@@ -13,7 +13,7 @@ function control(scenario = "basic", env: Record<string, string> = {}, overrides
     args: [resolve("tests/fixtures/control-peer.mjs"), "codex-app-server", scenario], env }, { ...options, ...overrides });
 }
 async function ready(driver: CodexControl) { await driver.initialize(); return driver.open(process.cwd()); }
-test("Codex initialization acknowledgement, safe thread settings, streaming and two distinct turns", async () => {
+test("Codex initialization acknowledgement, original thread policies, streaming and two distinct turns", async () => {
   const directory = await mkdtemp(join(tmpdir(), "gateway-codex-")), trace = join(directory, "trace");
   const driver = control("split", { FIXTURE_TRACE: trace });
   try {
@@ -24,7 +24,7 @@ test("Codex initialization acknowledgement, safe thread settings, streaming and 
     const messages = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line));
     assert.deepEqual(messages[0].params.capabilities, { experimentalApi: false, requestAttestation: false });
     assert.equal(messages[1].method, "initialized");
-    assert.deepEqual(messages[2].params, { cwd: process.cwd(), sandbox: "read-only", approvalPolicy: "untrusted", ephemeral: true });
+    assert.deepEqual(messages[2].params, { cwd: process.cwd(), ephemeral: true });
     assert.deepEqual(messages[3].params.input, [{ type: "text", text: "hello", text_elements: [] }]);
   } finally { await driver.close(); await rm(directory, { recursive: true, force: true }); }
 });

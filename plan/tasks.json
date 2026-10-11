@@ -1138,7 +1138,8 @@
         "G008-P01",
         "G008-P02",
         "G008-R01",
-        "G008-N01"
+        "G008-N01",
+        "G008-X02"
       ],
       "active_slice": "native-installation-management"
     },
@@ -2169,7 +2170,8 @@
         "tests/protocol/g031.test.ts",
         "src/infrastructure/control/json-rpc-process.ts",
         "tests/protocol/process.test.ts",
-        "tests/fixtures/control-peer.mjs"
+        "tests/fixtures/control-peer.mjs",
+        "src/infrastructure/control/process-group.ts"
       ],
       "requirements": [
         "R25",
@@ -2220,7 +2222,9 @@
         "src/adapters/control/native-dependencies.ts",
         "src/adapters/control/pi.ts",
         "tests/protocol/pi.test.ts",
-        "tests/fixtures/pi-rpc-peer.mjs"
+        "tests/fixtures/pi-rpc-peer.mjs",
+        "src/adapters/control/openclaw.ts",
+        "src/infrastructure/control/native-command.ts"
       ],
       "requirements": [
         "R11",
@@ -2251,7 +2255,8 @@
         "G032-C04",
         "G032-L01",
         "G032-N01",
-        "G032-N02"
+        "G032-N02",
+        "G032-X03"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3657,7 +3662,8 @@
         "tests/integration/web-session-stream.test.ts",
         "tests/unit/web-session-stream.test.ts",
         "tests/unit/web-api.test.ts",
-        "tests/integration/native-models.test.ts"
+        "tests/integration/native-models.test.ts",
+        "tests/integration/native-experience.test.ts"
       ],
       "requirements": [
         "R03",
@@ -3692,7 +3698,8 @@
         "G061-S03",
         "G061-L01",
         "G061-N01",
-        "G061-N02"
+        "G061-N02",
+        "G061-X01"
       ],
       "active_slice": "native-installation-management"
     },

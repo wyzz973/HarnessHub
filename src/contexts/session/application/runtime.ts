@@ -1,8 +1,8 @@
 import { parseProviderTarget } from "../../../contracts/provider.js";
 import type { BackendResult, CleanupEvidence, ControlEvent, ControlRun } from "../../../contracts/control.js";
 import {
-  SessionError, commandId, messageId, runId, sessionId, switchId,
-  type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicRun,
+  SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId,
+  type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicRun,
   type SelectionRequest, type SendReceipt, type SessionBindingFactory, type SessionCommit, type SessionConfiguration,
   type SessionId, type SessionEvent, type SessionMutation, type SessionRuntimeOptions, type SessionSnapshot, type SessionStore, type SwitchReceipt,
 } from "../../../contracts/session.js";
@@ -21,16 +21,16 @@ interface ActiveExecution {
 }
 const MAX_PENDING_CREATES = 16;
 function requested(value: SelectionRequest): SelectionRequest {
-  if (value === null || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => key !== "harnessId" && key !== "controlId" && key !== "provider" && key !== "nativeModel") ||
+  if (value === null || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => key !== "harnessId" && key !== "controlId" && key !== "provider" && key !== "nativeModel" && key !== "nativeOptions") ||
     typeof value.harnessId !== "string" || !/^[a-z][a-z0-9-]{0,95}$/u.test(value.harnessId) ||
     (value.controlId !== undefined && (typeof value.controlId !== "string" || !/^[a-z][a-z0-9-]{0,95}$/u.test(value.controlId))))
     throw new SessionError("INVALID_INPUT", "selection must name bounded catalog identities");
   if (value.nativeModel !== undefined && (typeof value.nativeModel !== "string" || !value.nativeModel.trim() || value.nativeModel.length > 1024 || /[\0\r\n]/u.test(value.nativeModel)))
     throw new SessionError("INVALID_INPUT", "invalid native model identity");
-  if (value.nativeModel !== undefined && value.provider != null) throw new SessionError("INVALID_INPUT", "native model and managed Provider are mutually exclusive");
+  if ((value.nativeModel !== undefined || value.nativeOptions !== undefined) && value.provider != null) throw new SessionError("INVALID_INPUT", "native model and managed Provider are mutually exclusive");
   return { harnessId: value.harnessId, ...(value.controlId === undefined ? {} : { controlId: value.controlId }),
     ...(value.provider === undefined ? {} : { provider: value.provider === null ? null : parseProviderTarget(value.provider) }),
-    ...(value.nativeModel === undefined ? {} : { nativeModel: value.nativeModel }) };
+    ...(value.nativeModel === undefined ? {} : { nativeModel: value.nativeModel }), ...(value.nativeOptions === undefined ? {} : { nativeOptions: parseNativeOptions(value.nativeOptions) }) };
 }
 function fault(error: unknown): { readonly code: string; readonly message: string } {
   if (error instanceof SessionError) return { code: error.code.slice(0, 128), message: error.message.slice(0, 512) };
@@ -55,6 +55,30 @@ export class SessionRuntime {
   private readonly work = new Set<SessionId>();
   private runner: Promise<void> | null = null;
   private active: ActiveExecution | null = null;
+  private readonly permissions = new Map<string, { request: PermissionRequest; nativeId: string; execution: ActiveExecution; option: string | null; command: string | null }>();
+  permissionRequests(id: SessionId): readonly PermissionRequest[] { this.load(id); return [...this.permissions.values()].filter(value => value.execution.sessionId === id).map(value => value.request); }
+  async decidePermission(id: SessionId, permission: string, option: string, key: string, input?: string): Promise<{ readonly replayed: boolean }> {
+    const command=commandId(key);
+    if (!/^permission-[A-Za-z0-9-]{1,96}$/u.test(permission) || typeof option!=="string" || !option || option.length>1024 || /[\0\r\n]/u.test(option)) throw new SessionError("INVALID_INPUT","invalid native permission decision");
+    if (input !== undefined && (typeof input !== "string" || Buffer.byteLength(input) > 65536 || input.includes("\0"))) throw new SessionError("INVALID_INPUT", "invalid native input response");
+    const state = this.load(id), fingerprint=this.fingerprint({kind:"permission",permission,option,...(input===undefined?{}:{input})}), prior=replayCommand(state,command,"permission",fingerprint);
+    if (prior) return {replayed:true};
+    this.commandBudget(state);
+    const pending = this.permissions.get(permission);
+    if (!pending || pending.execution.sessionId !== id || !pending.request.options.some(value => value.id === option)) throw new SessionError("PERMISSION_UNAVAILABLE", "native permission or option is no longer pending");
+    if(input!==undefined&&(!pending.request.input||Buffer.byteLength(input)>65536||input.includes("\0")))throw new SessionError("INVALID_INPUT","invalid native input response");
+    if (pending.option !== null) { if (pending.option === option && pending.command === key) return { replayed: true }; throw new SessionError("PERMISSION_CONFLICT", "native permission has already been decided"); }
+    this.continue(pending.execution);
+    const control = pending.execution.binding?.control;
+    if (!control?.decidePermission) throw new SessionError("UNSUPPORTED_PERMISSION", "native approval is unavailable");
+    pending.option = option; pending.command = key; pending.request = { ...pending.request, decided: true };
+    try { this.commit(id, current => ({ next: { ...current, commands:[...current.commands,{id:command,kind:"permission",fingerprint,resultId:pending.execution.runId}] }, events: [event("permission.decided", { permissionId: permission, runId: pending.execution.runId, optionId: option, commandId: key })] })); }
+    catch(error) { pending.option=null;pending.command=null;pending.request={...pending.request,decided:false};throw error; }
+    await control.decidePermission(pending.nativeId, option, input); this.owned(pending.execution);
+    this.permissions.delete(permission);
+    this.commit(id, current => ({ next: current, events: [event("permission.submitted", { permissionId: permission, runId: pending.execution.runId, optionId: option, backendAcknowledged: false })] }));
+    return { replayed: false };
+  }
   private switchBinding: { readonly sessionId: SessionId; readonly binding: PreparedSessionBinding; close: Promise<CleanupEvidence> | null } | null = null;
   private fatal: SessionError | null = null;
   private publicationFailed = false;
@@ -85,7 +109,7 @@ export class SessionRuntime {
     const concurrent = this.store.findByCreateKey(command);
     if (concurrent) { replayCommand(concurrent, command, "create", fingerprint); return concurrent; }
     const id = sessionId("session-" + this.options.id());
-    const state: SessionSnapshot = { schemaVersion: 4, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
+    const state: SessionSnapshot = { schemaVersion: 5, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
       configuration: config, selection: validated, activeRunId: null, pendingSwitchId: null,
       runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }] };
     try {
@@ -411,8 +435,20 @@ export class SessionRuntime {
   private output(execution: ActiveExecution, value: ControlEvent): void {
     const state = this.owned(execution), run = state.runs.find(run => run.id === execution.runId)!;
     if (run.status !== "running") throw new SessionError("STALE_EVENT", "output arrived outside its active Run");
+    if (value.type === "permission_requested") {
+      if (this.permissions.size >= 32) throw new SessionError("PERMISSION_LIMIT", "too many pending native permissions");
+      const id = "permission-" + this.options.id(), request: PermissionRequest = { id, runId: run.id, title: value.title, options: value.options, ...(value.detail===undefined?{}:{detail:value.detail}),...(value.input===undefined?{}:{input:value.input}), decided: false };
+      this.permissions.set(id, { request, nativeId: value.id, execution, option: null, command: null });
+      try { this.commit(state.id, current => ({ next: current, events: [event("permission.requested", { permissionId: id, runId: run.id, title: value.title, options: value.options })] })); } catch (error) { this.permissions.delete(id); throw error; } return;
+    }
     this.commit(state.id, current => {
       let next = current;
+      if (value.type === "thinking") {
+        const thinking = (run.thinking ?? "") + value.text; if (utf8Bytes(thinking) > MAX_OUTPUT_BYTES) throw new SessionError("OUTPUT_LIMIT", "native thinking exceeded its budget"); next = updatedRun(current, run.id, { thinking });
+      }
+      if (value.type === "tool") {
+        const tools = [...(run.tools ?? [])], index = tools.findIndex(tool => tool.id === value.id); const tool = { id: value.id, title: value.title, status: value.status }; if (index < 0) tools.push(tool); else tools[index] = tool; if (tools.length > 128) throw new SessionError("TOOL_LIMIT", "native tools exceeded their budget"); next = updatedRun(current, run.id, { tools });
+      }
       if (value.type === "text") {
         const message = current.messages.find(message => message.id === run.assistantMessageId);
         const text = (message?.text ?? "") + value.text;
@@ -455,11 +491,19 @@ export class SessionRuntime {
       }
       const observation = await execution.binding.control.initialize(); this.continue(execution);
       this.commit(id, current => ({ next: current, events: [event("run.protocol", { runId: target, observation })] }));
-      const native = await execution.binding.control.open(execution.binding.workspace, run.selection.nativeModel); this.continue(execution);
+      const native = await execution.binding.control.open(execution.binding.workspace, run.selection.nativeModel, run.selection.nativeOptions); this.continue(execution);
       this.commit(id, current => ({ next: updatedRun(current, target, { status: "running" }), events: [event("run.authorized", { runId: target, epoch: run.epoch })] }));
       this.continue(execution);
+      execution.binding.control.enablePermissions?.();
+      let input = context.text;
+      if (run.input.startsWith("/") && execution.binding.control.models) {
+        const catalog = await execution.binding.control.models(); const name = run.input.slice(1).split(/\s/u)[0];
+        this.continue(execution);
+        if (catalog.commands?.some(command => command.name === name)) { input = run.input; this.commit(id, current => ({ next: current, events: [event("run.native_command", { runId: target, name, publicContextInjected: false })] })); }
+      }
+      this.continue(execution);
       execution.dispatched = true;
-      execution.run = await execution.binding.control.startText(native, context.text, value => this.output(execution, value));
+      execution.run = await execution.binding.control.startText(native, input, value => this.output(execution, value));
       this.owned(execution);
       void execution.run.result.then(() => { execution.backendSettled = true; }, () => { execution.backendSettled = true; });
       if (this.load(id).runs.find(run => run.id === target)!.cancelRequested || !this.accepting || this.fatal || this.closingSessions.has(id)) this.stop(execution);
@@ -468,6 +512,9 @@ export class SessionRuntime {
       this.commit(id, current => ({ next: updatedRun(current, target, { status: "settling", backend }), events: [event("run.backend_settled", { runId: target, backend })] }));
     } catch (error) { problem = fault(error); }
     finally {
+      const abandoned = [...this.permissions.entries()].filter(([, permission]) => permission.execution === execution);
+      for (const [permissionId] of abandoned) this.permissions.delete(permissionId);
+      if (abandoned.length) this.commit(id, current => ({ next: current, events: abandoned.map(([permissionId]) => event("permission.closed", { permissionId, runId: target })) }));
       if (execution.stop) {
         try { await execution.stop; } catch (error) { problem ??= fault(error); }
       }
@@ -512,6 +559,7 @@ export class SessionRuntime {
       this.commit(id, current => ({ next: { ...current, switches: current.switches.map(sw => sw.id === targetId
         ? { ...sw, target, status: "validated", throughSeq: context.throughSeq, sourceRunIds: context.sourceRunIds } : sw) },
         events: [event("switch.validated", { switchId: targetId, target, throughSeq: context.throughSeq, sourceRunIds: context.sourceRunIds, continuity: context.continuity })] }));
+      if (recovery) {
       binding = await this.factory.prepare(target, initial.configuration, id, targetId);
       this.switchBinding = { sessionId: id, binding, close: null };
       this.store.assertOwner(); binding.assertOwned();
@@ -519,7 +567,8 @@ export class SessionRuntime {
       if (current.pendingSwitchId !== targetId || this.closingSessions.has(id) || !this.accepting || this.fatal) throw new SessionError("CANCELLED", "switch cancelled before target initialization");
       await binding.control.initialize(); this.store.assertOwner(); binding.assertOwned();
       if (this.load(id).pendingSwitchId !== targetId || this.closingSessions.has(id) || !this.accepting || this.fatal) throw new SessionError("CANCELLED", "switch cancelled before target conversation");
-      await binding.control.open(binding.workspace, target.nativeModel); this.store.assertOwner(); binding.assertOwned();
+      await binding.control.open(binding.workspace, target.nativeModel, target.nativeOptions); this.store.assertOwner(); binding.assertOwned();
+      }
     } catch (error) { problem = fault(error); }
     finally {
       if (binding) {

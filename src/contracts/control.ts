@@ -30,7 +30,9 @@ export interface ProtocolObservation {
 }
 export type ControlEvent =
   | { readonly type: "text"; readonly text: string }
+  | { readonly type: "thinking"; readonly text: string }
   | { readonly type: "tool"; readonly id: string; readonly title: string; readonly status: string }
+  | { readonly type: "permission_requested"; readonly id: string; readonly title: string; readonly detail?: string; readonly input?: {readonly kind:"text"|"editor";readonly value:string}; readonly options: readonly { readonly id: string; readonly name: string }[] }
   | { readonly type: "permission"; readonly id: string; readonly decision: "denied" | "cancelled" }
   | { readonly type: "diagnostic"; readonly message: string };
 export interface BackendResult {
@@ -38,11 +40,23 @@ export interface BackendResult {
   readonly reason: string;
   readonly error?: { readonly code: string; readonly message: string };
 }
+export interface NativeOption {
+  readonly id: string;
+  readonly name: string;
+  readonly category: string;
+  readonly currentValue: string;
+  readonly values: readonly { readonly value: string; readonly name: string }[];
+}
+export type NativeOptions = Readonly<Record<string, string>>;
 export interface NativeModelCatalog {
-  readonly models: readonly { readonly id: string; readonly name: string }[];
+  readonly models: readonly { readonly id: string; readonly name: string; readonly options?: readonly NativeOption[] }[];
+  /** The native configured default before any session-local model override. */
   readonly defaultModel: string | null;
+  readonly selectionError?: { readonly code: string; readonly message: string };
   readonly authentication: "ready" | "missing" | "unknown";
   readonly canSelect: boolean;
+  readonly options?: readonly NativeOption[];
+  readonly commands?: readonly { readonly name: string; readonly description: string }[];
 }
 export interface StopRequestReceipt { readonly requested: true }
 export interface CleanupEvidence {
@@ -60,8 +74,12 @@ export interface ControlRun {
 /** One native conversation and active run per connection; all resources are owned by close(). */
 export interface HarnessControl {
   initialize(): Promise<ProtocolObservation>;
-  open(cwd: string, model?: string): Promise<NativeConversationId>;
+  open(cwd: string, model?: string, options?: NativeOptions): Promise<NativeConversationId>;
   models?(): Promise<NativeModelCatalog>;
   startText(id: NativeConversationId, text: string, onEvent: (event: ControlEvent) => void): Promise<ControlRun>;
+  /** Enables interactive requests for a public Run. Standalone probes keep their explicit deny default. */
+  enablePermissions?(): void;
+  /** Selects an actual pending option; receipt does not assert backend acknowledgement. */
+  decidePermission?(id: string, option: string, input?: string): Promise<void>;
   close(): Promise<CleanupEvidence>;
 }

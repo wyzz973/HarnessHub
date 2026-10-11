@@ -52,3 +52,13 @@ test("Pi rejects malformed wire, unavailable models and native authentication wi
     assert.equal(result.error?.code, "NATIVE_AUTH_REQUIRED"); assert.equal(JSON.stringify(result).includes("private-key"), false); assert.equal((await driver.close()).protocolFailure, null);
   } finally { await driver.close(); }
 });
+
+for (const [scenario,option,input,field,expected] of [["ui-input","submit","typed input","value","typed input"],["ui-editor","submit","edited native text","text","edited native text"],["ui-select","choice-1",undefined,"value","Two"]] as const) test(`Pi ${scenario} surfaces native interaction and round-trips its response`, async t=>{
+  const root=await mkdtemp(join(tmpdir(),"pi-native-ui-")), trace=join(root,"trace");t.after(()=>rm(root,{recursive:true,force:true})); const driver=control(scenario,trace);
+  try { await driver.initialize();driver.enablePermissions(); const id=await driver.open(process.cwd()); let receive!:(event:Extract<import("../../src/contracts/control.js").ControlEvent,{type:"permission_requested"}>)=>void;
+    const request=new Promise<Extract<import("../../src/contracts/control.js").ControlEvent,{type:"permission_requested"}>>(resolve=>{receive=resolve});
+    const run=await driver.startText(id,"native UI",event=>{if(event.type==="permission_requested")receive(event)}),asked=await request;
+    assert.equal(asked.id,"native-ui"); await driver.decidePermission(asked.id,option,input);assert.equal((await run.result).status,"completed");
+    const wire=(await readFile(trace,"utf8")).trim().split("\n").map(line=>JSON.parse(line));assert.equal(wire.find(row=>row.type==="extension_ui_response")[field],expected);
+  } finally {assert.equal((await driver.close()).closed,true);}
+});

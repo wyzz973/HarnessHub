@@ -1,6 +1,6 @@
 import { parseProviderTarget, type ProviderTarget } from "../../../contracts/provider.js";
 import {
-  SessionError, commandId, messageId, runId, sessionId, switchId,
+  SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId,
   type CommandRecord, type HarnessSelection, type PublicMessage, type PublicRun,
   type PublicSwitch, type RunStatus, type SessionConfiguration, type SessionMutation, type SessionSnapshot,
 } from "../../../contracts/session.js";
@@ -48,17 +48,18 @@ function path(value: unknown, label: string): string {
   if (!result.startsWith("/") || /[\r\n]/u.test(result) || result.split("/").includes("..")) throw new SessionError("INVALID_DATA", label + " must be a bounded absolute path");
   return result;
 }
+function nativeOptions(value: unknown) { try { return parseNativeOptions(value); } catch { throw new SessionError("INVALID_DATA","invalid persisted native options"); } }
 function providerTarget(value: unknown): ProviderTarget {
   try { return parseProviderTarget(value); }
   catch { throw new SessionError("INVALID_DATA", "invalid or unknown Provider target fields"); }
 }
 export function parseSelection(value: unknown): HarnessSelection {
-  const item = record(value, "selection"); keys(item, ["harnessId", "controlId", "provider", "nativeModel"], "selection");
+  const item = record(value, "selection"); keys(item, ["harnessId", "controlId", "provider", "nativeModel", "nativeOptions"], "selection");
   const harnessId = text(item.harnessId, "harnessId", 96), controlId = text(item.controlId, "controlId", 96);
   if (![harnessId, controlId].every(id => /^[a-z][a-z0-9-]*$/u.test(id))) throw new SessionError("INVALID_DATA", "selection must name catalog identities");
-  if (item.provider !== undefined && item.nativeModel !== undefined) throw new SessionError("INVALID_DATA", "native model and managed Provider are mutually exclusive");
+  if (item.provider !== undefined && (item.nativeModel !== undefined || item.nativeOptions !== undefined)) throw new SessionError("INVALID_DATA", "native model and managed Provider are mutually exclusive");
   return { harnessId, controlId, ...(item.provider === undefined ? {} : { provider: providerTarget(item.provider) }),
-    ...(item.nativeModel === undefined ? {} : { nativeModel: text(item.nativeModel, "nativeModel", 1024) }) };
+    ...(item.nativeModel === undefined ? {} : { nativeModel: text(item.nativeModel, "nativeModel", 1024) }), ...(item.nativeOptions === undefined ? {} : { nativeOptions: nativeOptions(item.nativeOptions) }) };
 }
 export function parseConfiguration(value: unknown): SessionConfiguration {
   const item = record(value, "configuration");
@@ -96,12 +97,14 @@ function cleanup(value: unknown): CleanupEvidence | null {
 }
 function publicRun(value: unknown): PublicRun {
   const item = record(value, "Run");
-  keys(item, ["id", "commandId", "input", "userMessageId", "assistantMessageId", "selection", "epoch", "status", "cancelRequested", "contextThroughSeq", "sourceRunIds", "backend", "cleanup", "error", "stopRequested", "awaitingSwitchId"], "Run");
+  keys(item, ["id", "commandId", "input", "userMessageId", "assistantMessageId", "selection", "epoch", "status", "cancelRequested", "contextThroughSeq", "sourceRunIds", "backend", "cleanup", "error", "stopRequested", "awaitingSwitchId", "thinking", "tools"], "Run");
   return { id: runId(item.id), commandId: commandId(item.commandId), input: text(item.input, "Run input", MAX_INPUT_BYTES),
     userMessageId: messageId(item.userMessageId), assistantMessageId: messageId(item.assistantMessageId), selection: parseSelection(item.selection),
     epoch: number(item.epoch, "Run epoch", 1), status: status(item.status), cancelRequested: boolean(item.cancelRequested, "cancelRequested"),
     contextThroughSeq: number(item.contextThroughSeq, "contextThroughSeq"), sourceRunIds: array(item.sourceRunIds, "sourceRunIds", MAX_RUNS, runId),
     backend: backend(item.backend), cleanup: cleanup(item.cleanup), error: fault(item.error), stopRequested: boolean(item.stopRequested, "stopRequested"),
+    ...(item.thinking === undefined ? {} : { thinking: text(item.thinking, "native thinking", MAX_OUTPUT_BYTES, true) }),
+    ...(item.tools === undefined ? {} : { tools: array(item.tools, "native tools", 128, value => { const row = record(value, "native tool"); keys(row,["id","title","status"],"native tool"); return { id: text(row.id,"tool identity",512), title: text(row.title,"tool title",4096), status: text(row.status,"tool status",128) }; }) }),
     awaitingSwitchId: item.awaitingSwitchId === null ? null : switchId(item.awaitingSwitchId) };
 }
 function publicMessage(value: unknown): PublicMessage {
@@ -112,20 +115,20 @@ function publicMessage(value: unknown): PublicMessage {
 }
 function publicSwitch(value: unknown): PublicSwitch {
   const item = record(value, "switch"); keys(item, ["id", "commandId", "requested", "requestedSeq", "target", "status", "throughSeq", "sourceRunIds", "error"], "switch");
-  const requested = record(item.requested, "requested selection"); keys(requested, ["harnessId", "controlId", "provider", "nativeModel"], "requested selection");
+  const requested = record(item.requested, "requested selection"); keys(requested, ["harnessId", "controlId", "provider", "nativeModel", "nativeOptions"], "requested selection");
   const harnessId = text(requested.harnessId, "requested harness", 96);
   const controlId = requested.controlId === undefined ? undefined : text(requested.controlId, "requested control", 96);
   if (![harnessId, ...(controlId === undefined ? [] : [controlId])].every(id => /^[a-z][a-z0-9-]*$/u.test(id))) throw new SessionError("INVALID_DATA", "invalid requested selection");
   if (item.status !== "requested" && item.status !== "validated" && item.status !== "effective" && item.status !== "failed") throw new SessionError("INVALID_DATA", "unknown switch status");
   return { id: switchId(item.id), commandId: commandId(item.commandId), requested: { harnessId, ...(controlId === undefined ? {} : { controlId }),
       ...(requested.provider === undefined ? {} : { provider: requested.provider === null ? null : providerTarget(requested.provider) }),
-      ...(requested.nativeModel === undefined ? {} : { nativeModel: text(requested.nativeModel, "requested native model", 1024) }) },
+      ...(requested.nativeModel === undefined ? {} : { nativeModel: text(requested.nativeModel, "requested native model", 1024) }), ...(requested.nativeOptions === undefined ? {} : { nativeOptions: nativeOptions(requested.nativeOptions) }) },
     requestedSeq: number(item.requestedSeq, "switch requestedSeq", 1), target: item.target === null ? null : parseSelection(item.target), status: item.status,
     throughSeq: number(item.throughSeq, "switch throughSeq"), sourceRunIds: array(item.sourceRunIds, "switch sourceRunIds", MAX_RUNS, runId), error: fault(item.error) };
 }
 function command(value: unknown): CommandRecord {
   const item = record(value, "command"); keys(item, ["id", "kind", "fingerprint", "resultId"], "command");
-  if (item.kind !== "create" && item.kind !== "send" && item.kind !== "switch" && item.kind !== "cancel" && item.kind !== "close") throw new SessionError("INVALID_DATA", "unknown command kind");
+  if (item.kind !== "create" && item.kind !== "send" && item.kind !== "switch" && item.kind !== "cancel" && item.kind !== "close" && item.kind !== "permission") throw new SessionError("INVALID_DATA", "unknown command kind");
   const fingerprint = text(item.fingerprint, "command fingerprint", 64);
   if (!/^[a-f0-9]{64}$/u.test(fingerprint)) throw new SessionError("INVALID_DATA", "invalid command fingerprint");
   return { id: commandId(item.id), kind: item.kind, fingerprint, resultId: text(item.resultId, "command resultId", 128) };
@@ -137,7 +140,7 @@ function unique(values: readonly string[], label: string): void {
 export function parseSession(value: unknown): SessionSnapshot {
   const item = record(value, "Session");
   keys(item, ["schemaVersion", "id", "version", "lastSeq", "epoch", "status", "configuration", "selection", "activeRunId", "pendingSwitchId", "runs", "messages", "switches", "commands"], "Session");
-  if (item.schemaVersion !== 1 && item.schemaVersion !== 2 && item.schemaVersion !== 3 && item.schemaVersion !== 4) throw new SessionError("INVALID_DATA", "unknown Session schemaVersion");
+  if (item.schemaVersion !== 1 && item.schemaVersion !== 2 && item.schemaVersion !== 3 && item.schemaVersion !== 4 && item.schemaVersion !== 5) throw new SessionError("INVALID_DATA", "unknown Session schemaVersion");
   if (item.status !== "open" && item.status !== "closed" && item.status !== "blocked") throw new SessionError("INVALID_DATA", "unknown Session status");
   const result: SessionSnapshot = { schemaVersion: item.schemaVersion, id: sessionId(item.id), version: number(item.version, "version"), lastSeq: number(item.lastSeq, "lastSeq"),
     epoch: number(item.epoch, "epoch", 1), status: item.status, configuration: parseConfiguration(item.configuration), selection: parseSelection(item.selection),
@@ -152,6 +155,8 @@ export function parseSession(value: unknown): SessionSnapshot {
     throw new SessionError("INVALID_DATA", "legacy Session schema cannot contain native model targets or backend errors");
   unique(result.runs.map(run => run.id), "Run"); unique(result.messages.map(message => message.id), "message");
   unique(result.runs.flatMap(run => [run.userMessageId, run.assistantMessageId]), "declared message identity");
+  if (result.schemaVersion < 5 && [result.selection, ...result.runs.map(run => run.selection), ...result.switches.flatMap(sw => [sw.requested, ...(sw.target ? [sw.target] : [])])].some(selection => selection.nativeOptions !== undefined)) throw new SessionError("INVALID_DATA", "native options require Session v5");
+  if (result.schemaVersion < 5 && (result.runs.some(run=>run.thinking!==undefined || run.tools!==undefined) || result.commands.some(command=>command.kind==="permission"))) throw new SessionError("INVALID_DATA","native activity requires Session v5");
   unique(result.switches.map(entry => entry.id), "switch"); unique(result.commands.map(entry => entry.id), "command");
   if (result.lastSeq > MAX_SESSION_EVENTS) throw new SessionError("EVENT_LIMIT", "Session event budget exhausted");
   const active = result.runs.filter(run => ["preparing", "running", "settling"].includes(run.status));
@@ -197,7 +202,7 @@ export function parseSession(value: unknown): SessionSnapshot {
   const last = effective.at(-1);
   if (last?.target !== undefined && last.target !== null && !same(last.target, result.selection)) throw new SessionError("INVALID_DATA", "selection does not match last effective switch");
   if (result.commands.filter(entry => entry.kind === "create").length !== 1 || !result.commands.every(entry =>
-    entry.kind === "send" ? result.runs.some(run => run.id === entry.resultId) : entry.kind === "switch" ? result.switches.some(sw => sw.id === entry.resultId) : entry.kind === "cancel" ? entry.resultId === "none" || result.runs.some(run => run.id === entry.resultId) : entry.resultId === result.id)) throw new SessionError("INVALID_DATA", "command relation is inconsistent");
+    entry.kind === "send" ? result.runs.some(run => run.id === entry.resultId) : entry.kind === "switch" ? result.switches.some(sw => sw.id === entry.resultId) : entry.kind === "cancel" ? entry.resultId === "none" || result.runs.some(run => run.id === entry.resultId) : entry.kind === "permission" ? result.runs.some(run => run.id === entry.resultId) : entry.resultId === result.id)) throw new SessionError("INVALID_DATA", "command relation is inconsistent");
   if (utf8Bytes(JSON.stringify(result)) > MAX_SESSION_BYTES) throw new SessionError("SESSION_LIMIT", "Session aggregate byte limit reached");
   return result;
 }

@@ -19,11 +19,11 @@ pnpm web --cwd /absolute/workspace --data-dir data --port 4317
 
 对话现通过已提交事实的SSE实时显示回复，刷新或重连不会重新执行消息。消息区支持流式Markdown、生成反馈、阅读时暂停滚动、复制与执行详情；停止后保留部分内容。输入区为自动增长文本框和紧凑选择器，高级配置按需展开。短回复若模型几乎同时返回，仍可能一次显示；没有人工打字延迟。验收见[实时对话记录](docs/verification/live-chat-2026-10-10.md)，可单独运行 `pnpm test:real:stream` 验证真实Codex和本地确定性Provider的首块/重连。
 
-Harness连接或目标切换失败时，历史与原选择保留，可继续使用当前选择或明确重试。草稿在当前标签页按对话保存，刷新也可恢复。旧blocked会话可选择Harness并“检查连接并恢复对话”；未知结果需明确确认，清理未确认仍需先处理资源，不自动重跑旧任务。结束会话前说明后果并确认。审查见[对话恢复记录](docs/verification/conversation-recovery-2026-10-10.md)。当前业务存储为v4（保留v1→v2→v3→v4事务迁移）；更新前备份本机data，回退旧程序前停止服务并恢复旧备份。
+Harness连接或目标切换失败时，历史与原选择保留，可继续使用当前选择或明确重试。草稿在当前标签页按对话保存，刷新也可恢复。旧blocked会话可选择Harness并“检查连接并恢复对话”；未知结果需明确确认，清理未确认仍需先处理资源，不自动重跑旧任务。结束会话前说明后果并确认。审查见[对话恢复记录](docs/verification/conversation-recovery-2026-10-10.md)。当前业务存储为v5（保留v1→v2→v3→v4→v5事务迁移）；更新前备份本机data，回退旧程序前停止服务并恢复旧备份。
 
-所有接入的Harness使用本机已安装入口，默认沿用本机模型配置和登录。模型列表由所选Harness原生接口读取，未指定时跟随其本机默认；不写全局模型配置，不创建空native HOME。选择Harness、Provider或模型后直接提出切换，不再点“应用”；当前回复保持原选择，新消息等待最后一次选择生效。失败保留原选择与草稿，快速改选只推进最新未受理选择。
+所有接入的Harness使用本机已安装入口，默认沿用本机模型配置和登录。模型列表由所选Harness原生接口读取，未指定时跟随其本机默认；不写全局模型配置，不创建空native HOME。选择Harness、Provider或模型后直接提出切换，不再点“应用”；当前回复保持原选择，新消息等待最后一次选择生效。配置验证失败保留原选择与草稿，快速改选只推进最新未受理选择。普通切换不启动目标进程，effective表示下一轮配置选择已保存；原生连接、认证与额度在发送时分别核实。
 
-当前生产页面只使用各Harness本机已配置的模型，统一Provider管理后置。旧Provider接口与实验验收保留，已有显式Provider会话不会静默改成原生模式。原生模型选择/直接切换见[ADR-015](docs/decisions/0015-native-harness-models-and-switching.md)、[Multica调研](docs/research/multica-native-models.md)及[验收](docs/verification/native-models-2026-10-11.md)。业务格式现为v4，升级前备份，回退旧程序前恢复旧备份。
+当前生产页面只使用各Harness本机已配置的模型，统一Provider管理后置。旧Provider接口与实验验收保留，已有显式Provider会话不会静默改成原生模式。原生模型选择/直接切换见[ADR-015](docs/decisions/0015-native-harness-models-and-switching.md)、[Multica调研](docs/research/multica-native-models.md)及[验收](docs/verification/native-models-2026-10-11.md)。业务格式现为v5，升级前备份，回退旧程序前恢复旧备份。
 
 当前受管组合为 **Codex + OpenAI Responses**、**Gemini CLI + Gemini（API Key）**。其他产品继续检测，但协议/受管配置能力单独标明。OpenAI/Anthropic连接地址通常含/v1；Gemini填写API服务根。密钥只写入本机加密vault，不回显到UI/Session；同OS用户可访问主密钥，本版不宣称系统钥匙串隔离。
 
@@ -31,7 +31,7 @@ Harness连接或目标切换失败时，历史与原选择保留，可继续使�
 
 ## 本机原安装与版本管理
 
-已发现的本机PATH/显式入口优先，原安装和既有配置/登录作为当前执行来源，旧私有副本不能覆盖它。生产管理任务使用原npm/uv位置或已审核用户程序目录，真实CLI版本、原配置保护与未知结果分别记录。macOS Homebrew升级通过原SDK创建一个可认证的继承沙箱，模型/登录/shell配置与Homebrew仓库均拒绝写入；没有对应SDK时明确不可用。用户开发目录不自动替换。管理库v1→v2追加冻结计划，先备份业务库和管理库；业务会话仍为v4。旧私有版本槽只保留历史及显式测试模式。详见[ADR-017](docs/decisions/0017-native-installation-management.md)与[本轮验收](docs/verification/native-management-2026-10-11.md)。
+已发现的本机PATH/显式入口优先，原安装和既有配置/登录作为当前执行来源，旧私有副本不能覆盖它。生产管理任务使用原npm/uv位置或已审核用户程序目录，真实CLI版本、原配置保护与未知结果分别记录。macOS Homebrew升级通过原SDK创建一个可认证的继承沙箱，模型/登录/shell配置与Homebrew仓库均拒绝写入；没有对应SDK时明确不可用。用户开发目录不自动替换。管理库v1→v2追加冻结计划，先备份业务库和管理库；业务会话为v5。旧私有版本槽只保留历史及显式测试模式。详见[ADR-017](docs/decisions/0017-native-installation-management.md)与[本轮验收](docs/verification/native-management-2026-10-11.md)。
 
 原版OpenClaw2026.3.23-2、Codex0.162.1、OpenCode1.18.35、Pi0.85.1已通过本机真实模型回复；OpenClaw/Pi使用原生DeepSeek。Claude接入口绑定原Claude Code2.1.296及既有登录，账号周额度已用完。Cursor原安装已升级至2026.10.01-e373342，沿用本机登录、44项原生模型目录并通过独立短提示回复；原公共对话实测仍返回账号套餐升级提示，不能算该对话回复通过。Gemini0.62.0的个人登录被服务端停用，直连DeepSeek实际返回404（Google GenAI协议与DeepSeek接口不匹配），不能算回复通过。所有接入口版本与原程序版本分开解释，不把ACP适配器版本当原CLI版本。
 
@@ -134,3 +134,5 @@ python3 -m unittest discover -s tools -p 'test_*.py' -v
 设计检查实际保证 ID/依赖、唯一路径所有权（含大小写/NFC）、获准切片源码范围、需求/测试关联、生成新鲜度、简单相对文件链接及来源元数据。它不证明任务语义天然原子、DDD 正确、外部 URL 永久有效、Markdown 全语法、运行时行为或平台能力。
 
 原CLI恢复与原Homebrew升级证据见[ADR-018](docs/decisions/0018-native-cli-recovery.md)与[恢复验收](docs/verification/native-cli-recovery-2026-10-11.md)。
+
+快速切换、原生思考档位、选项、命令与工具审批按[ADR-019](docs/decisions/0019-native-session-experience.md)实现。原OpenClaw可读取其Gateway模型目录，仅为Hub自己的会话覆盖模型；Codex与Pi档位来自原安装接口。统一聊天界面承接原生审批与Pi输入交互，配置/登录保持本机来源。当前实测选择提交52–96ms；首次模型目录读取和首条回复仍受原程序启动及网络影响。范围与实际证据见[本轮验收](docs/verification/native-session-experience-2026-10-11.md)，不将这些结果称为全部Harness原生功能等价。

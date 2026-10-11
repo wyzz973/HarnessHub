@@ -424,7 +424,7 @@ test("live chat renders committed partial Markdown before completion, respects r
   assert.ok(!(await page.locator("body").innerText()).includes("synthetic-stream-fixture-key"));
 });
 
-test("failed Harness selection keeps the same conversation usable, shows recovery actions and preserves per-chat drafts", { timeout: 120000 }, async t => {
+test("unavailable native authentication keeps the same conversation usable, shows recovery actions and preserves per-chat drafts", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
@@ -448,23 +448,23 @@ test("failed Harness selection keeps the same conversation usable, shows recover
   await expect.poll(async () => (await current()).runs[0].status).toBe("completed"); const first = await current();
   await composer.fill("选择失败也要保留这条草稿");
   await pick("选择 Harness", "OpenClaw"); await pick("选择 Provider", "Harness 原生连接");
-  await expect(page.getByText("未能切换到 OpenClaw", { exact: true })).toBeVisible();
-  await expect(page.locator(".selection-failure").getByText(/尚未配置 Gateway 认证/)).toBeVisible();
+  await expect(page.getByText(/本机认证尚未就绪/)).toBeVisible();
+  await expect(page.getByRole("button",{name:"发送消息",exact:true})).toBeDisabled();
   await expect(composer).toBeEnabled(); await expect(composer).toHaveValue("选择失败也要保留这条草稿");
   const failed = await current(); assert.equal(failed.id, first.id); assert.equal(failed.status, "open"); assert.equal(failed.runs.length, 1);
-  assert.equal(failed.selection.harnessId, "codex"); assert.equal(failed.switches[0].error.code, "GATEWAY_AUTH_REQUIRED");
+  assert.equal(failed.selection.harnessId,"openclaw"); assert.equal(failed.switches.at(-1).status,"effective");
   await page.screenshot({ path: join(artifact, "harness-selection-failed.png"), fullPage: true, animations: "disabled" });
   const modelReload = page.waitForResponse(response => response.url().includes("/harnesses/openclaw/models"));
   await page.reload(); await modelReload;
-  await expect(page.getByText("未能切换到 OpenClaw", { exact: true })).toBeVisible();
+  await expect(page.getByText(/本机认证尚未就绪/)).toBeVisible();
   await expect(composer).toHaveValue("选择失败也要保留这条草稿");
   assert.equal((await current()).switches.length, failed.switches.length, "refresh must not retry an already failed selection");
-  await page.getByRole("button", { name: "继续使用当前选择", exact: true }).click();
+  await pick("选择 Harness","Codex"); await pick("选择 Provider","可用模型连接");
   await expect(page.getByRole("button", { name: "选择 Harness", exact: true })).toContainText("Codex");
   await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled();
   await composer.press("Enter"); await expect.poll(async () => (await current()).runs[1]?.status).toBe("completed");
   assert.equal((await current()).id, first.id);
-  await composer.fill("FAIL_ONCE：由用户明确重试"); await composer.press("Enter");
+  await composer.fill("FAIL_ONCE：由用户明确重试"); await expect(page.getByRole("button",{name:"发送消息",exact:true})).toBeEnabled(); await composer.press("Enter");
   await expect.poll(async () => (await current()).runs[2]?.status).toBe("failed");
   await page.locator(".assistant-message").last().hover(); await page.getByRole("button", { name: "重试回复", exact: true }).last().click();
   await expect.poll(async () => (await current()).runs[3]?.status).toBe("completed");
@@ -495,7 +495,7 @@ test("failed Harness selection keeps the same conversation usable, shows recover
   assert.deepEqual(errors, []);
 });
 
-test("native model selection follows the installed Harness and rapid choices switch directly without Apply", { timeout: 120000 }, async t => {
+test("native settings switch without Apply and approvals survive refresh or cancellation in unified chat", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true }); const context = await browser.newContext({ viewport: { width: 943, height: 1079 } }), page = await context.newPage();
@@ -505,11 +505,11 @@ test("native model selection follows the installed Harness and rapid choices swi
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true });
   const pick = async (label: string, value: string) => { await page.getByRole("button", { name: label, exact: true }).click(); await page.getByRole("option", { name: value, exact: true }).click(); };
   await pick("选择 Harness", "Codex"); await expect(page.getByRole("button", { name: "选择模型", exact: true })).toBeEnabled();
-  await pick("选择模型", "Native B"); await composer.fill("NATIVE_FIRST：沿用本机配置"); await composer.press("Enter");
+  await pick("选择模型", "Native B"); await expect(page.getByRole("button",{name:"思考强度",exact:true})).toBeEnabled(); await pick("思考强度","高"); await composer.fill("NATIVE_FIRST：沿用本机配置"); await composer.press("Enter");
   await expect(page.getByRole("log", { name: "对话历史" })).toContainText("已由 native-b 处理");
   const origin = new URL(fixture.gateway.url).origin;
   const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
-  await expect.poll(async () => (await current()).runs[0].status).toBe("completed"); const first = await current(); assert.equal(first.selection.nativeModel, "native-b");
+  await expect.poll(async () => (await current()).runs[0].status).toBe("completed"); const first = await current(); assert.equal(first.selection.nativeModel, "native-b"); assert.equal(first.runs[0].selection.nativeOptions.reasoning_effort,"high");
   await composer.fill("切换期间保留这个草稿");
   await pick("选择模型", "Native A"); await pick("选择模型", "Native B");
   await expect.poll(async () => { const value = await current(); return value.pendingSwitchId === null && value.selection.nativeModel === "native-b"; }).toBe(true);
@@ -517,7 +517,7 @@ test("native model selection follows the installed Harness and rapid choices swi
   await expect(page.getByRole("button", { name: "应用选择", exact: true })).toHaveCount(0); await expect(composer).toHaveValue("切换期间保留这个草稿");
   await composer.press("Enter"); await expect.poll(async () => (await current()).runs[1]?.status).toBe("completed");
   const latest = await current(); assert.equal(latest.id, first.id); assert.equal(latest.runs[1].selection.nativeModel, "native-b");
-  await composer.fill("FAIL_ONCE：检查重试按钮布局"); await composer.press("Enter"); await expect.poll(async () => (await current()).runs[2]?.status).toBe("failed");
+  await composer.fill("FAIL_ONCE：检查重试按钮布局"); await expect(page.getByRole("button",{name:"发送消息",exact:true})).toBeEnabled(); await composer.press("Enter"); await expect.poll(async () => (await current()).runs[2]?.status).toBe("failed");
   await page.locator(".assistant-message").last().hover();
   for (const width of [943, 390, 320]) {
     await page.setViewportSize({ width, height: 844 });
@@ -526,4 +526,21 @@ test("native model selection follows the installed Harness and rapid choices swi
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await page.screenshot({ path: join(artifact, `native-models-${width}.png`), fullPage: true, animations: "disabled" });
   }
+  await page.setViewportSize({ width: 943, height: 1079 });
+  await composer.fill("APPROVAL：统一界面原生审批");
+  await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
+  const approval = page.getByRole("region", { name: "工具审批", exact: true });
+  await expect(approval).toContainText("读取验收工作区");
+  assert.equal((await current()).permissions.length, 1);
+  await page.reload(); await expect(approval).toContainText("读取验收工作区");
+  await approval.getByRole("button", { name: "允许一次", exact: true }).click();
+  await expect(page.getByRole("log", { name: "对话历史" })).toContainText("原生审批已收到：accept");
+  await expect.poll(async () => (await current()).runs[3]?.status).toBe("completed");
+  await expect(approval).toHaveCount(0); assert.equal((await current()).permissions.length, 0);
+  await composer.fill("APPROVAL：取消未决定的原生审批");
+  await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
+  await expect(approval).toBeVisible();
+  await page.getByRole("button", { name: "停止当前回复", exact: true }).click();
+  await expect.poll(async () => (await current()).runs[4]?.status).toBe("cancelled");
+  await expect(approval).toHaveCount(0); assert.equal((await current()).status, "open");
 });

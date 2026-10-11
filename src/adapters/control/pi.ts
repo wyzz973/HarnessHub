@@ -1,5 +1,7 @@
-import { isAbsolute } from "node:path";
-import { nativeConversationId, type BackendResult, type CleanupEvidence, type ControlEvent, type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl, type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
+import { dirname, join, isAbsolute } from "node:path";
+import { realpath } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
+import { nativeConversationId, type BackendResult, type CleanupEvidence, type ControlEvent, type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl, type NativeConversationId, type NativeOptions, type NativeOption, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
 import { classifyRemoteFailure, ControlError, errorFrom, JsonRpcProcess, object, string, type RpcWireCodec } from "../../infrastructure/control/json-rpc-process.js";
 
 function piCodec(): RpcWireCodec {
@@ -47,6 +49,9 @@ export class PiControl implements HarnessControl {
   private failure: Error | null = null;
   private closed = false;
   private catalog: NativeModelCatalog = { models: [], defaultModel: null, authentication: "unknown", canSelect: false };
+  private levels: ((model: Record<string, unknown>) => unknown) | null = null;
+  private interactivePermissions = false;
+  private readonly permissions = new Map<string, { method:string;choices:readonly string[]; resolve: (value: Readonly<Record<string, unknown>>) => void }>();
   private entries: ReturnType<typeof model>[] = [];
   private state: Record<string, unknown> = {};
   constructor(private readonly launch: ControlLaunch, private readonly options: ControlOptions) {
@@ -63,6 +68,17 @@ export class PiControl implements HarnessControl {
   initialize(): Promise<ProtocolObservation> {
     this.initialization ??= this.initializeOnce(); return this.initialization;
   }
+  private async loadLevels(): Promise<void> {
+    try {
+      const entry = await realpath(this.launch.args[0]?.startsWith("/") && /\.(?:m?js|cjs)$/u.test(this.launch.args[0]) ? this.launch.args[0] : this.launch.executable);
+      const location=join(dirname(entry),"core","agent-session.js");
+      const sdk: unknown = await import(pathToFileURL(location).href), api=object(sdk,"native Pi SDK");
+      if(typeof api.AgentSession!=="function")throw new ControlError("NATIVE_CAPABILITY_UNAVAILABLE","native Pi session API unavailable");
+      const prototype=object(api.AgentSession.prototype,"native Pi session prototype"), get=prototype.getAvailableThinkingLevels;
+      if(typeof get!=="function")throw new ControlError("NATIVE_CAPABILITY_UNAVAILABLE","native Pi thinking catalog unavailable");
+      this.levels=model=>get.call({model});
+    } catch (error) { if (!(error !== null && typeof error === "object" && "code" in error && ["MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND", "ENOENT"].includes(String(error.code)))) throw error; }
+  }
   private async readState(): Promise<void> {
     this.state = object(await this.rpc.request("get_state", {}), "Pi state");
     string(this.state.sessionId, "Pi session identity");
@@ -72,17 +88,30 @@ export class PiControl implements HarnessControl {
     if (new Set(this.entries.map(row => row.id)).size !== this.entries.length) throw new ControlError("INVALID_PROTOCOL", "duplicate Pi model identity");
     const current = this.state.model == null ? null : model(this.state.model);
     const ready = current !== null && this.entries.some(row => row.id === current.id);
-    const models = this.entries.map(({ id, name }) => ({ id, name }));
+    const models = this.entries.map(({ id, name }, index) => {
+      let options: readonly NativeOption[] | undefined;
+      if (this.levels) {
+        const raw = this.levels!(object((available.models as unknown[])[index], "native Pi model"));
+        if (!Array.isArray(raw) || !raw.length || raw.length > 32 || raw.some(level => typeof level !== "string" || !level || level.length > 128)) throw new ControlError("INVALID_PROTOCOL", "native Pi thinking levels invalid");
+        const values = raw.map(value => ({ value: string(value, "thinking level", 128), name: string(value, "thinking level", 128) }));
+        const currentValue = typeof this.state.thinkingLevel === "string" && values.some(value => value.value === this.state.thinkingLevel) ? this.state.thinkingLevel : values[0]!.value;
+        options = [{ id: "thinking_level", name: "思考强度", category: "thought_level", currentValue, values }];
+      }
+      return { id, name, ...(options ? { options } : {}) };
+    });
     if (current && !ready) models.push({ id: current.id, name: current.name });
     this.catalog = { models, defaultModel: current?.id ?? null, canSelect: this.entries.length > 0, authentication: ready ? "ready" : this.entries.length === 0 ? "missing" : "unknown" };
   }
   private async initializeOnce(): Promise<ProtocolObservation> {
     try {
-      await this.readState(); this.initialized = true;
+      await this.loadLevels(); await this.readState();
+      const commandResult = object(await this.rpc.request("get_commands", {}), "Pi native commands");
+      if (!Array.isArray(commandResult.commands) || commandResult.commands.length > 256) throw new ControlError("INVALID_PROTOCOL", "invalid Pi command catalog");
+      this.catalog = { ...this.catalog, commands: commandResult.commands.map(value => { const command = object(value, "Pi command"); return { name: string(command.name, "Pi command name", 128), description: typeof command.description === "string" ? command.description.slice(0,4096) : "" }; }) }; this.initialized = true;
       return { protocol: "pi-rpc", protocolVersion: null, agentName: "pi", agentVersion: null, authenticationMethods: [], capabilities: { nativeModels: true, settlement: "agent_settled" } };
     } catch (error) { this.rpc.abort(errorFrom(error)); throw error; }
   }
-  async open(cwd: string, selected?: string): Promise<NativeConversationId> {
+  async open(cwd: string, selected?: string, native?: NativeOptions): Promise<NativeConversationId> {
     if (!this.initialized || this.closed || this.failure) throw this.failure ?? new ControlError("INVALID_STATE", "Pi is not initialized");
     if (this.conversation || !isAbsolute(cwd) || cwd !== this.options.cwd) throw new ControlError("INVALID_STATE", "Pi owns one conversation in its launch workspace");
     if (selected !== undefined && selected !== this.catalog.defaultModel) {
@@ -93,6 +122,12 @@ export class PiControl implements HarnessControl {
       this.failure = null;
       this.rpc = this.connection(entry); await this.readState();
       if (this.catalog.defaultModel !== selected) throw new ControlError("MODEL_MISMATCH", "native Pi did not apply the requested model");
+    }
+    for (const [key, value] of Object.entries(native ?? {})) {
+      if (key !== "thinking_level" || !this.catalog.models.find(row => row.id === (selected ?? this.catalog.defaultModel))?.options?.find(option => option.id === key)?.values.some(option => option.value === value)) throw new ControlError("NATIVE_OPTION_UNAVAILABLE", "thinking level unavailable for native Pi model");
+      await this.rpc.request("set_thinking_level", { level: value });
+      const state = object(await this.rpc.request("get_state", {}), "native Pi state");
+      if (state.thinkingLevel !== value) throw new ControlError("NATIVE_OPTION_MISMATCH", "Pi did not apply requested thinking level");
     }
     this.conversation = nativeConversationId(this.state.sessionId); return this.conversation;
   }
@@ -112,13 +147,25 @@ export class PiControl implements HarnessControl {
     });
     return { result, requestStop: () => {
       if (this.active !== prompt) return Promise.reject(new ControlError("INVALID_STATE", "Pi prompt has ended"));
-      prompt.stop ??= this.rpc.request("abort", {}).then(() => ({ requested: true })); return prompt.stop;
+      this.cancelPermissions(); prompt.stop ??= this.rpc.request("abort", {}).then(() => ({ requested: true })); return prompt.stop;
     } };
   }
   private notification(event: Record<string, unknown>): void {
     const type = string(event.type, "Pi event type");
     if (type === "extension_ui_request") {
       const id = string(event.id, "Pi UI request"), method = string(event.method, "Pi UI method");
+      if (this.interactivePermissions && this.active && ["confirm","select","input","editor"].includes(method)) {
+        if (this.permissions.size >= 32) throw new ControlError("PERMISSION_LIMIT", "native UI requests exceed their budget");
+        const choices=method==="select" ? event.options : [];
+        if (!Array.isArray(choices) || choices.length>128 || choices.some(value=>typeof value!=="string"||value.length>4096)) throw new ControlError("INVALID_PROTOCOL","invalid native UI choices");
+        const pending = new Promise<Readonly<Record<string, unknown>>>(resolve => this.permissions.set(id, { method,choices,resolve }));
+        const freeform=method==="input"||method==="editor";
+        const options=method==="confirm" ? [{id:"yes",name:"允许"},{id:"no",name:"拒绝"}] : method==="select" ? [...choices.map((name,index)=>({id:"choice-"+index,name:String(name)})),{id:"cancel",name:"取消"}] : [{id:"submit",name:"提交"},{id:"cancel",name:"取消"}];
+        const value=method==="editor"&&typeof event.prefilled==="string" ? event.prefilled : "";
+        if(value.length>65536)throw new ControlError("OUTPUT_LIMIT","native editor input exceeded its budget");
+        this.active.event({ type: "permission_requested", id, title: typeof event.title === "string" ? event.title.slice(0,4096) : "Pi 扩展请求交互", ...(typeof event.message==="string"?{detail:event.message.slice(0,4096)}:{}),...(freeform?{input:{kind:method==="editor"?"editor":"text",value}}:{}), options });
+        void pending.then(value => this.rpc.notify("extension_ui_response", { id, ...value })).catch(error => this.rpc.abort(errorFrom(error))); return;
+      }
       if (["confirm", "select", "input", "editor"].includes(method)) {
         this.active?.event({ type: "permission", id, decision: "denied" });
         void this.rpc.notify("extension_ui_response", { id, ...(method === "confirm" ? { confirmed: false } : { cancelled: true }) }).catch(error => this.rpc.abort(errorFrom(error)));
@@ -128,6 +175,7 @@ export class PiControl implements HarnessControl {
     const prompt = this.active; if (!prompt) return;
     if (type === "message_update") {
       const delta = object(event.assistantMessageEvent, "Pi message event");
+      if (delta.type === "thinking_delta" && typeof delta.delta === "string") prompt.event({ type: "thinking", text: delta.delta });
       if (delta.type === "text_delta") { if (typeof delta.delta !== "string") throw new ControlError("INVALID_PROTOCOL", "Pi text delta must be text"); prompt.event({ type: "text", text: delta.delta }); }
     } else if (type === "tool_execution_start" || type === "tool_execution_end") {
       prompt.event({ type: "tool", id: string(event.toolCallId, "Pi tool identity"), title: string(event.toolName, "Pi tool name"), status: type === "tool_execution_start" ? "in_progress" : event.isError === true ? "failed" : "completed" });
@@ -147,5 +195,17 @@ export class PiControl implements HarnessControl {
     clearTimeout(prompt.timer); this.active = null; prompt.resolve(prompt.final);
   }
   private rejectActive(error: Error): void { const prompt = this.active; if (prompt) { clearTimeout(prompt.timer); this.active = null; prompt.reject(error); } }
-  close(): Promise<CleanupEvidence> { this.closed = true; this.rejectActive(new ControlError("CLOSED", "Pi connection closed before settlement")); return this.rpc.close(); }
+  enablePermissions(): void { this.interactivePermissions = true; }
+  async decidePermission(id: string, option: string, input?: string): Promise<void> {
+    const pending=this.permissions.get(id);if(!pending)throw new ControlError("PERMISSION_UNAVAILABLE","native UI request unavailable");
+    let response:Readonly<Record<string,unknown>>;
+    if(pending.method==="confirm"&&["yes","no"].includes(option))response={confirmed:option==="yes"};
+    else if(option==="cancel")response={cancelled:true};
+    else if(pending.method==="select"&&/^choice-[0-9]+$/u.test(option)&&pending.choices[Number(option.slice(7))]!==undefined)response={value:pending.choices[Number(option.slice(7))]};
+    else if(["input","editor"].includes(pending.method)&&option==="submit"&&typeof input==="string"&&Buffer.byteLength(input)<=65536&&!input.includes("\0"))response=pending.method==="editor"?{text:input}:{value:input};
+    else throw new ControlError("PERMISSION_UNAVAILABLE","native UI response unavailable");
+    this.permissions.delete(id);pending.resolve(response);
+  }
+  private cancelPermissions(): void { for (const pending of this.permissions.values()) pending.resolve({ cancelled: true }); this.permissions.clear(); }
+  close(): Promise<CleanupEvidence> { this.cancelPermissions(); this.closed = true; this.rejectActive(new ControlError("CLOSED", "Pi connection closed before settlement")); return this.rpc.close(); }
 }

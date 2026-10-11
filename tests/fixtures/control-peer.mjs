@@ -16,7 +16,13 @@ if (scenario === "descendant") {
 }
 const lines = createInterface({ input: process.stdin });
 let promptId = null, turn = 0, initialized = false, pendingPermission = false;
-let selectedModel = "native-model-a";
+let selectedModel = "native-model-a", thinking = "low", fast = "off";
+function nativeConfiguration() { return [
+ { id:"native-model",category:"model",type:"select",currentValue:selectedModel,options:[{value:"native-model-a",name:"Native A"},{value:"native-model-b",name:"Native B"}] },
+ { id:"native-thinking",name:"Native effort",category:"thought_level",type:"select",currentValue:thinking,options:[{value:"low",name:"Low"},{value:"max",name:"Max"}] },
+ { id:"native-fast",name:"Native fast",type:"select",currentValue:fast,options:[{value:"off",name:"Off"},{value:"on",name:"On"}] }
+]; }
+
 function emit(message) {
   const envelope = protocol === "acp-v1" ? { jsonrpc: "2.0", ...message } : message;
   const bytes = Buffer.from(`${JSON.stringify(envelope)}\n`);
@@ -32,6 +38,11 @@ function emitAtomicBatch(messages) {
 }
 function notification(method, params) { emit({ method, params }); }
 function acpOutput(sessionId = "session-fixture") {
+  if(scenario==="native-experience") {
+    notification("session/update",{sessionId,update:{sessionUpdate:"agent_thought_chunk",content:{type:"text",text:"Observed fixture thinking"}}});
+    notification("session/update",{sessionId,update:{sessionUpdate:"tool_call",toolCallId:"native-tool",title:"Read fixture",status:"in_progress"}});
+    notification("session/update",{sessionId,update:{sessionUpdate:"tool_call_update",toolCallId:"native-tool",status:"completed"}});
+  }
   if (scenario === "chunks") {
     for (const value of ["first ", "second"]) notification("session/update", { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: value } } });
     return;
@@ -88,6 +99,11 @@ lines.on("line", line => {
   if (message.method === "config/read") { answer(message.id, { config: { model: "native-model-a", privateCredential: "synthetic-never-public" } }); return; }
   if (message.method === "account/read") { answer(message.id, { account: { type: "chatgpt", email: "private-account@example.invalid" }, requiresOpenaiAuth: true }); return; }
   if (message.method === "model/list") { answer(message.id, { data: ["native-model-a", "native-model-b"].map(model => ({ model, displayName: model })), nextCursor: null }); return; }
+  if (message.method === "session/new" && scenario === "native-experience") {
+    notification("session/update",{sessionId:"session-fixture",update:{sessionUpdate:"available_commands_update",availableCommands:[{name:"native-help",description:"Native fixture help"}]}});
+    answer(message.id,{sessionId:"session-fixture",configOptions:nativeConfiguration()});return;
+  }
+  if (message.method === "session/set_config_option" && scenario === "native-experience") { const p=message.params;if(p.configId==="native-model")selectedModel=p.value;else if(p.configId==="native-thinking")thinking=p.value;else if(p.configId==="native-fast")fast=p.value;answer(message.id,{configOptions:nativeConfiguration()});return; }
   if (message.method === "session/new") {
     if (scenario === "unsupported-client") { emit({ id: message.id, error: { code: -32000, message: "This client is no longer supported for Gemini Code Assist. private-synthetic-key" } }); return; }
     if (["opening-metadata", "opening-wrong-identity", "opening-flood", "opening-text"].includes(scenario)) {

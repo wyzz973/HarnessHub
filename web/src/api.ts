@@ -3,8 +3,8 @@ import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput
 import type { AuthSession, HarnessView, InstallationLogPage, SessionSummary, SessionView, SessionStreamFrame, WebState } from "../../src/contracts/web.js";
 import type { HarnessManagementView, InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
 import type { HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
-import type { NativeModelCatalog } from "../../src/contracts/control.js";
-import { commandId, messageId, runId, switchId } from "../../src/contracts/session.js";
+import type { NativeOption, NativeModelCatalog } from "../../src/contracts/control.js";
+import { parseNativeOptions, commandId, messageId, runId, switchId } from "../../src/contracts/session.js";
 
 export class ApiError extends Error {
   constructor(readonly code: string, message: string) { super(message); this.name = "ApiError"; }
@@ -30,6 +30,11 @@ function choice<const T extends readonly string[]>(value: unknown, choices: T): 
 const RUN_STATES = ["queued", "preparing", "running", "settling", "completed", "cancelled", "failed", "unknown"] as const;
 const SESSION_STATES = ["open", "closed", "blocked"] as const;
 export const PROVIDER_PROTOCOLS = ["openai-responses", "openai-chat-completions", "anthropic-messages", "gemini"] as const;
+function nativeOption(value: unknown): NativeOption {
+  const row = record(value), values = list(row.values,value => { const option = record(value); return { value: text(option.value), name: text(option.name) }; },4096);
+  if (!values.length || new Set(values.map(option=>option.value)).size!==values.length) return invalid();
+  return { id:text(row.id), name:text(row.name), category:text(row.category), currentValue:text(row.currentValue), values };
+}
 function target(value: unknown): ProviderTarget {
   const row = record(value);
   return { providerId: text(row.providerId), revision: number(row.revision), model: text(row.model) };
@@ -38,12 +43,12 @@ function selection(value: unknown): HarnessSelection {
   const row = record(value);
   if (row.provider !== undefined && row.nativeModel !== undefined) return invalid();
   return { harnessId: text(row.harnessId), controlId: text(row.controlId), ...(row.provider === undefined ? {} : { provider: target(row.provider) }),
-    ...(row.nativeModel === undefined ? {} : { nativeModel: text(row.nativeModel) }) };
+    ...(row.nativeModel === undefined ? {} : { nativeModel: text(row.nativeModel) }), ...(row.nativeOptions === undefined ? {} : { nativeOptions: parseNativeOptions(row.nativeOptions) }) };
 }
 function requestedSelection(value: unknown): SelectionRequest {
   const row = record(value);
   return { harnessId: text(row.harnessId), ...(row.controlId === undefined ? {} : { controlId: text(row.controlId) }),
-    ...(row.provider === undefined ? {} : { provider: row.provider === null ? null : target(row.provider) }), ...(row.nativeModel === undefined ? {} : { nativeModel: text(row.nativeModel) }) };
+    ...(row.provider === undefined ? {} : { provider: row.provider === null ? null : target(row.provider) }), ...(row.nativeModel === undefined ? {} : { nativeModel: text(row.nativeModel) }), ...(row.nativeOptions === undefined ? {} : { nativeOptions: parseNativeOptions(row.nativeOptions) }) };
 }
 function publicError(value: unknown): { code: string; message: string } | null {
   if (value === null) return null;
@@ -94,7 +99,7 @@ function decodeRun(value: unknown): PublicRun {
     sourceRunIds: list(row.sourceRunIds, runId, 256), backend: backend === null ? null : { status: choice(backend.status, ["completed", "cancelled", "failed"]), reason: text(backend.reason),
       ...(backend.error === undefined ? {} : { error: publicError(backend.error) ?? invalid() }) },
     cleanup: cleanup === null ? null : { closed: true, exitCode: nullableNumber(cleanup.exitCode), signal: nullableText(cleanup.signal), protocolFailure: publicError(cleanup.protocolFailure) },
-    error: publicError(row.error), stopRequested: bool(row.stopRequested), awaitingSwitchId: row.awaitingSwitchId === null ? null : switchId(row.awaitingSwitchId) };
+    error: publicError(row.error), ...(row.thinking === undefined ? {} : { thinking: text(row.thinking) }), ...(row.tools === undefined ? {} : { tools: list(row.tools,value=>{const tool=record(value);return {id:text(tool.id),title:text(tool.title),status:text(tool.status)};},128) }), stopRequested: bool(row.stopRequested), awaitingSwitchId: row.awaitingSwitchId === null ? null : switchId(row.awaitingSwitchId) };
 }
 function decodeSwitch(value: unknown): PublicSwitch {
   const row = record(value);
@@ -106,7 +111,7 @@ export function decodeSession(value: unknown): SessionView {
   const row = record(value);
   return { id: text(row.id), version: number(row.version), lastSeq: number(row.lastSeq), epoch: number(row.epoch), status: choice(row.status, SESSION_STATES),
     workspace: text(row.workspace), selection: selection(row.selection), activeRunId: nullableText(row.activeRunId), pendingSwitchId: nullableText(row.pendingSwitchId),
-    messages: list(row.messages, decodeMessage, 1024), runs: list(row.runs, decodeRun, 256), switches: list(row.switches, decodeSwitch, 1024) };
+    ...(row.permissions===undefined?{}:{permissions:list(row.permissions, value => { const request=record(value);return {id:text(request.id),runId:text(request.runId),title:text(request.title),decided:bool(request.decided), ...(request.detail===undefined?{}:{detail:text(request.detail)}),...(request.input===undefined?{}:{input:(()=>{const value=record(request.input);return {kind:choice(value.kind,["text","editor"]),value:text(value.value)};})()}),options:list(request.options,value=>{const option=record(value);return {id:text(option.id),name:text(option.name)};},128)};},32)}), messages: list(row.messages, decodeMessage, 1024), runs: list(row.runs, decodeRun, 256), switches: list(row.switches, decodeSwitch, 1024) };
 }
 /** Decodes only canonical public facts; stream framing and projection validate their watermarks. */
 export function decodeSessionStreamFrame(value: unknown): SessionStreamFrame {
@@ -176,14 +181,15 @@ export class GatewayApi {
     pageBootstrapToken = null;
   }
   state(signal?: AbortSignal): Promise<WebState> { return this.request("/state", "GET", undefined, decodeState, signal); }
-  nativeModels(harness: string, control: string, workspace: string, signal: AbortSignal): Promise<NativeModelCatalog> {
-    const query = new URLSearchParams({ controlId: control, workspace });
+  nativeModels(harness: string, control: string, workspace: string, signal: AbortSignal, refresh = false, nativeModel?: string): Promise<NativeModelCatalog> {
+    const query = new URLSearchParams({ controlId: control, workspace, ...(refresh ? { refresh: "1" } : {}), ...(nativeModel ? { nativeModel } : {}) });
     return this.request(`/harnesses/${encodeURIComponent(harness)}/models?${query}`, "GET", undefined, value => {
-      const row = record(value), models = list(row.models, value => { const model = record(value); return { id: text(model.id), name: text(model.name) }; }, 4096);
+      const row = record(value), models = list(row.models, value => { const model = record(value); return { id: text(model.id), name: text(model.name), ...(model.options === undefined ? {} : { options: list(model.options,nativeOption,128) }) }; }, 4096);
       if (new Set(models.map(model => model.id)).size !== models.length) return invalid();
-      return { models, defaultModel: nullableText(row.defaultModel), authentication: choice(row.authentication, ["ready", "missing", "unknown"]), canSelect: bool(row.canSelect) };
+      return { models, defaultModel: nullableText(row.defaultModel), authentication: choice(row.authentication, ["ready", "missing", "unknown"]), canSelect: bool(row.canSelect), ...(row.selectionError === undefined ? {} : {selectionError:publicError(row.selectionError)??invalid()}), ...(row.options === undefined ? {} : { options: list(row.options,nativeOption,128) }), ...(row.commands === undefined ? {} : { commands: list(row.commands,value => {const command=record(value);return { name:text(command.name),description:text(command.description) };},256) }) };
     }, signal);
   }
+  decidePermission(id: string, permission: string, optionId: string, key: string, input?: string): Promise<{ replayed: boolean }> { return this.request(`/sessions/${encodeURIComponent(id)}/permissions/${encodeURIComponent(permission)}`, "POST", { optionId, commandId: key, ...(input===undefined?{}:{input}) }, value => { const row=record(value);return { replayed:bool(row.replayed) }; }); }
   session(id: string, signal?: AbortSignal): Promise<SessionView> { return this.request(`/sessions/${encodeURIComponent(id)}`, "GET", undefined, decodeSession, signal); }
   /** Owns one cancellable fact stream; reconnecting never submits a conversation command. */
   async streamSession(id: string, afterSeq: number, signal: AbortSignal, onFrame: (frame: SessionStreamFrame) => void): Promise<void> {

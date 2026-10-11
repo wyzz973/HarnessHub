@@ -8,11 +8,11 @@
 
 用户在工作台新建对话，选择工作区与 Harness；选择一个 Provider 的具体 revision/model，提交消息。Session 准入输入，Run 固定完整选择，Binding 获取工作区租约并生成私有模型配置，Driver 驱动 Harness，Harness 访问用户指定的模型端点；结果/取消/清理分别持久化。浏览器显示这些实际事实。
 
-改变 Harness 或 Provider/模型先提出切换请求；当前一轮及此前已准入消息收敛后，网关验证目标、初始化并关闭控制连接，才提交下一 epoch。界面区分已生效与等待切换。仅换 Harness 继承现有 Provider，无法兼容时拒绝；选择原生配置模式必须显式传 provider:null。失败切换后的排队输入不能改用旧目标。
+改变 Harness 或 Provider/模型先提出切换请求；当前一轮及此前已准入消息收敛后，网关验证目标入口/配置后提交下一 epoch；普通选择不启动控制连接，认证与模型执行在发送时分别核实。界面区分已生效与等待切换。仅换 Harness 继承现有 Provider，无法兼容时拒绝；选择原生配置模式必须显式传 provider:null。失败切换后的排队输入不能改用旧目标。
 
 ADR-015后，选择器变化即提出意图，不再另点Apply。快速选择时只提交最新尚未受理选择，已受理请求使用原幂等键确认后收敛；期间新消息禁止发给中间目标。界面保留最新用户选择，不被较早切换快照覆盖；失败不自动重试，用户可明确重试或继续原有效选择。
 
-所有native入口沿用本机已安装Harness的配置目录、模型与登录，不创建空配置或写全局模型。选择nativeModel与managed provider互斥；native模型通过原生RPC传给新会话。`GET /api/v1/harnesses/:id/models?controlId=...&workspace=...`读取相同入口/配置的模型、默认和安全认证状态；Codex config/read/account/read/model/list，ACP声明的model配置项或明确的旧models接口。没有原生选择能力就明确说明由Harness管理，不伪造静态目录。后台最多8个读探测、同请求共享、20s期限，关闭取消并等待进程；认证缺失返回missing，异常不缓存空目录。
+所有native入口沿用本机已安装Harness的配置目录、模型与登录，不创建空配置或写全局模型。选择nativeModel与managed provider互斥；native模型通过原生RPC传给新会话。`GET /api/v1/harnesses/:id/models?controlId=...&workspace=...&nativeModel=...&refresh=1`读取相同入口/配置的模型、默认和安全认证状态；Codex config/read/account/read/model/list，ACP声明的model配置项或明确的旧models接口。没有原生选择能力就明确说明由Harness管理，不伪造静态目录。后台最多8个读探测、同请求共享、20s期限，关闭取消并等待进程；认证缺失返回missing，异常不缓存空目录。成功非空结果缓存60秒且最多8项，配置/入口身份变化和refresh=1失效；选中模型专属档位通过nativeModel读取。Pi目录/档位来自原CLI/SDK，OpenClaw通过原CLI读取models.list并只patch本轮Hub会话的模型。
 
 Provider 保存名称、协议、Base URL、模型列表、默认模型、启用状态和 hasCredential。新增/编辑都使用命令幂等键；更新要求 expectedRevision。空白密钥字段在前端转换为省略，保留旧密钥；显式空字符串无效。当前不做删除/复用身份，停用后保留全部历史 revision；已准入 Run 保留旧配置，新的准备过程拒绝停用目标。编辑不自动改变当前 Session 的固定 revision，用户需显式应用新版本。
 
@@ -34,7 +34,7 @@ Provider 保存名称、协议、Base URL、模型列表、默认模型、启用
 
 已知密钥在公开 control metadata、事件、诊断、错误与结算中清洗；文本跨delta分片使用前缀缓冲，不能通过分片逃逸。模型探测禁止redirect，响应≤1MiB，期限5s，同时≤16；shutdown停止准入、取消并等待所有探测，才释放vault/database。
 
-业务SQLite在独占owner内全事务执行既有user_version1→2→3及新增3→4迁移，保留全部命令、fingerprint、events、水位和业务version；坏数据整笔回滚。新Session必须v4，未知格式拒绝；只读Reader支持已知旧版本但不迁移。旧Session无法凭空获得模型目标，需要明确选择。旧程序不能读取v4；回退前停止服务并恢复升级前备份。
+业务SQLite在独占owner内全事务执行既有user_version1→2→3及新增3→4→5迁移，保留全部命令、fingerprint、events、水位和业务version；坏数据整笔回滚。新Session必须v5，未知格式拒绝；只读Reader支持已知旧版本但不迁移。旧Session无法凭空获得模型目标，需要明确选择。旧程序不能读取v5；回退前停止服务并恢复升级前备份。
 
 ## HTTP 与浏览器
 
@@ -56,10 +56,16 @@ Web DTO屏蔽commands/fingerprints与私有configuration引用，保留Run/switc
 
 `POST /api/v1/sessions/:id/resume` 接收selection/commandId及可选布尔acknowledgeUnknown，返回202/SwitchReceipt。新恢复命令在blocked状态检查持久关闭证据；未知结果需明确承认，无法确认资源或所有权故障返回409。验证目标和工作区租约后才生效；不发送prompt、不重跑Run、不清租约，普通switch命令不能冒充恢复。请求幂等，失败恢复仍可修改选择再试。
 
-失败的目标切换保留原有效选择/epoch，立即显示可读原因及“继续使用当前选择”动作；失败等待输入不自动交给旧目标。正在切换时区分等待活动回复和验证新连接。失败/停止的回复可由用户明确重试为新Run，unknown不提供一键重跑；历史和部分内容保留。
+失败的目标切换保留原有效选择/epoch，立即显示可读原因及“继续使用当前选择”动作；失败等待输入不自动交给旧目标。正在切换时区分等待活动回复和保存选择。blocked的显式恢复仍验证连接和清理。失败/停止的回复可由用户明确重试为新Run，unknown不提供一键重跑；历史和部分内容保留。
 
 草稿按当前标签页的工作区/对话保存在sessionStorage，含未确认命令身份，刷新/导航后恢复。不保存Provider表单/密钥，存储字段/字节严格校验；保存的committed标记不能代替服务端事实，写受理仍用canonical命令身份确认。浏览器不能保存时保留内存并提示，不清空用户内容。明确结束会话前显示原生焦点约束对话框，取消不发close；确认后保留历史并停止在途准入/执行。安装/入口发现与原生连接认证分开说明。实际审查与验收见[恢复记录](../verification/conversation-recovery-2026-10-10.md)。
 
 HTTP body≤128KiB、response≤8MiB、资产≤4MiB、并发请求≤16、连接≤32；body10s和半包连接关闭均有界。进程关闭等待Run停止/资源清理、HTTP请求、Provider探测，再关闭业务Store。停止服务保留Session历史。
 
 图形布局使用暖白对话正文、浅灰侧栏、铜色强调，Provider管理采用行列表和普通表单。支持键盘、IME、手机侧栏和无横向溢出，状态文字不依赖颜色。品牌为HarnessHub，工程工作目录仍为独立HarnessGateway。
+
+### 原生设置与交互（ADR-019）
+
+选择追加nativeOptions，仅接受有界原生枚举ID/值，不能与managed Provider并用。界面按原Harness实际模型显示思考档位，其他select设置放入高级配置，命令目录填入输入框；不能编造统一档位。切回Harness保留本对话最后的模型/选项，模型变化重新确认模型相关设置。
+
+`POST /api/v1/sessions/:id/permissions/:permissionId`接受optionId、commandId和可选input，使用既有Origin/CSRF保护。只有当前Run实际待决的原生选项可回复；公开DTO包含待决requests，刷新/SSE恢复同一问题。用户决定先持久记录，命令重试不重复回传；无后端确认时明确backendAcknowledged=false。取消、结束和关闭释放问题。Pi confirm/select/input/editor在统一界面呈现；原生思考/工具活动来自实际事件。文本之外的输入、原生checkpoint和持久后台任务尚未完整验收。

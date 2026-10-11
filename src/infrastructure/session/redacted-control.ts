@@ -1,5 +1,5 @@
 import type { ProviderTextRedactor } from "../../contracts/provider.js";
-import type { CleanupEvidence, ControlEvent, ControlRun, HarnessControl, NativeConversationId, ProtocolObservation } from "../../contracts/control.js";
+import type { CleanupEvidence, ControlEvent, ControlRun, HarnessControl, NativeConversationId, NativeOptions, ProtocolObservation } from "../../contracts/control.js";
 import { SessionError } from "../../contracts/session.js";
 
 function sanitize(value: unknown, redact: (text: string) => string): unknown {
@@ -10,7 +10,8 @@ function sanitize(value: unknown, redact: (text: string) => string): unknown {
 }
 function publicEvent(event: ControlEvent, redact: (text: string) => string): ControlEvent {
   switch (event.type) {
-    case "text": return { ...event, text: redact(event.text) };
+    case "text": case "thinking": return { ...event, text: redact(event.text) };
+    case "permission_requested": return { ...event, title: redact(event.title), options: event.options.map(option => ({ id: option.id, name: redact(option.name) })) };
     case "diagnostic": return { ...event, message: redact(event.message) };
     case "tool": return { ...event, id: redact(event.id), title: redact(event.title), status: redact(event.status) };
     case "permission": return { ...event, id: redact(event.id) };
@@ -27,7 +28,12 @@ export class RedactedHarnessControl implements HarnessControl {
       agentVersion: value.agentVersion === null ? null : this.redact(value.agentVersion),
       authenticationMethods: value.authenticationMethods.map(item => this.redact(item)), capabilities: capabilities as Readonly<Record<string, unknown>> };
   }
-  open(cwd: string, model?: string): Promise<NativeConversationId> { return this.safe(() => this.inner.open(cwd, model)); }
+  open(cwd: string, model?: string, options?: NativeOptions): Promise<NativeConversationId> { return this.safe(() => this.inner.open(cwd, model, options)); }
+  enablePermissions(): void { this.inner.enablePermissions?.(); }
+  decidePermission(id: string, option: string, input?: string): Promise<void> {
+    if (!this.inner.decidePermission) return Promise.reject(new SessionError("UNSUPPORTED_PERMISSION", "native permission decisions unavailable"));
+    return this.safe(() => this.inner.decidePermission!(id, option, input));
+  }
   async startText(id: NativeConversationId, text: string, onEvent: (event: ControlEvent) => void): Promise<ControlRun> {
     const redactor = this.stream();
     const run = await this.safe(() => this.inner.startText(id, text, value => {

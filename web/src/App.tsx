@@ -6,7 +6,7 @@ import { parseProviderTarget } from "../../src/contracts/provider.js";
 import type { HarnessView, SessionView, WebState } from "../../src/contracts/web.js";
 import type { NativeModelCatalog } from "../../src/contracts/control.js";
 import type { InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
-import { sessionId as validateSessionId } from "../../src/contracts/session.js";
+import { parseNativeOptions, sessionId as validateSessionId } from "../../src/contracts/session.js";
 import { applySessionStreamFrame } from "./session-stream.js";
 import { ApiError, errorMessage, GatewayApi, requestKey } from "./api.js";
 import { ChatPage, effectiveProviderProblem, EMPTY_SELECTION, selectionDraft, selectionProblem, selectionRequest } from "./components/ChatPage.js";
@@ -33,9 +33,10 @@ function savedChatDraft(workspace: string, id: string): ChatDraft | null {
     if (Object.keys(row).some(key => !["message", "selection", "epoch", "messageIntent", "selectionIntent"].includes(key)) || typeof row.message !== "string" ||
         !(row.epoch === null || typeof row.epoch === "number" && Number.isSafeInteger(row.epoch) && row.epoch > 0) || selected === null || typeof selected !== "object" || Array.isArray(selected)) return null;
     const selection = selected as Record<string, unknown>;
-    if (Object.keys(selection).some(key => !["harnessId", "controlId", "providerId", "providerRevision", "model"].includes(key)) ||
+    if (Object.keys(selection).some(key => !["harnessId", "controlId", "providerId", "providerRevision", "model", "nativeOptions"].includes(key)) ||
         !["harnessId", "controlId", "providerId", "model"].every(key => typeof selection[key] === "string" && selection[key].length <= 1024) ||
         !(selection.providerRevision === null || typeof selection.providerRevision === "number" && Number.isSafeInteger(selection.providerRevision) && selection.providerRevision > 0)) return null;
+    if (selection.nativeOptions !== undefined) { try { parseNativeOptions(selection.nativeOptions); } catch { return null; } }
     const parseMessage = (input: unknown): PendingMessage | null => {
       if (input === null) return null;
       if (typeof input !== "object" || Array.isArray(input)) throw new Error("invalid stored message intent");
@@ -61,7 +62,7 @@ function savedChatDraft(workspace: string, id: string): ChatDraft | null {
         ...(target.nativeModel === undefined ? {} : { nativeModel: typeof target.nativeModel === "string" && target.nativeModel.length <= 1024 ? target.nativeModel : (() => { throw new Error("invalid native model"); })() }) }, key: item.key, recovery: item.recovery, acknowledgeUnknown: item.acknowledgeUnknown };
     }
     return { message: row.message, selection: { harnessId: String(selection.harnessId), controlId: String(selection.controlId), providerId: String(selection.providerId),
-      providerRevision: selection.providerRevision, model: String(selection.model) }, epoch: row.epoch, messageIntent: parseMessage(row.messageIntent), selectionIntent };
+      providerRevision: selection.providerRevision, model: String(selection.model), nativeOptions: parseNativeOptions(selection.nativeOptions ?? {}) }, epoch: row.epoch, messageIntent: parseMessage(row.messageIntent), selectionIntent };
   } catch { return null; }
 }
 interface PendingProviderWrite { input: ProviderWriteInput; key: string; current: ProviderView | undefined }
@@ -390,15 +391,21 @@ export function App() {
     if (lastAutoSelection.current === key) return;
     void applySelection();
   }, [draft, session?.id, session?.version, mutation, state?.harnesses, state?.providers]);
+  const nativeCache = useRef(new Map<string,{value:NativeModelCatalog;expires:number}>());
+  const nativeRefresh = useRef(false);
+  const nativeScope = useRef("");
+  const refreshNativeModels = () => { nativeRefresh.current=true; setModelAttempt(value=>value+1); };
   useEffect(() => {
-    setNativeCatalog(null); setNativeError(null); setNativeLoading(false);
+    const key=JSON.stringify([draft.harnessId,draft.controlId,draft.model,session?.workspace??workspace]), cached=nativeCache.current.get(key);
+    const scope=JSON.stringify([draft.harnessId,draft.controlId,session?.workspace??workspace]), sameScope=nativeScope.current===scope; nativeScope.current=scope;
+    setNativeCatalog(previous=>cached && cached.expires>Date.now()?cached.value:sameScope?previous:null); setNativeError(null); setNativeLoading(false);
     if (!state || draft.providerId || !draft.harnessId || !draft.controlId) return;
-    const controller = new AbortController(); setNativeLoading(true);
-    void api.nativeModels(draft.harnessId, draft.controlId, session?.workspace ?? workspace, controller.signal).then(value => {
-      if (!controller.signal.aborted) setNativeCatalog(value);
+    const controller = new AbortController(), refresh=nativeRefresh.current; nativeRefresh.current=false; setNativeLoading(true);
+    void api.nativeModels(draft.harnessId, draft.controlId, session?.workspace ?? workspace, controller.signal, refresh, draft.model || undefined).then(value => {
+      if (!controller.signal.aborted) { if (value.models.length) { if (nativeCache.current.size>=8) nativeCache.current.delete(nativeCache.current.keys().next().value!); nativeCache.current.set(key,{value,expires:Date.now()+60000}); } setNativeCatalog(value); setNativeError(value.selectionError?.message??null); }
     }, (failure: unknown) => { if (!controller.signal.aborted) setNativeError(errorMessage(failure)); }).finally(() => { if (!controller.signal.aborted) setNativeLoading(false); });
     return () => controller.abort();
-  }, [api, state !== null, draft.harnessId, draft.controlId, draft.providerId, session?.workspace, workspace, modelAttempt]);
+  }, [api, state !== null, draft.harnessId, draft.controlId, draft.model, draft.providerId, session?.workspace, workspace, modelAttempt]);
   const cancel = async () => {
     if (!sessionId || !startOperation("cancelling")) return;
     try { await api.cancel(sessionId, requestKey()); acceptSession(await api.session(sessionId, AbortSignal.timeout(15_000))); }
@@ -486,7 +493,7 @@ export function App() {
   if (!state) return <div className="boot-screen"><BrandMark/><h1>Harness<span>Hub</span></h1>{bootError ? <><div className="boot-error" role="alert"><AlertCircle size={18}/><p>{bootError}</p></div><p className="boot-help">请使用本机网关启动时提供的入口链接。验证完成后，页面会自动隐藏链接中的令牌。</p><button className="button secondary" onClick={() => setBootAttempt(value => value + 1)}><RefreshCw size={15}/>重新连接</button></> : <div className="boot-progress" role="status"><Spinner/>正在连接你的工作空间</div>}</div>;
   return <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`} data-page={page}><a className="skip-link" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>跳到主要内容</a><Sidebar providerManagement={state.providerManagement !== false} page={page} sessions={state.sessions} currentId={sessionId} open={sidebarOpen} collapsed={sidebarCollapsed} activeJobs={state.jobs.filter(installationActive).length} interactionBusy={mutation !== null} onCollapse={() => setSidebarCollapsed(value => !value)} onToggle={() => setSidebarOpen(value => !value)} onPage={navigate} onNew={newChat} onSession={selectSession}/>
     <main id="main-content" className="app-main" tabIndex={-1}>
-      {page === "chat" ? <ChatPage providerManagement={state.providerManagement !== false} nativeModels={nativeCatalog} nativeModelsLoading={nativeLoading} nativeModelsError={nativeError} onRefreshModels={() => setModelAttempt(value => value + 1)} key={chatKey} session={session} sessionRequested={sessionId !== null} sessionError={sessionError} loading={sessionLoading} draft={draft} messageDraft={messageDraft} onMessageDraft={setMessageDraft} providers={state.providers} harnesses={state.harnesses} workspace={workspace} mutation={mutation} error={error ?? draftStorageError} connectionError={connectionError} onRetryConnection={() => setStreamAttempt(value => value + 1)} onDraft={changeSelection} onWorkspace={setWorkspace} onSend={send} onApply={() => { lastAutoSelection.current = null; void applySelection(); }} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }} onProviders={() => navigate("providers")} onNew={newChat} onMenu={() => setSidebarOpen(value => !value)}/>
+      {page === "chat" ? <ChatPage providerManagement={state.providerManagement !== false} onPermission={(permission,option,input)=>{ if(!sessionId||!startOperation("permission"))return; void api.decidePermission(sessionId,permission,option,requestKey(),input).then(()=>api.session(sessionId)).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }} nativeModels={nativeCatalog} nativeModelsLoading={nativeLoading} nativeModelsError={nativeError} onRefreshModels={refreshNativeModels} key={chatKey} session={session} sessionRequested={sessionId !== null} sessionError={sessionError} loading={sessionLoading} draft={draft} messageDraft={messageDraft} onMessageDraft={setMessageDraft} providers={state.providers} harnesses={state.harnesses} workspace={workspace} mutation={mutation} error={error ?? draftStorageError} connectionError={connectionError} onRetryConnection={() => setStreamAttempt(value => value + 1)} onDraft={changeSelection} onWorkspace={setWorkspace} onSend={send} onApply={() => { lastAutoSelection.current = null; void applySelection(); }} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }} onProviders={() => navigate("providers")} onNew={newChat} onMenu={() => setSidebarOpen(value => !value)}/>
         : page === "providers" ? <ProvidersPage providers={state.providers} editor={editor} saving={mutation === "saving"} probes={probes} error={error} onEdit={provider => { setEditor(provider); setError(null); }} onBack={() => leave(() => { setEditor(null); setEditorDirty(false); setError(null); })} onSave={saveProvider} onProbe={provider => void probeProvider(provider)} onDirty={dirtyChanged} onDismissError={() => setError(null)} onMenu={() => setSidebarOpen(value => !value)}/>
           : <HarnessesPage api={api} harnesses={state.harnesses} jobs={state.jobs} scanning={mutation === "scanning"} checking={checkingUpdates} submitting={submittingInstallations} cancelling={cancellingInstallations} unconfirmed={unconfirmedInstallations} error={error} connectionError={managementConnectionError} onRescan={() => void rescan()} onCheckUpdates={ids => void checkUpdates(ids)} onInstall={install} onConfirm={confirmInstallation} onCancelJob={job => void cancelInstallation(job)} onDismissError={() => setError(null)} onMenu={() => setSidebarOpen(value => !value)} onChoose={chooseHarness}/>}
     </main>

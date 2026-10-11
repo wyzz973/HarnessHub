@@ -1,3 +1,4 @@
+import { darwinExitedGroupIsQuiescent } from "./process-group.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { isAbsolute } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -255,12 +256,12 @@ export class JsonRpcProcess {
   private groupAlive(): boolean {
     if (this.pid === null) return false;
     try { process.kill(-this.pid, 0); return true; }
-    catch (error) { if (object(error, "signal error").code === "ESRCH") return false; throw error; }
+    catch (error) { if (object(error, "signal error").code === "ESRCH" || object(error,"signal error").code==="EPERM"&&this.closeObserved&&darwinExitedGroupIsQuiescent(this.pid)) return false; throw error; }
   }
   private signalGroup(signal: NodeJS.Signals): void {
     if (this.pid === null) return;
     try { process.kill(-this.pid, signal); }
-    catch (error) { if (object(error, "signal error").code !== "ESRCH") throw error; }
+    catch (error) { if (object(error, "signal error").code !== "ESRCH" && !(object(error,"signal error").code==="EPERM"&&this.closeObserved&&darwinExitedGroupIsQuiescent(this.pid))) throw error; }
   }
   private async waitClosed(): Promise<boolean> {
     const end = performance.now() + this.options.closeGraceMs;

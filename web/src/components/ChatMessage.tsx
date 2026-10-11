@@ -67,6 +67,8 @@ export const ChatMessage = memo(function ChatMessage({ message, run, harnesses, 
   const detailsId = `execution-${message?.id ?? run?.id ?? "unavailable"}`;
   return <article className={`message assistant-message ${!terminal ? "is-active" : ""}`} data-run-status={status}>
     <div className="assistant-label"><BrandIcon brand={run?.selection.harnessId ?? ""} name={harness} size={22}/><strong>{harness}</strong></div>
+    {run?.thinking ? <details className="native-thinking"><summary>思考过程</summary><StreamingMarkdown text={run.thinking} isStreaming={!terminal}/></details> : null}
+    {run?.tools?.length ? <div className="native-tools" aria-label="工具活动">{run.tools.map(tool=><div key={tool.id}><span>{tool.title}</span><small>{({pending:"等待",in_progress:"执行中",completed:"完成",failed:"失败"} as Record<string,string>)[tool.status]??tool.status}</small></div>)}</div> : null}
     {text ? <StreamingMarkdown text={text} isStreaming={!terminal && !run?.cancelRequested}/>
       : <div className={`response-status ${terminal ? "is-terminal" : ""} ${status === "failed" || status === "unknown" ? "is-error" : ""}`} role="status">{!terminal ? <span className="activity-dot" aria-hidden="true"/> : null}<span>{activityLabel(run, status)}</span></div>}
     {text && !terminal ? <div className="response-activity" role="status"><span className="activity-dot" aria-hidden="true"/><span>{activityLabel(run, status)}</span></div> : null}

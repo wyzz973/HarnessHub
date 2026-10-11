@@ -223,13 +223,13 @@ test("formal chat cancellation remains readable during a running external Harnes
   await assertClean(f);
 });
 
-test("formal chat failed target preparation keeps the active selection and public history", async t => {
+test("formal chat selects without a connection and an invalid target fails only its explicit input", async t => {
   const f = await fixture(t), chat = start(t, f, ["--harness", "session-a"]);
   chat.send("first"); await chat.wait(hasEvent("run.ended"));
-  chat.send(":harness session-bad"); await chat.wait(hasEvent("switch.failed")); chat.send(":quit");
+  chat.send(":harness session-bad"); await chat.wait(hasEvent("switch.effective")); chat.send("explicit input to unavailable connection"); await chat.wait(row=>event(row)?.type==="run.ended" && record(event(row)?.data).status==="failed"); chat.send(":quit");
   const ended = await chat.result; assert.equal(ended.signal, null);
-  const state = await persisted(f); assert.equal(state.epoch, 1); assert.equal(state.selection.harnessId, "session-a");
-  assert.equal(state.switches[0]?.status, "failed"); assert.equal(state.messages[0]?.text, "first");
+  const state = await persisted(f); assert.equal(state.epoch, 2); assert.equal(state.selection.harnessId, "session-bad");
+  assert.equal(state.switches[0]?.status,"effective"); assert.equal(state.status,"open"); assert.equal(state.runs.at(-1)?.status,"failed"); assert.equal(state.messages[0]?.text,"first");
   await assertClean(f);
 });
 

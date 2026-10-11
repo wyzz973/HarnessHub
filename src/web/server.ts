@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { application as composeApplication } from "../cli/session-application.js";
 import { ProviderError } from "../contracts/provider.js";
 import { ManagementError } from "../contracts/management.js";
-import { SessionError, sessionId, type SelectionRequest, type SessionConfiguration, type SessionSnapshot } from "../contracts/session.js";
+import { SessionError, parseNativeOptions, sessionId, type SelectionRequest, type SessionConfiguration, type SessionSnapshot } from "../contracts/session.js";
 import type { EventPage, HarnessView, InstallationLogPage, SessionSummary, SessionView, WebState } from "../contracts/web.js";
 import { inventory } from "../infrastructure/catalog/inventory-composition.js";
 import { prepareConfiguration } from "../infrastructure/session/binding-factory.js";
@@ -57,18 +57,18 @@ function cursor(value: string | null, fallback: number, minimum: number, maximum
   return integer(Number(value), minimum, maximum, "cursor or limit");
 }
 function select(value: unknown): SelectionRequest {
-  const item = record(value, ["harnessId", "controlId", "provider", "nativeModel"], ["harnessId"]);
+  const item = record(value, ["harnessId", "controlId", "provider", "nativeModel", "nativeOptions"], ["harnessId"]);
   if (typeof item.harnessId !== "string" || !/^[a-z][a-z0-9-]{0,95}$/u.test(item.harnessId) ||
       (item.controlId !== undefined && (typeof item.controlId !== "string" || !/^[a-z][a-z0-9-]{0,95}$/u.test(item.controlId)))) throw new HttpError(400, "INVALID_INPUT", "Invalid Harness selection");
   // The domain parser validates the Provider target; this boundary never casts it into a target.
   if (item.provider !== undefined && item.provider !== null) {
-    if (item.nativeModel !== undefined) throw new HttpError(400, "INVALID_INPUT", "Native model and managed Provider are mutually exclusive");
+    if (item.nativeModel !== undefined || item.nativeOptions !== undefined) throw new HttpError(400, "INVALID_INPUT", "Native model and managed Provider are mutually exclusive");
     const target = record(item.provider, ["providerId", "revision", "model"], ["providerId", "revision", "model"]);
     const providerId = text(target.providerId, "Provider identity", 96), revision = integer(target.revision, 1, Number.MAX_SAFE_INTEGER, "Provider revision"), model = text(target.model, "model", 256);
     return { harnessId: item.harnessId, ...(item.controlId === undefined ? {} : { controlId: item.controlId }), provider: { providerId, revision, model } };
   }
   return { harnessId: item.harnessId, ...(item.controlId === undefined ? {} : { controlId: item.controlId }), ...(item.provider === null ? { provider: null } : {}),
-    ...(item.nativeModel === undefined ? {} : { nativeModel: text(item.nativeModel, "native model", 1024) }) };
+    ...(item.nativeModel === undefined ? {} : { nativeModel: text(item.nativeModel, "native model", 1024) }), ...(item.nativeOptions === undefined ? {} : { nativeOptions: parseNativeOptions(item.nativeOptions) }) };
 }
 function equal(left: string, right: string): boolean {
   const a = Buffer.from(left), b = Buffer.from(right);
@@ -117,10 +117,10 @@ function summary(snapshot: SessionSnapshot): SessionSummary {
   return { id: snapshot.id, title: first ? first.slice(0, 80) : "新对话", status: snapshot.status, workspace: snapshot.configuration.workspace,
     selection: snapshot.selection, updatedSeq: snapshot.lastSeq, activeRunId: snapshot.activeRunId };
 }
-function view(snapshot: SessionSnapshot): SessionView {
+function view(snapshot: SessionSnapshot, permissions: SessionView["permissions"] = []): SessionView {
   return { id: snapshot.id, version: snapshot.version, lastSeq: snapshot.lastSeq, epoch: snapshot.epoch, status: snapshot.status,
     workspace: snapshot.configuration.workspace, selection: snapshot.selection, activeRunId: snapshot.activeRunId, pendingSwitchId: snapshot.pendingSwitchId,
-    messages: snapshot.messages, runs: snapshot.runs, switches: snapshot.switches };
+    permissions, messages: snapshot.messages, runs: snapshot.runs, switches: snapshot.switches };
 }
 function publicFailure(error: unknown): { readonly status: number; readonly code: string; readonly message: string } {
   if (error instanceof HttpError || error instanceof SessionStreamError) return error;
@@ -174,7 +174,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     throw error;
   });
   let app: ReturnType<typeof composeApplication>;
-  const streams = new SessionStreamHub(id => view(app.runtime.read(id)), {}, failure => {
+  const streams = new SessionStreamHub(id => view(app.runtime.read(id), app.runtime.permissionRequests(id)), {}, failure => {
     const fault = publicFailure(failure.error);
     process.stderr.write("HarnessGateway: SESSION_STREAM_READ_FAILED (" + app.providers.redact(fault.code).slice(0, 128) + ")\n");
   });
@@ -256,16 +256,19 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       queries(url, []); const output: WebState = { providerManagement: options.providerManagement ?? true, workspace: options.configuration.workspace, providers: app.providers.list(), harnesses: await rescan(), sessions: app.store.list(100).map(summary), jobs: app.management.listJobs().slice(0, 50) }; json(response, 200, output); return;
     }
     if (path === "/api/v1/harnesses" && method === "GET") { queries(url, []); json(response, 200, await rescan()); return; }
+    const permissionRoute = /^\/api\/v1\/sessions\/(session-[a-zA-Z0-9-]+)\/permissions\/(permission-[a-zA-Z0-9-]+)$/u.exec(path);
+    if (permissionRoute && method === "POST") { queries(url, []); const input = record(await body(request), ["optionId", "commandId", "input"], ["optionId", "commandId"]); const id = sessionId(permissionRoute[1]); json(response, 200, await app.runtime.decidePermission(id, permissionRoute[2]!, text(input.optionId, "optionId", 512), text(input.commandId, "commandId", 128), input.input===undefined?undefined:(typeof input.input==="string"&&Buffer.byteLength(input.input)<=65536&&!input.input.includes("\0")?input.input:(()=>{throw new HttpError(400,"INVALID_INPUT","invalid native UI input")})()))); return; }
     const modelsRoute = /^\/api\/v1\/harnesses\/([a-z][a-z0-9-]{0,95})\/models$/u.exec(path);
     if (modelsRoute && method === "GET") {
-      queries(url, ["controlId", "workspace"]);
+      queries(url, ["controlId", "workspace", "refresh", "nativeModel"]);
+      const refresh = url.searchParams.get("refresh"); if (refresh !== null && refresh !== "1") throw new HttpError(400, "INVALID_INPUT", "invalid model refresh flag");
       const controlId = url.searchParams.get("controlId"), workspace = url.searchParams.get("workspace");
       const configuration = workspace === null ? options.configuration : await prepareConfiguration({ workspace,
         ...(options.configuration.configHome === null ? {} : { configHome: options.configuration.configHome }),
         ...(options.configuration.manifestPath === null ? {} : { manifestPath: options.configuration.manifestPath }),
         packageRoots: options.configuration.packageRoots, searchDirs: options.configuration.searchDirs, pathOnly: options.configuration.pathOnly });
-      const selected = select({ harnessId: modelsRoute[1], ...(controlId === null ? {} : { controlId }) });
-      try { json(response, 200, await nativeModels.read(selected, configuration)); }
+      const selected = select({ harnessId: modelsRoute[1], ...(controlId === null ? {} : { controlId }), ...(url.searchParams.get("nativeModel") === null ? {} : {nativeModel:url.searchParams.get("nativeModel")}) });
+      try { json(response, 200, await nativeModels.read(selected, configuration, refresh === "1")); }
       catch (error) {
         const code = error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "MODEL_DISCOVERY_FAILED";
         if (code === "GATEWAY_AUTH_REQUIRED" || code === "HARNESS_AUTH_REQUIRED") { json(response, 200, { models: [], defaultModel: null, authentication: "missing", canSelect: false }); return; }
@@ -351,7 +354,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|switches|resume|cancel|close|events))?$/u.exec(path);
     if (sessionRoute) {
       const id = sessionId(sessionRoute[1]!), action = sessionRoute[2];
-      if (action === undefined && method === "GET") { queries(url, []); json(response, 200, view(app.runtime.read(id))); return; }
+      if (action === undefined && method === "GET") { queries(url, []); json(response, 200, view(app.runtime.read(id), app.runtime.permissionRequests(id))); return; }
       if (action === "events" && method === "GET") {
         queries(url, ["afterSeq", "limit"]); const after = cursor(url.searchParams.get("afterSeq"), 0, 0, Number.MAX_SAFE_INTEGER), limit = cursor(url.searchParams.get("limit"), 50, 1, 100);
         const events = app.store.events(id, after, limit), nextSeq = events.at(-1)?.seq ?? after;

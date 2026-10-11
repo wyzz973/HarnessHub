@@ -12,14 +12,14 @@ import { BrandIcon } from "./BrandIcon.js";
 import { ChatComposer } from "./ChatComposer.js";
 import { ChatMessage } from "./ChatMessage.js";
 
-export interface SelectionDraft { harnessId: string; controlId: string; providerId: string; providerRevision: number | null; model: string }
-export const EMPTY_SELECTION: SelectionDraft = { harnessId: "", controlId: "", providerId: "", providerRevision: null, model: "" };
+export interface SelectionDraft { harnessId: string; controlId: string; providerId: string; providerRevision: number | null; model: string; nativeOptions: Readonly<Record<string,string>> }
+export const EMPTY_SELECTION: SelectionDraft = { harnessId: "", controlId: "", providerId: "", providerRevision: null, model: "", nativeOptions: {} };
 export function selectionDraft(selection: HarnessSelection): SelectionDraft {
-  return { harnessId: selection.harnessId, controlId: selection.controlId, providerId: selection.provider?.providerId ?? "", providerRevision: selection.provider?.revision ?? null, model: selection.provider?.model ?? selection.nativeModel ?? "" };
+  return { harnessId: selection.harnessId, controlId: selection.controlId, providerId: selection.provider?.providerId ?? "", providerRevision: selection.provider?.revision ?? null, model: selection.provider?.model ?? selection.nativeModel ?? "", nativeOptions: selection.nativeOptions ?? {} };
 }
 export function selectionRequest(draft: SelectionDraft): SelectionRequest {
   return { harnessId: draft.harnessId, controlId: draft.controlId, provider: draft.providerId && draft.providerRevision !== null
-    ? { providerId: draft.providerId, revision: draft.providerRevision, model: draft.model } : null, ...(!draft.providerId && draft.model ? { nativeModel: draft.model } : {}) };
+    ? { providerId: draft.providerId, revision: draft.providerRevision, model: draft.model } : null, ...(!draft.providerId && draft.model ? { nativeModel: draft.model } : {}), ...(!draft.providerId && Object.keys(draft.nativeOptions).length ? { nativeOptions: draft.nativeOptions } : {}) };
 }
 export function selectionProblem(draft: SelectionDraft, harnesses: readonly HarnessView[], providers: readonly ProviderView[]): string | null {
   const harness = harnesses.find(row => row.id === draft.harnessId);
@@ -51,9 +51,14 @@ export interface ChatProps {
   messageDraft: string; onMessageDraft: Dispatch<SetStateAction<string>>;
   onDraft: (draft: SelectionDraft) => void; onWorkspace: (workspace: string) => void; onSend: (text: string) => Promise<void>;
   onApply: () => void; onCancel: () => void; onClose: () => void; onDismissError: () => void; onProviders: () => void; onNew: () => void; onMenu: () => void;
+  onPermission?: (id: string, option: string, input?: string) => void;
   onRetryConnection?: () => void;
 }
 
+function NativeQuestion({request,busy,onDecision}:{request:NonNullable<SessionView["permissions"]>[number];busy:boolean;onDecision:(option:string,input?:string)=>void}) {
+  const [input,setInput]=useState(request.input?.value??"");
+  return <section className="native-permission" aria-label={request.input?"Harness 交互":"工具审批"}><strong>{request.title}</strong>{request.detail?<p>{request.detail}</p>:null}{request.input?<textarea aria-label={request.title} value={input} rows={request.input.kind==="editor"?6:2} disabled={busy||request.decided} onChange={event=>setInput(event.target.value)}/>:null}<div>{request.options.map(option=><button type="button" key={option.id} disabled={busy||request.decided} onClick={()=>onDecision(option.id,request.input&&option.id==="submit"?input:undefined)}>{option.name}</button>)}</div>{request.decided?<small>决定已记录，等待 Harness 继续。</small>:null}</section>;
+}
 export function ChatPage(props: ChatProps) {
   const { session, draft, harnesses, providers, mutation, error } = props;
   const [followBottom, setFollowBottom] = useState(true);
@@ -128,7 +133,7 @@ export function ChatPage(props: ChatProps) {
       resumeFollowing();
     }
   };
-  const composer = <ChatComposer {...props} onSend={send} active={active} dirty={dirty} pending={pending} problem={problem} blocked={blocked} inputRef={textarea}/>;
+  const composer = <>{session?.permissions?.map(request => <NativeQuestion key={request.id} request={request} busy={mutation!==null} onDecision={(option,input)=>props.onPermission?.(request.id,option,input)}/>)}<ChatComposer {...props} onSend={send} active={active} dirty={dirty} pending={pending} problem={problem} blocked={blocked} inputRef={textarea}/></>;
   useEffect(() => {
     const dialog = closeDialog.current;
     if (!dialog) return;

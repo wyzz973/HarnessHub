@@ -8,11 +8,15 @@ const reply = (id, result) => send({ id, result });
 const notify = (method, params) => send({ method, params });
 createInterface({ input: process.stdin }).on("line", line => {
   const value = JSON.parse(line);
+  if (value.id === "browser-approval" && value.result !== undefined && active?.approval) {
+    notify("item/agentMessage/delta", { threadId: native, turnId: active.id, itemId: "browser-message", delta: "原生审批已收到：" + value.result.decision });
+    notify("turn/completed", { threadId: native, turn: { id: active.id, status: "completed" } }); active = null; return;
+  }
   if (value.method === "initialize") return reply(value.id, { userAgent: "browser-external-peer/1.0" });
   if (value.method === "initialized") return;
   if (value.method === "config/read") return reply(value.id, { config: { model: "native-a" } });
   if (value.method === "account/read") return reply(value.id, { account: { type: "chatgpt" }, requiresOpenaiAuth: true });
-  if (value.method === "model/list") return reply(value.id, { data: [{ model: "native-a", displayName: "Native A" }, { model: "native-b", displayName: "Native B" }], nextCursor: null });
+  if (value.method === "model/list") return reply(value.id, { data: [{ model: "native-a", displayName: "Native A", defaultReasoningEffort:"low",supportedReasoningEfforts:[{reasoningEffort:"low"},{reasoningEffort:"high"}] }, { model: "native-b", displayName: "Native B", defaultReasoningEffort:"low",supportedReasoningEfforts:[{reasoningEffort:"low"},{reasoningEffort:"high"}] }], nextCursor: null });
   if (value.method === "thread/start") { nativeModel = value.params.model ?? null; notify("thread/started", { thread: { id: native } }); return reply(value.id, { thread: { id: native } }); }
   if (value.method === "turn/start") {
     const context = JSON.parse(value.params.input[0].text.split("\n").slice(1).join("\n"));
@@ -21,6 +25,10 @@ createInterface({ input: process.stdin }).on("line", line => {
     const model = nativeModel ?? (config ? JSON.parse(config.match(/^model = (.+)$/mu)[1]) : "native-a");
     active = { id: "browser-turn-" + ++counter };
     notify("turn/started", { threadId: native, turn: { id: active.id, status: "inProgress" } }); reply(value.id, { turn: { id: active.id, status: "inProgress" } });
+    if (text.startsWith("APPROVAL")) {
+      active.approval = true;
+      send({ id: "browser-approval", method: "item/commandExecution/requestApproval", params: { threadId: native, turnId: active.id, itemId: "fixture-command", command: "读取验收工作区", availableDecisions: ["accept", "decline", "cancel"] } }); return;
+    }
     if (text.startsWith("STREAM_RENDER") || text.startsWith("STREAM_CANCEL")) {
       const emit = delta => notify("item/agentMessage/delta", { threadId: native, turnId: active.id, itemId: "browser-message", delta });
       let phase = "first";

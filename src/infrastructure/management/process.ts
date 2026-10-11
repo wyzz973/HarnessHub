@@ -1,3 +1,4 @@
+import { darwinExitedGroupIsQuiescent } from "../control/process-group.js";
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { ManagementError, type ManagementInstallContext } from "../../contracts/management.js";
@@ -15,7 +16,7 @@ export function runManagementProcess(executable: string, args: readonly string[]
     let pipeTimer: ReturnType<typeof setTimeout> | null = null;
     const kill = (signal: "SIGTERM" | "SIGKILL"): void => {
       try { if (process.platform !== "win32" && child.pid) process.kill(-child.pid, signal); else child.kill(signal); }
-      catch (error) { if (error === null || typeof error !== "object" || !("code" in error) || error.code !== "ESRCH") failure ??= new ManagementError("CLEANUP_FAILED", "installer process cleanup could not be confirmed"); }
+      catch (error) { if (error!==null&&typeof error==="object"&&"code"in error&&error.code==="EPERM"&&child.pid&&(child.exitCode!==null||child.signalCode!==null)&&darwinExitedGroupIsQuiescent(child.pid))return; if (error === null || typeof error !== "object" || !("code" in error) || error.code !== "ESRCH") failure ??= new ManagementError("CLEANUP_FAILED", "installer process cleanup could not be confirmed"); }
     };
     const stop = (): void => {
       if (stopping) return; stopping = true; kill("SIGTERM"); killTimer = setTimeout(() => kill("SIGKILL"), 500);
@@ -41,7 +42,7 @@ export function runManagementProcess(executable: string, args: readonly string[]
     child.once("close", (code, signal) => { void (async () => {
       context.signal.removeEventListener("abort", stop); if (killTimer !== null) clearTimeout(killTimer); if (pipeTimer !== null) clearTimeout(pipeTimer);
       if (process.platform !== "win32" && child.pid) {
-        const alive = (): boolean => { try { process.kill(-child.pid!, 0); return true; } catch (error) { return error === null || typeof error !== "object" || !("code" in error) || error.code !== "ESRCH"; } };
+        const alive = (): boolean => { try { process.kill(-child.pid!, 0); return true; } catch (error) { if(error!==null&&typeof error==="object"&&"code"in error&&error.code==="EPERM"&&darwinExitedGroupIsQuiescent(child.pid!))return false; return error === null || typeof error !== "object" || !("code" in error) || error.code !== "ESRCH"; } };
         if (alive()) {
           kill("SIGTERM"); const deadline = Date.now() + 2000;
           while (alive() && Date.now() < deadline) { kill("SIGKILL"); await new Promise<void>(ready => setTimeout(ready, 25)); }

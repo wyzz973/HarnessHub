@@ -70,7 +70,9 @@ test("real Codex/ACP protocol probes enumerate native models without prompts and
   assert.ok(messages.some(row => row.method === "session/set_config_option" && row.params.value === "native-model-b"));
   assert.equal(messages.filter(row => row.method === "turn/start" || row.method === "session/prompt").length, 2);
   runtime.switch(session.id, { harnessId: "native-codex", nativeModel: "model-from-another-harness" }, "invalid-model"); await runtime.wait(session.id);
-  assert.equal(runtime.read(session.id).switches.at(-1)!.status, "failed"); assert.equal(runtime.read(session.id).status, "open");
+  assert.equal(runtime.read(session.id).switches.at(-1)!.status, "effective");
+  runtime.send(session.id,"invalid model must not reach a prompt","invalid-model-input"); await runtime.wait(session.id);
+  assert.equal(runtime.read(session.id).runs.at(-1)!.status,"failed"); assert.equal(runtime.read(session.id).runs.at(-1)!.error?.code,"MODEL_UNAVAILABLE"); assert.equal(runtime.read(session.id).status,"open");
 });
 
 test("authenticated native models endpoint accepts workspace queries, projects no credentials and owns probe shutdown", async t => {

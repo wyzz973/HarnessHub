@@ -14,7 +14,7 @@ import { SessionError, type HarnessSelection, type PreparedSessionBinding, type 
   type SessionBindingFactory, type SessionConfiguration, type SessionId, type WorkspaceLease,
   type WorkspaceLeaseProvider } from "../../contracts/session.js";
 import { MAX_CATALOG_BYTES, type ControlObservation } from "../../contexts/catalog/domain/catalog.js";
-import { captureNativeEnvironment, referencedNativeValues, nativeDescriptorValues, type NativeEnvironment } from "./native-environment.js";
+import { captureNativeEnvironment, nativeValues, referencedNativeValues, nativeDescriptorValues, type NativeEnvironment } from "./native-environment.js";
 import type { NativeModelCatalog } from "../../contracts/control.js";
 import type { NativeInstallationLocks, NativeUsageLease } from "../management/native-lock.js";
 
@@ -133,7 +133,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       }
       if (request.nativeModel !== undefined && request.provider != null) throw new SessionError("INVALID_INPUT", "native model and managed Provider are mutually exclusive");
       return { harnessId, controlId: selected.id, ...(request.provider == null ? {} : { provider: request.provider }),
-        ...(request.nativeModel === undefined ? {} : { nativeModel: request.nativeModel }) };
+        ...(request.nativeModel === undefined ? {} : { nativeModel: request.nativeModel }), ...(request.nativeOptions === undefined ? {} : { nativeOptions: request.nativeOptions }) };
     } finally { await rm(root, { recursive: true, force: true }); }
   }
   async prepare(selection: HarnessSelection, configuration: SessionConfiguration, session: SessionId, run: string): Promise<PreparedSessionBinding> {
@@ -159,7 +159,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       const protocol = observed.selected.protocol;
       if (protocol !== "acp-v1" && protocol !== "codex-app-server" && protocol !== "pi-rpc") throw new SessionError("UNSUPPORTED_CONTROL", "unsupported control protocol");
       const launch: ControlLaunch = { ...observed.selected.command, env: environment, protocol };
-      const options = { cwd: configuration.workspace, env: environment, requestTimeoutMs: 10000, runTimeoutMs: 30000,
+      const options = { cwd: configuration.workspace, env: environment, requestTimeoutMs: 10000, runTimeoutMs: 300000,
         maxFrameBytes: 2 * 1024 * 1024, maxDiagnosticBytes: 64 * 1024, closeGraceMs: 500 };
       this.assertOwner(); lease.assertOwned();
       control = await createNativeControl(selection.harnessId, launch, options);
@@ -175,6 +175,20 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       if (cleanupError) throw new SessionError("BINDING_CLEANUP_FAILED", "binding preparation failed and cleanup could not be confirmed");
       throw error;
     }
+  }
+  /** Read-only identity for catalog caches; execution always makes a fresh observation. No credentials are returned. */
+  async catalogFingerprint(selection: SelectionRequest, configuration: SessionConfiguration): Promise<string> {
+    this.assertOwner(); const root = await realpath(await mkdtemp(join(tmpdir(), "harness-catalog-identity-")));
+    try {
+      const observed = await observe(selection, configuration, root, this.management, this.nativeEnvironment), command = observed.selected.command;
+      if (!command) throw new SessionError("HARNESS_UNAVAILABLE", "native control unavailable");
+      const env = nativeValues(this.nativeEnvironment, configuration.configHome), home = env.HOME ?? this.nativeEnvironment.home;
+      const codex = env.CODEX_HOME ?? join(home,".codex"), claude=env.CLAUDE_CONFIG_DIR ?? join(home,".claude"), pi=env.PI_CODING_AGENT_DIR ?? join(home,".pi","agent"), gemini=join(env.GEMINI_CLI_HOME ?? home,".gemini"), opencode=env.OPENCODE_CONFIG_DIR ?? join(env.XDG_CONFIG_HOME ?? join(home,".config"),"opencode");
+      const hints: Readonly<Record<string, readonly string[]>> = { codex: [join(codex,"config.toml"),join(codex,"auth.json")], claude:[join(claude,"settings.json"),join(claude,".credentials.json")], openclaw:[env.OPENCLAW_CONFIG_PATH ?? join(env.OPENCLAW_STATE_DIR ?? join(home,".openclaw"),"openclaw.json")], cursor:[join(home,".cursor","cli-config.json")], pi:[join(pi,"settings.json"),join(pi,"models.json"),join(pi,"auth.json")], opencode:[join(opencode,"opencode.json"),join(opencode,"opencode.jsonc"),join(home,".local/share/opencode/auth.json")], gemini:[join(gemini,"settings.json"),join(gemini,"oauth_creds.json")] };
+      const files = [command.executable, ...command.args.filter(arg => arg.startsWith("/")), ...(hints[selection.harnessId] ?? []), ...[".codex/config.toml",".claude/settings.json",".claude/settings.local.json",".gemini/settings.json",".pi/settings.json","opencode.json","opencode.jsonc"].map(path=>join(configuration.workspace,path))];
+      const identities = await Promise.all(files.map(async path => { try { const canonical = await realpath(path), info = await stat(canonical); return [canonical,info.dev,info.ino,info.size,info.mtimeMs]; } catch (error) { if (error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT") return [path,"missing"]; throw error; } }));
+      this.assertOwner(); return sha256(Buffer.from(JSON.stringify({ command, identities, managed: observed.managed?.revision })));
+    } finally { await rm(root,{recursive:true,force:true}); }
   }
   /** Read-only native catalog probe; no prompt and no workspace writer lease. */
   async discoverModels(request: SelectionRequest, configuration: SessionConfiguration, signal: AbortSignal): Promise<NativeModelCatalog> {
@@ -194,13 +208,15 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       const protocol = observed.selected.protocol;
       if (protocol !== "acp-v1" && protocol !== "codex-app-server" && protocol !== "pi-rpc") throw new SessionError("UNSUPPORTED_CONTROL", "native model discovery is unavailable");
       const launch: ControlLaunch = { ...observed.selected.command, protocol, env };
-      const options = { cwd: configuration.workspace, env, requestTimeoutMs: 10000, runTimeoutMs: 30000, maxFrameBytes: 2 * 1024 * 1024, maxDiagnosticBytes: 64 * 1024, closeGraceMs: 500 };
+      const options = { cwd: configuration.workspace, env, requestTimeoutMs: 10000, runTimeoutMs: 300000, maxFrameBytes: 2 * 1024 * 1024, maxDiagnosticBytes: 64 * 1024, closeGraceMs: 500 };
       control = await createNativeControl(observed.harnessId, launch, options);
       if (signal.aborted) { abort(); throw new SessionError("CANCELLED", "model discovery was cancelled"); }
       await control.initialize();
-      if (protocol === "acp-v1") await control.open(configuration.workspace);
+      let selectionError: NativeModelCatalog["selectionError"];
+      if (protocol === "acp-v1") try { await control.open(configuration.workspace, request.nativeModel); }
+      catch(error) { if(error!==null&&typeof error==="object"&&"code"in error&&error.code==="MODEL_UNAVAILABLE") selectionError={code:"MODEL_UNAVAILABLE",message:"所选模型当前不在本机目录中，请重新选择。"};else throw error; }
       if (!control.models) throw new SessionError("UNSUPPORTED_MODEL_SELECTION", "this Harness does not expose models");
-      const catalog = await control.models(); this.assertOwner();
+      const discovered = await control.models(), catalog={...discovered,...(selectionError ? {selectionError} : {})}; this.assertOwner();
       if (signal.aborted) throw new SessionError("CANCELLED", "model discovery was cancelled");
       return catalog;
     } finally {

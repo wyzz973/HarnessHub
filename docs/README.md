@@ -2,6 +2,8 @@
 
 当前以本机MVP切片推进；完整蓝图按各自状态管理。ADR-008/009/010/011/012及对应本机契约已认可，目录、控制和公共Session/静止切换已实现；本机Provider和HTTP/工作台按ADR-011实现；完整未来代理账本/自动路由等仍proposed。
 
+最新快速选择与原生会话能力：[ADR-019](decisions/0019-native-session-experience.md)、[切换时延、模型/档位、审批与原对话证据](verification/native-session-experience-2026-10-11.md)。普通选择不再建立控制连接；公共库为v5。统一界面按各Harness原接口接出功能，原生checkpoint、多模态与持久后台任务仍按未验证边界记录。
+
 最新本机管理与接入：[ADR-017](decisions/0017-native-installation-management.md)、[原安装/配置保护/原对话验收](verification/native-management-2026-10-11.md)。管理原渠道、保护模型与认证配置、保留未知结果；Homebrew升级限制、开发目录与各Harness真实回复分别说明。统一Provider管理后置。
 
 本机原安装与OpenClaw修复：[ADR-016](decisions/0016-local-installation-and-openclaw.md)、[真实DeepSeek与当前对话验收](verification/local-openclaw-2026-10-11.md)。本机原安装优先，私有副本不得冒充本机升级。

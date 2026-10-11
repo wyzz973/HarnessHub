@@ -123,6 +123,32 @@ async function trace(path: string): Promise<readonly Record<string, unknown>[]> 
   return (await readFile(path, "utf8")).trim().split("\n").map(line => JSON.parse(line) as Record<string, unknown>);
 }
 
+test("cancelling during native command discovery never dispatches the command", async t => {
+  const f = await fixture(t), peer = controlled(), factory = new ControlledFactory([peer]);
+  const reading = new Gate<void>(), catalog = new Gate<void>();
+  const prepare = factory.prepare.bind(factory);
+  let dispatched = 0;
+  factory.prepare = async (...args) => {
+    const binding = await prepare(...args);
+    return { ...binding, control: { ...binding.control,
+      models: async () => { reading.resolve(); await catalog.promise; return {
+        models: [], defaultModel: null, canSelect: false, authentication: "unknown" as const,
+        commands: [{ name: "native-help", description: "fixture command" }],
+      }; },
+      startText: async (...input) => { dispatched++; return binding.control.startText(...input); },
+    } };
+  };
+  const app = runtime(f, factory), session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  const sent = app.send(session.id, "/native-help", "send");
+  await reading.promise;
+  app.cancel(session.id, "cancel", sent.runId); catalog.resolve();
+  await app.wait(session.id);
+  const run = app.read(session.id).runs[0]!;
+  assert.equal(dispatched, 0); assert.equal(run.status, "cancelled");
+  assert.equal(run.backend, null); assert.equal(run.cleanup?.closed, true);
+  assert.equal(peer.closeCount, 1); assert.equal(app.read(session.id).status, "open");
+});
+
 test("real SQLite and ACP/Codex IPC retain one public Session through A to B to A with new connections", async (t) => {
   const f = await fixture(t), factory = new PeerFactory(f.root), published: SessionEvent[] = [], app = runtime(f, factory, value => {
     assert.ok(f.store.events(value.sessionId, value.seq - 1, 1).some(event => event.seq === value.seq), "event published before commit"); published.push(value);
@@ -141,7 +167,7 @@ test("real SQLite and ACP/Codex IPC retain one public Session through A to B to 
   assert.deepEqual(final.runs.map(run => run.selection.harnessId), ["alpha", "alpha", "bravo", "alpha"]);
   assert.deepEqual(final.runs.map(run => run.epoch), [1, 1, 2, 3]);
   assert.equal(final.switches.find(sw => sw.id === switched.switchId)?.status, "effective");
-  assert.equal(factory.prepared.length, 6); assert.ok(factory.prepared.every(entry => entry.closed));
+  assert.equal(factory.prepared.length, 4); assert.ok(factory.prepared.every(entry=>!entry.run.startsWith("switch-"))); assert.ok(factory.prepared.every(entry => entry.closed));
   const prompts: string[] = [];
   for (const entry of factory.prepared) {
     const messages = await trace(entry.trace), sent = messages.find(message => message.method === "session/prompt" || message.method === "turn/start");
@@ -187,7 +213,7 @@ test("busy switch waits for old cleanup and freezes its source identities before
   assert.equal(sw.status, "effective"); assert.deepEqual(sw.sourceRunIds, [initial.runId]);
   assert.ok(sw.throughSeq >= final.runs[0]!.contextThroughSeq);
   assert.equal(final.runs.find(run => run.id === next.runId)?.selection.harnessId, "bravo");
-  assert.equal(factory.prepared.length, 3);
+  assert.equal(factory.prepared.length, 2);
 });
 
 test("new queued input is not included in the active Turn prompt and cancellation wins over late completion", async (t) => {
@@ -347,7 +373,7 @@ test("inputs queued before switch retain their original Harness and become compl
   const after = app.send(state.id, "new Harness queued input", "after");
   first.result.resolve({ status: "completed", reason: "fixture" }); await app.wait(state.id);
   const final = app.read(state.id), firstSwitch = final.switches.find(entry => entry.id === sw.switchId)!;
-  assert.deepEqual(factory.prepared.map(entry => entry.selection.harnessId), ["alpha", "alpha", "bravo", "bravo"]);
+  assert.deepEqual(factory.prepared.map(entry => entry.selection.harnessId), ["alpha", "alpha", "bravo"]);
   assert.deepEqual(firstSwitch.sourceRunIds, [active.runId, before.runId]);
   assert.equal(final.runs.find(run => run.id === before.runId)?.epoch, 1);
   assert.equal(final.runs.find(run => run.id === before.runId)?.awaitingSwitchId, null);
@@ -386,17 +412,18 @@ test("publication failure after terminal commit preserves completion evidence an
   assert.equal(final.runs[0]?.cleanup?.closed, true); assert.equal(final.status, "blocked"); assert.equal(factory.prepared.length, 1);
 });
 
-test("switch effective watermark advances through target quiescence while later inputs stay excluded from sources", async (t) => {
-  const f = await fixture(t), target = controlled({ holdInitialize: true }), factory = new ControlledFactory([target]), app = runtime(f, factory);
+test("switch effective watermark advances through validation without creating an unused target connection while later inputs stay excluded from sources", async (t) => {
+  const f = await fixture(t), validating = new Gate<void>(), release = new Gate<void>(), factory = new ControlledFactory([]);
+  const validate = factory.validate.bind(factory); factory.validate = async request => { const target = await validate(request); if(request.harnessId==="bravo"){validating.resolve();await release.promise;} return target; }; const app=runtime(f,factory);
   const state = await app.create(f.configuration, { harnessId: "alpha" }, "create"), sw = app.switch(state.id, { harnessId: "bravo" }, "switch");
-  await target.initialized.promise;
+  await validating.promise;
   const later = app.send(state.id, "later cancelled input", "later"); app.cancel(state.id, "cancel", later.runId);
   const beforeEffective = app.read(state.id).lastSeq;
-  target.initialize!.resolve(); await app.wait(state.id);
+  release.resolve(); await app.wait(state.id);
   const final = app.read(state.id), effective = final.switches.find(entry => entry.id === sw.switchId)!;
-  assert.equal(effective.throughSeq, beforeEffective); assert.deepEqual(effective.sourceRunIds, []);
+  assert.equal(effective.throughSeq, beforeEffective + 1); assert.deepEqual(effective.sourceRunIds, []);
   assert.equal(effective.status, "effective"); assert.equal(final.runs[0]?.status, "cancelled");
-  assert.equal(factory.prepared.length, 1); assert.equal(target.closeCount, 1);
+  assert.equal(factory.prepared.length, 0);
 });
 
 test("runtime shutdown waits for in-flight creation validation to release its real private directory", async (t) => {
@@ -474,7 +501,7 @@ test("Harness-only switch inherits Provider and an explicit null clears managed 
   const state = await app.create(f.configuration, { harnessId: "alpha", provider: providerA }, "inherit-create");
   app.switch(state.id, { harnessId: "bravo" }, "inherit-switch"); await app.wait(state.id);
   assert.deepEqual(app.read(state.id).selection.provider, providerA);
-  assert.deepEqual(factory.prepared[0]?.selection.provider, providerA);
+  assert.equal(factory.prepared.length,0,"ordinary selection must not start a native process");
   app.switch(state.id, { harnessId: "alpha", provider: null }, "clear-switch"); await app.wait(state.id);
   assert.equal(app.read(state.id).selection.provider, undefined);
 });
@@ -490,7 +517,7 @@ test("initialization failure with confirmed close fails only that reply and perm
   app.switch(state.id, { harnessId: "bravo" }, "choose-working"); await app.wait(state.id);
   app.send(state.id, "explicit next request", "next"); await app.wait(state.id);
   const final = app.read(state.id); assert.equal(final.id, state.id); assert.equal(final.runs[1]!.status, "completed");
-  assert.equal(final.messages[0]!.text, "before initialization"); assert.equal(factory.prepared.length, 3);
+  assert.equal(final.messages[0]!.text, "before initialization"); assert.equal(factory.prepared.length, 2);
 });
 
 test("a Session with unknown execution cannot poison a different workspace or admit unconfirmed automatic retries", async t => {
@@ -527,11 +554,11 @@ test("explicit recovery preserves unknown facts, cancels queued inputs and start
 });
 
 test("legacy falsely blocked switch resumes with the same Session and immutable failed-switch evidence", async t => {
-  const f = await fixture(t), bad = controlled({ holdInitialize: true }), factory = new ControlledFactory([bad]), app = runtime(f, factory);
+  const f=await fixture(t), factory=new ControlledFactory([]), validate=factory.validate.bind(factory); factory.validate=async request=>{if(request.harnessId==="bravo")throw new SessionError("GATEWAY_AUTH_REQUIRED","synthetic legacy authentication failure");return validate(request);}; const app=runtime(f,factory);
   const state = await app.create(f.configuration, { harnessId: "alpha" }, "create"), failed = app.switch(state.id, { harnessId: "bravo" }, "bad-switch");
-  await bad.initialized.promise; bad.initialize!.reject(new SessionError("GATEWAY_AUTH_REQUIRED", "synthetic missing authentication")); await app.wait(state.id);
+  await app.wait(state.id);
   const cleanFailure = app.read(state.id);
-  f.store.transact(state.id, cleanFailure.version, current => ({ next: { ...current, status: "blocked" }, events: [{ type: "session.blocked", data: { switchId: failed.switchId } }] }));
+  f.store.transact(state.id, cleanFailure.version, current => ({ next: { ...current, status: "blocked" }, events: [{type:"switch.failed",data:{switchId:failed.switchId,error:{code:"GATEWAY_AUTH_REQUIRED"},cleanup:clean}},{ type: "session.blocked", data: { switchId: failed.switchId } }] }));
   app.resume(state.id, { harnessId: "alpha" }, "recover"); await app.wait(state.id);
   const current = app.read(state.id); assert.equal(current.id, state.id); assert.equal(current.status, "open");
   assert.deepEqual(current.switches[0], cleanFailure.switches[0]); assert.equal(current.selection.harnessId, "alpha");

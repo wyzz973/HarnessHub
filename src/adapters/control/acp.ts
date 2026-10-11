@@ -1,7 +1,7 @@
 import { isAbsolute } from "node:path";
 import { nativeConversationId, type BackendResult, type CleanupEvidence, type ControlEvent,
   type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl,
-  type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
+  type NativeOptions, type NativeOption, type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
 import { ControlError, errorFrom, JsonRpcProcess, object, string, text, type RpcRequest } from "../../infrastructure/control/json-rpc-process.js";
 
 interface ActivePrompt {
@@ -23,6 +23,9 @@ export class AcpControl implements HarnessControl {
   private active: ActivePrompt | null = null;
   private failure: Error | null = null;
   private catalog: NativeModelCatalog = { models: [], defaultModel: null, authentication: "unknown", canSelect: false };
+  private interactivePermissions = false;
+  private readonly permissions = new Map<string, { options: readonly string[]; resolve: (value: unknown) => void }>();
+  private configuredDefault: string | null = null;
   private modelConfigId: string | null = null;
   private legacyModels = false;
   private readonly openingMetadata: Record<string, unknown>[] = [];
@@ -59,7 +62,32 @@ export class AcpControl implements HarnessControl {
       return observation;
     } catch (error) { const failure = this.nativeFailure(error); this.rpc.abort(failure); throw failure; }
   }
+  private readSettings(response: Record<string, unknown>): void {
+    if (response.configOptions !== undefined) {
+      if (!Array.isArray(response.configOptions) || response.configOptions.length > 128) throw new ControlError("INVALID_PROTOCOL", "invalid native settings");
+      const settings: NativeOption[] = [];
+      for (const value of response.configOptions) {
+        const row = object(value, "native setting"); if (row.type !== "select" || row.category === "model") continue;
+        const id = string(row.id, "native setting identity", 128), currentValue = string(row.currentValue, "native setting value", 1024);
+        if (!Array.isArray(row.options)) throw new ControlError("INVALID_PROTOCOL", "native setting values unavailable");
+        const values = row.options.flatMap(value => { const item = object(value, "native setting group"); const entries = item.options === undefined ? [item] : item.options; if (!Array.isArray(entries)) throw new ControlError("INVALID_PROTOCOL", "native setting group invalid"); return entries.map(value => { const entry = object(value, "native setting choice"); return { value: string(entry.value, "native setting value", 1024), name: string(entry.name, "native setting name", 1024) }; }); });
+        if (!values.length || values.length > 4096 || new Set(values.map(value => value.value)).size !== values.length) throw new ControlError("INVALID_PROTOCOL", "invalid native setting choices");
+        if (!values.some(value => value.value === currentValue)) values.push({ value: currentValue, name: currentValue });
+        settings.push({ id, name: typeof row.name === "string" ? string(row.name, "native setting title", 1024) : id, category: typeof row.category === "string" ? string(row.category, "native setting category", 128) : "native", currentValue, values });
+      }
+      if (new Set(settings.map(option => option.id)).size !== settings.length) throw new ControlError("INVALID_PROTOCOL", "duplicate native settings");
+      this.catalog = { ...this.catalog, options: [...settings, ...(!settings.some(option=>option.category==="mode") ? (this.catalog.options??[]).filter(option=>option.id==="__mode") : [])] };
+    }
+    if (response.modes !== undefined && !this.catalog.options?.some(option => ["mode", "thought_level"].includes(option.category))) {
+      const modes = object(response.modes, "native modes"); if (!Array.isArray(modes.availableModes) || modes.availableModes.length > 128) throw new ControlError("INVALID_PROTOCOL", "invalid native modes");
+      const values = modes.availableModes.map(value => { const row = object(value, "native mode"); return { value: string(row.id, "mode id", 128), name: string(row.name, "mode name", 1024) }; });
+      const currentValue = string(modes.currentModeId, "current mode", 128);
+      if (!values.some(row => row.value === currentValue) || new Set(values.map(row => row.value)).size !== values.length) throw new ControlError("INVALID_PROTOCOL", "invalid current native mode");
+      this.catalog = { ...this.catalog, options: [...(this.catalog.options ?? []), { id: "__mode", name: "模式", category: "mode", currentValue, values }] };
+    }
+  }
   private readModels(response: Record<string, unknown>): void {
+    this.readSettings(response);
     if (response.configOptions !== undefined) {
       if (!Array.isArray(response.configOptions) || response.configOptions.length > 128) throw new ControlError("INVALID_PROTOCOL", "invalid ACP configuration options");
       for (const value of response.configOptions) {
@@ -76,7 +104,7 @@ export class AcpControl implements HarnessControl {
         }
         if (new Set(models.map(row => row.id)).size !== models.length || !models.some(row => row.id === selected)) throw new ControlError("INVALID_PROTOCOL", "ACP models have duplicate or unknown default values");
         this.modelConfigId = id; this.legacyModels = false;
-        this.catalog = { models, defaultModel: selected, authentication: "unknown", canSelect: true }; return;
+        this.catalog = { ...this.catalog, models, defaultModel: selected, authentication: "unknown", canSelect: true }; return;
       }
     }
     if (response.models !== undefined) {
@@ -89,12 +117,12 @@ export class AcpControl implements HarnessControl {
       // Retain the peer's actual current model; never invent a replacement default.
       if (!models.some(row => row.id === selected)) models.push({ id: selected, name: selected });
       if (models.length > 4096) throw new ControlError("MODEL_LIMIT", "native models exceed catalog budget");
-      this.legacyModels = true; this.catalog = { models, defaultModel: selected, authentication: "unknown", canSelect: models.length > 0 };
+      this.legacyModels = true; this.catalog = { ...this.catalog, models, defaultModel: selected, authentication: "unknown", canSelect: models.length > 0 };
     }
   }
-  async models(): Promise<NativeModelCatalog> { this.assertInitialized(); if (this.conversation === null) throw new ControlError("INVALID_STATE", "ACP model catalog requires a session"); return this.catalog; }
+  async models(): Promise<NativeModelCatalog> { this.assertInitialized(); if (this.conversation === null) throw new ControlError("INVALID_STATE", "ACP model catalog requires a session"); return { ...this.catalog, defaultModel: this.configuredDefault }; }
   protected async sessionParameters(cwd: string): Promise<Readonly<Record<string, unknown>>> { return { cwd, mcpServers: [] }; }
-  async open(cwd: string, model?: string): Promise<NativeConversationId> {
+  async open(cwd: string, model?: string, options?: NativeOptions): Promise<NativeConversationId> {
     this.assertInitialized();
     if (!isAbsolute(cwd)) throw new ControlError("INVALID_INPUT", "conversation cwd must be absolute");
     if (this.conversation !== null || this.opening) throw new ControlError("INVALID_STATE", "this connection already owns a conversation");
@@ -102,7 +130,7 @@ export class AcpControl implements HarnessControl {
     try {
       const response = object(await this.rpc.request("session/new", await this.sessionParameters(cwd)), "session/new result");
       this.conversation = nativeConversationId(response.sessionId);
-      this.readModels(response);
+      this.readModels(response); this.configuredDefault=this.catalog.defaultModel;
       for (const params of this.openingMetadata.splice(0)) this.notification("session/update", params);
       if (model !== undefined) {
         if (!this.catalog.canSelect || !this.catalog.models.some(row => row.id === model)) throw new ControlError("MODEL_UNAVAILABLE", "selected model is unavailable in this Harness");
@@ -115,8 +143,14 @@ export class AcpControl implements HarnessControl {
           this.catalog = { ...this.catalog, defaultModel: model };
         }
       }
+      for (const [key, value] of Object.entries(options ?? {})) {
+        const setting = this.catalog.options?.find(option => option.id === key);
+        if (!setting || !setting.values.some(option => option.value === value)) throw new ControlError("NATIVE_OPTION_UNAVAILABLE", "native option unavailable for selected Harness");
+        if (key === "__mode") await this.rpc.request("session/set_mode", { sessionId: this.conversation, modeId: value });
+        else { const response = object(await this.rpc.request("session/set_config_option", { sessionId: this.conversation, configId: key, value }), "native setting result"); this.readModels(response); if (this.catalog.options?.find(option => option.id === key)?.currentValue !== value) throw new ControlError("NATIVE_OPTION_MISMATCH", "Harness did not apply its native setting"); }
+      }
       return this.conversation;
-    } catch (error) { const failure = this.nativeFailure(error); this.rpc.abort(failure); throw failure; }
+    } catch (error) { const failure = this.nativeFailure(error); if (!(failure instanceof ControlError && ["MODEL_UNAVAILABLE","NATIVE_OPTION_UNAVAILABLE"].includes(failure.code))) this.rpc.abort(failure); throw failure; }
     finally { this.opening = false; this.openingMetadata.length = 0; }
   }
   async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void): Promise<ControlRun> {
@@ -147,14 +181,20 @@ export class AcpControl implements HarnessControl {
     return { result, requestStop: () => {
       if (active.stop) return active.stop;
       if (active.settled || this.active !== active) return Promise.reject(new ControlError("INVALID_STATE", "prompt has already ended"));
-      active.stopping = true;
+      active.stopping = true; this.cancelPermissions();
       active.stop = this.rpc.notify("session/cancel", { sessionId: id }).then(() => ({ requested: true }));
       return active.stop;
     } };
   }
-  close(): Promise<CleanupEvidence> { return this.rpc.close(); }
+  enablePermissions(): void { this.interactivePermissions = true; }
+  async decidePermission(id: string, option: string): Promise<void> {
+    const pending = this.permissions.get(id); if (!pending || !pending.options.includes(option)) throw new ControlError("PERMISSION_UNAVAILABLE", "permission or actual option unavailable");
+    this.permissions.delete(id); pending.resolve({ outcome: { outcome: "selected", optionId: option } });
+  }
+  private cancelPermissions(): void { for (const pending of this.permissions.values()) pending.resolve({ outcome: { outcome: "cancelled" } }); this.permissions.clear(); }
+  close(): Promise<CleanupEvidence> { this.cancelPermissions(); return this.rpc.close(); }
   private nativeFailure(error: unknown): Error { return error instanceof ControlError && error.remoteFailure ? new ControlError(error.remoteFailure.code, error.remoteFailure.message) : errorFrom(error); }
-  private settle(active: ActivePrompt): void { active.settled = true; if (this.active === active) this.active = null; }
+  private settle(active: ActivePrompt): void { this.cancelPermissions(); active.settled = true; if (this.active === active) this.active = null; }
   private assertInitialized(): void {
     if (this.failure) throw this.failure;
     if (!this.initialized) throw new ControlError("INVALID_STATE", "connection is not initialized");
@@ -180,6 +220,11 @@ export class AcpControl implements HarnessControl {
     }
     this.scope(params);
     if (kind === "config_option_update") { this.readModels(update); return; }
+    if (kind === "available_commands_update") {
+      if (!Array.isArray(update.availableCommands) || update.availableCommands.length > 256) throw new ControlError("INVALID_PROTOCOL", "native commands exceed their budget");
+      this.catalog = { ...this.catalog, commands: update.availableCommands.map(value => { const command = object(value, "native command"); return { name: string(command.name, "native command name", 128), description: typeof command.description === "string" ? text(command.description, "native command description").slice(0,4096) : "" }; }) }; return;
+    }
+    if (kind === "current_mode_update") { const mode = string(update.currentModeId, "current native mode", 128); this.catalog = { ...this.catalog, options: this.catalog.options?.map(option => option.id === "__mode" ? { ...option, currentValue: mode } : option) ?? [] }; return; }
     if (metadataUpdates.has(kind)) return;
     const active = this.active;
     if (!active || active.settled) throw new ControlError("INVALID_STATE", "ACP output arrived without an active prompt");
@@ -188,6 +233,7 @@ export class AcpControl implements HarnessControl {
       if (content.type !== "text") throw new ControlError("UNSUPPORTED_CONTENT", "this control slice supports text content only");
       const value = text(content.text, "ACP text chunk");
       if (kind === "agent_message_chunk") active.event({ type: "text", text: value });
+      if (kind === "agent_thought_chunk") active.event({ type: "thinking", text: value });
       return;
     }
     if (kind === "tool_call" || kind === "tool_call_update") {
@@ -215,10 +261,15 @@ export class AcpControl implements HarnessControl {
       throw new ControlError("INVALID_PROTOCOL", "permission options are invalid");
     const options = params.options.map(raw => {
       const option = object(raw, "permission option");
-      return { id: string(option.optionId, "permission option identity"), kind: string(option.kind, "permission option kind") };
+      return { id: string(option.optionId, "permission option identity"), kind: string(option.kind, "permission option kind"), name: typeof option.name === "string" ? string(option.name, "permission name", 1024) : string(option.kind, "permission kind") };
     });
     if (new Set(options.map(option => option.id)).size !== options.length)
       throw new ControlError("INVALID_PROTOCOL", "duplicate permission option identities");
+    if (this.interactivePermissions && !active.stopping) {
+      if (this.permissions.size >= 32) throw new ControlError("PERMISSION_LIMIT", "too many native permission requests");
+      const id = String(request.id);
+      return new Promise<unknown>(resolve => { this.permissions.set(id, { options: options.map(option => option.id), resolve }); active.event({ type: "permission_requested", id, title: typeof tool.title === "string" ? tool.title.slice(0,4096) : "Harness 请求执行工具", options: options.map(({ id, name }) => ({ id, name })) }); });
+    }
     const reject = options.find(option => option.kind === "reject_once") ?? options.find(option => option.kind === "reject_always");
     if (active.stopping || !reject) {
       active.event({ type: "permission", id: String(request.id), decision: "cancelled" });

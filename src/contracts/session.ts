@@ -1,5 +1,5 @@
 import type { ProviderTarget } from "./provider.js";
-import type { BackendResult, CleanupEvidence, ControlEvent, HarnessControl } from "./control.js";
+import type { BackendResult, CleanupEvidence, ControlEvent, HarnessControl, NativeOptions } from "./control.js";
 
 declare const sessionBrand: unique symbol;
 declare const runBrand: unique symbol;
@@ -26,8 +26,15 @@ export function commandId(value: unknown): CommandId {
 export class SessionError extends Error {
   constructor(readonly code: string, message: string) { super(message); this.name = "SessionError"; }
 }
-export interface HarnessSelection { readonly harnessId: string; readonly controlId: string; readonly provider?: ProviderTarget; readonly nativeModel?: string }
-export interface SelectionRequest { readonly harnessId: string; readonly controlId?: string; readonly provider?: ProviderTarget | null; readonly nativeModel?: string }
+/** Native enum overrides only; unknown keys/values are rejected by the selected Driver before dispatch. */
+export function parseNativeOptions(value: unknown): NativeOptions {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new SessionError("INVALID_INPUT", "native options must be an object");
+  const entries = Object.entries(value);
+  if (entries.length > 64 || entries.some(([key, item]) => !/^[a-zA-Z0-9_-]{1,128}$/u.test(key) || ["__proto__", "constructor", "prototype"].includes(key) || typeof item !== "string" || !item || item.length > 1024 || /[\0\r\n]/u.test(item))) throw new SessionError("INVALID_INPUT", "invalid native option identity or value");
+  return Object.fromEntries(entries.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+}
+export interface HarnessSelection { readonly harnessId: string; readonly controlId: string; readonly provider?: ProviderTarget; readonly nativeModel?: string; readonly nativeOptions?: NativeOptions }
+export interface SelectionRequest { readonly harnessId: string; readonly controlId?: string; readonly provider?: ProviderTarget | null; readonly nativeModel?: string; readonly nativeOptions?: NativeOptions }
 export interface SessionConfiguration {
   readonly workspace: string;
   readonly manifestPath: string | null;
@@ -61,6 +68,8 @@ export interface PublicRun {
   readonly backend: BackendResult | null;
   readonly cleanup: CleanupEvidence | null;
   readonly error: { readonly code: string; readonly message: string } | null;
+  readonly thinking?: string;
+  readonly tools?: readonly { readonly id: string; readonly title: string; readonly status: string }[];
   readonly stopRequested: boolean;
   readonly awaitingSwitchId: SwitchId | null;
 }
@@ -77,12 +86,12 @@ export interface PublicSwitch {
 }
 export interface CommandRecord {
   readonly id: CommandId;
-  readonly kind: "create" | "send" | "switch" | "cancel" | "close";
+  readonly kind: "create" | "send" | "switch" | "cancel" | "close" | "permission";
   readonly fingerprint: string;
   readonly resultId: string;
 }
 export interface SessionSnapshot {
-  readonly schemaVersion: 1 | 2 | 3 | 4;
+  readonly schemaVersion: 1 | 2 | 3 | 4 | 5;
   readonly id: SessionId;
   readonly version: number;
   readonly lastSeq: number;
@@ -141,4 +150,13 @@ export interface SessionRuntimeOptions {
 export interface SendReceipt { readonly sessionId: SessionId; readonly runId: RunId; readonly replayed: boolean }
 export interface SwitchReceipt { readonly sessionId: SessionId; readonly switchId: SwitchId; readonly replayed: boolean }
 export interface CancelReceipt { readonly sessionId: SessionId; readonly target: RunId | null; readonly replayed: boolean }
+export interface PermissionRequest {
+  readonly id: string;
+  readonly runId: string;
+  readonly title: string;
+  readonly options: readonly { readonly id: string; readonly name: string }[];
+  readonly detail?: string;
+  readonly input?: {readonly kind:"text"|"editor";readonly value:string};
+  readonly decided: boolean;
+}
 export type PersistedControlEvent = ControlEvent;

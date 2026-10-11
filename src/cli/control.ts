@@ -114,7 +114,7 @@ export async function main(args: readonly string[]): Promise<number> {
       const onEvent = (event: ControlEvent) => {
         if (json) process.stdout.write(JSON.stringify({ type: "event", event }) + "\n");
         else if (event.type === "text") process.stdout.write(event.text);
-        else process.stderr.write("[" + event.type + "] " + (event.type === "diagnostic" ? event.message : event.type === "tool" ? event.title : event.decision) + "\n");
+        else process.stderr.write("[" + event.type + "] " + (event.type === "diagnostic" ? event.message : event.type === "tool" || event.type === "permission_requested" ? event.title : event.type === "thinking" ? event.text : event.decision) + "\n");
       };
       activeRun = await control.startText(nativeId, values.prompt!, onEvent);
       if (interrupted) await activeRun.requestStop();

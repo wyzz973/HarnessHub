@@ -28,7 +28,7 @@ async function fixture(t: test.TestContext, largeHistory: boolean): Promise<Fixt
   const store = new SqliteSessionStore(data), id = sessionId("session-io-fixture"), run = runId("run-io-history"), user = messageId("message-io-user"), assistant = messageId("message-io-assistant");
   const configuration = { workspace, manifestPath, manifestSha256: createHash("sha256").update(manifest).digest("hex"), configHome: null, packageRoots: [], searchDirs: [], pathOnly: true };
   const selection = { harnessId: "io-fixture", controlId: "io-control" };
-  const created = store.create({ schemaVersion: 4, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration, selection,
+  const created = store.create({ schemaVersion: 5, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration, selection,
     activeRunId: null, pendingSwitchId: null, runs: [], messages: [], switches: [], commands: [{ id: commandId("io-create"), kind: "create", fingerprint: "a".repeat(64), resultId: id }] },
   [{ type: "session.created", data: {} }]);
   const state = store.transact(id, created.session.version, current => ({ next: { ...current,

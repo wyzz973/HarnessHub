@@ -32,6 +32,7 @@ export interface SessionView {
   readonly selection: HarnessSelection;
   readonly activeRunId: string | null;
   readonly pendingSwitchId: string | null;
+  readonly permissions?: readonly import("./session.js").PermissionRequest[];
   readonly messages: readonly PublicMessage[];
   readonly runs: readonly PublicRun[];
   readonly switches: readonly PublicSwitch[];

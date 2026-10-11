@@ -10,7 +10,7 @@ import { prepareConfiguration } from "../../src/infrastructure/session/binding-f
 import { startWebServer, type WebServer } from "../../src/web/server.js";
 import type { SessionView } from "../../src/contracts/web.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
-import { sessionId } from "../../src/contracts/session.js";
+import { commandId, switchId, sessionId } from "../../src/contracts/session.js";
 
 const peer = fileURLToPath(new URL("../../../tests/fixtures/session-peer.mjs", import.meta.url));
 function row(value: unknown): Record<string, unknown> {
@@ -155,9 +155,9 @@ test("target startup failure preserves the conversation and never dispatches wai
   await call(f, `/api/v1/sessions/${id}/switches`, "POST", { selection: { harnessId: "web-bad" }, commandId: "bad-switch" });
   await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "second", commandId: "second" });
   await call(f, `/api/v1/sessions/${id}/cancel`, "POST", { commandId: "cancel-first" });
-  const ended = await waitFor(f, id, value => value.runs[1]?.status === "failed"); assert.equal(ended.switches[0]?.status, "failed");
+  const ended = await waitFor(f, id, value => value.runs[1]?.status === "failed"); assert.equal(ended.switches[0]?.status, "effective");
   assert.equal(ended.status, "open");
-  assert.equal(ended.runs[1]?.backend, null); assert.equal(ended.runs[1]?.cleanup, null); assert.equal(ended.selection.harnessId, "web-a");
+  assert.equal(ended.runs[1]?.backend, null); assert.equal(ended.runs[1]?.cleanup?.closed, true); assert.equal(ended.selection.harnessId, "web-bad");
   assert.equal((await trace(f)).filter(item => item.kind === "prompt").length, 1);
   assert.equal((await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "third", commandId: "third" })).status, 202);
   await call(f, `/api/v1/sessions/${id}/cancel`, "POST", { commandId: "stop-third" });
@@ -256,12 +256,11 @@ test("authenticated recovery restores a legacy blocked conversation without rewr
   const f = await fixture(t); await auth(f); const id = await create(f);
   await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "first", commandId: "first" });
   await waitFor(f, id, value => value.runs[0]?.status === "completed");
-  await call(f, `/api/v1/sessions/${id}/switches`, "POST", { selection: { harnessId: "web-bad" }, commandId: "broken" });
-  const failed = await waitFor(f, id, value => value.switches[0]?.status === "failed");
   await f.gateway.close();
-  const store = new SqliteSessionStore(f.data), snapshot = store.get(sessionId(id));
-  store.transact(snapshot.id, snapshot.version, current => ({ next: { ...current, status: "blocked" }, events: [{ type: "session.blocked", data: { switchId: current.switches[0]!.id } }] }));
-  store.close();
+  const store = new SqliteSessionStore(f.data), snapshot = store.get(sessionId(id)), legacyId=switchId("switch-legacy"), broken=commandId("broken");
+  const error={code:"GATEWAY_AUTH_REQUIRED",message:"synthetic legacy startup failure"};
+  store.transact(snapshot.id,snapshot.version,current=>({next:{...current,status:"blocked",switches:[{id:legacyId,commandId:broken,requested:{harnessId:"web-bad"},requestedSeq:current.lastSeq+1,target:{harnessId:"web-bad",controlId:"web-bad-control"},status:"failed",throughSeq:current.lastSeq+3,sourceRunIds:current.runs.map(run=>run.id),error}],commands:[...current.commands,{id:broken,kind:"switch",fingerprint:"0".repeat(64),resultId:legacyId}]},events:[{type:"switch.requested",data:{switchId:legacyId}},{type:"switch.failed",data:{switchId:legacyId,error,cleanup:{closed:true,exitCode:0,signal:null,protocolFailure:null}}},{type:"session.blocked",data:{switchId:legacyId}}]}));
+  const legacy=store.get(snapshot.id); const failed={runs:legacy.runs,messages:legacy.messages,switches:legacy.switches}; store.close();
   f.gateway = await startWebServer({ root: f.data, configuration: await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true }), port: 0, assetsDirectory: f.assets });
   const launch = new URL(f.gateway.url); f.origin = launch.origin; f.token = new URLSearchParams(launch.hash.slice(1)).get("token")!; await auth(f);
   const count = (await trace(f)).filter(item => item.kind === "prompt").length;

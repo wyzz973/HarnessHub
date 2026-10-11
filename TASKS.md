@@ -623,7 +623,7 @@
 - 只有一个取得业务写入权
 - 恢复数据与outbox一致
 
-场景：G008-C01, G008-C02, G008-C03, G008-C04, G008-C05, G008-P01, G008-P02, G008-R01, G008-N01。
+场景：G008-C01, G008-C02, G008-C03, G008-C04, G008-C05, G008-P01, G008-P02, G008-R01, G008-N01, G008-X02。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1144,6 +1144,7 @@
 - src/infrastructure/control/json-rpc-process.ts
 - tests/protocol/process.test.ts
 - tests/fixtures/control-peer.mjs
+- src/infrastructure/control/process-group.ts
 
 验收：
 - 按wire v1与能力协商
@@ -1170,6 +1171,8 @@
 - src/adapters/control/pi.ts
 - tests/protocol/pi.test.ts
 - tests/fixtures/pi-rpc-peer.mjs
+- src/adapters/control/openclaw.ts
+- src/infrastructure/control/native-command.ts
 
 验收：
 - 各事实关联正确Attempt与generation
@@ -1177,7 +1180,7 @@
 - 明确拒绝，不空会话fallback
 - 不把结果称官方认证
 
-场景：G032-C01, G032-C02, G032-C03, G032-C04, G032-L01, G032-N01, G032-N02。
+场景：G032-C01, G032-C02, G032-C03, G032-C04, G032-L01, G032-N01, G032-N02, G032-X03。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1849,13 +1852,14 @@
 - tests/unit/web-session-stream.test.ts
 - tests/unit/web-api.test.ts
 - tests/integration/native-models.test.ts
+- tests/integration/native-experience.test.ts
 
 验收：
 - 操作复用Catalog服务且管理身份正确
 - 明确拒绝或幂等，不绕过排空规则
 - 旧执行保留版本，新准入遵循新状态
 
-场景：G061-C01, G061-C02, G061-C03, G061-M01, G061-M02, G061-M03, G061-S01, G061-S02, G061-S03, G061-L01, G061-N01, G061-N02。
+场景：G061-C01, G061-C02, G061-C03, G061-M01, G061-M02, G061-M03, G061-S01, G061-S02, G061-S03, G061-L01, G061-N01, G061-N02, G061-X01。
 
 禁止范围：不修改其他任务所有权文件；契约冻结不表示应用实现或真实链路验收。
 

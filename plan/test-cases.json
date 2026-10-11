@@ -6462,6 +6462,54 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/real/homebrew-native.real.ts"
+    },
+    {
+      "id": "G061-X01",
+      "task": "G061",
+      "requirements": [
+        "R03"
+      ],
+      "invariants": [
+        "INV-15"
+      ],
+      "layer": "integration",
+      "scenario": "原生快切换不启动额外进程、目录缓存刷新/失效、命令与实际审批决定幂等",
+      "expected": "真实HTTP/SQLite/IPC保持；未知原生选项不派发、原生命令不注入文本包、取消目录读取后不派发、审批先提交再响应且重试不重发",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/native-experience.test.ts"
+    },
+    {
+      "id": "G008-X02",
+      "task": "G008",
+      "requirements": [
+        "R07"
+      ],
+      "invariants": [
+        "INV-06"
+      ],
+      "layer": "integration",
+      "scenario": "公共历史v4到v5及无效原生设置迁移回滚",
+      "expected": "历史/消息/事件不变，所有行和版本原子升级或全部回滚",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/session-store.test.ts"
+    },
+    {
+      "id": "G032-X03",
+      "task": "G032",
+      "requirements": [
+        "R11"
+      ],
+      "invariants": [
+        "INV-04"
+      ],
+      "layer": "protocol",
+      "scenario": "Pi原生输入、选择、编辑与确认交互",
+      "expected": "真实RPC实际字段回传，不继续静默取消，关闭释放待决交互",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/pi.test.ts"
     }
   ]
 }

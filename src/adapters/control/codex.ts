@@ -1,7 +1,7 @@
 import { isAbsolute } from "node:path";
 import { nativeConversationId, type BackendResult, type CleanupEvidence, type ControlEvent,
   type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl,
-  type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
+  type NativeOptions, type NativeOption, type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
 import { ControlError, errorFrom, JsonRpcProcess, object, string, text, type RpcRequest } from "../../infrastructure/control/json-rpc-process.js";
 
 interface ActiveTurn {
@@ -30,6 +30,9 @@ export class CodexControl implements HarnessControl {
   private initialized = false;
   private conversation: NativeConversationId | null = null;
   private opening = false;
+  private effort: string | undefined;
+  private interactivePermissions = false;
+  private readonly permissions = new Map<string, { options: readonly string[]; resolve: (value: unknown) => void }>();
   private active: ActiveTurn | null = null;
   private failure: Error | null = null;
   private readonly turnIds = new Set<string>();
@@ -67,7 +70,7 @@ export class CodexControl implements HarnessControl {
     const config = object(await this.rpc.request("config/read", { includeLayers: false, cwd: this.options.cwd }), "native configuration");
     const configured = object(config.config, "effective native configuration");
     const account = object(await this.rpc.request("account/read", { refreshToken: false }), "native account status");
-    const models: { id: string; name: string }[] = [], seen = new Set<string>();
+    const models: { id: string; name: string; options?: readonly NativeOption[] }[] = [], seen = new Set<string>();
     let cursor: string | undefined;
     for (let page = 0; page < 64; page++) {
       const response = object(await this.rpc.request("model/list", { limit: 100, includeHidden: false, ...(cursor === undefined ? {} : { cursor }) }), "native models");
@@ -75,7 +78,15 @@ export class CodexControl implements HarnessControl {
       for (const value of response.data) {
         const row = object(value, "native model"), id = string(row.model, "model", 1024), name = string(row.displayName, "model name", 1024);
         if (seen.has(id)) throw new ControlError("INVALID_PROTOCOL", "duplicate native model");
-        seen.add(id); models.push({ id, name });
+        let options: NativeOption[] | undefined;
+        if (row.supportedReasoningEfforts !== undefined) {
+          if (!Array.isArray(row.supportedReasoningEfforts) || row.supportedReasoningEfforts.length > 32) throw new ControlError("INVALID_PROTOCOL", "invalid reasoning effort catalog");
+          const values = row.supportedReasoningEfforts.map(value => { const level = object(value, "reasoning effort"); const valueId = string(level.reasoningEffort, "reasoning effort", 128); return { value: valueId, name: valueId }; });
+          const currentValue = id === configured.model && typeof configured.model_reasoning_effort === "string" ? configured.model_reasoning_effort : string(row.defaultReasoningEffort, "default reasoning effort", 128);
+          if (values.length && !values.some(row => row.value === currentValue)) throw new ControlError("INVALID_PROTOCOL", "configured reasoning effort unavailable");
+          if (values.length) options = [{ id: "reasoning_effort", name: "思考强度", category: "thought_level", currentValue, values }];
+        }
+        seen.add(id); models.push({ id, name, ...(options ? { options } : {}) });
         if (models.length > 4095) throw new ControlError("MODEL_LIMIT", "native model catalog exceeds its bounds");
       }
       if (response.nextCursor === null || response.nextCursor === undefined) break;
@@ -87,18 +98,22 @@ export class CodexControl implements HarnessControl {
     if (defaultModel !== null && !seen.has(defaultModel)) models.unshift({ id: defaultModel, name: defaultModel });
     return { models, defaultModel, canSelect: models.length > 0, authentication: account.requiresOpenaiAuth === false || account.account != null ? "ready" : account.requiresOpenaiAuth === true ? "missing" : "unknown" };
   }
-  async open(cwd: string, model?: string): Promise<NativeConversationId> {
+  async open(cwd: string, model?: string, native?: NativeOptions): Promise<NativeConversationId> {
     this.assertInitialized();
     if (!isAbsolute(cwd)) throw new ControlError("INVALID_INPUT", "conversation cwd must be absolute");
     if (this.conversation || this.opening) throw new ControlError("INVALID_STATE", "this connection already owns a thread");
     this.opening = true;
     try {
-      if (model !== undefined) {
-        const catalog = await this.models();
-        if (!catalog.models.some(row => row.id === model)) throw new ControlError("MODEL_UNAVAILABLE", "selected model is not in this Harness native catalog");
+      if (model !== undefined || Object.keys(native ?? {}).length) {
+        const catalog = await this.models(), selected = catalog.models.find(row => row.id === (model ?? catalog.defaultModel));
+        if (!selected) throw new ControlError("MODEL_UNAVAILABLE", "selected model is not in this Harness native catalog");
+        for (const [id, value] of Object.entries(native ?? {})) {
+          if (id !== "reasoning_effort" || !selected.options?.find(option => option.id === id)?.values.some(option => option.value === value)) throw new ControlError("NATIVE_OPTION_UNAVAILABLE", "reasoning effort unavailable for selected native model");
+          this.effort = value;
+        }
       }
       const response = object(await this.rpc.request("thread/start", {
-        cwd, sandbox: "read-only", approvalPolicy: "untrusted", ephemeral: true, ...(model === undefined ? {} : { model }),
+        cwd, ephemeral: true, ...(model === undefined ? {} : { model }),
       }), "thread/start result");
       const thread = object(response.thread, "Codex thread");
       const received = nativeConversationId(thread.id);
@@ -123,7 +138,7 @@ export class CodexControl implements HarnessControl {
       timer: setTimeout(() => this.rpc.abort(new ControlError("RUN_TIMEOUT", "Codex turn exceeded its deadline")), this.options.runTimeoutMs),
       started, signalStarted, rejectStarted, turnId: null, settled: false, stopping: false, stop: null, deltaItems: new Set() };
     this.active = active;
-    void this.rpc.request("turn/start", { threadId: id, input: [{ type: "text", text: prompt, text_elements: [] }] }).then(value => {
+    void this.rpc.request("turn/start", { threadId: id, input: [{ type: "text", text: prompt, text_elements: [] }], ...(this.effort === undefined ? {} : { effort: this.effort }) }).then(value => {
       try {
         const response = object(value, "turn/start result"), turn = object(response.turn, "Codex turn");
         this.bindTurn(active, string(turn.id, "Codex turn identity"));
@@ -139,12 +154,12 @@ export class CodexControl implements HarnessControl {
     return { result, requestStop: () => {
       if (active.stop) return active.stop;
       if (active.settled || this.active !== active) return Promise.reject(new ControlError("INVALID_STATE", "turn has already ended"));
-      active.stopping = true;
+      active.stopping = true; this.cancelPermissions();
       active.stop = this.stopTurn(active, id);
       return active.stop;
     } };
   }
-  close(): Promise<CleanupEvidence> { return this.rpc.close(); }
+  close(): Promise<CleanupEvidence> { this.cancelPermissions(); return this.rpc.close(); }
   private async stopTurn(active: ActiveTurn, id: NativeConversationId): Promise<StopRequestReceipt> {
     await active.started;
     if (active.settled || !active.turnId) throw new ControlError("INVALID_STATE", "turn ended before interruption was requested");
@@ -237,6 +252,9 @@ export class CodexControl implements HarnessControl {
     if (params.threadId !== undefined) this.scope(params);
     this.active?.event({ type: "diagnostic", message: `Unsupported Codex notification: ${method}` });
   }
+  enablePermissions(): void { this.interactivePermissions = true; }
+  async decidePermission(id: string, option: string): Promise<void> { const pending = this.permissions.get(id); if (!pending || !pending.options.includes(option)) throw new ControlError("PERMISSION_UNAVAILABLE", "native approval unavailable"); this.permissions.delete(id); pending.resolve({ decision: option }); }
+  private cancelPermissions(): void { for (const pending of this.permissions.values()) pending.resolve({ decision: "cancel" }); this.permissions.clear(); }
   private serverRequest(request: RpcRequest): unknown {
     if (!["item/commandExecution/requestApproval", "item/fileChange/requestApproval"].includes(request.method))
       throw new ControlError("METHOD_NOT_FOUND", "client capability is not implemented");
@@ -244,11 +262,20 @@ export class CodexControl implements HarnessControl {
     const active = this.scope(params, true);
     if (!active) throw new ControlError("INVALID_STATE", "approval arrived without an active turn");
     string(params.itemId, "approval item identity");
+    if (this.interactivePermissions && !active.stopping) {
+      const available = params.availableDecisions === undefined ? ["accept", "decline", "cancel"] : params.availableDecisions;
+      if (!Array.isArray(available) || !available.length || available.length > 32) throw new ControlError("INVALID_PROTOCOL", "invalid native approval decisions");
+      const choices = available.filter((value): value is string => typeof value === "string" && ["accept", "acceptForSession", "decline", "cancel"].includes(value));
+      if (!choices.length || new Set(choices).size !== choices.length) throw new ControlError("INVALID_PROTOCOL", "no supported native approval decisions");
+      const id = String(request.id);
+      return new Promise<unknown>(resolve => { this.permissions.set(id, { options: choices, resolve }); active.event({ type: "permission_requested", id, title: typeof params.command === "string" ? params.command.slice(0,4096) : request.method.includes("fileChange") ? "Codex 请求修改文件" : "Codex 请求执行命令", options: choices.map(id => ({ id, name: ({ accept: "允许一次", acceptForSession: "本次会话允许", decline: "拒绝", cancel: "取消" } as Record<string,string>)[id]! })) }); });
+    }
     const decision = active.stopping ? "cancel" : "decline";
     active.event({ type: "permission", id: String(request.id), decision: active.stopping ? "cancelled" : "denied" });
     return { decision };
   }
   private settleTurn(active: ActiveTurn): void {
+    this.cancelPermissions();
     clearTimeout(active.timer); active.settled = true; active.signalStarted();
     if (this.active === active) this.active = null;
   }
