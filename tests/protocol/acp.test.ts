@@ -332,8 +332,8 @@ function attachment(directory: string, name: string, mediaType: string, kind: "i
   const path = join(directory, name); writeFileSync(path, data);
   return { id: contentId("content-" + name.replace(/[^a-z0-9]/giu, "")), name, mediaType, kind, bytes: data.length, sha256: "0".repeat(64), path };
 }
-function hermes(trace: string): ConstructorParameters<typeof HermesControl>[0] {
-  return { protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "hermes"], env: { FIXTURE_TRACE: trace } };
+function hermes(trace: string, version?: string): ConstructorParameters<typeof HermesControl>[0] {
+  return { protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "hermes"], env: { FIXTURE_TRACE: trace, ...(version === undefined ? {} : { FIXTURE_AGENT_VERSION: version }) } };
 }
 test("Hermes restores by session/load, keeps history replayed after a slow load out of the reply, and refuses an unknown identity", async t => {
   const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
@@ -772,4 +772,33 @@ test("an ACP prompt that outlives the Turn's deadline fails with RUN_TIMEOUT whi
     const requested = events.find(event => event.type === "permission_requested");
     assert.ok(requested?.type === "permission_requested" && requested.expiresBy === "turn" && (requested.expiresInMs ?? 0) <= 600);
   } finally { await driver.close(); }
+});
+
+test("Hermes's completed calls that say they failed are failed, and a refusal it never asked about is explained once", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
+  const notices = (events: readonly ControlEvent[]) => events.filter(event => event.type === "notice").map(event => event.type === "notice" ? event.title : "");
+  const finalStatus = (events: readonly ControlEvent[], id: string) => events.filter(event => event.type === "tool" && event.id === id).map(event => event.type === "tool" ? event.status : "").at(-1);
+  const reviewed = new HermesControl(hermes(trace, "0.12.0"), { ...options, runTimeoutMs: 5000 });
+  try {
+    await reviewed.initialize(); reviewed.enablePermissions(); const id = await reviewed.open(process.cwd()), events: ControlEvent[] = [];
+    assert.equal((await (await reviewed.startText(id, "blocked command", event => events.push(event))).result).status, "completed");
+    assert.equal(finalStatus(events, "terminal-blocked"), "failed"); assert.equal(finalStatus(events, "terminal-blocked-2"), "failed");
+    assert.deepEqual(notices(events), ["Hermes 拒绝了这条命令，但没有请求审批"], "once per prompt");
+    const notice = events.find(event => event.type === "notice");
+    assert.ok(notice?.type === "notice" && notice.detail?.includes("allow_permanent") === true && notice.detail.includes("回复内容可能与实际结果不符"));
+    // After a request the user answered, a refusal is that answer: nothing to explain.
+    const asked: ControlEvent[] = [];
+    const run = await reviewed.startText(id, "ask then blocked", event => asked.push(event));
+    for (let i = 0; i < 50 && !asked.some(event => event.type === "permission_requested"); i++) await new Promise(resolve => setTimeout(resolve, 20));
+    const request = asked.find(event => event.type === "permission_requested"); assert.ok(request?.type === "permission_requested");
+    await reviewed.decidePermission(request.id, "deny"); assert.equal((await run.result).status, "completed");
+    assert.equal(finalStatus(asked, "terminal-blocked"), "failed"); assert.deepEqual(notices(asked), []);
+  } finally { await reviewed.close(); }
+  // Another Hermes version still has its failures marked, without the 0.12 explanation.
+  const other = new HermesControl(hermes(trace), { ...options, runTimeoutMs: 5000 });
+  try {
+    await other.initialize(); const id = await other.open(process.cwd()), events: ControlEvent[] = [];
+    await (await other.startText(id, "blocked command", event => events.push(event))).result;
+    assert.equal(finalStatus(events, "terminal-blocked"), "failed"); assert.deepEqual(notices(events), []);
+  } finally { await other.close(); }
 });

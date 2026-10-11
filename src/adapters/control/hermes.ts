@@ -1,4 +1,4 @@
-import type { BackendResult, ControlEvent, ControlRun, NativeConversationId, NativeModelCatalog } from "../../contracts/control.js";
+import type { BackendResult, ControlEvent, ControlRun, NativeConversationId, NativeModelCatalog, NativeToolDetail } from "../../contracts/control.js";
 import { classifyRemoteFailure } from "../../infrastructure/control/json-rpc-process.js";
 import type { ControlAttachment } from "../../contracts/content.js";
 import { AcpControl } from "./acp.js";
@@ -11,6 +11,14 @@ const HERMES_TRAILING_QUIET_MS = 250;
 const TERMINAL_FAILURE = /API call failed after \d+ retries|Non-retryable|BadRequestError|AuthenticationError|PermissionDeniedError|NotFoundError|RateLimitError|Agent error in session/u;
 /** server.py logs this when the agent loop raised; the reply is then only `Error: …`. */
 const AGENT_ERROR = /Agent error in session/u;
+/**
+ * acp_adapter/tools.py: `build_tool_complete` reports every finished call as "completed"; a failed one is only told by its
+ * text, "<tool> failed: <error>" (`_format_generic_structured_result` and the other formatters), and a refused command's
+ * error is "BLOCKED: …" (tools/approval.py).
+ */
+const TOOL_FAILURE = /^(?:\S[^\n]{0,64} failed: |BLOCKED:)/u;
+/** A command Hermes refused: "BLOCKED: User denied…" (tools/approval.py) or "Command denied: …" (tools/terminal_tool.py). */
+const REFUSED = /BLOCKED: User denied|Command denied: /u;
 /** Hermes answers its own `/model <name>` locally with this text (server.py `_cmd_model`); no ACP update announces it. */
 const MODEL_SWITCHED = /^Model switched to: (\S+)[ \t]*\r?\nProvider: (\S+)[ \t]*$/mu;
 
@@ -38,6 +46,16 @@ export class HermesControl extends AcpControl {
   protected override get fileBlocks(): boolean { return false; }
   // The fixed 60-second wait is the reviewed 0.12 bridge; later Hermes makes it configurable, so other versions are not cut short.
   protected override get approvalDeadlineMs(): number | null { return /^0\.12\./u.test(this.agentVersion ?? "") ? HERMES_APPROVAL_WAIT_MS : null; }
+  // A call whose text says it failed did fail, whatever status Hermes reported for it.
+  protected override toolStatus(status: string, detail: NativeToolDetail | undefined): string { return status === "completed" && TOOL_FAILURE.test(detail?.output ?? "") ? "failed" : status; }
+  // In the reviewed 0.12 bridge approval.py calls the approval callback with allow_permanent, which permissions.py's callback
+  // does not take; the TypeError is answered with a denial, so no approval ever reaches the client. A refusal in a prompt that
+  // asked nothing is that defect, and the reply may claim otherwise.
+  protected override toolNotice(detail: NativeToolDetail | undefined, asked: boolean): { readonly title: string; readonly detail: string } | null {
+    if (asked || !/^0\.12\./u.test(this.agentVersion ?? "") || !REFUSED.test(detail?.output ?? "")) return null;
+    return { title: "Hermes 拒绝了这条命令，但没有请求审批",
+      detail: "Hermes 拒绝了这条命令，但没有向 HarnessHub 请求审批（Hermes 0.12.0 的 ACP 审批桥缺陷：approval.py 以 allow_permanent 调用回调，permissions.py 不接受）。HarnessHub 没有修改 Hermes；回复内容可能与实际结果不符。上游 v0.21.6 的这个回调已接受该参数。" };
+  }
   // Hermes can send its last reply chunks after the prompt response (Multica waits 250 ms for the same reason).
   protected override get trailingQuietMs(): number { return HERMES_TRAILING_QUIET_MS; }
   // tools/approval.py: "always" adds the dangerous-command pattern to command_allowlist in Hermes's own config.yaml,

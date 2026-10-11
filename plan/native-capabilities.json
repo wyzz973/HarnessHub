@@ -2263,8 +2263,10 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-hermes-activity.json",
+            ".tmp/cc-attention-2026-10-12.json",
             "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
-          ]
+          ],
+          "note": "Hermes 0.12 的 build_tool_complete 对每个结束的调用都报 completed，失败只写在文本里（“<工具> failed: …”或“BLOCKED: …”）；Hub 据此标为失败（2026-10-12，审批代理决定）。真实回合中 rm -r 被拒绝时曾显示为“完成”，已修正，修正后的显示只有协议测试"
         },
         "tool-detail": {
           "native": "yes",

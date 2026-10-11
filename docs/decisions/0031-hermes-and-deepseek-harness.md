@@ -39,6 +39,11 @@
 - dsh：沿用用户自己的权限预设，Hub 不改 `~/.dsh`；预设为 danger-full-access 时审批一行标为受阻。
 - 花费：每个 Harness 每轮完整验收不超过 ¥10，本阶段两者合计不超过 ¥50；单回合超过 150k token 或 5 分钟即停止并报告；不为了凑通过而重跑。
 
+## 工具失败与没有发出的审批（2026-10-12，审批代理决定）
+
+- Hermes 0.12 的 `build_tool_complete`（`acp_adapter/tools.py`）对每个结束的调用都报告 `completed`，失败只写在文本里：各格式化函数输出“<工具> failed: <错误>”，被拒绝的命令的错误是“BLOCKED: …”（`tools/approval.py`）。HermesControl 把文本符合这两种形式的调用标为失败，只对 Hermes 生效。
+- 本机 0.12.0 中 `approval.py` 以 `allow_permanent` 调用审批回调，而 `permissions.py` 的回调不接受这个参数，异常后一律按拒绝处理，审批请求从不发出（上游 v0.21.6 的回调已接受它）。一次回合中没有收到任何 `session/request_permission`、却出现了 Hermes 的拒绝文本（“BLOCKED: User denied”或“Command denied: ”）时，只对 0.12.x 加一条提示：Hermes 拒绝了这条命令，但没有向 HarnessHub 请求审批，并说明这个缺陷；HarnessHub 没有修改 Hermes，回复内容可能与实际结果不符。每个回合最多一次，对话中相同的提示只显示一次。
+
 ## 影响
 
 - 新增 `src/adapters/control/hermes.ts`；`acp.ts` 增加三个由子类覆盖的扩展点（`restoreByLoad`、`approvalDeadlineMs`、`fileBlocks`）和 `adoptModel`。

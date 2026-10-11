@@ -23,6 +23,11 @@ if (process.env.FIXTURE_LINGER) {
   lingering.unref();
   if (process.env.FIXTURE_CHILD_PID) writeFileSync(process.env.FIXTURE_CHILD_PID, String(lingering.pid));
 }
+/** A Hermes terminal call that its approval gate refused, reported as Hermes 0.12 reports it: completed, with failure text. */
+function hermesBlocked(sessionId, id = "terminal-blocked") {
+  notification("session/update", { sessionId, update: { sessionUpdate: "tool_call", toolCallId: id, title: "terminal: rm -r attention-check", kind: "execute", status: "pending", content: [{ type: "content", content: { type: "text", text: "$ rm -r attention-check" } }] } });
+  notification("session/update", { sessionId, update: { sessionUpdate: "tool_call_update", toolCallId: id, kind: "execute", status: "completed", content: [{ type: "content", content: { type: "text", text: "terminal failed: BLOCKED: User denied. Do NOT retry." } }] } });
+}
 const lines = createInterface({ input: process.stdin });
 let promptId = null, turn = 0, initialized = false, pendingPermission = false;
 let resumedThread = false;
@@ -400,6 +405,16 @@ lines.on("line", line => {
       if (JSON.stringify(message.params.prompt).includes("late tail")) { acpOutput(message.params.sessionId); finish(); setTimeout(() => notification("session/update", { sessionId: message.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: " tail" } } }), 100); return; }
       // Hermes handles its own /model command locally and only answers in text.
       if (JSON.stringify(message.params.prompt).includes("/model deepseek-v4-flash")) { notification("session/update", { sessionId: message.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Model switched to: deepseek-v4-flash\nProvider: deepseek" } } }); finish(); return; }
+      // Hermes 0.12 reports every finished call as completed; a refused command only says so in its text (acp_adapter/tools.py).
+      if (JSON.stringify(message.params.prompt).includes("blocked command")) {
+        hermesBlocked(message.params.sessionId); hermesBlocked(message.params.sessionId, "terminal-blocked-2");
+        notification("session/update", { sessionId: message.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "已删除" } } }); finish(); return;
+      }
+      if (JSON.stringify(message.params.prompt).includes("ask then blocked")) {
+        emit({ id: "hermes-permission-blocked", method: "session/request_permission", params: { sessionId: message.params.sessionId, toolCall: { toolCallId: "perm-check", title: "rm -r build", kind: "execute" },
+          options: [{ optionId: "allow_once", kind: "allow_once", name: "Allow once" }, { optionId: "deny", kind: "reject_once", name: "Deny" }] } });
+        return;
+      }
       if (JSON.stringify(message.params.prompt).includes("approve")) {
         emit({ id: "hermes-permission", method: "session/request_permission", params: { sessionId: message.params.sessionId, toolCall: { toolCallId: "perm-check", title: "rm -rf build", kind: "execute" },
           options: [{ optionId: "allow_once", kind: "allow_once", name: "Allow once" }, { optionId: "allow_always", kind: "allow_always", name: "Allow always" }, { optionId: "deny", kind: "reject_once", name: "Deny" }] } });
@@ -469,6 +484,7 @@ lines.on("line", line => {
     setTimeout(() => finish(true), 50); return;
   }
   if (message.id === "hermes-permission") { notification("session/update", { sessionId: "session-fixture", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "permission " + JSON.stringify(message.result) } } }); finish(); return; }
+  if (message.id === "hermes-permission-blocked") { hermesBlocked("session-fixture"); finish(); return; }
   if (message.id === "elicit-1") { notification("session/update", { sessionId: "session-fixture", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "form " + JSON.stringify(message.result) } } }); finish(); return; }
   if (message.id === "late-permission" || message.id === "child-approval" || message.id === "unrelated-approval") return;
   if (message.id === "permission-1" || message.id === "unsupported" || message.id === "native-question") {

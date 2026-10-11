@@ -20,6 +20,10 @@ interface ActivePrompt {
   stop: Promise<StopRequestReceipt> | null;
   /** When this prompt's request times out (the Turn's deadline, ADR-035). */
   readonly deadline: number;
+  /** Whether the agent asked the user anything during this prompt (session/request_permission). */
+  asked: boolean;
+  /** Whether this prompt already carries the driver's notice about a tool result. */
+  noticed: boolean;
 }
 const metadataUpdates = new Set(["plan", "available_commands_update", "current_mode_update", "config_option_update", "session_info_update", "usage_update"]);
 /** Long agentic turns flatten subagent tools into the root session; budgets bound memory, not normal work. */
@@ -369,6 +373,10 @@ export class AcpControl implements HarnessControl {
   protected get restoreByLoad(): boolean { return false; }
   /** How long the agent itself waits for an approval before refusing it, or null when it waits for the user. */
   protected get approvalDeadlineMs(): number | null { return null; }
+  /** The status a tool update reports; an agent that reports failures as completed calls with failure text says so here. */
+  protected toolStatus(status: string, _detail: NativeToolDetail | undefined): string { return status; }
+  /** A notice about a tool result, at most once per prompt; `asked` says whether the agent asked the user anything in it. */
+  protected toolNotice(_detail: NativeToolDetail | undefined, _asked: boolean): { readonly title: string; readonly detail: string } | null { return null; }
   /** Whether the agent hands ACP file blocks to its model; when it drops them, files travel as text pointers it reads with its own tools. */
   protected get fileBlocks(): boolean { return true; }
   /** A position in the agent's stderr and what it logged since, for an agent that reports some failures only there. */
@@ -465,7 +473,7 @@ export class AcpControl implements HarnessControl {
     const blocks: Record<string, unknown>[] = [{ type: "text", text: prompt + fileMentions(pointers) }];
     for (const file of attachments) if (!pointers.includes(file)) blocks.push(await this.promptBlock(file));
     if (this.active !== null) throw new ControlError("INVALID_STATE", "a prompt is already active");
-    const active: ActivePrompt = { event: onEvent, lastUpdate: 0, tools: new Map(), compaction: new Map(), stopping: false, settled: false, stop: null, deadline: Date.now() + this.options.runTimeoutMs };
+    const active: ActivePrompt = { event: onEvent, lastUpdate: 0, tools: new Map(), compaction: new Map(), stopping: false, settled: false, stop: null, deadline: Date.now() + this.options.runTimeoutMs, asked: false, noticed: false };
     this.active = active;
     const result = this.rpc.request("session/prompt", { sessionId: id, prompt: blocks }, this.options.runTimeoutMs)
       .then(value => {
@@ -596,10 +604,13 @@ export class AcpControl implements HarnessControl {
       const prior = active.tools.get(toolId);
       if (!prior && active.tools.size >= MAX_PROMPT_TOOLS) throw new ControlError("TOOL_LIMIT", "tool identity budget exhausted");
       const title = update.title == null ? prior?.title ?? "工具调用" : label(update.title, prior?.title ?? "工具调用");
-      const status = update.status == null ? (prior?.status ?? "pending") : string(update.status, "tool status", 64);
-      active.tools.set(toolId, { title, status });
       const detail = toolDetail(update);
-      active.event({ type: "tool", id: toolId, title, status, ...(detail ? { detail } : {}) }); return;
+      const status = this.toolStatus(update.status == null ? (prior?.status ?? "pending") : string(update.status, "tool status", 64), detail);
+      active.tools.set(toolId, { title, status });
+      active.event({ type: "tool", id: toolId, title, status, ...(detail ? { detail } : {}) });
+      const notice = active.noticed ? null : this.toolNotice(detail, active.asked);
+      if (notice !== null) { active.noticed = true; active.event({ type: "notice", severity: "warning", title: notice.title, detail: notice.detail }); }
+      return;
     }
     if (kind === "notice") {
       const severity = update.severity === "warning" || update.severity === "error" ? update.severity : "info";
@@ -677,6 +688,7 @@ export class AcpControl implements HarnessControl {
     }
     const params = object(request.params, "ACP permission params"); this.scope(params);
     const active = this.active;
+    if (active && !active.settled) active.asked = true;
     // No public Run owns an autonomous follow-up, so nobody can approve it: cancel instead of tearing down the connection.
     if (!active || active.settled) { this.unattributed++; return { outcome: { outcome: "cancelled" } }; }
     const tool = object(params.toolCall, "permission tool call");
