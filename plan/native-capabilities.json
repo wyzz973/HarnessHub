@@ -549,9 +549,10 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-native-activity-claude.json",
-            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md",
+            ".tmp/cc-parallel-budgets-2026-10-12.json"
           ],
-          "note": "Bash、Read、Edit、ToolSearch 工具真实回合"
+          "note": "Bash、Read、Edit、ToolSearch 工具真实回合；已知版本偏差：claude-agent-acp 0.89.1 在前台命令运行期间一直把工具报告为 pending（2026-10-12 执行预算检查时 ping 正在运行），回合中途结束时 Hub 显示“未完成（原程序未报告结束）”，不推断是否执行过"
         },
         "tool-detail": {
           "native": "yes",
@@ -599,9 +600,10 @@
             ".tmp/cc-native-activity-claude-approval.json",
             ".tmp/cc-native-activity-claude.json",
             ".tmp/cc-attention-2026-10-12.json",
-            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md",
+            ".tmp/cc-parallel-budgets-2026-10-12.json"
           ],
-          "note": "手动模式下编辑请求审批并一次允许；审批卡显示将要修改的差异；allow_always 会由原程序写入项目设置，验收只选一次允许；审批带回合期限（Claude 没有自己的期限），另一页面的侧栏显示“等待审批 · 回合期限 回合剩余 5 分”，点回对话批准后命令执行、标记消失（ADR-035，真实通过）"
+          "note": "手动模式下编辑请求审批并一次允许；审批卡显示将要修改的差异；allow_always 会由原程序写入项目设置，验收只选一次允许；审批的期限为 HarnessHub 的等待预算（默认 30 分钟；Claude 没有自己的期限），侧栏与审批卡显示“等待期限 · 剩余 N 分”；等待 349.6 秒后批准，命令执行、回合完成；等待预算到期时以 WAIT_EXPIRED 取消，原程序没有收到批准（ADR-035、ADR-036，真实通过）"
         },
         "questions": {
           "native": "yes",
