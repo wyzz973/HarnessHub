@@ -45,14 +45,14 @@ export function liveItems(items: readonly AttentionItem[], now: number): readonl
 export function secondsLeft(at: number, now: number): number { return Math.max(0, Math.ceil((at - now) / 1000)); }
 /**
  * What is left of a request's wait, in words (ADR-035): the program's own deadline counts down in seconds ("原程序期限");
- * a Turn's deadline in minutes, in seconds for its last minute ("回合期限"). Without a deadline: waiting for the user.
+ * HarnessHub's wait budget (ADR-036) in minutes, in seconds for its last minute ("等待期限"). Without a deadline: waiting.
  */
 export function remaining(item: { readonly expiresAt?: number; readonly expiresBy?: "native" | "turn" }, now: number): { readonly text: string; readonly source: string | null; readonly hint: string } {
   if (item.expiresAt === undefined) return { text: "等待你的决定", source: null, hint: "原程序会一直等待你的决定。" };
   const seconds = secondsLeft(item.expiresAt, now);
   if (item.expiresBy === "native") return { text: seconds < 60 ? `${seconds} 秒后自动拒绝` : `${Math.ceil(seconds / 60)} 分后自动拒绝`, source: "原程序期限",
     hint: "原程序的等待期限，到时它会按自己的规则拒绝。" };
-  return { text: seconds <= 60 ? `回合剩余 ${seconds} 秒` : `回合剩余 ${Math.ceil(seconds / 60)} 分`, source: "回合期限", hint: "HarnessHub 的回合期限，到时本回合超时结束。" };
+  return { text: seconds <= 60 ? `剩余 ${seconds} 秒` : `剩余 ${Math.ceil(seconds / 60)} 分`, source: "等待期限", hint: "HarnessHub 为等待你的决定设的期限，到时本回合取消，原程序不会收到决定。" };
 }
 /** What a waiting item asks for. */
 export function attentionKind(item: AttentionItem): string { return item.kind === "question" ? "等待回答提问" : "等待审批"; }

@@ -712,7 +712,8 @@
         "src/web/attention-stream.ts",
         "web/src/attention.ts",
         "tests/integration/attention.test.ts",
-        "src/web/run-diagnostics.ts"
+        "src/web/run-diagnostics.ts",
+        "tests/integration/parallel-work.test.ts"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/complete-native-capabilities-2026-10-11.md"

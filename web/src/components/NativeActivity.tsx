@@ -45,11 +45,13 @@ function ToolRow({ tool, active, loadDetail, children }: { tool: Tool; active: b
       loadDetail!(tool.detail).then(setDetail, error => setProblem(errorMessage(error))).finally(() => setLoading(false));
     }
   };
-  const status = STATUS[tool.status] ?? tool.status, failed = ["failed", "declined"].includes(tool.status);
+  // Once the Turn has ended, a tool that never reported an end did not run, or did not finish, in this Turn.
+  const unfinished = !active && TOOL_PENDING.has(tool.status);
+  const status = unfinished ? (tool.status === "pending" ? "未执行" : "未完成") : STATUS[tool.status] ?? tool.status, failed = ["failed", "declined"].includes(tool.status);
   // Tools a sub-agent ran under this call.
   const nested = children.get(tool.id) ?? [];
   return <li className={`native-tool ${failed ? "is-failed" : ""} ${open ? "is-open" : ""}`}>
-    <button type="button" className="native-tool-head" onClick={toggle} aria-expanded={expandable ? open : undefined} disabled={!expandable} title={expandable ? "查看工具输入与输出" : active && TOOL_PENDING.has(tool.status) ? "工具执行中" : "工具没有可显示的详情"}>
+    <button type="button" className="native-tool-head" onClick={toggle} aria-expanded={expandable ? open : undefined} disabled={!expandable} title={expandable ? "查看工具输入与输出" : active && TOOL_PENDING.has(tool.status) ? "工具执行中" : unfinished ? "回合结束时这个工具没有完成" : "工具没有可显示的详情"}>
       {expandable ? <ChevronRight size={12} className="native-tool-chevron" aria-hidden="true"/> : <span className="native-tool-chevron-space"/>}
       {toolIcon(nested.length ? "subagent" : tool.kind)}<span className="native-tool-title">{tool.title}</span>
       {nested.length ? <small className="native-tool-agent">子 Agent · {nested.length} 个工具</small> : null}

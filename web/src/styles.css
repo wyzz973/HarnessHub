@@ -1564,6 +1564,25 @@ a {
   font-size:12px
 }
 
+/* A Turn waiting for another conversation's work in their shared workspace (ADR-036), aligned under its status text. */
+.queued-turn {
+  margin:2px 0 0 16px;
+  color:#8b8072;
+  font-size:12px;
+  line-height:1.6
+}
+
+.queued-turn>div {
+  display:flex;
+  flex-wrap:wrap;
+  gap:14px
+}
+
+.run-error .text-button {
+  padding:0 0 0 6px;
+  font-size:12px
+}
+
 .activity-dot {
   width:7px;
   height:7px;

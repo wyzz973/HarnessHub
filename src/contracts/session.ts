@@ -291,6 +291,28 @@ export interface SessionBindingFactory {
   /** Releases the workspace lease an ended owner left for `session`, after its kept processes were confirmed ended (ADR-030). */
   releaseAbandonedLease?(configuration: SessionConfiguration, session: SessionId): boolean;
 }
+/** A Turn's budgets unless configured, and their bounds (ADR-036). */
+export const DEFAULT_EXECUTION_BUDGET_MS = 300_000, MAX_EXECUTION_BUDGET_MS = 60 * 60_000, MIN_EXECUTION_BUDGET_MS = 30_000;
+export const DEFAULT_WAIT_BUDGET_MS = 30 * 60_000, MAX_WAIT_BUDGET_MS = 2 * 60 * 60_000, MIN_WAIT_BUDGET_MS = 60_000;
+/** How long a stopped Turn's program may take to settle before its process is ended. */
+export const STOP_GRACE_MS = 15_000;
+/** The drivers' own per-Turn timeout: only a backstop against a hung protocol, beyond both budgets at their largest. */
+export const NATIVE_TURN_HARD_CAP_MS = MAX_EXECUTION_BUDGET_MS + MAX_WAIT_BUDGET_MS + 60 * 60_000;
+/**
+ * The configured budgets (command-line values in seconds and minutes), with their defaults and bounds (ADR-036). A value
+ * that is not a whole number within its bounds is refused, never adjusted.
+ */
+export function resolveTurnBudgets(input: { readonly executionSeconds?: string | undefined; readonly waitMinutes?: string | undefined } = {}): { readonly executionBudgetMs: number; readonly waitBudgetMs: number } {
+  const whole = (value: string | undefined, unit: number, fallback: number, minimum: number, maximum: number, label: string): number => {
+    if (value === undefined) return fallback;
+    if (!/^[1-9][0-9]{0,5}$/u.test(value)) throw new SessionError("INVALID_INPUT", label + " must be a whole number");
+    const ms = Number(value) * unit;
+    if (ms < minimum || ms > maximum) throw new SessionError("INVALID_INPUT", label + " is out of bounds");
+    return ms;
+  };
+  return { executionBudgetMs: whole(input.executionSeconds, 1000, DEFAULT_EXECUTION_BUDGET_MS, MIN_EXECUTION_BUDGET_MS, MAX_EXECUTION_BUDGET_MS, "execution budget (seconds)"),
+    waitBudgetMs: whole(input.waitMinutes, 60_000, DEFAULT_WAIT_BUDGET_MS, MIN_WAIT_BUDGET_MS, MAX_WAIT_BUDGET_MS, "wait budget (minutes)") };
+}
 export interface SessionRuntimeOptions {
   readonly id: () => string;
   readonly now: () => Date;
@@ -300,6 +322,14 @@ export interface SessionRuntimeOptions {
   readonly content?: ContentPort;
   /** How long a kept native process may stay without a Turn before it is closed (ADR-030); 30 minutes unless shortened. */
   readonly keptIdleMs?: number;
+  /** How many conversations may run a Turn, switch or native fork at once (ADR-036); 4 unless set. Each conversation runs one at a time. */
+  readonly maxParallel?: number;
+  /** A Turn's execution budget (ADR-036): it runs while the Turn works and pauses while it waits for the user. */
+  readonly executionBudgetMs?: number;
+  /** A Turn's wait budget (ADR-036): time spent waiting for the user's decisions and for a workspace another conversation holds. */
+  readonly waitBudgetMs?: number;
+  /** How long a stopped Turn's program may take to settle before its process is ended. */
+  readonly stopGraceMs?: number;
   /** Recognizes kept process groups across owner restarts; without it a previous owner's kept process cannot be ended. */
   readonly processes?: ProcessGroupPort;
 }
@@ -316,7 +346,10 @@ export interface PermissionRequest {
   readonly decided: boolean;
   /** When the Runtime received the request (milliseconds since the epoch, its clock). */
   readonly requestedAt: number;
-  /** When the request closes unless decided: the earliest deadline the driver knows, and whose it is (ADR-035). */
+  /**
+   * When the request closes unless decided, and whose deadline it is (ADR-035): the program's own ("native"), or the
+   * Turn's wait budget ("turn", ADR-036), after which the Turn is cancelled without an approval reaching the program.
+   */
   readonly expiresAt?: number;
   readonly expiresBy?: "native" | "turn";
   /** A question the program asks rather than an approval of its own action; approval when absent. */

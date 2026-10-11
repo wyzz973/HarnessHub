@@ -14,7 +14,8 @@ import { prepareConfiguration } from "../../src/infrastructure/session/binding-f
 
 const peer = fileURLToPath(new URL("../../../tests/fixtures/web-harness-peer.mjs", import.meta.url));
 const artifact = resolve("artifacts/chat-v3");
-async function launchFixture(providerManagement = true, nativeAcp: { readonly name: string; readonly scenario: string } | null = null, nativeCodex: { readonly name: string; readonly scenario: string } | null = null, hermes = false) {
+async function launchFixture(providerManagement = true, nativeAcp: { readonly name: string; readonly scenario: string } | null = null, nativeCodex: { readonly name: string; readonly scenario: string } | null = null, hermes = false,
+  budgets?: { readonly executionBudgetMs: number; readonly waitBudgetMs: number }) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "harness-web-browser-")));
   const workspace = join(root, "workspace"), shim = join(root, "codex-fixture.mjs"); await mkdir(workspace);
   await writeFile(shim, "#!" + process.execPath + "\nimport " + JSON.stringify(pathToFileURL(peer).href) + ";\n", { mode: 0o700 });
@@ -46,7 +47,7 @@ async function launchFixture(providerManagement = true, nativeAcp: { readonly na
     return { command: { executable: process.execPath, args: [join(ctx.stage, "node_modules", spec.recipe.packageName, "entry.mjs"), ...spec.recipe.args], env: {} }, observedVersion: spec.version, artifactSha256: null };
   } };
   const gateway = await startWebServer({ root: join(root, "data"), configuration: await prepareConfiguration({ workspace, manifestPath: manifest, pathOnly: true }), port: 0, providerManagement,
-    application: (data, publish) => application(data, publish, { management: { installationMode: "private-fixture", metadata, installer }, nativeEnvironment: { home: root, values: { HOME: root, PATH: dirname(process.execPath) + ":/usr/bin:/bin" } } }) });
+    application: (data, publish) => application(data, publish, { management: { installationMode: "private-fixture", metadata, installer }, nativeEnvironment: { home: root, values: { HOME: root, PATH: dirname(process.execPath) + ":/usr/bin:/bin" } }, ...(budgets === undefined ? {} : { budgets }) }) });
   return { root, gateway, setVersion: (value: string) => { fixtureVersion = value; }, baseUrl: `http://127.0.0.1:${address.port}/v1`, close: async () => { await gateway.close(); modelServer.closeAllConnections(); await new Promise<void>(done => modelServer.close(() => done())); await rm(root, { recursive: true, force: true }); } };
 }
 
@@ -985,5 +986,69 @@ test("a Turn's diagnostics are copied from its details without conversation cont
   const full = await page.evaluate(() => navigator.clipboard.readText());
   assert.match(full.split("\n")[0]!, /^HarnessHub 诊断 · 含对话内容/u); assert.match(full, /\n提示词：\nNATIVE_ACTIVITY\n/u);
   await page.screenshot({ path: join(artifact, "run-diagnostics.png"), animations: "disabled" });
+  assert.deepEqual(errors, []);
+});
+
+test("a Turn waiting for another conversation's work in their workspace names it and why, opens it, can be cancelled, and starts once it is free", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false, { name: "Shared Agent", scenario: "hermes" }); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
+  const send = async (text: string) => { await composer.fill(text); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter"); };
+  // The first conversation waits for an approval, holding the workspace; its deadline is HarnessHub's wait budget.
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
+  await send("approve this");
+  const card = page.getByRole("region", { name: "工具审批", exact: true });
+  await expect(card).toContainText("rm -rf build", { timeout: 15000 });
+  await expect(card.locator(".permission-deadline")).toHaveText("等待期限 · 剩余 30 分");
+  await expect(page.locator(".session-item.has-attention .attention-line")).toHaveText("等待审批 · 等待期限 剩余 30 分");
+  // A second conversation in the same workspace queues behind it, and says which conversation and why, without paths.
+  await page.getByRole("button", { name: "新对话", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
+  await send("queued work");
+  const status = log.locator(".response-status");
+  await expect(status).toHaveText("排队中：等待对话「approve this」释放工作区（它正在等待你的审批）", { timeout: 15000 });
+  await expect(log.locator(".queued-turn small")).toHaveText("最多再等 30 分钟，到时这条消息不会发出。");
+  assert.equal((await log.textContent())?.includes(fixture.root), false, "no private path reaches the page");
+  await page.screenshot({ path: join(artifact, "queued-turn.png"), animations: "disabled" });
+  // Cancelling the queued Turn stops only it; a new message queues again.
+  await log.getByRole("button", { name: "取消排队", exact: true }).click();
+  await expect(log.locator("[data-run-status=cancelled]")).toHaveCount(1);
+  await send("queued again");
+  await expect(log.locator(".response-status").last()).toHaveText(/^排队中：等待对话「approve this」/u, { timeout: 15000 });
+  // The holder opens from the queued Turn; once its approval is decided and its Turn ends, the queued Turn starts by itself.
+  await log.getByRole("button", { name: "打开那个对话", exact: true }).click();
+  await expect(card).toBeVisible(); await card.getByRole("button", { name: "Allow once", exact: true }).click();
+  await page.locator(".session-item", { hasText: "queued work" }).click();
+  await expect(log.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
+  await expect(log).toContainText("你好 fixture");
+  assert.deepEqual(errors, []);
+});
+
+test("a Turn that waits for its workspace past its wait budget is not sent, and names the conversation that held it", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false, { name: "Busy Agent", scenario: "stop" }, null, false, { executionBudgetMs: 60_000, waitBudgetMs: 3000 }); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
+  const send = async (text: string) => { await composer.fill(text); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter"); };
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Busy Agent", exact: true }).click();
+  await send("long work"); await expect(log).toContainText("你好 fixture", { timeout: 15000 });
+  await page.getByRole("button", { name: "新对话", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Busy Agent", exact: true }).click();
+  await send("waits too long");
+  await expect(log.locator(".response-status")).toHaveText("排队中：等待对话「long work」释放工作区（它正在运行）", { timeout: 15000 });
+  const failure = log.locator(".run-error");
+  await expect(failure).toHaveText("工作区正被另一项任务使用，这条消息没有发出。可以等它结束后重新发送，或为新对话选择其他工作区。占用它的是对话「long work」。打开那个对话", { timeout: 15000 });
+  await page.screenshot({ path: join(artifact, "workspace-busy.png"), animations: "disabled" });
+  await failure.getByRole("button", { name: "打开那个对话", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "long work" })).toBeVisible();
+  await page.getByRole("button", { name: "停止当前回复", exact: true }).click();
+  await expect(log.locator("[data-run-status=cancelled]")).toHaveCount(1, { timeout: 15000 });
   assert.deepEqual(errors, []);
 });

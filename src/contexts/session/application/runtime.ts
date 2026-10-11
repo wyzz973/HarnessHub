@@ -2,7 +2,7 @@ import { parseProviderTarget } from "../../../contracts/provider.js";
 import { TOOL_DIFF_BYTES, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type BackendResult, type CleanupEvidence, type ControlEvent, type ControlRun, type NativeConversationId, type NativeToolDetail, type NativeUsage } from "../../../contracts/control.js";
 import { MAX_RUN_ATTACHMENTS, MAX_RUN_OUTPUTS, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
 import {
-  SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId,
+  SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId, DEFAULT_EXECUTION_BUDGET_MS, DEFAULT_WAIT_BUDGET_MS, STOP_GRACE_MS,
   type AttentionItem, type ForkedMessage, type HarnessSelection, type KeptProcessIdentity, type NativeConfiguration, type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicNotice, type PublicRun, type RunTiming,
   type SelectionRequest, type SendReceipt, type SessionBindingFactory, type SessionCommit, type SessionConfiguration,
   type SessionId, type SessionEvent, type SessionMutation, type SessionRuntimeOptions, type SessionSnapshot, type SessionStore, type SwitchReceipt,
@@ -27,6 +27,15 @@ interface ActiveExecution {
   writeFailure: unknown;
   /** Where this Turn's stderr begins in its program's stderr, for its diagnostics; null before a program serves it. */
   diagnosticMark: number | null;
+  /**
+   * The Turn's budgets (ADR-036): what is left of each, whether it waits for the user now, since when (monotonic), and the
+   * timer of the one that runs.
+   */
+  readonly budget: { executionLeftMs: number; waitLeftMs: number; waiting: boolean; since: number; timer: ReturnType<typeof setTimeout> | null };
+  /** Why the Runtime stopped this Turn on its own, when it did. */
+  stopReason: "RUN_TIMEOUT" | "WAIT_EXPIRED" | null;
+  /** Ends the program when it has not settled once the stop grace has passed. */
+  grace: ReturnType<typeof setTimeout> | null;
 }
 /** A conversation's kept native process (ADR-030): the binding of its last Run, idle between Turns and owned by the runtime. */
 interface KeptProcess {
@@ -98,11 +107,19 @@ function fault(error: unknown): { readonly code: string; readonly message: strin
   const code = error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code.slice(0, 128) : "CONTROL_FAILED";
   return { code, message: "Harness operation failed; inspect private control diagnostics" };
 }
+/** How many conversations run work at once unless configured (ADR-036); the same as the kept-process limit. */
+const MAX_PARALLEL = 4;
 /** How much of a Turn's stderr is kept for its diagnostics, and for how many Turns. */
 const RUN_DIAGNOSTIC_BYTES = 4096, MAX_RUN_DIAGNOSTICS = 64;
 /** Longest wait a driver may announce for one request (a day); anything else is ignored rather than shown. */
 const MAX_PERMISSION_WAIT_MS = 24 * 60 * 60 * 1000;
-const TURN_DEADLINE_NOTICE: PublicNotice = { severity: "warning", title: "回合期限已到", detail: "HarnessHub 的回合期限已到，本回合超时结束；原程序没有收到你的决定。" };
+/** A duration in the user's words: seconds below a minute, whole minutes otherwise. */
+function duration(ms: number): string { return ms < 1000 ? ms + " 毫秒" : ms < 60_000 ? Math.round(ms / 1000) + " 秒" : Math.round(ms / 60_000) + " 分钟"; }
+/** What the conversation says when the Runtime stopped a Turn on its own (ADR-036). */
+function budgetNotice(kind: "execution" | "wait", budgetMs: number): PublicNotice {
+  return kind === "wait" ? { severity: "warning", title: "等待期限已到", detail: `等待你的决定超过 ${duration(budgetMs)}，本回合已取消；原程序没有收到决定。` }
+    : { severity: "warning", title: "执行期限已到", detail: `本回合的执行时间（不含等待你的时间）超过 ${duration(budgetMs)}，HarnessHub 已停止它。` };
+}
 /** Adds a notice of the Hub itself to a Run, within the Run's notice budget. */
 function withNotice(state: SessionSnapshot, id: string, notice: PublicNotice): SessionSnapshot {
   const run = state.runs.find(item => item.id === id);
@@ -130,15 +147,16 @@ function phase(state: SessionSnapshot, id: PublicRun["id"], name: Exclude<keyof 
 }
 
 /**
- * One global writer, durable admission, and a new explicitly rehydrated native connection per Turn, unless the conversation
+ * One worker per conversation (several conversations in parallel, ADR-036), durable admission, and a new explicitly
+ * rehydrated native connection per Turn, unless the conversation
  * keeps its native process between Turns (ADR-030): then the next Turn with the same selection reuses it, and every close
  * of a kept process (idle, switch, close, reset, branch, shutdown, or the user) is recorded for its conversation.
  */
 export class SessionRuntime {
   /** Native processes that conversations keep between Turns, owned here until closed. */
   private readonly kept = new Map<SessionId, KeptProcess>();
-  /** Kept processes to close; the single writer closes them before its next Turn or switch. */
-  private readonly releases = new Map<SessionId, { readonly reason: KeptRelease; readonly done: Promise<void>; readonly resolve: () => void }>();
+  /** Kept processes being closed; every Turn or switch waits for them first, so none meets a lease about to be released. */
+  private readonly releasing = new Map<SessionId, Promise<void>>();
   /** Processes a previous owner kept and this owner found at start, with what became of them; shown in their conversations. */
   private readonly lost = new Map<SessionId, { readonly outcome: "terminated" | "gone" | "unconfirmed"; readonly leaseReleased: boolean; readonly at: number }>();
   /** The latest Turns' stderr tails, oldest first; private until redacted for the user's diagnostics. */
@@ -147,9 +165,22 @@ export class SessionRuntime {
   private readonly closingSessions = new Set<SessionId>();
   private readonly managedSessions = new Set<SessionId>();
   private readonly creating = new Set<Promise<SessionSnapshot>>();
+  /** Conversations with work their worker has not taken yet (ADR-036). */
   private readonly work = new Set<SessionId>();
-  private runner: Promise<void> | null = null;
-  private active: ActiveExecution | null = null;
+  /** Callers of `wait` whose conversation's work is not taken yet; woken after every scheduling pass. */
+  private readonly wakers = new Set<() => void>();
+  /** The worker serving each conversation that has one: it runs that conversation's work in order; at most `maxParallel` run at once. */
+  private readonly workers = new Map<SessionId, Promise<void>>();
+  /** The Turn each conversation is executing, at most one per conversation. */
+  private readonly actives = new Map<SessionId, ActiveExecution>();
+  /** The workspace each worker holds while it serves its conversation; another conversation's work there waits (ADR-036). */
+  private readonly holders = new Map<string, SessionId>();
+  /** Conversations whose next Turn waits for a workspace another conversation's work holds, with since when. */
+  private readonly waitingForWorkspace = new Map<SessionId, { readonly runId: string; readonly holder: SessionId; readonly since: number; readonly sinceMono: number; readonly timer: ReturnType<typeof setTimeout> }>();
+  /** How much of each Turn's wait budget its waits for a workspace used before it started (ADR-036). */
+  private readonly waitUsed = new Map<string, number>();
+  /** The conversation that held the workspace of each Turn this owner ended with WORKSPACE_BUSY, latest first out. */
+  private readonly busyHolders = new Map<string, SessionId>();
   private readonly permissions = new Map<string, { request: PermissionRequest; nativeId: string; execution: ActiveExecution; option: string | null; command: string | null; readonly harnessId: string }>();
   permissionRequests(id: SessionId): readonly PermissionRequest[] { this.load(id); return [...this.permissions.values()].filter(value => value.execution.sessionId === id).map(value => value.request); }
   /**
@@ -179,12 +210,14 @@ export class SessionRuntime {
     pending.option = option; pending.command = key; pending.request = { ...pending.request, decided: true };
     try { this.commit(id, current => ({ next: { ...current, commands:[...current.commands,{id:command,kind:"permission",fingerprint,resultId:pending.execution.runId}] }, events: [event("permission.decided", { permissionId: permission, runId: pending.execution.runId, optionId: option, commandId: key })] })); }
     catch(error) { pending.option=null;pending.command=null;pending.request={...pending.request,decided:false};throw error; }
+    this.leaveWait(pending.execution);
     await control.decidePermission(pending.nativeId, option, input); this.owned(pending.execution);
     this.permissions.delete(permission);
     this.commit(id, current => ({ next: current, events: [event("permission.submitted", { permissionId: permission, runId: pending.execution.runId, optionId: option, backendAcknowledged: false })] }));
     return { replayed: false };
   }
-  private switchBinding: { readonly sessionId: SessionId; readonly binding: PreparedSessionBinding; close: Promise<CleanupEvidence> | null } | null = null;
+  /** The switch target each conversation is validating, at most one per conversation. */
+  private readonly switchBindings = new Map<SessionId, { readonly binding: PreparedSessionBinding; close: Promise<CleanupEvidence> | null }>();
   private fatal: SessionError | null = null;
   private publicationFailed = false;
   private recordingBlock = false;
@@ -399,9 +432,11 @@ export class SessionRuntime {
   async wait(id: SessionId): Promise<void> {
     this.load(id);
     for (;;) {
-      const running = this.runner;
-      if (running) await running;
-      if (this.runner !== null || this.work.has(id) || this.active?.sessionId === id) continue;
+      const worker = this.workers.get(id), release = this.releasing.get(id);
+      if (worker) { await worker.catch(() => {}); continue; }
+      if (release) { await release; continue; }
+      // Work not yet taken waits for a free worker slot or its workspace; every scheduling change wakes it to look again.
+      if (this.work.has(id) && !this.fatal) { await new Promise<void>(resolve => { this.wakers.add(resolve); }); continue; }
       if (this.fatal) throw this.fatal;
       if (this.load(id).status === "blocked" && !this.closingSessions.has(id)) throw new SessionError("SESSION_BLOCKED", "this Session needs recovery; new dispatch is disabled for this Session");
       return;
@@ -432,7 +467,7 @@ export class SessionRuntime {
       this.commandBudget(state);
       this.commit(id, current => ({ next: { ...current, commands: [...current.commands, { id: command, kind: "native-close", fingerprint, resultId: id }] }, events: [event("native.process_close_requested", {})] }));
     }
-    if (this.kept.has(id) || this.releases.has(id)) await this.requestRelease(id, "ended_by_user");
+    if (this.kept.has(id) || this.releasing.has(id)) await this.requestRelease(id, "ended_by_user");
     return this.load(id);
   }
   /** This conversation's kept process as the chat shows it; null when it keeps none. */
@@ -491,18 +526,17 @@ export class SessionRuntime {
   private background(kept: KeptProcess): number { return Math.max(0, (kept.binding.control.unattributedUpdates ?? kept.baseline) - kept.baseline); }
   /** Asks the single writer to close a kept process before its next Turn or switch; resolves once the close is recorded. */
   private requestRelease(id: SessionId, reason: KeptRelease): Promise<void> {
-    const pending = this.releases.get(id);
-    if (pending) return pending.done;
-    let resolve!: () => void; const done = new Promise<void>(next => { resolve = next; });
-    this.releases.set(id, { reason, done, resolve });
-    this.schedule(id); return done;
+    const pending = this.releasing.get(id);
+    if (pending) return pending;
+    if (!this.kept.has(id)) return Promise.resolve();
+    // A kept process is idle, so its close never meets its own conversation's Turn; Turns and switches wait for it (settleReleases).
+    const done: Promise<void> = this.release(id, reason).catch(error => { this.fail(error, id); })
+      .finally(() => { if (this.releasing.get(id) === done) this.releasing.delete(id); this.drive(); });
+    this.releasing.set(id, done);
+    return done;
   }
-  private async drainReleases(): Promise<void> {
-    for (const [id, request] of [...this.releases]) {
-      this.releases.delete(id);
-      try { await this.release(id, request.reason); } catch (error) { this.fail(error, id); } finally { request.resolve(); }
-    }
-  }
+  /** Resolves once no kept process is being closed; work never starts while a lease may be about to be released. */
+  private async settleReleases(): Promise<void> { while (this.releasing.size) await Promise.allSettled([...this.releasing.values()]); }
   /**
    * Closes a kept process with the normal stop chain (request stop, wait, SIGTERM/SIGKILL) and records the close and its
    * evidence for the conversation. A close that cannot be confirmed leaves the workspace lease quarantined.
@@ -532,7 +566,7 @@ export class SessionRuntime {
     try {
       const state = this.load(id), run = state.runs.find(row => row.id === execution.runId);
       if (state.retainNative !== true || run === undefined || run.cancelRequested || run.selection.provider !== undefined || !confirmed || problem !== null || backend?.status !== "completed"
-        || execution.stop !== null || execution.earlyClose !== null || !this.accepting || this.fatal !== null || this.closingSessions.has(id) || this.releases.has(id)
+        || execution.stop !== null || execution.earlyClose !== null || !this.accepting || this.fatal !== null || this.closingSessions.has(id) || this.releasing.has(id)
         || execution.binding?.control.healthy?.() !== true) return { keep: false };
       return this.kept.size >= KEPT_LIMIT ? { keep: false, skipped: "limit" } : { keep: true };
     } catch { return { keep: false }; }
@@ -549,8 +583,8 @@ export class SessionRuntime {
         return { next: { ...next, commands: [...next.commands, { id: command, kind: "close", fingerprint, resultId: id }] },
           events: [event("session.close_requested", { cancelledRunIds: current.runs.filter(run => run.status === "queued").map(run => run.id) })] };
       });
-      if (this.active?.sessionId === id) this.stop(this.active);
-      if (this.switchBinding?.sessionId === id) this.stopSwitch();
+      const active = this.actives.get(id); if (active) this.stop(active);
+      this.stopSwitch(id); this.drive();
       if (this.kept.has(id)) void this.requestRelease(id, "conversation_closed");
       await this.wait(id);
       return this.commit(id, current => ({ next: { ...current, status: "closed" }, events: [event("session.closed", {})] })).session;
@@ -575,11 +609,11 @@ export class SessionRuntime {
           this.commit(state.id, current => ({ next: this.cancelPending(current), events: [event("runtime.stopping", {})] }));
       }
     } catch (error) { problem = error; this.fail(error); }
-    if (this.active) this.stop(this.active);
+    for (const execution of [...this.actives.values()]) this.stop(execution);
     this.stopSwitch();
-    if (this.runner) await this.runner;
+    while (this.workers.size) await Promise.allSettled([...this.workers.values()]);
     // Kept processes end with their owner; each close is recorded for its conversation (ADR-030).
-    try { await this.drainReleases(); for (const id of [...this.kept.keys()]) await this.release(id, "gateway_shutdown"); }
+    try { await this.settleReleases(); for (const id of [...this.kept.keys()]) await this.release(id, "gateway_shutdown"); }
     catch (error) { problem ??= error; this.fail(error); }
     const creating = await Promise.allSettled([...this.creating]);
     for (const result of creating) if (result.status === "rejected" && !(result.reason instanceof SessionError && result.reason.code === "RUNTIME_CLOSED")) {
@@ -613,7 +647,7 @@ export class SessionRuntime {
       return { next: { ...next, commands: [...next.commands, { id: command, kind: "cancel", fingerprint, resultId: selected ?? "none" }] },
         events: [event("run.cancel_requested", { runId: selected, beforeStart: run?.status === "queued", alreadyTerminal: run === undefined || terminal(run.status) })] };
     });
-    if (this.active?.sessionId === id && this.active.runId === selected) this.stop(this.active);
+    const active = this.actives.get(id); if (active && active.runId === selected) this.stop(active);
     this.schedule(id); return { sessionId: id, target: selected, replayed: false };
   }
 
@@ -691,9 +725,9 @@ export class SessionRuntime {
   }
   private fail(error: unknown, id?: SessionId): void {
     this.fatal ??= new SessionError(fault(error).code, fault(error).message);
-    if (this.active) this.stop(this.active);
+    const affected = id ?? [...this.actives.keys()][0] ?? [...this.switchBindings.keys()][0];
+    for (const execution of [...this.actives.values()]) this.stop(execution);
     this.stopSwitch();
-    const affected = id ?? this.active?.sessionId ?? this.switchBinding?.sessionId;
     if (affected !== undefined && !this.recordingBlock) {
       this.recordingBlock = true;
       try {
@@ -709,31 +743,129 @@ export class SessionRuntime {
       } finally { this.recordingBlock = false; }
     }
   }
-  private stopSwitch(): void {
-    if (!this.switchBinding) return;
-    this.switchBinding.close ??= this.switchBinding.binding.close();
-    void this.switchBinding.close.catch(() => {});
+  /** Closes the switch target being validated for `id`, or for every conversation. */
+  private stopSwitch(id?: SessionId): void {
+    for (const [owner, pending] of this.switchBindings) {
+      if (id !== undefined && owner !== id) continue;
+      pending.close ??= pending.binding.close();
+      void pending.close.catch(() => {});
+    }
   }
   private schedule(id: SessionId): void {
     this.managedSessions.add(id);
     this.work.add(id);
-    if (this.runner !== null) return;
-    const running = Promise.resolve().then(() => this.pump());
-    this.runner = running;
-    void running.then(() => { if (this.runner === running) this.runner = null; if (this.work.size && !this.fatal && this.accepting) this.schedule(this.work.values().next().value!); },
-      error => { this.fail(error); if (this.runner === running) this.runner = null; this.work.clear(); });
+    this.drive();
   }
-  private async pump(): Promise<void> {
-    while (this.work.size || this.releases.size) {
-      // Kept processes to close go first, so a Turn or switch never meets a lease that is about to be released.
-      await this.drainReleases();
-      if (!this.work.size) continue;
-      const id = this.work.values().next().value!; this.work.delete(id);
+  /**
+   * Starts a worker for each conversation with waiting work and none of its own, oldest accepted work first, up to the
+   * parallel limit (ADR-036). Work in a workspace another conversation's worker holds waits, visibly, until it is free.
+   */
+  private drive(): void {
+    try { this.take(); }
+    finally { const wakers = [...this.wakers]; this.wakers.clear(); for (const wake of wakers) wake(); }
+  }
+  private take(): void {
+    if (this.fatal) { this.work.clear(); return; }
+    const ordered = [...this.work].sort((a, b) => this.headAccepted(a) - this.headAccepted(b));
+    for (const id of ordered) {
+      if (this.workers.has(id)) continue;
+      if (!this.runnable(id)) { this.work.delete(id); this.leaveQueue(id); continue; }
+      const workspace = this.load(id).configuration.workspace, holder = this.holders.get(workspace);
+      if (holder !== undefined && holder !== id) { this.joinQueue(id, holder); continue; }
+      // With every slot taken, later work is still looked at, so work behind a held workspace shows that it waits.
+      if (this.workers.size >= (this.options.maxParallel ?? MAX_PARALLEL)) continue;
+      this.work.delete(id); this.holders.set(workspace, id); this.leaveQueue(id);
+      const worker: Promise<void> = Promise.resolve().then(() => this.serve(id));
+      this.workers.set(id, worker);
+      void worker.then(() => {}, error => { this.fail(error, id); }).finally(() => {
+        if (this.workers.get(id) === worker) this.workers.delete(id);
+        if (this.holders.get(workspace) === id) this.holders.delete(workspace);
+        this.drive();
+      });
+    }
+  }
+  /** Whether a conversation has work its worker would do now: a native fork, a switch or a queued Turn while it is open. */
+  private runnable(id: SessionId): boolean {
+    try {
+      const state = this.load(id);
+      if ((state.status !== "open" && !(state.status === "blocked" && this.recoverySwitch(state))) || this.closingSessions.has(id) || !this.accepting) return false;
+      return state.pendingSwitchId !== null || state.runs.some(run => run.status === "queued") || (state.nativeBindings?.some(binding => binding.status === "fork-pending") ?? false);
+    } catch { return true; }
+  }
+  /** When a conversation's oldest queued Turn was accepted; other work counts as last. */
+  private headAccepted(id: SessionId): number {
+    try { return this.load(id).runs.find(run => run.status === "queued")?.timing?.acceptedAt ?? Number.MAX_SAFE_INTEGER; } catch { return Number.MAX_SAFE_INTEGER; }
+  }
+  /** Records once that a conversation's next Turn waits for `holder` to free their shared workspace. */
+  private joinQueue(id: SessionId, holder: SessionId): void {
+    const prior = this.waitingForWorkspace.get(id);
+    if (prior !== undefined && prior.holder === holder) return;
+    const state = this.load(id), run = state.runs.find(item => item.status === "queued");
+    if (run === undefined) return;
+    // Waiting for a workspace uses the Turn's wait budget; at its end the Turn fails with WORKSPACE_BUSY (ADR-036).
+    const left = (this.options.waitBudgetMs ?? DEFAULT_WAIT_BUDGET_MS) - (this.waitUsed.get(run.id) ?? 0) - (prior === undefined ? 0 : performance.now() - prior.sinceMono);
+    if (prior !== undefined) clearTimeout(prior.timer);
+    const timer = setTimeout(() => this.queueExpired(id, run.id), Math.max(0, left)); timer.unref?.();
+    this.waitingForWorkspace.set(id, { runId: run.id, holder, since: prior?.since ?? this.options.now().getTime(), sinceMono: prior?.sinceMono ?? performance.now(), timer });
+    this.commit(id, current => ({ next: current, events: [event("run.waiting", { runId: run.id, kind: "workspace", holderSessionId: holder })] }));
+  }
+  /** A Turn waited for its workspace for its whole wait budget: it fails with WORKSPACE_BUSY, naming the holder, and is not retried. */
+  private queueExpired(id: SessionId, run: string): void {
+    const waiting = this.waitingForWorkspace.get(id);
+    if (waiting === undefined || waiting.runId !== run) return;
+    this.leaveQueue(id);
+    // Known before the commit publishes, so the view that announces the failure already names the holder.
+    this.busyHolders.set(run, waiting.holder);
+    while (this.busyHolders.size > 256) this.busyHolders.delete(this.busyHolders.keys().next().value!);
+    try {
+      this.commit(id, current => ({ next: updatedRun(current, run, { status: "failed", error: { code: "WORKSPACE_BUSY", message: "another conversation's Turn held this workspace for the whole wait budget; this input was not dispatched" },
+        ...phase(current, runId(run), "endedAt", this.options.now().getTime()) }), events: [event("run.ended", { runId: run, status: "failed", error: { code: "WORKSPACE_BUSY" }, neverDispatched: true, holderSessionId: waiting.holder })] }));
+      this.waitUsed.delete(run);
+    } catch (error) { this.busyHolders.delete(run); this.fail(error, id); }
+    this.schedule(id);
+  }
+  /** Ends a conversation's wait for a workspace, recording how long it waited. */
+  private leaveQueue(id: SessionId): void {
+    const waiting = this.waitingForWorkspace.get(id);
+    if (waiting === undefined) return;
+    this.waitingForWorkspace.delete(id); clearTimeout(waiting.timer);
+    this.waitUsed.set(waiting.runId, (this.waitUsed.get(waiting.runId) ?? 0) + (performance.now() - waiting.sinceMono));
+    const waitedMs = Math.max(0, this.options.now().getTime() - waiting.since);
+    try { this.commit(id, current => ({ next: current, events: [event("run.waiting_ended", { runId: waiting.runId, kind: "workspace", waitedMs })] })); } catch (error) { this.fail(error, id); }
+  }
+  /**
+   * Whether another conversation should go before this worker's next work, by acceptance (FIFO, ADR-036): one waiting for
+   * this workspace, or one waiting for a slot while every slot is taken.
+   */
+  private earlierWaiter(id: SessionId): boolean {
+    const workspace = this.load(id).configuration.workspace, mine = this.headAccepted(id), full = this.workers.size >= (this.options.maxParallel ?? MAX_PARALLEL);
+    return [...this.work].some(other => other !== id && !this.workers.has(other) && this.headAccepted(other) < mine
+      && (this.waitingForWorkspace.has(other) ? this.load(other).configuration.workspace === workspace : full));
+  }
+  /**
+   * What a conversation's next Turn waits for, when it waits for another conversation's work in their shared workspace:
+   * which conversation holds it and whether that one waits for the user (ADR-036).
+   */
+  queueState(id: SessionId): { readonly runId: string; readonly holderSessionId: SessionId; readonly holderWaitsForUser: boolean; readonly since: number; readonly endsAt: number } | null {
+    const waiting = this.waitingForWorkspace.get(id);
+    if (waiting === undefined) return null;
+    const holderWaits = [...this.permissions.values()].some(value => value.execution.sessionId === waiting.holder && !value.request.decided);
+    const left = (this.options.waitBudgetMs ?? DEFAULT_WAIT_BUDGET_MS) - (this.waitUsed.get(waiting.runId) ?? 0);
+    return { runId: waiting.runId, holderSessionId: waiting.holder, holderWaitsForUser: holderWaits, since: waiting.since, endsAt: waiting.since + Math.max(0, left) };
+  }
+  /** The conversation that held the workspace of each of this conversation's Turns this owner ended with WORKSPACE_BUSY. */
+  busyHolderOf(run: string): SessionId | null { return this.busyHolders.get(run) ?? null; }
+  /** One conversation's work in order: its native fork, then a switch or its next Turn, until none is left (ADR-036). */
+  private async serve(id: SessionId): Promise<void> {
+    for (;;) {
+      this.work.delete(id);
+      // Kept processes being closed go first, so a Turn or switch never meets a lease that is about to be released.
+      await this.settleReleases();
       if (this.fatal) { this.work.clear(); return; }
       let state = this.load(id);
-      if ((state.status !== "open" && !(state.status === "blocked" && this.recoverySwitch(state))) || this.closingSessions.has(id) || !this.accepting) continue;
+      if ((state.status !== "open" && !(state.status === "blocked" && this.recoverySwitch(state))) || this.closingSessions.has(id) || !this.accepting) return;
       try {
-        // A branch's native fork runs before any of its inputs, in the same single-writer order as Turns.
+        // A branch's native fork runs before any of its inputs, in the same order as its Turns.
         if (state.nativeBindings?.some(binding => binding.status === "fork-pending")) { await this.forkNative(id); state = this.load(id); }
         if (state.pendingSwitchId !== null) {
           const pending = state.switches.find(sw => sw.id === state.pendingSwitchId)!;
@@ -745,16 +877,19 @@ export class SessionRuntime {
           const queued = state.runs.find(run => run.status === "queued");
           if (queued) await this.execute(id, queued.id);
         }
-      } catch (error) { this.fail(error); }
+      } catch (error) { this.fail(error, id); }
       const after = this.load(id);
-      if (after.status === "open" && (after.pendingSwitchId !== null || after.runs.some(run => run.status === "queued")) && !this.closingSessions.has(id) && this.accepting && !this.fatal) this.work.add(id);
+      const more = after.status === "open" && (after.pendingSwitchId !== null || after.runs.some(run => run.status === "queued")) && !this.closingSessions.has(id) && this.accepting && !this.fatal;
+      if (!more && !this.work.has(id)) return;
+      // Another conversation that waited for this workspace, or for a slot, with earlier work goes first (FIFO by acceptance).
+      if (this.earlierWaiter(id)) { this.work.add(id); return; }
     }
   }
 
   private owned(execution: ActiveExecution): SessionSnapshot {
     this.store.assertOwner(); execution.binding?.assertOwned();
     const state = this.load(execution.sessionId);
-    if (this.active !== execution || state.activeRunId !== execution.runId) throw new SessionError("OWNERSHIP_LOST", "active Run ownership changed");
+    if (this.actives.get(execution.sessionId) !== execution || state.activeRunId !== execution.runId) throw new SessionError("OWNERSHIP_LOST", "active Run ownership changed");
     const run = state.runs.find(run => run.id === execution.runId);
     if (!run || run.epoch !== state.epoch || JSON.stringify(run.selection) !== JSON.stringify(state.selection))
       throw new SessionError("OWNERSHIP_LOST", "active Run epoch or selection no longer belongs to its Session");
@@ -769,6 +904,14 @@ export class SessionRuntime {
     return run;
   }
   private stop(execution: ActiveExecution): void {
+    // A program that has not settled once the stop grace has passed is ended; its Turn is then unknown (ADR-036).
+    if (execution.grace === null && !execution.backendSettled) {
+      execution.grace = setTimeout(() => {
+        if (execution.backendSettled || execution.binding === null) return;
+        execution.earlyClose ??= execution.binding.close(); void execution.earlyClose.catch(() => {});
+      }, this.options.stopGraceMs ?? STOP_GRACE_MS);
+      execution.grace.unref?.();
+    }
     if (execution.stop !== null) return;
     if (execution.backendSettled) {
       if (execution.binding) {
@@ -800,6 +943,52 @@ export class SessionRuntime {
     }
   }
 
+  /** Runs the Turn's current budget: the execution budget while it works, the wait budget while it waits for the user (ADR-036). */
+  private armBudget(execution: ActiveExecution): void {
+    const budget = execution.budget;
+    if (budget.timer !== null) clearTimeout(budget.timer);
+    const waiting = budget.waiting;
+    budget.timer = setTimeout(() => this.expire(execution, waiting ? "wait" : "execution"), Math.max(0, waiting ? budget.waitLeftMs : budget.executionLeftMs));
+    budget.timer.unref?.();
+  }
+  /** The Turn waits for the user from now (if it did not already); returns how long it may still wait. */
+  private enterWait(execution: ActiveExecution, run: string): number {
+    const budget = execution.budget, now = performance.now();
+    if (budget.waiting) return Math.max(0, budget.waitLeftMs - (now - budget.since));
+    budget.executionLeftMs -= now - budget.since; budget.waiting = true; budget.since = now;
+    if (execution.stopReason === null) this.armBudget(execution);
+    this.commit(execution.sessionId, current => ({ next: current, events: [event("run.waiting", { runId: run, kind: "user" })] }));
+    return Math.max(0, budget.waitLeftMs);
+  }
+  /** Back to work once no request of this Turn waits for the user any longer. */
+  private leaveWait(execution: ActiveExecution): void {
+    const budget = execution.budget;
+    if (!budget.waiting || [...this.permissions.values()].some(value => value.execution === execution && !value.request.decided)) return;
+    const now = performance.now(), waitedMs = now - budget.since;
+    budget.waitLeftMs -= waitedMs; budget.waiting = false; budget.since = now;
+    if (execution.stopReason === null && !execution.backendSettled) this.armBudget(execution);
+    try { this.commit(execution.sessionId, current => ({ next: current, events: [event("run.waiting_ended", { runId: execution.runId, kind: "user", waitedMs: Math.round(waitedMs) })] })); }
+    catch (error) { this.fail(error, execution.sessionId); }
+  }
+  /**
+   * A budget ran out (ADR-036): requests still waiting expire first (the program gets the stop's cancellation, never an
+   * approval), the conversation says why, and the Turn is stopped with the normal stop chain.
+   */
+  private expire(execution: ActiveExecution, kind: "execution" | "wait"): void {
+    if (execution.stopReason !== null || execution.backendSettled || this.actives.get(execution.sessionId) !== execution) return;
+    execution.stopReason = kind === "wait" ? "WAIT_EXPIRED" : "RUN_TIMEOUT";
+    try {
+      const waiting = [...this.permissions.entries()].filter(([, value]) => value.execution === execution && value.option === null).map(([permissionId]) => permissionId);
+      for (const permissionId of waiting) this.permissions.delete(permissionId);
+      const budgetMs = kind === "wait" ? this.options.waitBudgetMs ?? DEFAULT_WAIT_BUDGET_MS : this.options.executionBudgetMs ?? DEFAULT_EXECUTION_BUDGET_MS;
+      this.commit(execution.sessionId, current => ({ next: withNotice(current, execution.runId, budgetNotice(kind, budgetMs)),
+        events: [...waiting.map(permissionId => event("permission.closed", { permissionId, runId: execution.runId, reason: "expired" })), event("run.budget_expired", { runId: execution.runId, kind, budgetMs })] }));
+      // The wait ends with its requests, so it is recorded like any other end of a wait.
+      this.leaveWait(execution);
+    } catch (error) { this.fail(error, execution.sessionId); }
+    this.stop(execution);
+  }
+
   private output(execution: ActiveExecution, value: ControlEvent): void {
     const state = this.owned(execution), run = state.runs.find(run => run.id === execution.runId)!;
     if (run.status !== "running") throw new SessionError("STALE_EVENT", "output arrived outside its active Run");
@@ -807,10 +996,11 @@ export class SessionRuntime {
       this.commit(state.id, current => ({ next: updatedRun(current, run.id, phase(current, run.id, "firstOutputAt", this.options.now().getTime())), events: [event("run.first_output", { runId: run.id })] }));
     if (value.type === "permission_requested") {
       if (this.permissions.size >= 32) throw new SessionError("PERMISSION_LIMIT", "too many pending native permissions");
-      // The driver says how long the request can wait from now; the Runtime turns it into a time on its own clock (ADR-035).
-      const requestedAt = this.options.now().getTime(), wait = value.expiresInMs;
-      const expires = wait !== undefined && Number.isSafeInteger(wait) && wait >= 0 && wait <= MAX_PERMISSION_WAIT_MS && (value.expiresBy === "native" || value.expiresBy === "turn")
-        ? { expiresAt: requestedAt + wait, expiresBy: value.expiresBy } : {};
+      // The Turn now waits for the user: its execution budget pauses and its wait budget runs (ADR-036). The request expires at
+      // the earlier of the program's own deadline, as its driver says, and the end of the wait budget, on this clock (ADR-035).
+      const requestedAt = this.options.now().getTime(), hubLeft = Math.round(this.enterWait(execution, run.id)), wait = value.expiresInMs;
+      const native = value.expiresBy === "native" && wait !== undefined && Number.isSafeInteger(wait) && wait >= 0 && wait <= MAX_PERMISSION_WAIT_MS ? wait : null;
+      const expires = native !== null && native <= hubLeft ? { expiresAt: requestedAt + native, expiresBy: "native" as const } : { expiresAt: requestedAt + hubLeft, expiresBy: "turn" as const };
       const id = "permission-" + this.options.id(), request: PermissionRequest = { id, runId: run.id, title: value.title, options: value.options, ...(value.detail===undefined?{}:{detail:value.detail}),...(value.input===undefined?{}:{input:value.input}), decided: false, requestedAt, ...expires, ...(value.kind === "question" ? { kind: "question" as const } : {}) };
       this.permissions.set(id, { request, nativeId: value.id, execution, option: null, command: null, harnessId: run.selection.harnessId });
       try { this.commit(state.id, current => ({ next: current, events: [event("permission.requested", { permissionId: id, runId: run.id, title: value.title, options: value.options, ...expires })] })); } catch (error) { this.permissions.delete(id); throw error; } return;
@@ -821,6 +1011,7 @@ export class SessionRuntime {
       if (pending) {
         this.permissions.delete(pending[0]);
         this.commit(state.id, current => ({ next: current, events: [event("permission.closed", { permissionId: pending[0], runId: run.id, reason: value.decision })] }));
+        this.leaveWait(execution);
         return;
       }
     }
@@ -929,9 +1120,13 @@ export class SessionRuntime {
     if (waitedSwitch && waitedSwitch.status !== "effective") return;
     const pinned = waitedSwitch?.target ?? queued.selection;
     const execution: ActiveExecution = { sessionId: id, runId: target, binding: null, run: null, dispatched: false,
-      backendSettled: false, stop: null, earlyClose: null, details: new Map(), dirty: new Set(), writes: Promise.resolve(), writeFailure: null, diagnosticMark: null };
-    if (this.active) throw new SessionError("OWNERSHIP_LOST", "another global writer is active");
-    this.active = execution;
+      backendSettled: false, stop: null, earlyClose: null, details: new Map(), dirty: new Set(), writes: Promise.resolve(), writeFailure: null, diagnosticMark: null,
+      budget: { executionLeftMs: this.options.executionBudgetMs ?? DEFAULT_EXECUTION_BUDGET_MS, waitLeftMs: (this.options.waitBudgetMs ?? DEFAULT_WAIT_BUDGET_MS) - (this.waitUsed.get(target) ?? 0),
+        waiting: false, since: performance.now(), timer: null }, stopReason: null, grace: null };
+    if (this.actives.has(id)) throw new SessionError("OWNERSHIP_LOST", "another Turn of this conversation is active");
+    this.actives.set(id, execution); this.waitUsed.delete(target);
+    // The execution budget runs from here: starting the program, its model, tools and result (ADR-036).
+    this.armBudget(execution);
     let backend: BackendResult | null = null, cleanup: CleanupEvidence | null = null, problem: ReturnType<typeof fault> | null = null;
     let checkpoint: string | null = null, checkpointStored = false, nativeConfirmed = false;
     let previousNative: NativeSessionBinding | undefined;
@@ -1049,10 +1244,7 @@ export class SessionRuntime {
     finally {
       const abandoned = [...this.permissions.entries()].filter(([, permission]) => permission.execution === execution);
       for (const [permissionId] of abandoned) this.permissions.delete(permissionId);
-      // A request still waiting when the Turn reached its own deadline expired: the program never received a decision (ADR-035).
-      const expired = problem?.code === "RUN_TIMEOUT" ? abandoned.filter(([, permission]) => permission.option === null).map(([permissionId]) => permissionId) : [];
-      if (abandoned.length) this.commit(id, current => ({ next: expired.length ? withNotice(current, target, TURN_DEADLINE_NOTICE) : current,
-        events: abandoned.map(([permissionId]) => event("permission.closed", { permissionId, runId: target, ...(expired.includes(permissionId) ? { reason: "expired" } : {}) })) }));
+      if (abandoned.length) this.commit(id, current => ({ next: current, events: abandoned.map(([permissionId]) => event("permission.closed", { permissionId, runId: target })) }));
       if (execution.stop) {
         try { await execution.stop; } catch (error) { problem ??= fault(error); }
       }
@@ -1086,8 +1278,12 @@ export class SessionRuntime {
         this.store.assertOwner();
         const current = this.load(id), run = current.runs.find(run => run.id === target)!;
         const unsafe = (execution.dispatched && backend === null) || (execution.binding !== null && cleanup === null && !keep.keep) || this.fatal !== null || this.unknownOwnership(problem);
-        const failure = problem ?? cleanup?.protocolFailure ?? backend?.error ?? null;
-        const status = unsafe ? "unknown" : run.cancelRequested || problem?.code === "CANCELLED" ? "cancelled" : failure ? "failed" : backend?.status ?? "failed";
+        // A Turn the Runtime stopped on its own (a budget ran out before it settled) is cancelled when it then settled, whatever
+        // it reported, and unknown when it had to be ended.
+        const stopped = execution.stopReason !== null;
+        const failure = stopped ? { code: execution.stopReason!, message: execution.stopReason === "WAIT_EXPIRED" ? "the wait for the user's decision ran out" : "the Turn's execution budget ran out" }
+          : problem ?? cleanup?.protocolFailure ?? backend?.error ?? null;
+        const status = unsafe ? "unknown" : run.cancelRequested || problem?.code === "CANCELLED" || stopped ? "cancelled" : failure ? "failed" : backend?.status ?? "failed";
         this.commit(id, current => {
           let next: SessionSnapshot = { ...updatedRun(current, target, { status, backend, cleanup,
             error: failure, ...phase(current, target, "endedAt", endedAt), ...(keep.keep ? { retained: true as const } : {}) }), activeRunId: null, status: unsafe ? "blocked" : current.status,
@@ -1114,7 +1310,9 @@ export class SessionRuntime {
         if (unrecorded !== undefined) { this.kept.delete(id); clearTimeout(unrecorded.timer); }
         if (execution.binding !== null) try { await execution.binding.close(); } catch (error) { this.fail(error, id); }
       }
-      this.active = null;
+      if (this.actives.get(id) === execution) this.actives.delete(id);
+      if (execution.budget.timer !== null) clearTimeout(execution.budget.timer);
+      if (execution.grace !== null) clearTimeout(execution.grace);
     }
   }
 
@@ -1173,7 +1371,7 @@ export class SessionRuntime {
         events: [event("switch.validated", { switchId: targetId, target, throughSeq: context.throughSeq, sourceRunIds: context.sourceRunIds, continuity: context.continuity })] }));
       if (recovery) {
       binding = await this.factory.prepare(target, initial.configuration, id, targetId);
-      this.switchBinding = { sessionId: id, binding, close: null };
+      this.switchBindings.set(id, { binding, close: null });
       this.store.assertOwner(); binding.assertOwned();
       current = this.load(id);
       if (current.pendingSwitchId !== targetId || this.closingSessions.has(id) || !this.accepting || this.fatal) throw new SessionError("CANCELLED", "switch cancelled before target initialization");
@@ -1184,9 +1382,9 @@ export class SessionRuntime {
     } catch (error) { problem = fault(error); }
     finally {
       if (binding) {
-        try { cleanup = await (this.switchBinding?.close ?? binding.close()); } catch (error) { problem = fault(error); }
+        try { cleanup = await (this.switchBindings.get(id)?.close ?? binding.close()); } catch (error) { problem = fault(error); }
       }
-      this.switchBinding = null;
+      this.switchBindings.delete(id);
     }
     const current = this.load(id);
     if (current.pendingSwitchId !== targetId) return;

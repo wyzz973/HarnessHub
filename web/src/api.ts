@@ -172,6 +172,9 @@ export function decodeSession(value: unknown): SessionView {
     workspace: text(row.workspace), selection: selection(row.selection), activeRunId: nullableText(row.activeRunId), pendingSwitchId: nullableText(row.pendingSwitchId),
     ...(row.retention === undefined ? {} : { retention: (() => { const retention = record(row.retention); return { enabled: bool(retention.enabled), process: retention.process === null ? null : decodeKeptProcess(retention.process),
       ...(retention.lost === undefined ? {} : { lost: (() => { const lost = record(retention.lost); return { outcome: choice(lost.outcome, ["terminated", "gone", "unconfirmed"]), leaseReleased: bool(lost.leaseReleased), at: number(lost.at) }; })() }) }; })() }),
+    ...(row.queue === undefined ? {} : { queue: (() => { const queue = record(row.queue); return { runId: text(queue.runId), holderSessionId: text(queue.holderSessionId), holderWaitsForUser: bool(queue.holderWaitsForUser),
+      since: number(queue.since), endsAt: number(queue.endsAt) }; })() }),
+    ...(row.busyHolders === undefined ? {} : { busyHolders: Object.fromEntries(Object.entries(record(row.busyHolders)).slice(0, 256).map(([run, holder]) => [run, text(holder)])) }),
     ...(row.nativeStates === undefined ? {} : { nativeStates: list(row.nativeStates, value => { const state = record(value);
       return { harnessId: text(state.harnessId), controlId: text(state.controlId), status: choice(state.status, ["ready", "unconfirmed", "forking"]),
         ...(state.observed === undefined ? {} : { observed: (() => { const observed = record(state.observed); return { model: observed.model === null ? null : text(observed.model), options: parseNativeOptions(observed.options) }; })() }),
@@ -395,6 +398,8 @@ export class GatewayApi {
     await this.request(`/sessions/${encodeURIComponent(id)}/resume`, "POST", { selection, commandId: key, acknowledgeUnknown }, value => acknowledge(value, id, "switchId"));
   }
   async cancel(id: string, key: string): Promise<void> { await this.request(`/sessions/${encodeURIComponent(id)}/cancel`, "POST", { commandId: key }, value => acknowledge(value, id, "target")); }
+  /** Cancels one named Turn, such as one still waiting for its workspace (ADR-036). */
+  async cancelRun(id: string, run: string, key: string): Promise<void> { await this.request(`/sessions/${encodeURIComponent(id)}/cancel`, "POST", { commandId: key, runId: run }, value => acknowledge(value, id, "target")); }
   closeSession(id: string, key: string): Promise<SessionView> { return this.request(`/sessions/${encodeURIComponent(id)}/close`, "POST", { commandId: key }, decodeSession); }
   /** Keeps this conversation's native process between Turns, or stops keeping it (which closes a kept process). */
   setRetention(id: string, enabled: boolean, key: string): Promise<SessionView> { return this.request(`/sessions/${encodeURIComponent(id)}/retention`, "POST", { enabled, commandId: key }, decodeSession); }
@@ -492,7 +497,8 @@ export function failureMessage(failure: { readonly code: string; readonly messag
     SWITCH_NOT_EFFECTIVE: "这条消息尚未执行，因为选择切换失败。重新选择后，可明确重发这条消息。",
     HARNESS_UNAVAILABLE: "这个 Harness 当前不可用。请选择其他 Harness，或到 Harnesses 检查安装。",
     PROVIDER_DISABLED: "所选 Provider 已停用。请选择其他连接，或到 Providers 启用它。",
-    WORKSPACE_BUSY: "工作区正被另一项任务使用。可以等待它结束，或为新对话选择其他工作区。",
+    WORKSPACE_BUSY: "工作区正被另一项任务使用，这条消息没有发出。可以等它结束后重新发送，或为新对话选择其他工作区。",
+    WAIT_EXPIRED: "等待你的决定超过了等待期限，原程序没有收到决定；它没有在停止宽限内结束，已被强制结束。结果尚待核实，不会自动重新执行。",
     WORKSPACE_QUARANTINED: "工作区仍有未核实的执行资源。请先核实并停止相关进程；历史和草稿已保留。",
     NATIVE_COMMAND_REJECTED: "原程序没有执行这个命令，原因见上方的活动记录。",
     NATIVE_EXPORT_UNAVAILABLE: "原程序暂时没有可导出的会话记录。",
@@ -513,7 +519,7 @@ export function failureMessage(failure: { readonly code: string; readonly messag
     NATIVE_RESUME_UNAVAILABLE: "原程序无法确认恢复后的原生会话，没有另建新会话。公共历史已保留，可以切换 Harness 继续。",
     NATIVE_STATE_UNCONFIRMED: "原生会话的状态尚未确认。可以切换其他 Harness，或明确建立新的原生分支；公共历史会保留。",
     SESSION_BLOCKED: "这段对话还有执行结果尚未核实，已暂停接收新消息。请在对话顶部核实后恢复；不会自动重新执行。",
-    RUN_TIMEOUT: "HarnessHub 的回合期限已到，本回合超时结束。原程序已被结束，结果尚待核实，不会自动重新执行。",
+    RUN_TIMEOUT: "本回合超过了 HarnessHub 的执行期限（不含等待你的时间），原程序没有按时结束，已被强制结束。结果尚待核实，不会自动重新执行。",
   };
   return labels[failure.code] ?? failure.message;
 }

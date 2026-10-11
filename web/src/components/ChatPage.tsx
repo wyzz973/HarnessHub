@@ -13,7 +13,7 @@ import { BrandMark, EmptyState, ErrorNotice, Spinner, StatusBadge } from "./comm
 import { MobileMenu } from "./Sidebar.js";
 import { BrandIcon } from "./BrandIcon.js";
 import { ChatComposer } from "./ChatComposer.js";
-import { ChatMessage } from "./ChatMessage.js";
+import { ChatMessage, type QueueNotice } from "./ChatMessage.js";
 
 export interface SelectionDraft { harnessId: string; controlId: string; providerId: string; providerRevision: number | null; model: string; nativeOptions: Readonly<Record<string,string>> }
 export const EMPTY_SELECTION: SelectionDraft = { harnessId: "", controlId: "", providerId: "", providerRevision: null, model: "", nativeOptions: {} };
@@ -42,6 +42,12 @@ export function effectiveProviderProblem(selection: HarnessSelection, providers:
   const provider = providers.find(row => row.id === selection.provider?.providerId);
   if (!provider) return "当前 Provider 已不可用，请应用另一个选择后继续。";
   return provider.enabled ? null : "当前 Provider 已停用。请启用它，或切换到另一个 Provider 后继续。";
+}
+/** Another conversation's title, short enough to name it within a sentence. */
+function shortTitle(title: string | null | undefined): string {
+  if (!title) return "另一个对话";
+  const characters = [...title];
+  return characters.length > 30 ? characters.slice(0, 30).join("") + "…" : title;
 }
 function draftMatches(draft: SelectionDraft, selection: HarnessSelection): boolean {
   return JSON.stringify(draft) === JSON.stringify(selectionDraft(selection));
@@ -76,6 +82,12 @@ export interface ChatProps {
   /** Branches after a finished reply; omitted while branching is unavailable. */
   onBranch?: (runId: string) => void;
   onOpenSession?: (id: string) => void;
+  /** Another conversation's title, to name the one whose work holds this conversation's workspace (ADR-036). */
+  sessionTitle?: (id: string) => string | null;
+  /** Approvals and questions waiting in every conversation, as last pushed; null until the first list arrives. */
+  attention?: readonly import("../../../src/contracts/session.js").AttentionItem[] | null;
+  /** Cancels a Turn still waiting for its workspace; resolves once the cancellation is recorded or refused. */
+  onCancelQueued?: (runId: string) => Promise<void>;
   /** Reads the selected Harness's native skills, MCP servers and plugins on demand. */
   onLoadExtensions?: (signal: AbortSignal) => Promise<import("../../../src/contracts/control.js").NativeExtensions | null>;
   /** `probes` includes the sessions that catalog reads opened, which are left out otherwise. */
@@ -133,6 +145,23 @@ export function ChatPage(props: ChatProps) {
     return hints;
   }, [session?.runs, props.readiness]);
   const availableHarnesses = harnesses.filter(harness => harness.controls.some(control => control.available));
+  // The queued Turn names the conversation whose work holds the workspace (ADR-036); whether that one waits for the user
+  // follows the pushed list of waiting requests, and the view's own answer until the first list arrives.
+  const [cancellingQueue, setCancellingQueue] = useState<string | null>(null);
+  const queue = session?.queue ?? null;
+  const queueNotice = useMemo((): QueueNotice | undefined => {
+    if (queue === null) return undefined;
+    const holder = queue.holderSessionId, waiting = props.attention?.filter(item => item.sessionId === holder);
+    const holderWaits = waiting === undefined ? queue.holderWaitsForUser ? "approval" as const : null
+      : waiting.some(item => item.kind === "approval") ? "approval" as const : waiting.length ? "question" as const : null;
+    return { holderTitle: shortTitle(props.sessionTitle?.(holder)), holderWaits, endsAt: queue.endsAt, cancelling: cancellingQueue === queue.runId,
+      onOpen: props.onOpenSession ? () => props.onOpenSession!(holder) : undefined,
+      onCancel: props.onCancelQueued ? () => { setCancellingQueue(queue.runId); void props.onCancelQueued!(queue.runId).finally(() => setCancellingQueue(null)); } : undefined };
+  }, [queue, props.attention, props.sessionTitle, props.onOpenSession, props.onCancelQueued, cancellingQueue]);
+  const busyHolder = useCallback((runId: string) => {
+    const holder = session?.busyHolders?.[runId];
+    return holder === undefined || !props.onOpenSession ? undefined : { title: shortTitle(props.sessionTitle?.(holder)), onOpen: () => props.onOpenSession!(holder) };
+  }, [session?.busyHolders, props.sessionTitle, props.onOpenSession]);
 
   const scrollToLatest = useCallback(() => {
     const element = scroll.current;
@@ -244,7 +273,8 @@ export function ChatPage(props: ChatProps) {
           {session.origin ? <BranchOrigin origin={session.origin} session={session} harnesses={harnesses} onOpenSource={props.onOpenSession}/> : null}
           {session.messages.length === 0 && session.origin ? null : session.messages.length === 0 ? <div className="conversation-empty"><BrandMark/><h2>对话准备好了</h2><p>发出第一条消息，开始这次协作。</p></div> : session.messages.map(message => <Fragment key={message.id}>
             <ChatMessage message={message} run={runs.get(message.runId)} startupHint={startupHints.get(message.runId)} harnesses={harnesses} providers={providers} onEdit={fillDraft} onRetry={canRetry ? (text, sent) => { void send(text, sent ?? []).catch(() => {}); } : undefined} {...(props.onToolDetail ? { loadToolDetail: props.onToolDetail } : {})} {...(canBranch && props.onBranch ? { onBranch: props.onBranch } : {})} loadDiagnostics={props.onDiagnostics}/>
-            {message.role === "user" && !assistantRuns.has(message.runId) && runs.has(message.runId) ? <ChatMessage message={undefined} run={runs.get(message.runId)} startupHint={startupHints.get(message.runId)} harnesses={harnesses} providers={providers} onEdit={fillDraft} onRetry={canRetry ? (text, sent) => { void send(text, sent ?? []).catch(() => {}); } : undefined} {...(props.onToolDetail ? { loadToolDetail: props.onToolDetail } : {})} loadDiagnostics={props.onDiagnostics}/> : null}
+            {message.role === "user" && !assistantRuns.has(message.runId) && runs.has(message.runId) ? <ChatMessage message={undefined} run={runs.get(message.runId)} startupHint={startupHints.get(message.runId)} harnesses={harnesses} providers={providers} onEdit={fillDraft} onRetry={canRetry ? (text, sent) => { void send(text, sent ?? []).catch(() => {}); } : undefined} {...(props.onToolDetail ? { loadToolDetail: props.onToolDetail } : {})} loadDiagnostics={props.onDiagnostics}
+              queue={queue?.runId === message.runId ? queueNotice : undefined} busyHolder={busyHolder(message.runId)}/> : null}
           </Fragment>)}
           {session.switches.length > 0 ? <details className="selection-history"><summary>选择记录 <span>{session.switches.length}</span></summary>{session.switches.map(item => <div className={`switch-record ${item.status}`} key={item.id}><span>{harnesses.find(harness => harness.id === item.requested.harnessId)?.name ?? item.requested.harnessId}</span><StatusBadge tone={item.status === "failed" ? "danger" : item.status === "effective" ? "success" : "warning"}>{item.status === "effective" ? "已生效" : item.status === "failed" ? "切换失败" : "等待生效"}</StatusBadge>{item.requested.provider ? <small>{providers.find(provider => provider.id === item.requested.provider?.providerId)?.name ?? "Provider"} · {item.requested.provider.model}</small> : null}{item.error ? <small className="error-text">{failureMessage(item.error)}</small> : null}</div>)}</details> : null}
         </div>}

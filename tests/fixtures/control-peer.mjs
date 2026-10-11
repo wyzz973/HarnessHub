@@ -461,7 +461,7 @@ lines.on("line", line => {
     }
     // A continued session answers under its own identity.
     if (protocol === "acp-v1") acpOutput(scenario === "session-list" ? message.params.sessionId : undefined); else codexOutput();
-    if (["stop", "stop-permission", "slow-start", "no-settlement"].includes(scenario)) {
+    if (["stop", "stop-permission", "slow-start", "no-settlement", "ignore-cancel"].includes(scenario)) {
       if (scenario === "slow-start") setTimeout(() => answer(message.id, { turn: { id: `turn-${turn}`, status: "inProgress" } }), 50);
       return;
     }
@@ -476,6 +476,8 @@ lines.on("line", line => {
   }
   if (message.method === "session/cancel" || message.method === "turn/interrupt") {
     if (message.method === "turn/interrupt") answer(message.id, {});
+    // A program that never settles its turn after a stop request: only ending its process ends the turn.
+    if (scenario === "ignore-cancel") return;
     if (scenario === "stop-permission") {
       emit(protocol === "acp-v1"
         ? { id: "permission-after-stop", method: "session/request_permission", params: { sessionId: "session-fixture", toolCall: { toolCallId: "tool-1" }, options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }] } }

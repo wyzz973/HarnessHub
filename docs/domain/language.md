@@ -6,7 +6,7 @@
 |---|---|---|
 | Session | 网关拥有的持续对话与工作容器；Chat 是其交互视图 | 某个 Harness 原生 Session/Thread |
 | Message | 持久接收的用户输入或公共输出，具有来源和顺序 | 浏览器草稿、stdout 一行 |
-| Turn | 一次已接收输入到结算的工作单元，排队也计入总期限 | 一次模型调用 |
+| Turn | 一次已接收输入到结算的工作单元；自身工作计入执行预算，等待用户与等待工作区计入等待预算（ADR-036） | 一次模型调用 |
 | ExecutionAttempt | Turn 某次被授予执行权的实际尝试 | 网络请求重发；未知尝试不自动再建一次 |
 | HarnessRegistration | 可选择执行者的身份、不可变 revision、适配入口与能力证据 | 已安装二进制或 SDK 的全局 singleton |
 | BackendBinding | 关联公共 Session 与某个原生会话/进程的私有绑定 | 公共 Session 身份 |

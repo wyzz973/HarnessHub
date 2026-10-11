@@ -42,6 +42,8 @@ export interface WebServerOptions {
   readonly port?: number;
   readonly assetsDirectory?: string;
   readonly application?: typeof composeApplication;
+  /** The Turn budgets (ADR-036), resolved by `resolveTurnBudgets`; the defaults otherwise. */
+  readonly budgets?: { readonly executionBudgetMs: number; readonly waitBudgetMs: number };
 }
 export interface WebServer { readonly url: string; close(): Promise<void> }
 function record(value: unknown, allowed: readonly string[], required: readonly string[] = []): Record<string, unknown> {
@@ -155,7 +157,8 @@ function summary(snapshot: SessionSnapshot): SessionSummary {
   return { id: snapshot.id, title: first ? first.slice(0, 80) : inherited ? inherited.slice(0, 80) : "新对话", status: snapshot.status, workspace: snapshot.configuration.workspace,
     selection: snapshot.selection, updatedSeq: snapshot.lastSeq, activeRunId: snapshot.activeRunId };
 }
-function view(snapshot: SessionSnapshot, permissions: SessionView["permissions"] = [], kept: KeptProcessView | null = null, lost: NonNullable<SessionView["retention"]>["lost"] | null = null): SessionView {
+function view(snapshot: SessionSnapshot, permissions: SessionView["permissions"] = [], kept: KeptProcessView | null = null, lost: NonNullable<SessionView["retention"]>["lost"] | null = null,
+  queue: SessionView["queue"] | null = null, busyHolders: SessionView["busyHolders"] = {}): SessionView {
   return { id: snapshot.id, version: snapshot.version, lastSeq: snapshot.lastSeq, epoch: snapshot.epoch, status: snapshot.status,
     workspace: snapshot.configuration.workspace, selection: snapshot.selection, activeRunId: snapshot.activeRunId, pendingSwitchId: snapshot.pendingSwitchId,
     permissions, nativeStates: snapshot.nativeBindings?.flatMap(binding => {
@@ -164,7 +167,7 @@ function view(snapshot: SessionSnapshot, permissions: SessionView["permissions"]
       return [{ harnessId: binding.harnessId, controlId: binding.controlId, status: binding.status === "fork-pending" || binding.status === "forking" ? "forking" as const : binding.status,
         ...(binding.observed === undefined ? {} : { observed: binding.observed }), ...(carried === null ? {} : { carried }) }];
     }) ?? [],
-    ...(snapshot.origin === undefined ? {} : { origin: snapshot.origin }),
+    ...(snapshot.origin === undefined ? {} : { origin: snapshot.origin }), ...(queue === null ? {} : { queue }), ...(Object.keys(busyHolders).length ? { busyHolders } : {}),
     ...(snapshot.schemaVersion < 11 ? {} : { retention: { enabled: snapshot.retainNative === true, process: kept, ...(lost === null ? {} : { lost }) } }), messages: snapshot.messages, runs: snapshot.runs, switches: snapshot.switches };
 }
 function publicFailure(error: unknown): { readonly status: number; readonly code: string; readonly message: string } {
@@ -259,7 +262,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   });
   let app: ReturnType<typeof composeApplication>;
   // A conversation's view with the live state of the native process it keeps (ADR-030).
-  const sessionView = (snapshot: SessionSnapshot, permissions: SessionView["permissions"] = []): SessionView => view(snapshot, permissions, app.runtime.keptProcess(snapshot.id), app.runtime.keptLoss(snapshot.id));
+  const sessionView = (snapshot: SessionSnapshot, permissions: SessionView["permissions"] = []): SessionView => view(snapshot, permissions, app.runtime.keptProcess(snapshot.id), app.runtime.keptLoss(snapshot.id),
+    app.runtime.queueState(snapshot.id), Object.fromEntries(snapshot.runs.flatMap(run => { const holder = app.runtime.busyHolderOf(run.id); return holder === null ? [] : [[run.id, holder]]; })));
   const streams = new SessionStreamHub(id => sessionView(app.runtime.read(id), app.runtime.permissionRequests(id)), {}, failure => {
     const fault = publicFailure(failure.error);
     process.stderr.write("HarnessGateway: SESSION_STREAM_READ_FAILED (" + app.providers.redact(fault.code).slice(0, 128) + ")\n");
@@ -267,7 +271,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   // Waiting approvals and questions of every conversation, refreshed after each published event (ADR-035). A page with a
   // conversation open gets them on that conversation's stream; a page without one subscribes to them alone.
   const attention = new AttentionStreamHub(() => app.runtime.attention(), {}, frame => streams.attentionChanged(frame));
-  app = (options.application ?? composeApplication)(options.root, event => {
+  app = (options.application ?? ((root, publish) => composeApplication(root, publish, options.budgets === undefined ? {} : { budgets: options.budgets })))(options.root, event => {
     try { streams.publish(event); } finally { if (app !== undefined) attention.changed(); }
   });
   // This build: every compiled Gateway file by name and content (ADR-033), also named in a Turn's diagnostics (ADR-037).

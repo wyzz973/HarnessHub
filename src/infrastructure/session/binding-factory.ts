@@ -11,7 +11,7 @@ import { NATIVE_FRAME_BYTES } from "../control/json-rpc-process.js";
 import { chooseControl } from "../../contexts/catalog/application/select-control.js";
 import { inventory } from "../catalog/inventory-composition.js";
 import type { CleanupEvidence, ControlLaunch, HarnessControl } from "../../contracts/control.js";
-import { SessionError, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest,
+import { NATIVE_TURN_HARD_CAP_MS, SessionError, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest,
   type SessionBindingFactory, type SessionConfiguration, type SessionId, type WorkspaceLease,
   type WorkspaceLeaseProvider } from "../../contracts/session.js";
 import { MAX_CATALOG_BYTES, type ControlObservation } from "../../contexts/catalog/domain/catalog.js";
@@ -162,7 +162,8 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       const protocol = observed.selected.protocol;
       if (protocol !== "acp-v1" && protocol !== "codex-app-server" && protocol !== "pi-rpc") throw new SessionError("UNSUPPORTED_CONTROL", "unsupported control protocol");
       const launch: ControlLaunch = { ...observed.selected.command, env: environment, protocol };
-      const options = { cwd: configuration.workspace, env: environment, requestTimeoutMs: 10000, runTimeoutMs: 300000,
+      // The Turn's budgets are the Runtime's (ADR-036); the driver's own timeout only backstops a hung protocol.
+      const options = { cwd: configuration.workspace, env: environment, requestTimeoutMs: 10000, runTimeoutMs: NATIVE_TURN_HARD_CAP_MS,
         maxFrameBytes: NATIVE_FRAME_BYTES, maxDiagnosticBytes: 64 * 1024, closeGraceMs: 500, ...(selection.nativeOptions === undefined ? {} : { selectedOptions: selection.nativeOptions }) };
       this.assertOwner(); lease.assertOwned();
       control = await createNativeControl(selection.harnessId, launch, options);

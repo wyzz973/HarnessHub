@@ -6,7 +6,8 @@ declare const nativeConversationBrand: unique symbol;
 export type NativeConversationId = string & { readonly [nativeConversationBrand]: true };
 /**
  * The wait a driver announces with a permission request (ADR-035): the earlier of the program's own deadline (already less
- * the driver's margin, in milliseconds from now) and what is left of the Turn's deadline (a time), never negative.
+ * the driver's margin, in milliseconds from now) and what is left of the driver's own deadline for the Turn (a time), never
+ * negative. The Runtime then applies the Turn's wait budget (ADR-036).
  */
 export function requestExpiry(turnDeadline: number, nativeMs: number | null, now = Date.now()): { readonly expiresInMs: number; readonly expiresBy: "native" | "turn" } {
   const turn = Math.max(0, Math.round(turnDeadline - now));
@@ -87,8 +88,9 @@ export type ControlEvent =
   | { readonly type: "permission_requested"; readonly id: string; readonly title: string; readonly detail?: string; readonly input?: {readonly kind:"text"|"editor"|"secret";readonly value:string}; readonly options: readonly { readonly id: string; readonly name: string }[];
       /**
        * How long the request can still wait from now, and whose deadline that is (ADR-035): the program's own ("native": it
-       * refuses or withdraws then, and the driver closes the request just before) or this Turn's ("turn": the driver's run
-       * deadline, after which the Turn fails with RUN_TIMEOUT). Absent when the driver knows neither.
+       * refuses or withdraws then, and the driver closes the request just before) or this Turn's ("turn": the driver's hard
+       * cap). The Runtime replaces a "turn" deadline with what is left of the Turn's wait budget (ADR-036), and keeps a
+       * "native" one only when it is earlier. Absent when the driver knows neither.
        */
       readonly expiresInMs?: number; readonly expiresBy?: "native" | "turn";
       /** A question the program asks (a form, a choice, free text) rather than an approval of its own action; approval when absent. */

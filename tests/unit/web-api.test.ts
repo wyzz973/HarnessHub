@@ -63,14 +63,14 @@ test("sub-agent tools are shown under their listed parent call; loops stay flat 
     [["d1", "r"], ["d2", "d1"], ["d3", "d2"], ["d4", "d2"], ["d5", "d2"]]);
 });
 
-test("a waiting request says whose deadline it is: the program's in seconds, the Turn's in minutes until its last one", () => {
+test("a waiting request says whose deadline it is: the program's in seconds, the wait budget's in minutes until its last one", () => {
   const now = 1_000_000;
   assert.deepEqual(remaining({ expiresAt: now + 45_200, expiresBy: "native" }, now), { text: "46 秒后自动拒绝", source: "原程序期限", hint: "原程序的等待期限，到时它会按自己的规则拒绝。" });
   assert.equal(remaining({ expiresAt: now + 125_000, expiresBy: "native" }, now).text, "3 分后自动拒绝");
-  assert.equal(remaining({ expiresAt: now + 240_000, expiresBy: "turn" }, now).text, "回合剩余 4 分");
-  assert.equal(remaining({ expiresAt: now + 59_100, expiresBy: "turn" }, now).text, "回合剩余 60 秒");
-  assert.equal(remaining({ expiresAt: now + 59_000, expiresBy: "turn" }, now).source, "回合期限");
-  assert.equal(remaining({ expiresAt: now - 5, expiresBy: "turn" }, now).text, "回合剩余 0 秒");
+  assert.equal(remaining({ expiresAt: now + 240_000, expiresBy: "turn" }, now).text, "剩余 4 分");
+  assert.equal(remaining({ expiresAt: now + 59_100, expiresBy: "turn" }, now).text, "剩余 60 秒");
+  assert.deepEqual(remaining({ expiresAt: now + 59_000, expiresBy: "turn" }, now), { text: "剩余 59 秒", source: "等待期限", hint: "HarnessHub 为等待你的决定设的期限，到时本回合取消，原程序不会收到决定。" });
+  assert.equal(remaining({ expiresAt: now - 5, expiresBy: "turn" }, now).text, "剩余 0 秒");
   assert.deepEqual(remaining({}, now), { text: "等待你的决定", source: null, hint: "原程序会一直等待你的决定。" });
   const item = (permissionId: string, extra: Partial<AttentionItem>): AttentionItem => ({ sessionId: "session-a" as AttentionItem["sessionId"], permissionId, runId: "run-a", harnessId: "hermes", kind: "approval", requestedAt: 1, ...extra });
   const items = [item("open", {}), item("late", { expiresAt: now + 90_000, expiresBy: "turn" }), item("soon", { expiresAt: now + 5_000, expiresBy: "native" }), item("gone", { expiresAt: now, expiresBy: "native" })];

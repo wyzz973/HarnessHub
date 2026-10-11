@@ -20,9 +20,22 @@ interface MessageProps {
   onBranch?: (runId: string) => void;
   /** One Turn's diagnostics as the Gateway assembles them (ADR-037). */
   loadDiagnostics?: ((runId: string, includeContent: boolean) => Promise<string>) | undefined;
-  /** Seconds the same Harness took to start in this conversation's previous Run, shown while this one starts. */
   /** Seconds the same Harness took to start: last time in this conversation, or usually when this conversation has no earlier Run of it. */
   startupHint?: { readonly seconds: number; readonly usual: boolean } | undefined;
+  /** This queued Turn waits for another conversation's work in their shared workspace (ADR-036). */
+  queue?: QueueNotice | undefined;
+  /** The conversation that held the workspace this Turn waited for until its wait budget ended (WORKSPACE_BUSY). */
+  busyHolder?: { readonly title: string; readonly onOpen: () => void } | undefined;
+}
+/** What a queued Turn shows about the conversation it waits for; no paths. */
+export interface QueueNotice {
+  readonly holderTitle: string;
+  /** What the holder waits for: the user's approval, an answer, or nothing (it is running). */
+  readonly holderWaits: "approval" | "question" | null;
+  readonly endsAt: number;
+  readonly cancelling: boolean;
+  readonly onOpen?: (() => void) | undefined;
+  readonly onCancel?: (() => void) | undefined;
 }
 function finished(status: RunStatus): boolean {
   return status === "completed" || status === "cancelled" || status === "failed" || status === "unknown";
@@ -35,9 +48,10 @@ export function duration(milliseconds: number): string {
   return Math.floor(seconds / 60) + " 分 " + Math.round(seconds % 60) + " 秒";
 }
 /** What the Run is doing now, from the phases the Runtime recorded; elapsed time is shown once it is noticeable. */
-function activityLabel(run: PublicRun | undefined, status: RunStatus, harness: string, now: number, startupHint: MessageProps["startupHint"]): string {
+function activityLabel(run: PublicRun | undefined, status: RunStatus, harness: string, now: number, startupHint: MessageProps["startupHint"], queue?: QueueNotice): string {
   if (run?.cancelRequested && !finished(status)) return "正在停止并清理资源";
   if (run?.awaitingSwitchId && status === "queued") return "等待选择切换生效";
+  if (queue !== undefined && status === "queued") return `排队中：等待对话「${queue.holderTitle}」释放工作区（${queue.holderWaits === "approval" ? "它正在等待你的审批" : queue.holderWaits === "question" ? "它正在等待你的回答" : "它正在运行"}）`;
   const timing = run?.timing, since = (from: number | undefined) => from !== undefined && now - from >= 2000 ? " · " + duration(now - from) : "";
   switch (status) {
     case "queued": return "等待开始";
@@ -97,7 +111,17 @@ function RunDiagnostics({ runId, load }: { readonly runId: string; readonly load
   </div>;
 }
 
-export const ChatMessage = memo(function ChatMessage({ message, run, harnesses, providers, onEdit, onRetry, loadToolDetail, onBranch, loadDiagnostics, startupHint }: MessageProps) {
+/** The actions of a Turn waiting for its workspace, and how long it may still wait; the Turn is never sent after that. */
+function QueuedTurn({ queue, now }: { readonly queue: QueueNotice; readonly now: number }) {
+  const minutes = Math.max(1, Math.ceil((queue.endsAt - now) / 60000));
+  return <div className="queued-turn">
+    <small title="HarnessHub 为外部等待设的期限；到期后这条消息不会发出，也不会自动重试。">最多再等 {minutes} 分钟，到时这条消息不会发出。</small>
+    <div>{queue.onOpen ? <button type="button" className="text-button" onClick={queue.onOpen}>打开那个对话</button> : null}
+      {queue.onCancel ? <button type="button" className="text-button" disabled={queue.cancelling} onClick={queue.onCancel}>{queue.cancelling ? "正在取消…" : "取消排队"}</button> : null}</div>
+  </div>;
+}
+
+export const ChatMessage = memo(function ChatMessage({ message, run, harnesses, providers, onEdit, onRetry, loadToolDetail, onBranch, loadDiagnostics, startupHint, queue, busyHolder }: MessageProps) {
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const [details, setDetails] = useState(false);
@@ -139,13 +163,15 @@ export const ChatMessage = memo(function ChatMessage({ message, run, harnesses, 
     {run?.activities?.length ? <ActivityList activities={run.activities}/> : null}
     {run?.tools?.length ? <ToolList tools={run.tools} active={!terminal} loadDetail={loadToolDetail}/> : null}
     {text ? <StreamingMarkdown text={text} isStreaming={!terminal && !run?.cancelRequested}/>
-      : <div className={`response-status ${terminal ? "is-terminal" : ""} ${status === "failed" || status === "unknown" ? "is-error" : ""}`} role="status">{!terminal ? <span className="activity-dot" aria-hidden="true"/> : null}<span>{activityLabel(run, status, harness, now, startupHint)}</span></div>}
+      : <div className={`response-status ${terminal ? "is-terminal" : ""} ${status === "failed" || status === "unknown" ? "is-error" : ""}`} role="status">{!terminal ? <span className="activity-dot" aria-hidden="true"/> : null}<span>{activityLabel(run, status, harness, now, startupHint, queue)}</span></div>}
+    {queue !== undefined && status === "queued" && !run?.cancelRequested ? <QueuedTurn queue={queue} now={now}/> : null}
     {text && !terminal ? <div className="response-activity" role="status"><span className="activity-dot" aria-hidden="true"/><span>{activityLabel(run, status, harness, now, startupHint)}</span></div> : null}
     {text && status === "cancelled" ? <p className="response-ended" role="status">已停止</p> : null}
     {status === "unknown" && text ? <p className="response-ended is-error" role="status">执行结果尚未核实</p> : null}
     {status === "failed" && text ? <p className="response-ended is-error" role="status">回复未能完成</p> : null}
     {run?.outputs?.length ? <OutputList outputs={run.outputs}/> : null}
-    {run?.error && (status === "failed" || status === "unknown") ? <div className="run-error" role="status">{failureMessage(run.error)}</div> : null}
+    {run?.error && (status === "failed" || status === "unknown") ? <div className="run-error" role="status">{failureMessage(run.error)}{busyHolder && run.error.code === "WORKSPACE_BUSY"
+      ? <>占用它的是对话「{busyHolder.title}」。<button type="button" className="text-button" onClick={busyHolder.onOpen}>打开那个对话</button></> : null}</div> : null}
     {terminal && run && (run.usage || run.timing?.endedAt !== undefined) ? <div className="run-meta">{run.usage ? <UsageLine usage={run.usage}/> : null}<RunTiming run={run}/></div> : null}
     <div className={`message-actions ${details || copied || copyFailed ? "is-revealed" : ""}`}>
       {text ? <button type="button" className="message-action" onClick={() => void copy()} aria-label={copied ? "已复制回复" : "复制回复"} title={copied ? "已复制" : "复制回复"}>{copied ? <Check size={14}/> : <Copy size={14}/>}<span className="sr-only">{copied ? "已复制" : "复制回复"}</span></button> : null}

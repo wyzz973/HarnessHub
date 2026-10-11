@@ -2041,6 +2041,7 @@
         "tests/integration/session-runtime.test.ts",
         "tests/integration/kept-process.test.ts",
         "tests/integration/attention.test.ts",
+        "tests/integration/parallel-work.test.ts",
         "tests/fixtures/kept-owner.mjs"
       ],
       "requirements": [
@@ -2080,7 +2081,9 @@
         "G028-NC7",
         "G028-NC8",
         "G028-NC9",
-        "G028-NC10"
+        "G028-NC10",
+        "G028-NC11",
+        "G028-NC12"
       ],
       "active_slice": "native-models-switching"
     },
@@ -3377,7 +3380,8 @@
         "G054-NC7",
         "G054-NC8",
         "G054-NC9",
-        "G054-NC10"
+        "G054-NC10",
+        "G054-NC11"
       ],
       "active_slice": "native-installation-management"
     },

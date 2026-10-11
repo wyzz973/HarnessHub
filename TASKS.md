@@ -1079,6 +1079,7 @@
 - tests/integration/session-runtime.test.ts
 - tests/integration/kept-process.test.ts
 - tests/integration/attention.test.ts
+- tests/integration/parallel-work.test.ts
 - tests/fixtures/kept-owner.mjs
 
 验收：
@@ -1086,7 +1087,7 @@
 - 未知结果不自动重跑
 - 有界排队且期限继续计时
 
-场景：G028-C01, G028-C02, G028-C03, G028-C04, G028-R01, G028-R02, G028-NC2, G028-NC3, G028-NC4, G028-NC5, G028-NC6, G028-NC7, G028-NC8, G028-NC9, G028-NC10。
+场景：G028-C01, G028-C02, G028-C03, G028-C04, G028-R01, G028-R02, G028-NC2, G028-NC3, G028-NC4, G028-NC5, G028-NC6, G028-NC7, G028-NC8, G028-NC9, G028-NC10, G028-NC11, G028-NC12。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1703,7 +1704,7 @@
 - 不提前展示新Harness已生效
 - 可操作且不持有独立业务状态
 
-场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01, G054-NC1, G054-NC2, G054-NC3, G054-NC4, G054-NC5, G054-NC6, G054-NC7, G054-NC8, G054-NC9, G054-NC10。
+场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01, G054-NC1, G054-NC2, G054-NC3, G054-NC4, G054-NC5, G054-NC6, G054-NC7, G054-NC8, G054-NC9, G054-NC10, G054-NC11。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 

@@ -39,7 +39,9 @@ function workspaceLockRoot(): string {
   if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== uid || (info.mode & 0o077) !== 0) throw new SessionError("INVALID_STORAGE", "workspace lock namespace is not privately owned");
   return path;
 }
-export function application(root: string, publish: (event: SessionEvent) => void, options: { readonly management?: Pick<ManagementOptions, "metadata" | "installer" | "recipes" | "installationMode" | "native" | "nativeLocks">; readonly nativeEnvironment?: NativeEnvironment } = {}): { readonly management: LocalHarnessManagement; readonly providers: LocalProviderService; readonly store: SqliteSessionStore; readonly content: LocalContentStore; readonly factory: DirectorySessionBindingFactory; readonly runtime: SessionRuntime } {
+export function application(root: string, publish: (event: SessionEvent) => void, options: { readonly management?: Pick<ManagementOptions, "metadata" | "installer" | "recipes" | "installationMode" | "native" | "nativeLocks">; readonly nativeEnvironment?: NativeEnvironment;
+  /** The Turn budgets this Gateway was configured with (ADR-036); the defaults otherwise. */
+  readonly budgets?: { readonly executionBudgetMs: number; readonly waitBudgetMs: number } } = {}): { readonly management: LocalHarnessManagement; readonly providers: LocalProviderService; readonly store: SqliteSessionStore; readonly content: LocalContentStore; readonly factory: DirectorySessionBindingFactory; readonly runtime: SessionRuntime } {
   const store = new SqliteSessionStore(root);
   let providers: LocalProviderService | undefined;
   let management: LocalHarnessManagement | undefined;
@@ -54,7 +56,7 @@ export function application(root: string, publish: (event: SessionEvent) => void
     content.collect(store.contentReferences());
     // Kept process groups are recognized across restarts on POSIX only; elsewhere a previous owner's kept process stays
     // unconfirmed and its workspace quarantined (ADR-030).
-    const runtime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: hash, publish, content,
+    const runtime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: hash, publish, content, ...(options.budgets ?? {}),
       ...(process.platform === "win32" ? {} : { processes: new PosixProcessGroups() }) });
     return { store, content, factory, runtime, providers, management };
   } catch (error) { try { management?.close(); } finally { try { providers?.close(); } finally { store.close(); } } throw error; }
