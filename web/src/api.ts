@@ -339,6 +339,14 @@ export class GatewayApi {
       if (!opened) throw new ApiError("STREAM_PROTOCOL", "实时连接没有返回会话事实。");
     } finally { clearTimeout(timeout); }
   }
+  /** One Turn's diagnostics as the Gateway assembled and scrubbed them (ADR-037); conversation content only when asked for. */
+  runDiagnostics(id: string, run: string, includeContent: boolean, signal?: AbortSignal): Promise<string> {
+    return this.request(`/sessions/${encodeURIComponent(id)}/runs/${encodeURIComponent(run)}/diagnostics?content=${includeContent ? "1" : "0"}`, "GET", undefined, value => {
+      const row = record(value), text = row.text;
+      if (typeof text !== "string" || bool(row.includesContent) !== includeContent || !text.startsWith("HarnessHub 诊断 · ")) return invalid();
+      return text;
+    }, signal);
+  }
   /** Waiting approvals and questions of every conversation, as they are now. */
   attention(signal?: AbortSignal): Promise<AttentionFrame> { return this.request("/attention", "GET", undefined, decodeAttentionFrame, signal); }
   /**

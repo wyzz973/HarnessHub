@@ -1245,7 +1245,8 @@
         "G010-C02",
         "G010-C03",
         "G010-C04",
-        "G010-NC1"
+        "G010-NC1",
+        "G010-NC2"
       ],
       "active_slice": "native-models-switching"
     },
@@ -3093,6 +3094,7 @@
         "tests/integration/web-server.test.ts",
         "src/web/session-stream.ts",
         "src/web/attention-stream.ts",
+        "src/web/run-diagnostics.ts",
         "src/web/harness-models.ts",
         "src/web/conversation-export.ts",
         "src/web/harness-entry.ts",
@@ -3133,7 +3135,8 @@
         "G050-NC2",
         "G050-NC3",
         "G050-NC4",
-        "G050-NC5"
+        "G050-NC5",
+        "G050-NC6"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3373,7 +3376,8 @@
         "G054-NC6",
         "G054-NC7",
         "G054-NC8",
-        "G054-NC9"
+        "G054-NC9",
+        "G054-NC10"
       ],
       "active_slice": "native-installation-management"
     },

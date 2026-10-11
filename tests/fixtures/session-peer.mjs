@@ -70,6 +70,8 @@ createInterface({ input: process.stdin }).on("line", line => {
       notify("turn/started", { threadId: nativeId, turn: { id: active.turnId, status: "inProgress" } });
       response(message.id, { turn: { id: active.turnId, status: "inProgress" } });
     }
+    // A program that logs a private path and credentials on stderr while it works (diagnostics must never carry them).
+    if (current.includes("noisy")) process.stderr.write("open /Users/someone/private/notes.txt failed\nOPENAI_API_KEY=sk-fixtureSECRET1234567890abcd\nAuthorization: Bearer fixture.token.value123\nINFO Prompt on session native: " + current + "\n");
     text(`${name}:${current}`);
     if (scenario !== "hold") finish();
     return;

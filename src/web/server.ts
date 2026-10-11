@@ -2,12 +2,13 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { constants, realpathSync } from "node:fs";
 import { open, realpath } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { release, userInfo } from "node:os";
 import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { application as composeApplication } from "../cli/session-application.js";
 import { ProviderError } from "../contracts/provider.js";
 import { ManagementError } from "../contracts/management.js";
-import { SessionError, parseNativeOptions, sessionId, type SelectionRequest, type SessionConfiguration, type SessionSnapshot } from "../contracts/session.js";
+import { SessionError, parseNativeOptions, sessionId, type SelectionRequest, type SessionConfiguration, type SessionEvent, type SessionSnapshot } from "../contracts/session.js";
 import { MAX_CONTENT_BYTES, MAX_RUN_ATTACHMENTS } from "../contracts/content.js";
 import type { EventPage, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, NativeSessionListView, SessionSummary, SessionView, WebState } from "../contracts/web.js";
 import { inventory, officialInstallation } from "../infrastructure/catalog/inventory-composition.js";
@@ -21,6 +22,7 @@ import { AttentionStreamHub } from "./attention-stream.js";
 import { HarnessModels } from "./harness-models.js";
 import { buildRevision, NativeCatalogCache, type NativeReadiness } from "./native-catalog-cache.js";
 import { conversationMarkdown } from "./conversation-export.js";
+import { runDiagnostics, scrubDiagnostics } from "./run-diagnostics.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -268,10 +270,12 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   app = (options.application ?? composeApplication)(options.root, event => {
     try { streams.publish(event); } finally { if (app !== undefined) attention.changed(); }
   });
+  // This build: every compiled Gateway file by name and content (ADR-033), also named in a Turn's diagnostics (ADR-037).
+  const revision = buildRevision(fileURLToPath(new URL("..", import.meta.url)));
   // Derived observations only; a file this version cannot adopt is reported and left as it is. Catalogs are reused only by
   // the build that read them (every compiled Gateway file), since its drivers decide what a catalog contains.
   const nativeModels = new HarnessModels(app.factory, new NativeCatalogCache(realpathSync(options.root), { assertOwner: () => app.store.assertOwner(),
-    report: problem => process.stderr.write("HarnessGateway: NATIVE_CATALOG_CACHE_UNAVAILABLE (" + problem + ")\n"), revision: buildRevision(fileURLToPath(new URL("..", import.meta.url))) }));
+    report: problem => process.stderr.write("HarnessGateway: NATIVE_CATALOG_CACHE_UNAVAILABLE (" + problem + ")\n"), revision }));
   /** A request's workspace with this Gateway's catalog, configuration home and search settings. */
   const workspaceConfiguration = (workspace: string) => prepareConfiguration({ workspace,
     ...(options.configuration.configHome === null ? {} : { configHome: options.configuration.configHome }),
@@ -540,6 +544,30 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     }
     // Which conversations keep a native process and in which workspace, for the choice when one occupies a workspace (ADR-030).
     if (path === "/api/v1/kept-processes" && method === "GET") { queries(url, []); json(response, 200, { processes: app.runtime.keptProcesses() }); return; }
+    // One Turn's diagnostics, assembled on request and never kept (ADR-037). Private text is scrubbed here, not in the page.
+    const diagnosticsRoute = /^\/api\/v1\/sessions\/([^/]+)\/runs\/([^/]+)\/diagnostics$/u.exec(path);
+    if (diagnosticsRoute && method === "GET") {
+      queries(url, ["content"]); const content = url.searchParams.get("content");
+      if (content !== null && content !== "0" && content !== "1") throw new HttpError(400, "INVALID_INPUT", "content must be 0 or 1");
+      const id = sessionId(diagnosticsRoute[1]!), snapshot = app.runtime.read(id), run = snapshot.runs.find(item => item.id === diagnosticsRoute[2]);
+      if (run === undefined) throw new HttpError(404, "RUN_NOT_FOUND", "this conversation has no such Turn");
+      const events: SessionEvent[] = []; let after = 0, complete = true;
+      for (let page = 0; ; page++) {
+        const batch = app.store.events(id, after, 100);
+        for (const event of batch) if (event.data.runId === run.id) events.push(event);
+        if (batch.length < 100) break;
+        if (page >= 200) { complete = false; break; }
+        after = batch.at(-1)!.seq;
+      }
+      const harness = harnesses.find(item => item.id === run.selection.harnessId), includeContent = content === "1";
+      let user: string | null = null; try { user = userInfo().username; } catch { user = null; }
+      const kept = app.runtime.runDiagnostics(id, run.id);
+      const text = runDiagnostics({ session: snapshot, run, events, eventsComplete: complete, stderr: kept === null ? null : { text: kept.stderr, truncated: kept.truncated },
+        harness: harness === undefined ? null : { name: harness.name, programVersion: harness.management.programVersion, installedVersion: harness.management.installedVersion },
+        build: revision, runtime: { node: process.version, platform: process.platform, release: release(), arch: process.arch }, now: new Date(), includeContent,
+        scrub: value => scrubDiagnostics(value, { redact: text => app.providers.redact(text), user }) });
+      json(response, 200, { text, includesContent: includeContent }); return;
+    }
     const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|switches|resume|cancel|close|events|export|fork|retention|end-process))?$/u.exec(path);
     if (sessionRoute) {
       const id = sessionId(sessionRoute[1]!), action = sessionRoute[2];

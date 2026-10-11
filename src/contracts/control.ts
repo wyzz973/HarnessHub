@@ -209,6 +209,13 @@ export interface HarnessControl {
   healthy?(): boolean;
   /** The process group this connection's program leads (its pid), for recognizing a kept process later; null before it started. */
   processGroup?(): number | null;
+  /** A position in the program's stderr, to read what it logs from here on (a Turn's diagnostics). */
+  diagnosticMark?(): number;
+  /**
+   * What the program logged on stderr after `mark`, as far as a bounded recent window still holds it. Private text: it may
+   * name the user's paths or the program's own credentials, and is redacted before it leaves the Gateway.
+   */
+  diagnosticsSince?(mark: number): string;
   /** Updates the native side sent outside any Turn of this connection (background work, autonomous follow-ups); counted only. */
   readonly unattributedUpdates?: number;
   /**

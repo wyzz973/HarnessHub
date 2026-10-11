@@ -673,7 +673,7 @@
 - 分别验证，不宣称同用户OS隔离
 - 无原值泄露
 
-场景：G010-C01, G010-C02, G010-C03, G010-C04, G010-NC1。
+场景：G010-C01, G010-C02, G010-C03, G010-C04, G010-NC1, G010-NC2。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1563,6 +1563,7 @@
 - tests/integration/web-server.test.ts
 - src/web/session-stream.ts
 - src/web/attention-stream.ts
+- src/web/run-diagnostics.ts
 - src/web/harness-models.ts
 - src/web/conversation-export.ts
 - src/web/harness-entry.ts
@@ -1575,7 +1576,7 @@
 - 统一problem错误且无副作用
 - 遗漏/重复/过期内容能被拒绝
 
-场景：G050-C01, G050-C02, G050-C03, G050-P01, G050-P02, G050-R01, G050-NC1, G050-NC2, G050-NC3, G050-NC4, G050-NC5。
+场景：G050-C01, G050-C02, G050-C03, G050-P01, G050-P02, G050-R01, G050-NC1, G050-NC2, G050-NC3, G050-NC4, G050-NC5, G050-NC6。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1702,7 +1703,7 @@
 - 不提前展示新Harness已生效
 - 可操作且不持有独立业务状态
 
-场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01, G054-NC1, G054-NC2, G054-NC3, G054-NC4, G054-NC5, G054-NC6, G054-NC7, G054-NC8, G054-NC9。
+场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01, G054-NC1, G054-NC2, G054-NC3, G054-NC4, G054-NC5, G054-NC6, G054-NC7, G054-NC8, G054-NC9, G054-NC10。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 

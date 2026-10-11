@@ -382,3 +382,27 @@ test("native extensions are read on demand from the selected Harness and are nul
   assert.equal(acp.status, 200); assert.equal(row(acp.data).extensions, null);
   assert.equal((await call(f, "/api/v1/harnesses/web-b/extensions?unknown=1")).status, 400);
 });
+
+test("a Turn's diagnostics are assembled on request, scrubbed by the Gateway and hold conversation content only when asked", async t => {
+  const f = await fixture(t); await auth(f); const id = await create(f);
+  assert.equal((await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "noisy turn", commandId: "noisy" })).status, 202);
+  const run = (await waitFor(f, id, value => value.runs[0]?.status === "completed")).runs[0]!;
+  const read = async (query: string) => call(f, `/api/v1/sessions/${id}/runs/${run.id}/diagnostics${query}`);
+  const plain = await read(""), text = String(row(plain.data).text);
+  assert.equal(plain.status, 200); assert.equal(row(plain.data).includesContent, false);
+  assert.equal(text.split("\n")[0], "HarnessHub 诊断 · 不含对话内容");
+  assert.ok(Buffer.byteLength(text) <= 64 * 1024);
+  assert.match(text, /回合：run-/u); assert.match(text, /阶段（距受理）：准备 \d+ ms/u); assert.match(text, /清理：已关闭 · 退出码 0/u); assert.match(text, /原程序在本回合报告：a 1\.0 · 协议版本 1/u);
+  assert.match(text, /stderr（本回合，最后 4 KiB）：\nopen \[路径\] failed\nOPENAI_API_KEY=\[已隐去\]\nAuthorization: Bearer \[已隐去\]\nINFO Prompt on session native: \[对话内容已隐去\]/u);
+  for (const secret of ["/Users/someone", "notes.txt", "sk-fixtureSECRET", "fixture.token.value123", f.workspace, f.data])
+    assert.equal(text.includes(secret), false, secret + " must not leave the Gateway");
+  assert.equal(text.includes("noisy turn"), false, "no prompt by default"); assert.equal(text.includes("a:noisy turn"), false, "no reply by default");
+  const full = String(row((await read("?content=1")).data).text);
+  assert.equal(full.split("\n")[0], "HarnessHub 诊断 · 含对话内容（只含这一轮的提示词与回复）");
+  assert.match(full, /\n提示词：\nnoisy turn\n\n回复：\na:noisy turn\n$/u);
+  assert.match(full, /INFO Prompt on session native: noisy turn/u, "with content chosen, the program's own log keeps it");
+  assert.equal(full.includes("sk-fixtureSECRET"), false);
+  assert.equal((await read("?content=2")).status, 400);
+  assert.equal((await call(f, `/api/v1/sessions/${id}/runs/run-missing/diagnostics`)).status, 404);
+  assert.equal((await fetch(f.origin + `/api/v1/sessions/${id}/runs/${run.id}/diagnostics`, { headers: { Origin: f.origin } })).status, 401);
+});

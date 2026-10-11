@@ -150,6 +150,8 @@ export class AcpControl implements HarnessControl {
   get unattributedUpdates(): number { return this.unattributed; }
   healthy(): boolean { return this.initialized && this.failure === null && this.rpc.failure === null; }
   processGroup(): number | null { return this.rpc.processGroup; }
+  diagnosticMark(): number { return this.rpc.stderrMark; }
+  diagnosticsSince(mark: number): string { return this.rpc.stderrSince(mark); }
 
   constructor(launch: ControlLaunch, private readonly options: ControlOptions) {
     if (launch.protocol !== "acp-v1") throw new ControlError("INVALID_INPUT", "ACP control requires an ACP launch");

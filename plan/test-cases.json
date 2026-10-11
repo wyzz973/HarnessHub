@@ -7319,6 +7319,23 @@
       "planned_file": "tests/integration/web-server.test.ts"
     },
     {
+      "id": "G050-NC6",
+      "task": "G050",
+      "requirements": [
+        "R01",
+        "R22"
+      ],
+      "invariants": [
+        "INV-17"
+      ],
+      "layer": "integration",
+      "scenario": "按回合读取诊断信息",
+      "expected": "服务端现场拼装不保存；植入stderr的路径与sk-令牌不出现；默认不含对话内容，勾选后只含该轮提示词与回复；参数无效400、回合不存在404、未登录401",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/web-server.test.ts"
+    },
+    {
       "id": "G061-NC6",
       "task": "G061",
       "requirements": [
@@ -7773,6 +7790,23 @@
       "planned_file": "tests/unit/session-redaction.test.ts"
     },
     {
+      "id": "G010-NC2",
+      "task": "G010",
+      "requirements": [
+        "R17",
+        "R10"
+      ],
+      "invariants": [
+        "INV-17"
+      ],
+      "layer": "unit",
+      "scenario": "诊断文本的清洗与拼装",
+      "expected": "先经既有脱敏器，再隐去路径、环境变量值、密钥样式字符串与账户名，保留其余文字与行；首行说明是否含对话内容；stderr只留最后4 KiB；总量不超过64 KiB；默认不含提示词与回复",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/unit/session-redaction.test.ts"
+    },
+    {
       "id": "G061-NC5",
       "task": "G061",
       "requirements": [
@@ -7819,6 +7853,23 @@
       "layer": "e2e",
       "scenario": "侧栏标记等待处理的对话并按期限倒计时",
       "expected": "侧栏说明等待审批或提问、期限来源与剩余时间，每秒更新，到期即消失；点击只打开对话，决定在对话内完成；浏览器通知由用户开启，只在页面不可见时发出，只含 Harness 名称与剩余时间",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/web.browser.ts"
+    },
+    {
+      "id": "G054-NC10",
+      "task": "G054",
+      "requirements": [
+        "R01",
+        "R22"
+      ],
+      "invariants": [
+        "INV-17"
+      ],
+      "layer": "e2e",
+      "scenario": "从执行详情复制诊断信息",
+      "expected": "默认不勾选对话内容，复制的首行与内容一致，不含私有路径；勾选后含该轮提示词",
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/browser/web.browser.ts"

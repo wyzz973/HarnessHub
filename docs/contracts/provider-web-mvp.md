@@ -83,3 +83,5 @@ ADR-030（2026-10-12，Session v11）追加：`POST /api/v1/sessions/:id/retenti
 ADR-030 服务异常退出后的清理（2026-10-12，Session v12）：保留记录带进程组身份`retained.process: {group, startedAt}`（v11→v12 只升版本号）。服务启动时先接管上一服务保留的进程组，结果记为对话事件`native.process_lost`（`outcome`为`terminated`、`gone`或`unconfirmed`，`leaseReleased`表示是否释放了工作区租约）；会话视图在本次服务运行期间、该对话下一条消息之前带`retention.lost: {outcome, leaseReleased, at}`。`unconfirmed`时工作区保持隔离。
 
 ADR-035（2026-10-12）追加：待决的审批与提问带`requestedAt`、`expiresAt`、`expiresBy`（`native`为原程序自己的期限，`turn`为本回合期限，取较早者）和`kind`（提问为`question`）。`GET /api/v1/attention`返回`{revision, items}`：所有尚未决定的请求（对话、请求、回合、Harness、类型、期限，不含标题与详情），最多32项，只含当前服务内存中的请求。会话事件流在会话事实之外携带`event: attention`帧（不带事件编号，不移动游标）；没有打开对话的页面订阅`GET /api/v1/attention/stream`（`id`为修订号，与会话流相同的连接上限、心跳与TTL）。回合期限到期时仍在等待的请求记为`permission.closed`且`reason: "expired"`，回合以`RUN_TIMEOUT`结束、结果未知。
+
+ADR-037（2026-10-12）追加：`GET /api/v1/sessions/:id/runs/:runId/diagnostics?content=0|1`返回`{text, includesContent}`：本轮的诊断纯文本（不超过64 KiB），服务端在请求时拼装、不保存；首行说明是否含对话内容，默认不含，`content=1`时只加入该轮提示词与回复。来自原程序的文字先经Provider脱敏器，再隐去密钥样式字符串、环境变量值、路径与本机账户名。stderr只取本轮最后4 KiB，只在当前服务内存中保留最近64轮。参数无效400，回合不存在404。

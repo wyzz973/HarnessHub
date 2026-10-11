@@ -25,6 +25,8 @@ interface ActiveExecution {
   /** Sequential content writes owned by this Turn; drained before its binding closes. */
   writes: Promise<void>;
   writeFailure: unknown;
+  /** Where this Turn's stderr begins in its program's stderr, for its diagnostics; null before a program serves it. */
+  diagnosticMark: number | null;
 }
 /** A conversation's kept native process (ADR-030): the binding of its last Run, idle between Turns and owned by the runtime. */
 interface KeptProcess {
@@ -96,6 +98,8 @@ function fault(error: unknown): { readonly code: string; readonly message: strin
   const code = error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code.slice(0, 128) : "CONTROL_FAILED";
   return { code, message: "Harness operation failed; inspect private control diagnostics" };
 }
+/** How much of a Turn's stderr is kept for its diagnostics, and for how many Turns. */
+const RUN_DIAGNOSTIC_BYTES = 4096, MAX_RUN_DIAGNOSTICS = 64;
 /** Longest wait a driver may announce for one request (a day); anything else is ignored rather than shown. */
 const MAX_PERMISSION_WAIT_MS = 24 * 60 * 60 * 1000;
 const TURN_DEADLINE_NOTICE: PublicNotice = { severity: "warning", title: "回合期限已到", detail: "HarnessHub 的回合期限已到，本回合超时结束；原程序没有收到你的决定。" };
@@ -137,6 +141,8 @@ export class SessionRuntime {
   private readonly releases = new Map<SessionId, { readonly reason: KeptRelease; readonly done: Promise<void>; readonly resolve: () => void }>();
   /** Processes a previous owner kept and this owner found at start, with what became of them; shown in their conversations. */
   private readonly lost = new Map<SessionId, { readonly outcome: "terminated" | "gone" | "unconfirmed"; readonly leaseReleased: boolean; readonly at: number }>();
+  /** The latest Turns' stderr tails, oldest first; private until redacted for the user's diagnostics. */
+  private readonly diagnostics = new Map<string, { readonly sessionId: SessionId; readonly stderr: string; readonly truncated: boolean }>();
   private accepting = true;
   private readonly closingSessions = new Set<SessionId>();
   private readonly managedSessions = new Set<SessionId>();
@@ -438,6 +444,19 @@ export class SessionRuntime {
   /** Every kept process with the workspace it holds, for telling a conversation which one occupies its workspace. */
   keptProcesses(): readonly { readonly sessionId: SessionId; readonly workspace: string; readonly harnessId: string }[] {
     return [...this.kept].map(([sessionId, kept]) => ({ sessionId, workspace: kept.binding.workspace, harnessId: kept.selection.harnessId }));
+  }
+  /**
+   * The last stderr this Turn's program logged while serving it, as the program wrote it (private: it is redacted before it
+   * leaves the Gateway). Kept in memory for the latest Turns of this owner only; null when unknown.
+   */
+  runDiagnostics(id: SessionId, run: string): { readonly stderr: string; readonly truncated: boolean } | null {
+    const kept = this.diagnostics.get(run);
+    return kept === undefined || kept.sessionId !== id ? null : { stderr: kept.stderr, truncated: kept.truncated };
+  }
+  private keepDiagnostics(id: SessionId, run: string, stderr: string): void {
+    const truncated = Buffer.byteLength(stderr) > RUN_DIAGNOSTIC_BYTES, tail = truncated ? Buffer.from(stderr).subarray(-RUN_DIAGNOSTIC_BYTES).toString("utf8").replace(/^\uFFFD+/u, "") : stderr;
+    this.diagnostics.delete(run); this.diagnostics.set(run, { sessionId: id, stderr: tail, truncated });
+    while (this.diagnostics.size > MAX_RUN_DIAGNOSTICS) this.diagnostics.delete(this.diagnostics.keys().next().value!);
   }
   /** What became of the process this conversation kept under the previous owner, when this owner found one at start. */
   keptLoss(id: SessionId): { readonly outcome: "terminated" | "gone" | "unconfirmed"; readonly leaseReleased: boolean; readonly at: number } | null { return this.lost.get(id) ?? null; }
@@ -910,7 +929,7 @@ export class SessionRuntime {
     if (waitedSwitch && waitedSwitch.status !== "effective") return;
     const pinned = waitedSwitch?.target ?? queued.selection;
     const execution: ActiveExecution = { sessionId: id, runId: target, binding: null, run: null, dispatched: false,
-      backendSettled: false, stop: null, earlyClose: null, details: new Map(), dirty: new Set(), writes: Promise.resolve(), writeFailure: null };
+      backendSettled: false, stop: null, earlyClose: null, details: new Map(), dirty: new Set(), writes: Promise.resolve(), writeFailure: null, diagnosticMark: null };
     if (this.active) throw new SessionError("OWNERSHIP_LOST", "another global writer is active");
     this.active = execution;
     let backend: BackendResult | null = null, cleanup: CleanupEvidence | null = null, problem: ReturnType<typeof fault> | null = null;
@@ -938,14 +957,14 @@ export class SessionRuntime {
       let native: NativeConversationId;
       if (reusing !== null) {
         const kept = reusing, now = this.options.now().getTime();
-        execution.binding = kept.binding; native = kept.conversation;
+        execution.binding = kept.binding; native = kept.conversation; execution.diagnosticMark = kept.binding.control.diagnosticMark?.() ?? null;
         this.commit(id, current => {
           const { retained, ...rest } = current;
           return { next: updatedRun(rest, target, { reused: true }), events: [event("native.process_reused", { runId: target, previousRunId: kept.runId, idleMs: Math.max(0, now - kept.lastUsed), backgroundUpdates: this.background(kept) })] };
         });
         this.continue(execution);
       } else {
-        try { execution.binding = await this.factory.prepare(run.selection, current.configuration, id, target); }
+        try { execution.binding = await this.factory.prepare(run.selection, current.configuration, id, target); execution.diagnosticMark = execution.binding.control.diagnosticMark?.() ?? null; }
         catch (error) {
           // Another conversation's kept process holds the workspace: the user decides whether to end it (ADR-030, option C).
           if (error instanceof SessionError && error.code === "WORKSPACE_BUSY" && [...this.kept].some(([holder, kept]) => holder !== id && kept.binding.workspace === current.configuration.workspace))
@@ -1046,6 +1065,8 @@ export class SessionRuntime {
         try { execution.earlyClose ??= execution.binding.close(); cleanup = await execution.earlyClose; }
         catch (error) { problem = fault(error); }
       }
+      // What the program logged during this Turn, kept privately in memory for the user's diagnostics (redacted on the way out).
+      if (execution.binding && execution.diagnosticMark !== null) this.keepDiagnostics(id, target, execution.binding.control.diagnosticsSince?.(execution.diagnosticMark) ?? "");
       let handed = false;
       const endedAt = this.options.now().getTime(), idleMs = this.options.keptIdleMs ?? KEPT_IDLE_MS;
       // The group's identity lets a later owner recognize and end it if this owner ends without closing it.

@@ -959,3 +959,31 @@ test("a waiting approval is marked in the sidebar with whose deadline it is, cou
   await expect(page.getByText("审批已超时")).toBeVisible({ timeout: 15000 });
   assert.deepEqual(errors, []);
 });
+
+test("a Turn's diagnostics are copied from its details without conversation content unless the user asks for it", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(fixture.gateway.url).origin });
+  const page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter");
+  await expect(log).toContainText("原生活动已完成。");
+  await log.getByRole("button", { name: "执行详情", exact: true }).last().click();
+  const content = page.getByRole("checkbox", { name: "包含这一轮的提示词与回复" });
+  await expect(content).not.toBeChecked();
+  const copy = page.getByRole("button", { name: "复制诊断信息", exact: true });
+  await copy.click(); await expect(page.getByText("已复制诊断信息（不含对话内容）。")).toBeVisible();
+  const plain = await page.evaluate(() => navigator.clipboard.readText());
+  assert.equal(plain.split("\n")[0], "HarnessHub 诊断 · 不含对话内容");
+  assert.equal(plain.includes("NATIVE_ACTIVITY"), false); assert.equal(plain.includes(fixture.root), false, "no private path reaches the page");
+  await content.check(); await copy.click(); await expect(page.getByText("已复制诊断信息（含对话内容）。")).toBeVisible();
+  const full = await page.evaluate(() => navigator.clipboard.readText());
+  assert.match(full.split("\n")[0]!, /^HarnessHub 诊断 · 含对话内容/u); assert.match(full, /\n提示词：\nNATIVE_ACTIVITY\n/u);
+  await page.screenshot({ path: join(artifact, "run-diagnostics.png"), animations: "disabled" });
+  assert.deepEqual(errors, []);
+});

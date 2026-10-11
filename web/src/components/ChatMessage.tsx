@@ -18,6 +18,8 @@ interface MessageProps {
   onRetry: ((text: string, attachments: PublicRun["attachments"]) => void) | undefined;
   loadToolDetail?: ToolDetailLoader;
   onBranch?: (runId: string) => void;
+  /** One Turn's diagnostics as the Gateway assembles them (ADR-037). */
+  loadDiagnostics?: ((runId: string, includeContent: boolean) => Promise<string>) | undefined;
   /** Seconds the same Harness took to start in this conversation's previous Run, shown while this one starts. */
   /** Seconds the same Harness took to start: last time in this conversation, or usually when this conversation has no earlier Run of it. */
   startupHint?: { readonly seconds: number; readonly usual: boolean } | undefined;
@@ -68,7 +70,34 @@ function RunTiming({ run }: { run: PublicRun }) {
   const parts = [...(timing.firstOutputAt === undefined ? [] : ["首字 " + duration(timing.firstOutputAt - timing.acceptedAt)]), "用时 " + duration(timing.endedAt - timing.acceptedAt)];
   return <p className="run-timing" title="从发送到首个可见输出、到回合结束的时间">{parts.join(" · ")}</p>;
 }
-export const ChatMessage = memo(function ChatMessage({ message, run, harnesses, providers, onEdit, onRetry, loadToolDetail, onBranch, startupHint }: MessageProps) {
+/**
+ * Copies one Turn's diagnostics (ADR-037). The Gateway assembles and scrubs the text; conversation content is in it only
+ * when the user ticks the box, and it is written to the clipboard as it arrives, not kept in the page.
+ */
+function RunDiagnostics({ runId, load }: { readonly runId: string; readonly load: (runId: string, includeContent: boolean) => Promise<string> }) {
+  const [content, setContent] = useState(false);
+  const [state, setState] = useState<"idle" | "busy" | "copied" | "failed">("idle");
+  const copy = async () => {
+    setState("busy");
+    const text = load(runId, content);
+    try {
+      // A clipboard item can wait for the text, so the copy stays tied to the click in browsers that require it.
+      if (typeof ClipboardItem !== "undefined" && typeof navigator.clipboard?.write === "function") {
+        try { await navigator.clipboard.write([new ClipboardItem({ "text/plain": text.then(value => new Blob([value], { type: "text/plain" })) })]); setState("copied"); return; }
+        catch (error) { if (error instanceof Error && error.name !== "NotAllowedError" && error.name !== "TypeError") throw error; }
+      }
+      await navigator.clipboard.writeText(await text); setState("copied");
+    } catch { void text.catch(() => {}); setState("failed"); }
+  };
+  return <div className="run-diagnostics">
+    <div><button type="button" className="message-action diagnostics-copy" disabled={state === "busy"} onClick={() => void copy()}>{state === "busy" ? "正在准备诊断信息…" : "复制诊断信息"}</button>
+      <label><input type="checkbox" checked={content} onChange={event => { setContent(event.target.checked); setState("idle"); }}/>包含这一轮的提示词与回复</label></div>
+    <p role="status">{state === "copied" ? `已复制诊断信息（${content ? "含" : "不含"}对话内容）。` : state === "failed" ? "无法复制诊断信息，请稍后再试。"
+      : "包含版本、各阶段耗时、结束原因、清理状态与本回合 stderr 的最后 4 KiB；已隐去路径、环境变量值和密钥样式的字符串。默认不含对话内容。"}</p>
+  </div>;
+}
+
+export const ChatMessage = memo(function ChatMessage({ message, run, harnesses, providers, onEdit, onRetry, loadToolDetail, onBranch, loadDiagnostics, startupHint }: MessageProps) {
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const [details, setDetails] = useState(false);
@@ -130,6 +159,7 @@ export const ChatMessage = memo(function ChatMessage({ message, run, harnesses, 
       {run.error ? <p>错误代码：<code>{run.error.code}</code></p> : null}
       {!run.selection.provider && run.selection.nativeModel ? <p>本机模型：<code>{run.selection.nativeModel}</code></p> : null}
       {status === "unknown" ? <p>请先核实执行结果。这个请求不会自动重新执行。</p> : status === "completed" ? <p>本轮执行已结束，结果仍需由你确认。</p> : null}
+      {loadDiagnostics && terminal ? <RunDiagnostics runId={run.id} load={loadDiagnostics}/> : null}
     </div> : null}
   </article>;
 });

@@ -7,6 +7,8 @@ import { nativeConversationId, type BackendResult, type CleanupEvidence, type Co
 import { SessionError } from "../../src/contracts/session.js";
 import { LocalProviderService } from "../../src/infrastructure/provider/service.js";
 import { RedactedHarnessControl } from "../../src/infrastructure/session/redacted-control.js";
+import { MAX_DIAGNOSTICS_BYTES, runDiagnostics, scrubDiagnostics } from "../../src/web/run-diagnostics.js";
+import type { PublicRun, SessionSnapshot } from "../../src/contracts/session.js";
 
 const keyA = "synthetic-private-key-version-A", keyB = "synthetic-private-key-version-B";
 const native = nativeConversationId("native-owned-identity");
@@ -144,3 +146,41 @@ test("Redacted control does not publish a withheld key prefix if the backend fai
   fail(privateError()); await assert.rejects(run.result, safeError);
   assert.deepEqual(events, [{ type: "text", text: "safe " }]); noKeys(events);
 }));
+
+test("diagnostics hide paths, environment values, credential-like strings and the account name, and keep everything else", () => {
+  const scrub = (text: string) => scrubDiagnostics(text, { redact: value => value.split("hub-injected-key").join("[redacted]"), user: "someone" });
+  const dirty = ["open /Users/someone/private/notes.txt failed", "cd ~/work/app && ls /private/var/folders/x/T/tmp-1", "C:\\Users\\Me\\secret.txt and file:///home/u/a.md",
+    "OPENAI_API_KEY=sk-live1234567890abcdef HOME=/Users/someone", "Authorization: Bearer abc.def.ghi-123456", "token=xyz1234567 and password: hunter22",
+    "ghp_abcdefghijklmnopqrstuvwxyz0123 AKIAABCDEFGHIJKLMNOP eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.c2lnbmF0dXJlMTIz", "hub-injected-key in a line", "user someone logged in; max_tokens=2048 status ok"].join("\n");
+  const clean = scrub(dirty);
+  for (const secret of ["/Users/someone", "notes.txt", "~/work", "/private/var", "C:\\Users", "file:///", "sk-live", "abc.def.ghi", "xyz1234567", "hunter22", "ghp_", "AKIAABCD", "eyJhbGci", "hub-injected-key", "someone"])
+    assert.equal(clean.includes(secret), false, secret);
+  assert.equal(clean.split("\n").length, 9, "lines stay"); assert.match(clean, /OPENAI_API_KEY=\[已隐去\] HOME=\[已隐去\]/u);
+  assert.match(clean, /user \[用户\] logged in; max_tokens=2048 status ok/u, "ordinary text and counters stay");
+});
+
+test("a Turn's diagnostics say what they hold, keep 4 KiB of stderr and stay within 64 KiB", () => {
+  const run = { id: "run-diag", commandId: "send-diag", input: "secret question", userMessageId: "message-user", assistantMessageId: "message-assistant",
+    selection: { harnessId: "claude", controlId: "claude-acp-npm" }, epoch: 1, status: "completed", cancelRequested: false, contextThroughSeq: 0, sourceRunIds: [],
+    backend: { status: "completed", reason: "end_turn" }, cleanup: { closed: true, exitCode: 0, signal: null, protocolFailure: null }, error: null, stopRequested: false, awaitingSwitchId: null,
+    timing: { acceptedAt: 1000, preparingAt: 1002, readyAt: 2600, dispatchedAt: 2602, firstOutputAt: 4000, endedAt: 9000 } } as unknown as PublicRun;
+  const session = { id: "session-diag", runs: [run], messages: [{ id: "message-assistant", runId: "run-diag", role: "assistant", text: "x".repeat(200 * 1024), seq: 2, status: "completed" }] } as unknown as SessionSnapshot;
+  const input = { session, run, events: [{ sessionId: "session-diag", seq: 1, ownerGeneration: 1, timestamp: "2026-10-12T00:00:00.000Z", type: "run.protocol",
+      data: { runId: "run-diag", observation: { protocol: "acp-v1", protocolVersion: 1, agentName: "claude-agent-acp", agentVersion: "0.89.1", authenticationMethods: [], capabilities: {} } } }] as never,
+    eventsComplete: true, stderr: { text: "early line\n" + "y".repeat(8000) + "\nlast line", truncated: false }, harness: { name: "Claude Code", programVersion: "2.1.296", installedVersion: "0.89.1" },
+    build: "f".repeat(64), runtime: { node: "v25.9.0", platform: "darwin", release: "27.0.0", arch: "arm64" }, now: new Date("2026-10-12T00:00:00Z"), includeContent: false, scrub: (value: string) => value };
+  const plain = runDiagnostics(input);
+  assert.equal(plain.split("\n")[0], "HarnessHub 诊断 · 不含对话内容");
+  assert.match(plain, /原程序在本回合报告：claude-agent-acp 0\.89\.1 · 协议版本 1/u); assert.match(plain, /当前安装：产品 2\.1\.296 · 控制入口 0\.89\.1/u);
+  assert.match(plain, /阶段（距受理）：准备 2 ms · 就绪 1600 ms · 发送 1602 ms · 首个输出 3000 ms · 结束 8000 ms/u);
+  assert.match(plain, /…（只保留最后 4 KiB）\n/u); assert.equal(plain.includes("early line"), false); assert.ok(plain.endsWith("last line\n"));
+  assert.equal(plain.includes("secret question"), false);
+  const full = runDiagnostics({ ...input, includeContent: true });
+  assert.ok(Buffer.byteLength(full) <= MAX_DIAGNOSTICS_BYTES); assert.match(full, /\n提示词：\nsecret question\n/u); assert.match(full, /…（已截断）\n$/u);
+  assert.match(runDiagnostics({ ...input, stderr: null }), /本次服务运行期间没有这一轮的记录/u);
+  // A program's log of the prompt is conversation content: withheld unless the user chose content.
+  const logged = { ...input, session: { ...session, messages: [{ id: "message-user", runId: "run-diag", role: "user", text: "secret question about the plan", seq: 1, status: "completed" }, ...session.messages] } as unknown as SessionSnapshot,
+    stderr: { text: "INFO Prompt on session x: secret question about the plan\nok 收到", truncated: false } };
+  assert.match(runDiagnostics(logged), /INFO Prompt on session x: \[对话内容已隐去\]\nok 收到/u);
+  assert.match(runDiagnostics({ ...logged, includeContent: true }), /INFO Prompt on session x: secret question about the plan/u);
+});
