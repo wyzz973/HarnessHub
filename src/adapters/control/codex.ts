@@ -24,6 +24,8 @@ interface ActiveTurn {
   readonly items: Map<string, { title: string; status: string; detail: NativeToolDetail; timer: ReturnType<typeof setTimeout> | null }>;
   /** Generated-image reads still in flight; the turn settles only after they are delivered or dropped. */
   readonly reads: Set<Promise<void>>;
+  /** Sub-agent threads working for this turn, each shown as a tool that the thread's own tools are nested under. */
+  readonly agents: Map<string, { title: string; status: string; detail: NativeToolDetail }>;
   /** Thread token totals before this turn (including a historical total reported at turn start); turn usage is the difference. */
   baseline: Tokens | null;
   turnId: string | null;
@@ -389,7 +391,7 @@ export class CodexControl implements HarnessControl {
     void started.catch(() => {});
     const active: ActiveTurn = { event: onEvent, resolve, reject,
       timer: setTimeout(() => this.rpc.abort(new ControlError("RUN_TIMEOUT", "Codex turn exceeded its deadline")), this.options.runTimeoutMs),
-      started, signalStarted, rejectStarted, turnId: null, settled: false, stopping: false, stop: null, deltaItems: new Set(), items: new Map(), reads: new Set(), baseline: this.lastTotal };
+      started, signalStarted, rejectStarted, turnId: null, settled: false, stopping: false, stop: null, deltaItems: new Set(), items: new Map(), agents: new Map(), reads: new Set(), baseline: this.lastTotal };
     this.active = active;
     // `/skill:<name> …` sends Codex's own skill input next to the remaining text, as its TUI does for a skill mention.
     const invoked = /^\/skill:([A-Za-z0-9][A-Za-z0-9._:-]{0,255})(?:\s+([\s\S]*))?$/u.exec(prompt), skill = invoked ? this.skills.get(invoked[1]!) : undefined;
@@ -490,6 +492,34 @@ export class CodexControl implements HarnessControl {
     for (let depth = 0; parent !== null && depth < 32; depth++) { if (parent === this.conversation) return true; parent = this.foreignThreads.get(parent) ?? null; }
     return false;
   }
+  /** The tool entry of a sub-agent thread, created when the thread is first seen; nested under its parent sub-agent, if any. */
+  private agent(active: ActiveTurn, thread: string, info?: Record<string, unknown>): string {
+    const id = "agent:" + thread.slice(0, 200);
+    if (!active.agents.has(thread)) {
+      const name = [info?.agentNickname, info?.agentRole].find(value => typeof value === "string" && value.trim()) as string | undefined;
+      const parent = this.foreignThreads.get(thread) ?? null;
+      const entry = { title: "子 Agent · " + (name ? line(name, 120) : thread.slice(0, 8)), status: "in_progress",
+        detail: { kind: "subagent", name: "codex-subagent", ...(parent !== null && parent !== this.conversation ? { parentId: "agent:" + parent.slice(0, 200) } : {}) } as NativeToolDetail };
+      active.agents.set(thread, entry);
+      active.event({ type: "tool", id, title: entry.title, status: entry.status, detail: entry.detail });
+    }
+    return id;
+  }
+  /** A descendant thread's item or turn update: tool items nest under its entry, its last message is the entry's output. */
+  private childUpdate(active: ActiveTurn, thread: string, method: string, params: Record<string, unknown>): void {
+    const parentId = this.agent(active, thread), agent = active.agents.get(thread)!;
+    const publish = () => active.event({ type: "tool", id: parentId, title: agent.title, status: agent.status, detail: agent.detail });
+    if (method === "turn/started" || method === "turn/completed") {
+      const turn = params.turn !== null && typeof params.turn === "object" ? params.turn as Record<string, unknown> : {};
+      agent.status = method === "turn/started" ? "in_progress" : turn.status === "failed" ? "failed" : turn.status === "interrupted" ? "cancelled" : "completed"; publish(); return;
+    }
+    if (method !== "item/started" && method !== "item/completed") return;
+    const item = object(params.item, "Codex sub-agent item"), type = string(item.type, "item type"), itemId = string(item.id, "item identity");
+    if (type === "agentMessage") { if (method === "item/completed" && typeof item.text === "string" && item.text.trim()) { agent.detail = { ...agent.detail, output: tail(item.text) }; publish(); } return; }
+    const tool = ["userMessage", "reasoning", "plan", "hookPrompt", "functionCallOutput", "subAgentActivity", "contextCompaction"].includes(type) ? null : itemTool(item);
+    if (tool === null) return;
+    active.event({ type: "tool", id: (thread.slice(0, 120) + "/" + itemId).slice(0, 256), title: tool.title, status: status(item.status, method === "item/started"), detail: { ...tool.detail, parentId } });
+  }
   /** Request owner: the active Turn for the owned thread or its sub-agents; unrelated workers are never approved for the user. */
   private requestOwner(params: Record<string, unknown>): ActiveTurn | null {
     const thread = string(params.threadId, "Codex thread identity");
@@ -508,12 +538,19 @@ export class CodexControl implements HarnessControl {
       if (this.opening && this.conversation === null) { this.conversation = id; return; }
       if (id === this.conversation) return;
       // app-server attaches every connection to every thread it creates; ownership stays with the thread/start response.
-      this.foreign(id, typeof thread.parentThreadId === "string" ? thread.parentThreadId : null); return;
+      this.foreign(id, typeof thread.parentThreadId === "string" ? thread.parentThreadId : null);
+      const active = this.active;
+      if (active && !active.settled && this.descendant(id)) this.agent(active, id, thread);
+      return;
     }
     // A fork connection owns no thread: whatever the source or the copy reports is counted, never scoped to a turn.
     if (this.forkConnection) { if (typeof params.threadId === "string") this.foreign(params.threadId, null); this.foreignUpdates++; return; }
     if (this.conversation !== null && typeof params.threadId === "string" && params.threadId !== this.conversation) {
-      this.foreign(params.threadId, null); this.foreignUpdates++; return;
+      this.foreign(params.threadId, null); this.foreignUpdates++;
+      // A sub-agent of this turn: its tools and final report are shown under its own entry; its text is never the reply.
+      const active = this.active;
+      if (active && !active.settled && this.descendant(params.threadId)) this.childUpdate(active, params.threadId, method, params);
+      return;
     }
     if (method === "turn/started" || method === "turn/completed") {
       const turn = object(params.turn, "Codex turn notification");
@@ -559,6 +596,14 @@ export class CodexControl implements HarnessControl {
       }
       if (["userMessage", "reasoning", "plan", "hookPrompt", "functionCallOutput"].includes(type)) return;
       const started = method === "item/started";
+      // Codex reports a spawned sub-agent here (and in collaboration calls), not with thread/started: the child thread's own
+      // items then nest under its entry.
+      if (type === "collabAgentToolCall" && Array.isArray(item.receiverThreadIds) && this.conversation !== null)
+        for (const thread of item.receiverThreadIds.slice(0, 64)) if (typeof thread === "string" && thread && thread !== this.conversation) this.foreign(thread, this.foreignThreads.get(thread) ?? this.conversation);
+      if (type === "subAgentActivity" && typeof item.agentThreadId === "string" && item.agentThreadId && this.conversation !== null && item.agentThreadId !== this.conversation) {
+        this.foreign(item.agentThreadId, this.foreignThreads.get(item.agentThreadId) ?? this.conversation);
+        this.agent(active, item.agentThreadId, typeof item.agentPath === "string" ? { agentNickname: item.agentPath } : undefined);
+      }
       if (type === "subAgentActivity") {
         const kind = item.kind, state = kind === "completed" ? "completed" : kind === "interrupted" ? "cancelled" : "running";
         active.event({ type: "activity", id: typeof item.agentThreadId === "string" ? item.agentThreadId : itemId, kind: "subagent", title: typeof item.agentPath === "string" ? item.agentPath : "子 Agent", status: state, ...(typeof item.model === "string" ? { detail: item.model } : {}) }); return;

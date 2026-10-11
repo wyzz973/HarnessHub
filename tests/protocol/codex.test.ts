@@ -346,3 +346,22 @@ test("Codex lists this workspace's threads and reads one for continuing it, newe
     assert.ok(!sent.some(row => row.method === "thread/resume" || row.method === "thread/start" || row.method === "turn/start"), "reading a thread never resumes it or sends anything");
   } finally { await driver.close(); }
 });
+
+test("Codex shows a sub-agent thread of the turn as an entry with its own tools nested under it, and never its text as the reply", async () => {
+  const driver = control("child-tools");
+  try {
+    const id = await ready(driver), events: ControlEvent[] = [];
+    assert.equal((await (await driver.startText(id, "delegate", event => events.push(event))).result).status, "completed");
+    const tools = new Map<string, ControlEvent & { type: "tool" }>();
+    for (const event of events) if (event.type === "tool") tools.set(event.id, event);
+    const agent = tools.get("agent:thread-child"), command = tools.get("thread-child/cmd-1"), nested = tools.get("thread-grandchild/cmd-2");
+    assert.equal(agent?.title, "子 Agent · Researcher"); assert.equal(agent?.status, "completed"); assert.equal(agent?.detail?.output, "child report: SUB-OK");
+    assert.equal(command?.detail?.parentId, "agent:thread-child"); assert.equal(command?.detail?.output, "SUB-OK"); assert.equal(command?.status, "completed");
+    assert.equal(tools.get("agent:thread-grandchild")?.detail?.parentId, "agent:thread-child", "a sub-agent of a sub-agent nests under it");
+    assert.equal(nested?.detail?.parentId, "agent:thread-grandchild");
+    assert.ok(![...tools.keys()].some(key => key.includes("unrelated")), "work of unrelated threads is never shown");
+    assert.equal(tools.get("agent:thread-helper")?.title, "子 Agent · /root/helper", "a sub-agent announced only by its activity item is known too");
+    assert.equal(tools.get("thread-helper/cmd-4")?.detail?.parentId, "agent:thread-helper");
+    assert.equal(events.filter(event => event.type === "text").map(event => event.type === "text" ? event.text : "").join(""), "你好 fixture", "the sub-agent's report is not the reply");
+  } finally { await driver.close(); }
+});

@@ -416,3 +416,4 @@
 | G060-NC11 | G060 | e2e | 本机原安装用自己的提问工具向用户提问 | 问题以对话中的原生提问显示；选择第二个选项后原程序按该回答回复；原配置不变 | planned |
 | G032-NC20 | G032 | protocol | Claude /export 复制本会话的 Claude Code 转录作为产物 | 代理没有自己的export命令时目录提供Hub的/export；按claude-agent-acp相同的位置查找转录并只读复制；找不到时明确失败；不发送提示 | planned |
 | G060-NC12 | G060 | e2e | 本机原安装的思考输出与回复分开记录 | 需要思考的设置下Run记录原程序的思考内容且不混入回复，答案正确；原配置不变 | planned |
+| G034-NC11 | G034 | protocol | Codex子Agent线程的工具嵌套在子Agent条目之下 | 子线程由thread/started、subAgentActivity或协作调用的receiverThreadIds识别；子线程工具以子Agent条目为父，最终回复作为条目输出，回合结束更新状态；孙线程嵌套在子线程下；无关线程不显示；子线程文字不进入回复 | planned |

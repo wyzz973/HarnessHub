@@ -27,7 +27,16 @@
 | Claude（haiku） | 回合完成；Agent 调用下关联 Bash 与 SubagentHandback 两个工具；主回复只有“主代理收到”，不含子 Agent 输出；settings.json 不变 | `.tmp/cc-native-subagent-claude.json` |
 | Codex 0.162.1 | 部分：子 Agent 活动“/root/echo_sub_ok”与协作调用 `wait` 显示并完成；子线程里运行的命令没有接出；config.toml 不变 | `.tmp/cc-native-subagent-codex.json` |
 
+## Codex 子线程（同日补充）
+
+真实运行发现：已安装的 Codex 0.162.1 不为子 Agent 线程发送 `thread/started`，但子线程的命令、消息与回合事件都会到达本连接；父子关系体现在本线程的 `subAgentActivity`（`agentThreadId`）与协作调用的 `receiverThreadIds` 中。驱动据此登记子线程：子线程首次出现时生成“子 Agent · 路径或名称”条目，子线程运行的工具以它为父，子线程的最终回复作为条目输出，子线程回合结束时更新条目状态；孙线程嵌套在子线程条目下；无关线程的工作不显示，子线程文字不进入主回复。
+
+| 验收 | 结果 | 证据 |
+|---|---|---|
+| 协议测试（`child-tools` 夹具） | 子 Agent 条目、嵌套命令及输出、孙线程、仅由活动项宣告的子 Agent、无关线程不显示、回复不含子线程文字 | `tests/protocol/codex.test.ts` |
+| Codex 真实回合 | 子 Agent 条目下关联它运行的 shell 命令；另有协作调用 `wait`；主回复不含子 Agent 输出；config.toml 不变 | `.tmp/cc-native-subagent-codex-threads.json` |
+
 ## 未验证与受阻
 
-- Codex 子线程内的工具与文字、Claude 原生子会话（协商 `subagents`）、Cursor 子 Agent 均未接出；OpenCode 的 task 子 Agent 工具不经 ACP 转发（原程序限制）。
+- Claude 原生子会话（协商 `subagents`）、Cursor 子 Agent 未接出；OpenCode 的 task 子 Agent 工具不经 ACP 转发（原程序限制）。
 - 未做 Windows 验证。

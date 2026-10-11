@@ -258,6 +258,24 @@ lines.on("line", line => {
       return;
     }
     if (scenario === "wrong-turn") { codexOutput("another-turn"); return; }
+    // A sub-agent thread spawned for this turn runs a command and reports back; an unrelated thread works at the same time.
+    if (protocol === "codex-app-server" && scenario === "child-tools") {
+      const child = { threadId: "thread-child", turnId: "child-turn" };
+      notification("thread/started", { thread: { id: "thread-child", parentThreadId: "thread-fixture", agentNickname: "Researcher" } });
+      notification("thread/started", { thread: { id: "thread-grandchild", parentThreadId: "thread-child" } });
+      // Installed Codex announces a spawned agent only through the parent's subAgentActivity item.
+      notification("item/started", { threadId: "thread-fixture", turnId: `turn-${turn}`, item: { type: "subAgentActivity", id: "spawn-1", agentPath: "/root/helper", agentThreadId: "thread-helper", kind: "started" } });
+      notification("item/completed", { threadId: "thread-helper", turnId: "helper-turn", item: { type: "commandExecution", id: "cmd-4", command: "pwd", cwd: "/w", status: "completed", aggregatedOutput: "/w", exitCode: 0 } });
+      notification("thread/started", { thread: { id: "thread-unrelated" } });
+      notification("turn/started", { threadId: "thread-child", turn: { id: "child-turn", status: "inProgress" } });
+      notification("item/started", { ...child, item: { type: "commandExecution", id: "cmd-1", command: "echo SUB-OK", cwd: "/w", status: "inProgress" } });
+      notification("item/completed", { ...child, item: { type: "commandExecution", id: "cmd-1", command: "echo SUB-OK", cwd: "/w", status: "completed", aggregatedOutput: "SUB-OK", exitCode: 0 } });
+      notification("item/completed", { threadId: "thread-grandchild", turnId: "g-turn", item: { type: "commandExecution", id: "cmd-2", command: "ls", cwd: "/w", status: "completed", aggregatedOutput: "a", exitCode: 0 } });
+      notification("item/completed", { threadId: "thread-unrelated", turnId: "u-turn", item: { type: "commandExecution", id: "cmd-3", command: "rm -rf /tmp/x", cwd: "/w", status: "completed", aggregatedOutput: "", exitCode: 0 } });
+      notification("item/completed", { ...child, item: { type: "agentMessage", id: "child-msg", text: "child report: SUB-OK" } });
+      notification("turn/completed", { threadId: "thread-child", turn: { id: "child-turn", status: "completed" } });
+      codexOutput(); setTimeout(() => finish(), 30); return;
+    }
     if (protocol === "codex-app-server" && scenario === "foreign-thread") {
       notification("thread/started", { thread: { id: "thread-child", parentThreadId: "thread-fixture" } });
       notification("thread/started", { thread: { id: "thread-unrelated" } });

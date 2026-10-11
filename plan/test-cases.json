@@ -7825,6 +7825,23 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/real/native-thinking.real.ts"
+    },
+    {
+      "id": "G034-NC11",
+      "task": "G034",
+      "requirements": [
+        "R11",
+        "R25"
+      ],
+      "invariants": [
+        "INV-04"
+      ],
+      "layer": "protocol",
+      "scenario": "Codex子Agent线程的工具嵌套在子Agent条目之下",
+      "expected": "子线程由thread/started、subAgentActivity或协作调用的receiverThreadIds识别；子线程工具以子Agent条目为父，最终回复作为条目输出，回合结束更新状态；孙线程嵌套在子线程下；无关线程不显示；子线程文字不进入回复",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/codex.test.ts"
     }
   ]
 }

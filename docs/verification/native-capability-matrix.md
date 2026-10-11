@@ -30,13 +30,13 @@
 | 会话 | 原生分支 | ✅ | ✅ | ✅ | — | — | — | ✅ |
 | 会话 | 上下文压缩 | ✅ | ✅ | ○ | ✅ | — | ？ | ✅ |
 | 会话 | 回滚/回退 | ○ | — | ？ | — | ○ | — | ○ |
-| 并发与后台 | 子 Agent | ◑ | ✅ | ○ | ○ | ？ | ○ | — |
+| 并发与后台 | 子 Agent | ✅ | ✅ | ○ | ○ | ？ | ○ | — |
 | 并发与后台 | 后台任务 | ○ | ○ | ？ | ○ | ？ | ？ | — |
 | 产物 | 导出与产物 | ✅ | ◐ | ？ | ○ | ？ | — | ✅ |
 
 | Harness | ✅ | ◐ | ◑ | ○ | ✕ | — | ？ |
 |---|---|---|---|---|---|---|---|
-| Codex | 13 | 3 | 6 | 2 | 2 | 1 | 0 |
+| Codex | 14 | 3 | 5 | 2 | 2 | 1 | 0 |
 | Claude Code | 16 | 3 | 3 | 1 | 2 | 2 | 0 |
 | OpenCode | 10 | 5 | 3 | 2 | 0 | 2 | 5 |
 | OpenClaw | 5 | 5 | 4 | 6 | 0 | 7 | 0 |
@@ -74,7 +74,7 @@
 | 原生分支 | 具备 | thread/fork {lastTurnId} | 已接出 | 通过 | 通过 | .tmp/cc-native-branch-codex-acp.json；docs/verification/native-branch-2026-10-11.md | 从最新回复分支时 thread/fork 建立原生副本；更早位置以公共历史分支 |
 | 上下文压缩 | 具备 | thread/compact/start → contextCompaction item | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-pi-codex.json；docs/verification/native-session-actions-2026-10-11.md | /compact 调用 thread/compact/start 并以活动展示；压缩后原生会话仍记得先前事实 |
 | 回滚/回退 | 具备 | thread/revert {beforeTurnId}（只回退历史，不回退文件） | 未接出 | 未接出 | 未接出 | — | — |
-| 子 Agent | 具备 | collabAgentToolCall、subAgentActivity；子线程自动附着连接 | 部分 | 通过 | 部分通过 | .tmp/cc-native-subagent-codex.json；docs/verification/native-subagents-2026-10-11.md | 子 Agent 活动（agentPath）与协作调用（wait 等）真实显示；子线程内执行的工具与文字未接出（子线程通知只计数） |
+| 子 Agent | 具备 | collabAgentToolCall、subAgentActivity；子线程自动附着连接 | 已接出 | 通过 | 通过 | .tmp/cc-native-subagent-codex-threads.json；.tmp/cc-native-subagent-codex.json；docs/verification/native-subagents-2026-10-11.md | 子线程以 subAgentActivity/协作调用识别（已安装版本不为子线程发 thread/started）；子线程的工具嵌套在“子 Agent”条目下，最终回复作为条目输出；子线程文字不进入主回复 |
 | 后台任务 | 具备 | command/exec；后台终端 thread/backgroundTerminals/* 需 experimentalApi | 未接出 | 未接出 | 未接出 | — | 每轮关闭控制进程，需长期资源所有者设计 |
 | 导出与产物 | 具备 | thread/read(includeTurns)、Thread.path rollout 路径 | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-pi-codex.json；docs/verification/native-session-actions-2026-10-11.md | /export 读取线程自己的 rollout JSONL 作为产物；临时线程明确失败 |
 

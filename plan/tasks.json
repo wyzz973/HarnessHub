@@ -2403,7 +2403,8 @@
         "G034-NC7",
         "G034-NC8",
         "G034-NC9",
-        "G034-NC10"
+        "G034-NC10",
+        "G034-NC11"
       ],
       "active_slice": "native-installation-management"
     },

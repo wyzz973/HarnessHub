@@ -420,14 +420,15 @@
         "subagents": {
           "native": "yes",
           "source": "collabAgentToolCall、subAgentActivity；子线程自动附着连接",
-          "hub": "partial",
+          "hub": "done",
           "protocol": "pass",
-          "real": "partial",
+          "real": "pass",
           "evidence": [
+            ".tmp/cc-native-subagent-codex-threads.json",
             ".tmp/cc-native-subagent-codex.json",
             "docs/verification/native-subagents-2026-10-11.md"
           ],
-          "note": "子 Agent 活动（agentPath）与协作调用（wait 等）真实显示；子线程内执行的工具与文字未接出（子线程通知只计数）"
+          "note": "子线程以 subAgentActivity/协作调用识别（已安装版本不为子线程发 thread/started）；子线程的工具嵌套在“子 Agent”条目下，最终回复作为条目输出；子线程文字不进入主回复"
         },
         "background": {
           "native": "yes",
