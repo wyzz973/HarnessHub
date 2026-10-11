@@ -7,6 +7,7 @@ import { failureMessage, runStatusLabel } from "../api.js";
 import { BrandIcon } from "./BrandIcon.js";
 import { StreamingMarkdown } from "./StreamingMarkdown.js";
 import { ActivityList, NoticeList, OutputList, PlanView, ToolList, UsageDetails, UsageLine, type ToolDetailLoader } from "./NativeActivity.js";
+import { MessageAttachments } from "./Attachments.js";
 
 interface MessageProps {
   message: PublicMessage | undefined;
@@ -14,7 +15,7 @@ interface MessageProps {
   harnesses: readonly HarnessView[];
   providers: readonly ProviderView[];
   onEdit: (text: string) => void;
-  onRetry: ((text: string) => void) | undefined;
+  onRetry: ((text: string, attachments: PublicRun["attachments"]) => void) | undefined;
   loadToolDetail?: ToolDetailLoader;
 }
 function finished(status: RunStatus): boolean {
@@ -63,6 +64,7 @@ export const ChatMessage = memo(function ChatMessage({ message, run, harnesses, 
     }
   };
   if (message?.role === "user") return <article className="message user-message">
+    {run?.attachments?.length ? <MessageAttachments attachments={run.attachments}/> : null}
     <div className="user-bubble"><span className="sr-only">你：</span>{text}</div>
     <div className="message-actions user-actions"><button type="button" className="message-action" aria-label="放回输入框" title="放回输入框" onClick={() => onEdit(text)}><PencilLine size={14}/><span className="sr-only">放回输入框</span></button></div>
   </article>;
@@ -86,7 +88,7 @@ export const ChatMessage = memo(function ChatMessage({ message, run, harnesses, 
     <div className={`message-actions ${details || copied || copyFailed ? "is-revealed" : ""}`}>
       {text ? <button type="button" className="message-action" onClick={() => void copy()} aria-label={copied ? "已复制回复" : "复制回复"} title={copied ? "已复制" : "复制回复"}>{copied ? <Check size={14}/> : <Copy size={14}/>}<span className="sr-only">{copied ? "已复制" : "复制回复"}</span></button> : null}
       {run ? <button type="button" className="message-action" aria-label="执行详情" title="执行详情" aria-expanded={details} aria-controls={detailsId} onClick={() => setDetails(value => !value)}><Info size={14}/><span className="sr-only">执行详情</span></button> : null}
-      {run && onRetry && (status === "failed" || status === "cancelled") ? <button type="button" className="message-action retry-response" onClick={() => onRetry(run.input)}><RotateCcw size={14}/><span>重试回复</span></button> : null}
+      {run && onRetry && (status === "failed" || status === "cancelled") ? <button type="button" className="message-action retry-response" onClick={() => onRetry(run.input, run.attachments)}><RotateCcw size={14}/><span>重试回复</span></button> : null}
       {copyFailed ? <span className="copy-error" role="status">无法使用剪贴板，可选中文本后复制。</span> : copied ? <span className="copy-feedback" role="status">已复制</span> : null}
     </div>
     {details && run ? <div className="execution-details" id={detailsId}>

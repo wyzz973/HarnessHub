@@ -1,6 +1,6 @@
 import { parseProviderTarget } from "../../../contracts/provider.js";
 import { TOOL_DIFF_BYTES, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type BackendResult, type CleanupEvidence, type ControlEvent, type ControlRun, type NativeToolDetail, type NativeUsage } from "../../../contracts/control.js";
-import { MAX_RUN_OUTPUTS } from "../../../contracts/content.js";
+import { MAX_RUN_ATTACHMENTS, MAX_RUN_OUTPUTS, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
 import {
   SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId,
   type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicRun,
@@ -153,22 +153,29 @@ export class SessionRuntime {
     catch (error) { this.fail(error, id); throw error; }
   }
 
-  send(id: SessionId, text: string, key: string): SendReceipt {
+  send(id: SessionId, text: string, key: string, attachmentIds: readonly string[] = []): SendReceipt {
     this.admit(); assertInput(text);
-    const command = commandId(key), fingerprint = this.fingerprint({ kind: "send", text }), state = this.load(id);
+    if (!Array.isArray(attachmentIds) || attachmentIds.length > MAX_RUN_ATTACHMENTS || attachmentIds.some(value => typeof value !== "string")) throw new SessionError("INVALID_INPUT", "attachments must be at most 8 content identities");
+    // Without attachments the fingerprint keeps its earlier shape, so replayed commands from before attachments still match.
+    const command = commandId(key), fingerprint = this.fingerprint(attachmentIds.length ? { kind: "send", text, attachments: attachmentIds } : { kind: "send", text }), state = this.load(id);
     const prior = replayCommand(state, command, "send", fingerprint);
     if (prior) return { sessionId: id, runId: runId(prior.resultId), replayed: true };
     this.open(state); this.commandBudget(state);
+    let attachments: readonly ContentRef[] = [];
+    if (attachmentIds.length) {
+      if (this.options.content === undefined) throw new SessionError("ATTACHMENT_UNAVAILABLE", "this Gateway has no content storage for attachments");
+      attachments = this.options.content.resolve(attachmentIds, state.configuration.workspace);
+    }
     if (state.runs.length >= MAX_RUNS) throw new SessionError("RUN_LIMIT", "Session Run budget exhausted");
     if (state.runs.filter(run => run.status === "queued").length >= MAX_QUEUE) throw new SessionError("QUEUE_FULL", "Session queued input limit reached");
     const nextId = runId("run-" + this.options.id()), userId = messageId("message-" + this.options.id()), assistantId = messageId("message-" + this.options.id());
     const run: PublicRun = { id: nextId, commandId: command, input: text, userMessageId: userId, assistantMessageId: assistantId,
       selection: state.selection, epoch: state.epoch, status: "queued", cancelRequested: false, contextThroughSeq: 0,
-      sourceRunIds: [], backend: null, cleanup: null, error: null, stopRequested: false, awaitingSwitchId: state.pendingSwitchId };
+      sourceRunIds: [], backend: null, cleanup: null, error: null, stopRequested: false, awaitingSwitchId: state.pendingSwitchId, ...(attachments.length ? { attachments } : {}) };
     this.commit(id, current => ({ next: { ...current, runs: [...current.runs, run],
       messages: [...current.messages, { id: userId, runId: nextId, role: "user", text, seq: current.lastSeq + 1, status: "queued" }],
       commands: [...current.commands, { id: command, kind: "send", fingerprint, resultId: nextId }] },
-      events: [event("message.accepted", { runId: nextId, messageId: userId, role: "user", text })] }));
+      events: [event("message.accepted", { runId: nextId, messageId: userId, role: "user", text, ...(attachments.length ? { attachments } : {}) })] }));
     this.schedule(id); return { sessionId: id, runId: nextId, replayed: false };
   }
 
@@ -649,8 +656,24 @@ export class SessionRuntime {
         if (catalog.commands?.some(command => command.name === name)) { input = run.input; this.commit(id, current => ({ next: current, events: [event("run.native_command", { runId: target, name, publicContextInjected: false })] })); }
       }
       this.continue(execution);
+      // Attachments are checked against the opened agent/model and copied before dispatch, so a refusal fails this input cleanly.
+      let files: readonly ControlAttachment[] = [];
+      if (run.attachments?.length) {
+        const control = execution.binding.control, content = this.options.content;
+        if (!control.checkAttachments) throw new SessionError("ATTACHMENT_UNSUPPORTED", "this Harness interface does not accept attachments");
+        if (content === undefined) throw new SessionError("ATTACHMENT_UNAVAILABLE", "this Gateway has no content storage for attachments");
+        try { await control.checkAttachments(run.attachments); }
+        catch (error) {
+          // These two refusals are written by the Driver itself (no native text) and name only the attachment.
+          const code = error !== null && typeof error === "object" && "code" in error ? error.code : undefined;
+          if ((code === "ATTACHMENT_UNSUPPORTED" || code === "ATTACHMENT_LIMIT") && error instanceof Error) throw new SessionError(code, error.message.slice(0, 512));
+          throw error;
+        }
+        this.continue(execution);
+        files = await content.materialize(run.attachments); this.continue(execution);
+      }
       execution.dispatched = true;
-      execution.run = await execution.binding.control.startText(native, input, value => this.output(execution, value));
+      execution.run = await execution.binding.control.startText(native, input, value => this.output(execution, value), ...(files.length ? [files] : []));
       this.owned(execution);
       void execution.run.result.then(() => { execution.backendSettled = true; }, () => { execution.backendSettled = true; });
       if (this.load(id).runs.find(run => run.id === target)!.cancelRequested || !this.accepting || this.fatal || this.closingSessions.has(id)) this.stop(execution);

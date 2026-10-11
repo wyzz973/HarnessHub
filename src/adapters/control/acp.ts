@@ -1,11 +1,13 @@
 import { isAbsolute } from "node:path";
+import { pathToFileURL } from "node:url";
 import { nativeConversationId, type BackendResult, type CleanupEvidence, type ControlEvent,
   type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl,
   type NativeOptions, type NativeOption, type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
 import { ControlError, errorFrom, JsonRpcProcess, object, string, text, type RpcRequest } from "../../infrastructure/control/json-rpc-process.js";
 import { unifiedDiff } from "../../infrastructure/control/unified-diff.js";
 import type { NativeOutput, NativeToolDetail, NativeUsage } from "../../contracts/control.js";
-import { MAX_CONTENT_BYTES } from "../../contracts/content.js";
+import { MAX_CONTENT_BYTES, textual, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
+import { checkInputs, readAttachment } from "../../infrastructure/control/attachments.js";
 
 interface ActivePrompt {
   readonly event: (event: ControlEvent) => void;
@@ -21,6 +23,8 @@ const MAX_PROMPT_TOOLS = 4096;
 const MAX_NATIVE_COMMANDS = 2048;
 /** Some agents keep streaming session/load history after the load response; the prompt waits for that replay to go quiet. */
 const REPLAY_QUIET_MS = 150;
+/** Text files up to this size travel as embedded resources when the agent declares embedded context. */
+const EMBED_TEXT_BYTES = 256 * 1024;
 const REPLAY_SETTLE_MS = 3000;
 /** Session setup starts the agent's own runtime (plugins, MCP, model catalog); a cold start can exceed a plain request. */
 const SESSION_SETUP_MS = 60000;
@@ -199,7 +203,29 @@ export class AcpControl implements HarnessControl {
       this.legacyModels = true; this.catalog = { ...this.catalog, models, defaultModel: selected, authentication: "unknown", canSelect: models.length > 0 };
     }
   }
-  async models(): Promise<NativeModelCatalog> { this.assertInitialized(); if (this.conversation === null) throw new ControlError("INVALID_STATE", "ACP model catalog requires a session"); return { ...this.catalog, defaultModel: this.configuredDefault }; }
+  async models(): Promise<NativeModelCatalog> { this.assertInitialized(); if (this.conversation === null) throw new ControlError("INVALID_STATE", "ACP model catalog requires a session"); return { ...this.catalog, defaultModel: this.configuredDefault, inputs: this.inputs() }; }
+  /** ACP promptCapabilities; every agent must accept resource links, so files are always offered. */
+  private promptCapabilities(): { readonly image: boolean; readonly audio: boolean; readonly embeddedContext: boolean } {
+    const value = this.capabilities.promptCapabilities, caps = value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+    return { image: caps.image === true, audio: caps.audio === true, embeddedContext: caps.embeddedContext === true };
+  }
+  private inputs(): { readonly image: boolean; readonly audio: boolean; readonly file: boolean } { const caps = this.promptCapabilities(); return { image: caps.image, audio: caps.audio, file: true }; }
+  /** Largest inline image this agent forwards to its model. */
+  protected get maxInlineImageBytes(): number { return MAX_CONTENT_BYTES; }
+  async checkAttachments(attachments: readonly ContentRef[]): Promise<void> {
+    this.assertInitialized();
+    checkInputs(attachments, this.inputs(), { image: this.maxInlineImageBytes });
+  }
+  /** Native ACP content blocks: inline image/audio, embedded small text, otherwise a file link the agent reads itself. */
+  private async promptBlock(file: ControlAttachment): Promise<Record<string, unknown>> {
+    const uri = pathToFileURL(file.path).href;
+    if (file.kind === "image" || file.kind === "audio") return { type: file.kind, data: (await readAttachment(file)).toString("base64"), mimeType: file.mediaType };
+    if (textual(file.mediaType) && file.bytes <= EMBED_TEXT_BYTES && this.promptCapabilities().embeddedContext) {
+      try { return { type: "resource", resource: { uri, mimeType: file.mediaType, text: new TextDecoder("utf-8", { fatal: true }).decode(await readAttachment(file)) } }; }
+      catch (error) { if (!(error instanceof TypeError)) throw error; }
+    }
+    return { type: "resource_link", uri, name: file.name, mimeType: file.mediaType, size: file.bytes };
+  }
   protected async sessionParameters(cwd: string): Promise<Readonly<Record<string, unknown>>> { return { cwd, mcpServers: [] }; }
   async checkpoint(): Promise<string | null> {
     const session = this.capabilities.sessionCapabilities == null ? {} : object(this.capabilities.sessionCapabilities, "native session capabilities");
@@ -248,14 +274,17 @@ export class AcpControl implements HarnessControl {
     } catch (error) { const failure = this.nativeFailure(error); if (!(failure instanceof ControlError && ["MODEL_UNAVAILABLE","NATIVE_OPTION_UNAVAILABLE"].includes(failure.code))) this.rpc.abort(failure); throw failure; }
     finally { this.opening = false; this.replaying = false; this.openingMetadata.length = 0; }
   }
-  async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void): Promise<ControlRun> {
+  async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
     this.assertInitialized();
     if (!this.conversation || id !== this.conversation) throw new ControlError("IDENTITY_MISMATCH", "conversation is not owned by this connection");
     if (this.active !== null) throw new ControlError("INVALID_STATE", "a prompt is already active");
     if (typeof prompt !== "string" || prompt.length === 0) throw new ControlError("INVALID_INPUT", "prompt must contain text");
+    const blocks: Record<string, unknown>[] = [{ type: "text", text: prompt }];
+    for (const file of attachments) blocks.push(await this.promptBlock(file));
+    if (this.active !== null) throw new ControlError("INVALID_STATE", "a prompt is already active");
     const active: ActivePrompt = { event: onEvent, tools: new Map(), compaction: new Map(), stopping: false, settled: false, stop: null };
     this.active = active;
-    const result = this.rpc.request("session/prompt", { sessionId: id, prompt: [{ type: "text", text: prompt }] }, this.options.runTimeoutMs)
+    const result = this.rpc.request("session/prompt", { sessionId: id, prompt: blocks }, this.options.runTimeoutMs)
       .then(value => {
         const response = object(value, "session/prompt result");
         const reason = string(response.stopReason, "ACP stop reason");

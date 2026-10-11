@@ -1,10 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants, closeSync, existsSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
-import { open } from "node:fs/promises";
+import { constants, closeSync, existsSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, realpathSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmod, copyFile, mkdir, open, rename, unlink } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { MAX_CONTENT_BYTES, contentId, contentKind, contentName, mediaType, type ContentOrigin, type ContentPort, type ContentRef } from "../../contracts/content.js";
-import { SessionError } from "../../contracts/session.js";
+import { MAX_CONTENT_BYTES, MAX_RUN_ATTACHMENTS, MAX_RUN_ATTACHMENT_BYTES, contentId, contentKind, contentName, mediaType, type ContentOrigin, type ContentPort, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
+import { SessionError, commandId } from "../../contracts/session.js";
 
 const MARKER = '{"application":"harness-gateway-content","schemaVersion":1}';
 /** Owner-local budgets; content is user data, so pressure fails explicitly instead of evicting referenced items. */
@@ -63,7 +63,7 @@ export class LocalContentStore implements ContentPort {
       try { writeFileSync(fd, MARKER + "\n"); fsyncSync(fd); } finally { closeSync(fd); }
     }
     if (readMarker(marker).trim() !== MARKER) throw new SessionError("INVALID_STORAGE", "invalid content ownership marker");
-    privateDirectory(join(this.root, "blobs")); privateDirectory(join(this.root, "partial"));
+    privateDirectory(join(this.root, "blobs")); privateDirectory(join(this.root, "partial")); privateDirectory(join(this.root, "files"));
     const database = join(this.root, "content.sqlite");
     const fd = openSync(database, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
     try { const info = fstatSync(fd); if (!info.isFile() || info.nlink !== 1 || (info.mode & 0o077) !== 0) throw new SessionError("INVALID_STORAGE", "invalid content database file"); } finally { closeSync(fd); }
@@ -98,6 +98,89 @@ export class LocalContentStore implements ContentPort {
       return this.publish(written, { name, type, kind, origin: "output", workspace: input.workspace, command: null, fingerprint: null });
     } finally { this.removePartial(written.path); }
   }
+  /** Streams one upload under its byte budget, verifies the declared type against the bytes, then records it for the workspace. */
+  async stage(input: { readonly workspace: string; readonly name: unknown; readonly mediaType: unknown; readonly commandId: string; readonly declaredBytes: number; readonly source: AsyncIterable<unknown> }): Promise<ContentRef> {
+    this.owner();
+    const key = commandId(input.commandId), name = contentName(input.name), type = mediaType(input.mediaType);
+    if (!isAbsolute(input.workspace)) throw new SessionError("INVALID_INPUT", "attachment workspace must be absolute");
+    if (!Number.isSafeInteger(input.declaredBytes) || input.declaredBytes < 1 || input.declaredBytes > MAX_CONTENT_BYTES) throw new SessionError("ATTACHMENT_LIMIT", "attachments must contain 1 byte to 20 MiB");
+    const written = await this.write(input.source, input.declaredBytes);
+    try {
+      const kind = contentKind(type, written.head);
+      const fingerprint = createHash("sha256").update(JSON.stringify({ workspace: input.workspace, name, type, sha256: written.sha256 })).digest("hex");
+      this.owner();
+      const prior = this.use(db => db.prepare("SELECT * FROM content WHERE command_id=?").get(key));
+      if (prior !== undefined) {
+        const existing = parseRow(prior);
+        if (existing.fingerprint !== fingerprint || existing.origin !== "upload") throw new SessionError("IDEMPOTENCY_CONFLICT", "attachment command key already names other content");
+        return reference(existing);
+      }
+      return this.publish(written, { name, type, kind, origin: "upload", workspace: input.workspace, command: key, fingerprint });
+    } finally { this.removePartial(written.path); }
+  }
+  /** Admission: each identity must be a staged, not withdrawn upload of this workspace whose bytes are still present. */
+  resolve(ids: readonly string[], workspace: string): readonly ContentRef[] {
+    if (!Array.isArray(ids) || ids.length > MAX_RUN_ATTACHMENTS || new Set(ids).size !== ids.length) throw new SessionError("INVALID_INPUT", "attachments must be at most 8 unique content identities");
+    const refs = this.use(db => ids.map(value => {
+      const stored = db.prepare("SELECT * FROM content WHERE id=?").get(contentId(value));
+      if (stored === undefined) throw new SessionError("ATTACHMENT_UNAVAILABLE", "an attachment is no longer available; remove it and attach the file again");
+      const item = parseRow(stored);
+      if (item.workspace !== workspace || item.origin !== "upload" || item.discarded === 1) throw new SessionError("ATTACHMENT_UNAVAILABLE", "an attachment does not belong to this workspace or was removed");
+      this.blob(item.sha256, item.bytes);
+      return reference(item);
+    }));
+    if (refs.reduce((total, ref) => total + ref.bytes, 0) > MAX_RUN_ATTACHMENT_BYTES) throw new SessionError("ATTACHMENT_LIMIT", "attachments of one message exceed 32 MiB");
+    return refs;
+  }
+  /** Withdraws a staged upload from future admission. Content already admitted by a Run stays referenced and kept. */
+  discard(value: string, workspace: string): void {
+    this.owner();
+    const id = contentId(value);
+    this.use(db => {
+      const stored = db.prepare("SELECT * FROM content WHERE id=?").get(id);
+      if (stored === undefined) return;
+      const item = parseRow(stored);
+      if (item.workspace !== workspace || item.origin !== "upload") throw new SessionError("ATTACHMENT_UNAVAILABLE", "attachment does not belong to this workspace");
+      db.prepare("UPDATE content SET discarded=1 WHERE id=?").run(item.id);
+    });
+  }
+  /**
+   * One stable read-only copy per content item at `files/<id>/<name>`, so a native session can read it again in a later
+   * Turn. An existing copy is re-verified against the digest and replaced if it was changed.
+   */
+  async materialize(refs: readonly ContentRef[]): Promise<readonly ControlAttachment[]> {
+    this.owner();
+    const result: ControlAttachment[] = [];
+    for (const item of refs) {
+      const id = contentId(item.id), name = contentName(item.name), source = this.blob(item.sha256, item.bytes);
+      const parent = join(this.root, "files", id), target = join(parent, name);
+      await mkdir(parent, { recursive: false, mode: 0o700 }).catch((error: unknown) => { if (code(error) !== "EEXIST") throw error; });
+      privateDirectory(parent);
+      if (!await this.matches(target, item)) {
+        const staging = join(parent, "." + randomUUID());
+        try {
+          await copyFile(source, staging, constants.COPYFILE_EXCL);
+          if (!await this.matches(staging, item)) throw new SessionError("INVALID_STORAGE", "stored content changed after admission");
+          await chmod(staging, 0o400);
+          await unlink(target).catch((error: unknown) => { if (code(error) !== "ENOENT") throw error; });
+          await rename(staging, target);
+        } catch (error) { await unlink(staging).catch(() => {}); throw error; }
+      }
+      result.push({ ...item, path: target });
+    }
+    return result;
+  }
+  private async matches(path: string, item: ContentRef): Promise<boolean> {
+    const info = lstatSync(path, { throwIfNoEntry: false });
+    if (!info) return false;
+    if (!info.isFile() || info.size !== item.bytes) return false;
+    const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      const hash = createHash("sha256"), buffer = Buffer.alloc(1024 * 1024); let total = 0;
+      for (;;) { const { bytesRead } = await handle.read(buffer, 0, buffer.length, total); if (bytesRead === 0) break; total += bytesRead; if (total > item.bytes) return false; hash.update(buffer.subarray(0, bytesRead)); }
+      return total === item.bytes && hash.digest("hex") === item.sha256;
+    } finally { await handle.close(); }
+  }
   /** Owner-local lookup for serving content to the authenticated page. */
   read(value: string): { readonly ref: ContentRef; readonly workspace: string; readonly origin: ContentOrigin; readonly path: string } {
     const id = contentId(value), stored = this.use(db => db.prepare("SELECT * FROM content WHERE id=?").get(id));
@@ -106,10 +189,10 @@ export class LocalContentStore implements ContentPort {
     return { ref: reference(item), workspace: item.workspace, origin: item.origin, path: this.blob(item.sha256, item.bytes) };
   }
   /** Startup collector for a quiescent owner. `referenced` must hold every content id in any Session snapshot. */
-  collect(referenced: ReadonlySet<string>): { readonly records: number; readonly blobs: number; readonly partial: number } {
+  collect(referenced: ReadonlySet<string>): { readonly records: number; readonly blobs: number; readonly files: number; readonly partial: number } {
     this.owner();
     if (this.writing.size) throw new SessionError("CONTENT_BUSY", "content collection requires a quiescent owner");
-    let records = 0, blobs = 0, partial = 0;
+    let records = 0, blobs = 0, files = 0, partial = 0;
     const live = this.use(db => {
       for (const value of db.prepare("SELECT * FROM content WHERE discarded=1 OR created_at<?").all(this.now() - CONTENT_RETENTION_MS)) {
         const item = parseRow(value);
@@ -123,11 +206,16 @@ export class LocalContentStore implements ContentPort {
       const path = join(this.root, "blobs", name), size = lstatSync(path).size;
       unlinkSync(path); this.storedBytes -= size; blobs++;
     }
+    const recorded = this.use(db => new Set(db.prepare("SELECT id FROM content").all().map(value => String((value as { id?: unknown }).id))));
+    for (const name of readdirSync(join(this.root, "files"))) {
+      if (!/^content-[a-zA-Z0-9-]{1,96}$/u.test(name) || recorded.has(name)) continue;
+      rmSync(join(this.root, "files", name), { recursive: true, force: true }); files++;
+    }
     for (const name of readdirSync(join(this.root, "partial"))) {
       const path = join(this.root, "partial", name), info = lstatSync(path);
       if (info.isFile() && info.mtimeMs < this.now() - PARTIAL_RETENTION_MS) { unlinkSync(path); partial++; }
     }
-    return { records, blobs, partial };
+    return { records, blobs, files, partial };
   }
   private blob(sha256: string, bytes: number): string {
     const path = join(this.root, "blobs", sha256), info = lstatSync(path, { throwIfNoEntry: false });

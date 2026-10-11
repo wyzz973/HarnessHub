@@ -1,14 +1,18 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, symlink } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 import type { ControlEvent, ControlOptions } from "../../src/contracts/control.js";
 import { AcpControl } from "../../src/adapters/control/acp.js";
 import { OpenClawControl } from "../../src/adapters/control/factory.js";
 import { CursorControl } from "../../src/adapters/control/cursor.js";
+import { OpenCodeControl, parseOpenCodeModels } from "../../src/adapters/control/opencode.js";
 import { ControlError } from "../../src/infrastructure/control/json-rpc-process.js";
 import { bindNativeDependencies } from "../../src/adapters/control/native-dependencies.js";
+import { contentId } from "../../src/contracts/content.js";
 
 const options: ControlOptions = { cwd: process.cwd(), env: {}, requestTimeoutMs: 1000, runTimeoutMs: 1500,
   maxFrameBytes: 65536, maxDiagnosticBytes: 1024, closeGraceMs: 150 };
@@ -307,4 +311,78 @@ test("ACP maps native tool detail, plan, usage, notices, compaction and non-text
     assert.equal(outputs[0]?.kind, "content"); assert.equal(outputs[0]?.kind === "content" ? Buffer.from(outputs[0].data).toString() : "", "png!");
     assert.deepEqual(outputs[1], { kind: "link", uri: "https://example.invalid/report", name: "report", title: "Report" });
   } finally { await driver.close(); }
+});
+
+function attachment(directory: string, name: string, mediaType: string, kind: "image" | "audio" | "file", data: Buffer) {
+  const path = join(directory, name); writeFileSync(path, data);
+  return { id: contentId("content-" + name.replace(/[^a-z0-9]/giu, "")), name, mediaType, kind, bytes: data.length, sha256: "0".repeat(64), path };
+}
+test("ACP sends attachments as native content blocks within the agent's declared prompt capabilities", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-acp-attachments-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
+  const png = attachment(directory, "shot.png", "image/png", "image", Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]));
+  const notes = attachment(directory, "notes.md", "text/markdown", "file", Buffer.from("# 标题\n"));
+  const pdf = attachment(directory, "doc.pdf", "application/pdf", "file", Buffer.from("%PDF-1.4"));
+  const wav = attachment(directory, "voice.wav", "audio/wav", "audio", Buffer.from("RIFF\0\0\0\0WAVE"));
+  const driver = control("attachments", { FIXTURE_TRACE: trace });
+  try {
+    const id = await ready(driver);
+    assert.deepEqual((await driver.models()).inputs, { image: true, audio: true, file: true });
+    await driver.checkAttachments([png, wav, notes, pdf]);
+    assert.equal((await (await driver.startText(id, "look", () => {}, [png, wav, notes, pdf])).result).status, "completed");
+    const prompt = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line)).find(row => row.method === "session/prompt").params.prompt;
+    assert.deepEqual(prompt, [
+      { type: "text", text: "look" },
+      { type: "image", data: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]).toString("base64"), mimeType: "image/png" },
+      { type: "audio", data: Buffer.from("RIFF\0\0\0\0WAVE").toString("base64"), mimeType: "audio/wav" },
+      { type: "resource", resource: { uri: pathToFileURL(notes.path).href, mimeType: "text/markdown", text: "# 标题\n" } },
+      { type: "resource_link", uri: pathToFileURL(pdf.path).href, name: "doc.pdf", mimeType: "application/pdf", size: 8 },
+    ]);
+  } finally { await driver.close(); }
+  // Without declared image or audio support, those are refused before anything is sent; files always have a link form.
+  const plain = control("basic");
+  try {
+    await ready(plain); assert.deepEqual((await plain.models()).inputs, { image: false, audio: false, file: true });
+    for (const item of [png, wav]) await assert.rejects(plain.checkAttachments([item]), (error: unknown) => error instanceof ControlError && error.code === "ATTACHMENT_UNSUPPORTED" && error.message.includes(item.name));
+    await plain.checkAttachments([pdf]);
+  } finally { await plain.close(); }
+});
+test("OpenClaw refuses images its Gateway would drop or its running model cannot see", async t => {
+  const root = await mkdtemp(join(tmpdir(), "openclaw-attachments-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const catalog = async () => ({ models: [{ provider: "vision", id: "large", name: "Vision", input: ["text", "image"] }, { provider: "deepseek", id: "deepseek-chat", name: "DeepSeek Chat", input: ["text"] }] });
+  const image = { ...attachment(root, "big.png", "image/png", "image", Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), bytes: 5_000_001 };
+  for (const [model, check] of [["vision/large", async (driver: OpenClawControl) => {
+    await assert.rejects(driver.checkAttachments([image]), (error: unknown) => error instanceof ControlError && error.code === "ATTACHMENT_LIMIT" && error.message.includes("big.png"));
+    await driver.checkAttachments([{ ...image, bytes: 5_000_000 }]);
+  }], ["deepseek/deepseek-chat", async (driver: OpenClawControl) => {
+    assert.deepEqual((await driver.models()).models.find(row => row.id === "deepseek/deepseek-chat")?.inputs, { image: false, audio: false, file: true });
+    await assert.rejects(driver.checkAttachments([{ ...image, bytes: 10 }]), (error: unknown) => error instanceof ControlError && error.code === "ATTACHMENT_UNSUPPORTED");
+  }]] as const) {
+    const config = join(root, "openclaw.json"); await writeFile(config, `{agents:{list:[{id:"main",default:true}],defaults:{model:{primary:"${model}"}}}}`);
+    const env = { HOME: root, OPENCLAW_CONFIG_PATH: config };
+    const driver = new OpenClawControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "attachments"], env }, { ...options, env }, catalog);
+    try { await ready(driver); await check(driver); } finally { await driver.close(); }
+  }
+});
+test("OpenCode refines agent image support with each model's input kinds from the original CLI catalog", async t => {
+  const root = await mkdtemp(join(tmpdir(), "opencode-attachments-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const verbose = (id: string, image: boolean) => id + "\n" + JSON.stringify({ id: id.split("/")[1], providerID: id.split("/")[0], capabilities: { attachment: image, input: { text: true, audio: false, image, video: false, pdf: false } } }, null, 2) + "\n";
+  assert.deepEqual([...parseOpenCodeModels(verbose("opencode/big-pickle", false) + "broken/model\n{\n  not json\n}\n" + verbose("vision/eye", true))], [["opencode/big-pickle", { image: false, audio: false }], ["vision/eye", { image: true, audio: false }]]);
+  // An executable that is the original CLI for both `acp` and `models --verbose`.
+  const shim = join(root, "opencode-fixture.mjs");
+  await writeFile(shim, `#!${process.execPath}\nif (process.argv[2] === "models") { process.stdout.write(${JSON.stringify(verbose("native/model-a", false) + verbose("native/model-b", true))}); }\nelse { process.argv.splice(2, process.argv.length, "acp-v1", "attachments"); await import(${JSON.stringify(pathToFileURL(resolve("tests/fixtures/control-peer.mjs")).href)}); }\n`, { mode: 0o700 });
+  const driver = new OpenCodeControl({ protocol: "acp-v1", executable: shim, args: ["acp"], env: {} }, options);
+  const image = attachment(root, "shot.png", "image/png", "image", Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  try {
+    await ready(driver);
+    const catalog = await driver.models();
+    assert.deepEqual(catalog.models.map(row => [row.id, row.inputs?.image]), [["native/model-a", false], ["native/model-b", true]]);
+    await assert.rejects(driver.checkAttachments([image]), (error: unknown) => error instanceof ControlError && error.code === "ATTACHMENT_UNSUPPORTED", "the configured model cannot see images");
+  } finally { await driver.close(); }
+  const vision = new OpenCodeControl({ protocol: "acp-v1", executable: shim, args: ["acp"], env: {} }, options);
+  try { await vision.initialize(); await vision.open(process.cwd(), "native/model-b"); await vision.checkAttachments([image]); }
+  finally { await vision.close(); }
+  // Without the original catalog the agent-level declaration stands.
+  const plain = new OpenCodeControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "attachments"], env: {} }, options);
+  try { await ready(plain); assert.equal((await plain.models()).models.every(row => row.inputs === undefined), true); await plain.checkAttachments([image]); }
+  finally { await plain.close(); }
 });

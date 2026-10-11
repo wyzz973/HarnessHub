@@ -276,29 +276,35 @@
         "input-image": {
           "native": "yes",
           "source": "UserInput.image(data URL)/localImage；Model.inputModalities",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-attachments-codex.json",
+            "docs/verification/native-attachments-2026-10-11.md"
+          ],
+          "note": "localImage 指向只读副本；按所开模型 inputModalities 门控"
         },
         "input-audio": {
           "native": "partial",
           "source": "UserInput.audio/localAudio，仅 inputModalities 含 audio 的模型",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
           "evidence": [],
-          "note": ""
+          "note": "localAudio 已接出；本机模型目录没有声明音频输入的模型，真实无法验收"
         },
         "input-file": {
           "native": "partial",
           "source": "无 file 输入类型；仅 localImage/localAudio/mention(app/plugin) 与文本路径",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-attachments-codex.json",
+            "docs/verification/native-attachments-2026-10-11.md"
+          ],
+          "note": "只读副本路径写入提示，原程序用自己的工具读取"
         },
         "output-media": {
           "native": "partial",
@@ -538,11 +544,11 @@
         "input-image": {
           "native": "yes",
           "source": "promptCapabilities.image；image block base64",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
           "evidence": [],
-          "note": ""
+          "note": "Claude 账号周额度用完，真实生成无法验收"
         },
         "input-audio": {
           "native": "no",
@@ -556,11 +562,11 @@
         "input-file": {
           "native": "partial",
           "source": "文本 resource 以 <context> 注入；blob 被丢弃；resource_link 只成链接文本",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
           "evidence": [],
-          "note": ""
+          "note": "小文本文件以嵌入资源发送，其余为文件链接；Claude 账号周额度用完，真实生成无法验收"
         },
         "output-media": {
           "native": "partial",
@@ -804,11 +810,15 @@
         "input-image": {
           "native": "yes",
           "source": "promptCapabilities.image",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-attachments-opencode-vision.json",
+            ".tmp/cc-native-attachments-opencode-openclaw.json",
+            "docs/verification/native-attachments-2026-10-11.md"
+          ],
+          "note": "代理级声明再按 opencode models --verbose 的模型输入细化；mimo-v2.6-flash-free 真实识别图片，默认 big-pickle 在派发前拒绝"
         },
         "input-audio": {
           "native": "no",
@@ -822,11 +832,15 @@
         "input-file": {
           "native": "yes",
           "source": "promptCapabilities.embeddedContext",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-attachments-opencode-vision.json",
+            ".tmp/cc-native-attachments-opencode-openclaw.json",
+            "docs/verification/native-attachments-2026-10-11.md"
+          ],
+          "note": "小文本以嵌入资源发送；模型主动读取工作区外副本时原程序请求外部目录审批"
         },
         "output-media": {
           "native": "partial",
@@ -1067,11 +1081,14 @@
         "input-image": {
           "native": "yes",
           "source": "image block → chat.send attachment（≤5 MB）",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "hub": "done",
+          "protocol": "pass",
+          "real": "partial",
+          "evidence": [
+            ".tmp/cc-native-attachments-opencode-openclaw.json",
+            "docs/verification/native-attachments-2026-10-11.md"
+          ],
+          "note": "按 models.list 的模型 input 与 5 MB 上限门控；默认 deepseek-chat 在派发前拒绝，识图模型未真实验收"
         },
         "input-audio": {
           "native": "no",
@@ -1085,11 +1102,14 @@
         "input-file": {
           "native": "partial",
           "source": "文本 resource 追加为文本；blob 丢弃；resource_link 成文本",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-attachments-opencode-openclaw.json",
+            "docs/verification/native-attachments-2026-10-11.md"
+          ],
+          "note": "文本资源由桥展开为文本；文件链接成为文本路径"
         },
         "output-media": {
           "native": "no",
@@ -1324,29 +1344,29 @@
         "input-image": {
           "native": "yes",
           "source": "promptCapabilities.image",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
           "evidence": [],
-          "note": ""
+          "note": "Gemini 个人账号客户端被服务端停用（NATIVE_CLIENT_UNSUPPORTED），真实链路受阻"
         },
         "input-audio": {
           "native": "yes",
           "source": "promptCapabilities.audio",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
           "evidence": [],
-          "note": ""
+          "note": "Gemini 个人账号客户端被服务端停用（NATIVE_CLIENT_UNSUPPORTED），真实链路受阻"
         },
         "input-file": {
           "native": "yes",
           "source": "promptCapabilities.embeddedContext",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
           "evidence": [],
-          "note": ""
+          "note": "Gemini 个人账号客户端被服务端停用（NATIVE_CLIENT_UNSUPPORTED），真实链路受阻"
         },
         "output-media": {
           "native": "no",
@@ -1578,11 +1598,11 @@
         "input-image": {
           "native": "yes",
           "source": "promptCapabilities.image",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
           "evidence": [],
-          "note": ""
+          "note": "Cursor 账号套餐限制，原公共对话返回升级提示，生成任务无法验收"
         },
         "input-audio": {
           "native": "no",
@@ -1596,11 +1616,11 @@
         "input-file": {
           "native": "partial",
           "source": "resource 文本内联（≤20000 字）；项目根内 resource_link 读取",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
           "evidence": [],
-          "note": ""
+          "note": "未声明嵌入上下文，文件以链接发送（项目根外只显示名称与路径）；Cursor 账号套餐限制，原公共对话返回升级提示，生成任务无法验收"
         },
         "output-media": {
           "native": "partial",
@@ -1845,11 +1865,14 @@
         "input-image": {
           "native": "yes",
           "source": "prompt.images[{data,mimeType}]，按 Model.input 门控",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-attachments-pi.json",
+            "docs/verification/native-attachments-2026-10-11.md"
+          ],
+          "note": "按当前模型 Model.input 门控；deepseek-flash 真实识别图片"
         },
         "input-audio": {
           "native": "no",
@@ -1861,12 +1884,15 @@
           "note": ""
         },
         "input-file": {
-          "native": "no",
-          "source": "RPC 不支持 @file 附件",
-          "hub": "n/a",
-          "protocol": "n/a",
-          "real": "n/a",
-          "evidence": [],
+          "native": "partial",
+          "source": "RPC 无 @file 附件；只读副本路径写入提示，由原 read 工具读取",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-attachments-pi.json",
+            "docs/verification/native-attachments-2026-10-11.md"
+          ],
           "note": ""
         },
         "output-media": {

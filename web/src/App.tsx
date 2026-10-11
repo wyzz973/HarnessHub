@@ -18,11 +18,15 @@ import type { ProviderProbeState } from "./components/ProvidersPage.js";
 import { Sidebar } from "./components/Sidebar.js";
 import type { Page } from "./components/Sidebar.js";
 import { BrandMark, Spinner } from "./components/common.js";
+import { attachmentKind, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, MAX_MESSAGE_ATTACHMENT_BYTES, type AttachmentDraft } from "./components/Attachments.js";
+import { parseContentRef, type ContentRef } from "../../src/contracts/content.js";
 
-interface PendingMessage { text: string; createKey: string; sessionId: string | null; sendKey: string; committed: boolean }
+interface PendingMessage { text: string; attachments: readonly string[]; createKey: string; sessionId: string | null; sendKey: string; committed: boolean }
 interface PendingSelection { sessionId: string; selection: SelectionRequest; key: string; recovery: boolean; acknowledgeUnknown: boolean }
-interface ChatDraft { message: string; selection: SelectionDraft; epoch: number | null; messageIntent: PendingMessage | null; selectionIntent: PendingSelection | null }
+interface ChatDraft { message: string; attachments: readonly ContentRef[]; selection: SelectionDraft; epoch: number | null; messageIntent: PendingMessage | null; selectionIntent: PendingSelection | null }
 function draftStorageKey(workspace: string, id: string): string { return "harnessgateway:chat-draft:" + workspace + ":" + id; }
+function readyAttachments(items: readonly AttachmentDraft[]): readonly ContentRef[] { return items.flatMap(item => item.status === "ready" && item.ref ? [item.ref] : []); }
+function draftAttachments(refs: readonly ContentRef[] | undefined): readonly AttachmentDraft[] { return (refs ?? []).map(ref => ({ local: ref.id, name: ref.name, bytes: ref.bytes, kind: ref.kind, status: "ready", ref })); }
 function savedChatDraft(workspace: string, id: string): ChatDraft | null {
   try {
     const raw = sessionStorage.getItem(draftStorageKey(workspace, id));
@@ -30,7 +34,7 @@ function savedChatDraft(workspace: string, id: string): ChatDraft | null {
     const value: unknown = JSON.parse(raw);
     if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
     const row = value as Record<string, unknown>, selected = row.selection;
-    if (Object.keys(row).some(key => !["message", "selection", "epoch", "messageIntent", "selectionIntent"].includes(key)) || typeof row.message !== "string" ||
+    if (Object.keys(row).some(key => !["message", "attachments", "selection", "epoch", "messageIntent", "selectionIntent"].includes(key)) || typeof row.message !== "string" ||
         !(row.epoch === null || typeof row.epoch === "number" && Number.isSafeInteger(row.epoch) && row.epoch > 0) || selected === null || typeof selected !== "object" || Array.isArray(selected)) return null;
     const selection = selected as Record<string, unknown>;
     if (Object.keys(selection).some(key => !["harnessId", "controlId", "providerId", "providerRevision", "model", "nativeOptions"].includes(key)) ||
@@ -41,10 +45,11 @@ function savedChatDraft(workspace: string, id: string): ChatDraft | null {
       if (input === null) return null;
       if (typeof input !== "object" || Array.isArray(input)) throw new Error("invalid stored message intent");
       const item = input as Record<string, unknown>;
-      if (Object.keys(item).some(key => !["text", "createKey", "sessionId", "sendKey", "committed"].includes(key)) || typeof item.text !== "string" || typeof item.committed !== "boolean" ||
+      if (Object.keys(item).some(key => !["text", "attachments", "createKey", "sessionId", "sendKey", "committed"].includes(key)) || typeof item.text !== "string" || typeof item.committed !== "boolean" ||
+          !(item.attachments === undefined || Array.isArray(item.attachments) && item.attachments.length <= 8 && item.attachments.every(value => typeof value === "string" && /^content-[a-zA-Z0-9-]{1,96}$/u.test(value))) ||
           ![item.createKey, item.sendKey].every(key => typeof key === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(key)) ||
           !(item.sessionId === null || typeof item.sessionId === "string" && item.sessionId === id)) throw new Error("invalid stored message intent");
-      return { text: item.text, createKey: String(item.createKey), sessionId: item.sessionId, sendKey: String(item.sendKey), committed: false };
+      return { text: item.text, attachments: (item.attachments ?? []) as string[], createKey: String(item.createKey), sessionId: item.sessionId, sendKey: String(item.sendKey), committed: false };
     };
     // A saved receipt is never authoritative; canonical Session facts confirm it after reload.
     let selectionIntent: PendingSelection | null = null;
@@ -61,7 +66,9 @@ function savedChatDraft(workspace: string, id: string): ChatDraft | null {
         ...(target.provider === undefined ? {} : { provider: target.provider === null ? null : parseProviderTarget(target.provider) }),
         ...(target.nativeModel === undefined ? {} : { nativeModel: typeof target.nativeModel === "string" && target.nativeModel.length <= 1024 ? target.nativeModel : (() => { throw new Error("invalid native model"); })() }) , ...(target.nativeOptions === undefined ? {} : { nativeOptions: parseNativeOptions(target.nativeOptions) }) }, key: item.key, recovery: item.recovery, acknowledgeUnknown: item.acknowledgeUnknown };
     }
-    return { message: row.message, selection: { harnessId: String(selection.harnessId), controlId: String(selection.controlId), providerId: String(selection.providerId),
+    // Drafts saved before attachments existed have none; a damaged list drops the whole draft like any other field.
+    const attachments = row.attachments === undefined ? [] : Array.isArray(row.attachments) && row.attachments.length <= 8 ? row.attachments.map(parseContentRef) : (() => { throw new Error("invalid stored attachments"); })();
+    return { message: row.message, attachments, selection: { harnessId: String(selection.harnessId), controlId: String(selection.controlId), providerId: String(selection.providerId),
       providerRevision: selection.providerRevision, model: String(selection.model), nativeOptions: parseNativeOptions(selection.nativeOptions ?? {}) }, epoch: row.epoch, messageIntent: parseMessage(row.messageIntent), selectionIntent };
   } catch { return null; }
 }
@@ -91,6 +98,7 @@ export function App() {
   const [chatKey, setChatKey] = useState(0);
   const [draft, setDraft] = useState<SelectionDraft>({ ...EMPTY_SELECTION });
   const [messageDraft, setMessageDraft] = useState("");
+  const [attachments, setAttachments] = useState<readonly AttachmentDraft[]>([]);
   const [workspace, setWorkspace] = useState("");
   const [mutation, setMutation] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -143,7 +151,7 @@ export function App() {
         if (!ignored) {
           snapshot.jobs.filter(job => job.status === "completed").forEach(job => completedInstallations.current.add(job.id)); setState(snapshot); setWorkspace(snapshot.workspace);
           const key = sessionIdRef.current ?? "new", saved = savedChatDraft(snapshot.workspace, key);
-          if (saved && !chatDrafts.current.has(key)) { chatDrafts.current.set(key, saved); setMessageDraft(saved.message); setDraft(saved.selection); pendingMessage.current = saved.messageIntent; pendingSwitchWrite.current = saved.selectionIntent; }
+          if (saved && !chatDrafts.current.has(key)) { chatDrafts.current.set(key, saved); setMessageDraft(saved.message); setAttachments(draftAttachments(saved.attachments)); setDraft(saved.selection); pendingMessage.current = saved.messageIntent; pendingSwitchWrite.current = saved.selectionIntent; }
         }
       } catch (failure: unknown) { if (!ignored) setBootError(errorMessage(failure)); }
     })();
@@ -271,7 +279,7 @@ export function App() {
   };
   const navigate = (next: Page) => leave(() => { setPage(next); setEditor(null); setEditorDirty(false); setSidebarOpen(false); setError(null); });
   const saveChatDraft = () => {
-    chatDrafts.current.set(sessionIdRef.current ?? "new", { message: messageDraft, selection: draft,
+    chatDrafts.current.set(sessionIdRef.current ?? "new", { message: messageDraft, attachments: readyAttachments(attachments), selection: draft,
       epoch: session?.epoch ?? null, messageIntent: pendingMessage.current, selectionIntent: pendingSwitchWrite.current });
     try {
       const saved = chatDrafts.current.get(sessionIdRef.current ?? "new")!;
@@ -280,13 +288,13 @@ export function App() {
       sessionStorage.setItem(draftStorageKey(state?.workspace ?? workspace, sessionIdRef.current ?? "new"), serialized); setDraftStorageError(null);
     } catch { setDraftStorageError("浏览器暂时无法保存草稿。内容仍在当前页面，请暂时保留此页面。"); }
   };
-  useEffect(() => { if (state && !sessionLoading && !sessionError) saveChatDraft(); }, [messageDraft, draft, session?.epoch, mutation, state !== null, sessionLoading, sessionError]);
+  useEffect(() => { if (state && !sessionLoading && !sessionError) saveChatDraft(); }, [messageDraft, attachments, draft, session?.epoch, mutation, state !== null, sessionLoading, sessionError]);
   const newChat = () => leave(() => {
     selectionWish.current = null; lastAutoSelection.current = null;
     saveChatDraft(); const saved = chatDrafts.current.get("new"); pendingSwitchWrite.current = saved?.selectionIntent ?? null;
     sessionIdRef.current = null; liveSession.current = null; observedSelection.current = ""; pendingMessage.current = null;
     pendingMessage.current = saved?.messageIntent ?? null;
-    writeSessionRoute(null); setSessionId(null); setSession(null); setSessionLoading(false); setSessionError(null); setDraft(saved?.selection ?? { ...EMPTY_SELECTION }); setMessageDraft(saved?.message ?? ""); setChatKey(value => value + 1);
+    writeSessionRoute(null); setSessionId(null); setSession(null); setSessionLoading(false); setSessionError(null); setDraft(saved?.selection ?? { ...EMPTY_SELECTION }); setMessageDraft(saved?.message ?? ""); setAttachments(draftAttachments(saved?.attachments)); setChatKey(value => value + 1);
     setPage("chat"); setEditor(null); setEditorDirty(false); setSidebarOpen(false); setError(null); setConnectionError(null);
   });
   const selectSession = (id: string) => leave(() => {
@@ -297,7 +305,7 @@ export function App() {
       sessionIdRef.current = id; liveSession.current = null; observedSelection.current = "";
       pendingMessage.current = saved?.messageIntent ?? null; pendingSwitchWrite.current = saved?.selectionIntent ?? null;
       writeSessionRoute(id); setSessionId(id); setSession(null); setSessionLoading(true); setSessionError(null);
-      setMessageDraft(saved?.message ?? ""); if (saved) setDraft(saved.selection); setChatKey(value => value + 1);
+      setMessageDraft(saved?.message ?? ""); setAttachments(draftAttachments(saved?.attachments)); if (saved) setDraft(saved.selection); setChatKey(value => value + 1);
     }
     setPage("chat"); setEditor(null); setEditorDirty(false); setSidebarOpen(false); setError(null); setConnectionError(null);
   });
@@ -306,7 +314,7 @@ export function App() {
     const control = harness.controls.find(row => row.id === harness.defaultControlId && row.available) ?? harness.controls.find(row => row.available); if (!control) return;
     saveChatDraft(); pendingSwitchWrite.current = null;
     sessionIdRef.current = null; liveSession.current = null; observedSelection.current = ""; pendingMessage.current = null;
-    writeSessionRoute(null); setSessionId(null); setSession(null); setSessionLoading(false); setSessionError(null); setDraft({ ...EMPTY_SELECTION, harnessId: harness.id, controlId: control.id }); setMessageDraft("");
+    writeSessionRoute(null); setSessionId(null); setSession(null); setSessionLoading(false); setSessionError(null); setDraft({ ...EMPTY_SELECTION, harnessId: harness.id, controlId: control.id }); setMessageDraft(""); setAttachments([]);
     setChatKey(value => value + 1); setPage("chat"); setSidebarOpen(false); setError(null); setConnectionError(null);
   });
   useEffect(() => {
@@ -318,17 +326,19 @@ export function App() {
   });
   const startOperation = (label: string): boolean => { if (operation.current) return false; operation.current = true; setMutation(label); setError(null); return true; };
   const endOperation = () => { operation.current = false; if (mounted.current) setMutation(null); };
-  const send = async (value: string) => {
+  const send = async (value: string, retryAttachments?: readonly ContentRef[]) => {
     if (!state) throw new ApiError("NOT_READY", "工作空间尚未连接。");
     if (!startOperation("sending")) throw new ApiError("OPERATION_PENDING", "正在处理当前选择，请稍候；草稿已保留。");
+    const sent = retryAttachments ?? readyAttachments(attachments), ids = sent.map(item => item.id);
     try {
+      if (retryAttachments === undefined && attachments.some(item => item.status !== "ready")) throw new ApiError("ATTACHMENT_PENDING", "附件还在上传或上传失败，处理后再发送。");
       if (session && (session.pendingSwitchId !== null || JSON.stringify(draft) !== JSON.stringify(selectionDraft(session.selection))))
         throw new ApiError("SELECTION_PENDING", "正在切换到所选 Harness 或模型，请稍候；草稿已保留。");
       const isEffective = session !== null && JSON.stringify(draft) === JSON.stringify(selectionDraft(session.selection));
       const problem = (isEffective && session ? effectiveProviderProblem(session.selection, state.providers) : null) ?? selectionProblem(draft, state.harnesses, state.providers); if (problem) throw new ApiError("INVALID_SELECTION", problem);
-      const previous = pendingMessage.current;
-      if (previous && !previous.committed && previous.text !== value) throw new ApiError("UNCONFIRMED_REQUEST", "上一条消息的接收结果还未确认。请保留原消息重试，或等待历史更新后再发送新内容。");
-      const request = previous?.text === value ? previous : { text: value, createKey: requestKey(), sessionId: sessionIdRef.current, sendKey: requestKey(), committed: false };
+      const previous = pendingMessage.current, same = previous !== null && previous.text === value && previous.attachments.join() === ids.join();
+      if (previous && !previous.committed && !same) throw new ApiError("UNCONFIRMED_REQUEST", "上一条消息的接收结果还未确认。请保留原消息重试，或等待历史更新后再发送新内容。");
+      const request = same ? previous : { text: value, attachments: ids, createKey: requestKey(), sessionId: sessionIdRef.current, sendKey: requestKey(), committed: false };
       pendingMessage.current = request;
       saveChatDraft();
       let id = request.sessionId;
@@ -338,8 +348,10 @@ export function App() {
         try { sessionStorage.removeItem(draftStorageKey(state.workspace, "new")); } catch { /* The owned in-memory draft remains available. */ }
         sessionIdRef.current = id; writeSessionRoute(id); setSessionId(id); acceptSession(created);
       }
-      if (!request.committed) { await api.send(id, value, request.sendKey); request.committed = true; }
+      if (!request.committed) { await api.send(id, value, request.sendKey, request.attachments); request.committed = true; }
       pendingMessage.current = null;
+      // Sent attachments now belong to the message; the composer keeps only what was added meanwhile.
+      if (retryAttachments === undefined && mounted.current) setAttachments(current => current.filter(item => item.ref === undefined || !ids.includes(item.ref.id)));
       // The command ACK releases the draft. Durable facts arrive on the independently owned stream.
       void api.session(id, AbortSignal.timeout(15_000)).then(acceptSession).catch(() => {
         if (mounted.current && sessionIdRef.current === id) setConnectionError("消息已接收，正在恢复实时回复连接。历史和草稿已保留。");
@@ -353,6 +365,38 @@ export function App() {
       if (failure instanceof ApiError && !["NETWORK_ERROR", "INVALID_RESPONSE", "REQUEST_TIMEOUT", "UNCONFIRMED_REQUEST"].includes(failure.code) && !pendingMessage.current?.committed) pendingMessage.current = null;
       if (mounted.current) setError(errorMessage(failure)); throw failure;
     } finally { endOperation(); }
+  };
+  /** Uploads run per chat; a finished upload for a chat no longer on screen goes into that chat's saved draft. */
+  const attachFiles = (files: readonly File[]) => {
+    const owner = sessionIdRef.current ?? "new", room = MAX_ATTACHMENTS - attachments.length;
+    let total = attachments.reduce((sum, item) => sum + item.bytes, 0);
+    const added: AttachmentDraft[] = files.slice(0, Math.max(0, room)).map(file => {
+      const item: AttachmentDraft = { local: requestKey(), name: file.name || "附件", bytes: file.size, kind: attachmentKind(file.type), status: "uploading" };
+      total += file.size;
+      const problem = file.size < 1 ? "文件为空" : file.size > MAX_ATTACHMENT_BYTES ? "单个附件不能超过 20 MB" : total > MAX_MESSAGE_ATTACHMENT_BYTES ? "一条消息的附件合计不能超过 32 MB" : null;
+      return problem ? { ...item, status: "failed", error: problem } : item;
+    });
+    if (files.length > room) setError(`一条消息最多 ${MAX_ATTACHMENTS} 个附件，多出的文件没有添加。`);
+    setAttachments(current => [...current, ...added]);
+    for (const [index, item] of added.entries()) {
+      if (item.status !== "uploading") continue;
+      const file = files[index]!;
+      void api.uploadAttachment(file, item.name, requestKey()).then(ref => {
+        if ((sessionIdRef.current ?? "new") === owner) { if (mounted.current) setAttachments(current => current.map(row => row.local === item.local ? { ...row, status: "ready", ref, kind: ref.kind, bytes: ref.bytes } : row)); return; }
+        const saved = chatDrafts.current.get(owner);
+        if (saved && saved.attachments.length < MAX_ATTACHMENTS) chatDrafts.current.set(owner, { ...saved, attachments: [...saved.attachments, ref] });
+        else void api.discardAttachment(ref.id).catch(() => {});
+      }, (failure: unknown) => {
+        const message = failure instanceof ApiError && failure.code === "INVALID_INPUT" ? "文件内容与类型不符或名称无效" : failure instanceof ApiError && failure.code === "ATTACHMENT_LIMIT" ? "附件超过大小上限" : errorMessage(failure);
+        if (mounted.current && (sessionIdRef.current ?? "new") === owner) setAttachments(current => current.map(row => row.local === item.local ? { ...row, status: "failed", error: message } : row));
+      });
+    }
+  };
+  const removeAttachment = (local: string) => {
+    const item = attachments.find(row => row.local === local);
+    setAttachments(current => current.filter(row => row.local !== local));
+    // Withdrawing is best effort; an unsent upload is collected after the retention window anyway.
+    if (item?.ref) void api.discardAttachment(item.ref.id).catch(() => {});
   };
   const applySelection = async () => {
     if (!sessionId || !startOperation("switching")) return;
@@ -493,7 +537,7 @@ export function App() {
   if (!state) return <div className="boot-screen"><BrandMark/><h1>Harness<span>Hub</span></h1>{bootError ? <><div className="boot-error" role="alert"><AlertCircle size={18}/><p>{bootError}</p></div><p className="boot-help">请使用本机网关启动时提供的入口链接。验证完成后，页面会自动隐藏链接中的令牌。</p><button className="button secondary" onClick={() => setBootAttempt(value => value + 1)}><RefreshCw size={15}/>重新连接</button></> : <div className="boot-progress" role="status"><Spinner/>正在连接你的工作空间</div>}</div>;
   return <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`} data-page={page}><a className="skip-link" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>跳到主要内容</a><Sidebar providerManagement={state.providerManagement !== false} page={page} sessions={state.sessions} currentId={sessionId} open={sidebarOpen} collapsed={sidebarCollapsed} activeJobs={state.jobs.filter(installationActive).length} interactionBusy={mutation !== null} onCollapse={() => setSidebarCollapsed(value => !value)} onToggle={() => setSidebarOpen(value => !value)} onPage={navigate} onNew={newChat} onSession={selectSession}/>
     <main id="main-content" className="app-main" tabIndex={-1}>
-      {page === "chat" ? <ChatPage providerManagement={state.providerManagement !== false} onToolDetail={content => api.toolDetail(content)} onNativeBranch={()=>{ if(!session||!startOperation("native-branch"))return; void api.branchNative(session.id,session.epoch,requestKey()).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }} onPermission={(permission,option,input)=>{ if(!sessionId||!startOperation("permission"))return; void api.decidePermission(sessionId,permission,option,requestKey(),input).then(()=>api.session(sessionId)).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }} nativeModels={nativeCatalog} nativeModelsLoading={nativeLoading} nativeModelsError={nativeError} onRefreshModels={refreshNativeModels} key={chatKey} session={session} sessionRequested={sessionId !== null} sessionError={sessionError} loading={sessionLoading} draft={draft} messageDraft={messageDraft} onMessageDraft={setMessageDraft} providers={state.providers} harnesses={state.harnesses} workspace={workspace} mutation={mutation} error={error ?? draftStorageError} connectionError={connectionError} onRetryConnection={() => setStreamAttempt(value => value + 1)} onDraft={changeSelection} onWorkspace={setWorkspace} onSend={send} onApply={() => { lastAutoSelection.current = null; void applySelection(); }} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }} onProviders={() => navigate("providers")} onNew={newChat} onMenu={() => setSidebarOpen(value => !value)}/>
+      {page === "chat" ? <ChatPage providerManagement={state.providerManagement !== false} onToolDetail={content => api.toolDetail(content)} onNativeBranch={()=>{ if(!session||!startOperation("native-branch"))return; void api.branchNative(session.id,session.epoch,requestKey()).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }} onPermission={(permission,option,input)=>{ if(!sessionId||!startOperation("permission"))return; void api.decidePermission(sessionId,permission,option,requestKey(),input).then(()=>api.session(sessionId)).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }} nativeModels={nativeCatalog} nativeModelsLoading={nativeLoading} nativeModelsError={nativeError} onRefreshModels={refreshNativeModels} key={chatKey} session={session} sessionRequested={sessionId !== null} sessionError={sessionError} loading={sessionLoading} draft={draft} messageDraft={messageDraft} onMessageDraft={setMessageDraft} providers={state.providers} harnesses={state.harnesses} workspace={workspace} mutation={mutation} error={error ?? draftStorageError} connectionError={connectionError} onRetryConnection={() => setStreamAttempt(value => value + 1)} onDraft={changeSelection} onWorkspace={setWorkspace} onSend={send} attachments={attachments} onAttach={attachFiles} onRemoveAttachment={removeAttachment} onApply={() => { lastAutoSelection.current = null; void applySelection(); }} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }} onProviders={() => navigate("providers")} onNew={newChat} onMenu={() => setSidebarOpen(value => !value)}/>
         : page === "providers" ? <ProvidersPage providers={state.providers} editor={editor} saving={mutation === "saving"} probes={probes} error={error} onEdit={provider => { setEditor(provider); setError(null); }} onBack={() => leave(() => { setEditor(null); setEditorDirty(false); setError(null); })} onSave={saveProvider} onProbe={provider => void probeProvider(provider)} onDirty={dirtyChanged} onDismissError={() => setError(null)} onMenu={() => setSidebarOpen(value => !value)}/>
           : <HarnessesPage api={api} harnesses={state.harnesses} jobs={state.jobs} scanning={mutation === "scanning"} checking={checkingUpdates} submitting={submittingInstallations} cancelling={cancellingInstallations} unconfirmed={unconfirmedInstallations} error={error} connectionError={managementConnectionError} onRescan={() => void rescan()} onCheckUpdates={ids => void checkUpdates(ids)} onInstall={install} onConfirm={confirmInstallation} onCancelJob={job => void cancelInstallation(job)} onDismissError={() => setError(null)} onMenu={() => setSidebarOpen(value => !value)} onChoose={chooseHarness}/>}
     </main>

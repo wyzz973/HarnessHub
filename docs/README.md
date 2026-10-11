@@ -1,6 +1,6 @@
 # 工程文档与阅读顺序
 
-最新：[逐Harness原生能力矩阵](verification/native-capability-matrix.md)（生成自`plan/native-capabilities.json`）、[ADR-022](decisions/0022-native-activity-and-content-store.md)与[原生活动验收](verification/native-activity-2026-10-11.md)：工具详情、计划、用量、提示、活动与产物进入统一聊天，详情与产物存入内容存储，业务库v7。此前：[七个原安装能力面调研](research/native-capability-surfaces-2026-10-11.md)、[ADR-021](decisions/0021-native-profile-and-deviation-tolerance.md)与[第二轮验收](verification/native-capabilities-round2-2026-10-11.md)。完整能力仍进行中。
+最新：[逐Harness原生能力矩阵](verification/native-capability-matrix.md)（生成自`plan/native-capabilities.json`）、[ADR-023](decisions/0023-attachment-input.md)与[附件输入验收](verification/native-attachments-2026-10-11.md)：文件、图片、音频按各原接口发送，模型看不到时派发前拒绝。[ADR-022](decisions/0022-native-activity-and-content-store.md)与[原生活动验收](verification/native-activity-2026-10-11.md)：工具详情、计划、用量、提示、活动与产物进入统一聊天，详情与产物存入内容存储，业务库v7。此前：[七个原安装能力面调研](research/native-capability-surfaces-2026-10-11.md)、[ADR-021](decisions/0021-native-profile-and-deviation-tolerance.md)与[第二轮验收](verification/native-capabilities-round2-2026-10-11.md)。完整能力仍进行中。
 
 最新全部Harness原生能力标准：[ADR-020](decisions/0020-complete-native-harness-capabilities.md)、[逐Harness能力清单与本轮恢复证据](verification/complete-native-capabilities-2026-10-11.md)。完整能力仍进行中，原生绑定/增量恢复已实现，业务库现为v7。
 

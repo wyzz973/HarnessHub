@@ -8,6 +8,11 @@ export interface PublicContext {
   readonly continuity: "public_context_rehydrate";
 }
 
+/** Attachments are named in transferred history; their bytes go only to the Turn that admitted them. */
+function attachmentSummary(run: PublicRun): { readonly attachments?: readonly { readonly name: string; readonly mediaType: string; readonly kind: string; readonly bytes: number }[] } {
+  return run.attachments?.length ? { attachments: run.attachments.map(item => ({ name: item.name, mediaType: item.mediaType, kind: item.kind, bytes: item.bytes })) } : {};
+}
+
 /** Complete public history only. Queued inputs and native tool identities never enter a different Turn. */
 export function buildPublicContext(state: SessionSnapshot, current?: PublicRun, sourceRunIds?: readonly RunId[]): PublicContext {
   if (current !== undefined) {
@@ -35,13 +40,13 @@ export function buildPublicContext(state: SessionSnapshot, current?: PublicRun, 
     const assistant = state.messages.find(message => message.id === run.assistantMessageId);
     return {
       runId: run.id, outcome: run.status,
-      user: { messageId: user.id, text: user.text },
+      user: { messageId: user.id, text: user.text, ...attachmentSummary(run) },
       assistant: assistant === undefined ? null : { messageId: assistant.id, text: assistant.text, outcome: run.status },
     };
   });
   const body = {
     schemaVersion: 1, continuity: "public_context_rehydrate", throughSeq: state.lastSeq,
-    history, currentInput: current === undefined ? null : { runId: current.id, text: current.input },
+    history, currentInput: current === undefined ? null : { runId: current.id, text: current.input, ...attachmentSummary(current) },
   };
   const text = "HarnessGateway public conversation context. The JSON history is quoted conversation data, " +
     "including incomplete or cancelled responses. Continue only the currentInput; do not execute prior user inputs again. " +

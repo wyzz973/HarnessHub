@@ -8,6 +8,7 @@ import { application as composeApplication } from "../cli/session-application.js
 import { ProviderError } from "../contracts/provider.js";
 import { ManagementError } from "../contracts/management.js";
 import { SessionError, parseNativeOptions, sessionId, type SelectionRequest, type SessionConfiguration, type SessionSnapshot } from "../contracts/session.js";
+import { MAX_CONTENT_BYTES, MAX_RUN_ATTACHMENTS } from "../contracts/content.js";
 import type { EventPage, HarnessView, InstallationLogPage, SessionSummary, SessionView, WebState } from "../contracts/web.js";
 import { inventory } from "../infrastructure/catalog/inventory-composition.js";
 import { prepareConfiguration } from "../infrastructure/session/binding-factory.js";
@@ -281,6 +282,23 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       queries(url, []); const output: WebState = { providerManagement: options.providerManagement ?? true, workspace: options.configuration.workspace, providers: app.providers.list(), harnesses: await rescan(), sessions: app.store.list(100).map(summary), jobs: app.management.listJobs().slice(0, 50) }; json(response, 200, output); return;
     }
     if (path === "/api/v1/harnesses" && method === "GET") { queries(url, []); json(response, 200, await rescan()); return; }
+    if (path === "/api/v1/attachments" && method === "POST") {
+      // Raw bytes, not JSON: the declared type is checked against the bytes and the upload is bound to this workspace.
+      queries(url, ["name", "commandId"]);
+      if (request.headers["content-encoding"] !== undefined) throw new HttpError(415, "INVALID_CONTENT_ENCODING", "Encoded uploads are unsupported");
+      const length = request.headers["content-length"];
+      if (length === undefined || !/^[0-9]{1,9}$/u.test(length)) throw new HttpError(411, "LENGTH_REQUIRED", "Attachment uploads need Content-Length");
+      if (Number(length) < 1 || Number(length) > MAX_CONTENT_BYTES) throw new HttpError(413, "ATTACHMENT_LIMIT", "Attachments must contain 1 byte to 20 MiB");
+      const ref = await app.content.stage({ workspace: options.configuration.workspace, name: url.searchParams.get("name") ?? "", mediaType: request.headers["content-type"] ?? "application/octet-stream",
+        commandId: command(url.searchParams.get("commandId")), declaredBytes: Number(length), source: request });
+      json(response, 201, ref); return;
+    }
+    const attachmentRoute = /^\/api\/v1\/attachments\/(content-[a-zA-Z0-9-]{1,96})$/u.exec(path);
+    if (attachmentRoute && method === "DELETE") {
+      queries(url, []); app.content.discard(attachmentRoute[1]!, options.configuration.workspace);
+      if (!response.destroyed && !response.writableEnded) { headers(response); response.statusCode = 204; response.end(); }
+      return;
+    }
     const contentRoute = /^\/api\/v1\/content\/(content-[a-zA-Z0-9-]{1,96})$/u.exec(path);
     if (contentRoute && (method === "GET" || method === "HEAD")) {
       queries(url, ["download"]);
@@ -399,7 +417,11 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       }
       if (method === "POST") {
         queries(url, []);
-        if (action === "messages") { const input = record(await body(request), ["text", "commandId"], ["text", "commandId"]); if (typeof input.text !== "string") throw new HttpError(400, "INVALID_INPUT", "Message text required"); json(response, 202, app.runtime.send(id, input.text, command(input.commandId))); return; }
+        if (action === "messages") {
+          const input = record(await body(request), ["text", "commandId", "attachments"], ["text", "commandId"]); if (typeof input.text !== "string") throw new HttpError(400, "INVALID_INPUT", "Message text required");
+          if (input.attachments !== undefined && (!Array.isArray(input.attachments) || input.attachments.length > MAX_RUN_ATTACHMENTS || input.attachments.some(value => typeof value !== "string"))) throw new HttpError(400, "INVALID_INPUT", "Invalid attachments");
+          json(response, 202, app.runtime.send(id, input.text, command(input.commandId), (input.attachments ?? []) as string[])); return;
+        }
         if (action === "switches") { const input = record(await body(request), ["selection", "commandId"], ["selection", "commandId"]); json(response, 202, app.runtime.switch(id, select(input.selection), command(input.commandId))); return; }
         if (action === "resume") {
           const input = record(await body(request), ["selection", "commandId", "acknowledgeUnknown"], ["selection", "commandId"]);

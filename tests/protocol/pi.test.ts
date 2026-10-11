@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { writeFileSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { PiControl } from "../../src/adapters/control/pi.js";
 import { ControlError } from "../../src/infrastructure/control/json-rpc-process.js";
+import { contentId } from "../../src/contracts/content.js";
 function control(scenario = "basic", trace?: string, timeout = 1000) {
   return new PiControl({ executable: process.execPath, args: [resolve("tests/fixtures/pi-rpc-peer.mjs"), scenario], env: trace ? { FIXTURE_TRACE: trace } : {}, protocol: "pi-rpc" },
     { cwd: process.cwd(), env: {}, requestTimeoutMs: 1000, runTimeoutMs: timeout, closeGraceMs: 100, maxFrameBytes: 65536, maxDiagnosticBytes: 4096 });
@@ -147,4 +149,26 @@ test("Pi maps tool arguments, streamed and final results, per-call usage, compac
     assert.deepEqual(events.filter(event => event.type === "activity").map(event => event.type === "activity" ? event.status : null), ["running", "completed"]);
     assert.deepEqual(events.filter(event => event.type === "notice").map(event => event.type === "notice" ? [event.severity, event.title] : null), [["warning", "Extension says hi"], ["error", "Pi 扩展出错"]]);
   } finally { await driver.close(); }
+});
+
+test("Pi sends images only to a model whose Model.input lists them and names files for its own read tool", async t => {
+  const root = await mkdtemp(join(tmpdir(), "pi-attachments-")), trace = join(root, "trace"); t.after(() => rm(root, { recursive: true, force: true }));
+  const file = (name: string, mediaType: string, kind: "image" | "file", data: Buffer) => { const path = join(root, name); writeFileSync(path, data); return { id: contentId("content-" + name.replace(/[^a-z0-9]/giu, "")), name, mediaType, kind, bytes: data.length, sha256: "0".repeat(64), path }; };
+  const png = file("shot.png", "image/png", "image", Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1])), csv = file("data.csv", "text/csv", "file", Buffer.from("a,b\n1,2\n"));
+  const textOnly = control("basic");
+  try {
+    await textOnly.initialize(); await textOnly.open(process.cwd());
+    assert.deepEqual((await textOnly.models()).models.map(model => [model.id, model.inputs?.image]), [["native/one", false], ["native/two", true]]);
+    await assert.rejects(textOnly.checkAttachments([png]), (error: unknown) => error instanceof ControlError && error.code === "ATTACHMENT_UNSUPPORTED" && error.message.includes("shot.png"));
+    await textOnly.checkAttachments([csv]);
+  } finally { await textOnly.close(); }
+  const vision = control("basic", trace);
+  try {
+    await vision.initialize(); const id = await vision.open(process.cwd(), "native/two");
+    await vision.checkAttachments([png, csv]);
+    assert.equal((await (await vision.startText(id, "look", () => {}, [png, csv])).result).status, "completed");
+    const prompt = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line)).find(row => row.type === "prompt");
+    assert.equal(prompt.message, "look\n\n[Attached file] data.csv (text/csv, 8 bytes, read-only copy): " + csv.path);
+    assert.deepEqual(prompt.images, [{ type: "image", data: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]).toString("base64"), mimeType: "image/png" }]);
+  } finally { await vision.close(); }
 });

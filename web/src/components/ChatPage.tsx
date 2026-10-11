@@ -49,12 +49,15 @@ export interface ChatProps {
   session: SessionView | null; sessionRequested: boolean; sessionError: string | null; loading: boolean; draft: SelectionDraft; providers: readonly ProviderView[]; harnesses: readonly HarnessView[];
   workspace: string; mutation: string | null; error: string | null; connectionError: string | null;
   messageDraft: string; onMessageDraft: Dispatch<SetStateAction<string>>;
-  onDraft: (draft: SelectionDraft) => void; onWorkspace: (workspace: string) => void; onSend: (text: string) => Promise<void>;
+  onDraft: (draft: SelectionDraft) => void; onWorkspace: (workspace: string) => void; onSend: (text: string, retryAttachments?: readonly import("../../../src/contracts/content.js").ContentRef[]) => Promise<void>;
   onApply: () => void; onCancel: () => void; onClose: () => void; onDismissError: () => void; onProviders: () => void; onNew: () => void; onMenu: () => void;
   onPermission?: (id: string, option: string, input?: string) => void;
   onNativeBranch?: () => void;
   onRetryConnection?: () => void;
   onToolDetail?: import("./NativeActivity.js").ToolDetailLoader;
+  attachments: readonly import("./Attachments.js").AttachmentDraft[];
+  onAttach: (files: readonly File[]) => void;
+  onRemoveAttachment: (local: string) => void;
 }
 
 function NativeQuestion({request,busy,onDecision}:{request:NonNullable<SessionView["permissions"]>[number];busy:boolean;onDecision:(option:string,input?:string)=>void}) {
@@ -128,8 +131,9 @@ export function ChatPage(props: ChatProps) {
     props.onMessageDraft(text);
     textarea.current?.focus();
   }, [props.onMessageDraft]);
-  const send = async (text: string) => {
-    await props.onSend(text);
+  // A retry resends the original input with the attachments it was sent with; a new message takes the composer's.
+  const send = async (text: string, retryAttachments?: readonly import("../../../src/contracts/content.js").ContentRef[]) => {
+    await props.onSend(text, retryAttachments);
     if (mounted.current) {
       props.onMessageDraft(value => value === text ? "" : value);
       resumeFollowing();
@@ -178,8 +182,8 @@ export function ChatPage(props: ChatProps) {
         </div>
         : <div className="transcript" ref={transcript} role="log" aria-label="对话历史" aria-live="off">
           {session.messages.length === 0 ? <div className="conversation-empty"><BrandMark/><h2>对话准备好了</h2><p>发出第一条消息，开始这次协作。</p></div> : session.messages.map(message => <Fragment key={message.id}>
-            <ChatMessage message={message} run={runs.get(message.runId)} harnesses={harnesses} providers={providers} onEdit={fillDraft} onRetry={canRetry ? text => { void send(text).catch(() => {}); } : undefined} {...(props.onToolDetail ? { loadToolDetail: props.onToolDetail } : {})}/>
-            {message.role === "user" && !assistantRuns.has(message.runId) && runs.has(message.runId) ? <ChatMessage message={undefined} run={runs.get(message.runId)} harnesses={harnesses} providers={providers} onEdit={fillDraft} onRetry={canRetry ? text => { void send(text).catch(() => {}); } : undefined} {...(props.onToolDetail ? { loadToolDetail: props.onToolDetail } : {})}/> : null}
+            <ChatMessage message={message} run={runs.get(message.runId)} harnesses={harnesses} providers={providers} onEdit={fillDraft} onRetry={canRetry ? (text, sent) => { void send(text, sent ?? []).catch(() => {}); } : undefined} {...(props.onToolDetail ? { loadToolDetail: props.onToolDetail } : {})}/>
+            {message.role === "user" && !assistantRuns.has(message.runId) && runs.has(message.runId) ? <ChatMessage message={undefined} run={runs.get(message.runId)} harnesses={harnesses} providers={providers} onEdit={fillDraft} onRetry={canRetry ? (text, sent) => { void send(text, sent ?? []).catch(() => {}); } : undefined} {...(props.onToolDetail ? { loadToolDetail: props.onToolDetail } : {})}/> : null}
           </Fragment>)}
           {session.switches.length > 0 ? <details className="selection-history"><summary>选择记录 <span>{session.switches.length}</span></summary>{session.switches.map(item => <div className={`switch-record ${item.status}`} key={item.id}><span>{harnesses.find(harness => harness.id === item.requested.harnessId)?.name ?? item.requested.harnessId}</span><StatusBadge tone={item.status === "failed" ? "danger" : item.status === "effective" ? "success" : "warning"}>{item.status === "effective" ? "已生效" : item.status === "failed" ? "切换失败" : "等待生效"}</StatusBadge>{item.requested.provider ? <small>{providers.find(provider => provider.id === item.requested.provider?.providerId)?.name ?? "Provider"} · {item.requested.provider.model}</small> : null}{item.error ? <small className="error-text">{failureMessage(item.error)}</small> : null}</div>)}</details> : null}
         </div>}

@@ -133,3 +133,18 @@ test("Provider target is a v2 public reference with immutable dispatched selecti
   assert.throws(() => assertSessionTransition(current, { ...current, selection }), /selection can change/);
   assert.throws(() => assertSessionTransition(current, { ...current, runs: [{ ...current.runs[0]!, selection: { ...selection, provider: target } }, current.runs[1]!] }), /terminal Run/);
 });
+
+test("v7 attachments are bounded, unique, canonical references that cannot change after admission", () => {
+  const ref = (id: string, bytes = 10) => ({ id, name: id + ".png", mediaType: "image/png", kind: "image", bytes, sha256: "b".repeat(64) });
+  const base = seed(), state = { ...base, schemaVersion: 7, runs: [{ ...base.runs[0]!, attachments: [ref("content-a"), ref("content-b")] }, base.runs[1]!] };
+  assert.deepEqual(parseSession(state).runs[0]?.attachments?.map(item => item.id), ["content-a", "content-b"]);
+  const variant = (attachments: unknown, schemaVersion = 7) => ({ ...state, schemaVersion, runs: [{ ...state.runs[0]!, attachments }, state.runs[1]!] });
+  for (const value of [variant([]), variant([ref("content-a"), ref("content-a")]), variant(Array.from({ length: 9 }, (_, index) => ref("content-" + index))),
+    variant([ref("content-a", 20 * 1024 * 1024), ref("content-b", 20 * 1024 * 1024)]), variant([{ ...ref("content-a"), path: "/private" }]), variant([ref("content-a")], 6)])
+    assert.throws(() => parseSession(value), SessionError);
+  // A queued input's attachments are part of what was accepted: they cannot be swapped before it runs.
+  const queued = { ...base.runs[1]!, status: "queued", backend: null, cleanup: null, contextThroughSeq: 0, sourceRunIds: [], attachments: [ref("content-c")] };
+  const waiting = { ...state, lastSeq: 3, runs: [state.runs[0]!, queued], messages: [...base.messages.slice(0, 2), { ...base.messages[2]!, status: "queued" }] };
+  const before = parseSession(waiting), after = parseSession({ ...waiting, version: waiting.version + 1, runs: [waiting.runs[0]!, { ...queued, attachments: [ref("content-d")] }] });
+  assert.throws(() => assertSessionTransition(before, after), (error: unknown) => error instanceof SessionError && error.code === "INVALID_TRANSITION" && error.message === "accepted Run input and identities are immutable");
+});

@@ -8,10 +8,14 @@ import { AcpControl } from "./acp.js";
 import { ControlError, object } from "../../infrastructure/control/json-rpc-process.js";
 import { nativeCommand } from "../../infrastructure/control/native-command.js";
 import { string } from "../../infrastructure/control/json-rpc-process.js";
+import { checkInputs } from "../../infrastructure/control/attachments.js";
+import type { ContentRef } from "../../contracts/content.js";
 
 /** The installed OpenClaw bridge accepts sessionKey in _meta. A normal chat key avoids its ACP-runtime namespace. */
 export class OpenClawControl extends AcpControl {
   private configuredModel: string | null = null;
+  /** Session-local model applied with sessions.patch; otherwise the agent's configured model runs. */
+  private openedModel: string | undefined;
   private sessionKey: string | null = null;
   private restoredKey: string | null = null;
   private readonly abort = new AbortController();
@@ -56,12 +60,19 @@ export class OpenClawControl extends AcpControl {
     this.nativeModels ??= this.call("models.list", {}).then(value => {
       const data = object(value, "OpenClaw native models");
       if (!Array.isArray(data.models) || data.models.length > 4096) throw new ControlError("INVALID_PROTOCOL", "invalid OpenClaw model catalog");
-      const models = data.models.map(value => { const row = object(value, "OpenClaw model"), provider = string(row.provider, "model provider", 128), id = string(row.id, "model identity", 768); return { id: provider + "/" + id, name: string(row.name, "model name", 1024) }; });
+      const models = data.models.map(value => {
+        const row = object(value, "OpenClaw model"), provider = string(row.provider, "model provider", 128), id = string(row.id, "model identity", 768);
+        if (row.input !== undefined && (!Array.isArray(row.input) || row.input.length > 16 || row.input.some(item => typeof item !== "string"))) throw new ControlError("INVALID_PROTOCOL", "invalid OpenClaw model input kinds");
+        // The bridge forwards only images as attachments (audio is dropped); a model without image input would answer without seeing it.
+        return { id: provider + "/" + id, name: string(row.name, "model name", 1024), ...(Array.isArray(row.input) ? { inputs: { image: row.input.includes("image"), audio: false, file: true } } : {}) };
+      });
       if (new Set(models.map(row => row.id)).size !== models.length) throw new ControlError("INVALID_PROTOCOL", "duplicate OpenClaw models");
       return models;
     });
     return this.nativeModels;
   }
+  /** OpenClaw's Gateway drops image attachments above 5,000,000 bytes with only a log line; refuse them up front instead. */
+  protected override get maxInlineImageBytes(): number { return 5_000_000; }
   override async checkpoint(): Promise<string | null> {
     const conversation = await super.checkpoint();
     return conversation !== null && this.sessionKey !== null ? JSON.stringify({ conversation, key: this.sessionKey }) : null;
@@ -81,9 +92,17 @@ export class OpenClawControl extends AcpControl {
       const patched = object(await this.call("sessions.patch", { key: this.sessionKey, model }), "OpenClaw model override");
       const resolved = object(patched.resolved, "OpenClaw resolved model");
       if (resolved.modelProvider + "/" + resolved.model !== model) throw new ControlError("MODEL_MISMATCH", "OpenClaw did not apply the selected session model");
+      this.openedModel = model;
 
     }
     return id;
+  }
+  /** Agent-level checks first, then the running model's own input kinds from the original catalog when it lists them. */
+  override async checkAttachments(attachments: readonly ContentRef[]): Promise<void> {
+    await super.checkAttachments(attachments);
+    if (!attachments.some(item => item.kind === "image")) return;
+    const model = this.openedModel ?? this.configuredModel, entry = (await this.readNativeModels()).find(row => row.id === model);
+    if (entry?.inputs) checkInputs(attachments, entry.inputs);
   }
   override async models(): Promise<NativeModelCatalog> {
     const catalog = await super.models();

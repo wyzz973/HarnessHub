@@ -93,6 +93,8 @@ export interface PublicRun {
   readonly notices?: readonly PublicNotice[];
   readonly activities?: readonly PublicActivity[];
   readonly outputs?: readonly PublicOutput[];
+  /** User attachments admitted with this input; the bytes stay in the content store. */
+  readonly attachments?: readonly ContentRef[];
   readonly stopRequested: boolean;
   readonly awaitingSwitchId: SwitchId | null;
 }

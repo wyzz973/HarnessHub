@@ -1,5 +1,6 @@
 import type { ControlProtocol } from "../contexts/catalog/domain/discovery.js";
 import type { ResolvedCommand } from "../contexts/catalog/domain/catalog.js";
+import type { ContentRef, ControlAttachment } from "./content.js";
 
 declare const nativeConversationBrand: unique symbol;
 export type NativeConversationId = string & { readonly [nativeConversationBrand]: true };
@@ -86,8 +87,15 @@ export interface NativeOption {
   readonly values: readonly { readonly value: string; readonly name: string }[];
 }
 export type NativeOptions = Readonly<Record<string, string>>;
+/**
+ * Prompt content a native interface accepts besides text, as it declares it: ACP promptCapabilities, Codex
+ * Model.inputModalities, Pi Model.input. `file` means a file can be handed over as a readable path, link or embedded text.
+ */
+export interface NativeInputs { readonly image: boolean; readonly audio: boolean; readonly file: boolean }
 export interface NativeModelCatalog {
-  readonly models: readonly { readonly id: string; readonly name: string; readonly options?: readonly NativeOption[] }[];
+  readonly models: readonly { readonly id: string; readonly name: string; readonly options?: readonly NativeOption[]; readonly inputs?: NativeInputs }[];
+  /** Agent-level inputs; a model's own `inputs` take precedence when the native interface declares them per model. */
+  readonly inputs?: NativeInputs;
   /** The native configured default before any session-local model override. */
   readonly defaultModel: string | null;
   readonly selectionError?: { readonly code: string; readonly message: string };
@@ -116,7 +124,13 @@ export interface HarnessControl {
   /** Private Driver-owned recovery reference, never credentials. Null means the current native interface cannot resume. */
   checkpoint?(): Promise<string | null>;
   models?(): Promise<NativeModelCatalog>;
-  startText(id: NativeConversationId, text: string, onEvent: (event: ControlEvent) => void): Promise<ControlRun>;
+  /**
+   * Rejects with ATTACHMENT_UNSUPPORTED (or a size code) before anything is sent when the open conversation's agent or
+   * model cannot take one of the attachments. Called by the Runtime before dispatch; a control without it takes none.
+   */
+  checkAttachments?(attachments: readonly ContentRef[]): Promise<void>;
+  /** Sends one prompt. Attachments were accepted by checkAttachments; their private copies stay readable for the Turn. */
+  startText(id: NativeConversationId, text: string, onEvent: (event: ControlEvent) => void, attachments?: readonly ControlAttachment[]): Promise<ControlRun>;
   /** Enables interactive requests for a public Run. Standalone probes keep their explicit deny default. */
   enablePermissions?(): void;
   /** Selects an actual pending option; receipt does not assert backend acknowledgement. */

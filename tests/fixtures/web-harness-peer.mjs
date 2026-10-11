@@ -21,12 +21,21 @@ createInterface({ input: process.stdin }).on("line", line => {
   if (value.method === "thread/resume") { native = value.params.threadId; nativeModel = value.params.model ?? null; notify("thread/started", { thread: { id: native } }); return reply(value.id, { thread: { id: native } }); }
   if (value.method === "turn/start") {
     const input = value.params.input[0].text;
-    const context = input.startsWith("HarnessGateway public conversation context.") ? JSON.parse(input.split("\n").slice(1).join("\n")) : { history: [], currentInput: { text: input } };
+    // File pointers follow the public context envelope; they are not part of its JSON.
+    const envelope = input.replace(/\n\n\[Attached file\][^]*$/u, "");
+    const context = envelope.startsWith("HarnessGateway public conversation context.") ? JSON.parse(envelope.split("\n").slice(1).join("\n")) : { history: [], currentInput: { text: envelope } };
     const text = context.currentInput.text;
     const config = process.env.HARNESS_GATEWAY_PROVIDER_KEY ? readFileSync(join(process.env.CODEX_HOME, "config.toml"), "utf8") : null;
     const model = nativeModel ?? (config ? JSON.parse(config.match(/^model = (.+)$/mu)[1]) : "native-a");
     active = { id: "browser-turn-" + ++counter };
     notify("turn/started", { threadId: native, turn: { id: active.id, status: "inProgress" } }); reply(value.id, { turn: { id: active.id, status: "inProgress" } });
+    if (text.startsWith("ATTACHMENTS")) {
+      // Images arrive as localImage paths, files as text pointers; the reply proves the private copies are readable.
+      const images = value.params.input.slice(1).filter(item => item.type === "localImage"), files = [...input.matchAll(/^\[Attached file\] (.+?) \(.+\): (\/.+)$/gmu)];
+      const readable = [...images.map(item => item.path), ...files.map(match => match[2])].every(path => existsSync(path));
+      notify("item/agentMessage/delta", { threadId: native, turnId: active.id, itemId: "browser-message", delta: `收到附件：图片 ${images.length}，文件 ${files.length}，${readable ? "均可读" : "存在不可读文件"}。` });
+      notify("turn/completed", { threadId: native, turn: { id: active.id, status: "completed" } }); active = null; return;
+    }
     if (text.startsWith("NATIVE_ACTIVITY")) {
       const base = { threadId: native, turnId: active.id };
       notify("turn/plan/updated", { ...base, explanation: "浏览器验收计划", plan: [{ step: "读取工作区", status: "completed" }, { step: "修改文件", status: "inProgress" }] });

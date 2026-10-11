@@ -34,7 +34,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   if (message.method === "initialize") {
     if (scenario === "initialize-failure") { emit({ id: message.id, error: { code: -32000, message: "fixture preparation rejected" } }); return; }
     response(message.id, protocol === "acp-v1"
-      ? { protocolVersion: 1, agentCapabilities: {}, authMethods: [], agentInfo: { name, version: "1.0" } }
+      ? { protocolVersion: 1, agentCapabilities: scenario === "attachments" ? { promptCapabilities: { image: true, embeddedContext: true } } : {}, authMethods: [], agentInfo: { name, version: "1.0" } }
       : { userAgent: `${name}/1.0` }); return;
   }
   if (message.method === "initialized") { initialized = true; return; }
@@ -60,7 +60,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     const prior = [...nativeHistory, ...context.history.map(item => item.user.text)];
     if (Object.hasOwn(expected, current) && JSON.stringify(prior) !== JSON.stringify(expected[current]))
       throw new Error(`public history mismatch for ${current}: ${JSON.stringify(prior)}`);
-    trace({ kind: "prompt", prompt, context });
+    trace({ kind: "prompt", prompt, context, attachments: protocol === "acp-v1" ? message.params.prompt.slice(1) : message.params.input.slice(1) });
     if (protocol !== "acp-v1") { nativeHistory = [...prior, current]; writeFileSync(statePath(), JSON.stringify(nativeHistory)); }
     active = { id: message.id, turnId: `turn-${process.pid}-${++counter}` };
     if (protocol !== "acp-v1") {

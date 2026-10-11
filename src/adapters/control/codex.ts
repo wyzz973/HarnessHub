@@ -7,7 +7,8 @@ import { diffPath } from "../../infrastructure/control/unified-diff.js";
 import type { NativeToolDetail, NativeUsage } from "../../contracts/control.js";
 import { readFile, stat } from "node:fs/promises";
 import { basename } from "node:path";
-import { MAX_CONTENT_BYTES } from "../../contracts/content.js";
+import { MAX_CONTENT_BYTES, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
+import { checkInputs, fileMentions } from "../../infrastructure/control/attachments.js";
 
 interface ActiveTurn {
   readonly event: (event: ControlEvent) => void;
@@ -92,6 +93,8 @@ export class CodexControl implements HarnessControl {
   private conversation: NativeConversationId | null = null;
   private opening = false;
   private effort: string | undefined;
+  /** Model named when the thread was opened; undefined means the configured default. */
+  private openedModel: string | undefined;
   private interactivePermissions = false;
   private readonly permissions = new Map<string, { options: readonly string[]; resolve: (value: unknown) => void; reply: (option: string, input?: string) => unknown }>();
   private active: ActiveTurn | null = null;
@@ -136,7 +139,7 @@ export class CodexControl implements HarnessControl {
     const config = object(await this.rpc.request("config/read", { includeLayers: false, cwd: this.options.cwd }), "native configuration");
     const configured = object(config.config, "effective native configuration");
     const account = object(await this.rpc.request("account/read", { refreshToken: false }), "native account status");
-    const models: { id: string; name: string; options?: readonly NativeOption[] }[] = [], seen = new Set<string>();
+    const models: NativeModelCatalog["models"][number][] = [], seen = new Set<string>();
     let cursor: string | undefined;
     for (let page = 0; page < 64; page++) {
       const response = object(await this.rpc.request("model/list", { limit: 100, includeHidden: false, ...(cursor === undefined ? {} : { cursor }) }), "native models");
@@ -145,6 +148,10 @@ export class CodexControl implements HarnessControl {
         const row = object(value, "native model"), id = string(row.model, "model", 1024), name = string(row.displayName, "model name", 1024);
         if (seen.has(id)) throw new ControlError("INVALID_PROTOCOL", "duplicate native model");
         let options: NativeOption[] | undefined;
+        // The schema default is text and image when a model does not list its modalities.
+        if (row.inputModalities !== undefined && (!Array.isArray(row.inputModalities) || row.inputModalities.length > 16 || row.inputModalities.some(value => typeof value !== "string"))) throw new ControlError("INVALID_PROTOCOL", "invalid model input modalities");
+        const modalities = (row.inputModalities ?? ["text", "image"]) as readonly string[];
+        const inputs = { image: modalities.includes("image"), audio: modalities.includes("audio"), file: true };
         if (row.supportedReasoningEfforts !== undefined) {
           if (!Array.isArray(row.supportedReasoningEfforts) || row.supportedReasoningEfforts.length > 32) throw new ControlError("INVALID_PROTOCOL", "invalid reasoning effort catalog");
           const values = row.supportedReasoningEfforts.map(value => { const level = object(value, "reasoning effort"); const valueId = string(level.reasoningEffort, "reasoning effort", 128); return { value: valueId, name: valueId }; });
@@ -152,7 +159,7 @@ export class CodexControl implements HarnessControl {
           if (values.length && !values.some(row => row.value === currentValue)) throw new ControlError("INVALID_PROTOCOL", "configured reasoning effort unavailable");
           if (values.length) options = [{ id: "reasoning_effort", name: "思考强度", category: "thought_level", currentValue, values }];
         }
-        seen.add(id); models.push({ id, name, ...(options ? { options } : {}) });
+        seen.add(id); models.push({ id, name, ...(options ? { options } : {}), inputs });
         if (models.length > 4095) throw new ControlError("MODEL_LIMIT", "native model catalog exceeds its bounds");
       }
       if (response.nextCursor === null || response.nextCursor === undefined) break;
@@ -179,6 +186,7 @@ export class CodexControl implements HarnessControl {
           this.effort = value;
         }
       }
+      this.openedModel = model;
       if (checkpoint !== undefined) this.conversation = nativeConversationId(checkpoint);
       // A cold start or a long thread resume loads native state before answering; bounded by the run budget.
       const response = object(await this.rpc.request(checkpoint === undefined ? "thread/start" : "thread/resume", {
@@ -193,7 +201,14 @@ export class CodexControl implements HarnessControl {
     } catch (error) { this.rpc.abort(errorFrom(error)); throw error; }
     finally { this.opening = false; }
   }
-  async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void): Promise<ControlRun> {
+  /** Gated by the opened model's inputModalities; a model outside the catalog keeps the schema default (text and image). */
+  async checkAttachments(attachments: readonly ContentRef[]): Promise<void> {
+    this.assertInitialized();
+    if (!attachments.some(item => item.kind !== "file")) return;
+    const catalog = await this.models(), selected = catalog.models.find(row => row.id === (this.openedModel ?? catalog.defaultModel));
+    checkInputs(attachments, selected?.inputs ?? { image: true, audio: false, file: true });
+  }
+  async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
     this.assertInitialized();
     if (!this.conversation || id !== this.conversation) throw new ControlError("IDENTITY_MISMATCH", "thread is not owned by this connection");
     if (this.active) throw new ControlError("INVALID_STATE", "a turn is already active");
@@ -208,7 +223,10 @@ export class CodexControl implements HarnessControl {
       timer: setTimeout(() => this.rpc.abort(new ControlError("RUN_TIMEOUT", "Codex turn exceeded its deadline")), this.options.runTimeoutMs),
       started, signalStarted, rejectStarted, turnId: null, settled: false, stopping: false, stop: null, deltaItems: new Set(), items: new Map(), reads: new Set(), baseline: this.lastTotal };
     this.active = active;
-    void this.rpc.request("turn/start", { threadId: id, input: [{ type: "text", text: prompt, text_elements: [] }], ...(this.effort === undefined ? {} : { effort: this.effort }) }).then(value => {
+    // Images and audio are read by Codex from the private copies; files have no input type and are named by path.
+    const input = [{ type: "text", text: prompt + fileMentions(attachments.filter(file => file.kind === "file")), text_elements: [] },
+      ...attachments.flatMap(file => file.kind === "image" ? [{ type: "localImage", path: file.path }] : file.kind === "audio" ? [{ type: "localAudio", path: file.path }] : [])];
+    void this.rpc.request("turn/start", { threadId: id, input, ...(this.effort === undefined ? {} : { effort: this.effort }) }).then(value => {
       try {
         const response = object(value, "turn/start result"), turn = object(response.turn, "Codex turn");
         this.bindTurn(active, string(turn.id, "Codex turn identity"));

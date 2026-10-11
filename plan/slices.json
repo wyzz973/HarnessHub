@@ -681,7 +681,11 @@
         "tests/integration/web-management.test.ts",
         "tests/integration/web-session-stream.test.ts",
         "tests/unit/web-session-stream.test.ts",
-        "tests/real/native-activity.real.ts"
+        "tests/real/native-activity.real.ts",
+        "src/infrastructure/control/attachments.ts",
+        "src/adapters/control/opencode.ts",
+        "web/src/components/Attachments.tsx",
+        "tests/real/native-attachments.real.ts"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/complete-native-capabilities-2026-10-11.md"

@@ -1,6 +1,6 @@
 import * as Popover from "@radix-ui/react-popover";
-import { ArrowRight, ArrowUp, RefreshCw, SlidersHorizontal, Square, X } from "lucide-react";
-import { useLayoutEffect, useRef } from "react";
+import { ArrowRight, ArrowUp, Paperclip, RefreshCw, SlidersHorizontal, Square, X } from "lucide-react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import type { PublicRun } from "../../../src/contracts/session.js";
 import { protocolLabel } from "../api.js";
@@ -9,6 +9,7 @@ import { BrandMark, Spinner } from "./common.js";
 import { SearchPicker } from "./SearchPicker.js";
 import type { PickerOption } from "./SearchPicker.js";
 import type { ChatProps } from "./ChatPage.js";
+import { attachmentProblem, ComposerAttachments } from "./Attachments.js";
 
 interface ComposerProps extends ChatProps {
   active: PublicRun | null;
@@ -22,6 +23,8 @@ interface ComposerProps extends ChatProps {
 export function ChatComposer(props: ComposerProps) {
   const { draft, harnesses, providers, session, active, dirty, pending, problem, blocked, inputRef } = props;
   const sending = useRef(false);
+  const picker = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
   const bytes = new TextEncoder().encode(props.messageDraft).byteLength;
   const harness = harnesses.find(row => row.id === draft.harnessId);
   const provider = providers.find(row => row.id === draft.providerId);
@@ -29,7 +32,12 @@ export function ChatComposer(props: ComposerProps) {
   const selectedControl = harness?.controls.find(control => control.id === draft.controlId);
   const readonly = session?.status === "closed";
   const disabled = props.mutation !== null && props.mutation !== "switching" || props.loading || props.sessionError !== null || readonly;
-  const disableSend = disabled || props.mutation !== null || pending || blocked || active !== null || dirty || problem !== null || !draft.providerId && props.nativeModels?.authentication === "missing" || bytes > 64 * 1024 || !props.messageDraft.trim();
+  // Native catalogs declare what the agent or selected model accepts; a managed Provider leaves the decision to the Harness.
+  const inputs = draft.providerId ? undefined : props.nativeModels?.models.find(model => model.id === (draft.model || props.nativeModels?.defaultModel))?.inputs ?? props.nativeModels?.inputs;
+  const uploading = props.attachments.some(item => item.status === "uploading");
+  const attachmentBlocked = props.attachments.some(item => item.status !== "ready" || attachmentProblem(item, inputs) !== null);
+  const disableSend = disabled || props.mutation !== null || pending || blocked || active !== null || dirty || problem !== null || !draft.providerId && props.nativeModels?.authentication === "missing" || bytes > 64 * 1024 || !props.messageDraft.trim() || attachmentBlocked;
+  const attach = (files: FileList | readonly File[] | null) => { if (files && files.length) props.onAttach([...files]); };
   const unknown = session?.runs.filter(run => run.status === "unknown") ?? [];
   const lastSwitch = session?.switches.at(-1);
   const selectionFailed = props.error !== null || lastSwitch?.status === "failed" && JSON.stringify(lastSwitch.requested) === JSON.stringify({ harnessId: draft.harnessId, controlId: draft.controlId,
@@ -101,21 +109,33 @@ export function ChatComposer(props: ComposerProps) {
     : pending ? active ? "当前回复结束后应用新选择，草稿已保留。" : "正在保存下一条消息的选择。"
     : dirty ? problem ?? (selectionFailed ? "所选连接未生效，可以重试切换或选择其他 Harness。" : "正在切换所选 Harness 或模型，草稿已保留。")
     : !draft.providerId && props.nativeModels?.authentication === "missing" ? "所选 Harness 的本机认证尚未就绪。请完成它的登录或 Gateway 连接配置，也可以切换其他 Harness。"
+    : uploading ? "附件上传中，完成后即可发送。"
+    : attachmentBlocked ? "有附件无法随这条消息发送，请移除标记的附件或切换到支持它的 Harness 或模型。"
+    : props.attachments.length && !props.messageDraft.trim() ? "请写一句说明，再和附件一起发送。"
     : problem;
 
   return <div className="composer-wrap">
-    <form className={`composer ${blocked ? "unavailable" : ""}`} onSubmit={event => { event.preventDefault(); void send(); }}>
+    <form className={`composer ${blocked ? "unavailable" : ""} ${dragging ? "is-dropping" : ""}`} onSubmit={event => { event.preventDefault(); void send(); }}
+      onDragOver={event => { if (!readonly && event.dataTransfer.types.includes("Files")) { event.preventDefault(); setDragging(true); } }}
+      onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false); }}
+      onDrop={event => { if (event.dataTransfer.files.length) { event.preventDefault(); setDragging(false); if (!readonly) attach(event.dataTransfer.files); } }}>
       <label className="sr-only" htmlFor="message-input">发送消息</label>
+      {props.attachments.length ? <ComposerAttachments items={props.attachments} inputs={inputs} disabled={props.mutation === "sending"} onRemove={props.onRemoveAttachment}/> : null}
       <textarea id="message-input" ref={inputRef} rows={1} value={props.messageDraft} disabled={readonly}
         aria-describedby={note ? "composer-notice" : "composer-keyboard-hint"}
         placeholder={readonly ? "对话已关闭，历史仍可查看" : blocked ? "先写下想继续的内容，恢复后发送…" : session ? "继续这次对话…" : "说说你想完成的事…"}
-        onChange={event => props.onMessageDraft(event.target.value)} onKeyDown={event => {
+        onChange={event => props.onMessageDraft(event.target.value)} onPaste={event => {
+          // Pasted screenshots and files become attachments; pasted text keeps its normal behavior.
+          if (event.clipboardData.files.length) { event.preventDefault(); attach(event.clipboardData.files); }
+        }} onKeyDown={event => {
           if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
             event.preventDefault();
             void send();
           }
         }}/>
       <div className="composer-toolbar">
+        <button type="button" className="composer-attach" aria-label="添加附件" title="添加图片、音频或文件" disabled={readonly || props.attachments.length >= 8} onClick={() => picker.current?.click()}><Paperclip size={16}/></button>
+        <input ref={picker} type="file" multiple hidden tabIndex={-1} aria-hidden="true" onChange={event => { attach(event.target.files); event.target.value = ""; }}/>
         <div className="composer-pickers" aria-label="下一次任务的执行选择">
           <div className="composer-chip harness-chip"><SearchPicker label="选择 Harness" value={draft.harnessId} placeholder="选择 Harness" options={harnessOptions} disabled={disabled} onChange={value => {
             if(value===draft.harnessId)return;

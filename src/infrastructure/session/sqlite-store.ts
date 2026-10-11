@@ -274,6 +274,7 @@ export class SqliteSessionStore implements SessionStore {
         for (const run of this.readSession(sessionId(row.id)).runs) {
           for (const tool of run.tools ?? []) if (tool.detail !== undefined) referenced.add(tool.detail.id);
           for (const output of run.outputs ?? []) if (output.kind === "content") referenced.add(output.content.id);
+          for (const attachment of run.attachments ?? []) referenced.add(attachment.id);
         }
       }
       return referenced;

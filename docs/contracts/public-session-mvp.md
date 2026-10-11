@@ -2,7 +2,7 @@
 
 状态：accepted，仅限ADR-010的S03/S04。
 
-身份分别为SessionId、RunId、MessageId、SwitchId、CommandId；当前存储格式schemaVersion=7（v1为初始切片，v2加入Provider引用，v3加入明确恢复语义，v4加入nativeModel和安全backend.error，v5加入nativeOptions、思考/工具活动和权限决定命令，v6加入私有原生绑定和显式重建命令，v7加入原生活动事实：工具种类/退出码/详情引用、计划、用量、提示、活动与产物引用），严格校验未知字段、关系与上限。公共Session保存workspace、私有配置引用、实际selection/epoch、命令幂等、Run与消息；不保存配置正文/凭据/原生内部状态。聚合最多256Run/1024命令、每输入64KiB、每输出1MiB、完整context1MiB、最多8排队输入；超限明确拒绝/失败，不裁剪历史。
+身份分别为SessionId、RunId、MessageId、SwitchId、CommandId；当前存储格式schemaVersion=7（v1为初始切片，v2加入Provider引用，v3加入明确恢复语义，v4加入nativeModel和安全backend.error，v5加入nativeOptions、思考/工具活动和权限决定命令，v6加入私有原生绑定和显式重建命令，v7加入原生活动事实：工具种类/退出码/详情引用、计划、用量、提示、活动与产物引用，以及输入附件引用），严格校验未知字段、关系与上限。公共Session保存workspace、私有配置引用、实际selection/epoch、命令幂等、Run与消息；不保存配置正文/凭据/原生内部状态。聚合最多256Run/1024命令、每输入64KiB、每输出1MiB、完整context1MiB、最多8排队输入；超限明确拒绝/失败，不裁剪历史。
 
 所有Store操作同步且事务内不await；commit通过expectedVersion CAS，聚合和非空事件同事务，seq连续。命令/历史append-only，已终结证据不能改写，关系/来源/水位/epoch严格校验。事件单条2MiB+4096，Session日志32MiB；读页1..100项/8MiB，超限不裁掉同一历史。Runtime同步回调提交control事实后才emit；发布失败不重跑，持久游标可查询。
 
@@ -27,5 +27,7 @@ ADR-010初始切片未包含HTTP/图形UI与Provider；当前它们由ADR-011/01
 ADR-020中，私有原生绑定按Harness/control归属，ready保存最后已同步的原生Run；后续只补该水位之后的公共事实。派发前先提交unconfirmed，结算/清理后才ready。未知或恢复失败不能fallback到空会话；显式重新建立保留旧引用与公共历史，不能称native_fork。所有权/归属、旧引用保留、游标和格式均受聚合校验。
 
 ADR-022：原生活动作为Run事实提交。工具摘要（标题、状态、种类、名称、父工具、退出码）变化即提交，详情（输入16KiB、输出与差异各64KiB）在工具终态或回合结算后、绑定关闭前写入内容存储，Run只保存内容引用并记录`run.tool_detail`；计划（≤64项）、用量（本轮token、上下文占用、标注作用域的费用）、提示（≤32，同一对话中相同的提示只写日志不重复显示）、活动（子Agent/后台任务/压缩/重试/审查，≤64）与产物（内容引用或链接，≤32）同样有界。事件日志只含摘要和引用，不含预览或字节。内容存储位于数据根`content`目录，内容寻址、魔数判型、owner守卫；启动时回收超过7天且未被任何Run引用的内容。存储失败写诊断，不改变回合结论。
+
+ADR-023：发送可带最多8个附件（单条合计32MiB），准入时同步确认它们是本工作区未撤回的上传且字节仍在，否则不建Run；附件是Run不可变的一部分，命令指纹包含附件id。原生会话打开后、派发前由Driver按代理与所开模型的输入能力检查，不接受时本输入以ATTACHMENT_UNSUPPORTED/ATTACHMENT_LIMIT失败，Session保持open；通过的附件复制为数据根内稳定只读副本交给Driver。公共上下文只列附件名称、类型与大小。
 
 ADR-021：原生侧撤回仍待决的问题（如自身对话框到期）时，公开请求同步关闭并记录`permission.closed`（含原因），迟到回答明确拒绝。公开工具摘要每Run最多128项，超过后新工具不再追加，回合与Runtime不因此失败。原生连接预算为单帧16MiB、累计256MiB，会话建立请求最长60秒且不超过运行预算；没有进行中Turn的原生输出只计数，不归属到任何Run。

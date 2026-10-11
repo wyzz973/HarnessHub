@@ -237,7 +237,7 @@ export function applySessionStreamFrame(current: SessionView | null, frame: Sess
     // Only the active Run's native activity changes in a run frame; identity, input, selection and epoch are immutable.
     if (prior === undefined || current.activeRunId !== prior.id || !["running", "settling"].includes(frame.run.status) || frame.run.status !== prior.status ||
         frame.run.commandId !== prior.commandId || frame.run.input !== prior.input || frame.run.userMessageId !== prior.userMessageId || frame.run.assistantMessageId !== prior.assistantMessageId ||
-        frame.run.epoch !== prior.epoch || JSON.stringify(frame.run.selection) !== JSON.stringify(prior.selection)) stateError("Stream run frame does not belong to the active Run");
+        frame.run.epoch !== prior.epoch || JSON.stringify(frame.run.selection) !== JSON.stringify(prior.selection) || JSON.stringify(frame.run.attachments) !== JSON.stringify(prior.attachments)) stateError("Stream run frame does not belong to the active Run");
     return { ...current, version: frame.version, lastSeq: frame.lastSeq, runs: current.runs.map(run => run.id === prior.id ? frame.run : run) };
   }
   validateMessage(frame.message, frame.lastSeq);

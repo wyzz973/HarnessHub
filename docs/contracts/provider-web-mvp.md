@@ -74,4 +74,6 @@ ADR-020追加`POST /api/v1/sessions/:id/native-branch`，接受epoch/commandId�
 
 ADR-022追加`GET/HEAD /api/v1/content/:id`（`download=1`可选）：需要登录，跨站请求拒绝；只有png/jpeg/gif/webp图片与JSON/纯文本内联，其余强制下载，响应带`Content-Security-Policy: sandbox`与`nosniff`，未知内容404，文件与记录不一致409。工具详情按需读取。SSE新增`run`帧，携带version/lastSeq与活动Run的完整公开事实，用于工具、计划、用量、提示、活动、产物的增量更新；客户端只接受仍在执行的活动Run，身份、输入、选择、epoch与状态不得改变，不符或缺帧时改取完整快照。
 
+ADR-023追加`POST /api/v1/attachments?name=&commandId=`：请求体为原始字节，Content-Type为声明类型，Content-Length必填（1字节到20MiB，否则411/413），同源写保护与CSRF照常；声明的图片/音频类型须与魔数一致（否则400），同commandId同内容返回同一引用（201）。`DELETE /api/v1/attachments/:id`撤回未发送的暂存（204）。`POST /api/v1/sessions/:id/messages`可带`attachments`（最多8个id），已撤回或不属于本工作区的附件返回409 ATTACHMENT_UNAVAILABLE。模型目录返回代理级与模型级`inputs`（image/audio/file），界面据此阻止发送不受支持的附件；草稿附件随对话草稿保存。
+
 ADR-021：原生配置位置只透传用户环境中真实设置的变量，未设置的由原程序自行解析，目录描述符不能重定向。会改写用户全局默认值的原生设置不由Hub执行：Cursor模型目录只读（`canSelect=false`，`selectionError.code=NATIVE_MODEL_SWITCH_GLOBAL`），固定了Cursor模型的选择在派发前明确失败；会话级设置照常。原生命令目录上限2048项。

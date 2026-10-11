@@ -301,3 +301,35 @@ test("stored native content is served only to the authenticated page and never r
   assert.equal((await call(f, "/api/v1/content/not-content")).status, 404);
   assert.equal((await call(f, "/api/v1/content/" + image.id + "?download=yes")).status, 400);
 });
+
+test("attachments upload as raw bytes for this workspace, go to the Harness with their message, and can be withdrawn", async t => {
+  const f = await fixture(t, "attachments"); await auth(f); const id = await create(f);
+  const upload = (name: string, type: string, body: Buffer, headers: Record<string, string> = {}) => fetch(f.origin + "/api/v1/attachments?" + new URLSearchParams({ name, commandId: "up-" + name.replace(/[^a-z]/giu, "") }),
+    { method: "POST", headers: { Cookie: f.cookie, Origin: f.origin, "X-CSRF-Token": f.csrf, "Content-Type": type, ...headers }, body: new Uint8Array(body) });
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 3]);
+  assert.equal((await upload("shot.png", "image/png", png, { "X-CSRF-Token": "wrong" })).status, 403);
+  const created = await upload("shot.png", "image/png", png); assert.equal(created.status, 201);
+  const image = row(await created.json());
+  assert.equal(image.kind, "image"); assert.equal(image.name, "shot.png"); assert.equal(image.bytes, png.length);
+  assert.equal(row(await (await upload("shot.png", "image/png", png)).json()).id, image.id, "a retried upload returns the same content");
+  assert.equal((await upload("fake.png", "image/png", Buffer.from("<svg/>"))).status, 400);
+  assert.equal((await upload("empty.txt", "text/plain", Buffer.alloc(0))).status, 413);
+  const pdf = row(await (await upload("doc.pdf", "application/pdf", Buffer.from("%PDF-1.4"))).json());
+  const shown = await fetch(f.origin + "/api/v1/content/" + String(image.id), { headers: { Cookie: f.cookie } });
+  assert.equal(shown.headers.get("content-type"), "image/png"); assert.deepEqual(Buffer.from(await shown.arrayBuffer()), png);
+  assert.equal((await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "look", commandId: "with-files", attachments: [image.id, pdf.id] })).status, 202);
+  const done = await waitFor(f, id, value => value.runs[0]?.status === "completed");
+  assert.deepEqual(done.runs[0]?.attachments?.map(item => item.id), [image.id, pdf.id]);
+  const prompt = (await trace(f)).find(item => item.kind === "prompt")!, blocks = prompt.attachments as Record<string, unknown>[];
+  assert.deepEqual(blocks.map(block => block.type), ["image", "resource_link"]);
+  assert.equal(blocks[0]!.data, png.toString("base64")); assert.equal(blocks[1]!.name, "doc.pdf");
+  assert.match(String(blocks[1]!.uri), /^file:\/\/.*\/content\/files\/content-[^/]+\/doc\.pdf$/u);
+  // Withdrawing a staged upload refuses it for later messages; the sent message keeps its attachment.
+  const later = row(await (await upload("later.png", "image/png", png)).json());
+  const withdrawn = await fetch(f.origin + "/api/v1/attachments/" + String(later.id), { method: "DELETE", headers: { Cookie: f.cookie, Origin: f.origin, "X-CSRF-Token": f.csrf } });
+  assert.equal(withdrawn.status, 204);
+  const refused = await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "again", commandId: "withdrawn", attachments: [later.id] });
+  assert.equal(refused.status, 409); assert.equal(row(refused.data).code, "ATTACHMENT_UNAVAILABLE");
+  assert.equal((await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "bad", commandId: "bad-list", attachments: "nope" })).status, 400);
+  assert.equal((await state(f, id)).runs.length, 1);
+});

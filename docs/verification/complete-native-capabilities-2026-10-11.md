@@ -59,3 +59,5 @@ ACP原接口声明的image/audio/embeddedContext只说明原Harness有该接口�
 本记录中“OpenCode 真实恢复验收仍待补”已由[第二轮验收](native-capabilities-round2-2026-10-11.md)补齐（新的 Hub owner 下 `resumed=true`、`sourceRunIds=[]`、正确复述标记）。逐 Harness 能力与验收状态此后以[能力矩阵](native-capability-matrix.md)为准；本记录的原有结论与失败事实保持不变。
 
 原生工具详情、计划、用量、提示、活动与产物的接入及真实工具回合见[原生活动验收](native-activity-2026-10-11.md)（业务库升级为v7）。
+
+文件、图片与音频输入的接入及真实附件回合见[附件输入验收](native-attachments-2026-10-11.md)。

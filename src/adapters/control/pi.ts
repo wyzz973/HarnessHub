@@ -1,6 +1,8 @@
 import { isAbsolute } from "node:path";
 import { nativeConversationId, type BackendResult, type CleanupEvidence, type ControlEvent, type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl, type NativeConversationId, type NativeOptions, type NativeOption, type NativeModelCatalog, type NativeToolDetail, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
 import { classifyRemoteFailure, ControlError, errorFrom, JsonRpcProcess, object, string, type RpcWireCodec } from "../../infrastructure/control/json-rpc-process.js";
+import type { ContentRef, ControlAttachment } from "../../contracts/content.js";
+import { checkInputs, fileMentions, readAttachment } from "../../infrastructure/control/attachments.js";
 
 function piCodec(): RpcWireCodec {
  const commands = new Map<string, string>();
@@ -61,10 +63,12 @@ function supportedLevels(value: Record<string, unknown>): string[] {
 }
 /** Grace for a run started asynchronously by an extension command after its acknowledgement. */
 const HANDLED_PROBE_MS = 150;
-function model(value: unknown): { id: string; name: string; provider: string; modelId: string } {
+function model(value: unknown): { id: string; name: string; provider: string; modelId: string; image: boolean } {
   const row = object(value, "Pi model"), provider = string(row.provider, "Pi provider", 128), modelId = string(row.id, "Pi model identity", 768);
   if (provider.includes("/")) throw new ControlError("INVALID_PROTOCOL", "Pi provider identity is ambiguous");
-  return { id: provider + "/" + modelId, name: typeof row.name === "string" ? string(row.name, "Pi model name", 1024) : modelId, provider, modelId };
+  if (row.input !== undefined && (!Array.isArray(row.input) || row.input.length > 16 || row.input.some(item => typeof item !== "string"))) throw new ControlError("INVALID_PROTOCOL", "invalid Pi model input kinds");
+  // Pi does not refuse images for text-only models; it replaces them with a placeholder, so the Hub gates on Model.input.
+  return { id: provider + "/" + modelId, name: typeof row.name === "string" ? string(row.name, "Pi model name", 1024) : modelId, provider, modelId, image: Array.isArray(row.input) && row.input.includes("image") };
 }
 /** Uses the original Pi CLI RPC. Models are launch flags of the session process; global settings commands are never sent. */
 export class PiControl implements HarnessControl {
@@ -114,12 +118,12 @@ export class PiControl implements HarnessControl {
         currentLevels = reply.levels.map(level => string(level, "thinking level", 128));
       } catch (error) { if (!(error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null)) throw error; }
     }
-    const models: { id: string; name: string; options?: readonly NativeOption[] }[] = this.entries.map(({ id, name }, index) => {
+    const models: NativeModelCatalog["models"][number][] = this.entries.map(({ id, name, image }, index) => {
       const levels = id === current?.id && currentLevels !== null ? currentLevels : supportedLevels(object((available.models as unknown[])[index], "native Pi model"));
       const values = levels.map(value => ({ value, name: value }));
       const currentValue = typeof this.state.thinkingLevel === "string" && levels.includes(this.state.thinkingLevel) ? this.state.thinkingLevel : levels[0]!;
       const options: readonly NativeOption[] = [{ id: "thinking_level", name: "思考强度", category: "thought_level", currentValue, values }];
-      return { id, name, options };
+      return { id, name, options, inputs: { image, audio: false, file: true } };
     });
     if (current && !ready) models.push({ id: current.id, name: current.name });
     this.catalog = { ...this.catalog, models, defaultModel: current?.id ?? null, canSelect: this.entries.length > 0, authentication: ready ? "ready" : this.entries.length === 0 ? "missing" : "unknown" };
@@ -171,15 +175,26 @@ export class PiControl implements HarnessControl {
     this.conversation = nativeConversationId(this.state.sessionId); return this.conversation;
   }
   async models(): Promise<NativeModelCatalog> { if (!this.initialized) throw new ControlError("INVALID_STATE", "Pi is not initialized"); return this.catalog; }
-  async startText(id: NativeConversationId, message: string, event: (event: ControlEvent) => void): Promise<ControlRun> {
+  /** Images only for a current model whose Model.input lists them; files are named by path for Pi's own read tool. */
+  async checkAttachments(attachments: readonly ContentRef[]): Promise<void> {
+    if (!this.initialized || this.closed || this.failure) throw this.failure ?? new ControlError("INVALID_STATE", "Pi is not initialized");
+    const current = this.entries.find(row => row.id === this.catalog.defaultModel);
+    checkInputs(attachments, { image: current?.image === true, audio: false, file: true });
+  }
+  async startText(id: NativeConversationId, message: string, event: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
     if (this.closed || this.failure || id !== this.conversation || this.active) throw this.failure ?? new ControlError("INVALID_STATE", "Pi conversation is not ready for a prompt");
     if (typeof message !== "string" || !message.trim()) throw new ControlError("INVALID_INPUT", "prompt must contain text");
+    const images: { type: "image"; data: string; mimeType: string }[] = [];
+    for (const file of attachments) if (file.kind === "image") images.push({ type: "image", data: (await readAttachment(file)).toString("base64"), mimeType: file.mediaType });
+    if (attachments.some(file => file.kind === "audio")) throw new ControlError("ATTACHMENT_UNSUPPORTED", "Pi does not accept audio");
+    message += fileMentions(attachments.filter(file => file.kind === "file"));
+    if (this.closed || this.failure || this.active) throw this.failure ?? new ControlError("INVALID_STATE", "Pi conversation is not ready for a prompt");
     const result = new Promise<BackendResult>((resolve, reject) => {
       const timer = setTimeout(() => this.rpc.abort(new ControlError("RUN_TIMEOUT", "Pi run exceeded its deadline")), this.options.runTimeoutMs);
       this.active = { event, resolve, reject, timer, acknowledged: false, started: false, settled: false, final: null, stop: null, tools: new Map(), usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 0, cost: 0, costed: false } };
     });
     const prompt = this.active!;
-    void this.rpc.request("prompt", { message }).then(() => { prompt.acknowledged = true; this.settle(prompt); if (!prompt.started && !prompt.settled) void this.probeHandled(prompt); }, error => {
+    void this.rpc.request("prompt", { message, ...(images.length ? { images } : {}) }).then(() => { prompt.acknowledged = true; this.settle(prompt); if (!prompt.started && !prompt.settled) void this.probeHandled(prompt); }, error => {
       if (error instanceof ControlError && error.code === "REMOTE_ERROR" && !this.rpc.failure) {
         prompt.acknowledged = true; prompt.settled = true; prompt.final = { status: "failed", reason: "request_rejected", ...(error.remoteFailure ? { error: error.remoteFailure } : {}) }; this.settle(prompt);
       } else this.rpc.abort(errorFrom(error));

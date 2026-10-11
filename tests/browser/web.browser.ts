@@ -578,3 +578,40 @@ test("unified chat shows native plan, notices, tool details with diffs and turn 
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "native activity must not overflow a narrow screen");
   assert.deepEqual(errors, []);
 });
+
+test("unified chat attaches files, refuses inputs the model does not take, keeps staged attachments across reload and shows them on the message", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" }), chips = page.getByRole("list", { name: "待发送的附件" });
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  const picker = page.locator("input[type=file]");
+  // The selected model lists no audio input, so a voice note is marked and blocks sending until it is removed.
+  await picker.setInputFiles([{ name: "voice.wav", mimeType: "audio/wav", buffer: Buffer.from("RIFF\0\0\0\0WAVEfmt ") }]);
+  await expect(chips.getByText("当前 Harness 或模型不接受音频")).toBeVisible();
+  await composer.fill("ATTACHMENTS 看看这些");
+  await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "移除附件 voice.wav", exact: true }).click();
+  await picker.setInputFiles([{ name: "shot.png", mimeType: "image/png", buffer: png }, { name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("hello attachments") }]);
+  await expect(chips.locator(".attachment-chip")).toHaveCount(2); await expect(chips.getByText("上传中")).toHaveCount(0);
+  // Staged attachments are part of the per-chat draft and survive a reload.
+  await page.reload();
+  await expect(page.getByRole("list", { name: "待发送的附件" }).locator(".attachment-chip")).toHaveCount(2);
+  await expect(composer).toHaveValue("ATTACHMENTS 看看这些");
+  await page.screenshot({ path: join(artifact, "attachments-composer.png"), animations: "disabled" });
+  await composer.press("Enter");
+  await expect(log).toContainText("收到附件：图片 1，文件 1，均可读。");
+  await expect(page.getByRole("list", { name: "待发送的附件" })).toHaveCount(0);
+  const sent = log.locator(".user-message").last();
+  await expect(sent.locator(".message-attachment-image img")).toHaveAttribute("alt", "shot.png");
+  await expect(sent.getByRole("link", { name: /notes\.txt/u })).toHaveAttribute("download", "notes.txt");
+  assert.equal(await sent.locator(".message-attachment-image img").evaluate(image => (image as HTMLImageElement).naturalWidth), 1, "the sent image is served from the content store");
+  await page.screenshot({ path: join(artifact, "attachments-sent.png"), fullPage: true, animations: "disabled" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "attachments must not overflow a narrow screen");
+  assert.deepEqual(errors, []);
+});

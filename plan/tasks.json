@@ -946,7 +946,8 @@
       "test_cases": [
         "G004-C01",
         "G004-C02",
-        "G004-C03"
+        "G004-C03",
+        "G004-NC1"
       ],
       "active_slice": "native-models-switching"
     },
@@ -1145,7 +1146,8 @@
         "G008-X02",
         "G008-NC1",
         "G008-NC2",
-        "G008-NC3"
+        "G008-NC3",
+        "G008-NC4"
       ],
       "active_slice": "native-installation-management"
     },
@@ -2060,7 +2062,8 @@
         "G028-R02",
         "G028-NC2",
         "G028-NC3",
-        "G028-NC4"
+        "G028-NC4",
+        "G028-NC5"
       ],
       "active_slice": "native-models-switching"
     },
@@ -2235,7 +2238,9 @@
         "src/adapters/control/openclaw.ts",
         "src/infrastructure/control/native-command.ts",
         "src/adapters/control/cursor.ts",
-        "src/infrastructure/control/unified-diff.ts"
+        "src/infrastructure/control/unified-diff.ts",
+        "src/infrastructure/control/attachments.ts",
+        "src/adapters/control/opencode.ts"
       ],
       "requirements": [
         "R11",
@@ -2271,7 +2276,9 @@
         "G032-NC4",
         "G032-NC5",
         "G032-NC6",
-        "G032-NC7"
+        "G032-NC7",
+        "G032-NC8",
+        "G032-NC9"
       ],
       "active_slice": "native-installation-management"
     },
@@ -2369,7 +2376,8 @@
         "G034-C04",
         "G034-NC3",
         "G034-NC4",
-        "G034-NC5"
+        "G034-NC5",
+        "G034-NC6"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3080,7 +3088,8 @@
         "G050-P01",
         "G050-P02",
         "G050-R01",
-        "G050-NC1"
+        "G050-NC1",
+        "G050-NC2"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3272,7 +3281,8 @@
         "web/src/assets/minion-code.svg",
         "web/src/assets/sigit.svg",
         "web/src/assets/vtcode.svg",
-        "web/src/components/NativeActivity.tsx"
+        "web/src/components/NativeActivity.tsx",
+        "web/src/components/Attachments.tsx"
       ],
       "requirements": [
         "R01",
@@ -3306,7 +3316,8 @@
         "G054-R01",
         "G054-N01",
         "G054-L01",
-        "G054-NC1"
+        "G054-NC1",
+        "G054-NC2"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3621,7 +3632,8 @@
         "tests/real/homebrew-native.real.ts",
         "tests/real/native-resume.real.ts",
         "tests/real/native-catalog.real.ts",
-        "tests/real/native-activity.real.ts"
+        "tests/real/native-activity.real.ts",
+        "tests/real/native-attachments.real.ts"
       ],
       "requirements": [
         "R04",
@@ -3660,7 +3672,8 @@
         "G060-S01",
         "G060-N04",
         "G060-NC1",
-        "G060-NC2"
+        "G060-NC2",
+        "G060-NC3"
       ],
       "active_slice": "native-installation-management"
     },

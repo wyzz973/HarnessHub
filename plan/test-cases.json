@@ -6829,6 +6829,170 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/real/native-activity.real.ts"
+    },
+    {
+      "id": "G004-NC1",
+      "task": "G004",
+      "requirements": [
+        "R07"
+      ],
+      "invariants": [
+        "INV-07"
+      ],
+      "layer": "unit",
+      "scenario": "v7输入附件引用：数量、字节、唯一性、规范字段与准入后不可变",
+      "expected": "超限、重复、空列表、非规范或v6中的附件明确拒绝；已受理输入的附件不能被替换",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/unit/session-state.test.ts"
+    },
+    {
+      "id": "G008-NC4",
+      "task": "G008",
+      "requirements": [
+        "R07",
+        "R19"
+      ],
+      "invariants": [
+        "INV-06",
+        "INV-22"
+      ],
+      "layer": "integration",
+      "scenario": "上传按命令幂等暂存、按字节判型、按工作区准入、撤回，以及稳定只读副本与回收",
+      "expected": "同命令同内容返回同一引用；类型不符、长度不符与超限拒绝且不留半写；其他工作区与原生产物不可作为附件；副本被改动时恢复；无引用过期内容与副本一并回收",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/content-store.test.ts"
+    },
+    {
+      "id": "G028-NC5",
+      "task": "G028",
+      "requirements": [
+        "R11",
+        "R14"
+      ],
+      "invariants": [
+        "INV-06",
+        "INV-27"
+      ],
+      "layer": "integration",
+      "scenario": "附件随输入准入、派发前检查并复制；Driver拒绝附件",
+      "expected": "未知或外工作区附件不建Run；拒绝发生在派发前，本输入failed且Session保持open、无unknown；原生消息只收到准入的副本",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/session-runtime.test.ts"
+    },
+    {
+      "id": "G032-NC8",
+      "task": "G032",
+      "requirements": [
+        "R11",
+        "R12",
+        "R25"
+      ],
+      "invariants": [
+        "INV-04",
+        "INV-09"
+      ],
+      "layer": "protocol",
+      "scenario": "ACP附件内容块（图片、音频、嵌入文本、文件链接）；OpenClaw 5 MB与模型输入门控；OpenCode按原CLI模型目录细化",
+      "expected": "按代理声明映射且未声明能力派发前拒绝；拒绝信息只含附件名；模型目录不可用时退回代理级声明",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/acp.test.ts"
+    },
+    {
+      "id": "G032-NC9",
+      "task": "G032",
+      "requirements": [
+        "R11",
+        "R12",
+        "R25"
+      ],
+      "invariants": [
+        "INV-04",
+        "INV-09"
+      ],
+      "layer": "protocol",
+      "scenario": "Pi图片附件与文件路径；按Model.input门控",
+      "expected": "仅声明图片的模型收到images；文件以只读副本路径写入提示；文本模型派发前拒绝图片",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/pi.test.ts"
+    },
+    {
+      "id": "G034-NC6",
+      "task": "G034",
+      "requirements": [
+        "R11",
+        "R12",
+        "R25"
+      ],
+      "invariants": [
+        "INV-04",
+        "INV-09"
+      ],
+      "layer": "protocol",
+      "scenario": "Codex localImage/localAudio与文件路径；按所开模型inputModalities门控",
+      "expected": "图片与音频以只读副本路径交给原程序；文件写入文本；模型未列出的输入派发前拒绝",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/codex.test.ts"
+    },
+    {
+      "id": "G050-NC2",
+      "task": "G050",
+      "requirements": [
+        "R01",
+        "R19"
+      ],
+      "invariants": [
+        "INV-06",
+        "INV-25"
+      ],
+      "layer": "integration",
+      "scenario": "原始字节上传、撤回与带附件发送；CSRF、长度、类型不符",
+      "expected": "上传绑定本工作区且幂等；撤回后不能再随消息发送；无效请求明确拒绝且不建Run",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/web-server.test.ts"
+    },
+    {
+      "id": "G054-NC2",
+      "task": "G054",
+      "requirements": [
+        "R01",
+        "R22"
+      ],
+      "invariants": [
+        "INV-01",
+        "INV-25"
+      ],
+      "layer": "e2e",
+      "scenario": "统一聊天添加附件、标记不受支持的附件、刷新后保留草稿附件并在消息中显示",
+      "expected": "不受支持或未就绪附件阻止发送；草稿附件随会话草稿恢复；发送后消息显示图片与可下载文件",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/web.browser.ts"
+    },
+    {
+      "id": "G060-NC3",
+      "task": "G060",
+      "requirements": [
+        "R04",
+        "R24",
+        "R12"
+      ],
+      "invariants": [
+        "INV-16",
+        "INV-09"
+      ],
+      "layer": "e2e",
+      "scenario": "本机原安装真实附件：只存在于附件中的代码、纯色图片；未声明图片的模型",
+      "expected": "回复包含附件独有的事实；未声明图片的模型在派发前明确拒绝；原全局配置不变",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/real/native-attachments.real.ts"
     }
   ]
 }

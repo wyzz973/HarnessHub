@@ -46,3 +46,5 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
 - [ADR-021：原生配置来源透传、原生协议偏差容忍与能力矩阵](0021-native-profile-and-deviation-tolerance.md)（accepted）：只透传用户真实设置的配置位置变量；正常协议偏差归一而不归属；不代为执行原生全局写；逐Harness能力矩阵由设计检查校验。
 
 - [ADR-022：原生活动事实、内容存储与运行帧](0022-native-activity-and-content-store.md)（accepted）：工具详情、计划、用量、提示、活动与产物作为Run事实；详情与产物进入内容存储；Session v7；内容读取路由与SSE run帧。
+
+- [ADR-023：文件、图片与音频输入](0023-attachment-input.md)（accepted）：原始字节上传与工作区暂存；附件随输入准入且不可变；派发前按代理与模型输入能力检查并复制为只读副本；各原接口映射与界面附件交互。

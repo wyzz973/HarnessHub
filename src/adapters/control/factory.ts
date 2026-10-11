@@ -7,11 +7,13 @@ import { PiControl } from "./pi.js";
 export { OpenClawControl } from "./openclaw.js";
 import { OpenClawControl } from "./openclaw.js";
 import { CursorControl } from "./cursor.js";
+import { OpenCodeControl } from "./opencode.js";
 
 /** Vendor extensions remain in the adapter layer; Gateway owns only the common control contract. */
 export async function createNativeControl(harnessId: string, launch: ControlLaunch, options: ControlOptions): Promise<HarnessControl> {
   launch = await bindNativeDependencies(harnessId, launch);
   if (launch.protocol === "pi-rpc") return new PiControl(launch, options);
   if (launch.protocol === "codex-app-server") return new CodexControl(launch, options);
-  return harnessId === "openclaw" ? new OpenClawControl(launch, options) : harnessId === "cursor" ? new CursorControl(launch, options) : new AcpControl(launch, options);
+  return harnessId === "openclaw" ? new OpenClawControl(launch, options) : harnessId === "cursor" ? new CursorControl(launch, options)
+    : harnessId === "opencode" ? new OpenCodeControl(launch, options) : new AcpControl(launch, options);
 }

@@ -727,3 +727,42 @@ test("native activity becomes bounded public facts and tool detail content befor
   assert.deepEqual(app.read(session.id).runs[1]!.notices, [{ severity: "info", title: "new" }]);
   assert.equal(f.store.events(session.id, 0, 100).filter(row => row.type === "run.output" && JSON.stringify(row.data).includes('"title":"fallback"')).length, 3);
 });
+
+test("attachments are admitted with the input, checked and copied before dispatch, and a refusal fails only that input", { timeout: 10000 }, async t => {
+  const f = await fixture(t), content = new LocalContentStore(join(f.root, "data"), () => f.store.assertOwner());
+  const factory = new ControlledFactory([controlled(), controlled()]), prepare = factory.prepare.bind(factory);
+  const received: { checked: string[]; files: { name: string; path: string }[] }[] = [];
+  let refuse = false;
+  factory.prepare = async (...args) => {
+    const binding = await prepare(...args), seen = { checked: [] as string[], files: [] as { name: string; path: string }[] }; received.push(seen);
+    return { ...binding, control: { ...binding.control,
+      checkAttachments: async refs => { seen.checked.push(...refs.map(ref => ref.id)); if (refuse) throw Object.assign(new Error("当前 Harness 或模型不接受图片附件：shot.png"), { code: "ATTACHMENT_UNSUPPORTED" }); },
+      startText: (id: NativeConversationId, text: string, output: (event: ControlEvent) => void, files?: readonly { name: string; path: string }[]) => { seen.files.push(...(files ?? []).map(file => ({ name: file.name, path: file.path }))); return binding.control.startText(id, text, output); } } };
+  };
+  let next = 0;
+  const app = new SessionRuntime(f.store, factory, { id: () => String(++next), now: () => new Date("2026-10-11T00:00:00Z"), publish: () => {}, fingerprint: value => createHash("sha256").update(value).digest("hex"), content });
+  f.runtimes.push(app);
+  const session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  async function* body(value: Uint8Array) { yield value; }
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7]);
+  const image = await content.stage({ workspace: f.configuration.workspace, name: "shot.png", mediaType: "image/png", commandId: "upload-1", declaredBytes: png.length, source: body(png) });
+  const elsewhere = await content.stage({ workspace: "/elsewhere", name: "x.txt", mediaType: "text/plain", commandId: "upload-2", declaredBytes: 1, source: body(Buffer.from("x")) });
+  // Admission is synchronous: an unknown or foreign upload creates no Run.
+  assert.throws(() => app.send(session.id, "look", "send-foreign", [elsewhere.id]), (error: unknown) => error instanceof SessionError && error.code === "ATTACHMENT_UNAVAILABLE");
+  assert.equal(app.read(session.id).runs.length, 0);
+  const receipt = app.send(session.id, "look", "send-1", [image.id]);
+  assert.deepEqual(app.send(session.id, "look", "send-1", [image.id]), { ...receipt, replayed: true });
+  assert.throws(() => app.send(session.id, "look", "send-1", []), (error: unknown) => error instanceof SessionError && error.code === "IDEMPOTENCY_CONFLICT");
+  await app.wait(session.id);
+  let state = app.read(session.id);
+  assert.deepEqual(state.runs[0]?.attachments, [image]); assert.equal(state.runs[0]?.status, "completed");
+  assert.deepEqual(received[0]?.checked, [image.id]);
+  assert.equal(received[0]?.files[0]?.name, "shot.png"); assert.deepEqual(await readFile(received[0]!.files[0]!.path), png);
+  assert.ok(f.store.contentReferences().has(image.id), "admitted attachments are kept as long as the Session references them");
+  // A refusal happens before dispatch: the input fails with the Driver's own message, the Session stays open and nothing is unknown.
+  refuse = true;
+  app.send(session.id, "again", "send-2", [image.id]); await app.wait(session.id);
+  state = app.read(session.id);
+  assert.equal(state.runs[1]?.status, "failed"); assert.deepEqual(state.runs[1]?.error, { code: "ATTACHMENT_UNSUPPORTED", message: "当前 Harness 或模型不接受图片附件：shot.png" });
+  assert.equal(state.status, "open"); assert.equal(received[1]?.files.length, 0, "a refused input never reaches the Harness");
+});

@@ -18,9 +18,9 @@
 | 执行可见性 | 用量/上下文/费用 | ✅ | ✕ | ✅ | ○ | ✕ | — | ✅ |
 | 交互 | 工具审批 | ◐ | ✕ | ✅ | ○ | ✕ | ✕ | ◐ |
 | 交互 | 原生提问与表单 | ◑ | ○ | ？ | — | ？ | ◑ | ◐ |
-| 输入输出 | 图片输入 | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
-| 输入输出 | 音频输入 | ○ | — | — | — | ○ | — | — |
-| 输入输出 | 文件/文档输入 | ○ | ○ | ○ | ○ | ○ | ○ | — |
+| 输入输出 | 图片输入 | ✅ | ✕ | ✅ | ◐ | ✕ | ✕ | ✅ |
+| 输入输出 | 音频输入 | ✕ | — | — | — | ✕ | — | — |
+| 输入输出 | 文件/文档输入 | ◐ | ✕ | ✅ | ◐ | ✕ | ✕ | ◐ |
 | 输入输出 | 非文本输出 | ◐ | ✕ | ◐ | — | — | ✕ | ○ |
 | 扩展 | Skills | ○ | ◑ | ◑ | ◑ | ？ | ◑ | ◑ |
 | 扩展 | MCP | ◑ | ◑ | ◑ | — | ◑ | ◑ | — |
@@ -36,13 +36,13 @@
 
 | Harness | ✅ | ◐ | ◑ | ○ | ✕ | — | ？ |
 |---|---|---|---|---|---|---|---|
-| Codex | 6 | 3 | 5 | 11 | 1 | 1 | 0 |
-| Claude Code | 0 | 0 | 3 | 9 | 13 | 2 | 0 |
-| OpenCode | 5 | 6 | 4 | 5 | 0 | 2 | 5 |
-| OpenClaw | 3 | 4 | 2 | 11 | 0 | 7 | 0 |
-| Gemini CLI | 0 | 0 | 2 | 4 | 9 | 6 | 6 |
-| Cursor | 0 | 2 | 4 | 6 | 7 | 5 | 3 |
-| Pi | 6 | 4 | 3 | 6 | 0 | 8 | 0 |
+| Codex | 7 | 4 | 5 | 8 | 2 | 1 | 0 |
+| Claude Code | 0 | 0 | 3 | 7 | 15 | 2 | 0 |
+| OpenCode | 7 | 6 | 4 | 3 | 0 | 2 | 5 |
+| OpenClaw | 3 | 6 | 2 | 9 | 0 | 7 | 0 |
+| Gemini CLI | 0 | 0 | 2 | 1 | 12 | 6 | 6 |
+| Cursor | 0 | 2 | 4 | 4 | 9 | 5 | 3 |
+| Pi | 7 | 5 | 3 | 5 | 0 | 7 | 0 |
 
 ## Codex
 
@@ -62,9 +62,9 @@
 | 用量/上下文/费用 | 具备 | thread/tokenUsage/updated {total,last,modelContextWindow}、account/rateLimits/updated | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-codex.json；docs/verification/native-activity-2026-10-11.md | 本轮 token 与上下文占用；Codex 不报告费用；账户额度 rateLimits 未接出 |
 | 工具审批 | 具备 | item/commandExecution\|fileChange/requestApproval；子 Agent 线程审批归属当前回合 | 已接出 | 通过 | 未接出 | — | 原配置 approval_policy=never 且 danger-full-access，本机原程序不会请求审批；item/permissions/requestApproval、策略修订决定尚未接出 |
 | 原生提问与表单 | 具备 | item/tool/requestUserInput、mcpServer/elicitation/request | 部分 | 通过 | 未接出 | — | requestUserInput 已接出；MCP elicitation 仍被 -32601 拒绝 |
-| 图片输入 | 具备 | UserInput.image(data URL)/localImage；Model.inputModalities | 未接出 | 未接出 | 未接出 | — | — |
-| 音频输入 | 部分 | UserInput.audio/localAudio，仅 inputModalities 含 audio 的模型 | 未接出 | 未接出 | 未接出 | — | — |
-| 文件/文档输入 | 部分 | 无 file 输入类型；仅 localImage/localAudio/mention(app/plugin) 与文本路径 | 未接出 | 未接出 | 未接出 | — | — |
+| 图片输入 | 具备 | UserInput.image(data URL)/localImage；Model.inputModalities | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-codex.json；docs/verification/native-attachments-2026-10-11.md | localImage 指向只读副本；按所开模型 inputModalities 门控 |
+| 音频输入 | 部分 | UserInput.audio/localAudio，仅 inputModalities 含 audio 的模型 | 已接出 | 通过 | 受阻 | — | localAudio 已接出；本机模型目录没有声明音频输入的模型，真实无法验收 |
+| 文件/文档输入 | 部分 | 无 file 输入类型；仅 localImage/localAudio/mention(app/plugin) 与文本路径 | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-codex.json；docs/verification/native-attachments-2026-10-11.md | 只读副本路径写入提示，原程序用自己的工具读取 |
 | 非文本输出 | 部分 | imageGeneration.savedPath、imageView.path | 已接出 | 通过 | 未接出 | — | imageGeneration.savedPath 读取为产物（回合等待读取完成）、imageView 显示路径；真实图片生成未验收 |
 | Skills | 具备 | skills/list、UserInput.skill | 未接出 | 未接出 | 未接出 | — | — |
 | MCP | 具备 | 用户 MCP 按原配置加载；mcpServerStatus/list、mcpServer/oauth/login | 部分 | 未接出 | 未接出 | — | 原程序加载；Hub 无状态/登录界面 |
@@ -96,9 +96,9 @@
 | 用量/上下文/费用 | 具备 | usage_update {used,size,cost USD}、PromptResponse.usage | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收 |
 | 工具审批 | 具备 | session/request_permission（allow_once/allow_always/reject_once，ExitPlanMode 选项） | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收；allow_always 会由原程序写入项目设置 |
 | 原生提问与表单 | 具备 | AskUserQuestion/MCP 表单经 elicitation/create，需客户端声明 elicitation.form | 未接出 | 未接出 | 未接出 | — | 未声明能力时原程序禁用 AskUserQuestion |
-| 图片输入 | 具备 | promptCapabilities.image；image block base64 | 未接出 | 未接出 | 未接出 | — | — |
+| 图片输入 | 具备 | promptCapabilities.image；image block base64 | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收 |
 | 音频输入 | 不提供 | 未声明 audio，音频块被静默丢弃 | 不适用 | 不适用 | 不适用 | — | — |
-| 文件/文档输入 | 部分 | 文本 resource 以 <context> 注入；blob 被丢弃；resource_link 只成链接文本 | 未接出 | 未接出 | 未接出 | — | — |
+| 文件/文档输入 | 部分 | 文本 resource 以 <context> 注入；blob 被丢弃；resource_link 只成链接文本 | 已接出 | 通过 | 受阻 | — | 小文本文件以嵌入资源发送，其余为文件链接；Claude 账号周额度用完，真实生成无法验收 |
 | 非文本输出 | 部分 | assistant 图片块（少见）与工具结果中的图片 | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收 |
 | Skills | 具备 | skills 出现在原生命令目录并按原配置加载 | 部分 | 通过 | 未接出 | — | 通过原生命令执行；无独立技能管理界面 |
 | MCP | 具备 | 用户/项目/插件 MCP 默认加载；MCP OAuth 需 elicitation.url | 部分 | 未接出 | 未接出 | — | 原程序加载；Hub 无状态/OAuth 界面 |
@@ -130,9 +130,9 @@
 | 用量/上下文/费用 | 具备 | 每轮 usage_update {used,size,cost}、PromptResponse.usage | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-opencode.json；docs/verification/native-activity-2026-10-11.md | 本轮 token、上下文与会话累计费用（原程序报告） |
 | 工具审批 | 具备 | session/request_permission(once/always/reject) | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-opencode-approval.json；docs/verification/native-activity-2026-10-11.md | 工作区级 opencode.json 要求询问时真实审批（允许一次）；批准编辑后原程序调用未宣告的 fs/write_text_file，Hub 回 -32601 并留审计行，编辑仍由原程序完成 |
 | 原生提问与表单 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
-| 图片输入 | 具备 | promptCapabilities.image | 未接出 | 未接出 | 未接出 | — | — |
+| 图片输入 | 具备 | promptCapabilities.image | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-opencode-vision.json；.tmp/cc-native-attachments-opencode-openclaw.json；docs/verification/native-attachments-2026-10-11.md | 代理级声明再按 opencode models --verbose 的模型输入细化；mimo-v2.6-flash-free 真实识别图片，默认 big-pickle 在派发前拒绝 |
 | 音频输入 | 不提供 | 未声明 audio | 不适用 | 不适用 | 不适用 | — | — |
-| 文件/文档输入 | 具备 | promptCapabilities.embeddedContext | 未接出 | 未接出 | 未接出 | — | — |
+| 文件/文档输入 | 具备 | promptCapabilities.embeddedContext | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-opencode-vision.json；.tmp/cc-native-attachments-opencode-openclaw.json；docs/verification/native-attachments-2026-10-11.md | 小文本以嵌入资源发送；模型主动读取工作区外副本时原程序请求外部目录审批 |
 | 非文本输出 | 部分 | 工具结果中的图片附件；回放中的图片/资源 | 已接出 | 通过 | 未接出 | — | ACP 非文本块进入产物；真实未验收 |
 | Skills | 具备 | skills 出现在原生命令目录 | 部分 | 通过 | 未接出 | — | 通过原生命令执行 |
 | MCP | 具备 | 用户 MCP 配置按原程序加载 | 部分 | 未接出 | 未接出 | — | 原程序加载；Hub 无状态界面 |
@@ -164,9 +164,9 @@
 | 用量/上下文/费用 | 部分 | usage_update 近似 {used,size}，无费用；sessions.list 含 token/估算费用 | 未接出 | 未接出 | 未接出 | — | — |
 | 工具审批 | 部分 | exec.approval.* 只走 Gateway RPC/事件；经 ACP 会静默等待约 120 秒后拒绝 | 未接出 | 未接出 | 未接出 | — | — |
 | 原生提问与表单 | 不提供 | ACP 桥不发送提问 | 不适用 | 不适用 | 不适用 | — | — |
-| 图片输入 | 具备 | image block → chat.send attachment（≤5 MB） | 未接出 | 未接出 | 未接出 | — | — |
+| 图片输入 | 具备 | image block → chat.send attachment（≤5 MB） | 已接出 | 通过 | 部分通过 | .tmp/cc-native-attachments-opencode-openclaw.json；docs/verification/native-attachments-2026-10-11.md | 按 models.list 的模型 input 与 5 MB 上限门控；默认 deepseek-chat 在派发前拒绝，识图模型未真实验收 |
 | 音频输入 | 不提供 | 音频块被丢弃 | 不适用 | 不适用 | 不适用 | — | — |
-| 文件/文档输入 | 部分 | 文本 resource 追加为文本；blob 丢弃；resource_link 成文本 | 未接出 | 未接出 | 未接出 | — | — |
+| 文件/文档输入 | 部分 | 文本 resource 追加为文本；blob 丢弃；resource_link 成文本 | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-opencode-openclaw.json；docs/verification/native-attachments-2026-10-11.md | 文本资源由桥展开为文本；文件链接成为文本路径 |
 | 非文本输出 | 不提供 | 桥不转发图片/媒体；MEDIA: 行以原文出现 | 不适用 | 不适用 | 不适用 | — | — |
 | Skills | 具备 | Gateway skills.status 与技能命令 | 部分 | 未接出 | 未接出 | — | 可经原生命令触发 |
 | MCP | 不提供 | ACP 桥不使用 mcpServers | 不适用 | 不适用 | 不适用 | — | — |
@@ -198,9 +198,9 @@
 | 用量/上下文/费用 | 部分 | 仅 PromptResponse._meta.quota | 已接出 | 通过 | 受阻 | — | Gemini 个人账号客户端被服务端停用（NATIVE_CLIENT_UNSUPPORTED），真实链路受阻 |
 | 工具审批 | 具备 | session/request_permission(allow always/once/reject) | 已接出 | 通过 | 受阻 | — | Gemini 个人账号客户端被服务端停用（NATIVE_CLIENT_UNSUPPORTED），真实链路受阻 |
 | 原生提问与表单 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
-| 图片输入 | 具备 | promptCapabilities.image | 未接出 | 未接出 | 未接出 | — | — |
-| 音频输入 | 具备 | promptCapabilities.audio | 未接出 | 未接出 | 未接出 | — | — |
-| 文件/文档输入 | 具备 | promptCapabilities.embeddedContext | 未接出 | 未接出 | 未接出 | — | — |
+| 图片输入 | 具备 | promptCapabilities.image | 已接出 | 通过 | 受阻 | — | Gemini 个人账号客户端被服务端停用（NATIVE_CLIENT_UNSUPPORTED），真实链路受阻 |
+| 音频输入 | 具备 | promptCapabilities.audio | 已接出 | 通过 | 受阻 | — | Gemini 个人账号客户端被服务端停用（NATIVE_CLIENT_UNSUPPORTED），真实链路受阻 |
+| 文件/文档输入 | 具备 | promptCapabilities.embeddedContext | 已接出 | 通过 | 受阻 | — | Gemini 个人账号客户端被服务端停用（NATIVE_CLIENT_UNSUPPORTED），真实链路受阻 |
 | 非文本输出 | 不提供 | 只输出文本块 | 不适用 | 不适用 | 不适用 | — | — |
 | Skills | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
 | MCP | 具备 | 用户 MCP/扩展按原配置加载 | 部分 | 未接出 | 未接出 | — | 原程序加载 |
@@ -232,9 +232,9 @@
 | 用量/上下文/费用 | 不提供 | 不提供用量 | 不适用 | 不适用 | 不适用 | — | — |
 | 工具审批 | 具备 | session/request_permission(allow-once/allow-always/reject-once) | 已接出 | 通过 | 受阻 | — | Cursor 账号套餐限制，原公共对话返回升级提示，生成任务无法验收 |
 | 原生提问与表单 | 部分 | cursor/ask_question 扩展请求；-32601 时退化为权限选项 | 部分 | 通过 | 未接出 | — | 经权限选项呈现 |
-| 图片输入 | 具备 | promptCapabilities.image | 未接出 | 未接出 | 未接出 | — | — |
+| 图片输入 | 具备 | promptCapabilities.image | 已接出 | 通过 | 受阻 | — | Cursor 账号套餐限制，原公共对话返回升级提示，生成任务无法验收 |
 | 音频输入 | 不提供 | 未声明 audio | 不适用 | 不适用 | 不适用 | — | — |
-| 文件/文档输入 | 部分 | resource 文本内联（≤20000 字）；项目根内 resource_link 读取 | 未接出 | 未接出 | 未接出 | — | — |
+| 文件/文档输入 | 部分 | resource 文本内联（≤20000 字）；项目根内 resource_link 读取 | 已接出 | 通过 | 受阻 | — | 未声明嵌入上下文，文件以链接发送（项目根外只显示名称与路径）；Cursor 账号套餐限制，原公共对话返回升级提示，生成任务无法验收 |
 | 非文本输出 | 部分 | cursor/generate_image 扩展请求 | 已接出 | 通过 | 受阻 | — | Cursor 账号套餐限制，原公共对话返回升级提示，生成任务无法验收 |
 | Skills | 具备 | skills 出现在原生命令目录 | 部分 | 通过 | 未接出 | — | 通过原生命令执行 |
 | MCP | 具备 | ~/.cursor/mcp.json 与项目 mcp.json；本轮修复后才按原配置目录加载 | 部分 | 未接出 | 未接出 | — | 原程序加载 |
@@ -266,9 +266,9 @@
 | 用量/上下文/费用 | 具备 | assistant message usage{input,output,cacheRead,cacheWrite,cost}、get_session_stats | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-pi.json；docs/verification/native-activity-2026-10-11.md | 逐消息累计 token（含推理与缓存）、上下文窗口与本轮费用 |
 | 工具审批 | 部分 | 无内置审批；扩展经 extension_ui confirm/select 拦截工具 | 已接出 | 通过 | 未接出 | — | 由扩展决定是否出现 |
 | 原生提问与表单 | 具备 | extension_ui select/confirm/input/editor（含超时） | 已接出 | 通过 | 未接出 | — | 编辑器字段与超时已按 0.85.1 修正；未真实验收 |
-| 图片输入 | 具备 | prompt.images[{data,mimeType}]，按 Model.input 门控 | 未接出 | 未接出 | 未接出 | — | — |
+| 图片输入 | 具备 | prompt.images[{data,mimeType}]，按 Model.input 门控 | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-pi.json；docs/verification/native-attachments-2026-10-11.md | 按当前模型 Model.input 门控；deepseek-flash 真实识别图片 |
 | 音频输入 | 不提供 | 无音频输入 | 不适用 | 不适用 | 不适用 | — | — |
-| 文件/文档输入 | 不提供 | RPC 不支持 @file 附件 | 不适用 | 不适用 | 不适用 | — | — |
+| 文件/文档输入 | 部分 | RPC 无 @file 附件；只读副本路径写入提示，由原 read 工具读取 | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-pi.json；docs/verification/native-attachments-2026-10-11.md | — |
 | 非文本输出 | 部分 | read 工具返回的图片内容 | 未接出 | 未接出 | 未接出 | — | — |
 | Skills | 具备 | /skill:name 经 prompt 展开 | 部分 | 通过 | 未接出 | — | 通过原生命令执行 |
 | MCP | 不提供 | 无内置 MCP（仅扩展） | 不适用 | 不适用 | 不适用 | — | — |

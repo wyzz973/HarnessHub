@@ -84,7 +84,7 @@ lines.on("line", line => {
     if (scenario === "remote-error") { emit({ id: message.id, error: { code: -32001, message: "test remote error" } }); return; }
     if (scenario === "stderr") process.stderr.write("diagnostic".repeat(100000));
     const result = protocol === "acp-v1"
-      ? { protocolVersion: scenario === "version" ? 2 : 1, agentCapabilities: { loadSession: ["native-resume", "resume-fails", "resume-wrong-identity", "load-trailing-replay"].includes(scenario) }, authMethods: [{ id: "fixture-login", name: "Fixture Login" }], agentInfo: { name: "fixture", version: "1.0" } }
+      ? { protocolVersion: scenario === "version" ? 2 : 1, agentCapabilities: { loadSession: ["native-resume", "resume-fails", "resume-wrong-identity", "load-trailing-replay"].includes(scenario), ...(scenario === "attachments" ? { promptCapabilities: { image: true, audio: true, embeddedContext: true } } : {}) }, authMethods: [{ id: "fixture-login", name: "Fixture Login" }], agentInfo: { name: "fixture", version: "1.0" } }
       : { userAgent: "fixture-codex/1.0", codexHome: process.cwd(), platformFamily: "unix", platformOs: process.platform };
     answer(message.id, result);
     if (scenario === "flood") {
@@ -101,7 +101,13 @@ lines.on("line", line => {
   if (message.method === "initialized") { initialized = true; return; }
   if (message.method === "config/read") { answer(message.id, { config: { model: "native-model-a", privateCredential: "synthetic-never-public" } }); return; }
   if (message.method === "account/read") { answer(message.id, { account: { type: "chatgpt", email: "private-account@example.invalid" }, requiresOpenaiAuth: true }); return; }
-  if (message.method === "model/list") { answer(message.id, { data: ["native-model-a", "native-model-b"].map(model => ({ model, displayName: model })), nextCursor: null }); return; }
+  if (message.method === "model/list") { answer(message.id, { data: ["native-model-a", "native-model-b"].map(model => ({ model, displayName: model, ...(scenario === "attachments" ? { inputModalities: model === "native-model-a" ? ["text", "image", "audio"] : ["text"] } : {}) })), nextCursor: null }); return; }
+  if (message.method === "session/new" && scenario === "attachments") {
+    answer(message.id, { sessionId: "session-fixture", configOptions: [{ id: "model", category: "model", type: "select", currentValue: "native/model-a", options: [{ value: "native/model-a", name: "Model A" }, { value: "native/model-b", name: "Model B" }] }] }); return;
+  }
+  if (message.method === "session/set_config_option" && scenario === "attachments") {
+    answer(message.id, { configOptions: [{ id: "model", category: "model", type: "select", currentValue: message.params.value, options: [{ value: "native/model-a", name: "Model A" }, { value: "native/model-b", name: "Model B" }] }] }); return;
+  }
   if (message.method === "session/new" && scenario === "native-experience") {
     notification("session/update",{sessionId:"session-fixture",update:{sessionUpdate:"available_commands_update",availableCommands:[{name:"native-help",description:"Native fixture help"}]}});
     answer(message.id,{sessionId:"session-fixture",configOptions:nativeConfiguration()});return;

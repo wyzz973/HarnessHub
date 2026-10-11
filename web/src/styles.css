@@ -3925,3 +3925,26 @@ a {
 
 .native-permission textarea { width:100%; margin-top:10px; padding:8px; border:1px solid var(--line); border-radius:8px; resize:vertical; }
 .native-permission p { font-size:13px; white-space:pre-wrap; overflow-wrap:anywhere; }
+
+/* Attachments: composer chips, drop target and the files sent with a user message. */
+.composer.is-dropping { border-color: var(--accent); box-shadow: 0 0 0 3px #ae5b3d1f; }
+.composer-attach { display: grid; place-items: center; flex-shrink: 0; width: 30px; height: 30px; border: 0; border-radius: 7px; color: #8b8377; background: transparent; }
+.composer-attach:hover:not(:disabled) { background: #f1eee7; color: var(--chat-ink); }
+.composer-attach:disabled { opacity: .5; }
+.composer-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; padding: 0; list-style: none; }
+.attachment-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0; padding: 4px 6px 4px 9px; border: 1px solid var(--line); border-radius: 10px; background: #faf9f6; color: var(--ink); font-size: 12px; text-decoration: none; }
+.attachment-chip.is-error { border-color: #d9a7a2; background: #fbf1f0; color: var(--danger); }
+.attachment-chip small { flex-shrink: 0; color: var(--muted); }
+.attachment-chip.is-error small { color: var(--danger); }
+.attachment-chip .icon-button { width: 22px; height: 22px; }
+.attachment-name { min-width: 0; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-thumb { width: 22px; height: 22px; border-radius: 4px; object-fit: cover; }
+.message-attachments { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: flex-end; gap: 6px; max-width: 85%; margin-bottom: 6px; }
+.message-attachments .attachment-chip { padding-right: 10px; }
+.message-attachment-image { display: block; width: 160px; max-width: 100%; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #fff; }
+.message-attachment-image img { display: block; width: 100%; height: auto; max-height: 220px; object-fit: contain; }
+@media (max-width: 640px) {
+  .attachment-name { max-width: 140px; }
+  .message-attachments { max-width: 91%; }
+  .message-attachment-image { width: 120px; }
+}

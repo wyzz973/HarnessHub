@@ -3,7 +3,7 @@ import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput
 import type { AuthSession, HarnessView, InstallationLogPage, SessionSummary, SessionView, SessionStreamFrame, WebState } from "../../src/contracts/web.js";
 import type { HarnessManagementView, InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
 import type { HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
-import type { NativeOption, NativeModelCatalog } from "../../src/contracts/control.js";
+import type { NativeInputs, NativeOption, NativeModelCatalog } from "../../src/contracts/control.js";
 import { parseNativeOptions, commandId, messageId, runId, switchId } from "../../src/contracts/session.js";
 import { parseContentRef, type ContentRef } from "../../src/contracts/content.js";
 import type { NativeUsage } from "../../src/contracts/control.js";
@@ -94,6 +94,9 @@ function decodeMessage(value: unknown): PublicMessage {
   return { id: messageId(row.id), runId: runId(row.runId), role: choice(row.role, ["user", "assistant"]), text: text(row.text), seq: number(row.seq), status: choice(row.status, RUN_STATES) };
 }
 function contentRef(value: unknown): ContentRef { try { return parseContentRef(value); } catch { return invalid(); } }
+function nativeInputs(value: unknown): NativeInputs { const row = record(value); return { image: bool(row.image), audio: bool(row.audio), file: bool(row.file) }; }
+/** Marks a request body that is sent as raw bytes with its own media type instead of JSON. */
+class RawBody { constructor(readonly blob: Blob) {} }
 function optionalNumber(value: unknown): number | undefined { return value === undefined ? undefined : number(value); }
 function decodeUsage(value: unknown): NativeUsage {
   const row = record(value), turn = row.turn === undefined ? undefined : record(row.turn), context = row.context === undefined ? undefined : record(row.context), cost = row.cost === undefined ? undefined : record(row.cost);
@@ -127,7 +130,8 @@ function decodeRun(value: unknown): PublicRun {
     sourceRunIds: list(row.sourceRunIds, runId, 256), backend: backend === null ? null : { status: choice(backend.status, ["completed", "cancelled", "failed"]), reason: text(backend.reason),
       ...(backend.error === undefined ? {} : { error: publicError(backend.error) ?? invalid() }) },
     cleanup: cleanup === null ? null : { closed: true, exitCode: nullableNumber(cleanup.exitCode), signal: nullableText(cleanup.signal), protocolFailure: publicError(cleanup.protocolFailure) },
-    error: publicError(row.error), ...(row.thinking === undefined ? {} : { thinking: text(row.thinking) }), ...(row.tools === undefined ? {} : { tools: list(row.tools, decodeTool, 128) }), ...decodeActivityFields(row), stopRequested: bool(row.stopRequested), awaitingSwitchId: row.awaitingSwitchId === null ? null : switchId(row.awaitingSwitchId) };
+    error: publicError(row.error), ...(row.thinking === undefined ? {} : { thinking: text(row.thinking) }), ...(row.tools === undefined ? {} : { tools: list(row.tools, decodeTool, 128) }), ...decodeActivityFields(row),
+    ...(row.attachments === undefined ? {} : { attachments: list(row.attachments, contentRef, 8) }), stopRequested: bool(row.stopRequested), awaitingSwitchId: row.awaitingSwitchId === null ? null : switchId(row.awaitingSwitchId) };
 }
 function decodeSwitch(value: unknown): PublicSwitch {
   const row = record(value);
@@ -214,9 +218,9 @@ export class GatewayApi {
   nativeModels(harness: string, control: string, workspace: string, signal: AbortSignal, refresh = false, nativeModel?: string): Promise<NativeModelCatalog> {
     const query = new URLSearchParams({ controlId: control, workspace, ...(refresh ? { refresh: "1" } : {}), ...(nativeModel ? { nativeModel } : {}) });
     return this.request(`/harnesses/${encodeURIComponent(harness)}/models?${query}`, "GET", undefined, value => {
-      const row = record(value), models = list(row.models, value => { const model = record(value); return { id: text(model.id), name: text(model.name), ...(model.options === undefined ? {} : { options: list(model.options,nativeOption,128) }) }; }, 4096);
+      const row = record(value), models = list(row.models, value => { const model = record(value); return { id: text(model.id), name: text(model.name), ...(model.options === undefined ? {} : { options: list(model.options,nativeOption,128) }), ...(model.inputs === undefined ? {} : { inputs: nativeInputs(model.inputs) }) }; }, 4096);
       if (new Set(models.map(model => model.id)).size !== models.length) return invalid();
-      return { models, defaultModel: nullableText(row.defaultModel), authentication: choice(row.authentication, ["ready", "missing", "unknown"]), canSelect: bool(row.canSelect), ...(row.selectionError === undefined ? {} : {selectionError:publicError(row.selectionError)??invalid()}), ...(row.options === undefined ? {} : { options: list(row.options,nativeOption,128) }), ...(row.commands === undefined ? {} : { commands: list(row.commands,value => {const command=record(value);return { name:text(command.name),description:text(command.description) };},2048) }) };
+      return { models, defaultModel: nullableText(row.defaultModel), authentication: choice(row.authentication, ["ready", "missing", "unknown"]), canSelect: bool(row.canSelect), ...(row.selectionError === undefined ? {} : {selectionError:publicError(row.selectionError)??invalid()}), ...(row.options === undefined ? {} : { options: list(row.options,nativeOption,128) }), ...(row.commands === undefined ? {} : { commands: list(row.commands,value => {const command=record(value);return { name:text(command.name),description:text(command.description) };},2048) }), ...(row.inputs === undefined ? {} : { inputs: nativeInputs(row.inputs) }) };
     }, signal);
   }
   decidePermission(id: string, permission: string, optionId: string, key: string, input?: string): Promise<{ replayed: boolean }> { return this.request(`/sessions/${encodeURIComponent(id)}/permissions/${encodeURIComponent(permission)}`, "POST", { optionId, commandId: key, ...(input===undefined?{}:{input}) }, value => { const row=record(value);return { replayed:bool(row.replayed) }; }); }
@@ -262,9 +266,15 @@ export class GatewayApi {
   createSession(workspace: string, selection: SelectionRequest, key: string): Promise<SessionView> {
     return this.request("/sessions", "POST", { workspace, selection, commandId: key }, decodeSession);
   }
-  async send(id: string, value: string, key: string): Promise<void> {
-    await this.request(`/sessions/${encodeURIComponent(id)}/messages`, "POST", { text: value, commandId: key }, value => acknowledge(value, id, "runId"));
+  async send(id: string, value: string, key: string, attachments: readonly string[] = []): Promise<void> {
+    await this.request(`/sessions/${encodeURIComponent(id)}/messages`, "POST", { text: value, commandId: key, ...(attachments.length ? { attachments } : {}) }, value => acknowledge(value, id, "runId"));
   }
+  /** Sends one file as raw bytes; the server checks the declared type against the bytes and binds it to this workspace. */
+  uploadAttachment(file: Blob, name: string, key: string, signal?: AbortSignal): Promise<ContentRef> {
+    return this.request(`/attachments?${new URLSearchParams({ name, commandId: key })}`, "POST", new RawBody(file), contentRef, signal);
+  }
+  /** Withdraws a staged upload; content already sent with a message stays with that message. */
+  async discardAttachment(id: string): Promise<void> { await this.request(`/attachments/${encodeURIComponent(id)}`, "DELETE", undefined, () => undefined); }
   async switchSelection(id: string, selection: SelectionRequest, key: string): Promise<void> {
     await this.request(`/sessions/${encodeURIComponent(id)}/switches`, "POST", { selection, commandId: key }, value => acknowledge(value, id, "switchId"));
   }
@@ -294,15 +304,17 @@ export class GatewayApi {
   cancelInstallation(id: string, key: string): Promise<InstallationJobView> { return this.request(`/installation-jobs/${encodeURIComponent(id)}/cancel`, "POST", { commandId: key }, decodeInstallationJob); }
   inspectInstallation(id: string): Promise<InstallationJobView> { return this.request(`/installation-jobs/${encodeURIComponent(id)}/inspect`, "POST", {}, decodeInstallationJob); }
   installationLogs(id: string, afterSeq: number, signal?: AbortSignal): Promise<InstallationLogPage> { return this.request(`/installation-jobs/${encodeURIComponent(id)}/logs?afterSeq=${afterSeq}&limit=50`, "GET", undefined, decodeLogPage, signal); }
-  private async request<T>(path: string, method: "GET" | "POST" | "PATCH", body: unknown, decode: (value: unknown) => T, signal?: AbortSignal): Promise<T> {
+  private async request<T>(path: string, method: "GET" | "POST" | "PATCH" | "DELETE", body: unknown, decode: (value: unknown) => T, signal?: AbortSignal): Promise<T> {
     const deadline = new AbortController();
     const timeout = setTimeout(() => deadline.abort(new DOMException("Request deadline exceeded", "TimeoutError")), 15_000);
     const attempt = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
     try {
+      const raw = body instanceof RawBody ? body.blob : null;
       const response = await fetch("/api/v1" + path, { method, credentials: "same-origin", signal: attempt,
-        headers: { Accept: "application/json", ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        headers: { Accept: "application/json", ...(body === undefined ? {} : { "Content-Type": raw === null ? "application/json" : raw.type || "application/octet-stream" }),
           ...(this.csrfToken === null || method === "GET" ? {} : { "X-CSRF-Token": this.csrfToken }) },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+        ...(body === undefined ? {} : { body: raw ?? JSON.stringify(body) }) });
+      if (response.status === 204) { await response.body?.cancel(); return decode(undefined); }
       const payload = await readBoundedJson(response);
       if (!response.ok) {
         const error = publicError(payload);

@@ -8,7 +8,7 @@ function response(m,data){emit({type:'response',id:m.id,command:m.type,success:t
 function started(){streaming=true;emit({type:'agent_start'});}
 function ended(reason='stop'){emit({type:'agent_end',messages:[{role:'assistant',stopReason:reason}]});}
 function settled(){streaming=false;emit({type:'agent_settled'});}
-const models=[{provider:'native',id:'one',name:'One',reasoning:false,contextWindow:64000},{provider:'native',id:'two',name:'Two',reasoning:true,thinkingLevelMap:{max:'max',minimal:null}}];
+const models=[{provider:'native',id:'one',name:'One',reasoning:false,contextWindow:64000,input:['text']},{provider:'native',id:'two',name:'Two',reasoning:true,thinkingLevelMap:{max:'max',minimal:null},input:['text','image']}];
 createInterface({input:process.stdin}).on('line',line=>{
  const m=JSON.parse(line);if(process.env.FIXTURE_TRACE)appendFileSync(process.env.FIXTURE_TRACE,JSON.stringify(m)+'\n');
  if(m.type==='get_commands'){response(m,{commands:[]});}

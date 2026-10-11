@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
+import { writeFileSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import type { ControlEvent, ControlOptions } from "../../src/contracts/control.js";
 import { CodexControl } from "../../src/adapters/control/codex.js";
+import { contentId } from "../../src/contracts/content.js";
+import { ControlError } from "../../src/infrastructure/control/json-rpc-process.js";
 
 const options: ControlOptions = { cwd: process.cwd(), env: {}, requestTimeoutMs: 1000, runTimeoutMs: 1500,
   maxFrameBytes: 65536, maxDiagnosticBytes: 1024, closeGraceMs: 150 };
@@ -207,4 +210,31 @@ test("Codex maps item details, streamed output, plan, turn usage, notices and ac
     assert.equal(final("img-1")?.detail?.input, "a chart"); assert.match(final("img-1")?.detail?.locations?.[0] ?? "", /codex-fixture-\d+\.png$/u);
     assert.equal(final("cmd-2")?.detail?.output, "line1", "throttled output pending at settlement is delivered");
   } finally { await driver.close(); }
+});
+
+function attachment(directory: string, name: string, mediaType: string, kind: "image" | "audio" | "file", data: Buffer) {
+  const path = join(directory, name); writeFileSync(path, data);
+  return { id: contentId("content-" + name.replace(/[^a-z0-9]/giu, "")), name, mediaType, kind, bytes: data.length, sha256: "0".repeat(64), path };
+}
+test("Codex gives images to the opened model by path, names files in text, and refuses inputs the model does not list", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-codex-attachments-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
+  const png = attachment(directory, "shot.png", "image/png", "image", Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]));
+  const pdf = attachment(directory, "doc.pdf", "application/pdf", "file", Buffer.from("%PDF-1.4"));
+  const wav = attachment(directory, "voice.wav", "audio/wav", "audio", Buffer.from("RIFF\0\0\0\0WAVE"));
+  const driver = control("attachments", { FIXTURE_TRACE: trace });
+  try {
+    await driver.initialize();
+    assert.deepEqual((await driver.models()).models.map(model => [model.id, model.inputs]), [["native-model-a", { image: true, audio: true, file: true }], ["native-model-b", { image: false, audio: false, file: true }]]);
+    const id = await driver.open(process.cwd());
+    await driver.checkAttachments([png, wav, pdf]);
+    assert.equal((await (await driver.startText(id, "look", () => {}, [png, wav, pdf])).result).status, "completed");
+    const input = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line)).find(row => row.method === "turn/start").params.input;
+    assert.deepEqual(input, [{ type: "text", text: "look\n\n[Attached file] doc.pdf (application/pdf, 8 bytes, read-only copy): " + pdf.path, text_elements: [] }, { type: "localImage", path: png.path }, { type: "localAudio", path: wav.path }]);
+  } finally { await driver.close(); }
+  const textOnly = control("attachments");
+  try {
+    await textOnly.initialize(); await textOnly.open(process.cwd(), "native-model-b");
+    for (const item of [png, wav]) await assert.rejects(textOnly.checkAttachments([item]), (error: unknown) => error instanceof ControlError && error.code === "ATTACHMENT_UNSUPPORTED" && error.message.includes(item.name));
+    await textOnly.checkAttachments([pdf]);
+  } finally { await textOnly.close(); }
 });

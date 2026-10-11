@@ -5,7 +5,7 @@ import {
   type PublicSwitch, type RunStatus, type SessionConfiguration, type SessionMutation, type SessionSnapshot, type NativeSessionBinding,
 } from "../../../contracts/session.js";
 import type { BackendResult, CleanupEvidence, NativeUsage } from "../../../contracts/control.js";
-import { MAX_RUN_OUTPUTS, parseContentRef } from "../../../contracts/content.js";
+import { MAX_RUN_OUTPUTS, parseAttachmentRefs, parseContentRef } from "../../../contracts/content.js";
 
 export const MAX_RUNS = 256;
 export const MAX_COMMANDS = 1024;
@@ -144,7 +144,7 @@ function publicOutput(value: unknown): NonNullable<PublicRun["outputs"]>[number]
 }
 function publicRun(value: unknown): PublicRun {
   const item = record(value, "Run");
-  keys(item, ["id", "commandId", "input", "userMessageId", "assistantMessageId", "selection", "epoch", "status", "cancelRequested", "contextThroughSeq", "sourceRunIds", "backend", "cleanup", "error", "stopRequested", "awaitingSwitchId", "thinking", "tools", "plan", "usage", "notices", "activities", "outputs"], "Run");
+  keys(item, ["id", "commandId", "input", "userMessageId", "assistantMessageId", "selection", "epoch", "status", "cancelRequested", "contextThroughSeq", "sourceRunIds", "backend", "cleanup", "error", "stopRequested", "awaitingSwitchId", "thinking", "tools", "plan", "usage", "notices", "activities", "outputs", "attachments"], "Run");
   return { id: runId(item.id), commandId: commandId(item.commandId), input: text(item.input, "Run input", MAX_INPUT_BYTES),
     userMessageId: messageId(item.userMessageId), assistantMessageId: messageId(item.assistantMessageId), selection: parseSelection(item.selection),
     epoch: number(item.epoch, "Run epoch", 1), status: status(item.status), cancelRequested: boolean(item.cancelRequested, "cancelRequested"),
@@ -163,6 +163,7 @@ function publicRun(value: unknown): PublicRun {
       return { id: text(row.id, "activity identity", 512), kind: choiceOf(row.kind, ["subagent", "task", "compaction", "retry", "review"], "activity kind"), title: text(row.title, "activity title", 1024),
         status: choiceOf(row.status, ["running", "completed", "failed", "cancelled"], "activity status"), ...(row.detail === undefined ? {} : { detail: text(row.detail, "activity detail", 4096) }) }; }) }),
     ...(item.outputs === undefined ? {} : { outputs: array(item.outputs, "native outputs", MAX_RUN_OUTPUTS, publicOutput) }),
+    ...(item.attachments === undefined ? {} : { attachments: (() => { const refs = parseAttachmentRefs(item.attachments); if (!refs.length) throw new SessionError("INVALID_DATA", "an empty attachment list is omitted"); return refs; })() }),
     awaitingSwitchId: item.awaitingSwitchId === null ? null : switchId(item.awaitingSwitchId) };
 }
 function publicMessage(value: unknown): PublicMessage {
@@ -215,7 +216,7 @@ export function parseSession(value: unknown): SessionSnapshot {
     runs: array(item.runs, "runs", MAX_RUNS, publicRun), messages: array(item.messages, "messages", MAX_RUNS * 2, publicMessage),
     switches: array(item.switches, "switches", MAX_COMMANDS, publicSwitch), commands: array(item.commands, "commands", MAX_COMMANDS, command), ...(item.nativeBindings === undefined ? {} : { nativeBindings: array(item.nativeBindings, "native bindings", MAX_RUNS, nativeBinding) }) };
   if (result.schemaVersion < 6 && (result.nativeBindings !== undefined || result.commands.some(command => command.kind === "native-reset"))) throw new SessionError("INVALID_DATA", "native bindings require Session v6");
-  if (result.schemaVersion < 7 && result.runs.some(run => run.plan !== undefined || run.usage !== undefined || run.notices !== undefined || run.activities !== undefined || run.outputs !== undefined ||
+  if (result.schemaVersion < 7 && result.runs.some(run => run.plan !== undefined || run.usage !== undefined || run.notices !== undefined || run.activities !== undefined || run.outputs !== undefined || run.attachments !== undefined ||
       run.tools?.some(tool => Object.keys(tool).some(key => !["id", "title", "status"].includes(key))))) throw new SessionError("INVALID_DATA", "native activity details require Session v7");
   const activeBindings = (result.nativeBindings ?? []).filter(binding => binding.status !== "archived");
   unique(activeBindings.map(binding => binding.harnessId + ":" + binding.controlId), "active native binding");
@@ -322,7 +323,8 @@ export function assertSessionTransition(before: SessionSnapshot, after: SessionS
   for (let index = 0; index < before.runs.length; index++) {
     const old = before.runs[index]!, next = after.runs[index]!;
     if (terminal(old.status) && !same(old, next)) throw new SessionError("INVALID_TRANSITION", "terminal Run evidence cannot be rewritten");
-    if (old.commandId !== next.commandId || old.input !== next.input || old.userMessageId !== next.userMessageId || old.assistantMessageId !== next.assistantMessageId || old.awaitingSwitchId !== next.awaitingSwitchId)
+    if (old.commandId !== next.commandId || old.input !== next.input || old.userMessageId !== next.userMessageId || old.assistantMessageId !== next.assistantMessageId || old.awaitingSwitchId !== next.awaitingSwitchId ||
+        JSON.stringify(old.attachments) !== JSON.stringify(next.attachments))
       throw new SessionError("INVALID_TRANSITION", "accepted Run input and identities are immutable");
     if ((old.cancelRequested && !next.cancelRequested) || (old.stopRequested && !next.stopRequested)) throw new SessionError("INVALID_TRANSITION", "cancel/stop tombstones cannot be undone");
     if ((old.backend !== null && !same(old.backend, next.backend)) || (old.cleanup !== null && !same(old.cleanup, next.cleanup))) throw new SessionError("INVALID_TRANSITION", "backend/cleanup facts cannot be overwritten");

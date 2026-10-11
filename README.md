@@ -78,6 +78,7 @@ pnpm test:real:switch
 pnpm test:real:native-catalog
 pnpm test:real:native-resume
 pnpm test:real:native-activity
+pnpm test:real:native-attachments
 pnpm exec playwright install chromium
 pnpm test:web
 ~~~
@@ -145,3 +146,5 @@ python3 -m unittest discover -s tools -p 'test_*.py' -v
 逐Harness原生能力与验收状态以[能力矩阵](docs/verification/native-capability-matrix.md)为准（机器权威`plan/native-capabilities.json`，设计检查拒绝无证据的完整声明），来源见[七个原安装的能力面调研](docs/research/native-capability-surfaces-2026-10-11.md)。[ADR-021](docs/decisions/0021-native-profile-and-deviation-tolerance.md)起，原生模式只透传用户真实设置的配置位置变量（Cursor因此回到原`~/.cursor`并加载原MCP配置）；原生协议的正常偏差（迟到输出、外部线程、重复工具id、多行标题、load后回放）归一而不归属，不再中断回合；会改写全局默认值的原生设置（Cursor模型、Pi全局settings命令）不由Hub执行。本轮OpenCode、OpenClaw、Codex、Pi跨Hub进程重启的原生恢复真实通过，见[第二轮验收](docs/verification/native-capabilities-round2-2026-10-11.md)；完整能力仍在进行中。
 
 [ADR-022](docs/decisions/0022-native-activity-and-content-store.md)起，统一聊天在回复下显示原生计划、提示、工具（展开查看输入、输出与着色差异）、子Agent/压缩/重试活动、图片与文件产物和本轮用量；详情与产物存入数据根下的`content`目录（7天未引用自动回收），事件日志只存摘要。Codex、OpenCode、Pi的真实命令与编辑回合已通过，OpenCode工作区级审批已通过；Claude、Cursor、Gemini受账号限制只有协议验证，OpenClaw需直连Gateway才能取得工具事件。见[原生活动验收](docs/verification/native-activity-2026-10-11.md)。`test:real:native-*`需要`HH_REAL_HARNESSES`与`HH_REAL_EVIDENCE`，使用本机原安装与登录，真实调用模型。
+
+[ADR-023](docs/decisions/0023-attachment-input.md)起，输入框可选择、拖放或粘贴文件、图片和音频，附件随对话草稿保存。Hub按各原接口发送（ACP内容块、Codex本地路径、Pi图片），并按代理与所选模型的输入能力在派发前拒绝看不到的附件；附件副本留在数据根内，不写入工作区。Codex、Pi、OpenCode的真实文件与图片回合已通过，OpenClaw文本附件通过、识图模型未验收；音频只有协议验证。见[附件输入验收](docs/verification/native-attachments-2026-10-11.md)。

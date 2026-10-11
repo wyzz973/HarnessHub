@@ -1,6 +1,7 @@
 import type { ProviderTextRedactor } from "../../contracts/provider.js";
 import type { CleanupEvidence, ControlEvent, ControlRun, HarnessControl, NativeConversationId, NativeOptions, NativeToolDetail, ProtocolObservation } from "../../contracts/control.js";
 import { SessionError } from "../../contracts/session.js";
+import type { ContentRef, ControlAttachment } from "../../contracts/content.js";
 
 function sanitize(value: unknown, redact: (text: string) => string): unknown {
   if (typeof value === "string") return redact(value);
@@ -46,12 +47,22 @@ export class RedactedHarnessControl implements HarnessControl {
     if (!this.inner.decidePermission) return Promise.reject(new SessionError("UNSUPPORTED_PERMISSION", "native permission decisions unavailable"));
     return this.safe(() => this.inner.decidePermission!(id, option, input));
   }
-  async startText(id: NativeConversationId, text: string, onEvent: (event: ControlEvent) => void): Promise<ControlRun> {
+  /** Attachment refusals are Driver-authored and name only the attachment; they pass through redacted. */
+  async checkAttachments(attachments: readonly ContentRef[]): Promise<void> {
+    if (!this.inner.checkAttachments) throw new SessionError("ATTACHMENT_UNSUPPORTED", "this Harness interface does not accept attachments");
+    try { await this.inner.checkAttachments(attachments); }
+    catch (error) {
+      const code = error !== null && typeof error === "object" && "code" in error ? error.code : undefined;
+      if ((code === "ATTACHMENT_UNSUPPORTED" || code === "ATTACHMENT_LIMIT") && error instanceof Error) throw new SessionError(code, this.redact(error.message).slice(0, 512));
+      return this.safe(() => Promise.reject(error));
+    }
+  }
+  async startText(id: NativeConversationId, text: string, onEvent: (event: ControlEvent) => void, attachments?: readonly ControlAttachment[]): Promise<ControlRun> {
     const redactor = this.stream();
     const run = await this.safe(() => this.inner.startText(id, text, value => {
       if (value.type !== "text") onEvent(publicEvent(value, this.redact));
       else { const safe = redactor.push(value.text); if (safe) onEvent({ type: "text", text: safe }); }
-    }));
+    }, ...(attachments?.length ? [attachments] : [])));
     return { result: this.safe(() => run.result).then(value => {
       const tail = redactor.flush(); if (tail) onEvent({ type: "text", text: tail });
       return { ...value, reason: this.redact(value.reason), ...(value.error === undefined ? {} : { error: { code: this.redact(value.error.code), message: this.redact(value.error.message) } }) };

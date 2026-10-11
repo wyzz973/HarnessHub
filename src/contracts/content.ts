@@ -6,6 +6,9 @@ export type ContentKind = "image" | "audio" | "file";
 export type ContentOrigin = "upload" | "output";
 /** Per item budget for stored bytes; native transport limits are checked again by each Driver. */
 export const MAX_CONTENT_BYTES = 20 * 1024 * 1024;
+/** User attachments admitted with one input. */
+export const MAX_RUN_ATTACHMENTS = 8;
+export const MAX_RUN_ATTACHMENT_BYTES = 32 * 1024 * 1024;
 export const MAX_RUN_OUTPUTS = 32;
 export const MAX_CONTENT_NAME_BYTES = 255;
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
@@ -76,7 +79,23 @@ export function parseContentRef(value: unknown): ContentRef {
     return { id: contentId(item.id), name, mediaType: type, kind, bytes: item.bytes, sha256: item.sha256 };
   } catch (error) { throw error instanceof SessionError && error.code === "INVALID_DATA" ? error : new SessionError("INVALID_DATA", "invalid content reference"); }
 }
-/** Owner of stored bytes for native outputs and tool details; Session snapshots keep only the returned reference. */
+/** Validated public attachment list: unique identities within the per-input count and byte budgets. */
+export function parseAttachmentRefs(value: unknown): readonly ContentRef[] {
+  if (!Array.isArray(value) || value.length > MAX_RUN_ATTACHMENTS) throw new SessionError("INVALID_DATA", "attachments exceed their budget");
+  const refs = value.map(parseContentRef);
+  if (new Set(refs.map(ref => ref.id)).size !== refs.length || refs.reduce((total, ref) => total + ref.bytes, 0) > MAX_RUN_ATTACHMENT_BYTES) throw new SessionError("INVALID_DATA", "attachments exceed their budget");
+  return refs;
+}
+/** A stable private copy handed to a Driver. The copy is read-only and kept while any Session references the content. */
+export interface ControlAttachment extends ContentRef {
+  readonly path: string;
+}
+/**
+ * Owner of stored bytes for user attachments, native outputs and tool details; Session snapshots keep only references.
+ * `resolve` is synchronous admission: it confirms the owner still holds each staged upload for the workspace.
+ */
 export interface ContentPort {
   storeOutput(input: { readonly workspace: string; readonly name: string; readonly mediaType: string; readonly data: Uint8Array }): Promise<ContentRef>;
+  resolve(ids: readonly string[], workspace: string): readonly ContentRef[];
+  materialize(refs: readonly ContentRef[]): Promise<readonly ControlAttachment[]>;
 }
