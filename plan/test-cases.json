@@ -7336,6 +7336,23 @@
       "planned_file": "tests/integration/web-server.test.ts"
     },
     {
+      "id": "G050-NC7",
+      "task": "G050",
+      "requirements": [
+        "R01",
+        "R22"
+      ],
+      "invariants": [
+        "INV-09"
+      ],
+      "layer": "integration",
+      "scenario": "导出已取消的回合时说明原因",
+      "expected": "Markdown 导出与界面一致：执行预算用尽、等待你的决定超时、用户停止分别写出，不都写成已停止",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/web-server.test.ts"
+    },
+    {
       "id": "G061-NC6",
       "task": "G061",
       "requirements": [
@@ -7684,7 +7701,7 @@
       ],
       "layer": "integration",
       "scenario": "不同工作区的对话有界并行，同一工作区可见排队",
-      "expected": "上限内同时执行，满额时空位按受理先后分配；同一工作区的回合排队并记录 run.waiting（持有者、持有者是否在等用户），持有者的回合结束后自动开始并记录 run.waiting_ended；排队中可按回合取消，其他排队者按受理先后取得工作区；等待工作区超过等待预算时以 WORKSPACE_BUSY 结束、从未派发、不重试并记录持有者",
+      "expected": "上限内同时执行，满额时空位按受理先后分配；同一工作区的回合排队并记录 run.waiting（持有者、持有者是否在等用户），持有者的回合结束后自动开始并记录 run.waiting_ended；排队中可按回合取消，其他排队者按受理先后取得工作区；等待工作区超过等待预算时以 WORKSPACE_BUSY 结束、从未派发、不重试并记录持有者；所有位置已满时回合等待空位并记录 run.waiting（kind slot，带正在执行的数量），可以按回合取消且不启动程序；取消正在等待的回合后，等待立即转给同一对话的下一条消息，只有那一条会到期",
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/integration/parallel-work.test.ts"
@@ -7702,7 +7719,7 @@
       ],
       "layer": "integration",
       "scenario": "执行预算与等待预算由运行时计时",
-      "expected": "执行预算从派发起算，等待用户时暂停（ACP、Codex、Pi 各一）；执行预算到期加“执行期限已到”提示并走停止链，宽限内结算为已取消（RUN_TIMEOUT），原程序不结束时宽限后强制结束并记为未知；进入与离开等待记为事件，业务格式不变；预算参数只接受范围内的整数（执行30至3600秒、等待1至120分钟），其他值在服务启动前以 INVALID_INPUT 失败",
+      "expected": "执行预算从派发起算，等待用户时暂停（ACP、Codex、Pi 各一）；执行预算到期加“执行期限已到”提示并走停止链，宽限内结算为已取消（RUN_TIMEOUT），原程序不结束时宽限后强制结束并记为未知；进入与离开等待记为事件，业务格式不变；预算参数只接受范围内的整数（执行30至3600秒、等待1至120分钟），其他值在服务启动前以 INVALID_INPUT 失败；停止原因判定后，原程序在宽限内晚到的完成不改写它：回合仍为已取消（RUN_TIMEOUT），原程序的结果单独记录",
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/integration/parallel-work.test.ts"
@@ -7923,7 +7940,7 @@
       ],
       "layer": "e2e",
       "scenario": "排队回合显示等待的对话与原因",
-      "expected": "审批卡与侧栏显示“等待期限 · 剩余 N 分”；同一工作区的第二个对话显示“排队中：等待对话「…」释放工作区（它正在等待你的审批／它正在运行）”和剩余等待，不含路径；可取消排队、可打开那个对话，批准后排队回合自动完成；排队到期显示消息没有发出、占用它的对话和“打开那个对话”",
+      "expected": "审批卡与侧栏显示“等待期限 · 剩余 N 分”；同一工作区的第二个对话显示“排队中：等待对话「…」释放工作区（它正在等待你的审批／它正在运行）”和剩余等待，不含路径；可取消排队、可打开那个对话，批准后排队回合自动完成；排队到期显示消息没有发出、占用它的对话和“打开那个对话”；4 个对话占满位置时第 5 个显示“等待开始：4 个对话正在执行”和“没有单独的等待期限”，可以取消；用户停止的回合显示“已取消（用户停止）”",
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/browser/web.browser.ts"

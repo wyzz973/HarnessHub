@@ -4,6 +4,7 @@ import type { ProviderView } from "../../../src/contracts/provider.js";
 import type { PublicMessage, PublicRun, RunStatus } from "../../../src/contracts/session.js";
 import type { HarnessView } from "../../../src/contracts/web.js";
 import { failureMessage, runStatusLabel } from "../api.js";
+import { cancelledLabel } from "../../../src/contracts/session.js";
 import { BrandIcon } from "./BrandIcon.js";
 import { StreamingMarkdown } from "./StreamingMarkdown.js";
 import { ActivityList, NoticeList, OutputList, PlanView, ToolList, UsageDetails, UsageLine, type ToolDetailLoader } from "./NativeActivity.js";
@@ -27,16 +28,14 @@ interface MessageProps {
   /** The conversation that held the workspace this Turn waited for until its wait budget ended (WORKSPACE_BUSY). */
   busyHolder?: { readonly title: string; readonly onOpen: () => void } | undefined;
 }
-/** What a queued Turn shows about the conversation it waits for; no paths. */
-export interface QueueNotice {
-  readonly holderTitle: string;
-  /** What the holder waits for: the user's approval, an answer, or nothing (it is running). */
-  readonly holderWaits: "approval" | "question" | null;
-  readonly endsAt: number;
-  readonly cancelling: boolean;
-  readonly onOpen?: (() => void) | undefined;
-  readonly onCancel?: (() => void) | undefined;
-}
+/** What a queued Turn shows about what it waits for (ADR-036); no paths. */
+export type QueueNotice = ({
+  /** Another conversation's work holds the workspace: which one, what it waits for (approval, an answer, or nothing: it runs), and the deadline. */
+  readonly kind: "workspace"; readonly holderTitle: string; readonly holderWaits: "approval" | "question" | null; readonly endsAt: number; readonly onOpen?: (() => void) | undefined;
+} | {
+  /** Every slot is taken: how many conversations run; there is no deadline of its own. */
+  readonly kind: "slot"; readonly running: number;
+}) & { readonly cancelling: boolean; readonly onCancel?: (() => void) | undefined };
 function finished(status: RunStatus): boolean {
   return status === "completed" || status === "cancelled" || status === "failed" || status === "unknown";
 }
@@ -51,7 +50,8 @@ export function duration(milliseconds: number): string {
 function activityLabel(run: PublicRun | undefined, status: RunStatus, harness: string, now: number, startupHint: MessageProps["startupHint"], queue?: QueueNotice): string {
   if (run?.cancelRequested && !finished(status)) return "正在停止并清理资源";
   if (run?.awaitingSwitchId && status === "queued") return "等待选择切换生效";
-  if (queue !== undefined && status === "queued") return `排队中：等待对话「${queue.holderTitle}」释放工作区（${queue.holderWaits === "approval" ? "它正在等待你的审批" : queue.holderWaits === "question" ? "它正在等待你的回答" : "它正在运行"}）`;
+  if (queue?.kind === "workspace" && status === "queued") return `排队中：等待对话「${queue.holderTitle}」释放工作区（${queue.holderWaits === "approval" ? "它正在等待你的审批" : queue.holderWaits === "question" ? "它正在等待你的回答" : "它正在运行"}）`;
+  if (queue?.kind === "slot" && status === "queued") return `等待开始：${queue.running} 个对话正在执行，其中一个结束后自动开始`;
   const timing = run?.timing, since = (from: number | undefined) => from !== undefined && now - from >= 2000 ? " · " + duration(now - from) : "";
   switch (status) {
     case "queued": return "等待开始";
@@ -61,7 +61,7 @@ function activityLabel(run: PublicRun | undefined, status: RunStatus, harness: s
       return timing.dispatchedAt === undefined ? "已连接 " + harness + "，正在发送" : "等待 " + harness + " 回复" + since(timing.dispatchedAt);
     case "settling": return "正在结束执行";
     case "completed": return "本次调用没有文本输出。";
-    case "cancelled": return "已停止";
+    case "cancelled": return run ? cancelledLabel(run) : "已取消";
     case "failed": return "回复未能完成";
     case "unknown": return "执行结果尚未核实";
   }
@@ -111,12 +111,16 @@ function RunDiagnostics({ runId, load }: { readonly runId: string; readonly load
   </div>;
 }
 
-/** The actions of a Turn waiting for its workspace, and how long it may still wait; the Turn is never sent after that. */
+/**
+ * The actions of a queued Turn. One waiting for its workspace says how long it may still wait (it is never sent after
+ * that); one waiting for a slot has no deadline of its own, since every running Turn is bounded by its budgets.
+ */
 function QueuedTurn({ queue, now }: { readonly queue: QueueNotice; readonly now: number }) {
-  const minutes = Math.max(1, Math.ceil((queue.endsAt - now) / 60000));
   return <div className="queued-turn">
-    <small title="HarnessHub 为外部等待设的期限；到期后这条消息不会发出，也不会自动重试。">最多再等 {minutes} 分钟，到时这条消息不会发出。</small>
-    <div>{queue.onOpen ? <button type="button" className="text-button" onClick={queue.onOpen}>打开那个对话</button> : null}
+    {queue.kind === "workspace"
+      ? <small title="HarnessHub 为外部等待设的期限；到期后这条消息不会发出，也不会自动重试。">最多再等 {Math.max(1, Math.ceil((queue.endsAt - now) / 60000))} 分钟，到时这条消息不会发出。</small>
+      : <small title="同时执行的对话有上限；每个正在执行的回合都受自己的期限约束，所以位置总会空出。">没有单独的等待期限，按发送先后轮到。</small>}
+    <div>{queue.kind === "workspace" && queue.onOpen ? <button type="button" className="text-button" onClick={queue.onOpen}>打开那个对话</button> : null}
       {queue.onCancel ? <button type="button" className="text-button" disabled={queue.cancelling} onClick={queue.onCancel}>{queue.cancelling ? "正在取消…" : "取消排队"}</button> : null}</div>
   </div>;
 }
@@ -166,7 +170,7 @@ export const ChatMessage = memo(function ChatMessage({ message, run, harnesses, 
       : <div className={`response-status ${terminal ? "is-terminal" : ""} ${status === "failed" || status === "unknown" ? "is-error" : ""}`} role="status">{!terminal ? <span className="activity-dot" aria-hidden="true"/> : null}<span>{activityLabel(run, status, harness, now, startupHint, queue)}</span></div>}
     {queue !== undefined && status === "queued" && !run?.cancelRequested ? <QueuedTurn queue={queue} now={now}/> : null}
     {text && !terminal ? <div className="response-activity" role="status"><span className="activity-dot" aria-hidden="true"/><span>{activityLabel(run, status, harness, now, startupHint)}</span></div> : null}
-    {text && status === "cancelled" ? <p className="response-ended" role="status">已停止</p> : null}
+    {text && status === "cancelled" ? <p className="response-ended" role="status">{run ? cancelledLabel(run) : "已取消"}</p> : null}
     {status === "unknown" && text ? <p className="response-ended is-error" role="status">执行结果尚未核实</p> : null}
     {status === "failed" && text ? <p className="response-ended is-error" role="status">回复未能完成</p> : null}
     {run?.outputs?.length ? <OutputList outputs={run.outputs}/> : null}
@@ -181,7 +185,7 @@ export const ChatMessage = memo(function ChatMessage({ message, run, harnesses, 
       {copyFailed ? <span className="copy-error" role="status">无法使用剪贴板，可选中文本后复制。</span> : copied ? <span className="copy-feedback" role="status">已复制</span> : null}
     </div>
     {details && run ? <div className="execution-details" id={detailsId}>
-      <dl><div><dt>执行者</dt><dd>{harness}</dd></div><div><dt>模型连接</dt><dd>{provider?.name ?? (run.selection.provider ? "Provider" : "Harness 原生连接")}</dd></div>{run.selection.provider ? <><div><dt>模型</dt><dd>{run.selection.provider.model}</dd></div><div><dt>配置版本</dt><dd>v{run.selection.provider.revision}</dd></div></> : null}<div><dt>控制入口</dt><dd><code>{run.selection.controlId}</code></dd></div><div><dt>执行状态</dt><dd>{runStatusLabel(status)}</dd></div><div><dt>执行标识</dt><dd><code>{run.id}</code></dd></div>{run.timing?.readyAt !== undefined && run.timing.preparingAt !== undefined ? <div><dt>启动原程序</dt><dd>{duration(run.timing.readyAt - run.timing.preparingAt)}</dd></div> : null}{run.timing?.firstOutputAt !== undefined && run.timing.dispatchedAt !== undefined ? <div><dt>发送后首个输出</dt><dd>{duration(run.timing.firstOutputAt - run.timing.dispatchedAt)}</dd></div> : null}{run.usage ? <UsageDetails usage={run.usage}/> : null}</dl>
+      <dl><div><dt>执行者</dt><dd>{harness}</dd></div><div><dt>模型连接</dt><dd>{provider?.name ?? (run.selection.provider ? "Provider" : "Harness 原生连接")}</dd></div>{run.selection.provider ? <><div><dt>模型</dt><dd>{run.selection.provider.model}</dd></div><div><dt>配置版本</dt><dd>v{run.selection.provider.revision}</dd></div></> : null}<div><dt>控制入口</dt><dd><code>{run.selection.controlId}</code></dd></div><div><dt>执行状态</dt><dd>{status === "cancelled" ? cancelledLabel(run) : runStatusLabel(status)}</dd></div><div><dt>执行标识</dt><dd><code>{run.id}</code></dd></div>{run.timing?.readyAt !== undefined && run.timing.preparingAt !== undefined ? <div><dt>启动原程序</dt><dd>{duration(run.timing.readyAt - run.timing.preparingAt)}</dd></div> : null}{run.timing?.firstOutputAt !== undefined && run.timing.dispatchedAt !== undefined ? <div><dt>发送后首个输出</dt><dd>{duration(run.timing.firstOutputAt - run.timing.dispatchedAt)}</dd></div> : null}{run.usage ? <UsageDetails usage={run.usage}/> : null}</dl>
       {run.error ? <p>错误代码：<code>{run.error.code}</code></p> : null}
       {!run.selection.provider && run.selection.nativeModel ? <p>本机模型：<code>{run.selection.nativeModel}</code></p> : null}
       {status === "unknown" ? <p>请先核实执行结果。这个请求不会自动重新执行。</p> : status === "completed" ? <p>本轮执行已结束，结果仍需由你确认。</p> : null}

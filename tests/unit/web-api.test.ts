@@ -3,7 +3,7 @@ import test from "node:test";
 import { ApiError, GatewayApi } from "../../web/src/api.js";
 import { toolParents } from "../../web/src/tool-tree.js";
 import { liveItems, mostUrgent, remaining } from "../../web/src/attention.js";
-import type { AttentionItem } from "../../src/contracts/session.js";
+import { cancelledLabel, type AttentionItem } from "../../src/contracts/session.js";
 
 function api(t: test.TestContext, fetcher: typeof fetch): GatewayApi {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "window"), original = globalThis.fetch;
@@ -94,4 +94,12 @@ test("the attention stream hands over whole frames and rejects one whose identit
   await assert.rejects(client.streamAttention(new AbortController().signal, () => {}), code("INVALID_RESPONSE"));
   client = api(t, async () => body(frame(5, [{ ...waiting, kind: "other" }])));
   await assert.rejects(client.streamAttention(new AbortController().signal, () => {}), code("INVALID_RESPONSE"));
+});
+
+test("a cancelled Turn says why: its execution budget, its wait for the user, a restart before it was sent, or the user's stop", () => {
+  assert.equal(cancelledLabel({ error: { code: "RUN_TIMEOUT" }, cancelRequested: false }), "已取消（执行预算用尽）");
+  assert.equal(cancelledLabel({ error: { code: "WAIT_EXPIRED" }, cancelRequested: true }), "已取消（等待你的决定超时）");
+  assert.equal(cancelledLabel({ error: { code: "OWNER_ENDED" } }), "已取消（服务重启，这条消息没有发出）");
+  assert.equal(cancelledLabel({ error: null, cancelRequested: true }), "已取消（用户停止）");
+  assert.equal(cancelledLabel({ error: null, cancelRequested: false }), "已取消");
 });

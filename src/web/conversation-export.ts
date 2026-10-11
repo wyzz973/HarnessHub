@@ -1,7 +1,9 @@
-import type { PublicRun } from "../contracts/session.js";
+import { cancelledLabel, type PublicRun } from "../contracts/session.js";
 import type { SessionView } from "../contracts/web.js";
 
-const STATUS: Readonly<Record<string, string>> = { queued: "等待", preparing: "准备中", running: "进行中", settling: "结束中", completed: "完成", cancelled: "已停止", failed: "失败", unknown: "结果未核实" };
+const STATUS: Readonly<Record<string, string>> = { queued: "等待", preparing: "准备中", running: "进行中", settling: "结束中", completed: "完成", cancelled: "已取消", failed: "失败", unknown: "结果未核实" };
+/** A Turn's status as exported; a cancelled one says why, as the chat does (ADR-036). */
+function statusOf(run: PublicRun | undefined, status: string): string { return status === "cancelled" && run !== undefined ? cancelledLabel(run) : STATUS[status] ?? status; }
 function bytes(value: number): string { return value >= 1024 * 1024 ? (value / 1024 / 1024).toFixed(1) + " MB" : value >= 1024 ? Math.ceil(value / 1024) + " KB" : value + " B"; }
 /** Text is quoted as-is; only a line that would close the surrounding fence is indented. */
 function fenced(text: string): string { return text.replace(/^(\s*)(```)/gmu, "$1 $2"); }
@@ -30,11 +32,11 @@ export function conversationMarkdown(view: SessionView, harnessName: (id: string
       out.push("---", "", "## 你", "", "```text", fenced(message.text), "```", "");
       if (run?.attachments?.length) out.push("附件：", ...run.attachments.map(item => `- ${item.name}（${item.mediaType}，${bytes(item.bytes)}）`), "");
       // A Run that produced no reply message (failed before output, still queued) keeps its status and facts in place.
-      if (run && !view.messages.some(row => row.runId === run.id && row.role === "assistant")) out.push(`## ${harnessName(run.selection.harnessId)} · ${STATUS[run.status] ?? run.status}`, "", ...runFacts(run), "");
+      if (run && !view.messages.some(row => row.runId === run.id && row.role === "assistant")) out.push(`## ${harnessName(run.selection.harnessId)} · ${statusOf(run, run.status)}`, "", ...runFacts(run), "");
       continue;
     }
     const selection = run?.selection, model = selection?.provider?.model ?? selection?.nativeModel;
-    out.push(`## ${selection ? harnessName(selection.harnessId) : "Harness"}${model ? "（" + model + "）" : ""} · ${STATUS[run?.status ?? message.status] ?? message.status}`, "", message.text, "");
+    out.push(`## ${selection ? harnessName(selection.harnessId) : "Harness"}${model ? "（" + model + "）" : ""} · ${statusOf(run, run?.status ?? message.status)}`, "", message.text, "");
     if (run) { const facts = runFacts(run); if (facts.length) out.push(...facts, ""); }
   }
   return out.join("\n");

@@ -241,7 +241,7 @@ test("real browser validates Provider management, public chat switching, cancell
   await page.getByRole("button", { name: "发送消息", exact: true }).click();
   await expect(page.getByRole("button", { name: "停止当前回复", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "停止当前回复", exact: true }).click();
-  await expect(page.getByRole("log")).toContainText("已停止");
+  await expect(page.getByRole("log")).toContainText("已取消（用户停止）");
   current = await snapshot(); assert.equal(current.runs.at(-1)?.status, "cancelled");
   await page.getByRole("button", { name: "Providers", exact: true }).click();
   await page.getByRole("button", { name: "编辑 工作模型 B", exact: true }).click();
@@ -413,7 +413,7 @@ test("live chat renders committed partial Markdown before completion, respects r
   const partial = await current(); assert.equal(partial.runs.length, 2); assert.equal(partial.runs[1]!.status, "running");
   assert.ok(String(partial.messages.at(-1)?.text).includes("第一段已经到达。"));
   await page.getByRole("button", { name: "停止当前回复", exact: true }).click();
-  await expect(page.locator(".assistant-message").last()).toContainText("已停止");
+  await expect(page.locator(".assistant-message").last()).toContainText("已取消（用户停止）");
   const stopped = await current(); assert.equal(stopped.runs.length, 2); assert.equal(stopped.runs[1]!.status, "cancelled");
   assert.ok(String(stopped.messages.at(-1)?.text).includes("第一段已经到达。"));
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -1050,5 +1050,37 @@ test("a Turn that waits for its workspace past its wait budget is not sent, and 
   await expect(page.getByRole("heading", { name: "long work" })).toBeVisible();
   await page.getByRole("button", { name: "停止当前回复", exact: true }).click();
   await expect(log.locator("[data-run-status=cancelled]")).toHaveCount(1, { timeout: 15000 });
+  assert.deepEqual(errors, []);
+});
+
+test("a Turn waiting for a slot says how many conversations run, has no deadline of its own, and can be cancelled", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false, { name: "Busy Agent", scenario: "hermes" }); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const origin = new URL(fixture.gateway.url).origin;
+  await expect(page.getByRole("textbox", { name: "发送消息", exact: true })).toBeVisible();
+  const csrf = String((await (await context.request.get(origin + "/api/v1/auth/session")).json()).csrfToken);
+  const write = (path: string, data: unknown) => context.request.post(origin + path, { headers: { Origin: origin, "X-CSRF-Token": csrf }, data });
+  // Four conversations, each in its own workspace, wait for an approval and so take every slot.
+  for (const index of [1, 2, 3, 4]) {
+    const workspace = join(fixture.root, "busy-" + index); await mkdir(workspace);
+    const created = await write("/api/v1/sessions", { workspace, selection: { harnessId: "native-acp", controlId: "native-acp" }, commandId: "create-busy-" + index });
+    assert.equal(created.status(), 201);
+    assert.equal((await write("/api/v1/sessions/" + String((await created.json()).id) + "/messages", { text: "approve this", commandId: "send-busy-" + index })).status(), 202);
+  }
+  await expect(page.locator(".attention-count")).toHaveText("待处理 4", { timeout: 15000 });
+  // A fifth conversation, in another workspace, waits for one of them to end.
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Busy Agent", exact: true }).click();
+  await composer.fill("queued work"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
+  await expect(log.locator(".response-status")).toHaveText("等待开始：4 个对话正在执行，其中一个结束后自动开始", { timeout: 15000 });
+  await expect(log.locator(".queued-turn small")).toHaveText("没有单独的等待期限，按发送先后轮到。");
+  await expect(log.getByRole("button", { name: "打开那个对话", exact: true })).toHaveCount(0);
+  await page.screenshot({ path: join(artifact, "slot-wait.png"), animations: "disabled" });
+  await log.getByRole("button", { name: "取消排队", exact: true }).click();
+  await expect(log.locator("[data-run-status=cancelled]")).toContainText("已取消（用户停止）");
   assert.deepEqual(errors, []);
 });

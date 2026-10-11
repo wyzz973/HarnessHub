@@ -69,6 +69,7 @@ test("conversations in different workspaces run at once, up to the limit, and th
   await until(() => app.attention().length === 2);
   assert.deepEqual(app.attention().map(item => item.sessionId).sort(), sessions.slice(0, 2).sort(), "two run at once; the third waits for a slot");
   assert.equal(app.read(sessions[2]!).runs[0]!.status, "queued"); assert.deepEqual(factory.started.length, 2);
+  assert.deepEqual(app.slotWait(sessions[2]!) && { running: app.slotWait(sessions[2]!)!.running, limit: app.slotWait(sessions[2]!)!.limit }, { running: 2, limit: 2 }, "the third says that two run");
   await decide(app, sessions[0]!, "allow_once", "decide-0"); await app.wait(sessions[0]!);
   await until(() => app.attention().some(item => item.sessionId === sessions[2]));
   await decide(app, sessions[1]!, "deny", "decide-1"); await decide(app, sessions[2]!, "allow_once", "decide-2");
@@ -124,6 +125,55 @@ test("a conversation waiting for a slot goes before another conversation's later
   for (const id of [first.id, second.id]) await app.wait(id);
   assert.deepEqual(factory.started, [first.id, second.id, first.id], "the slot goes to the work accepted first, not to the conversation that held it");
   assert.deepEqual([...app.read(first.id).runs, ...app.read(second.id).runs].map(run => run.status), ["completed", "completed", "completed"]);
+});
+
+test("a Turn waiting for a slot says how many conversations run, can be cancelled, and starts nothing", async t => {
+  const { app, workspace, until, events, factory } = await setup(t, 1);
+  const first = await app.create(await workspace("slot-one"), { harnessId: "alpha" }, "create-one"), second = await app.create(await workspace("slot-two"), { harnessId: "alpha" }, "create-two");
+  app.send(first.id, "approve this", "send-one"); await until(() => app.attention().length === 1);
+  app.send(second.id, "turn", "send-two");
+  await until(() => app.slotWait(second.id) !== null);
+  const waiting = app.slotWait(second.id)!;
+  assert.equal(waiting.runId, app.read(second.id).runs[0]!.id); assert.equal(waiting.running, 1); assert.equal(waiting.limit, 1); assert.equal(app.queueState(second.id), null);
+  assert.deepEqual(events(second.id, "run.waiting"), [{ runId: waiting.runId, kind: "slot", running: 1 }]);
+  app.cancel(second.id, "cancel-two", waiting.runId);
+  await until(() => app.slotWait(second.id) === null);
+  assert.equal(app.read(second.id).runs[0]!.status, "cancelled"); assert.equal(events(second.id, "run.waiting_ended")[0]?.kind, "slot");
+  await decide(app, first.id, "allow_once", "decide-one"); await app.wait(first.id); await app.wait(second.id);
+  assert.deepEqual(factory.started, [first.id], "the cancelled Turn never started");
+});
+
+test("cancelling the waiting Turn passes the wait to the conversation's next Turn, and only that one can run out of time", async t => {
+  const { app, workspace, until, events } = await setup(t, undefined, { executionBudgetMs: 20_000, waitBudgetMs: 700 }, session => session === holderId ? "stop" : "hermes");
+  let holderId = "" as SessionId;
+  const shared = await workspace("next-in-line");
+  const holder = await app.create(shared, { harnessId: "alpha" }, "create-holder"); holderId = holder.id;
+  const waiting = await app.create(shared, { harnessId: "alpha" }, "create-waiting");
+  app.send(holder.id, "work until stopped", "holder-send"); await until(() => app.read(holder.id).runs[0]?.status === "running");
+  app.send(waiting.id, "first", "first-send"); app.send(waiting.id, "second", "second-send");
+  await until(() => app.queueState(waiting.id) !== null);
+  const [first, second] = app.read(waiting.id).runs;
+  assert.equal(app.queueState(waiting.id)!.runId, first!.id);
+  app.cancel(waiting.id, "cancel-first", first!.id);
+  // The next Turn waits from the moment of the cancel, not from when the cancelled Turn's wait would have run out.
+  assert.equal(app.queueState(waiting.id)?.runId, second!.id);
+  await app.wait(waiting.id);
+  const runs = app.read(waiting.id).runs;
+  assert.equal(runs[0]!.status, "cancelled", "the cancelled Turn is not failed by its old wait"); assert.equal(runs[0]!.error, null);
+  assert.equal(runs[1]!.status, "failed"); assert.equal(runs[1]!.error?.code, "WORKSPACE_BUSY"); assert.equal(app.busyHolderOf(runs[1]!.id), holder.id);
+  assert.deepEqual(events(waiting.id, "run.waiting").map(data => data.runId), [first!.id, second!.id]);
+  assert.deepEqual(events(waiting.id, "run.waiting_ended").map(data => data.runId), [first!.id, second!.id]);
+  app.cancel(holder.id, "cancel-holder"); await app.wait(holder.id);
+});
+
+test("a stop the Runtime decided stays its reason when the program completes the Turn within the stop grace", async t => {
+  const { app, workspace } = await setup(t, undefined, { executionBudgetMs: 300 }, () => "complete-on-cancel");
+  const session = await app.create(await workspace("late-complete"), { harnessId: "alpha" }, "create");
+  app.send(session.id, "complete late", "send"); await app.wait(session.id);
+  const run = app.read(session.id).runs[0]!;
+  assert.equal(run.status, "cancelled"); assert.equal(run.error?.code, "RUN_TIMEOUT");
+  assert.equal(run.backend?.status, "completed", "what the program said is kept apart from the Turn's status");
+  assert.equal(app.read(session.id).status, "open");
 });
 
 test("a Turn's execution budget pauses while it waits for the user, and its wait is recorded", async t => {
@@ -202,4 +252,3 @@ test("the budgets are whole seconds and minutes within their bounds, and anythin
     { waitMinutes: "121" }, { waitMinutes: "0" }, { waitMinutes: "30m" }, { waitMinutes: "" }])
     assert.throws(() => resolveTurnBudgets(input), (error: unknown) => error instanceof SessionError && error.code === "INVALID_INPUT", JSON.stringify(input));
 });
-

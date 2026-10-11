@@ -2,7 +2,7 @@ import { parseProviderTarget } from "../../../contracts/provider.js";
 import { TOOL_DIFF_BYTES, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type BackendResult, type CleanupEvidence, type ControlEvent, type ControlRun, type NativeConversationId, type NativeToolDetail, type NativeUsage } from "../../../contracts/control.js";
 import { MAX_RUN_ATTACHMENTS, MAX_RUN_OUTPUTS, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
 import {
-  SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId, DEFAULT_EXECUTION_BUDGET_MS, DEFAULT_WAIT_BUDGET_MS, STOP_GRACE_MS,
+  SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId, DEFAULT_EXECUTION_BUDGET_MS, DEFAULT_WAIT_BUDGET_MS, MAX_PARALLEL_CONVERSATIONS, STOP_GRACE_MS,
   type AttentionItem, type ForkedMessage, type HarnessSelection, type KeptProcessIdentity, type NativeConfiguration, type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicNotice, type PublicRun, type RunTiming,
   type SelectionRequest, type SendReceipt, type SessionBindingFactory, type SessionCommit, type SessionConfiguration,
   type SessionId, type SessionEvent, type SessionMutation, type SessionRuntimeOptions, type SessionSnapshot, type SessionStore, type SwitchReceipt,
@@ -107,8 +107,6 @@ function fault(error: unknown): { readonly code: string; readonly message: strin
   const code = error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code.slice(0, 128) : "CONTROL_FAILED";
   return { code, message: "Harness operation failed; inspect private control diagnostics" };
 }
-/** How many conversations run work at once unless configured (ADR-036); the same as the kept-process limit. */
-const MAX_PARALLEL = 4;
 /** How much of a Turn's stderr is kept for its diagnostics, and for how many Turns. */
 const RUN_DIAGNOSTIC_BYTES = 4096, MAX_RUN_DIAGNOSTICS = 64;
 /** Longest wait a driver may announce for one request (a day); anything else is ignored rather than shown. */
@@ -177,6 +175,8 @@ export class SessionRuntime {
   private readonly holders = new Map<string, SessionId>();
   /** Conversations whose next Turn waits for a workspace another conversation's work holds, with since when. */
   private readonly waitingForWorkspace = new Map<SessionId, { readonly runId: string; readonly holder: SessionId; readonly since: number; readonly sinceMono: number; readonly timer: ReturnType<typeof setTimeout> }>();
+  /** Conversations whose next Turn waits for a slot while every slot is taken, with since when (ADR-036); no budget runs. */
+  private readonly waitingForSlot = new Map<SessionId, { readonly runId: string; readonly since: number }>();
   /** How much of each Turn's wait budget its waits for a workspace used before it started (ADR-036). */
   private readonly waitUsed = new Map<string, number>();
   /** The conversation that held the workspace of each Turn this owner ended with WORKSPACE_BUSY, latest first out. */
@@ -769,12 +769,12 @@ export class SessionRuntime {
     const ordered = [...this.work].sort((a, b) => this.headAccepted(a) - this.headAccepted(b));
     for (const id of ordered) {
       if (this.workers.has(id)) continue;
-      if (!this.runnable(id)) { this.work.delete(id); this.leaveQueue(id); continue; }
+      if (!this.runnable(id)) { this.work.delete(id); this.leaveQueue(id); this.leaveSlot(id); continue; }
       const workspace = this.load(id).configuration.workspace, holder = this.holders.get(workspace);
-      if (holder !== undefined && holder !== id) { this.joinQueue(id, holder); continue; }
+      if (holder !== undefined && holder !== id) { this.leaveSlot(id); this.joinQueue(id, holder); continue; }
       // With every slot taken, later work is still looked at, so work behind a held workspace shows that it waits.
-      if (this.workers.size >= (this.options.maxParallel ?? MAX_PARALLEL)) continue;
-      this.work.delete(id); this.holders.set(workspace, id); this.leaveQueue(id);
+      if (this.workers.size >= (this.options.maxParallel ?? MAX_PARALLEL_CONVERSATIONS)) { this.joinSlot(id); continue; }
+      this.work.delete(id); this.holders.set(workspace, id); this.leaveQueue(id); this.leaveSlot(id);
       const worker: Promise<void> = Promise.resolve().then(() => this.serve(id));
       this.workers.set(id, worker);
       void worker.then(() => {}, error => { this.fail(error, id); }).finally(() => {
@@ -796,12 +796,16 @@ export class SessionRuntime {
   private headAccepted(id: SessionId): number {
     try { return this.load(id).runs.find(run => run.status === "queued")?.timing?.acceptedAt ?? Number.MAX_SAFE_INTEGER; } catch { return Number.MAX_SAFE_INTEGER; }
   }
-  /** Records once that a conversation's next Turn waits for `holder` to free their shared workspace. */
+  /**
+   * Records once that a conversation's next Turn waits for `holder` to free their shared workspace. When that Turn is no
+   * longer the next one (it was cancelled), its wait ends and the next Turn's wait begins.
+   */
   private joinQueue(id: SessionId, holder: SessionId): void {
+    const state = this.load(id), run = state.runs.find(item => item.status === "queued");
+    if (this.waitingForWorkspace.get(id)?.runId !== run?.id) this.leaveQueue(id);
+    if (run === undefined) return;
     const prior = this.waitingForWorkspace.get(id);
     if (prior !== undefined && prior.holder === holder) return;
-    const state = this.load(id), run = state.runs.find(item => item.status === "queued");
-    if (run === undefined) return;
     // Waiting for a workspace uses the Turn's wait budget; at its end the Turn fails with WORKSPACE_BUSY (ADR-036).
     const left = (this.options.waitBudgetMs ?? DEFAULT_WAIT_BUDGET_MS) - (this.waitUsed.get(run.id) ?? 0) - (prior === undefined ? 0 : performance.now() - prior.sinceMono);
     if (prior !== undefined) clearTimeout(prior.timer);
@@ -834,11 +838,30 @@ export class SessionRuntime {
     try { this.commit(id, current => ({ next: current, events: [event("run.waiting_ended", { runId: waiting.runId, kind: "workspace", waitedMs })] })); } catch (error) { this.fail(error, id); }
   }
   /**
+   * Records once that a conversation's next Turn waits for a slot because every slot is taken (ADR-036). It waits without a
+   * budget of its own: each running Turn is bounded by its budgets, and slots go to work in the order it was accepted.
+   */
+  private joinSlot(id: SessionId): void {
+    const run = this.load(id).runs.find(item => item.status === "queued");
+    if (this.waitingForSlot.get(id)?.runId !== run?.id) this.leaveSlot(id);
+    if (run === undefined || this.waitingForSlot.has(id)) return;
+    this.waitingForSlot.set(id, { runId: run.id, since: this.options.now().getTime() });
+    this.commit(id, current => ({ next: current, events: [event("run.waiting", { runId: run.id, kind: "slot", running: this.workers.size })] }));
+  }
+  /** Ends a conversation's wait for a slot, recording how long it waited. */
+  private leaveSlot(id: SessionId): void {
+    const waiting = this.waitingForSlot.get(id);
+    if (waiting === undefined) return;
+    this.waitingForSlot.delete(id);
+    const waitedMs = Math.max(0, this.options.now().getTime() - waiting.since);
+    try { this.commit(id, current => ({ next: current, events: [event("run.waiting_ended", { runId: waiting.runId, kind: "slot", waitedMs })] })); } catch (error) { this.fail(error, id); }
+  }
+  /**
    * Whether another conversation should go before this worker's next work, by acceptance (FIFO, ADR-036): one waiting for
    * this workspace, or one waiting for a slot while every slot is taken.
    */
   private earlierWaiter(id: SessionId): boolean {
-    const workspace = this.load(id).configuration.workspace, mine = this.headAccepted(id), full = this.workers.size >= (this.options.maxParallel ?? MAX_PARALLEL);
+    const workspace = this.load(id).configuration.workspace, mine = this.headAccepted(id), full = this.workers.size >= (this.options.maxParallel ?? MAX_PARALLEL_CONVERSATIONS);
     return [...this.work].some(other => other !== id && !this.workers.has(other) && this.headAccepted(other) < mine
       && (this.waitingForWorkspace.has(other) ? this.load(other).configuration.workspace === workspace : full));
   }
@@ -852,6 +875,11 @@ export class SessionRuntime {
     const holderWaits = [...this.permissions.values()].some(value => value.execution.sessionId === waiting.holder && !value.request.decided);
     const left = (this.options.waitBudgetMs ?? DEFAULT_WAIT_BUDGET_MS) - (this.waitUsed.get(waiting.runId) ?? 0);
     return { runId: waiting.runId, holderSessionId: waiting.holder, holderWaitsForUser: holderWaits, since: waiting.since, endsAt: waiting.since + Math.max(0, left) };
+  }
+  /** What a conversation's next Turn waits for, when every slot is taken: how many conversations run and the limit (ADR-036). */
+  slotWait(id: SessionId): { readonly runId: string; readonly running: number; readonly limit: number; readonly since: number } | null {
+    const waiting = this.waitingForSlot.get(id);
+    return waiting === undefined ? null : { runId: waiting.runId, running: this.workers.size, limit: this.options.maxParallel ?? MAX_PARALLEL_CONVERSATIONS, since: waiting.since };
   }
   /** The conversation that held the workspace of each of this conversation's Turns this owner ended with WORKSPACE_BUSY. */
   busyHolderOf(run: string): SessionId | null { return this.busyHolders.get(run) ?? null; }

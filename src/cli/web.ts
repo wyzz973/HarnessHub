@@ -2,7 +2,7 @@ import { parseArgs } from "node:util";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { dataRoot } from "./session-application.js";
-import { SessionError, resolveTurnBudgets } from "../contracts/session.js";
+import { MAX_PARALLEL_CONVERSATIONS, SessionError, resolveTurnBudgets } from "../contracts/session.js";
 import { prepareConfiguration } from "../infrastructure/session/binding-factory.js";
 import { startWebServer, type WebServer } from "../web/server.js";
 
@@ -25,6 +25,8 @@ export async function main(args: readonly string[]): Promise<number> {
     gateway = await startWebServer({ providerManagement: false, root: dataRoot(values["data-dir"]), configuration, port: values.port === undefined ? 4317 : Number(values.port), budgets,
       ...(values["assets-dir"] === undefined ? {} : { assetsDirectory: resolve(values["assets-dir"]) }) });
     process.stdout.write("HarnessGateway\n" + gateway.url + "\n");
+    // What this service runs with (ADR-036), so its log says it without reading the code.
+    process.stdout.write(`HarnessGateway: up to ${MAX_PARALLEL_CONVERSATIONS} conversations run at once; each Turn may work ${budgets.executionBudgetMs / 1000} s and wait ${budgets.waitBudgetMs / 60_000} min for the user\n`);
     await new Promise<void>(done => {
       const stop = () => { process.off("SIGINT", stop); process.off("SIGTERM", stop); done(); };
       process.on("SIGINT", stop); process.on("SIGTERM", stop);

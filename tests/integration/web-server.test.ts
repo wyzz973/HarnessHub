@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { startWebServer, type WebServer } from "../../src/web/server.js";
+import { conversationMarkdown } from "../../src/web/conversation-export.js";
 import type { SessionView } from "../../src/contracts/web.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
 import { LocalContentStore } from "../../src/infrastructure/session/content-store.js";
@@ -347,6 +348,12 @@ test("the public conversation exports as Markdown or JSON without private native
   const json = await fetch(f.origin + `/api/v1/sessions/${id}/export?format=json`, { headers: { Cookie: f.cookie } });
   const exported = row(await json.json()); assert.equal(exported.application, "HarnessHub"); assertView(exported.session);
   assert.equal(JSON.stringify(exported).includes("nativeBindings"), false, "private native bindings are not exported");
+  // A cancelled Turn is exported with why it ended, as the chat shows it (ADR-036).
+  const view = exported.session as SessionView, ended = (error: string | null, cancelRequested: boolean) => conversationMarkdown({ ...view,
+    runs: view.runs.map(run => ({ ...run, status: "cancelled" as const, error: error === null ? null : { code: error, message: "ended" }, cancelRequested })),
+    messages: view.messages.map(message => ({ ...message, status: "cancelled" as const })) }, () => "Web a", new Date(0));
+  assert.ok(ended("RUN_TIMEOUT", false).includes("## Web a · 已取消（执行预算用尽）")); assert.ok(ended("WAIT_EXPIRED", false).includes("## Web a · 已取消（等待你的决定超时）"));
+  assert.ok(ended(null, true).includes("## Web a · 已取消（用户停止）"));
   assert.equal((await call(f, `/api/v1/sessions/${id}/export?format=pdf`)).status, 400);
   assert.equal((await fetch(f.origin + `/api/v1/sessions/${id}/export`)).status, 401);
 });

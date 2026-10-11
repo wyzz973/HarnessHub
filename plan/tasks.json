@@ -3139,7 +3139,8 @@
         "G050-NC3",
         "G050-NC4",
         "G050-NC5",
-        "G050-NC6"
+        "G050-NC6",
+        "G050-NC7"
       ],
       "active_slice": "native-installation-management"
     },

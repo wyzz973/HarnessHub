@@ -262,8 +262,13 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   });
   let app: ReturnType<typeof composeApplication>;
   // A conversation's view with the live state of the native process it keeps (ADR-030).
+  // A Turn waits for its workspace or, when every slot is taken, for a slot (ADR-036).
+  const queueOf = (id: SessionSnapshot["id"]): NonNullable<SessionView["queue"]> | null => {
+    const workspace = app.runtime.queueState(id), slot = workspace === null ? app.runtime.slotWait(id) : null;
+    return workspace !== null ? { kind: "workspace", ...workspace } : slot !== null ? { kind: "slot", ...slot } : null;
+  };
   const sessionView = (snapshot: SessionSnapshot, permissions: SessionView["permissions"] = []): SessionView => view(snapshot, permissions, app.runtime.keptProcess(snapshot.id), app.runtime.keptLoss(snapshot.id),
-    app.runtime.queueState(snapshot.id), Object.fromEntries(snapshot.runs.flatMap(run => { const holder = app.runtime.busyHolderOf(run.id); return holder === null ? [] : [[run.id, holder]]; })));
+    queueOf(snapshot.id), Object.fromEntries(snapshot.runs.flatMap(run => { const holder = app.runtime.busyHolderOf(run.id); return holder === null ? [] : [[run.id, holder]]; })));
   const streams = new SessionStreamHub(id => sessionView(app.runtime.read(id), app.runtime.permissionRequests(id)), {}, failure => {
     const fault = publicFailure(failure.error);
     process.stderr.write("HarnessGateway: SESSION_STREAM_READ_FAILED (" + app.providers.redact(fault.code).slice(0, 128) + ")\n");

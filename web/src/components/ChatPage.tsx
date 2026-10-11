@@ -151,12 +151,14 @@ export function ChatPage(props: ChatProps) {
   const queue = session?.queue ?? null;
   const queueNotice = useMemo((): QueueNotice | undefined => {
     if (queue === null) return undefined;
+    const cancel = { cancelling: cancellingQueue === queue.runId,
+      onCancel: props.onCancelQueued ? () => { setCancellingQueue(queue.runId); void props.onCancelQueued!(queue.runId).finally(() => setCancellingQueue(null)); } : undefined };
+    if (queue.kind === "slot") return { kind: "slot", running: queue.running, ...cancel };
     const holder = queue.holderSessionId, waiting = props.attention?.filter(item => item.sessionId === holder);
     const holderWaits = waiting === undefined ? queue.holderWaitsForUser ? "approval" as const : null
       : waiting.some(item => item.kind === "approval") ? "approval" as const : waiting.length ? "question" as const : null;
-    return { holderTitle: shortTitle(props.sessionTitle?.(holder)), holderWaits, endsAt: queue.endsAt, cancelling: cancellingQueue === queue.runId,
-      onOpen: props.onOpenSession ? () => props.onOpenSession!(holder) : undefined,
-      onCancel: props.onCancelQueued ? () => { setCancellingQueue(queue.runId); void props.onCancelQueued!(queue.runId).finally(() => setCancellingQueue(null)); } : undefined };
+    return { kind: "workspace", holderTitle: shortTitle(props.sessionTitle?.(holder)), holderWaits, endsAt: queue.endsAt, ...cancel,
+      onOpen: props.onOpenSession ? () => props.onOpenSession!(holder) : undefined };
   }, [queue, props.attention, props.sessionTitle, props.onOpenSession, props.onCancelQueued, cancellingQueue]);
   const busyHolder = useCallback((runId: string) => {
     const holder = session?.busyHolders?.[runId];

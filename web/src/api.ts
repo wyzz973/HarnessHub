@@ -172,8 +172,9 @@ export function decodeSession(value: unknown): SessionView {
     workspace: text(row.workspace), selection: selection(row.selection), activeRunId: nullableText(row.activeRunId), pendingSwitchId: nullableText(row.pendingSwitchId),
     ...(row.retention === undefined ? {} : { retention: (() => { const retention = record(row.retention); return { enabled: bool(retention.enabled), process: retention.process === null ? null : decodeKeptProcess(retention.process),
       ...(retention.lost === undefined ? {} : { lost: (() => { const lost = record(retention.lost); return { outcome: choice(lost.outcome, ["terminated", "gone", "unconfirmed"]), leaseReleased: bool(lost.leaseReleased), at: number(lost.at) }; })() }) }; })() }),
-    ...(row.queue === undefined ? {} : { queue: (() => { const queue = record(row.queue); return { runId: text(queue.runId), holderSessionId: text(queue.holderSessionId), holderWaitsForUser: bool(queue.holderWaitsForUser),
-      since: number(queue.since), endsAt: number(queue.endsAt) }; })() }),
+    ...(row.queue === undefined ? {} : { queue: (() => { const queue = record(row.queue), kind = choice(queue.kind, ["workspace", "slot"]);
+      return kind === "workspace" ? { kind, runId: text(queue.runId), holderSessionId: text(queue.holderSessionId), holderWaitsForUser: bool(queue.holderWaitsForUser), since: number(queue.since), endsAt: number(queue.endsAt) }
+        : { kind, runId: text(queue.runId), running: number(queue.running), limit: number(queue.limit), since: number(queue.since) }; })() }),
     ...(row.busyHolders === undefined ? {} : { busyHolders: Object.fromEntries(Object.entries(record(row.busyHolders)).slice(0, 256).map(([run, holder]) => [run, text(holder)])) }),
     ...(row.nativeStates === undefined ? {} : { nativeStates: list(row.nativeStates, value => { const state = record(value);
       return { harnessId: text(state.harnessId), controlId: text(state.controlId), status: choice(state.status, ["ready", "unconfirmed", "forking"]),
@@ -528,6 +529,6 @@ export function protocolLabel(protocol: ProviderProtocol | string): string {
   return labels[protocol] ?? protocol;
 }
 export function runStatusLabel(status: RunStatus): string {
-  const labels: Record<RunStatus, string> = { queued: "等待中", preparing: "准备中", running: "正在回复", settling: "正在结束", completed: "本轮结束", cancelled: "已停止", failed: "执行失败", unknown: "结果待核实" };
+  const labels: Record<RunStatus, string> = { queued: "等待中", preparing: "准备中", running: "正在回复", settling: "正在结束", completed: "本轮结束", cancelled: "已取消", failed: "执行失败", unknown: "结果待核实" };
   return labels[status];
 }

@@ -295,6 +295,8 @@ export interface SessionBindingFactory {
 export const DEFAULT_EXECUTION_BUDGET_MS = 300_000, MAX_EXECUTION_BUDGET_MS = 60 * 60_000, MIN_EXECUTION_BUDGET_MS = 30_000;
 export const DEFAULT_WAIT_BUDGET_MS = 30 * 60_000, MAX_WAIT_BUDGET_MS = 2 * 60 * 60_000, MIN_WAIT_BUDGET_MS = 60_000;
 /** How long a stopped Turn's program may take to settle before its process is ended. */
+/** How many conversations run work at once (ADR-036); the same as the kept-process limit. */
+export const MAX_PARALLEL_CONVERSATIONS = 4;
 export const STOP_GRACE_MS = 15_000;
 /** The drivers' own per-Turn timeout: only a backstop against a hung protocol, beyond both budgets at their largest. */
 export const NATIVE_TURN_HARD_CAP_MS = MAX_EXECUTION_BUDGET_MS + MAX_WAIT_BUDGET_MS + 60 * 60_000;
@@ -312,6 +314,18 @@ export function resolveTurnBudgets(input: { readonly executionSeconds?: string |
   };
   return { executionBudgetMs: whole(input.executionSeconds, 1000, DEFAULT_EXECUTION_BUDGET_MS, MIN_EXECUTION_BUDGET_MS, MAX_EXECUTION_BUDGET_MS, "execution budget (seconds)"),
     waitBudgetMs: whole(input.waitMinutes, 60_000, DEFAULT_WAIT_BUDGET_MS, MIN_WAIT_BUDGET_MS, MAX_WAIT_BUDGET_MS, "wait budget (minutes)") };
+}
+/**
+ * Why a cancelled Turn ended, in the user's words, so the Runtime's own stops are never shown or exported as the user's
+ * (ADR-036): its execution budget, its wait for the user, a restart before it was sent, or the user's stop.
+ */
+export function cancelledLabel(run: { readonly error?: { readonly code: string } | null; readonly cancelRequested?: boolean }): string {
+  switch (run.error?.code) {
+    case "RUN_TIMEOUT": return "已取消（执行预算用尽）";
+    case "WAIT_EXPIRED": return "已取消（等待你的决定超时）";
+    case "OWNER_ENDED": return "已取消（服务重启，这条消息没有发出）";
+  }
+  return run.cancelRequested === true ? "已取消（用户停止）" : "已取消";
 }
 export interface SessionRuntimeOptions {
   readonly id: () => string;
