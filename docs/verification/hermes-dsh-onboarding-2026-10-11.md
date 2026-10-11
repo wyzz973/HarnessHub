@@ -34,7 +34,7 @@ Hermes Agent 0.12.0（官方安装方式，`~/.hermes/hermes-agent`，DeepSeek d
 | 验收 | Hermes | dsh | 证据 |
 |---|---|---|---|
 | 协议握手（`probe`，不发提示词） | hermes-agent 0.12.0；load、list、fork、resume、图片 | deepseek-harness-acp；list、resume、close，无认证 | `.tmp/cc-hermes-probe.ndjson`、`.tmp/cc-dsh-probe.ndjson` |
-| 真实界面两轮对话（独立开发实例） | 第二轮接上上文，回复未混入回放；思考与用量显示 | 第二轮接上上文；上下文占用显示 | 开发实例截图（未入库） |
+| 真实界面两轮对话（独立开发实例） | 第二轮接上上文，回复未混入回放；思考与用量显示 | 第二轮接上上文；上下文占用显示 | 开发实例截图（未入库）：`.tmp/cc-ui-hermes-turn.png`、`cc-ui-hermes-turn2.png`、`cc-ui-hermes-turn3.png`、`cc-ui-dsh-turn.png` |
 | 跨 Hub 重启的原生恢复 | 通过 | 通过 | `.tmp/cc-hermes-dsh-resume.json` |
 | 思考与回复分开保存（37×43=1591） | 通过，152 字 | 通过，97 字 | `.tmp/cc-hermes-dsh-thinking.json` |
 | 工具活动：命令与编辑、详情可读 | 通过（todo、cat、patch 带差异） | 通过（todo_write、bash、read、edit） | `.tmp/cc-hermes-activity.json`、`.tmp/cc-hermes-dsh-activity.json` |
