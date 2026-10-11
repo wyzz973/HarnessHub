@@ -1153,7 +1153,8 @@
         "G008-NC4",
         "G008-NC5",
         "G008-NC6",
-        "G008-NC7"
+        "G008-NC7",
+        "G008-NC8"
       ],
       "active_slice": "native-installation-management"
     },
@@ -2037,7 +2038,8 @@
         "tests/integration/g028.test.ts",
         "src/contexts/session/application/runtime.ts",
         "tests/integration/session-runtime.test.ts",
-        "tests/integration/kept-process.test.ts"
+        "tests/integration/kept-process.test.ts",
+        "tests/fixtures/kept-owner.mjs"
       ],
       "requirements": [
         "R07",
@@ -2074,7 +2076,8 @@
         "G028-NC5",
         "G028-NC6",
         "G028-NC7",
-        "G028-NC8"
+        "G028-NC8",
+        "G028-NC9"
       ],
       "active_slice": "native-models-switching"
     },

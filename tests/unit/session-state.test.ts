@@ -41,7 +41,7 @@ test("Run timing is bounded, ordered and exists only from Session v10", () => {
 test("unknown schemas, properties and inconsistent public ownership are rejected", () => {
   const state = seed();
   assert.equal(parseSession({ ...state, schemaVersion: 3 }).schemaVersion, 3);
-  for (const value of [null, {}, { ...state, schemaVersion: 12 }, { ...state, secret: "not-a-field" },
+  for (const value of [null, {}, { ...state, schemaVersion: 13 }, { ...state, secret: "not-a-field" },
     { ...state, activeRunId: "run-one" }, { ...state, lastSeq: 3 }, { ...state, status: "unknown" },
     { ...state, configuration: { ...state.configuration, workspace: "relative" } }]) assert.throws(() => parseSession(value), SessionError);
 });
@@ -226,9 +226,12 @@ test("a conversation keeps its native process only from Session v11, through the
     kept({ retained: { harnessId: "other", controlId: selection.controlId, runId: handed.id, since: 5 } }), kept({ retained: { harnessId: selection.harnessId, controlId: selection.controlId, runId: handed.id, since: 0 } }),
     kept({ commands: [...state.commands, { id: "retention-1", kind: "retention", fingerprint, resultId: "session-unit" }] }, 10)])
     assert.throws(() => parseSession(invalid), SessionError);
-  // A process the previous owner kept is not held after recovery; nothing else changes.
-  const recovered = recoverSession(valid)!;
-  assert.equal(recovered.next.retained, undefined); assert.equal(recovered.next.retainNative, true); assert.equal(recovered.next.status, "open");
-  assert.deepEqual(recovered.events, [{ type: "native.process_lost", data: { runId: handed.id, harnessId: selection.harnessId, controlId: selection.controlId, reason: "owner_ended" } }]);
-  assert.equal(recoverSession(parseSession({ ...state, schemaVersion: 11, retainNative: true })), null);
+  // Recovery leaves a previous owner's kept process recorded: the new owner's runtime recognizes and ends it (ADR-030).
+  assert.equal(recoverSession(valid), null);
+  // From v12 the record also says how to recognize the process group once its owner ended.
+  const identified = { harnessId: selection.harnessId, controlId: selection.controlId, runId: handed.id, since: 5, process: { group: 4242, startedAt: "1791741701" } };
+  assert.equal(parseSession(kept({ retained: identified }, 12)).retained?.process?.group, 4242);
+  assert.throws(() => parseSession(kept({ retained: identified })), /requires Session v12/u);
+  for (const process of [{ group: 1, startedAt: "1" }, { group: 4242 }, { group: 4242, startedAt: "" }, { group: 4242, startedAt: "x", pid: 1 }])
+    assert.throws(() => parseSession(kept({ retained: { ...identified, process } }, 12)), SessionError);
 });

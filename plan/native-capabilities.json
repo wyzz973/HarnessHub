@@ -762,10 +762,11 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-kept-process-2026-10-12.json",
+            ".tmp/cc-kept-orphan-2026-10-12.json",
             "docs/decisions/0030-retained-native-processes.md",
             "docs/verification/first-chain-polish-2026-10-11.md"
           ],
-          "note": "按对话开启“保持原生进程”（默认关闭，新对话可在首条消息前开启）；回合之间保留 claude-agent-acp 进程，后台 shell 继续运行，下一回合复用进程读取其输出（真实通过：启动 7 毫秒，读到后台输出）；回合外更新只计数；空闲 30 分钟、切换、关闭、重建、分支与服务关闭时先结束并留证"
+          "note": "按对话开启“保持原生进程”（默认关闭，新对话可在首条消息前开启）；回合之间保留 claude-agent-acp 进程，后台 shell 继续运行，下一回合复用进程读取其输出（真实通过：启动 7 毫秒，读到后台输出）；回合外更新只计数；空闲 30 分钟、切换、关闭、重建、分支与服务关闭时先结束并留证；服务被强制结束后，下一次启动按进程组号与启动时间接管：真实验证中 Claude Code 在输入关闭后自行结束（含后台任务），延迟重启记为已结束，立即重启时由 Hub 结束进程组，两种情况都在确认后释放工作区；Claude 的后台 Bash 在自己的进程组里，靠原程序自己清理"
         },
         "export": {
           "native": "partial",

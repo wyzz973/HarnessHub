@@ -179,6 +179,11 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       throw error;
     }
   }
+  /** Releases the workspace lease an ended owner left for `session` once its kept processes were confirmed ended (ADR-030). */
+  releaseAbandonedLease(configuration: SessionConfiguration, session: SessionId): boolean {
+    this.assertOwner();
+    return this.workspaces.releaseAbandoned?.(configuration.workspace, session) ?? false;
+  }
   /**
    * Read-only identity for catalog caches, with the control entry the selection resolves to; execution always makes a fresh
    * observation. File identities only (never contents), and no credentials are returned.

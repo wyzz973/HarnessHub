@@ -152,7 +152,7 @@ function summary(snapshot: SessionSnapshot): SessionSummary {
   return { id: snapshot.id, title: first ? first.slice(0, 80) : inherited ? inherited.slice(0, 80) : "新对话", status: snapshot.status, workspace: snapshot.configuration.workspace,
     selection: snapshot.selection, updatedSeq: snapshot.lastSeq, activeRunId: snapshot.activeRunId };
 }
-function view(snapshot: SessionSnapshot, permissions: SessionView["permissions"] = [], kept: KeptProcessView | null = null): SessionView {
+function view(snapshot: SessionSnapshot, permissions: SessionView["permissions"] = [], kept: KeptProcessView | null = null, lost: NonNullable<SessionView["retention"]>["lost"] | null = null): SessionView {
   return { id: snapshot.id, version: snapshot.version, lastSeq: snapshot.lastSeq, epoch: snapshot.epoch, status: snapshot.status,
     workspace: snapshot.configuration.workspace, selection: snapshot.selection, activeRunId: snapshot.activeRunId, pendingSwitchId: snapshot.pendingSwitchId,
     permissions, nativeStates: snapshot.nativeBindings?.flatMap(binding => {
@@ -162,7 +162,7 @@ function view(snapshot: SessionSnapshot, permissions: SessionView["permissions"]
         ...(binding.observed === undefined ? {} : { observed: binding.observed }), ...(carried === null ? {} : { carried }) }];
     }) ?? [],
     ...(snapshot.origin === undefined ? {} : { origin: snapshot.origin }),
-    ...(snapshot.schemaVersion < 11 ? {} : { retention: { enabled: snapshot.retainNative === true, process: kept } }), messages: snapshot.messages, runs: snapshot.runs, switches: snapshot.switches };
+    ...(snapshot.schemaVersion < 11 ? {} : { retention: { enabled: snapshot.retainNative === true, process: kept, ...(lost === null ? {} : { lost }) } }), messages: snapshot.messages, runs: snapshot.runs, switches: snapshot.switches };
 }
 function publicFailure(error: unknown): { readonly status: number; readonly code: string; readonly message: string } {
   if (error instanceof HttpError || error instanceof SessionStreamError) return error;
@@ -256,7 +256,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   });
   let app: ReturnType<typeof composeApplication>;
   // A conversation's view with the live state of the native process it keeps (ADR-030).
-  const sessionView = (snapshot: SessionSnapshot, permissions: SessionView["permissions"] = []): SessionView => view(snapshot, permissions, app.runtime.keptProcess(snapshot.id));
+  const sessionView = (snapshot: SessionSnapshot, permissions: SessionView["permissions"] = []): SessionView => view(snapshot, permissions, app.runtime.keptProcess(snapshot.id), app.runtime.keptLoss(snapshot.id));
   const streams = new SessionStreamHub(id => sessionView(app.runtime.read(id), app.runtime.permissionRequests(id)), {}, failure => {
     const fault = publicFailure(failure.error);
     process.stderr.write("HarnessGateway: SESSION_STREAM_READ_FAILED (" + app.providers.redact(fault.code).slice(0, 128) + ")\n");
@@ -610,6 +610,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     return closing;
   };
   try {
+    // Processes conversations kept under a service that ended without closing them are ended (or left quarantined) first.
+    await app.runtime.reapKept();
     await rescan();
     await new Promise<void>((done, reject) => { server.once("error", reject); server.listen(port, "127.0.0.1", () => { server.off("error", reject); done(); }); });
     const address = server.address();

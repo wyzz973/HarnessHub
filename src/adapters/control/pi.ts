@@ -82,6 +82,7 @@ export class PiControl implements HarnessControl {
   private failure: Error | null = null;
   private closed = false;
   healthy(): boolean { return this.initialized && !this.closed && this.failure === null && this.rpc.failure === null; }
+  processGroup(): number | null { return this.rpc.processGroup; }
   private catalog: NativeModelCatalog = { models: [], defaultModel: null, authentication: "unknown", canSelect: false };
   private interactivePermissions = false;
   private readonly permissions = new Map<string, { method:string;choices:readonly string[]; resolve: (value: Readonly<Record<string, unknown>>) => void; timer: ReturnType<typeof setTimeout> | null }>();

@@ -626,7 +626,7 @@
 - 只有一个取得业务写入权
 - 恢复数据与outbox一致
 
-场景：G008-C01, G008-C02, G008-C03, G008-C04, G008-C05, G008-P01, G008-P02, G008-R01, G008-N01, G008-X02, G008-NC1, G008-NC2, G008-NC3, G008-NC4, G008-NC5, G008-NC6, G008-NC7。
+场景：G008-C01, G008-C02, G008-C03, G008-C04, G008-C05, G008-P01, G008-P02, G008-R01, G008-N01, G008-X02, G008-NC1, G008-NC2, G008-NC3, G008-NC4, G008-NC5, G008-NC6, G008-NC7, G008-NC8。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1078,13 +1078,14 @@
 - src/contexts/session/application/runtime.ts
 - tests/integration/session-runtime.test.ts
 - tests/integration/kept-process.test.ts
+- tests/fixtures/kept-owner.mjs
 
 验收：
 - 同一意图只取得一次有效执行权
 - 未知结果不自动重跑
 - 有界排队且期限继续计时
 
-场景：G028-C01, G028-C02, G028-C03, G028-C04, G028-R01, G028-R02, G028-NC2, G028-NC3, G028-NC4, G028-NC5, G028-NC6, G028-NC7, G028-NC8。
+场景：G028-C01, G028-C02, G028-C03, G028-C04, G028-R01, G028-R02, G028-NC2, G028-NC3, G028-NC4, G028-NC5, G028-NC6, G028-NC7, G028-NC8, G028-NC9。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 

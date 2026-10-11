@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { test, type TestContext } from "node:test";
 import { SessionError, commandId, messageId, runId, sessionId, type EventDraft, type SessionSnapshot } from "../../src/contracts/session.js";
+import { parseSession } from "../../src/contexts/session/domain/state.js";
 import { SqliteSessionReader, SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
 
 const repository = dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url)))));
@@ -19,7 +20,7 @@ function directory(t: TestContext): string {
 function draft(type = "session.created"): readonly EventDraft[] { return [{ type, data: {} }]; }
 function initial(root: string, suffix = "one", key = "create-one", fingerprint = "a".repeat(64)): SessionSnapshot {
   const id = sessionId("session-" + suffix);
-  return { schemaVersion: 11, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
+  return { schemaVersion: 12, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
     configuration: { workspace: root, manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: false },
     selection: { harnessId: "fixture", controlId: "fixture-acp" }, activeRunId: null, pendingSwitchId: null,
     runs: [], messages: [], switches: [], commands: [{ id: commandId(key), kind: "create", fingerprint, resultId: id }] };
@@ -47,10 +48,10 @@ test("numbered v1-to-v2-to-v3 migration preserves public identities, history, co
   const reader = new SqliteSessionReader(root); assert.equal(reader.get(state.id).schemaVersion, 1); reader.close();
   const upgraded = new SqliteSessionStore(root);
   try {
-    assert.deepEqual(upgraded.get(state.id), { ...state, schemaVersion: 11 });
+    assert.deepEqual(upgraded.get(state.id), { ...state, schemaVersion: 12 });
     assert.deepEqual(upgraded.events(state.id, 0), events);
     assert.equal(upgraded.findByCreateKey(commandId("create-one"))?.id, state.id);
-    const verify = database(root); assert.equal(verify.prepare("PRAGMA user_version").get()?.user_version, 11); verify.close();
+    const verify = database(root); assert.equal(verify.prepare("PRAGMA user_version").get()?.user_version, 12); verify.close();
   } finally { upgraded.close(); }
 });
 
@@ -296,7 +297,7 @@ test("SQLite event write failure rolls back snapshot and disables new operations
 test("corrupt persisted aggregate and unknown migration version never become empty Sessions", t => {
   const root = directory(t), store = new SqliteSessionStore(root), created = store.create(initial(root), draft()); store.close();
   const outsider = database(root);
-  outsider.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify({ ...created.session, schemaVersion: 12 }), created.session.id); outsider.close();
+  outsider.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify({ ...created.session, schemaVersion: 13 }), created.session.id); outsider.close();
   assert.throws(() => new SqliteSessionStore(root), code("INVALID_DATA"));
   const badVersion = database(root); badVersion.exec("PRAGMA user_version=99"); badVersion.close();
   assert.throws(() => new SqliteSessionReader(root), code("INVALID_DATA"));
@@ -480,6 +481,27 @@ test("v9 to v10 keeps every fact and rejects Run timing in v9 data atomically", 
   const invalid = database(root); invalid.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify(timed), state.id); invalid.exec("PRAGMA user_version=9"); invalid.close();
   assert.throws(() => new SqliteSessionStore(root), code("INVALID_DATA"));
   const verify = database(root); assert.equal(verify.prepare("PRAGMA user_version").get()?.user_version, 9); assert.equal(JSON.parse(String(verify.prepare("SELECT snapshot FROM sessions WHERE id=?").get(state.id)?.snapshot)).schemaVersion, 9); verify.close();
+});
+
+test("v10 and v11 to v12 keep every fact and reject fields of a later version atomically", t => {
+  const root = directory(t), original = new SqliteSessionStore(root), state = completedHistory(original, root), oldEvents = original.events(state.id, 0); original.close();
+  // A v11 conversation that keeps its process is valid as it is; only the v12 group identity is out of place in it.
+  const kept = { harnessId: state.selection.harnessId, controlId: state.selection.controlId, runId: state.runs.at(-1)!.id, since: 5 };
+  const holding = { retainNative: true, runs: state.runs.map(run => ({ ...run, cleanup: null, retained: true })), retained: kept };
+  assert.equal(parseSession({ ...state, ...holding, schemaVersion: 11 }).retained?.runId, kept.runId);
+  for (const [version, later] of [[10, { retainNative: true }], [11, { ...holding, retained: { ...kept, process: { group: 4242, startedAt: "1791741701" } } }]] as const) {
+    const legacy = { ...state, schemaVersion: version }, db = database(root);
+    db.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify(legacy), state.id); db.exec("PRAGMA user_version=" + version); db.close();
+    const reader = new SqliteSessionReader(root); assert.equal(reader.get(state.id).schemaVersion, version); reader.close();
+    const upgraded = new SqliteSessionStore(root);
+    assert.deepEqual(upgraded.get(state.id), state, "v" + version); assert.deepEqual(upgraded.events(state.id, 0), oldEvents); upgraded.close();
+    // A field of a later version in older data means corrupted data, and nothing is migrated.
+    const invalid = database(root); invalid.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify({ ...legacy, ...later }), state.id); invalid.exec("PRAGMA user_version=" + version); invalid.close();
+    assert.throws(() => new SqliteSessionStore(root), code("INVALID_DATA"), "v" + version);
+    const verify = database(root); assert.equal(verify.prepare("PRAGMA user_version").get()?.user_version, version);
+    assert.equal(JSON.parse(String(verify.prepare("SELECT snapshot FROM sessions WHERE id=?").get(state.id)?.snapshot)).schemaVersion, version);
+    verify.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify(state), state.id); verify.exec("PRAGMA user_version=12"); verify.close();
+  }
 });
 
 test("native owners name the Session holding each ready or unconfirmed native reference, never a pending branch or an archived one", t => {

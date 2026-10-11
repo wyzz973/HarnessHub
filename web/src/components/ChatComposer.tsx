@@ -165,6 +165,11 @@ export function ChatComposer(props: ComposerProps) {
     // Codex's collaboration mode stays with its thread: plan mode answers with a plan, and following the native configuration
     // does not leave it (ADR-034).
     : !draft.providerId && draft.nativeOptions.collaboration_mode === "plan" ? `计划模式：${harness?.name ?? "Harness"} 先给出方案。要让它执行，在高级配置里把协作模式改为“默认”后再发送。`
+    // The previous service ended without closing this conversation's kept process; what this one found at start is said
+    // here until the conversation's next Turn (ADR-030).
+    : session?.retention?.lost ? session.retention.lost.outcome === "unconfirmed"
+      ? "服务上次异常退出，无法确认这个对话保留的后台进程已经结束，工作区保持隔离。请检查并结束相关进程。"
+      : `服务上次异常退出，这个对话保留的后台进程${session.retention.lost.outcome === "terminated" ? "已被清理" : "已随之结束"}（没有恢复）。下一条消息会重新启动原程序，并恢复原生会话。`
     : !draft.providerId && draft.nativeOptions.collaboration_mode === undefined && nativeState?.observed?.options.collaboration_mode === "plan" ? `这个 ${harness?.name ?? "Harness"} 线程仍为计划模式：跟随本机配置不会改回，在高级配置里把协作模式改为“默认”即可退出。`
     : problem;
 

@@ -85,7 +85,9 @@ export interface SessionView {
    * Whether the conversation keeps its native process between Turns (ADR-030), and the process it keeps now: when it was
    * first kept, its last Turn, when it ends unless used, and how many updates it sent outside Turns (counted, not shown).
    */
-  readonly retention?: { readonly enabled: boolean; readonly process: KeptProcessView | null };
+  readonly retention?: { readonly enabled: boolean; readonly process: KeptProcessView | null;
+    /** The process this conversation kept when the previous service ended without closing it, as this service found it. */
+    readonly lost?: { readonly outcome: "terminated" | "gone" | "unconfirmed"; readonly leaseReleased: boolean; readonly at: number } };
   readonly messages: readonly PublicMessage[];
   readonly runs: readonly PublicRun[];
   readonly switches: readonly PublicSwitch[];

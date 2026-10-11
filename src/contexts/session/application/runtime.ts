@@ -3,7 +3,7 @@ import { TOOL_DIFF_BYTES, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type BackendResul
 import { MAX_RUN_ATTACHMENTS, MAX_RUN_OUTPUTS, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
 import {
   SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId,
-  type ForkedMessage, type HarnessSelection, type NativeConfiguration, type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicRun, type RunTiming,
+  type ForkedMessage, type HarnessSelection, type KeptProcessIdentity, type NativeConfiguration, type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicRun, type RunTiming,
   type SelectionRequest, type SendReceipt, type SessionBindingFactory, type SessionCommit, type SessionConfiguration,
   type SessionId, type SessionEvent, type SessionMutation, type SessionRuntimeOptions, type SessionSnapshot, type SessionStore, type SwitchReceipt,
 } from "../../../contracts/session.js";
@@ -37,6 +37,8 @@ interface KeptProcess {
   readonly baseline: number;
   readonly lastUsed: number;
   readonly timer: ReturnType<typeof setTimeout>;
+  /** The recorded identity of its process group, read once when it was first kept; absent when it could not be read. */
+  readonly identity?: KeptProcessIdentity;
 }
 /** Why a kept process was closed; each close is recorded for its conversation. */
 type KeptRelease = "idle" | "disabled" | "ended_by_user" | "selection_changed" | "conversation_closed" | "native_reset" | "branched" | "exited" | "gateway_shutdown";
@@ -124,6 +126,8 @@ export class SessionRuntime {
   private readonly kept = new Map<SessionId, KeptProcess>();
   /** Kept processes to close; the single writer closes them before its next Turn or switch. */
   private readonly releases = new Map<SessionId, { readonly reason: KeptRelease; readonly done: Promise<void>; readonly resolve: () => void }>();
+  /** Processes a previous owner kept and this owner found at start, with what became of them; shown in their conversations. */
+  private readonly lost = new Map<SessionId, { readonly outcome: "terminated" | "gone" | "unconfirmed"; readonly leaseReleased: boolean; readonly at: number }>();
   private accepting = true;
   private readonly closingSessions = new Set<SessionId>();
   private readonly managedSessions = new Set<SessionId>();
@@ -185,7 +189,7 @@ export class SessionRuntime {
     const concurrent = this.store.findByCreateKey(command);
     if (concurrent) { replayCommand(concurrent, command, "create", fingerprint); return concurrent; }
     const id = sessionId("session-" + this.options.id());
-    const state: SessionSnapshot = { schemaVersion: 11, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
+    const state: SessionSnapshot = { schemaVersion: 12, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
       configuration: config, selection: validated, activeRunId: null, pendingSwitchId: null,
       runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }] };
     try {
@@ -245,7 +249,7 @@ export class SessionRuntime {
     }
     const title = typeof read.title === "string" && read.title.trim() ? read.title.replace(/[\0-\x1f\x7f]+/gu, " ").trim().slice(0, 200) : null;
     const id = sessionId("session-" + this.options.id());
-    const state: SessionSnapshot = { schemaVersion: 11, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration: config, selection: validated,
+    const state: SessionSnapshot = { schemaVersion: 12, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration: config, selection: validated,
       activeRunId: null, pendingSwitchId: null, runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }],
       origin: { kind: "import", harnessId: validated.harnessId, title, omitted, complete: read.historyRead === true && read.complete === true, historyRead: read.historyRead === true, history: quoted },
       nativeBindings: [{ harnessId: validated.harnessId, controlId: validated.controlId, checkpoint, throughRunId: null, status: "ready" }] };
@@ -277,6 +281,8 @@ export class SessionRuntime {
       selection: state.selection, epoch: state.epoch, status: "queued", cancelRequested: false, contextThroughSeq: 0,
       sourceRunIds: [], backend: null, cleanup: null, error: null, stopRequested: false, awaitingSwitchId: state.pendingSwitchId, ...(attachments.length ? { attachments } : {}),
       timing: { acceptedAt: this.options.now().getTime() } };
+    // What this owner found of a process kept under the previous one is shown until the conversation's next Turn.
+    this.lost.delete(id);
     this.commit(id, current => ({ next: { ...current, runs: [...current.runs, run],
       messages: [...current.messages, { id: userId, runId: nextId, role: "user", text, seq: current.lastSeq + 1, status: "queued" }],
       commands: [...current.commands, { id: command, kind: "send", fingerprint, resultId: nextId }] },
@@ -352,7 +358,7 @@ export class SessionRuntime {
     const native = source.selection.provider === undefined ? source.nativeBindings?.find(binding => binding.harnessId === source.selection.harnessId && binding.controlId === source.selection.controlId && binding.status === "ready") : undefined;
     const nativeFork = native !== undefined && native.throughRunId === through.id;
     const id = sessionId("session-" + this.options.id());
-    const state: SessionSnapshot = { schemaVersion: 11, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration: source.configuration, selection: source.selection,
+    const state: SessionSnapshot = { schemaVersion: 12, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration: source.configuration, selection: source.selection,
       activeRunId: null, pendingSwitchId: null, runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }],
       origin: { kind: "fork", sessionId: sourceId, throughRunId: through.id, history },
       ...(nativeFork ? { nativeBindings: [{ harnessId: native.harnessId, controlId: native.controlId, checkpoint: native.checkpoint, throughRunId: null, status: "fork-pending" as const }] } : {}) };
@@ -413,6 +419,32 @@ export class SessionRuntime {
   /** Every kept process with the workspace it holds, for telling a conversation which one occupies its workspace. */
   keptProcesses(): readonly { readonly sessionId: SessionId; readonly workspace: string; readonly harnessId: string }[] {
     return [...this.kept].map(([sessionId, kept]) => ({ sessionId, workspace: kept.binding.workspace, harnessId: kept.selection.harnessId }));
+  }
+  /** What became of the process this conversation kept under the previous owner, when this owner found one at start. */
+  keptLoss(id: SessionId): { readonly outcome: "terminated" | "gone" | "unconfirmed"; readonly leaseReleased: boolean; readonly at: number } | null { return this.lost.get(id) ?? null; }
+  /**
+   * Ends the native process groups that conversations kept under an owner that ended without closing them (ADR-030), and
+   * releases each one's workspace lease once the end is confirmed. A group that cannot be recognized (no recorded identity,
+   * or members that outlive SIGKILL) leaves its workspace quarantined. Each outcome is recorded for its conversation. The
+   * owner runs it once at start, before admitting work.
+   */
+  async reapKept(): Promise<void> {
+    for (const state of this.store.listKept()) {
+      const retained = state.retained;
+      if (retained === undefined || this.kept.has(state.id)) continue;
+      let outcome: "terminated" | "gone" | "unconfirmed" = "unconfirmed";
+      if (retained.process !== undefined && this.options.processes !== undefined) {
+        try { outcome = await this.options.processes.end(retained.process); } catch { outcome = "unconfirmed"; }
+      }
+      let leaseReleased = false;
+      if (outcome !== "unconfirmed") { try { leaseReleased = this.factory.releaseAbandonedLease?.(state.configuration, state.id) ?? false; } catch { leaseReleased = false; } }
+      const at = this.options.now().getTime();
+      this.commit(state.id, current => {
+        const { retained: _held, ...rest } = current;
+        return { next: rest, events: [event("native.process_lost", { runId: retained.runId, harnessId: retained.harnessId, controlId: retained.controlId, reason: "owner_ended", outcome, leaseReleased })] };
+      });
+      this.lost.set(state.id, { outcome, leaseReleased, at });
+    }
   }
   private background(kept: KeptProcess): number { return Math.max(0, (kept.binding.control.unattributedUpdates ?? kept.baseline) - kept.baseline); }
   /** Asks the single writer to close a kept process before its next Turn or switch; resolves once the close is recorded. */
@@ -986,10 +1018,18 @@ export class SessionRuntime {
       }
       let handed = false;
       const endedAt = this.options.now().getTime(), idleMs = this.options.keptIdleMs ?? KEPT_IDLE_MS;
+      // The group's identity lets a later owner recognize and end it if this owner ends without closing it.
+      let identity = reusing?.identity;
+      if (keep.keep && identity === undefined && execution.binding !== null && this.options.processes !== undefined) {
+        const group = execution.binding.control.processGroup?.() ?? null;
+        const startedAt = group === null ? null : await this.options.processes.identify(group).catch(() => null);
+        if (group !== null && startedAt !== null) identity = { group, startedAt };
+      }
       // Registered before the hand-over is committed, so the view published with that commit already shows the kept process.
       if (keep.keep && execution.binding !== null && opened !== null) {
         const binding = execution.binding, timer = setTimeout(() => { void this.requestRelease(id, "idle"); }, idleMs); timer.unref?.();
-        this.kept.set(id, { binding, selection: pinned, conversation: opened, runId: target, since: reusing?.since ?? endedAt, baseline: binding.control.unattributedUpdates ?? 0, lastUsed: endedAt, timer });
+        this.kept.set(id, { binding, selection: pinned, conversation: opened, runId: target, since: reusing?.since ?? endedAt, baseline: binding.control.unattributedUpdates ?? 0, lastUsed: endedAt, timer,
+          ...(identity === undefined ? {} : { identity }) });
       }
       try {
         this.store.assertOwner();
@@ -1000,7 +1040,7 @@ export class SessionRuntime {
         this.commit(id, current => {
           let next: SessionSnapshot = { ...updatedRun(current, target, { status, backend, cleanup,
             error: failure, ...phase(current, target, "endedAt", endedAt), ...(keep.keep ? { retained: true as const } : {}) }), activeRunId: null, status: unsafe ? "blocked" : current.status,
-            ...(keep.keep ? { retained: { harnessId: pinned.harnessId, controlId: pinned.controlId, runId: target, since: reusing?.since ?? endedAt } } : {}) };
+            ...(keep.keep ? { retained: { harnessId: pinned.harnessId, controlId: pinned.controlId, runId: target, since: reusing?.since ?? endedAt, ...(identity === undefined ? {} : { process: identity }) } } : {}) };
           if (checkpointStored && checkpoint !== null && (keep.keep || cleanup?.closed === true && cleanup.protocolFailure === null) && (!execution.dispatched || nativeConfirmed && backend !== null)) {
             next = { ...next, nativeBindings: next.nativeBindings?.map(binding => {
               if (binding.harnessId !== pinned.harnessId || binding.controlId !== pinned.controlId || binding.status === "archived") return binding;

@@ -8,6 +8,7 @@ import { SessionError, type SelectionRequest, type SessionEvent } from "../contr
 import { SessionRuntime } from "../contexts/session/application/runtime.js";
 import { SqliteSessionStore } from "../infrastructure/session/sqlite-store.js";
 import { SqliteWorkspaceLeaseProvider } from "../infrastructure/session/workspace-lease.js";
+import { PosixProcessGroups } from "../infrastructure/control/process-group.js";
 import { DirectorySessionBindingFactory } from "../infrastructure/session/binding-factory.js";
 import { NativeInstallationLocks } from "../infrastructure/management/native-lock.js";
 import { LocalContentStore } from "../infrastructure/session/content-store.js";
@@ -51,7 +52,10 @@ export function application(root: string, publish: (event: SessionEvent) => void
     // The owner is exclusive and quiescent here, so unreferenced content from earlier owners can be collected safely.
     const content = new LocalContentStore(root, () => store.assertOwner());
     content.collect(store.contentReferences());
-    const runtime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: hash, publish, content });
+    // Kept process groups are recognized across restarts on POSIX only; elsewhere a previous owner's kept process stays
+    // unconfirmed and its workspace quarantined (ADR-030).
+    const runtime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: hash, publish, content,
+      ...(process.platform === "win32" ? {} : { processes: new PosixProcessGroups() }) });
     return { store, content, factory, runtime, providers, management };
   } catch (error) { try { management?.close(); } finally { try { providers?.close(); } finally { store.close(); } } throw error; }
 }

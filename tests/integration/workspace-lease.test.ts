@@ -179,3 +179,17 @@ test("invalid roots, workspaces and identities fail before execution", async (t)
   const alias = join(root, "lock-alias"); await symlink(locks, alias);
   assert.throws(() => new SqliteWorkspaceLeaseProvider(alias), SessionError);
 });
+
+test("a quarantine is cleared only for the Session that held it, once its holder is gone, and never under a live holder", async (t) => {
+  const { root, locks, workspace } = await fixture(t), provider = new SqliteWorkspaceLeaseProvider(locks), child = await childOwner(t, locks, workspace);
+  assert.equal(provider.releaseAbandoned(workspace, sessionId("session-child")), false, "a live holder keeps its lease");
+  assert.equal(contender(locks, workspace).stdout, "WORKSPACE_BUSY");
+  const exited = once(child, "exit"); child.kill("SIGKILL"); await exited;
+  assert.equal(provider.releaseAbandoned(workspace, sessionId("session-other")), false, "a record for another Session stays a quarantine");
+  assert.equal(contender(locks, workspace).stdout, "WORKSPACE_QUARANTINED");
+  assert.equal(provider.releaseAbandoned(workspace, sessionId("session-child")), true);
+  assert.equal(contender(locks, workspace).stdout, "acquired");
+  assert.equal(provider.releaseAbandoned(workspace, sessionId("session-child")), false, "nothing is held any more");
+  const untouched = join(root, "untouched"); await mkdir(untouched);
+  assert.equal(provider.releaseAbandoned(untouched, sessionId("session-child")), false, "a workspace never leased has nothing to clear");
+});

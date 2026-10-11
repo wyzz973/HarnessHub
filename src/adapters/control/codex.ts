@@ -184,6 +184,7 @@ export class CodexControl implements HarnessControl {
   private unattributed = 0;
   get unattributedUpdates(): number { return this.unattributed; }
   healthy(): boolean { return this.initialized && this.failure === null && this.rpc.failure === null; }
+  processGroup(): number | null { return this.rpc.processGroup; }
 
   constructor(launch: ControlLaunch, private readonly options: ControlOptions) {
     if (launch.protocol !== "codex-app-server") throw new ControlError("INVALID_INPUT", "Codex control requires an app-server launch");

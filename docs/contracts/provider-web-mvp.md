@@ -80,6 +80,8 @@ ADR-033追加只读`GET /api/v1/harnesses/readiness`，返回`{readiness}`；`/a
 
 ADR-030（2026-10-12，Session v11）追加：`POST /api/v1/sessions/:id/retention`（`{enabled, commandId}`，幂等）开启或关闭“保持原生进程”，关闭会结束已保留的进程；`POST /api/v1/sessions/:id/end-process`（`{commandId}`）以正常停止链结束保留的进程，记录关闭后才返回；`GET /api/v1/kept-processes`列出保留进程的对话与工作区。会话视图带`retention: {enabled, process}`，`process`含开始保留时间、最后回合、空闲截止时间与回合外更新条数（只计数）。Run可带`retained`（进程交给对话，`cleanup`为空）与`reused`（复用了保留进程）。另一对话的工作区被保留进程占用时，回合以`WORKSPACE_KEPT`失败且未发出任何内容。
 
+ADR-030 服务异常退出后的清理（2026-10-12，Session v12）：保留记录带进程组身份`retained.process: {group, startedAt}`（v11→v12 只升版本号）。服务启动时先接管上一服务保留的进程组，结果记为对话事件`native.process_lost`（`outcome`为`terminated`、`gone`或`unconfirmed`，`leaseReleased`表示是否释放了工作区租约）；会话视图在本次服务运行期间、该对话下一条消息之前带`retention.lost: {outcome, leaseReleased, at}`。`unconfirmed`时工作区保持隔离。
+
 ADR-025追加`POST /api/v1/sessions/:id/fork {commandId, throughRunId?}`：在已完成的回复后创建分支并返回新对话视图（201，命令幂等）；没有完成的回复或源正在执行时409。会话视图包含`origin`（源对话、分支点、引用历史），原生状态增加`forking`；尚无输入的分支在列表中命名为“分支 · 首条消息”。
 
 ADR-024追加`GET /api/v1/sessions/:id/export?format=markdown|json`：需要登录，返回附件形式的公开对话（消息与Run摘要：计划、工具标题、活动、产物与附件名称、用量、错误），不含原生私有绑定、工具详情正文与存储字节；未知格式400。Codex模型目录增加取自原配置的`approval_policy`、`sandbox`原生选项，只覆盖Hub线程；Codex与Pi目录在原接口没有同名命令时提供`compact`、`export`，分别调用原生压缩与导出，导出文件作为Run产物。ACP目录读取最多等待1.5秒的命令公告。

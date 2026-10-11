@@ -191,6 +191,8 @@ export interface HarnessControl {
    * conversation that keeps its process (ADR-030) checks it before reusing it; absent means it cannot tell.
    */
   healthy?(): boolean;
+  /** The process group this connection's program leads (its pid), for recognizing a kept process later; null before it started. */
+  processGroup?(): number | null;
   /** Updates the native side sent outside any Turn of this connection (background work, autonomous follow-ups); counted only. */
   readonly unattributedUpdates?: number;
   /**

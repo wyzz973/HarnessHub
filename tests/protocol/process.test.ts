@@ -124,3 +124,47 @@ test("an incompatible native configuration reports a safe cause and independentl
     assert.equal(cleanup.protocolFailure?.code, "NATIVE_CONFIGURATION_INVALID"); assert.equal(JSON.stringify(cleanup).includes("never-public"), false);
   }
 });
+
+/** A detached group: a leader and one child of its own, both idle; the child's pid is printed by the leader. */
+async function group(leaderExits = false): Promise<{ readonly leader: number; readonly child: number }> {
+  const { spawn } = await import("node:child_process");
+  const script = "const c=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});process.stdout.write(String(c.pid)+'\\n');" +
+    (leaderExits ? "setTimeout(()=>process.exit(0),100);" : "setInterval(()=>{},1000);");
+  const leader = spawn(process.execPath, ["-e", script], { detached: true, stdio: ["ignore", "pipe", "ignore"] });
+  const child = await new Promise<number>((done, fail) => { leader.stdout.once("data", chunk => done(Number(String(chunk).trim()))); leader.once("error", fail); });
+  leader.stdout.destroy(); leader.unref();
+  return { leader: leader.pid!, child };
+}
+function running(pid: number): boolean { try { process.kill(pid, 0); return true; } catch { return false; } }
+async function until(check: () => boolean): Promise<void> { for (let i = 0; i < 100 && !check(); i++) await new Promise(resolve => setTimeout(resolve, 20)); }
+
+test("elapsed time from ps is read in all its forms, and nothing else is", async () => {
+  const { elapsedSeconds } = await import("../../src/infrastructure/control/process-group.js");
+  assert.equal(elapsedSeconds("05:03"), 303); assert.equal(elapsedSeconds(" 1:02:03\n"), 3723); assert.equal(elapsedSeconds("2-01:02:03"), 2 * 86400 + 3723);
+  for (const text of ["", "3", "1:2:3:4", "a:bc", "-01:02"]) assert.equal(elapsedSeconds(text), null, text);
+});
+
+test("a kept process group is ended only while it is the recorded one, members included", async () => {
+  const { PosixProcessGroups } = await import("../../src/infrastructure/control/process-group.js");
+  const groups = new PosixProcessGroups();
+  // The recorded group: leader and member end together.
+  const kept = await group(), startedAt = await groups.identify(kept.leader);
+  assert.ok(startedAt !== null && Math.abs(Number(startedAt) - Date.now() / 1000) < 10);
+  assert.equal(await groups.end({ group: kept.leader, startedAt: startedAt! }), "terminated");
+  await until(() => !running(kept.child)); assert.equal(running(kept.leader), false); assert.equal(running(kept.child), false);
+  assert.equal(await groups.identify(kept.leader), null);
+  assert.equal(await groups.end({ group: kept.leader, startedAt: startedAt! }), "gone", "a group that no longer exists is gone");
+  // A leader started at another time is another program: never signalled.
+  const other = await group();
+  try {
+    const started = Number(await groups.identify(other.leader));
+    assert.equal(await groups.end({ group: other.leader, startedAt: String(started - 3600) }), "gone");
+    assert.equal(running(other.leader), true); assert.equal(running(other.child), true);
+  } finally { try { process.kill(-other.leader, "SIGKILL"); } catch { /* already gone */ } }
+  // A leader that exited first leaves its member in the recorded group, which is still ended.
+  const orphaned = await group(true);
+  await until(() => !running(orphaned.leader));
+  assert.equal(await groups.identify(orphaned.leader), null); assert.equal(running(orphaned.child), true);
+  assert.equal(await groups.end({ group: orphaned.leader, startedAt: "1" }), "terminated");
+  await until(() => !running(orphaned.child)); assert.equal(running(orphaned.child), false);
+});

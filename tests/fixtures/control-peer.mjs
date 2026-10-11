@@ -16,6 +16,13 @@ if (scenario === "descendant") {
   setInterval(() => {}, 1000);
   process.on("SIGTERM", () => { child.once("exit", () => process.exit(0)); child.kill("SIGTERM"); });
 }
+// A background task in this program's process group (FIXTURE_LINGER): the program exits when its input closes, and the task
+// outlives it, as a shell job started by an agent does.
+if (process.env.FIXTURE_LINGER) {
+  const lingering = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" });
+  lingering.unref();
+  if (process.env.FIXTURE_CHILD_PID) writeFileSync(process.env.FIXTURE_CHILD_PID, String(lingering.pid));
+}
 const lines = createInterface({ input: process.stdin });
 let promptId = null, turn = 0, initialized = false, pendingPermission = false;
 let resumedThread = false;

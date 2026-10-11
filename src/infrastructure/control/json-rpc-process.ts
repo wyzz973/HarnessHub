@@ -125,6 +125,8 @@ export class JsonRpcProcess {
   }
   get diagnosticsTruncated(): boolean { return this.diagnosticWasTruncated; }
   get failure(): Error | null { return this.failed; }
+  /** The process group this connection's program leads (spawned detached, so its pid); null before it started. */
+  get processGroup(): number | null { return this.pid; }
 
   request(method: string, params: unknown, timeoutMs = this.options.requestTimeoutMs): Promise<unknown> {
     if (this.failed || this.closing) return Promise.reject(this.failed ?? new ControlError("CLOSED", "connection is closed"));

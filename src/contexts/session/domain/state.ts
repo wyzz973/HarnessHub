@@ -214,10 +214,14 @@ function command(value: unknown): CommandRecord {
   return { id: commandId(item.id), kind: item.kind, fingerprint, resultId: text(item.resultId, "command resultId", 128) };
 }
 function retainedProcess(value: unknown): RetainedProcess {
-  const item = record(value, "kept native process"); keys(item, ["harnessId", "controlId", "runId", "since"], "kept native process");
+  const item = record(value, "kept native process"); keys(item, ["harnessId", "controlId", "runId", "since", "process"], "kept native process");
   const harnessId = text(item.harnessId, "kept native Harness", 96), controlId = text(item.controlId, "kept native control", 96);
   if (![harnessId, controlId].every(id => /^[a-z][a-z0-9-]*$/u.test(id))) throw new SessionError("INVALID_DATA", "invalid kept native process identity");
-  return { harnessId, controlId, runId: runId(item.runId), since: number(item.since, "kept native process time", 1) };
+  const process = item.process === undefined ? undefined : (() => {
+    const row = record(item.process, "kept process group"); keys(row, ["group", "startedAt"], "kept process group");
+    return { group: number(row.group, "kept process group", 2), startedAt: text(row.startedAt, "kept process start", 64) };
+  })();
+  return { harnessId, controlId, runId: runId(item.runId), since: number(item.since, "kept native process time", 1), ...(process === undefined ? {} : { process }) };
 }
 function nativeBinding(value: unknown): NativeSessionBinding {
   const item = record(value, "native binding");
@@ -272,7 +276,7 @@ function unique(values: readonly string[], label: string): void {
 export function parseSession(value: unknown): SessionSnapshot {
   const item = record(value, "Session");
   keys(item, ["schemaVersion", "id", "version", "lastSeq", "epoch", "status", "configuration", "selection", "activeRunId", "pendingSwitchId", "runs", "messages", "switches", "commands", "nativeBindings", "origin", "retainNative", "retained"], "Session");
-  if (item.schemaVersion !== 1 && item.schemaVersion !== 2 && item.schemaVersion !== 3 && item.schemaVersion !== 4 && item.schemaVersion !== 5 && item.schemaVersion !== 6 && item.schemaVersion !== 7 && item.schemaVersion !== 8 && item.schemaVersion !== 9 && item.schemaVersion !== 10 && item.schemaVersion !== 11) throw new SessionError("INVALID_DATA", "unknown Session schemaVersion");
+  if (item.schemaVersion !== 1 && item.schemaVersion !== 2 && item.schemaVersion !== 3 && item.schemaVersion !== 4 && item.schemaVersion !== 5 && item.schemaVersion !== 6 && item.schemaVersion !== 7 && item.schemaVersion !== 8 && item.schemaVersion !== 9 && item.schemaVersion !== 10 && item.schemaVersion !== 11 && item.schemaVersion !== 12) throw new SessionError("INVALID_DATA", "unknown Session schemaVersion");
   if (item.status !== "open" && item.status !== "closed" && item.status !== "blocked") throw new SessionError("INVALID_DATA", "unknown Session status");
   const result: SessionSnapshot = { schemaVersion: item.schemaVersion, id: sessionId(item.id), version: number(item.version, "version"), lastSeq: number(item.lastSeq, "lastSeq"),
     epoch: number(item.epoch, "epoch", 1), status: item.status, configuration: parseConfiguration(item.configuration), selection: parseSelection(item.selection),
@@ -294,6 +298,8 @@ export function parseSession(value: unknown): SessionSnapshot {
   // completed Run of the same entry, whose process was not closed.
   if (result.schemaVersion < 11 && (result.retainNative !== undefined || result.retained !== undefined || result.runs.some(run => run.retained !== undefined || run.reused !== undefined) || result.commands.some(command => command.kind === "retention" || command.kind === "native-close")))
     throw new SessionError("INVALID_DATA", "kept native processes require Session v11");
+  // The identity that lets a later owner end a kept process group exists only from v12 (ADR-030).
+  if (result.schemaVersion < 12 && result.retained?.process !== undefined) throw new SessionError("INVALID_DATA", "a kept process group identity requires Session v12");
   if (result.runs.some(run => run.retained === true && (run.status !== "completed" || run.cleanup !== null || run.backend === null))) throw new SessionError("INVALID_DATA", "only a completed Run without its own cleanup hands its process over");
   if (result.runs.some(run => run.reused === true && (run.status === "queued" || run.selection.provider !== undefined))) throw new SessionError("INVALID_DATA", "only a started native Run reuses a kept process");
   if (result.retained !== undefined) {
@@ -460,20 +466,14 @@ export function assertSessionTransition(before: SessionSnapshot, after: SessionS
 export function recoverSession(state: SessionSnapshot): SessionMutation | null {
   const unfinished = state.runs.filter(run => !terminal(run.status));
   const pending = state.pendingSwitchId !== null;
-  // A process kept by the previous owner is not this owner's: it ended with that owner, or it is an orphan whose workspace
-  // lease stays quarantined until its process group is confirmed gone. Either way it is no longer held here.
-  if (unfinished.length === 0 && !pending) {
-    if (state.retained === undefined) return null;
-    const { retained, ...rest } = state;
-    return { next: rest, events: [{ type: "native.process_lost", data: { runId: retained.runId, harnessId: retained.harnessId, controlId: retained.controlId, reason: "owner_ended" } }] };
-  }
+  // A process kept by the previous owner stays recorded here: the new owner's runtime recognizes and ends its group, then
+  // records the outcome (ADR-030). Recovery itself never touches processes.
+  if (unfinished.length === 0 && !pending) return null;
   const unknown = unfinished.some(run => run.status !== "queued");
   const runs = state.runs.map(run => terminal(run.status) ? run : { ...run, status: run.status === "queued" ? "cancelled" as const : "unknown" as const,
     error: { code: "OWNER_ENDED", message: "previous owner ended without confirmed settlement; input was not replayed" } });
   const messages = state.messages.map(message => ({ ...message, status: runs.find(run => run.id === message.runId)!.status }));
   const switches = state.switches.map(entry => entry.id === state.pendingSwitchId ? { ...entry, status: "failed" as const, error: { code: "OWNER_ENDED", message: "pending switch was not activated after owner exit" } } : entry);
-  const { retained, ...kept } = state;
-  return { next: { ...kept, status: unknown ? "blocked" : state.status, activeRunId: null, pendingSwitchId: null, runs, messages, switches },
-    events: [{ type: "session.recovered", data: { unknownRunIds: runs.filter(run => run.status === "unknown").map(run => run.id), cancelledRunIds: unfinished.filter(run => run.status === "queued").map(run => run.id), replayed: false } },
-      ...(retained === undefined ? [] : [{ type: "native.process_lost", data: { runId: retained.runId, harnessId: retained.harnessId, controlId: retained.controlId, reason: "owner_ended" } }])] };
+  return { next: { ...state, status: unknown ? "blocked" : state.status, activeRunId: null, pendingSwitchId: null, runs, messages, switches },
+    events: [{ type: "session.recovered", data: { unknownRunIds: runs.filter(run => run.status === "unknown").map(run => run.id), cancelledRunIds: unfinished.filter(run => run.status === "queued").map(run => run.id), replayed: false } }] };
 }

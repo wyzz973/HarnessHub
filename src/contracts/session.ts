@@ -191,6 +191,22 @@ export interface ImportOrigin {
   readonly historyRead: boolean;
   readonly history: readonly ForkedMessage[];
 }
+/**
+ * How a kept process group is recognized after its owner ended: the group id (the leader's pid) and the leader's start
+ * time as the system reports it, so a later program reusing the id is never mistaken for it.
+ */
+export interface KeptProcessIdentity { readonly group: number; readonly startedAt: string }
+/** Recognizes and ends a previous owner's kept process group (POSIX; ADR-030). */
+export interface ProcessGroupPort {
+  /** The start time of the process with this id as the system reports it; null when no such process runs. */
+  identify(group: number): Promise<string | null>;
+  /**
+   * Ends the recorded group if it still exists: "terminated" once no member remains after SIGTERM and then SIGKILL; "gone"
+   * when the group no longer exists (its id may since name another program, which is left alone); "unconfirmed" when
+   * members remain or the group cannot be told apart.
+   */
+  end(identity: KeptProcessIdentity): Promise<"terminated" | "gone" | "unconfirmed">;
+}
 /** The native process a conversation keeps between Turns (ADR-030, v11), held since its last Run handed it over. */
 export interface RetainedProcess {
   readonly harnessId: string;
@@ -199,9 +215,11 @@ export interface RetainedProcess {
   readonly runId: RunId;
   /** When the conversation first took the process (milliseconds since the epoch). */
   readonly since: number;
+  /** v12: how to recognize the process group after this owner ends without closing it; absent when it could not be read. */
+  readonly process?: KeptProcessIdentity;
 }
 export interface SessionSnapshot {
-  readonly schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
+  readonly schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
   readonly id: SessionId;
   readonly version: number;
   readonly lastSeq: number;
@@ -240,6 +258,8 @@ export interface SessionStore {
   get(id: SessionId): SessionSnapshot;
   findByCreateKey(key: CommandId): SessionSnapshot | null;
   list(limit?: number): readonly SessionSnapshot[];
+  /** Every Session whose state still records a kept native process (ADR-030), whatever its age. */
+  listKept(): readonly SessionSnapshot[];
   /** The Session holding each ready or unconfirmed native reference of one Harness control (checkpoint → Session). */
   nativeOwners(harnessId: string, controlId: string): ReadonlyMap<string, SessionId>;
   transact(id: SessionId, expectedVersion: number, mutate: (current: SessionSnapshot) => SessionMutation): SessionCommit;
@@ -247,7 +267,14 @@ export interface SessionStore {
   close(): void;
 }
 export interface WorkspaceLease { assertOwned(): void; release(quiescent: boolean): void }
-export interface WorkspaceLeaseProvider { acquire(workspace: string, session: SessionId, run: string): WorkspaceLease }
+export interface WorkspaceLeaseProvider {
+  acquire(workspace: string, session: SessionId, run: string): WorkspaceLease;
+  /**
+   * Clears a held record an ended owner left for `session`, once the caller confirmed that the processes it guarded are
+   * gone (ADR-030). A live holder or a record for another Session makes it return false; it never infers the end itself.
+   */
+  releaseAbandoned?(workspace: string, session: SessionId): boolean;
+}
 /** Per-Turn owner; close also releases the workspace lease and only its own private directories. */
 export interface PreparedSessionBinding {
   readonly installation?: { readonly source: "system" } | { readonly source: "managed"; readonly id: string; readonly revision: number; readonly version: string };
@@ -261,6 +288,8 @@ export interface SessionBindingFactory {
   prepare(selection: HarnessSelection, configuration: SessionConfiguration, session: SessionId, run: string): Promise<PreparedSessionBinding>;
   /** Reads one native session of the workspace for continuing it (no prompt, no workspace writer); absent when unsupported. */
   readNativeSession?(selection: HarnessSelection, configuration: SessionConfiguration, nativeId: string): Promise<import("./control.js").NativeSessionImport>;
+  /** Releases the workspace lease an ended owner left for `session`, after its kept processes were confirmed ended (ADR-030). */
+  releaseAbandonedLease?(configuration: SessionConfiguration, session: SessionId): boolean;
 }
 export interface SessionRuntimeOptions {
   readonly id: () => string;
@@ -271,6 +300,8 @@ export interface SessionRuntimeOptions {
   readonly content?: ContentPort;
   /** How long a kept native process may stay without a Turn before it is closed (ADR-030); 30 minutes unless shortened. */
   readonly keptIdleMs?: number;
+  /** Recognizes kept process groups across owner restarts; without it a previous owner's kept process cannot be ended. */
+  readonly processes?: ProcessGroupPort;
 }
 export interface SendReceipt { readonly sessionId: SessionId; readonly runId: RunId; readonly replayed: boolean }
 export interface SwitchReceipt { readonly sessionId: SessionId; readonly switchId: SwitchId; readonly replayed: boolean }

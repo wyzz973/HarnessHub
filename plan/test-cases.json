@@ -7565,6 +7565,23 @@
       "planned_file": "tests/integration/session-store.test.ts"
     },
     {
+      "id": "G008-NC8",
+      "task": "G008",
+      "requirements": [
+        "R07",
+        "R19"
+      ],
+      "invariants": [
+        "INV-06"
+      ],
+      "layer": "integration",
+      "scenario": "业务库v10与v11升级到v12",
+      "expected": "会话全部事实与事件不变，仅版本升为12；v10数据中出现保留进程、v11数据中出现进程组身份时整笔拒绝且版本保持不变",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/session-store.test.ts"
+    },
+    {
       "id": "G028-NC8",
       "task": "G028",
       "requirements": [
@@ -7581,6 +7598,25 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/integration/session-runtime.test.ts"
+    },
+    {
+      "id": "G028-NC9",
+      "task": "G028",
+      "requirements": [
+        "R11",
+        "R14"
+      ],
+      "invariants": [
+        "INV-11",
+        "INV-12",
+        "INV-26"
+      ],
+      "layer": "integration",
+      "scenario": "服务被强制结束后，新的服务接管上一服务保留的原生进程",
+      "expected": "按进程组号与组长启动时间识别；确认结束（含原程序已自行结束）后才释放该对话的工作区租约，并在对话中记录结果，下一回合重新启动原程序并恢复原生会话；没有身份时不发任何信号，租约保持隔离，下一回合为WORKSPACE_QUARANTINED",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/kept-process.test.ts"
     },
     {
       "id": "G032-NC18",

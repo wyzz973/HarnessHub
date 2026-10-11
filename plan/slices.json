@@ -707,7 +707,8 @@
         "tests/unit/harness-entry.test.ts",
         "src/web/native-catalog-cache.ts",
         "tests/integration/native-catalog-cache.test.ts",
-        "tests/integration/kept-process.test.ts"
+        "tests/integration/kept-process.test.ts",
+        "tests/fixtures/kept-owner.mjs"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/complete-native-capabilities-2026-10-11.md"

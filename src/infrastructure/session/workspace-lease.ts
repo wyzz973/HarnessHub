@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { SessionError, sessionId, type SessionId, type WorkspaceLease, type WorkspaceLeaseProvider } from "../../contracts/session.js";
 
 interface FileIdentity { readonly dev: string; readonly ino: string }
-interface State { readonly held: boolean; readonly token: string | null }
+interface State { readonly held: boolean; readonly token: string | null; readonly session: string | null }
 // SQLite's POSIX locks are process-scoped: opening/closing another FD to the
 // same file could release existing locks. Refuse same-process contenders before
 // touching the file. Other processes contend on SQLite's OS lock.
@@ -49,13 +49,13 @@ function readState(db: DatabaseSync, workspace: string): State {
   if (!row || (row.held !== 0 && row.held !== 1)) throw new SessionError("WORKSPACE_STORAGE", "invalid workspace lease state");
   if (row.held === 0) {
     if (row.token !== null || row.session !== null || row.run !== null) throw new SessionError("WORKSPACE_STORAGE", "invalid idle workspace lease state");
-    return { held: false, token: null };
+    return { held: false, token: null, session: null };
   }
   if (typeof row.token !== "string" || row.token.length === 0 || typeof row.session !== "string" || typeof row.run !== "string" || row.run.length === 0) {
     throw new SessionError("WORKSPACE_STORAGE", "invalid held workspace lease state");
   }
   sessionId(row.session);
-  return { held: true, token: row.token };
+  return { held: true, token: row.token, session: row.session };
 }
 function configure(db: DatabaseSync): void {
   db.exec("PRAGMA busy_timeout = 0; PRAGMA synchronous = FULL;");
@@ -160,6 +160,47 @@ export class SqliteWorkspaceLeaseProvider implements WorkspaceLeaseProvider {
       try { closeDatabase(lockDb); } catch (closeError) { cleanupError ??= closeError; }
       if (cleanupError) throw new SessionError("WORKSPACE_STORAGE", "workspace acquire failed and storage cleanup failed");
       throw failure(error);
+    }
+  }
+
+  /**
+   * Clears the held record an ended owner left for `session`, after the caller confirmed that the processes it guarded are
+   * gone (ADR-030: a kept process group the restarted owner ended). It takes the OS lock like acquire, so a live holder
+   * makes it return false, as does a record naming another Session or no held record. It never infers the end itself;
+   * every other held record stays a quarantine.
+   */
+  releaseAbandoned(workspace: string, session: SessionId): boolean {
+    absolute(workspace, "workspace"); sessionId(session);
+    let canonical: string;
+    try { canonical = realpathSync(workspace); identity(canonical, true); matches(this.root, this.rootIdentity, true); }
+    catch (error) { if (error instanceof SessionError && error.code === "WORKSPACE_OWNERSHIP_LOST") throw error; return false; }
+    const key = createHash("sha256").update(canonical).digest("hex");
+    const lockPath = join(this.root, `${key}.lock.sqlite`), statePath = join(this.root, `${key}.state.sqlite`);
+    if (active.has(lockPath)) return false;
+    let lockDb: DatabaseSync | undefined, stateDb: DatabaseSync | undefined;
+    try {
+      let lockIdentity: FileIdentity;
+      try { lockIdentity = identity(lockPath, false); } catch (error) { if (error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT") return false; throw error; }
+      lockDb = new DatabaseSync(lockPath, { timeout: 0 }); configure(lockDb);
+      try { lockDb.exec("BEGIN EXCLUSIVE"); } catch (error) { if (busy(error)) return false; throw error; }
+      matches(lockPath, lockIdentity, false);
+      if (!tableExists(lockDb, "workspace_lock")) return false;
+      const marker = lockDb.prepare("SELECT version, workspace, state_dev, state_ino FROM workspace_lock WHERE id = 1").get();
+      if (marker?.version !== 1 || marker.workspace !== canonical || typeof marker.state_dev !== "string" || typeof marker.state_ino !== "string") throw new SessionError("WORKSPACE_STORAGE", "unsupported workspace lease database");
+      matches(statePath, { dev: marker.state_dev, ino: marker.state_ino }, false);
+      stateDb = new DatabaseSync(statePath, { timeout: 0 }); configure(stateDb);
+      const state = readState(stateDb, canonical);
+      if (!state.held || state.session !== session) return false;
+      stateDb.exec("BEGIN IMMEDIATE");
+      const result = stateDb.prepare("UPDATE workspace_state SET held = 0, token = NULL, session = NULL, run = NULL WHERE id = 1 AND held = 1 AND session = ?").run(session);
+      stateDb.exec("COMMIT");
+      return result.changes === 1;
+    } catch (error) { if (busy(error)) return false; throw failure(error); }
+    finally {
+      let cleanupError: unknown;
+      try { closeDatabase(stateDb); } catch (closeError) { cleanupError = closeError; }
+      try { closeDatabase(lockDb); } catch (closeError) { cleanupError ??= closeError; }
+      if (cleanupError) throw new SessionError("WORKSPACE_STORAGE", "abandoned lease release could not close its storage");
     }
   }
 }
