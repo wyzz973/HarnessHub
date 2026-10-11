@@ -11,7 +11,7 @@
 
 ## 结论
 
-- 9 个 Harness 都能从统一聊天界面使用：Codex、Claude Code、OpenCode、OpenClaw、Gemini CLI、Cursor、Pi、Hermes Agent、DeepSeek Harness（dsh）。完整接入的能力格为 78/243。
+- 9 个 Harness 都已接入统一聊天界面：Codex、Claude Code、OpenCode、OpenClaw、Gemini CLI、Cursor、Pi、Hermes Agent、DeepSeek Harness（dsh）。其中 Gemini CLI 目前被模型服务拒绝，Cursor 受账号套餐限制，实际还不能完成任务。完整接入的能力格为 78/243。
 - 本阶段的 11 个 ADR（ADR-030～040）都已采纳、实现，并部署到本机 4317 服务。唯一例外是 ADR-040 的补充（关闭开关与拒绝原因），代码与测试已完成，等审批后部署。
 - 当前提交的检查：单元、集成与协议测试 635 项通过；浏览器测试 23 项通过；设计检查通过，计划场景 439 个。
 - 主要受阻项都在原程序一侧：Hermes 0.12.0 的审批缺陷、Cursor 的工作区信任与账号套餐、Gemini 客户端被服务端停用、dsh 的权限预设无法观察。
