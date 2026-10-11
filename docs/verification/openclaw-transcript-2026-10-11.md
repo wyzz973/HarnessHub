@@ -25,7 +25,7 @@
 
 ## 未验证与受阻
 
-- 转录为错误时的失败修正只有协议验证（本机没有可安全触发的模型错误）。
+- 转录为错误时的失败修正：同日晚些时候有了真实实例——在 Hub 会话中选择 OpenClaw 目录里的 `openai-codex/gpt-5.4`（该提供方在本机 OpenClaw 中不可用），桥报告回合结束，Hub 按本会话转录的错误停止原因判为失败（`MODEL_REQUEST_FAILED`），openclaw.json 不变（`.tmp/cc-native-thinking-openclaw-gpt.json`、`.tmp/cc-native-attachments-openclaw-gpt.json`）。
 - 思考补记只有协议验证（deepseek-chat 不输出思考）。
 - 实时工具流与执行审批需要直连 Gateway，待用户决定。
 - 未做 Windows 验证。

@@ -1139,8 +1139,10 @@
           "hub": "partial",
           "protocol": "pass",
           "real": "none",
-          "evidence": [],
-          "note": "桥未流式转发思考时，回合结束后从原生转录补记；deepseek-chat 无思考输出，真实未验收"
+          "evidence": [
+            ".tmp/cc-native-thinking-openclaw-gpt.json"
+          ],
+          "note": "桥未流式转发思考时，回合结束后从原生转录补记；deepseek-chat 无思考输出，推理模型 openai-codex/gpt-5.4 在本机请求失败，真实未验收"
         },
         "tool-status": {
           "native": "partial",
@@ -1213,9 +1215,10 @@
           "real": "partial",
           "evidence": [
             ".tmp/cc-native-attachments-opencode-openclaw.json",
-            "docs/verification/native-attachments-2026-10-11.md"
+            "docs/verification/native-attachments-2026-10-11.md",
+            ".tmp/cc-native-attachments-openclaw-gpt.json"
           ],
-          "note": "按 models.list 的模型 input 与 5 MB 上限门控；默认 deepseek-chat 在派发前拒绝，识图模型未真实验收"
+          "note": "按 models.list 的模型 input 与 5 MB 上限门控；默认 deepseek-chat 在派发前拒绝；识图模型 openai-codex/gpt-5.4 在本机 OpenClaw 中请求失败（原生转录记录错误，Hub 判为失败），识图未真实验收"
         },
         "input-audio": {
           "native": "no",

@@ -21,6 +21,7 @@ const configFiles: Readonly<Record<string, readonly string[]>> = {
   claude: [join(home, ".claude", "settings.json")],
   opencode: [join(home, ".config", "opencode", "opencode.json")],
   pi: [join(home, ".pi", "agent", "settings.json"), join(home, ".pi", "agent", "models.json")],
+  openclaw: [join(home, ".openclaw", "openclaw.json")],
 };
 const TERMINAL = new Set<PublicRun["status"]>(["completed", "failed", "cancelled", "unknown"]);
 async function digest(path: string): Promise<string> {
