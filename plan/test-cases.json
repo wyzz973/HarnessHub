@@ -7806,6 +7806,25 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/protocol/acp.test.ts"
+    },
+    {
+      "id": "G060-NC12",
+      "task": "G060",
+      "requirements": [
+        "R04",
+        "R24",
+        "R12"
+      ],
+      "invariants": [
+        "INV-16",
+        "INV-09"
+      ],
+      "layer": "e2e",
+      "scenario": "本机原安装的思考输出与回复分开记录",
+      "expected": "需要思考的设置下Run记录原程序的思考内容且不混入回复，答案正确；原配置不变",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/real/native-thinking.real.ts"
     }
   ]
 }

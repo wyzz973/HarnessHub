@@ -11,7 +11,7 @@
 | 配置与模型 | 模式与原生设置 | ◑ | ✅ | ◐ | ◐ | ✕ | ◐ | — |
 | 配置与模型 | 原生命令目录与执行 | — | ✅ | ◐ | ✅ | ✕ | ◐ | ◐ |
 | 配置与模型 | 原生命令改配置后的同步 | ◑ | ✅ | ？ | ◐ | ？ | ✕ | ✕ |
-| 执行可见性 | 思考输出 | ◐ | ◐ | ◐ | ◑ | ✕ | ✕ | ◐ |
+| 执行可见性 | 思考输出 | ◐ | ✕ | ✅ | ◑ | ✕ | ✕ | ✅ |
 | 执行可见性 | 工具状态 | ✅ | ✅ | ✅ | ◑ | ✕ | ✕ | ✅ |
 | 执行可见性 | 工具输入/输出/差异 | ✅ | ✅ | ✅ | ◑ | ✕ | ✕ | ✅ |
 | 执行可见性 | 计划 | ✕ | ✕ | — | — | — | ✕ | — |
@@ -37,12 +37,12 @@
 | Harness | ✅ | ◐ | ◑ | ○ | ✕ | — | ？ |
 |---|---|---|---|---|---|---|---|
 | Codex | 13 | 3 | 6 | 2 | 2 | 1 | 0 |
-| Claude Code | 16 | 4 | 3 | 1 | 1 | 2 | 0 |
-| OpenCode | 9 | 6 | 3 | 2 | 0 | 2 | 5 |
+| Claude Code | 16 | 3 | 3 | 1 | 2 | 2 | 0 |
+| OpenCode | 10 | 5 | 3 | 2 | 0 | 2 | 5 |
 | OpenClaw | 5 | 5 | 4 | 6 | 0 | 7 | 0 |
 | Gemini CLI | 0 | 0 | 2 | 1 | 12 | 6 | 6 |
 | Cursor | 0 | 2 | 4 | 2 | 11 | 5 | 3 |
-| Pi | 10 | 6 | 1 | 2 | 1 | 7 | 0 |
+| Pi | 11 | 5 | 1 | 2 | 1 | 7 | 0 |
 
 ## Codex
 
@@ -55,7 +55,7 @@
 | 模式与原生设置 | 具备 | approvalPolicy/sandboxPolicy/serviceTier 逐轮参数；collaborationMode 计划模式需 experimentalApi | 部分 | 通过 | 通过 | .tmp/cc-native-activity-codex-approval.json；docs/verification/native-session-actions-2026-10-11.md | 审批策略与沙箱作为本 Hub 线程设置接出（取自原配置、由线程回报核实、不写 config.toml）；计划模式需 experimentalApi、serviceTier 未接出 |
 | 原生命令目录与执行 | 不提供 | app-server 无斜杠命令；skills 以 UserInput.skill 调用（见 Skills） | 不适用 | 不适用 | 不适用 | — | — |
 | 原生命令改配置后的同步 | 部分 | model/rerouted 通知（服务端单轮改路由）；app-server 没有修改模型或设置的原生命令 | 部分 | 未接出 | 未接出 | — | 改路由以警告提示逐轮显示；它不是会话设置，不在下一回合沿用（ADR-028）；改路由提示尚无协议测试 |
-| 思考输出 | 具备 | item/reasoning/summaryTextDelta、textDelta | 已接出 | 通过 | 未接出 | — | 协议测试覆盖；真实思考输出未单独验收 |
+| 思考输出 | 具备 | item/reasoning/summaryTextDelta、textDelta | 已接出 | 通过 | 未接出 | .tmp/cc-native-thinking-codex.json；docs/verification/native-thinking-2026-10-11.md | 按用户配置（model_reasoning_effort=xhigh，未设置推理摘要）这一回合没有发送推理摘要；协议映射已测试 |
 | 工具状态 | 具备 | item/started\|completed 的 commandExecution/fileChange/mcpToolCall/webSearch 等 | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-codex.json；docs/verification/native-activity-2026-10-11.md | 命令与补丁工具真实回合 |
 | 工具输入/输出/差异 | 具备 | commandExecution.aggregatedOutput/exitCode、fileChange.changes[].diff、mcpToolCall 参数与结果、turn/diff/updated | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-codex.json；docs/verification/native-activity-2026-10-11.md | 命令输入/输出/退出码与补丁差异真实存储；MCP、搜索、图片项仅协议验证 |
 | 计划 | 部分 | turn/plan/updated 来自 update_plan 清单工具；工具是否提供取决于模型与模式 | 已接出 | 通过 | 受阻 | .tmp/cc-native-activity-codex-plan.json；docs/verification/native-activity-2026-10-11.md | 本机默认 gpt-6.1-sol 回合未提供 update_plan 工具（真实回复确认）；计划模式 collaborationMode 需 experimentalApi，未接出 |
@@ -89,7 +89,7 @@
 | 模式与原生设置 | 具备 | mode(default/acceptEdits/plan/auto/bypassPermissions)、fast、agent | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | mode=default（手动审批）真实生效：编辑前请求审批 |
 | 原生命令目录与执行 | 具备 | available_commands_update（内置、自定义、skills、插件、MCP prompt），/compact /model 等原生处理 | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-claude.json；.tmp/cc-native-config-claude-model.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | 目录真实读取 223 条命令；/compact、/model 作为原生命令真实执行 |
 | 原生命令改配置后的同步 | 具备 | /model、ExitPlanMode、回退模型后发送 config_option_update/current_mode_update | 已接出 | 通过 | 通过 | .tmp/cc-native-config-claude-model.json；.tmp/cc-native-config-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | /model haiku 后代理宣告新模型，下一回合沿用、显式切换后恢复所选；/effort 不被宣告，因此不沿用 |
-| 思考输出 | 具备 | agent_thought_chunk（新模型可能只有签名不出文本） | 已接出 | 通过 | 未接出 | docs/verification/claude-real-and-approval-detail-2026-10-11.md | 账号额度已恢复；思考输出尚未单独真实验收 |
+| 思考输出 | 具备 | agent_thought_chunk（新模型可能只有签名不出文本） | 已接出 | 通过 | 受阻 | .tmp/cc-native-thinking-claude.json；docs/verification/native-thinking-2026-10-11.md | claude-agent-acp 说明新模型默认 thinking.display=omitted，只发送无文本的签名块；Hub 不修改用户设置，本机未产生可显示的思考文本 |
 | 工具状态 | 具备 | tool_call/tool_call_update | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | Bash、Read、Edit、ToolSearch 工具真实回合 |
 | 工具输入/输出/差异 | 具备 | kind、content(diff/console)、locations、rawInput/rawOutput、_meta.claudeCode.toolResponse | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | 命令输入输出、读取位置与编辑差异真实存储为可读详情 |
 | 计划 | 具备 | plan 全量快照（TodoWrite/Task*） | 已接出 | 通过 | 受阻 | .tmp/cc-native-activity-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | 本机 claude-agent-acp 0.89.1 会话里模型没有 TodoWrite 类计划工具（模型自述），无法产生计划；协议映射已测试 |
@@ -123,7 +123,7 @@
 | 模式与原生设置 | 具备 | configOptions mode(build/plan) | 已接出 | 通过 | 未接出 | — | 未真实验收 |
 | 原生命令目录与执行 | 具备 | available_commands_update（init/review、配置命令、MCP prompt、skills） | 已接出 | 通过 | 未接出 | — | 目录真实读取 104 条（目录读取现等待代理的命令公告）；执行未验收；未知 / 开头文本会被原程序丢弃 |
 | 原生命令改配置后的同步 | 未核实 | 1.18.35 只在客户端 session/set_config_option（model）后发送 config_option_update；未发现原生命令修改设置后的宣告 | 未接出 | 未接出 | 未接出 | — | 若它宣告设置变化，通用 ACP 机制（ADR-028）会同样记录并沿用；未确认，不计为已接出 |
-| 思考输出 | 具备 | agent_thought_chunk | 已接出 | 通过 | 未接出 | — | 未真实验收 |
+| 思考输出 | 具备 | agent_thought_chunk | 已接出 | 通过 | 通过 | .tmp/cc-native-thinking-opencode.json；docs/verification/native-thinking-2026-10-11.md | 推理题的思考内容记录在 Run 上，不混入回复 |
 | 工具状态 | 具备 | tool_call/tool_call_update | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-opencode.json；docs/verification/native-activity-2026-10-11.md | 命令、读取、编辑与 todowrite 真实回合 |
 | 工具输入/输出/差异 | 具备 | rawInput/rawOutput、diff、图片附件 | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-opencode.json；docs/verification/native-activity-2026-10-11.md | 命令/读取/编辑详情与差异真实存储；标题为原程序给出的路径 |
 | 计划 | 不提供 | 不发送 plan 更新 | 不适用 | 不适用 | 不适用 | — | 原程序 todowrite 以工具（N todos）显示，不发 ACP plan |
@@ -259,7 +259,7 @@
 | 模式与原生设置 | 不提供 | 无会话级模式；steering/follow-up/自动压缩设置会写全局 settings.json | 不适用 | 不适用 | 不适用 | — | — |
 | 原生命令目录与执行 | 具备 | get_commands（extension/prompt/skill）；内置 TUI 命令不可用 | 已接出 | 通过 | 未接出 | — | 扩展命令无运行时已按原生状态结算；执行未真实验收 |
 | 原生命令改配置后的同步 | 部分 | get_state 的 model/thinkingLevel；扩展命令可改模型与思考档位；恢复会话文件时 Pi 自己恢复上次的模型与档位 | 已接出 | 通过 | 受阻 | docs/verification/native-config-sync-2026-10-11.md | 回合后读取 get_state；恢复会话不再强加默认模型（只在有选择时指定）；真实触发需要在用户 Pi 配置中加入扩展，不做 |
-| 思考输出 | 具备 | message_update thinking_delta | 已接出 | 通过 | 未接出 | — | 未真实验收 |
+| 思考输出 | 具备 | message_update thinking_delta | 已接出 | 通过 | 通过 | .tmp/cc-native-thinking-pi.json；docs/verification/native-thinking-2026-10-11.md | deepseek/deepseek-flash、thinking_level=high：思考内容记录在 Run 上，不混入回复 |
 | 工具状态 | 具备 | tool_execution_start/end | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-pi.json；docs/verification/native-activity-2026-10-11.md | bash、read、edit 真实回合 |
 | 工具输入/输出/差异 | 具备 | tool_execution_start.args、update.partialResult、end.result.content/details(diff/patch) | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-pi.json；docs/verification/native-activity-2026-10-11.md | 参数、结果与 patch 差异真实存储 |
 | 计划 | 不提供 | 无原生计划 | 不适用 | 不适用 | 不适用 | — | — |

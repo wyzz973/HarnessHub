@@ -81,3 +81,5 @@ Claude 额度恢复后的真实补测与 ACP 审批详情见[Claude 真实验收
 ACP 原生提问表单（Claude AskUserQuestion）见[原生提问表单](native-questions-2026-10-11.md)。
 
 Claude 会话导出见[Claude 会话导出](claude-export-2026-10-11.md)。
+
+思考输出的真实验收见[思考输出](native-thinking-2026-10-11.md)。

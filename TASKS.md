@@ -1851,6 +1851,7 @@
 - tests/real/native-import.real.ts
 - tests/real/native-subagent.real.ts
 - tests/real/native-question.real.ts
+- tests/real/native-thinking.real.ts
 
 验收：
 - 记录通过/失败/未覆盖，不能称全协议认证
@@ -1859,7 +1860,7 @@
 - 真实HTTP/Store/IPC/原生进程与产物/清理完整可核对
 - 真实HTTP/Store/IPC/原生进程与产物/清理完整可核对
 
-场景：G060-C01, G060-C02, G060-C03, G060-C04, G060-C05, G060-P01, G060-P02, G060-M01, G060-S01, G060-N04, G060-NC1, G060-NC2, G060-NC3, G060-NC4, G060-NC5, G060-NC6, G060-NC7, G060-NC8, G060-NC9, G060-NC10, G060-NC11。
+场景：G060-C01, G060-C02, G060-C03, G060-C04, G060-C05, G060-P01, G060-P02, G060-M01, G060-S01, G060-N04, G060-NC1, G060-NC2, G060-NC3, G060-NC4, G060-NC5, G060-NC6, G060-NC7, G060-NC8, G060-NC9, G060-NC10, G060-NC11, G060-NC12。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 

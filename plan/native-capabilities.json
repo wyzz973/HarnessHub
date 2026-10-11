@@ -207,8 +207,11 @@
           "hub": "done",
           "protocol": "pass",
           "real": "none",
-          "evidence": [],
-          "note": "协议测试覆盖；真实思考输出未单独验收"
+          "evidence": [
+            ".tmp/cc-native-thinking-codex.json",
+            "docs/verification/native-thinking-2026-10-11.md"
+          ],
+          "note": "按用户配置（model_reasoning_effort=xhigh，未设置推理摘要）这一回合没有发送推理摘要；协议映射已测试"
         },
         "tool-status": {
           "native": "yes",
@@ -524,11 +527,12 @@
           "source": "agent_thought_chunk（新模型可能只有签名不出文本）",
           "hub": "done",
           "protocol": "pass",
-          "real": "none",
+          "real": "blocked",
           "evidence": [
-            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+            ".tmp/cc-native-thinking-claude.json",
+            "docs/verification/native-thinking-2026-10-11.md"
           ],
-          "note": "账号额度已恢复；思考输出尚未单独真实验收"
+          "note": "claude-agent-acp 说明新模型默认 thinking.display=omitted，只发送无文本的签名块；Hub 不修改用户设置，本机未产生可显示的思考文本"
         },
         "tool-status": {
           "native": "yes",
@@ -825,9 +829,12 @@
           "source": "agent_thought_chunk",
           "hub": "done",
           "protocol": "pass",
-          "real": "none",
-          "evidence": [],
-          "note": "未真实验收"
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-thinking-opencode.json",
+            "docs/verification/native-thinking-2026-10-11.md"
+          ],
+          "note": "推理题的思考内容记录在 Run 上，不混入回复"
         },
         "tool-status": {
           "native": "yes",
@@ -1917,9 +1924,12 @@
           "source": "message_update thinking_delta",
           "hub": "done",
           "protocol": "pass",
-          "real": "none",
-          "evidence": [],
-          "note": "未真实验收"
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-thinking-pi.json",
+            "docs/verification/native-thinking-2026-10-11.md"
+          ],
+          "note": "deepseek/deepseek-flash、thinking_level=high：思考内容记录在 Run 上，不混入回复"
         },
         "tool-status": {
           "native": "yes",
