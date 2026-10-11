@@ -83,3 +83,5 @@ ACP 原生提问表单（Claude AskUserQuestion）见[原生提问表单](native
 Claude 会话导出见[Claude 会话导出](claude-export-2026-10-11.md)。
 
 思考输出的真实验收见[思考输出](native-thinking-2026-10-11.md)。
+
+前端构建：React 运行时单独分块后应用主包为 305.10 kB（React 218.76 kB），不再触发 Vite 的 500 kB 提示；浏览器测试 11 通过、0 失败（`.tmp/cc-batch15-webbuild.log`、`.tmp/cc-batch15-browser.log`）。此前各验收记录中的 500 kB 提示为当时情况。
