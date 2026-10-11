@@ -8,6 +8,8 @@ import test from "node:test";
 import { application } from "../../src/cli/session-application.js";
 import type { PublicRun, SessionId } from "../../src/contracts/session.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
+import { inventory } from "../../src/infrastructure/catalog/inventory-composition.js";
+import { createNativeControl } from "../../src/adapters/control/factory.js";
 
 /**
  * Original-installation acceptance of continuing a native session (ADR-029): the installed program itself creates a session
@@ -31,6 +33,28 @@ const nativeStart: Readonly<Record<string, (prompt: string) => readonly [string,
   opencode: prompt => ["opencode", ["run", prompt]],
   claude: prompt => ["claude", ["-p", prompt]],
 };
+/**
+ * Harnesses whose own listable sessions come from ACP clients such as editors (Hermes lists only ACP sessions; dsh's ACP
+ * profile is its automation entry): another ACP client creates the session through the program's own ACP entry, found by
+ * the Hub's discovery, outside any Hub conversation.
+ */
+const acpStarted = new Set(["hermes", "dsh"]);
+/** Agents that can resume a session but never replay it (dsh's ACP has no session/load): continuing them has no history to quote. */
+const resumeOnly = new Set(["dsh"]);
+async function acpStart(harnessId: string, workspace: string, prompt: string): Promise<void> {
+  const observed = await inventory({ ...(process.env.HH_REAL_MANIFEST ? { manifest: process.env.HH_REAL_MANIFEST } : {}), searchDirs: [], packageRoots: [], pathOnly: false });
+  const control = observed.report.harnesses.find(harness => harness.id === harnessId)?.controls.find(item => item.state === "candidate" && item.protocol === "acp-v1");
+  if (!control?.command) throw new Error("no ACP entry was discovered for " + harnessId);
+  const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+  const driver = await createNativeControl(harnessId, { protocol: "acp-v1", executable: control.command.executable, args: [...control.command.args], env: { ...control.command.env } },
+    { cwd: workspace, env, requestTimeoutMs: 30_000, runTimeoutMs: 5 * 60_000, maxFrameBytes: 8 * 1024 * 1024, maxDiagnosticBytes: 64 * 1024, closeGraceMs: 5_000 });
+  try {
+    await driver.initialize();
+    if (!driver.open || !driver.startText) throw new Error("the ACP entry cannot hold a conversation");
+    const id = await driver.open(workspace), result = await (await driver.startText(id, prompt, () => {})).result;
+    if (result.status !== "completed") throw new Error("the native session start ended " + result.status);
+  } finally { await driver.close(); }
+}
 const TERMINAL = new Set<PublicRun["status"]>(["completed", "failed", "cancelled", "unknown"]);
 async function digest(path: string): Promise<string> {
   try { return createHash("sha256").update(await readFile(path)).digest("hex"); }
@@ -68,11 +92,11 @@ test("installed Harness continues its own session of the workspace in the Hub, w
       const proof: Record<string, unknown> = { harnessId, startedAt: new Date().toISOString() };
       const app = application(data, () => {});
       try {
-        assert.ok(start, "no native session starter for " + harnessId);
-        const tag = "T-" + randomUUID().slice(0, 6).toUpperCase();
-        const [command, args] = start("请记住标记 " + tag + "。只回复“好的”，不要调用任何工具。");
+        assert.ok(start || acpStarted.has(harnessId), "no native session starter for " + harnessId);
+        const tag = "T-" + randomUUID().slice(0, 6).toUpperCase(), prompt = "请记住标记 " + tag + "。只回复“好的”，不要调用任何工具，也不要保存到长期记忆。";
         // A start that the account refuses (Claude's exhausted quota) can still leave a native session to list and read.
-        try { await run(command, args, workspace); proof.nativeStart = "completed"; } catch (error) { proof.nativeStart = error instanceof Error ? error.message.split("\n").at(-2)?.slice(0, 200) ?? "failed" : "failed"; }
+        try { if (start) { const [command, args] = start(prompt); await run(command, args, workspace); } else await acpStart(harnessId, workspace, prompt); proof.nativeStart = start ? "completed" : "completed through the program's own ACP entry"; }
+        catch (error) { proof.nativeStart = error instanceof Error ? error.message.split("\n").at(-2)?.slice(0, 200) ?? error.message.slice(0, 200) : "failed"; }
         const configuration = await prepareConfiguration({ workspace, ...(process.env.HH_REAL_MANIFEST ? { manifestPath: process.env.HH_REAL_MANIFEST } : {}) });
         const page = await app.factory.listNativeSessions({ harnessId }, configuration, AbortSignal.timeout(120_000));
         proof.listed = page === null ? null : { sessions: page.sessions.length, titled: page.sessions.filter(row => row.title !== null).length, sources: page.sessions.map(row => row.source ?? null) };
@@ -81,7 +105,7 @@ test("installed Harness continues its own session of the workspace in the Hub, w
         const imported = await app.runtime.importNative(configuration, { harnessId }, native.id, "import-" + randomUUID());
         const origin = imported.origin?.kind === "import" ? imported.origin : null;
         proof.imported = origin === null ? null : { messages: origin.history.length, omitted: origin.omitted, complete: origin.complete, historyRead: origin.historyRead, tagQuoted: origin.history.some(row => row.role === "user" && row.text.includes(tag)) };
-        if (!origin?.historyRead || !origin.history.some(row => row.text.includes(tag))) failures.push(harnessId + ": quoted history");
+        if (resumeOnly.has(harnessId) ? origin?.historyRead !== false || origin.history.length !== 0 : !origin?.historyRead || !origin.history.some(row => row.text.includes(tag))) failures.push(harnessId + ": quoted history");
         try { await app.runtime.importNative(configuration, { harnessId }, native.id, "import-" + randomUUID()); proof.secondImport = "accepted"; failures.push(harnessId + ": second holder"); }
         catch (error) { proof.secondImport = error !== null && typeof error === "object" && "code" in error ? String(error.code) : "failed"; }
         const asked = await turn(app, imported.id, "我之前让你记住的标记是什么？只回复那个标记本身，不要调用任何工具。");

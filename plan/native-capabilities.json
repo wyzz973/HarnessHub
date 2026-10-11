@@ -2387,8 +2387,12 @@
           "source": "session/list（按 cwd 过滤、游标分页，只列有消息的 ACP 会话）与 session/load 回放（acp_adapter/server.py）",
           "hub": "done",
           "protocol": "pass",
-          "real": "none",
-          "evidence": []
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-hermes-dsh-import.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ],
+          "note": "只列出经 ACP 创建的会话（编辑器等），CLI、TUI 与消息网关中的会话不在其中"
         },
         "fork": {
           "native": "yes",
@@ -2425,9 +2429,12 @@
           "source": "delegate_task 在进程内运行子 Agent；子 Agent 的活动不经 ACP 发出（acp_adapter/tools.py）",
           "hub": "partial",
           "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": "只显示 delegate_task 工具本身"
+          "real": "partial",
+          "evidence": [
+            ".tmp/cc-hermes-subagent.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ],
+          "note": "delegate_task 只显示为一个 execute 工具（无工具名，标题为“delegate: …”）；子 Agent 自己的工具不经 ACP 发出，无法挂到调用下"
         },
         "background": {
           "native": "yes",
@@ -2654,9 +2661,12 @@
           "source": "session/list：从新到旧列出持久根会话（无标题、无时间），可按 cwd 过滤（packages/acp/acp/src/index.ts）",
           "hub": "done",
           "protocol": "pass",
-          "real": "none",
-          "evidence": [],
-          "note": "不支持 session/load，接续时显示不了以前的历史"
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-hermes-dsh-import.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ],
+          "note": "不支持 session/load，接续时没有历史可引用（如实标出），接续后由原生会话回答"
         },
         "fork": {
           "native": "no",

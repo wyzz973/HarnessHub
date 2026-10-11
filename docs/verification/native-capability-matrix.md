@@ -28,7 +28,7 @@
 | 扩展 | MCP | ◑ | ◑ | ◑ | — | ◑ | ◑ | — | ○ | ○ |
 | 扩展 | 插件/扩展 | ◑ | ◑ | ◑ | ◑ | ◑ | ？ | ◑ | ○ | ○ |
 | 会话 | 原生会话恢复 | ✅ | ✅ | ✅ | ✅ | ✕ | ✕ | ✅ | ✅ | ✅ |
-| 会话 | 原生会话列表/接续 | ✅ | ✅ | ✅ | ○ | — | ✕ | — | ◐ | ◐ |
+| 会话 | 原生会话列表/接续 | ✅ | ✅ | ✅ | ○ | — | ✕ | — | ✅ | ✅ |
 | 会话 | 原生分支 | ✅ | ✅ | ✅ | — | — | — | ✅ | ✅ | — |
 | 会话 | 上下文压缩 | ✅ | ✅ | ○ | ✅ | — | ？ | ✅ | ✅ | ○ |
 | 会话 | 回滚/回退 | ○ | — | ？ | — | ○ | — | ○ | — | — |
@@ -45,8 +45,8 @@
 | Gemini CLI | 0 | 0 | 2 | 1 | 12 | 6 | 6 |
 | Cursor | 0 | 2 | 4 | 2 | 11 | 5 | 3 |
 | Pi | 11 | 5 | 1 | 2 | 1 | 7 | 0 |
-| Hermes Agent | 10 | 2 | 1 | 6 | 2 | 6 | 0 |
-| DeepSeek Harness | 6 | 4 | 1 | 6 | 2 | 8 | 0 |
+| Hermes Agent | 11 | 1 | 1 | 6 | 2 | 6 | 0 |
+| DeepSeek Harness | 7 | 3 | 1 | 6 | 2 | 8 | 0 |
 
 ## Codex
 
@@ -312,11 +312,11 @@
 | MCP | 部分 | config.yaml 的 mcp_servers 在启动时注册，会话也可附加 MCP 服务器；ACP 没有列表（acp_adapter/entry.py、server.py） | 未接出 | 未接出 | 未接出 | — | — |
 | 插件/扩展 | 部分 | plugins/ 插件机制；ACP 没有对应接口 | 未接出 | 未接出 | 未接出 | — | — |
 | 原生会话恢复 | 具备 | session/load 从 ~/.hermes/state.db 恢复（未知标识返回 null）；session/resume 对未知标识会静默新建（acp_adapter/session.py、server.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-resume.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | Hub 只用 session/load；历史回放在响应之后，等待窗口从响应开始计算 |
-| 原生会话列表/接续 | 具备 | session/list（按 cwd 过滤、游标分页，只列有消息的 ACP 会话）与 session/load 回放（acp_adapter/server.py） | 已接出 | 通过 | 未接出 | — | — |
+| 原生会话列表/接续 | 具备 | session/list（按 cwd 过滤、游标分页，只列有消息的 ACP 会话）与 session/load 回放（acp_adapter/server.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-import.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 只列出经 ACP 创建的会话（编辑器等），CLI、TUI 与消息网关中的会话不在其中 |
 | 原生分支 | 具备 | session/fork（acp_adapter/session.py fork_session） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-branch.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
 | 上下文压缩 | 具备 | /compact 命令（acp_adapter/server.py _cmd_compact） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-commands.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
 | 回滚/回退 | 不提供 | 只有 /reset 清空整段历史，没有回退到某一轮 | 不适用 | 不适用 | 不适用 | — | — |
-| 子 Agent | 部分 | delegate_task 在进程内运行子 Agent；子 Agent 的活动不经 ACP 发出（acp_adapter/tools.py） | 部分 | 未接出 | 未接出 | — | 只显示 delegate_task 工具本身 |
+| 子 Agent | 部分 | delegate_task 在进程内运行子 Agent；子 Agent 的活动不经 ACP 发出（acp_adapter/tools.py） | 部分 | 未接出 | 部分通过 | .tmp/cc-hermes-subagent.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | delegate_task 只显示为一个 execute 工具（无工具名，标题为“delegate: …”）；子 Agent 自己的工具不经 ACP 发出，无法挂到调用下 |
 | 后台任务 | 具备 | process 工具管理后台进程；随每回合结束的 ACP 进程一起结束（toolsets.py） | 未接出 | 未接出 | 未接出 | — | 等待 ADR-030 |
 | 导出与产物 | 具备 | hermes sessions export - --session-id <id> 输出 JSONL（hermes_cli/main.py） | 未接出 | 未接出 | 未接出 | — | — |
 
@@ -346,7 +346,7 @@
 | MCP | 部分 | session/new 可挂载 stdio/HTTP MCP；ACP 不列出用户自己的 MCP（packages/acp/acp/README.md、src/mcp.ts） | 未接出 | 未接出 | 未接出 | — | — |
 | 插件/扩展 | 部分 | profile bundles 插件机制（dsh plugin）；ACP 没有列表 | 未接出 | 未接出 | 未接出 | — | — |
 | 原生会话恢复 | 具备 | session/resume 恢复持久会话，不回放旧更新（packages/acp/acp/src/index.ts） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-resume.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
-| 原生会话列表/接续 | 具备 | session/list：从新到旧列出持久根会话（无标题、无时间），可按 cwd 过滤（packages/acp/acp/src/index.ts） | 已接出 | 通过 | 未接出 | — | 不支持 session/load，接续时显示不了以前的历史 |
+| 原生会话列表/接续 | 具备 | session/list：从新到旧列出持久根会话（无标题、无时间），可按 cwd 过滤（packages/acp/acp/src/index.ts） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-import.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 不支持 session/load，接续时没有历史可引用（如实标出），接续后由原生会话回答 |
 | 原生分支 | 不提供 | 不支持 fork（packages/acp/acp/README.md） | 不适用 | 不适用 | 不适用 | — | — |
 | 上下文压缩 | 部分 | 自动压缩插件（compaction-basic、tool-result-pruner）；ACP 没有压缩命令或更新 | 未接出 | 未接出 | 未接出 | — | — |
 | 回滚/回退 | 不提供 | ACP 界面不提供（packages/acp/acp/README.md） | 不适用 | 不适用 | 不适用 | — | — |

@@ -45,8 +45,16 @@ Hermes Agent 0.12.0（官方安装方式，`~/.hermes/hermes-agent`，DeepSeek d
 | 选择推理档位与模型后由原程序回报 | 不提供档位 | 通过（low，所选模型已应用） | `.tmp/cc-dsh-options.json` |
 | 分支 | 原生 fork，分支答对暗号且不泄漏到源 | 不支持 fork，按公共历史分支，隔离正确 | `.tmp/cc-hermes-dsh-branch.json` |
 | 危险命令审批 | 受阻：本机 Hermes 缺陷，见下 | 受阻：用户预设为 danger-full-access，不发审批 | `.tmp/cc-hermes-approval.json` |
+| 接续本机会话：另一个 ACP 客户端建会话并告知标记，Hub 列出、接续后询问标记 | 通过：列出 1 个带标题会话，引用 2 条历史，标记答对，重复接续被拒 | 通过：列出 1 个会话，如实报告没有历史（不支持 load），标记由原生会话答对，重复接续被拒 | `.tmp/cc-hermes-dsh-import.json` |
+| 子 Agent（审批允许的一次最小任务） | 部分：委派只显示为一个 execute 工具，子 Agent 的工具不可见 | 未做 | `.tmp/cc-hermes-subagent.json` |
 
 界面检查（独立开发实例）：Harness 页列出 45 个产品、9 个已安装，DeepSeek Harness 显示“v0.2.1-alpha.1 · 自定义入口（发现清单）”。验收用的干净环境里 `hermes` 解析为 `~/.local/bin/hermes`（交互终端 cmux 中另有同名 shim，Hub 服务不经过它）。
+
+dsh 的接续：第一次运行的判据要求引用历史，而 dsh 原生不能回放；判据改为“只能恢复的 Harness 如实报告没有历史、回答仍须来自原生会话”后，对同一次运行的证据评估为通过，没有为凑通过而重跑。之后的验收工作区按审批代理要求放在 `$HOME/.cache/harnesshub-acceptance` 下（Hermes 拒绝写 `/private/var`）。
+
+进程检查：验收后只有用户自己的 Hermes 网关（PID 4058）与 OpenClaw 网关进程在运行，没有残留的 `hermes acp`，也没有被启动的 gateway 或 cron 子命令（`.tmp/cc-hermes-process-tree.txt`）。
+
+花费：两者都走用户自己的 DeepSeek API。Hermes 每回合输入约 16k token（大部分命中缓存），dsh 约 11k；含两次约 4 分钟的调试回合在内，本轮全部真实运行按用量估计不超过审批上限（每个 Harness ¥10、合计 ¥50）的一半。
 
 所有真实验收都在临时工作区进行，前后核对 `~/.hermes/config.yaml`、`~/.dsh/settings.yaml` 与 acp profile 的 patch 未改动。
 
@@ -79,7 +87,7 @@ Hermes Agent 0.12.0（官方安装方式，`~/.hermes/hermes-agent`，DeepSeek d
 
 ## 未验证与受阻
 
-- Hermes：接续本机会话（它只列出经 ACP 创建的会话，CLI、TUI 与消息网关里的会话不在其中）、子 Agent 嵌套活动、后台进程、导出（原生有 `hermes sessions export`，Hub 未接出）。
-- dsh：接续本机会话（不支持 `session/load`，接续时没有历史）、输出图片、子 Agent。
+- Hermes：它只列出经 ACP 创建的会话（CLI、TUI 与消息网关里的会话不在其中）；子 Agent 的嵌套活动不可见；后台进程；导出（原生有 `hermes sessions export`，Hub 未接出）。
+- dsh：接续时没有历史可引用（不支持 `session/load`）；输出图片与子 Agent 未做真实验收。
 - 读取模型目录会让原程序新建一个空会话：dsh 会持久化并在列表中显示它，Hermes 写入一行但在列表中过滤。处理方式待定（ADR-031）。
 - Windows 未验证。
