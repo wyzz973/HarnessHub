@@ -1,6 +1,6 @@
 import { consumeSessionEventStream, SessionStreamError } from "./session-stream.js";
 import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
-import type { AuthSession, HarnessView, InstallationLogPage, SessionSummary, SessionView, SessionStreamFrame, WebState } from "../../src/contracts/web.js";
+import type { AuthSession, HarnessView, InstallationLogPage, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, WebState } from "../../src/contracts/web.js";
 import type { HarnessManagementView, InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
 import type { HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
 import type { NativeExtensions, NativeInputs, NativeOption, NativeModelCatalog } from "../../src/contracts/control.js";
@@ -148,9 +148,12 @@ export function decodeSession(value: unknown): SessionView {
         ...(state.observed === undefined ? {} : { observed: (() => { const observed = record(state.observed); return { model: observed.model === null ? null : text(observed.model), options: parseNativeOptions(observed.options) }; })() }),
         ...(state.carried === undefined ? {} : { carried: (() => { const carried = record(state.carried);
           return { ...(carried.model === undefined ? {} : { model: text(carried.model) }), ...(carried.options === undefined ? {} : { options: parseNativeOptions(carried.options) }) }; })() }) }; }, 256) }),
-    ...(row.origin === undefined ? {} : { origin: (() => { const origin = record(row.origin); if (origin.kind !== "fork") return invalid();
-      return { kind: "fork" as const, sessionId: sessionId(origin.sessionId), throughRunId: runId(origin.throughRunId), history: list(origin.history, value => { const message = record(value);
-        return { role: choice(message.role, ["user", "assistant"]), text: text(message.text), status: choice(message.status, RUN_STATES), ...(message.harnessId === undefined ? {} : { harnessId: text(message.harnessId) }), ...(message.attachments === undefined ? {} : { attachments: list(message.attachments, contentRef, 8) }) }; }, 512) }; })() }),
+    ...(row.origin === undefined ? {} : { origin: (() => { const origin = record(row.origin);
+      const history = list(origin.history, value => { const message = record(value);
+        return { role: choice(message.role, ["user", "assistant"]), text: text(message.text), status: choice(message.status, RUN_STATES), ...(message.harnessId === undefined ? {} : { harnessId: text(message.harnessId) }), ...(message.attachments === undefined ? {} : { attachments: list(message.attachments, contentRef, 8) }) }; }, 512);
+      if (origin.kind === "import") return { kind: "import" as const, harnessId: text(origin.harnessId), title: nullableText(origin.title), omitted: number(origin.omitted), complete: bool(origin.complete), historyRead: bool(origin.historyRead), history };
+      if (origin.kind !== "fork") return invalid();
+      return { kind: "fork" as const, sessionId: sessionId(origin.sessionId), throughRunId: runId(origin.throughRunId), history }; })() }),
     ...(row.permissions===undefined?{}:{permissions:list(row.permissions, value => { const request=record(value);return {id:text(request.id),runId:text(request.runId),title:text(request.title),decided:bool(request.decided), ...(request.detail===undefined?{}:{detail:text(request.detail)}),...(request.input===undefined?{}:{input:(()=>{const value=record(request.input);return {kind:choice(value.kind,["text","editor","secret"]),value:text(value.value)};})()}),options:list(request.options,value=>{const option=record(value);return {id:text(option.id),name:text(option.name)};},128)};},32)}), messages: list(row.messages, decodeMessage, 1024), runs: list(row.runs, decodeRun, 256), switches: list(row.switches, decodeSwitch, 1024) };
 }
 /** Decodes only canonical public facts; stream framing and projection validate their watermarks. */
@@ -229,6 +232,19 @@ export class GatewayApi {
       if (new Set(models.map(model => model.id)).size !== models.length) return invalid();
       return { models, defaultModel: nullableText(row.defaultModel), authentication: choice(row.authentication, ["ready", "missing", "unknown"]), canSelect: bool(row.canSelect), ...(row.selectionError === undefined ? {} : {selectionError:publicError(row.selectionError)??invalid()}), ...(row.options === undefined ? {} : { options: list(row.options,nativeOption,128) }), ...(row.commands === undefined ? {} : { commands: list(row.commands,value => {const command=record(value);return { name:text(command.name),description:text(command.description) };},2048) }), ...(row.inputs === undefined ? {} : { inputs: nativeInputs(row.inputs) }) };
     }, signal);
+  }
+  /** The selected Harness's own sessions in this workspace, newest first; `sessions` is null when it cannot list them. */
+  nativeSessions(harness: string, control: string, workspace: string, cursor?: string, signal?: AbortSignal): Promise<NativeSessionListView> {
+    return this.request(`/harnesses/${encodeURIComponent(harness)}/native-sessions?${new URLSearchParams({ controlId: control, workspace, ...(cursor === undefined ? {} : { cursor }) })}`, "GET", undefined, value => {
+      const row = record(value), next = row.nextCursor === null ? null : text(row.nextCursor);
+      if (row.sessions === null) return { sessions: null, nextCursor: null };
+      return { nextCursor: next, sessions: list(row.sessions, value => { const item = record(value);
+        return { id: text(item.id), title: nullableText(item.title), updatedAt: item.updatedAt === null ? null : number(item.updatedAt), ...(item.source === undefined ? {} : { source: text(item.source) }), ...(item.conversationId === undefined ? {} : { conversationId: text(item.conversationId) }) }; }, 1000) };
+    }, signal);
+  }
+  /** Continues one listed native session as a new conversation; nothing is sent until the next message. */
+  importNativeSession(workspace: string, selection: SelectionRequest, nativeId: string, key: string): Promise<SessionView> {
+    return this.request("/sessions/import", "POST", { workspace, selection, nativeId, commandId: key }, decodeSession);
   }
   /** Native skills, MCP servers and plugins of the selected Harness in this workspace; null when its interface has no such list. */
   nativeExtensions(harness: string, control: string, workspace: string, signal?: AbortSignal): Promise<NativeExtensions | null> {

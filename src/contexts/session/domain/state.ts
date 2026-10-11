@@ -211,19 +211,34 @@ export function parseNativeConfiguration(value: unknown): NativeConfiguration {
   try { return { model: item.model, options: parseNativeOptions(item.options) }; }
   catch (error) { if (error instanceof SessionError) throw new SessionError("INVALID_DATA", "invalid native configuration options"); throw error; }
 }
-function origin(value: unknown): SessionOrigin {
-  const item = record(value, "Session origin"); keys(item, ["kind", "sessionId", "throughRunId", "history"], "Session origin");
-  if (item.kind !== "fork") throw new SessionError("INVALID_DATA", "unknown Session origin");
-  const history = array(item.history, "branched history", MAX_ORIGIN_MESSAGES, entry => {
-    const row = record(entry, "branched message"); keys(row, ["role", "text", "status", "harnessId", "attachments"], "branched message");
-    if (row.role !== "user" && row.role !== "assistant") throw new SessionError("INVALID_DATA", "unknown branched message role");
+function quoted(value: unknown): readonly ForkedMessage[] {
+  const history = array(value, "quoted history", MAX_ORIGIN_MESSAGES, entry => {
+    const row = record(entry, "quoted message"); keys(row, ["role", "text", "status", "harnessId", "attachments"], "quoted message");
+    if (row.role !== "user" && row.role !== "assistant") throw new SessionError("INVALID_DATA", "unknown quoted message role");
     const attachments = row.attachments === undefined ? undefined : parseAttachmentRefs(row.attachments);
-    if (attachments !== undefined && (!attachments.length || row.role !== "user")) throw new SessionError("INVALID_DATA", "only a branched user message carries attachments");
-    return { role: row.role, text: text(row.text, "branched message", MAX_OUTPUT_BYTES, true), status: status(row.status),
-      ...(row.harnessId === undefined ? {} : { harnessId: text(row.harnessId, "branched Harness", 96) }), ...(attachments === undefined ? {} : { attachments }) } as ForkedMessage;
+    if (attachments !== undefined && (!attachments.length || row.role !== "user")) throw new SessionError("INVALID_DATA", "only a quoted user message carries attachments");
+    return { role: row.role, text: text(row.text, "quoted message", MAX_OUTPUT_BYTES, true), status: status(row.status),
+      ...(row.harnessId === undefined ? {} : { harnessId: text(row.harnessId, "quoted Harness", 96) }), ...(attachments === undefined ? {} : { attachments }) } as ForkedMessage;
   });
-  if (utf8Bytes(JSON.stringify(history)) > MAX_CONTEXT_BYTES) throw new SessionError("INVALID_DATA", "branched history exceeds the public context budget");
-  return { kind: "fork", sessionId: sessionId(item.sessionId), throughRunId: runId(item.throughRunId), history };
+  if (utf8Bytes(JSON.stringify(history)) > MAX_CONTEXT_BYTES) throw new SessionError("INVALID_DATA", "quoted history exceeds the public context budget");
+  return history;
+}
+function origin(value: unknown): SessionOrigin {
+  const item = record(value, "Session origin");
+  if (item.kind === "import") {
+    keys(item, ["kind", "harnessId", "title", "omitted", "complete", "historyRead", "history"], "Session origin");
+    const harnessId = text(item.harnessId, "imported Harness", 96);
+    if (!/^[a-z][a-z0-9-]*$/u.test(harnessId)) throw new SessionError("INVALID_DATA", "invalid imported Harness");
+    const title = item.title === null ? null : text(item.title, "imported title", 1024);
+    if (title !== null && /[\0-\x1f\x7f]/u.test(title)) throw new SessionError("INVALID_DATA", "invalid imported title");
+    const history = quoted(item.history), historyRead = boolean(item.historyRead, "imported history read");
+    const complete = boolean(item.complete, "imported history completeness");
+    if (!historyRead && (history.length || complete)) throw new SessionError("INVALID_DATA", "an unread native history quotes nothing");
+    return { kind: "import", harnessId, title, omitted: number(item.omitted, "omitted native messages"), complete, historyRead, history };
+  }
+  keys(item, ["kind", "sessionId", "throughRunId", "history"], "Session origin");
+  if (item.kind !== "fork") throw new SessionError("INVALID_DATA", "unknown Session origin");
+  return { kind: "fork", sessionId: sessionId(item.sessionId), throughRunId: runId(item.throughRunId), history: quoted(item.history) };
 }
 function unique(values: readonly string[], label: string): void {
   if (new Set(values).size !== values.length) throw new SessionError("INVALID_DATA", "duplicate " + label);
@@ -242,9 +257,13 @@ export function parseSession(value: unknown): SessionSnapshot {
     ...(item.origin === undefined ? {} : { origin: origin(item.origin) }) };
   // Branches and their pending native forks exist only from v8; a fork reference always belongs to a branched Session.
   if (result.schemaVersion < 8 && (result.origin !== undefined || result.nativeBindings?.some(binding => binding.status === "fork-pending" || binding.status === "forking"))) throw new SessionError("INVALID_DATA", "branched Sessions require Session v8");
-  if (result.nativeBindings?.some(binding => (binding.status === "fork-pending" || binding.status === "forking") && (result.origin === undefined || binding.throughRunId !== null))) throw new SessionError("INVALID_DATA", "a native fork reference needs its branch origin");
+  if (result.nativeBindings?.some(binding => (binding.status === "fork-pending" || binding.status === "forking") && (result.origin?.kind !== "fork" || binding.throughRunId !== null))) throw new SessionError("INVALID_DATA", "a native fork reference needs its branch origin");
+  // A continued native session (v9) keeps the reference it was imported with, even after it is archived.
+  const imported = result.origin?.kind === "import" ? result.origin : undefined;
+  if (imported && (result.schemaVersion < 9 || !result.nativeBindings?.some(binding => binding.harnessId === imported.harnessId)))
+    throw new SessionError("INVALID_DATA", "a continued native session requires Session v9 and its native reference");
   if (result.schemaVersion < 9 && result.nativeBindings?.some(binding => binding.observed !== undefined)) throw new SessionError("INVALID_DATA", "observed native configuration requires Session v9");
-  if (result.origin !== undefined && result.origin.sessionId === result.id) throw new SessionError("INVALID_DATA", "a Session cannot be branched from itself");
+  if (result.origin?.kind === "fork" && result.origin.sessionId === result.id) throw new SessionError("INVALID_DATA", "a Session cannot be branched from itself");
   if (result.schemaVersion < 6 && (result.nativeBindings !== undefined || result.commands.some(command => command.kind === "native-reset"))) throw new SessionError("INVALID_DATA", "native bindings require Session v6");
   if (result.schemaVersion < 7 && result.runs.some(run => run.plan !== undefined || run.usage !== undefined || run.notices !== undefined || run.activities !== undefined || run.outputs !== undefined || run.attachments !== undefined ||
       run.tools?.some(tool => Object.keys(tool).some(key => !["id", "title", "status"].includes(key))))) throw new SessionError("INVALID_DATA", "native activity details require Session v7");

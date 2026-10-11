@@ -26,7 +26,7 @@
 | 扩展 | MCP | ◑ | ◑ | ◑ | — | ◑ | ◑ | — |
 | 扩展 | 插件/扩展 | ◑ | ◑ | ◑ | ○ | ◑ | ？ | ◑ |
 | 会话 | 原生会话恢复 | ✅ | ✕ | ✅ | ✅ | ✕ | ✕ | ✅ |
-| 会话 | 原生会话列表/接续 | ○ | ○ | ○ | ○ | — | ○ | — |
+| 会话 | 原生会话列表/接续 | ✅ | ✅ | ✅ | ○ | — | ✕ | — |
 | 会话 | 原生分支 | ✅ | ✕ | ✅ | — | — | — | ✅ |
 | 会话 | 上下文压缩 | ✅ | ✕ | ○ | ✅ | — | ？ | ✅ |
 | 会话 | 回滚/回退 | ○ | — | ？ | — | ○ | — | ○ |
@@ -36,12 +36,12 @@
 
 | Harness | ✅ | ◐ | ◑ | ○ | ✕ | — | ？ |
 |---|---|---|---|---|---|---|---|
-| Codex | 12 | 3 | 6 | 3 | 2 | 1 | 0 |
-| Claude Code | 0 | 0 | 3 | 5 | 17 | 2 | 0 |
-| OpenCode | 8 | 6 | 3 | 3 | 0 | 2 | 5 |
+| Codex | 13 | 3 | 6 | 2 | 2 | 1 | 0 |
+| Claude Code | 1 | 0 | 3 | 4 | 17 | 2 | 0 |
+| OpenCode | 9 | 6 | 3 | 2 | 0 | 2 | 5 |
 | OpenClaw | 5 | 5 | 4 | 6 | 0 | 7 | 0 |
 | Gemini CLI | 0 | 0 | 2 | 1 | 12 | 6 | 6 |
-| Cursor | 0 | 2 | 4 | 3 | 10 | 5 | 3 |
+| Cursor | 0 | 2 | 4 | 2 | 11 | 5 | 3 |
 | Pi | 10 | 6 | 1 | 2 | 1 | 7 | 0 |
 
 ## Codex
@@ -70,7 +70,7 @@
 | MCP | 具备 | 用户 MCP 按原配置加载；mcpServerStatus/list、mcpServer/oauth/login | 部分 | 通过 | 通过 | .tmp/cc-native-extensions.json；docs/verification/native-extensions-2026-10-11.md | 原生扩展面板只读显示 MCP 服务器状态、认证与工具数（真实 14 个）；登录与重载在原程序中进行 |
 | 插件/扩展 | 具备 | plugin/list\|install、app/list | 部分 | 通过 | 通过 | .tmp/cc-native-extensions.json；docs/verification/native-extensions-2026-10-11.md | 只读显示已安装插件（真实 46 个）；安装与启停在原程序中进行 |
 | 原生会话恢复 | 具备 | thread/resume(excludeTurns)；跨 Hub 进程重启 | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；docs/verification/complete-native-capabilities-2026-10-11.md | — |
-| 原生会话列表/接续 | 具备 | thread/list、thread/read、thread/turns/list | 未接出 | 未接出 | 未接出 | — | — |
+| 原生会话列表/接续 | 具备 | thread/list（cwd、来源、归档过滤）、thread/read、thread/turns/list（itemsView full） | 已接出 | 通过 | 通过 | .tmp/cc-native-import-codex.json；docs/verification/native-session-import-2026-10-11.md | 本机输入框“本机会话”列出本工作区线程并接续：引用最近消息，下一条输入直接进入原线程；同一线程只能被一个对话持有 |
 | 原生分支 | 具备 | thread/fork {lastTurnId} | 已接出 | 通过 | 通过 | .tmp/cc-native-branch-codex-acp.json；docs/verification/native-branch-2026-10-11.md | 从最新回复分支时 thread/fork 建立原生副本；更早位置以公共历史分支 |
 | 上下文压缩 | 具备 | thread/compact/start → contextCompaction item | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-pi-codex.json；docs/verification/native-session-actions-2026-10-11.md | /compact 调用 thread/compact/start 并以活动展示；压缩后原生会话仍记得先前事实 |
 | 回滚/回退 | 具备 | thread/revert {beforeTurnId}（只回退历史，不回退文件） | 未接出 | 未接出 | 未接出 | — | — |
@@ -104,7 +104,7 @@
 | MCP | 具备 | 用户/项目/插件 MCP 默认加载；MCP OAuth 需 elicitation.url | 部分 | 未接出 | 未接出 | — | 原程序加载；Hub 无状态/OAuth 界面 |
 | 插件/扩展 | 具备 | 已启用插件、hooks 按 settingSources 加载 | 部分 | 未接出 | 未接出 | — | 原程序加载；Hub 无管理界面 |
 | 原生会话恢复 | 具备 | session/resume（不回放） | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收 |
-| 原生会话列表/接续 | 具备 | session/list（含 CLI/TUI 创建的会话） | 未接出 | 未接出 | 未接出 | — | — |
+| 原生会话列表/接续 | 具备 | session/list（含 CLI/TUI 会话）、session/load 回放 | 已接出 | 通过 | 通过 | .tmp/cc-native-import-claude.json；docs/verification/native-session-import-2026-10-11.md | 通用 ACP 实现；claude -p 在新工作区创建的会话被列出、接续并答出标记 |
 | 原生分支 | 具备 | session/fork 复制转录后需 resume | 已接出 | 通过 | 受阻 | — | 按声明的 session/fork 建立原生副本；Claude 账号周额度用完，真实生成无法验收 |
 | 上下文压缩 | 具备 | /compact 触发原生压缩；compaction_update 需 session.compaction 能力 | 部分 | 通过 | 受阻 | — | 可经原生命令执行；ACP compaction_update 以活动展示；Claude 账号周额度用完，真实生成无法验收 |
 | 回滚/回退 | 不提供 | 非 JetBrains AIR 客户端无指定消息回退 | 不适用 | 不适用 | 不适用 | — | — |
@@ -138,7 +138,7 @@
 | MCP | 具备 | 用户 MCP 配置按原程序加载 | 部分 | 未接出 | 未接出 | — | 原程序加载；Hub 无状态界面 |
 | 插件/扩展 | 具备 | 插件按原配置加载 | 部分 | 未接出 | 未接出 | — | 原程序加载；Hub 无管理界面 |
 | 原生会话恢复 | 具备 | session/resume（不回放）；跨 Hub 进程重启 | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；.tmp/cc-opencode-native-resume.json | — |
-| 原生会话列表/接续 | 具备 | session/list | 未接出 | 未接出 | 未接出 | — | — |
+| 原生会话列表/接续 | 具备 | session/list（每页 100，根会话）、session/load 回放全部历史 | 已接出 | 通过 | 通过 | .tmp/cc-native-import-opencode.json；docs/verification/native-session-import-2026-10-11.md | 通用 ACP 实现；opencode run 在新工作区创建的会话被列出、接续并答出标记 |
 | 原生分支 | 具备 | session/fork | 已接出 | 通过 | 通过 | .tmp/cc-native-branch-codex-acp.json；docs/verification/native-branch-2026-10-11.md | session/fork 建立原生副本，复制历史的回放不归属；更早位置以公共历史分支 |
 | 上下文压缩 | 具备 | /compact 原生命令 | 未接出 | 未接出 | 未接出 | — | OpenCode 的 ACP 命令目录没有压缩命令（真实目录 104 项），压缩只能在原 TUI 中执行 |
 | 回滚/回退 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
@@ -172,7 +172,7 @@
 | MCP | 不提供 | ACP 桥不使用 mcpServers | 不适用 | 不适用 | 不适用 | — | — |
 | 插件/扩展 | 部分 | Gateway tools.catalog/skills；无插件管理接口 | 未接出 | 未接出 | 未接出 | — | — |
 | 原生会话恢复 | 具备 | session/load + Hub 自有会话键 requireExistingSession | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；.tmp/native-complete-real-combined.json；docs/verification/complete-native-capabilities-2026-10-11.md | — |
-| 原生会话列表/接续 | 部分 | session/list 声明但桥实际 Method not found；gateway sessions.list 可用 | 未接出 | 未接出 | 未接出 | — | — |
+| 原生会话列表/接续 | 部分 | 桥对 session/list 返回 Method not found；Gateway sessions.list 含渠道与其他代理的会话 | 未接出 | 未接出 | 未接出 | docs/verification/native-session-import-2026-10-11.md | 按设计不接续：其他会话属于渠道与代理，Hub 不向其中写入，只继续 Hub 自己创建的会话；明确拒绝已有协议测试 |
 | 原生分支 | 不提供 | 无原生分支 | 不适用 | 不适用 | 不适用 | — | — |
 | 上下文压缩 | 具备 | /compact 文本命令（sessions.compact 只截断） | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-acp.json；docs/verification/native-session-actions-2026-10-11.md | 原生 /compact 命令真实执行，压缩后仍记得先前事实；桥不发压缩活动 |
 | 回滚/回退 | 不提供 | 无回退 | 不适用 | 不适用 | 不适用 | — | — |
@@ -240,7 +240,7 @@
 | MCP | 具备 | ~/.cursor/mcp.json 与项目 mcp.json；本轮修复后才按原配置目录加载 | 部分 | 未接出 | 未接出 | — | 原程序加载 |
 | 插件/扩展 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
 | 原生会话恢复 | 具备 | session/load（完整回放） | 已接出 | 通过 | 受阻 | — | Cursor 账号套餐限制，原公共对话返回升级提示，生成任务无法验收 |
-| 原生会话列表/接续 | 具备 | session/list（unstable，无分页） | 未接出 | 未接出 | 未接出 | — | — |
+| 原生会话列表/接续 | 具备 | session/list（unstable，无分页） | 已接出 | 通过 | 受阻 | docs/verification/native-session-import-2026-10-11.md | 通用 ACP 实现；账号计划受限，未做真实验收 |
 | 原生分支 | 不提供 | fork 路由未实现 | 不适用 | 不适用 | 不适用 | — | — |
 | 上下文压缩 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
 | 回滚/回退 | 不提供 | 无回退 | 不适用 | 不适用 | 不适用 | — | — |

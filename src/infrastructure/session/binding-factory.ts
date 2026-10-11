@@ -16,7 +16,9 @@ import { SessionError, type HarnessSelection, type PreparedSessionBinding, type 
   type WorkspaceLeaseProvider } from "../../contracts/session.js";
 import { MAX_CATALOG_BYTES, type ControlObservation } from "../../contexts/catalog/domain/catalog.js";
 import { captureNativeEnvironment, nativeValues, referencedNativeValues, nativeDescriptorValues, type NativeEnvironment } from "./native-environment.js";
-import type { NativeExtensions, NativeModelCatalog } from "../../contracts/control.js";
+import type { NativeExtensions, NativeModelCatalog, NativeSessionImport, NativeSessionPage } from "../../contracts/control.js";
+/** Reading a long native history (an ACP agent replays it in full) is bounded separately from Turn budgets. */
+const NATIVE_IMPORT_MS = 120_000;
 import type { NativeInstallationLocks, NativeUsageLease } from "../management/native-lock.js";
 
 export interface ConfigurationInput {
@@ -205,6 +207,21 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
   /** Skills, MCP servers and plugins as the installed Harness reports them; an interface without such a list returns null. */
   async discoverExtensions(request: SelectionRequest, configuration: SessionConfiguration, signal: AbortSignal): Promise<NativeExtensions | null> {
     return this.probe(request, configuration, signal, async control => control.extensions ? control.extensions() : null);
+  }
+  /** The installed Harness's own sessions of this workspace, newest first; null when its interface cannot list them. */
+  async listNativeSessions(request: SelectionRequest, configuration: SessionConfiguration, signal: AbortSignal, cursor?: string): Promise<NativeSessionPage | null> {
+    return this.probe(request, configuration, signal, async control => {
+      if (!control.nativeSessions) return null;
+      try { return await control.nativeSessions(configuration.workspace, cursor); }
+      catch (error) { if (error !== null && typeof error === "object" && "code" in error && error.code === "NATIVE_SESSION_LIST_UNAVAILABLE") return null; throw error; }
+    });
+  }
+  /** Reads one native session of this workspace for continuing it; bounded by its own deadline, never prompts. */
+  async readNativeSession(selection: HarnessSelection, configuration: SessionConfiguration, nativeId: string): Promise<NativeSessionImport> {
+    return this.probe(selection, configuration, AbortSignal.timeout(NATIVE_IMPORT_MS), async control => {
+      if (!control.importSession) throw new SessionError("NATIVE_SESSION_LIST_UNAVAILABLE", "this Harness cannot continue its own sessions in the Hub");
+      return control.importSession(nativeId, configuration.workspace);
+    });
   }
   /** One short-lived native probe on the original installation; cleanup and the native read lease are always awaited. */
   private async probe<T>(request: SelectionRequest, configuration: SessionConfiguration, signal: AbortSignal, read: (control: HarnessControl, protocol: ControlLaunch["protocol"]) => Promise<T>): Promise<T> {

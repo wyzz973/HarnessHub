@@ -467,3 +467,18 @@ test("v8 to v9 keeps every fact and rejects an observed native configuration in 
   assert.throws(() => new SqliteSessionStore(root), code("INVALID_DATA"));
   const verify = database(root); assert.equal(verify.prepare("PRAGMA user_version").get()?.user_version, 8); assert.equal(JSON.parse(String(verify.prepare("SELECT snapshot FROM sessions WHERE id=?").get(state.id)?.snapshot)).schemaVersion, 8); verify.close();
 });
+
+test("native owners name the Session holding each ready or unconfirmed native reference, never a pending branch or an archived one", t => {
+  const root = directory(t), store = new SqliteSessionStore(root);
+  try {
+    const binding = (checkpoint: string, status: "ready" | "unconfirmed" | "archived" | "fork-pending", harnessId = "fixture", controlId = "fixture-acp") => ({ harnessId, controlId, checkpoint, throughRunId: null, status });
+    const imported = { ...initial(root, "imported", "create-imported"), origin: { kind: "import" as const, harnessId: "fixture", title: "Earlier", omitted: 0, complete: true, historyRead: true,
+      history: [{ role: "user" as const, text: "q", status: "completed" as const }] }, nativeBindings: [binding("native-1", "ready")] };
+    const second = { ...initial(root, "second", "create-second"), nativeBindings: [binding("native-2", "archived"), binding("native-3", "unconfirmed"), binding("native-9", "ready", "other", "other-acp")] };
+    const branch = { ...initial(root, "branch", "create-branch"), origin: { kind: "fork" as const, sessionId: sessionId("session-imported"), throughRunId: runId("run-elsewhere"), history: [] }, nativeBindings: [binding("native-1", "fork-pending")] };
+    for (const state of [imported, second, branch]) store.create(state, draft());
+    assert.deepEqual([...store.nativeOwners("fixture", "fixture-acp")], [["native-1", sessionId("session-imported")], ["native-3", sessionId("session-second")]]);
+    assert.deepEqual([...store.nativeOwners("other", "other-acp")], [["native-9", sessionId("session-second")]]);
+    assert.equal(store.get(sessionId("session-imported")).origin?.kind, "import");
+  } finally { store.close(); }
+});

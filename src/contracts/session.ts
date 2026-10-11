@@ -142,10 +142,27 @@ export interface ForkedMessage {
   readonly harnessId?: string;
   readonly attachments?: readonly ContentRef[];
 }
-export interface SessionOrigin {
+/**
+ * Where a Session's quoted history came from: a branch of another Session (v8) or a native session of the installed
+ * Harness continued in the Hub (v9). The quoted history is immutable and never re-executed.
+ */
+export type SessionOrigin = BranchOrigin | ImportOrigin;
+export interface BranchOrigin {
   readonly kind: "fork";
   readonly sessionId: SessionId;
   readonly throughRunId: RunId;
+  readonly history: readonly ForkedMessage[];
+}
+export interface ImportOrigin {
+  readonly kind: "import";
+  readonly harnessId: string;
+  readonly title: string | null;
+  /** Older native messages read but not quoted; the native session itself still has them. */
+  readonly omitted: number;
+  /** False when even older native history was not read at all. */
+  readonly complete: boolean;
+  /** False when the Harness could not return its history; the native session still has it. */
+  readonly historyRead: boolean;
   readonly history: readonly ForkedMessage[];
 }
 export interface SessionSnapshot {
@@ -184,6 +201,8 @@ export interface SessionStore {
   get(id: SessionId): SessionSnapshot;
   findByCreateKey(key: CommandId): SessionSnapshot | null;
   list(limit?: number): readonly SessionSnapshot[];
+  /** The Session holding each ready or unconfirmed native reference of one Harness control (checkpoint → Session). */
+  nativeOwners(harnessId: string, controlId: string): ReadonlyMap<string, SessionId>;
   transact(id: SessionId, expectedVersion: number, mutate: (current: SessionSnapshot) => SessionMutation): SessionCommit;
   events(id: SessionId, afterSeq: number, limit?: number): readonly SessionEvent[];
   close(): void;
@@ -201,6 +220,8 @@ export interface PreparedSessionBinding {
 export interface SessionBindingFactory {
   validate(selection: SelectionRequest, configuration: SessionConfiguration): Promise<HarnessSelection>;
   prepare(selection: HarnessSelection, configuration: SessionConfiguration, session: SessionId, run: string): Promise<PreparedSessionBinding>;
+  /** Reads one native session of the workspace for continuing it (no prompt, no workspace writer); absent when unsupported. */
+  readNativeSession?(selection: HarnessSelection, configuration: SessionConfiguration, nativeId: string): Promise<import("./control.js").NativeSessionImport>;
 }
 export interface SessionRuntimeOptions {
   readonly id: () => string;

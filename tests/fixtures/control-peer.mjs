@@ -91,7 +91,7 @@ lines.on("line", line => {
     if (scenario === "remote-error") { emit({ id: message.id, error: { code: -32001, message: "test remote error" } }); return; }
     if (scenario === "stderr") process.stderr.write("diagnostic".repeat(100000));
     const result = protocol === "acp-v1"
-      ? { protocolVersion: scenario === "version" ? 2 : 1, agentCapabilities: { loadSession: ["native-resume", "resume-fails", "resume-wrong-identity", "load-trailing-replay", "native-config", "openclaw-settings"].includes(scenario), ...(scenario === "attachments" || scenario === "openclaw-settings" ? { promptCapabilities: { image: true, audio: true, embeddedContext: true } } : {}), ...(scenario === "forkable" ? { sessionCapabilities: { fork: {} } } : {}) }, authMethods: [{ id: "fixture-login", name: "Fixture Login" }], agentInfo: { name: "fixture", version: "1.0" } }
+      ? { protocolVersion: scenario === "version" ? 2 : 1, agentCapabilities: { loadSession: ["native-resume", "resume-fails", "resume-wrong-identity", "load-trailing-replay", "native-config", "openclaw-settings", "session-list"].includes(scenario), ...(scenario === "session-list" ? { sessionCapabilities: { list: {} } } : {}), ...(scenario === "attachments" || scenario === "openclaw-settings" ? { promptCapabilities: { image: true, audio: true, embeddedContext: true } } : {}), ...(scenario === "forkable" ? { sessionCapabilities: { fork: {} } } : {}) }, authMethods: [{ id: "fixture-login", name: "Fixture Login" }], agentInfo: { name: "fixture", version: "1.0" } }
       : { userAgent: "fixture-codex/1.0", codexHome: process.cwd(), platformFamily: "unix", platformOs: process.platform };
     answer(message.id, result);
     if (scenario === "flood") {
@@ -129,6 +129,19 @@ lines.on("line", line => {
   if (message.method === "session/new" && (scenario === "native-experience" || scenario === "native-config")) {
     notification("session/update",{sessionId:"session-fixture",update:{sessionUpdate:"available_commands_update",availableCommands:[{name:"native-help",description:"Native fixture help"},...(scenario==="native-config"?[{name:"native-fast",description:"Turns fast mode on or off"}]:[])]}});
     answer(message.id,{sessionId:"session-fixture",configOptions:nativeConfiguration()});return;
+  }
+  // An agent's own session catalogue (two pages) and a load that replays the history before answering.
+  if (scenario === "session-list" && message.method === "session/list") {
+    const here = message.params.cwd;
+    if (message.params.cursor === "p2") { answer(message.id, { sessions: [{ sessionId: "native-b", cwd: here, title: null, updatedAt: "2026-10-01T09:00:00Z" }], nextCursor: null }); return; }
+    answer(message.id, { sessions: [{ sessionId: "native-a", cwd: here, title: "Earlier  work", updatedAt: "2026-10-01T10:00:00Z" }, { sessionId: "native-x", cwd: "/elsewhere", title: "Elsewhere" }], nextCursor: "p2" }); return;
+  }
+  if (scenario === "session-list" && message.method === "session/load") {
+    const sessionId = message.params.sessionId, chunk = (kind, text) => notification("session/update", { sessionId, update: { sessionUpdate: kind, content: { type: "text", text } } });
+    chunk("user_message_chunk", "first "); chunk("user_message_chunk", "question"); chunk("agent_thought_chunk", "thinking is not history"); chunk("agent_message_chunk", "first answer");
+    notification("session/update", { sessionId, update: { sessionUpdate: "tool_call", toolCallId: "old-tool", title: "old tool", status: "completed" } });
+    chunk("user_message_chunk", "second question"); chunk("agent_message_chunk", "second answer");
+    answer(message.id, {}); return;
   }
   // Like many agents, the mode change is acknowledged without echoing a current_mode_update.
   if (message.method === "session/set_mode" && scenario === "openclaw-settings") { answer(message.id, {}); return; }
@@ -169,6 +182,23 @@ lines.on("line", line => {
   }
   if (message.method === "session/set_model") { selectedModel = message.params.modelId; answer(message.id, {}); return; }
   if (message.method === "session/set_config_option") { selectedModel = message.params.value; answer(message.id, { configOptions: [{ id: "native-model", category: "model", type: "select", currentValue: selectedModel, options: [{ value: "native-model-a", name: "Native A" }, { value: "native-model-b", name: "Native B" }] }] }); return; }
+  // Codex thread catalogue: two pages of this workspace's threads plus ones the client must not continue.
+  if (scenario === "threads" && message.method === "thread/list") {
+    const here = process.cwd(), base = { name: null, ephemeral: false, modelProvider: "openai", cliVersion: "fixture", status: { type: "notLoaded" }, turns: [] };
+    if (message.params.cursor === "page-2") { answer(message.id, { data: [{ ...base, id: "thread-older", preview: "older\nquestion", cwd: here, createdAt: 1700000000, updatedAt: 1700000100, source: { subAgent: "review" } }], nextCursor: null }); return; }
+    answer(message.id, { data: [{ ...base, id: "thread-recent", name: "Recent work", preview: "ignored preview", cwd: here, createdAt: 1700000200, updatedAt: 1700000300, source: "cli" },
+      { ...base, id: "thread-elsewhere", preview: "elsewhere", cwd: "/elsewhere", createdAt: 1, updatedAt: 2, source: "cli" }, { ...base, id: "thread-ephemeral", preview: "temporary", cwd: here, createdAt: 1, updatedAt: 2, source: "exec", ephemeral: true }], nextCursor: "page-2" }); return;
+  }
+  if (scenario === "threads" && message.method === "thread/read") {
+    const id = message.params.threadId;
+    answer(message.id, { thread: { id, name: id === "thread-recent" ? "Recent work" : null, preview: "older question", cwd: id === "thread-elsewhere" ? "/elsewhere" : process.cwd(), ephemeral: id === "thread-ephemeral", createdAt: 1, updatedAt: 2, source: "cli", turns: [] } }); return;
+  }
+  if (scenario === "threads" && message.method === "thread/turns/list") {
+    const turnOf = (n, input) => ({ id: "turn-" + n, status: "completed", items: [{ type: "userMessage", id: "u" + n, content: input }, { type: "commandExecution", id: "c" + n, command: "ls", status: "completed" },
+      { type: "agentMessage", id: "a" + n, text: "answer " + n, phase: "final_answer" }] });
+    if (message.params.cursor === "older") { answer(message.id, { data: [turnOf(1, [{ type: "text", text: "question 1" }])], nextCursor: null }); return; }
+    answer(message.id, { data: [turnOf(3, [{ type: "text", text: "question 3" }]), turnOf(2, [{ type: "text", text: "question 2" }, { type: "localImage", path: "/tmp/shot.png" }])], nextCursor: "older" }); return;
+  }
   if (message.method === "thread/start" || message.method === "thread/resume") {
     resumedThread = message.method === "thread/resume";
     if (!initialized) { emit({ id: message.id, error: { code: -32600, message: "Not initialized" } }); return; }
@@ -309,7 +339,8 @@ lines.on("line", line => {
         : { id: "permission-1", method: "item/commandExecution/requestApproval", params: { threadId: "thread-fixture", turnId: `turn-${turn}`, itemId: "tool-1" } };
       emit(permission); if (scenario === "duplicate-permission") emit(permission); return;
     }
-    if (protocol === "acp-v1") acpOutput(); else codexOutput();
+    // A continued session answers under its own identity.
+    if (protocol === "acp-v1") acpOutput(scenario === "session-list" ? message.params.sessionId : undefined); else codexOutput();
     if (["stop", "stop-permission", "slow-start", "no-settlement"].includes(scenario)) {
       if (scenario === "slow-start") setTimeout(() => answer(message.id, { turn: { id: `turn-${turn}`, status: "inProgress" } }), 50);
       return;

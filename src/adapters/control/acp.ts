@@ -5,7 +5,7 @@ import { nativeConversationId, type BackendResult, type CleanupEvidence, type Co
   type NativeOptions, type NativeOption, type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
 import { ControlError, errorFrom, JsonRpcProcess, object, string, text, type RpcRequest } from "../../infrastructure/control/json-rpc-process.js";
 import { unifiedDiff } from "../../infrastructure/control/unified-diff.js";
-import type { NativeOutput, NativeToolDetail, NativeUsage } from "../../contracts/control.js";
+import { MAX_NATIVE_SESSIONS, type NativeOutput, type NativeSessionImport, type NativeSessionPage, type NativeToolDetail, type NativeUsage } from "../../contracts/control.js";
 import { MAX_CONTENT_BYTES, textual, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
 import { checkInputs, readAttachment } from "../../infrastructure/control/attachments.js";
 
@@ -28,6 +28,10 @@ const COMMANDS_WAIT_MS = 1500;
 /** Text files up to this size travel as embedded resources when the agent declares embedded context. */
 const EMBED_TEXT_BYTES = 256 * 1024;
 const REPLAY_SETTLE_MS = 3000;
+/** Replayed history kept when a session is read for continuing it; older text beyond this is counted, not kept. */
+const IMPORT_REPLAY_BYTES = 4 * 1024 * 1024, IMPORT_REPLAY_MESSAGES = 2000;
+/** Pages of session/list searched to confirm that a session belongs to the workspace. */
+const IMPORT_LIST_PAGES = 20;
 /** Session setup starts the agent's own runtime (plugins, MCP, model catalog); a cold start can exceed a plain request. */
 const SESSION_SETUP_MS = 60000;
 /** Display label from native text: control characters (including newlines in multi-line commands) become spaces. */
@@ -107,6 +111,8 @@ export class AcpControl implements HarnessControl {
   private modelConfigId: string | null = null;
   private legacyModels = false;
   private readonly openingMetadata: Record<string, unknown>[] = [];
+  /** While a session is read for continuing it, replayed user and agent text is collected here instead of dropped. */
+  private collected: { messages: { role: "user" | "assistant"; text: string }[]; bytes: number; dropped: number } | null = null;
   /** Updates outside any active prompt (autonomous native follow-ups); never attributed to a public Run. */
   private unattributed = 0;
   /** Resolved by the first available_commands_update; catalog reads wait briefly for it instead of racing it. */
@@ -221,6 +227,67 @@ export class AcpControl implements HarnessControl {
   async nativeConfig(): Promise<{ readonly model: string | null; readonly options: NativeOptions }> {
     this.assertInitialized(); if (this.conversation === null) throw new ControlError("INVALID_STATE", "native configuration requires a session");
     return { model: this.catalog.canSelect ? this.catalog.defaultModel : null, options: Object.fromEntries((this.catalog.options ?? []).map(option => [option.id, option.currentValue])) };
+  }
+  /** Consecutive replayed chunks of one role form one message; the oldest messages give way to the budget. */
+  private collect(role: "user" | "assistant", content: unknown): void {
+    const collected = this.collected!, item = content !== null && typeof content === "object" ? content as Record<string, unknown> : {};
+    const value = item.type === "text" && typeof item.text === "string" ? item.text : item.type === "image" ? "[图片]" : item.type === "resource_link" && typeof item.name === "string" ? "[文件 " + item.name + "]" : "";
+    if (!value) return;
+    const last = collected.messages.at(-1);
+    if (last?.role === role) last.text += value; else collected.messages.push({ role, text: value });
+    collected.bytes += Buffer.byteLength(value);
+    while (collected.messages.length > 1 && (collected.bytes > IMPORT_REPLAY_BYTES || collected.messages.length > IMPORT_REPLAY_MESSAGES)) {
+      const oldest = collected.messages.shift()!; collected.bytes -= Buffer.byteLength(oldest.text); collected.dropped++;
+    }
+  }
+  /** session/list for this workspace when the agent declares it; an agent that refuses it cannot list sessions. */
+  async nativeSessions(cwd: string, cursor?: string): Promise<NativeSessionPage> {
+    this.assertInitialized();
+    if (!isAbsolute(cwd)) throw new ControlError("INVALID_INPUT", "workspace must be absolute");
+    const sessions = this.capabilities.sessionCapabilities == null ? {} : object(this.capabilities.sessionCapabilities, "native session capabilities");
+    if (sessions.list === undefined) throw new ControlError("NATIVE_SESSION_LIST_UNAVAILABLE", "this agent does not declare session/list");
+    let response: Record<string, unknown>;
+    try { response = object(await this.rpc.request("session/list", { cwd, ...(cursor === undefined ? {} : { cursor }) }), "session/list result"); }
+    catch (error) {
+      if (error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null) throw new ControlError("NATIVE_SESSION_LIST_UNAVAILABLE", "the agent refused session/list");
+      throw this.nativeFailure(error);
+    }
+    if (!Array.isArray(response.sessions) || response.sessions.length > 1000) throw new ControlError("INVALID_PROTOCOL", "invalid native session list");
+    const rows = response.sessions.map(value => object(value, "native session")).filter(row => row.cwd === cwd).map(row => {
+      const updated = typeof row.updatedAt === "string" ? Date.parse(row.updatedAt) : NaN;
+      return { id: string(row.sessionId, "native session identity", 1024), title: typeof row.title === "string" && row.title.trim() ? row.title.replace(/\s+/gu, " ").trim().slice(0, 200) : null, updatedAt: Number.isFinite(updated) ? updated : null };
+    });
+    return { sessions: rows.slice(0, MAX_NATIVE_SESSIONS), nextCursor: response.nextCursor == null ? null : string(response.nextCursor, "native session cursor", 1024) };
+  }
+  /**
+   * Reads a session of this workspace for continuing it: the listing confirms its workspace and title, session/load
+   * replays its history, which is kept as messages. An agent that can only resume continues without its history.
+   */
+  async importSession(id: string, cwd: string): Promise<NativeSessionImport> {
+    this.assertInitialized();
+    if (this.conversation !== null || this.opening || this.forking) throw new ControlError("INVALID_STATE", "reading a session needs its own connection");
+    let title: string | null = null, found = false, cursor: string | undefined;
+    for (let page = 0; page < IMPORT_LIST_PAGES && !found; page++) {
+      const listed = await this.nativeSessions(cwd, cursor), row = listed.sessions.find(item => item.id === id);
+      if (row) { found = true; title = row.title; } else if (listed.nextCursor === null) break; else cursor = listed.nextCursor;
+    }
+    if (!found) throw new ControlError("NATIVE_SESSION_NOT_FOUND", "the agent does not list this session for the workspace");
+    const sessions = this.capabilities.sessionCapabilities == null ? {} : object(this.capabilities.sessionCapabilities, "native session capabilities");
+    if (this.capabilities.loadSession !== true) {
+      if (sessions.resume === undefined) throw new ControlError("NATIVE_RESUME_UNAVAILABLE", "installed Harness did not advertise native recovery");
+      return { checkpoint: id, title, history: [], omitted: 0, complete: false, historyRead: false };
+    }
+    this.opening = true; this.conversation = nativeConversationId(id); this.replaying = true; this.lastReplay = Date.now();
+    this.collected = { messages: [], bytes: 0, dropped: 0 };
+    try {
+      const setup = Math.max(this.options.requestTimeoutMs, Math.min(SESSION_SETUP_MS, this.options.runTimeoutMs));
+      const response = object(await this.rpc.request("session/load", { ...await this.sessionParameters(cwd), sessionId: id }, setup), "native session load result");
+      if (response.sessionId !== undefined && response.sessionId !== id) throw new ControlError("IDENTITY_MISMATCH", "native load changed the session identity");
+      for (const deadline = Date.now() + REPLAY_SETTLE_MS; Date.now() - this.lastReplay < REPLAY_QUIET_MS && Date.now() < deadline;) await new Promise(resolve => setTimeout(resolve, REPLAY_QUIET_MS));
+      const collected = this.collected;
+      return { checkpoint: id, title, history: collected.messages.map(message => ({ role: message.role, text: message.text })), omitted: collected.dropped, complete: true, historyRead: true };
+    } catch (error) { const failure = this.nativeFailure(error); this.rpc.abort(failure); throw failure; }
+    finally { this.opening = false; this.replaying = false; this.collected = null; this.openingMetadata.length = 0; }
   }
   private forking = false;
   /** ACP `session/fork` when the agent declares it; the copy's replay is ignored and the source is untouched. */
@@ -394,6 +461,7 @@ export class AcpControl implements HarnessControl {
       this.lastReplay = Date.now();
       this.replayBytes += Buffer.byteLength(JSON.stringify(params));
       if (this.replayBytes > 64 * 1024 * 1024) throw new ControlError("REPLAY_LIMIT", "native history replay exceeded its budget");
+      if (this.collected && (kind === "user_message_chunk" || kind === "agent_message_chunk")) { this.collect(kind === "user_message_chunk" ? "user" : "assistant", update.content); return; }
       if (!metadataUpdates.has(kind)) return;
     }
     if (kind === "config_option_update") { this.readModels(update); return; }

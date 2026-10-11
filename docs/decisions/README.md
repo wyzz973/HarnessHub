@@ -58,3 +58,5 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
 - [ADR-027：OpenClaw 回合按原生转录对账](0027-openclaw-transcript-reconciliation.md)（accepted）：桥结束后读取本会话本轮追加的原生转录，补记工具、思考与用量并修正真实停止原因；直连 Gateway 待用户决定。
 
 - [ADR-028：原生命令改设置后的同步](0028-native-configuration-sync.md)（accepted）：回合后记录原生回报的模型与选项；同一纪元下一回合按原生值应用被改动的所选值，显式切换才按所选；Session v9。
+
+- [ADR-029：在 Hub 中接续本机原生会话](0029-continue-native-sessions.md)（accepted）：列出原程序在本工作区的会话，接续为带引用历史的新对话并直接继续原生会话；一个原生会话只有一个持有者；OpenClaw 不接续渠道会话。

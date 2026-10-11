@@ -949,7 +949,8 @@
         "G004-C03",
         "G004-NC1",
         "G004-NC2",
-        "G004-NC3"
+        "G004-NC3",
+        "G004-NC4"
       ],
       "active_slice": "native-models-switching"
     },
@@ -1151,7 +1152,8 @@
         "G008-NC3",
         "G008-NC4",
         "G008-NC5",
-        "G008-NC6"
+        "G008-NC6",
+        "G008-NC7"
       ],
       "active_slice": "native-installation-management"
     },
@@ -2069,7 +2071,8 @@
         "G028-NC4",
         "G028-NC5",
         "G028-NC6",
-        "G028-NC7"
+        "G028-NC7",
+        "G028-NC8"
       ],
       "active_slice": "native-models-switching"
     },
@@ -2292,7 +2295,8 @@
         "G032-NC14",
         "G032-NC15",
         "G032-NC16",
-        "G032-NC17"
+        "G032-NC17",
+        "G032-NC18"
       ],
       "active_slice": "native-installation-management"
     },
@@ -2394,7 +2398,8 @@
         "G034-NC6",
         "G034-NC7",
         "G034-NC8",
-        "G034-NC9"
+        "G034-NC9",
+        "G034-NC10"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3305,7 +3310,8 @@
         "web/src/components/NativeActivity.tsx",
         "web/src/components/Attachments.tsx",
         "web/src/components/BranchOrigin.tsx",
-        "web/src/components/NativeExtensions.tsx"
+        "web/src/components/NativeExtensions.tsx",
+        "web/src/components/NativeSessions.tsx"
       ],
       "requirements": [
         "R01",
@@ -3344,7 +3350,8 @@
         "G054-NC3",
         "G054-NC4",
         "G054-NC5",
-        "G054-NC6"
+        "G054-NC6",
+        "G054-NC7"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3664,7 +3671,8 @@
         "tests/real/native-commands.real.ts",
         "tests/real/native-branch.real.ts",
         "tests/real/native-extensions.real.ts",
-        "tests/real/native-config.real.ts"
+        "tests/real/native-config.real.ts",
+        "tests/real/native-import.real.ts"
       ],
       "requirements": [
         "R04",
@@ -3709,7 +3717,8 @@
         "G060-NC5",
         "G060-NC6",
         "G060-NC7",
-        "G060-NC8"
+        "G060-NC8",
+        "G060-NC9"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3776,7 +3785,8 @@
         "G061-N02",
         "G061-X01",
         "G061-NC1",
-        "G061-NC2"
+        "G061-NC2",
+        "G061-NC3"
       ],
       "active_slice": "native-installation-management"
     },

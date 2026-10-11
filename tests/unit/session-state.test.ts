@@ -184,3 +184,19 @@ test("v9 bindings keep what the native session reported, and only a same-epoch c
   assert.throws(() => assertSessionTransition(parsed, parseSession({ ...state, version: state.version + 1, nativeBindings: [{ ...ready, observed: { model: null, options: {} } }] })),
     (error: unknown) => error instanceof SessionError && error.code === "INVALID_TRANSITION");
 });
+test("v9 continued native sessions quote bounded history and keep the reference they were imported with", () => {
+  const base = seed();
+  const imported = { kind: "import", harnessId: "alpha", title: "Earlier work", omitted: 3, complete: false, historyRead: true,
+    history: [{ role: "user", text: "q", status: "completed" }, { role: "assistant", text: "a", status: "completed", harnessId: "alpha" }] };
+  const binding = { harnessId: "alpha", controlId: "alpha-acp", checkpoint: "native-a", throughRunId: null, status: "ready" };
+  const state = { ...base, schemaVersion: 9, origin: imported, nativeBindings: [binding] };
+  assert.deepEqual(parseSession(state).origin, imported);
+  for (const value of [{ ...state, schemaVersion: 8 }, { ...state, nativeBindings: undefined }, { ...state, nativeBindings: [{ ...binding, harnessId: "bravo", controlId: "bravo-acp" }] },
+    { ...state, origin: { ...imported, harnessId: "Bad" } }, { ...state, origin: { ...imported, title: "a\nb" } }, { ...state, origin: { ...imported, historyRead: false } },
+    { ...state, origin: { ...imported, history: [], historyRead: false, complete: true } }, { ...state, origin: { ...imported, omitted: -1 } }, { ...state, origin: { ...imported, extra: 1 } },
+    { ...state, origin: { ...imported, sessionId: "session-x" } }, { ...state, nativeBindings: [{ ...binding, status: "fork-pending" }] }])
+    assert.throws(() => parseSession(value), SessionError);
+  // An unread history quotes nothing and is never complete; the origin stays immutable.
+  assert.equal(parseSession({ ...state, origin: { ...imported, history: [], historyRead: false, complete: false } }).origin?.kind, "import");
+  assert.throws(() => assertSessionTransition(parseSession(state), parseSession({ ...state, version: state.version + 1, origin: { ...imported, title: "renamed" } })), /origin is immutable/u);
+});

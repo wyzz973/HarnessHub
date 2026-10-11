@@ -328,3 +328,21 @@ test("Codex lists its skills, MCP servers and installed plugins and invokes an e
   try { await older.initialize(); assert.deepEqual((await older.models()).commands?.map(command => command.name), ["compact", "export"], "an app-server without skills/list has no skills"); }
   finally { await older.close(); }
 });
+
+test("Codex lists this workspace's threads and reads one for continuing it, newest turns first, without resuming it", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-codex-threads-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
+  const driver = control("threads", { FIXTURE_TRACE: trace });
+  try {
+    await driver.initialize();
+    const first = await driver.nativeSessions(process.cwd());
+    assert.deepEqual(first, { sessions: [{ id: "thread-recent", title: "Recent work", updatedAt: 1700000300000, source: "cli" }], nextCursor: "page-2" }, "other workspaces and ephemeral threads are left out");
+    assert.deepEqual(await driver.nativeSessions(process.cwd(), "page-2"), { sessions: [{ id: "thread-older", title: "older question", updatedAt: 1700000100000, source: "subAgent" }], nextCursor: null });
+    assert.deepEqual(await driver.importSession("thread-recent", process.cwd()), { checkpoint: "thread-recent", title: "Recent work", omitted: 0, complete: true, historyRead: true,
+      history: [{ role: "user", text: "question 1" }, { role: "assistant", text: "answer 1" }, { role: "user", text: "question 2\n[图片]" }, { role: "assistant", text: "answer 2" }, { role: "user", text: "question 3" }, { role: "assistant", text: "answer 3" }] });
+    await assert.rejects(driver.importSession("thread-elsewhere", process.cwd()), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_SESSION_WORKSPACE_MISMATCH");
+    await assert.rejects(driver.importSession("thread-ephemeral", process.cwd()), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_SESSION_UNAVAILABLE");
+    const sent = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { method?: string; params?: Record<string, unknown> });
+    assert.deepEqual(sent.find(row => row.method === "thread/list")?.params, { cwd: process.cwd(), limit: 50, sortKey: "updated_at", sortDirection: "desc", archived: false, sourceKinds: ["cli", "vscode", "exec", "appServer"] });
+    assert.ok(!sent.some(row => row.method === "thread/resume" || row.method === "thread/start" || row.method === "turn/start"), "reading a thread never resumes it or sends anything");
+  } finally { await driver.close(); }
+});

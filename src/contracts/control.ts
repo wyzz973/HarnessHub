@@ -104,6 +104,29 @@ export interface NativeExtensions {
   readonly truncated?: boolean;
 }
 export const MAX_NATIVE_EXTENSIONS = 512;
+/** One native session of a workspace as the installed Harness lists it; `id` is the Harness's own session identity. */
+export interface NativeSessionSummary {
+  readonly id: string;
+  readonly title: string | null;
+  /** Milliseconds since the epoch, when the Harness reports it. */
+  readonly updatedAt: number | null;
+  /** Where the Harness says the session came from (cli, vscode, exec, appServer…), when it says. */
+  readonly source?: string;
+}
+export interface NativeSessionPage { readonly sessions: readonly NativeSessionSummary[]; readonly nextCursor: string | null }
+/** A listed native session read for continuing it: its recovery reference and the most recent public messages. */
+export interface NativeSessionImport {
+  readonly checkpoint: string;
+  readonly title: string | null;
+  readonly history: readonly { readonly role: "user" | "assistant"; readonly text: string }[];
+  /** Older messages read but not returned within the reading budget. */
+  readonly omitted: number;
+  /** True when the returned and omitted messages cover the whole native history. */
+  readonly complete: boolean;
+  /** False when the interface can continue the session but cannot read its history. */
+  readonly historyRead: boolean;
+}
+export const MAX_NATIVE_SESSIONS = 200;
 export interface NativeModelCatalog {
   readonly models: readonly { readonly id: string; readonly name: string; readonly options?: readonly NativeOption[]; readonly inputs?: NativeInputs }[];
   /** Agent-level inputs; a model's own `inputs` take precedence when the native interface declares them per model. */
@@ -156,6 +179,16 @@ export interface HarnessControl {
   nativeConfig?(): Promise<{ readonly model: string | null; readonly options: NativeOptions }>;
   /** Native skills, MCP servers and plugins; absent when the interface cannot list them. */
   extensions?(): Promise<NativeExtensions>;
+  /**
+   * The installed Harness's own sessions whose working directory is `cwd`, newest first, on a connection that opens none
+   * of them. Absent when the interface cannot list sessions; NATIVE_SESSION_LIST_UNAVAILABLE when it declares but refuses.
+   */
+  nativeSessions?(cwd: string, cursor?: string): Promise<NativeSessionPage>;
+  /**
+   * Reads one listed session of `cwd` for continuing it in the Hub: confirms it belongs to `cwd`, returns its recovery
+   * reference and recent messages. Sends no prompt and changes nothing; the connection is closed afterwards.
+   */
+  importSession?(id: string, cwd: string): Promise<NativeSessionImport>;
   /** Sends one prompt. Attachments were accepted by checkAttachments; their private copies stay readable for the Turn. */
   startText(id: NativeConversationId, text: string, onEvent: (event: ControlEvent) => void, attachments?: readonly ControlAttachment[]): Promise<ControlRun>;
   /** Enables interactive requests for a public Run. Standalone probes keep their explicit deny default. */

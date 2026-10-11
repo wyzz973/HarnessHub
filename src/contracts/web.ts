@@ -22,6 +22,12 @@ export interface SessionSummary {
   readonly activeRunId: string | null;
 }
 /** Public history excludes admission fingerprints and private configuration references. */
+/** The installed Harness's own sessions of a workspace; `conversationId` names the conversation already continuing one. */
+export interface NativeSessionListView {
+  /** null when this Harness's interface cannot list or continue its sessions. */
+  readonly sessions: readonly (import("./control.js").NativeSessionSummary & { readonly conversationId?: string })[] | null;
+  readonly nextCursor: string | null;
+}
 /** A native session reference as the chat shows it; never the private checkpoint. */
 export interface NativeStateView {
   readonly harnessId: string;

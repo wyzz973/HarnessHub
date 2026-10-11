@@ -839,3 +839,35 @@ test("an unreadable or invalid native configuration report leaves it unknown wit
   assert.deepEqual(opened.at(-1), { effort: "low" }); assert.equal(state.runs[2]?.status, "completed"); assert.equal(state.nativeBindings?.[0]?.observed, undefined);
   assert.deepEqual(f.store.events(session.id, 0, 100).filter(row => row.type === "native.config_unreadable").map(row => row.data.code), ["NATIVE_CONFIG_UNAVAILABLE", "INVALID_DATA"]);
 });
+
+test("a native session continues as a new conversation that quotes its recent history and takes the next input directly", async t => {
+  const f = await fixture(t), peers = [controlled(), controlled()], factory = new ControlledFactory(peers), reads: string[] = [], opened: (string | undefined)[] = [];
+  const history = Array.from({ length: 205 }, (_, index) => ({ role: index % 2 ? "assistant" as const : "user" as const, text: "message " + index }));
+  (factory as SessionBindingFactory).readNativeSession = async (_selection, _configuration, nativeId) => {
+    reads.push(nativeId); return { checkpoint: "private-" + nativeId, title: "Earlier\nwork", history, omitted: 4, complete: false, historyRead: true };
+  };
+  const prepare = factory.prepare.bind(factory);
+  factory.prepare = async (...args) => {
+    const binding = await prepare(...args), original = binding.control.open;
+    return { ...binding, control: { ...binding.control, open: async (cwd, model, options, checkpoint) => { opened.push(checkpoint); return original(cwd, model, options, checkpoint); }, checkpoint: async () => "private-native-a" } };
+  };
+  const app = runtime(f, factory), imported = await app.importNative(f.configuration, { harnessId: "alpha" }, "native-a", "import-one");
+  const origin = imported.origin!; assert.equal(origin.kind, "import"); if (origin.kind !== "import") return;
+  // The newest 200 messages are quoted; the five older ones join the four the Harness already left out.
+  assert.equal(origin.title, "Earlier work"); assert.equal(origin.history.length, 200); assert.equal(origin.omitted, 9); assert.equal(origin.complete, false);
+  assert.deepEqual([origin.history[0]!.text, origin.history.at(-1)!.text, origin.history.at(-2)!.harnessId], ["message 5", "message 204", "alpha"]);
+  assert.deepEqual(imported.nativeBindings, [{ harnessId: "alpha", controlId: "alpha-acp", checkpoint: "private-native-a", throughRunId: null, status: "ready" }]);
+  assert.equal((await app.importNative(f.configuration, { harnessId: "alpha" }, "native-a", "import-one")).id, imported.id); assert.equal(reads.length, 1, "a replayed command reads nothing");
+  await assert.rejects(app.importNative(f.configuration, { harnessId: "alpha" }, "native-b", "import-one"), (error: unknown) => error instanceof SessionError && error.code === "IDEMPOTENCY_CONFLICT");
+  await assert.rejects(app.importNative(f.configuration, { harnessId: "alpha" }, "native-a", "import-two"), (error: unknown) => error instanceof SessionError && error.code === "NATIVE_SESSION_CONFLICT", "one native session has one conversation");
+  app.send(imported.id, "continue please", "send-one"); await app.wait(imported.id);
+  assert.equal(await peers[0]!.started.promise, "continue please", "the native session gets the input itself, not a public context");
+  assert.deepEqual(opened, ["private-native-a"]); assert.equal(app.read(imported.id).runs[0]?.status, "completed");
+  // A Harness that cannot read its history is continued without quoting any.
+  (factory as SessionBindingFactory).readNativeSession = async () => ({ checkpoint: "private-native-c", title: null, history: [], omitted: 0, complete: false, historyRead: false });
+  const unread = await app.importNative(f.configuration, { harnessId: "alpha" }, "native-c", "import-three");
+  assert.deepEqual(unread.origin, { kind: "import", harnessId: "alpha", title: null, omitted: 0, complete: false, historyRead: false, history: [] });
+  delete (factory as SessionBindingFactory).readNativeSession;
+  await assert.rejects(app.importNative(f.configuration, { harnessId: "alpha" }, "native-d", "import-four"), (error: unknown) => error instanceof SessionError && error.code === "NATIVE_SESSION_LIST_UNAVAILABLE");
+  await assert.rejects(app.importNative(f.configuration, { harnessId: "alpha" }, "bad\nid", "import-five"), (error: unknown) => error instanceof SessionError && error.code === "INVALID_INPUT");
+});

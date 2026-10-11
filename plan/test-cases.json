@@ -7530,6 +7530,144 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/real/native-config.real.ts"
+    },
+    {
+      "id": "G004-NC4",
+      "task": "G004",
+      "requirements": [
+        "R07"
+      ],
+      "invariants": [
+        "INV-07"
+      ],
+      "layer": "unit",
+      "scenario": "v9接续的原生会话来源：有界引用历史、标题与完整性，并保留导入时的原生引用",
+      "expected": "非v9、缺少该Harness的原生引用、标题含控制字符、未读历史却有引用或声称完整、负数省略、未知字段、来源中的分支字段、接续来源下的fork引用均拒绝；来源不可变",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/unit/session-state.test.ts"
+    },
+    {
+      "id": "G008-NC7",
+      "task": "G008",
+      "requirements": [
+        "R07",
+        "R19"
+      ],
+      "invariants": [
+        "INV-06"
+      ],
+      "layer": "integration",
+      "scenario": "按原生引用查找持有它的会话",
+      "expected": "只计ready与unconfirmed引用；归档引用与分支待建的引用不算持有；按Harness控制入口区分",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/session-store.test.ts"
+    },
+    {
+      "id": "G028-NC8",
+      "task": "G028",
+      "requirements": [
+        "R11",
+        "R14"
+      ],
+      "invariants": [
+        "INV-06",
+        "INV-27"
+      ],
+      "layer": "integration",
+      "scenario": "把本机原生会话接续为新对话",
+      "expected": "最近消息在预算内引用并计入省略数；同命令重放不再读取；同键不同请求拒绝；同一原生会话不能被第二个对话持有；下一条输入直接发给原生会话且不带公共上下文；不能读取历史时不引用；工厂不支持或标识非法时拒绝",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/session-runtime.test.ts"
+    },
+    {
+      "id": "G032-NC18",
+      "task": "G032",
+      "requirements": [
+        "R11",
+        "R25"
+      ],
+      "invariants": [
+        "INV-04"
+      ],
+      "layer": "protocol",
+      "scenario": "ACP按session/list列出本工作区会话并经session/load回放读取历史",
+      "expected": "只列本工作区；跨页查找；回放的用户与代理文本合并为消息，思考与工具不计入；不发送提示；未声明列表的代理与OpenClaw明确不可用",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/acp.test.ts"
+    },
+    {
+      "id": "G034-NC10",
+      "task": "G034",
+      "requirements": [
+        "R11",
+        "R25"
+      ],
+      "invariants": [
+        "INV-04"
+      ],
+      "layer": "protocol",
+      "scenario": "Codex按thread/list列出本工作区线程并按thread/turns/list读取历史",
+      "expected": "排除其他工作区与临时线程；标题取名称或预览；从新到旧分页读取后按时间排列，图片以占位表示；其他工作区与临时线程拒绝；不恢复线程、不发送任何回合",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/codex.test.ts"
+    },
+    {
+      "id": "G061-NC3",
+      "task": "G061",
+      "requirements": [
+        "R22"
+      ],
+      "invariants": [
+        "INV-25"
+      ],
+      "layer": "integration",
+      "scenario": "正式HTTP入口列出并接续本机会话",
+      "expected": "列表分页；接续后视图含来源与就绪原生状态且不含私有引用；列表标出持有它的对话；重复接续409、其他工作区404；侧栏标题“接续 · 标题”；下一条消息以原会话load后原样发送",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/native-experience.test.ts"
+    },
+    {
+      "id": "G054-NC7",
+      "task": "G054",
+      "requirements": [
+        "R01",
+        "R22"
+      ],
+      "invariants": [
+        "INV-01",
+        "INV-25"
+      ],
+      "layer": "e2e",
+      "scenario": "输入框的本机会话面板接续会话",
+      "expected": "列表可加载更早会话；接续后显示来源块与可展开历史并可继续对话；已接续的会话显示“打开对话”；窄屏不溢出",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/web.browser.ts"
+    },
+    {
+      "id": "G060-NC9",
+      "task": "G060",
+      "requirements": [
+        "R04",
+        "R24",
+        "R12"
+      ],
+      "invariants": [
+        "INV-16",
+        "INV-09"
+      ],
+      "layer": "e2e",
+      "scenario": "本机原安装在新工作区自建的会话被Hub列出并接续",
+      "expected": "原程序自己创建的会话被列出；接续引用含标记；第二次接续因占用拒绝；接续后回答出只有原生会话知道的标记且未注入公共上下文；原配置不变",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/real/native-import.real.ts"
     }
   ]
 }

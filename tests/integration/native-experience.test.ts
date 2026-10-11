@@ -125,3 +125,29 @@ test("a setting the native session changed itself is applied as it is on the nex
   view=await send("fourth turn","four",4);
   assert.deepEqual(await applied(),["off","off","on","off"]);assert.equal(native(view).observed?.options["native-fast"],"off");assert.equal(native(view).carried,undefined);
 });
+
+test("a native session of the workspace is listed, continued as a conversation and then marked as held by it",{timeout:30000},async t=>{
+  const f=await fixture(t,"session-list"),list=(cursor?:string)=>f.call(`/harnesses/native-alpha/native-sessions?${new URLSearchParams({controlId:"native-alpha",workspace:f.workspace,...(cursor===undefined?{}:{cursor})})}`);
+  const first=await list();
+  assert.equal(first.status,200);assert.deepEqual(first.value,{sessions:[{id:"native-a",title:"Earlier work",updatedAt:Date.parse("2026-10-01T10:00:00Z")}],nextCursor:"p2"});
+  assert.deepEqual((await list("p2")).value.sessions,[{id:"native-b",title:null,updatedAt:Date.parse("2026-10-01T09:00:00Z")}]);
+  const imported=await f.call("/sessions/import",{workspace:f.workspace,selection:{harnessId:"native-alpha"},nativeId:"native-a",commandId:"import"}),id=String(imported.value.id);
+  assert.equal(imported.status,201);
+  assert.deepEqual(imported.value.origin,{kind:"import",harnessId:"native-alpha",title:"Earlier work",omitted:0,complete:true,historyRead:true,history:[
+    {role:"user",text:"first question",status:"completed"},{role:"assistant",text:"first answer",status:"completed",harnessId:"native-alpha"},
+    {role:"user",text:"second question",status:"completed"},{role:"assistant",text:"second answer",status:"completed",harnessId:"native-alpha"}]});
+  assert.deepEqual(imported.value.nativeStates,[{harnessId:"native-alpha",controlId:"native-alpha",status:"ready"}]);
+  assert.ok(!JSON.stringify(imported.value).includes("native-a\""),"the native reference stays private");
+  assert.deepEqual((await list()).value.sessions,[{id:"native-a",title:"Earlier work",updatedAt:Date.parse("2026-10-01T10:00:00Z"),conversationId:id}]);
+  const again=await f.call("/sessions/import",{workspace:f.workspace,selection:{harnessId:"native-alpha"},nativeId:"native-a",commandId:"import-again"});
+  assert.equal(again.status,409);assert.equal((again.value as {code:string}).code,"NATIVE_SESSION_CONFLICT");
+  const elsewhere=await f.call("/sessions/import",{workspace:f.workspace,selection:{harnessId:"native-alpha"},nativeId:"native-x",commandId:"import-elsewhere"});
+  assert.equal(elsewhere.status,404);assert.equal((elsewhere.value as {code:string}).code,"NATIVE_SESSION_NOT_FOUND");
+  const sessions=(await f.call("/sessions")).value as unknown as {id:string;title:string}[];
+  assert.equal(sessions.find(row=>row.id===id)?.title,"接续 · Earlier work");
+  assert.equal((await f.call(`/sessions/${id}/messages`,{text:"what did I ask first?",commandId:"send"})).status,202);
+  await f.until(`/sessions/${id}`,row=>Array.isArray(row.runs)&&row.runs.length===1&&(row.runs[0] as {status:string}).status==="completed");
+  const wire=await f.wire(),load=wire.filter(row=>row.method==="session/load").at(-1)!,prompt=wire.filter(row=>row.method==="session/prompt").at(-1)!;
+  assert.equal((load.params as {sessionId:string}).sessionId,"native-a","the conversation continues the native session itself");
+  assert.deepEqual((prompt.params as {prompt:unknown}).prompt,[{type:"text",text:"what did I ask first?"}],"the native session gets the input without a public context");
+});

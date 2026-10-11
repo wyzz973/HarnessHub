@@ -70,7 +70,7 @@ HTTP body≤128KiB、response≤8MiB、资产≤4MiB、并发请求≤16、连�
 
 `POST /api/v1/sessions/:id/permissions/:permissionId`接受optionId、commandId和可选input，使用既有Origin/CSRF保护。只有当前Run实际待决的原生选项可回复；公开DTO包含待决requests，刷新/SSE恢复同一问题。用户决定先持久记录，命令重试不重复回传；无后端确认时明确backendAcknowledged=false。取消、结束和关闭释放问题。Pi confirm/select/input/editor在统一界面呈现；原生思考/工具活动来自实际事件。文本之外的输入、原生checkpoint和持久后台任务尚未完整验收。
 
-ADR-020追加`POST /api/v1/sessions/:id/native-branch`，接受epoch/commandId；仅空闲及资源已核实的所选原生Harness允许重新建立。原生私有引用保留，公开历史不删除；接口不是原生fork。Web仅投影nativeStates的身份/status，checkpoint隐藏；ADR-028起另投影原生回报`observed`与下一回合将沿用的原生值`carried`。恢复后的历史回放不创造公共回复，thread级用量元数据不绑定当前Turn。Codex原生问答和密码输入通过既有交互往返，回答正文不写权限事件。
+ADR-020追加`POST /api/v1/sessions/:id/native-branch`，接受epoch/commandId；仅空闲及资源已核实的所选原生Harness允许重新建立。原生私有引用保留，公开历史不删除；接口不是原生fork。Web仅投影nativeStates的身份/status，checkpoint隐藏；ADR-028起另投影原生回报`observed`与下一回合将沿用的原生值`carried`。ADR-029追加`GET /api/v1/harnesses/:id/native-sessions?controlId=&workspace=&cursor=`（本工作区的本机会话，已被对话持有的带`conversationId`；不支持时`sessions:null`）与`POST /api/v1/sessions/import {workspace?, selection, nativeId, commandId}`（命令幂等；同一原生会话已被持有409，不在本工作区列表404）；会话视图`origin`可为`kind:"import"`。恢复后的历史回放不创造公共回复，thread级用量元数据不绑定当前Turn。Codex原生问答和密码输入通过既有交互往返，回答正文不写权限事件。
 
 ADR-022追加`GET/HEAD /api/v1/content/:id`（`download=1`可选）：需要登录，跨站请求拒绝；只有png/jpeg/gif/webp图片与JSON/纯文本内联，其余强制下载，响应带`Content-Security-Policy: sandbox`与`nosniff`，未知内容404，文件与记录不一致409。工具详情按需读取。SSE新增`run`帧，携带version/lastSeq与活动Run的完整公开事实，用于工具、计划、用量、提示、活动、产物的增量更新；客户端只接受仍在执行的活动Run，身份、输入、选择、epoch与状态不得改变，不符或缺帧时改取完整快照。
 

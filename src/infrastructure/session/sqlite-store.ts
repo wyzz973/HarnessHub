@@ -265,6 +265,20 @@ export class SqliteSessionStore implements SessionStore {
     this.assertOwner(); const maximum = limitValue(limit);
     return this.read(() => readListFrom(this.database, maximum));
   }
+  /** A pending branch only refers to its source's native session; ready and unconfirmed references hold one. */
+  nativeOwners(harnessId: string, controlId: string): ReadonlyMap<string, SessionId> {
+    this.assertOwner();
+    return this.read(() => {
+      const owners = new Map<string, SessionId>();
+      for (const row of this.database.prepare("SELECT s.id AS id, json_extract(b.value,'$.checkpoint') AS checkpoint FROM sessions s, json_each(s.snapshot,'$.nativeBindings') b " +
+          "WHERE json_extract(b.value,'$.harnessId')=? AND json_extract(b.value,'$.controlId')=? AND json_extract(b.value,'$.status') IN ('ready','unconfirmed') ORDER BY s.rowid").iterate(harnessId, controlId)) {
+        if (typeof row.checkpoint !== "string") throw new SessionError("INVALID_DATA", "persisted native reference is invalid");
+        if (owners.has(row.checkpoint)) throw new SessionError("INVALID_DATA", "one native session is held by two Sessions");
+        owners.set(row.checkpoint, sessionId(row.id));
+      }
+      return owners;
+    });
+  }
   /** Every content identity any Session references; the content collector must keep all of them. */
   contentReferences(): ReadonlySet<string> {
     this.assertOwner();

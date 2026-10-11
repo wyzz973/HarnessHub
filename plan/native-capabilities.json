@@ -371,12 +371,15 @@
         },
         "session-list": {
           "native": "yes",
-          "source": "thread/list、thread/read、thread/turns/list",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "source": "thread/list（cwd、来源、归档过滤）、thread/read、thread/turns/list（itemsView full）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-import-codex.json",
+            "docs/verification/native-session-import-2026-10-11.md"
+          ],
+          "note": "本机输入框“本机会话”列出本工作区线程并接续：引用最近消息，下一条输入直接进入原线程；同一线程只能被一个对话持有"
         },
         "fork": {
           "native": "yes",
@@ -641,12 +644,15 @@
         },
         "session-list": {
           "native": "yes",
-          "source": "session/list（含 CLI/TUI 创建的会话）",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "source": "session/list（含 CLI/TUI 会话）、session/load 回放",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-import-claude.json",
+            "docs/verification/native-session-import-2026-10-11.md"
+          ],
+          "note": "通用 ACP 实现；claude -p 在新工作区创建的会话被列出、接续并答出标记"
         },
         "fork": {
           "native": "yes",
@@ -918,12 +924,15 @@
         },
         "session-list": {
           "native": "yes",
-          "source": "session/list",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "source": "session/list（每页 100，根会话）、session/load 回放全部历史",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-import-opencode.json",
+            "docs/verification/native-session-import-2026-10-11.md"
+          ],
+          "note": "通用 ACP 实现；opencode run 在新工作区创建的会话被列出、接续并答出标记"
         },
         "fork": {
           "native": "yes",
@@ -1207,12 +1216,14 @@
         },
         "session-list": {
           "native": "partial",
-          "source": "session/list 声明但桥实际 Method not found；gateway sessions.list 可用",
+          "source": "桥对 session/list 返回 Method not found；Gateway sessions.list 含渠道与其他代理的会话",
           "hub": "none",
           "protocol": "none",
           "real": "none",
-          "evidence": [],
-          "note": ""
+          "evidence": [
+            "docs/verification/native-session-import-2026-10-11.md"
+          ],
+          "note": "按设计不接续：其他会话属于渠道与代理，Hub 不向其中写入，只继续 Hub 自己创建的会话；明确拒绝已有协议测试"
         },
         "fork": {
           "native": "no",
@@ -1720,11 +1731,13 @@
         "session-list": {
           "native": "yes",
           "source": "session/list（unstable，无分页）",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
+          "evidence": [
+            "docs/verification/native-session-import-2026-10-11.md"
+          ],
+          "note": "通用 ACP 实现；账号计划受限，未做真实验收"
         },
         "fork": {
           "native": "no",

@@ -65,6 +65,8 @@ function requested(value: SelectionRequest): SelectionRequest {
     ...(value.provider === undefined ? {} : { provider: value.provider === null ? null : parseProviderTarget(value.provider) }),
     ...(value.nativeModel === undefined ? {} : { nativeModel: value.nativeModel }), ...(value.nativeOptions === undefined ? {} : { nativeOptions: parseNativeOptions(value.nativeOptions) }) };
 }
+/** Quoted native history of a continued session: well inside the 1 MiB public context, so its branches still fit. */
+const MAX_IMPORTED_MESSAGES = 200, MAX_IMPORTED_BYTES = 512 * 1024;
 function fault(error: unknown): { readonly code: string; readonly message: string } {
   if (error instanceof SessionError) return { code: error.code.slice(0, 128), message: error.message.slice(0, 512) };
   const code = error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code.slice(0, 128) : "CONTROL_FAILED";
@@ -151,6 +153,67 @@ export class SessionRuntime {
       return this.publish(committed).session;
     }
     catch (error) { this.fail(error, id); throw error; }
+  }
+
+  /**
+   * Continues a native session of the installed Harness as a new conversation. The session must belong to this workspace
+   * and no other conversation may hold it; its recent messages are quoted (never re-executed) and its reference becomes
+   * this conversation's native session, so the next input goes to it directly. Nothing is sent to a model.
+   */
+  importNative(configuration: SessionConfiguration, selection: SelectionRequest, nativeId: string, key: string): Promise<SessionSnapshot> {
+    try {
+      this.admit();
+      if (this.creating.size >= MAX_PENDING_CREATES) throw new SessionError("CREATE_LIMIT", "at most " + MAX_PENDING_CREATES + " Session creations may be awaiting validation");
+    } catch (error) { return Promise.reject(error); }
+    const pending = this.importOwned(configuration, selection, nativeId, key);
+    this.creating.add(pending);
+    void pending.then(() => { this.creating.delete(pending); }, () => { this.creating.delete(pending); });
+    return pending;
+  }
+  private async importOwned(configuration: SessionConfiguration, selection: SelectionRequest, nativeId: string, key: string): Promise<SessionSnapshot> {
+    this.admit();
+    if (typeof nativeId !== "string" || !nativeId.trim() || Buffer.byteLength(nativeId) > 1024 || /[\0-\x1f\x7f]/u.test(nativeId)) throw new SessionError("INVALID_INPUT", "invalid native session identity");
+    const config = parseConfiguration(configuration), request = requested(selection), command = commandId(key);
+    if (request.provider != null) throw new SessionError("INVALID_INPUT", "a native session continues with its own Harness, not a managed Provider");
+    const fingerprint = this.fingerprint({ kind: "import", configuration: config, selection: request, nativeId });
+    const replay = () => { const prior = this.store.findByCreateKey(command); if (prior) replayCommand(prior, command, "create", fingerprint); return prior; };
+    const prior = replay(); if (prior) return prior;
+    const validated = await this.factory.validate(request, config);
+    this.admit();
+    if (validated.provider !== undefined) throw new SessionError("INVALID_INPUT", "a native session continues with its own Harness, not a managed Provider");
+    if (!this.factory.readNativeSession) throw new SessionError("NATIVE_SESSION_LIST_UNAVAILABLE", "this Gateway cannot read native sessions");
+    const held = (checkpoint: string) => {
+      const owner = this.store.nativeOwners(validated.harnessId, validated.controlId).get(checkpoint);
+      if (owner !== undefined) throw new SessionError("NATIVE_SESSION_CONFLICT", "这个本机会话已经在另一个对话中继续：" + owner);
+    };
+    held(nativeId);
+    const read = await this.factory.readNativeSession(validated, config, nativeId);
+    this.admit();
+    const concurrent = replay(); if (concurrent) return concurrent;
+    const checkpoint = read.checkpoint;
+    if (typeof checkpoint !== "string" || !checkpoint || Buffer.byteLength(checkpoint) > 8192 || /[\0\r\n]/u.test(checkpoint)) throw new SessionError("INVALID_NATIVE_CHECKPOINT", "invalid original Harness recovery reference");
+    held(checkpoint);
+    // The newest messages are quoted within a budget that leaves room for this conversation's own branches.
+    const quoted: ForkedMessage[] = []; let bytes = 2, omitted = Number.isSafeInteger(read.omitted) && read.omitted > 0 ? read.omitted : 0;
+    const history = read.historyRead ? read.history : [];
+    for (let index = history.length - 1; index >= 0; index--) {
+      const entry = history[index]!, message: ForkedMessage = { role: entry.role, text: entry.text, status: "completed", ...(entry.role === "assistant" ? { harnessId: validated.harnessId } : {}) };
+      const size = utf8Bytes(JSON.stringify(message)) + 1;
+      if (quoted.length >= MAX_IMPORTED_MESSAGES || bytes + size > MAX_IMPORTED_BYTES) { omitted += index + 1; break; }
+      quoted.unshift(message); bytes += size;
+    }
+    const title = typeof read.title === "string" && read.title.trim() ? read.title.replace(/[\0-\x1f\x7f]+/gu, " ").trim().slice(0, 200) : null;
+    const id = sessionId("session-" + this.options.id());
+    const state: SessionSnapshot = { schemaVersion: 9, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration: config, selection: validated,
+      activeRunId: null, pendingSwitchId: null, runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }],
+      origin: { kind: "import", harnessId: validated.harnessId, title, omitted, complete: read.historyRead === true && read.complete === true, historyRead: read.historyRead === true, history: quoted },
+      nativeBindings: [{ harnessId: validated.harnessId, controlId: validated.controlId, checkpoint, throughRunId: null, status: "ready" }] };
+    try {
+      const committed = this.store.create(state, [event("session.created", { selection: validated, continuity: "native_import",
+        origin: { harnessId: validated.harnessId, messages: quoted.length, omitted, historyRead: read.historyRead === true } })]);
+      this.managedSessions.add(id);
+      return this.publish(committed).session;
+    } catch (error) { this.fail(error, id); throw error; }
   }
 
   send(id: SessionId, text: string, key: string, attachmentIds: readonly string[] = []): SendReceipt {

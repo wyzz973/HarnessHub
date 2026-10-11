@@ -3,7 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import JSON5 from "json5";
-import { TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type BackendResult, type ControlEvent, type ControlRun, type ControlLaunch, type ControlOptions, type NativeConversationId, type NativeModelCatalog, type NativeOptions, type NativeToolDetail, type CleanupEvidence } from "../../contracts/control.js";
+import { TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type NativeSessionImport, type NativeSessionPage, type BackendResult, type ControlEvent, type ControlRun, type ControlLaunch, type ControlOptions, type NativeConversationId, type NativeModelCatalog, type NativeOptions, type NativeToolDetail, type CleanupEvidence } from "../../contracts/control.js";
 import { AcpControl } from "./acp.js";
 import { classifyRemoteFailure, ControlError, object } from "../../infrastructure/control/json-rpc-process.js";
 import { nativeCommand } from "../../infrastructure/control/native-command.js";
@@ -132,6 +132,12 @@ export class OpenClawControl extends AcpControl {
     });
     return this.nativeModels;
   }
+  /**
+   * The bridge answers session/list with Method not found, and the Gateway's other sessions belong to channels and agents
+   * the Hub must not write to; only conversations the Hub created are continued (by their own reference).
+   */
+  override async nativeSessions(): Promise<NativeSessionPage> { throw new ControlError("NATIVE_SESSION_LIST_UNAVAILABLE", "OpenClaw sessions are not continued from the Hub"); }
+  override async importSession(): Promise<NativeSessionImport> { throw new ControlError("NATIVE_SESSION_LIST_UNAVAILABLE", "OpenClaw sessions are not continued from the Hub"); }
   /** The installed bridge answers session/fork with Method not found even where it declares session capabilities. */
   override async fork(): Promise<string> { throw new ControlError("NATIVE_FORK_UNAVAILABLE", "the OpenClaw ACP bridge cannot fork sessions"); }
   /** OpenClaw's Gateway drops image attachments above 5,000,000 bytes with only a log line; refuse them up front instead. */

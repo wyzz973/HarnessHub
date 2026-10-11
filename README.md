@@ -161,3 +161,5 @@ python3 -m unittest discover -s tools -p 'test_*.py' -v
 [ADR-027](docs/decisions/0027-openclaw-transcript-reconciliation.md)起，OpenClaw 每轮结束后按它自己的会话转录补记工具调用与结果、思考和用量，模型错误不再被桥记成完成；实时工具流与执行审批需直连 Gateway，待决定。见[OpenClaw 转录对账验收](docs/verification/openclaw-transcript-2026-10-11.md)。
 
 [ADR-028](docs/decisions/0028-native-configuration-sync.md)起，原生命令在原生会话里改了所选设置（如 OpenClaw `/think high`、`/fast on`）后，下一回合沿用原生当前值而不改回；输入框提示被沿用的设置，可“改用所选设置”。OpenClaw 已真实验证。见[原生配置同步验收](docs/verification/native-config-sync-2026-10-11.md)。
+
+[ADR-029](docs/decisions/0029-continue-native-sessions.md)起，输入框的“本机会话”列出所选 Harness 在本工作区自己的会话（Codex、Claude、OpenCode、Cursor），可接续为新对话：对话引用最近的消息，下一条输入直接发给那个原生会话。Codex、Claude、OpenCode 已真实验证。见[本机会话接续验收](docs/verification/native-session-import-2026-10-11.md)。

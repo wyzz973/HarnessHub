@@ -8,7 +8,7 @@ import type { NativeToolDetail, NativeUsage } from "../../contracts/control.js";
 import { readFile, stat } from "node:fs/promises";
 import { basename } from "node:path";
 import { MAX_CONTENT_BYTES, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
-import { MAX_NATIVE_EXTENSIONS, type NativeExtensions } from "../../contracts/control.js";
+import { MAX_NATIVE_EXTENSIONS, MAX_NATIVE_SESSIONS, type NativeExtensions, type NativeSessionImport, type NativeSessionPage } from "../../contracts/control.js";
 import { checkInputs, fileMentions } from "../../infrastructure/control/attachments.js";
 
 interface ActiveTurn {
@@ -56,6 +56,27 @@ const PERMISSION_SETTINGS = {
 } as const;
 type PermissionSetting = keyof typeof PERMISSION_SETTINGS;
 /** app-server has no slash commands; native thread operations the Hub exposes under command names. */
+/** Thread sources a user continues; sub-agent threads belong to their parent thread. */
+const LISTED_SOURCES = ["cli", "vscode", "exec", "appServer"] as const;
+/** Reading budget for a continued thread's history: enough turns for the Hub's quoted window, newest first. */
+const IMPORT_TURN_PAGES = 8, IMPORT_TURNS_PER_PAGE = 50, IMPORT_MESSAGES = 400;
+function threadTitle(thread: Record<string, unknown>): string | null {
+  const value = [thread.name, thread.preview].find(item => typeof item === "string" && item.trim()) as string | undefined;
+  return value === undefined ? null : value.replace(/\s+/gu, " ").trim().slice(0, 200);
+}
+function threadSource(value: unknown): string | undefined {
+  if (typeof value === "string") return value.slice(0, 64);
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? Object.keys(value)[0]?.slice(0, 64) : undefined;
+}
+/** The text a user sees for one native user input item; non-text inputs are named, never inlined. */
+function inputText(value: unknown): string {
+  const item = value !== null && typeof value === "object" ? value as Record<string, unknown> : {};
+  if (item.type === "text" && typeof item.text === "string") return item.text;
+  if (item.type === "image" || item.type === "localImage") return "[图片]";
+  if (item.type === "skill" && typeof item.name === "string") return "/skill:" + item.name;
+  if (item.type === "mention" && typeof item.name === "string") return "@" + item.name;
+  return "";
+}
 const THREAD_COMMANDS = [{ name: "compact", description: "压缩当前会话上下文（原生 thread/compact/start）" }, { name: "export", description: "导出原生会话记录（Codex rollout JSONL）" }] as const;
 const SANDBOX_TYPES: Readonly<Record<string, string>> = { readOnly: "read-only", workspaceWrite: "workspace-write", dangerFullAccess: "danger-full-access" };
 function permissionOptions(configured: Record<string, unknown>): NativeOption[] {
@@ -239,6 +260,49 @@ export class CodexControl implements HarnessControl {
       return received;
     } catch (error) { this.rpc.abort(errorFrom(error)); throw error; }
     finally { this.opening = false; }
+  }
+  /** This workspace's threads (thread/list): not archived, newest first, without sub-agent threads. */
+  async nativeSessions(cwd: string, cursor?: string): Promise<NativeSessionPage> {
+    this.assertInitialized();
+    if (!isAbsolute(cwd)) throw new ControlError("INVALID_INPUT", "workspace must be absolute");
+    const response = object(await this.rpc.request("thread/list", { cwd, limit: 50, sortKey: "updated_at", sortDirection: "desc", archived: false, sourceKinds: LISTED_SOURCES,
+      ...(cursor === undefined ? {} : { cursor }) }), "Codex thread list");
+    if (!Array.isArray(response.data) || response.data.length > 100) throw new ControlError("INVALID_PROTOCOL", "invalid Codex thread page");
+    const sessions = response.data.map(value => object(value, "Codex thread")).filter(thread => thread.cwd === cwd && thread.ephemeral !== true).map(thread => {
+      const updated = typeof thread.updatedAt === "number" && Number.isSafeInteger(thread.updatedAt) && thread.updatedAt > 0 ? thread.updatedAt * 1000 : null, source = threadSource(thread.source);
+      return { id: string(thread.id, "Codex thread identity", 1024), title: threadTitle(thread), updatedAt: updated, ...(source ? { source } : {}) };
+    });
+    return { sessions: sessions.slice(0, MAX_NATIVE_SESSIONS), nextCursor: response.nextCursor == null ? null : string(response.nextCursor, "Codex thread cursor", 1024) };
+  }
+  /**
+   * Reads a thread of this workspace for continuing it: thread/read confirms its workspace, thread/turns/list returns its
+   * turns newest first; each turn becomes the user's input and the agent's messages. Nothing is resumed or sent.
+   */
+  async importSession(id: string, cwd: string): Promise<NativeSessionImport> {
+    this.assertInitialized();
+    const thread = object(object(await this.rpc.request("thread/read", { threadId: id, includeTurns: false }), "Codex thread read").thread, "Codex thread");
+    if (thread.id !== id) throw new ControlError("IDENTITY_MISMATCH", "Codex returned another thread");
+    if (thread.cwd !== cwd) throw new ControlError("NATIVE_SESSION_WORKSPACE_MISMATCH", "the thread belongs to another workspace");
+    if (thread.ephemeral === true) throw new ControlError("NATIVE_SESSION_UNAVAILABLE", "an ephemeral thread cannot be continued");
+    const turns: { user: string; assistant: string }[] = [];
+    let cursor: string | undefined, complete = false;
+    for (let page = 0; page < IMPORT_TURN_PAGES && turns.length * 2 < IMPORT_MESSAGES; page++) {
+      const response = object(await this.rpc.request("thread/turns/list", { threadId: id, limit: IMPORT_TURNS_PER_PAGE, sortDirection: "desc", itemsView: "full", ...(cursor === undefined ? {} : { cursor }) }), "Codex turns");
+      if (!Array.isArray(response.data) || response.data.length > IMPORT_TURNS_PER_PAGE) throw new ControlError("INVALID_PROTOCOL", "invalid Codex turn page");
+      for (const value of response.data) {
+        const items = object(value, "Codex turn").items, user: string[] = [], assistant: string[] = [];
+        for (const raw of Array.isArray(items) ? items : []) {
+          const item = object(raw, "Codex turn item");
+          if (item.type === "userMessage" && Array.isArray(item.content)) user.push(item.content.map(inputText).filter(Boolean).join("\n"));
+          if (item.type === "agentMessage" && typeof item.text === "string" && item.text.trim()) assistant.push(item.text);
+        }
+        if (user.some(Boolean) || assistant.length) turns.push({ user: user.filter(Boolean).join("\n\n"), assistant: assistant.join("\n\n") });
+      }
+      if (response.nextCursor == null) { complete = true; break; }
+      cursor = string(response.nextCursor, "Codex turn cursor", 1024);
+    }
+    const history = turns.reverse().flatMap(turn => [...(turn.user ? [{ role: "user" as const, text: turn.user }] : []), ...(turn.assistant ? [{ role: "assistant" as const, text: turn.assistant }] : [])]);
+    return { checkpoint: id, title: threadTitle(thread), history, omitted: 0, complete, historyRead: true };
   }
   /** skills/list for this workspace; enabled skills become invocable as `/skill:<name>`. */
   private async readSkills(): Promise<{ name: string; description: string; scope?: string; enabled: boolean; path: string }[]> {

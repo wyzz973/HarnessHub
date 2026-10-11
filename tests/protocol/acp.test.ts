@@ -481,3 +481,31 @@ test("ACP reports the configuration the agent announced and records a mode it ap
     assert.deepEqual(reported.options, { thought_level: "adaptive", fast_mode: "off", verbose_level: "off", reasoning_level: "off", response_usage: "off", elevated_level: "off", __mode: "high" });
   } finally { await driver.close(); }
 });
+
+test("ACP lists the agent's own sessions of this workspace and reads one by replaying it, without prompting", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "acp-session-list-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
+  const launch = (scenario: string) => ({ protocol: "acp-v1" as const, executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", scenario], env: { FIXTURE_TRACE: trace } });
+  const driver = new AcpControl(launch("session-list"), options);
+  try {
+    await driver.initialize();
+    assert.deepEqual(await driver.nativeSessions(process.cwd()), { sessions: [{ id: "native-a", title: "Earlier work", updatedAt: Date.parse("2026-10-01T10:00:00Z") }], nextCursor: "p2" });
+    assert.deepEqual(await driver.importSession("native-b", process.cwd()), { checkpoint: "native-b", title: null, omitted: 0, complete: true, historyRead: true,
+      history: [{ role: "user", text: "first question" }, { role: "assistant", text: "first answer" }, { role: "user", text: "second question" }, { role: "assistant", text: "second answer" }] }, "found on the second page; replayed chunks become messages");
+  } finally { await driver.close(); }
+  const elsewhere = new AcpControl(launch("session-list"), options);
+  try { await elsewhere.initialize(); await assert.rejects(elsewhere.importSession("native-x", process.cwd()), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_SESSION_NOT_FOUND", "a session of another workspace is not listed here"); }
+  finally { await elsewhere.close(); }
+  assert.ok(!(await readFile(trace, "utf8")).includes("session/prompt"), "reading sessions sends no prompt");
+  // An agent that does not declare session/list cannot list or continue its sessions here.
+  const plain = new AcpControl(launch("basic"), options);
+  try { await plain.initialize(); await assert.rejects(plain.nativeSessions(process.cwd()), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_SESSION_LIST_UNAVAILABLE"); }
+  finally { await plain.close(); }
+  const root = await mkdtemp(join(tmpdir(), "openclaw-sessions-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const config = join(root, "openclaw.json"); await writeFile(config, '{agents:{list:[{id:"main",default:true}]}}');
+  const openclaw = new OpenClawControl({ ...launch("session-list"), env: { HOME: root, OPENCLAW_CONFIG_PATH: config } }, { ...options, env: { HOME: root, OPENCLAW_CONFIG_PATH: config } }, async () => ({}));
+  try {
+    await openclaw.initialize();
+    await assert.rejects(openclaw.nativeSessions(), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_SESSION_LIST_UNAVAILABLE");
+    await assert.rejects(openclaw.importSession(), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_SESSION_LIST_UNAVAILABLE");
+  } finally { await openclaw.close(); }
+});

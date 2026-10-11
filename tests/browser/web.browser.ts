@@ -14,17 +14,17 @@ import { prepareConfiguration } from "../../src/infrastructure/session/binding-f
 
 const peer = fileURLToPath(new URL("../../../tests/fixtures/web-harness-peer.mjs", import.meta.url));
 const artifact = resolve("artifacts/chat-v3");
-async function launchFixture(providerManagement = true, nativeSettings = false) {
+async function launchFixture(providerManagement = true, nativeAcp: { readonly name: string; readonly scenario: string } | null = null) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "harness-web-browser-")));
   const workspace = join(root, "workspace"), shim = join(root, "codex-fixture.mjs"); await mkdir(workspace);
   await writeFile(shim, "#!" + process.execPath + "\nimport " + JSON.stringify(pathToFileURL(peer).href) + ";\n", { mode: 0o700 });
   const manifest = join(root, "catalog.json"), authShim = join(root, "gateway-auth-fixture.mjs");
   await writeFile(authShim, "#!" + process.execPath + "\nprocess.stderr.write('unauthorized: gateway token missing\\n');process.exit(1);\n", { mode: 0o700 });
   // An ACP agent whose native command changes one of its own settings and announces it (control-peer "native-config").
-  const settings = { id: "native-settings", name: "Native Settings", aliases: [], binaryNames: [], configHints: [], controls: [{ id: "native-settings", protocol: "acp-v1", executableNames: ["fixture"],
-    args: [fileURLToPath(new URL("../../../tests/fixtures/control-peer.mjs", import.meta.url)), "acp-v1", "native-config"], env: {}, package: null, distribution: null, requiredExecutables: [],
-    source: { repository: "fixture", revision: "native-config", upstreamId: "fixture", url: "https://example.invalid/native-config" } }] };
-  await writeFile(manifest, JSON.stringify({ version: 2, definitions: nativeSettings ? [settings] : [], overrides: { "codex-native": { executable: shim }, "openclaw-native": { executable: authShim }, ...(nativeSettings ? { "native-settings": { executable: process.execPath } } : {}) } }));
+  const acp = nativeAcp === null ? null : { id: "native-acp", name: nativeAcp.name, aliases: [], binaryNames: [], configHints: [], controls: [{ id: "native-acp", protocol: "acp-v1", executableNames: ["fixture"],
+    args: [fileURLToPath(new URL("../../../tests/fixtures/control-peer.mjs", import.meta.url)), "acp-v1", nativeAcp.scenario], env: {}, package: null, distribution: null, requiredExecutables: [],
+    source: { repository: "fixture", revision: nativeAcp.scenario, upstreamId: "fixture", url: "https://example.invalid/" + nativeAcp.scenario } }] };
+  await writeFile(manifest, JSON.stringify({ version: 2, definitions: acp ? [acp] : [], overrides: { "codex-native": { executable: shim }, "openclaw-native": { executable: authShim }, ...(acp ? { "native-acp": { executable: process.execPath } } : {}) } }));
   const modelServer = createServer((req, res) => { assert.equal(req.method, "GET"); assert.equal(req.url, "/v1/models"); res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ data: [{ id: "model-a" }, { id: "model-b" }] })); });
   await new Promise<void>(done => modelServer.listen(0, "127.0.0.1", done));
   const address = modelServer.address(); assert.ok(address && typeof address === "object");
@@ -684,7 +684,7 @@ test("the native extensions panel lists skills, MCP servers and plugins and invo
 });
 
 test("a setting a native command changed is kept, shown in the composer and can be put back to the selection", { timeout: 120000 }, async t => {
-  const fixture = await launchFixture(false, true); let browser: Browser | null = null;
+  const fixture = await launchFixture(false, { name: "Native Settings", scenario: "native-config" }); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
@@ -722,5 +722,35 @@ test("a setting a native command changed is kept, shown in the composer and can 
   await reply("fourth turn", 4);
   assert.equal((await current()).nativeStates[0].observed.options["native-fast"], "off");
   await expect(log.locator(".assistant-message")).toHaveCount(4);
+  assert.deepEqual(errors, []);
+});
+
+test("a native session of the workspace is continued from the composer, quoted above the chat and marked as held", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false, { name: "Native Sessions", scenario: "session-list" }); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Native Sessions", exact: true }).click();
+  await page.getByRole("button", { name: "本机会话", exact: true }).click();
+  const panel = page.locator(".native-sessions");
+  await expect(panel.getByText("Earlier work", { exact: true })).toBeVisible({ timeout: 15000 });
+  await panel.getByRole("button", { name: "加载更早的会话", exact: true }).click(); await expect(panel.getByText("未命名会话", { exact: true })).toBeVisible({ timeout: 15000 });
+  await page.screenshot({ path: join(artifact, "native-sessions-panel.png"), animations: "disabled" });
+  await panel.locator("li", { hasText: "Earlier work" }).getByRole("button", { name: "接续", exact: true }).click();
+  const origin = page.getByRole("region", { name: "接续来源" });
+  await expect(origin).toContainText("接续本机 Native Sessions 会话「Earlier work」", { timeout: 15000 }); await expect(origin).toContainText("4 条消息");
+  await origin.getByText("查看本机会话的历史").click(); await expect(origin).toContainText("first question"); await expect(origin).toContainText("second answer");
+  await expect(page.getByRole("button", { name: "接续 · Earlier work", exact: true })).toBeVisible();
+  await composer.fill("what did I ask first?"); await composer.press("Enter");
+  await expect(log.locator(".assistant-message").last()).toContainText("你好 fixture", { timeout: 15000 });
+  await page.getByRole("button", { name: "本机会话", exact: true }).click();
+  await expect(page.locator(".native-sessions li", { hasText: "Earlier work" }).getByRole("button", { name: /打开对话/u })).toBeVisible({ timeout: 15000 });
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "the continued conversation must not overflow a narrow screen");
+  await page.screenshot({ path: join(artifact, "native-session-continued-390.png"), animations: "disabled" });
   assert.deepEqual(errors, []);
 });

@@ -3992,3 +3992,12 @@ a {
 .native-carried>.text-button {
   flex-shrink:0
 }
+
+.native-sessions { width: min(420px, calc(100vw - 32px)); max-height: min(560px, 70vh); overflow: auto; }
+.native-sessions .composer-settings-heading > span { display: inline-flex; gap: 4px; }
+.native-session-list { display: grid; gap: 10px; margin: 8px 0; padding: 0; list-style: none; }
+.native-session-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; }
+.native-session-list li > div { display: grid; gap: 2px; min-width: 0; }
+.native-session-list strong { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.native-session-list small { color: var(--muted); font-size: 11px; }
+.native-session-list .text-button { flex-shrink: 0; }

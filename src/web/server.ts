@@ -9,7 +9,7 @@ import { ProviderError } from "../contracts/provider.js";
 import { ManagementError } from "../contracts/management.js";
 import { SessionError, parseNativeOptions, sessionId, type SelectionRequest, type SessionConfiguration, type SessionSnapshot } from "../contracts/session.js";
 import { MAX_CONTENT_BYTES, MAX_RUN_ATTACHMENTS } from "../contracts/content.js";
-import type { EventPage, HarnessView, InstallationLogPage, SessionSummary, SessionView, WebState } from "../contracts/web.js";
+import type { EventPage, HarnessView, InstallationLogPage, NativeSessionListView, SessionSummary, SessionView, WebState } from "../contracts/web.js";
 import { inventory } from "../infrastructure/catalog/inventory-composition.js";
 import { prepareConfiguration } from "../infrastructure/session/binding-factory.js";
 import { supportedProviderProtocols } from "../contexts/provider/domain/provider.js";
@@ -117,9 +117,10 @@ async function body(request: IncomingMessage): Promise<unknown> {
 }
 function summary(snapshot: SessionSnapshot): SessionSummary {
   const first = snapshot.messages.find(message => message.role === "user")?.text.replace(/\s+/gu, " ").trim();
-  // A branch without its own input yet is named after the history it came from.
-  const branched = snapshot.origin?.history.find(message => message.role === "user")?.text.replace(/\s+/gu, " ").trim();
-  return { id: snapshot.id, title: first ? first.slice(0, 80) : branched ? ("分支 · " + branched).slice(0, 80) : "新对话", status: snapshot.status, workspace: snapshot.configuration.workspace,
+  // A branch or a continued native session without its own input yet is named after where it came from.
+  const quoted = snapshot.origin?.history.find(message => message.role === "user")?.text.replace(/\s+/gu, " ").trim();
+  const inherited = snapshot.origin?.kind === "import" ? "接续 · " + (snapshot.origin.title ?? quoted ?? snapshot.origin.harnessId) : quoted ? "分支 · " + quoted : null;
+  return { id: snapshot.id, title: first ? first.slice(0, 80) : inherited ? inherited.slice(0, 80) : "新对话", status: snapshot.status, workspace: snapshot.configuration.workspace,
     selection: snapshot.selection, updatedSeq: snapshot.lastSeq, activeRunId: snapshot.activeRunId };
 }
 function view(snapshot: SessionSnapshot, permissions: SessionView["permissions"] = []): SessionView {
@@ -142,6 +143,20 @@ function publicFailure(error: unknown): { readonly status: number; readonly code
     return { status, code, message: error.message.slice(0, 512) };
   }
   return { status: 500, code: "GATEWAY_FAILED", message: "Gateway operation failed" };
+}
+/** Native session listing and continuing failures, named for the person choosing a session; private detail stays out. */
+function importFailure(error: unknown): unknown {
+  if (error instanceof HttpError || error instanceof SessionError) return error;
+  const code = error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code.slice(0, 128) : "NATIVE_SESSION_IMPORT_FAILED";
+  const known: Readonly<Record<string, readonly [number, string]>> = {
+    NATIVE_SESSION_NOT_FOUND: [404, "这个工作区的本机会话列表里没有它，可能已删除或属于其他目录。"],
+    NATIVE_SESSION_WORKSPACE_MISMATCH: [409, "这个本机会话属于其他工作区。请先切换到它所在的工作区。"],
+    NATIVE_SESSION_UNAVAILABLE: [409, "这个本机会话不能继续，例如原程序的临时会话。"],
+    NATIVE_SESSION_LIST_UNAVAILABLE: [409, "这个 Harness 不能在 Hub 中继续它自己的会话。"],
+    NATIVE_RESUME_UNAVAILABLE: [409, "这个 Harness 没有声明原生会话恢复，不能继续它的会话。"],
+  };
+  const [status, message] = known[code] ?? [502, "无法读取这个本机会话。请检查这个 Harness 的登录和配置后重试。"];
+  return new HttpError(status, code, message);
 }
 function queries(url: URL, allowed: readonly string[]): void {
   for (const key of url.searchParams.keys()) if (!allowed.includes(key) || url.searchParams.getAll(key).length !== 1) throw new HttpError(400, "INVALID_INPUT", "Unexpected query parameters");
@@ -216,6 +231,11 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   });
   app = (options.application ?? composeApplication)(options.root, event => streams.publish(event));
   const nativeModels = new HarnessModels(app.factory);
+  /** A request's workspace with this Gateway's catalog, configuration home and search settings. */
+  const workspaceConfiguration = (workspace: string) => prepareConfiguration({ workspace,
+    ...(options.configuration.configHome === null ? {} : { configHome: options.configuration.configHome }),
+    ...(options.configuration.manifestPath === null ? {} : { manifestPath: options.configuration.manifestPath }),
+    packageRoots: options.configuration.packageRoots, searchDirs: options.configuration.searchDirs, pathOnly: options.configuration.pathOnly });
   let origin = "", host = "", running = 0, stopping = false, closing: Promise<void> | null = null;
   const bootstrap = randomBytes(32).toString("hex"), bootstrapExpires = Date.now() + BOOTSTRAP_MS;
   let bootstrapAvailable = true;
@@ -323,6 +343,22 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       json(response, 200, view(app.runtime.resetNative(sessionId(nativeBranch[1]), text(input.commandId, "commandId", 128), input.epoch))); return;
     }
     if (permissionRoute && method === "POST") { queries(url, []); const input = record(await body(request), ["optionId", "commandId", "input"], ["optionId", "commandId"]); const id = sessionId(permissionRoute[1]); json(response, 200, await app.runtime.decidePermission(id, permissionRoute[2]!, text(input.optionId, "optionId", 512), text(input.commandId, "commandId", 128), input.input===undefined?undefined:(typeof input.input==="string"&&Buffer.byteLength(input.input)<=65536&&!input.input.includes("\0")?input.input:(()=>{throw new HttpError(400,"INVALID_INPUT","invalid native UI input")})()))); return; }
+    const nativeSessionsRoute = /^\/api\/v1\/harnesses\/([a-z][a-z0-9-]{0,95})\/native-sessions$/u.exec(path);
+    if (nativeSessionsRoute && method === "GET") {
+      queries(url, ["controlId", "workspace", "cursor"]);
+      const controlId = url.searchParams.get("controlId"), workspace = url.searchParams.get("workspace"), after = url.searchParams.get("cursor");
+      if (after !== null && (!after || Buffer.byteLength(after) > 1024 || /[\0-\x1f\x7f]/u.test(after))) throw new HttpError(400, "INVALID_INPUT", "Invalid native session cursor");
+      const configuration = workspace === null ? options.configuration : await workspaceConfiguration(workspace);
+      const selected = select({ harnessId: nativeSessionsRoute[1], ...(controlId === null ? {} : { controlId }) });
+      let page: Awaited<ReturnType<typeof nativeModels.sessions>>;
+      try { page = await nativeModels.sessions(selected, configuration, after ?? undefined); }
+      catch (error) { const failure = importFailure(error); throw failure instanceof HttpError && failure.status === 502 ? new HttpError(502, failure.code, "无法读取这个 Harness 的本机会话。请检查它的登录和配置后重试。") : failure; }
+      if (page === null) { const output: NativeSessionListView = { sessions: null, nextCursor: null }; json(response, 200, output); return; }
+      // Sessions a conversation already continues (or the Hub created) open that conversation instead of a second holder.
+      const validated = await app.factory.validate(selected, configuration), owners = app.store.nativeOwners(validated.harnessId, validated.controlId);
+      const output: NativeSessionListView = { sessions: page.sessions.map(row => ({ ...row, ...(owners.has(row.id) ? { conversationId: owners.get(row.id)! } : {}) })), nextCursor: page.nextCursor };
+      json(response, 200, output); return;
+    }
     const extensionsRoute = /^\/api\/v1\/harnesses\/([a-z][a-z0-9-]{0,95})\/extensions$/u.exec(path);
     if (extensionsRoute && method === "GET") {
       queries(url, ["controlId", "workspace"]);
@@ -406,6 +442,13 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         json(response, 200, app.providers.update(id, input.input, integer(input.expectedRevision, 1, Number.MAX_SAFE_INTEGER, "expected revision"), command(input.commandId))); return;
       }
       if (method === "POST" && providerRoute[2] === "/probe") { record(await body(request), []); json(response, 200, await app.providers.probe(id)); return; }
+    }
+    if (path === "/api/v1/sessions/import" && method === "POST") {
+      queries(url, []); const input = record(await body(request), ["workspace", "selection", "nativeId", "commandId"], ["selection", "nativeId", "commandId"]);
+      const configuration = input.workspace === undefined ? options.configuration : await workspaceConfiguration(text(input.workspace, "workspace"));
+      try { json(response, 201, view(await app.runtime.importNative(configuration, select(input.selection), text(input.nativeId, "native session", 1024), command(input.commandId)))); }
+      catch (error) { throw importFailure(error); }
+      return;
     }
     if (path === "/api/v1/sessions") {
       if (method === "GET") { queries(url, ["limit"]); json(response, 200, app.store.list(cursor(url.searchParams.get("limit"), 100, 1, 100)).map(summary)); return; }

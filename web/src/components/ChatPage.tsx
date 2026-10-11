@@ -63,6 +63,8 @@ export interface ChatProps {
   onOpenSession?: (id: string) => void;
   /** Reads the selected Harness's native skills, MCP servers and plugins on demand. */
   onLoadExtensions?: (signal: AbortSignal) => Promise<import("../../../src/contracts/control.js").NativeExtensions | null>;
+  onLoadNativeSessions?: (cursor: string | undefined, signal: AbortSignal) => Promise<import("../../../src/contracts/web.js").NativeSessionListView>;
+  onImportNative?: (nativeId: string) => void;
   onAttach: (files: readonly File[]) => void;
   onRemoveAttachment: (local: string) => void;
 }
