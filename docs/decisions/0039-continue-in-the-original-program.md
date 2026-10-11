@@ -22,7 +22,7 @@
    | Harness | 交互形式 | 已验证的非交互形式 | 结论 |
    |---|---|---|---|
    | Claude Code 2.1.296（claude-agent-acp 0.89.1） | `claude --resume <id>` | `claude -p --resume <id> "…"` | 给出 |
-   | Codex 0.162.1 | `codex resume <id>` | `codex exec --skip-git-repo-check resume <id> "…"` | 给出 |
+   | Codex 0.162.1 | `codex resume <id>` | `codex exec --skip-git-repo-check resume <id> "…"` | 给出；`--skip-git-repo-check` 绕过 Codex 的 Git 仓库检查，只在工作区不是 Git 仓库时加入，并注明原因，是仓库时为 `codex exec resume <id> "…"`。`codex resume` 的帮助中没有这个标志，交互形式不加 |
    | OpenCode 1.18.35 | `opencode -s <id>` | `opencode run -s <id> "…"` | 给出 |
    | Hermes 0.12.0 | `hermes --resume <id>`（Hermes 自己在回合结束时也打印这条命令） | `hermes chat --resume <id> -q "…"` | 给出 |
    | DeepSeek Harness 0.2.1-alpha.1 | `dsh tui --resume <id>` | `dsh headless --session-id <id> "…"` | 给出 |

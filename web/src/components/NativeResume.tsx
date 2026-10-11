@@ -26,7 +26,8 @@ export function NativeResume({ load }: { readonly load: (signal: AbortSignal) =>
     {view.nativeId ? <div className="native-resume-row"><small>原生会话 ID</small><code>{view.nativeId}</code><CopyText text={view.nativeId} label="复制原生会话 ID"/></div> : null}
     {view.interactive ? <>
       <div className="native-resume-row" title="交互形式按原程序帮助给出，恢复机制以非交互形式真实验证"><small>在该对话的工作区目录中运行</small><code>{view.interactive}</code><CopyText text={view.interactive} label="复制恢复命令"/></div>
-      {view.once ? <details className="native-resume-once"><summary>只问一次（已用真实回合验证）</summary><div className="native-resume-row"><code>{view.once}</code><CopyText text={view.once} label="复制只问一次的命令"/></div></details> : null}
+      {view.once ? <details className="native-resume-once"><summary>只问一次（已用真实回合验证）</summary><div className="native-resume-row" title={view.onceNote}><code>{view.once}</code><CopyText text={view.once} label="复制只问一次的命令"/></div>
+        {view.onceNote ? <small className="native-resume-note">{view.onceNote}</small> : null}</details> : null}
       <small className="native-resume-note">原程序首次在这个目录运行时可能先询问是否信任这个目录；接受会写入它自己的全局配置。</small>
       <small className="native-resume-note">在原程序中继续会使两边的回合交错；回到 HarnessHub 继续前，先在原程序中结束。</small>
     </> : view.note === "version-unverified" ? <small className="native-resume-note">恢复命令未在此版本验证。</small>

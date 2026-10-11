@@ -1,9 +1,9 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { constants, realpathSync } from "node:fs";
-import { open, realpath } from "node:fs/promises";
+import { open, realpath, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { release, userInfo } from "node:os";
-import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { application as composeApplication } from "../cli/session-application.js";
 import { ProviderError } from "../contracts/provider.js";
@@ -600,7 +600,9 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         queries(url, []); const snapshot = app.runtime.read(id), selection = snapshot.selection;
         const binding = selection.provider === undefined ? snapshot.nativeBindings?.find(item => item.harnessId === selection.harnessId && item.controlId === selection.controlId && item.status === "ready") : undefined;
         const verification = binding === undefined ? null : (await rescan()).find(harness => harness.id === selection.harnessId)?.management.verification ?? null;
-        json(response, 200, { resume: binding === undefined ? null : nativeResume(selection.harnessId, binding.checkpoint, verification) }); return;
+        // Whether the workspace is a Git repository decides one program's flag; it is only looked at.
+        const git = binding === undefined ? false : await stat(join(snapshot.configuration.workspace, ".git")).then(() => true, () => false);
+        json(response, 200, { resume: binding === undefined ? null : nativeResume(selection.harnessId, binding.checkpoint, verification, { git }) }); return;
       }
       if (action === "events" && method === "GET") {
         queries(url, ["afterSeq", "limit"]); const after = cursor(url.searchParams.get("afterSeq"), 0, 0, Number.MAX_SAFE_INTEGER), limit = cursor(url.searchParams.get("limit"), 50, 1, 100);

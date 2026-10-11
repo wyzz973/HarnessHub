@@ -46,9 +46,15 @@ const QUESTION = "\"你的问题\"";
  * Pi's session reference is a file path, so it is only pointed to; OpenClaw's sessions live in the user's own OpenClaw
  * Gateway, so nothing is shown. Changed together with VERIFIED_VERSIONS and the verification record.
  */
-const RESUME_COMMANDS: Readonly<Record<string, { readonly interactive: (id: string) => string; readonly once: (id: string) => string } | { readonly list: string } | { readonly hidden: true }>> = {
+/** What a command may depend on in the conversation's workspace, read without changing it. */
+export interface ResumeWorkspace { readonly git: boolean }
+type ResumeCommands = { readonly interactive: (id: string) => string; readonly once: (id: string, workspace: ResumeWorkspace) => string; readonly onceNote?: (workspace: ResumeWorkspace) => string | null };
+const RESUME_COMMANDS: Readonly<Record<string, ResumeCommands | { readonly list: string } | { readonly hidden: true }>> = {
   claude: { interactive: id => `claude --resume ${id}`, once: id => `claude -p --resume ${id} ${QUESTION}` },
-  codex: { interactive: id => `codex resume ${id}`, once: id => `codex exec --skip-git-repo-check resume ${id} ${QUESTION}` },
+  // `codex exec` refuses a directory outside a Git repository unless told otherwise; the flag bypasses that check, so it is
+  // given only where it is needed. `codex resume` has no such flag (its help lists none): it asks about the folder itself.
+  codex: { interactive: id => `codex resume ${id}`, once: (id, workspace) => workspace.git ? `codex exec resume ${id} ${QUESTION}` : `codex exec --skip-git-repo-check resume ${id} ${QUESTION}`,
+    onceNote: workspace => workspace.git ? null : "工作区不是 git 仓库，Codex 需要这个标志" },
   opencode: { interactive: id => `opencode -s ${id}`, once: id => `opencode run -s ${id} ${QUESTION}` },
   hermes: { interactive: id => `hermes --resume ${id}`, once: id => `hermes chat --resume ${id} -q ${QUESTION}` },
   dsh: { interactive: id => `dsh tui --resume ${id}`, once: id => `dsh headless --session-id ${id} ${QUESTION}` },
@@ -63,12 +69,13 @@ const PLAIN_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
  * identifier; otherwise the identifier alone, with why. Null for a hidden program and for a reference that is no plain
  * identifier. Nothing here runs a program.
  */
-export function nativeResume(harnessId: string, reference: string, verification: HarnessVersionVerification | null): NativeResumeView | null {
+export function nativeResume(harnessId: string, reference: string, verification: HarnessVersionVerification | null, workspace: ResumeWorkspace): NativeResumeView | null {
   const commands = Object.hasOwn(RESUME_COMMANDS, harnessId) ? RESUME_COMMANDS[harnessId]! : null;
   if (commands !== null && "hidden" in commands) return null;
   if (commands !== null && "list" in commands) return { harnessId, list: commands.list };
   if (!PLAIN_ID.test(reference)) return null;
   if (commands === null) return { harnessId, nativeId: reference, note: "not-verified" };
   if (verification?.state !== "verified") return { harnessId, nativeId: reference, note: "version-unverified" };
-  return { harnessId, nativeId: reference, interactive: commands.interactive(reference), once: commands.once(reference) };
+  const note = commands.onceNote?.(workspace) ?? null;
+  return { harnessId, nativeId: reference, interactive: commands.interactive(reference), once: commands.once(reference, workspace), ...(note === null ? {} : { onceNote: note }) };
 }

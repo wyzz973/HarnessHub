@@ -69,6 +69,8 @@ export interface NativeResumeView {
   readonly interactive?: string;
   /** The one-question command a real Turn verified, with a question placeholder. */
   readonly once?: string;
+  /** Why the one-question command carries a flag it does not always need. */
+  readonly onceNote?: string;
   /** Where the program lists its own sessions, for one whose reference is private. */
   readonly list?: string;
   /** Why no command is given: the installed version is not one HarnessHub verified, or this program's resume never was. */

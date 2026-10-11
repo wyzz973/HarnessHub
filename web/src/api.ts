@@ -291,8 +291,8 @@ export class GatewayApi {
   nativeResume(id: string, signal?: AbortSignal): Promise<NativeResumeView | null> {
     return this.request(`/sessions/${encodeURIComponent(id)}/native-resume`, "GET", undefined, value => {
       const row = record(value); if (row.resume === null) return null;
-      const resume = record(row.resume), optional = (key: "nativeId" | "interactive" | "once" | "list") => resume[key] === undefined ? {} : { [key]: text(resume[key]) };
-      return { harnessId: text(resume.harnessId), ...optional("nativeId"), ...optional("interactive"), ...optional("once"), ...optional("list"),
+      const resume = record(row.resume), optional = (key: "nativeId" | "interactive" | "once" | "onceNote" | "list") => resume[key] === undefined ? {} : { [key]: text(resume[key]) };
+      return { harnessId: text(resume.harnessId), ...optional("nativeId"), ...optional("interactive"), ...optional("once"), ...optional("onceNote"), ...optional("list"),
         ...(resume.note === undefined ? {} : { note: choice(resume.note, ["version-unverified", "not-verified"]) }) };
     }, signal);
   }

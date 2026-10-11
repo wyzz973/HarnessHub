@@ -6474,7 +6474,7 @@
       ],
       "layer": "unit",
       "scenario": "在原程序中继续的命令只给验证过的产品与版本",
-      "expected": "验证过的产品在验证版本上给出交互命令与已验证的非交互命令；版本未验证或未知只给 ID 并注明；从未验证的产品只给 ID；Pi 只指向它的会话列表；OpenClaw 不给；含空格、引号、分号、$( 或以 - 开头等非普通标识符的引用既不显示也不进入命令",
+      "expected": "验证过的产品在验证版本上给出交互命令与已验证的非交互命令；版本未验证或未知只给 ID 并注明；从未验证的产品只给 ID；Pi 只指向它的会话列表；OpenClaw 不给；含空格、引号、分号、$( 或以 - 开头等非普通标识符的引用既不显示也不进入命令；Codex 只问一次的形式只在工作区不是 Git 仓库时带 --skip-git-repo-check 并注明原因，交互形式从不带",
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/unit/verified-versions.test.ts"

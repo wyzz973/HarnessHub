@@ -34,21 +34,25 @@ test("the verified versions are the installations the capability matrix records 
 
 test("continuing in the original program gives the verified commands only for a verified version and a plain identifier", () => {
   const verified = { state: "verified" as const, program: "2.1.296", adapter: "0.89.1" }, unverified = { state: "unverified" as const, program: "2.1.296" };
-  const id = "ebe4c04a-20fb-49dd-93b7-d264a1187cb8";
-  assert.deepEqual(nativeResume("claude", id, verified), { harnessId: "claude", nativeId: id, interactive: "claude --resume " + id, once: "claude -p --resume " + id + " \"你的问题\"" });
-  assert.deepEqual(nativeResume("codex", "01a12cdd-07cd-7541-97fc-c41b242c85e0", { state: "verified", program: "0.162.1" }), { harnessId: "codex", nativeId: "01a12cdd-07cd-7541-97fc-c41b242c85e0",
-    interactive: "codex resume 01a12cdd-07cd-7541-97fc-c41b242c85e0", once: "codex exec --skip-git-repo-check resume 01a12cdd-07cd-7541-97fc-c41b242c85e0 \"你的问题\"" });
-  assert.equal(nativeResume("opencode", "ses_ed322dcf7ffe892PKrBGRgoBKW", { state: "verified", program: "1.18.35" })?.interactive, "opencode -s ses_ed322dcf7ffe892PKrBGRgoBKW");
-  assert.equal(nativeResume("hermes", id, { state: "verified", program: "0.12.0" })?.once, "hermes chat --resume " + id + " -q \"你的问题\"");
-  assert.equal(nativeResume("dsh", id, { state: "verified", program: "0.2.1-alpha.1" })?.interactive, "dsh tui --resume " + id);
+  const id = "ebe4c04a-20fb-49dd-93b7-d264a1187cb8", outside = { git: false }, repository = { git: true };
+  assert.deepEqual(nativeResume("claude", id, verified, outside), { harnessId: "claude", nativeId: id, interactive: "claude --resume " + id, once: "claude -p --resume " + id + " \"你的问题\"" });
+  // Codex's one-question form bypasses its Git repository check only where the workspace is no repository; its interactive form has no such flag.
+  const thread = "01a12cdd-07cd-7541-97fc-c41b242c85e0", codex = { state: "verified" as const, program: "0.162.1" };
+  assert.deepEqual(nativeResume("codex", thread, codex, outside), { harnessId: "codex", nativeId: thread, interactive: "codex resume " + thread,
+    once: "codex exec --skip-git-repo-check resume " + thread + " \"你的问题\"", onceNote: "工作区不是 git 仓库，Codex 需要这个标志" });
+  assert.deepEqual(nativeResume("codex", thread, codex, repository), { harnessId: "codex", nativeId: thread, interactive: "codex resume " + thread, once: "codex exec resume " + thread + " \"你的问题\"" });
+  assert.equal(nativeResume("claude", id, verified, repository)?.once, "claude -p --resume " + id + " \"你的问题\"", "no other program depends on it");
+  assert.equal(nativeResume("opencode", "ses_ed322dcf7ffe892PKrBGRgoBKW", { state: "verified", program: "1.18.35" }, outside)?.interactive, "opencode -s ses_ed322dcf7ffe892PKrBGRgoBKW");
+  assert.equal(nativeResume("hermes", id, { state: "verified", program: "0.12.0" }, outside)?.once, "hermes chat --resume " + id + " -q \"你的问题\"");
+  assert.equal(nativeResume("dsh", id, { state: "verified", program: "0.2.1-alpha.1" }, outside)?.interactive, "dsh tui --resume " + id);
   // Another version, a version not known, or a program whose resume was never verified: the identifier alone, and why.
-  assert.deepEqual(nativeResume("claude", id, unverified), { harnessId: "claude", nativeId: id, note: "version-unverified" });
-  assert.deepEqual(nativeResume("claude", id, null), { harnessId: "claude", nativeId: id, note: "version-unverified" });
-  assert.deepEqual(nativeResume("cursor", id, { state: "verified", program: "2026.10.01-e373342" }), { harnessId: "cursor", nativeId: id, note: "not-verified" });
+  assert.deepEqual(nativeResume("claude", id, unverified, outside), { harnessId: "claude", nativeId: id, note: "version-unverified" });
+  assert.deepEqual(nativeResume("claude", id, null, outside), { harnessId: "claude", nativeId: id, note: "version-unverified" });
+  assert.deepEqual(nativeResume("cursor", id, { state: "verified", program: "2026.10.01-e373342" }, outside), { harnessId: "cursor", nativeId: id, note: "not-verified" });
   // Pi's reference is a private file path: only where Pi lists its sessions. OpenClaw: nothing.
-  assert.deepEqual(nativeResume("pi", JSON.stringify({ path: "/Users/someone/.pi/sessions/a.jsonl", id: "a" }), { state: "verified", program: "0.85.1" }), { harnessId: "pi", list: "见 Pi 自己的会话列表" });
-  assert.equal(nativeResume("openclaw", id, { state: "verified", program: "2026.3.23-2" }), null);
+  assert.deepEqual(nativeResume("pi", JSON.stringify({ path: "/Users/someone/.pi/sessions/a.jsonl", id: "a" }), { state: "verified", program: "0.85.1" }, outside), { harnessId: "pi", list: "见 Pi 自己的会话列表" });
+  assert.equal(nativeResume("openclaw", id, { state: "verified", program: "2026.3.23-2" }, outside), null);
   // A reference that is no plain identifier never reaches the page or a command.
-  for (const reference of ["abc; rm -rf ~", "a b", "$(id)", "\"quoted\"", "-r", "x".repeat(129), ""]) assert.equal(nativeResume("claude", reference, verified), null, JSON.stringify(reference));
-  assert.equal(nativeResume("constructor", id, verified)?.note, "not-verified", "no inherited key is a program's command");
+  for (const reference of ["abc; rm -rf ~", "a b", "$(id)", "\"quoted\"", "-r", "x".repeat(129), ""]) assert.equal(nativeResume("claude", reference, verified, outside), null, JSON.stringify(reference));
+  assert.equal(nativeResume("constructor", id, verified, outside)?.note, "not-verified", "no inherited key is a program's command");
 });
