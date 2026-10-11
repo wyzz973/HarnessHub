@@ -116,13 +116,16 @@ async function body(request: IncomingMessage): Promise<unknown> {
 }
 function summary(snapshot: SessionSnapshot): SessionSummary {
   const first = snapshot.messages.find(message => message.role === "user")?.text.replace(/\s+/gu, " ").trim();
-  return { id: snapshot.id, title: first ? first.slice(0, 80) : "新对话", status: snapshot.status, workspace: snapshot.configuration.workspace,
+  // A branch without its own input yet is named after the history it came from.
+  const branched = snapshot.origin?.history.find(message => message.role === "user")?.text.replace(/\s+/gu, " ").trim();
+  return { id: snapshot.id, title: first ? first.slice(0, 80) : branched ? ("分支 · " + branched).slice(0, 80) : "新对话", status: snapshot.status, workspace: snapshot.configuration.workspace,
     selection: snapshot.selection, updatedSeq: snapshot.lastSeq, activeRunId: snapshot.activeRunId };
 }
 function view(snapshot: SessionSnapshot, permissions: SessionView["permissions"] = []): SessionView {
   return { id: snapshot.id, version: snapshot.version, lastSeq: snapshot.lastSeq, epoch: snapshot.epoch, status: snapshot.status,
     workspace: snapshot.configuration.workspace, selection: snapshot.selection, activeRunId: snapshot.activeRunId, pendingSwitchId: snapshot.pendingSwitchId,
-    permissions, nativeStates: snapshot.nativeBindings?.flatMap(binding => binding.status === "archived" ? [] : [{ harnessId: binding.harnessId, controlId: binding.controlId, status: binding.status }]) ?? [], messages: snapshot.messages, runs: snapshot.runs, switches: snapshot.switches };
+    permissions, nativeStates: snapshot.nativeBindings?.flatMap(binding => binding.status === "archived" ? [] : [{ harnessId: binding.harnessId, controlId: binding.controlId, status: binding.status === "fork-pending" || binding.status === "forking" ? "forking" as const : binding.status }]) ?? [],
+    ...(snapshot.origin === undefined ? {} : { origin: snapshot.origin }), messages: snapshot.messages, runs: snapshot.runs, switches: snapshot.switches };
 }
 function publicFailure(error: unknown): { readonly status: number; readonly code: string; readonly message: string } {
   if (error instanceof HttpError || error instanceof SessionStreamError) return error;
@@ -407,7 +410,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       });
       return;
     }
-    const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|switches|resume|cancel|close|events|export))?$/u.exec(path);
+    const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|switches|resume|cancel|close|events|export|fork))?$/u.exec(path);
     if (sessionRoute) {
       const id = sessionId(sessionRoute[1]!), action = sessionRoute[2];
       if (action === undefined && method === "GET") { queries(url, []); json(response, 200, view(app.runtime.read(id), app.runtime.permissionRequests(id))); return; }
@@ -437,6 +440,12 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
           json(response, 202, app.runtime.send(id, input.text, command(input.commandId), (input.attachments ?? []) as string[])); return;
         }
         if (action === "switches") { const input = record(await body(request), ["selection", "commandId"], ["selection", "commandId"]); json(response, 202, app.runtime.switch(id, select(input.selection), command(input.commandId))); return; }
+        if (action === "fork") {
+          const input = record(await body(request), ["commandId", "throughRunId"], ["commandId"]);
+          if (input.throughRunId !== undefined && typeof input.throughRunId !== "string") throw new HttpError(400, "INVALID_INPUT", "Invalid branch point");
+          const branch = app.runtime.fork(id, command(input.commandId), input.throughRunId as string | undefined);
+          json(response, 201, view(branch, app.runtime.permissionRequests(branch.id))); return;
+        }
         if (action === "resume") {
           const input = record(await body(request), ["selection", "commandId", "acknowledgeUnknown"], ["selection", "commandId"]);
           if (input.acknowledgeUnknown !== undefined && typeof input.acknowledgeUnknown !== "boolean") throw new HttpError(400, "INVALID_INPUT", "Invalid unknown-result acknowledgement");

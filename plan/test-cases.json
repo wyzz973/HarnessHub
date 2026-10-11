@@ -7103,6 +7103,166 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/real/native-commands.real.ts"
+    },
+    {
+      "id": "G004-NC2",
+      "task": "G004",
+      "requirements": [
+        "R07"
+      ],
+      "invariants": [
+        "INV-07"
+      ],
+      "layer": "unit",
+      "scenario": "v8分支来源与原生fork引用的状态",
+      "expected": "来源历史有界且不可变；fork引用只能沿待派发→派发→就绪或归档推进，缺来源或越级即拒绝",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/unit/session-state.test.ts"
+    },
+    {
+      "id": "G008-NC5",
+      "task": "G008",
+      "requirements": [
+        "R07",
+        "R19"
+      ],
+      "invariants": [
+        "INV-06"
+      ],
+      "layer": "integration",
+      "scenario": "v7事务升级到v8；v7数据中出现分支来源",
+      "expected": "原会话与事件保留；v8专属字段出现在v7数据中整笔拒绝",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/session-store.test.ts"
+    },
+    {
+      "id": "G028-NC6",
+      "task": "G028",
+      "requirements": [
+        "R11",
+        "R14"
+      ],
+      "invariants": [
+        "INV-06",
+        "INV-27"
+      ],
+      "layer": "integration",
+      "scenario": "从最新回复分支（原生fork）、从更早回复分支（公共历史）、原生拒绝fork",
+      "expected": "分支引用原生副本且源会话不变；更早位置不做原生fork而带上引用历史；拒绝时归档引用并以公共历史继续；同命令返回同一分支",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/session-runtime.test.ts"
+    },
+    {
+      "id": "G034-NC8",
+      "task": "G034",
+      "requirements": [
+        "R11",
+        "R25"
+      ],
+      "invariants": [
+        "INV-04",
+        "INV-09"
+      ],
+      "layer": "protocol",
+      "scenario": "Codex thread/fork及fork连接上的线程通知",
+      "expected": "返回新线程身份；源线程与副本的通知只计数不归属；拒绝报告为不可用",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/codex.test.ts"
+    },
+    {
+      "id": "G032-NC12",
+      "task": "G032",
+      "requirements": [
+        "R11",
+        "R25"
+      ],
+      "invariants": [
+        "INV-04",
+        "INV-09"
+      ],
+      "layer": "protocol",
+      "scenario": "ACP session/fork的声明要求与复制历史回放",
+      "expected": "未声明即不可用；回放计数不归属；fork连接不能再打开会话",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/acp.test.ts"
+    },
+    {
+      "id": "G032-NC13",
+      "task": "G032",
+      "requirements": [
+        "R11",
+        "R25"
+      ],
+      "invariants": [
+        "INV-04",
+        "INV-09"
+      ],
+      "layer": "protocol",
+      "scenario": "Pi恢复源会话文件后clone",
+      "expected": "返回独立的新会话文件与身份；扩展取消时不可用",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/pi.test.ts"
+    },
+    {
+      "id": "G050-NC4",
+      "task": "G050",
+      "requirements": [
+        "R01",
+        "R19"
+      ],
+      "invariants": [
+        "INV-06",
+        "INV-25"
+      ],
+      "layer": "integration",
+      "scenario": "HTTP分支路由与分支会话的第一条输入",
+      "expected": "没有完成的回复时拒绝；返回带引用历史的新会话且命令幂等；第一条输入带上引用历史",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/web-server.test.ts"
+    },
+    {
+      "id": "G054-NC4",
+      "task": "G054",
+      "requirements": [
+        "R01",
+        "R22"
+      ],
+      "invariants": [
+        "INV-01",
+        "INV-25"
+      ],
+      "layer": "e2e",
+      "scenario": "从回复分支、分支来源显示与回到原对话",
+      "expected": "分支打开并显示引用历史和原生状态；分支在原生副本继续，原对话仍在原线程",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/web.browser.ts"
+    },
+    {
+      "id": "G060-NC5",
+      "task": "G060",
+      "requirements": [
+        "R04",
+        "R24",
+        "R12"
+      ],
+      "invariants": [
+        "INV-16",
+        "INV-09"
+      ],
+      "layer": "e2e",
+      "scenario": "本机原安装真实分支：原生fork或公共历史回退与隔离",
+      "expected": "分支答出源会话记住的标记；只告诉分支的事实不进入源会话；不能fork的Harness如实回退；原全局配置不变",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/real/native-branch.real.ts"
     }
   ]
 }

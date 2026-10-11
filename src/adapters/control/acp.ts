@@ -214,6 +214,26 @@ export class AcpControl implements HarnessControl {
     if (this.catalog.commands === undefined) { let timer: ReturnType<typeof setTimeout> | undefined; await Promise.race([this.commandsArrived, new Promise<void>(resolve => { timer = setTimeout(resolve, COMMANDS_WAIT_MS); })]); clearTimeout(timer); if (this.catalog.commands === undefined) this.catalog = { ...this.catalog, commands: [] }; }
     return { ...this.catalog, defaultModel: this.configuredDefault, inputs: this.inputs() };
   }
+  private forking = false;
+  /** ACP `session/fork` when the agent declares it; the copy's replay is ignored and the source is untouched. */
+  async fork(checkpoint: string, cwd: string): Promise<string> {
+    this.assertInitialized();
+    if (this.conversation !== null || this.opening || this.forking) throw new ControlError("INVALID_STATE", "a fork needs its own connection");
+    if (!isAbsolute(cwd)) throw new ControlError("INVALID_INPUT", "fork cwd must be absolute");
+    const sessions = this.capabilities.sessionCapabilities == null ? {} : object(this.capabilities.sessionCapabilities, "native session capabilities");
+    if (sessions.fork === undefined) throw new ControlError("NATIVE_FORK_UNAVAILABLE", "this agent does not declare session/fork");
+    this.forking = true;
+    try {
+      const response = object(await this.rpc.request("session/fork", { sessionId: nativeConversationId(checkpoint), cwd, mcpServers: [] }, Math.min(SESSION_SETUP_MS, this.options.runTimeoutMs)), "session/fork result");
+      const id = nativeConversationId(response.sessionId);
+      if (id === checkpoint) throw new ControlError("IDENTITY_MISMATCH", "session/fork returned its source session");
+      return id;
+    } catch (error) {
+      // An agent that answers -32601 or refuses did not fork; anything else leaves the copy's existence unknown.
+      if (error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null) throw new ControlError("NATIVE_FORK_UNAVAILABLE", "the agent refused session/fork");
+      throw this.nativeFailure(error);
+    }
+  }
   /** ACP promptCapabilities; every agent must accept resource links, so files are always offered. */
   private promptCapabilities(): { readonly image: boolean; readonly audio: boolean; readonly embeddedContext: boolean } {
     const value = this.capabilities.promptCapabilities, caps = value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -244,7 +264,7 @@ export class AcpControl implements HarnessControl {
   async open(cwd: string, model?: string, options?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> {
     this.assertInitialized();
     if (!isAbsolute(cwd)) throw new ControlError("INVALID_INPUT", "conversation cwd must be absolute");
-    if (this.conversation !== null || this.opening) throw new ControlError("INVALID_STATE", "this connection already owns a conversation");
+    if (this.conversation !== null || this.opening || this.forking) throw new ControlError("INVALID_STATE", "this connection already owns a conversation");
     this.opening = true;
     try {
       let method = "session/new";
@@ -344,6 +364,8 @@ export class AcpControl implements HarnessControl {
     if (!this.conversation || received !== this.conversation) throw new ControlError("IDENTITY_MISMATCH", "ACP message belongs to another session");
   }
   private notification(method: string, raw: unknown): void {
+    // A fork connection opens no conversation; the agent's replay of the copied history is counted, never attributed.
+    if (this.forking) { this.replayBytes += Buffer.byteLength(JSON.stringify(raw ?? null)); if (this.replayBytes > 64 * 1024 * 1024) throw new ControlError("REPLAY_LIMIT", "native fork replay exceeded its budget"); this.unattributed++; return; }
     if (method !== "session/update") {
       const params = raw === undefined ? {} : object(raw, "ACP notification params");
       if (params.sessionId !== undefined) this.scope(params);

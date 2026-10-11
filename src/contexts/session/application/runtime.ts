@@ -3,7 +3,7 @@ import { TOOL_DIFF_BYTES, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type BackendResul
 import { MAX_RUN_ATTACHMENTS, MAX_RUN_OUTPUTS, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
 import {
   SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId,
-  type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicRun,
+  type ForkedMessage, type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicRun,
   type SelectionRequest, type SendReceipt, type SessionBindingFactory, type SessionCommit, type SessionConfiguration,
   type SessionId, type SessionEvent, type SessionMutation, type SessionRuntimeOptions, type SessionSnapshot, type SessionStore, type SwitchReceipt,
 } from "../../../contracts/session.js";
@@ -142,7 +142,7 @@ export class SessionRuntime {
     const concurrent = this.store.findByCreateKey(command);
     if (concurrent) { replayCommand(concurrent, command, "create", fingerprint); return concurrent; }
     const id = sessionId("session-" + this.options.id());
-    const state: SessionSnapshot = { schemaVersion: 7, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
+    const state: SessionSnapshot = { schemaVersion: 8, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
       configuration: config, selection: validated, activeRunId: null, pendingSwitchId: null,
       runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }] };
     try {
@@ -220,6 +220,40 @@ export class SessionRuntime {
       nativeBindings: current.nativeBindings?.map(binding => binding.harnessId === current.selection.harnessId && binding.controlId === current.selection.controlId && binding.status !== "archived" ? { ...binding, status: "archived" as const } : binding) ?? [],
       commands: [...current.commands, { id: command, kind: "native-reset", fingerprint, resultId: id }],
     }, events: [event("native.branch_requested", { harnessId: current.selection.harnessId, controlId: current.selection.controlId, historyPreserved: true, previousBindingPreserved: true })] })).session;
+  }
+  /**
+   * Branches a Session after a finished Run. The branch quotes the public history through that Run and starts with the
+   * same selection. When the source's native session is exactly at that Run, the branch gets a native fork of it (made
+   * before the branch's first input); otherwise the branch continues from public history. Nothing is sent to a model.
+   */
+  fork(sourceId: SessionId, key: string, throughRunId?: string): SessionSnapshot {
+    this.admit();
+    const source = this.load(sourceId), command = commandId(key);
+    if (throughRunId !== undefined && (typeof throughRunId !== "string" || !/^run-[A-Za-z0-9-]{1,128}$/u.test(throughRunId))) throw new SessionError("INVALID_INPUT", "invalid branch point");
+    const through = throughRunId === undefined ? [...source.runs].reverse().find(run => terminal(run.status)) : source.runs.find(run => run.id === throughRunId);
+    const fingerprint = this.fingerprint({ kind: "fork", source: sourceId, through: through?.id ?? null });
+    const prior = this.store.findByCreateKey(command);
+    if (prior) { replayCommand(prior, command, "create", fingerprint); return prior; }
+    if (!through || !terminal(through.status)) throw new SessionError("FORK_UNAVAILABLE", "a branch starts after a finished reply");
+    if (source.activeRunId !== null || source.pendingSwitchId !== null) throw new SessionError("NATIVE_SESSION_BUSY", "wait for the current reply or switch to finish before branching");
+    const last = source.runs.findIndex(run => run.id === through.id), included = new Set(source.runs.slice(0, last + 1).filter(run => terminal(run.status)).map(run => run.id));
+    const history: ForkedMessage[] = [...(source.origin?.history ?? []), ...[...source.messages].filter(message => included.has(message.runId)).sort((a, b) => a.seq - b.seq).map(message => {
+      const run = source.runs.find(row => row.id === message.runId)!;
+      return { role: message.role, text: message.text, status: run.status, ...(message.role === "assistant" ? { harnessId: run.selection.harnessId } : {}), ...(message.role === "user" && run.attachments?.length ? { attachments: run.attachments } : {}) };
+    })];
+    const native = source.selection.provider === undefined ? source.nativeBindings?.find(binding => binding.harnessId === source.selection.harnessId && binding.controlId === source.selection.controlId && binding.status === "ready") : undefined;
+    const nativeFork = native !== undefined && native.throughRunId === through.id;
+    const id = sessionId("session-" + this.options.id());
+    const state: SessionSnapshot = { schemaVersion: 8, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration: source.configuration, selection: source.selection,
+      activeRunId: null, pendingSwitchId: null, runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }],
+      origin: { kind: "fork", sessionId: sourceId, throughRunId: through.id, history },
+      ...(nativeFork ? { nativeBindings: [{ harnessId: native.harnessId, controlId: native.controlId, checkpoint: native.checkpoint, throughRunId: null, status: "fork-pending" as const }] } : {}) };
+    try {
+      const committed = this.store.create(state, [event("session.created", { selection: state.selection, continuity: nativeFork ? "native_fork" : "public_context_rehydrate", origin: { sessionId: sourceId, throughRunId: through.id, messages: history.length, nativeFork } })]);
+      this.managedSessions.add(id); this.publish(committed);
+      if (nativeFork) this.schedule(id);
+      return committed.session;
+    } catch (error) { this.fail(error, id); throw error; }
   }
   async wait(id: SessionId): Promise<void> {
     this.load(id);
@@ -417,9 +451,11 @@ export class SessionRuntime {
     while (this.work.size) {
       const id = this.work.values().next().value!; this.work.delete(id);
       if (this.fatal) { this.work.clear(); return; }
-      const state = this.load(id);
+      let state = this.load(id);
       if ((state.status !== "open" && !(state.status === "blocked" && this.recoverySwitch(state))) || this.closingSessions.has(id) || !this.accepting) continue;
       try {
+        // A branch's native fork runs before any of its inputs, in the same single-writer order as Turns.
+        if (state.nativeBindings?.some(binding => binding.status === "fork-pending")) { await this.forkNative(id); state = this.load(id); }
         if (state.pendingSwitchId !== null) {
           const pending = state.switches.find(sw => sw.id === state.pendingSwitchId)!;
           const beforeSwitch = state.runs.find(run => run.status === "queued" && state.messages.some(message => message.id === run.userMessageId && message.seq < pending.requestedSeq));
@@ -619,7 +655,7 @@ export class SessionRuntime {
         events: [event("run.preparing", { runId: target, selection: state.selection, epoch: state.epoch })] }));
       let current = this.owned(execution), run = this.continue(execution), context = buildPublicContext(current, run);
       previousNative = run.selection.provider === undefined ? current.nativeBindings?.find(binding => binding.harnessId === run.selection.harnessId && binding.controlId === run.selection.controlId && binding.status !== "archived") : undefined;
-      if (previousNative?.status === "unconfirmed") throw new SessionError("NATIVE_STATE_UNCONFIRMED", "原生会话状态尚未确认；可以切换其他 Harness，或明确建立新的原生分支。公共历史会保留。");
+      if (previousNative !== undefined && previousNative.status !== "ready") throw new SessionError("NATIVE_STATE_UNCONFIRMED", "原生会话状态尚未确认；可以切换其他 Harness，或明确建立新的原生分支。公共历史会保留。");
       if (previousNative !== undefined) {
         const through = previousNative.throughRunId === null ? -1 : current.runs.findIndex(run => run.id === previousNative!.throughRunId);
         context = buildPublicContext(current, run, context.sourceRunIds.filter(id => current.runs.findIndex(run => run.id === id) > through));
@@ -721,6 +757,39 @@ export class SessionRuntime {
       } catch (error) { this.fail(error); }
       this.active = null;
     }
+  }
+
+  /**
+   * Performs a branch's pending native fork with its own connection. The binding is marked `forking` before the request;
+   * a clean refusal archives it (the branch continues from public history), a result that cannot be confirmed leaves it
+   * `forking`, which blocks native use until the user explicitly rebuilds the native session.
+   */
+  private async forkNative(id: SessionId): Promise<void> {
+    const state = this.load(id), pending = state.nativeBindings?.find(binding => binding.status === "fork-pending");
+    if (!pending) return;
+    const owns = (binding: NativeSessionBinding) => binding.harnessId === pending.harnessId && binding.controlId === pending.controlId && binding.status !== "archived";
+    let binding: PreparedSessionBinding | null = null, problem: ReturnType<typeof fault> | null = null, forked: string | null = null, dispatched = false, cleanup: CleanupEvidence | null = null;
+    try {
+      binding = await this.factory.prepare(state.selection, state.configuration, id, "fork-" + this.options.id());
+      await binding.control.initialize();
+      if (!binding.control.fork) throw new SessionError("NATIVE_FORK_UNAVAILABLE", "this Harness interface cannot branch its native session");
+      this.commit(id, current => ({ next: { ...current, nativeBindings: current.nativeBindings!.map(item => owns(item) ? { ...item, status: "forking" as const } : item) },
+        events: [event("native.fork_dispatched", { harnessId: pending.harnessId, controlId: pending.controlId })] }));
+      dispatched = true;
+      const reference = await binding.control.fork(pending.checkpoint, binding.workspace);
+      if (typeof reference !== "string" || !reference || Buffer.byteLength(reference) > 8192 || /[\0\r\n]/u.test(reference) || reference === pending.checkpoint) throw new SessionError("INVALID_NATIVE_CHECKPOINT", "the Harness returned an invalid branch reference");
+      forked = reference;
+    } catch (error) { problem = fault(error); }
+    finally { if (binding) { try { cleanup = await binding.close(); } catch (error) { problem ??= fault(error); } } }
+    const refused = problem !== null && ["NATIVE_FORK_UNAVAILABLE", "UNSUPPORTED_CONTROL", "HARNESS_UNAVAILABLE", "CONTROL_UNAVAILABLE", "NATIVE_AUTH_REQUIRED"].includes(problem.code);
+    const confirmed = forked !== null && cleanup?.closed === true && cleanup.protocolFailure === null;
+    this.commit(id, current => {
+      if (confirmed) return { next: { ...current, nativeBindings: current.nativeBindings!.map(item => owns(item) ? { ...item, checkpoint: forked!, status: "ready" as const } : item) },
+        events: [event("native.forked", { harnessId: pending.harnessId, controlId: pending.controlId, cleanup })] };
+      if (!dispatched || refused) return { next: { ...current, nativeBindings: current.nativeBindings!.map(item => owns(item) ? { ...item, status: "archived" as const } : item) },
+        events: [event("native.fork_failed", { harnessId: pending.harnessId, controlId: pending.controlId, error: problem, continuity: "public_context_rehydrate" })] };
+      return { next: current, events: [event("native.fork_unknown", { harnessId: pending.harnessId, controlId: pending.controlId, error: problem, cleanup })] };
+    });
   }
 
   private async applySwitch(id: SessionId, targetId: string): Promise<void> {

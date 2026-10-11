@@ -183,6 +183,24 @@ export class PiControl implements HarnessControl {
     this.conversation = nativeConversationId(this.state.sessionId); return this.conversation;
   }
   async models(): Promise<NativeModelCatalog> { if (!this.initialized) throw new ControlError("INVALID_STATE", "Pi is not initialized"); return this.catalog; }
+  /** Restores the source session file, then `clone` copies its current branch into a new session file Pi switches to. */
+  async fork(checkpoint: string, cwd: string): Promise<string> {
+    await this.open(cwd, undefined, undefined, checkpoint);
+    const source = JSON.parse(checkpoint) as { path: string; id: string };
+    try {
+      const reply = object(await this.rpc.request("clone", {}), "Pi clone result");
+      if (reply.cancelled === true) throw new ControlError("NATIVE_FORK_UNAVAILABLE", "a Pi extension cancelled the clone");
+    } catch (error) {
+      if (error instanceof ControlError && error.code === "REMOTE_ERROR" && !this.rpc.failure) throw new ControlError("NATIVE_FORK_UNAVAILABLE", "Pi refused to clone the session");
+      throw error;
+    }
+    const state = object(await this.rpc.request("get_state", {}), "Pi state after clone");
+    if (state.sessionFile == null) throw new ControlError("NATIVE_FORK_UNAVAILABLE", "the Pi clone has no session file");
+    const path = string(state.sessionFile, "Pi clone file", 4096), id = string(state.sessionId, "Pi clone identity");
+    if (!isAbsolute(path) || /[\0\r\n]/u.test(path) || path === source.path || id === source.id) throw new ControlError("IDENTITY_MISMATCH", "Pi clone did not create a separate session");
+    this.conversation = nativeConversationId(id);
+    return JSON.stringify({ path, id });
+  }
   /** Images only for a current model whose Model.input lists them; files are named by path for Pi's own read tool. */
   async checkAttachments(attachments: readonly ContentRef[]): Promise<void> {
     if (!this.initialized || this.closed || this.failure) throw this.failure ?? new ControlError("INVALID_STATE", "Pi is not initialized");

@@ -116,6 +116,8 @@ export class CodexControl implements HarnessControl {
   private effort: string | undefined;
   /** Model named when the thread was opened; undefined means the configured default. */
   private openedModel: string | undefined;
+  /** Set once this connection forked a thread; it then opens nothing and attributes nothing. */
+  private forkConnection = false;
   /** Codex's own rollout file for the opened thread, as the thread reports it; null for an ephemeral thread. */
   private threadPath: string | null = null;
   private interactivePermissions = false;
@@ -199,7 +201,7 @@ export class CodexControl implements HarnessControl {
   async open(cwd: string, model?: string, native?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> {
     this.assertInitialized();
     if (!isAbsolute(cwd)) throw new ControlError("INVALID_INPUT", "conversation cwd must be absolute");
-    if (this.conversation || this.opening) throw new ControlError("INVALID_STATE", "this connection already owns a thread");
+    if (this.conversation || this.opening || this.forkConnection) throw new ControlError("INVALID_STATE", "this connection already owns a thread");
     this.opening = true;
     try {
       const overrides: Record<string, string> = {};
@@ -233,6 +235,23 @@ export class CodexControl implements HarnessControl {
       return received;
     } catch (error) { this.rpc.abort(errorFrom(error)); throw error; }
     finally { this.opening = false; }
+  }
+  /** `thread/fork` of a stored thread on a connection that opened none; the source thread is not loaded into a turn. */
+  async fork(checkpoint: string, cwd: string): Promise<string> {
+    this.assertInitialized();
+    if (this.conversation !== null || this.opening || this.forkConnection) throw new ControlError("INVALID_STATE", "a fork needs its own connection");
+    if (!isAbsolute(cwd)) throw new ControlError("INVALID_INPUT", "fork cwd must be absolute");
+    const source = nativeConversationId(checkpoint);
+    this.forkConnection = true;
+    try {
+      const response = object(await this.rpc.request("thread/fork", { threadId: source, cwd, excludeTurns: true }, Math.max(this.options.requestTimeoutMs, Math.min(60000, this.options.runTimeoutMs))), "thread/fork result");
+      const id = nativeConversationId(object(response.thread, "forked thread").id);
+      if (id === source) throw new ControlError("IDENTITY_MISMATCH", "thread/fork returned its source thread");
+      return id;
+    } catch (error) {
+      if (error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null) throw new ControlError("NATIVE_FORK_UNAVAILABLE", "Codex refused to fork the thread");
+      this.rpc.abort(errorFrom(error)); throw error;
+    }
   }
   /** Gated by the opened model's inputModalities; a model outside the catalog keeps the schema default (text and image). */
   async checkAttachments(attachments: readonly ContentRef[]): Promise<void> {
@@ -372,6 +391,8 @@ export class CodexControl implements HarnessControl {
       // app-server attaches every connection to every thread it creates; ownership stays with the thread/start response.
       this.foreign(id, typeof thread.parentThreadId === "string" ? thread.parentThreadId : null); return;
     }
+    // A fork connection owns no thread: whatever the source or the copy reports is counted, never scoped to a turn.
+    if (this.forkConnection) { if (typeof params.threadId === "string") this.foreign(params.threadId, null); this.foreignUpdates++; return; }
     if (this.conversation !== null && typeof params.threadId === "string" && params.threadId !== this.conversation) {
       this.foreign(params.threadId, null); this.foreignUpdates++; return;
     }

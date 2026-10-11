@@ -210,3 +210,17 @@ test("Pi /export returns its HTML export as an output and reports an empty sessi
     assert.equal(result.status, "failed"); assert.equal(result.error?.code, "NATIVE_EXPORT_UNAVAILABLE");
   } finally { await empty.close(); }
 });
+
+test("Pi forks by restoring the source session file and cloning it into a separate session", async t => {
+  const root = await mkdtemp(join(tmpdir(), "pi-fork-")), trace = join(root, "trace"); t.after(() => rm(root, { recursive: true, force: true }));
+  const source = JSON.stringify({ path: join(root, "source.jsonl"), id: "pi-fixture" });
+  const driver = control("basic", trace);
+  try {
+    await driver.initialize();
+    assert.deepEqual(JSON.parse(await driver.fork(source, process.cwd())), { path: join(root, "source.jsonl") + ".clone", id: "pi-clone" });
+    assert.ok((await readFile(trace, "utf8")).includes('"type":"clone"'));
+  } finally { await driver.close(); }
+  const cancelled = control("clone-cancelled");
+  try { await cancelled.initialize(); await assert.rejects(cancelled.fork(source, process.cwd()), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_FORK_UNAVAILABLE"); }
+  finally { await cancelled.close(); }
+});

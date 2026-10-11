@@ -34,7 +34,7 @@ Provider 保存名称、协议、Base URL、模型列表、默认模型、启用
 
 已知密钥在公开 control metadata、事件、诊断、错误与结算中清洗；文本跨delta分片使用前缀缓冲，不能通过分片逃逸。模型探测禁止redirect，响应≤1MiB，期限5s，同时≤16；shutdown停止准入、取消并等待所有探测，才释放vault/database。
 
-业务SQLite在独占owner内全事务执行既有user_version1→2→3及新增3→4→5→6→7迁移，保留全部命令、fingerprint、events、水位和业务version；坏数据整笔回滚。新Session必须v7，未知格式拒绝；只读Reader支持已知旧版本但不迁移。旧Session无法凭空获得模型目标，需要明确选择。旧程序不能读取v7；回退前停止服务并恢复升级前备份（含数据根下的`content`目录）。
+业务SQLite在独占owner内全事务执行既有user_version1→2→3及新增3→4→5→6→7→8迁移，保留全部命令、fingerprint、events、水位和业务version；坏数据整笔回滚。新Session必须v8，未知格式拒绝；只读Reader支持已知旧版本但不迁移。旧Session无法凭空获得模型目标，需要明确选择。旧程序不能读取v8；回退前停止服务并恢复升级前备份（含数据根下的`content`目录）。
 
 ## HTTP 与浏览器
 
@@ -73,6 +73,8 @@ HTTP body≤128KiB、response≤8MiB、资产≤4MiB、并发请求≤16、连�
 ADR-020追加`POST /api/v1/sessions/:id/native-branch`，接受epoch/commandId；仅空闲及资源已核实的所选原生Harness允许重新建立。原生私有引用保留，公开历史不删除；接口不是原生fork。Web仅投影nativeStates的身份/status，checkpoint隐藏。恢复后的历史回放不创造公共回复，thread级用量元数据不绑定当前Turn。Codex原生问答和密码输入通过既有交互往返，回答正文不写权限事件。
 
 ADR-022追加`GET/HEAD /api/v1/content/:id`（`download=1`可选）：需要登录，跨站请求拒绝；只有png/jpeg/gif/webp图片与JSON/纯文本内联，其余强制下载，响应带`Content-Security-Policy: sandbox`与`nosniff`，未知内容404，文件与记录不一致409。工具详情按需读取。SSE新增`run`帧，携带version/lastSeq与活动Run的完整公开事实，用于工具、计划、用量、提示、活动、产物的增量更新；客户端只接受仍在执行的活动Run，身份、输入、选择、epoch与状态不得改变，不符或缺帧时改取完整快照。
+
+ADR-025追加`POST /api/v1/sessions/:id/fork {commandId, throughRunId?}`：在已完成的回复后创建分支并返回新对话视图（201，命令幂等）；没有完成的回复或源正在执行时409。会话视图包含`origin`（源对话、分支点、引用历史），原生状态增加`forking`；尚无输入的分支在列表中命名为“分支 · 首条消息”。
 
 ADR-024追加`GET /api/v1/sessions/:id/export?format=markdown|json`：需要登录，返回附件形式的公开对话（消息与Run摘要：计划、工具标题、活动、产物与附件名称、用量、错误），不含原生私有绑定、工具详情正文与存储字节；未知格式400。Codex模型目录增加取自原配置的`approval_policy`、`sandbox`原生选项，只覆盖Hub线程；Codex与Pi目录在原接口没有同名命令时提供`compact`、`export`，分别调用原生压缩与导出，导出文件作为Run产物。ACP目录读取最多等待1.5秒的命令公告。
 

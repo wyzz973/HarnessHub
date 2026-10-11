@@ -50,3 +50,5 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
 - [ADR-023：文件、图片与音频输入](0023-attachment-input.md)（accepted）：原始字节上传与工作区暂存；附件随输入准入且不可变；派发前按代理与模型输入能力检查并复制为只读副本；各原接口映射与界面附件交互。
 
 - [ADR-024：原生会话操作——权限设置、压缩与导出](0024-native-session-operations.md)（accepted）：Codex线程审批策略与沙箱只覆盖Hub线程并核实；Codex/Pi原生压缩与导出以命令名提供；ACP命令公告等待；公开对话导出。
+
+- [ADR-025：对话分支与原生会话副本](0025-conversation-branches.md)（accepted）：分支为带引用历史的新Session；原生会话恰好在分支点时由Runner建立原生副本，否则以公共历史继续；Session v8。

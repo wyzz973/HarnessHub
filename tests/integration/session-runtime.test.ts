@@ -766,3 +766,47 @@ test("attachments are admitted with the input, checked and copied before dispatc
   assert.equal(state.runs[1]?.status, "failed"); assert.deepEqual(state.runs[1]?.error, { code: "ATTACHMENT_UNSUPPORTED", message: "当前 Harness 或模型不接受图片附件：shot.png" });
   assert.equal(state.status, "open"); assert.equal(received[1]?.files.length, 0, "a refused input never reaches the Harness");
 });
+
+test("a branch quotes public history, forks the native session at its latest Turn, and falls back to public context otherwise", { timeout: 10000 }, async t => {
+  const f = await fixture(t), peers = Array.from({ length: 8 }, () => controlled()), factory = new ControlledFactory(peers);
+  const prepare = factory.prepare.bind(factory), opens: (string | undefined)[] = [], forks: string[] = [];
+  let refuse = false;
+  factory.prepare = async (...args) => {
+    const binding = await prepare(...args), original = binding.control.open;
+    return { ...binding, control: { ...binding.control,
+      open: async (cwd, model, options, checkpoint) => { opens.push(checkpoint); return original(cwd, model, options, checkpoint); },
+      checkpoint: async () => opens.at(-1) ?? "native-source",
+      fork: async (checkpoint: string) => { forks.push(checkpoint); if (refuse) throw new SessionError("NATIVE_FORK_UNAVAILABLE", "refused"); return checkpoint + "-copy-" + forks.length; },
+    } };
+  };
+  const app = runtime(f, factory), source = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  app.send(source.id, "first", "one"); await app.wait(source.id);
+  app.send(source.id, "second", "two"); await app.wait(source.id);
+  const runs = app.read(source.id).runs;
+  // Native fork: the source binding is exactly at the latest Turn.
+  const branch = app.fork(source.id, "branch-latest");
+  assert.deepEqual(branch.origin?.history.map(row => [row.role, row.text]), [["user", "first"], ["assistant", "synthetic response"], ["user", "second"], ["assistant", "synthetic response"]]);
+  assert.equal(branch.nativeBindings?.[0]?.status, "fork-pending"); assert.deepEqual(app.fork(source.id, "branch-latest"), branch, "the same command returns the same branch");
+  await app.wait(branch.id);
+  assert.deepEqual(forks, ["native-source"]);
+  assert.deepEqual(app.read(branch.id).nativeBindings?.map(binding => [binding.checkpoint, binding.status]), [["native-source-copy-1", "ready"]]);
+  app.send(branch.id, "branch question", "b-one"); await app.wait(branch.id);
+  assert.equal(opens.at(-1), "native-source-copy-1", "the branch resumes its own native copy");
+  // Each fork and each Turn prepares its own connection: peers 0–1 ran the source, 2 made the fork, 3 runs the branch.
+  assert.equal(await peers[3]!.started.promise, "branch question", "a native branch receives only the new input");
+  assert.equal(app.read(source.id).nativeBindings?.[0]?.checkpoint, "native-source", "the source keeps its own native session");
+  // Public-only branch: an earlier Turn is not where the native session is.
+  const early = app.fork(source.id, "branch-early", runs[0]!.id);
+  assert.equal(early.nativeBindings, undefined); assert.deepEqual(early.origin?.history.map(row => row.text), ["first", "synthetic response"]);
+  app.send(early.id, "early question", "e-one"); await app.wait(early.id);
+  const context = JSON.parse((await peers[4]!.started.promise).split("\n").slice(1).join("\n")) as { branchedHistory: { role: string; text: string }[]; history: unknown[] };
+  assert.deepEqual(context.branchedHistory.map(row => row.text), ["first", "synthetic response"]); assert.deepEqual(context.history, []);
+  // A refused native fork archives the reference; the branch continues from public history.
+  refuse = true;
+  const refused = app.fork(source.id, "branch-refused"); await app.wait(refused.id);
+  assert.deepEqual(app.read(refused.id).nativeBindings?.map(binding => binding.status), ["archived"]);
+  assert.ok(f.store.events(refused.id, 0, 100).some(row => row.type === "native.fork_failed"));
+  app.send(refused.id, "after refusal", "r-one"); await app.wait(refused.id);
+  assert.equal(app.read(refused.id).runs[0]?.status, "completed"); assert.match(await peers[6]!.started.promise, /branchedHistory/u);
+  assert.throws(() => app.fork(source.id, "branch-missing", "run-missing"), (error: unknown) => error instanceof SessionError && error.code === "FORK_UNAVAILABLE");
+});

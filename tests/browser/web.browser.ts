@@ -622,3 +622,36 @@ test("unified chat attaches files, refuses inputs the model does not take, keeps
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "attachments must not overflow a narrow screen");
   assert.deepEqual(errors, []);
 });
+
+test("a branch opens with the quoted history and continues in its own native copy while the original stays unchanged", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  await composer.fill("分支前的第一条消息"); await composer.press("Enter");
+  await expect(log).toContainText("分支前的第一条消息", { timeout: 15000 }); await expect(log.locator(".assistant-message")).toHaveCount(1);
+  await expect(log.locator(".assistant-message").last()).toContainText("已由");
+  await page.locator(".assistant-message").last().hover();
+  await page.getByRole("button", { name: "从这里分支", exact: true }).click();
+  const origin = page.getByRole("region", { name: "分支来源" });
+  await expect(origin).toContainText("分支自之前的对话"); await expect(origin).toContainText("2 条消息");
+  await expect(origin.getByText("原生会话已分支")).toBeVisible({ timeout: 15000 });
+  await origin.getByText("查看分支前的对话").click(); await expect(origin).toContainText("分支前的第一条消息");
+  await expect(page.getByRole("button", { name: "分支 · 分支前的第一条消息", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("分支 · 分支前的第一条消息");
+  await page.screenshot({ path: join(artifact, "branch-origin.png"), animations: "disabled" });
+  await composer.fill("WHICH_THREAD 分支"); await composer.press("Enter");
+  await expect(log).toContainText("原生分支线程，公共历史 0 轮，分支历史 0 条", { timeout: 15000 });
+  // The original conversation keeps its own native thread and history.
+  await origin.getByRole("button", { name: /打开原对话/u }).click();
+  await expect(page.getByRole("region", { name: "分支来源" })).toHaveCount(0);
+  await composer.fill("WHICH_THREAD 原对话"); await composer.press("Enter");
+  await expect(log).toContainText("原线程", { timeout: 15000 });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "the branch view must not overflow a narrow screen");
+  assert.deepEqual(errors, []);
+});

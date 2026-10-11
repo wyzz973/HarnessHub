@@ -33,7 +33,7 @@ test("valid public snapshot keeps independent public identities and exact causal
 test("unknown schemas, properties and inconsistent public ownership are rejected", () => {
   const state = seed();
   assert.equal(parseSession({ ...state, schemaVersion: 3 }).schemaVersion, 3);
-  for (const value of [null, {}, { ...state, schemaVersion: 8 }, { ...state, secret: "not-a-field" },
+  for (const value of [null, {}, { ...state, schemaVersion: 9 }, { ...state, secret: "not-a-field" },
     { ...state, activeRunId: "run-one" }, { ...state, lastSeq: 3 }, { ...state, status: "unknown" },
     { ...state, configuration: { ...state.configuration, workspace: "relative" } }]) assert.throws(() => parseSession(value), SessionError);
 });
@@ -147,4 +147,18 @@ test("v7 attachments are bounded, unique, canonical references that cannot chang
   const waiting = { ...state, lastSeq: 3, runs: [state.runs[0]!, queued], messages: [...base.messages.slice(0, 2), { ...base.messages[2]!, status: "queued" }] };
   const before = parseSession(waiting), after = parseSession({ ...waiting, version: waiting.version + 1, runs: [waiting.runs[0]!, { ...queued, attachments: [ref("content-d")] }] });
   assert.throws(() => assertSessionTransition(before, after), (error: unknown) => error instanceof SessionError && error.code === "INVALID_TRANSITION" && error.message === "accepted Run input and identities are immutable");
+});
+test("v8 branch origins are bounded quoted history and native fork references advance only along the fork path", () => {
+  const base = seed(), origin = { kind: "fork", sessionId: "session-source", throughRunId: "run-source", history: [{ role: "user", text: "earlier", status: "completed" }, { role: "assistant", text: "reply", status: "completed", harnessId: "alpha" }] };
+  const binding = (status: string, checkpoint = "native-source") => ({ harnessId: "alpha", controlId: "alpha-acp", checkpoint, throughRunId: null, status });
+  const state = { ...base, schemaVersion: 8, origin, nativeBindings: [binding("fork-pending")] };
+  assert.deepEqual(parseSession(state).origin, origin);
+  for (const value of [{ ...state, schemaVersion: 7 }, { ...state, origin: undefined }, { ...state, origin: { ...origin, kind: "copy" } }, { ...state, origin: { ...origin, sessionId: state.id } },
+    { ...state, origin: { ...origin, history: [{ role: "assistant", text: "x", status: "completed", attachments: [] }] } }, { ...state, nativeBindings: [{ ...binding("forking"), throughRunId: "run-one" }] }])
+    assert.throws(() => parseSession(value), SessionError);
+  const step = (from: string, to: string, checkpoint?: string) => () => assertSessionTransition(parseSession({ ...state, nativeBindings: [binding(from)] }), parseSession({ ...state, version: state.version + 1, nativeBindings: [binding(to, checkpoint)] }));
+  step("fork-pending", "forking")(); step("forking", "ready", "native-copy")(); step("fork-pending", "archived")(); step("forking", "archived")();
+  for (const invalid of [step("fork-pending", "ready", "native-copy"), step("fork-pending", "forking", "native-other"), step("forking", "archived", "native-copy"), step("ready", "forking")])
+    assert.throws(invalid, (error: unknown) => error instanceof SessionError && error.code === "INVALID_TRANSITION");
+  assert.throws(() => assertSessionTransition(parseSession(state), parseSession({ ...state, version: state.version + 1, origin: { ...origin, history: origin.history.slice(1) } })), /branch origin is immutable/u);
 });

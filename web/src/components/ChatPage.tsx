@@ -1,5 +1,6 @@
 import * as Popover from "@radix-ui/react-popover";
 import { AlertCircle, ArrowDown, ArrowRight, Bug, Download, FolderOpen, FolderSearch, SquareTerminal, X } from "lucide-react";
+import { BranchOrigin } from "./BranchOrigin.js";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { ProviderView } from "../../../src/contracts/provider.js";
@@ -57,6 +58,9 @@ export interface ChatProps {
   onRetryConnection?: () => void;
   onToolDetail?: import("./NativeActivity.js").ToolDetailLoader;
   attachments: readonly import("./Attachments.js").AttachmentDraft[];
+  /** Branches after a finished reply; omitted while branching is unavailable. */
+  onBranch?: (runId: string) => void;
+  onOpenSession?: (id: string) => void;
   onAttach: (files: readonly File[]) => void;
   onRemoveAttachment: (local: string) => void;
 }
@@ -87,7 +91,9 @@ export function ChatPage(props: ChatProps) {
   const failedSwitch = latestSwitch?.status === "failed" && latestSwitch.id !== dismissedSwitch && !session?.runs.some(run =>
     run.status === "completed" && session.messages.some(message => message.runId === run.id && message.role === "user" && message.seq > latestSwitch.requestedSeq)) ? latestSwitch : null;
   const canRetry = session?.status === "open" && active === null && !dirty && !pending && problem === null && mutation === null;
-  const title = session?.messages.find(message => message.role === "user")?.text ?? (props.sessionRequested || props.sessionError ? "打开对话" : "新对话");
+  const canBranch = session !== null && session.activeRunId === null && session.pendingSwitchId === null && mutation === null;
+  const branchedTitle = session?.origin?.history.find(message => message.role === "user")?.text;
+  const title = session?.messages.find(message => message.role === "user")?.text ?? (branchedTitle ? "分支 · " + branchedTitle : props.sessionRequested || props.sessionError ? "打开对话" : "新对话");
   const runs = useMemo(() => new Map(session?.runs.map(run => [run.id, run])), [session?.runs]);
   const assistantRuns = useMemo(() => new Set(session?.messages.filter(message => message.role === "assistant").map(message => message.runId)), [session?.messages]);
   const availableHarnesses = harnesses.filter(harness => harness.controls.some(control => control.available));
@@ -188,8 +194,9 @@ export function ChatPage(props: ChatProps) {
           {providers.length === 0 ? <button className="welcome-config-link" onClick={props.onProviders}>配置模型连接 <ArrowRight size={14} aria-hidden="true"/></button> : null}
         </div>
         : <div className="transcript" ref={transcript} role="log" aria-label="对话历史" aria-live="off">
-          {session.messages.length === 0 ? <div className="conversation-empty"><BrandMark/><h2>对话准备好了</h2><p>发出第一条消息，开始这次协作。</p></div> : session.messages.map(message => <Fragment key={message.id}>
-            <ChatMessage message={message} run={runs.get(message.runId)} harnesses={harnesses} providers={providers} onEdit={fillDraft} onRetry={canRetry ? (text, sent) => { void send(text, sent ?? []).catch(() => {}); } : undefined} {...(props.onToolDetail ? { loadToolDetail: props.onToolDetail } : {})}/>
+          {session.origin ? <BranchOrigin origin={session.origin} session={session} harnesses={harnesses} onOpenSource={props.onOpenSession}/> : null}
+          {session.messages.length === 0 && session.origin ? null : session.messages.length === 0 ? <div className="conversation-empty"><BrandMark/><h2>对话准备好了</h2><p>发出第一条消息，开始这次协作。</p></div> : session.messages.map(message => <Fragment key={message.id}>
+            <ChatMessage message={message} run={runs.get(message.runId)} harnesses={harnesses} providers={providers} onEdit={fillDraft} onRetry={canRetry ? (text, sent) => { void send(text, sent ?? []).catch(() => {}); } : undefined} {...(props.onToolDetail ? { loadToolDetail: props.onToolDetail } : {})} {...(canBranch && props.onBranch ? { onBranch: props.onBranch } : {})}/>
             {message.role === "user" && !assistantRuns.has(message.runId) && runs.has(message.runId) ? <ChatMessage message={undefined} run={runs.get(message.runId)} harnesses={harnesses} providers={providers} onEdit={fillDraft} onRetry={canRetry ? (text, sent) => { void send(text, sent ?? []).catch(() => {}); } : undefined} {...(props.onToolDetail ? { loadToolDetail: props.onToolDetail } : {})}/> : null}
           </Fragment>)}
           {session.switches.length > 0 ? <details className="selection-history"><summary>选择记录 <span>{session.switches.length}</span></summary>{session.switches.map(item => <div className={`switch-record ${item.status}`} key={item.id}><span>{harnesses.find(harness => harness.id === item.requested.harnessId)?.name ?? item.requested.harnessId}</span><StatusBadge tone={item.status === "failed" ? "danger" : item.status === "effective" ? "success" : "warning"}>{item.status === "effective" ? "已生效" : item.status === "failed" ? "切换失败" : "等待生效"}</StatusBadge>{item.requested.provider ? <small>{providers.find(provider => provider.id === item.requested.provider?.providerId)?.name ?? "Provider"} · {item.requested.provider.model}</small> : null}{item.error ? <small className="error-text">{failureMessage(item.error)}</small> : null}</div>)}</details> : null}

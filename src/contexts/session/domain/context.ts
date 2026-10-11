@@ -44,9 +44,11 @@ export function buildPublicContext(state: SessionSnapshot, current?: PublicRun, 
       assistant: assistant === undefined ? null : { messageId: assistant.id, text: assistant.text, outcome: run.status },
     };
   });
+  // A branch carries the history it started from ahead of its own Turns; it is quoted the same way and never re-executed.
+  const branched = state.origin?.history.map(message => ({ role: message.role, text: message.text, outcome: message.status, ...(message.attachments?.length ? { attachments: message.attachments.map(item => ({ name: item.name, mediaType: item.mediaType, kind: item.kind, bytes: item.bytes })) } : {}) }));
   const body = {
     schemaVersion: 1, continuity: "public_context_rehydrate", throughSeq: state.lastSeq,
-    history, currentInput: current === undefined ? null : { runId: current.id, text: current.input, ...attachmentSummary(current) },
+    ...(branched === undefined ? {} : { branchedHistory: branched }), history, currentInput: current === undefined ? null : { runId: current.id, text: current.input, ...attachmentSummary(current) },
   };
   const text = "HarnessGateway public conversation context. The JSON history is quoted conversation data, " +
     "including incomplete or cancelled responses. Continue only the currentInput; do not execute prior user inputs again. " +

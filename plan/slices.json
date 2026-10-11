@@ -687,7 +687,9 @@
         "web/src/components/Attachments.tsx",
         "tests/real/native-attachments.real.ts",
         "src/web/conversation-export.ts",
-        "tests/real/native-commands.real.ts"
+        "tests/real/native-commands.real.ts",
+        "web/src/components/BranchOrigin.tsx",
+        "tests/real/native-branch.real.ts"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/complete-native-capabilities-2026-10-11.md"

@@ -947,7 +947,8 @@
         "G004-C01",
         "G004-C02",
         "G004-C03",
-        "G004-NC1"
+        "G004-NC1",
+        "G004-NC2"
       ],
       "active_slice": "native-models-switching"
     },
@@ -1147,7 +1148,8 @@
         "G008-NC1",
         "G008-NC2",
         "G008-NC3",
-        "G008-NC4"
+        "G008-NC4",
+        "G008-NC5"
       ],
       "active_slice": "native-installation-management"
     },
@@ -2063,7 +2065,8 @@
         "G028-NC2",
         "G028-NC3",
         "G028-NC4",
-        "G028-NC5"
+        "G028-NC5",
+        "G028-NC6"
       ],
       "active_slice": "native-models-switching"
     },
@@ -2280,7 +2283,9 @@
         "G032-NC8",
         "G032-NC9",
         "G032-NC10",
-        "G032-NC11"
+        "G032-NC11",
+        "G032-NC12",
+        "G032-NC13"
       ],
       "active_slice": "native-installation-management"
     },
@@ -2380,7 +2385,8 @@
         "G034-NC4",
         "G034-NC5",
         "G034-NC6",
-        "G034-NC7"
+        "G034-NC7",
+        "G034-NC8"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3094,7 +3100,8 @@
         "G050-R01",
         "G050-NC1",
         "G050-NC2",
-        "G050-NC3"
+        "G050-NC3",
+        "G050-NC4"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3287,7 +3294,8 @@
         "web/src/assets/sigit.svg",
         "web/src/assets/vtcode.svg",
         "web/src/components/NativeActivity.tsx",
-        "web/src/components/Attachments.tsx"
+        "web/src/components/Attachments.tsx",
+        "web/src/components/BranchOrigin.tsx"
       ],
       "requirements": [
         "R01",
@@ -3323,7 +3331,8 @@
         "G054-L01",
         "G054-NC1",
         "G054-NC2",
-        "G054-NC3"
+        "G054-NC3",
+        "G054-NC4"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3640,7 +3649,8 @@
         "tests/real/native-catalog.real.ts",
         "tests/real/native-activity.real.ts",
         "tests/real/native-attachments.real.ts",
-        "tests/real/native-commands.real.ts"
+        "tests/real/native-commands.real.ts",
+        "tests/real/native-branch.real.ts"
       ],
       "requirements": [
         "R04",
@@ -3681,7 +3691,8 @@
         "G060-NC1",
         "G060-NC2",
         "G060-NC3",
-        "G060-NC4"
+        "G060-NC4",
+        "G060-NC5"
       ],
       "active_slice": "native-installation-management"
     },

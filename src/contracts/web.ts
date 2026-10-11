@@ -33,7 +33,9 @@ export interface SessionView {
   readonly activeRunId: string | null;
   readonly pendingSwitchId: string | null;
   readonly permissions?: readonly import("./session.js").PermissionRequest[];
-  readonly nativeStates?: readonly { readonly harnessId: string; readonly controlId: string; readonly status: "ready" | "unconfirmed" }[];
+  readonly nativeStates?: readonly { readonly harnessId: string; readonly controlId: string; readonly status: "ready" | "unconfirmed" | "forking" }[];
+  /** The public history a branched conversation started from. */
+  readonly origin?: import("./session.js").SessionOrigin;
   readonly messages: readonly PublicMessage[];
   readonly runs: readonly PublicRun[];
   readonly switches: readonly PublicSwitch[];

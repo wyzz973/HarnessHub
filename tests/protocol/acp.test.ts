@@ -395,3 +395,16 @@ test("ACP catalog reads wait briefly for the agent's command announcement instea
   try { await ready(silent); assert.deepEqual((await silent.models()).commands, []); const started = Date.now(); await silent.models(); assert.ok(Date.now() - started < 200, "the bounded wait happens once"); }
   finally { await silent.close(); }
 });
+
+test("ACP forks a session only when the agent declares it, ignoring the copy's replay", async () => {
+  const driver = control("forkable");
+  try {
+    await driver.initialize();
+    assert.equal(await driver.fork("session-source", process.cwd()), "session-forked");
+    assert.equal(driver.unattributedUpdates, 2, "the replayed history of the copy is counted, never attributed");
+    await assert.rejects(driver.open(process.cwd()), (error: unknown) => error instanceof ControlError && error.code === "INVALID_STATE", "a fork connection opens nothing else");
+  } finally { await driver.close(); }
+  const undeclared = control("basic");
+  try { await undeclared.initialize(); await assert.rejects(undeclared.fork("session-source", process.cwd()), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_FORK_UNAVAILABLE"); }
+  finally { await undeclared.close(); }
+});

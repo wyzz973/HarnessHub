@@ -18,6 +18,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   if (value.method === "account/read") return reply(value.id, { account: { type: "chatgpt" }, requiresOpenaiAuth: true });
   if (value.method === "model/list") return reply(value.id, { data: [{ model: "native-a", displayName: "Native A", defaultReasoningEffort:"low",supportedReasoningEfforts:[{reasoningEffort:"low"},{reasoningEffort:"high"}] }, { model: "native-b", displayName: "Native B", defaultReasoningEffort:"low",supportedReasoningEfforts:[{reasoningEffort:"low"},{reasoningEffort:"high"}] }], nextCursor: null });
   if (value.method === "thread/start") { nativeModel = value.params.model ?? null; notify("thread/started", { thread: { id: native } }); return reply(value.id, { thread: { id: native } }); }
+  if (value.method === "thread/fork") { const id = "browser-fork-" + process.pid; notify("thread/started", { thread: { id } }); return reply(value.id, { thread: { id } }); }
   if (value.method === "thread/resume") { native = value.params.threadId; nativeModel = value.params.model ?? null; notify("thread/started", { thread: { id: native } }); return reply(value.id, { thread: { id: native } }); }
   if (value.method === "turn/start") {
     const input = value.params.input[0].text;
@@ -29,6 +30,11 @@ createInterface({ input: process.stdin }).on("line", line => {
     const model = nativeModel ?? (config ? JSON.parse(config.match(/^model = (.+)$/mu)[1]) : "native-a");
     active = { id: "browser-turn-" + ++counter };
     notify("turn/started", { threadId: native, turn: { id: active.id, status: "inProgress" } }); reply(value.id, { turn: { id: active.id, status: "inProgress" } });
+    if (text.startsWith("WHICH_THREAD")) {
+      // Names the native thread this Turn ran on, so a branch can be seen continuing in its own native copy.
+      notify("item/agentMessage/delta", { threadId: native, turnId: active.id, itemId: "browser-message", delta: (native.startsWith("browser-fork-") ? "原生分支线程" : "原线程") + "，公共历史 " + context.history.length + " 轮，分支历史 " + (context.branchedHistory?.length ?? 0) + " 条" });
+      notify("turn/completed", { threadId: native, turn: { id: active.id, status: "completed" } }); active = null; return;
+    }
     if (text.startsWith("ATTACHMENTS")) {
       // Images arrive as localImage paths, files as text pointers; the reply proves the private copies are readable.
       const images = value.params.input.slice(1).filter(item => item.type === "localImage"), files = [...input.matchAll(/^\[Attached file\] (.+?) \(.+\): (\/.+)$/gmu)];

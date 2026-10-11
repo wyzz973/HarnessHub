@@ -84,7 +84,7 @@ lines.on("line", line => {
     if (scenario === "remote-error") { emit({ id: message.id, error: { code: -32001, message: "test remote error" } }); return; }
     if (scenario === "stderr") process.stderr.write("diagnostic".repeat(100000));
     const result = protocol === "acp-v1"
-      ? { protocolVersion: scenario === "version" ? 2 : 1, agentCapabilities: { loadSession: ["native-resume", "resume-fails", "resume-wrong-identity", "load-trailing-replay"].includes(scenario), ...(scenario === "attachments" ? { promptCapabilities: { image: true, audio: true, embeddedContext: true } } : {}) }, authMethods: [{ id: "fixture-login", name: "Fixture Login" }], agentInfo: { name: "fixture", version: "1.0" } }
+      ? { protocolVersion: scenario === "version" ? 2 : 1, agentCapabilities: { loadSession: ["native-resume", "resume-fails", "resume-wrong-identity", "load-trailing-replay"].includes(scenario), ...(scenario === "attachments" ? { promptCapabilities: { image: true, audio: true, embeddedContext: true } } : {}), ...(scenario === "forkable" ? { sessionCapabilities: { fork: {} } } : {}) }, authMethods: [{ id: "fixture-login", name: "Fixture Login" }], agentInfo: { name: "fixture", version: "1.0" } }
       : { userAgent: "fixture-codex/1.0", codexHome: process.cwd(), platformFamily: "unix", platformOs: process.platform };
     answer(message.id, result);
     if (scenario === "flood") {
@@ -154,6 +154,20 @@ lines.on("line", line => {
     answer(message.id, { thread: { id, ...(rollout ? { path: rollout } : {}) }, approvalPolicy: scenario === "ignore-permissions" ? "never" : message.params.approvalPolicy ?? "never", sandbox: { type: scenario === "ignore-permissions" ? "dangerFullAccess" : sandboxType } }); return;
   }
   if (message.method === "ping") { answer(message.id, { echoed: message.params }); return; }
+  if (message.method === "thread/fork") {
+    if (scenario === "fork-refused") { emit({ id: message.id, error: { code: -32600, message: "thread cannot be forked" } }); return; }
+    notification("thread/started", { thread: { id: "thread-forked" } });
+    // Like the installed app-server, the copy reports its own status on every attached connection.
+    notification("thread/status/changed", { threadId: "thread-forked", status: { type: "idle" } });
+    notification("thread/tokenUsage/updated", { threadId: "thread-forked", turnId: "copied-turn", tokenUsage: { total: { totalTokens: 10, inputTokens: 8, cachedInputTokens: 0, outputTokens: 2, reasoningOutputTokens: 0 }, last: { totalTokens: 10, inputTokens: 8, cachedInputTokens: 0, outputTokens: 2, reasoningOutputTokens: 0 }, modelContextWindow: 1000 } });
+    answer(message.id, { thread: { id: scenario === "fork-same" ? message.params.threadId : "thread-forked" } }); return;
+  }
+  if (message.method === "session/fork") {
+    // ACP agents replay the copied history for the new session before answering.
+    notification("session/update", { sessionId: "session-forked", update: { sessionUpdate: "user_message_chunk", content: { type: "text", text: "copied question" } } });
+    notification("session/update", { sessionId: "session-forked", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "copied answer" } } });
+    answer(message.id, { sessionId: "session-forked" }); return;
+  }
   if (message.method === "thread/compact/start") {
     // Codex runs compaction as its own turn: the receipt is empty and the turn identity arrives by notification.
     answer(message.id, {}); turn += 1;

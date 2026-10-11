@@ -350,3 +350,21 @@ test("the public conversation exports as Markdown or JSON without private native
   assert.equal((await call(f, `/api/v1/sessions/${id}/export?format=pdf`)).status, 400);
   assert.equal((await fetch(f.origin + `/api/v1/sessions/${id}/export`)).status, 401);
 });
+
+test("branching over HTTP returns the new conversation with its quoted history and keeps the command idempotent", async t => {
+  const f = await fixture(t); await auth(f); const id = await create(f);
+  assert.equal((await call(f, `/api/v1/sessions/${id}/fork`, "POST", { commandId: "fork-too-early" })).status, 409, "a branch needs a finished reply");
+  assert.equal((await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "first", commandId: "fork-first" })).status, 202);
+  await waitFor(f, id, value => value.runs[0]?.status === "completed");
+  const created = await call(f, `/api/v1/sessions/${id}/fork`, "POST", { commandId: "fork-one" }); assert.equal(created.status, 201, created.text);
+  assertView(created.data); const branch = created.data;
+  assert.notEqual(branch.id, id); assert.deepEqual(branch.origin?.history.map(row => row.text), ["first", "a:first"]); assert.equal(branch.messages.length, 0);
+  assert.equal(row((await call(f, `/api/v1/sessions/${id}/fork`, "POST", { commandId: "fork-one" })).data).id, branch.id, "the same command returns the same branch");
+  assert.equal((await call(f, `/api/v1/sessions/${id}/fork`, "POST", { commandId: "fork-bad", throughRunId: 7 })).status, 400);
+  const listed = row((await call(f, "/api/v1/state")).data).sessions as { id: string; title: string }[];
+  assert.equal(listed.find(item => item.id === branch.id)?.title, "分支 · first");
+  assert.equal((await call(f, `/api/v1/sessions/${branch.id}/messages`, "POST", { text: "branch input", commandId: "fork-second" })).status, 202);
+  await waitFor(f, branch.id, value => value.runs[0]?.status === "completed");
+  const prompt = (await trace(f)).filter(item => item.kind === "prompt").at(-1)!;
+  assert.deepEqual((prompt.context as { branchedHistory: { text: string }[] }).branchedHistory.map(row => row.text), ["first", "a:first"], "the branch's first input carries the quoted history");
+});

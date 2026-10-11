@@ -372,11 +372,14 @@
         "fork": {
           "native": "yes",
           "source": "thread/fork {lastTurnId}",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-branch-codex-acp.json",
+            "docs/verification/native-branch-2026-10-11.md"
+          ],
+          "note": "从最新回复分支时 thread/fork 建立原生副本；更早位置以公共历史分支"
         },
         "compaction": {
           "native": "yes",
@@ -637,11 +640,11 @@
         "fork": {
           "native": "yes",
           "source": "session/fork 复制转录后需 resume",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
           "evidence": [],
-          "note": ""
+          "note": "按声明的 session/fork 建立原生副本；Claude 账号周额度用完，真实生成无法验收"
         },
         "compaction": {
           "native": "yes",
@@ -914,11 +917,14 @@
         "fork": {
           "native": "yes",
           "source": "session/fork",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-branch-codex-acp.json",
+            "docs/verification/native-branch-2026-10-11.md"
+          ],
+          "note": "session/fork 建立原生副本，复制历史的回放不归属；更早位置以公共历史分支"
         },
         "compaction": {
           "native": "yes",
@@ -1974,11 +1980,14 @@
         "fork": {
           "native": "yes",
           "source": "fork {entryId}、clone、get_fork_messages",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-branch-codex-pi.json",
+            "docs/verification/native-branch-2026-10-11.md"
+          ],
+          "note": "恢复源会话文件后 clone 为新会话文件；更早位置以公共历史分支"
         },
         "compaction": {
           "native": "yes",

@@ -116,15 +116,33 @@ export interface CommandRecord {
   readonly resultId: string;
 }
 /** Private original-Harness state. Waiting/archived references are never silently resumed or replaced. */
+/**
+ * Private native session reference. `fork-pending` holds the source checkpoint of a branch not yet sent to the Harness;
+ * `forking` means the native fork was dispatched and its result is not yet known (it blocks native use like `unconfirmed`).
+ */
 export interface NativeSessionBinding {
   readonly harnessId: string;
   readonly controlId: string;
   readonly checkpoint: string;
   readonly throughRunId: RunId | null;
-  readonly status: "ready" | "unconfirmed" | "archived";
+  readonly status: "ready" | "unconfirmed" | "archived" | "fork-pending" | "forking";
+}
+/** Public history a branched Session starts from: quoted, immutable, and never re-executed. */
+export interface ForkedMessage {
+  readonly role: "user" | "assistant";
+  readonly text: string;
+  readonly status: RunStatus;
+  readonly harnessId?: string;
+  readonly attachments?: readonly ContentRef[];
+}
+export interface SessionOrigin {
+  readonly kind: "fork";
+  readonly sessionId: SessionId;
+  readonly throughRunId: RunId;
+  readonly history: readonly ForkedMessage[];
 }
 export interface SessionSnapshot {
-  readonly schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  readonly schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
   readonly id: SessionId;
   readonly version: number;
   readonly lastSeq: number;
@@ -139,6 +157,8 @@ export interface SessionSnapshot {
   readonly switches: readonly PublicSwitch[];
   readonly commands: readonly CommandRecord[];
   readonly nativeBindings?: readonly NativeSessionBinding[];
+  /** Present on a branched Session (v8): the public history it was branched from. */
+  readonly origin?: SessionOrigin;
 }
 export interface EventDraft { readonly type: string; readonly data: Readonly<Record<string, unknown>> }
 export interface SessionEvent extends EventDraft {

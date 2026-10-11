@@ -27,7 +27,7 @@
 | 扩展 | 插件/扩展 | ◑ | ◑ | ◑ | ○ | ◑ | ？ | ◑ |
 | 会话 | 原生会话恢复 | ✅ | ✕ | ✅ | ✅ | ✕ | ✕ | ✅ |
 | 会话 | 原生会话列表/接续 | ○ | ○ | ○ | ○ | — | ○ | — |
-| 会话 | 原生分支 | ○ | ○ | ○ | — | — | — | ○ |
+| 会话 | 原生分支 | ✅ | ✕ | ✅ | — | — | — | ✅ |
 | 会话 | 上下文压缩 | ✅ | ✕ | ○ | ✅ | — | ？ | ✅ |
 | 会话 | 回滚/回退 | ○ | — | ？ | — | ○ | — | ○ |
 | 并发与后台 | 子 Agent | ◑ | ○ | ○ | ○ | ？ | ○ | — |
@@ -36,13 +36,13 @@
 
 | Harness | ✅ | ◐ | ◑ | ○ | ✕ | — | ？ |
 |---|---|---|---|---|---|---|---|
-| Codex | 10 | 3 | 5 | 6 | 2 | 1 | 0 |
-| Claude Code | 0 | 0 | 3 | 7 | 15 | 2 | 0 |
-| OpenCode | 7 | 6 | 3 | 4 | 0 | 2 | 5 |
+| Codex | 11 | 3 | 5 | 5 | 2 | 1 | 0 |
+| Claude Code | 0 | 0 | 3 | 6 | 16 | 2 | 0 |
+| OpenCode | 8 | 6 | 3 | 3 | 0 | 2 | 5 |
 | OpenClaw | 5 | 5 | 1 | 9 | 0 | 7 | 0 |
 | Gemini CLI | 0 | 0 | 2 | 1 | 12 | 6 | 6 |
 | Cursor | 0 | 2 | 4 | 4 | 9 | 5 | 3 |
-| Pi | 9 | 5 | 2 | 4 | 0 | 7 | 0 |
+| Pi | 10 | 5 | 2 | 3 | 0 | 7 | 0 |
 
 ## Codex
 
@@ -71,7 +71,7 @@
 | 插件/扩展 | 具备 | plugin/list\|install、app/list | 部分 | 未接出 | 未接出 | — | 原程序按配置加载；Hub 无管理界面 |
 | 原生会话恢复 | 具备 | thread/resume(excludeTurns)；跨 Hub 进程重启 | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；docs/verification/complete-native-capabilities-2026-10-11.md | — |
 | 原生会话列表/接续 | 具备 | thread/list、thread/read、thread/turns/list | 未接出 | 未接出 | 未接出 | — | — |
-| 原生分支 | 具备 | thread/fork {lastTurnId} | 未接出 | 未接出 | 未接出 | — | — |
+| 原生分支 | 具备 | thread/fork {lastTurnId} | 已接出 | 通过 | 通过 | .tmp/cc-native-branch-codex-acp.json；docs/verification/native-branch-2026-10-11.md | 从最新回复分支时 thread/fork 建立原生副本；更早位置以公共历史分支 |
 | 上下文压缩 | 具备 | thread/compact/start → contextCompaction item | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-pi-codex.json；docs/verification/native-session-actions-2026-10-11.md | /compact 调用 thread/compact/start 并以活动展示；压缩后原生会话仍记得先前事实 |
 | 回滚/回退 | 具备 | thread/revert {beforeTurnId}（只回退历史，不回退文件） | 未接出 | 未接出 | 未接出 | — | — |
 | 子 Agent | 具备 | collabAgentToolCall、subAgentActivity；子线程自动附着连接 | 部分 | 通过 | 未接出 | — | 子线程输出不中断回合、审批交给用户；子 Agent 活动与协作调用以活动/工具展示；子线程会话未接出 |
@@ -105,7 +105,7 @@
 | 插件/扩展 | 具备 | 已启用插件、hooks 按 settingSources 加载 | 部分 | 未接出 | 未接出 | — | 原程序加载；Hub 无管理界面 |
 | 原生会话恢复 | 具备 | session/resume（不回放） | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收 |
 | 原生会话列表/接续 | 具备 | session/list（含 CLI/TUI 创建的会话） | 未接出 | 未接出 | 未接出 | — | — |
-| 原生分支 | 具备 | session/fork 复制转录后需 resume | 未接出 | 未接出 | 未接出 | — | — |
+| 原生分支 | 具备 | session/fork 复制转录后需 resume | 已接出 | 通过 | 受阻 | — | 按声明的 session/fork 建立原生副本；Claude 账号周额度用完，真实生成无法验收 |
 | 上下文压缩 | 具备 | /compact 触发原生压缩；compaction_update 需 session.compaction 能力 | 部分 | 通过 | 受阻 | — | 可经原生命令执行；ACP compaction_update 以活动展示；Claude 账号周额度用完，真实生成无法验收 |
 | 回滚/回退 | 不提供 | 非 JetBrains AIR 客户端无指定消息回退 | 不适用 | 不适用 | 不适用 | — | — |
 | 子 Agent | 具备 | 子会话 subagent_spawned/state_update 需 subagents 能力；否则工具带 parentToolUseId | 未接出 | 未接出 | 未接出 | — | — |
@@ -139,7 +139,7 @@
 | 插件/扩展 | 具备 | 插件按原配置加载 | 部分 | 未接出 | 未接出 | — | 原程序加载；Hub 无管理界面 |
 | 原生会话恢复 | 具备 | session/resume（不回放）；跨 Hub 进程重启 | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；.tmp/cc-opencode-native-resume.json | — |
 | 原生会话列表/接续 | 具备 | session/list | 未接出 | 未接出 | 未接出 | — | — |
-| 原生分支 | 具备 | session/fork | 未接出 | 未接出 | 未接出 | — | — |
+| 原生分支 | 具备 | session/fork | 已接出 | 通过 | 通过 | .tmp/cc-native-branch-codex-acp.json；docs/verification/native-branch-2026-10-11.md | session/fork 建立原生副本，复制历史的回放不归属；更早位置以公共历史分支 |
 | 上下文压缩 | 具备 | /compact 原生命令 | 未接出 | 未接出 | 未接出 | — | OpenCode 的 ACP 命令目录没有压缩命令（真实目录 104 项），压缩只能在原 TUI 中执行 |
 | 回滚/回退 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
 | 子 Agent | 具备 | 子会话（task 子 Agent）权限请求 | 未接出 | 未接出 | 未接出 | — | 子会话权限请求当前无人应答 |
@@ -275,7 +275,7 @@
 | 插件/扩展 | 具备 | extensions/packages 按原配置加载（项目资源需信任） | 部分 | 未接出 | 未接出 | — | 原程序加载 |
 | 原生会话恢复 | 具备 | --session 原会话文件 | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1-pi.json；.tmp/native-complete-real-combined.json；docs/verification/complete-native-capabilities-2026-10-11.md | 首个助手消息前恢复仍会失败（原程序延迟创建文件） |
 | 原生会话列表/接续 | 不提供 | RPC 无会话列表 | 不适用 | 不适用 | 不适用 | — | — |
-| 原生分支 | 具备 | fork {entryId}、clone、get_fork_messages | 未接出 | 未接出 | 未接出 | — | — |
+| 原生分支 | 具备 | fork {entryId}、clone、get_fork_messages | 已接出 | 通过 | 通过 | .tmp/cc-native-branch-codex-pi.json；docs/verification/native-branch-2026-10-11.md | 恢复源会话文件后 clone 为新会话文件；更早位置以公共历史分支 |
 | 上下文压缩 | 具备 | compact {customInstructions} | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-pi.json；docs/verification/native-session-actions-2026-10-11.md | /compact 调用 RPC compact（无同名扩展命令时）；会话过小时如实失败并显示原因 |
 | 回滚/回退 | 部分 | 从用户消息 fork；原地树导航仅 TUI | 未接出 | 未接出 | 未接出 | — | — |
 | 子 Agent | 不提供 | 无内置子 Agent（仅扩展工具） | 不适用 | 不适用 | 不适用 | — | — |

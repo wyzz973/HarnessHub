@@ -2,7 +2,7 @@ import { parseProviderTarget, type ProviderTarget } from "../../../contracts/pro
 import {
   SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId,
   type CommandRecord, type HarnessSelection, type PublicMessage, type PublicRun,
-  type PublicSwitch, type RunStatus, type SessionConfiguration, type SessionMutation, type SessionSnapshot, type NativeSessionBinding,
+  type PublicSwitch, type RunStatus, type SessionConfiguration, type SessionMutation, type SessionSnapshot, type NativeSessionBinding, type ForkedMessage, type SessionOrigin,
 } from "../../../contracts/session.js";
 import type { BackendResult, CleanupEvidence, NativeUsage } from "../../../contracts/control.js";
 import { MAX_RUN_OUTPUTS, parseAttachmentRefs, parseContentRef } from "../../../contracts/content.js";
@@ -24,7 +24,9 @@ export const MAX_RUN_TOOLS = 128;
 export const MAX_RUN_NOTICES = 32;
 export const MAX_RUN_ACTIVITIES = 64;
 export const MAX_PLAN_ENTRIES = 64;
-export const CURRENT_SCHEMA = 7;
+export const CURRENT_SCHEMA = 8;
+/** A branched Session's quoted history: bounded like the complete public context it feeds. */
+export const MAX_ORIGIN_MESSAGES = MAX_RUNS * 2;
 const statuses: readonly RunStatus[] = ["queued", "preparing", "running", "settling", "completed", "cancelled", "failed", "unknown"];
 const terminalStatuses: readonly RunStatus[] = ["completed", "cancelled", "failed", "unknown"];
 export function terminal(status: RunStatus): boolean { return terminalStatuses.includes(status); }
@@ -196,10 +198,24 @@ function nativeBinding(value: unknown): NativeSessionBinding {
   const item = record(value, "native binding");
   keys(item, ["harnessId", "controlId", "checkpoint", "throughRunId", "status"], "native binding");
   const harnessId = text(item.harnessId, "native Harness", 96), controlId = text(item.controlId, "native control", 96);
-  if (![harnessId, controlId].every(id => /^[a-z][a-z0-9-]*$/u.test(id)) || !["ready", "unconfirmed", "archived"].includes(String(item.status))) throw new SessionError("INVALID_DATA", "invalid native binding identity or state");
+  if (![harnessId, controlId].every(id => /^[a-z][a-z0-9-]*$/u.test(id)) || !["ready", "unconfirmed", "archived", "fork-pending", "forking"].includes(String(item.status))) throw new SessionError("INVALID_DATA", "invalid native binding identity or state");
   const checkpoint = text(item.checkpoint, "native checkpoint", 8192);
   if (/[\r\n]/u.test(checkpoint)) throw new SessionError("INVALID_DATA", "invalid native checkpoint");
   return { harnessId, controlId, checkpoint, throughRunId: item.throughRunId === null ? null : runId(item.throughRunId), status: item.status as NativeSessionBinding["status"] };
+}
+function origin(value: unknown): SessionOrigin {
+  const item = record(value, "Session origin"); keys(item, ["kind", "sessionId", "throughRunId", "history"], "Session origin");
+  if (item.kind !== "fork") throw new SessionError("INVALID_DATA", "unknown Session origin");
+  const history = array(item.history, "branched history", MAX_ORIGIN_MESSAGES, entry => {
+    const row = record(entry, "branched message"); keys(row, ["role", "text", "status", "harnessId", "attachments"], "branched message");
+    if (row.role !== "user" && row.role !== "assistant") throw new SessionError("INVALID_DATA", "unknown branched message role");
+    const attachments = row.attachments === undefined ? undefined : parseAttachmentRefs(row.attachments);
+    if (attachments !== undefined && (!attachments.length || row.role !== "user")) throw new SessionError("INVALID_DATA", "only a branched user message carries attachments");
+    return { role: row.role, text: text(row.text, "branched message", MAX_OUTPUT_BYTES, true), status: status(row.status),
+      ...(row.harnessId === undefined ? {} : { harnessId: text(row.harnessId, "branched Harness", 96) }), ...(attachments === undefined ? {} : { attachments }) } as ForkedMessage;
+  });
+  if (utf8Bytes(JSON.stringify(history)) > MAX_CONTEXT_BYTES) throw new SessionError("INVALID_DATA", "branched history exceeds the public context budget");
+  return { kind: "fork", sessionId: sessionId(item.sessionId), throughRunId: runId(item.throughRunId), history };
 }
 function unique(values: readonly string[], label: string): void {
   if (new Set(values).size !== values.length) throw new SessionError("INVALID_DATA", "duplicate " + label);
@@ -207,14 +223,19 @@ function unique(values: readonly string[], label: string): void {
 /** Single persisted schema boundary. Malformed state never becomes an empty conversation. */
 export function parseSession(value: unknown): SessionSnapshot {
   const item = record(value, "Session");
-  keys(item, ["schemaVersion", "id", "version", "lastSeq", "epoch", "status", "configuration", "selection", "activeRunId", "pendingSwitchId", "runs", "messages", "switches", "commands", "nativeBindings"], "Session");
-  if (item.schemaVersion !== 1 && item.schemaVersion !== 2 && item.schemaVersion !== 3 && item.schemaVersion !== 4 && item.schemaVersion !== 5 && item.schemaVersion !== 6 && item.schemaVersion !== 7) throw new SessionError("INVALID_DATA", "unknown Session schemaVersion");
+  keys(item, ["schemaVersion", "id", "version", "lastSeq", "epoch", "status", "configuration", "selection", "activeRunId", "pendingSwitchId", "runs", "messages", "switches", "commands", "nativeBindings", "origin"], "Session");
+  if (item.schemaVersion !== 1 && item.schemaVersion !== 2 && item.schemaVersion !== 3 && item.schemaVersion !== 4 && item.schemaVersion !== 5 && item.schemaVersion !== 6 && item.schemaVersion !== 7 && item.schemaVersion !== 8) throw new SessionError("INVALID_DATA", "unknown Session schemaVersion");
   if (item.status !== "open" && item.status !== "closed" && item.status !== "blocked") throw new SessionError("INVALID_DATA", "unknown Session status");
   const result: SessionSnapshot = { schemaVersion: item.schemaVersion, id: sessionId(item.id), version: number(item.version, "version"), lastSeq: number(item.lastSeq, "lastSeq"),
     epoch: number(item.epoch, "epoch", 1), status: item.status, configuration: parseConfiguration(item.configuration), selection: parseSelection(item.selection),
     activeRunId: item.activeRunId === null ? null : runId(item.activeRunId), pendingSwitchId: item.pendingSwitchId === null ? null : switchId(item.pendingSwitchId),
     runs: array(item.runs, "runs", MAX_RUNS, publicRun), messages: array(item.messages, "messages", MAX_RUNS * 2, publicMessage),
-    switches: array(item.switches, "switches", MAX_COMMANDS, publicSwitch), commands: array(item.commands, "commands", MAX_COMMANDS, command), ...(item.nativeBindings === undefined ? {} : { nativeBindings: array(item.nativeBindings, "native bindings", MAX_RUNS, nativeBinding) }) };
+    switches: array(item.switches, "switches", MAX_COMMANDS, publicSwitch), commands: array(item.commands, "commands", MAX_COMMANDS, command), ...(item.nativeBindings === undefined ? {} : { nativeBindings: array(item.nativeBindings, "native bindings", MAX_RUNS, nativeBinding) }),
+    ...(item.origin === undefined ? {} : { origin: origin(item.origin) }) };
+  // Branches and their pending native forks exist only from v8; a fork reference always belongs to a branched Session.
+  if (result.schemaVersion < 8 && (result.origin !== undefined || result.nativeBindings?.some(binding => binding.status === "fork-pending" || binding.status === "forking"))) throw new SessionError("INVALID_DATA", "branched Sessions require Session v8");
+  if (result.nativeBindings?.some(binding => (binding.status === "fork-pending" || binding.status === "forking") && (result.origin === undefined || binding.throughRunId !== null))) throw new SessionError("INVALID_DATA", "a native fork reference needs its branch origin");
+  if (result.origin !== undefined && result.origin.sessionId === result.id) throw new SessionError("INVALID_DATA", "a Session cannot be branched from itself");
   if (result.schemaVersion < 6 && (result.nativeBindings !== undefined || result.commands.some(command => command.kind === "native-reset"))) throw new SessionError("INVALID_DATA", "native bindings require Session v6");
   if (result.schemaVersion < 7 && result.runs.some(run => run.plan !== undefined || run.usage !== undefined || run.notices !== undefined || run.activities !== undefined || run.outputs !== undefined || run.attachments !== undefined ||
       run.tools?.some(tool => Object.keys(tool).some(key => !["id", "title", "status"].includes(key))))) throw new SessionError("INVALID_DATA", "native activity details require Session v7");
@@ -297,6 +318,7 @@ function same(left: unknown, right: unknown): boolean { return JSON.stringify(le
 /** Persisted history is append-only; an application bug cannot silently erase prior public facts. */
 export function assertSessionTransition(before: SessionSnapshot, after: SessionSnapshot): void {
   if (before.schemaVersion !== after.schemaVersion || before.id !== after.id || !same(before.configuration, after.configuration)) throw new SessionError("INVALID_TRANSITION", "Session identity/configuration reference is immutable");
+  if (!same(before.origin, after.origin)) throw new SessionError("INVALID_TRANSITION", "branch origin is immutable");
   const oldBindings = before.nativeBindings ?? [], newBindings = after.nativeBindings ?? [];
   if (newBindings.length < oldBindings.length) throw new SessionError("INVALID_TRANSITION", "native state references cannot be silently erased");
   for (let index = 0; index < newBindings.length; index++) {
@@ -305,7 +327,10 @@ export function assertSessionTransition(before: SessionSnapshot, after: SessionS
     if (old?.status === "archived" || old !== undefined && (old.harnessId !== next.harnessId || old.controlId !== next.controlId)) throw new SessionError("INVALID_TRANSITION", "native state ownership or archived state changed");
     const writer = after.runs.find(run => run.id === (before.activeRunId ?? after.activeRunId));
     const reset = old !== undefined && next.status === "archived" && next.checkpoint === old.checkpoint && next.throughRunId === old.throughRunId && after.selection.harnessId === next.harnessId && after.selection.controlId === next.controlId && after.commands.slice(before.commands.length).some(command => command.kind === "native-reset");
-    if (!reset && (!writer || writer.selection.provider !== undefined || writer.selection.harnessId !== next.harnessId || writer.selection.controlId !== next.controlId || next.throughRunId !== null && next.throughRunId !== old?.throughRunId && next.throughRunId !== writer.id)) throw new SessionError("INVALID_TRANSITION", "native state changed without its original Run owner");
+    // A branch's native fork advances without a Run: pending → dispatched → ready with the new reference, or archived unchanged.
+    const forked = old !== undefined && next.throughRunId === null && (old.status === "fork-pending" && next.status === "forking" && next.checkpoint === old.checkpoint
+      || old.status === "forking" && next.status === "ready" || (old.status === "fork-pending" || old.status === "forking") && next.status === "archived" && next.checkpoint === old.checkpoint);
+    if (!reset && !forked && (!writer || writer.selection.provider !== undefined || writer.selection.harnessId !== next.harnessId || writer.selection.controlId !== next.controlId || next.throughRunId !== null && next.throughRunId !== old?.throughRunId && next.throughRunId !== writer.id)) throw new SessionError("INVALID_TRANSITION", "native state changed without its original Run owner");
   }
   if ((before.status === "closed" && after.status !== "closed") || (before.status === "blocked" && after.status === "open" &&
       (after.epoch !== before.epoch + 1 || !after.switches.some(sw => sw.id === before.pendingSwitchId && sw.status === "effective") ||

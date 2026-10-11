@@ -47,6 +47,10 @@ export class RedactedHarnessControl implements HarnessControl {
     if (!this.inner.decidePermission) return Promise.reject(new SessionError("UNSUPPORTED_PERMISSION", "native permission decisions unavailable"));
     return this.safe(() => this.inner.decidePermission!(id, option, input));
   }
+  fork(checkpoint: string, cwd: string): Promise<string> {
+    if (!this.inner.fork) return Promise.reject(new SessionError("NATIVE_FORK_UNAVAILABLE", "this Harness interface cannot branch its native session"));
+    return this.safe(() => this.inner.fork!(checkpoint, cwd));
+  }
   /** Attachment refusals are Driver-authored and name only the attachment; they pass through redacted. */
   async checkAttachments(attachments: readonly ContentRef[]): Promise<void> {
     if (!this.inner.checkAttachments) throw new SessionError("ATTACHMENT_UNSUPPORTED", "this Harness interface does not accept attachments");

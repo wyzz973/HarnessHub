@@ -289,3 +289,19 @@ test("Codex /export copies the thread's own rollout record as an output and fail
     assert.equal(result.status, "failed"); assert.equal(result.error?.code, "NATIVE_EXPORT_UNAVAILABLE");
   } finally { await ephemeral.close(); }
 });
+
+test("Codex forks a stored thread on its own connection and reports refusals as unavailable", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-codex-fork-")), trace = join(directory, "trace");
+  const driver = control("basic", { FIXTURE_TRACE: trace });
+  try {
+    await driver.initialize();
+    assert.equal(await driver.fork("thread-source", process.cwd()), "thread-forked");
+    const fork = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line)).find(row => row.method === "thread/fork");
+    assert.deepEqual(fork.params, { threadId: "thread-source", cwd: process.cwd(), excludeTurns: true });
+  } finally { await driver.close(); await rm(directory, { recursive: true, force: true }); }
+  for (const [scenario, code] of [["fork-refused", "NATIVE_FORK_UNAVAILABLE"], ["fork-same", "IDENTITY_MISMATCH"]] as const) {
+    const other = control(scenario);
+    try { await other.initialize(); await assert.rejects(other.fork("thread-source", process.cwd()), (error: unknown) => error instanceof ControlError && error.code === code, scenario); }
+    finally { await other.close(); }
+  }
+});

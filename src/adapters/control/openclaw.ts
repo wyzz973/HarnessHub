@@ -71,6 +71,8 @@ export class OpenClawControl extends AcpControl {
     });
     return this.nativeModels;
   }
+  /** The installed bridge answers session/fork with Method not found even where it declares session capabilities. */
+  override async fork(): Promise<string> { throw new ControlError("NATIVE_FORK_UNAVAILABLE", "the OpenClaw ACP bridge cannot fork sessions"); }
   /** OpenClaw's Gateway drops image attachments above 5,000,000 bytes with only a log line; refuse them up front instead. */
   protected override get maxInlineImageBytes(): number { return 5_000_000; }
   override async checkpoint(): Promise<string | null> {

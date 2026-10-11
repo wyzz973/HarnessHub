@@ -129,6 +129,12 @@ export interface HarnessControl {
    * model cannot take one of the attachments. Called by the Runtime before dispatch; a control without it takes none.
    */
   checkAttachments?(attachments: readonly ContentRef[]): Promise<void>;
+  /**
+   * Creates a native copy of the session behind `checkpoint` and returns the copy's own recovery reference; the source
+   * session is left as it was. Rejects with NATIVE_FORK_UNAVAILABLE when the installed interface cannot branch. Used on a
+   * connection that opens no other conversation.
+   */
+  fork?(checkpoint: string, cwd: string): Promise<string>;
   /** Sends one prompt. Attachments were accepted by checkAttachments; their private copies stay readable for the Turn. */
   startText(id: NativeConversationId, text: string, onEvent: (event: ControlEvent) => void, attachments?: readonly ControlAttachment[]): Promise<ControlRun>;
   /** Enables interactive requests for a public Run. Standalone probes keep their explicit deny default. */
