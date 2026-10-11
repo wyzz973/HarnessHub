@@ -252,6 +252,8 @@ lines.on("line", line => {
     notification("turn/completed", { threadId: "thread-fixture", turn: { id: base.turnId, status: "completed" } }); return;
   }
   if (message.method === "session/prompt" || message.method === "turn/start") {
+    // An ACP agent reports a missing login with the protocol's auth_required code, whatever its own words are.
+    if (scenario === "auth-code") { emit({ id: message.id, error: { code: -32000, message: "agent setup needed" } }); return; }
     if (scenario === "quota-rejected" || scenario === "auth-rejected") { emit({ id: message.id, error: { code: -32001, message: (scenario === "quota-rejected" ? "You've hit your weekly limit" : "Authentication required") + " private-synthetic-key" } }); return; }
     if (scenario === "prompt-rejected") { emit({ id: message.id, error: { code: -32001, message: "private rejected request synthetic-key" } }); return; }
     promptId = message.id; turn += 1;
@@ -359,6 +361,10 @@ lines.on("line", line => {
     }
     if (scenario === "hermes") {
       // A dangerous command asks Hermes's approval bridge; otherwise the reply arrives after a pause, as a model turn does.
+      // A model call that failed for good: Hermes logs why on stderr and still ends the turn, with nothing answered.
+      if (JSON.stringify(message.params.prompt).includes("fail quietly")) { process.stderr.write("2026-10-11 12:00:00 [ERROR] run_agent: API call failed after 3 retries. Error code: 402 - Insufficient Balance | provider=deepseek model=deepseek-v4-pro\n"); setTimeout(() => finish(), 20); return; }
+      // A failure that a retry overcame is logged too, but the turn answers.
+      if (JSON.stringify(message.params.prompt).includes("recovered failure")) { process.stderr.write("2026-10-11 12:00:00 [WARNING] run_agent: RateLimitError on attempt 1, retrying\n"); acpOutput(message.params.sessionId); finish(); return; }
       // Hermes can send its last reply chunk after the prompt response.
       if (JSON.stringify(message.params.prompt).includes("late tail")) { acpOutput(message.params.sessionId); finish(); setTimeout(() => notification("session/update", { sessionId: message.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: " tail" } } }), 100); return; }
       // Hermes handles its own /model command locally and only answers in text.

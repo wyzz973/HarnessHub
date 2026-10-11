@@ -7,11 +7,25 @@ import type { CleanupEvidence, ControlLaunch, ControlOptions } from "../../contr
 export class ControlError extends Error {
   constructor(readonly code: string, message: string, readonly remoteFailure?: { readonly code: string; readonly message: string }) { super(message); this.name = "ControlError"; }
 }
-/** Recognize actionable failures without publishing arbitrary provider text or credentials. */
-export function classifyRemoteFailure(message: string): { readonly code: string; readonly message: string } | undefined {
+/** How much of a program's latest stderr stays readable for its driver. */
+const RECENT_STDERR_BYTES = 32 * 1024;
+/** ACP's `auth_required` error code (agent-client-protocol schema); other JSON-RPC peers use -32000 for other server errors. */
+const ACP_AUTH_REQUIRED = -32000;
+/**
+ * Recognize actionable failures without publishing arbitrary provider text or credentials. The provider's own words decide
+ * the class, in this order, because one message can mention several (an auth error that also says "limit"); `acpCode` is
+ * the JSON-RPC error code of an ACP peer, whose -32000 means authentication is required.
+ */
+export function classifyRemoteFailure(message: string, acpCode?: number): { readonly code: string; readonly message: string } | undefined {
   if (/this client is no longer supported|unsupported client version/iu.test(message)) return { code: "NATIVE_CLIENT_UNSUPPORTED", message: "模型服务已停止支持这个本机客户端。原配置已保留，可以选择其他 Harness 继续。" };
-  if (/authentication required|not (?:logged|signed) in|login required|unauthorized|API key.*(?:missing|not configured)|no API key/iu.test(message)) return { code: "NATIVE_AUTH_REQUIRED", message: "这个 Harness 的本机登录或密钥不可用，请在本机完成认证后再试。" };
-  if (/weekly limit|daily limit|quota (?:exceeded|exhausted)|usage limit|hit your .*limit/iu.test(message)) return { code: "NATIVE_QUOTA_EXCEEDED", message: "这个 Harness 的账号额度已用完。可等待额度恢复，或选择其他 Harness 继续。" };
+  if (/authentication (?:required|fails?|failed)|not (?:logged|signed) in|login required|unauthorized|\b401\b|(?:invalid|incorrect) (?:x-)?api[ _-]?key|API key.*(?:missing|not configured|invalid)|no API key/iu.test(message) || acpCode === ACP_AUTH_REQUIRED)
+    return { code: "NATIVE_AUTH_REQUIRED", message: "这个 Harness 的本机登录或密钥不可用，请在本机完成认证后再试。" };
+  if (/weekly limit|daily limit|quota (?:exceeded|exhausted)|usage limit|hit your .*limit|insufficient[ _](?:balance|quota|credits?)|payment required|\b402\b|余额不足/iu.test(message))
+    return { code: "NATIVE_QUOTA_EXCEEDED", message: "这个 Harness 的账号额度或余额不足。可等待额度恢复或充值，也可以选择其他 Harness 继续。" };
+  if (/rate[ _-]?limit|too many requests|\b429\b|overloaded|\b529\b/iu.test(message)) return { code: "NATIVE_RATE_LIMITED", message: "模型服务暂时限流或过载。请稍后再试，或换一个模型。" };
+  if (/context[ _](?:length|window)[ _](?:exceeded|is too long)|maximum context length|context_length_exceeded|prompt is too long|too many tokens/iu.test(message))
+    return { code: "NATIVE_CONTEXT_EXCEEDED", message: "对话超出了模型的上下文长度。可以先用这个 Harness 的压缩命令（如 /compact），或开始新对话。" };
+  if (/model[ _](?:not[ _](?:found|exists?)|does not exist|is not (?:available|supported))|unknown model|invalid model/iu.test(message)) return { code: "NATIVE_MODEL_UNAVAILABLE", message: "所选模型在这个 Harness 的模型服务中不可用，请换一个模型。" };
   if (/connection error|fetch failed|ECONNREFUSED|ENOTFOUND/iu.test(message)) return { code: "NATIVE_CONNECTION_FAILED", message: "这个 Harness 配置的模型服务无法连接。请检查它本机的模型配置，或选择其他模型继续。" };
   return undefined;
 }
@@ -81,6 +95,9 @@ export class JsonRpcProcess {
   private exitSignal: string | null = null;
   private diagnostic = Buffer.alloc(0);
   private diagnosticWasTruncated = false;
+  /** The latest stderr bytes, for a driver that reads what the program logged during one turn; `stderrBytes` counts all of it. */
+  private recentStderr = Buffer.alloc(0);
+  private stderrBytes = 0;
   private wireBytes = 0;
   private readonly decoder = new TextDecoder("utf-8", { fatal: true });
 
@@ -99,6 +116,13 @@ export class JsonRpcProcess {
         throw new ControlError("INVALID_INPUT", `${name} must be a positive bounded integer`);
   }
   get diagnostics(): string { return this.diagnostic.toString("utf8"); }
+  /** A position in the program's stderr, to read what it logs after this point. */
+  get stderrMark(): number { return this.stderrBytes; }
+  /** What the program logged after `mark`, as far as the bounded recent window still holds it (lossy UTF-8 at the cut). */
+  stderrSince(mark: number): string {
+    const kept = Math.min(this.recentStderr.length, Math.max(0, this.stderrBytes - mark));
+    return this.recentStderr.subarray(this.recentStderr.length - kept).toString("utf8");
+  }
   get diagnosticsTruncated(): boolean { return this.diagnosticWasTruncated; }
   get failure(): Error | null { return this.failed; }
 
@@ -154,6 +178,9 @@ export class JsonRpcProcess {
       const available = this.options.maxDiagnosticBytes - this.diagnostic.length;
       if (chunk.length > available) this.diagnosticWasTruncated = true;
       if (available > 0) this.diagnostic = Buffer.concat([this.diagnostic, chunk.subarray(0, available)]);
+      this.stderrBytes += chunk.length;
+      const recent = Buffer.concat([this.recentStderr, chunk]);
+      this.recentStderr = recent.length > RECENT_STDERR_BYTES ? recent.subarray(recent.length - RECENT_STDERR_BYTES) : recent;
     });
     child.stdout.on("end", () => {
       if (!this.closing && this.input.length) this.abort(new ControlError("INCOMPLETE_FRAME", "stdout ended inside a frame"));
@@ -245,7 +272,7 @@ export class JsonRpcProcess {
       if (!Number.isSafeInteger(remote.code) || typeof remote.message !== "string")
         throw new ControlError("INVALID_PROTOCOL", "RPC error payload is invalid");
       this.pending.delete(responseKey); clearTimeout(pending.timer);
-      pending.reject(new ControlError("REMOTE_ERROR", `Harness rejected the protocol request (${remote.code})`, classifyRemoteFailure(remote.message)));
+      pending.reject(new ControlError("REMOTE_ERROR", `Harness rejected the protocol request (${remote.code})`, classifyRemoteFailure(remote.message, this.launch.protocol === "acp-v1" ? remote.code as number : undefined)));
     } else {
       this.pending.delete(responseKey); clearTimeout(pending.timer); pending.resolve(message.result);
     }

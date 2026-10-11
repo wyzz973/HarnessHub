@@ -12,7 +12,7 @@ import { CursorControl } from "../../src/adapters/control/cursor.js";
 import { OpenCodeControl, parseOpenCodeModels } from "../../src/adapters/control/opencode.js";
 import { ClaudeControl } from "../../src/adapters/control/claude.js";
 import { HermesControl } from "../../src/adapters/control/hermes.js";
-import { ControlError } from "../../src/infrastructure/control/json-rpc-process.js";
+import { classifyRemoteFailure, ControlError } from "../../src/infrastructure/control/json-rpc-process.js";
 import { bindNativeDependencies } from "../../src/adapters/control/native-dependencies.js";
 import { contentId } from "../../src/contracts/content.js";
 
@@ -48,6 +48,19 @@ test("ACP handshake, sequential prompts and exact client capability declaration"
     assert.ok(messages.some(message => JSON.stringify(message).includes('"clientCapabilities":{"session":{"notices":{},"compaction":{}},"elicitation":{"form":{}}}')));
     assert.ok(messages.some(message => JSON.stringify(message).includes('"mcpServers":[]')));
   } finally { await driver.close(); await rm(directory, { recursive: true, force: true }); }
+});
+test("remote failures are classified by the provider's own words, and only an ACP peer's -32000 means authentication", () => {
+  const samples: readonly (readonly [string, string | undefined])[] = [
+    ["Authentication Fails (no such user)", "NATIVE_AUTH_REQUIRED"], ["Error code: 401 - invalid api key", "NATIVE_AUTH_REQUIRED"],
+    ["Insufficient Balance", "NATIVE_QUOTA_EXCEEDED"], ["You've hit your weekly limit", "NATIVE_QUOTA_EXCEEDED"],
+    ["Rate Limit Reached", "NATIVE_RATE_LIMITED"], ["429 Too Many Requests", "NATIVE_RATE_LIMITED"], ["Overloaded", "NATIVE_RATE_LIMITED"],
+    ["This model's maximum context length is 65536 tokens", "NATIVE_CONTEXT_EXCEEDED"], ["Model Not Exist", "NATIVE_MODEL_UNAVAILABLE"],
+    ["fetch failed", "NATIVE_CONNECTION_FAILED"], ["something else went wrong", undefined],
+  ];
+  for (const [message, code] of samples) assert.equal(classifyRemoteFailure(message)?.code, code, message);
+  assert.equal(classifyRemoteFailure("agent setup needed", -32000)?.code, "NATIVE_AUTH_REQUIRED");
+  assert.equal(classifyRemoteFailure("agent setup needed"), undefined);
+  assert.equal(classifyRemoteFailure("agent setup needed", -32001), undefined);
 });
 test("ACP rejects incompatible protocol negotiation and closes its process", async () => {
   const driver = control("version");
@@ -157,7 +170,7 @@ test("an explicit ACP prompt rejection is a failed backend result with a cleanly
     assert.equal((await driver.close()).protocolFailure, null);
   } finally { await driver.close(); }
 });
-for (const [scenario, code] of [["quota-rejected", "NATIVE_QUOTA_EXCEEDED"], ["auth-rejected", "NATIVE_AUTH_REQUIRED"]] as const)
+for (const [scenario, code] of [["quota-rejected", "NATIVE_QUOTA_EXCEEDED"], ["auth-rejected", "NATIVE_AUTH_REQUIRED"], ["auth-code", "NATIVE_AUTH_REQUIRED"]] as const)
   test(`ACP ${scenario} exposes an actionable category without remote secrets`, async () => {
     const driver = control(scenario);
     try {
@@ -372,6 +385,17 @@ test("Hermes keeps reply chunks that follow its prompt response, and never re-re
   finally { await switching.close(); }
   assert.equal((await methods()).filter(method => method === "session/set_model").length, 1);
 });
+test("Hermes's silent model failures are reported from its own log class, and an answered turn is never recast", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
+  const driver = new HermesControl(hermes(trace), { ...options, runTimeoutMs: 5000, maxDiagnosticBytes: 64 * 1024 });
+  try {
+    await driver.initialize(); const id = await driver.open(process.cwd());
+    const failed = await (await driver.startText(id, "fail quietly", () => {})).result;
+    assert.deepEqual(failed, { status: "failed", reason: "native_error", error: { code: "NATIVE_QUOTA_EXCEEDED", message: "这个 Harness 的账号额度或余额不足。可等待额度恢复或充值，也可以选择其他 Harness 继续。" } });
+    assert.ok(!JSON.stringify(failed).includes("deepseek-v4-pro"), "the log text itself is never published");
+    assert.equal((await (await driver.startText(id, "recovered failure", () => {})).result).status, "completed");
+  } finally { await driver.close(); }
+});
 test("Hermes's 60-second approval deadline applies only to the reviewed 0.12 bridge", async t => {
   const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
   // The fixture reports agent version 1.0: no deadline is announced and nothing closes the request early.
@@ -525,7 +549,7 @@ test("OpenClaw reconciles each turn from its own transcript: tools, reasoning, u
     { role: "toolResult", toolCallId: "call-1", toolName: "exec", content: [{ type: "text", text: "HH" }], isError: false, __openclaw: { seq: 8 } },
     { role: "assistant", content: [{ type: "text", text: "done" }], usage: { input: 150, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 155, cost: { total: 0.001 } }, stopReason: stop, ...extra, __openclaw: { seq: 9 } }];
   for (const [stop, extra, expected] of [["stop", {}, { status: "completed", reason: "end_turn" }],
-    ["error", { errorMessage: "You've hit your weekly limit" }, { status: "failed", reason: "native_error", error: { code: "NATIVE_QUOTA_EXCEEDED", message: "这个 Harness 的账号额度已用完。可等待额度恢复，或选择其他 Harness 继续。" } }]] as const) {
+    ["error", { errorMessage: "You've hit your weekly limit" }, { status: "failed", reason: "native_error", error: { code: "NATIVE_QUOTA_EXCEEDED", message: "这个 Harness 的账号额度或余额不足。可等待额度恢复或充值，也可以选择其他 Harness 继续。" } }]] as const) {
     let reads = 0;
     const driver = new OpenClawControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "basic"], env }, { ...options, env },
       async method => method === "sessions.get" ? { messages: reads++ === 0 ? [earlier] : turn(stop, extra) } : { models: [] });

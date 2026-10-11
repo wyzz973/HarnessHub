@@ -363,6 +363,9 @@ export class AcpControl implements HarnessControl {
   protected get approvalDeadlineMs(): number | null { return null; }
   /** Whether the agent hands ACP file blocks to its model; when it drops them, files travel as text pointers it reads with its own tools. */
   protected get fileBlocks(): boolean { return true; }
+  /** A position in the agent's stderr and what it logged since, for an agent that reports some failures only there. */
+  protected get stderrMark(): number { return this.rpc.stderrMark; }
+  protected stderrSince(mark: number): string { return this.rpc.stderrSince(mark); }
   /** The version the agent reported in initialize, for behaviour that differs between its versions; null before it or when absent. */
   protected get agentVersion(): string | null { return this.version; }
   /**
