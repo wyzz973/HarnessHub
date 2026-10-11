@@ -12,7 +12,7 @@
 
 ADR-015后，选择器变化即提出意图，不再另点Apply。快速选择时只提交最新尚未受理选择，已受理请求使用原幂等键确认后收敛；期间新消息禁止发给中间目标。界面保留最新用户选择，不被较早切换快照覆盖；失败不自动重试，用户可明确重试或继续原有效选择。
 
-所有native入口沿用本机已安装Harness的配置目录、模型与登录，不创建空配置或写全局模型。选择nativeModel与managed provider互斥；native模型通过原生RPC传给新会话。`GET /api/v1/harnesses/:id/models?controlId=...&workspace=...&nativeModel=...&refresh=1`读取相同入口/配置的模型、默认和安全认证状态；Codex config/read/account/read/model/list，ACP声明的model配置项或明确的旧models接口。没有原生选择能力就明确说明由Harness管理，不伪造静态目录。后台最多8个读探测、同请求共享、20s期限，关闭取消并等待进程；认证缺失（含ACP的NATIVE_AUTH_REQUIRED）返回missing，异常不缓存空目录。成功非空结果按配置指纹缓存，最长24小时、最多32项，跨重启保存在数据根`native-catalogs.json`（ADR-033），配置/入口身份变化和refresh=1失效；选中模型专属档位通过nativeModel读取。Pi目录/档位来自原CLI/SDK，OpenClaw通过原CLI读取models.list并只patch本轮Hub会话的模型。
+所有native入口沿用本机已安装Harness的配置目录、模型与登录，不创建空配置或写全局模型。选择nativeModel与managed provider互斥；native模型通过原生RPC传给新会话。`GET /api/v1/harnesses/:id/models?controlId=...&workspace=...&nativeModel=...&refresh=1`读取相同入口/配置的模型、默认和安全认证状态；Codex config/read/account/read/model/list，ACP声明的model配置项或明确的旧models接口。没有原生选择能力就明确说明由Harness管理，不伪造静态目录。后台最多8个读探测、同请求共享、20s期限，关闭取消并等待进程；认证缺失（含ACP的NATIVE_AUTH_REQUIRED）返回missing，异常不缓存空目录。成功非空结果按配置指纹与读取它的Hub构建缓存，最长24小时、最多32项，跨重启保存在数据根`native-catalogs.json`（ADR-033，格式v2），配置/入口身份变化、Hub换构建和refresh=1失效；选中模型专属档位通过nativeModel读取。Pi目录/档位来自原CLI/SDK，OpenClaw通过原CLI读取models.list并只patch本轮Hub会话的模型。
 
 Provider 保存名称、协议、Base URL、模型列表、默认模型、启用状态和 hasCredential。新增/编辑都使用命令幂等键；更新要求 expectedRevision。空白密钥字段在前端转换为省略，保留旧密钥；显式空字符串无效。当前不做删除/复用身份，停用后保留全部历史 revision；已准入 Run 保留旧配置，新的准备过程拒绝停用目标。编辑不自动改变当前 Session 的固定 revision，用户需显式应用新版本。
 

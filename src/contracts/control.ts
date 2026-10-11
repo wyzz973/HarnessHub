@@ -22,6 +22,11 @@ export interface ControlOptions {
   readonly closeGraceMs: number;
   /** Cumulative inbound+outbound bytes for one connection; defaults to the native-turn budget. */
   readonly maxWireBytes?: number;
+  /**
+   * The native options the connection's conversation is chosen to open with, known before initialize (a Run's selection).
+   * A driver whose protocol fixes capabilities at initialize reads them; open() still validates what it receives.
+   */
+  readonly selectedOptions?: NativeOptions;
 }
 export interface ProtocolObservation {
   readonly protocol: ControlProtocol;

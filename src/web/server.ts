@@ -18,7 +18,7 @@ import { carriedNativeConfiguration } from "../contexts/session/domain/state.js"
 import { observedPackageVersion } from "../infrastructure/management/system-version.js";
 import { SessionStreamError, SessionStreamHub } from "./session-stream.js";
 import { HarnessModels } from "./harness-models.js";
-import { NativeCatalogCache, type NativeReadiness } from "./native-catalog-cache.js";
+import { buildRevision, NativeCatalogCache, type NativeReadiness } from "./native-catalog-cache.js";
 import { conversationMarkdown } from "./conversation-export.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
@@ -258,9 +258,10 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     process.stderr.write("HarnessGateway: SESSION_STREAM_READ_FAILED (" + app.providers.redact(fault.code).slice(0, 128) + ")\n");
   });
   app = (options.application ?? composeApplication)(options.root, event => streams.publish(event));
-  // Derived observations only; a file this version cannot adopt is reported and left as it is.
-  const nativeModels = new HarnessModels(app.factory, new NativeCatalogCache(realpathSync(options.root), () => app.store.assertOwner(),
-    problem => process.stderr.write("HarnessGateway: NATIVE_CATALOG_CACHE_UNAVAILABLE (" + problem + ")\n")));
+  // Derived observations only; a file this version cannot adopt is reported and left as it is. Catalogs are reused only by
+  // the build that read them (every compiled Gateway file), since its drivers decide what a catalog contains.
+  const nativeModels = new HarnessModels(app.factory, new NativeCatalogCache(realpathSync(options.root), { assertOwner: () => app.store.assertOwner(),
+    report: problem => process.stderr.write("HarnessGateway: NATIVE_CATALOG_CACHE_UNAVAILABLE (" + problem + ")\n"), revision: buildRevision(fileURLToPath(new URL("..", import.meta.url))) }));
   /** A request's workspace with this Gateway's catalog, configuration home and search settings. */
   const workspaceConfiguration = (workspace: string) => prepareConfiguration({ workspace,
     ...(options.configuration.configHome === null ? {} : { configHome: options.configuration.configHome }),

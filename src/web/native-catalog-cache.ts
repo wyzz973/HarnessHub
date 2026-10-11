@@ -1,12 +1,13 @@
-import { randomBytes } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync, rmSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readSync, rmSync } from "node:fs";
 import { open, rename, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import type { NativeInputs, NativeModelCatalog, NativeOption } from "../contracts/control.js";
 
 const FILE = "native-catalogs.json";
 const APPLICATION = "harness-native-catalogs";
-const VERSION = 1;
+/** v2 records the Hub build its catalogs were read by; v1 files keep their readiness and probe sessions, not their catalogs. */
+const VERSION = 2;
 const TEMPORARY = /^\.native-catalogs\.json\.[0-9]+\.[0-9a-f]{12}\.tmp$/u;
 /** How long one catalog read is reused while its installation and configuration fingerprint holds. */
 export const NATIVE_CATALOG_TTL_MS = 24 * 60 * 60 * 1000;
@@ -27,6 +28,23 @@ export interface NativeReadiness {
   readonly signedIn?: boolean | null;
   /** The stable failure class of a failed read; never the native side's own words. */
   readonly failureCode?: string;
+}
+/**
+ * The identity of the Hub build that reads catalogs: a digest of every compiled file under `directory`. Drivers decide what
+ * a catalog contains, so a catalog read by another build is read again instead of being reused.
+ */
+export function buildRevision(directory: string): string {
+  const hash = createHash("sha256"), files: string[] = [];
+  const walk = (path: string): void => {
+    for (const entry of readdirSync(path, { withFileTypes: true }).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)) {
+      const child = join(path, entry.name);
+      if (entry.isDirectory()) walk(child); else if (entry.isFile()) files.push(child);
+      if (files.length > 4096) throw new Error("the Hub build has more files than its revision covers");
+    }
+  };
+  walk(directory);
+  for (const file of files) hash.update(relative(directory, file)).update("\0").update(readFileSync(file)).update("\0");
+  return hash.digest("hex");
 }
 interface CatalogEntry { readonly key: string; readonly fingerprint: string; readonly harnessId: string; readonly controlId: string; readonly observedAt: number; readonly catalog: NativeModelCatalog }
 interface ProbeSession { readonly harnessId: string; readonly controlId: string; readonly id: string; readonly createdAt: number }
@@ -49,7 +67,15 @@ export class NativeCatalogCache {
   private chain: Promise<void> = Promise.resolve();
   private readonly path: string;
 
-  constructor(private readonly root: string, private readonly assertOwner: () => void, private readonly report: (problem: string) => void, private readonly now: () => number = Date.now) {
+  private readonly assertOwner: () => void;
+  private readonly report: (problem: string) => void;
+  private readonly revision: string;
+  private readonly now: () => number;
+
+  /** `revision` is the reading Hub build (buildRevision); catalogs another build read are not reused. */
+  constructor(private readonly root: string, options: { readonly assertOwner: () => void; readonly report: (problem: string) => void; readonly revision: string; readonly now?: () => number }) {
+    if (!/^[0-9a-f]{64}$/u.test(options.revision)) throw new Error("catalog revision must be a SHA-256 digest");
+    this.assertOwner = options.assertOwner; this.report = options.report; this.revision = options.revision; this.now = options.now ?? Date.now;
     this.path = join(root, FILE);
     try { this.load(); }
     catch (error) { this.reject("the data root could not be read (" + (error !== null && typeof error === "object" && "code" in error ? String(error.code) : "unknown") + ")"); }
@@ -115,7 +141,7 @@ export class NativeCatalogCache {
     catch (error) { await rm(temporary, { force: true }); throw error; }
   }
   private document(catalogs: readonly CatalogEntry[]): string {
-    return JSON.stringify({ application: APPLICATION, version: VERSION, catalogs, readiness: [...this.readiness.values()], probeSessions: this.probes }) + "\n";
+    return JSON.stringify({ application: APPLICATION, version: VERSION, revision: this.revision, catalogs, readiness: [...this.readiness.values()], probeSessions: this.probes }) + "\n";
   }
   private load(): void {
     // A write interrupted before its rename leaves only its own temporary file behind.
@@ -140,14 +166,17 @@ export class NativeCatalogCache {
       text = buffer.subarray(0, length).toString("utf8");
     } finally { closeSync(descriptor); }
     try {
-      const document = record(JSON.parse(text), ["application", "version", "catalogs", "readiness", "probeSessions"]);
+      const document = record(JSON.parse(text), ["application", "version", "revision", "catalogs", "readiness", "probeSessions"]);
       if (document.application !== APPLICATION) throw new Error("application");
-      if (document.version !== VERSION) return this.reject("its version " + JSON.stringify(document.version).slice(0, 16) + " is not " + VERSION);
+      if (document.version !== 1 && document.version !== VERSION) return this.reject("its version " + JSON.stringify(document.version).slice(0, 16) + " is not 1 or " + VERSION);
+      if (document.version === 1 ? document.revision !== undefined : typeof document.revision !== "string") throw new Error("revision");
+      // Catalogs read by another build (or by v1, which did not record it) are validated but not reused.
+      const current = document.version === VERSION && digest(document.revision) === this.revision;
       const now = this.now();
       this.catalogs = bounded(document.catalogs, MAX_CATALOGS).map(value => {
         const row = record(value, ["key", "fingerprint", "harnessId", "controlId", "observedAt", "catalog"]);
         return { key: digest(row.key), fingerprint: digest(row.fingerprint), harnessId: identity(row.harnessId), controlId: identity(row.controlId), observedAt: time(row.observedAt), catalog: parseCatalog(row.catalog) };
-      }).filter(entry => now - entry.observedAt >= 0 && now - entry.observedAt < NATIVE_CATALOG_TTL_MS);
+      }).filter(entry => current && now - entry.observedAt >= 0 && now - entry.observedAt < NATIVE_CATALOG_TTL_MS);
       if (new Set(this.catalogs.map(entry => entry.key)).size !== this.catalogs.length) throw new Error("duplicate catalogs");
       for (const value of bounded(document.readiness, MAX_READINESS)) {
         const row = record(value, ["harnessId", "controlId", "state", "checkedAt", "signedIn", "failureCode"]);

@@ -702,7 +702,11 @@ test("a setting a native command changed is kept, shown in the composer and can 
   const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Native Settings", exact: true }).click();
   await page.getByRole("button", { name: "高级配置", exact: true }).click();
-  await page.getByRole("button", { name: "Native fast", exact: true }).click(); await page.getByRole("option", { name: "Off", exact: true }).click();
+  await page.getByRole("button", { name: "Native fast", exact: true }).click();
+  // An option list opened from the settings panel stacks above it, wherever it happens to be placed.
+  const stacking = await page.evaluate(() => [".picker-popover", ".composer-settings-panel"].map(selector => Number(getComputedStyle(document.querySelector(selector)!.closest("[data-radix-popper-content-wrapper]")!).zIndex)));
+  assert.ok(stacking[0]! > stacking[1]!, "option list z-index " + stacking.join(" over "));
+  await page.getByRole("option", { name: "Off", exact: true }).click();
   await page.keyboard.press("Escape");
   const reply = async (text: string, count: number) => {
     await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeDisabled(); await composer.fill(text);

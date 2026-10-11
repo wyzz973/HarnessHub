@@ -79,6 +79,23 @@ function inputText(value: unknown): string {
   if (item.type === "mention" && typeof item.name === "string") return "@" + item.name;
   return "";
 }
+/**
+ * Codex's collaboration mode (plan mode) as a native option. The reviewed app-server (0.162.1) defines the two modes; the
+ * protocol is experimental and enabled per connection at initialize, so only a connection opened with a chosen mode
+ * declares it, and an older or unidentified Codex is not offered the option.
+ */
+const COLLABORATION_MODE = "collaboration_mode";
+const COLLABORATION_MODES: NativeOption["values"] = [{ value: "default", name: "默认" }, { value: "plan", name: "计划" }];
+const COLLABORATION_SINCE: readonly [number, number, number] = [0, 162, 1];
+/** The app-server version from its user agent (`<originator>/<x.y.z> (…)`); null when it is not stated that way. */
+function agentRelease(userAgent: string): readonly [number, number, number] | null {
+  const match = /^[^/\s]+\/(\d{1,6})\.(\d{1,6})\.(\d{1,6})(?=$|[\s(;+-])/u.exec(userAgent);
+  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
+}
+function atLeast(version: readonly [number, number, number], minimum: readonly [number, number, number]): boolean {
+  for (let index = 0; index < 3; index++) if (version[index] !== minimum[index]) return version[index]! > minimum[index]!;
+  return true;
+}
 const THREAD_COMMANDS = [{ name: "compact", description: "压缩当前会话上下文（原生 thread/compact/start）" }, { name: "export", description: "导出原生会话记录（Codex rollout JSONL）" }] as const;
 const SANDBOX_TYPES: Readonly<Record<string, string>> = { readOnly: "read-only", workspaceWrite: "workspace-write", dangerFullAccess: "danger-full-access" };
 function permissionOptions(configured: Record<string, unknown>): NativeOption[] {
@@ -116,7 +133,7 @@ function itemTool(item: Record<string, unknown>): { title: string; detail: Nativ
 function status(value: unknown, started: boolean): string { return value === "inProgress" ? "in_progress" : typeof value === "string" ? value : started ? "in_progress" : "completed"; }
 const passiveNotifications = new Set(["thread/started", "thread/status/changed", "account/updated", "account/rateLimits/updated",
   "sessionConfigured", "turn/diff/updated", "item/reasoning/summaryTextDelta", "item/reasoning/summaryPartAdded", "item/reasoning/textDelta",
-  "item/fileChange/outputDelta", "serverRequest/resolved", "thread/name/updated", "skills/changed", "hook/started", "hook/completed", "mcpServer/startupStatus/updated"]);
+  "item/fileChange/outputDelta", "item/plan/delta", "thread/settings/updated", "serverRequest/resolved", "thread/name/updated", "skills/changed", "hook/started", "hook/completed", "mcpServer/startupStatus/updated"]);
 
 /** Typed native failure (codexErrorInfo) first; message text is only a fallback for older servers. */
 function turnFailure(error: Record<string, unknown>): { readonly code: string; readonly message: string } {
@@ -140,6 +157,11 @@ export class CodexControl implements HarnessControl {
   private effort: string | undefined;
   /** Model named when the thread was opened; undefined means the configured default. */
   private openedModel: string | undefined;
+  /** Declared at initialize when the connection is opened with a chosen collaboration mode. */
+  private experimental = false;
+  private release: readonly [number, number, number] | null = null;
+  /** The collaboration mode every turn of this connection sends, with the model and effort it runs; null leaves the thread's own. */
+  private collaboration: { readonly mode: string; readonly model: string; readonly effort: string | null } | null = null;
   /** Enabled skills by name, as the last skills/list for this workspace reported them; `/skill:<name>` invokes one. */
   private skills = new Map<string, { readonly name: string; readonly path: string }>();
   /** Set once this connection forked a thread; it then opens nothing and attributes nothing. */
@@ -174,22 +196,32 @@ export class CodexControl implements HarnessControl {
   }
   private async initializeOnce(): Promise<ProtocolObservation> {
     try {
+      // Experimental fields are accepted only when declared here, for this connection.
+      this.experimental = this.options.selectedOptions?.[COLLABORATION_MODE] !== undefined;
       const response = object(await this.rpc.request("initialize", {
         clientInfo: { name: "harnessgateway", title: "HarnessGateway", version: "0.0.0" },
-        capabilities: { experimentalApi: false, requestAttestation: false },
+        capabilities: { experimentalApi: this.experimental, requestAttestation: false },
       }), "Codex initialize result");
       const userAgent = string(response.userAgent, "Codex user agent", 4096);
+      this.release = agentRelease(userAgent);
       await this.rpc.notify("initialized", {});
       this.initialized = true;
-      return { protocol: "codex-app-server", protocolVersion: null, agentName: "codex", agentVersion: null,
-        authenticationMethods: [], capabilities: { userAgent, experimentalApi: false } };
+      return { protocol: "codex-app-server", protocolVersion: null, agentName: "codex", agentVersion: this.release === null ? null : this.release.join("."),
+        authenticationMethods: [], capabilities: { userAgent, experimentalApi: this.experimental } };
     } catch (error) { this.rpc.abort(errorFrom(error)); throw error; }
   }
   async models(): Promise<NativeModelCatalog> {
     this.assertInitialized();
+    const { models, defaultModel, options } = await this.nativeCatalog();
+    const account = object(await this.rpc.request("account/read", { refreshToken: false }), "native account status");
+    const skills = await this.readSkills();
+    const commands = [...THREAD_COMMANDS, ...skills.filter(skill => skill.enabled).slice(0, MAX_NATIVE_EXTENSIONS).map(skill => ({ name: "skill:" + skill.name, description: ("Skill · " + skill.description).slice(0, 1024) }))];
+    return { models, defaultModel, canSelect: models.length > 0, ...(options.length ? { options } : {}), commands, authentication: account.requiresOpenaiAuth === false || account.account != null ? "ready" : account.requiresOpenaiAuth === true ? "missing" : "unknown" };
+  }
+  /** The configured and listed models with the native options; opening a thread validates against this without account or skill reads. */
+  private async nativeCatalog(): Promise<{ readonly models: NativeModelCatalog["models"]; readonly defaultModel: string | null; readonly options: readonly NativeOption[] }> {
     const config = object(await this.rpc.request("config/read", { includeLayers: false, cwd: this.options.cwd }), "native configuration");
     const configured = object(config.config, "effective native configuration");
-    const account = object(await this.rpc.request("account/read", { refreshToken: false }), "native account status");
     const models: NativeModelCatalog["models"][number][] = [], seen = new Set<string>();
     let cursor: string | undefined;
     for (let page = 0; page < 64; page++) {
@@ -220,9 +252,8 @@ export class CodexControl implements HarnessControl {
     }
     const defaultModel = configured.model == null ? null : string(configured.model, "configured model", 1024);
     if (defaultModel !== null && !seen.has(defaultModel)) models.unshift({ id: defaultModel, name: defaultModel });
-    const options = permissionOptions(configured), skills = await this.readSkills();
-    const commands = [...THREAD_COMMANDS, ...skills.filter(skill => skill.enabled).slice(0, MAX_NATIVE_EXTENSIONS).map(skill => ({ name: "skill:" + skill.name, description: ("Skill · " + skill.description).slice(0, 1024) }))];
-    return { models, defaultModel, canSelect: models.length > 0, ...(options.length ? { options } : {}), commands, authentication: account.requiresOpenaiAuth === false || account.account != null ? "ready" : account.requiresOpenaiAuth === true ? "missing" : "unknown" };
+    const options = [...(this.release !== null && atLeast(this.release, COLLABORATION_SINCE) ? [{ id: COLLABORATION_MODE, name: "协作模式", category: "mode", currentValue: "default", values: COLLABORATION_MODES }] : []), ...permissionOptions(configured)];
+    return { models, defaultModel, options };
   }
   async checkpoint(): Promise<string | null> { return this.conversation; }
   async open(cwd: string, model?: string, native?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> {
@@ -232,10 +263,16 @@ export class CodexControl implements HarnessControl {
     this.opening = true;
     try {
       const overrides: Record<string, string> = {};
+      let selected: NativeModelCatalog["models"][number] | undefined;
       if (model !== undefined || Object.keys(native ?? {}).length) {
-        const catalog = await this.models(), selected = catalog.models.find(row => row.id === (model ?? catalog.defaultModel));
+        const catalog = await this.nativeCatalog(); selected = catalog.models.find(row => row.id === (model ?? catalog.defaultModel));
         if (!selected) throw new ControlError("MODEL_UNAVAILABLE", "selected model is not in this Harness native catalog");
         for (const [id, value] of Object.entries(native ?? {})) {
+          if (id === COLLABORATION_MODE) {
+            if (!catalog.options?.find(option => option.id === id)?.values.some(option => option.value === value)) throw new ControlError("NATIVE_OPTION_UNAVAILABLE", "this Codex does not offer the collaboration mode");
+            if (!this.experimental) throw new ControlError("NATIVE_OPTION_UNAVAILABLE", "the collaboration mode was not chosen when this connection was prepared");
+            continue;
+          }
           if (Object.hasOwn(PERMISSION_SETTINGS, id)) {
             if (!catalog.options?.find(option => option.id === id)?.values.some(option => option.value === value)) throw new ControlError("NATIVE_OPTION_UNAVAILABLE", "permission setting unavailable in the native configuration");
             overrides[PERMISSION_SETTINGS[id as PermissionSetting].param] = value; continue;
@@ -245,6 +282,18 @@ export class CodexControl implements HarnessControl {
         }
       }
       this.openedModel = model;
+      const mode = native?.[COLLABORATION_MODE];
+      if (mode !== undefined) {
+        // The mode's settings replace the turn's model and effort, so they carry what the turn would otherwise run: the chosen
+        // values first, then the user's own preset for the mode (plan_mode_reasoning_effort), then the configured ones.
+        const presets = object(await this.rpc.request("collaborationMode/list", {}), "collaboration modes");
+        if (!Array.isArray(presets.data) || presets.data.length > 64) throw new ControlError("INVALID_PROTOCOL", "invalid collaboration modes");
+        const preset = presets.data.map(value => object(value, "collaboration mode")).find(row => row.mode === mode);
+        const presetModel = typeof preset?.model === "string" && preset.model ? preset.model : undefined, presetEffort = typeof preset?.reasoning_effort === "string" ? preset.reasoning_effort : undefined;
+        const chosen = model ?? presetModel ?? selected?.id;
+        if (chosen === undefined) throw new ControlError("MODEL_UNAVAILABLE", "no model is configured for the collaboration mode");
+        this.collaboration = { mode, model: chosen, effort: this.effort ?? presetEffort ?? selected?.options?.find(option => option.id === "reasoning_effort")?.currentValue ?? null };
+      }
       if (checkpoint !== undefined) this.conversation = nativeConversationId(checkpoint);
       // A cold start or a long thread resume loads native state before answering; bounded by the run budget.
       const response = object(await this.rpc.request(checkpoint === undefined ? "thread/start" : "thread/resume", {
@@ -408,7 +457,9 @@ export class CodexControl implements HarnessControl {
         if (error instanceof ControlError && error.code === "REMOTE_ERROR" && active.turnId === null && this.rpc.failure === null) { this.settleTurn(active); active.resolve({ status: "failed", reason: "request_rejected" }); }
         else this.rpc.abort(errorFrom(error));
       });
-    } else void this.rpc.request("turn/start", { threadId: id, input, ...(this.effort === undefined ? {} : { effort: this.effort }) }).then(value => {
+    } else void this.rpc.request("turn/start", { threadId: id, input, ...(this.effort === undefined ? {} : { effort: this.effort }),
+      // A null developer_instructions keeps the mode's built-in instructions.
+      ...(this.collaboration === null ? {} : { collaborationMode: { mode: this.collaboration.mode, settings: { model: this.collaboration.model, reasoning_effort: this.collaboration.effort, developer_instructions: null } } }) }).then(value => {
       try {
         const response = object(value, "turn/start result"), turn = object(response.turn, "Codex turn");
         this.bindTurn(active, string(turn.id, "Codex turn identity"));
@@ -594,7 +645,9 @@ export class CodexControl implements HarnessControl {
         if (method === "item/completed" && !active.deltaItems.has(itemId)) active.event({ type: "text", text: text(item.text, "agent message") });
         return;
       }
-      if (["userMessage", "reasoning", "plan", "hookPrompt", "functionCallOutput"].includes(type)) return;
+      // Plan mode answers with a proposed plan; the completed item is authoritative over its deltas.
+      if (type === "plan") { if (method === "item/completed") active.event({ type: "text", text: text(item.text, "proposed plan") }); return; }
+      if (["userMessage", "reasoning", "hookPrompt", "functionCallOutput"].includes(type)) return;
       const started = method === "item/started";
       // Codex reports a spawned sub-agent here (and in collaboration calls), not with thread/started: the child thread's own
       // items then nest under its entry.

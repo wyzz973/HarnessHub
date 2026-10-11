@@ -1914,7 +1914,7 @@ a {
 }
 
 .picker-popover {
-  z-index:60;
+  z-index:64;
   width:350px;
   max-width:calc(100vw - 28px);
   border:1px solid #dfe5ee;

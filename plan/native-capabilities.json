@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-10-11",
+  "updated": "2026-10-12",
   "research": "docs/research/native-capability-surfaces-2026-10-11.md",
   "features": [
     {
@@ -173,15 +173,17 @@
         },
         "modes-settings": {
           "native": "yes",
-          "source": "approvalPolicy/sandboxPolicy/serviceTier 逐轮参数；collaborationMode 计划模式需 experimentalApi",
+          "source": "approvalPolicy/sandboxPolicy/serviceTier 逐轮参数；collaborationMode 计划模式需 experimentalApi（按连接声明）",
           "hub": "partial",
           "protocol": "pass",
           "real": "pass",
           "evidence": [
             ".tmp/cc-native-activity-codex-approval.json",
-            "docs/verification/native-session-actions-2026-10-11.md"
+            "docs/verification/native-session-actions-2026-10-11.md",
+            ".tmp/cc-codex-plan-2026-10-12.json",
+            "docs/decisions/0034-codex-plan-mode.md"
           ],
-          "note": "审批策略与沙箱作为本 Hub 线程设置接出（取自原配置、由线程回报核实、不写 config.toml）；计划模式需 experimentalApi、serviceTier 未接出"
+          "note": "审批策略与沙箱作为本 Hub 线程设置接出（取自原配置、由线程回报核实、不写 config.toml）；协作模式（默认/计划）自 0.162.1 接出，只有选择了协作模式的回合声明 experimentalApi，真实计划与切回默认通过；serviceTier 未接出"
         },
         "commands": {
           "native": "no",
@@ -245,9 +247,10 @@
           "real": "blocked",
           "evidence": [
             ".tmp/cc-native-activity-codex-plan.json",
-            "docs/verification/native-activity-2026-10-11.md"
+            "docs/verification/native-activity-2026-10-11.md",
+            ".tmp/cc-codex-plan-2026-10-12.json"
           ],
-          "note": "本机默认 gpt-6.1-sol 回合未提供 update_plan 工具（真实回复确认）；计划模式 collaborationMode 需 experimentalApi，未接出"
+          "note": "本机默认 gpt-6.1-sol 回合未提供 update_plan 清单工具（真实回复确认）；计划模式给出的方案以 plan 条目返回，作为回复显示（ADR-034，真实通过），不是清单"
         },
         "usage": {
           "native": "yes",

@@ -19,6 +19,8 @@ if (scenario === "descendant") {
 const lines = createInterface({ input: process.stdin });
 let promptId = null, turn = 0, initialized = false, pendingPermission = false;
 let resumedThread = false;
+// Codex app-server gates experimental methods and fields per connection on initialize.capabilities.experimentalApi.
+let experimental = false;
 let selectedModel = "native-model-a", thinking = "low", fast = "off";
 function nativeConfiguration() { return [
  { id:"native-model",category:"model",type:"select",currentValue:selectedModel,options:[{value:"native-model-a",name:"Native A"},{value:"native-model-b",name:"Native B"}] },
@@ -94,7 +96,8 @@ lines.on("line", line => {
     if (scenario === "stderr") process.stderr.write("diagnostic".repeat(100000));
     const result = protocol === "acp-v1"
       ? { protocolVersion: scenario === "version" ? 2 : 1, agentCapabilities: { loadSession: ["native-resume", "resume-fails", "resume-wrong-identity", "load-trailing-replay", "native-config", "openclaw-settings", "session-list", "hermes"].includes(scenario), ...(scenario === "hermes" ? { sessionCapabilities: { resume: {}, list: {}, fork: {} }, promptCapabilities: { image: true } } : {}), ...(scenario === "session-list" ? { sessionCapabilities: { list: {} } } : {}), ...(scenario === "attachments" || scenario === "openclaw-settings" ? { promptCapabilities: { image: true, audio: true, embeddedContext: true } } : {}), ...(scenario === "forkable" ? { sessionCapabilities: { fork: {} } } : {}) }, ...(process.env.FIXTURE_AUTH === "none" ? {} : { authMethods: process.env.FIXTURE_AUTH === "terminal" ? [{ id: "hermes-setup", name: "Set up Hermes", type: "terminal", args: ["--setup"] }] : process.env.FIXTURE_AUTH === "invalid" ? { id: "fixture-login" } : [{ id: "fixture-login", name: "Fixture Login" }] }), agentInfo: { name: "fixture", version: "1.0" } }
-      : { userAgent: "fixture-codex/1.0", codexHome: process.cwd(), platformFamily: "unix", platformOs: process.platform };
+      : { userAgent: scenario === "plan-mode" ? "codex_cli_rs/0.162.1 (fixture)" : scenario === "plan-old" ? "codex_cli_rs/0.161.0 (fixture)" : "fixture-codex/1.0", codexHome: process.cwd(), platformFamily: "unix", platformOs: process.platform };
+    if (protocol === "codex-app-server") experimental = message.params?.capabilities?.experimentalApi === true;
     answer(message.id, result);
     if (scenario === "flood") {
       let remaining = 10000;
@@ -109,6 +112,11 @@ lines.on("line", line => {
   }
   if (message.method === "initialized") { initialized = true; return; }
   if (message.method === "config/read") { answer(message.id, { config: { model: "native-model-a", privateCredential: "synthetic-never-public", ...(["permissions-settings", "ignore-permissions"].includes(scenario) ? { approval_policy: "never", sandbox_mode: "danger-full-access" } : {}) } }); return; }
+  if (message.method === "collaborationMode/list") {
+    if (!experimental) { emit({ id: message.id, error: { code: -32600, message: "collaborationMode/list requires experimentalApi capability" } }); return; }
+    // The user's plan-mode effort (plan_mode_reasoning_effort) comes with the plan preset.
+    answer(message.id, { data: [{ name: "Plan", mode: "plan", model: null, reasoning_effort: "high" }, { name: "Default", mode: "default", model: null, reasoning_effort: null }] }); return;
+  }
   if (message.method === "account/read") { answer(message.id, { account: { type: "chatgpt", email: "private-account@example.invalid" }, requiresOpenaiAuth: true }); return; }
   if (message.method === "skills/list" && scenario === "no-skills") { emit({ id: message.id, error: { code: -32601, message: "Method not found" } }); return; }
   if (message.method === "skills/list") {
@@ -253,6 +261,9 @@ lines.on("line", line => {
     notification("item/completed", { ...base, item: { type: "contextCompaction", id: "compact-item" } });
     notification("turn/completed", { threadId: "thread-fixture", turn: { id: base.turnId, status: "completed" } }); return;
   }
+  if (message.method === "turn/start" && message.params?.collaborationMode !== undefined && !experimental) {
+    emit({ id: message.id, error: { code: -32600, message: "turn/start.collaborationMode requires experimentalApi capability" } }); return;
+  }
   if (message.method === "session/prompt" || message.method === "turn/start") {
     // An ACP agent reports a missing login with the protocol's auth_required code, whatever its own words are.
     if (scenario === "auth-code") { emit({ id: message.id, error: { code: -32000, message: "agent setup needed" } }); return; }
@@ -326,6 +337,16 @@ lines.on("line", line => {
       notification("item/started", { ...base, item: { type: "commandExecution", id: "cmd-2", command: "tail log", cwd: "/w", status: "inProgress" } });
       notification("item/commandExecution/outputDelta", { ...base, itemId: "cmd-2", delta: "line1" });
       codexOutput(); finish(); return;
+    }
+    // Plan mode answers with a proposed plan item; its deltas may differ from the completed item, which is authoritative.
+    if (protocol === "codex-app-server" && scenario === "plan-mode") {
+      const base = { threadId: "thread-fixture", turnId: `turn-${turn}` };
+      if (message.params.collaborationMode?.mode === "plan") {
+        notification("item/plan/delta", { ...base, itemId: "plan-1", delta: "1. 读" });
+        notification("item/plan/delta", { ...base, itemId: "plan-1", delta: "代码（草稿）" });
+        notification("item/completed", { ...base, item: { type: "plan", id: "plan-1", text: "1. 读代码\n2. 改实现" } });
+      } else codexOutput();
+      finish(); return;
     }
     if (protocol === "codex-app-server" && scenario === "typed-failure") {
       notification("turn/completed", { threadId: "thread-fixture", turn: { id: `turn-${turn}`, status: "failed", error: { message: "provider said something unhelpful", codexErrorInfo: "usageLimitExceeded" } } }); return;

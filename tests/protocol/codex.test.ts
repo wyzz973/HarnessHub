@@ -365,3 +365,50 @@ test("Codex shows a sub-agent thread of the turn as an entry with its own tools 
     assert.equal(events.filter(event => event.type === "text").map(event => event.type === "text" ? event.text : "").join(""), "你好 fixture", "the sub-agent's report is not the reply");
   } finally { await driver.close(); }
 });
+test("Codex plan mode is declared only by a connection opened with a chosen mode, and its proposed plan is the reply", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-codex-plan-"));
+  const sent = async (name: string) => (await readFile(join(directory, name), "utf8")).trim().split("\n").map(line => JSON.parse(line) as { method?: string; params?: Record<string, unknown> });
+  const experimental = async (name: string) => ((await sent(name)).find(row => row.method === "initialize")!.params!.capabilities as Record<string, unknown>).experimentalApi;
+  try {
+    // The reviewed app-server is offered the mode; a catalog read never declares the experimental API.
+    const reader = control("plan-mode", { FIXTURE_TRACE: join(directory, "reader") });
+    try {
+      assert.equal((await reader.initialize()).agentVersion, "0.162.1");
+      assert.deepEqual((await reader.models()).options?.find(option => option.id === "collaboration_mode")?.values.map(value => value.value), ["default", "plan"]);
+    } finally { await reader.close(); }
+    assert.equal(await experimental("reader"), false);
+    // An older or unidentified app-server is not offered it.
+    for (const scenario of ["plan-old", "basic"]) {
+      const old = control(scenario);
+      try { await old.initialize(); assert.equal((await old.models()).options?.some(option => option.id === "collaboration_mode") ?? false, false, scenario); } finally { await old.close(); }
+    }
+    // A Run that chose plan mode declares the API, sends the mode with its model and the plan preset's effort, and shows the plan.
+    const planner = control("plan-mode", { FIXTURE_TRACE: join(directory, "planner") }, { selectedOptions: { collaboration_mode: "plan" } });
+    try {
+      await planner.initialize(); const id = await planner.open(process.cwd(), undefined, { collaboration_mode: "plan" }), events: ControlEvent[] = [];
+      assert.equal((await (await planner.startText(id, "plan it", event => events.push(event))).result).status, "completed");
+      assert.deepEqual(events.filter(event => event.type === "text").map(event => event.type === "text" ? event.text : ""), ["1. 读代码\n2. 改实现"], "the completed plan, not its drafts");
+      assert.equal(events.some(event => event.type === "diagnostic"), false);
+    } finally { await planner.close(); }
+    const planned = await sent("planner");
+    assert.equal(await experimental("planner"), true);
+    assert.deepEqual(planned.find(row => row.method === "turn/start")!.params!.collaborationMode, { mode: "plan", settings: { model: "native-model-a", reasoning_effort: "high", developer_instructions: null } });
+    // Opening a thread validates the choice without the account or skill reads a catalog makes.
+    assert.equal(planned.some(row => row.method === "account/read" || row.method === "skills/list"), false);
+    // Choosing the default mode afterwards sends it explicitly, so the thread leaves plan mode.
+    const back = control("plan-mode", { FIXTURE_TRACE: join(directory, "back") }, { selectedOptions: { collaboration_mode: "default" } });
+    try {
+      await back.initialize(); const id = await back.open(process.cwd(), undefined, { collaboration_mode: "default" }), events: ControlEvent[] = [];
+      assert.equal((await (await back.startText(id, "do it", event => events.push(event))).result).status, "completed");
+      assert.ok(events.some(event => event.type === "text" && event.text === "你好 fixture"));
+    } finally { await back.close(); }
+    assert.deepEqual((await sent("back")).find(row => row.method === "turn/start")!.params!.collaborationMode, { mode: "default", settings: { model: "native-model-a", reasoning_effort: null, developer_instructions: null } });
+    // A connection that was not prepared for the mode refuses it before a thread is opened.
+    const unprepared = control("plan-mode", { FIXTURE_TRACE: join(directory, "unprepared") });
+    try {
+      await unprepared.initialize();
+      await assert.rejects(unprepared.open(process.cwd(), undefined, { collaboration_mode: "plan" }), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_OPTION_UNAVAILABLE");
+      assert.equal((await sent("unprepared")).some(row => row.method === "thread/start" || row.method === "collaborationMode/list"), false);
+    } finally { await unprepared.close(); }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});

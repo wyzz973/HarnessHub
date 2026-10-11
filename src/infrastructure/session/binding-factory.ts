@@ -163,7 +163,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       if (protocol !== "acp-v1" && protocol !== "codex-app-server" && protocol !== "pi-rpc") throw new SessionError("UNSUPPORTED_CONTROL", "unsupported control protocol");
       const launch: ControlLaunch = { ...observed.selected.command, env: environment, protocol };
       const options = { cwd: configuration.workspace, env: environment, requestTimeoutMs: 10000, runTimeoutMs: 300000,
-        maxFrameBytes: NATIVE_FRAME_BYTES, maxDiagnosticBytes: 64 * 1024, closeGraceMs: 500 };
+        maxFrameBytes: NATIVE_FRAME_BYTES, maxDiagnosticBytes: 64 * 1024, closeGraceMs: 500, ...(selection.nativeOptions === undefined ? {} : { selectedOptions: selection.nativeOptions }) };
       this.assertOwner(); lease.assertOwned();
       control = await createNativeControl(selection.harnessId, launch, options);
       if (selection.provider !== undefined && this.providers) control = new RedactedHarnessControl(control, text => this.providers!.redact(text), () => this.providers!.createTextRedactor());

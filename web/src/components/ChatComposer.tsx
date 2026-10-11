@@ -137,7 +137,7 @@ export function ChatComposer(props: ComposerProps) {
   const thinkingNames: Readonly<Record<string,string>> = {off:"关闭",minimal:"最少",low:"低",medium:"中",high:"高",xhigh:"极高",max:"最大",ultra:"最高",adaptive:"自适应"};
   const nativeNames: Readonly<Record<string,string>> = {thought_level:"思考强度",fast_mode:"快速模式",verbose_level:"工具详情",reasoning_level:"思考输出",response_usage:"用量详情",elevated_level:"执行权限"};
   const changeOption = (id: string, value: string) => { const choices={...draft.nativeOptions}; if(value)choices[id]=value;else delete choices[id]; props.onDraft({...draft,nativeOptions:Object.fromEntries(Object.entries(choices).sort(([a],[b])=>a < b ? -1 : a > b ? 1 : 0))}); };
-  const optionPicker = (option: typeof nativeOptions[number], label: string) => <SearchPicker label={label} value={draft.nativeOptions[option.id] ?? ""} placeholder="跟随本机配置" options={[{value:"",label:`${thinkingNames[option.currentValue] ?? option.currentValue} · 本机默认`,group:"跟随 Harness"},...option.values.map(value=>({value:value.value,label:option.category==="thought_level" ? thinkingNames[value.value]??value.name : value.name,description:value.value,group:harness?.name??"原生选项"}))]} disabled={disabled || props.nativeModelsLoading} onChange={value=>changeOption(option.id,value)}/>;
+  const optionPicker = (option: typeof nativeOptions[number], label: string) => <SearchPicker label={label} value={draft.nativeOptions[option.id] ?? ""} placeholder="跟随本机配置" options={[{value:"",label:`${(option.category==="thought_level" ? thinkingNames[option.currentValue] : undefined) ?? option.values.find(value=>value.value===option.currentValue)?.name ?? option.currentValue} · 本机默认`,group:"跟随 Harness"},...option.values.map(value=>({value:value.value,label:option.category==="thought_level" ? thinkingNames[value.value]??value.name : value.name,description:value.value,group:harness?.name??"原生选项"}))]} disabled={disabled || props.nativeModelsLoading} onChange={value=>changeOption(option.id,value)}/>;
   // The native session's own values, as it reported them after its last Turn (ADR-028).
   const nativeState = provider ? undefined : session?.nativeStates?.find(state => state.harnessId === draft.harnessId && state.controlId === draft.controlId);
   const valueName = (id: string, value: string) => { const option = nativeOptions.find(row => row.id === id); return option?.category === "thought_level" ? thinkingNames[value] ?? value : option?.values.find(row => row.value === value)?.name ?? value; };
@@ -159,6 +159,7 @@ export function ChatComposer(props: ComposerProps) {
     : uploading ? "附件上传中，完成后即可发送。"
     : attachmentBlocked ? "有附件无法随这条消息发送，请移除标记的附件或切换到支持它的 Harness 或模型。"
     : props.attachments.length && !props.messageDraft.trim() ? "请写一句说明，再和附件一起发送。"
+    : !draft.providerId && draft.harnessId === "codex" && draft.nativeOptions.collaboration_mode === "plan" ? "计划模式：Codex 先给出方案。要让它执行，在高级配置里把协作模式改为“默认”后再发送。"
     : problem;
 
   return <div className="composer-wrap">

@@ -68,3 +68,5 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
 - [ADR-032：记录并显示回合阶段与首字延迟](0032-run-phases-and-first-output.md)（accepted）：Run 记录受理、准备、就绪、发送、首个输出与结束（Session v10）；界面按阶段显示已用时间，结束后显示首字与用时。
 
 - [ADR-033：本机目录缓存、就绪状态与探测会话](0033-native-catalog-cache-and-readiness.md)（accepted）：目录按配置指纹复用最长 24 小时并跨重启保存；选择器显示上次读取得到的就绪状态与通常启动用时，不在后台启动 Harness；读取目录建出的原生会话默认不列出；ACP 缺省 authMethods 按空列表处理，Hermes 未配置提供方时不建会话、提示 `hermes model`。
+
+- [ADR-034：Codex 计划模式（实验接口按回合声明）](0034-codex-plan-mode.md)（accepted）：Codex 0.162.1 起提供“协作模式”（默认、计划）；只有明确选择协作模式的回合声明 experimentalApi；方案条目作为回复显示；打开线程时不再读取账号与技能。
