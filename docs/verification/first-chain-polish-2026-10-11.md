@@ -807,3 +807,28 @@ G(i) 取消：网络检索（[Ollama 文档](https://docs.ollama.com/integration
 租约目录的 8060 个文件，大多是测试为临时工作区留下的租约文件（约 79 MB）。这个目录也是运行中服务的租约命名空间，所以没有清理；处理办法见阶段报告。
 
 回退：停止服务，检出 `3717df3` 重新构建，以原参数启动。
+
+## 登录 shell 的关闭开关与拒绝原因（审批代理补充，ADR-040 补充）
+
+交付（依据 [ADR-040 补充](../decisions/0040-login-shell-search-directories.md#补充关闭开关与拒绝原因2026-10-12审批代理条件)）：
+- `web` 命令增加 `--no-login-shell`。是否提供由入口的 `loginShellSetting` 集中决定：带这个参数、设置了 `CI`（即使为空）或在 Windows 上时不提供，否则使用 `$SHELL`。
+- 面板写明“只运行列在 /etc/shells 中的 shell：用 Homebrew 等方式安装、没有加入这个文件的 shell 会被拒绝”。
+- 读取被拒绝（`LOGIN_SHELL_UNAVAILABLE`）或失败（`LOGIN_SHELL_FAILED`）时，页面显示中文原因并说明搜索目录没有变化。之前显示的是服务端的英文诊断。
+
+检查：
+
+| 命令 | 结果 |
+|---|---|
+| `pnpm build` 与 `node --test dist/tests/*/*.test.js` | 635 通过、0 失败、0 跳过 |
+| `pnpm web:build` 与 `node --test dist/tests/browser/web.browser.js` | 23 通过 |
+| `python3 tools/check_design.py --write` 与默认检查 | 通过；计划场景 439 |
+
+新增与修改的测试：
+- 集成测试（G012-NC2），从构建后的正式 `web` 命令启动：
+  - 不带参数时，接口返回可读取（shell 为 `sh`）；带 `--no-login-shell` 时返回不提供。两次都在 SIGTERM 后以 0 退出。
+  - 帮助列出这个参数；拼错的 `--no-login-shel` 在启动前被拒绝，退出码为 1。
+  - 判定函数覆盖 `CI` 为空、Windows 和没有 `$SHELL` 的情况。
+- 浏览器测试（G054-NC15）：面板含 `/etc/shells` 说明；把夹具 shell 从 shell 列表中去掉后再读取，显示中文拒绝原因，目录不变。浏览器把预期的 409 记为资源加载失败，测试只放过这一条。
+- 变异检查：在构建产物中去掉对 `--no-login-shell` 的判断后，新测试失败；重新构建后恢复。
+
+尚未部署到 4317，等审批代理同意。

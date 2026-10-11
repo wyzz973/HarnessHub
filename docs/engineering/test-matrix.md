@@ -65,6 +65,7 @@
 | G012-C02 | G012 | security | 恶意manifest/链接/相同ID | 拒绝歧义和越界 | planned |
 | G012-C03 | G012 | integration | 缺Adapter或不可执行文件 | 明确原因，不联网下载或调用模型 | planned |
 | G012-NC1 | G012 | integration | 由用户读取登录 shell 的 PATH 补充发现目录 | 只运行列在系统 shell 列表中的绝对路径 shell，用 -l -c 在首尾标记之间读取 PATH；只保留存在的绝对目录且去重；超过 3 秒、超过 64 KiB、没有标记或退出码非零都明确失败，登录配置留在进程组中的任务随之结束；经 HTTP 读取后只加入 Gateway 尚未搜索的目录，原先找不到的 Harness 被发现，用户移除目录后不再发现；未提供时 409；保存的目录重启后仍在，无法读取的文件当作没有 | planned |
+| G012-NC2 | G012 | integration | web 命令集中决定是否提供读取登录 shell | 带 --no-login-shell、设置了 CI（即使为空）或在 Windows 上时不提供，否则使用 $SHELL（未设置时没有可读的 shell）；从正式 web 命令启动：不带参数时接口返回可读取，带 --no-login-shell 时返回不提供，帮助列出这个参数，拼错的参数在启动前被拒绝并以非零退出 | planned |
 | G013-C01 | G013 | protocol | 初始化宣告与受控探测结果 | 分别保存declared/observed证据 | planned |
 | G013-C02 | G013 | protocol | 未公布可选方法/版本不匹配 | 不试探调用未支持能力 | planned |
 | G013-C03 | G013 | integration | Harness或Adapter升级 | 旧validated不自动迁移 | planned |
@@ -432,7 +433,7 @@
 | G054-NC12 | G054 | e2e | 未经验证的版本在 Harness 列表与选择器中提示 | 安装不在验证范围内的版本后，列表显示“未经验证”并在悬停与详情中说明验证过的版本；选择器写“未经验证的版本”且仍可选择；从未验证的 Harness 不显示标记 | planned |
 | G054-NC13 | G054 | e2e | 执行配置显示原生会话与在原程序中继续 | 打开执行配置后显示原生会话 ID 与复制按钮；版本未验证时说明恢复命令未在此版本验证，不给复制命令的按钮 | planned |
 | G054-NC14 | G054 | e2e | 结束保留进程后提示仍在运行的组外后台任务 | 结束后台进程后输入框下方说明“原程序的后台任务可能仍在运行（N 个进程）”，发送下一条消息后消失 | planned |
-| G054-NC15 | G054 | e2e | Harnesses 页从登录 shell 补充搜索目录 | 面板说明会执行 shell 登录配置；只在点击时读取；读取后列出新增目录并可逐项移除，移除后说明没有带来新的目录 | planned |
+| G054-NC15 | G054 | e2e | Harnesses 页从登录 shell 补充搜索目录 | 面板说明会执行 shell 登录配置，并写明只运行列在 /etc/shells 中的 shell、其他 shell 会被拒绝；只在点击时读取；读取后列出新增目录并可逐项移除，移除后说明没有带来新的目录；shell 不在列表中时显示拒绝原因，目录不变 | planned |
 | G060-NC10 | G060 | e2e | 本机原安装把命令委派给自己的子 Agent | 子 Agent 调用与其运行的工具被提交并关联；主回复不混入子 Agent 输出；原配置不变 | planned |
 | G032-NC19 | G032 | protocol | ACP原生表单（elicitation/create）逐字段提问 | 初始化声明elicitation.form；单选、自填（Other伴随字段并入提交回答）、多选按列表返回、是否题；跳过即decline、取消即cancel；含数字等无法显示的字段整表拒绝并提示；非交互时拒绝 | planned |
 | G060-NC11 | G060 | e2e | 本机原安装用自己的提问工具向用户提问 | 问题以对话中的原生提问显示；选择第二个选项后原程序按该回答回复；原配置不变 | planned |

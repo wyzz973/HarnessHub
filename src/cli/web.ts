@@ -6,14 +6,22 @@ import { MAX_PARALLEL_CONVERSATIONS, SessionError, resolveTurnBudgets } from "..
 import { prepareConfiguration } from "../infrastructure/session/binding-factory.js";
 import { startWebServer, type WebServer } from "../web/server.js";
 
+/**
+ * Whether this Gateway offers reading the login shell's PATH on the user's request (ADR-040), decided once at the entry:
+ * never with `--no-login-shell`, when CI is set (even empty) or on Windows; otherwise with the user's `$SHELL`, which may be
+ * unset, in which case the page shows nothing to read.
+ */
+export function loginShellSetting(input: { readonly off: boolean; readonly env: Readonly<Record<string, string | undefined>>; readonly platform: string }): false | { readonly shell: string | null; readonly shells: string } {
+  return input.off || input.env.CI !== undefined || input.platform === "win32" ? false : { shell: input.env.SHELL ?? null, shells: "/etc/shells" };
+}
 /** Owns one local web application until SIGINT/SIGTERM; startup URL carries a one-use fragment token. */
 export async function main(args: readonly string[]): Promise<number> {
   let gateway: WebServer | undefined;
   try {
     const { values } = parseArgs({ args: [...args], options: { "data-dir": { type: "string" }, cwd: { type: "string" }, port: { type: "string" },
       manifest: { type: "string" }, "config-home": { type: "string" }, "package-root": { type: "string", multiple: true }, "search-dir": { type: "string", multiple: true },
-      "path-only": { type: "boolean" }, "assets-dir": { type: "string" }, "execution-budget": { type: "string" }, "wait-budget": { type: "string" }, help: { type: "boolean", short: "h" } }, strict: true, allowPositionals: false });
-    if (values.help) { process.stdout.write("HarnessGateway web --cwd <workspace> --data-dir <path> [--port <0..65535>] [--execution-budget <30..3600 秒>] [--wait-budget <1..120 分钟>]\n本机页面使用一次性启动链接。Ctrl+C等待在途执行清理并保留公共历史。\n"); return 0; }
+      "path-only": { type: "boolean" }, "assets-dir": { type: "string" }, "execution-budget": { type: "string" }, "wait-budget": { type: "string" }, "no-login-shell": { type: "boolean" }, help: { type: "boolean", short: "h" } }, strict: true, allowPositionals: false });
+    if (values.help) { process.stdout.write("HarnessGateway web --cwd <workspace> --data-dir <path> [--port <0..65535>] [--execution-budget <30..3600 秒>] [--wait-budget <1..120 分钟>] [--no-login-shell]\n本机页面使用一次性启动链接。Ctrl+C等待在途执行清理并保留公共历史。\n"); return 0; }
     // Each Turn's budgets (ADR-036): execution 300 s and waiting 30 minutes unless set here.
     const budgets = resolveTurnBudgets({ executionSeconds: values["execution-budget"], waitMinutes: values["wait-budget"] });
     if (values.port !== undefined && !/^(0|[1-9][0-9]{0,4})$/u.test(values.port)) throw new SessionError("INVALID_INPUT", "port must be 0..65535");
@@ -22,8 +30,7 @@ export async function main(args: readonly string[]): Promise<number> {
     const configuration = await prepareConfiguration({ workspace: resolve(values.cwd ?? process.cwd()), ...(values.manifest === undefined ? {} : { manifestPath: resolve(values.manifest) }),
       ...(values["config-home"] === undefined ? {} : { configHome: resolve(values["config-home"]) }), packageRoots: (values["package-root"] ?? []).map(path => resolve(path)),
       searchDirs: (values["search-dir"] ?? []).map(path => resolve(path)), pathOnly: values["path-only"] ?? false });
-    // Reading the login shell's PATH is offered on the user's request only, never in CI and not on Windows (G(ii)).
-    const loginShell = process.env.CI !== undefined || process.platform === "win32" ? false as const : { shell: process.env.SHELL ?? null, shells: "/etc/shells" };
+    const loginShell = loginShellSetting({ off: values["no-login-shell"] ?? false, env: process.env, platform: process.platform });
     gateway = await startWebServer({ providerManagement: false, root: dataRoot(values["data-dir"]), configuration, port: values.port === undefined ? 4317 : Number(values.port), budgets, loginShell,
       ...(values["assets-dir"] === undefined ? {} : { assetsDirectory: resolve(values["assets-dir"]) }) });
     process.stdout.write("HarnessGateway\n" + gateway.url + "\n");

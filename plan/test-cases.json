@@ -1137,6 +1137,23 @@
       "planned_file": "tests/integration/login-shell.test.ts"
     },
     {
+      "id": "G012-NC2",
+      "task": "G012",
+      "requirements": [
+        "R03",
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "scenario": "web 命令集中决定是否提供读取登录 shell",
+      "expected": "带 --no-login-shell、设置了 CI（即使为空）或在 Windows 上时不提供，否则使用 $SHELL（未设置时没有可读的 shell）；从正式 web 命令启动：不带参数时接口返回可读取，带 --no-login-shell 时返回不提供，帮助列出这个参数，拼错的参数在启动前被拒绝并以非零退出",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/login-shell.test.ts"
+    },
+    {
       "id": "G013-C01",
       "task": "G013",
       "requirements": [
@@ -8104,7 +8121,7 @@
       ],
       "layer": "e2e",
       "scenario": "Harnesses 页从登录 shell 补充搜索目录",
-      "expected": "面板说明会执行 shell 登录配置；只在点击时读取；读取后列出新增目录并可逐项移除，移除后说明没有带来新的目录",
+      "expected": "面板说明会执行 shell 登录配置，并写明只运行列在 /etc/shells 中的 shell、其他 shell 会被拒绝；只在点击时读取；读取后列出新增目录并可逐项移除，移除后说明没有带来新的目录；shell 不在列表中时显示拒绝原因，目录不变",
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/browser/web.browser.ts"

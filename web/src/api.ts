@@ -542,6 +542,8 @@ export function failureMessage(failure: { readonly code: string; readonly messag
     NATIVE_STATE_UNCONFIRMED: "原生会话的状态尚未确认。可以切换其他 Harness，或明确建立新的原生分支；公共历史会保留。",
     SESSION_BLOCKED: "这段对话还有执行结果尚未核实，已暂停接收新消息。请在对话顶部核实后恢复；不会自动重新执行。",
     RUN_TIMEOUT: "本回合超过了 HarnessHub 的执行期限（不含等待你的时间），原程序没有按时结束，已被强制结束。结果尚待核实，不会自动重新执行。",
+    LOGIN_SHELL_UNAVAILABLE: "HarnessHub 没有运行你的登录 shell：它必须是列在 /etc/shells 中的绝对路径。用 Homebrew 等方式安装、没有加入这个文件的 shell 常见这种情况。搜索目录没有变化。",
+    LOGIN_SHELL_FAILED: "没有读到登录 shell 的 PATH：登录配置超过 3 秒、输出超过 64 KiB、以错误退出，或没有打印 PATH。搜索目录没有变化。",
   };
   return labels[failure.code] ?? failure.message;
 }

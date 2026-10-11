@@ -11,7 +11,7 @@
 ## 决定
 
 1. **由用户触发。** Harnesses 页的“从登录 shell 补充搜索目录”面板提供“读取并重新检测”，并写明“会执行你的 shell 登录配置（`<shell> -l`）来读取 PATH”。启动时不自动读取，也不定时重读。
-2. **哪个 shell。** `$SHELL` 必须是绝对路径、文件存在，并且列在 `/etc/shells` 中，否则返回 `LOGIN_SHELL_UNAVAILABLE`（409）。设置了 `CI` 或在 Windows 上时不提供这个功能；测试不指定夹具 shell 时也不提供。是否提供由命令行入口集中决定。
+2. **哪个 shell。** `$SHELL` 必须是绝对路径、文件存在，并且列在 `/etc/shells` 中，否则返回 `LOGIN_SHELL_UNAVAILABLE`（409）。设置了 `CI`、在 Windows 上或 `web` 命令带 `--no-login-shell` 时不提供这个功能；测试不指定夹具 shell 时也不提供。是否提供由命令行入口集中决定（见文末补充）。
 3. **怎样读取。** 用 `$SHELL -l -c` 的非交互登录形式运行一次，并遵守以下限制：
    - 只传入 HOME、USER、LOGNAME、LANG 和 TMPDIR；
    - 脚本在首尾标记之间打印 PATH，只解析标记之间的这一行，不读取其他变量，登录配置自己打印的内容一律忽略；
@@ -24,6 +24,16 @@
    - `POST /api/v1/discovery/login-shell` 运行一次读取并重新检测；
    - `POST /api/v1/discovery/login-shell/remove` 带 `{dir}`，移除一个目录。
    写操作需要登录、同源与 CSRF 令牌。
+
+## 补充：关闭开关与拒绝原因（2026-10-12，审批代理条件）
+
+审批代理审阅实施后提出两点：
+- **显式关闭。** `web` 命令增加 `--no-login-shell`，供自动化启动的开发实例使用。它与 `CI`、Windows 一起在入口由 `loginShellSetting` 集中解析，带上后接口返回 `available: false`，页面不显示这个面板。
+- **说明拒绝原因。** 面板写明“只运行列在 /etc/shells 中的 shell：用 Homebrew 等方式安装、没有加入这个文件的 shell 会被拒绝”。读取被拒绝或失败时，页面显示中文原因，并说明搜索目录没有变化：
+  - `LOGIN_SHELL_UNAVAILABLE`：shell 必须是列在 `/etc/shells` 中的绝对路径；
+  - `LOGIN_SHELL_FAILED`：超过 3 秒、输出超过 64 KiB、以错误退出或没有打印 PATH。
+
+HarnessHub 不修改 `/etc/shells`，也不提示用户修改。
 
 ## G(i)：DSH Desktop 的命令位置（取消）
 

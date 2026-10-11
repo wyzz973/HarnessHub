@@ -52,7 +52,7 @@ function LoginShellPanel({ api, onChanged }: { readonly api: GatewayApi; readonl
   const change = (operation: Promise<LoginShellView>) => { setBusy(true); setProblem(null); operation.then(next => { setView(next); onChanged(); }, failure => setProblem(errorMessage(failure))).finally(() => setBusy(false)); };
   return <section className="login-shell-panel" aria-label="来自登录 shell 的目录">
     <div className="login-shell-heading"><div><strong>从登录 shell 补充搜索目录</strong>
-      <p>会执行你的 shell 登录配置{view.shell ? `（${view.shell} -l）` : ""}来读取 PATH；新增的目录只用于发现 Harness，不改变 HarnessHub 自己的环境。</p></div>
+      <p>会执行你的 shell 登录配置{view.shell ? `（${view.shell} -l）` : ""}来读取 PATH；新增的目录只用于发现 Harness，不改变 HarnessHub 自己的环境。只运行列在 /etc/shells 中的 shell：用 Homebrew 等方式安装、没有加入这个文件的 shell 会被拒绝。</p></div>
       {view.available ? <button type="button" className="button secondary" disabled={busy} onClick={() => change(api.readLoginShell(crypto.randomUUID()))}>{busy ? <Spinner/> : <RefreshCw size={15}/>}读取并重新检测</button> : null}</div>
     {view.dirs.length ? <ul>{view.dirs.map(dir => <li key={dir}><code>{dir}</code><button type="button" className="text-button" disabled={busy} onClick={() => change(api.removeLoginShellDirectory(dir, crypto.randomUUID()))}>移除</button></li>)}</ul>
       : view.readAt !== null ? <small>登录 shell 的 PATH 没有带来新的目录。</small> : null}

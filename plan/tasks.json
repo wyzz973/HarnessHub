@@ -1376,7 +1376,8 @@
         "G012-C01",
         "G012-C02",
         "G012-C03",
-        "G012-NC1"
+        "G012-NC1",
+        "G012-NC2"
       ],
       "active_slice": "native-installation-management"
     },

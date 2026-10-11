@@ -1180,11 +1180,18 @@ test("the Harnesses page reads the login shell's PATH only when asked, says it r
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); await rm(directory, { recursive: true, force: true }); } });
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
-  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  // The refusal below is an expected 409, which the browser logs as a failed resource.
+  let expectedRefusals = 0;
+  page.on("pageerror", error => errors.push(error.message));
+  page.on("console", entry => {
+    if (entry.type() !== "error") return;
+    if (entry.location().url.endsWith("/api/v1/discovery/login-shell") && entry.text().includes("409")) expectedRefusals++; else errors.push(entry.text());
+  });
   await page.goto(fixture.gateway.url);
   await page.getByRole("button", { name: "Harnesses", exact: true }).click();
   const panel = page.getByRole("region", { name: "来自登录 shell 的目录" });
   await expect(panel).toContainText("会执行你的 shell 登录配置（login-sh -l）来读取 PATH");
+  await expect(panel).toContainText("只运行列在 /etc/shells 中的 shell：用 Homebrew 等方式安装、没有加入这个文件的 shell 会被拒绝。");
   await expect(panel.locator("li")).toHaveCount(0); await expect(panel).not.toContainText("没有带来新的目录");
   await panel.getByRole("button", { name: "读取并重新检测" }).click();
   await expect(panel.locator("li code")).toHaveText([bin], { timeout: 30000 });
@@ -1192,5 +1199,11 @@ test("the Harnesses page reads the login shell's PATH only when asked, says it r
   await panel.locator("li").getByRole("button", { name: "移除" }).click();
   await expect(panel.locator("li")).toHaveCount(0, { timeout: 30000 });
   await expect(panel).toContainText("登录 shell 的 PATH 没有带来新的目录。");
-  assert.deepEqual(errors, []);
+  // A shell the system's list no longer names is refused with its reason, and the directories stay as they were.
+  await writeFile(shells, "/bin/sh\n");
+  await panel.getByRole("button", { name: "读取并重新检测" }).click();
+  await expect(panel.getByRole("status")).toHaveText("HarnessHub 没有运行你的登录 shell：它必须是列在 /etc/shells 中的绝对路径。用 Homebrew 等方式安装、没有加入这个文件的 shell 常见这种情况。搜索目录没有变化。");
+  await expect(panel.locator("li")).toHaveCount(0);
+  await page.screenshot({ path: join(artifact, "login-shell-refused.png"), animations: "disabled" });
+  assert.deepEqual(errors, []); assert.ok(expectedRefusals <= 1);
 });

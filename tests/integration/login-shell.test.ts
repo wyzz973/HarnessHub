@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { spawn, spawnSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { loginShellSetting } from "../../src/cli/web.js";
 import { SessionError } from "../../src/contracts/session.js";
 import { LoginShellStore, readLoginShellPath } from "../../src/infrastructure/discovery/login-shell.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
@@ -113,4 +116,44 @@ test("over HTTP, reading the login shell adds only new directories to discovery 
   assert.deepEqual(removed.data.dirs, [f.other]);
   assert.equal(await on.found(), false, "gone with its directory");
   t.after(() => rm(data, { recursive: true, force: true }));
+});
+
+const web = fileURLToPath(new URL("../../src/cli/web.js", import.meta.url));
+test("whether the login shell is offered is decided once at the web command: never with --no-login-shell, in CI or on Windows", posixOnly, async t => {
+  assert.deepEqual(loginShellSetting({ off: false, env: { SHELL: "/bin/zsh" }, platform: "darwin" }), { shell: "/bin/zsh", shells: "/etc/shells" });
+  assert.deepEqual(loginShellSetting({ off: false, env: {}, platform: "linux" }), { shell: null, shells: "/etc/shells" }, "no $SHELL: nothing to read");
+  assert.equal(loginShellSetting({ off: true, env: { SHELL: "/bin/zsh" }, platform: "darwin" }), false);
+  assert.equal(loginShellSetting({ off: false, env: { SHELL: "/bin/zsh", CI: "" }, platform: "darwin" }), false, "CI counts when set, even empty");
+  assert.equal(loginShellSetting({ off: false, env: { SHELL: "/bin/zsh" }, platform: "win32" }), false);
+  // The web command itself: the flag is accepted and turns the offer off; a misspelt flag is refused before anything starts.
+  const root = await mkdtemp(join(tmpdir(), "harness-login-cli-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const workspace = join(root, "workspace"), assets = join(root, "assets"), manifest = join(root, "catalog.json");
+  await mkdir(workspace); await mkdir(assets); await writeFile(join(assets, "index.html"), "<!doctype html><title>fixture</title>");
+  await writeFile(manifest, JSON.stringify({ version: 2, overrides: {}, definitions: [] }));
+  const env = { PATH: "/usr/bin:/bin", HOME: root, SHELL: "/bin/sh" };
+  const misspelt = spawnSync(process.execPath, [web, "--no-login-shel", "--help"], { env, encoding: "utf8", timeout: 10000 });
+  assert.equal(misspelt.status, 1); assert.match(misspelt.stderr, /could not run/u);
+  const help = spawnSync(process.execPath, [web, "--help"], { env, encoding: "utf8", timeout: 10000 });
+  assert.equal(help.status, 0); assert.match(help.stdout, /\[--no-login-shell\]/u);
+  const offered = async (flags: readonly string[], data: string) => {
+    const child = spawn(process.execPath, [web, "--cwd", workspace, "--data-dir", join(root, data), "--port", "0", "--manifest", manifest, "--path-only", "--assets-dir", assets, ...flags], { env, stdio: ["ignore", "pipe", "pipe"] });
+    const exited = new Promise<number | null>(done => child.once("exit", code => done(code)));
+    let output = "", errors = "", view: Record<string, unknown> = {}, code: number | null = null;
+    child.stderr.on("data", (chunk: Buffer) => { errors += chunk.toString("utf8"); });
+    try {
+      const link = await new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("the web command printed no link")), 15000);
+        child.stdout.on("data", (chunk: Buffer) => { output += chunk.toString("utf8"); const found = /http:\/\/127\.0\.0\.1:\d+\/#token=[A-Za-z0-9_-]+/u.exec(output); if (found) { clearTimeout(timer); resolve(found[0]); } });
+        child.once("exit", () => { clearTimeout(timer); reject(new Error("the web command exited: " + errors)); });
+      });
+      const url = new URL(link), origin = url.origin;
+      const boot = await fetch(origin + "/api/v1/auth/bootstrap", { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ token: new URLSearchParams(url.hash.slice(1)).get("token") }) });
+      const cookie = boot.headers.get("set-cookie")!.split(";", 1)[0]!;
+      view = await (await fetch(origin + "/api/v1/discovery/login-shell", { headers: { Cookie: cookie, Origin: origin } })).json() as Record<string, unknown>;
+    } finally { child.kill("SIGTERM"); code = await exited; }
+    assert.equal(code, 0, "the web command closed cleanly");
+    return view;
+  };
+  assert.deepEqual(await offered([], "on"), { available: true, shell: "sh", dirs: [], readAt: null });
+  assert.deepEqual(await offered(["--no-login-shell"], "off"), { available: false, dirs: [], readAt: null });
 });
