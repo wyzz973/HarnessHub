@@ -426,9 +426,11 @@ export class SessionRuntime {
    * Ends the native process groups that conversations kept under an owner that ended without closing them (ADR-030), and
    * releases each one's workspace lease once the end is confirmed. A group that cannot be recognized (no recorded identity,
    * or members that outlive SIGKILL) leaves its workspace quarantined. Each outcome is recorded for its conversation. The
-   * owner runs it once at start, before admitting work.
+   * owner runs it once at start, before admitting work; groups are handled one at a time, each within about 6 seconds.
+   * Resolves with every outcome, in the order handled.
    */
-  async reapKept(): Promise<void> {
+  async reapKept(): Promise<readonly { readonly sessionId: SessionId; readonly outcome: "terminated" | "gone" | "unconfirmed"; readonly leaseReleased: boolean }[]> {
+    const outcomes: { readonly sessionId: SessionId; readonly outcome: "terminated" | "gone" | "unconfirmed"; readonly leaseReleased: boolean }[] = [];
     for (const state of this.store.listKept()) {
       const retained = state.retained;
       if (retained === undefined || this.kept.has(state.id)) continue;
@@ -444,7 +446,9 @@ export class SessionRuntime {
         return { next: rest, events: [event("native.process_lost", { runId: retained.runId, harnessId: retained.harnessId, controlId: retained.controlId, reason: "owner_ended", outcome, leaseReleased })] };
       });
       this.lost.set(state.id, { outcome, leaseReleased, at });
+      outcomes.push({ sessionId: state.id, outcome, leaseReleased });
     }
+    return outcomes;
   }
   private background(kept: KeptProcess): number { return Math.max(0, (kept.binding.control.unattributedUpdates ?? kept.baseline) - kept.baseline); }
   /** Asks the single writer to close a kept process before its next Turn or switch; resolves once the close is recorded. */

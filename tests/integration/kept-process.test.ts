@@ -243,7 +243,7 @@ test("a process kept under an owner that was killed is ended at the next start, 
   assert.ok(alive(crashed.member!), "the background task outlived its owner");
   assert.notEqual(app.read(crashed.session).retained, undefined, "recovery keeps the record for the reaper");
 
-  await app.reapKept();
+  assert.deepEqual(await app.reapKept(), [{ sessionId: crashed.session, outcome: "terminated", leaseReleased: true }], "the outcomes it reports");
   assert.deepEqual(app.keptLoss(crashed.session), { outcome: "terminated", leaseReleased: true, at: NOW.getTime() });
   assert.ok(await settle(() => !alive(crashed.member!)), "the whole group ended, the background task included");
   assert.equal(app.read(crashed.session).retained, undefined);
@@ -262,7 +262,7 @@ test("a kept program that ended with its owner is recorded as gone and its works
   const crashed = await crashedOwner(root, workspace, true, false);
   const { app, lost } = nextOwner(t, root, () => { try { process.kill(-crashed.leader, "SIGKILL"); } catch { /* already ended */ } });
   assert.ok(await settle(() => !alive(crashed.leader)), "the program exits when its input closes");
-  await app.reapKept();
+  assert.deepEqual(await app.reapKept(), [{ sessionId: crashed.session, outcome: "gone", leaseReleased: true }], "the outcomes it reports");
   assert.deepEqual(app.keptLoss(crashed.session), { outcome: "gone", leaseReleased: true, at: NOW.getTime() });
   assert.deepEqual(lost(crashed.session).map(data => (data as { outcome: string }).outcome), ["gone"]);
   app.send(crashed.session, "again", "again"); await app.wait(crashed.session);
@@ -274,7 +274,7 @@ test("a kept process without a recorded identity is never signalled and its work
   const crashed = await crashedOwner(root, workspace, false, true);
   const { app, factory, lost } = nextOwner(t, root, () => { try { process.kill(-crashed.leader, "SIGKILL"); } catch { /* already ended */ } });
   assert.equal(crashed.retained?.process, undefined);
-  await app.reapKept();
+  assert.deepEqual(await app.reapKept(), [{ sessionId: crashed.session, outcome: "unconfirmed", leaseReleased: false }], "the outcomes it reports");
   assert.deepEqual(app.keptLoss(crashed.session), { outcome: "unconfirmed", leaseReleased: false, at: NOW.getTime() });
   assert.ok(alive(crashed.member!), "a group that cannot be recognized is left running");
   assert.deepEqual(lost(crashed.session).map(data => [(data as { outcome: string }).outcome, (data as { leaseReleased: boolean }).leaseReleased]), [["unconfirmed", false]]);

@@ -611,7 +611,14 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   };
   try {
     // Processes conversations kept under a service that ended without closing them are ended (or left quarantined) first.
-    await app.runtime.reapKept();
+    const left = app.store.listKept().length;
+    if (left > 0) process.stderr.write("HarnessGateway: ending " + left + " native process(es) kept by the previous service (up to about 6 s each)\n");
+    const reaped = await app.runtime.reapKept();
+    if (reaped.length > 0) {
+      const count = (outcome: string) => reaped.filter(item => item.outcome === outcome).length;
+      process.stderr.write("HarnessGateway: kept native processes of the previous service: " + count("terminated") + " ended, " + count("gone") + " already gone, "
+        + count("unconfirmed") + " unconfirmed (workspace quarantined)\n");
+    }
     await rescan();
     await new Promise<void>((done, reject) => { server.once("error", reject); server.listen(port, "127.0.0.1", () => { server.off("error", reject); done(); }); });
     const address = server.address();
