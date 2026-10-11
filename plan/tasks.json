@@ -2053,7 +2053,8 @@
         "G028-C04",
         "G028-R01",
         "G028-R02",
-        "G028-NC2"
+        "G028-NC2",
+        "G028-NC3"
       ],
       "active_slice": "native-models-switching"
     },
@@ -2226,7 +2227,8 @@
         "tests/protocol/pi.test.ts",
         "tests/fixtures/pi-rpc-peer.mjs",
         "src/adapters/control/openclaw.ts",
-        "src/infrastructure/control/native-command.ts"
+        "src/infrastructure/control/native-command.ts",
+        "src/adapters/control/cursor.ts"
       ],
       "requirements": [
         "R11",
@@ -2258,7 +2260,9 @@
         "G032-L01",
         "G032-N01",
         "G032-N02",
-        "G032-X03"
+        "G032-X03",
+        "G032-NC4",
+        "G032-NC5"
       ],
       "active_slice": "native-installation-management"
     },
@@ -2354,7 +2358,8 @@
         "G034-C02",
         "G034-C03",
         "G034-C04",
-        "G034-NC3"
+        "G034-NC3",
+        "G034-NC4"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3600,7 +3605,9 @@
         "tests/fixtures/managed-inventory-peer.mjs",
         "tests/real/managed-install.real.ts",
         "tests/real/live-web-stream.real.ts",
-        "tests/real/homebrew-native.real.ts"
+        "tests/real/homebrew-native.real.ts",
+        "tests/real/native-resume.real.ts",
+        "tests/real/native-catalog.real.ts"
       ],
       "requirements": [
         "R04",
@@ -3637,7 +3644,8 @@
         "G060-P02",
         "G060-M01",
         "G060-S01",
-        "G060-N04"
+        "G060-N04",
+        "G060-NC1"
       ],
       "active_slice": "native-installation-management"
     },

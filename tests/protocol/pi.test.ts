@@ -19,7 +19,8 @@ test("native Pi model selection relaunches the original command with runtime fla
     assert.deepEqual(await (await driver.startText(id, "test", event => { if (event.type === "text") events.push(event.text); })).result, { status: "completed", reason: "stop" });
     assert.deepEqual(events, ["Pi native answer"]); assert.equal((await driver.close()).protocolFailure, null);
     const frames = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line));
-    assert.equal(frames.filter(row => row.type === "set_model" || row.type === "new_session").length, 0); assert.equal(frames.filter(row => row.type === "get_state").length, 2);
+    // One state read per process before the prompt; a later read is the handled-prompt probe, not a relaunch.
+    assert.equal(frames.filter(row => row.type === "set_model" || row.type === "new_session").length, 0); assert.equal(frames.slice(0, frames.findIndex(row => row.type === "prompt")).filter(row => row.type === "get_state").length, 2);
   } finally { await driver.close(); }
 });
 for (const scenario of ["pre-ack", "retry"]) test(`Pi ${scenario} waits for prompt acknowledgment and final settlement`, async () => {
@@ -53,7 +54,8 @@ test("Pi rejects malformed wire, unavailable models and native authentication wi
   } finally { await driver.close(); }
 });
 
-for (const [scenario,option,input,field,expected] of [["ui-input","submit","typed input","value","typed input"],["ui-editor","submit","edited native text","text","edited native text"],["ui-select","choice-1",undefined,"value","Two"]] as const) test(`Pi ${scenario} surfaces native interaction and round-trips its response`, async t=>{
+// Pi 0.85.1 editor dialogs send `prefill` and accept only `{value}` (rpc-mode.ts:254-271); `{text}` would read as a cancel.
+for (const [scenario,option,input,field,expected] of [["ui-input","submit","typed input","value","typed input"],["ui-editor","submit","edited native text","value","edited native text"],["ui-select","choice-1",undefined,"value","Two"]] as const) test(`Pi ${scenario} surfaces native interaction and round-trips its response`, async t=>{
   const root=await mkdtemp(join(tmpdir(),"pi-native-ui-")), trace=join(root,"trace");t.after(()=>rm(root,{recursive:true,force:true})); const driver=control(scenario,trace);
   try { await driver.initialize();driver.enablePermissions(); const id=await driver.open(process.cwd()); let receive!:(event:Extract<import("../../src/contracts/control.js").ControlEvent,{type:"permission_requested"}>)=>void;
     const request=new Promise<Extract<import("../../src/contracts/control.js").ControlEvent,{type:"permission_requested"}>>(resolve=>{receive=resolve});
@@ -77,4 +79,57 @@ test("Pi recovers its original session file and rejects a replacement session", 
   const wrong = create("restore-wrong");
   try { await wrong.initialize(); await assert.rejects(wrong.open(process.cwd(), undefined, undefined, saved), /owned session file/); }
   finally { await wrong.close(); }
+});
+
+test("Pi editor dialogs show the native prefill", async () => {
+  const driver = control("ui-editor");
+  try {
+    await driver.initialize(); driver.enablePermissions(); const id = await driver.open(process.cwd());
+    let receive!: (event: Extract<import("../../src/contracts/control.js").ControlEvent, { type: "permission_requested" }>) => void;
+    const request = new Promise<Extract<import("../../src/contracts/control.js").ControlEvent, { type: "permission_requested" }>>(resolve => { receive = resolve; });
+    const run = await driver.startText(id, "edit", event => { if (event.type === "permission_requested") receive(event); }), asked = await request;
+    assert.deepEqual(asked.input, { kind: "editor", value: "native draft" });
+    await driver.decidePermission(asked.id, "cancel"); assert.equal((await run.result).status, "completed");
+  } finally { await driver.close(); }
+});
+test("Pi prompts handled by an extension command or input hook settle without waiting for a run", async () => {
+  const driver = control("handled", undefined, 2000);
+  try {
+    await driver.initialize(); const started = Date.now(), run = await driver.startText(await driver.open(process.cwd()), "/extension-command", () => {});
+    assert.deepEqual(await run.result, { status: "completed", reason: "handled" }); assert.ok(Date.now() - started < 1500);
+    assert.equal((await driver.close()).protocolFailure, null);
+  } finally { await driver.close(); }
+});
+test("Pi keeps the Turn when a handled command starts its run after the acknowledgement", async () => {
+  const driver = control("late-run", undefined, 2000);
+  try {
+    await driver.initialize(); const output: string[] = [], run = await driver.startText(await driver.open(process.cwd()), "/extension-command", event => { if (event.type === "text") output.push(event.text); });
+    assert.deepEqual(await run.result, { status: "completed", reason: "stop" }); assert.deepEqual(output, ["late native run"]);
+  } finally { await driver.close(); }
+});
+test("Pi withdraws a timed native dialog at its deadline and rejects a late answer", async () => {
+  const driver = control("ui-timeout");
+  try {
+    await driver.initialize(); driver.enablePermissions(); const events: import("../../src/contracts/control.js").ControlEvent[] = [];
+    const run = await driver.startText(await driver.open(process.cwd()), "timed", event => events.push(event));
+    await new Promise(resolve => setTimeout(resolve, 80));
+    assert.ok(events.some(event => event.type === "permission_requested" && event.id === "native-ui"));
+    assert.ok(events.some(event => event.type === "permission" && event.id === "native-ui" && event.decision === "cancelled"));
+    await assert.rejects(driver.decidePermission("native-ui", "choice-0"), /unavailable/);
+    assert.equal((await run.result).status, "completed");
+  } finally { await driver.close(); }
+});
+test("Pi treats a terminating tool batch as a completed run", async () => {
+  const driver = control("terminate");
+  try { await driver.initialize(); assert.deepEqual(await (await driver.startText(await driver.open(process.cwd()), "finish", () => {})).result, { status: "completed", reason: "toolUse" }); }
+  finally { await driver.close(); }
+});
+test("Pi thinking levels come from the native RPC and native Model fields, never from Pi internals", async () => {
+  const driver = control("basic");
+  try {
+    await driver.initialize(); const catalog = await driver.models();
+    const level = (model: string) => catalog.models.find(row => row.id === model)?.options?.find(option => option.id === "thinking_level")?.values.map(value => value.value);
+    assert.deepEqual(level("native/one"), ["off"]);
+    assert.deepEqual(level("native/two"), ["off", "low", "medium", "high", "max"]);
+  } finally { await driver.close(); }
 });

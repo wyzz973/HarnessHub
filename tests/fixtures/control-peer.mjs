@@ -82,7 +82,7 @@ lines.on("line", line => {
     if (scenario === "remote-error") { emit({ id: message.id, error: { code: -32001, message: "test remote error" } }); return; }
     if (scenario === "stderr") process.stderr.write("diagnostic".repeat(100000));
     const result = protocol === "acp-v1"
-      ? { protocolVersion: scenario === "version" ? 2 : 1, agentCapabilities: { loadSession: ["native-resume", "resume-fails", "resume-wrong-identity"].includes(scenario) }, authMethods: [{ id: "fixture-login", name: "Fixture Login" }], agentInfo: { name: "fixture", version: "1.0" } }
+      ? { protocolVersion: scenario === "version" ? 2 : 1, agentCapabilities: { loadSession: ["native-resume", "resume-fails", "resume-wrong-identity", "load-trailing-replay"].includes(scenario) }, authMethods: [{ id: "fixture-login", name: "Fixture Login" }], agentInfo: { name: "fixture", version: "1.0" } }
       : { userAgent: "fixture-codex/1.0", codexHome: process.cwd(), platformFamily: "unix", platformOs: process.platform };
     answer(message.id, result);
     if (scenario === "flood") {
@@ -113,8 +113,15 @@ lines.on("line", line => {
       notification("session/update", { sessionId, update: { sessionUpdate: "available_commands_update", availableCommands: [] } });
       if (scenario === "opening-text") acpOutput();
     }
+    if (scenario === "unlisted-model") { answer(message.id, { sessionId: "session-fixture", configOptions: [{ id: "native-model", category: "model", type: "select", currentValue: "resumed-unlisted", options: [{ value: "native-model-a", name: "Native A" }] }] }); return; }
     answer(message.id, { sessionId: "session-fixture", ...(scenario === "native-models" ? { configOptions: [{ id: "native-model", category: "model", type: "select", currentValue: selectedModel, options: [{ value: "native-model-a", name: "Native A" }, { value: "native-model-b", name: "Native B" }] }] } : {}),
     ...(["legacy-configured-model", "duplicate-models"].includes(scenario) ? { models: { currentModelId: "configured-model", availableModels: [{ modelId: "suggested-model", name: "Suggested" }, ...(scenario === "duplicate-models" ? [{ modelId: "suggested-model", name: "Duplicate" }] : [])] } } : {}) }); return; }
+  if (message.method === "session/load" && scenario === "load-trailing-replay") {
+    // Gemini-style: the load response returns first and history keeps streaming afterwards.
+    answer(message.id, {});
+    for (const delay of [30, 90]) setTimeout(() => notification("session/update", { sessionId: message.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "old replayed answer " } } }), delay);
+    return;
+  }
   if (message.method === "session/load") {
     if (scenario === "resume-fails") { emit({ id: message.id, error: { code: -32001, message: "Original native state unavailable" } }); return; }
     const sessionId = scenario === "resume-wrong-identity" ? "another-session" : message.params.sessionId;
@@ -151,6 +158,34 @@ lines.on("line", line => {
       return;
     }
     if (scenario === "wrong-turn") { codexOutput("another-turn"); return; }
+    if (protocol === "codex-app-server" && scenario === "foreign-thread") {
+      notification("thread/started", { thread: { id: "thread-child", parentThreadId: "thread-fixture" } });
+      notification("thread/started", { thread: { id: "thread-unrelated" } });
+      notification("item/agentMessage/delta", { threadId: "thread-child", turnId: "child-turn", itemId: "child-message", delta: "child output" });
+      notification("turn/completed", { threadId: "thread-unrelated", turn: { id: "unrelated-turn", status: "completed" } });
+      emit({ id: "child-approval", method: "item/commandExecution/requestApproval", params: { threadId: "thread-child", turnId: "child-turn", itemId: "child-tool", command: "ls" } });
+      emit({ id: "unrelated-approval", method: "item/commandExecution/requestApproval", params: { threadId: "thread-unrelated", turnId: "unrelated-turn", itemId: "unrelated-tool", command: "rm -rf /tmp/x" } });
+      codexOutput(); setTimeout(() => finish(), 30); return;
+    }
+    if (protocol === "codex-app-server" && scenario === "typed-failure") {
+      notification("turn/completed", { threadId: "thread-fixture", turn: { id: `turn-${turn}`, status: "failed", error: { message: "provider said something unhelpful", codexErrorInfo: "usageLimitExceeded" } } }); return;
+    }
+    if (protocol === "acp-v1" && scenario === "tool-merge") {
+      const sessionId = "session-fixture";
+      notification("session/update", { sessionId, update: { sessionUpdate: "tool_call", toolCallId: "merged", title: "printf 'a'\nprintf 'b'", status: "pending" } });
+      notification("session/update", { sessionId, update: { sessionUpdate: "tool_call", toolCallId: "merged", title: "printf 'a'\nprintf 'b'", status: "pending" } });
+      notification("session/update", { sessionId, update: { sessionUpdate: "tool_call_update", toolCallId: "late-announced", status: "completed" } });
+      notification("session/update", { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "image", data: "aGk=", mimeType: "image/png" } } });
+      acpOutput(); finish(); return;
+    }
+    if (protocol === "acp-v1" && scenario === "late-output") {
+      acpOutput(); finish();
+      setTimeout(() => {
+        notification("session/update", { sessionId: "session-fixture", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "autonomous follow-up" } } });
+        emit({ id: "late-permission", method: "session/request_permission", params: { sessionId: "session-fixture", toolCall: { toolCallId: "late-tool" }, options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }] } });
+      }, 10);
+      return;
+    }
     if (scenario === "passive") notification("fixture/passive", { privateSecret: "must-not-leak" });
     if (scenario === "native-question") {
       pendingPermission = true;
@@ -190,6 +225,7 @@ lines.on("line", line => {
     }
     setTimeout(() => finish(true), 50); return;
   }
+  if (message.id === "late-permission" || message.id === "child-approval" || message.id === "unrelated-approval") return;
   if (message.id === "permission-1" || message.id === "unsupported" || message.id === "native-question") {
     if (protocol === "acp-v1") acpOutput(); else codexOutput();
     pendingPermission = false; finish();

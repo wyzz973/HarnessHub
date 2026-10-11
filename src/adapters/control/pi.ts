@@ -1,6 +1,4 @@
-import { dirname, join, isAbsolute } from "node:path";
-import { realpath } from "node:fs/promises";
-import { pathToFileURL } from "node:url";
+import { isAbsolute } from "node:path";
 import { nativeConversationId, type BackendResult, type CleanupEvidence, type ControlEvent, type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl, type NativeConversationId, type NativeOptions, type NativeOption, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
 import { classifyRemoteFailure, ControlError, errorFrom, JsonRpcProcess, object, string, type RpcWireCodec } from "../../infrastructure/control/json-rpc-process.js";
 
@@ -30,16 +28,27 @@ interface Prompt {
   readonly reject: (error: Error) => void;
   readonly timer: ReturnType<typeof setTimeout>;
   acknowledged: boolean;
+  /** An agent run began for this prompt; extension commands and input hooks can be handled without one. */
+  started: boolean;
   settled: boolean;
   final: BackendResult | null;
   stop: Promise<StopRequestReceipt> | null;
 }
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+/** Pi's native Model contract (reasoning + thinkingLevelMap); the chosen level is confirmed by native state at open. */
+function supportedLevels(value: Record<string, unknown>): string[] {
+  if (value.reasoning !== true) return ["off"];
+  const map = value.thinkingLevelMap == null ? {} : object(value.thinkingLevelMap, "Pi thinking level map");
+  return THINKING_LEVELS.filter(level => { const mapped = map[level]; if (mapped === null) return false; return level === "xhigh" || level === "max" ? mapped !== undefined : true; });
+}
+/** Grace for a run started asynchronously by an extension command after its acknowledgement. */
+const HANDLED_PROBE_MS = 150;
 function model(value: unknown): { id: string; name: string; provider: string; modelId: string } {
   const row = object(value, "Pi model"), provider = string(row.provider, "Pi provider", 128), modelId = string(row.id, "Pi model identity", 768);
   if (provider.includes("/")) throw new ControlError("INVALID_PROTOCOL", "Pi provider identity is ambiguous");
   return { id: provider + "/" + modelId, name: typeof row.name === "string" ? string(row.name, "Pi model name", 1024) : modelId, provider, modelId };
 }
-/** Uses the original Pi CLI RPC. Model overrides are launch flags because set_model writes the user's global default. */
+/** Uses the original Pi CLI RPC. Models are launch flags of the session process; global settings commands are never sent. */
 export class PiControl implements HarnessControl {
   private rpc: JsonRpcProcess;
   private initialization: Promise<ProtocolObservation> | null = null;
@@ -49,9 +58,8 @@ export class PiControl implements HarnessControl {
   private failure: Error | null = null;
   private closed = false;
   private catalog: NativeModelCatalog = { models: [], defaultModel: null, authentication: "unknown", canSelect: false };
-  private levels: ((model: Record<string, unknown>) => unknown) | null = null;
   private interactivePermissions = false;
-  private readonly permissions = new Map<string, { method:string;choices:readonly string[]; resolve: (value: Readonly<Record<string, unknown>>) => void }>();
+  private readonly permissions = new Map<string, { method:string;choices:readonly string[]; resolve: (value: Readonly<Record<string, unknown>>) => void; timer: ReturnType<typeof setTimeout> | null }>();
   private entries: ReturnType<typeof model>[] = [];
   private state: Record<string, unknown> = {};
   constructor(private readonly launch: ControlLaunch, private readonly options: ControlOptions) {
@@ -68,17 +76,6 @@ export class PiControl implements HarnessControl {
   initialize(): Promise<ProtocolObservation> {
     this.initialization ??= this.initializeOnce(); return this.initialization;
   }
-  private async loadLevels(): Promise<void> {
-    try {
-      const entry = await realpath(this.launch.args[0]?.startsWith("/") && /\.(?:m?js|cjs)$/u.test(this.launch.args[0]) ? this.launch.args[0] : this.launch.executable);
-      const location=join(dirname(entry),"core","agent-session.js");
-      const sdk: unknown = await import(pathToFileURL(location).href), api=object(sdk,"native Pi SDK");
-      if(typeof api.AgentSession!=="function")throw new ControlError("NATIVE_CAPABILITY_UNAVAILABLE","native Pi session API unavailable");
-      const prototype=object(api.AgentSession.prototype,"native Pi session prototype"), get=prototype.getAvailableThinkingLevels;
-      if(typeof get!=="function")throw new ControlError("NATIVE_CAPABILITY_UNAVAILABLE","native Pi thinking catalog unavailable");
-      this.levels=model=>get.call({model});
-    } catch (error) { if (!(error !== null && typeof error === "object" && "code" in error && ["MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND", "ENOENT"].includes(String(error.code)))) throw error; }
-  }
   private async readState(): Promise<void> {
     this.state = object(await this.rpc.request("get_state", {}), "Pi state");
     string(this.state.sessionId, "Pi session identity");
@@ -88,23 +85,28 @@ export class PiControl implements HarnessControl {
     if (new Set(this.entries.map(row => row.id)).size !== this.entries.length) throw new ControlError("INVALID_PROTOCOL", "duplicate Pi model identity");
     const current = this.state.model == null ? null : model(this.state.model);
     const ready = current !== null && this.entries.some(row => row.id === current.id);
-    const models = this.entries.map(({ id, name }, index) => {
-      let options: readonly NativeOption[] | undefined;
-      if (this.levels) {
-        const raw = this.levels!(object((available.models as unknown[])[index], "native Pi model"));
-        if (!Array.isArray(raw) || !raw.length || raw.length > 32 || raw.some(level => typeof level !== "string" || !level || level.length > 128)) throw new ControlError("INVALID_PROTOCOL", "native Pi thinking levels invalid");
-        const values = raw.map(value => ({ value: string(value, "thinking level", 128), name: string(value, "thinking level", 128) }));
-        const currentValue = typeof this.state.thinkingLevel === "string" && values.some(value => value.value === this.state.thinkingLevel) ? this.state.thinkingLevel : values[0]!.value;
-        options = [{ id: "thinking_level", name: "思考强度", category: "thought_level", currentValue, values }];
-      }
-      return { id, name, ...(options ? { options } : {}) };
+    // The current model's levels come from the native RPC; others follow the same native Model fields.
+    let currentLevels: string[] | null = null;
+    if (current !== null) {
+      try {
+        const reply = object(await this.rpc.request("get_available_thinking_levels", {}), "Pi thinking levels");
+        if (!Array.isArray(reply.levels) || !reply.levels.length || reply.levels.length > 32) throw new ControlError("INVALID_PROTOCOL", "native Pi thinking levels invalid");
+        currentLevels = reply.levels.map(level => string(level, "thinking level", 128));
+      } catch (error) { if (!(error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null)) throw error; }
+    }
+    const models: { id: string; name: string; options?: readonly NativeOption[] }[] = this.entries.map(({ id, name }, index) => {
+      const levels = id === current?.id && currentLevels !== null ? currentLevels : supportedLevels(object((available.models as unknown[])[index], "native Pi model"));
+      const values = levels.map(value => ({ value, name: value }));
+      const currentValue = typeof this.state.thinkingLevel === "string" && levels.includes(this.state.thinkingLevel) ? this.state.thinkingLevel : levels[0]!;
+      const options: readonly NativeOption[] = [{ id: "thinking_level", name: "思考强度", category: "thought_level", currentValue, values }];
+      return { id, name, options };
     });
     if (current && !ready) models.push({ id: current.id, name: current.name });
     this.catalog = { ...this.catalog, models, defaultModel: current?.id ?? null, canSelect: this.entries.length > 0, authentication: ready ? "ready" : this.entries.length === 0 ? "missing" : "unknown" };
   }
   private async initializeOnce(): Promise<ProtocolObservation> {
     try {
-      await this.loadLevels(); await this.readState();
+      await this.readState();
       const commandResult = object(await this.rpc.request("get_commands", {}), "Pi native commands");
       if (!Array.isArray(commandResult.commands) || commandResult.commands.length > 256) throw new ControlError("INVALID_PROTOCOL", "invalid Pi command catalog");
       this.catalog = { ...this.catalog, commands: commandResult.commands.map(value => { const command = object(value, "Pi command"); return { name: string(command.name, "Pi command name", 128), description: typeof command.description === "string" ? command.description.slice(0,4096) : "" }; }) }; this.initialized = true;
@@ -154,10 +156,10 @@ export class PiControl implements HarnessControl {
     if (typeof message !== "string" || !message.trim()) throw new ControlError("INVALID_INPUT", "prompt must contain text");
     const result = new Promise<BackendResult>((resolve, reject) => {
       const timer = setTimeout(() => this.rpc.abort(new ControlError("RUN_TIMEOUT", "Pi run exceeded its deadline")), this.options.runTimeoutMs);
-      this.active = { event, resolve, reject, timer, acknowledged: false, settled: false, final: null, stop: null };
+      this.active = { event, resolve, reject, timer, acknowledged: false, started: false, settled: false, final: null, stop: null };
     });
     const prompt = this.active!;
-    void this.rpc.request("prompt", { message }).then(() => { prompt.acknowledged = true; this.settle(prompt); }, error => {
+    void this.rpc.request("prompt", { message }).then(() => { prompt.acknowledged = true; this.settle(prompt); if (!prompt.started && !prompt.settled) void this.probeHandled(prompt); }, error => {
       if (error instanceof ControlError && error.code === "REMOTE_ERROR" && !this.rpc.failure) {
         prompt.acknowledged = true; prompt.settled = true; prompt.final = { status: "failed", reason: "request_rejected", ...(error.remoteFailure ? { error: error.remoteFailure } : {}) }; this.settle(prompt);
       } else this.rpc.abort(errorFrom(error));
@@ -175,10 +177,13 @@ export class PiControl implements HarnessControl {
         if (this.permissions.size >= 32) throw new ControlError("PERMISSION_LIMIT", "native UI requests exceed their budget");
         const choices=method==="select" ? event.options : [];
         if (!Array.isArray(choices) || choices.length>128 || choices.some(value=>typeof value!=="string"||value.length>4096)) throw new ControlError("INVALID_PROTOCOL","invalid native UI choices");
-        const pending = new Promise<Readonly<Record<string, unknown>>>(resolve => this.permissions.set(id, { method,choices,resolve }));
+        // Pi resolves timed dialogs itself and ignores later answers; the question is withdrawn at the same deadline.
+        const timeout = typeof event.timeout === "number" && Number.isSafeInteger(event.timeout) && event.timeout > 0 ? event.timeout : null;
+        const timer = timeout === null ? null : setTimeout(() => { if (this.permissions.delete(id)) this.active?.event({ type: "permission", id, decision: "cancelled" }); }, timeout);
+        const pending = new Promise<Readonly<Record<string, unknown>>>(resolve => this.permissions.set(id, { method, choices, resolve, timer }));
         const freeform=method==="input"||method==="editor";
         const options=method==="confirm" ? [{id:"yes",name:"允许"},{id:"no",name:"拒绝"}] : method==="select" ? [...choices.map((name,index)=>({id:"choice-"+index,name:String(name)})),{id:"cancel",name:"取消"}] : [{id:"submit",name:"提交"},{id:"cancel",name:"取消"}];
-        const value=method==="editor"&&typeof event.prefilled==="string" ? event.prefilled : "";
+        const value=method==="editor"&&typeof event.prefill==="string" ? event.prefill : "";
         if(value.length>65536)throw new ControlError("OUTPUT_LIMIT","native editor input exceeded its budget");
         this.active.event({ type: "permission_requested", id, title: typeof event.title === "string" ? event.title.slice(0,4096) : "Pi 扩展请求交互", ...(typeof event.message==="string"?{detail:event.message.slice(0,4096)}:{}),...(freeform?{input:{kind:method==="editor"?"editor":"text",value}}:{}), options });
         void pending.then(value => this.rpc.notify("extension_ui_response", { id, ...value })).catch(error => this.rpc.abort(errorFrom(error))); return;
@@ -190,6 +195,7 @@ export class PiControl implements HarnessControl {
       return;
     }
     const prompt = this.active; if (!prompt) return;
+    if (type === "agent_start") { prompt.started = true; return; }
     if (type === "message_update") {
       const delta = object(event.assistantMessageEvent, "Pi message event");
       if (delta.type === "thinking_delta" && typeof delta.delta === "string") prompt.event({ type: "thinking", text: delta.delta });
@@ -203,8 +209,24 @@ export class PiControl implements HarnessControl {
       const reason = string(assistant.stopReason, "Pi stop reason");
       if (!["stop", "length", "error", "aborted", "toolUse"].includes(reason)) throw new ControlError("INVALID_PROTOCOL", "unknown Pi stop reason");
       const error = typeof assistant.errorMessage === "string" ? classifyRemoteFailure(assistant.errorMessage) : undefined;
-      prompt.final = { status: reason === "stop" ? "completed" : reason === "aborted" ? "cancelled" : "failed", reason, ...(error ? { error } : {}) };
+      // A final toolUse stop only happens when every result of the last tool batch requested termination.
+      prompt.final = { status: reason === "stop" || reason === "toolUse" ? "completed" : reason === "aborted" ? "cancelled" : "failed", reason, ...(error ? { error } : {}) };
     } else if (type === "agent_settled") { prompt.settled = true; this.settle(prompt); }
+  }
+  /**
+   * Extension commands and input hooks can fully handle a prompt: Pi acknowledges it without starting a run,
+   * so no agent_settled follows. Native state decides; a run started shortly after the command still owns the Turn.
+   */
+  private async probeHandled(prompt: Prompt): Promise<void> {
+    try {
+      for (const pause of [0, HANDLED_PROBE_MS]) {
+        if (pause) await new Promise(resolve => setTimeout(resolve, pause));
+        if (this.active !== prompt || prompt.started || prompt.settled) return;
+        const state = object(await this.rpc.request("get_state", {}), "Pi state");
+        if (this.active !== prompt || prompt.started || prompt.settled || state.isStreaming !== false) return;
+      }
+      prompt.final = { status: "completed", reason: "handled" }; prompt.settled = true; this.settle(prompt);
+    } catch (error) { if (this.active === prompt) this.rpc.abort(errorFrom(error)); }
   }
   private settle(prompt: Prompt): void {
     if (this.active !== prompt || !prompt.acknowledged || !prompt.settled) return;
@@ -219,10 +241,10 @@ export class PiControl implements HarnessControl {
     if(pending.method==="confirm"&&["yes","no"].includes(option))response={confirmed:option==="yes"};
     else if(option==="cancel")response={cancelled:true};
     else if(pending.method==="select"&&/^choice-[0-9]+$/u.test(option)&&pending.choices[Number(option.slice(7))]!==undefined)response={value:pending.choices[Number(option.slice(7))]};
-    else if(["input","editor"].includes(pending.method)&&option==="submit"&&typeof input==="string"&&Buffer.byteLength(input)<=65536&&!input.includes("\0"))response=pending.method==="editor"?{text:input}:{value:input};
+    else if(["input","editor"].includes(pending.method)&&option==="submit"&&typeof input==="string"&&Buffer.byteLength(input)<=65536&&!input.includes("\0"))response={value:input};
     else throw new ControlError("PERMISSION_UNAVAILABLE","native UI response unavailable");
-    this.permissions.delete(id);pending.resolve(response);
+    this.permissions.delete(id);if(pending.timer)clearTimeout(pending.timer);pending.resolve(response);
   }
-  private cancelPermissions(): void { for (const pending of this.permissions.values()) pending.resolve({ cancelled: true }); this.permissions.clear(); }
+  private cancelPermissions(): void { for (const pending of this.permissions.values()) { if (pending.timer) clearTimeout(pending.timer); pending.resolve({ cancelled: true }); } this.permissions.clear(); }
   close(): Promise<CleanupEvidence> { this.cancelPermissions(); this.closed = true; this.rejectActive(new ControlError("CLOSED", "Pi connection closed before settlement")); return this.rpc.close(); }
 }

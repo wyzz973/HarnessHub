@@ -56,8 +56,14 @@ function id(value: unknown): RpcId {
 }
 function key(value: RpcId): string { return JSON.stringify(value); }
 function delay(ms: number): Promise<void> { return new Promise(resolve => setTimeout(resolve, ms)); }
-/** Cumulative inbound and outbound budget for one connection; streamed output is never unbounded. */
-export const MAX_CONNECTION_WIRE_BYTES = 16 * 1024 * 1024;
+/**
+ * Cumulative inbound and outbound budget for one connection; streamed output is never unbounded.
+ * Native agents legitimately repeat large tool results (content, raw output, hook payloads) and replay
+ * long histories on load, so the budget covers a long Turn rather than a short chat reply.
+ */
+export const MAX_CONNECTION_WIRE_BYTES = 256 * 1024 * 1024;
+/** One native frame can carry a whole read file or a run summary several times over; this bounds parse memory. */
+export const NATIVE_FRAME_BYTES = 16 * 1024 * 1024;
 
 /** Owns one POSIX subprocess group, wire framing, request deadlines and awaited cleanup. */
 export class JsonRpcProcess {
@@ -88,7 +94,7 @@ export class JsonRpcProcess {
         throw new ControlError("INVALID_INPUT", "invalid private environment");
     for (const [name, value] of Object.entries({ requestTimeoutMs: options.requestTimeoutMs,
       runTimeoutMs: options.runTimeoutMs, maxFrameBytes: options.maxFrameBytes,
-      maxDiagnosticBytes: options.maxDiagnosticBytes, closeGraceMs: options.closeGraceMs }))
+      maxDiagnosticBytes: options.maxDiagnosticBytes, closeGraceMs: options.closeGraceMs, maxWireBytes: options.maxWireBytes ?? MAX_CONNECTION_WIRE_BYTES }))
       if (!Number.isSafeInteger(value) || value <= 0 || value > 2_147_483_647)
         throw new ControlError("INVALID_INPUT", `${name} must be a positive bounded integer`);
   }
@@ -250,7 +256,7 @@ export class JsonRpcProcess {
   }
   private accountWire(bytes: number): void {
     this.wireBytes += bytes;
-    if (this.wireBytes > MAX_CONNECTION_WIRE_BYTES)
+    if (this.wireBytes > (this.options.maxWireBytes ?? MAX_CONNECTION_WIRE_BYTES))
       throw new ControlError("WIRE_LIMIT", "connection exceeded its cumulative wire byte budget");
   }
   private groupAlive(): boolean {

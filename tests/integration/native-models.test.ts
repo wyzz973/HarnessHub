@@ -21,6 +21,16 @@ test("native Claude keeps an unset auth-directory override unset and honors an e
   assert.equal(nativeDescriptorValues(custom, null, {}).CLAUDE_CONFIG_DIR, "/tmp/user-claude");
   assert.equal(nativeDescriptorValues(host, "/tmp/private-profile", {}).CLAUDE_CONFIG_DIR, "/tmp/private-profile/claude");
 });
+test("native launch never synthesizes profile locations the user did not set", () => {
+  const host = captureNativeEnvironment({ HOME: "/tmp/native-host" });
+  const launched = nativeDescriptorValues(host, null, { XDG_CONFIG_HOME: "/tmp/foreign-config", CODEX_HOME: "/tmp/foreign-codex" });
+  assert.equal(launched.HOME, "/tmp/native-host");
+  for (const name of ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "CODEX_HOME", "OPENCODE_CONFIG_DIR", "OPENCLAW_CONFIG_PATH"]) assert.equal(launched[name], undefined, name);
+  const configured = captureNativeEnvironment({ HOME: "/tmp/native-host", XDG_CONFIG_HOME: "/tmp/user-config", CODEX_HOME: "/tmp/user-codex" });
+  assert.equal(nativeDescriptorValues(configured, null, {}).XDG_CONFIG_HOME, "/tmp/user-config");
+  assert.equal(nativeDescriptorValues(configured, null, {}).CODEX_HOME, "/tmp/user-codex");
+  assert.equal(nativeDescriptorValues(host, "/tmp/private-profile", {}).XDG_CONFIG_HOME, "/tmp/private-profile/config");
+});
 async function setup(t: test.TestContext) {
   const root = await mkdtemp(join(tmpdir(), "native-harness-models-")), home = join(root, "native-home"), workspace = join(root, "workspace"), manifest = join(root, "catalog.json"), trace = join(root, "trace.ndjson");
   await mkdir(home); await mkdir(workspace); await mkdir(join(home, ".codex")); await writeFile(join(home, ".codex", "config.toml"), 'model = "native-model-a"\n[model_providers.fixture]\nenv_key = "CUSTOM_NATIVE_AUTH"\n');

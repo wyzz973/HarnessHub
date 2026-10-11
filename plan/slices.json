@@ -615,7 +615,8 @@
         "G061",
         "G060",
         "G029",
-        "G006"
+        "G006",
+        "G026"
       ],
       "decision": "docs/decisions/0020-complete-native-harness-capabilities.md",
       "allowed_files": [
@@ -662,7 +663,13 @@
         "src/infrastructure/control/json-rpc-process.ts",
         "src/infrastructure/management/process.ts",
         "src/contexts/session/domain/context.ts",
-        "tests/fixtures/session-peer.mjs"
+        "tests/fixtures/session-peer.mjs",
+        "src/adapters/control/cursor.ts",
+        "src/infrastructure/session/native-environment.ts",
+        "tests/real/native-resume.real.ts",
+        "tests/real/native-catalog.real.ts",
+        "tests/protocol/process.test.ts",
+        "tests/integration/control-cli.test.ts"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/complete-native-capabilities-2026-10-11.md"

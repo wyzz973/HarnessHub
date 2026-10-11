@@ -9,6 +9,7 @@ import { parseArgs } from "node:util";
 import type { ControlEvent, ControlLaunch, ControlRun, HarnessControl } from "../contracts/control.js";
 import { DiscoveryInputError } from "../contexts/catalog/domain/discovery.js";
 import { createNativeControl } from "../adapters/control/factory.js";
+import { NATIVE_FRAME_BYTES } from "../infrastructure/control/json-rpc-process.js";
 import { inventory } from "../infrastructure/catalog/inventory-composition.js";
 import { NativeInstallationLocks, type NativeUsageLease } from "../infrastructure/management/native-lock.js";
 
@@ -100,7 +101,7 @@ export async function main(args: readonly string[]): Promise<number> {
     const environment: Record<string, string> = { ...await referencedNativeValues(native, explicitHome ?? null, harness.id, cwd), ...nativeDescriptorValues(native, explicitHome ?? null, selected.command.env),
       PATH: observed.searchPath, OPENCODE_DISABLE_AUTOUPDATE: "true", PWD: cwd };
     const launch: ControlLaunch = { ...selected.command, env: environment, protocol: selected.protocol };
-    const options = { cwd, env: environment, requestTimeoutMs: Math.min(10000, budget), runTimeoutMs: budget, maxFrameBytes: 2 * 1024 * 1024, maxDiagnosticBytes: 64 * 1024, closeGraceMs: 500 };
+    const options = { cwd, env: environment, requestTimeoutMs: Math.min(10000, budget), runTimeoutMs: budget, maxFrameBytes: NATIVE_FRAME_BYTES, maxDiagnosticBytes: 64 * 1024, closeGraceMs: 500 };
     nativeUsage = new NativeInstallationLocks().read(harness.id);
     control = await createNativeControl(harness.id, launch, options);
     process.on("SIGINT", onSignal); process.on("SIGTERM", onSignal);

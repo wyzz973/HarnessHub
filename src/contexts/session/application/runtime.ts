@@ -7,7 +7,7 @@ import {
   type SessionId, type SessionEvent, type SessionMutation, type SessionRuntimeOptions, type SessionSnapshot, type SessionStore, type SwitchReceipt,
 } from "../../../contracts/session.js";
 import { buildPublicContext } from "../domain/context.js";
-import { MAX_COMMANDS, MAX_OUTPUT_BYTES, MAX_QUEUE, MAX_RUNS, assertInput, parseConfiguration, replayCommand, terminal, utf8Bytes } from "../domain/state.js";
+import { MAX_COMMANDS, MAX_OUTPUT_BYTES, MAX_QUEUE, MAX_RUNS, MAX_RUN_TOOLS, assertInput, parseConfiguration, replayCommand, terminal, utf8Bytes } from "../domain/state.js";
 
 interface ActiveExecution {
   readonly sessionId: SessionId;
@@ -454,13 +454,23 @@ export class SessionRuntime {
       this.permissions.set(id, { request, nativeId: value.id, execution, option: null, command: null });
       try { this.commit(state.id, current => ({ next: current, events: [event("permission.requested", { permissionId: id, runId: run.id, title: value.title, options: value.options })] })); } catch (error) { this.permissions.delete(id); throw error; } return;
     }
+    if (value.type === "permission") {
+      // The Harness withdrew a question it had asked (for example its own dialog deadline): the public request closes too.
+      const pending = [...this.permissions.entries()].find(([, item]) => item.execution === execution && item.nativeId === value.id && item.option === null);
+      if (pending) {
+        this.permissions.delete(pending[0]);
+        this.commit(state.id, current => ({ next: current, events: [event("permission.closed", { permissionId: pending[0], runId: run.id, reason: value.decision })] }));
+        return;
+      }
+    }
     this.commit(state.id, current => {
       let next = current;
       if (value.type === "thinking") {
         const thinking = (run.thinking ?? "") + value.text; if (utf8Bytes(thinking) > MAX_OUTPUT_BYTES) throw new SessionError("OUTPUT_LIMIT", "native thinking exceeded its budget"); next = updatedRun(current, run.id, { thinking });
       }
       if (value.type === "tool") {
-        const tools = [...(run.tools ?? [])], index = tools.findIndex(tool => tool.id === value.id); const tool = { id: value.id, title: value.title, status: value.status }; if (index < 0) tools.push(tool); else tools[index] = tool; if (tools.length > 128) throw new SessionError("TOOL_LIMIT", "native tools exceeded their budget"); next = updatedRun(current, run.id, { tools });
+        // The public summary keeps a bounded set of tools; a long native turn must not fail or block the Runtime because of it.
+        const tools = [...(run.tools ?? [])], index = tools.findIndex(tool => tool.id === value.id); const tool = { id: value.id, title: value.title, status: value.status }; if (index >= 0) tools[index] = tool; else if (tools.length < MAX_RUN_TOOLS) tools.push(tool); next = updatedRun(current, run.id, { tools });
       }
       if (value.type === "text") {
         const message = current.messages.find(message => message.id === run.assistantMessageId);

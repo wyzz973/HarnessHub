@@ -12,6 +12,20 @@ interface ActivePrompt {
   stop: Promise<StopRequestReceipt> | null;
 }
 const metadataUpdates = new Set(["plan", "available_commands_update", "current_mode_update", "config_option_update", "session_info_update", "usage_update"]);
+/** Long agentic turns flatten subagent tools into the root session; budgets bound memory, not normal work. */
+const MAX_PROMPT_TOOLS = 4096;
+const MAX_NATIVE_COMMANDS = 2048;
+/** Some agents keep streaming session/load history after the load response; the prompt waits for that replay to go quiet. */
+const REPLAY_QUIET_MS = 150;
+const REPLAY_SETTLE_MS = 3000;
+/** Session setup starts the agent's own runtime (plugins, MCP, model catalog); a cold start can exceed a plain request. */
+const SESSION_SETUP_MS = 60000;
+/** Display label from native text: control characters (including newlines in multi-line commands) become spaces. */
+function label(value: unknown, fallback: string, maximum = 4096): string {
+  if (typeof value !== "string") return fallback;
+  const result = value.replace(/[\0-\x1f\x7f]+/gu, " ").trim();
+  return result ? result.slice(0, maximum) : fallback;
+}
 
 /** ACP v1 anti-corruption layer. Client filesystem and terminal capabilities are not advertised. */
 export class AcpControl implements HarnessControl {
@@ -23,6 +37,7 @@ export class AcpControl implements HarnessControl {
   private opening = false;
   private replaying = false;
   private replayBytes = 0;
+  private lastReplay = 0;
   private active: ActivePrompt | null = null;
   private failure: Error | null = null;
   private catalog: NativeModelCatalog = { models: [], defaultModel: null, authentication: "unknown", canSelect: false };
@@ -32,6 +47,9 @@ export class AcpControl implements HarnessControl {
   private modelConfigId: string | null = null;
   private legacyModels = false;
   private readonly openingMetadata: Record<string, unknown>[] = [];
+  /** Updates outside any active prompt (autonomous native follow-ups); never attributed to a public Run. */
+  private unattributed = 0;
+  get unattributedUpdates(): number { return this.unattributed; }
 
   constructor(launch: ControlLaunch, private readonly options: ControlOptions) {
     if (launch.protocol !== "acp-v1") throw new ControlError("INVALID_INPUT", "ACP control requires an ACP launch");
@@ -106,7 +124,9 @@ export class AcpControl implements HarnessControl {
           for (const value of options) { const model = object(value, "model value"); models.push({ id: string(model.value, "model value", 1024), name: string(model.name, "model name", 1024) }); }
           if (models.length > 4096) throw new ControlError("MODEL_LIMIT", "native models exceed catalog budget");
         }
-        if (new Set(models.map(row => row.id)).size !== models.length || !models.some(row => row.id === selected)) throw new ControlError("INVALID_PROTOCOL", "ACP models have duplicate or unknown default values");
+        if (new Set(models.map(row => row.id)).size !== models.length) throw new ControlError("INVALID_PROTOCOL", "ACP models have duplicate values");
+        // A resumed or natively switched session can run a model its picker does not list; keep the actual value.
+        if (!models.some(row => row.id === selected)) models.push({ id: selected, name: selected });
         this.modelConfigId = id; this.legacyModels = false;
         this.catalog = { ...this.catalog, models, defaultModel: selected, authentication: "unknown", canSelect: true }; return;
       }
@@ -141,12 +161,14 @@ export class AcpControl implements HarnessControl {
         const session = this.capabilities.sessionCapabilities == null ? {} : object(this.capabilities.sessionCapabilities, "native session capabilities");
         method = session.resume !== undefined ? "session/resume" : this.capabilities.loadSession === true ? "session/load" : "";
         if (!method) throw new ControlError("NATIVE_RESUME_UNAVAILABLE", "installed Harness did not advertise native recovery");
-        this.conversation = nativeConversationId(checkpoint); this.replaying = true;
+        this.conversation = nativeConversationId(checkpoint); this.replaying = true; this.lastReplay = Date.now();
       }
-      const response = object(await this.rpc.request(method, { ...await this.sessionParameters(cwd), ...(checkpoint === undefined ? {} : { sessionId: this.conversation }) }), "native session setup result");
+      const setup = Math.max(this.options.requestTimeoutMs, Math.min(SESSION_SETUP_MS, this.options.runTimeoutMs));
+      const response = object(await this.rpc.request(method, { ...await this.sessionParameters(cwd), ...(checkpoint === undefined ? {} : { sessionId: this.conversation }) }, setup), "native session setup result");
       if (checkpoint === undefined) this.conversation = nativeConversationId(response.sessionId);
       else if (response.sessionId !== undefined && response.sessionId !== this.conversation) throw new ControlError("IDENTITY_MISMATCH", "native restore changed the owned session identity");
       if (this.conversation === null) throw new ControlError("IDENTITY_MISMATCH", "native setup did not establish an owned conversation");
+      if (method === "session/load") for (const deadline = Date.now() + REPLAY_SETTLE_MS; Date.now() - this.lastReplay < REPLAY_QUIET_MS && Date.now() < deadline;) await new Promise(resolve => setTimeout(resolve, REPLAY_QUIET_MS));
       this.replaying = false;
       this.readModels(response); this.configuredDefault=this.catalog.defaultModel;
       for (const params of this.openingMetadata.splice(0)) this.notification("session/update", params);
@@ -238,22 +260,28 @@ export class AcpControl implements HarnessControl {
     }
     this.scope(params);
     if (this.replaying) {
+      this.lastReplay = Date.now();
       this.replayBytes += Buffer.byteLength(JSON.stringify(params));
       if (this.replayBytes > 64 * 1024 * 1024) throw new ControlError("REPLAY_LIMIT", "native history replay exceeded its budget");
       if (!metadataUpdates.has(kind)) return;
     }
     if (kind === "config_option_update") { this.readModels(update); return; }
     if (kind === "available_commands_update") {
-      if (!Array.isArray(update.availableCommands) || update.availableCommands.length > 256) throw new ControlError("INVALID_PROTOCOL", "native commands exceed their budget");
-      this.catalog = { ...this.catalog, commands: update.availableCommands.map(value => { const command = object(value, "native command"); return { name: string(command.name, "native command name", 128), description: typeof command.description === "string" ? text(command.description, "native command description").slice(0,4096) : "" }; }) }; return;
+      if (!Array.isArray(update.availableCommands) || update.availableCommands.length > MAX_NATIVE_COMMANDS) throw new ControlError("INVALID_PROTOCOL", "native commands exceed their budget");
+      this.catalog = { ...this.catalog, commands: update.availableCommands.map(value => { const command = object(value, "native command"); return { name: string(command.name, "native command name", 256), description: typeof command.description === "string" ? text(command.description, "native command description").slice(0, 1024) : "" }; }) }; return;
     }
     if (kind === "current_mode_update") { const mode = string(update.currentModeId, "current native mode", 128); this.catalog = { ...this.catalog, options: this.catalog.options?.map(option => option.id === "__mode" ? { ...option, currentValue: mode } : option) ?? [] }; return; }
     if (metadataUpdates.has(kind)) return;
     const active = this.active;
-    if (!active || active.settled) throw new ControlError("INVALID_STATE", "ACP output arrived without an active prompt");
+    // Native agents can stream autonomous follow-ups (background task completions, late frames) between
+    // prompts. They belong to no public Run, so they are counted and never attributed to another Turn.
+    if (!active || active.settled) { this.unattributed++; return; }
     if (kind === "agent_message_chunk" || kind === "agent_thought_chunk" || kind === "user_message_chunk") {
       const content = object(update.content, "ACP message content");
-      if (content.type !== "text") throw new ControlError("UNSUPPORTED_CONTENT", "this control slice supports text content only");
+      if (content.type !== "text") {
+        if (kind !== "user_message_chunk") active.event({ type: "diagnostic", message: "Harness returned " + string(content.type, "ACP content type", 64) + " content that this Hub version does not display yet" });
+        return;
+      }
       const value = text(content.text, "ACP text chunk");
       if (kind === "agent_message_chunk") active.event({ type: "text", text: value });
       if (kind === "agent_thought_chunk") active.event({ type: "thinking", text: value });
@@ -261,13 +289,12 @@ export class AcpControl implements HarnessControl {
     }
     if (kind === "tool_call" || kind === "tool_call_update") {
       const toolId = string(update.toolCallId, "tool call identity");
+      // Agents may announce a call from a permission request and again from the model stream, or update a call
+      // first seen in a replay window. Identity is merged within this prompt; it never crosses prompts.
       const prior = active.tools.get(toolId);
-      if (kind === "tool_call" && prior) throw new ControlError("DUPLICATE_TOOL", "ACP repeated a tool call identity");
-      if (kind === "tool_call_update" && !prior) throw new ControlError("IDENTITY_MISMATCH", "ACP updated an unknown tool call");
-      if (!prior && active.tools.size >= 128) throw new ControlError("TOOL_LIMIT", "tool identity budget exhausted");
-      const title = update.title === undefined && prior ? prior.title : string(update.title, "tool title", 4096);
-      const status = update.status === undefined ? (prior?.status ?? "pending") : string(update.status, "tool status");
-      if (!["pending", "in_progress", "completed", "failed"].includes(status)) throw new ControlError("INVALID_PROTOCOL", "unknown tool status");
+      if (!prior && active.tools.size >= MAX_PROMPT_TOOLS) throw new ControlError("TOOL_LIMIT", "tool identity budget exhausted");
+      const title = update.title == null ? prior?.title ?? "工具调用" : label(update.title, prior?.title ?? "工具调用");
+      const status = update.status == null ? (prior?.status ?? "pending") : string(update.status, "tool status", 64);
       active.tools.set(toolId, { title, status });
       active.event({ type: "tool", id: toolId, title, status }); return;
     }
@@ -277,7 +304,8 @@ export class AcpControl implements HarnessControl {
     if (request.method !== "session/request_permission") throw new ControlError("METHOD_NOT_FOUND", "client capability is not implemented");
     const params = object(request.params, "ACP permission params"); this.scope(params);
     const active = this.active;
-    if (!active || active.settled) throw new ControlError("INVALID_STATE", "permission arrived without an active prompt");
+    // No public Run owns an autonomous follow-up, so nobody can approve it: cancel instead of tearing down the connection.
+    if (!active || active.settled) { this.unattributed++; return { outcome: { outcome: "cancelled" } }; }
     const tool = object(params.toolCall, "permission tool call");
     string(tool.toolCallId, "permission tool identity");
     if (!Array.isArray(params.options) || params.options.length === 0 || params.options.length > 32)

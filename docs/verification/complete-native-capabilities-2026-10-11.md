@@ -53,3 +53,7 @@ ACP原接口声明的image/audio/embeddedContext只说明原Harness有该接口�
 旧服务空闲后正常停止，备份v5业务库及管理库后在同data根启动v6。备份路径保存在忽略文件`.tmp/native-v6-backup-path.txt`；`.tmp/native-v6-live-migration-proof.json`确认schema6、会话数量与全部旧历史/水位/命令/Run逐项不变。
 
 原对话第13和14轮均由原OpenClaw/DeepSeek Chat/low正确回复「你好」；第14轮sourceRunIds为空，通过已有原生会话接续。ready绑定保留，Session open。见`.tmp/native-v6-live-replies.json`及`.tmp/native-v6-live-settings.png`。最终4份模型配置摘要再次相同，见`.tmp/native-v6-live-config-proof.json`。原来的失败记录没有删除，界面可继续使用。
+
+## 后续验收
+
+本记录中“OpenCode 真实恢复验收仍待补”已由[第二轮验收](native-capabilities-round2-2026-10-11.md)补齐（新的 Hub owner 下 `resumed=true`、`sourceRunIds=[]`、正确复述标记）。逐 Harness 能力与验收状态此后以[能力矩阵](native-capability-matrix.md)为准；本记录的原有结论与失败事实保持不变。

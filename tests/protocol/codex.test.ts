@@ -66,7 +66,13 @@ test("Codex approvals arriving during interruption return cancel", async () => {
     assert.ok(events.some(event => event.type === "permission" && event.decision === "cancelled"));
   } finally { await driver.close(); }
 });
-for (const [scenario, expected] of [["wrong-identity", /another thread/], ["wrong-turn", /identity changed/],
+// app-server attaches every connection to every thread it creates, so another thread's output is ignored, never attributed.
+test("Codex never attributes output of a thread it does not own", async () => {
+  const driver = control("wrong-identity", {}, { runTimeoutMs: 100 }), events: ControlEvent[] = [];
+  try { const id = await ready(driver), run = await driver.startText(id, "hello", event => events.push(event)); await assert.rejects(run.result, /deadline/); assert.equal(events.some(event => event.type === "text"), false); }
+  finally { assert.equal((await driver.close()).closed, true); }
+});
+for (const [scenario, expected] of [["wrong-turn", /identity changed/],
   ["duplicate-permission", /repeated an RPC request/], ["exit-zero", /exited/], ["no-settlement", /deadline/]])
   test(`Codex rejects ${scenario} and awaits cleanup`, async () => {
     const driver = control(scenario as string, {}, { runTimeoutMs: 100 });
@@ -156,4 +162,28 @@ test("Codex native questions return actual option labels and freeform values, an
     const frames = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line));
     assert.deepEqual(frames.find(frame => frame.id === "native-question").result, { answers: { "native-choice": { answers: ["Second"] }, "native-text": { answers: ["synthetic answer\nsecond line"] } } });
   } finally { await driver.close(); await rm(root, { recursive: true, force: true }); }
+});
+test("Codex ignores attached foreign threads, surfaces sub-agent approvals and never approves unrelated work", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-codex-foreign-")), trace = join(directory, "trace");
+  const driver = control("foreign-thread", { FIXTURE_TRACE: trace });
+  try {
+    const id = await ready(driver); driver.enablePermissions(); const events: ControlEvent[] = [];
+    const run = await driver.startText(id, "delegate", event => events.push(event));
+    assert.deepEqual(await run.result, { status: "completed", reason: "completed" });
+    assert.deepEqual(events.filter(event => event.type === "text").map(event => event.type === "text" ? event.text : ""), ["你好 fixture"]);
+    const asked = events.flatMap(event => event.type === "permission_requested" ? [event] : []);
+    assert.deepEqual(asked.map(event => [event.id, event.title]), [["child-approval", "子 Agent · ls"]]);
+    // close() ends input and awaits the peer, so every answer written before it is in the trace.
+    assert.equal((await driver.close()).protocolFailure, null);
+    const wire = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { id?: unknown; result?: unknown });
+    assert.deepEqual(wire.find(row => row.id === "unrelated-approval")?.result, { decision: "decline" });
+    assert.deepEqual(wire.find(row => row.id === "child-approval")?.result, { decision: "cancel" });
+  } finally { await driver.close(); await rm(directory, { recursive: true, force: true }); }
+});
+test("Codex classifies failures by native codexErrorInfo before message text", async () => {
+  const driver = control("typed-failure");
+  try {
+    const result = await (await driver.startText(await ready(driver), "hello", () => {})).result;
+    assert.equal(result.status, "failed"); assert.equal(result.error?.code, "NATIVE_QUOTA_EXCEEDED");
+  } finally { await driver.close(); }
 });

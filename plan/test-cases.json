@@ -6558,6 +6558,96 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/protocol/codex.test.ts"
+    },
+    {
+      "id": "G032-NC4",
+      "task": "G032",
+      "requirements": [
+        "R25",
+        "R11"
+      ],
+      "invariants": [
+        "INV-04",
+        "INV-09"
+      ],
+      "layer": "protocol",
+      "scenario": "ACP迟到/自主输出、未归属权限请求、重复或未宣告工具id、多行标题、列表外模型值、非文本块、load后回放",
+      "expected": "归一化且绝不归属到其他Run；迟到权限以cancelled应答；连接不中断；回放不进入新回复",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/acp.test.ts"
+    },
+    {
+      "id": "G032-NC5",
+      "task": "G032",
+      "requirements": [
+        "R12",
+        "R25"
+      ],
+      "invariants": [
+        "INV-05",
+        "INV-16"
+      ],
+      "layer": "protocol",
+      "scenario": "Pi0.85.1编辑器prefill/value、带timeout对话框、扩展命令无运行、terminate结束、档位来源；Cursor全局模型写",
+      "expected": "按原生字段往返；到期撤回问题且拒绝迟到回答；按原生状态结算；不加载Pi内部JS；Cursor模型只读且不发送set_config_option",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/pi.test.ts"
+    },
+    {
+      "id": "G034-NC4",
+      "task": "G034",
+      "requirements": [
+        "R11",
+        "R25"
+      ],
+      "invariants": [
+        "INV-04",
+        "INV-18"
+      ],
+      "layer": "protocol",
+      "scenario": "app-server附着的子Agent/外部线程通知与审批、类型化codexErrorInfo失败",
+      "expected": "外部线程输出不归属；子线程审批交给用户；无关线程审批decline；失败按类型分类",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/codex.test.ts"
+    },
+    {
+      "id": "G028-NC3",
+      "task": "G028",
+      "requirements": [
+        "R11",
+        "R14"
+      ],
+      "invariants": [
+        "INV-06",
+        "INV-20"
+      ],
+      "layer": "integration",
+      "scenario": "原生撤回待决问题；单回合工具数超过公开摘要预算",
+      "expected": "permission.closed先提交、迟到回答拒绝；超出预算不失败、Runtime不进入致命状态",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/session-runtime.test.ts"
+    },
+    {
+      "id": "G060-NC1",
+      "task": "G060",
+      "requirements": [
+        "R04",
+        "R24"
+      ],
+      "invariants": [
+        "INV-16",
+        "INV-22"
+      ],
+      "layer": "e2e",
+      "scenario": "本机原安装跨Hub owner重启的原生恢复与只读目录审计",
+      "expected": "真实原程序回复来自恢复的原生上下文、sourceRunIds为空、回放不混入、原模型配置不变；目录审计不发提示词并确认清理",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/real/native-resume.real.ts"
     }
   ]
 }

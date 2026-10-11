@@ -6,6 +6,8 @@ import test from "node:test";
 import type { ControlEvent, ControlOptions } from "../../src/contracts/control.js";
 import { AcpControl } from "../../src/adapters/control/acp.js";
 import { OpenClawControl } from "../../src/adapters/control/factory.js";
+import { CursorControl } from "../../src/adapters/control/cursor.js";
+import { ControlError } from "../../src/infrastructure/control/json-rpc-process.js";
 import { bindNativeDependencies } from "../../src/adapters/control/native-dependencies.js";
 
 const options: ControlOptions = { cwd: process.cwd(), env: {}, requestTimeoutMs: 1000, runTimeoutMs: 1500,
@@ -221,4 +223,59 @@ for (const scenario of ["basic", "resume-fails", "resume-wrong-identity"]) test(
   const driver = control(scenario);
   try { await driver.initialize(); await assert.rejects(driver.open(process.cwd(), undefined, undefined, "session-fixture")); }
   finally { assert.equal((await driver.close()).closed, true); }
+});
+
+test("ACP autonomous output after a prompt is never attributed and its permission request is cancelled without tearing down", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-acp-late-")), trace = join(directory, "trace");
+  const driver = control("late-output", { FIXTURE_TRACE: trace });
+  try {
+    const id = await ready(driver), events: ControlEvent[] = [];
+    assert.deepEqual(await (await driver.startText(id, "hello", event => events.push(event))).result, { status: "completed", reason: "end_turn" });
+    await new Promise(resolve => setTimeout(resolve, 80));
+    assert.deepEqual(events.filter(event => event.type === "text").map(event => event.type === "text" ? event.text : ""), ["你好 fixture"]);
+    const wire = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { id?: unknown; result?: unknown });
+    assert.deepEqual(wire.find(row => row.id === "late-permission")?.result, { outcome: { outcome: "cancelled" } });
+    assert.equal(driver.unattributedUpdates, 2);
+    assert.equal((await driver.close()).protocolFailure, null);
+  } finally { await driver.close(); await rm(directory, { recursive: true, force: true }); }
+});
+test("ACP keeps a resumed model that its picker does not list instead of failing the session", async () => {
+  const driver = control("unlisted-model");
+  try {
+    await ready(driver); const catalog = await driver.models();
+    assert.ok(catalog.models.some(row => row.id === "resumed-unlisted")); assert.equal((await driver.close()).protocolFailure, null);
+  } finally { await driver.close(); }
+});
+test("ACP merges repeated tool identities, sanitizes multi-line titles and survives non-text message content", async () => {
+  const driver = control("tool-merge");
+  try {
+    const id = await ready(driver), events: ControlEvent[] = [];
+    assert.equal((await (await driver.startText(id, "hello", event => events.push(event))).result).status, "completed");
+    const tools = events.flatMap(event => event.type === "tool" ? [event] : []);
+    assert.deepEqual(tools.map(tool => [tool.id, tool.title, tool.status]), [["merged", "printf 'a' printf 'b'", "pending"], ["merged", "printf 'a' printf 'b'", "pending"], ["late-announced", "工具调用", "completed"]]);
+    assert.ok(events.some(event => event.type === "diagnostic" && event.message.includes("image")));
+    assert.ok(events.some(event => event.type === "text"));
+    assert.equal((await driver.close()).protocolFailure, null);
+  } finally { await driver.close(); }
+});
+
+test("ACP keeps trailing session/load history out of the next reply", async () => {
+  const driver = control("load-trailing-replay");
+  try {
+    await driver.initialize(); const id = await driver.open(process.cwd(), undefined, undefined, "session-fixture"), events: ControlEvent[] = [];
+    assert.equal((await (await driver.startText(id, "hello", event => events.push(event))).result).status, "completed");
+    assert.deepEqual(events.filter(event => event.type === "text").map(event => event.type === "text" ? event.text : ""), ["你好 fixture"]);
+  } finally { await driver.close(); }
+});
+test("Cursor exposes its native models read-only and never performs the global model switch", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-cursor-")), trace = join(directory, "trace");
+  const launch = { protocol: "acp-v1" as const, executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "native-models"], env: { FIXTURE_TRACE: trace } };
+  const reader = new CursorControl(launch, options), driver = new CursorControl(launch, options);
+  try {
+    await reader.initialize(); await reader.open(process.cwd()); const catalog = await reader.models();
+    assert.equal(catalog.canSelect, false); assert.equal(catalog.selectionError?.code, "NATIVE_MODEL_SWITCH_GLOBAL"); assert.ok(catalog.models.length > 0);
+    await driver.initialize(); await assert.rejects(driver.open(process.cwd(), "native-model-b"), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_MODEL_SWITCH_GLOBAL");
+    const wire = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { method?: string });
+    assert.equal(wire.filter(row => row.method === "session/set_config_option" || row.method === "session/set_model").length, 0);
+  } finally { await reader.close(); await driver.close(); await rm(directory, { recursive: true, force: true }); }
 });

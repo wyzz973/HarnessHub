@@ -1,5 +1,7 @@
 # 工程文档与阅读顺序
 
+最新：[逐Harness原生能力矩阵](verification/native-capability-matrix.md)（生成自`plan/native-capabilities.json`）、[七个原安装能力面调研](research/native-capability-surfaces-2026-10-11.md)、[ADR-021](decisions/0021-native-profile-and-deviation-tolerance.md)与[第二轮验收](verification/native-capabilities-round2-2026-10-11.md)。原生配置来源透传、原生偏差归一、不代为执行全局写；完整能力仍进行中。
+
 最新全部Harness原生能力标准：[ADR-020](decisions/0020-complete-native-harness-capabilities.md)、[逐Harness能力清单与本轮恢复证据](verification/complete-native-capabilities-2026-10-11.md)。完整能力仍进行中，原生绑定/增量恢复已实现，业务库为v6。
 
 当前以本机MVP切片推进；完整蓝图按各自状态管理。ADR-008/009/010/011/012及对应本机契约已认可，目录、控制和公共Session/静止切换已实现；本机Provider和HTTP/工作台按ADR-011实现；完整未来代理账本/自动路由等仍proposed。

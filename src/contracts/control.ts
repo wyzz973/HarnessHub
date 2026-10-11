@@ -19,6 +19,8 @@ export interface ControlOptions {
   readonly maxFrameBytes: number;
   readonly maxDiagnosticBytes: number;
   readonly closeGraceMs: number;
+  /** Cumulative inbound+outbound bytes for one connection; defaults to the native-turn budget. */
+  readonly maxWireBytes?: number;
 }
 export interface ProtocolObservation {
   readonly protocol: ControlProtocol;

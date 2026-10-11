@@ -18,6 +18,8 @@ export const MAX_EVENT_BYTES = 2 * 1024 * 1024 + 4096;
 export const MAX_EVENT_LOG_BYTES = 32 * 1024 * 1024;
 export const MAX_READ_BYTES = 8 * 1024 * 1024;
 export const MAX_READ_ITEMS = 100;
+/** Public tool summaries per Run; later native tools stay in the Harness and are not attributed. */
+export const MAX_RUN_TOOLS = 128;
 const statuses: readonly RunStatus[] = ["queued", "preparing", "running", "settling", "completed", "cancelled", "failed", "unknown"];
 const terminalStatuses: readonly RunStatus[] = ["completed", "cancelled", "failed", "unknown"];
 export function terminal(status: RunStatus): boolean { return terminalStatuses.includes(status); }
@@ -104,7 +106,7 @@ function publicRun(value: unknown): PublicRun {
     contextThroughSeq: number(item.contextThroughSeq, "contextThroughSeq"), sourceRunIds: array(item.sourceRunIds, "sourceRunIds", MAX_RUNS, runId),
     backend: backend(item.backend), cleanup: cleanup(item.cleanup), error: fault(item.error), stopRequested: boolean(item.stopRequested, "stopRequested"),
     ...(item.thinking === undefined ? {} : { thinking: text(item.thinking, "native thinking", MAX_OUTPUT_BYTES, true) }),
-    ...(item.tools === undefined ? {} : { tools: array(item.tools, "native tools", 128, value => { const row = record(value, "native tool"); keys(row,["id","title","status"],"native tool"); return { id: text(row.id,"tool identity",512), title: text(row.title,"tool title",4096), status: text(row.status,"tool status",128) }; }) }),
+    ...(item.tools === undefined ? {} : { tools: array(item.tools, "native tools", MAX_RUN_TOOLS, value => { const row = record(value, "native tool"); keys(row,["id","title","status"],"native tool"); return { id: text(row.id,"tool identity",512), title: text(row.title,"tool title",4096), status: text(row.status,"tool status",128) }; }) }),
     awaitingSwitchId: item.awaitingSwitchId === null ? null : switchId(item.awaitingSwitchId) };
 }
 function publicMessage(value: unknown): PublicMessage {

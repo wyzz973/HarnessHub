@@ -216,6 +216,62 @@ class DesignChecks(unittest.TestCase):
         errors = self.file_fixture_errors(mutate)
         self.assertTrue(any("lacks task ownership" in item for item in errors))
 
+    def matrix(self):
+        complete = {"native": "yes", "source": "native schema", "hub": "done", "protocol": "pass", "real": "pass", "evidence": [".tmp/real.json"], "note": ""}
+        absent = {"native": "no", "source": "native schema", "hub": "n/a", "protocol": "n/a", "real": "n/a", "evidence": [], "note": ""}
+        return {"version": 1, "features": [{"id": "models", "group": "配置", "title": "模型"}, {"id": "audio", "group": "输入", "title": "音频"}],
+                "harnesses": [{"id": "fixture", "name": "Fixture", "installation": "1.0", "control": "acp-v1",
+                               "capabilities": {"models": complete, "audio": absent}}]}
+
+    def matrix_rejected(self, mutate, expected):
+        value = self.matrix(); mutate(value)
+        errors = checker.check_capabilities(value)
+        self.assertTrue(any(expected in item for item in errors), errors)
+
+    def test_accepts_valid_capability_matrix(self):
+        self.assertEqual(checker.check_capabilities(self.matrix()), [])
+        view = checker.render_capabilities(self.matrix())
+        self.assertIn("| 配置 | 模型 | ✅ |", view)
+        self.assertIn("| 输入 | 音频 | — |", view)
+
+    def test_rejects_missing_capability_cell(self):
+        self.matrix_rejected(lambda m: m["harnesses"][0]["capabilities"].pop("audio"), "cover exactly")
+
+    def test_rejects_real_pass_without_evidence(self):
+        self.matrix_rejected(lambda m: m["harnesses"][0]["capabilities"]["models"].update(evidence=[]), "needs evidence")
+
+    def test_rejects_completion_without_protocol_test(self):
+        self.matrix_rejected(lambda m: m["harnesses"][0]["capabilities"]["models"].update(protocol="none"), "needs protocol verification")
+
+    def test_rejects_implemented_absent_capability(self):
+        self.matrix_rejected(lambda m: m["harnesses"][0]["capabilities"]["audio"].update(hub="done", protocol="pass"), "absent native capability")
+
+    def test_rejects_unknown_native_claimed_done(self):
+        self.matrix_rejected(lambda m: m["harnesses"][0]["capabilities"]["models"].update(native="unknown"), "unknown native capability")
+
+    def test_rejects_blocked_without_reason(self):
+        self.matrix_rejected(lambda m: m["harnesses"][0]["capabilities"]["models"].update(real="blocked"), "needs a reason")
+
+    def test_rejects_native_claim_without_source(self):
+        self.matrix_rejected(lambda m: m["harnesses"][0]["capabilities"]["models"].update(source=""), "needs a source")
+
+    def test_rejects_invalid_capability_level(self):
+        self.matrix_rejected(lambda m: m["harnesses"][0]["capabilities"]["models"].update(real="green"), "invalid capability level")
+
+    def test_rejects_escaping_capability_evidence(self):
+        self.matrix_rejected(lambda m: m["harnesses"][0]["capabilities"]["models"].update(evidence=["../outside.json"]), "project-relative")
+
+    def test_rejects_missing_repository_evidence(self):
+        value = self.matrix(); value["harnesses"][0]["capabilities"]["models"]["evidence"] = ["docs/missing.md"]
+        with TemporaryDirectory(prefix="harness-matrix-") as directory:
+            errors = checker.check_capabilities(value, Path(directory))
+        self.assertTrue(any("evidence path is missing" in item for item in errors), errors)
+
+    def test_partial_hub_never_renders_complete(self):
+        value = self.matrix(); value["harnesses"][0]["capabilities"]["models"]["hub"] = "partial"
+        self.assertEqual(checker.check_capabilities(value), [])
+        self.assertIn("| 配置 | 模型 | ◑ |", checker.render_capabilities(value))
+
     def test_cli_returns_nonzero_for_invalid_plan(self):
         with TemporaryDirectory(prefix="harness-design-cli-") as directory:
             root = Path(directory)

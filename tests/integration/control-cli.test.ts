@@ -193,8 +193,9 @@ test("formal CLI default reuses the native host profile without forwarding unrel
   assert.ok("hostSecretPresent" in capture && capture.hostSecretPresent === false);
   assert.ok("bindingValue" in capture && capture.bindingValue === "explicit-binding");
   assert.equal("claudeHome" in capture, false, "an unset native CLAUDE_CONFIG_DIR must remain unset to preserve ~/.claude.json login");
-  for (const [field, suffix] of [["codexHome", ".codex"], ["opencodeHome", ".config/opencode"], ["config", ".config"]] as const)
-    assert.equal(field in capture ? capture[field as keyof typeof capture] : undefined, join(f.hostHome, suffix));
+  // Unset profile variables stay unset, as in the user's own terminal: a synthesized XDG_CONFIG_HOME moves Cursor from
+  // ~/.cursor to ~/.config/cursor, and a catalog descriptor must not redirect any native profile either.
+  for (const field of ["codexHome", "opencodeHome", "config"] as const) assert.equal(field in capture, false, field + " must follow the native program default");
   assert.equal(await readFile(hostConfig, "utf8"), "unchanged private user fixture\n");
   assert.equal((await stat(home)).isDirectory(), true);
   await assert.rejects(() => stat(cwd), (error: unknown) => errorCode(error) === "ENOENT");

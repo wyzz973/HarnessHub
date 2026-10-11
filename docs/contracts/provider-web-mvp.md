@@ -71,3 +71,5 @@ HTTP body≤128KiB、response≤8MiB、资产≤4MiB、并发请求≤16、连�
 `POST /api/v1/sessions/:id/permissions/:permissionId`接受optionId、commandId和可选input，使用既有Origin/CSRF保护。只有当前Run实际待决的原生选项可回复；公开DTO包含待决requests，刷新/SSE恢复同一问题。用户决定先持久记录，命令重试不重复回传；无后端确认时明确backendAcknowledged=false。取消、结束和关闭释放问题。Pi confirm/select/input/editor在统一界面呈现；原生思考/工具活动来自实际事件。文本之外的输入、原生checkpoint和持久后台任务尚未完整验收。
 
 ADR-020追加`POST /api/v1/sessions/:id/native-branch`，接受epoch/commandId；仅空闲及资源已核实的所选原生Harness允许重新建立。原生私有引用保留，公开历史不删除；接口不是原生fork。Web仅投影nativeStates的身份/status，checkpoint隐藏。恢复后的历史回放不创造公共回复，thread级用量元数据不绑定当前Turn。Codex原生问答和密码输入通过既有交互往返，回答正文不写权限事件。
+
+ADR-021：原生配置位置只透传用户环境中真实设置的变量，未设置的由原程序自行解析，目录描述符不能重定向。会改写用户全局默认值的原生设置不由Hub执行：Cursor模型目录只读（`canSelect=false`，`selectionError.code=NATIVE_MODEL_SWITCH_GLOBAL`），固定了Cursor模型的选择在派发前明确失败；会话级设置照常。原生命令目录上限2048项。

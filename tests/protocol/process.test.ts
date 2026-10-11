@@ -80,7 +80,7 @@ test("close owns and terminates descendants in its process group", async () => {
   } finally { await rpc.close(); await rm(directory, { recursive: true, force: true }); }
 });
 test("many valid small frames cannot bypass the cumulative wire budget", async () => {
-  const rpc = peer("flood");
+  const rpc = peer("flood", {}, { maxWireBytes: 16 * 1024 * 1024 });
   try {
     await rpc.request("initialize", {});
     for (let i = 0; i < 100 && !rpc.failure; i++) await new Promise(resolve => setTimeout(resolve, 10));

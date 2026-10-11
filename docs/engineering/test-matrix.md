@@ -345,3 +345,8 @@
 | G008-NC1 | G008 | integration | 原生绑定恢复、待确认和归属保护；旧v5事务升级到v6及无效回滚 | 正式存储/IPC和原生身份保留；无效或未知明确拒绝，无自动fallback；输入/恢复并不冒充后端达标 | planned |
 | G028-NC2 | G028 | integration | 原生进程重开、A→B→A增量历史、重启、未知拒绝恢复及显式重建 | 正式存储/IPC和原生身份保留；无效或未知明确拒绝，无自动fallback；输入/恢复并不冒充后端达标 | planned |
 | G034-NC3 | G034 | protocol | ACP恢复回放、Codex历史用量不绑定新Turn、Pi原文件恢复和原生问答 | 正式存储/IPC和原生身份保留；无效或未知明确拒绝，无自动fallback；输入/恢复并不冒充后端达标 | planned |
+| G032-NC4 | G032 | protocol | ACP迟到/自主输出、未归属权限请求、重复或未宣告工具id、多行标题、列表外模型值、非文本块、load后回放 | 归一化且绝不归属到其他Run；迟到权限以cancelled应答；连接不中断；回放不进入新回复 | planned |
+| G032-NC5 | G032 | protocol | Pi0.85.1编辑器prefill/value、带timeout对话框、扩展命令无运行、terminate结束、档位来源；Cursor全局模型写 | 按原生字段往返；到期撤回问题且拒绝迟到回答；按原生状态结算；不加载Pi内部JS；Cursor模型只读且不发送set_config_option | planned |
+| G034-NC4 | G034 | protocol | app-server附着的子Agent/外部线程通知与审批、类型化codexErrorInfo失败 | 外部线程输出不归属；子线程审批交给用户；无关线程审批decline；失败按类型分类 | planned |
+| G028-NC3 | G028 | integration | 原生撤回待决问题；单回合工具数超过公开摘要预算 | permission.closed先提交、迟到回答拒绝；超出预算不失败、Runtime不进入致命状态 | planned |
+| G060-NC1 | G060 | e2e | 本机原安装跨Hub owner重启的原生恢复与只读目录审计 | 真实原程序回复来自恢复的原生上下文、sourceRunIds为空、回放不混入、原模型配置不变；目录审计不发提示词并确认清理 | planned |

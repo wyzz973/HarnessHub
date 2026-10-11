@@ -27,7 +27,9 @@
     "test:real:gemini-provider": "pnpm build && node --test dist/tests/real/gemini-provider.real.js",
     "test:real:switch": "pnpm build && node --test dist/tests/real/harness-provider-switch.real.js",
     "test:real:install": "pnpm build && node --test dist/tests/real/managed-install.real.js",
-    "test:real:stream": "pnpm build && node --test dist/tests/real/live-web-stream.real.js"
+    "test:real:stream": "pnpm build && node --test dist/tests/real/live-web-stream.real.js",
+    "test:real:native-resume": "pnpm build && node --test dist/tests/real/native-resume.real.js",
+    "test:real:native-catalog": "pnpm build && node --test dist/tests/real/native-catalog.real.js"
   },
   "devDependencies": {
     "@playwright/test": "1.64.0",

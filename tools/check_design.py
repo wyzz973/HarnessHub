@@ -135,6 +135,138 @@ def check_plan(requirements: dict, task_plan: dict, test_plan: dict) -> list[str
     return errors
 
 
+CAPABILITY_LEVELS = {
+    "native": {"yes", "partial", "no", "unknown"},
+    "hub": {"done", "partial", "none", "n/a"},
+    "protocol": {"pass", "none", "n/a"},
+    "real": {"pass", "partial", "fail", "blocked", "none", "n/a"},
+}
+CAPABILITY_FIELDS = {"native", "source", "hub", "protocol", "real", "evidence", "note"}
+CAPABILITY_VIEW = "docs/verification/native-capability-matrix.md"
+
+
+def check_capabilities(matrix: dict, root: Path | None = None) -> list[str]:
+    """Per-Harness native capability claims. Completion needs native, Hub, protocol and real evidence."""
+    errors: list[str] = []
+    features, harnesses = matrix.get("features"), matrix.get("harnesses")
+    if not isinstance(features, list) or not features or not isinstance(harnesses, list) or not harnesses:
+        return ["capability matrix needs non-empty features and harnesses"]
+    feature_ids: list[str] = []
+    for feature in features:
+        fid = feature.get("id") if isinstance(feature, dict) else None
+        if not isinstance(fid, str) or not re.fullmatch(r"[a-z][a-z0-9-]{1,63}", fid):
+            errors.append("invalid capability feature id: " + str(fid))
+            continue
+        if any(not isinstance(feature.get(field), str) or not feature[field].strip() for field in ["group", "title"]):
+            errors.append("capability feature lacks group/title: " + fid)
+        feature_ids.append(fid)
+    for value, count in Counter(feature_ids).items():
+        if count != 1:
+            errors.append("duplicate capability feature: " + value)
+    harness_ids: list[str] = []
+    for harness in harnesses:
+        hid = harness.get("id") if isinstance(harness, dict) else None
+        if not isinstance(hid, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", hid):
+            errors.append("invalid capability Harness id: " + str(hid))
+            continue
+        harness_ids.append(hid)
+        for field in ["name", "installation", "control"]:
+            if not isinstance(harness.get(field), str) or not harness[field].strip():
+                errors.append(hid + " capability record lacks " + field)
+        cells = harness.get("capabilities")
+        if not isinstance(cells, dict) or set(cells) != set(feature_ids):
+            errors.append(hid + " capabilities must cover exactly the declared features")
+            continue
+        for fid, entry in cells.items():
+            label = hid + "/" + fid
+            if not isinstance(entry, dict) or set(entry) - CAPABILITY_FIELDS:
+                errors.append(label + " has unknown capability fields")
+                continue
+            values = {key: entry.get(key) for key in CAPABILITY_LEVELS}
+            if any(values[key] not in allowed for key, allowed in CAPABILITY_LEVELS.items()):
+                errors.append(label + " has an invalid capability level")
+                continue
+            native, hub, protocol, real = values["native"], values["hub"], values["protocol"], values["real"]
+            evidence, note, source = entry.get("evidence", []), entry.get("note", ""), entry.get("source", "")
+            if not isinstance(evidence, list) or any(not isinstance(item, str) or not item.strip() for item in evidence) or not isinstance(note, str) or not isinstance(source, str):
+                errors.append(label + " has invalid evidence/note/source")
+                continue
+            if native != "unknown" and not source.strip():
+                errors.append(label + " native observation needs a source")
+            if native == "no" and (hub, protocol, real) != ("n/a", "n/a", "n/a"):
+                errors.append(label + " absent native capability cannot be implemented or verified")
+            if hub == "n/a" and native != "no":
+                errors.append(label + " only an absent native capability is not applicable")
+            if native == "unknown" and hub in {"done", "partial"}:
+                errors.append(label + " unknown native capability cannot be claimed implemented")
+            if hub == "done" and protocol != "pass":
+                errors.append(label + " Hub-complete capability needs protocol verification")
+            if protocol == "pass" and hub not in {"done", "partial"}:
+                errors.append(label + " protocol verification needs a Hub implementation")
+            if real in {"pass", "partial"} and hub not in {"done", "partial"}:
+                errors.append(label + " real verification needs a Hub implementation")
+            if real in {"pass", "partial"} and not evidence:
+                errors.append(label + " real verification needs evidence")
+            if real in {"fail", "blocked", "partial"} and not note.strip():
+                errors.append(label + " incomplete real verification needs a reason")
+            for item in evidence:
+                path = PurePosixPath(item.split("#", 1)[0])
+                if path.is_absolute() or ".." in path.parts:
+                    errors.append(label + " evidence must be a project-relative path")
+                elif root is not None and path.parts and path.parts[0] != ".tmp" and not (root / path).exists():
+                    errors.append(label + " evidence path is missing: " + item)
+    for value, count in Counter(harness_ids).items():
+        if count != 1:
+            errors.append("duplicate capability Harness: " + value)
+    return errors
+
+
+def capability_symbol(entry: dict) -> str:
+    native, hub, protocol, real = entry["native"], entry["hub"], entry["protocol"], entry["real"]
+    if native == "no":
+        return "—"
+    if native == "unknown":
+        return "？"
+    if real in {"fail", "blocked"}:
+        return "✕"
+    if native == "yes" and hub == "done" and protocol == "pass" and real == "pass":
+        return "✅"
+    if hub == "none":
+        return "○"
+    if hub == "done" and protocol == "pass":
+        return "◐"
+    return "◑"
+
+
+def render_capabilities(matrix: dict) -> str:
+    features, harnesses = matrix["features"], matrix["harnesses"]
+    lines = ["# 逐Harness原生能力矩阵", "",
+             "生成自 plan/native-capabilities.json；使用 python3 tools/check_design.py --write 更新。设计检查要求每个Harness覆盖全部能力项，"
+             "完整（✅）必须同时满足原接口具备、Hub契约/执行/界面已接出、协议测试通过和本机原安装真实验收通过；其余状态均不算完整接入。", "",
+             "图例：✅ 完整；◐ 已接出并通过协议测试，真实原安装未验收；◑ 部分接出；○ 原接口具备但Hub未接出；✕ 真实验收失败或受阻；— 原接口不提供；？ 未核实。", "",
+             "| 分组 | 能力 | " + " | ".join(cell(item["name"]) for item in harnesses) + " |",
+             "|---|---|" + "---|" * len(harnesses)]
+    for feature in features:
+        lines.append("| " + cell(feature["group"]) + " | " + cell(feature["title"]) + " | " +
+                     " | ".join(capability_symbol(item["capabilities"][feature["id"]]) for item in harnesses) + " |")
+    lines += ["", "| Harness | ✅ | ◐ | ◑ | ○ | ✕ | — | ？ |", "|---|---|---|---|---|---|---|---|"]
+    for item in harnesses:
+        counts = Counter(capability_symbol(item["capabilities"][feature["id"]]) for feature in features)
+        lines.append("| " + cell(item["name"]) + " | " + " | ".join(str(counts.get(symbol, 0)) for symbol in ["✅", "◐", "◑", "○", "✕", "—", "？"]) + " |")
+    names = {"yes": "具备", "partial": "部分", "no": "不提供", "unknown": "未核实", "done": "已接出", "none": "未接出",
+             "n/a": "不适用", "pass": "通过", "fail": "失败", "blocked": "受阻"}
+    for item in harnesses:
+        lines += ["", "## " + item["name"], "", "原安装：" + item["installation"] + "；控制入口：" + item["control"] + "。", "",
+                  "| 能力 | 原接口 | 来源 | Hub | 协议 | 真实原安装 | 证据 | 说明 |", "|---|---|---|---|---|---|---|---|"]
+        for feature in features:
+            entry = item["capabilities"][feature["id"]]
+            lines.append("| " + " | ".join([cell(feature["title"]), names[entry["native"]], cell(entry.get("source", "")) or "—",
+                                             names[entry["hub"]], names[entry["protocol"]],
+                                             "部分通过" if entry["real"] == "partial" else names[entry["real"]],
+                                             cell("；".join(entry.get("evidence", []))) or "—", cell(entry.get("note", "")) or "—"]) + " |")
+    return "\n".join(lines) + "\n"
+
+
 def cell(value: object) -> str:
     return str(value).replace("|", "\\|").replace("\n", " ")
 
@@ -271,10 +403,16 @@ def main() -> int:
         tasks = json.loads((ROOT / "plan/tasks.json").read_text())
         cases = json.loads((ROOT / "plan/test-cases.json").read_text())
         errors = check_plan(requirements, tasks, cases)
+        matrix_file = ROOT / "plan/native-capabilities.json"
+        matrix = json.loads(matrix_file.read_text()) if matrix_file.exists() else None
+        if matrix is not None:
+            errors += check_capabilities(matrix, ROOT)
         if errors:
             print("\n".join(errors), file=sys.stderr)
             return 1
         views = render_views(requirements, tasks, cases)
+        if matrix is not None:
+            views[CAPABILITY_VIEW] = render_capabilities(matrix)
         if args.write:
             for relative, content in views.items():
                 path = ROOT / relative
@@ -288,6 +426,8 @@ def main() -> int:
                           "requirements": len(requirements["requirements"]),
                           "tasks": len(tasks["tasks"]),
                           "planned_test_scenarios": len(cases["cases"]),
+                          "native_capability_cells": sum(len(item["capabilities"]) for item in matrix["harnesses"]) if matrix is not None else 0,
+                          "native_capabilities_complete": sum(1 for item in matrix["harnesses"] for entry in item["capabilities"].values() if capability_symbol(entry) == "✅") if matrix is not None else 0,
                           "application_implementation_allowed": False,
                           "approved_slices": [item["id"] for item in json.loads((ROOT / "plan/slices.json").read_text()).get("slices", []) if item.get("status") == "accepted"] if (ROOT / "plan/slices.json").exists() else [],
                           "runtime_tests_executed_by_this_check": 0,

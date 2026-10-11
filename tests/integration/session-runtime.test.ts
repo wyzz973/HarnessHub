@@ -634,3 +634,40 @@ test("uncertain native dispatch cannot be silently restored after public recover
   assert.equal(app.read(session.id).nativeBindings?.[1]?.status, "ready");
   assert.equal(app.read(session.id).runs[0]?.status, "unknown");
 });
+
+test("a question the Harness withdraws closes its public request and refuses a late answer", { timeout: 10000 }, async t => {
+  const f = await fixture(t), peer = controlled({ holdResult: true }), factory = new ControlledFactory([peer]);
+  const prepare = factory.prepare.bind(factory), asked = new Gate<void>(), withdrawn = new Gate<void>();
+  let emit: ((event: ControlEvent) => void) | null = null;
+  factory.prepare = async (...args) => {
+    const binding = await prepare(...args);
+    return { ...binding, control: { ...binding.control, enablePermissions: () => {}, decidePermission: async () => { throw new SessionError("PERMISSION_UNAVAILABLE", "withdrawn"); },
+      startText: async (id: NativeConversationId, text: string, output: (event: ControlEvent) => void) => { emit = output; const run = await binding.control.startText(id, text, output); output({ type: "permission_requested", id: "native-ui", title: "Timed native dialog", options: [{ id: "yes", name: "Yes" }] }); asked.resolve(); return run; } } };
+  };
+  const events: SessionEvent[] = [], app = runtime(f, factory, event => { events.push(event); if (event.type === "permission.closed") withdrawn.resolve(); });
+  const session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  app.send(session.id, "ask me", "one"); await asked.promise;
+  const [pending] = app.permissionRequests(session.id); assert.ok(pending);
+  emit!({ type: "permission", id: "native-ui", decision: "cancelled" }); await withdrawn.promise;
+  assert.deepEqual(app.permissionRequests(session.id), []);
+  await assert.rejects(app.decidePermission(session.id, pending.id, "yes", "late"), /no longer pending/);
+  peer.result.resolve({ status: "completed", reason: "fixture" }); await app.wait(session.id);
+  assert.equal(events.filter(event => event.type === "permission.closed" && event.data.reason === "cancelled").length, 1);
+  assert.equal(app.read(session.id).runs[0]?.status, "completed");
+});
+
+test("a long native turn beyond the public tool budget completes without blocking the Runtime", { timeout: 10000 }, async t => {
+  const f = await fixture(t), peer = controlled(), factory = new ControlledFactory([peer]), prepare = factory.prepare.bind(factory);
+  factory.prepare = async (...args) => {
+    const binding = await prepare(...args);
+    return { ...binding, control: { ...binding.control, startText: async (id: NativeConversationId, text: string, output: (event: ControlEvent) => void) => {
+      for (let index = 0; index < 140; index++) output({ type: "tool", id: "tool-" + index, title: "step " + index, status: "completed" });
+      return binding.control.startText(id, text, output);
+    } } };
+  };
+  const app = runtime(f, factory), session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  app.send(session.id, "many tools", "one"); await app.wait(session.id);
+  const run = app.read(session.id).runs[0]!;
+  assert.equal(run.status, "completed"); assert.equal(run.tools?.length, 128);
+  app.send(session.id, "still usable", "two"); await app.wait(session.id); assert.equal(app.read(session.id).runs[1]?.status, "completed");
+});

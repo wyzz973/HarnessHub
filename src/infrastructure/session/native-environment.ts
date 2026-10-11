@@ -56,9 +56,21 @@ export function nativeValues(source: NativeEnvironment, explicitHome: string | n
     CLAUDE_CONFIG_DIR: join(explicitHome, "claude"), OPENCODE_CONFIG_DIR: join(explicitHome, "opencode"),
     OPENCLAW_CONFIG_PATH: join(explicitHome, ".openclaw", "openclaw.json") };
 }
-/** An unset native override is meaningful: Claude stores .claude.json outside an explicitly overridden config directory. */
+/** Profile-location variables a native program resolves for itself when they are unset. */
+const PROFILE_VARIABLES = ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "OPENCODE_CONFIG_DIR", "OPENCLAW_CONFIG_PATH"] as const;
+/**
+ * Child-process profile variables. Native mode passes exactly what the user's environment sets: a synthesized default
+ * is not equivalent for every program (Cursor resolves $XDG_CONFIG_HOME/cursor before ~/.cursor; Claude keeps
+ * .claude.json outside an overridden config directory). Explicit private profiles keep their isolated layout.
+ * Hub-side path lookups use nativeValues(), which may resolve defaults without exporting them.
+ */
+export function nativeLaunchValues(source: NativeEnvironment, explicitHome: string | null): Record<string, string> {
+  if (explicitHome !== null) return nativeValues(source, explicitHome);
+  return { HOME: source.home, ...Object.fromEntries(PROFILE_VARIABLES.flatMap(name => { const value = source.values[name]; return value === undefined ? [] : [[name, value] as const]; })) };
+}
+/** A catalog descriptor cannot redirect the user's native profile: unset profile variables stay unset. */
 export function nativeDescriptorValues(source: NativeEnvironment, explicitHome: string | null, descriptor: Readonly<Record<string, string>>): Record<string, string> {
-  const values = { ...descriptor, ...nativeValues(source, explicitHome) };
-  if (explicitHome === null && source.values.CLAUDE_CONFIG_DIR === undefined) delete values.CLAUDE_CONFIG_DIR;
+  const values = { ...descriptor, ...nativeLaunchValues(source, explicitHome) };
+  if (explicitHome === null) for (const name of PROFILE_VARIABLES) if (source.values[name] === undefined) delete values[name];
   return values;
 }

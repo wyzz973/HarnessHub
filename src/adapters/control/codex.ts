@@ -23,6 +23,18 @@ const passiveNotifications = new Set(["thread/started", "thread/status/changed",
   "item/reasoning/summaryTextDelta", "item/reasoning/summaryPartAdded", "item/reasoning/textDelta", "item/commandExecution/outputDelta",
   "item/fileChange/outputDelta", "item/mcpToolCall/progress", "serverRequest/resolved", "warning", "error"]);
 
+/** Typed native failure (codexErrorInfo) first; message text is only a fallback for older servers. */
+function turnFailure(error: Record<string, unknown>): { readonly code: string; readonly message: string } {
+  const info = error.codexErrorInfo, kind = typeof info === "string" ? info : info !== null && typeof info === "object" ? Object.keys(info)[0] : undefined;
+  const message = typeof error.message === "string" ? error.message : "";
+  if (kind === "unauthorized" || kind === undefined && /unauthorized|not logged|authentication|api key|401/iu.test(message)) return { code: "HARNESS_AUTH_REQUIRED", message: "本机 Codex 登录或模型认证不可用，请检查它的登录状态。" };
+  if (kind === "usageLimitExceeded" || kind === "sessionBudgetExceeded") return { code: "NATIVE_QUOTA_EXCEEDED", message: "Codex 账号额度或本会话预算已用完。可等待额度恢复，或选择其他 Harness 继续。" };
+  if (kind === "rateLimitExceeded" || kind === "serverOverloaded" || kind === undefined && /rate limit|quota|429/iu.test(message)) return { code: "MODEL_RATE_LIMIT", message: "模型服务当前达到额度或调用限制，请稍后再试。" };
+  if (kind === "contextWindowExceeded") return { code: "CONTEXT_WINDOW_EXCEEDED", message: "对话已超过模型上下文窗口。可以压缩原生上下文或重新建立原生会话后继续。" };
+  if (kind === "httpConnectionFailed" || kind === "responseStreamConnectionFailed" || kind === "responseStreamDisconnected" || kind === "responseTooManyFailedAttempts") return { code: "NATIVE_CONNECTION_FAILED", message: "Codex 无法连接模型服务。请检查网络或本机配置后重试。" };
+  if (kind === "cyberPolicy" || kind === "misalignmentPolicyViolation") return { code: "MODEL_POLICY_REFUSED", message: "模型服务按其策略拒绝了这次请求。" };
+  return { code: "MODEL_REQUEST_FAILED", message: "Codex 的模型请求未完成，请检查本机配置或更换模型。" };
+}
 /** Codex app-server anti-corruption layer; native thread and turn IDs never become public Session IDs. */
 export class CodexControl implements HarnessControl {
   private readonly rpc: JsonRpcProcess;
@@ -36,6 +48,9 @@ export class CodexControl implements HarnessControl {
   private active: ActiveTurn | null = null;
   private failure: Error | null = null;
   private readonly turnIds = new Set<string>();
+  /** Threads the app-server attached to this connection (sub-agents, reviews, internal workers) with their parent. */
+  private readonly foreignThreads = new Map<string, string | null>();
+  private foreignUpdates = 0;
 
   constructor(launch: ControlLaunch, private readonly options: ControlOptions) {
     if (launch.protocol !== "codex-app-server") throw new ControlError("INVALID_INPUT", "Codex control requires an app-server launch");
@@ -114,9 +129,10 @@ export class CodexControl implements HarnessControl {
         }
       }
       if (checkpoint !== undefined) this.conversation = nativeConversationId(checkpoint);
+      // A cold start or a long thread resume loads native state before answering; bounded by the run budget.
       const response = object(await this.rpc.request(checkpoint === undefined ? "thread/start" : "thread/resume", {
         cwd, ...(checkpoint === undefined ? { ephemeral: false } : { threadId: nativeConversationId(checkpoint), excludeTurns: true }), ...(model === undefined ? {} : { model }),
-      }), "native thread setup result");
+      }, Math.max(this.options.requestTimeoutMs, Math.min(60000, this.options.runTimeoutMs))), "native thread setup result");
       const thread = object(response.thread, "Codex thread");
       const received = nativeConversationId(thread.id);
       if (checkpoint !== undefined && received !== checkpoint) throw new ControlError("IDENTITY_MISMATCH", "native restore returned a different thread");
@@ -199,13 +215,38 @@ export class CodexControl implements HarnessControl {
     if (params.turnId !== undefined) string(params.turnId, "Codex metadata turn identity");
     return this.active;
   }
+  private foreign(id: string, parent: string | null): void {
+    if (!this.foreignThreads.has(id) && this.foreignThreads.size >= 1024) throw new ControlError("THREAD_LIMIT", "foreign Codex thread budget exhausted");
+    if (!this.foreignThreads.has(id) || parent !== null) this.foreignThreads.set(id, parent);
+  }
+  /** A sub-agent spawned (directly or transitively) by the owned thread works for the active public Run. */
+  private descendant(id: string): boolean {
+    let parent = this.foreignThreads.get(id) ?? null;
+    for (let depth = 0; parent !== null && depth < 32; depth++) { if (parent === this.conversation) return true; parent = this.foreignThreads.get(parent) ?? null; }
+    return false;
+  }
+  /** Request owner: the active Turn for the owned thread or its sub-agents; unrelated workers are never approved for the user. */
+  private requestOwner(params: Record<string, unknown>): ActiveTurn | null {
+    const thread = string(params.threadId, "Codex thread identity");
+    if (this.conversation !== null && thread !== this.conversation) {
+      this.foreign(thread, null);
+      return this.descendant(thread) && this.active !== null && !this.active.settled ? this.active : null;
+    }
+    const active = this.scope(params, true);
+    if (!active) throw new ControlError("INVALID_STATE", "request arrived without an active turn");
+    return active;
+  }
   private notification(method: string, raw: unknown): void {
     const params = raw === undefined ? {} : object(raw, "Codex notification params");
     if (method === "thread/started") {
       const thread = object(params.thread, "started thread"); const id = nativeConversationId(thread.id);
-      if (!this.opening && id !== this.conversation) throw new ControlError("IDENTITY_MISMATCH", "unsolicited Codex thread");
-      if (this.conversation && this.conversation !== id) throw new ControlError("IDENTITY_MISMATCH", "started thread identity changed");
-      this.conversation = id; return;
+      if (this.opening && this.conversation === null) { this.conversation = id; return; }
+      if (id === this.conversation) return;
+      // app-server attaches every connection to every thread it creates; ownership stays with the thread/start response.
+      this.foreign(id, typeof thread.parentThreadId === "string" ? thread.parentThreadId : null); return;
+    }
+    if (this.conversation !== null && typeof params.threadId === "string" && params.threadId !== this.conversation) {
+      this.foreign(params.threadId, null); this.foreignUpdates++; return;
     }
     if (method === "turn/started" || method === "turn/completed") {
       const turn = object(params.turn, "Codex turn notification");
@@ -219,11 +260,7 @@ export class CodexControl implements HarnessControl {
         case "interrupted": result = { status: "cancelled", reason: "interrupted" }; break;
         case "failed": {
           const error = turn.error == null ? {} : object(turn.error, "native turn error");
-          const message = typeof error.message === "string" ? error.message : "";
-          const auth = /unauthorized|not logged|authentication|api key|401/iu.test(message);
-          const rate = /rate limit|quota|429/iu.test(message);
-          result = { status: "failed", reason: "failed", error: { code: auth ? "HARNESS_AUTH_REQUIRED" : rate ? "MODEL_RATE_LIMIT" : "MODEL_REQUEST_FAILED",
-            message: auth ? "本机 Codex 登录或模型认证不可用，请检查它的登录状态。" : rate ? "模型服务当前达到额度或调用限制，请稍后再试。" : "Codex 的模型请求未完成，请检查本机配置或更换模型。" } }; break;
+          result = { status: "failed", reason: "failed", error: turnFailure(error) }; break;
         }
         default: throw new ControlError("INVALID_PROTOCOL", "turn/completed contains a nonterminal status");
       }
@@ -272,8 +309,9 @@ export class CodexControl implements HarnessControl {
     if (!["item/commandExecution/requestApproval", "item/fileChange/requestApproval"].includes(request.method))
       throw new ControlError("METHOD_NOT_FOUND", "client capability is not implemented");
     const params = object(request.params, "Codex approval params");
-    const active = this.scope(params, true);
-    if (!active) throw new ControlError("INVALID_STATE", "approval arrived without an active turn");
+    const active = this.requestOwner(params);
+    // Work outside the owned thread tree (internal reviewers, other clients' threads) is never approved for the user.
+    if (!active) return { decision: "decline" };
     string(params.itemId, "approval item identity");
     if (this.interactivePermissions && !active.stopping) {
       const available = params.availableDecisions === undefined ? ["accept", "decline", "cancel"] : params.availableDecisions;
@@ -281,15 +319,15 @@ export class CodexControl implements HarnessControl {
       const choices = available.filter((value): value is string => typeof value === "string" && ["accept", "acceptForSession", "decline", "cancel"].includes(value));
       if (!choices.length || new Set(choices).size !== choices.length) throw new ControlError("INVALID_PROTOCOL", "no supported native approval decisions");
       const id = String(request.id);
-      return new Promise<unknown>(resolve => { this.permissions.set(id, { options: choices, resolve, reply: decision => ({ decision }) }); active.event({ type: "permission_requested", id, title: typeof params.command === "string" ? params.command.slice(0,4096) : request.method.includes("fileChange") ? "Codex 请求修改文件" : "Codex 请求执行命令", options: choices.map(id => ({ id, name: ({ accept: "允许一次", acceptForSession: "本次会话允许", decline: "拒绝", cancel: "取消" } as Record<string,string>)[id]! })) }); });
+      return new Promise<unknown>(resolve => { this.permissions.set(id, { options: choices, resolve, reply: decision => ({ decision }) }); active.event({ type: "permission_requested", id, title: (params.threadId !== this.conversation ? "子 Agent · " : "") + (typeof params.command === "string" ? params.command.slice(0,4096) : request.method.includes("fileChange") ? "Codex 请求修改文件" : "Codex 请求执行命令"), options: choices.map(id => ({ id, name: ({ accept: "允许一次", acceptForSession: "本次会话允许", decline: "拒绝", cancel: "取消" } as Record<string,string>)[id]! })) }); });
     }
     const decision = active.stopping ? "cancel" : "decline";
     active.event({ type: "permission", id: String(request.id), decision: active.stopping ? "cancelled" : "denied" });
     return { decision };
   }
   private async userInput(request: RpcRequest): Promise<unknown> {
-    const params = object(request.params, "Codex native questions"), active = this.scope(params, true);
-    if (!active) throw new ControlError("INVALID_STATE", "native question arrived without an active turn");
+    const params = object(request.params, "Codex native questions"), active = this.requestOwner(params);
+    if (!active) return { answers: {} };
     if (!Array.isArray(params.questions) || !params.questions.length || params.questions.length > 32) throw new ControlError("INVALID_PROTOCOL", "invalid native question list");
     const questions = params.questions.map((value, index) => {
       const row = object(value, "native question"), id = string(row.id, "native question id", 128), title = string(row.question, "native question", 4096);
