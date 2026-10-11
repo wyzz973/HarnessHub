@@ -34,7 +34,8 @@
     "test:real:native-attachments": "pnpm build && node --test dist/tests/real/native-attachments.real.js",
     "test:real:native-commands": "pnpm build && node --test dist/tests/real/native-commands.real.js",
     "test:real:native-branch": "pnpm build && node --test dist/tests/real/native-branch.real.js",
-    "test:real:native-extensions": "pnpm build && node --test dist/tests/real/native-extensions.real.js"
+    "test:real:native-extensions": "pnpm build && node --test dist/tests/real/native-extensions.real.js",
+    "test:real:native-config": "pnpm build && node --test dist/tests/real/native-config.real.js"
   },
   "devDependencies": {
     "@playwright/test": "1.64.0",

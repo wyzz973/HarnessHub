@@ -810,3 +810,32 @@ test("a branch quotes public history, forks the native session at its latest Tur
   assert.equal(app.read(refused.id).runs[0]?.status, "completed"); assert.match(await peers[6]!.started.promise, /branchedHistory/u);
   assert.throws(() => app.fork(source.id, "branch-missing", "run-missing"), (error: unknown) => error instanceof SessionError && error.code === "FORK_UNAVAILABLE");
 });
+
+test("an unreadable or invalid native configuration report leaves it unknown without changing the Turn's result", async t => {
+  const f = await fixture(t), factory = new ControlledFactory(Array.from({ length: 3 }, () => controlled()));
+  factory.validate = async request => ({ ...selection(request), ...(request.nativeOptions === undefined ? {} : { nativeOptions: request.nativeOptions }) });
+  const prepare = factory.prepare.bind(factory), opened: unknown[] = [];
+  const reports: (() => Promise<{ model: string | null; options: Record<string, string> }>)[] = [
+    async () => ({ model: null, options: { effort: "high" } }),
+    async () => { throw new SessionError("NATIVE_CONFIG_UNAVAILABLE", "settings unreadable"); },
+    async () => ({ model: "bad\nmodel", options: {} }),
+  ];
+  factory.prepare = async (...args) => {
+    const binding = await prepare(...args), original = binding.control.open;
+    return { ...binding, control: { ...binding.control, open: async (cwd, model, options, checkpoint) => { opened.push(options); return original(cwd, model, options, checkpoint); },
+      checkpoint: async () => "private-native-alpha", nativeConfig: () => reports.shift()!() } };
+  };
+  const app = runtime(f, factory), session = await app.create(f.configuration, { harnessId: "alpha", nativeOptions: { effort: "low" } }, "create");
+  app.send(session.id, "first", "one"); await app.wait(session.id);
+  assert.deepEqual(app.read(session.id).nativeBindings?.[0]?.observed, { model: null, options: { effort: "high" } });
+  // The second Turn applies the native value; its own report is unreadable, so the configuration becomes unknown.
+  app.send(session.id, "second", "two"); await app.wait(session.id);
+  let state = app.read(session.id);
+  assert.deepEqual(opened, [{ effort: "low" }, { effort: "high" }]); assert.equal(state.runs[1]?.status, "completed");
+  assert.equal(state.nativeBindings?.[0]?.status, "ready"); assert.equal(state.nativeBindings?.[0]?.observed, undefined);
+  // Unknown means the selection is applied as requested; an invalid report is unknown too.
+  app.send(session.id, "third", "three"); await app.wait(session.id);
+  state = app.read(session.id);
+  assert.deepEqual(opened.at(-1), { effort: "low" }); assert.equal(state.runs[2]?.status, "completed"); assert.equal(state.nativeBindings?.[0]?.observed, undefined);
+  assert.deepEqual(f.store.events(session.id, 0, 100).filter(row => row.type === "native.config_unreadable").map(row => row.data.code), ["NATIVE_CONFIG_UNAVAILABLE", "INVALID_DATA"]);
+});

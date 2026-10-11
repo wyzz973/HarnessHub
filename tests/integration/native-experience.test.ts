@@ -97,3 +97,31 @@ test("Darwin exited-group evidence rejects any live member, malformed inventory 
   for(const output of ["","200 S\n","200 Z\n200 R+\n","invalid inventory","200 Z\npartial"])assert.equal(exitedGroupSnapshotIsQuiescent(200,output),false);
   assert.equal(exitedGroupSnapshotIsQuiescent(0,""),false);assert.equal(exitedGroupSnapshotIsQuiescent(1,""),false);
 });
+
+test("a setting the native session changed itself is applied as it is on the next Turn and shown, until an explicit switch applies the selection again",{timeout:30000},async t=>{
+  const f=await fixture(t,"native-config");
+  const created=await f.call("/sessions",{selection:{harnessId:"native-alpha",nativeOptions:{"native-fast":"off"}},commandId:"create"}),id=String(created.value.id);
+  assert.equal(created.status,201);
+  const send=async(text:string,key:string,count:number)=>{assert.equal((await f.call(`/sessions/${id}/messages`,{text,commandId:key})).status,202);
+    return f.until(`/sessions/${id}`,row=>Array.isArray(row.runs)&&row.runs.length===count&&row.activeRunId===null&&(row.runs.at(-1) as {status:string}).status==="completed");};
+  const applied=async()=>(await f.wire()).filter(row=>row.method==="session/set_config_option"&&(row.params as {configId:string}).configId==="native-fast").map(row=>(row.params as {value:string}).value);
+  type NativeState={status:string;observed?:{model:string|null;options:Record<string,string>};carried?:{model?:string;options?:Record<string,string>}};
+  const native=(row:Record<string,unknown>)=>(row.nativeStates as NativeState[])[0]!;
+  let view=await send("first turn","one",1);
+  assert.deepEqual(native(view),{harnessId:"native-alpha",controlId:"native-alpha",status:"ready",observed:{model:"native-model-a",options:{"native-fast":"off","native-thinking":"low"}}});
+  view=await send("/native-fast on","two",2);
+  assert.equal(native(view).observed?.options["native-fast"],"on");assert.deepEqual(native(view).carried,{options:{"native-fast":"on"}});
+  view=await send("third turn","three",3);
+  assert.deepEqual(await applied(),["off","off","on"],"the next Turn applies the native value instead of reverting it");
+  const third=(view.runs as {id:string}[])[2]!.id,events:{type:string;data:Record<string,unknown>}[]=[];
+  for(let after=0;;){const page=(await f.call(`/sessions/${id}/events?afterSeq=${after}&limit=100`)).value as {events:{type:string;data:Record<string,unknown>}[];nextSeq:number;hasMore:boolean};events.push(...page.events);if(!page.hasMore)break;after=page.nextSeq;}
+  assert.deepEqual(events.filter(row=>row.type==="native.config_carried").map(row=>row.data),[{runId:third,options:{"native-fast":"on"}}]);
+  assert.deepEqual(native(view).carried,{options:{"native-fast":"on"}},"the native value stays in effect for this selection");
+  assert.ok(!JSON.stringify(view).includes("session-fixture"),"the private native session reference stays out of the view");
+  // Choosing the same selection again is an explicit switch: the next Turn applies the selection.
+  assert.equal((await f.call(`/sessions/${id}/switches`,{selection:{harnessId:"native-alpha",nativeOptions:{"native-fast":"off"}},commandId:"reassert"})).status,202);
+  view=await f.until(`/sessions/${id}`,row=>row.pendingSwitchId===null&&row.epoch===2);
+  assert.equal(native(view).carried,undefined);
+  view=await send("fourth turn","four",4);
+  assert.deepEqual(await applied(),["off","off","on","off"]);assert.equal(native(view).observed?.options["native-fast"],"off");assert.equal(native(view).carried,undefined);
+});

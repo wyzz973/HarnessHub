@@ -11,6 +11,11 @@ import { string } from "../../infrastructure/control/json-rpc-process.js";
 import { checkInputs } from "../../infrastructure/control/attachments.js";
 import type { ContentRef, ControlAttachment } from "../../contracts/content.js";
 
+type OpenClawMethod = "models.list" | "sessions.patch" | "sessions.get" | "sessions.list" | "chat.history";
+/** A Gateway session row's model in the catalog's provider/model form. */
+function rowModel(row: Record<string, unknown>): string | null {
+  return typeof row.modelProvider === "string" && typeof row.model === "string" && row.modelProvider && row.model && (row.modelProvider + "/" + row.model).length <= 1024 && !/[\0\r\n]/u.test(row.modelProvider + row.model) ? row.modelProvider + "/" + row.model : null;
+}
 function transcriptSeq(value: unknown): number | null {
   const meta = value !== null && typeof value === "object" ? (value as { __openclaw?: { seq?: unknown } }).__openclaw : undefined;
   return typeof meta?.seq === "number" && Number.isSafeInteger(meta.seq) ? meta.seq : null;
@@ -75,8 +80,10 @@ export class OpenClawControl extends AcpControl {
   private readonly abort = new AbortController();
   private readonly commands = new Set<Promise<unknown>>();
   private nativeModels: Promise<NativeModelCatalog["models"]> | null = null;
+  /** Session settings read back after the latest Turn; the bridge never pushes changes made by slash commands. */
+  private sessionSettings: Promise<{ readonly model: string | null; readonly values: Readonly<Record<string, string>> }> | null = null;
   constructor(private readonly nativeLaunch: ControlLaunch, private readonly nativeOptions: ControlOptions,
-    private readonly nativeRequest?: (method: "models.list" | "sessions.patch" | "sessions.get", params: Readonly<Record<string, unknown>>) => Promise<unknown>) { super(nativeLaunch, nativeOptions); }
+    private readonly nativeRequest?: (method: OpenClawMethod, params: Readonly<Record<string, unknown>>) => Promise<unknown>) { super(nativeLaunch, nativeOptions); }
   protected override async sessionParameters(cwd: string): Promise<Readonly<Record<string, unknown>>> {
     const env = this.nativeLaunch.env, path = env.OPENCLAW_CONFIG_PATH ?? join(env.OPENCLAW_STATE_DIR ?? join(env.HOME ?? homedir(), ".openclaw"), "openclaw.json");
     let config: Record<string, unknown>;
@@ -103,7 +110,7 @@ export class OpenClawControl extends AcpControl {
     this.sessionKey = this.restoredKey ?? "agent:" + agent.toLowerCase() + ":harnesshub:" + randomUUID();
     return { ...await super.sessionParameters(cwd), _meta: { sessionKey: this.sessionKey, ...(this.restoredKey === null ? {} : { requireExistingSession: true, resetSession: false }) } };
   }
-  private call(method: "models.list" | "sessions.patch" | "sessions.get", params: Readonly<Record<string, unknown>>): Promise<unknown> {
+  private call(method: OpenClawMethod, params: Readonly<Record<string, unknown>>): Promise<unknown> {
     if (this.nativeRequest) return this.nativeRequest(method, params);
     const index = this.nativeLaunch.args.lastIndexOf("acp");
     if (index < 0) return Promise.reject(new ControlError("UNSUPPORTED_CONTROL", "OpenClaw native CLI prefix unavailable"));
@@ -153,11 +160,19 @@ export class OpenClawControl extends AcpControl {
     }
     return id;
   }
+  /** This key's Gateway session row; undefined until the session's first prompt or patch creates it. */
+  private async sessionRow(key: string): Promise<Record<string, unknown> | undefined> {
+    const rows = object(await this.call("sessions.list", { search: key, limit: 50 }), "OpenClaw sessions").sessions;
+    if (!Array.isArray(rows) || rows.length > 50) throw new ControlError("INVALID_NATIVE_METADATA", "invalid OpenClaw session list");
+    return rows.map(value => object(value, "OpenClaw session")).find(value => value.key === key);
+  }
   /** Agent-level checks first, then the running model's own input kinds from the original catalog when it lists them. */
   override async checkAttachments(attachments: readonly ContentRef[]): Promise<void> {
     await super.checkAttachments(attachments);
     if (!attachments.some(item => item.kind === "image")) return;
-    const model = this.openedModel ?? this.configuredModel, entry = (await this.readNativeModels()).find(row => row.id === model);
+    // A restored session runs the model its Gateway row holds (a native /model change persists there), not necessarily the configured one.
+    const restored = this.openedModel === undefined && this.restoredKey !== null ? await this.sessionRow(this.restoredKey) : undefined;
+    const model = this.openedModel ?? (restored === undefined ? null : rowModel(restored)) ?? this.configuredModel, entry = (await this.readNativeModels()).find(row => row.id === model);
     if (entry?.inputs) checkInputs(attachments, entry.inputs);
   }
   /** Highest transcript sequence of the Hub-owned session; null when it cannot be read (the turn then stays as the bridge reported it). */
@@ -179,6 +194,7 @@ export class OpenClawControl extends AcpControl {
     let thought = false;
     const run = await super.startText(id, prompt, event => { if (event.type === "thinking") thought = true; onEvent(event); }, attachments);
     const result = run.result.then(async backend => {
+      if (this.sessionKey !== null) { const pending = this.readSessionSettings(this.sessionKey); this.sessionSettings = pending; pending.catch(() => {}); }
       if (before === null || this.sessionKey === null || backend.status === "cancelled") return backend;
       let messages: unknown;
       try { messages = object(await this.call("sessions.get", { key: this.sessionKey, limit: 200 }), "OpenClaw transcript").messages; }
@@ -187,6 +203,25 @@ export class OpenClawControl extends AcpControl {
       return reconcileTurn(messages.filter(value => (transcriptSeq(value) ?? 0) > before), backend, onEvent, !thought);
     });
     return { result, requestStop: run.requestStop };
+  }
+  /**
+   * The Gateway session row holds the model and the settings the bridge offers (thinking, verbose, reasoning, usage
+   * footer, elevated); fast mode is only in chat.history. Values follow the bridge's own defaults for unset fields.
+   */
+  private async readSessionSettings(key: string): Promise<{ readonly model: string | null; readonly values: Readonly<Record<string, string>> }> {
+    const [row, history] = await Promise.all([this.sessionRow(key), this.call("chat.history", { sessionKey: key, limit: 1 })]);
+    if (row === undefined) throw new ControlError("NATIVE_CONFIG_UNAVAILABLE", "the Hub-owned OpenClaw session is not listed");
+    const setting = (value: unknown, fallback: string) => typeof value === "string" && value && value.length <= 128 && !/[\0\r\n]/u.test(value) ? value : fallback;
+    const thinking = setting(row.thinkingLevel, "adaptive"), fast = object(history, "OpenClaw chat history").fastMode === true ? "on" : "off";
+    return { model: rowModel(row), values: { thought_level: thinking, __mode: thinking, fast_mode: fast, verbose_level: setting(row.verboseLevel, "off"), reasoning_level: setting(row.reasoningLevel, "off"),
+      response_usage: setting(row.responseUsage, "off"), elevated_level: setting(row.elevatedLevel, "off") } };
+  }
+  /** The bridge's option ids with the values the Gateway holds after the Turn, including changes made by /think, /model and the like. */
+  override async nativeConfig(): Promise<{ readonly model: string | null; readonly options: NativeOptions }> {
+    const announced = await super.nativeConfig();
+    if (this.sessionSettings === null) throw new ControlError("NATIVE_CONFIG_UNAVAILABLE", "OpenClaw settings were not read after the turn");
+    const current = await this.sessionSettings;
+    return { model: current.model, options: Object.fromEntries(Object.keys(announced.options).flatMap(id => current.values[id] === undefined ? [] : [[id, current.values[id]!]])) };
   }
   override async models(): Promise<NativeModelCatalog> {
     const catalog = await super.models();

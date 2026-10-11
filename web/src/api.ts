@@ -143,7 +143,11 @@ export function decodeSession(value: unknown): SessionView {
   const row = record(value);
   return { id: text(row.id), version: number(row.version), lastSeq: number(row.lastSeq), epoch: number(row.epoch), status: choice(row.status, SESSION_STATES),
     workspace: text(row.workspace), selection: selection(row.selection), activeRunId: nullableText(row.activeRunId), pendingSwitchId: nullableText(row.pendingSwitchId),
-    ...(row.nativeStates === undefined ? {} : { nativeStates: list(row.nativeStates, value => { const state = record(value); return { harnessId: text(state.harnessId), controlId: text(state.controlId), status: choice(state.status, ["ready", "unconfirmed", "forking"]) }; }, 256) }),
+    ...(row.nativeStates === undefined ? {} : { nativeStates: list(row.nativeStates, value => { const state = record(value);
+      return { harnessId: text(state.harnessId), controlId: text(state.controlId), status: choice(state.status, ["ready", "unconfirmed", "forking"]),
+        ...(state.observed === undefined ? {} : { observed: (() => { const observed = record(state.observed); return { model: observed.model === null ? null : text(observed.model), options: parseNativeOptions(observed.options) }; })() }),
+        ...(state.carried === undefined ? {} : { carried: (() => { const carried = record(state.carried);
+          return { ...(carried.model === undefined ? {} : { model: text(carried.model) }), ...(carried.options === undefined ? {} : { options: parseNativeOptions(carried.options) }) }; })() }) }; }, 256) }),
     ...(row.origin === undefined ? {} : { origin: (() => { const origin = record(row.origin); if (origin.kind !== "fork") return invalid();
       return { kind: "fork" as const, sessionId: sessionId(origin.sessionId), throughRunId: runId(origin.throughRunId), history: list(origin.history, value => { const message = record(value);
         return { role: choice(message.role, ["user", "assistant"]), text: text(message.text), status: choice(message.status, RUN_STATES), ...(message.harnessId === undefined ? {} : { harnessId: text(message.harnessId) }), ...(message.attachments === undefined ? {} : { attachments: list(message.attachments, contentRef, 8) }) }; }, 512) }; })() }),

@@ -102,6 +102,14 @@ export function ChatComposer(props: ComposerProps) {
   const nativeNames: Readonly<Record<string,string>> = {thought_level:"思考强度",fast_mode:"快速模式",verbose_level:"工具详情",reasoning_level:"思考输出",response_usage:"用量详情",elevated_level:"执行权限"};
   const changeOption = (id: string, value: string) => { const choices={...draft.nativeOptions}; if(value)choices[id]=value;else delete choices[id]; props.onDraft({...draft,nativeOptions:Object.fromEntries(Object.entries(choices).sort(([a],[b])=>a < b ? -1 : a > b ? 1 : 0))}); };
   const optionPicker = (option: typeof nativeOptions[number], label: string) => <SearchPicker label={label} value={draft.nativeOptions[option.id] ?? ""} placeholder="跟随本机配置" options={[{value:"",label:`${thinkingNames[option.currentValue] ?? option.currentValue} · 本机默认`,group:"跟随 Harness"},...option.values.map(value=>({value:value.value,label:option.category==="thought_level" ? thinkingNames[value.value]??value.name : value.name,description:value.value,group:harness?.name??"原生选项"}))]} disabled={disabled || props.nativeModelsLoading} onChange={value=>changeOption(option.id,value)}/>;
+  // The native session's own values, as it reported them after its last Turn (ADR-028).
+  const nativeState = provider ? undefined : session?.nativeStates?.find(state => state.harnessId === draft.harnessId && state.controlId === draft.controlId);
+  const valueName = (id: string, value: string) => { const option = nativeOptions.find(row => row.id === id); return option?.category === "thought_level" ? thinkingNames[value] ?? value : option?.values.find(row => row.value === value)?.name ?? value; };
+  const describeNative = (model: string | undefined, options: Readonly<Record<string, string>> | undefined) => [
+    ...(model ? ["模型 " + (props.nativeModels?.models.find(row => row.id === model)?.name ?? model)] : []),
+    ...Object.entries(options ?? {}).filter(([id]) => nativeOptions.some(row => row.id === id)).map(([id, value]) => (nativeNames[id] ?? nativeOptions.find(row => row.id === id)?.name ?? id) + " " + valueName(id, value)),
+  ].join("、");
+  const carried = !dirty && !pending && !blocked && nativeState?.carried ? describeNative(nativeState.carried.model, nativeState.carried.options) : "";
   const onboarding = session === null && draft.harnessId === "";
   const noteDanger = bytes > 64 * 1024 || problem !== null && !onboarding;
   const note = bytes > 64 * 1024 ? "单条消息不能超过 64 KiB，请缩短内容。"
@@ -162,7 +170,7 @@ export function ChatComposer(props: ComposerProps) {
               : <div className="execution-setting"><span>控制入口</span><strong>{selectedControl ? protocolLabel(selectedControl.protocol) : "尚未选择"}</strong>{draft.controlId ? <code>{draft.controlId}</code> : null}</div>}
             {provider && draft.providerRevision !== null ? <div className="execution-setting"><span>Provider 配置</span><strong>{provider.name} · v{draft.providerRevision}</strong>{outdated ? <button type="button" className="revision-update" disabled={disabled} onClick={() => props.onDraft({ ...draft, providerRevision: provider.revision, model: provider.models.includes(draft.model) ? draft.model : provider.defaultModel })}>使用最新 v{provider.revision} <ArrowRight size={12}/></button> : <small>会话固定使用这个版本。</small>}</div>
               : <p className="settings-native-note">沿用本机已安装 Harness 的模型配置和登录状态。</p>}
-            {!provider && session?.nativeStates?.some(state => state.harnessId === draft.harnessId && state.controlId === draft.controlId) ? <div className="execution-setting"><span>原生会话</span><strong>{session.nativeStates.find(state => state.harnessId === draft.harnessId && state.controlId === draft.controlId)?.status === "ready" ? "继续已有会话" : "状态待确认"}</strong><small>公共历史与旧原生记录保留；原生内部状态重新建立。</small><button type="button" className="text-button" disabled={disabled || dirty || pending || active !== null} onClick={props.onNativeBranch}>重新建立原生会话</button></div> : null}
+            {nativeState ? <div className="execution-setting"><span>原生会话</span><strong>{nativeState.status === "ready" ? "继续已有会话" : "状态待确认"}</strong>{nativeState.observed ? <small className="native-observed">原生当前：{describeNative(nativeState.observed.model ?? undefined, nativeState.observed.options) || "未报告"}</small> : null}<small>公共历史与旧原生记录保留；原生内部状态重新建立。</small><button type="button" className="text-button" disabled={disabled || dirty || pending || active !== null} onClick={props.onNativeBranch}>重新建立原生会话</button></div> : null}
             <p className="settings-help">选择后直接切换；当前回复继续使用原配置，下一次发送使用新选择。</p>
           </Popover.Content></Popover.Portal>
         </Popover.Root>
@@ -170,6 +178,7 @@ export function ChatComposer(props: ComposerProps) {
           : <button type="submit" className="send-button" aria-label="发送消息" title="发送消息" disabled={disableSend}>{props.mutation === "sending" ? <Spinner/> : <ArrowUp size={19}/>}</button>}
       </div>
       {pending || dirty && !blocked ? <div className="composer-change" role="status">{selectionFailed && !pending ? <><span>{problem ?? "所选连接尚未生效"}</span><button type="button" className="text-button" onClick={props.onApply} disabled={props.mutation !== null || problem !== null}>重试切换</button></> : <><Spinner/><span>{problem ?? (active ? "当前回复结束后自动切换" : "正在保存选择")}</span></>}</div> : null}
+      {carried && !readonly ? <div className="composer-change native-carried" role="status"><span>原生命令已改为 {carried}；下一回合沿用，不改回所选。</span><button type="button" className="text-button" onClick={props.onApply} disabled={disabled || props.mutation !== null}>改用所选设置</button></div> : null}
       {blocked && !readonly ? <div className="composer-change" role="status"><span>恢复会检查连接，不会重跑旧任务</span><button type="button" className="apply-selection" onClick={props.onApply} disabled={disabled || pending || props.mutation !== null || problem !== null || resourcesUnconfirmed}><RefreshCw size={12}/>{unknown.length ? "确认保留未知结果并继续" : "检查连接并恢复对话"}</button></div> : null}
     </form>
     {note ? <p id="composer-notice" className={`composer-note ${noteDanger ? "error-text" : ""}`} role={problem || bytes > 64 * 1024 ? "status" : undefined}>{note}</p> : null}

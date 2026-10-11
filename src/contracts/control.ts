@@ -147,6 +147,13 @@ export interface HarnessControl {
    * connection that opens no other conversation.
    */
   fork?(checkpoint: string, cwd: string): Promise<string>;
+  /**
+   * The open conversation's current model and option values as the native side reports them after a Turn, including
+   * changes made by its own commands. Identities are the catalog's (model ids, option ids and values) so the Hub can apply
+   * them again; a null model means the interface cannot tell. Called only after the Turn settled, before close; a failure
+   * leaves the configuration unknown and never changes the Turn's result. Absent when the interface cannot report it.
+   */
+  nativeConfig?(): Promise<{ readonly model: string | null; readonly options: NativeOptions }>;
   /** Native skills, MCP servers and plugins; absent when the interface cannot list them. */
   extensions?(): Promise<NativeExtensions>;
   /** Sends one prompt. Attachments were accepted by checkAttachments; their private copies stay readable for the Turn. */

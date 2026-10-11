@@ -236,3 +236,25 @@ test("Pi lists skills and extensions from its own command catalog", async () => 
     });
   } finally { await driver.close(); }
 });
+
+test("Pi reports its own model and thinking level after a Turn, and a restored session keeps the model it last ran unless one is selected", async t => {
+  const root = await mkdtemp(join(tmpdir(), "pi-native-config-")), file = join(root, "session.jsonl"); t.after(() => rm(root, { recursive: true, force: true }));
+  // The session file records a model and thinking level changed inside Pi (an extension command, for example).
+  writeFileSync(file, JSON.stringify({ type: "model_change", modelId: "two" }) + "\n" + JSON.stringify({ type: "thinking_level_change", thinkingLevel: "high" }) + "\n");
+  const checkpoint = JSON.stringify({ path: file, id: "pi-fixture" });
+  const kept = control();
+  try {
+    await kept.initialize(); assert.equal((await kept.models()).defaultModel, "native/one", "the configured default of a new session");
+    const id = await kept.open(process.cwd(), undefined, undefined, checkpoint);
+    assert.deepEqual(await (await kept.startText(id, "continue", () => {})).result, { status: "completed", reason: "stop" });
+    assert.deepEqual(await kept.nativeConfig(), { model: "native/two", options: { thinking_level: "high" } });
+  } finally { await kept.close(); }
+  const chosen = control();
+  try {
+    await chosen.initialize(); await chosen.open(process.cwd(), "native/one", undefined, checkpoint);
+    assert.equal((await chosen.nativeConfig()).model, "native/one", "an explicit selection still overrides the restored model");
+  } finally { await chosen.close(); }
+  const fresh = control();
+  try { await fresh.initialize(); await assert.rejects(fresh.nativeConfig(), (error: unknown) => error instanceof ControlError && error.code === "INVALID_STATE"); }
+  finally { await fresh.close(); }
+});

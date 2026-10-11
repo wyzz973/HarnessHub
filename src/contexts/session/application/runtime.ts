@@ -3,12 +3,12 @@ import { TOOL_DIFF_BYTES, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type BackendResul
 import { MAX_RUN_ATTACHMENTS, MAX_RUN_OUTPUTS, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
 import {
   SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId,
-  type ForkedMessage, type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicRun,
+  type ForkedMessage, type NativeConfiguration, type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicRun,
   type SelectionRequest, type SendReceipt, type SessionBindingFactory, type SessionCommit, type SessionConfiguration,
   type SessionId, type SessionEvent, type SessionMutation, type SessionRuntimeOptions, type SessionSnapshot, type SessionStore, type SwitchReceipt,
 } from "../../../contracts/session.js";
 import { buildPublicContext } from "../domain/context.js";
-import { MAX_COMMANDS, MAX_OUTPUT_BYTES, MAX_PLAN_ENTRIES, MAX_QUEUE, MAX_RUNS, MAX_RUN_ACTIVITIES, MAX_RUN_NOTICES, MAX_RUN_TOOLS, assertInput, parseConfiguration, replayCommand, terminal, utf8Bytes } from "../domain/state.js";
+import { MAX_COMMANDS, MAX_OUTPUT_BYTES, MAX_PLAN_ENTRIES, MAX_QUEUE, MAX_RUNS, MAX_RUN_ACTIVITIES, MAX_RUN_NOTICES, MAX_RUN_TOOLS, assertInput, carriedNativeConfiguration, parseConfiguration, parseNativeConfiguration, replayCommand, terminal, utf8Bytes } from "../domain/state.js";
 
 interface ActiveExecution {
   readonly sessionId: SessionId;
@@ -142,7 +142,7 @@ export class SessionRuntime {
     const concurrent = this.store.findByCreateKey(command);
     if (concurrent) { replayCommand(concurrent, command, "create", fingerprint); return concurrent; }
     const id = sessionId("session-" + this.options.id());
-    const state: SessionSnapshot = { schemaVersion: 8, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
+    const state: SessionSnapshot = { schemaVersion: 9, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
       configuration: config, selection: validated, activeRunId: null, pendingSwitchId: null,
       runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }] };
     try {
@@ -244,7 +244,7 @@ export class SessionRuntime {
     const native = source.selection.provider === undefined ? source.nativeBindings?.find(binding => binding.harnessId === source.selection.harnessId && binding.controlId === source.selection.controlId && binding.status === "ready") : undefined;
     const nativeFork = native !== undefined && native.throughRunId === through.id;
     const id = sessionId("session-" + this.options.id());
-    const state: SessionSnapshot = { schemaVersion: 8, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration: source.configuration, selection: source.selection,
+    const state: SessionSnapshot = { schemaVersion: 9, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration: source.configuration, selection: source.selection,
       activeRunId: null, pendingSwitchId: null, runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }],
       origin: { kind: "fork", sessionId: sourceId, throughRunId: through.id, history },
       ...(nativeFork ? { nativeBindings: [{ harnessId: native.harnessId, controlId: native.controlId, checkpoint: native.checkpoint, throughRunId: null, status: "fork-pending" as const }] } : {}) };
@@ -650,6 +650,8 @@ export class SessionRuntime {
     let backend: BackendResult | null = null, cleanup: CleanupEvidence | null = null, problem: ReturnType<typeof fault> | null = null;
     let checkpoint: string | null = null, checkpointStored = false, nativeConfirmed = false;
     let previousNative: NativeSessionBinding | undefined;
+    // What the native session reported after this Turn; `reported` means the binding's earlier report is replaced (ADR-028).
+    let observed: NativeConfiguration | undefined, reported = false;
     try {
       this.commit(id, current => ({ next: { ...updatedRun(current, target, { status: "preparing", selection: pinned, epoch: waitedSwitch ? current.epoch : queued.epoch }), activeRunId: target },
         events: [event("run.preparing", { runId: target, selection: state.selection, epoch: state.epoch })] }));
@@ -670,13 +672,18 @@ export class SessionRuntime {
       }
       const observation = await execution.binding.control.initialize(); this.continue(execution);
       this.commit(id, current => ({ next: current, events: [event("run.protocol", { runId: target, observation })] }));
-      const native = await execution.binding.control.open(execution.binding.workspace, run.selection.nativeModel, run.selection.nativeOptions, previousNative?.checkpoint); this.continue(execution);
+      // A requested value the native session changed itself is applied as it is now instead of being reverted (ADR-028).
+      const carried = carriedNativeConfiguration(current, run.selection, run.epoch);
+      if (carried !== null) this.commit(id, current => ({ next: current, events: [event("native.config_carried", { runId: target, ...carried })] }));
+      const nativeOptions = carried?.options === undefined ? run.selection.nativeOptions : { ...run.selection.nativeOptions, ...carried.options };
+      const native = await execution.binding.control.open(execution.binding.workspace, carried?.model ?? run.selection.nativeModel, nativeOptions, previousNative?.checkpoint); this.continue(execution);
       if (run.selection.provider === undefined && execution.binding.control.checkpoint) {
         checkpoint = await execution.binding.control.checkpoint(); this.continue(execution);
         if (checkpoint !== null && (typeof checkpoint !== "string" || !checkpoint || Buffer.byteLength(checkpoint) > 8192 || /[\0\r\n]/u.test(checkpoint))) throw new SessionError("INVALID_NATIVE_CHECKPOINT", "invalid original Harness recovery reference");
         if (previousNative !== undefined && checkpoint === null) throw new SessionError("NATIVE_RESUME_UNAVAILABLE", "original Harness cannot confirm its recovered state; no replacement session was dispatched");
         if (checkpoint !== null) {
-          const reference: NativeSessionBinding = { harnessId: run.selection.harnessId, controlId: run.selection.controlId, checkpoint, throughRunId: previousNative?.throughRunId ?? null, status: "unconfirmed" };
+          const reference: NativeSessionBinding = { harnessId: run.selection.harnessId, controlId: run.selection.controlId, checkpoint, throughRunId: previousNative?.throughRunId ?? null, status: "unconfirmed",
+            ...(previousNative?.observed === undefined ? {} : { observed: previousNative.observed }) };
           this.commit(id, current => ({ next: { ...current, nativeBindings: previousNative === undefined ? [...(current.nativeBindings ?? []), reference] : current.nativeBindings?.map(binding => binding.harnessId === reference.harnessId && binding.controlId === reference.controlId && binding.status !== "archived" ? reference : binding) ?? [reference] },
             events: [event("native.binding_prepared", { runId: target, harnessId: reference.harnessId, controlId: reference.controlId, resumed: previousNative !== undefined })] }));
           checkpointStored = true;
@@ -720,6 +727,13 @@ export class SessionRuntime {
         const after = await execution.binding.control.checkpoint!(); this.owned(execution);
         if (after === null || typeof after !== "string" || !after || Buffer.byteLength(after) > 8192 || /[\0\r\n]/u.test(after)) throw new SessionError("INVALID_NATIVE_CHECKPOINT", "original Harness lost its owned session reference");
         checkpoint = after; nativeConfirmed = true;
+        if (execution.binding.control.nativeConfig) {
+          // Unreadable or invalid reports leave the configuration unknown; the next Turn then applies the selection as requested.
+          try { observed = parseNativeConfiguration(await execution.binding.control.nativeConfig()); }
+          catch (error) { observed = undefined; const code = fault(error).code; this.commit(id, current => ({ next: current, events: [event("native.config_unreadable", { runId: target, code })] })); }
+          this.owned(execution);
+        }
+        reported = true;
       }
     } catch (error) { problem = fault(error); }
     finally {
@@ -746,7 +760,11 @@ export class SessionRuntime {
           let next: SessionSnapshot = { ...updatedRun(current, target, { status, backend, cleanup,
             error: failure }), activeRunId: null, status: unsafe ? "blocked" : current.status };
           if (checkpointStored && checkpoint !== null && cleanup?.closed === true && cleanup.protocolFailure === null && (!execution.dispatched || nativeConfirmed && backend !== null)) {
-            next = { ...next, nativeBindings: next.nativeBindings?.map(binding => binding.harnessId === pinned.harnessId && binding.controlId === pinned.controlId && binding.status !== "archived" ? { ...binding, checkpoint: checkpoint!, status: "ready" as const, throughRunId: execution.dispatched ? run.id : binding.throughRunId } : binding) ?? [] };
+            next = { ...next, nativeBindings: next.nativeBindings?.map(binding => {
+              if (binding.harnessId !== pinned.harnessId || binding.controlId !== pinned.controlId || binding.status === "archived") return binding;
+              const { observed: earlier, ...rest } = binding, latest = reported ? observed : earlier;
+              return { ...rest, checkpoint: checkpoint!, status: "ready" as const, throughRunId: execution.dispatched ? run.id : binding.throughRunId, ...(latest === undefined ? {} : { observed: latest }) };
+            }) ?? [] };
           }
           const cancelSwitch = (!this.accepting || this.closingSessions.has(id)) && next.pendingSwitchId !== null;
           if (cancelSwitch) next = this.cancelPending(next);

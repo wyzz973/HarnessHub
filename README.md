@@ -144,7 +144,7 @@ python3 -m unittest discover -s tools -p 'test_*.py' -v
 
 快速切换、原生思考档位、选项、命令与工具审批按[ADR-019](docs/decisions/0019-native-session-experience.md)实现。原OpenClaw可读取其Gateway模型目录，仅为Hub自己的会话覆盖模型；Codex与Pi档位来自原安装接口。统一聊天界面承接原生审批与Pi输入交互，配置/登录保持本机来源。当前实测选择提交52–96ms；首次模型目录读取和首条回复仍受原程序启动及网络影响。范围与实际证据见[本轮验收](docs/verification/native-session-experience-2026-10-11.md)，不将这些结果称为全部Harness原生功能等价。
 
-所有Harness以[ADR-020](docs/decisions/0020-complete-native-harness-capabilities.md)的完整原生能力标准验收；当前通用原生恢复已接入，OpenClaw/Codex/Pi真实恢复通过。未确认的原生状态不能自动继续；高级配置可明确重新建立原生会话并保留旧记录。业务库为v8，升级前备份；其余能力缺口及七个原接口审查见[验收记录](docs/verification/complete-native-capabilities-2026-10-11.md)，完整目标仍进行中。
+所有Harness以[ADR-020](docs/decisions/0020-complete-native-harness-capabilities.md)的完整原生能力标准验收；当前通用原生恢复已接入，OpenClaw/Codex/Pi真实恢复通过。未确认的原生状态不能自动继续；高级配置可明确重新建立原生会话并保留旧记录。业务库为v9，升级前备份；其余能力缺口及七个原接口审查见[验收记录](docs/verification/complete-native-capabilities-2026-10-11.md)，完整目标仍进行中。
 
 逐Harness原生能力与验收状态以[能力矩阵](docs/verification/native-capability-matrix.md)为准（机器权威`plan/native-capabilities.json`，设计检查拒绝无证据的完整声明），来源见[七个原安装的能力面调研](docs/research/native-capability-surfaces-2026-10-11.md)。[ADR-021](docs/decisions/0021-native-profile-and-deviation-tolerance.md)起，原生模式只透传用户真实设置的配置位置变量（Cursor因此回到原`~/.cursor`并加载原MCP配置）；原生协议的正常偏差（迟到输出、外部线程、重复工具id、多行标题、load后回放）归一而不归属，不再中断回合；会改写全局默认值的原生设置（Cursor模型、Pi全局settings命令）不由Hub执行。本轮OpenCode、OpenClaw、Codex、Pi跨Hub进程重启的原生恢复真实通过，见[第二轮验收](docs/verification/native-capabilities-round2-2026-10-11.md)；完整能力仍在进行中。
 
@@ -159,3 +159,5 @@ python3 -m unittest discover -s tools -p 'test_*.py' -v
 [ADR-026](docs/decisions/0026-native-extensions.md)起，输入框的“原生扩展”面板只读列出所选 Harness 加载的技能、MCP 服务器与插件（Codex、Pi），点选技能即填入命令；Codex 技能以它自己的 skill 输入调用。见[原生扩展验收](docs/verification/native-extensions-2026-10-11.md)。
 
 [ADR-027](docs/decisions/0027-openclaw-transcript-reconciliation.md)起，OpenClaw 每轮结束后按它自己的会话转录补记工具调用与结果、思考和用量，模型错误不再被桥记成完成；实时工具流与执行审批需直连 Gateway，待决定。见[OpenClaw 转录对账验收](docs/verification/openclaw-transcript-2026-10-11.md)。
+
+[ADR-028](docs/decisions/0028-native-configuration-sync.md)起，原生命令在原生会话里改了所选设置（如 OpenClaw `/think high`、`/fast on`）后，下一回合沿用原生当前值而不改回；输入框提示被沿用的设置，可“改用所选设置”。OpenClaw 已真实验证。见[原生配置同步验收](docs/verification/native-config-sync-2026-10-11.md)。

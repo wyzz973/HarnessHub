@@ -948,7 +948,8 @@
         "G004-C02",
         "G004-C03",
         "G004-NC1",
-        "G004-NC2"
+        "G004-NC2",
+        "G004-NC3"
       ],
       "active_slice": "native-models-switching"
     },
@@ -1149,7 +1150,8 @@
         "G008-NC2",
         "G008-NC3",
         "G008-NC4",
-        "G008-NC5"
+        "G008-NC5",
+        "G008-NC6"
       ],
       "active_slice": "native-installation-management"
     },
@@ -2066,7 +2068,8 @@
         "G028-NC3",
         "G028-NC4",
         "G028-NC5",
-        "G028-NC6"
+        "G028-NC6",
+        "G028-NC7"
       ],
       "active_slice": "native-models-switching"
     },
@@ -2287,7 +2290,9 @@
         "G032-NC12",
         "G032-NC13",
         "G032-NC14",
-        "G032-NC15"
+        "G032-NC15",
+        "G032-NC16",
+        "G032-NC17"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3338,7 +3343,8 @@
         "G054-NC2",
         "G054-NC3",
         "G054-NC4",
-        "G054-NC5"
+        "G054-NC5",
+        "G054-NC6"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3657,7 +3663,8 @@
         "tests/real/native-attachments.real.ts",
         "tests/real/native-commands.real.ts",
         "tests/real/native-branch.real.ts",
-        "tests/real/native-extensions.real.ts"
+        "tests/real/native-extensions.real.ts",
+        "tests/real/native-config.real.ts"
       ],
       "requirements": [
         "R04",
@@ -3701,7 +3708,8 @@
         "G060-NC4",
         "G060-NC5",
         "G060-NC6",
-        "G060-NC7"
+        "G060-NC7",
+        "G060-NC8"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3767,7 +3775,8 @@
         "G061-N01",
         "G061-N02",
         "G061-X01",
-        "G061-NC1"
+        "G061-NC1",
+        "G061-NC2"
       ],
       "active_slice": "native-installation-management"
     },

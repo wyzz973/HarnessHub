@@ -7392,6 +7392,144 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/real/native-activity.real.ts"
+    },
+    {
+      "id": "G004-NC3",
+      "task": "G004",
+      "requirements": [
+        "R07"
+      ],
+      "invariants": [
+        "INV-07"
+      ],
+      "layer": "unit",
+      "scenario": "v9原生引用记录原生会话回报的模型与选项；同一选择纪元内被原生改动的已选值在下一回合沿用",
+      "expected": "回报有界校验、v8数据中出现即拒绝；只沿用已选键；纪元变化、受管Provider、未回报模型、未改动值或无已完成回合时不沿用；只有拥有该原生会话的Run可写入",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/unit/session-state.test.ts"
+    },
+    {
+      "id": "G008-NC6",
+      "task": "G008",
+      "requirements": [
+        "R07",
+        "R19"
+      ],
+      "invariants": [
+        "INV-06"
+      ],
+      "layer": "integration",
+      "scenario": "业务库v8到v9迁移",
+      "expected": "v8会话全部事实与事件不变，仅版本升为9；v8数据中出现回报配置时整笔拒绝且版本保持8",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/session-store.test.ts"
+    },
+    {
+      "id": "G028-NC7",
+      "task": "G028",
+      "requirements": [
+        "R11",
+        "R14"
+      ],
+      "invariants": [
+        "INV-06",
+        "INV-27"
+      ],
+      "layer": "integration",
+      "scenario": "原生配置回报不可读或无效时视为未知",
+      "expected": "回合结果不受影响；记录native.config_unreadable；清除旧回报；下一回合按选择应用",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/session-runtime.test.ts"
+    },
+    {
+      "id": "G032-NC16",
+      "task": "G032",
+      "requirements": [
+        "R11",
+        "R25"
+      ],
+      "invariants": [
+        "INV-04"
+      ],
+      "layer": "protocol",
+      "scenario": "ACP按代理宣告报告当前配置；OpenClaw回合后经原CLI读回会话设置",
+      "expected": "ACP未回显的模式按已应用值记录；OpenClaw按会话行与chat.history映射桥的选项ID，回合前不报告；恢复的会话按会话行模型检查图片，无会话行时按配置模型",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/acp.test.ts"
+    },
+    {
+      "id": "G032-NC17",
+      "task": "G032",
+      "requirements": [
+        "R11",
+        "R25"
+      ],
+      "invariants": [
+        "INV-04"
+      ],
+      "layer": "protocol",
+      "scenario": "Pi回合后报告自己的模型与思考档位，恢复的会话保留上次运行的模型",
+      "expected": "get_state映射为目录ID；未选择模型时恢复不强加默认模型；有选择时仍以选择为准；无会话时拒绝",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/pi.test.ts"
+    },
+    {
+      "id": "G061-NC2",
+      "task": "G061",
+      "requirements": [
+        "R22"
+      ],
+      "invariants": [
+        "INV-25"
+      ],
+      "layer": "integration",
+      "scenario": "正式HTTP入口下原生命令改设置后的同步",
+      "expected": "下一回合应用原生值并提交native.config_carried；视图含observed与carried且不含私有引用；同选择显式切换后按选择应用",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/native-experience.test.ts"
+    },
+    {
+      "id": "G054-NC6",
+      "task": "G054",
+      "requirements": [
+        "R01",
+        "R22"
+      ],
+      "invariants": [
+        "INV-01",
+        "INV-25"
+      ],
+      "layer": "e2e",
+      "scenario": "输入框显示原生命令改动的设置并可改用所选设置",
+      "expected": "提示列出被沿用的设置；高级配置显示原生当前值；改用所选设置后提示消失并按选择执行；窄屏不溢出",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/web.browser.ts"
+    },
+    {
+      "id": "G060-NC8",
+      "task": "G060",
+      "requirements": [
+        "R04",
+        "R24",
+        "R12"
+      ],
+      "invariants": [
+        "INV-16",
+        "INV-09"
+      ],
+      "layer": "e2e",
+      "scenario": "本机原安装中原生命令改设置后的下一回合",
+      "expected": "首轮按选择；原生命令改动后读回新值；下一回合沿用不改回；同选择显式切换后恢复；原配置不变",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/real/native-config.real.ts"
     }
   ]
 }

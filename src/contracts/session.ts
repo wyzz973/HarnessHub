@@ -126,7 +126,14 @@ export interface NativeSessionBinding {
   readonly checkpoint: string;
   readonly throughRunId: RunId | null;
   readonly status: "ready" | "unconfirmed" | "archived" | "fork-pending" | "forking";
+  /**
+   * v9: the model and option values the native session reported at the end of its last dispatched Turn, including changes
+   * made by its own commands. Absent when the interface cannot report them or the last report was unreadable.
+   */
+  readonly observed?: NativeConfiguration;
 }
+/** A native session's model and option values as one side saw them; option keys are the Harness's own option ids. */
+export interface NativeConfiguration { readonly model: string | null; readonly options: NativeOptions }
 /** Public history a branched Session starts from: quoted, immutable, and never re-executed. */
 export interface ForkedMessage {
   readonly role: "user" | "assistant";
@@ -142,7 +149,7 @@ export interface SessionOrigin {
   readonly history: readonly ForkedMessage[];
 }
 export interface SessionSnapshot {
-  readonly schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+  readonly schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
   readonly id: SessionId;
   readonly version: number;
   readonly lastSeq: number;

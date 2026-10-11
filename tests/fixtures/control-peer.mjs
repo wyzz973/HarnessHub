@@ -26,6 +26,13 @@ function nativeConfiguration() { return [
  { id:"native-fast",name:"Native fast",type:"select",currentValue:fast,options:[{value:"off",name:"Off"},{value:"on",name:"On"}] }
 ]; }
 
+// The OpenClaw bridge's session presentation: six select options and the same thinking levels again as modes.
+const openclawLevels = ["off", "minimal", "low", "medium", "high", "adaptive"].map(value => ({ value, name: value }));
+function openclawPresentation() { return { configOptions: [
+  { id: "thought_level", name: "Thinking", category: "thought_level", type: "select", currentValue: "adaptive", options: openclawLevels },
+  ...[["fast_mode", ["off", "on"]], ["verbose_level", ["off", "on", "full"]], ["reasoning_level", ["off", "on", "stream"]], ["response_usage", ["off", "tokens", "full"]], ["elevated_level", ["off", "on", "ask", "full"]]]
+    .map(([id, values]) => ({ id, name: id, type: "select", currentValue: "off", options: values.map(value => ({ value, name: value })) })),
+], modes: { currentModeId: "adaptive", availableModes: openclawLevels.map(row => ({ id: row.value, name: row.name })) } }; }
 function emit(message) {
   const envelope = protocol === "acp-v1" ? { jsonrpc: "2.0", ...message } : message;
   const bytes = Buffer.from(`${JSON.stringify(envelope)}\n`);
@@ -84,7 +91,7 @@ lines.on("line", line => {
     if (scenario === "remote-error") { emit({ id: message.id, error: { code: -32001, message: "test remote error" } }); return; }
     if (scenario === "stderr") process.stderr.write("diagnostic".repeat(100000));
     const result = protocol === "acp-v1"
-      ? { protocolVersion: scenario === "version" ? 2 : 1, agentCapabilities: { loadSession: ["native-resume", "resume-fails", "resume-wrong-identity", "load-trailing-replay"].includes(scenario), ...(scenario === "attachments" ? { promptCapabilities: { image: true, audio: true, embeddedContext: true } } : {}), ...(scenario === "forkable" ? { sessionCapabilities: { fork: {} } } : {}) }, authMethods: [{ id: "fixture-login", name: "Fixture Login" }], agentInfo: { name: "fixture", version: "1.0" } }
+      ? { protocolVersion: scenario === "version" ? 2 : 1, agentCapabilities: { loadSession: ["native-resume", "resume-fails", "resume-wrong-identity", "load-trailing-replay", "native-config", "openclaw-settings"].includes(scenario), ...(scenario === "attachments" || scenario === "openclaw-settings" ? { promptCapabilities: { image: true, audio: true, embeddedContext: true } } : {}), ...(scenario === "forkable" ? { sessionCapabilities: { fork: {} } } : {}) }, authMethods: [{ id: "fixture-login", name: "Fixture Login" }], agentInfo: { name: "fixture", version: "1.0" } }
       : { userAgent: "fixture-codex/1.0", codexHome: process.cwd(), platformFamily: "unix", platformOs: process.platform };
     answer(message.id, result);
     if (scenario === "flood") {
@@ -119,11 +126,21 @@ lines.on("line", line => {
   if (message.method === "session/set_config_option" && scenario === "attachments") {
     answer(message.id, { configOptions: [{ id: "model", category: "model", type: "select", currentValue: message.params.value, options: [{ value: "native/model-a", name: "Model A" }, { value: "native/model-b", name: "Model B" }] }] }); return;
   }
-  if (message.method === "session/new" && scenario === "native-experience") {
-    notification("session/update",{sessionId:"session-fixture",update:{sessionUpdate:"available_commands_update",availableCommands:[{name:"native-help",description:"Native fixture help"}]}});
+  if (message.method === "session/new" && (scenario === "native-experience" || scenario === "native-config")) {
+    notification("session/update",{sessionId:"session-fixture",update:{sessionUpdate:"available_commands_update",availableCommands:[{name:"native-help",description:"Native fixture help"},...(scenario==="native-config"?[{name:"native-fast",description:"Turns fast mode on or off"}]:[])]}});
     answer(message.id,{sessionId:"session-fixture",configOptions:nativeConfiguration()});return;
   }
-  if (message.method === "session/set_config_option" && scenario === "native-experience") { const p=message.params;if(p.configId==="native-model")selectedModel=p.value;else if(p.configId==="native-thinking")thinking=p.value;else if(p.configId==="native-fast")fast=p.value;answer(message.id,{configOptions:nativeConfiguration()});return; }
+  // Like many agents, the mode change is acknowledged without echoing a current_mode_update.
+  if (message.method === "session/set_mode" && scenario === "openclaw-settings") { answer(message.id, {}); return; }
+  if ((message.method === "session/new" || message.method === "session/load") && scenario === "openclaw-settings") {
+    answer(message.id, { ...(message.method === "session/new" ? { sessionId: "session-fixture" } : {}), ...openclawPresentation() }); return;
+  }
+  // A restored native-config session reports its options; a new process starts from the defaults until the client applies them.
+  if (message.method === "session/load" && scenario === "native-config") {
+    notification("session/update",{sessionId:message.params.sessionId,update:{sessionUpdate:"available_commands_update",availableCommands:[{name:"native-help",description:"Native fixture help"},{name:"native-fast",description:"Turns fast mode on or off"}]}});
+    answer(message.id,{configOptions:nativeConfiguration()});return;
+  }
+  if (message.method === "session/set_config_option" && (scenario === "native-experience" || scenario === "native-config")) { const p=message.params;if(p.configId==="native-model")selectedModel=p.value;else if(p.configId==="native-thinking")thinking=p.value;else if(p.configId==="native-fast")fast=p.value;answer(message.id,{configOptions:nativeConfiguration()});return; }
   if (message.method === "session/new") {
     if (scenario === "unsupported-client") { emit({ id: message.id, error: { code: -32000, message: "This client is no longer supported for Gemini Code Assist. private-synthetic-key" } }); return; }
     if (["opening-metadata", "opening-wrong-identity", "opening-flood", "opening-text"].includes(scenario)) {
@@ -193,6 +210,10 @@ lines.on("line", line => {
     if (scenario === "prompt-rejected") { emit({ id: message.id, error: { code: -32001, message: "private rejected request synthetic-key" } }); return; }
     promptId = message.id; turn += 1;
     if (scenario === "exit-zero") { process.exit(0); }
+    // A native command changes a session setting and the agent announces it, as ACP agents do for their own changes.
+    if (scenario === "native-config" && JSON.stringify(message.params.prompt).includes("/native-fast on")) {
+      fast = "on"; notification("session/update", { sessionId: message.params.sessionId, update: { sessionUpdate: "config_option_update", configOptions: nativeConfiguration() } });
+    }
     if (scenario === "unknown-method") {
       emit({ id: "unsupported", method: "fixture/unsupported", params: {} });
       pendingPermission = true;

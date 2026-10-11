@@ -214,6 +214,14 @@ export class AcpControl implements HarnessControl {
     if (this.catalog.commands === undefined) { let timer: ReturnType<typeof setTimeout> | undefined; await Promise.race([this.commandsArrived, new Promise<void>(resolve => { timer = setTimeout(resolve, COMMANDS_WAIT_MS); })]); clearTimeout(timer); if (this.catalog.commands === undefined) this.catalog = { ...this.catalog, commands: [] }; }
     return { ...this.catalog, defaultModel: this.configuredDefault, inputs: this.inputs() };
   }
+  /**
+   * The model and option values the agent last announced for this session: its configuration replies and its own
+   * config_option_update / current_mode_update notifications, which include changes made during a Turn.
+   */
+  async nativeConfig(): Promise<{ readonly model: string | null; readonly options: NativeOptions }> {
+    this.assertInitialized(); if (this.conversation === null) throw new ControlError("INVALID_STATE", "native configuration requires a session");
+    return { model: this.catalog.canSelect ? this.catalog.defaultModel : null, options: Object.fromEntries((this.catalog.options ?? []).map(option => [option.id, option.currentValue])) };
+  }
   private forking = false;
   /** ACP `session/fork` when the agent declares it; the copy's replay is ignored and the source is untouched. */
   async fork(checkpoint: string, cwd: string): Promise<string> {
@@ -297,7 +305,8 @@ export class AcpControl implements HarnessControl {
       for (const [key, value] of Object.entries(options ?? {})) {
         const setting = this.catalog.options?.find(option => option.id === key);
         if (!setting || !setting.values.some(option => option.value === value)) throw new ControlError("NATIVE_OPTION_UNAVAILABLE", "native option unavailable for selected Harness");
-        if (key === "__mode") await this.rpc.request("session/set_mode", { sessionId: this.conversation, modeId: value });
+        // An agent need not echo its own mode change, so the applied mode is recorded as current.
+        if (key === "__mode") { await this.rpc.request("session/set_mode", { sessionId: this.conversation, modeId: value }); this.catalog = { ...this.catalog, options: this.catalog.options?.map(option => option.id === "__mode" ? { ...option, currentValue: value } : option) ?? [] }; }
         else { const response = object(await this.rpc.request("session/set_config_option", { sessionId: this.conversation, configId: key, value }), "native setting result"); this.readModels(response); if (this.catalog.options?.find(option => option.id === key)?.currentValue !== value) throw new ControlError("NATIVE_OPTION_MISMATCH", "Harness did not apply its native setting"); }
       }
       return this.conversation;

@@ -69,3 +69,5 @@ Codex 线程权限设置、原生压缩与导出及公开对话导出见[原生�
 原生技能、MCP 与插件的只读视图及技能调用见[原生扩展验收](native-extensions-2026-10-11.md)。
 
 OpenClaw 回合的工具、用量与真实停止原因按原生转录对账，见[OpenClaw 转录对账验收](openclaw-transcript-2026-10-11.md)。
+
+原生命令修改设置后的同步见[原生配置同步验收](native-config-sync-2026-10-11.md)（业务库升级为v9）。

@@ -13,6 +13,7 @@ import type { EventPage, HarnessView, InstallationLogPage, SessionSummary, Sessi
 import { inventory } from "../infrastructure/catalog/inventory-composition.js";
 import { prepareConfiguration } from "../infrastructure/session/binding-factory.js";
 import { supportedProviderProtocols } from "../contexts/provider/domain/provider.js";
+import { carriedNativeConfiguration } from "../contexts/session/domain/state.js";
 import { observedPackageVersion } from "../infrastructure/management/system-version.js";
 import { SessionStreamError, SessionStreamHub } from "./session-stream.js";
 import { HarnessModels } from "./harness-models.js";
@@ -124,7 +125,12 @@ function summary(snapshot: SessionSnapshot): SessionSummary {
 function view(snapshot: SessionSnapshot, permissions: SessionView["permissions"] = []): SessionView {
   return { id: snapshot.id, version: snapshot.version, lastSeq: snapshot.lastSeq, epoch: snapshot.epoch, status: snapshot.status,
     workspace: snapshot.configuration.workspace, selection: snapshot.selection, activeRunId: snapshot.activeRunId, pendingSwitchId: snapshot.pendingSwitchId,
-    permissions, nativeStates: snapshot.nativeBindings?.flatMap(binding => binding.status === "archived" ? [] : [{ harnessId: binding.harnessId, controlId: binding.controlId, status: binding.status === "fork-pending" || binding.status === "forking" ? "forking" as const : binding.status }]) ?? [],
+    permissions, nativeStates: snapshot.nativeBindings?.flatMap(binding => {
+      if (binding.status === "archived") return [];
+      const carried = binding.harnessId === snapshot.selection.harnessId && binding.controlId === snapshot.selection.controlId ? carriedNativeConfiguration(snapshot, snapshot.selection, snapshot.epoch) : null;
+      return [{ harnessId: binding.harnessId, controlId: binding.controlId, status: binding.status === "fork-pending" || binding.status === "forking" ? "forking" as const : binding.status,
+        ...(binding.observed === undefined ? {} : { observed: binding.observed }), ...(carried === null ? {} : { carried }) }];
+    }) ?? [],
     ...(snapshot.origin === undefined ? {} : { origin: snapshot.origin }), messages: snapshot.messages, runs: snapshot.runs, switches: snapshot.switches };
 }
 function publicFailure(error: unknown): { readonly status: number; readonly code: string; readonly message: string } {

@@ -22,6 +22,16 @@ export interface SessionSummary {
   readonly activeRunId: string | null;
 }
 /** Public history excludes admission fingerprints and private configuration references. */
+/** A native session reference as the chat shows it; never the private checkpoint. */
+export interface NativeStateView {
+  readonly harnessId: string;
+  readonly controlId: string;
+  readonly status: "ready" | "unconfirmed" | "forking";
+  /** The model and option values the native session reported after its last Turn. */
+  readonly observed?: import("./session.js").NativeConfiguration;
+  /** Selected values the next Turn applies as the native session changed them itself, instead of the selection (ADR-028). */
+  readonly carried?: { readonly model?: string; readonly options?: import("./control.js").NativeOptions };
+}
 export interface SessionView {
   readonly id: string;
   readonly version: number;
@@ -33,7 +43,7 @@ export interface SessionView {
   readonly activeRunId: string | null;
   readonly pendingSwitchId: string | null;
   readonly permissions?: readonly import("./session.js").PermissionRequest[];
-  readonly nativeStates?: readonly { readonly harnessId: string; readonly controlId: string; readonly status: "ready" | "unconfirmed" | "forking" }[];
+  readonly nativeStates?: readonly NativeStateView[];
   /** The public history a branched conversation started from. */
   readonly origin?: import("./session.js").SessionOrigin;
   readonly messages: readonly PublicMessage[];

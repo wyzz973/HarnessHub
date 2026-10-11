@@ -14,13 +14,17 @@ import { prepareConfiguration } from "../../src/infrastructure/session/binding-f
 
 const peer = fileURLToPath(new URL("../../../tests/fixtures/web-harness-peer.mjs", import.meta.url));
 const artifact = resolve("artifacts/chat-v3");
-async function launchFixture(providerManagement = true) {
+async function launchFixture(providerManagement = true, nativeSettings = false) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "harness-web-browser-")));
   const workspace = join(root, "workspace"), shim = join(root, "codex-fixture.mjs"); await mkdir(workspace);
   await writeFile(shim, "#!" + process.execPath + "\nimport " + JSON.stringify(pathToFileURL(peer).href) + ";\n", { mode: 0o700 });
   const manifest = join(root, "catalog.json"), authShim = join(root, "gateway-auth-fixture.mjs");
   await writeFile(authShim, "#!" + process.execPath + "\nprocess.stderr.write('unauthorized: gateway token missing\\n');process.exit(1);\n", { mode: 0o700 });
-  await writeFile(manifest, JSON.stringify({ version: 2, definitions: [], overrides: { "codex-native": { executable: shim }, "openclaw-native": { executable: authShim } } }));
+  // An ACP agent whose native command changes one of its own settings and announces it (control-peer "native-config").
+  const settings = { id: "native-settings", name: "Native Settings", aliases: [], binaryNames: [], configHints: [], controls: [{ id: "native-settings", protocol: "acp-v1", executableNames: ["fixture"],
+    args: [fileURLToPath(new URL("../../../tests/fixtures/control-peer.mjs", import.meta.url)), "acp-v1", "native-config"], env: {}, package: null, distribution: null, requiredExecutables: [],
+    source: { repository: "fixture", revision: "native-config", upstreamId: "fixture", url: "https://example.invalid/native-config" } }] };
+  await writeFile(manifest, JSON.stringify({ version: 2, definitions: nativeSettings ? [settings] : [], overrides: { "codex-native": { executable: shim }, "openclaw-native": { executable: authShim }, ...(nativeSettings ? { "native-settings": { executable: process.execPath } } : {}) } }));
   const modelServer = createServer((req, res) => { assert.equal(req.method, "GET"); assert.equal(req.url, "/v1/models"); res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ data: [{ id: "model-a" }, { id: "model-b" }] })); });
   await new Promise<void>(done => modelServer.listen(0, "127.0.0.1", done));
   const address = modelServer.address(); assert.ok(address && typeof address === "object");
@@ -676,5 +680,47 @@ test("the native extensions panel lists skills, MCP servers and plugins and invo
   await expect(composer).toHaveValue("/skill:browser-skill ");
   await composer.press("End"); await composer.type("看看这个仓库"); await composer.press("Enter");
   await expect(log).toContainText("已使用技能 browser-skill：看看这个仓库", { timeout: 15000 });
+  assert.deepEqual(errors, []);
+});
+
+test("a setting a native command changed is kept, shown in the composer and can be put back to the selection", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false, true); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
+  const origin = new URL(fixture.gateway.url).origin;
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Native Settings", exact: true }).click();
+  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  await page.getByRole("button", { name: "Native fast", exact: true }).click(); await page.getByRole("option", { name: "Off", exact: true }).click();
+  await page.keyboard.press("Escape");
+  const reply = async (text: string, count: number) => {
+    await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeDisabled(); await composer.fill(text);
+    await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
+    await expect.poll(async () => { if (!new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session")) return null; const value = await current(); return value.runs.length === count && value.activeRunId === null && value.runs.at(-1).status; }, { timeout: 15000 }).toBe("completed");
+  };
+  await reply("first turn", 1);
+  assert.deepEqual((await current()).selection.nativeOptions, { "native-fast": "off" });
+  await reply("/native-fast on", 2);
+  const hint = page.locator(".native-carried");
+  await expect(hint).toContainText("原生命令已改为 Native fast On；下一回合沿用，不改回所选。");
+  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  await expect(page.locator(".native-observed")).toContainText("Native fast On"); await page.keyboard.press("Escape");
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "the hint must not overflow");
+    await page.screenshot({ path: join(artifact, `native-carried-${width}.png`), animations: "disabled" });
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await reply("third turn", 3);
+  await expect(hint).toBeVisible();
+  await hint.getByRole("button", { name: "改用所选设置", exact: true }).click();
+  await expect(hint).toHaveCount(0); await expect.poll(async () => (await current()).epoch).toBe(2);
+  await reply("fourth turn", 4);
+  assert.equal((await current()).nativeStates[0].observed.options["native-fast"], "off");
+  await expect(log.locator(".assistant-message")).toHaveCount(4);
   assert.deepEqual(errors, []);
 });

@@ -174,7 +174,8 @@ export class PiControl implements HarnessControl {
       const cleanup = await this.rpc.close();
       if (cleanup.protocolFailure) throw new ControlError("PROTOCOL_FAILED", "Pi model probe failed before model launch");
       this.failure = null;
-      this.rpc = this.connection(entry, true, restored?.path); await this.readState();
+      // A restored session keeps the model it last ran (Pi restores it when no model flag is given); only a selection overrides it.
+      this.rpc = this.connection(restored !== undefined && selected === undefined ? undefined : entry, true, restored?.path); await this.readState();
       if (selected !== undefined && this.catalog.defaultModel !== selected) throw new ControlError("MODEL_MISMATCH", "native Pi did not apply the requested model");
       if (restored !== undefined && (this.state.sessionId !== restored.id || this.state.sessionFile !== restored.path)) throw new ControlError("IDENTITY_MISMATCH", "native Pi recovery did not restore the owned session file");
     }
@@ -187,6 +188,12 @@ export class PiControl implements HarnessControl {
     this.conversation = nativeConversationId(this.state.sessionId); return this.conversation;
   }
   async models(): Promise<NativeModelCatalog> { if (!this.initialized) throw new ControlError("INVALID_STATE", "Pi is not initialized"); return this.catalog; }
+  /** Pi's own state after the Turn: the session's model and thinking level, including changes made by extension commands. */
+  async nativeConfig(): Promise<{ readonly model: string | null; readonly options: NativeOptions }> {
+    if (this.conversation === null || this.closed) throw new ControlError("INVALID_STATE", "Pi native configuration requires an open session");
+    const state = object(await this.rpc.request("get_state", {}), "Pi state");
+    return { model: state.model == null ? null : model(state.model).id, options: typeof state.thinkingLevel === "string" ? { thinking_level: string(state.thinkingLevel, "thinking level", 128) } : {} };
+  }
   /** Skills and extensions from Pi's own command catalog; Pi has no MCP servers of its own. */
   async extensions(): Promise<NativeExtensions> {
     if (!this.initialized) throw new ControlError("INVALID_STATE", "Pi is not initialized");

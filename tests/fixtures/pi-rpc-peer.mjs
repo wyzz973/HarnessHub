@@ -1,8 +1,10 @@
-import{createInterface}from'node:readline';import{appendFileSync,writeFileSync}from'node:fs';
+import{createInterface}from'node:readline';import{appendFileSync,readFileSync,writeFileSync}from'node:fs';
 // Mirrors Pi 0.85.1 RPC (src/modes/rpc/rpc-mode.ts): ack before agent_start, isStreaming during runs, editor `prefill` / `{value}`, dialog `timeout`.
-const scenario=process.argv[2]??'basic', selected=process.argv.indexOf('--model'), current=selected<0?'one':process.argv[selected+1];
 const restored=process.argv.indexOf('--session'), sessionFile=process.argv.includes('--no-session')?null:restored<0?process.env.FIXTURE_SESSION_FILE:process.argv[restored+1];
-let streaming=false,cloned=false;
+// Like Pi, a restored session without a model flag runs the model and thinking level its file last recorded.
+function saved(type,key){if(restored<0)return undefined;try{return readFileSync(sessionFile,'utf8').trim().split('\n').map(line=>JSON.parse(line)).filter(row=>row.type===type).at(-1)?.[key];}catch{return undefined;}}
+const scenario=process.argv[2]??'basic', selected=process.argv.indexOf('--model'), current=selected<0?saved('model_change','modelId')??'one':process.argv[selected+1];
+let streaming=false,cloned=false,thinking=saved('thinking_level_change','thinkingLevel')??'off';
 function emit(value){process.stdout.write(JSON.stringify(value)+'\n');}
 function response(m,data){emit({type:'response',id:m.id,command:m.type,success:true,...(data===undefined?{}:{data})});}
 function started(){streaming=true;emit({type:'agent_start'});}
@@ -15,7 +17,8 @@ createInterface({input:process.stdin}).on('line',line=>{
  else if(m.type==='clone'){if(scenario==='clone-cancelled'){response(m,{cancelled:true});return;}cloned=true;response(m,{cancelled:false});}
  else if(m.type==='export_html'){if(scenario==='nothing-to-export'){emit({type:'response',id:m.id,command:m.type,success:false,error:'Nothing to export yet'});return;}writeFileSync(m.outputPath,'<html>pi</html>');response(m,{path:m.outputPath});}
  else if(m.type==='compact'){emit({type:'compaction_start',reason:'manual'});emit({type:'compaction_end',reason:'manual',aborted:false,willRetry:false});response(m,{summary:'kept',firstKeptEntryId:'e1',tokensBefore:1000,estimatedTokensAfter:200});}
- else if(m.type==='get_state'){if(scenario==='bad-json'){process.stdout.write('invalid\n');return;}response(m,{sessionId:cloned?'pi-clone':scenario==='restore-wrong'&&restored>=0?'pi-replacement':'pi-fixture',...(sessionFile?{sessionFile:cloned?sessionFile+'.clone':sessionFile}:{}),model:models.find(row=>row.id===current)??{provider:'native',id:current,name:current},thinkingLevel:'off',isStreaming:streaming});}
+ else if(m.type==='get_state'){if(scenario==='bad-json'){process.stdout.write('invalid\n');return;}response(m,{sessionId:cloned?'pi-clone':scenario==='restore-wrong'&&restored>=0?'pi-replacement':'pi-fixture',...(sessionFile?{sessionFile:cloned?sessionFile+'.clone':sessionFile}:{}),model:models.find(row=>row.id===current)??{provider:'native',id:current,name:current},thinkingLevel:thinking,isStreaming:streaming});}
+ else if(m.type==='set_thinking_level'){thinking=m.level;response(m);}
  else if(m.type==='get_available_models')response(m,{models});
  else if(m.type==='get_available_thinking_levels')response(m,{levels:current==='two'?['off','low','high','max']:['off']});
  else if(m.type==='prompt'){

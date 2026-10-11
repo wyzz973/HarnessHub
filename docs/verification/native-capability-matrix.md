@@ -10,7 +10,7 @@
 | 配置与模型 | 思考档位 | ✅ | ✕ | ◐ | ✅ | — | ○ | ✅ |
 | 配置与模型 | 模式与原生设置 | ◑ | ✕ | ◐ | ◐ | ✕ | ◐ | — |
 | 配置与模型 | 原生命令目录与执行 | — | ✕ | ◐ | ✅ | ✕ | ◐ | ◐ |
-| 配置与模型 | 原生命令改配置后的同步 | ○ | ○ | ？ | ○ | ？ | ○ | ○ |
+| 配置与模型 | 原生命令改配置后的同步 | ◑ | ✕ | ？ | ◐ | ？ | ✕ | ✕ |
 | 执行可见性 | 思考输出 | ◐ | ✕ | ◐ | ◑ | ✕ | ✕ | ◐ |
 | 执行可见性 | 工具状态 | ✅ | ✕ | ✅ | ◑ | ✕ | ✕ | ✅ |
 | 执行可见性 | 工具输入/输出/差异 | ✅ | ✕ | ✅ | ◑ | ✕ | ✕ | ✅ |
@@ -36,13 +36,13 @@
 
 | Harness | ✅ | ◐ | ◑ | ○ | ✕ | — | ？ |
 |---|---|---|---|---|---|---|---|
-| Codex | 12 | 3 | 5 | 4 | 2 | 1 | 0 |
-| Claude Code | 0 | 0 | 3 | 6 | 16 | 2 | 0 |
+| Codex | 12 | 3 | 6 | 3 | 2 | 1 | 0 |
+| Claude Code | 0 | 0 | 3 | 5 | 17 | 2 | 0 |
 | OpenCode | 8 | 6 | 3 | 3 | 0 | 2 | 5 |
-| OpenClaw | 5 | 4 | 4 | 7 | 0 | 7 | 0 |
+| OpenClaw | 5 | 5 | 4 | 6 | 0 | 7 | 0 |
 | Gemini CLI | 0 | 0 | 2 | 1 | 12 | 6 | 6 |
-| Cursor | 0 | 2 | 4 | 4 | 9 | 5 | 3 |
-| Pi | 10 | 6 | 1 | 3 | 0 | 7 | 0 |
+| Cursor | 0 | 2 | 4 | 3 | 10 | 5 | 3 |
+| Pi | 10 | 6 | 1 | 2 | 1 | 7 | 0 |
 
 ## Codex
 
@@ -54,7 +54,7 @@
 | 思考档位 | 具备 | Model.supportedReasoningEfforts、turn/start.effort | 已接出 | 通过 | 通过 | .tmp/native-complete-real-combined.json；docs/verification/complete-native-capabilities-2026-10-11.md | low 档真实使用 |
 | 模式与原生设置 | 具备 | approvalPolicy/sandboxPolicy/serviceTier 逐轮参数；collaborationMode 计划模式需 experimentalApi | 部分 | 通过 | 通过 | .tmp/cc-native-activity-codex-approval.json；docs/verification/native-session-actions-2026-10-11.md | 审批策略与沙箱作为本 Hub 线程设置接出（取自原配置、由线程回报核实、不写 config.toml）；计划模式需 experimentalApi、serviceTier 未接出 |
 | 原生命令目录与执行 | 不提供 | app-server 无斜杠命令；skills 以 UserInput.skill 调用（见 Skills） | 不适用 | 不适用 | 不适用 | — | — |
-| 原生命令改配置后的同步 | 部分 | model/rerouted 通知会改变实际模型；无命令式配置修改 | 未接出 | 未接出 | 未接出 | — | Hub 未记录改路由 |
+| 原生命令改配置后的同步 | 部分 | model/rerouted 通知（服务端单轮改路由）；app-server 没有修改模型或设置的原生命令 | 部分 | 未接出 | 未接出 | — | 改路由以警告提示逐轮显示；它不是会话设置，不在下一回合沿用（ADR-028）；改路由提示尚无协议测试 |
 | 思考输出 | 具备 | item/reasoning/summaryTextDelta、textDelta | 已接出 | 通过 | 未接出 | — | 协议测试覆盖；真实思考输出未单独验收 |
 | 工具状态 | 具备 | item/started\|completed 的 commandExecution/fileChange/mcpToolCall/webSearch 等 | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-codex.json；docs/verification/native-activity-2026-10-11.md | 命令与补丁工具真实回合 |
 | 工具输入/输出/差异 | 具备 | commandExecution.aggregatedOutput/exitCode、fileChange.changes[].diff、mcpToolCall 参数与结果、turn/diff/updated | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-codex.json；docs/verification/native-activity-2026-10-11.md | 命令输入/输出/退出码与补丁差异真实存储；MCP、搜索、图片项仅协议验证 |
@@ -88,7 +88,7 @@
 | 思考档位 | 具备 | configOptions effort(thought_level) | 已接出 | 通过 | 受阻 | .tmp/cc-native-catalog.json | Claude 账号周额度用完，真实生成无法验收 |
 | 模式与原生设置 | 具备 | mode(default/acceptEdits/plan/auto/bypassPermissions)、fast、agent | 已接出 | 通过 | 受阻 | .tmp/cc-native-catalog.json | Claude 账号周额度用完，真实生成无法验收 |
 | 原生命令目录与执行 | 具备 | available_commands_update（内置、自定义、skills、插件、MCP prompt），/compact /model 等原生处理 | 已接出 | 通过 | 受阻 | .tmp/cc-native-catalog.json | Claude 账号周额度用完，真实生成无法验收；目录真实读取 223 条命令 |
-| 原生命令改配置后的同步 | 具备 | /model、ExitPlanMode、回退模型后发送 config_option_update/current_mode_update | 未接出 | 未接出 | 未接出 | — | Hub 尚未把原生变化同步到界面与下一轮选择 |
+| 原生命令改配置后的同步 | 具备 | /model、ExitPlanMode、回退模型后发送 config_option_update/current_mode_update | 已接出 | 通过 | 受阻 | docs/verification/native-config-sync-2026-10-11.md | 通用 ACP：回合后按代理宣告的当前值记录；同一选择下一回合应用原生值（ADR-028）；账号周额度用完，未做真实验收 |
 | 思考输出 | 具备 | agent_thought_chunk（新模型可能只有签名不出文本） | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收 |
 | 工具状态 | 具备 | tool_call/tool_call_update | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收 |
 | 工具输入/输出/差异 | 具备 | kind、content(diff/console)、locations、rawInput/rawOutput、_meta.claudeCode.toolResponse | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收 |
@@ -122,7 +122,7 @@
 | 思考档位 | 具备 | configOptions effort（仅模型有 variants 时） | 已接出 | 通过 | 未接出 | — | 默认模型无档位，未真实验收 |
 | 模式与原生设置 | 具备 | configOptions mode(build/plan) | 已接出 | 通过 | 未接出 | — | 未真实验收 |
 | 原生命令目录与执行 | 具备 | available_commands_update（init/review、配置命令、MCP prompt、skills） | 已接出 | 通过 | 未接出 | — | 目录真实读取 104 条（目录读取现等待代理的命令公告）；执行未验收；未知 / 开头文本会被原程序丢弃 |
-| 原生命令改配置后的同步 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
+| 原生命令改配置后的同步 | 未核实 | 1.18.35 只在客户端 session/set_config_option（model）后发送 config_option_update；未发现原生命令修改设置后的宣告 | 未接出 | 未接出 | 未接出 | — | 若它宣告设置变化，通用 ACP 机制（ADR-028）会同样记录并沿用；未确认，不计为已接出 |
 | 思考输出 | 具备 | agent_thought_chunk | 已接出 | 通过 | 未接出 | — | 未真实验收 |
 | 工具状态 | 具备 | tool_call/tool_call_update | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-opencode.json；docs/verification/native-activity-2026-10-11.md | 命令、读取、编辑与 todowrite 真实回合 |
 | 工具输入/输出/差异 | 具备 | rawInput/rawOutput、diff、图片附件 | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-opencode.json；docs/verification/native-activity-2026-10-11.md | 命令/读取/编辑详情与差异真实存储；标题为原程序给出的路径 |
@@ -156,7 +156,7 @@
 | 思考档位 | 具备 | configOptions thought_level | 已接出 | 通过 | 通过 | .tmp/native-complete-real-combined.json；docs/verification/complete-native-capabilities-2026-10-11.md | low 档真实使用 |
 | 模式与原生设置 | 具备 | fast_mode/verbose_level/reasoning_level/response_usage/elevated_level | 已接出 | 通过 | 部分通过 | .tmp/native-complete-real-combined.json | 仅思考档位真实使用；__mode 与思考档位重复 |
 | 原生命令目录与执行 | 具备 | 固定 27 条命令（缺 /fast /exec /approve 等） | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-acp.json；docs/verification/native-session-actions-2026-10-11.md | 原生 /compact 真实执行；固定 27 条命令（缺 /fast /exec /approve 等） |
-| 原生命令改配置后的同步 | 部分 | 斜杠命令修改 Gateway 会话设置，但 ACP 桥不推送 config_option_update | 未接出 | 未接出 | 未接出 | — | — |
+| 原生命令改配置后的同步 | 部分 | /think、/fast、/verbose、/reasoning、/elevated、/model 等指令持久修改 Gateway 会话设置，但 ACP 桥不推送 config_option_update | 已接出 | 通过 | 通过 | .tmp/cc-native-config-openclaw.json；.tmp/cc-native-config-openclaw-fast.json；docs/verification/native-config-sync-2026-10-11.md | 每回合后经原 CLI 读回会话行与 chat.history；/think high、/fast on 后下一回合沿用，同选择显式切换后恢复所选；恢复的会话按会话行模型检查图片 |
 | 思考输出 | 部分 | ACP 桥不实时转发思考，仅 load 回放 | 部分 | 通过 | 未接出 | — | 桥未流式转发思考时，回合结束后从原生转录补记；deepseek-chat 无思考输出，真实未验收 |
 | 工具状态 | 部分 | 桥未声明 tool-events，工具事件很可能不会到达 | 部分 | 通过 | 通过 | .tmp/cc-native-activity-openclaw.json；docs/verification/openclaw-transcript-2026-10-11.md | ACP 桥不转发工具事件；回合结束后按本会话原生转录补记工具与结果（非实时） |
 | 工具输入/输出/差异 | 部分 | Gateway agent 事件含工具输入输出（需 tool-events 与 verbose=full） | 部分 | 通过 | 通过 | .tmp/cc-native-activity-openclaw.json；docs/verification/openclaw-transcript-2026-10-11.md | 工具参数与结果来自本会话原生转录，回合结束后补记；实时工具流需直连 Gateway |
@@ -190,7 +190,7 @@
 | 思考档位 | 不提供 | 无思考档位配置 | 不适用 | 不适用 | 不适用 | — | — |
 | 模式与原生设置 | 具备 | 旧式 modes(default/autoEdit/yolo/plan) + session/set_mode | 已接出 | 通过 | 受阻 | — | Gemini 个人账号客户端被服务端停用（NATIVE_CLIENT_UNSUPPORTED），真实链路受阻；set_mode 会在无 prompt 时发文本块，已改为不中断连接 |
 | 原生命令目录与执行 | 具备 | available_commands_update（memory/extensions/init/restore 等） | 已接出 | 通过 | 受阻 | — | Gemini 个人账号客户端被服务端停用（NATIVE_CLIENT_UNSUPPORTED），真实链路受阻 |
-| 原生命令改配置后的同步 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
+| 原生命令改配置后的同步 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | 若它宣告设置变化，通用 ACP 机制（ADR-028）会同样记录并沿用；本机客户端被服务端停用，无法确认 |
 | 思考输出 | 具备 | agent_thought_chunk | 已接出 | 通过 | 受阻 | — | Gemini 个人账号客户端被服务端停用（NATIVE_CLIENT_UNSUPPORTED），真实链路受阻 |
 | 工具状态 | 具备 | tool_call/tool_call_update | 已接出 | 通过 | 受阻 | — | Gemini 个人账号客户端被服务端停用（NATIVE_CLIENT_UNSUPPORTED），真实链路受阻 |
 | 工具输入/输出/差异 | 部分 | kind、locations、全文件 diff；无 raw 输入输出 | 已接出 | 通过 | 受阻 | — | Gemini 个人账号客户端被服务端停用（NATIVE_CLIENT_UNSUPPORTED），真实链路受阻 |
@@ -224,7 +224,7 @@
 | 思考档位 | 部分 | 仅客户端声明 parameterizedModelPicker 时出现 thought_level，且随模型全局保存 | 未接出 | 未接出 | 未接出 | — | — |
 | 模式与原生设置 | 具备 | mode(agent/plan/ask) 会话级 set_config_option | 已接出 | 通过 | 未接出 | — | 未真实验收 |
 | 原生命令目录与执行 | 具备 | copy-request-id、自定义命令、skills | 已接出 | 通过 | 未接出 | — | 执行未验收 |
-| 原生命令改配置后的同步 | 部分 | current_mode_update | 未接出 | 未接出 | 未接出 | — | — |
+| 原生命令改配置后的同步 | 部分 | current_mode_update | 已接出 | 通过 | 受阻 | docs/verification/native-config-sync-2026-10-11.md | 通用 ACP 机制（模式宣告与回合后应用）；Cursor 模型选择在 Hub 只读；账号计划受限，未做真实验收 |
 | 思考输出 | 具备 | agent_thought_chunk | 已接出 | 通过 | 受阻 | — | Cursor 账号套餐限制，原公共对话返回升级提示，生成任务无法验收 |
 | 工具状态 | 具备 | tool_call/tool_call_update（失败工具仍报告 completed） | 已接出 | 通过 | 受阻 | — | Cursor 账号套餐限制，原公共对话返回升级提示，生成任务无法验收 |
 | 工具输入/输出/差异 | 具备 | rawInput/rawOutput、diff、locations | 已接出 | 通过 | 受阻 | — | Cursor 账号套餐限制，原公共对话返回升级提示，生成任务无法验收 |
@@ -258,7 +258,7 @@
 | 思考档位 | 具备 | get_available_thinking_levels + Model.reasoning/thinkingLevelMap、set_thinking_level（会话级） | 已接出 | 通过 | 通过 | .tmp/native-complete-real-combined.json；docs/verification/complete-native-capabilities-2026-10-11.md | low 档真实使用；本轮改为不加载 Pi 内部 JS |
 | 模式与原生设置 | 不提供 | 无会话级模式；steering/follow-up/自动压缩设置会写全局 settings.json | 不适用 | 不适用 | 不适用 | — | — |
 | 原生命令目录与执行 | 具备 | get_commands（extension/prompt/skill）；内置 TUI 命令不可用 | 已接出 | 通过 | 未接出 | — | 扩展命令无运行时已按原生状态结算；执行未真实验收 |
-| 原生命令改配置后的同步 | 部分 | thinking_level_changed 事件；扩展可改模型 | 未接出 | 未接出 | 未接出 | — | — |
+| 原生命令改配置后的同步 | 部分 | get_state 的 model/thinkingLevel；扩展命令可改模型与思考档位；恢复会话文件时 Pi 自己恢复上次的模型与档位 | 已接出 | 通过 | 受阻 | docs/verification/native-config-sync-2026-10-11.md | 回合后读取 get_state；恢复会话不再强加默认模型（只在有选择时指定）；真实触发需要在用户 Pi 配置中加入扩展，不做 |
 | 思考输出 | 具备 | message_update thinking_delta | 已接出 | 通过 | 未接出 | — | 未真实验收 |
 | 工具状态 | 具备 | tool_execution_start/end | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-pi.json；docs/verification/native-activity-2026-10-11.md | bash、read、edit 真实回合 |
 | 工具输入/输出/差异 | 具备 | tool_execution_start.args、update.partialResult、end.result.content/details(diff/patch) | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-pi.json；docs/verification/native-activity-2026-10-11.md | 参数、结果与 patch 差异真实存储 |

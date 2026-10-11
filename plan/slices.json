@@ -691,7 +691,8 @@
         "web/src/components/BranchOrigin.tsx",
         "tests/real/native-branch.real.ts",
         "web/src/components/NativeExtensions.tsx",
-        "tests/real/native-extensions.real.ts"
+        "tests/real/native-extensions.real.ts",
+        "tests/real/native-config.real.ts"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/complete-native-capabilities-2026-10-11.md"

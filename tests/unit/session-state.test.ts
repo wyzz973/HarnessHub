@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { commandId, sessionId, SessionError } from "../../src/contracts/session.js";
-import { assertSessionTransition, parseSession, recoverSession, replayCommand } from "../../src/contexts/session/domain/state.js";
+import { assertSessionTransition, carriedNativeConfiguration, parseSession, recoverSession, replayCommand } from "../../src/contexts/session/domain/state.js";
 
 const fingerprint = "a".repeat(64);
 const selection = { harnessId: "alpha", controlId: "alpha-acp" };
@@ -33,7 +33,7 @@ test("valid public snapshot keeps independent public identities and exact causal
 test("unknown schemas, properties and inconsistent public ownership are rejected", () => {
   const state = seed();
   assert.equal(parseSession({ ...state, schemaVersion: 3 }).schemaVersion, 3);
-  for (const value of [null, {}, { ...state, schemaVersion: 9 }, { ...state, secret: "not-a-field" },
+  for (const value of [null, {}, { ...state, schemaVersion: 10 }, { ...state, secret: "not-a-field" },
     { ...state, activeRunId: "run-one" }, { ...state, lastSeq: 3 }, { ...state, status: "unknown" },
     { ...state, configuration: { ...state.configuration, workspace: "relative" } }]) assert.throws(() => parseSession(value), SessionError);
 });
@@ -161,4 +161,26 @@ test("v8 branch origins are bounded quoted history and native fork references ad
   for (const invalid of [step("fork-pending", "ready", "native-copy"), step("fork-pending", "forking", "native-other"), step("forking", "archived", "native-copy"), step("ready", "forking")])
     assert.throws(invalid, (error: unknown) => error instanceof SessionError && error.code === "INVALID_TRANSITION");
   assert.throws(() => assertSessionTransition(parseSession(state), parseSession({ ...state, version: state.version + 1, origin: { ...origin, history: origin.history.slice(1) } })), /branch origin is immutable/u);
+});
+test("v9 bindings keep what the native session reported, and only a same-epoch change of a requested value is carried", () => {
+  const base = seed(), chosen = { ...selection, nativeModel: "model-a", nativeOptions: { effort: "low" } };
+  const ready = { harnessId: "alpha", controlId: "alpha-acp", checkpoint: "native-one", throughRunId: "run-two", status: "ready", observed: { model: "model-b", options: { effort: "high", mode: "plan" } } };
+  const state = { ...base, schemaVersion: 9, selection: chosen, runs: base.runs.map(row => ({ ...row, selection: chosen })), nativeBindings: [ready] };
+  const parsed = parseSession(state); assert.deepEqual(parsed.nativeBindings?.[0]?.observed, ready.observed);
+  const observed = (value: unknown) => ({ ...state, nativeBindings: [{ ...ready, observed: value }] });
+  for (const value of [{ ...state, schemaVersion: 8 }, observed({ model: "x\n", options: {} }), observed({ model: "", options: {} }), observed({ model: null, options: { "bad key": "x" } }),
+    observed({ model: null }), observed({ model: null, options: {}, extra: 1 }), observed({ model: null, options: { effort: "" } }), observed(null)])
+    assert.throws(() => parseSession(value), SessionError);
+  // A requested value the native session changed is carried as it is now; a value the selection does not request is left to the Harness.
+  assert.deepEqual(carriedNativeConfiguration(parsed, parsed.selection, 1), { model: "model-b", options: { effort: "high" } });
+  // An effective switch (a later epoch), a managed Provider, an unreported model, an unchanged value or a binding without a finished Turn carry nothing.
+  assert.equal(carriedNativeConfiguration(parsed, parsed.selection, 2), null);
+  assert.equal(carriedNativeConfiguration(parsed, { harnessId: "alpha", controlId: "alpha-acp", provider: { providerId: "provider-fixture", revision: 1, model: "m" } } as typeof parsed.selection, 1), null);
+  const unchanged = parseSession(observed({ model: null, options: { effort: "low", mode: "plan" } }));
+  assert.equal(carriedNativeConfiguration(unchanged, unchanged.selection, 1), null);
+  const fresh = parseSession({ ...state, nativeBindings: [{ ...ready, throughRunId: null }] });
+  assert.equal(carriedNativeConfiguration(fresh, fresh.selection, 1), null);
+  // Only the Run that owns the native session may record what it reported.
+  assert.throws(() => assertSessionTransition(parsed, parseSession({ ...state, version: state.version + 1, nativeBindings: [{ ...ready, observed: { model: null, options: {} } }] })),
+    (error: unknown) => error instanceof SessionError && error.code === "INVALID_TRANSITION");
 });

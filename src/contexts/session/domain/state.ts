@@ -2,9 +2,9 @@ import { parseProviderTarget, type ProviderTarget } from "../../../contracts/pro
 import {
   SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId,
   type CommandRecord, type HarnessSelection, type PublicMessage, type PublicRun,
-  type PublicSwitch, type RunStatus, type SessionConfiguration, type SessionMutation, type SessionSnapshot, type NativeSessionBinding, type ForkedMessage, type SessionOrigin,
+  type PublicSwitch, type RunStatus, type SessionConfiguration, type SessionMutation, type SessionSnapshot, type NativeSessionBinding, type ForkedMessage, type SessionOrigin, type NativeConfiguration,
 } from "../../../contracts/session.js";
-import type { BackendResult, CleanupEvidence, NativeUsage } from "../../../contracts/control.js";
+import type { BackendResult, CleanupEvidence, NativeOptions, NativeUsage } from "../../../contracts/control.js";
 import { MAX_RUN_OUTPUTS, parseAttachmentRefs, parseContentRef } from "../../../contracts/content.js";
 
 export const MAX_RUNS = 256;
@@ -24,7 +24,7 @@ export const MAX_RUN_TOOLS = 128;
 export const MAX_RUN_NOTICES = 32;
 export const MAX_RUN_ACTIVITIES = 64;
 export const MAX_PLAN_ENTRIES = 64;
-export const CURRENT_SCHEMA = 8;
+export const CURRENT_SCHEMA = 9;
 /** A branched Session's quoted history: bounded like the complete public context it feeds. */
 export const MAX_ORIGIN_MESSAGES = MAX_RUNS * 2;
 const statuses: readonly RunStatus[] = ["queued", "preparing", "running", "settling", "completed", "cancelled", "failed", "unknown"];
@@ -196,12 +196,20 @@ function command(value: unknown): CommandRecord {
 }
 function nativeBinding(value: unknown): NativeSessionBinding {
   const item = record(value, "native binding");
-  keys(item, ["harnessId", "controlId", "checkpoint", "throughRunId", "status"], "native binding");
+  keys(item, ["harnessId", "controlId", "checkpoint", "throughRunId", "status", "observed"], "native binding");
   const harnessId = text(item.harnessId, "native Harness", 96), controlId = text(item.controlId, "native control", 96);
   if (![harnessId, controlId].every(id => /^[a-z][a-z0-9-]*$/u.test(id)) || !["ready", "unconfirmed", "archived", "fork-pending", "forking"].includes(String(item.status))) throw new SessionError("INVALID_DATA", "invalid native binding identity or state");
   const checkpoint = text(item.checkpoint, "native checkpoint", 8192);
   if (/[\r\n]/u.test(checkpoint)) throw new SessionError("INVALID_DATA", "invalid native checkpoint");
-  return { harnessId, controlId, checkpoint, throughRunId: item.throughRunId === null ? null : runId(item.throughRunId), status: item.status as NativeSessionBinding["status"] };
+  return { harnessId, controlId, checkpoint, throughRunId: item.throughRunId === null ? null : runId(item.throughRunId), status: item.status as NativeSessionBinding["status"],
+    ...(item.observed === undefined ? {} : { observed: parseNativeConfiguration(item.observed) }) };
+}
+/** A reported native configuration: a bounded model identity (or null) and options shaped like requested native options. */
+export function parseNativeConfiguration(value: unknown): NativeConfiguration {
+  const item = record(value, "native configuration"); keys(item, ["model", "options"], "native configuration");
+  if (item.model !== null && (typeof item.model !== "string" || !item.model.trim() || item.model.length > 1024 || /[\0\r\n]/u.test(item.model))) throw new SessionError("INVALID_DATA", "invalid native configuration model");
+  try { return { model: item.model, options: parseNativeOptions(item.options) }; }
+  catch (error) { if (error instanceof SessionError) throw new SessionError("INVALID_DATA", "invalid native configuration options"); throw error; }
 }
 function origin(value: unknown): SessionOrigin {
   const item = record(value, "Session origin"); keys(item, ["kind", "sessionId", "throughRunId", "history"], "Session origin");
@@ -224,7 +232,7 @@ function unique(values: readonly string[], label: string): void {
 export function parseSession(value: unknown): SessionSnapshot {
   const item = record(value, "Session");
   keys(item, ["schemaVersion", "id", "version", "lastSeq", "epoch", "status", "configuration", "selection", "activeRunId", "pendingSwitchId", "runs", "messages", "switches", "commands", "nativeBindings", "origin"], "Session");
-  if (item.schemaVersion !== 1 && item.schemaVersion !== 2 && item.schemaVersion !== 3 && item.schemaVersion !== 4 && item.schemaVersion !== 5 && item.schemaVersion !== 6 && item.schemaVersion !== 7 && item.schemaVersion !== 8) throw new SessionError("INVALID_DATA", "unknown Session schemaVersion");
+  if (item.schemaVersion !== 1 && item.schemaVersion !== 2 && item.schemaVersion !== 3 && item.schemaVersion !== 4 && item.schemaVersion !== 5 && item.schemaVersion !== 6 && item.schemaVersion !== 7 && item.schemaVersion !== 8 && item.schemaVersion !== 9) throw new SessionError("INVALID_DATA", "unknown Session schemaVersion");
   if (item.status !== "open" && item.status !== "closed" && item.status !== "blocked") throw new SessionError("INVALID_DATA", "unknown Session status");
   const result: SessionSnapshot = { schemaVersion: item.schemaVersion, id: sessionId(item.id), version: number(item.version, "version"), lastSeq: number(item.lastSeq, "lastSeq"),
     epoch: number(item.epoch, "epoch", 1), status: item.status, configuration: parseConfiguration(item.configuration), selection: parseSelection(item.selection),
@@ -235,6 +243,7 @@ export function parseSession(value: unknown): SessionSnapshot {
   // Branches and their pending native forks exist only from v8; a fork reference always belongs to a branched Session.
   if (result.schemaVersion < 8 && (result.origin !== undefined || result.nativeBindings?.some(binding => binding.status === "fork-pending" || binding.status === "forking"))) throw new SessionError("INVALID_DATA", "branched Sessions require Session v8");
   if (result.nativeBindings?.some(binding => (binding.status === "fork-pending" || binding.status === "forking") && (result.origin === undefined || binding.throughRunId !== null))) throw new SessionError("INVALID_DATA", "a native fork reference needs its branch origin");
+  if (result.schemaVersion < 9 && result.nativeBindings?.some(binding => binding.observed !== undefined)) throw new SessionError("INVALID_DATA", "observed native configuration requires Session v9");
   if (result.origin !== undefined && result.origin.sessionId === result.id) throw new SessionError("INVALID_DATA", "a Session cannot be branched from itself");
   if (result.schemaVersion < 6 && (result.nativeBindings !== undefined || result.commands.some(command => command.kind === "native-reset"))) throw new SessionError("INVALID_DATA", "native bindings require Session v6");
   if (result.schemaVersion < 7 && result.runs.some(run => run.plan !== undefined || run.usage !== undefined || run.notices !== undefined || run.activities !== undefined || run.outputs !== undefined || run.attachments !== undefined ||
@@ -305,6 +314,22 @@ export function parseSession(value: unknown): SessionSnapshot {
     entry.kind === "send" ? result.runs.some(run => run.id === entry.resultId) : entry.kind === "switch" ? result.switches.some(sw => sw.id === entry.resultId) : entry.kind === "cancel" ? entry.resultId === "none" || result.runs.some(run => run.id === entry.resultId) : entry.kind === "permission" ? result.runs.some(run => run.id === entry.resultId) : entry.resultId === result.id)) throw new SessionError("INVALID_DATA", "command relation is inconsistent");
   if (utf8Bytes(JSON.stringify(result)) > MAX_SESSION_BYTES) throw new SessionError("SESSION_LIMIT", "Session aggregate byte limit reached");
   return result;
+}
+/**
+ * Requested native values that the native session itself changed (by its own commands) since its last Turn under the same
+ * selection epoch. The next Turn applies these native values instead of reverting them; an effective switch (a new epoch,
+ * even to the same selection) applies the selection again. Values the selection does not request are never applied.
+ */
+export function carriedNativeConfiguration(state: SessionSnapshot, selection: HarnessSelection, epoch: number): { readonly model?: string; readonly options?: NativeOptions } | null {
+  if (selection.provider !== undefined) return null;
+  const binding = state.nativeBindings?.find(item => item.harnessId === selection.harnessId && item.controlId === selection.controlId && item.status === "ready");
+  const observed = binding?.observed, last = binding?.throughRunId == null ? undefined : state.runs.find(run => run.id === binding.throughRunId);
+  if (observed === undefined || last === undefined || last.epoch !== epoch) return null;
+  const model = selection.nativeModel !== undefined && observed.model !== null && observed.model !== selection.nativeModel ? observed.model : undefined;
+  const options: Record<string, string> = {};
+  for (const [key, value] of Object.entries(selection.nativeOptions ?? {})) { const seen = observed.options[key]; if (seen !== undefined && seen !== value) options[key] = seen; }
+  if (model === undefined && !Object.keys(options).length) return null;
+  return { ...(model === undefined ? {} : { model }), ...(Object.keys(options).length ? { options } : {}) };
 }
 export function assertInput(value: string): void {
   if (typeof value !== "string" || !value.trim() || value.includes("\0") || utf8Bytes(value) > MAX_INPUT_BYTES) throw new SessionError("INVALID_INPUT", "message must contain text within 64 KiB");

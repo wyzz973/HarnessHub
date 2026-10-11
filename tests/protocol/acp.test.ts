@@ -434,3 +434,50 @@ test("OpenClaw reconciles each turn from its own transcript: tools, reasoning, u
     } finally { await driver.close(); }
   }
 });
+
+test("OpenClaw reads its settings back after each turn as slash commands leave them, and gates images on a restored session's own model", async t => {
+  const root = await mkdtemp(join(tmpdir(), "openclaw-settings-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const config = join(root, "openclaw.json"); await writeFile(config, '{agents:{list:[{id:"main",default:true}],defaults:{model:{primary:"deepseek/deepseek-chat"}}}}');
+  const env = { HOME: root, OPENCLAW_CONFIG_PATH: config }, launch = { protocol: "acp-v1" as const, executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "openclaw-settings"], env };
+  // What the Gateway holds after `/think high`, `/verbose full` and the like; fast mode is only in chat.history.
+  let row: Record<string, unknown> | null = { modelProvider: "vision", model: "large", thinkingLevel: "high", verboseLevel: "full", reasoningLevel: "stream", responseUsage: "tokens" };
+  const calls: string[] = [];
+  const request = async (method: string, params: Readonly<Record<string, unknown>>) => {
+    calls.push(method);
+    if (method === "sessions.get") return { messages: [] };
+    if (method === "sessions.list") return { sessions: [{ key: "agent:main:harnesshub:00000000-0000-0000-0000-000000000000", modelProvider: "other", model: "x", thinkingLevel: "off" }, ...(row === null ? [] : [{ ...row, key: params.search }])] };
+    if (method === "chat.history") return { messages: [], fastMode: true };
+    if (method === "models.list") return { models: [{ provider: "vision", id: "large", name: "Vision", input: ["text", "image"] }, { provider: "deepseek", id: "deepseek-chat", name: "DeepSeek Chat", input: ["text"] }] };
+    throw new Error("unexpected OpenClaw method " + method);
+  };
+  const first = new OpenClawControl(launch, { ...options, env }, request);
+  let checkpoint: string | null;
+  try {
+    const id = await ready(first);
+    await assert.rejects(first.nativeConfig(), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_CONFIG_UNAVAILABLE", "nothing is reported before a turn");
+    assert.equal((await (await first.startText(id, "/think high", () => {})).result).status, "completed");
+    assert.deepEqual(await first.nativeConfig(), { model: "vision/large", options: { thought_level: "high", __mode: "high", fast_mode: "on", verbose_level: "full", reasoning_level: "stream", response_usage: "tokens", elevated_level: "off" } });
+    assert.ok(calls.includes("sessions.list") && calls.includes("chat.history"));
+    checkpoint = await first.checkpoint(); assert.ok(checkpoint);
+  } finally { await first.close(); }
+  const image = attachment(root, "photo.png", "image/png", "image", Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  // The restored session runs the model its row holds (vision), not the configured text-only model.
+  const restored = new OpenClawControl(launch, { ...options, env }, request);
+  try { await restored.initialize(); await restored.open(process.cwd(), undefined, undefined, checkpoint); await restored.checkAttachments([image]); }
+  finally { await restored.close(); }
+  // Without a row the configured model decides, and it cannot see images.
+  row = null;
+  const unlisted = new OpenClawControl(launch, { ...options, env }, request);
+  try { await unlisted.initialize(); await unlisted.open(process.cwd(), undefined, undefined, checkpoint); await assert.rejects(unlisted.checkAttachments([image]), (error: unknown) => error instanceof ControlError && error.code === "ATTACHMENT_UNSUPPORTED"); }
+  finally { await unlisted.close(); }
+});
+
+test("ACP reports the configuration the agent announced and records a mode it applied without an echo", async () => {
+  const driver = new AcpControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "openclaw-settings"], env: {} }, options);
+  try {
+    await driver.initialize(); await driver.open(process.cwd(), undefined, { __mode: "high" });
+    const reported = await driver.nativeConfig();
+    assert.equal(reported.model, null, "an agent without a model selector reports no model");
+    assert.deepEqual(reported.options, { thought_level: "adaptive", fast_mode: "off", verbose_level: "off", reasoning_level: "off", response_usage: "off", elevated_level: "off", __mode: "high" });
+  } finally { await driver.close(); }
+});

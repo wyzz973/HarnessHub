@@ -194,12 +194,12 @@
         },
         "config-sync": {
           "native": "partial",
-          "source": "model/rerouted 通知会改变实际模型；无命令式配置修改",
-          "hub": "none",
+          "source": "model/rerouted 通知（服务端单轮改路由）；app-server 没有修改模型或设置的原生命令",
+          "hub": "partial",
           "protocol": "none",
           "real": "none",
           "evidence": [],
-          "note": "Hub 未记录改路由"
+          "note": "改路由以警告提示逐轮显示；它不是会话设置，不在下一回合沿用（ADR-028）；改路由提示尚无协议测试"
         },
         "thinking": {
           "native": "yes",
@@ -496,11 +496,13 @@
         "config-sync": {
           "native": "yes",
           "source": "/model、ExitPlanMode、回退模型后发送 config_option_update/current_mode_update",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": "Hub 尚未把原生变化同步到界面与下一轮选择"
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
+          "evidence": [
+            "docs/verification/native-config-sync-2026-10-11.md"
+          ],
+          "note": "通用 ACP：回合后按代理宣告的当前值记录；同一选择下一回合应用原生值（ADR-028）；账号周额度用完，未做真实验收"
         },
         "thinking": {
           "native": "yes",
@@ -749,12 +751,12 @@
         },
         "config-sync": {
           "native": "unknown",
-          "source": "",
+          "source": "1.18.35 只在客户端 session/set_config_option（model）后发送 config_option_update；未发现原生命令修改设置后的宣告",
           "hub": "none",
           "protocol": "none",
           "real": "none",
           "evidence": [],
-          "note": ""
+          "note": "若它宣告设置变化，通用 ACP 机制（ADR-028）会同样记录并沿用；未确认，不计为已接出"
         },
         "thinking": {
           "native": "yes",
@@ -1038,12 +1040,16 @@
         },
         "config-sync": {
           "native": "partial",
-          "source": "斜杠命令修改 Gateway 会话设置，但 ACP 桥不推送 config_option_update",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "source": "/think、/fast、/verbose、/reasoning、/elevated、/model 等指令持久修改 Gateway 会话设置，但 ACP 桥不推送 config_option_update",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-config-openclaw.json",
+            ".tmp/cc-native-config-openclaw-fast.json",
+            "docs/verification/native-config-sync-2026-10-11.md"
+          ],
+          "note": "每回合后经原 CLI 读回会话行与 chat.history；/think high、/fast on 后下一回合沿用，同选择显式切换后恢复所选；恢复的会话按会话行模型检查图片"
         },
         "thinking": {
           "native": "partial",
@@ -1318,7 +1324,7 @@
           "protocol": "none",
           "real": "none",
           "evidence": [],
-          "note": ""
+          "note": "若它宣告设置变化，通用 ACP 机制（ADR-028）会同样记录并沿用；本机客户端被服务端停用，无法确认"
         },
         "thinking": {
           "native": "yes",
@@ -1568,11 +1574,13 @@
         "config-sync": {
           "native": "partial",
           "source": "current_mode_update",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
+          "evidence": [
+            "docs/verification/native-config-sync-2026-10-11.md"
+          ],
+          "note": "通用 ACP 机制（模式宣告与回合后应用）；Cursor 模型选择在 Hub 只读；账号计划受限，未做真实验收"
         },
         "thinking": {
           "native": "yes",
@@ -1825,12 +1833,14 @@
         },
         "config-sync": {
           "native": "partial",
-          "source": "thinking_level_changed 事件；扩展可改模型",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "source": "get_state 的 model/thinkingLevel；扩展命令可改模型与思考档位；恢复会话文件时 Pi 自己恢复上次的模型与档位",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
+          "evidence": [
+            "docs/verification/native-config-sync-2026-10-11.md"
+          ],
+          "note": "回合后读取 get_state；恢复会话不再强加默认模型（只在有选择时指定）；真实触发需要在用户 Pi 配置中加入扩展，不做"
         },
         "thinking": {
           "native": "yes",

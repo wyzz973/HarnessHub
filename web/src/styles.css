@@ -3983,3 +3983,12 @@ a {
 .extension-list small { color: var(--muted); font-size: 11px; }
 .extension-list small.is-error { color: var(--danger); }
 .extension-list .is-disabled { color: var(--muted); font-weight: 400; }
+
+.native-carried>span {
+  min-width:0;
+  overflow-wrap:anywhere
+}
+
+.native-carried>.text-button {
+  flex-shrink:0
+}
