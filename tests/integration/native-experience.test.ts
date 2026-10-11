@@ -114,7 +114,8 @@ test("a setting the native session changed itself is applied as it is on the nex
   view=await send("/native-fast on","two",2);
   assert.equal(native(view).observed?.options["native-fast"],"on");assert.deepEqual(native(view).carried,{options:{"native-fast":"on"}});
   view=await send("third turn","three",3);
-  assert.deepEqual(await applied(),["off","off","on"],"the next Turn applies the native value instead of reverting it");
+  // A value the restored session already runs is not requested again: only the carried native value is applied.
+  assert.deepEqual(await applied(),["on"],"the next Turn applies the native value instead of reverting it");
   const third=(view.runs as {id:string}[])[2]!.id,events:{type:string;data:Record<string,unknown>}[]=[];
   for(let after=0;;){const page=(await f.call(`/sessions/${id}/events?afterSeq=${after}&limit=100`)).value as {events:{type:string;data:Record<string,unknown>}[];nextSeq:number;hasMore:boolean};events.push(...page.events);if(!page.hasMore)break;after=page.nextSeq;}
   assert.deepEqual(events.filter(row=>row.type==="native.config_carried").map(row=>row.data),[{runId:third,options:{"native-fast":"on"}}]);
@@ -125,7 +126,8 @@ test("a setting the native session changed itself is applied as it is on the nex
   view=await f.until(`/sessions/${id}`,row=>row.pendingSwitchId===null&&row.epoch===2);
   assert.equal(native(view).carried,undefined);
   view=await send("fourth turn","four",4);
-  assert.deepEqual(await applied(),["off","off","on","off"]);assert.equal(native(view).observed?.options["native-fast"],"off");assert.equal(native(view).carried,undefined);
+  // This fixture restores sessions at their defaults, so the selection (off) is already in effect and the session reports it.
+  assert.deepEqual(await applied(),["on"]);assert.equal(native(view).observed?.options["native-fast"],"off");assert.equal(native(view).carried,undefined);
 });
 
 test("a native session of the workspace is listed, continued as a conversation and then marked as held by it",{timeout:30000},async t=>{

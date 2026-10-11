@@ -11,6 +11,8 @@ import { checkInputs, fileMentions, readAttachment } from "../../infrastructure/
 
 interface ActivePrompt {
   readonly event: (event: ControlEvent) => void;
+  /** When the prompt's own last update arrived; an agent that keeps sending after its prompt response is waited for. */
+  lastUpdate: number;
   readonly tools: Map<string, { title: string; status: string }>;
   readonly compaction: Map<string, string>;
   stopping: boolean;
@@ -33,6 +35,8 @@ const COMMANDS_WAIT_MS = 1500;
 /** Text files up to this size travel as embedded resources when the agent declares embedded context. */
 const EMBED_TEXT_BYTES = 256 * 1024;
 const REPLAY_SETTLE_MS = 3000;
+/** The longest wait for an agent's updates that trail its prompt response. */
+const TRAILING_SETTLE_MS = 2000;
 /** Replayed history kept when a session is read for continuing it; older text beyond this is counted, not kept. */
 const IMPORT_REPLAY_BYTES = 4 * 1024 * 1024, IMPORT_REPLAY_MESSAGES = 2000;
 /** Pages of session/list searched to confirm that a session belongs to the workspace. */
@@ -113,6 +117,7 @@ export class AcpControl implements HarnessControl {
   private readonly rpc: JsonRpcProcess;
   private initializing: Promise<ProtocolObservation> | null = null;
   private initialized = false;
+  private version: string | null = null;
   private capabilities: Record<string, unknown> = {};
   private conversation: NativeConversationId | null = null;
   private opening = false;
@@ -169,6 +174,7 @@ export class AcpControl implements HarnessControl {
         agentName: info === null ? null : string(info.name, "agent name"),
         agentVersion: info === null ? null : string(info.version, "agent version"),
         authenticationMethods: methods, capabilities };
+      this.version = observation.agentVersion;
       this.initialized = true;
       return observation;
     } catch (error) { const failure = this.nativeFailure(error); this.rpc.abort(failure); throw failure; }
@@ -357,6 +363,13 @@ export class AcpControl implements HarnessControl {
   protected get approvalDeadlineMs(): number | null { return null; }
   /** Whether the agent hands ACP file blocks to its model; when it drops them, files travel as text pointers it reads with its own tools. */
   protected get fileBlocks(): boolean { return true; }
+  /** The version the agent reported in initialize, for behaviour that differs between its versions; null before it or when absent. */
+  protected get agentVersion(): string | null { return this.version; }
+  /**
+   * How long the agent's updates must stay quiet after its prompt response before the turn is settled, for an agent that
+   * sends its last reply chunks after that response (Hermes); 0 settles at the response, as ACP v1 requires of agents.
+   */
+  protected get trailingQuietMs(): number { return 0; }
   /** A model the agent switched to on its own (its own command) without announcing it; reported as the session's model from now on. */
   protected adoptModel(id: string): void {
     if (!this.catalog.canSelect || !id || id.length > 1024 || /[\0\r\n]/u.test(id)) return;
@@ -395,9 +408,11 @@ export class AcpControl implements HarnessControl {
       this.replaying = false;
       this.readModels(response); this.configuredDefault=this.catalog.defaultModel;
       for (const params of this.openingMetadata.splice(0)) this.notification("session/update", params);
+      // A value the session already runs is not requested again (Hermes's set_model can reroute an unchanged model).
       if (model !== undefined) {
         if (!this.catalog.canSelect || !this.catalog.models.some(row => row.id === model)) throw new ControlError("MODEL_UNAVAILABLE", "selected model is unavailable in this Harness");
-        if (this.modelConfigId !== null) {
+        if (model === this.catalog.defaultModel) { /* already the session's model */ }
+        else if (this.modelConfigId !== null) {
           const selected = object(await this.rpc.request("session/set_config_option", { sessionId: this.conversation, configId: this.modelConfigId, value: model }), "model selection result");
           this.readModels(selected);
           if (this.catalog.defaultModel !== model) throw new ControlError("MODEL_MISMATCH", "Harness did not apply the selected model");
@@ -409,6 +424,7 @@ export class AcpControl implements HarnessControl {
       for (const [key, value] of Object.entries(options ?? {})) {
         const setting = this.catalog.options?.find(option => option.id === key);
         if (!setting || !setting.values.some(option => option.value === value)) throw new ControlError("NATIVE_OPTION_UNAVAILABLE", "native option unavailable for selected Harness");
+        if (setting.currentValue === value) continue;
         // An agent need not echo its own mode change, so the applied mode is recorded as current.
         if (key === "__mode") { await this.rpc.request("session/set_mode", { sessionId: this.conversation, modeId: value }); this.catalog = { ...this.catalog, options: this.catalog.options?.map(option => option.id === "__mode" ? { ...option, currentValue: value } : option) ?? [] }; }
         else { const response = object(await this.rpc.request("session/set_config_option", { sessionId: this.conversation, configId: key, value }), "native setting result"); this.readModels(response); if (this.catalog.options?.find(option => option.id === key)?.currentValue !== value) throw new ControlError("NATIVE_OPTION_MISMATCH", "Harness did not apply its native setting"); }
@@ -426,7 +442,7 @@ export class AcpControl implements HarnessControl {
     const blocks: Record<string, unknown>[] = [{ type: "text", text: prompt + fileMentions(pointers) }];
     for (const file of attachments) if (!pointers.includes(file)) blocks.push(await this.promptBlock(file));
     if (this.active !== null) throw new ControlError("INVALID_STATE", "a prompt is already active");
-    const active: ActivePrompt = { event: onEvent, tools: new Map(), compaction: new Map(), stopping: false, settled: false, stop: null };
+    const active: ActivePrompt = { event: onEvent, lastUpdate: 0, tools: new Map(), compaction: new Map(), stopping: false, settled: false, stop: null };
     this.active = active;
     const result = this.rpc.request("session/prompt", { sessionId: id, prompt: blocks }, this.options.runTimeoutMs)
       .then(value => {
@@ -445,7 +461,12 @@ export class AcpControl implements HarnessControl {
           case "max_tokens": case "max_turn_requests": case "refusal": status = "failed"; break;
           default: throw new ControlError("INVALID_PROTOCOL", "unknown ACP stop reason");
         }
-        return { status, reason };
+        return { status, reason } as BackendResult;
+      }).then(async result => {
+        // Late chunks of this prompt still belong to it: the turn settles only once they have stopped.
+        const quiet = this.trailingQuietMs;
+        if (quiet > 0) for (const answered = Date.now(); Date.now() - Math.max(active.lastUpdate, answered) < quiet && Date.now() - answered < TRAILING_SETTLE_MS;) await new Promise(resolve => setTimeout(resolve, Math.min(quiet, 50)));
+        return result;
       }).catch((error: unknown): BackendResult => {
         if (error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null)
           return { status: "failed", reason: "request_rejected", ...(error.remoteFailure ? { error: error.remoteFailure } : {}) };
@@ -528,6 +549,7 @@ export class AcpControl implements HarnessControl {
     // Native agents can stream autonomous follow-ups (background task completions, late frames) between
     // prompts. They belong to no public Run, so they are counted and never attributed to another Turn.
     if (!active || active.settled) { this.unattributed++; return; }
+    active.lastUpdate = Date.now();
     if (kind === "agent_message_chunk" || kind === "agent_thought_chunk" || kind === "user_message_chunk") {
       const content = object(update.content, "ACP message content");
       if (content.type !== "text") {

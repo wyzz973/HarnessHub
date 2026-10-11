@@ -13,11 +13,13 @@
 2. **Hermes 与 ACP v1 的差异在 `HermesControl` 中处理，不由通用层吸收**：
    - 恢复只用 `session/load`。Hermes 的 `session/resume` 遇到未知标识会静默新建会话，而响应里没有会话标识，客户端无法察觉，这违反“恢复失败不新建空会话”。
    - 文件改为在提示词中附上只读副本路径（与 Codex、Pi 相同），因为 Hermes 不会把 `resource_link` 和嵌入资源交给模型。
-   - Hermes 的审批在 ACP 模式下最多等待 60 秒，之后自行拒绝。公共请求提前 2 秒关闭并说明原因，避免出现“界面上批准了、Hermes 实际已拒绝”的情况。
+   - 已审查的 0.12 版本中，Hermes 的审批在 ACP 模式下最多等待 60 秒，之后自行拒绝。公共请求提前 2 秒关闭并说明原因，避免出现“界面上批准了、Hermes 实际已拒绝”的情况。只对 0.12.x 生效：上游新版本把期限改为可配置（默认 300 秒），不能被 Hub 提前关闭。
+   - Hermes 的最后一段回复可能在 prompt 响应之后才到（Multica 也为此等待 250 毫秒）。回合在响应后再静默 250 毫秒（最长 2 秒）才结束，迟到的回复仍归这一回合。
    - `/model <名称>` 不发 ACP 更新，只回固定文本。只有提示词本身是这条命令时，驱动才读取回复，把新模型记为当前模型（遵循 ADR-028：下一回合沿用，不改回所选）。
 3. **两项通用 ACP 修正**（对所有 ACP Harness 生效）：
    - `session/load` 之后的回放等待窗口从响应时刻开始计算。Gemini 与 Hermes 都在响应之后才回放历史；原来从请求时刻计时，加载较慢时会跳过等待，回放可能混入下一回合。代价是每次 load 恢复至少多等 150 毫秒。
    - `session/load` 返回 `null` 视为会话不存在（`NATIVE_SESSION_NOT_FOUND`），不当成协议错误，也不新建会话。
+   - 会话已在使用所选模型或选项值时，不再重复发送设置请求。Hermes 0.12 的 `set_model` 在模型未变时可能把请求误路由到其他提供方（hermes-agent#59089）；对其他 ACP Harness 也只是少了冗余请求。
 4. **目录条目**：两者作为经审查的原生条目加入（固定上游修订），目录由 43 个产品、47 个控制入口变为 45 个和 49 个。两者都不提供安装配方，Hub 不会安装它们。
 
 ## 发现方式（审批代理决定）
@@ -40,4 +42,4 @@
 
 - 新增 `src/adapters/control/hermes.ts`；`acp.ts` 增加三个由子类覆盖的扩展点（`restoreByLoad`、`approvalDeadlineMs`、`fileBlocks`）和 `adoptModel`。
 - 能力矩阵增加两列：27 项 × 9 个 Harness。
-- 验收记录：[接入 Hermes Agent 与 DeepSeek Harness](../verification/hermes-dsh-onboarding-2026-10-11.md)。
+- 验收记录：[接入 Hermes Agent 与 DeepSeek Harness](../verification/hermes-dsh-onboarding-2026-10-11.md)。参考调研：[第一链路调研](../research/first-chain-products-2026-10-11.md)。

@@ -4,6 +4,8 @@ import { AcpControl } from "./acp.js";
 
 /** Hermes's ACP approval bridge waits this long for the client and then denies the command itself (permissions.py). */
 const HERMES_APPROVAL_WAIT_MS = 60_000;
+/** Quiet time after Hermes's prompt response before its turn is settled. */
+const HERMES_TRAILING_QUIET_MS = 250;
 /** Hermes answers its own `/model <name>` locally with this text (server.py `_cmd_model`); no ACP update announces it. */
 const MODEL_SWITCHED = /^Model switched to: (\S+)[ \t]*\r?\nProvider: (\S+)[ \t]*$/mu;
 
@@ -15,14 +17,18 @@ const MODEL_SWITCHED = /^Model switched to: (\S+)[ \t]*\r?\nProvider: (\S+)[ \t]
  * - session/load replays history after its response; the generic replay window already starts at the response;
  * - resource links and embedded resources never reach its model, so an attached file travels as a text pointer to the
  *   read-only copy, which its own file tools read;
- * - an approval left unanswered for 60 s is denied by Hermes, and the public request closes with it;
+ * - in the reviewed 0.12 bridge an approval left unanswered for 60 s is denied by Hermes, and the public request closes with it;
+ * - its last reply chunks can follow the prompt response, so the turn settles after a short quiet window;
  * - `/model <name>` switches the session's model without an update, so its own reply is the only report of the change.
  * Only the `hermes-acp` tool set is active in this mode (no messaging, cron or audio tools).
  */
 export class HermesControl extends AcpControl {
   protected override get restoreByLoad(): boolean { return true; }
   protected override get fileBlocks(): boolean { return false; }
-  protected override get approvalDeadlineMs(): number | null { return HERMES_APPROVAL_WAIT_MS; }
+  // The fixed 60-second wait is the reviewed 0.12 bridge; later Hermes makes it configurable, so other versions are not cut short.
+  protected override get approvalDeadlineMs(): number | null { return /^0\.12\./u.test(this.agentVersion ?? "") ? HERMES_APPROVAL_WAIT_MS : null; }
+  // Hermes can send its last reply chunks after the prompt response (Multica waits 250 ms for the same reason).
+  protected override get trailingQuietMs(): number { return HERMES_TRAILING_QUIET_MS; }
   override async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
     // Only Hermes's own command is read this way; a model reply quoting the same words in another turn is never parsed.
     if (attachments.length || !/^\/model\s+\S/u.test(prompt.trim())) return super.startText(id, prompt, onEvent, attachments);

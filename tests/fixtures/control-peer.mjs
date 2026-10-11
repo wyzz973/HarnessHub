@@ -359,6 +359,8 @@ lines.on("line", line => {
     }
     if (scenario === "hermes") {
       // A dangerous command asks Hermes's approval bridge; otherwise the reply arrives after a pause, as a model turn does.
+      // Hermes can send its last reply chunk after the prompt response.
+      if (JSON.stringify(message.params.prompt).includes("late tail")) { acpOutput(message.params.sessionId); finish(); setTimeout(() => notification("session/update", { sessionId: message.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: " tail" } } }), 100); return; }
       // Hermes handles its own /model command locally and only answers in text.
       if (JSON.stringify(message.params.prompt).includes("/model deepseek-v4-flash")) { notification("session/update", { sessionId: message.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Model switched to: deepseek-v4-flash\nProvider: deepseek" } } }); finish(); return; }
       if (JSON.stringify(message.params.prompt).includes("approve")) {

@@ -58,6 +58,10 @@ dsh 的接续：第一次运行的判据要求引用历史，而 dsh 原生不�
 
 所有真实验收都在临时工作区进行，前后核对 `~/.hermes/config.yaml`、`~/.dsh/settings.yaml` 与 acp profile 的 patch 未改动。
 
+## 依据调研的补充修正
+
+[第一链路调研](../research/first-chain-products-2026-10-11.md)核对了 Multica 对 Hermes 的处理后，补了三处：Hermes 回复的尾块可能晚于 prompt 响应，回合改为再静默 250 毫秒（最长 2 秒）才结束；会话已在用所选模型或选项值时不再重复请求（规避 0.12 的 `set_model` 误路由）；60 秒审批期限只用于 0.12.x。协议测试：尾块晚到 100 毫秒仍归本回合（变异检查：关闭等待后测试失败）；当前模型不重复请求、换模型才请求；非 0.12 版本不宣布期限也不提前关闭。ADR-028 的同步测试改为断言“只发送需要改变的值”，沿用与显式切换的行为不变。真实回归：Hermes 跨 Hub 重启的原生恢复再次通过（`.tmp/cc-hermes-resume-trailing.json`）。
+
 ## 复核命令
 
 真实验收都在干净环境中运行：`env -i HOME USER LOGNAME SHELL TERM LANG TMPDIR PATH=<~/.local/bin 与系统目录>`，`HH_REAL_TMP` 指向非系统目录，dsh 通过 `HH_REAL_MANIFEST` 指向只含 `dsh-native` 自定义入口的发现清单（`overrides` 指向本机源码构建的 `apps/cli/lib/bin.js`）。证据写入主检出的 `.tmp/`。

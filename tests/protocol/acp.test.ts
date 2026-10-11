@@ -355,6 +355,38 @@ test("Hermes reports a model its own /model command switched to, and only that c
     assert.equal((await driver.nativeConfig()).model, "deepseek:deepseek-v4-flash");
   } finally { await driver.close(); }
 });
+test("Hermes keeps reply chunks that follow its prompt response, and never re-requests the model the session already runs", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
+  const driver = new HermesControl(hermes(trace), { ...options, runTimeoutMs: 5000 });
+  try {
+    await driver.initialize(); const id = await driver.open(process.cwd(), "deepseek:deepseek-v4-pro"), events: ControlEvent[] = [];
+    assert.equal((await (await driver.startText(id, "late tail please", event => events.push(event))).result).status, "completed");
+    assert.equal(events.filter(event => event.type === "text").map(event => event.type === "text" ? event.text : "").join(""), "你好 fixture tail");
+    assert.equal(driver.unattributedUpdates, 0);
+  } finally { await driver.close(); }
+  const methods = () => readFile(trace, "utf8").then(text => text.trim().split("\n").map(line => (JSON.parse(line) as { method?: string }).method));
+  // The current model is not requested again (Hermes 0.12's set_model can reroute an unchanged model); a different one is.
+  assert.equal((await methods()).includes("session/set_model"), false);
+  const switching = new HermesControl(hermes(trace), options);
+  try { await switching.initialize(); await switching.open(process.cwd(), "deepseek:deepseek-v4-flash"); assert.equal((await switching.nativeConfig()).model, "deepseek:deepseek-v4-flash"); }
+  finally { await switching.close(); }
+  assert.equal((await methods()).filter(method => method === "session/set_model").length, 1);
+});
+test("Hermes's 60-second approval deadline applies only to the reviewed 0.12 bridge", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
+  // The fixture reports agent version 1.0: no deadline is announced and nothing closes the request early.
+  const driver = new HermesControl(hermes(trace), { ...options, runTimeoutMs: 5000 });
+  try {
+    await driver.initialize(); driver.enablePermissions(); const id = await driver.open(process.cwd()), events: ControlEvent[] = [];
+    const run = await driver.startText(id, "approve this", event => events.push(event));
+    for (let i = 0; i < 50 && !events.some(event => event.type === "permission_requested"); i++) await new Promise(resolve => setTimeout(resolve, 20));
+    const requested = events.find(event => event.type === "permission_requested");
+    assert.ok(requested?.type === "permission_requested" && !(requested.detail ?? "").includes("最多等待"));
+    await driver.decidePermission(requested.id, "allow_once");
+    assert.equal((await run.result).status, "completed");
+    assert.ok(events.some(event => event.type === "text" && event.text.includes('"optionId":"allow_once"')));
+  } finally { await driver.close(); }
+});
 test("Hermes continues a listed session with the history it replays after the load response", async t => {
   const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
   const reader = new HermesControl(hermes(trace), { ...options, runTimeoutMs: 5000 });
