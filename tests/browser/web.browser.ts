@@ -611,6 +611,13 @@ test("unified chat attaches files, refuses inputs the model does not take, keeps
   await expect(sent.getByRole("link", { name: /notes\.txt/u })).toHaveAttribute("download", "notes.txt");
   assert.equal(await sent.locator(".message-attachment-image img").evaluate(image => (image as HTMLImageElement).naturalWidth), 1, "the sent image is served from the content store");
   await page.screenshot({ path: join(artifact, "attachments-sent.png"), fullPage: true, animations: "disabled" });
+  // The conversation exports with its attachments listed by name.
+  await page.getByRole("button", { name: "导出对话", exact: true }).click();
+  const exportLink = page.getByRole("link", { name: "导出 Markdown", exact: true });
+  await expect(exportLink).toHaveAttribute("download", "");
+  const exported = await page.evaluate(async href => (await fetch(href, { credentials: "same-origin" })).text(), await exportLink.getAttribute("href") ?? "");
+  assert.ok(exported.includes("ATTACHMENTS 看看这些") && exported.includes("- shot.png（image/png") && exported.includes("收到附件：图片 1，文件 1，均可读。"));
+  await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "attachments must not overflow a narrow screen");
   assert.deepEqual(errors, []);

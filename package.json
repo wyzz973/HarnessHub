@@ -31,7 +31,8 @@
     "test:real:native-resume": "pnpm build && node --test dist/tests/real/native-resume.real.js",
     "test:real:native-catalog": "pnpm build && node --test dist/tests/real/native-catalog.real.js",
     "test:real:native-activity": "pnpm build && node --test dist/tests/real/native-activity.real.js",
-    "test:real:native-attachments": "pnpm build && node --test dist/tests/real/native-attachments.real.js"
+    "test:real:native-attachments": "pnpm build && node --test dist/tests/real/native-attachments.real.js",
+    "test:real:native-commands": "pnpm build && node --test dist/tests/real/native-commands.real.js"
   },
   "devDependencies": {
     "@playwright/test": "1.64.0",

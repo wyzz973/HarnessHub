@@ -79,6 +79,7 @@ pnpm test:real:native-catalog
 pnpm test:real:native-resume
 pnpm test:real:native-activity
 pnpm test:real:native-attachments
+pnpm test:real:native-commands
 pnpm exec playwright install chromium
 pnpm test:web
 ~~~
@@ -148,3 +149,5 @@ python3 -m unittest discover -s tools -p 'test_*.py' -v
 [ADR-022](docs/decisions/0022-native-activity-and-content-store.md)起，统一聊天在回复下显示原生计划、提示、工具（展开查看输入、输出与着色差异）、子Agent/压缩/重试活动、图片与文件产物和本轮用量；详情与产物存入数据根下的`content`目录（7天未引用自动回收），事件日志只存摘要。Codex、OpenCode、Pi的真实命令与编辑回合已通过，OpenCode工作区级审批已通过；Claude、Cursor、Gemini受账号限制只有协议验证，OpenClaw需直连Gateway才能取得工具事件。见[原生活动验收](docs/verification/native-activity-2026-10-11.md)。`test:real:native-*`需要`HH_REAL_HARNESSES`与`HH_REAL_EVIDENCE`，使用本机原安装与登录，真实调用模型。
 
 [ADR-023](docs/decisions/0023-attachment-input.md)起，输入框可选择、拖放或粘贴文件、图片和音频，附件随对话草稿保存。Hub按各原接口发送（ACP内容块、Codex本地路径、Pi图片），并按代理与所选模型的输入能力在派发前拒绝看不到的附件；附件副本留在数据根内，不写入工作区。Codex、Pi、OpenCode的真实文件与图片回合已通过，OpenClaw文本附件通过、识图模型未验收；音频只有协议验证。见[附件输入验收](docs/verification/native-attachments-2026-10-11.md)。
+
+[ADR-024](docs/decisions/0024-native-session-operations.md)起，Codex 可在高级配置中为本次对话选择审批策略与沙箱（只覆盖 Hub 的线程，不改 config.toml），审批请求带文件名与差异；Codex 与 Pi 的命令目录提供 `/compact`、`/export`，调用原程序自己的压缩与导出，导出文件可从回复下载；对话头部可把公开对话导出为 Markdown 或 JSON。见[原生会话操作验收](docs/verification/native-session-actions-2026-10-11.md)。

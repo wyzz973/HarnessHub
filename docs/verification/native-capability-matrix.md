@@ -8,15 +8,15 @@
 |---|---|---|---|---|---|---|---|---|
 | 配置与模型 | 模型目录与选择 | ✅ | ✕ | ◐ | ✅ | ✕ | ◑ | ✅ |
 | 配置与模型 | 思考档位 | ✅ | ✕ | ◐ | ✅ | — | ○ | ✅ |
-| 配置与模型 | 模式与原生设置 | ○ | ✕ | ◐ | ◐ | ✕ | ◐ | — |
-| 配置与模型 | 原生命令目录与执行 | — | ✕ | ◐ | ◐ | ✕ | ◐ | ◐ |
+| 配置与模型 | 模式与原生设置 | ◑ | ✕ | ◐ | ◐ | ✕ | ◐ | — |
+| 配置与模型 | 原生命令目录与执行 | — | ✕ | ◐ | ✅ | ✕ | ◐ | ◐ |
 | 配置与模型 | 原生命令改配置后的同步 | ○ | ○ | ？ | ○ | ？ | ○ | ○ |
 | 执行可见性 | 思考输出 | ◐ | ✕ | ◐ | ◐ | ✕ | ✕ | ◐ |
 | 执行可见性 | 工具状态 | ✅ | ✕ | ✅ | ◐ | ✕ | ✕ | ✅ |
 | 执行可见性 | 工具输入/输出/差异 | ✅ | ✕ | ✅ | ○ | ✕ | ✕ | ✅ |
 | 执行可见性 | 计划 | ✕ | ✕ | — | — | — | ✕ | — |
 | 执行可见性 | 用量/上下文/费用 | ✅ | ✕ | ✅ | ○ | ✕ | — | ✅ |
-| 交互 | 工具审批 | ◐ | ✕ | ✅ | ○ | ✕ | ✕ | ◐ |
+| 交互 | 工具审批 | ✅ | ✕ | ✅ | ○ | ✕ | ✕ | ◐ |
 | 交互 | 原生提问与表单 | ◑ | ○ | ？ | — | ？ | ◑ | ◐ |
 | 输入输出 | 图片输入 | ✅ | ✕ | ✅ | ◐ | ✕ | ✕ | ✅ |
 | 输入输出 | 音频输入 | ✕ | — | — | — | ✕ | — | — |
@@ -28,21 +28,21 @@
 | 会话 | 原生会话恢复 | ✅ | ✕ | ✅ | ✅ | ✕ | ✕ | ✅ |
 | 会话 | 原生会话列表/接续 | ○ | ○ | ○ | ○ | — | ○ | — |
 | 会话 | 原生分支 | ○ | ○ | ○ | — | — | — | ○ |
-| 会话 | 上下文压缩 | ◑ | ✕ | ◑ | ◑ | — | ？ | ◑ |
+| 会话 | 上下文压缩 | ✅ | ✕ | ○ | ✅ | — | ？ | ✅ |
 | 会话 | 回滚/回退 | ○ | — | ？ | — | ○ | — | ○ |
 | 并发与后台 | 子 Agent | ◑ | ○ | ○ | ○ | ？ | ○ | — |
 | 并发与后台 | 后台任务 | ○ | ○ | ？ | ○ | ？ | ？ | — |
-| 产物 | 导出与产物 | ○ | ○ | ？ | ○ | ？ | — | ○ |
+| 产物 | 导出与产物 | ✅ | ○ | ？ | ○ | ？ | — | ✅ |
 
 | Harness | ✅ | ◐ | ◑ | ○ | ✕ | — | ？ |
 |---|---|---|---|---|---|---|---|
-| Codex | 7 | 4 | 5 | 8 | 2 | 1 | 0 |
+| Codex | 10 | 3 | 5 | 6 | 2 | 1 | 0 |
 | Claude Code | 0 | 0 | 3 | 7 | 15 | 2 | 0 |
-| OpenCode | 7 | 6 | 4 | 3 | 0 | 2 | 5 |
-| OpenClaw | 3 | 6 | 2 | 9 | 0 | 7 | 0 |
+| OpenCode | 7 | 6 | 3 | 4 | 0 | 2 | 5 |
+| OpenClaw | 5 | 5 | 1 | 9 | 0 | 7 | 0 |
 | Gemini CLI | 0 | 0 | 2 | 1 | 12 | 6 | 6 |
 | Cursor | 0 | 2 | 4 | 4 | 9 | 5 | 3 |
-| Pi | 7 | 5 | 3 | 5 | 0 | 7 | 0 |
+| Pi | 9 | 5 | 2 | 4 | 0 | 7 | 0 |
 
 ## Codex
 
@@ -52,7 +52,7 @@
 |---|---|---|---|---|---|---|---|
 | 模型目录与选择 | 具备 | model/list、config/read、thread/start.model（0.162.1 schema） | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；.tmp/cc-native-catalog.json；docs/verification/native-models-2026-10-11.md | 默认 gpt-6.1-sol；目录 7 个模型 |
 | 思考档位 | 具备 | Model.supportedReasoningEfforts、turn/start.effort | 已接出 | 通过 | 通过 | .tmp/native-complete-real-combined.json；docs/verification/complete-native-capabilities-2026-10-11.md | low 档真实使用 |
-| 模式与原生设置 | 具备 | approvalPolicy/sandboxPolicy/serviceTier 逐轮参数；collaborationMode 计划模式需 experimentalApi | 未接出 | 未接出 | 未接出 | — | Hub 未接出审批/沙箱/计划模式设置 |
+| 模式与原生设置 | 具备 | approvalPolicy/sandboxPolicy/serviceTier 逐轮参数；collaborationMode 计划模式需 experimentalApi | 部分 | 通过 | 通过 | .tmp/cc-native-activity-codex-approval.json；docs/verification/native-session-actions-2026-10-11.md | 审批策略与沙箱作为本 Hub 线程设置接出（取自原配置、由线程回报核实、不写 config.toml）；计划模式需 experimentalApi、serviceTier 未接出 |
 | 原生命令目录与执行 | 不提供 | app-server 无斜杠命令；skills 以 UserInput.skill 调用（见 Skills） | 不适用 | 不适用 | 不适用 | — | — |
 | 原生命令改配置后的同步 | 部分 | model/rerouted 通知会改变实际模型；无命令式配置修改 | 未接出 | 未接出 | 未接出 | — | Hub 未记录改路由 |
 | 思考输出 | 具备 | item/reasoning/summaryTextDelta、textDelta | 已接出 | 通过 | 未接出 | — | 协议测试覆盖；真实思考输出未单独验收 |
@@ -60,7 +60,7 @@
 | 工具输入/输出/差异 | 具备 | commandExecution.aggregatedOutput/exitCode、fileChange.changes[].diff、mcpToolCall 参数与结果、turn/diff/updated | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-codex.json；docs/verification/native-activity-2026-10-11.md | 命令输入/输出/退出码与补丁差异真实存储；MCP、搜索、图片项仅协议验证 |
 | 计划 | 部分 | turn/plan/updated 来自 update_plan 清单工具；工具是否提供取决于模型与模式 | 已接出 | 通过 | 受阻 | .tmp/cc-native-activity-codex-plan.json；docs/verification/native-activity-2026-10-11.md | 本机默认 gpt-6.1-sol 回合未提供 update_plan 工具（真实回复确认）；计划模式 collaborationMode 需 experimentalApi，未接出 |
 | 用量/上下文/费用 | 具备 | thread/tokenUsage/updated {total,last,modelContextWindow}、account/rateLimits/updated | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-codex.json；docs/verification/native-activity-2026-10-11.md | 本轮 token 与上下文占用；Codex 不报告费用；账户额度 rateLimits 未接出 |
-| 工具审批 | 具备 | item/commandExecution\|fileChange/requestApproval；子 Agent 线程审批归属当前回合 | 已接出 | 通过 | 未接出 | — | 原配置 approval_policy=never 且 danger-full-access，本机原程序不会请求审批；item/permissions/requestApproval、策略修订决定尚未接出 |
+| 工具审批 | 具备 | item/commandExecution\|fileChange/requestApproval；子 Agent 线程审批归属当前回合 | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-codex-approval.json；docs/verification/native-session-actions-2026-10-11.md | 只读沙箱 + 按需审批的真实回合：文件修改审批带文件名与差异，允许一次后由原程序写入；原配置 approval_policy=never 时原程序不请求审批 |
 | 原生提问与表单 | 具备 | item/tool/requestUserInput、mcpServer/elicitation/request | 部分 | 通过 | 未接出 | — | requestUserInput 已接出；MCP elicitation 仍被 -32601 拒绝 |
 | 图片输入 | 具备 | UserInput.image(data URL)/localImage；Model.inputModalities | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-codex.json；docs/verification/native-attachments-2026-10-11.md | localImage 指向只读副本；按所开模型 inputModalities 门控 |
 | 音频输入 | 部分 | UserInput.audio/localAudio，仅 inputModalities 含 audio 的模型 | 已接出 | 通过 | 受阻 | — | localAudio 已接出；本机模型目录没有声明音频输入的模型，真实无法验收 |
@@ -72,11 +72,11 @@
 | 原生会话恢复 | 具备 | thread/resume(excludeTurns)；跨 Hub 进程重启 | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；docs/verification/complete-native-capabilities-2026-10-11.md | — |
 | 原生会话列表/接续 | 具备 | thread/list、thread/read、thread/turns/list | 未接出 | 未接出 | 未接出 | — | — |
 | 原生分支 | 具备 | thread/fork {lastTurnId} | 未接出 | 未接出 | 未接出 | — | — |
-| 上下文压缩 | 具备 | thread/compact/start → contextCompaction item | 部分 | 通过 | 未接出 | — | contextCompaction 以活动展示；thread/compact/start 未接出 |
+| 上下文压缩 | 具备 | thread/compact/start → contextCompaction item | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-pi-codex.json；docs/verification/native-session-actions-2026-10-11.md | /compact 调用 thread/compact/start 并以活动展示；压缩后原生会话仍记得先前事实 |
 | 回滚/回退 | 具备 | thread/revert {beforeTurnId}（只回退历史，不回退文件） | 未接出 | 未接出 | 未接出 | — | — |
 | 子 Agent | 具备 | collabAgentToolCall、subAgentActivity；子线程自动附着连接 | 部分 | 通过 | 未接出 | — | 子线程输出不中断回合、审批交给用户；子 Agent 活动与协作调用以活动/工具展示；子线程会话未接出 |
 | 后台任务 | 具备 | command/exec；后台终端 thread/backgroundTerminals/* 需 experimentalApi | 未接出 | 未接出 | 未接出 | — | 每轮关闭控制进程，需长期资源所有者设计 |
-| 导出与产物 | 具备 | thread/read(includeTurns)、Thread.path rollout 路径 | 未接出 | 未接出 | 未接出 | — | — |
+| 导出与产物 | 具备 | thread/read(includeTurns)、Thread.path rollout 路径 | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-pi-codex.json；docs/verification/native-session-actions-2026-10-11.md | /export 读取线程自己的 rollout JSONL 作为产物；临时线程明确失败 |
 
 ## Claude Code
 
@@ -121,7 +121,7 @@
 | 模型目录与选择 | 具备 | configOptions model(provider/model) | 已接出 | 通过 | 部分通过 | docs/verification/native-models-2026-10-11.md；.tmp/cc-native-resume-batch1.json | 默认 opencode/big-pickle 真实生成；原生接口选择 opencode/exo-free 已生效但未生成 |
 | 思考档位 | 具备 | configOptions effort（仅模型有 variants 时） | 已接出 | 通过 | 未接出 | — | 默认模型无档位，未真实验收 |
 | 模式与原生设置 | 具备 | configOptions mode(build/plan) | 已接出 | 通过 | 未接出 | — | 未真实验收 |
-| 原生命令目录与执行 | 具备 | available_commands_update（init/review、配置命令、MCP prompt、skills） | 已接出 | 通过 | 未接出 | — | 目录真实读取 104 条；执行未验收；未知 / 开头文本会被原程序丢弃 |
+| 原生命令目录与执行 | 具备 | available_commands_update（init/review、配置命令、MCP prompt、skills） | 已接出 | 通过 | 未接出 | — | 目录真实读取 104 条（目录读取现等待代理的命令公告）；执行未验收；未知 / 开头文本会被原程序丢弃 |
 | 原生命令改配置后的同步 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
 | 思考输出 | 具备 | agent_thought_chunk | 已接出 | 通过 | 未接出 | — | 未真实验收 |
 | 工具状态 | 具备 | tool_call/tool_call_update | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-opencode.json；docs/verification/native-activity-2026-10-11.md | 命令、读取、编辑与 todowrite 真实回合 |
@@ -140,7 +140,7 @@
 | 原生会话恢复 | 具备 | session/resume（不回放）；跨 Hub 进程重启 | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；.tmp/cc-opencode-native-resume.json | — |
 | 原生会话列表/接续 | 具备 | session/list | 未接出 | 未接出 | 未接出 | — | — |
 | 原生分支 | 具备 | session/fork | 未接出 | 未接出 | 未接出 | — | — |
-| 上下文压缩 | 具备 | /compact 原生命令 | 部分 | 通过 | 未接出 | — | 可经原生命令执行；ACP compaction_update 以活动展示 |
+| 上下文压缩 | 具备 | /compact 原生命令 | 未接出 | 未接出 | 未接出 | — | OpenCode 的 ACP 命令目录没有压缩命令（真实目录 104 项），压缩只能在原 TUI 中执行 |
 | 回滚/回退 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
 | 子 Agent | 具备 | 子会话（task 子 Agent）权限请求 | 未接出 | 未接出 | 未接出 | — | 子会话权限请求当前无人应答 |
 | 后台任务 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
@@ -155,7 +155,7 @@
 | 模型目录与选择 | 具备 | gateway models.list + sessions.patch（只改 Hub 自己的会话键） | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；.tmp/native-complete-real-combined.json；docs/verification/complete-native-capabilities-2026-10-11.md | deepseek/deepseek-chat |
 | 思考档位 | 具备 | configOptions thought_level | 已接出 | 通过 | 通过 | .tmp/native-complete-real-combined.json；docs/verification/complete-native-capabilities-2026-10-11.md | low 档真实使用 |
 | 模式与原生设置 | 具备 | fast_mode/verbose_level/reasoning_level/response_usage/elevated_level | 已接出 | 通过 | 部分通过 | .tmp/native-complete-real-combined.json | 仅思考档位真实使用；__mode 与思考档位重复 |
-| 原生命令目录与执行 | 具备 | 固定 27 条命令（缺 /fast /exec /approve 等） | 已接出 | 通过 | 未接出 | — | 命令执行未真实验收 |
+| 原生命令目录与执行 | 具备 | 固定 27 条命令（缺 /fast /exec /approve 等） | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-acp.json；docs/verification/native-session-actions-2026-10-11.md | 原生 /compact 真实执行；固定 27 条命令（缺 /fast /exec /approve 等） |
 | 原生命令改配置后的同步 | 部分 | 斜杠命令修改 Gateway 会话设置，但 ACP 桥不推送 config_option_update | 未接出 | 未接出 | 未接出 | — | — |
 | 思考输出 | 部分 | ACP 桥不实时转发思考，仅 load 回放 | 已接出 | 通过 | 未接出 | — | 需直连 Gateway agent 事件 |
 | 工具状态 | 部分 | 桥未声明 tool-events，工具事件很可能不会到达 | 已接出 | 通过 | 未接出 | — | 需直连 Gateway 才能获得工具事件 |
@@ -174,7 +174,7 @@
 | 原生会话恢复 | 具备 | session/load + Hub 自有会话键 requireExistingSession | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；.tmp/native-complete-real-combined.json；docs/verification/complete-native-capabilities-2026-10-11.md | — |
 | 原生会话列表/接续 | 部分 | session/list 声明但桥实际 Method not found；gateway sessions.list 可用 | 未接出 | 未接出 | 未接出 | — | — |
 | 原生分支 | 不提供 | 无原生分支 | 不适用 | 不适用 | 不适用 | — | — |
-| 上下文压缩 | 具备 | /compact 文本命令（sessions.compact 只截断） | 部分 | 未接出 | 未接出 | — | 可经原生命令执行 |
+| 上下文压缩 | 具备 | /compact 文本命令（sessions.compact 只截断） | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-acp.json；docs/verification/native-session-actions-2026-10-11.md | 原生 /compact 命令真实执行，压缩后仍记得先前事实；桥不发压缩活动 |
 | 回滚/回退 | 不提供 | 无回退 | 不适用 | 不适用 | 不适用 | — | — |
 | 子 Agent | 部分 | sessions_spawn 子会话在桥中不可见 | 未接出 | 未接出 | 未接出 | — | — |
 | 后台任务 | 部分 | 后台 exec、cron 在回合结束后继续，需 Gateway 订阅观察 | 未接出 | 未接出 | 未接出 | — | — |
@@ -276,8 +276,8 @@
 | 原生会话恢复 | 具备 | --session 原会话文件 | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1-pi.json；.tmp/native-complete-real-combined.json；docs/verification/complete-native-capabilities-2026-10-11.md | 首个助手消息前恢复仍会失败（原程序延迟创建文件） |
 | 原生会话列表/接续 | 不提供 | RPC 无会话列表 | 不适用 | 不适用 | 不适用 | — | — |
 | 原生分支 | 具备 | fork {entryId}、clone、get_fork_messages | 未接出 | 未接出 | 未接出 | — | — |
-| 上下文压缩 | 具备 | compact {customInstructions} | 部分 | 通过 | 未接出 | — | 自动压缩与重试以活动展示；手动压缩未接出 |
+| 上下文压缩 | 具备 | compact {customInstructions} | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-pi.json；docs/verification/native-session-actions-2026-10-11.md | /compact 调用 RPC compact（无同名扩展命令时）；会话过小时如实失败并显示原因 |
 | 回滚/回退 | 部分 | 从用户消息 fork；原地树导航仅 TUI | 未接出 | 未接出 | 未接出 | — | — |
 | 子 Agent | 不提供 | 无内置子 Agent（仅扩展工具） | 不适用 | 不适用 | 不适用 | — | — |
 | 后台任务 | 不提供 | 无内置后台任务 | 不适用 | 不适用 | 不适用 | — | — |
-| 导出与产物 | 具备 | export_html {outputPath} | 未接出 | 未接出 | 未接出 | — | — |
+| 导出与产物 | 具备 | export_html {outputPath} | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-pi.json；docs/verification/native-session-actions-2026-10-11.md | /export 调用 export_html 写入临时目录后作为产物；会话为空时明确失败 |

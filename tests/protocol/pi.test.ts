@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
+import type { ControlEvent } from "../../src/contracts/control.js";
 import { PiControl } from "../../src/adapters/control/pi.js";
 import { ControlError } from "../../src/infrastructure/control/json-rpc-process.js";
 import { contentId } from "../../src/contracts/content.js";
@@ -171,4 +172,41 @@ test("Pi sends images only to a model whose Model.input lists them and names fil
     assert.equal(prompt.message, "look\n\n[Attached file] data.csv (text/csv, 8 bytes, read-only copy): " + csv.path);
     assert.deepEqual(prompt.images, [{ type: "image", data: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]).toString("base64"), mimeType: "image/png" }]);
   } finally { await vision.close(); }
+});
+
+test("Pi /compact uses the native RPC compaction unless an extension owns the command", async t => {
+  const root = await mkdtemp(join(tmpdir(), "pi-compact-")), trace = join(root, "trace"); t.after(() => rm(root, { recursive: true, force: true }));
+  const driver = control("basic", trace);
+  try {
+    await driver.initialize(); assert.ok((await driver.models()).commands?.some(command => command.name === "compact"));
+    const id = await driver.open(process.cwd()), events: ControlEvent[] = [];
+    assert.deepEqual(await (await driver.startText(id, "/compact keep the code", event => events.push(event))).result, { status: "completed", reason: "compacted" });
+    const last = events.filter(event => event.type === "activity").at(-1);
+    assert.equal(last?.type === "activity" ? last.detail : null, "tokens 1000 → 200");
+    const frames = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+    assert.deepEqual(frames.find(row => row.type === "compact")?.customInstructions, "keep the code"); assert.equal(frames.some(row => row.type === "prompt"), false);
+  } finally { await driver.close(); }
+  const extension = control("native-compact", trace);
+  try {
+    await extension.initialize(); assert.deepEqual((await extension.models()).commands?.filter(command => command.name === "compact"), [{ name: "compact", description: "extension compact" }]);
+    await (await extension.startText(await extension.open(process.cwd()), "/compact", () => {})).result;
+    const frames = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+    assert.ok(frames.some(row => row.type === "prompt" && row.message === "/compact"), "an extension command is sent as the prompt it is");
+  } finally { await extension.close(); }
+});
+
+test("Pi /export returns its HTML export as an output and reports an empty session clearly", async () => {
+  const driver = control("basic");
+  try {
+    await driver.initialize(); assert.ok((await driver.models()).commands?.some(command => command.name === "export"));
+    const id = await driver.open(process.cwd()), events: ControlEvent[] = [];
+    assert.deepEqual(await (await driver.startText(id, "/export", event => events.push(event))).result, { status: "completed", reason: "exported" });
+    const output = events.find(event => event.type === "output");
+    assert.ok(output?.type === "output" && output.output.kind === "content" && output.output.mediaType === "text/html" && Buffer.from(output.output.data).toString() === "<html>pi</html>");
+  } finally { await driver.close(); }
+  const empty = control("nothing-to-export");
+  try {
+    await empty.initialize(); const result = await (await empty.startText(await empty.open(process.cwd()), "/export", () => {})).result;
+    assert.equal(result.status, "failed"); assert.equal(result.error?.code, "NATIVE_EXPORT_UNAVAILABLE");
+  } finally { await empty.close(); }
 });

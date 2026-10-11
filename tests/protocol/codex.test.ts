@@ -238,3 +238,54 @@ test("Codex gives images to the opened model by path, names files in text, and r
     await textOnly.checkAttachments([pdf]);
   } finally { await textOnly.close(); }
 });
+
+test("Codex thread permission settings come from the native configuration, apply to the Hub's thread and are verified", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-codex-permissions-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
+  const driver = control("permissions-settings", { FIXTURE_TRACE: trace });
+  try {
+    await driver.initialize();
+    const options = (await driver.models()).options ?? [];
+    assert.deepEqual(options.map(option => [option.id, option.currentValue, option.values.map(value => value.value)]), [
+      ["approval_policy", "never", ["untrusted", "on-request", "never"]], ["sandbox", "danger-full-access", ["read-only", "workspace-write", "danger-full-access"]]]);
+    await driver.open(process.cwd(), undefined, { approval_policy: "on-request", sandbox: "read-only" });
+    const start = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line)).find(row => row.method === "thread/start");
+    assert.equal(start.params.approvalPolicy, "on-request"); assert.equal(start.params.sandbox, "read-only");
+  } finally { await driver.close(); }
+  for (const [scenario, native, code] of [["permissions-settings", { sandbox: "everything" }, "NATIVE_OPTION_UNAVAILABLE"], ["basic", { approval_policy: "never" }, "NATIVE_OPTION_UNAVAILABLE"], ["ignore-permissions", { approval_policy: "on-request" }, "NATIVE_OPTION_MISMATCH"]] as const) {
+    const other = control(scenario);
+    try { await other.initialize(); await assert.rejects(other.open(process.cwd(), undefined, native), (error: unknown) => error instanceof ControlError && error.code === code, scenario); }
+    finally { await other.close(); }
+  }
+});
+
+test("Codex /compact runs the native compaction turn instead of a prompt", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-codex-compact-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
+  const driver = control("basic", { FIXTURE_TRACE: trace });
+  try {
+    await driver.initialize();
+    assert.deepEqual((await driver.models()).commands?.map(command => command.name), ["compact", "export"]);
+    const id = await driver.open(process.cwd()), events: ControlEvent[] = [];
+    assert.equal((await (await driver.startText(id, "/compact", event => events.push(event))).result).status, "completed");
+    assert.deepEqual(events.filter(event => event.type === "activity").map(event => event.type === "activity" ? event.status : null), ["running", "completed"]);
+    const methods = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line).method);
+    assert.ok(methods.includes("thread/compact/start")); assert.equal(methods.includes("turn/start"), false);
+    // The next ordinary prompt still binds its own turn.
+    assert.equal((await (await driver.startText(id, "hello", () => {})).result).status, "completed");
+  } finally { await driver.close(); }
+});
+
+test("Codex /export copies the thread's own rollout record as an output and fails clearly without one", async () => {
+  const driver = control("rollout");
+  try {
+    await driver.initialize(); const id = await driver.open(process.cwd()), events: ControlEvent[] = [];
+    assert.deepEqual(await (await driver.startText(id, "/export", event => events.push(event))).result, { status: "completed", reason: "exported" });
+    const output = events.find(event => event.type === "output");
+    assert.ok(output?.type === "output" && output.output.kind === "content" && output.output.mediaType === "application/x-ndjson" && Buffer.from(output.output.data).toString() === '{"type":"session_meta"}\n');
+  } finally { await driver.close(); }
+  const ephemeral = control("basic");
+  try {
+    await ephemeral.initialize(); const id = await ephemeral.open(process.cwd());
+    const result = await (await ephemeral.startText(id, "/export", () => {})).result;
+    assert.equal(result.status, "failed"); assert.equal(result.error?.code, "NATIVE_EXPORT_UNAVAILABLE");
+  } finally { await ephemeral.close(); }
+});

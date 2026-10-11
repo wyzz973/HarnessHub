@@ -1,0 +1,109 @@
+import assert from "node:assert/strict";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import { application } from "../../src/cli/session-application.js";
+import type { PublicRun, SessionId } from "../../src/contracts/session.js";
+import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
+
+/**
+ * Original-installation acceptance of native session operations offered as commands: after one ordinary turn, `/compact`
+ * must run the Harness's own compaction and `/export` must return its own transcript as an output. Each command is used
+ * only when the installed catalog lists it. Evidence keeps statuses, activity kinds and output shapes, never transcripts.
+ */
+const harnesses = (process.env.HH_REAL_HARNESSES ?? "").split(",").map(value => value.trim()).filter(Boolean);
+const evidencePath = process.env.HH_REAL_EVIDENCE;
+const home = process.env.HOME ?? homedir();
+const configFiles: Readonly<Record<string, readonly string[]>> = {
+  codex: [join(home, ".codex", "config.toml")],
+  opencode: [join(home, ".config", "opencode", "opencode.json")],
+  openclaw: [join(home, ".openclaw", "openclaw.json")],
+  pi: [join(home, ".pi", "agent", "settings.json"), join(home, ".pi", "agent", "models.json")],
+};
+const TERMINAL = new Set<PublicRun["status"]>(["completed", "failed", "cancelled", "unknown"]);
+async function digest(path: string): Promise<string> {
+  try { return createHash("sha256").update(await readFile(path)).digest("hex"); }
+  catch (error) { if (error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT") return "missing"; throw error; }
+}
+type App = ReturnType<typeof application>;
+async function closeApp(app: App): Promise<void> {
+  try { await app.runtime.close(); } finally { try { await app.management.shutdown(); } finally { try { await app.providers.shutdown(); } finally { app.store.close(); } } }
+}
+async function turn(app: App, id: SessionId, text: string): Promise<PublicRun> {
+  app.runtime.send(id, text, "send-" + randomUUID());
+  const deadline = Date.now() + 6 * 60 * 1000;
+  for (;;) {
+    const run = app.runtime.read(id).runs.at(-1)!;
+    if (TERMINAL.has(run.status)) { await app.runtime.wait(id); return app.runtime.read(id).runs.at(-1)!; }
+    if (app.runtime.permissionRequests(id).length) throw new Error("a native command turn asked for an approval");
+    if (Date.now() > deadline) throw new Error("native command turn did not settle in time");
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+}
+function summary(app: App, id: SessionId, run: PublicRun): Record<string, unknown> {
+  const reply = app.runtime.read(id).messages.find(row => row.id === run.assistantMessageId)?.text ?? "";
+  return { status: run.status, error: run.error, replyBytes: Buffer.byteLength(reply), activities: (run.activities ?? []).map(item => [item.kind, item.status, (item.detail ?? "").slice(0, 200)]),
+    outputs: (run.outputs ?? []).map(output => output.kind === "content" ? { kind: output.content.kind, mediaType: output.content.mediaType, bytes: output.content.bytes } : { kind: "link" }), cleanup: run.cleanup?.closed ?? null };
+}
+
+test("installed Harness compacts and exports its own session through the unified commands", { timeout: 20 * 60 * 1000 }, async () => {
+  assert.ok(harnesses.length, "set HH_REAL_HARNESSES"); assert.ok(evidencePath, "set HH_REAL_EVIDENCE");
+  const root = await realpath(await mkdtemp(join(tmpdir(), "hh-native-commands-")));
+  const results: Record<string, unknown>[] = [], failures: string[] = [];
+  try {
+    for (const harnessId of harnesses) {
+      const files = configFiles[harnessId] ?? [], before = await Promise.all(files.map(digest));
+      const data = join(root, harnessId + "-data"), workspace = join(root, harnessId + "-workspace");
+      await mkdir(workspace);
+      const configuration = await prepareConfiguration({ workspace });
+      const proof: Record<string, unknown> = { harnessId, startedAt: new Date().toISOString() };
+      const app = application(data, () => {});
+      try {
+        const requested = process.env["HH_REAL_MODEL_" + harnessId.toUpperCase()];
+        const catalog = await app.factory.discoverModels({ harnessId }, configuration, new AbortController().signal);
+        const names = new Set((catalog.commands ?? []).map(command => command.name));
+        proof.commands = { compact: names.has("compact"), export: names.has("export") };
+        const created = await app.runtime.create(configuration, { harnessId, ...(requested === undefined ? {} : { nativeModel: requested }) }, "create-" + randomUUID());
+        const first = await turn(app, created.id, "请记住数字 42。只回复“好的”，不要调用任何工具。");
+        proof.first = summary(app, created.id, first);
+        if (first.status !== "completed") failures.push(harnessId + ": first turn");
+        // HH_REAL_FILL=n adds n reference messages so a Harness that keeps recent context uncompacted has something to compact.
+        const fill = Number(process.env.HH_REAL_FILL ?? "0"), paragraph = "The reference archive describes routine maintenance of a fictional lighthouse, including lamp cleaning, log keeping and weather notes. ";
+        for (let index = 0; index < fill; index++) {
+          const filler = await turn(app, created.id, "以下是参考资料，不需要分析，只回复“收到”。\n" + paragraph.repeat(380));
+          if (filler.status !== "completed") failures.push(harnessId + ": filler " + index);
+        }
+        proof.fill = fill;
+        if (names.has("compact")) {
+          const compact = await turn(app, created.id, "/compact");
+          proof.compact = summary(app, created.id, compact);
+          if (compact.status !== "completed") failures.push(harnessId + ": compact");
+          // The native session still answers from its own (now compacted) context.
+          const after = await turn(app, created.id, "我让你记住的数字是多少？只回复数字。");
+          const reply = app.runtime.read(created.id).messages.find(row => row.id === after.assistantMessageId)?.text ?? "";
+          proof.afterCompact = { ...summary(app, created.id, after), remembered: reply.includes("42"), sourceRunIds: after.sourceRunIds.length };
+          if (after.status !== "completed" || !reply.includes("42")) failures.push(harnessId + ": context after compaction");
+        }
+        if (names.has("export")) {
+          const exported = await turn(app, created.id, "/export");
+          proof.export = summary(app, created.id, exported);
+          if (exported.status !== "completed" || !(exported.outputs ?? []).some(output => output.kind === "content" && output.content.bytes > 0)) failures.push(harnessId + ": export");
+        }
+      } catch (error) {
+        proof.failure = { code: error !== null && typeof error === "object" && "code" in error ? String(error.code) : "ASSERTION", message: error instanceof Error ? error.message.slice(0, 512) : "failed" };
+        failures.push(harnessId + ": " + (proof.failure as { code: string }).code);
+      } finally {
+        await closeApp(app);
+        const after = await Promise.all(files.map(digest));
+        proof.configuration = files.map((path, index) => ({ path, unchanged: before[index] === after[index] }));
+        if (!(proof.configuration as { unchanged: boolean }[]).every(row => row.unchanged)) failures.push(harnessId + ": configuration changed");
+        proof.finishedAt = new Date().toISOString();
+        results.push(proof);
+        await writeFile(evidencePath, JSON.stringify(results, null, 2) + "\n", { mode: 0o600 });
+      }
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+  assert.deepEqual(failures, [], "native command acceptance failed");
+});

@@ -1,4 +1,5 @@
-import { AlertCircle, ArrowDown, ArrowRight, Bug, FolderOpen, FolderSearch, SquareTerminal, X } from "lucide-react";
+import * as Popover from "@radix-ui/react-popover";
+import { AlertCircle, ArrowDown, ArrowRight, Bug, Download, FolderOpen, FolderSearch, SquareTerminal, X } from "lucide-react";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { ProviderView } from "../../../src/contracts/provider.js";
@@ -152,6 +153,12 @@ export function ChatPage(props: ChatProps) {
       <MobileMenu onClick={props.onMenu}/>
       <div className="chat-heading"><h1 id="chat-title" title={title}>{title}</h1>{session && session.status !== "open" ? <span className="session-caption">{session.status === "closed" ? "已关闭" : "需要核实"}</span> : null}</div>
       <label className="header-workspace"><FolderOpen size={14} aria-hidden="true"/>{session ? <span title={session.workspace}>{session.workspace.split(/[\\/]/u).filter(Boolean).at(-1) ?? session.workspace}</span> : <input aria-label="新对话工作目录" value={props.workspace} onChange={event => props.onWorkspace(event.target.value)} placeholder="工作目录的绝对路径" title={props.workspace}/>}</label>
+      {session ? <Popover.Root><Popover.Trigger asChild><button type="button" className="icon-button export-chat" aria-label="导出对话" title="导出对话"><Download size={16}/></button></Popover.Trigger>
+        <Popover.Portal><Popover.Content className="export-menu" side="bottom" align="end" sideOffset={8} collisionPadding={16}>
+          <a href={`/api/v1/sessions/${encodeURIComponent(session.id)}/export?format=markdown`} download>导出 Markdown</a>
+          <a href={`/api/v1/sessions/${encodeURIComponent(session.id)}/export?format=json`} download>导出 JSON</a>
+          <small>公开对话与执行摘要；原生内部状态不包含在内。</small>
+        </Popover.Content></Popover.Portal></Popover.Root> : null}
       {session && session.status !== "closed" ? <button className="icon-button close-chat" aria-label="关闭这个对话" title="结束会话，保留历史" disabled={mutation !== null} onClick={() => setConfirmClose(true)}><X size={18}/></button> : null}
     </header>
     {error ? <div className="chat-error"><ErrorNotice message={error} onDismiss={props.onDismissError}/></div> : null}

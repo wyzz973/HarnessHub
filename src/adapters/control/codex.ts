@@ -45,6 +45,27 @@ function fileDiff(change: unknown): string {
   const row = change as Record<string, unknown>, path = typeof row.path === "string" ? row.path : "file", diff = typeof row.diff === "string" ? row.diff : "";
   return /^(---|diff --git)/mu.test(diff) ? diff.endsWith("\n") ? diff : diff + "\n" : "--- a/" + diffPath(path) + "\n+++ b/" + diffPath(path) + "\n" + diff + (diff.endsWith("\n") ? "" : "\n");
 }
+/**
+ * Thread-level permission settings Codex accepts on thread/start and thread/resume. They apply to the Hub's own thread only;
+ * the user's config.toml is never written. A value the configuration does not state is not offered, never guessed.
+ */
+const PERMISSION_SETTINGS = {
+  approval_policy: { name: "审批策略", config: "approval_policy", param: "approvalPolicy", values: { untrusted: "仅可信命令自动执行", "on-request": "按需请求审批", "on-failure": "失败时请求审批", never: "从不请求审批" } },
+  sandbox: { name: "沙箱", config: "sandbox_mode", param: "sandbox", values: { "read-only": "只读", "workspace-write": "工作区可写", "danger-full-access": "完全访问" } },
+} as const;
+type PermissionSetting = keyof typeof PERMISSION_SETTINGS;
+/** app-server has no slash commands; native thread operations the Hub exposes under command names. */
+const THREAD_COMMANDS = [{ name: "compact", description: "压缩当前会话上下文（原生 thread/compact/start）" }, { name: "export", description: "导出原生会话记录（Codex rollout JSONL）" }] as const;
+const SANDBOX_TYPES: Readonly<Record<string, string>> = { readOnly: "read-only", workspaceWrite: "workspace-write", dangerFullAccess: "danger-full-access" };
+function permissionOptions(configured: Record<string, unknown>): NativeOption[] {
+  return (Object.keys(PERMISSION_SETTINGS) as PermissionSetting[]).flatMap(id => {
+    const setting = PERMISSION_SETTINGS[id], current = configured[setting.config];
+    if (typeof current !== "string" || !Object.hasOwn(setting.values, current)) return [];
+    // on-failure is deprecated: offered only when the configuration still uses it.
+    const values = Object.entries(setting.values).filter(([value]) => value !== "on-failure" || current === "on-failure").map(([value, name]) => ({ value, name }));
+    return [{ id, name: setting.name, category: "permission", currentValue: current, values }];
+  });
+}
 /** Public title and bounded detail for a Codex tool-like item; message, reasoning and lifecycle items return null. */
 function itemTool(item: Record<string, unknown>): { title: string; detail: NativeToolDetail } | null {
   switch (item.type) {
@@ -95,6 +116,8 @@ export class CodexControl implements HarnessControl {
   private effort: string | undefined;
   /** Model named when the thread was opened; undefined means the configured default. */
   private openedModel: string | undefined;
+  /** Codex's own rollout file for the opened thread, as the thread reports it; null for an ephemeral thread. */
+  private threadPath: string | null = null;
   private interactivePermissions = false;
   private readonly permissions = new Map<string, { options: readonly string[]; resolve: (value: unknown) => void; reply: (option: string, input?: string) => unknown }>();
   private active: ActiveTurn | null = null;
@@ -169,7 +192,8 @@ export class CodexControl implements HarnessControl {
     }
     const defaultModel = configured.model == null ? null : string(configured.model, "configured model", 1024);
     if (defaultModel !== null && !seen.has(defaultModel)) models.unshift({ id: defaultModel, name: defaultModel });
-    return { models, defaultModel, canSelect: models.length > 0, authentication: account.requiresOpenaiAuth === false || account.account != null ? "ready" : account.requiresOpenaiAuth === true ? "missing" : "unknown" };
+    const options = permissionOptions(configured);
+    return { models, defaultModel, canSelect: models.length > 0, ...(options.length ? { options } : {}), commands: THREAD_COMMANDS, authentication: account.requiresOpenaiAuth === false || account.account != null ? "ready" : account.requiresOpenaiAuth === true ? "missing" : "unknown" };
   }
   async checkpoint(): Promise<string | null> { return this.conversation; }
   async open(cwd: string, model?: string, native?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> {
@@ -178,10 +202,15 @@ export class CodexControl implements HarnessControl {
     if (this.conversation || this.opening) throw new ControlError("INVALID_STATE", "this connection already owns a thread");
     this.opening = true;
     try {
+      const overrides: Record<string, string> = {};
       if (model !== undefined || Object.keys(native ?? {}).length) {
         const catalog = await this.models(), selected = catalog.models.find(row => row.id === (model ?? catalog.defaultModel));
         if (!selected) throw new ControlError("MODEL_UNAVAILABLE", "selected model is not in this Harness native catalog");
         for (const [id, value] of Object.entries(native ?? {})) {
+          if (Object.hasOwn(PERMISSION_SETTINGS, id)) {
+            if (!catalog.options?.find(option => option.id === id)?.values.some(option => option.value === value)) throw new ControlError("NATIVE_OPTION_UNAVAILABLE", "permission setting unavailable in the native configuration");
+            overrides[PERMISSION_SETTINGS[id as PermissionSetting].param] = value; continue;
+          }
           if (id !== "reasoning_effort" || !selected.options?.find(option => option.id === id)?.values.some(option => option.value === value)) throw new ControlError("NATIVE_OPTION_UNAVAILABLE", "reasoning effort unavailable for selected native model");
           this.effort = value;
         }
@@ -190,9 +219,13 @@ export class CodexControl implements HarnessControl {
       if (checkpoint !== undefined) this.conversation = nativeConversationId(checkpoint);
       // A cold start or a long thread resume loads native state before answering; bounded by the run budget.
       const response = object(await this.rpc.request(checkpoint === undefined ? "thread/start" : "thread/resume", {
-        cwd, ...(checkpoint === undefined ? { ephemeral: false } : { threadId: nativeConversationId(checkpoint), excludeTurns: true }), ...(model === undefined ? {} : { model }),
+        cwd, ...(checkpoint === undefined ? { ephemeral: false } : { threadId: nativeConversationId(checkpoint), excludeTurns: true }), ...(model === undefined ? {} : { model }), ...overrides,
       }, Math.max(this.options.requestTimeoutMs, Math.min(60000, this.options.runTimeoutMs))), "native thread setup result");
+      // The thread reports the policy it actually runs with; an override it did not apply is a failure, not a silent default.
+      if (overrides.approvalPolicy !== undefined && response.approvalPolicy !== overrides.approvalPolicy) throw new ControlError("NATIVE_OPTION_MISMATCH", "Codex did not apply the requested approval policy");
+      if (overrides.sandbox !== undefined && SANDBOX_TYPES[String(object(response.sandbox, "Codex sandbox").type)] !== overrides.sandbox) throw new ControlError("NATIVE_OPTION_MISMATCH", "Codex did not apply the requested sandbox");
       const thread = object(response.thread, "Codex thread");
+      this.threadPath = typeof thread.path === "string" && isAbsolute(thread.path) ? thread.path : null;
       const received = nativeConversationId(thread.id);
       if (checkpoint !== undefined && received !== checkpoint) throw new ControlError("IDENTITY_MISMATCH", "native restore returned a different thread");
       if (this.conversation && this.conversation !== received) throw new ControlError("IDENTITY_MISMATCH", "thread/start response does not match thread/started");
@@ -226,7 +259,16 @@ export class CodexControl implements HarnessControl {
     // Images and audio are read by Codex from the private copies; files have no input type and are named by path.
     const input = [{ type: "text", text: prompt + fileMentions(attachments.filter(file => file.kind === "file")), text_elements: [] },
       ...attachments.flatMap(file => file.kind === "image" ? [{ type: "localImage", path: file.path }] : file.kind === "audio" ? [{ type: "localAudio", path: file.path }] : [])];
-    void this.rpc.request("turn/start", { threadId: id, input, ...(this.effort === undefined ? {} : { effort: this.effort }) }).then(value => {
+    // `/export` copies Codex's own rollout record; nothing is sent to the model.
+    if (/^\/export\s*$/u.test(prompt) && !attachments.length) {
+      void this.exportThread(active, id);
+    // `/compact` runs Codex's own compaction turn; its turn identity arrives with turn/started.
+    } else if (/^\/compact\s*$/u.test(prompt) && !attachments.length) {
+      void this.rpc.request("thread/compact/start", { threadId: id }).then(value => { if (Object.keys(object(value, "thread/compact/start result")).length) this.rpc.abort(new ControlError("INVALID_PROTOCOL", "compaction receipt must be empty")); }, (error: unknown) => {
+        if (error instanceof ControlError && error.code === "REMOTE_ERROR" && active.turnId === null && this.rpc.failure === null) { this.settleTurn(active); active.resolve({ status: "failed", reason: "request_rejected" }); }
+        else this.rpc.abort(errorFrom(error));
+      });
+    } else void this.rpc.request("turn/start", { threadId: id, input, ...(this.effort === undefined ? {} : { effort: this.effort }) }).then(value => {
       try {
         const response = object(value, "turn/start result"), turn = object(response.turn, "Codex turn");
         this.bindTurn(active, string(turn.id, "Codex turn identity"));
@@ -246,6 +288,22 @@ export class CodexControl implements HarnessControl {
       active.stop = this.stopTurn(active, id);
       return active.stop;
     } };
+  }
+  /** Reads the rollout file read-only within the content budget and returns it as an output of this Run. */
+  private async exportThread(active: ActiveTurn, id: NativeConversationId): Promise<void> {
+    let result: BackendResult;
+    try {
+      if (this.threadPath === null) throw new ControlError("NATIVE_EXPORT_UNAVAILABLE", "this Codex thread has no rollout record");
+      const info = await stat(this.threadPath);
+      if (!info.isFile() || info.size < 1 || info.size > MAX_CONTENT_BYTES) throw new ControlError("NATIVE_EXPORT_UNAVAILABLE", "the Codex rollout record is missing or exceeds 20 MiB");
+      const data = await readFile(this.threadPath);
+      if (this.active === active && !active.settled) active.event({ type: "output", output: { kind: "content", name: "codex-" + id.replace(/[^A-Za-z0-9-]/gu, "") + ".jsonl", mediaType: "application/x-ndjson", data } });
+      result = { status: "completed", reason: "exported" };
+    } catch (error) {
+      const code = error instanceof ControlError ? error.code : "NATIVE_EXPORT_UNAVAILABLE";
+      result = { status: "failed", reason: "export_failed", error: { code, message: code === "NATIVE_EXPORT_UNAVAILABLE" && error instanceof Error ? error.message : "Codex rollout record could not be read" } };
+    }
+    if (this.active === active && !active.settled) { this.settleTurn(active); active.resolve(result); }
   }
   close(): Promise<CleanupEvidence> { this.cancelPermissions(); return this.rpc.close(); }
   private async stopTurn(active: ActiveTurn, id: NativeConversationId): Promise<StopRequestReceipt> {
@@ -451,8 +509,12 @@ export class CodexControl implements HarnessControl {
       if (!Array.isArray(available) || !available.length || available.length > 32) throw new ControlError("INVALID_PROTOCOL", "invalid native approval decisions");
       const choices = available.filter((value): value is string => typeof value === "string" && ["accept", "acceptForSession", "decline", "cancel"].includes(value));
       if (!choices.length || new Set(choices).size !== choices.length) throw new ControlError("INVALID_PROTOCOL", "no supported native approval decisions");
-      const id = String(request.id);
-      return new Promise<unknown>(resolve => { this.permissions.set(id, { options: choices, resolve, reply: decision => ({ decision }) }); active.event({ type: "permission_requested", id, title: (params.threadId !== this.conversation ? "子 Agent · " : "") + (typeof params.command === "string" ? params.command.slice(0,4096) : request.method.includes("fileChange") ? "Codex 请求修改文件" : "Codex 请求执行命令"), options: choices.map(id => ({ id, name: ({ accept: "允许一次", acceptForSession: "本次会话允许", decline: "拒绝", cancel: "取消" } as Record<string,string>)[id]! })) }); });
+      const id = String(request.id), item = active.items.get(String(params.itemId))?.detail;
+      // The user decides with what the item already reported: the files and diff of a change, or the command, its cwd and reason.
+      const files = request.method.includes("fileChange") ? (item?.locations ?? []).map(path => basename(path)).slice(0, 3).join(", ") : "";
+      const title = (params.threadId !== this.conversation ? "子 Agent · " : "") + (typeof params.command === "string" ? line(params.command) : request.method.includes("fileChange") ? "Codex 请求修改文件" + (files ? "：" + files : "") : "Codex 请求执行命令");
+      const detail = [typeof params.reason === "string" ? line(params.reason) : "", typeof params.cwd === "string" ? "目录：" + params.cwd : "", request.method.includes("fileChange") && item?.diff ? item.diff : ""].filter(Boolean).join("\n").slice(0, 4096);
+      return new Promise<unknown>(resolve => { this.permissions.set(id, { options: choices, resolve, reply: decision => ({ decision }) }); active.event({ type: "permission_requested", id, title, ...(detail ? { detail } : {}), options: choices.map(id => ({ id, name: ({ accept: "允许一次", acceptForSession: "本次会话允许", decline: "拒绝", cancel: "取消" } as Record<string,string>)[id]! })) }); });
     }
     const decision = active.stopping ? "cancel" : "decline";
     active.event({ type: "permission", id: String(request.id), decision: active.stopping ? "cancelled" : "denied" });

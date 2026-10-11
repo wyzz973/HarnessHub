@@ -373,6 +373,9 @@ export function failureMessage(failure: { readonly code: string; readonly messag
     PROVIDER_DISABLED: "所选 Provider 已停用。请选择其他连接，或到 Providers 启用它。",
     WORKSPACE_BUSY: "工作区正被另一项任务使用。可以等待它结束，或为新对话选择其他工作区。",
     WORKSPACE_QUARANTINED: "工作区仍有未核实的执行资源。请先核实并停止相关进程；历史和草稿已保留。",
+    NATIVE_COMMAND_REJECTED: "原程序没有执行这个命令，原因见上方的活动记录。",
+    NATIVE_EXPORT_UNAVAILABLE: "原程序暂时没有可导出的会话记录。",
+    ATTACHMENT_UNAVAILABLE: "附件已失效或已移除，请重新添加后再发送。",
   };
   return labels[failure.code] ?? failure.message;
 }

@@ -333,3 +333,20 @@ test("attachments upload as raw bytes for this workspace, go to the Harness with
   assert.equal((await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "bad", commandId: "bad-list", attachments: "nope" })).status, 400);
   assert.equal((await state(f, id)).runs.length, 1);
 });
+
+test("the public conversation exports as Markdown or JSON without private native state", async t => {
+  const f = await fixture(t); await auth(f); const id = await create(f);
+  assert.equal((await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "first\n```\nquoted", commandId: "export-first" })).status, 202);
+  await waitFor(f, id, value => value.runs[0]?.status === "completed");
+  const markdown = await fetch(f.origin + `/api/v1/sessions/${id}/export`, { headers: { Cookie: f.cookie } });
+  assert.equal(markdown.status, 200); assert.equal(markdown.headers.get("content-type"), "text/markdown; charset=utf-8");
+  assert.equal(markdown.headers.get("content-disposition"), "attachment; filename*=UTF-8''" + encodeURIComponent("harnesshub-" + id + ".md"));
+  const text = await markdown.text();
+  assert.match(text, /^# first ``` quoted/u); assert.ok(text.includes("## 你\n\n```text\nfirst\n ```\nquoted\n```"), "a fence inside the user text cannot close the quote");
+  assert.ok(text.includes("## Web a · 完成")); assert.equal(text.includes("checkpoint"), false);
+  const json = await fetch(f.origin + `/api/v1/sessions/${id}/export?format=json`, { headers: { Cookie: f.cookie } });
+  const exported = row(await json.json()); assert.equal(exported.application, "HarnessHub"); assertView(exported.session);
+  assert.equal(JSON.stringify(exported).includes("nativeBindings"), false, "private native bindings are not exported");
+  assert.equal((await call(f, `/api/v1/sessions/${id}/export?format=pdf`)).status, 400);
+  assert.equal((await fetch(f.origin + `/api/v1/sessions/${id}/export`)).status, 401);
+});

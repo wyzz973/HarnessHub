@@ -386,3 +386,12 @@ test("OpenCode refines agent image support with each model's input kinds from th
   try { await ready(plain); assert.equal((await plain.models()).models.every(row => row.inputs === undefined), true); await plain.checkAttachments([image]); }
   finally { await plain.close(); }
 });
+
+test("ACP catalog reads wait briefly for the agent's command announcement instead of racing it", async () => {
+  const late = control("late-commands");
+  try { await ready(late); const started = Date.now(); assert.deepEqual((await late.models()).commands, [{ name: "late", description: "arrives after session creation" }]); assert.ok(Date.now() - started < 1400, "the announcement ends the wait"); }
+  finally { await late.close(); }
+  const silent = control("basic");
+  try { await ready(silent); assert.deepEqual((await silent.models()).commands, []); const started = Date.now(); await silent.models(); assert.ok(Date.now() - started < 200, "the bounded wait happens once"); }
+  finally { await silent.close(); }
+});

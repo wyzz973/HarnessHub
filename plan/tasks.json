@@ -2278,7 +2278,9 @@
         "G032-NC6",
         "G032-NC7",
         "G032-NC8",
-        "G032-NC9"
+        "G032-NC9",
+        "G032-NC10",
+        "G032-NC11"
       ],
       "active_slice": "native-installation-management"
     },
@@ -2377,7 +2379,8 @@
         "G034-NC3",
         "G034-NC4",
         "G034-NC5",
-        "G034-NC6"
+        "G034-NC6",
+        "G034-NC7"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3057,7 +3060,8 @@
         "src/cli/web.ts",
         "tests/integration/web-server.test.ts",
         "src/web/session-stream.ts",
-        "src/web/harness-models.ts"
+        "src/web/harness-models.ts",
+        "src/web/conversation-export.ts"
       ],
       "requirements": [
         "R01",
@@ -3089,7 +3093,8 @@
         "G050-P02",
         "G050-R01",
         "G050-NC1",
-        "G050-NC2"
+        "G050-NC2",
+        "G050-NC3"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3317,7 +3322,8 @@
         "G054-N01",
         "G054-L01",
         "G054-NC1",
-        "G054-NC2"
+        "G054-NC2",
+        "G054-NC3"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3633,7 +3639,8 @@
         "tests/real/native-resume.real.ts",
         "tests/real/native-catalog.real.ts",
         "tests/real/native-activity.real.ts",
-        "tests/real/native-attachments.real.ts"
+        "tests/real/native-attachments.real.ts",
+        "tests/real/native-commands.real.ts"
       ],
       "requirements": [
         "R04",
@@ -3673,7 +3680,8 @@
         "G060-N04",
         "G060-NC1",
         "G060-NC2",
-        "G060-NC3"
+        "G060-NC3",
+        "G060-NC4"
       ],
       "active_slice": "native-installation-management"
     },

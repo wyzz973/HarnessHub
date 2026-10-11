@@ -16,6 +16,7 @@ import { supportedProviderProtocols } from "../contexts/provider/domain/provider
 import { observedPackageVersion } from "../infrastructure/management/system-version.js";
 import { SessionStreamError, SessionStreamHub } from "./session-stream.js";
 import { HarnessModels } from "./harness-models.js";
+import { conversationMarkdown } from "./conversation-export.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -406,10 +407,23 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       });
       return;
     }
-    const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|switches|resume|cancel|close|events))?$/u.exec(path);
+    const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|switches|resume|cancel|close|events|export))?$/u.exec(path);
     if (sessionRoute) {
       const id = sessionId(sessionRoute[1]!), action = sessionRoute[2];
       if (action === undefined && method === "GET") { queries(url, []); json(response, 200, view(app.runtime.read(id), app.runtime.permissionRequests(id))); return; }
+      if (action === "export" && method === "GET") {
+        // A download of the public conversation; private native state and stored bytes stay out.
+        queries(url, ["format"]); const format = url.searchParams.get("format") ?? "markdown";
+        if (format !== "markdown" && format !== "json") throw new HttpError(400, "INVALID_INPUT", "export format must be markdown or json");
+        const current = view(app.runtime.read(id)), now = new Date(), names = new Map((await rescan()).map(harness => [harness.id, harness.name]));
+        const bytes = Buffer.from(format === "json" ? JSON.stringify({ application: "HarnessHub", exportedAt: now.toISOString(), session: current }, null, 2) + "\n" : conversationMarkdown(current, harnessId => names.get(harnessId) ?? harnessId, now));
+        if (bytes.length > MAX_RESPONSE_BYTES) throw new HttpError(413, "RESPONSE_LIMIT", "Conversation export exceeds its byte budget");
+        if (response.destroyed || response.writableEnded) return;
+        headers(response); response.statusCode = 200;
+        response.setHeader("Content-Type", format === "json" ? "application/json; charset=utf-8" : "text/markdown; charset=utf-8"); response.setHeader("Content-Length", bytes.length);
+        response.setHeader("Content-Disposition", "attachment; filename*=UTF-8''" + encodeURIComponent("harnesshub-" + id + (format === "json" ? ".json" : ".md")));
+        response.end(bytes); return;
+      }
       if (action === "events" && method === "GET") {
         queries(url, ["afterSeq", "limit"]); const after = cursor(url.searchParams.get("afterSeq"), 0, 0, Number.MAX_SAFE_INTEGER), limit = cursor(url.searchParams.get("limit"), 50, 1, 100);
         const events = app.store.events(id, after, limit), nextSeq = events.at(-1)?.seq ?? after;

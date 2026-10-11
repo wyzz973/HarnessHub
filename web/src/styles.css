@@ -3924,7 +3924,7 @@ a {
 .native-setting .picker-trigger { max-width: 180px; }
 
 .native-permission textarea { width:100%; margin-top:10px; padding:8px; border:1px solid var(--line); border-radius:8px; resize:vertical; }
-.native-permission p { font-size:13px; white-space:pre-wrap; overflow-wrap:anywhere; }
+.native-permission p { font-size:13px; white-space:pre-wrap; overflow-wrap:anywhere; max-height:240px; overflow:auto; }
 
 /* Attachments: composer chips, drop target and the files sent with a user message. */
 .composer.is-dropping { border-color: var(--accent); box-shadow: 0 0 0 3px #ae5b3d1f; }
@@ -3948,3 +3948,9 @@ a {
   .message-attachments { max-width: 91%; }
   .message-attachment-image { width: 120px; }
 }
+
+/* Conversation export menu in the chat header. */
+.export-menu { display: grid; gap: 2px; min-width: 200px; padding: 6px; border: 1px solid var(--line); border-radius: 10px; background: #fff; box-shadow: 0 8px 28px #32291d14; z-index: 30; }
+.export-menu a { padding: 7px 10px; border-radius: 7px; color: var(--chat-ink); font-size: 13px; text-decoration: none; }
+.export-menu a:hover, .export-menu a:focus-visible { background: #f1eee7; }
+.export-menu small { padding: 4px 10px 2px; color: var(--muted); font-size: 11px; line-height: 1.5; }

@@ -685,7 +685,9 @@
         "src/infrastructure/control/attachments.ts",
         "src/adapters/control/opencode.ts",
         "web/src/components/Attachments.tsx",
-        "tests/real/native-attachments.real.ts"
+        "tests/real/native-attachments.real.ts",
+        "src/web/conversation-export.ts",
+        "tests/real/native-commands.real.ts"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/complete-native-capabilities-2026-10-11.md"

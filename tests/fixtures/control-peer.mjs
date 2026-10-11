@@ -99,7 +99,7 @@ lines.on("line", line => {
     return;
   }
   if (message.method === "initialized") { initialized = true; return; }
-  if (message.method === "config/read") { answer(message.id, { config: { model: "native-model-a", privateCredential: "synthetic-never-public" } }); return; }
+  if (message.method === "config/read") { answer(message.id, { config: { model: "native-model-a", privateCredential: "synthetic-never-public", ...(["permissions-settings", "ignore-permissions"].includes(scenario) ? { approval_policy: "never", sandbox_mode: "danger-full-access" } : {}) } }); return; }
   if (message.method === "account/read") { answer(message.id, { account: { type: "chatgpt", email: "private-account@example.invalid" }, requiresOpenaiAuth: true }); return; }
   if (message.method === "model/list") { answer(message.id, { data: ["native-model-a", "native-model-b"].map(model => ({ model, displayName: model, ...(scenario === "attachments" ? { inputModalities: model === "native-model-a" ? ["text", "image", "audio"] : ["text"] } : {}) })), nextCursor: null }); return; }
   if (message.method === "session/new" && scenario === "attachments") {
@@ -121,6 +121,8 @@ lines.on("line", line => {
       notification("session/update", { sessionId, update: { sessionUpdate: "available_commands_update", availableCommands: [] } });
       if (scenario === "opening-text") acpOutput();
     }
+    // Real agents announce their commands just after the session/new response.
+    if (scenario === "late-commands") setTimeout(() => notification("session/update", { sessionId: "session-fixture", update: { sessionUpdate: "available_commands_update", availableCommands: [{ name: "late", description: "arrives after session creation" }] } }), 200);
     if (scenario === "unlisted-model") { answer(message.id, { sessionId: "session-fixture", configOptions: [{ id: "native-model", category: "model", type: "select", currentValue: "resumed-unlisted", options: [{ value: "native-model-a", name: "Native A" }] }] }); return; }
     answer(message.id, { sessionId: "session-fixture", ...(scenario === "native-models" ? { configOptions: [{ id: "native-model", category: "model", type: "select", currentValue: selectedModel, options: [{ value: "native-model-a", name: "Native A" }, { value: "native-model-b", name: "Native B" }] }] } : {}),
     ...(["legacy-configured-model", "duplicate-models"].includes(scenario) ? { models: { currentModelId: "configured-model", availableModels: [{ modelId: "suggested-model", name: "Suggested" }, ...(scenario === "duplicate-models" ? [{ modelId: "suggested-model", name: "Duplicate" }] : [])] } } : {}) }); return; }
@@ -144,9 +146,23 @@ lines.on("line", line => {
     if (!initialized) { emit({ id: message.id, error: { code: -32600, message: "Not initialized" } }); return; }
     const id = scenario === "resume-wrong-identity" && message.method === "thread/resume" ? "thread-replacement" : "thread-fixture";
     notification("thread/started", { thread: { id } });
-    answer(message.id, { thread: { id } }); return;
+    // The thread reports the policy it runs with: requested overrides apply unless the scenario refuses them.
+    const sandboxType = { "read-only": "readOnly", "workspace-write": "workspaceWrite", "danger-full-access": "dangerFullAccess" }[message.params.sandbox ?? "danger-full-access"];
+    // A thread reports its own rollout file; the fixture writes one so export has native bytes to copy.
+    const rollout = scenario === "rollout" ? join(tmpdir(), `codex-rollout-${process.pid}.jsonl`) : null;
+    if (rollout) { writeFileSync(rollout, '{"type":"session_meta"}\n'); process.on("exit", () => rmSync(rollout, { force: true })); }
+    answer(message.id, { thread: { id, ...(rollout ? { path: rollout } : {}) }, approvalPolicy: scenario === "ignore-permissions" ? "never" : message.params.approvalPolicy ?? "never", sandbox: { type: scenario === "ignore-permissions" ? "dangerFullAccess" : sandboxType } }); return;
   }
   if (message.method === "ping") { answer(message.id, { echoed: message.params }); return; }
+  if (message.method === "thread/compact/start") {
+    // Codex runs compaction as its own turn: the receipt is empty and the turn identity arrives by notification.
+    answer(message.id, {}); turn += 1;
+    const base = { threadId: "thread-fixture", turnId: `turn-${turn}` };
+    notification("turn/started", { threadId: "thread-fixture", turn: { id: base.turnId, status: "inProgress" } });
+    notification("item/started", { ...base, item: { type: "contextCompaction", id: "compact-item" } });
+    notification("item/completed", { ...base, item: { type: "contextCompaction", id: "compact-item" } });
+    notification("turn/completed", { threadId: "thread-fixture", turn: { id: base.turnId, status: "completed" } }); return;
+  }
   if (message.method === "session/prompt" || message.method === "turn/start") {
     if (scenario === "quota-rejected" || scenario === "auth-rejected") { emit({ id: message.id, error: { code: -32001, message: (scenario === "quota-rejected" ? "You've hit your weekly limit" : "Authentication required") + " private-synthetic-key" } }); return; }
     if (scenario === "prompt-rejected") { emit({ id: message.id, error: { code: -32001, message: "private rejected request synthetic-key" } }); return; }

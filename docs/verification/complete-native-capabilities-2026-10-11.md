@@ -61,3 +61,5 @@ ACP原接口声明的image/audio/embeddedContext只说明原Harness有该接口�
 原生工具详情、计划、用量、提示、活动与产物的接入及真实工具回合见[原生活动验收](native-activity-2026-10-11.md)（业务库升级为v7）。
 
 文件、图片与音频输入的接入及真实附件回合见[附件输入验收](native-attachments-2026-10-11.md)。
+
+Codex 线程权限设置、原生压缩与导出及公开对话导出见[原生会话操作验收](native-session-actions-2026-10-11.md)。

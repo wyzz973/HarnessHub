@@ -50,7 +50,7 @@ async function settle(app: App, id: SessionId, permissions: Record<string, unkno
   for (;;) {
     for (const request of app.runtime.permissionRequests(id).filter(item => !item.decided)) {
       const option = allowOnce(request);
-      permissions.push({ title: request.title.slice(0, 160), options: request.options.map(item => item.id), chosen: option });
+      permissions.push({ title: request.title.slice(0, 160), detailLines: (request.detail ?? "").split("\n").filter(Boolean).length, detailHasDiff: (request.detail ?? "").includes("+delta"), options: request.options.map(item => item.id), chosen: option });
       if (option === null) throw new Error("no one-time allow option among the native approval options");
       await app.runtime.decidePermission(id, request.id, option, "allow-" + randomUUID());
     }
@@ -73,7 +73,9 @@ test("installed Harness tool activity is committed with stored, readable details
       const data = join(root, harnessId + "-data"), workspace = join(root, harnessId + "-workspace");
       await mkdir(workspace);
       await writeFile(join(workspace, "notes.txt"), "alpha\nbravo\ncharlie\n");
-      if (askApproval) {
+      // HH_REAL_OPTIONS_<ID>: session-level native settings (for example Codex approval_policy/sandbox) instead of a project file.
+      const optionsText = process.env["HH_REAL_OPTIONS_" + harnessId.toUpperCase()], nativeOptions = optionsText === undefined ? undefined : JSON.parse(optionsText) as Record<string, string>;
+      if (askApproval && nativeOptions === undefined) {
         const project = approvalConfig[harnessId];
         assert.ok(project, "no workspace-level approval configuration is known for " + harnessId);
         await writeFile(join(workspace, project.file), project.text);
@@ -85,7 +87,8 @@ test("installed Harness tool activity is committed with stored, readable details
       const app = application(data, () => {});
       try {
         const requested = process.env["HH_REAL_MODEL_" + harnessId.toUpperCase()];
-        const created = await app.runtime.create(configuration, { harnessId, ...(requested === undefined ? {} : { nativeModel: requested }) }, "create-" + randomUUID());
+        const created = await app.runtime.create(configuration, { harnessId, ...(requested === undefined ? {} : { nativeModel: requested }), ...(nativeOptions === undefined ? {} : { nativeOptions }) }, "create-" + randomUUID());
+        proof.nativeOptions = nativeOptions ?? null;
         app.runtime.send(created.id, "这是一次工具链路验收，只在当前工作目录内操作：\n1. 用命令行工具运行 `cat notes.txt`。\n2. 用你的文件编辑工具（不要用 shell 命令）把 notes.txt 里的 bravo 改成 delta。\n" + (askPlan ? "开始前必须先用你的计划/待办工具（例如 update_plan 或 TodoWrite）列出这两步，并在每步完成后更新状态。" : "如果你有计划或待办工具，先用它列出这两步。") + "完成后只回复 notes.txt 第二行的新内容。不要创建或修改其他文件。", "send-" + randomUUID());
         const run = await settle(app, created.id, permissions, Date.now() + 8 * 60 * 1000);
         const state = app.runtime.read(created.id), reply = state.messages.find(row => row.id === run.assistantMessageId)?.text ?? "";

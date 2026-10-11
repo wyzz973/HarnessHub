@@ -23,6 +23,8 @@ const MAX_PROMPT_TOOLS = 4096;
 const MAX_NATIVE_COMMANDS = 2048;
 /** Some agents keep streaming session/load history after the load response; the prompt waits for that replay to go quiet. */
 const REPLAY_QUIET_MS = 150;
+/** Agents announce their commands just after session creation; a catalog read waits this long for that announcement. */
+const COMMANDS_WAIT_MS = 1500;
 /** Text files up to this size travel as embedded resources when the agent declares embedded context. */
 const EMBED_TEXT_BYTES = 256 * 1024;
 const REPLAY_SETTLE_MS = 3000;
@@ -107,6 +109,9 @@ export class AcpControl implements HarnessControl {
   private readonly openingMetadata: Record<string, unknown>[] = [];
   /** Updates outside any active prompt (autonomous native follow-ups); never attributed to a public Run. */
   private unattributed = 0;
+  /** Resolved by the first available_commands_update; catalog reads wait briefly for it instead of racing it. */
+  private commandsAnnounced!: () => void;
+  private readonly commandsArrived = new Promise<void>(resolve => { this.commandsAnnounced = resolve; });
   get unattributedUpdates(): number { return this.unattributed; }
 
   constructor(launch: ControlLaunch, private readonly options: ControlOptions) {
@@ -203,7 +208,12 @@ export class AcpControl implements HarnessControl {
       this.legacyModels = true; this.catalog = { ...this.catalog, models, defaultModel: selected, authentication: "unknown", canSelect: models.length > 0 };
     }
   }
-  async models(): Promise<NativeModelCatalog> { this.assertInitialized(); if (this.conversation === null) throw new ControlError("INVALID_STATE", "ACP model catalog requires a session"); return { ...this.catalog, defaultModel: this.configuredDefault, inputs: this.inputs() }; }
+  async models(): Promise<NativeModelCatalog> {
+    this.assertInitialized(); if (this.conversation === null) throw new ControlError("INVALID_STATE", "ACP model catalog requires a session");
+    // An agent without commands never announces any; the wait is bounded and happens at most once per connection.
+    if (this.catalog.commands === undefined) { let timer: ReturnType<typeof setTimeout> | undefined; await Promise.race([this.commandsArrived, new Promise<void>(resolve => { timer = setTimeout(resolve, COMMANDS_WAIT_MS); })]); clearTimeout(timer); if (this.catalog.commands === undefined) this.catalog = { ...this.catalog, commands: [] }; }
+    return { ...this.catalog, defaultModel: this.configuredDefault, inputs: this.inputs() };
+  }
   /** ACP promptCapabilities; every agent must accept resource links, so files are always offered. */
   private promptCapabilities(): { readonly image: boolean; readonly audio: boolean; readonly embeddedContext: boolean } {
     const value = this.capabilities.promptCapabilities, caps = value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -358,7 +368,8 @@ export class AcpControl implements HarnessControl {
     if (kind === "config_option_update") { this.readModels(update); return; }
     if (kind === "available_commands_update") {
       if (!Array.isArray(update.availableCommands) || update.availableCommands.length > MAX_NATIVE_COMMANDS) throw new ControlError("INVALID_PROTOCOL", "native commands exceed their budget");
-      this.catalog = { ...this.catalog, commands: update.availableCommands.map(value => { const command = object(value, "native command"); return { name: string(command.name, "native command name", 256), description: typeof command.description === "string" ? text(command.description, "native command description").slice(0, 1024) : "" }; }) }; return;
+      this.catalog = { ...this.catalog, commands: update.availableCommands.map(value => { const command = object(value, "native command"); return { name: string(command.name, "native command name", 256), description: typeof command.description === "string" ? text(command.description, "native command description").slice(0, 1024) : "" }; }) };
+      this.commandsAnnounced(); return;
     }
     if (kind === "current_mode_update") { const mode = string(update.currentModeId, "current native mode", 128); this.catalog = { ...this.catalog, options: this.catalog.options?.map(option => option.id === "__mode" ? { ...option, currentValue: mode } : option) ?? [] }; return; }
     const active = this.active;

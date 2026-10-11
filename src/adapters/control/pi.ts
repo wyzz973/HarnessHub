@@ -1,7 +1,9 @@
-import { isAbsolute } from "node:path";
+import { mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { isAbsolute, join, sep } from "node:path";
 import { nativeConversationId, type BackendResult, type CleanupEvidence, type ControlEvent, type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl, type NativeConversationId, type NativeOptions, type NativeOption, type NativeModelCatalog, type NativeToolDetail, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
 import { classifyRemoteFailure, ControlError, errorFrom, JsonRpcProcess, object, string, type RpcWireCodec } from "../../infrastructure/control/json-rpc-process.js";
-import type { ContentRef, ControlAttachment } from "../../contracts/content.js";
+import { MAX_CONTENT_BYTES, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
 import { checkInputs, fileMentions, readAttachment } from "../../infrastructure/control/attachments.js";
 
 function piCodec(): RpcWireCodec {
@@ -83,6 +85,8 @@ export class PiControl implements HarnessControl {
   private interactivePermissions = false;
   private readonly permissions = new Map<string, { method:string;choices:readonly string[]; resolve: (value: Readonly<Record<string, unknown>>) => void; timer: ReturnType<typeof setTimeout> | null }>();
   private entries: ReturnType<typeof model>[] = [];
+  private hubCompact = false;
+  private hubExport = false;
   private readonly contextWindows = new Map<string, number>();
   private state: Record<string, unknown> = {};
   constructor(private readonly launch: ControlLaunch, private readonly options: ControlOptions) {
@@ -133,7 +137,11 @@ export class PiControl implements HarnessControl {
       await this.readState();
       const commandResult = object(await this.rpc.request("get_commands", {}), "Pi native commands");
       if (!Array.isArray(commandResult.commands) || commandResult.commands.length > 256) throw new ControlError("INVALID_PROTOCOL", "invalid Pi command catalog");
-      this.catalog = { ...this.catalog, commands: commandResult.commands.map(value => { const command = object(value, "Pi command"); return { name: string(command.name, "Pi command name", 128), description: typeof command.description === "string" ? command.description.slice(0,4096) : "" }; }) }; this.initialized = true;
+      const commands = commandResult.commands.map(value => { const command = object(value, "Pi command"); return { name: string(command.name, "Pi command name", 128), description: typeof command.description === "string" ? command.description.slice(0,4096) : "" }; });
+      // Manual compaction is an RPC command, not a prompt command; it is offered only when no native command owns the name.
+      this.hubCompact = !commands.some(command => command.name === "compact");
+      this.hubExport = !commands.some(command => command.name === "export");
+      this.catalog = { ...this.catalog, commands: [...commands, ...(this.hubCompact ? [{ name: "compact", description: "压缩当前会话上下文（原生 RPC compact）" }] : []), ...(this.hubExport ? [{ name: "export", description: "导出原生会话（Pi HTML）" }] : [])] }; this.initialized = true;
       return { protocol: "pi-rpc", protocolVersion: null, agentName: "pi", agentVersion: null, authenticationMethods: [], capabilities: { nativeModels: true, settlement: "agent_settled" } };
     } catch (error) { this.rpc.abort(errorFrom(error)); throw error; }
   }
@@ -194,7 +202,21 @@ export class PiControl implements HarnessControl {
       this.active = { event, resolve, reject, timer, acknowledged: false, started: false, settled: false, final: null, stop: null, tools: new Map(), usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 0, cost: 0, costed: false } };
     });
     const prompt = this.active!;
-    void this.rpc.request("prompt", { message, ...(images.length ? { images } : {}) }).then(() => { prompt.acknowledged = true; this.settle(prompt); if (!prompt.started && !prompt.settled) void this.probeHandled(prompt); }, error => {
+    const compact = this.hubCompact && !attachments.length ? /^\/compact(?:\s+([\s\S]*))?$/u.exec(message.trim()) : null;
+    if (this.hubExport && !attachments.length && message.trim() === "/export") void this.exportSession(prompt);
+    else if (compact) {
+      const instructions = compact[1]?.trim();
+      void this.rpc.request("compact", instructions ? { customInstructions: instructions } : {}).then(value => {
+        const result = object(value, "Pi compaction result"), before = result.tokensBefore, after = result.estimatedTokensAfter;
+        const detail = typeof before === "number" && Number.isSafeInteger(before) ? "tokens " + before + (typeof after === "number" && Number.isSafeInteger(after) ? " → " + after : "") : undefined;
+        if (this.active === prompt) prompt.event({ type: "activity", id: "compaction", kind: "compaction", title: "上下文压缩", status: "completed", ...(detail ? { detail } : {}) });
+        prompt.acknowledged = true; prompt.settled = true; prompt.final = { status: "completed", reason: "compacted" }; this.settle(prompt);
+      }, error => {
+        // Pi's own refusal (for example a session too small to compact) is shown on the compaction activity.
+        if (error instanceof ControlError && error.code === "REMOTE_ERROR" && !this.rpc.failure) { prompt.acknowledged = true; prompt.settled = true; prompt.final = { status: "failed", reason: "request_rejected", error: error.remoteFailure ?? { code: "NATIVE_COMMAND_REJECTED", message: "Pi did not compact this session; see the compaction activity" } }; this.settle(prompt); }
+        else this.rpc.abort(errorFrom(error));
+      });
+    } else void this.rpc.request("prompt", { message, ...(images.length ? { images } : {}) }).then(() => { prompt.acknowledged = true; this.settle(prompt); if (!prompt.started && !prompt.settled) void this.probeHandled(prompt); }, error => {
       if (error instanceof ControlError && error.code === "REMOTE_ERROR" && !this.rpc.failure) {
         prompt.acknowledged = true; prompt.settled = true; prompt.final = { status: "failed", reason: "request_rejected", ...(error.remoteFailure ? { error: error.remoteFailure } : {}) }; this.settle(prompt);
       } else this.rpc.abort(errorFrom(error));
@@ -298,6 +320,24 @@ export class PiControl implements HarnessControl {
       }
       prompt.final = { status: "completed", reason: "handled" }; prompt.settled = true; this.settle(prompt);
     } catch (error) { if (this.active === prompt) this.rpc.abort(errorFrom(error)); }
+  }
+  /** Pi writes its HTML export into a private temporary directory; the Run keeps the bytes as an output. */
+  private async exportSession(prompt: Prompt): Promise<void> {
+    const directory = await realpath(await mkdtemp(join(tmpdir(), "hh-pi-export-")));
+    try {
+      const reply = object(await this.rpc.request("export_html", { outputPath: join(directory, "pi-session.html") }), "Pi export result"), path = string(reply.path, "Pi export path", 4096);
+      if (!path.startsWith(directory + sep)) throw new ControlError("INVALID_PROTOCOL", "Pi exported outside the requested path");
+      const info = await stat(path);
+      if (!info.isFile() || info.size < 1 || info.size > MAX_CONTENT_BYTES) throw new ControlError("NATIVE_EXPORT_UNAVAILABLE", "Pi export is missing or exceeds 20 MiB");
+      const data = await readFile(path);
+      if (this.active === prompt) prompt.event({ type: "output", output: { kind: "content", name: "pi-session.html", mediaType: "text/html", data } });
+      prompt.final = { status: "completed", reason: "exported" };
+    } catch (error) {
+      if (error instanceof ControlError && error.code !== "REMOTE_ERROR" && error.code !== "NATIVE_EXPORT_UNAVAILABLE") { this.rpc.abort(errorFrom(error)); return; }
+      // Pi refuses in-memory sessions and sessions without an assistant reply ("Nothing to export yet").
+      prompt.final = { status: "failed", reason: "export_failed", error: { code: "NATIVE_EXPORT_UNAVAILABLE", message: "Pi has nothing to export for this session yet" } };
+    } finally { await rm(directory, { recursive: true, force: true }); }
+    prompt.acknowledged = true; prompt.settled = true; this.settle(prompt);
   }
   private settle(prompt: Prompt): void {
     if (this.active !== prompt || !prompt.acknowledged || !prompt.settled) return;

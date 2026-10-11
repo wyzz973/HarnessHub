@@ -174,11 +174,14 @@
         "modes-settings": {
           "native": "yes",
           "source": "approvalPolicy/sandboxPolicy/serviceTier 逐轮参数；collaborationMode 计划模式需 experimentalApi",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": "Hub 未接出审批/沙箱/计划模式设置"
+          "hub": "partial",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-activity-codex-approval.json",
+            "docs/verification/native-session-actions-2026-10-11.md"
+          ],
+          "note": "审批策略与沙箱作为本 Hub 线程设置接出（取自原配置、由线程回报核实、不写 config.toml）；计划模式需 experimentalApi、serviceTier 未接出"
         },
         "commands": {
           "native": "no",
@@ -260,9 +263,12 @@
           "source": "item/commandExecution|fileChange/requestApproval；子 Agent 线程审批归属当前回合",
           "hub": "done",
           "protocol": "pass",
-          "real": "none",
-          "evidence": [],
-          "note": "原配置 approval_policy=never 且 danger-full-access，本机原程序不会请求审批；item/permissions/requestApproval、策略修订决定尚未接出"
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-activity-codex-approval.json",
+            "docs/verification/native-session-actions-2026-10-11.md"
+          ],
+          "note": "只读沙箱 + 按需审批的真实回合：文件修改审批带文件名与差异，允许一次后由原程序写入；原配置 approval_policy=never 时原程序不请求审批"
         },
         "questions": {
           "native": "yes",
@@ -375,11 +381,14 @@
         "compaction": {
           "native": "yes",
           "source": "thread/compact/start → contextCompaction item",
-          "hub": "partial",
+          "hub": "done",
           "protocol": "pass",
-          "real": "none",
-          "evidence": [],
-          "note": "contextCompaction 以活动展示；thread/compact/start 未接出"
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-commands-pi-codex.json",
+            "docs/verification/native-session-actions-2026-10-11.md"
+          ],
+          "note": "/compact 调用 thread/compact/start 并以活动展示；压缩后原生会话仍记得先前事实"
         },
         "rollback": {
           "native": "yes",
@@ -411,11 +420,14 @@
         "export": {
           "native": "yes",
           "source": "thread/read(includeTurns)、Thread.path rollout 路径",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-commands-pi-codex.json",
+            "docs/verification/native-session-actions-2026-10-11.md"
+          ],
+          "note": "/export 读取线程自己的 rollout JSONL 作为产物；临时线程明确失败"
         }
       }
     },
@@ -721,7 +733,7 @@
           "protocol": "pass",
           "real": "none",
           "evidence": [],
-          "note": "目录真实读取 104 条；执行未验收；未知 / 开头文本会被原程序丢弃"
+          "note": "目录真实读取 104 条（目录读取现等待代理的命令公告）；执行未验收；未知 / 开头文本会被原程序丢弃"
         },
         "config-sync": {
           "native": "unknown",
@@ -911,11 +923,11 @@
         "compaction": {
           "native": "yes",
           "source": "/compact 原生命令",
-          "hub": "partial",
-          "protocol": "pass",
+          "hub": "none",
+          "protocol": "none",
           "real": "none",
           "evidence": [],
-          "note": "可经原生命令执行；ACP compaction_update 以活动展示"
+          "note": "OpenCode 的 ACP 命令目录没有压缩命令（真实目录 104 项），压缩只能在原 TUI 中执行"
         },
         "rollback": {
           "native": "unknown",
@@ -1002,9 +1014,12 @@
           "source": "固定 27 条命令（缺 /fast /exec /approve 等）",
           "hub": "done",
           "protocol": "pass",
-          "real": "none",
-          "evidence": [],
-          "note": "命令执行未真实验收"
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-commands-acp.json",
+            "docs/verification/native-session-actions-2026-10-11.md"
+          ],
+          "note": "原生 /compact 真实执行；固定 27 条命令（缺 /fast /exec /approve 等）"
         },
         "config-sync": {
           "native": "partial",
@@ -1181,11 +1196,14 @@
         "compaction": {
           "native": "yes",
           "source": "/compact 文本命令（sessions.compact 只截断）",
-          "hub": "partial",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": "可经原生命令执行"
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-commands-acp.json",
+            "docs/verification/native-session-actions-2026-10-11.md"
+          ],
+          "note": "原生 /compact 命令真实执行，压缩后仍记得先前事实；桥不发压缩活动"
         },
         "rollback": {
           "native": "no",
@@ -1965,11 +1983,14 @@
         "compaction": {
           "native": "yes",
           "source": "compact {customInstructions}",
-          "hub": "partial",
+          "hub": "done",
           "protocol": "pass",
-          "real": "none",
-          "evidence": [],
-          "note": "自动压缩与重试以活动展示；手动压缩未接出"
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-commands-pi.json",
+            "docs/verification/native-session-actions-2026-10-11.md"
+          ],
+          "note": "/compact 调用 RPC compact（无同名扩展命令时）；会话过小时如实失败并显示原因"
         },
         "rollback": {
           "native": "partial",
@@ -2001,11 +2022,14 @@
         "export": {
           "native": "yes",
           "source": "export_html {outputPath}",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-commands-pi.json",
+            "docs/verification/native-session-actions-2026-10-11.md"
+          ],
+          "note": "/export 调用 export_html 写入临时目录后作为产物；会话为空时明确失败"
         }
       }
     }
