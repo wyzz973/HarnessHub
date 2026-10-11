@@ -39,3 +39,15 @@
 - Codex 计划模式（需 experimentalApi）、serviceTier；会话分支、原生会话列表、子 Agent 会话与后台任务未接出。
 - OpenCode 压缩只能在原 TUI 中执行；Claude、Cursor、Gemini 受账号限制没有真实验收。
 - 未做 Windows 验证；4317 服务尚未部署本轮代码。
+
+## 部署到 4317 服务
+
+2026-10-11 18:34–18:36，在服务空闲时部署批次 2–4：
+
+1. 确认唯一会话没有在途 Run 与待决切换，核实 PID 与命令行后发送 SIGTERM，服务正常退出（WAL 已合并）。
+2. 冷备份 `data/` 到 `.tmp/backup-data-v6-20261011-183421/`（与原目录逐字节比较一致）。
+3. 在只含业务库、所有者标记与 Provider 目录的副本上用新代码演练 v6→v7：会话保持 open，14 个 Run、27 条消息、OpenClaw 原生绑定 ready 全部保留。管理库记录了数据根绝对路径，复制到别处会按设计拒绝，因此不参与演练。
+4. 主检出 `codex/local-discovery` 快进到 `199faa3`，离线按锁文件安装依赖并构建服务与页面。
+5. 经登录 shell（无代理变量）重启：`node dist/src/cli/web.js --cwd /Users/sd3/Desktop/project/HarnessGateway --data-dir …/data --port 4317`，输出写入私有文件 `.tmp/service-4317.log`（0600）。
+
+部署后核对：业务库 `user_version=7`，原会话为 schema 7、open、14 个 Run、27 条消息、OpenClaw 绑定 ready；新建 `data/content`；静态页 200、未登录 API 401；进程无代理变量。一次性启动链接只在私有日志中，未在任何记录里展开；本次没有使用它，也没有在原对话中发送消息。回退：停止服务后用备份目录替换 `data/`，并检出 `d3da700` 重新构建。
