@@ -702,6 +702,7 @@
 - src/infrastructure/management/native.ts
 - src/infrastructure/management/native-lock.ts
 - tests/integration/native-management.test.ts
+- src/infrastructure/management/homebrew.ts
 
 验收：
 - 发布新revision并保留历史
@@ -1820,6 +1821,7 @@
 - tests/fixtures/managed-inventory-peer.mjs
 - tests/real/managed-install.real.ts
 - tests/real/live-web-stream.real.ts
+- tests/real/homebrew-native.real.ts
 
 验收：
 - 记录通过/失败/未覆盖，不能称全协议认证
@@ -1828,7 +1830,7 @@
 - 真实HTTP/Store/IPC/原生进程与产物/清理完整可核对
 - 真实HTTP/Store/IPC/原生进程与产物/清理完整可核对
 
-场景：G060-C01, G060-C02, G060-C03, G060-C04, G060-C05, G060-P01, G060-P02, G060-M01, G060-S01。
+场景：G060-C01, G060-C02, G060-C03, G060-C04, G060-C05, G060-P01, G060-P02, G060-M01, G060-S01, G060-N04。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 

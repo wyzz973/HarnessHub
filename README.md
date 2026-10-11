@@ -31,9 +31,9 @@ Harness连接或目标切换失败时，历史与原选择保留，可继续使�
 
 ## 本机原安装与版本管理
 
-已发现的本机PATH/显式入口优先，原安装和既有配置/登录作为当前执行来源，旧私有副本不能覆盖它。生产管理任务使用原npm/uv位置或已审核用户程序目录，真实CLI版本、原配置保护与未知结果分别记录。Homebrew本机升级因嵌套沙箱限制明确不可用，保留原程序；用户开发目录不自动替换。管理库v1→v2追加冻结计划，先备份业务库和管理库；业务会话仍为v4。旧私有版本槽只保留历史及显式测试模式。详见[ADR-017](docs/decisions/0017-native-installation-management.md)与[本轮验收](docs/verification/native-management-2026-10-11.md)。
+已发现的本机PATH/显式入口优先，原安装和既有配置/登录作为当前执行来源，旧私有副本不能覆盖它。生产管理任务使用原npm/uv位置或已审核用户程序目录，真实CLI版本、原配置保护与未知结果分别记录。macOS Homebrew升级通过原SDK创建一个可认证的继承沙箱，模型/登录/shell配置与Homebrew仓库均拒绝写入；没有对应SDK时明确不可用。用户开发目录不自动替换。管理库v1→v2追加冻结计划，先备份业务库和管理库；业务会话仍为v4。旧私有版本槽只保留历史及显式测试模式。详见[ADR-017](docs/decisions/0017-native-installation-management.md)与[本轮验收](docs/verification/native-management-2026-10-11.md)。
 
-原版OpenClaw2026.3.23-2、Codex0.160.0、OpenCode1.18.35、Pi0.85.1已通过本机真实模型回复；OpenClaw/Pi使用原生DeepSeek。Claude接入口绑定原Claude Code2.1.296及既有登录，账号周额度已用完。Gemini0.62.0被服务端拒绝，Cursor旧本机版本尚未登录；这些情况不能算回复通过。所有接入口版本与原程序版本分开解释，不把ACP适配器版本当原CLI版本。
+原版OpenClaw2026.3.23-2、Codex0.162.1、OpenCode1.18.35、Pi0.85.1已通过本机真实模型回复；OpenClaw/Pi使用原生DeepSeek。Claude接入口绑定原Claude Code2.1.296及既有登录，账号周额度已用完。Cursor原安装已升级至2026.10.01-e373342，沿用本机登录、44项原生模型目录并通过独立短提示回复；原公共对话实测仍返回账号套餐升级提示，不能算该对话回复通过。Gemini0.62.0的个人登录被服务端停用，直连DeepSeek实际返回404（Google GenAI协议与DeepSeek接口不匹配），不能算回复通过。所有接入口版本与原程序版本分开解释，不把ACP适配器版本当原CLI版本。
 
 Provider统一管理仍是用户→HarnessHub→不同Harness→Provider统一管理的后续环节；当前原生接入直接使用各Harness已配置模型，不通过本项目Provider来完成DeepSeek测试。
 
@@ -132,3 +132,5 @@ python3 -m unittest discover -s tools -p 'test_*.py' -v
 修改 plan 中的结构化来源后运行 python3 tools/check_design.py --write 更新人读清单，再运行默认检查。仅本机已抓取缓存可追加 --verify-cache 核对内容 SHA-256；缓存不入库，其他机器必须重新取得对应来源才能执行该项检查。版本化网页可能重新渲染，哈希变化需要重新审阅，不自动改来源锁。
 
 设计检查实际保证 ID/依赖、唯一路径所有权（含大小写/NFC）、获准切片源码范围、需求/测试关联、生成新鲜度、简单相对文件链接及来源元数据。它不证明任务语义天然原子、DDD 正确、外部 URL 永久有效、Markdown 全语法、运行时行为或平台能力。
+
+原CLI恢复与原Homebrew升级证据见[ADR-018](docs/decisions/0018-native-cli-recovery.md)与[恢复验收](docs/verification/native-cli-recovery-2026-10-11.md)。

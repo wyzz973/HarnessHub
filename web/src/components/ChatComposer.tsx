@@ -78,8 +78,9 @@ export function ChatComposer(props: ComposerProps) {
       reason: !row.enabled ? "已停用" : !supported ? "当前 Harness 暂不支持这个协议" : missingKey ? "缺少 Gemini API Key" : "",
     };
   })];
+  const nativeDefault = props.nativeModels?.models.find(model => model.id === props.nativeModels?.defaultModel)?.name ?? props.nativeModels?.defaultModel;
   const modelOptions: PickerOption[] = provider ? provider.models.map(model => ({ value: model, label: model, group: provider.name })) : [
-    { value: "", label: props.nativeModels?.defaultModel ?? (props.nativeModelsLoading ? "读取本机模型…" : "跟随本机配置"), description: "本机当前默认模型", group: "跟随 Harness" },
+    { value: "", label: nativeDefault ? `${nativeDefault} · 本机默认` : props.nativeModelsLoading ? "读取本机模型…" : "跟随本机配置", description: "本机当前默认模型", group: "跟随 Harness" },
     ...(props.nativeModels?.models.map(model => ({ value: model.id, label: model.name, description: model.id, group: harness?.name ?? "本机模型" })) ?? []),
   ];
   if (provider && draft.model && !provider.models.includes(draft.model)) {

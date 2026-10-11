@@ -6446,6 +6446,22 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/unit/management-state.test.ts"
+    },
+    {
+      "id": "G060-N04",
+      "task": "G060",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "platform",
+      "scenario": "原Homebrew创建并认证继承沙箱，模型配置与Homebrew仓库拒绝写入",
+      "expected": "真实SDK继承成立；配置与brew自身写入以明确EPERM拒绝且原内容不变，进程退出可等待",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/real/homebrew-native.real.ts"
     }
   ]
 }

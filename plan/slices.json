@@ -499,6 +499,34 @@
       ],
       "implementation_state": "implemented",
       "verification_record": "docs/verification/native-management-2026-10-11.md"
+    },
+    {
+      "id": "native-cli-recovery",
+      "status": "accepted",
+      "scope": "原渠道Homebrew单沙箱维护、Cursor原CLI更新/登录接入及Gemini原生DeepSeek兼容性核实",
+      "task_ids": [
+        "G011",
+        "G032",
+        "G031",
+        "G059",
+        "G060",
+        "G061",
+        "G054"
+      ],
+      "decision": "docs/decisions/0018-native-cli-recovery.md",
+      "allowed_files": [
+        "src/infrastructure/management/native.ts",
+        "src/infrastructure/management/homebrew.ts",
+        "src/adapters/control/acp.ts",
+        "src/adapters/control/factory.ts",
+        "tests/integration/native-management.test.ts",
+        "tests/real/homebrew-native.real.ts",
+        "tests/protocol/acp.test.ts",
+        "tests/fixtures/control-peer.mjs",
+        "web/src/components/ChatComposer.tsx"
+      ],
+      "implementation_state": "implemented",
+      "verification_record": "docs/verification/native-cli-recovery-2026-10-11.md"
     }
   ]
 }

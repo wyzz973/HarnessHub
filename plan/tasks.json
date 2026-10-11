@@ -1265,7 +1265,8 @@
         "tests/integration/management-system-version.test.ts",
         "src/infrastructure/management/native.ts",
         "src/infrastructure/management/native-lock.ts",
-        "tests/integration/native-management.test.ts"
+        "tests/integration/native-management.test.ts",
+        "src/infrastructure/management/homebrew.ts"
       ],
       "requirements": [
         "R03",
@@ -3590,7 +3591,8 @@
         "tests/real/harness-provider-switch.real.ts",
         "tests/fixtures/managed-inventory-peer.mjs",
         "tests/real/managed-install.real.ts",
-        "tests/real/live-web-stream.real.ts"
+        "tests/real/live-web-stream.real.ts",
+        "tests/real/homebrew-native.real.ts"
       ],
       "requirements": [
         "R04",
@@ -3626,7 +3628,8 @@
         "G060-P01",
         "G060-P02",
         "G060-M01",
-        "G060-S01"
+        "G060-S01",
+        "G060-N04"
       ],
       "active_slice": "native-installation-management"
     },

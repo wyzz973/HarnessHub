@@ -9,6 +9,7 @@ import { OfficialManagementMetadata } from "./metadata.js";
 import { DefaultManagementInstaller, installedNpmEntry } from "./installer.js";
 import { runManagementProcess } from "./process.js";
 import { systemVersionFromOutput } from "./system-version.js";
+import { homebrewSandboxIdentity, runHomebrewProtected } from "./homebrew.js";
 
 const MAX_JSON = 2 * 1024 * 1024;
 function object(value: unknown): Record<string, unknown> { if (value === null || typeof value !== "object" || Array.isArray(value)) throw new ManagementError("INVALID_METADATA", "native installation metadata is invalid"); return value as Record<string, unknown>; }
@@ -18,7 +19,7 @@ function missing(error: unknown): boolean { return error !== null && typeof erro
 async function available(path: string): Promise<boolean> { try { await access(path, constants.X_OK); return (await stat(path)).isFile(); } catch (error) { if (missing(error)) return false; return false; } }
 function fingerprint(plan: Omit<NativeInstallPlan, "fingerprint">, identity: string): NativeInstallPlan { return { ...plan, fingerprint: createHash("sha256").update(JSON.stringify(plan) + identity).digest("hex") }; }
 function parseVersion(value: unknown): string { const text = string(value, 128); if (!valid(text)) throw new ManagementError("INVALID_METADATA", "native channel returned an unsupported version"); return text; }
-const configDirectories = [".codex", ".claude", ".openclaw", ".gemini", ".pi", ".config", ".local/share/opencode"];
+const configDirectories = [".codex", ".claude", ".openclaw", ".gemini", ".pi", ".cursor", ".config", ".local/share/opencode"];
 const configFiles = [".claude.json", ".zshrc", ".zprofile", ".bashrc", ".bash_profile", ".profile", ".npmrc"];
 /** Native managers operate on standard local installation paths. The user profile remains readable and protected from writes. */
 export class NativeManagement implements NativeManagementPort {
@@ -62,8 +63,8 @@ export class NativeManagement implements NativeManagementPort {
       if (recipe.harnessId === "cursor" && actual.includes("/cursor-agent/versions/"))
         return fingerprint({ ...base, channel: "native-cli", manager: entry, prefix: join(this.source.home, ".local", "share", "cursor-agent"), reference: "cursor-agent", entry, actualEntry: actual }, identity);
       const brew = /^(.*)\/(Cellar|Caskroom)\/([^/]+)\/[^/]+\//u.exec(actual);
-      if (brew) return fingerprint({ ...base, channel: brew[2] === "Cellar" ? "brew-formula" : "brew-cask", manager: join(brew[1]!, "bin", "brew"), prefix: brew[1]!, reference: brew[3]!, entry, actualEntry: actual,
-        reason: "本机 Homebrew 升级会启动嵌套沙箱，当前无法同时保证原模型与登录配置不被修改。版本检查与原安装接入可用，升级暂不可用。" }, identity);
+      if (brew) { const manager = join(brew[1]!, "bin", "brew"), sdk = await homebrewSandboxIdentity(manager); return fingerprint({ ...base, channel: brew[2] === "Cellar" ? "brew-formula" : "brew-cask", manager, prefix: brew[1]!, reference: brew[3]!, entry, actualEntry: actual,
+        reason: sdk === null ? "本机 Homebrew 没有受支持的配置保护接口，原安装接入可用，升级暂不可用。" : null }, identity + (sdk ?? "unsupported")); }
       let directory = dirname(actual);
       for (let depth = 0; depth < 10; depth++) {
         const packageFile = join(directory, "package.json");
@@ -142,7 +143,11 @@ export class NativeManagement implements NativeManagementPort {
         break;
       }
       case "brew-formula": case "brew-cask":
-        await this.process(plan.manager, ["upgrade", plan.channel === "brew-cask" ? "--cask" : "--formula", plan.reference], context, true); break;
+        { const native = nativeValues(this.source, null);
+          const directories = [...new Set([...configDirectories.map(path => join(this.source.home, path)), ...[native.CODEX_HOME, native.CLAUDE_CONFIG_DIR, native.OPENCODE_CONFIG_DIR, native.XDG_CONFIG_HOME, this.source.values.OPENCLAW_STATE_DIR, this.source.values.PI_CODING_AGENT_DIR].filter((value): value is string => value !== undefined)])];
+          const files = [...configFiles.map(path => join(this.source.home, path)), ...(native.OPENCLAW_CONFIG_PATH ? [native.OPENCLAW_CONFIG_PATH] : [])];
+          await runHomebrewProtected(plan.manager, ["upgrade", plan.channel === "brew-cask" ? "--cask" : "--formula", plan.reference], directories, files, this.env(context.stage), context); break;
+        }
       case "uv":
         await this.process(plan.manager, ["tool", "install", "--no-progress", "--force", plan.reference + "==" + version], context, true, { UV_TOOL_DIR: plan.prefix, UV_TOOL_BIN_DIR: dirname(plan.entry), UV_CACHE_DIR: join(context.stage, "cache"), UV_PYTHON_DOWNLOADS: "never" }); break;
       case "archive": {
@@ -177,7 +182,7 @@ export class NativeManagement implements NativeManagementPort {
   private async configurationHashes(): Promise<Readonly<Record<string, string>>> {
     const result: Record<string, string> = {};
     // Content remains private; receipts only use digests. Directory write protection also covers credentials.
-    for (const path of [".codex/config.toml", ".claude/settings.json", ".claude.json", ".openclaw/openclaw.json", ".gemini/settings.json", ".pi/agent/settings.json", ".pi/agent/models.json", ".config/opencode/opencode.json", ...configFiles]) {
+    for (const path of [".codex/config.toml", ".claude/settings.json", ".claude.json", ".openclaw/openclaw.json", ".gemini/settings.json", ".pi/agent/settings.json", ".pi/agent/models.json", ".cursor/cli-config.json", ".config/opencode/opencode.json", ...configFiles]) {
       const file = join(this.source.home, path); try { const info = await stat(file); if (info.size > MAX_JSON) throw new ManagementError("CONFIGURATION_LIMIT", "protected configuration exceeds its budget"); result[path] = createHash("sha256").update(await readFile(file)).digest("hex"); } catch (error) { if (!missing(error)) throw error; }
     }
     return result;
