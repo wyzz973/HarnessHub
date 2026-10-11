@@ -187,3 +187,24 @@ test("Codex classifies failures by native codexErrorInfo before message text", a
     assert.equal(result.status, "failed"); assert.equal(result.error?.code, "NATIVE_QUOTA_EXCEEDED");
   } finally { await driver.close(); }
 });
+test("Codex maps item details, streamed output, plan, turn usage, notices and activities", async () => {
+  const driver = control("native-activity");
+  try {
+    const events: ControlEvent[] = [];
+    assert.equal((await (await driver.startText(await ready(driver), "work", event => events.push(event))).result).status, "completed");
+    const final = (id: string) => events.flatMap(event => event.type === "tool" && event.id === id ? [event] : []).at(-1);
+    const command = final("cmd-1");
+    assert.equal(command?.title, "printf 'a' printf 'b'"); assert.equal(command?.status, "completed");
+    assert.deepEqual(command?.detail, { kind: "execute", name: "shell", input: "printf 'a'\nprintf 'b'", output: "ab", exitCode: 0, locations: ["/w"] });
+    assert.equal(final("patch-1")?.detail?.diff, "--- a/w/a.txt\n+++ b/w/a.txt\n@@ -1 +1 @@\n-old\n+new\n");
+    assert.deepEqual(final("mcp-1")?.detail, { kind: "mcp", name: "docs/search", input: "{\n  \"q\": \"acp\"\n}", output: "found" });
+    assert.deepEqual(events.find(event => event.type === "plan"), { type: "plan", entries: [{ content: "Inspect", status: "completed" }, { content: "Patch", status: "in_progress" }], explanation: "two steps" });
+    assert.deepEqual(events.filter(event => event.type === "usage").map(event => event.type === "usage" ? event.usage : null), [{ turn: { input: 400, output: 200, cachedInput: 200, cacheWrite: 0, reasoning: 50, total: 600 }, context: { used: 600, size: 100000 } }]);
+    assert.deepEqual(events.filter(event => event.type === "activity").map(event => event.type === "activity" ? [event.kind, event.status] : null), [["compaction", "running"], ["subagent", "completed"], ["retry", "running"]]);
+    assert.deepEqual(events.filter(event => event.type === "notice").map(event => event.type === "notice" ? event.title : null), ["模型已由服务端改路由"]);
+    const image = events.find(event => event.type === "output");
+    assert.ok(image?.type === "output" && image.output.kind === "content" && image.output.mediaType === "image/png" && image.output.data.length === 11, "a saved image read after item/completed is delivered before the turn ends");
+    assert.equal(final("img-1")?.detail?.input, "a chart"); assert.match(final("img-1")?.detail?.locations?.[0] ?? "", /codex-fixture-\d+\.png$/u);
+    assert.equal(final("cmd-2")?.detail?.output, "line1", "throttled output pending at settlement is delivered");
+  } finally { await driver.close(); }
+});

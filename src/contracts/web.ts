@@ -54,7 +54,9 @@ export interface EventPage {
 /** Canonical committed UI facts. Message frames replace the full message; they are not append-only deltas. */
 export type SessionStreamFrame =
   | { readonly type: "snapshot"; readonly session: SessionView }
-  | { readonly type: "message"; readonly sessionId: string; readonly version: number; readonly lastSeq: number; readonly message: PublicMessage };
+  | { readonly type: "message"; readonly sessionId: string; readonly version: number; readonly lastSeq: number; readonly message: PublicMessage }
+  /** One active Run's canonical facts (tools, plan, usage, notices, activities, outputs) after a single committed event. */
+  | { readonly type: "run"; readonly sessionId: string; readonly version: number; readonly lastSeq: number; readonly run: PublicRun };
 export interface InstallationLogPage {
   readonly entries: readonly InstallationLog[];
   readonly nextSeq: number;

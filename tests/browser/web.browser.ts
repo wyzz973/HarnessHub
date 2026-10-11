@@ -551,3 +551,30 @@ test("native settings switch without Apply and approvals survive refresh or canc
   assert.equal((await current()).messages.length, beforeBranch.messages.length);
   assert.ok(!JSON.stringify(await current()).includes("checkpoint"), "private native recovery references never enter the Web DTO");
 });
+
+test("unified chat shows native plan, notices, tool details with diffs and turn usage from committed facts", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter");
+  await expect(log).toContainText("原生活动已完成。");
+  await expect(log.getByText("计划 · 1/2 完成")).toBeVisible(); await expect(log.getByText("修改文件")).toBeVisible();
+  await expect(log.getByText("浏览器验收提示")).toBeVisible();
+  await expect(log.getByText(/输入 1\.2k · 输出 300 · 上下文 15%/u)).toBeVisible();
+  const command = log.getByRole("button", { name: /ls -la/u });
+  await expect(command).toBeEnabled(); await command.click();
+  await expect(log.getByText("README.md").first()).toBeVisible(); await expect(log.locator(".native-tool-detail pre").first()).toContainText("ls -la");
+  await log.getByRole("button", { name: /修改 README\.md/u }).click();
+  await expect(log.locator(".native-diff .is-add")).toContainText("+新内容"); await expect(log.locator(".native-diff .is-remove")).toContainText("-旧内容");
+  await page.locator(".assistant-message").last().hover(); await page.getByRole("button", { name: "执行详情", exact: true }).last().click();
+  await expect(page.getByText("本轮用量")).toBeVisible();
+  await page.screenshot({ path: join(artifact, "native-activity.png"), fullPage: true, animations: "disabled" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "native activity must not overflow a narrow screen");
+  assert.deepEqual(errors, []);
+});

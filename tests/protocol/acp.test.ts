@@ -38,7 +38,8 @@ test("ACP handshake, sequential prompts and exact client capability declaration"
     }
     assert.deepEqual(events.filter(event => event.type === "text"), [{ type: "text", text: "你好 fixture" }, { type: "text", text: "你好 fixture" }]);
     const messages: unknown[] = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line));
-    assert.ok(messages.some(message => JSON.stringify(message).includes('"clientCapabilities":{}')));
+    // Only session notice/compaction updates are requested; filesystem and terminal capabilities stay undeclared.
+    assert.ok(messages.some(message => JSON.stringify(message).includes('"clientCapabilities":{"session":{"notices":{},"compaction":{}}}')));
     assert.ok(messages.some(message => JSON.stringify(message).includes('"mcpServers":[]')));
   } finally { await driver.close(); await rm(directory, { recursive: true, force: true }); }
 });
@@ -87,13 +88,15 @@ test("ACP permission arriving during stop is cancelled", async () => {
     assert.ok(events.some(event => event.type === "permission" && event.decision === "cancelled"));
   } finally { await driver.close(); }
 });
-test("ACP unknown client method is explicitly unsupported", async () => {
+test("ACP unknown client method is explicitly unsupported and audited on the Run", async () => {
   const directory = await mkdtemp(join(tmpdir(), "gateway-acp-unknown-")), trace = join(directory, "trace");
   const driver = control("unknown-method", { FIXTURE_TRACE: trace });
   try {
-    const id = await ready(driver), run = await driver.startText(id, "hello", () => {}); await run.result;
+    const events: ControlEvent[] = [], id = await ready(driver), run = await driver.startText(id, "hello", event => events.push(event));
+    assert.equal((await run.result).status, "completed");
     const messages = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line));
     assert.equal(messages.find(message => message.id === "unsupported").error.code, -32601);
+    assert.ok(events.some(event => event.type === "diagnostic" && event.message === "Harness called unsupported client method fixture/unsupported"));
   } finally { await driver.close(); await rm(directory, { recursive: true, force: true }); }
 });
 for (const [scenario, expected] of [["wrong-identity", /another session/], ["duplicate-permission", /repeated an RPC request/],
@@ -253,7 +256,7 @@ test("ACP merges repeated tool identities, sanitizes multi-line titles and survi
     assert.equal((await (await driver.startText(id, "hello", event => events.push(event))).result).status, "completed");
     const tools = events.flatMap(event => event.type === "tool" ? [event] : []);
     assert.deepEqual(tools.map(tool => [tool.id, tool.title, tool.status]), [["merged", "printf 'a' printf 'b'", "pending"], ["merged", "printf 'a' printf 'b'", "pending"], ["late-announced", "工具调用", "completed"]]);
-    assert.ok(events.some(event => event.type === "diagnostic" && event.message.includes("image")));
+    assert.ok(events.some(event => event.type === "output" && event.output.kind === "content" && event.output.mediaType === "image/png"));
     assert.ok(events.some(event => event.type === "text"));
     assert.equal((await driver.close()).protocolFailure, null);
   } finally { await driver.close(); }
@@ -278,4 +281,30 @@ test("Cursor exposes its native models read-only and never performs the global m
     const wire = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { method?: string });
     assert.equal(wire.filter(row => row.method === "session/set_config_option" || row.method === "session/set_model").length, 0);
   } finally { await reader.close(); await driver.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("ACP maps native tool detail, plan, usage, notices, compaction and non-text output", async () => {
+  const driver = control("native-activity");
+  try {
+    const id = await ready(driver), events: ControlEvent[] = [];
+    assert.equal((await (await driver.startText(id, "work", event => events.push(event))).result).status, "completed");
+    // Each update carries the fields it changed; the Runtime merges them the same way.
+    const tool = { detail: Object.assign({}, ...events.flatMap(event => event.type === "tool" && event.id === "edit-1" ? [event.detail ?? {}] : [])) as import("../../src/contracts/control.js").NativeToolDetail };
+    assert.equal(tool?.detail?.kind, "edit"); assert.equal(tool?.detail?.name, "Edit"); assert.equal(tool?.detail?.parentId, "parent-task");
+    assert.equal(tool?.detail?.input, "{\n  \"file_path\": \"/w/a.txt\"\n}"); assert.equal(tool?.detail?.output, "edited");
+    assert.equal(tool?.detail?.diff, "--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n one\n-two\n+TWO\n"); assert.deepEqual(tool?.detail?.locations, ["/w/a.txt:2"]);
+    const shell = events.flatMap(event => event.type === "tool" && event.id === "shell-1" ? [event] : []).at(-1);
+    assert.equal(shell?.detail?.input, "ls -la");
+    assert.deepEqual(events.find(event => event.type === "plan"), { type: "plan", entries: [{ content: "Read", status: "completed", priority: "high" }, { content: "Edit", status: "in_progress", priority: "medium" }] });
+    assert.deepEqual(events.filter(event => event.type === "usage").map(event => event.type === "usage" ? event.usage : null), [
+      { context: { used: 1200, size: 200000 }, cost: { amount: 0.25, currency: "USD", scope: "session" } },
+      { turn: { input: 900, output: 300, cachedInput: 50, total: 1250 } }]);
+    assert.deepEqual(events.find(event => event.type === "notice"), { type: "notice", severity: "warning", title: "Model fallback", detail: "switched model" });
+    assert.deepEqual(events.filter(event => event.type === "activity"), [
+      { type: "activity", id: "compact-1", kind: "compaction", title: "上下文压缩", status: "running" },
+      { type: "activity", id: "compact-1", kind: "compaction", title: "上下文压缩", status: "completed", detail: "summary text" }]);
+    const outputs = events.flatMap(event => event.type === "output" ? [event.output] : []);
+    assert.equal(outputs[0]?.kind, "content"); assert.equal(outputs[0]?.kind === "content" ? Buffer.from(outputs[0].data).toString() : "", "png!");
+    assert.deepEqual(outputs[1], { kind: "link", uri: "https://example.invalid/report", name: "report", title: "Report" });
+  } finally { await driver.close(); }
 });

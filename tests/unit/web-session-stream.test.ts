@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { commandId, messageId, runId } from "../../src/contracts/session.js";
-import type { PublicMessage } from "../../src/contracts/session.js";
+import type { PublicMessage, PublicRun } from "../../src/contracts/session.js";
 import type { SessionStreamFrame, SessionView } from "../../src/contracts/web.js";
 import { decodeSession } from "../../web/src/api.js";
 import { applySessionStreamFrame, consumeSessionEventStream, SessionStreamError } from "../../web/src/session-stream.js";
@@ -253,4 +253,16 @@ test("snapshot ownership, message order, Run input, active status and epoch are 
     { ...base, runs: base.runs.map(run => ({ ...run, assistantMessageId: run.userMessageId })) },
   ];
   for (const session of candidates) assert.throws(() => applySessionStreamFrame(null, { type: "snapshot", session }, base.id), isCode("STREAM_INVALID_FRAME"));
+});
+test("run frames replace only the active Run's native activity and never cross missing facts", () => {
+  const base = snapshot(), run = base.runs[0]!;
+  const frame: SessionStreamFrame = { type: "run", sessionId: base.id, version: base.version + 1, lastSeq: base.lastSeq + 1,
+    run: { ...run, tools: [{ id: "tool-1", title: "ls", status: "completed", kind: "execute" }], plan: { entries: [{ content: "Read", status: "in_progress" }] }, usage: { turn: { input: 5 } } } };
+  const next = applySessionStreamFrame(base, frame, base.id);
+  assert.deepEqual(next.runs[0]?.tools, [{ id: "tool-1", title: "ls", status: "completed", kind: "execute" }]);
+  assert.equal(next.lastSeq, base.lastSeq + 1); assert.equal(next.messages, base.messages);
+  assert.throws(() => applySessionStreamFrame(base, { ...frame, lastSeq: base.lastSeq + 2, version: base.version + 2 }, base.id), isCode("STREAM_STATE"));
+  const patches: Partial<PublicRun>[] = [{ input: "rewritten" }, { epoch: 2 }, { status: "completed" }, { selection: { harnessId: "other", controlId: "x" } }, { id: runId("run-other") }];
+  for (const patch of patches) assert.throws(() => applySessionStreamFrame(base, { ...frame, run: { ...frame.run, ...patch } }, base.id), isCode("STREAM_STATE"));
+  assert.throws(() => applySessionStreamFrame({ ...base, activeRunId: null }, frame, base.id), isCode("STREAM_STATE"));
 });

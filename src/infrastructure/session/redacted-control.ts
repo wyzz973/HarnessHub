@@ -1,5 +1,5 @@
 import type { ProviderTextRedactor } from "../../contracts/provider.js";
-import type { CleanupEvidence, ControlEvent, ControlRun, HarnessControl, NativeConversationId, NativeOptions, ProtocolObservation } from "../../contracts/control.js";
+import type { CleanupEvidence, ControlEvent, ControlRun, HarnessControl, NativeConversationId, NativeOptions, NativeToolDetail, ProtocolObservation } from "../../contracts/control.js";
 import { SessionError } from "../../contracts/session.js";
 
 function sanitize(value: unknown, redact: (text: string) => string): unknown {
@@ -13,8 +13,19 @@ function publicEvent(event: ControlEvent, redact: (text: string) => string): Con
     case "text": case "thinking": return { ...event, text: redact(event.text) };
     case "permission_requested": return { ...event, title: redact(event.title), options: event.options.map(option => ({ id: option.id, name: redact(option.name) })) };
     case "diagnostic": return { ...event, message: redact(event.message) };
-    case "tool": return { ...event, id: redact(event.id), title: redact(event.title), status: redact(event.status) };
+    case "tool": return { ...event, id: redact(event.id), title: redact(event.title), status: redact(event.status), ...(event.detail === undefined ? {} : { detail: sanitize(event.detail, redact) as NativeToolDetail }) };
     case "permission": return { ...event, id: redact(event.id) };
+    case "plan": return { type: "plan", entries: event.entries.map(entry => ({ ...entry, content: redact(entry.content) })), ...(event.explanation === undefined ? {} : { explanation: redact(event.explanation) }) };
+    case "usage": return event;
+    case "notice": return { ...event, title: redact(event.title), ...(event.detail === undefined ? {} : { detail: redact(event.detail) }) };
+    case "activity": return { ...event, id: redact(event.id), title: redact(event.title), ...(event.detail === undefined ? {} : { detail: redact(event.detail) }) };
+    case "output": {
+      const output = event.output;
+      if (output.kind === "link") return { type: "output", output: { ...output, uri: redact(output.uri), name: redact(output.name), ...(output.title === undefined ? {} : { title: redact(output.title) }) } };
+      // Text-like native output is redacted like any message; opaque bytes cannot carry an injected secret as text.
+      const text = /^text\/|json|xml|yaml|javascript/u.test(output.mediaType) ? new TextDecoder("utf-8", { fatal: false }).decode(output.data) : null;
+      return { type: "output", output: { ...output, name: redact(output.name), data: text === null ? output.data : new TextEncoder().encode(redact(text)) } };
+    }
   }
 }
 /** Prevents private injected credentials from entering committed public output or control diagnostics. */

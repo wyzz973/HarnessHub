@@ -1,5 +1,6 @@
 import type { ProviderTarget } from "./provider.js";
-import type { BackendResult, CleanupEvidence, ControlEvent, HarnessControl, NativeOptions } from "./control.js";
+import type { BackendResult, CleanupEvidence, ControlEvent, HarnessControl, NativeOptions, NativePlanEntry, NativeUsage } from "./control.js";
+import type { ContentPort, ContentRef } from "./content.js";
 
 declare const sessionBrand: unique symbol;
 declare const runBrand: unique symbol;
@@ -53,6 +54,23 @@ export interface PublicMessage {
   readonly seq: number;
   readonly status: RunStatus;
 }
+/** Public tool summary; the bounded native detail is a stored content reference (v7). */
+export interface PublicTool {
+  readonly id: string;
+  readonly title: string;
+  readonly status: string;
+  readonly kind?: string;
+  readonly name?: string;
+  readonly parentId?: string;
+  readonly exitCode?: number;
+  readonly detail?: ContentRef;
+}
+export interface PublicPlan { readonly entries: readonly NativePlanEntry[]; readonly explanation?: string }
+export interface PublicNotice { readonly severity: "info" | "warning" | "error"; readonly title: string; readonly detail?: string }
+export interface PublicActivity { readonly id: string; readonly kind: "subagent" | "task" | "compaction" | "retry" | "review"; readonly title: string; readonly status: "running" | "completed" | "failed" | "cancelled"; readonly detail?: string }
+export type PublicOutput =
+  | { readonly kind: "content"; readonly content: ContentRef }
+  | { readonly kind: "link"; readonly uri: string; readonly name: string; readonly title?: string; readonly mediaType?: string };
 export interface PublicRun {
   readonly id: RunId;
   readonly commandId: CommandId;
@@ -69,7 +87,12 @@ export interface PublicRun {
   readonly cleanup: CleanupEvidence | null;
   readonly error: { readonly code: string; readonly message: string } | null;
   readonly thinking?: string;
-  readonly tools?: readonly { readonly id: string; readonly title: string; readonly status: string }[];
+  readonly tools?: readonly PublicTool[];
+  readonly plan?: PublicPlan;
+  readonly usage?: NativeUsage;
+  readonly notices?: readonly PublicNotice[];
+  readonly activities?: readonly PublicActivity[];
+  readonly outputs?: readonly PublicOutput[];
   readonly stopRequested: boolean;
   readonly awaitingSwitchId: SwitchId | null;
 }
@@ -99,7 +122,7 @@ export interface NativeSessionBinding {
   readonly status: "ready" | "unconfirmed" | "archived";
 }
 export interface SessionSnapshot {
-  readonly schemaVersion: 1 | 2 | 3 | 4 | 5 | 6;
+  readonly schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7;
   readonly id: SessionId;
   readonly version: number;
   readonly lastSeq: number;
@@ -155,6 +178,8 @@ export interface SessionRuntimeOptions {
   readonly now: () => Date;
   readonly publish: (event: SessionEvent) => void;
   readonly fingerprint: (value: string) => string;
+  /** Stores native outputs and tool details; without it those facts stay summaries/diagnostics. */
+  readonly content?: ContentPort;
 }
 export interface SendReceipt { readonly sessionId: SessionId; readonly runId: RunId; readonly replayed: boolean }
 export interface SwitchReceipt { readonly sessionId: SessionId; readonly switchId: SwitchId; readonly replayed: boolean }

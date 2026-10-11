@@ -10,6 +10,21 @@ import type { ControlEvent, ControlLaunch, ControlRun, HarnessControl } from "..
 import { DiscoveryInputError } from "../contexts/catalog/domain/discovery.js";
 import { createNativeControl } from "../adapters/control/factory.js";
 import { NATIVE_FRAME_BYTES } from "../infrastructure/control/json-rpc-process.js";
+
+function describe(event: ControlEvent): string {
+  switch (event.type) {
+    case "text": case "thinking": return event.text;
+    case "diagnostic": return event.message;
+    case "tool": return event.title + " · " + event.status;
+    case "permission_requested": return event.title;
+    case "permission": return event.decision;
+    case "plan": return event.entries.map(entry => (entry.status === "completed" ? "[x] " : entry.status === "in_progress" ? "[~] " : "[ ] ") + entry.content).join(" | ");
+    case "usage": return JSON.stringify(event.usage);
+    case "notice": return event.severity + ": " + event.title;
+    case "activity": return event.kind + " " + event.title + " · " + event.status;
+    case "output": return event.output.kind === "link" ? event.output.uri : event.output.name + " (" + event.output.mediaType + ", " + event.output.data.byteLength + " bytes)";
+  }
+}
 import { inventory } from "../infrastructure/catalog/inventory-composition.js";
 import { NativeInstallationLocks, type NativeUsageLease } from "../infrastructure/management/native-lock.js";
 
@@ -115,7 +130,7 @@ export async function main(args: readonly string[]): Promise<number> {
       const onEvent = (event: ControlEvent) => {
         if (json) process.stdout.write(JSON.stringify({ type: "event", event }) + "\n");
         else if (event.type === "text") process.stdout.write(event.text);
-        else process.stderr.write("[" + event.type + "] " + (event.type === "diagnostic" ? event.message : event.type === "tool" || event.type === "permission_requested" ? event.title : event.type === "thinking" ? event.text : event.decision) + "\n");
+        else process.stderr.write("[" + event.type + "] " + describe(event) + "\n");
       };
       activeRun = await control.startText(nativeId, values.prompt!, onEvent);
       if (interrupted) await activeRun.requestStop();

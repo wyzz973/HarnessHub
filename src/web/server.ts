@@ -164,6 +164,31 @@ async function asset(root: string, pathname: string, response: ServerResponse, m
   } finally { await handle.close(); }
 }
 
+/** Native content is served as data: only known raster images and JSON/plain text render inline, never HTML or SVG. */
+const INLINE_CONTENT = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "application/json", "text/plain"]);
+async function content(path: string, ref: { readonly name: string; readonly mediaType: string; readonly bytes: number }, response: ServerResponse, method: string, download: boolean): Promise<void> {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const info = await handle.stat();
+    if (!info.isFile() || info.size !== ref.bytes) throw new HttpError(409, "CONTENT_CHANGED", "Stored content changed");
+    if (response.destroyed || response.writableEnded) return;
+    headers(response); response.statusCode = 200;
+    const inline = !download && INLINE_CONTENT.has(ref.mediaType);
+    response.setHeader("Content-Type", inline ? ref.mediaType + (ref.mediaType.startsWith("text/") || ref.mediaType === "application/json" ? "; charset=utf-8" : "") : "application/octet-stream");
+    response.setHeader("Content-Length", ref.bytes);
+    response.setHeader("Content-Disposition", (inline ? "inline" : "attachment") + "; filename*=UTF-8''" + encodeURIComponent(ref.name));
+    response.setHeader("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox");
+    response.setHeader("Cache-Control", "private, max-age=3600");
+    if (method === "HEAD") { response.end(); return; }
+    await new Promise<void>((done, reject) => {
+      const stream = handle.createReadStream({ autoClose: false, highWaterMark: 256 * 1024 });
+      stream.once("error", reject); response.once("close", done);
+      stream.once("end", () => { response.end(); done(); });
+      stream.pipe(response, { end: false });
+    });
+  } finally { await handle.close(); }
+}
+
 /** Owns the HTTP listener and a real application owner; browser connection loss never cancels a Run. */
 export async function startWebServer(options: WebServerOptions): Promise<WebServer> {
   const port = options.port ?? 0;
@@ -236,7 +261,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       if (method !== "GET" && method !== "HEAD") throw new HttpError(405, "METHOD_NOT_ALLOWED", "Method not allowed");
       queries(url, []); await asset(assets, path, response, method); return;
     }
-    const write = method !== "GET";
+    const write = method !== "GET" && method !== "HEAD";
     if (write && receivedOrigin !== origin) throw new HttpError(403, "ORIGIN_REQUIRED", "Same-origin write required");
     if (path === "/api/v1/auth/bootstrap") {
       if (method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", "POST required");
@@ -256,6 +281,12 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       queries(url, []); const output: WebState = { providerManagement: options.providerManagement ?? true, workspace: options.configuration.workspace, providers: app.providers.list(), harnesses: await rescan(), sessions: app.store.list(100).map(summary), jobs: app.management.listJobs().slice(0, 50) }; json(response, 200, output); return;
     }
     if (path === "/api/v1/harnesses" && method === "GET") { queries(url, []); json(response, 200, await rescan()); return; }
+    const contentRoute = /^\/api\/v1\/content\/(content-[a-zA-Z0-9-]{1,96})$/u.exec(path);
+    if (contentRoute && (method === "GET" || method === "HEAD")) {
+      queries(url, ["download"]);
+      const download = url.searchParams.get("download"); if (download !== null && download !== "1") throw new HttpError(400, "INVALID_INPUT", "invalid download flag");
+      const item = app.content.read(contentRoute[1]!); await content(item.path, item.ref, response, method, download === "1"); return;
+    }
     const permissionRoute = /^\/api\/v1\/sessions\/(session-[a-zA-Z0-9-]+)\/permissions\/(permission-[a-zA-Z0-9-]+)$/u.exec(path);
     const nativeBranch = /^\/api\/v1\/sessions\/(session-[a-zA-Z0-9-]+)\/native-branch$/u.exec(path);
     if (nativeBranch && method === "POST") {

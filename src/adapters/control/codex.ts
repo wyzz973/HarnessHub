@@ -3,6 +3,11 @@ import { nativeConversationId, type BackendResult, type CleanupEvidence, type Co
   type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl,
   type NativeOptions, type NativeOption, type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
 import { ControlError, errorFrom, JsonRpcProcess, object, string, text, type RpcRequest } from "../../infrastructure/control/json-rpc-process.js";
+import { diffPath } from "../../infrastructure/control/unified-diff.js";
+import type { NativeToolDetail, NativeUsage } from "../../contracts/control.js";
+import { readFile, stat } from "node:fs/promises";
+import { basename } from "node:path";
+import { MAX_CONTENT_BYTES } from "../../contracts/content.js";
 
 interface ActiveTurn {
   readonly event: (event: ControlEvent) => void;
@@ -13,15 +18,59 @@ interface ActiveTurn {
   readonly signalStarted: () => void;
   readonly rejectStarted: (error: Error) => void;
   readonly deltaItems: Set<string>;
+  /** Tool items of this turn with their accumulated native detail; streamed output is published at most every 300 ms. */
+  readonly items: Map<string, { title: string; status: string; detail: NativeToolDetail; timer: ReturnType<typeof setTimeout> | null }>;
+  /** Generated-image reads still in flight; the turn settles only after they are delivered or dropped. */
+  readonly reads: Set<Promise<void>>;
+  /** Thread token totals before this turn (including a historical total reported at turn start); turn usage is the difference. */
+  baseline: Tokens | null;
   turnId: string | null;
   settled: boolean;
   stopping: boolean;
   stop: Promise<StopRequestReceipt> | null;
 }
+interface Tokens { readonly totalTokens: number; readonly inputTokens: number; readonly cachedInputTokens: number; readonly cacheWriteInputTokens: number; readonly outputTokens: number; readonly reasoningOutputTokens: number }
+const STREAM_MS = 300, ITEM_OUTPUT_BYTES = 128 * 1024;
+function tokens(value: unknown): Tokens | null {
+  if (value === null || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>, read = (key: string) => typeof row[key] === "number" && Number.isSafeInteger(row[key]) && (row[key] as number) >= 0 ? row[key] as number : 0;
+  return { totalTokens: read("totalTokens"), inputTokens: read("inputTokens"), cachedInputTokens: read("cachedInputTokens"), cacheWriteInputTokens: read("cacheWriteInputTokens"), outputTokens: read("outputTokens"), reasoningOutputTokens: read("reasoningOutputTokens") };
+}
+function line(value: string, maximum = 4096): string { return value.replace(/[\0-\x1f\x7f]+/gu, " ").trim().slice(0, maximum); }
+function json(value: unknown): string | undefined { if (value === undefined || value === null) return undefined; if (typeof value === "string") return value; try { return JSON.stringify(value, null, 2); } catch { return undefined; } }
+function tail(value: string): string { const bytes = Buffer.from(value); return bytes.length <= ITEM_OUTPUT_BYTES ? value : new TextDecoder().decode(bytes.subarray(bytes.length - ITEM_OUTPUT_BYTES)); }
+function fileDiff(change: unknown): string {
+  if (change === null || typeof change !== "object") return "";
+  const row = change as Record<string, unknown>, path = typeof row.path === "string" ? row.path : "file", diff = typeof row.diff === "string" ? row.diff : "";
+  return /^(---|diff --git)/mu.test(diff) ? diff.endsWith("\n") ? diff : diff + "\n" : "--- a/" + diffPath(path) + "\n+++ b/" + diffPath(path) + "\n" + diff + (diff.endsWith("\n") ? "" : "\n");
+}
+/** Public title and bounded detail for a Codex tool-like item; message, reasoning and lifecycle items return null. */
+function itemTool(item: Record<string, unknown>): { title: string; detail: NativeToolDetail } | null {
+  switch (item.type) {
+    case "commandExecution": { const command = typeof item.command === "string" ? item.command : "";
+      return { title: line(command) || "命令", detail: { kind: "execute", name: "shell", ...(command ? { input: command } : {}), ...(typeof item.aggregatedOutput === "string" ? { output: tail(item.aggregatedOutput) } : {}), ...(typeof item.exitCode === "number" && Number.isSafeInteger(item.exitCode) ? { exitCode: item.exitCode } : {}), ...(typeof item.cwd === "string" ? { locations: [item.cwd] } : {}) } }; }
+    case "fileChange": { const changes = Array.isArray(item.changes) ? item.changes : [], paths = changes.flatMap(change => change !== null && typeof change === "object" && typeof (change as Record<string, unknown>).path === "string" ? [(change as Record<string, unknown>).path as string] : []);
+      return { title: "修改 " + (paths.slice(0, 3).map(path => basename(path)).join(", ") || "文件") + (paths.length > 3 ? " 等 " + paths.length + " 个文件" : ""), detail: { kind: "edit", name: "apply_patch", ...(changes.length ? { diff: changes.map(fileDiff).join("") } : {}), ...(paths.length ? { locations: paths.slice(0, 16) } : {}) } }; }
+    case "mcpToolCall": { const name = String(item.server ?? "mcp") + "/" + String(item.tool ?? "tool"), result = item.result !== null && typeof item.result === "object" ? item.result as Record<string, unknown> : null, error = item.error !== null && typeof item.error === "object" ? (item.error as Record<string, unknown>).message : undefined;
+      const texts = Array.isArray(result?.content) ? result.content.flatMap(part => part !== null && typeof part === "object" && (part as Record<string, unknown>).type === "text" && typeof (part as Record<string, unknown>).text === "string" ? [(part as Record<string, unknown>).text as string] : []) : [];
+      const output = typeof error === "string" ? error : texts.length ? texts.join("\n") : json(result?.structuredContent ?? result ?? undefined), input = json(item.arguments);
+      return { title: line(name.replace("/", ".")), detail: { kind: "mcp", name, ...(input ? { input } : {}), ...(output ? { output } : {}) } }; }
+    case "webSearch": { const query = typeof item.query === "string" ? item.query : "";
+      return { title: "搜索：" + (line(query, 200) || "网页"), detail: { kind: "search", name: "web_search", ...(query ? { input: query } : {}), ...(item.results != null ? { output: json(item.results) ?? "" } : {}) } }; }
+    case "imageView": return { title: "查看图片 " + (typeof item.path === "string" ? basename(item.path) : ""), detail: { kind: "image", name: "view_image", ...(typeof item.path === "string" ? { locations: [item.path] } : {}) } };
+    case "imageGeneration": return { title: "生成图片", detail: { kind: "image", name: "image_generation", ...(typeof item.revisedPrompt === "string" ? { input: item.revisedPrompt } : {}), ...(typeof item.savedPath === "string" ? { locations: [item.savedPath] } : {}) } };
+    case "collabAgentToolCall": { const states = item.agentsStates !== null && typeof item.agentsStates === "object" ? Object.entries(item.agentsStates as Record<string, unknown>).map(([thread, state]) => thread + ": " + String(state !== null && typeof state === "object" ? (state as Record<string, unknown>).status : state)).join("\n") : "";
+      return { title: "子 Agent · " + String(item.tool ?? "协作"), detail: { kind: "subagent", name: String(item.tool ?? "collab"), ...(typeof item.prompt === "string" ? { input: item.prompt } : {}), ...(states ? { output: states } : {}) } }; }
+    case "dynamicToolCall": { const texts = Array.isArray(item.contentItems) ? item.contentItems.flatMap(part => part !== null && typeof part === "object" && typeof (part as Record<string, unknown>).text === "string" ? [(part as Record<string, unknown>).text as string] : []) : [], input = json(item.arguments);
+      return { title: line(String(item.tool ?? "工具")), detail: { kind: "tool", name: String(item.tool ?? "tool"), ...(input ? { input } : {}), ...(texts.length ? { output: texts.join("\n") } : {}) } }; }
+    case "sleep": return { title: "等待 " + Math.round(Number(item.durationMs ?? 0) / 1000) + " 秒", detail: { kind: "other", name: "sleep" } };
+    default: return null;
+  }
+}
+function status(value: unknown, started: boolean): string { return value === "inProgress" ? "in_progress" : typeof value === "string" ? value : started ? "in_progress" : "completed"; }
 const passiveNotifications = new Set(["thread/started", "thread/status/changed", "account/updated", "account/rateLimits/updated",
-  "model/rerouted", "configWarning", "sessionConfigured", "thread/tokenUsage/updated", "turn/diff/updated", "turn/plan/updated",
-  "item/reasoning/summaryTextDelta", "item/reasoning/summaryPartAdded", "item/reasoning/textDelta", "item/commandExecution/outputDelta",
-  "item/fileChange/outputDelta", "item/mcpToolCall/progress", "serverRequest/resolved", "warning", "error"]);
+  "sessionConfigured", "turn/diff/updated", "item/reasoning/summaryTextDelta", "item/reasoning/summaryPartAdded", "item/reasoning/textDelta",
+  "item/fileChange/outputDelta", "serverRequest/resolved", "thread/name/updated", "skills/changed", "hook/started", "hook/completed", "mcpServer/startupStatus/updated"]);
 
 /** Typed native failure (codexErrorInfo) first; message text is only a fallback for older servers. */
 function turnFailure(error: Record<string, unknown>): { readonly code: string; readonly message: string } {
@@ -51,6 +100,8 @@ export class CodexControl implements HarnessControl {
   /** Threads the app-server attached to this connection (sub-agents, reviews, internal workers) with their parent. */
   private readonly foreignThreads = new Map<string, string | null>();
   private foreignUpdates = 0;
+  /** Latest thread token totals, including historical totals reported on resume. */
+  private lastTotal: Tokens | null = null;
 
   constructor(launch: ControlLaunch, private readonly options: ControlOptions) {
     if (launch.protocol !== "codex-app-server") throw new ControlError("INVALID_INPUT", "Codex control requires an app-server launch");
@@ -155,7 +206,7 @@ export class CodexControl implements HarnessControl {
     void started.catch(() => {});
     const active: ActiveTurn = { event: onEvent, resolve, reject,
       timer: setTimeout(() => this.rpc.abort(new ControlError("RUN_TIMEOUT", "Codex turn exceeded its deadline")), this.options.runTimeoutMs),
-      started, signalStarted, rejectStarted, turnId: null, settled: false, stopping: false, stop: null, deltaItems: new Set() };
+      started, signalStarted, rejectStarted, turnId: null, settled: false, stopping: false, stop: null, deltaItems: new Set(), items: new Map(), reads: new Set(), baseline: this.lastTotal };
     this.active = active;
     void this.rpc.request("turn/start", { threadId: id, input: [{ type: "text", text: prompt, text_elements: [] }], ...(this.effort === undefined ? {} : { effort: this.effort }) }).then(value => {
       try {
@@ -264,7 +315,9 @@ export class CodexControl implements HarnessControl {
         }
         default: throw new ControlError("INVALID_PROTOCOL", "turn/completed contains a nonterminal status");
       }
-      this.settleTurn(active); active.resolve(result); return;
+      const finish = () => { if (active.settled) return; this.settleTurn(active); active.resolve(result); };
+      if (active.reads.size) { void Promise.all([...active.reads]).then(finish); return; }
+      finish(); return;
     }
     if (method === "item/agentMessage/delta") {
       const active = this.scope(params, true);
@@ -288,10 +341,72 @@ export class CodexControl implements HarnessControl {
         if (method === "item/completed" && !active.deltaItems.has(itemId)) active.event({ type: "text", text: text(item.text, "agent message") });
         return;
       }
-      if (["userMessage", "reasoning"].includes(type)) return;
-      const title = typeof item.command === "string" ? item.command.slice(0, 4096) : type;
-      const status = typeof item.status === "string" ? item.status : (method === "item/started" ? "in_progress" : "completed");
-      active.event({ type: "tool", id: itemId, title, status }); return;
+      if (["userMessage", "reasoning", "plan", "hookPrompt", "functionCallOutput"].includes(type)) return;
+      const started = method === "item/started";
+      if (type === "subAgentActivity") {
+        const kind = item.kind, state = kind === "completed" ? "completed" : kind === "interrupted" ? "cancelled" : "running";
+        active.event({ type: "activity", id: typeof item.agentThreadId === "string" ? item.agentThreadId : itemId, kind: "subagent", title: typeof item.agentPath === "string" ? item.agentPath : "子 Agent", status: state, ...(typeof item.model === "string" ? { detail: item.model } : {}) }); return;
+      }
+      if (type === "contextCompaction") { active.event({ type: "activity", id: itemId, kind: "compaction", title: "上下文压缩", status: started ? "running" : "completed" }); return; }
+      if (type === "enteredReviewMode" || type === "exitedReviewMode") { active.event({ type: "activity", id: "review", kind: "review", title: typeof item.review === "string" ? line(item.review, 1024) || "代码审查" : "代码审查", status: type === "enteredReviewMode" ? "running" : "completed" }); return; }
+      const tool = itemTool(item);
+      if (tool === null) { active.event({ type: "tool", id: itemId, title: type, status: status(item.status, started) }); return; }
+      const prior = active.items.get(itemId);
+      if (prior?.timer) clearTimeout(prior.timer);
+      // Completion carries the authoritative aggregate; while running keep the streamed output already seen.
+      const detail = { ...prior?.detail, ...tool.detail, ...(tool.detail.output === undefined && prior?.detail.output !== undefined ? { output: prior.detail.output } : {}) };
+      const entry = { title: tool.title, status: status(item.status, started), detail, timer: null };
+      active.items.set(itemId, entry);
+      active.event({ type: "tool", id: itemId, title: entry.title, status: entry.status, detail });
+      if (!started && type === "imageGeneration" && typeof item.savedPath === "string") {
+        const read = this.generatedImage(active, item.savedPath); active.reads.add(read); void read.then(() => active.reads.delete(read));
+      }
+      return;
+    }
+    if (method === "item/commandExecution/outputDelta" || method === "item/fileChange/patchUpdated" || method === "item/mcpToolCall/progress") {
+      const active = this.scope(params, true);
+      if (!active) throw new ControlError("INVALID_STATE", "native tool progress arrived without an active turn");
+      const entry = active.items.get(string(params.itemId, "tool item identity"));
+      if (!entry) return;
+      if (method === "item/commandExecution/outputDelta") entry.detail = { ...entry.detail, output: tail((entry.detail.output ?? "") + text(params.delta, "command output delta")) };
+      else if (method === "item/fileChange/patchUpdated") entry.detail = { ...entry.detail, ...(Array.isArray(params.changes) ? { diff: params.changes.map(fileDiff).join("") } : {}) };
+      else entry.detail = { ...entry.detail, output: text(params.message, "tool progress") };
+      const itemId = String(params.itemId);
+      entry.timer ??= setTimeout(() => { entry.timer = null; if (this.active === active && !active.settled) active.event({ type: "tool", id: itemId, title: entry.title, status: entry.status, detail: entry.detail }); }, STREAM_MS);
+      return;
+    }
+    if (method === "turn/plan/updated") {
+      const active = this.scope(params);
+      if (!active || active.settled || !Array.isArray(params.plan)) return;
+      active.event({ type: "plan", entries: params.plan.slice(0, 256).map(value => { const step = object(value, "plan step"); return { content: typeof step.step === "string" ? step.step : "", status: step.status === "completed" ? "completed" : step.status === "inProgress" ? "in_progress" : "pending" }; }),
+        ...(typeof params.explanation === "string" && params.explanation ? { explanation: params.explanation } : {}) });
+      return;
+    }
+    if (method === "thread/tokenUsage/updated") {
+      const active = this.scope(params), usage = object(params.tokenUsage, "native token usage"), total = tokens(usage.total), last = tokens(usage.last);
+      if (total !== null) this.lastTotal = total;
+      // Thread totals may refer to a historical turn right after resume: they are this turn's baseline, never its usage.
+      if (!active || active.settled || total === null) return;
+      if (params.turnId !== active.turnId) { active.baseline = total; return; }
+      const base = active.baseline, minus = (key: keyof Tokens) => Math.max(0, total[key] - (base?.[key] ?? 0));
+      const window = typeof usage.modelContextWindow === "number" && Number.isSafeInteger(usage.modelContextWindow) && usage.modelContextWindow > 0 ? usage.modelContextWindow : undefined;
+      const value: NativeUsage = { turn: { input: minus("inputTokens"), output: minus("outputTokens"), cachedInput: minus("cachedInputTokens"), cacheWrite: minus("cacheWriteInputTokens"), reasoning: minus("reasoningOutputTokens"), total: minus("totalTokens") },
+        ...(last !== null ? { context: { used: last.totalTokens, ...(window ? { size: window } : {}) } } : {}) };
+      active.event({ type: "usage", usage: value }); return;
+    }
+    if (method === "error" || method === "warning" || method === "configWarning" || method === "deprecationNotice" || method === "guardianWarning" || method === "model/rerouted") {
+      if (params.threadId !== undefined) this.scope(params);
+      const active = this.active; if (!active || active.settled) return;
+      if (method === "error") {
+        const failure = turnFailure(params.error !== null && typeof params.error === "object" ? params.error as Record<string, unknown> : {});
+        if (params.willRetry === true) active.event({ type: "activity", id: "retry", kind: "retry", title: "模型请求重试", status: "running", detail: failure.message });
+        else active.event({ type: "notice", severity: "error", title: failure.message });
+        return;
+      }
+      if (method === "model/rerouted") { active.event({ type: "notice", severity: "warning", title: "模型已由服务端改路由", detail: String(params.fromModel ?? "") + " → " + String(params.toModel ?? "") }); return; }
+      const message = typeof params.message === "string" ? params.message : typeof params.summary === "string" ? params.summary : "";
+      if (message) active.event({ type: "notice", severity: method === "deprecationNotice" ? "info" : "warning", title: line(message, 1024), ...(typeof params.details === "string" ? { detail: params.details } : {}) });
+      return;
     }
     if (passiveNotifications.has(method)) {
       if (params.threadId !== undefined) this.scope(params);
@@ -356,13 +471,25 @@ export class CodexControl implements HarnessControl {
     }
     return { answers: Object.fromEntries(answers) };
   }
+  /** A generated image file reported by the native turn becomes an output; only bounded regular image files are read. */
+  private async generatedImage(active: ActiveTurn, path: string): Promise<void> {
+    try {
+      const info = await stat(path), mediaType = /\.png$/iu.test(path) ? "image/png" : /\.jpe?g$/iu.test(path) ? "image/jpeg" : /\.webp$/iu.test(path) ? "image/webp" : null;
+      if (!info.isFile() || info.size < 1 || info.size > MAX_CONTENT_BYTES || mediaType === null) return;
+      const data = await readFile(path);
+      if (this.active === active && !active.settled) active.event({ type: "output", output: { kind: "content", name: basename(path), mediaType, data } });
+    } catch { if (this.active === active && !active.settled) active.event({ type: "diagnostic", message: "generated image could not be read" }); }
+  }
   private settleTurn(active: ActiveTurn): void {
+    // Streamed output still waiting for its throttle window is delivered before the turn ends.
+    for (const [id, entry] of active.items) if (entry.timer) { clearTimeout(entry.timer); entry.timer = null; active.event({ type: "tool", id, title: entry.title, status: entry.status, detail: entry.detail }); }
     this.cancelPermissions();
     clearTimeout(active.timer); active.settled = true; active.signalStarted();
     if (this.active === active) this.active = null;
   }
   private failTurn(active: ActiveTurn, error: Error): void {
     if (active.settled) return;
+    for (const entry of active.items.values()) if (entry.timer) { clearTimeout(entry.timer); entry.timer = null; }
     clearTimeout(active.timer); active.settled = true; active.rejectStarted(error); active.reject(error);
     if (this.active === active) this.active = null;
   }

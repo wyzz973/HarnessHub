@@ -33,7 +33,7 @@ test("valid public snapshot keeps independent public identities and exact causal
 test("unknown schemas, properties and inconsistent public ownership are rejected", () => {
   const state = seed();
   assert.equal(parseSession({ ...state, schemaVersion: 3 }).schemaVersion, 3);
-  for (const value of [null, {}, { ...state, schemaVersion: 7 }, { ...state, secret: "not-a-field" },
+  for (const value of [null, {}, { ...state, schemaVersion: 8 }, { ...state, secret: "not-a-field" },
     { ...state, activeRunId: "run-one" }, { ...state, lastSeq: 3 }, { ...state, status: "unknown" },
     { ...state, configuration: { ...state.configuration, workspace: "relative" } }]) assert.throws(() => parseSession(value), SessionError);
 });

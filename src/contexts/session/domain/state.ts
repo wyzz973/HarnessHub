@@ -4,7 +4,8 @@ import {
   type CommandRecord, type HarnessSelection, type PublicMessage, type PublicRun,
   type PublicSwitch, type RunStatus, type SessionConfiguration, type SessionMutation, type SessionSnapshot, type NativeSessionBinding,
 } from "../../../contracts/session.js";
-import type { BackendResult, CleanupEvidence } from "../../../contracts/control.js";
+import type { BackendResult, CleanupEvidence, NativeUsage } from "../../../contracts/control.js";
+import { MAX_RUN_OUTPUTS, parseContentRef } from "../../../contracts/content.js";
 
 export const MAX_RUNS = 256;
 export const MAX_COMMANDS = 1024;
@@ -20,6 +21,10 @@ export const MAX_READ_BYTES = 8 * 1024 * 1024;
 export const MAX_READ_ITEMS = 100;
 /** Public tool summaries per Run; later native tools stay in the Harness and are not attributed. */
 export const MAX_RUN_TOOLS = 128;
+export const MAX_RUN_NOTICES = 32;
+export const MAX_RUN_ACTIVITIES = 64;
+export const MAX_PLAN_ENTRIES = 64;
+export const CURRENT_SCHEMA = 7;
 const statuses: readonly RunStatus[] = ["queued", "preparing", "running", "settling", "completed", "cancelled", "failed", "unknown"];
 const terminalStatuses: readonly RunStatus[] = ["completed", "cancelled", "failed", "unknown"];
 export function terminal(status: RunStatus): boolean { return terminalStatuses.includes(status); }
@@ -97,16 +102,67 @@ function cleanup(value: unknown): CleanupEvidence | null {
   return { closed: true, exitCode: item.exitCode === null ? null : number(item.exitCode, "exitCode", -2147483648),
     signal: item.signal === null ? null : text(item.signal, "signal", 64), protocolFailure: failure };
 }
+function choiceOf<T extends string>(value: unknown, allowed: readonly T[], label: string): T {
+  if (typeof value !== "string" || !allowed.includes(value as T)) throw new SessionError("INVALID_DATA", label + " is not a known value");
+  return value as T;
+}
+function count(value: unknown, label: string): number { return number(value, label); }
+function usage(value: unknown): NativeUsage {
+  const item = record(value, "native usage"); keys(item, ["turn", "context", "cost"], "native usage");
+  const result: { turn?: NonNullable<NativeUsage["turn"]>; context?: NonNullable<NativeUsage["context"]>; cost?: NonNullable<NativeUsage["cost"]> } = {};
+  if (item.turn !== undefined) {
+    const turn = record(item.turn, "turn usage"); keys(turn, ["input", "output", "cachedInput", "cacheWrite", "reasoning", "total"], "turn usage");
+    result.turn = Object.fromEntries(Object.entries(turn).map(([key, amount]) => [key, count(amount, "turn usage " + key)]));
+  }
+  if (item.context !== undefined) {
+    const context = record(item.context, "context usage"); keys(context, ["used", "size"], "context usage");
+    result.context = { used: count(context.used, "context used"), ...(context.size === undefined ? {} : { size: number(context.size, "context size", 1) }) };
+  }
+  if (item.cost !== undefined) {
+    const cost = record(item.cost, "native cost"); keys(cost, ["amount", "currency", "scope"], "native cost");
+    if (typeof cost.amount !== "number" || !Number.isFinite(cost.amount) || cost.amount < 0 || cost.amount > 1e9) throw new SessionError("INVALID_DATA", "native cost amount is invalid");
+    result.cost = { amount: cost.amount, currency: text(cost.currency, "cost currency", 16), scope: choiceOf(cost.scope, ["turn", "session"], "cost scope") };
+  }
+  return result;
+}
+function publicTool(value: unknown): NonNullable<PublicRun["tools"]>[number] {
+  const row = record(value, "native tool"); keys(row, ["id", "title", "status", "kind", "name", "parentId", "exitCode", "detail"], "native tool");
+  return { id: text(row.id, "tool identity", 512), title: text(row.title, "tool title", 4096), status: text(row.status, "tool status", 128),
+    ...(row.kind === undefined ? {} : { kind: text(row.kind, "tool kind", 64) }), ...(row.name === undefined ? {} : { name: text(row.name, "tool name", 256) }),
+    ...(row.parentId === undefined ? {} : { parentId: text(row.parentId, "tool parent", 512) }),
+    ...(row.exitCode === undefined ? {} : { exitCode: number(row.exitCode, "tool exit code", -2147483648) }),
+    ...(row.detail === undefined ? {} : { detail: parseContentRef(row.detail) }) };
+}
+function publicOutput(value: unknown): NonNullable<PublicRun["outputs"]>[number] {
+  const row = record(value, "native output");
+  if (row.kind === "content") { keys(row, ["kind", "content"], "native output"); return { kind: "content", content: parseContentRef(row.content) }; }
+  keys(row, ["kind", "uri", "name", "title", "mediaType"], "native link");
+  if (row.kind !== "link") throw new SessionError("INVALID_DATA", "unknown native output kind");
+  const uri = text(row.uri, "native link", 4096);
+  if (!/^(https?|file):\/\//iu.test(uri) || /[\r\n]/u.test(uri)) throw new SessionError("INVALID_DATA", "native link must be an http(s) or file URI");
+  return { kind: "link", uri, name: text(row.name, "native link name", 1024), ...(row.title === undefined ? {} : { title: text(row.title, "native link title", 1024) }), ...(row.mediaType === undefined ? {} : { mediaType: text(row.mediaType, "native link type", 255) }) };
+}
 function publicRun(value: unknown): PublicRun {
   const item = record(value, "Run");
-  keys(item, ["id", "commandId", "input", "userMessageId", "assistantMessageId", "selection", "epoch", "status", "cancelRequested", "contextThroughSeq", "sourceRunIds", "backend", "cleanup", "error", "stopRequested", "awaitingSwitchId", "thinking", "tools"], "Run");
+  keys(item, ["id", "commandId", "input", "userMessageId", "assistantMessageId", "selection", "epoch", "status", "cancelRequested", "contextThroughSeq", "sourceRunIds", "backend", "cleanup", "error", "stopRequested", "awaitingSwitchId", "thinking", "tools", "plan", "usage", "notices", "activities", "outputs"], "Run");
   return { id: runId(item.id), commandId: commandId(item.commandId), input: text(item.input, "Run input", MAX_INPUT_BYTES),
     userMessageId: messageId(item.userMessageId), assistantMessageId: messageId(item.assistantMessageId), selection: parseSelection(item.selection),
     epoch: number(item.epoch, "Run epoch", 1), status: status(item.status), cancelRequested: boolean(item.cancelRequested, "cancelRequested"),
     contextThroughSeq: number(item.contextThroughSeq, "contextThroughSeq"), sourceRunIds: array(item.sourceRunIds, "sourceRunIds", MAX_RUNS, runId),
     backend: backend(item.backend), cleanup: cleanup(item.cleanup), error: fault(item.error), stopRequested: boolean(item.stopRequested, "stopRequested"),
     ...(item.thinking === undefined ? {} : { thinking: text(item.thinking, "native thinking", MAX_OUTPUT_BYTES, true) }),
-    ...(item.tools === undefined ? {} : { tools: array(item.tools, "native tools", MAX_RUN_TOOLS, value => { const row = record(value, "native tool"); keys(row,["id","title","status"],"native tool"); return { id: text(row.id,"tool identity",512), title: text(row.title,"tool title",4096), status: text(row.status,"tool status",128) }; }) }),
+    ...(item.tools === undefined ? {} : { tools: array(item.tools, "native tools", MAX_RUN_TOOLS, publicTool) }),
+    ...(item.plan === undefined ? {} : { plan: (() => { const plan = record(item.plan, "native plan"); keys(plan, ["entries", "explanation"], "native plan"); return {
+      entries: array(plan.entries, "native plan entries", MAX_PLAN_ENTRIES, value => { const entry = record(value, "plan entry"); keys(entry, ["content", "status", "priority"], "plan entry");
+        return { content: text(entry.content, "plan entry", 4096), status: choiceOf(entry.status, ["pending", "in_progress", "completed"], "plan status"), ...(entry.priority === undefined ? {} : { priority: choiceOf(entry.priority, ["high", "medium", "low"], "plan priority") }) }; }),
+      ...(plan.explanation === undefined ? {} : { explanation: text(plan.explanation, "plan explanation", 4096) }) }; })() }),
+    ...(item.usage === undefined ? {} : { usage: usage(item.usage) }),
+    ...(item.notices === undefined ? {} : { notices: array(item.notices, "native notices", MAX_RUN_NOTICES, value => { const row = record(value, "native notice"); keys(row, ["severity", "title", "detail"], "native notice");
+      return { severity: choiceOf(row.severity, ["info", "warning", "error"], "notice severity"), title: text(row.title, "notice title", 1024), ...(row.detail === undefined ? {} : { detail: text(row.detail, "notice detail", 4096) }) }; }) }),
+    ...(item.activities === undefined ? {} : { activities: array(item.activities, "native activities", MAX_RUN_ACTIVITIES, value => { const row = record(value, "native activity"); keys(row, ["id", "kind", "title", "status", "detail"], "native activity");
+      return { id: text(row.id, "activity identity", 512), kind: choiceOf(row.kind, ["subagent", "task", "compaction", "retry", "review"], "activity kind"), title: text(row.title, "activity title", 1024),
+        status: choiceOf(row.status, ["running", "completed", "failed", "cancelled"], "activity status"), ...(row.detail === undefined ? {} : { detail: text(row.detail, "activity detail", 4096) }) }; }) }),
+    ...(item.outputs === undefined ? {} : { outputs: array(item.outputs, "native outputs", MAX_RUN_OUTPUTS, publicOutput) }),
     awaitingSwitchId: item.awaitingSwitchId === null ? null : switchId(item.awaitingSwitchId) };
 }
 function publicMessage(value: unknown): PublicMessage {
@@ -151,7 +207,7 @@ function unique(values: readonly string[], label: string): void {
 export function parseSession(value: unknown): SessionSnapshot {
   const item = record(value, "Session");
   keys(item, ["schemaVersion", "id", "version", "lastSeq", "epoch", "status", "configuration", "selection", "activeRunId", "pendingSwitchId", "runs", "messages", "switches", "commands", "nativeBindings"], "Session");
-  if (item.schemaVersion !== 1 && item.schemaVersion !== 2 && item.schemaVersion !== 3 && item.schemaVersion !== 4 && item.schemaVersion !== 5 && item.schemaVersion !== 6) throw new SessionError("INVALID_DATA", "unknown Session schemaVersion");
+  if (item.schemaVersion !== 1 && item.schemaVersion !== 2 && item.schemaVersion !== 3 && item.schemaVersion !== 4 && item.schemaVersion !== 5 && item.schemaVersion !== 6 && item.schemaVersion !== 7) throw new SessionError("INVALID_DATA", "unknown Session schemaVersion");
   if (item.status !== "open" && item.status !== "closed" && item.status !== "blocked") throw new SessionError("INVALID_DATA", "unknown Session status");
   const result: SessionSnapshot = { schemaVersion: item.schemaVersion, id: sessionId(item.id), version: number(item.version, "version"), lastSeq: number(item.lastSeq, "lastSeq"),
     epoch: number(item.epoch, "epoch", 1), status: item.status, configuration: parseConfiguration(item.configuration), selection: parseSelection(item.selection),
@@ -159,6 +215,8 @@ export function parseSession(value: unknown): SessionSnapshot {
     runs: array(item.runs, "runs", MAX_RUNS, publicRun), messages: array(item.messages, "messages", MAX_RUNS * 2, publicMessage),
     switches: array(item.switches, "switches", MAX_COMMANDS, publicSwitch), commands: array(item.commands, "commands", MAX_COMMANDS, command), ...(item.nativeBindings === undefined ? {} : { nativeBindings: array(item.nativeBindings, "native bindings", MAX_RUNS, nativeBinding) }) };
   if (result.schemaVersion < 6 && (result.nativeBindings !== undefined || result.commands.some(command => command.kind === "native-reset"))) throw new SessionError("INVALID_DATA", "native bindings require Session v6");
+  if (result.schemaVersion < 7 && result.runs.some(run => run.plan !== undefined || run.usage !== undefined || run.notices !== undefined || run.activities !== undefined || run.outputs !== undefined ||
+      run.tools?.some(tool => Object.keys(tool).some(key => !["id", "title", "status"].includes(key))))) throw new SessionError("INVALID_DATA", "native activity details require Session v7");
   const activeBindings = (result.nativeBindings ?? []).filter(binding => binding.status !== "archived");
   unique(activeBindings.map(binding => binding.harnessId + ":" + binding.controlId), "active native binding");
   for (const binding of result.nativeBindings ?? []) {

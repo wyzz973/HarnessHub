@@ -28,7 +28,7 @@ function watermark(value: number): void {
 }
 function envelope(frame: SessionStreamFrame): { id: string; version: number; lastSeq: number } {
   if (frame === null || typeof frame !== "object") invalid("Invalid stream frame");
-  if (frame.type !== "snapshot" && frame.type !== "message") invalid("Unknown stream frame type");
+  if (frame.type !== "snapshot" && frame.type !== "message" && frame.type !== "run") invalid("Unknown stream frame type");
   const value = frame.type === "snapshot" ? frame.session : frame;
   if (value === null || typeof value !== "object") invalid("Invalid stream frame facts");
   const id = frame.type === "snapshot" ? frame.session.id : frame.sessionId;
@@ -232,6 +232,14 @@ export function applySessionStreamFrame(current: SessionView | null, frame: Sess
   if (frame.type === "snapshot") { validateSnapshot(frame.session); return frame.session; }
   if (current === null) stateError("A message frame requires a canonical Session snapshot");
   if (frame.lastSeq !== current.lastSeq + 1 || frame.version !== current.version + 1) stateError("A message frame crossed missing Session facts");
+  if (frame.type === "run") {
+    const prior = current.runs.find(run => run.id === frame.run.id);
+    // Only the active Run's native activity changes in a run frame; identity, input, selection and epoch are immutable.
+    if (prior === undefined || current.activeRunId !== prior.id || !["running", "settling"].includes(frame.run.status) || frame.run.status !== prior.status ||
+        frame.run.commandId !== prior.commandId || frame.run.input !== prior.input || frame.run.userMessageId !== prior.userMessageId || frame.run.assistantMessageId !== prior.assistantMessageId ||
+        frame.run.epoch !== prior.epoch || JSON.stringify(frame.run.selection) !== JSON.stringify(prior.selection)) stateError("Stream run frame does not belong to the active Run");
+    return { ...current, version: frame.version, lastSeq: frame.lastSeq, runs: current.runs.map(run => run.id === prior.id ? frame.run : run) };
+  }
   validateMessage(frame.message, frame.lastSeq);
   const run = current.runs.find(run => run.id === frame.message.runId);
   if (run === undefined || current.activeRunId !== run.id || run.status !== "running" || frame.message.status !== "running" ||

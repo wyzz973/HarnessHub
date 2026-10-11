@@ -12,23 +12,23 @@
 | 配置与模型 | 原生命令目录与执行 | — | ✕ | ◐ | ◐ | ✕ | ◐ | ◐ |
 | 配置与模型 | 原生命令改配置后的同步 | ○ | ○ | ？ | ○ | ？ | ○ | ○ |
 | 执行可见性 | 思考输出 | ◐ | ✕ | ◐ | ◐ | ✕ | ✕ | ◐ |
-| 执行可见性 | 工具状态 | ◐ | ✕ | ◐ | ◐ | ✕ | ✕ | ◐ |
-| 执行可见性 | 工具输入/输出/差异 | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
-| 执行可见性 | 计划 | ○ | ○ | — | — | — | ○ | — |
-| 执行可见性 | 用量/上下文/费用 | ○ | ○ | ○ | ○ | ○ | — | ○ |
-| 交互 | 工具审批 | ◐ | ✕ | ◐ | ○ | ✕ | ✕ | ◐ |
+| 执行可见性 | 工具状态 | ✅ | ✕ | ✅ | ◐ | ✕ | ✕ | ✅ |
+| 执行可见性 | 工具输入/输出/差异 | ✅ | ✕ | ✅ | ○ | ✕ | ✕ | ✅ |
+| 执行可见性 | 计划 | ✕ | ✕ | — | — | — | ✕ | — |
+| 执行可见性 | 用量/上下文/费用 | ✅ | ✕ | ✅ | ○ | ✕ | — | ✅ |
+| 交互 | 工具审批 | ◐ | ✕ | ✅ | ○ | ✕ | ✕ | ◐ |
 | 交互 | 原生提问与表单 | ◑ | ○ | ？ | — | ？ | ◑ | ◐ |
 | 输入输出 | 图片输入 | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
 | 输入输出 | 音频输入 | ○ | — | — | — | ○ | — | — |
 | 输入输出 | 文件/文档输入 | ○ | ○ | ○ | ○ | ○ | ○ | — |
-| 输入输出 | 非文本输出 | ○ | ○ | ○ | — | — | ○ | ○ |
+| 输入输出 | 非文本输出 | ◐ | ✕ | ◐ | — | — | ✕ | ○ |
 | 扩展 | Skills | ○ | ◑ | ◑ | ◑ | ？ | ◑ | ◑ |
 | 扩展 | MCP | ◑ | ◑ | ◑ | — | ◑ | ◑ | — |
 | 扩展 | 插件/扩展 | ◑ | ◑ | ◑ | ○ | ◑ | ？ | ◑ |
 | 会话 | 原生会话恢复 | ✅ | ✕ | ✅ | ✅ | ✕ | ✕ | ✅ |
 | 会话 | 原生会话列表/接续 | ○ | ○ | ○ | ○ | — | ○ | — |
 | 会话 | 原生分支 | ○ | ○ | ○ | — | — | — | ○ |
-| 会话 | 上下文压缩 | ○ | ◑ | ◑ | ◑ | — | ？ | ○ |
+| 会话 | 上下文压缩 | ◑ | ✕ | ◑ | ◑ | — | ？ | ◑ |
 | 会话 | 回滚/回退 | ○ | — | ？ | — | ○ | — | ○ |
 | 并发与后台 | 子 Agent | ◑ | ○ | ○ | ○ | ？ | ○ | — |
 | 并发与后台 | 后台任务 | ○ | ○ | ？ | ○ | ？ | ？ | — |
@@ -36,13 +36,13 @@
 
 | Harness | ✅ | ◐ | ◑ | ○ | ✕ | — | ？ |
 |---|---|---|---|---|---|---|---|
-| Codex | 3 | 3 | 4 | 16 | 0 | 1 | 0 |
-| Claude Code | 0 | 0 | 4 | 13 | 8 | 2 | 0 |
-| OpenCode | 1 | 7 | 4 | 8 | 0 | 2 | 5 |
+| Codex | 6 | 3 | 5 | 11 | 1 | 1 | 0 |
+| Claude Code | 0 | 0 | 3 | 9 | 13 | 2 | 0 |
+| OpenCode | 5 | 6 | 4 | 5 | 0 | 2 | 5 |
 | OpenClaw | 3 | 4 | 2 | 11 | 0 | 7 | 0 |
-| Gemini CLI | 0 | 0 | 2 | 6 | 7 | 6 | 6 |
-| Cursor | 0 | 2 | 4 | 9 | 4 | 5 | 3 |
-| Pi | 3 | 5 | 2 | 9 | 0 | 8 | 0 |
+| Gemini CLI | 0 | 0 | 2 | 4 | 9 | 6 | 6 |
+| Cursor | 0 | 2 | 4 | 6 | 7 | 5 | 3 |
+| Pi | 6 | 4 | 3 | 6 | 0 | 8 | 0 |
 
 ## Codex
 
@@ -56,25 +56,25 @@
 | 原生命令目录与执行 | 不提供 | app-server 无斜杠命令；skills 以 UserInput.skill 调用（见 Skills） | 不适用 | 不适用 | 不适用 | — | — |
 | 原生命令改配置后的同步 | 部分 | model/rerouted 通知会改变实际模型；无命令式配置修改 | 未接出 | 未接出 | 未接出 | — | Hub 未记录改路由 |
 | 思考输出 | 具备 | item/reasoning/summaryTextDelta、textDelta | 已接出 | 通过 | 未接出 | — | 协议测试覆盖；真实思考输出未单独验收 |
-| 工具状态 | 具备 | item/started\|completed 的 commandExecution/fileChange/mcpToolCall/webSearch 等 | 已接出 | 通过 | 未接出 | — | 真实工具调用未验收 |
-| 工具输入/输出/差异 | 具备 | commandExecution.aggregatedOutput/exitCode、fileChange.changes[].diff、mcpToolCall 参数与结果、turn/diff/updated | 未接出 | 未接出 | 未接出 | — | 当前仅保留 id/标题/状态 |
-| 计划 | 具备 | turn/plan/updated {explanation, plan[{step,status}]} | 未接出 | 未接出 | 未接出 | — | — |
-| 用量/上下文/费用 | 具备 | thread/tokenUsage/updated {total,last,modelContextWindow}、account/rateLimits/updated | 未接出 | 未接出 | 未接出 | — | — |
-| 工具审批 | 具备 | item/commandExecution\|fileChange/requestApproval；子 Agent 线程审批归属当前回合 | 已接出 | 通过 | 未接出 | — | item/permissions/requestApproval、策略修订决定尚未接出 |
+| 工具状态 | 具备 | item/started\|completed 的 commandExecution/fileChange/mcpToolCall/webSearch 等 | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-codex.json；docs/verification/native-activity-2026-10-11.md | 命令与补丁工具真实回合 |
+| 工具输入/输出/差异 | 具备 | commandExecution.aggregatedOutput/exitCode、fileChange.changes[].diff、mcpToolCall 参数与结果、turn/diff/updated | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-codex.json；docs/verification/native-activity-2026-10-11.md | 命令输入/输出/退出码与补丁差异真实存储；MCP、搜索、图片项仅协议验证 |
+| 计划 | 部分 | turn/plan/updated 来自 update_plan 清单工具；工具是否提供取决于模型与模式 | 已接出 | 通过 | 受阻 | .tmp/cc-native-activity-codex-plan.json；docs/verification/native-activity-2026-10-11.md | 本机默认 gpt-6.1-sol 回合未提供 update_plan 工具（真实回复确认）；计划模式 collaborationMode 需 experimentalApi，未接出 |
+| 用量/上下文/费用 | 具备 | thread/tokenUsage/updated {total,last,modelContextWindow}、account/rateLimits/updated | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-codex.json；docs/verification/native-activity-2026-10-11.md | 本轮 token 与上下文占用；Codex 不报告费用；账户额度 rateLimits 未接出 |
+| 工具审批 | 具备 | item/commandExecution\|fileChange/requestApproval；子 Agent 线程审批归属当前回合 | 已接出 | 通过 | 未接出 | — | 原配置 approval_policy=never 且 danger-full-access，本机原程序不会请求审批；item/permissions/requestApproval、策略修订决定尚未接出 |
 | 原生提问与表单 | 具备 | item/tool/requestUserInput、mcpServer/elicitation/request | 部分 | 通过 | 未接出 | — | requestUserInput 已接出；MCP elicitation 仍被 -32601 拒绝 |
 | 图片输入 | 具备 | UserInput.image(data URL)/localImage；Model.inputModalities | 未接出 | 未接出 | 未接出 | — | — |
 | 音频输入 | 部分 | UserInput.audio/localAudio，仅 inputModalities 含 audio 的模型 | 未接出 | 未接出 | 未接出 | — | — |
 | 文件/文档输入 | 部分 | 无 file 输入类型；仅 localImage/localAudio/mention(app/plugin) 与文本路径 | 未接出 | 未接出 | 未接出 | — | — |
-| 非文本输出 | 部分 | imageGeneration.savedPath、imageView.path | 未接出 | 未接出 | 未接出 | — | — |
+| 非文本输出 | 部分 | imageGeneration.savedPath、imageView.path | 已接出 | 通过 | 未接出 | — | imageGeneration.savedPath 读取为产物（回合等待读取完成）、imageView 显示路径；真实图片生成未验收 |
 | Skills | 具备 | skills/list、UserInput.skill | 未接出 | 未接出 | 未接出 | — | — |
 | MCP | 具备 | 用户 MCP 按原配置加载；mcpServerStatus/list、mcpServer/oauth/login | 部分 | 未接出 | 未接出 | — | 原程序加载；Hub 无状态/登录界面 |
 | 插件/扩展 | 具备 | plugin/list\|install、app/list | 部分 | 未接出 | 未接出 | — | 原程序按配置加载；Hub 无管理界面 |
 | 原生会话恢复 | 具备 | thread/resume(excludeTurns)；跨 Hub 进程重启 | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；docs/verification/complete-native-capabilities-2026-10-11.md | — |
 | 原生会话列表/接续 | 具备 | thread/list、thread/read、thread/turns/list | 未接出 | 未接出 | 未接出 | — | — |
 | 原生分支 | 具备 | thread/fork {lastTurnId} | 未接出 | 未接出 | 未接出 | — | — |
-| 上下文压缩 | 具备 | thread/compact/start → contextCompaction item | 未接出 | 未接出 | 未接出 | — | — |
+| 上下文压缩 | 具备 | thread/compact/start → contextCompaction item | 部分 | 通过 | 未接出 | — | contextCompaction 以活动展示；thread/compact/start 未接出 |
 | 回滚/回退 | 具备 | thread/revert {beforeTurnId}（只回退历史，不回退文件） | 未接出 | 未接出 | 未接出 | — | — |
-| 子 Agent | 具备 | collabAgentToolCall、subAgentActivity；子线程自动附着连接 | 部分 | 通过 | 未接出 | — | 子线程输出不再中断回合、审批交给用户；子 Agent 活动尚未展示 |
+| 子 Agent | 具备 | collabAgentToolCall、subAgentActivity；子线程自动附着连接 | 部分 | 通过 | 未接出 | — | 子线程输出不中断回合、审批交给用户；子 Agent 活动与协作调用以活动/工具展示；子线程会话未接出 |
 | 后台任务 | 具备 | command/exec；后台终端 thread/backgroundTerminals/* 需 experimentalApi | 未接出 | 未接出 | 未接出 | — | 每轮关闭控制进程，需长期资源所有者设计 |
 | 导出与产物 | 具备 | thread/read(includeTurns)、Thread.path rollout 路径 | 未接出 | 未接出 | 未接出 | — | — |
 
@@ -91,22 +91,22 @@
 | 原生命令改配置后的同步 | 具备 | /model、ExitPlanMode、回退模型后发送 config_option_update/current_mode_update | 未接出 | 未接出 | 未接出 | — | Hub 尚未把原生变化同步到界面与下一轮选择 |
 | 思考输出 | 具备 | agent_thought_chunk（新模型可能只有签名不出文本） | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收 |
 | 工具状态 | 具备 | tool_call/tool_call_update | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收 |
-| 工具输入/输出/差异 | 具备 | kind、content(diff/console)、locations、rawInput/rawOutput、_meta.claudeCode.toolResponse | 未接出 | 未接出 | 未接出 | — | — |
-| 计划 | 具备 | plan 全量快照（TodoWrite/Task*） | 未接出 | 未接出 | 未接出 | — | — |
-| 用量/上下文/费用 | 具备 | usage_update {used,size,cost USD}、PromptResponse.usage | 未接出 | 未接出 | 未接出 | — | — |
+| 工具输入/输出/差异 | 具备 | kind、content(diff/console)、locations、rawInput/rawOutput、_meta.claudeCode.toolResponse | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收 |
+| 计划 | 具备 | plan 全量快照（TodoWrite/Task*） | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收 |
+| 用量/上下文/费用 | 具备 | usage_update {used,size,cost USD}、PromptResponse.usage | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收 |
 | 工具审批 | 具备 | session/request_permission（allow_once/allow_always/reject_once，ExitPlanMode 选项） | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收；allow_always 会由原程序写入项目设置 |
 | 原生提问与表单 | 具备 | AskUserQuestion/MCP 表单经 elicitation/create，需客户端声明 elicitation.form | 未接出 | 未接出 | 未接出 | — | 未声明能力时原程序禁用 AskUserQuestion |
 | 图片输入 | 具备 | promptCapabilities.image；image block base64 | 未接出 | 未接出 | 未接出 | — | — |
 | 音频输入 | 不提供 | 未声明 audio，音频块被静默丢弃 | 不适用 | 不适用 | 不适用 | — | — |
 | 文件/文档输入 | 部分 | 文本 resource 以 <context> 注入；blob 被丢弃；resource_link 只成链接文本 | 未接出 | 未接出 | 未接出 | — | — |
-| 非文本输出 | 部分 | assistant 图片块（少见）与工具结果中的图片 | 未接出 | 未接出 | 未接出 | — | — |
+| 非文本输出 | 部分 | assistant 图片块（少见）与工具结果中的图片 | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收 |
 | Skills | 具备 | skills 出现在原生命令目录并按原配置加载 | 部分 | 通过 | 未接出 | — | 通过原生命令执行；无独立技能管理界面 |
 | MCP | 具备 | 用户/项目/插件 MCP 默认加载；MCP OAuth 需 elicitation.url | 部分 | 未接出 | 未接出 | — | 原程序加载；Hub 无状态/OAuth 界面 |
 | 插件/扩展 | 具备 | 已启用插件、hooks 按 settingSources 加载 | 部分 | 未接出 | 未接出 | — | 原程序加载；Hub 无管理界面 |
 | 原生会话恢复 | 具备 | session/resume（不回放） | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收 |
 | 原生会话列表/接续 | 具备 | session/list（含 CLI/TUI 创建的会话） | 未接出 | 未接出 | 未接出 | — | — |
 | 原生分支 | 具备 | session/fork 复制转录后需 resume | 未接出 | 未接出 | 未接出 | — | — |
-| 上下文压缩 | 具备 | /compact 触发原生压缩；compaction_update 需 session.compaction 能力 | 部分 | 未接出 | 未接出 | — | 可经原生命令执行；压缩过程未展示 |
+| 上下文压缩 | 具备 | /compact 触发原生压缩；compaction_update 需 session.compaction 能力 | 部分 | 通过 | 受阻 | — | 可经原生命令执行；ACP compaction_update 以活动展示；Claude 账号周额度用完，真实生成无法验收 |
 | 回滚/回退 | 不提供 | 非 JetBrains AIR 客户端无指定消息回退 | 不适用 | 不适用 | 不适用 | — | — |
 | 子 Agent | 具备 | 子会话 subagent_spawned/state_update 需 subagents 能力；否则工具带 parentToolUseId | 未接出 | 未接出 | 未接出 | — | — |
 | 后台任务 | 具备 | 后台 shell 与自主后续回合；async_task_* 仅 AIR | 未接出 | 未接出 | 未接出 | — | 每轮关闭进程会终止后台任务 |
@@ -124,23 +124,23 @@
 | 原生命令目录与执行 | 具备 | available_commands_update（init/review、配置命令、MCP prompt、skills） | 已接出 | 通过 | 未接出 | — | 目录真实读取 104 条；执行未验收；未知 / 开头文本会被原程序丢弃 |
 | 原生命令改配置后的同步 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
 | 思考输出 | 具备 | agent_thought_chunk | 已接出 | 通过 | 未接出 | — | 未真实验收 |
-| 工具状态 | 具备 | tool_call/tool_call_update | 已接出 | 通过 | 未接出 | — | 未真实验收 |
-| 工具输入/输出/差异 | 具备 | rawInput/rawOutput、diff、图片附件 | 未接出 | 未接出 | 未接出 | — | — |
-| 计划 | 不提供 | 不发送 plan 更新 | 不适用 | 不适用 | 不适用 | — | — |
-| 用量/上下文/费用 | 具备 | 每轮 usage_update {used,size,cost}、PromptResponse.usage | 未接出 | 未接出 | 未接出 | — | — |
-| 工具审批 | 具备 | session/request_permission(once/always/reject) | 已接出 | 通过 | 未接出 | — | 批准编辑后原程序会无条件发 fs/write_text_file，需真实工具任务核实 |
+| 工具状态 | 具备 | tool_call/tool_call_update | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-opencode.json；docs/verification/native-activity-2026-10-11.md | 命令、读取、编辑与 todowrite 真实回合 |
+| 工具输入/输出/差异 | 具备 | rawInput/rawOutput、diff、图片附件 | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-opencode.json；docs/verification/native-activity-2026-10-11.md | 命令/读取/编辑详情与差异真实存储；标题为原程序给出的路径 |
+| 计划 | 不提供 | 不发送 plan 更新 | 不适用 | 不适用 | 不适用 | — | 原程序 todowrite 以工具（N todos）显示，不发 ACP plan |
+| 用量/上下文/费用 | 具备 | 每轮 usage_update {used,size,cost}、PromptResponse.usage | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-opencode.json；docs/verification/native-activity-2026-10-11.md | 本轮 token、上下文与会话累计费用（原程序报告） |
+| 工具审批 | 具备 | session/request_permission(once/always/reject) | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-opencode-approval.json；docs/verification/native-activity-2026-10-11.md | 工作区级 opencode.json 要求询问时真实审批（允许一次）；批准编辑后原程序调用未宣告的 fs/write_text_file，Hub 回 -32601 并留审计行，编辑仍由原程序完成 |
 | 原生提问与表单 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
 | 图片输入 | 具备 | promptCapabilities.image | 未接出 | 未接出 | 未接出 | — | — |
 | 音频输入 | 不提供 | 未声明 audio | 不适用 | 不适用 | 不适用 | — | — |
 | 文件/文档输入 | 具备 | promptCapabilities.embeddedContext | 未接出 | 未接出 | 未接出 | — | — |
-| 非文本输出 | 部分 | 工具结果中的图片附件；回放中的图片/资源 | 未接出 | 未接出 | 未接出 | — | — |
+| 非文本输出 | 部分 | 工具结果中的图片附件；回放中的图片/资源 | 已接出 | 通过 | 未接出 | — | ACP 非文本块进入产物；真实未验收 |
 | Skills | 具备 | skills 出现在原生命令目录 | 部分 | 通过 | 未接出 | — | 通过原生命令执行 |
 | MCP | 具备 | 用户 MCP 配置按原程序加载 | 部分 | 未接出 | 未接出 | — | 原程序加载；Hub 无状态界面 |
 | 插件/扩展 | 具备 | 插件按原配置加载 | 部分 | 未接出 | 未接出 | — | 原程序加载；Hub 无管理界面 |
 | 原生会话恢复 | 具备 | session/resume（不回放）；跨 Hub 进程重启 | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；.tmp/cc-opencode-native-resume.json | — |
 | 原生会话列表/接续 | 具备 | session/list | 未接出 | 未接出 | 未接出 | — | — |
 | 原生分支 | 具备 | session/fork | 未接出 | 未接出 | 未接出 | — | — |
-| 上下文压缩 | 具备 | /compact 原生命令 | 部分 | 未接出 | 未接出 | — | 可经原生命令执行 |
+| 上下文压缩 | 具备 | /compact 原生命令 | 部分 | 通过 | 未接出 | — | 可经原生命令执行；ACP compaction_update 以活动展示 |
 | 回滚/回退 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
 | 子 Agent | 具备 | 子会话（task 子 Agent）权限请求 | 未接出 | 未接出 | 未接出 | — | 子会话权限请求当前无人应答 |
 | 后台任务 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
@@ -193,9 +193,9 @@
 | 原生命令改配置后的同步 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
 | 思考输出 | 具备 | agent_thought_chunk | 已接出 | 通过 | 受阻 | — | Gemini 个人账号客户端被服务端停用（NATIVE_CLIENT_UNSUPPORTED），真实链路受阻 |
 | 工具状态 | 具备 | tool_call/tool_call_update | 已接出 | 通过 | 受阻 | — | Gemini 个人账号客户端被服务端停用（NATIVE_CLIENT_UNSUPPORTED），真实链路受阻 |
-| 工具输入/输出/差异 | 部分 | kind、locations、全文件 diff；无 raw 输入输出 | 未接出 | 未接出 | 未接出 | — | — |
+| 工具输入/输出/差异 | 部分 | kind、locations、全文件 diff；无 raw 输入输出 | 已接出 | 通过 | 受阻 | — | Gemini 个人账号客户端被服务端停用（NATIVE_CLIENT_UNSUPPORTED），真实链路受阻 |
 | 计划 | 不提供 | 不发送 plan | 不适用 | 不适用 | 不适用 | — | — |
-| 用量/上下文/费用 | 部分 | 仅 PromptResponse._meta.quota | 未接出 | 未接出 | 未接出 | — | — |
+| 用量/上下文/费用 | 部分 | 仅 PromptResponse._meta.quota | 已接出 | 通过 | 受阻 | — | Gemini 个人账号客户端被服务端停用（NATIVE_CLIENT_UNSUPPORTED），真实链路受阻 |
 | 工具审批 | 具备 | session/request_permission(allow always/once/reject) | 已接出 | 通过 | 受阻 | — | Gemini 个人账号客户端被服务端停用（NATIVE_CLIENT_UNSUPPORTED），真实链路受阻 |
 | 原生提问与表单 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
 | 图片输入 | 具备 | promptCapabilities.image | 未接出 | 未接出 | 未接出 | — | — |
@@ -227,15 +227,15 @@
 | 原生命令改配置后的同步 | 部分 | current_mode_update | 未接出 | 未接出 | 未接出 | — | — |
 | 思考输出 | 具备 | agent_thought_chunk | 已接出 | 通过 | 受阻 | — | Cursor 账号套餐限制，原公共对话返回升级提示，生成任务无法验收 |
 | 工具状态 | 具备 | tool_call/tool_call_update（失败工具仍报告 completed） | 已接出 | 通过 | 受阻 | — | Cursor 账号套餐限制，原公共对话返回升级提示，生成任务无法验收 |
-| 工具输入/输出/差异 | 具备 | rawInput/rawOutput、diff、locations | 未接出 | 未接出 | 未接出 | — | — |
-| 计划 | 具备 | plan（create_plan） | 未接出 | 未接出 | 未接出 | — | — |
+| 工具输入/输出/差异 | 具备 | rawInput/rawOutput、diff、locations | 已接出 | 通过 | 受阻 | — | Cursor 账号套餐限制，原公共对话返回升级提示，生成任务无法验收 |
+| 计划 | 具备 | plan（create_plan） | 已接出 | 通过 | 受阻 | — | Cursor 账号套餐限制，原公共对话返回升级提示，生成任务无法验收 |
 | 用量/上下文/费用 | 不提供 | 不提供用量 | 不适用 | 不适用 | 不适用 | — | — |
 | 工具审批 | 具备 | session/request_permission(allow-once/allow-always/reject-once) | 已接出 | 通过 | 受阻 | — | Cursor 账号套餐限制，原公共对话返回升级提示，生成任务无法验收 |
 | 原生提问与表单 | 部分 | cursor/ask_question 扩展请求；-32601 时退化为权限选项 | 部分 | 通过 | 未接出 | — | 经权限选项呈现 |
 | 图片输入 | 具备 | promptCapabilities.image | 未接出 | 未接出 | 未接出 | — | — |
 | 音频输入 | 不提供 | 未声明 audio | 不适用 | 不适用 | 不适用 | — | — |
 | 文件/文档输入 | 部分 | resource 文本内联（≤20000 字）；项目根内 resource_link 读取 | 未接出 | 未接出 | 未接出 | — | — |
-| 非文本输出 | 部分 | cursor/generate_image 扩展请求 | 未接出 | 未接出 | 未接出 | — | — |
+| 非文本输出 | 部分 | cursor/generate_image 扩展请求 | 已接出 | 通过 | 受阻 | — | Cursor 账号套餐限制，原公共对话返回升级提示，生成任务无法验收 |
 | Skills | 具备 | skills 出现在原生命令目录 | 部分 | 通过 | 未接出 | — | 通过原生命令执行 |
 | MCP | 具备 | ~/.cursor/mcp.json 与项目 mcp.json；本轮修复后才按原配置目录加载 | 部分 | 未接出 | 未接出 | — | 原程序加载 |
 | 插件/扩展 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
@@ -260,10 +260,10 @@
 | 原生命令目录与执行 | 具备 | get_commands（extension/prompt/skill）；内置 TUI 命令不可用 | 已接出 | 通过 | 未接出 | — | 扩展命令无运行时已按原生状态结算；执行未真实验收 |
 | 原生命令改配置后的同步 | 部分 | thinking_level_changed 事件；扩展可改模型 | 未接出 | 未接出 | 未接出 | — | — |
 | 思考输出 | 具备 | message_update thinking_delta | 已接出 | 通过 | 未接出 | — | 未真实验收 |
-| 工具状态 | 具备 | tool_execution_start/end | 已接出 | 通过 | 未接出 | — | 未真实验收 |
-| 工具输入/输出/差异 | 具备 | tool_execution_start.args、update.partialResult、end.result.content/details(diff/patch) | 未接出 | 未接出 | 未接出 | — | — |
+| 工具状态 | 具备 | tool_execution_start/end | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-pi.json；docs/verification/native-activity-2026-10-11.md | bash、read、edit 真实回合 |
+| 工具输入/输出/差异 | 具备 | tool_execution_start.args、update.partialResult、end.result.content/details(diff/patch) | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-pi.json；docs/verification/native-activity-2026-10-11.md | 参数、结果与 patch 差异真实存储 |
 | 计划 | 不提供 | 无原生计划 | 不适用 | 不适用 | 不适用 | — | — |
-| 用量/上下文/费用 | 具备 | assistant message usage{input,output,cacheRead,cacheWrite,cost}、get_session_stats | 未接出 | 未接出 | 未接出 | — | — |
+| 用量/上下文/费用 | 具备 | assistant message usage{input,output,cacheRead,cacheWrite,cost}、get_session_stats | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-pi.json；docs/verification/native-activity-2026-10-11.md | 逐消息累计 token（含推理与缓存）、上下文窗口与本轮费用 |
 | 工具审批 | 部分 | 无内置审批；扩展经 extension_ui confirm/select 拦截工具 | 已接出 | 通过 | 未接出 | — | 由扩展决定是否出现 |
 | 原生提问与表单 | 具备 | extension_ui select/confirm/input/editor（含超时） | 已接出 | 通过 | 未接出 | — | 编辑器字段与超时已按 0.85.1 修正；未真实验收 |
 | 图片输入 | 具备 | prompt.images[{data,mimeType}]，按 Model.input 门控 | 未接出 | 未接出 | 未接出 | — | — |
@@ -276,7 +276,7 @@
 | 原生会话恢复 | 具备 | --session 原会话文件 | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1-pi.json；.tmp/native-complete-real-combined.json；docs/verification/complete-native-capabilities-2026-10-11.md | 首个助手消息前恢复仍会失败（原程序延迟创建文件） |
 | 原生会话列表/接续 | 不提供 | RPC 无会话列表 | 不适用 | 不适用 | 不适用 | — | — |
 | 原生分支 | 具备 | fork {entryId}、clone、get_fork_messages | 未接出 | 未接出 | 未接出 | — | — |
-| 上下文压缩 | 具备 | compact {customInstructions} | 未接出 | 未接出 | 未接出 | — | — |
+| 上下文压缩 | 具备 | compact {customInstructions} | 部分 | 通过 | 未接出 | — | 自动压缩与重试以活动展示；手动压缩未接出 |
 | 回滚/回退 | 部分 | 从用户消息 fork；原地树导航仅 TUI | 未接出 | 未接出 | 未接出 | — | — |
 | 子 Agent | 不提供 | 无内置子 Agent（仅扩展工具） | 不适用 | 不适用 | 不适用 | — | — |
 | 后台任务 | 不提供 | 无内置后台任务 | 不适用 | 不适用 | 不适用 | — | — |

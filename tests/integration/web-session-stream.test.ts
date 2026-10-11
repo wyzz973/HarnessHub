@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { application } from "../../src/cli/session-application.js";
-import type { SessionSnapshot } from "../../src/contracts/session.js";
+import { commandId, messageId, runId, sessionId, type SessionSnapshot } from "../../src/contracts/session.js";
 import type { SessionView } from "../../src/contracts/web.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { startWebServer, type WebServer } from "../../src/web/server.js";
@@ -193,4 +193,22 @@ test("async drain retains and reports a real owner failure while closing only it
   assert.equal(f.hub.readFailure?.sessionId, f.id); assert.equal(record(f.hub.readFailure?.error).code, "OWNER_LOST");
   assert.equal(f.reports.length, 1); assert.equal(f.reports[0], f.hub.readFailure); assert.equal(f.hub.diagnosticFailure, null);
   assert.throws(() => f.app.runtime.send(f.id, "must not dispatch", "after-owner"), (error: unknown) => record(error).code === "OWNER_LOST");
+});
+
+test("native activity of the active Run is published as one run frame, other facts as canonical snapshots", () => {
+  const id = sessionId("session-run-frame"), run = runId("run-active");
+  let current: SessionView = { id, version: 4, lastSeq: 7, epoch: 1, status: "open", workspace: "/w", selection: { harnessId: "a", controlId: "a" }, activeRunId: run, pendingSwitchId: null,
+    messages: [{ id: messageId("message-u"), runId: run, role: "user", text: "q", seq: 2, status: "running" }],
+    runs: [{ id: run, commandId: commandId("send"), input: "q", userMessageId: messageId("message-u"), assistantMessageId: messageId("message-a"), selection: { harnessId: "a", controlId: "a" }, epoch: 1, status: "running", cancelRequested: false, contextThroughSeq: 0, sourceRunIds: [], backend: null, cleanup: null, error: null, stopRequested: false, awaitingSwitchId: null }], switches: [] };
+  const hub = new SessionStreamHub(() => current), socket = new FakeSocket();
+  hub.open(id, current.lastSeq, Date.now() + 5000, socket, () => {});
+  const advance = (patch: Partial<SessionView["runs"][number]>) => { current = { ...current, version: current.version + 1, lastSeq: current.lastSeq + 1, runs: current.runs.map(item => ({ ...item, ...patch })) }; };
+  advance({ tools: [{ id: "t", title: "ls", status: "completed" }] });
+  hub.publish({ sessionId: id, seq: current.lastSeq, ownerGeneration: 1, timestamp: "2026-10-11T00:00:00Z", type: "run.output", data: { runId: run, event: { type: "tool", id: "t", title: "ls", status: "completed" } } });
+  advance({});
+  hub.publish({ sessionId: id, seq: current.lastSeq, ownerGeneration: 1, timestamp: "2026-10-11T00:00:00Z", type: "permission.requested", data: { runId: run } });
+  const sent = frames(socket);
+  assert.deepEqual(sent.map(frame => frame.type), ["snapshot", "run", "snapshot"]);
+  assert.deepEqual(record(sent[1]!.run).tools, [{ id: "t", title: "ls", status: "completed" }]);
+  hub.close();
 });

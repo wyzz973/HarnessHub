@@ -9,6 +9,7 @@ import test from "node:test";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { startWebServer, type WebServer, type WebServerOptions } from "../../src/web/server.js";
 import { LocalHarnessManagement } from "../../src/infrastructure/management/service.js";
+import { LocalContentStore } from "../../src/infrastructure/session/content-store.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
 import { LocalProviderService } from "../../src/infrastructure/provider/service.js";
 import { DirectorySessionBindingFactory } from "../../src/infrastructure/session/binding-factory.js";
@@ -79,8 +80,9 @@ class ExternalInstallFixture {
       const management = this.management = new LocalHarnessManagement(root, { installationMode: "private-fixture", assertOwner: owner, ownerGeneration: store.ownerGeneration, metadata: this.metadata, installer: this.installer, nodeExecutable: process.execPath });
       const factory = new DirectorySessionBindingFactory(new SqliteWorkspaceLeaseProvider(join(root, "workspace-locks")), owner, providers, management,
         { home: root, values: { HOME: root, PATH: dirname(process.execPath) + ":/usr/bin:/bin" } });
-      const runtime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: value => createHash("sha256").update(value).digest("hex"), publish });
-      return { store, providers, management, factory, runtime };
+      const content = new LocalContentStore(root, owner);
+      const runtime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: value => createHash("sha256").update(value).digest("hex"), publish, content });
+      return { store, content, providers, management, factory, runtime };
     };
   }
 }

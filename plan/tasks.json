@@ -918,7 +918,8 @@
         "tests/unit/g004.test.ts",
         "tests/property/g004.test.ts",
         "src/contexts/session/domain/state.ts",
-        "tests/unit/session-state.test.ts"
+        "tests/unit/session-state.test.ts",
+        "src/contracts/content.ts"
       ],
       "requirements": [
         "R01",
@@ -1105,7 +1106,9 @@
         "tests/integration/g008.test.ts",
         "src/infrastructure/session/sqlite-store.ts",
         "tests/integration/session-store.test.ts",
-        "tests/fixtures/session-store-peer.mjs"
+        "tests/fixtures/session-store-peer.mjs",
+        "src/infrastructure/session/content-store.ts",
+        "tests/integration/content-store.test.ts"
       ],
       "requirements": [
         "R07",
@@ -1140,7 +1143,9 @@
         "G008-R01",
         "G008-N01",
         "G008-X02",
-        "G008-NC1"
+        "G008-NC1",
+        "G008-NC2",
+        "G008-NC3"
       ],
       "active_slice": "native-installation-management"
     },
@@ -2054,7 +2059,8 @@
         "G028-R01",
         "G028-R02",
         "G028-NC2",
-        "G028-NC3"
+        "G028-NC3",
+        "G028-NC4"
       ],
       "active_slice": "native-models-switching"
     },
@@ -2228,7 +2234,8 @@
         "tests/fixtures/pi-rpc-peer.mjs",
         "src/adapters/control/openclaw.ts",
         "src/infrastructure/control/native-command.ts",
-        "src/adapters/control/cursor.ts"
+        "src/adapters/control/cursor.ts",
+        "src/infrastructure/control/unified-diff.ts"
       ],
       "requirements": [
         "R11",
@@ -2262,7 +2269,9 @@
         "G032-N02",
         "G032-X03",
         "G032-NC4",
-        "G032-NC5"
+        "G032-NC5",
+        "G032-NC6",
+        "G032-NC7"
       ],
       "active_slice": "native-installation-management"
     },
@@ -2359,7 +2368,8 @@
         "G034-C03",
         "G034-C04",
         "G034-NC3",
-        "G034-NC4"
+        "G034-NC4",
+        "G034-NC5"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3069,7 +3079,8 @@
         "G050-C03",
         "G050-P01",
         "G050-P02",
-        "G050-R01"
+        "G050-R01",
+        "G050-NC1"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3260,7 +3271,8 @@
         "web/src/assets/kimchi.svg",
         "web/src/assets/minion-code.svg",
         "web/src/assets/sigit.svg",
-        "web/src/assets/vtcode.svg"
+        "web/src/assets/vtcode.svg",
+        "web/src/components/NativeActivity.tsx"
       ],
       "requirements": [
         "R01",
@@ -3293,7 +3305,8 @@
         "G054-S01",
         "G054-R01",
         "G054-N01",
-        "G054-L01"
+        "G054-L01",
+        "G054-NC1"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3607,7 +3620,8 @@
         "tests/real/live-web-stream.real.ts",
         "tests/real/homebrew-native.real.ts",
         "tests/real/native-resume.real.ts",
-        "tests/real/native-catalog.real.ts"
+        "tests/real/native-catalog.real.ts",
+        "tests/real/native-activity.real.ts"
       ],
       "requirements": [
         "R04",
@@ -3645,7 +3659,8 @@
         "G060-M01",
         "G060-S01",
         "G060-N04",
-        "G060-NC1"
+        "G060-NC1",
+        "G060-NC2"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3710,7 +3725,8 @@
         "G061-L01",
         "G061-N01",
         "G061-N02",
-        "G061-X01"
+        "G061-X01",
+        "G061-NC1"
       ],
       "active_slice": "native-installation-management"
     },

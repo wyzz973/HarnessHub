@@ -1,5 +1,6 @@
 import { parseProviderTarget } from "../../../contracts/provider.js";
-import type { BackendResult, CleanupEvidence, ControlEvent, ControlRun } from "../../../contracts/control.js";
+import { TOOL_DIFF_BYTES, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type BackendResult, type CleanupEvidence, type ControlEvent, type ControlRun, type NativeToolDetail, type NativeUsage } from "../../../contracts/control.js";
+import { MAX_RUN_OUTPUTS } from "../../../contracts/content.js";
 import {
   SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId,
   type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicRun,
@@ -7,7 +8,7 @@ import {
   type SessionId, type SessionEvent, type SessionMutation, type SessionRuntimeOptions, type SessionSnapshot, type SessionStore, type SwitchReceipt,
 } from "../../../contracts/session.js";
 import { buildPublicContext } from "../domain/context.js";
-import { MAX_COMMANDS, MAX_OUTPUT_BYTES, MAX_QUEUE, MAX_RUNS, MAX_RUN_TOOLS, assertInput, parseConfiguration, replayCommand, terminal, utf8Bytes } from "../domain/state.js";
+import { MAX_COMMANDS, MAX_OUTPUT_BYTES, MAX_PLAN_ENTRIES, MAX_QUEUE, MAX_RUNS, MAX_RUN_ACTIVITIES, MAX_RUN_NOTICES, MAX_RUN_TOOLS, assertInput, parseConfiguration, replayCommand, terminal, utf8Bytes } from "../domain/state.js";
 
 interface ActiveExecution {
   readonly sessionId: SessionId;
@@ -18,7 +19,39 @@ interface ActiveExecution {
   backendSettled: boolean;
   stop: Promise<void> | null;
   earlyClose: Promise<CleanupEvidence> | null;
+  /** Latest bounded native tool details, kept in memory until stored as content. */
+  readonly details: Map<string, NativeToolDetail>;
+  readonly dirty: Set<string>;
+  /** Sequential content writes owned by this Turn; drained before its binding closes. */
+  writes: Promise<void>;
+  writeFailure: unknown;
 }
+const TERMINAL_TOOL = new Set(["completed", "failed", "declined", "cancelled", "interrupted", "error"]);
+/** Byte-bounded UTF-8 text; the tail is kept for streams whose end carries the result. */
+function bounded(value: string, maximum: number, tail = false): { readonly text: string; readonly cut: boolean } {
+  const bytes = Buffer.from(value, "utf8");
+  if (bytes.length <= maximum) return { text: value, cut: false };
+  const slice = tail ? bytes.subarray(bytes.length - maximum) : bytes.subarray(0, maximum);
+  return { text: new TextDecoder("utf-8", { fatal: false }).decode(slice).replace(/^\uFFFD|\uFFFD$/gu, ""), cut: true };
+}
+function mergeDetail(prior: NativeToolDetail | undefined, next: NativeToolDetail): NativeToolDetail {
+  let cut = prior?.truncated === true || next.truncated === true;
+  const field = (value: string | undefined, fallback: string | undefined, maximum: number, tail = false): string | undefined => {
+    if (value === undefined) return fallback; const result = bounded(value, maximum, tail); cut ||= result.cut; return result.text;
+  };
+  const input = field(next.input, prior?.input, TOOL_INPUT_BYTES), output = field(next.output, prior?.output, TOOL_OUTPUT_BYTES, true), diff = field(next.diff, prior?.diff, TOOL_DIFF_BYTES);
+  const locations = (next.locations ?? prior?.locations)?.slice(0, 16).map(path => bounded(path, 1024).text);
+  const kind = next.kind ?? prior?.kind, name = next.name ?? prior?.name, parentId = next.parentId ?? prior?.parentId, exitCode = next.exitCode ?? prior?.exitCode;
+  return { ...(kind === undefined ? {} : { kind: kind.slice(0, 64) }), ...(name === undefined ? {} : { name: name.slice(0, 256) }), ...(input === undefined ? {} : { input }), ...(output === undefined ? {} : { output }),
+    ...(diff === undefined ? {} : { diff }), ...(locations === undefined ? {} : { locations }), ...(exitCode === undefined ? {} : { exitCode }), ...(parentId === undefined ? {} : { parentId: parentId.slice(0, 512) }), ...(cut ? { truncated: true } : {}) };
+}
+/** Event-log form of a native event: summaries only, never stored bytes or large previews. */
+function logged(value: ControlEvent): ControlEvent | Readonly<Record<string, unknown>> {
+  if (value.type === "tool") { const { detail, ...summary } = value; return detail === undefined ? summary : { ...summary, ...(detail.kind === undefined ? {} : { kind: detail.kind }), ...(detail.name === undefined ? {} : { name: detail.name }), ...(detail.exitCode === undefined ? {} : { exitCode: detail.exitCode }), ...(detail.parentId === undefined ? {} : { parentId: detail.parentId }) }; }
+  if (value.type === "output" && value.output.kind === "content") { const summary: Readonly<Record<string, unknown>> = { type: "output", output: { kind: "content", name: value.output.name, mediaType: value.output.mediaType, bytes: value.output.data.byteLength } }; return summary; }
+  return value;
+}
+function safeName(value: string): string { return value.replace(/[^A-Za-z0-9._-]+/gu, "_").slice(0, 96) || "tool"; }
 const MAX_PENDING_CREATES = 16;
 function requested(value: SelectionRequest): SelectionRequest {
   if (value === null || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => key !== "harnessId" && key !== "controlId" && key !== "provider" && key !== "nativeModel" && key !== "nativeOptions") ||
@@ -109,7 +142,7 @@ export class SessionRuntime {
     const concurrent = this.store.findByCreateKey(command);
     if (concurrent) { replayCommand(concurrent, command, "create", fingerprint); return concurrent; }
     const id = sessionId("session-" + this.options.id());
-    const state: SessionSnapshot = { schemaVersion: 6, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
+    const state: SessionSnapshot = { schemaVersion: 7, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
       configuration: config, selection: validated, activeRunId: null, pendingSwitchId: null,
       runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }] };
     try {
@@ -463,14 +496,43 @@ export class SessionRuntime {
         return;
       }
     }
+    if (value.type === "output") { this.nativeOutput(execution, state, run, value.output); return; }
+    if (value.type === "tool") {
+      // The public summary keeps a bounded set of tools; a long native turn must not fail or block the Runtime because of it.
+      const tools = [...(run.tools ?? [])], index = tools.findIndex(tool => tool.id === value.id);
+      if (index < 0 && tools.length >= MAX_RUN_TOOLS) return;
+      const detail = value.detail === undefined ? execution.details.get(value.id) : mergeDetail(execution.details.get(value.id), value.detail);
+      if (value.detail !== undefined && detail !== undefined) { execution.details.set(value.id, detail); execution.dirty.add(value.id); }
+      const prior = index < 0 ? undefined : tools[index];
+      const tool = { id: value.id, title: value.title, status: value.status, ...(detail?.kind === undefined ? {} : { kind: detail.kind }), ...(detail?.name === undefined ? {} : { name: detail.name }),
+        ...(detail?.parentId === undefined ? {} : { parentId: detail.parentId }), ...(detail?.exitCode === undefined ? {} : { exitCode: detail.exitCode }), ...(prior?.detail === undefined ? {} : { detail: prior.detail }) };
+      // Refinements that only change the private detail create no public fact until the detail is stored.
+      if (prior === undefined || JSON.stringify(prior) !== JSON.stringify(tool)) {
+        if (index >= 0) tools[index] = tool; else tools.push(tool);
+        this.commit(state.id, current => ({ next: updatedRun(current, run.id, { tools }), events: [event("run.output", { runId: run.id, event: logged(value) })] }));
+      }
+      if (TERMINAL_TOOL.has(value.status) && execution.dirty.has(value.id)) this.storeDetail(execution, value.id);
+      return;
+    }
+    if (value.type === "notice" && (run.notices ?? []).length >= MAX_RUN_NOTICES) return;
+    if (value.type === "activity" && !(run.activities ?? []).some(item => item.id === value.id) && (run.activities ?? []).length >= MAX_RUN_ACTIVITIES) return;
     this.commit(state.id, current => {
       let next = current;
       if (value.type === "thinking") {
         const thinking = (run.thinking ?? "") + value.text; if (utf8Bytes(thinking) > MAX_OUTPUT_BYTES) throw new SessionError("OUTPUT_LIMIT", "native thinking exceeded its budget"); next = updatedRun(current, run.id, { thinking });
       }
-      if (value.type === "tool") {
-        // The public summary keeps a bounded set of tools; a long native turn must not fail or block the Runtime because of it.
-        const tools = [...(run.tools ?? [])], index = tools.findIndex(tool => tool.id === value.id); const tool = { id: value.id, title: value.title, status: value.status }; if (index >= 0) tools[index] = tool; else if (tools.length < MAX_RUN_TOOLS) tools.push(tool); next = updatedRun(current, run.id, { tools });
+      if (value.type === "plan") next = updatedRun(current, run.id, { plan: { entries: value.entries.slice(0, MAX_PLAN_ENTRIES).map(entry => ({ ...entry, content: bounded(entry.content, 4096).text || "…" })), ...(value.explanation ? { explanation: bounded(value.explanation, 4096).text } : {}) } });
+      if (value.type === "usage") next = updatedRun(current, run.id, { usage: { ...run.usage, ...(value.usage.turn === undefined ? {} : { turn: { ...run.usage?.turn, ...value.usage.turn } }), ...(value.usage.context === undefined ? {} : { context: value.usage.context }), ...(value.usage.cost === undefined ? {} : { cost: value.usage.cost }) } satisfies NativeUsage });
+      if (value.type === "notice") {
+        // Harnesses restarted per Turn repeat their startup warnings; a notice already shown in this conversation stays in the log only.
+        const notice = { severity: value.severity, title: bounded(value.title, 1024).text || "提示", ...(value.detail ? { detail: bounded(value.detail, 4096).text } : {}) }, same = JSON.stringify(notice);
+        if (!current.runs.some(item => item.notices?.some(prior => JSON.stringify(prior) === same))) next = updatedRun(current, run.id, { notices: [...(run.notices ?? []), notice] });
+      }
+      if (value.type === "activity") {
+        const activities = [...(run.activities ?? [])], index = activities.findIndex(item => item.id === value.id);
+        const activity = { id: bounded(value.id, 512).text, kind: value.kind, title: bounded(value.title, 1024).text || value.kind, status: value.status, ...(value.detail ? { detail: bounded(value.detail, 4096).text } : {}) };
+        if (index >= 0) activities[index] = activity; else activities.push(activity);
+        next = updatedRun(current, run.id, { activities });
       }
       if (value.type === "text") {
         const message = current.messages.find(message => message.id === run.assistantMessageId);
@@ -479,8 +541,51 @@ export class SessionRuntime {
         next = { ...current, messages: message ? current.messages.map(item => item.id === message.id ? { ...item, text } : item)
           : [...current.messages, { id: run.assistantMessageId, runId: run.id, role: "assistant", text, seq: current.lastSeq + 1, status: run.status }] };
       }
-      return { next, events: [event("run.output", { runId: run.id, event: value })] };
+      return { next, events: [event("run.output", { runId: run.id, event: logged(value) })] };
     });
+  }
+  /** Stores one tool's latest bounded detail and publishes its reference. Storage trouble is reported, not hidden. */
+  private storeDetail(execution: ActiveExecution, toolId: string): void {
+    const content = this.options.content; if (content === undefined) return;
+    this.enqueue(execution, async () => {
+      const detail = execution.details.get(toolId); if (detail === undefined || !execution.dirty.delete(toolId)) return;
+      const state = this.owned(execution);
+      let ref;
+      try { ref = await content.storeOutput({ workspace: state.configuration.workspace, name: "tool-" + safeName(toolId) + ".json", mediaType: "application/json", data: new TextEncoder().encode(JSON.stringify({ toolId, ...detail })) }); }
+      catch (error) { this.commit(state.id, current => ({ next: current, events: [event("run.output", { runId: execution.runId, event: { type: "diagnostic", message: "tool detail was not stored (" + fault(error).code + ")" } })] })); return; }
+      const after = this.owned(execution), run = after.runs.find(row => row.id === execution.runId)!;
+      if (!run.tools?.some(tool => tool.id === toolId)) return;
+      this.commit(after.id, current => ({ next: updatedRun(current, run.id, { tools: run.tools!.map(tool => tool.id === toolId ? { ...tool, detail: ref } : tool) }), events: [event("run.tool_detail", { runId: run.id, toolId, content: ref })] }));
+    });
+  }
+  /** Non-text native output: links are recorded as given; bytes go to the content owner first. */
+  private nativeOutput(execution: ActiveExecution, state: SessionSnapshot, run: PublicRun, output: Extract<ControlEvent, { type: "output" }>["output"]): void {
+    if ((run.outputs ?? []).length >= MAX_RUN_OUTPUTS) return;
+    if (output.kind === "link") {
+      this.commit(state.id, current => ({ next: updatedRun(current, run.id, { outputs: [...(run.outputs ?? []), { kind: "link", uri: bounded(output.uri, 4096).text, name: bounded(output.name, 1024).text || "链接", ...(output.title ? { title: bounded(output.title, 1024).text } : {}), ...(output.mediaType ? { mediaType: output.mediaType.slice(0, 255) } : {}) }] }),
+        events: [event("run.output", { runId: run.id, event: logged({ type: "output", output }) })] }));
+      return;
+    }
+    const content = this.options.content;
+    if (content === undefined) { this.commit(state.id, current => ({ next: current, events: [event("run.output", { runId: run.id, event: { type: "diagnostic", message: "native " + output.mediaType + " output was not kept (no content storage)" } })] })); return; }
+    this.enqueue(execution, async () => {
+      let ref;
+      try { ref = await content.storeOutput({ workspace: state.configuration.workspace, name: output.name, mediaType: output.mediaType, data: output.data }); }
+      catch (error) { const owned = this.owned(execution); this.commit(owned.id, current => ({ next: current, events: [event("run.output", { runId: run.id, event: { type: "diagnostic", message: "native output was not stored (" + fault(error).code + ")" } })] })); return; }
+      const after = this.owned(execution), current = after.runs.find(row => row.id === execution.runId)!;
+      if ((current.outputs ?? []).length >= MAX_RUN_OUTPUTS) return;
+      this.commit(after.id, snapshot => ({ next: updatedRun(snapshot, current.id, { outputs: [...(current.outputs ?? []), { kind: "content", content: ref }] }), events: [event("run.output", { runId: current.id, event: logged({ type: "output", output }) })] }));
+    });
+  }
+  /** Keeps the write chain alive; an ownership or Store failure is retained for the Turn owner to report. */
+  private enqueue(execution: ActiveExecution, job: () => Promise<void>): void {
+    execution.writes = execution.writes.then(job).catch((error: unknown) => { execution.writeFailure ??= error; });
+  }
+  /** Drains this Turn's content writes while its binding is still owned; called before cleanup. */
+  private async flushNative(execution: ActiveExecution): Promise<void> {
+    for (const toolId of [...execution.dirty]) this.storeDetail(execution, toolId);
+    await execution.writes;
+    if (execution.writeFailure !== null) throw execution.writeFailure;
   }
 
   private async execute(id: SessionId, target: PublicRun["id"]): Promise<void> {
@@ -496,7 +601,7 @@ export class SessionRuntime {
     if (waitedSwitch && waitedSwitch.status !== "effective") return;
     const pinned = waitedSwitch?.target ?? queued.selection;
     const execution: ActiveExecution = { sessionId: id, runId: target, binding: null, run: null, dispatched: false,
-      backendSettled: false, stop: null, earlyClose: null };
+      backendSettled: false, stop: null, earlyClose: null, details: new Map(), dirty: new Set(), writes: Promise.resolve(), writeFailure: null };
     if (this.active) throw new SessionError("OWNERSHIP_LOST", "another global writer is active");
     this.active = execution;
     let backend: BackendResult | null = null, cleanup: CleanupEvidence | null = null, problem: ReturnType<typeof fault> | null = null;
@@ -564,6 +669,9 @@ export class SessionRuntime {
       if (abandoned.length) this.commit(id, current => ({ next: current, events: abandoned.map(([permissionId]) => event("permission.closed", { permissionId, runId: target })) }));
       if (execution.stop) {
         try { await execution.stop; } catch (error) { problem ??= fault(error); }
+      }
+      if (execution.binding && execution.earlyClose === null) {
+        try { await this.flushNative(execution); } catch (error) { problem ??= fault(error); }
       }
       if (execution.binding) {
         try { execution.earlyClose ??= execution.binding.close(); cleanup = await execution.earlyClose; }

@@ -54,6 +54,7 @@ export interface ChatProps {
   onPermission?: (id: string, option: string, input?: string) => void;
   onNativeBranch?: () => void;
   onRetryConnection?: () => void;
+  onToolDetail?: import("./NativeActivity.js").ToolDetailLoader;
 }
 
 function NativeQuestion({request,busy,onDecision}:{request:NonNullable<SessionView["permissions"]>[number];busy:boolean;onDecision:(option:string,input?:string)=>void}) {
@@ -177,8 +178,8 @@ export function ChatPage(props: ChatProps) {
         </div>
         : <div className="transcript" ref={transcript} role="log" aria-label="对话历史" aria-live="off">
           {session.messages.length === 0 ? <div className="conversation-empty"><BrandMark/><h2>对话准备好了</h2><p>发出第一条消息，开始这次协作。</p></div> : session.messages.map(message => <Fragment key={message.id}>
-            <ChatMessage message={message} run={runs.get(message.runId)} harnesses={harnesses} providers={providers} onEdit={fillDraft} onRetry={canRetry ? text => { void send(text).catch(() => {}); } : undefined}/>
-            {message.role === "user" && !assistantRuns.has(message.runId) && runs.has(message.runId) ? <ChatMessage message={undefined} run={runs.get(message.runId)} harnesses={harnesses} providers={providers} onEdit={fillDraft} onRetry={canRetry ? text => { void send(text).catch(() => {}); } : undefined}/> : null}
+            <ChatMessage message={message} run={runs.get(message.runId)} harnesses={harnesses} providers={providers} onEdit={fillDraft} onRetry={canRetry ? text => { void send(text).catch(() => {}); } : undefined} {...(props.onToolDetail ? { loadToolDetail: props.onToolDetail } : {})}/>
+            {message.role === "user" && !assistantRuns.has(message.runId) && runs.has(message.runId) ? <ChatMessage message={undefined} run={runs.get(message.runId)} harnesses={harnesses} providers={providers} onEdit={fillDraft} onRetry={canRetry ? text => { void send(text).catch(() => {}); } : undefined} {...(props.onToolDetail ? { loadToolDetail: props.onToolDetail } : {})}/> : null}
           </Fragment>)}
           {session.switches.length > 0 ? <details className="selection-history"><summary>选择记录 <span>{session.switches.length}</span></summary>{session.switches.map(item => <div className={`switch-record ${item.status}`} key={item.id}><span>{harnesses.find(harness => harness.id === item.requested.harnessId)?.name ?? item.requested.harnessId}</span><StatusBadge tone={item.status === "failed" ? "danger" : item.status === "effective" ? "success" : "warning"}>{item.status === "effective" ? "已生效" : item.status === "failed" ? "切换失败" : "等待生效"}</StatusBadge>{item.requested.provider ? <small>{providers.find(provider => provider.id === item.requested.provider?.providerId)?.name ?? "Provider"} · {item.requested.provider.model}</small> : null}{item.error ? <small className="error-text">{failureMessage(item.error)}</small> : null}</div>)}</details> : null}
         </div>}

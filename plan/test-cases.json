@@ -6648,6 +6648,187 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/real/native-resume.real.ts"
+    },
+    {
+      "id": "G008-NC2",
+      "task": "G008",
+      "requirements": [
+        "R07",
+        "R19"
+      ],
+      "invariants": [
+        "INV-06",
+        "INV-22"
+      ],
+      "layer": "integration",
+      "scenario": "原生产物与工具详情的内容寻址存储：按字节判型、保留期回收、半写文件、外来标记、异常文件与失效owner",
+      "expected": "相同字节只存一份；伪装图片与SVG只作文件；只回收无引用且过期的记录；外来或不一致存储与失效owner明确失败",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/content-store.test.ts"
+    },
+    {
+      "id": "G008-NC3",
+      "task": "G008",
+      "requirements": [
+        "R07",
+        "R19"
+      ],
+      "invariants": [
+        "INV-06"
+      ],
+      "layer": "integration",
+      "scenario": "v6事务升级到v7；运行中的内容引用集合",
+      "expected": "原会话、原生绑定与Run保留；未知版本明确拒绝；被引用内容不被回收",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/session-store.test.ts"
+    },
+    {
+      "id": "G028-NC4",
+      "task": "G028",
+      "requirements": [
+        "R11",
+        "R14"
+      ],
+      "invariants": [
+        "INV-06",
+        "INV-27"
+      ],
+      "layer": "integration",
+      "scenario": "原生工具详情、计划、用量、提示、活动与非文本产物进入公开Run；超大预览；同会话重复启动提示",
+      "expected": "摘要先提交，详情在终态或结算前存储且日志只含引用；存储失败可见；重复提示只进日志不重复显示",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/session-runtime.test.ts"
+    },
+    {
+      "id": "G032-NC6",
+      "task": "G032",
+      "requirements": [
+        "R11",
+        "R12",
+        "R25"
+      ],
+      "invariants": [
+        "INV-04",
+        "INV-09"
+      ],
+      "layer": "protocol",
+      "scenario": "ACP工具详情（rawInput/rawOutput/diff/locations）、计划、usage_update与回合用量、通知、压缩、非文本块；未宣告的客户端方法",
+      "expected": "按真实字段有界映射；未宣告方法回-32601并留审计行，不改变回合结果",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/acp.test.ts"
+    },
+    {
+      "id": "G032-NC7",
+      "task": "G032",
+      "requirements": [
+        "R11",
+        "R12",
+        "R25"
+      ],
+      "invariants": [
+        "INV-04",
+        "INV-09"
+      ],
+      "layer": "protocol",
+      "scenario": "Pi工具参数、流式与最终结果、patch差异、逐消息用量与上下文窗口、压缩与自动重试、扩展通知与错误",
+      "expected": "工具详情与差异可读；用量按回合累计；活动与提示不打断回合",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/pi.test.ts"
+    },
+    {
+      "id": "G034-NC5",
+      "task": "G034",
+      "requirements": [
+        "R11",
+        "R12",
+        "R25"
+      ],
+      "invariants": [
+        "INV-04",
+        "INV-09"
+      ],
+      "layer": "protocol",
+      "scenario": "Codex item细节（命令、补丁、MCP、搜索、图片、子Agent）、增量输出节流、turn/plan/updated、tokenUsage基线、警告与改路由",
+      "expected": "命令输出与退出码、补丁差异与计划按协议字段映射；历史累计用量不计入本轮；提示与活动不改变回合结果",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/codex.test.ts"
+    },
+    {
+      "id": "G050-NC1",
+      "task": "G050",
+      "requirements": [
+        "R01",
+        "R19"
+      ],
+      "invariants": [
+        "INV-06",
+        "INV-25"
+      ],
+      "layer": "integration",
+      "scenario": "内容读取路由GET/HEAD、下载与内联类型白名单、CSP与nosniff；SSE run帧",
+      "expected": "只读访问、未知内容404、不可内联类型强制下载；run帧只携带活动Run的已提交原生活动",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/web-server.test.ts"
+    },
+    {
+      "id": "G054-NC1",
+      "task": "G054",
+      "requirements": [
+        "R01",
+        "R22"
+      ],
+      "invariants": [
+        "INV-01",
+        "INV-25"
+      ],
+      "layer": "e2e",
+      "scenario": "统一聊天显示原生计划、提示、工具详情（差异着色）与本轮用量",
+      "expected": "只显示已提交事实；工具详情按需读取；刷新后与服务端一致",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/web.browser.ts"
+    },
+    {
+      "id": "G061-NC1",
+      "task": "G061",
+      "requirements": [
+        "R22"
+      ],
+      "invariants": [
+        "INV-25"
+      ],
+      "layer": "unit",
+      "scenario": "客户端校验SSE run帧",
+      "expected": "只替换活动Run的原生活动，缺失事实时要求完整快照",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/unit/web-session-stream.test.ts"
+    },
+    {
+      "id": "G060-NC2",
+      "task": "G060",
+      "requirements": [
+        "R04",
+        "R24",
+        "R12"
+      ],
+      "invariants": [
+        "INV-16",
+        "INV-09"
+      ],
+      "layer": "e2e",
+      "scenario": "本机原安装真实工具回合：命令与编辑；工作区级审批配置；计划工具",
+      "expected": "文件真实被修改；工具摘要与详情已存储可读；审批只允许一次；原全局配置不变；未出现的能力如实记录而非通过",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/real/native-activity.real.ts"
     }
   ]
 }

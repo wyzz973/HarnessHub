@@ -10,6 +10,7 @@ import { SqliteSessionStore } from "../infrastructure/session/sqlite-store.js";
 import { SqliteWorkspaceLeaseProvider } from "../infrastructure/session/workspace-lease.js";
 import { DirectorySessionBindingFactory } from "../infrastructure/session/binding-factory.js";
 import { NativeInstallationLocks } from "../infrastructure/management/native-lock.js";
+import { LocalContentStore } from "../infrastructure/session/content-store.js";
 
 export function dataRoot(value: string | undefined): string {
   const path = value === undefined ? resolve("data") : resolve(value);
@@ -37,7 +38,7 @@ function workspaceLockRoot(): string {
   if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== uid || (info.mode & 0o077) !== 0) throw new SessionError("INVALID_STORAGE", "workspace lock namespace is not privately owned");
   return path;
 }
-export function application(root: string, publish: (event: SessionEvent) => void, options: { readonly management?: Pick<ManagementOptions, "metadata" | "installer" | "recipes" | "installationMode" | "native" | "nativeLocks">; readonly nativeEnvironment?: NativeEnvironment } = {}): { readonly management: LocalHarnessManagement; readonly providers: LocalProviderService; readonly store: SqliteSessionStore; readonly factory: DirectorySessionBindingFactory; readonly runtime: SessionRuntime } {
+export function application(root: string, publish: (event: SessionEvent) => void, options: { readonly management?: Pick<ManagementOptions, "metadata" | "installer" | "recipes" | "installationMode" | "native" | "nativeLocks">; readonly nativeEnvironment?: NativeEnvironment } = {}): { readonly management: LocalHarnessManagement; readonly providers: LocalProviderService; readonly store: SqliteSessionStore; readonly content: LocalContentStore; readonly factory: DirectorySessionBindingFactory; readonly runtime: SessionRuntime } {
   const store = new SqliteSessionStore(root);
   let providers: LocalProviderService | undefined;
   let management: LocalHarnessManagement | undefined;
@@ -47,7 +48,10 @@ export function application(root: string, publish: (event: SessionEvent) => void
     const nativeLocks = options.management?.installationMode === "private-fixture" ? undefined : options.management?.nativeLocks ?? new NativeInstallationLocks();
     management = new LocalHarnessManagement(root, { ...options.management, ...(nativeLocks === undefined ? {} : { nativeLocks }), ...(options.nativeEnvironment === undefined ? {} : { nativeEnvironment: options.nativeEnvironment }), assertOwner: () => store.assertOwner(), ownerGeneration: store.ownerGeneration, redactor: text => providers!.redact(text) });
     const factory = new DirectorySessionBindingFactory(workspaces, () => store.assertOwner(), providers, management, options.nativeEnvironment, nativeLocks);
-    const runtime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: hash, publish });
-    return { store, factory, runtime, providers, management };
+    // The owner is exclusive and quiescent here, so unreferenced content from earlier owners can be collected safely.
+    const content = new LocalContentStore(root, () => store.assertOwner());
+    content.collect(store.contentReferences());
+    const runtime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: hash, publish, content });
+    return { store, content, factory, runtime, providers, management };
   } catch (error) { try { management?.close(); } finally { try { providers?.close(); } finally { store.close(); } } throw error; }
 }

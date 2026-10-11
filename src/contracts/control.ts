@@ -30,10 +30,46 @@ export interface ProtocolObservation {
   readonly authenticationMethods: readonly string[];
   readonly capabilities: Readonly<Record<string, unknown>>;
 }
+/** Bounded native tool facts. Drivers trim previews; complete payloads never leave the Driver unbounded. */
+export interface NativeToolDetail {
+  /** Native tool family (execute/edit/read/search/fetch/think/mcp/subagent/image/...). */
+  readonly kind?: string;
+  /** Native tool name, e.g. Bash or server/tool. */
+  readonly name?: string;
+  readonly input?: string;
+  readonly output?: string;
+  /** Unified diff text for file changes. */
+  readonly diff?: string;
+  readonly locations?: readonly string[];
+  readonly exitCode?: number;
+  /** Owning parent tool or sub-agent identity inside the same Turn. */
+  readonly parentId?: string;
+  /** A preview was cut to its byte budget. */
+  readonly truncated?: boolean;
+}
+export const TOOL_INPUT_BYTES = 16 * 1024;
+export const TOOL_OUTPUT_BYTES = 64 * 1024;
+export const TOOL_DIFF_BYTES = 64 * 1024;
+export interface NativePlanEntry { readonly content: string; readonly status: "pending" | "in_progress" | "completed"; readonly priority?: "high" | "medium" | "low" }
+/** Latest native accounting. Turn tokens belong to this Run; context and cost carry their own scope. */
+export interface NativeUsage {
+  readonly turn?: { readonly input?: number; readonly output?: number; readonly cachedInput?: number; readonly cacheWrite?: number; readonly reasoning?: number; readonly total?: number };
+  readonly context?: { readonly used: number; readonly size?: number };
+  readonly cost?: { readonly amount: number; readonly currency: string; readonly scope: "turn" | "session" };
+}
+/** Non-text native output. Bytes are handed to the content owner; links are never fetched. */
+export type NativeOutput =
+  | { readonly kind: "content"; readonly name: string; readonly mediaType: string; readonly data: Uint8Array }
+  | { readonly kind: "link"; readonly uri: string; readonly name: string; readonly title?: string; readonly mediaType?: string };
 export type ControlEvent =
   | { readonly type: "text"; readonly text: string }
   | { readonly type: "thinking"; readonly text: string }
-  | { readonly type: "tool"; readonly id: string; readonly title: string; readonly status: string }
+  | { readonly type: "tool"; readonly id: string; readonly title: string; readonly status: string; readonly detail?: NativeToolDetail }
+  | { readonly type: "plan"; readonly entries: readonly NativePlanEntry[]; readonly explanation?: string }
+  | { readonly type: "usage"; readonly usage: NativeUsage }
+  | { readonly type: "notice"; readonly severity: "info" | "warning" | "error"; readonly title: string; readonly detail?: string }
+  | { readonly type: "activity"; readonly id: string; readonly kind: "subagent" | "task" | "compaction" | "retry" | "review"; readonly title: string; readonly status: "running" | "completed" | "failed" | "cancelled"; readonly detail?: string }
+  | { readonly type: "output"; readonly output: NativeOutput }
   | { readonly type: "permission_requested"; readonly id: string; readonly title: string; readonly detail?: string; readonly input?: {readonly kind:"text"|"editor"|"secret";readonly value:string}; readonly options: readonly { readonly id: string; readonly name: string }[] }
   | { readonly type: "permission"; readonly id: string; readonly decision: "denied" | "cancelled" }
   | { readonly type: "diagnostic"; readonly message: string };

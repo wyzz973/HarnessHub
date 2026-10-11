@@ -3,10 +3,14 @@ import { nativeConversationId, type BackendResult, type CleanupEvidence, type Co
   type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl,
   type NativeOptions, type NativeOption, type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
 import { ControlError, errorFrom, JsonRpcProcess, object, string, text, type RpcRequest } from "../../infrastructure/control/json-rpc-process.js";
+import { unifiedDiff } from "../../infrastructure/control/unified-diff.js";
+import type { NativeOutput, NativeToolDetail, NativeUsage } from "../../contracts/control.js";
+import { MAX_CONTENT_BYTES } from "../../contracts/content.js";
 
 interface ActivePrompt {
   readonly event: (event: ControlEvent) => void;
   readonly tools: Map<string, { title: string; status: string }>;
+  readonly compaction: Map<string, string>;
   stopping: boolean;
   settled: boolean;
   stop: Promise<StopRequestReceipt> | null;
@@ -26,6 +30,56 @@ function label(value: unknown, fallback: string, maximum = 4096): string {
   const result = value.replace(/[\0-\x1f\x7f]+/gu, " ").trim();
   return result ? result.slice(0, maximum) : fallback;
 }
+
+function preview(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "string") return value || undefined;
+  if (typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 0) return undefined;
+  try { return JSON.stringify(value, null, 2); } catch { return undefined; }
+}
+function field(value: unknown, key: string): unknown { return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>)[key] : undefined; }
+/** Native tool fields as given by the agent: kind/name, raw input and output, content text, diffs and locations. */
+function toolDetail(update: Record<string, unknown>): NativeToolDetail | undefined {
+  const claude = field(field(update, "_meta"), "claudeCode");
+  const name = typeof update.name === "string" ? update.name : typeof field(claude, "toolName") === "string" ? field(claude, "toolName") as string : undefined;
+  const parentId = field(claude, "parentToolUseId");
+  const command = field(update.rawInput, "command");
+  const input = typeof command === "string" ? command : preview(update.rawInput);
+  const texts: string[] = [], diffs: string[] = [];
+  if (Array.isArray(update.content)) for (const item of update.content) {
+    const type = field(item, "type");
+    if (type === "content" && field(field(item, "content"), "type") === "text" && typeof field(field(item, "content"), "text") === "string") texts.push(field(field(item, "content"), "text") as string);
+    if (type === "diff" && typeof field(item, "path") === "string" && typeof field(item, "newText") === "string") {
+      const before = field(item, "oldText"); diffs.push(unifiedDiff(field(item, "path") as string, typeof before === "string" ? before : null, field(item, "newText") as string));
+    }
+  }
+  const output = texts.length ? texts.join("\n") : preview(update.rawOutput);
+  const locations = Array.isArray(update.locations) ? update.locations.flatMap(item => typeof field(item, "path") === "string" ? [(field(item, "path") as string) + (typeof field(item, "line") === "number" ? ":" + String(field(item, "line")) : "")] : []) : [];
+  const detail: NativeToolDetail = { ...(typeof update.kind === "string" ? { kind: update.kind } : {}), ...(name ? { name } : {}), ...(typeof parentId === "string" ? { parentId } : {}),
+    ...(input ? { input } : {}), ...(output ? { output } : {}), ...(diffs.length ? { diff: diffs.join("") } : {}), ...(locations.length ? { locations } : {}) };
+  return Object.keys(detail).length ? detail : undefined;
+}
+function decoded(data: string): Uint8Array | null {
+  if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(data) || data.length > Math.ceil(MAX_CONTENT_BYTES / 3) * 4) return null;
+  const bytes = Buffer.from(data, "base64"); return bytes.length > 0 && bytes.length <= MAX_CONTENT_BYTES ? bytes : null;
+}
+/** Non-text ACP content as a native output; unknown or oversized shapes become a diagnostic instead. */
+function outputOf(content: Record<string, unknown>): NativeOutput | null {
+  const type = content.type, mime = typeof content.mimeType === "string" ? content.mimeType : undefined;
+  if ((type === "image" || type === "audio") && typeof content.data === "string" && mime) {
+    const data = decoded(content.data); if (!data) return null;
+    return { kind: "content", name: (type === "image" ? "image." : "audio.") + (mime.split("/")[1]?.replace(/[^a-z0-9]/giu, "") || "bin"), mediaType: mime, data };
+  }
+  if (type === "resource_link" && typeof content.uri === "string" && typeof content.name === "string") return { kind: "link", uri: content.uri, name: content.name, ...(typeof content.title === "string" ? { title: content.title } : {}), ...(mime ? { mediaType: mime } : {}) };
+  const resource = field(content, "resource");
+  if (type === "resource" && typeof field(resource, "uri") === "string") {
+    const uri = field(resource, "uri") as string, name = uri.split(/[\\/]/u).filter(Boolean).at(-1)?.slice(0, 200) || "resource", type = typeof field(resource, "mimeType") === "string" ? field(resource, "mimeType") as string : undefined;
+    if (typeof field(resource, "text") === "string") return { kind: "content", name, mediaType: type ?? "text/plain", data: new TextEncoder().encode(field(resource, "text") as string) };
+    if (typeof field(resource, "blob") === "string") { const data = decoded(field(resource, "blob") as string); if (data) return { kind: "content", name, mediaType: type ?? "application/octet-stream", data }; }
+  }
+  return null;
+}
+function count(value: unknown): number | undefined { return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined; }
 
 /** ACP v1 anti-corruption layer. Client filesystem and terminal capabilities are not advertised. */
 export class AcpControl implements HarnessControl {
@@ -67,7 +121,8 @@ export class AcpControl implements HarnessControl {
   private async initializeOnce(): Promise<ProtocolObservation> {
     try {
       const response = object(await this.rpc.request("initialize", {
-        protocolVersion: 1, clientCapabilities: {},
+        // Notices and compaction arrive as their own updates instead of being folded into reply text or fake tools.
+        protocolVersion: 1, clientCapabilities: { session: { notices: {}, compaction: {} } },
         clientInfo: { name: "harnessgateway", title: "HarnessGateway", version: "0.0.0" },
       }), "ACP initialize result");
       if (response.protocolVersion !== 1) throw new ControlError("PROTOCOL_VERSION", "peer did not negotiate ACP v1");
@@ -198,12 +253,18 @@ export class AcpControl implements HarnessControl {
     if (!this.conversation || id !== this.conversation) throw new ControlError("IDENTITY_MISMATCH", "conversation is not owned by this connection");
     if (this.active !== null) throw new ControlError("INVALID_STATE", "a prompt is already active");
     if (typeof prompt !== "string" || prompt.length === 0) throw new ControlError("INVALID_INPUT", "prompt must contain text");
-    const active: ActivePrompt = { event: onEvent, tools: new Map(), stopping: false, settled: false, stop: null };
+    const active: ActivePrompt = { event: onEvent, tools: new Map(), compaction: new Map(), stopping: false, settled: false, stop: null };
     this.active = active;
     const result = this.rpc.request("session/prompt", { sessionId: id, prompt: [{ type: "text", text: prompt }] }, this.options.runTimeoutMs)
       .then(value => {
         const response = object(value, "session/prompt result");
         const reason = string(response.stopReason, "ACP stop reason");
+        const usage = response.usage == null ? null : object(response.usage, "ACP prompt usage");
+        if (usage !== null && !active.settled) {
+          const turn = { input: count(usage.inputTokens), output: count(usage.outputTokens), cachedInput: count(usage.cachedReadTokens), cacheWrite: count(usage.cachedWriteTokens), reasoning: count(usage.thoughtTokens), total: count(usage.totalTokens) };
+          const defined = Object.fromEntries(Object.entries(turn).filter(([, amount]) => amount !== undefined));
+          if (Object.keys(defined).length) active.event({ type: "usage", usage: { turn: defined } });
+        }
         let status: BackendResult["status"];
         switch (reason) {
           case "end_turn": status = "completed"; break;
@@ -271,15 +332,32 @@ export class AcpControl implements HarnessControl {
       this.catalog = { ...this.catalog, commands: update.availableCommands.map(value => { const command = object(value, "native command"); return { name: string(command.name, "native command name", 256), description: typeof command.description === "string" ? text(command.description, "native command description").slice(0, 1024) : "" }; }) }; return;
     }
     if (kind === "current_mode_update") { const mode = string(update.currentModeId, "current native mode", 128); this.catalog = { ...this.catalog, options: this.catalog.options?.map(option => option.id === "__mode" ? { ...option, currentValue: mode } : option) ?? [] }; return; }
-    if (metadataUpdates.has(kind)) return;
     const active = this.active;
+    if (kind === "usage_update" || kind === "plan") {
+      if (!active || active.settled) return;
+      if (kind === "plan") {
+        if (!Array.isArray(update.entries) || update.entries.length > 256) throw new ControlError("INVALID_PROTOCOL", "invalid native plan");
+        active.event({ type: "plan", entries: update.entries.map(value => { const entry = object(value, "plan entry"); const status = entry.status === "in_progress" || entry.status === "completed" ? entry.status : "pending";
+          return { content: typeof entry.content === "string" ? entry.content : "", status, ...(entry.priority === "high" || entry.priority === "medium" || entry.priority === "low" ? { priority: entry.priority } : {}) }; }) });
+      } else {
+        const used = count(update.used), size = count(update.size), cost = update.cost == null ? null : object(update.cost, "native cost");
+        const usage: NativeUsage = { ...(used === undefined ? {} : { context: { used, ...(size ? { size } : {}) } }),
+          ...(cost !== null && typeof cost.amount === "number" && Number.isFinite(cost.amount) && cost.amount >= 0 && typeof cost.currency === "string" ? { cost: { amount: cost.amount, currency: cost.currency.slice(0, 16), scope: "session" as const } } : {}) };
+        if (Object.keys(usage).length) active.event({ type: "usage", usage });
+      }
+      return;
+    }
+    if (metadataUpdates.has(kind)) return;
     // Native agents can stream autonomous follow-ups (background task completions, late frames) between
     // prompts. They belong to no public Run, so they are counted and never attributed to another Turn.
     if (!active || active.settled) { this.unattributed++; return; }
     if (kind === "agent_message_chunk" || kind === "agent_thought_chunk" || kind === "user_message_chunk") {
       const content = object(update.content, "ACP message content");
       if (content.type !== "text") {
-        if (kind !== "user_message_chunk") active.event({ type: "diagnostic", message: "Harness returned " + string(content.type, "ACP content type", 64) + " content that this Hub version does not display yet" });
+        if (kind !== "agent_message_chunk") return;
+        const output = outputOf(content);
+        if (output) active.event({ type: "output", output });
+        else active.event({ type: "diagnostic", message: "Harness returned " + string(content.type, "ACP content type", 64) + " content that could not be kept" });
         return;
       }
       const value = text(content.text, "ACP text chunk");
@@ -296,12 +374,28 @@ export class AcpControl implements HarnessControl {
       const title = update.title == null ? prior?.title ?? "工具调用" : label(update.title, prior?.title ?? "工具调用");
       const status = update.status == null ? (prior?.status ?? "pending") : string(update.status, "tool status", 64);
       active.tools.set(toolId, { title, status });
-      active.event({ type: "tool", id: toolId, title, status }); return;
+      const detail = toolDetail(update);
+      active.event({ type: "tool", id: toolId, title, status, ...(detail ? { detail } : {}) }); return;
+    }
+    if (kind === "notice") {
+      const severity = update.severity === "warning" || update.severity === "error" ? update.severity : "info";
+      active.event({ type: "notice", severity, title: label(update.title, "提示", 1024), ...(typeof update.description === "string" && update.description ? { detail: update.description.slice(0, 4096) } : {}) }); return;
+    }
+    if (kind === "compaction_update" || kind === "compaction_summary_chunk") {
+      const id = string(update.compactionId, "compaction identity", 512);
+      if (kind === "compaction_summary_chunk") { const content = object(update.content, "compaction summary"); if (content.type === "text") active.compaction.set(id, ((active.compaction.get(id) ?? "") + text(content.text, "compaction summary")).slice(-4096)); return; }
+      const status = update.status === "completed" || update.status === "failed" || update.status === "cancelled" ? update.status : "running";
+      const summary = Array.isArray(update.summary) ? update.summary.flatMap(item => field(item, "type") === "text" && typeof field(item, "text") === "string" ? [field(item, "text") as string] : []).join("\n") : active.compaction.get(id);
+      active.event({ type: "activity", id, kind: "compaction", title: "上下文压缩", status, ...(typeof update.error === "string" ? { detail: update.error } : summary ? { detail: summary.slice(0, 4096) } : {}) }); return;
     }
     active.event({ type: "diagnostic", message: `Unsupported ACP session update: ${kind}` });
   }
   private serverRequest(request: RpcRequest): unknown {
-    if (request.method !== "session/request_permission") throw new ControlError("METHOD_NOT_FOUND", "client capability is not implemented");
+    if (request.method !== "session/request_permission") {
+      // Unadvertised client methods (OpenCode fs/write_text_file after an approved edit, Cursor extensions) get -32601; the Run keeps an audit line.
+      if (this.active && !this.active.settled) this.active.event({ type: "diagnostic", message: "Harness called unsupported client method " + label(request.method, "unknown", 128) });
+      throw new ControlError("METHOD_NOT_FOUND", "client capability is not implemented");
+    }
     const params = object(request.params, "ACP permission params"); this.scope(params);
     const active = this.active;
     // No public Run owns an autonomous follow-up, so nobody can approve it: cancel instead of tearing down the connection.

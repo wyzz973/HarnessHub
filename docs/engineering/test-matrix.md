@@ -350,3 +350,13 @@
 | G034-NC4 | G034 | protocol | app-server附着的子Agent/外部线程通知与审批、类型化codexErrorInfo失败 | 外部线程输出不归属；子线程审批交给用户；无关线程审批decline；失败按类型分类 | planned |
 | G028-NC3 | G028 | integration | 原生撤回待决问题；单回合工具数超过公开摘要预算 | permission.closed先提交、迟到回答拒绝；超出预算不失败、Runtime不进入致命状态 | planned |
 | G060-NC1 | G060 | e2e | 本机原安装跨Hub owner重启的原生恢复与只读目录审计 | 真实原程序回复来自恢复的原生上下文、sourceRunIds为空、回放不混入、原模型配置不变；目录审计不发提示词并确认清理 | planned |
+| G008-NC2 | G008 | integration | 原生产物与工具详情的内容寻址存储：按字节判型、保留期回收、半写文件、外来标记、异常文件与失效owner | 相同字节只存一份；伪装图片与SVG只作文件；只回收无引用且过期的记录；外来或不一致存储与失效owner明确失败 | planned |
+| G008-NC3 | G008 | integration | v6事务升级到v7；运行中的内容引用集合 | 原会话、原生绑定与Run保留；未知版本明确拒绝；被引用内容不被回收 | planned |
+| G028-NC4 | G028 | integration | 原生工具详情、计划、用量、提示、活动与非文本产物进入公开Run；超大预览；同会话重复启动提示 | 摘要先提交，详情在终态或结算前存储且日志只含引用；存储失败可见；重复提示只进日志不重复显示 | planned |
+| G032-NC6 | G032 | protocol | ACP工具详情（rawInput/rawOutput/diff/locations）、计划、usage_update与回合用量、通知、压缩、非文本块；未宣告的客户端方法 | 按真实字段有界映射；未宣告方法回-32601并留审计行，不改变回合结果 | planned |
+| G032-NC7 | G032 | protocol | Pi工具参数、流式与最终结果、patch差异、逐消息用量与上下文窗口、压缩与自动重试、扩展通知与错误 | 工具详情与差异可读；用量按回合累计；活动与提示不打断回合 | planned |
+| G034-NC5 | G034 | protocol | Codex item细节（命令、补丁、MCP、搜索、图片、子Agent）、增量输出节流、turn/plan/updated、tokenUsage基线、警告与改路由 | 命令输出与退出码、补丁差异与计划按协议字段映射；历史累计用量不计入本轮；提示与活动不改变回合结果 | planned |
+| G050-NC1 | G050 | integration | 内容读取路由GET/HEAD、下载与内联类型白名单、CSP与nosniff；SSE run帧 | 只读访问、未知内容404、不可内联类型强制下载；run帧只携带活动Run的已提交原生活动 | planned |
+| G054-NC1 | G054 | e2e | 统一聊天显示原生计划、提示、工具详情（差异着色）与本轮用量 | 只显示已提交事实；工具详情按需读取；刷新后与服务端一致 | planned |
+| G061-NC1 | G061 | unit | 客户端校验SSE run帧 | 只替换活动Run的原生活动，缺失事实时要求完整快照 | planned |
+| G060-NC2 | G060 | e2e | 本机原安装真实工具回合：命令与编辑；工作区级审批配置；计划工具 | 文件真实被修改；工具摘要与详情已存储可读；审批只允许一次；原全局配置不变；未出现的能力如实记录而非通过 | planned |

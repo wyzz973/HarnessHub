@@ -530,6 +530,7 @@
 - tests/property/g004.test.ts
 - src/contexts/session/domain/state.ts
 - tests/unit/session-state.test.ts
+- src/contracts/content.ts
 
 验收：
 - 语义区分且输入有界
@@ -616,6 +617,8 @@
 - src/infrastructure/session/sqlite-store.ts
 - tests/integration/session-store.test.ts
 - tests/fixtures/session-store-peer.mjs
+- src/infrastructure/session/content-store.ts
+- tests/integration/content-store.test.ts
 
 验收：
 - 状态与迁移记录原子一致
@@ -623,7 +626,7 @@
 - 只有一个取得业务写入权
 - 恢复数据与outbox一致
 
-场景：G008-C01, G008-C02, G008-C03, G008-C04, G008-C05, G008-P01, G008-P02, G008-R01, G008-N01, G008-X02, G008-NC1。
+场景：G008-C01, G008-C02, G008-C03, G008-C04, G008-C05, G008-P01, G008-P02, G008-R01, G008-N01, G008-X02, G008-NC1, G008-NC2, G008-NC3。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1080,7 +1083,7 @@
 - 未知结果不自动重跑
 - 有界排队且期限继续计时
 
-场景：G028-C01, G028-C02, G028-C03, G028-C04, G028-R01, G028-R02, G028-NC2, G028-NC3。
+场景：G028-C01, G028-C02, G028-C03, G028-C04, G028-R01, G028-R02, G028-NC2, G028-NC3, G028-NC4。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1174,6 +1177,7 @@
 - src/adapters/control/openclaw.ts
 - src/infrastructure/control/native-command.ts
 - src/adapters/control/cursor.ts
+- src/infrastructure/control/unified-diff.ts
 
 验收：
 - 各事实关联正确Attempt与generation
@@ -1181,7 +1185,7 @@
 - 明确拒绝，不空会话fallback
 - 不把结果称官方认证
 
-场景：G032-C01, G032-C02, G032-C03, G032-C04, G032-L01, G032-N01, G032-N02, G032-X03, G032-NC4, G032-NC5。
+场景：G032-C01, G032-C02, G032-C03, G032-C04, G032-L01, G032-N01, G032-N02, G032-X03, G032-NC4, G032-NC5, G032-NC6, G032-NC7。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1224,7 +1228,7 @@
 - 明确失败或能力不支持
 - 验证原生Adapter执行/中断/审批/绑定清理；完整正式入口验收由G060承担
 
-场景：G034-C01, G034-C02, G034-C03, G034-C04, G034-NC3, G034-NC4。
+场景：G034-C01, G034-C02, G034-C03, G034-C04, G034-NC3, G034-NC4, G034-NC5。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1558,7 +1562,7 @@
 - 统一problem错误且无副作用
 - 遗漏/重复/过期内容能被拒绝
 
-场景：G050-C01, G050-C02, G050-C03, G050-P01, G050-P02, G050-R01。
+场景：G050-C01, G050-C02, G050-C03, G050-P01, G050-P02, G050-R01, G050-NC1。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1672,13 +1676,14 @@
 - web/src/assets/minion-code.svg
 - web/src/assets/sigit.svg
 - web/src/assets/vtcode.svg
+- web/src/components/NativeActivity.tsx
 
 验收：
 - 公共Session身份与历史保留
 - 不提前展示新Harness已生效
 - 可操作且不持有独立业务状态
 
-场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01。
+场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01, G054-NC1。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1828,6 +1833,7 @@
 - tests/real/homebrew-native.real.ts
 - tests/real/native-resume.real.ts
 - tests/real/native-catalog.real.ts
+- tests/real/native-activity.real.ts
 
 验收：
 - 记录通过/失败/未覆盖，不能称全协议认证
@@ -1836,7 +1842,7 @@
 - 真实HTTP/Store/IPC/原生进程与产物/清理完整可核对
 - 真实HTTP/Store/IPC/原生进程与产物/清理完整可核对
 
-场景：G060-C01, G060-C02, G060-C03, G060-C04, G060-C05, G060-P01, G060-P02, G060-M01, G060-S01, G060-N04, G060-NC1。
+场景：G060-C01, G060-C02, G060-C03, G060-C04, G060-C05, G060-P01, G060-P02, G060-M01, G060-S01, G060-N04, G060-NC1, G060-NC2。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1862,7 +1868,7 @@
 - 明确拒绝或幂等，不绕过排空规则
 - 旧执行保留版本，新准入遵循新状态
 
-场景：G061-C01, G061-C02, G061-C03, G061-M01, G061-M02, G061-M03, G061-S01, G061-S02, G061-S03, G061-L01, G061-N01, G061-N02, G061-X01。
+场景：G061-C01, G061-C02, G061-C03, G061-M01, G061-M02, G061-M03, G061-S01, G061-S02, G061-S03, G061-L01, G061-N01, G061-N02, G061-X01, G061-NC1。
 
 禁止范围：不修改其他任务所有权文件；契约冻结不表示应用实现或真实链路验收。
 

@@ -1,5 +1,5 @@
 import { isAbsolute } from "node:path";
-import { nativeConversationId, type BackendResult, type CleanupEvidence, type ControlEvent, type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl, type NativeConversationId, type NativeOptions, type NativeOption, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
+import { nativeConversationId, type BackendResult, type CleanupEvidence, type ControlEvent, type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl, type NativeConversationId, type NativeOptions, type NativeOption, type NativeModelCatalog, type NativeToolDetail, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
 import { classifyRemoteFailure, ControlError, errorFrom, JsonRpcProcess, object, string, type RpcWireCodec } from "../../infrastructure/control/json-rpc-process.js";
 
 function piCodec(): RpcWireCodec {
@@ -33,7 +33,25 @@ interface Prompt {
   settled: boolean;
   final: BackendResult | null;
   stop: Promise<StopRequestReceipt> | null;
+  /** Tool calls of this prompt; streamed partial results are published at most every 300 ms. */
+  readonly tools: Map<string, { title: string; detail: NativeToolDetail; timer: ReturnType<typeof setTimeout> | null }>;
+  /** Accumulated assistant-message usage of this prompt (Pi reports usage per model call). */
+  readonly usage: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number; total: number; cost: number; costed: boolean };
 }
+const PI_TOOL_KINDS: Readonly<Record<string, string>> = { bash: "execute", powershell: "execute", read: "read", edit: "edit", write: "edit", grep: "search", find: "search", ls: "search" };
+function textParts(value: unknown): string {
+  const content = value !== null && typeof value === "object" ? (value as Record<string, unknown>).content : undefined;
+  return Array.isArray(content) ? content.flatMap(part => part !== null && typeof part === "object" && (part as Record<string, unknown>).type === "text" && typeof (part as Record<string, unknown>).text === "string" ? [(part as Record<string, unknown>).text as string] : part !== null && typeof part === "object" && (part as Record<string, unknown>).type === "image" ? ["[image]"] : []).join("\n") : "";
+}
+/** Public title and native input for a Pi tool call (bash command, file path, or JSON arguments). */
+function piTool(name: string, args: unknown): { title: string; detail: NativeToolDetail } {
+  const row = args !== null && typeof args === "object" && !Array.isArray(args) ? args as Record<string, unknown> : {};
+  const command = typeof row.command === "string" ? row.command : undefined, path = typeof row.path === "string" ? row.path : undefined;
+  let input: string | undefined; try { input = command ?? (Object.keys(row).length ? JSON.stringify(row, null, 2) : undefined); } catch { input = undefined; }
+  const summary = (command ?? path ?? "").replace(/[\0-\x1f\x7f]+/gu, " ").trim().slice(0, 4000);
+  return { title: summary ? name + ": " + summary : name, detail: { kind: PI_TOOL_KINDS[name] ?? "tool", name, ...(input ? { input } : {}), ...(path ? { locations: [path] } : {}) } };
+}
+const PI_STREAM_MS = 300;
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 /** Pi's native Model contract (reasoning + thinkingLevelMap); the chosen level is confirmed by native state at open. */
 function supportedLevels(value: Record<string, unknown>): string[] {
@@ -61,6 +79,7 @@ export class PiControl implements HarnessControl {
   private interactivePermissions = false;
   private readonly permissions = new Map<string, { method:string;choices:readonly string[]; resolve: (value: Readonly<Record<string, unknown>>) => void; timer: ReturnType<typeof setTimeout> | null }>();
   private entries: ReturnType<typeof model>[] = [];
+  private readonly contextWindows = new Map<string, number>();
   private state: Record<string, unknown> = {};
   constructor(private readonly launch: ControlLaunch, private readonly options: ControlOptions) {
     if (launch.protocol !== "pi-rpc") throw new ControlError("INVALID_INPUT", "Pi control requires Pi RPC");
@@ -82,6 +101,7 @@ export class PiControl implements HarnessControl {
     const available = object(await this.rpc.request("get_available_models", {}), "Pi models");
     if (!Array.isArray(available.models) || available.models.length > 4096) throw new ControlError("INVALID_PROTOCOL", "Pi models exceed the catalog budget");
     this.entries = available.models.map(model);
+    for (const [index, entry] of this.entries.entries()) { const window = object((available.models as unknown[])[index], "Pi model").contextWindow; if (typeof window === "number" && Number.isSafeInteger(window) && window > 0) this.contextWindows.set(entry.id, window); }
     if (new Set(this.entries.map(row => row.id)).size !== this.entries.length) throw new ControlError("INVALID_PROTOCOL", "duplicate Pi model identity");
     const current = this.state.model == null ? null : model(this.state.model);
     const ready = current !== null && this.entries.some(row => row.id === current.id);
@@ -156,7 +176,7 @@ export class PiControl implements HarnessControl {
     if (typeof message !== "string" || !message.trim()) throw new ControlError("INVALID_INPUT", "prompt must contain text");
     const result = new Promise<BackendResult>((resolve, reject) => {
       const timer = setTimeout(() => this.rpc.abort(new ControlError("RUN_TIMEOUT", "Pi run exceeded its deadline")), this.options.runTimeoutMs);
-      this.active = { event, resolve, reject, timer, acknowledged: false, started: false, settled: false, final: null, stop: null };
+      this.active = { event, resolve, reject, timer, acknowledged: false, started: false, settled: false, final: null, stop: null, tools: new Map(), usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 0, cost: 0, costed: false } };
     });
     const prompt = this.active!;
     void this.rpc.request("prompt", { message }).then(() => { prompt.acknowledged = true; this.settle(prompt); if (!prompt.started && !prompt.settled) void this.probeHandled(prompt); }, error => {
@@ -188,6 +208,10 @@ export class PiControl implements HarnessControl {
         this.active.event({ type: "permission_requested", id, title: typeof event.title === "string" ? event.title.slice(0,4096) : "Pi 扩展请求交互", ...(typeof event.message==="string"?{detail:event.message.slice(0,4096)}:{}),...(freeform?{input:{kind:method==="editor"?"editor":"text",value}}:{}), options });
         void pending.then(value => this.rpc.notify("extension_ui_response", { id, ...value })).catch(error => this.rpc.abort(errorFrom(error))); return;
       }
+      if (method === "notify") {
+        if (this.active && typeof event.message === "string") this.active.event({ type: "notice", severity: event.notifyType === "error" ? "error" : event.notifyType === "warning" ? "warning" : "info", title: event.message.slice(0, 1024) });
+        return;
+      }
       if (["confirm", "select", "input", "editor"].includes(method)) {
         this.active?.event({ type: "permission", id, decision: "denied" });
         void this.rpc.notify("extension_ui_response", { id, ...(method === "confirm" ? { confirmed: false } : { cancelled: true }) }).catch(error => this.rpc.abort(errorFrom(error)));
@@ -200,8 +224,40 @@ export class PiControl implements HarnessControl {
       const delta = object(event.assistantMessageEvent, "Pi message event");
       if (delta.type === "thinking_delta" && typeof delta.delta === "string") prompt.event({ type: "thinking", text: delta.delta });
       if (delta.type === "text_delta") { if (typeof delta.delta !== "string") throw new ControlError("INVALID_PROTOCOL", "Pi text delta must be text"); prompt.event({ type: "text", text: delta.delta }); }
-    } else if (type === "tool_execution_start" || type === "tool_execution_end") {
-      prompt.event({ type: "tool", id: string(event.toolCallId, "Pi tool identity"), title: string(event.toolName, "Pi tool name"), status: type === "tool_execution_start" ? "in_progress" : event.isError === true ? "failed" : "completed" });
+    } else if (type === "tool_execution_start" || type === "tool_execution_update" || type === "tool_execution_end") {
+      const id = string(event.toolCallId, "Pi tool identity"), name = string(event.toolName, "Pi tool name");
+      const entry = prompt.tools.get(id) ?? { ...piTool(name, event.args), timer: null };
+      prompt.tools.set(id, entry);
+      if (type === "tool_execution_update") {
+        const output = textParts(event.partialResult); if (output) entry.detail = { ...entry.detail, output };
+        entry.timer ??= setTimeout(() => { entry.timer = null; if (this.active === prompt && !prompt.settled) prompt.event({ type: "tool", id, title: entry.title, status: "in_progress", detail: entry.detail }); }, PI_STREAM_MS);
+        return;
+      }
+      if (entry.timer) { clearTimeout(entry.timer); entry.timer = null; }
+      if (type === "tool_execution_end") {
+        const result = event.result !== null && typeof event.result === "object" ? event.result as Record<string, unknown> : {}, details = result.details !== null && typeof result.details === "object" ? result.details as Record<string, unknown> : {};
+        const output = textParts(result), diff = typeof details.patch === "string" ? details.patch : typeof details.diff === "string" ? details.diff : undefined;
+        entry.detail = { ...entry.detail, ...(output ? { output } : {}), ...(diff ? { diff } : {}) };
+      }
+      prompt.event({ type: "tool", id, title: entry.title, status: type === "tool_execution_start" ? "in_progress" : event.isError === true ? "failed" : "completed", detail: entry.detail });
+    } else if (type === "message_end") {
+      const message = event.message !== null && typeof event.message === "object" ? event.message as Record<string, unknown> : {}, usage = message.usage !== null && typeof message.usage === "object" ? message.usage as Record<string, unknown> : null;
+      if (message.role !== "assistant" || usage === null) return;
+      const amount = (key: string) => typeof usage[key] === "number" && Number.isFinite(usage[key]) && (usage[key] as number) >= 0 ? usage[key] as number : 0;
+      const sum = prompt.usage, cost = usage.cost !== null && typeof usage.cost === "object" ? (usage.cost as Record<string, unknown>).total : undefined;
+      sum.input += amount("input"); sum.output += amount("output"); sum.cacheRead += amount("cacheRead"); sum.cacheWrite += amount("cacheWrite"); sum.reasoning += amount("reasoning"); sum.total += amount("totalTokens");
+      if (typeof cost === "number" && Number.isFinite(cost) && cost >= 0) { sum.cost += cost; sum.costed = true; }
+      const size = this.contextWindows.get(this.catalog.defaultModel ?? "");
+      prompt.event({ type: "usage", usage: { turn: { input: Math.round(sum.input), output: Math.round(sum.output), cachedInput: Math.round(sum.cacheRead), cacheWrite: Math.round(sum.cacheWrite), reasoning: Math.round(sum.reasoning), total: Math.round(sum.total) },
+        context: { used: Math.round(amount("totalTokens")), ...(size ? { size } : {}) }, ...(sum.costed ? { cost: { amount: sum.cost, currency: "USD", scope: "turn" as const } } : {}) } });
+    } else if (type === "compaction_start" || type === "compaction_end") {
+      const detail = type === "compaction_end" && typeof event.errorMessage === "string" ? event.errorMessage : typeof event.reason === "string" ? event.reason : undefined;
+      prompt.event({ type: "activity", id: "compaction", kind: "compaction", title: "上下文压缩", status: type === "compaction_start" ? "running" : event.aborted === true ? "cancelled" : event.errorMessage ? "failed" : "completed", ...(detail ? { detail } : {}) });
+    } else if (type === "auto_retry_start" || type === "auto_retry_end") {
+      prompt.event({ type: "activity", id: "retry", kind: "retry", title: "模型请求重试", status: type === "auto_retry_start" ? "running" : event.success === true ? "completed" : "failed",
+        ...(typeof event.errorMessage === "string" ? { detail: event.errorMessage.slice(0, 1024) } : typeof event.finalError === "string" ? { detail: event.finalError.slice(0, 1024) } : {}) });
+    } else if (type === "extension_error") {
+      prompt.event({ type: "notice", severity: "error", title: "Pi 扩展出错", ...(typeof event.error === "string" ? { detail: event.error.slice(0, 4096) } : {}) });
     } else if (type === "agent_end") {
       if (!Array.isArray(event.messages) || event.messages.length > 4096) throw new ControlError("INVALID_PROTOCOL", "invalid Pi terminal messages");
       const assistant = event.messages.map(value => object(value, "Pi terminal message")).findLast(row => row.role === "assistant");
@@ -230,10 +286,11 @@ export class PiControl implements HarnessControl {
   }
   private settle(prompt: Prompt): void {
     if (this.active !== prompt || !prompt.acknowledged || !prompt.settled) return;
+    for (const entry of prompt.tools.values()) if (entry.timer) { clearTimeout(entry.timer); entry.timer = null; }
     if (!prompt.final) { this.rpc.abort(new ControlError("INVALID_PROTOCOL", "Pi settled without a backend result")); return; }
     clearTimeout(prompt.timer); this.active = null; prompt.resolve(prompt.final);
   }
-  private rejectActive(error: Error): void { const prompt = this.active; if (prompt) { clearTimeout(prompt.timer); this.active = null; prompt.reject(error); } }
+  private rejectActive(error: Error): void { const prompt = this.active; if (prompt) { clearTimeout(prompt.timer); for (const entry of prompt.tools.values()) if (entry.timer) clearTimeout(entry.timer); this.active = null; prompt.reject(error); } }
   enablePermissions(): void { this.interactivePermissions = true; }
   async decidePermission(id: string, option: string, input?: string): Promise<void> {
     const pending=this.permissions.get(id);if(!pending)throw new ControlError("PERMISSION_UNAVAILABLE","native UI request unavailable");

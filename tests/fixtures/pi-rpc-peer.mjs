@@ -8,7 +8,7 @@ function response(m,data){emit({type:'response',id:m.id,command:m.type,success:t
 function started(){streaming=true;emit({type:'agent_start'});}
 function ended(reason='stop'){emit({type:'agent_end',messages:[{role:'assistant',stopReason:reason}]});}
 function settled(){streaming=false;emit({type:'agent_settled'});}
-const models=[{provider:'native',id:'one',name:'One',reasoning:false},{provider:'native',id:'two',name:'Two',reasoning:true,thinkingLevelMap:{max:'max',minimal:null}}];
+const models=[{provider:'native',id:'one',name:'One',reasoning:false,contextWindow:64000},{provider:'native',id:'two',name:'Two',reasoning:true,thinkingLevelMap:{max:'max',minimal:null}}];
 createInterface({input:process.stdin}).on('line',line=>{
  const m=JSON.parse(line);if(process.env.FIXTURE_TRACE)appendFileSync(process.env.FIXTURE_TRACE,JSON.stringify(m)+'\n');
  if(m.type==='get_commands'){response(m,{commands:[]});}
@@ -21,6 +21,19 @@ createInterface({input:process.stdin}).on('line',line=>{
   if(scenario==='handled')return;
   if(scenario==='late-run'){setTimeout(()=>{started();emit({type:'message_update',assistantMessageEvent:{type:'text_delta',delta:'late native run'}});ended();settled();},50);return;}
   started();
+  if(scenario==='native-activity'){
+   emit({type:'tool_execution_start',toolCallId:'bash-1',toolName:'bash',args:{command:'ls\n-la'}});
+   emit({type:'tool_execution_update',toolCallId:'bash-1',toolName:'bash',args:{command:'ls\n-la'},partialResult:{content:[{type:'text',text:'partial'}]}});
+   emit({type:'tool_execution_end',toolCallId:'bash-1',toolName:'bash',result:{content:[{type:'text',text:'a.txt'}],details:{}},isError:false});
+   emit({type:'tool_execution_start',toolCallId:'edit-1',toolName:'edit',args:{path:'/w/a.txt',edits:[{oldText:'x',newText:'y'}]}});
+   emit({type:'tool_execution_end',toolCallId:'edit-1',toolName:'edit',result:{content:[{type:'text',text:'Edited'}],details:{patch:'--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-x\n+y\n'}},isError:false});
+   emit({type:'message_end',message:{role:'assistant',usage:{input:100,output:20,cacheRead:5,cacheWrite:0,totalTokens:125,cost:{total:0.001}}}});
+   emit({type:'message_end',message:{role:'assistant',usage:{input:130,output:30,cacheRead:5,cacheWrite:0,reasoning:4,totalTokens:165,cost:{total:0.002}}}});
+   emit({type:'compaction_start',reason:'threshold'});emit({type:'compaction_end',reason:'threshold',aborted:false,willRetry:false});
+   emit({type:'extension_ui_request',id:'notify-1',method:'notify',message:'Extension says hi',notifyType:'warning'});
+   emit({type:'extension_error',extensionPath:'/x',event:'command',error:'boom'});
+   emit({type:'message_update',assistantMessageEvent:{type:'text_delta',delta:'done'}});ended();settled();return;
+  }
   if(scenario==='ui-timeout'){emit({type:'extension_ui_request',id:'native-ui',method:'select',title:'Timed request',options:['One','Two'],timeout:40});setTimeout(()=>{emit({type:'message_update',assistantMessageEvent:{type:'text_delta',delta:'default used'}});ended();settled();},120);return;}
   if(scenario.startsWith('ui-')){const method=scenario.slice(3);emit({type:'extension_ui_request',id:'native-ui',method,title:'Native UI request',...(method==='select'?{options:['One','Two']}:method==='editor'?{prefill:'native draft'}:{placeholder:'native input'})});return;}
   emit({type:'message_update',assistantMessageEvent:{type:'text_delta',delta:'Pi native answer'}});

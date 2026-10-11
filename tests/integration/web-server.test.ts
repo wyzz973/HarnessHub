@@ -10,6 +10,7 @@ import { prepareConfiguration } from "../../src/infrastructure/session/binding-f
 import { startWebServer, type WebServer } from "../../src/web/server.js";
 import type { SessionView } from "../../src/contracts/web.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { LocalContentStore } from "../../src/infrastructure/session/content-store.js";
 import { commandId, switchId, sessionId } from "../../src/contracts/session.js";
 
 const peer = fileURLToPath(new URL("../../../tests/fixtures/session-peer.mjs", import.meta.url));
@@ -275,4 +276,28 @@ test("authenticated recovery restores a legacy blocked conversation without rewr
   await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "second", commandId: "second" });
   await waitFor(f, id, value => value.runs[1]?.status === "completed");
   const incompatible = await call(f, `/api/v1/sessions/${id}/resume`, "POST", { selection: { harnessId: "web-a" }, commandId: "already-open" }); assert.equal(incompatible.status, 409);
+});
+
+test("stored native content is served only to the authenticated page and never renders active documents", async t => {
+  const f = await fixture(t);
+  assert.equal((await fetch(f.origin + "/api/v1/content/content-unknown")).status, 401);
+  await auth(f);
+  const content = new LocalContentStore(f.data, () => {});
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7]);
+  const image = await content.storeOutput({ workspace: f.workspace, name: "图表.png", mediaType: "image/png", data: png });
+  const page = await content.storeOutput({ workspace: f.workspace, name: "page.html", mediaType: "text/html", data: Buffer.from("<script>alert(1)</script>") });
+  const shown = await fetch(f.origin + "/api/v1/content/" + image.id, { headers: { Cookie: f.cookie } });
+  assert.equal(shown.status, 200); assert.equal(shown.headers.get("content-type"), "image/png");
+  assert.equal(shown.headers.get("content-disposition"), "inline; filename*=UTF-8''" + encodeURIComponent("图表.png"));
+  assert.equal(shown.headers.get("x-content-type-options"), "nosniff"); assert.match(shown.headers.get("content-security-policy") ?? "", /sandbox/u);
+  assert.deepEqual(Buffer.from(await shown.arrayBuffer()), png);
+  const html = await fetch(f.origin + "/api/v1/content/" + page.id, { headers: { Cookie: f.cookie } });
+  assert.equal(html.headers.get("content-type"), "application/octet-stream"); assert.match(html.headers.get("content-disposition") ?? "", /^attachment;/u); await html.arrayBuffer();
+  const download = await fetch(f.origin + "/api/v1/content/" + image.id + "?download=1", { headers: { Cookie: f.cookie } });
+  assert.match(download.headers.get("content-disposition") ?? "", /^attachment;/u); await download.arrayBuffer();
+  const head = await fetch(f.origin + "/api/v1/content/" + image.id, { method: "HEAD", headers: { Cookie: f.cookie } });
+  assert.equal(head.status, 200); assert.equal(head.headers.get("content-length"), String(png.length));
+  assert.equal((await call(f, "/api/v1/content/content-missing")).status, 404);
+  assert.equal((await call(f, "/api/v1/content/not-content")).status, 404);
+  assert.equal((await call(f, "/api/v1/content/" + image.id + "?download=yes")).status, 400);
 });

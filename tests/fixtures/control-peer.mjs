@@ -1,6 +1,8 @@
 import { createInterface } from "node:readline";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const protocol = process.argv[2], scenario = process.argv[3] ?? "basic";
 if (process.env.FIXTURE_PID) writeFileSync(process.env.FIXTURE_PID, String(process.pid));
@@ -167,8 +169,45 @@ lines.on("line", line => {
       emit({ id: "unrelated-approval", method: "item/commandExecution/requestApproval", params: { threadId: "thread-unrelated", turnId: "unrelated-turn", itemId: "unrelated-tool", command: "rm -rf /tmp/x" } });
       codexOutput(); setTimeout(() => finish(), 30); return;
     }
+    if (protocol === "codex-app-server" && scenario === "native-activity") {
+      const base = { threadId: "thread-fixture", turnId: `turn-${turn}` };
+      notification("thread/tokenUsage/updated", { threadId: "thread-fixture", turnId: "older-turn", tokenUsage: { total: { totalTokens: 1000, inputTokens: 800, cachedInputTokens: 100, outputTokens: 200, reasoningOutputTokens: 0 }, last: { totalTokens: 1000, inputTokens: 800, cachedInputTokens: 100, outputTokens: 200, reasoningOutputTokens: 0 }, modelContextWindow: 100000 } });
+      notification("item/started", { ...base, item: { type: "commandExecution", id: "cmd-1", command: "printf 'a'\nprintf 'b'", cwd: "/w", status: "inProgress" } });
+      notification("item/commandExecution/outputDelta", { ...base, itemId: "cmd-1", delta: "a" });
+      notification("item/commandExecution/outputDelta", { ...base, itemId: "cmd-1", delta: "b" });
+      notification("item/completed", { ...base, item: { type: "commandExecution", id: "cmd-1", command: "printf 'a'\nprintf 'b'", cwd: "/w", status: "completed", aggregatedOutput: "ab", exitCode: 0 } });
+      notification("item/completed", { ...base, item: { type: "fileChange", id: "patch-1", status: "completed", changes: [{ path: "/w/a.txt", kind: { type: "update" }, diff: "@@ -1 +1 @@\n-old\n+new\n" }] } });
+      notification("item/completed", { ...base, item: { type: "mcpToolCall", id: "mcp-1", server: "docs", tool: "search", arguments: { q: "acp" }, status: "completed", result: { content: [{ type: "text", text: "found" }] } } });
+      notification("item/started", { ...base, item: { type: "contextCompaction", id: "compact-1" } });
+      notification("item/completed", { ...base, item: { type: "subAgentActivity", id: "agent-item", agentPath: "researcher", agentThreadId: "thread-child", kind: "completed" } });
+      notification("turn/plan/updated", { ...base, explanation: "two steps", plan: [{ step: "Inspect", status: "completed" }, { step: "Patch", status: "inProgress" }] });
+      notification("error", { ...base, error: { message: "stream disconnected", codexErrorInfo: { responseStreamDisconnected: {} } }, willRetry: true });
+      notification("model/rerouted", { ...base, fromModel: "gpt-a", toModel: "gpt-b", reason: "highRiskCyberActivity" });
+      notification("thread/tokenUsage/updated", { ...base, tokenUsage: { total: { totalTokens: 1600, inputTokens: 1200, cachedInputTokens: 300, outputTokens: 400, reasoningOutputTokens: 50 }, last: { totalTokens: 600, inputTokens: 400, cachedInputTokens: 200, outputTokens: 200, reasoningOutputTokens: 50 }, modelContextWindow: 100000 } });
+      // The saved image is read after item/completed; turn/completed follows immediately and must not drop it.
+      const image = join(tmpdir(), `codex-fixture-${process.pid}.png`); writeFileSync(image, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3])); process.on("exit", () => rmSync(image, { force: true }));
+      notification("item/completed", { ...base, item: { type: "imageGeneration", id: "img-1", status: "completed", revisedPrompt: "a chart", savedPath: image } });
+      notification("item/started", { ...base, item: { type: "commandExecution", id: "cmd-2", command: "tail log", cwd: "/w", status: "inProgress" } });
+      notification("item/commandExecution/outputDelta", { ...base, itemId: "cmd-2", delta: "line1" });
+      codexOutput(); finish(); return;
+    }
     if (protocol === "codex-app-server" && scenario === "typed-failure") {
       notification("turn/completed", { threadId: "thread-fixture", turn: { id: `turn-${turn}`, status: "failed", error: { message: "provider said something unhelpful", codexErrorInfo: "usageLimitExceeded" } } }); return;
+    }
+    if (protocol === "acp-v1" && scenario === "native-activity") {
+      const sessionId = "session-fixture", update = value => notification("session/update", { sessionId, update: value });
+      update({ sessionUpdate: "plan", entries: [{ content: "Read", status: "completed", priority: "high" }, { content: "Edit", status: "in_progress", priority: "medium" }] });
+      update({ sessionUpdate: "tool_call", toolCallId: "shell-1", title: "ls -la", kind: "execute", status: "pending", rawInput: { command: "ls -la" } });
+      update({ sessionUpdate: "tool_call", toolCallId: "edit-1", title: "Edit a.txt", kind: "edit", status: "pending", name: "Edit", rawInput: { file_path: "/w/a.txt" }, _meta: { claudeCode: { toolName: "Edit", parentToolUseId: "parent-task" } } });
+      update({ sessionUpdate: "tool_call_update", toolCallId: "edit-1", status: "completed", content: [{ type: "content", content: { type: "text", text: "edited" } }, { type: "diff", path: "a.txt", oldText: "one\ntwo", newText: "one\nTWO" }], locations: [{ path: "/w/a.txt", line: 2 }] });
+      update({ sessionUpdate: "usage_update", used: 1200, size: 200000, cost: { amount: 0.25, currency: "USD" } });
+      update({ sessionUpdate: "notice", severity: "warning", title: "Model fallback", description: "switched model" });
+      update({ sessionUpdate: "compaction_update", compactionId: "compact-1", status: "in_progress" });
+      update({ sessionUpdate: "compaction_summary_chunk", compactionId: "compact-1", content: { type: "text", text: "summary text" } });
+      update({ sessionUpdate: "compaction_update", compactionId: "compact-1", status: "completed" });
+      update({ sessionUpdate: "agent_message_chunk", content: { type: "image", data: Buffer.from("png!").toString("base64"), mimeType: "image/png" } });
+      update({ sessionUpdate: "agent_message_chunk", content: { type: "resource_link", uri: "https://example.invalid/report", name: "report", title: "Report" } });
+      acpOutput(); answer(promptId, { stopReason: "end_turn", usage: { inputTokens: 900, outputTokens: 300, cachedReadTokens: 50, totalTokens: 1250 } }); return;
     }
     if (protocol === "acp-v1" && scenario === "tool-merge") {
       const sessionId = "session-fixture";

@@ -133,3 +133,18 @@ test("Pi thinking levels come from the native RPC and native Model fields, never
     assert.deepEqual(level("native/two"), ["off", "low", "medium", "high", "max"]);
   } finally { await driver.close(); }
 });
+test("Pi maps tool arguments, streamed and final results, per-call usage, compaction and extension notices", async () => {
+  const driver = control("native-activity", undefined, 2000);
+  try {
+    await driver.initialize(); const events: import("../../src/contracts/control.js").ControlEvent[] = [];
+    assert.equal((await (await driver.startText(await driver.open(process.cwd()), "work", event => events.push(event))).result).status, "completed");
+    const final = (id: string) => events.flatMap(event => event.type === "tool" && event.id === id ? [event] : []).at(-1);
+    assert.equal(final("bash-1")?.title, "bash: ls -la"); assert.deepEqual(final("bash-1")?.detail, { kind: "execute", name: "bash", input: "ls\n-la", output: "a.txt" });
+    assert.equal(final("edit-1")?.title, "edit: /w/a.txt"); assert.equal(final("edit-1")?.detail?.diff, "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-x\n+y\n"); assert.deepEqual(final("edit-1")?.detail?.locations, ["/w/a.txt"]);
+    const usage = events.flatMap(event => event.type === "usage" ? [event.usage] : []).at(-1);
+    assert.deepEqual(usage?.turn, { input: 230, output: 50, cachedInput: 10, cacheWrite: 0, reasoning: 4, total: 290 }); assert.deepEqual(usage?.context, { used: 165, size: 64000 });
+    assert.equal(usage?.cost?.scope, "turn"); assert.ok(Math.abs((usage?.cost?.amount ?? 0) - 0.003) < 1e-9);
+    assert.deepEqual(events.filter(event => event.type === "activity").map(event => event.type === "activity" ? event.status : null), ["running", "completed"]);
+    assert.deepEqual(events.filter(event => event.type === "notice").map(event => event.type === "notice" ? [event.severity, event.title] : null), [["warning", "Extension says hi"], ["error", "Pi 扩展出错"]]);
+  } finally { await driver.close(); }
+});

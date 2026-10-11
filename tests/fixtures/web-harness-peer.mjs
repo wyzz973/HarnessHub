@@ -27,6 +27,18 @@ createInterface({ input: process.stdin }).on("line", line => {
     const model = nativeModel ?? (config ? JSON.parse(config.match(/^model = (.+)$/mu)[1]) : "native-a");
     active = { id: "browser-turn-" + ++counter };
     notify("turn/started", { threadId: native, turn: { id: active.id, status: "inProgress" } }); reply(value.id, { turn: { id: active.id, status: "inProgress" } });
+    if (text.startsWith("NATIVE_ACTIVITY")) {
+      const base = { threadId: native, turnId: active.id };
+      notify("turn/plan/updated", { ...base, explanation: "浏览器验收计划", plan: [{ step: "读取工作区", status: "completed" }, { step: "修改文件", status: "inProgress" }] });
+      notify("item/started", { ...base, item: { type: "commandExecution", id: "browser-cmd", command: "ls -la", cwd: process.cwd(), status: "inProgress" } });
+      notify("item/commandExecution/outputDelta", { ...base, itemId: "browser-cmd", delta: "total 0\n" });
+      notify("item/completed", { ...base, item: { type: "commandExecution", id: "browser-cmd", command: "ls -la", cwd: process.cwd(), status: "completed", aggregatedOutput: "total 0\nREADME.md\n", exitCode: 0 } });
+      notify("item/completed", { ...base, item: { type: "fileChange", id: "browser-patch", status: "completed", changes: [{ path: "README.md", kind: { type: "update" }, diff: "@@ -1 +1 @@\n-旧内容\n+新内容\n" }] } });
+      notify("warning", { threadId: native, message: "浏览器验收提示" });
+      notify("thread/tokenUsage/updated", { ...base, tokenUsage: { total: { totalTokens: 1500, inputTokens: 1200, cachedInputTokens: 0, outputTokens: 300, reasoningOutputTokens: 0 }, last: { totalTokens: 1500, inputTokens: 1200, cachedInputTokens: 0, outputTokens: 300, reasoningOutputTokens: 0 }, modelContextWindow: 10000 } });
+      notify("item/agentMessage/delta", { ...base, itemId: "browser-message", delta: "原生活动已完成。" });
+      notify("turn/completed", { threadId: native, turn: { id: active.id, status: "completed" } }); active = null; return;
+    }
     if (text.startsWith("APPROVAL")) {
       active.approval = true;
       send({ id: "browser-approval", method: "item/commandExecution/requestApproval", params: { threadId: native, turnId: active.id, itemId: "fixture-command", command: "读取验收工作区", availableDecisions: ["accept", "decline", "cancel"] } }); return;

@@ -3870,9 +3870,57 @@ a {
 .native-permission small { display: block; margin-top: 8px; color: var(--muted); }
 .native-thinking { margin: 12px 0; color: var(--muted); font-size: 13px; }
 .native-thinking summary { cursor: pointer; margin-bottom: 8px; }
-.native-tools { margin: 12px 0; padding-left: 12px; border-left: 2px solid var(--line); font-size: 12px; }
-.native-tools > div { display: flex; gap: 12px; margin: 6px 0; overflow-wrap: anywhere; }
-.native-tools small { flex-shrink: 0; color: var(--muted); }
+.native-tools { margin: 12px 0; padding: 0 0 0 10px; border-left: 2px solid var(--line); font-size: 12px; list-style: none; }
+.native-tool { margin: 2px 0; }
+.native-tool-head { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 26px; padding: 3px 6px; border: 0; border-radius: 7px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+.native-tool-head:disabled { cursor: default; }
+.native-tool-head:not(:disabled):hover { background: #00000008; }
+.native-tool-head svg { flex-shrink: 0; color: var(--muted); }
+.native-tool-chevron { transition: transform .15s ease; }
+.native-tool.is-open .native-tool-chevron { transform: rotate(90deg); }
+.native-tool-chevron-space { display: inline-block; width: 12px; flex-shrink: 0; }
+.native-tool-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; }
+.native-tool small { flex-shrink: 0; color: var(--muted); }
+.native-tool small.is-error, .native-tool.is-failed .native-tool-title { color: var(--danger); }
+.native-tool-detail { margin: 4px 0 10px 19px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.native-tool-detail section + section { margin-top: 10px; }
+.native-tool-detail h5 { margin: 0 0 4px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .02em; }
+.native-tool-detail pre, .native-diff { max-height: 280px; margin: 0; padding: 8px 10px; overflow: auto; border-radius: 7px; background: #f6f5f1; font: 11.5px/1.5 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.native-diff .is-add { color: #1f6b3a; background: #e8f4ec; }
+.native-diff .is-remove { color: #9a2f28; background: #fbecea; }
+.native-diff .is-hunk { color: #4a5f8c; }
+.native-diff .is-file { color: var(--muted); font-weight: 600; }
+.native-locations { margin: 0; padding-left: 16px; }
+.native-muted { margin: 4px 0; color: var(--muted); font-size: 12px; }
+.native-muted.is-error { color: var(--danger); }
+.native-plan { margin: 12px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); font-size: 13px; }
+.native-plan summary { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; cursor: pointer; }
+.native-plan ol { margin: 8px 0 0; padding: 0; list-style: none; }
+.native-plan li { display: flex; align-items: flex-start; gap: 8px; margin: 4px 0; line-height: 1.5; }
+.native-plan li svg { flex-shrink: 0; margin-top: 3px; color: var(--muted); }
+.native-plan li.is-completed span { color: var(--muted); text-decoration: line-through; }
+.native-plan li.is-completed svg { color: var(--green); }
+.native-plan li.is-in_progress svg { color: var(--accent); }
+.native-plan li small { margin-left: auto; color: var(--accent); }
+.native-notices { display: grid; gap: 6px; margin: 10px 0; }
+.native-notice { display: flex; gap: 8px; padding: 8px 10px; border-radius: 10px; background: #f3f1ea; font-size: 12.5px; line-height: 1.5; }
+.native-notice svg { flex-shrink: 0; margin-top: 2px; }
+.native-notice.is-warning { background: #fbf3e4; }
+.native-notice.is-error { background: #fbecea; color: var(--danger); }
+.native-notice p { margin: 2px 0 0; color: var(--muted); }
+.native-activities { margin: 10px 0; padding: 0; list-style: none; font-size: 12.5px; }
+.native-activities li { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+.native-activities li > small { margin-left: auto; color: var(--muted); }
+.native-activities li.is-failed > small { color: var(--danger); }
+.native-outputs { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.native-output-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink); font-size: 12px; text-decoration: none; overflow-wrap: anywhere; }
+.native-output-chip small { color: var(--muted); }
+.native-output-image { display: block; max-width: min(100%, 420px); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.native-output-image img { display: block; width: 100%; height: auto; }
+.native-usage { margin: 6px 0 0; color: var(--muted); font-size: 11.5px; }
+.spin { animation: native-spin 1s linear infinite; }
+@keyframes native-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin, .native-tool-chevron { animation: none; transition: none; } }
 .native-setting .picker-trigger { max-width: 180px; }
 
 .native-permission textarea { width:100%; margin-top:10px; padding:8px; border:1px solid var(--line); border-radius:8px; resize:vertical; }

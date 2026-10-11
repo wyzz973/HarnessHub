@@ -212,36 +212,48 @@
           "source": "item/started|completed 的 commandExecution/fileChange/mcpToolCall/webSearch 等",
           "hub": "done",
           "protocol": "pass",
-          "real": "none",
-          "evidence": [],
-          "note": "真实工具调用未验收"
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-activity-codex.json",
+            "docs/verification/native-activity-2026-10-11.md"
+          ],
+          "note": "命令与补丁工具真实回合"
         },
         "tool-detail": {
           "native": "yes",
           "source": "commandExecution.aggregatedOutput/exitCode、fileChange.changes[].diff、mcpToolCall 参数与结果、turn/diff/updated",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": "当前仅保留 id/标题/状态"
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-activity-codex.json",
+            "docs/verification/native-activity-2026-10-11.md"
+          ],
+          "note": "命令输入/输出/退出码与补丁差异真实存储；MCP、搜索、图片项仅协议验证"
         },
         "plan": {
-          "native": "yes",
-          "source": "turn/plan/updated {explanation, plan[{step,status}]}",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "native": "partial",
+          "source": "turn/plan/updated 来自 update_plan 清单工具；工具是否提供取决于模型与模式",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
+          "evidence": [
+            ".tmp/cc-native-activity-codex-plan.json",
+            "docs/verification/native-activity-2026-10-11.md"
+          ],
+          "note": "本机默认 gpt-6.1-sol 回合未提供 update_plan 工具（真实回复确认）；计划模式 collaborationMode 需 experimentalApi，未接出"
         },
         "usage": {
           "native": "yes",
           "source": "thread/tokenUsage/updated {total,last,modelContextWindow}、account/rateLimits/updated",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-activity-codex.json",
+            "docs/verification/native-activity-2026-10-11.md"
+          ],
+          "note": "本轮 token 与上下文占用；Codex 不报告费用；账户额度 rateLimits 未接出"
         },
         "approvals": {
           "native": "yes",
@@ -250,7 +262,7 @@
           "protocol": "pass",
           "real": "none",
           "evidence": [],
-          "note": "item/permissions/requestApproval、策略修订决定尚未接出"
+          "note": "原配置 approval_policy=never 且 danger-full-access，本机原程序不会请求审批；item/permissions/requestApproval、策略修订决定尚未接出"
         },
         "questions": {
           "native": "yes",
@@ -291,11 +303,11 @@
         "output-media": {
           "native": "partial",
           "source": "imageGeneration.savedPath、imageView.path",
-          "hub": "none",
-          "protocol": "none",
+          "hub": "done",
+          "protocol": "pass",
           "real": "none",
           "evidence": [],
-          "note": ""
+          "note": "imageGeneration.savedPath 读取为产物（回合等待读取完成）、imageView 显示路径；真实图片生成未验收"
         },
         "skills": {
           "native": "yes",
@@ -357,11 +369,11 @@
         "compaction": {
           "native": "yes",
           "source": "thread/compact/start → contextCompaction item",
-          "hub": "none",
-          "protocol": "none",
+          "hub": "partial",
+          "protocol": "pass",
           "real": "none",
           "evidence": [],
-          "note": ""
+          "note": "contextCompaction 以活动展示；thread/compact/start 未接出"
         },
         "rollback": {
           "native": "yes",
@@ -379,7 +391,7 @@
           "protocol": "pass",
           "real": "none",
           "evidence": [],
-          "note": "子线程输出不再中断回合、审批交给用户；子 Agent 活动尚未展示"
+          "note": "子线程输出不中断回合、审批交给用户；子 Agent 活动与协作调用以活动/工具展示；子线程会话未接出"
         },
         "background": {
           "native": "yes",
@@ -481,29 +493,29 @@
         "tool-detail": {
           "native": "yes",
           "source": "kind、content(diff/console)、locations、rawInput/rawOutput、_meta.claudeCode.toolResponse",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
           "evidence": [],
-          "note": ""
+          "note": "Claude 账号周额度用完，真实生成无法验收"
         },
         "plan": {
           "native": "yes",
           "source": "plan 全量快照（TodoWrite/Task*）",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
           "evidence": [],
-          "note": ""
+          "note": "Claude 账号周额度用完，真实生成无法验收"
         },
         "usage": {
           "native": "yes",
           "source": "usage_update {used,size,cost USD}、PromptResponse.usage",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
           "evidence": [],
-          "note": ""
+          "note": "Claude 账号周额度用完，真实生成无法验收"
         },
         "approvals": {
           "native": "yes",
@@ -553,11 +565,11 @@
         "output-media": {
           "native": "partial",
           "source": "assistant 图片块（少见）与工具结果中的图片",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
           "evidence": [],
-          "note": ""
+          "note": "Claude 账号周额度用完，真实生成无法验收"
         },
         "skills": {
           "native": "yes",
@@ -617,10 +629,10 @@
           "native": "yes",
           "source": "/compact 触发原生压缩；compaction_update 需 session.compaction 能力",
           "hub": "partial",
-          "protocol": "none",
-          "real": "none",
+          "protocol": "pass",
+          "real": "blocked",
           "evidence": [],
-          "note": "可经原生命令执行；压缩过程未展示"
+          "note": "可经原生命令执行；ACP compaction_update 以活动展示；Claude 账号周额度用完，真实生成无法验收"
         },
         "rollback": {
           "native": "no",
@@ -728,18 +740,24 @@
           "source": "tool_call/tool_call_update",
           "hub": "done",
           "protocol": "pass",
-          "real": "none",
-          "evidence": [],
-          "note": "未真实验收"
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-activity-opencode.json",
+            "docs/verification/native-activity-2026-10-11.md"
+          ],
+          "note": "命令、读取、编辑与 todowrite 真实回合"
         },
         "tool-detail": {
           "native": "yes",
           "source": "rawInput/rawOutput、diff、图片附件",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-activity-opencode.json",
+            "docs/verification/native-activity-2026-10-11.md"
+          ],
+          "note": "命令/读取/编辑详情与差异真实存储；标题为原程序给出的路径"
         },
         "plan": {
           "native": "no",
@@ -748,25 +766,31 @@
           "protocol": "n/a",
           "real": "n/a",
           "evidence": [],
-          "note": ""
+          "note": "原程序 todowrite 以工具（N todos）显示，不发 ACP plan"
         },
         "usage": {
           "native": "yes",
           "source": "每轮 usage_update {used,size,cost}、PromptResponse.usage",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-activity-opencode.json",
+            "docs/verification/native-activity-2026-10-11.md"
+          ],
+          "note": "本轮 token、上下文与会话累计费用（原程序报告）"
         },
         "approvals": {
           "native": "yes",
           "source": "session/request_permission(once/always/reject)",
           "hub": "done",
           "protocol": "pass",
-          "real": "none",
-          "evidence": [],
-          "note": "批准编辑后原程序会无条件发 fs/write_text_file，需真实工具任务核实"
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-activity-opencode-approval.json",
+            "docs/verification/native-activity-2026-10-11.md"
+          ],
+          "note": "工作区级 opencode.json 要求询问时真实审批（允许一次）；批准编辑后原程序调用未宣告的 fs/write_text_file，Hub 回 -32601 并留审计行，编辑仍由原程序完成"
         },
         "questions": {
           "native": "unknown",
@@ -807,11 +831,11 @@
         "output-media": {
           "native": "partial",
           "source": "工具结果中的图片附件；回放中的图片/资源",
-          "hub": "none",
-          "protocol": "none",
+          "hub": "done",
+          "protocol": "pass",
           "real": "none",
           "evidence": [],
-          "note": ""
+          "note": "ACP 非文本块进入产物；真实未验收"
         },
         "skills": {
           "native": "yes",
@@ -874,10 +898,10 @@
           "native": "yes",
           "source": "/compact 原生命令",
           "hub": "partial",
-          "protocol": "none",
+          "protocol": "pass",
           "real": "none",
           "evidence": [],
-          "note": "可经原生命令执行"
+          "note": "可经原生命令执行；ACP compaction_update 以活动展示"
         },
         "rollback": {
           "native": "unknown",
@@ -1255,11 +1279,11 @@
         "tool-detail": {
           "native": "partial",
           "source": "kind、locations、全文件 diff；无 raw 输入输出",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
           "evidence": [],
-          "note": ""
+          "note": "Gemini 个人账号客户端被服务端停用（NATIVE_CLIENT_UNSUPPORTED），真实链路受阻"
         },
         "plan": {
           "native": "no",
@@ -1273,11 +1297,11 @@
         "usage": {
           "native": "partial",
           "source": "仅 PromptResponse._meta.quota",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
           "evidence": [],
-          "note": ""
+          "note": "Gemini 个人账号客户端被服务端停用（NATIVE_CLIENT_UNSUPPORTED），真实链路受阻"
         },
         "approvals": {
           "native": "yes",
@@ -1509,20 +1533,20 @@
         "tool-detail": {
           "native": "yes",
           "source": "rawInput/rawOutput、diff、locations",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
           "evidence": [],
-          "note": ""
+          "note": "Cursor 账号套餐限制，原公共对话返回升级提示，生成任务无法验收"
         },
         "plan": {
           "native": "yes",
           "source": "plan（create_plan）",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
           "evidence": [],
-          "note": ""
+          "note": "Cursor 账号套餐限制，原公共对话返回升级提示，生成任务无法验收"
         },
         "usage": {
           "native": "no",
@@ -1581,11 +1605,11 @@
         "output-media": {
           "native": "partial",
           "source": "cursor/generate_image 扩展请求",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
           "evidence": [],
-          "note": ""
+          "note": "Cursor 账号套餐限制，原公共对话返回升级提示，生成任务无法验收"
         },
         "skills": {
           "native": "yes",
@@ -1760,18 +1784,24 @@
           "source": "tool_execution_start/end",
           "hub": "done",
           "protocol": "pass",
-          "real": "none",
-          "evidence": [],
-          "note": "未真实验收"
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-activity-pi.json",
+            "docs/verification/native-activity-2026-10-11.md"
+          ],
+          "note": "bash、read、edit 真实回合"
         },
         "tool-detail": {
           "native": "yes",
           "source": "tool_execution_start.args、update.partialResult、end.result.content/details(diff/patch)",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-activity-pi.json",
+            "docs/verification/native-activity-2026-10-11.md"
+          ],
+          "note": "参数、结果与 patch 差异真实存储"
         },
         "plan": {
           "native": "no",
@@ -1785,11 +1815,14 @@
         "usage": {
           "native": "yes",
           "source": "assistant message usage{input,output,cacheRead,cacheWrite,cost}、get_session_stats",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-activity-pi.json",
+            "docs/verification/native-activity-2026-10-11.md"
+          ],
+          "note": "逐消息累计 token（含推理与缓存）、上下文窗口与本轮费用"
         },
         "approvals": {
           "native": "partial",
@@ -1906,11 +1939,11 @@
         "compaction": {
           "native": "yes",
           "source": "compact {customInstructions}",
-          "hub": "none",
-          "protocol": "none",
+          "hub": "partial",
+          "protocol": "pass",
           "real": "none",
           "evidence": [],
-          "note": ""
+          "note": "自动压缩与重试以活动展示；手动压缩未接出"
         },
         "rollback": {
           "native": "partial",

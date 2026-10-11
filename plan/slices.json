@@ -669,7 +669,19 @@
         "tests/real/native-resume.real.ts",
         "tests/real/native-catalog.real.ts",
         "tests/protocol/process.test.ts",
-        "tests/integration/control-cli.test.ts"
+        "tests/integration/control-cli.test.ts",
+        "src/contracts/content.ts",
+        "src/infrastructure/session/content-store.ts",
+        "src/infrastructure/control/unified-diff.ts",
+        "web/src/components/NativeActivity.tsx",
+        "tests/integration/content-store.test.ts",
+        "src/web/session-stream.ts",
+        "web/src/session-stream.ts",
+        "src/cli/session-application.ts",
+        "tests/integration/web-management.test.ts",
+        "tests/integration/web-session-stream.test.ts",
+        "tests/unit/web-session-stream.test.ts",
+        "tests/real/native-activity.real.ts"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/complete-native-capabilities-2026-10-11.md"

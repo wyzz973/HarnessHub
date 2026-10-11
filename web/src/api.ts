@@ -5,7 +5,12 @@ import type { HarnessManagementView, InstallationJobView, ManagementJobInput } f
 import type { HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
 import type { NativeOption, NativeModelCatalog } from "../../src/contracts/control.js";
 import { parseNativeOptions, commandId, messageId, runId, switchId } from "../../src/contracts/session.js";
+import { parseContentRef, type ContentRef } from "../../src/contracts/content.js";
+import type { NativeUsage } from "../../src/contracts/control.js";
 
+export interface ToolDetailView { readonly kind?: string; readonly name?: string; readonly input?: string; readonly output?: string; readonly diff?: string; readonly parentId?: string; readonly locations?: readonly string[]; readonly exitCode?: number; readonly truncated?: boolean }
+/** Same-origin URL of stored native content for img/download use; the page cookie authorizes it. */
+export function contentUrl(content: ContentRef, download = false): string { return "/api/v1/content/" + encodeURIComponent(content.id) + (download ? "?download=1" : ""); }
 export class ApiError extends Error {
   constructor(readonly code: string, message: string) { super(message); this.name = "ApiError"; }
 }
@@ -88,6 +93,29 @@ function decodeMessage(value: unknown): PublicMessage {
   const row = record(value);
   return { id: messageId(row.id), runId: runId(row.runId), role: choice(row.role, ["user", "assistant"]), text: text(row.text), seq: number(row.seq), status: choice(row.status, RUN_STATES) };
 }
+function contentRef(value: unknown): ContentRef { try { return parseContentRef(value); } catch { return invalid(); } }
+function optionalNumber(value: unknown): number | undefined { return value === undefined ? undefined : number(value); }
+function decodeUsage(value: unknown): NativeUsage {
+  const row = record(value), turn = row.turn === undefined ? undefined : record(row.turn), context = row.context === undefined ? undefined : record(row.context), cost = row.cost === undefined ? undefined : record(row.cost);
+  const tokens = (key: string) => { const amount = turn === undefined ? undefined : optionalNumber(turn[key]); return amount === undefined ? {} : { [key]: amount }; };
+  return { ...(turn === undefined ? {} : { turn: { ...tokens("input"), ...tokens("output"), ...tokens("cachedInput"), ...tokens("cacheWrite"), ...tokens("reasoning"), ...tokens("total") } }),
+    ...(context === undefined ? {} : { context: { used: number(context.used), ...(context.size === undefined ? {} : { size: number(context.size) }) } }),
+    ...(cost === undefined ? {} : { cost: { amount: typeof cost.amount === "number" && Number.isFinite(cost.amount) && cost.amount >= 0 ? cost.amount : invalid(), currency: text(cost.currency), scope: choice(cost.scope, ["turn", "session"]) } }) };
+}
+function decodeActivityFields(row: Record<string, unknown>): Pick<PublicRun, "plan" | "usage" | "notices" | "activities" | "outputs"> {
+  return { ...(row.plan === undefined ? {} : { plan: (() => { const plan = record(row.plan); return { entries: list(plan.entries, value => { const entry = record(value); return { content: text(entry.content), status: choice(entry.status, ["pending", "in_progress", "completed"]), ...(entry.priority === undefined ? {} : { priority: choice(entry.priority, ["high", "medium", "low"]) }) }; }, 64), ...(plan.explanation === undefined ? {} : { explanation: text(plan.explanation) }) }; })() }),
+    ...(row.usage === undefined ? {} : { usage: decodeUsage(row.usage) }),
+    ...(row.notices === undefined ? {} : { notices: list(row.notices, value => { const notice = record(value); return { severity: choice(notice.severity, ["info", "warning", "error"]), title: text(notice.title), ...(notice.detail === undefined ? {} : { detail: text(notice.detail) }) }; }, 32) }),
+    ...(row.activities === undefined ? {} : { activities: list(row.activities, value => { const activity = record(value); return { id: text(activity.id), kind: choice(activity.kind, ["subagent", "task", "compaction", "retry", "review"]), title: text(activity.title), status: choice(activity.status, ["running", "completed", "failed", "cancelled"]), ...(activity.detail === undefined ? {} : { detail: text(activity.detail) }) }; }, 64) }),
+    ...(row.outputs === undefined ? {} : { outputs: list(row.outputs, value => { const output = record(value);
+      return output.kind === "content" ? { kind: "content" as const, content: contentRef(output.content) }
+        : output.kind === "link" ? { kind: "link" as const, uri: text(output.uri), name: text(output.name), ...(output.title === undefined ? {} : { title: text(output.title) }), ...(output.mediaType === undefined ? {} : { mediaType: text(output.mediaType) }) } : invalid(); }, 32) }) };
+}
+function decodeTool(value: unknown): NonNullable<PublicRun["tools"]>[number] {
+  const tool = record(value);
+  return { id: text(tool.id), title: text(tool.title), status: text(tool.status), ...(tool.kind === undefined ? {} : { kind: text(tool.kind) }), ...(tool.name === undefined ? {} : { name: text(tool.name) }),
+    ...(tool.parentId === undefined ? {} : { parentId: text(tool.parentId) }), ...(tool.exitCode === undefined ? {} : { exitCode: number(tool.exitCode) }), ...(tool.detail === undefined ? {} : { detail: contentRef(tool.detail) }) };
+}
 function decodeRun(value: unknown): PublicRun {
   const row = record(value);
   const backend = row.backend === null ? null : record(row.backend);
@@ -99,7 +127,7 @@ function decodeRun(value: unknown): PublicRun {
     sourceRunIds: list(row.sourceRunIds, runId, 256), backend: backend === null ? null : { status: choice(backend.status, ["completed", "cancelled", "failed"]), reason: text(backend.reason),
       ...(backend.error === undefined ? {} : { error: publicError(backend.error) ?? invalid() }) },
     cleanup: cleanup === null ? null : { closed: true, exitCode: nullableNumber(cleanup.exitCode), signal: nullableText(cleanup.signal), protocolFailure: publicError(cleanup.protocolFailure) },
-    error: publicError(row.error), ...(row.thinking === undefined ? {} : { thinking: text(row.thinking) }), ...(row.tools === undefined ? {} : { tools: list(row.tools,value=>{const tool=record(value);return {id:text(tool.id),title:text(tool.title),status:text(tool.status)};},128) }), stopRequested: bool(row.stopRequested), awaitingSwitchId: row.awaitingSwitchId === null ? null : switchId(row.awaitingSwitchId) };
+    error: publicError(row.error), ...(row.thinking === undefined ? {} : { thinking: text(row.thinking) }), ...(row.tools === undefined ? {} : { tools: list(row.tools, decodeTool, 128) }), ...decodeActivityFields(row), stopRequested: bool(row.stopRequested), awaitingSwitchId: row.awaitingSwitchId === null ? null : switchId(row.awaitingSwitchId) };
 }
 function decodeSwitch(value: unknown): PublicSwitch {
   const row = record(value);
@@ -117,9 +145,10 @@ export function decodeSession(value: unknown): SessionView {
 /** Decodes only canonical public facts; stream framing and projection validate their watermarks. */
 export function decodeSessionStreamFrame(value: unknown): SessionStreamFrame {
   const row = record(value);
-  const keys = row.type === "snapshot" ? ["type", "session"] : ["type", "sessionId", "version", "lastSeq", "message"];
+  const keys = row.type === "snapshot" ? ["type", "session"] : row.type === "run" ? ["type", "sessionId", "version", "lastSeq", "run"] : ["type", "sessionId", "version", "lastSeq", "message"];
   if (Object.keys(row).some(key => !keys.includes(key)) || keys.some(key => !(key in row))) return invalid();
   if (row.type === "snapshot") return { type: "snapshot", session: decodeSession(row.session) };
+  if (row.type === "run") { const version = number(row.version), lastSeq = number(row.lastSeq); if (version < 1 || lastSeq < 0) return invalid(); return { type: "run", sessionId: text(row.sessionId), version, lastSeq, run: decodeRun(row.run) }; }
   if (row.type !== "message") return invalid();
   const version = number(row.version), lastSeq = number(row.lastSeq), message = decodeMessage(row.message);
   if (version < 1 || lastSeq < 0 || message.role !== "assistant" || message.seq < 0 || message.seq > lastSeq) return invalid();
@@ -192,6 +221,14 @@ export class GatewayApi {
   }
   decidePermission(id: string, permission: string, optionId: string, key: string, input?: string): Promise<{ replayed: boolean }> { return this.request(`/sessions/${encodeURIComponent(id)}/permissions/${encodeURIComponent(permission)}`, "POST", { optionId, commandId: key, ...(input===undefined?{}:{input}) }, value => { const row=record(value);return { replayed:bool(row.replayed) }; }); }
   session(id: string, signal?: AbortSignal): Promise<SessionView> { return this.request(`/sessions/${encodeURIComponent(id)}`, "GET", undefined, decodeSession, signal); }
+  /** Stored native tool detail; the JSON shape is display data and is validated field by field. */
+  toolDetail(content: ContentRef, signal?: AbortSignal): Promise<ToolDetailView> {
+    return this.request(`/content/${encodeURIComponent(content.id)}`, "GET", undefined, value => {
+      const row = record(value), optional = (key: string) => row[key] === undefined ? {} : { [key]: text(row[key]) };
+      return { ...optional("kind"), ...optional("name"), ...optional("input"), ...optional("output"), ...optional("diff"), ...optional("parentId"),
+        ...(row.locations === undefined ? {} : { locations: list(row.locations, text, 16) }), ...(row.exitCode === undefined ? {} : { exitCode: number(row.exitCode) }), ...(row.truncated === undefined ? {} : { truncated: bool(row.truncated) }) };
+    }, signal);
+  }
   /** Owns one cancellable fact stream; reconnecting never submits a conversation command. */
   async streamSession(id: string, afterSeq: number, signal: AbortSignal, onFrame: (frame: SessionStreamFrame) => void): Promise<void> {
     const deadline = new AbortController();

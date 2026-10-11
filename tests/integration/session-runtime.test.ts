@@ -12,6 +12,7 @@ import { nativeConversationId, type BackendResult, type CleanupEvidence, type Co
 import { SessionError, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId } from "../../src/contracts/session.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { LocalContentStore } from "../../src/infrastructure/session/content-store.js";
 import { SqliteWorkspaceLeaseProvider } from "../../src/infrastructure/session/workspace-lease.js";
 
 const peer = fileURLToPath(new URL("../../../tests/fixtures/control-peer.mjs", import.meta.url));
@@ -670,4 +671,59 @@ test("a long native turn beyond the public tool budget completes without blockin
   const run = app.read(session.id).runs[0]!;
   assert.equal(run.status, "completed"); assert.equal(run.tools?.length, 128);
   app.send(session.id, "still usable", "two"); await app.wait(session.id); assert.equal(app.read(session.id).runs[1]?.status, "completed");
+});
+
+test("native activity becomes bounded public facts and tool detail content before the binding closes", { timeout: 10000 }, async t => {
+  const f = await fixture(t), peer = controlled({ holdResult: true }), later = controlled({ holdResult: true }), factory = new ControlledFactory([peer, later]), prepare = factory.prepare.bind(factory);
+  const content = new LocalContentStore(join(f.root, "data"), () => f.store.assertOwner());
+  let emit: ((event: ControlEvent) => void) | null = null;
+  factory.prepare = async (...args) => {
+    const binding = await prepare(...args);
+    return { ...binding, control: { ...binding.control, startText: async (id: NativeConversationId, text: string, output: (event: ControlEvent) => void) => { emit = output; return binding.control.startText(id, text, output); } } };
+  };
+  let id = 0;
+  const app = new SessionRuntime(f.store, factory, { id: () => String(++id), now: () => new Date("2026-10-11T00:00:00Z"), publish: () => {}, fingerprint: value => createHash("sha256").update(value).digest("hex"), content });
+  f.runtimes.push(app);
+  const session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  app.send(session.id, "do work", "one"); await peer.started.promise;
+  const huge = "x".repeat(200 * 1024);
+  emit!({ type: "tool", id: "shell", title: "ls", status: "in_progress", detail: { kind: "execute", name: "Bash", input: "ls" } });
+  emit!({ type: "tool", id: "shell", title: "ls", status: "in_progress", detail: { output: huge } });
+  emit!({ type: "tool", id: "shell", title: "ls", status: "completed", detail: { exitCode: 0 } });
+  emit!({ type: "tool", id: "edit", title: "Edit a.txt", status: "in_progress", detail: { kind: "edit", diff: "--- a/a.txt\n+++ b/a.txt\n" } });
+  emit!({ type: "plan", entries: [{ content: "Read", status: "completed" }, { content: "Edit", status: "in_progress", priority: "high" }] });
+  emit!({ type: "usage", usage: { context: { used: 10, size: 100 }, cost: { amount: 0.5, currency: "USD", scope: "session" } } });
+  emit!({ type: "usage", usage: { turn: { input: 7, output: 3 } } });
+  emit!({ type: "notice", severity: "warning", title: "fallback" });
+  emit!({ type: "notice", severity: "warning", title: "fallback" });
+  emit!({ type: "activity", id: "c1", kind: "compaction", title: "压缩", status: "running" });
+  emit!({ type: "activity", id: "c1", kind: "compaction", title: "压缩", status: "completed" });
+  emit!({ type: "output", output: { kind: "link", uri: "https://example.invalid/r", name: "r" } });
+  emit!({ type: "output", output: { kind: "content", name: "chart.png", mediaType: "image/png", data: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0]) } });
+  peer.result.resolve({ status: "completed", reason: "fixture" }); await app.wait(session.id);
+  const run = app.read(session.id).runs[0]!;
+  assert.equal(run.status, "completed");
+  const shell = run.tools?.find(tool => tool.id === "shell"), edit = run.tools?.find(tool => tool.id === "edit");
+  assert.deepEqual([shell?.kind, shell?.name, shell?.exitCode], ["execute", "Bash", 0]); assert.ok(shell?.detail);
+  const stored = JSON.parse(await readFile(content.read(shell.detail.id).path, "utf8")) as Record<string, unknown>;
+  assert.equal(stored.input, "ls"); assert.equal(stored.truncated, true); assert.equal(Buffer.byteLength(String(stored.output)), 64 * 1024);
+  assert.ok(edit?.detail, "a tool still running at settlement is flushed before cleanup");
+  assert.deepEqual(run.plan, { entries: [{ content: "Read", status: "completed" }, { content: "Edit", status: "in_progress", priority: "high" }] });
+  assert.deepEqual(run.usage, { context: { used: 10, size: 100 }, cost: { amount: 0.5, currency: "USD", scope: "session" }, turn: { input: 7, output: 3 } });
+  assert.deepEqual(run.notices, [{ severity: "warning", title: "fallback" }]);
+  assert.deepEqual(run.activities, [{ id: "c1", kind: "compaction", title: "压缩", status: "completed" }]);
+  assert.equal(run.outputs?.length, 2); assert.deepEqual(run.outputs?.[0], { kind: "link", uri: "https://example.invalid/r", name: "r" });
+  const image = run.outputs?.[1]; assert.equal(image?.kind === "content" ? image.content.kind : null, "image");
+  const log = JSON.stringify(f.store.events(session.id, 0, 100));
+  assert.equal(log.includes("xxxxxxxxxxxxxxxx"), false, "large native previews never enter the event log");
+  assert.equal(log.includes('"0":137'), false, "stored bytes never enter the event log");
+  assert.ok(log.includes('"mediaType":"image/png","bytes":9'), "the event log keeps only the output summary");
+  assert.deepEqual(f.store.contentReferences(), new Set([shell.detail.id, edit.detail.id, image?.kind === "content" ? image.content.id : ""]));
+  // A Harness restarted for the next Turn repeats its startup warning: the conversation shows it once, the log keeps both.
+  app.send(session.id, "again", "two"); await later.started.promise;
+  emit!({ type: "notice", severity: "warning", title: "fallback" });
+  emit!({ type: "notice", severity: "info", title: "new" });
+  later.result.resolve({ status: "completed", reason: "fixture" }); await app.wait(session.id);
+  assert.deepEqual(app.read(session.id).runs[1]!.notices, [{ severity: "info", title: "new" }]);
+  assert.equal(f.store.events(session.id, 0, 100).filter(row => row.type === "run.output" && JSON.stringify(row.data).includes('"title":"fallback"')).length, 3);
 });

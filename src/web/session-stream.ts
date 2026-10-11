@@ -86,8 +86,11 @@ export class SessionStreamHub {
     const output = event.type === "run.output" && event.data.event !== null && typeof event.data.event === "object" &&
       "type" in event.data.event && event.data.event.type === "text" && typeof event.data.runId === "string";
     const message = output && session.lastSeq === event.seq ? session.messages.find(item => item.role === "assistant" && item.runId === event.data.runId) : undefined;
-    const frame: SessionStreamFrame = message === undefined ? { type: "snapshot", session }
-      : { type: "message", sessionId: session.id, version: session.version, lastSeq: session.lastSeq, message };
+    // Non-text activity of the active Run replaces that Run only; everything else stays a canonical snapshot.
+    const activity = !output && (event.type === "run.output" || event.type === "run.tool_detail") && typeof event.data.runId === "string" && session.lastSeq === event.seq && session.activeRunId === event.data.runId
+      ? session.runs.find(item => item.id === event.data.runId) : undefined;
+    const frame: SessionStreamFrame = message !== undefined ? { type: "message", sessionId: session.id, version: session.version, lastSeq: session.lastSeq, message }
+      : activity !== undefined ? { type: "run", sessionId: session.id, version: session.version, lastSeq: session.lastSeq, run: activity } : { type: "snapshot", session };
     for (const client of clients) client.send(frame);
   }
   close(): void { if (this.closed) return; this.closed = true; for (const client of [...this.clients]) client.close(); }
