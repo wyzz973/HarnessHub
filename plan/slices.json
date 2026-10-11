@@ -616,7 +616,8 @@
         "G060",
         "G029",
         "G006",
-        "G026"
+        "G026",
+        "G011"
       ],
       "decision": "docs/decisions/0020-complete-native-harness-capabilities.md",
       "allowed_files": [
@@ -713,7 +714,11 @@
         "web/src/attention.ts",
         "tests/integration/attention.test.ts",
         "src/web/run-diagnostics.ts",
-        "tests/integration/parallel-work.test.ts"
+        "tests/integration/parallel-work.test.ts",
+        "src/infrastructure/management/verified-versions.ts",
+        "tests/unit/verified-versions.test.ts",
+        "src/infrastructure/management/service.ts",
+        "src/contracts/management.ts"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/complete-native-capabilities-2026-10-11.md"

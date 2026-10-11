@@ -14,6 +14,7 @@ import { OfficialManagementMetadata } from "./metadata.js";
 import { boundedManagementFile, managementIdentity, managementStorage, sameManagementIdentity } from "./storage.js";
 import { managementInteger, managementObject, parseInstallationRecord, parseManagementJob, parseManagementLog, parseManagementUpdate, parseNativePlan, type InstallationRecord } from "../../contexts/management/domain/state.js";
 import { probeSystemVersion } from "./system-version.js";
+import { versionVerification } from "./verified-versions.js";
 import { NativeManagement } from "./native.js";
 import { NativeInstallationLocks } from "./native-lock.js";
 import type { NativeEnvironment } from "../session/native-environment.js";
@@ -503,8 +504,9 @@ export class LocalHarnessManagement {
           ? gt(checked.latestVersion, currentVersion) : checked.latestVersion !== currentVersion);
         updateStatus = currentVersion === null ? "unchecked" : newer ? "available" : "current";
       }
+      const programVersion = system ? this.programVersion(harness, currentVersion) : currentVersion, verification = versionVerification(harness, programVersion, currentVersion);
       return { harnessId: harness, recipe, source: system ? "system" : installationId === null ? "missing" : "managed",
-        installedVersion: currentVersion, programVersion: system ? this.programVersion(harness, currentVersion) : currentVersion, installationId: system ? null : installationId,
+        installedVersion: currentVersion, programVersion, installationId: system ? null : installationId, ...(verification === null ? {} : { verification }),
         latestVersion: checked?.latestVersion ?? null, updateStatus,
         checkedAt: checked?.checkedAt ?? null, activeJobId: typeof active === "string" ? active : null, defaultRevision: this.defaultRevision(harness), error: checked?.error ?? null,
         ...(nativePlan === undefined ? {} : { native: { channel: nativePlan.channel, location: nativePlan.entry, fingerprint: nativePlan.fingerprint,

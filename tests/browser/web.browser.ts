@@ -1084,3 +1084,33 @@ test("a Turn waiting for a slot says how many conversations run, has no deadline
   await expect(log.locator("[data-run-status=cancelled]")).toContainText("已取消（用户停止）");
   assert.deepEqual(errors, []);
 });
+
+test("a Harness version HarnessHub has not run for real is marked in the Harness list and the picker, and stays usable", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  // HarnessHub verified Gemini CLI 0.62.0; the fixture installs 1.0.0 of it.
+  await page.getByRole("button", { name: "Harnesses", exact: true }).click();
+  const row = page.locator(".harness-table-row").filter({ has: page.getByRole("button", { name: "查看 Gemini CLI 详情", exact: true }) });
+  await row.getByRole("button", { name: "安装", exact: true }).click();
+  const detail = page.getByRole("dialog");
+  await expect(detail.getByText("安装完成", { exact: true })).toBeVisible({ timeout: 30000 });
+  await expect(detail.locator(".version-unverified-note")).toHaveText("未经验证的版本：HarnessHub 用真实程序验证过 0.62.0。这个版本仍可使用，部分能力可能不同。");
+  await detail.getByRole("button", { name: "关闭 Harness 详情", exact: true }).click();
+  const hint = row.locator(".version-unverified");
+  await expect(hint).toHaveText("未经验证"); await expect(hint).toHaveAttribute("title", "HarnessHub 用真实程序验证过 0.62.0。这个版本仍可使用，部分能力可能不同。");
+  // A Harness HarnessHub never verified claims nothing either way.
+  await expect(page.locator(".harness-table-row").filter({ has: page.getByRole("button", { name: "查看 Autohand Code 详情", exact: true }) }).locator(".version-unverified")).toHaveCount(0);
+  await page.screenshot({ path: join(artifact, "version-unverified.png"), animations: "disabled" });
+  // The picker says so too, and the Harness can still be chosen.
+  await page.getByRole("button", { name: "对话", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click();
+  const option = page.getByRole("option", { name: "Gemini CLI", exact: true });
+  await expect(option).toContainText("v1.0.0 · 未经验证的版本"); await expect(option).toBeEnabled();
+  await option.click();
+  await expect(page.getByRole("button", { name: "选择 Harness", exact: true })).toContainText("Gemini CLI");
+  assert.deepEqual(errors, []);
+});

@@ -108,7 +108,8 @@ export function ChatComposer(props: ComposerProps) {
     return {
       value: row.id, label: row.name, icon: <BrandIcon brand={row.id} name={row.name}/>,
       group: available ? "已发现控制入口" : "更多 Harness",
-      description: [version ? `v${version}` : row.controls.filter(item => item.available).map(item => protocolLabel(item.protocol)).join(" / "),
+      // A version HarnessHub has not run for real is said, never blocked (ADR-038).
+      description: [version ? `v${version}${row.management.verification?.state === "unverified" ? " · 未经验证的版本" : ""}` : row.controls.filter(item => item.available).map(item => protocolLabel(item.protocol)).join(" / "),
         available && readiness?.startupMs !== undefined ? "启动约 " + approximately(readiness.startupMs) : ""].filter(Boolean).join(" · "),
       ...(status ? { status } : {}),
       disabled: !available, reason: row.installed ? "已发现程序，控制入口尚未就绪" : "尚未安装，请在 Harnesses 中管理",

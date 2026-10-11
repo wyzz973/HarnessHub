@@ -1284,7 +1284,9 @@
         "src/infrastructure/management/native.ts",
         "src/infrastructure/management/native-lock.ts",
         "tests/integration/native-management.test.ts",
-        "src/infrastructure/management/homebrew.ts"
+        "src/infrastructure/management/homebrew.ts",
+        "src/infrastructure/management/verified-versions.ts",
+        "tests/unit/verified-versions.test.ts"
       ],
       "requirements": [
         "R03",
@@ -1315,7 +1317,8 @@
         "G011-L01",
         "G011-N01",
         "G011-N02",
-        "G011-N03"
+        "G011-N03",
+        "G011-NC1"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3382,7 +3385,8 @@
         "G054-NC8",
         "G054-NC9",
         "G054-NC10",
-        "G054-NC11"
+        "G054-NC11",
+        "G054-NC12"
       ],
       "active_slice": "native-installation-management"
     },

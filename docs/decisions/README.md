@@ -80,3 +80,7 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
   - 修改了 lifecycle §3 和 INV-10。
 
 - [ADR-037：复制一轮的诊断信息](0037-run-diagnostics.md)（accepted）：执行详情中复制本轮的版本、阶段、结束原因、清理状态与 stderr 最后 4 KiB；服务端现场拼装并清洗（路径、环境变量值、密钥样式字符串、账户名），不保存；默认不含对话内容。
+- [ADR-038：未经验证的版本提示](0038-verified-version-hint.md)（accepted）：
+  - 每个 Harness 记录真实验证过的版本范围（经适配器接入的还记录适配器版本），由测试与能力矩阵保持一致。
+  - 本机版本不在范围内时，选择器与 Harnesses 列表提示“未经验证的版本”，不阻止使用。
+  - 版本未知或从未验证的 Harness 不下结论。

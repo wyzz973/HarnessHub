@@ -6448,6 +6448,22 @@
       "planned_file": "tests/unit/management-state.test.ts"
     },
     {
+      "id": "G011-NC1",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "scenario": "判断本机版本是否为真实验证过的版本",
+      "expected": "产品版本与不同于它的适配器版本都在验证范围内才算已验证；semver 按范围比较，其他版本只按完全相同判断；版本未知或从未验证的 Harness 不下结论；表中版本与能力矩阵记录的安装版本一致，任一处单独改动都使测试失败",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/unit/verified-versions.test.ts"
+    },
+    {
       "id": "G060-N04",
       "task": "G060",
       "requirements": [
@@ -7941,6 +7957,22 @@
       "layer": "e2e",
       "scenario": "排队回合显示等待的对话与原因",
       "expected": "审批卡与侧栏显示“等待期限 · 剩余 N 分”；同一工作区的第二个对话显示“排队中：等待对话「…」释放工作区（它正在等待你的审批／它正在运行）”和剩余等待，不含路径；可取消排队、可打开那个对话，批准后排队回合自动完成；排队到期显示消息没有发出、占用它的对话和“打开那个对话”；4 个对话占满位置时第 5 个显示“等待开始：4 个对话正在执行”和“没有单独的等待期限”，可以取消；用户停止的回合显示“已取消（用户停止）”",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/web.browser.ts"
+    },
+    {
+      "id": "G054-NC12",
+      "task": "G054",
+      "requirements": [
+        "R22"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "e2e",
+      "scenario": "未经验证的版本在 Harness 列表与选择器中提示",
+      "expected": "安装不在验证范围内的版本后，列表显示“未经验证”并在悬停与详情中说明验证过的版本；选择器写“未经验证的版本”且仍可选择；从未验证的 Harness 不显示标记",
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/browser/web.browser.ts"

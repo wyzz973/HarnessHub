@@ -50,6 +50,15 @@ export interface HarnessManagementView {
   readonly defaultRevision: number;
   readonly error: { readonly code: string; readonly message: string } | null;
   readonly native?: NativeManagementCapability;
+  /** Whether this is a version HarnessHub verified with the real program (ADR-038); absent when that is not known. A hint only. */
+  readonly verification?: HarnessVersionVerification;
+}
+/** The verified versions as text (one version, or a range) and whether the installed ones are among them. */
+export interface HarnessVersionVerification {
+  readonly state: "verified" | "unverified";
+  readonly program: string;
+  /** The adapter entry's verified version, for a Harness reached through an adapter. */
+  readonly adapter?: string;
 }
 export interface NativeManagementCapability {
   readonly channel: string;

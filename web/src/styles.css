@@ -2754,6 +2754,24 @@ a {
   color:#915d39
 }
 
+/* A version HarnessHub has not run for real (ADR-038): said beside the version, never a blocker. */
+.version-unverified {
+  margin-left:8px;
+  padding:1px 6px;
+  border-radius:4px;
+  background:#f6ecdf;
+  color:#8a5a2b;
+  font:500 11px/1.6 inherit;
+  font-family:inherit;
+  cursor:help
+}
+
+.detail-version-card .version-unverified-note {
+  font:12px/1.6 inherit;
+  font-family:inherit;
+  color:#8a5a2b
+}
+
 .harness-row-actions {
   display:flex;
   justify-content:flex-end;
