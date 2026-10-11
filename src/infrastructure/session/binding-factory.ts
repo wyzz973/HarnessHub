@@ -16,7 +16,7 @@ import { SessionError, type HarnessSelection, type PreparedSessionBinding, type 
   type WorkspaceLeaseProvider } from "../../contracts/session.js";
 import { MAX_CATALOG_BYTES, type ControlObservation } from "../../contexts/catalog/domain/catalog.js";
 import { captureNativeEnvironment, nativeValues, referencedNativeValues, nativeDescriptorValues, type NativeEnvironment } from "./native-environment.js";
-import type { NativeModelCatalog } from "../../contracts/control.js";
+import type { NativeExtensions, NativeModelCatalog } from "../../contracts/control.js";
 import type { NativeInstallationLocks, NativeUsageLease } from "../management/native-lock.js";
 
 export interface ConfigurationInput {
@@ -193,6 +193,21 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
   }
   /** Read-only native catalog probe; no prompt and no workspace writer lease. */
   async discoverModels(request: SelectionRequest, configuration: SessionConfiguration, signal: AbortSignal): Promise<NativeModelCatalog> {
+    return this.probe(request, configuration, signal, async (control, protocol) => {
+      let selectionError: NativeModelCatalog["selectionError"];
+      if (protocol === "acp-v1") try { await control.open(configuration.workspace, request.nativeModel); }
+      catch(error) { if(error!==null&&typeof error==="object"&&"code"in error&&error.code==="MODEL_UNAVAILABLE") selectionError={code:"MODEL_UNAVAILABLE",message:"所选模型当前不在本机目录中，请重新选择。"};else throw error; }
+      if (!control.models) throw new SessionError("UNSUPPORTED_MODEL_SELECTION", "this Harness does not expose models");
+      const discovered = await control.models();
+      return { ...discovered, ...(selectionError ? { selectionError } : {}) };
+    });
+  }
+  /** Skills, MCP servers and plugins as the installed Harness reports them; an interface without such a list returns null. */
+  async discoverExtensions(request: SelectionRequest, configuration: SessionConfiguration, signal: AbortSignal): Promise<NativeExtensions | null> {
+    return this.probe(request, configuration, signal, async control => control.extensions ? control.extensions() : null);
+  }
+  /** One short-lived native probe on the original installation; cleanup and the native read lease are always awaited. */
+  private async probe<T>(request: SelectionRequest, configuration: SessionConfiguration, signal: AbortSignal, read: (control: HarnessControl, protocol: ControlLaunch["protocol"]) => Promise<T>): Promise<T> {
     this.assertOwner();
     const root = await realpath(await mkdtemp(join(tmpdir(), "harness-native-models-")));
     let control: HarnessControl | undefined, close: Promise<CleanupEvidence> | null = null, usage: NativeUsageLease | undefined;
@@ -213,13 +228,9 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       control = await createNativeControl(observed.harnessId, launch, options);
       if (signal.aborted) { abort(); throw new SessionError("CANCELLED", "model discovery was cancelled"); }
       await control.initialize();
-      let selectionError: NativeModelCatalog["selectionError"];
-      if (protocol === "acp-v1") try { await control.open(configuration.workspace, request.nativeModel); }
-      catch(error) { if(error!==null&&typeof error==="object"&&"code"in error&&error.code==="MODEL_UNAVAILABLE") selectionError={code:"MODEL_UNAVAILABLE",message:"所选模型当前不在本机目录中，请重新选择。"};else throw error; }
-      if (!control.models) throw new SessionError("UNSUPPORTED_MODEL_SELECTION", "this Harness does not expose models");
-      const discovered = await control.models(), catalog={...discovered,...(selectionError ? {selectionError} : {})}; this.assertOwner();
+      const value = await read(control, protocol); this.assertOwner();
       if (signal.aborted) throw new SessionError("CANCELLED", "model discovery was cancelled");
-      return catalog;
+      return value;
     } finally {
       signal.removeEventListener("abort", abort);
       let quiescent = control === undefined, cleanupError: unknown;

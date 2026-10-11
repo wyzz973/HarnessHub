@@ -317,6 +317,22 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       json(response, 200, view(app.runtime.resetNative(sessionId(nativeBranch[1]), text(input.commandId, "commandId", 128), input.epoch))); return;
     }
     if (permissionRoute && method === "POST") { queries(url, []); const input = record(await body(request), ["optionId", "commandId", "input"], ["optionId", "commandId"]); const id = sessionId(permissionRoute[1]); json(response, 200, await app.runtime.decidePermission(id, permissionRoute[2]!, text(input.optionId, "optionId", 512), text(input.commandId, "commandId", 128), input.input===undefined?undefined:(typeof input.input==="string"&&Buffer.byteLength(input.input)<=65536&&!input.input.includes("\0")?input.input:(()=>{throw new HttpError(400,"INVALID_INPUT","invalid native UI input")})()))); return; }
+    const extensionsRoute = /^\/api\/v1\/harnesses\/([a-z][a-z0-9-]{0,95})\/extensions$/u.exec(path);
+    if (extensionsRoute && method === "GET") {
+      queries(url, ["controlId", "workspace"]);
+      const controlId = url.searchParams.get("controlId"), workspace = url.searchParams.get("workspace");
+      const configuration = workspace === null ? options.configuration : await prepareConfiguration({ workspace,
+        ...(options.configuration.configHome === null ? {} : { configHome: options.configuration.configHome }),
+        ...(options.configuration.manifestPath === null ? {} : { manifestPath: options.configuration.manifestPath }),
+        packageRoots: options.configuration.packageRoots, searchDirs: options.configuration.searchDirs, pathOnly: options.configuration.pathOnly });
+      const selected = select({ harnessId: extensionsRoute[1], ...(controlId === null ? {} : { controlId }) });
+      try { json(response, 200, { extensions: await nativeModels.extensions(selected, configuration) }); }
+      catch (error) {
+        const code = error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "EXTENSION_DISCOVERY_FAILED";
+        throw new HttpError(502, code, "无法读取这个 Harness 的本机扩展。请检查它的登录和配置后重试。");
+      }
+      return;
+    }
     const modelsRoute = /^\/api\/v1\/harnesses\/([a-z][a-z0-9-]{0,95})\/models$/u.exec(path);
     if (modelsRoute && method === "GET") {
       queries(url, ["controlId", "workspace", "refresh", "nativeModel"]);

@@ -61,6 +61,8 @@ export interface ChatProps {
   /** Branches after a finished reply; omitted while branching is unavailable. */
   onBranch?: (runId: string) => void;
   onOpenSession?: (id: string) => void;
+  /** Reads the selected Harness's native skills, MCP servers and plugins on demand. */
+  onLoadExtensions?: (signal: AbortSignal) => Promise<import("../../../src/contracts/control.js").NativeExtensions | null>;
   onAttach: (files: readonly File[]) => void;
   onRemoveAttachment: (local: string) => void;
 }

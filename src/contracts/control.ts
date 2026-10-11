@@ -92,6 +92,18 @@ export type NativeOptions = Readonly<Record<string, string>>;
  * Model.inputModalities, Pi Model.input. `file` means a file can be handed over as a readable path, link or embedded text.
  */
 export interface NativeInputs { readonly image: boolean; readonly audio: boolean; readonly file: boolean }
+/**
+ * What the installed Harness has loaded besides its model, as it reports it: skills (invocable ones are also commands),
+ * MCP servers with their connection state and tool count, and plugins or extensions. Read-only; Hub never changes them.
+ */
+export interface NativeExtensions {
+  readonly skills: readonly { readonly name: string; readonly description: string; readonly scope?: string; readonly enabled: boolean; readonly command?: string }[];
+  readonly mcpServers: readonly { readonly name: string; readonly status: string; readonly auth?: string; readonly tools: number; readonly failed: boolean }[];
+  readonly plugins: readonly { readonly name: string; readonly enabled: boolean; readonly version?: string; readonly source?: string }[];
+  /** Lists cut at their bounds; the Harness has more than shown. */
+  readonly truncated?: boolean;
+}
+export const MAX_NATIVE_EXTENSIONS = 512;
 export interface NativeModelCatalog {
   readonly models: readonly { readonly id: string; readonly name: string; readonly options?: readonly NativeOption[]; readonly inputs?: NativeInputs }[];
   /** Agent-level inputs; a model's own `inputs` take precedence when the native interface declares them per model. */
@@ -135,6 +147,8 @@ export interface HarnessControl {
    * connection that opens no other conversation.
    */
   fork?(checkpoint: string, cwd: string): Promise<string>;
+  /** Native skills, MCP servers and plugins; absent when the interface cannot list them. */
+  extensions?(): Promise<NativeExtensions>;
   /** Sends one prompt. Attachments were accepted by checkAttachments; their private copies stay readable for the Turn. */
   startText(id: NativeConversationId, text: string, onEvent: (event: ControlEvent) => void, attachments?: readonly ControlAttachment[]): Promise<ControlRun>;
   /** Enables interactive requests for a public Run. Standalone probes keep their explicit deny default. */

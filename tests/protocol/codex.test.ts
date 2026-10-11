@@ -305,3 +305,26 @@ test("Codex forks a stored thread on its own connection and reports refusals as 
     finally { await other.close(); }
   }
 });
+
+test("Codex lists its skills, MCP servers and installed plugins and invokes an enabled skill as its own skill input", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-codex-skills-")), trace = join(directory, "trace");
+  const driver = control("skills", { FIXTURE_TRACE: trace });
+  try {
+    await driver.initialize();
+    assert.deepEqual(await driver.extensions(), {
+      skills: [{ name: "review-helper", description: "Reviews code in depth", scope: "user", enabled: true, command: "skill:review-helper" }, { name: "dormant", description: "Disabled skill", scope: "repo", enabled: false }],
+      mcpServers: [{ name: "docs", status: "notStarted", auth: "unsupported", tools: 2, failed: false }, { name: "remote", status: "failed", auth: "notLoggedIn", tools: 0, failed: true }],
+      plugins: [{ name: "github", enabled: true, version: "1.2.0", source: "openai-curated" }],
+    });
+    assert.deepEqual((await driver.models()).commands?.map(command => command.name), ["compact", "export", "skill:review-helper"], "only enabled skills become commands");
+    const id = await driver.open(process.cwd());
+    assert.equal((await (await driver.startText(id, "/skill:review-helper check the diff", () => {})).result).status, "completed");
+    assert.equal((await (await driver.startText(id, "/skill:dormant hello", () => {})).result).status, "completed");
+    const turns = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line)).filter(row => row.method === "turn/start").map(row => row.params.input);
+    assert.deepEqual(turns[0], [{ type: "text", text: "check the diff", text_elements: [] }, { type: "skill", name: "review-helper", path: "/skills/review-helper/SKILL.md" }]);
+    assert.deepEqual(turns[1], [{ type: "text", text: "/skill:dormant hello", text_elements: [] }], "a disabled skill is not invoked");
+  } finally { await driver.close(); await rm(directory, { recursive: true, force: true }); }
+  const older = control("no-skills");
+  try { await older.initialize(); assert.deepEqual((await older.models()).commands?.map(command => command.name), ["compact", "export"], "an app-server without skills/list has no skills"); }
+  finally { await older.close(); }
+});

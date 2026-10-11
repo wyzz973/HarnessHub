@@ -655,3 +655,26 @@ test("a branch opens with the quoted history and continues in its own native cop
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "the branch view must not overflow a narrow screen");
   assert.deepEqual(errors, []);
 });
+
+test("the native extensions panel lists skills, MCP servers and plugins and invokes a skill through its command", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  await page.getByRole("button", { name: "原生扩展", exact: true }).click();
+  const panel = page.locator(".native-extensions");
+  await expect(panel.getByRole("button", { name: "browser-skill", exact: true })).toBeVisible({ timeout: 15000 });
+  await expect(panel).toContainText("浏览器验收技能");
+  await panel.getByText("MCP 服务器").click(); await expect(panel).toContainText("browser-docs"); await expect(panel).toContainText("已连接"); await expect(panel).toContainText("1 个工具");
+  await panel.getByText("插件与扩展").click(); await expect(panel).toContainText("browser-plugin"); await expect(panel).toContainText("v2.0.0");
+  await page.screenshot({ path: join(artifact, "native-extensions.png"), animations: "disabled" });
+  await panel.getByRole("button", { name: "browser-skill", exact: true }).click();
+  await expect(composer).toHaveValue("/skill:browser-skill ");
+  await composer.press("End"); await composer.type("看看这个仓库"); await composer.press("Enter");
+  await expect(log).toContainText("已使用技能 browser-skill：看看这个仓库", { timeout: 15000 });
+  assert.deepEqual(errors, []);
+});

@@ -3970,3 +3970,16 @@ a {
 .branch-message p { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .branch-role { display: block; margin-bottom: 2px; color: var(--muted); font-size: 12px; }
 .branch-message .markdown, .branch-message .markdown p { font-size: 14px; line-height: 1.6; color: #5d5850; }
+
+/* Native extensions panel: read-only skills, MCP servers and plugins. */
+.native-extensions { width: min(420px, calc(100vw - 32px)); max-height: min(560px, 70vh); overflow: auto; }
+.native-extensions .composer-settings-heading > span { display: inline-flex; gap: 4px; }
+.native-extensions details { margin-top: 10px; }
+.native-extensions summary { cursor: pointer; font-size: 13px; color: var(--chat-ink); }
+.native-extensions summary span { color: var(--muted); margin-left: 4px; }
+.extension-list { display: grid; gap: 8px; margin: 8px 0 0; padding: 0; list-style: none; }
+.extension-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; font-size: 13px; }
+.extension-list li p { flex-basis: 100%; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.extension-list small { color: var(--muted); font-size: 11px; }
+.extension-list small.is-error { color: var(--danger); }
+.extension-list .is-disabled { color: var(--muted); font-weight: 400; }

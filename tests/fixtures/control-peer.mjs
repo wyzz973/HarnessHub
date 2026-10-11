@@ -101,6 +101,17 @@ lines.on("line", line => {
   if (message.method === "initialized") { initialized = true; return; }
   if (message.method === "config/read") { answer(message.id, { config: { model: "native-model-a", privateCredential: "synthetic-never-public", ...(["permissions-settings", "ignore-permissions"].includes(scenario) ? { approval_policy: "never", sandbox_mode: "danger-full-access" } : {}) } }); return; }
   if (message.method === "account/read") { answer(message.id, { account: { type: "chatgpt", email: "private-account@example.invalid" }, requiresOpenaiAuth: true }); return; }
+  if (message.method === "skills/list" && scenario === "no-skills") { emit({ id: message.id, error: { code: -32601, message: "Method not found" } }); return; }
+  if (message.method === "skills/list") {
+    const skills = scenario === "skills" ? [{ name: "review-helper", description: "Reviews code\nin depth", path: "/skills/review-helper/SKILL.md", scope: "user", enabled: true }, { name: "dormant", description: "Disabled skill", path: "/skills/dormant/SKILL.md", scope: "repo", enabled: false }, { name: "bad name", description: "", path: "relative", enabled: true }] : [];
+    answer(message.id, { data: [{ cwd: message.params.cwds?.[0] ?? "/", skills, errors: [] }] }); return;
+  }
+  if (message.method === "mcpServerStatus/list") {
+    answer(message.id, { data: scenario === "skills" ? [{ name: "docs", runtimeStatus: null, authStatus: "unsupported", tools: { search: {}, read: {} }, toolsError: null }, { name: "remote", runtimeStatus: "failed", authStatus: "notLoggedIn", tools: {}, toolsError: "login required" }] : [], nextCursor: null }); return;
+  }
+  if (message.method === "plugin/installed") {
+    answer(message.id, { marketplaces: scenario === "skills" ? [{ name: "openai-curated", plugins: [{ name: "github", installed: true, enabled: true, localVersion: "1.2.0" }, { name: "not-here", installed: false, enabled: false }] }] : [], marketplaceLoadErrors: [] }); return;
+  }
   if (message.method === "model/list") { answer(message.id, { data: ["native-model-a", "native-model-b"].map(model => ({ model, displayName: model, ...(scenario === "attachments" ? { inputModalities: model === "native-model-a" ? ["text", "image", "audio"] : ["text"] } : {}) })), nextCursor: null }); return; }
   if (message.method === "session/new" && scenario === "attachments") {
     answer(message.id, { sessionId: "session-fixture", configOptions: [{ id: "model", category: "model", type: "select", currentValue: "native/model-a", options: [{ value: "native/model-a", name: "Model A" }, { value: "native/model-b", name: "Model B" }] }] }); return;

@@ -17,6 +17,9 @@ createInterface({ input: process.stdin }).on("line", line => {
   if (value.method === "config/read") return reply(value.id, { config: { model: "native-a" } });
   if (value.method === "account/read") return reply(value.id, { account: { type: "chatgpt" }, requiresOpenaiAuth: true });
   if (value.method === "model/list") return reply(value.id, { data: [{ model: "native-a", displayName: "Native A", defaultReasoningEffort:"low",supportedReasoningEfforts:[{reasoningEffort:"low"},{reasoningEffort:"high"}] }, { model: "native-b", displayName: "Native B", defaultReasoningEffort:"low",supportedReasoningEfforts:[{reasoningEffort:"low"},{reasoningEffort:"high"}] }], nextCursor: null });
+  if (value.method === "skills/list") return reply(value.id, { data: [{ cwd: process.cwd(), skills: [{ name: "browser-skill", description: "浏览器验收技能", path: "/skills/browser-skill/SKILL.md", scope: "user", enabled: true }], errors: [] }] });
+  if (value.method === "mcpServerStatus/list") return reply(value.id, { data: [{ name: "browser-docs", runtimeStatus: "connected", authStatus: "unsupported", tools: { lookup: {} }, toolsError: null }], nextCursor: null });
+  if (value.method === "plugin/installed") return reply(value.id, { marketplaces: [{ name: "browser-market", plugins: [{ name: "browser-plugin", installed: true, enabled: true, localVersion: "2.0.0" }] }], marketplaceLoadErrors: [] });
   if (value.method === "thread/start") { nativeModel = value.params.model ?? null; notify("thread/started", { thread: { id: native } }); return reply(value.id, { thread: { id: native } }); }
   if (value.method === "thread/fork") { const id = "browser-fork-" + process.pid; notify("thread/started", { thread: { id } }); return reply(value.id, { thread: { id } }); }
   if (value.method === "thread/resume") { native = value.params.threadId; nativeModel = value.params.model ?? null; notify("thread/started", { thread: { id: native } }); return reply(value.id, { thread: { id: native } }); }
@@ -30,6 +33,11 @@ createInterface({ input: process.stdin }).on("line", line => {
     const model = nativeModel ?? (config ? JSON.parse(config.match(/^model = (.+)$/mu)[1]) : "native-a");
     active = { id: "browser-turn-" + ++counter };
     notify("turn/started", { threadId: native, turn: { id: active.id, status: "inProgress" } }); reply(value.id, { turn: { id: active.id, status: "inProgress" } });
+    const skill = value.params.input.find(item => item.type === "skill");
+    if (skill) {
+      notify("item/agentMessage/delta", { threadId: native, turnId: active.id, itemId: "browser-message", delta: "已使用技能 " + skill.name + "：" + input });
+      notify("turn/completed", { threadId: native, turn: { id: active.id, status: "completed" } }); active = null; return;
+    }
     if (text.startsWith("WHICH_THREAD")) {
       // Names the native thread this Turn ran on, so a branch can be seen continuing in its own native copy.
       notify("item/agentMessage/delta", { threadId: native, turnId: active.id, itemId: "browser-message", delta: (native.startsWith("browser-fork-") ? "原生分支线程" : "原线程") + "，公共历史 " + context.history.length + " 轮，分支历史 " + (context.branchedHistory?.length ?? 0) + " 条" });

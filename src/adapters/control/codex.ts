@@ -8,6 +8,7 @@ import type { NativeToolDetail, NativeUsage } from "../../contracts/control.js";
 import { readFile, stat } from "node:fs/promises";
 import { basename } from "node:path";
 import { MAX_CONTENT_BYTES, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
+import { MAX_NATIVE_EXTENSIONS, type NativeExtensions } from "../../contracts/control.js";
 import { checkInputs, fileMentions } from "../../infrastructure/control/attachments.js";
 
 interface ActiveTurn {
@@ -116,6 +117,8 @@ export class CodexControl implements HarnessControl {
   private effort: string | undefined;
   /** Model named when the thread was opened; undefined means the configured default. */
   private openedModel: string | undefined;
+  /** Enabled skills by name, as the last skills/list for this workspace reported them; `/skill:<name>` invokes one. */
+  private skills = new Map<string, { readonly name: string; readonly path: string }>();
   /** Set once this connection forked a thread; it then opens nothing and attributes nothing. */
   private forkConnection = false;
   /** Codex's own rollout file for the opened thread, as the thread reports it; null for an ephemeral thread. */
@@ -194,8 +197,9 @@ export class CodexControl implements HarnessControl {
     }
     const defaultModel = configured.model == null ? null : string(configured.model, "configured model", 1024);
     if (defaultModel !== null && !seen.has(defaultModel)) models.unshift({ id: defaultModel, name: defaultModel });
-    const options = permissionOptions(configured);
-    return { models, defaultModel, canSelect: models.length > 0, ...(options.length ? { options } : {}), commands: THREAD_COMMANDS, authentication: account.requiresOpenaiAuth === false || account.account != null ? "ready" : account.requiresOpenaiAuth === true ? "missing" : "unknown" };
+    const options = permissionOptions(configured), skills = await this.readSkills();
+    const commands = [...THREAD_COMMANDS, ...skills.filter(skill => skill.enabled).slice(0, MAX_NATIVE_EXTENSIONS).map(skill => ({ name: "skill:" + skill.name, description: ("Skill · " + skill.description).slice(0, 1024) }))];
+    return { models, defaultModel, canSelect: models.length > 0, ...(options.length ? { options } : {}), commands, authentication: account.requiresOpenaiAuth === false || account.account != null ? "ready" : account.requiresOpenaiAuth === true ? "missing" : "unknown" };
   }
   async checkpoint(): Promise<string | null> { return this.conversation; }
   async open(cwd: string, model?: string, native?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> {
@@ -236,6 +240,54 @@ export class CodexControl implements HarnessControl {
     } catch (error) { this.rpc.abort(errorFrom(error)); throw error; }
     finally { this.opening = false; }
   }
+  /** skills/list for this workspace; enabled skills become invocable as `/skill:<name>`. */
+  private async readSkills(): Promise<{ name: string; description: string; scope?: string; enabled: boolean; path: string }[]> {
+    let response: unknown;
+    try { response = await this.rpc.request("skills/list", { cwds: [this.options.cwd] }); }
+    catch (error) {
+      // An app-server without skills/list (older Codex) has no skills to offer; other failures stay failures.
+      if (error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null) { this.skills = new Map(); return []; }
+      throw error;
+    }
+    const result = object(response, "native skills");
+    if (!Array.isArray(result.data)) throw new ControlError("INVALID_PROTOCOL", "invalid native skill list");
+    const skills = result.data.flatMap(entry => { const rows = object(entry, "native skill root").skills; return Array.isArray(rows) ? rows : []; }).slice(0, 4096).flatMap(value => {
+      const row = object(value, "native skill"), name = typeof row.name === "string" ? line(row.name, 256) : "", path = typeof row.path === "string" ? row.path : "";
+      if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(name) || !isAbsolute(path)) return [];
+      return [{ name, description: typeof row.description === "string" ? line(row.description, 1024) : "", ...(typeof row.scope === "string" ? { scope: line(row.scope, 64) } : {}), enabled: row.enabled === true, path }];
+    });
+    this.skills = new Map(skills.filter(skill => skill.enabled).map(skill => [skill.name, { name: skill.name, path: skill.path }]));
+    return skills;
+  }
+  /** Skills, MCP server status and installed plugins as this Codex reports them; listing never starts or changes anything it does not already. */
+  async extensions(): Promise<NativeExtensions> {
+    this.assertInitialized();
+    const skills = await this.readSkills(), mcpServers: NativeExtensions["mcpServers"][number][] = [];
+    let cursor: string | undefined, truncated = skills.length > MAX_NATIVE_EXTENSIONS;
+    for (let page = 0; page < 16; page++) {
+      const result = object(await this.rpc.request("mcpServerStatus/list", { detail: "toolsAndAuthOnly", limit: 100, ...(cursor === undefined ? {} : { cursor }) }), "native MCP status");
+      if (!Array.isArray(result.data)) throw new ControlError("INVALID_PROTOCOL", "invalid native MCP status");
+      for (const value of result.data) {
+        const row = object(value, "native MCP server"), tools = row.tools !== null && typeof row.tools === "object" ? Object.keys(row.tools).length : 0;
+        mcpServers.push({ name: string(row.name, "MCP server name", 256), status: typeof row.runtimeStatus === "string" ? row.runtimeStatus : "notStarted", ...(typeof row.authStatus === "string" ? { auth: row.authStatus } : {}), tools, failed: row.toolsError !== null && row.toolsError !== undefined });
+      }
+      if (typeof result.nextCursor !== "string" || mcpServers.length >= MAX_NATIVE_EXTENSIONS) { truncated ||= typeof result.nextCursor === "string"; break; }
+      cursor = result.nextCursor;
+    }
+    const installed = object(await this.rpc.request("plugin/installed", { cwds: [this.options.cwd] }), "native plugins");
+    const plugins = (Array.isArray(installed.marketplaces) ? installed.marketplaces : []).flatMap(value => {
+      const market = object(value, "native plugin marketplace"), source = typeof market.name === "string" ? line(market.name, 256) : undefined;
+      return (Array.isArray(market.plugins) ? market.plugins : []).flatMap(item => {
+        const plugin = object(item, "native plugin");
+        if (plugin.installed !== true || typeof plugin.name !== "string") return [];
+        const version = typeof plugin.localVersion === "string" ? plugin.localVersion : typeof plugin.version === "string" ? plugin.version : undefined;
+        return [{ name: line(plugin.name, 256), enabled: plugin.enabled === true, ...(version ? { version: line(version, 64) } : {}), ...(source ? { source } : {}) }];
+      });
+    });
+    truncated ||= plugins.length > MAX_NATIVE_EXTENSIONS;
+    return { skills: skills.slice(0, MAX_NATIVE_EXTENSIONS).map(({ path: _path, ...skill }) => ({ ...skill, ...(skill.enabled ? { command: "skill:" + skill.name } : {}) })),
+      mcpServers: mcpServers.slice(0, MAX_NATIVE_EXTENSIONS), plugins: plugins.slice(0, MAX_NATIVE_EXTENSIONS), ...(truncated ? { truncated } : {}) };
+  }
   /** `thread/fork` of a stored thread on a connection that opened none; the source thread is not loaded into a turn. */
   async fork(checkpoint: string, cwd: string): Promise<string> {
     this.assertInitialized();
@@ -275,8 +327,11 @@ export class CodexControl implements HarnessControl {
       timer: setTimeout(() => this.rpc.abort(new ControlError("RUN_TIMEOUT", "Codex turn exceeded its deadline")), this.options.runTimeoutMs),
       started, signalStarted, rejectStarted, turnId: null, settled: false, stopping: false, stop: null, deltaItems: new Set(), items: new Map(), reads: new Set(), baseline: this.lastTotal };
     this.active = active;
+    // `/skill:<name> …` sends Codex's own skill input next to the remaining text, as its TUI does for a skill mention.
+    const invoked = /^\/skill:([A-Za-z0-9][A-Za-z0-9._:-]{0,255})(?:\s+([\s\S]*))?$/u.exec(prompt), skill = invoked ? this.skills.get(invoked[1]!) : undefined;
+    const text = skill ? invoked![2]?.trim() || "$" + skill.name : prompt;
     // Images and audio are read by Codex from the private copies; files have no input type and are named by path.
-    const input = [{ type: "text", text: prompt + fileMentions(attachments.filter(file => file.kind === "file")), text_elements: [] },
+    const input = [{ type: "text", text: text + fileMentions(attachments.filter(file => file.kind === "file")), text_elements: [] }, ...(skill ? [{ type: "skill", name: skill.name, path: skill.path }] : []),
       ...attachments.flatMap(file => file.kind === "image" ? [{ type: "localImage", path: file.path }] : file.kind === "audio" ? [{ type: "localAudio", path: file.path }] : [])];
     // `/export` copies Codex's own rollout record; nothing is sent to the model.
     if (/^\/export\s*$/u.test(prompt) && !attachments.length) {

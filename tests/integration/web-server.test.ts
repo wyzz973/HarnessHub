@@ -368,3 +368,17 @@ test("branching over HTTP returns the new conversation with its quoted history a
   const prompt = (await trace(f)).filter(item => item.kind === "prompt").at(-1)!;
   assert.deepEqual((prompt.context as { branchedHistory: { text: string }[] }).branchedHistory.map(row => row.text), ["first", "a:first"], "the branch's first input carries the quoted history");
 });
+
+test("native extensions are read on demand from the selected Harness and are null where its interface has no list", async t => {
+  const f = await fixture(t);
+  assert.equal((await fetch(f.origin + "/api/v1/harnesses/web-b/extensions")).status, 401);
+  await auth(f);
+  const codex = await call(f, "/api/v1/harnesses/web-b/extensions?" + new URLSearchParams({ controlId: "web-b-control", workspace: f.workspace }));
+  assert.equal(codex.status, 200, codex.text);
+  const listed = row(row(codex.data).extensions);
+  assert.deepEqual((listed.skills as { name: string; command?: string }[]).map(skill => [skill.name, skill.command]), [["web-skill", "skill:web-skill"]]);
+  assert.deepEqual((listed.mcpServers as { name: string; tools: number }[]).map(server => [server.name, server.tools]), [["web-mcp", 1]]);
+  const acp = await call(f, "/api/v1/harnesses/web-a/extensions?" + new URLSearchParams({ controlId: "web-a-control", workspace: f.workspace }));
+  assert.equal(acp.status, 200); assert.equal(row(acp.data).extensions, null);
+  assert.equal((await call(f, "/api/v1/harnesses/web-b/extensions?unknown=1")).status, 400);
+});

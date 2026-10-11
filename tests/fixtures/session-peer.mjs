@@ -39,6 +39,9 @@ createInterface({ input: process.stdin }).on("line", line => {
   }
   if (message.method === "initialized") { initialized = true; return; }
   if (message.method === "session/new") { response(message.id, { sessionId: nativeId }); return; }
+  if (message.method === "skills/list") { response(message.id, { data: [{ cwd: process.cwd(), skills: [{ name: "web-skill", description: "Web fixture skill", path: "/skills/web-skill/SKILL.md", scope: "user", enabled: true }], errors: [] }] }); return; }
+  if (message.method === "mcpServerStatus/list") { response(message.id, { data: [{ name: "web-mcp", runtimeStatus: null, authStatus: "unsupported", tools: { one: {} }, toolsError: null }], nextCursor: null }); return; }
+  if (message.method === "plugin/installed") { response(message.id, { marketplaces: [], marketplaceLoadErrors: [] }); return; }
   if (message.method === "thread/start") {
     if (!initialized) throw new Error("Codex thread was opened before initialized");
     notify("thread/started", { thread: { id: nativeId } }); response(message.id, { thread: { id: nativeId } }); return;

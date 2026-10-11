@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, sep } from "node:path";
-import { nativeConversationId, type BackendResult, type CleanupEvidence, type ControlEvent, type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl, type NativeConversationId, type NativeOptions, type NativeOption, type NativeModelCatalog, type NativeToolDetail, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
+import { MAX_NATIVE_EXTENSIONS, nativeConversationId, type NativeExtensions, type BackendResult, type CleanupEvidence, type ControlEvent, type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl, type NativeConversationId, type NativeOptions, type NativeOption, type NativeModelCatalog, type NativeToolDetail, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
 import { classifyRemoteFailure, ControlError, errorFrom, JsonRpcProcess, object, string, type RpcWireCodec } from "../../infrastructure/control/json-rpc-process.js";
 import { MAX_CONTENT_BYTES, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
 import { checkInputs, fileMentions, readAttachment } from "../../infrastructure/control/attachments.js";
@@ -86,6 +86,7 @@ export class PiControl implements HarnessControl {
   private readonly permissions = new Map<string, { method:string;choices:readonly string[]; resolve: (value: Readonly<Record<string, unknown>>) => void; timer: ReturnType<typeof setTimeout> | null }>();
   private entries: ReturnType<typeof model>[] = [];
   private hubCompact = false;
+  private commandSources: readonly { readonly name: string; readonly source: string; readonly path: string; readonly scope: string | undefined; readonly origin: string | undefined }[] = [];
   private hubExport = false;
   private readonly contextWindows = new Map<string, number>();
   private state: Record<string, unknown> = {};
@@ -138,6 +139,9 @@ export class PiControl implements HarnessControl {
       const commandResult = object(await this.rpc.request("get_commands", {}), "Pi native commands");
       if (!Array.isArray(commandResult.commands) || commandResult.commands.length > 256) throw new ControlError("INVALID_PROTOCOL", "invalid Pi command catalog");
       const commands = commandResult.commands.map(value => { const command = object(value, "Pi command"); return { name: string(command.name, "Pi command name", 128), description: typeof command.description === "string" ? command.description.slice(0,4096) : "" }; });
+      // Kept for the extension listing: which commands are skills and which extension file each extension command comes from.
+      this.commandSources = commandResult.commands.map(value => { const command = object(value, "Pi command"), info = command.sourceInfo !== null && typeof command.sourceInfo === "object" ? command.sourceInfo as Record<string, unknown> : {};
+        return { name: string(command.name, "Pi command name", 128), source: typeof command.source === "string" ? command.source : "", path: typeof info.path === "string" ? info.path.slice(0, 4096) : "", scope: typeof info.scope === "string" ? info.scope.slice(0, 64) : undefined, origin: typeof info.origin === "string" ? info.origin.slice(0, 64) : undefined }; });
       // Manual compaction is an RPC command, not a prompt command; it is offered only when no native command owns the name.
       this.hubCompact = !commands.some(command => command.name === "compact");
       this.hubExport = !commands.some(command => command.name === "export");
@@ -183,6 +187,16 @@ export class PiControl implements HarnessControl {
     this.conversation = nativeConversationId(this.state.sessionId); return this.conversation;
   }
   async models(): Promise<NativeModelCatalog> { if (!this.initialized) throw new ControlError("INVALID_STATE", "Pi is not initialized"); return this.catalog; }
+  /** Skills and extensions from Pi's own command catalog; Pi has no MCP servers of its own. */
+  async extensions(): Promise<NativeExtensions> {
+    if (!this.initialized) throw new ControlError("INVALID_STATE", "Pi is not initialized");
+    const described = new Map((this.catalog.commands ?? []).map(command => [command.name, command.description]));
+    const skills = this.commandSources.filter(command => command.source === "skill").map(command => ({ name: command.name.replace(/^skill:/u, ""), description: (described.get(command.name) ?? "").slice(0, 1024), ...(command.scope ? { scope: command.scope } : {}), enabled: true, command: command.name }));
+    const files = new Map<string, { scope: string | undefined; origin: string | undefined }>();
+    for (const command of this.commandSources) if (command.source === "extension" && command.path && !files.has(command.path)) files.set(command.path, { scope: command.scope, origin: command.origin });
+    const plugins = [...files.entries()].map(([path, info]) => ({ name: path.split(/[\\/]/u).filter(Boolean).slice(-2).join("/") || path, enabled: true, ...(info.origin ?? info.scope ? { source: [info.origin, info.scope].filter(Boolean).join(" · ") } : {}) }));
+    return { skills: skills.slice(0, MAX_NATIVE_EXTENSIONS), mcpServers: [], plugins: plugins.slice(0, MAX_NATIVE_EXTENSIONS), ...(skills.length > MAX_NATIVE_EXTENSIONS || plugins.length > MAX_NATIVE_EXTENSIONS ? { truncated: true } : {}) };
+  }
   /** Restores the source session file, then `clone` copies its current branch into a new session file Pi switches to. */
   async fork(checkpoint: string, cwd: string): Promise<string> {
     await this.open(cwd, undefined, undefined, checkpoint);

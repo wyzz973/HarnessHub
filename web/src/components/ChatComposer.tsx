@@ -10,6 +10,7 @@ import { SearchPicker } from "./SearchPicker.js";
 import type { PickerOption } from "./SearchPicker.js";
 import type { ChatProps } from "./ChatPage.js";
 import { attachmentProblem, ComposerAttachments } from "./Attachments.js";
+import { NativeExtensionsPanel } from "./NativeExtensions.js";
 
 interface ComposerProps extends ChatProps {
   active: PublicRun | null;
@@ -152,6 +153,7 @@ export function ChatComposer(props: ComposerProps) {
           {thought ? <div className="composer-chip thinking-chip">{optionPicker(thought,"思考强度")}</div> : null}
           {props.nativeModels?.commands?.length ? <div className="composer-chip command-chip"><SearchPicker label="原生命令" value="" placeholder="命令" options={props.nativeModels.commands.map(command=>({value:command.name,label:"/"+command.name,description:command.description}))} disabled={disabled} onChange={value=>{props.onMessageDraft("/"+value+" "); inputRef.current?.focus();}}/></div> : null}
         </div>
+        {!draft.providerId && draft.harnessId && props.onLoadExtensions ? <NativeExtensionsPanel key={draft.harnessId + ":" + draft.controlId} load={props.onLoadExtensions} disabled={disabled} onCommand={command => { props.onMessageDraft("/" + command + " "); inputRef.current?.focus(); }}/> : null}
         <Popover.Root><Popover.Trigger asChild><button type="button" className={`composer-settings-trigger ${outdated ? "has-update" : ""}`} aria-label="高级配置" title="控制入口与配置版本" disabled={disabled}><SlidersHorizontal size={15}/>{outdated ? <span className="settings-update-dot"/> : null}</button></Popover.Trigger>
           <Popover.Portal><Popover.Content className="composer-settings-panel" side="top" align="end" sideOffset={12} collisionPadding={16}>
             <div className="composer-settings-heading"><h3>执行配置</h3><Popover.Close className="icon-button" aria-label="收起高级配置"><X size={15}/></Popover.Close></div>

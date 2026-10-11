@@ -1187,7 +1187,7 @@
 - 明确拒绝，不空会话fallback
 - 不把结果称官方认证
 
-场景：G032-C01, G032-C02, G032-C03, G032-C04, G032-L01, G032-N01, G032-N02, G032-X03, G032-NC4, G032-NC5, G032-NC6, G032-NC7, G032-NC8, G032-NC9, G032-NC10, G032-NC11, G032-NC12, G032-NC13。
+场景：G032-C01, G032-C02, G032-C03, G032-C04, G032-L01, G032-N01, G032-N02, G032-X03, G032-NC4, G032-NC5, G032-NC6, G032-NC7, G032-NC8, G032-NC9, G032-NC10, G032-NC11, G032-NC12, G032-NC13, G032-NC14。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1230,7 +1230,7 @@
 - 明确失败或能力不支持
 - 验证原生Adapter执行/中断/审批/绑定清理；完整正式入口验收由G060承担
 
-场景：G034-C01, G034-C02, G034-C03, G034-C04, G034-NC3, G034-NC4, G034-NC5, G034-NC6, G034-NC7, G034-NC8。
+场景：G034-C01, G034-C02, G034-C03, G034-C04, G034-NC3, G034-NC4, G034-NC5, G034-NC6, G034-NC7, G034-NC8, G034-NC9。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1565,7 +1565,7 @@
 - 统一problem错误且无副作用
 - 遗漏/重复/过期内容能被拒绝
 
-场景：G050-C01, G050-C02, G050-C03, G050-P01, G050-P02, G050-R01, G050-NC1, G050-NC2, G050-NC3, G050-NC4。
+场景：G050-C01, G050-C02, G050-C03, G050-P01, G050-P02, G050-R01, G050-NC1, G050-NC2, G050-NC3, G050-NC4, G050-NC5。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1682,13 +1682,14 @@
 - web/src/components/NativeActivity.tsx
 - web/src/components/Attachments.tsx
 - web/src/components/BranchOrigin.tsx
+- web/src/components/NativeExtensions.tsx
 
 验收：
 - 公共Session身份与历史保留
 - 不提前展示新Harness已生效
 - 可操作且不持有独立业务状态
 
-场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01, G054-NC1, G054-NC2, G054-NC3, G054-NC4。
+场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01, G054-NC1, G054-NC2, G054-NC3, G054-NC4, G054-NC5。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1842,6 +1843,7 @@
 - tests/real/native-attachments.real.ts
 - tests/real/native-commands.real.ts
 - tests/real/native-branch.real.ts
+- tests/real/native-extensions.real.ts
 
 验收：
 - 记录通过/失败/未覆盖，不能称全协议认证
@@ -1850,7 +1852,7 @@
 - 真实HTTP/Store/IPC/原生进程与产物/清理完整可核对
 - 真实HTTP/Store/IPC/原生进程与产物/清理完整可核对
 
-场景：G060-C01, G060-C02, G060-C03, G060-C04, G060-C05, G060-P01, G060-P02, G060-M01, G060-S01, G060-N04, G060-NC1, G060-NC2, G060-NC3, G060-NC4, G060-NC5。
+场景：G060-C01, G060-C02, G060-C03, G060-C04, G060-C05, G060-P01, G060-P02, G060-M01, G060-S01, G060-N04, G060-NC1, G060-NC2, G060-NC3, G060-NC4, G060-NC5, G060-NC6。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 

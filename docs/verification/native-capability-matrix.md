@@ -22,7 +22,7 @@
 | 输入输出 | 音频输入 | ✕ | — | — | — | ✕ | — | — |
 | 输入输出 | 文件/文档输入 | ◐ | ✕ | ✅ | ◐ | ✕ | ✕ | ◐ |
 | 输入输出 | 非文本输出 | ◐ | ✕ | ◐ | — | — | ✕ | ○ |
-| 扩展 | Skills | ○ | ◑ | ◑ | ◑ | ？ | ◑ | ◑ |
+| 扩展 | Skills | ✅ | ◑ | ◑ | ◑ | ？ | ◑ | ◐ |
 | 扩展 | MCP | ◑ | ◑ | ◑ | — | ◑ | ◑ | — |
 | 扩展 | 插件/扩展 | ◑ | ◑ | ◑ | ○ | ◑ | ？ | ◑ |
 | 会话 | 原生会话恢复 | ✅ | ✕ | ✅ | ✅ | ✕ | ✕ | ✅ |
@@ -36,13 +36,13 @@
 
 | Harness | ✅ | ◐ | ◑ | ○ | ✕ | — | ？ |
 |---|---|---|---|---|---|---|---|
-| Codex | 11 | 3 | 5 | 5 | 2 | 1 | 0 |
+| Codex | 12 | 3 | 5 | 4 | 2 | 1 | 0 |
 | Claude Code | 0 | 0 | 3 | 6 | 16 | 2 | 0 |
 | OpenCode | 8 | 6 | 3 | 3 | 0 | 2 | 5 |
 | OpenClaw | 5 | 5 | 1 | 9 | 0 | 7 | 0 |
 | Gemini CLI | 0 | 0 | 2 | 1 | 12 | 6 | 6 |
 | Cursor | 0 | 2 | 4 | 4 | 9 | 5 | 3 |
-| Pi | 10 | 5 | 2 | 3 | 0 | 7 | 0 |
+| Pi | 10 | 6 | 1 | 3 | 0 | 7 | 0 |
 
 ## Codex
 
@@ -66,9 +66,9 @@
 | 音频输入 | 部分 | UserInput.audio/localAudio，仅 inputModalities 含 audio 的模型 | 已接出 | 通过 | 受阻 | — | localAudio 已接出；本机模型目录没有声明音频输入的模型，真实无法验收 |
 | 文件/文档输入 | 部分 | 无 file 输入类型；仅 localImage/localAudio/mention(app/plugin) 与文本路径 | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-codex.json；docs/verification/native-attachments-2026-10-11.md | 只读副本路径写入提示，原程序用自己的工具读取 |
 | 非文本输出 | 部分 | imageGeneration.savedPath、imageView.path | 已接出 | 通过 | 未接出 | — | imageGeneration.savedPath 读取为产物（回合等待读取完成）、imageView 显示路径；真实图片生成未验收 |
-| Skills | 具备 | skills/list、UserInput.skill | 未接出 | 未接出 | 未接出 | — | — |
-| MCP | 具备 | 用户 MCP 按原配置加载；mcpServerStatus/list、mcpServer/oauth/login | 部分 | 未接出 | 未接出 | — | 原程序加载；Hub 无状态/登录界面 |
-| 插件/扩展 | 具备 | plugin/list\|install、app/list | 部分 | 未接出 | 未接出 | — | 原程序按配置加载；Hub 无管理界面 |
+| Skills | 具备 | skills/list、UserInput.skill | 已接出 | 通过 | 通过 | .tmp/cc-native-extensions.json；docs/verification/native-extensions-2026-10-11.md | skills/list 列出用户、系统与工作区技能（真实 173 项）；启用的技能以 /skill:名称 作为 Codex 自己的 skill 输入调用，工作区技能真实调用成功 |
+| MCP | 具备 | 用户 MCP 按原配置加载；mcpServerStatus/list、mcpServer/oauth/login | 部分 | 通过 | 通过 | .tmp/cc-native-extensions.json；docs/verification/native-extensions-2026-10-11.md | 原生扩展面板只读显示 MCP 服务器状态、认证与工具数（真实 14 个）；登录与重载在原程序中进行 |
+| 插件/扩展 | 具备 | plugin/list\|install、app/list | 部分 | 通过 | 通过 | .tmp/cc-native-extensions.json；docs/verification/native-extensions-2026-10-11.md | 只读显示已安装插件（真实 46 个）；安装与启停在原程序中进行 |
 | 原生会话恢复 | 具备 | thread/resume(excludeTurns)；跨 Hub 进程重启 | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；docs/verification/complete-native-capabilities-2026-10-11.md | — |
 | 原生会话列表/接续 | 具备 | thread/list、thread/read、thread/turns/list | 未接出 | 未接出 | 未接出 | — | — |
 | 原生分支 | 具备 | thread/fork {lastTurnId} | 已接出 | 通过 | 通过 | .tmp/cc-native-branch-codex-acp.json；docs/verification/native-branch-2026-10-11.md | 从最新回复分支时 thread/fork 建立原生副本；更早位置以公共历史分支 |
@@ -270,9 +270,9 @@
 | 音频输入 | 不提供 | 无音频输入 | 不适用 | 不适用 | 不适用 | — | — |
 | 文件/文档输入 | 部分 | RPC 无 @file 附件；只读副本路径写入提示，由原 read 工具读取 | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-pi.json；docs/verification/native-attachments-2026-10-11.md | — |
 | 非文本输出 | 部分 | read 工具返回的图片内容 | 未接出 | 未接出 | 未接出 | — | — |
-| Skills | 具备 | /skill:name 经 prompt 展开 | 部分 | 通过 | 未接出 | — | 通过原生命令执行 |
+| Skills | 具备 | /skill:name 经 prompt 展开 | 已接出 | 通过 | 部分通过 | .tmp/cc-native-extensions.json；docs/verification/native-extensions-2026-10-11.md | 命令目录中的 skill:名称 列为技能（真实 69 项）并按原生命令调用；新工作区的项目技能需 Pi 信任才加载，技能调用未真实验收 |
 | MCP | 不提供 | 无内置 MCP（仅扩展） | 不适用 | 不适用 | 不适用 | — | — |
-| 插件/扩展 | 具备 | extensions/packages 按原配置加载（项目资源需信任） | 部分 | 未接出 | 未接出 | — | 原程序加载 |
+| 插件/扩展 | 具备 | extensions/packages 按原配置加载（项目资源需信任） | 部分 | 通过 | 通过 | .tmp/cc-native-extensions.json；docs/verification/native-extensions-2026-10-11.md | 只读显示扩展命令来源的扩展（真实 1 个）；安装与启停在原程序中进行 |
 | 原生会话恢复 | 具备 | --session 原会话文件 | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1-pi.json；.tmp/native-complete-real-combined.json；docs/verification/complete-native-capabilities-2026-10-11.md | 首个助手消息前恢复仍会失败（原程序延迟创建文件） |
 | 原生会话列表/接续 | 不提供 | RPC 无会话列表 | 不适用 | 不适用 | 不适用 | — | — |
 | 原生分支 | 具备 | fork {entryId}、clone、get_fork_messages | 已接出 | 通过 | 通过 | .tmp/cc-native-branch-codex-pi.json；docs/verification/native-branch-2026-10-11.md | 恢复源会话文件后 clone 为新会话文件；更早位置以公共历史分支 |

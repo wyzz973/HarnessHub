@@ -74,6 +74,8 @@ ADR-020追加`POST /api/v1/sessions/:id/native-branch`，接受epoch/commandId�
 
 ADR-022追加`GET/HEAD /api/v1/content/:id`（`download=1`可选）：需要登录，跨站请求拒绝；只有png/jpeg/gif/webp图片与JSON/纯文本内联，其余强制下载，响应带`Content-Security-Policy: sandbox`与`nosniff`，未知内容404，文件与记录不一致409。工具详情按需读取。SSE新增`run`帧，携带version/lastSeq与活动Run的完整公开事实，用于工具、计划、用量、提示、活动、产物的增量更新；客户端只接受仍在执行的活动Run，身份、输入、选择、epoch与状态不得改变，不符或缺帧时改取完整快照。
 
+ADR-026追加`GET /api/v1/harnesses/:id/extensions?controlId=&workspace=`：按需用短期原生探针读取技能、MCP服务器与插件（每类≤512，标记截断），不缓存；接口没有列表时返回`{extensions:null}`。Codex启用的技能进入命令目录（`skill:名称`）并以原生skill输入调用。
+
 ADR-025追加`POST /api/v1/sessions/:id/fork {commandId, throughRunId?}`：在已完成的回复后创建分支并返回新对话视图（201，命令幂等）；没有完成的回复或源正在执行时409。会话视图包含`origin`（源对话、分支点、引用历史），原生状态增加`forking`；尚无输入的分支在列表中命名为“分支 · 首条消息”。
 
 ADR-024追加`GET /api/v1/sessions/:id/export?format=markdown|json`：需要登录，返回附件形式的公开对话（消息与Run摘要：计划、工具标题、活动、产物与附件名称、用量、错误），不含原生私有绑定、工具详情正文与存储字节；未知格式400。Codex模型目录增加取自原配置的`approval_policy`、`sandbox`原生选项，只覆盖Hub线程；Codex与Pi目录在原接口没有同名命令时提供`compact`、`export`，分别调用原生压缩与导出，导出文件作为Run产物。ACP目录读取最多等待1.5秒的命令公告。

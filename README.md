@@ -81,6 +81,7 @@ pnpm test:real:native-activity
 pnpm test:real:native-attachments
 pnpm test:real:native-commands
 pnpm test:real:native-branch
+pnpm test:real:native-extensions
 pnpm exec playwright install chromium
 pnpm test:web
 ~~~
@@ -154,3 +155,5 @@ python3 -m unittest discover -s tools -p 'test_*.py' -v
 [ADR-024](docs/decisions/0024-native-session-operations.md)起，Codex 可在高级配置中为本次对话选择审批策略与沙箱（只覆盖 Hub 的线程，不改 config.toml），审批请求带文件名与差异；Codex 与 Pi 的命令目录提供 `/compact`、`/export`，调用原程序自己的压缩与导出，导出文件可从回复下载；对话头部可把公开对话导出为 Markdown 或 JSON。见[原生会话操作验收](docs/verification/native-session-actions-2026-10-11.md)。
 
 [ADR-025](docs/decisions/0025-conversation-branches.md)起，可在任一完成的回复上“从这里分支”：新对话带上到此为止的历史；原生会话恰好在这一处时（Codex、OpenCode、Pi 已真实验证），由原程序建立原生副本，否则以公共历史继续（如 OpenClaw）。分支与原对话互不影响。见[分支验收](docs/verification/native-branch-2026-10-11.md)。
+
+[ADR-026](docs/decisions/0026-native-extensions.md)起，输入框的“原生扩展”面板只读列出所选 Harness 加载的技能、MCP 服务器与插件（Codex、Pi），点选技能即填入命令；Codex 技能以它自己的 skill 输入调用。见[原生扩展验收](docs/verification/native-extensions-2026-10-11.md)。

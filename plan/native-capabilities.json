@@ -324,29 +324,38 @@
         "skills": {
           "native": "yes",
           "source": "skills/list、UserInput.skill",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-extensions.json",
+            "docs/verification/native-extensions-2026-10-11.md"
+          ],
+          "note": "skills/list 列出用户、系统与工作区技能（真实 173 项）；启用的技能以 /skill:名称 作为 Codex 自己的 skill 输入调用，工作区技能真实调用成功"
         },
         "mcp": {
           "native": "yes",
           "source": "用户 MCP 按原配置加载；mcpServerStatus/list、mcpServer/oauth/login",
           "hub": "partial",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": "原程序加载；Hub 无状态/登录界面"
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-extensions.json",
+            "docs/verification/native-extensions-2026-10-11.md"
+          ],
+          "note": "原生扩展面板只读显示 MCP 服务器状态、认证与工具数（真实 14 个）；登录与重载在原程序中进行"
         },
         "plugins": {
           "native": "yes",
           "source": "plugin/list|install、app/list",
           "hub": "partial",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": "原程序按配置加载；Hub 无管理界面"
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-extensions.json",
+            "docs/verification/native-extensions-2026-10-11.md"
+          ],
+          "note": "只读显示已安装插件（真实 46 个）；安装与启停在原程序中进行"
         },
         "resume": {
           "native": "yes",
@@ -1931,11 +1940,14 @@
         "skills": {
           "native": "yes",
           "source": "/skill:name 经 prompt 展开",
-          "hub": "partial",
+          "hub": "done",
           "protocol": "pass",
-          "real": "none",
-          "evidence": [],
-          "note": "通过原生命令执行"
+          "real": "partial",
+          "evidence": [
+            ".tmp/cc-native-extensions.json",
+            "docs/verification/native-extensions-2026-10-11.md"
+          ],
+          "note": "命令目录中的 skill:名称 列为技能（真实 69 项）并按原生命令调用；新工作区的项目技能需 Pi 信任才加载，技能调用未真实验收"
         },
         "mcp": {
           "native": "no",
@@ -1950,10 +1962,13 @@
           "native": "yes",
           "source": "extensions/packages 按原配置加载（项目资源需信任）",
           "hub": "partial",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": "原程序加载"
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-extensions.json",
+            "docs/verification/native-extensions-2026-10-11.md"
+          ],
+          "note": "只读显示扩展命令来源的扩展（真实 1 个）；安装与启停在原程序中进行"
         },
         "resume": {
           "native": "yes",

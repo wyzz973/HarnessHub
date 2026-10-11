@@ -3,7 +3,7 @@ import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput
 import type { AuthSession, HarnessView, InstallationLogPage, SessionSummary, SessionView, SessionStreamFrame, WebState } from "../../src/contracts/web.js";
 import type { HarnessManagementView, InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
 import type { HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
-import type { NativeInputs, NativeOption, NativeModelCatalog } from "../../src/contracts/control.js";
+import type { NativeExtensions, NativeInputs, NativeOption, NativeModelCatalog } from "../../src/contracts/control.js";
 import { parseNativeOptions, commandId, messageId, runId, sessionId, switchId } from "../../src/contracts/session.js";
 import { parseContentRef, type ContentRef } from "../../src/contracts/content.js";
 import type { NativeUsage } from "../../src/contracts/control.js";
@@ -224,6 +224,19 @@ export class GatewayApi {
       const row = record(value), models = list(row.models, value => { const model = record(value); return { id: text(model.id), name: text(model.name), ...(model.options === undefined ? {} : { options: list(model.options,nativeOption,128) }), ...(model.inputs === undefined ? {} : { inputs: nativeInputs(model.inputs) }) }; }, 4096);
       if (new Set(models.map(model => model.id)).size !== models.length) return invalid();
       return { models, defaultModel: nullableText(row.defaultModel), authentication: choice(row.authentication, ["ready", "missing", "unknown"]), canSelect: bool(row.canSelect), ...(row.selectionError === undefined ? {} : {selectionError:publicError(row.selectionError)??invalid()}), ...(row.options === undefined ? {} : { options: list(row.options,nativeOption,128) }), ...(row.commands === undefined ? {} : { commands: list(row.commands,value => {const command=record(value);return { name:text(command.name),description:text(command.description) };},2048) }), ...(row.inputs === undefined ? {} : { inputs: nativeInputs(row.inputs) }) };
+    }, signal);
+  }
+  /** Native skills, MCP servers and plugins of the selected Harness in this workspace; null when its interface has no such list. */
+  nativeExtensions(harness: string, control: string, workspace: string, signal?: AbortSignal): Promise<NativeExtensions | null> {
+    return this.request(`/harnesses/${encodeURIComponent(harness)}/extensions?${new URLSearchParams({ controlId: control, workspace })}`, "GET", undefined, value => {
+      const row = record(value); if (row.extensions === null) return null;
+      const extensions = record(row.extensions), optional = (item: Record<string, unknown>, key: string) => item[key] === undefined ? {} : { [key]: text(item[key]) };
+      return {
+        skills: list(extensions.skills, value => { const item = record(value); return { name: text(item.name), description: text(item.description), enabled: bool(item.enabled), ...optional(item, "scope"), ...optional(item, "command") }; }, 512),
+        mcpServers: list(extensions.mcpServers, value => { const item = record(value); return { name: text(item.name), status: text(item.status), tools: number(item.tools), failed: bool(item.failed), ...optional(item, "auth") }; }, 512),
+        plugins: list(extensions.plugins, value => { const item = record(value); return { name: text(item.name), enabled: bool(item.enabled), ...optional(item, "version"), ...optional(item, "source") }; }, 512),
+        ...(extensions.truncated === undefined ? {} : { truncated: bool(extensions.truncated) }),
+      };
     }, signal);
   }
   decidePermission(id: string, permission: string, optionId: string, key: string, input?: string): Promise<{ replayed: boolean }> { return this.request(`/sessions/${encodeURIComponent(id)}/permissions/${encodeURIComponent(permission)}`, "POST", { optionId, commandId: key, ...(input===undefined?{}:{input}) }, value => { const row=record(value);return { replayed:bool(row.replayed) }; }); }

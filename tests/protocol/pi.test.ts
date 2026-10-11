@@ -224,3 +224,15 @@ test("Pi forks by restoring the source session file and cloning it into a separa
   try { await cancelled.initialize(); await assert.rejects(cancelled.fork(source, process.cwd()), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_FORK_UNAVAILABLE"); }
   finally { await cancelled.close(); }
 });
+
+test("Pi lists skills and extensions from its own command catalog", async () => {
+  const driver = control("extensions");
+  try {
+    await driver.initialize();
+    assert.deepEqual(await driver.extensions(), {
+      skills: [{ name: "pdf", description: "Read PDFs", scope: "user", enabled: true, command: "skill:pdf" }],
+      mcpServers: [],
+      plugins: [{ name: "deploy/index.ts", enabled: true, source: "top-level · user" }],
+    });
+  } finally { await driver.close(); }
+});
