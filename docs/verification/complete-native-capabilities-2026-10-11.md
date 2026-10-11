@@ -75,3 +75,5 @@ OpenClaw 回合的工具、用量与真实停止原因按原生转录对账，�
 列出并接续原程序在本工作区的会话见[本机会话接续验收](native-session-import-2026-10-11.md)。
 
 Claude 额度恢复后的真实补测与 ACP 审批详情见[Claude 真实验收补测](claude-real-and-approval-detail-2026-10-11.md)。
+
+子 Agent 工具的嵌套显示见[子 Agent 活动](native-subagents-2026-10-11.md)。

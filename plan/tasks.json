@@ -3312,7 +3312,8 @@
         "web/src/components/Attachments.tsx",
         "web/src/components/BranchOrigin.tsx",
         "web/src/components/NativeExtensions.tsx",
-        "web/src/components/NativeSessions.tsx"
+        "web/src/components/NativeSessions.tsx",
+        "web/src/tool-tree.ts"
       ],
       "requirements": [
         "R01",
@@ -3352,7 +3353,8 @@
         "G054-NC4",
         "G054-NC5",
         "G054-NC6",
-        "G054-NC7"
+        "G054-NC7",
+        "G054-NC8"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3673,7 +3675,8 @@
         "tests/real/native-branch.real.ts",
         "tests/real/native-extensions.real.ts",
         "tests/real/native-config.real.ts",
-        "tests/real/native-import.real.ts"
+        "tests/real/native-import.real.ts",
+        "tests/real/native-subagent.real.ts"
       ],
       "requirements": [
         "R04",
@@ -3719,7 +3722,8 @@
         "G060-NC6",
         "G060-NC7",
         "G060-NC8",
-        "G060-NC9"
+        "G060-NC9",
+        "G060-NC10"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3788,7 +3792,8 @@
         "G061-NC1",
         "G061-NC2",
         "G061-NC3",
-        "G061-NC4"
+        "G061-NC4",
+        "G061-NC5"
       ],
       "active_slice": "native-installation-management"
     },

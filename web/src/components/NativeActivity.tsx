@@ -5,6 +5,7 @@ import type { ContentRef } from "../../../src/contracts/content.js";
 import type { NativeUsage } from "../../../src/contracts/control.js";
 import type { PublicActivity, PublicNotice, PublicOutput, PublicPlan, PublicRun } from "../../../src/contracts/session.js";
 import { contentUrl, errorMessage, type ToolDetailView } from "../api.js";
+import { toolParents } from "../tool-tree.js";
 
 export type ToolDetailLoader = (content: ContentRef) => Promise<ToolDetailView>;
 type Tool = NonNullable<PublicRun["tools"]>[number];
@@ -30,7 +31,7 @@ function toolIcon(kind: string | undefined): ReactNode {
 function Diff({ text }: { text: string }) {
   return <pre className="native-diff">{text.replace(/\n$/u, "").split("\n").map((line, index) => <span key={index} className={line.startsWith("+++") || line.startsWith("---") ? "is-file" : line.startsWith("@@") ? "is-hunk" : line.startsWith("+") ? "is-add" : line.startsWith("-") ? "is-remove" : undefined}>{line + "\n"}</span>)}</pre>;
 }
-function ToolRow({ tool, active, loadDetail }: { tool: Tool; active: boolean; loadDetail: ToolDetailLoader | undefined }) {
+function ToolRow({ tool, active, loadDetail, children }: { tool: Tool; active: boolean; loadDetail: ToolDetailLoader | undefined; children: ReadonlyMap<string, readonly Tool[]> }) {
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<ToolDetailView | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -45,10 +46,13 @@ function ToolRow({ tool, active, loadDetail }: { tool: Tool; active: boolean; lo
     }
   };
   const status = STATUS[tool.status] ?? tool.status, failed = ["failed", "declined"].includes(tool.status);
+  // Tools a sub-agent ran under this call.
+  const nested = children.get(tool.id) ?? [];
   return <li className={`native-tool ${failed ? "is-failed" : ""} ${open ? "is-open" : ""}`}>
     <button type="button" className="native-tool-head" onClick={toggle} aria-expanded={expandable ? open : undefined} disabled={!expandable} title={expandable ? "查看工具输入与输出" : active && TOOL_PENDING.has(tool.status) ? "工具执行中" : "工具没有可显示的详情"}>
       {expandable ? <ChevronRight size={12} className="native-tool-chevron" aria-hidden="true"/> : <span className="native-tool-chevron-space"/>}
-      {toolIcon(tool.kind)}<span className="native-tool-title">{tool.title}</span>
+      {toolIcon(nested.length ? "subagent" : tool.kind)}<span className="native-tool-title">{tool.title}</span>
+      {nested.length ? <small className="native-tool-agent">子 Agent · {nested.length} 个工具</small> : null}
       {tool.exitCode !== undefined ? <small className={tool.exitCode === 0 ? "" : "is-error"}>退出码 {tool.exitCode}</small> : null}
       <small className={failed ? "is-error" : ""}>{status}</small>
     </button>
@@ -65,10 +69,14 @@ function ToolRow({ tool, active, loadDetail }: { tool: Tool; active: boolean; lo
         {!detail.input && !detail.output && !detail.diff && !detail.locations?.length ? <p className="native-muted">这个工具没有返回可显示的输入或输出。</p> : null}
       </> : null}
     </div> : null}
+    {nested.length ? <ul className="native-tools is-nested" aria-label={"子 Agent 的工具：" + tool.title}>{nested.map(child => <ToolRow key={child.id} tool={child} active={active} loadDetail={loadDetail} children={children}/>)}</ul> : null}
   </li>;
 }
+/** Tools in call order; a tool whose parent call is listed is shown under it, as the sub-agent work of that call. */
 export function ToolList({ tools, active, loadDetail }: { tools: readonly Tool[]; active: boolean; loadDetail: ToolDetailLoader | undefined }) {
-  return <ul className="native-tools" aria-label="工具活动">{tools.map(tool => <ToolRow key={tool.id} tool={tool} active={active} loadDetail={loadDetail}/>)}</ul>;
+  const parents = toolParents(tools), children = new Map<string, Tool[]>();
+  for (const tool of tools) { const parent = parents.get(tool.id); if (parent !== undefined) children.set(parent, [...(children.get(parent) ?? []), tool]); }
+  return <ul className="native-tools" aria-label="工具活动">{tools.filter(tool => !parents.has(tool.id)).map(tool => <ToolRow key={tool.id} tool={tool} active={active} loadDetail={loadDetail} children={children}/>)}</ul>;
 }
 export function PlanView({ plan }: { plan: PublicPlan }) {
   const done = plan.entries.filter(entry => entry.status === "completed").length;

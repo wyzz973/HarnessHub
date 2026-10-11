@@ -1684,13 +1684,14 @@
 - web/src/components/BranchOrigin.tsx
 - web/src/components/NativeExtensions.tsx
 - web/src/components/NativeSessions.tsx
+- web/src/tool-tree.ts
 
 验收：
 - 公共Session身份与历史保留
 - 不提前展示新Harness已生效
 - 可操作且不持有独立业务状态
 
-场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01, G054-NC1, G054-NC2, G054-NC3, G054-NC4, G054-NC5, G054-NC6, G054-NC7。
+场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01, G054-NC1, G054-NC2, G054-NC3, G054-NC4, G054-NC5, G054-NC6, G054-NC7, G054-NC8。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1847,6 +1848,7 @@
 - tests/real/native-extensions.real.ts
 - tests/real/native-config.real.ts
 - tests/real/native-import.real.ts
+- tests/real/native-subagent.real.ts
 
 验收：
 - 记录通过/失败/未覆盖，不能称全协议认证
@@ -1855,7 +1857,7 @@
 - 真实HTTP/Store/IPC/原生进程与产物/清理完整可核对
 - 真实HTTP/Store/IPC/原生进程与产物/清理完整可核对
 
-场景：G060-C01, G060-C02, G060-C03, G060-C04, G060-C05, G060-P01, G060-P02, G060-M01, G060-S01, G060-N04, G060-NC1, G060-NC2, G060-NC3, G060-NC4, G060-NC5, G060-NC6, G060-NC7, G060-NC8, G060-NC9。
+场景：G060-C01, G060-C02, G060-C03, G060-C04, G060-C05, G060-P01, G060-P02, G060-M01, G060-S01, G060-N04, G060-NC1, G060-NC2, G060-NC3, G060-NC4, G060-NC5, G060-NC6, G060-NC7, G060-NC8, G060-NC9, G060-NC10。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1881,7 +1883,7 @@
 - 明确拒绝或幂等，不绕过排空规则
 - 旧执行保留版本，新准入遵循新状态
 
-场景：G061-C01, G061-C02, G061-C03, G061-M01, G061-M02, G061-M03, G061-S01, G061-S02, G061-S03, G061-L01, G061-N01, G061-N02, G061-X01, G061-NC1, G061-NC2, G061-NC3, G061-NC4。
+场景：G061-C01, G061-C02, G061-C03, G061-M01, G061-M02, G061-M03, G061-S01, G061-S02, G061-S03, G061-L01, G061-N01, G061-N02, G061-X01, G061-NC1, G061-NC2, G061-NC3, G061-NC4, G061-NC5。
 
 禁止范围：不修改其他任务所有权文件；契约冻结不表示应用实现或真实链路验收。
 

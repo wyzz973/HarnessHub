@@ -7700,6 +7700,59 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/unit/session-redaction.test.ts"
+    },
+    {
+      "id": "G061-NC5",
+      "task": "G061",
+      "requirements": [
+        "R22"
+      ],
+      "invariants": [
+        "INV-25"
+      ],
+      "layer": "unit",
+      "scenario": "工具按列出的父调用分组显示",
+      "expected": "父调用在列表中时归到其下；自指、缺失父调用与成环的平铺；超过三层的挂在第三层祖先下，每个工具只出现一次",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/unit/web-api.test.ts"
+    },
+    {
+      "id": "G054-NC8",
+      "task": "G054",
+      "requirements": [
+        "R01",
+        "R22"
+      ],
+      "invariants": [
+        "INV-01",
+        "INV-25"
+      ],
+      "layer": "e2e",
+      "scenario": "子 Agent 运行的工具显示在子 Agent 调用之下",
+      "expected": "子 Agent 调用显示工具数；嵌套列表含子工具并可展开详情；窄屏不溢出",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/web.browser.ts"
+    },
+    {
+      "id": "G060-NC10",
+      "task": "G060",
+      "requirements": [
+        "R04",
+        "R24",
+        "R12"
+      ],
+      "invariants": [
+        "INV-16",
+        "INV-09"
+      ],
+      "layer": "e2e",
+      "scenario": "本机原安装把命令委派给自己的子 Agent",
+      "expected": "子 Agent 调用与其运行的工具被提交并关联；主回复不混入子 Agent 输出；原配置不变",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/real/native-subagent.real.ts"
     }
   ]
 }

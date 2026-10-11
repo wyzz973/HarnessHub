@@ -4001,3 +4001,6 @@ a {
 .native-session-list strong { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .native-session-list small { color: var(--muted); font-size: 11px; }
 .native-session-list .text-button { flex-shrink: 0; }
+
+.native-tools.is-nested { margin: 2px 0 4px 14px; padding-left: 8px; border-left: 1px solid var(--line, #e6e1d8); }
+.native-tool-agent { color: var(--muted); font-size: 11px; white-space: nowrap; }

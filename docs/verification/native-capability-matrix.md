@@ -30,14 +30,14 @@
 | 会话 | 原生分支 | ✅ | ✅ | ✅ | — | — | — | ✅ |
 | 会话 | 上下文压缩 | ✅ | ✅ | ○ | ✅ | — | ？ | ✅ |
 | 会话 | 回滚/回退 | ○ | — | ？ | — | ○ | — | ○ |
-| 并发与后台 | 子 Agent | ◑ | ○ | ○ | ○ | ？ | ○ | — |
+| 并发与后台 | 子 Agent | ◑ | ✅ | ○ | ○ | ？ | ○ | — |
 | 并发与后台 | 后台任务 | ○ | ○ | ？ | ○ | ？ | ？ | — |
 | 产物 | 导出与产物 | ✅ | ○ | ？ | ○ | ？ | — | ✅ |
 
 | Harness | ✅ | ◐ | ◑ | ○ | ✕ | — | ？ |
 |---|---|---|---|---|---|---|---|
 | Codex | 13 | 3 | 6 | 2 | 2 | 1 | 0 |
-| Claude Code | 14 | 3 | 3 | 4 | 1 | 2 | 0 |
+| Claude Code | 15 | 3 | 3 | 3 | 1 | 2 | 0 |
 | OpenCode | 9 | 6 | 3 | 2 | 0 | 2 | 5 |
 | OpenClaw | 5 | 5 | 4 | 6 | 0 | 7 | 0 |
 | Gemini CLI | 0 | 0 | 2 | 1 | 12 | 6 | 6 |
@@ -74,7 +74,7 @@
 | 原生分支 | 具备 | thread/fork {lastTurnId} | 已接出 | 通过 | 通过 | .tmp/cc-native-branch-codex-acp.json；docs/verification/native-branch-2026-10-11.md | 从最新回复分支时 thread/fork 建立原生副本；更早位置以公共历史分支 |
 | 上下文压缩 | 具备 | thread/compact/start → contextCompaction item | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-pi-codex.json；docs/verification/native-session-actions-2026-10-11.md | /compact 调用 thread/compact/start 并以活动展示；压缩后原生会话仍记得先前事实 |
 | 回滚/回退 | 具备 | thread/revert {beforeTurnId}（只回退历史，不回退文件） | 未接出 | 未接出 | 未接出 | — | — |
-| 子 Agent | 具备 | collabAgentToolCall、subAgentActivity；子线程自动附着连接 | 部分 | 通过 | 未接出 | — | 子线程输出不中断回合、审批交给用户；子 Agent 活动与协作调用以活动/工具展示；子线程会话未接出 |
+| 子 Agent | 具备 | collabAgentToolCall、subAgentActivity；子线程自动附着连接 | 部分 | 通过 | 部分通过 | .tmp/cc-native-subagent-codex.json；docs/verification/native-subagents-2026-10-11.md | 子 Agent 活动（agentPath）与协作调用（wait 等）真实显示；子线程内执行的工具与文字未接出（子线程通知只计数） |
 | 后台任务 | 具备 | command/exec；后台终端 thread/backgroundTerminals/* 需 experimentalApi | 未接出 | 未接出 | 未接出 | — | 每轮关闭控制进程，需长期资源所有者设计 |
 | 导出与产物 | 具备 | thread/read(includeTurns)、Thread.path rollout 路径 | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-pi-codex.json；docs/verification/native-session-actions-2026-10-11.md | /export 读取线程自己的 rollout JSONL 作为产物；临时线程明确失败 |
 
@@ -108,7 +108,7 @@
 | 原生分支 | 具备 | session/fork 复制转录后需 resume | 已接出 | 通过 | 通过 | .tmp/cc-native-branch-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | session/fork 建立原生副本：分支答出源标记，源对话不知道分支标记 |
 | 上下文压缩 | 具备 | /compact 触发原生压缩；compaction_update 需 session.compaction 能力 | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | /compact 原生命令执行，compaction_update 以活动显示完成；压缩后仍记得先前事实 |
 | 回滚/回退 | 不提供 | 非 JetBrains AIR 客户端无指定消息回退 | 不适用 | 不适用 | 不适用 | — | — |
-| 子 Agent | 具备 | 子会话 subagent_spawned/state_update 需 subagents 能力；否则工具带 parentToolUseId | 未接出 | 未接出 | 未接出 | — | — |
+| 子 Agent | 具备 | 子会话 subagent_spawned/state_update 需 subagents 能力；否则工具带 parentToolUseId | 已接出 | 通过 | 通过 | .tmp/cc-native-subagent-claude.json；docs/verification/native-subagents-2026-10-11.md | 未协商原生子会话时，子 Agent 工具平铺在根会话并带 parentToolUseId；Hub 记录关联并在 Agent 调用下嵌套显示，子 Agent 文字不进入主回复 |
 | 后台任务 | 具备 | 后台 shell 与自主后续回合；async_task_* 仅 AIR | 未接出 | 未接出 | 未接出 | — | 每轮关闭进程会终止后台任务 |
 | 导出与产物 | 部分 | 转录在本机磁盘；ACP 无导出方法 | 未接出 | 未接出 | 未接出 | — | — |
 
@@ -142,7 +142,7 @@
 | 原生分支 | 具备 | session/fork | 已接出 | 通过 | 通过 | .tmp/cc-native-branch-codex-acp.json；docs/verification/native-branch-2026-10-11.md | session/fork 建立原生副本，复制历史的回放不归属；更早位置以公共历史分支 |
 | 上下文压缩 | 具备 | /compact 原生命令 | 未接出 | 未接出 | 未接出 | — | OpenCode 的 ACP 命令目录没有压缩命令（真实目录 104 项），压缩只能在原 TUI 中执行 |
 | 回滚/回退 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
-| 子 Agent | 具备 | 子会话（task 子 Agent）权限请求 | 未接出 | 未接出 | 未接出 | — | 子会话权限请求当前无人应答 |
+| 子 Agent | 具备 | 子会话（task 子 Agent）权限请求 | 未接出 | 未接出 | 未接出 | — | task 子 Agent 的子会话工具不经 ACP 转发；子会话的权限请求被原程序丢弃（原程序限制） |
 | 后台任务 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
 | 导出与产物 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
 

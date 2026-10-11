@@ -754,3 +754,26 @@ test("a native session of the workspace is continued from the composer, quoted a
   await page.screenshot({ path: join(artifact, "native-session-continued-390.png"), animations: "disabled" });
   assert.deepEqual(errors, []);
 });
+
+test("tools a sub-agent ran are shown under the sub-agent call", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false, { name: "Native Agents", scenario: "subagent" }); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Native Agents", exact: true }).click();
+  await composer.fill("让子代理运行 echo"); await composer.press("Enter");
+  await expect(log.locator(".assistant-message").last()).toContainText("你好 fixture", { timeout: 15000 });
+  const tools = log.getByRole("list", { name: "工具活动" }).last();
+  await expect(tools.locator(":scope > li")).toHaveCount(1);
+  await expect(tools).toContainText("Run echo SUB-OK"); await expect(tools).toContainText("子 Agent · 1 个工具");
+  const nested = tools.getByRole("list", { name: "子 Agent 的工具：Run echo SUB-OK" });
+  await expect(nested).toContainText("echo SUB-OK");
+  await nested.getByRole("button", { name: /echo SUB-OK/u }).click(); await expect(nested.locator(".native-tool-detail")).toContainText("输出"); await expect(nested.locator(".native-tool-detail")).toContainText("SUB-OK");
+  await page.screenshot({ path: join(artifact, "native-subagent-tools.png"), animations: "disabled" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "nested tools must not overflow a narrow screen");
+  assert.deepEqual(errors, []);
+});

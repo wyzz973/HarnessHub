@@ -419,9 +419,12 @@
           "source": "collabAgentToolCall、subAgentActivity；子线程自动附着连接",
           "hub": "partial",
           "protocol": "pass",
-          "real": "none",
-          "evidence": [],
-          "note": "子线程输出不中断回合、审批交给用户；子 Agent 活动与协作调用以活动/工具展示；子线程会话未接出"
+          "real": "partial",
+          "evidence": [
+            ".tmp/cc-native-subagent-codex.json",
+            "docs/verification/native-subagents-2026-10-11.md"
+          ],
+          "note": "子 Agent 活动（agentPath）与协作调用（wait 等）真实显示；子线程内执行的工具与文字未接出（子线程通知只计数）"
         },
         "background": {
           "native": "yes",
@@ -728,11 +731,14 @@
         "subagents": {
           "native": "yes",
           "source": "子会话 subagent_spawned/state_update 需 subagents 能力；否则工具带 parentToolUseId",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-subagent-claude.json",
+            "docs/verification/native-subagents-2026-10-11.md"
+          ],
+          "note": "未协商原生子会话时，子 Agent 工具平铺在根会话并带 parentToolUseId；Hub 记录关联并在 Agent 调用下嵌套显示，子 Agent 文字不进入主回复"
         },
         "background": {
           "native": "yes",
@@ -1016,7 +1022,7 @@
           "protocol": "none",
           "real": "none",
           "evidence": [],
-          "note": "子会话权限请求当前无人应答"
+          "note": "task 子 Agent 的子会话工具不经 ACP 转发；子会话的权限请求被原程序丢弃（原程序限制）"
         },
         "background": {
           "native": "unknown",

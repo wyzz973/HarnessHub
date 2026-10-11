@@ -342,6 +342,13 @@ lines.on("line", line => {
         : { id: "permission-1", method: "item/commandExecution/requestApproval", params: { threadId: "thread-fixture", turnId: `turn-${turn}`, itemId: "tool-1" } };
       emit(permission); if (scenario === "duplicate-permission") emit(permission); return;
     }
+    // A sub-agent call whose own tool runs flattened in the root session, stamped with the parent call (Claude's default).
+    if (scenario === "subagent") {
+      const sessionId = message.params.sessionId, update = value => notification("session/update", { sessionId, update: value });
+      update({ sessionUpdate: "tool_call", toolCallId: "agent-1", title: "Run echo SUB-OK", kind: "think", status: "in_progress", rawInput: { description: "Run echo SUB-OK", prompt: "run echo SUB-OK" }, _meta: { claudeCode: { toolName: "Agent" } } });
+      update({ sessionUpdate: "tool_call", toolCallId: "bash-1", title: "echo SUB-OK", kind: "execute", status: "completed", rawInput: { command: "echo SUB-OK" }, content: [{ type: "content", content: { type: "text", text: "SUB-OK" } }], _meta: { claudeCode: { toolName: "Bash", parentToolUseId: "agent-1" } } });
+      update({ sessionUpdate: "tool_call_update", toolCallId: "agent-1", status: "completed", content: [{ type: "content", content: { type: "text", text: "子代理报告：SUB-OK" } }] });
+    }
     // A continued session answers under its own identity.
     if (protocol === "acp-v1") acpOutput(scenario === "session-list" ? message.params.sessionId : undefined); else codexOutput();
     if (["stop", "stop-permission", "slow-start", "no-settlement"].includes(scenario)) {
