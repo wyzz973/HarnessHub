@@ -37,3 +37,9 @@
 - Claude、OpenCode、Cursor、Gemini 的 ACP 接口没有扩展列表，技能经原生命令目录使用；OpenClaw 的 Gateway 技能与工具目录需直连 Gateway。
 - MCP 登录、插件安装与启停不在 Hub 中进行。
 - 未做 Windows 验证；4317 服务尚未部署本轮代码。
+
+## 部署到 4317 服务（批次 5–6）
+
+2026-10-11 19:13–19:14，服务空闲（唯一会话无在途 Run 与待决切换，部署后无新使用）时部署分支与原生扩展：核实 PID 与命令行后 SIGTERM 正常退出；以 APFS 克隆冷备份 `data/` 到 `.tmp/backup-data-v7-20261011-191351/`（逐项比较一致）；在副本上演练 v7→v8（会话 open、14 个 Run、27 条消息、OpenClaw 绑定 ready 全部保留）；主检出快进到 `b0b6bdd`，离线安装依赖并构建；经登录 shell（无代理变量）重启，输出写入私有 `.tmp/service-4317.log`。
+
+部署后核对：业务库 `user_version=8`，原会话 schema 8、open、14 个 Run、27 条消息、OpenClaw 绑定 ready；静态页 200、未登录 API 401。一次性启动链接只在私有日志中，未使用、未展开。回退：停止服务后用 v7 备份替换 `data/`，检出 `c0555f9` 重新构建。
