@@ -49,3 +49,10 @@
 - 新增 `src/adapters/control/hermes.ts`；`acp.ts` 增加三个由子类覆盖的扩展点（`restoreByLoad`、`approvalDeadlineMs`、`fileBlocks`）和 `adoptModel`。
 - 能力矩阵增加两列：27 项 × 9 个 Harness。
 - 验收记录：[接入 Hermes Agent 与 DeepSeek Harness](../verification/hermes-dsh-onboarding-2026-10-11.md)。参考调研：[第一链路调研](../research/first-chain-products-2026-10-11.md)。
+
+## 迟到条件的处置（2026-10-12，审批代理裁定）
+
+另一个审批代理实例在 2026-10-11 13:52–14:17（UTC）发出的条件，直到 2026-10-12 才送达本会话。凡与已作决定冲突的，以当前审批代理的决定为准。
+- **Hermes 面板说明“Hermes 会按其配置写 ~/.hermes/memories”：下一阶段首批。** 一行说明，并配测试。
+- **审批卡对“对外发送或产生持续副作用”的工具（send_message、discord*、feishu_*reply/add_comment、cronjob、homeassistant）显示提示：不做。** hermes-acp 工具集不含消息与 cron 工具，OpenClaw 桥不发审批，目前没有使用方。等某个接入面真的出现这类工具的审批时再议。
+- 固定探测目录并复用探测会话，以及 dsh 醒目显示权限预设，这两项已被后来的决定取代（见上文“读取模型目录的副作用”和[第一链路打磨记录](../verification/first-chain-polish-2026-10-11.md)的“审批说明与 dsh 预设”），维持现状。

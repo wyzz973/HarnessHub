@@ -887,3 +887,9 @@ G(i) 取消：网络检索（[Ollama 文档](https://docs.ollama.com/integration
 调试中的发现：测试的清理钩子按注册顺序执行，夹具先删除了数据目录，导致之后关闭应用时报 `OWNER_LOST`。新测试改为在测试体内关闭应用。
 
 未做（下一阶段先写提案）：清理已有的约 4083 对文件；评估把租约目录迁到每个用户的耐久位置。
+
+部署前的真实测试（审批代理要求，证据 `.tmp/cc-lock-root-real-2026-10-12.json`）：
+- `HH_REAL_HARNESSES=claude node --test dist/tests/real/native-catalog.real.js`，在临时租约目录下运行，没有发送提示词。
+- 结果：1 通过。Claude Code 的接入口 `@agentclientprotocol/claude-agent-acp` 0.89.1 返回 13 个模型（默认 opus）和 224 条命令；绑定正常关闭，退出码 0。
+- 测试监视的 8 个全局配置文件都没有改变。共享租约目录 8166 → 8166 个文件，临时目录已删除，没有残留的接入口进程。
+- 其余 17 个真实测试文件只改了租约目录参数，没有重跑。
