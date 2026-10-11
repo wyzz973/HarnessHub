@@ -117,3 +117,16 @@
 - 本轮没有读取 Claude Code、Cursor、Gemini CLI、OpenCode、Pi、OpenClaw 的目录，以免在它们那里多建空会话；OpenClaw 的读取还会在用户正在运行的网关上建会话。它们的就绪判断沿用已验证的目录读取路径，只是没有在新界面上实测。
 - 本版本之前建出的探测会话无法识别，仍会列出。
 - Windows：缓存文件的私有权限检查按 POSIX 模式位进行，未在 Windows 验证。
+
+## 审批说明与 dsh 预设（P6）
+
+交付：
+
+- Hermes 的审批卡在选项之外加一行说明：选“Allow always”会写入 Hermes 自己的配置（`command_allowlist`），之后 Hermes 的所有会话（包括终端和消息网关）遇到同一类危险命令都不再询问。依据本机 0.12.0 源码：`tools/approval.py` 把这一类危险命令的模式写入 `config.yaml`，Hermes 的所有入口都读取它。其他代理不加这行说明：Claude 适配器的选项名称已经写明要写入的规则。
+- dsh 的执行配置面板加“审批”一项：审批由 dsh 自己的权限预设决定，workspace-write 在超出工作区时请求审批，danger-full-access 不会请求审批；可在 dsh 自己的界面用 `/permission` 查看或切换，HarnessHub 不改它的设置。
+
+为什么 dsh 不显示具体预设：审批代理原定只读 `permission.defaultPreset`，读不到时显示“由 dsh 决定”。核实后发现三处都读不到：本机没有 `~/.dsh/settings.yaml` 和 `~/.dsh/cordis.patch.yml`，acp profile 的补丁是空列表；默认预设由 dsh 在运行时按沙箱与审批默认推断（`permission-presets/src/index.ts`）；dsh 的 ACP 既不公布预设，也不处理 `/permission`（命令列表为空）。所以按审批代理给的退路，说明规则，不读取用户配置。
+
+检查：全部测试 573 通过；浏览器测试 11 通过；设计检查通过。新增协议测试：Hermes 的审批说明写明“Allow always”会写入 `command_allowlist`；同一请求由普通 ACP 代理发出时没有这行说明。开发实例中已人工核对 dsh 面板的显示。
+
+未验证：Hermes 0.12.0 的审批桥本身有缺陷（任何选择都按拒绝处理，见 Hermes 与 dsh 接入记录），这行说明要等用户升级 Hermes 后才会遇到真实请求；本轮没有真实触发 Hermes 审批。

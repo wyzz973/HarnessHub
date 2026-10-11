@@ -25,6 +25,14 @@ interface ComposerProps extends ChatProps {
 
 /** Products whose own documentation names the command that sets up a missing sign-in or provider. */
 const SETUP_COMMANDS: Readonly<Record<string, string>> = { hermes: "hermes model" };
+/**
+ * How a Harness decides on approvals when its interface does not report it. dsh's ACP entry neither publishes its
+ * permission preset nor runs /permission, and its default is derived at runtime, so the Hub states the rule instead
+ * (permission-presets: workspace-write asks beyond the workspace, danger-full-access never asks).
+ */
+const APPROVAL_NOTES: Readonly<Record<string, string>> = {
+  dsh: "由 dsh 自己的权限预设决定：workspace-write 在超出工作区时请求审批，danger-full-access 不会请求审批。可在 dsh 自己的界面用 /permission 查看或切换；HarnessHub 不改它的设置。",
+};
 function approximately(ms: number): string { return Math.max(1, Math.round(ms / 1000)) + " 秒"; }
 function ago(at: number): string {
   const minutes = Math.round((Date.now() - at) / 60000);
@@ -198,6 +206,7 @@ export function ChatComposer(props: ComposerProps) {
           <Popover.Portal><Popover.Content className="composer-settings-panel" side="top" align="end" sideOffset={12} collisionPadding={16}>
             <div className="composer-settings-heading"><h3>执行配置</h3><Popover.Close className="icon-button" aria-label="收起高级配置"><X size={15}/></Popover.Close></div>
             {nativeOptions.filter(option=>option!==thought).map(option=><div className="execution-setting native-setting" key={option.id}><span>{nativeNames[option.id]??option.name}</span>{optionPicker(option,nativeNames[option.id]??option.name)}</div>)}
+            {!provider && APPROVAL_NOTES[draft.harnessId] ? <div className="execution-setting"><span>审批</span><small>{APPROVAL_NOTES[draft.harnessId]}</small></div> : null}
             {controls.length > 1 ? <div className="advanced-control"><SearchPicker label="选择控制入口" value={draft.controlId} placeholder="控制入口" options={controls.map(control => ({ value: control.id, label: protocolLabel(control.protocol), description: control.id }))} disabled={disabled} onChange={value => props.onDraft({ ...draft, controlId: value, nativeOptions: {} })}/></div>
               : <div className="execution-setting"><span>控制入口</span><strong>{selectedControl ? protocolLabel(selectedControl.protocol) : "尚未选择"}</strong>{draft.controlId ? <code>{draft.controlId}</code> : null}</div>}
             {provider && draft.providerRevision !== null ? <div className="execution-setting"><span>Provider 配置</span><strong>{provider.name} · v{draft.providerRevision}</strong>{outdated ? <button type="button" className="revision-update" disabled={disabled} onClick={() => props.onDraft({ ...draft, providerRevision: provider.revision, model: provider.models.includes(draft.model) ? draft.model : provider.defaultModel })}>使用最新 v{provider.revision} <ArrowRight size={12}/></button> : <small>会话固定使用这个版本。</small>}</div>

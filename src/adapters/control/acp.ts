@@ -383,6 +383,11 @@ export class AcpControl implements HarnessControl {
    * (Hermes) reports "missing" without one; no session is opened then, and the catalog read reports the missing sign-in.
    */
   protected authentication(methods: readonly { readonly id: string; readonly type: string }[]): NativeModelCatalog["authentication"] { return "unknown"; }
+  /**
+   * What one of the agent's own approval options changes beyond this request, shown with the request; empty when the
+   * option names already say it (Claude's name the rule they would write).
+   */
+  protected permissionNote(options: readonly { readonly id: string; readonly kind: string; readonly name: string }[]): string { return ""; }
   /** A model the agent switched to on its own (its own command) without announcing it; reported as the session's model from now on. */
   protected adoptModel(id: string): void {
     if (!this.catalog.canSelect || !id || id.length > 1024 || /[\0\r\n]/u.test(id)) return;
@@ -682,7 +687,7 @@ export class AcpControl implements HarnessControl {
     if (this.interactivePermissions && !active.stopping) {
       if (this.permissions.size >= 32) throw new ControlError("PERMISSION_LIMIT", "too many native permission requests");
       const id = String(request.id), deadline = this.approvalDeadlineMs, seconds = deadline === null ? 0 : Math.round(deadline / 1000);
-      const detail = [permissionDetail(tool), deadline === null ? "" : `原程序最多等待 ${seconds} 秒，超时会自动拒绝。`].filter(Boolean).join("\n");
+      const detail = [permissionDetail(tool), this.permissionNote(options), deadline === null ? "" : `原程序最多等待 ${seconds} 秒，超时会自动拒绝。`].filter(Boolean).join("\n");
       return new Promise<unknown>(resolve => {
         let timer: ReturnType<typeof setTimeout> | undefined;
         const settle = (value: unknown): void => { clearTimeout(timer); resolve(value); };

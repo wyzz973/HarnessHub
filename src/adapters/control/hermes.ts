@@ -23,6 +23,7 @@ const MODEL_SWITCHED = /^Model switched to: (\S+)[ \t]*\r?\nProvider: (\S+)[ \t]
  * - resource links and embedded resources never reach its model, so an attached file travels as a text pointer to the
  *   read-only copy, which its own file tools read;
  * - in the reviewed 0.12 bridge an approval left unanswered for 60 s is denied by Hermes, and the public request closes with it;
+ *   its "always" option writes to Hermes's own configuration for all of its sessions, which the request says;
  * - its last reply chunks can follow the prompt response, so the turn settles after a short quiet window;
  * - `/model <name>` switches the session's model without an update, so its own reply is the only report of the change;
  * - a failed model call still ends with end_turn and an empty reply (or only `Error: …`); its stderr log is the only report of
@@ -39,6 +40,12 @@ export class HermesControl extends AcpControl {
   protected override get approvalDeadlineMs(): number | null { return /^0\.12\./u.test(this.agentVersion ?? "") ? HERMES_APPROVAL_WAIT_MS : null; }
   // Hermes can send its last reply chunks after the prompt response (Multica waits 250 ms for the same reason).
   protected override get trailingQuietMs(): number { return HERMES_TRAILING_QUIET_MS; }
+  // tools/approval.py: "always" adds the dangerous-command pattern to command_allowlist in Hermes's own config.yaml,
+  // which every Hermes session reads, its messaging gateway included.
+  protected override permissionNote(options: readonly { readonly id: string; readonly kind: string; readonly name: string }[]): string {
+    const always = options.find(option => option.kind === "allow_always");
+    return always ? `选“${always.name}”会写入 Hermes 自己的配置（command_allowlist），之后 Hermes 的所有会话（包括终端和消息网关）遇到同一类危险命令都不再询问。` : "";
+  }
   // acp_adapter/auth.py: the agent method's id is the configured provider, present only when its credentials resolve.
   protected override authentication(methods: readonly { readonly id: string; readonly type: string }[]): NativeModelCatalog["authentication"] { return methods.some(method => method.type === "agent") ? "ready" : "missing"; }
   override async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {

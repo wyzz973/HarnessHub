@@ -435,6 +435,16 @@ test("Hermes's 60-second approval deadline applies only to the reviewed 0.12 bri
     assert.equal((await run.result).status, "completed");
     assert.ok(events.some(event => event.type === "text" && event.text.includes('"optionId":"allow_once"')));
   } finally { await driver.close(); }
+  // Another agent's "always" option says nothing about Hermes's configuration.
+  const ordinary = control("hermes");
+  try {
+    await ordinary.initialize(); ordinary.enablePermissions(); const id = await ordinary.open(process.cwd()), events: ControlEvent[] = [];
+    const run = await ordinary.startText(id, "approve this", event => events.push(event));
+    for (let i = 0; i < 50 && !events.some(event => event.type === "permission_requested"); i++) await new Promise(resolve => setTimeout(resolve, 20));
+    const requested = events.find(event => event.type === "permission_requested");
+    assert.ok(requested?.type === "permission_requested" && !(requested.detail ?? "").includes("command_allowlist"));
+    await ordinary.decidePermission(requested.id, "deny"); await run.result;
+  } finally { await ordinary.close(); }
 });
 test("Hermes continues a listed session with the history it replays after the load response", async t => {
   const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
@@ -457,6 +467,8 @@ test("Hermes closes an approval at its own deadline and hands files over as text
     assert.equal((await (await driver.startText(id, "approve this", event => events.push(event))).result).status, "completed");
     const requested = events.find(event => event.type === "permission_requested");
     assert.ok(requested?.type === "permission_requested" && requested.title === "rm -rf build" && requested.detail?.includes("最多等待 2 秒") === true);
+    // Its "always" option changes Hermes's own configuration for every session, and the request says so.
+    assert.match(requested.detail ?? "", /选“Allow always”会写入 Hermes 自己的配置（command_allowlist）/u);
     assert.ok(events.some(event => event.type === "notice" && event.title === "审批已超时"));
     assert.ok(events.some(event => event.type === "permission" && event.id === requested.id && event.decision === "denied"));
     assert.ok(events.some(event => event.type === "text" && event.text.includes('"optionId":"deny"')));
