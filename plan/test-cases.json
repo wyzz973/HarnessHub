@@ -8152,6 +8152,24 @@
       "planned_file": "tests/protocol/acp.test.ts"
     },
     {
+      "id": "G032-NC22",
+      "task": "G032",
+      "requirements": [
+        "R11",
+        "R12"
+      ],
+      "invariants": [
+        "INV-09",
+        "INV-20"
+      ],
+      "layer": "protocol",
+      "scenario": "Hermes 的 /export 运行它自己的会话导出",
+      "expected": "Hermes 没有自己的 export 命令时提供 /export；只运行一次 sessions export - --session-id <id>，会话的 JSON 行作为产物登记；未知会话的提示句、超过 8 MiB、超过 5 秒都明确失败且不记录部分内容；非普通标识符不调用命令行；不向模型发送任何内容",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/acp.test.ts"
+    },
+    {
       "id": "G060-NC13",
       "task": "G060",
       "requirements": [

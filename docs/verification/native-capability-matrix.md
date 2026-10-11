@@ -34,7 +34,7 @@
 | 会话 | 回滚/回退 | ○ | — | ？ | — | ○ | — | ○ | — | — |
 | 并发与后台 | 子 Agent | ✅ | ✅ | ○ | ○ | ？ | ○ | — | ◑ | ◑ |
 | 并发与后台 | 后台任务 | ◐ | ✅ | ？ | ○ | ？ | ？ | — | ◐ | ◐ |
-| 产物 | 导出与产物 | ✅ | ◐ | ？ | ○ | ？ | — | ✅ | ○ | ○ |
+| 产物 | 导出与产物 | ✅ | ◐ | ？ | ○ | ？ | — | ✅ | ✅ | ○ |
 
 | Harness | ✅ | ◐ | ◑ | ○ | ✕ | — | ？ |
 |---|---|---|---|---|---|---|---|
@@ -45,7 +45,7 @@
 | Gemini CLI | 0 | 0 | 2 | 1 | 12 | 6 | 6 |
 | Cursor | 0 | 2 | 4 | 2 | 11 | 5 | 3 |
 | Pi | 11 | 5 | 1 | 2 | 1 | 7 | 0 |
-| Hermes Agent | 11 | 2 | 1 | 5 | 2 | 6 | 0 |
+| Hermes Agent | 12 | 2 | 1 | 4 | 2 | 6 | 0 |
 | DeepSeek Harness | 7 | 4 | 1 | 5 | 2 | 8 | 0 |
 
 ## Codex
@@ -318,7 +318,7 @@
 | 回滚/回退 | 不提供 | 只有 /reset 清空整段历史，没有回退到某一轮 | 不适用 | 不适用 | 不适用 | — | — |
 | 子 Agent | 部分 | delegate_task 在进程内运行子 Agent；子 Agent 的活动不经 ACP 发出（acp_adapter/tools.py） | 部分 | 未接出 | 部分通过 | .tmp/cc-hermes-subagent.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | delegate_task 只显示为一个 execute 工具（无工具名，标题为“delegate: …”）；子 Agent 自己的工具不经 ACP 发出，无法挂到调用下 |
 | 后台任务 | 具备 | process 工具管理后台进程；随每回合结束的 ACP 进程一起结束（toolsets.py） | 已接出 | 通过 | 未接出 | docs/decisions/0030-retained-native-processes.md；docs/verification/first-chain-polish-2026-10-11.md | 同一保留机制：开启后回合之间保留 ACP 进程，后台工作随进程继续（ACP 测试替身经正式运行时验证）；真实后台任务未验证 |
-| 导出与产物 | 具备 | hermes sessions export - --session-id <id> 输出 JSONL（hermes_cli/main.py） | 未接出 | 未接出 | 未接出 | — | — |
+| 导出与产物 | 具备 | hermes sessions export - --session-id <id> 输出 JSONL（hermes_cli/main.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-export-2026-10-12.json；docs/verification/first-chain-polish-2026-10-11.md | Hermes 没有列出自己的 export 命令时，Hub 提供 /export：只在用户执行时运行一次 hermes sessions export - --session-id <id>（5 秒、8 MiB 上限，只接受普通标识符；未知会话的提示句与超限、超时都明确失败，不记录部分内容），会话的 JSON 行作为产物登记；sessions 子命令不触发插件发现与更新检查，真实运行时进程中只有这一条子命令，用户的 gateway 不受影响 |
 
 ## DeepSeek Harness
 

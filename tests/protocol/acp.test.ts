@@ -335,6 +335,42 @@ function attachment(directory: string, name: string, mediaType: string, kind: "i
 function hermes(trace: string, version?: string): ConstructorParameters<typeof HermesControl>[0] {
   return { protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "hermes"], env: { FIXTURE_TRACE: trace, ...(version === undefined ? {} : { FIXTURE_AGENT_VERSION: version }) } };
 }
+test("Hermes's /export runs its own session export once and records the session's line; anything else fails with no partial record", { timeout: 60000 }, async t => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-export-")), trace = join(directory, "trace"), cli = join(directory, "cli"); t.after(() => rm(directory, { recursive: true, force: true }));
+  const launch = (mode?: string): ConstructorParameters<typeof HermesControl>[0] => ({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/hermes-cli.mjs"), "acp"],
+    env: { FIXTURE_TRACE: trace, FIXTURE_CLI_TRACE: cli, ...(mode === undefined ? {} : { FIXTURE_EXPORT: mode }) } });
+  for (const [mode, expected] of [[undefined, null], ["missing", "Hermes has no record of this session"], ["huge", "the Hermes export exceeds 8 MiB"], ["slow", "the Hermes export took longer than 5 seconds"]] as const) {
+    const driver = new HermesControl(launch(mode), { ...options, runTimeoutMs: 10000 });
+    try {
+      await driver.initialize(); const id = await driver.open(process.cwd());
+      assert.ok((await driver.models()).commands?.some(command => command.name === "export"), "offered while Hermes lists none of its own");
+      const events: ControlEvent[] = [], started = Date.now(), result = await (await driver.startText(id, "/export", event => events.push(event))).result;
+      const outputs = events.flatMap(event => event.type === "output" ? [event.output] : []);
+      if (expected === null) {
+        assert.deepEqual([result.status, result.reason], ["completed", "exported"]);
+        const output = outputs[0]; assert.ok(output?.kind === "content"); assert.equal(output.name, "hermes-session-fixture.jsonl"); assert.equal(output.mediaType, "application/x-ndjson");
+        assert.equal((JSON.parse(Buffer.from(output.data).toString("utf8")) as { id: string }).id, "session-fixture");
+      } else {
+        assert.equal(result.status, "failed"); assert.equal(result.error?.code, "NATIVE_EXPORT_UNAVAILABLE"); assert.equal(result.error?.message, expected); assert.deepEqual(outputs, [], "nothing partial is recorded");
+        if (mode === "slow") assert.ok(Date.now() - started < 9000, "ended by its own deadline");
+      }
+      assert.equal(events.some(event => event.type === "text"), false, "nothing was sent to the model");
+    } finally { await driver.close(); }
+  }
+  // An identifier that is no plain one never reaches Hermes's command line (without it Hermes would export every session).
+  const crafted = new HermesControl(launch(), { ...options, runTimeoutMs: 10000 });
+  try {
+    await crafted.initialize(); await crafted.open(process.cwd()); await crafted.models();
+    for (const id of ["", "--source", "a b", "x;y"]) {
+      const result = await (await crafted.startText(id as Parameters<HermesControl["startText"]>[0], "/export", () => {})).result;
+      assert.equal(result.error?.message, "this Hermes session has no plain identifier", JSON.stringify(id));
+    }
+  } finally { await crafted.close(); }
+  // Each export ran one command line and only that one: never another Hermes command, never without the session.
+  const commands = (await readFile(cli, "utf8")).trim().split("\n").map(line => JSON.parse(line) as string[]).filter(args => args[0] !== "acp");
+  assert.deepEqual(commands, Array.from({ length: 4 }, () => ["sessions", "export", "-", "--session-id", "session-fixture"]));
+});
+
 test("Hermes restores by session/load, keeps history replayed after a slow load out of the reply, and refuses an unknown identity", async t => {
   const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
   const driver = new HermesControl(hermes(trace), { ...options, runTimeoutMs: 5000 });

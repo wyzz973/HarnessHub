@@ -2476,10 +2476,14 @@
         "export": {
           "native": "yes",
           "source": "hermes sessions export - --session-id <id> 输出 JSONL（hermes_cli/main.py）",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": []
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-hermes-export-2026-10-12.json",
+            "docs/verification/first-chain-polish-2026-10-11.md"
+          ],
+          "note": "Hermes 没有列出自己的 export 命令时，Hub 提供 /export：只在用户执行时运行一次 hermes sessions export - --session-id <id>（5 秒、8 MiB 上限，只接受普通标识符；未知会话的提示句与超限、超时都明确失败，不记录部分内容），会话的 JSON 行作为产物登记；sessions 子命令不触发插件发现与更新检查，真实运行时进程中只有这一条子命令，用户的 gateway 不受影响"
         }
       }
     },

@@ -152,7 +152,7 @@ python3 -m unittest discover -s tools -p 'test_*.py' -v
 
 [ADR-023](docs/decisions/0023-attachment-input.md)起，输入框可选择、拖放或粘贴文件、图片和音频，附件随对话草稿保存。Hub按各原接口发送（ACP内容块、Codex本地路径、Pi图片），并按代理与所选模型的输入能力在派发前拒绝看不到的附件；附件副本留在数据根内，不写入工作区。Codex、Pi、OpenCode的真实文件与图片回合已通过，OpenClaw文本附件通过、识图模型未验收；音频只有协议验证。见[附件输入验收](docs/verification/native-attachments-2026-10-11.md)。
 
-[ADR-024](docs/decisions/0024-native-session-operations.md)起，Codex 可在高级配置中为本次对话选择审批策略与沙箱（只覆盖 Hub 的线程，不改 config.toml），审批请求带文件名与差异；Codex 与 Pi 的命令目录提供 `/compact`、`/export`，调用原程序自己的压缩与导出，导出文件可从回复下载；对话头部可把公开对话导出为 Markdown 或 JSON。见[原生会话操作验收](docs/verification/native-session-actions-2026-10-11.md)。
+[ADR-024](docs/decisions/0024-native-session-operations.md)起，Codex 可在高级配置中为本次对话选择审批策略与沙箱（只覆盖 Hub 的线程，不改 config.toml），审批请求带文件名与差异；Codex 与 Pi 的命令目录提供 `/compact`、`/export`，调用原程序自己的压缩与导出，导出文件可从回复下载；Hermes 没有列出自己的 export 命令时，`/export` 只运行一次它自己的 `hermes sessions export - --session-id <id>`（5 秒、8 MiB 上限，不触及它的消息网关），会话的 JSON 行作为产物下载；对话头部可把公开对话导出为 Markdown 或 JSON。见[原生会话操作验收](docs/verification/native-session-actions-2026-10-11.md)。
 
 [ADR-025](docs/decisions/0025-conversation-branches.md)起，可在任一完成的回复上“从这里分支”：新对话带上到此为止的历史；原生会话恰好在这一处时（Codex、OpenCode、Pi 已真实验证），由原程序建立原生副本，否则以公共历史继续（如 OpenClaw）。分支与原对话互不影响。见[分支验收](docs/verification/native-branch-2026-10-11.md)。
 

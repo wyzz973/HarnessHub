@@ -1188,6 +1188,7 @@
 - src/adapters/control/opencode.ts
 - src/adapters/control/claude.ts
 - src/adapters/control/hermes.ts
+- tests/fixtures/hermes-cli.mjs
 
 验收：
 - 各事实关联正确Attempt与generation
@@ -1195,7 +1196,7 @@
 - 明确拒绝，不空会话fallback
 - 不把结果称官方认证
 
-场景：G032-C01, G032-C02, G032-C03, G032-C04, G032-L01, G032-N01, G032-N02, G032-X03, G032-NC4, G032-NC5, G032-NC6, G032-NC7, G032-NC8, G032-NC9, G032-NC10, G032-NC11, G032-NC12, G032-NC13, G032-NC14, G032-NC15, G032-NC16, G032-NC17, G032-NC18, G032-NC19, G032-NC20, G032-NC21。
+场景：G032-C01, G032-C02, G032-C03, G032-C04, G032-L01, G032-N01, G032-N02, G032-X03, G032-NC4, G032-NC5, G032-NC6, G032-NC7, G032-NC8, G032-NC9, G032-NC10, G032-NC11, G032-NC12, G032-NC13, G032-NC14, G032-NC15, G032-NC16, G032-NC17, G032-NC18, G032-NC19, G032-NC20, G032-NC21, G032-NC22。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 

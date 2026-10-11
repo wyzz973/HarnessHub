@@ -1,7 +1,14 @@
-import type { BackendResult, ControlEvent, ControlRun, NativeConversationId, NativeModelCatalog, NativeToolDetail } from "../../contracts/control.js";
-import { classifyRemoteFailure } from "../../infrastructure/control/json-rpc-process.js";
+import type { BackendResult, CleanupEvidence, ControlEvent, ControlLaunch, ControlOptions, ControlRun, NativeConversationId, NativeModelCatalog, NativeToolDetail } from "../../contracts/control.js";
+import { ControlError, classifyRemoteFailure } from "../../infrastructure/control/json-rpc-process.js";
+import { nativeCommand } from "../../infrastructure/control/native-command.js";
 import type { ControlAttachment } from "../../contracts/content.js";
 import { AcpControl } from "./acp.js";
+
+const EXPORT = { name: "export", description: "导出原生会话记录（Hermes 会话 JSONL）" } as const;
+/** One session's export is small and quick; one that is larger or slower fails rather than being cut short (E). */
+const EXPORT_BYTES = 8 * 1024 * 1024, EXPORT_DEADLINE_MS = 5000;
+/** Without --session-id Hermes exports every session it holds, its messaging gateway's too: the identifier must be a plain one. */
+const PLAIN_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 
 /** Hermes's ACP approval bridge waits this long for the client and then denies the command itself (permissions.py). */
 const HERMES_APPROVAL_WAIT_MS = 60_000;
@@ -41,7 +48,15 @@ const MODEL_SWITCHED = /^Model switched to: (\S+)[ \t]*\r?\nProvider: (\S+)[ \t]
  *   session is opened and the missing setup is reported instead of a prompt that cannot reach a model.
  * Only the `hermes-acp` tool set is active in this mode (no messaging, cron or audio tools).
  */
+/**
+ * Hermes's ACP bridge, with its 0.12 specifics. ACP has no export method: when Hermes lists no `export` command of its own,
+ * the Hub offers `/export`, which runs Hermes's own `hermes sessions export - --session-id <id>` once (never its gateway)
+ * and records the session's JSON line as an output of the Run. Nothing is sent to the model.
+ */
 export class HermesControl extends AcpControl {
+  private hubExport = false;
+  private readonly exports = new AbortController();
+  constructor(private readonly hermesLaunch: ControlLaunch, private readonly hermesOptions: ControlOptions) { super(hermesLaunch, hermesOptions); }
   protected override get restoreByLoad(): boolean { return true; }
   protected override get fileBlocks(): boolean { return false; }
   // The fixed 60-second wait is the reviewed 0.12 bridge; later Hermes makes it configurable, so other versions are not cut short.
@@ -67,6 +82,9 @@ export class HermesControl extends AcpControl {
   // acp_adapter/auth.py: the agent method's id is the configured provider, present only when its credentials resolve.
   protected override authentication(methods: readonly { readonly id: string; readonly type: string }[]): NativeModelCatalog["authentication"] { return methods.some(method => method.type === "agent") ? "ready" : "missing"; }
   override async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
+    if (this.hubExport && !attachments.length && /^\/export\s*$/u.test(prompt)) {
+      return { result: this.exportSession(id, onEvent), requestStop: () => Promise.reject(new ControlError("INVALID_STATE", "an export has no native turn to stop")) };
+    }
     // Only Hermes's own command is read for a model switch; a model reply quoting the same words in another turn is never parsed.
     const switching = !attachments.length && /^\/model\s+\S/u.test(prompt.trim()), mark = this.stderrMark;
     let reply = "", answered = false;
@@ -84,4 +102,32 @@ export class HermesControl extends AcpControl {
       return result;
     }) };
   }
+  override async models(): Promise<NativeModelCatalog> {
+    const catalog = await super.models();
+    this.hubExport = !(catalog.commands ?? []).some(command => command.name === EXPORT.name);
+    return this.hubExport ? { ...catalog, commands: [...(catalog.commands ?? []), EXPORT] } : catalog;
+  }
+  private async exportSession(id: NativeConversationId, onEvent: (event: ControlEvent) => void): Promise<BackendResult> {
+    try {
+      if (!PLAIN_ID.test(id)) throw new ControlError("NATIVE_EXPORT_UNAVAILABLE", "this Hermes session has no plain identifier");
+      const index = this.hermesLaunch.args.lastIndexOf("acp");
+      if (index < 0) throw new ControlError("NATIVE_EXPORT_UNAVAILABLE", "this Hermes entry has no command line to export with");
+      const output = await nativeCommand(this.hermesLaunch, [...this.hermesLaunch.args.slice(0, index), "sessions", "export", "-", "--session-id", id],
+        { ...this.hermesOptions, requestTimeoutMs: EXPORT_DEADLINE_MS, maxFrameBytes: EXPORT_BYTES }, this.exports.signal);
+      // An unknown session is answered with a sentence and exit code 0: only one JSON object of this very session counts.
+      const line = output.trimEnd();
+      let record: unknown = null;
+      try { record = JSON.parse(line); } catch { throw new ControlError("NATIVE_EXPORT_UNAVAILABLE", "Hermes has no record of this session"); }
+      if (line.includes("\n") || record === null || typeof record !== "object" || Array.isArray(record) || (record as { readonly id?: unknown }).id !== id)
+        throw new ControlError("NATIVE_EXPORT_UNAVAILABLE", "Hermes exported something other than this session");
+      onEvent({ type: "output", output: { kind: "content", name: "hermes-" + id + ".jsonl", mediaType: "application/x-ndjson", data: Buffer.from(line + "\n", "utf8") } });
+      return { status: "completed", reason: "exported" };
+    } catch (error) {
+      const message = error instanceof ControlError && error.code === "NATIVE_EXPORT_UNAVAILABLE" ? error.message
+        : error instanceof ControlError && error.code === "OUTPUT_LIMIT" ? "the Hermes export exceeds 8 MiB"
+        : error instanceof ControlError && error.code === "REQUEST_TIMEOUT" ? "the Hermes export took longer than 5 seconds" : "Hermes could not export this session";
+      return { status: "failed", reason: "export_failed", error: { code: "NATIVE_EXPORT_UNAVAILABLE", message } };
+    }
+  }
+  override async close(): Promise<CleanupEvidence> { this.exports.abort(); return super.close(); }
 }

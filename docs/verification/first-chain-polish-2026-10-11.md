@@ -635,3 +635,48 @@
 核对用掉了一次性启动链接，因此在服务空闲时又重启一次（新 PID 10197），重新核对了代理变量、启动日志、静态页与 401。新的启动链接已在用户的浏览器窗格中打开。
 
 回退：停止服务，检出 `411fa47` 重新构建，以原参数启动。
+
+## Hermes 的 `/export`（审批代理排序第 7 项 E）
+
+交付：
+- Hermes 没有列出自己的 `export` 命令时，命令目录提供 `/export`。用户执行它时，HarnessHub 从自身进程运行一次 Hermes 自己的 `hermes sessions export - --session-id <id>`：期限 5 秒，标准输出上限 8 MiB，只接受普通标识符作为会话 ID。
+- 输出必须恰好是这个会话的一个 JSON 对象（顶层 `id` 与会话相同），才作为该回合的产物登记，包括内容 ID、名称、`application/x-ndjson`、大小与 sha256。以下情况都明确失败，不记录部分内容：
+  - Hermes 对未知会话打印一句话并以退出码 0 返回；
+  - 输出超过 8 MiB；
+  - 运行超过 5 秒；
+  - 退出码不为 0。
+- 不向模型发送任何内容，不调用 Hermes 的其他子命令。
+
+实施前的只读核对（证据 `.tmp/cc-hermes-export-2026-10-12.json`）：
+- `hermes sessions --help` 与 `hermes sessions export --help` 确认参数，`-` 表示写到标准输出。
+- 源码 `hermes_cli/main.py`：
+  - 插件发现与 hooks 只针对 `_AGENT_COMMANDS = {None, "chat", "acp", "rl"}` 和 `cron run/tick`、`gateway run`、`mcp serve`；
+  - 后台更新检查只出现在 `chat` 与 `version` 中，`sessions` 两者都不触发；
+  - 带 `--session-id` 时不使用 `--source`，并先按完整 ID 精确匹配；
+  - 不带 `--session-id` 时会导出全部会话，包括消息网关的会话，所以 HarnessHub 拒绝任何非普通标识符。
+
+检查：
+
+| 命令 | 结果 |
+|---|---|
+| `pnpm build` 与 `node --test dist/tests/*/*.test.js` | 627 通过、0 失败、0 跳过（含协议测试 `Hermes's /export …`，G032-NC22） |
+| `python3 tools/check_design.py --write` 与默认检查 | 通过；计划场景 433；完整能力格 78/243 |
+
+协议测试使用新夹具 `tests/fixtures/hermes-cli.mjs`：`acp` 运行 ACP 夹具，`sessions export` 按场景输出。测试覆盖：
+- 正常导出并登记产物；
+- 未知会话；
+- 超过 8 MiB；
+- 超过 5 秒，由自身期限结束；
+- 四种非普通标识符（空、`--source`、含空格、含分号），都不调用命令行；
+- 命令行记录中只有四次 `sessions export - --session-id session-fixture`。
+
+真实验证（开发实例，Hermes 0.12.0，C 项的 Hermes 测试对话）：
+- 发送 `/export`，回合完成，后端 `completed/exported`。产物为 `hermes-<id>.jsonl`、`application/x-ndjson`、31,526 字节，并带 sha256。
+- 期间每 100 毫秒采样一次含 `hermes` 的进程，共 25 秒：
+  - 导出子进程的命令行正好是 `hermes sessions export - --session-id <id>`，父进程为开发实例，只出现在一次采样中，运行时间不到 200 毫秒；
+  - 同时存在的只有这一回合的 `hermes acp`；
+  - 用户的 Hermes gateway（PID 4058，`gateway run --replace`）在全部 150 次采样中都存在，没有变化，也没有出现其他 Hermes 进程。
+
+未验证：
+- Hermes 列出自己 `export` 命令的版本（0.12.0 不列出）。
+- Windows。
