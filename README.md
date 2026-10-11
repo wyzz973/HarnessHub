@@ -157,3 +157,5 @@ python3 -m unittest discover -s tools -p 'test_*.py' -v
 [ADR-025](docs/decisions/0025-conversation-branches.md)起，可在任一完成的回复上“从这里分支”：新对话带上到此为止的历史；原生会话恰好在这一处时（Codex、OpenCode、Pi 已真实验证），由原程序建立原生副本，否则以公共历史继续（如 OpenClaw）。分支与原对话互不影响。见[分支验收](docs/verification/native-branch-2026-10-11.md)。
 
 [ADR-026](docs/decisions/0026-native-extensions.md)起，输入框的“原生扩展”面板只读列出所选 Harness 加载的技能、MCP 服务器与插件（Codex、Pi），点选技能即填入命令；Codex 技能以它自己的 skill 输入调用。见[原生扩展验收](docs/verification/native-extensions-2026-10-11.md)。
+
+[ADR-027](docs/decisions/0027-openclaw-transcript-reconciliation.md)起，OpenClaw 每轮结束后按它自己的会话转录补记工具调用与结果、思考和用量，模型错误不再被桥记成完成；实时工具流与执行审批需直连 Gateway，待决定。见[OpenClaw 转录对账验收](docs/verification/openclaw-transcript-2026-10-11.md)。

@@ -1048,29 +1048,35 @@
         "thinking": {
           "native": "partial",
           "source": "ACP 桥不实时转发思考，仅 load 回放",
-          "hub": "done",
+          "hub": "partial",
           "protocol": "pass",
           "real": "none",
           "evidence": [],
-          "note": "需直连 Gateway agent 事件"
+          "note": "桥未流式转发思考时，回合结束后从原生转录补记；deepseek-chat 无思考输出，真实未验收"
         },
         "tool-status": {
           "native": "partial",
           "source": "桥未声明 tool-events，工具事件很可能不会到达",
-          "hub": "done",
+          "hub": "partial",
           "protocol": "pass",
-          "real": "none",
-          "evidence": [],
-          "note": "需直连 Gateway 才能获得工具事件"
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-activity-openclaw.json",
+            "docs/verification/openclaw-transcript-2026-10-11.md"
+          ],
+          "note": "ACP 桥不转发工具事件；回合结束后按本会话原生转录补记工具与结果（非实时）"
         },
         "tool-detail": {
           "native": "partial",
           "source": "Gateway agent 事件含工具输入输出（需 tool-events 与 verbose=full）",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "hub": "partial",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-activity-openclaw.json",
+            "docs/verification/openclaw-transcript-2026-10-11.md"
+          ],
+          "note": "工具参数与结果来自本会话原生转录，回合结束后补记；实时工具流需直连 Gateway"
         },
         "plan": {
           "native": "no",
@@ -1084,11 +1090,14 @@
         "usage": {
           "native": "partial",
           "source": "usage_update 近似 {used,size}，无费用；sessions.list 含 token/估算费用",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-activity-openclaw.json",
+            "docs/verification/openclaw-transcript-2026-10-11.md"
+          ],
+          "note": "本轮逐次调用用量与费用来自原生转录；上下文占用来自桥"
         },
         "approvals": {
           "native": "partial",

@@ -3,13 +3,67 @@ import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import JSON5 from "json5";
-import type { ControlLaunch, ControlOptions, NativeConversationId, NativeModelCatalog, NativeOptions, CleanupEvidence } from "../../contracts/control.js";
+import { TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type BackendResult, type ControlEvent, type ControlRun, type ControlLaunch, type ControlOptions, type NativeConversationId, type NativeModelCatalog, type NativeOptions, type NativeToolDetail, type CleanupEvidence } from "../../contracts/control.js";
 import { AcpControl } from "./acp.js";
-import { ControlError, object } from "../../infrastructure/control/json-rpc-process.js";
+import { classifyRemoteFailure, ControlError, object } from "../../infrastructure/control/json-rpc-process.js";
 import { nativeCommand } from "../../infrastructure/control/native-command.js";
 import { string } from "../../infrastructure/control/json-rpc-process.js";
 import { checkInputs } from "../../infrastructure/control/attachments.js";
-import type { ContentRef } from "../../contracts/content.js";
+import type { ContentRef, ControlAttachment } from "../../contracts/content.js";
+
+function transcriptSeq(value: unknown): number | null {
+  const meta = value !== null && typeof value === "object" ? (value as { __openclaw?: { seq?: unknown } }).__openclaw : undefined;
+  return typeof meta?.seq === "number" && Number.isSafeInteger(meta.seq) ? meta.seq : null;
+}
+function blocks(value: unknown): readonly Record<string, unknown>[] {
+  const content = value !== null && typeof value === "object" ? (value as { content?: unknown }).content : undefined;
+  return Array.isArray(content) ? content.filter((item): item is Record<string, unknown> => item !== null && typeof item === "object") : [];
+}
+function textOf(value: unknown): string { return blocks(value).flatMap(block => block.type === "text" && typeof block.text === "string" ? [block.text] : []).join("\n"); }
+function cap(value: string, limit: number, tail = false): { text: string; cut: boolean } {
+  const bytes = Buffer.from(value); if (bytes.length <= limit) return { text: value, cut: false };
+  return { text: new TextDecoder().decode(tail ? bytes.subarray(bytes.length - limit) : bytes.subarray(0, limit)), cut: true };
+}
+const TOOL_KIND: Readonly<Record<string, string>> = { exec: "execute", bash: "execute", process: "execute", read: "read", write: "edit", edit: "edit", apply_patch: "edit", web_search: "search", web_fetch: "fetch", memory_search: "search", sessions_spawn: "subagent" };
+/** Maps the turn's own transcript entries (Pi-format agent messages) to public tool, thinking and usage facts and the real outcome. */
+function reconcileTurn(entries: readonly unknown[], backend: BackendResult, emit: (event: ControlEvent) => void, withThinking: boolean): BackendResult {
+  const results = new Map<string, { output: string; failed: boolean }>();
+  for (const entry of entries) {
+    const row = entry as Record<string, unknown>;
+    if (row.role === "toolResult" && typeof row.toolCallId === "string") results.set(row.toolCallId, { output: textOf(row), failed: row.isError === true });
+  }
+  const usage = { input: 0, output: 0, cachedInput: 0, cacheWrite: 0, total: 0 }, cost = { amount: 0 };
+  let counted = false, last: Record<string, unknown> | undefined;
+  for (const entry of entries) {
+    const row = entry as Record<string, unknown>;
+    if (row.role !== "assistant") continue;
+    last = row;
+    for (const block of blocks(row)) {
+      if (withThinking && block.type === "thinking" && typeof block.thinking === "string" && block.thinking) emit({ type: "thinking", text: block.thinking + "\n" });
+      if (block.type !== "toolCall" || typeof block.id !== "string" || typeof block.name !== "string") continue;
+      const done = results.get(block.id), input = cap(JSON.stringify(block.arguments ?? {}, null, 2), TOOL_INPUT_BYTES), output = done ? cap(done.output, TOOL_OUTPUT_BYTES, true) : null;
+      const args = block.arguments !== null && typeof block.arguments === "object" ? block.arguments as Record<string, unknown> : {};
+      const summary = [args.command, args.path, args.file_path, args.query, args.url].find(value => typeof value === "string") as string | undefined;
+      emit({ type: "tool", id: block.id.slice(0, 256), title: (block.name + (summary ? ": " + summary : "")).replace(/[\0-\x1f\x7f]+/gu, " ").trim().slice(0, 4096), status: done ? (done.failed ? "failed" : "completed") : "completed",
+        detail: { kind: TOOL_KIND[block.name] ?? "other", name: block.name.slice(0, 256), input: input.text, ...(output?.text ? { output: output.text } : {}), ...(input.cut || output?.cut ? { truncated: true } : {}) } satisfies NativeToolDetail });
+    }
+    const call = row.usage !== null && typeof row.usage === "object" ? row.usage as Record<string, unknown> : null;
+    if (call) {
+      counted = true;
+      const add = (key: keyof typeof usage, value: unknown) => { if (typeof value === "number" && Number.isFinite(value) && value >= 0) usage[key] += value; };
+      add("input", call.input); add("output", call.output); add("cachedInput", call.cacheRead); add("cacheWrite", call.cacheWrite); add("total", call.totalTokens);
+      const spent = call.cost !== null && typeof call.cost === "object" ? (call.cost as { total?: unknown }).total : undefined;
+      if (typeof spent === "number" && Number.isFinite(spent) && spent > 0) cost.amount += spent;
+    }
+  }
+  if (counted) emit({ type: "usage", usage: { turn: usage, ...(cost.amount > 0 ? { cost: { amount: cost.amount, currency: "USD", scope: "turn" } } : {}) } });
+  // The bridge turns a model or provider error into end_turn; the transcript keeps the real stop reason.
+  if (backend.status === "completed" && last?.stopReason === "error") {
+    const classified = typeof last.errorMessage === "string" ? classifyRemoteFailure(last.errorMessage) : undefined;
+    return { status: "failed", reason: "native_error", error: classified ?? { code: "MODEL_REQUEST_FAILED", message: "OpenClaw 的模型请求失败；原生会话记录了这个错误。" } };
+  }
+  return backend;
+}
 
 /** The installed OpenClaw bridge accepts sessionKey in _meta. A normal chat key avoids its ACP-runtime namespace. */
 export class OpenClawControl extends AcpControl {
@@ -22,7 +76,7 @@ export class OpenClawControl extends AcpControl {
   private readonly commands = new Set<Promise<unknown>>();
   private nativeModels: Promise<NativeModelCatalog["models"]> | null = null;
   constructor(private readonly nativeLaunch: ControlLaunch, private readonly nativeOptions: ControlOptions,
-    private readonly nativeRequest?: (method: "models.list" | "sessions.patch", params: Readonly<Record<string, unknown>>) => Promise<unknown>) { super(nativeLaunch, nativeOptions); }
+    private readonly nativeRequest?: (method: "models.list" | "sessions.patch" | "sessions.get", params: Readonly<Record<string, unknown>>) => Promise<unknown>) { super(nativeLaunch, nativeOptions); }
   protected override async sessionParameters(cwd: string): Promise<Readonly<Record<string, unknown>>> {
     const env = this.nativeLaunch.env, path = env.OPENCLAW_CONFIG_PATH ?? join(env.OPENCLAW_STATE_DIR ?? join(env.HOME ?? homedir(), ".openclaw"), "openclaw.json");
     let config: Record<string, unknown>;
@@ -49,7 +103,7 @@ export class OpenClawControl extends AcpControl {
     this.sessionKey = this.restoredKey ?? "agent:" + agent.toLowerCase() + ":harnesshub:" + randomUUID();
     return { ...await super.sessionParameters(cwd), _meta: { sessionKey: this.sessionKey, ...(this.restoredKey === null ? {} : { requireExistingSession: true, resetSession: false }) } };
   }
-  private call(method: "models.list" | "sessions.patch", params: Readonly<Record<string, unknown>>): Promise<unknown> {
+  private call(method: "models.list" | "sessions.patch" | "sessions.get", params: Readonly<Record<string, unknown>>): Promise<unknown> {
     if (this.nativeRequest) return this.nativeRequest(method, params);
     const index = this.nativeLaunch.args.lastIndexOf("acp");
     if (index < 0) return Promise.reject(new ControlError("UNSUPPORTED_CONTROL", "OpenClaw native CLI prefix unavailable"));
@@ -105,6 +159,34 @@ export class OpenClawControl extends AcpControl {
     if (!attachments.some(item => item.kind === "image")) return;
     const model = this.openedModel ?? this.configuredModel, entry = (await this.readNativeModels()).find(row => row.id === model);
     if (entry?.inputs) checkInputs(attachments, entry.inputs);
+  }
+  /** Highest transcript sequence of the Hub-owned session; null when it cannot be read (the turn then stays as the bridge reported it). */
+  private async transcriptSeq(): Promise<number | null> {
+    if (this.sessionKey === null) return null;
+    try {
+      const messages = object(await this.call("sessions.get", { key: this.sessionKey, limit: 1 }), "OpenClaw transcript").messages;
+      if (!Array.isArray(messages)) return null;
+      return messages.reduce((max: number, value) => Math.max(max, transcriptSeq(value) ?? 0), 0);
+    } catch { return null; }
+  }
+  /**
+   * The ACP bridge forwards only reply text and reports Gateway errors as end_turn. After the turn, this session's own
+   * transcript (read through the original CLI) supplies the tool calls and results, reasoning, per-call usage and the
+   * real stop reason of exactly the messages this turn appended.
+   */
+  override async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
+    const before = await this.transcriptSeq();
+    let thought = false;
+    const run = await super.startText(id, prompt, event => { if (event.type === "thinking") thought = true; onEvent(event); }, attachments);
+    const result = run.result.then(async backend => {
+      if (before === null || this.sessionKey === null || backend.status === "cancelled") return backend;
+      let messages: unknown;
+      try { messages = object(await this.call("sessions.get", { key: this.sessionKey, limit: 200 }), "OpenClaw transcript").messages; }
+      catch { onEvent({ type: "diagnostic", message: "OpenClaw transcript was not readable after the turn" }); return backend; }
+      if (!Array.isArray(messages)) return backend;
+      return reconcileTurn(messages.filter(value => (transcriptSeq(value) ?? 0) > before), backend, onEvent, !thought);
+    });
+    return { result, requestStop: run.requestStop };
   }
   override async models(): Promise<NativeModelCatalog> {
     const catalog = await super.models();

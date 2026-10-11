@@ -54,3 +54,5 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
 - [ADR-025：对话分支与原生会话副本](0025-conversation-branches.md)（accepted）：分支为带引用历史的新Session；原生会话恰好在分支点时由Runner建立原生副本，否则以公共历史继续；Session v8。
 
 - [ADR-026：原生扩展的只读视图与技能调用](0026-native-extensions.md)（accepted）：Codex/Pi 技能、MCP 与插件按需只读列出；Codex 技能以原生 skill 输入经命令调用。
+
+- [ADR-027：OpenClaw 回合按原生转录对账](0027-openclaw-transcript-reconciliation.md)（accepted）：桥结束后读取本会话本轮追加的原生转录，补记工具、思考与用量并修正真实停止原因；直连 Gateway 待用户决定。

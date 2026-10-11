@@ -7354,6 +7354,44 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/real/native-extensions.real.ts"
+    },
+    {
+      "id": "G032-NC15",
+      "task": "G032",
+      "requirements": [
+        "R11",
+        "R12",
+        "R25"
+      ],
+      "invariants": [
+        "INV-04",
+        "INV-09"
+      ],
+      "layer": "protocol",
+      "scenario": "OpenClaw回合按本会话原生转录对账：工具与结果、思考、逐次用量与真实停止原因",
+      "expected": "只取本回合追加的转录；桥报告end_turn但转录为error时回合失败并分类；转录不可读时保持桥的结果并留诊断",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/acp.test.ts"
+    },
+    {
+      "id": "G060-NC7",
+      "task": "G060",
+      "requirements": [
+        "R04",
+        "R24",
+        "R12"
+      ],
+      "invariants": [
+        "INV-16",
+        "INV-09"
+      ],
+      "layer": "e2e",
+      "scenario": "OpenClaw本机原安装只读工具回合",
+      "expected": "exec工具及结果在回合后出现并可读；用量记录；原配置不变",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/real/native-activity.real.ts"
     }
   ]
 }

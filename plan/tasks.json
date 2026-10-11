@@ -2286,7 +2286,8 @@
         "G032-NC11",
         "G032-NC12",
         "G032-NC13",
-        "G032-NC14"
+        "G032-NC14",
+        "G032-NC15"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3699,7 +3700,8 @@
         "G060-NC3",
         "G060-NC4",
         "G060-NC5",
-        "G060-NC6"
+        "G060-NC6",
+        "G060-NC7"
       ],
       "active_slice": "native-installation-management"
     },

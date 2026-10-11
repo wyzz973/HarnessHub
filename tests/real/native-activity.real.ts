@@ -21,6 +21,7 @@ const configFiles: Readonly<Record<string, readonly string[]>> = {
   codex: [join(home, ".codex", "config.toml")],
   claude: [join(home, ".claude", "settings.json")],
   opencode: [join(home, ".config", "opencode", "opencode.json")],
+  openclaw: [join(home, ".openclaw", "openclaw.json")],
   pi: [join(home, ".pi", "agent", "settings.json"), join(home, ".pi", "agent", "models.json")],
   cursor: [join(home, ".cursor", "cli-config.json")],
   gemini: [join(home, ".gemini", "settings.json")],
@@ -32,6 +33,8 @@ const approvalConfig: Readonly<Record<string, { readonly file: string; readonly 
 const askApproval = process.env.HH_REAL_APPROVAL === "1";
 /** HH_REAL_PLAN=1: the turn must use the Harness's own plan tool, and the Hub must commit the plan. */
 const askPlan = process.env.HH_REAL_PLAN === "1";
+/** HH_REAL_READONLY=1: only a harmless echo through the Harness's command tool, for Harnesses whose tools act outside the test workspace (OpenClaw's agent workspace). */
+const readOnly = process.env.HH_REAL_READONLY === "1";
 const TERMINAL = new Set<PublicRun["status"]>(["completed", "failed", "cancelled", "unknown"]);
 async function digest(path: string): Promise<string> {
   try { return createHash("sha256").update(await readFile(path)).digest("hex"); }
@@ -89,7 +92,8 @@ test("installed Harness tool activity is committed with stored, readable details
         const requested = process.env["HH_REAL_MODEL_" + harnessId.toUpperCase()];
         const created = await app.runtime.create(configuration, { harnessId, ...(requested === undefined ? {} : { nativeModel: requested }), ...(nativeOptions === undefined ? {} : { nativeOptions }) }, "create-" + randomUUID());
         proof.nativeOptions = nativeOptions ?? null;
-        app.runtime.send(created.id, "这是一次工具链路验收，只在当前工作目录内操作：\n1. 用命令行工具运行 `cat notes.txt`。\n2. 用你的文件编辑工具（不要用 shell 命令）把 notes.txt 里的 bravo 改成 delta。\n" + (askPlan ? "开始前必须先用你的计划/待办工具（例如 update_plan 或 TodoWrite）列出这两步，并在每步完成后更新状态。" : "如果你有计划或待办工具，先用它列出这两步。") + "完成后只回复 notes.txt 第二行的新内容。不要创建或修改其他文件。", "send-" + randomUUID());
+        if (readOnly) app.runtime.send(created.id, "这是一次只读的工具链路验收：用你的命令执行工具运行 `echo HH-TOOL-OK`，不要做其他任何操作，然后只回复命令输出。", "send-" + randomUUID());
+        else app.runtime.send(created.id, "这是一次工具链路验收，只在当前工作目录内操作：\n1. 用命令行工具运行 `cat notes.txt`。\n2. 用你的文件编辑工具（不要用 shell 命令）把 notes.txt 里的 bravo 改成 delta。\n" + (askPlan ? "开始前必须先用你的计划/待办工具（例如 update_plan 或 TodoWrite）列出这两步，并在每步完成后更新状态。" : "如果你有计划或待办工具，先用它列出这两步。") + "完成后只回复 notes.txt 第二行的新内容。不要创建或修改其他文件。", "send-" + randomUUID());
         const run = await settle(app, created.id, permissions, Date.now() + 8 * 60 * 1000);
         const state = app.runtime.read(created.id), reply = state.messages.find(row => row.id === run.assistantMessageId)?.text ?? "";
         const edited = (await readFile(join(workspace, "notes.txt"), "utf8")).split("\n")[1] ?? "";
@@ -115,10 +119,10 @@ test("installed Harness tool activity is committed with stored, readable details
         proof.events = { toolDetail: events.filter(row => row.type === "run.tool_detail").length, outputs: events.filter(row => row.type === "run.output").length, diagnostics };
         const checks = {
           completed: run.status === "completed",
-          fileEdited: edited === "delta",
+          ...(readOnly ? { echoed: details.some(row => row.output) && reply.includes("HH-TOOL-OK") } : { fileEdited: edited === "delta" }),
           toolsCommitted: tools.length > 0 && tools.every(tool => !["pending", "in_progress", "inProgress", "running"].includes(tool.status)),
           detailsReadable: details.length > 0 && details.some(row => row.input || row.output),
-          editDiff: details.some(row => row.diff),
+          ...(readOnly ? {} : { editDiff: details.some(row => row.diff) }),
           cleanup: run.cleanup?.closed === true,
           ...(askApproval ? { approved: permissions.length > 0 && permissions.every(row => row.chosen !== null) } : {}),
           ...(askPlan ? { plan: (run.plan?.entries.length ?? 0) >= 2 } : {}),

@@ -408,3 +408,29 @@ test("ACP forks a session only when the agent declares it, ignoring the copy's r
   try { await undeclared.initialize(); await assert.rejects(undeclared.fork("session-source", process.cwd()), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_FORK_UNAVAILABLE"); }
   finally { await undeclared.close(); }
 });
+
+test("OpenClaw reconciles each turn from its own transcript: tools, reasoning, usage and the real stop reason", async t => {
+  const root = await mkdtemp(join(tmpdir(), "openclaw-transcript-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const config = join(root, "openclaw.json"); await writeFile(config, '{agents:{list:[{id:"main",default:true}]}}');
+  const env = { HOME: root, OPENCLAW_CONFIG_PATH: config };
+  const earlier = { role: "assistant", content: [{ type: "text", text: "earlier turn" }], usage: { input: 999, output: 999 }, stopReason: "stop", __openclaw: { seq: 5 } };
+  const turn = (stop: string, extra: Record<string, unknown> = {}) => [earlier,
+    { role: "user", content: [{ type: "text", text: "run it" }], __openclaw: { seq: 6 } },
+    { role: "assistant", content: [{ type: "thinking", thinking: "plan the command" }, { type: "toolCall", id: "call-1", name: "exec", arguments: { command: "echo HH" } }], usage: { input: 100, output: 20, cacheRead: 10, cacheWrite: 0, totalTokens: 130, cost: { total: 0.002 } }, stopReason: "toolUse", __openclaw: { seq: 7 } },
+    { role: "toolResult", toolCallId: "call-1", toolName: "exec", content: [{ type: "text", text: "HH" }], isError: false, __openclaw: { seq: 8 } },
+    { role: "assistant", content: [{ type: "text", text: "done" }], usage: { input: 150, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 155, cost: { total: 0.001 } }, stopReason: stop, ...extra, __openclaw: { seq: 9 } }];
+  for (const [stop, extra, expected] of [["stop", {}, { status: "completed", reason: "end_turn" }],
+    ["error", { errorMessage: "You've hit your weekly limit" }, { status: "failed", reason: "native_error", error: { code: "NATIVE_QUOTA_EXCEEDED", message: "这个 Harness 的账号额度已用完。可等待额度恢复，或选择其他 Harness 继续。" } }]] as const) {
+    let reads = 0;
+    const driver = new OpenClawControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "basic"], env }, { ...options, env },
+      async method => method === "sessions.get" ? { messages: reads++ === 0 ? [earlier] : turn(stop, extra) } : { models: [] });
+    try {
+      const id = await ready(driver), events: ControlEvent[] = [];
+      assert.deepEqual(await (await driver.startText(id, "run it", event => events.push(event))).result, expected);
+      const tool = events.find(event => event.type === "tool");
+      assert.deepEqual(tool, { type: "tool", id: "call-1", title: "exec: echo HH", status: "completed", detail: { kind: "execute", name: "exec", input: "{\n  \"command\": \"echo HH\"\n}", output: "HH" } });
+      assert.deepEqual(events.filter(event => event.type === "thinking").map(event => event.type === "thinking" ? event.text : ""), ["plan the command\n"]);
+      assert.deepEqual(events.find(event => event.type === "usage"), { type: "usage", usage: { turn: { input: 250, output: 25, cachedInput: 10, cacheWrite: 0, total: 285 }, cost: { amount: 0.003, currency: "USD", scope: "turn" } } }, "only this turn's calls are counted");
+    } finally { await driver.close(); }
+  }
+});

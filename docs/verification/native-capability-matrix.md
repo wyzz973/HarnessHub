@@ -11,11 +11,11 @@
 | 配置与模型 | 模式与原生设置 | ◑ | ✕ | ◐ | ◐ | ✕ | ◐ | — |
 | 配置与模型 | 原生命令目录与执行 | — | ✕ | ◐ | ✅ | ✕ | ◐ | ◐ |
 | 配置与模型 | 原生命令改配置后的同步 | ○ | ○ | ？ | ○ | ？ | ○ | ○ |
-| 执行可见性 | 思考输出 | ◐ | ✕ | ◐ | ◐ | ✕ | ✕ | ◐ |
-| 执行可见性 | 工具状态 | ✅ | ✕ | ✅ | ◐ | ✕ | ✕ | ✅ |
-| 执行可见性 | 工具输入/输出/差异 | ✅ | ✕ | ✅ | ○ | ✕ | ✕ | ✅ |
+| 执行可见性 | 思考输出 | ◐ | ✕ | ◐ | ◑ | ✕ | ✕ | ◐ |
+| 执行可见性 | 工具状态 | ✅ | ✕ | ✅ | ◑ | ✕ | ✕ | ✅ |
+| 执行可见性 | 工具输入/输出/差异 | ✅ | ✕ | ✅ | ◑ | ✕ | ✕ | ✅ |
 | 执行可见性 | 计划 | ✕ | ✕ | — | — | — | ✕ | — |
-| 执行可见性 | 用量/上下文/费用 | ✅ | ✕ | ✅ | ○ | ✕ | — | ✅ |
+| 执行可见性 | 用量/上下文/费用 | ✅ | ✕ | ✅ | ◐ | ✕ | — | ✅ |
 | 交互 | 工具审批 | ✅ | ✕ | ✅ | ○ | ✕ | ✕ | ◐ |
 | 交互 | 原生提问与表单 | ◑ | ○ | ？ | — | ？ | ◑ | ◐ |
 | 输入输出 | 图片输入 | ✅ | ✕ | ✅ | ◐ | ✕ | ✕ | ✅ |
@@ -39,7 +39,7 @@
 | Codex | 12 | 3 | 5 | 4 | 2 | 1 | 0 |
 | Claude Code | 0 | 0 | 3 | 6 | 16 | 2 | 0 |
 | OpenCode | 8 | 6 | 3 | 3 | 0 | 2 | 5 |
-| OpenClaw | 5 | 5 | 1 | 9 | 0 | 7 | 0 |
+| OpenClaw | 5 | 4 | 4 | 7 | 0 | 7 | 0 |
 | Gemini CLI | 0 | 0 | 2 | 1 | 12 | 6 | 6 |
 | Cursor | 0 | 2 | 4 | 4 | 9 | 5 | 3 |
 | Pi | 10 | 6 | 1 | 3 | 0 | 7 | 0 |
@@ -157,11 +157,11 @@
 | 模式与原生设置 | 具备 | fast_mode/verbose_level/reasoning_level/response_usage/elevated_level | 已接出 | 通过 | 部分通过 | .tmp/native-complete-real-combined.json | 仅思考档位真实使用；__mode 与思考档位重复 |
 | 原生命令目录与执行 | 具备 | 固定 27 条命令（缺 /fast /exec /approve 等） | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-acp.json；docs/verification/native-session-actions-2026-10-11.md | 原生 /compact 真实执行；固定 27 条命令（缺 /fast /exec /approve 等） |
 | 原生命令改配置后的同步 | 部分 | 斜杠命令修改 Gateway 会话设置，但 ACP 桥不推送 config_option_update | 未接出 | 未接出 | 未接出 | — | — |
-| 思考输出 | 部分 | ACP 桥不实时转发思考，仅 load 回放 | 已接出 | 通过 | 未接出 | — | 需直连 Gateway agent 事件 |
-| 工具状态 | 部分 | 桥未声明 tool-events，工具事件很可能不会到达 | 已接出 | 通过 | 未接出 | — | 需直连 Gateway 才能获得工具事件 |
-| 工具输入/输出/差异 | 部分 | Gateway agent 事件含工具输入输出（需 tool-events 与 verbose=full） | 未接出 | 未接出 | 未接出 | — | — |
+| 思考输出 | 部分 | ACP 桥不实时转发思考，仅 load 回放 | 部分 | 通过 | 未接出 | — | 桥未流式转发思考时，回合结束后从原生转录补记；deepseek-chat 无思考输出，真实未验收 |
+| 工具状态 | 部分 | 桥未声明 tool-events，工具事件很可能不会到达 | 部分 | 通过 | 通过 | .tmp/cc-native-activity-openclaw.json；docs/verification/openclaw-transcript-2026-10-11.md | ACP 桥不转发工具事件；回合结束后按本会话原生转录补记工具与结果（非实时） |
+| 工具输入/输出/差异 | 部分 | Gateway agent 事件含工具输入输出（需 tool-events 与 verbose=full） | 部分 | 通过 | 通过 | .tmp/cc-native-activity-openclaw.json；docs/verification/openclaw-transcript-2026-10-11.md | 工具参数与结果来自本会话原生转录，回合结束后补记；实时工具流需直连 Gateway |
 | 计划 | 不提供 | 桥从不发送 plan | 不适用 | 不适用 | 不适用 | — | — |
-| 用量/上下文/费用 | 部分 | usage_update 近似 {used,size}，无费用；sessions.list 含 token/估算费用 | 未接出 | 未接出 | 未接出 | — | — |
+| 用量/上下文/费用 | 部分 | usage_update 近似 {used,size}，无费用；sessions.list 含 token/估算费用 | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-openclaw.json；docs/verification/openclaw-transcript-2026-10-11.md | 本轮逐次调用用量与费用来自原生转录；上下文占用来自桥 |
 | 工具审批 | 部分 | exec.approval.* 只走 Gateway RPC/事件；经 ACP 会静默等待约 120 秒后拒绝 | 未接出 | 未接出 | 未接出 | — | — |
 | 原生提问与表单 | 不提供 | ACP 桥不发送提问 | 不适用 | 不适用 | 不适用 | — | — |
 | 图片输入 | 具备 | image block → chat.send attachment（≤5 MB） | 已接出 | 通过 | 部分通过 | .tmp/cc-native-attachments-opencode-openclaw.json；docs/verification/native-attachments-2026-10-11.md | 按 models.list 的模型 input 与 5 MB 上限门控；默认 deepseek-chat 在派发前拒绝，识图模型未真实验收 |
