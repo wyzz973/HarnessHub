@@ -3683,7 +3683,8 @@
         "tests/real/native-import.real.ts",
         "tests/real/native-subagent.real.ts",
         "tests/real/native-question.real.ts",
-        "tests/real/native-thinking.real.ts"
+        "tests/real/native-thinking.real.ts",
+        "tests/real/native-options.real.ts"
       ],
       "requirements": [
         "R04",
@@ -3732,7 +3733,8 @@
         "G060-NC9",
         "G060-NC10",
         "G060-NC11",
-        "G060-NC12"
+        "G060-NC12",
+        "G060-NC13"
       ],
       "active_slice": "native-installation-management"
     },

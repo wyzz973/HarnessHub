@@ -7859,6 +7859,25 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/protocol/acp.test.ts"
+    },
+    {
+      "id": "G060-NC13",
+      "task": "G060",
+      "requirements": [
+        "R04",
+        "R24",
+        "R12"
+      ],
+      "invariants": [
+        "INV-16",
+        "INV-09"
+      ],
+      "layer": "e2e",
+      "scenario": "本机原安装应用所选原生设置并执行原生命令",
+      "expected": "回合后原生回报与所选设置一致，限制修改的模式下文件不变；原生命令作为独立回合执行并产生预期文件；原配置不变",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/real/native-options.real.ts"
     }
   ]
 }

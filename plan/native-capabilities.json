@@ -794,27 +794,35 @@
           "source": "configOptions effort（仅模型有 variants 时）",
           "hub": "done",
           "protocol": "pass",
-          "real": "none",
-          "evidence": [],
-          "note": "默认模型无档位，未真实验收"
+          "real": "blocked",
+          "evidence": [
+            "docs/verification/native-options-2026-10-11.md"
+          ],
+          "note": "本机 OpenCode 模型均无思考档位变体（effort 选项只在有变体的模型上出现），无法真实验收"
         },
         "modes-settings": {
           "native": "yes",
           "source": "configOptions mode(build/plan)",
           "hub": "done",
           "protocol": "pass",
-          "real": "none",
-          "evidence": [],
-          "note": "未真实验收"
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-options-opencode.json",
+            "docs/verification/native-options-2026-10-11.md"
+          ],
+          "note": "mode=plan 真实生效：原生回报 plan，要求修改文件的回合未改动文件"
         },
         "commands": {
           "native": "yes",
           "source": "available_commands_update（init/review、配置命令、MCP prompt、skills）",
           "hub": "done",
           "protocol": "pass",
-          "real": "none",
-          "evidence": [],
-          "note": "目录真实读取 104 条（目录读取现等待代理的命令公告）；执行未验收；未知 / 开头文本会被原程序丢弃"
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-options-opencode-init.json",
+            "docs/verification/native-options-2026-10-11.md"
+          ],
+          "note": "目录真实读取 104 条；/init 作为原生命令执行并生成 AGENTS.md；未知 / 开头文本会被原程序丢弃"
         },
         "config-sync": {
           "native": "unknown",

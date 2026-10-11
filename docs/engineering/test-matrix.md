@@ -418,3 +418,4 @@
 | G060-NC12 | G060 | e2e | 本机原安装的思考输出与回复分开记录 | 需要思考的设置下Run记录原程序的思考内容且不混入回复，答案正确；原配置不变 | planned |
 | G034-NC11 | G034 | protocol | Codex子Agent线程的工具嵌套在子Agent条目之下 | 子线程由thread/started、subAgentActivity或协作调用的receiverThreadIds识别；子线程工具以子Agent条目为父，最终回复作为条目输出，回合结束更新状态；孙线程嵌套在子线程下；无关线程不显示；子线程文字不进入回复 | planned |
 | G032-NC21 | G032 | protocol | OpenClaw按Gateway只读报告列出技能与插件 | 技能来自skills.status（可用性含资格、停用与白名单），插件来自tools.catalog的插件工具组；不列MCP；只请求只读方法 | planned |
+| G060-NC13 | G060 | e2e | 本机原安装应用所选原生设置并执行原生命令 | 回合后原生回报与所选设置一致，限制修改的模式下文件不变；原生命令作为独立回合执行并产生预期文件；原配置不变 | planned |

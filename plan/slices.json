@@ -700,7 +700,8 @@
         "web/src/tool-tree.ts",
         "tests/real/native-question.real.ts",
         "src/adapters/control/claude.ts",
-        "tests/real/native-thinking.real.ts"
+        "tests/real/native-thinking.real.ts",
+        "tests/real/native-options.real.ts"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/complete-native-capabilities-2026-10-11.md"

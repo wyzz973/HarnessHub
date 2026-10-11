@@ -39,7 +39,8 @@
     "test:real:native-import": "pnpm build && node --test dist/tests/real/native-import.real.js",
     "test:real:native-subagent": "pnpm build && node --test dist/tests/real/native-subagent.real.js",
     "test:real:native-question": "pnpm build && node --test dist/tests/real/native-question.real.js",
-    "test:real:native-thinking": "pnpm build && node --test dist/tests/real/native-thinking.real.js"
+    "test:real:native-thinking": "pnpm build && node --test dist/tests/real/native-thinking.real.js",
+    "test:real:native-options": "pnpm build && node --test dist/tests/real/native-options.real.js"
   },
   "devDependencies": {
     "@playwright/test": "1.64.0",

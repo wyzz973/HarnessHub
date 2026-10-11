@@ -7,9 +7,9 @@
 | 分组 | 能力 | Codex | Claude Code | OpenCode | OpenClaw | Gemini CLI | Cursor | Pi |
 |---|---|---|---|---|---|---|---|---|
 | 配置与模型 | 模型目录与选择 | ✅ | ✅ | ◐ | ✅ | ✕ | ◑ | ✅ |
-| 配置与模型 | 思考档位 | ✅ | ✅ | ◐ | ✅ | — | ○ | ✅ |
-| 配置与模型 | 模式与原生设置 | ◑ | ✅ | ◐ | ◐ | ✕ | ◐ | — |
-| 配置与模型 | 原生命令目录与执行 | — | ✅ | ◐ | ✅ | ✕ | ◐ | ◐ |
+| 配置与模型 | 思考档位 | ✅ | ✅ | ✕ | ✅ | — | ○ | ✅ |
+| 配置与模型 | 模式与原生设置 | ◑ | ✅ | ✅ | ◐ | ✕ | ◐ | — |
+| 配置与模型 | 原生命令目录与执行 | — | ✅ | ✅ | ✅ | ✕ | ◐ | ◐ |
 | 配置与模型 | 原生命令改配置后的同步 | ◑ | ✅ | ？ | ◐ | ？ | ✕ | ✕ |
 | 执行可见性 | 思考输出 | ◐ | ✕ | ✅ | ◑ | ✕ | ✕ | ✅ |
 | 执行可见性 | 工具状态 | ✅ | ✅ | ✅ | ◑ | ✕ | ✕ | ✅ |
@@ -38,7 +38,7 @@
 |---|---|---|---|---|---|---|---|
 | Codex | 14 | 3 | 5 | 2 | 2 | 1 | 0 |
 | Claude Code | 16 | 3 | 3 | 1 | 2 | 2 | 0 |
-| OpenCode | 10 | 5 | 3 | 2 | 0 | 2 | 5 |
+| OpenCode | 12 | 2 | 3 | 2 | 1 | 2 | 5 |
 | OpenClaw | 5 | 5 | 5 | 5 | 0 | 7 | 0 |
 | Gemini CLI | 0 | 0 | 2 | 1 | 12 | 6 | 6 |
 | Cursor | 0 | 2 | 4 | 2 | 11 | 5 | 3 |
@@ -119,9 +119,9 @@
 | 能力 | 原接口 | 来源 | Hub | 协议 | 真实原安装 | 证据 | 说明 |
 |---|---|---|---|---|---|---|---|
 | 模型目录与选择 | 具备 | configOptions model(provider/model) | 已接出 | 通过 | 部分通过 | docs/verification/native-models-2026-10-11.md；.tmp/cc-native-resume-batch1.json | 默认 opencode/big-pickle 真实生成；原生接口选择 opencode/exo-free 已生效但未生成 |
-| 思考档位 | 具备 | configOptions effort（仅模型有 variants 时） | 已接出 | 通过 | 未接出 | — | 默认模型无档位，未真实验收 |
-| 模式与原生设置 | 具备 | configOptions mode(build/plan) | 已接出 | 通过 | 未接出 | — | 未真实验收 |
-| 原生命令目录与执行 | 具备 | available_commands_update（init/review、配置命令、MCP prompt、skills） | 已接出 | 通过 | 未接出 | — | 目录真实读取 104 条（目录读取现等待代理的命令公告）；执行未验收；未知 / 开头文本会被原程序丢弃 |
+| 思考档位 | 具备 | configOptions effort（仅模型有 variants 时） | 已接出 | 通过 | 受阻 | docs/verification/native-options-2026-10-11.md | 本机 OpenCode 模型均无思考档位变体（effort 选项只在有变体的模型上出现），无法真实验收 |
+| 模式与原生设置 | 具备 | configOptions mode(build/plan) | 已接出 | 通过 | 通过 | .tmp/cc-native-options-opencode.json；docs/verification/native-options-2026-10-11.md | mode=plan 真实生效：原生回报 plan，要求修改文件的回合未改动文件 |
+| 原生命令目录与执行 | 具备 | available_commands_update（init/review、配置命令、MCP prompt、skills） | 已接出 | 通过 | 通过 | .tmp/cc-native-options-opencode-init.json；docs/verification/native-options-2026-10-11.md | 目录真实读取 104 条；/init 作为原生命令执行并生成 AGENTS.md；未知 / 开头文本会被原程序丢弃 |
 | 原生命令改配置后的同步 | 未核实 | 1.18.35 只在客户端 session/set_config_option（model）后发送 config_option_update；未发现原生命令修改设置后的宣告 | 未接出 | 未接出 | 未接出 | — | 若它宣告设置变化，通用 ACP 机制（ADR-028）会同样记录并沿用；未确认，不计为已接出 |
 | 思考输出 | 具备 | agent_thought_chunk | 已接出 | 通过 | 通过 | .tmp/cc-native-thinking-opencode.json；docs/verification/native-thinking-2026-10-11.md | 推理题的思考内容记录在 Run 上，不混入回复 |
 | 工具状态 | 具备 | tool_call/tool_call_update | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-opencode.json；docs/verification/native-activity-2026-10-11.md | 命令、读取、编辑与 todowrite 真实回合 |
