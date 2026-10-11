@@ -32,12 +32,12 @@
 | 会话 | 回滚/回退 | ○ | — | ？ | — | ○ | — | ○ |
 | 并发与后台 | 子 Agent | ◑ | ✅ | ○ | ○ | ？ | ○ | — |
 | 并发与后台 | 后台任务 | ○ | ○ | ？ | ○ | ？ | ？ | — |
-| 产物 | 导出与产物 | ✅ | ○ | ？ | ○ | ？ | — | ✅ |
+| 产物 | 导出与产物 | ✅ | ◐ | ？ | ○ | ？ | — | ✅ |
 
 | Harness | ✅ | ◐ | ◑ | ○ | ✕ | — | ？ |
 |---|---|---|---|---|---|---|---|
 | Codex | 13 | 3 | 6 | 2 | 2 | 1 | 0 |
-| Claude Code | 16 | 3 | 3 | 2 | 1 | 2 | 0 |
+| Claude Code | 16 | 4 | 3 | 1 | 1 | 2 | 0 |
 | OpenCode | 9 | 6 | 3 | 2 | 0 | 2 | 5 |
 | OpenClaw | 5 | 5 | 4 | 6 | 0 | 7 | 0 |
 | Gemini CLI | 0 | 0 | 2 | 1 | 12 | 6 | 6 |
@@ -110,7 +110,7 @@
 | 回滚/回退 | 不提供 | 非 JetBrains AIR 客户端无指定消息回退 | 不适用 | 不适用 | 不适用 | — | — |
 | 子 Agent | 具备 | 子会话 subagent_spawned/state_update 需 subagents 能力；否则工具带 parentToolUseId | 已接出 | 通过 | 通过 | .tmp/cc-native-subagent-claude.json；docs/verification/native-subagents-2026-10-11.md | 未协商原生子会话时，子 Agent 工具平铺在根会话并带 parentToolUseId；Hub 记录关联并在 Agent 调用下嵌套显示，子 Agent 文字不进入主回复 |
 | 后台任务 | 具备 | 后台 shell 与自主后续回合；async_task_* 仅 AIR | 未接出 | 未接出 | 未接出 | — | 每轮关闭进程会终止后台任务 |
-| 导出与产物 | 部分 | 转录在本机磁盘；ACP 无导出方法 | 未接出 | 未接出 | 未接出 | — | — |
+| 导出与产物 | 部分 | ACP 无导出方法；转录在 <CLAUDE_CONFIG_DIR 或 ~/.claude>/projects/<项目>/<会话>.jsonl（claude-agent-acp 也在此查找） | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-claude-export.json；docs/verification/claude-export-2026-10-11.md | 代理没有自己的 export 命令时 Hub 提供 /export：只读复制本会话转录作为产物；找不到转录时明确失败 |
 
 ## OpenCode
 

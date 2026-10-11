@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -10,6 +10,7 @@ import { AcpControl } from "../../src/adapters/control/acp.js";
 import { OpenClawControl } from "../../src/adapters/control/factory.js";
 import { CursorControl } from "../../src/adapters/control/cursor.js";
 import { OpenCodeControl, parseOpenCodeModels } from "../../src/adapters/control/opencode.js";
+import { ClaudeControl } from "../../src/adapters/control/claude.js";
 import { ControlError } from "../../src/infrastructure/control/json-rpc-process.js";
 import { bindNativeDependencies } from "../../src/adapters/control/native-dependencies.js";
 import { contentId } from "../../src/contracts/content.js";
@@ -538,4 +539,27 @@ test("ACP forms are asked field by field: a choice, a typed answer for its Other
   const number = await ask("elicitation-number", []);
   assert.deepEqual(number.reply, { action: "decline" }); assert.equal(number.questions.length, 0);
   assert.deepEqual((await ask("elicitation", [], false)).reply, { action: "decline" }, "without an interactive chat nobody can answer, so the form is declined");
+});
+
+test("Claude /export copies the session's own Claude Code transcript as an output, and fails clearly without one", async t => {
+  const root = await mkdtemp(join(tmpdir(), "claude-export-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const launch = (env: Record<string, string>) => ({ protocol: "acp-v1" as const, executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "basic"], env });
+  const transcript = '{"type":"user","message":"hello"}\n{"type":"assistant","message":"hi"}\n';
+  await mkdir(join(root, "projects", "-other-project"), { recursive: true }); await mkdir(join(root, "projects", "-w-project"), { recursive: true });
+  await writeFile(join(root, "projects", "-w-project", "session-fixture.jsonl"), transcript);
+  const driver = new ClaudeControl(launch({ CLAUDE_CONFIG_DIR: root }), options);
+  try {
+    const id = await ready(driver);
+    assert.ok((await driver.models()).commands?.some(command => command.name === "export"), "the Hub offers /export when the agent has none");
+    const events: ControlEvent[] = [], result = await (await driver.startText(id, "/export", event => events.push(event))).result;
+    assert.deepEqual(result, { status: "completed", reason: "exported" });
+    const output = events.find(event => event.type === "output");
+    assert.ok(output?.type === "output" && output.output.kind === "content" && output.output.name === "claude-session-fixture.jsonl" && Buffer.from(output.output.data).toString() === transcript);
+  } finally { await driver.close(); }
+  const missing = new ClaudeControl(launch({ CLAUDE_CONFIG_DIR: join(root, "empty") }), options);
+  try {
+    const id = await ready(missing); await missing.models();
+    const result = await (await missing.startText(id, "/export", () => {})).result;
+    assert.equal(result.status, "failed"); assert.equal(result.error?.code, "NATIVE_EXPORT_UNAVAILABLE");
+  } finally { await missing.close(); }
 });

@@ -2250,7 +2250,8 @@
         "src/adapters/control/cursor.ts",
         "src/infrastructure/control/unified-diff.ts",
         "src/infrastructure/control/attachments.ts",
-        "src/adapters/control/opencode.ts"
+        "src/adapters/control/opencode.ts",
+        "src/adapters/control/claude.ts"
       ],
       "requirements": [
         "R11",
@@ -2298,7 +2299,8 @@
         "G032-NC16",
         "G032-NC17",
         "G032-NC18",
-        "G032-NC19"
+        "G032-NC19",
+        "G032-NC20"
       ],
       "active_slice": "native-installation-management"
     },

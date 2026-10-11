@@ -7789,6 +7789,23 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/real/native-question.real.ts"
+    },
+    {
+      "id": "G032-NC20",
+      "task": "G032",
+      "requirements": [
+        "R11",
+        "R25"
+      ],
+      "invariants": [
+        "INV-04"
+      ],
+      "layer": "protocol",
+      "scenario": "Claude /export 复制本会话的 Claude Code 转录作为产物",
+      "expected": "代理没有自己的export命令时目录提供Hub的/export；按claude-agent-acp相同的位置查找转录并只读复制；找不到时明确失败；不发送提示",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/acp.test.ts"
     }
   ]
 }

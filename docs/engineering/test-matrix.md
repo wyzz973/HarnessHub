@@ -414,3 +414,4 @@
 | G060-NC10 | G060 | e2e | 本机原安装把命令委派给自己的子 Agent | 子 Agent 调用与其运行的工具被提交并关联；主回复不混入子 Agent 输出；原配置不变 | planned |
 | G032-NC19 | G032 | protocol | ACP原生表单（elicitation/create）逐字段提问 | 初始化声明elicitation.form；单选、自填（Other伴随字段并入提交回答）、多选按列表返回、是否题；跳过即decline、取消即cancel；含数字等无法显示的字段整表拒绝并提示；非交互时拒绝 | planned |
 | G060-NC11 | G060 | e2e | 本机原安装用自己的提问工具向用户提问 | 问题以对话中的原生提问显示；选择第二个选项后原程序按该回答回复；原配置不变 | planned |
+| G032-NC20 | G032 | protocol | Claude /export 复制本会话的 Claude Code 转录作为产物 | 代理没有自己的export命令时目录提供Hub的/export；按claude-agent-acp相同的位置查找转录并只读复制；找不到时明确失败；不发送提示 | planned |
