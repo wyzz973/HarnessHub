@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -84,8 +84,10 @@ test("five-second version deadline closes a hanging CLI and reports an unknown v
 
 test("cancelled version probe waits for CLI shutdown and removes only its owned temporary root", async t => {
   const f = await fixture(t, "hold"), controller = new AbortController(), pending = probeSystemVersion(observation(f), { signal: controller.signal, assertOwned: () => {} });
-  const deadline = Date.now() + 3000; while (!existsSync(f.trace) && Date.now() < deadline) await delay(10);
-  assert.ok(existsSync(f.trace)); controller.abort(); const result = await pending; assert.equal(result.version, null); assert.match(result.reason ?? "", /cancelled/u);
+  // The CLI has started once its trace is complete: the file can exist, still empty, before the fixture has written it.
+  const traced = () => { try { JSON.parse(readFileSync(f.trace, "utf8")); return true; } catch { return false; } };
+  const deadline = Date.now() + 3000; while (!traced() && Date.now() < deadline) await delay(10);
+  assert.ok(traced()); controller.abort(); const result = await pending; assert.equal(result.version, null); assert.match(result.reason ?? "", /cancelled/u);
   const trace = await traceValue(f); assertStopped(trace.pid); assert.equal(existsSync(trace.tmp), false); assert.equal(existsSync(f.path), true);
 });
 

@@ -17,6 +17,7 @@ import { supportedProviderProtocols } from "../contexts/provider/domain/provider
 import { carriedNativeConfiguration } from "../contexts/session/domain/state.js";
 import { observedPackageVersion } from "../infrastructure/management/system-version.js";
 import { SessionStreamError, SessionStreamHub } from "./session-stream.js";
+import { AttentionStreamHub } from "./attention-stream.js";
 import { HarnessModels } from "./harness-models.js";
 import { buildRevision, NativeCatalogCache, type NativeReadiness } from "./native-catalog-cache.js";
 import { conversationMarkdown } from "./conversation-export.js";
@@ -260,8 +261,13 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   const streams = new SessionStreamHub(id => sessionView(app.runtime.read(id), app.runtime.permissionRequests(id)), {}, failure => {
     const fault = publicFailure(failure.error);
     process.stderr.write("HarnessGateway: SESSION_STREAM_READ_FAILED (" + app.providers.redact(fault.code).slice(0, 128) + ")\n");
+  }, () => attention.frame());
+  // Waiting approvals and questions of every conversation, refreshed after each published event (ADR-035). A page with a
+  // conversation open gets them on that conversation's stream; a page without one subscribes to them alone.
+  const attention = new AttentionStreamHub(() => app.runtime.attention(), {}, frame => streams.attentionChanged(frame));
+  app = (options.application ?? composeApplication)(options.root, event => {
+    try { streams.publish(event); } finally { if (app !== undefined) attention.changed(); }
   });
-  app = (options.application ?? composeApplication)(options.root, event => streams.publish(event));
   // Derived observations only; a file this version cannot adopt is reported and left as it is. Catalogs are reused only by
   // the build that read them (every compiled Gateway file), since its drivers decide what a catalog contains.
   const nativeModels = new HarnessModels(app.factory, new NativeCatalogCache(realpathSync(options.root), { assertOwner: () => app.store.assertOwner(),
@@ -521,6 +527,17 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       });
       return;
     }
+    // Approvals and questions waiting in any conversation (ADR-035): the current list, then live frames of it.
+    if (path === "/api/v1/attention" && method === "GET") { queries(url, []); json(response, 200, attention.frame()); return; }
+    if (path === "/api/v1/attention/stream" && method === "GET") {
+      queries(url, []);
+      attention.open(login.expires, response, () => {
+        headers(response); response.statusCode = 200; response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+        response.setHeader("Cache-Control", "no-cache, no-transform"); response.setHeader("Connection", "keep-alive"); response.setHeader("X-Accel-Buffering", "no");
+        response.flushHeaders();
+      });
+      return;
+    }
     // Which conversations keep a native process and in which workspace, for the choice when one occupies a workspace (ADR-030).
     if (path === "/api/v1/kept-processes" && method === "GET") { queries(url, []); json(response, 200, { processes: app.runtime.keptProcesses() }); return; }
     const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|switches|resume|cancel|close|events|export|fork|retention|end-process))?$/u.exec(path);
@@ -591,7 +608,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   const close = (): Promise<void> => {
     if (closing) return closing;
     stopping = true;
-    streams.close();
+    streams.close(); attention.close();
     closing = (async () => {
       const listener = new Promise<void>((done, reject) => server.close(error => error ? reject(error) : done()));
       // Bound even sockets that have not completed their headers; durable execution is closed separately.
@@ -626,7 +643,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     host = "127.0.0.1:" + address.port; origin = "http://" + host;
     return { url: origin + "/#token=" + bootstrap, close };
   } catch (error) {
-    streams.close();
+    streams.close(); attention.close();
     await nativeModels.close();
     try { await app.runtime.close(); } finally { try { await app.management.shutdown(); } finally { try { await app.providers.shutdown(); } finally { app.store.close(); } } }
     throw error;

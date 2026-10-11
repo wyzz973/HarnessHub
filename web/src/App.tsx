@@ -3,11 +3,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { SelectionRequest } from "../../src/contracts/session.js";
 import type { ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
 import { parseProviderTarget } from "../../src/contracts/provider.js";
-import type { HarnessView, SessionView, WebState } from "../../src/contracts/web.js";
+import type { AttentionFrame, HarnessView, SessionView, WebState } from "../../src/contracts/web.js";
 import type { NativeModelCatalog } from "../../src/contracts/control.js";
 import type { InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
 import { parseNativeOptions, sessionId as validateSessionId } from "../../src/contracts/session.js";
 import { applySessionStreamFrame } from "./session-stream.js";
+import { notifyWaiting } from "./attention.js";
 import { ApiError, errorMessage, GatewayApi, requestKey } from "./api.js";
 import { ChatPage, effectiveProviderProblem, EMPTY_SELECTION, selectionDraft, selectionProblem, selectionRequest } from "./components/ChatPage.js";
 import type { SelectionDraft } from "./components/ChatPage.js";
@@ -115,6 +116,19 @@ export function App() {
   const [api] = useState(() => new GatewayApi());
   const [initialRoute] = useState(sessionRoute);
   const [state, setState] = useState<WebState | null>(null);
+  // Waiting approvals and questions of every conversation, pushed by the Gateway (ADR-035); the newest revision wins.
+  const [attention, setAttention] = useState<AttentionFrame | null>(null);
+  const attentionSeen = useRef(new Set<string>());
+  const openFromNotice = useRef<(id: string) => void>(() => {});
+  const acceptAttention = useCallback((frame: AttentionFrame) => {
+    setAttention(current => current !== null && current.revision > frame.revision ? current : frame);
+    const names = new Map((liveState.current?.harnesses ?? []).map(harness => [harness.id, harness.name]));
+    for (const item of frame.items) {
+      if (attentionSeen.current.has(item.permissionId)) continue;
+      attentionSeen.current.add(item.permissionId);
+      notifyWaiting(item, names.get(item.harnessId) ?? item.harnessId, Date.now(), id => openFromNotice.current(id));
+    }
+  }, []);
   const [bootError, setBootError] = useState<string | null>(null);
   const [bootAttempt, setBootAttempt] = useState(0);
   const [page, setPage] = useState<Page>("chat");
@@ -251,7 +265,7 @@ export function App() {
             const base = liveSession.current?.id === sessionId ? liveSession.current : null;
             const next = applySessionStreamFrame(base, frame, sessionId);
             setConnectionError(null); stage(next);
-          });
+          }, frame => { if (!stopped) acceptAttention(frame); });
           if (!stopped) {
             if (performance.now() - started < 45_000) throw new ApiError("STREAM_EARLY_EOF", "实时连接提前结束。");
             failures = 0; await wait(250);
@@ -270,7 +284,7 @@ export function App() {
       }
     })();
     return () => { stopped = true; controller.abort(); if (animation !== null) cancelAnimationFrame(animation); pending = null; };
-  }, [api, sessionId, state !== null, streamAttempt, acceptSession]);
+  }, [api, sessionId, state !== null, streamAttempt, acceptSession, acceptAttention]);
   useEffect(() => {
     if (!state) return;
     let stopped = false, failures = 0;
@@ -302,6 +316,32 @@ export function App() {
     timer = setTimeout(() => void poll(), liveState.current?.jobs.some(installationActive) ? 800 : 1500);
     return () => { stopped = true; if (timer !== null) clearTimeout(timer); controller.abort(); };
   }, [api, state !== null]);
+  // Without a conversation open, the page subscribes to waiting requests alone; with one open, that conversation's stream
+  // carries them, so a page holds one long-lived connection either way.
+  useEffect(() => {
+    if (!state || sessionId !== null) return;
+    let stopped = false, failures = 0;
+    const controller = new AbortController();
+    const wait = (ms: number): Promise<void> => new Promise(resolve => {
+      const finish = () => { clearTimeout(timer); controller.signal.removeEventListener("abort", finish); resolve(); };
+      const timer = setTimeout(finish, ms); controller.signal.addEventListener("abort", finish, { once: true });
+      if (controller.signal.aborted) finish();
+    });
+    void (async () => {
+      while (!stopped) {
+        try {
+          await api.streamAttention(controller.signal, frame => { if (!stopped) { failures = 0; acceptAttention(frame); } });
+          if (!stopped) await wait(250);
+        } catch (failure: unknown) {
+          if (stopped) return;
+          // The reminder is secondary: it retries quietly and gives up only when the login is gone.
+          if (failure instanceof ApiError && ["AUTH_REQUIRED", "HOST_REJECTED", "ORIGIN_REJECTED"].includes(failure.code)) return;
+          failures += 1; await wait(Math.min(15000, 500 * 2 ** Math.min(failures, 5)));
+        }
+      }
+    })();
+    return () => { stopped = true; controller.abort(); };
+  }, [api, state !== null, sessionId === null, acceptAttention]);
   const leave = (action: () => void) => {
     if (operation.current) return;
     const finish = () => { pendingProviderWrite.current = null; action(); };
@@ -340,6 +380,7 @@ export function App() {
     }
     setPage("chat"); setEditor(null); setEditorDirty(false); setSidebarOpen(false); setError(null); setConnectionError(null);
   });
+  openFromNotice.current = selectSession;
   const chooseHarness = (harness: HarnessView) => leave(() => {
     selectionWish.current = null; lastAutoSelection.current = null;
     const control = harness.controls.find(row => row.id === harness.defaultControlId && row.available) ?? harness.controls.find(row => row.available); if (!control) return;
@@ -588,7 +629,7 @@ export function App() {
   };
   const dirtyChanged = useCallback((dirty: boolean) => setEditorDirty(dirty), []);
   if (!state) return <div className="boot-screen"><BrandMark/><h1>Harness<span>Hub</span></h1>{bootError ? <><div className="boot-error" role="alert"><AlertCircle size={18}/><p>{bootError}</p></div><p className="boot-help">请使用本机网关启动时提供的入口链接。验证完成后，页面会自动隐藏链接中的令牌。</p><button className="button secondary" onClick={() => setBootAttempt(value => value + 1)}><RefreshCw size={15}/>重新连接</button></> : <div className="boot-progress" role="status"><Spinner/>正在连接你的工作空间</div>}</div>;
-  return <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`} data-page={page}><a className="skip-link" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>跳到主要内容</a><Sidebar providerManagement={state.providerManagement !== false} page={page} sessions={state.sessions} currentId={sessionId} open={sidebarOpen} collapsed={sidebarCollapsed} activeJobs={state.jobs.filter(installationActive).length} interactionBusy={mutation !== null} onCollapse={() => setSidebarCollapsed(value => !value)} onToggle={() => setSidebarOpen(value => !value)} onPage={navigate} onNew={newChat} onSession={selectSession}/>
+  return <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`} data-page={page}><a className="skip-link" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>跳到主要内容</a><Sidebar providerManagement={state.providerManagement !== false} page={page} sessions={state.sessions} attention={attention?.items ?? []} currentId={sessionId} open={sidebarOpen} collapsed={sidebarCollapsed} activeJobs={state.jobs.filter(installationActive).length} interactionBusy={mutation !== null} onCollapse={() => setSidebarCollapsed(value => !value)} onToggle={() => setSidebarOpen(value => !value)} onPage={navigate} onNew={newChat} onSession={selectSession}/>
     <main id="main-content" className="app-main" tabIndex={-1}>
       {page === "chat" ? <ChatPage providerManagement={state.providerManagement !== false} onToolDetail={content => api.toolDetail(content)} onNativeBranch={()=>{ if(!session||!startOperation("native-branch"))return; void api.branchNative(session.id,session.epoch,requestKey()).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
         retainNew={keepNew}

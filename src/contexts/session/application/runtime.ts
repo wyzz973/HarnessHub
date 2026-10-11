@@ -3,7 +3,7 @@ import { TOOL_DIFF_BYTES, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type BackendResul
 import { MAX_RUN_ATTACHMENTS, MAX_RUN_OUTPUTS, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
 import {
   SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId,
-  type ForkedMessage, type HarnessSelection, type KeptProcessIdentity, type NativeConfiguration, type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicRun, type RunTiming,
+  type AttentionItem, type ForkedMessage, type HarnessSelection, type KeptProcessIdentity, type NativeConfiguration, type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicNotice, type PublicRun, type RunTiming,
   type SelectionRequest, type SendReceipt, type SessionBindingFactory, type SessionCommit, type SessionConfiguration,
   type SessionId, type SessionEvent, type SessionMutation, type SessionRuntimeOptions, type SessionSnapshot, type SessionStore, type SwitchReceipt,
 } from "../../../contracts/session.js";
@@ -96,6 +96,15 @@ function fault(error: unknown): { readonly code: string; readonly message: strin
   const code = error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code.slice(0, 128) : "CONTROL_FAILED";
   return { code, message: "Harness operation failed; inspect private control diagnostics" };
 }
+/** Longest wait a driver may announce for one request (a day); anything else is ignored rather than shown. */
+const MAX_PERMISSION_WAIT_MS = 24 * 60 * 60 * 1000;
+const TURN_DEADLINE_NOTICE: PublicNotice = { severity: "warning", title: "回合期限已到", detail: "HarnessHub 的回合期限已到，本回合超时结束；原程序没有收到你的决定。" };
+/** Adds a notice of the Hub itself to a Run, within the Run's notice budget. */
+function withNotice(state: SessionSnapshot, id: string, notice: PublicNotice): SessionSnapshot {
+  const run = state.runs.find(item => item.id === id);
+  if (run === undefined || (run.notices ?? []).length >= MAX_RUN_NOTICES) return state;
+  return updatedRun(state, id, { notices: [...(run.notices ?? []), notice] });
+}
 function updatedRun(state: SessionSnapshot, id: string, patch: Partial<PublicRun>): SessionSnapshot {
   const prior = state.runs.find(run => run.id === id);
   if (!prior) throw new SessionError("IDENTITY_MISMATCH", "Run is not owned by this Session");
@@ -135,8 +144,18 @@ export class SessionRuntime {
   private readonly work = new Set<SessionId>();
   private runner: Promise<void> | null = null;
   private active: ActiveExecution | null = null;
-  private readonly permissions = new Map<string, { request: PermissionRequest; nativeId: string; execution: ActiveExecution; option: string | null; command: string | null }>();
+  private readonly permissions = new Map<string, { request: PermissionRequest; nativeId: string; execution: ActiveExecution; option: string | null; command: string | null; readonly harnessId: string }>();
   permissionRequests(id: SessionId): readonly PermissionRequest[] { this.load(id); return [...this.permissions.values()].filter(value => value.execution.sessionId === id).map(value => value.request); }
+  /**
+   * Every approval or question still waiting for the user, across conversations, oldest first (ADR-035). Requests live only
+   * in this owner's memory, so a restarted owner lists none; decided requests are no longer waiting.
+   */
+  attention(): readonly AttentionItem[] {
+    return [...this.permissions.entries()].filter(([, value]) => !value.request.decided).map(([permissionId, value]) => ({ sessionId: value.execution.sessionId, permissionId,
+      runId: value.execution.runId, harnessId: value.harnessId, kind: value.request.kind ?? "approval" as const, requestedAt: value.request.requestedAt,
+      ...(value.request.expiresAt === undefined ? {} : { expiresAt: value.request.expiresAt, expiresBy: value.request.expiresBy ?? "turn" }) }))
+      .sort((a, b) => a.requestedAt - b.requestedAt);
+  }
   async decidePermission(id: SessionId, permission: string, option: string, key: string, input?: string): Promise<{ readonly replayed: boolean }> {
     const command=commandId(key);
     if (!/^permission-[A-Za-z0-9-]{1,96}$/u.test(permission) || typeof option!=="string" || !option || option.length>1024 || /[\0\r\n]/u.test(option)) throw new SessionError("INVALID_INPUT","invalid native permission decision");
@@ -769,9 +788,13 @@ export class SessionRuntime {
       this.commit(state.id, current => ({ next: updatedRun(current, run.id, phase(current, run.id, "firstOutputAt", this.options.now().getTime())), events: [event("run.first_output", { runId: run.id })] }));
     if (value.type === "permission_requested") {
       if (this.permissions.size >= 32) throw new SessionError("PERMISSION_LIMIT", "too many pending native permissions");
-      const id = "permission-" + this.options.id(), request: PermissionRequest = { id, runId: run.id, title: value.title, options: value.options, ...(value.detail===undefined?{}:{detail:value.detail}),...(value.input===undefined?{}:{input:value.input}), decided: false };
-      this.permissions.set(id, { request, nativeId: value.id, execution, option: null, command: null });
-      try { this.commit(state.id, current => ({ next: current, events: [event("permission.requested", { permissionId: id, runId: run.id, title: value.title, options: value.options })] })); } catch (error) { this.permissions.delete(id); throw error; } return;
+      // The driver says how long the request can wait from now; the Runtime turns it into a time on its own clock (ADR-035).
+      const requestedAt = this.options.now().getTime(), wait = value.expiresInMs;
+      const expires = wait !== undefined && Number.isSafeInteger(wait) && wait >= 0 && wait <= MAX_PERMISSION_WAIT_MS && (value.expiresBy === "native" || value.expiresBy === "turn")
+        ? { expiresAt: requestedAt + wait, expiresBy: value.expiresBy } : {};
+      const id = "permission-" + this.options.id(), request: PermissionRequest = { id, runId: run.id, title: value.title, options: value.options, ...(value.detail===undefined?{}:{detail:value.detail}),...(value.input===undefined?{}:{input:value.input}), decided: false, requestedAt, ...expires, ...(value.kind === "question" ? { kind: "question" as const } : {}) };
+      this.permissions.set(id, { request, nativeId: value.id, execution, option: null, command: null, harnessId: run.selection.harnessId });
+      try { this.commit(state.id, current => ({ next: current, events: [event("permission.requested", { permissionId: id, runId: run.id, title: value.title, options: value.options, ...expires })] })); } catch (error) { this.permissions.delete(id); throw error; } return;
     }
     if (value.type === "permission") {
       // The Harness withdrew a question it had asked (for example its own dialog deadline): the public request closes too.
@@ -1007,7 +1030,10 @@ export class SessionRuntime {
     finally {
       const abandoned = [...this.permissions.entries()].filter(([, permission]) => permission.execution === execution);
       for (const [permissionId] of abandoned) this.permissions.delete(permissionId);
-      if (abandoned.length) this.commit(id, current => ({ next: current, events: abandoned.map(([permissionId]) => event("permission.closed", { permissionId, runId: target })) }));
+      // A request still waiting when the Turn reached its own deadline expired: the program never received a decision (ADR-035).
+      const expired = problem?.code === "RUN_TIMEOUT" ? abandoned.filter(([, permission]) => permission.option === null).map(([permissionId]) => permissionId) : [];
+      if (abandoned.length) this.commit(id, current => ({ next: expired.length ? withNotice(current, target, TURN_DEADLINE_NOTICE) : current,
+        events: abandoned.map(([permissionId]) => event("permission.closed", { permissionId, runId: target, ...(expired.includes(permissionId) ? { reason: "expired" } : {}) })) }));
       if (execution.stop) {
         try { await execution.stop; } catch (error) { problem ??= fault(error); }
       }

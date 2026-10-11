@@ -314,5 +314,27 @@ export interface PermissionRequest {
   readonly detail?: string;
   readonly input?: {readonly kind:"text"|"editor"|"secret";readonly value:string};
   readonly decided: boolean;
+  /** When the Runtime received the request (milliseconds since the epoch, its clock). */
+  readonly requestedAt: number;
+  /** When the request closes unless decided: the earliest deadline the driver knows, and whose it is (ADR-035). */
+  readonly expiresAt?: number;
+  readonly expiresBy?: "native" | "turn";
+  /** A question the program asks rather than an approval of its own action; approval when absent. */
+  readonly kind?: "question";
+}
+/**
+ * An approval or question still waiting for the user, in any conversation (ADR-035). Only live requests of this owner are
+ * listed: a restarted owner lists none, since nothing can answer a request its process no longer holds. The request's
+ * title and details stay in its conversation.
+ */
+export interface AttentionItem {
+  readonly sessionId: SessionId;
+  readonly permissionId: string;
+  readonly runId: string;
+  readonly harnessId: string;
+  readonly kind: "approval" | "question";
+  readonly requestedAt: number;
+  readonly expiresAt?: number;
+  readonly expiresBy?: "native" | "turn";
 }
 export type PersistedControlEvent = ControlEvent;

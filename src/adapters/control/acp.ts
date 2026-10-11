@@ -1,6 +1,6 @@
 import { isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
-import { nativeConversationId, type BackendResult, type CleanupEvidence, type ControlEvent,
+import { nativeConversationId, requestExpiry, type BackendResult, type CleanupEvidence, type ControlEvent,
   type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl,
   type NativeOptions, type NativeOption, type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
 import { ControlError, errorFrom, JsonRpcProcess, object, string, text, type RpcRequest } from "../../infrastructure/control/json-rpc-process.js";
@@ -18,6 +18,8 @@ interface ActivePrompt {
   stopping: boolean;
   settled: boolean;
   stop: Promise<StopRequestReceipt> | null;
+  /** When this prompt's request times out (the Turn's deadline, ADR-035). */
+  readonly deadline: number;
 }
 const metadataUpdates = new Set(["plan", "available_commands_update", "current_mode_update", "config_option_update", "session_info_update", "usage_update"]);
 /** Long agentic turns flatten subagent tools into the root session; budgets bound memory, not normal work. */
@@ -463,7 +465,7 @@ export class AcpControl implements HarnessControl {
     const blocks: Record<string, unknown>[] = [{ type: "text", text: prompt + fileMentions(pointers) }];
     for (const file of attachments) if (!pointers.includes(file)) blocks.push(await this.promptBlock(file));
     if (this.active !== null) throw new ControlError("INVALID_STATE", "a prompt is already active");
-    const active: ActivePrompt = { event: onEvent, lastUpdate: 0, tools: new Map(), compaction: new Map(), stopping: false, settled: false, stop: null };
+    const active: ActivePrompt = { event: onEvent, lastUpdate: 0, tools: new Map(), compaction: new Map(), stopping: false, settled: false, stop: null, deadline: Date.now() + this.options.runTimeoutMs };
     this.active = active;
     const result = this.rpc.request("session/prompt", { sessionId: id, prompt: blocks }, this.options.runTimeoutMs)
       .then(value => {
@@ -491,7 +493,9 @@ export class AcpControl implements HarnessControl {
       }).catch((error: unknown): BackendResult => {
         if (error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null)
           return { status: "failed", reason: "request_rejected", ...(error.remoteFailure ? { error: error.remoteFailure } : {}) };
-        this.rpc.abort(errorFrom(error)); throw error;
+        // The prompt request's own timeout is the Turn's deadline, reported as every driver reports it.
+        const failure = error instanceof ControlError && error.code === "REQUEST_TIMEOUT" ? new ControlError("RUN_TIMEOUT", "ACP prompt exceeded its deadline") : errorFrom(error);
+        this.rpc.abort(failure); throw failure;
       });
     void result.then(() => this.settle(active), () => this.settle(active));
     return { result, requestStop: () => {
@@ -655,7 +659,7 @@ export class AcpControl implements HarnessControl {
           if (option === "submit") return { kind: "value", value: typeof input === "string" ? input : "", typed: true };
           return { kind: "value", value: field.choices[Number(option.slice(7))]?.value ?? null, typed: false };
         } });
-        active.event({ type: "permission_requested", id, title: field.title, ...(detail ? { detail } : {}), options, ...(text ? { input: { kind: "text", value: "" } } : {}) });
+        active.event({ type: "permission_requested", id, title: field.title, ...(detail ? { detail } : {}), options, ...(text ? { input: { kind: "text", value: "" } } : {}), kind: "question", ...requestExpiry(active.deadline, null) });
       }) as Answer;
       if (answer.kind === "cancel") return { action: "cancel" };
       if (answer.kind === "skip") return { action: "decline" };
@@ -694,7 +698,8 @@ export class AcpControl implements HarnessControl {
         let timer: ReturnType<typeof setTimeout> | undefined;
         const settle = (value: unknown): void => { clearTimeout(timer); resolve(value); };
         this.permissions.set(id, { options: options.map(option => option.id), resolve: settle });
-        active.event({ type: "permission_requested", id, title: typeof tool.title === "string" ? tool.title.slice(0,4096) : "Harness 请求执行工具", ...(detail ? { detail } : {}), options: options.map(({ id, name }) => ({ id, name })) });
+        active.event({ type: "permission_requested", id, title: typeof tool.title === "string" ? tool.title.slice(0,4096) : "Harness 请求执行工具", ...(detail ? { detail } : {}), options: options.map(({ id, name }) => ({ id, name })),
+          ...requestExpiry(active.deadline, deadline === null ? null : Math.max(0, deadline - APPROVAL_DEADLINE_MARGIN_MS)) });
         // The agent refuses on its own at its deadline; the public request closes just before, so no late choice looks applied.
         if (deadline !== null) timer = setTimeout(() => {
           if (this.permissions.get(id)?.resolve !== settle || this.active !== active || active.settled) return;

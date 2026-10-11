@@ -4,6 +4,14 @@ import type { ContentRef, ControlAttachment } from "./content.js";
 
 declare const nativeConversationBrand: unique symbol;
 export type NativeConversationId = string & { readonly [nativeConversationBrand]: true };
+/**
+ * The wait a driver announces with a permission request (ADR-035): the earlier of the program's own deadline (already less
+ * the driver's margin, in milliseconds from now) and what is left of the Turn's deadline (a time), never negative.
+ */
+export function requestExpiry(turnDeadline: number, nativeMs: number | null, now = Date.now()): { readonly expiresInMs: number; readonly expiresBy: "native" | "turn" } {
+  const turn = Math.max(0, Math.round(turnDeadline - now));
+  return nativeMs !== null && nativeMs <= turn ? { expiresInMs: Math.max(0, Math.round(nativeMs)), expiresBy: "native" } : { expiresInMs: turn, expiresBy: "turn" };
+}
 export function nativeConversationId(value: unknown): NativeConversationId {
   if (typeof value !== "string" || !value || value.length > 512 || /[\0\r\n]/u.test(value))
     throw new Error("invalid native conversation identity");
@@ -76,7 +84,15 @@ export type ControlEvent =
   | { readonly type: "notice"; readonly severity: "info" | "warning" | "error"; readonly title: string; readonly detail?: string }
   | { readonly type: "activity"; readonly id: string; readonly kind: "subagent" | "task" | "compaction" | "retry" | "review"; readonly title: string; readonly status: "running" | "completed" | "failed" | "cancelled"; readonly detail?: string }
   | { readonly type: "output"; readonly output: NativeOutput }
-  | { readonly type: "permission_requested"; readonly id: string; readonly title: string; readonly detail?: string; readonly input?: {readonly kind:"text"|"editor"|"secret";readonly value:string}; readonly options: readonly { readonly id: string; readonly name: string }[] }
+  | { readonly type: "permission_requested"; readonly id: string; readonly title: string; readonly detail?: string; readonly input?: {readonly kind:"text"|"editor"|"secret";readonly value:string}; readonly options: readonly { readonly id: string; readonly name: string }[];
+      /**
+       * How long the request can still wait from now, and whose deadline that is (ADR-035): the program's own ("native": it
+       * refuses or withdraws then, and the driver closes the request just before) or this Turn's ("turn": the driver's run
+       * deadline, after which the Turn fails with RUN_TIMEOUT). Absent when the driver knows neither.
+       */
+      readonly expiresInMs?: number; readonly expiresBy?: "native" | "turn";
+      /** A question the program asks (a form, a choice, free text) rather than an approval of its own action; approval when absent. */
+      readonly kind?: "approval" | "question" }
   | { readonly type: "permission"; readonly id: string; readonly decision: "denied" | "cancelled" }
   | { readonly type: "diagnostic"; readonly message: string };
 export interface BackendResult {

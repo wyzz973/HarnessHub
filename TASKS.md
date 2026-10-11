@@ -1078,6 +1078,7 @@
 - src/contexts/session/application/runtime.ts
 - tests/integration/session-runtime.test.ts
 - tests/integration/kept-process.test.ts
+- tests/integration/attention.test.ts
 - tests/fixtures/kept-owner.mjs
 
 验收：
@@ -1085,7 +1086,7 @@
 - 未知结果不自动重跑
 - 有界排队且期限继续计时
 
-场景：G028-C01, G028-C02, G028-C03, G028-C04, G028-R01, G028-R02, G028-NC2, G028-NC3, G028-NC4, G028-NC5, G028-NC6, G028-NC7, G028-NC8, G028-NC9。
+场景：G028-C01, G028-C02, G028-C03, G028-C04, G028-R01, G028-R02, G028-NC2, G028-NC3, G028-NC4, G028-NC5, G028-NC6, G028-NC7, G028-NC8, G028-NC9, G028-NC10。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1561,6 +1562,7 @@
 - src/cli/web.ts
 - tests/integration/web-server.test.ts
 - src/web/session-stream.ts
+- src/web/attention-stream.ts
 - src/web/harness-models.ts
 - src/web/conversation-export.ts
 - src/web/harness-entry.ts
@@ -1671,6 +1673,7 @@
 - web/src/assets/nova.svg
 - web/src/assets/stakpak.svg
 - web/src/session-stream.ts
+- web/src/attention.ts
 - web/src/components/ChatComposer.tsx
 - web/src/components/ChatMessage.tsx
 - web/src/components/StreamingMarkdown.tsx
@@ -1699,7 +1702,7 @@
 - 不提前展示新Harness已生效
 - 可操作且不持有独立业务状态
 
-场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01, G054-NC1, G054-NC2, G054-NC3, G054-NC4, G054-NC5, G054-NC6, G054-NC7, G054-NC8。
+场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01, G054-NC1, G054-NC2, G054-NC3, G054-NC4, G054-NC5, G054-NC6, G054-NC7, G054-NC8, G054-NC9。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1894,7 +1897,7 @@
 - 明确拒绝或幂等，不绕过排空规则
 - 旧执行保留版本，新准入遵循新状态
 
-场景：G061-C01, G061-C02, G061-C03, G061-M01, G061-M02, G061-M03, G061-S01, G061-S02, G061-S03, G061-L01, G061-N01, G061-N02, G061-X01, G061-NC1, G061-NC2, G061-NC3, G061-NC4, G061-NC5。
+场景：G061-C01, G061-C02, G061-C03, G061-M01, G061-M02, G061-M03, G061-S01, G061-S02, G061-S03, G061-L01, G061-N01, G061-N02, G061-X01, G061-NC1, G061-NC2, G061-NC3, G061-NC4, G061-NC5, G061-NC6。
 
 禁止范围：不修改其他任务所有权文件；契约冻结不表示应用实现或真实链路验收。
 

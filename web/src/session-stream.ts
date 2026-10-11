@@ -17,6 +17,8 @@ export interface SessionEventStreamOptions {
   readonly decode: (value: unknown) => SessionStreamFrame;
   readonly onFrame: (frame: SessionStreamFrame) => void | Promise<void>;
   readonly maxFrameBytes?: number;
+  /** Waiting approvals and questions the stream carries alongside (`event: attention`, no event id; ADR-035); ignored when absent. */
+  readonly onAttention?: (value: unknown) => void;
 }
 function invalid(message: string): never { throw new SessionStreamError("STREAM_INVALID_FRAME", message); }
 function stateError(message: string): never { throw new SessionStreamError("STREAM_STATE", message); }
@@ -46,7 +48,7 @@ export async function consumeSessionEventStream(body: ReadableStream<Uint8Array>
   const reader = body.getReader();
   let consumerAbort: (() => void) | null = null;
   const aborted = (): DOMException => new DOMException("Session stream was aborted", "AbortError");
-  const parser = new SessionSseParser(maxFrameBytes, options.decode, async frame => {
+  const parser = new SessionSseParser(maxFrameBytes, options.decode, options.onAttention, async frame => {
     if (options.signal.aborted) throw aborted();
     // One current consumer slot avoids retaining one abort-promise reaction for every emitted frame.
     await new Promise<void>((resolve, reject) => {
@@ -104,7 +106,7 @@ class SessionSseParser {
   private hasFields = false;
   private readonly decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
   constructor(private readonly maxBytes: number, private readonly decode: SessionEventStreamOptions["decode"],
-    private readonly consume: SessionEventStreamOptions["onFrame"]) {}
+    private readonly attention: SessionEventStreamOptions["onAttention"], private readonly consume: SessionEventStreamOptions["onFrame"]) {}
   private budget(bytes: number): void {
     this.frameBytes += bytes;
     if (this.frameBytes > this.maxBytes) throw new SessionStreamError("STREAM_LIMIT", "Session stream frame exceeds its byte budget");
@@ -143,6 +145,13 @@ class SessionSseParser {
     if (this.firstLine) { this.firstLine = false; if (line.startsWith("\uFEFF")) line = line.slice(1); }
     if (line === "") {
       let frame: SessionStreamFrame | null = null;
+      if (this.data.length && this.event === "attention") {
+        // Carried alongside the session's facts; it never moves the session cursor.
+        let value: unknown;
+        try { value = JSON.parse(this.data.join("\n")); } catch { invalid("Attention SSE event contains invalid JSON"); }
+        this.frameBytes = 0; this.event = ""; this.id = null; this.data = []; this.hasFields = false;
+        this.attention?.(value); return;
+      }
       if (this.data.length) {
         if (this.event !== "session" || this.id === null || !/^(0|[1-9][0-9]*)$/u.test(this.id)) invalid("Invalid session SSE event or identity");
         const id = Number(this.id); watermark(id);

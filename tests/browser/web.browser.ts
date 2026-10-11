@@ -14,10 +14,14 @@ import { prepareConfiguration } from "../../src/infrastructure/session/binding-f
 
 const peer = fileURLToPath(new URL("../../../tests/fixtures/web-harness-peer.mjs", import.meta.url));
 const artifact = resolve("artifacts/chat-v3");
-async function launchFixture(providerManagement = true, nativeAcp: { readonly name: string; readonly scenario: string } | null = null, nativeCodex: { readonly name: string; readonly scenario: string } | null = null) {
+async function launchFixture(providerManagement = true, nativeAcp: { readonly name: string; readonly scenario: string } | null = null, nativeCodex: { readonly name: string; readonly scenario: string } | null = null, hermes = false) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "harness-web-browser-")));
   const workspace = join(root, "workspace"), shim = join(root, "codex-fixture.mjs"); await mkdir(workspace);
   await writeFile(shim, "#!" + process.execPath + "\nimport " + JSON.stringify(pathToFileURL(peer).href) + ";\n", { mode: 0o700 });
+  // Hermes 0.12 as its own entry: the control-peer's Hermes behaviour under the version whose approvals wait 60 seconds.
+  const hermesShim = join(root, "hermes-fixture.mjs");
+  if (hermes) await writeFile(hermesShim, "#!" + process.execPath + "\nprocess.argv.splice(2, Infinity, \"acp-v1\", \"hermes\");\nprocess.env.FIXTURE_AGENT_VERSION = \"0.12.0\";\nawait import("
+    + JSON.stringify(pathToFileURL(fileURLToPath(new URL("../../../tests/fixtures/control-peer.mjs", import.meta.url))).href) + ");\n", { mode: 0o700 });
   const manifest = join(root, "catalog.json"), authShim = join(root, "gateway-auth-fixture.mjs");
   await writeFile(authShim, "#!" + process.execPath + "\nprocess.stderr.write('unauthorized: gateway token missing\\n');process.exit(1);\n", { mode: 0o700 });
   // An ACP agent whose native command changes one of its own settings and announces it (control-peer "native-config").
@@ -28,7 +32,7 @@ async function launchFixture(providerManagement = true, nativeAcp: { readonly na
   const codex = nativeCodex === null ? null : { id: "native-codex", name: nativeCodex.name, aliases: [], binaryNames: [], configHints: [], controls: [{ id: "native-codex", protocol: "codex-app-server", executableNames: ["fixture"],
     args: [fileURLToPath(new URL("../../../tests/fixtures/control-peer.mjs", import.meta.url)), "codex-app-server", nativeCodex.scenario], env: {}, package: null, distribution: null, requiredExecutables: [],
     source: { repository: "fixture", revision: nativeCodex.scenario, upstreamId: "fixture", url: "https://example.invalid/" + nativeCodex.scenario } }] };
-  await writeFile(manifest, JSON.stringify({ version: 2, definitions: [...(acp ? [acp] : []), ...(codex ? [codex] : [])], overrides: { "codex-native": { executable: shim }, "openclaw-native": { executable: authShim },
+  await writeFile(manifest, JSON.stringify({ version: 2, definitions: [...(acp ? [acp] : []), ...(codex ? [codex] : [])], overrides: { "codex-native": { executable: shim }, "openclaw-native": { executable: authShim }, ...(hermes ? { "hermes-native": { executable: hermesShim } } : {}),
     ...(acp ? { "native-acp": { executable: process.execPath } } : {}), ...(codex ? { "native-codex": { executable: process.execPath } } : {}) } }));
   const modelServer = createServer((req, res) => { assert.equal(req.method, "GET"); assert.equal(req.url, "/v1/models"); res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ data: [{ id: "model-a" }, { id: "model-b" }] })); });
   await new Promise<void>(done => modelServer.listen(0, "127.0.0.1", done));
@@ -78,7 +82,8 @@ test("real browser validates Provider management, public chat switching, cancell
     else if (reusedLaunch && message.location().url.endsWith("/api/v1/auth/bootstrap") && message.text().includes("401")) expectedAuthErrors++;
     else errors.push(message.text());
   });
-  await page.goto(fixture.gateway.url); await page.waitForLoadState("networkidle");
+  // The waiting-request stream stays open while the page is (ADR-035), so the network never goes idle: wait for the shell.
+  await page.goto(fixture.gateway.url); await expect(page.getByRole("button", { name: "新对话", exact: true })).toBeVisible(); await expect(page.locator(".session-section")).toBeVisible();
   await page.screenshot({ path: join(artifact, "initial-desktop.png"), fullPage: true, animations: "disabled" });
   async function responsive(label: string) {
     for (const width of [390, 320]) {
@@ -900,5 +905,57 @@ test("a new conversation starts a Harness with the model and thinking level last
   await page.getByRole("button", { name: "新对话", exact: true }).click();
   await page.getByRole("button", { name: "选择 Native Settings", exact: true }).click();
   await check();
+  assert.deepEqual(errors, []);
+});
+
+test("a waiting approval is marked in the sidebar with whose deadline it is, counts down, opens its conversation and is gone when it expires", { timeout: 180000 }, async t => {
+  const fixture = await launchFixture(false, null, null, true); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  // Notifications are recorded instead of shown, by a browser that allows them once asked.
+  await context.addInitScript(() => {
+    const shown: { title: string; body: string; tag: string }[] = [], state = { permission: "default" };
+    Object.defineProperty(window, "__notices", { value: shown });
+    class Recorded { static get permission() { return state.permission; } static async requestPermission() { state.permission = "granted"; return "granted"; }
+      onclick: (() => void) | null = null; constructor(title: string, options: { body?: string; tag?: string } = {}) { shown.push({ title, body: options.body ?? "", tag: options.tag ?? "" }); } close() {} }
+    Object.defineProperty(window, "Notification", { configurable: true, value: Recorded });
+  });
+  const page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  // Off until the user turns it on; turning it on is what asks the browser.
+  const toggle = page.getByRole("button", { name: "待处理时通知我", exact: true });
+  await expect(toggle).toHaveAttribute("aria-pressed", "false"); await toggle.click(); await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Hermes Agent", exact: true }).click();
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true });
+  await composer.fill("approve this"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled();
+  // The page is in the background when Hermes asks, so a notification goes out.
+  await page.evaluate(() => { Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" }); });
+  await composer.press("Enter");
+  const card = page.getByRole("region", { name: "工具审批", exact: true });
+  await expect(card).toContainText("rm -rf build", { timeout: 15000 });
+  await expect(card.locator(".permission-deadline")).toHaveText(/^原程序期限 · \d+ 秒后自动拒绝$/u);
+  await page.evaluate(() => { Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" }); });
+  const notices = await page.evaluate(() => (window as unknown as { __notices: { title: string; body: string }[] }).__notices);
+  assert.equal(notices.length, 1); assert.equal(notices[0]!.title, "Hermes Agent 等待你处理");
+  assert.match(notices[0]!.body, /^等待审批（原程序期限，\d+ 秒后自动拒绝）$/u, "only the Harness and the wait, nothing of the conversation");
+  // Another conversation is open; the sidebar still says which one waits, for what, and for how long.
+  await page.getByRole("button", { name: "新对话", exact: true }).click();
+  const waiting = page.locator(".session-item.has-attention");
+  await expect(waiting).toHaveCount(1); await expect(page.locator(".attention-count")).toHaveText("待处理 1");
+  const line = waiting.locator(".attention-line");
+  await expect(line).toHaveText(/^等待审批 · 原程序期限 \d+ 秒后自动拒绝$/u);
+  const seconds = async () => Number(/(\d+) 秒/u.exec((await line.textContent()) ?? "")?.[1]);
+  const first = await seconds(); await page.waitForTimeout(2200); const later = await seconds();
+  assert.ok(first <= 58 && later < first, `${first} then ${later}`);
+  await page.screenshot({ path: join(artifact, "attention-sidebar.png"), animations: "disabled" });
+  // Deciding happens in the conversation: the row opens it, with its approval card.
+  await waiting.click();
+  await expect(card).toBeVisible(); await expect(card.getByRole("button", { name: "Deny", exact: true })).toBeEnabled();
+  // At Hermes's deadline the mark is gone and the conversation says the approval timed out.
+  await expect(waiting).toHaveCount(0, { timeout: 70000 });
+  await expect(page.locator(".attention-count")).toHaveCount(0);
+  await expect(page.getByText("审批已超时")).toBeVisible({ timeout: 15000 });
   assert.deepEqual(errors, []);
 });

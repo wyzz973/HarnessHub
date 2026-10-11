@@ -1,5 +1,5 @@
 import { SessionError, type SessionEvent, type SessionId } from "../contracts/session.js";
-import type { SessionStreamFrame, SessionView } from "../contracts/web.js";
+import type { AttentionFrame, SessionStreamFrame, SessionView } from "../contracts/web.js";
 
 export class SessionStreamError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message); this.name = "SessionStreamError"; }
@@ -41,7 +41,12 @@ export class SessionStreamHub {
   readonly connectionTtlMs: number;
   readonly drainTimeoutMs: number;
   readonly now: () => number;
-  constructor(private readonly read: (id: SessionId) => SessionView, options: SessionStreamLimits = {}, private readonly reportReadFailure?: (failure: SessionStreamReadFailure) => void) {
+  /**
+   * `attention`, when given, is the current list of waiting approvals and questions (ADR-035): every subscription carries it
+   * as `event: attention` frames without an event id, so a page with a conversation open needs no second long-lived connection.
+   */
+  constructor(private readonly read: (id: SessionId) => SessionView, options: SessionStreamLimits = {}, private readonly reportReadFailure?: (failure: SessionStreamReadFailure) => void,
+    private readonly attention?: () => AttentionFrame) {
     this.maxConnections = limit(options.maxConnections, 8); this.maxFrameBytes = limit(options.maxFrameBytes, 8 * 1024 * 1024);
     this.heartbeatMs = limit(options.heartbeatMs, 15000); this.connectionTtlMs = limit(options.connectionTtlMs, 60000);
     this.drainTimeoutMs = limit(options.drainTimeoutMs, 10000); this.now = options.now ?? Date.now;
@@ -70,6 +75,7 @@ export class SessionStreamHub {
       const ttl = Math.min(openedAt + this.connectionTtlMs, loginExpires) - this.now();
       if (ttl <= 0) throw new SessionStreamError(401, "AUTH_REQUIRED", "Session subscription login expired before its initial facts were ready");
       ready(); started = true; client.start(ttl); client.send({ type: "snapshot", session: snapshot });
+      if (this.attention) client.attention(this.attention());
     } catch (error) { client.close(started); throw error; }
   }
   snapshot(id: SessionId): SessionView {
@@ -93,6 +99,8 @@ export class SessionStreamHub {
       : activity !== undefined ? { type: "run", sessionId: session.id, version: session.version, lastSeq: session.lastSeq, run: activity } : { type: "snapshot", session };
     for (const client of clients) client.send(frame);
   }
+  /** A newer list of waiting approvals and questions for every subscription; never throws. */
+  attentionChanged(frame: AttentionFrame): void { for (const client of [...this.clients]) client.attention(frame); }
   close(): void { if (this.closed) return; this.closed = true; for (const client of [...this.clients]) client.close(); }
 }
 
@@ -101,6 +109,8 @@ class StreamClient {
   private closed = false;
   private paused = false;
   private dirty = false;
+  private attentionRevision = -1;
+  private pendingAttention: AttentionFrame | null = null;
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   private ttl: ReturnType<typeof setTimeout> | null = null;
   private stalled: ReturnType<typeof setTimeout> | null = null;
@@ -109,11 +119,13 @@ class StreamClient {
     if (this.closed) return;
     this.paused = false;
     if (this.stalled !== null) clearTimeout(this.stalled); this.stalled = null;
-    if (!this.dirty) return;
+    if (!this.dirty) { const attention = this.pendingAttention; this.pendingAttention = null; if (attention !== null) this.attention(attention); return; }
     this.dirty = false;
     // The application-owned reader applies its fail-closed storage handling before this transport callback isolates the connection.
     try { this.send({ type: "snapshot", session: this.hub.snapshot(this.id) }); }
-    catch (error) { this.hub.recordReadFailure(this.id, error); this.close(); }
+    catch (error) { this.hub.recordReadFailure(this.id, error); this.close(); return; }
+    const attention = this.pendingAttention; this.pendingAttention = null;
+    if (attention !== null) this.attention(attention);
   };
   constructor(readonly id: SessionId, private readonly sink: SessionStreamSink, private readonly hub: SessionStreamHub, private readonly release: () => void) {
     sink.on("close", this.gone); sink.on("error", this.gone); sink.on("drain", this.drain);
@@ -129,6 +141,13 @@ class StreamClient {
     if (Buffer.byteLength(text, "utf8") > this.hub.maxFrameBytes) { this.close(); return; }
     // write(false) still accepted this frame; subsequent output is replaced by one dirty snapshot marker.
     this.lastSeq = water(frame); this.write(text);
+  }
+  /** The newest list only; a paused subscription keeps the latest until it drains. */
+  attention(frame: AttentionFrame): void {
+    if (this.closed || frame.revision <= this.attentionRevision) return;
+    if (this.paused) { this.pendingAttention = frame; return; }
+    this.attentionRevision = frame.revision;
+    this.write("event: attention\ndata: " + JSON.stringify(frame) + "\n\n");
   }
   private write(text: string): void {
     if (this.closed || this.sink.destroyed || this.sink.writableEnded) { this.close(); return; }

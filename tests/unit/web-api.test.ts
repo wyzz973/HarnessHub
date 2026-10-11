@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ApiError, GatewayApi } from "../../web/src/api.js";
 import { toolParents } from "../../web/src/tool-tree.js";
+import { liveItems, mostUrgent, remaining } from "../../web/src/attention.js";
+import type { AttentionItem } from "../../src/contracts/session.js";
 
 function api(t: test.TestContext, fetcher: typeof fetch): GatewayApi {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "window"), original = globalThis.fetch;
@@ -59,4 +61,37 @@ test("sub-agent tools are shown under their listed parent call; loops stay flat 
   assert.deepEqual([...toolParents([tool("a", "b"), tool("b", "a"), tool("c", "a")])], [], "a parent loop is shown flat");
   assert.deepEqual([...toolParents([tool("r"), tool("d1", "r"), tool("d2", "d1"), tool("d3", "d2"), tool("d4", "d3"), tool("d5", "d4")])],
     [["d1", "r"], ["d2", "d1"], ["d3", "d2"], ["d4", "d2"], ["d5", "d2"]]);
+});
+
+test("a waiting request says whose deadline it is: the program's in seconds, the Turn's in minutes until its last one", () => {
+  const now = 1_000_000;
+  assert.deepEqual(remaining({ expiresAt: now + 45_200, expiresBy: "native" }, now), { text: "46 秒后自动拒绝", source: "原程序期限", hint: "原程序的等待期限，到时它会按自己的规则拒绝。" });
+  assert.equal(remaining({ expiresAt: now + 125_000, expiresBy: "native" }, now).text, "3 分后自动拒绝");
+  assert.equal(remaining({ expiresAt: now + 240_000, expiresBy: "turn" }, now).text, "回合剩余 4 分");
+  assert.equal(remaining({ expiresAt: now + 59_100, expiresBy: "turn" }, now).text, "回合剩余 60 秒");
+  assert.equal(remaining({ expiresAt: now + 59_000, expiresBy: "turn" }, now).source, "回合期限");
+  assert.equal(remaining({ expiresAt: now - 5, expiresBy: "turn" }, now).text, "回合剩余 0 秒");
+  assert.deepEqual(remaining({}, now), { text: "等待你的决定", source: null, hint: "原程序会一直等待你的决定。" });
+  const item = (permissionId: string, extra: Partial<AttentionItem>): AttentionItem => ({ sessionId: "session-a" as AttentionItem["sessionId"], permissionId, runId: "run-a", harnessId: "hermes", kind: "approval", requestedAt: 1, ...extra });
+  const items = [item("open", {}), item("late", { expiresAt: now + 90_000, expiresBy: "turn" }), item("soon", { expiresAt: now + 5_000, expiresBy: "native" }), item("gone", { expiresAt: now, expiresBy: "native" })];
+  assert.deepEqual(liveItems(items, now).map(value => value.permissionId), ["open", "late", "soon"], "an expired request is gone at its deadline");
+  assert.equal(mostUrgent(liveItems(items, now))?.permissionId, "soon"); assert.equal(mostUrgent([items[0]!])?.permissionId, "open"); assert.equal(mostUrgent([]), null);
+});
+
+test("the attention stream hands over whole frames and rejects one whose identity disagrees with its revision", async t => {
+  const frame = (revision: number, items: unknown[]) => "id: " + revision + "\nevent: attention\ndata: " + JSON.stringify({ revision, items }) + "\n\n";
+  const waiting = { sessionId: "session-a", permissionId: "permission-1", runId: "run-1", harnessId: "hermes", kind: "approval", requestedAt: 5, expiresAt: 60_005, expiresBy: "native" };
+  const body = (text: string) => new Response(new ReadableStream<Uint8Array>({ start(controller) {
+    // Split mid-frame, with a heartbeat between frames and CRLF line ends, as a real connection may deliver it.
+    const bytes = new TextEncoder().encode(text), half = Math.floor(bytes.length / 2);
+    controller.enqueue(bytes.subarray(0, half)); controller.enqueue(bytes.subarray(half)); controller.close();
+  } }), { status: 200, headers: { "Content-Type": "text/event-stream; charset=utf-8" } });
+  const frames: unknown[] = [];
+  let client = api(t, async () => body(frame(1, [waiting]) + ": heartbeat\r\n\r\n" + frame(2, []).replace(/\n/gu, "\r\n")));
+  await client.streamAttention(new AbortController().signal, value => frames.push(value));
+  assert.deepEqual(frames, [{ revision: 1, items: [waiting] }, { revision: 2, items: [] }]);
+  client = api(t, async () => body(frame(3, [waiting]).replace("id: 3", "id: 4")));
+  await assert.rejects(client.streamAttention(new AbortController().signal, () => {}), code("INVALID_RESPONSE"));
+  client = api(t, async () => body(frame(5, [{ ...waiting, kind: "other" }])));
+  await assert.rejects(client.streamAttention(new AbortController().signal, () => {}), code("INVALID_RESPONSE"));
 });

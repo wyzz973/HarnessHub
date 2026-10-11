@@ -82,10 +82,4 @@ ADR-030（2026-10-12，Session v11）追加：`POST /api/v1/sessions/:id/retenti
 
 ADR-030 服务异常退出后的清理（2026-10-12，Session v12）：保留记录带进程组身份`retained.process: {group, startedAt}`（v11→v12 只升版本号）。服务启动时先接管上一服务保留的进程组，结果记为对话事件`native.process_lost`（`outcome`为`terminated`、`gone`或`unconfirmed`，`leaseReleased`表示是否释放了工作区租约）；会话视图在本次服务运行期间、该对话下一条消息之前带`retention.lost: {outcome, leaseReleased, at}`。`unconfirmed`时工作区保持隔离。
 
-ADR-025追加`POST /api/v1/sessions/:id/fork {commandId, throughRunId?}`：在已完成的回复后创建分支并返回新对话视图（201，命令幂等）；没有完成的回复或源正在执行时409。会话视图包含`origin`（源对话、分支点、引用历史），原生状态增加`forking`；尚无输入的分支在列表中命名为“分支 · 首条消息”。
-
-ADR-024追加`GET /api/v1/sessions/:id/export?format=markdown|json`：需要登录，返回附件形式的公开对话（消息与Run摘要：计划、工具标题、活动、产物与附件名称、用量、错误），不含原生私有绑定、工具详情正文与存储字节；未知格式400。Codex模型目录增加取自原配置的`approval_policy`、`sandbox`原生选项，只覆盖Hub线程；Codex与Pi目录在原接口没有同名命令时提供`compact`、`export`，分别调用原生压缩与导出，导出文件作为Run产物。ACP目录读取最多等待1.5秒的命令公告。
-
-ADR-023追加`POST /api/v1/attachments?name=&commandId=`：请求体为原始字节，Content-Type为声明类型，Content-Length必填（1字节到20MiB，否则411/413），同源写保护与CSRF照常；声明的图片/音频类型须与魔数一致（否则400），同commandId同内容返回同一引用（201）。`DELETE /api/v1/attachments/:id`撤回未发送的暂存（204）。`POST /api/v1/sessions/:id/messages`可带`attachments`（最多8个id），已撤回或不属于本工作区的附件返回409 ATTACHMENT_UNAVAILABLE。模型目录返回代理级与模型级`inputs`（image/audio/file），界面据此阻止发送不受支持的附件；草稿附件随对话草稿保存。
-
-ADR-021：原生配置位置只透传用户环境中真实设置的变量，未设置的由原程序自行解析，目录描述符不能重定向。会改写用户全局默认值的原生设置不由Hub执行：Cursor模型目录只读（`canSelect=false`，`selectionError.code=NATIVE_MODEL_SWITCH_GLOBAL`），固定了Cursor模型的选择在派发前明确失败；会话级设置照常。原生命令目录上限2048项。
+ADR-035（2026-10-12）追加：待决的审批与提问带`requestedAt`、`expiresAt`、`expiresBy`（`native`为原程序自己的期限，`turn`为本回合期限，取较早者）和`kind`（提问为`question`）。`GET /api/v1/attention`返回`{revision, items}`：所有尚未决定的请求（对话、请求、回合、Harness、类型、期限，不含标题与详情），最多32项，只含当前服务内存中的请求。会话事件流在会话事实之外携带`event: attention`帧（不带事件编号，不移动游标）；没有打开对话的页面订阅`GET /api/v1/attention/stream`（`id`为修订号，与会话流相同的连接上限、心跳与TTL）。回合期限到期时仍在等待的请求记为`permission.closed`且`reason: "expired"`，回合以`RUN_TIMEOUT`结束、结果未知。

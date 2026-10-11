@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, sep } from "node:path";
-import { MAX_NATIVE_EXTENSIONS, nativeConversationId, type NativeExtensions, type BackendResult, type CleanupEvidence, type ControlEvent, type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl, type NativeConversationId, type NativeOptions, type NativeOption, type NativeModelCatalog, type NativeToolDetail, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
+import { MAX_NATIVE_EXTENSIONS, nativeConversationId, requestExpiry, type NativeExtensions, type BackendResult, type CleanupEvidence, type ControlEvent, type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl, type NativeConversationId, type NativeOptions, type NativeOption, type NativeModelCatalog, type NativeToolDetail, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
 import { classifyRemoteFailure, ControlError, errorFrom, JsonRpcProcess, object, string, type RpcWireCodec } from "../../infrastructure/control/json-rpc-process.js";
 import { MAX_CONTENT_BYTES, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
 import { checkInputs, fileMentions, readAttachment } from "../../infrastructure/control/attachments.js";
@@ -31,6 +31,8 @@ interface Prompt {
   readonly resolve: (result: BackendResult) => void;
   readonly reject: (error: Error) => void;
   readonly timer: ReturnType<typeof setTimeout>;
+  /** When the run times out (its deadline, ADR-035). */
+  readonly deadline: number;
   acknowledged: boolean;
   /** An agent run began for this prompt; extension commands and input hooks can be handled without one. */
   started: boolean;
@@ -240,7 +242,7 @@ export class PiControl implements HarnessControl {
     if (this.closed || this.failure || this.active) throw this.failure ?? new ControlError("INVALID_STATE", "Pi conversation is not ready for a prompt");
     const result = new Promise<BackendResult>((resolve, reject) => {
       const timer = setTimeout(() => this.rpc.abort(new ControlError("RUN_TIMEOUT", "Pi run exceeded its deadline")), this.options.runTimeoutMs);
-      this.active = { event, resolve, reject, timer, acknowledged: false, started: false, settled: false, final: null, stop: null, tools: new Map(), usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 0, cost: 0, costed: false } };
+      this.active = { event, resolve, reject, timer, deadline: Date.now() + this.options.runTimeoutMs, acknowledged: false, started: false, settled: false, final: null, stop: null, tools: new Map(), usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 0, cost: 0, costed: false } };
     });
     const prompt = this.active!;
     const compact = this.hubCompact && !attachments.length ? /^\/compact(?:\s+([\s\S]*))?$/u.exec(message.trim()) : null;
@@ -283,7 +285,8 @@ export class PiControl implements HarnessControl {
         const options=method==="confirm" ? [{id:"yes",name:"允许"},{id:"no",name:"拒绝"}] : method==="select" ? [...choices.map((name,index)=>({id:"choice-"+index,name:String(name)})),{id:"cancel",name:"取消"}] : [{id:"submit",name:"提交"},{id:"cancel",name:"取消"}];
         const value=method==="editor"&&typeof event.prefill==="string" ? event.prefill : "";
         if(value.length>65536)throw new ControlError("OUTPUT_LIMIT","native editor input exceeded its budget");
-        this.active.event({ type: "permission_requested", id, title: typeof event.title === "string" ? event.title.slice(0,4096) : "Pi 扩展请求交互", ...(typeof event.message==="string"?{detail:event.message.slice(0,4096)}:{}),...(freeform?{input:{kind:method==="editor"?"editor":"text",value}}:{}), options });
+        this.active.event({ type: "permission_requested", id, title: typeof event.title === "string" ? event.title.slice(0,4096) : "Pi 扩展请求交互", ...(typeof event.message==="string"?{detail:event.message.slice(0,4096)}:{}),...(freeform?{input:{kind:method==="editor"?"editor":"text",value}}:{}), options,
+          ...(method === "confirm" ? {} : { kind: "question" as const }), ...requestExpiry(this.active.deadline, timeout) });
         void pending.then(value => this.rpc.notify("extension_ui_response", { id, ...value })).catch(error => this.rpc.abort(errorFrom(error))); return;
       }
       if (method === "notify") {

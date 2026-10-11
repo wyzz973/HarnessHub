@@ -2039,6 +2039,7 @@
         "src/contexts/session/application/runtime.ts",
         "tests/integration/session-runtime.test.ts",
         "tests/integration/kept-process.test.ts",
+        "tests/integration/attention.test.ts",
         "tests/fixtures/kept-owner.mjs"
       ],
       "requirements": [
@@ -2077,7 +2078,8 @@
         "G028-NC6",
         "G028-NC7",
         "G028-NC8",
-        "G028-NC9"
+        "G028-NC9",
+        "G028-NC10"
       ],
       "active_slice": "native-models-switching"
     },
@@ -3090,6 +3092,7 @@
         "src/cli/web.ts",
         "tests/integration/web-server.test.ts",
         "src/web/session-stream.ts",
+        "src/web/attention-stream.ts",
         "src/web/harness-models.ts",
         "src/web/conversation-export.ts",
         "src/web/harness-entry.ts",
@@ -3306,6 +3309,7 @@
         "web/src/assets/nova.svg",
         "web/src/assets/stakpak.svg",
         "web/src/session-stream.ts",
+        "web/src/attention.ts",
         "web/src/components/ChatComposer.tsx",
         "web/src/components/ChatMessage.tsx",
         "web/src/components/StreamingMarkdown.tsx",
@@ -3368,7 +3372,8 @@
         "G054-NC5",
         "G054-NC6",
         "G054-NC7",
-        "G054-NC8"
+        "G054-NC8",
+        "G054-NC9"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3813,7 +3818,8 @@
         "G061-NC2",
         "G061-NC3",
         "G061-NC4",
-        "G061-NC5"
+        "G061-NC5",
+        "G061-NC6"
       ],
       "active_slice": "native-installation-management"
     },

@@ -444,6 +444,18 @@ a {
   flex:1
 }
 
+/* Waiting approvals and questions (ADR-035): what the conversation waits for and how long it can wait. */
+.session-text { display:flex; flex-direction:column; gap:3px; flex:1; min-width:0 }
+.attention-line { display:flex; align-items:flex-start; gap:4px; font-size:11.5px; line-height:1.35; color:var(--accent); font-variant-numeric:tabular-nums }
+.attention-line>svg { flex:none; margin-top:2px }
+/* What it waits for, and how long: each part stays whole and the time moves to its own line when the row is narrow. */
+.attention-parts { display:flex; flex-wrap:wrap; column-gap:4px; min-width:0 }
+.attention-parts>span { white-space:nowrap }
+.eyebrow-tools { display:flex; align-items:center; gap:8px }
+.attention-count { font-weight:600; font-size:11px; color:var(--accent); background:color-mix(in srgb, var(--accent) 12%, transparent); padding:1px 6px; border-radius:8px; font-variant-numeric:tabular-nums }
+.notify-toggle { width:22px; height:22px; color:var(--muted) }
+.notify-toggle.is-on { color:var(--accent) }
+
 .running-dot {
   width:6px;
   height:6px;
@@ -1083,6 +1095,10 @@ a {
   z-index:62;
   width:310px;
   max-width:calc(100vw - 32px);
+  /* Taller than the room on either side of the composer (the welcome page centres it): scroll inside the panel. */
+  max-height:var(--radix-popover-content-available-height);
+  overflow-y:auto;
+  overscroll-behavior:contain;
   padding:15px;
   border:1px solid #ded8cc;
   border-radius:13px;

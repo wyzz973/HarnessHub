@@ -8,6 +8,7 @@ import type { HarnessSelection, SelectionRequest } from "../../../src/contracts/
 import type { HarnessReadinessView, HarnessView, SessionView } from "../../../src/contracts/web.js";
 import type { NativeModelCatalog } from "../../../src/contracts/control.js";
 import { failureMessage, runStatusLabel } from "../api.js";
+import { remaining } from "../attention.js";
 import { BrandMark, EmptyState, ErrorNotice, Spinner, StatusBadge } from "./common.js";
 import { MobileMenu } from "./Sidebar.js";
 import { BrandIcon } from "./BrandIcon.js";
@@ -84,7 +85,11 @@ export interface ChatProps {
 
 function NativeQuestion({request,busy,onDecision}:{request:NonNullable<SessionView["permissions"]>[number];busy:boolean;onDecision:(option:string,input?:string)=>void}) {
   const [input,setInput]=useState(request.input?.value??"");
-  return <section className="native-permission" aria-label={request.input?"Harness 交互":"工具审批"}><strong>{request.title}</strong>{request.detail?<p>{request.detail}</p>:null}{request.input?.kind === "secret" ? <input type="password" autoComplete="off" aria-label={request.title} value={input} disabled={busy||request.decided} onChange={event=>setInput(event.target.value)}/> : request.input?<textarea aria-label={request.title} value={input} rows={request.input.kind==="editor"?6:2} disabled={busy||request.decided} onChange={event=>setInput(event.target.value)}/>:null}<div>{request.options.map(option=><button type="button" key={option.id} disabled={busy||request.decided} onClick={()=>onDecision(option.id,request.input&&option.id==="submit"?input:undefined)}>{option.name}</button>)}</div>{request.decided?<small>决定已记录，等待 Harness 继续。</small>:null}</section>;
+  // How long the request can still wait and whose deadline that is (ADR-035), counted once a second until it is decided.
+  const [now,setNow]=useState(()=>Date.now());
+  useEffect(()=>{ if(request.expiresAt===undefined||request.decided)return; const timer=setInterval(()=>setNow(Date.now()),1000); return ()=>clearInterval(timer); },[request.expiresAt,request.decided]);
+  const left=request.expiresAt===undefined||request.decided?null:remaining(request,now);
+  return <section className="native-permission" aria-label={request.input?"Harness 交互":"工具审批"}><strong>{request.title}</strong>{request.detail?<p>{request.detail}</p>:null}{request.input?.kind === "secret" ? <input type="password" autoComplete="off" aria-label={request.title} value={input} disabled={busy||request.decided} onChange={event=>setInput(event.target.value)}/> : request.input?<textarea aria-label={request.title} value={input} rows={request.input.kind==="editor"?6:2} disabled={busy||request.decided} onChange={event=>setInput(event.target.value)}/>:null}<div>{request.options.map(option=><button type="button" key={option.id} disabled={busy||request.decided} onClick={()=>onDecision(option.id,request.input&&option.id==="submit"?input:undefined)}>{option.name}</button>)}</div>{request.decided?<small>决定已记录，等待 Harness 继续。</small>:left?<small className="permission-deadline" title={left.hint}>{left.source} · {left.text}</small>:null}</section>;
 }
 export function ChatPage(props: ChatProps) {
   const { session, draft, harnesses, providers, mutation, error } = props;

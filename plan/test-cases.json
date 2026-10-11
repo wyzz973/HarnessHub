@@ -7319,6 +7319,23 @@
       "planned_file": "tests/integration/web-server.test.ts"
     },
     {
+      "id": "G061-NC6",
+      "task": "G061",
+      "requirements": [
+        "R22"
+      ],
+      "invariants": [
+        "INV-19",
+        "INV-20"
+      ],
+      "layer": "integration",
+      "scenario": "待处理列表的按需读取与推送",
+      "expected": "有对话打开时随该对话的流推送且不移动会话游标；没有对话时单独订阅；只推送更新的修订；慢订阅者在排空后只收到最新列表；按需读取不会吞掉一次推送",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/web-session-stream.test.ts"
+    },
+    {
       "id": "G054-NC5",
       "task": "G054",
       "requirements": [
@@ -7619,6 +7636,24 @@
       "planned_file": "tests/integration/kept-process.test.ts"
     },
     {
+      "id": "G028-NC10",
+      "task": "G028",
+      "requirements": [
+        "R11",
+        "R14"
+      ],
+      "invariants": [
+        "INV-06",
+        "INV-09"
+      ],
+      "layer": "integration",
+      "scenario": "跨对话列出等待用户的审批与提问及其期限",
+      "expected": "运行时按自身时钟把驱动给出的剩余等待换算为期限并标明来源；只列出未决定的请求，不含标题与详情；决定后即移除；回合期限先到时请求记为 expired、加回合提示、回合为结果未知；重启后的服务不列出上一服务遗留的请求",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/attention.test.ts"
+    },
+    {
       "id": "G032-NC18",
       "task": "G032",
       "requirements": [
@@ -7767,6 +7802,23 @@
       "layer": "e2e",
       "scenario": "子 Agent 运行的工具显示在子 Agent 调用之下",
       "expected": "子 Agent 调用显示工具数；嵌套列表含子工具并可展开详情；窄屏不溢出",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/web.browser.ts"
+    },
+    {
+      "id": "G054-NC9",
+      "task": "G054",
+      "requirements": [
+        "R01",
+        "R22"
+      ],
+      "invariants": [
+        "INV-19"
+      ],
+      "layer": "e2e",
+      "scenario": "侧栏标记等待处理的对话并按期限倒计时",
+      "expected": "侧栏说明等待审批或提问、期限来源与剩余时间，每秒更新，到期即消失；点击只打开对话，决定在对话内完成；浏览器通知由用户开启，只在页面不可见时发出，只含 Harness 名称与剩余时间",
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/browser/web.browser.ts"

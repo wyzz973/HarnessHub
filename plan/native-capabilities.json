@@ -598,9 +598,10 @@
           "evidence": [
             ".tmp/cc-native-activity-claude-approval.json",
             ".tmp/cc-native-activity-claude.json",
+            ".tmp/cc-attention-2026-10-12.json",
             "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
           ],
-          "note": "手动模式下编辑请求审批并一次允许；审批卡显示将要修改的差异；allow_always 会由原程序写入项目设置，验收只选一次允许"
+          "note": "手动模式下编辑请求审批并一次允许；审批卡显示将要修改的差异；allow_always 会由原程序写入项目设置，验收只选一次允许；审批带回合期限（Claude 没有自己的期限），另一页面的侧栏显示“等待审批 · 回合期限 回合剩余 5 分”，点回对话批准后命令执行、标记消失（ADR-035，真实通过）"
         },
         "questions": {
           "native": "yes",
@@ -2305,9 +2306,10 @@
           "real": "blocked",
           "evidence": [
             ".tmp/cc-hermes-approval.json",
+            ".tmp/cc-attention-2026-10-12.json",
             "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
           ],
-          "note": "本机 Hermes 0.12.0 的缺陷：tools/approval.py 调用审批回调时传入 allow_permanent，ACP 适配层回调不接受（TypeError），危险命令一律按拒绝处理，审批请求根本不会发出；需要用户升级 Hermes（本机落后上游 18332 个提交）。Hub 的 60 秒期限处理已有协议测试"
+          "note": "本机 Hermes 0.12.0 的缺陷：tools/approval.py 调用审批回调时传入 allow_permanent，ACP 适配层回调不接受（TypeError），危险命令一律按拒绝处理，审批请求根本不会发出；需要用户升级 Hermes（本机落后上游 18332 个提交）。Hub 的 60 秒期限处理已有协议测试；2026-10-12 再次确认（rm -r 被拒绝，模型仍回复“已删除”），侧栏的原生期限倒计时只在 Hermes 0.12.0 夹具的浏览器测试中验证（ADR-035）"
         },
         "questions": {
           "native": "no",

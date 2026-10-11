@@ -1,5 +1,5 @@
 import { isAbsolute } from "node:path";
-import { nativeConversationId, type BackendResult, type CleanupEvidence, type ControlEvent,
+import { nativeConversationId, requestExpiry, type BackendResult, type CleanupEvidence, type ControlEvent,
   type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl,
   type NativeOptions, type NativeOption, type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
 import { ControlError, errorFrom, JsonRpcProcess, object, string, text, type RpcRequest } from "../../infrastructure/control/json-rpc-process.js";
@@ -16,6 +16,8 @@ interface ActiveTurn {
   readonly resolve: (result: BackendResult) => void;
   readonly reject: (error: Error) => void;
   readonly timer: ReturnType<typeof setTimeout>;
+  /** When the turn times out (its deadline, ADR-035). */
+  readonly deadline: number;
   readonly started: Promise<void>;
   readonly signalStarted: () => void;
   readonly rejectStarted: (error: Error) => void;
@@ -452,7 +454,7 @@ export class CodexControl implements HarnessControl {
     const started = new Promise<void>((res, rej) => { signalStarted = res; rejectStarted = rej; });
     // The promise is also consumed by requestStop(); attach rejection ownership before any failure can occur.
     void started.catch(() => {});
-    const active: ActiveTurn = { event: onEvent, resolve, reject,
+    const active: ActiveTurn = { event: onEvent, resolve, reject, deadline: Date.now() + this.options.runTimeoutMs,
       timer: setTimeout(() => this.rpc.abort(new ControlError("RUN_TIMEOUT", "Codex turn exceeded its deadline")), this.options.runTimeoutMs),
       started, signalStarted, rejectStarted, turnId: null, settled: false, stopping: false, stop: null, deltaItems: new Set(), items: new Map(), agents: new Map(), reads: new Set(), baseline: this.lastTotal };
     this.active = active;
@@ -768,7 +770,7 @@ export class CodexControl implements HarnessControl {
       const files = request.method.includes("fileChange") ? (item?.locations ?? []).map(path => basename(path)).slice(0, 3).join(", ") : "";
       const title = (params.threadId !== this.conversation ? "子 Agent · " : "") + (typeof params.command === "string" ? line(params.command) : request.method.includes("fileChange") ? "Codex 请求修改文件" + (files ? "：" + files : "") : "Codex 请求执行命令");
       const detail = [typeof params.reason === "string" ? line(params.reason) : "", typeof params.cwd === "string" ? "目录：" + params.cwd : "", request.method.includes("fileChange") && item?.diff ? item.diff : ""].filter(Boolean).join("\n").slice(0, 4096);
-      return new Promise<unknown>(resolve => { this.permissions.set(id, { options: choices, resolve, reply: decision => ({ decision }) }); active.event({ type: "permission_requested", id, title, ...(detail ? { detail } : {}), options: choices.map(id => ({ id, name: ({ accept: "允许一次", acceptForSession: "本次会话允许", decline: "拒绝", cancel: "取消" } as Record<string,string>)[id]! })) }); });
+      return new Promise<unknown>(resolve => { this.permissions.set(id, { options: choices, resolve, reply: decision => ({ decision }) }); active.event({ type: "permission_requested", id, title, ...(detail ? { detail } : {}), options: choices.map(id => ({ id, name: ({ accept: "允许一次", acceptForSession: "本次会话允许", decline: "拒绝", cancel: "取消" } as Record<string,string>)[id]! })), ...requestExpiry(active.deadline, null) }); });
     }
     const decision = active.stopping ? "cancel" : "decline";
     active.event({ type: "permission", id: String(request.id), decision: active.stopping ? "cancelled" : "denied" });
@@ -798,7 +800,7 @@ export class CodexControl implements HarnessControl {
           const index = Number(option.slice(7)); if (!Number.isSafeInteger(index) || !question.choices[index]) throw new ControlError("INVALID_INPUT", "invalid native answer choice"); return question.choices[index];
         } });
         active.event({ type: "permission_requested", id: question.requestId, title: question.title, options: choices,
-          ...(question.freeform ? { input: { kind: question.secret ? "secret" : "text", value: "" } } : {}) });
+          ...(question.freeform ? { input: { kind: question.secret ? "secret" : "text", value: "" } } : {}), kind: "question", ...requestExpiry(active.deadline, null) });
       });
       if (answer === null) return { answers: {} };
       answers.set(question.id, { answers: [text(answer, "native answer")] });

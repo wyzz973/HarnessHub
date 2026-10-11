@@ -266,3 +266,14 @@ test("run frames replace only the active Run's native activity and never cross m
   for (const patch of patches) assert.throws(() => applySessionStreamFrame(base, { ...frame, run: { ...frame.run, ...patch } }, base.id), isCode("STREAM_STATE"));
   assert.throws(() => applySessionStreamFrame({ ...base, activeRunId: null }, frame, base.id), isCode("STREAM_STATE"));
 });
+
+test("waiting-request lists ride along a session stream without moving its cursor", async () => {
+  const first = snapshot(), next = messageFrame(first), lists: unknown[] = [], frames: SessionStreamFrame[] = [];
+  const attention = "event: attention\ndata: " + JSON.stringify({ revision: 3, items: [] }) + "\n\n";
+  await consumeSessionEventStream(bytesStream([encoder.encode(sse({ type: "snapshot", session: first }) + attention + sse(next))]), { signal: new AbortController().signal, decode,
+    onFrame: frame => { frames.push(frame); }, onAttention: value => { lists.push(value); } });
+  assert.deepEqual(frames, [{ type: "snapshot", session: first }, next]); assert.deepEqual(lists, [{ revision: 3, items: [] }]);
+  // Without a consumer for them they are skipped; a broken one fails the stream like any other broken frame.
+  assert.deepEqual(await read([encoder.encode(attention + sse(next))]), [next]);
+  await assert.rejects(read([encoder.encode("event: attention\ndata: {broken\n\n")]), isCode("STREAM_INVALID_FRAME"));
+});

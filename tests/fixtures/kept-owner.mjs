@@ -1,11 +1,12 @@
-// A Gateway owner that keeps one native process for a conversation and then waits to be killed, so that a later owner can
-// be tested on what it finds (ADR-030). Arguments: build root, data root, lease root, workspace, ACP peer script, and "1"
-// to record the kept process group's identity. FIXTURE_LINGER, FIXTURE_PID and FIXTURE_CHILD_PID reach the peer.
+// A Gateway owner that keeps one native process for a conversation (ADR-030), or with mode "ask" leaves one approval
+// waiting (ADR-035), and then waits to be killed, so that a later owner can be tested on what it finds. Arguments: build
+// root, data root, lease root, workspace, ACP peer script, "1" to record the kept process group's identity, and the mode.
+// FIXTURE_LINGER, FIXTURE_PID and FIXTURE_CHILD_PID reach the peer.
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const [build, data, locks, workspace, peer, identify] = process.argv.slice(2);
+const [build, data, locks, workspace, peer, identify, mode = "keep"] = process.argv.slice(2);
 const load = path => import(pathToFileURL(join(build, path)).href);
 const { SessionRuntime } = await load("src/contexts/session/application/runtime.js");
 const { SqliteSessionStore } = await load("src/infrastructure/session/sqlite-store.js");
@@ -35,7 +36,13 @@ const app = new SessionRuntime(store, factory, { id: () => "owner-" + (++id), no
   ...(identify === "1" ? { processes: new PosixProcessGroups() } : {}) });
 const configuration = { workspace, manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: true };
 const session = await app.create(configuration, { harnessId: "alpha" }, "create");
-app.setRetention(session.id, true, "keep");
-app.send(session.id, "turn", "first"); await app.wait(session.id);
-process.stdout.write(JSON.stringify({ session: session.id, retained: app.read(session.id).retained ?? null }) + "\n");
+if (mode === "ask") {
+  app.send(session.id, "approve this", "first");
+  for (let i = 0; i < 200 && app.attention().length === 0; i++) await new Promise(resolve => setTimeout(resolve, 20));
+  process.stdout.write(JSON.stringify({ session: session.id, attention: app.attention() }) + "\n");
+} else {
+  app.setRetention(session.id, true, "keep");
+  app.send(session.id, "turn", "first"); await app.wait(session.id);
+  process.stdout.write(JSON.stringify({ session: session.id, retained: app.read(session.id).retained ?? null }) + "\n");
+}
 setInterval(() => {}, 1000);

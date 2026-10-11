@@ -11,6 +11,8 @@ import type { SessionView } from "../../src/contracts/web.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { startWebServer, type WebServer } from "../../src/web/server.js";
 import { SessionStreamHub, type SessionStreamLimits, type SessionStreamReadFailure, type SessionStreamSink } from "../../src/web/session-stream.js";
+import { AttentionStreamHub } from "../../src/web/attention-stream.js";
+import type { AttentionItem } from "../../src/contracts/session.js";
 
 function record(value: unknown): Record<string, unknown> { assert.ok(value !== null && typeof value === "object" && !Array.isArray(value)); return value as Record<string, unknown>; }
 interface Files { readonly root: string; readonly data: string; readonly workspace: string; readonly manifest: string; readonly trace: string; readonly step: string; readonly release: string }
@@ -48,14 +50,22 @@ class StreamReader {
   private readonly reader: ReadableStreamDefaultReader<Uint8Array>;
   private readonly decoder = new TextDecoder("utf-8", { fatal: true });
   private buffer = "";
+  /** Waiting-request lists that rode along without an event id (ADR-035), kept apart from the session's facts. */
+  readonly attention: Record<string, unknown>[] = [];
   constructor(readonly response: Response, private readonly abort: AbortController) { assert.ok(response.body); this.reader = response.body.getReader(); }
-  async next(): Promise<Received> {
+  /** The next waiting-request list, whether already read past or still to come. */
+  async nextAttention(): Promise<Record<string, unknown>> { return this.attention.shift() ?? (await this.read(true)).frame; }
+  next(): Promise<Received> { return this.read(false); }
+  private async read(attention: boolean): Promise<Received> {
     for (;;) {
       const delimiter = this.buffer.indexOf("\n\n");
       if (delimiter >= 0) {
         const block = this.buffer.slice(0, delimiter); this.buffer = this.buffer.slice(delimiter + 2);
         if (!block.includes("data:")) continue;
-        const lines = block.split("\n"), id = Number(lines.find(line => line.startsWith("id: "))?.slice(4)), data = lines.find(line => line.startsWith("data: "))?.slice(6); assert.ok(data); return { id, frame: record(JSON.parse(data)) };
+        const lines = block.split("\n"), id = Number(lines.find(line => line.startsWith("id: "))?.slice(4)), data = lines.find(line => line.startsWith("data: "))?.slice(6); assert.ok(data);
+        if (block.startsWith("event: attention")) { if (attention) return { id, frame: record(JSON.parse(data)) }; this.attention.push(record(JSON.parse(data))); continue; }
+        if (attention) continue;
+        return { id, frame: record(JSON.parse(data)) };
       }
       const timer = setTimeout(() => this.abort.abort(), 5000);
       try { const next = await this.reader.read(); if (next.done) throw new Error("SSE ended before expected frame"); this.buffer += this.decoder.decode(next.value, { stream: true }); }
@@ -211,4 +221,49 @@ test("native activity of the active Run is published as one run frame, other fac
   assert.deepEqual(sent.map(frame => frame.type), ["snapshot", "run", "snapshot"]);
   assert.deepEqual(record(sent[1]!.run).tools, [{ id: "t", title: "ls", status: "completed" }]);
   hub.close();
+});
+
+test("a session stream carries the newest waiting list without an event id, and a slow subscriber gets only the latest once it drains", async t => {
+  const f = await hubFixture(t), frame = (revision: number) => ({ revision, items: [] });
+  let current = frame(0);
+  const hub = new SessionStreamHub(id => view(f.app.runtime.read(id)), {}, undefined, () => current); t.after(() => hub.close());
+  const socket = new FakeSocket(); hub.open(f.id, 0, Date.now() + 5000, socket, () => {});
+  const attention = () => socket.written.filter(value => value.startsWith("event: attention")).map(value => {
+    assert.ok(!value.includes("\nid:") && !value.startsWith("id:"), "it never moves the session cursor");
+    return Number(record(JSON.parse(value.split("data: ")[1]!.trim())).revision);
+  });
+  assert.equal(frames(socket).length, 1, "the session snapshot comes first"); assert.deepEqual(attention(), [0]);
+  hub.attentionChanged(frame(2)); hub.attentionChanged(frame(1)); assert.deepEqual(attention(), [0, 2], "an older list never replaces a newer one");
+  socket.blocked = true; hub.attentionChanged(frame(3)); hub.attentionChanged(frame(4)); hub.attentionChanged(frame(5));
+  assert.deepEqual(attention(), [0, 2, 3]); socket.blocked = false; socket.emit("drain");
+  assert.deepEqual(attention(), [0, 2, 3, 5], "the latest list only, once the subscriber drains");
+  current = frame(6); const later = new FakeSocket(); hub.open(f.id, 0, Date.now() + 5000, later, () => {});
+  assert.equal(later.written.filter(value => value.startsWith("event: attention")).length, 1, "a new subscription starts with the current list");
+});
+
+test("a list given out on request does not hide a change from the subscribers of the waiting list", () => {
+  const waiting: AttentionItem = { sessionId: "session-a" as AttentionItem["sessionId"], permissionId: "permission-1", runId: "run-1", harnessId: "hermes", kind: "approval", requestedAt: 1 };
+  let items: readonly AttentionItem[] = [];
+  const heard: number[] = [], hub = new AttentionStreamHub(() => items, {}, frame => heard.push(frame.revision));
+  const socket = new FakeSocket(); hub.open(Date.now() + 5000, socket, () => {});
+  items = [waiting];
+  assert.equal(hub.frame().revision, 1, "read by request first");
+  hub.changed(); hub.changed();
+  const sent = socket.written.filter(value => value.startsWith("id:")).map(value => record(JSON.parse(value.split("data: ")[1]!.trim())));
+  assert.deepEqual(sent.map(value => value.revision), [0, 1]); assert.deepEqual(heard, [1], "each change is told once");
+  items = []; hub.changed(); assert.deepEqual(heard, [1, 2]);
+  hub.close(); assert.equal(socket.writableEnded, true);
+});
+
+test("the waiting list is served on request, on its own stream, and on a conversation's stream", async t => {
+  const f = await httpFixture(t), id = await create(f);
+  const listed = await call(f, "/attention"); assert.equal(listed.status, 200); assert.deepEqual(record(listed.value).items, []);
+  const reader = await stream(f, id); assert.equal((await reader.next()).frame.type, "snapshot");
+  assert.deepEqual((await reader.nextAttention()).items, [], "the conversation's stream starts with the current list");
+  const abort = new AbortController(), alone = await fetch(f.origin + "/api/v1/attention/stream", { headers: { Cookie: f.cookie, Origin: f.origin }, signal: abort.signal });
+  try {
+    assert.equal(alone.status, 200); assert.match(alone.headers.get("content-type") ?? "", /^text\/event-stream/u);
+    const first = await alone.body!.getReader().read(); const block = new TextDecoder().decode(first.value);
+    assert.match(block, /^id: \d+\nevent: attention\ndata: \{"revision":\d+,"items":\[\]\}\n\n/u);
+  } finally { abort.abort(); }
 });

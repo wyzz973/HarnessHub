@@ -443,6 +443,9 @@ test("Hermes's 60-second approval deadline applies only to the reviewed 0.12 bri
     for (let i = 0; i < 50 && !events.some(event => event.type === "permission_requested"); i++) await new Promise(resolve => setTimeout(resolve, 20));
     const requested = events.find(event => event.type === "permission_requested");
     assert.ok(requested?.type === "permission_requested" && !(requested.detail ?? "").includes("command_allowlist"));
+    // Without a deadline of its own, the request can wait as long as the Turn's deadline allows.
+    assert.equal(requested.expiresBy, "turn"); assert.ok(requested.expiresInMs !== undefined && requested.expiresInMs > 0 && requested.expiresInMs <= options.runTimeoutMs);
+    assert.equal(requested.kind, undefined, "an approval of the agent's own action");
     await ordinary.decidePermission(requested.id, "deny"); await run.result;
   } finally { await ordinary.close(); }
 });
@@ -467,6 +470,8 @@ test("Hermes closes an approval at its own deadline and hands files over as text
     assert.equal((await (await driver.startText(id, "approve this", event => events.push(event))).result).status, "completed");
     const requested = events.find(event => event.type === "permission_requested");
     assert.ok(requested?.type === "permission_requested" && requested.title === "rm -rf build" && requested.detail?.includes("最多等待 2 秒") === true);
+    // The wait it announces is Hermes's own deadline less the margin, which comes before the Turn's (ADR-035).
+    assert.equal(requested.expiresBy, "native"); assert.ok(requested.expiresInMs !== undefined && requested.expiresInMs <= 300 && requested.expiresInMs >= 250, String(requested.expiresInMs));
     // Its "always" option changes Hermes's own configuration for every session, and the request says so.
     assert.match(requested.detail ?? "", /选“Allow always”会写入 Hermes 自己的配置（command_allowlist）/u);
     assert.ok(events.some(event => event.type === "notice" && event.title === "审批已超时"));
@@ -746,5 +751,25 @@ test("OpenClaw lists its workspace skills and plugin tool groups from the Gatewa
       { name: "deploy", description: "Ship it", scope: "openclaw-workspace", enabled: false },
       { name: "blocked", description: "", scope: "agents-skills-personal", enabled: false }], plugins: [{ name: "feishu", enabled: true, source: "3 个工具" }] });
     assert.deepEqual(calls, ["skills.status {}", "tools.catalog {\"includePlugins\":true}"], "only read-only reports are requested");
+  } finally { await driver.close(); }
+});
+
+test("a request's wait is the earlier of the program's own deadline and the Turn's, never negative", async () => {
+  const { requestExpiry } = await import("../../src/contracts/control.js");
+  assert.deepEqual(requestExpiry(10_000, 3_000, 1_000), { expiresInMs: 3_000, expiresBy: "native" });
+  assert.deepEqual(requestExpiry(10_000, 30_000, 1_000), { expiresInMs: 9_000, expiresBy: "turn" });
+  assert.deepEqual(requestExpiry(10_000, null, 1_000), { expiresInMs: 9_000, expiresBy: "turn" });
+  assert.deepEqual(requestExpiry(1_000, null, 5_000), { expiresInMs: 0, expiresBy: "turn" });
+  assert.deepEqual(requestExpiry(10_000, -5, 1_000), { expiresInMs: 0, expiresBy: "native" });
+});
+test("an ACP prompt that outlives the Turn's deadline fails with RUN_TIMEOUT while its approval waits", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
+  const driver = new HermesControl(hermes(trace), { ...options, runTimeoutMs: 600 });
+  try {
+    await driver.initialize(); driver.enablePermissions(); const id = await driver.open(process.cwd()), events: ControlEvent[] = [];
+    const run = await driver.startText(id, "approve this", event => events.push(event));
+    await assert.rejects(run.result, (error: unknown) => error instanceof Error && "code" in error && error.code === "RUN_TIMEOUT");
+    const requested = events.find(event => event.type === "permission_requested");
+    assert.ok(requested?.type === "permission_requested" && requested.expiresBy === "turn" && (requested.expiresInMs ?? 0) <= 600);
   } finally { await driver.close(); }
 });

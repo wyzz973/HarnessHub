@@ -1,8 +1,9 @@
 import { consumeSessionEventStream, SessionStreamError } from "./session-stream.js";
+import { readSseBlocks } from "./attention.js";
 import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
-import type { AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, WebState } from "../../src/contracts/web.js";
+import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, WebState } from "../../src/contracts/web.js";
 import type { HarnessManagementView, InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
-import type { HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
+import type { AttentionItem, HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
 import type { NativeExtensions, NativeInputs, NativeOption, NativeModelCatalog } from "../../src/contracts/control.js";
 import { parseNativeOptions, commandId, messageId, runId, sessionId, switchId } from "../../src/contracts/session.js";
 import { parseContentRef, type ContentRef } from "../../src/contracts/content.js";
@@ -154,6 +155,17 @@ function decodeKeptProcess(value: unknown): KeptProcessView {
   const row = record(value);
   return { harnessId: text(row.harnessId), controlId: text(row.controlId), since: number(row.since), lastUsedAt: number(row.lastUsedAt), idleEndsAt: number(row.idleEndsAt), backgroundUpdates: number(row.backgroundUpdates) };
 }
+/** One frame of waiting approvals and questions (ADR-035); at most 32 items, each checked field by field. */
+export function decodeAttentionFrame(value: unknown): AttentionFrame {
+  const row = record(value);
+  return { revision: number(row.revision), items: list(row.items, value => {
+    const item = record(value);
+    const decoded: AttentionItem = { sessionId: sessionId(text(item.sessionId)), permissionId: text(item.permissionId), runId: text(item.runId), harnessId: text(item.harnessId),
+      kind: choice(item.kind, ["approval", "question"]), requestedAt: number(item.requestedAt),
+      ...(item.expiresAt === undefined ? {} : { expiresAt: number(item.expiresAt), expiresBy: choice(item.expiresBy, ["native", "turn"]) }) };
+    return decoded;
+  }, 32) };
+}
 export function decodeSession(value: unknown): SessionView {
   const row = record(value);
   return { id: text(row.id), version: number(row.version), lastSeq: number(row.lastSeq), epoch: number(row.epoch), status: choice(row.status, SESSION_STATES),
@@ -171,7 +183,8 @@ export function decodeSession(value: unknown): SessionView {
       if (origin.kind === "import") return { kind: "import" as const, harnessId: text(origin.harnessId), title: nullableText(origin.title), omitted: number(origin.omitted), complete: bool(origin.complete), historyRead: bool(origin.historyRead), history };
       if (origin.kind !== "fork") return invalid();
       return { kind: "fork" as const, sessionId: sessionId(origin.sessionId), throughRunId: runId(origin.throughRunId), history }; })() }),
-    ...(row.permissions===undefined?{}:{permissions:list(row.permissions, value => { const request=record(value);return {id:text(request.id),runId:text(request.runId),title:text(request.title),decided:bool(request.decided), ...(request.detail===undefined?{}:{detail:text(request.detail)}),...(request.input===undefined?{}:{input:(()=>{const value=record(request.input);return {kind:choice(value.kind,["text","editor","secret"]),value:text(value.value)};})()}),options:list(request.options,value=>{const option=record(value);return {id:text(option.id),name:text(option.name)};},128)};},32)}), messages: list(row.messages, decodeMessage, 1024), runs: list(row.runs, decodeRun, 256), switches: list(row.switches, decodeSwitch, 1024) };
+    ...(row.permissions===undefined?{}:{permissions:list(row.permissions, value => { const request=record(value);return {id:text(request.id),runId:text(request.runId),title:text(request.title),decided:bool(request.decided),requestedAt:number(request.requestedAt),
+      ...(request.expiresAt===undefined?{}:{expiresAt:number(request.expiresAt),expiresBy:choice(request.expiresBy,["native","turn"])}),...(request.kind===undefined?{}:{kind:choice(request.kind,["question"])}), ...(request.detail===undefined?{}:{detail:text(request.detail)}),...(request.input===undefined?{}:{input:(()=>{const value=record(request.input);return {kind:choice(value.kind,["text","editor","secret"]),value:text(value.value)};})()}),options:list(request.options,value=>{const option=record(value);return {id:text(option.id),name:text(option.name)};},128)};},32)}), messages: list(row.messages, decodeMessage, 1024), runs: list(row.runs, decodeRun, 256), switches: list(row.switches, decodeSwitch, 1024) };
 }
 /** Decodes only canonical public facts; stream framing and projection validate their watermarks. */
 export function decodeSessionStreamFrame(value: unknown): SessionStreamFrame {
@@ -296,7 +309,7 @@ export class GatewayApi {
     }, signal);
   }
   /** Owns one cancellable fact stream; reconnecting never submits a conversation command. */
-  async streamSession(id: string, afterSeq: number, signal: AbortSignal, onFrame: (frame: SessionStreamFrame) => void): Promise<void> {
+  async streamSession(id: string, afterSeq: number, signal: AbortSignal, onFrame: (frame: SessionStreamFrame) => void, onAttention?: (frame: AttentionFrame) => void): Promise<void> {
     const deadline = new AbortController();
     const timeout = setTimeout(() => deadline.abort(new DOMException("Session stream deadline exceeded", "TimeoutError")), 75_000);
     const attempt = AbortSignal.any([signal, deadline.signal]);
@@ -318,11 +331,37 @@ export class GatewayApi {
         await response.body?.cancel(); return invalid();
       }
       let opened = false;
-      await consumeSessionEventStream(response.body, { signal: attempt, decode: decodeSessionStreamFrame, maxFrameBytes: 8 * 1024 * 1024, onFrame: frame => {
+      await consumeSessionEventStream(response.body, { signal: attempt, decode: decodeSessionStreamFrame, maxFrameBytes: 8 * 1024 * 1024,
+        ...(onAttention === undefined ? {} : { onAttention: (value: unknown) => onAttention(decodeAttentionFrame(value)) }), onFrame: frame => {
         if (!opened && frame.type !== "snapshot") throw new ApiError("STREAM_PROTOCOL", "实时连接缺少起始会话事实。");
         opened = true; onFrame(frame);
       } });
       if (!opened) throw new ApiError("STREAM_PROTOCOL", "实时连接没有返回会话事实。");
+    } finally { clearTimeout(timeout); }
+  }
+  /** Waiting approvals and questions of every conversation, as they are now. */
+  attention(signal?: AbortSignal): Promise<AttentionFrame> { return this.request("/attention", "GET", undefined, decodeAttentionFrame, signal); }
+  /**
+   * Live frames of waiting approvals and questions until the server ends the connection (its TTL) or the signal aborts;
+   * the caller reconnects. Frames arrive whole, newest revision last.
+   */
+  async streamAttention(signal: AbortSignal, onFrame: (frame: AttentionFrame) => void): Promise<void> {
+    const deadline = new AbortController();
+    const timeout = setTimeout(() => deadline.abort(new DOMException("Attention stream deadline exceeded", "TimeoutError")), 75_000);
+    const attempt = AbortSignal.any([signal, deadline.signal]);
+    try {
+      let response: Response;
+      try { response = await fetch("/api/v1/attention/stream", { method: "GET", credentials: "same-origin", cache: "no-store", redirect: "error", signal: attempt, headers: { Accept: "text/event-stream" } }); }
+      catch (error: unknown) { if (attempt.aborted) throw error; throw new ApiError("NETWORK_ERROR", "待处理提醒的连接中断。"); }
+      if (!response.ok) { const error = publicError(await readBoundedJson(response)); throw new ApiError(error?.code ?? "REQUEST_FAILED", error?.message ?? "待处理提醒的连接未能建立。"); }
+      if (!response.headers.get("Content-Type")?.toLowerCase().startsWith("text/event-stream") || response.body === null) { await response.body?.cancel(); return invalid(); }
+      await readSseBlocks(response.body, attempt, block => {
+        if (block.event !== "attention") return;
+        let value: unknown; try { value = JSON.parse(block.data); } catch { return invalid(); }
+        const frame = decodeAttentionFrame(value);
+        if (block.id !== String(frame.revision)) return invalid();
+        onFrame(frame);
+      });
     } finally { clearTimeout(timeout); }
   }
   createSession(workspace: string, selection: SelectionRequest, key: string): Promise<SessionView> {
@@ -466,6 +505,7 @@ export function failureMessage(failure: { readonly code: string; readonly messag
     NATIVE_RESUME_UNAVAILABLE: "原程序无法确认恢复后的原生会话，没有另建新会话。公共历史已保留，可以切换 Harness 继续。",
     NATIVE_STATE_UNCONFIRMED: "原生会话的状态尚未确认。可以切换其他 Harness，或明确建立新的原生分支；公共历史会保留。",
     SESSION_BLOCKED: "这段对话还有执行结果尚未核实，已暂停接收新消息。请在对话顶部核实后恢复；不会自动重新执行。",
+    RUN_TIMEOUT: "HarnessHub 的回合期限已到，本回合超时结束。原程序已被结束，结果尚待核实，不会自动重新执行。",
   };
   return labels[failure.code] ?? failure.message;
 }

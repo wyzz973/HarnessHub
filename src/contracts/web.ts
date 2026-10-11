@@ -67,6 +67,8 @@ export interface NativeStateView {
   /** Selected values the next Turn applies as the native session changed them itself, instead of the selection (ADR-028). */
   readonly carried?: { readonly model?: string; readonly options?: import("./control.js").NativeOptions };
 }
+/** Every waiting approval or question across conversations, as one bounded frame (ADR-035); revisions only increase. */
+export interface AttentionFrame { readonly revision: number; readonly items: readonly import("./session.js").AttentionItem[] }
 export interface SessionView {
   readonly id: string;
   readonly version: number;
