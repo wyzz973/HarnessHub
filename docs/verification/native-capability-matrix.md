@@ -75,7 +75,7 @@
 | 上下文压缩 | 具备 | thread/compact/start → contextCompaction item | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-pi-codex.json；docs/verification/native-session-actions-2026-10-11.md | /compact 调用 thread/compact/start 并以活动展示；压缩后原生会话仍记得先前事实 |
 | 回滚/回退 | 具备 | thread/revert {beforeTurnId}（只回退历史，不回退文件） | 未接出 | 未接出 | 未接出 | — | — |
 | 子 Agent | 具备 | collabAgentToolCall、subAgentActivity；子线程自动附着连接 | 已接出 | 通过 | 通过 | .tmp/cc-native-subagent-codex-threads.json；.tmp/cc-native-subagent-codex.json；docs/verification/native-subagents-2026-10-11.md | 子线程以 subAgentActivity/协作调用识别（已安装版本不为子线程发 thread/started）；子线程的工具嵌套在“子 Agent”条目下，最终回复作为条目输出；子线程文字不进入主回复 |
-| 后台任务 | 具备 | command/exec；后台终端 thread/backgroundTerminals/* 需 experimentalApi | 未接出 | 未接出 | 未接出 | — | 每轮关闭控制进程，需长期资源所有者设计 |
+| 后台任务 | 具备 | command/exec；后台终端 thread/backgroundTerminals/* 需 experimentalApi | 未接出 | 未接出 | 未接出 | — | 每轮关闭控制进程，需长期资源所有者设计；需要回合之间保留原生进程，涉及工作区唯一写入者约束，见待决的 ADR-030 |
 | 导出与产物 | 具备 | thread/read(includeTurns)、Thread.path rollout 路径 | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-pi-codex.json；docs/verification/native-session-actions-2026-10-11.md | /export 读取线程自己的 rollout JSONL 作为产物；临时线程明确失败 |
 
 ## Claude Code
@@ -109,7 +109,7 @@
 | 上下文压缩 | 具备 | /compact 触发原生压缩；compaction_update 需 session.compaction 能力 | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | /compact 原生命令执行，compaction_update 以活动显示完成；压缩后仍记得先前事实 |
 | 回滚/回退 | 不提供 | 非 JetBrains AIR 客户端无指定消息回退 | 不适用 | 不适用 | 不适用 | — | — |
 | 子 Agent | 具备 | 子会话 subagent_spawned/state_update 需 subagents 能力；否则工具带 parentToolUseId | 已接出 | 通过 | 通过 | .tmp/cc-native-subagent-claude.json；docs/verification/native-subagents-2026-10-11.md | 未协商原生子会话时，子 Agent 工具平铺在根会话并带 parentToolUseId；Hub 记录关联并在 Agent 调用下嵌套显示，子 Agent 文字不进入主回复 |
-| 后台任务 | 具备 | 后台 shell 与自主后续回合；async_task_* 仅 AIR | 未接出 | 未接出 | 未接出 | — | 每轮关闭进程会终止后台任务 |
+| 后台任务 | 具备 | 后台 shell 与自主后续回合；async_task_* 仅 AIR | 未接出 | 未接出 | 未接出 | — | 每轮关闭进程会终止后台任务；需要回合之间保留原生进程，涉及工作区唯一写入者约束，见待决的 ADR-030 |
 | 导出与产物 | 部分 | ACP 无导出方法；转录在 <CLAUDE_CONFIG_DIR 或 ~/.claude>/projects/<项目>/<会话>.jsonl（claude-agent-acp 也在此查找） | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-claude-export.json；docs/verification/claude-export-2026-10-11.md | 代理没有自己的 export 命令时 Hub 提供 /export：只读复制本会话转录作为产物；找不到转录时明确失败 |
 
 ## OpenCode

@@ -437,7 +437,7 @@
           "protocol": "none",
           "real": "none",
           "evidence": [],
-          "note": "每轮关闭控制进程，需长期资源所有者设计"
+          "note": "每轮关闭控制进程，需长期资源所有者设计；需要回合之间保留原生进程，涉及工作区唯一写入者约束，见待决的 ADR-030"
         },
         "export": {
           "native": "yes",
@@ -755,7 +755,7 @@
           "protocol": "none",
           "real": "none",
           "evidence": [],
-          "note": "每轮关闭进程会终止后台任务"
+          "note": "每轮关闭进程会终止后台任务；需要回合之间保留原生进程，涉及工作区唯一写入者约束，见待决的 ADR-030"
         },
         "export": {
           "native": "partial",
