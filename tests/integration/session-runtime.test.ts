@@ -183,6 +183,25 @@ test("real SQLite and ACP/Codex IPC retain one public Session through A to B to 
   assert.equal(final.lastSeq, published.length);
 });
 
+test("each Run records when it was accepted, prepared, ready, dispatched, first answered and ended, in that order", async t => {
+  const f = await fixture(t), factory = new PeerFactory(f.root);
+  let clock = Date.parse("2026-10-11T00:00:00Z"), id = 0;
+  // Every reading moves the clock on, so each recorded phase has its own time.
+  const app = new SessionRuntime(f.store, factory, { id: () => "timing-" + String(++id), now: () => new Date(clock += 7), publish: () => {},
+    fingerprint: value => createHash("sha256").update(value).digest("hex") });
+  f.runtimes.push(app);
+  const state = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  app.send(state.id, "timed question", "timed"); await app.wait(state.id);
+  const run = app.read(state.id).runs[0]!, timing = run.timing!;
+  assert.equal(run.status, "completed");
+  const order = [timing.acceptedAt, timing.preparingAt, timing.readyAt, timing.dispatchedAt, timing.firstOutputAt, timing.endedAt];
+  assert.ok(order.every(value => typeof value === "number"), "every phase of a completed Run is recorded");
+  assert.deepEqual([...order].sort((a, b) => a! - b!), order, "phases are recorded in order");
+  const types = f.store.events(state.id, 0, 100).map(row => row.type);
+  assert.equal(types.filter(type => type === "run.dispatched").length, 1); assert.equal(types.filter(type => type === "run.first_output").length, 1);
+  assert.ok(types.indexOf("run.dispatched") < types.indexOf("run.first_output"));
+});
+
 test("idempotent create/send/switch/cancel persist one intent and reject key conflicts", async (t) => {
   const f = await fixture(t), factory = new ControlledFactory([]), app = runtime(f, factory); t.after(() => app.close());
   const state = await app.create(f.configuration, { harnessId: "alpha" }, "create");

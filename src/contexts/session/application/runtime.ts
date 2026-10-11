@@ -3,7 +3,7 @@ import { TOOL_DIFF_BYTES, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type BackendResul
 import { MAX_RUN_ATTACHMENTS, MAX_RUN_OUTPUTS, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
 import {
   SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId,
-  type ForkedMessage, type NativeConfiguration, type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicRun,
+  type ForkedMessage, type NativeConfiguration, type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicRun, type RunTiming,
   type SelectionRequest, type SendReceipt, type SessionBindingFactory, type SessionCommit, type SessionConfiguration,
   type SessionId, type SessionEvent, type SessionMutation, type SessionRuntimeOptions, type SessionSnapshot, type SessionStore, type SwitchReceipt,
 } from "../../../contracts/session.js";
@@ -80,6 +80,17 @@ function updatedRun(state: SessionSnapshot, id: string, patch: Partial<PublicRun
     messages: state.messages.map(message => message.runId === id ? { ...message, status: next.status } : message) };
 }
 function event(type: string, data: Readonly<Record<string, unknown>>): EventDraft { return { type, data }; }
+/** Native events that the user sees in the conversation; the first of them marks the Run's first output. */
+const VISIBLE_OUTPUT = new Set<ControlEvent["type"]>(["text", "thinking", "tool", "plan", "permission_requested", "output", "activity"]);
+/**
+ * The Run patch that records one more phase at `now`, never before a phase already recorded (a clock that steps back keeps
+ * the order). A Run without timing (accepted before Session v10) and a phase already recorded stay as they are.
+ */
+function phase(state: SessionSnapshot, id: PublicRun["id"], name: Exclude<keyof RunTiming, "acceptedAt">, now: number): Partial<PublicRun> {
+  const timing = state.runs.find(run => run.id === id)?.timing;
+  if (timing === undefined || timing[name] !== undefined) return {};
+  return { timing: { ...timing, [name]: Math.max(now, ...Object.values(timing).filter((value): value is number => typeof value === "number")) } };
+}
 
 /** One global writer, durable admission, and a new explicitly rehydrated native connection per Turn. */
 export class SessionRuntime {
@@ -144,7 +155,7 @@ export class SessionRuntime {
     const concurrent = this.store.findByCreateKey(command);
     if (concurrent) { replayCommand(concurrent, command, "create", fingerprint); return concurrent; }
     const id = sessionId("session-" + this.options.id());
-    const state: SessionSnapshot = { schemaVersion: 9, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
+    const state: SessionSnapshot = { schemaVersion: 10, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
       configuration: config, selection: validated, activeRunId: null, pendingSwitchId: null,
       runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }] };
     try {
@@ -204,7 +215,7 @@ export class SessionRuntime {
     }
     const title = typeof read.title === "string" && read.title.trim() ? read.title.replace(/[\0-\x1f\x7f]+/gu, " ").trim().slice(0, 200) : null;
     const id = sessionId("session-" + this.options.id());
-    const state: SessionSnapshot = { schemaVersion: 9, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration: config, selection: validated,
+    const state: SessionSnapshot = { schemaVersion: 10, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration: config, selection: validated,
       activeRunId: null, pendingSwitchId: null, runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }],
       origin: { kind: "import", harnessId: validated.harnessId, title, omitted, complete: read.historyRead === true && read.complete === true, historyRead: read.historyRead === true, history: quoted },
       nativeBindings: [{ harnessId: validated.harnessId, controlId: validated.controlId, checkpoint, throughRunId: null, status: "ready" }] };
@@ -234,7 +245,8 @@ export class SessionRuntime {
     const nextId = runId("run-" + this.options.id()), userId = messageId("message-" + this.options.id()), assistantId = messageId("message-" + this.options.id());
     const run: PublicRun = { id: nextId, commandId: command, input: text, userMessageId: userId, assistantMessageId: assistantId,
       selection: state.selection, epoch: state.epoch, status: "queued", cancelRequested: false, contextThroughSeq: 0,
-      sourceRunIds: [], backend: null, cleanup: null, error: null, stopRequested: false, awaitingSwitchId: state.pendingSwitchId, ...(attachments.length ? { attachments } : {}) };
+      sourceRunIds: [], backend: null, cleanup: null, error: null, stopRequested: false, awaitingSwitchId: state.pendingSwitchId, ...(attachments.length ? { attachments } : {}),
+      timing: { acceptedAt: this.options.now().getTime() } };
     this.commit(id, current => ({ next: { ...current, runs: [...current.runs, run],
       messages: [...current.messages, { id: userId, runId: nextId, role: "user", text, seq: current.lastSeq + 1, status: "queued" }],
       commands: [...current.commands, { id: command, kind: "send", fingerprint, resultId: nextId }] },
@@ -307,7 +319,7 @@ export class SessionRuntime {
     const native = source.selection.provider === undefined ? source.nativeBindings?.find(binding => binding.harnessId === source.selection.harnessId && binding.controlId === source.selection.controlId && binding.status === "ready") : undefined;
     const nativeFork = native !== undefined && native.throughRunId === through.id;
     const id = sessionId("session-" + this.options.id());
-    const state: SessionSnapshot = { schemaVersion: 9, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration: source.configuration, selection: source.selection,
+    const state: SessionSnapshot = { schemaVersion: 10, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration: source.configuration, selection: source.selection,
       activeRunId: null, pendingSwitchId: null, runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }],
       origin: { kind: "fork", sessionId: sourceId, throughRunId: through.id, history },
       ...(nativeFork ? { nativeBindings: [{ harnessId: native.harnessId, controlId: native.controlId, checkpoint: native.checkpoint, throughRunId: null, status: "fork-pending" as const }] } : {}) };
@@ -379,7 +391,8 @@ export class SessionRuntime {
   }
 
   private cancelPending(state: SessionSnapshot): SessionSnapshot {
-    const runs = state.runs.map(run => run.status === "queued" ? { ...run, status: "cancelled" as const, cancelRequested: true }
+    const closedAt = this.options.now().getTime();
+    const runs = state.runs.map(run => run.status === "queued" ? { ...run, status: "cancelled" as const, cancelRequested: true, ...phase(state, run.id, "endedAt", closedAt) }
       : terminal(run.status) ? run : { ...run, cancelRequested: true });
     const sourceStillActive = state.activeRunId !== null && state.switches.some(sw => sw.id === state.pendingSwitchId && sw.sourceRunIds.includes(state.activeRunId!));
     return { ...state, runs, messages: state.messages.map(message => ({ ...message, status: runs.find(run => run.id === message.runId)!.status })),
@@ -396,7 +409,7 @@ export class SessionRuntime {
     if (selected !== null && !run) throw new SessionError("NOT_FOUND", "Run does not belong to this Session");
     this.commit(id, current => {
       let next = current;
-      if (run && !terminal(run.status)) next = updatedRun(current, run.id, { cancelRequested: true, ...(run.status === "queued" ? { status: "cancelled" as const } : {}) });
+      if (run && !terminal(run.status)) next = updatedRun(current, run.id, { cancelRequested: true, ...(run.status === "queued" ? { status: "cancelled" as const, ...phase(current, run.id, "endedAt", this.options.now().getTime()) } : {}) });
       return { next: { ...next, commands: [...next.commands, { id: command, kind: "cancel", fingerprint, resultId: selected ?? "none" }] },
         events: [event("run.cancel_requested", { runId: selected, beforeStart: run?.status === "queued", alreadyTerminal: run === undefined || terminal(run.status) })] };
     });
@@ -587,6 +600,8 @@ export class SessionRuntime {
   private output(execution: ActiveExecution, value: ControlEvent): void {
     const state = this.owned(execution), run = state.runs.find(run => run.id === execution.runId)!;
     if (run.status !== "running") throw new SessionError("STALE_EVENT", "output arrived outside its active Run");
+    if (VISIBLE_OUTPUT.has(value.type) && run.timing !== undefined && run.timing.firstOutputAt === undefined)
+      this.commit(state.id, current => ({ next: updatedRun(current, run.id, phase(current, run.id, "firstOutputAt", this.options.now().getTime())), events: [event("run.first_output", { runId: run.id })] }));
     if (value.type === "permission_requested") {
       if (this.permissions.size >= 32) throw new SessionError("PERMISSION_LIMIT", "too many pending native permissions");
       const id = "permission-" + this.options.id(), request: PermissionRequest = { id, runId: run.id, title: value.title, options: value.options, ...(value.detail===undefined?{}:{detail:value.detail}),...(value.input===undefined?{}:{input:value.input}), decided: false };
@@ -700,7 +715,7 @@ export class SessionRuntime {
     const waitedSwitch = queued.awaitingSwitchId === null ? null : state.switches.find(sw => sw.id === queued.awaitingSwitchId);
     if (queued.awaitingSwitchId !== null && !waitedSwitch) throw new SessionError("INVALID_DATA", "queued Run refers to an unknown switch");
     if (waitedSwitch?.status === "failed") {
-      this.commit(id, current => ({ next: updatedRun(current, target, { status: "failed", error: { code: "SWITCH_NOT_EFFECTIVE", message: "requested Harness switch failed; this input was not dispatched" } }),
+      this.commit(id, current => ({ next: updatedRun(current, target, { status: "failed", error: { code: "SWITCH_NOT_EFFECTIVE", message: "requested Harness switch failed; this input was not dispatched" }, ...phase(current, target, "endedAt", this.options.now().getTime()) }),
         events: [event("run.ended", { runId: target, status: "failed", error: { code: "SWITCH_NOT_EFFECTIVE" }, neverDispatched: true })] }));
       return;
     }
@@ -716,7 +731,7 @@ export class SessionRuntime {
     // What the native session reported after this Turn; `reported` means the binding's earlier report is replaced (ADR-028).
     let observed: NativeConfiguration | undefined, reported = false;
     try {
-      this.commit(id, current => ({ next: { ...updatedRun(current, target, { status: "preparing", selection: pinned, epoch: waitedSwitch ? current.epoch : queued.epoch }), activeRunId: target },
+      this.commit(id, current => ({ next: { ...updatedRun(current, target, { status: "preparing", selection: pinned, epoch: waitedSwitch ? current.epoch : queued.epoch, ...phase(current, target, "preparingAt", this.options.now().getTime()) }), activeRunId: target },
         events: [event("run.preparing", { runId: target, selection: state.selection, epoch: state.epoch })] }));
       let current = this.owned(execution), run = this.continue(execution), context = buildPublicContext(current, run);
       previousNative = run.selection.provider === undefined ? current.nativeBindings?.find(binding => binding.harnessId === run.selection.harnessId && binding.controlId === run.selection.controlId && binding.status !== "archived") : undefined;
@@ -752,7 +767,7 @@ export class SessionRuntime {
           checkpointStored = true;
         }
       }
-      this.commit(id, current => ({ next: updatedRun(current, target, { status: "running" }), events: [event("run.authorized", { runId: target, epoch: run.epoch })] }));
+      this.commit(id, current => ({ next: updatedRun(current, target, { status: "running", ...phase(current, target, "readyAt", this.options.now().getTime()) }), events: [event("run.authorized", { runId: target, epoch: run.epoch })] }));
       this.continue(execution);
       execution.binding.control.enablePermissions?.();
       let input = previousNative !== undefined && context.sourceRunIds.length === 0 ? run.input : context.text;
@@ -778,6 +793,7 @@ export class SessionRuntime {
         this.continue(execution);
         files = await content.materialize(run.attachments); this.continue(execution);
       }
+      this.commit(id, current => ({ next: updatedRun(current, target, phase(current, target, "dispatchedAt", this.options.now().getTime())), events: [event("run.dispatched", { runId: target })] }));
       execution.dispatched = true;
       execution.run = await execution.binding.control.startText(native, input, value => this.output(execution, value), ...(files.length ? [files] : []));
       this.owned(execution);
@@ -821,7 +837,7 @@ export class SessionRuntime {
         const status = unsafe ? "unknown" : run.cancelRequested || problem?.code === "CANCELLED" ? "cancelled" : failure ? "failed" : backend?.status ?? "failed";
         this.commit(id, current => {
           let next: SessionSnapshot = { ...updatedRun(current, target, { status, backend, cleanup,
-            error: failure }), activeRunId: null, status: unsafe ? "blocked" : current.status };
+            error: failure, ...phase(current, target, "endedAt", this.options.now().getTime()) }), activeRunId: null, status: unsafe ? "blocked" : current.status };
           if (checkpointStored && checkpoint !== null && cleanup?.closed === true && cleanup.protocolFailure === null && (!execution.dispatched || nativeConfirmed && backend !== null)) {
             next = { ...next, nativeBindings: next.nativeBindings?.map(binding => {
               if (binding.harnessId !== pinned.harnessId || binding.controlId !== pinned.controlId || binding.status === "archived") return binding;

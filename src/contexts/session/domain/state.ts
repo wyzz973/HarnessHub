@@ -1,7 +1,7 @@
 import { parseProviderTarget, type ProviderTarget } from "../../../contracts/provider.js";
 import {
   SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId,
-  type CommandRecord, type HarnessSelection, type PublicMessage, type PublicRun,
+  type CommandRecord, type HarnessSelection, type PublicMessage, type PublicRun, type RunTiming,
   type PublicSwitch, type RunStatus, type SessionConfiguration, type SessionMutation, type SessionSnapshot, type NativeSessionBinding, type ForkedMessage, type SessionOrigin, type NativeConfiguration,
 } from "../../../contracts/session.js";
 import type { BackendResult, CleanupEvidence, NativeOptions, NativeUsage } from "../../../contracts/control.js";
@@ -144,9 +144,24 @@ function publicOutput(value: unknown): NonNullable<PublicRun["outputs"]>[number]
   if (!/^(https?|file):\/\//iu.test(uri) || /[\r\n]/u.test(uri)) throw new SessionError("INVALID_DATA", "native link must be an http(s) or file URI");
   return { kind: "link", uri, name: text(row.name, "native link name", 1024), ...(row.title === undefined ? {} : { title: text(row.title, "native link title", 1024) }), ...(row.mediaType === undefined ? {} : { mediaType: text(row.mediaType, "native link type", 255) }) };
 }
+const TIMING_PHASES = ["preparingAt", "readyAt", "dispatchedAt", "firstOutputAt", "endedAt"] as const;
+/** Phase times are bounded epoch milliseconds, none before acceptance; later phases may be absent but never precede earlier ones. */
+function runTiming(value: unknown): RunTiming {
+  const item = record(value, "Run timing"); keys(item, ["acceptedAt", ...TIMING_PHASES], "Run timing");
+  const at = (raw: unknown, field: string): number => { const time = number(raw, field); if (time > 8.64e15) throw new SessionError("INVALID_DATA", field + " is out of range"); return time; };
+  const result: { -readonly [K in keyof RunTiming]: RunTiming[K] } = { acceptedAt: at(item.acceptedAt, "Run acceptedAt") };
+  let previous = result.acceptedAt;
+  for (const phase of TIMING_PHASES) {
+    if (item[phase] === undefined) continue;
+    const time = at(item[phase], "Run " + phase);
+    if (time < previous) throw new SessionError("INVALID_DATA", "Run phases must not go back in time");
+    result[phase] = time; previous = time;
+  }
+  return result;
+}
 function publicRun(value: unknown): PublicRun {
   const item = record(value, "Run");
-  keys(item, ["id", "commandId", "input", "userMessageId", "assistantMessageId", "selection", "epoch", "status", "cancelRequested", "contextThroughSeq", "sourceRunIds", "backend", "cleanup", "error", "stopRequested", "awaitingSwitchId", "thinking", "tools", "plan", "usage", "notices", "activities", "outputs", "attachments"], "Run");
+  keys(item, ["id", "commandId", "input", "userMessageId", "assistantMessageId", "selection", "epoch", "status", "cancelRequested", "contextThroughSeq", "sourceRunIds", "backend", "cleanup", "error", "stopRequested", "awaitingSwitchId", "thinking", "tools", "plan", "usage", "notices", "activities", "outputs", "attachments", "timing"], "Run");
   return { id: runId(item.id), commandId: commandId(item.commandId), input: text(item.input, "Run input", MAX_INPUT_BYTES),
     userMessageId: messageId(item.userMessageId), assistantMessageId: messageId(item.assistantMessageId), selection: parseSelection(item.selection),
     epoch: number(item.epoch, "Run epoch", 1), status: status(item.status), cancelRequested: boolean(item.cancelRequested, "cancelRequested"),
@@ -166,6 +181,7 @@ function publicRun(value: unknown): PublicRun {
         status: choiceOf(row.status, ["running", "completed", "failed", "cancelled"], "activity status"), ...(row.detail === undefined ? {} : { detail: text(row.detail, "activity detail", 4096) }) }; }) }),
     ...(item.outputs === undefined ? {} : { outputs: array(item.outputs, "native outputs", MAX_RUN_OUTPUTS, publicOutput) }),
     ...(item.attachments === undefined ? {} : { attachments: (() => { const refs = parseAttachmentRefs(item.attachments); if (!refs.length) throw new SessionError("INVALID_DATA", "an empty attachment list is omitted"); return refs; })() }),
+    ...(item.timing === undefined ? {} : { timing: runTiming(item.timing) }),
     awaitingSwitchId: item.awaitingSwitchId === null ? null : switchId(item.awaitingSwitchId) };
 }
 function publicMessage(value: unknown): PublicMessage {
@@ -247,7 +263,7 @@ function unique(values: readonly string[], label: string): void {
 export function parseSession(value: unknown): SessionSnapshot {
   const item = record(value, "Session");
   keys(item, ["schemaVersion", "id", "version", "lastSeq", "epoch", "status", "configuration", "selection", "activeRunId", "pendingSwitchId", "runs", "messages", "switches", "commands", "nativeBindings", "origin"], "Session");
-  if (item.schemaVersion !== 1 && item.schemaVersion !== 2 && item.schemaVersion !== 3 && item.schemaVersion !== 4 && item.schemaVersion !== 5 && item.schemaVersion !== 6 && item.schemaVersion !== 7 && item.schemaVersion !== 8 && item.schemaVersion !== 9) throw new SessionError("INVALID_DATA", "unknown Session schemaVersion");
+  if (item.schemaVersion !== 1 && item.schemaVersion !== 2 && item.schemaVersion !== 3 && item.schemaVersion !== 4 && item.schemaVersion !== 5 && item.schemaVersion !== 6 && item.schemaVersion !== 7 && item.schemaVersion !== 8 && item.schemaVersion !== 9 && item.schemaVersion !== 10) throw new SessionError("INVALID_DATA", "unknown Session schemaVersion");
   if (item.status !== "open" && item.status !== "closed" && item.status !== "blocked") throw new SessionError("INVALID_DATA", "unknown Session status");
   const result: SessionSnapshot = { schemaVersion: item.schemaVersion, id: sessionId(item.id), version: number(item.version, "version"), lastSeq: number(item.lastSeq, "lastSeq"),
     epoch: number(item.epoch, "epoch", 1), status: item.status, configuration: parseConfiguration(item.configuration), selection: parseSelection(item.selection),
@@ -262,6 +278,7 @@ export function parseSession(value: unknown): SessionSnapshot {
   const imported = result.origin?.kind === "import" ? result.origin : undefined;
   if (imported && (result.schemaVersion < 9 || !result.nativeBindings?.some(binding => binding.harnessId === imported.harnessId)))
     throw new SessionError("INVALID_DATA", "a continued native session requires Session v9 and its native reference");
+  if (result.schemaVersion < 10 && result.runs.some(run => run.timing !== undefined)) throw new SessionError("INVALID_DATA", "Run timing requires Session v10");
   if (result.schemaVersion < 9 && result.nativeBindings?.some(binding => binding.observed !== undefined)) throw new SessionError("INVALID_DATA", "observed native configuration requires Session v9");
   if (result.origin?.kind === "fork" && result.origin.sessionId === result.id) throw new SessionError("INVALID_DATA", "a Session cannot be branched from itself");
   if (result.schemaVersion < 6 && (result.nativeBindings !== undefined || result.commands.some(command => command.kind === "native-reset"))) throw new SessionError("INVALID_DATA", "native bindings require Session v6");

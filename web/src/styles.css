@@ -3946,6 +3946,10 @@ a {
 .native-output-image { display: block; max-width: min(100%, 420px); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 .native-output-image img { display: block; width: 100%; height: auto; }
 .native-usage { margin: 6px 0 0; color: var(--muted); font-size: 11.5px; }
+/* Usage and timing of a finished Run share one quiet line. */
+.run-meta { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 10px; margin-top: 6px; }
+.run-meta .native-usage { margin: 0; }
+.run-timing { margin: 0; color: var(--muted); font-size: 11.5px; }
 .spin { animation: native-spin 1s linear infinite; }
 @keyframes native-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spin, .native-tool-chevron { animation: none; transition: none; } }

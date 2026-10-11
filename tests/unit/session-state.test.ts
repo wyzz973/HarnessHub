@@ -30,10 +30,18 @@ test("valid public snapshot keeps independent public identities and exact causal
   const state = parseSession(seed()); assert.equal(state.id, sessionId("session-unit"));
   assert.deepEqual(state.runs[1]?.sourceRunIds, [state.runs[0]?.id]); assert.equal(state.messages[2]?.text, state.runs[1]?.input);
 });
+test("Run timing is bounded, ordered and exists only from Session v10", () => {
+  const state = seed(), run = state.runs[0]!;
+  const timed = (timing: unknown, schemaVersion = 10) => ({ ...state, schemaVersion, runs: [{ ...run, timing }, ...state.runs.slice(1)] });
+  assert.deepEqual(parseSession(timed({ acceptedAt: 10, preparingAt: 12, dispatchedAt: 15, endedAt: 15 })).runs[0]?.timing, { acceptedAt: 10, preparingAt: 12, dispatchedAt: 15, endedAt: 15 });
+  for (const value of [{ acceptedAt: 10, readyAt: 9 }, { acceptedAt: 10, preparingAt: 20, readyAt: 15 }, { acceptedAt: 10, private: 11 }, { preparingAt: 10 }, { acceptedAt: -1 }, { acceptedAt: 1.5 }, { acceptedAt: 9e15 }])
+    assert.throws(() => parseSession(timed(value)), SessionError);
+  assert.throws(() => parseSession(timed({ acceptedAt: 10 }, 9)), /requires Session v10/u);
+});
 test("unknown schemas, properties and inconsistent public ownership are rejected", () => {
   const state = seed();
   assert.equal(parseSession({ ...state, schemaVersion: 3 }).schemaVersion, 3);
-  for (const value of [null, {}, { ...state, schemaVersion: 10 }, { ...state, secret: "not-a-field" },
+  for (const value of [null, {}, { ...state, schemaVersion: 11 }, { ...state, secret: "not-a-field" },
     { ...state, activeRunId: "run-one" }, { ...state, lastSeq: 3 }, { ...state, status: "unknown" },
     { ...state, configuration: { ...state.configuration, workspace: "relative" } }]) assert.throws(() => parseSession(value), SessionError);
 });

@@ -123,6 +123,11 @@ function decodeTool(value: unknown): NonNullable<PublicRun["tools"]>[number] {
   return { id: text(tool.id), title: text(tool.title), status: text(tool.status), ...(tool.kind === undefined ? {} : { kind: text(tool.kind) }), ...(tool.name === undefined ? {} : { name: text(tool.name) }),
     ...(tool.parentId === undefined ? {} : { parentId: text(tool.parentId) }), ...(tool.exitCode === undefined ? {} : { exitCode: number(tool.exitCode) }), ...(tool.detail === undefined ? {} : { detail: contentRef(tool.detail) }) };
 }
+/** When the Run reached its phases; each present phase is a finite number, as the Gateway recorded it. */
+function decodeTiming(value: unknown): NonNullable<PublicRun["timing"]> {
+  const row = record(value), at = (raw: unknown) => { const time = number(raw); return time; };
+  return { acceptedAt: at(row.acceptedAt), ...(["preparingAt", "readyAt", "dispatchedAt", "firstOutputAt", "endedAt"] as const).reduce((phases, name) => row[name] === undefined ? phases : { ...phases, [name]: at(row[name]) }, {}) };
+}
 function decodeRun(value: unknown): PublicRun {
   const row = record(value);
   const backend = row.backend === null ? null : record(row.backend);
@@ -135,7 +140,8 @@ function decodeRun(value: unknown): PublicRun {
       ...(backend.error === undefined ? {} : { error: publicError(backend.error) ?? invalid() }) },
     cleanup: cleanup === null ? null : { closed: true, exitCode: nullableNumber(cleanup.exitCode), signal: nullableText(cleanup.signal), protocolFailure: publicError(cleanup.protocolFailure) },
     error: publicError(row.error), ...(row.thinking === undefined ? {} : { thinking: text(row.thinking) }), ...(row.tools === undefined ? {} : { tools: list(row.tools, decodeTool, 128) }), ...decodeActivityFields(row),
-    ...(row.attachments === undefined ? {} : { attachments: list(row.attachments, contentRef, 8) }), stopRequested: bool(row.stopRequested), awaitingSwitchId: row.awaitingSwitchId === null ? null : switchId(row.awaitingSwitchId) };
+    ...(row.attachments === undefined ? {} : { attachments: list(row.attachments, contentRef, 8) }), ...(row.timing === undefined ? {} : { timing: decodeTiming(row.timing) }),
+    stopRequested: bool(row.stopRequested), awaitingSwitchId: row.awaitingSwitchId === null ? null : switchId(row.awaitingSwitchId) };
 }
 function decodeSwitch(value: unknown): PublicSwitch {
   const row = record(value);

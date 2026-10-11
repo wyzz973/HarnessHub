@@ -71,6 +71,24 @@ export interface PublicActivity { readonly id: string; readonly kind: "subagent"
 export type PublicOutput =
   | { readonly kind: "content"; readonly content: ContentRef }
   | { readonly kind: "link"; readonly uri: string; readonly name: string; readonly title?: string; readonly mediaType?: string };
+/**
+ * When a Run reached each phase, in epoch milliseconds from the Runtime's clock (Session v10). A phase the Run did not reach
+ * is absent; the Harness never supplies these values.
+ */
+export interface RunTiming {
+  /** The input was accepted and queued. */
+  readonly acceptedAt: number;
+  /** Preparation began: the original program is being started for this Run. */
+  readonly preparingAt?: number;
+  /** The program answered its handshake and its native session (new or restored) is open. */
+  readonly readyAt?: number;
+  /** The input was handed to the program. */
+  readonly dispatchedAt?: number;
+  /** The first visible native output arrived: reply text, thinking, a tool, a plan, an approval or question, an output or an activity. */
+  readonly firstOutputAt?: number;
+  /** The Run reached its final status. */
+  readonly endedAt?: number;
+}
 export interface PublicRun {
   readonly id: RunId;
   readonly commandId: CommandId;
@@ -95,6 +113,7 @@ export interface PublicRun {
   readonly outputs?: readonly PublicOutput[];
   /** User attachments admitted with this input; the bytes stay in the content store. */
   readonly attachments?: readonly ContentRef[];
+  readonly timing?: RunTiming;
   readonly stopRequested: boolean;
   readonly awaitingSwitchId: SwitchId | null;
 }
@@ -166,7 +185,7 @@ export interface ImportOrigin {
   readonly history: readonly ForkedMessage[];
 }
 export interface SessionSnapshot {
-  readonly schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+  readonly schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
   readonly id: SessionId;
   readonly version: number;
   readonly lastSeq: number;

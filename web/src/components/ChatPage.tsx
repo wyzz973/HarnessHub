@@ -100,6 +100,15 @@ export function ChatPage(props: ChatProps) {
   const title = session?.messages.find(message => message.role === "user")?.text ?? (branchedTitle ? "分支 · " + branchedTitle : props.sessionRequested || props.sessionError ? "打开对话" : "新对话");
   const runs = useMemo(() => new Map(session?.runs.map(run => [run.id, run])), [session?.runs]);
   const assistantRuns = useMemo(() => new Set(session?.messages.filter(message => message.role === "assistant").map(message => message.runId)), [session?.messages]);
+  // How long the same Harness took to start in the latest earlier Run of this conversation, shown while a Run starts.
+  const startupHints = useMemo(() => {
+    const hints = new Map<string, number>(), latest = new Map<string, number>();
+    for (const run of session?.runs ?? []) {
+      const known = latest.get(run.selection.harnessId); if (known !== undefined) hints.set(run.id, known);
+      if (run.timing?.preparingAt !== undefined && run.timing.readyAt !== undefined) latest.set(run.selection.harnessId, (run.timing.readyAt - run.timing.preparingAt) / 1000);
+    }
+    return hints;
+  }, [session?.runs]);
   const availableHarnesses = harnesses.filter(harness => harness.controls.some(control => control.available));
 
   const scrollToLatest = useCallback(() => {
@@ -200,8 +209,8 @@ export function ChatPage(props: ChatProps) {
         : <div className="transcript" ref={transcript} role="log" aria-label="对话历史" aria-live="off">
           {session.origin ? <BranchOrigin origin={session.origin} session={session} harnesses={harnesses} onOpenSource={props.onOpenSession}/> : null}
           {session.messages.length === 0 && session.origin ? null : session.messages.length === 0 ? <div className="conversation-empty"><BrandMark/><h2>对话准备好了</h2><p>发出第一条消息，开始这次协作。</p></div> : session.messages.map(message => <Fragment key={message.id}>
-            <ChatMessage message={message} run={runs.get(message.runId)} harnesses={harnesses} providers={providers} onEdit={fillDraft} onRetry={canRetry ? (text, sent) => { void send(text, sent ?? []).catch(() => {}); } : undefined} {...(props.onToolDetail ? { loadToolDetail: props.onToolDetail } : {})} {...(canBranch && props.onBranch ? { onBranch: props.onBranch } : {})}/>
-            {message.role === "user" && !assistantRuns.has(message.runId) && runs.has(message.runId) ? <ChatMessage message={undefined} run={runs.get(message.runId)} harnesses={harnesses} providers={providers} onEdit={fillDraft} onRetry={canRetry ? (text, sent) => { void send(text, sent ?? []).catch(() => {}); } : undefined} {...(props.onToolDetail ? { loadToolDetail: props.onToolDetail } : {})}/> : null}
+            <ChatMessage message={message} run={runs.get(message.runId)} startupHint={startupHints.get(message.runId)} harnesses={harnesses} providers={providers} onEdit={fillDraft} onRetry={canRetry ? (text, sent) => { void send(text, sent ?? []).catch(() => {}); } : undefined} {...(props.onToolDetail ? { loadToolDetail: props.onToolDetail } : {})} {...(canBranch && props.onBranch ? { onBranch: props.onBranch } : {})}/>
+            {message.role === "user" && !assistantRuns.has(message.runId) && runs.has(message.runId) ? <ChatMessage message={undefined} run={runs.get(message.runId)} startupHint={startupHints.get(message.runId)} harnesses={harnesses} providers={providers} onEdit={fillDraft} onRetry={canRetry ? (text, sent) => { void send(text, sent ?? []).catch(() => {}); } : undefined} {...(props.onToolDetail ? { loadToolDetail: props.onToolDetail } : {})}/> : null}
           </Fragment>)}
           {session.switches.length > 0 ? <details className="selection-history"><summary>选择记录 <span>{session.switches.length}</span></summary>{session.switches.map(item => <div className={`switch-record ${item.status}`} key={item.id}><span>{harnesses.find(harness => harness.id === item.requested.harnessId)?.name ?? item.requested.harnessId}</span><StatusBadge tone={item.status === "failed" ? "danger" : item.status === "effective" ? "success" : "warning"}>{item.status === "effective" ? "已生效" : item.status === "failed" ? "切换失败" : "等待生效"}</StatusBadge>{item.requested.provider ? <small>{providers.find(provider => provider.id === item.requested.provider?.providerId)?.name ?? "Provider"} · {item.requested.provider.model}</small> : null}{item.error ? <small className="error-text">{failureMessage(item.error)}</small> : null}</div>)}</details> : null}
         </div>}

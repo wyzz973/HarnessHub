@@ -64,3 +64,5 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
 - [ADR-030：在回合之间保留原生进程以运行后台任务](0030-retained-native-processes.md)（accepted，分阶段、本阶段最后）：采纳“需要时由用户选择结束后台进程”；按对话显式开启、默认关闭，空闲 30 分钟结束，最多保留 4 个。
 
 - [ADR-031：接入 Hermes Agent 与 DeepSeek Harness](0031-hermes-and-deepseek-harness.md)（accepted）：两者经内置 ACP 接入；Hermes 恢复只用 session/load、文件改为文本指针、60 秒审批期限、/model 回复同步；通用 ACP 的 load 回放窗口从响应开始；发现只走 PATH/标准目录与显式自定义入口。
+
+- [ADR-032：记录并显示回合阶段与首字延迟](0032-run-phases-and-first-output.md)（accepted）：Run 记录受理、准备、就绪、发送、首个输出与结束（Session v10）；界面按阶段显示已用时间，结束后显示首字与用时。

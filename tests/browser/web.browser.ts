@@ -570,6 +570,8 @@ test("unified chat shows native plan, notices, tool details with diffs and turn 
   await expect(log.getByText("计划 · 1/2 完成")).toBeVisible(); await expect(log.getByText("修改文件")).toBeVisible();
   await expect(log.getByText("浏览器验收提示")).toBeVisible();
   await expect(log.getByText(/输入 1\.2k · 输出 300 · 上下文 15%/u)).toBeVisible();
+  // The Run's own phases give the first-output and total time next to its usage.
+  await expect(log.locator(".run-timing").first()).toHaveText(/^首字 [0-9.]+ 秒 · 用时 [0-9.]+ 秒$/u);
   const command = log.getByRole("button", { name: /ls -la/u });
   await expect(command).toBeEnabled(); await command.click();
   await expect(log.getByText("README.md").first()).toBeVisible(); await expect(log.locator(".native-tool-detail pre").first()).toContainText("ls -la");
