@@ -3,7 +3,7 @@ import { TOOL_DIFF_BYTES, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type BackendResul
 import { MAX_RUN_ATTACHMENTS, MAX_RUN_OUTPUTS, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
 import {
   SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId, DEFAULT_EXECUTION_BUDGET_MS, DEFAULT_WAIT_BUDGET_MS, MAX_PARALLEL_CONVERSATIONS, STOP_GRACE_MS,
-  type AttentionItem, type ForkedMessage, type HarnessSelection, type KeptProcessIdentity, type NativeConfiguration, type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicNotice, type PublicRun, type RunTiming,
+  type AttentionItem, type ForkedMessage, type HarnessSelection, type KeptProcessIdentity, type OutsideEvidence, type OutsideProcess, type NativeConfiguration, type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicNotice, type PublicRun, type RunTiming,
   type SelectionRequest, type SendReceipt, type SessionBindingFactory, type SessionCommit, type SessionConfiguration,
   type SessionId, type SessionEvent, type SessionMutation, type SessionRuntimeOptions, type SessionSnapshot, type SessionStore, type SwitchReceipt,
 } from "../../../contracts/session.js";
@@ -155,6 +155,8 @@ export class SessionRuntime {
   private readonly kept = new Map<SessionId, KeptProcess>();
   /** Kept processes being closed; every Turn or switch waits for them first, so none meets a lease about to be released. */
   private readonly releasing = new Map<SessionId, Promise<void>>();
+  /** Background processes that left a closed or taken-over program's group and still ran; said once in their conversations. */
+  private readonly outside = new Map<SessionId, { readonly count: number; readonly at: number }>();
   /** Processes a previous owner kept and this owner found at start, with what became of them; shown in their conversations. */
   private readonly lost = new Map<SessionId, { readonly outcome: "terminated" | "gone" | "unconfirmed"; readonly leaseReleased: boolean; readonly at: number }>();
   /** The latest Turns' stderr tails, oldest first; private until redacted for the user's diagnostics. */
@@ -340,7 +342,7 @@ export class SessionRuntime {
       sourceRunIds: [], backend: null, cleanup: null, error: null, stopRequested: false, awaitingSwitchId: state.pendingSwitchId, ...(attachments.length ? { attachments } : {}),
       timing: { acceptedAt: this.options.now().getTime() } };
     // What this owner found of a process kept under the previous one is shown until the conversation's next Turn.
-    this.lost.delete(id);
+    this.lost.delete(id); this.outside.delete(id);
     this.commit(id, current => ({ next: { ...current, runs: [...current.runs, run],
       messages: [...current.messages, { id: userId, runId: nextId, role: "user", text, seq: current.lastSeq + 1, status: "queued" }],
       commands: [...current.commands, { id: command, kind: "send", fingerprint, resultId: nextId }] },
@@ -495,6 +497,24 @@ export class SessionRuntime {
   }
   /** What became of the process this conversation kept under the previous owner, when this owner found one at start. */
   keptLoss(id: SessionId): { readonly outcome: "terminated" | "gone" | "unconfirmed"; readonly leaseReleased: boolean; readonly at: number } | null { return this.lost.get(id) ?? null; }
+  /** How many background processes of this conversation's closed program may still run, until its next Turn. */
+  keptOutside(id: SessionId): { readonly count: number; readonly at: number } | null { return this.outside.get(id) ?? null; }
+  /**
+   * Before a kept program's group is ended: the processes that left it, read once and never signalled. After: which still
+   * run. The evidence keeps 0 found apart from not knowing, and a conversation hears of those still running once.
+   */
+  private async outsideBefore(identity: KeptProcessIdentity | undefined): Promise<readonly OutsideProcess[] | null> {
+    if (identity === undefined || this.options.processes?.outsiders === undefined) return null;
+    try { return await this.options.processes.outsiders(identity); } catch { return null; }
+  }
+  private async outsideAfter(id: SessionId, found: readonly OutsideProcess[] | null): Promise<OutsideEvidence> {
+    if (found === null) return { state: "unknown" };
+    let remaining: readonly OutsideProcess[] | null = [];
+    if (found.length) { try { remaining = this.options.processes?.running === undefined ? null : await this.options.processes.running(found); } catch { remaining = null; } }
+    const still = remaining === null ? found.length : remaining.length;
+    if (still > 0) this.outside.set(id, { count: still, at: this.options.now().getTime() });
+    return { state: "enumerated", found: found.length, remaining: remaining === null ? null : remaining.length, commands: [...new Set(found.map(item => item.command))].slice(0, 16) };
+  }
   /**
    * Ends the native process groups that conversations kept under an owner that ended without closing them (ADR-030), and
    * releases each one's workspace lease once the end is confirmed. A group that cannot be recognized (no recorded identity,
@@ -508,15 +528,17 @@ export class SessionRuntime {
       const retained = state.retained;
       if (retained === undefined || this.kept.has(state.id)) continue;
       let outcome: "terminated" | "gone" | "unconfirmed" = "unconfirmed";
+      const found = await this.outsideBefore(retained.process);
       if (retained.process !== undefined && this.options.processes !== undefined) {
         try { outcome = await this.options.processes.end(retained.process); } catch { outcome = "unconfirmed"; }
       }
+      const outside = await this.outsideAfter(state.id, found);
       let leaseReleased = false;
       if (outcome !== "unconfirmed") { try { leaseReleased = this.factory.releaseAbandonedLease?.(state.configuration, state.id) ?? false; } catch { leaseReleased = false; } }
       const at = this.options.now().getTime();
       this.commit(state.id, current => {
         const { retained: _held, ...rest } = current;
-        return { next: rest, events: [event("native.process_lost", { runId: retained.runId, harnessId: retained.harnessId, controlId: retained.controlId, reason: "owner_ended", outcome, leaseReleased })] };
+        return { next: rest, events: [event("native.process_lost", { runId: retained.runId, harnessId: retained.harnessId, controlId: retained.controlId, reason: "owner_ended", outcome, leaseReleased, outside })] };
       });
       this.lost.set(state.id, { outcome, leaseReleased, at });
       outcomes.push({ sessionId: state.id, outcome, leaseReleased });
@@ -547,10 +569,12 @@ export class SessionRuntime {
     this.kept.delete(id); clearTimeout(kept.timer);
     const backgroundUpdates = this.background(kept);
     let cleanup: CleanupEvidence | null = null, problem: ReturnType<typeof fault> | null = null;
+    const found = await this.outsideBefore(kept.identity);
     try { cleanup = await kept.binding.close(); } catch (error) { problem = fault(error); }
+    const outside = await this.outsideAfter(id, found);
     this.commit(id, current => {
       const { retained, ...rest } = current;
-      return { next: rest, events: [event("native.process_closed", { runId: kept.runId, reason, backgroundUpdates, cleanup, ...(problem === null ? {} : { error: problem }) })] };
+      return { next: rest, events: [event("native.process_closed", { runId: kept.runId, reason, backgroundUpdates, cleanup, outside, ...(problem === null ? {} : { error: problem }) })] };
     });
   }
   /** The process this conversation kept, when it can take a Turn with `selection`; a kept process that cannot is closed first. */

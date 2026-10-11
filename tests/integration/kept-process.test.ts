@@ -23,9 +23,10 @@ const NOW = new Date("2026-10-12T00:00:00Z");
 
 /** Real ACP fixture processes behind real workspace leases; every prepared connection is recorded. */
 class KeptFactory implements SessionBindingFactory {
-  readonly prepared: { readonly run: string; readonly trace: string; readonly pid: string; closed: boolean }[] = [];
+  readonly prepared: { readonly run: string; readonly trace: string; readonly pid: string; readonly outsider: string | null; closed: boolean }[] = [];
   private readonly lease: SqliteWorkspaceLeaseProvider;
-  constructor(private readonly root: string, private readonly protocol: "acp-v1" | "codex-app-server" = "acp-v1") { this.lease = new SqliteWorkspaceLeaseProvider(join(root, "leases")); }
+  /** `outsiders`: each program starts a background task in its own process group, its id written next to its trace. */
+  constructor(private readonly root: string, private readonly protocol: "acp-v1" | "codex-app-server" = "acp-v1", private readonly outsiders = false) { this.lease = new SqliteWorkspaceLeaseProvider(join(root, "leases")); }
   async validate(request: SelectionRequest): Promise<HarnessSelection> {
     if (request.harnessId !== "alpha") throw new SessionError("HARNESS_UNAVAILABLE", "fixture target is unavailable");
     return { harnessId: "alpha", controlId: "alpha-acp", ...(request.nativeModel === undefined ? {} : { nativeModel: request.nativeModel }) };
@@ -33,8 +34,9 @@ class KeptFactory implements SessionBindingFactory {
   async prepare(_selected: HarnessSelection, configuration: SessionConfiguration, session: SessionId, run: string): Promise<PreparedSessionBinding> {
     const lease = this.lease.acquire(configuration.workspace, session, run);
     const index = this.prepared.length, trace = join(this.root, "trace-" + index + ".ndjson"), pid = join(this.root, "peer-" + index + ".pid");
-    const entry = { run, trace, pid, closed: false }; this.prepared.push(entry);
-    const env = { FIXTURE_TRACE: trace, FIXTURE_PID: pid, FIXTURE_RESUME_MODELS: "1", LANG: "C.UTF-8" };
+    const outsider = this.outsiders ? join(this.root, "outsider-" + index + ".pid") : null;
+    const entry = { run, trace, pid, outsider, closed: false }; this.prepared.push(entry);
+    const env = { FIXTURE_TRACE: trace, FIXTURE_PID: pid, FIXTURE_RESUME_MODELS: "1", LANG: "C.UTF-8", ...(outsider === null ? {} : { FIXTURE_OUTSIDER: outsider }) };
     // The Hermes-like ACP fixture declares session/resume and load, and every Codex thread can be resumed, so the native
     // session is confirmed after every Turn.
     const options = { cwd: configuration.workspace, env, requestTimeoutMs: 2000, runTimeoutMs: 5000, maxFrameBytes: 2 * 1024 * 1024, maxDiagnosticBytes: 4096, closeGraceMs: 120 };
@@ -208,10 +210,11 @@ async function settle(check: () => boolean): Promise<boolean> {
  * Runs a separate Gateway owner that keeps the native process of one conversation in `root`, then kills that owner with
  * SIGKILL, so nothing of it is closed. With `linger`, the kept program leaves a background task in its process group.
  */
-async function crashedOwner(root: string, workspace: string, identify: boolean, linger: boolean) {
-  const leaderFile = join(root, "leader.pid"), memberFile = join(root, "member.pid");
+/** `hold`: the kept program keeps running after its owner dies; `outsider`: it started a task in its own process group. */
+async function crashedOwner(root: string, workspace: string, identify: boolean, linger: boolean, outsider = false, hold = false) {
+  const leaderFile = join(root, "leader.pid"), memberFile = join(root, "member.pid"), outsiderFile = join(root, "outsider.pid");
   const owner = spawn(process.execPath, [keptOwner, build, join(root, "data"), join(root, "leases"), workspace, peer, identify ? "1" : "0"],
-    { env: { PATH: process.env.PATH ?? "", LANG: "C.UTF-8", FIXTURE_PID: leaderFile, ...(linger ? { FIXTURE_LINGER: "1", FIXTURE_CHILD_PID: memberFile } : {}) }, stdio: ["ignore", "pipe", "inherit"] });
+    { env: { PATH: process.env.PATH ?? "", LANG: "C.UTF-8", FIXTURE_PID: leaderFile, ...(linger ? { FIXTURE_LINGER: "1", FIXTURE_CHILD_PID: memberFile } : {}), ...(outsider ? { FIXTURE_OUTSIDER: outsiderFile } : {}), ...(hold ? { FIXTURE_HOLD: "1" } : {}) }, stdio: ["ignore", "pipe", "inherit"] });
   owner.stdout.setEncoding("utf8");
   const line = await new Promise<string>((done, reject) => {
     let output = "";
@@ -221,7 +224,8 @@ async function crashedOwner(root: string, workspace: string, identify: boolean, 
   });
   const exited = once(owner, "exit"); owner.kill("SIGKILL"); await exited;
   const kept = JSON.parse(line) as { readonly session: string; readonly retained: { readonly runId: string; readonly process?: { readonly group: number; readonly startedAt: string } } | null };
-  return { session: kept.session as SessionId, retained: kept.retained, leader: Number(await readFile(leaderFile, "utf8")), member: linger ? Number(await readFile(memberFile, "utf8")) : null };
+  return { session: kept.session as SessionId, retained: kept.retained, leader: Number(await readFile(leaderFile, "utf8")), member: linger ? Number(await readFile(memberFile, "utf8")) : null,
+    outsider: outsider ? Number(await readFile(outsiderFile, "utf8")) : null };
 }
 /** The owner that starts after a crashed one, on the same data and lease roots. */
 function nextOwner(t: test.TestContext, root: string, cleanup: () => void) {
@@ -247,7 +251,10 @@ test("a process kept under an owner that was killed is ended at the next start, 
   assert.deepEqual(app.keptLoss(crashed.session), { outcome: "terminated", leaseReleased: true, at: NOW.getTime() });
   assert.ok(await settle(() => !alive(crashed.member!)), "the whole group ended, the background task included");
   assert.equal(app.read(crashed.session).retained, undefined);
-  assert.deepEqual(lost(crashed.session), [{ runId: crashed.retained?.runId, harnessId: "alpha", controlId: "alpha-acp", reason: "owner_ended", outcome: "terminated", leaseReleased: true }]);
+  // The program left with its owner, so whatever it had started was adopted elsewhere: unknown, never zero.
+  assert.deepEqual(lost(crashed.session), [{ runId: crashed.retained?.runId, harnessId: "alpha", controlId: "alpha-acp", reason: "owner_ended", outcome: "terminated", leaseReleased: true,
+    outside: { state: "unknown" } }]);
+  assert.equal(app.keptOutside(crashed.session), null);
 
   app.send(crashed.session, "again", "again"); await app.wait(crashed.session);
   const next = app.read(crashed.session).runs.at(-1)!;
@@ -265,6 +272,8 @@ test("a kept program that ended with its owner is recorded as gone and its works
   assert.deepEqual(await app.reapKept(), [{ sessionId: crashed.session, outcome: "gone", leaseReleased: true }], "the outcomes it reports");
   assert.deepEqual(app.keptLoss(crashed.session), { outcome: "gone", leaseReleased: true, at: NOW.getTime() });
   assert.deepEqual(lost(crashed.session).map(data => (data as { outcome: string }).outcome), ["gone"]);
+  // The program and its group are gone, so its descendants, if any, were adopted elsewhere: they cannot be enumerated.
+  assert.deepEqual(lost(crashed.session).map(data => (data as { outside: unknown }).outside), [{ state: "unknown" }]);
   app.send(crashed.session, "again", "again"); await app.wait(crashed.session);
   assert.equal(app.read(crashed.session).runs.at(-1)!.status, "completed");
 });
@@ -277,10 +286,57 @@ test("a kept process without a recorded identity is never signalled and its work
   assert.deepEqual(await app.reapKept(), [{ sessionId: crashed.session, outcome: "unconfirmed", leaseReleased: false }], "the outcomes it reports");
   assert.deepEqual(app.keptLoss(crashed.session), { outcome: "unconfirmed", leaseReleased: false, at: NOW.getTime() });
   assert.ok(alive(crashed.member!), "a group that cannot be recognized is left running");
-  assert.deepEqual(lost(crashed.session).map(data => [(data as { outcome: string }).outcome, (data as { leaseReleased: boolean }).leaseReleased]), [["unconfirmed", false]]);
+  assert.deepEqual(lost(crashed.session).map(data => [(data as { outcome: string }).outcome, (data as { leaseReleased: boolean }).leaseReleased, (data as { outside: unknown }).outside]), [["unconfirmed", false, { state: "unknown" }]]);
   assert.equal(app.read(crashed.session).retained, undefined, "the record is resolved once; the quarantine carries on");
   app.send(crashed.session, "again", "again");
   await assert.rejects(app.wait(crashed.session), { code: "SESSION_BLOCKED" }, "an unresolved workspace blocks the conversation as before");
   const refused = app.read(crashed.session).runs.at(-1)!;
   assert.equal(refused.status, "unknown"); assert.equal(refused.error?.code, "WORKSPACE_QUARANTINED"); assert.equal(factory.prepared.length, 0);
+});
+
+test("a taken-over program that still runs: what left its group is recorded, left running and said once; none found is zero", posixOnly, async t => {
+  // Without an outside task: the leader still runs, so finding none means none.
+  const plain = await mkdtemp(join(tmpdir(), "harness-kept-outside-")), plainWorkspace = join(plain, "crash"); await mkdir(plainWorkspace);
+  const quiet = await crashedOwner(plain, plainWorkspace, true, true, false, true);
+  const first = nextOwner(t, plain, () => { try { process.kill(-quiet.leader, "SIGKILL"); } catch { /* already ended */ } });
+  assert.ok(alive(quiet.leader), "the program outlived its owner");
+  assert.deepEqual(await first.app.reapKept(), [{ sessionId: quiet.session, outcome: "terminated", leaseReleased: true }]);
+  assert.deepEqual(first.lost(quiet.session).map(data => (data as { outside: unknown }).outside), [{ state: "enumerated", found: 0, remaining: 0, commands: [] }]);
+  assert.equal(first.app.keptOutside(quiet.session), null);
+
+  const root = await mkdtemp(join(tmpdir(), "harness-kept-outside-")), workspace = join(root, "crash"); await mkdir(workspace);
+  const crashed = await crashedOwner(root, workspace, true, true, true, true);
+  const { app, lost } = nextOwner(t, root, () => { for (const pid of [crashed.outsider!]) { try { process.kill(pid, "SIGKILL"); } catch { /* already ended */ } } try { process.kill(-crashed.leader, "SIGKILL"); } catch { /* already ended */ } });
+  assert.ok(alive(crashed.outsider!) && alive(crashed.leader));
+  assert.deepEqual(await app.reapKept(), [{ sessionId: crashed.session, outcome: "terminated", leaseReleased: true }]);
+  assert.deepEqual(lost(crashed.session).map(data => (data as { outside: unknown }).outside), [{ state: "enumerated", found: 1, remaining: 1, commands: ["node"] }]);
+  assert.ok(alive(crashed.outsider!), "the Hub never signals what left the group");
+  assert.equal(app.keptOutside(crashed.session)?.count, 1);
+  app.send(crashed.session, "again", "again"); await app.wait(crashed.session);
+  assert.equal(app.keptOutside(crashed.session), null, "said until the next Turn");
+});
+
+test("closing a kept program records the background task that left its group, leaves it running and says so once", posixOnly, async t => {
+  const root = await mkdtemp(join(tmpdir(), "harness-kept-outside-")), workspace = join(root, "outside"); await mkdir(workspace);
+  const store = new SqliteSessionStore(join(root, "data")), factory = new KeptFactory(root, "acp-v1", true);
+  let id = 0;
+  const app = new SessionRuntime(store, factory, { id: () => "outside-" + String(++id), now: () => NOW, publish: () => {}, fingerprint: value => createHash("sha256").update(value).digest("hex"), processes: new PosixProcessGroups() });
+  t.after(async () => {
+    try { await app.close(); } finally {
+      store.close();
+      for (const entry of factory.prepared) { try { process.kill(Number(await readFile(entry.outsider!, "utf8")), "SIGKILL"); } catch { /* already ended */ } }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+  const session = await app.create({ workspace, manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: true }, { harnessId: "alpha" }, "create");
+  app.setRetention(session.id, true, "keep"); app.send(session.id, "first", "first"); await app.wait(session.id);
+  assert.notEqual(app.read(session.id).retained, undefined);
+  const outsider = Number(await readFile(factory.prepared[0]!.outsider!, "utf8"));
+  await app.endKept(session.id, "end");
+  const closed = store.events(session.id, 0).filter(event => event.type === "native.process_closed").map(event => (event.data as { outside: unknown; reason: string }));
+  assert.deepEqual(closed.map(data => [data.reason, data.outside]), [["ended_by_user", { state: "enumerated", found: 1, remaining: 1, commands: ["node"] }]]);
+  assert.ok(alive(outsider), "the Hub never signals what left the group");
+  assert.equal(app.keptOutside(session.id)?.count, 1);
+  app.send(session.id, "again", "again"); await app.wait(session.id);
+  assert.equal(app.keptOutside(session.id), null, "said until the next Turn");
 });

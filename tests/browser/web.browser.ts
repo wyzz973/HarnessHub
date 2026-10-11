@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -14,7 +14,7 @@ import { prepareConfiguration } from "../../src/infrastructure/session/binding-f
 
 const peer = fileURLToPath(new URL("../../../tests/fixtures/web-harness-peer.mjs", import.meta.url));
 const artifact = resolve("artifacts/chat-v3");
-async function launchFixture(providerManagement = true, nativeAcp: { readonly name: string; readonly scenario: string } | null = null, nativeCodex: { readonly name: string; readonly scenario: string } | null = null, hermes = false,
+async function launchFixture(providerManagement = true, nativeAcp: { readonly name: string; readonly scenario: string; readonly env?: Readonly<Record<string, string>> } | null = null, nativeCodex: { readonly name: string; readonly scenario: string } | null = null, hermes = false,
   budgets?: { readonly executionBudgetMs: number; readonly waitBudgetMs: number }) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "harness-web-browser-")));
   const workspace = join(root, "workspace"), shim = join(root, "codex-fixture.mjs"); await mkdir(workspace);
@@ -27,7 +27,7 @@ async function launchFixture(providerManagement = true, nativeAcp: { readonly na
   await writeFile(authShim, "#!" + process.execPath + "\nprocess.stderr.write('unauthorized: gateway token missing\\n');process.exit(1);\n", { mode: 0o700 });
   // An ACP agent whose native command changes one of its own settings and announces it (control-peer "native-config").
   const acp = nativeAcp === null ? null : { id: "native-acp", name: nativeAcp.name, aliases: [], binaryNames: [], configHints: [], controls: [{ id: "native-acp", protocol: "acp-v1", executableNames: ["fixture"],
-    args: [fileURLToPath(new URL("../../../tests/fixtures/control-peer.mjs", import.meta.url)), "acp-v1", nativeAcp.scenario], env: {}, package: null, distribution: null, requiredExecutables: [],
+    args: [fileURLToPath(new URL("../../../tests/fixtures/control-peer.mjs", import.meta.url)), "acp-v1", nativeAcp.scenario], env: nativeAcp.env ?? {}, package: null, distribution: null, requiredExecutables: [],
     source: { repository: "fixture", revision: nativeAcp.scenario, upstreamId: "fixture", url: "https://example.invalid/" + nativeAcp.scenario } }] };
   // A Codex app-server fixture under its own entry, for scenarios the default Codex shim cannot select (plan mode).
   const codex = nativeCodex === null ? null : { id: "native-codex", name: nativeCodex.name, aliases: [], binaryNames: [], configHints: [], controls: [{ id: "native-codex", protocol: "codex-app-server", executableNames: ["fixture"],
@@ -1134,5 +1134,39 @@ test("the execution settings name the native session and, without a verified ver
   await expect(resume.getByRole("button", { name: "复制恢复命令", exact: true })).toHaveCount(0);
   await expect(resume.getByRole("button", { name: "复制原生会话 ID", exact: true })).toBeVisible();
   await page.screenshot({ path: join(artifact, "native-resume.png"), animations: "disabled" });
+  assert.deepEqual(errors, []);
+});
+
+test("ending a kept process says once that its background tasks outside its group may still run", { skip: process.platform === "win32" ? "process groups are POSIX; Windows is not verified" : false, timeout: 120000 }, async t => {
+  const outsiderDirectory = await realpath(await mkdtemp(join(tmpdir(), "harness-outside-browser-"))), outsiderFile = join(outsiderDirectory, "outsider.pid");
+  const fixture = await launchFixture(false, { name: "Kept Agent", scenario: "hermes", env: { FIXTURE_OUTSIDER: outsiderFile } }); let browser: Browser | null = null;
+  t.after(async () => {
+    try { await browser?.close(); } finally {
+      await fixture.close();
+      for (const line of (await readFile(outsiderFile, "utf8").catch(() => "")).split("\n").filter(Boolean)) { try { process.kill(Number(line), "SIGKILL"); } catch { /* already ended */ } }
+      await rm(outsiderDirectory, { recursive: true, force: true });
+    }
+  });
+  browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Kept Agent", exact: true }).click();
+  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  await page.getByRole("checkbox", { name: "保持原生进程" }).click(); await page.keyboard.press("Escape");
+  await composer.fill("first"); await composer.press("Enter");
+  await expect(log.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
+  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  await expect(page.locator(".kept-setting")).toContainText("原生进程保留中");
+  await page.locator(".kept-setting").getByRole("button", { name: "结束后台进程", exact: true }).click();
+  await expect(page.locator(".kept-setting")).not.toContainText("原生进程保留中");
+  await page.keyboard.press("Escape");
+  await expect(page.getByText("原程序的后台任务可能仍在运行（1 个进程）：它们已离开原程序的进程组，HarnessHub 没有结束它们。")).toBeVisible();
+  await page.screenshot({ path: join(artifact, "kept-outside.png"), animations: "disabled" });
+  // Said once: the next message ends the notice.
+  await composer.fill("second"); await composer.press("Enter");
+  await expect(log.locator("[data-run-status=completed]")).toHaveCount(2, { timeout: 15000 });
+  await expect(page.getByText("原程序的后台任务可能仍在运行", { exact: false })).toHaveCount(0);
   assert.deepEqual(errors, []);
 });

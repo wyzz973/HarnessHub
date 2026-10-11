@@ -159,7 +159,7 @@ function summary(snapshot: SessionSnapshot): SessionSummary {
     selection: snapshot.selection, updatedSeq: snapshot.lastSeq, activeRunId: snapshot.activeRunId };
 }
 function view(snapshot: SessionSnapshot, permissions: SessionView["permissions"] = [], kept: KeptProcessView | null = null, lost: NonNullable<SessionView["retention"]>["lost"] | null = null,
-  queue: SessionView["queue"] | null = null, busyHolders: SessionView["busyHolders"] = {}): SessionView {
+  queue: SessionView["queue"] | null = null, busyHolders: SessionView["busyHolders"] = {}, outside: NonNullable<SessionView["retention"]>["outside"] | null = null): SessionView {
   return { id: snapshot.id, version: snapshot.version, lastSeq: snapshot.lastSeq, epoch: snapshot.epoch, status: snapshot.status,
     workspace: snapshot.configuration.workspace, selection: snapshot.selection, activeRunId: snapshot.activeRunId, pendingSwitchId: snapshot.pendingSwitchId,
     permissions, nativeStates: snapshot.nativeBindings?.flatMap(binding => {
@@ -169,7 +169,7 @@ function view(snapshot: SessionSnapshot, permissions: SessionView["permissions"]
         ...(binding.observed === undefined ? {} : { observed: binding.observed }), ...(carried === null ? {} : { carried }) }];
     }) ?? [],
     ...(snapshot.origin === undefined ? {} : { origin: snapshot.origin }), ...(queue === null ? {} : { queue }), ...(Object.keys(busyHolders).length ? { busyHolders } : {}),
-    ...(snapshot.schemaVersion < 11 ? {} : { retention: { enabled: snapshot.retainNative === true, process: kept, ...(lost === null ? {} : { lost }) } }), messages: snapshot.messages, runs: snapshot.runs, switches: snapshot.switches };
+    ...(snapshot.schemaVersion < 11 ? {} : { retention: { enabled: snapshot.retainNative === true, process: kept, ...(lost === null ? {} : { lost }), ...(outside === null ? {} : { outside }) } }), messages: snapshot.messages, runs: snapshot.runs, switches: snapshot.switches };
 }
 function publicFailure(error: unknown): { readonly status: number; readonly code: string; readonly message: string } {
   if (error instanceof HttpError || error instanceof SessionStreamError) return error;
@@ -269,7 +269,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     return workspace !== null ? { kind: "workspace", ...workspace } : slot !== null ? { kind: "slot", ...slot } : null;
   };
   const sessionView = (snapshot: SessionSnapshot, permissions: SessionView["permissions"] = []): SessionView => view(snapshot, permissions, app.runtime.keptProcess(snapshot.id), app.runtime.keptLoss(snapshot.id),
-    queueOf(snapshot.id), Object.fromEntries(snapshot.runs.flatMap(run => { const holder = app.runtime.busyHolderOf(run.id); return holder === null ? [] : [[run.id, holder]]; })));
+    queueOf(snapshot.id), Object.fromEntries(snapshot.runs.flatMap(run => { const holder = app.runtime.busyHolderOf(run.id); return holder === null ? [] : [[run.id, holder]]; })),
+    app.runtime.keptOutside(snapshot.id));
   const streams = new SessionStreamHub(id => sessionView(app.runtime.read(id), app.runtime.permissionRequests(id)), {}, failure => {
     const fault = publicFailure(failure.error);
     process.stderr.write("HarnessGateway: SESSION_STREAM_READ_FAILED (" + app.providers.redact(fault.code).slice(0, 128) + ")\n");

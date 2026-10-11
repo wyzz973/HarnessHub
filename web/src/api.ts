@@ -173,7 +173,8 @@ export function decodeSession(value: unknown): SessionView {
   return { id: text(row.id), version: number(row.version), lastSeq: number(row.lastSeq), epoch: number(row.epoch), status: choice(row.status, SESSION_STATES),
     workspace: text(row.workspace), selection: selection(row.selection), activeRunId: nullableText(row.activeRunId), pendingSwitchId: nullableText(row.pendingSwitchId),
     ...(row.retention === undefined ? {} : { retention: (() => { const retention = record(row.retention); return { enabled: bool(retention.enabled), process: retention.process === null ? null : decodeKeptProcess(retention.process),
-      ...(retention.lost === undefined ? {} : { lost: (() => { const lost = record(retention.lost); return { outcome: choice(lost.outcome, ["terminated", "gone", "unconfirmed"]), leaseReleased: bool(lost.leaseReleased), at: number(lost.at) }; })() }) }; })() }),
+      ...(retention.lost === undefined ? {} : { lost: (() => { const lost = record(retention.lost); return { outcome: choice(lost.outcome, ["terminated", "gone", "unconfirmed"]), leaseReleased: bool(lost.leaseReleased), at: number(lost.at) }; })() }),
+      ...(retention.outside === undefined ? {} : { outside: (() => { const outside = record(retention.outside); return { count: number(outside.count), at: number(outside.at) }; })() }) }; })() }),
     ...(row.queue === undefined ? {} : { queue: (() => { const queue = record(row.queue), kind = choice(queue.kind, ["workspace", "slot"]);
       return kind === "workspace" ? { kind, runId: text(queue.runId), holderSessionId: text(queue.holderSessionId), holderWaitsForUser: bool(queue.holderWaitsForUser), since: number(queue.since), endsAt: number(queue.endsAt) }
         : { kind, runId: text(queue.runId), running: number(queue.running), limit: number(queue.limit), since: number(queue.since) }; })() }),

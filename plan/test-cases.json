@@ -6198,6 +6198,22 @@
       "planned_file": "tests/protocol/process.test.ts"
     },
     {
+      "id": "G031-NC1",
+      "task": "G031",
+      "requirements": [
+        "R26"
+      ],
+      "invariants": [
+        "INV-12"
+      ],
+      "layer": "protocol",
+      "scenario": "从进程表找出离开进程组的后代",
+      "expected": "从组内成员按父进程向下最多 32 层，取进程组不同的后代及其启动时间与命令基名（不含参数与路径，路径含空格也能取出）；组内没有成员时为无法枚举；没有离开的后代时为 0；无法解析的进程表为无法枚举",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/process.test.ts"
+    },
+    {
       "id": "G054-R01",
       "task": "G054",
       "requirements": [
@@ -7774,6 +7790,24 @@
       "planned_file": "tests/integration/parallel-work.test.ts"
     },
     {
+      "id": "G028-NC13",
+      "task": "G028",
+      "requirements": [
+        "R11",
+        "R14"
+      ],
+      "invariants": [
+        "INV-12",
+        "INV-09"
+      ],
+      "layer": "integration",
+      "scenario": "关闭或接管保留进程时记录离开进程组的后台任务",
+      "expected": "结束组前枚举一次，结束后按进程号与启动时间复查：用户结束与服务重启接管都在证据中记录找到与仍在运行的数量和命令基名；不向它们发信号；仍在运行时对话提示一次，下一回合后消失；组长已退出或没有记录的组身份时记为无法枚举，组长仍在而没有离开的后代时记为 0",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/kept-process.test.ts"
+    },
+    {
       "id": "G032-NC18",
       "task": "G032",
       "requirements": [
@@ -8022,6 +8056,22 @@
       "layer": "e2e",
       "scenario": "执行配置显示原生会话与在原程序中继续",
       "expected": "打开执行配置后显示原生会话 ID 与复制按钮；版本未验证时说明恢复命令未在此版本验证，不给复制命令的按钮",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/web.browser.ts"
+    },
+    {
+      "id": "G054-NC14",
+      "task": "G054",
+      "requirements": [
+        "R22"
+      ],
+      "invariants": [
+        "INV-09"
+      ],
+      "layer": "e2e",
+      "scenario": "结束保留进程后提示仍在运行的组外后台任务",
+      "expected": "结束后台进程后输入框下方说明“原程序的后台任务可能仍在运行（N 个进程）”，发送下一条消息后消失",
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/browser/web.browser.ts"

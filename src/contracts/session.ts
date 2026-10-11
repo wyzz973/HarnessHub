@@ -197,9 +197,25 @@ export interface ImportOrigin {
  */
 export interface KeptProcessIdentity { readonly group: number; readonly startedAt: string }
 /** Recognizes and ends a previous owner's kept process group (POSIX; ADR-030). */
+/** A process that descends from a kept program's group but left it (its own process group): never signalled by the Hub. */
+export interface OutsideProcess { readonly pid: number; readonly startedAt: number; readonly command: string }
+/**
+ * What was seen of such processes when a kept program was closed or taken over: how many were found before its group was
+ * ended, how many were still running after (null when that could not be checked), and their command names (no arguments,
+ * no paths). "unknown" when they could not be enumerated: no process port, no recorded group, the group was no longer the
+ * recorded one, no member remained to start from (descendants were adopted elsewhere), or the process list was unreadable.
+ */
+export type OutsideEvidence = { readonly state: "enumerated"; readonly found: number; readonly remaining: number | null; readonly commands: readonly string[] } | { readonly state: "unknown" };
 export interface ProcessGroupPort {
   /** The start time of the process with this id as the system reports it; null when no such process runs. */
   identify(group: number): Promise<string | null>;
+  /**
+   * The descendants of the recorded group's members that left the group, read once before the group is ended; null when
+   * they cannot be enumerated (see OutsideEvidence). Reading signals nothing.
+   */
+  outsiders?(identity: KeptProcessIdentity): Promise<readonly OutsideProcess[] | null>;
+  /** Which of these still run (the same id and start time); null when that cannot be read. */
+  running?(processes: readonly OutsideProcess[]): Promise<readonly OutsideProcess[] | null>;
   /**
    * Ends the recorded group if it still exists: "terminated" once no member remains after SIGTERM and then SIGKILL; "gone"
    * when the group no longer exists (its id may since name another program, which is left alone); "unconfirmed" when

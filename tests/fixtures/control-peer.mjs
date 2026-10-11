@@ -23,6 +23,16 @@ if (process.env.FIXTURE_LINGER) {
   lingering.unref();
   if (process.env.FIXTURE_CHILD_PID) writeFileSync(process.env.FIXTURE_CHILD_PID, String(lingering.pid));
 }
+// A program that keeps running after its input closes (FIXTURE_HOLD), until it is signalled.
+if (process.env.FIXTURE_HOLD) setInterval(() => {}, 1000);
+// A background task that left this program's process group (FIXTURE_OUTSIDER), as an agent's detached job does: ending the
+// group does not reach it.
+if (process.env.FIXTURE_OUTSIDER) {
+  const outsider = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore", detached: true });
+  outsider.unref();
+  // One line per program that started one, so a test can end every one of them.
+  appendFileSync(process.env.FIXTURE_OUTSIDER, outsider.pid + "\n");
+}
 /** A Hermes terminal call that its approval gate refused, reported as Hermes 0.12 reports it: completed, with failure text. */
 function hermesBlocked(sessionId, id = "terminal-blocked") {
   notification("session/update", { sessionId, update: { sessionUpdate: "tool_call", toolCallId: id, title: "terminal: rm -r attention-check", kind: "execute", status: "pending", content: [{ type: "content", content: { type: "text", text: "$ rm -r attention-check" } }] } });

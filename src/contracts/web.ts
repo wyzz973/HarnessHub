@@ -117,7 +117,9 @@ export interface SessionView {
   readonly busyHolders?: Readonly<Record<string, string>>;
   readonly retention?: { readonly enabled: boolean; readonly process: KeptProcessView | null;
     /** The process this conversation kept when the previous service ended without closing it, as this service found it. */
-    readonly lost?: { readonly outcome: "terminated" | "gone" | "unconfirmed"; readonly leaseReleased: boolean; readonly at: number } };
+    readonly lost?: { readonly outcome: "terminated" | "gone" | "unconfirmed"; readonly leaseReleased: boolean; readonly at: number };
+    /** Background processes that left the closed or taken-over program's group and still ran then; until the next Turn. */
+    readonly outside?: { readonly count: number; readonly at: number } };
   readonly messages: readonly PublicMessage[];
   readonly runs: readonly PublicRun[];
   readonly switches: readonly PublicSwitch[];

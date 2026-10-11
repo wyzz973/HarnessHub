@@ -2,7 +2,7 @@
 // (ADR-035), or with mode "queue" also a Turn queued behind it (ADR-036), and then waits to be killed, so that a later
 // owner can be tested on what it finds. Arguments: build
 // root, data root, lease root, workspace, ACP peer script, "1" to record the kept process group's identity, and the mode.
-// FIXTURE_LINGER, FIXTURE_PID and FIXTURE_CHILD_PID reach the peer.
+// FIXTURE_LINGER, FIXTURE_PID, FIXTURE_CHILD_PID, FIXTURE_OUTSIDER and FIXTURE_HOLD reach the peer.
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -16,7 +16,7 @@ const { AcpControl } = await load("src/adapters/control/acp.js");
 const { PosixProcessGroups } = await load("src/infrastructure/control/process-group.js");
 
 const leases = new SqliteWorkspaceLeaseProvider(locks);
-const passed = Object.fromEntries(["FIXTURE_LINGER", "FIXTURE_PID", "FIXTURE_CHILD_PID"].flatMap(name => process.env[name] ? [[name, process.env[name]]] : []));
+const passed = Object.fromEntries(["FIXTURE_LINGER", "FIXTURE_PID", "FIXTURE_CHILD_PID", "FIXTURE_OUTSIDER", "FIXTURE_HOLD"].flatMap(name => process.env[name] ? [[name, process.env[name]]] : []));
 const factory = {
   validate: async () => ({ harnessId: "alpha", controlId: "alpha-acp" }),
   prepare: async (_selected, configuration, session, run) => {

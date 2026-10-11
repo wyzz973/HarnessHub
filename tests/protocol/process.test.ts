@@ -144,6 +144,25 @@ test("elapsed time from ps is read in all its forms, and nothing else is", async
   for (const text of ["", "3", "1:2:3:4", "a:bc", "-01:02"]) assert.equal(elapsedSeconds(text), null, text);
 });
 
+test("the processes that left a group are found below its members, with base names only; nothing to start from is no answer", async () => {
+  const { outsidersOf } = await import("../../src/infrastructure/control/process-group.js");
+  const now = 10_000, table = [
+    "  100     1   100   01:00 /usr/local/bin/node",
+    "  101   100   100   00:59 /bin/zsh",
+    "  102   101   102   00:30 /bin/sleep",
+    "  103   102   102   00:20 sleep",
+    "  104     1   104   00:10 /usr/bin/unrelated",
+    "  105   100   100   00:05 /Applications/Some App.app/Contents/MacOS/Some App",
+    "  106   105   106   00:02 /Applications/Some App.app/Contents/MacOS/Helper Tool"].join("\n");
+  assert.deepEqual(outsidersOf(table, 100, now), [{ pid: 102, startedAt: now - 30, command: "sleep" }, { pid: 106, startedAt: now - 2, command: "Helper Tool" }, { pid: 103, startedAt: now - 20, command: "sleep" }]);
+  assert.deepEqual(outsidersOf(table, 104, now), [], "a group whose members started nothing outside: zero, not unknown");
+  assert.equal(outsidersOf(table, 999, now), null, "no member left to start from: unknown");
+  assert.equal(outsidersOf(table + "\nnot a ps row", 100, now), null, "an unreadable table: unknown");
+  // A chain deeper than 32 levels is followed only that far.
+  const chain = ["  200     1   200   01:00 leader", ...Array.from({ length: 40 }, (_, index) => `  ${201 + index}   ${200 + index}   ${201 + index}   00:10 child`)].join("\n");
+  assert.equal(outsidersOf(chain, 200, now)?.length, 32);
+});
+
 test("a kept process group is ended only while it is the recorded one, members included", async () => {
   const { PosixProcessGroups } = await import("../../src/infrastructure/control/process-group.js");
   const groups = new PosixProcessGroups();
