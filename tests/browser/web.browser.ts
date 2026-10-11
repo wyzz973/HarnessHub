@@ -870,3 +870,35 @@ test("a conversation keeps its native process between Turns, shows it, and ends 
   assert.deepEqual(events.events.filter((event: { type: string }) => event.type === "native.process_closed").map((event: { data: { reason: string; cleanup: { closed: boolean } } }) => [event.data.reason, event.data.cleanup.closed]), [["ended_by_user", true]]);
   assert.deepEqual(errors, []);
 });
+
+test("a new conversation starts a Harness with the model and thinking level last sent with it, and nothing else", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false, { name: "Native Settings", scenario: "native-config" }); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), fast = page.getByRole("button", { name: "Native fast", exact: true }), thinking = page.getByRole("button", { name: "思考强度", exact: true });
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Native Settings", exact: true }).click();
+  await thinking.click(); await page.getByRole("option", { name: "最大", exact: true }).click();
+  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  await fast.click(); await page.getByRole("option", { name: "On", exact: true }).click(); await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeDisabled(); await composer.fill("first");
+  await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
+  await expect(page.getByRole("log", { name: "对话历史" })).toContainText("你好 fixture", { timeout: 15000 });
+  const check = async () => {
+    // The thinking level comes back, marked as last used; the other native setting follows the program's default.
+    await expect(thinking).toContainText("最大");
+    await thinking.click(); await expect(page.getByRole("option", { name: "最大", exact: true })).toHaveAccessibleDescription(/上次使用/); await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "高级配置", exact: true }).click(); await expect(fast).toContainText("本机默认"); await page.keyboard.press("Escape");
+  };
+  // Through the picker of a new conversation.
+  await page.getByRole("button", { name: "新对话", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Native Settings", exact: true }).click();
+  await check();
+  // Through the welcome strip of another new conversation.
+  await page.getByRole("button", { name: "新对话", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Native Settings", exact: true }).click();
+  await check();
+  assert.deepEqual(errors, []);
+});

@@ -124,9 +124,12 @@ export function ChatComposer(props: ComposerProps) {
     };
   })];
   const nativeDefault = props.nativeModels?.models.find(model => model.id === props.nativeModels?.defaultModel)?.name ?? props.nativeModels?.defaultModel;
+  // What this browser last sent with the Harness, shown as such while a new conversation starts with it.
+  const recalled = !provider && !session?.runs.some(run => run.selection.harnessId === draft.harnessId) ? props.rememberedChoice?.(draft.harnessId) ?? null : null;
+  const lastUsed = (value: string, recalledValue: string | undefined) => recalled !== null && recalledValue !== undefined && value === recalledValue ? "上次使用" : undefined;
   const modelOptions: PickerOption[] = provider ? provider.models.map(model => ({ value: model, label: model, group: provider.name })) : [
     { value: "", label: nativeDefault ? `${nativeDefault} · 本机默认` : props.nativeModelsLoading ? "读取本机模型…" : "跟随本机配置", description: "本机当前默认模型", group: "跟随 Harness" },
-    ...(props.nativeModels?.models.map(model => ({ value: model.id, label: model.name, description: model.id, group: harness?.name ?? "本机模型" })) ?? []),
+    ...(props.nativeModels?.models.map(model => ({ value: model.id, label: model.name, description: lastUsed(model.id, recalled?.nativeModel) ?? model.id, group: harness?.name ?? "本机模型" })) ?? []),
   ];
   if (provider && draft.model && !provider.models.includes(draft.model)) {
     modelOptions.unshift({ value: draft.model, label: draft.model, description: `固定配置 v${draft.providerRevision}`, group: "会话当前版本" });
@@ -137,7 +140,7 @@ export function ChatComposer(props: ComposerProps) {
   const thinkingNames: Readonly<Record<string,string>> = {off:"关闭",minimal:"最少",low:"低",medium:"中",high:"高",xhigh:"极高",max:"最大",ultra:"最高",adaptive:"自适应"};
   const nativeNames: Readonly<Record<string,string>> = {thought_level:"思考强度",fast_mode:"快速模式",verbose_level:"工具详情",reasoning_level:"思考输出",response_usage:"用量详情",elevated_level:"执行权限"};
   const changeOption = (id: string, value: string) => { const choices={...draft.nativeOptions}; if(value)choices[id]=value;else delete choices[id]; props.onDraft({...draft,nativeOptions:Object.fromEntries(Object.entries(choices).sort(([a],[b])=>a < b ? -1 : a > b ? 1 : 0))}); };
-  const optionPicker = (option: typeof nativeOptions[number], label: string) => <SearchPicker label={label} value={draft.nativeOptions[option.id] ?? ""} placeholder="跟随本机配置" options={[{value:"",label:`${(option.category==="thought_level" ? thinkingNames[option.currentValue] : undefined) ?? option.values.find(value=>value.value===option.currentValue)?.name ?? option.currentValue} · 本机默认`,group:"跟随 Harness"},...option.values.map(value=>({value:value.value,label:option.category==="thought_level" ? thinkingNames[value.value]??value.name : value.name,description:value.value,group:harness?.name??"原生选项"}))]} disabled={disabled || props.nativeModelsLoading} onChange={value=>changeOption(option.id,value)}/>;
+  const optionPicker = (option: typeof nativeOptions[number], label: string) => <SearchPicker label={label} value={draft.nativeOptions[option.id] ?? ""} placeholder="跟随本机配置" options={[{value:"",label:`${(option.category==="thought_level" ? thinkingNames[option.currentValue] : undefined) ?? option.values.find(value=>value.value===option.currentValue)?.name ?? option.currentValue} · 本机默认`,group:"跟随 Harness"},...option.values.map(value=>({value:value.value,label:option.category==="thought_level" ? thinkingNames[value.value]??value.name : value.name,description:lastUsed(value.value, recalled?.nativeOptions?.[option.id])??value.value,group:harness?.name??"原生选项"}))]} disabled={disabled || props.nativeModelsLoading} onChange={value=>changeOption(option.id,value)}/>;
   // The native session's own values, as it reported them after its last Turn (ADR-028).
   const nativeState = provider ? undefined : session?.nativeStates?.find(state => state.harnessId === draft.harnessId && state.controlId === draft.controlId);
   const valueName = (id: string, value: string) => { const option = nativeOptions.find(row => row.id === id); return option?.category === "thought_level" ? thinkingNames[value] ?? value : option?.values.find(row => row.value === value)?.name ?? value; };
@@ -190,7 +193,7 @@ export function ChatComposer(props: ComposerProps) {
         <div className="composer-pickers" aria-label="下一次任务的执行选择">
           <div className="composer-chip harness-chip"><SearchPicker label="选择 Harness" value={draft.harnessId} placeholder="选择 Harness" options={harnessOptions} disabled={disabled} onChange={value => {
             if(value===draft.harnessId)return;
-            const next = harnesses.find(row => row.id === value), previous=[...(session?.switches??[])].reverse().find(sw=>sw.status==="effective"&&sw.target?.harnessId===value)?.target??[...(session?.runs??[])].reverse().find(run=>run.selection.harnessId===value)?.selection;
+            const next = harnesses.find(row => row.id === value), previous=[...(session?.switches??[])].reverse().find(sw=>sw.status==="effective"&&sw.target?.harnessId===value)?.target??[...(session?.runs??[])].reverse().find(run=>run.selection.harnessId===value)?.selection??props.rememberedChoice?.(value)??undefined;
             const control=previous && next?.controls.some(row=>row.id===previous.controlId&&row.available) ? previous.controlId : next?.controls.find(row => row.id === next.defaultControlId && row.available)?.id ?? next?.controls.find(row => row.available)?.id ?? "";
             props.onDraft({ ...draft, harnessId:value,controlId:control,model:draft.providerId?draft.model:previous?.nativeModel??"",nativeOptions:draft.providerId?{}:previous?.nativeOptions??{} });
           }}/></div>

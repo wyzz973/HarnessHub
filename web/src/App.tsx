@@ -27,6 +27,33 @@ interface PendingMessage { text: string; attachments: readonly string[]; createK
 interface PendingSelection { sessionId: string; selection: SelectionRequest; key: string; recovery: boolean; acknowledgeUnknown: boolean }
 interface ChatDraft { message: string; attachments: readonly ContentRef[]; selection: SelectionDraft; epoch: number | null; messageIntent: PendingMessage | null; selectionIntent: PendingSelection | null }
 function draftStorageKey(workspace: string, id: string): string { return "harnessgateway:chat-draft:" + workspace + ":" + id; }
+function choiceStorageKey(harnessId: string): string { return "harnessgateway:native-choice:" + harnessId; }
+/**
+ * The last native choice sent with each Harness from this browser: its entry, model and thinking level, never a Provider.
+ * Modes and permission or sandbox settings are not carried into another conversation (the approver's scope); a new
+ * conversation follows the program's own defaults for them. A Hub preference only; nothing is written to the Harness's
+ * own configuration, and an unreadable entry is ignored.
+ */
+function rememberedChoice(harnessId: string): { readonly controlId: string; readonly nativeModel?: string; readonly nativeOptions?: Readonly<Record<string, string>> } | null {
+  try {
+    const raw = localStorage.getItem(choiceStorageKey(harnessId));
+    if (raw === null || raw.length > 16 * 1024) return null;
+    const value: unknown = JSON.parse(raw);
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+    const row = value as Record<string, unknown>;
+    if (Object.keys(row).some(key => !["controlId", "model", "nativeOptions"].includes(key)) || typeof row.controlId !== "string" || !/^[a-z][a-z0-9-]{0,95}$/u.test(row.controlId) ||
+        row.model !== undefined && (typeof row.model !== "string" || !row.model.trim() || row.model.length > 1024 || /[\0\r\n]/u.test(row.model))) return null;
+    return { controlId: row.controlId, ...(typeof row.model === "string" ? { nativeModel: row.model } : {}), ...(row.nativeOptions === undefined ? {} : { nativeOptions: parseNativeOptions(row.nativeOptions) }) };
+  } catch { return null; }
+}
+function rememberChoice(draft: SelectionDraft, catalog: NativeModelCatalog | null): void {
+  if (draft.providerId || !draft.harnessId || !draft.controlId) return;
+  // Only thinking levels, as the catalog names them; any option the catalog does not describe is left out.
+  const thinking = new Set([...(catalog?.options ?? []), ...(catalog?.models.find(model => model.id === (draft.model || catalog.defaultModel))?.options ?? [])].filter(option => option.category === "thought_level").map(option => option.id));
+  const options = Object.fromEntries(Object.entries(draft.nativeOptions).filter(([id]) => thinking.has(id)));
+  try { localStorage.setItem(choiceStorageKey(draft.harnessId), JSON.stringify({ controlId: draft.controlId, ...(draft.model ? { model: draft.model } : {}), ...(Object.keys(options).length ? { nativeOptions: options } : {}) })); }
+  catch { /* A convenience only: without storage the next conversation follows the native configuration. */ }
+}
 function readyAttachments(items: readonly AttachmentDraft[]): readonly ContentRef[] { return items.flatMap(item => item.status === "ready" && item.ref ? [item.ref] : []); }
 function draftAttachments(refs: readonly ContentRef[] | undefined): readonly AttachmentDraft[] { return (refs ?? []).map(ref => ({ local: ref.id, name: ref.name, bytes: ref.bytes, kind: ref.kind, status: "ready", ref })); }
 function savedChatDraft(workspace: string, id: string): ChatDraft | null {
@@ -318,7 +345,9 @@ export function App() {
     const control = harness.controls.find(row => row.id === harness.defaultControlId && row.available) ?? harness.controls.find(row => row.available); if (!control) return;
     saveChatDraft(); pendingSwitchWrite.current = null;
     sessionIdRef.current = null; liveSession.current = null; observedSelection.current = ""; pendingMessage.current = null; setKeepNew(false);
-    writeSessionRoute(null); setSessionId(null); setSession(null); setSessionLoading(false); setSessionError(null); setDraft({ ...EMPTY_SELECTION, harnessId: harness.id, controlId: control.id }); setMessageDraft(""); setAttachments([]);
+    const remembered = rememberedChoice(harness.id), entry = remembered && harness.controls.some(row => row.id === remembered.controlId && row.available) ? remembered : null;
+    writeSessionRoute(null); setSessionId(null); setSession(null); setSessionLoading(false); setSessionError(null);
+    setDraft({ ...EMPTY_SELECTION, harnessId: harness.id, controlId: entry?.controlId ?? control.id, model: entry?.nativeModel ?? "", nativeOptions: entry?.nativeOptions ?? {} }); setMessageDraft(""); setAttachments([]);
     setChatKey(value => value + 1); setPage("chat"); setSidebarOpen(false); setError(null); setConnectionError(null);
   });
   useEffect(() => {
@@ -355,7 +384,7 @@ export function App() {
       }
       // Recorded before the first message, so the first Turn's process is already kept.
       if (request.retain && !request.retain.applied) { acceptSession(await api.setRetention(id, true, request.retain.key)); request.retain.applied = true; setKeepNew(false); }
-      if (!request.committed) { await api.send(id, value, request.sendKey, request.attachments); request.committed = true; }
+      if (!request.committed) { await api.send(id, value, request.sendKey, request.attachments); request.committed = true; rememberChoice(draft, nativeCatalog); }
       pendingMessage.current = null;
       // Sent attachments now belong to the message; the composer keeps only what was added meanwhile.
       if (retryAttachments === undefined && mounted.current) setAttachments(current => current.filter(item => item.ref === undefined || !ids.includes(item.ref.id)));
@@ -568,7 +597,7 @@ export function App() {
         onFreeWorkspace={async run=>{ if(!session)return;
           // The conversation whose kept process holds this workspace ends it with the normal stop chain, then this message is sent again.
           try { const holder=(await api.keptProcesses()).find(item=>item.workspace===session.workspace&&item.sessionId!==session.id); if(holder) await api.endKeptProcess(holder.sessionId,requestKey()); await send(run.input,run.attachments ?? []); }
-          catch(failure){ setError(errorMessage(failure)); } }} onPermission={(permission,option,input)=>{ if(!sessionId||!startOperation("permission"))return; void api.decidePermission(sessionId,permission,option,requestKey(),input).then(()=>api.session(sessionId)).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }} nativeModels={nativeCatalog} nativeModelsLoading={nativeLoading} nativeModelsError={nativeError} onRefreshModels={refreshNativeModels} key={chatKey} session={session} sessionRequested={sessionId !== null} sessionError={sessionError} loading={sessionLoading} draft={draft} messageDraft={messageDraft} onMessageDraft={setMessageDraft} providers={state.providers} harnesses={state.harnesses} readiness={state.readiness} workspace={workspace} mutation={mutation} error={error ?? draftStorageError} connectionError={connectionError} onRetryConnection={() => setStreamAttempt(value => value + 1)} onDraft={changeSelection} onWorkspace={setWorkspace} onSend={send} attachments={attachments} onAttach={attachFiles} onRemoveAttachment={removeAttachment} onBranch={branch} onOpenSession={selectSession} onLoadExtensions={signal => api.nativeExtensions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, signal)} onLoadNativeSessions={(cursor, signal, probes) => api.nativeSessions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, cursor, signal, probes)} onImportNative={importNative} onApply={() => { lastAutoSelection.current = null; void applySelection(); }} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }} onProviders={() => navigate("providers")} onNew={newChat} onMenu={() => setSidebarOpen(value => !value)}/>
+          catch(failure){ setError(errorMessage(failure)); } }} onPermission={(permission,option,input)=>{ if(!sessionId||!startOperation("permission"))return; void api.decidePermission(sessionId,permission,option,requestKey(),input).then(()=>api.session(sessionId)).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }} nativeModels={nativeCatalog} nativeModelsLoading={nativeLoading} nativeModelsError={nativeError} onRefreshModels={refreshNativeModels} key={chatKey} session={session} sessionRequested={sessionId !== null} sessionError={sessionError} loading={sessionLoading} draft={draft} messageDraft={messageDraft} onMessageDraft={setMessageDraft} providers={state.providers} harnesses={state.harnesses} readiness={state.readiness} rememberedChoice={rememberedChoice} workspace={workspace} mutation={mutation} error={error ?? draftStorageError} connectionError={connectionError} onRetryConnection={() => setStreamAttempt(value => value + 1)} onDraft={changeSelection} onWorkspace={setWorkspace} onSend={send} attachments={attachments} onAttach={attachFiles} onRemoveAttachment={removeAttachment} onBranch={branch} onOpenSession={selectSession} onLoadExtensions={signal => api.nativeExtensions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, signal)} onLoadNativeSessions={(cursor, signal, probes) => api.nativeSessions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, cursor, signal, probes)} onImportNative={importNative} onApply={() => { lastAutoSelection.current = null; void applySelection(); }} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }} onProviders={() => navigate("providers")} onNew={newChat} onMenu={() => setSidebarOpen(value => !value)}/>
         : page === "providers" ? <ProvidersPage providers={state.providers} editor={editor} saving={mutation === "saving"} probes={probes} error={error} onEdit={provider => { setEditor(provider); setError(null); }} onBack={() => leave(() => { setEditor(null); setEditorDirty(false); setError(null); })} onSave={saveProvider} onProbe={provider => void probeProvider(provider)} onDirty={dirtyChanged} onDismissError={() => setError(null)} onMenu={() => setSidebarOpen(value => !value)}/>
           : <HarnessesPage api={api} harnesses={state.harnesses} jobs={state.jobs} scanning={mutation === "scanning"} checking={checkingUpdates} submitting={submittingInstallations} cancelling={cancellingInstallations} unconfirmed={unconfirmedInstallations} error={error} connectionError={managementConnectionError} onRescan={() => void rescan()} onCheckUpdates={ids => void checkUpdates(ids)} onInstall={install} onConfirm={confirmInstallation} onCancelJob={job => void cancelInstallation(job)} onDismissError={() => setError(null)} onMenu={() => setSidebarOpen(value => !value)} onChoose={chooseHarness}/>}
     </main>

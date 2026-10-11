@@ -51,6 +51,8 @@ export interface ChatProps {
   session: SessionView | null; sessionRequested: boolean; sessionError: string | null; loading: boolean; draft: SelectionDraft; providers: readonly ProviderView[]; harnesses: readonly HarnessView[];
   /** What the latest catalog reads and Runs showed of each Harness entry. */
   readiness?: readonly HarnessReadinessView[];
+  /** The last native choice sent with a Harness from this browser, offered when a conversation picks it for the first time. */
+  rememberedChoice?: (harnessId: string) => { readonly controlId: string; readonly nativeModel?: string; readonly nativeOptions?: Readonly<Record<string, string>> } | null;
   workspace: string; mutation: string | null; error: string | null; connectionError: string | null;
   messageDraft: string; onMessageDraft: Dispatch<SetStateAction<string>>;
   onDraft: (draft: SelectionDraft) => void; onWorkspace: (workspace: string) => void; onSend: (text: string, retryAttachments?: readonly import("../../../src/contracts/content.js").ContentRef[]) => Promise<void>;
@@ -223,7 +225,12 @@ export function ChatPage(props: ChatProps) {
           <p className="welcome-description">在同一对话里，与不同 Agent 协作。</p>
           {composer}
           <div className="prompt-suggestions">{[{ text: "理解一个项目", icon: FolderSearch }, { text: "帮我完成实现", icon: SquareTerminal }, { text: "排查一个问题", icon: Bug }].map(({ text, icon: Icon }) => <button key={text} onClick={() => fillDraft(text)}><Icon size={15} aria-hidden="true"/><span>{text}</span></button>)}</div>
-          <div className="welcome-harness-strip"><span>本机发现</span>{availableHarnesses.slice(0, 7).map(harness => <button type="button" key={harness.id} aria-label={`选择 ${harness.name}`} title={harness.name} onClick={() => props.onDraft({ ...draft, harnessId: harness.id, controlId: harness.controls.find(control => control.id === harness.defaultControlId && control.available)?.id ?? harness.controls.find(control => control.available)?.id ?? "" })}><BrandIcon brand={harness.id} name={harness.name} size={21}/></button>)}<span>{availableHarnesses.length} 个 Harness 有入口</span></div>
+          <div className="welcome-harness-strip"><span>本机发现</span>{availableHarnesses.slice(0, 7).map(harness => <button type="button" key={harness.id} aria-label={`选择 ${harness.name}`} title={harness.name} onClick={() => {
+            // Another Harness's model and options never carry over; this Harness's last choice from this browser does.
+            const remembered = props.rememberedChoice?.(harness.id), entry = remembered && harness.controls.some(control => control.id === remembered.controlId && control.available) ? remembered : null;
+            props.onDraft({ ...draft, harnessId: harness.id, controlId: entry?.controlId ?? harness.controls.find(control => control.id === harness.defaultControlId && control.available)?.id ?? harness.controls.find(control => control.available)?.id ?? "",
+              model: draft.providerId ? draft.model : entry?.nativeModel ?? "", nativeOptions: draft.providerId ? {} : entry?.nativeOptions ?? {} });
+          }}><BrandIcon brand={harness.id} name={harness.name} size={21}/></button>)}<span>{availableHarnesses.length} 个 Harness 有入口</span></div>
           {providers.length === 0 ? <button className="welcome-config-link" onClick={props.onProviders}>配置模型连接 <ArrowRight size={14} aria-hidden="true"/></button> : null}
         </div>
         : <div className="transcript" ref={transcript} role="log" aria-label="对话历史" aria-live="off">
