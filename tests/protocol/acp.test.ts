@@ -353,6 +353,31 @@ test("Hermes restores by session/load, keeps history replayed after a slow load 
     await assert.rejects(missing.open(process.cwd(), undefined, undefined, "missing-session"), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_SESSION_NOT_FOUND");
   } finally { await missing.close(); }
 });
+test("Hermes without a configured provider opens no session and reports the missing setup; other agents' methods say nothing", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
+  // 0.12 leaves authMethods out without provider credentials; later versions list only a terminal setup method then.
+  for (const auth of ["none", "terminal"]) {
+    const driver = new HermesControl({ ...hermes(trace), env: { FIXTURE_TRACE: trace, FIXTURE_AUTH: auth } }, options);
+    try {
+      assert.deepEqual((await driver.initialize()).authenticationMethods, auth === "none" ? [] : ["hermes-setup"]);
+      for (const checkpoint of [undefined, "session-fixture"])
+        await assert.rejects(driver.open(process.cwd(), undefined, undefined, checkpoint), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_AUTH_REQUIRED");
+    } finally { await driver.close(); }
+  }
+  const sent = (await readFile(trace, "utf8")).trim().split("\n").map(line => (JSON.parse(line) as { method?: string }).method ?? "");
+  assert.equal(sent.some(method => method.startsWith("session/")), false);
+  // With its agent method Hermes has a provider, and the catalog says so.
+  const configured = new HermesControl(hermes(trace), options);
+  try { await configured.initialize(); await configured.open(process.cwd()); assert.equal((await configured.models()).authentication, "ready"); }
+  finally { await configured.close(); }
+  // Any other agent that leaves the list out gets the schema's empty default and opens as before.
+  const ordinary = control("hermes", { FIXTURE_AUTH: "none" });
+  try { assert.deepEqual((await ordinary.initialize()).authenticationMethods, []); await ordinary.open(process.cwd()); assert.equal((await ordinary.models()).authentication, "unknown"); }
+  finally { await ordinary.close(); }
+  // A list that is present must still be a list.
+  const malformed = control("basic", { FIXTURE_AUTH: "invalid" });
+  try { await assert.rejects(malformed.initialize(), (error: unknown) => error instanceof ControlError && error.code === "INVALID_PROTOCOL"); } finally { await malformed.close(); }
+});
 test("Hermes reports a model its own /model command switched to, and only that command's reply is read", async t => {
   const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
   const driver = new HermesControl(hermes(trace), { ...options, runTimeoutMs: 5000 });

@@ -5,7 +5,7 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, use
 import type { Dispatch, SetStateAction } from "react";
 import type { ProviderView } from "../../../src/contracts/provider.js";
 import type { HarnessSelection, SelectionRequest } from "../../../src/contracts/session.js";
-import type { HarnessView, SessionView } from "../../../src/contracts/web.js";
+import type { HarnessReadinessView, HarnessView, SessionView } from "../../../src/contracts/web.js";
 import type { NativeModelCatalog } from "../../../src/contracts/control.js";
 import { failureMessage, runStatusLabel } from "../api.js";
 import { BrandMark, EmptyState, ErrorNotice, Spinner, StatusBadge } from "./common.js";
@@ -49,6 +49,8 @@ export interface ChatProps {
   nativeModels: NativeModelCatalog | null; nativeModelsLoading: boolean; nativeModelsError: string | null; onRefreshModels: () => void;
   providerManagement?: boolean;
   session: SessionView | null; sessionRequested: boolean; sessionError: string | null; loading: boolean; draft: SelectionDraft; providers: readonly ProviderView[]; harnesses: readonly HarnessView[];
+  /** What the latest catalog reads and Runs showed of each Harness entry. */
+  readiness?: readonly HarnessReadinessView[];
   workspace: string; mutation: string | null; error: string | null; connectionError: string | null;
   messageDraft: string; onMessageDraft: Dispatch<SetStateAction<string>>;
   onDraft: (draft: SelectionDraft) => void; onWorkspace: (workspace: string) => void; onSend: (text: string, retryAttachments?: readonly import("../../../src/contracts/content.js").ContentRef[]) => Promise<void>;
@@ -63,7 +65,8 @@ export interface ChatProps {
   onOpenSession?: (id: string) => void;
   /** Reads the selected Harness's native skills, MCP servers and plugins on demand. */
   onLoadExtensions?: (signal: AbortSignal) => Promise<import("../../../src/contracts/control.js").NativeExtensions | null>;
-  onLoadNativeSessions?: (cursor: string | undefined, signal: AbortSignal) => Promise<import("../../../src/contracts/web.js").NativeSessionListView>;
+  /** `probes` includes the sessions that catalog reads opened, which are left out otherwise. */
+  onLoadNativeSessions?: (cursor: string | undefined, signal: AbortSignal, probes?: boolean) => Promise<import("../../../src/contracts/web.js").NativeSessionListView>;
   onImportNative?: (nativeId: string) => void;
   onAttach: (files: readonly File[]) => void;
   onRemoveAttachment: (local: string) => void;
@@ -100,15 +103,18 @@ export function ChatPage(props: ChatProps) {
   const title = session?.messages.find(message => message.role === "user")?.text ?? (branchedTitle ? "分支 · " + branchedTitle : props.sessionRequested || props.sessionError ? "打开对话" : "新对话");
   const runs = useMemo(() => new Map(session?.runs.map(run => [run.id, run])), [session?.runs]);
   const assistantRuns = useMemo(() => new Set(session?.messages.filter(message => message.role === "assistant").map(message => message.runId)), [session?.messages]);
-  // How long the same Harness took to start in the latest earlier Run of this conversation, shown while a Run starts.
+  // How long the same Harness took to start in the latest earlier Run of this conversation, shown while a Run starts;
+  // without one, its usual startup over its latest Runs anywhere.
   const startupHints = useMemo(() => {
-    const hints = new Map<string, number>(), latest = new Map<string, number>();
+    const hints = new Map<string, { readonly seconds: number; readonly usual: boolean }>(), latest = new Map<string, number>();
     for (const run of session?.runs ?? []) {
-      const known = latest.get(run.selection.harnessId); if (known !== undefined) hints.set(run.id, known);
+      const known = latest.get(run.selection.harnessId), usual = props.readiness?.find(item => item.harnessId === run.selection.harnessId && item.controlId === run.selection.controlId)?.startupMs;
+      if (known !== undefined) hints.set(run.id, { seconds: known, usual: false });
+      else if (usual !== undefined) hints.set(run.id, { seconds: usual / 1000, usual: true });
       if (run.timing?.preparingAt !== undefined && run.timing.readyAt !== undefined) latest.set(run.selection.harnessId, (run.timing.readyAt - run.timing.preparingAt) / 1000);
     }
     return hints;
-  }, [session?.runs]);
+  }, [session?.runs, props.readiness]);
   const availableHarnesses = harnesses.filter(harness => harness.controls.some(control => control.available));
 
   const scrollToLatest = useCallback(() => {

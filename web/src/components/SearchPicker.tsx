@@ -11,6 +11,8 @@ export interface PickerOption {
   readonly group?: string;
   readonly disabled?: boolean;
   readonly reason?: string;
+  /** A short state shown beside the label, such as whether a Harness is ready. */
+  readonly status?: { readonly tone: "success" | "warning" | "danger"; readonly label: string; readonly title?: string };
 }
 /** Searchable, keyboard-operated selection. Disabled choices stay visible with their actual reason. */
 export function SearchPicker({ label, value, placeholder, options, onChange, disabled = false, footer }: {
@@ -47,8 +49,8 @@ export function SearchPicker({ label, value, placeholder, options, onChange, dis
       <div className="picker-options" id={listId} role="listbox" aria-label={label}>
         {filtered.length ? filtered.map((option, index) => <div className="picker-option-wrap" key={option.value}>
           {option.group && (index === 0 || filtered[index - 1]?.group !== option.group) ? <div className="picker-group">{option.group}</div> : null}
-          <button type="button" className={`picker-option ${active?.value === option.value ? "is-active" : ""}`} id={`${listId}-${options.indexOf(option)}`} role="option" aria-label={option.label} aria-describedby={option.description || option.reason ? `${listId}-${options.indexOf(option)}-description` : undefined} aria-selected={value === option.value} disabled={option.disabled} aria-disabled={option.disabled ?? false} onPointerMove={() => { if (!option.disabled) setActiveValue(option.value); }} onClick={() => choose(option)}>
-            {option.icon ? <span className="picker-option-icon">{option.icon}</span> : null}<span className="picker-option-copy"><strong>{option.label}</strong>{option.disabled && option.reason ? <small id={`${listId}-${options.indexOf(option)}-description`} className="picker-reason">{option.reason}</small> : option.description ? <small id={`${listId}-${options.indexOf(option)}-description`}>{option.description}</small> : null}</span>{value === option.value ? <Check size={15} className="picker-check" aria-hidden="true"/> : null}
+          <button type="button" className={`picker-option ${active?.value === option.value ? "is-active" : ""}`} id={`${listId}-${options.indexOf(option)}`} role="option" aria-label={option.label} aria-describedby={[option.status ? `${listId}-${options.indexOf(option)}-status` : "", option.description || option.reason ? `${listId}-${options.indexOf(option)}-description` : ""].filter(Boolean).join(" ") || undefined} aria-selected={value === option.value} disabled={option.disabled} aria-disabled={option.disabled ?? false} onPointerMove={() => { if (!option.disabled) setActiveValue(option.value); }} onClick={() => choose(option)}>
+            {option.icon ? <span className="picker-option-icon">{option.icon}</span> : null}<span className="picker-option-copy"><span className="picker-option-title"><strong>{option.label}</strong>{option.status ? <span id={`${listId}-${options.indexOf(option)}-status`} className={`status-badge picker-status ${option.status.tone}`} title={option.status.title}><span className="status-dot" aria-hidden="true"/>{option.status.label}</span> : null}</span>{option.disabled && option.reason ? <small id={`${listId}-${options.indexOf(option)}-description`} className="picker-reason">{option.reason}</small> : option.description ? <small id={`${listId}-${options.indexOf(option)}-description`}>{option.description}</small> : null}</span>{value === option.value ? <Check size={15} className="picker-check" aria-hidden="true"/> : null}
           </button>
         </div>) : <p className="picker-empty">没有匹配的选项</p>}
       </div>

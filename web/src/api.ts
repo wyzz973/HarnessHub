@@ -1,6 +1,6 @@
 import { consumeSessionEventStream, SessionStreamError } from "./session-stream.js";
 import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
-import type { AuthSession, HarnessView, InstallationLogPage, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, WebState } from "../../src/contracts/web.js";
+import type { AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, WebState } from "../../src/contracts/web.js";
 import type { HarnessManagementView, InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
 import type { HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
 import type { NativeExtensions, NativeInputs, NativeOption, NativeModelCatalog } from "../../src/contracts/control.js";
@@ -178,9 +178,16 @@ export function decodeSessionStreamFrame(value: unknown): SessionStreamFrame {
   if (version < 1 || lastSeq < 0 || message.role !== "assistant" || message.seq < 0 || message.seq > lastSeq) return invalid();
   return { type: "message", sessionId: text(row.sessionId), version, lastSeq, message };
 }
+function decodeReadiness(value: unknown): HarnessReadinessView {
+  const row = record(value), state = choice(row.state, ["ready", "signed_out", "failed", "unchecked"]);
+  return { harnessId: text(row.harnessId), controlId: text(row.controlId), state, checkedAt: nullableNumber(row.checkedAt),
+    ...(row.signedIn === undefined ? {} : { signedIn: row.signedIn === null ? null : bool(row.signedIn) }), ...(row.failureCode === undefined ? {} : { failureCode: text(row.failureCode) }),
+    ...(row.startupMs === undefined ? {} : { startupMs: number(row.startupMs) }) };
+}
 function decodeState(value: unknown): WebState {
   const row = record(value);
-  return { ...(row.providerManagement === undefined ? {} : { providerManagement: bool(row.providerManagement) }), workspace: text(row.workspace), providers: list(row.providers, decodeProvider, 256), harnesses: list(row.harnesses, decodeHarness, 256), sessions: list(row.sessions, decodeSummary, 1000), jobs: list(row.jobs, decodeInstallationJob, 100) };
+  return { ...(row.providerManagement === undefined ? {} : { providerManagement: bool(row.providerManagement) }), workspace: text(row.workspace), providers: list(row.providers, decodeProvider, 256), harnesses: list(row.harnesses, decodeHarness, 256), sessions: list(row.sessions, decodeSummary, 1000), jobs: list(row.jobs, decodeInstallationJob, 100),
+    readiness: list(row.readiness, decodeReadiness, 512) };
 }
 function decodeAuth(value: unknown): AuthSession { return { csrfToken: text(record(value).csrfToken) }; }
 function acknowledge(value: unknown, session: string, result: "runId" | "switchId" | "target"): void {
@@ -235,6 +242,8 @@ export class GatewayApi {
     pageBootstrapToken = null;
   }
   state(signal?: AbortSignal): Promise<WebState> { return this.request("/state", "GET", undefined, decodeState, signal); }
+  /** What the latest catalog reads and Runs showed of each Harness entry; reading it starts nothing. */
+  readiness(signal?: AbortSignal): Promise<readonly HarnessReadinessView[]> { return this.request("/harnesses/readiness", "GET", undefined, value => list(record(value).readiness, decodeReadiness, 512), signal); }
   nativeModels(harness: string, control: string, workspace: string, signal: AbortSignal, refresh = false, nativeModel?: string): Promise<NativeModelCatalog> {
     const query = new URLSearchParams({ controlId: control, workspace, ...(refresh ? { refresh: "1" } : {}), ...(nativeModel ? { nativeModel } : {}) });
     return this.request(`/harnesses/${encodeURIComponent(harness)}/models?${query}`, "GET", undefined, value => {
@@ -244,11 +253,11 @@ export class GatewayApi {
     }, signal);
   }
   /** The selected Harness's own sessions in this workspace, newest first; `sessions` is null when it cannot list them. */
-  nativeSessions(harness: string, control: string, workspace: string, cursor?: string, signal?: AbortSignal): Promise<NativeSessionListView> {
-    return this.request(`/harnesses/${encodeURIComponent(harness)}/native-sessions?${new URLSearchParams({ controlId: control, workspace, ...(cursor === undefined ? {} : { cursor }) })}`, "GET", undefined, value => {
+  nativeSessions(harness: string, control: string, workspace: string, cursor?: string, signal?: AbortSignal, probes = false): Promise<NativeSessionListView> {
+    return this.request(`/harnesses/${encodeURIComponent(harness)}/native-sessions?${new URLSearchParams({ controlId: control, workspace, ...(cursor === undefined ? {} : { cursor }), ...(probes ? { probes: "include" } : {}) })}`, "GET", undefined, value => {
       const row = record(value), next = row.nextCursor === null ? null : text(row.nextCursor);
       if (row.sessions === null) return { sessions: null, nextCursor: null };
-      return { nextCursor: next, sessions: list(row.sessions, value => { const item = record(value);
+      return { nextCursor: next, ...(row.hiddenProbes === undefined ? {} : { hiddenProbes: number(row.hiddenProbes) }), sessions: list(row.sessions, value => { const item = record(value);
         return { id: text(item.id), title: nullableText(item.title), updatedAt: item.updatedAt === null ? null : number(item.updatedAt), ...(item.source === undefined ? {} : { source: text(item.source) }), ...(item.conversationId === undefined ? {} : { conversationId: text(item.conversationId) }) }; }, 1000) };
     }, signal);
   }
@@ -431,6 +440,7 @@ export function failureMessage(failure: { readonly code: string; readonly messag
     NATIVE_CONTEXT_EXCEEDED: "对话超出了模型的上下文长度。可以先用这个 Harness 的压缩命令（如 /compact），或开始新对话。",
     NATIVE_MODEL_UNAVAILABLE: "所选模型在这个 Harness 的模型服务中不可用，请换一个模型。",
     MODEL_REQUEST_FAILED: "这个 Harness 向模型服务发出的请求失败了。请检查它本机的模型配置，或换一个模型再试。",
+    NATIVE_CATALOG_TIMEOUT: "这个 Harness 在 20 秒内没有给出模型列表。可以稍后刷新本机模型重试。",
     MODEL_POLICY_REFUSED: "模型服务按自身的内容策略拒绝了这次请求。",
     MODEL_UNAVAILABLE: "所选模型当前不在这个 Harness 的本机模型目录中，请重新选择模型。",
     MODEL_MISMATCH: "Harness 没有切换到所选模型，这条消息没有发出。可以重新选择模型后重发。",

@@ -17,17 +17,19 @@ function when(value: number | null): string {
  * session a conversation already continues opens that conversation instead.
  */
 export function NativeSessionsPanel({ load, onImport, onOpen, disabled }: {
-  load: (cursor: string | undefined, signal: AbortSignal) => Promise<NativeSessionListView>;
+  load: (cursor: string | undefined, signal: AbortSignal, probes?: boolean) => Promise<NativeSessionListView>;
   onImport: (nativeId: string) => void; onOpen: (conversationId: string) => void; disabled: boolean;
 }) {
   const [state, setState] = useState<{ loading: boolean; value: NativeSessionListView | undefined; error: string | null }>({ loading: false, value: undefined, error: null });
-  const read = (cursor?: string) => {
+  // Sessions that the Hub's own model-list reads opened are empty; they stay out of the list unless asked for.
+  const [probes, setProbes] = useState(false);
+  const read = (cursor?: string, includeProbes = probes) => {
     setState(current => ({ loading: true, value: cursor === undefined ? undefined : current.value, error: null }));
-    load(cursor, new AbortController().signal).then(page => setState(current => ({ loading: false, error: null,
-      value: cursor === undefined || !current.value?.sessions || !page.sessions ? page : { sessions: [...current.value.sessions, ...page.sessions], nextCursor: page.nextCursor } })),
+    load(cursor, new AbortController().signal, includeProbes).then(page => setState(current => ({ loading: false, error: null,
+      value: cursor === undefined || !current.value?.sessions || !page.sessions ? page : { sessions: [...current.value.sessions, ...page.sessions], nextCursor: page.nextCursor, hiddenProbes: (current.value.hiddenProbes ?? 0) + (page.hiddenProbes ?? 0) } })),
     error => setState(current => ({ loading: false, value: cursor === undefined ? undefined : current.value, error: errorMessage(error) })));
   };
-  const sessions = state.value?.sessions;
+  const sessions = state.value?.sessions, hidden = state.value?.hiddenProbes ?? 0;
   return <Popover.Root onOpenChange={open => { if (open && state.value === undefined && !state.loading) read(); }}>
     <Popover.Trigger asChild><button type="button" className="composer-settings-trigger" aria-label="本机会话" title="继续这个 Harness 在本工作区的会话" disabled={disabled}><History size={15}/></button></Popover.Trigger>
     <Popover.Portal><Popover.Content className="composer-settings-panel native-sessions" side="top" align="end" sideOffset={12} collisionPadding={16}>
@@ -44,6 +46,7 @@ export function NativeSessionsPanel({ load, onImport, onOpen, disabled }: {
       </li>)}</ul> : <p className="native-muted">这个工作区还没有本机会话。</p> : null}
       {state.loading ? <p className="native-muted"><LoaderCircle size={12} className="spin" aria-hidden="true"/> 正在从本机安装读取…</p> : null}
       {state.value?.nextCursor && !state.loading ? <button type="button" className="text-button" onClick={() => read(state.value!.nextCursor!)}>加载更早的会话</button> : null}
+      {hidden > 0 && !state.loading ? <p className="settings-help">已隐藏 {hidden} 个 HarnessHub 读取模型列表时建立的空会话。<button type="button" className="text-button" onClick={() => { setProbes(true); read(undefined, true); }}>显示</button></p> : null}
       <p className="settings-help">接续后，新消息直接发给这个本机会话，它记得自己的全部历史；对话里引用最近的消息。请不要同时在原程序中继续它。</p>
     </Popover.Content></Popover.Portal>
   </Popover.Root>;

@@ -167,14 +167,18 @@ export class AcpControl implements HarnessControl {
       if (response.protocolVersion !== 1) throw new ControlError("PROTOCOL_VERSION", "peer did not negotiate ACP v1");
       const capabilities = object(response.agentCapabilities, "ACP agent capabilities");
       this.capabilities = capabilities;
-      if (!Array.isArray(response.authMethods)) throw new ControlError("INVALID_PROTOCOL", "authMethods must be an array");
-      const methods = response.authMethods.map(method => string(object(method, "auth method").id, "auth method id"));
+      // ACP's schema defaults authMethods to an empty list; Hermes 0.12 leaves it out when it has no provider credentials.
+      const advertised = response.authMethods === undefined ? [] : response.authMethods;
+      if (!Array.isArray(advertised) || advertised.length > 64) throw new ControlError("INVALID_PROTOCOL", "authMethods must be a bounded array");
+      // A method without a type is an agent method (ACP AuthMethod).
+      const methods = advertised.map(method => { const row = object(method, "auth method"); return { id: string(row.id, "auth method id"), type: row.type === undefined ? "agent" : string(row.type, "auth method type", 64) }; });
       const info = response.agentInfo == null ? null : object(response.agentInfo, "agentInfo");
       const observation: ProtocolObservation = { protocol: "acp-v1", protocolVersion: 1,
         agentName: info === null ? null : string(info.name, "agent name"),
         agentVersion: info === null ? null : string(info.version, "agent version"),
-        authenticationMethods: methods, capabilities };
+        authenticationMethods: methods.map(method => method.id), capabilities };
       this.version = observation.agentVersion;
+      this.catalog = { ...this.catalog, authentication: this.authentication(methods) };
       this.initialized = true;
       return observation;
     } catch (error) { const failure = this.nativeFailure(error); this.rpc.abort(failure); throw failure; }
@@ -223,7 +227,7 @@ export class AcpControl implements HarnessControl {
         // A resumed or natively switched session can run a model its picker does not list; keep the actual value.
         if (!models.some(row => row.id === selected)) models.push({ id: selected, name: selected });
         this.modelConfigId = id; this.legacyModels = false;
-        this.catalog = { ...this.catalog, models, defaultModel: selected, authentication: "unknown", canSelect: true }; return;
+        this.catalog = { ...this.catalog, models, defaultModel: selected, canSelect: true }; return;
       }
     }
     if (response.models !== undefined) {
@@ -236,7 +240,7 @@ export class AcpControl implements HarnessControl {
       // Retain the peer's actual current model; never invent a replacement default.
       if (!models.some(row => row.id === selected)) models.push({ id: selected, name: selected });
       if (models.length > 4096) throw new ControlError("MODEL_LIMIT", "native models exceed catalog budget");
-      this.legacyModels = true; this.catalog = { ...this.catalog, models, defaultModel: selected, authentication: "unknown", canSelect: models.length > 0 };
+      this.legacyModels = true; this.catalog = { ...this.catalog, models, defaultModel: selected, canSelect: models.length > 0 };
     }
   }
   async models(): Promise<NativeModelCatalog> {
@@ -373,6 +377,12 @@ export class AcpControl implements HarnessControl {
    * sends its last reply chunks after that response (Hermes); 0 settles at the response, as ACP v1 requires of agents.
    */
   protected get trailingQuietMs(): number { return 0; }
+  /**
+   * What the agent's advertised authentication methods say about its readiness. ACP lists the methods an agent offers,
+   * not whether one is set up, so the default is "unknown". An agent that advertises a method only once it is set up
+   * (Hermes) reports "missing" without one; no session is opened then, and the catalog read reports the missing sign-in.
+   */
+  protected authentication(methods: readonly { readonly id: string; readonly type: string }[]): NativeModelCatalog["authentication"] { return "unknown"; }
   /** A model the agent switched to on its own (its own command) without announcing it; reported as the session's model from now on. */
   protected adoptModel(id: string): void {
     if (!this.catalog.canSelect || !id || id.length > 1024 || /[\0\r\n]/u.test(id)) return;
@@ -389,6 +399,7 @@ export class AcpControl implements HarnessControl {
   }
   async open(cwd: string, model?: string, options?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> {
     this.assertInitialized();
+    if (this.catalog.authentication === "missing") throw new ControlError("NATIVE_AUTH_REQUIRED", "the Harness reported no usable sign-in or provider configuration");
     if (!isAbsolute(cwd)) throw new ControlError("INVALID_INPUT", "conversation cwd must be absolute");
     if (this.conversation !== null || this.opening || this.forking) throw new ControlError("INVALID_STATE", "this connection already owns a conversation");
     this.opening = true;

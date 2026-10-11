@@ -12,7 +12,7 @@
 
 ADR-015后，选择器变化即提出意图，不再另点Apply。快速选择时只提交最新尚未受理选择，已受理请求使用原幂等键确认后收敛；期间新消息禁止发给中间目标。界面保留最新用户选择，不被较早切换快照覆盖；失败不自动重试，用户可明确重试或继续原有效选择。
 
-所有native入口沿用本机已安装Harness的配置目录、模型与登录，不创建空配置或写全局模型。选择nativeModel与managed provider互斥；native模型通过原生RPC传给新会话。`GET /api/v1/harnesses/:id/models?controlId=...&workspace=...&nativeModel=...&refresh=1`读取相同入口/配置的模型、默认和安全认证状态；Codex config/read/account/read/model/list，ACP声明的model配置项或明确的旧models接口。没有原生选择能力就明确说明由Harness管理，不伪造静态目录。后台最多8个读探测、同请求共享、20s期限，关闭取消并等待进程；认证缺失返回missing，异常不缓存空目录。成功非空结果缓存60秒且最多8项，配置/入口身份变化和refresh=1失效；选中模型专属档位通过nativeModel读取。Pi目录/档位来自原CLI/SDK，OpenClaw通过原CLI读取models.list并只patch本轮Hub会话的模型。
+所有native入口沿用本机已安装Harness的配置目录、模型与登录，不创建空配置或写全局模型。选择nativeModel与managed provider互斥；native模型通过原生RPC传给新会话。`GET /api/v1/harnesses/:id/models?controlId=...&workspace=...&nativeModel=...&refresh=1`读取相同入口/配置的模型、默认和安全认证状态；Codex config/read/account/read/model/list，ACP声明的model配置项或明确的旧models接口。没有原生选择能力就明确说明由Harness管理，不伪造静态目录。后台最多8个读探测、同请求共享、20s期限，关闭取消并等待进程；认证缺失（含ACP的NATIVE_AUTH_REQUIRED）返回missing，异常不缓存空目录。成功非空结果按配置指纹缓存，最长24小时、最多32项，跨重启保存在数据根`native-catalogs.json`（ADR-033），配置/入口身份变化和refresh=1失效；选中模型专属档位通过nativeModel读取。Pi目录/档位来自原CLI/SDK，OpenClaw通过原CLI读取models.list并只patch本轮Hub会话的模型。
 
 Provider 保存名称、协议、Base URL、模型列表、默认模型、启用状态和 hasCredential。新增/编辑都使用命令幂等键；更新要求 expectedRevision。空白密钥字段在前端转换为省略，保留旧密钥；显式空字符串无效。当前不做删除/复用身份，停用后保留全部历史 revision；已准入 Run 保留旧配置，新的准备过程拒绝停用目标。编辑不自动改变当前 Session 的固定 revision，用户需显式应用新版本。
 
@@ -75,6 +75,8 @@ ADR-020追加`POST /api/v1/sessions/:id/native-branch`，接受epoch/commandId�
 ADR-022追加`GET/HEAD /api/v1/content/:id`（`download=1`可选）：需要登录，跨站请求拒绝；只有png/jpeg/gif/webp图片与JSON/纯文本内联，其余强制下载，响应带`Content-Security-Policy: sandbox`与`nosniff`，未知内容404，文件与记录不一致409。工具详情按需读取。SSE新增`run`帧，携带version/lastSeq与活动Run的完整公开事实，用于工具、计划、用量、提示、活动、产物的增量更新；客户端只接受仍在执行的活动Run，身份、输入、选择、epoch与状态不得改变，不符或缺帧时改取完整快照。
 
 ADR-026追加`GET /api/v1/harnesses/:id/extensions?controlId=&workspace=`：按需用短期原生探针读取技能、MCP服务器与插件（每类≤512，标记截断），不缓存；接口没有列表时返回`{extensions:null}`。Codex启用的技能进入命令目录（`skill:名称`）并以原生skill输入调用。
+
+ADR-033追加只读`GET /api/v1/harnesses/readiness`，返回`{readiness}`；`/api/v1/state`同带`readiness`。每项为一个入口最近一次目录读取的结果（`ready`附`signedIn`、`signed_out`、`failed`附稳定`failureCode`），只有回合记录时为`unchecked`；`startupMs`是该入口最近5个带计时回合的启动中位数。读取它不启动任何Harness。`GET /api/v1/harnesses/:id/native-sessions`默认不列出Hub目录读取建出的原生会话（已被对话持有的除外），有隐藏时返回`hiddenProbes`；`probes=include`列出全部。
 
 ADR-025追加`POST /api/v1/sessions/:id/fork {commandId, throughRunId?}`：在已完成的回复后创建分支并返回新对话视图（201，命令幂等）；没有完成的回复或源正在执行时409。会话视图包含`origin`（源对话、分支点、引用历史），原生状态增加`forking`；尚无输入的分支在列表中命名为“分支 · 首条消息”。
 

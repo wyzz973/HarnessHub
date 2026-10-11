@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, realpathSync } from "node:fs";
 import { open, realpath } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -9,7 +9,7 @@ import { ProviderError } from "../contracts/provider.js";
 import { ManagementError } from "../contracts/management.js";
 import { SessionError, parseNativeOptions, sessionId, type SelectionRequest, type SessionConfiguration, type SessionSnapshot } from "../contracts/session.js";
 import { MAX_CONTENT_BYTES, MAX_RUN_ATTACHMENTS } from "../contracts/content.js";
-import type { EventPage, HarnessView, InstallationLogPage, NativeSessionListView, SessionSummary, SessionView, WebState } from "../contracts/web.js";
+import type { EventPage, HarnessReadinessView, HarnessView, InstallationLogPage, NativeSessionListView, SessionSummary, SessionView, WebState } from "../contracts/web.js";
 import { inventory, officialInstallation } from "../infrastructure/catalog/inventory-composition.js";
 import { harnessEntry, productCommand } from "./harness-entry.js";
 import { prepareConfiguration } from "../infrastructure/session/binding-factory.js";
@@ -18,6 +18,7 @@ import { carriedNativeConfiguration } from "../contexts/session/domain/state.js"
 import { observedPackageVersion } from "../infrastructure/management/system-version.js";
 import { SessionStreamError, SessionStreamHub } from "./session-stream.js";
 import { HarnessModels } from "./harness-models.js";
+import { NativeCatalogCache, type NativeReadiness } from "./native-catalog-cache.js";
 import { conversationMarkdown } from "./conversation-export.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
@@ -115,6 +116,32 @@ async function body(request: IncomingMessage): Promise<unknown> {
     try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks, length))) as unknown; }
     catch { throw new HttpError(400, "INVALID_JSON", "Request body must be valid UTF-8 JSON"); }
   } finally { clearTimeout(timer); }
+}
+/** How many of an entry's latest Runs set its usual startup time. */
+const STARTUP_SAMPLES = 5;
+/**
+ * Each Harness entry's latest catalog read, with its usual startup: the median time from starting the program to its open
+ * native session over its latest Runs in these Sessions. An entry with Runs but no read is unchecked.
+ */
+function readinessViews(observed: readonly NativeReadiness[], snapshots: readonly SessionSnapshot[]): HarnessReadinessView[] {
+  const samples = new Map<string, { readonly at: number; readonly ms: number }[]>();
+  for (const snapshot of snapshots) for (const run of snapshot.runs) {
+    const timing = run.timing;
+    if (timing?.preparingAt === undefined || timing.readyAt === undefined || timing.readyAt < timing.preparingAt) continue;
+    const key = run.selection.harnessId + "\0" + run.selection.controlId;
+    samples.set(key, [...samples.get(key) ?? [], { at: timing.preparingAt, ms: timing.readyAt - timing.preparingAt }]);
+  }
+  const startup = (key: string) => {
+    const latest = [...samples.get(key) ?? []].sort((a, b) => b.at - a.at).slice(0, STARTUP_SAMPLES).map(sample => sample.ms).sort((a, b) => a - b);
+    return latest.length ? { startupMs: latest[Math.floor(latest.length / 2)]! } : {};
+  };
+  const views: HarnessReadinessView[] = observed.map(item => ({ harnessId: item.harnessId, controlId: item.controlId, state: item.state, checkedAt: item.checkedAt,
+    ...(item.signedIn === undefined ? {} : { signedIn: item.signedIn }), ...(item.failureCode === undefined ? {} : { failureCode: item.failureCode }), ...startup(item.harnessId + "\0" + item.controlId) }));
+  for (const key of samples.keys()) {
+    const [harnessId, controlId] = key.split("\0") as [string, string];
+    if (!views.some(view => view.harnessId === harnessId && view.controlId === controlId)) views.push({ harnessId, controlId, state: "unchecked", checkedAt: null, ...startup(key) });
+  }
+  return views;
 }
 function summary(snapshot: SessionSnapshot): SessionSummary {
   const first = snapshot.messages.find(message => message.role === "user")?.text.replace(/\s+/gu, " ").trim();
@@ -231,7 +258,9 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     process.stderr.write("HarnessGateway: SESSION_STREAM_READ_FAILED (" + app.providers.redact(fault.code).slice(0, 128) + ")\n");
   });
   app = (options.application ?? composeApplication)(options.root, event => streams.publish(event));
-  const nativeModels = new HarnessModels(app.factory);
+  // Derived observations only; a file this version cannot adopt is reported and left as it is.
+  const nativeModels = new HarnessModels(app.factory, new NativeCatalogCache(realpathSync(options.root), () => app.store.assertOwner(),
+    problem => process.stderr.write("HarnessGateway: NATIVE_CATALOG_CACHE_UNAVAILABLE (" + problem + ")\n")));
   /** A request's workspace with this Gateway's catalog, configuration home and search settings. */
   const workspaceConfiguration = (workspace: string) => prepareConfiguration({ workspace,
     ...(options.configuration.configHome === null ? {} : { configHome: options.configuration.configHome }),
@@ -312,9 +341,13 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (write && (typeof request.headers["x-csrf-token"] !== "string" || !equal(request.headers["x-csrf-token"], login.csrf))) throw new HttpError(403, "CSRF_REJECTED", "Invalid write token");
     if (path === "/api/v1/auth/session" && method === "GET") { queries(url, []); json(response, 200, { csrfToken: login.csrf }); return; }
     if (path === "/api/v1/state" && method === "GET") {
-      queries(url, []); const output: WebState = { providerManagement: options.providerManagement ?? true, workspace: options.configuration.workspace, providers: app.providers.list(), harnesses: await rescan(), sessions: app.store.list(100).map(summary), jobs: app.management.listJobs().slice(0, 50) }; json(response, 200, output); return;
+      queries(url, []); const snapshots = app.store.list(100);
+      const output: WebState = { providerManagement: options.providerManagement ?? true, workspace: options.configuration.workspace, providers: app.providers.list(), harnesses: await rescan(), sessions: snapshots.map(summary), jobs: app.management.listJobs().slice(0, 50),
+        readiness: readinessViews(nativeModels.readiness(), snapshots) }; json(response, 200, output); return;
     }
     if (path === "/api/v1/harnesses" && method === "GET") { queries(url, []); json(response, 200, await rescan()); return; }
+    // Read-only: what the latest catalog reads and Runs showed; nothing is started.
+    if (path === "/api/v1/harnesses/readiness" && method === "GET") { queries(url, []); json(response, 200, { readiness: readinessViews(nativeModels.readiness(), app.store.list(100)) }); return; }
     if (path === "/api/v1/attachments" && method === "POST") {
       // Raw bytes, not JSON: the declared type is checked against the bytes and the upload is bound to this workspace.
       queries(url, ["name", "commandId"]);
@@ -348,8 +381,9 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (permissionRoute && method === "POST") { queries(url, []); const input = record(await body(request), ["optionId", "commandId", "input"], ["optionId", "commandId"]); const id = sessionId(permissionRoute[1]); json(response, 200, await app.runtime.decidePermission(id, permissionRoute[2]!, text(input.optionId, "optionId", 512), text(input.commandId, "commandId", 128), input.input===undefined?undefined:(typeof input.input==="string"&&Buffer.byteLength(input.input)<=65536&&!input.input.includes("\0")?input.input:(()=>{throw new HttpError(400,"INVALID_INPUT","invalid native UI input")})()))); return; }
     const nativeSessionsRoute = /^\/api\/v1\/harnesses\/([a-z][a-z0-9-]{0,95})\/native-sessions$/u.exec(path);
     if (nativeSessionsRoute && method === "GET") {
-      queries(url, ["controlId", "workspace", "cursor"]);
-      const controlId = url.searchParams.get("controlId"), workspace = url.searchParams.get("workspace"), after = url.searchParams.get("cursor");
+      queries(url, ["controlId", "workspace", "cursor", "probes"]);
+      const controlId = url.searchParams.get("controlId"), workspace = url.searchParams.get("workspace"), after = url.searchParams.get("cursor"), probes = url.searchParams.get("probes");
+      if (probes !== null && probes !== "include") throw new HttpError(400, "INVALID_INPUT", "Invalid native session filter");
       if (after !== null && (!after || Buffer.byteLength(after) > 1024 || /[\0-\x1f\x7f]/u.test(after))) throw new HttpError(400, "INVALID_INPUT", "Invalid native session cursor");
       const configuration = workspace === null ? options.configuration : await workspaceConfiguration(workspace);
       const selected = select({ harnessId: nativeSessionsRoute[1], ...(controlId === null ? {} : { controlId }) });
@@ -359,7 +393,11 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       if (page === null) { const output: NativeSessionListView = { sessions: null, nextCursor: null }; json(response, 200, output); return; }
       // Sessions a conversation already continues (or the Hub created) open that conversation instead of a second holder.
       const validated = await app.factory.validate(selected, configuration), owners = app.store.nativeOwners(validated.harnessId, validated.controlId);
-      const output: NativeSessionListView = { sessions: page.sessions.map(row => ({ ...row, ...(owners.has(row.id) ? { conversationId: owners.get(row.id)! } : {}) })), nextCursor: page.nextCursor };
+      // Sessions only a catalog read opened are left out unless asked for; one a conversation holds is never left out.
+      const opened = probes === "include" ? new Set<string>() : nativeModels.probeSessions(validated.harnessId, validated.controlId);
+      const shown = page.sessions.filter(row => owners.has(row.id) || !opened.has(row.id));
+      const output: NativeSessionListView = { sessions: shown.map(row => ({ ...row, ...(owners.has(row.id) ? { conversationId: owners.get(row.id)! } : {}) })), nextCursor: page.nextCursor,
+        ...(shown.length < page.sessions.length ? { hiddenProbes: page.sessions.length - shown.length } : {}) };
       json(response, 200, output); return;
     }
     const extensionsRoute = /^\/api\/v1\/harnesses\/([a-z][a-z0-9-]{0,95})\/extensions$/u.exec(path);
@@ -391,7 +429,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       try { json(response, 200, await nativeModels.read(selected, configuration, refresh === "1")); }
       catch (error) {
         const code = error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "MODEL_DISCOVERY_FAILED";
-        if (code === "GATEWAY_AUTH_REQUIRED" || code === "HARNESS_AUTH_REQUIRED") { json(response, 200, { models: [], defaultModel: null, authentication: "missing", canSelect: false }); return; }
+        if (code === "GATEWAY_AUTH_REQUIRED" || code === "HARNESS_AUTH_REQUIRED" || code === "NATIVE_AUTH_REQUIRED") { json(response, 200, { models: [], defaultModel: null, authentication: "missing", canSelect: false }); return; }
         throw new HttpError(502, code, "无法读取这个 Harness 的本机模型列表。请检查它的登录和配置后刷新。");
       }
       return;

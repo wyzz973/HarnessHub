@@ -179,8 +179,11 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       throw error;
     }
   }
-  /** Read-only identity for catalog caches; execution always makes a fresh observation. No credentials are returned. */
-  async catalogFingerprint(selection: SelectionRequest, configuration: SessionConfiguration): Promise<string> {
+  /**
+   * Read-only identity for catalog caches, with the control entry the selection resolves to; execution always makes a fresh
+   * observation. File identities only (never contents), and no credentials are returned.
+   */
+  async catalogFingerprint(selection: SelectionRequest, configuration: SessionConfiguration): Promise<{ readonly fingerprint: string; readonly controlId: string }> {
     this.assertOwner(); const root = await realpath(await mkdtemp(join(tmpdir(), "harness-catalog-identity-")));
     try {
       const observed = await observe(selection, configuration, root, this.management, this.nativeEnvironment), command = observed.selected.command;
@@ -192,14 +195,17 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
         hermes:[join(hermes,"config.yaml"),join(hermes,".env"),join(hermes,"auth.json")], dsh:[join(dsh,"settings.yaml"),join(dsh,"cordis.patch.yml"),join(dsh,".credentials.yaml"),join(dsh,"profiles","acp","cordis.patch.yml"),join(dsh,"profiles","acp","package.json")] };
       const files = [command.executable, ...command.args.filter(arg => arg.startsWith("/")), ...(hints[selection.harnessId] ?? []), ...[".codex/config.toml",".claude/settings.json",".claude/settings.local.json",".gemini/settings.json",".pi/settings.json","opencode.json","opencode.jsonc"].map(path=>join(configuration.workspace,path))];
       const identities = await Promise.all(files.map(async path => { try { const canonical = await realpath(path), info = await stat(canonical); return [canonical,info.dev,info.ino,info.size,info.mtimeMs]; } catch (error) { if (error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT") return [path,"missing"]; throw error; } }));
-      this.assertOwner(); return sha256(Buffer.from(JSON.stringify({ command, identities, managed: observed.managed?.revision })));
+      this.assertOwner(); return { fingerprint: sha256(Buffer.from(JSON.stringify({ command, identities, managed: observed.managed?.revision }))), controlId: observed.selected.id };
     } finally { await rm(root,{recursive:true,force:true}); }
   }
-  /** Read-only native catalog probe; no prompt and no workspace writer lease. */
-  async discoverModels(request: SelectionRequest, configuration: SessionConfiguration, signal: AbortSignal): Promise<NativeModelCatalog> {
+  /**
+   * Read-only native catalog probe; no prompt and no workspace writer lease. An ACP catalog is only available from a
+   * session, so the probe opens one; `opened` receives its native identity as soon as the Harness has created it.
+   */
+  async discoverModels(request: SelectionRequest, configuration: SessionConfiguration, signal: AbortSignal, opened?: (nativeId: string) => void): Promise<NativeModelCatalog> {
     return this.probe(request, configuration, signal, async (control, protocol) => {
       let selectionError: NativeModelCatalog["selectionError"];
-      if (protocol === "acp-v1") try { await control.open(configuration.workspace, request.nativeModel); }
+      if (protocol === "acp-v1") try { const id = await control.open(configuration.workspace, request.nativeModel); opened?.(id); }
       catch(error) { if(error!==null&&typeof error==="object"&&"code"in error&&error.code==="MODEL_UNAVAILABLE") selectionError={code:"MODEL_UNAVAILABLE",message:"所选模型当前不在本机目录中，请重新选择。"};else throw error; }
       if (!control.models) throw new SessionError("UNSUPPORTED_MODEL_SELECTION", "this Harness does not expose models");
       const discovered = await control.models();

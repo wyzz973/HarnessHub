@@ -454,6 +454,11 @@ test("unavailable native authentication keeps the same conversation usable, show
   await pick("选择 Harness", "OpenClaw"); await pick("选择 Provider", "Harness 原生连接");
   await expect(page.getByText(/本机认证尚未就绪/)).toBeVisible();
   await expect(page.getByRole("button",{name:"发送消息",exact:true})).toBeDisabled();
+  // The picker shows what the latest catalog read and Runs found, before anything else is sent.
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click();
+  await expect(page.getByRole("option", { name: "OpenClaw", exact: true })).toHaveAccessibleDescription(/需要登录/);
+  await expect(page.getByRole("option", { name: "Codex", exact: true })).toHaveAccessibleDescription(/启动约 \d+ 秒/);
+  await page.keyboard.press("Escape");
   await expect(composer).toBeEnabled(); await expect(composer).toHaveValue("选择失败也要保留这条草稿");
   const failed = await current(); assert.equal(failed.id, first.id); assert.equal(failed.status, "open"); assert.equal(failed.runs.length, 1);
   assert.equal(failed.selection.harnessId,"openclaw"); assert.equal(failed.switches.at(-1).status,"effective");

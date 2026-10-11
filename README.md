@@ -21,7 +21,7 @@ pnpm web --cwd /absolute/workspace --data-dir data --port 4317
 
 Harness连接或目标切换失败时，历史与原选择保留，可继续使用当前选择或明确重试。草稿在当前标签页按对话保存，刷新也可恢复。旧blocked会话可选择Harness并“检查连接并恢复对话”；未知结果需明确确认，清理未确认仍需先处理资源，不自动重跑旧任务。结束会话前说明后果并确认。审查见[对话恢复记录](docs/verification/conversation-recovery-2026-10-10.md)。当前业务存储为v10（保留v1→v2→v3→v4→v5→v6→v7→v8→v9→v10事务迁移）；更新前备份本机data，回退旧程序前停止服务并恢复旧备份。
 
-所有接入的Harness使用本机已安装入口，默认沿用本机模型配置和登录。模型列表由所选Harness原生接口读取，未指定时跟随其本机默认；不写全局模型配置，不创建空native HOME。选择Harness、Provider或模型后直接提出切换，不再点“应用”；当前回复保持原选择，新消息等待最后一次选择生效。配置验证失败保留原选择与草稿，快速改选只推进最新未受理选择。普通切换不启动目标进程，effective表示下一轮配置选择已保存；原生连接、认证与额度在发送时分别核实。
+所有接入的Harness使用本机已安装入口，默认沿用本机模型配置和登录。模型列表由所选Harness原生接口读取，未指定时跟随其本机默认；不写全局模型配置，不创建空native HOME。选择Harness、Provider或模型后直接提出切换，不再点“应用”；当前回复保持原选择，新消息等待最后一次选择生效。配置验证失败保留原选择与草稿，快速改选只推进最新未受理选择。普通切换不启动目标进程，effective表示下一轮配置选择已保存；原生连接、认证与额度在发送时分别核实。选择器显示每个入口上次读取模型目录时的状态（已就绪、需要登录或配置、读取失败）和通常启动用时；目录按配置指纹复用最长24小时并跨重启保存在数据根的`native-catalogs.json`，读取目录时原程序建出的空会话默认不在“本机会话”中列出（[ADR-033](docs/decisions/0033-native-catalog-cache-and-readiness.md)）。
 
 当前生产页面只使用各Harness本机已配置的模型，统一Provider管理后置。旧Provider接口与实验验收保留，已有显式Provider会话不会静默改成原生模式。原生模型选择/直接切换见[ADR-015](docs/decisions/0015-native-harness-models-and-switching.md)、[Multica调研](docs/research/multica-native-models.md)及[验收](docs/verification/native-models-2026-10-11.md)。业务格式现为v10，升级前备份，回退旧程序前恢复旧备份。
 

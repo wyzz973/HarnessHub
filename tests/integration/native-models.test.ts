@@ -100,6 +100,50 @@ test("authenticated native models endpoint accepts workspace queries, projects n
   const rejected = await fetch(origin + "/api/v1/harnesses/native-codex/models?bad=value", { headers: { Cookie: cookie, Origin: origin } }); assert.equal(rejected.status, 400);
 });
 
+test("a native catalog read is reused across restarts while its fingerprint holds, and the session it opened stays out of the list", async t => {
+  const f = await setup(t), manifest = join(f.root, "listing.json"), traces = { "native-list": join(f.root, "list.ndjson"), "native-signin": join(f.root, "signin.ndjson") };
+  const source = { repository: "fixture", revision: "native", upstreamId: "native", url: "https://example.invalid/native" };
+  const definitions = ([["native-list", "hermes"], ["native-signin", "auth-session"]] as const).map(([id, scenario]) => ({ id, name: id, aliases: [], binaryNames: [], configHints: [],
+    controls: [{ id, protocol: "acp-v1", executableNames: ["fixture"], args: [peer, "acp-v1", scenario], env: { FIXTURE_TRACE: traces[id] }, package: null, distribution: null, requiredExecutables: [], source }] }));
+  await writeFile(manifest, JSON.stringify({ version: 2, definitions, overrides: Object.fromEntries(definitions.map(d => [d.id, { executable: process.execPath }])) }));
+  const config = await prepareConfiguration({ workspace: f.workspace, manifestPath: manifest, pathOnly: true }), data = join(f.root, "web-data");
+  const opened = async (id: keyof typeof traces) => { try { return (await readFile(traces[id], "utf8")).trim().split("\n").filter(line => (JSON.parse(line) as { method?: string }).method === "session/new").length; } catch { return 0; } };
+  const start = async () => {
+    const gateway = await startWebServer({ root: data, configuration: config, port: 0, application: (root, publish) => application(root, publish, { nativeEnvironment: f.environment }) });
+    const launch = new URL(gateway.url), origin = launch.origin;
+    const boot = await fetch(origin + "/api/v1/auth/bootstrap", { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ token: new URLSearchParams(launch.hash.slice(1)).get("token") }) });
+    assert.equal(boot.status, 200); const cookie = boot.headers.get("set-cookie")!.split(";", 1)[0]!;
+    return { gateway, get: async (path: string) => { const response = await fetch(origin + path, { headers: { Cookie: cookie, Origin: origin } }); assert.equal(response.status, 200, path + " " + await response.clone().text()); return response.json() as Promise<Record<string, unknown>>; } };
+  };
+  const query = (id: string) => "?" + new URLSearchParams({ workspace: f.workspace, controlId: id });
+  let web = await start(); f.close.push(() => web.gateway.close());
+  await web.get("/api/v1/harnesses/native-list/models" + query("native-list"));
+  await web.get("/api/v1/harnesses/native-list/models" + query("native-list"));
+  assert.equal(await opened("native-list"), 1, "a second read in the same day is answered from the first");
+  // The session the read opened is not offered for continuing unless asked for.
+  const listed = await web.get("/api/v1/harnesses/native-list/native-sessions" + query("native-list"));
+  assert.deepEqual(listed.sessions, []); assert.equal(listed.hiddenProbes, 1);
+  const all = await web.get("/api/v1/harnesses/native-list/native-sessions" + query("native-list") + "&probes=include");
+  assert.deepEqual((all.sessions as { id: string }[]).map(row => row.id), ["session-fixture"]); assert.equal(all.hiddenProbes, undefined);
+  // An agent that needs its own sign-in reports it as such, and the readiness view remembers both entries.
+  assert.equal((await web.get("/api/v1/harnesses/native-signin/models" + query("native-signin"))).authentication, "missing");
+  const readiness = (await web.get("/api/v1/harnesses/readiness")).readiness as { harnessId: string; state: string; signedIn?: boolean | null; checkedAt: number }[];
+  assert.deepEqual(readiness.map(row => [row.harnessId, row.state, row.signedIn]).sort(), [["native-list", "ready", null], ["native-signin", "signed_out", undefined]]);
+  assert.deepEqual((await web.get("/api/v1/state")).readiness, readiness);
+  await web.gateway.close();
+
+  web = await start();
+  await web.get("/api/v1/harnesses/native-list/models" + query("native-list"));
+  assert.equal(await opened("native-list"), 1, "a restart reuses the read");
+  assert.equal((await web.get("/api/v1/harnesses/native-list/native-sessions" + query("native-list"))).hiddenProbes, 1);
+  assert.deepEqual(((await web.get("/api/v1/harnesses/readiness")).readiness as unknown[]).length, 2);
+  await web.get("/api/v1/harnesses/native-list/models" + query("native-list") + "&refresh=1");
+  assert.equal(await opened("native-list"), 2, "refresh always reads again");
+  await mkdir(join(f.workspace, ".gemini")); await writeFile(join(f.workspace, ".gemini", "settings.json"), "{}");
+  await web.get("/api/v1/harnesses/native-list/models" + query("native-list"));
+  assert.equal(await opened("native-list"), 3, "a changed configuration is read again");
+});
+
 test("cancelled native discovery starts no protocol operation and removes only its owned temporary manifest", async t => {
   const f = await setup(t), factory = new DirectorySessionBindingFactory(new SqliteWorkspaceLeaseProvider(join(f.root, "locks")), () => {}, undefined, undefined, f.environment);
   const controller = new AbortController(); controller.abort();

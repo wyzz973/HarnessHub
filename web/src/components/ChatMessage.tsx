@@ -19,7 +19,8 @@ interface MessageProps {
   loadToolDetail?: ToolDetailLoader;
   onBranch?: (runId: string) => void;
   /** Seconds the same Harness took to start in this conversation's previous Run, shown while this one starts. */
-  startupHint?: number | undefined;
+  /** Seconds the same Harness took to start: last time in this conversation, or usually when this conversation has no earlier Run of it. */
+  startupHint?: { readonly seconds: number; readonly usual: boolean } | undefined;
 }
 function finished(status: RunStatus): boolean {
   return status === "completed" || status === "cancelled" || status === "failed" || status === "unknown";
@@ -32,13 +33,13 @@ export function duration(milliseconds: number): string {
   return Math.floor(seconds / 60) + " 分 " + Math.round(seconds % 60) + " 秒";
 }
 /** What the Run is doing now, from the phases the Runtime recorded; elapsed time is shown once it is noticeable. */
-function activityLabel(run: PublicRun | undefined, status: RunStatus, harness: string, now: number, startupHint: number | undefined): string {
+function activityLabel(run: PublicRun | undefined, status: RunStatus, harness: string, now: number, startupHint: MessageProps["startupHint"]): string {
   if (run?.cancelRequested && !finished(status)) return "正在停止并清理资源";
   if (run?.awaitingSwitchId && status === "queued") return "等待选择切换生效";
   const timing = run?.timing, since = (from: number | undefined) => from !== undefined && now - from >= 2000 ? " · " + duration(now - from) : "";
   switch (status) {
     case "queued": return "等待开始";
-    case "preparing": return "正在启动 " + harness + since(timing?.preparingAt) + (startupHint !== undefined && startupHint >= 2 ? "（上次约 " + Math.round(startupHint) + " 秒）" : "");
+    case "preparing": return "正在启动 " + harness + since(timing?.preparingAt) + (startupHint !== undefined && startupHint.seconds >= 2 ? (startupHint.usual ? "（通常约 " : "（上次约 ") + Math.round(startupHint.seconds) + " 秒）" : "");
     case "running":
       if (timing === undefined || timing.firstOutputAt !== undefined) return "正在回复";
       return timing.dispatchedAt === undefined ? "已连接 " + harness + "，正在发送" : "等待 " + harness + " 回复" + since(timing.dispatchedAt);

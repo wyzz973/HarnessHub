@@ -1,4 +1,4 @@
-import type { BackendResult, ControlEvent, ControlRun, NativeConversationId } from "../../contracts/control.js";
+import type { BackendResult, ControlEvent, ControlRun, NativeConversationId, NativeModelCatalog } from "../../contracts/control.js";
 import { classifyRemoteFailure } from "../../infrastructure/control/json-rpc-process.js";
 import type { ControlAttachment } from "../../contracts/content.js";
 import { AcpControl } from "./acp.js";
@@ -26,7 +26,10 @@ const MODEL_SWITCHED = /^Model switched to: (\S+)[ \t]*\r?\nProvider: (\S+)[ \t]
  * - its last reply chunks can follow the prompt response, so the turn settles after a short quiet window;
  * - `/model <name>` switches the session's model without an update, so its own reply is the only report of the change;
  * - a failed model call still ends with end_turn and an empty reply (or only `Error: …`); its stderr log is the only report of
- *   the failure, so such a turn is reported as failed with the class its log names, never with the log text itself.
+ *   the failure, so such a turn is reported as failed with the class its log names, never with the log text itself;
+ * - it advertises its agent authentication method only when it resolves a provider with credentials (0.12 leaves the list
+ *   out otherwise; later versions add a terminal setup method that says nothing about it), so without that method no
+ *   session is opened and the missing setup is reported instead of a prompt that cannot reach a model.
  * Only the `hermes-acp` tool set is active in this mode (no messaging, cron or audio tools).
  */
 export class HermesControl extends AcpControl {
@@ -36,6 +39,8 @@ export class HermesControl extends AcpControl {
   protected override get approvalDeadlineMs(): number | null { return /^0\.12\./u.test(this.agentVersion ?? "") ? HERMES_APPROVAL_WAIT_MS : null; }
   // Hermes can send its last reply chunks after the prompt response (Multica waits 250 ms for the same reason).
   protected override get trailingQuietMs(): number { return HERMES_TRAILING_QUIET_MS; }
+  // acp_adapter/auth.py: the agent method's id is the configured provider, present only when its credentials resolve.
+  protected override authentication(methods: readonly { readonly id: string; readonly type: string }[]): NativeModelCatalog["authentication"] { return methods.some(method => method.type === "agent") ? "ready" : "missing"; }
   override async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
     // Only Hermes's own command is read for a model switch; a model reply quoting the same words in another turn is never parsed.
     const switching = !attachments.length && /^\/model\s+\S/u.test(prompt.trim()), mark = this.stderrMark;

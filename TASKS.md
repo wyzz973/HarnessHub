@@ -1563,6 +1563,8 @@
 - src/web/conversation-export.ts
 - src/web/harness-entry.ts
 - tests/unit/harness-entry.test.ts
+- src/web/native-catalog-cache.ts
+- tests/integration/native-catalog-cache.test.ts
 
 验收：
 - 复用应用语义，202只表受理

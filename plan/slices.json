@@ -704,7 +704,9 @@
         "tests/real/native-thinking.real.ts",
         "tests/real/native-options.real.ts",
         "src/web/harness-entry.ts",
-        "tests/unit/harness-entry.test.ts"
+        "tests/unit/harness-entry.test.ts",
+        "src/web/native-catalog-cache.ts",
+        "tests/integration/native-catalog-cache.test.ts"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/complete-native-capabilities-2026-10-11.md"

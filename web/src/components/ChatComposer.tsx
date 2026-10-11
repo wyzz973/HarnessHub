@@ -3,7 +3,8 @@ import { ArrowRight, ArrowUp, Paperclip, RefreshCw, SlidersHorizontal, Square, X
 import { useLayoutEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import type { PublicRun } from "../../../src/contracts/session.js";
-import { protocolLabel } from "../api.js";
+import { failureMessage, protocolLabel } from "../api.js";
+import type { HarnessReadinessView, HarnessView } from "../../../src/contracts/web.js";
 import { BrandIcon, providerBrand } from "./BrandIcon.js";
 import { BrandMark, Spinner } from "./common.js";
 import { SearchPicker } from "./SearchPicker.js";
@@ -20,6 +21,25 @@ interface ComposerProps extends ChatProps {
   problem: string | null;
   blocked: boolean;
   inputRef: RefObject<HTMLTextAreaElement | null>;
+}
+
+/** Products whose own documentation names the command that sets up a missing sign-in or provider. */
+const SETUP_COMMANDS: Readonly<Record<string, string>> = { hermes: "hermes model" };
+function approximately(ms: number): string { return Math.max(1, Math.round(ms / 1000)) + " 秒"; }
+function ago(at: number): string {
+  const minutes = Math.round((Date.now() - at) / 60000);
+  return minutes < 1 ? "刚刚" : minutes < 60 ? minutes + " 分钟前" : minutes < 1440 ? Math.round(minutes / 60) + " 小时前" : Math.round(minutes / 1440) + " 天前";
+}
+/** The readiness badge of one Harness entry, from its latest catalog read; nothing when it has not been read. */
+function readinessStatus(harness: HarnessView, readiness: HarnessReadinessView | undefined): PickerOption["status"] {
+  if (readiness === undefined || readiness.checkedAt === null) return undefined;
+  const when = ago(readiness.checkedAt);
+  switch (readiness.state) {
+    case "ready": return { tone: "success", label: "已就绪", title: when + "读取过本机模型" + (readiness.signedIn ? "，已登录" : "；登录与额度在发送时由它自己核实") };
+    case "signed_out": return { tone: "warning", label: SETUP_COMMANDS[harness.id] ? "需要配置" : "需要登录", title: when + "检查时，它需要先在本机完成登录或配置" + (SETUP_COMMANDS[harness.id] ? "（终端运行 " + SETUP_COMMANDS[harness.id] + "）" : "") };
+    case "failed": return { tone: "danger", label: "读取失败", title: when + "读取本机模型失败：" + failureMessage({ code: readiness.failureCode ?? "", message: "原因未知，可以刷新本机模型重试。" }) };
+    case "unchecked": return undefined;
+  }
 }
 
 export function ChatComposer(props: ComposerProps) {
@@ -72,10 +92,17 @@ export function ChatComposer(props: ComposerProps) {
   };
   const harnessOptions: PickerOption[] = harnesses.map(row => {
     const available = row.controls.some(control => control.available);
+    // The entry this Harness would run through: the chosen one for the current Harness, otherwise its default.
+    const control = row.id === draft.harnessId && draft.controlId ? draft.controlId : row.controls.find(item => item.id === row.defaultControlId && item.available)?.id ?? row.controls.find(item => item.available)?.id;
+    const readiness = control === undefined ? undefined : props.readiness?.find(item => item.harnessId === row.id && item.controlId === control);
+    const version = row.management.programVersion ?? row.management.installedVersion;
+    const status = available ? readinessStatus(row, readiness) : undefined;
     return {
       value: row.id, label: row.name, icon: <BrandIcon brand={row.id} name={row.name}/>,
       group: available ? "已发现控制入口" : "更多 Harness",
-      description: (row.management.programVersion ?? row.management.installedVersion) ? `v${row.management.programVersion ?? row.management.installedVersion}` : row.controls.filter(control => control.available).map(control => protocolLabel(control.protocol)).join(" / "),
+      description: [version ? `v${version}` : row.controls.filter(item => item.available).map(item => protocolLabel(item.protocol)).join(" / "),
+        available && readiness?.startupMs !== undefined ? "启动约 " + approximately(readiness.startupMs) : ""].filter(Boolean).join(" · "),
+      ...(status ? { status } : {}),
       disabled: !available, reason: row.installed ? "已发现程序，控制入口尚未就绪" : "尚未安装，请在 Harnesses 中管理",
     };
   }).sort((a, b) => Number(Boolean(a.disabled)) - Number(Boolean(b.disabled)));
@@ -118,7 +145,9 @@ export function ChatComposer(props: ComposerProps) {
     : blocked && !readonly ? resourcesUnconfirmed ? "资源停止还未确认。你可以编辑草稿、查看历史；核实后再恢复执行。" : "选择可用的 Harness 后，检查连接并继续这次对话。"
     : pending ? active ? "当前回复结束后应用新选择，草稿已保留。" : "正在保存下一条消息的选择。"
     : dirty ? problem ?? (selectionFailed ? "所选连接未生效，可以重试切换或选择其他 Harness。" : "正在切换所选 Harness 或模型，草稿已保留。")
-    : !draft.providerId && props.nativeModels?.authentication === "missing" ? "所选 Harness 的本机认证尚未就绪。请完成它的登录或 Gateway 连接配置，也可以切换其他 Harness。"
+    : !draft.providerId && props.nativeModels?.authentication === "missing" ? SETUP_COMMANDS[draft.harnessId]
+      ? `${harness?.name ?? "所选 Harness"} 的本机认证尚未就绪：它还没有可用的模型提供方。请在终端运行 ${SETUP_COMMANDS[draft.harnessId]} 完成配置，然后刷新本机模型；也可以切换其他 Harness。`
+      : "所选 Harness 的本机认证尚未就绪。请在它自己的程序中完成登录或 Gateway 连接配置，然后刷新本机模型；也可以切换其他 Harness。"
     : uploading ? "附件上传中，完成后即可发送。"
     : attachmentBlocked ? "有附件无法随这条消息发送，请移除标记的附件或切换到支持它的 Harness 或模型。"
     : props.attachments.length && !props.messageDraft.trim() ? "请写一句说明，再和附件一起发送。"

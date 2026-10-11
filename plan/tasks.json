@@ -3089,7 +3089,9 @@
         "src/web/harness-models.ts",
         "src/web/conversation-export.ts",
         "src/web/harness-entry.ts",
-        "tests/unit/harness-entry.test.ts"
+        "tests/unit/harness-entry.test.ts",
+        "src/web/native-catalog-cache.ts",
+        "tests/integration/native-catalog-cache.test.ts"
       ],
       "requirements": [
         "R01",

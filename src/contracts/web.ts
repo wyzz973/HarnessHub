@@ -36,6 +36,26 @@ export interface NativeSessionListView {
   /** null when this Harness's interface cannot list or continue its sessions. */
   readonly sessions: readonly (import("./control.js").NativeSessionSummary & { readonly conversationId?: string })[] | null;
   readonly nextCursor: string | null;
+  /** How many sessions of this page were left out because a Hub catalog read opened them; absent when none were. */
+  readonly hiddenProbes?: number;
+}
+/**
+ * What the Hub last saw of one Harness entry before a message is sent. `state` comes from the entry's latest native
+ * catalog read (ready: it answered; signed_out: it needs its own sign-in or setup; failed: the read failed), or is
+ * `unchecked` when only recent Runs are known. Entries the Hub has neither read nor run are absent.
+ */
+export interface HarnessReadinessView {
+  readonly harnessId: string;
+  readonly controlId: string;
+  readonly state: "ready" | "signed_out" | "failed" | "unchecked";
+  /** Milliseconds since the epoch of that catalog read; null when unchecked. */
+  readonly checkedAt: number | null;
+  /** Whether the native side said it is signed in; null when its interface does not say. Only for `ready`. */
+  readonly signedIn?: boolean | null;
+  /** Stable failure class of a failed read. */
+  readonly failureCode?: string;
+  /** Median time from starting the program to its open native session over this entry's latest Runs (up to five). */
+  readonly startupMs?: number;
 }
 /** A native session reference as the chat shows it; never the private checkpoint. */
 export interface NativeStateView {
@@ -72,6 +92,7 @@ export interface WebState {
   readonly harnesses: readonly HarnessView[];
   readonly sessions: readonly SessionSummary[];
   readonly jobs: readonly InstallationJobView[];
+  readonly readiness: readonly HarnessReadinessView[];
 }
 export interface EventPage {
   readonly events: readonly SessionEvent[];
