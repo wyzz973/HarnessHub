@@ -10,3 +10,7 @@
 | Codex（gpt-6.1-sol，用户配置 effort=xhigh） | 用户配置 | 回复正确但没有推理摘要：用户配置未设置推理摘要，这一回合原程序没有发送 | `.tmp/cc-native-thinking-codex.json` |
 
 各项原配置均未改变。思考与回复的映射在协议测试中已覆盖（ACP `agent_thought_chunk`、Codex reasoning 摘要、Pi thinking 事件、OpenClaw 转录中的 thinking 块）。未做 Windows 验证。
+
+## 部署到 4317 服务（第 11–14 轮）
+
+2026-10-11 20:55–20:56，服务空闲（唯一会话无在途 Run 与待决切换，20:37 部署后无新写入）时部署子 Agent 嵌套显示、原生提问表单、Claude 导出与本轮脚本：核实 PID 与命令行后 SIGTERM 正常退出；冷备份 `data/` 到 `.tmp/backup-data-v9-20261011-205546/`（格式未变，无需迁移）；主检出快进到 `4408535` 并构建；经干净环境的登录 shell（无代理变量）启动，输出写入私有 `.tmp/service-4317.log`。部署后核对：业务库 `user_version=9`、325 条事件；原会话 schema 9、open、14 个 Run、27 条消息、OpenClaw 原生会话 ready；静态页 200、未登录 API 401。一次性启动链接只在私有日志中，未使用、未展开。回退：停止服务后用该备份替换 `data/`，检出 `a64d445` 重新构建。
