@@ -182,5 +182,8 @@ test("a Turn's diagnostics say what they hold, keep 4 KiB of stderr and stay wit
   const logged = { ...input, session: { ...session, messages: [{ id: "message-user", runId: "run-diag", role: "user", text: "secret question about the plan", seq: 1, status: "completed" }, ...session.messages] } as unknown as SessionSnapshot,
     stderr: { text: "INFO Prompt on session x: secret question about the plan\nok 收到", truncated: false } };
   assert.match(runDiagnostics(logged), /INFO Prompt on session x: \[对话内容已隐去\]\nok 收到/u);
+  // Hermes's prompt log is withheld by its pattern even when it holds text no message starts with (the public context).
+  assert.match(runDiagnostics({ ...input, stderr: { text: "[INFO] acp_adapter.server: Prompt on session cc03: HarnessGateway public conversation context. The JSON", truncated: false } }),
+    /Prompt on session cc03: \[对话内容已隐去\]\n/u);
   assert.match(runDiagnostics({ ...logged, includeContent: true }), /INFO Prompt on session x: secret question about the plan/u);
 });

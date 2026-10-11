@@ -3,7 +3,12 @@ import type { PublicRun, SessionEvent, SessionSnapshot } from "../contracts/sess
 
 /** The most a diagnostics text holds, and how much of a Turn's stderr it carries (ADR-037). */
 export const MAX_DIAGNOSTICS_BYTES = 64 * 1024, MAX_DIAGNOSTIC_STDERR_BYTES = 4096;
-const HIDDEN = "[已隐去]", PATH = "[路径]", USER = "[用户]";
+const HIDDEN = "[已隐去]", PATH = "[路径]", USER = "[用户]", WITHHELD = "[对话内容已隐去]";
+/**
+ * Log lines that carry what a program received, whatever it was: Hermes's ACP server logs every prompt's first 100
+ * characters (acp_adapter/server.py:876, `logger.info("Prompt on session %s: %s", …)`).
+ */
+const PROMPT_LOGS: readonly RegExp[] = [/Prompt on session \S+: /u];
 
 /** Strings that look like credentials, each with the part kept in front of the hidden value. */
 const CREDENTIALS: readonly (readonly [RegExp, string])[] = [
@@ -46,10 +51,13 @@ export function scrubDiagnostics(text: string, options: { readonly redact: (text
  */
 export function withholdConversation(text: string, messages: readonly string[]): string {
   const starts = [...new Set(messages.map(message => message.trim().slice(0, 32)).filter(start => [...start].length >= 4))];
-  if (!starts.length) return text;
   return text.split("\n").map(line => {
+    // Known log lines first: they hold conversation text whatever it is.
+    const known = PROMPT_LOGS.map(pattern => pattern.exec(line)).find(match => match !== null);
+    if (known) return line.slice(0, known.index + known[0].length) + WITHHELD;
+    // Otherwise, wherever the start of a message of this conversation appears.
     const at = Math.min(...starts.map(start => line.indexOf(start)).filter(index => index >= 0));
-    return Number.isFinite(at) ? line.slice(0, at) + "[对话内容已隐去]" : line;
+    return Number.isFinite(at) ? line.slice(0, at) + WITHHELD : line;
   }).join("\n");
 }
 
@@ -99,7 +107,7 @@ export function runDiagnostics(input: RunDiagnosticsInput): string {
   const options = Object.entries(run.selection.nativeOptions ?? {}).map(([key, value]) => key + "=" + value).join(", ");
   const lines = [
     "HarnessHub 诊断 · " + (input.includeContent ? "含对话内容（只含这一轮的提示词与回复）" : "不含对话内容"),
-    "已隐去路径、环境变量值和密钥样式的字符串" + (input.includeContent ? "。" : "；原程序日志中出现的对话内容也已隐去。"),
+    "已隐去路径、环境变量值和密钥样式的字符串" + (input.includeContent ? "。" : "；stderr 中的对话内容按已知日志模式与消息开头隐去（尽力而为）。"),
     "",
     "生成时间：" + input.now.toISOString(),
     "HarnessHub 构建：" + input.build.slice(0, 12) + " · Node " + input.runtime.node + " · " + input.runtime.platform + " " + input.runtime.release + " " + input.runtime.arch,
