@@ -21,7 +21,9 @@ const nativeDefinitions: readonly HarnessDefinition[] = [
   },
   {
     id: "hermes", name: "Hermes Agent", aliases: [], binaryNames: ["hermes"], configHints: [".hermes"],
-    controls: [{ id: "hermes-native", protocol: "acp-v1", executableNames: ["hermes"], args: ["acp"], env: {}, package: null, distribution: null, requiredExecutables: [],
+    // Its official installer keeps a Python environment behind ~/.local/bin/hermes; the version is read from that metadata.
+    controls: [{ id: "hermes-native", protocol: "acp-v1", executableNames: ["hermes"], args: ["acp"], env: {},
+      package: { kind: "python", name: "hermes-agent", version: "0.12.0", binNames: ["hermes"] }, distribution: null, requiredExecutables: [],
       source: { repository: "NousResearch/hermes-agent", revision: "a0556b861f2667a49ded048c9cfac88defff8c5f", upstreamId: "hermes-agent", url: "https://github.com/NousResearch/hermes-agent/blob/a0556b861f2667a49ded048c9cfac88defff8c5f/acp_registry/agent.json" } }],
   },
   {

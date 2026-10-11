@@ -219,6 +219,37 @@ test("a copy left in npm's npx cache is never an installation, as in comparable 
   if (control.installation.selected === null) assert.equal(control.state, "missing_dependency");
 });
 
+test("an installed package reports its own version from metadata behind the found entry, and nothing runs", async (t) => {
+  const root = await fixture(t), sentinel = join(root, "launched"), bin = join(root, "bin");
+  await executable(join(bin, "node"), "#!/bin/sh\nprintf launched > '" + sentinel + "'\n");
+  const resolver = new LocalInstalledPackageResolver([], new LocalInstallationEnumerator([{ path: bin, source: "path" }]));
+  // npm -g: the global bin is a link to the package's declared bin.
+  const directory = await packageAt(join(root, "global"), identity.name, "1.4.2");
+  await symlink(join(directory, "dist/cli.js"), join(bin, "agent"));
+  const npm = await resolver.observe(identity, join(bin, "agent"));
+  assert.ok(npm.some(entry => entry.code === "package_version_observed" && entry.detail?.startsWith("installed=1.4.2; catalog-reference=1.0.0; installed package metadata")));
+  // A file that is not one of the package's bins, or a package with another name, establishes nothing.
+  await writeFile(join(directory, "dist/other.js"), "process.exit(99);\n");
+  assert.deepEqual(await resolver.observe(identity, join(directory, "dist/other.js")), []);
+  assert.deepEqual(await resolver.observe({ ...identity, name: "@example/other" }, join(bin, "agent")), []);
+  // Python: a console script names its environment's interpreter; an installer's launcher execs that script once.
+  const venv = join(root, "home", ".tool", "venv"), python: PackageIdentity = { kind: "python", name: "hermes-agent", version: "0.12.0", binNames: ["hermes"] };
+  await mkdir(join(venv, "bin"), { recursive: true }); await writeFile(join(venv, "pyvenv.cfg"), "version_info = 3.11.5\n");
+  await executable(join(venv, "bin", "python3"), "#!/bin/sh\nprintf launched > '" + sentinel + "'\n");
+  await executable(join(venv, "bin", "hermes"), "#!" + join(venv, "bin", "python3") + "\nimport sys\n");
+  await mkdir(join(venv, "lib", "python3.11", "site-packages", "hermes_agent-0.12.0.dist-info"), { recursive: true });
+  await writeFile(join(venv, "lib", "python3.11", "site-packages", "hermes_agent-0.12.0.dist-info", "METADATA"), "Metadata-Version: 2.4\nName: hermes-agent\nVersion: 0.12.0\n");
+  await executable(join(bin, "hermes"), "#!/usr/bin/env bash\nunset PYTHONPATH\nexec \"" + join(venv, "bin", "hermes") + "\" \"$@\"\n");
+  for (const entry of [join(venv, "bin", "hermes"), join(bin, "hermes")])
+    assert.ok((await resolver.observe(python, entry)).some(row => row.code === "package_version_observed" && row.detail?.startsWith("installed=0.12.0;")));
+  // Only one launcher hop is followed, and an environment without pyvenv.cfg is not a virtual environment.
+  await executable(join(bin, "twice"), "#!/bin/sh\nexec \"" + join(bin, "hermes") + "\" \"$@\"\n");
+  assert.deepEqual(await resolver.observe(python, join(bin, "twice")), []);
+  await rm(join(venv, "pyvenv.cfg"));
+  assert.deepEqual(await resolver.observe(python, join(venv, "bin", "hermes")), []);
+  await assert.rejects(() => readFile(sentinel), { code: "ENOENT" });
+});
+
 test("a package manager without the target package is not an installation", async (t) => {
   const root = await fixture(t);
   await executable(join(root, "bin/node")); await executable(join(root, "bin/npx")); await executable(join(root, "bin/uvx"));

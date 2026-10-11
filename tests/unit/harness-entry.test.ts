@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ControlObservation, InstallationSource } from "../../src/contexts/catalog/domain/catalog.js";
-import { harnessEntry } from "../../src/web/harness-entry.js";
+import { harnessEntry, productCommand } from "../../src/web/harness-entry.js";
 
 function control(source: InstallationSource | null, command = true): ControlObservation {
   const candidate = source === null ? null : { path: "/private/entry", resolvedPath: "/private/entry", source, entries: [] };
@@ -23,4 +23,20 @@ test("entry sources use the terms comparable products use and never carry the en
   assert.deepEqual(harnessEntry(control(null), false), { source: "package-root" });
   assert.equal(harnessEntry(control(null, false), false), null);
   for (const source of ["path", "override", "known-directory"] as const) assert.equal(JSON.stringify(harnessEntry(control(source), false)).includes("/private/entry"), false);
+});
+
+test("an adapter entry reports the product's own command, and a product entry reports none", () => {
+  const product = { candidates: [{ path: "/bin/claude", resolvedPath: "/lib/claude-code/cli.js", source: "path" as const, entries: [{ path: "/bin/claude", source: "path" as const, name: "claude" }] },
+    { path: "/bin/claude-agent-acp", resolvedPath: "/lib/claude-agent-acp/dist/index.js", source: "path" as const, entries: [{ path: "/bin/claude-agent-acp", source: "path" as const, name: "claude-agent-acp" }] }],
+    selected: null, defaultResolution: "located" as const, diagnostics: [] };
+  const adapter = { ...control("path"), command: { executable: "/bin/claude-agent-acp", args: [], env: { HOME: "/home" } },
+    installation: { ...control("path").installation, selected: { path: "/bin/claude-agent-acp", resolvedPath: "/lib/claude-agent-acp/dist/index.js", source: "path" as const, entries: [] } } };
+  assert.deepEqual(productCommand("claude", product, adapter), { executable: "/bin/claude", args: [], env: { HOME: "/home" } });
+  // The entry is the product itself (Codex's app-server, Hermes's acp): its own version is the product version.
+  const itself = { ...adapter, installation: { ...adapter.installation, selected: { path: "/bin/claude", resolvedPath: "/lib/claude-code/cli.js", source: "path" as const, entries: [] } } };
+  assert.equal(productCommand("claude", product, itself), null);
+  // A package entry run through Node names the product's file as its script.
+  assert.equal(productCommand("claude", product, { ...adapter, installation: { ...adapter.installation, selected: null }, command: { executable: "/bin/node", args: ["/lib/claude-code/cli.js"], env: {} } }), null);
+  assert.equal(productCommand("missing", product, adapter), null);
+  assert.equal(productCommand(undefined, product, adapter), null);
 });

@@ -68,6 +68,8 @@ export class LocalHarnessManagement {
   private readonly checkControllers = new Set<AbortController>();
   private readonly system = new Map<string, SystemInstallationObservation>();
   private readonly systemVersions = new Map<string, { fingerprint: string; version: string | null }>();
+  /** Versions of products whose control entry is an adapter, keyed by Harness; the product command is the fingerprint. */
+  private readonly programVersions = new Map<string, { fingerprint: string; version: string | null }>();
   private active: { id: string; controller: AbortController; timedOut: boolean } | null = null;
   private accepting = true;
   private closed = false;
@@ -126,10 +128,13 @@ export class LocalHarnessManagement {
       managementSlug(entry.harnessId); managementSlug(entry.controlId);
       if (!isAbsolute(entry.command.executable) || entry.command.args.length > 64 || entry.command.args.some(arg => typeof arg !== "string" || arg.length > 4096))
         throw new ManagementError("INVALID_INPUT", "invalid system installation command observation");
+      if (entry.program !== undefined && (!isAbsolute(entry.program.executable) || entry.program.args.length > 64 || entry.program.args.some(arg => typeof arg !== "string" || arg.length > 4096)))
+        throw new ManagementError("INVALID_INPUT", "invalid product command observation");
       const preferred = this.recipe(entry.harnessId)?.controlId, existing = chosen.get(entry.harnessId);
       if (existing === undefined || entry.controlId === preferred) chosen.set(entry.harnessId, {
         harnessId: entry.harnessId, controlId: entry.controlId, command: { executable: entry.command.executable, args: [...entry.command.args], env: { ...entry.command.env } },
-        ...(entry.packageVersion === undefined ? {} : { packageVersion: entry.packageVersion }) });
+        ...(entry.packageVersion === undefined ? {} : { packageVersion: entry.packageVersion }),
+        ...(entry.program === undefined ? {} : { program: { executable: entry.program.executable, args: [...entry.program.args], env: { ...entry.program.env } } }) });
     }
     this.system.clear(); for (const [id, entry] of chosen) this.system.set(id, entry);
   }
@@ -499,7 +504,7 @@ export class LocalHarnessManagement {
         updateStatus = currentVersion === null ? "unchecked" : newer ? "available" : "current";
       }
       return { harnessId: harness, recipe, source: system ? "system" : installationId === null ? "missing" : "managed",
-        installedVersion: currentVersion, installationId: system ? null : installationId,
+        installedVersion: currentVersion, programVersion: system ? this.programVersion(harness, currentVersion) : currentVersion, installationId: system ? null : installationId,
         latestVersion: checked?.latestVersion ?? null, updateStatus,
         checkedAt: checked?.checkedAt ?? null, activeJobId: typeof active === "string" ? active : null, defaultRevision: this.defaultRevision(harness), error: checked?.error ?? null,
         ...(nativePlan === undefined ? {} : { native: { channel: nativePlan.channel, location: nativePlan.entry, fingerprint: nativePlan.fingerprint,
@@ -524,15 +529,33 @@ export class LocalHarnessManagement {
       for (;;) {
         const entry = entries[index++]; if (!entry || !this.accepting) return;
         const [id, observation] = entry, fingerprint = this.systemFingerprint(observation);
-        if (this.systemVersions.get(id)?.fingerprint === fingerprint) continue;
+        if (this.systemVersions.get(id)?.fingerprint === fingerprint) { await this.readProgramVersion(id, observation); continue; }
         const controller = new AbortController(); this.checkControllers.add(controller);
         try {
           const result = await (this.options.systemVersionProbe ?? probeSystemVersion)(observation, { signal: controller.signal, assertOwned: () => this.own(), redact: this.redactor }); this.own();
           if (this.system.get(id) === observation) this.systemVersions.set(id, { fingerprint, version: result.version });
         } finally { this.checkControllers.delete(controller); }
+        await this.readProgramVersion(id, observation);
       }
     }));
     return this.views(entries.map(([id]) => id));
+  }
+  /** The adapter's product version through the same isolated --version probe; read once per product command. */
+  private async readProgramVersion(id: string, observation: SystemInstallationObservation): Promise<void> {
+    const program = observation.program; if (program === undefined || !this.accepting) return;
+    const fingerprint = createHash("sha256").update(JSON.stringify(program)).digest("hex");
+    if (this.programVersions.get(id)?.fingerprint === fingerprint) return;
+    const controller = new AbortController(); this.checkControllers.add(controller);
+    try {
+      const result = await (this.options.systemVersionProbe ?? probeSystemVersion)({ harnessId: observation.harnessId, controlId: observation.controlId, command: program },
+        { signal: controller.signal, assertOwned: () => this.own(), redact: this.redactor }); this.own();
+      if (this.system.get(id) === observation) this.programVersions.set(id, { fingerprint, version: result.version });
+    } finally { this.checkControllers.delete(controller); }
+  }
+  private programVersion(harnessId: string, entryVersion: string | null): string | null {
+    const program = this.system.get(harnessId)?.program; if (program === undefined) return entryVersion;
+    const cached = this.programVersions.get(harnessId);
+    return cached?.fingerprint === createHash("sha256").update(JSON.stringify(program)).digest("hex") ? cached.version : null;
   }
   private async checkOwned(ids: readonly string[]): Promise<readonly HarnessManagementView[]> {
     if (ids.length > 256) throw new ManagementError("INVALID_INPUT", "too many update targets");

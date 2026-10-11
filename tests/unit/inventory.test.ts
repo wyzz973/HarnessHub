@@ -13,7 +13,7 @@ const definition: HarnessDefinition = { id: "demo", name: "Demo", aliases: [], b
   id: "demo-acp", protocol: "acp-v1", executableNames: ["demo-acp"], args: ["acp"], env: { DEMO_MODE: "1" }, package: null, distribution: null, requiredExecutables: [],
   source: { repository: "example/demo", revision: "fixed", upstreamId: "demo", url: "https://example.com/demo" },
 }] };
-const nonePackage: LocalPackageResolver = { resolve: async () => ({ command: null, diagnostics: [] }) };
+const nonePackage: LocalPackageResolver = { observe: async () => [], resolve: async () => ({ command: null, diagnostics: [] }) };
 
 function service(lookup: InstallationEnumerator, packages: LocalPackageResolver = nonePackage) {
   return new DiscoverInventory(lookup, packages, { observe: async () => [{ path: "/home/.demo", state: "configured" }] }, () => new Date(0));
@@ -41,13 +41,13 @@ test("all unknown and relative overrides are rejected before filesystem observat
 test("blocked PATH default never falls back to package resolution", async () => {
   let packageCalls = 0;
   const withPackage = { ...definition, controls: definition.controls.map((control) => ({ ...control, package: { kind: "npm" as const, name: "demo-acp", version: "1.0.0", binNames: [] } })) };
-  const report = await service({ validateOverride: () => {}, enumerate: async () => ({ ...found, selected: null, defaultResolution: "blocked" }) }, { resolve: async () => { packageCalls++; return { command: { executable: "/node", args: ["/package/bin.js"], env: {} }, diagnostics: [] }; } }).execute([withPackage]);
+  const report = await service({ validateOverride: () => {}, enumerate: async () => ({ ...found, selected: null, defaultResolution: "blocked" }) }, { observe: async () => [], resolve: async () => { packageCalls++; return { command: { executable: "/node", args: ["/package/bin.js"], env: {} }, diagnostics: [] }; } }).execute([withPackage]);
   assert.equal(packageCalls, 0); assert.equal(report.harnesses[0]?.controls[0]?.state, "blocked");
   assert.equal(report.harnesses[0]?.controls[0]?.command, null);
 });
 test("a local wrapper runtime is candidate without a global native CLI", async () => {
   const withPackage = { ...definition, controls: definition.controls.map((control) => ({ ...control, executableNames: [], package: { kind: "npm" as const, name: "demo-acp", version: "1.0.0", binNames: [] } })) };
-  const report = await service({ validateOverride: () => {}, enumerate: async () => absent }, { resolve: async () => ({ command: { executable: "/node", args: ["/bin.js"], env: {} }, diagnostics: [] }) }).execute([withPackage]);
+  const report = await service({ validateOverride: () => {}, enumerate: async () => absent }, { observe: async () => [], resolve: async () => ({ command: { executable: "/node", args: ["/bin.js"], env: {} }, diagnostics: [] }) }).execute([withPackage]);
   assert.equal(report.harnesses[0]?.installation.candidates.length, 0);
   assert.deepEqual(report.harnesses[0]?.controls[0]?.command?.args, ["/bin.js", "acp"]);
 });

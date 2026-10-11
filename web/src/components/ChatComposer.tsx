@@ -75,7 +75,7 @@ export function ChatComposer(props: ComposerProps) {
     return {
       value: row.id, label: row.name, icon: <BrandIcon brand={row.id} name={row.name}/>,
       group: available ? "已发现控制入口" : "更多 Harness",
-      description: row.management.installedVersion ? `v${row.management.installedVersion}` : row.controls.filter(control => control.available).map(control => protocolLabel(control.protocol)).join(" / "),
+      description: (row.management.programVersion ?? row.management.installedVersion) ? `v${row.management.programVersion ?? row.management.installedVersion}` : row.controls.filter(control => control.available).map(control => protocolLabel(control.protocol)).join(" / "),
       disabled: !available, reason: row.installed ? "已发现程序，控制入口尚未就绪" : "尚未安装，请在 Harnesses 中管理",
     };
   }).sort((a, b) => Number(Boolean(a.disabled)) - Number(Boolean(b.disabled)));

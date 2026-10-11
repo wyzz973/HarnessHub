@@ -1,4 +1,4 @@
-import type { ControlObservation } from "../contexts/catalog/domain/catalog.js";
+import type { ControlObservation, InstallationEnumeration, ResolvedCommand } from "../contexts/catalog/domain/catalog.js";
 import type { HarnessView } from "../contracts/web.js";
 
 /**
@@ -21,4 +21,20 @@ export function harnessEntry(control: ControlObservation, managed: boolean): Har
   }
   // A package found in an explicit package root runs through Node from the package's own bin.
   return control.command !== null ? { source: "package-root" } : null;
+}
+
+/**
+ * The product's own command when the control entry is a different program in front of it: Claude Code's `claude` behind
+ * the claude-agent-acp adapter. `product` is the product's first binary name; the installation is the enumeration of the
+ * product's binaries. Returns null when the entry is the product itself or the product command was not found; the
+ * product's version is then the entry's version.
+ */
+export function productCommand(product: string | undefined, installation: InstallationEnumeration, control: ControlObservation): ResolvedCommand | null {
+  if (product === undefined || control.command === null) return null;
+  const candidate = installation.candidates.find(item => item.entries.some(entry => entry.name === product));
+  if (candidate === undefined) return null;
+  const entry = control.installation.selected;
+  if (entry !== null && (entry.resolvedPath === candidate.resolvedPath || entry.path === candidate.path)) return null;
+  if (control.command.args.includes(candidate.resolvedPath)) return null;
+  return { executable: candidate.path, args: [], env: { ...control.command.env } };
 }

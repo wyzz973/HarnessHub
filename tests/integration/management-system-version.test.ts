@@ -110,3 +110,21 @@ test("real manager update check detects an observed system version and preserves
   const checked = (await manager.checkUpdates(["codex"]))[0]; assert.equal(checked?.installedVersion, "1.2.3"); assert.equal(checked?.latestVersion, "2.0.0"); assert.equal(checked?.updateStatus, "available");
   assert.equal(checked?.defaultRevision, 0); assert.equal(checked?.installationId, null); assert.deepEqual(manager.listJobs(), []); assertStopped((await traceValue(f)).pid);
 });
+
+test("an adapter entry keeps its own version while the product reports the version of its own command, probed once", async t => {
+  const f = await fixture(t), store = new SqliteSessionStore(join(f.root, "data")), probed: string[] = [];
+  const manager = new LocalHarnessManagement(join(f.root, "data"), { installationMode: "private-fixture", assertOwner: () => store.assertOwner(), ownerGeneration: store.ownerGeneration,
+    // Like the real probe, an observed package version answers without running anything.
+    systemVersionProbe: async observation => { if (observation.packageVersion) return { version: observation.packageVersion, reason: null };
+      probed.push(observation.command.executable); return { version: observation.command.executable.endsWith("/claude") ? "2.1.296" : "0.89.1", reason: null }; } });
+  f.cleanup.push(async () => { try { await manager.shutdown(); } finally { store.close(); } });
+  manager.setSystemObservations([{ harnessId: "claude", controlId: "claude-acp-npm", command: { executable: "/opt/bin/claude-agent-acp", args: [], env: {} }, program: { executable: "/opt/bin/claude", args: [], env: {} } },
+    { harnessId: "codex", controlId: "codex-native", command: { executable: "/opt/bin/codex", args: ["app-server"], env: {} }, packageVersion: "0.162.1" }]);
+  // Nothing runs until versions are read, and an unread product version is unknown rather than the adapter's.
+  assert.deepEqual(probed, []); assert.equal(manager.views(["claude"])[0]?.programVersion, null);
+  await manager.refreshSystemVersions(); await manager.refreshSystemVersions();
+  const [claude, codex] = manager.views(["claude", "codex"]);
+  assert.equal(claude?.installedVersion, "0.89.1"); assert.equal(claude?.programVersion, "2.1.296");
+  assert.equal(codex?.installedVersion, "0.162.1"); assert.equal(codex?.programVersion, "0.162.1");
+  assert.deepEqual(probed.filter(path => path === "/opt/bin/claude"), ["/opt/bin/claude"]);
+});

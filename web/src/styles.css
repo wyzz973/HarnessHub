@@ -2814,6 +2814,12 @@ a {
   overflow-wrap:anywhere
 }
 
+/* The adapter entry's own version under the product's version. */
+.detail-version-card small {
+  font:12px "SFMono-Regular",Consolas,monospace;
+  color:#8c867c
+}
+
 .detail-info-note {
   display:flex;
   align-items:flex-start;

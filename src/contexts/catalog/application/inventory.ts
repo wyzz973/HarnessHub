@@ -41,6 +41,8 @@ export class DiscoverInventory {
           const explicit = overrides.get(recipe.id);
           const entry = await this.installations.enumerate(recipe.executableNames, explicit?.executable);
           const diagnostics = [...entry.diagnostics];
+          // The installed package behind a found entry reports its own version from metadata; nothing is run.
+          if (entry.selected !== null && recipe.package !== null) diagnostics.push(...await this.packages.observe(recipe.package, entry.selected.resolvedPath));
           let command: ResolvedCommand | null = entry.selected === null ? null : {
             executable: entry.selected.path, args: [...recipe.args], env: { ...recipe.env },
           };

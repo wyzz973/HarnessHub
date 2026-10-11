@@ -90,6 +90,12 @@ export interface LocalPackageObservation {
 }
 export interface LocalPackageResolver {
   resolve(identity: PackageIdentity): Promise<LocalPackageObservation>;
+  /**
+   * Reads the installed package metadata behind an executable found on PATH or in a standard directory (an npm global bin,
+   * a Python console script or its launcher) to observe the package's own version. It reads files only; nothing runs.
+   * Returns diagnostics: `package_version_observed` when the metadata confirms the identity, otherwise nothing.
+   */
+  observe(identity: PackageIdentity, executable: string): Promise<readonly InventoryDiagnostic[]>;
 }
 export interface ConfigurationEvidence { readonly path: string; readonly state: "configured" }
 export interface ConfigurationLocator {

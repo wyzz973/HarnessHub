@@ -11,7 +11,7 @@ import { SessionError, parseNativeOptions, sessionId, type SelectionRequest, typ
 import { MAX_CONTENT_BYTES, MAX_RUN_ATTACHMENTS } from "../contracts/content.js";
 import type { EventPage, HarnessView, InstallationLogPage, NativeSessionListView, SessionSummary, SessionView, WebState } from "../contracts/web.js";
 import { inventory, officialInstallation } from "../infrastructure/catalog/inventory-composition.js";
-import { harnessEntry } from "./harness-entry.js";
+import { harnessEntry, productCommand } from "./harness-entry.js";
 import { prepareConfiguration } from "../infrastructure/session/binding-factory.js";
 import { supportedProviderProtocols } from "../contexts/provider/domain/provider.js";
 import { carriedNativeConfiguration } from "../contexts/session/domain/state.js";
@@ -251,8 +251,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       managedResolver: app.management }).then(async observed => {
       app.management.setSystemObservations(observed.report.harnesses.flatMap(harness => harness.controls.flatMap(control => {
         if (control.state !== "candidate" || control.command === null || observed.managedBindings.has(control.id)) return [];
-        const packageVersion = observedPackageVersion(control.diagnostics);
-        return [{ harnessId: harness.id, controlId: control.id, command: control.command, ...(packageVersion === undefined ? {} : { packageVersion }) }];
+        const packageVersion = observedPackageVersion(control.diagnostics), program = productCommand(observed.definitions.find(item => item.id === harness.id)?.binaryNames[0], harness.installation, control);
+        return [{ harnessId: harness.id, controlId: control.id, command: control.command, ...(packageVersion === undefined ? {} : { packageVersion }), ...(program === null ? {} : { program }) }];
       })));
       await app.management.refreshSystemVersions();
       await app.management.refreshNativeCapabilities();

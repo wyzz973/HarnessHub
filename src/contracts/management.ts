@@ -40,6 +40,8 @@ export interface HarnessManagementView {
   readonly recipe: InstallCapability | null;
   readonly source: "managed" | "system" | "missing";
   readonly installedVersion: string | null;
+  /** The product's own version. It equals installedVersion unless the control entry is an adapter with its own version. */
+  readonly programVersion: string | null;
   readonly latestVersion: string | null;
   readonly updateStatus: "unchecked" | "checking" | "available" | "current" | "failed" | "unsupported";
   readonly checkedAt: string | null;
@@ -139,6 +141,8 @@ export interface SystemInstallationObservation {
   readonly controlId: string;
   readonly command: ResolvedCommand;
   readonly packageVersion?: string;
+  /** The product's own command when the control entry is an adapter in front of it (Claude Code behind claude-agent-acp). */
+  readonly program?: ResolvedCommand;
 }
 export interface SystemVersionProbeOptions {
   readonly signal: AbortSignal;
