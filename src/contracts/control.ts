@@ -179,9 +179,11 @@ export interface HarnessControl {
    * The open conversation's current model and option values as the native side reports them after a Turn, including
    * changes made by its own commands. Identities are the catalog's (model ids, option ids and values) so the Hub can apply
    * them again; a null model means the interface cannot tell. Called only after the Turn settled, before close; a failure
-   * leaves the configuration unknown and never changes the Turn's result. Absent when the interface cannot report it.
+   * leaves the configuration unknown and never changes the Turn's result. Absent when the interface cannot report it; null
+   * when this Turn told nothing about the native values, so the earlier report stands (Codex cannot read a thread's
+   * collaboration mode without choosing one).
    */
-  nativeConfig?(): Promise<{ readonly model: string | null; readonly options: NativeOptions }>;
+  nativeConfig?(): Promise<{ readonly model: string | null; readonly options: NativeOptions } | null>;
   /** Native skills, MCP servers and plugins; absent when the interface cannot list them. */
   extensions?(): Promise<NativeExtensions>;
   /**

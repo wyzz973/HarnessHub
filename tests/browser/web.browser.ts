@@ -14,7 +14,7 @@ import { prepareConfiguration } from "../../src/infrastructure/session/binding-f
 
 const peer = fileURLToPath(new URL("../../../tests/fixtures/web-harness-peer.mjs", import.meta.url));
 const artifact = resolve("artifacts/chat-v3");
-async function launchFixture(providerManagement = true, nativeAcp: { readonly name: string; readonly scenario: string } | null = null) {
+async function launchFixture(providerManagement = true, nativeAcp: { readonly name: string; readonly scenario: string } | null = null, nativeCodex: { readonly name: string; readonly scenario: string } | null = null) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "harness-web-browser-")));
   const workspace = join(root, "workspace"), shim = join(root, "codex-fixture.mjs"); await mkdir(workspace);
   await writeFile(shim, "#!" + process.execPath + "\nimport " + JSON.stringify(pathToFileURL(peer).href) + ";\n", { mode: 0o700 });
@@ -24,7 +24,12 @@ async function launchFixture(providerManagement = true, nativeAcp: { readonly na
   const acp = nativeAcp === null ? null : { id: "native-acp", name: nativeAcp.name, aliases: [], binaryNames: [], configHints: [], controls: [{ id: "native-acp", protocol: "acp-v1", executableNames: ["fixture"],
     args: [fileURLToPath(new URL("../../../tests/fixtures/control-peer.mjs", import.meta.url)), "acp-v1", nativeAcp.scenario], env: {}, package: null, distribution: null, requiredExecutables: [],
     source: { repository: "fixture", revision: nativeAcp.scenario, upstreamId: "fixture", url: "https://example.invalid/" + nativeAcp.scenario } }] };
-  await writeFile(manifest, JSON.stringify({ version: 2, definitions: acp ? [acp] : [], overrides: { "codex-native": { executable: shim }, "openclaw-native": { executable: authShim }, ...(acp ? { "native-acp": { executable: process.execPath } } : {}) } }));
+  // A Codex app-server fixture under its own entry, for scenarios the default Codex shim cannot select (plan mode).
+  const codex = nativeCodex === null ? null : { id: "native-codex", name: nativeCodex.name, aliases: [], binaryNames: [], configHints: [], controls: [{ id: "native-codex", protocol: "codex-app-server", executableNames: ["fixture"],
+    args: [fileURLToPath(new URL("../../../tests/fixtures/control-peer.mjs", import.meta.url)), "codex-app-server", nativeCodex.scenario], env: {}, package: null, distribution: null, requiredExecutables: [],
+    source: { repository: "fixture", revision: nativeCodex.scenario, upstreamId: "fixture", url: "https://example.invalid/" + nativeCodex.scenario } }] };
+  await writeFile(manifest, JSON.stringify({ version: 2, definitions: [...(acp ? [acp] : []), ...(codex ? [codex] : [])], overrides: { "codex-native": { executable: shim }, "openclaw-native": { executable: authShim },
+    ...(acp ? { "native-acp": { executable: process.execPath } } : {}), ...(codex ? { "native-codex": { executable: process.execPath } } : {}) } }));
   const modelServer = createServer((req, res) => { assert.equal(req.method, "GET"); assert.equal(req.url, "/v1/models"); res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ data: [{ id: "model-a" }, { id: "model-b" }] })); });
   await new Promise<void>(done => modelServer.listen(0, "127.0.0.1", done));
   const address = modelServer.address(); assert.ok(address && typeof address === "object");
@@ -786,5 +791,44 @@ test("tools a sub-agent ran are shown under the sub-agent call", { timeout: 1200
   await page.screenshot({ path: join(artifact, "native-subagent-tools.png"), animations: "disabled" });
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "nested tools must not overflow a narrow screen");
+  assert.deepEqual(errors, []);
+});
+
+test("Codex plan mode answers with its plan, and a thread that follows the native configuration says it is still in plan mode", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false, null, { name: "Codex Plan", scenario: "plan-mode" }); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" }), note = page.locator("#composer-notice");
+  const origin = new URL(fixture.gateway.url).origin;
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  const mode = async (label: string) => {
+    await page.getByRole("button", { name: "高级配置", exact: true }).click();
+    await page.getByRole("button", { name: "协作模式", exact: true }).click(); await page.getByRole("option", { name: label, exact: true }).click();
+    await page.keyboard.press("Escape");
+  };
+  const reply = async (text: string, count: number) => {
+    await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeDisabled(); await composer.fill(text);
+    await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
+    await expect.poll(async () => { if (!new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session")) return null; const value = await current(); return value.runs.length === count && value.activeRunId === null && value.runs.at(-1).status; }, { timeout: 15000 }).toBe("completed");
+  };
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex Plan", exact: true }).click();
+  await mode("计划");
+  await expect(note).toContainText("计划模式：Codex Plan 先给出方案");
+  await reply("plan it", 1);
+  // The proposed plan is the reply, rendered as the Markdown list Codex wrote.
+  await expect(log.getByRole("listitem")).toHaveText(["读代码", "改实现"]);
+  // Following the native configuration does not take the thread out of plan mode, and the composer says so.
+  await mode("默认 · 本机默认");
+  await expect(note).toContainText("这个 Codex Plan 线程仍为计划模式：跟随本机配置不会改回");
+  await reply("next", 2);
+  await expect(note).toContainText("仍为计划模式");
+  // Choosing the default mode sends it; the thread leaves plan mode.
+  await mode("默认");
+  await expect(note).not.toContainText("仍为计划模式");
+  await reply("do it", 3);
+  assert.equal((await current()).nativeStates[0].observed.options.collaboration_mode, "default");
   assert.deepEqual(errors, []);
 });

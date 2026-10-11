@@ -144,6 +144,34 @@ test("a native catalog read is reused across restarts while its fingerprint hold
   assert.equal(await opened("native-list"), 3, "a changed configuration is read again");
 });
 
+test("a Codex thread keeps the collaboration mode it last confirmed while the conversation follows the native configuration", async t => {
+  const f = await setup(t), manifest = join(f.root, "plan.json"), trace = join(f.root, "plan.ndjson");
+  const source = { repository: "fixture", revision: "native", upstreamId: "native", url: "https://example.invalid/native" };
+  const definitions = [{ id: "native-plan", name: "plan", aliases: [], binaryNames: [], configHints: [],
+    controls: [{ id: "native-plan", protocol: "codex-app-server", executableNames: ["fixture"], args: [peer, "codex-app-server", "plan-mode"], env: { FIXTURE_TRACE: trace }, package: null, distribution: null, requiredExecutables: [], source }] }];
+  await writeFile(manifest, JSON.stringify({ version: 2, definitions, overrides: { "native-plan": { executable: process.execPath } } }));
+  const config = await prepareConfiguration({ workspace: f.workspace, manifestPath: manifest, pathOnly: true });
+  const factory = new DirectorySessionBindingFactory(new SqliteWorkspaceLeaseProvider(join(f.root, "locks")), () => {}, undefined, undefined, f.environment);
+  const store = new SqliteSessionStore(join(f.root, "data")); let id = 0;
+  const runtime = new SessionRuntime(store, factory, { id: () => String(++id), now: () => new Date(), publish: () => {}, fingerprint: text => createHash("sha256").update(text).digest("hex") });
+  f.close.push(async () => { await runtime.close(); store.close(); });
+  const observed = (session: Parameters<typeof runtime.read>[0]) => runtime.read(session).nativeBindings?.find(binding => binding.harnessId === "native-plan")?.observed?.options.collaboration_mode;
+  const session = await runtime.create(config, { harnessId: "native-plan", nativeOptions: { collaboration_mode: "plan" } }, "create");
+  runtime.send(session.id, "plan it", "first"); await runtime.wait(session.id);
+  assert.equal(runtime.read(session.id).runs[0]!.status, "completed"); assert.equal(observed(session.id), "plan");
+  // Following the native configuration declares nothing and sends no mode; the thread's last confirmed mode is kept.
+  runtime.switch(session.id, { harnessId: "native-plan", provider: null }, "follow"); await runtime.wait(session.id);
+  runtime.send(session.id, "next", "second"); await runtime.wait(session.id);
+  assert.equal(runtime.read(session.id).runs[1]!.status, "completed"); assert.equal(observed(session.id), "plan");
+  // Choosing the default mode sends it, and that becomes the thread's value.
+  runtime.switch(session.id, { harnessId: "native-plan", provider: null, nativeOptions: { collaboration_mode: "default" } }, "default"); await runtime.wait(session.id);
+  runtime.send(session.id, "do it", "third"); await runtime.wait(session.id);
+  assert.equal(runtime.read(session.id).runs[2]!.status, "completed"); assert.equal(observed(session.id), "default");
+  const sent = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { method?: string; params?: Record<string, unknown> });
+  assert.deepEqual(sent.filter(row => row.method === "initialize").map(row => (row.params!.capabilities as Record<string, unknown>).experimentalApi), [true, false, true]);
+  assert.deepEqual(sent.filter(row => row.method === "turn/start").map(row => (row.params!.collaborationMode as { mode?: string } | undefined)?.mode ?? null), ["plan", null, "default"]);
+});
+
 test("cancelled native discovery starts no protocol operation and removes only its owned temporary manifest", async t => {
   const f = await setup(t), factory = new DirectorySessionBindingFactory(new SqliteWorkspaceLeaseProvider(join(f.root, "locks")), () => {}, undefined, undefined, f.environment);
   const controller = new AbortController(); controller.abort();

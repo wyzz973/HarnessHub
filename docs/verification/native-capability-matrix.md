@@ -56,7 +56,7 @@
 |---|---|---|---|---|---|---|---|
 | 模型目录与选择 | 具备 | model/list、config/read、thread/start.model（0.162.1 schema） | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；.tmp/cc-native-catalog.json；docs/verification/native-models-2026-10-11.md | 默认 gpt-6.1-sol；目录 7 个模型 |
 | 思考档位 | 具备 | Model.supportedReasoningEfforts、turn/start.effort | 已接出 | 通过 | 通过 | .tmp/native-complete-real-combined.json；docs/verification/complete-native-capabilities-2026-10-11.md | low 档真实使用 |
-| 模式与原生设置 | 具备 | approvalPolicy/sandboxPolicy/serviceTier 逐轮参数；collaborationMode 计划模式需 experimentalApi（按连接声明） | 部分 | 通过 | 通过 | .tmp/cc-native-activity-codex-approval.json；docs/verification/native-session-actions-2026-10-11.md；.tmp/cc-codex-plan-2026-10-12.json；docs/decisions/0034-codex-plan-mode.md | 审批策略与沙箱作为本 Hub 线程设置接出（取自原配置、由线程回报核实、不写 config.toml）；协作模式（默认/计划）自 0.162.1 接出，只有选择了协作模式的回合声明 experimentalApi，真实计划与切回默认通过；serviceTier 未接出 |
+| 模式与原生设置 | 具备 | approvalPolicy/sandboxPolicy/serviceTier 逐轮参数；collaborationMode 计划模式需 experimentalApi（按连接声明） | 部分 | 通过 | 通过 | .tmp/cc-native-activity-codex-approval.json；docs/verification/native-session-actions-2026-10-11.md；.tmp/cc-codex-plan-2026-10-12.json；docs/decisions/0034-codex-plan-mode.md | 审批策略与沙箱作为本 Hub 线程设置接出（取自原配置、由线程回报核实、不写 config.toml）；协作模式（默认/计划）自 0.162.1 接出，只有明确选择协作模式的回合声明 experimentalApi，真实计划与切回默认通过；线程会保存模式，跟随本机配置的回合读不到它，Hub 记住最后确认的模式并提示仍为计划模式（审批代理附加条件，已实现并有协议、集成与浏览器测试）；serviceTier 未接出 |
 | 原生命令目录与执行 | 不提供 | app-server 无斜杠命令；skills 以 UserInput.skill 调用（见 Skills） | 不适用 | 不适用 | 不适用 | — | — |
 | 原生命令改配置后的同步 | 部分 | model/rerouted 通知（服务端单轮改路由）；app-server 没有修改模型或设置的原生命令 | 部分 | 未接出 | 未接出 | — | 改路由以警告提示逐轮显示；它不是会话设置，不在下一回合沿用（ADR-028）；改路由提示尚无协议测试 |
 | 思考输出 | 具备 | item/reasoning/summaryTextDelta、textDelta | 已接出 | 通过 | 未接出 | .tmp/cc-native-thinking-codex.json；docs/verification/native-thinking-2026-10-11.md | 按用户配置（model_reasoning_effort=xhigh，未设置推理摘要）这一回合没有发送推理摘要；协议映射已测试 |
@@ -336,7 +336,7 @@
 | 工具输入/输出/差异 | 部分 | 工具名、rawInput、结果内容；kind 恒为 other，没有差异和位置（packages/acp/acp/src/updates.ts） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-activity.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
 | 计划 | 不提供 | ACP 界面不提供计划与 todo（packages/acp/acp/README.md） | 不适用 | 不适用 | 不适用 | — | — |
 | 用量/上下文/费用 | 部分 | usage_update（上下文占用与窗口）；session/prompt 结果不带用量（packages/acp/acp/src/updates.ts） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-resume.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
-| 工具审批 | 具备 | session/request_permission（允许一次、拒绝）（packages/acp/acp/src/index.ts） | 已接出 | 通过 | 受阻 | .tmp/cc-hermes-dsh-activity.json；.tmp/cc-dsh-options.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 用户 dsh 的默认权限预设为 danger-full-access，dsh 不发审批请求；ACP 没有可切换预设的配置项，Hub 不改用户配置 |
+| 工具审批 | 具备 | session/request_permission（允许一次、拒绝）（packages/acp/acp/src/index.ts） | 已接出 | 通过 | 受阻 | .tmp/cc-hermes-dsh-activity.json；.tmp/cc-dsh-options.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 受阻：无法观察生效预设。Hub 会话按 dsh 为新会话设定的默认预设运行（permission.defaultPreset，未设置时由 dsh 推断）；本机为 danger-full-access，不会请求审批。ACP 入口不回报预设、不处理 /permission；界面只说明规则，不读取 dsh 设置 |
 | 原生提问与表单 | 不提供 | 不提供 elicitation（packages/acp/acp/README.md） | 不适用 | 不适用 | 不适用 | — | — |
 | 图片输入 | 部分 | 只有挂载持久附件存储且路由支持图片时才公布 promptCapabilities.image（packages/acp/acp/src/index.ts） | 已接出 | 通过 | 受阻 | .tmp/cc-hermes-dsh-attachments.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 本机 acp profile 未公布图片输入；Hub 在派发前拒绝图片已在真实环境确认 |
 | 音频输入 | 不提供 | promptCapabilities.audio=false（packages/acp/acp/src/index.ts） | 不适用 | 不适用 | 不适用 | — | — |

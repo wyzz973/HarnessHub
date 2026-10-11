@@ -183,7 +183,7 @@
             ".tmp/cc-codex-plan-2026-10-12.json",
             "docs/decisions/0034-codex-plan-mode.md"
           ],
-          "note": "审批策略与沙箱作为本 Hub 线程设置接出（取自原配置、由线程回报核实、不写 config.toml）；协作模式（默认/计划）自 0.162.1 接出，只有选择了协作模式的回合声明 experimentalApi，真实计划与切回默认通过；serviceTier 未接出"
+          "note": "审批策略与沙箱作为本 Hub 线程设置接出（取自原配置、由线程回报核实、不写 config.toml）；协作模式（默认/计划）自 0.162.1 接出，只有明确选择协作模式的回合声明 experimentalApi，真实计划与切回默认通过；线程会保存模式，跟随本机配置的回合读不到它，Hub 记住最后确认的模式并提示仍为计划模式（审批代理附加条件，已实现并有协议、集成与浏览器测试）；serviceTier 未接出"
         },
         "commands": {
           "native": "no",
@@ -2575,7 +2575,7 @@
             ".tmp/cc-dsh-options.json",
             "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
           ],
-          "note": "用户 dsh 的默认权限预设为 danger-full-access，dsh 不发审批请求；ACP 没有可切换预设的配置项，Hub 不改用户配置"
+          "note": "受阻：无法观察生效预设。Hub 会话按 dsh 为新会话设定的默认预设运行（permission.defaultPreset，未设置时由 dsh 推断）；本机为 danger-full-access，不会请求审批。ACP 入口不回报预设、不处理 /permission；界面只说明规则，不读取 dsh 设置"
         },
         "questions": {
           "native": "no",

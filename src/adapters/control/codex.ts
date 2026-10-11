@@ -162,6 +162,8 @@ export class CodexControl implements HarnessControl {
   private release: readonly [number, number, number] | null = null;
   /** The collaboration mode every turn of this connection sends, with the model and effort it runs; null leaves the thread's own. */
   private collaboration: { readonly mode: string; readonly model: string; readonly effort: string | null } | null = null;
+  /** The collaboration mode a turn of this connection set and Codex accepted; the thread keeps it for later turns. */
+  private confirmedMode: string | null = null;
   /** Enabled skills by name, as the last skills/list for this workspace reported them; `/skill:<name>` invokes one. */
   private skills = new Map<string, { readonly name: string; readonly path: string }>();
   /** Set once this connection forked a thread; it then opens nothing and attributes nothing. */
@@ -256,6 +258,13 @@ export class CodexControl implements HarnessControl {
     return { models, defaultModel, options };
   }
   async checkpoint(): Promise<string | null> { return this.conversation; }
+  /**
+   * Only the collaboration mode a turn of this connection set. Without a chosen mode the thread's mode cannot be read (it
+   * needs the experimental API), so nothing is reported and the thread's last confirmed mode stands.
+   */
+  async nativeConfig(): Promise<{ readonly model: string | null; readonly options: NativeOptions } | null> {
+    return this.confirmedMode === null ? null : { model: null, options: { [COLLABORATION_MODE]: this.confirmedMode } };
+  }
   async open(cwd: string, model?: string, native?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> {
     this.assertInitialized();
     if (!isAbsolute(cwd)) throw new ControlError("INVALID_INPUT", "conversation cwd must be absolute");
@@ -463,6 +472,7 @@ export class CodexControl implements HarnessControl {
       try {
         const response = object(value, "turn/start result"), turn = object(response.turn, "Codex turn");
         this.bindTurn(active, string(turn.id, "Codex turn identity"));
+        if (this.collaboration !== null) this.confirmedMode = this.collaboration.mode;
         const status = string(turn.status, "Codex turn status");
         if (!["inProgress", "completed", "interrupted", "failed"].includes(status)) throw new ControlError("INVALID_PROTOCOL", "unknown turn status");
         active.signalStarted();

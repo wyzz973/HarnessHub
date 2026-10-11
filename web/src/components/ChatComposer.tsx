@@ -26,12 +26,12 @@ interface ComposerProps extends ChatProps {
 /** Products whose own documentation names the command that sets up a missing sign-in or provider. */
 const SETUP_COMMANDS: Readonly<Record<string, string>> = { hermes: "hermes model" };
 /**
- * How a Harness decides on approvals when its interface does not report it. dsh's ACP entry neither publishes its
- * permission preset nor runs /permission, and its default is derived at runtime, so the Hub states the rule instead
- * (permission-presets: workspace-write asks beyond the workspace, danger-full-access never asks).
+ * How a Harness decides on approvals when its interface does not report it. A session the Hub opens through dsh's ACP entry
+ * runs dsh's default preset for new sessions (`permission.defaultPreset`, derived at runtime when unset); its entry neither
+ * reports the preset nor runs /permission, which only switches the dsh session it is typed in. So the Hub states the rule.
  */
 const APPROVAL_NOTES: Readonly<Record<string, string>> = {
-  dsh: "由 dsh 自己的权限预设决定：workspace-write 在超出工作区时请求审批，danger-full-access 不会请求审批。可在 dsh 自己的界面用 /permission 查看或切换；HarnessHub 不改它的设置。",
+  dsh: "由 dsh 自己为新会话设定的默认权限预设决定（workspace-write 超出工作区时请求审批；danger-full-access 不请求审批）。要改变 HarnessHub 会话的预设，请在 dsh 自己的设置中修改默认预设；HarnessHub 不读取、不修改它的设置。",
 };
 function approximately(ms: number): string { return Math.max(1, Math.round(ms / 1000)) + " 秒"; }
 function ago(at: number): string {
@@ -159,7 +159,10 @@ export function ChatComposer(props: ComposerProps) {
     : uploading ? "附件上传中，完成后即可发送。"
     : attachmentBlocked ? "有附件无法随这条消息发送，请移除标记的附件或切换到支持它的 Harness 或模型。"
     : props.attachments.length && !props.messageDraft.trim() ? "请写一句说明，再和附件一起发送。"
-    : !draft.providerId && draft.harnessId === "codex" && draft.nativeOptions.collaboration_mode === "plan" ? "计划模式：Codex 先给出方案。要让它执行，在高级配置里把协作模式改为“默认”后再发送。"
+    // Codex's collaboration mode stays with its thread: plan mode answers with a plan, and following the native configuration
+    // does not leave it (ADR-034).
+    : !draft.providerId && draft.nativeOptions.collaboration_mode === "plan" ? `计划模式：${harness?.name ?? "Harness"} 先给出方案。要让它执行，在高级配置里把协作模式改为“默认”后再发送。`
+    : !draft.providerId && draft.nativeOptions.collaboration_mode === undefined && nativeState?.observed?.options.collaboration_mode === "plan" ? `这个 ${harness?.name ?? "Harness"} 线程仍为计划模式：跟随本机配置不会改回，在高级配置里把协作模式改为“默认”即可退出。`
     : problem;
 
   return <div className="composer-wrap">

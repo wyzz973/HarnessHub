@@ -806,13 +806,14 @@ export class SessionRuntime {
         const after = await execution.binding.control.checkpoint!(); this.owned(execution);
         if (after === null || typeof after !== "string" || !after || Buffer.byteLength(after) > 8192 || /[\0\r\n]/u.test(after)) throw new SessionError("INVALID_NATIVE_CHECKPOINT", "original Harness lost its owned session reference");
         checkpoint = after; nativeConfirmed = true;
+        reported = true;
         if (execution.binding.control.nativeConfig) {
           // Unreadable or invalid reports leave the configuration unknown; the next Turn then applies the selection as requested.
-          try { observed = parseNativeConfiguration(await execution.binding.control.nativeConfig()); }
+          // A Turn that told nothing about the native values leaves the earlier report standing.
+          try { const report = await execution.binding.control.nativeConfig(); if (report === null) reported = false; else observed = parseNativeConfiguration(report); }
           catch (error) { observed = undefined; const code = fault(error).code; this.commit(id, current => ({ next: current, events: [event("native.config_unreadable", { runId: target, code })] })); }
           this.owned(execution);
         }
-        reported = true;
       }
     } catch (error) { problem = fault(error); }
     finally {

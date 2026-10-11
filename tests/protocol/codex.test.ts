@@ -389,7 +389,16 @@ test("Codex plan mode is declared only by a connection opened with a chosen mode
       assert.equal((await (await planner.startText(id, "plan it", event => events.push(event))).result).status, "completed");
       assert.deepEqual(events.filter(event => event.type === "text").map(event => event.type === "text" ? event.text : ""), ["1. 读代码\n2. 改实现"], "the completed plan, not its drafts");
       assert.equal(events.some(event => event.type === "diagnostic"), false);
+      // The thread keeps the mode this turn set; that is what the connection reports as the native value.
+      assert.deepEqual(await planner.nativeConfig(), { model: null, options: { collaboration_mode: "plan" } });
     } finally { await planner.close(); }
+    // A turn that follows the native configuration cannot read the thread's mode, so it reports nothing and the last stands.
+    const follower = control("plan-mode");
+    try {
+      await follower.initialize(); const id = await follower.open(process.cwd());
+      assert.equal((await (await follower.startText(id, "continue", () => {})).result).status, "completed");
+      assert.equal(await follower.nativeConfig(), null);
+    } finally { await follower.close(); }
     const planned = await sent("planner");
     assert.equal(await experimental("planner"), true);
     assert.deepEqual(planned.find(row => row.method === "turn/start")!.params!.collaborationMode, { mode: "plan", settings: { model: "native-model-a", reasoning_effort: "high", developer_instructions: null } });
@@ -401,6 +410,7 @@ test("Codex plan mode is declared only by a connection opened with a chosen mode
       await back.initialize(); const id = await back.open(process.cwd(), undefined, { collaboration_mode: "default" }), events: ControlEvent[] = [];
       assert.equal((await (await back.startText(id, "do it", event => events.push(event))).result).status, "completed");
       assert.ok(events.some(event => event.type === "text" && event.text === "你好 fixture"));
+      assert.deepEqual(await back.nativeConfig(), { model: null, options: { collaboration_mode: "default" } });
     } finally { await back.close(); }
     assert.deepEqual((await sent("back")).find(row => row.method === "turn/start")!.params!.collaborationMode, { mode: "default", settings: { model: "native-model-a", reasoning_effort: null, developer_instructions: null } });
     // A connection that was not prepared for the mode refuses it before a thread is opened.
