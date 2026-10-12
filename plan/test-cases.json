@@ -8308,6 +8308,134 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/real/native-options.real.ts"
+    },
+    {
+      "id": "G054-FR1",
+      "task": "G054",
+      "requirements": [
+        "R22"
+      ],
+      "invariants": [
+        "INV-25"
+      ],
+      "layer": "e2e",
+      "scenario": "侧栏按状态分组，跨对话收件箱",
+      "expected": "等你处理与进行中的对话排在最前；铃铛列出所有对话中等待的审批与提问，写明期限来源与剩余时间，点击打开对应对话；通知开关在收件箱中，默认关闭",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/web.browser.ts"
+    },
+    {
+      "id": "G054-FR2",
+      "task": "G054",
+      "requirements": [
+        "R22"
+      ],
+      "invariants": [
+        "INV-25"
+      ],
+      "layer": "e2e",
+      "scenario": "过程折叠为一行摘要并可切换密度",
+      "expected": "简洁模式下每轮工具折叠为一行摘要，失败与未完成的数量写在摘要里；切到详细后全部展开，偏好在重新载入后保留",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/web.browser.ts"
+    },
+    {
+      "id": "G054-FR3",
+      "task": "G054",
+      "requirements": [
+        "R22"
+      ],
+      "invariants": [
+        "INV-25"
+      ],
+      "layer": "e2e",
+      "scenario": "详情栏的改动、过程、计划、后台与执行",
+      "expected": "改动按文件列出工具报告的差异且只读；执行页列出执行者、模型连接、阶段耗时与用量，并可复制诊断信息；窄屏时详情栏以抽屉或底部面板打开",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/web.browser.ts"
+    },
+    {
+      "id": "G054-FR4",
+      "task": "G054",
+      "requirements": [
+        "R22"
+      ],
+      "invariants": [
+        "INV-25"
+      ],
+      "layer": "e2e",
+      "scenario": "回复进行中暂存下一条消息",
+      "expected": "本轮正常结束后自动发出一次且只由暂存它的标签页发出；本轮失败、取消、切换待生效或页面重新载入时放回输入框不发出；发出前可编辑或撤回",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/web.browser.ts"
+    },
+    {
+      "id": "G054-FR5",
+      "task": "G054",
+      "requirements": [
+        "R22"
+      ],
+      "invariants": [
+        "INV-25"
+      ],
+      "layer": "e2e",
+      "scenario": "命令面板与快捷键",
+      "expected": "⌘K 打开命令面板，可搜索对话、前往页面、切换主题与过程显示，Enter 执行；⌘/ 打开快捷键表；⇧⌘O 新建对话；输入法组合中不执行",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/web.browser.ts"
+    },
+    {
+      "id": "G054-FR6",
+      "task": "G054",
+      "requirements": [
+        "R22"
+      ],
+      "invariants": [
+        "INV-25"
+      ],
+      "layer": "e2e",
+      "scenario": "明暗主题与减少动效",
+      "expected": "设置中可选跟随系统、浅色、深色；深色下主要页面在 390 与 320 像素宽度没有横向滚动；减少动效时动画与过渡不超过 1 毫秒",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/web.browser.ts"
+    },
+    {
+      "id": "G054-FR7",
+      "task": "G054",
+      "requirements": [
+        "R22"
+      ],
+      "invariants": [
+        "INV-25"
+      ],
+      "layer": "unit",
+      "scenario": "统一差异解析与过程摘要",
+      "expected": "差异按文件拆分并给出行号与增删计数，无文件头时使用工具报告的位置；摘要按工具类别计数并始终写出失败与未完成数量",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/unit/web-turn.test.ts"
+    },
+    {
+      "id": "G054-FR8",
+      "task": "G054",
+      "requirements": [
+        "R22"
+      ],
+      "invariants": [
+        "INV-25"
+      ],
+      "layer": "e2e",
+      "scenario": "审批卡片的数字键",
+      "expected": "卡片获得焦点时 1–9 选择对应的一次性选项；会长期生效的选项不绑定数字键；焦点在卡片内输入框时数字键照常输入",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/web.browser.ts"
     }
   ]
 }

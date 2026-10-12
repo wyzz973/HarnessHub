@@ -1704,13 +1704,31 @@
 - web/src/components/NativeSessions.tsx
 - web/src/tool-tree.ts
 - web/src/components/NativeResume.tsx
+- web/src/components/Activity.tsx
+- web/src/components/Approval.tsx
+- web/src/components/CodeBlock.tsx
+- web/src/components/CommandPalette.tsx
+- web/src/components/Composer.tsx
+- web/src/components/DetailsPanel.tsx
+- web/src/components/PageShell.tsx
+- web/src/components/SettingsPage.tsx
+- web/src/components/Turn.tsx
+- web/src/components/Welcome.tsx
+- web/src/lib/cn.ts
+- web/src/lib/format.ts
+- web/src/lib/prefs.ts
+- web/src/lib/turn.ts
+- web/src/ui/overlay.tsx
+- web/src/ui/primitives.tsx
+- tests/unit/web-turn.test.ts
+- docs/verification/frontend-redesign-2026-10-12.md
 
 验收：
 - 公共Session身份与历史保留
 - 不提前展示新Harness已生效
 - 可操作且不持有独立业务状态
 
-场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01, G054-NC1, G054-NC2, G054-NC3, G054-NC4, G054-NC5, G054-NC6, G054-NC7, G054-NC8, G054-NC9, G054-NC10, G054-NC11, G054-NC12, G054-NC13, G054-NC14, G054-NC15。
+场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01, G054-NC1, G054-NC2, G054-NC3, G054-NC4, G054-NC5, G054-NC6, G054-NC7, G054-NC8, G054-NC9, G054-NC10, G054-NC11, G054-NC12, G054-NC13, G054-NC14, G054-NC15, G054-FR1, G054-FR2, G054-FR3, G054-FR4, G054-FR5, G054-FR6, G054-FR7, G054-FR8。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 

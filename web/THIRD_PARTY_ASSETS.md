@@ -1,4 +1,14 @@
-# 品牌图标来源
+# 第三方素材与界面依赖
+
+## 字体
+
+界面字体 Geist 与 Geist Mono 随前端打包，来自固定依赖 `@fontsource-variable/geist@5.3.0` 与 `@fontsource-variable/geist-mono@5.3.0`，按 [SIL Open Font License 1.1](https://github.com/vercel/geist-font/blob/main/OFL.txt) 分发（Copyright 2024 The Geist Project Authors）。运行时不连接字体 CDN；中文使用系统字体（ADR-042）。
+
+## 界面依赖
+
+Tailwind CSS 4.3.3、Base UI 1.8.0、Shiki 4.4.3、clsx 2.1.1 与 tailwind-merge 3.7.0 均为 MIT 许可，版本在 `package.json` 中精确锁定。Shiki 只打包所用的语法与 GitHub 浅色、深色两个主题，按需加载，使用 JavaScript 正则引擎。
+
+## 品牌图标来源
 
 Harness 与已识别官方 Provider 的品牌图标使用固定依赖 `@lobehub/icons-static-svg@1.95.1`，从包内 SVG 本地构建；运行时不连接图标 CDN、不下载远程图片。仅引入实际使用的图标文件。
 

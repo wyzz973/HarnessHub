@@ -1,7 +1,10 @@
-import { AudioLines, FileText, Image, LoaderCircle, TriangleAlert, X } from "lucide-react";
+import { AudioLines, FileText, Image, TriangleAlert, X } from "lucide-react";
 import type { ContentRef } from "../../../src/contracts/content.js";
 import type { NativeInputs } from "../../../src/contracts/control.js";
 import { contentUrl } from "../api.js";
+import { cn } from "../lib/cn.js";
+import { bytes } from "../lib/format.js";
+import { Spinner } from "../ui/primitives.js";
 
 /** A file the user added to the next message. Only `ready` items carry a server reference that can be sent. */
 export interface AttachmentDraft {
@@ -29,27 +32,27 @@ export function attachmentKind(type: string): ContentRef["kind"] {
 export function attachmentProblem(item: Pick<AttachmentDraft, "kind">, inputs: NativeInputs | undefined): string | null {
   return inputs !== undefined && !inputs[item.kind] ? `当前 Harness 或模型不接受${KIND_LABEL[item.kind]}` : null;
 }
-function size(bytes: number): string { return bytes >= 1024 * 1024 ? (bytes / 1024 / 1024).toFixed(1) + " MB" : bytes >= 1024 ? Math.ceil(bytes / 1024) + " KB" : bytes + " B"; }
 function KindIcon({ kind }: { kind: ContentRef["kind"] }) {
   return kind === "image" ? <Image size={13} aria-hidden="true"/> : kind === "audio" ? <AudioLines size={13} aria-hidden="true"/> : <FileText size={13} aria-hidden="true"/>;
 }
+const CHIP = "attachment-chip inline-flex max-w-[260px] items-center gap-1.5 rounded-lg border bg-surface py-1 pr-1 pl-2 text-[12.5px]";
 
 export function ComposerAttachments({ items, inputs, disabled, onRemove }: { items: readonly AttachmentDraft[]; inputs: NativeInputs | undefined; disabled: boolean; onRemove: (local: string) => void }) {
-  return <ul className="composer-attachments" aria-label="待发送的附件">{items.map(item => {
+  return <ul className="m-0 flex list-none flex-wrap gap-1.5 p-0" aria-label="待发送的附件">{items.map(item => {
     const problem = item.status === "failed" ? item.error ?? "上传失败" : attachmentProblem(item, inputs);
-    return <li key={item.local} className={`attachment-chip ${problem ? "is-error" : ""}`} title={problem ?? item.name}>
-      {item.status === "uploading" ? <LoaderCircle size={13} className="spin" aria-label="正在上传"/> : problem ? <TriangleAlert size={13} aria-hidden="true"/> : <KindIcon kind={item.kind}/>}
-      {item.status === "ready" && item.kind === "image" && item.ref ? <img src={contentUrl(item.ref)} alt="" className="attachment-thumb"/> : null}
-      <span className="attachment-name">{item.name}</span>
-      <small>{problem ?? (item.status === "uploading" ? "上传中" : size(item.bytes))}</small>
-      <button type="button" className="icon-button" aria-label={`移除附件 ${item.name}`} disabled={disabled} onClick={() => onRemove(item.local)}><X size={12}/></button>
+    return <li key={item.local} className={cn(CHIP, problem ? "is-error border-red-line bg-red-soft" : "border-line")} title={problem ?? item.name}>
+      {item.status === "uploading" ? <Spinner size={13} label="正在上传"/> : problem ? <TriangleAlert size={13} className="text-red" aria-hidden="true"/> : <span className="text-fg-3"><KindIcon kind={item.kind}/></span>}
+      {item.status === "ready" && item.kind === "image" && item.ref ? <img src={contentUrl(item.ref)} alt="" className="h-5 w-5 rounded object-cover"/> : null}
+      <span className="min-w-0 truncate">{item.name}</span>
+      <small className={cn("flex-none text-[11.5px]", problem ? "text-red" : "text-fg-3")}>{problem ?? (item.status === "uploading" ? "上传中" : bytes(item.bytes))}</small>
+      <button type="button" className="icon-btn h-5 w-5 rounded-md" aria-label={`移除附件 ${item.name}`} disabled={disabled} onClick={() => onRemove(item.local)}><X size={12}/></button>
     </li>;
   })}</ul>;
 }
 
 /** Attachments shown with the user message they were sent with; images open in a new tab, other files download. */
-export function MessageAttachments({ attachments }: { attachments: readonly ContentRef[] }) {
-  return <div className="message-attachments">{attachments.map(item => item.kind === "image"
-    ? <a key={item.id} className="message-attachment-image" href={contentUrl(item)} target="_blank" rel="noopener noreferrer" title={item.name}><img src={contentUrl(item)} alt={item.name} loading="lazy"/></a>
-    : <a key={item.id} className="attachment-chip" href={contentUrl(item, true)} download={item.name} title={item.name}><KindIcon kind={item.kind}/><span className="attachment-name">{item.name}</span><small>{size(item.bytes)}</small></a>)}</div>;
+export function MessageAttachments({ attachments, align = "end" }: { attachments: readonly ContentRef[]; align?: "start" | "end" }) {
+  return <div className={cn("flex flex-wrap gap-1.5", align === "end" ? "justify-end" : "justify-start")}>{attachments.map(item => item.kind === "image"
+    ? <a key={item.id} className="message-attachment-image block overflow-hidden rounded-xl border border-line" href={contentUrl(item)} target="_blank" rel="noopener noreferrer" title={item.name}><img className="block max-h-48 max-w-[240px] object-cover" src={contentUrl(item)} alt={item.name} loading="lazy"/></a>
+    : <a key={item.id} className={cn(CHIP, "border-line pr-2 text-fg no-underline hover:bg-hover")} href={contentUrl(item, true)} download={item.name} title={item.name}><span className="text-fg-3"><KindIcon kind={item.kind}/></span><span className="min-w-0 truncate">{item.name}</span><small className="text-fg-3">{bytes(item.bytes)}</small></a>)}</div>;
 }

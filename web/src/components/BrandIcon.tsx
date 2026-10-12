@@ -67,12 +67,14 @@ const assets: Readonly<Record<string, string>> = {
   "claude-acp": claudeCode, "claude-code": claudeCode, "pi-acp": pi, deepseek, dsh: deepseek, devin, hermes, "factory-droid": factory, gemini, "github-copilot": copilot, "github-copilot-cli": copilot, "glm-acp-agent": glm, goose, "grok-build": grok,
   dirac, junie, kilo, kimi, "minimax-code": minimax, "mistral-vibe": mistral, nova, openai, openclaw, opencode, openrouter, pi, poolside, qoder, qwen, "qwen-code": qwen, stakpak,
 };
+/** Single-color marks drawn in black; the dark theme inverts them so they stay visible. */
+const MONOCHROME = new Set(["anthropic", "cline", "cursor", "devin", "github-copilot", "github-copilot-cli", "goose", "grok-build", "hermes", "kilo", "openai", "opencode", "pi", "pi-acp"]);
 export function BrandIcon({ brand, name, size = 24 }: { brand: string; name: string; size?: number }) {
   const source = assets[brand];
   const characters = Array.from(name.trim());
   const initials = /^[\x20-\x7e]$/u.test(characters[0] ?? "") ? characters.slice(0, 2).join("").toLocaleUpperCase() : characters[0] ?? "?";
-  return source ? <img className="brand-icon" src={source} alt="" width={size} height={size} aria-hidden="true"/>
-    : <span className="brand-icon brand-fallback" style={{ width: size, height: size, fontSize: Math.max(12, Math.round(size * .37)) }} aria-hidden="true" title={`${name}：通用标识`}>{initials}</span>;
+  return source ? <img className={"brand-icon flex-none select-none" + (MONOCHROME.has(brand) ? " brand-mono" : "")} src={source} alt="" width={size} height={size} aria-hidden="true" draggable={false}/>
+    : <span className="brand-icon brand-fallback inline-flex flex-none select-none items-center justify-center rounded-[28%] bg-subtle font-semibold text-fg-2 ring-1 ring-line ring-inset" style={{ width: size, height: size, fontSize: Math.max(9, Math.round(size * .4)) }} aria-hidden="true" title={`${name}：通用标识`}>{initials}</span>;
 }
 export function providerBrand(baseUrl: string): string {
   try {

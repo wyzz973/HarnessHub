@@ -1,4 +1,4 @@
-import { AlertCircle, ArrowRight, RefreshCw, X } from "lucide-react";
+import { Bot, Columns2, Keyboard, MessageSquarePlus, Monitor, Moon, PanelLeft, RefreshCw, Settings, SlidersHorizontal, Sun } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SelectionRequest } from "../../src/contracts/session.js";
 import type { ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
@@ -11,22 +11,30 @@ import { applySessionStreamFrame } from "./session-stream.js";
 import { notifyWaiting } from "./attention.js";
 import { ApiError, errorMessage, GatewayApi, requestKey } from "./api.js";
 import { ChatPage, effectiveProviderProblem, EMPTY_SELECTION, selectionDraft, selectionProblem, selectionRequest } from "./components/ChatPage.js";
-import type { SelectionDraft } from "./components/ChatPage.js";
+import type { QueuedMessage, SelectionDraft } from "./components/ChatPage.js";
 import { HarnessesPage, installationActive } from "./components/HarnessesPage.js";
 import type { UnconfirmedInstallation } from "./components/HarnessesPage.js";
 import { ProvidersPage } from "./components/ProvidersPage.js";
 import type { ProviderProbeState } from "./components/ProvidersPage.js";
 import { Sidebar } from "./components/Sidebar.js";
 import type { Page } from "./components/Sidebar.js";
-import { BrandMark, Spinner } from "./components/common.js";
+import { SettingsPage } from "./components/SettingsPage.js";
+import { CommandPalette, ShortcutsDialog, type PaletteCommand } from "./components/CommandPalette.js";
+import { BrandIcon } from "./components/BrandIcon.js";
 import { attachmentKind, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, MAX_MESSAGE_ATTACHMENT_BYTES, type AttachmentDraft } from "./components/Attachments.js";
 import { parseContentRef, type ContentRef } from "../../src/contracts/content.js";
+import { useMedia, usePreferences } from "./lib/prefs.js";
+import { finished } from "./lib/turn.js";
+import { cn } from "./lib/cn.js";
+import { Dialog } from "./ui/overlay.js";
+import { LogoMark, Notice, Spinner, TipProvider } from "./ui/primitives.js";
 
 interface PendingMessage { text: string; attachments: readonly string[]; createKey: string; sessionId: string | null; sendKey: string; committed: boolean;
   /** A new conversation chosen to keep its native process records that before its first message is sent (ADR-030). */
   retain?: { readonly key: string; applied: boolean } }
 interface PendingSelection { sessionId: string; selection: SelectionRequest; key: string; recovery: boolean; acknowledgeUnknown: boolean }
-interface ChatDraft { message: string; attachments: readonly ContentRef[]; selection: SelectionDraft; epoch: number | null; messageIntent: PendingMessage | null; selectionIntent: PendingSelection | null }
+/** One conversation's unsent state in this tab. A held message (ADR-042) is restored into the composer, never sent, after a reload. */
+interface ChatDraft { message: string; attachments: readonly ContentRef[]; selection: SelectionDraft; epoch: number | null; messageIntent: PendingMessage | null; selectionIntent: PendingSelection | null; queued?: QueuedMessage | null }
 function draftStorageKey(workspace: string, id: string): string { return "harnessgateway:chat-draft:" + workspace + ":" + id; }
 function choiceStorageKey(harnessId: string): string { return "harnessgateway:native-choice:" + harnessId; }
 /**
@@ -64,7 +72,7 @@ function savedChatDraft(workspace: string, id: string): ChatDraft | null {
     const value: unknown = JSON.parse(raw);
     if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
     const row = value as Record<string, unknown>, selected = row.selection;
-    if (Object.keys(row).some(key => !["message", "attachments", "selection", "epoch", "messageIntent", "selectionIntent"].includes(key)) || typeof row.message !== "string" ||
+    if (Object.keys(row).some(key => !["message", "attachments", "selection", "epoch", "messageIntent", "selectionIntent", "queued"].includes(key)) || typeof row.message !== "string" ||
         !(row.epoch === null || typeof row.epoch === "number" && Number.isSafeInteger(row.epoch) && row.epoch > 0) || selected === null || typeof selected !== "object" || Array.isArray(selected)) return null;
     const selection = selected as Record<string, unknown>;
     if (Object.keys(selection).some(key => !["harnessId", "controlId", "providerId", "providerRevision", "model", "nativeOptions"].includes(key)) ||
@@ -98,11 +106,31 @@ function savedChatDraft(workspace: string, id: string): ChatDraft | null {
     }
     // Drafts saved before attachments existed have none; a damaged list drops the whole draft like any other field.
     const attachments = row.attachments === undefined ? [] : Array.isArray(row.attachments) && row.attachments.length <= 8 ? row.attachments.map(parseContentRef) : (() => { throw new Error("invalid stored attachments"); })();
-    return { message: row.message, attachments, selection: { harnessId: String(selection.harnessId), controlId: String(selection.controlId), providerId: String(selection.providerId),
-      providerRevision: selection.providerRevision, model: String(selection.model), nativeOptions: parseNativeOptions(selection.nativeOptions ?? {}) }, epoch: row.epoch, messageIntent: parseMessage(row.messageIntent), selectionIntent };
+    // A message held until a Turn ended goes back into the composer after a reload: it is never sent without the user.
+    let queued: QueuedMessage | null = null;
+    if (row.queued !== undefined && row.queued !== null) {
+      if (typeof row.queued !== "object" || Array.isArray(row.queued)) return null;
+      const item = row.queued as Record<string, unknown>;
+      if (Object.keys(item).some(key => !["text", "attachments", "afterRunId", "selection"].includes(key)) || typeof item.text !== "string" || typeof item.afterRunId !== "string" || typeof item.selection !== "string" || !Array.isArray(item.attachments) || item.attachments.length > 8) return null;
+      queued = { text: item.text, attachments: item.attachments.map(parseContentRef), afterRunId: item.afterRunId, selection: item.selection };
+    }
+    const restored = restoreQueued({ message: row.message, attachments }, queued);
+    return { message: restored.message, attachments: restored.attachments, selection: { harnessId: String(selection.harnessId), controlId: String(selection.controlId), providerId: String(selection.providerId),
+      providerRevision: selection.providerRevision, model: String(selection.model), nativeOptions: parseNativeOptions(selection.nativeOptions ?? {}) }, epoch: row.epoch, messageIntent: parseMessage(row.messageIntent), selectionIntent, queued: null };
   } catch { return null; }
 }
+/** Puts a held message back in front of whatever the composer holds; attachments stay within the per-message limit. */
+function restoreQueued(draft: { readonly message: string; readonly attachments: readonly ContentRef[] }, queued: QueuedMessage | null | undefined): { readonly message: string; readonly attachments: readonly ContentRef[] } {
+  if (!queued) return draft;
+  return { message: queued.text + (draft.message.trim() ? "\n\n" + draft.message : ""), attachments: [...queued.attachments, ...draft.attachments.filter(ref => !queued.attachments.some(item => item.id === ref.id))].slice(0, MAX_ATTACHMENTS) };
+}
 interface PendingProviderWrite { input: ProviderWriteInput; key: string; current: ProviderView | undefined }
+/** The page named in the address, so a reload stays where the user was; the conversation route is the default. */
+function pageRoute(): Page {
+  const value = new URLSearchParams(window.location.hash.slice(1)).get("page");
+  return value === "harnesses" || value === "settings" || value === "providers" ? value : "chat";
+}
+function writePageRoute(page: Exclude<Page, "chat">): void { window.history.replaceState(null, "", window.location.pathname + "#" + new URLSearchParams({ page }).toString()); }
 function sessionRoute(): { id: string | null; error: string | null } {
   const value = new URLSearchParams(window.location.hash.slice(1)).get("session");
   if (value === null) return { id: null, error: null };
@@ -112,6 +140,7 @@ function sessionRoute(): { id: string | null; error: string | null } {
 function writeSessionRoute(id: string | null): void {
   window.history.replaceState(null, "", window.location.pathname + (id ? "#" + new URLSearchParams({ session: id }).toString() : ""));
 }
+const SHORTCUT_TARGETS = "input, textarea, select, [contenteditable=true]";
 export function App() {
   const [api] = useState(() => new GatewayApi());
   const [initialRoute] = useState(sessionRoute);
@@ -131,9 +160,16 @@ export function App() {
   }, []);
   const [bootError, setBootError] = useState<string | null>(null);
   const [bootAttempt, setBootAttempt] = useState(0);
-  const [page, setPage] = useState<Page>("chat");
+  const [page, setPage] = useState<Page>(pageRoute);
+  // On a narrow screen the sidebar is a drawer; on a wide one the user may hide it (a preference of this browser).
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [preferences, setPreference] = usePreferences();
+  const narrow = useMedia("(max-width: 759px)");
+  const [palette, setPalette] = useState(false);
+  const [shortcuts, setShortcuts] = useState(false);
+  // The message written while a reply runs, held by this tab until that Turn ends (ADR-042).
+  const [queued, setQueued] = useState<QueuedMessage | null>(null);
+  const [queueNotice, setQueueNotice] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(initialRoute.id);
   const [session, setSession] = useState<SessionView | null>(null);
   const [sessionLoading, setSessionLoading] = useState(initialRoute.id !== null);
@@ -348,10 +384,13 @@ export function App() {
     if (editorDirty) { setLeaveAction(() => finish); return; }
     finish();
   };
-  const navigate = (next: Page) => leave(() => { setPage(next); setEditor(null); setEditorDirty(false); setSidebarOpen(false); setError(null); });
+  const navigate = (next: Page) => leave(() => {
+    setPage(next); setEditor(null); setEditorDirty(false); setSidebarOpen(false); setError(null);
+    if (next === "chat") writeSessionRoute(sessionIdRef.current); else writePageRoute(next);
+  });
   const saveChatDraft = () => {
     chatDrafts.current.set(sessionIdRef.current ?? "new", { message: messageDraft, attachments: readyAttachments(attachments), selection: draft,
-      epoch: session?.epoch ?? null, messageIntent: pendingMessage.current, selectionIntent: pendingSwitchWrite.current });
+      epoch: session?.epoch ?? null, messageIntent: pendingMessage.current, selectionIntent: pendingSwitchWrite.current, queued });
     try {
       const saved = chatDrafts.current.get(sessionIdRef.current ?? "new")!;
       const serialized = JSON.stringify(saved);
@@ -359,19 +398,22 @@ export function App() {
       sessionStorage.setItem(draftStorageKey(state?.workspace ?? workspace, sessionIdRef.current ?? "new"), serialized); setDraftStorageError(null);
     } catch { setDraftStorageError("浏览器暂时无法保存草稿。内容仍在当前页面，请暂时保留此页面。"); }
   };
-  useEffect(() => { if (state && !sessionLoading && !sessionError) saveChatDraft(); }, [messageDraft, attachments, draft, session?.epoch, mutation, state !== null, sessionLoading, sessionError]);
+  useEffect(() => { if (state && !sessionLoading && !sessionError) saveChatDraft(); }, [messageDraft, attachments, draft, session?.epoch, mutation, state !== null, sessionLoading, sessionError, queued]);
   const newChat = () => leave(() => {
     selectionWish.current = null; lastAutoSelection.current = null;
     saveChatDraft(); const saved = chatDrafts.current.get("new"); pendingSwitchWrite.current = saved?.selectionIntent ?? null;
     sessionIdRef.current = null; liveSession.current = null; observedSelection.current = ""; pendingMessage.current = null; setKeepNew(false);
-    pendingMessage.current = saved?.messageIntent ?? null;
+    pendingMessage.current = saved?.messageIntent ?? null; setQueued(null); setQueueNotice(null);
     writeSessionRoute(null); setSessionId(null); setSession(null); setSessionLoading(false); setSessionError(null); setDraft(saved?.selection ?? { ...EMPTY_SELECTION }); setMessageDraft(saved?.message ?? ""); setAttachments(draftAttachments(saved?.attachments)); setChatKey(value => value + 1);
     setPage("chat"); setEditor(null); setEditorDirty(false); setSidebarOpen(false); setError(null); setConnectionError(null);
   });
   const selectSession = (id: string) => leave(() => {
     if (sessionIdRef.current !== id) {
-      saveChatDraft(); const saved = chatDrafts.current.get(id) ?? savedChatDraft(state?.workspace ?? workspace, id);
+      saveChatDraft(); const stored = chatDrafts.current.get(id) ?? savedChatDraft(state?.workspace ?? workspace, id);
+      // Leaving a conversation stops watching its Turn, so a message held there goes back into its composer, unsent.
+      const restored = stored?.queued ? restoreQueued(stored, stored.queued) : null, saved = stored && restored ? { ...stored, ...restored, queued: null } : stored;
       if (saved) chatDrafts.current.set(id, saved);
+      setQueued(null); setQueueNotice(restored ? "离开对话时暂存的消息已放回输入框，没有发出。" : null);
       selectionWish.current = saved ? { id, draft: saved.selection } : null; lastAutoSelection.current = null;
       sessionIdRef.current = id; liveSession.current = null; observedSelection.current = "";
       pendingMessage.current = saved?.messageIntent ?? null; pendingSwitchWrite.current = saved?.selectionIntent ?? null;
@@ -384,7 +426,7 @@ export function App() {
   const chooseHarness = (harness: HarnessView) => leave(() => {
     selectionWish.current = null; lastAutoSelection.current = null;
     const control = harness.controls.find(row => row.id === harness.defaultControlId && row.available) ?? harness.controls.find(row => row.available); if (!control) return;
-    saveChatDraft(); pendingSwitchWrite.current = null;
+    saveChatDraft(); pendingSwitchWrite.current = null; setQueued(null); setQueueNotice(null);
     sessionIdRef.current = null; liveSession.current = null; observedSelection.current = ""; pendingMessage.current = null; setKeepNew(false);
     const remembered = rememberedChoice(harness.id), entry = remembered && harness.controls.some(row => row.id === remembered.controlId && row.available) ? remembered : null;
     writeSessionRoute(null); setSessionId(null); setSession(null); setSessionLoading(false); setSessionError(null);
@@ -393,8 +435,13 @@ export function App() {
   });
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") { event.preventDefault(); newChat(); }
-      if (event.key === "Escape") setSidebarOpen(false);
+      if (event.isComposing) return;
+      const command = event.metaKey || event.ctrlKey, key = event.key.toLowerCase();
+      if (command && event.shiftKey && key === "o") { event.preventDefault(); newChat(); return; }
+      if (command && !event.shiftKey && key === "k") { event.preventDefault(); setShortcuts(false); setPalette(value => !value); return; }
+      if (command && event.key === "/") { event.preventDefault(); setPalette(false); setShortcuts(value => !value); return; }
+      if (command && event.key === ".") { event.preventDefault(); setPreference("panel", !preferences.panel); return; }
+      if (command && !event.shiftKey && key === "b" && !(event.target instanceof Element && event.target.closest(SHORTCUT_TARGETS))) { event.preventDefault(); if (narrow) setSidebarOpen(value => !value); else setPreference("sidebar", !preferences.sidebar); return; }
     };
     window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
   });
@@ -443,6 +490,41 @@ export function App() {
       if (mounted.current) setError(errorMessage(failure)); throw failure;
     } finally { endOperation(); }
   };
+  /**
+   * Holds the composer's message until the running Turn ends (ADR-042, the approver's conditions): it is sent once, through
+   * the same idempotent path as a click, only if that Turn completed, the conversation still accepts messages and no
+   * selection change waits; otherwise it goes back into the composer unsent. Only this tab sends it.
+   */
+  const queueMessage = () => {
+    const live = liveSession.current, run = live?.runs.find(item => item.id === live.activeRunId);
+    if (!live || !run || queued !== null || !messageDraft.trim() || attachments.some(item => item.status !== "ready")) return;
+    setQueued({ text: messageDraft, attachments: readyAttachments(attachments), afterRunId: run.id, selection: JSON.stringify(selectionDraft(live.selection)) });
+    setMessageDraft(""); setAttachments([]); setQueueNotice(null);
+  };
+  const returnQueued = (item: QueuedMessage, notice: string | null) => {
+    setQueued(null); setQueueNotice(notice);
+    setMessageDraft(current => item.text + (current.trim() ? "\n\n" + current : ""));
+    setAttachments(current => [...draftAttachments(item.attachments), ...current.filter(row => !item.attachments.some(ref => ref.id === row.ref?.id))].slice(0, MAX_ATTACHMENTS));
+  };
+  const withdrawQueued = () => {
+    const item = queued; if (!item) return;
+    setQueued(null);
+    // Withdrawing is best effort; an unsent upload is collected after the retention window anyway.
+    for (const ref of item.attachments) void api.discardAttachment(ref.id).catch(() => {});
+  };
+  useEffect(() => {
+    const item = queued, live = session;
+    if (!item || !live || sessionIdRef.current !== live.id || mutation !== null || operation.current) return;
+    const run = live.runs.find(row => row.id === item.afterRunId);
+    if (run !== undefined && !finished(run.status)) return;
+    if (live.activeRunId !== null && live.activeRunId !== item.afterRunId) { returnQueued(item, "对话开始了另一轮回复，暂存的消息已放回输入框，没有发出。"); return; }
+    if (run === undefined || run.status !== "completed") { returnQueued(item, "上一轮没有正常结束，暂存的消息已放回输入框，没有发出。"); return; }
+    if (live.status !== "open") { returnQueued(item, "这个对话现在不能接收消息，暂存的消息已放回输入框，没有发出。"); return; }
+    // A selection change made after the message was held, applied or still pending, puts it back: it was written for the earlier one.
+    if (live.pendingSwitchId !== null || JSON.stringify(draft) !== JSON.stringify(selectionDraft(live.selection)) || JSON.stringify(selectionDraft(live.selection)) !== item.selection) { returnQueued(item, "所选 Harness 或模型已改变，暂存的消息已放回输入框，没有发出。"); return; }
+    setQueued(null);
+    void send(item.text, item.attachments).catch((failure: unknown) => { if (mounted.current) returnQueued(item, "暂存的消息没有发出：" + errorMessage(failure) + " 已放回输入框。"); });
+  }, [queued, session?.version, session?.activeRunId, mutation]);
   /** Uploads run per chat; a finished upload for a chat no longer on screen goes into that chat's saved draft. */
   const attachFiles = (files: readonly File[]) => {
     const owner = sessionIdRef.current ?? "new", room = MAX_ATTACHMENTS - attachments.length;
@@ -635,20 +717,69 @@ export function App() {
     finally { setCheckingUpdates(false); }
   };
   const dirtyChanged = useCallback((dirty: boolean) => setEditorDirty(dirty), []);
-  if (!state) return <div className="boot-screen"><BrandMark/><h1>Harness<span>Hub</span></h1>{bootError ? <><div className="boot-error" role="alert"><AlertCircle size={18}/><p>{bootError}</p></div><p className="boot-help">请使用本机网关启动时提供的入口链接。验证完成后，页面会自动隐藏链接中的令牌。</p><button className="button secondary" onClick={() => setBootAttempt(value => value + 1)}><RefreshCw size={15}/>重新连接</button></> : <div className="boot-progress" role="status"><Spinner/>正在连接你的工作空间</div>}</div>;
-  return <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`} data-page={page}><a className="skip-link" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>跳到主要内容</a><Sidebar providerManagement={state.providerManagement !== false} page={page} sessions={state.sessions} attention={attention?.items ?? []} currentId={sessionId} open={sidebarOpen} collapsed={sidebarCollapsed} activeJobs={state.jobs.filter(installationActive).length} interactionBusy={mutation !== null} onCollapse={() => setSidebarCollapsed(value => !value)} onToggle={() => setSidebarOpen(value => !value)} onPage={navigate} onNew={newChat} onSession={selectSession}/>
-    <main id="main-content" className="app-main" tabIndex={-1}>
-      {page === "chat" ? <ChatPage providerManagement={state.providerManagement !== false} onToolDetail={content => api.toolDetail(content)} {...(sessionId === null ? {} : { onDiagnostics: (run: string, includeContent: boolean) => api.runDiagnostics(sessionId, run, includeContent) })} onNativeBranch={()=>{ if(!session||!startOperation("native-branch"))return; void api.branchNative(session.id,session.epoch,requestKey()).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
+  const harnessName = (id: string) => state?.harnesses.find(harness => harness.id === id)?.name ?? id;
+  const commands = ((): readonly PaletteCommand[] => {
+    if (!state) return [];
+    const go = (target: Page) => () => navigate(target);
+    const theme = (value: "system" | "light" | "dark") => () => setPreference("theme", value);
+    return [
+      { id: "new", group: "操作", label: "新对话", icon: <MessageSquarePlus size={16}/>, shortcut: "⇧⌘O", run: newChat },
+      ...state.sessions.slice(0, 200).map(item => ({ id: "session:" + item.id, group: "对话", label: item.title || "新对话", hint: harnessName(item.selection.harnessId), keywords: item.workspace, icon: <BrandIcon brand={item.selection.harnessId} name={harnessName(item.selection.harnessId)} size={16}/>, run: () => selectSession(item.id) })),
+      ...state.harnesses.filter(harness => harness.controls.some(control => control.available)).map(harness => ({ id: "start:" + harness.id, group: "用 Agent 开始新对话", label: "用 " + harness.name + " 开始新对话", keywords: harness.id, icon: <BrandIcon brand={harness.id} name={harness.name} size={16}/>, run: () => chooseHarness(harness) })),
+      { id: "harnesses", group: "前往", label: "我的 Agent", icon: <Bot size={16}/>, run: go("harnesses") },
+      { id: "settings", group: "前往", label: "设置", icon: <Settings size={16}/>, run: go("settings") },
+      ...(state.providerManagement !== false ? [{ id: "providers", group: "前往", label: "模型与账号", icon: <SlidersHorizontal size={16}/>, run: go("providers") }] : []),
+      { id: "panel", group: "显示", label: preferences.panel ? "隐藏详情栏" : "显示详情栏", icon: <Columns2 size={16}/>, shortcut: "⌘.", run: () => setPreference("panel", !preferences.panel) },
+      { id: "sidebar", group: "显示", label: preferences.sidebar ? "收起侧栏" : "展开侧栏", icon: <PanelLeft size={16}/>, shortcut: "⌘B", run: () => setPreference("sidebar", !preferences.sidebar) },
+      { id: "density", group: "显示", label: preferences.density === "compact" ? "过程显示：详细" : "过程显示：简洁", icon: <Columns2 size={16}/>, run: () => setPreference("density", preferences.density === "compact" ? "detailed" : "compact") },
+      { id: "theme-system", group: "显示", label: "主题：跟随系统", icon: <Monitor size={16}/>, run: theme("system") },
+      { id: "theme-light", group: "显示", label: "主题：浅色", icon: <Sun size={16}/>, run: theme("light") },
+      { id: "theme-dark", group: "显示", label: "主题：深色", icon: <Moon size={16}/>, run: theme("dark") },
+      { id: "shortcuts", group: "帮助", label: "快捷键", icon: <Keyboard size={16}/>, shortcut: "⌘/", run: () => setShortcuts(true) },
+    ];
+  })();
+  if (!state) return <div className="flex h-dvh flex-col items-center justify-center gap-4 bg-app px-6 text-center">
+    <LogoMark size={40}/><h1 className="m-0 text-[20px] font-semibold tracking-[-0.01em]">HarnessHub</h1>
+    {bootError ? <div className="flex max-w-md flex-col items-center gap-3"><Notice tone="red">{bootError}</Notice><p className="m-0 text-[13px] text-fg-2">请使用本机网关启动时提供的入口链接。验证完成后，页面会自动隐藏链接中的令牌。</p>
+      <button className="btn" onClick={() => setBootAttempt(value => value + 1)}><RefreshCw size={14}/>重新连接</button></div>
+      : <div className="flex items-center gap-2 text-[13px] text-fg-2" role="status"><Spinner/>正在连接你的工作空间</div>}
+  </div>;
+  const chooseAndClose = (id: string) => { setSidebarOpen(false); selectSession(id); };
+  // An address naming the Provider page where Provider management is off opens the conversation instead.
+  const shown: Page = page === "providers" && state.providerManagement === false ? "chat" : page;
+  const sidebar = <Sidebar providerManagement={state.providerManagement !== false} page={shown} sessions={state.sessions} attention={attention?.items ?? []} harnesses={state.harnesses} currentId={sessionId}
+    interactionBusy={mutation !== null} activeJobs={state.jobs.filter(installationActive).length} updates={state.harnesses.filter(harness => harness.management.updateStatus === "available").length}
+    groupBy={preferences.groupBy} onGroupBy={value => setPreference("groupBy", value)} connected={connectionError === null && managementConnectionError === null}
+    onCollapse={() => setPreference("sidebar", false)} {...(narrow ? { onClose: () => setSidebarOpen(false) } : {})} onPage={next => { setSidebarOpen(false); navigate(next); }} onNew={newChat} onSession={chooseAndClose} onPalette={() => { setSidebarOpen(false); setPalette(true); }}/>;
+  const shell = { onMenu: () => setSidebarOpen(value => !value), sidebarHidden: !preferences.sidebar, onExpandSidebar: () => setPreference("sidebar", true), onChat: () => navigate("chat") };
+  return <TipProvider delay={500}><div className="app-shell flex h-dvh overflow-hidden bg-app text-fg" data-page={shown}>
+    <a className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[80] focus:rounded-lg focus:bg-surface focus:px-3 focus:py-2 focus:shadow-md" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>跳到主要内容</a>
+    {narrow ? <Dialog open={sidebarOpen} onOpenChange={setSidebarOpen} title="主导航" kind="left">{sidebar}</Dialog>
+      : preferences.sidebar ? <div className="w-[264px] flex-none border-r border-line">{sidebar}</div> : null}
+    <main id="main-content" className={cn("flex min-w-0 flex-1 flex-col outline-none")} tabIndex={-1}>
+      {shown === "chat" ? <ChatPage providerManagement={state.providerManagement !== false} onToolDetail={content => api.toolDetail(content)} {...(sessionId === null ? {} : { onDiagnostics: (run: string, includeContent: boolean) => api.runDiagnostics(sessionId, run, includeContent) })} onNativeBranch={()=>{ if(!session||!startOperation("native-branch"))return; void api.branchNative(session.id,session.epoch,requestKey()).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
         retainNew={keepNew}
         onRetention={enabled=>{ if(!session){ setKeepNew(enabled); return; } if(!startOperation("retention"))return; void api.setRetention(session.id,enabled,requestKey()).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
         onEndProcess={()=>{ if(!session||!startOperation("ending-process"))return; void api.endKeptProcess(session.id,requestKey()).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
         onFreeWorkspace={async run=>{ if(!session)return;
           // The conversation whose kept process holds this workspace ends it with the normal stop chain, then this message is sent again.
           try { const holder=(await api.keptProcesses()).find(item=>item.workspace===session.workspace&&item.sessionId!==session.id); if(holder) await api.endKeptProcess(holder.sessionId,requestKey()); await send(run.input,run.attachments ?? []); }
-          catch(failure){ setError(errorMessage(failure)); } }} onPermission={(permission,option,input)=>{ if(!sessionId||!startOperation("permission"))return; void api.decidePermission(sessionId,permission,option,requestKey(),input).then(()=>api.session(sessionId)).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }} nativeModels={nativeCatalog} nativeModelsLoading={nativeLoading} nativeModelsError={nativeError} onRefreshModels={refreshNativeModels} key={chatKey} session={session} sessionRequested={sessionId !== null} sessionError={sessionError} loading={sessionLoading} draft={draft} messageDraft={messageDraft} onMessageDraft={setMessageDraft} providers={state.providers} harnesses={state.harnesses} readiness={state.readiness} rememberedChoice={rememberedChoice} workspace={workspace} mutation={mutation} error={error ?? draftStorageError} connectionError={connectionError} onRetryConnection={() => setStreamAttempt(value => value + 1)} onDraft={changeSelection} onWorkspace={setWorkspace} onSend={send} attachments={attachments} onAttach={attachFiles} onRemoveAttachment={removeAttachment} onBranch={branch} onOpenSession={selectSession} sessionTitle={id => state.sessions.find(item => item.id === id)?.title ?? null} attention={attention?.items ?? null} onCancelQueued={cancelQueued} onLoadNativeResume={session ? signal => api.nativeResume(session.id, signal) : undefined} onLoadExtensions={signal => api.nativeExtensions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, signal)} onLoadNativeSessions={(cursor, signal, probes) => api.nativeSessions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, cursor, signal, probes)} onImportNative={importNative} onApply={() => { lastAutoSelection.current = null; void applySelection(); }} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }} onProviders={() => navigate("providers")} onNew={newChat} onMenu={() => setSidebarOpen(value => !value)}/>
-        : page === "providers" ? <ProvidersPage providers={state.providers} editor={editor} saving={mutation === "saving"} probes={probes} error={error} onEdit={provider => { setEditor(provider); setError(null); }} onBack={() => leave(() => { setEditor(null); setEditorDirty(false); setError(null); })} onSave={saveProvider} onProbe={provider => void probeProvider(provider)} onDirty={dirtyChanged} onDismissError={() => setError(null)} onMenu={() => setSidebarOpen(value => !value)}/>
-          : <HarnessesPage api={api} harnesses={state.harnesses} jobs={state.jobs} scanning={mutation === "scanning"} checking={checkingUpdates} submitting={submittingInstallations} cancelling={cancellingInstallations} unconfirmed={unconfirmedInstallations} error={error} connectionError={managementConnectionError} onRescan={() => void rescan()} onCheckUpdates={ids => void checkUpdates(ids)} onInstall={install} onConfirm={confirmInstallation} onCancelJob={job => void cancelInstallation(job)} onDismissError={() => setError(null)} onMenu={() => setSidebarOpen(value => !value)} onChoose={chooseHarness}/>}
+          catch(failure){ setError(errorMessage(failure)); } }} onPermission={(permission,option,input)=>{ if(!sessionId||!startOperation("permission"))return; void api.decidePermission(sessionId,permission,option,requestKey(),input).then(()=>api.session(sessionId)).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
+        nativeModels={nativeCatalog} nativeModelsLoading={nativeLoading} nativeModelsError={nativeError} onRefreshModels={refreshNativeModels} key={chatKey} session={session} sessionRequested={sessionId !== null} sessionError={sessionError} loading={sessionLoading} draft={draft}
+        messageDraft={messageDraft} onMessageDraft={setMessageDraft} providers={state.providers} harnesses={state.harnesses} readiness={state.readiness} rememberedChoice={rememberedChoice} workspace={workspace} mutation={mutation} error={error ?? draftStorageError} connectionError={connectionError}
+        onRetryConnection={() => setStreamAttempt(value => value + 1)} onDraft={changeSelection} onWorkspace={setWorkspace} onSend={send} attachments={attachments} onAttach={attachFiles} onRemoveAttachment={removeAttachment} onBranch={branch} onOpenSession={selectSession}
+        sessionTitle={id => state.sessions.find(item => item.id === id)?.title ?? null} attention={attention?.items ?? null} onCancelQueued={cancelQueued} onLoadNativeResume={session ? signal => api.nativeResume(session.id, signal) : undefined}
+        onLoadExtensions={signal => api.nativeExtensions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, signal)} onLoadNativeSessions={(cursor, signal, probes) => api.nativeSessions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, cursor, signal, probes)}
+        onImportNative={importNative} onApply={() => { lastAutoSelection.current = null; void applySelection(); }} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }}
+        onProviders={() => navigate("providers")} onNew={newChat} onMenu={shell.onMenu}
+        queued={queued} onQueue={queueMessage} onEditQueued={() => { if (queued) returnQueued(queued, null); }} onWithdrawQueued={withdrawQueued} queueNotice={queueNotice} onDismissQueueNotice={() => setQueueNotice(null)}
+        preferences={preferences} onPreference={setPreference} conversations={state.sessions.length} sidebarHidden={!narrow && !preferences.sidebar} onExpandSidebar={shell.onExpandSidebar} onHarnesses={() => navigate("harnesses")} onSettings={() => navigate("settings")} onRescan={() => void rescan()} scanning={mutation === "scanning"}/>
+        : shown === "providers" ? <ProvidersPage providers={state.providers} editor={editor} saving={mutation === "saving"} probes={probes} error={error} onEdit={provider => { setEditor(provider); setError(null); }} onBack={() => leave(() => { setEditor(null); setEditorDirty(false); setError(null); })} onSave={saveProvider} onProbe={provider => void probeProvider(provider)} onDirty={dirtyChanged} onDismissError={() => setError(null)} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
+        : shown === "settings" ? <SettingsPage api={api} preferences={preferences} onPreference={setPreference} onRescan={() => void rescan()} scanning={mutation === "scanning"} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
+        : <HarnessesPage api={api} harnesses={state.harnesses} jobs={state.jobs} scanning={mutation === "scanning"} checking={checkingUpdates} submitting={submittingInstallations} cancelling={cancellingInstallations} unconfirmed={unconfirmedInstallations} error={error} connectionError={managementConnectionError} onRescan={() => void rescan()} onCheckUpdates={ids => void checkUpdates(ids)} onInstall={install} onConfirm={confirmInstallation} onCancelJob={job => void cancelInstallation(job)} onDismissError={() => setError(null)} onChoose={chooseHarness} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>}
     </main>
-    {leaveAction ? <div className="leave-notice" role="alert"><div><strong>有尚未保存的修改</strong><p>离开会丢弃编辑草稿。已受理的请求可在列表中查看。</p></div><button className="button secondary" onClick={() => setLeaveAction(null)}>继续编辑</button><button className="button primary" onClick={() => { const action = leaveAction; setLeaveAction(null); setEditorDirty(false); action(); }}>放弃修改，离开<ArrowRight size={14}/></button><button className="icon-button" aria-label="关闭提示，继续编辑" onClick={() => setLeaveAction(null)}><X size={16}/></button></div> : null}
-  </div>;
+    {leaveAction ? <div className="fixed right-4 bottom-4 left-4 z-[70] mx-auto max-w-[560px]"><Notice tone="amber" title="有尚未保存的修改" action={<><button className="btn btn-sm" onClick={() => setLeaveAction(null)}>继续编辑</button><button className="btn btn-sm btn-primary" onClick={() => { const action = leaveAction; setLeaveAction(null); setEditorDirty(false); action(); }}>放弃修改，离开</button></>} onDismiss={() => setLeaveAction(null)}>离开会丢弃编辑草稿。已受理的请求可在列表中查看。</Notice></div> : null}
+    <CommandPalette open={palette} onOpenChange={setPalette} commands={commands}/>
+    <ShortcutsDialog open={shortcuts} onOpenChange={setShortcuts}/>
+  </div></TipProvider>;
 }
