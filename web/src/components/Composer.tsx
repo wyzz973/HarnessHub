@@ -171,6 +171,8 @@ export function Composer(props: ComposerProps) {
     : session?.retention?.lost ? session.retention.lost.outcome === "unconfirmed"
       ? "服务上次异常退出，无法确认这个对话保留的后台进程已经结束，工作区保持隔离。请检查并结束相关进程。"
       : `服务上次异常退出，这个对话保留的后台进程${session.retention.lost.outcome === "terminated" ? "已被清理" : "已随之结束"}（没有恢复）。下一条消息会重新启动原程序，并恢复原生会话。${session.retention.outside ? `原程序的后台任务可能仍在运行（${session.retention.outside.count} 个进程）。` : ""}`
+    // An upgrade of this Harness closed the conversation's kept process; said until its next Turn (ADR-043).
+    : session?.retention?.upgraded ? `升级 ${harnesses.find(row => row.id === session.retention!.upgraded!.harnessId)?.name ?? session.retention.upgraded.harnessId} 前，HarnessHub 关闭了这个对话保留的后台进程。下一条消息会用新版本重新启动原程序，并恢复原生会话。`
     // Processes the closed program had moved out of its own group are left alone; the conversation hears of them once.
     : session?.retention?.outside ? `原程序的后台任务可能仍在运行（${session.retention.outside.count} 个进程）：它们已离开原程序的进程组，HarnessHub 没有结束它们。`
     : !draft.providerId && draft.nativeOptions.collaboration_mode === undefined && nativeState?.observed?.options.collaboration_mode === "plan" ? `这个 ${harness?.name ?? "Harness"} 线程仍为计划模式：跟随本机配置不会改回，在高级配置里把协作模式改为“默认”即可退出。`

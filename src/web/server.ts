@@ -10,7 +10,7 @@ import { ProviderError } from "../contracts/provider.js";
 import { ManagementError } from "../contracts/management.js";
 import { SessionError, parseNativeOptions, sessionId, type SelectionRequest, type SessionConfiguration, type SessionEvent, type SessionSnapshot } from "../contracts/session.js";
 import { MAX_CONTENT_BYTES, MAX_RUN_ATTACHMENTS } from "../contracts/content.js";
-import type { EventPage, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, NativeSessionListView, SessionSummary, SessionView, WebState } from "../contracts/web.js";
+import type { EventPage, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, MaintenanceView, NativeSessionListView, SessionSummary, SessionView, WebState } from "../contracts/web.js";
 import { inventory, officialInstallation } from "../infrastructure/catalog/inventory-composition.js";
 import { harnessEntry, productCommand } from "./harness-entry.js";
 import { prepareConfiguration } from "../infrastructure/session/binding-factory.js";
@@ -168,7 +168,8 @@ function summary(snapshot: SessionSnapshot): SessionSummary {
     selection: snapshot.selection, updatedSeq: snapshot.lastSeq, activeRunId: snapshot.activeRunId };
 }
 function view(snapshot: SessionSnapshot, permissions: SessionView["permissions"] = [], kept: KeptProcessView | null = null, lost: NonNullable<SessionView["retention"]>["lost"] | null = null,
-  queue: SessionView["queue"] | null = null, busyHolders: SessionView["busyHolders"] = {}, outside: NonNullable<SessionView["retention"]>["outside"] | null = null): SessionView {
+  queue: SessionView["queue"] | null = null, busyHolders: SessionView["busyHolders"] = {}, outside: NonNullable<SessionView["retention"]>["outside"] | null = null,
+  upgraded: NonNullable<SessionView["retention"]>["upgraded"] | null = null): SessionView {
   return { id: snapshot.id, version: snapshot.version, lastSeq: snapshot.lastSeq, epoch: snapshot.epoch, status: snapshot.status,
     workspace: snapshot.configuration.workspace, selection: snapshot.selection, activeRunId: snapshot.activeRunId, pendingSwitchId: snapshot.pendingSwitchId,
     permissions, nativeStates: snapshot.nativeBindings?.flatMap(binding => {
@@ -178,7 +179,7 @@ function view(snapshot: SessionSnapshot, permissions: SessionView["permissions"]
         ...(binding.observed === undefined ? {} : { observed: binding.observed }), ...(carried === null ? {} : { carried }) }];
     }) ?? [],
     ...(snapshot.origin === undefined ? {} : { origin: snapshot.origin }), ...(queue === null ? {} : { queue }), ...(Object.keys(busyHolders).length ? { busyHolders } : {}),
-    ...(snapshot.schemaVersion < 11 ? {} : { retention: { enabled: snapshot.retainNative === true, process: kept, ...(lost === null ? {} : { lost }), ...(outside === null ? {} : { outside }) } }), messages: snapshot.messages, runs: snapshot.runs, switches: snapshot.switches };
+    ...(snapshot.schemaVersion < 11 ? {} : { retention: { enabled: snapshot.retainNative === true, process: kept, ...(lost === null ? {} : { lost }), ...(outside === null ? {} : { outside }), ...(upgraded === null ? {} : { upgraded }) } }), messages: snapshot.messages, runs: snapshot.runs, switches: snapshot.switches };
 }
 function publicFailure(error: unknown): { readonly status: number; readonly code: string; readonly message: string } {
   if (error instanceof HttpError || error instanceof SessionStreamError) return error;
@@ -279,7 +280,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   // A conversation's view with the live state of the native process it keeps (ADR-030).
   const sessionView = (snapshot: SessionSnapshot, permissions: SessionView["permissions"] = []): SessionView => view(snapshot, permissions, app.runtime.keptProcess(snapshot.id), app.runtime.keptLoss(snapshot.id),
     queueOf(snapshot.id), Object.fromEntries(snapshot.runs.flatMap(run => { const holder = app.runtime.busyHolderOf(run.id); return holder === null ? [] : [[run.id, holder]]; })),
-    app.runtime.keptOutside(snapshot.id));
+    app.runtime.keptOutside(snapshot.id), app.runtime.keptUpgrade(snapshot.id));
   const streams = new SessionStreamHub(id => sessionView(app.runtime.read(id), app.runtime.permissionRequests(id)), {}, failure => {
     const fault = publicFailure(failure.error);
     process.stderr.write("HarnessGateway: SESSION_STREAM_READ_FAILED (" + app.providers.redact(fault.code).slice(0, 128) + ")\n");
@@ -498,6 +499,17 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       }
       return;
     }
+    const maintenanceRoute = /^\/api\/v1\/harnesses\/([a-z][a-z0-9-]{0,95})\/maintenance$/u.exec(path);
+    if (maintenanceRoute && method === "GET") {
+      queries(url, []); await rescan();
+      const check = await app.management.maintenance(maintenanceRoute[1]!);
+      const output: MaintenanceView = { ...check, conversations: check.conversations.map(item => {
+        let title = "对话";
+        try { title = summary(app.runtime.read(sessionId(item.sessionId))).title; } catch { /* a conversation closed meanwhile keeps the generic name */ }
+        return { ...item, title };
+      }) };
+      json(response, 200, output); return;
+    }
     if (path === "/api/v1/harnesses/rescan" && method === "POST") { queries(url, []); record(await body(request), []); json(response, 200, await rescan()); return; }
     if (path === "/api/v1/harnesses/check-updates" && method === "POST") {
       queries(url, []); const input = record(await body(request), ["harnessIds"]);
@@ -512,13 +524,14 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (path === "/api/v1/installation-jobs") {
       if (method === "GET") { queries(url, ["limit"]); json(response, 200, app.management.listJobs().slice(0, cursor(url.searchParams.get("limit"), 50, 1, 100))); return; }
       if (method === "POST") {
-        queries(url, []); const input = record(await body(request), ["harnessId", "controlId", "action", "commandId", "expectedDefaultRevision", "expectedNativeFingerprint"], ["harnessId", "action", "commandId"]);
+        queries(url, []); const input = record(await body(request), ["harnessId", "controlId", "action", "commandId", "expectedDefaultRevision", "expectedNativeFingerprint", "restartServices"], ["harnessId", "action", "commandId"]);
         if (input.action !== "install" && input.action !== "upgrade") throw new HttpError(400, "INVALID_INPUT", "Expected install or upgrade action");
         await rescan();
         json(response, 202, app.management.submit({ harnessId: text(input.harnessId, "Harness identity", 96), action: input.action, commandId: command(input.commandId),
           ...(input.controlId === undefined ? {} : { controlId: text(input.controlId, "control identity", 96) }),
           ...(input.expectedDefaultRevision === undefined ? {} : { expectedDefaultRevision: integer(input.expectedDefaultRevision, 0, Number.MAX_SAFE_INTEGER, "default revision") }),
-          ...(input.expectedNativeFingerprint === undefined ? {} : { expectedNativeFingerprint: text(input.expectedNativeFingerprint, "native fingerprint", 64) }) })); return;
+          ...(input.expectedNativeFingerprint === undefined ? {} : { expectedNativeFingerprint: text(input.expectedNativeFingerprint, "native fingerprint", 64) }),
+          ...(input.restartServices === undefined ? {} : { restartServices: input.restartServices }) })); return;
       }
     }
     const jobRoute = /^\/api\/v1\/installation-jobs\/([^/]+)(?:\/(logs|cancel|inspect))?$/u.exec(path);

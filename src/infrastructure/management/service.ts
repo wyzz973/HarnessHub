@@ -4,7 +4,7 @@ import { access, lstat, realpath, mkdtemp, rm } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { gt, valid } from "semver";
 import { ManagementError, type HarnessManagementView, type InstallCapability, type InstallationJobView, type InstallationLog, type NativeManagementPort, type NativeInstallPlan, type ManagementInstallContext,
-  type ManagementInstallerPort, type ManagementMetadataPort, type ManagementRecipe, type ResolvedManagedControl } from "../../contracts/management.js";
+  type ManagementInstallerPort, type ManagementMetadataPort, type ManagementRecipe, type ResolvedManagedControl, type MaintenanceCheck, type NativeJobFacts, type NativeProgramUsers, type RuntimeRequirement, type ServiceRestartFact } from "../../contracts/management.js";
 import type { SystemInstallationObservation, SystemVersionProbeOptions } from "../../contracts/management.js";
 import { boundedManagementLimit, installationJobId, managementCommand, managementSlug, parseManagementInput } from "../../contexts/management/domain/input.js";
 import { builtinManagementRecipes } from "../../adapters/management/recipes.js";
@@ -51,6 +51,13 @@ function executable(name: string): string | null {
     try { const path = realpathSync(join(directory, name)); if (lstatSync(path).isFile()) return path; } catch { /* unavailable candidate */ }
   } return null;
 }
+/** The command that returns an original installation to its version before an upgrade, where its channel has one. */
+function rollbackCommand(plan: NativeInstallPlan): string | null {
+  if (plan.beforeVersion === null) return null;
+  if (plan.channel === "npm") return "npm install --global " + plan.reference + "@" + plan.beforeVersion;
+  if (plan.channel === "uv") return "uv tool install --force " + plan.reference + "==" + plan.beforeVersion;
+  return null;
+}
 export class LocalHarnessManagement {
   private readonly storage: ReturnType<typeof managementStorage>;
   private readonly recipes: readonly ManagementRecipe[];
@@ -72,6 +79,8 @@ export class LocalHarnessManagement {
   /** Versions of products whose control entry is an adapter, keyed by Harness; the product command is the fingerprint. */
   private readonly programVersions = new Map<string, { fingerprint: string; version: string | null }>();
   private active: { id: string; controller: AbortController; timedOut: boolean } | null = null;
+  /** HarnessHub's own conversations using native programs; attached once the session runtime exists (ADR-043). */
+  private users: NativeProgramUsers | null = null;
   private accepting = true;
   private closed = false;
   private stopping: Promise<void> | null = null;
@@ -175,6 +184,35 @@ export class LocalHarnessManagement {
     try { return await action({ stage, signal: controller.signal, assertOwned: owned, log: () => {} }); }
     catch (error) { if (error instanceof ManagementError && error.code === "CLEANUP_FAILED") quiescent = false; throw error; }
     finally { clearTimeout(timer); this.checkControllers.delete(controller); owned(); if (quiescent) await rm(stage, { recursive: true, force: true }); }
+  }
+  /** Lets upgrades see and close HarnessHub's own conversations' processes (ADR-043); attached once, after the runtime exists. */
+  attachProgramUsers(users: NativeProgramUsers): void {
+    if (this.users !== null) throw new ManagementError("INVALID_STATE", "program users are already attached"); this.users = users;
+  }
+  /**
+   * What upgrading this Harness would touch, for the user's confirmation (ADR-043): the services restarted, resident and
+   * other programs left on the old version, HarnessHub's conversations using it, other HarnessHub processes using it, and
+   * usage records left over. Reads only; the upgrade checks again before changing anything.
+   */
+  async maintenance(harnessId: string): Promise<MaintenanceCheck> {
+    this.admission(); const id = managementSlug(harnessId), recipe = this.recipe(id);
+    const plan = recipe && this.native ? this.nativePlans.get(id + ":" + recipe.controlId) : undefined;
+    if (!recipe || !this.native || !plan || plan.channel === "unsupported" || plan.reason !== null || !plan.actualEntry)
+      throw new ManagementError("UNSUPPORTED_NATIVE_MANAGEMENT", plan?.reason ?? "this Harness has no native installation HarnessHub can upgrade");
+    const native = this.native, usage = await this.nativeInspection(context => native.usage(plan, recipe, context)); this.own();
+    const records = await this.nativeLocks.users(id), plugins = await native.plugins(recipe), view = this.views([id])[0]!, target = view.latestVersion;
+    // The target's runtime requirement is read from its release; when it cannot be read the upgrade still checks it before changing anything.
+    let runtime: RuntimeRequirement | null = null;
+    if (target !== null) try { runtime = await this.nativeInspection(context => native.requirements(plan, recipe, target, context)); this.own(); }
+    catch (error) { if (error instanceof ManagementError && ["OWNER_LOST", "OWNERSHIP_LOST", "MANAGEMENT_CLOSED", "INVALID_STORAGE"].includes(error.code)) throw error; runtime = null; }
+    return { harnessId: id, checkedAt: this.now(), fingerprint: plan.fingerprint, channel: plan.channel, location: plan.entry,
+      currentVersion: plan.beforeVersion, targetVersion: view.latestVersion, servicesKnown: usage.servicesKnown,
+      restart: usage.services.filter(service => service.declared?.restart === true).map(service => ({ label: service.label, name: service.declared!.name, pid: service.pid,
+        command: "launchctl kickstart -k " + service.target, portKnown: service.port !== null })),
+      resident: [...usage.services.filter(service => service.declared?.restart !== true).map(service => ({ label: service.label, name: service.declared?.name ?? service.label, pid: service.pid,
+        restartCommand: service.declared?.restartCommand ?? "launchctl kickstart -k " + service.target })), ...usage.resident.map(program => ({ label: null, name: program.name, pid: program.pid, restartCommand: null }))],
+      processes: usage.processes, conversations: this.users?.list(id) ?? [], otherUsers: records.live.map(pid => ({ pid })), staleRecords: records.stale,
+      plugins, notes: recipe.upgradeNotes ?? [], rollback: rollbackCommand(plan), target: target === null ? null : versionVerification(id, target, null), runtime };
   }
   listJobs(limit?: number): readonly InstallationJobView[] {
     this.own(); const count = boundedManagementLimit(limit, 1000);
@@ -286,7 +324,8 @@ export class LocalHarnessManagement {
     const capability = this.capability(request.harnessId);
     if (!this.native && capability?.canInstall === false && capability.controlId === recipe.controlId) throw new ManagementError("UNSUPPORTED_MANAGEMENT", capability.reason ?? "installation is unavailable");
     const fingerprint = createHash("sha256").update(JSON.stringify({ harnessId: request.harnessId, controlId: recipe.controlId, action: request.action,
-      expectedDefaultRevision: request.expectedDefaultRevision ?? null, ...(request.expectedNativeFingerprint === undefined ? {} : { expectedNativeFingerprint: request.expectedNativeFingerprint }) })).digest("hex"), prior = this.storage.db.prepare("SELECT id,fingerprint FROM management_jobs WHERE command_id=?").get(request.commandId);
+      expectedDefaultRevision: request.expectedDefaultRevision ?? null, ...(request.expectedNativeFingerprint === undefined ? {} : { expectedNativeFingerprint: request.expectedNativeFingerprint }),
+      ...(request.restartServices === undefined ? {} : { restartServices: request.restartServices }) })).digest("hex"), prior = this.storage.db.prepare("SELECT id,fingerprint FROM management_jobs WHERE command_id=?").get(request.commandId);
     if (prior) { if (prior.fingerprint !== fingerprint || typeof prior.id !== "string") throw new ManagementError("COMMAND_CONFLICT", "management command already used different input"); return this.readJob(prior.id); }
     const nativePlan = this.native ? this.nativePlans.get(request.harnessId + ":" + recipe.controlId) : undefined;
     if (this.native && (!nativePlan || nativePlan.channel === "unsupported")) throw new ManagementError("UNSUPPORTED_NATIVE_MANAGEMENT", nativePlan?.reason ?? "Refresh the actual native installation before submitting");
@@ -304,7 +343,8 @@ export class LocalHarnessManagement {
     const time = this.now(), job: InstallationJobView = { id: "management-" + randomUUID(), harnessId: recipe.harnessId, controlId: recipe.controlId,
       action: request.action, status: "queued", phase: "queued", cancelRequested: false, createdAt: time, updatedAt: time,
       resolvedVersion: null, installationId: null, error: null, logCursor: 0,
-      ...(nativePlan === undefined ? {} : { native: { channel: nativePlan.channel, location: nativePlan.entry, beforeVersion: nativePlan.beforeVersion, actualVersion: null, dispatched: false, configurationPreserved: null } }) };
+      ...(nativePlan === undefined ? {} : { native: { channel: nativePlan.channel, location: nativePlan.entry, beforeVersion: nativePlan.beforeVersion, actualVersion: null, dispatched: false, configurationPreserved: null,
+        ...(request.restartServices === undefined ? {} : { restartServices: request.restartServices }) } }) };
     this.storage.db.exec("BEGIN IMMEDIATE");
     try {
       this.storage.db.prepare("INSERT INTO management_jobs(id,harness_id,status,command_id,fingerprint,expected_revision,view_json) VALUES(?,?,?,?,?,?,?)").run(job.id, job.harnessId, job.status, request.commandId, fingerprint, revision, JSON.stringify(job));
@@ -412,38 +452,102 @@ export class LocalHarnessManagement {
         { error: { code: active.timedOut ? "INSTALL_TIMEOUT" : this.redactor(failure.code), message: this.redactor(active.timedOut ? "installation exceeded its deadline" : failure.message) } });
     } finally { clearTimeout(timer); this.active = null; }
   }
+  /** Merges facts into a native job's record. */
+  private nativeFacts(id: string, patch: Partial<NativeJobFacts>): void {
+    const current = this.readJob(id); if (!current.native) throw new ManagementError("INVALID_DATA", "native job facts are missing");
+    this.saveJob({ ...current, native: { ...current.native, ...patch }, updatedAt: this.now() });
+  }
+  /**
+   * Runs one native upgrade (ADR-017, ADR-043). Everything that changes nothing comes first: the exact version, the
+   * product's own compatibility check, HarnessHub's conversations in a Turn, and the services to restart against the
+   * user's consent. Then HarnessHub's idle kept processes close, the maintenance lock clears left-over usage records, the
+   * original channel installs, and the version is verified. The agreed services restart right after that; one that does
+   * not run again fails the job with the installed version recorded, and nothing is rolled back or retried.
+   */
   private async runNativeJob(job: InstallationJobView, recipe: ManagementRecipe): Promise<void> {
     if (!this.native || !job.native) { this.phase(job.id, "failed", { error: { code: "NATIVE_UNAVAILABLE", message: "native maintenance is unavailable" } }); return; }
     const row = this.storage.db.prepare("SELECT plan_json FROM management_native_plans WHERE job_id=?").get(job.id);
     const plan = parseNativePlan(json(row?.plan_json));
     if (plan.harnessId !== job.harnessId || plan.controlId !== job.controlId) throw new ManagementError("INVALID_DATA", "native plan is not owned by this job");
-    const controller = new AbortController(), active = { id: job.id, controller, timedOut: false }; this.active = active;
+    const native = this.native, controller = new AbortController(), active = { id: job.id, controller, timedOut: false }; this.active = active;
     const timer = setTimeout(() => { active.timedOut = true; controller.abort(); }, this.timeout);
     let stage: string | undefined, identity: ReturnType<typeof managementIdentity> | undefined;
     let dispatched = false, verified = false, quiescent = true, lock: ReturnType<NativeInstallationLocks["write"]> | undefined;
     const owned = () => { this.own(); if (controller.signal.aborted) throw new ManagementError("CANCELLED", "native maintenance was cancelled"); if (!stage || !identity || !sameManagementIdentity(identity, managementIdentity(stage, true))) throw new ManagementError("OWNERSHIP_LOST", "native maintenance directory changed"); lock?.assertOwned(); };
+    const note = (text: string) => this.log(job.id, "system", text);
     try {
       stage = await realpath(await mkdtemp(join(this.storage.root, "native-job-"))); identity = managementIdentity(stage, true);
       const context: ManagementInstallContext = { stage, signal: controller.signal, assertOwned: owned, log: (stream, text) => this.log(job.id, stream, text) };
       this.phase(job.id, "resolving");
       const observed = this.system.get(job.harnessId);
-      const refreshedPlan = await this.native.describe(recipe, observed?.controlId === job.controlId ? observed : undefined, observed?.controlId === job.controlId ? this.systemVersion(job.harnessId) : null, context);
+      const refreshedPlan = await native.describe(recipe, observed?.controlId === job.controlId ? observed : undefined, observed?.controlId === job.controlId ? this.systemVersion(job.harnessId) : null, context);
       if (refreshedPlan.fingerprint !== plan.fingerprint) throw new ManagementError("NATIVE_INSTALLATION_CHANGED", "native installation changed since submission");
-      const version = await this.native.latest(plan, recipe, context); owned();
+      const version = await native.latest(plan, recipe, context); owned();
+      note("目标版本 " + version + "，沿用原安装渠道。");
+      await native.prepare(plan, recipe, version, context); owned();
+      if (plan.harnessId === "openclaw") note("目标版本用你现在的配置校验通过（校验在隔离环境中进行，不能写文件、不能联网）。");
+      // Who uses the program is read right before anything changes; nothing has changed if any of these refuse.
+      const busy = this.users?.list(job.harnessId).filter(item => item.busy).length ?? 0;
+      if (busy) throw new ManagementError("HARNESS_BUSY", "有 " + busy + " 个 HarnessHub 对话正在使用这个程序（正在回复或等你处理），等它们结束或停止后再升级。");
+      const others = await this.nativeLocks.users(job.harnessId);
+      if (others.live.length) throw new ManagementError("HARNESS_BUSY", "另一个 HarnessHub 进程（进程 " + others.live.slice(0, 4).join("、") + "）正在使用这个程序，等它结束后再升级。");
+      const usage = await native.usage(plan, recipe, context); owned();
+      const consent = new Set(job.native.restartServices ?? []), restart = usage.services.filter(service => service.declared?.restart === true);
+      const unagreed = restart.filter(service => !consent.has(service.label));
+      if (unagreed.length) throw new ManagementError("SERVICE_CONSENT_REQUIRED", "升级需要重启 " + unagreed.map(service => service.label).join("、") + "，这次请求没有同意重启它。请重新打开升级确认后再升级。");
+      const left = [...usage.services.filter(service => service.declared?.restart !== true).map(service => service.label), ...usage.resident.map(program => program.name + "（进程 " + program.pid + "）"), ...usage.processes.map(program => program.name + "（进程 " + program.pid + "）")];
+      if (left.length) note("这些程序不会被关闭，继续使用旧版本，重开后才用新版本：" + left.slice(0, 12).join("、") + (left.length > 12 ? " 等 " + left.length + " 个" : "") + "。");
+      const closed = this.users === null ? 0 : await this.users.closeIdle(job.harnessId); owned();
+      if (closed) { this.nativeFacts(job.id, { closedConversations: closed }); note("关闭了 " + closed + " 个对话保留的进程，它们下次发消息时会重新连接。"); }
       this.phase(job.id, "installing", { resolvedVersion: version }); lock = this.nativeLocks.write(job.harnessId, job.id);
-      const result = await this.native.execute(plan, recipe, version, { ...context, beginMutation: () => {
+      if (lock.cleared.length) {
+        this.nativeFacts(job.id, { clearedRecords: lock.cleared.length });
+        for (const record of lock.cleared) note("清除了一条旧的使用记录：写入它的 HarnessHub 进程" + (record.pid === null ? "" : " " + record.pid) + " 已不再使用这个程序。");
+      }
+      const result = await native.execute(plan, recipe, version, { ...context, beginMutation: () => {
         owned(); if (dispatched) return; const current = this.readJob(job.id); if (!current.native) throw new ManagementError("INVALID_DATA", "native job facts are missing");
         this.saveJob({ ...current, native: { ...current.native, dispatched: true } }); dispatched = true;
       } }); owned();
       this.phase(job.id, "verifying");
       if (!dispatched || plan.channel !== "native-cli" && result.version !== version || !result.configurationPreserved) throw new ManagementError("NATIVE_VERIFICATION_FAILED", "native result did not match the planned version and configuration protection");
+      verified = true; this.nativeFacts(job.id, { actualVersion: result.version, configurationPreserved: true });
+      note("已核实本机程序为 " + result.version + "，受保护的配置文件没有改动。");
+      // Old processes and new files coexist until the restart, so it follows the verification at once.
+      const agreed = restart.filter(service => consent.has(service.label));
+      if (agreed.length) {
+        this.phase(job.id, "activating");
+        const before = await native.configuration(), facts: ServiceRestartFact[] = []; let failure: ManagementError | null = null;
+        for (const service of agreed) {
+          note("正在重启 " + service.label + "：launchctl kickstart -k " + service.target);
+          try {
+            const outcome = await native.restartService(service, context); owned();
+            if (outcome === null) { facts.push({ label: service.label, outcome: "not_running", pid: null, ready: null }); note(service.label + " 已不在运行，没有重启它。"); continue; }
+            facts.push({ label: service.label, outcome: "restarted", pid: outcome.pid, ready: outcome.ready });
+            if (outcome.ready === false) { failure ??= new ManagementError("SERVICE_NOT_READY", service.label + " 已重新运行（进程 " + outcome.pid + "），但 60 秒内没有在端口 " + service.port + " 上监听。可以在终端运行 launchctl kickstart -k " + service.target + " 再试一次。"); note(failure.message); }
+            else note(service.label + " 已重新运行（进程 " + outcome.pid + "）" + (outcome.ready === true ? "，正在端口 " + service.port + " 上监听。" : "；不知道它监听的端口，可用性未验证。"));
+          } catch (error) {
+            if (!(error instanceof ManagementError) || error.code !== "SERVICE_NOT_RECOVERED" && error.code !== "SERVICE_RESTART_FAILED") throw error;
+            facts.push({ label: service.label, outcome: "not_recovered", pid: null, ready: null });
+            failure ??= new ManagementError(error.code, (error.code === "SERVICE_RESTART_FAILED" ? "系统服务管理器拒绝重启 " : "重启后 60 秒内 ") + service.label + (error.code === "SERVICE_RESTART_FAILED" ? "。" : " 没有重新运行。")
+              + "新版本 " + result.version + " 已安装。可以在终端运行 launchctl kickstart -k " + service.target + " 再试一次" + (rollbackCommand(plan) ? "；要退回原版本，运行 " + rollbackCommand(plan) + " 后再执行同一条重启命令。" : "。"));
+            note(failure.message);
+          }
+        }
+        const changed = before !== await native.configuration();
+        this.nativeFacts(job.id, { services: facts, ...(changed ? { configurationChangedByService: true } : {}) });
+        if (changed) note("重启后受保护的配置文件有了变化：这是重启后的服务自己写入的，HarnessHub 没有写入。");
+        if (failure) throw failure;
+      }
       const current = this.readJob(job.id); if (!current.native) throw new ManagementError("INVALID_DATA", "native result lost its facts");
-      this.phase(job.id, "completed", { resolvedVersion: result.version, native: { ...current.native, actualVersion: result.version, configurationPreserved: true } }); verified = true;
+      this.phase(job.id, "completed", { resolvedVersion: result.version, native: { ...current.native, actualVersion: result.version, configurationPreserved: true } });
       this.systemVersions.delete(job.harnessId); this.nativePlans.delete(job.harnessId + ":" + job.controlId);
     } catch (error) {
       this.own(); const failure = error instanceof ManagementError ? error : new ManagementError("NATIVE_FAILED", "native maintenance did not finish");
       quiescent = failure.code !== "CLEANUP_FAILED";
-      this.phase(job.id, dispatched || !quiescent || failure.code === "OWNERSHIP_LOST" ? "unknown" : controller.signal.aborted ? "cancelled" : "failed", { error: { code: active.timedOut ? "INSTALL_TIMEOUT" : failure.code, message: this.redactor(failure.message) } });
+      // A verified installation is a known one: a later failure (a service that did not run again) fails the job.
+      const status = verified ? "failed" : dispatched || !quiescent || failure.code === "OWNERSHIP_LOST" ? "unknown" : controller.signal.aborted ? "cancelled" : "failed";
+      this.phase(job.id, status, { error: { code: active.timedOut ? "INSTALL_TIMEOUT" : failure.code, message: this.redactor(failure.message) } });
+      if (verified) { this.systemVersions.delete(job.harnessId); this.nativePlans.delete(job.harnessId + ":" + job.controlId); }
     } finally {
       clearTimeout(timer); this.active = null;
       lock?.release(verified || !dispatched && quiescent);

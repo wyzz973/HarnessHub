@@ -177,6 +177,7 @@ function Background({ session, kept, items, busy, onEndProcess, harnesses }: { r
       <div className="flex flex-wrap items-center gap-3 text-[12px] text-fg-3"><span>后台活动 {kept.backgroundUpdates} 条</span><span>{Math.max(1, Math.round((kept.idleEndsAt - now) / 60000))} 分钟后结束</span></div>
       {onEndProcess ? <button type="button" className="btn btn-sm self-start" disabled={busy} onClick={onEndProcess}>结束后台进程</button> : null}
     </div> : <div className="rounded-[10px] border border-dashed border-line-strong p-3 text-[12.5px] text-fg-2">{session.retention?.enabled ? "已开启保持原生进程：下一轮结束后原程序会留在后台。" : "回合结束时原程序随之关闭。需要它在后台继续运行任务时，在输入框的高级配置里开启“保持原生进程”。"}</div>}
+    {session.retention?.upgraded ? <p className="kept-upgraded m-0 rounded-lg bg-subtle px-3 py-2 text-[12.5px] text-fg-2">升级 {harnesses.find(row => row.id === session.retention!.upgraded!.harnessId)?.name ?? session.retention.upgraded.harnessId} 前，HarnessHub 关闭了这个对话保留的后台进程。下一条消息会用新版本重新启动原程序。</p> : null}
     {session.retention?.outside ? <p className="m-0 rounded-lg bg-amber-soft px-3 py-2 text-[12.5px] text-amber">原程序的后台任务可能仍在运行（{session.retention.outside.count} 个进程）：它们已离开原程序的进程组，HarnessHub 没有结束它们。</p> : null}
     <span className="text-[12.5px] text-fg-2">后台任务与子 Agent</span>
     {items.length ? <ul className="m-0 flex list-none flex-col gap-1.5 p-0">{items.map(({ activity }) => <li key={activity.id} className="flex items-center gap-2.5 rounded-[9px] border border-line px-3 py-2 text-[13px]">

@@ -8,6 +8,10 @@ import type { HarnessSelection, PublicMessage, PublicRun, PublicSwitch, Selectio
  */
 export type HarnessEntrySource = "path" | "standard-directory" | "custom-entry" | "package-root" | "managed";
 /** Browser-safe observations. Available means resolved control, not task acceptance. */
+/** What upgrading a Harness would touch, for the user's confirmation (ADR-043); conversations carry their titles. */
+export type MaintenanceView = Omit<import("./management.js").MaintenanceCheck, "conversations"> & {
+  readonly conversations: readonly { readonly sessionId: string; readonly title: string; readonly busy: boolean }[];
+};
 export interface HarnessView {
   readonly id: string;
   readonly name: string;
@@ -128,7 +132,9 @@ export interface SessionView {
     /** The process this conversation kept when the previous service ended without closing it, as this service found it. */
     readonly lost?: { readonly outcome: "terminated" | "gone" | "unconfirmed"; readonly leaseReleased: boolean; readonly at: number };
     /** Background processes that left the closed or taken-over program's group and still ran then; until the next Turn. */
-    readonly outside?: { readonly count: number; readonly at: number } };
+    readonly outside?: { readonly count: number; readonly at: number };
+    /** The upgrade of this Harness that closed the kept process (ADR-043); until the next Turn, which starts the new version. */
+    readonly upgraded?: { readonly harnessId: string; readonly at: number } };
   readonly messages: readonly PublicMessage[];
   readonly runs: readonly PublicRun[];
   readonly switches: readonly PublicSwitch[];

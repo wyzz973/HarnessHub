@@ -1,7 +1,7 @@
 import { consumeSessionEventStream, SessionStreamError } from "./session-stream.js";
 import { readSseBlocks } from "./attention.js";
 import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
-import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, LoginShellView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, WebState } from "../../src/contracts/web.js";
+import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, LoginShellView, MaintenanceView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, WebState } from "../../src/contracts/web.js";
 import type { HarnessManagementView, InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
 import type { AttentionItem, HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
 import type { NativeExtensions, NativeInputs, NativeOption, NativeModelCatalog } from "../../src/contracts/control.js";
@@ -89,7 +89,26 @@ function decodeManagement(value: unknown): HarnessManagementView {
 export function decodeInstallationJob(value: unknown): InstallationJobView {
   const row = record(value);
   return { id: text(row.id), harnessId: text(row.harnessId), controlId: text(row.controlId), action: choice(row.action, ["install", "upgrade"]), status: choice(row.status, ["queued", "resolving", "installing", "verifying", "activating", "completed", "cancelled", "failed", "unknown"]), phase: text(row.phase), cancelRequested: bool(row.cancelRequested), createdAt: text(row.createdAt), updatedAt: text(row.updatedAt), resolvedVersion: nullableText(row.resolvedVersion), installationId: nullableText(row.installationId), error: publicError(row.error), logCursor: number(row.logCursor),
-    ...(row.native === undefined ? {} : { native: (() => { const native = record(row.native); return { channel: text(native.channel), location: text(native.location), beforeVersion: nullableText(native.beforeVersion), actualVersion: nullableText(native.actualVersion), dispatched: bool(native.dispatched), configurationPreserved: native.configurationPreserved === null ? null : bool(native.configurationPreserved) }; })() }) };
+    ...(row.native === undefined ? {} : { native: (() => { const native = record(row.native); return { channel: text(native.channel), location: text(native.location), beforeVersion: nullableText(native.beforeVersion), actualVersion: nullableText(native.actualVersion), dispatched: bool(native.dispatched), configurationPreserved: native.configurationPreserved === null ? null : bool(native.configurationPreserved),
+      ...(native.restartServices === undefined ? {} : { restartServices: list(native.restartServices, text, 16) }),
+      ...(native.closedConversations === undefined ? {} : { closedConversations: number(native.closedConversations) }),
+      ...(native.clearedRecords === undefined ? {} : { clearedRecords: number(native.clearedRecords) }),
+      ...(native.services === undefined ? {} : { services: list(native.services, value => { const item = record(value); return { label: text(item.label), outcome: choice(item.outcome, ["restarted", "not_running", "not_recovered"]), pid: item.pid === null ? null : number(item.pid), ready: item.ready === null ? null : bool(item.ready) }; }, 16) }),
+      ...(native.configurationChangedByService === undefined ? {} : { configurationChangedByService: bool(native.configurationChangedByService) }) }; })() }) };
+}
+/** What upgrading a Harness would touch (ADR-043). */
+export function decodeMaintenance(value: unknown): MaintenanceView {
+  const row = record(value), entry = (item: unknown) => { const program = record(item); return { pid: number(program.pid), name: text(program.name) }; };
+  return { harnessId: text(row.harnessId), checkedAt: text(row.checkedAt), fingerprint: text(row.fingerprint), channel: text(row.channel), location: text(row.location),
+    currentVersion: nullableText(row.currentVersion), targetVersion: nullableText(row.targetVersion), servicesKnown: bool(row.servicesKnown),
+    restart: list(row.restart, item => { const service = record(item); return { label: text(service.label), name: text(service.name), pid: number(service.pid), command: text(service.command), portKnown: bool(service.portKnown) }; }, 16),
+    resident: list(row.resident, item => { const program = record(item); return { label: nullableText(program.label), name: text(program.name), pid: number(program.pid), restartCommand: nullableText(program.restartCommand) }; }, 96),
+    processes: list(row.processes, entry, 64),
+    conversations: list(row.conversations, item => { const conversation = record(item); return { sessionId: text(conversation.sessionId), title: text(conversation.title), busy: bool(conversation.busy) }; }, 256),
+    otherUsers: list(row.otherUsers, item => ({ pid: number(record(item).pid) }), 256), staleRecords: number(row.staleRecords),
+    plugins: list(row.plugins, text, 32), notes: list(row.notes, text, 16), rollback: nullableText(row.rollback),
+    target: row.target === null ? null : (() => { const target = record(row.target); return { state: choice(target.state, ["verified", "unverified"]), program: text(target.program), ...(target.adapter === undefined ? {} : { adapter: text(target.adapter) }) }; })(),
+    runtime: row.runtime === null ? null : (() => { const runtime = record(row.runtime); return { runtime: choice(runtime.runtime, ["Node.js"]), required: text(runtime.required), found: nullableText(runtime.found), path: text(runtime.path), satisfied: bool(runtime.satisfied) }; })() };
 }
 function decodeLogPage(value: unknown): InstallationLogPage {
   const row = record(value);
@@ -178,7 +197,8 @@ export function decodeSession(value: unknown): SessionView {
     workspace: text(row.workspace), selection: selection(row.selection), activeRunId: nullableText(row.activeRunId), pendingSwitchId: nullableText(row.pendingSwitchId),
     ...(row.retention === undefined ? {} : { retention: (() => { const retention = record(row.retention); return { enabled: bool(retention.enabled), process: retention.process === null ? null : decodeKeptProcess(retention.process),
       ...(retention.lost === undefined ? {} : { lost: (() => { const lost = record(retention.lost); return { outcome: choice(lost.outcome, ["terminated", "gone", "unconfirmed"]), leaseReleased: bool(lost.leaseReleased), at: number(lost.at) }; })() }),
-      ...(retention.outside === undefined ? {} : { outside: (() => { const outside = record(retention.outside); return { count: number(outside.count), at: number(outside.at) }; })() }) }; })() }),
+      ...(retention.outside === undefined ? {} : { outside: (() => { const outside = record(retention.outside); return { count: number(outside.count), at: number(outside.at) }; })() }),
+      ...(retention.upgraded === undefined ? {} : { upgraded: (() => { const upgraded = record(retention.upgraded); return { harnessId: text(upgraded.harnessId), at: number(upgraded.at) }; })() }) }; })() }),
     ...(row.queue === undefined ? {} : { queue: (() => { const queue = record(row.queue), kind = choice(queue.kind, ["workspace", "slot"]);
       return kind === "workspace" ? { kind, runId: text(queue.runId), holderSessionId: text(queue.holderSessionId), holderWaitsForUser: bool(queue.holderWaitsForUser), since: number(queue.since), endsAt: number(queue.endsAt) }
         : { kind, runId: text(queue.runId), running: number(queue.running), limit: number(queue.limit), since: number(queue.since) }; })() }),
@@ -448,6 +468,8 @@ export class GatewayApi {
     return this.request("/harnesses/check-updates", "POST", harnessIds ? { harnessIds } : {}, value => list(value, decodeHarness, 256));
   }
   submitInstallation(input: ManagementJobInput): Promise<InstallationJobView> { return this.request("/installation-jobs", "POST", input, decodeInstallationJob); }
+  /** Reads what upgrading this Harness would touch, for the confirmation (ADR-043); changes nothing. */
+  maintenance(harnessId: string, signal?: AbortSignal): Promise<MaintenanceView> { return this.request(`/harnesses/${encodeURIComponent(harnessId)}/maintenance`, "GET", undefined, decodeMaintenance, signal); }
   jobs(signal?: AbortSignal): Promise<readonly InstallationJobView[]> { return this.request("/installation-jobs?limit=50", "GET", undefined, value => list(value, decodeInstallationJob, 100), signal); }
   cancelInstallation(id: string, key: string): Promise<InstallationJobView> { return this.request(`/installation-jobs/${encodeURIComponent(id)}/cancel`, "POST", { commandId: key }, decodeInstallationJob); }
   inspectInstallation(id: string): Promise<InstallationJobView> { return this.request(`/installation-jobs/${encodeURIComponent(id)}/inspect`, "POST", {}, decodeInstallationJob); }
@@ -512,7 +534,15 @@ export function failureMessage(failure: { readonly code: string; readonly messag
     NATIVE_CLIENT_UNSUPPORTED: "模型服务已停止支持这个本机客户端。原配置已保留，可以选择其他 Harness 继续。",
     NATIVE_CONNECTION_FAILED: "这个 Harness 配置的模型服务无法连接。请检查它本机的模型配置，或选择其他模型继续。",
     NATIVE_DEPENDENCY_UNAVAILABLE: "这个接入口需要本机已安装的 Harness。请到 Harnesses 检查原程序。",
-    HARNESS_BUSY: "这个 Harness 还有任务在运行。结束对应任务后可以升级，其他对话可以继续。",
+    HARNESS_BUSY: "有 HarnessHub 对话或另一个 HarnessHub 进程正在使用这个程序，没有升级。等它们结束或停止后再升级。",
+    SERVICE_CONSENT_REQUIRED: "升级需要重启这个程序的后台服务，这次请求没有同意。请重新打开升级确认后再升级。",
+    SERVICE_NOT_RECOVERED: "新版本已安装，但后台服务重启后没有重新运行。",
+    SERVICE_NOT_READY: "新版本已安装，后台服务也重新运行了，但没有在它的端口上监听。",
+    SERVICE_RESTART_FAILED: "新版本已安装，但系统服务管理器拒绝重启后台服务。",
+    NATIVE_CONFIGURATION_INCOMPATIBLE: "目标版本的配置校验没有通过，原安装保留，没有升级。",
+    NO_UPDATE: "本机程序已经是这个渠道的最新版本，没有升级。",
+    RUNTIME_INCOMPATIBLE: "新版本要求的 Node.js 版本和本机运行它的不一致。先升级 Node.js 再升级；没有升级。",
+    UNSUPPORTED_NATIVE_MANAGEMENT: "HarnessHub 不能在这里升级这个程序，请用它自己的方式更新。",
     NATIVE_INSTALLATION_UNKNOWN: "本机安装结果尚待核实。请到 Harnesses 核实结果，也可以切换其他 Harness。",
     NATIVE_INSTALLATION_CHANGED: "本机程序已变化。请重新扫描后再操作。",
     CONFIGURATION_PROTECTION_UNAVAILABLE: "当前安装渠道无法保证保留原配置，暂不能在这里升级。",

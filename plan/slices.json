@@ -811,6 +811,42 @@
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/frontend-redesign-2026-10-12.md"
+    },
+    {
+      "id": "upgrade-with-running-programs",
+      "status": "accepted",
+      "scope": "升级本机 Harness 时先检查并说明会重启、关闭和仍用旧版本的程序，用户同意后按产品自己的方式重启它的后台服务；HarnessHub 的空闲进程先关闭，正在回复的对话与其他 HarnessHub 进程阻止升级；没有开始的升级说没有升级",
+      "task_ids": [
+        "G011",
+        "G028",
+        "G050",
+        "G054",
+        "G059"
+      ],
+      "decision": "docs/decisions/0043-upgrade-with-running-programs.md",
+      "allowed_files": [
+        "src/contracts/management.ts",
+        "src/contracts/web.ts",
+        "src/adapters/management/recipes.ts",
+        "src/contexts/management/domain/input.ts",
+        "src/contexts/management/domain/state.ts",
+        "src/infrastructure/management/native.ts",
+        "src/infrastructure/management/native-lock.ts",
+        "src/infrastructure/management/program-usage.ts",
+        "src/infrastructure/management/service.ts",
+        "src/infrastructure/management/storage.ts",
+        "src/contexts/session/application/runtime.ts",
+        "src/web/server.ts",
+        "src/cli/session-application.ts",
+        "web/src/api.ts",
+        "web/src/App.tsx",
+        "web/src/components/HarnessesPage.tsx",
+        "web/src/components/UpgradeDialog.tsx",
+        "web/src/components/Composer.tsx",
+        "web/src/components/DetailsPanel.tsx"
+      ],
+      "implementation_state": "in_progress",
+      "verification_record": "docs/verification/upgrade-restart-2026-10-12.md"
     }
   ]
 }

@@ -103,3 +103,7 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
   - Tailwind CSS v4、Base UI、Shiki（按需加载、JavaScript 正则引擎）；Geist 随前端打包。补充：中文按用户选择从 Google Fonts 加载 Noto Sans SC，内容安全策略只为它放开 `fonts.googleapis.com` 与 `fonts.gstatic.com`。
   - 侧栏按状态分组与收件箱、审批卡片放在对话里、过程折叠摘要、详情栏、暂存下一条消息、命令面板与明暗主题。
   - 不做：对话重命名、置顶、归档（需要后端元数据），差异行评论。
+- [ADR-043：升级时处理正在使用安装的程序](0043-upgrade-with-running-programs.md)（accepted）：
+  - 取代 ADR-017 中“发现活动本机进程时拒绝原地升级”一条。按用户决定，升级前先列出会重启、会关闭和仍用旧版本的程序，用户同意后在新版本核实后立即按产品自己的方式重启它的后台服务（launchd `kickstart -k`）。
+  - HarnessHub 自己的空闲进程先关闭；正在回复的对话、其他 HarnessHub 进程、不满足的 Node.js 要求阻止升级；写记录的进程已结束的旧记录在维护锁内清除。
+  - 管理库 v3（只改版本号，附经过测试的降级 SQL）；业务库仍是 v12。

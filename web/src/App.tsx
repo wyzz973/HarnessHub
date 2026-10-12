@@ -14,6 +14,7 @@ import { ChatPage, effectiveProviderProblem, EMPTY_SELECTION, selectionDraft, se
 import type { QueuedMessage, SelectionDraft } from "./components/ChatPage.js";
 import { HarnessesPage, installationActive } from "./components/HarnessesPage.js";
 import type { UnconfirmedInstallation } from "./components/HarnessesPage.js";
+import type { UpgradeConsent } from "./components/UpgradeDialog.js";
 import { ProvidersPage } from "./components/ProvidersPage.js";
 import type { ProviderProbeState } from "./components/ProvidersPage.js";
 import { Sidebar } from "./components/Sidebar.js";
@@ -695,12 +696,14 @@ export function App() {
       else setUnconfirmedInstallations(current => [{ harnessId: input.harnessId, action: input.action, message }, ...current.filter(item => item.harnessId !== input.harnessId)]);
     } finally { installationRequests.current.delete(input.harnessId); if (mounted.current) setSubmittingInstallations(current => current.filter(id => id !== input.harnessId)); }
   };
-  const install = (harness: HarnessView, action: "install" | "upgrade") => {
+  const install = (harness: HarnessView, action: "install" | "upgrade", consent?: UpgradeConsent) => {
     const previous = installationWrites.current.get(harness.id);
     if (previous && previous.action !== action) { setError("上一次安装请求的接收结果还未确认。请先确认原请求，再发起其他操作。"); return; }
     const controlId = harness.management.recipe?.controlId;
     if (!controlId) { setError("这个 Harness 暂无受管安装配方。"); return; }
-    const input = previous ?? { harnessId: harness.id, controlId, action, commandId: requestKey(), expectedDefaultRevision: harness.management.defaultRevision, ...(harness.management.native ? { expectedNativeFingerprint: harness.management.native.fingerprint } : {}) };
+    // An upgrade carries what the user agreed to in its confirmation, for the installation that confirmation described (ADR-043).
+    const input = previous ?? { harnessId: harness.id, controlId, action, commandId: requestKey(), expectedDefaultRevision: harness.management.defaultRevision,
+      ...(harness.management.native ? { expectedNativeFingerprint: consent?.fingerprint ?? harness.management.native.fingerprint } : {}), ...(consent ? { restartServices: consent.restartServices } : {}) };
     installationWrites.current.set(harness.id, input); void submitInstallation(input);
   };
   const confirmInstallation = (id: string) => { const input = installationWrites.current.get(id); if (input) void submitInstallation(input); };
@@ -779,7 +782,7 @@ export function App() {
         preferences={preferences} onPreference={setPreference} conversations={state.sessions.length} sidebarHidden={!narrow && !preferences.sidebar} onExpandSidebar={shell.onExpandSidebar} onHarnesses={() => navigate("harnesses")} onSettings={() => navigate("settings")} onRescan={() => void rescan()} scanning={mutation === "scanning"}/>
         : shown === "providers" ? <ProvidersPage providers={state.providers} editor={editor} saving={mutation === "saving"} probes={probes} error={error} onEdit={provider => { setEditor(provider); setError(null); }} onBack={() => leave(() => { setEditor(null); setEditorDirty(false); setError(null); })} onSave={saveProvider} onProbe={provider => void probeProvider(provider)} onDirty={dirtyChanged} onDismissError={() => setError(null)} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
         : shown === "settings" ? <SettingsPage api={api} preferences={preferences} onPreference={setPreference} onRescan={() => void rescan()} scanning={mutation === "scanning"} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
-        : <HarnessesPage api={api} harnesses={state.harnesses} jobs={state.jobs} scanning={mutation === "scanning"} checking={checkingUpdates} submitting={submittingInstallations} cancelling={cancellingInstallations} unconfirmed={unconfirmedInstallations} error={error} connectionError={managementConnectionError} onRescan={() => void rescan()} onCheckUpdates={ids => void checkUpdates(ids)} onInstall={install} onConfirm={confirmInstallation} onCancelJob={job => void cancelInstallation(job)} onDismissError={() => setError(null)} onChoose={chooseHarness} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>}
+        : <HarnessesPage api={api} harnesses={state.harnesses} jobs={state.jobs} scanning={mutation === "scanning"} checking={checkingUpdates} submitting={submittingInstallations} cancelling={cancellingInstallations} unconfirmed={unconfirmedInstallations} error={error} connectionError={managementConnectionError} onRescan={() => void rescan()} onCheckUpdates={ids => void checkUpdates(ids)} onInstall={install} onOpenSession={selectSession} onConfirm={confirmInstallation} onCancelJob={job => void cancelInstallation(job)} onDismissError={() => setError(null)} onChoose={chooseHarness} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>}
     </main>
     {leaveAction ? <div className="fixed right-4 bottom-4 left-4 z-[70] mx-auto max-w-[560px]"><Notice tone="amber" title="有尚未保存的修改" action={<><button className="btn btn-sm" onClick={() => setLeaveAction(null)}>继续编辑</button><button className="btn btn-sm btn-primary" onClick={() => { const action = leaveAction; setLeaveAction(null); setEditorDirty(false); action(); }}>放弃修改，离开</button></>} onDismiss={() => setLeaveAction(null)}>离开会丢弃编辑草稿。已受理的请求可在列表中查看。</Notice></div> : null}
     <CommandPalette open={palette} onOpenChange={setPalette} commands={commands}/>

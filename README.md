@@ -33,7 +33,13 @@ Web界面按用户确认的设计稿重写（[ADR-042](docs/decisions/0042-front
 
 ## 本机原安装与版本管理
 
-已发现的本机PATH/显式入口优先，原安装和既有配置/登录作为当前执行来源，旧私有副本不能覆盖它。生产管理任务使用原npm/uv位置或已审核用户程序目录，真实CLI版本、原配置保护与未知结果分别记录。macOS Homebrew升级通过原SDK创建一个可认证的继承沙箱，模型/登录/shell配置与Homebrew仓库均拒绝写入；没有对应SDK时明确不可用。用户开发目录不自动替换。管理库v1→v2追加冻结计划，先备份业务库和管理库；业务会话为v10。旧私有版本槽只保留历史及显式测试模式。详见[ADR-017](docs/decisions/0017-native-installation-management.md)与[本轮验收](docs/verification/native-management-2026-10-11.md)。
+已发现的本机PATH/显式入口优先，原安装和既有配置/登录作为当前执行来源，旧私有副本不能覆盖它。生产管理任务使用原npm/uv位置或已审核用户程序目录，真实CLI版本、原配置保护与未知结果分别记录。macOS Homebrew升级通过原SDK创建一个可认证的继承沙箱，模型/登录/shell配置与Homebrew仓库均拒绝写入；没有对应SDK时明确不可用。用户开发目录不自动替换。管理库v1→v2追加冻结计划；业务会话库现为v12。旧私有版本槽只保留历史及显式测试模式。详见[ADR-017](docs/decisions/0017-native-installation-management.md)与[本轮验收](docs/verification/native-management-2026-10-11.md)。
+
+升级本机 Harness 时先检查再确认（[ADR-043](docs/decisions/0043-upgrade-with-running-programs.md)）：
+- 确认框列出会重启的后台服务及命令原文、仍用旧版本的程序、会先关闭的 HarnessHub 空闲进程、插件、退回命令，以及新版本要求的 Node.js。
+- 正在回复的对话、其他 HarnessHub 进程、不满足的 Node.js 要求会阻止升级。
+- 同意后安装并核实版本，随即按产品自己的方式重启它的服务（OpenClaw 只重启 Gateway，Node 由用户用 `openclaw node restart` 重启），并确认它重新运行、在端口上监听。
+- 改动前停下的任务显示“没有升级”。管理库因此升到 v3（只改版本号），退回旧构建前用 `tools/management-v3-to-v2.sql` 降级。验收见[升级与重启验收](docs/verification/upgrade-restart-2026-10-12.md)。
 
 原版OpenClaw2026.3.23-2、Codex0.162.1、OpenCode1.18.35、Pi0.85.1已通过本机真实模型回复；OpenClaw/Pi使用原生DeepSeek。Hermes Agent 0.12.0（官方安装方式）与 DeepSeek Harness（`dsh`，本机为源码构建 0.2.1-alpha.1，经发现清单的自定义入口接入）经各自内置 ACP 接入，已通过真实回复、跨 Hub 重启的原生恢复、思考与工具活动验收，见[ADR-031](docs/decisions/0031-hermes-and-deepseek-harness.md)与[验收记录](docs/verification/hermes-dsh-onboarding-2026-10-11.md)。Harness 发现与同类产品一致：PATH 与标准安装目录中的官方命令，非标准安装用显式自定义入口。Claude接入口绑定原Claude Code2.1.296及既有登录，账号周额度已用完。Cursor原安装已升级至2026.10.01-e373342，沿用本机登录、44项原生模型目录并通过独立短提示回复；原公共对话实测仍返回账号套餐升级提示，不能算该对话回复通过。Gemini0.62.0的个人登录被服务端停用，直连DeepSeek实际返回404（Google GenAI协议与DeepSeek接口不匹配），不能算回复通过。所有接入口版本与原程序版本分开解释，不把ACP适配器版本当原CLI版本。
 

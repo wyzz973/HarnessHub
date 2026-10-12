@@ -52,7 +52,7 @@ interface KeptProcess {
   readonly identity?: KeptProcessIdentity;
 }
 /** Why a kept process was closed; each close is recorded for its conversation. */
-type KeptRelease = "idle" | "disabled" | "ended_by_user" | "selection_changed" | "conversation_closed" | "native_reset" | "branched" | "exited" | "gateway_shutdown";
+type KeptRelease = "idle" | "disabled" | "ended_by_user" | "selection_changed" | "conversation_closed" | "native_reset" | "branched" | "exited" | "gateway_shutdown" | "harness_upgrade";
 /** At most this many processes are kept at once (ADR-030). */
 const KEPT_LIMIT = 4;
 /** A kept process without a Turn for this long is closed (ADR-030). */
@@ -62,6 +62,8 @@ function sameSelection(left: HarnessSelection, right: HarnessSelection): boolean
     && (left.nativeModel ?? null) === (right.nativeModel ?? null) && JSON.stringify(Object.entries(left.nativeOptions ?? {}).sort()) === JSON.stringify(Object.entries(right.nativeOptions ?? {}).sort());
 }
 const TERMINAL_TOOL = new Set(["completed", "failed", "declined", "cancelled", "interrupted", "error"]);
+/** Run statuses of a Turn not yet settled: it is queued, waits for a slot or workspace, or runs. */
+const OPEN_RUN = new Set<PublicRun["status"]>(["queued", "preparing", "running", "settling"]);
 /** Byte-bounded UTF-8 text; the tail is kept for streams whose end carries the result. */
 function bounded(value: string, maximum: number, tail = false): { readonly text: string; readonly cut: boolean } {
   const bytes = Buffer.from(value, "utf8");
@@ -159,6 +161,8 @@ export class SessionRuntime {
   private readonly outside = new Map<SessionId, { readonly count: number; readonly at: number }>();
   /** Processes a previous owner kept and this owner found at start, with what became of them; shown in their conversations. */
   private readonly lost = new Map<SessionId, { readonly outcome: "terminated" | "gone" | "unconfirmed"; readonly leaseReleased: boolean; readonly at: number }>();
+  /** Conversations whose kept process an upgrade of its Harness closed (ADR-043), until their next Turn. */
+  private readonly upgraded = new Map<SessionId, { readonly harnessId: string; readonly at: number }>();
   /** The latest Turns' stderr tails, oldest first; private until redacted for the user's diagnostics. */
   private readonly diagnostics = new Map<string, { readonly sessionId: SessionId; readonly stderr: string; readonly truncated: boolean }>();
   private accepting = true;
@@ -342,7 +346,7 @@ export class SessionRuntime {
       sourceRunIds: [], backend: null, cleanup: null, error: null, stopRequested: false, awaitingSwitchId: state.pendingSwitchId, ...(attachments.length ? { attachments } : {}),
       timing: { acceptedAt: this.options.now().getTime() } };
     // What this owner found of a process kept under the previous one is shown until the conversation's next Turn.
-    this.lost.delete(id); this.outside.delete(id);
+    this.lost.delete(id); this.outside.delete(id); this.upgraded.delete(id);
     this.commit(id, current => ({ next: { ...current, runs: [...current.runs, run],
       messages: [...current.messages, { id: userId, runId: nextId, role: "user", text, seq: current.lastSeq + 1, status: "queued" }],
       commands: [...current.commands, { id: command, kind: "send", fingerprint, resultId: nextId }] },
@@ -478,6 +482,33 @@ export class SessionRuntime {
     return kept === undefined ? null : { harnessId: kept.selection.harnessId, controlId: kept.selection.controlId, since: kept.since, lastUsedAt: kept.lastUsed,
       idleEndsAt: kept.lastUsed + (this.options.keptIdleMs ?? KEPT_IDLE_MS), backgroundUpdates: this.background(kept) };
   }
+  /**
+   * HarnessHub's own conversations using a Harness, for its upgrade (ADR-043): busy while a Turn with it is queued, waits
+   * or runs; idle while the conversation only keeps its process.
+   */
+  programUsers(harnessId: string): readonly { readonly sessionId: SessionId; readonly busy: boolean }[] {
+    const users = new Map<SessionId, boolean>();
+    for (const id of new Set([...this.actives.keys(), ...this.work, ...this.workers.keys()])) {
+      let state: SessionSnapshot;
+      try { state = this.load(id); } catch { continue; }
+      if (state.runs.some(run => OPEN_RUN.has(run.status) && run.selection.harnessId === harnessId)) users.set(id, true);
+    }
+    for (const [id, kept] of this.kept) if (kept.selection.harnessId === harnessId && !users.has(id)) users.set(id, false);
+    return [...users].map(([sessionId, busy]) => ({ sessionId, busy }));
+  }
+  /**
+   * Closes every idle kept process of a Harness before it is upgraded (ADR-043), with the normal stop chain, and resolves
+   * with how many once each close is recorded. Each conversation says so until its next Turn, which starts the new version.
+   */
+  async releaseForUpgrade(harnessId: string): Promise<number> {
+    const ids = [...this.kept].filter(([, kept]) => kept.selection.harnessId === harnessId).map(([id]) => id), at = this.options.now().getTime();
+    // Recorded first, so the view published with each close already says why.
+    for (const id of ids) this.upgraded.set(id, { harnessId, at });
+    await Promise.all(ids.map(id => this.requestRelease(id, "harness_upgrade")));
+    return ids.length;
+  }
+  /** The upgrade that closed this conversation's kept process, until its next Turn; null when none did. */
+  keptUpgrade(id: SessionId): { readonly harnessId: string; readonly at: number } | null { return this.upgraded.get(id) ?? null; }
   /** Every kept process with the workspace it holds, for telling a conversation which one occupies its workspace. */
   keptProcesses(): readonly { readonly sessionId: SessionId; readonly workspace: string; readonly harnessId: string }[] {
     return [...this.kept].map(([sessionId, kept]) => ({ sessionId, workspace: kept.binding.workspace, harnessId: kept.selection.harnessId }));

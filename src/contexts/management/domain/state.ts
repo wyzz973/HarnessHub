@@ -1,5 +1,5 @@
-import { ManagementError, type HarnessManagementView, type InstallationJobStatus, type InstallationJobView, type InstallationLog, type ResolvedManagedControl, type NativeInstallPlan } from "../../../contracts/management.js";
-import { installationJobId, managementSlug } from "./input.js";
+import { ManagementError, type HarnessManagementView, type InstallationJobStatus, type InstallationJobView, type InstallationLog, type ResolvedManagedControl, type NativeInstallPlan, type ServiceRestartFact } from "../../../contracts/management.js";
+import { installationJobId, managementSlug, serviceLabel } from "./input.js";
 import { isAbsolute } from "node:path";
 
 export interface InstallationRecord { readonly id: string; readonly harnessId: string; readonly controlId: string; readonly version: string;
@@ -30,6 +30,12 @@ function jobStatus(value: unknown): InstallationJobStatus {
   for (const status of ["queued", "resolving", "installing", "verifying", "activating", "completed", "cancelled", "failed", "unknown"] as const) if (value === status) return status;
   throw new ManagementError("INVALID_DATA", "invalid management job status");
 }
+function serviceFact(value: unknown): ServiceRestartFact {
+  const row = managementObject(value, ["label", "outcome", "pid", "ready"]);
+  if (!serviceLabel(row.label) || row.outcome !== "restarted" && row.outcome !== "not_running" && row.outcome !== "not_recovered" || row.ready !== null && typeof row.ready !== "boolean")
+    throw new ManagementError("INVALID_DATA", "service restart facts are invalid");
+  return { label: row.label, outcome: row.outcome, pid: row.pid === null ? null : managementInteger(row.pid, 1), ready: row.ready };
+}
 export function parseManagementJob(value: unknown): InstallationJobView {
   const row = managementObject(value, ["id", "harnessId", "controlId", "action", "status", "phase", "cancelRequested", "createdAt", "updatedAt", "resolvedVersion", "installationId", "error", "logCursor", "native"]);
   const status = jobStatus(row.status), phase = managementString(row.phase, 32);
@@ -38,9 +44,18 @@ export function parseManagementJob(value: unknown): InstallationJobView {
   const resolvedVersion = row.resolvedVersion === null ? null : managementString(row.resolvedVersion, 128), installationId = row.installationId === null ? null : managementInstallationId(row.installationId), error = errorValue(row.error);
   let native: InstallationJobView["native"];
   if (row.native !== undefined) {
-    const value = managementObject(row.native, ["channel", "location", "beforeVersion", "actualVersion", "dispatched", "configurationPreserved"]);
+    const value = managementObject(row.native, ["channel", "location", "beforeVersion", "actualVersion", "dispatched", "configurationPreserved", "restartServices", "closedConversations", "clearedRecords", "services", "configurationChangedByService"]);
     if (typeof value.dispatched !== "boolean" || value.configurationPreserved !== null && typeof value.configurationPreserved !== "boolean") throw new ManagementError("INVALID_DATA", "native maintenance facts are invalid");
-    native = { channel: managementString(value.channel, 32), location: managementString(value.location, 4096, true), beforeVersion: value.beforeVersion === null ? null : managementString(value.beforeVersion, 128), actualVersion: value.actualVersion === null ? null : managementString(value.actualVersion, 128), dispatched: value.dispatched, configurationPreserved: value.configurationPreserved };
+    if (value.restartServices !== undefined && (!Array.isArray(value.restartServices) || value.restartServices.length > 16 || value.restartServices.some(label => !serviceLabel(label)))
+      || value.closedConversations !== undefined && managementInteger(value.closedConversations) > 1024 || value.clearedRecords !== undefined && managementInteger(value.clearedRecords) > 1024
+      || value.configurationChangedByService !== undefined && typeof value.configurationChangedByService !== "boolean"
+      || value.services !== undefined && (!Array.isArray(value.services) || value.services.length > 16)) throw new ManagementError("INVALID_DATA", "native maintenance facts are invalid");
+    native = { channel: managementString(value.channel, 32), location: managementString(value.location, 4096, true), beforeVersion: value.beforeVersion === null ? null : managementString(value.beforeVersion, 128), actualVersion: value.actualVersion === null ? null : managementString(value.actualVersion, 128), dispatched: value.dispatched, configurationPreserved: value.configurationPreserved,
+      ...(value.restartServices === undefined ? {} : { restartServices: (value.restartServices as readonly string[]).slice() }),
+      ...(value.closedConversations === undefined ? {} : { closedConversations: managementInteger(value.closedConversations) }),
+      ...(value.clearedRecords === undefined ? {} : { clearedRecords: managementInteger(value.clearedRecords) }),
+      ...(value.services === undefined ? {} : { services: (value.services as readonly unknown[]).map(serviceFact) }),
+      ...(value.configurationChangedByService === undefined ? {} : { configurationChangedByService: value.configurationChangedByService as boolean }) };
   }
   if (status === "queued" && (resolvedVersion !== null || installationId !== null || error !== null || native?.dispatched) || status === "completed" && (resolvedVersion === null || error !== null || native === undefined && installationId === null || native !== undefined && (installationId !== null || !native.dispatched || native.actualVersion !== resolvedVersion || native.configurationPreserved !== true)))
     throw new ManagementError("INVALID_DATA", "management terminal/admission fields are inconsistent");

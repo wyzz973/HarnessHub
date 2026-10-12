@@ -8436,6 +8436,184 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/browser/web.browser.ts"
+    },
+    {
+      "id": "G011-UP1",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "planned_file": "tests/unit/program-usage.test.ts",
+      "scenario": "识别使用一个本机安装的程序，并判定重启后的服务是否恢复",
+      "expected": "按 launchctl、ps、lsof 的真实输出逐字段解析，不读任务的环境变量块；程序或前几个参数落在安装里的 launchd 任务是它的服务，配方声明的进程名是常驻程序，命令行指向安装的是其他程序，本进程及其后代和只共享前缀的路径不算；非 macOS 不读服务；重启后要新进程、running、自重启只启动一次且连续 5 秒不变，声明了端口的在 60 秒内监听过才算就绪，否则写未就绪；已停止的服务不启动，被拒绝的重启与取消如实失败",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UP2",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/native-management.test.ts",
+      "scenario": "升级前检查与用户同意后的重启",
+      "expected": "检查只读：列出随升级重启的服务及命令原文、不重启的常驻服务及其自己的重启命令、HarnessHub 的空闲对话、旧记录与退回命令，不重启也不关闭任何东西；同意后关闭空闲进程、安装并核实版本，随后立即只重启同意过的服务一次并记录新进程与端口监听，其他服务继续运行；v3 任务事实原样读回",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UP3",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/native-management.test.ts",
+      "scenario": "需要重启却没有同意的升级",
+      "expected": "在关闭空闲进程和安装之前停下：SERVICE_CONSENT_REQUIRED，未派发，原版本不变，没有重启任何服务",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UP4",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/native-management.test.ts",
+      "scenario": "正在使用程序的 HarnessHub 对话、另一个 HarnessHub 进程与旧记录",
+      "expected": "正在回复的对话阻止升级且不关闭空闲对话；另一个进程持有的使用租约阻止升级且什么都不改；写记录的进程已结束的旧记录在维护锁内清除并逐条写日志",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UP5",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/native-management.test.ts",
+      "scenario": "新版本已核实但服务没有重新运行",
+      "expected": "任务失败并记下已安装版本、原配置保留与每个服务的结果；错误给出重试命令与退回命令；不回滚不重试，维护锁按已知结果释放",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UP6",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/native-management.test.ts",
+      "scenario": "兼容校验的隔离沙箱",
+      "expected": "只能写本次临时目录：写真实配置路径被拒绝（EPERM），连接本机正在监听的端口失败且对方没有收到连接",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UP7",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/native-management.test.ts",
+      "scenario": "管理库 v3 手工降级到 v2",
+      "expected": "文档中的 SQL 保留每个任务，只去掉 v3 新增的五个事实字段并把 user_version 改回 2，剩下的字段正是 v2 读取器接受的集合；本构建再打开时重新标为 v3",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UP8",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/native-management.test.ts",
+      "scenario": "新版本要求的 Node.js 与运行程序的不一致",
+      "expected": "升级前检查给出要求的范围、运行程序的解释器路径与版本；升级在改动前以 RUNTIME_INCOMPATIBLE 停下，说明先升级 Node.js，原版本不变",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G028-UP1",
+      "task": "G028",
+      "requirements": [
+        "R11",
+        "R14"
+      ],
+      "invariants": [
+        "INV-12",
+        "INV-09"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/kept-process.test.ts",
+      "scenario": "升级关闭保留进程",
+      "expected": "只关闭该 Harness 的空闲保留进程，按正常停止链记录原因 harness_upgrade，经存储解析器读回；对话在下一回合前可得知是升级关闭了它；排队或运行中的回合算作正在使用",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G054-UP1",
+      "task": "G054",
+      "requirements": [
+        "R22"
+      ],
+      "invariants": [
+        "INV-25"
+      ],
+      "layer": "e2e",
+      "planned_file": "tests/browser/web.browser.ts",
+      "scenario": "升级确认框与没有升级的任务",
+      "expected": "点升级先检查再确认：列出会重启的服务和命令、仍用旧版的程序、会关闭的对话、插件、产品说明、版本跨度、未验证版本与退回命令；有对话正在回复、另一个 HarnessHub 进程或 Node.js 不符时不能确认；提交的同意与指纹来自这次检查；改动前停下的任务显示没有升级与原版本，不显示核实版本与空日志，旧版本的拒绝按实际情况解释",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G054-UP2",
+      "task": "G054",
+      "requirements": [
+        "R22"
+      ],
+      "invariants": [
+        "INV-25"
+      ],
+      "layer": "e2e",
+      "planned_file": "tests/browser/web.browser.ts",
+      "scenario": "升级关闭了对话保留的进程",
+      "expected": "输入框上方与详情栏后台页说明是升级关闭了它，下一回合开始后消失；事件记录原因 harness_upgrade",
+      "status": "planned",
+      "evidence": null
     }
   ]
 }

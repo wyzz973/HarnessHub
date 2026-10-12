@@ -708,13 +708,16 @@
 - src/infrastructure/management/homebrew.ts
 - src/infrastructure/management/verified-versions.ts
 - tests/unit/verified-versions.test.ts
+- src/infrastructure/management/program-usage.ts
+- tests/unit/program-usage.test.ts
+- tools/management-v3-to-v2.sql
 
 验收：
 - 发布新revision并保留历史
 - 提交前拒绝
 - 内存目录不先更新
 
-场景：G011-C01, G011-C02, G011-C03, G011-M01, G011-M02, G011-M03, G011-M04, G011-L01, G011-N01, G011-N02, G011-N03, G011-NC1, G011-NC2。
+场景：G011-C01, G011-C02, G011-C03, G011-M01, G011-M02, G011-M03, G011-M04, G011-L01, G011-N01, G011-N02, G011-N03, G011-NC1, G011-NC2, G011-UP1, G011-UP2, G011-UP3, G011-UP4, G011-UP5, G011-UP6, G011-UP7, G011-UP8。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1091,7 +1094,7 @@
 - 未知结果不自动重跑
 - 有界排队且期限继续计时
 
-场景：G028-C01, G028-C02, G028-C03, G028-C04, G028-R01, G028-R02, G028-NC2, G028-NC3, G028-NC4, G028-NC5, G028-NC6, G028-NC7, G028-NC8, G028-NC9, G028-NC10, G028-NC11, G028-NC12, G028-NC13。
+场景：G028-C01, G028-C02, G028-C03, G028-C04, G028-R01, G028-R02, G028-NC2, G028-NC3, G028-NC4, G028-NC5, G028-NC6, G028-NC7, G028-NC8, G028-NC9, G028-NC10, G028-NC11, G028-NC12, G028-NC13, G028-UP1。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1722,13 +1725,14 @@
 - web/src/ui/primitives.tsx
 - tests/unit/web-turn.test.ts
 - docs/verification/frontend-redesign-2026-10-12.md
+- web/src/components/UpgradeDialog.tsx
 
 验收：
 - 公共Session身份与历史保留
 - 不提前展示新Harness已生效
 - 可操作且不持有独立业务状态
 
-场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01, G054-NC1, G054-NC2, G054-NC3, G054-NC4, G054-NC5, G054-NC6, G054-NC7, G054-NC8, G054-NC9, G054-NC10, G054-NC11, G054-NC12, G054-NC13, G054-NC14, G054-NC15, G054-FR1, G054-FR2, G054-FR3, G054-FR4, G054-FR5, G054-FR6, G054-FR7, G054-FR8。
+场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01, G054-NC1, G054-NC2, G054-NC3, G054-NC4, G054-NC5, G054-NC6, G054-NC7, G054-NC8, G054-NC9, G054-NC10, G054-NC11, G054-NC12, G054-NC13, G054-NC14, G054-NC15, G054-FR1, G054-FR2, G054-FR3, G054-FR4, G054-FR5, G054-FR6, G054-FR7, G054-FR8, G054-UP1, G054-UP2。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 

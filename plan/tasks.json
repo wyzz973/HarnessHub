@@ -1286,7 +1286,10 @@
         "tests/integration/native-management.test.ts",
         "src/infrastructure/management/homebrew.ts",
         "src/infrastructure/management/verified-versions.ts",
-        "tests/unit/verified-versions.test.ts"
+        "tests/unit/verified-versions.test.ts",
+        "src/infrastructure/management/program-usage.ts",
+        "tests/unit/program-usage.test.ts",
+        "tools/management-v3-to-v2.sql"
       ],
       "requirements": [
         "R03",
@@ -1319,9 +1322,17 @@
         "G011-N02",
         "G011-N03",
         "G011-NC1",
-        "G011-NC2"
+        "G011-NC2",
+        "G011-UP1",
+        "G011-UP2",
+        "G011-UP3",
+        "G011-UP4",
+        "G011-UP5",
+        "G011-UP6",
+        "G011-UP7",
+        "G011-UP8"
       ],
-      "active_slice": "native-installation-management"
+      "active_slice": "upgrade-with-running-programs"
     },
     {
       "id": "G012",
@@ -2092,9 +2103,10 @@
         "G028-NC10",
         "G028-NC11",
         "G028-NC12",
-        "G028-NC13"
+        "G028-NC13",
+        "G028-UP1"
       ],
-      "active_slice": "native-models-switching"
+      "active_slice": "upgrade-with-running-programs"
     },
     {
       "id": "G029",
@@ -3155,7 +3167,7 @@
         "G050-NC7",
         "G050-NC8"
       ],
-      "active_slice": "native-installation-management"
+      "active_slice": "upgrade-with-running-programs"
     },
     {
       "id": "G051",
@@ -3370,7 +3382,8 @@
         "web/src/ui/overlay.tsx",
         "web/src/ui/primitives.tsx",
         "tests/unit/web-turn.test.ts",
-        "docs/verification/frontend-redesign-2026-10-12.md"
+        "docs/verification/frontend-redesign-2026-10-12.md",
+        "web/src/components/UpgradeDialog.tsx"
       ],
       "requirements": [
         "R01",
@@ -3426,9 +3439,11 @@
         "G054-FR5",
         "G054-FR6",
         "G054-FR7",
-        "G054-FR8"
+        "G054-FR8",
+        "G054-UP1",
+        "G054-UP2"
       ],
-      "active_slice": "frontend-redesign"
+      "active_slice": "upgrade-with-running-programs"
     },
     {
       "id": "G055",
@@ -3713,7 +3728,7 @@
         "G059-C03",
         "G059-NC1"
       ],
-      "active_slice": "native-installation-management"
+      "active_slice": "upgrade-with-running-programs"
     },
     {
       "id": "G060",

@@ -342,3 +342,24 @@ test("closing a kept program records the background task that left its group, le
   app.send(session.id, "again", "again"); await app.wait(session.id);
   assert.equal(app.keptOutside(session.id), null, "said until the next Turn");
 });
+
+test("G028-UP1 an upgrade of a Harness closes its idle kept processes and says so until the next Turn, and a Turn of it counts as busy (ADR-043)", async t => {
+  const { factory, app, workspace, closes } = await setup(t);
+  const session = await app.create(await workspace("upgrade"), { harnessId: "alpha" }, "create");
+  app.setRetention(session.id, true, "keep");
+  app.send(session.id, "first", "first"); await app.wait(session.id);
+  assert.deepEqual(app.programUsers("alpha"), [{ sessionId: session.id, busy: false }]); assert.deepEqual(app.programUsers("beta"), []);
+  assert.equal(await app.releaseForUpgrade("beta"), 0); assert.equal(factory.prepared[0]!.closed, false, "another Harness's upgrade leaves it");
+  assert.equal(await app.releaseForUpgrade("alpha"), 1);
+  assert.equal(factory.prepared[0]!.closed, true); assert.equal(app.read(session.id).retained, undefined); assert.deepEqual(app.programUsers("alpha"), []);
+  // The reason is read back through the store's event parser, which has not changed since the deployed build 80a5246:
+  // it checks an event's type name, shape and size, never the values inside its data, so that build reads it too.
+  const [closed] = closes(session.id);
+  assert.equal(closed?.reason, "harness_upgrade"); assert.equal(closed?.cleanup?.closed, true);
+  assert.deepEqual(app.keptUpgrade(session.id), { harnessId: "alpha", at: NOW.getTime() });
+  app.send(session.id, "second", "second");
+  assert.deepEqual(app.programUsers("alpha"), [{ sessionId: session.id, busy: true }], "a Turn queued or running blocks an upgrade");
+  assert.equal(app.keptUpgrade(session.id), null, "the next Turn starts the new version");
+  await app.wait(session.id);
+  assert.deepEqual(app.programUsers("alpha"), [{ sessionId: session.id, busy: false }], "kept again after the Turn");
+});

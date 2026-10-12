@@ -40,14 +40,15 @@ export function managementStorage(root: string, generation: number): { root: str
   try {
     db.exec("PRAGMA journal_mode=DELETE;PRAGMA synchronous=FULL;PRAGMA busy_timeout=1000;PRAGMA foreign_keys=ON");
     const version = db.prepare("PRAGMA user_version").get()?.user_version;
-    if (version !== 0 && version !== 1 && version !== 2) throw new ManagementError("INVALID_STORAGE", "unknown management storage schema");
+    if (version !== 0 && version !== 1 && version !== 2 && version !== 3) throw new ManagementError("INVALID_STORAGE", "unknown management storage schema");
     db.exec("CREATE TABLE IF NOT EXISTS management_owner (singleton INTEGER PRIMARY KEY CHECK(singleton=1), generation INTEGER NOT NULL) STRICT;CREATE TABLE IF NOT EXISTS management_jobs (id TEXT PRIMARY KEY,harness_id TEXT NOT NULL,status TEXT NOT NULL,command_id TEXT UNIQUE NOT NULL,fingerprint TEXT NOT NULL,expected_revision INTEGER NOT NULL,view_json TEXT NOT NULL) STRICT;CREATE TABLE IF NOT EXISTS management_commands (id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,job_id TEXT NOT NULL) STRICT;CREATE TABLE IF NOT EXISTS management_logs (job_id TEXT NOT NULL,seq INTEGER NOT NULL,entry_json TEXT NOT NULL,PRIMARY KEY(job_id,seq)) STRICT;CREATE TABLE IF NOT EXISTS management_installations (id TEXT PRIMARY KEY,harness_id TEXT NOT NULL,control_id TEXT NOT NULL,record_json TEXT NOT NULL) STRICT;CREATE TABLE IF NOT EXISTS management_defaults (harness_id TEXT PRIMARY KEY,installation_id TEXT NOT NULL,revision INTEGER NOT NULL) STRICT;CREATE TABLE IF NOT EXISTS management_updates (harness_id TEXT PRIMARY KEY,view_json TEXT NOT NULL) STRICT;");
-    // Additive v1→v2 migration preserves private history and introduces frozen native plans.
-    if (version !== 2) {
+    // Additive v1→v2 migration preserves private history and introduces frozen native plans. v3 only marks that job facts
+    // may carry an upgrade's restart consent and results (ADR-043), which a v2 reader would reject; its rows are unchanged.
+    if (version !== 3) {
       db.exec("BEGIN IMMEDIATE");
       try {
         db.exec("CREATE TABLE IF NOT EXISTS management_native_plans(job_id TEXT PRIMARY KEY REFERENCES management_jobs(id),plan_json TEXT NOT NULL CHECK(json_valid(plan_json))) STRICT");
-        nativePlanSchema(db); db.exec("PRAGMA user_version=2; COMMIT");
+        nativePlanSchema(db); db.exec("PRAGMA user_version=3; COMMIT");
       } catch (error) { db.exec("ROLLBACK"); throw error; }
     }
     nativePlanSchema(db);

@@ -70,6 +70,8 @@ export function application(root: string, publish: (event: SessionEvent) => void
     // unconfirmed and its workspace quarantined (ADR-030).
     const runtime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: hash, publish, content, ...(options.budgets ?? {}),
       ...(process.platform === "win32" ? {} : { processes: new PosixProcessGroups() }) });
+    // Upgrades see and close this runtime's conversations' processes (ADR-043).
+    management.attachProgramUsers({ list: harnessId => runtime.programUsers(harnessId), closeIdle: harnessId => runtime.releaseForUpgrade(harnessId) });
     return { store, content, factory, runtime, providers, management };
   } catch (error) { try { management?.close(); } finally { try { providers?.close(); } finally { store.close(); } } throw error; }
 }

@@ -55,9 +55,10 @@ async function launchFixture(providerManagement = true, nativeAcp: { readonly na
     await runManagementProcess(process.execPath, ["--input-type=module", "-e", code, ctx.stage, spec.recipe.packageName, spec.version, spec.recipe.binName], ctx.stage, { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: ctx.stage }, ctx);
     return { command: { executable: process.execPath, args: [join(ctx.stage, "node_modules", spec.recipe.packageName, "entry.mjs"), ...spec.recipe.args], env: {} }, observedVersion: spec.version, artifactSha256: null };
   } };
+  let composed: ReturnType<typeof application> | null = null;
   const gateway = await startWebServer({ root: join(root, "data"), configuration: await prepareConfiguration({ workspace, manifestPath: manifest, pathOnly: true }), port: 0, providerManagement, ...(loginShell === undefined ? {} : { loginShell }),
-    application: (data, publish) => application(data, publish, { management: { installationMode: "private-fixture", metadata, installer }, nativeEnvironment: { home: root, values: { HOME: root, PATH: dirname(process.execPath) + ":/usr/bin:/bin" } }, ...(budgets === undefined ? {} : { budgets }), workspaceLockRoot: join(root, "locks") }) });
-  return { root, gateway, setVersion: (value: string) => { fixtureVersion = value; }, baseUrl: `http://127.0.0.1:${address.port}/v1`, close: async () => { await gateway.close(); modelServer.closeAllConnections(); await new Promise<void>(done => modelServer.close(() => done())); await rm(root, { recursive: true, force: true }); } };
+    application: (data, publish) => (composed = application(data, publish, { management: { installationMode: "private-fixture", metadata, installer }, nativeEnvironment: { home: root, values: { HOME: root, PATH: dirname(process.execPath) + ":/usr/bin:/bin" } }, ...(budgets === undefined ? {} : { budgets }), workspaceLockRoot: join(root, "locks") })) });
+  return { root, gateway, runtime: () => { assert.ok(composed); return composed.runtime; }, setVersion: (value: string) => { fixtureVersion = value; }, baseUrl: `http://127.0.0.1:${address.port}/v1`, close: async () => { await gateway.close(); modelServer.closeAllConnections(); await new Promise<void>(done => modelServer.close(() => done())); await rm(root, { recursive: true, force: true }); } };
 }
 
 test("real browser validates Provider management, public chat switching, cancellation and responsive layouts", { timeout: 120000 }, async t => {
@@ -292,7 +293,8 @@ test("real browser validates Provider management, public chat switching, cancell
     return jobs.length === 2 && jobs.every(job => job !== null && typeof job === "object" && "status" in job && job.status === "completed");
   }).toBe(true);
   await expect(detail.getByText("2.0.0", { exact: true }).first()).toBeVisible();
-  await expect(detail.getByRole("status").filter({ hasText: "安装完成" })).toBeVisible();
+  // A completed upgrade is said as one (ADR-043); the first task above was an installation.
+  await expect(detail.getByRole("status").filter({ hasText: "升级完成" })).toBeVisible();
   await expect(detail.getByText("当前渠道无需升级", { exact: true })).toBeVisible();
   await expect(detail.getByRole("button", { name: "已是最新", exact: true })).toBeDisabled();
   await page.screenshot({ path: join(artifact, "upgrade-detail.png"), fullPage: true, animations: "disabled" });
@@ -1431,5 +1433,118 @@ test("G054-FR6 the chosen theme applies before the first paint and survives relo
   await page.keyboard.press("Escape");
   await page.getByRole("radio", { name: /跟随系统/u }).click();
   await expect(page.locator("html")).not.toHaveAttribute("data-theme", /.+/u);
+  assert.deepEqual(errors, []);
+});
+
+test("G054-UP1 an upgrade first says what it restarts, closes and leaves on the old version and sends exactly that consent; one that changed nothing says so", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  // The fixture's OpenClaw shown as the user's npm installation with an update; the fixture itself has no native channel (ADR-017).
+  const viewed = "a".repeat(64), checked = "b".repeat(64);
+  const native = (harness: { id: string; management: Record<string, unknown> }) => harness.id !== "openclaw" ? harness : { ...harness, installed: true,
+    management: { ...harness.management, source: "system", installedVersion: "2026.3.23-2", programVersion: "2026.3.23-2", latestVersion: "2026.10.2", updateStatus: "available",
+      recipe: { controlId: "openclaw-native", kind: "npm", sourceLabel: "npm registry", packageName: "openclaw", referenceVersion: "latest", canInstall: true, reason: null },
+      native: { channel: "npm", location: "/opt/homebrew/bin/openclaw", fingerprint: viewed, canInstall: false, canUpgrade: true, reason: null } } };
+  const base = { id: "", harnessId: "openclaw", controlId: "openclaw-native", action: "upgrade", status: "failed", phase: "failed", cancelRequested: false, resolvedVersion: "2026.10.2", installationId: null, logCursor: 0 };
+  const legacy = { ...base, id: "management-11111111-1111-4111-8111-111111111111", createdAt: "2026-10-12T13:12:27.277Z", updatedAt: "2026-10-12T13:12:28.662Z",
+    error: { code: "HARNESS_BUSY", message: "本机程序仍有活动进程，请结束对应任务后再升级；其他对话可以继续。" },
+    native: { channel: "npm", location: "/opt/homebrew/bin/openclaw", beforeVersion: "2026.3.23-2", actualVersion: null, dispatched: false, configurationPreserved: null } };
+  const refused = { ...base, id: "management-22222222-2222-4222-8222-222222222222", createdAt: "2026-10-12T14:00:00.000Z", updatedAt: "2026-10-12T14:00:02.000Z",
+    error: { code: "HARNESS_BUSY", message: "另一个 HarnessHub 进程正在使用这个程序（例如另一个服务里正在回复的对话），没有升级。等它结束后再升级。" },
+    native: { channel: "npm", location: "/opt/homebrew/bin/openclaw", beforeVersion: "2026.3.23-2", actualVersion: null, dispatched: false, configurationPreserved: null, restartServices: ["ai.openclaw.gateway"], closedConversations: 1 } };
+  let jobs: unknown[] = [legacy], submitted: Record<string, unknown> | null = null, blocked = true;
+  for (const path of ["**/api/v1/state", "**/api/v1/harnesses", "**/api/v1/harnesses/rescan", "**/api/v1/harnesses/check-updates"]) await page.route(path, async route => {
+    const response = await route.fetch(), body = await response.json();
+    await route.fulfill({ response, json: Array.isArray(body) ? body.map(native) : { ...body, harnesses: body.harnesses.map(native), jobs } });
+  });
+  await page.route("**/api/v1/installation-jobs?limit=50", route => route.fulfill({ json: jobs }));
+  await page.route("**/api/v1/installation-jobs", async route => {
+    if (route.request().method() !== "POST") return route.fallback();
+    submitted = route.request().postDataJSON(); jobs = [refused, legacy]; await route.fulfill({ status: 202, json: refused });
+  });
+  await page.route("**/api/v1/harnesses/openclaw/maintenance", route => route.fulfill({ json: { harnessId: "openclaw", checkedAt: "2026-10-12T14:00:00.000Z", fingerprint: checked, channel: "npm", location: "/opt/homebrew/bin/openclaw",
+    currentVersion: "2026.3.23-2", targetVersion: "2026.10.2", servicesKnown: true,
+    restart: [{ label: "ai.openclaw.gateway", name: "OpenClaw Gateway", pid: 4039, command: "launchctl kickstart -k gui/501/ai.openclaw.gateway", portKnown: true }],
+    resident: [{ label: "ai.openclaw.node", name: "OpenClaw Node", pid: 4736, restartCommand: "openclaw node restart" }], processes: [{ pid: 8100, name: "openclaw" }],
+    conversations: blocked ? [{ sessionId: "s-replying", title: "正在回复的对话", busy: true }] : [{ sessionId: "s-idle", title: "空闲的对话", busy: false }],
+    otherUsers: blocked ? [{ pid: 51234 }] : [], staleRecords: 2, plugins: ["openclaw-weixin"], notes: ["重启时 Gateway 连接的消息渠道（例如微信、飞书）会断开片刻，最好选一个能接受短暂中断的时间升级。"],
+    rollback: "npm install --global openclaw@2026.3.23-2", target: { state: "unverified", program: "2026.3.23-2" },
+    runtime: { runtime: "Node.js", required: ">=24.16.0 <25 || >=26.1.0", found: blocked ? "25.9.0" : "26.1.0", path: "/opt/homebrew/bin/node", satisfied: !blocked } } }));
+  await page.goto(fixture.gateway.url);
+  // The sidebar counts the available update next to the page's name.
+  await page.getByRole("button", { name: "我的 Agent 1 个可升级", exact: true }).click();
+  const row = page.locator(".harness-table-row").filter({ has: page.getByRole("button", { name: "查看 OpenClaw 详情", exact: true }) });
+  // Something in a Turn, or another HarnessHub process, blocks: said before anything runs, and the upgrade cannot be confirmed.
+  await row.getByRole("button", { name: "升级", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "升级 OpenClaw" });
+  await expect(dialog.getByText("现在不能升级")).toBeVisible();
+  await expect(dialog).toContainText("有 1 个对话正在使用 OpenClaw（正在回复或等你处理）"); await expect(dialog.getByRole("button", { name: "正在回复的对话" })).toBeVisible();
+  await expect(dialog).toContainText("另一个 HarnessHub 进程（进程 51234）正在使用 OpenClaw");
+  await expect(dialog.locator(".upgrade-runtime")).toHaveText("OpenClaw 2026.10.2 要求 Node.js >=24.16.0 <25 || >=26.1.0，本机运行 OpenClaw 的 Node.js 是 25.9.0（/opt/homebrew/bin/node）。需要先升级 Node.js，HarnessHub 不替你升级它。");
+  await expect(dialog.getByRole("button", { name: "升级并重启 OpenClaw Gateway" })).toBeDisabled();
+  await dialog.getByRole("button", { name: "取消", exact: true }).click(); await expect(dialog).toBeHidden();
+  assert.equal(submitted, null, "nothing is sent while the upgrade is blocked");
+  // Otherwise it says everything it touches, before anything runs.
+  blocked = false;
+  await row.getByRole("button", { name: "升级", exact: true }).click();
+  await expect(dialog.getByText("2026.3.23-2 → 2026.10.2")).toBeVisible();
+  for (const text of ["沿用原来的 npm 全局安装，把 OpenClaw 从 2026.3.23-2 升级到 2026.10.2。", "两个版本相隔约 7 个月，变化可能较多。", "HarnessHub 对 OpenClaw 的接入是在 2026.3.23-2 上验证的；2026.10.2 还没有验证",
+    "OpenClaw Gateway（ai.openclaw.gateway，进程 4039）会在新版本核实后立即重启：", "launchctl kickstart -k gui/501/ai.openclaw.gateway", "1 个对话保留的 OpenClaw 进程会先关闭，下次发消息时重新连接。",
+    "OpenClaw Node（ai.openclaw.node，进程 4736），升级后可运行 openclaw node restart", "openclaw（进程 8100）", "还会清除 2 条已结束的 HarnessHub 进程留下的使用记录。",
+    "已安装的插件：openclaw-weixin。新版本可能不兼容它们。", "最好选一个能接受短暂中断的时间升级", "npm install --global openclaw@2026.3.23-2"]) await expect(dialog).toContainText(text);
+  await page.screenshot({ path: join(artifact, "upgrade-confirmation.png"), animations: "disabled" });
+  await dialog.getByRole("button", { name: "升级并重启 OpenClaw Gateway" }).click(); await expect(dialog).toBeHidden();
+  await expect.poll(() => submitted).not.toBeNull();
+  assert.deepEqual(submitted!.restartServices, ["ai.openclaw.gateway"]); assert.equal(submitted!.expectedNativeFingerprint, checked, "the consent is for the installation the confirmation described");
+  // A refusal before anything changed is "没有升级", not a failed installation, and says what was closed.
+  const detail = page.getByRole("dialog", { name: "OpenClaw 详情" });
+  await expect(detail.locator(".installation-state")).toContainText("没有升级");
+  await expect(detail.locator(".installation-state")).toContainText("OpenClaw 没有任何改动，仍是 2026.3.23-2。升级前关闭了 1 个对话保留的进程，它们下次发消息时会重新连接。");
+  await expect(detail).toContainText("另一个 HarnessHub 进程正在使用这个程序");
+  await expect(detail.getByText("已核实版本")).toHaveCount(0); await expect(detail.getByRole("button", { name: /安装日志/u })).toHaveCount(0);
+  await expect(detail.getByText("安装失败")).toHaveCount(0);
+  // The old refusal, which told users to end a task that did not exist, is explained as what it was.
+  await detail.getByRole("combobox", { name: "选择安装任务" }).selectOption(legacy.id);
+  await expect(detail.locator(".installation-state")).toContainText("没有升级");
+  await expect(detail).toContainText("开始前发现这个程序正在运行（例如它的后台服务），按当时的规则没有升级。现在再点升级，会先列出需要重启或关闭的程序，由你确认后再升级。");
+  await expect(detail).not.toContainText("请结束对应任务");
+  await page.screenshot({ path: join(artifact, "upgrade-unchanged.png"), animations: "disabled" });
+  assert.deepEqual(errors, []);
+});
+
+test("G054-UP2 a conversation whose kept process an upgrade closed says so until its next Turn", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false, { name: "Kept Agent", scenario: "hermes" }); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), origin = new URL(fixture.gateway.url).origin;
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  const reply = async (text: string, count: number) => {
+    await composer.fill(text); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
+    await expect.poll(async () => { if (!new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session")) return null; const value = await current(); return value.runs.length === count && value.activeRunId === null && value.runs.at(-1).status; }, { timeout: 15000 }).toBe("completed");
+  };
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Kept Agent", exact: true }).click();
+  await page.getByRole("button", { name: "高级配置", exact: true }).click(); await page.getByRole("checkbox", { name: "保持原生进程" }).click(); await page.keyboard.press("Escape");
+  await reply("first", 1);
+  assert.equal((await current()).retention.process?.harnessId, "native-acp");
+  assert.equal(await fixture.runtime().releaseForUpgrade("native-acp"), 1);
+  const notice = "升级 Kept Agent 前，HarnessHub 关闭了这个对话保留的后台进程。下一条消息会用新版本重新启动原程序，并恢复原生会话。";
+  await expect(page.locator("#composer-notice")).toHaveText(notice);
+  const closed = await current();
+  assert.equal(closed.retention.process, null); assert.equal(closed.retention.upgraded.harnessId, "native-acp");
+  const events = await (await context.request.get(origin + "/api/v1/sessions/" + closed.id + "/events?afterSeq=0&limit=100")).json();
+  assert.deepEqual(events.events.filter((event: { type: string }) => event.type === "native.process_closed").map((event: { data: { reason: string; cleanup: { closed: boolean } } }) => [event.data.reason, event.data.cleanup.closed]), [["harness_upgrade", true]]);
+  // The details panel is open by default at this width.
+  await page.getByRole("complementary", { name: "详情栏" }).getByRole("tab", { name: /后台/u }).click();
+  await expect(page.locator(".kept-upgraded")).toHaveText("升级 Kept Agent 前，HarnessHub 关闭了这个对话保留的后台进程。下一条消息会用新版本重新启动原程序。");
+  await page.screenshot({ path: join(artifact, "upgrade-kept-closed.png"), animations: "disabled" });
+  await reply("second", 2);
+  await expect(page.getByText(notice)).toHaveCount(0);
+  assert.equal((await current()).retention.upgraded, undefined, "the next Turn starts the new version");
   assert.deepEqual(errors, []);
 });
