@@ -290,7 +290,13 @@ export class LocalHarnessManagement {
     }
     for (const row of this.storage.db.prepare("SELECT harness_id,view_json FROM management_updates").all()) { managementSlug(row.harness_id); parseManagementUpdate(json(row.view_json)); }
   }
-  private verifyStoredRecord(record: InstallationRecord): void {
+  /**
+   * Verifies a stored private installation and says whether it can still run. An npm package installed with HarnessHub's
+   * own Node.js at the time cannot once that Node.js changed (the user upgraded it, or its version is gone): the record
+   * stays as history and no longer resolves, and startup does not fail on it (ADR-043). Every other mismatch is a tampered
+   * or corrupt record and fails.
+   */
+  private verifyStoredRecord(record: InstallationRecord): boolean {
     if (record.slot !== join(this.storage.root, "slots", record.id)) throw new ManagementError("INVALID_DATA", "managed installation slot namespace changed");
     managementIdentity(record.slot, true); const markerPath = join(record.slot, ".slot.json"); managementIdentity(markerPath);
     const marker = managementObject(json(importedFile(markerPath)), ["installationId", "jobId", "ownerGeneration"]);
@@ -303,16 +309,26 @@ export class LocalHarnessManagement {
     const launchBytes = boundedManagementFile(launchPath, 65536);
     if (createHash("sha256").update(launchBytes).digest("hex") !== record.launchSha256 ||
         new TextDecoder("utf8", { fatal: true }).decode(launchBytes) !== JSON.stringify(record.command)) throw new ManagementError("INVALID_DATA", "managed launch receipt disagrees with committed command");
-    const executable = realpathSync(record.command.executable);
     if (recipe.kind === "npm") {
       if (!recipe.packageName) throw new ManagementError("INVALID_DATA", "managed package identity disappeared");
       const entry = realpathSync(installedNpmEntry(record.slot, recipe.packageName, record.version, recipe.binName));
-      if (!insideManagement(record.slot, entry) || record.command.args[0] !== entry || !lstatSync(entry).isFile() ||
-          (executable !== this.node && !/^runtime\/node-v24\.[0-9]+\.[0-9]+-[a-z0-9-]+\/bin\/node$/u.test(relativeSlot(record.slot, executable))))
-        throw new ManagementError("INVALID_DATA", "managed package entry or runtime identity changed");
+      if (!insideManagement(record.slot, entry) || record.command.args[0] !== entry || !lstatSync(entry).isFile())
+        throw new ManagementError("INVALID_DATA", "managed package entry changed");
       if (JSON.stringify(record.command.args.slice(1)) !== JSON.stringify(recipe.args) || Object.keys(record.command.env).some(key => key !== "PATH"))
         throw new ManagementError("INVALID_DATA", "managed npm arguments or environment no longer match its recipe");
-    } else if (!insideManagement(record.slot, executable) || !lstatSync(executable).isFile()) throw new ManagementError("INVALID_DATA", "managed binary entry escaped its slot");
+      // Its runtime is a private Node.js in the slot, or HarnessHub's own Node.js when it was installed.
+      if (insideManagement(record.slot, record.command.executable)) {
+        if (!/^runtime\/node-v24\.[0-9]+\.[0-9]+-[a-z0-9-]+\/bin\/node$/u.test(relativeSlot(record.slot, realpathSync(record.command.executable))))
+          throw new ManagementError("INVALID_DATA", "managed package runtime identity changed");
+        return true;
+      }
+      let runtime: string | null = null;
+      try { runtime = realpathSync(record.command.executable); } catch (error) { if (error === null || typeof error !== "object" || !("code" in error) || error.code !== "ENOENT") throw error; }
+      return runtime === this.node;
+    }
+    const executable = realpathSync(record.command.executable);
+    if (!insideManagement(record.slot, executable) || !lstatSync(executable).isFile()) throw new ManagementError("INVALID_DATA", "managed binary entry escaped its slot");
+    return true;
   }
   private defaultRevision(harnessId: string): number {
     const row = this.storage.db.prepare("SELECT revision FROM management_defaults WHERE harness_id=?").get(harnessId);
@@ -584,7 +600,8 @@ export class LocalHarnessManagement {
     const record = parseInstallationRecord(json(row.record_json));
     if (record.id !== pointer.installation_id || record.harnessId !== harnessId) throw new ManagementError("INVALID_DATA", "managed installation identity changed");
     if (record.controlId !== controlId) return null;
-    this.verifyStoredRecord(record);
+    // One installed with a Node.js that has since changed is not run with another (ADR-043).
+    if (!this.verifyStoredRecord(record)) return null;
     return { installationId: record.id, revision: pointer.revision, version: record.version,
       command: { executable: record.command.executable, args: [...record.command.args], env: { ...record.command.env } } };
   }
@@ -597,7 +614,8 @@ export class LocalHarnessManagement {
         if (typeof pointer.installation_id !== "string") throw new ManagementError("INVALID_DATA", "managed installation pointer is invalid");
         const row = this.storage.db.prepare("SELECT record_json FROM management_installations WHERE id=? AND length(CAST(record_json AS BLOB))<=65536").get(pointer.installation_id);
         if (!row) throw new ManagementError("INVALID_DATA", "managed installation default is dangling");
-        const record = parseInstallationRecord(json(row.record_json)); this.verifyStoredRecord(record); installedVersion = record.version; installationId = record.id;
+        const record = parseInstallationRecord(json(row.record_json));
+        if (this.verifyStoredRecord(record)) { installedVersion = record.version; installationId = record.id; }
       }
       const update = this.storage.db.prepare("SELECT view_json FROM management_updates WHERE harness_id=? AND length(CAST(view_json AS BLOB))<=65536").get(harness);
       const checked = update ? parseManagementUpdate(json(update.view_json)) : null;

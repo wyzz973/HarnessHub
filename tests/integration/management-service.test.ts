@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -213,4 +213,31 @@ test("tampered slot namespace and command entry never become a usable default", 
       assert.throws(() => manager.resolveControl("fixture-a", "fixture-a-npm"));
     } finally { db.close(); }
   });
+});
+
+test("a private npm installation made with HarnessHub's former Node.js stays as history: startup holds and it no longer resolves (ADR-043)", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "harness-management-runtime-"))), options: ManagementOptions = { installationMode: "private-fixture", assertOwner: () => {}, ownerGeneration: 1, recipes: [recipe()], ...dependencies() };
+  try {
+    const manager = new LocalHarnessManagement(root, options), job = await settled(manager, manager.submit({ harnessId: "fixture-a", action: "install", commandId: "create" }).id);
+    assert.equal(job.status, "completed"); assert.notEqual(manager.resolveControl("fixture-a", "fixture-a-npm"), null); await manager.shutdown();
+    // The user upgraded Node.js, so HarnessHub now runs another one: the package is not run with a Node.js it was not installed with.
+    const upgraded = join(root, "upgraded", "node"); await mkdir(dirname(upgraded)); await writeFile(upgraded, "#!/bin/sh\n", { mode: 0o755 });
+    let reopened = new LocalHarnessManagement(root, { ...options, ownerGeneration: 2, nodeExecutable: upgraded });
+    try {
+      assert.equal(reopened.resolveControl("fixture-a", "fixture-a-npm"), null);
+      assert.equal(reopened.views(["fixture-a"])[0]?.installationId, null); assert.equal(reopened.readJob(job.id).status, "completed", "its history stays");
+    } finally { await reopened.shutdown(); }
+    // The former Node.js is gone altogether (its Homebrew version was cleaned up): startup still holds. The record and its launch
+    // receipt agree, so this is a changed runtime, not a tampered record.
+    const db = new DatabaseSync(join(root, "management", "management.sqlite"));
+    try {
+      const record = JSON.parse(String(db.prepare("SELECT record_json FROM management_installations WHERE id=?").get(job.installationId!)?.record_json));
+      record.command.executable = join(root, "removed-node-version", "bin", "node"); const launch = JSON.stringify(record.command);
+      await writeFile(join(record.slot, ".launch.json"), launch); record.launchSha256 = createHash("sha256").update(launch).digest("hex");
+      db.prepare("UPDATE management_installations SET record_json=? WHERE id=?").run(JSON.stringify(record), job.installationId!);
+    } finally { db.close(); }
+    reopened = new LocalHarnessManagement(root, { ...options, ownerGeneration: 3, nodeExecutable: upgraded });
+    try { assert.equal(reopened.resolveControl("fixture-a", "fixture-a-npm"), null); assert.equal(reopened.views(["fixture-a"])[0]?.installationId, null); }
+    finally { await reopened.shutdown(); }
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
