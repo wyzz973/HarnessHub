@@ -2,7 +2,9 @@
 
 ## 字体
 
-界面字体 Geist 与 Geist Mono 随前端打包，来自固定依赖 `@fontsource-variable/geist@5.3.0` 与 `@fontsource-variable/geist-mono@5.3.0`，按 [SIL Open Font License 1.1](https://github.com/vercel/geist-font/blob/main/OFL.txt) 分发（Copyright 2024 The Geist Project Authors）。运行时不连接字体 CDN；中文使用系统字体（ADR-042）。
+界面字体 Geist 与 Geist Mono 随前端打包，来自固定依赖 `@fontsource-variable/geist@5.3.0` 与 `@fontsource-variable/geist-mono@5.3.0`，按 [SIL Open Font License 1.1](https://github.com/vercel/geist-font/blob/main/OFL.txt) 分发（Copyright 2024 The Geist Project Authors）。
+
+中文字体 Noto Sans SC 不随前端分发，页面运行时从 Google Fonts 加载（[SIL Open Font License 1.1](https://fonts.google.com/noto/specimen/Noto+Sans+SC/license)）；没有网络时回退到系统字体（ADR-042 补充）。
 
 ## 界面依赖
 

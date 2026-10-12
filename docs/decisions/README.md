@@ -100,6 +100,6 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
   - 测试一律使用自己的临时租约目录。已有文件的清理和 `/tmp` 不耐久的问题，下一阶段先写提案。
 - [ADR-042：重写 Web 界面，沿用数据层与对话状态逻辑](0042-frontend-redesign.md)（accepted）：
   - 全部视图按用户确认的设计稿重写；数据层与对话状态逻辑（幂等键、草稿、切换、重连）不改行为。
-  - Tailwind CSS v4、Base UI、Shiki（按需加载、JavaScript 正则引擎）；字体随前端打包，内容安全策略不变。
+  - Tailwind CSS v4、Base UI、Shiki（按需加载、JavaScript 正则引擎）；Geist 随前端打包。补充：中文按用户选择从 Google Fonts 加载 Noto Sans SC，内容安全策略只为它放开 `fonts.googleapis.com` 与 `fonts.gstatic.com`。
   - 侧栏按状态分组与收件箱、审批卡片放在对话里、过程折叠摘要、详情栏、暂存下一条消息、命令面板与明暗主题。
   - 不做：对话重命名、置顶、归档（需要后端元数据），差异行评论。

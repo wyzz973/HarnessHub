@@ -31,8 +31,15 @@
    - `@pierre/diffs`：差异来自工具结果中的统一差异文本，自己按行渲染即可。
    - `cmdk`：命令面板与选择器共用同一套键盘与输入法处理（`isComposing`）。
 4. **字体与内容安全策略。**
-   - 用户允许使用 CDN 与远程字体。实现选择不用：Geist 与 Geist Mono 的可变字体随前端打包（`@fontsource-variable/*`，OFL-1.1），中文使用系统字体（PingFang SC、Hiragino Sans GB、Microsoft YaHei、Noto Sans CJK SC）。
-   - 这样页面不访问外网，离线可用，服务端的内容安全策略保持不变（`script-src 'self'`、`font-src 'self'`）。
+   - Geist 与 Geist Mono 的可变字体随前端打包（`@fontsource-variable/*`，OFL-1.1）。
+   - 中文最初使用系统字体，内容安全策略不变。交付时把“改用远程中文字体”作为选项交给用户，用户选择放开（见下文“补充”）。
+
+### 补充：中文改用 Noto Sans SC 远程字体（2026-10-12，用户决定）
+
+- 页面从 Google Fonts 加载 Noto Sans SC（400、500、600、700），各平台字形一致；没有网络时回退到系统字体（PingFang SC、Microsoft YaHei 等），页面照常可用。
+- 内容安全策略只为这一项放开两个来源：`style-src` 增加 `https://fonts.googleapis.com`，`font-src` 增加 `https://fonts.gstatic.com`。脚本、连接、图片等其余来源不变，仍只允许本机网关。
+- 页面已带 `Referrer-Policy: no-referrer`，样式表链接也写明 `referrerpolicy="no-referrer"`：向 Google 的请求不带页面地址。代价是打开页面时会访问 Google 的服务器。
+- 浏览器测试在本地应答这两个域名的请求，测试不依赖网络；主题测试断言完整的内容安全策略、样式表请求与字体栈。
 5. **新的交互（来自设计稿）。**
    - 侧栏按状态分组：等你处理、进行中、今天、更早。顶部铃铛打开跨对话的收件箱，同时放通知开关。
    - 审批与提问卡片放在对话里，挂在当前回合的末尾，写明期限的来源。卡片获得焦点时按 1–9 选择对应选项。

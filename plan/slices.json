@@ -743,7 +743,8 @@
       "status": "accepted",
       "scope": "按用户确认的设计稿重写全部Web界面：沿用数据层与对话状态逻辑，Tailwind与Base UI组件，侧栏状态分组、收件箱、详情栏、过程摘要、暂存消息、命令面板与明暗主题",
       "task_ids": [
-        "G054"
+        "G054",
+        "G050"
       ],
       "decision": "docs/decisions/0042-frontend-redesign.md",
       "allowed_files": [
@@ -805,7 +806,8 @@
         "web/tsconfig.json",
         "web/vite.config.ts",
         "tests/browser/web.browser.ts",
-        "tests/unit/web-turn.test.ts"
+        "tests/unit/web-turn.test.ts",
+        "src/web/server.ts"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/frontend-redesign-2026-10-12.md"
