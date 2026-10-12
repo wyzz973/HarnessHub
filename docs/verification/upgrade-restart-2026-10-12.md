@@ -128,12 +128,29 @@ HarnessHub 在 Node 26.11.1 下修复后的全量结果：单元与集成测试 
   - `ai.openclaw.gateway`（会被重启）和 `ai.openclaw.node`（不重启）都用 `/opt/homebrew/opt/node/bin/node`，是 26.11.1，满足。
   - 现在运行环境已经不再阻止 OpenClaw 升级。配置能否通过，要在用户点击时的校验里确认。
 
+### 4317 改用 Node 26 时没能启动，以及修复
+
+- 22:45 按空闲流程部署 877b58a，经登录 shell 启动后进程退出，日志只有 `WEB_FAILED`。用同样的参数和 Node 26 复现，拿到原始错误：`ManagementError INVALID_DATA managed package entry or runtime identity changed`，出在启动时核对旧的私有安装记录。
+- 原因：管理库里有 ADR-017 之前留下的 5 条私有安装记录。其中 codex 两条、gemini 一条记的是当时运行 HarnessHub 的 `/opt/homebrew/Cellar/node/25.9.0_2/bin/node`，而启动核对要求它和当前运行的 Node 完全相同。所以无论用 nvm 还是 Homebrew 升级 Node，HarnessHub 都会起不来。旧的 25.9.0 也已经不能再启动（依赖库换了大版本），不能退回去用。
+- 修复（33620db）：Node.js 已经换了、甚至路径已经不存在的这类记录，作为历史保留：不再用于后备入口，也不再算作已安装，启动不因它失败。槽内运行环境不对、启动凭据不一致、入口、参数和环境被改，这些仍按损坏处理。新增测试 `a private npm installation made with HarnessHub's former Node.js…`（`tests/integration/management-service.test.ts`），原有的篡改测试照常通过。这几条记录只在本机找不到系统安装时才会被用作后备，这台机器上用不到。
+- 22:50:32，4317 恢复（进程 88834），中间停了约 4 分钟。22:53:11 为了给用户新链接，再按空闲流程重启了一次（进程 1262）。两次都跑在 `~/.nvm/versions/node/v26.11.1/bin/node` 上。管理库 v3、业务库 v12，会话 5 个，多出的一个是下面的冒烟对话。
+- 在无界面浏览器里核对真实页面：
+  - OpenClaw 的升级确认框不再被 Node 挡住，“升级并重启 OpenClaw Gateway”可以点，我没有点，只点了取消。
+  - 插件只列出 `openclaw-weixin`。
+  - 新建对话，让 Claude Code 回“收到，Node 26 工作正常”：首字 5.8 秒，用时 7.6 秒。
+  - 控制台没有错误或警告。
+- 最终检查：
+  - 单元与集成测试 651 通过（Node 26.11.1）。
+  - 浏览器测试：877b58a 上全量 30 通过；33620db 只改了管理服务，涉及安装和升级的 4 个浏览器测试重跑通过。
+  - 设计检查通过。
+- 部署用的克隆核对后都已删除。用户的 OpenClaw 两个服务和 Hermes 网关的启动时间仍是 10 月 5 日。
+
 ## 回退
 
 现在没有数据备份。要退回 ADR-043 之前的构建：
 1. 按空闲流程停掉 4317。
 2. 在没有 Gateway 运行时执行 `sqlite3 data/management/management.sqlite < tools/management-v3-to-v2.sql`。这一步保留所有任务行，只去掉 v3 新增的五个字段；已用部署构建验证过，见上文“真实验证”第 4 条。
-3. 主检出退回 86c8d90，执行 `pnpm install --frozen-lockfile`，重新构建，再用原参数启动。
+3. 主检出退回 86c8d90，执行 `pnpm install --frozen-lockfile`，重新构建，再用原参数启动。注意：86c8d90 不能在已经换过的 Node 上启动（见上文“4317 改用 Node 26 时没能启动”）。要退回到那么早，需要先把旧版私有安装记录里的运行环境路径处理掉，或者退回到 33620db 及以后的提交。
 
 业务库仍是 v12，不需要处理。
 

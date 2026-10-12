@@ -83,6 +83,7 @@ HarnessHub 只对已加载、正在运行的任务执行 kickstart，不替产�
 
 - **业务库仍是 v12，不升版本。** 关闭原因新增了 `harness_upgrade`，但 `sqlite-store.ts` 从已部署构建 80a5246 起没有改动；它的 `parseStoredEvent` 只校验事件类型名、对象结构和大小，不校验 data 里的枚举值，所以已部署构建也能读回这个原因。`tests/integration/kept-process.test.ts` 经存储的解析器读回该原因来证明。
 - **管理库从 v2 升到 v3，只改版本号。** 新的任务事实（`restartServices`、`closedConversations`、`clearedRecords`、`services`、`configurationChangedByService`）会被 v2 的严格解析器拒绝，所以升版本号，让旧构建明确拒绝打开，而不是读错。v2 的旧任务行在 v3 下照常读取。
+- **旧的私有安装记录与 Node.js 升级：** ADR-017 之前的私有 npm 安装，记的是当时运行 HarnessHub 的 Node.js 路径。启动核对原来要求它与当前的完全相同，所以用户一升级 Node.js（nvm 或 Homebrew），HarnessHub 就起不来（2026-10-12 实际发生）。现在这类记录作为历史保留：不再用作后备入口，不再算作已安装，启动也不因它失败。其余损坏照旧报错。
 - **手工降级到 v2：** 在没有 Gateway 持有数据目录时，执行 `sqlite3 <data>/management/management.sqlite < tools/management-v3-to-v2.sql`。
   - 它保留所有任务行，只去掉上面五个字段，再把 `user_version` 改回 2。
   - 丢失的只有这些结构化事实：同意重启的服务、每个服务的重启结果、关闭了几个空闲进程、清除了几条旧记录、重启后的服务是否改写了配置。任务日志里仍有对应的文字记录。
