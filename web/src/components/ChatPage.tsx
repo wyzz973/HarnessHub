@@ -164,7 +164,12 @@ export function ChatPage(props: ChatProps) {
   const describe = useCallback((run: PublicRun): string => {
     const catalog = run.selection.harnessId === draft.harnessId && !run.selection.provider ? props.nativeModels : null;
     const model = run.selection.provider?.model ?? (run.selection.nativeModel ? catalog?.models.find(row => row.id === run.selection.nativeModel)?.name ?? run.selection.nativeModel : null);
-    const options = Object.entries(run.selection.nativeOptions ?? {}).map(([id, value]) => id === "thought_level" || /thought|effort|reasoning/u.test(id) ? "思考 " + (THINKING_NAMES[value] ?? value) : (OPTION_NAMES[id] ?? id) + " " + value);
+    const known = [...(catalog?.options ?? []), ...(catalog?.models.find(row => row.id === (run.selection.nativeModel ?? catalog.defaultModel))?.options ?? [])];
+    const options = Object.entries(run.selection.nativeOptions ?? {}).map(([id, value]) => {
+      const option = known.find(row => row.id === id), name = option?.values.find(row => row.value === value)?.name ?? value;
+      if (option?.category === "thought_level" || id === "thought_level" || /thought|effort|reasoning/u.test(id)) return "思考 " + (THINKING_NAMES[value] ?? name);
+      return (option?.category === "mode" ? "模式" : OPTION_NAMES[id] ?? option?.name ?? id) + " " + name;
+    });
     return [model, ...options].filter(Boolean).join(" · ");
   }, [draft.harnessId, props.nativeModels]);
   // The queued Turn names the conversation whose work holds the workspace (ADR-036); whether that one waits for the user

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { PublicTool } from "../../src/contracts/session.js";
+import { workspacePath } from "../../web/src/lib/format.js";
 import { parseUnifiedDiff, toolSummary } from "../../web/src/lib/turn.js";
 
 test("G054-FR7 a unified diff splits into files with numbered lines and counts, and text without headers keeps the given name", () => {
@@ -36,4 +37,12 @@ test("G054-FR7 the folded process line counts each kind of tool and always says 
   assert.equal(running.unfinished, 0); assert.equal(running.running?.id, "x2");
   assert.equal(running.text, "读取 2 个文件，搜索 1 次，执行 2 条命令，改动 1 个文件，子 Agent 1 个，1 项失败");
   assert.equal(toolSummary([tool("d", "declined-kind", "declined")], false).text, "其他工具 1 个，1 项失败");
+});
+
+test("G054-FR3 a changed file is named relative to the conversation's workspace, also when the diff dropped its leading slash", () => {
+  const workspace = "/private/tmp/hub/dev-ws";
+  assert.equal(workspacePath("private/tmp/hub/dev-ws/src/a.ts", workspace), "src/a.ts");
+  assert.equal(workspacePath("/tmp/hub/dev-ws/b.md", workspace), "b.md", "macOS reports /tmp and /private/tmp for the same directory");
+  assert.equal(workspacePath("/Users/someone/elsewhere/c.ts", workspace), "~/elsewhere/c.ts");
+  assert.equal(workspacePath("src/relative.ts", workspace), "src/relative.ts");
 });

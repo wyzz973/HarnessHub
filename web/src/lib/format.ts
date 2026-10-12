@@ -26,3 +26,13 @@ export function shortTitle(title: string | null | undefined): string {
 export function folderName(path: string): string { return path.split(/[\\/]/u).filter(Boolean).at(-1) ?? path; }
 /** The path with the home directory shortened when it is recognizably a user's home. */
 export function homePath(path: string): string { return path.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/u, "~"); }
+/**
+ * A file path as the conversation's workspace sees it: relative inside the workspace, otherwise absolute with the home
+ * shortened. Diff headers often drop an absolute path's leading slash ("b/private/tmp/…"); such a path is restored first.
+ */
+export function workspacePath(path: string, workspace: string): string {
+  const absolute = path.startsWith("/") ? path : /^(?:private|Users|home|tmp|var|opt|Volumes)\//u.test(path) ? "/" + path : path;
+  const root = workspace.replace(/\/+$/u, ""), alias = root.startsWith("/private/") ? root.slice("/private".length) : "/private" + root;
+  for (const base of [root, alias]) if (base && absolute.startsWith(base + "/")) return absolute.slice(base.length + 1);
+  return absolute.startsWith("/") ? homePath(absolute) : absolute;
+}

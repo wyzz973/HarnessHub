@@ -7,7 +7,7 @@ import type { HarnessView, NativeResumeView, SessionView } from "../../../src/co
 import type { ProviderView } from "../../../src/contracts/provider.js";
 import { errorMessage, runStatusLabel, type ToolDetailView } from "../api.js";
 import { cn } from "../lib/cn.js";
-import { duration, folderName, homePath } from "../lib/format.js";
+import { duration, folderName, homePath, workspacePath } from "../lib/format.js";
 import { useNow } from "../lib/prefs.js";
 import { editTools, finished, parseUnifiedDiff, toolSummary, type DiffFile } from "../lib/turn.js";
 import { EmptyState, Fact, Spinner } from "../ui/primitives.js";
@@ -63,7 +63,7 @@ export function DetailsPanel(props: PanelProps) {
   const background = runs.flatMap(run => (run.activities ?? []).filter(activity => activity.kind === "task" || activity.kind === "subagent").map(activity => ({ run, activity })));
   const counts: Partial<Record<PanelTab, string>> = { ...(edits.length ? { changes: String(edits.length) } : {}), ...(plan ? { plan: `${plan.entries.filter(entry => entry.status === "completed").length}/${plan.entries.length}` } : {}),
     ...(kept || background.some(item => item.activity.status === "running") ? { background: String((kept ? 1 : 0) + background.filter(item => item.activity.status === "running").length) } : {}) };
-  return <div className="details-panel flex h-full min-h-0 flex-col">
+  return <div className="details-panel flex h-full min-h-0 w-full min-w-0 flex-col">
     <div className="flex h-[46px] flex-none items-end gap-0.5 border-b border-line px-3" role="tablist" aria-label="详情">
       {TABS.map(item => <button key={item.id} type="button" role="tab" id={`details-tab-${item.id}`} aria-selected={tab === item.id} aria-controls="details-tabpanel" className="tab" onClick={() => props.onTab(item.id)}>
         {item.label}{counts[item.id] ? <span className="text-[11px] font-normal text-fg-3">{counts[item.id]}</span> : null}</button>)}
@@ -71,7 +71,7 @@ export function DetailsPanel(props: PanelProps) {
       {props.onClose ? <button type="button" className="icon-btn icon-btn-sm mb-2" aria-label="关闭详情栏" onClick={props.onClose}><X size={15}/></button> : null}
     </div>
     <div className="scroll-area min-h-0 flex-1" role="tabpanel" id="details-tabpanel" aria-labelledby={`details-tab-${tab}`}>
-      {tab === "changes" ? <Changes edits={edits} load={props.loadToolDetail} sessionId={session.id}/>
+      {tab === "changes" ? <Changes edits={edits} load={props.loadToolDetail} sessionId={session.id} workspace={session.workspace}/>
         : tab === "process" ? selected ? <Process run={selected} runs={runs} onRun={props.onRun} describe={props.describe} loadToolDetail={props.loadToolDetail} harnesses={props.harnesses}/> : <Empty>这个对话还没有执行记录。</Empty>
         : tab === "plan" ? plan ? <div className="p-3.5"><p className="mt-0 mb-2.5 text-[12.5px] text-fg-2">{props.harnesses.find(row => row.id === [...runs].reverse().find(run => run.plan === plan)?.selection.harnessId)?.name ?? "Harness"} 报告的计划</p><PlanView plan={plan}/></div> : <Empty>原程序报告计划后会显示在这里。</Empty>
         : tab === "background" ? <Background session={session} kept={kept} items={background} busy={props.busy} onEndProcess={props.onEndProcess} harnesses={props.harnesses}/>
@@ -89,7 +89,7 @@ function RunPicker({ runs, run, onRun }: { readonly runs: readonly PublicRun[]; 
 }
 
 /** Each edited file of the conversation, with its diff as the program reported it. Read-only: nothing here undoes a change. */
-function Changes({ edits, load, sessionId }: { readonly edits: readonly NonNullable<PublicRun["tools"]>[number][]; readonly load: ToolDetailLoader | undefined; readonly sessionId: string }) {
+function Changes({ edits, load, sessionId, workspace }: { readonly edits: readonly NonNullable<PublicRun["tools"]>[number][]; readonly load: ToolDetailLoader | undefined; readonly sessionId: string; readonly workspace: string }) {
   const [details, setDetails] = useState<ReadonlyMap<string, ToolDetailView | string>>(new Map());
   const [selected, setSelected] = useState<string | null>(null);
   // Each stored detail is read once per conversation view, however often the conversation's facts change meanwhile.
@@ -128,12 +128,12 @@ function Changes({ edits, load, sessionId }: { readonly edits: readonly NonNulla
     <div className="flex items-center justify-between px-3.5 pt-3 pb-1.5 text-[12.5px] text-fg-2"><span>本对话改动 {files.length} 个文件</span><span className="mono"><span className="text-add">+{add}</span> <span className="text-del">−{del}</span></span></div>
     <ul className="m-0 flex list-none flex-col gap-px px-2 pb-2">{files.map(file => <li key={file.path}><button type="button" onClick={() => setSelected(file.path)} aria-pressed={current?.path === file.path}
       className={cn("flex w-full items-center gap-2 rounded-[7px] border-none px-2 py-1.5 text-left hover:bg-hover", current?.path === file.path ? "bg-subtle" : "bg-transparent")}>
-      <FileText size={14} className="flex-none text-fg-3" aria-hidden="true"/><span className="mono min-w-0 flex-1 truncate text-[12.5px]" title={file.path}>{homePath(file.path)}</span>
+      <FileText size={14} className="flex-none text-fg-3" aria-hidden="true"/><span className="mono min-w-0 flex-1 truncate text-[12.5px]" title={file.path}>{workspacePath(file.path, workspace)}</span>
       <span className="mono flex-none text-[12px]"><span className="text-add">{file.add ? "+" + file.add : ""}</span> <span className="text-del">{file.del ? "−" + file.del : ""}</span></span></button></li>)}</ul>
     {loading ? <p className="m-0 flex items-center gap-1.5 px-4 pb-3 text-[12.5px] text-fg-3"><Spinner size={12}/> 正在读取改动…</p> : null}
     {failures.length ? <p className="m-0 px-4 pb-3 text-[12.5px] text-red">{failures.length} 处改动读取失败：{String(failures[0])}</p> : null}
-    {current ? <div className="mx-3 mb-3.5 overflow-hidden rounded-[10px] border border-line">
-      <div className="mono flex items-center justify-between gap-2 bg-subtle px-2.5 py-2 text-[12px] text-fg-2"><span className="truncate" title={current.path}>{homePath(current.path)}</span><span className="flex-none"><span className="text-add">+{current.add}</span> <span className="text-del">−{current.del}</span></span></div>
+    {current ? <div className="mx-3 mb-3.5 min-w-0 overflow-hidden rounded-[10px] border border-line">
+      <div className="mono flex items-center justify-between gap-2 bg-subtle px-2.5 py-2 text-[12px] text-fg-2"><span className="min-w-0 truncate" title={current.path}>{workspacePath(current.path, workspace)}</span><span className="flex-none"><span className="text-add">+{current.add}</span> <span className="text-del">−{current.del}</span></span></div>
       {current.diffs.map((diff, index) => <DiffView key={index} className="rounded-none border-0 border-t border-line first:border-t-0" text={diff.lines.map(line => line.kind === "add" ? "+" + line.text : line.kind === "remove" ? "-" + line.text : line.kind === "context" ? " " + line.text : line.text).join("\n")} fallback={current.path}/>)}
     </div> : !loading && !failures.length ? <p className="m-0 px-4 pb-4 text-[12.5px] text-fg-3">这些工具没有返回差异文本。</p> : null}
   </div>;
