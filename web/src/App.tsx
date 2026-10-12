@@ -234,7 +234,10 @@ export function App() {
           const key = sessionIdRef.current ?? "new", saved = savedChatDraft(snapshot.workspace, key);
           if (saved && !chatDrafts.current.has(key)) { chatDrafts.current.set(key, saved); setMessageDraft(saved.message); setAttachments(draftAttachments(saved.attachments)); setDraft(saved.selection); pendingMessage.current = saved.messageIntent; pendingSwitchWrite.current = saved.selectionIntent; }
         }
-      } catch (failure: unknown) { if (!ignored) setBootError(errorMessage(failure)); }
+      } catch (failure: unknown) {
+        // Without a session the page says so in the product's words; the help below names the startup link.
+        if (!ignored) setBootError(failure instanceof ApiError && failure.code === "AUTH_REQUIRED" ? "这个页面还没有登录。" : errorMessage(failure));
+      }
     })();
     return () => { ignored = true; controller.abort(); };
   }, [api, bootAttempt]);

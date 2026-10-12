@@ -1398,6 +1398,11 @@ test("G054-FR6 the chosen theme applies before the first paint and survives relo
   assert.equal(policy, "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data:; font-src 'self' https://fonts.gstatic.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'");
   await expect.poll(() => fonts.some(url => url.startsWith("https://fonts.googleapis.com/css2?family=Noto+Sans+SC"))).toBe(true);
   assert.match(await page.evaluate(() => getComputedStyle(document.body).fontFamily), /^"Geist Variable", "Noto Sans SC", /u);
+  // Without a session, the startup page explains how to sign in, in Chinese.
+  const visitor = await isolatedContext(browser), outside = await visitor.newPage();
+  await outside.goto(new URL(fixture.gateway.url).origin + "/");
+  await expect(outside.getByRole("alert")).toContainText("这个页面还没有登录。"); await expect(outside.getByText("请使用本机网关启动时提供的入口链接", { exact: false })).toBeVisible();
+  await visitor.close();
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByRole("radio", { name: /深色/u }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
