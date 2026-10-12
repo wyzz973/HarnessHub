@@ -129,7 +129,7 @@ export function ChatPage(props: ChatProps) {
   const following = useRef(true);
   const mounted = useRef(true);
   const viewport = useRef({ width: 0, height: 0 });
-  const previousScrollTop = useRef(0);
+  const previousScrollTop = useRef(0), previousScrollHeight = useRef(0);
   const scroll = useRef<HTMLDivElement>(null);
   const transcript = useRef<HTMLDivElement>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -195,7 +195,7 @@ export function ChatPage(props: ChatProps) {
   const scrollToLatest = useCallback(() => {
     const element = scroll.current; if (!element) return;
     element.scrollTo({ top: element.scrollHeight, behavior: "instant" });
-    previousScrollTop.current = element.scrollTop;
+    previousScrollTop.current = element.scrollTop; previousScrollHeight.current = element.scrollHeight;
   }, []);
   const resumeFollowing = useCallback(() => { following.current = true; setFollowBottom(true); scrollToLatest(); }, [scrollToLatest]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -313,6 +313,10 @@ export function ChatPage(props: ChatProps) {
         <div className={cn("chat-scroll scroll-area min-h-0 flex-1 px-4 sm:px-7", session === null ? "welcome-scroll pt-0" : "pt-7 pb-2")} ref={scroll} onScroll={() => {
           const element = scroll.current;
           if (!element || viewport.current.width !== element.clientWidth || viewport.current.height !== element.clientHeight) return;
+          // Content that got shorter (a Markdown block replacing its plain-text placeholder) pulls the position up by
+          // itself; only the reader moving up stops following the latest reply.
+          const shrank = element.scrollHeight < previousScrollHeight.current; previousScrollHeight.current = element.scrollHeight;
+          if (shrank) { previousScrollTop.current = element.scrollTop; if (following.current) scrollToLatest(); return; }
           const upward = element.scrollTop < previousScrollTop.current - 1;
           const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 64;
           if (upward || nearBottom) { following.current = !upward && nearBottom; setFollowBottom(following.current); }
