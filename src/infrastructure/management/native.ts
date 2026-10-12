@@ -267,10 +267,10 @@ export class NativeManagement implements NativeManagementPort {
   usage(plan: NativeInstallPlan, recipe: ManagementRecipe, context: ManagementInstallContext): Promise<ProgramUsage> { return inspectProgramUsage(plan, recipe, this.host, context); }
   restartService(service: UsedService, context: ManagementInstallContext): Promise<{ readonly pid: number; readonly ready: boolean | null } | null> { return restartProgramService(service, this.host, context); }
   async configuration(): Promise<string> { return JSON.stringify(await this.configurationHashes()); }
-  /** Directory names under the product's plugin directory, for the confirmation; contents are never read. */
+  /** Directory names under the product's plugin directory, for the confirmation; hidden ones (a product's own backups) are not plugins, and contents are never read. */
   async plugins(recipe: ManagementRecipe): Promise<readonly string[]> {
     if (recipe.pluginDirectory === undefined) return [];
-    try { return (await readdir(join(this.source.home, recipe.pluginDirectory), { withFileTypes: true })).filter(entry => entry.isDirectory() && /^[A-Za-z0-9._@-]{1,96}$/u.test(entry.name)).map(entry => entry.name).sort().slice(0, 32); }
+    try { return (await readdir(join(this.source.home, recipe.pluginDirectory), { withFileTypes: true })).filter(entry => entry.isDirectory() && /^[A-Za-z0-9@][A-Za-z0-9._@-]{0,95}$/u.test(entry.name)).map(entry => entry.name).sort().slice(0, 32); }
     catch (error) { if (missing(error)) return []; throw error; }
   }
   private async configurationHashes(): Promise<Readonly<Record<string, string>>> {

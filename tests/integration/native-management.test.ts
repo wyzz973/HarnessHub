@@ -177,7 +177,7 @@ test("formal authenticated HTTP owns native upgrades and their real SQLite/insta
   assert.equal((await (await fetch(origin + "/api/v1/installation-jobs", { method: "POST", headers, body: JSON.stringify(input) })).json()).id, receipt.id);
 });
 const AGENT = "com.example.fixture-agent", HELPER = "com.example.fixture-helper";
-const serviceRecipe: ManagementRecipe = { ...recipe, processNames: ["fixture-agent-daemon"],
+const serviceRecipe: ManagementRecipe = { ...recipe, processNames: ["fixture-agent-daemon"], pluginDirectory: ".fixture/extensions",
   services: [{ label: AGENT, name: "Fixture Agent", restart: true, portFlag: "--port" }, { label: HELPER, name: "Fixture Helper", restart: false, restartCommand: "fixture-agent helper restart" }] };
 function launchd(after: FakeLaunchd["after"], listening?: FakeLaunchd["listening"]): FakeLaunchd {
   return { kicked: [], after, ...(listening === undefined ? {} : { listening }), services: [
@@ -196,11 +196,15 @@ const target = (label: string) => "gui/" + process.getuid!() + "/" + label;
 test("G011-UP2 an upgrade restarts the agreed service right after verifying the new version, leaves the others running, and records each (ADR-043)", { skip: process.platform !== "darwin" && "native upgrades need the macOS sandbox" }, async t => {
   const daemon = launchd(() => ({ state: "running", pid: 42001, runs: 2 }), pid => pid === 42001 ? "p42001\nf3\nn127.0.0.1:18999\n" : ""), port = users([{ sessionId: "idle-conversation", busy: false }]);
   const f = await fixture(t, false, undefined, false, { recipe: serviceRecipe, launchd: daemon, users: port });
+  for (const name of ["fixture-channel", ".fixture-install-backups"]) await mkdir(join(f.environment.home, ".fixture", "extensions", name), { recursive: true });
+  await writeFile(join(f.environment.home, ".fixture", "extensions", "not-a-directory"), "");
   const check = await f.manager.maintenance(recipe.harnessId);
   assert.deepEqual(check.restart, [{ label: AGENT, name: "Fixture Agent", pid: 41001, command: "launchctl kickstart -k " + target(AGENT), portKnown: true }]);
   assert.deepEqual(check.resident, [{ label: HELPER, name: "Fixture Helper", pid: 41002, restartCommand: "fixture-agent helper restart" }]);
   assert.deepEqual(check.conversations, [{ sessionId: "idle-conversation", busy: false }]); assert.deepEqual(check.otherUsers, []); assert.equal(check.staleRecords, 0);
   assert.equal(check.rollback, "npm install --global fixture-agent@1.0.0"); assert.equal(check.currentVersion, "1.0.0");
+  // Only plugin directories are listed: not hidden ones such as a product's own install backups, and never their contents.
+  assert.deepEqual(check.plugins, ["fixture-channel"]);
   assert.deepEqual(daemon.kicked, [], "the check restarts nothing"); assert.equal(port.closed, 0, "the check closes nothing");
   const job = await settled(f.manager, f.manager.submit({ harnessId: recipe.harnessId, action: "upgrade", commandId: "restart", expectedNativeFingerprint: check.fingerprint, restartServices: [AGENT] }).id);
   assert.equal(job.status, "completed", JSON.stringify(job)); assert.equal(await version(f), "2.0.0");
