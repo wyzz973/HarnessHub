@@ -200,7 +200,8 @@ export function Composer(props: ComposerProps) {
           else if (event.key === "Escape" && active && !active.cancelRequested && !event.nativeEvent.isComposing && props.mutation === null) { event.preventDefault(); props.onCancel(); }
         }}/>
       <div className="flex items-end gap-1">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-0.5" role="group" aria-label="下一次任务的执行选择">
+        {/* One line at every width: a long model name scrolls the choices sideways instead of making the composer taller. */}
+        <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-0.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:flex-none" role="group" aria-label="下一次任务的执行选择">
         <Tip label="添加图片、音频或文件"><button type="button" className="icon-btn mr-1 h-[30px] w-[30px] border border-line" aria-label="添加附件" disabled={readonly || props.attachments.length >= 8} onClick={() => picker.current?.click()}><Paperclip size={15}/></button></Tip>
         <input ref={picker} type="file" multiple hidden tabIndex={-1} aria-hidden="true" onChange={event => { attach(event.target.files); event.target.value = ""; }}/>
           <SearchPicker label="选择 Harness" value={draft.harnessId} placeholder="选择 Harness" options={harnessChoices} disabled={disabled} wide onChange={value => {

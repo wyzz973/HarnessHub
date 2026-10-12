@@ -392,7 +392,7 @@ test("live chat renders committed partial Markdown before completion, respects r
     await page.setViewportSize({ width, height: 844 });
     await expect.poll(() => scroll.evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(4);
     const height = await page.locator(".composer").evaluate(element => element.getBoundingClientRect().height);
-    assert.ok(height <= 140, "empty mobile composer remains compact while a response streams");
+    assert.ok(height <= 140, "empty mobile composer remains compact while a response streams: " + height + "px " + JSON.stringify(await page.locator(".composer").innerText()));
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "live Markdown does not overflow narrow viewport");
     assert.ok(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight + 1), "long replies only scroll inside the transcript, without empty document overflow");
     await page.screenshot({ path: join(artifact, `streaming-${width}.png`), fullPage: true, animations: "disabled" });
@@ -1472,7 +1472,10 @@ test("G054-UP1 an upgrade first says what it restarts, closes and leaves on the 
     conversations: blocked ? [{ sessionId: "s-replying", title: "正在回复的对话", busy: true }] : [{ sessionId: "s-idle", title: "空闲的对话", busy: false }],
     otherUsers: blocked ? [{ pid: 51234 }] : [], staleRecords: 2, plugins: ["openclaw-weixin"], notes: ["重启时 Gateway 连接的消息渠道（例如微信、飞书）会断开片刻，最好选一个能接受短暂中断的时间升级。"],
     rollback: "npm install --global openclaw@2026.3.23-2", target: { state: "unverified", program: "2026.3.23-2" },
-    runtime: { runtime: "Node.js", required: ">=24.16.0 <25 || >=26.1.0", found: blocked ? "25.9.0" : "26.1.0", path: "/opt/homebrew/bin/node", satisfied: !blocked } } }));
+    runtimes: [
+      { runtime: "Node.js", required: ">=24.16.0 <25 || >=26.1.0", found: blocked ? "25.9.0" : "26.11.1", path: blocked ? "/opt/homebrew/bin/node" : "/Users/me/.nvm/versions/node/v26.11.1/bin/node", satisfied: !blocked, service: null, restarted: true, upgradeCommand: blocked ? "brew upgrade node" : null },
+      { runtime: "Node.js", required: ">=24.16.0 <25 || >=26.1.0", found: blocked ? "25.9.0" : "26.11.0", path: "/opt/homebrew/opt/node/bin/node", satisfied: !blocked, service: "ai.openclaw.gateway", restarted: true, upgradeCommand: "brew upgrade node" },
+      { runtime: "Node.js", required: ">=24.16.0 <25 || >=26.1.0", found: "25.9.0", path: "/opt/homebrew/opt/node@25/bin/node", satisfied: false, service: "ai.openclaw.node", restarted: false, upgradeCommand: "brew upgrade node@25" }] } }));
   await page.goto(fixture.gateway.url);
   // The sidebar counts the available update next to the page's name.
   await page.getByRole("button", { name: "我的 Agent 1 个可升级", exact: true }).click();
@@ -1483,7 +1486,10 @@ test("G054-UP1 an upgrade first says what it restarts, closes and leaves on the 
   await expect(dialog.getByText("现在不能升级")).toBeVisible();
   await expect(dialog).toContainText("有 1 个对话正在使用 OpenClaw（正在回复或等你处理）"); await expect(dialog.getByRole("button", { name: "正在回复的对话" })).toBeVisible();
   await expect(dialog).toContainText("另一个 HarnessHub 进程（进程 51234）正在使用 OpenClaw");
-  await expect(dialog.locator(".upgrade-runtime")).toHaveText("OpenClaw 2026.10.2 要求 Node.js >=24.16.0 <25 || >=26.1.0，本机运行 OpenClaw 的 Node.js 是 25.9.0（/opt/homebrew/bin/node）。需要先升级 Node.js，HarnessHub 不替你升级它。");
+  // Both the program's Node.js and the one the restarted Gateway starts must meet the range; each says how to upgrade it.
+  await expect(dialog.locator(".upgrade-runtime")).toHaveText([
+    "OpenClaw 2026.10.2 要求 Node.js >=24.16.0 <25 || >=26.1.0，本机运行 OpenClaw 的 Node.js 是 25.9.0（/opt/homebrew/bin/node）。需要先升级它，可以运行 brew upgrade node；HarnessHub 不替你升级 Node.js。",
+    "OpenClaw 2026.10.2 要求 Node.js >=24.16.0 <25 || >=26.1.0，OpenClaw Gateway（ai.openclaw.gateway）启动用的 Node.js 是 25.9.0（/opt/homebrew/opt/node/bin/node）。需要先升级它，可以运行 brew upgrade node；HarnessHub 不替你升级 Node.js。"]);
   await expect(dialog.getByRole("button", { name: "升级并重启 OpenClaw Gateway" })).toBeDisabled();
   await dialog.getByRole("button", { name: "取消", exact: true }).click(); await expect(dialog).toBeHidden();
   assert.equal(submitted, null, "nothing is sent while the upgrade is blocked");
@@ -1495,6 +1501,8 @@ test("G054-UP1 an upgrade first says what it restarts, closes and leaves on the 
     "OpenClaw Gateway（ai.openclaw.gateway，进程 4039）会在新版本核实后立即重启：", "launchctl kickstart -k gui/501/ai.openclaw.gateway", "1 个对话保留的 OpenClaw 进程会先关闭，下次发消息时重新连接。",
     "OpenClaw Node（ai.openclaw.node，进程 4736），升级后可运行 openclaw node restart", "openclaw（进程 8100）", "还会清除 2 条已结束的 HarnessHub 进程留下的使用记录。",
     "已安装的插件：openclaw-weixin。新版本可能不兼容它们。", "最好选一个能接受短暂中断的时间升级", "npm install --global openclaw@2026.3.23-2"]) await expect(dialog).toContainText(text);
+  // A service left running only needs a newer Node.js before its own restart: said, without blocking.
+  await expect(dialog.locator(".upgrade-runtime-warning")).toHaveText("OpenClaw Node（ai.openclaw.node）启动用的 Node.js 是 25.9.0（/opt/homebrew/opt/node@25/bin/node），2026.10.2 要求 >=24.16.0 <25 || >=26.1.0。升级后重启它之前，需要先升级这个 Node.js（brew upgrade node@25）。");
   await page.screenshot({ path: join(artifact, "upgrade-confirmation.png"), animations: "disabled" });
   await dialog.getByRole("button", { name: "升级并重启 OpenClaw Gateway" }).click(); await expect(dialog).toBeHidden();
   await expect.poll(() => submitted).not.toBeNull();

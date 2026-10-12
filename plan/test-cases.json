@@ -8560,8 +8560,8 @@
       ],
       "layer": "integration",
       "planned_file": "tests/integration/native-management.test.ts",
-      "scenario": "新版本要求的 Node.js 与运行程序的不一致",
-      "expected": "升级前检查给出要求的范围、运行程序的解释器路径与版本；升级在改动前以 RUNTIME_INCOMPATIBLE 停下，说明先升级 Node.js，原版本不变",
+      "scenario": "新版本要求的 Node.js 与运行程序或被重启服务的不一致",
+      "expected": "升级前检查列出程序 #! 解释器与每个以 Node.js 启动的服务各自的版本、路径与是否被重启，Homebrew 的 Node.js 给出 brew upgrade 命令；程序或被重启服务不满足时升级在改动前以 RUNTIME_INCOMPATIBLE 停下并指名是哪一个，不关闭空闲进程、不重启服务、原版本不变；不重启的服务只提示",
       "status": "planned",
       "evidence": null
     },
@@ -8595,7 +8595,7 @@
       "layer": "e2e",
       "planned_file": "tests/browser/web.browser.ts",
       "scenario": "升级确认框与没有升级的任务",
-      "expected": "点升级先检查再确认：列出会重启的服务和命令、仍用旧版的程序、会关闭的对话、插件、产品说明、版本跨度、未验证版本与退回命令；有对话正在回复、另一个 HarnessHub 进程或 Node.js 不符时不能确认；提交的同意与指纹来自这次检查；改动前停下的任务显示没有升级与原版本，不显示核实版本与空日志，旧版本的拒绝按实际情况解释",
+      "expected": "点升级先检查再确认：列出会重启的服务和命令、仍用旧版的程序、会关闭的对话、插件、产品说明、版本跨度、未验证版本与退回命令；有对话正在回复、另一个 HarnessHub 进程、程序或被重启服务的 Node.js 不符时不能确认，不重启服务的 Node.js 不符只提示；提交的同意与指纹来自这次检查；改动前停下的任务显示没有升级与原版本，不显示核实版本与空日志，旧版本的拒绝按实际情况解释",
       "status": "planned",
       "evidence": null
     },

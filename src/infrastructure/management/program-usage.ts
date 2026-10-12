@@ -147,7 +147,8 @@ export async function inspectProgramUsage(plan: NativeInstallPlan, recipe: Manag
       for (const domain of ["gui/" + host.uid, "user/" + host.uid]) if (await host.print(domain + "/" + job.label, context) !== null) { target = domain + "/" + job.label; break; }
       if (target === null) continue;
       const declared = recipe.services?.find(service => service.label === job.label) ?? null;
-      services.push({ label: job.label, pid: job.pid, target, port: declared?.portFlag === undefined ? null : portArgument(details.args, declared.portFlag), declared });
+      services.push({ label: job.label, pid: job.pid, target, port: declared?.portFlag === undefined ? null : portArgument(details.args, declared.portFlag),
+        program: details.program ?? details.args[0] ?? null, declared });
     }
   }
   const servicePids = new Set(services.map(service => service.pid)), names = new Set(recipe.processNames ?? []);

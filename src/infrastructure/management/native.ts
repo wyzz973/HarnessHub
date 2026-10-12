@@ -30,6 +30,12 @@ const configFiles = [".claude.json", ".zshrc", ".zprofile", ".bashrc", ".bash_pr
 export function isolatedSandboxProfile(writable: readonly string[]): string {
   return "(version 1)(allow default)(deny file-write*)(allow file-write* " + writable.map(path => "(subpath " + JSON.stringify(path) + ")").join(" ") + " (literal \"/dev/null\"))(deny network*)";
 }
+/** Why an upgrade stops for a runtime that does not meet the release's range; nothing has changed then. */
+export function runtimeRefusal(version: string, runtime: RuntimeRequirement): string {
+  return "新版本 " + version + " 要求 Node.js " + runtime.required + "，" + (runtime.service === null ? "运行它的" : runtime.service + " 启动用的") + " Node.js "
+    + (runtime.found === null ? "版本读不出来" : "是 " + runtime.found) + "（" + runtime.path + "）。先升级 Node.js 再升级" + (runtime.upgradeCommand ? "（可以运行 " + runtime.upgradeCommand + "）" : "")
+    + "；HarnessHub 不替你升级 Node.js。没有升级。";
+}
 /** The configuration paths a product's validation output names, never their values; bounded for a message. */
 function issuePaths(output: string): readonly string[] {
   let value: unknown;
@@ -165,9 +171,8 @@ export class NativeManagement implements NativeManagementPort {
     if (plan.beforeVersion && valid(plan.beforeVersion) && valid(version) && !gt(version, plan.beforeVersion)) throw new ManagementError("NO_UPDATE", "the original installation is already at or above its channel version");
     if (plan.channel !== "npm") return;
     const spec = await this.npmRelease(plan, recipe, version, context);
-    const runtime = spec.engines.node ? await this.runtime(plan, spec.engines.node, context) : null;
-    if (runtime && !runtime.satisfied) throw new ManagementError("RUNTIME_INCOMPATIBLE", "新版本 " + version + " 要求 Node.js " + runtime.required + "，运行它的 Node.js "
-      + (runtime.found === null ? "版本读不出来" : "是 " + runtime.found) + "（" + runtime.path + "）。先升级 Node.js 再升级；HarnessHub 不替你升级 Node.js。没有升级。");
+    const runtime = spec.engines.node ? await this.runtimeAt((plan.actualEntry ? await this.interpreter(plan.actualEntry) : null) ?? this.node, spec.engines.node, null, true, context) : null;
+    if (runtime && !runtime.satisfied) throw new ManagementError("RUNTIME_INCOMPATIBLE", runtimeRefusal(version, runtime));
     if (plan.harnessId !== "openclaw") return;
     // The candidate is the exact version the upgrade installs. Its validation runs isolated: it can write only the stage
     // and reach no network, so it can neither migrate the user's configuration nor connect to the running gateway.
@@ -251,18 +256,25 @@ export class NativeManagement implements NativeManagementPort {
     for (const directory of (this.source.values.PATH ?? "").split(":")) { if (!isAbsolute(directory)) continue; const candidate = join(directory, name); if (await available(candidate)) return candidate; }
     return null;
   }
-  /** The Node.js that runs the installed program (its interpreter, else HarnessHub's own) against `required`. */
-  private async runtime(plan: NativeInstallPlan, required: string, context: ManagementInstallContext): Promise<RuntimeRequirement> {
-    const path = (plan.actualEntry ? await this.interpreter(plan.actualEntry) : null) ?? this.node;
+  /** The Node.js at `path` against `required`, and how to upgrade it when it is Homebrew's. */
+  private async runtimeAt(path: string, required: string, service: string | null, restarted: boolean, context: ManagementInstallContext): Promise<RuntimeRequirement> {
     let found: string | null = null;
     try { found = /^v?(\d+\.\d+\.\d+)/u.exec((await this.process(path, ["--version"], { ...context, log: () => {} })).trim())?.[1] ?? null; }
     catch (error) { if (!(error instanceof ManagementError) || error.code !== "PROCESS_FAILED" && error.code !== "PROCESS_START_FAILED") throw error; }
-    return { runtime: "Node.js", required, found, path, satisfied: found !== null && satisfies(found, required) };
+    let upgradeCommand: string | null = null;
+    try { const formula = /\/Cellar\/(node(?:@\d+)?)\/[^/]+\/bin\/node$/u.exec(await realpath(path))?.[1]; if (formula) upgradeCommand = "brew upgrade " + formula; }
+    catch (error) { if (!missing(error)) throw error; }
+    return { runtime: "Node.js", required, found, path, satisfied: found !== null && satisfies(found, required), service, restarted, upgradeCommand };
   }
-  async requirements(plan: NativeInstallPlan, recipe: ManagementRecipe, version: string, context: ManagementInstallContext): Promise<RuntimeRequirement | null> {
-    if (plan.channel !== "npm") return null;
-    const spec = await this.metadata.resolve({ ...recipe, kind: "npm", packageName: plan.reference, referenceVersion: version }, context.signal, version);
-    return spec.engines.node ? this.runtime(plan, spec.engines.node, context) : null;
+  async runtimes(plan: NativeInstallPlan, recipe: ManagementRecipe, version: string, services: readonly UsedService[], context: ManagementInstallContext): Promise<readonly RuntimeRequirement[]> {
+    if (plan.channel !== "npm") return [];
+    const spec = await this.metadata.resolve({ ...recipe, kind: "npm", packageName: plan.reference, referenceVersion: version }, context.signal, version), required = spec.engines.node;
+    if (!required) return [];
+    const result = [await this.runtimeAt((plan.actualEntry ? await this.interpreter(plan.actualEntry) : null) ?? this.node, required, null, true, context)];
+    // A service's job names its own Node.js; it does not load the user's shell, so a version manager's default does not reach it.
+    for (const service of services) if (service.program !== null && isAbsolute(service.program) && basename(service.program) === "node")
+      result.push(await this.runtimeAt(service.program, required, service.label, service.declared?.restart === true, context));
+    return result;
   }
   usage(plan: NativeInstallPlan, recipe: ManagementRecipe, context: ManagementInstallContext): Promise<ProgramUsage> { return inspectProgramUsage(plan, recipe, this.host, context); }
   restartService(service: UsedService, context: ManagementInstallContext): Promise<{ readonly pid: number; readonly ready: boolean | null } | null> { return restartProgramService(service, this.host, context); }

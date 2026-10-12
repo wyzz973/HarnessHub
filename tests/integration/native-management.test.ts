@@ -307,17 +307,34 @@ test("G011-UP7 the documented v3 to v2 downgrade keeps every job and leaves only
   try { assert.equal(reopened.db.prepare("PRAGMA user_version").get()?.user_version, 3); assert.equal(reopened.db.prepare("SELECT count(*) AS n FROM management_jobs").get()?.n, 2); } finally { reopened.db.close(); }
 });
 
-test("G011-UP8 a release whose Node.js range excludes the one that runs the program is said before confirming and refused before anything changes", { skip: process.platform !== "darwin" && "native upgrades need the macOS sandbox" }, async t => {
-  const f = await fixture(t);
-  // The fixture's program runs with this test's own Node.js (its #! line); the release asks for a range that excludes it.
+test("G011-UP8 a release whose Node.js range excludes the one that runs the program, or the one a restarted service starts, is said before confirming and refused before anything changes", { skip: process.platform !== "darwin" && "native upgrades need the macOS sandbox" }, async t => {
+  // The agent's job starts a Homebrew-style Node.js of its own (a keg linked under opt/, as Homebrew lays it out) that reports 1.0.0;
+  // the helper's job uses it too but is not restarted. The program itself runs with this test's Node.js (its #! line).
+  const root = await realpath(await mkdtemp(join(tmpdir(), "native-runtime-test-"))); t.after(() => rm(root, { recursive: true, force: true }));
+  const keg = join(root, "homebrew", "Cellar", "node", "1.0.0_1", "bin"), linked = join(root, "homebrew", "opt", "node", "bin", "node");
+  await mkdir(keg, { recursive: true }); await writeFile(join(keg, "node"), "#!/bin/sh\necho v1.0.0\n", { mode: 0o755 });
+  await mkdir(join(root, "homebrew", "opt"), { recursive: true }); await symlink(join(root, "homebrew", "Cellar", "node", "1.0.0_1"), join(root, "homebrew", "opt", "node"));
+  const daemon: FakeLaunchd = { kicked: [], after: () => assert.fail("nothing restarts"), services: [
+    { label: AGENT, pid: 41001, args: packageRoot => [linked, join(packageRoot, "entry.mjs"), "serve", "--port", "18999"] },
+    { label: HELPER, pid: 41002, args: packageRoot => [linked, join(packageRoot, "entry.mjs"), "helper"] }] };
+  const port = users([{ sessionId: "idle", busy: false }]);
+  const f = await fixture(t, false, undefined, false, { recipe: serviceRecipe, launchd: daemon, users: port });
   await f.manager.checkUpdates([recipe.harnessId]).catch(() => {});
+  // A range that excludes the program's own Node.js: said, and refused before anything changes.
   f.setEngines({ node: ">=99" });
-  const check = await f.manager.maintenance(recipe.harnessId);
-  assert.deepEqual(check.runtime, { runtime: "Node.js", required: ">=99", found: process.versions.node, path: process.execPath, satisfied: false });
-  const job = await settled(f.manager, f.manager.submit({ harnessId: recipe.harnessId, action: "upgrade", commandId: "runtime", expectedNativeFingerprint: check.fingerprint }).id);
+  let check = await f.manager.maintenance(recipe.harnessId);
+  assert.deepEqual(check.runtimes.map(runtime => [runtime.service, runtime.path, runtime.found, runtime.satisfied, runtime.restarted]), [
+    [null, process.execPath, process.versions.node, false, true], [AGENT, linked, "1.0.0", false, true], [HELPER, linked, "1.0.0", false, false]]);
+  assert.deepEqual(check.runtimes.slice(1).map(runtime => runtime.upgradeCommand), ["brew upgrade node", "brew upgrade node"]);
+  let job = await settled(f.manager, f.manager.submit({ harnessId: recipe.harnessId, action: "upgrade", commandId: "runtime", expectedNativeFingerprint: check.fingerprint, restartServices: [AGENT] }).id);
   assert.equal(job.status, "failed"); assert.equal(job.error?.code, "RUNTIME_INCOMPATIBLE"); assert.equal(job.native?.dispatched, false);
-  assert.equal(job.error?.message, "新版本 2.0.0 要求 Node.js >=99，运行它的 Node.js 是 " + process.versions.node + "（" + process.execPath + "）。先升级 Node.js 再升级；HarnessHub 不替你升级 Node.js。没有升级。");
-  assert.equal(await version(f), "1.0.0");
-  f.setEngines({ node: ">=" + process.versions.node });
-  assert.equal((await f.manager.maintenance(recipe.harnessId)).runtime?.satisfied, true);
+  assert.match(job.error!.message, new RegExp("^新版本 2\\.0\\.0 要求 Node\\.js >=99，运行它的 Node\\.js 是 " + process.versions.node.replaceAll(".", "\\.") + "（"));
+  // The program's own Node.js meets the range, but the service it restarts would start the new version on one that does not.
+  f.setEngines({ node: ">=2" });
+  check = await f.manager.maintenance(recipe.harnessId);
+  assert.deepEqual(check.runtimes.map(runtime => [runtime.service, runtime.satisfied]), [[null, true], [AGENT, false], [HELPER, false]]);
+  job = await settled(f.manager, f.manager.submit({ harnessId: recipe.harnessId, action: "upgrade", commandId: "service-runtime", expectedNativeFingerprint: check.fingerprint, restartServices: [AGENT] }).id);
+  assert.equal(job.status, "failed"); assert.equal(job.error?.code, "RUNTIME_INCOMPATIBLE"); assert.equal(job.native?.dispatched, false);
+  assert.equal(job.error?.message, "新版本 2.0.0 要求 Node.js >=2，" + AGENT + " 启动用的 Node.js 是 1.0.0（" + linked + "）。先升级 Node.js 再升级（可以运行 brew upgrade node）；HarnessHub 不替你升级 Node.js。没有升级。");
+  assert.equal(port.closed, 0, "nothing is closed for an upgrade that cannot run"); assert.deepEqual(daemon.kicked, []); assert.equal(await version(f), "1.0.0");
 });

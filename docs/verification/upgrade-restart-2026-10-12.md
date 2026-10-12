@@ -85,6 +85,49 @@
 - 22:19:44，第二次按空闲流程重启：再次确认空闲，PID 67939 收到 SIGTERM 后不到 1 秒就退出了（第一次停止慢，很可能是当时用户的页面还连着）；克隆备份与在线数据一致；快进到 62c242c 并构建。22:20:31 用原参数启动，新进程 78660，管理库 v3、业务库 v12，会话 4 个。用户的 OpenClaw Gateway（4039）、Node（4736）和 Hermes 网关（4058）的启动时间仍是 10 月 5 日。新的一次性链接已在用户的浏览器里打开。
 - 核对完成后，按用户的规则删除了两组克隆备份；今晚无界面浏览器留下的快照和截图也已删除。`.tmp/` 里仍然只有 `discovery-manifest.json` 和 `service-4317.log`。
 
+## 用户的 Node.js 改由 nvm 管理（同日）
+
+用户要求“帮我升级一下 node，用 nvm 进行管理”。只读核实到的情况：
+- 本机已经有 Homebrew 装的 nvm 0.40.3 和用它装的 Node v23.10.0，但只在 `~/.bash_profile` 里加载，zsh 里一直用的是 Homebrew 的 Node 25.9.0。
+- `~/.npmrc` 里只有 registry 设置，没有和 nvm 冲突的 prefix。
+- `gemini-cli` 依赖 Homebrew 的 Node，所以 Homebrew 的 Node 保留。
+- 全局 npm 工具（包括 OpenClaw）装在 Homebrew 的前缀下。其中的原生模块都是 N-API 预编译的，不绑定 Node 大版本。
+
+做了什么：
+- 先把 `~/.zshrc` 复制到会话临时目录，然后在文件末尾追加 Homebrew 版 nvm 官方给出的三行加载语句和说明注释，原有内容不变。
+- 用 nvm 安装 Node 26.11.1（2026-10-07 发布，npm 11.20.0，校验和一致），并执行 `nvm alias default 26`。
+- 新开的 zsh 里，`node` 是 `~/.nvm/versions/node/v26.11.1/bin/node`，`npm prefix -g` 是 nvm 的目录。OpenClaw 2026.3.23-2、Pi 0.85.1、pnpm 10.12.3、Gemini 0.62.0 在 Node 26 下都能启动。Claude Code 是原生可执行文件，不受影响。
+- 没有改动的：Homebrew 的 Node 25.9.0、全局 npm 工具的安装位置、OpenClaw 的 launchd 服务。服务仍按 plist 用 `/opt/homebrew/opt/node/bin/node`，也就是 25.9.0。
+
+HarnessHub 在 Node 26 下的检查：
+- 单元与集成测试 650 通过。
+- 浏览器测试第一次运行 29 通过、1 失败。失败的是实时对话测试里“窄屏下输入框不超过 140 像素”这一条，在 Node 25.9 和 26 下都会偶发：模型列表已经加载、模型名较长时，输入框下面那排选择按钮在 390 像素宽时折行，把输入框撑到 150 像素。这是 ADR-042 的布局问题，不是 Node 的问题。
+- 修法：这排选择按钮不再折行，超出部分横向滚动。断言没有放宽，只是在失败信息里加上了高度和文字。修复后连续 6 次通过；全量结果见下一条。
+
+HarnessHub 在 Node 26.11.1 下修复后的全量结果：单元与集成测试 650 通过；浏览器测试 30 通过。
+
+### 后台服务各自用的 Node.js（新增检查）与 Homebrew 的 Node.js
+
+- 发现的问题：原来的检查只看命令行解释器。nvm 只对交互式 shell 生效，OpenClaw 的两个 launchd 服务按 plist 用 `/opt/homebrew/opt/node/bin/node`。如果只换了终端里的 Node，确认框会放行升级，Gateway 重启后却跑在新版本不支持的 25.9.0 上。
+- 修复：检查每个以 Node.js 启动的服务。会被重启的服务不满足要求时阻止升级，并给出 `brew upgrade <formula>`；不重启的服务只提示。见 ADR-043 第 7 条、G011-UP8、G054-UP1。
+- 用户的选择（AskUserQuestion）：“也升级 Homebrew 的 Node（推荐）”。依据是 OpenClaw 文档建议后台服务使用系统安装的 Node.js，而不是版本管理器的路径。
+- 执行的命令是 `HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 brew upgrade node`，先预演过：
+  - node 从 25.9.0_2 升到 26.11.1。
+  - 新装 libffi、openssl@4、highway。
+  - 升级 abseil、fmt、simdutf、ada-url（3→4）、c-ares、hdrhistogram_c、libnghttp2、libuv、llhttp、merve、ca-certificates、simdjson（4→5）、readline、sqlite。
+  - 不检查依赖 node 的软件，是因为默认会把 `gemini-cli` 一起升到 0.46.0，而用户实际用的 Gemini CLI 是 0.62.0，那样会变成降级。`gemini-cli` 保持 0.38.2 的 keg，`gemini --version` 仍是 0.62.0。
+  - 不清理旧版本：旧的 node 25.9.0_2 链接了 `libllhttp.9.3`、`libada.3`、`libsimdjson.33`，这几个库这次都换了大版本。已经在运行的进程不受影响（库已加载）；但再用旧版本程序启动新进程会失败。
+- 升级前就在跑、用旧版本程序的进程：
+  - OpenClaw 的 Gateway（4039）和 Node（4736），自 10 月 5 日起运行。OpenClaw 只在不受 launchd 管理时，才会用 `process.execPath` 重新拉起自己（`gateway-cli` 第 42570 行附近），平常收发消息不会；下次重启就换到 26.11.1。
+  - 用户自己的 `remotion studio`、`pnpm dev`（端口 3123），以及几个经 npx 启动的 MCP 服务。它们方便时重开即可。
+  - 4317 已在部署时重启。
+  - 这些都换到新版本以后，再执行 `brew cleanup node` 清理旧版本。
+- 结果：`/opt/homebrew/bin/node` 与 `/opt/homebrew/opt/node/bin/node` 都是 26.11.1。OpenClaw、Gemini、pnpm、Pi 在系统 Node 26 下都能启动。用户的三个服务没有被重启，启动时间仍是 10 月 5 日。
+- 用新代码只读核对 OpenClaw 2026.10.2 的运行环境，host 无法重启任何东西：
+  - 命令行解释器 `~/.nvm/versions/node/v26.11.1/bin/node` 是 26.11.1，满足。
+  - `ai.openclaw.gateway`（会被重启）和 `ai.openclaw.node`（不重启）都用 `/opt/homebrew/opt/node/bin/node`，是 26.11.1，满足。
+  - 现在运行环境已经不再阻止 OpenClaw 升级。配置能否通过，要在用户点击时的校验里确认。
+
 ## 回退
 
 现在没有数据备份。要退回 ADR-043 之前的构建：

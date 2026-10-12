@@ -15,7 +15,7 @@ import { boundedManagementFile, managementIdentity, managementStorage, sameManag
 import { managementInteger, managementObject, parseInstallationRecord, parseManagementJob, parseManagementLog, parseManagementUpdate, parseNativePlan, type InstallationRecord } from "../../contexts/management/domain/state.js";
 import { probeSystemVersion } from "./system-version.js";
 import { versionVerification } from "./verified-versions.js";
-import { NativeManagement } from "./native.js";
+import { NativeManagement, runtimeRefusal } from "./native.js";
 import { NativeInstallationLocks } from "./native-lock.js";
 import type { NativeEnvironment } from "../session/native-environment.js";
 
@@ -202,9 +202,9 @@ export class LocalHarnessManagement {
     const native = this.native, usage = await this.nativeInspection(context => native.usage(plan, recipe, context)); this.own();
     const records = await this.nativeLocks.users(id), plugins = await native.plugins(recipe), view = this.views([id])[0]!, target = view.latestVersion;
     // The target's runtime requirement is read from its release; when it cannot be read the upgrade still checks it before changing anything.
-    let runtime: RuntimeRequirement | null = null;
-    if (target !== null) try { runtime = await this.nativeInspection(context => native.requirements(plan, recipe, target, context)); this.own(); }
-    catch (error) { if (error instanceof ManagementError && ["OWNER_LOST", "OWNERSHIP_LOST", "MANAGEMENT_CLOSED", "INVALID_STORAGE"].includes(error.code)) throw error; runtime = null; }
+    let runtimes: readonly RuntimeRequirement[] = [];
+    if (target !== null) try { runtimes = await this.nativeInspection(context => native.runtimes(plan, recipe, target, usage.services, context)); this.own(); }
+    catch (error) { if (error instanceof ManagementError && ["OWNER_LOST", "OWNERSHIP_LOST", "MANAGEMENT_CLOSED", "INVALID_STORAGE"].includes(error.code)) throw error; runtimes = []; }
     return { harnessId: id, checkedAt: this.now(), fingerprint: plan.fingerprint, channel: plan.channel, location: plan.entry,
       currentVersion: plan.beforeVersion, targetVersion: view.latestVersion, servicesKnown: usage.servicesKnown,
       restart: usage.services.filter(service => service.declared?.restart === true).map(service => ({ label: service.label, name: service.declared!.name, pid: service.pid,
@@ -212,7 +212,7 @@ export class LocalHarnessManagement {
       resident: [...usage.services.filter(service => service.declared?.restart !== true).map(service => ({ label: service.label, name: service.declared?.name ?? service.label, pid: service.pid,
         restartCommand: service.declared?.restartCommand ?? "launchctl kickstart -k " + service.target })), ...usage.resident.map(program => ({ label: null, name: program.name, pid: program.pid, restartCommand: null }))],
       processes: usage.processes, conversations: this.users?.list(id) ?? [], otherUsers: records.live.map(pid => ({ pid })), staleRecords: records.stale,
-      plugins, notes: recipe.upgradeNotes ?? [], rollback: rollbackCommand(plan), target: target === null ? null : versionVerification(id, target, null), runtime };
+      plugins, notes: recipe.upgradeNotes ?? [], rollback: rollbackCommand(plan), target: target === null ? null : versionVerification(id, target, null), runtimes };
   }
   listJobs(limit?: number): readonly InstallationJobView[] {
     this.own(); const count = boundedManagementLimit(limit, 1000);
@@ -495,6 +495,9 @@ export class LocalHarnessManagement {
       const consent = new Set(job.native.restartServices ?? []), restart = usage.services.filter(service => service.declared?.restart === true);
       const unagreed = restart.filter(service => !consent.has(service.label));
       if (unagreed.length) throw new ManagementError("SERVICE_CONSENT_REQUIRED", "升级需要重启 " + unagreed.map(service => service.label).join("、") + "，这次请求没有同意重启它。请重新打开升级确认后再升级。");
+      // A service the upgrade restarts starts the new version on its own Node.js, which must meet the release's range too.
+      const blocking = (await native.runtimes(plan, recipe, version, restart.filter(service => consent.has(service.label)), context)).find(runtime => runtime.service !== null && !runtime.satisfied); owned();
+      if (blocking) throw new ManagementError("RUNTIME_INCOMPATIBLE", runtimeRefusal(version, blocking));
       const left = [...usage.services.filter(service => service.declared?.restart !== true).map(service => service.label), ...usage.resident.map(program => program.name + "（进程 " + program.pid + "）"), ...usage.processes.map(program => program.name + "（进程 " + program.pid + "）")];
       if (left.length) note("这些程序不会被关闭，继续使用旧版本，重开后才用新版本：" + left.slice(0, 12).join("、") + (left.length > 12 ? " 等 " + left.length + " 个" : "") + "。");
       const closed = this.users === null ? 0 : await this.users.closeIdle(job.harnessId); owned();

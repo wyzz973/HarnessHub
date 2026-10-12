@@ -54,6 +54,10 @@
    - 确认框会列出要求的范围、解释器路径和版本；不满足时不能确认。升级执行时会再核对一次，不满足就在改动前停下（`RUNTIME_INCOMPATIBLE`），说明要先升级 Node.js。HarnessHub 不替用户升级 Node.js。
    - 这是 ADR-017 已有的检查（原来只比较 HarnessHub 自己的 Node.js，提示是英文），这次改为核对实际运行程序的解释器，并提前到确认之前。
    - 本机实例：OpenClaw 2026.10.2 要求 `>=24.16.0 <25 || >=26.1.0`，本机运行它的是 Homebrew 的 Node.js 25.9.0，所以现在不能升级到 2026.10.2。在 25.9.0 上可用的最新版本是 2026.9.2，从 2026.9.3 起就排除了 Node 25。
+   - **后台服务各自用的 Node.js 也要核对**（同日补充）：
+     - launchd 任务会在 plist 里写死自己的 Node.js 路径（OpenClaw 的是 `/opt/homebrew/opt/node/bin/node`），不加载用户的 shell，所以 nvm 之类版本管理器的默认版本对它不起作用。
+     - 一个服务的程序是 Node.js 时，确认框和执行时都会核对它的版本。会被重启的服务不满足要求时阻止升级，并给出升级办法：Homebrew 安装的 Node.js 给出 `brew upgrade <formula>`。不重启的服务只提示：在它下次重启之前，需要先升级它用的 Node.js。
+     - 依据：OpenClaw 文档 `gateway/doctor.md` 第 17 节，以及 2026.3.23-2 的 `runtime-paths-DOEOEFe-.js`（`VERSION_MANAGER_MARKERS`、`resolvePreferredNodePath`）。OpenClaw 让后台服务使用系统安装的 Node.js（Homebrew 等），并警告版本管理器的路径在升级后会失效，所以 HarnessHub 不建议把服务改到 nvm 的路径上。
 8. **兼容校验在隔离环境里运行。** OpenClaw 的候选版本仍按原受保护路径装进临时目录（`--ignore-scripts`，拒绝写配置）。`config validate` 在白名单沙箱里运行：先 `(deny file-write*)`，只放开这次任务的临时目录与 `/dev/null`，再 `(deny network*)`，期限 60 秒。真实配置文件不复制（里面有渠道凭据），只读不写，也连不到正在运行的网关。输出不落盘，只记录通过与否和经过脱敏的配置路径名。
 9. **配方声明产品事实，Gateway 不按产品分支。** 每个产品的服务标签、是否随升级重启、自己的重启命令、端口参数、常驻进程名、插件目录和升级说明都写在配方里（`src/adapters/management/recipes.ts`）。OpenClaw 只声明 `ai.openclaw.gateway`（随升级重启，端口参数 `--port`）和 `ai.openclaw.node`（不重启，`openclaw node restart`），因为 OpenClaw 自己的升级只重启 Gateway；依据见下文。去掉了 `native.ts` 里写死的 `openclaw-gateway` 判断。
 10. **界面。**

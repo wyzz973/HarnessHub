@@ -131,8 +131,11 @@ export interface NativeManagementPort {
   configuration(): Promise<string>;
   /** Directory names in the recipe's plugin directory; contents are never read. */
   plugins(recipe: ManagementRecipe): Promise<readonly string[]>;
-  /** The runtime this exact version requires against the one that runs the program (ADR-043); null when it declares none. Changes nothing. */
-  requirements(plan: NativeInstallPlan, recipe: ManagementRecipe, version: string, context: ManagementInstallContext): Promise<RuntimeRequirement | null>;
+  /**
+   * The Node.js this exact version requires (ADR-043), against each runtime that will run it: the program's `#!`
+   * interpreter, and each given service's program when that is Node.js. Empty when the release declares none. Changes nothing.
+   */
+  runtimes(plan: NativeInstallPlan, recipe: ManagementRecipe, version: string, services: readonly UsedService[], context: ManagementInstallContext): Promise<readonly RuntimeRequirement[]>;
   inspect(plan: NativeInstallPlan, context: ManagementInstallContext): Promise<string>;
 }
 /** A running service-manager job whose program is this installation, with the recipe's facts when it declares the job. */
@@ -143,6 +146,8 @@ export interface UsedService {
   readonly target: string;
   /** The TCP port its arguments give for the recipe's `portFlag`; null when it declares none or the arguments carry none. */
   readonly port: number | null;
+  /** The executable its job starts (an interpreter such as node for a script); null when the job names none. */
+  readonly program: string | null;
   readonly declared: RecipeService | null;
 }
 /** A running program by process id and base name only; arguments are never kept. */
@@ -163,7 +168,10 @@ export interface NativeProgramUsers {
   /** Closes every idle kept process of this Harness with the normal stop chain; resolves with how many, once each close is recorded. */
   closeIdle(harnessId: string): Promise<number>;
 }
-/** A runtime a release requires, and the one that runs the installed program: its `#!` interpreter on the user's PATH. */
+/**
+ * A runtime a release requires, and one that will run it: the program's `#!` interpreter on the user's PATH, or the Node.js
+ * a service's job starts. Services keep their own Node.js path; they do not load the user's shell (nvm and the like).
+ */
 export interface RuntimeRequirement {
   readonly runtime: "Node.js";
   /** The release's `engines` range. */
@@ -172,6 +180,12 @@ export interface RuntimeRequirement {
   readonly found: string | null;
   readonly path: string;
   readonly satisfied: boolean;
+  /** The service that runs on it; null for the program itself. */
+  readonly service: string | null;
+  /** Whether the upgrade starts it on the new version: the program, or a service it restarts. Such a runtime not met blocks the upgrade. */
+  readonly restarted: boolean;
+  /** How the user moves it to a newer version when HarnessHub knows: `brew upgrade <formula>` for a Homebrew Node.js. */
+  readonly upgradeCommand: string | null;
 }
 /** What upgrading one Harness would touch, read once for the user's confirmation (ADR-043). */
 export interface MaintenanceCheck {
@@ -204,8 +218,8 @@ export interface MaintenanceCheck {
   readonly rollback: string | null;
   /** Whether HarnessHub verified its interface with the target version (ADR-038), and on which versions; null when unknown. */
   readonly target: HarnessVersionVerification | null;
-  /** The target's runtime requirement against the runtime that runs the program; one not met blocks the upgrade. Null when none is declared or it could not be read. */
-  readonly runtime: RuntimeRequirement | null;
+  /** The target's runtime requirement against each runtime that will run it; a restarted one not met blocks the upgrade. Empty when none is declared or it could not be read. */
+  readonly runtimes: readonly RuntimeRequirement[];
 }
 /** One background service a product's default installation registers with the host's service manager (ADR-043). */
 export interface RecipeService {

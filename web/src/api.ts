@@ -108,7 +108,8 @@ export function decodeMaintenance(value: unknown): MaintenanceView {
     otherUsers: list(row.otherUsers, item => ({ pid: number(record(item).pid) }), 256), staleRecords: number(row.staleRecords),
     plugins: list(row.plugins, text, 32), notes: list(row.notes, text, 16), rollback: nullableText(row.rollback),
     target: row.target === null ? null : (() => { const target = record(row.target); return { state: choice(target.state, ["verified", "unverified"]), program: text(target.program), ...(target.adapter === undefined ? {} : { adapter: text(target.adapter) }) }; })(),
-    runtime: row.runtime === null ? null : (() => { const runtime = record(row.runtime); return { runtime: choice(runtime.runtime, ["Node.js"]), required: text(runtime.required), found: nullableText(runtime.found), path: text(runtime.path), satisfied: bool(runtime.satisfied) }; })() };
+    runtimes: list(row.runtimes, value => { const runtime = record(value); return { runtime: choice(runtime.runtime, ["Node.js"]), required: text(runtime.required), found: nullableText(runtime.found), path: text(runtime.path),
+      satisfied: bool(runtime.satisfied), service: nullableText(runtime.service), restarted: bool(runtime.restarted), upgradeCommand: nullableText(runtime.upgradeCommand) }; }, 32) };
 }
 function decodeLogPage(value: unknown): InstallationLogPage {
   const row = record(value);

@@ -39,8 +39,10 @@ export function UpgradeDialog({ api, harness, onClose, onConfirm, onOpenSession 
   }, [api, id, attempt]);
   const name = harness?.name ?? "Harness", current = check?.currentVersion ?? harness?.management.programVersion ?? "当前版本", target = check?.targetVersion ?? harness?.management.latestVersion ?? "最新版本";
   const busy = check?.conversations.filter(item => item.busy) ?? [], idle = check?.conversations.filter(item => !item.busy) ?? [];
-  const runtime = check?.runtime && !check.runtime.satisfied ? check.runtime : null;
-  const blocked = busy.length > 0 || (check?.otherUsers.length ?? 0) > 0 || runtime !== null;
+  // A runtime the upgrade starts the new version on must meet its range; one it leaves running only needs it before its own restart.
+  const unmet = check?.runtimes.filter(runtime => !runtime.satisfied) ?? [], runtimeBlocks = unmet.filter(runtime => runtime.restarted), runtimeWarnings = unmet.filter(runtime => !runtime.restarted);
+  const serviceName = (label: string) => check?.restart.find(item => item.label === label)?.name ?? check?.resident.find(item => item.label === label)?.name ?? label;
+  const blocked = busy.length > 0 || (check?.otherUsers.length ?? 0) > 0 || runtimeBlocks.length > 0;
   const gap = calendarGap(check?.currentVersion ?? null, check?.targetVersion ?? null);
   const left = check ? [...check.resident, ...check.processes.map(item => ({ label: null, name: item.name, pid: item.pid, restartCommand: null }))] : [];
   return <Dialog open={harness !== null} onOpenChange={open => { if (!open) onClose(); }} title={`升级 ${name}`} description={`${current} → ${target}`} className="upgrade-dialog w-[min(560px,calc(100vw-32px))]">
@@ -52,7 +54,7 @@ export function UpgradeDialog({ api, harness, onClose, onConfirm, onOpenSession 
             {busy.length ? <span className="block">有 {busy.length} 个对话正在使用 {name}（正在回复或等你处理），等它们结束或停止后再升级：</span> : null}
             {busy.map(item => <button key={item.sessionId} type="button" className="mt-1 block max-w-full truncate border-none bg-transparent p-0 text-left text-[12.5px] text-accent-text underline" onClick={() => onOpenSession(item.sessionId)}>{item.title}</button>)}
             {check.otherUsers.length ? <span className="mt-1 block">另一个 HarnessHub 进程（进程 {check.otherUsers.map(item => item.pid).join("、")}）正在使用 {name}，等它结束后再升级。</span> : null}
-            {runtime ? <span className="upgrade-runtime mt-1 block">{name} {target} 要求 Node.js {runtime.required}，本机运行 {name} 的 Node.js {runtime.found === null ? "版本读不出来" : `是 ${runtime.found}`}（{runtime.path}）。需要先升级 Node.js，HarnessHub 不替你升级它。</span> : null}
+            {runtimeBlocks.map(runtime => <span key={runtime.path + (runtime.service ?? "")} className="upgrade-runtime mt-1 block">{name} {target} 要求 Node.js {runtime.required}，{runtime.service === null ? `本机运行 ${name} 的` : `${serviceName(runtime.service)}（${runtime.service}）启动用的`} Node.js {runtime.found === null ? "版本读不出来" : `是 ${runtime.found}`}（{runtime.path}）。需要先升级它{runtime.upgradeCommand ? <>，可以运行 <code className="text-[12px]">{runtime.upgradeCommand}</code></> : null}；HarnessHub 不替你升级 Node.js。</span>)}
           </Notice> : null}
           <ol className="m-0 flex list-none flex-col gap-3 p-0">
             <Step title="安装新版本">
@@ -66,6 +68,9 @@ export function UpgradeDialog({ api, harness, onClose, onConfirm, onOpenSession 
                 {service.portKnown ? null : <span>不知道它监听的端口，重启后只能确认进程在运行。</span>}</span>)}
             </Step> : null}
             {idle.length ? <Step title="关闭 HarnessHub 里的空闲进程"><span>{idle.length} 个对话保留的 {name} 进程会先关闭，下次发消息时重新连接。</span></Step> : null}
+            {runtimeWarnings.length ? <Step title="重启这些服务之前">
+              {runtimeWarnings.map(runtime => <span key={runtime.path + (runtime.service ?? "")} className="upgrade-runtime-warning text-amber">{serviceName(runtime.service ?? "")}（{runtime.service}）启动用的 Node.js {runtime.found === null ? "版本读不出来" : `是 ${runtime.found}`}（{runtime.path}），{target} 要求 {runtime.required}。升级后重启它之前，需要先升级这个 Node.js{runtime.upgradeCommand ? `（${runtime.upgradeCommand}）` : ""}。</span>)}
+            </Step> : null}
             {left.length ? <Step title="这些程序不会被关闭">
               <span>它们继续使用旧版本，重开后才用新版本：</span>
               <ul className="m-0 flex list-disc flex-col gap-0.5 pl-5">{left.map(item => <li key={item.pid}>{item.name}{item.label && item.label !== item.name ? `（${item.label}，进程 ${item.pid}）` : `（进程 ${item.pid}）`}{item.restartCommand ? <>，升级后可运行 <code className="text-[12px]">{item.restartCommand}</code></> : null}</li>)}</ul>

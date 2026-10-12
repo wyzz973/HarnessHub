@@ -53,8 +53,8 @@ test("G011-UP1 the programs of one installation are its launchd services, its re
   const usage = await inspectProgramUsage(plan, recipe, host(), context());
   assert.equal(usage.servicesKnown, true);
   // Both OpenClaw jobs run from the installation; the Hermes job does not, and Apple's jobs are not read.
-  assert.deepEqual(usage.services.map(service => [service.label, service.pid, service.target, service.port, service.declared?.restart]), [
-    ["ai.openclaw.gateway", 4039, "gui/501/ai.openclaw.gateway", 18789, true], ["ai.openclaw.node", 4736, "gui/501/ai.openclaw.node", null, false]]);
+  assert.deepEqual(usage.services.map(service => [service.label, service.pid, service.target, service.port, service.program, service.declared?.restart]), [
+    ["ai.openclaw.gateway", 4039, "gui/501/ai.openclaw.gateway", 18789, "/opt/homebrew/opt/node/bin/node", true], ["ai.openclaw.node", 4736, "gui/501/ai.openclaw.node", null, "/opt/homebrew/opt/node/bin/node", false]]);
   // A gateway started by hand (its title hides its path) is resident; a terminal session is another program; this
   // process's own children (a conversation's `openclaw acp`) are left out, and so is an unrelated path that only shares a prefix.
   assert.deepEqual(usage.resident, [{ pid: 8200, name: "openclaw-gateway" }]);
@@ -66,7 +66,7 @@ test("G011-UP1 the programs of one installation are its launchd services, its re
   await assert.rejects(inspectProgramUsage(plan, recipe, host({ processes: async () => "garbage" }), context()), (error: unknown) => error instanceof ManagementError && error.code === "PROCESS_INSPECTION_FAILED");
 });
 
-const gateway: UsedService = { label: "ai.openclaw.gateway", pid: 4039, target: "gui/501/ai.openclaw.gateway", port: 18789, declared: recipe.services![0]! };
+const gateway: UsedService = { label: "ai.openclaw.gateway", pid: 4039, target: "gui/501/ai.openclaw.gateway", port: 18789, program: "/opt/homebrew/opt/node/bin/node", declared: recipe.services![0]! };
 /** A clock that sleeping advances, and launchd states that follow it: the old process until `restartAt`, then `states`. */
 function timeline(states: (time: number) => string | null, listening: (time: number) => string = () => "") {
   let time = 0, kicked = 0;
