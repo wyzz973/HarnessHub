@@ -50,3 +50,16 @@
 - 真实的 `brew upgrade` 没有运行过。预演会把清单下载进 Homebrew 的缓存。
 - uv 安装不提供升级，pnpm、bun 的安装不维护。
 - “其他 HarnessHub 进程正在使用”这一阻止项，与卸载共用同一段使用记录的读取代码，这次没有为升级单独写测试。
+
+## 4317 部署（2026-10-17）
+
+- 部署前服务空闲（没有子进程，也没有进行中的管理任务），做了数据克隆备份。主检出快进到 `79b7abb`，在登录 shell 环境里构建并启动（PID 26669）。
+- 管理库迁移到 v6。迁移前后任务数（12）和日志数（19）相同，业务库仍是 v12。核对后删除了备份。
+- 一次性登录链接经本机重定向打开，没有贴出。
+- 部署前发现：用户 21:09 点过一次“升级 OpenClaw”（ADR-043 的路径）。目标版本用现有配置校验没有通过（涉及 meta、messages、commands、gateway.tailscale、gateway.nodes），任务在改动前停下，原安装 2026.3.23-2 保留。
+- 在同一登录环境里只读预演了第一个待点击的升级，即 Homebrew 前缀下的 Claude Code。它没有经过 4317，也没有安装任何东西：
+  - 现版本 2.1.296（package.json，命令解析到包里的 `bin/claude.exe`），npm 上的最新版 2.1.302；
+  - 将运行 `/opt/homebrew/bin/npm install --global --prefix /opt/homebrew @anthropic-ai/claude-code@2.1.302`，只能写 `/opt/homebrew`；
+  - 要求 Node.js `>=22.0.0`，`/opt/homebrew/bin/node` 是 26.11.1，满足；
+  - 没有后台服务、常驻程序，也没有 HarnessHub 自己的进程在用它。另一个终端里 10 月 16 日启动的 Claude Code 会话（进程 58943）在用它，升级不会关闭它，它重开后才用新版本；
+  - 登录 shell 的 PATH 上第一个 `claude` 是 nvm v26.11.1 的那份，与 4317 标出的“当前使用”一致，这次升级不改变它。
