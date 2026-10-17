@@ -1,7 +1,7 @@
 import { ArrowRight, ArrowUpRight, CheckCheck, ChevronRight, CircleAlert, Clock3, Download, Package, RefreshCw, Search, ShieldCheck, Square, Terminal, X } from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import type { HarnessEntrySource, HarnessView } from "../../../src/contracts/web.js";
+import type { HarnessEntrySource, HarnessView, InstallationView } from "../../../src/contracts/web.js";
 import type { InstallationJobView, InstallationLog } from "../../../src/contracts/management.js";
 import { errorMessage, failureMessage, GatewayApi, protocolLabel } from "../api.js";
 import { cn } from "../lib/cn.js";
@@ -10,13 +10,15 @@ import { Badge, EmptyState, Notice, Spinner, Tip } from "../ui/primitives.js";
 import { BrandIcon } from "./BrandIcon.js";
 import { PageShell } from "./PageShell.js";
 import { UpgradeDialog, type UpgradeConsent } from "./UpgradeDialog.js";
+import { UninstallDialog, type UninstallConsent } from "./UninstallDialog.js";
 
-export interface UnconfirmedInstallation { harnessId: string; action: "install" | "upgrade"; message: string }
+export interface UnconfirmedInstallation { harnessId: string; action: "install" | "upgrade" | "uninstall"; message: string }
+function verbOf(job: InstallationJobView): string { return job.action === "upgrade" ? "升级" : job.action === "uninstall" ? "卸载" : "安装"; }
 export function installationActive(job: InstallationJobView): boolean { return ["queued", "resolving", "installing", "verifying", "activating"].includes(job.status); }
 /** A task's state in the user's terms: an upgrade that stopped before changing anything did not happen; it did not fail (ADR-043). */
 export function installationStatus(job: InstallationJobView): string {
   if (job.cancelRequested && installationActive(job)) return "正在取消并清理";
-  const verb = job.action === "upgrade" ? "升级" : "安装";
+  const verb = verbOf(job);
   switch (job.status) {
     case "queued": return "等待" + verb;
     case "resolving": return "正在检查";
@@ -43,7 +45,14 @@ function jobError(job: InstallationJobView): string | null {
   return /[\u4e00-\u9fff]/u.test(job.error.message) ? job.error.message : failureMessage(job.error);
 }
 function jobSummary(job: InstallationJobView, name: string): string {
-  const verb = job.action === "upgrade" ? "升级" : "安装", native = job.native;
+  const verb = verbOf(job), native = job.native;
+  if (job.action === "uninstall" && native?.uninstall) {
+    const facts = native.uninstall, what = facts.role === "adapter" ? name + " 的接入口" : name;
+    if (job.status === "completed") return "已卸载" + facts.label + "里的 " + what + (job.resolvedVersion ? " " + job.resolvedVersion : "") + (facts.stoppedServices.length ? "，已停止并注销 " + facts.stoppedServices.join("、") : "") + "，配置、登录和会话数据保留。";
+    if (unchanged(job)) return facts.label + "里的 " + what + " 没有任何改动。";
+    if (job.status === "unknown") return "结果尚未确认" + (facts.stoppedServices.length ? "（已停止并注销 " + facts.stoppedServices.join("、") + "）" : "") + "。";
+    return installationStatus(job);
+  }
   if (job.status === "completed") {
     const restarted = native?.services?.filter(service => service.outcome === "restarted").map(service => service.label) ?? [];
     return (job.resolvedVersion ? "已" + verb + "到 " + job.resolvedVersion : verb + "完成") + (restarted.length ? "，已重启 " + restarted.join("、") : "") + (native ? "，原配置保留。" : "，入口验证已完成。");
@@ -62,6 +71,8 @@ interface HarnessProps {
   api: GatewayApi; harnesses: readonly HarnessView[]; installationPolicy: "official" | "any"; jobs: readonly InstallationJobView[]; scanning: boolean; checking: boolean;
   submitting: readonly string[]; cancelling: readonly string[]; error: string | null; connectionError: string | null; unconfirmed: readonly UnconfirmedInstallation[];
   onRescan: () => void; onCheckUpdates: (ids?: readonly string[]) => void; onInstall: (harness: HarnessView, action: "install" | "upgrade", consent?: UpgradeConsent) => void;
+  /** Uninstalls one installation the user confirmed (ADR-044). */
+  onUninstall: (harness: HarnessView, installation: InstallationView, consent: UninstallConsent) => void;
   /** Opens a conversation, e.g. one that blocks an upgrade. */
   onOpenSession: (id: string) => void;
   onConfirm: (id: string) => void; onCancelJob: (job: InstallationJobView) => void; onDismissError: () => void; onMenu: () => void; onChoose: (harness: HarnessView) => void;
@@ -99,6 +110,8 @@ export function HarnessesPage(props: HarnessProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showTasks, setShowTasks] = useState(false);
   const [confirming, setConfirming] = useState<{ readonly harness: HarnessView; readonly fromDetail: boolean } | null>(null);
+  // Uninstalling also shows what it removes, stops and keeps first; the confirmation takes the details' place like an upgrade's.
+  const [removing, setRemoving] = useState<{ readonly harness: HarnessView; readonly installation: InstallationView } | null>(null);
   const selected = harnesses.find(harness => harness.id === selectedId) ?? null;
   // Upgrading an installed program first shows what it touches and asks for consent (ADR-043); installing does not. The
   // confirmation takes the details' place while it is open, and the details come back with the task once it is sent.
@@ -164,16 +177,21 @@ export function HarnessesPage(props: HarnessProps) {
     })}</div> : <EmptyState title={query ? "没有匹配的 Harness" : "这个分类中暂无 Harness"} action={<button className="btn" onClick={() => { setQuery(""); setFilter("all"); }}>查看全部</button>}>试试其他名称或切换分类。</EmptyState>}
     <p className="m-0 flex items-start gap-2 text-[12.5px] text-fg-3"><ShieldCheck size={14} className="mt-0.5 flex-none"/><span>本机安装升级沿用原渠道。执行期间暂停对应程序的新任务；模型配置、登录状态与对话历史保留。搜索目录可以在“设置 → 发现”中补充。</span></p>
     <Dialog open={selected !== null} onOpenChange={open => { if (!open) setSelectedId(null); }} title={selected ? `${selected.name} 详情` : "Harness 详情"} kind="drawer">
-      {selected ? <HarnessDetail {...props} harness={selected} onClose={() => setSelectedId(null)} onRequest={harness => request(harness, true)}/> : null}
+      {selected ? <HarnessDetail {...props} harness={selected} onClose={() => setSelectedId(null)} onRequest={harness => request(harness, true)}
+        onUninstallRequest={(harness, installation) => { setSelectedId(null); setRemoving({ harness, installation }); }}/> : null}
     </Dialog>
     <UpgradeDialog api={props.api} harness={confirming?.harness ?? null} onClose={closeConfirmation} onConfirm={(harness, consent) => { setConfirming(null); setSelectedId(harness.id); props.onInstall(harness, "upgrade", consent); }}
       onOpenSession={id => { setConfirming(null); setSelectedId(null); props.onOpenSession(id); }}/>
+    <UninstallDialog api={props.api} harness={removing?.harness ?? null} installation={removing?.installation ?? null}
+      onClose={() => { const from = removing?.harness.id ?? null; setRemoving(null); if (from) setSelectedId(from); }}
+      onConfirm={(harness, installation, consent) => { setRemoving(null); setSelectedId(harness.id); props.onUninstall(harness, installation, consent); }}
+      onOpenSession={id => { setRemoving(null); setSelectedId(null); props.onOpenSession(id); }}/>
   </PageShell>;
 }
 function DetailSection({ title, children }: { readonly title: string; readonly children: ReactNode }) {
   return <section className="flex flex-col gap-2 border-t border-line px-5 py-4 first:border-t-0"><h3 className="m-0 text-[12.5px] font-semibold text-fg-2">{title}</h3>{children}</section>;
 }
-function HarnessDetail(props: HarnessProps & { harness: HarnessView; onClose: () => void; onRequest: (harness: HarnessView) => void }) {
+function HarnessDetail(props: HarnessProps & { harness: HarnessView; onClose: () => void; onRequest: (harness: HarnessView) => void; onUninstallRequest: (harness: HarnessView, installation: InstallationView) => void }) {
   const { harness } = props;
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [inspecting, setInspecting] = useState(false), [inspectionError, setInspectionError] = useState<string | null>(null);
@@ -202,7 +220,8 @@ function HarnessDetail(props: HarnessProps & { harness: HarnessView; onClose: ()
       </DetailSection>
       {harness.installations.length > 0 ? <DetailSection title="本机找到的官网安装"><ul className="harness-installations m-0 flex list-none flex-col gap-1.5 p-0">{harness.installations.map((item, index) =>
         <li key={index} className="flex flex-col gap-0.5 rounded-lg border border-line px-3 py-2"><span className="flex flex-wrap items-center gap-1.5 text-[13px]"><strong className="font-medium">{item.label}</strong>
-          {item.role === "adapter" ? <Badge tone="neutral">接入口 {item.command}</Badge> : null}{item.active ? <span title="按 HarnessHub 服务进程的 PATH 顺序；终端里可能不同"><Badge tone="green" dot>当前使用</Badge></span> : null}</span>
+          {item.role === "adapter" ? <Badge tone="neutral">接入口 {item.command}</Badge> : null}{item.active ? <span title="按 HarnessHub 服务进程的 PATH 顺序；终端里可能不同"><Badge tone="green" dot>当前使用</Badge></span> : null}
+          {item.canUninstall ? <button type="button" className="btn btn-ghost btn-sm btn-danger ml-auto" disabled={busy} aria-label={`卸载${item.label}里的 ${item.command}`} onClick={() => props.onUninstallRequest(harness, item)}>卸载</button> : null}</span>
           <small className="text-[12px] text-fg-3">{item.version === null ? "版本未记录" : `v${item.version}`}{item.maintained ? "" : " · 当前版本不维护这种安装方式"}</small></li>)}</ul>
         {harness.installations.filter(item => item.role === "product").length > 1 ? <p className="m-0 text-[12px] text-fg-2">“当前使用”按 HarnessHub 服务进程的 PATH 顺序确定；终端常被 nvm 等改动 PATH，用的可能是另一份。</p> : null}</DetailSection> : null}
       {harness.unofficial ? <DetailSection title="非官网安装"><p className="harness-unofficial m-0 text-[12.5px] text-fg-2">在{harness.unofficial.onPath ? " PATH " : "标准目录"}中发现一个非官网安装（开发目录、npm link 或其他），命令名 {harness.unofficial.command}；平台不使用也不维护它。{harness.unofficial.pathDefault ? harness.installations.some(item => item.role === "product") ? `终端里 ${harness.unofficial.command} 运行的是这份非官网安装；HarnessHub 使用的是标为“当前使用”的官网安装。` : "终端里能用的就是它。" : ""}</p></DetailSection> : null}

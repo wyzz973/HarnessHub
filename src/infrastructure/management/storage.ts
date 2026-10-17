@@ -40,18 +40,20 @@ export function managementStorage(root: string, generation: number): { root: str
   try {
     db.exec("PRAGMA journal_mode=DELETE;PRAGMA synchronous=FULL;PRAGMA busy_timeout=1000;PRAGMA foreign_keys=ON");
     const version = db.prepare("PRAGMA user_version").get()?.user_version;
-    if (version !== 0 && version !== 1 && version !== 2 && version !== 3) throw new ManagementError("INVALID_STORAGE", "unknown management storage schema");
+    if (version !== 0 && version !== 1 && version !== 2 && version !== 3 && version !== 4) throw new ManagementError("INVALID_STORAGE", "unknown management storage schema");
     db.exec("CREATE TABLE IF NOT EXISTS management_owner (singleton INTEGER PRIMARY KEY CHECK(singleton=1), generation INTEGER NOT NULL) STRICT;CREATE TABLE IF NOT EXISTS management_jobs (id TEXT PRIMARY KEY,harness_id TEXT NOT NULL,status TEXT NOT NULL,command_id TEXT UNIQUE NOT NULL,fingerprint TEXT NOT NULL,expected_revision INTEGER NOT NULL,view_json TEXT NOT NULL) STRICT;CREATE TABLE IF NOT EXISTS management_commands (id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,job_id TEXT NOT NULL) STRICT;CREATE TABLE IF NOT EXISTS management_logs (job_id TEXT NOT NULL,seq INTEGER NOT NULL,entry_json TEXT NOT NULL,PRIMARY KEY(job_id,seq)) STRICT;CREATE TABLE IF NOT EXISTS management_installations (id TEXT PRIMARY KEY,harness_id TEXT NOT NULL,control_id TEXT NOT NULL,record_json TEXT NOT NULL) STRICT;CREATE TABLE IF NOT EXISTS management_defaults (harness_id TEXT PRIMARY KEY,installation_id TEXT NOT NULL,revision INTEGER NOT NULL) STRICT;CREATE TABLE IF NOT EXISTS management_updates (harness_id TEXT PRIMARY KEY,view_json TEXT NOT NULL) STRICT;");
     // Additive v1→v2 migration preserves private history and introduces frozen native plans. v3 only marks that job facts
     // may carry an upgrade's restart consent and results (ADR-043), which a v2 reader would reject; its rows are unchanged.
-    if (version !== 3) {
+    // v4 adds uninstall jobs and the frozen installation each removes (ADR-044), which a v3 reader would reject.
+    if (version !== 4) {
       db.exec("BEGIN IMMEDIATE");
       try {
         db.exec("CREATE TABLE IF NOT EXISTS management_native_plans(job_id TEXT PRIMARY KEY REFERENCES management_jobs(id),plan_json TEXT NOT NULL CHECK(json_valid(plan_json))) STRICT");
-        nativePlanSchema(db); db.exec("PRAGMA user_version=3; COMMIT");
+        db.exec("CREATE TABLE IF NOT EXISTS management_installation_targets(job_id TEXT PRIMARY KEY REFERENCES management_jobs(id),target_json TEXT NOT NULL CHECK(json_valid(target_json))) STRICT");
+        nativePlanSchema(db); targetSchema(db); db.exec("PRAGMA user_version=4; COMMIT");
       } catch (error) { db.exec("ROLLBACK"); throw error; }
     }
-    nativePlanSchema(db);
+    nativePlanSchema(db); targetSchema(db);
     const previous = db.prepare("SELECT generation FROM management_owner WHERE singleton=1").get()?.generation;
     if (typeof previous === "number" && previous > generation) throw new ManagementError("OWNERSHIP_LOST", "management owner generation is stale");
     db.prepare("INSERT INTO management_owner(singleton,generation) VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET generation=excluded.generation").run(generation);
@@ -68,4 +70,10 @@ function nativePlanSchema(db: DatabaseSync): void {
   const columns = db.prepare("PRAGMA table_info(management_native_plans)").all();
   if (table?.type !== "table" || columns.length !== 2 || columns[0]?.name !== "job_id" || columns[0]?.type !== "TEXT" || columns[0]?.pk !== 1 || columns[1]?.name !== "plan_json" || columns[1]?.type !== "TEXT" || columns[1]?.notnull !== 1)
     throw new ManagementError("INVALID_STORAGE", "native management plan schema is invalid");
+}
+function targetSchema(db: DatabaseSync): void {
+  const table = db.prepare("SELECT type FROM sqlite_schema WHERE name='management_installation_targets'").get();
+  const columns = db.prepare("PRAGMA table_info(management_installation_targets)").all();
+  if (table?.type !== "table" || columns.length !== 2 || columns[0]?.name !== "job_id" || columns[0]?.type !== "TEXT" || columns[0]?.pk !== 1 || columns[1]?.name !== "target_json" || columns[1]?.type !== "TEXT" || columns[1]?.notnull !== 1)
+    throw new ManagementError("INVALID_STORAGE", "installation target schema is invalid");
 }

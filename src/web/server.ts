@@ -10,11 +10,12 @@ import { ProviderError } from "../contracts/provider.js";
 import { ManagementError } from "../contracts/management.js";
 import { SessionError, parseNativeOptions, sessionId, type SelectionRequest, type SessionConfiguration, type SessionEvent, type SessionSnapshot } from "../contracts/session.js";
 import { MAX_CONTENT_BYTES, MAX_RUN_ATTACHMENTS } from "../contracts/content.js";
-import type { EventPage, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, MaintenanceView, NativeSessionListView, SessionSummary, SessionView, WebState } from "../contracts/web.js";
+import type { EventPage, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, MaintenanceView, NativeSessionListView, SessionSummary, SessionView, UninstallCheckView, WebState } from "../contracts/web.js";
 import { inventory, officialInstallation } from "../infrastructure/catalog/inventory-composition.js";
 import type { InstallationPolicy } from "../contexts/catalog/domain/catalog.js";
 import { harnessEntry, productCommand } from "./harness-entry.js";
-import { installationViews, unofficialView } from "./harness-installations.js";
+import { installationObservations, installationViews, unofficialView } from "./harness-installations.js";
+import { homePathsIn } from "./shown-paths.js";
 import { prepareConfiguration } from "../infrastructure/session/binding-factory.js";
 import { supportedProviderProtocols } from "../contexts/provider/domain/provider.js";
 import { carriedNativeConfiguration } from "../contexts/session/domain/state.js";
@@ -190,7 +191,7 @@ function publicFailure(error: unknown): { readonly status: number; readonly code
   if (error instanceof SessionError || error instanceof ProviderError || error instanceof ManagementError) {
     const code = error.code;
     const status = code.includes("NOT_FOUND") ? 404 : code === "INVALID_INPUT" ? 400 : code.includes("LIMIT") || code === "QUEUE_FULL" ? 429
-      : code.startsWith("RECOVERY_") || code.includes("UNAVAILABLE") || code.includes("CLOSED") || code.includes("BLOCKED") || code.includes("CONFLICT") || code.includes("PENDING") || code.includes("REVISION") || code.includes("UNSUPPORTED") || code.includes("BUSY") || code.includes("ACTIVE") || code === "STALE_DEFAULT" || code === "DEFAULT_CHANGED" ? 409 : 502;
+      : code.startsWith("RECOVERY_") || code.includes("UNAVAILABLE") || code.includes("CLOSED") || code.includes("BLOCKED") || code.includes("CONFLICT") || code.includes("PENDING") || code.includes("REVISION") || code.includes("UNSUPPORTED") || code.includes("BUSY") || code.includes("ACTIVE") || code === "STALE_DEFAULT" || code.endsWith("_CHANGED") || code.includes("REFUSED") ? 409 : 502;
     return { status, code, message: error.message.slice(0, 512) };
   }
   return { status: 500, code: "GATEWAY_FAILED", message: "Gateway operation failed" };
@@ -314,6 +315,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     ...(options.configuration.configHome === null ? {} : { configHome: options.configuration.configHome }),
     ...(options.configuration.manifestPath === null ? {} : { manifestPath: options.configuration.manifestPath }),
     packageRoots: options.configuration.packageRoots, searchDirs: searchDirs(), pathOnly: options.configuration.pathOnly });
+  /** The user's home as given and as resolved, for the privacy guard of confirmations (ADR-044). */
+  const homeForms = (): readonly string[] => { const home = app.factory.discoveryEnvironment.home; try { return [...new Set([home, realpathSync(home)])]; } catch { return [home]; } };
   let origin = "", host = "", running = 0, stopping = false, closing: Promise<void> | null = null;
   const bootstrap = randomBytes(32).toString("hex"), bootstrapExpires = Date.now() + BOOTSTRAP_MS;
   let bootstrapAvailable = true;
@@ -333,6 +336,12 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         const packageVersion = observedPackageVersion(control.diagnostics), program = productCommand(observed.definitions.find(item => item.id === harness.id)?.binaryNames[0], harness.installation, control);
         return [{ harnessId: harness.id, controlId: control.id, command: control.command, ...(packageVersion === undefined ? {} : { packageVersion }), ...(program === null ? {} : { program }) }];
       })));
+      // Every official installation by its reference, for uninstall checks and submissions (ADR-044).
+      app.management.setInstallations(observed.report.harnesses.flatMap(harness => {
+        const definition = observed.definitions.find(item => item.id === harness.id);
+        return installationObservations(harness.id, harness.installation, app.factory.discoveryEnvironment.home,
+          command => definition?.controls.find(control => control.executableNames.includes(command))?.id ?? definition?.controls[0]?.id ?? harness.id);
+      }));
       await app.management.refreshSystemVersions();
       await app.management.refreshNativeCapabilities();
       const management = new Map(app.management.views(observed.report.harnesses.map(item => item.id)).map(item => [item.harnessId, item]));
@@ -350,7 +359,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
           entry: harnessEntry(control, observed.managedBindings.has(control.id)) })),
         providerProtocols: item.controls.some(control => control.state === "candidate" && ((item.id === "codex" && control.protocol === "codex-app-server") || (item.id === "gemini" && control.protocol === "acp-v1"))) ? supportedProviderProtocols(item.id) : [],
         management: { ...managed, source: managed.source === "managed" ? "managed" : installed ? "system" : "missing" }, install: officialInstallation(item.id),
-        installations: installationViews(item.installation, app.factory.discoveryEnvironment.home),
+        installations: installationViews(item.id, item.installation, app.factory.discoveryEnvironment.home),
         unofficial: unofficialView(item.installation, observed.definitions.find(definition => definition.id === item.id)?.binaryNames[0]) };
       });
       return harnesses;
@@ -517,6 +526,20 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       }) };
       json(response, 200, output); return;
     }
+    // What uninstalling one installation would remove, stop and leave (ADR-044); reads only.
+    const uninstallRoute = /^\/api\/v1\/harnesses\/([a-z][a-z0-9-]{0,95})\/installations\/([a-f0-9]{64})\/uninstall$/u.exec(path);
+    if (uninstallRoute && method === "GET") {
+      queries(url, []); await rescan();
+      const check = await app.management.uninstallCheck(uninstallRoute[1]!, uninstallRoute[2]!);
+      const output: UninstallCheckView = { ...check, conversations: check.conversations.map(item => {
+        let title = "对话";
+        try { title = summary(app.runtime.read(sessionId(item.sessionId))).title; } catch { /* a conversation closed meanwhile keeps the generic name */ }
+        return { ...item, title };
+      }) };
+      // The confirmation may name the removed program paths with ~ only; an absolute home path is refused, not sent (ADR-044).
+      if (homePathsIn(output, homeForms()).length) throw new HttpError(500, "PRIVACY_GUARD", "卸载检查的结果含有未隐去的本机路径，已拦截。");
+      json(response, 200, output); return;
+    }
     if (path === "/api/v1/harnesses/rescan" && method === "POST") { queries(url, []); record(await body(request), []); json(response, 200, await rescan()); return; }
     if (path === "/api/v1/harnesses/check-updates" && method === "POST") {
       queries(url, []); const input = record(await body(request), ["harnessIds"]);
@@ -531,9 +554,15 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (path === "/api/v1/installation-jobs") {
       if (method === "GET") { queries(url, ["limit"]); json(response, 200, app.management.listJobs().slice(0, cursor(url.searchParams.get("limit"), 50, 1, 100))); return; }
       if (method === "POST") {
-        queries(url, []); const input = record(await body(request), ["harnessId", "controlId", "action", "commandId", "expectedDefaultRevision", "expectedNativeFingerprint", "restartServices"], ["harnessId", "action", "commandId"]);
-        if (input.action !== "install" && input.action !== "upgrade") throw new HttpError(400, "INVALID_INPUT", "Expected install or upgrade action");
+        queries(url, []); const input = record(await body(request), ["harnessId", "controlId", "action", "commandId", "expectedDefaultRevision", "expectedNativeFingerprint", "restartServices", "installation", "expectedInstallationFingerprint", "stopServices"], ["harnessId", "action", "commandId"]);
+        if (input.action !== "install" && input.action !== "upgrade" && input.action !== "uninstall") throw new HttpError(400, "INVALID_INPUT", "Expected install, upgrade or uninstall action");
         await rescan();
+        if (input.action === "uninstall") {
+          json(response, 202, await app.management.submitUninstall({ harnessId: text(input.harnessId, "Harness identity", 96), action: "uninstall", commandId: command(input.commandId),
+            installation: input.installation, expectedInstallationFingerprint: input.expectedInstallationFingerprint, ...(input.stopServices === undefined ? {} : { stopServices: input.stopServices }),
+            ...(input.controlId === undefined ? {} : { controlId: input.controlId }), ...(input.expectedDefaultRevision === undefined ? {} : { expectedDefaultRevision: input.expectedDefaultRevision }),
+            ...(input.expectedNativeFingerprint === undefined ? {} : { expectedNativeFingerprint: input.expectedNativeFingerprint }), ...(input.restartServices === undefined ? {} : { restartServices: input.restartServices }) })); return;
+        }
         json(response, 202, app.management.submit({ harnessId: text(input.harnessId, "Harness identity", 96), action: input.action, commandId: command(input.commandId),
           ...(input.controlId === undefined ? {} : { controlId: text(input.controlId, "control identity", 96) }),
           ...(input.expectedDefaultRevision === undefined ? {} : { expectedDefaultRevision: integer(input.expectedDefaultRevision, 0, Number.MAX_SAFE_INTEGER, "default revision") }),

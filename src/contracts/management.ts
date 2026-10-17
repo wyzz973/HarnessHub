@@ -8,7 +8,8 @@ export interface InstallationJobView {
   readonly id: string;
   readonly harnessId: string;
   readonly controlId: string;
-  readonly action: "install" | "upgrade";
+  /** `uninstall` removes one official installation through its channel (ADR-044, management schema v4). */
+  readonly action: "install" | "upgrade" | "uninstall";
   readonly status: InstallationJobStatus;
   readonly phase: string;
   readonly cancelRequested: boolean;
@@ -38,6 +39,20 @@ export interface NativeJobFacts {
   readonly services?: readonly ServiceRestartFact[];
   /** A protected configuration changed after the restart although it was unchanged right before: the restarted service wrote it. */
   readonly configurationChangedByService?: boolean;
+  /** What an uninstall removed and stopped (ADR-044); present on uninstall jobs only, from management schema v4. */
+  readonly uninstall?: UninstallFacts;
+}
+/** One uninstall's facts: the installation by its label, the services the user agreed to stop and those stopped, and whether removal was verified. */
+export interface UninstallFacts {
+  /** Where it was, in the user's terms, such as "npm 全局（nvm v23.10.0）". */
+  readonly label: string;
+  readonly role: "product" | "adapter";
+  /** The service labels the user agreed to have stopped and unregistered; an uninstall finding another one stops before changing anything. */
+  readonly stopServices: readonly string[];
+  /** Services stopped and unregistered with the product's own commands. */
+  readonly stoppedServices: readonly string[];
+  /** Whether the program's files were confirmed gone. */
+  readonly removed: boolean;
 }
 export interface ServiceRestartFact {
   readonly label: string;
@@ -150,8 +165,8 @@ export interface UsedService {
   readonly program: string | null;
   readonly declared: RecipeService | null;
 }
-/** A running program by process id and base name only; arguments are never kept. */
-export interface ProgramEntry { readonly pid: number; readonly name: string }
+/** A running program by process id and base name only; arguments are never kept. `stop`: the product's command that stops it, when known. */
+export interface ProgramEntry { readonly pid: number; readonly name: string; readonly stop?: string }
 export interface ProgramUsage {
   /** Whether the host's service manager could be read (macOS launchd); elsewhere every program is a plain process. */
   readonly servicesKnown: boolean;
@@ -234,6 +249,101 @@ export interface RecipeService {
   readonly portFlag?: string;
 }
 export interface NativeInstallContext extends ManagementInstallContext { beginMutation(): void }
+/** The official channels an installation can be maintained through (ADR-044); pnpm and bun installations are listed only. */
+export type MaintainedChannel = "npm" | "brew-formula" | "brew-cask" | "script" | "uv";
+/**
+ * One official installation as discovery found it (ADR-044), handed to management after each scan. `ref` names it without
+ * its path; everything else stays on the Gateway. `active`: the one of its role this Gateway runs (first in its PATH order).
+ */
+export interface InstallationObservation {
+  readonly harnessId: string;
+  /** The catalog control this program is the entry of, or the Harness's first control for a product its controls start indirectly. */
+  readonly controlId: string;
+  readonly ref: string;
+  readonly role: "product" | "adapter";
+  readonly channel: MaintainedChannel | "pnpm" | "bun";
+  /** The npm package, Homebrew formula or cask, uv tool, or the script layout's root. */
+  readonly name: string;
+  /** The directory the channel owns for this installation. */
+  readonly root: string;
+  /** The npm or Homebrew prefix; null for script and uv channels. */
+  readonly prefix: string | null;
+  /** The command as found, and the file it resolves to. */
+  readonly entry: string;
+  readonly resolvedPath: string;
+  readonly version: string | null;
+  readonly active: boolean;
+  /** Where it is in the user's terms, without its path. */
+  readonly label: string;
+}
+/** A frozen uninstall target: the observation with the file identities checked again right before anything changes. */
+export interface InstallationTarget extends InstallationObservation { readonly fingerprint: string }
+/** What removing an installation runs and deletes, read without changing anything (ADR-044). Paths are absolute here. */
+export interface RemovalPreview {
+  readonly commands: readonly string[];
+  readonly removes: readonly string[];
+  readonly skipped: readonly { readonly path: string; readonly reason: string }[];
+  readonly documented: boolean;
+}
+/** The host side of an uninstall (ADR-044); replaced in tests that must not touch the user's programs or services. */
+export interface InstallationRemovalPort {
+  /** File identities of the installation, for its fingerprint; changes when it is updated, replaced or removed. */
+  identity(target: InstallationObservation): Promise<string>;
+  /** What removing it runs and deletes. Refuses a script layout that resolves outside its whitelist. */
+  preview(target: InstallationObservation, context: ManagementInstallContext): Promise<RemovalPreview>;
+  /** Programs running it now: launchd jobs, the product's resident programs, and other processes. Read once, never signalled. */
+  usage(target: InstallationObservation, context: ManagementInstallContext): Promise<{ readonly servicesKnown: boolean; readonly services: readonly { readonly label: string; readonly pid: number }[];
+    readonly resident: readonly ProgramEntry[]; readonly processes: readonly ProgramEntry[] }>;
+  /** Whether any file of the installation is still there: its command resolving into it, its program or its directory. */
+  remains(target: InstallationObservation): Promise<boolean>;
+  /** Uncommitted changes in a git checkout the installer made, read without locking it; null when it is not one. */
+  localChanges(target: InstallationObservation, context: ManagementInstallContext): Promise<number | null>;
+  /** Runs the product's own commands that stop and unregister one service; resolves once the service manager no longer knows it. */
+  stopService(target: InstallationObservation, service: { readonly label: string; readonly stop: readonly (readonly string[])[] }, context: ManagementInstallContext): Promise<void>;
+  /** Removes the program through its channel and verifies that its files are gone; calls beginMutation before changing anything. */
+  remove(target: InstallationObservation, context: NativeInstallContext): Promise<void>;
+  /** Digests of the protected configuration, compared around the uninstall; contents never leave this call. */
+  configuration(target: InstallationObservation): Promise<string>;
+}
+/** What uninstalling one installation would remove, stop and leave, read once for the user's confirmation (ADR-044). */
+export interface UninstallCheck {
+  readonly harnessId: string;
+  readonly ref: string;
+  readonly checkedAt: string;
+  /** The installation this check describes; an uninstall submitted for another one is refused. */
+  readonly fingerprint: string;
+  readonly channel: MaintainedChannel;
+  readonly label: string;
+  readonly role: "product" | "adapter";
+  readonly version: string | null;
+  readonly active: boolean;
+  /** The commands HarnessHub runs, as text; paths under the home directory are written with ~. */
+  readonly commands: readonly string[];
+  /** The files and directories removed, with ~; for a package manager, the package directory it removes. */
+  readonly removes: readonly string[];
+  /** Paths the installer's layout names that are not what it writes (a launcher the user replaced): kept, with why. */
+  readonly skipped: readonly { readonly path: string; readonly reason: string }[];
+  /** Whether the product's page gives this removal; false when it follows the installer's layout. */
+  readonly documented: boolean;
+  /** The product's data kept, with ~: configuration, sign-in and sessions. */
+  readonly kept: readonly string[];
+  /** Declared services running from it: stopped and unregistered with the product's own commands first. */
+  readonly services: readonly { readonly label: string; readonly name: string; readonly pid: number; readonly commands: readonly string[]; readonly interrupts: string }[];
+  /** Running services no product declares: they block, since HarnessHub cannot stop them the product's way. */
+  readonly undeclaredServices: readonly { readonly label: string; readonly pid: number }[];
+  /** The product's resident programs running outside a service manager: they block until stopped. */
+  readonly resident: readonly ProgramEntry[];
+  /** Other programs running it, such as terminal sessions: not stopped; they may fail once it is removed. */
+  readonly processes: readonly ProgramEntry[];
+  /** HarnessHub conversations using it (only for the installation this Gateway runs): busy ones block, idle kept processes close first. */
+  readonly conversations: readonly { readonly sessionId: string; readonly busy: boolean }[];
+  /** Other HarnessHub processes using this Harness; they block. */
+  readonly otherUsers: readonly { readonly pid: number }[];
+  /** Uncommitted changes in a checkout the installer made (Hermes); null when it is not one. */
+  readonly localChanges: number | null;
+  /** Which installation of its role this Gateway uses afterwards: another one, none (the Harness shows as not installed), or the same as before. */
+  readonly after: { readonly kind: "next"; readonly label: string; readonly version: string | null } | { readonly kind: "none" } | { readonly kind: "unchanged" };
+}
 export interface ResolvedManagedControl {
   readonly installationId: string;
   readonly revision: number;
@@ -243,7 +353,13 @@ export interface ResolvedManagedControl {
 export interface ManagementJobInput {
   readonly harnessId: string;
   readonly controlId?: string;
-  readonly action: "install" | "upgrade";
+  readonly action: "install" | "upgrade" | "uninstall";
+  /** The installation an uninstall removes, by the reference the Harness list gives it. */
+  readonly installation?: string;
+  /** The fingerprint of the uninstall check the user confirmed. */
+  readonly expectedInstallationFingerprint?: string;
+  /** The service labels the user agreed to have stopped and unregistered by an uninstall. */
+  readonly stopServices?: readonly string[];
   readonly commandId: string;
   readonly expectedDefaultRevision?: number;
   readonly expectedNativeFingerprint?: string;

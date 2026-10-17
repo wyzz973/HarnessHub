@@ -851,7 +851,7 @@
     {
       "id": "official-install-channels",
       "status": "accepted",
-      "scope": "只面向 macOS；按各产品官网写明的安装渠道探测 Harness，只有官方渠道里的程序算已安装，同一产品的多份安装全部列出并标出当前使用的一份，非官网安装只作不带路径的说明；正式入口默认只认官网，--allow-unofficial 只用于开发和测试",
+      "scope": "只面向 macOS；按各产品官网写明的安装渠道探测 Harness，只有官方渠道里的程序算已安装，同一产品的多份安装全部列出并标出当前使用的一份，非官网安装只作不带路径的说明；正式入口默认只认官网，--allow-unofficial 只用于开发和测试；每份官网安装可按其渠道卸载（只删程序，保留数据），产品服务按产品命令先停止并注销",
       "task_ids": [
         "G003",
         "G011",
@@ -883,7 +883,17 @@
         "src/contracts/web.ts",
         "web/src/api.ts",
         "web/src/components/HarnessesPage.tsx",
-        "web/src/App.tsx"
+        "web/src/App.tsx",
+        "src/contracts/management.ts",
+        "src/contexts/management/domain/input.ts",
+        "src/contexts/management/domain/state.ts",
+        "src/infrastructure/management/uninstall.ts",
+        "src/infrastructure/management/service.ts",
+        "src/infrastructure/management/program-usage.ts",
+        "src/infrastructure/management/native.ts",
+        "src/infrastructure/management/storage.ts",
+        "src/web/shown-paths.ts",
+        "web/src/components/UninstallDialog.tsx"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/official-channels-2026-10-17.md"

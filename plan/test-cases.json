@@ -8699,6 +8699,135 @@
       "expected": "详情按顺序列出渠道、接入口、当前使用与版本，pnpm 安装注明不维护；多份产品安装时说明当前使用指 HarnessHub 环境的 PATH；非官网说明按是否已有官网安装、是否在 PATH 上措辞；未安装时给出官网安装命令；无页面错误",
       "status": "planned",
       "evidence": null
+    },
+    {
+      "id": "G011-UN1",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/uninstall.test.ts",
+      "scenario": "脚本渠道的卸载按安装脚本写入的白名单删除",
+      "expected": "Claude Code、Codex、Cursor、OpenCode、Hermes 各删安装脚本写入的链接、启动器、文件和目录；指向别处的链接和用户自己的启动脚本保留并说明；目录是链接或上级目录经链接指向别处时拒绝；计划读出后安装变了就不删；用户数据不动；白名单都是家目录下的普通相对路径，且不含产品数据目录",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UN2",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/uninstall.test.ts",
+      "scenario": "管理库 v4 保存卸载任务与冻结目标，降级脚本回到 v3",
+      "expected": "v4 读取卸载任务和它的事实；未核实删除的完成、带安装版本的卸载、非卸载任务带卸载事实都被拒绝；降级脚本删除卸载任务、日志和目标表，保留其他任务，本构建能再打开",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UN3",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/uninstall.test.ts",
+      "scenario": "卸载的检查、同意与阻止",
+      "expected": "检查列出产品服务及其停止命令（路径以 ~ 书写）、保留数据、卸载后改用哪一份；没同意停止的服务不卸载；确认后安装变了拒绝；正在回复的对话阻止；先停服务后删程序，空闲进程先关闭；常驻程序和未声明的服务阻止且不动任何东西；开始删除后失败为结果未知，核实只记录现状不重跑；pnpm 安装不提供卸载",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UN4",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/uninstall.test.ts",
+      "scenario": "经正式 Gateway 入口按渠道真实卸载",
+      "expected": "临时 npm 前缀里由 npm 自己安装的包用 npm 卸载，临时家目录里的脚本安装按白名单删除；确认与日志不含家目录绝对路径和环境变量值；用户数据不变；同一命令重复提交返回同一任务，已卸载的安装再提交返回 404",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UN5",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "planned_file": "tests/integration/uninstall.test.ts",
+      "scenario": "隐私检查找出确认内容中家目录的绝对路径",
+      "expected": "以 ~ 书写的路径和系统路径通过；任何字符串或对象键中出现的家目录绝对路径（单独、在命令里、在赋值里）都被找出；其他用户的同前缀目录不算",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UN6",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "planned_file": "tests/unit/management-state.test.ts",
+      "scenario": "卸载请求的字段",
+      "expected": "卸载必须带安装引用和确认的指纹，服务列表排序且不重复；安装引用必须是 64 位十六进制而不是路径；卸载不接受升级的字段，其他动作不接受卸载的字段",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G054-UN1",
+      "task": "G054",
+      "requirements": [
+        "R01",
+        "R22"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "e2e",
+      "planned_file": "tests/browser/web.browser.ts",
+      "scenario": "卸载确认框",
+      "expected": "常驻程序在运行时说明并禁止确认；否则列出先停止的服务及命令和影响、关闭的空闲进程、删除的命令和文件、保留的数据、仍在运行的其他程序和卸载后的状态；提交的内容正好是确认框显示的同意；任务显示为等待卸载；无页面错误",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UN7",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "planned_file": "tests/unit/program-usage.test.ts",
+      "scenario": "按名字启动的原生程序靠它打开的可执行文件找到",
+      "expected": "命令行里没有路径的进程，凭 lsof 报告它打开了这份安装的程序文件而列入“仍在运行”；本进程及其后代不列；不存在的程序文件不去查询",
+      "status": "planned",
+      "evidence": null
     }
   ]
 }

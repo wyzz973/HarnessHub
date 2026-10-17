@@ -1,5 +1,5 @@
-import { ManagementError, type HarnessManagementView, type InstallationJobStatus, type InstallationJobView, type InstallationLog, type ResolvedManagedControl, type NativeInstallPlan, type ServiceRestartFact } from "../../../contracts/management.js";
-import { installationJobId, managementSlug, serviceLabel } from "./input.js";
+import { ManagementError, type HarnessManagementView, type InstallationJobStatus, type InstallationJobView, type InstallationLog, type InstallationTarget, type ResolvedManagedControl, type NativeInstallPlan, type ServiceRestartFact, type UninstallFacts } from "../../../contracts/management.js";
+import { installationJobId, installationRef, managementSlug, serviceLabel } from "./input.js";
 import { isAbsolute } from "node:path";
 
 export interface InstallationRecord { readonly id: string; readonly harnessId: string; readonly controlId: string; readonly version: string;
@@ -36,15 +36,24 @@ function serviceFact(value: unknown): ServiceRestartFact {
     throw new ManagementError("INVALID_DATA", "service restart facts are invalid");
   return { label: row.label, outcome: row.outcome, pid: row.pid === null ? null : managementInteger(row.pid, 1), ready: row.ready };
 }
+function labels(value: unknown): readonly string[] {
+  if (!Array.isArray(value) || value.length > 16 || value.some(label => !serviceLabel(label))) throw new ManagementError("INVALID_DATA", "service labels are invalid");
+  return (value as readonly string[]).slice();
+}
+function uninstallFacts(value: unknown): UninstallFacts {
+  const row = managementObject(value, ["label", "role", "stopServices", "stoppedServices", "removed"]);
+  if (row.role !== "product" && row.role !== "adapter" || typeof row.removed !== "boolean") throw new ManagementError("INVALID_DATA", "uninstall facts are invalid");
+  return { label: managementString(row.label, 256), role: row.role, stopServices: labels(row.stopServices), stoppedServices: labels(row.stoppedServices), removed: row.removed };
+}
 export function parseManagementJob(value: unknown): InstallationJobView {
   const row = managementObject(value, ["id", "harnessId", "controlId", "action", "status", "phase", "cancelRequested", "createdAt", "updatedAt", "resolvedVersion", "installationId", "error", "logCursor", "native"]);
   const status = jobStatus(row.status), phase = managementString(row.phase, 32);
-  if (row.action !== "install" && row.action !== "upgrade" || typeof row.cancelRequested !== "boolean" || (phase !== status && phase !== "interrupted"))
+  if (row.action !== "install" && row.action !== "upgrade" && row.action !== "uninstall" || typeof row.cancelRequested !== "boolean" || (phase !== status && phase !== "interrupted"))
     throw new ManagementError("INVALID_DATA", "management job action/phase/cancellation is inconsistent");
   const resolvedVersion = row.resolvedVersion === null ? null : managementString(row.resolvedVersion, 128), installationId = row.installationId === null ? null : managementInstallationId(row.installationId), error = errorValue(row.error);
   let native: InstallationJobView["native"];
   if (row.native !== undefined) {
-    const value = managementObject(row.native, ["channel", "location", "beforeVersion", "actualVersion", "dispatched", "configurationPreserved", "restartServices", "closedConversations", "clearedRecords", "services", "configurationChangedByService"]);
+    const value = managementObject(row.native, ["channel", "location", "beforeVersion", "actualVersion", "dispatched", "configurationPreserved", "restartServices", "closedConversations", "clearedRecords", "services", "configurationChangedByService", "uninstall"]);
     if (typeof value.dispatched !== "boolean" || value.configurationPreserved !== null && typeof value.configurationPreserved !== "boolean") throw new ManagementError("INVALID_DATA", "native maintenance facts are invalid");
     if (value.restartServices !== undefined && (!Array.isArray(value.restartServices) || value.restartServices.length > 16 || value.restartServices.some(label => !serviceLabel(label)))
       || value.closedConversations !== undefined && managementInteger(value.closedConversations) > 1024 || value.clearedRecords !== undefined && managementInteger(value.clearedRecords) > 1024
@@ -55,11 +64,22 @@ export function parseManagementJob(value: unknown): InstallationJobView {
       ...(value.closedConversations === undefined ? {} : { closedConversations: managementInteger(value.closedConversations) }),
       ...(value.clearedRecords === undefined ? {} : { clearedRecords: managementInteger(value.clearedRecords) }),
       ...(value.services === undefined ? {} : { services: (value.services as readonly unknown[]).map(serviceFact) }),
-      ...(value.configurationChangedByService === undefined ? {} : { configurationChangedByService: value.configurationChangedByService as boolean }) };
+      ...(value.configurationChangedByService === undefined ? {} : { configurationChangedByService: value.configurationChangedByService as boolean }),
+      ...(value.uninstall === undefined ? {} : { uninstall: uninstallFacts(value.uninstall) }) };
   }
+  // An uninstall carries its facts and nothing an install publishes; it completes once removal is verified, without a version afterwards.
+  if (row.action === "uninstall") {
+    if (native?.uninstall === undefined || installationId !== null || native.actualVersion !== null || native.restartServices !== undefined || native.services !== undefined
+        || status === "completed" && (error !== null || !native.dispatched || native.configurationPreserved !== true || !native.uninstall.removed)
+        || status === "queued" && (native.dispatched || error !== null || native.uninstall.stoppedServices.length > 0 || native.uninstall.removed))
+      throw new ManagementError("INVALID_DATA", "uninstall job facts are inconsistent");
+    return { id: installationJobId(row.id), harnessId: managementSlug(row.harnessId), controlId: managementSlug(row.controlId), action: "uninstall",
+      status, phase, cancelRequested: row.cancelRequested, createdAt: date(row.createdAt), updatedAt: date(row.updatedAt), resolvedVersion, installationId, error, logCursor: managementInteger(row.logCursor), native };
+  }
+  if (native?.uninstall !== undefined) throw new ManagementError("INVALID_DATA", "only an uninstall carries uninstall facts");
   if (status === "queued" && (resolvedVersion !== null || installationId !== null || error !== null || native?.dispatched) || status === "completed" && (resolvedVersion === null || error !== null || native === undefined && installationId === null || native !== undefined && (installationId !== null || !native.dispatched || native.actualVersion !== resolvedVersion || native.configurationPreserved !== true)))
     throw new ManagementError("INVALID_DATA", "management terminal/admission fields are inconsistent");
-  return { id: installationJobId(row.id), harnessId: managementSlug(row.harnessId), controlId: managementSlug(row.controlId), action: row.action,
+  return { id: installationJobId(row.id), harnessId: managementSlug(row.harnessId), controlId: managementSlug(row.controlId), action: row.action as "install" | "upgrade",
     status, phase, cancelRequested: row.cancelRequested, createdAt: date(row.createdAt), updatedAt: date(row.updatedAt), resolvedVersion, installationId, error, logCursor: managementInteger(row.logCursor), ...(native === undefined ? {} : { native }) };
 }
 export function parseNativePlan(value: unknown): NativeInstallPlan {
@@ -99,4 +119,15 @@ export function parseManagementUpdate(value: unknown): Pick<HarnessManagementVie
   for (const status of ["unchecked", "checking", "available", "current", "failed", "unsupported"] as const) if (row.updateStatus === status) updateStatus = status;
   if (updateStatus === null) throw new ManagementError("INVALID_DATA", "invalid management update status");
   return { latestVersion: row.latestVersion === null ? null : managementString(row.latestVersion, 128), updateStatus, checkedAt: row.checkedAt === null ? null : date(row.checkedAt), error: errorValue(row.error) };
+}
+/** A frozen uninstall target as stored with its job (management schema v4); paths are absolute and the reference is the list's. */
+export function parseInstallationTarget(value: unknown): InstallationTarget {
+  const row = managementObject(value, ["harnessId", "controlId", "ref", "role", "channel", "name", "root", "prefix", "entry", "resolvedPath", "version", "active", "label", "fingerprint"]);
+  if (!installationRef(row.ref) || row.role !== "product" && row.role !== "adapter" || typeof row.active !== "boolean" || typeof row.fingerprint !== "string" || !/^[a-f0-9]{64}$/u.test(row.fingerprint))
+    throw new ManagementError("INVALID_DATA", "installation target identity is invalid");
+  const channel = row.channel;
+  if (channel !== "npm" && channel !== "brew-formula" && channel !== "brew-cask" && channel !== "script" && channel !== "uv") throw new ManagementError("INVALID_DATA", "installation target channel is not maintained");
+  const path = (field: unknown) => { const text = managementString(field); if (!isAbsolute(text)) throw new ManagementError("INVALID_DATA", "installation target paths must be absolute"); return text; };
+  return { harnessId: managementSlug(row.harnessId), controlId: managementSlug(row.controlId), ref: row.ref, role: row.role, channel, name: managementString(row.name, 256), root: path(row.root), prefix: row.prefix === null ? null : path(row.prefix),
+    entry: path(row.entry), resolvedPath: path(row.resolvedPath), version: row.version === null ? null : managementString(row.version, 128), active: row.active, label: managementString(row.label, 256), fingerprint: row.fingerprint };
 }

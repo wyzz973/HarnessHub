@@ -21,6 +21,11 @@ export interface ProgramHost {
   kickstart(target: string, context: ManagementInstallContext): Promise<void>;
   /** `lsof -nP -a -p <pid> -iTCP -sTCP:LISTEN -Fn`, within five seconds; empty when it listens on nothing. */
   listening(pid: number, context: ManagementInstallContext): Promise<string>;
+  /**
+   * `lsof -nP -Fp -- <files>`, within five seconds: the processes that have one of these existing files open, including a
+   * program mapped as their executable; empty when none has. A native program started by name shows no path on its command line.
+   */
+  openers(files: readonly string[], context: ManagementInstallContext): Promise<string>;
   sleep(milliseconds: number, signal: AbortSignal): Promise<void>;
   now(): number;
 }
@@ -64,6 +69,12 @@ export function parseServiceState(text: string): { readonly state: string | null
   const field = (name: string): string | null => new RegExp("^\\t" + name + " = ([^\\n]*)$", "mu").exec(text)?.[1]?.trim() ?? null;
   const pid = field("pid"), runs = field("runs");
   return { state: field("state"), pid: pid !== null && /^\d+$/u.test(pid) ? Number(pid) : null, runs: runs !== null && /^\d+$/u.test(runs) ? Number(runs) : null };
+}
+/** The process ids in `lsof -Fp` output. */
+export function parseOpeners(text: string): readonly number[] {
+  const pids: number[] = [];
+  for (const line of text.split(/\r?\n/u)) { const match = /^p(\d+)$/u.exec(line); if (match) pids.push(Number(match[1])); }
+  return pids;
 }
 /** The TCP ports in `lsof -Fn` listening output. */
 export function parseListening(text: string): readonly number[] {
@@ -125,7 +136,24 @@ async function jobRunsInstallation(job: ReturnType<typeof parseJob>, roots: read
  * every program is a plain process. Programs this process started are HarnessHub's own and left out.
  */
 export async function inspectProgramUsage(plan: NativeInstallPlan, recipe: ManagementRecipe, host: ProgramHost, context: ManagementInstallContext): Promise<ProgramUsage> {
-  const roots = installationRoots(plan), table = parseProcessTable(await host.processes(context));
+  const names = new Set(recipe.processNames ?? []);
+  const usage = await inspectRootsUsage(installationRoots(plan), plan.actualEntry ? [plan.actualEntry] : [], command => names.has(basename(command.split(/\s+/u, 1)[0]!)) ? { stop: null } : null, host, context);
+  return { ...usage, services: usage.services.map(service => {
+    const declared = recipe.services?.find(item => item.label === service.label) ?? null;
+    return { label: service.label, pid: service.pid, target: service.target, port: declared?.portFlag === undefined ? null : portArgument(service.args, declared.portFlag), program: service.program, declared };
+  }) };
+}
+/** A running launchd job of the installation, before a recipe or product says what it is. */
+export interface RootService { readonly label: string; readonly pid: number; readonly target: string; readonly program: string | null; readonly args: readonly string[] }
+/**
+ * The programs running from any of `roots`, read once and never signalled (ADR-043, ADR-044): the user's launchd jobs whose
+ * program or first arguments lie there, resident programs `isResident` recognizes by their command line, and every other
+ * process naming one of the roots or having one of `programs` open (a native program started by name names no path).
+ * Programs this process started are HarnessHub's own and left out.
+ */
+export async function inspectRootsUsage(roots: readonly string[], programs: readonly string[], isResident: (command: string) => { readonly stop: string | null } | null, host: ProgramHost, context: ManagementInstallContext): Promise<{
+  readonly servicesKnown: boolean; readonly services: readonly RootService[]; readonly resident: readonly ProgramEntry[]; readonly processes: readonly ProgramEntry[] }> {
+  const table = parseProcessTable(await host.processes(context));
   if (table === null) throw new ManagementError("PROCESS_INSPECTION_FAILED", "the process table could not be read");
   const children = new Map<number, number[]>();
   for (const row of table) children.set(row.ppid, [...(children.get(row.ppid) ?? []), row.pid]);
@@ -136,7 +164,7 @@ export async function inspectProgramUsage(plan: NativeInstallPlan, recipe: Manag
     for (const pid of level) for (const child of children.get(pid) ?? []) if (!own.has(child)) { own.add(child); next.push(child); }
     level = next;
   }
-  const services: UsedService[] = [];
+  const services: RootService[] = [];
   if (host.platform === "darwin") {
     const jobs = parseJobs(await host.jobs(context)).filter(job => !job.label.startsWith("com.apple.")).slice(0, MAX_JOBS);
     for (const job of jobs) {
@@ -146,18 +174,27 @@ export async function inspectProgramUsage(plan: NativeInstallPlan, recipe: Manag
       let target: string | null = null;
       for (const domain of ["gui/" + host.uid, "user/" + host.uid]) if (await host.print(domain + "/" + job.label, context) !== null) { target = domain + "/" + job.label; break; }
       if (target === null) continue;
-      const declared = recipe.services?.find(service => service.label === job.label) ?? null;
-      services.push({ label: job.label, pid: job.pid, target, port: declared?.portFlag === undefined ? null : portArgument(details.args, declared.portFlag),
-        program: details.program ?? details.args[0] ?? null, declared });
+      services.push({ label: job.label, pid: job.pid, target, program: details.program ?? details.args[0] ?? null, args: details.args });
     }
   }
-  const servicePids = new Set(services.map(service => service.pid)), names = new Set(recipe.processNames ?? []);
+  const servicePids = new Set(services.map(service => service.pid));
   const resident: ProgramEntry[] = [], processes: ProgramEntry[] = [];
   for (const row of table) {
     if (own.has(row.pid) || servicePids.has(row.pid)) continue;
     const name = programName(row.command);
-    if (names.has(basename(row.command.split(/\s+/u, 1)[0]!))) { resident.push({ pid: row.pid, name }); continue; }
+    const resident_ = isResident(row.command);
+    if (resident_ !== null) { resident.push({ pid: row.pid, name, ...(resident_.stop === null ? {} : { stop: resident_.stop }) }); continue; }
     if (roots.some(root => mentions(row.command, root))) processes.push({ pid: row.pid, name });
+  }
+  const existing: string[] = [];
+  for (const path of programs) if (isAbsolute(path) && await resolved(path) !== null) existing.push(path);
+  if (existing.length) {
+    const listed = new Set([...resident, ...processes].map(entry => entry.pid)), rows = new Map(table.map(row => [row.pid, row]));
+    for (const pid of parseOpeners(await host.openers(existing, context))) {
+      const row = rows.get(pid);
+      if (row === undefined || own.has(pid) || servicePids.has(pid) || listed.has(pid)) continue;
+      listed.add(pid); processes.push({ pid, name: programName(row.command) });
+    }
   }
   return { servicesKnown: host.platform === "darwin", services, resident: resident.slice(0, 64), processes: processes.slice(0, 64) };
 }
@@ -212,6 +249,12 @@ export function systemProgramHost(): ProgramHost {
     listening: async (pid, context) => {
       const signal = AbortSignal.any([context.signal, AbortSignal.timeout(5000)]);
       try { return await run("/usr/sbin/lsof", ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN", "-Fn"], context, signal); }
+      catch (error) { if (error instanceof ManagementError && (error.code === "PROCESS_FAILED" || error.code === "CANCELLED" && !context.signal.aborted)) return ""; throw error; }
+    },
+    // lsof exits 1 when no process has the files open; a timeout counts as none found and the confirmation says less.
+    openers: async (files, context) => {
+      const signal = AbortSignal.any([context.signal, AbortSignal.timeout(5000)]);
+      try { return await run("/usr/sbin/lsof", ["-nP", "-Fp", "--", ...files], context, signal); }
       catch (error) { if (error instanceof ManagementError && (error.code === "PROCESS_FAILED" || error.code === "CANCELLED" && !context.signal.aborted)) return ""; throw error; }
     },
     sleep: (milliseconds, signal) => new Promise<void>((resolve, reject) => {

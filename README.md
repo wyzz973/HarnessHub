@@ -46,6 +46,11 @@ Web界面按用户确认的设计稿重写（[ADR-042](docs/decisions/0042-front
 - 源码目录、`npm link`、自行编译的程序不算；“我的 Agent”显示未安装、给出官网安装命令，并用一句不带路径的话说明发现了非官网安装。pnpm、bun 全局装的官方包列出但暂不维护。
 - 同一产品装了多份时全部列出，按 HarnessHub 服务进程的 PATH 顺序标出“当前使用”的一份；终端的 PATH 可能不同。
 - 正式入口默认只认官网，不读发现清单；`--allow-unofficial` 只用于开发和测试，此时“我的 Agent”顶部显示开发模式。
+- 每份可维护的安装都可以单独卸载，只删程序，配置、登录和会话数据保留（[验收记录](docs/verification/uninstall-2026-10-17.md)）：
+  - 确认框先列出会运行的命令、删除的文件、保留的数据，以及先按产品命令停止并注销的后台服务（例如 OpenClaw、Hermes 的网关）。
+  - npm 用该前缀自己的 npm，Homebrew 用它自己的沙箱，官方脚本按安装脚本写入的白名单删除。
+  - 正在回复的对话、产品的常驻程序、产品没有声明的后台服务会阻止卸载。
+  - 管理库因此升到 v4，退回旧构建前先用 `tools/management-v4-to-v3.sql` 降级（会删除卸载任务的记录），再用 `tools/management-v3-to-v2.sql`。
 
 原版OpenClaw2026.3.23-2、Codex0.162.1、OpenCode1.18.35、Pi0.85.1已通过本机真实模型回复；OpenClaw/Pi使用原生DeepSeek。Hermes Agent 0.12.0（官方安装方式）与 DeepSeek Harness（`dsh`，本机为源码构建 0.2.1-alpha.1，经发现清单的自定义入口接入）经各自内置 ACP 接入，已通过真实回复、跨 Hub 重启的原生恢复、思考与工具活动验收，见[ADR-031](docs/decisions/0031-hermes-and-deepseek-harness.md)与[验收记录](docs/verification/hermes-dsh-onboarding-2026-10-11.md)。Pi 与 DeepSeek Harness 的上述证据来自非官网安装，按 ADR-044 不再作为验收对象。Claude接入口绑定原Claude Code2.1.296及既有登录，账号周额度已用完。Cursor原安装已升级至2026.10.01-e373342，沿用本机登录、44项原生模型目录并通过独立短提示回复；原公共对话实测仍返回账号套餐升级提示，不能算该对话回复通过。Gemini0.62.0的个人登录被服务端停用，直连DeepSeek实际返回404（Google GenAI协议与DeepSeek接口不匹配），不能算回复通过。所有接入口版本与原程序版本分开解释，不把ACP适配器版本当原CLI版本。
 

@@ -1567,10 +1567,10 @@ test("G054-OC1 a Harness lists each official installation with the one in use, a
   // The fixture's Codex shown with three npm installations and an adapter; its DeepSeek Harness only as a source checkout on PATH.
   const shaped = (harness: { id: string; installed: boolean; installations: unknown[]; unofficial: unknown; install: unknown; management: Record<string, unknown>; controls: { available: boolean }[] }) => harness.id === "codex" ? { ...harness,
     installations: [
-      { channel: "npm", label: "npm 全局（nvm v26.11.1）", command: "codex", version: "0.162.1", role: "product", active: true, maintained: true },
-      { channel: "npm", label: "npm 全局（Homebrew 的 Node.js）", command: "codex", version: "0.160.0", role: "product", active: false, maintained: true },
-      { channel: "pnpm", label: "pnpm 全局", command: "codex", version: "0.150.0", role: "product", active: false, maintained: false },
-      { channel: "npm", label: "npm 全局（Homebrew 的 Node.js）", command: "codex-acp", version: "0.9.0", role: "adapter", active: true, maintained: true }],
+      { ref: "1".repeat(64), channel: "npm", label: "npm 全局（nvm v26.11.1）", command: "codex", version: "0.162.1", role: "product", active: true, maintained: true, canUninstall: true },
+      { ref: "2".repeat(64), channel: "npm", label: "npm 全局（Homebrew 的 Node.js）", command: "codex", version: "0.160.0", role: "product", active: false, maintained: true, canUninstall: true },
+      { ref: "3".repeat(64), channel: "pnpm", label: "pnpm 全局", command: "codex", version: "0.150.0", role: "product", active: false, maintained: false, canUninstall: false },
+      { ref: "4".repeat(64), channel: "npm", label: "npm 全局（Homebrew 的 Node.js）", command: "codex-acp", version: "0.9.0", role: "adapter", active: true, maintained: true, canUninstall: true }],
     unofficial: { command: "codex", onPath: true, pathDefault: true } }
     : harness.id === "dsh" ? { ...harness, installed: false, installations: [], unofficial: { command: "dsh", onPath: true, pathDefault: true }, controls: harness.controls.map(control => ({ ...control, available: false })),
       management: { ...harness.management, source: "missing" } } : harness;
@@ -1583,7 +1583,9 @@ test("G054-OC1 a Harness lists each official installation with the one in use, a
   await page.getByRole("button", { name: "查看 Codex 详情", exact: true }).click();
   const codex = page.getByRole("dialog", { name: "Codex 详情" });
   await expect(codex.locator(".harness-installations li")).toHaveText([
-    "npm 全局（nvm v26.11.1）当前使用v0.162.1", "npm 全局（Homebrew 的 Node.js）v0.160.0", "pnpm 全局v0.150.0 · 当前版本不维护这种安装方式", "npm 全局（Homebrew 的 Node.js）接入口 codex-acp当前使用v0.9.0"]);
+    "npm 全局（nvm v26.11.1）当前使用卸载v0.162.1", "npm 全局（Homebrew 的 Node.js）卸载v0.160.0", "pnpm 全局v0.150.0 · 当前版本不维护这种安装方式", "npm 全局（Homebrew 的 Node.js）接入口 codex-acp当前使用卸载v0.9.0"]);
+  // Each maintained installation can be uninstalled on its own; a pnpm installation is listed only.
+  await expect(codex.getByRole("button", { name: /^卸载/u })).toHaveCount(3);
   await expect(codex).toContainText("“当前使用”按 HarnessHub 服务进程的 PATH 顺序确定；终端常被 nvm 等改动 PATH，用的可能是另一份。");
   await expect(codex.locator(".harness-installations li").first().locator("[title]")).toHaveAttribute("title", "按 HarnessHub 服务进程的 PATH 顺序；终端里可能不同");
   // A development Gateway says it accepts unofficial entries; this fixture is one.
@@ -1600,5 +1602,68 @@ test("G054-OC1 a Harness lists each official installation with the one in use, a
   // The official page's own note travels with the product, installed or not.
   await page.getByRole("button", { name: "查看 Gemini CLI 详情", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Gemini CLI 详情" }).locator(".harness-install-note")).toHaveText("官方仓库写明：自 2026-06-18 起，免费用户与 Google One 用户改用 Antigravity CLI。");
+  assert.deepEqual(errors, []);
+});
+
+test("G054-UN1 uninstalling one installation first says what it stops, removes and keeps, and sends exactly that consent; a resident program blocks it", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  const ref = "e".repeat(64), fingerprint = "f".repeat(64), label = "npm 全局（Homebrew 的 Node.js）";
+  const shaped = (harness: { id: string; installations: unknown[]; unofficial: unknown }) => harness.id !== "openclaw" ? harness : { ...harness, installed: true, unofficial: null,
+    installations: [{ ref, channel: "npm", label, command: "openclaw", version: "2026.3.23-2", role: "product", active: true, maintained: true, canUninstall: true }] };
+  for (const path of ["**/api/v1/state", "**/api/v1/harnesses", "**/api/v1/harnesses/rescan"]) await page.route(path, async route => {
+    const response = await route.fetch(), body = await response.json();
+    await route.fulfill({ response, json: Array.isArray(body) ? body.map(shaped) : { ...body, harnesses: body.harnesses.map(shaped) } });
+  });
+  let blocked = true, submitted: Record<string, unknown> | null = null;
+  const interrupts = "Gateway 连接的消息渠道（例如微信、飞书）会断开，重新安装并运行 openclaw onboard --install-daemon 后才恢复。";
+  await page.route(`**/api/v1/harnesses/openclaw/installations/${ref}/uninstall`, route => route.fulfill({ json: { harnessId: "openclaw", ref, checkedAt: "2026-10-17T10:00:00.000Z", fingerprint,
+    channel: "npm", label, role: "product", version: "2026.3.23-2", active: true, commands: ["/opt/homebrew/bin/npm uninstall --global --prefix /opt/homebrew openclaw"],
+    removes: ["/opt/homebrew/lib/node_modules/openclaw", "/opt/homebrew/bin/openclaw"], skipped: [], documented: true, kept: ["~/.openclaw"],
+    services: [{ label: "ai.openclaw.gateway", name: "OpenClaw Gateway", pid: 4039, commands: ["/opt/homebrew/bin/openclaw gateway stop", "/opt/homebrew/bin/openclaw gateway uninstall"], interrupts }],
+    undeclaredServices: [], resident: blocked ? [{ pid: 6576, name: "openclaw-node", stop: "openclaw node stop" }] : [], processes: [{ pid: 8100, name: "openclaw" }],
+    conversations: [{ sessionId: "s-idle", title: "空闲的对话", busy: false }], otherUsers: [], localChanges: null, after: { kind: "none" } } }));
+  const job = { id: "management-77777777-7777-4777-8777-777777777777", harnessId: "openclaw", controlId: "openclaw-native", action: "uninstall", status: "queued", phase: "queued", cancelRequested: false,
+    createdAt: "2026-10-17T10:00:01.000Z", updatedAt: "2026-10-17T10:00:01.000Z", resolvedVersion: "2026.3.23-2", installationId: null, error: null, logCursor: 0,
+    native: { channel: "npm", location: "/opt/homebrew/bin/openclaw", beforeVersion: "2026.3.23-2", actualVersion: null, dispatched: false, configurationPreserved: null,
+      uninstall: { label, role: "product", stopServices: ["ai.openclaw.gateway"], stoppedServices: [], removed: false } } };
+  await page.route("**/api/v1/installation-jobs", async route => {
+    if (route.request().method() !== "POST") return route.fallback();
+    submitted = route.request().postDataJSON(); await route.fulfill({ status: 202, json: job });
+  });
+  // The queued task as the page then follows it; this fixture runs nothing.
+  await page.route(`**/api/v1/installation-jobs/${job.id}`, route => route.fulfill({ json: job }));
+  await page.route(`**/api/v1/installation-jobs/${job.id}/logs**`, route => route.fulfill({ json: { entries: [], nextSeq: 0, hasMore: false } }));
+  await page.goto(fixture.gateway.url);
+  await page.getByRole("button", { name: "我的 Agent", exact: true }).click();
+  await page.getByRole("button", { name: "查看 OpenClaw 详情", exact: true }).click();
+  const detail = page.getByRole("dialog", { name: "OpenClaw 详情" });
+  await detail.getByRole("button", { name: `卸载${label}里的 openclaw`, exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "卸载 OpenClaw" });
+  // A resident program the uninstall cannot stop the product's way: said before anything runs, and nothing can be confirmed.
+  await expect(dialog.getByText("现在不能卸载")).toBeVisible();
+  await expect(dialog.locator(".uninstall-resident")).toHaveText("openclaw-node（进程 6576）正在运行，先运行 openclaw node stop 停止它，再卸载。");
+  await expect(dialog.getByRole("button", { name: "停止服务并卸载" })).toBeDisabled();
+  await dialog.getByRole("button", { name: "取消", exact: true }).click(); await expect(dialog).toBeHidden();
+  await expect(detail).toBeVisible(); assert.equal(submitted, null, "nothing is sent while the uninstall is blocked");
+  // Otherwise it says what it stops first, what it removes, what stays and what is used afterwards.
+  blocked = false;
+  await detail.getByRole("button", { name: `卸载${label}里的 openclaw`, exact: true }).click();
+  await expect(dialog.locator(".uninstall-service")).toContainText("OpenClaw Gateway（ai.openclaw.gateway，进程 4039）按产品自己的命令停止并注销：");
+  for (const text of ["/opt/homebrew/bin/openclaw gateway stop", "/opt/homebrew/bin/openclaw gateway uninstall", interrupts, "服务注册会被移除；重新安装后需要再安装服务。",
+    "1 个对话保留的 OpenClaw 进程会先关闭。", "/opt/homebrew/bin/npm uninstall --global --prefix /opt/homebrew openclaw", "/opt/homebrew/lib/node_modules/openclaw",
+    "这些程序正在运行这份安装，不会被关闭；卸载后它们可能出错，建议先退出：openclaw（进程 8100）。"]) await expect(dialog).toContainText(text);
+  await expect(dialog.locator(".uninstall-kept")).toHaveText("配置、登录和会话数据保留：~/.openclaw。");
+  await expect(dialog.locator(".uninstall-after")).toHaveText("卸载后，OpenClaw 在 HarnessHub 里显示为未安装。");
+  await page.screenshot({ path: join(artifact, "uninstall-confirmation.png"), animations: "disabled" });
+  await dialog.getByRole("button", { name: "停止服务并卸载" }).click(); await expect(dialog).toBeHidden();
+  await expect.poll(() => submitted).not.toBeNull();
+  const { commandId, ...consent } = submitted!;
+  assert.match(String(commandId), /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u);
+  assert.deepEqual(consent, { harnessId: "openclaw", action: "uninstall", installation: ref, expectedInstallationFingerprint: fingerprint, stopServices: ["ai.openclaw.gateway"] }, "the consent is exactly what the confirmation showed");
+  await expect(page.getByRole("dialog", { name: "OpenClaw 详情" }).locator(".installation-state")).toContainText("等待卸载");
   assert.deepEqual(errors, []);
 });

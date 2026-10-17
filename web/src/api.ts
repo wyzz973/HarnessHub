@@ -1,7 +1,7 @@
 import { consumeSessionEventStream, SessionStreamError } from "./session-stream.js";
 import { readSseBlocks } from "./attention.js";
 import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
-import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, LoginShellView, MaintenanceView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, WebState } from "../../src/contracts/web.js";
+import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, LoginShellView, MaintenanceView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, UninstallCheckView, WebState } from "../../src/contracts/web.js";
 import type { HarnessManagementView, InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
 import type { AttentionItem, HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
 import type { NativeExtensions, NativeInputs, NativeOption, NativeModelCatalog } from "../../src/contracts/control.js";
@@ -74,8 +74,8 @@ function decodeHarness(value: unknown): HarnessView {
         entry: entry === null ? null : { source: choice(entry.source, ["path", "standard-directory", "custom-entry", "package-root", "managed"]) } }; }, 64),
     install: install === null ? null : { command: text(install.command), docs: text(install.docs), checkedAt: text(install.checkedAt), note: nullableText(install.note) },
     installations: list(row.installations, value => { const item = record(value);
-      return { channel: item.channel === null ? null : choice(item.channel, ["npm", "brew-formula", "brew-cask", "script", "uv", "pnpm", "bun"]), label: text(item.label), command: text(item.command),
-        version: nullableText(item.version), role: choice(item.role, ["product", "adapter"]), active: bool(item.active), maintained: bool(item.maintained) }; }, 64),
+      return { ref: text(item.ref), channel: item.channel === null ? null : choice(item.channel, ["npm", "brew-formula", "brew-cask", "script", "uv", "pnpm", "bun"]), label: text(item.label), command: text(item.command),
+        version: nullableText(item.version), role: choice(item.role, ["product", "adapter"]), active: bool(item.active), maintained: bool(item.maintained), canUninstall: bool(item.canUninstall) }; }, 64),
     unofficial: row.unofficial === null ? null : (() => { const item = record(row.unofficial); return { command: text(item.command), onPath: bool(item.onPath), pathDefault: bool(item.pathDefault) }; })() };
 }
 function decodeLoginShell(value: unknown): LoginShellView {
@@ -92,13 +92,30 @@ function decodeManagement(value: unknown): HarnessManagementView {
 }
 export function decodeInstallationJob(value: unknown): InstallationJobView {
   const row = record(value);
-  return { id: text(row.id), harnessId: text(row.harnessId), controlId: text(row.controlId), action: choice(row.action, ["install", "upgrade"]), status: choice(row.status, ["queued", "resolving", "installing", "verifying", "activating", "completed", "cancelled", "failed", "unknown"]), phase: text(row.phase), cancelRequested: bool(row.cancelRequested), createdAt: text(row.createdAt), updatedAt: text(row.updatedAt), resolvedVersion: nullableText(row.resolvedVersion), installationId: nullableText(row.installationId), error: publicError(row.error), logCursor: number(row.logCursor),
+  return { id: text(row.id), harnessId: text(row.harnessId), controlId: text(row.controlId), action: choice(row.action, ["install", "upgrade", "uninstall"]), status: choice(row.status, ["queued", "resolving", "installing", "verifying", "activating", "completed", "cancelled", "failed", "unknown"]), phase: text(row.phase), cancelRequested: bool(row.cancelRequested), createdAt: text(row.createdAt), updatedAt: text(row.updatedAt), resolvedVersion: nullableText(row.resolvedVersion), installationId: nullableText(row.installationId), error: publicError(row.error), logCursor: number(row.logCursor),
     ...(row.native === undefined ? {} : { native: (() => { const native = record(row.native); return { channel: text(native.channel), location: text(native.location), beforeVersion: nullableText(native.beforeVersion), actualVersion: nullableText(native.actualVersion), dispatched: bool(native.dispatched), configurationPreserved: native.configurationPreserved === null ? null : bool(native.configurationPreserved),
       ...(native.restartServices === undefined ? {} : { restartServices: list(native.restartServices, text, 16) }),
       ...(native.closedConversations === undefined ? {} : { closedConversations: number(native.closedConversations) }),
       ...(native.clearedRecords === undefined ? {} : { clearedRecords: number(native.clearedRecords) }),
       ...(native.services === undefined ? {} : { services: list(native.services, value => { const item = record(value); return { label: text(item.label), outcome: choice(item.outcome, ["restarted", "not_running", "not_recovered"]), pid: item.pid === null ? null : number(item.pid), ready: item.ready === null ? null : bool(item.ready) }; }, 16) }),
-      ...(native.configurationChangedByService === undefined ? {} : { configurationChangedByService: bool(native.configurationChangedByService) }) }; })() }) };
+      ...(native.configurationChangedByService === undefined ? {} : { configurationChangedByService: bool(native.configurationChangedByService) }),
+      ...(native.uninstall === undefined ? {} : { uninstall: (() => { const facts = record(native.uninstall); return { label: text(facts.label), role: choice(facts.role, ["product", "adapter"]),
+        stopServices: list(facts.stopServices, text, 16), stoppedServices: list(facts.stoppedServices, text, 16), removed: bool(facts.removed) }; })() }) }; })() }) };
+}
+/** What uninstalling one installation would remove, stop and leave (ADR-044). */
+export function decodeUninstallCheck(value: unknown): UninstallCheckView {
+  const row = record(value), entry = (item: unknown) => { const program = record(item); return { pid: number(program.pid), name: text(program.name), ...(program.stop === undefined ? {} : { stop: text(program.stop) }) }; };
+  const after = record(row.after), kind = choice(after.kind, ["next", "none", "unchanged"]);
+  return { harnessId: text(row.harnessId), ref: text(row.ref), checkedAt: text(row.checkedAt), fingerprint: text(row.fingerprint), channel: choice(row.channel, ["npm", "brew-formula", "brew-cask", "script", "uv"]),
+    label: text(row.label), role: choice(row.role, ["product", "adapter"]), version: nullableText(row.version), active: bool(row.active),
+    commands: list(row.commands, text, 16), removes: list(row.removes, text, 32), skipped: list(row.skipped, item => { const skipped = record(item); return { path: text(skipped.path), reason: text(skipped.reason) }; }, 16),
+    documented: bool(row.documented), kept: list(row.kept, text, 16),
+    services: list(row.services, item => { const service = record(item); return { label: text(service.label), name: text(service.name), pid: number(service.pid), commands: list(service.commands, text, 8), interrupts: text(service.interrupts) }; }, 16),
+    undeclaredServices: list(row.undeclaredServices, item => { const service = record(item); return { label: text(service.label), pid: number(service.pid) }; }, 64),
+    resident: list(row.resident, entry, 64), processes: list(row.processes, entry, 64),
+    conversations: list(row.conversations, item => { const conversation = record(item); return { sessionId: text(conversation.sessionId), title: text(conversation.title), busy: bool(conversation.busy) }; }, 256),
+    otherUsers: list(row.otherUsers, item => ({ pid: number(record(item).pid) }), 256), localChanges: row.localChanges === null ? null : number(row.localChanges),
+    after: kind === "next" ? { kind, label: text(after.label), version: nullableText(after.version) } : { kind } };
 }
 /** What upgrading a Harness would touch (ADR-043). */
 export function decodeMaintenance(value: unknown): MaintenanceView {
@@ -473,6 +490,10 @@ export class GatewayApi {
     return this.request("/harnesses/check-updates", "POST", harnessIds ? { harnessIds } : {}, value => list(value, decodeHarness, 256));
   }
   submitInstallation(input: ManagementJobInput): Promise<InstallationJobView> { return this.request("/installation-jobs", "POST", input, decodeInstallationJob); }
+  /** Reads what uninstalling one installation would remove, stop and leave, for the confirmation (ADR-044); changes nothing. */
+  uninstallCheck(harnessId: string, ref: string, signal?: AbortSignal): Promise<UninstallCheckView> {
+    return this.request(`/harnesses/${encodeURIComponent(harnessId)}/installations/${encodeURIComponent(ref)}/uninstall`, "GET", undefined, decodeUninstallCheck, signal);
+  }
   /** Reads what upgrading this Harness would touch, for the confirmation (ADR-043); changes nothing. */
   maintenance(harnessId: string, signal?: AbortSignal): Promise<MaintenanceView> { return this.request(`/harnesses/${encodeURIComponent(harnessId)}/maintenance`, "GET", undefined, decodeMaintenance, signal); }
   jobs(signal?: AbortSignal): Promise<readonly InstallationJobView[]> { return this.request("/installation-jobs?limit=50", "GET", undefined, value => list(value, decodeInstallationJob, 100), signal); }

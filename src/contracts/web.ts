@@ -12,6 +12,10 @@ export type HarnessEntrySource = "path" | "standard-directory" | "custom-entry" 
 export type MaintenanceView = Omit<import("./management.js").MaintenanceCheck, "conversations"> & {
   readonly conversations: readonly { readonly sessionId: string; readonly title: string; readonly busy: boolean }[];
 };
+/** What uninstalling one installation would remove, stop and leave, for the user's confirmation (ADR-044); conversations carry their titles. */
+export type UninstallCheckView = Omit<import("./management.js").UninstallCheck, "conversations"> & {
+  readonly conversations: readonly { readonly sessionId: string; readonly title: string; readonly busy: boolean }[];
+};
 export interface HarnessView {
   readonly id: string;
   readonly name: string;
@@ -40,6 +44,8 @@ export interface HarnessView {
 }
 /** One installation of a product or of the adapter HarnessHub runs in front of it, described without its path. */
 export interface InstallationView {
+  /** Names this installation for an uninstall check or submission without its path (ADR-044). */
+  readonly ref: string;
   readonly channel: "npm" | "brew-formula" | "brew-cask" | "script" | "uv" | "pnpm" | "bun" | null;
   /** Where it is in the user's terms, such as "npm 全局（nvm v26.11.1）" or "官方安装脚本". */
   readonly label: string;
@@ -52,6 +58,8 @@ export interface InstallationView {
   readonly active: boolean;
   /** Whether HarnessHub maintains this channel; pnpm and bun installations are listed only. */
   readonly maintained: boolean;
+  /** Whether HarnessHub can uninstall it: a maintained channel, and for a script its whitelisted layout. */
+  readonly canUninstall: boolean;
 }
 export interface SessionSummary {
   readonly id: string;

@@ -87,6 +87,29 @@
 - **页面。** Harness 视图新增 `installations`（渠道、名称、命令、版本、产品或适配器、是否当前使用、是否维护；不含路径）和 `unofficial`（命令名、是否在 PATH 上、是否 PATH 默认）。`install` 增加核对日期和官网附注。9 个产品都有官网安装命令。
 - **本机结果。** 详见[验收记录](../verification/official-channels-2026-10-17.md)。
 
+## 审批代理对卸载设计的裁决（2026-10-17，第三轮）
+
+- 每份安装单独卸载，用不含路径的引用定位，提交时带检查时的指纹，安装变了就拒绝。
+- npm 卸载用该前缀自己的 npm，包自己的卸载脚本照常运行，但在沙箱里只能写该前缀、npm 缓存和临时目录；Homebrew 遇到多版本或被依赖时按它的报错原样失败，不加 `--force`；不用 `--zap`。
+- Codex 安装脚本还会写 `~/.local/bin/codex-code-mode-host`，一并列入白名单。
+- 顺序固定为：停服务 → 注销服务 → 删程序；确认框说明服务注册会被移除，重新安装后需要再安装服务。产品没有声明的 launchd 服务在运行就阻止。
+- 产品声明的常驻程序（openclaw-gateway、openclaw-node、Hermes 网关等）只要在运行就阻止，不论是否由 launchd 启动，并给出停止命令；其他终端进程只警告、不阻止。
+- 确认框和任务日志可以显示白名单内、以 `~` 书写的程序路径，这是知道会删什么所必需的；页面列表仍不含路径。这一例外写进契约，并有服务端检查和无效样例测试。
+- 管理库升 v4，附降级脚本；降级会删除卸载任务的记录，写进说明。
+
+## 实现（第 2 步：卸载，2026-10-17）
+
+- **入口与确认。** “本机找到的官网安装”里每份可维护的安装都有“卸载”（pnpm、bun 的没有）。点击后先读 `GET /api/v1/harnesses/{id}/installations/{ref}/uninstall`，确认框列出：会运行的命令、删除的文件、保留的数据（例如 `~/.claude`、`~/.claude.json`）、先停止并注销的服务及其命令和影响、阻止卸载的原因、仍在运行它的其他程序、卸载后 HarnessHub 改用哪一份。
+- **各渠道的做法。** 没有用产品自带的卸载命令：`opencode uninstall`、`hermes uninstall` 会交互提问或改 shell 配置，`openclaw uninstall` 会删数据。
+  - npm：`<前缀>/bin/npm uninstall --global --prefix <前缀> <包>`，沙箱只允许写该前缀和任务目录；核实包目录没了。
+  - Homebrew：在 Homebrew 自己的继承沙箱里运行 `brew uninstall --formula|--cask <名>`，带 `HOMEBREW_NO_AUTOREMOVE`；核实 keg 或 Caskroom 目录没了。
+  - uv：`uv tool uninstall <包>`，沙箱只允许写工具目录、bin 目录和任务目录。
+  - 官方脚本：HarnessHub 按白名单自己删除。Claude Code 删 `~/.local/bin/claude` 和 `~/.local/share/claude`（官网写明）；Codex 删两个链接和 `~/.codex/packages/standalone`；Cursor 删两个链接和 `~/.local/share/cursor-agent`（官网没写，按安装脚本）；OpenCode 删 `~/.opencode/bin/opencode`，`bin` 目录空了才删；Hermes 删启动器 `~/.local/bin/hermes` 和 `~/.hermes/hermes-agent`，确认框提醒本地改动。链接只在指向本安装的目录时删；用户自己的启动脚本或指向别处的链接保留并说明；目录是链接或上级目录经链接指向别处时拒绝。
+- **服务与程序。** OpenClaw 的 gateway 和 node 服务、Hermes 的 gateway 服务按产品命令停止并注销（`openclaw gateway stop`、`openclaw gateway uninstall` 等），停完核实系统服务管理器里没有了才删程序。
+- **HarnessHub 自己。** 卸载的是当前使用的那份时，正在回复的对话和其他 HarnessHub 进程阻止卸载，空闲保留进程先关闭，期间持有维护锁。结果未知的卸载不会重跑，可以“核实本机结果”，只记录文件还在不在。
+- **验收。** 见[卸载验收记录](../verification/uninstall-2026-10-17.md)。
+- **存储与接口。** 管理库 v4 新增 `management_installation_targets`，冻结每个卸载任务的目标；`tools/management-v4-to-v3.sql` 降回 v3，会删除卸载任务及其日志。错误码 `*_CHANGED` 和 `*REFUSED` 返回 409。
+
 ## 影响
 
 - 这台电脑上，Pi（开发目录）和 DeepSeek Harness（源码构建）会显示为未安装。Claude Code 会列出三份 npm 安装。

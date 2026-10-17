@@ -14,6 +14,48 @@ export interface ScriptLayout {
   readonly launchers: readonly string[];
   /** The program a launcher starts, relative to the root; null when the installer writes no launcher. */
   readonly program: string | null;
+  /** What removing the program deletes (ADR-044); null when HarnessHub does not uninstall this layout. */
+  readonly removal: ScriptRemoval | null;
+}
+/**
+ * Exactly what an official installer writes, for removing the program and nothing else (ADR-044). Paths are relative to
+ * the user's home. Configuration, sign-in and session data are never listed.
+ */
+export interface ScriptRemoval {
+  /** Links the installer writes outside its directories; each is removed only while it points into one of `directories`. */
+  readonly links: readonly string[];
+  /** Launcher scripts it writes; each is removed only while it starts a program inside one of `directories`. */
+  readonly launchers: readonly string[];
+  /** Single files it writes into a directory it does not own alone; removed one by one. */
+  readonly files: readonly string[];
+  /** Directories it owns, removed whole. */
+  readonly directories: readonly string[];
+  /** Directories it creates for its files, removed only once empty. */
+  readonly emptyDirectories: readonly string[];
+  /** Whether the product's official page gives this removal; false when it is read from the installer's own layout. */
+  readonly documented: boolean;
+}
+/** A background service a product's own installation registers, with the product's commands that stop and unregister it. */
+export interface ProductService {
+  /** Its launchd label. */
+  readonly label: string;
+  readonly name: string;
+  /** Argument lists run in order with the product's own command from the installation being removed. */
+  readonly stop: readonly (readonly string[])[];
+  /** What stopping it interrupts, said before anything runs. */
+  readonly interrupts: string;
+}
+/** Facts about one product that removing an installation needs (ADR-044). */
+export interface ProductMaintenance {
+  /** Services its installation registers; a running service no product declares blocks an uninstall. */
+  readonly services: readonly ProductService[];
+  /** Where it keeps configuration, sign-in and session data, home-relative; kept by an uninstall and named in its confirmation. */
+  readonly data: readonly string[];
+  /**
+   * Its resident programs as their command lines show them, and the product's command that stops each. One running when
+   * an uninstall would remove its files blocks the uninstall, launched by a service manager or not.
+   */
+  readonly resident: readonly { readonly command: RegExp; readonly stop: string }[];
 }
 /** The channels a product's official documentation describes on macOS, with where the description was read. */
 export interface OfficialChannels {

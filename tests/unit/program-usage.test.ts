@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ManagementError, type ManagementInstallContext, type ManagementRecipe, type NativeInstallPlan, type UsedService } from "../../src/contracts/management.js";
-import { inspectProgramUsage, installationRoots, parseJob, parseJobs, parseListening, parseProcessTable, parseServiceState, portArgument, programName, restartProgramService, type ProgramHost } from "../../src/infrastructure/management/program-usage.js";
+import { inspectProgramUsage, inspectRootsUsage, installationRoots, parseJob, parseJobs, parseListening, parseOpeners, parseProcessTable, parseServiceState, portArgument, programName, restartProgramService, type ProgramHost } from "../../src/infrastructure/management/program-usage.js";
 
 // Shapes of the real macOS outputs (launchctl 7.0 on macOS 27, lsof 4.91), with the values of this test only.
 const JOBS = "PID\tStatus\tLabel\n4039\t0\tai.openclaw.gateway\n4736\t0\tai.openclaw.node\n-\t0\tai.openclaw.sync-claude-token\n4058\t0\tai.hermes.gateway\n312\t0\tcom.apple.Finder\n";
@@ -30,7 +30,7 @@ function host(overrides: Partial<ProgramHost> = {}): ProgramHost & { readonly ki
     processes: async () => PROCESSES, jobs: async () => JOBS,
     job: async label => ({ "ai.openclaw.gateway": GATEWAY, "ai.openclaw.node": NODE, "ai.hermes.gateway": HERMES } as Record<string, string>)[label] ?? null,
     print: async target => target.startsWith("gui/501/") ? print("running", 4039, 1) : null,
-    kickstart: async target => { kicked.push(target); }, listening: async () => "", sleep: async () => {}, now: () => 0, ...overrides };
+    kickstart: async target => { kicked.push(target); }, listening: async () => "", openers: async () => "", sleep: async () => {}, now: () => 0, ...overrides };
 }
 
 test("G011-UP1 the macOS outputs are parsed field by field, and the environment block of a job is never read", () => {
@@ -96,4 +96,16 @@ test("G011-UP1 a restarted service counts as running again only under a new, sta
   const controller = new AbortController();
   await assert.rejects(restartProgramService(gateway, host({ print: async target => { controller.abort(); return print("running", 4039, 1) + target.slice(0, 0); },
     sleep: async (_ms, signal) => { if (signal.aborted) throw new ManagementError("CANCELLED", "cancelled"); } }), context(controller.signal), timing), (error: unknown) => error instanceof ManagementError && error.code === "CANCELLED");
+});
+test("G011-UN7 a native program started by name, whose command line names no path, is found by the executable it has open", async () => {
+  const opened: (readonly string[])[] = [];
+  const table = PROCESSES + " 9100  9000 claude --resume\n 9200  9000 claude\n";
+  const usage = await inspectRootsUsage(["/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code"], ["/bin/sh"], () => null,
+    host({ processes: async () => table, jobs: async () => "", openers: async files => { opened.push(files); return "p9100\nf1\np" + SELF + "\np9200\n"; } }), context());
+  assert.deepEqual(opened, [["/bin/sh"]], "only existing program files are asked about");
+  assert.deepEqual(usage.processes, [{ pid: 9100, name: "claude" }, { pid: 9200, name: "claude" }], "this process is HarnessHub's own and left out");
+  assert.deepEqual(parseOpeners("p1\nfcwd\np22\n"), [1, 22]);
+  // A program file that is not there is not asked about.
+  const missing = await inspectRootsUsage(["/nowhere"], ["/nowhere/claude.exe"], () => null, host({ jobs: async () => "", openers: async () => assert.fail("not asked") }), context());
+  assert.deepEqual(missing.processes, []);
 });

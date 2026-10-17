@@ -1289,7 +1289,10 @@
         "tests/unit/verified-versions.test.ts",
         "src/infrastructure/management/program-usage.ts",
         "tests/unit/program-usage.test.ts",
-        "tools/management-v3-to-v2.sql"
+        "tools/management-v3-to-v2.sql",
+        "src/infrastructure/management/uninstall.ts",
+        "tools/management-v4-to-v3.sql",
+        "tests/integration/uninstall.test.ts"
       ],
       "requirements": [
         "R03",
@@ -1330,7 +1333,14 @@
         "G011-UP5",
         "G011-UP6",
         "G011-UP7",
-        "G011-UP8"
+        "G011-UP8",
+        "G011-UN1",
+        "G011-UN2",
+        "G011-UN3",
+        "G011-UN4",
+        "G011-UN5",
+        "G011-UN6",
+        "G011-UN7"
       ],
       "active_slice": "upgrade-with-running-programs"
     },
@@ -3137,7 +3147,8 @@
         "tests/unit/harness-entry.test.ts",
         "src/web/native-catalog-cache.ts",
         "tests/integration/native-catalog-cache.test.ts",
-        "src/web/harness-installations.ts"
+        "src/web/harness-installations.ts",
+        "src/web/shown-paths.ts"
       ],
       "requirements": [
         "R01",
@@ -3393,7 +3404,8 @@
         "web/src/ui/primitives.tsx",
         "tests/unit/web-turn.test.ts",
         "docs/verification/frontend-redesign-2026-10-12.md",
-        "web/src/components/UpgradeDialog.tsx"
+        "web/src/components/UpgradeDialog.tsx",
+        "web/src/components/UninstallDialog.tsx"
       ],
       "requirements": [
         "R01",
@@ -3452,7 +3464,8 @@
         "G054-FR8",
         "G054-UP1",
         "G054-UP2",
-        "G054-OC1"
+        "G054-OC1",
+        "G054-UN1"
       ],
       "active_slice": "upgrade-with-running-programs"
     },

@@ -27,6 +27,25 @@
 - **Gemini CLI 已被 Antigravity CLI 取代**（官方仓库写着自 2026-06-18 起，对免费用户和 Google One 用户生效）。这和它在能力矩阵里全部受阻是一致的。是否接入 Antigravity CLI 另行决定。
 - **适配器单独计。** HarnessHub 通过 `claude-agent-acp` 控制 Claude Code。这个适配器是 ACP 注册表里的 npm 包，它的安装和升级与 Claude Code 本身分开维护。
 
+## 卸载与安装脚本的补充核对（2026-10-17，只读）
+
+- **Claude Code**：官网卸载节写明脚本版删 `~/.local/bin/claude` 和 `~/.local/share/claude`。安装脚本把程序下载到 `~/.claude/downloads`，再运行 `claude install` 设置启动器。
+- **Codex**（`https://chatgpt.com/codex/install.sh`）：
+  - 在 `~/.local/bin` 写 `codex` 和 `codex-code-mode-host` 两个链接，发布文件放在 `~/.codex/packages/standalone`。
+  - macOS 的 zsh 会往 `~/.zprofile` 加一段 PATH；`~/.local/bin` 已在 PATH 上、且没有其他渠道的 Codex 时不加。
+  - `CODEX_NON_INTERACTIVE=1` 跳过两处提问：卸载其他渠道的 Codex，和立即启动。脚本没有卸载模式。
+- **Cursor**（`https://cursor.com/install`）：写 `~/.local/share/cursor-agent/versions/<版本>`，并链接 `~/.local/bin/agent` 与 `~/.local/bin/cursor-agent`。不改 shell 配置，下载不校验摘要，官网没有卸载说明。
+- **OpenCode**（`https://opencode.ai/install`）：
+  - 只写 `~/.opencode/bin/opencode`；`--no-modify-path` 时不改 shell 配置。
+  - PATH 里已有同版本的 `opencode` 时，脚本直接退出。
+  - CLI 有 `opencode uninstall [--keep-config --keep-data --force]` 和 `opencode upgrade [--method curl|npm|pnpm|bun|brew]`。
+- **OpenClaw**：
+  - 安装脚本在需要时会安装 Homebrew、Node.js、cmake 等，并通过 `/dev/tty` 交互；`--no-onboard --no-prompt` 可以跳过引导。
+  - 本机自带文档的卸载手动步骤是 `openclaw gateway stop` → `openclaw gateway uninstall` → `npm rm -g openclaw`。node host 服务另有 `openclaw node stop` 和 `openclaw node uninstall`。
+- **Hermes**：
+  - `hermes uninstall` 是交互式的（选 1/2/3，再输 yes）；选保留数据时，它会删除 shell 配置里的 PATH 行。
+  - 文档的手动卸载是 `rm -f ~/.local/bin/hermes; rm -rf <hermes-agent>`；网关先 `hermes gateway stop`，macOS 上再 `launchctl remove ai.hermes.gateway`。CLI 另有 `hermes gateway uninstall`。
+
 ## 来源
 
 - Claude Code：https://code.claude.com/docs/en/setup （安装、更新、卸载各节）

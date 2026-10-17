@@ -39,7 +39,7 @@ function fakeHost(packageRoot: string, launchd: FakeLaunchd | undefined): Progra
     job: async label => { const item = launchd?.services.find(entry => entry.label === label); return item ? jobText(item.pid, item.args(packageRoot)) : null; },
     print: async target => { const item = service(target); if (!item || !target.startsWith("gui/")) return null; const restarts = launchd!.kicked.filter(entry => entry === target).length;
       const state = restarts === 0 ? { state: "running", pid: item.pid, runs: 1 } : launchd!.after(item.label, restarts); return state === null ? null : printText(state); },
-    kickstart: async target => { launchd?.kicked.push(target); }, listening: async pid => launchd?.listening?.(pid) ?? "",
+    kickstart: async target => { launchd?.kicked.push(target); }, listening: async pid => launchd?.listening?.(pid) ?? "", openers: async () => "",
     sleep: async () => {}, now: () => (clock += 250) };
 }
 async function fixture(t: test.TestContext, attack = false, beforeCleanup?: () => Promise<void>, verificationAttack = false,
@@ -142,7 +142,7 @@ test("legacy management v1 migration preserves job history and rolls back an inv
   storage.db.prepare("INSERT INTO management_jobs VALUES(?,?,?,?,?,?,?)").run(id, "fixture", "failed", "old-command", "f".repeat(64), 0, JSON.stringify(view));
   storage.db.exec("DROP TABLE management_native_plans; PRAGMA user_version=1"); storage.db.close();
   const migrated = managementStorage(root, 2);
-  assert.equal(migrated.db.prepare("PRAGMA user_version").get()?.user_version, 3, "v3 only marks the job facts of ADR-043; the rows stay as they were");
+  assert.equal(migrated.db.prepare("PRAGMA user_version").get()?.user_version, 4, "v3 only marks the job facts of ADR-043 and v4 adds the uninstall targets of ADR-044; the rows stay as they were");
   assert.deepEqual(JSON.parse(String(migrated.db.prepare("SELECT view_json FROM management_jobs WHERE id=?").get(id)?.view_json)), view);
   migrated.db.exec("DROP TABLE management_native_plans; CREATE VIEW management_native_plans AS SELECT id FROM management_jobs; PRAGMA user_version=1"); migrated.db.close();
   assert.throws(() => managementStorage(root, 3));
@@ -284,6 +284,8 @@ test("G011-UP6 the compatibility check's sandbox writes only its stage and reach
 test("G011-UP7 the documented v3 to v2 downgrade keeps every job and leaves only the facts a v2 reader accepts", async t => {
   const root = await mkdtemp(join(tmpdir(), "native-downgrade-test-")); t.after(() => rm(root, { recursive: true, force: true }));
   const storage = managementStorage(root, 1);
+  // A v4 database goes back to v3 first (ADR-044); this test starts from there.
+  storage.db.exec(await readFile(new URL("../../../tools/management-v4-to-v3.sql", import.meta.url), "utf8"));
   assert.equal(storage.db.prepare("PRAGMA user_version").get()?.user_version, 3);
   const native = { channel: "npm", location: "/opt/homebrew/bin/fixture-agent", beforeVersion: "1.0.0", actualVersion: "2.0.0", dispatched: true, configurationPreserved: true };
   const v3 = { id: "management-33333333-3333-4333-8333-333333333333", harnessId: "fixture", controlId: "fixture-control", action: "upgrade", status: "failed", phase: "failed", cancelRequested: false,
@@ -302,9 +304,9 @@ test("G011-UP7 the documented v3 to v2 downgrade keeps every job and leaves only
     assert.deepEqual(rows, [{ ...v3, native }, v2]);
     for (const row of rows) assert.deepEqual(Object.keys(row.native).sort(), ["actualVersion", "beforeVersion", "channel", "configurationPreserved", "dispatched", "location"]);
   } finally { db.close(); }
-  // And this build opens it again as v3, with nothing lost that the downgrade kept.
+  // And this build opens it again (as v4), with nothing lost that the downgrade kept.
   const reopened = managementStorage(root, 2);
-  try { assert.equal(reopened.db.prepare("PRAGMA user_version").get()?.user_version, 3); assert.equal(reopened.db.prepare("SELECT count(*) AS n FROM management_jobs").get()?.n, 2); } finally { reopened.db.close(); }
+  try { assert.equal(reopened.db.prepare("PRAGMA user_version").get()?.user_version, 4); assert.equal(reopened.db.prepare("SELECT count(*) AS n FROM management_jobs").get()?.n, 2); } finally { reopened.db.close(); }
 });
 
 test("G011-UP8 a release whose Node.js range excludes the one that runs the program, or the one a restarted service starts, is said before confirming and refused before anything changes", { skip: process.platform !== "darwin" && "native upgrades need the macOS sandbox" }, async t => {

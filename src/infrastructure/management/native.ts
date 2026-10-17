@@ -58,6 +58,16 @@ const CHANNEL_REASONS = {
   unreviewed: "这个程序的安装方式还没有经过 HarnessHub 审核，HarnessHub 不替你升级它；请用它自己的方式更新。",
   manager: "本机缺少这个程序安装方式需要的包管理器，HarnessHub 无法在这里安装或升级它。",
 } as const;
+/** The user's model, sign-in and shell configuration HarnessHub's package-manager runs may not write: directories and single files. */
+export function protectedConfigurationPaths(source: NativeEnvironment): { readonly directories: readonly string[]; readonly files: readonly string[] } {
+  const native = nativeValues(source, null);
+  return { directories: [...new Set([...configDirectories.map(path => join(source.home, path)), ...[native.CODEX_HOME, native.CLAUDE_CONFIG_DIR, native.OPENCODE_CONFIG_DIR, native.XDG_CONFIG_HOME, source.values.OPENCLAW_STATE_DIR, source.values.PI_CODING_AGENT_DIR].filter((value): value is string => value !== undefined)])],
+    files: [...configFiles.map(path => join(source.home, path)), ...(native.OPENCLAW_CONFIG_PATH ? [native.OPENCLAW_CONFIG_PATH] : [])] };
+}
+/** The sandbox profile of a package-manager run that may write only `writable` (and /dev/null); the network stays available. */
+export function writeOnlySandboxProfile(writable: readonly string[]): string {
+  return "(version 1)(allow default)(deny file-write*)(allow file-write* " + writable.map(path => "(subpath " + JSON.stringify(path) + ")").join(" ") + " (literal \"/dev/null\"))";
+}
 /** Native managers operate on standard local installation paths. The user profile remains readable and protected from writes. */
 export class NativeManagement implements NativeManagementPort {
   private readonly source: NativeEnvironment;
@@ -209,9 +219,7 @@ export class NativeManagement implements NativeManagementPort {
         break;
       }
       case "brew-formula": case "brew-cask":
-        { const native = nativeValues(this.source, null);
-          const directories = [...new Set([...configDirectories.map(path => join(this.source.home, path)), ...[native.CODEX_HOME, native.CLAUDE_CONFIG_DIR, native.OPENCODE_CONFIG_DIR, native.XDG_CONFIG_HOME, this.source.values.OPENCLAW_STATE_DIR, this.source.values.PI_CODING_AGENT_DIR].filter((value): value is string => value !== undefined)])];
-          const files = [...configFiles.map(path => join(this.source.home, path)), ...(native.OPENCLAW_CONFIG_PATH ? [native.OPENCLAW_CONFIG_PATH] : [])];
+        { const { directories, files } = protectedConfigurationPaths(this.source);
           await runHomebrewProtected(plan.manager, ["upgrade", plan.channel === "brew-cask" ? "--cask" : "--formula", plan.reference], directories, files, this.env(context.stage), context); break;
         }
       case "uv":
@@ -285,14 +293,7 @@ export class NativeManagement implements NativeManagementPort {
     try { return (await readdir(join(this.source.home, recipe.pluginDirectory), { withFileTypes: true })).filter(entry => entry.isDirectory() && /^[A-Za-z0-9@][A-Za-z0-9._@-]{0,95}$/u.test(entry.name)).map(entry => entry.name).sort().slice(0, 32); }
     catch (error) { if (missing(error)) return []; throw error; }
   }
-  private async configurationHashes(): Promise<Readonly<Record<string, string>>> {
-    const result: Record<string, string> = {};
-    // Content remains private; receipts only use digests. Directory write protection also covers credentials.
-    for (const path of [".codex/config.toml", ".claude/settings.json", ".claude.json", ".openclaw/openclaw.json", ".gemini/settings.json", ".pi/agent/settings.json", ".pi/agent/models.json", ".cursor/cli-config.json", ".config/opencode/opencode.json", ...configFiles]) {
-      const file = join(this.source.home, path); try { const info = await stat(file); if (info.size > MAX_JSON) throw new ManagementError("CONFIGURATION_LIMIT", "protected configuration exceeds its budget"); result[path] = createHash("sha256").update(await readFile(file)).digest("hex"); } catch (error) { if (!missing(error)) throw error; }
-    }
-    return result;
-  }
+  private configurationHashes(): Promise<Readonly<Record<string, string>>> { return protectedConfigurationHashes(this.source.home); }
   async inspect(plan: NativeInstallPlan, context: ManagementInstallContext): Promise<string> {
     context.assertOwned(); await access(plan.entry, constants.X_OK);
     const version = await this.protectedVersion(plan.entry, context);
@@ -311,4 +312,15 @@ export class NativeManagement implements NativeManagementPort {
     const version = systemVersionFromOutput(output + "\n" + diagnostics);
     if (!version) throw new ManagementError("NATIVE_VERIFICATION_FAILED", "the native executable did not report one unambiguous version"); return version;
   }
+}
+/**
+ * Digests of the user's protected model, sign-in and shell configuration files under `home`, and of `extra` home-relative
+ * files, compared around maintenance (ADR-043, ADR-044). Contents stay private; a missing file is left out.
+ */
+export async function protectedConfigurationHashes(home: string, extra: readonly string[] = []): Promise<Readonly<Record<string, string>>> {
+  const result: Record<string, string> = {};
+  for (const path of [".codex/config.toml", ".claude/settings.json", ".claude.json", ".openclaw/openclaw.json", ".gemini/settings.json", ".pi/agent/settings.json", ".pi/agent/models.json", ".cursor/cli-config.json", ".config/opencode/opencode.json", ...configFiles, ...extra]) {
+    const file = join(home, path); try { const info = await stat(file); if (info.size > MAX_JSON) throw new ManagementError("CONFIGURATION_LIMIT", "protected configuration exceeds its budget"); result[path] = createHash("sha256").update(await readFile(file)).digest("hex"); } catch (error) { if (!missing(error)) throw error; }
+  }
+  return result;
 }
