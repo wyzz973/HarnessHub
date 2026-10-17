@@ -131,7 +131,7 @@ test("G011-UN2 management v4 keeps uninstall jobs with their frozen target; the 
 /** A removal that changes nothing on the host: it records calls, and its usage is what the test sets. */
 function fakeRemoval(home: string) {
   const state = {
-    calls: [] as string[], removed: false, failRemove: false, identity: "one",
+    calls: [] as string[], removed: false, failRemove: false, identity: "one", drift: 0,
     usage: { servicesKnown: true, services: [] as { label: string; pid: number }[], resident: [] as { pid: number; name: string; stop?: string }[], processes: [] as { pid: number; name: string }[] },
   };
   const port: InstallationRemovalPort = {
@@ -142,7 +142,8 @@ function fakeRemoval(home: string) {
     localChanges: async () => null,
     stopService: async (_target, service) => { state.calls.push("stop:" + service.label + ":" + service.stop.map(args => args.join(" ")).join(",")); state.usage = { ...state.usage, services: state.usage.services.filter(item => item.label !== service.label) }; },
     remove: async (_target, context) => { context.beginMutation(); state.calls.push("remove"); if (state.failRemove) throw new ManagementError("PROCESS_FAILED", "npm exited unsuccessfully"); state.removed = true; },
-    configuration: async () => "unchanged",
+    // `drift` makes another program (a running Claude Code session, say) write the configuration during the uninstall.
+    configuration: async () => state.drift ? "changed-" + state.drift++ : "unchanged",
   };
   return { state, port };
 }
@@ -197,6 +198,12 @@ test("G011-UN3 an uninstall says what it stops, removes and keeps, refuses what 
   assert.ok(logs.some(text => text.includes("仍在运行这份安装") && text.includes("openclaw（进程 8100）")));
   assert.deepEqual(logs.filter(text => text.includes(home)), [], "logs name home paths only with ~");
 
+  // A configuration file another program writes meanwhile does not fail the uninstall: the removal cannot write it.
+  state.removed = false; state.calls = []; state.usage = { ...state.usage, services: [], processes: [] }; state.drift = 1;
+  const drifting = await manager.uninstallCheck("openclaw", openclaw.ref);
+  const drifted = await settled(manager, (await manager.submitUninstall({ harnessId: "openclaw", action: "uninstall", commandId: "u-drift", installation: openclaw.ref, expectedInstallationFingerprint: drifting.fingerprint })).id);
+  assert.equal(drifted.status, "completed", JSON.stringify(drifted.error)); state.drift = 0;
+  assert.ok(manager.logs(drifted.id, 0).some(entry => entry.text.startsWith("卸载期间受保护的配置文件有了变化")));
   // A resident program or a service no product declares refuses before anything changes.
   state.removed = false; state.calls = [];
   state.usage = { ...state.usage, services: [], resident: [{ pid: 5056, name: "openclaw-gateway", stop: "openclaw gateway stop" }] };

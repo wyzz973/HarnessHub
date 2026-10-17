@@ -376,7 +376,9 @@ export class LocalHarnessManagement {
       await removal.remove(target, { ...context, beginMutation: begin }); owned();
       this.phase(job.id, "verifying");
       if (await removal.remains(target)) throw new ManagementError("REMOVAL_INCOMPLETE", "卸载命令结束了，但这份安装还有文件留在原处。");
-      if (await removal.configuration(target) !== afterServices) throw new ManagementError("NATIVE_CONFIGURATION_CHANGED", "删除程序时受保护的配置文件有了变化。");
+      // The removal cannot write configuration (package managers run sandboxed, scripts are removed by whitelist); a change
+      // seen here comes from programs still running, such as a Claude Code session writing ~/.claude.json, and is only noted.
+      if (await removal.configuration(target) !== afterServices) note("卸载期间受保护的配置文件有了变化。卸载没有写入它们（包管理器在沙箱里不能写配置，脚本安装只删白名单里的文件），变化来自仍在运行的程序。");
       verified = true; this.uninstallFacts(job.id, { removed: true }, { configurationPreserved: true });
       note("已核实程序已删除，配置、登录和会话数据保留。");
       this.phase(job.id, "completed");

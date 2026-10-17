@@ -250,7 +250,10 @@ export class NativeManagement implements NativeManagementPort {
     context.assertOwned(); await access(plan.entry, constants.X_OK);
     const actualVersion = await this.protectedVersion(plan.entry, context);
     if (plan.channel !== "native-cli" && actualVersion !== version) throw new ManagementError("NATIVE_VERIFICATION_FAILED", "the actual native executable did not report the planned version");
-    if (JSON.stringify(before) !== JSON.stringify(await this.configurationHashes())) throw new ManagementError("NATIVE_CONFIGURATION_CHANGED", "native maintenance changed a protected configuration");
+    // The channel ran with writes to these files denied, so a change seen here is another running program's (a Claude Code
+    // session writes ~/.claude.json, a gateway its own config): noted, not a failure of the upgrade (ADR-044).
+    const after = await this.configurationHashes(), changed = Object.keys({ ...before, ...after }).filter(path => before[path] !== after[path]);
+    if (changed.length) context.log("system", "升级期间这些受保护的配置文件有了变化：" + changed.map(path => "~/" + path).join("、") + "。升级在沙箱里不能写它们，变化来自仍在运行的程序。");
     return { version: actualVersion, configurationPreserved: true };
   }
   /** The interpreter of a `#!` program: absolute, or found on the user's PATH for `/usr/bin/env`; null when it has none. */

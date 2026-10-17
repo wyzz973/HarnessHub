@@ -108,6 +108,10 @@
 - **服务与程序。** OpenClaw 的 gateway 和 node 服务、Hermes 的 gateway 服务按产品命令停止并注销（`openclaw gateway stop`、`openclaw gateway uninstall` 等），停完核实系统服务管理器里没有了才删程序。
 - **HarnessHub 自己。** 卸载的是当前使用的那份时，正在回复的对话和其他 HarnessHub 进程阻止卸载，空闲保留进程先关闭，期间持有维护锁。结果未知的卸载不会重跑，可以“核实本机结果”，只记录文件还在不在。
 - **验收。** 见[卸载验收记录](../verification/uninstall-2026-10-17.md)。
+- **配置摘要只记录，不判失败。**
+  - 卸载和升级前后都会比对受保护配置文件的摘要。但包管理器在沙箱里写不了这些文件，脚本安装的卸载也只删白名单里的文件。
+  - 所以摘要有了变化，只可能是仍在运行的程序写的，例如正在运行的 Claude Code 会改写 `~/.claude.json`，网关也会改写自己的配置。
+  - 现在只在任务日志里记一笔，不再判失败。此前 ADR-043 的升级会因此误报“结果未知”；这次一并修正。
 - **存储与接口。** 管理库 v4 新增 `management_installation_targets`，冻结每个卸载任务的目标；`tools/management-v4-to-v3.sql` 降回 v3，会删除卸载任务及其日志。错误码 `*_CHANGED` 和 `*REFUSED` 返回 409。
 
 ## 影响
