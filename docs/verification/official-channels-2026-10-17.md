@@ -58,3 +58,12 @@
 - pnpm、bun 的判定只有单元测试；这台电脑上 `~/Library/pnpm` 只有 store，`~/.bun/install/global` 没有 Harness 包。
 - `uv` 渠道没有产品登记（官网都不以 uv 为主要方式）；只有 Hermes 适配器的 Python 包会走 uv 判定，本机没有这样的安装。
 - Pi、DeepSeek Harness 在能力矩阵中的真实验收证据来自非官网安装，已注明不再作为验收对象。
+
+## 4317 部署（2026-10-17）
+
+- 部署前 4317 没有运行（电脑 10 月 13 日重启后未再启动）。数据目录先做了 APFS 克隆备份；这次没有存储格式变化，核对后删除了备份。
+- 主检出快进到 `4f3ab23`，在登录 shell 环境（Node.js 26.11.1）里构建。启动命令不再带 `--manifest`，`.tmp/discovery-manifest.json` 保留但不再使用。
+- 启动后监听 4317（PID 42232），日志里没有 `manifest_ignored` 提示，因为没有给清单。一次性登录链接经本机重定向打开，没有贴出。
+- 同一登录环境下 `discover` 的结果与上表一致：Pi 显示“只发现非官网安装，平台不使用”，DeepSeek Harness 显示“仅发现配置线索”。其余 7 个产品的控制入口都已解析。
+- Claude Code 的“当前使用”是 nvm v26.11.1 下的 2.1.302，与登录 shell 中 `command -v claude` 的结果相同。
+- 页面上的显示（多份安装、非官网说明、DeepSeek Harness 历史对话的状态）请用户在 4317 上确认；本记录没有替用户登录查看。
