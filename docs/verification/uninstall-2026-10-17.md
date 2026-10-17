@@ -40,3 +40,14 @@
 - Homebrew 渠道的真实卸载还没有执行。按裁决放在第 3 步，用 `hello` 先装再卸，前后比对 `brew list --versions`。
 - OpenClaw、Hermes 的服务停止与注销只在替身上验证过。它们的真实执行只能由用户点击，因为会断开微信、飞书、QQ 等消息渠道。
 - uv 渠道只有代码路径，没有真实验证；本机没有 uv 安装的官方产品。
+
+## 4317 部署（2026-10-17）
+
+- 部署前 4317（PID 42232）没有子进程，即没有在途回复或保留进程。正常停止后，数据目录做了 APFS 克隆备份。
+- 主检出快进到 `3c498fd`，在登录 shell 环境里构建并启动（PID 34678，不带 `--manifest`）。管理库启动时迁移到 v4，用 `PRAGMA user_version` 只读核对。服务启动正常后删除了备份。
+- 用只读脚本在同一登录环境里预演了第一个待点击的卸载（不经过 4317，不写数据目录）：
+  - nvm v23.10.0 下的 Claude Code 1.0.31 不是“当前使用”（当前使用的是 nvm v26.11.1 下的 2.1.302）。
+  - 会运行 `~/.nvm/versions/node/v23.10.0/bin/npm uninstall --global --prefix ~/.nvm/versions/node/v23.10.0 @anthropic-ai/claude-code`。
+  - 删除 `~/.nvm/versions/node/v23.10.0/lib/node_modules/@anthropic-ai/claude-code` 和 `~/.nvm/versions/node/v23.10.0/bin/claude`。
+  - 没有服务、常驻程序或其他进程在使用它。
+- 一次性登录链接经本机重定向打开，没有贴出。
