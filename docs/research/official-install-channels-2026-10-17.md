@@ -46,6 +46,13 @@
   - `hermes uninstall` 是交互式的（选 1/2/3，再输 yes）；选保留数据时，它会删除 shell 配置里的 PATH 行。
   - 文档的手动卸载是 `rm -f ~/.local/bin/hermes; rm -rf <hermes-agent>`；网关先 `hermes gateway stop`，macOS 上再 `launchctl remove ai.hermes.gateway`。CLI 另有 `hermes gateway uninstall`。
 
+- **安装脚本地址的跳转**（2026-10-17 用 `curl -L` 核对）：
+  - `https://claude.ai/install.sh` 跳到 `https://downloads.claude.ai/claude-code-releases/bootstrap.sh`；
+  - `https://chatgpt.com/codex/install.sh` 跳到 `https://releases.openai.com/codex/install.sh`；
+  - `https://opencode.ai/install` 跳到 `https://raw.githubusercontent.com/anomalyco/opencode/refs/heads/v1/install`；
+  - `https://cursor.com/install` 和 `https://openclaw.ai/install.sh` 不跳转。
+- **Claude Code 的 npm 安装**：官网写明用 npm 安装时，postinstall 会把原生程序链接到位，所以 HarnessHub 用 npm 安装时不能加 `--ignore-scripts`。
+
 ## 来源
 
 - Claude Code：https://code.claude.com/docs/en/setup （安装、更新、卸载各节）

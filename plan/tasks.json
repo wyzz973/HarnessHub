@@ -1292,7 +1292,11 @@
         "tools/management-v3-to-v2.sql",
         "src/infrastructure/management/uninstall.ts",
         "tools/management-v4-to-v3.sql",
-        "tests/integration/uninstall.test.ts"
+        "tests/integration/uninstall.test.ts",
+        "src/infrastructure/management/official-install.ts",
+        "tools/management-v5-to-v4.sql",
+        "tests/integration/official-install.test.ts",
+        "tests/unit/official-install.test.ts"
       ],
       "requirements": [
         "R03",
@@ -1340,7 +1344,15 @@
         "G011-UN4",
         "G011-UN5",
         "G011-UN6",
-        "G011-UN7"
+        "G011-UN7",
+        "G011-IN1",
+        "G011-IN2",
+        "G011-IN3",
+        "G011-IN4",
+        "G011-IN5",
+        "G011-IN6",
+        "G011-IN7",
+        "G011-IN8"
       ],
       "active_slice": "upgrade-with-running-programs"
     },
@@ -3405,7 +3417,8 @@
         "tests/unit/web-turn.test.ts",
         "docs/verification/frontend-redesign-2026-10-12.md",
         "web/src/components/UpgradeDialog.tsx",
-        "web/src/components/UninstallDialog.tsx"
+        "web/src/components/UninstallDialog.tsx",
+        "web/src/components/InstallDialog.tsx"
       ],
       "requirements": [
         "R01",
@@ -3465,7 +3478,8 @@
         "G054-UP1",
         "G054-UP2",
         "G054-OC1",
-        "G054-UN1"
+        "G054-UN1",
+        "G054-IN1"
       ],
       "active_slice": "upgrade-with-running-programs"
     },

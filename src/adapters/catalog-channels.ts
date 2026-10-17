@@ -1,5 +1,5 @@
 import type { ChannelRegistry, ControlRecipe } from "../contexts/catalog/domain/catalog.js";
-import type { OfficialChannels, ProductMaintenance } from "../contexts/catalog/domain/channels.js";
+import type { OfficialChannels, OfficialInstallMethod, ProductMaintenance } from "../contexts/catalog/domain/channels.js";
 
 const CHECKED = "2026-10-17";
 const none = { npm: [], brewFormulae: [], brewCasks: [], scripts: [], uv: [] } as const;
@@ -77,3 +77,32 @@ export function adapterChannels(harnessId: string, control: ControlRecipe): Offi
 export function productMaintenance(harnessId: string): ProductMaintenance { return maintenance[harnessId] ?? { services: [], data: [], resident: [] }; }
 /** The registry of recorded channels the inventory classifies found programs with. */
 export const channelRegistry: ChannelRegistry = { product: productChannels, adapter: adapterChannels };
+const SCRIPT_NOTE = "脚本运行时还会下载程序本体，那部分由脚本自己处理，HarnessHub 不校验，与你在终端里运行相同。";
+/**
+ * Each product's official way to install it on macOS, as HarnessHub runs it (ADR-044); read from the pages and scripts in
+ * docs/research/official-install-channels-2026-10-17.md. OpenClaw's script would install Homebrew and Node.js and start
+ * an interactive onboarding, so its equally official npm package is used; Hermes's script clones and builds interactively.
+ */
+const installs: Readonly<Record<string, OfficialInstallMethod>> = {
+  claude: { kind: "script", command: "curl -fsSL https://claude.ai/install.sh | bash", url: "https://claude.ai/install.sh", hosts: ["claude.ai", "downloads.claude.ai"], interpreter: "bash", args: [], env: {},
+    writes: [".local/bin", ".local/share/claude", ".claude/downloads"], configFiles: [".claude.json"], shellProfile: null,
+    installs: { command: "claude", path: ".local/bin/claude" }, notes: [SCRIPT_NOTE] },
+  codex: { kind: "script", command: "curl -fsSL https://chatgpt.com/codex/install.sh | sh", url: "https://chatgpt.com/codex/install.sh", hosts: ["chatgpt.com", "releases.openai.com"],
+    interpreter: "sh", args: [], env: { CODEX_NON_INTERACTIVE: "1" }, writes: [".local/bin", ".codex/packages"], configFiles: [], shellProfile: "codex",
+    installs: { command: "codex", path: ".local/bin/codex" }, notes: [SCRIPT_NOTE, "以非交互方式运行（CODEX_NON_INTERACTIVE=1）：不会卸载其他渠道的 Codex，也不会在安装后立即启动。"] },
+  opencode: { kind: "script", command: "curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path", url: "https://opencode.ai/install", hosts: ["opencode.ai", "raw.githubusercontent.com"],
+    interpreter: "bash", args: ["--no-modify-path"], env: {}, writes: [".opencode"], configFiles: [], shellProfile: null,
+    installs: { command: "opencode", path: ".opencode/bin/opencode" }, notes: [SCRIPT_NOTE, "带 --no-modify-path 运行，不改 shell 配置；如果终端里找不到 opencode，需要自己把 ~/.opencode/bin 加入 PATH。"] },
+  cursor: { kind: "script", command: "curl https://cursor.com/install -fsS | bash", url: "https://cursor.com/install", hosts: ["cursor.com"], interpreter: "bash", args: [], env: {},
+    writes: [".local/bin", ".local/share/cursor-agent"], configFiles: [], shellProfile: null,
+    installs: { command: "cursor-agent", path: ".local/bin/cursor-agent" }, notes: [SCRIPT_NOTE, "Cursor 的安装脚本自身不校验下载的完整性。"] },
+  openclaw: { kind: "npm", package: "openclaw", bin: "openclaw", command: "npm install -g openclaw@latest",
+    notes: ["OpenClaw 的官方脚本会安装 Homebrew 和 Node.js 并进入交互式引导，HarnessHub 不代为运行，改用官网同样列出的 npm 方式。", "装好后请在终端运行 openclaw onboard --install-daemon 完成配置；装好服务之前，OpenClaw 的网关不会运行。"] },
+  gemini: { kind: "npm", package: "@google/gemini-cli", bin: "gemini", command: "npm install -g @google/gemini-cli", notes: ["官方仓库写明：自 2026-06-18 起，免费用户与 Google One 用户改用 Antigravity CLI。"] },
+  pi: { kind: "npm", package: "@earendil-works/pi-coding-agent", bin: "pi", command: "npm install -g @earendil-works/pi-coding-agent", notes: [] },
+  dsh: { kind: "npm", package: "@deepseek-ai/dsh", bin: "dsh", command: "npm install -g @deepseek-ai/dsh", notes: ["DeepSeek Harness 会读取 ~/.dsh 下已有的配置和 acp profile（包括源码版留下的）；HarnessHub 还没有验证它们与官网版的兼容性。"] },
+  hermes: { kind: "terminal", command: "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash",
+    reason: "Hermes 的安装脚本会克隆源码、准备 Python 环境并交互提问，HarnessHub 不代为运行；请在终端运行这条命令。" },
+};
+/** A product's official install method, or null when HarnessHub records none for it. */
+export function officialInstallMethod(harnessId: string): OfficialInstallMethod | null { return installs[harnessId] ?? null; }

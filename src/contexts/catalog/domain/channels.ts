@@ -116,3 +116,60 @@ export function classifyProgram(program: FoundProgram, channels: OfficialChannel
   if (uv !== undefined && channels.uv.includes(uv)) return { kind: "uv", name: uv, root: uvToolDir + "/" + uv, prefix: null };
   return null;
 }
+/**
+ * How HarnessHub installs a product the way its official page does (ADR-044): one channel per product. A script runs the
+ * downloaded copy the user confirmed; npm installs an exact version into the prefix of the first Node.js on PATH; a
+ * terminal method is only shown, never run.
+ */
+export type OfficialInstallMethod = OfficialScriptMethod | OfficialNpmMethod | OfficialTerminalMethod;
+export interface OfficialScriptMethod {
+  readonly kind: "script";
+  /** The official command as its page gives it. */
+  readonly command: string;
+  readonly url: string;
+  /** Hosts the script's URL and its redirects may be on, as checked on 2026-10-17; any other stops the install. */
+  readonly hosts: readonly string[];
+  readonly interpreter: "bash" | "sh";
+  readonly args: readonly string[];
+  readonly env: Readonly<Record<string, string>>;
+  /** Home-relative directories the script may write; everything else is denied. */
+  readonly writes: readonly string[];
+  /** Home-relative files the official installer is known to change (Claude Code's ~/.claude.json); only their changed keys are recorded. */
+  readonly configFiles: readonly string[];
+  /** Whether the script adds its directory to a shell startup file, and which one it picks for the user's shell. */
+  readonly shellProfile: "codex" | null;
+  /** The command this method installs and where it lands, home-relative; used to verify the result and say what the terminal runs. */
+  readonly installs: { readonly command: string; readonly path: string };
+  readonly notes: readonly string[];
+}
+export interface OfficialNpmMethod {
+  readonly kind: "npm";
+  readonly package: string;
+  /** The command the package installs. */
+  readonly bin: string;
+  readonly command: string;
+  readonly notes: readonly string[];
+}
+/**
+ * An npm global prefix in the user's terms: Homebrew's Node.js, or the Node.js version a version manager keeps there.
+ * The path itself is not returned.
+ */
+export function prefixLabel(prefix: string, home: string): string {
+  if (prefix === "/opt/homebrew" || prefix === "/usr/local") return "Homebrew 的 Node.js";
+  const inHome = prefix.startsWith(home + "/") ? prefix.slice(home.length + 1) : null;
+  const managers: readonly (readonly [RegExp, string])[] = [
+    [/^\.nvm\/versions\/node\/([^/]+)$/u, "nvm"], [/(?:^|\/)fnm\/node-versions\/([^/]+)\/installation$/u, "fnm"],
+    [/^\.volta\/tools\/image\/node\/([^/]+)$/u, "Volta"], [/(?:^|\/)mise\/installs\/node\/([^/]+)$/u, "mise"], [/^\.asdf\/installs\/nodejs\/([^/]+)$/u, "asdf"],
+  ];
+  for (const [pattern, manager] of managers) {
+    const version = inHome === null ? undefined : pattern.exec(inHome)?.[1];
+    if (version !== undefined) return manager + " " + version;
+  }
+  return "其他 npm 前缀";
+}
+export interface OfficialTerminalMethod {
+  readonly kind: "terminal";
+  readonly command: string;
+  /** Why HarnessHub does not run it. */
+  readonly reason: string;
+}

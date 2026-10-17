@@ -50,7 +50,7 @@ export function resolveWorkspaceLockRoot(explicit?: string): string {
   if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== uid || (info.mode & 0o077) !== 0) throw new SessionError("INVALID_STORAGE", "workspace lock namespace is not privately owned");
   return path;
 }
-export function application(root: string, publish: (event: SessionEvent) => void, options: { readonly management?: Pick<ManagementOptions, "metadata" | "installer" | "recipes" | "installationMode" | "native" | "nativeLocks">; readonly nativeEnvironment?: NativeEnvironment;
+export function application(root: string, publish: (event: SessionEvent) => void, options: { readonly management?: Pick<ManagementOptions, "metadata" | "installer" | "recipes" | "installationMode" | "native" | "nativeLocks" | "removal" | "officialInstaller" | "npmRegistry">; readonly nativeEnvironment?: NativeEnvironment;
   /** The Turn budgets this Gateway was configured with (ADR-036); the defaults otherwise. */
   readonly budgets?: { readonly executionBudgetMs: number; readonly waitBudgetMs: number };
   /** The workspace lock namespace, resolved by `resolveWorkspaceLockRoot`; the per-user default shared by every Gateway otherwise. */

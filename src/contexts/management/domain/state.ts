@@ -1,4 +1,4 @@
-import { ManagementError, type HarnessManagementView, type InstallationJobStatus, type InstallationJobView, type InstallationLog, type InstallationTarget, type ResolvedManagedControl, type NativeInstallPlan, type ServiceRestartFact, type UninstallFacts } from "../../../contracts/management.js";
+import { ManagementError, type HarnessManagementView, type InstallationJobStatus, type InstallationJobView, type InstallationLog, type InstallationTarget, type OfficialInstallFacts, type PreparedInstall, type ResolvedManagedControl, type NativeInstallPlan, type RuntimeRequirement, type ServiceRestartFact, type UninstallFacts } from "../../../contracts/management.js";
 import { installationJobId, installationRef, managementSlug, serviceLabel } from "./input.js";
 import { isAbsolute } from "node:path";
 
@@ -45,6 +45,22 @@ function uninstallFacts(value: unknown): UninstallFacts {
   if (row.role !== "product" && row.role !== "adapter" || typeof row.removed !== "boolean") throw new ManagementError("INVALID_DATA", "uninstall facts are invalid");
   return { label: managementString(row.label, 256), role: row.role, stopServices: labels(row.stopServices), stoppedServices: labels(row.stoppedServices), removed: row.removed };
 }
+function texts(value: unknown, maximum: number, size = 512): readonly string[] {
+  if (!Array.isArray(value) || value.length > maximum) throw new ManagementError("INVALID_DATA", "management text list is invalid");
+  return value.map(item => managementString(item, size, true));
+}
+function officialFacts(value: unknown): OfficialInstallFacts {
+  const row = managementObject(value, ["method", "source", "sha256", "shellChanges", "configChanges", "blocked", "installed"]);
+  if (row.method !== "script" && row.method !== "npm" || typeof row.installed !== "boolean" || row.sha256 !== null && (typeof row.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(row.sha256))
+      || !Array.isArray(row.shellChanges) || row.shellChanges.length > 4 || !Array.isArray(row.configChanges) || row.configChanges.length > 4)
+    throw new ManagementError("INVALID_DATA", "official install facts are invalid");
+  return { method: row.method, source: managementString(row.source, 1024), sha256: row.sha256 as string | null,
+    shellChanges: (row.shellChanges as unknown[]).map(item => { const change = managementObject(item, ["file", "added", "removed"]); return { file: managementString(change.file, 1024), added: texts(change.added, 64), removed: texts(change.removed, 64) }; }),
+    configChanges: (row.configChanges as unknown[]).map(item => { const change = managementObject(item, ["file", "keys"]);
+      if (!Array.isArray(change.keys) || change.keys.length > 64) throw new ManagementError("INVALID_DATA", "official install facts are invalid");
+      return { file: managementString(change.file, 1024), keys: change.keys.map(key => { const entry = managementObject(key, ["path", "value"]); return { path: managementString(entry.path, 256), value: entry.value === null ? null : managementString(entry.value, 256, true) }; }) }; }),
+    blocked: texts(row.blocked, 16, 1024), installed: row.installed };
+}
 export function parseManagementJob(value: unknown): InstallationJobView {
   const row = managementObject(value, ["id", "harnessId", "controlId", "action", "status", "phase", "cancelRequested", "createdAt", "updatedAt", "resolvedVersion", "installationId", "error", "logCursor", "native"]);
   const status = jobStatus(row.status), phase = managementString(row.phase, 32);
@@ -53,7 +69,7 @@ export function parseManagementJob(value: unknown): InstallationJobView {
   const resolvedVersion = row.resolvedVersion === null ? null : managementString(row.resolvedVersion, 128), installationId = row.installationId === null ? null : managementInstallationId(row.installationId), error = errorValue(row.error);
   let native: InstallationJobView["native"];
   if (row.native !== undefined) {
-    const value = managementObject(row.native, ["channel", "location", "beforeVersion", "actualVersion", "dispatched", "configurationPreserved", "restartServices", "closedConversations", "clearedRecords", "services", "configurationChangedByService", "uninstall"]);
+    const value = managementObject(row.native, ["channel", "location", "beforeVersion", "actualVersion", "dispatched", "configurationPreserved", "restartServices", "closedConversations", "clearedRecords", "services", "configurationChangedByService", "uninstall", "official"]);
     if (typeof value.dispatched !== "boolean" || value.configurationPreserved !== null && typeof value.configurationPreserved !== "boolean") throw new ManagementError("INVALID_DATA", "native maintenance facts are invalid");
     if (value.restartServices !== undefined && (!Array.isArray(value.restartServices) || value.restartServices.length > 16 || value.restartServices.some(label => !serviceLabel(label)))
       || value.closedConversations !== undefined && managementInteger(value.closedConversations) > 1024 || value.clearedRecords !== undefined && managementInteger(value.clearedRecords) > 1024
@@ -65,7 +81,17 @@ export function parseManagementJob(value: unknown): InstallationJobView {
       ...(value.clearedRecords === undefined ? {} : { clearedRecords: managementInteger(value.clearedRecords) }),
       ...(value.services === undefined ? {} : { services: (value.services as readonly unknown[]).map(serviceFact) }),
       ...(value.configurationChangedByService === undefined ? {} : { configurationChangedByService: value.configurationChangedByService as boolean }),
-      ...(value.uninstall === undefined ? {} : { uninstall: uninstallFacts(value.uninstall) }) };
+      ...(value.uninstall === undefined ? {} : { uninstall: uninstallFacts(value.uninstall) }),
+      ...(value.official === undefined ? {} : { official: officialFacts(value.official) }) };
+  }
+  // An official install (ADR-044) publishes no private installation; it completes once the product was found in its channel.
+  if (native?.official !== undefined) {
+    if (row.action !== "install" || installationId !== null || native.uninstall !== undefined || native.restartServices !== undefined || native.services !== undefined
+        || status === "completed" && (error !== null || !native.dispatched || !native.official.installed || native.configurationPreserved !== true || native.actualVersion === null || resolvedVersion !== native.actualVersion)
+        || status === "queued" && (native.dispatched || error !== null || native.official.installed))
+      throw new ManagementError("INVALID_DATA", "official install job facts are inconsistent");
+    return { id: installationJobId(row.id), harnessId: managementSlug(row.harnessId), controlId: managementSlug(row.controlId), action: "install",
+      status, phase, cancelRequested: row.cancelRequested, createdAt: date(row.createdAt), updatedAt: date(row.updatedAt), resolvedVersion, installationId, error, logCursor: managementInteger(row.logCursor), native };
   }
   // An uninstall carries its facts and nothing an install publishes; it completes once removal is verified, without a version afterwards.
   if (row.action === "uninstall") {
@@ -130,4 +156,27 @@ export function parseInstallationTarget(value: unknown): InstallationTarget {
   const path = (field: unknown) => { const text = managementString(field); if (!isAbsolute(text)) throw new ManagementError("INVALID_DATA", "installation target paths must be absolute"); return text; };
   return { harnessId: managementSlug(row.harnessId), controlId: managementSlug(row.controlId), ref: row.ref, role: row.role, channel, name: managementString(row.name, 256), root: path(row.root), prefix: row.prefix === null ? null : path(row.prefix),
     entry: path(row.entry), resolvedPath: path(row.resolvedPath), version: row.version === null ? null : managementString(row.version, 128), active: row.active, label: managementString(row.label, 256), fingerprint: row.fingerprint };
+}
+function runtimeRequirement(value: unknown): RuntimeRequirement {
+  const row = managementObject(value, ["runtime", "required", "found", "path", "satisfied", "service", "restarted", "upgradeCommand"]);
+  if (row.runtime !== "Node.js" || typeof row.satisfied !== "boolean" || typeof row.restarted !== "boolean") throw new ManagementError("INVALID_DATA", "runtime requirement is invalid");
+  return { runtime: "Node.js", required: managementString(row.required, 512), found: row.found === null ? null : managementString(row.found, 128), path: managementString(row.path),
+    satisfied: row.satisfied, service: row.service === null ? null : managementString(row.service, 256), restarted: row.restarted, upgradeCommand: row.upgradeCommand === null ? null : managementString(row.upgradeCommand, 256) };
+}
+/** A prepared official install as frozen with its job (management schema v5); paths are absolute. */
+export function parseInstallRequest(value: unknown): PreparedInstall & { readonly fingerprint: string } {
+  const row = managementObject(value, ["harnessId", "method", "source", "sha256", "script", "interpreter", "args", "env", "writes", "shellProfile", "configFiles", "package", "version", "prefix", "npm", "entry", "command", "runtime", "fingerprint"]);
+  const absolute = (field: unknown, nullable: boolean): string | null => { if (field === null && nullable) return null; const text = managementString(field); if (!isAbsolute(text)) throw new ManagementError("INVALID_DATA", "install request paths must be absolute"); return text; };
+  if (row.method !== "script" && row.method !== "npm" || typeof row.fingerprint !== "string" || !/^[a-f0-9]{64}$/u.test(row.fingerprint) || row.interpreter !== null && row.interpreter !== "bash" && row.interpreter !== "sh"
+      || row.sha256 !== null && (typeof row.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(row.sha256)) || (row.method === "script") !== (row.script !== null && row.sha256 !== null && row.interpreter !== null)
+      || (row.method === "npm") !== (row.package !== null && row.version !== null && row.prefix !== null && row.npm !== null))
+    throw new ManagementError("INVALID_DATA", "install request is inconsistent");
+  const env = managementObject(row.env, Object.keys(row.env !== null && typeof row.env === "object" ? row.env : {})), copied: Record<string, string> = {};
+  if (Object.keys(env).length > 16) throw new ManagementError("INVALID_DATA", "install request environment is invalid");
+  for (const [key, item] of Object.entries(env)) { if (!/^[A-Z][A-Z0-9_]{0,63}$/u.test(key)) throw new ManagementError("INVALID_DATA", "install request environment is invalid"); copied[key] = managementString(item, 256); }
+  const paths = (field: unknown) => { if (!Array.isArray(field) || field.length > 16) throw new ManagementError("INVALID_DATA", "install request paths are invalid"); return field.map(item => absolute(item, false)!); };
+  return { harnessId: managementSlug(row.harnessId), method: row.method, source: managementString(row.source, 1024), sha256: row.sha256 as string | null, script: absolute(row.script, true), interpreter: row.interpreter as "bash" | "sh" | null,
+    args: texts(row.args, 8, 128), env: copied, writes: paths(row.writes), shellProfile: absolute(row.shellProfile, true), configFiles: paths(row.configFiles),
+    package: row.package === null ? null : managementString(row.package, 214), version: row.version === null ? null : managementString(row.version, 128), prefix: absolute(row.prefix, true), npm: absolute(row.npm, true),
+    entry: absolute(row.entry, false)!, command: managementString(row.command, 64), runtime: row.runtime === null ? null : runtimeRequirement(row.runtime), fingerprint: row.fingerprint };
 }

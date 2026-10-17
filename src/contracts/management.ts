@@ -41,6 +41,24 @@ export interface NativeJobFacts {
   readonly configurationChangedByService?: boolean;
   /** What an uninstall removed and stopped (ADR-044); present on uninstall jobs only, from management schema v4. */
   readonly uninstall?: UninstallFacts;
+  /** What an official install ran and changed (ADR-044); present on official install jobs only, from management schema v5. */
+  readonly official?: OfficialInstallFacts;
+}
+/** One official install's facts: how it ran and what it changed besides the program itself. */
+export interface OfficialInstallFacts {
+  readonly method: "script" | "npm";
+  /** The script's final URL, or the npm package and exact version. */
+  readonly source: string;
+  /** The SHA-256 of the script copy that ran; null for npm. */
+  readonly sha256: string | null;
+  /** Lines the script added to or removed from the shell startup file it was allowed to change. */
+  readonly shellChanges: readonly { readonly file: string; readonly added: readonly string[]; readonly removed: readonly string[] }[];
+  /** Keys the installer changed in the product configuration it was allowed to write; values only for known install fields. */
+  readonly configChanges: readonly { readonly file: string; readonly keys: readonly { readonly path: string; readonly value: string | null }[] }[];
+  /** Paths the installer tried to write outside what it was allowed, as its output named them; they were blocked. */
+  readonly blocked: readonly string[];
+  /** Whether the product was found installed in its official channel afterwards. */
+  readonly installed: boolean;
 }
 /** One uninstall's facts: the installation by its label, the services the user agreed to stop and those stopped, and whether removal was verified. */
 export interface UninstallFacts {
@@ -305,6 +323,80 @@ export interface InstallationRemovalPort {
   /** Digests of the protected configuration, compared around the uninstall; contents never leave this call. */
   configuration(target: InstallationObservation): Promise<string>;
 }
+/**
+ * What installing a missing product the official way would run, write and change (ADR-044), read once for the user's
+ * confirmation. The script is downloaded here and the copy that ran is this one; npm installs this exact version.
+ */
+export interface InstallCheck {
+  readonly harnessId: string;
+  readonly checkedAt: string;
+  /** Names this prepared install; a submission carrying another, or after `expiresAt`, is refused. */
+  readonly fingerprint: string;
+  readonly expiresAt: string;
+  readonly method: "script" | "npm";
+  /** The command as the product's page gives it. */
+  readonly officialCommand: string;
+  readonly docs: string;
+  /** The script's final URL after its recorded redirects, or `package@version`. */
+  readonly source: string;
+  readonly sha256: string | null;
+  /** What HarnessHub runs, as text, with ~ for the home directory. */
+  readonly runs: string;
+  /** Where it may write, with ~; everything else is denied. */
+  readonly writes: readonly string[];
+  /** The shell startup file the installer may change (with ~), or null when it changes none. */
+  readonly shellProfile: string | null;
+  /** Product configuration files the installer may change (with ~); only their changed keys are recorded. */
+  readonly configFiles: readonly string[];
+  /** The exact npm version; null for a script, which installs its own latest. */
+  readonly version: string | null;
+  /** The npm prefix it installs into: the first Node.js on this Gateway's PATH. */
+  readonly prefix: { readonly label: string; readonly path: string } | null;
+  /** The release's Node.js range against that prefix's Node.js; an unmet one blocks the install. */
+  readonly runtime: RuntimeRequirement | null;
+  /** Which program the terminal's command runs afterwards (by this Gateway's PATH, which the login shell gives). */
+  readonly terminal: { readonly command: string; readonly before: string | null; readonly after: "this" | "unchanged" | "not-on-path" };
+  /** Whether HarnessHub verified this version (ADR-038); null when the version is not known before installing. */
+  readonly target: HarnessVersionVerification | null;
+  readonly notes: readonly string[];
+  /** Why it cannot be installed now; null when it can. */
+  readonly blocked: string | null;
+}
+/** The host side of an official install (ADR-044); replaced in tests that must not touch the user's home or the network. */
+export interface OfficialInstallPort {
+  /**
+   * Prepares an install without changing the user's programs: downloads the script into `directory` (HTTPS, recorded
+   * hosts only, bounded) or resolves the exact npm release and the prefix's Node.js. Rejects when the method cannot run.
+   */
+  prepare(harnessId: string, directory: string, context: ManagementInstallContext): Promise<PreparedInstall>;
+  /** Runs the prepared install with writes confined to what it declares; resolves with what it changed besides the program. */
+  run(prepared: PreparedInstall, context: NativeInstallContext): Promise<{ readonly exitCode: number; readonly facts: Omit<OfficialInstallFacts, "installed"> }>;
+  /** The installed command and its version, when the product is now in its official channel; null when it is not. */
+  verify(prepared: PreparedInstall, context: ManagementInstallContext): Promise<{ readonly entry: string; readonly version: string | null } | null>;
+}
+/** A prepared official install, frozen with its job; private paths stay on the Gateway. */
+export interface PreparedInstall {
+  readonly harnessId: string;
+  readonly method: "script" | "npm";
+  readonly source: string;
+  readonly sha256: string | null;
+  /** The script copy, inside the job's private directory once submitted. */
+  readonly script: string | null;
+  readonly interpreter: "bash" | "sh" | null;
+  readonly args: readonly string[];
+  readonly env: Readonly<Record<string, string>>;
+  readonly writes: readonly string[];
+  readonly shellProfile: string | null;
+  readonly configFiles: readonly string[];
+  readonly package: string | null;
+  readonly version: string | null;
+  readonly prefix: string | null;
+  readonly npm: string | null;
+  /** Where the command lands, absolute. */
+  readonly entry: string;
+  readonly command: string;
+  readonly runtime: RuntimeRequirement | null;
+}
 /** What uninstalling one installation would remove, stop and leave, read once for the user's confirmation (ADR-044). */
 export interface UninstallCheck {
   readonly harnessId: string;
@@ -360,6 +452,8 @@ export interface ManagementJobInput {
   readonly expectedInstallationFingerprint?: string;
   /** The service labels the user agreed to have stopped and unregistered by an uninstall. */
   readonly stopServices?: readonly string[];
+  /** The fingerprint of the official install check the user confirmed (ADR-044); marks an official install. */
+  readonly expectedInstallFingerprint?: string;
   readonly commandId: string;
   readonly expectedDefaultRevision?: number;
   readonly expectedNativeFingerprint?: string;

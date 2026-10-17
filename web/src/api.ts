@@ -1,7 +1,7 @@
 import { consumeSessionEventStream, SessionStreamError } from "./session-stream.js";
 import { readSseBlocks } from "./attention.js";
 import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
-import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, LoginShellView, MaintenanceView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, UninstallCheckView, WebState } from "../../src/contracts/web.js";
+import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, LoginShellView, MaintenanceView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, UninstallCheckView, InstallCheckView, WebState } from "../../src/contracts/web.js";
 import type { HarnessManagementView, InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
 import type { AttentionItem, HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
 import type { NativeExtensions, NativeInputs, NativeOption, NativeModelCatalog } from "../../src/contracts/control.js";
@@ -72,7 +72,8 @@ function decodeHarness(value: unknown): HarnessView {
     controls: list(row.controls, value => { const control = record(value), entry = control.entry === null ? null : record(control.entry);
       return { id: text(control.id), protocol: text(control.protocol), available: bool(control.available), reason: nullableText(control.reason),
         entry: entry === null ? null : { source: choice(entry.source, ["path", "standard-directory", "custom-entry", "package-root", "managed"]) } }; }, 64),
-    install: install === null ? null : { command: text(install.command), docs: text(install.docs), checkedAt: text(install.checkedAt), note: nullableText(install.note) },
+    install: install === null ? null : { command: text(install.command), docs: text(install.docs), checkedAt: text(install.checkedAt), note: nullableText(install.note),
+      method: choice(install.method, ["script", "npm", "terminal"]), available: bool(install.available) },
     installations: list(row.installations, value => { const item = record(value);
       return { ref: text(item.ref), channel: item.channel === null ? null : choice(item.channel, ["npm", "brew-formula", "brew-cask", "script", "uv", "pnpm", "bun"]), label: text(item.label), command: text(item.command),
         version: nullableText(item.version), role: choice(item.role, ["product", "adapter"]), active: bool(item.active), maintained: bool(item.maintained), canUninstall: bool(item.canUninstall) }; }, 64),
@@ -100,7 +101,24 @@ export function decodeInstallationJob(value: unknown): InstallationJobView {
       ...(native.services === undefined ? {} : { services: list(native.services, value => { const item = record(value); return { label: text(item.label), outcome: choice(item.outcome, ["restarted", "not_running", "not_recovered"]), pid: item.pid === null ? null : number(item.pid), ready: item.ready === null ? null : bool(item.ready) }; }, 16) }),
       ...(native.configurationChangedByService === undefined ? {} : { configurationChangedByService: bool(native.configurationChangedByService) }),
       ...(native.uninstall === undefined ? {} : { uninstall: (() => { const facts = record(native.uninstall); return { label: text(facts.label), role: choice(facts.role, ["product", "adapter"]),
-        stopServices: list(facts.stopServices, text, 16), stoppedServices: list(facts.stoppedServices, text, 16), removed: bool(facts.removed) }; })() }) }; })() }) };
+        stopServices: list(facts.stopServices, text, 16), stoppedServices: list(facts.stoppedServices, text, 16), removed: bool(facts.removed) }; })() }),
+      ...(native.official === undefined ? {} : { official: (() => { const facts = record(native.official); return { method: choice(facts.method, ["script", "npm"]), source: text(facts.source), sha256: nullableText(facts.sha256),
+        shellChanges: list(facts.shellChanges, item => { const change = record(item); return { file: text(change.file), added: list(change.added, value => typeof value === "string" ? value : invalid(), 64), removed: list(change.removed, value => typeof value === "string" ? value : invalid(), 64) }; }, 4),
+        configChanges: list(facts.configChanges, item => { const change = record(item); return { file: text(change.file), keys: list(change.keys, key => { const entry = record(key); return { path: text(entry.path), value: nullableText(entry.value) }; }, 64) }; }, 4),
+        blocked: list(facts.blocked, text, 16), installed: bool(facts.installed) }; })() }) }; })() }) };
+}
+/** What installing a missing product the official way would run and change (ADR-044). */
+export function decodeInstallCheck(value: unknown): InstallCheckView {
+  const row = record(value), terminal = record(row.terminal), prefix = row.prefix === null ? null : record(row.prefix), runtime = row.runtime === null ? null : record(row.runtime);
+  return { harnessId: text(row.harnessId), checkedAt: text(row.checkedAt), fingerprint: text(row.fingerprint), expiresAt: text(row.expiresAt), method: choice(row.method, ["script", "npm"]),
+    officialCommand: text(row.officialCommand), docs: text(row.docs), source: text(row.source), sha256: nullableText(row.sha256), runs: text(row.runs), writes: list(row.writes, text, 16),
+    shellProfile: nullableText(row.shellProfile), configFiles: list(row.configFiles, text, 8), version: nullableText(row.version),
+    prefix: prefix === null ? null : { label: text(prefix.label), path: text(prefix.path) },
+    runtime: runtime === null ? null : { runtime: choice(runtime.runtime, ["Node.js"]), required: text(runtime.required), found: nullableText(runtime.found), path: text(runtime.path),
+      satisfied: bool(runtime.satisfied), service: nullableText(runtime.service), restarted: bool(runtime.restarted), upgradeCommand: nullableText(runtime.upgradeCommand) },
+    terminal: { command: text(terminal.command), before: nullableText(terminal.before), after: choice(terminal.after, ["this", "unchanged", "not-on-path"]) },
+    target: row.target === null ? null : (() => { const target = record(row.target); return { state: choice(target.state, ["verified", "unverified"]), program: text(target.program), ...(target.adapter === undefined ? {} : { adapter: text(target.adapter) }) }; })(),
+    notes: list(row.notes, text, 16), blocked: nullableText(row.blocked) };
 }
 /** What uninstalling one installation would remove, stop and leave (ADR-044). */
 export function decodeUninstallCheck(value: unknown): UninstallCheckView {
@@ -490,6 +508,8 @@ export class GatewayApi {
     return this.request("/harnesses/check-updates", "POST", harnessIds ? { harnessIds } : {}, value => list(value, decodeHarness, 256));
   }
   submitInstallation(input: ManagementJobInput): Promise<InstallationJobView> { return this.request("/installation-jobs", "POST", input, decodeInstallationJob); }
+  /** Prepares installing a missing product the official way and reads what it would run and change (ADR-044); changes nothing of the user's. */
+  installCheck(harnessId: string, signal?: AbortSignal): Promise<InstallCheckView> { return this.request(`/harnesses/${encodeURIComponent(harnessId)}/install`, "GET", undefined, decodeInstallCheck, signal); }
   /** Reads what uninstalling one installation would remove, stop and leave, for the confirmation (ADR-044); changes nothing. */
   uninstallCheck(harnessId: string, ref: string, signal?: AbortSignal): Promise<UninstallCheckView> {
     return this.request(`/harnesses/${encodeURIComponent(harnessId)}/installations/${encodeURIComponent(ref)}/uninstall`, "GET", undefined, decodeUninstallCheck, signal);

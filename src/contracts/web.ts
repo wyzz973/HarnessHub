@@ -12,6 +12,8 @@ export type HarnessEntrySource = "path" | "standard-directory" | "custom-entry" 
 export type MaintenanceView = Omit<import("./management.js").MaintenanceCheck, "conversations"> & {
   readonly conversations: readonly { readonly sessionId: string; readonly title: string; readonly busy: boolean }[];
 };
+/** What installing a missing product the official way would run and change, for the user's confirmation (ADR-044). */
+export type InstallCheckView = import("./management.js").InstallCheck;
 /** What uninstalling one installation would remove, stop and leave, for the user's confirmation (ADR-044); conversations carry their titles. */
 export type UninstallCheckView = Omit<import("./management.js").UninstallCheck, "conversations"> & {
   readonly conversations: readonly { readonly sessionId: string; readonly title: string; readonly busy: boolean }[];
@@ -30,7 +32,9 @@ export interface HarnessView {
    * The product's own documented way to install it on macOS, shown when it is missing; HarnessHub does not run it yet.
    * `checkedAt` is when the command was read from `docs`; `note` says what the official page adds, such as a successor.
    */
-  readonly install: { readonly command: string; readonly docs: string; readonly checkedAt: string; readonly note: string | null } | null;
+  readonly install: { readonly command: string; readonly docs: string; readonly checkedAt: string; readonly note: string | null;
+    /** How HarnessHub installs it: by its official script or npm package once the user confirms, or only shown for the terminal. */
+    readonly method: "script" | "npm" | "terminal"; readonly available: boolean } | null;
   /**
    * Every installation found in an official channel (ADR-044), in search order with PATH first; a Gateway that allows
    * unofficial entries (development) also lists those, with a null channel. Paths stay on the Gateway.

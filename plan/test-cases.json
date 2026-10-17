@@ -8828,6 +8828,151 @@
       "expected": "命令行里没有路径的进程，凭 lsof 报告它打开了这份安装的程序文件而列入“仍在运行”；本进程及其后代不列；不存在的程序文件不去查询",
       "status": "planned",
       "evidence": null
+    },
+    {
+      "id": "G011-IN1",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "planned_file": "tests/unit/official-install.test.ts",
+      "scenario": "安装脚本只经 HTTPS、只从登记的域名下载，有大小上限，必须是脚本",
+      "expected": "登记的跳转正常下载并给出最终地址和 SHA-256；跳到未登记的域名、HTTP、带账号的地址、超过 1 MiB、错误页面、404 都拒绝且不保存文件，未登记的域名不会被请求",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-IN2",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "planned_file": "tests/unit/official-install.test.ts",
+      "scenario": "安装改动的记录方式",
+      "expected": "Codex 按 $SHELL 选择启动文件；增删的行逐行记录；产品配置只记录变化的键，已知安装字段显示值，其他键不显示值，无法解析时记为整个文件；被拒写入取错误信息紧挨着的那个路径，不取脚本自己的路径",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-IN3",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "planned_file": "tests/unit/official-install.test.ts",
+      "scenario": "每个产品登记一种官网安装方式",
+      "expected": "四个脚本产品的地址在登记的域名里，可写位置都是家目录下的普通相对路径，并包含程序落点；四个 npm 产品；Hermes 只给命令；目录外的产品没有",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-IN4",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "planned_file": "tests/unit/official-install.test.ts",
+      "scenario": "官网安装请求与冻结的安装请求",
+      "expected": "官网安装请求只带确认的指纹；冻结的请求逐字段校验（脚本必须有副本、摘要和解释器，npm 必须有前缀、版本和 npm；路径必须是绝对路径，环境变量名受限）",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-IN5",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/official-install.test.ts",
+      "scenario": "经正式入口用官方脚本安装缺失的产品",
+      "expected": "确认显示最终地址、SHA-256、可写位置、产品配置文件和终端指向；脚本在真实沙箱里运行，写入 ~/.zshrc 被阻止并记录；~/.claude.json 只记录 installMethod 的改动；装好后列表出现脚本安装；已有官网安装时不再安装第二份；同一命令重复提交返回同一任务",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-IN6",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/official-install.test.ts",
+      "scenario": "安装脚本的来源与副本受保护",
+      "expected": "跳到未登记域名的脚本不下载并返回 409；确认后被改动的副本不运行，任务为没有安装；未知或过期的确认返回 409",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-IN7",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/official-install.test.ts",
+      "scenario": "npm 产品按确认的精确版本装入 PATH 上第一个 Node.js 的前缀",
+      "expected": "经本机假 npm 仓库安装，确认显示版本、前缀、Node.js 满足情况和终端指向；装好后列表出现 npm 安装；Node.js 不满足范围时确认显示原因，提交返回 409 且什么都不装",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-IN8",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/official-install.test.ts",
+      "scenario": "会改 shell 配置的安装脚本与带参数的安装脚本",
+      "expected": "Codex 式脚本只能改 ~/.zprofile，增加的行逐行记录，写入 ~/.codex/config.toml 被阻止且原内容不变；OpenCode 式脚本收到 --no-modify-path，目录不在 PATH 上时确认如实说明",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G054-IN1",
+      "task": "G054",
+      "requirements": [
+        "R01",
+        "R22"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "e2e",
+      "planned_file": "tests/browser/web.browser.ts",
+      "scenario": "按官网方式安装的确认框",
+      "expected": "不能安装时说明原因并禁止确认；否则显示官网命令、版本、实际运行的命令、前缀、Node.js 和产品说明，以及安装后终端里的命令指向哪一份；提交的内容正好是确认的指纹；任务显示为等待安装；无页面错误",
+      "status": "planned",
+      "evidence": null
     }
   ]
 }

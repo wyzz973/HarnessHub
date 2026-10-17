@@ -1,28 +1,12 @@
 import { createHash } from "node:crypto";
 import { basename, join } from "node:path";
 import type { ClassifiedCandidate, InstallationCandidate, ObservedInstallations } from "../contexts/catalog/domain/catalog.js";
-import { UNMAINTAINED_CHANNELS, type InstallationChannel } from "../contexts/catalog/domain/channels.js";
+import { prefixLabel, UNMAINTAINED_CHANNELS, type InstallationChannel } from "../contexts/catalog/domain/channels.js";
 import { productChannels } from "../adapters/catalog-channels.js";
 import type { InstallationObservation } from "../contracts/management.js";
 import type { HarnessView, InstallationView } from "../contracts/web.js";
 
-/**
- * An npm global prefix in the user's terms: Homebrew's Node.js, or the Node.js version a version manager keeps there.
- * The path itself is not returned.
- */
-export function prefixLabel(prefix: string, home: string): string {
-  if (prefix === "/opt/homebrew" || prefix === "/usr/local") return "Homebrew 的 Node.js";
-  const inHome = prefix.startsWith(home + "/") ? prefix.slice(home.length + 1) : null;
-  const managers: readonly (readonly [RegExp, string])[] = [
-    [/^\.nvm\/versions\/node\/([^/]+)$/u, "nvm"], [/(?:^|\/)fnm\/node-versions\/([^/]+)\/installation$/u, "fnm"],
-    [/^\.volta\/tools\/image\/node\/([^/]+)$/u, "Volta"], [/(?:^|\/)mise\/installs\/node\/([^/]+)$/u, "mise"], [/^\.asdf\/installs\/nodejs\/([^/]+)$/u, "asdf"],
-  ];
-  for (const [pattern, manager] of managers) {
-    const version = inHome === null ? undefined : pattern.exec(inHome)?.[1];
-    if (version !== undefined) return manager + " " + version;
-  }
-  return "其他 npm 前缀";
-}
+export { prefixLabel } from "../contexts/catalog/domain/channels.js";
 /** A channel in the user's terms; null is an entry admitted only because development allows unofficial entries. */
 export function channelLabel(channel: InstallationChannel | null, home: string): string {
   if (channel === null) return "开发入口（非官网安装）";

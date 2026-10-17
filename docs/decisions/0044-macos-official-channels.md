@@ -114,6 +114,33 @@
   - 现在只在任务日志里记一笔，不再判失败。此前 ADR-043 的升级会因此误报“结果未知”；这次一并修正。
 - **存储与接口。** 管理库 v4 新增 `management_installation_targets`，冻结每个卸载任务的目标；`tools/management-v4-to-v3.sql` 降回 v3，会删除卸载任务及其日志。错误码 `*_CHANGED` 和 `*REFUSED` 返回 409。
 
+## 审批代理对安装设计的裁决（2026-10-17，第四轮）
+
+- 安装脚本的下载只允许跳到登记的域名，例如 `claude.ai` 跳到 `downloads.claude.ai`，`chatgpt.com` 跳到 `releases.openai.com`，`opencode.ai` 跳到 `raw.githubusercontent.com`。跳到其他域名就停下，请用户在终端运行官网命令。确认框显示最终地址和 SHA-256，并写明脚本自己还会下载程序本体、平台不校验那部分；Cursor 另注明它的脚本不校验下载的完整性。
+- 脚本拿到的是 Gateway 从登录 shell 得到的 PATH，与用户终端一致。沙箱拦下的写入要在任务里写明“尝试写入 X，已被阻止”。期限 10 分钟；失败不卸载、不重试，留下的文件可以在列表里卸载。
+- Claude Code 的官方安装会写 `~/.claude.json`：放开它，但只记录变化的键，已知的安装字段显示值，其他键只写“值已更改（未显示）”。Codex 的脚本按 `$SHELL` 选择 shell 启动文件（macOS 上 zsh 是 `~/.zprofile`，bash 是 `~/.bash_profile`），只放开那一个文件，并记录增删的行。OpenCode 用 `--no-modify-path` 时写明“终端里找不到 opencode 时，需要自己把 `~/.opencode/bin` 加入 PATH”。
+- 装好后按 ADR-038 判断，不是验证过的版本就提示。
+- npm 加 `--no-audit --no-fund` 并关闭更新提示；前缀取 Gateway PATH 上第一个 Node.js 的前缀，确认框显示它。
+- 不改用户的 Homebrew，暂不提供 Homebrew 安装：9 个产品的首选渠道都不是 Homebrew。测试用临时 npm 前缀和本地假脚本，含跳转、超限、摘要不一致、越界写入等无效样例。第一个请用户点击的真实安装是 DeepSeek Harness，第二个是 Pi。每个安装确认框都有固定一行，说明“安装后终端里的命令指向哪一份”。
+- 同一产品的安装、卸载、升级互斥。
+- 脚本在沙箱里仍能读取家目录并联网，这是 `curl | bash` 固有的风险。平台只保证运行的就是确认框里那一份。
+
+## 实现（第 3 步：按官网方式安装，2026-10-17）
+
+- **方式。**
+  - 官方脚本：Claude Code、Codex（`CODEX_NON_INTERACTIVE=1`）、OpenCode（`--no-modify-path`）、Cursor。
+  - npm：OpenClaw、Gemini CLI、Pi、DeepSeek Harness。OpenClaw 的官方脚本会安装 Homebrew 和 Node.js 并进入交互式引导，所以改用官网同样列出的 npm 方式，装好后提示运行 `openclaw onboard --install-daemon`。
+  - Hermes：只显示终端命令。
+  - 各产品的方式登记在 `catalog-channels.ts`，附来源。
+- **准备与确认。** `GET /api/v1/harnesses/{id}/install` 准备一次安装：脚本下载到管理目录里的私有位置并计算 SHA-256；npm 先解析出精确版本，再读取该前缀 Node.js 的版本。确认框显示：官网命令、来源与 SHA-256、实际运行的命令、可写位置、可能改动的 shell 启动文件或产品配置、Node.js 是否满足、安装后终端里的命令指向哪一份，以及各产品的说明。准备好的安装等待 15 分钟。
+- **执行。**
+  - 提交时，脚本副本移入任务自己的目录，运行前再核对 SHA-256。
+  - 脚本在沙箱里只能写它的安装目录、任务目录、`/dev` 和那一个允许的文件。缺少的上级目录（例如 `~/.local/share`）由 HarnessHub 先建好空目录。
+  - npm 在沙箱里只能写该前缀和任务目录，包自己的安装脚本照常运行。
+  - 装完按渠道判定，产品必须出现在它的官方渠道里，再在只读沙箱里读出版本。
+- **存储与接口。** 管理库 v5 新增 `management_install_requests`，冻结每个安装任务；`tools/management-v5-to-v4.sql` 降回 v4，会删除这些安装任务的记录。错误码 `*_EXPIRED`、`*INCOMPATIBLE` 返回 409。
+- **验收。** 见[安装验收记录](../verification/official-install-2026-10-17.md)。
+
 ## 影响
 
 - 这台电脑上，Pi（开发目录）和 DeepSeek Harness（源码构建）会显示为未安装。Claude Code 会列出三份 npm 安装。

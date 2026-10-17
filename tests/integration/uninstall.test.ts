@@ -98,6 +98,9 @@ test("G011-UN1 a script installation is removed exactly as its installer wrote i
 test("G011-UN2 management v4 keeps uninstall jobs with their frozen target; the documented downgrade to v3 removes exactly those and v3's rows stay", async t => {
   const root = await temporary(t, "uninstall-storage-");
   const storage = managementStorage(root, 1);
+  assert.equal(storage.db.prepare("PRAGMA user_version").get()?.user_version, 5);
+  // This build is v5; its official install requests go first (v5 to v4), which keeps every uninstall.
+  storage.db.exec(await readFile(new URL("../../../tools/management-v5-to-v4.sql", import.meta.url), "utf8"));
   assert.equal(storage.db.prepare("PRAGMA user_version").get()?.user_version, 4);
   const target = { harnessId: "claude", controlId: "claude-acp-npm", ref: "a".repeat(64), role: "product", channel: "npm", name: "@anthropic-ai/claude-code", root: "/opt/prefix/lib/node_modules/@anthropic-ai/claude-code",
     prefix: "/opt/prefix", entry: "/opt/prefix/bin/claude", resolvedPath: "/opt/prefix/lib/node_modules/@anthropic-ai/claude-code/cli.js", version: "1.0.31", active: false, label: "npm 全局（nvm v23.10.0）", fingerprint: "b".repeat(64) };
@@ -125,7 +128,7 @@ test("G011-UN2 management v4 keeps uninstall jobs with their frozen target; the 
     assert.equal(db.prepare("SELECT count(*) AS n FROM sqlite_schema WHERE name='management_installation_targets'").get()?.n, 0);
   } finally { db.close(); }
   const reopened = managementStorage(root, 2);
-  try { assert.equal(reopened.db.prepare("PRAGMA user_version").get()?.user_version, 4); assert.equal(reopened.db.prepare("SELECT count(*) AS n FROM management_jobs").get()?.n, 1); } finally { reopened.db.close(); }
+  try { assert.equal(reopened.db.prepare("PRAGMA user_version").get()?.user_version, 5); assert.equal(reopened.db.prepare("SELECT count(*) AS n FROM management_jobs").get()?.n, 1); } finally { reopened.db.close(); }
 });
 
 /** A removal that changes nothing on the host: it records calls, and its usage is what the test sets. */

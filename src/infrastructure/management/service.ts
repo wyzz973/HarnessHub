@@ -1,11 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants, lstatSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { constants, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { access, lstat, realpath, mkdtemp, rm } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative } from "node:path";
+import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { gt, valid } from "semver";
 import { ManagementError, type HarnessManagementView, type InstallCapability, type InstallationJobView, type InstallationLog, type NativeManagementPort, type NativeInstallPlan, type ManagementInstallContext,
   type ManagementInstallerPort, type ManagementMetadataPort, type ManagementRecipe, type ResolvedManagedControl, type MaintenanceCheck, type NativeJobFacts, type NativeProgramUsers, type RuntimeRequirement, type ServiceRestartFact,
-  type InstallationObservation, type InstallationRemovalPort, type InstallationTarget, type UninstallCheck, type UninstallFacts } from "../../contracts/management.js";
+  type InstallationObservation, type InstallationRemovalPort, type InstallationTarget, type UninstallCheck, type UninstallFacts, type InstallCheck, type OfficialInstallPort, type PreparedInstall } from "../../contracts/management.js";
 import type { SystemInstallationObservation, SystemVersionProbeOptions } from "../../contracts/management.js";
 import { boundedManagementLimit, installationJobId, installationRef, managementCommand, managementSlug, parseManagementInput } from "../../contexts/management/domain/input.js";
 import { builtinManagementRecipes } from "../../adapters/management/recipes.js";
@@ -13,14 +13,16 @@ import { DefaultManagementInstaller, installedNpmEntry } from "./installer.js";
 import { insideManagement } from "./archive.js";
 import { OfficialManagementMetadata } from "./metadata.js";
 import { boundedManagementFile, managementIdentity, managementStorage, sameManagementIdentity } from "./storage.js";
-import { managementInteger, managementObject, parseInstallationRecord, parseInstallationTarget, parseManagementJob, parseManagementLog, parseManagementUpdate, parseNativePlan, type InstallationRecord } from "../../contexts/management/domain/state.js";
+import { managementInteger, managementObject, parseInstallationRecord, parseInstallationTarget, parseInstallRequest, parseManagementJob, parseManagementLog, parseManagementUpdate, parseNativePlan, type InstallationRecord } from "../../contexts/management/domain/state.js";
 import { probeSystemVersion } from "./system-version.js";
 import { versionVerification } from "./verified-versions.js";
 import { NativeManagement, runtimeRefusal } from "./native.js";
 import { NativeInstallationLocks } from "./native-lock.js";
 import { captureNativeEnvironment, type NativeEnvironment } from "../session/native-environment.js";
-import { productMaintenance } from "../../adapters/catalog-channels.js";
+import { officialInstallMethod, productMaintenance } from "../../adapters/catalog-channels.js";
+import { prefixLabel } from "../../contexts/catalog/domain/channels.js";
 import { LocalInstallationRemoval } from "./uninstall.js";
+import { LocalOfficialInstaller } from "./official-install.js";
 
 export interface ManagementOptions {
   readonly installationMode?: "native" | "private-fixture";
@@ -41,7 +43,13 @@ export interface ManagementOptions {
   readonly systemVersionProbe?: (observation: SystemInstallationObservation, options: SystemVersionProbeOptions) => Promise<{ version: string | null; reason: string | null }>;
   /** Removes official installations (ADR-044); the host's own by default, none in private-fixture mode unless given. */
   readonly removal?: InstallationRemovalPort;
+  /** Installs missing products the official way (ADR-044); the host's own by default, none in private-fixture mode unless given. */
+  readonly officialInstaller?: OfficialInstallPort;
+  /** The npm registry official npm installs use; the public registry unless a test serves its own. */
+  readonly npmRegistry?: string;
 }
+/** How long a prepared official install waits for the user's confirmation (ADR-044). */
+const INSTALL_CHECK_MS = 15 * 60 * 1000;
 const openRoots = new Set<string>();
 function importedFile(path: string): string { return new TextDecoder("utf8", { fatal: true }).decode(boundedManagementFile(path, 4096)); }
 function relativeSlot(root: string, path: string): string { return relative(root, path).replaceAll("\\", "/"); }
@@ -94,6 +102,10 @@ export class LocalHarnessManagement {
   private readonly removal: InstallationRemovalPort | null;
   /** The user's home as given and as resolved: paths shown to the user are written with ~ (ADR-044). */
   private readonly homes: readonly string[];
+  private readonly source: NativeEnvironment;
+  private readonly officialInstaller: OfficialInstallPort | null;
+  /** Official installs prepared for a confirmation, by fingerprint, until they expire or are submitted (ADR-044). */
+  private readonly prepared = new Map<string, { readonly harnessId: string; readonly prepared: PreparedInstall; readonly directory: string; readonly expires: number }>();
   constructor(root: string, private readonly options: ManagementOptions) {
     options.assertOwner(); this.timeout = options.runTimeoutMs ?? 10 * 60 * 1000;
     if (!Number.isSafeInteger(this.timeout) || this.timeout < 20 || this.timeout > 10 * 60 * 1000) throw new ManagementError("INVALID_INPUT", "invalid installation timeout");
@@ -101,8 +113,10 @@ export class LocalHarnessManagement {
     this.redactor = options.redactor ?? (text => text); this.recipes = options.recipes ?? builtinManagementRecipes();
     this.metadata = options.metadata ?? new OfficialManagementMetadata();
     this.native = options.installationMode === "private-fixture" ? null : options.native ?? new NativeManagement(this.npm, this.uv, this.node, options.nativeEnvironment);
-    const source = options.nativeEnvironment ?? captureNativeEnvironment();
+    const source = options.nativeEnvironment ?? captureNativeEnvironment(); this.source = source;
     this.removal = options.removal ?? (options.installationMode === "private-fixture" ? null : new LocalInstallationRemoval(source, { npm: this.npm, uv: this.uv }));
+    this.officialInstaller = options.officialInstaller ?? (options.installationMode === "private-fixture" ? null
+      : new LocalOfficialInstaller(source, { npm: this.npm }, { metadata: this.metadata, ...(options.npmRegistry === undefined ? {} : { registry: options.npmRegistry }) }));
     let realHome = source.home; try { realHome = realpathSync(source.home); } catch { /* a home that cannot be resolved is shown as given */ }
     this.homes = [...new Set([realHome, source.home])].sort((left, right) => right.length - left.length);
     this.nativeLocks = options.nativeLocks ?? new NativeInstallationLocks();
@@ -119,6 +133,10 @@ export class LocalHarnessManagement {
         status: job.status === "queued" ? "cancelled" : "unknown", phase: "interrupted", updatedAt: this.now(),
         error: { code: "INTERRUPTED", message: "previous management owner ended before installation settlement; work is not replayed" } });
       }
+      // Prepared installs live only as long as this owner; the copies of finished jobs are no longer needed.
+      rmSync(join(this.storage.root, "install-checks"), { recursive: true, force: true });
+      const jobs = join(this.storage.root, "install-jobs");
+      if (existsSync(jobs)) for (const name of readdirSync(jobs)) if (/^management-[0-9a-f-]{36}$/u.test(name)) rmSync(join(jobs, name), { recursive: true, force: true });
     } catch (error) { openRoots.delete(this.storage.root); this.storage.db.close(); throw error; }
   }
   private now(): string { return (this.options.now?.() ?? new Date()).toISOString(); }
@@ -302,6 +320,143 @@ export class LocalHarnessManagement {
     } catch (error) { this.storage.db.exec("ROLLBACK"); throw error; }
     this.schedule(); return job;
   }
+  /** Whether this Gateway installs missing products the official way (ADR-044); not in private-fixture mode unless given an installer. */
+  offersOfficialInstall(): boolean { return this.officialInstaller !== null; }
+  /** A private directory under the management root for one prepared or submitted install. */
+  private installDirectory(kind: "install-checks" | "install-jobs", name: string): string {
+    const parent = join(this.storage.root, kind); mkdirSync(parent, { recursive: true, mode: 0o700 }); managementIdentity(parent, true);
+    const directory = join(parent, name); mkdirSync(directory, { mode: 0o700 }); managementIdentity(directory, true); return directory;
+  }
+  private pruneChecks(): void {
+    for (const [fingerprint, entry] of this.prepared) if (entry.expires < Date.now()) { this.prepared.delete(fingerprint); rmSync(entry.directory, { recursive: true, force: true }); }
+  }
+  /** Which program a terminal with this Gateway's PATH runs for `command` now, and whether the new installation comes first. */
+  private terminalAfter(prepared: PreparedInstall): InstallCheck["terminal"] {
+    const directories = (this.source.values.PATH ?? "").split(":").filter(isAbsolute), target = dirname(prepared.entry);
+    let current: string | null = null;
+    for (const directory of directories) { try { const path = join(directory, prepared.command); if (lstatSync(path)) { current = directory; break; } } catch { /* not in this directory */ } }
+    const known = current === null ? undefined : (this.installations.get(prepared.harnessId) ?? []).find(item => dirname(item.entry) === current && basename(item.entry) === prepared.command);
+    const before = current === null ? null : known?.label ?? "非官网安装（" + this.shown(join(current, prepared.command)) + "）";
+    const index = directories.indexOf(target);
+    return { command: prepared.command, before, after: index === -1 ? "not-on-path" : current === null || index <= directories.indexOf(current) ? "this" : "unchanged" };
+  }
+  /**
+   * What installing a missing product the official way would run, write and change (ADR-044), prepared once for the user's
+   * confirmation: the script is downloaded and hashed here, or the exact npm release and the prefix's Node.js are read.
+   * Changes nothing of the user's; the prepared install waits 15 minutes for its submission.
+   */
+  async installCheck(harnessId: string): Promise<InstallCheck> {
+    this.admission(); const id = managementSlug(harnessId), method = officialInstallMethod(id), installer = this.officialInstaller;
+    if (installer === null) throw new ManagementError("UNSUPPORTED_INSTALL", "这里不提供安装。");
+    if (method === null || method.kind === "terminal") throw new ManagementError("UNSUPPORTED_INSTALL", method?.kind === "terminal" ? method.reason : "HarnessHub 没有记录这个产品的官网安装方式。");
+    this.pruneChecks();
+    const directory = this.installDirectory("install-checks", randomUUID());
+    let prepared: PreparedInstall;
+    try { prepared = await this.nativeInspection(context => installer.prepare(id, directory, { ...context, signal: AbortSignal.any([context.signal]) })); this.own(); }
+    catch (error) { rmSync(directory, { recursive: true, force: true }); throw error; }
+    const fingerprint = createHash("sha256").update(JSON.stringify(prepared)).digest("hex"), expires = Date.now() + INSTALL_CHECK_MS;
+    this.prepared.set(fingerprint, { harnessId: id, prepared, directory, expires });
+    const installed = (this.installations.get(id) ?? []).filter(item => item.role === "product");
+    const blocked = installed.length ? "这台电脑上已经有 " + installed.map(item => item.label).join("、") + " 的官网安装，HarnessHub 不再安装第二份。"
+      : prepared.runtime !== null && !prepared.runtime.satisfied ? prepared.source + " 要求 Node.js " + prepared.runtime.required + "，安装用的 Node.js（" + this.shown(prepared.runtime.path) + "）是 " + (prepared.runtime.found ?? "读不出版本") + "。请先升级这个 Node.js；HarnessHub 不安装 Node.js。" : null;
+    const target = prepared.version === null ? null : versionVerification(id, prepared.version, null);
+    const runs = prepared.method === "npm" ? this.shown([prepared.npm!, "install", "--global", "--prefix", prepared.prefix!, prepared.package + "@" + prepared.version].join(" "))
+      : [...Object.entries(prepared.env).map(([key, value]) => key + "=" + value), prepared.interpreter!, "install." + prepared.interpreter, ...prepared.args].join(" ");
+    return { harnessId: id, checkedAt: this.now(), fingerprint, expiresAt: new Date(expires).toISOString(), method: prepared.method, officialCommand: method.command,
+      docs: method.kind === "npm" ? "https://www.npmjs.com/package/" + method.package : method.url, source: prepared.source, sha256: prepared.sha256, runs,
+      writes: prepared.writes.map(path => this.shown(path)), shellProfile: prepared.shellProfile === null ? null : this.shown(prepared.shellProfile), configFiles: prepared.configFiles.map(path => this.shown(path)),
+      version: prepared.version, prefix: prepared.prefix === null ? null : { label: prefixLabel(prepared.prefix, this.source.home), path: this.shown(prepared.prefix) },
+      runtime: prepared.runtime === null ? null : { ...prepared.runtime, path: this.shown(prepared.runtime.path) }, terminal: this.terminalAfter(prepared), target,
+      notes: [...method.notes, ...(prepared.method === "script" ? ["装好后，如果不是 HarnessHub 用真实程序验证过的版本，会提示“未经验证的版本”。"] : [])], blocked };
+  }
+  /** Queues the official install the user confirmed (ADR-044); the prepared copy moves into the job's own directory. */
+  submitOfficialInstall(input: unknown): InstallationJobView {
+    this.admission(); this.payloadBudgets(); const request = parseManagementInput(input);
+    if (request.action !== "install" || request.expectedInstallFingerprint === undefined) throw new ManagementError("INVALID_INPUT", "an official install names its confirmed check");
+    const fingerprint = createHash("sha256").update(JSON.stringify({ harnessId: request.harnessId, action: "install", expectedInstallFingerprint: request.expectedInstallFingerprint })).digest("hex");
+    const prior = this.storage.db.prepare("SELECT id,fingerprint FROM management_jobs WHERE command_id=?").get(request.commandId);
+    if (prior) { if (prior.fingerprint !== fingerprint || typeof prior.id !== "string") throw new ManagementError("COMMAND_CONFLICT", "management command already used different input"); return this.readJob(prior.id); }
+    this.pruneChecks();
+    const entry = this.prepared.get(request.expectedInstallFingerprint);
+    if (entry === undefined || entry.harnessId !== request.harnessId) throw new ManagementError("INSTALL_CHECK_EXPIRED", "安装确认已过期或已经用过，请重新打开安装确认。");
+    if ((this.installations.get(request.harnessId) ?? []).some(item => item.role === "product")) throw new ManagementError("INSTALLATION_CHANGED", "这个产品已经有官网安装了，没有安装第二份。");
+    if (entry.prepared.runtime !== null && !entry.prepared.runtime.satisfied) throw new ManagementError("RUNTIME_INCOMPATIBLE", "安装用的 Node.js 不满足新版本的要求，没有安装。");
+    if (this.storage.db.prepare("SELECT id FROM management_commands WHERE id=?").get(request.commandId)) throw new ManagementError("COMMAND_CONFLICT", "management command identity already used by cancellation");
+    if (this.storage.db.prepare("SELECT id FROM management_jobs WHERE harness_id=? AND status NOT IN('completed','cancelled','failed','unknown')").get(request.harnessId)) throw new ManagementError("MANAGEMENT_BUSY", "this Harness already has an active installation job");
+    const queued = this.storage.db.prepare("SELECT count(*) AS n FROM management_jobs WHERE status='queued'").get()?.n;
+    if (typeof queued !== "number" || queued >= 8 || this.storage.db.prepare("SELECT count(*) AS n FROM management_jobs").get()?.n === 2048) throw new ManagementError("QUEUE_LIMIT", "installation job queue or storage budget exhausted");
+    const id = "management-" + randomUUID(), parent = join(this.storage.root, "install-jobs"); mkdirSync(parent, { recursive: true, mode: 0o700 }); managementIdentity(parent, true);
+    const directory = join(parent, id); renameSync(entry.directory, directory); managementIdentity(directory, true); this.prepared.delete(request.expectedInstallFingerprint);
+    const prepared: PreparedInstall = { ...entry.prepared, script: entry.prepared.script === null ? null : join(directory, basename(entry.prepared.script)) };
+    const time = this.now(), job: InstallationJobView = { id, harnessId: request.harnessId, controlId: request.harnessId, action: "install", status: "queued", phase: "queued", cancelRequested: false, createdAt: time, updatedAt: time,
+      resolvedVersion: null, installationId: null, error: null, logCursor: 0,
+      native: { channel: prepared.method, location: this.shown(prepared.entry), beforeVersion: null, actualVersion: null, dispatched: false, configurationPreserved: null,
+        official: { method: prepared.method, source: prepared.source, sha256: prepared.sha256, shellChanges: [], configChanges: [], blocked: [], installed: false } } };
+    parseManagementJob(job); parseInstallRequest({ ...prepared, fingerprint: request.expectedInstallFingerprint });
+    this.storage.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.storage.db.prepare("INSERT INTO management_jobs(id,harness_id,status,command_id,fingerprint,expected_revision,view_json) VALUES(?,?,?,?,?,?,?)").run(id, job.harnessId, job.status, request.commandId, fingerprint, this.defaultRevision(job.harnessId), JSON.stringify(job));
+      this.storage.db.prepare("INSERT INTO management_install_requests(job_id,request_json) VALUES(?,?)").run(id, JSON.stringify({ ...prepared, fingerprint: request.expectedInstallFingerprint }));
+      this.storage.db.exec("COMMIT");
+    } catch (error) { this.storage.db.exec("ROLLBACK"); renameSync(directory, entry.directory); throw error; }
+    this.schedule(); return job;
+  }
+  /**
+   * Runs one official install (ADR-044): the product must still be missing; the prepared script or npm release runs
+   * confined to what it declares; then the product must be found in its official channel and report its version. A
+   * failed install is not retried or rolled back; whatever it left can be uninstalled from the Harness list.
+   */
+  private async runOfficialInstallJob(job: InstallationJobView): Promise<void> {
+    const installer = this.officialInstaller, row = this.storage.db.prepare("SELECT request_json FROM management_install_requests WHERE job_id=?").get(job.id);
+    const request = parseInstallRequest(json(row?.request_json));
+    if (installer === null || job.native?.official === undefined || request.harnessId !== job.harnessId) { this.phase(job.id, "failed", { error: { code: "UNSUPPORTED_INSTALL", message: "这里不提供安装。" } }); return; }
+    const controller = new AbortController(), active = { id: job.id, controller, timedOut: false }; this.active = active;
+    const timer = setTimeout(() => { active.timedOut = true; controller.abort(); }, this.timeout);
+    let stage: string | undefined, identity: ReturnType<typeof managementIdentity> | undefined, dispatched = false, ran = false, quiescent = true;
+    const owned = () => { this.own(); if (controller.signal.aborted) throw new ManagementError("CANCELLED", "install was cancelled"); if (!stage || !identity || !sameManagementIdentity(identity, managementIdentity(stage, true))) throw new ManagementError("OWNERSHIP_LOST", "install directory changed"); };
+    const note = (text: string) => this.log(job.id, "system", this.shown(text));
+    const official = (patch: Partial<NonNullable<NativeJobFacts["official"]>>, native: Partial<NativeJobFacts> = {}) => {
+      const current = this.readJob(job.id); if (!current.native?.official) throw new ManagementError("INVALID_DATA", "official install facts are missing");
+      this.saveJob({ ...current, native: { ...current.native, ...native, official: { ...current.native.official, ...patch } }, updatedAt: this.now() });
+    };
+    try {
+      stage = await realpath(await mkdtemp(join(this.storage.root, "install-job-"))); identity = managementIdentity(stage, true);
+      const context: ManagementInstallContext = { stage, signal: controller.signal, assertOwned: owned, log: (stream, text) => this.log(job.id, stream, this.shown(text)) };
+      this.phase(job.id, "resolving");
+      if ((this.installations.get(job.harnessId) ?? []).some(item => item.role === "product")) throw new ManagementError("INSTALLATION_CHANGED", "这个产品已经有官网安装了，没有安装第二份。");
+      note(request.method === "npm" ? "用 npm 安装 " + request.source + "，装到 " + request.prefix + "。" : "运行官方安装脚本 " + request.source + "（SHA-256 " + request.sha256 + "）。");
+      this.phase(job.id, "installing");
+      const outcome = await installer.run(request, { ...context, beginMutation: () => { owned(); if (dispatched) return; official({}, { dispatched: true }); dispatched = true; } }); owned(); ran = true;
+      const shown = { ...outcome.facts, shellChanges: outcome.facts.shellChanges.map(change => ({ file: this.shown(change.file), added: change.added.map(line => this.redactor(this.shown(line))), removed: change.removed.map(line => this.redactor(this.shown(line))) })),
+        configChanges: outcome.facts.configChanges.map(change => ({ file: this.shown(change.file), keys: change.keys })), blocked: outcome.facts.blocked.map(path => this.shown(path)) };
+      official(shown);
+      for (const change of shown.shellChanges) note("安装脚本改了 " + change.file + "：加了 " + change.added.length + " 行，删了 " + change.removed.length + " 行。");
+      for (const change of shown.configChanges) note("安装程序改了 " + change.file + " 的 " + change.keys.map(key => key.path).join("、") + "。");
+      for (const path of shown.blocked) note("安装程序尝试写入 " + path + "，已被阻止。");
+      this.phase(job.id, "verifying");
+      const found = await installer.verify(request, context); owned();
+      if (outcome.exitCode !== 0) throw new ManagementError("INSTALL_FAILED", "安装程序没有成功结束" + (shown.blocked.length ? "（它尝试写入 " + shown.blocked.join("、") + "，已被阻止）" : "") + "。没有重试；留下的文件可以在“我的 Agent”里卸载。");
+      if (found === null) throw new ManagementError("INSTALL_NOT_FOUND", "安装结束了，但没有在官网渠道里找到 " + request.command + "（" + this.shown(request.entry) + "）。没有重试。");
+      if (found.version === null) throw new ManagementError("INSTALL_VERSION_UNKNOWN", "已经装好 " + request.command + "，但读不出它的版本。");
+      official({ installed: true }, { actualVersion: found.version, configurationPreserved: true });
+      const verification = versionVerification(job.harnessId, found.version, null);
+      if (verification?.state === "unverified") note("这个版本还不是 HarnessHub 用真实程序验证过的版本（验证过的是 " + verification.program + "）。仍然可以使用，部分能力可能不同。");
+      note("已核实：" + request.command + " " + found.version + " 装在官网渠道里。");
+      this.phase(job.id, "completed", { resolvedVersion: found.version });
+      this.systemVersions.delete(job.harnessId);
+    } catch (error) {
+      this.own(); const failure = error instanceof ManagementError ? error : new ManagementError("INSTALL_FAILED", "install did not finish");
+      quiescent = failure.code !== "CLEANUP_FAILED";
+      // The installer's own result is known once it ran; an interruption while it ran leaves the result unknown.
+      const known = ran && ["INSTALL_FAILED", "INSTALL_NOT_FOUND", "INSTALL_VERSION_UNKNOWN"].includes(failure.code);
+      const status = known ? "failed" : dispatched || !quiescent || failure.code === "OWNERSHIP_LOST" ? "unknown" : controller.signal.aborted ? "cancelled" : "failed";
+      this.phase(job.id, status, { error: { code: active.timedOut ? "INSTALL_TIMEOUT" : failure.code, message: this.redactor(this.shown(failure.message)) } });
+    } finally {
+      clearTimeout(timer); this.active = null;
+      if (quiescent && stage && identity && sameManagementIdentity(identity, managementIdentity(stage, true))) await rm(stage, { recursive: true, force: true });
+      if (quiescent) rmSync(join(this.storage.root, "install-jobs", job.id), { recursive: true, force: true });
+    }
+  }
   private uninstallFacts(id: string, patch: Partial<UninstallFacts>, native: Partial<NativeJobFacts> = {}): void {
     const current = this.readJob(id); if (!current.native?.uninstall) throw new ManagementError("INVALID_DATA", "uninstall job facts are missing");
     this.saveJob({ ...current, native: { ...current.native, ...native, uninstall: { ...current.native.uninstall, ...patch } }, updatedAt: this.now() });
@@ -448,7 +603,7 @@ export class LocalHarnessManagement {
   }
   private payloadBudgets(): void {
     for (const [table, column, size, maximum] of [["management_jobs", "view_json", 65536, 2048], ["management_installations", "record_json", 65536, 2048],
-      ["management_updates", "view_json", 65536, 256], ["management_logs", "entry_json", 32768, 65536], ["management_native_plans", "plan_json", 32768, 2048], ["management_installation_targets", "target_json", 32768, 2048]] as const) {
+      ["management_updates", "view_json", 65536, 256], ["management_logs", "entry_json", 32768, 65536], ["management_native_plans", "plan_json", 32768, 2048], ["management_installation_targets", "target_json", 32768, 2048], ["management_install_requests", "request_json", 32768, 2048]] as const) {
       const total = this.storage.db.prepare("SELECT count(*) AS count,coalesce(sum(length(CAST(" + column + " AS BLOB))),0) AS bytes FROM " + table).get();
       if (!total || typeof total.count !== "number" || total.count > maximum || typeof total.bytes !== "number" || total.bytes > 32 * 1024 * 1024)
         throw new ManagementError("STORAGE_LIMIT", "management storage exceeded its row or byte budget");
@@ -489,8 +644,16 @@ export class LocalHarnessManagement {
       const job = this.readJob(row.job_id);
       if (job.action !== "uninstall" || job.harnessId !== target.harnessId || nativeIds.has(job.id)) throw new ManagementError("INVALID_DATA", "uninstall job and target disagree"); targetIds.add(job.id);
     }
+    const requestIds = new Set<string>();
+    for (const row of this.storage.db.prepare("SELECT job_id,request_json FROM management_install_requests").all()) {
+      const request = parseInstallRequest(json(row.request_json));
+      if (typeof row.job_id !== "string" || !ids.has(row.job_id)) throw new ManagementError("INVALID_DATA", "orphan official install request");
+      const job = this.readJob(row.job_id);
+      if (job.native?.official === undefined || job.harnessId !== request.harnessId || nativeIds.has(job.id) || targetIds.has(job.id)) throw new ManagementError("INVALID_DATA", "official install job and request disagree"); requestIds.add(job.id);
+    }
     for (const id of ids) { const job = this.readJob(id);
-      if (job.action === "uninstall" ? !targetIds.has(id) : job.native && !nativeIds.has(id)) throw new ManagementError("INVALID_DATA", job.action === "uninstall" ? "uninstall job has no frozen target" : "native job has no frozen plan"); }
+      const frozen = job.action === "uninstall" ? targetIds.has(id) : job.native?.official !== undefined ? requestIds.has(id) : !job.native || nativeIds.has(id);
+      if (!frozen) throw new ManagementError("INVALID_DATA", job.action === "uninstall" ? "uninstall job has no frozen target" : job.native?.official !== undefined ? "official install job has no frozen request" : "native job has no frozen plan"); }
     for (const row of this.storage.db.prepare("SELECT id,harness_id,control_id,record_json FROM management_installations").all()) {
       const record = parseInstallationRecord(json(row.record_json));
       if (record.id !== row.id || record.harnessId !== row.harness_id || record.controlId !== row.control_id) throw new ManagementError("INVALID_DATA", "installation record row identity disagrees");
@@ -623,6 +786,7 @@ export class LocalHarnessManagement {
   private async runJob(id: string): Promise<void> {
     const job = this.readJob(id);
     if (job.action === "uninstall") { await this.runUninstallJob(job); return; }
+    if (job.native?.official !== undefined) { await this.runOfficialInstallJob(job); return; }
     const recipe = this.recipe(job.harnessId, job.controlId);
     if (!recipe) { this.phase(id, "failed", { error: { code: "RECIPE_CHANGED", message: "installation recipe is unavailable" } }); return; }
     if (job.native !== undefined) { await this.runNativeJob(job, recipe); return; }
@@ -792,8 +956,9 @@ export class LocalHarnessManagement {
   /** Explicit inspection verifies the current program without replaying an uncertain mutation. */
   async inspectNativeResult(id: string): Promise<InstallationJobView> {
     this.admission(); const job = this.readJob(id);
-    if (job.status !== "unknown" || !job.native || (job.action === "uninstall" ? !this.removal : !this.native) || job.error?.code === "CLEANUP_FAILED") throw new ManagementError("INSPECTION_UNAVAILABLE", "this native result cannot yet be inspected safely");
-    const operation = job.action === "uninstall" ? this.inspectUninstallOwned(job) : this.inspectNativeOwned(job); this.checks.add(operation);
+    const official = job.native?.official !== undefined;
+    if (job.status !== "unknown" || !job.native || (job.action === "uninstall" ? !this.removal : official ? !this.officialInstaller : !this.native) || job.error?.code === "CLEANUP_FAILED") throw new ManagementError("INSPECTION_UNAVAILABLE", "this native result cannot yet be inspected safely");
+    const operation = job.action === "uninstall" ? this.inspectUninstallOwned(job) : official ? this.inspectOfficialInstallOwned(job) : this.inspectNativeOwned(job); this.checks.add(operation);
     void operation.then(() => this.checks.delete(operation), () => this.checks.delete(operation)); return operation;
   }
   private async inspectNativeOwned(job: InstallationJobView): Promise<InstallationJobView> {
@@ -805,6 +970,15 @@ export class LocalHarnessManagement {
       this.phase(job.id, "failed", { native: { ...current.native, actualVersion: version }, error: { code: "NATIVE_RESULT_INSPECTED", message: "已核实本机当前版本为 " + version + "；原任务未确认为完成，未重跑安装。" } });
       verified = true; this.systemVersions.delete(job.harnessId); this.nativePlans.delete(job.harnessId + ":" + job.controlId); return this.readJob(job.id);
     } finally { lock.release(verified); }
+  }
+  /** Whether an official install of unknown result left the product in its channel; settles the job as failed with what was found, never reruns it. */
+  private async inspectOfficialInstallOwned(job: InstallationJobView): Promise<InstallationJobView> {
+    const row = this.storage.db.prepare("SELECT request_json FROM management_install_requests WHERE job_id=?").get(job.id), request = parseInstallRequest(json(row?.request_json));
+    const found = await this.nativeInspection(context => this.officialInstaller!.verify(request, context)); this.own();
+    const current = this.readJob(job.id); if (current.status !== "unknown" || !current.native?.official) throw new ManagementError("DEFAULT_CONFLICT", "install result changed during inspection");
+    this.saveJob({ ...current, status: "failed", phase: "failed", updatedAt: this.now(), native: { ...current.native, actualVersion: found?.version ?? null, official: { ...current.native.official, installed: found !== null } },
+      error: { code: "NATIVE_RESULT_INSPECTED", message: found === null ? "已核实：没有在官网渠道里找到它。原任务没有完成安装，没有重跑。" : "已核实：" + request.command + (found.version ? " " + found.version : "") + " 装在官网渠道里。原任务未确认为完成，没有重跑。" } });
+    this.systemVersions.delete(job.harnessId); return this.readJob(job.id);
   }
   /** Whether an uninstall of unknown result left the installation's files; settles the job as failed with what was found, never reruns it. */
   private async inspectUninstallOwned(job: InstallationJobView): Promise<InstallationJobView> {

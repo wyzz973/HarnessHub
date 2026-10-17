@@ -1667,3 +1667,59 @@ test("G054-UN1 uninstalling one installation first says what it stops, removes a
   await expect(page.getByRole("dialog", { name: "OpenClaw 详情" }).locator(".installation-state")).toContainText("等待卸载");
   assert.deepEqual(errors, []);
 });
+
+test("G054-IN1 installing a missing product the official way first says what runs, where it writes and what the terminal will run, and sends exactly the confirmed check", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  const fingerprint = "a".repeat(64);
+  const shaped = (harness: { id: string; install: Record<string, unknown> | null; installations: unknown[] }) => harness.id !== "dsh" ? harness
+    : { ...harness, installed: false, installations: [], unofficial: null, install: { ...harness.install, method: "npm", available: true } };
+  for (const path of ["**/api/v1/state", "**/api/v1/harnesses", "**/api/v1/harnesses/rescan"]) await page.route(path, async route => {
+    const response = await route.fetch(), body = await response.json();
+    await route.fulfill({ response, json: Array.isArray(body) ? body.map(shaped) : { ...body, harnesses: body.harnesses.map(shaped) } });
+  });
+  let blocked: string | null = "@deepseek-ai/dsh@9.9.7 要求 Node.js >=26，安装用的 Node.js（~/.nvm/versions/node/v24.0.0/bin/node）是 24.0.0。请先升级这个 Node.js；HarnessHub 不安装 Node.js。";
+  const note = "DeepSeek Harness 会读取 ~/.dsh 下已有的配置和 acp profile（包括源码版留下的）；HarnessHub 还没有验证它们与官网版的兼容性。";
+  await page.route("**/api/v1/harnesses/dsh/install", route => route.fulfill({ json: { harnessId: "dsh", checkedAt: "2026-10-17T11:00:00.000Z", fingerprint, expiresAt: "2026-10-17T11:15:00.000Z", method: "npm",
+    officialCommand: "npm install -g @deepseek-ai/dsh", docs: "https://www.npmjs.com/package/@deepseek-ai/dsh", source: "@deepseek-ai/dsh@9.9.7", sha256: null,
+    runs: "~/.nvm/versions/node/v26.11.1/bin/npm install --global --prefix ~/.nvm/versions/node/v26.11.1 @deepseek-ai/dsh@9.9.7", writes: ["~/.nvm/versions/node/v26.11.1"], shellProfile: null, configFiles: [],
+    version: "9.9.7", prefix: { label: "nvm v26.11.1", path: "~/.nvm/versions/node/v26.11.1" },
+    runtime: { runtime: "Node.js", required: ">=22", found: "26.11.1", path: "~/.nvm/versions/node/v26.11.1/bin/node", satisfied: true, service: null, restarted: true, upgradeCommand: null },
+    terminal: { command: "dsh", before: null, after: "this" }, target: null, notes: [note], blocked } }));
+  let submitted: Record<string, unknown> | null = null;
+  const job = { id: "management-88888888-8888-4888-8888-888888888888", harnessId: "dsh", controlId: "dsh", action: "install", status: "queued", phase: "queued", cancelRequested: false,
+    createdAt: "2026-10-17T11:00:05.000Z", updatedAt: "2026-10-17T11:00:05.000Z", resolvedVersion: null, installationId: null, error: null, logCursor: 0,
+    native: { channel: "npm", location: "~/.nvm/versions/node/v26.11.1/bin/dsh", beforeVersion: null, actualVersion: null, dispatched: false, configurationPreserved: null,
+      official: { method: "npm", source: "@deepseek-ai/dsh@9.9.7", sha256: null, shellChanges: [], configChanges: [], blocked: [], installed: false } } };
+  await page.route("**/api/v1/installation-jobs", async route => {
+    if (route.request().method() !== "POST") return route.fallback();
+    submitted = route.request().postDataJSON(); await route.fulfill({ status: 202, json: job });
+  });
+  await page.route(`**/api/v1/installation-jobs/${job.id}`, route => route.fulfill({ json: job }));
+  await page.route(`**/api/v1/installation-jobs/${job.id}/logs**`, route => route.fulfill({ json: { entries: [], nextSeq: 0, hasMore: false } }));
+  await page.goto(fixture.gateway.url);
+  await page.getByRole("button", { name: "我的 Agent", exact: true }).click();
+  const row = page.locator(".harness-table-row").filter({ has: page.getByRole("button", { name: "查看 DeepSeek Harness 详情", exact: true }) });
+  await row.getByRole("button", { name: "安装", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "安装 DeepSeek Harness" });
+  await expect(dialog.locator(".install-blocked")).toContainText("要求 Node.js >=26");
+  await expect(dialog.getByRole("button", { name: "安装", exact: true })).toBeDisabled();
+  await dialog.getByRole("button", { name: "取消", exact: true }).click(); await expect(dialog).toBeHidden();
+  assert.equal(submitted, null, "nothing is sent while the install is blocked");
+  blocked = null;
+  await row.getByRole("button", { name: "安装", exact: true }).click();
+  for (const text of ["npm install -g @deepseek-ai/dsh", "@deepseek-ai/dsh@9.9.7", "~/.nvm/versions/node/v26.11.1/bin/npm install --global --prefix ~/.nvm/versions/node/v26.11.1 @deepseek-ai/dsh@9.9.7",
+    "nvm v26.11.1（~/.nvm/versions/node/v26.11.1）", "26.11.1 满足 >=22", note]) await expect(dialog).toContainText(text);
+  await expect(dialog.locator(".install-terminal")).toHaveText("安装后，终端里的 dsh 就是这份新安装。");
+  await page.screenshot({ path: join(artifact, "install-confirmation.png"), animations: "disabled" });
+  await dialog.getByRole("button", { name: "安装", exact: true }).click(); await expect(dialog).toBeHidden();
+  await expect.poll(() => submitted).not.toBeNull();
+  const { commandId, ...consent } = submitted!;
+  assert.match(String(commandId), /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u);
+  assert.deepEqual(consent, { harnessId: "dsh", action: "install", expectedInstallFingerprint: fingerprint });
+  await expect(page.getByRole("dialog", { name: "DeepSeek Harness 详情" }).locator(".installation-state")).toContainText("等待安装");
+  assert.deepEqual(errors, []);
+});

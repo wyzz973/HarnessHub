@@ -16,7 +16,7 @@ export function parseManagementInput(value: unknown): ManagementJobInput {
   if (value === null || typeof value !== "object" || Array.isArray(value) ||
       Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) throw new ManagementError("INVALID_INPUT", "management request must be a plain object");
   const row = value as Record<string, unknown>;
-  if (Object.keys(row).some(key => !["harnessId", "controlId", "action", "commandId", "expectedDefaultRevision", "expectedNativeFingerprint", "restartServices", "installation", "expectedInstallationFingerprint", "stopServices"].includes(key)))
+  if (Object.keys(row).some(key => !["harnessId", "controlId", "action", "commandId", "expectedDefaultRevision", "expectedNativeFingerprint", "restartServices", "installation", "expectedInstallationFingerprint", "stopServices", "expectedInstallFingerprint"].includes(key)))
     throw new ManagementError("INVALID_INPUT", "unknown management request fields");
   if (row.action !== "install" && row.action !== "upgrade" && row.action !== "uninstall") throw new ManagementError("INVALID_INPUT", "unsupported management action");
   // An uninstall names one installation and the check the user confirmed; the other actions take neither (ADR-044).
@@ -24,6 +24,10 @@ export function parseManagementInput(value: unknown): ManagementJobInput {
   if (uninstall !== (row.installation !== undefined) || uninstall !== (row.expectedInstallationFingerprint !== undefined) || !uninstall && row.stopServices !== undefined
       || uninstall && (row.controlId !== undefined || row.expectedDefaultRevision !== undefined || row.expectedNativeFingerprint !== undefined || row.restartServices !== undefined))
     throw new ManagementError("INVALID_INPUT", "an uninstall names an installation and its confirmed check; other actions do not");
+  // An official install names only the check the user confirmed (ADR-044); the recipe fields belong to the other installs.
+  if (row.expectedInstallFingerprint !== undefined && (row.action !== "install" || !installationRef(row.expectedInstallFingerprint) || row.controlId !== undefined
+      || row.expectedDefaultRevision !== undefined || row.expectedNativeFingerprint !== undefined || row.restartServices !== undefined))
+    throw new ManagementError("INVALID_INPUT", "an official install names only its confirmed check");
   if (row.installation !== undefined && !installationRef(row.installation)) throw new ManagementError("INVALID_INPUT", "invalid installation reference");
   if (row.expectedInstallationFingerprint !== undefined && (typeof row.expectedInstallationFingerprint !== "string" || !/^[a-f0-9]{64}$/u.test(row.expectedInstallationFingerprint))) throw new ManagementError("INVALID_INPUT", "invalid installation fingerprint");
   if (row.stopServices !== undefined && (!Array.isArray(row.stopServices) || row.stopServices.length > 16 || row.stopServices.some(label => !serviceLabel(label)) || new Set(row.stopServices).size !== row.stopServices.length))
@@ -38,6 +42,7 @@ export function parseManagementInput(value: unknown): ManagementJobInput {
     ...(row.expectedDefaultRevision === undefined ? {} : { expectedDefaultRevision: row.expectedDefaultRevision }),
     ...(row.expectedNativeFingerprint === undefined ? {} : { expectedNativeFingerprint: row.expectedNativeFingerprint }),
     ...(row.restartServices === undefined ? {} : { restartServices: [...row.restartServices as string[]].sort() }),
+    ...(row.expectedInstallFingerprint === undefined ? {} : { expectedInstallFingerprint: row.expectedInstallFingerprint as string }),
     ...(row.installation === undefined ? {} : { installation: row.installation as string, expectedInstallationFingerprint: row.expectedInstallationFingerprint as string,
       stopServices: [...(row.stopServices ?? []) as string[]].sort() }) };
 }
