@@ -8973,6 +8973,22 @@
       "expected": "不能安装时说明原因并禁止确认；否则显示官网命令、版本、实际运行的命令、前缀、Node.js 和产品说明，以及安装后终端里的命令指向哪一份；提交的内容正好是确认的指纹；任务显示为等待安装；无页面错误",
       "status": "planned",
       "evidence": null
+    },
+    {
+      "id": "G011-UP9",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/native-management.test.ts",
+      "scenario": "升级安装期间别的程序改写受保护配置",
+      "expected": "npm 在配置写保护沙箱里安装期间，测试进程改写 ~/.claude.json；升级照常完成，原配置判为保留，任务日志写明这些文件在升级期间有变化、来自仍在运行的程序",
+      "status": "planned",
+      "evidence": null
     }
   ]
 }

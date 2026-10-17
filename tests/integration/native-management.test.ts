@@ -19,6 +19,7 @@ import { startWebServer } from "../../src/web/server.js";
 import { managementStorage } from "../../src/infrastructure/management/storage.js";
 import { parseManagementJob } from "../../src/contexts/management/domain/state.js";
 import { DatabaseSync } from "node:sqlite";
+import { existsSync } from "node:fs";
 
 const recipe: ManagementRecipe = { harnessId: "native-fixture", controlId: "native-fixture-npm", kind: "npm", packageName: "fixture-agent", referenceVersion: "1.0.0", binName: "fixture-agent", args: [], archiveUrl: null, archiveSha256: null, relativeExecutable: null, dependencies: [] };
 /** launchd as a test sees it: jobs running the fixture's programs, what `print` says after each restart, and every restart asked for. */
@@ -43,14 +44,15 @@ function fakeHost(packageRoot: string, launchd: FakeLaunchd | undefined): Progra
     sleep: async () => {}, now: () => (clock += 250) };
 }
 async function fixture(t: test.TestContext, attack = false, beforeCleanup?: () => Promise<void>, verificationAttack = false,
-  extra: { readonly recipe?: ManagementRecipe; readonly launchd?: FakeLaunchd; readonly users?: NativeProgramUsers } = {}) {
+  extra: { readonly recipe?: ManagementRecipe; readonly launchd?: FakeLaunchd; readonly users?: NativeProgramUsers; readonly pause?: { readonly started: string; readonly go: string } } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "native-install-test-"))), home = join(root, "user-home"), prefix = join(root, "global"), data = join(root, "data"), packageRoot = join(prefix, "lib", "node_modules", "fixture-agent"), entry = join(prefix, "bin", "fixture-agent"), npm = join(root, "npm");
   await mkdir(home); await mkdir(packageRoot, { recursive: true }); await mkdir(dirname(entry), { recursive: true });
   const config = join(home, ".claude.json"); await writeFile(config, '{"model":"keep-model","login":"synthetic-login"}');
   await writeFile(join(packageRoot, "package.json"), JSON.stringify({ name: "fixture-agent", version: "1.0.0", bin: { "fixture-agent": "entry.mjs" } }));
   await writeFile(join(packageRoot, "entry.mjs"), "#!" + process.execPath + "\nimport{readFileSync,writeFileSync}from'node:fs';import{dirname,join}from'node:path';" + (verificationAttack ? "writeFileSync(" + JSON.stringify(config) + ",'changed during version check');" : "") + "console.log(JSON.parse(readFileSync(join(dirname(process.argv[1]),'package.json'))).version);\n", { mode: 0o700 });
   await symlink(join(packageRoot, "entry.mjs"), entry);
-  const code = "#!" + process.execPath + "\nimport{writeFile}from'node:fs/promises';const a=process.argv.slice(2);if(a[0]==='prefix'){if(process.env.HOME!==" + JSON.stringify(home) + ")throw Error('prefix query lost native HOME');console.log(" + JSON.stringify(prefix) + ");process.exit(0);}if(a[0]!=='install')throw Error('unexpected command');" + (attack ? "await writeFile(" + JSON.stringify(config) + ",'changed');" : "") + "const version=a.at(-1).split('@').at(-1);await writeFile(" + JSON.stringify(join(packageRoot, "package.json")) + ",JSON.stringify({name:'fixture-agent',version,bin:{'fixture-agent':'entry.mjs'}}));console.log('native package updated');\n";
+  const code = "#!" + process.execPath + "\nimport{writeFile}from'node:fs/promises';const a=process.argv.slice(2);if(a[0]==='prefix'){if(process.env.HOME!==" + JSON.stringify(home) + ")throw Error('prefix query lost native HOME');console.log(" + JSON.stringify(prefix) + ");process.exit(0);}if(a[0]!=='install')throw Error('unexpected command');" + (attack ? "await writeFile(" + JSON.stringify(config) + ",'changed');" : "")
+    + (extra.pause ? "await writeFile(" + JSON.stringify(extra.pause.started) + ",'1');const{existsSync}=await import('node:fs');while(!existsSync(" + JSON.stringify(extra.pause.go) + "))await new Promise(r=>setTimeout(r,20));" : "") + "const version=a.at(-1).split('@').at(-1);await writeFile(" + JSON.stringify(join(packageRoot, "package.json")) + ",JSON.stringify({name:'fixture-agent',version,bin:{'fixture-agent':'entry.mjs'}}));console.log('native package updated');\n";
   await writeFile(npm, code, { mode: 0o700 });
   let version = "2.0.0", binNames = [recipe.binName], engines: Record<string, string> = {};
   const metadata: ManagementMetadataPort = { resolve: async original => ({ recipe: original, version: original.referenceVersion === "latest" ? version : original.referenceVersion, artifactUrl: null, integrity: null, engines, binNames, dependencies: [] }) };
@@ -340,4 +342,18 @@ test("G011-UP8 a release whose Node.js range excludes the one that runs the prog
   assert.equal(job.status, "failed"); assert.equal(job.error?.code, "RUNTIME_INCOMPATIBLE"); assert.equal(job.native?.dispatched, false);
   assert.equal(job.error?.message, "新版本 2.0.0 要求 Node.js >=2，" + AGENT + " 启动用的 Node.js 是 1.0.0（" + linked + "）。先升级 Node.js 再升级（可以运行 brew upgrade node）；HarnessHub 不替你升级 Node.js。没有升级。");
   assert.equal(port.closed, 0, "nothing is closed for an upgrade that cannot run"); assert.deepEqual(daemon.kicked, []); assert.equal(await version(f), "1.0.0");
+});
+
+test("G011-UP9 a protected configuration another program writes while an upgrade installs is noted in its log, not a failure: the installer could not write it", { skip: process.platform !== "darwin" && "native upgrades need the macOS sandbox" }, async t => {
+  const marks = await realpath(await mkdtemp(join(tmpdir(), "native-drift-"))); t.after(() => rm(marks, { recursive: true, force: true }));
+  const started = join(marks, "started"), go = join(marks, "go");
+  const f = await fixture(t, false, undefined, false, { pause: { started, go } });
+  const capability = f.manager.views([recipe.harnessId])[0]!.native!;
+  const job = f.manager.submit({ harnessId: recipe.harnessId, action: "upgrade", commandId: "drift", expectedNativeFingerprint: capability.fingerprint });
+  // While npm installs, a running program (a Claude Code session, say) rewrites ~/.claude.json; then npm finishes.
+  for (const end = Date.now() + 10000; !existsSync(started); ) { assert.ok(Date.now() < end, "the installer did not start"); await new Promise(resolve => setTimeout(resolve, 20)); }
+  await writeFile(f.config, '{"model":"keep-model","login":"synthetic-login","numStartups":2}'); await writeFile(go, "1");
+  const result = await settled(f.manager, job.id);
+  assert.equal(result.status, "completed", JSON.stringify(result.error)); assert.equal(result.native?.configurationPreserved, true);
+  assert.ok(f.manager.logs(job.id, 0).some(entry => entry.text.startsWith("升级期间这些受保护的配置文件有了变化：~/.claude.json")));
 });

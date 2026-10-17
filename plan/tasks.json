@@ -1352,7 +1352,8 @@
         "G011-IN5",
         "G011-IN6",
         "G011-IN7",
-        "G011-IN8"
+        "G011-IN8",
+        "G011-UP9"
       ],
       "active_slice": "upgrade-with-running-programs"
     },

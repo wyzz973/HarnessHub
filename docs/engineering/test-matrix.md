@@ -485,3 +485,4 @@
 | G011-IN7 | G011 | integration | npm 产品按确认的精确版本装入 PATH 上第一个 Node.js 的前缀 | 经本机假 npm 仓库安装，确认显示版本、前缀、Node.js 满足情况和终端指向；装好后列表出现 npm 安装；Node.js 不满足范围时确认显示原因，提交返回 409 且什么都不装 | planned |
 | G011-IN8 | G011 | integration | 会改 shell 配置的安装脚本与带参数的安装脚本 | Codex 式脚本只能改 ~/.zprofile，增加的行逐行记录，写入 ~/.codex/config.toml 被阻止且原内容不变；OpenCode 式脚本收到 --no-modify-path，目录不在 PATH 上时确认如实说明 | planned |
 | G054-IN1 | G054 | e2e | 按官网方式安装的确认框 | 不能安装时说明原因并禁止确认；否则显示官网命令、版本、实际运行的命令、前缀、Node.js 和产品说明，以及安装后终端里的命令指向哪一份；提交的内容正好是确认的指纹；任务显示为等待安装；无页面错误 | planned |
+| G011-UP9 | G011 | integration | 升级安装期间别的程序改写受保护配置 | npm 在配置写保护沙箱里安装期间，测试进程改写 ~/.claude.json；升级照常完成，原配置判为保留，任务日志写明这些文件在升级期间有变化、来自仍在运行的程序 | planned |

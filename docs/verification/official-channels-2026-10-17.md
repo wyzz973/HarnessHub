@@ -67,3 +67,9 @@
 - 同一登录环境下 `discover` 的结果与上表一致：Pi 显示“只发现非官网安装，平台不使用”，DeepSeek Harness 显示“仅发现配置线索”。其余 7 个产品的控制入口都已解析。
 - Claude Code 的“当前使用”是 nvm v26.11.1 下的 2.1.302，与登录 shell 中 `command -v claude` 的结果相同。
 - 页面上的显示（多份安装、非官网说明、DeepSeek Harness 历史对话的状态）请用户在 4317 上确认；本记录没有替用户登录查看。
+
+## 服务进程的 PATH 从哪里来（2026-10-17 补记）
+
+- 4317 用 `env -i HOME USER LOGNAME SHELL TERM LANG /bin/zsh -lic '…'` 启动，是登录加交互的 zsh。它会依次加载 `~/.zprofile` 和 `~/.zshrc`；`~/.zshrc` 里的 nvm 初始化把 nvm v26.11.1 的 bin 放到 PATH 最前面。所以服务里“当前使用”的 Claude Code 是 nvm v26.11.1 下的 2.1.302，与用户交互终端里 `command -v claude` 的结果一致。
+- 如果用非交互的登录 shell（`zsh -lc`）来看，只会加载 `~/.zprofile`，不会初始化 nvm，PATH 上排在前面的是 Homebrew 那份。这就是审批代理看到 Homebrew 优先的原因。
+- 页面上“当前使用”的悬停说明写着“按 HarnessHub 服务进程的 PATH 顺序；终端里可能不同”，指的就是这种差别。
