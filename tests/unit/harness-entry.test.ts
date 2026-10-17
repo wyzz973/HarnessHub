@@ -4,10 +4,10 @@ import type { ControlObservation, InstallationSource } from "../../src/contexts/
 import { harnessEntry, productCommand } from "../../src/web/harness-entry.js";
 
 function control(source: InstallationSource | null, command = true): ControlObservation {
-  const candidate = source === null ? null : { path: "/private/entry", resolvedPath: "/private/entry", source, entries: [] };
+  const candidate = source === null ? null : { path: "/private/entry", resolvedPath: "/private/entry", source, entries: [], channel: null, version: null, role: "product" as const };
   return { id: "fixture-control", protocol: "acp-v1", source: { repository: "fixture", revision: "r", upstreamId: "fixture", url: "https://example.invalid" },
     state: command ? "candidate" : "missing_dependency", command: command ? { executable: "/private/entry", args: [], env: {} } : null,
-    installation: { candidates: candidate ? [candidate] : [], selected: candidate, defaultResolution: candidate ? "located" : "none", diagnostics: [] },
+    installation: { candidates: candidate ? [candidate] : [], selected: candidate, defaultResolution: candidate ? "located" : "none", diagnostics: [], unofficial: [], unofficialDefault: null },
     missingDependencies: [], diagnostics: [], probe: "not_run" };
 }
 
@@ -30,10 +30,10 @@ test("an adapter entry reports the product's own command, and a product entry re
     { path: "/bin/claude-agent-acp", resolvedPath: "/lib/claude-agent-acp/dist/index.js", source: "path" as const, entries: [{ path: "/bin/claude-agent-acp", source: "path" as const, name: "claude-agent-acp" }] }],
     selected: null, defaultResolution: "located" as const, diagnostics: [] };
   const adapter = { ...control("path"), command: { executable: "/bin/claude-agent-acp", args: [], env: { HOME: "/home" } },
-    installation: { ...control("path").installation, selected: { path: "/bin/claude-agent-acp", resolvedPath: "/lib/claude-agent-acp/dist/index.js", source: "path" as const, entries: [] } } };
+    installation: { ...control("path").installation, selected: { path: "/bin/claude-agent-acp", resolvedPath: "/lib/claude-agent-acp/dist/index.js", source: "path" as const, entries: [], channel: null, version: null, role: "adapter" as const } } };
   assert.deepEqual(productCommand("claude", product, adapter), { executable: "/bin/claude", args: [], env: { HOME: "/home" } });
   // The entry is the product itself (Codex's app-server, Hermes's acp): its own version is the product version.
-  const itself = { ...adapter, installation: { ...adapter.installation, selected: { path: "/bin/claude", resolvedPath: "/lib/claude-code/cli.js", source: "path" as const, entries: [] } } };
+  const itself = { ...adapter, installation: { ...adapter.installation, selected: { path: "/bin/claude", resolvedPath: "/lib/claude-code/cli.js", source: "path" as const, entries: [], channel: null, version: null, role: "adapter" as const } } };
   assert.equal(productCommand("claude", product, itself), null);
   // A package entry run through Node names the product's file as its script.
   assert.equal(productCommand("claude", product, { ...adapter, installation: { ...adapter.installation, selected: null }, command: { executable: "/bin/node", args: ["/lib/claude-code/cli.js"], env: {} } }), null);

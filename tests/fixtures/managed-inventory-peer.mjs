@@ -8,11 +8,11 @@ const [root, manifest, validate] = process.argv.slice(2);
 const store = new SqliteSessionStore(root);
 const management = new LocalHarnessManagement(root, { installationMode: "private-fixture", assertOwner: () => store.assertOwner(), ownerGeneration: store.ownerGeneration });
 try {
-  const observed = await inventory({ ...(manifest ? { manifest } : {}), searchDirs: [], packageRoots: [], pathOnly: true, managedResolver: management });
+  const observed = await inventory({ ...(manifest ? { manifest } : {}), searchDirs: [], packageRoots: [], pathOnly: true, installations: "any", managedResolver: management });
   const control = observed.report.harnesses.find(h => h.id === "codex").controls.find(c => c.id === "codex-native");
   let defaultSelection = null, explicitSelection = null;
   if (validate) {
-    const factory = new DirectorySessionBindingFactory(new SqliteWorkspaceLeaseProvider(join(root, "leases")), () => store.assertOwner(), undefined, management);
+    const factory = new DirectorySessionBindingFactory(new SqliteWorkspaceLeaseProvider(join(root, "leases")), () => store.assertOwner(), "any", undefined, management);
     const config = await prepareConfiguration({ workspace: dirname(root), pathOnly: true, ...(manifest ? { manifestPath: manifest } : {}) });
     try { defaultSelection = (await factory.validate({ harnessId: "codex" }, config)).controlId; }
     catch (error) { if (!String(error.message).includes("multiple available controls")) throw error; defaultSelection = "requires-explicit-control"; }

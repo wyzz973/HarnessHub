@@ -847,6 +847,46 @@
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/upgrade-restart-2026-10-12.md"
+    },
+    {
+      "id": "official-install-channels",
+      "status": "accepted",
+      "scope": "只面向 macOS；按各产品官网写明的安装渠道探测 Harness，只有官方渠道里的程序算已安装，同一产品的多份安装全部列出并标出当前使用的一份，非官网安装只作不带路径的说明；正式入口默认只认官网，--allow-unofficial 只用于开发和测试",
+      "task_ids": [
+        "G003",
+        "G011",
+        "G012",
+        "G050",
+        "G054",
+        "G059",
+        "G060",
+        "G061"
+      ],
+      "decision": "docs/decisions/0044-macos-official-channels.md",
+      "allowed_files": [
+        "src/contexts/catalog/domain/catalog.ts",
+        "src/contexts/catalog/domain/channels.ts",
+        "src/contexts/catalog/application/inventory.ts",
+        "src/adapters/catalog.ts",
+        "src/adapters/catalog-channels.ts",
+        "src/infrastructure/discovery/installation-channels.ts",
+        "src/infrastructure/discovery/packages.ts",
+        "src/infrastructure/catalog/inventory-composition.ts",
+        "src/infrastructure/session/binding-factory.ts",
+        "src/cli/session-application.ts",
+        "src/cli/web.ts",
+        "src/cli/chat.ts",
+        "src/cli/discover.ts",
+        "src/cli/control.ts",
+        "src/web/server.ts",
+        "src/web/harness-installations.ts",
+        "src/contracts/web.ts",
+        "web/src/api.ts",
+        "web/src/components/HarnessesPage.tsx",
+        "web/src/App.tsx"
+      ],
+      "implementation_state": "in_progress",
+      "verification_record": "docs/verification/official-channels-2026-10-17.md"
     }
   ]
 }

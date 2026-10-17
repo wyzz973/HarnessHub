@@ -7,6 +7,8 @@ import test from "node:test";
 import { application } from "../../src/cli/session-application.js";
 import type { PermissionRequest, PublicRun, SessionId } from "../../src/contracts/session.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
+/** A development manifest (HH_REAL_MANIFEST) names non-official entries, which only the development policy reads (ADR-044). */
+const realInstallations = process.env.HH_REAL_MANIFEST ? "any" as const : "official" as const;
 
 /**
  * Original-installation acceptance of native tool activity: the user's installed Harness runs a shell command and an edit
@@ -89,7 +91,7 @@ test("installed Harness tool activity is committed with stored, readable details
       const proof: Record<string, unknown> = { harnessId, startedAt: new Date().toISOString() };
       const permissions: Record<string, unknown>[] = [];
       proof.permissions = permissions;
-      const app = application(data, () => {}, { workspaceLockRoot: join(root, "locks") });
+      const app = application(data, () => {}, { installations: realInstallations, workspaceLockRoot: join(root, "locks") });
       try {
         const requested = process.env["HH_REAL_MODEL_" + harnessId.toUpperCase()];
         const created = await app.runtime.create(configuration, { harnessId, ...(requested === undefined ? {} : { nativeModel: requested }), ...(nativeOptions === undefined ? {} : { nativeOptions }) }, "create-" + randomUUID());

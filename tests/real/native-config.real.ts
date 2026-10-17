@@ -7,6 +7,8 @@ import test from "node:test";
 import { application } from "../../src/cli/session-application.js";
 import type { PublicRun, SessionId } from "../../src/contracts/session.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
+/** A development manifest (HH_REAL_MANIFEST) names non-official entries, which only the development policy reads (ADR-044). */
+const realInstallations = process.env.HH_REAL_MANIFEST ? "any" as const : "official" as const;
 
 /**
  * Original-installation acceptance of native configuration sync (ADR-028): the conversation selects an option value, a
@@ -61,7 +63,7 @@ test("installed Harness keeps a setting its own command changed, until an explic
       await mkdir(workspace);
       const configuration = await prepareConfiguration({ workspace, ...(process.env.HH_REAL_MANIFEST ? { manifestPath: process.env.HH_REAL_MANIFEST } : {}) });
       const proof: Record<string, unknown> = { harnessId, option, from, to, startedAt: new Date().toISOString() };
-      const app = application(data, () => {}, { workspaceLockRoot: join(root, "locks") });
+      const app = application(data, () => {}, { installations: realInstallations, workspaceLockRoot: join(root, "locks") });
       try {
         const requested = process.env["HH_REAL_MODEL_" + harnessId.toUpperCase()];
         const byModel = option === "model", selection = byModel ? { harnessId, nativeModel: from } : { harnessId, ...(requested === undefined ? {} : { nativeModel: requested }), nativeOptions: { [option]: from } };

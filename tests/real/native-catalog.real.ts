@@ -6,6 +6,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { application } from "../../src/cli/session-application.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
+/** A development manifest (HH_REAL_MANIFEST) names non-official entries, which only the development policy reads (ADR-044). */
+const realInstallations = process.env.HH_REAL_MANIFEST ? "any" as const : "official" as const;
 
 /**
  * Directory-level evidence from each installed Harness: initialize capabilities and the native catalog read through the
@@ -26,7 +28,7 @@ function keys(value: unknown): string[] { return value !== null && typeof value 
 test("installed Harnesses report their native capabilities and catalogs without a prompt", { timeout: 10 * 60 * 1000 }, async () => {
   assert.ok(harnesses.length, "set HH_REAL_HARNESSES"); assert.ok(evidencePath, "set HH_REAL_EVIDENCE");
   const root = await realpath(await mkdtemp(join(process.env.HH_REAL_TMP ?? tmpdir(), "hh-native-catalog-"))), before = await Promise.all(watched.map(digest));
-  const app = application(join(root, "data"), () => {}, { workspaceLockRoot: join(root, "locks") }), results: Record<string, unknown>[] = [];
+  const app = application(join(root, "data"), () => {}, { installations: realInstallations, workspaceLockRoot: join(root, "locks") }), results: Record<string, unknown>[] = [];
   try {
     for (const harnessId of harnesses) {
       const workspace = join(root, harnessId); await mkdir(workspace);

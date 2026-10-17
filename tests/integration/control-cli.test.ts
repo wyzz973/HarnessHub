@@ -45,7 +45,7 @@ function environment(f: Fixture): NodeJS.ProcessEnv {
   return { PATH: join(f.root, "empty-path"), HOME: f.hostHome, TMPDIR: f.temporary, LANG: "C", TEST_HOST_SECRET: "synthetic-secret" };
 }
 function invoke(f: Fixture, args: readonly string[]): SpawnSyncReturns<string> {
-  return spawnSync(process.execPath, [cli, ...args, "--path-only", "--manifest", f.manifest], { cwd: f.root, env: environment(f), encoding: "utf8", timeout: 10000, maxBuffer: 4 * 1024 * 1024 });
+  return spawnSync(process.execPath, [cli, ...args, "--path-only", "--allow-unofficial", "--manifest", f.manifest], { cwd: f.root, env: environment(f), encoding: "utf8", timeout: 10000, maxBuffer: 4 * 1024 * 1024 });
 }
 function records(output: string): readonly Record<string, unknown>[] {
   return output.trim() ? output.trim().split("\n").map((line) => {
@@ -217,7 +217,7 @@ test("formal CLI respects explicit private configuration/workspace ownership dur
 
 test("formal CLI signal waits for backend cancellation and reports a separate cleanup", async (t) => {
   const f = await fixture(t); await manifest(f, "acp-v1", "stop");
-  const child = spawn(process.execPath, [cli, "run", "--harness", "cli-fixture", "--prompt", "stop fixture", "--json", "--path-only", "--manifest", f.manifest], { cwd: f.root, env: environment(f), stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [cli, "run", "--harness", "cli-fixture", "--prompt", "stop fixture", "--json", "--path-only", "--allow-unofficial", "--manifest", f.manifest], { cwd: f.root, env: environment(f), stdio: ["ignore", "pipe", "pipe"] });
   let stdout = "", stderr = "";
   child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
   const completed = new Promise<{ readonly code: number | null; readonly signal: NodeJS.Signals | null }>((resolve, reject) => {
@@ -249,7 +249,7 @@ for (const protocol of ["acp-v1", "codex-app-server"] as const) {
       "process.stdout.write(JSON.stringify({...((process.argv[2]==='acp-v1')?{jsonrpc:'2.0'}:{}),id:msg.id,result})+'\\n');});",
     ].join("\n"));
     await manifest(f, protocol, "basic", { wrapper: resistantPeer });
-    const child = spawn(process.execPath, [cli, "probe", "--harness", "cli-fixture", "--json", "--path-only", "--manifest", f.manifest], { cwd: f.root, env: environment(f), stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(process.execPath, [cli, "probe", "--harness", "cli-fixture", "--json", "--path-only", "--allow-unofficial", "--manifest", f.manifest], { cwd: f.root, env: environment(f), stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "", stderr = "";
     child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
     child.stdout.on("data", (value: string) => { stdout += value; });

@@ -27,7 +27,8 @@ function errno(error: unknown): string | undefined {
   return record(error) && typeof error.code === "string" ? error.code : undefined;
 }
 
-async function packageJson(path: string): Promise<unknown> {
+/** A bounded package.json read without following a final link. */
+export async function packageJson(path: string): Promise<unknown> {
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const information = await file.stat();

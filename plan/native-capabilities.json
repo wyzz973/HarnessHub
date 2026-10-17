@@ -1902,7 +1902,7 @@
     {
       "id": "pi",
       "name": "Pi",
-      "installation": "Pi 0.85.1（本机开发安装）",
+      "installation": "Pi 0.85.1（本机开发安装；安装渠道非官网，按 ADR-044 不再作为验收对象，以下证据保留为历史）",
       "control": "pi-rpc（pi --mode rpc）",
       "capabilities": {
         "models": {
@@ -2491,7 +2491,7 @@
     {
       "id": "dsh",
       "name": "DeepSeek Harness",
-      "installation": "DeepSeek Harness 0.2.1-alpha.1（本机源码构建，经显式入口；官方分发为 npm 包 @deepseek-ai/dsh）",
+      "installation": "DeepSeek Harness 0.2.1-alpha.1（本机源码构建，经显式入口；安装渠道非官网，按 ADR-044 不再作为验收对象，以下证据保留为历史；官方分发为 npm 包 @deepseek-ai/dsh）",
       "control": "acp-v1（dsh --profile acp）",
       "capabilities": {
         "models": {

@@ -14,7 +14,7 @@ import type { CleanupEvidence, ControlLaunch, HarnessControl } from "../../contr
 import { NATIVE_TURN_HARD_CAP_MS, SessionError, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest,
   type SessionBindingFactory, type SessionConfiguration, type SessionId, type WorkspaceLease,
   type WorkspaceLeaseProvider } from "../../contracts/session.js";
-import { MAX_CATALOG_BYTES, type ControlObservation } from "../../contexts/catalog/domain/catalog.js";
+import { MAX_CATALOG_BYTES, type ControlObservation, type InstallationPolicy } from "../../contexts/catalog/domain/catalog.js";
 import { captureNativeEnvironment, nativeValues, referencedNativeValues, nativeDescriptorValues, type NativeEnvironment } from "./native-environment.js";
 import type { NativeExtensions, NativeModelCatalog, NativeSessionImport, NativeSessionPage } from "../../contracts/control.js";
 /** Reading a long native history (an ACP agent replays it in full) is bounded separately from Turn budgets. */
@@ -81,7 +81,7 @@ export async function prepareConfiguration(input: ConfigurationInput): Promise<S
 }
 interface ManagedResolver { resolveControl(harnessId: string, controlId: string): ResolvedManagedControl | null }
 interface Observation { readonly harnessId: string; readonly selected: ControlObservation; readonly searchPath: string; readonly managed: ResolvedManagedControl | null }
-async function observe(request: SelectionRequest, configuration: SessionConfiguration, root: string, managedResolver?: ManagedResolver, source?: NativeEnvironment): Promise<Observation> {
+async function observe(request: SelectionRequest, configuration: SessionConfiguration, root: string, installations: InstallationPolicy, managedResolver?: ManagedResolver, source?: NativeEnvironment): Promise<Observation> {
   await pinnedDirectory(configuration.workspace, "workspace");
   if (configuration.configHome !== null) await pinnedDirectory(configuration.configHome, "configuration home");
   for (const path of configuration.packageRoots) await pinnedDirectory(path, "package root");
@@ -95,7 +95,7 @@ async function observe(request: SelectionRequest, configuration: SessionConfigur
   } else if (configuration.manifestSha256 !== null) throw new SessionError("INVALID_INPUT", "manifest fingerprint requires a manifest reference");
   const observed = await inventory({ ...(snapshot === undefined ? {} : { manifest: snapshot }),
     ...(source === undefined ? {} : { environment: source.values, home: source.home }),
-    packageRoots: configuration.packageRoots, searchDirs: configuration.searchDirs, pathOnly: configuration.pathOnly, ...(managedResolver === undefined ? {} : { managedResolver }) });
+    packageRoots: configuration.packageRoots, searchDirs: configuration.searchDirs, pathOnly: configuration.pathOnly, installations, ...(managedResolver === undefined ? {} : { managedResolver }) });
   const harness = observed.report.harnesses.find(item => item.id === request.harnessId || item.aliases.includes(request.harnessId));
   if (!harness) throw new SessionError("HARNESS_UNAVAILABLE", "unknown Harness: " + request.harnessId);
   // A published managed default is an explicit installation choice for this Harness.
@@ -117,15 +117,18 @@ async function privateHome(root: string, configuration: SessionConfiguration): P
 }
 /** Fresh per-Turn control with a real workspace lease; this is public-context rehydration, not native resume. */
 export class DirectorySessionBindingFactory implements SessionBindingFactory {
-  constructor(private readonly workspaces: WorkspaceLeaseProvider, private readonly assertOwner: () => void, private readonly providers?: LocalProviderService, private readonly management?: ManagedResolver,
-    private readonly nativeEnvironment: NativeEnvironment = captureNativeEnvironment(), private readonly nativeLocks?: NativeInstallationLocks) {}
+  /** `installations` is what this Gateway counts as an installation (ADR-044); its Harness list observes with the same policy. */
+  constructor(private readonly workspaces: WorkspaceLeaseProvider, private readonly assertOwner: () => void, readonly installations: InstallationPolicy, private readonly providers?: LocalProviderService, private readonly management?: ManagedResolver,
+    private readonly nativeEnvironment: NativeEnvironment = captureNativeEnvironment(), private readonly nativeLocks?: NativeInstallationLocks) {
+    if (installations !== "official" && installations !== "any") throw new SessionError("INVALID_INPUT", "installation policy must be official or any");
+  }
   /** Private host observation source; never serialize this into public Session or Web DTOs. */
   get discoveryEnvironment(): NativeEnvironment { return this.nativeEnvironment; }
   async validate(request: SelectionRequest, configuration: SessionConfiguration): Promise<HarnessSelection> {
     this.assertOwner();
     const root = await realpath(await mkdtemp(join(tmpdir(), "harness-session-validation-")));
     try {
-      const { harnessId, selected } = await observe(request, configuration, root, this.management, this.nativeEnvironment);
+      const { harnessId, selected } = await observe(request, configuration, root, this.installations, this.management, this.nativeEnvironment);
       this.assertOwner();
       if (request.provider !== undefined && request.provider !== null) {
         if (!this.providers) throw new SessionError("PROVIDER_UNAVAILABLE", "Provider management is unavailable");
@@ -146,7 +149,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
     try {
       usage = this.nativeLocks?.read(selection.harnessId);
       root = await realpath(await mkdtemp(join(tmpdir(), "harness-session-binding-")));
-      const observed = await observe(selection, configuration, root, this.management, this.nativeEnvironment);
+      const observed = await observe(selection, configuration, root, this.installations, this.management, this.nativeEnvironment);
       if (observed.harnessId !== selection.harnessId || observed.selected.id !== selection.controlId || observed.selected.command === null)
         throw new SessionError("HARNESS_UNAVAILABLE", "the admitted control is no longer available");
       const home = selection.provider === undefined ? configuration.configHome : await privateHome(root, configuration);
@@ -192,7 +195,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
   async catalogFingerprint(selection: SelectionRequest, configuration: SessionConfiguration): Promise<{ readonly fingerprint: string; readonly controlId: string }> {
     this.assertOwner(); const root = await realpath(await mkdtemp(join(tmpdir(), "harness-catalog-identity-")));
     try {
-      const observed = await observe(selection, configuration, root, this.management, this.nativeEnvironment), command = observed.selected.command;
+      const observed = await observe(selection, configuration, root, this.installations, this.management, this.nativeEnvironment), command = observed.selected.command;
       if (!command) throw new SessionError("HARNESS_UNAVAILABLE", "native control unavailable");
       const env = nativeValues(this.nativeEnvironment, configuration.configHome), home = env.HOME ?? this.nativeEnvironment.home;
       const codex = env.CODEX_HOME ?? join(home,".codex"), claude=env.CLAUDE_CONFIG_DIR ?? join(home,".claude"), pi=env.PI_CODING_AGENT_DIR ?? join(home,".pi","agent"), gemini=join(env.GEMINI_CLI_HOME ?? home,".gemini"), opencode=env.OPENCODE_CONFIG_DIR ?? join(env.XDG_CONFIG_HOME ?? join(home,".config"),"opencode");
@@ -247,7 +250,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
     try {
       if (signal.aborted) throw new SessionError("CANCELLED", "model discovery was cancelled");
       usage = this.nativeLocks?.read(request.harnessId);
-      const observed = await observe(request, configuration, root, this.management, this.nativeEnvironment);
+      const observed = await observe(request, configuration, root, this.installations, this.management, this.nativeEnvironment);
       if (observed.selected.command === null) throw new SessionError("HARNESS_UNAVAILABLE", "native control is unavailable");
       const env = { ...await referencedNativeValues(this.nativeEnvironment, configuration.configHome, observed.harnessId, configuration.workspace), ...nativeDescriptorValues(this.nativeEnvironment, configuration.configHome, observed.selected.command.env),
         PATH: observed.managed?.command.env.PATH ? observed.managed.command.env.PATH + ":" + observed.searchPath : observed.searchPath,

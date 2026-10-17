@@ -33,7 +33,9 @@
 
 测试隔离：组合应用、启动 Gateway 或运行 `chat`、`sessions`、`web` 命令的测试，必须使用测试自己的临时工作区租约目录（`workspaceLockRoot` 或 `--workspace-lock-root`），不得写入每个本机用户共用的 `/tmp/harnessgateway-workspaces-<uid>`（[ADR-041](../decisions/0041-workspace-lock-root.md)）。检查方式：人工审查新增的组合点；完整测试前后对比共享目录的文件数。尚无自动检查。
 
-macOS/Linux：进程组、脱离组后代、父进程先退出、中文/空格路径、软链接与权限。Windows：Job Objects、breakaway、cmd/PowerShell argv、孙进程、DPAPI/ACL、中文路径、取消启动中/运行中、重启清理。没有宿主不能把 skipped 当通过。
+平台只面向 macOS（[ADR-044](../decisions/0044-macos-official-channels.md)）：进程组、脱离组后代、父进程先退出、中文/空格路径、软链接与权限在 macOS 上验证。Windows、Linux 不再计划和验证，报告里不再列“未验证”，直接写明只面向 macOS；跳过的必需检查仍不能算通过。
+
+安装策略：正式入口默认只认官网渠道（ADR-044）。用测试假程序或发现清单的测试必须显式使用开发策略：组合时传 `installations: "any"`，命令行加 `--allow-unofficial`。检查方式：人工审查新增的组合点和命令行调用；漏传时这类测试会因 Harness 未安装而失败。
 
 真实组合按 Harness、Adapter、protocol/SDK、Provider/模型、OS/架构、权限/工具、恢复等级记录。至少验证两个 Harness 与两个兼容模型目标的独立切换，包含 A→B→A。
 

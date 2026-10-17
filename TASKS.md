@@ -747,13 +747,18 @@
 - tests/integration/discovery-cli.test.ts
 - src/infrastructure/discovery/login-shell.ts
 - tests/integration/login-shell.test.ts
+- src/contexts/catalog/domain/channels.ts
+- src/adapters/catalog-channels.ts
+- src/infrastructure/discovery/installation-channels.ts
+- tests/unit/official-channels.test.ts
+- tests/integration/official-channels.test.ts
 
 验收：
 - 返回安装观察，不自动注册
 - 拒绝歧义和越界
 - 明确原因，不联网下载或调用模型
 
-场景：G012-C01, G012-C02, G012-C03, G012-NC1, G012-NC2。
+场景：G012-C01, G012-C02, G012-C03, G012-NC1, G012-NC2, G012-OC1, G012-OC2, G012-OC3, G012-OC4。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1579,6 +1584,7 @@
 - tests/unit/harness-entry.test.ts
 - src/web/native-catalog-cache.ts
 - tests/integration/native-catalog-cache.test.ts
+- src/web/harness-installations.ts
 
 验收：
 - 复用应用语义，202只表受理
@@ -1732,7 +1738,7 @@
 - 不提前展示新Harness已生效
 - 可操作且不持有独立业务状态
 
-场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01, G054-NC1, G054-NC2, G054-NC3, G054-NC4, G054-NC5, G054-NC6, G054-NC7, G054-NC8, G054-NC9, G054-NC10, G054-NC11, G054-NC12, G054-NC13, G054-NC14, G054-NC15, G054-FR1, G054-FR2, G054-FR3, G054-FR4, G054-FR5, G054-FR6, G054-FR7, G054-FR8, G054-UP1, G054-UP2。
+场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01, G054-NC1, G054-NC2, G054-NC3, G054-NC4, G054-NC5, G054-NC6, G054-NC7, G054-NC8, G054-NC9, G054-NC10, G054-NC11, G054-NC12, G054-NC13, G054-NC14, G054-NC15, G054-FR1, G054-FR2, G054-FR3, G054-FR4, G054-FR5, G054-FR6, G054-FR7, G054-FR8, G054-UP1, G054-UP2, G054-OC1。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 

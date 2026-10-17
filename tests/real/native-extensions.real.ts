@@ -7,6 +7,8 @@ import test from "node:test";
 import { application } from "../../src/cli/session-application.js";
 import type { PublicRun } from "../../src/contracts/session.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
+/** A development manifest (HH_REAL_MANIFEST) names non-official entries, which only the development policy reads (ADR-044). */
+const realInstallations = process.env.HH_REAL_MANIFEST ? "any" as const : "official" as const;
 
 /**
  * Original-installation acceptance of native extensions: the listing comes from the installed Harness, and a skill defined
@@ -49,7 +51,7 @@ test("installed Harness lists its native extensions and runs a workspace skill t
       await writeFile(join(workspace, ".agents", "skills", "hh-echo", "SKILL.md"), SKILL);
       const configuration = await prepareConfiguration({ workspace, ...(process.env.HH_REAL_MANIFEST ? { manifestPath: process.env.HH_REAL_MANIFEST } : {}) });
       const proof: Record<string, unknown> = { harnessId, startedAt: new Date().toISOString() };
-      const app = application(data, () => {}, { workspaceLockRoot: join(root, "locks") });
+      const app = application(data, () => {}, { installations: realInstallations, workspaceLockRoot: join(root, "locks") });
       try {
         const extensions = await app.factory.discoverExtensions({ harnessId }, configuration, new AbortController().signal);
         const local = extensions?.skills.find(skill => skill.name === "hh-echo");

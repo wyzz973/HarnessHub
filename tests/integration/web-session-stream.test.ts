@@ -36,7 +36,7 @@ function view(snapshot: SessionSnapshot): SessionView { return { id: snapshot.id
 interface HttpFixture extends Files { gateway: WebServer; readonly origin: string; readonly cookie: string; readonly csrf: string; readonly streams: Set<StreamReader> }
 async function httpFixture(t: test.TestContext): Promise<HttpFixture> {
   const f = await files(), configuration = await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true });
-  const gateway = await startWebServer({ root: f.data, configuration, port: 0, workspaceLockRoot: join(f.root, "locks") }); const url = new URL(gateway.url), response = await fetch(url.origin + "/api/v1/auth/bootstrap", { method: "POST", headers: { Origin: url.origin, "Content-Type": "application/json" }, body: JSON.stringify({ token: new URLSearchParams(url.hash.slice(1)).get("token") }) }); assert.equal(response.status, 200);
+  const gateway = await startWebServer({ installations: "any", root: f.data, configuration, port: 0, workspaceLockRoot: join(f.root, "locks") }); const url = new URL(gateway.url), response = await fetch(url.origin + "/api/v1/auth/bootstrap", { method: "POST", headers: { Origin: url.origin, "Content-Type": "application/json" }, body: JSON.stringify({ token: new URLSearchParams(url.hash.slice(1)).get("token") }) }); assert.equal(response.status, 200);
   const result = { ...f, gateway, origin: url.origin, cookie: response.headers.get("set-cookie")!.split(";", 1)[0]!, csrf: String(record(await response.json()).csrfToken), streams: new Set<StreamReader>() };
   t.after(async () => { for (const stream of result.streams) await stream.close(); try { await gateway.close(); } finally { await rm(f.root, { recursive: true, force: true }); } }); return result;
 }
@@ -141,7 +141,7 @@ function frames(socket: FakeSocket): Record<string, unknown>[] { return socket.w
 async function hubFixture(t: test.TestContext, limits: SessionStreamLimits = {}) {
   const f = await files(); let hub: SessionStreamHub;
   const reports: SessionStreamReadFailure[] = [];
-  const app = application(f.data, event => hub.publish(event), { workspaceLockRoot: join(f.root, "locks") }); hub = new SessionStreamHub(id => view(app.runtime.read(id)), limits, failure => { reports.push(failure); });
+  const app = application(f.data, event => hub.publish(event), { installations: "any", workspaceLockRoot: join(f.root, "locks") }); hub = new SessionStreamHub(id => view(app.runtime.read(id)), limits, failure => { reports.push(failure); });
   const config = await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true }), session = await app.runtime.create(config, { harnessId: "stream-peer" }, "hub-session");
   const result = { ...f, hub, app, reports, id: session.id, ownerLost: false };
   t.after(async () => {

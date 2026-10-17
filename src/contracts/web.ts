@@ -22,8 +22,36 @@ export interface HarnessView {
     readonly entry: { readonly source: HarnessEntrySource } | null }[];
   readonly providerProtocols: readonly string[];
   readonly management: HarnessManagementView;
-  /** The product's own documented way to install it, shown when it is missing; HarnessHub never runs it. */
-  readonly install: { readonly command: string; readonly docs: string } | null;
+  /**
+   * The product's own documented way to install it on macOS, shown when it is missing; HarnessHub does not run it yet.
+   * `checkedAt` is when the command was read from `docs`; `note` says what the official page adds, such as a successor.
+   */
+  readonly install: { readonly command: string; readonly docs: string; readonly checkedAt: string; readonly note: string | null } | null;
+  /**
+   * Every installation found in an official channel (ADR-044), in search order with PATH first; a Gateway that allows
+   * unofficial entries (development) also lists those, with a null channel. Paths stay on the Gateway.
+   */
+  readonly installations: readonly InstallationView[];
+  /**
+   * A program found under the product's command outside every official channel; HarnessHub neither uses nor maintains it.
+   * `pathDefault`: it is what the command resolves to in this Gateway's PATH, so a terminal with that PATH runs it.
+   */
+  readonly unofficial: { readonly command: string; readonly onPath: boolean; readonly pathDefault: boolean } | null;
+}
+/** One installation of a product or of the adapter HarnessHub runs in front of it, described without its path. */
+export interface InstallationView {
+  readonly channel: "npm" | "brew-formula" | "brew-cask" | "script" | "uv" | "pnpm" | "bun" | null;
+  /** Where it is in the user's terms, such as "npm 全局（nvm v26.11.1）" or "官方安装脚本". */
+  readonly label: string;
+  /** The command it was found as. */
+  readonly command: string;
+  /** The version its channel records; null when the channel records none. */
+  readonly version: string | null;
+  readonly role: "product" | "adapter";
+  /** The one this Gateway runs: the first of its role in this Gateway's PATH order. A terminal's PATH may differ. */
+  readonly active: boolean;
+  /** Whether HarnessHub maintains this channel; pnpm and bun installations are listed only. */
+  readonly maintained: boolean;
 }
 export interface SessionSummary {
   readonly id: string;
@@ -156,6 +184,8 @@ export interface WebState {
   readonly sessions: readonly SessionSummary[];
   readonly jobs: readonly InstallationJobView[];
   readonly readiness: readonly HarnessReadinessView[];
+  /** What this Gateway counts as an installation (ADR-044); `any` only for development and tests. */
+  readonly installationPolicy: "official" | "any";
 }
 export interface EventPage {
   readonly events: readonly SessionEvent[];

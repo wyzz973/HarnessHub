@@ -21,3 +21,5 @@ CleanupEvidence.closed 只表资源确认关闭，protocolFailure独立保留连
 ADR-016：原PATH/显式控制入口优先于旧受管副本；candidate/blocked不被覆盖，只有缺失控制可使用已安装私有入口。OpenClaw专属Driver处理其普通Gateway会话键扩展，ACP有界延迟验证session/new前的初始化元数据；错误身份/早到输出仍拒绝。
 
 ADR-017：ControlLaunch新增pi-rpc。Pi原CLI有界JSON行由Adapter翻译，复用同一进程监督所有者；读get_state/get_available_models，不调用会写全局默认的set_model。指定模型时，静止关闭读探测，再以原CLI启动参数覆盖并核对实际模型。prompt成功响应只是受理，agent_end保留后端结果，agent_settled才允许结算；重试、取消回执与清理分开。当前真实验证为Pi0.85.1；没有静止回执的旧版本不算支持。Claude ACP通过CLAUDE_CODE_EXECUTABLE指向原CLI，原生CLAUDE_CONFIG_DIR未设置时保持未设置，以沿用原登录文件。认证/额度/客户端不支持错误只发布稳定分类，不转发任意远端错误文本。
+
+ADR-044（2026-10-17，只面向 macOS）：发现端口的结果再按官方安装渠道分类。每个候选带 `channel`（npm、brew-formula、brew-cask、script、uv、pnpm、bun 或 null）、渠道记录的 `version` 和 `role`（product 或 adapter）；产品先按产品渠道判定，再按命名它的适配器控制入口的包判定。安装策略 `official`（正式入口默认）只承认渠道内的候选，其余进入 `unofficial`，并用 `unofficialDefault` 指明 PATH 默认解析到的那一个；PATH 默认不是官网安装时选搜索顺序中第一份官网安装，PATH 默认损坏仍 blocked 不回退；`--package-root` 找到的包同样判定；发现清单不读，诊断 `manifest_ignored`。策略 `any`（`--allow-unofficial`，只用于开发和测试）承认全部候选、渠道为空的照常可用。新建对话与 Harness 列表由同一个 `DirectorySessionBindingFactory.installations` 决定，两处结论一致。

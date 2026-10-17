@@ -1,4 +1,5 @@
 import { captureNativeEnvironment, referencedNativeValues, nativeDescriptorValues } from "../infrastructure/session/native-environment.js";
+import { resolveInstallationPolicy } from "../contexts/catalog/domain/catalog.js";
 import { chooseControl } from "../contexts/catalog/application/select-control.js";
 export { chooseControl } from "../contexts/catalog/application/select-control.js";
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
@@ -83,11 +84,11 @@ export async function main(args: readonly string[]): Promise<number> {
       manifest: { type: "string" }, "search-dir": { type: "string", multiple: true },
       "package-root": { type: "string", multiple: true }, "path-only": { type: "boolean" },
       cwd: { type: "string" }, "config-home": { type: "string" }, "timeout-ms": { type: "string" },
-      json: { type: "boolean" }, help: { type: "boolean", short: "h" },
+      "allow-unofficial": { type: "boolean" }, json: { type: "boolean" }, help: { type: "boolean", short: "h" },
     }, strict: true, allowPositionals: false });
     json = values.json ?? false;
     if (values.help) {
-      process.stdout.write("HarnessGateway " + action + " --harness <id> [--control <id>]\nrun另需 --prompt <text>；--json 输出NDJSON事件\n--manifest <file> 指定目录覆盖；--package-root <absolute> 已安装包根\n--cwd <absolute> 工作目录；--config-home <absolute> 已准备的私有配置根\n--timeout-ms <100..300000> 预算（默认30000）\n默认沿用本机已有配置和登录；不安装依赖。probe只初始化，run明确发送一条消息。\n");
+      process.stdout.write("HarnessGateway " + action + " --harness <id> [--control <id>]\nrun另需 --prompt <text>；--json 输出NDJSON事件\n--manifest <file> 指定目录覆盖；--package-root <absolute> 已安装包根\n--cwd <absolute> 工作目录；--config-home <absolute> 已准备的私有配置根\n--timeout-ms <100..300000> 预算（默认30000）\n--allow-unofficial 官网渠道以外的入口也算作已安装，只用于开发和测试\n默认沿用本机已有配置和登录；不安装依赖。probe只初始化，run明确发送一条消息。\n");
       return 0;
     }
     if (!values.harness || !/^[a-z][a-z0-9-]{0,95}$/u.test(values.harness)) throw new DiscoveryInputError("--harness must name a catalog id or alias");
@@ -102,6 +103,7 @@ export async function main(args: readonly string[]): Promise<number> {
     const observed = await inventory({
       ...(values.manifest === undefined ? {} : { manifest: values.manifest }),
       searchDirs: values["search-dir"] ?? [], packageRoots: values["package-root"] ?? [], pathOnly: values["path-only"] ?? false,
+      installations: resolveInstallationPolicy(values["allow-unofficial"]),
     });
     const harness = observed.report.harnesses.find((item) => item.id === values.harness || item.aliases.includes(values.harness!));
     if (!harness) throw new DiscoveryInputError("unknown Harness: " + values.harness);

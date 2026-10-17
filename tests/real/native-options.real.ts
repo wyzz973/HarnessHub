@@ -7,6 +7,8 @@ import test from "node:test";
 import { application } from "../../src/cli/session-application.js";
 import type { PublicRun, SessionId } from "../../src/contracts/session.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
+/** A development manifest (HH_REAL_MANIFEST) names non-official entries, which only the development policy reads (ADR-044). */
+const realInstallations = process.env.HH_REAL_MANIFEST ? "any" as const : "official" as const;
 
 /**
  * Original-installation acceptance of selected native settings and of a native command:
@@ -60,7 +62,7 @@ test("installed Harness applies the selected native settings and runs a native c
       await mkdir(workspace); await writeFile(join(workspace, "notes.txt"), "alpha\nbravo\ncharlie\n");
       const configuration = await prepareConfiguration({ workspace, ...(process.env.HH_REAL_MANIFEST ? { manifestPath: process.env.HH_REAL_MANIFEST } : {}) });
       const proof: Record<string, unknown> = { harnessId, startedAt: new Date().toISOString() };
-      const app = application(data, () => {}, { workspaceLockRoot: join(root, "locks") });
+      const app = application(data, () => {}, { installations: realInstallations, workspaceLockRoot: join(root, "locks") });
       try {
         const requested = process.env["HH_REAL_MODEL_" + harnessId.toUpperCase()], optionsText = process.env["HH_REAL_OPTIONS_" + harnessId.toUpperCase()];
         const nativeOptions = optionsText === undefined ? undefined : JSON.parse(optionsText) as Record<string, string>;

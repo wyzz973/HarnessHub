@@ -149,7 +149,7 @@ test("real local Codex through the formal gateway CLI uses only its deterministi
         executableNames: ["codex"], args: ["app-server", "--listen", "stdio://"], env: { [KEY_NAME]: DUMMY_KEY },
         package: null, distribution: null, requiredExecutables: [], source }] }],
       overrides: { "customrealcodex-control": { executable } } }));
-    const invoked = await invoke(["run", "--harness", "customrealcodex", "--prompt", PROMPT, "--manifest", manifest,
+    const invoked = await invoke(["run", "--harness", "customrealcodex", "--prompt", PROMPT, "--allow-unofficial", "--manifest", manifest,
       "--config-home", home, "--cwd", workspace, "--timeout-ms", "10000", "--json"], workspace, home, temporary);
     assert.deepEqual(providerErrors, [], providerErrors.map(error => error.message).join("; "));
     assert.equal(invoked.code, 0, `formal CLI failed (signal ${invoked.signal}): ${invoked.stderr}\n${invoked.stdout}`);

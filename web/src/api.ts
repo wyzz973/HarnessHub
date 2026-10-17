@@ -72,7 +72,11 @@ function decodeHarness(value: unknown): HarnessView {
     controls: list(row.controls, value => { const control = record(value), entry = control.entry === null ? null : record(control.entry);
       return { id: text(control.id), protocol: text(control.protocol), available: bool(control.available), reason: nullableText(control.reason),
         entry: entry === null ? null : { source: choice(entry.source, ["path", "standard-directory", "custom-entry", "package-root", "managed"]) } }; }, 64),
-    install: install === null ? null : { command: text(install.command), docs: text(install.docs) } };
+    install: install === null ? null : { command: text(install.command), docs: text(install.docs), checkedAt: text(install.checkedAt), note: nullableText(install.note) },
+    installations: list(row.installations, value => { const item = record(value);
+      return { channel: item.channel === null ? null : choice(item.channel, ["npm", "brew-formula", "brew-cask", "script", "uv", "pnpm", "bun"]), label: text(item.label), command: text(item.command),
+        version: nullableText(item.version), role: choice(item.role, ["product", "adapter"]), active: bool(item.active), maintained: bool(item.maintained) }; }, 64),
+    unofficial: row.unofficial === null ? null : (() => { const item = record(row.unofficial); return { command: text(item.command), onPath: bool(item.onPath), pathDefault: bool(item.pathDefault) }; })() };
 }
 function decodeLoginShell(value: unknown): LoginShellView {
   const row = record(value);
@@ -239,7 +243,7 @@ function decodeReadiness(value: unknown): HarnessReadinessView {
 function decodeState(value: unknown): WebState {
   const row = record(value);
   return { ...(row.providerManagement === undefined ? {} : { providerManagement: bool(row.providerManagement) }), workspace: text(row.workspace), providers: list(row.providers, decodeProvider, 256), harnesses: list(row.harnesses, decodeHarness, 256), sessions: list(row.sessions, decodeSummary, 1000), jobs: list(row.jobs, decodeInstallationJob, 100),
-    readiness: list(row.readiness, decodeReadiness, 512) };
+    readiness: list(row.readiness, decodeReadiness, 512), installationPolicy: choice(row.installationPolicy, ["official", "any"]) };
 }
 function decodeAuth(value: unknown): AuthSession { return { csrfToken: text(record(value).csrfToken) }; }
 function acknowledge(value: unknown, session: string, result: "runId" | "switchId" | "target"): void {

@@ -1364,7 +1364,12 @@
         "tests/unit/inventory.test.ts",
         "tests/integration/discovery-cli.test.ts",
         "src/infrastructure/discovery/login-shell.ts",
-        "tests/integration/login-shell.test.ts"
+        "tests/integration/login-shell.test.ts",
+        "src/contexts/catalog/domain/channels.ts",
+        "src/adapters/catalog-channels.ts",
+        "src/infrastructure/discovery/installation-channels.ts",
+        "tests/unit/official-channels.test.ts",
+        "tests/integration/official-channels.test.ts"
       ],
       "requirements": [
         "R03",
@@ -1388,9 +1393,13 @@
         "G012-C02",
         "G012-C03",
         "G012-NC1",
-        "G012-NC2"
+        "G012-NC2",
+        "G012-OC1",
+        "G012-OC2",
+        "G012-OC3",
+        "G012-OC4"
       ],
-      "active_slice": "native-installation-management"
+      "active_slice": "official-install-channels"
     },
     {
       "id": "G013",
@@ -3127,7 +3136,8 @@
         "src/web/harness-entry.ts",
         "tests/unit/harness-entry.test.ts",
         "src/web/native-catalog-cache.ts",
-        "tests/integration/native-catalog-cache.test.ts"
+        "tests/integration/native-catalog-cache.test.ts",
+        "src/web/harness-installations.ts"
       ],
       "requirements": [
         "R01",
@@ -3441,7 +3451,8 @@
         "G054-FR7",
         "G054-FR8",
         "G054-UP1",
-        "G054-UP2"
+        "G054-UP2",
+        "G054-OC1"
       ],
       "active_slice": "upgrade-with-running-programs"
     },

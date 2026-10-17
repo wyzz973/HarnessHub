@@ -57,7 +57,8 @@ async function launchFixture(providerManagement = true, nativeAcp: { readonly na
   } };
   let composed: ReturnType<typeof application> | null = null;
   const gateway = await startWebServer({ root: join(root, "data"), configuration: await prepareConfiguration({ workspace, manifestPath: manifest, pathOnly: true }), port: 0, providerManagement, ...(loginShell === undefined ? {} : { loginShell }),
-    application: (data, publish) => (composed = application(data, publish, { management: { installationMode: "private-fixture", metadata, installer }, nativeEnvironment: { home: root, values: { HOME: root, PATH: dirname(process.execPath) + ":/usr/bin:/bin" } }, ...(budgets === undefined ? {} : { budgets }), workspaceLockRoot: join(root, "locks") })) });
+    // The fixture's Harnesses are discovery-manifest entries, which only a development Gateway reads (ADR-044).
+    application: (data, publish) => (composed = application(data, publish, { installations: "any", management: { installationMode: "private-fixture", metadata, installer }, nativeEnvironment: { home: root, values: { HOME: root, PATH: dirname(process.execPath) + ":/usr/bin:/bin" } }, ...(budgets === undefined ? {} : { budgets }), workspaceLockRoot: join(root, "locks") })) });
   return { root, gateway, runtime: () => { assert.ok(composed); return composed.runtime; }, setVersion: (value: string) => { fixtureVersion = value; }, baseUrl: `http://127.0.0.1:${address.port}/v1`, close: async () => { await gateway.close(); modelServer.closeAllConnections(); await new Promise<void>(done => modelServer.close(() => done())); await rm(root, { recursive: true, force: true }); } };
 }
 
@@ -1554,5 +1555,50 @@ test("G054-UP2 a conversation whose kept process an upgrade closed says so until
   await reply("second", 2);
   await expect(page.getByText(notice)).toHaveCount(0);
   assert.equal((await current()).retention.upgraded, undefined, "the next Turn starts the new version");
+  assert.deepEqual(errors, []);
+});
+
+test("G054-OC1 a Harness lists each official installation with the one in use, and a non-official one only as a note beside the official way to install (ADR-044)", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  // The fixture's Codex shown with three npm installations and an adapter; its DeepSeek Harness only as a source checkout on PATH.
+  const shaped = (harness: { id: string; installed: boolean; installations: unknown[]; unofficial: unknown; install: unknown; management: Record<string, unknown>; controls: { available: boolean }[] }) => harness.id === "codex" ? { ...harness,
+    installations: [
+      { channel: "npm", label: "npm 全局（nvm v26.11.1）", command: "codex", version: "0.162.1", role: "product", active: true, maintained: true },
+      { channel: "npm", label: "npm 全局（Homebrew 的 Node.js）", command: "codex", version: "0.160.0", role: "product", active: false, maintained: true },
+      { channel: "pnpm", label: "pnpm 全局", command: "codex", version: "0.150.0", role: "product", active: false, maintained: false },
+      { channel: "npm", label: "npm 全局（Homebrew 的 Node.js）", command: "codex-acp", version: "0.9.0", role: "adapter", active: true, maintained: true }],
+    unofficial: { command: "codex", onPath: true, pathDefault: true } }
+    : harness.id === "dsh" ? { ...harness, installed: false, installations: [], unofficial: { command: "dsh", onPath: true, pathDefault: true }, controls: harness.controls.map(control => ({ ...control, available: false })),
+      management: { ...harness.management, source: "missing" } } : harness;
+  for (const path of ["**/api/v1/state", "**/api/v1/harnesses", "**/api/v1/harnesses/rescan"]) await page.route(path, async route => {
+    const response = await route.fetch(), body = await response.json();
+    await route.fulfill({ response, json: Array.isArray(body) ? body.map(shaped) : { ...body, harnesses: body.harnesses.map(shaped) } });
+  });
+  await page.goto(fixture.gateway.url);
+  await page.getByRole("button", { name: "我的 Agent", exact: true }).click();
+  await page.getByRole("button", { name: "查看 Codex 详情", exact: true }).click();
+  const codex = page.getByRole("dialog", { name: "Codex 详情" });
+  await expect(codex.locator(".harness-installations li")).toHaveText([
+    "npm 全局（nvm v26.11.1）当前使用v0.162.1", "npm 全局（Homebrew 的 Node.js）v0.160.0", "pnpm 全局v0.150.0 · 当前版本不维护这种安装方式", "npm 全局（Homebrew 的 Node.js）接入口 codex-acp当前使用v0.9.0"]);
+  await expect(codex).toContainText("“当前使用”按 HarnessHub 服务进程的 PATH 顺序确定；终端常被 nvm 等改动 PATH，用的可能是另一份。");
+  await expect(codex.locator(".harness-installations li").first().locator("[title]")).toHaveAttribute("title", "按 HarnessHub 服务进程的 PATH 顺序；终端里可能不同");
+  // A development Gateway says it accepts unofficial entries; this fixture is one.
+  await expect(page.locator(".development-entries")).toHaveText("开发模式：接受非官网安装。服务以 --allow-unofficial 启动，列表里的开发入口不是正式安装。");
+  await expect(codex.locator(".harness-unofficial")).toHaveText("在 PATH 中发现一个非官网安装（开发目录、npm link 或其他），命令名 codex；平台不使用也不维护它。终端里 codex 运行的是这份非官网安装；HarnessHub 使用的是标为“当前使用”的官网安装。");
+  await page.screenshot({ path: join(artifact, "harness-installations.png"), animations: "disabled" });
+  await codex.getByRole("button", { name: "关闭 Harness 详情" }).click();
+  await page.getByRole("button", { name: "查看 DeepSeek Harness 详情", exact: true }).click();
+  const dsh = page.getByRole("dialog", { name: "DeepSeek Harness 详情" });
+  await expect(dsh.locator(".harness-unofficial")).toHaveText("在 PATH 中发现一个非官网安装（开发目录、npm link 或其他），命令名 dsh；平台不使用也不维护它。终端里能用的就是它。");
+  await expect(dsh.locator(".harness-installations")).toHaveCount(0);
+  await expect(dsh).toContainText("npm install -g @deepseek-ai/dsh"); await expect(dsh).toContainText("命令于 2026-10-17 对照官方说明核对。");
+  await dsh.getByRole("button", { name: "关闭 Harness 详情" }).click();
+  // The official page's own note travels with the product, installed or not.
+  await page.getByRole("button", { name: "查看 Gemini CLI 详情", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Gemini CLI 详情" }).locator(".harness-install-note")).toHaveText("官方仓库写明：自 2026-06-18 起，免费用户与 Google One 用户改用 Antigravity CLI。");
   assert.deepEqual(errors, []);
 });

@@ -9,6 +9,8 @@ import { application } from "../../src/cli/session-application.js";
 import type { ContentRef } from "../../src/contracts/content.js";
 import type { PublicRun, SessionId } from "../../src/contracts/session.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
+/** A development manifest (HH_REAL_MANIFEST) names non-official entries, which only the development policy reads (ADR-044). */
+const realInstallations = process.env.HH_REAL_MANIFEST ? "any" as const : "official" as const;
 
 /**
  * Original-installation acceptance of attachments: a text file whose code word exists nowhere else, and a solid red image
@@ -78,7 +80,7 @@ test("installed Harness reads a text attachment, sees an image it declares, and 
       await mkdir(workspace);
       const configuration = await prepareConfiguration({ workspace, ...(process.env.HH_REAL_MANIFEST ? { manifestPath: process.env.HH_REAL_MANIFEST } : {}) });
       const proof: Record<string, unknown> = { harnessId, startedAt: new Date().toISOString() };
-      const app = application(data, () => {}, { workspaceLockRoot: join(root, "locks") });
+      const app = application(data, () => {}, { installations: realInstallations, workspaceLockRoot: join(root, "locks") });
       try {
         const requested = process.env["HH_REAL_MODEL_" + harnessId.toUpperCase()];
         const catalog = await app.factory.discoverModels({ harnessId }, configuration, new AbortController().signal);

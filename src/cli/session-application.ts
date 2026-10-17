@@ -10,6 +10,7 @@ import { SqliteSessionStore } from "../infrastructure/session/sqlite-store.js";
 import { SqliteWorkspaceLeaseProvider } from "../infrastructure/session/workspace-lease.js";
 import { PosixProcessGroups } from "../infrastructure/control/process-group.js";
 import { DirectorySessionBindingFactory } from "../infrastructure/session/binding-factory.js";
+import type { InstallationPolicy } from "../contexts/catalog/domain/catalog.js";
 import { NativeInstallationLocks } from "../infrastructure/management/native-lock.js";
 import { LocalContentStore } from "../infrastructure/session/content-store.js";
 
@@ -53,7 +54,9 @@ export function application(root: string, publish: (event: SessionEvent) => void
   /** The Turn budgets this Gateway was configured with (ADR-036); the defaults otherwise. */
   readonly budgets?: { readonly executionBudgetMs: number; readonly waitBudgetMs: number };
   /** The workspace lock namespace, resolved by `resolveWorkspaceLockRoot`; the per-user default shared by every Gateway otherwise. */
-  readonly workspaceLockRoot?: string } = {}): { readonly management: LocalHarnessManagement; readonly providers: LocalProviderService; readonly store: SqliteSessionStore; readonly content: LocalContentStore; readonly factory: DirectorySessionBindingFactory; readonly runtime: SessionRuntime } {
+  readonly workspaceLockRoot?: string;
+  /** What counts as an installation (ADR-044): only official channels unless development explicitly allows any entry. */
+  readonly installations?: InstallationPolicy } = {}): { readonly management: LocalHarnessManagement; readonly providers: LocalProviderService; readonly store: SqliteSessionStore; readonly content: LocalContentStore; readonly factory: DirectorySessionBindingFactory; readonly runtime: SessionRuntime } {
   const store = new SqliteSessionStore(root);
   let providers: LocalProviderService | undefined;
   let management: LocalHarnessManagement | undefined;
@@ -62,7 +65,7 @@ export function application(root: string, publish: (event: SessionEvent) => void
     providers = new LocalProviderService(root, () => store.assertOwner());
     const nativeLocks = options.management?.installationMode === "private-fixture" ? undefined : options.management?.nativeLocks ?? new NativeInstallationLocks();
     management = new LocalHarnessManagement(root, { ...options.management, ...(nativeLocks === undefined ? {} : { nativeLocks }), ...(options.nativeEnvironment === undefined ? {} : { nativeEnvironment: options.nativeEnvironment }), assertOwner: () => store.assertOwner(), ownerGeneration: store.ownerGeneration, redactor: text => providers!.redact(text) });
-    const factory = new DirectorySessionBindingFactory(workspaces, () => store.assertOwner(), providers, management, options.nativeEnvironment, nativeLocks);
+    const factory = new DirectorySessionBindingFactory(workspaces, () => store.assertOwner(), options.installations ?? "official", providers, management, options.nativeEnvironment, nativeLocks);
     // The owner is exclusive and quiescent here, so unreferenced content from earlier owners can be collected safely.
     const content = new LocalContentStore(root, () => store.assertOwner());
     content.collect(store.contentReferences());

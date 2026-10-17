@@ -254,7 +254,7 @@
 
 ## Pi
 
-原安装：Pi 0.85.1（本机开发安装）；控制入口：pi-rpc（pi --mode rpc）。
+原安装：Pi 0.85.1（本机开发安装；安装渠道非官网，按 ADR-044 不再作为验收对象，以下证据保留为历史）；控制入口：pi-rpc（pi --mode rpc）。
 
 | 能力 | 原接口 | 来源 | Hub | 协议 | 真实原安装 | 证据 | 说明 |
 |---|---|---|---|---|---|---|---|
@@ -322,7 +322,7 @@
 
 ## DeepSeek Harness
 
-原安装：DeepSeek Harness 0.2.1-alpha.1（本机源码构建，经显式入口；官方分发为 npm 包 @deepseek-ai/dsh）；控制入口：acp-v1（dsh --profile acp）。
+原安装：DeepSeek Harness 0.2.1-alpha.1（本机源码构建，经显式入口；安装渠道非官网，按 ADR-044 不再作为验收对象，以下证据保留为历史；官方分发为 npm 包 @deepseek-ai/dsh）；控制入口：acp-v1（dsh --profile acp）。
 
 | 能力 | 原接口 | 来源 | Hub | 协议 | 真实原安装 | 证据 | 说明 |
 |---|---|---|---|---|---|---|---|

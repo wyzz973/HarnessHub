@@ -2,17 +2,19 @@ import type { ResolvedManagedControl } from "../../contracts/management.js";
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { loadBuiltinCatalog } from "../../adapters/catalog.js";
+import { channelRegistry } from "../../adapters/catalog-channels.js";
 export { officialInstallation } from "../../adapters/catalog.js";
 import { migrateLegacyManifest, parseCatalogManifest, validateDefinitions } from "../../contexts/catalog/domain/catalog-parser.js";
-import { MAX_CATALOG_BYTES, type CatalogManifest, type HarnessDefinition, type InventoryReport } from "../../contexts/catalog/domain/catalog.js";
+import { MAX_CATALOG_BYTES, type CatalogManifest, type HarnessDefinition, type InstallationPolicy, type InventoryReport } from "../../contexts/catalog/domain/catalog.js";
 import { MAX_MANIFEST_BYTES, DiscoveryInputError, parseDiscoveryManifest } from "../../contexts/catalog/domain/discovery.js";
 import { DiscoverInventory } from "../../contexts/catalog/application/inventory.js";
 import { discoverSearchDirectories } from "../discovery/search.js";
 import { LocalInstallationEnumerator } from "../discovery/installation-enumerator.js";
 import { LocalInstalledPackageResolver } from "../discovery/packages.js";
 import { LocalConfigurationLocator } from "../discovery/configuration.js";
+import { LocalInstallationClassifier } from "../discovery/installation-channels.js";
 import { catalogTarget } from "./platform.js";
 
 export async function readJsonDocument(path: string, limit: number): Promise<{ readonly value: unknown; readonly bytes: number }> {
@@ -42,6 +44,9 @@ export async function readJsonDocument(path: string, limit: number): Promise<{ r
   }
 }
 
+/** Said wherever a discovery manifest was given to an entry running with the official policy. */
+export const MANIFEST_IGNORED = "安装策略为 official，发现清单的入口被忽略；开发和测试请加 --allow-unofficial";
+
 export interface InventoryInput {
   readonly environment?: Readonly<Record<string, string>>;
   readonly home?: string;
@@ -49,6 +54,8 @@ export interface InventoryInput {
   readonly searchDirs: readonly string[];
   readonly packageRoots: readonly string[];
   readonly pathOnly: boolean;
+  /** What counts as an installation (ADR-044); each entry decides it explicitly. */
+  readonly installations: InstallationPolicy;
   readonly managedResolver?: { resolveControl(harnessId: string, controlId: string): ResolvedManagedControl | null };
 }
 
@@ -65,7 +72,10 @@ export async function inventory(input: InventoryInput): Promise<{
   const builtins = loadBuiltinCatalog(catalogTarget());
   if (input.manifest === "") throw new DiscoveryInputError("--manifest must name a file");
   let manifest: CatalogManifest = { version: 2, definitions: [], overrides: new Map(), installationOverrides: new Map() };
-  if (input.manifest !== undefined) {
+  // A discovery manifest is for development and tests (ADR-044): under the official policy it is not read at all, so a
+  // leftover --manifest cannot bring an unofficial program back as an installation.
+  const manifestIgnored = input.manifest !== undefined && input.installations === "official";
+  if (input.manifest !== undefined && !manifestIgnored) {
     const document = await readJsonDocument(resolve(input.manifest), MAX_CATALOG_BYTES);
     const value = document.value;
     if (value !== null && typeof value === "object" && "version" in value && value.version === 1) {
@@ -81,9 +91,11 @@ export async function inventory(input: InventoryInput): Promise<{
     pathOnly: input.pathOnly, environment,
   });
   const enumerator = new LocalInstallationEnumerator(search.directories);
+  const uvToolDir = environment.UV_TOOL_DIR ?? join(environment.XDG_DATA_HOME ?? join(home, ".local", "share"), "uv", "tools");
   const service = new DiscoverInventory(
     enumerator, new LocalInstalledPackageResolver(input.packageRoots, enumerator),
     new LocalConfigurationLocator(home), () => new Date(),
+    { classifier: new LocalInstallationClassifier(home, uvToolDir), registry: channelRegistry, policy: input.installations },
   );
   const initial = await service.execute(definitions, manifest.overrides, manifest.installationOverrides);
   const managedBindings = new Map<string, ResolvedManagedControl>();
@@ -94,15 +106,19 @@ export async function inventory(input: InventoryInput): Promise<{
       const managed = input.managedResolver!.resolveControl(harness.id, control.id);
       if (managed === null) return control;
       const path = managed.command.args[0] !== undefined && isAbsolute(managed.command.args[0]) ? managed.command.args[0] : managed.command.executable;
-      const entry = { path, resolvedPath: path, source: "managed" as const, entries: [{ path, source: "managed" as const, name: control.id }] };
+      const product = definitions.find(item => item.id === harness.id)?.binaryNames[0];
+      const runsProduct = product !== undefined && definitions.find(item => item.id === harness.id)?.controls.find(item => item.id === control.id)?.executableNames.includes(product) === true;
+      // HarnessHub's own installation from the control's registry distribution (ADR-017), not one of the product's channels.
+      const entry = { path, resolvedPath: path, source: "managed" as const, entries: [{ path, source: "managed" as const, name: control.id }],
+        channel: null, version: managed.version, role: runsProduct ? "product" as const : "adapter" as const };
       managedBindings.set(control.id, managed);
       return { ...control, state: "candidate" as const, command: managed.command, missingDependencies: [],
-        installation: { candidates: [entry], selected: entry, defaultResolution: "located" as const, diagnostics: [] },
+        installation: { candidates: [entry], selected: entry, defaultResolution: "located" as const, diagnostics: [], unofficial: [], unofficialDefault: null },
         diagnostics: [{ code: "package_version_observed" as const, path, detail: "managed=" + managed.version + "; installation=" + managed.installationId }] };
     }) })) };
   return {
     managedBindings, definitions, report,
-    searchDiagnostics: search.diagnostics,
+    searchDiagnostics: manifestIgnored ? [...search.diagnostics, { code: "manifest_ignored" as const, path: input.manifest!, detail: MANIFEST_IGNORED }] : search.diagnostics,
     searchPath: search.directories.map((directory) => directory.path).join(":") ,
     customEntries: new Set(manifest.overrides.keys()),
   };

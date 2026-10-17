@@ -63,7 +63,7 @@ interface CliProcess {
   send(line: string): void;
 }
 function start(t: test.TestContext, f: Fixture, extra: readonly string[]): CliProcess {
-  const child = spawn(process.execPath, [cli, ...args(f, extra)], { cwd: f.root, env: env(f), stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [cli, "--allow-unofficial", ...args(f, extra)], { cwd: f.root, env: env(f), stdio: ["pipe", "pipe", "pipe"] });
   f.children.add(child);
   let stdout = "", stderr = "", partial = "", length = 0;
   const output: Record<string, unknown>[] = [];
@@ -139,7 +139,7 @@ test("Session binding configuration requires real canonical directories and fing
 
 test("Session binding validates aliases without launching a process and rejects manifest changes", async t => {
   const f = await fixture(t), configuration = await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true });
-  const factory = new DirectorySessionBindingFactory(new SqliteWorkspaceLeaseProvider(join(f.root, "locks")), () => {});
+  const factory = new DirectorySessionBindingFactory(new SqliteWorkspaceLeaseProvider(join(f.root, "locks")), () => {}, "any");
   const selected = await factory.validate({ harnessId: "alias-a" }, configuration);
   assert.deepEqual(selected, { harnessId: "session-a", controlId: "session-a-control" });
   await assert.rejects(readFile(f.trace));
@@ -153,7 +153,7 @@ test("Session binding owns its lease, isolates configuration and closes idempote
   const f = await fixture(t), configuration = await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true });
   const leases = new SqliteWorkspaceLeaseProvider(join(f.root, "locks"));
   let owned = true;
-  const factory = new DirectorySessionBindingFactory(leases, () => { if (!owned) throw new Error("owner lost"); });
+  const factory = new DirectorySessionBindingFactory(leases, () => { if (!owned) throw new Error("owner lost"); }, "any");
   const selection = await factory.validate({ harnessId: "session-a" }, configuration);
   const binding = await factory.prepare(selection, configuration, sessionId("session-fixture"), "run-fixture");
   binding.assertOwned();
@@ -200,7 +200,7 @@ test("Session binding preserves explicitly prepared private configuration and ad
   const f = await fixture(t);
   await writeFile(join(f.home, "prepared-config"), "synthetic private settings");
   const configuration = await prepareConfiguration({ workspace: f.workspace, configHome: f.home, manifestPath: f.manifest, pathOnly: true });
-  const factory = new DirectorySessionBindingFactory(new SqliteWorkspaceLeaseProvider(join(f.root, "locks")), () => {});
+  const factory = new DirectorySessionBindingFactory(new SqliteWorkspaceLeaseProvider(join(f.root, "locks")), () => {}, "any");
   const selection = await factory.validate({ harnessId: "session-a" }, configuration);
   const binding = await factory.prepare(selection, configuration, sessionId("session-config"), "run-config");
   await binding.control.initialize(); await binding.close();
@@ -251,7 +251,7 @@ test("formal chat management lists history and closes admission without launchin
 
 test("formal chat single-prompt command identity replays its public Run without re-dispatch and rejects changed input", async t => {
   const f = await fixture(t);
-  const invoke = (extra: readonly string[]) => spawnSync(process.execPath, [cli, ...args(f, extra)], { cwd: f.root, env: env(f), encoding: "utf8", timeout: 15000, maxBuffer: 4 * 1024 * 1024 });
+  const invoke = (extra: readonly string[]) => spawnSync(process.execPath, [cli, "--allow-unofficial", ...args(f, extra)], { cwd: f.root, env: env(f), encoding: "utf8", timeout: 15000, maxBuffer: 4 * 1024 * 1024 });
   const first = invoke(["--harness", "session-a", "--prompt", "first", "--command-id", "fixed-cli-input"]);
   assert.equal(first.status, 0, first.stderr);
   const state = await persisted(f);
@@ -270,7 +270,7 @@ test("formal chat single-prompt command identity replays its public Run without 
 test("formal chat initial command retry without a Session id retains the same public identity", async t => {
   const f = await fixture(t);
   const options = args(f, ["--harness", "session-a", "--prompt", "first", "--command-id", "fixed-create-input"]);
-  const invoke = () => spawnSync(process.execPath, [cli, ...options], { cwd: f.root, env: env(f), encoding: "utf8", timeout: 15000 });
+  const invoke = () => spawnSync(process.execPath, [cli, "--allow-unofficial", ...options], { cwd: f.root, env: env(f), encoding: "utf8", timeout: 15000 });
   const first = invoke(); assert.equal(first.status, 0, first.stderr); const state = await persisted(f);
   const retry = invoke(); assert.equal(retry.status, 0, retry.stderr);
   const repeated = await persisted(f); assert.equal(repeated.id, state.id); assert.equal(repeated.runs.length, 1);
@@ -282,12 +282,12 @@ test("formal chat rejects resume workspace changes and fails changed admitted ma
   const f = await fixture(t), chat = start(t, f, ["--harness", "session-a"]);
   chat.send("first"); await chat.wait(hasEvent("run.ended")); chat.send(":quit"); assert.equal((await chat.result).code, 0);
   const state = await persisted(f), alternate = join(f.root, "alternate-workspace"); await mkdir(alternate);
-  const changedWorkspace = spawnSync(process.execPath, [cli, "--data-dir", f.data, "--workspace-lock-root", join(f.root, "locks"), "--session", state.id, "--cwd", alternate, "--prompt", "second", "--json"], { cwd: f.root, env: env(f), encoding: "utf8", timeout: 10000 });
+  const changedWorkspace = spawnSync(process.execPath, [cli, "--allow-unofficial", "--data-dir", f.data, "--workspace-lock-root", join(f.root, "locks"), "--session", state.id, "--cwd", alternate, "--prompt", "second", "--json"], { cwd: f.root, env: env(f), encoding: "utf8", timeout: 10000 });
   assert.notEqual(changedWorkspace.status, 0);
   assert.ok(records(changedWorkspace.stdout).some(entry => record(entry.error ?? {}).code === "CONFIGURATION_CONFLICT"));
   assert.equal((await persisted(f)).runs.length, 1);
   await writeFile(f.manifest, await readFile(f.manifest, "utf8") + "\n");
-  const changedManifest = spawnSync(process.execPath, [cli, "--data-dir", f.data, "--workspace-lock-root", join(f.root, "locks"), "--session", state.id, "--prompt", "second", "--json"], { cwd: f.root, env: env(f), encoding: "utf8", timeout: 10000 });
+  const changedManifest = spawnSync(process.execPath, [cli, "--allow-unofficial", "--data-dir", f.data, "--workspace-lock-root", join(f.root, "locks"), "--session", state.id, "--prompt", "second", "--json"], { cwd: f.root, env: env(f), encoding: "utf8", timeout: 10000 });
   assert.notEqual(changedManifest.status, 0);
   const final = await persisted(f);
   assert.equal(final.runs.length, 2); assert.equal(final.runs[1]?.status, "failed"); assert.equal(final.runs[1]?.error?.code, "CONFIGURATION_CHANGED");
@@ -298,7 +298,7 @@ test("formal chat rejects resume workspace changes and fails changed admitted ma
 test("formal human chat output streams assistant text from committed public events", async t => {
   const f = await fixture(t);
   const options = args(f, ["--harness", "session-a", "--prompt", "first"]).filter(value => value !== "--json");
-  const invoked = spawnSync(process.execPath, [cli, ...options], { cwd: f.root, env: env(f), encoding: "utf8", timeout: 15000 });
+  const invoked = spawnSync(process.execPath, [cli, "--allow-unofficial", ...options], { cwd: f.root, env: env(f), encoding: "utf8", timeout: 15000 });
   assert.equal(invoked.status, 0, invoked.stderr);
   assert.match(invoked.stdout, /a:first/u); assert.match(invoked.stdout, /public_context_rehydrate/u);
   assert.equal((await persisted(f)).messages.at(-1)?.text, "a:first");
@@ -310,7 +310,7 @@ test("the workspace lock root is the shared per-user one unless set; an explicit
   const refused = (code: string) => (error: unknown) => record(error).code === code;
   assert.equal(resolveWorkspaceLockRoot(), join("/tmp", "harnessgateway-workspaces-" + process.getuid?.()));
   // The formal commands refuse a relative root before anything starts; given a fresh root, they create it.
-  const relative = spawnSync(process.execPath, [cli, "--data-dir", f.data, "--workspace-lock-root", "relative-locks", "--cwd", f.workspace, "--manifest", f.manifest, "--path-only", "--json", "--harness", "session-a", "--prompt", "first"],
+  const relative = spawnSync(process.execPath, [cli, "--allow-unofficial", "--data-dir", f.data, "--workspace-lock-root", "relative-locks", "--cwd", f.workspace, "--manifest", f.manifest, "--path-only", "--json", "--harness", "session-a", "--prompt", "first"],
     { cwd: f.root, env: env(f), encoding: "utf8", timeout: 15000 });
   assert.notEqual(relative.status, 0); assert.ok(records(relative.stdout).some(entry => record(entry.error ?? {}).code === "INVALID_INPUT"), relative.stdout);
   await assert.rejects(readFile(f.trace), "no Harness started"); await assert.rejects(stat(join(f.root, "relative-locks")));
@@ -330,7 +330,7 @@ test("the workspace lock root is the shared per-user one unless set; an explicit
   // before the fixture removes their data roots.
   const shared = join(f.root, "shared-locks"), apps: ReturnType<typeof application>[] = [];
   try {
-    for (const [data, locks] of [["data-one", shared], ["data-two", shared], ["data-own", join(f.root, "own-locks")]] as const) apps.push(application(join(f.root, data), () => {}, { workspaceLockRoot: locks }));
+    for (const [data, locks] of [["data-one", shared], ["data-two", shared], ["data-own", join(f.root, "own-locks")]] as const) apps.push(application(join(f.root, data), () => {}, { installations: "any", workspaceLockRoot: locks }));
     const selection = await apps[0]!.factory.validate({ harnessId: "session-a" }, configuration);
     const held = await apps[0]!.factory.prepare(selection, configuration, sessionId("session-one"), "run-one");
     await assert.rejects(apps[1]!.factory.prepare(selection, configuration, sessionId("session-two"), "run-two"), refused("WORKSPACE_BUSY"));

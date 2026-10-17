@@ -32,7 +32,7 @@ async function fixture(t: test.TestContext, scenario = "basic"): Promise<Fixture
       requiredExecutables: [], package: null, distribution: null, source }] }));
   await writeFile(manifest, JSON.stringify({ version: 2, definitions, overrides: Object.fromEntries(definitions.map(item => [item.controls[0]!.id, { executable: process.execPath }])) }));
   const configuration = await prepareConfiguration({ workspace, manifestPath: manifest, pathOnly: true });
-  const data = join(root, "data"), gateway = await startWebServer({ root: data, configuration, port: 0, assetsDirectory: assets, workspaceLockRoot: join(root, "locks") });
+  const data = join(root, "data"), gateway = await startWebServer({ installations: "any", root: data, configuration, port: 0, assetsDirectory: assets, workspaceLockRoot: join(root, "locks") });
   const parsed = new URL(gateway.url), f = { root, workspace: configuration.workspace, assets, manifest, trace, data, gateway, origin: parsed.origin, token: new URLSearchParams(parsed.hash.slice(1)).get("token")!, cookie: "", csrf: "", expectedShutdownError: false };
   t.after(async () => {
     if (f.expectedShutdownError) await assert.rejects(f.gateway.close(), (error: unknown) => row(error).code === "SESSION_BLOCKED");
@@ -197,7 +197,7 @@ test("closed Session retains history and denies new messages; server reopen pres
   assert.equal((await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "second", commandId: "second" })).status, 409);
   await f.gateway.close();
   const configuration = await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true });
-  const reopened = await startWebServer({ root: f.data, configuration, port: 0, assetsDirectory: f.assets, workspaceLockRoot: join(f.root, "locks") }); f.gateway = reopened;
+  const reopened = await startWebServer({ installations: "any", root: f.data, configuration, port: 0, assetsDirectory: f.assets, workspaceLockRoot: join(f.root, "locks") }); f.gateway = reopened;
   const parsed = new URL(reopened.url); const next = { ...f, gateway: reopened, origin: parsed.origin, token: new URLSearchParams(parsed.hash.slice(1)).get("token")!, cookie: "", csrf: "" }; await auth(next);
   const history = await state(next, id); assert.equal(history.status, "closed"); assert.equal(history.runs.length, 1); assert.equal(history.messages.at(-1)?.text, "a:first");
 });
@@ -250,7 +250,7 @@ test("closing the web owner waits for the running Harness cleanup and releases t
   await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "first", commandId: "first" }); await waitFor(f, id, value => value.runs[0]?.status === "running");
   await f.gateway.close(); await f.gateway.close();
   for (const child of (await trace(f)).filter(item => item.kind === "spawn")) assert.throws(() => process.kill(Number(child.pid), 0), (error: unknown) => row(error).code === "ESRCH");
-  const reopened = await startWebServer({ root: f.data, configuration: await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true }), port: 0, assetsDirectory: f.assets, workspaceLockRoot: join(f.root, "locks") });
+  const reopened = await startWebServer({ installations: "any", root: f.data, configuration: await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true }), port: 0, assetsDirectory: f.assets, workspaceLockRoot: join(f.root, "locks") });
   f.gateway = reopened;
 });
 
@@ -263,7 +263,7 @@ test("authenticated recovery restores a legacy blocked conversation without rewr
   const error={code:"GATEWAY_AUTH_REQUIRED",message:"synthetic legacy startup failure"};
   store.transact(snapshot.id,snapshot.version,current=>({next:{...current,status:"blocked",switches:[{id:legacyId,commandId:broken,requested:{harnessId:"web-bad"},requestedSeq:current.lastSeq+1,target:{harnessId:"web-bad",controlId:"web-bad-control"},status:"failed",throughSeq:current.lastSeq+3,sourceRunIds:current.runs.map(run=>run.id),error}],commands:[...current.commands,{id:broken,kind:"switch",fingerprint:"0".repeat(64),resultId:legacyId}]},events:[{type:"switch.requested",data:{switchId:legacyId}},{type:"switch.failed",data:{switchId:legacyId,error,cleanup:{closed:true,exitCode:0,signal:null,protocolFailure:null}}},{type:"session.blocked",data:{switchId:legacyId}}]}));
   const legacy=store.get(snapshot.id); const failed={runs:legacy.runs,messages:legacy.messages,switches:legacy.switches}; store.close();
-  f.gateway = await startWebServer({ root: f.data, configuration: await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true }), port: 0, assetsDirectory: f.assets, workspaceLockRoot: join(f.root, "locks") });
+  f.gateway = await startWebServer({ installations: "any", root: f.data, configuration: await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true }), port: 0, assetsDirectory: f.assets, workspaceLockRoot: join(f.root, "locks") });
   const launch = new URL(f.gateway.url); f.origin = launch.origin; f.token = new URLSearchParams(launch.hash.slice(1)).get("token")!; await auth(f);
   const count = (await trace(f)).filter(item => item.kind === "prompt").length;
   const input = { selection: { harnessId: "web-b" }, commandId: "resume" };

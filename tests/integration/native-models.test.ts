@@ -61,7 +61,7 @@ test("native Pi preserves supported credential variables and explicit model refe
 });
 
 test("real Codex/ACP protocol probes enumerate native models without prompts and model selection reaches the original native RPC", async t => {
-  const f = await setup(t), factory = new DirectorySessionBindingFactory(new SqliteWorkspaceLeaseProvider(join(f.root, "locks")), () => {}, undefined, undefined, f.environment);
+  const f = await setup(t), factory = new DirectorySessionBindingFactory(new SqliteWorkspaceLeaseProvider(join(f.root, "locks")), () => {}, "any", undefined, undefined, f.environment);
   const codex = await factory.discoverModels({ harnessId: "native-codex" }, f.config, new AbortController().signal);
   assert.equal(codex.defaultModel, "native-model-a"); assert.equal(codex.authentication, "ready"); assert.deepEqual(codex.models.map(m => m.id), ["native-model-a", "native-model-b"]);
   assert.equal(JSON.stringify(codex).includes("private-account"), false); assert.equal(JSON.stringify(codex).includes("synthetic-never-public"), false);
@@ -88,7 +88,7 @@ test("real Codex/ACP protocol probes enumerate native models without prompts and
 test("authenticated native models endpoint accepts workspace queries, projects no credentials and owns probe shutdown", async t => {
   const f = await setup(t);
   const gateway = await startWebServer({ root: join(f.root, "web-data"), configuration: f.config, port: 0,
-    application: (root, publish) => application(root, publish, { nativeEnvironment: f.environment, workspaceLockRoot: join(f.root, "locks") }) });
+    application: (root, publish) => application(root, publish, { installations: "any", nativeEnvironment: f.environment, workspaceLockRoot: join(f.root, "locks") }) });
   f.close.push(() => gateway.close());
   const launch = new URL(gateway.url), origin = launch.origin;
   const boot = await fetch(origin + "/api/v1/auth/bootstrap", { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ token: new URLSearchParams(launch.hash.slice(1)).get("token") }) });
@@ -109,7 +109,7 @@ test("a native catalog read is reused across restarts while its fingerprint hold
   const config = await prepareConfiguration({ workspace: f.workspace, manifestPath: manifest, pathOnly: true }), data = join(f.root, "web-data");
   const opened = async (id: keyof typeof traces) => { try { return (await readFile(traces[id], "utf8")).trim().split("\n").filter(line => (JSON.parse(line) as { method?: string }).method === "session/new").length; } catch { return 0; } };
   const start = async () => {
-    const gateway = await startWebServer({ root: data, configuration: config, port: 0, application: (root, publish) => application(root, publish, { nativeEnvironment: f.environment, workspaceLockRoot: join(f.root, "locks") }) });
+    const gateway = await startWebServer({ root: data, configuration: config, port: 0, application: (root, publish) => application(root, publish, { installations: "any", nativeEnvironment: f.environment, workspaceLockRoot: join(f.root, "locks") }) });
     const launch = new URL(gateway.url), origin = launch.origin;
     const boot = await fetch(origin + "/api/v1/auth/bootstrap", { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ token: new URLSearchParams(launch.hash.slice(1)).get("token") }) });
     assert.equal(boot.status, 200); const cookie = boot.headers.get("set-cookie")!.split(";", 1)[0]!;
@@ -151,7 +151,7 @@ test("a Codex thread keeps the collaboration mode it last confirmed while the co
     controls: [{ id: "native-plan", protocol: "codex-app-server", executableNames: ["fixture"], args: [peer, "codex-app-server", "plan-mode"], env: { FIXTURE_TRACE: trace }, package: null, distribution: null, requiredExecutables: [], source }] }];
   await writeFile(manifest, JSON.stringify({ version: 2, definitions, overrides: { "native-plan": { executable: process.execPath } } }));
   const config = await prepareConfiguration({ workspace: f.workspace, manifestPath: manifest, pathOnly: true });
-  const factory = new DirectorySessionBindingFactory(new SqliteWorkspaceLeaseProvider(join(f.root, "locks")), () => {}, undefined, undefined, f.environment);
+  const factory = new DirectorySessionBindingFactory(new SqliteWorkspaceLeaseProvider(join(f.root, "locks")), () => {}, "any", undefined, undefined, f.environment);
   const store = new SqliteSessionStore(join(f.root, "data")); let id = 0;
   const runtime = new SessionRuntime(store, factory, { id: () => String(++id), now: () => new Date(), publish: () => {}, fingerprint: text => createHash("sha256").update(text).digest("hex") });
   f.close.push(async () => { await runtime.close(); store.close(); });
@@ -173,7 +173,7 @@ test("a Codex thread keeps the collaboration mode it last confirmed while the co
 });
 
 test("cancelled native discovery starts no protocol operation and removes only its owned temporary manifest", async t => {
-  const f = await setup(t), factory = new DirectorySessionBindingFactory(new SqliteWorkspaceLeaseProvider(join(f.root, "locks")), () => {}, undefined, undefined, f.environment);
+  const f = await setup(t), factory = new DirectorySessionBindingFactory(new SqliteWorkspaceLeaseProvider(join(f.root, "locks")), () => {}, "any", undefined, undefined, f.environment);
   const controller = new AbortController(); controller.abort();
   await assert.rejects(() => factory.discoverModels({ harnessId: "native-codex" }, f.config, controller.signal), error => error !== null && typeof error === "object" && "code" in error && error.code === "CANCELLED");
   await assert.rejects(() => readFile(f.trace), error => error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT");

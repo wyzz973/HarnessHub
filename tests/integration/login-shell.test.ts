@@ -88,7 +88,8 @@ test("over HTTP, reading the login shell adds only new directories to discovery 
   await writeFile(shell, `#!/bin/sh\n[ "$1" = "-l" ] && [ "$2" = "-c" ] || exit 9\nPATH="${f.bin}:${f.other}:/usr/bin" exec /bin/sh -c "$3"\n`); await chmod(shell, 0o700);
   await writeFile(f.shells, shell + "\n");
   const start = async (loginShell: Parameters<typeof startWebServer>[0]["loginShell"]) => {
-    const gateway = await startWebServer({ root: join(data, loginShell === undefined ? "off" : "on"), configuration, port: 0, assetsDirectory: assets, workspaceLockRoot: join(data, "locks"), ...(loginShell === undefined ? {} : { loginShell }) });
+    // The login shell's directories hold fixture programs, which only a development Gateway counts as installed (ADR-044).
+    const gateway = await startWebServer({ root: join(data, loginShell === undefined ? "off" : "on"), configuration, port: 0, assetsDirectory: assets, workspaceLockRoot: join(data, "locks"), installations: "any", ...(loginShell === undefined ? {} : { loginShell }) });
     t.after(() => gateway.close());
     const url = new URL(gateway.url), origin = url.origin;
     const boot = await fetch(origin + "/api/v1/auth/bootstrap", { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ token: new URLSearchParams(url.hash.slice(1)).get("token") }) });

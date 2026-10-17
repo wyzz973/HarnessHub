@@ -41,7 +41,13 @@ Web界面按用户确认的设计稿重写（[ADR-042](docs/decisions/0042-front
 - 同意后安装并核实版本，随即按产品自己的方式重启它的服务（OpenClaw 只重启 Gateway，Node 由用户用 `openclaw node restart` 重启），并确认它重新运行、在端口上监听。
 - 改动前停下的任务显示“没有升级”。管理库因此升到 v3（只改版本号），退回旧构建前用 `tools/management-v3-to-v2.sql` 降级。验收见[升级与重启验收](docs/verification/upgrade-restart-2026-10-12.md)。
 
-原版OpenClaw2026.3.23-2、Codex0.162.1、OpenCode1.18.35、Pi0.85.1已通过本机真实模型回复；OpenClaw/Pi使用原生DeepSeek。Hermes Agent 0.12.0（官方安装方式）与 DeepSeek Harness（`dsh`，本机为源码构建 0.2.1-alpha.1，经发现清单的自定义入口接入）经各自内置 ACP 接入，已通过真实回复、跨 Hub 重启的原生恢复、思考与工具活动验收，见[ADR-031](docs/decisions/0031-hermes-and-deepseek-harness.md)与[验收记录](docs/verification/hermes-dsh-onboarding-2026-10-11.md)。Harness 发现与同类产品一致：PATH 与标准安装目录中的官方命令，非标准安装用显式自定义入口。Claude接入口绑定原Claude Code2.1.296及既有登录，账号周额度已用完。Cursor原安装已升级至2026.10.01-e373342，沿用本机登录、44项原生模型目录并通过独立短提示回复；原公共对话实测仍返回账号套餐升级提示，不能算该对话回复通过。Gemini0.62.0的个人登录被服务端停用，直连DeepSeek实际返回404（Google GenAI协议与DeepSeek接口不匹配），不能算回复通过。所有接入口版本与原程序版本分开解释，不把ACP适配器版本当原CLI版本。
+只认官网安装方式（[ADR-044](docs/decisions/0044-macos-official-channels.md)，2026-10-17）：
+- 程序落在产品官网写明的渠道里才算已安装：npm 全局（任意前缀，含 Homebrew 的 Node.js 和 nvm 等版本管理器）、Homebrew formula 或 cask、官方安装脚本的固定目录、uv 工具。各产品的渠道和来源见[渠道调研](docs/research/official-install-channels-2026-10-17.md)。
+- 源码目录、`npm link`、自行编译的程序不算；“我的 Agent”显示未安装、给出官网安装命令，并用一句不带路径的话说明发现了非官网安装。pnpm、bun 全局装的官方包列出但暂不维护。
+- 同一产品装了多份时全部列出，按 HarnessHub 服务进程的 PATH 顺序标出“当前使用”的一份；终端的 PATH 可能不同。
+- 正式入口默认只认官网，不读发现清单；`--allow-unofficial` 只用于开发和测试，此时“我的 Agent”顶部显示开发模式。
+
+原版OpenClaw2026.3.23-2、Codex0.162.1、OpenCode1.18.35、Pi0.85.1已通过本机真实模型回复；OpenClaw/Pi使用原生DeepSeek。Hermes Agent 0.12.0（官方安装方式）与 DeepSeek Harness（`dsh`，本机为源码构建 0.2.1-alpha.1，经发现清单的自定义入口接入）经各自内置 ACP 接入，已通过真实回复、跨 Hub 重启的原生恢复、思考与工具活动验收，见[ADR-031](docs/decisions/0031-hermes-and-deepseek-harness.md)与[验收记录](docs/verification/hermes-dsh-onboarding-2026-10-11.md)。Pi 与 DeepSeek Harness 的上述证据来自非官网安装，按 ADR-044 不再作为验收对象。Claude接入口绑定原Claude Code2.1.296及既有登录，账号周额度已用完。Cursor原安装已升级至2026.10.01-e373342，沿用本机登录、44项原生模型目录并通过独立短提示回复；原公共对话实测仍返回账号套餐升级提示，不能算该对话回复通过。Gemini0.62.0的个人登录被服务端停用，直连DeepSeek实际返回404（Google GenAI协议与DeepSeek接口不匹配），不能算回复通过。所有接入口版本与原程序版本分开解释，不把ACP适配器版本当原CLI版本。
 
 Provider统一管理仍是用户→HarnessHub→不同Harness→Provider统一管理的后续环节；当前原生接入直接使用各Harness已配置模型，不通过本项目Provider来完成DeepSeek测试。
 
@@ -61,7 +67,7 @@ Provider统一管理仍是用户→HarnessHub→不同Harness→Provider统一�
 
 自动选择表示在当前能力、策略和已有评测证据下选出合适执行者，不声称存在未经测量的绝对最优 Harness。接续公共上下文不表示可以搬运不同 Harness 的内部状态。
 
-旧 HarnessHub 保留为独立研究材料；新项目不继承它的存储格式、目录结构或 Session 绑定模型。跨平台适配、发布和 Harness 多发行版矩阵延后，先完成当前宿主核心链路。
+旧 HarnessHub 保留为独立研究材料；新项目不继承它的存储格式、目录结构或 Session 绑定模型。当前只面向 macOS（[ADR-044](docs/decisions/0044-macos-official-channels.md)），Windows、Linux 不再计划；发布和 Harness 多发行版矩阵延后。
 
 ## 先运行检测
 
@@ -74,7 +80,7 @@ pnpm catalog
 pnpm discover
 pnpm --silent discover --json
 pnpm --silent discover --legacy --json
-pnpm discover --manifest examples/discovery-manifest.json
+pnpm discover --allow-unofficial --manifest examples/discovery-manifest.json
 pnpm probe --harness codex --json
 pnpm probe --harness gemini --json
 pnpm test
@@ -94,7 +100,7 @@ pnpm exec playwright install chromium
 pnpm test:web
 ~~~
 
-discover 默认输出 schemaVersion=2，分别展示配置线索、多个安装和控制依赖；它不执行找到的程序或下载包。v1 描述可显式迁移；旧 JSON 使用方可用 --legacy 保留 schemaVersion=1。通过 v2 描述和 --package-root 指定已有包可扩展目录。详见[当前契约](docs/contracts/catalog-control.md)与[旧 v1 契约](docs/contracts/discovery.md)。
+discover 默认输出 schemaVersion=2，分别展示配置线索、多个安装（每个带官方渠道与版本）、非官网安装和控制依赖；它不执行找到的程序或下载包。默认只认官网安装、不读发现清单，开发和测试加 `--allow-unofficial`。v1 描述可显式迁移；旧 JSON 使用方可用 --legacy 保留 schemaVersion=1。通过 v2 描述和 --package-root 指定已有包可扩展目录。详见[当前契约](docs/contracts/catalog-control.md)与[旧 v1 契约](docs/contracts/discovery.md)。
 
 probe 主动启动所选控制入口并初始化，输出 NDJSON 协议观察与独立清理证据；它不发送 prompt。run:harness 明确发送一次文本，输出流/后端结果/清理，不创建公共 Session，也不承诺任务正确性。多个可用控制入口必须 --control 指定，不自动替换。默认沿用本机已有配置与登录，未指定工作区时使用自有临时工作区；--config-home只用于调用者明确准备的配置来源，测试使用私有fixture来源。
 

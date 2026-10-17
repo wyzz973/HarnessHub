@@ -12,7 +12,9 @@ import { SessionError, parseNativeOptions, sessionId, type SelectionRequest, typ
 import { MAX_CONTENT_BYTES, MAX_RUN_ATTACHMENTS } from "../contracts/content.js";
 import type { EventPage, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, MaintenanceView, NativeSessionListView, SessionSummary, SessionView, WebState } from "../contracts/web.js";
 import { inventory, officialInstallation } from "../infrastructure/catalog/inventory-composition.js";
+import type { InstallationPolicy } from "../contexts/catalog/domain/catalog.js";
 import { harnessEntry, productCommand } from "./harness-entry.js";
+import { installationViews, unofficialView } from "./harness-installations.js";
 import { prepareConfiguration } from "../infrastructure/session/binding-factory.js";
 import { supportedProviderProtocols } from "../contexts/provider/domain/provider.js";
 import { carriedNativeConfiguration } from "../contexts/session/domain/state.js";
@@ -53,6 +55,8 @@ export interface WebServerOptions {
   readonly loginShell?: { readonly shell: string | null; readonly shells: string } | false;
   /** The workspace lock namespace (`resolveWorkspaceLockRoot`) when this server composes its own application; the default otherwise. */
   readonly workspaceLockRoot?: string;
+  /** What counts as an installation (ADR-044) when this server composes its own application; the composition's default otherwise. */
+  readonly installations?: InstallationPolicy;
 }
 export interface WebServer { readonly url: string; close(): Promise<void> }
 function record(value: unknown, allowed: readonly string[], required: readonly string[] = []): Record<string, unknown> {
@@ -289,7 +293,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   // conversation open gets them on that conversation's stream; a page without one subscribes to them alone.
   const attention = new AttentionStreamHub(() => app.runtime.attention(), {}, frame => streams.attentionChanged(frame));
   app = (options.application ?? ((root, publish) => composeApplication(root, publish, { ...(options.budgets === undefined ? {} : { budgets: options.budgets }),
-    ...(options.workspaceLockRoot === undefined ? {} : { workspaceLockRoot: options.workspaceLockRoot }) })))(options.root, event => {
+    ...(options.workspaceLockRoot === undefined ? {} : { workspaceLockRoot: options.workspaceLockRoot }),
+    ...(options.installations === undefined ? {} : { installations: options.installations }) })))(options.root, event => {
     try { streams.publish(event); } finally { if (app !== undefined) attention.changed(); }
   });
   // This build: every compiled Gateway file by name and content (ADR-033), also named in a Turn's diagnostics (ADR-037).
@@ -322,7 +327,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     const pending = inventory({ ...(options.configuration.manifestPath === null ? {} : { manifest: options.configuration.manifestPath }),
       environment: app.factory.discoveryEnvironment.values, home: app.factory.discoveryEnvironment.home,
       searchDirs: searchDirs(), packageRoots: options.configuration.packageRoots, pathOnly: options.configuration.pathOnly,
-      managedResolver: app.management }).then(async observed => {
+      installations: app.factory.installations, managedResolver: app.management }).then(async observed => {
       app.management.setSystemObservations(observed.report.harnesses.flatMap(harness => harness.controls.flatMap(control => {
         if (control.state !== "candidate" || control.command === null || observed.managedBindings.has(control.id)) return [];
         const packageVersion = observedPackageVersion(control.diagnostics), program = productCommand(observed.definitions.find(item => item.id === harness.id)?.binaryNames[0], harness.installation, control);
@@ -344,7 +349,9 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
             : observed.customEntries.has(control.id) ? "发现清单中的自定义入口不可用（不存在或不可执行）" : control.missingDependencies.length ? "Missing: " + control.missingDependencies.join(", ") : "Control entry unavailable",
           entry: harnessEntry(control, observed.managedBindings.has(control.id)) })),
         providerProtocols: item.controls.some(control => control.state === "candidate" && ((item.id === "codex" && control.protocol === "codex-app-server") || (item.id === "gemini" && control.protocol === "acp-v1"))) ? supportedProviderProtocols(item.id) : [],
-        management: { ...managed, source: managed.source === "managed" ? "managed" : installed ? "system" : "missing" }, install: officialInstallation(item.id) };
+        management: { ...managed, source: managed.source === "managed" ? "managed" : installed ? "system" : "missing" }, install: officialInstallation(item.id),
+        installations: installationViews(item.installation, app.factory.discoveryEnvironment.home),
+        unofficial: unofficialView(item.installation, observed.definitions.find(definition => definition.id === item.id)?.binaryNames[0]) };
       });
       return harnesses;
     });
@@ -388,7 +395,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (path === "/api/v1/state" && method === "GET") {
       queries(url, []); const snapshots = app.store.list(100);
       const output: WebState = { providerManagement: options.providerManagement ?? true, workspace: options.configuration.workspace, providers: app.providers.list(), harnesses: await rescan(), sessions: snapshots.map(summary), jobs: app.management.listJobs().slice(0, 50),
-        readiness: readinessViews(nativeModels.readiness(), snapshots) }; json(response, 200, output); return;
+        readiness: readinessViews(nativeModels.readiness(), snapshots), installationPolicy: app.factory.installations }; json(response, 200, output); return;
     }
     if (path === "/api/v1/harnesses" && method === "GET") { queries(url, []); json(response, 200, await rescan()); return; }
     // The login shell's PATH, read once on the user's request: it runs the shell's login configuration (G(ii)).

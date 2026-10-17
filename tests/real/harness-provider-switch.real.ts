@@ -100,7 +100,7 @@ test("real Codex→Gemini→Codex uses the same public Session with explicit Pro
   const codexControl = catalog.find(item => item.id === "codex")?.controls.find(item => item.protocol === "codex-app-server");
   const geminiControl = catalog.find(item => item.id === "gemini")?.controls.find(item => item.protocol === "acp-v1"); assert.ok(codexControl && geminiControl);
   await writeFile(manifest, JSON.stringify({ version: 2, definitions: [], overrides: { [codexControl.id]: { executable: codexBinary }, [geminiControl.id]: { executable: geminiBinary } } }));
-  const app = ownedApplication = application(data, event => { publicEvents.push(event); }, { workspaceLockRoot: join(root, "locks") });
+  const app = ownedApplication = application(data, event => { publicEvents.push(event); }, { installations: "any", workspaceLockRoot: join(root, "locks") });
   const codexProvider = app.providers.create({ name: "Cross Codex", protocol: "openai-responses", baseUrl: codexUrl, models: [CODEX_MODEL], defaultModel: CODEX_MODEL, enabled: true, apiKey: CODEX_KEY }, "cross-provider-codex");
   const geminiProvider = app.providers.create({ name: "Cross Gemini", protocol: "gemini", baseUrl: geminiUrl, models: [GEMINI_MODEL], defaultModel: GEMINI_MODEL, enabled: true, apiKey: GEMINI_KEY }, "cross-provider-gemini");
   const configuration = await prepareConfiguration({ workspace, manifestPath: manifest, searchDirs: [...new Set([dirname(codexBinary), dirname(geminiBinary)])], pathOnly: true });

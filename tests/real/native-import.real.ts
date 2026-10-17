@@ -10,6 +10,8 @@ import type { PublicRun, SessionId } from "../../src/contracts/session.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { inventory } from "../../src/infrastructure/catalog/inventory-composition.js";
 import { createNativeControl } from "../../src/adapters/control/factory.js";
+/** A development manifest (HH_REAL_MANIFEST) names non-official entries, which only the development policy reads (ADR-044). */
+const realInstallations = process.env.HH_REAL_MANIFEST ? "any" as const : "official" as const;
 
 /**
  * Original-installation acceptance of continuing a native session (ADR-029): the installed program itself creates a session
@@ -42,7 +44,7 @@ const acpStarted = new Set(["hermes", "dsh"]);
 /** Agents that can resume a session but never replay it (dsh's ACP has no session/load): continuing them has no history to quote. */
 const resumeOnly = new Set(["dsh"]);
 async function acpStart(harnessId: string, workspace: string, prompt: string): Promise<void> {
-  const observed = await inventory({ ...(process.env.HH_REAL_MANIFEST ? { manifest: process.env.HH_REAL_MANIFEST } : {}), searchDirs: [], packageRoots: [], pathOnly: false });
+  const observed = await inventory({ ...(process.env.HH_REAL_MANIFEST ? { manifest: process.env.HH_REAL_MANIFEST } : {}), searchDirs: [], packageRoots: [], pathOnly: false, installations: process.env.HH_REAL_MANIFEST ? "any" : "official" });
   const control = observed.report.harnesses.find(harness => harness.id === harnessId)?.controls.find(item => item.state === "candidate" && item.protocol === "acp-v1");
   if (!control?.command) throw new Error("no ACP entry was discovered for " + harnessId);
   const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
@@ -90,7 +92,7 @@ test("installed Harness continues its own session of the workspace in the Hub, w
       const data = join(root, harnessId + "-data"), workspace = join(root, harnessId + "-workspace");
       await mkdir(workspace);
       const proof: Record<string, unknown> = { harnessId, startedAt: new Date().toISOString() };
-      const app = application(data, () => {}, { workspaceLockRoot: join(root, "locks") });
+      const app = application(data, () => {}, { installations: realInstallations, workspaceLockRoot: join(root, "locks") });
       try {
         assert.ok(start || acpStarted.has(harnessId), "no native session starter for " + harnessId);
         const tag = "T-" + randomUUID().slice(0, 6).toUpperCase(), prompt = "请记住标记 " + tag + "。只回复“好的”，不要调用任何工具，也不要保存到长期记忆。";

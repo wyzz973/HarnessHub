@@ -211,7 +211,7 @@ test("a copy left in npm's npx cache is never an installation, as in comparable 
   // `npx @deepseek-ai/dsh web`, the README's way to run it, leaves the package here without a `dsh` command.
   await packageAt(join(home, ".npm", "_npx", "0123456789abcdef"), "@deepseek-ai/dsh", "0.2.1-alpha.2", { dsh: "dist/cli.js" });
   const { inventory } = await import("../../src/infrastructure/catalog/inventory-composition.js");
-  const observed = await inventory({ home, environment: { PATH: bin }, searchDirs: [], packageRoots: [], pathOnly: false });
+  const observed = await inventory({ home, environment: { PATH: bin }, searchDirs: [], packageRoots: [], pathOnly: false, installations: "official" });
   const control = observed.report.harnesses.find(harness => harness.id === "dsh")?.controls[0];
   assert.ok(control);
   // A dsh installed on this host may still be found in a standard directory; the npx cache never supplies one.

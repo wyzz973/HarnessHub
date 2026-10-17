@@ -33,7 +33,7 @@
 
 ProcessHost 负责 argv、显式环境、私有目录、归属 token、进程树、升级终止与关闭等待。不同 Harness 的原生绑定可以保留多个，但同一公共 Session 只有一个执行权。保留空闲绑定须有资源限额和已验证恢复策略。
 
-Windows Job Objects、POSIX 进程组和脱离组的后代分别设计验证；外部服务启动的进程、失去归属标记的后代和同用户旁路属于显式能力边界。
+当前只面向 macOS（[ADR-044](../decisions/0044-macos-official-channels.md)）：POSIX 进程组和脱离组的后代在 macOS 上设计验证；已有的 Windows 分支代码保留但不扩展、不再验证。外部服务启动的进程、失去归属标记的后代和同用户旁路属于显式能力边界。
 
 ## 5. 模型路径
 

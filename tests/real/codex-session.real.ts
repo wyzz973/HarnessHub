@@ -159,7 +159,7 @@ test("real Codex preserves public history across two turns and a new formal chat
     await writeFile(manifest, JSON.stringify({ version: 2, definitions: [{ id: "custom-session-codex", name: "Real local Session Codex", aliases: [], binaryNames: [], configHints: [],
       controls: [{ id: "custom-session-codex-control", protocol: "codex-app-server", executableNames: ["codex"], args: ["app-server", "--listen", "stdio://"],
         env: { [KEY_NAME]: DUMMY_KEY }, package: null, distribution: null, requiredExecutables: [], source }] }], overrides: { "custom-session-codex-control": { executable } } }));
-    const options = ["--data-dir", data, "--workspace-lock-root", join(root, "locks"), "--cwd", workspace, "--config-home", home, "--manifest", manifest, "--json"];
+    const options = ["--data-dir", data, "--workspace-lock-root", join(root, "locks"), "--cwd", workspace, "--config-home", home, "--allow-unofficial", "--manifest", manifest, "--json"];
     const first = await invoke([...options, "--harness", "custom-session-codex"], PROMPTS.slice(0, 2), workspace, home, temporary);
     assertProvider(errors); assert.equal(first.code, 0, first.stderr); assert.equal(first.signal, null);
     let id: SessionId;

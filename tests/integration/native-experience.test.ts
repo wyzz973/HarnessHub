@@ -16,7 +16,7 @@ async function fixture(t: test.TestContext, scenario = "native-experience") {
   const definitions=["alpha","bravo"].map(id=>({id:"native-"+id,name:id,aliases:[],binaryNames:[],configHints:[],controls:[{id:"native-"+id,protocol:"acp-v1",executableNames:["fixture"],args:[peer,"acp-v1",scenario],env:{FIXTURE_TRACE:trace},package:null,distribution:null,requiredExecutables:[],source}]}));
   await writeFile(manifest,JSON.stringify({version:2,definitions,overrides:Object.fromEntries(definitions.map(row=>[row.controls[0]!.id,{executable:process.execPath}]))}));
   const config=await prepareConfiguration({workspace,manifestPath:manifest,pathOnly:true}), native=captureNativeEnvironment({HOME:home,PATH:process.env.PATH});
-  const server=await startWebServer({root:join(root,"data"),configuration:config,application:(data,publish)=>application(data,publish,{nativeEnvironment:native,management:{installationMode:"private-fixture"},workspaceLockRoot:join(root,"locks")})});
+  const server=await startWebServer({root:join(root,"data"),configuration:config,application:(data,publish)=>application(data,publish,{installations:"any",nativeEnvironment:native,management:{installationMode:"private-fixture"},workspaceLockRoot:join(root,"locks")})});
   t.after(async()=>{await server.close();await rm(root,{recursive:true,force:true});});
   const url=new URL(server.url),origin=url.origin;
   const boot=await fetch(origin+"/api/v1/auth/bootstrap",{method:"POST",headers:{Origin:origin,"Content-Type":"application/json"},body:JSON.stringify({token:new URLSearchParams(url.hash.slice(1)).get("token")})});

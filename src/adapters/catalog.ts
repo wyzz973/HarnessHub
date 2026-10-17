@@ -38,15 +38,24 @@ const nativeDefinitions: readonly HarnessDefinition[] = [
 ];
 
 /**
- * Each product's own documented installation, shown when it is missing. Only entries reviewed against the product's
- * official instructions are listed; HarnessHub never runs them.
+ * Each product's own documented installation on macOS (ADR-044), read from the official page the product's channels cite
+ * (docs/research/official-install-channels-2026-10-17.md); shown when the product is missing. HarnessHub never runs it.
  */
-const officialInstallations: Readonly<Record<string, { readonly command: string; readonly docs: string }>> = {
+const CHECKED = "2026-10-17";
+const officialInstallations: Readonly<Record<string, { readonly command: string; readonly docs: string; readonly checkedAt: string; readonly note: string | null }>> = {
+  claude: { command: "curl -fsSL https://claude.ai/install.sh | bash", docs: "https://code.claude.com/docs/en/setup", checkedAt: CHECKED, note: null },
+  codex: { command: "curl -fsSL https://chatgpt.com/codex/install.sh | sh", docs: "https://github.com/openai/codex", checkedAt: CHECKED, note: null },
+  opencode: { command: "curl -fsSL https://opencode.ai/install | bash", docs: "https://opencode.ai/docs", checkedAt: CHECKED, note: null },
+  openclaw: { command: "curl -fsSL https://openclaw.ai/install.sh | bash", docs: "https://docs.openclaw.ai/install", checkedAt: CHECKED, note: null },
+  gemini: { command: "npm install -g @google/gemini-cli", docs: "https://github.com/google-gemini/gemini-cli", checkedAt: CHECKED,
+    note: "官方仓库写明：自 2026-06-18 起，免费用户与 Google One 用户改用 Antigravity CLI。" },
+  cursor: { command: "curl https://cursor.com/install -fsS | bash", docs: "https://cursor.com/docs/cli/installation", checkedAt: CHECKED, note: null },
+  pi: { command: "npm install -g @earendil-works/pi-coding-agent", docs: "https://www.npmjs.com/package/@earendil-works/pi-coding-agent", checkedAt: CHECKED, note: null },
   hermes: { command: "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash",
-    docs: "https://github.com/NousResearch/hermes-agent/blob/a0556b861f2667a49ded048c9cfac88defff8c5f/README.md" },
-  dsh: { command: "npm install -g @deepseek-ai/dsh", docs: "https://github.com/deepseek-ai/deepseek-harness/blob/5badb15009ae1756c3afe0ae0cef1faafc290ccc/README.md" },
+    docs: "https://github.com/NousResearch/hermes-agent/blob/a0556b861f2667a49ded048c9cfac88defff8c5f/README.md", checkedAt: CHECKED, note: null },
+  dsh: { command: "npm install -g @deepseek-ai/dsh", docs: "https://github.com/deepseek-ai/deepseek-harness/blob/5badb15009ae1756c3afe0ae0cef1faafc290ccc/README.md", checkedAt: CHECKED, note: null },
 };
-export function officialInstallation(harnessId: string): { readonly command: string; readonly docs: string } | null {
+export function officialInstallation(harnessId: string): { readonly command: string; readonly docs: string; readonly checkedAt: string; readonly note: string | null } | null {
   return officialInstallations[harnessId] ?? null;
 }
 

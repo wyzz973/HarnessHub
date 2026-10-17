@@ -60,7 +60,7 @@ test("an original local control with a missing dependency is not replaced by a d
     id: "native-fixture-control", protocol: "acp-v1", executableNames: ["native-only"], args: [], env: {}, package: null, distribution: null, requiredExecutables: ["missing-fixture-runtime"],
     source: { repository: "fixture", revision: "pinned", upstreamId: "fixture", url: "https://example.invalid/source" } }] }] }));
   let replacementReads = 0;
-  const observed = await inventory({ manifest, environment: { PATH: root }, home: root, pathOnly: true, searchDirs: [], packageRoots: [], managedResolver: { resolveControl: (_harness, id) => {
+  const observed = await inventory({ manifest, environment: { PATH: root }, home: root, pathOnly: true, searchDirs: [], packageRoots: [], installations: "any", managedResolver: { resolveControl: (_harness, id) => {
     if (id !== "native-fixture-control") return null; replacementReads++;
     return { installationId: "installation-private", revision: 1, version: "2.0.0", command: { executable: process.execPath, args: ["--version"], env: {} } };
   } } });

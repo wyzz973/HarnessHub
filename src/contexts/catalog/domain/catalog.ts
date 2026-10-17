@@ -1,3 +1,4 @@
+import type { InstallationChannel, OfficialChannels } from "./channels.js";
 import type { ControlProtocol } from "./discovery.js";
 
 export const MAX_DEFINITIONS = 128;
@@ -63,7 +64,7 @@ export interface InstallationCandidate {
   readonly entries: readonly InstallationEntry[];
 }
 export interface InventoryDiagnostic {
-  readonly code: "not_found" | "not_file" | "not_executable" | "inaccessible" | "relative_path_ignored" | "scan_truncated" | "package_invalid" | "runtime_missing" | "package_version_observed";
+  readonly code: "not_found" | "not_file" | "not_executable" | "inaccessible" | "relative_path_ignored" | "scan_truncated" | "package_invalid" | "runtime_missing" | "package_version_observed" | "manifest_ignored";
   readonly path: string;
   readonly detail?: string;
 }
@@ -72,6 +73,42 @@ export interface InstallationEnumeration {
   readonly selected: InstallationCandidate | null;
   readonly defaultResolution: "none" | "located" | "blocked";
   readonly diagnostics: readonly InventoryDiagnostic[];
+}
+/**
+ * What a Gateway counts as an installation (ADR-044): `official` admits only programs in a channel their product's official
+ * documentation describes and does not read a discovery manifest; `any` admits every entry found (development and tests).
+ */
+export type InstallationPolicy = "official" | "any";
+/** The policy an entry runs with: `any` only when development explicitly allows unofficial entries, `official` otherwise. */
+export function resolveInstallationPolicy(allowUnofficial: boolean | undefined): InstallationPolicy { return allowUnofficial === true ? "any" : "official"; }
+/** A found program with the official channel it lies in. */
+export interface ClassifiedCandidate extends InstallationCandidate {
+  /** The official channel, or null outside every channel its product or adapter documents. */
+  readonly channel: InstallationChannel | null;
+  /** The version the channel records for this installation (package metadata, keg or versions directory), or null. */
+  readonly version: string | null;
+  /** Whether the program is the product itself or an adapter HarnessHub runs in front of it. */
+  readonly role: "product" | "adapter";
+}
+/** An enumeration after the installation policy: under `official`, candidates outside every channel move to `unofficial`. */
+export interface ObservedInstallations extends InstallationEnumeration {
+  readonly candidates: readonly ClassifiedCandidate[];
+  readonly selected: ClassifiedCandidate | null;
+  /** Programs found outside every official channel and left out by the official policy; always empty under `any`. */
+  readonly unofficial: readonly InstallationCandidate[];
+  /** The one of `unofficial` that PATH resolves the command to (what a shell with this PATH runs), or null. */
+  readonly unofficialDefault: InstallationCandidate | null;
+}
+/** Read-only classification of a found program into an official channel. It reads files and never runs the program. */
+export interface InstallationClassifier {
+  classify(candidate: InstallationCandidate, channels: OfficialChannels): Promise<{ readonly channel: InstallationChannel; readonly version: string | null } | null>;
+}
+/** The recorded official channels of products and of the adapters HarnessHub runs in front of them. */
+export interface ChannelRegistry {
+  /** A product's channels, or null when none are recorded. */
+  product(harnessId: string): OfficialChannels | null;
+  /** An adapter control's channels (the package or archive its registry entry publishes), or null when it publishes none. */
+  adapter(harnessId: string, control: ControlRecipe): OfficialChannels | null;
 }
 /** Read-only enumeration. It must never execute candidates or package runners. */
 export interface InstallationEnumerator {
@@ -107,7 +144,7 @@ export interface ControlObservation {
   readonly source: CatalogSource;
   readonly state: "candidate" | "missing_dependency" | "blocked";
   readonly command: ResolvedCommand | null;
-  readonly installation: InstallationEnumeration;
+  readonly installation: ObservedInstallations;
   readonly missingDependencies: readonly string[];
   readonly diagnostics: readonly InventoryDiagnostic[];
   readonly probe: "not_run";
@@ -116,7 +153,7 @@ export interface HarnessInventory {
   readonly id: string;
   readonly name: string;
   readonly aliases: readonly string[];
-  readonly installation: InstallationEnumeration;
+  readonly installation: ObservedInstallations;
   readonly configuration: readonly ConfigurationEvidence[];
   readonly controls: readonly ControlObservation[];
 }

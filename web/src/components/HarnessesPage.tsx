@@ -59,7 +59,7 @@ function serviceOutcome(service: NonNullable<NonNullable<InstallationJobView["na
   return "已重启（进程 " + service.pid + "）" + (service.ready === true ? "，正在监听" : service.ready === false ? "，没有在端口上监听" : "，可用性未验证");
 }
 interface HarnessProps {
-  api: GatewayApi; harnesses: readonly HarnessView[]; jobs: readonly InstallationJobView[]; scanning: boolean; checking: boolean;
+  api: GatewayApi; harnesses: readonly HarnessView[]; installationPolicy: "official" | "any"; jobs: readonly InstallationJobView[]; scanning: boolean; checking: boolean;
   submitting: readonly string[]; cancelling: readonly string[]; error: string | null; connectionError: string | null; unconfirmed: readonly UnconfirmedInstallation[];
   onRescan: () => void; onCheckUpdates: (ids?: readonly string[]) => void; onInstall: (harness: HarnessView, action: "install" | "upgrade", consent?: UpgradeConsent) => void;
   /** Opens a conversation, e.g. one that blocks an upgrade. */
@@ -119,6 +119,7 @@ export function HarnessesPage(props: HarnessProps) {
       <button type="button" className="btn" onClick={() => props.onCheckUpdates()} disabled={props.checking}>{props.checking ? <Spinner size={13}/> : <RefreshCw size={14}/>}<span className="hidden sm:inline">检查更新</span></button>
       <Tip label="重新检测本机入口"><button type="button" className="icon-btn" aria-label="重新检测" onClick={props.onRescan} disabled={props.scanning}>{props.scanning ? <Spinner size={15}/> : <Search size={16}/>}</button></Tip>
     </>}>
+    {props.installationPolicy === "any" ? <Notice tone="amber" className="development-entries">开发模式：接受非官网安装。服务以 --allow-unofficial 启动，列表里的开发入口不是正式安装。</Notice> : null}
     {props.error ? <Notice tone="red" onDismiss={props.onDismissError}>{props.error}</Notice> : null}
     {props.connectionError ? <Notice tone="amber" className="connection-notice">{props.connectionError} · 安装状态暂时显示最后一次观察，正在重新连接，不会重跑任务。</Notice> : null}
     {props.unconfirmed.map(intent => <Notice key={intent.harnessId} tone="amber" title={`${harnesses.find(h => h.id === intent.harnessId)?.name ?? intent.harnessId} 的请求尚未确认`}
@@ -195,9 +196,16 @@ function HarnessDetail(props: HarnessProps & { harness: HarnessView; onClose: ()
       <DetailSection title="版本">
         <div className="grid grid-cols-2 gap-3"><div className="rounded-lg bg-subtle px-3 py-2.5"><span className="block text-[11.5px] text-fg-3">当前版本</span><strong className="text-[15px] font-semibold">{versionOf(harness) ?? (harness.installed ? "待检测" : "未安装")}</strong>{adapterVersion(harness) ? <small className="block text-[12px] text-fg-3">接入口 {adapterVersion(harness)}</small> : null}</div>
           <div className="rounded-lg bg-subtle px-3 py-2.5"><span className="block text-[11.5px] text-fg-3">最新版本</span><strong className="text-[15px] font-semibold">{harness.management.latestVersion ?? "尚未检查"}</strong></div></div>
+        {harness.install?.note ? <p className="harness-install-note m-0 text-[12.5px] text-fg-2">{harness.install.note}</p> : null}
         {hint ? <small className="version-unverified-note rounded-lg bg-amber-soft px-3 py-2 text-[12.5px] text-amber">未经验证的版本：{hint}</small> : null}
         {harness.management.source === "system" ? <p className="m-0 flex items-start gap-2 text-[12.5px] text-fg-2"><ShieldCheck size={14} className="mt-0.5 flex-none text-fg-3"/>这里管理终端使用的本机原安装，升级沿用它的原渠道。</p> : null}
       </DetailSection>
+      {harness.installations.length > 0 ? <DetailSection title="本机找到的官网安装"><ul className="harness-installations m-0 flex list-none flex-col gap-1.5 p-0">{harness.installations.map((item, index) =>
+        <li key={index} className="flex flex-col gap-0.5 rounded-lg border border-line px-3 py-2"><span className="flex flex-wrap items-center gap-1.5 text-[13px]"><strong className="font-medium">{item.label}</strong>
+          {item.role === "adapter" ? <Badge tone="neutral">接入口 {item.command}</Badge> : null}{item.active ? <span title="按 HarnessHub 服务进程的 PATH 顺序；终端里可能不同"><Badge tone="green" dot>当前使用</Badge></span> : null}</span>
+          <small className="text-[12px] text-fg-3">{item.version === null ? "版本未记录" : `v${item.version}`}{item.maintained ? "" : " · 当前版本不维护这种安装方式"}</small></li>)}</ul>
+        {harness.installations.filter(item => item.role === "product").length > 1 ? <p className="m-0 text-[12px] text-fg-2">“当前使用”按 HarnessHub 服务进程的 PATH 顺序确定；终端常被 nvm 等改动 PATH，用的可能是另一份。</p> : null}</DetailSection> : null}
+      {harness.unofficial ? <DetailSection title="非官网安装"><p className="harness-unofficial m-0 text-[12.5px] text-fg-2">在{harness.unofficial.onPath ? " PATH " : "标准目录"}中发现一个非官网安装（开发目录、npm link 或其他），命令名 {harness.unofficial.command}；平台不使用也不维护它。{harness.unofficial.pathDefault ? harness.installations.some(item => item.role === "product") ? `终端里 ${harness.unofficial.command} 运行的是这份非官网安装；HarnessHub 使用的是标为“当前使用”的官网安装。` : "终端里能用的就是它。" : ""}</p></DetailSection> : null}
       {job ? <DetailSection title="安装任务">
         {related.length > 1 ? <select className="field h-8 text-[12.5px]" aria-label="选择安装任务" value={job.id} onChange={event => setSelectedJobId(event.target.value)}>{related.map(item => <option value={item.id} key={item.id}>{item.action === "upgrade" ? "升级" : "安装"} · {item.resolvedVersion ?? item.id.slice(-8)} · {installationStatus(item)}</option>)}</select> : null}
         <div className={cn("installation-state flex items-center gap-2.5 rounded-lg border px-3 py-2.5", unchanged(job) ? "border-amber-line bg-amber-soft" : job.status === "failed" || job.status === "unknown" ? "border-red-line bg-red-soft" : job.status === "completed" ? "border-line bg-green-soft" : "border-line bg-subtle")} role="status">
@@ -222,7 +230,7 @@ function HarnessDetail(props: HarnessProps & { harness: HarnessView; onClose: ()
       <DetailSection title="控制入口">{harness.controls.map(control => <div key={control.id} className="flex flex-col gap-1 rounded-lg border border-line px-3 py-2.5">
         <div className="flex items-center gap-2"><Terminal size={14} className="text-fg-3"/><strong className="text-[13px] font-medium">{protocolLabel(control.protocol)}</strong><Badge tone={control.available ? "green" : "neutral"} dot>{control.available ? "已解析" : "待准备"}</Badge></div>
         <code className="text-[12px] text-fg-3">{control.id}</code>{control.entry ? <p className="m-0 text-[12px] text-fg-2">入口来源：{ENTRY_SOURCES[control.entry.source]}{control.entry.source === "custom-entry" ? "（路径以服务启动时的发现清单为准）" : ""}</p> : null}{control.reason ? <p className="m-0 text-[12px] text-amber">{control.reason}</p> : null}</div>)}</DetailSection>
-      {missing(harness) && harness.install ? <DetailSection title="官方安装方式"><p className="m-0 text-[12.5px] text-fg-2">按 {harness.name} 官方说明在终端安装，完成后重新检测即可使用。HarnessHub 不会替你运行安装命令。</p><code className="block rounded-md bg-subtle px-2.5 py-2 text-[12px] break-all">{harness.install.command}</code><a className="text-[12.5px]" href={harness.install.docs} target="_blank" rel="noreferrer">查看官方说明</a></DetailSection> : null}
+      {missing(harness) && harness.install ? <DetailSection title="官方安装方式"><p className="m-0 text-[12.5px] text-fg-2">按 {harness.name} 官方说明在终端安装，完成后重新检测即可使用。HarnessHub 不会替你运行安装命令。命令于 {harness.install.checkedAt} 对照官方说明核对。</p><code className="block rounded-md bg-subtle px-2.5 py-2 text-[12px] break-all">{harness.install.command}</code><a className="text-[12.5px]" href={harness.install.docs} target="_blank" rel="noreferrer">查看官方说明</a></DetailSection> : null}
       <DetailSection title="模型与登录"><p className="m-0 text-[12.5px] text-fg-2">沿用 Harness 本机已有配置。统一 Provider 管理将在后续接入。</p></DetailSection>
     </div>
     <footer className="flex flex-wrap items-center gap-2 border-t border-line px-5 py-3">
