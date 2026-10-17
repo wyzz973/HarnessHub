@@ -2,10 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { access, lstat, realpath, mkdtemp, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
-import { gt, valid } from "semver";
+import { gt, prerelease, valid } from "semver";
 import { ManagementError, type HarnessManagementView, type InstallCapability, type InstallationJobView, type InstallationLog, type NativeManagementPort, type NativeInstallPlan, type ManagementInstallContext,
   type ManagementInstallerPort, type ManagementMetadataPort, type ManagementRecipe, type ResolvedManagedControl, type MaintenanceCheck, type NativeJobFacts, type NativeProgramUsers, type RuntimeRequirement, type ServiceRestartFact,
-  type InstallationObservation, type InstallationRemovalPort, type InstallationTarget, type UninstallCheck, type UninstallFacts, type InstallCheck, type OfficialInstallPort, type PreparedInstall } from "../../contracts/management.js";
+  type InstallationObservation, type InstallationRemovalPort, type InstallationTarget, type UninstallCheck, type UninstallFacts, type InstallCheck, type OfficialInstallPort, type PreparedInstall,
+  type InstallationUpgradePort, type InstallationUpgradeCheck, type InstallationUpgradeFacts, type InstallationUpdate, type PreparedUpgrade, type UpgradeKind } from "../../contracts/management.js";
 import type { SystemInstallationObservation, SystemVersionProbeOptions } from "../../contracts/management.js";
 import { boundedManagementLimit, installationJobId, installationRef, managementCommand, managementSlug, parseManagementInput } from "../../contexts/management/domain/input.js";
 import { builtinManagementRecipes } from "../../adapters/management/recipes.js";
@@ -13,16 +14,17 @@ import { DefaultManagementInstaller, installedNpmEntry } from "./installer.js";
 import { insideManagement } from "./archive.js";
 import { OfficialManagementMetadata } from "./metadata.js";
 import { boundedManagementFile, managementIdentity, managementStorage, sameManagementIdentity } from "./storage.js";
-import { managementInteger, managementObject, parseInstallationRecord, parseInstallationTarget, parseInstallRequest, parseManagementJob, parseManagementLog, parseManagementUpdate, parseNativePlan, type InstallationRecord } from "../../contexts/management/domain/state.js";
+import { managementInteger, managementObject, parseInstallationRecord, parseInstallationTarget, parseInstallRequest, parseManagementJob, parseManagementLog, parseManagementUpdate, parseNativePlan, parseUpgradeRequest, type InstallationRecord } from "../../contexts/management/domain/state.js";
 import { probeSystemVersion } from "./system-version.js";
-import { versionVerification } from "./verified-versions.js";
+import { adapterVersionVerification, versionVerification } from "./verified-versions.js";
 import { NativeManagement, runtimeRefusal } from "./native.js";
 import { NativeInstallationLocks } from "./native-lock.js";
 import { captureNativeEnvironment, type NativeEnvironment } from "../session/native-environment.js";
-import { officialInstallMethod, productMaintenance } from "../../adapters/catalog-channels.js";
+import { officialInstallMethod, productChannels, productMaintenance } from "../../adapters/catalog-channels.js";
 import { prefixLabel } from "../../contexts/catalog/domain/channels.js";
 import { LocalInstallationRemoval } from "./uninstall.js";
 import { LocalOfficialInstaller } from "./official-install.js";
+import { LocalInstallationUpgrader, sharedRuntimes } from "./installation-upgrade.js";
 
 export interface ManagementOptions {
   readonly installationMode?: "native" | "private-fixture";
@@ -47,9 +49,13 @@ export interface ManagementOptions {
   readonly officialInstaller?: OfficialInstallPort;
   /** The npm registry official npm installs use; the public registry unless a test serves its own. */
   readonly npmRegistry?: string;
+  /** Upgrades one official installation through its channel (ADR-044); the host's own by default, none in private-fixture mode unless given. */
+  readonly installationUpgrader?: InstallationUpgradePort;
 }
-/** How long a prepared official install waits for the user's confirmation (ADR-044). */
+/** How long a prepared official install or installation upgrade waits for the user's confirmation (ADR-044). */
 const INSTALL_CHECK_MS = 15 * 60 * 1000;
+/** A Homebrew upgrade may build or download for longer than other maintenance (ADR-044). */
+const HOMEBREW_UPGRADE_MS = 15 * 60 * 1000;
 const openRoots = new Set<string>();
 function importedFile(path: string): string { return new TextDecoder("utf8", { fatal: true }).decode(boundedManagementFile(path, 4096)); }
 function relativeSlot(root: string, path: string): string { return relative(root, path).replaceAll("\\", "/"); }
@@ -106,6 +112,11 @@ export class LocalHarnessManagement {
   private readonly officialInstaller: OfficialInstallPort | null;
   /** Official installs prepared for a confirmation, by fingerprint, until they expire or are submitted (ADR-044). */
   private readonly prepared = new Map<string, { readonly harnessId: string; readonly prepared: PreparedInstall; readonly directory: string; readonly expires: number }>();
+  private readonly upgrader: InstallationUpgradePort | null;
+  /** The latest version each installation's channel knew at the last update check, by reference; kept in memory only (ADR-044). */
+  private readonly updates = new Map<string, InstallationUpdate>();
+  /** Installation upgrades prepared for a confirmation, by fingerprint, until they expire or are submitted (ADR-044). */
+  private readonly preparedUpgrades = new Map<string, { readonly harnessId: string; readonly ref: string; readonly prepared: PreparedUpgrade; readonly directory: string; readonly expires: number }>();
   constructor(root: string, private readonly options: ManagementOptions) {
     options.assertOwner(); this.timeout = options.runTimeoutMs ?? 10 * 60 * 1000;
     if (!Number.isSafeInteger(this.timeout) || this.timeout < 20 || this.timeout > 10 * 60 * 1000) throw new ManagementError("INVALID_INPUT", "invalid installation timeout");
@@ -117,6 +128,8 @@ export class LocalHarnessManagement {
     this.removal = options.removal ?? (options.installationMode === "private-fixture" ? null : new LocalInstallationRemoval(source, { npm: this.npm, uv: this.uv }));
     this.officialInstaller = options.officialInstaller ?? (options.installationMode === "private-fixture" ? null
       : new LocalOfficialInstaller(source, { npm: this.npm }, { metadata: this.metadata, ...(options.npmRegistry === undefined ? {} : { registry: options.npmRegistry }) }));
+    this.upgrader = options.installationUpgrader ?? (options.installationMode === "private-fixture" ? null
+      : new LocalInstallationUpgrader(source, { npm: this.npm }, { metadata: this.metadata, ...(options.npmRegistry === undefined ? {} : { registry: options.npmRegistry }) }));
     let realHome = source.home; try { realHome = realpathSync(source.home); } catch { /* a home that cannot be resolved is shown as given */ }
     this.homes = [...new Set([realHome, source.home])].sort((left, right) => right.length - left.length);
     this.nativeLocks = options.nativeLocks ?? new NativeInstallationLocks();
@@ -209,9 +222,9 @@ export class LocalHarnessManagement {
       }
     }));
   }
-  private async nativeInspection<T>(action: (context: ManagementInstallContext) => Promise<T>): Promise<T> {
+  private async nativeInspection<T>(action: (context: ManagementInstallContext) => Promise<T>, timeoutMs = 15000): Promise<T> {
     const stage = await realpath(await mkdtemp(join(this.storage.root, "native-inspect-"))), identity = managementIdentity(stage, true);
-    const controller = new AbortController(); this.checkControllers.add(controller); const timer = setTimeout(() => controller.abort(), 15000); let quiescent = true;
+    const controller = new AbortController(); this.checkControllers.add(controller); const timer = setTimeout(() => controller.abort(), timeoutMs); let quiescent = true;
     const owned = () => { this.own(); if (!sameManagementIdentity(identity, managementIdentity(stage, true))) throw new ManagementError("OWNERSHIP_LOST", "native inspection directory changed"); };
     try { return await action({ stage, signal: controller.signal, assertOwned: owned, log: () => {} }); }
     catch (error) { if (error instanceof ManagementError && error.code === "CLEANUP_FAILED") quiescent = false; throw error; }
@@ -245,10 +258,10 @@ export class LocalHarnessManagement {
     for (const home of this.homes) result = result.split(home + "/").join("~/").replace(new RegExp("(^|\\s)" + home.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&") + "(?=\\s|$)", "gu"), "$1~");
     return result;
   }
-  private observation(harnessId: string, ref: string): InstallationObservation {
+  private observation(harnessId: string, ref: string, action: "uninstall" | "upgrade" = "uninstall"): InstallationObservation {
     const found = this.installations.get(harnessId)?.find(item => item.ref === ref);
     if (!found) throw new ManagementError("INSTALLATION_NOT_FOUND", "没有找到这份安装，它可能已经变化。请重新检测后再试。");
-    if (found.channel === "pnpm" || found.channel === "bun") throw new ManagementError("UNSUPPORTED_UNINSTALL", "当前版本不维护 pnpm、bun 全局安装。");
+    if (found.channel === "pnpm" || found.channel === "bun") throw new ManagementError(action === "uninstall" ? "UNSUPPORTED_UNINSTALL" : "UNSUPPORTED_UPGRADE", "当前版本不维护 pnpm、bun 全局安装。");
     return found;
   }
   /** The observation with its file identities: the fingerprint changes once the installation is updated, replaced or removed. */
@@ -551,6 +564,236 @@ export class LocalHarnessManagement {
     }
   }
   /**
+   * How one installation upgrades (ADR-044): through ADR-043's upgrade (`maintenance`) when it is the installation the
+   * Harness's control runs and its product declares services that upgrade restarts; otherwise through its own channel, or
+   * only by a command for the terminal; null when HarnessHub does not upgrade it.
+   */
+  installationUpgrade(harnessId: string, ref: string): { readonly kind: UpgradeKind | "terminal" | "maintenance"; readonly update: InstallationUpdate | null } | null {
+    this.own(); const observation = this.installations.get(harnessId)?.find(item => item.ref === ref);
+    if (observation === undefined || this.upgrader === null || observation.channel === "pnpm" || observation.channel === "bun") return null;
+    const kind = this.upgrader.kind(observation); if (kind === null) return null;
+    return { kind: this.throughMaintenance(observation) ? "maintenance" : kind, update: this.updates.get(ref) ?? null };
+  }
+  /** Whether ADR-043's upgrade owns this installation: the product declares services and its control runs from this installation. */
+  private throughMaintenance(observation: InstallationObservation): boolean {
+    if (productMaintenance(observation.harnessId).services.length === 0 || observation.role !== "product") return false;
+    const recipe = this.recipe(observation.harnessId), plan = recipe && this.native ? this.nativePlans.get(observation.harnessId + ":" + recipe.controlId) : undefined;
+    return plan !== undefined && plan.channel !== "unsupported" && !!plan.actualEntry && (plan.actualEntry === observation.resolvedPath || plan.actualEntry.startsWith(observation.root + "/"));
+  }
+  /** The latest version of every npm and Homebrew installation of `harnessIds`, each within 15 seconds; failures are kept per installation. */
+  private async checkInstallations(harnessIds: readonly string[] | null): Promise<void> {
+    const upgrader = this.upgrader; if (upgrader === null) return;
+    const targets = [...this.installations.entries()].filter(([id]) => harnessIds === null || harnessIds.includes(id)).flatMap(([, list]) => list)
+      .filter(item => item.channel === "npm" || item.channel === "brew-formula" || item.channel === "brew-cask");
+    let index = 0;
+    await Promise.all(Array.from({ length: Math.min(4, targets.length) }, async () => {
+      for (;;) {
+        const target = targets[index++]; if (target === undefined || !this.accepting) return;
+        try {
+          const latest = await this.nativeInspection(context => upgrader.latest(target, context)); this.own();
+          if (latest !== null) this.updates.set(target.ref, { ref: target.ref, latest: latest.version, source: latest.source, checkedAt: this.now(), error: null });
+        } catch (error) {
+          this.own(); if (error instanceof ManagementError && ["OWNER_LOST", "OWNERSHIP_LOST", "MANAGEMENT_CLOSED", "INVALID_STORAGE"].includes(error.code)) throw error;
+          this.updates.set(target.ref, { ref: target.ref, latest: null, source: target.channel === "npm" ? "npm" : "homebrew-local", checkedAt: this.now(), error: "没有查到最新版本" });
+        }
+      }
+    }));
+  }
+  private pruneUpgrades(): void {
+    for (const [fingerprint, entry] of this.preparedUpgrades) if (entry.expires < Date.now()) { this.preparedUpgrades.delete(fingerprint); rmSync(entry.directory, { recursive: true, force: true }); }
+  }
+  /**
+   * What upgrading one installation through its channel would run, write and change (ADR-044), prepared once for the
+   * user's confirmation: the exact release and the Node.js it needs, Homebrew's dry run, or the downloaded official script;
+   * which programs run the installation now, and what blocks it. Changes no installed program; the prepared upgrade waits
+   * 15 minutes for its submission, and the upgrade checks again before it changes anything.
+   */
+  async upgradeCheck(harnessId: string, ref: string): Promise<InstallationUpgradeCheck> {
+    this.admission(); const id = managementSlug(harnessId);
+    if (!installationRef(ref)) throw new ManagementError("INVALID_INPUT", "invalid installation reference");
+    if (this.upgrader === null || this.removal === null) throw new ManagementError("UNSUPPORTED_UPGRADE", "这里不提供升级。");
+    const upgrader = this.upgrader, removal = this.removal, observation = this.observation(id, ref, "upgrade"), kind = upgrader.kind(observation);
+    if (kind === null) throw new ManagementError("UNSUPPORTED_UPGRADE", "HarnessHub 不升级这种安装。");
+    if (this.throughMaintenance(observation)) throw new ManagementError("UNSUPPORTED_UPGRADE", "这份安装有产品的后台服务，请用“升级 Harness”：它会在升级后按产品的方式重启服务。");
+    const target = await this.targetOf(observation), checkedAt = this.now(), others = (this.installations.get(id) ?? []).filter(item => item.role === observation.role && item.ref !== observation.ref);
+    const common = { harnessId: id, ref, checkedAt, label: observation.label, role: observation.role, channel: observation.channel as InstallationUpgradeCheck["channel"], active: observation.active };
+    if (kind === "terminal") {
+      const layout = productChannels(id)?.scripts.find(item => join(this.source.home, item.root) === observation.root)?.upgrade;
+      if (layout?.kind !== "terminal") throw new ManagementError("UNSUPPORTED_UPGRADE", "HarnessHub 不升级这种安装。");
+      const localChanges = await this.nativeInspection(context => removal.localChanges(observation, context)); this.own();
+      return { ...common, fingerprint: target.fingerprint, expiresAt: checkedAt, kind, current: observation.version, target: null, prerelease: false, runs: layout.command, writes: [], script: null, shellProfile: null, configFiles: [],
+        dependencies: [], sharedRuntimes: [], runtime: null, conversations: [], otherUsers: [], processes: [], verification: null,
+        terminal: { command: layout.command, explains: layout.explains, localChanges },
+        notes: localChanges ? ["这份安装的目录里有 " + localChanges + " 处没有提交的改动，" + layout.command + " 会先把它们 git stash 起来。"] : [],
+        blocked: "HarnessHub 不代为运行这个产品的更新，请在终端运行 " + layout.command + "。" };
+    }
+    const usage = await this.nativeInspection(context => removal.usage(observation, context)); this.own();
+    const records = observation.active ? await this.nativeLocks.users(id) : { live: [], stale: 0 };
+    const conversations = usage.own.length ? this.users?.list(id) ?? [] : [];
+    this.pruneUpgrades();
+    const directory = this.installDirectory("install-checks", randomUUID());
+    let check: Awaited<ReturnType<InstallationUpgradePort["prepare"]>>;
+    try { check = await this.nativeInspection(context => upgrader.prepare(target, directory, context), 90_000); this.own(); }
+    catch (error) { rmSync(directory, { recursive: true, force: true }); throw error; }
+    // The version now, as the upgrade reads it before it runs; the latest scan may predate an upgrade since.
+    const prepared = check.prepared, current = await this.nativeInspection(context => upgrader.version(observation, context)) ?? observation.version; this.own();
+    const fingerprint = createHash("sha256").update(JSON.stringify({ target: target.fingerprint, prepared })).digest("hex"), expires = Date.now() + INSTALL_CHECK_MS;
+    this.preparedUpgrades.set(fingerprint, { harnessId: id, ref, prepared, directory, expires });
+    const newer = prepared.version === null || current === null || (valid(prepared.version) && valid(current) ? gt(prepared.version, current) : prepared.version !== current);
+    const shared = sharedRuntimes(prepared.dependencies), busy = conversations.filter(item => item.busy).length;
+    const verification = prepared.version === null ? null : observation.role === "adapter" ? adapterVersionVerification(id, prepared.version) : versionVerification(id, prepared.version, null);
+    const notes: string[] = [];
+    if (observation.active) notes.push("这是 HarnessHub 当前使用的那份：升级后，HarnessHub 的对话下次发消息起使用新版本。");
+    else notes.push("这不是 HarnessHub 当前使用的那份" + (others.find(item => item.active) ? "（当前使用 " + others.find(item => item.active)!.label + "）" : "") + "；升级后“当前使用”不变。");
+    if (observation.role === "adapter" && verification?.state === "unverified")
+      notes.push("HarnessHub 对这个产品的控制在适配器 " + verification.adapter + " 上验证过；新版本 " + prepared.version + " 未经验证（ADR-038），仍可使用，部分能力可能不同。");
+    if (prepared.kind === "self-update") notes.push("由 " + prepared.command + " 自己决定装哪个版本；完成后显示升级前后的版本。");
+    if (prepared.kind === "rerun") { const method = officialInstallMethod(id); notes.push("重新运行官方安装脚本" + (method?.kind === "script" ? "（官网命令 " + method.command + "）" : "") + "，装入它现在提供的版本；完成后显示升级前后的版本。"); }
+    if (observation.channel === "brew-formula" || observation.channel === "brew-cask") {
+      notes.push("以 Homebrew 本地记录为准" + (check.records === null ? "" : "（更新于 " + check.records.slice(0, 10) + "）") + "，没有运行 brew update；需要最新版请先在终端运行 brew update。");
+      notes.push("预演由 Homebrew 在它的沙箱里运行，可能下载清单到它的缓存，不改已装的程序。");
+      if (check.deprecated.includes(observation.name)) notes.push("Homebrew 把 " + observation.name + " 标为已弃用或停用。" + (() => { const method = officialInstallMethod(id); return method !== null && method.kind !== "terminal" ? method.notes.join("") : ""; })());
+    }
+    const blocked = !newer ? "这份安装已是" + (observation.channel === "npm" ? " npm 上的" : observation.channel === "script" ? "" : " Homebrew 本地记录里的") + "最新版本 " + current + "。"
+      : prepared.runtime !== null && !prepared.runtime.satisfied ? "新版本 " + prepared.version + " 要求 Node.js " + prepared.runtime.required + "，这份安装用的 Node.js（" + this.shown(prepared.runtime.path) + "）是 " + (prepared.runtime.found ?? "读不出版本") + "。请先升级这个 Node.js；HarnessHub 不升级 Node.js。"
+      : usage.services.length ? "这份安装有后台服务 " + usage.services.map(item => item.label).join("、") + " 在运行。HarnessHub 只在“升级 Harness”里按产品的方式重启服务；请先在终端停止它们，或升级当前使用的那份。"
+      : busy ? "有 " + busy + " 个 HarnessHub 对话正在使用这份安装（正在回复或等你处理），等它们结束或停止后再升级。"
+      : records.live.length ? "另一个 HarnessHub 进程（进程 " + records.live.slice(0, 4).join("、") + "）正在使用这个程序，等它结束后再升级。" : null;
+    return { ...common, fingerprint, expiresAt: new Date(expires).toISOString(), kind: prepared.kind, current, target: prepared.version, prerelease: prepared.version !== null && (valid(prepared.version) ? prerelease(prepared.version) !== null : false),
+      runs: this.shown(prepared.command), writes: prepared.writes.map(path => this.shown(path)), script: prepared.script === null ? null : { source: prepared.script.source, sha256: prepared.script.sha256 },
+      shellProfile: prepared.shellProfile === null ? null : this.shown(prepared.shellProfile), configFiles: prepared.configFiles.map(path => this.shown(path)),
+      dependencies: prepared.dependencies, sharedRuntimes: shared, runtime: prepared.runtime === null ? null : { ...prepared.runtime, path: this.shown(prepared.runtime.path) },
+      conversations, otherUsers: records.live.map(pid => ({ pid })), processes: [...usage.processes, ...usage.resident], verification, terminal: null, notes, blocked };
+  }
+  /**
+   * Queues the installation upgrade the user confirmed (ADR-044). Refused when the confirmation expired or was used, or
+   * the installation changed since; idempotent per command identity like every management job.
+   */
+  async submitInstallationUpgrade(input: unknown): Promise<InstallationJobView> {
+    this.admission(); this.payloadBudgets(); const request = parseManagementInput(input);
+    if (request.action !== "upgrade" || request.installation === undefined || request.expectedInstallationFingerprint === undefined) throw new ManagementError("INVALID_INPUT", "an installation upgrade names the installation and its confirmed check");
+    if (this.upgrader === null || this.removal === null) throw new ManagementError("UNSUPPORTED_UPGRADE", "这里不提供升级。");
+    const fingerprint = createHash("sha256").update(JSON.stringify({ harnessId: request.harnessId, action: "upgrade", installation: request.installation, expectedInstallationFingerprint: request.expectedInstallationFingerprint })).digest("hex");
+    const existing = () => { const prior = this.storage.db.prepare("SELECT id,fingerprint FROM management_jobs WHERE command_id=?").get(request.commandId);
+      if (!prior) return null; if (prior.fingerprint !== fingerprint || typeof prior.id !== "string") throw new ManagementError("COMMAND_CONFLICT", "management command already used different input"); return this.readJob(prior.id); };
+    const prior = existing(); if (prior) return prior;
+    this.pruneUpgrades();
+    const entry = this.preparedUpgrades.get(request.expectedInstallationFingerprint);
+    if (entry === undefined || entry.harnessId !== request.harnessId || entry.ref !== request.installation) throw new ManagementError("INSTALL_CHECK_EXPIRED", "升级确认已过期或已经用过，请重新打开升级确认。");
+    const observation = this.observation(request.harnessId, request.installation, "upgrade"), target = await this.targetOf(observation); this.admission();
+    if (target.fingerprint !== entry.prepared.target.fingerprint) throw new ManagementError("INSTALLATION_CHANGED", "这份安装在确认之后有了变化，没有升级。请重新打开升级确认。");
+    const again = existing(); if (again) return again;
+    if (this.storage.db.prepare("SELECT id FROM management_commands WHERE id=?").get(request.commandId)) throw new ManagementError("COMMAND_CONFLICT", "management command identity already used by cancellation");
+    if (this.storage.db.prepare("SELECT id FROM management_jobs WHERE harness_id=? AND status NOT IN('completed','cancelled','failed','unknown')").get(request.harnessId)) throw new ManagementError("MANAGEMENT_BUSY", "this Harness already has an active installation job");
+    const queued = this.storage.db.prepare("SELECT count(*) AS n FROM management_jobs WHERE status='queued'").get()?.n;
+    if (typeof queued !== "number" || queued >= 8 || this.storage.db.prepare("SELECT count(*) AS n FROM management_jobs").get()?.n === 2048) throw new ManagementError("QUEUE_LIMIT", "installation job queue or storage budget exhausted");
+    if (entry.prepared.runtime !== null && !entry.prepared.runtime.satisfied) throw new ManagementError("RUNTIME_INCOMPATIBLE", "这份安装用的 Node.js 不满足新版本的要求，没有升级。");
+    const id = "management-" + randomUUID(), parent = join(this.storage.root, "install-jobs"); mkdirSync(parent, { recursive: true, mode: 0o700 }); managementIdentity(parent, true);
+    const directory = join(parent, id); renameSync(entry.directory, directory); managementIdentity(directory, true); this.preparedUpgrades.delete(request.expectedInstallationFingerprint);
+    const script = entry.prepared.script === null ? null : { ...entry.prepared.script, path: join(directory, basename(entry.prepared.script.path)) };
+    const prepared: PreparedUpgrade = { ...entry.prepared, script, args: script === null ? entry.prepared.args : entry.prepared.args.map(arg => arg === entry.prepared.script!.path ? script.path : arg) };
+    const time = this.now(), job: InstallationJobView = { id, harnessId: target.harnessId, controlId: target.controlId, action: "upgrade", status: "queued", phase: "queued", cancelRequested: false, createdAt: time, updatedAt: time,
+      resolvedVersion: prepared.version, installationId: null, error: null, logCursor: 0,
+      native: { channel: target.channel, location: this.shown(target.entry), beforeVersion: target.version, actualVersion: null, dispatched: false, configurationPreserved: null,
+        installation: { label: target.label, role: target.role, kind: prepared.kind, command: this.shown(prepared.command), dependencies: prepared.dependencies, shellChanges: [], configChanges: [], blocked: [] } } };
+    parseManagementJob(job); parseUpgradeRequest({ ...prepared, fingerprint: request.expectedInstallationFingerprint });
+    this.storage.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.storage.db.prepare("INSERT INTO management_jobs(id,harness_id,status,command_id,fingerprint,expected_revision,view_json) VALUES(?,?,?,?,?,?,?)").run(id, job.harnessId, job.status, request.commandId, fingerprint, this.defaultRevision(job.harnessId), JSON.stringify(job));
+      this.storage.db.prepare("INSERT INTO management_installation_upgrades(job_id,request_json) VALUES(?,?)").run(id, JSON.stringify({ ...prepared, fingerprint: request.expectedInstallationFingerprint }));
+      this.storage.db.exec("COMMIT");
+    } catch (error) { this.storage.db.exec("ROLLBACK"); renameSync(directory, entry.directory); throw error; }
+    this.schedule(); return job;
+  }
+  private upgradeFacts(id: string, patch: Partial<InstallationUpgradeFacts>, native: Partial<NativeJobFacts> = {}): void {
+    const current = this.readJob(id); if (!current.native?.installation) throw new ManagementError("INVALID_DATA", "installation upgrade facts are missing");
+    this.saveJob({ ...current, native: { ...current.native, ...native, installation: { ...current.native.installation, ...patch } }, updatedAt: this.now() });
+  }
+  private storedUpgrade(id: string): ReturnType<typeof parseUpgradeRequest> {
+    const row = this.storage.db.prepare("SELECT request_json FROM management_installation_upgrades WHERE job_id=?").get(id);
+    return parseUpgradeRequest(json(row?.request_json));
+  }
+  /**
+   * Runs one installation upgrade (ADR-044). Everything that changes nothing comes first: the installation must be the one
+   * confirmed; services running from it, HarnessHub conversations in a Turn on it and, for the installation this Gateway
+   * runs, other HarnessHub processes refuse it. Then the version is read, idle kept processes running it close, and the
+   * prepared upgrade runs through its channel (Homebrew checks its plan again first); the version is read again after.
+   * Nothing is retried or rolled back.
+   */
+  private async runInstallationUpgradeJob(job: InstallationJobView): Promise<void> {
+    const request = this.storedUpgrade(job.id), target = request.target, facts = job.native?.installation;
+    if (this.upgrader === null || this.removal === null || facts === undefined) { this.phase(job.id, "failed", { error: { code: "UNSUPPORTED_UPGRADE", message: "这里不提供升级。" } }); return; }
+    if (target.harnessId !== job.harnessId) throw new ManagementError("INVALID_DATA", "installation target is not owned by this job");
+    const upgrader = this.upgrader, removal = this.removal, controller = new AbortController(), active = { id: job.id, controller, timedOut: false }; this.active = active;
+    const homebrew = target.channel === "brew-formula" || target.channel === "brew-cask";
+    const timer = setTimeout(() => { active.timedOut = true; controller.abort(); }, this.options.runTimeoutMs === undefined && homebrew ? HOMEBREW_UPGRADE_MS : this.timeout);
+    let stage: string | undefined, identity: ReturnType<typeof managementIdentity> | undefined;
+    let dispatched = false, ran = false, verified = false, quiescent = true, lock: ReturnType<NativeInstallationLocks["write"]> | undefined;
+    const owned = () => { this.own(); if (controller.signal.aborted) throw new ManagementError("CANCELLED", "upgrade was cancelled"); if (!stage || !identity || !sameManagementIdentity(identity, managementIdentity(stage, true))) throw new ManagementError("OWNERSHIP_LOST", "upgrade directory changed"); lock?.assertOwned(); };
+    const note = (text: string) => this.log(job.id, "system", this.shown(text));
+    try {
+      stage = await realpath(await mkdtemp(join(this.storage.root, "upgrade-job-"))); identity = managementIdentity(stage, true);
+      const context: ManagementInstallContext = { stage, signal: controller.signal, assertOwned: owned, log: (stream, text) => this.log(job.id, stream, this.shown(text)) };
+      this.phase(job.id, "resolving");
+      const current = this.installations.get(job.harnessId)?.find(item => item.ref === target.ref);
+      if (current === undefined || (await this.targetOf(current)).fingerprint !== target.fingerprint) throw new ManagementError("INSTALLATION_CHANGED", "这份安装在确认之后有了变化，没有升级。请重新打开升级确认。");
+      owned(); const usage = await removal.usage(target, context); owned();
+      if (usage.services.length) throw new ManagementError("SERVICE_RUNNING", "这份安装有后台服务 " + usage.services.map(item => item.label).join("、") + " 在运行，没有升级。请先在终端停止它们，或用“升级 Harness”。");
+      const users = usage.own.length ? this.users?.list(job.harnessId) ?? [] : [], busy = users.filter(item => item.busy).length;
+      if (busy) throw new ManagementError("HARNESS_BUSY", "有 " + busy + " 个 HarnessHub 对话正在使用这份安装（正在回复或等你处理），等它们结束或停止后再升级。");
+      if (target.active) {
+        const others = await this.nativeLocks.users(job.harnessId);
+        if (others.live.length) throw new ManagementError("HARNESS_BUSY", "另一个 HarnessHub 进程（进程 " + others.live.slice(0, 4).join("、") + "）正在使用这个程序，等它结束后再升级。");
+      }
+      const left = [...usage.processes, ...usage.resident];
+      if (left.length) note("这些程序不会被关闭，继续使用旧版本，重开后才用新版本：" + left.slice(0, 12).map(item => item.name + "（进程 " + item.pid + "）").join("、") + "。");
+      const before = await upgrader.version(target, context); owned();
+      this.upgradeFacts(job.id, {}, { beforeVersion: before });
+      note("升级前：" + target.label + " " + (before ?? "版本读不出") + "。运行 " + request.command + "。");
+      this.phase(job.id, "installing");
+      if (users.length) {
+        const closed = this.users === null ? 0 : await this.users.closeIdle(job.harnessId); owned();
+        if (closed) { this.upgradeFacts(job.id, {}, { closedConversations: closed }); note("关闭了 " + closed + " 个对话保留的进程，它们下次发消息时会重新连接。"); }
+      }
+      if (target.active) {
+        lock = this.nativeLocks.write(job.harnessId, job.id);
+        if (lock.cleared.length) { this.upgradeFacts(job.id, {}, { clearedRecords: lock.cleared.length }); note("清除了 " + lock.cleared.length + " 条已结束的 HarnessHub 进程留下的使用记录。"); }
+      }
+      const outcome = await upgrader.run(request, { ...context, beginMutation: () => { owned(); if (dispatched) return; this.upgradeFacts(job.id, {}, { dispatched: true }); dispatched = true; } }); owned(); ran = true;
+      const shown = { shellChanges: outcome.facts.shellChanges.map(change => ({ file: this.shown(change.file), added: change.added.map(line => this.redactor(this.shown(line))), removed: change.removed.map(line => this.redactor(this.shown(line))) })),
+        configChanges: outcome.facts.configChanges.map(change => ({ file: this.shown(change.file), keys: change.keys })), blocked: outcome.facts.blocked.map(path => this.shown(path)) };
+      this.upgradeFacts(job.id, shown);
+      for (const change of shown.shellChanges) note("更新程序改了 " + change.file + "：加了 " + change.added.length + " 行，删了 " + change.removed.length + " 行。");
+      for (const change of shown.configChanges) note("更新程序改了 " + change.file + " 的 " + change.keys.map(key => key.path).join("、") + "。");
+      for (const path of shown.blocked) note("更新程序尝试写入 " + path + "，已被阻止。");
+      this.phase(job.id, "verifying");
+      const after = await upgrader.version(target, context); owned();
+      this.upgradeFacts(job.id, {}, { actualVersion: after });
+      if (outcome.exitCode !== 0) throw new ManagementError("UPGRADE_FAILED", "升级程序没有成功结束" + (shown.blocked.length ? "（它尝试写入 " + shown.blocked.join("、") + "，已被阻止）" : "") + "，现在的版本是 " + (after ?? "读不出") + "。没有重试。");
+      if (after === null) throw new ManagementError("UPGRADE_VERSION_UNKNOWN", "升级结束了，但读不出这份安装现在的版本。");
+      if (request.kind === "version" && after !== request.version) throw new ManagementError("UPGRADE_VERSION_MISMATCH", "升级结束了，但这份安装现在是 " + after + "，不是确认的 " + request.version + "。没有重试。");
+      verified = true; this.upgradeFacts(job.id, {}, { configurationPreserved: true });
+      const verification = target.role === "adapter" ? adapterVersionVerification(job.harnessId, after) : versionVerification(job.harnessId, after, null);
+      if (verification?.state === "unverified") note("这个版本还不是 HarnessHub 用真实程序验证过的版本（验证过的是 " + (target.role === "adapter" ? "适配器 " + verification.adapter : verification.program) + "）。仍然可以使用，部分能力可能不同。");
+      note(before === after ? "已是最新：" + target.label + " " + after + "。" : "已核实：" + target.label + " " + (before ?? "原版本") + " → " + after + "。");
+      this.phase(job.id, "completed", { resolvedVersion: after });
+      this.updates.delete(target.ref); this.systemVersions.delete(job.harnessId); this.programVersions.delete(job.harnessId); this.nativePlans.delete(job.harnessId + ":" + job.controlId);
+    } catch (error) {
+      this.own(); const failure = error instanceof ManagementError ? error : new ManagementError("UPGRADE_FAILED", "upgrade did not finish");
+      quiescent = failure.code !== "CLEANUP_FAILED";
+      // The updater's own result is known once it ran and the version was read again; an interruption while it ran leaves it unknown.
+      const known = ran && ["UPGRADE_FAILED", "UPGRADE_VERSION_UNKNOWN", "UPGRADE_VERSION_MISMATCH"].includes(failure.code);
+      const status = known ? "failed" : dispatched || !quiescent || failure.code === "OWNERSHIP_LOST" ? "unknown" : controller.signal.aborted ? "cancelled" : "failed";
+      this.phase(job.id, status, { error: { code: active.timedOut ? "INSTALL_TIMEOUT" : failure.code, message: this.redactor(this.shown(failure.message)) } });
+      if (ran) { this.updates.delete(target.ref); this.systemVersions.delete(job.harnessId); this.programVersions.delete(job.harnessId); }
+    } finally {
+      clearTimeout(timer); this.active = null;
+      lock?.release(verified || !dispatched && quiescent);
+      if (quiescent && stage && identity && sameManagementIdentity(identity, managementIdentity(stage, true))) await rm(stage, { recursive: true, force: true });
+      if (quiescent) rmSync(join(this.storage.root, "install-jobs", job.id), { recursive: true, force: true });
+    }
+  }
+  /**
    * What upgrading this Harness would touch, for the user's confirmation (ADR-043): the services restarted, resident and
    * other programs left on the old version, HarnessHub's conversations using it, other HarnessHub processes using it, and
    * usage records left over. Reads only; the upgrade checks again before changing anything.
@@ -603,7 +846,7 @@ export class LocalHarnessManagement {
   }
   private payloadBudgets(): void {
     for (const [table, column, size, maximum] of [["management_jobs", "view_json", 65536, 2048], ["management_installations", "record_json", 65536, 2048],
-      ["management_updates", "view_json", 65536, 256], ["management_logs", "entry_json", 32768, 65536], ["management_native_plans", "plan_json", 32768, 2048], ["management_installation_targets", "target_json", 32768, 2048], ["management_install_requests", "request_json", 32768, 2048]] as const) {
+      ["management_updates", "view_json", 65536, 256], ["management_logs", "entry_json", 32768, 65536], ["management_native_plans", "plan_json", 32768, 2048], ["management_installation_targets", "target_json", 32768, 2048], ["management_install_requests", "request_json", 32768, 2048], ["management_installation_upgrades", "request_json", 32768, 2048]] as const) {
       const total = this.storage.db.prepare("SELECT count(*) AS count,coalesce(sum(length(CAST(" + column + " AS BLOB))),0) AS bytes FROM " + table).get();
       if (!total || typeof total.count !== "number" || total.count > maximum || typeof total.bytes !== "number" || total.bytes > 32 * 1024 * 1024)
         throw new ManagementError("STORAGE_LIMIT", "management storage exceeded its row or byte budget");
@@ -651,9 +894,18 @@ export class LocalHarnessManagement {
       const job = this.readJob(row.job_id);
       if (job.native?.official === undefined || job.harnessId !== request.harnessId || nativeIds.has(job.id) || targetIds.has(job.id)) throw new ManagementError("INVALID_DATA", "official install job and request disagree"); requestIds.add(job.id);
     }
+    const upgradeIds = new Set<string>();
+    for (const row of this.storage.db.prepare("SELECT job_id,request_json FROM management_installation_upgrades").all()) {
+      const request = parseUpgradeRequest(json(row.request_json));
+      if (typeof row.job_id !== "string" || !ids.has(row.job_id)) throw new ManagementError("INVALID_DATA", "orphan installation upgrade request");
+      const job = this.readJob(row.job_id);
+      if (job.native?.installation === undefined || job.harnessId !== request.target.harnessId || nativeIds.has(job.id) || targetIds.has(job.id) || requestIds.has(job.id))
+        throw new ManagementError("INVALID_DATA", "installation upgrade job and request disagree"); upgradeIds.add(job.id);
+    }
     for (const id of ids) { const job = this.readJob(id);
-      const frozen = job.action === "uninstall" ? targetIds.has(id) : job.native?.official !== undefined ? requestIds.has(id) : !job.native || nativeIds.has(id);
-      if (!frozen) throw new ManagementError("INVALID_DATA", job.action === "uninstall" ? "uninstall job has no frozen target" : job.native?.official !== undefined ? "official install job has no frozen request" : "native job has no frozen plan"); }
+      const frozen = job.action === "uninstall" ? targetIds.has(id) : job.native?.official !== undefined ? requestIds.has(id) : job.native?.installation !== undefined ? upgradeIds.has(id) : !job.native || nativeIds.has(id);
+      if (!frozen) throw new ManagementError("INVALID_DATA", job.action === "uninstall" ? "uninstall job has no frozen target" : job.native?.official !== undefined ? "official install job has no frozen request"
+        : job.native?.installation !== undefined ? "installation upgrade job has no frozen request" : "native job has no frozen plan"); }
     for (const row of this.storage.db.prepare("SELECT id,harness_id,control_id,record_json FROM management_installations").all()) {
       const record = parseInstallationRecord(json(row.record_json));
       if (record.id !== row.id || record.harnessId !== row.harness_id || record.controlId !== row.control_id) throw new ManagementError("INVALID_DATA", "installation record row identity disagrees");
@@ -787,6 +1039,7 @@ export class LocalHarnessManagement {
     const job = this.readJob(id);
     if (job.action === "uninstall") { await this.runUninstallJob(job); return; }
     if (job.native?.official !== undefined) { await this.runOfficialInstallJob(job); return; }
+    if (job.native?.installation !== undefined) { await this.runInstallationUpgradeJob(job); return; }
     const recipe = this.recipe(job.harnessId, job.controlId);
     if (!recipe) { this.phase(id, "failed", { error: { code: "RECIPE_CHANGED", message: "installation recipe is unavailable" } }); return; }
     if (job.native !== undefined) { await this.runNativeJob(job, recipe); return; }
@@ -956,9 +1209,9 @@ export class LocalHarnessManagement {
   /** Explicit inspection verifies the current program without replaying an uncertain mutation. */
   async inspectNativeResult(id: string): Promise<InstallationJobView> {
     this.admission(); const job = this.readJob(id);
-    const official = job.native?.official !== undefined;
-    if (job.status !== "unknown" || !job.native || (job.action === "uninstall" ? !this.removal : official ? !this.officialInstaller : !this.native) || job.error?.code === "CLEANUP_FAILED") throw new ManagementError("INSPECTION_UNAVAILABLE", "this native result cannot yet be inspected safely");
-    const operation = job.action === "uninstall" ? this.inspectUninstallOwned(job) : official ? this.inspectOfficialInstallOwned(job) : this.inspectNativeOwned(job); this.checks.add(operation);
+    const official = job.native?.official !== undefined, upgrade = job.native?.installation !== undefined;
+    if (job.status !== "unknown" || !job.native || (job.action === "uninstall" ? !this.removal : official ? !this.officialInstaller : upgrade ? !this.upgrader : !this.native) || job.error?.code === "CLEANUP_FAILED") throw new ManagementError("INSPECTION_UNAVAILABLE", "this native result cannot yet be inspected safely");
+    const operation = job.action === "uninstall" ? this.inspectUninstallOwned(job) : official ? this.inspectOfficialInstallOwned(job) : upgrade ? this.inspectUpgradeOwned(job) : this.inspectNativeOwned(job); this.checks.add(operation);
     void operation.then(() => this.checks.delete(operation), () => this.checks.delete(operation)); return operation;
   }
   private async inspectNativeOwned(job: InstallationJobView): Promise<InstallationJobView> {
@@ -979,6 +1232,18 @@ export class LocalHarnessManagement {
     this.saveJob({ ...current, status: "failed", phase: "failed", updatedAt: this.now(), native: { ...current.native, actualVersion: found?.version ?? null, official: { ...current.native.official, installed: found !== null } },
       error: { code: "NATIVE_RESULT_INSPECTED", message: found === null ? "已核实：没有在官网渠道里找到它。原任务没有完成安装，没有重跑。" : "已核实：" + request.command + (found.version ? " " + found.version : "") + " 装在官网渠道里。原任务未确认为完成，没有重跑。" } });
     this.systemVersions.delete(job.harnessId); return this.readJob(job.id);
+  }
+  /** The version an installation upgrade of unknown result left; settles the job as failed with what was found, never reruns it. */
+  private async inspectUpgradeOwned(job: InstallationJobView): Promise<InstallationJobView> {
+    const target = this.storedUpgrade(job.id).target;
+    const lock = target.active && job.native?.dispatched ? this.nativeLocks.write(job.harnessId, job.id, true) : undefined; let known = false;
+    try {
+      const version = await this.nativeInspection(context => this.upgrader!.version(target, context)); lock?.assertOwned(); this.own();
+      const current = this.readJob(job.id); if (current.status !== "unknown" || !current.native?.installation) throw new ManagementError("DEFAULT_CONFLICT", "upgrade result changed during inspection");
+      this.saveJob({ ...current, status: "failed", phase: "failed", updatedAt: this.now(), native: { ...current.native, actualVersion: version },
+        error: { code: "NATIVE_RESULT_INSPECTED", message: version === null ? "读不出这份安装现在的版本。原任务未确认为完成，没有重跑。" : "已核实：这份安装现在是 " + version + "。原任务未确认为完成，没有重跑。" } });
+      known = true; this.updates.delete(target.ref); this.systemVersions.delete(job.harnessId); this.programVersions.delete(job.harnessId); return this.readJob(job.id);
+    } finally { lock?.release(known); }
   }
   /** Whether an uninstall of unknown result left the installation's files; settles the job as failed with what was found, never reruns it. */
   private async inspectUninstallOwned(job: InstallationJobView): Promise<InstallationJobView> {
@@ -1043,9 +1308,14 @@ export class LocalHarnessManagement {
           reason: nativePlan.reason } }) };
     });
   }
-  checkUpdates(harnessIds: readonly string[] = [...new Set(this.recipes.map(item => item.harnessId))]): Promise<readonly HarnessManagementView[]> {
+  /**
+   * Checks the latest version of each Harness's control program and of each npm and Homebrew installation (ADR-044) of
+   * `harnessIds`, or of every one when none are given. Network reads only; installation results stay in memory.
+   */
+  checkUpdates(harnessIds?: readonly string[]): Promise<readonly HarnessManagementView[]> {
     this.admission(); if (this.checks.size >= 4) return Promise.reject(new ManagementError("CHECK_LIMIT", "too many update checks are already active"));
-    const operation = this.checkOwned(harnessIds); this.checks.add(operation); void operation.then(() => this.checks.delete(operation), () => this.checks.delete(operation)); return operation;
+    const operation = this.checkOwned(harnessIds ?? [...new Set(this.recipes.map(item => item.harnessId))]).then(async views => { await this.checkInstallations(harnessIds ?? null); return views; });
+    this.checks.add(operation); void operation.then(() => this.checks.delete(operation), () => this.checks.delete(operation)); return operation;
   }
   /** Read the selected local program's version without downloading releases or changing its configuration. */
   refreshSystemVersions(): Promise<readonly HarnessManagementView[]> {

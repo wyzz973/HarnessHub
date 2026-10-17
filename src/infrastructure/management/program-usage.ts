@@ -149,10 +149,11 @@ export interface RootService { readonly label: string; readonly pid: number; rea
  * The programs running from any of `roots`, read once and never signalled (ADR-043, ADR-044): the user's launchd jobs whose
  * program or first arguments lie there, resident programs `isResident` recognizes by their command line, and every other
  * process naming one of the roots or having one of `programs` open (a native program started by name names no path).
- * Programs this process started are HarnessHub's own and left out.
+ * Programs this process started are HarnessHub's own: they are never listed with the others, and `own` names those of
+ * them running from the roots, such as a conversation's native process (ADR-044).
  */
 export async function inspectRootsUsage(roots: readonly string[], programs: readonly string[], isResident: (command: string) => { readonly stop: string | null } | null, host: ProgramHost, context: ManagementInstallContext): Promise<{
-  readonly servicesKnown: boolean; readonly services: readonly RootService[]; readonly resident: readonly ProgramEntry[]; readonly processes: readonly ProgramEntry[] }> {
+  readonly servicesKnown: boolean; readonly services: readonly RootService[]; readonly resident: readonly ProgramEntry[]; readonly processes: readonly ProgramEntry[]; readonly own: readonly ProgramEntry[] }> {
   const table = parseProcessTable(await host.processes(context));
   if (table === null) throw new ManagementError("PROCESS_INSPECTION_FAILED", "the process table could not be read");
   const children = new Map<number, number[]>();
@@ -178,9 +179,10 @@ export async function inspectRootsUsage(roots: readonly string[], programs: read
     }
   }
   const servicePids = new Set(services.map(service => service.pid));
-  const resident: ProgramEntry[] = [], processes: ProgramEntry[] = [];
+  const resident: ProgramEntry[] = [], processes: ProgramEntry[] = [], mine: ProgramEntry[] = [];
   for (const row of table) {
-    if (own.has(row.pid) || servicePids.has(row.pid)) continue;
+    if (own.has(row.pid)) { if (row.pid !== host.self && roots.some(root => mentions(row.command, root))) mine.push({ pid: row.pid, name: programName(row.command) }); continue; }
+    if (servicePids.has(row.pid)) continue;
     const name = programName(row.command);
     const resident_ = isResident(row.command);
     if (resident_ !== null) { resident.push({ pid: row.pid, name, ...(resident_.stop === null ? {} : { stop: resident_.stop }) }); continue; }
@@ -189,14 +191,14 @@ export async function inspectRootsUsage(roots: readonly string[], programs: read
   const existing: string[] = [];
   for (const path of programs) if (isAbsolute(path) && await resolved(path) !== null) existing.push(path);
   if (existing.length) {
-    const listed = new Set([...resident, ...processes].map(entry => entry.pid)), rows = new Map(table.map(row => [row.pid, row]));
+    const listed = new Set([...resident, ...processes, ...mine].map(entry => entry.pid)), rows = new Map(table.map(row => [row.pid, row]));
     for (const pid of parseOpeners(await host.openers(existing, context))) {
       const row = rows.get(pid);
-      if (row === undefined || own.has(pid) || servicePids.has(pid) || listed.has(pid)) continue;
-      listed.add(pid); processes.push({ pid, name: programName(row.command) });
+      if (row === undefined || pid === host.self || servicePids.has(pid) || listed.has(pid)) continue;
+      listed.add(pid); (own.has(pid) ? mine : processes).push({ pid, name: programName(row.command) });
     }
   }
-  return { servicesKnown: host.platform === "darwin", services, resident: resident.slice(0, 64), processes: processes.slice(0, 64) };
+  return { servicesKnown: host.platform === "darwin", services, resident: resident.slice(0, 64), processes: processes.slice(0, 64), own: mine.slice(0, 64) };
 }
 /**
  * Restarts one running service with `launchctl kickstart -k` and waits until it runs again (ADR-043); resolves null,

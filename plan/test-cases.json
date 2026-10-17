@@ -8975,6 +8975,183 @@
       "evidence": null
     },
     {
+      "id": "G011-UG1",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "planned_file": "tests/unit/installation-upgrade.test.ts",
+      "scenario": "按 Homebrew 预演输出读出升级计划",
+      "expected": "按 Homebrew 7.0.9 的真实输出格式，读出一并升级、新装和依赖者升级的包及前后版本；tap 警告和清单下载行不算包；标为弃用或停用的包单独列出；共享运行时（node、python 等）被单独指出",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UG2",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "planned_file": "tests/unit/installation-upgrade.test.ts",
+      "scenario": "逐份升级的请求、冻结的升级请求与任务事实",
+      "expected": "升级请求只带安装引用和确认的指纹，带配方字段被拒；冻结的请求逐字段校验（重跑脚本必须有副本、摘要和解释器；路径必须是绝对路径；环境变量名受限；不接受只给终端命令的方式）；完成的任务必须读到新版本且与任务版本一致，只有升级任务带升级事实",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UG3",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "planned_file": "tests/unit/installation-upgrade.test.ts",
+      "scenario": "每种脚本安装登记自己的更新方式",
+      "expected": "Claude Code 与 Cursor 用产品自己的更新命令；Codex 与 OpenCode 重新运行官方脚本；Hermes 只给终端命令并写明它会 stash、迁移配置、重启网关；适配器版本按适配器的验证范围判断",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UG4",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "planned_file": "tests/unit/installation-upgrade.test.ts",
+      "scenario": "安装的版本按渠道记录读取，Homebrew 沿用用户的家目录、设置和本地记录",
+      "expected": "npm 读包的 package.json，Homebrew 和带版本目录的脚本读命令解析到的版本目录；适配器的脚本布局不当作产品；Homebrew 运行环境用真实 HOME、用户的 HOMEBREW_* 设置和缓存，并强制不自动 update、cleanup、autoremove",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UG5",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "planned_file": "tests/unit/program-usage.test.ts",
+      "scenario": "HarnessHub 自己运行这份安装的进程单独列出",
+      "expected": "本进程后代中命令行指向安装目录、或打开了安装程序文件的进程列为 own，不与其他程序混列；本进程自己不列",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UG6",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/installation-upgrade.test.ts",
+      "scenario": "经正式入口把 npm 安装升级到确认的精确版本",
+      "expected": "确认显示现版本、目标版本、实际运行的命令和可写前缀；用前缀的 npm 从本机假仓库装入精确版本，任务记录前后版本；同一确认不能用第二次；已是最新时如实说明；确认后安装有变化时返回 409 且不升级",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UG7",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/installation-upgrade.test.ts",
+      "scenario": "会自更新的脚本安装运行产品自己的更新命令",
+      "expected": "claude update 在真实沙箱里只能写安装目录和 ~/.claude.json；写入 ~/.zshrc 被阻止并记录；设置只记录变化的键；任务记录前后版本；在最新版本上再运行显示“已是最新”",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UG8",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/installation-upgrade.test.ts",
+      "scenario": "没有更新命令的脚本安装重新运行官方脚本",
+      "expected": "确认显示脚本来源、SHA-256 和实际运行的命令（带 --no-modify-path）；确认后被改动的副本不运行且什么都不改；正常时装入新版本并记录前后版本",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UG9",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/installation-upgrade.test.ts",
+      "scenario": "Homebrew 安装按本地记录升级，预演列出一并升级的包",
+      "expected": "检查更新读 Homebrew 本地记录；确认列出一并升级的包、共享运行时、本地记录日期、预演说明和弃用提示；预演改动了已装的包时停止（无效样例）；确认后计划变化时任务不升级；正常时升级并核实新版本",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UG10",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/installation-upgrade.test.ts",
+      "scenario": "逐份升级的使用者、服务、结果核实、终端方式与 ADR-043 的分工",
+      "expected": "HarnessHub 自己的进程在运行这份安装时，正在回复的对话阻止升级，空闲保留进程先关闭；没有自己的进程时不关闭对话；后台服务在运行时拒绝；结果未知时核实只读版本、不重跑；Hermes 只给终端命令并提示本地改动；声明服务且控制入口在这份安装里的产品由 ADR-043 的升级负责",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G054-UG1",
+      "task": "G054",
+      "requirements": [
+        "R01",
+        "R22"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "e2e",
+      "planned_file": "tests/browser/web.browser.ts",
+      "scenario": "逐份升级的按钮与确认框",
+      "expected": "每份安装显示上次检查的结果；正在回复的对话阻止升级并可打开该对话；否则显示前后版本、实际运行的命令、可写位置、仍在运行的程序、未验证提示和“当前使用”说明；提交的内容正好是确认的安装和指纹；完成摘要写出前后版本；Hermes 只显示终端命令、它会做的事和本地改动，没有确认按钮；无页面错误",
+      "status": "planned",
+      "evidence": null
+    },
+    {
       "id": "G011-UP9",
       "task": "G011",
       "requirements": [

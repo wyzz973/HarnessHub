@@ -46,10 +46,10 @@ async function harnesses(f: Awaited<ReturnType<typeof fixture>>, installations: 
 test("G012-OC3 the Harness list counts only official installations, lists each one without its path, and notes a non-official one on PATH (ADR-044)", { timeout: 30000 }, async t => {
   const f = await fixture(t), list = await harnesses(f, "official");
   const pi = list.find(item => item.id === "pi")!, dsh = list.find(item => item.id === "dsh")!;
-  // Pi: the npm installation is used although the source checkout comes first on PATH.
+  // Pi: the npm installation is used although the source checkout comes first on PATH. This fixture maintains nothing, so it offers no upgrade.
   assert.equal(pi.installed, true);
   assert.deepEqual(pi.installations.map(({ ref, ...rest }) => { assert.match(ref, /^[a-f0-9]{64}$/u); return rest; }),
-    [{ channel: "npm", label: "npm 全局（nvm v26.0.0）", command: "pi", version: "1.3.0", role: "product", active: true, maintained: true, canUninstall: true }]);
+    [{ channel: "npm", label: "npm 全局（nvm v26.0.0）", command: "pi", version: "1.3.0", role: "product", active: true, maintained: true, canUninstall: true, upgrade: null, latest: null }]);
   assert.deepEqual(pi.unofficial, { command: "pi", onPath: true, pathDefault: true });
   assert.equal(pi.controls.find(control => control.id === "pi-native")?.available, true);
   // DeepSeek Harness: only a source checkout, so it is not installed; its official way to install is offered.

@@ -144,7 +144,7 @@ test("legacy management v1 migration preserves job history and rolls back an inv
   storage.db.prepare("INSERT INTO management_jobs VALUES(?,?,?,?,?,?,?)").run(id, "fixture", "failed", "old-command", "f".repeat(64), 0, JSON.stringify(view));
   storage.db.exec("DROP TABLE management_native_plans; PRAGMA user_version=1"); storage.db.close();
   const migrated = managementStorage(root, 2);
-  assert.equal(migrated.db.prepare("PRAGMA user_version").get()?.user_version, 5, "v3 only marks the job facts of ADR-043, and v4 and v5 add the uninstall targets and install requests of ADR-044; the rows stay as they were");
+  assert.equal(migrated.db.prepare("PRAGMA user_version").get()?.user_version, 6, "v3 only marks the job facts of ADR-043, and v4, v5 and v6 add the uninstall targets, install requests and installation upgrades of ADR-044; the rows stay as they were");
   assert.deepEqual(JSON.parse(String(migrated.db.prepare("SELECT view_json FROM management_jobs WHERE id=?").get(id)?.view_json)), view);
   migrated.db.exec("DROP TABLE management_native_plans; CREATE VIEW management_native_plans AS SELECT id FROM management_jobs; PRAGMA user_version=1"); migrated.db.close();
   assert.throws(() => managementStorage(root, 3));
@@ -286,7 +286,8 @@ test("G011-UP6 the compatibility check's sandbox writes only its stage and reach
 test("G011-UP7 the documented v3 to v2 downgrade keeps every job and leaves only the facts a v2 reader accepts", async t => {
   const root = await mkdtemp(join(tmpdir(), "native-downgrade-test-")); t.after(() => rm(root, { recursive: true, force: true }));
   const storage = managementStorage(root, 1);
-  // A v5 database goes back to v4 and then v3 first (ADR-044); this test starts from there.
+  // A v6 database goes back to v5, v4 and then v3 first (ADR-044); this test starts from there.
+  storage.db.exec(await readFile(new URL("../../../tools/management-v6-to-v5.sql", import.meta.url), "utf8"));
   storage.db.exec(await readFile(new URL("../../../tools/management-v5-to-v4.sql", import.meta.url), "utf8"));
   storage.db.exec(await readFile(new URL("../../../tools/management-v4-to-v3.sql", import.meta.url), "utf8"));
   assert.equal(storage.db.prepare("PRAGMA user_version").get()?.user_version, 3);
@@ -307,9 +308,9 @@ test("G011-UP7 the documented v3 to v2 downgrade keeps every job and leaves only
     assert.deepEqual(rows, [{ ...v3, native }, v2]);
     for (const row of rows) assert.deepEqual(Object.keys(row.native).sort(), ["actualVersion", "beforeVersion", "channel", "configurationPreserved", "dispatched", "location"]);
   } finally { db.close(); }
-  // And this build opens it again (as v5), with nothing lost that the downgrade kept.
+  // And this build opens it again (as v6), with nothing lost that the downgrade kept.
   const reopened = managementStorage(root, 2);
-  try { assert.equal(reopened.db.prepare("PRAGMA user_version").get()?.user_version, 5); assert.equal(reopened.db.prepare("SELECT count(*) AS n FROM management_jobs").get()?.n, 2); } finally { reopened.db.close(); }
+  try { assert.equal(reopened.db.prepare("PRAGMA user_version").get()?.user_version, 6); assert.equal(reopened.db.prepare("SELECT count(*) AS n FROM management_jobs").get()?.n, 2); } finally { reopened.db.close(); }
 });
 
 test("G011-UP8 a release whose Node.js range excludes the one that runs the program, or the one a restarted service starts, is said before confirming and refused before anything changes", { skip: process.platform !== "darwin" && "native upgrades need the macOS sandbox" }, async t => {

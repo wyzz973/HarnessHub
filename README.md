@@ -56,6 +56,11 @@ Web界面按用户确认的设计稿重写（[ADR-042](docs/decisions/0042-front
   - 确认框先显示来源和 SHA-256、实际运行的命令、可写位置、可能改动的 shell 启动文件，以及安装后终端里的命令指向哪一份。
   - 脚本在沙箱里只能写它的安装目录；npm 装入 PATH 上第一个 Node.js 的前缀，装的是确认时的精确版本。
   - 管理库升到 v5，降级先用 `tools/management-v5-to-v4.sql`。
+- 每份可维护的安装都可以单独升级（[验收记录](docs/verification/installation-upgrade-2026-10-17.md)）：
+  - npm 用该前缀自己的 npm 装入确认时的精确版本；Homebrew 按它的本地记录升级，先预演，把一并升级的包（含 node 这类共享运行时）列进确认框，预演改动了已装的包就停止。
+  - Claude Code、Cursor 的脚本安装运行产品自己的更新命令（“立即更新”），Codex、OpenCode 的脚本安装重新运行官方脚本；Hermes 只给终端命令 `hermes update --yes` 并说明它会做什么。
+  - 确认框显示现版本与目标、实际运行的命令、可写位置和仍在运行它的程序；正在回复的对话、这份安装上的后台服务会阻止升级。OpenClaw 当前使用的那份仍走上面的升级与重启流程。
+  - 管理库升到 v6，降级先用 `tools/management-v6-to-v5.sql`（会删除这些升级任务的记录）。
 
 原版OpenClaw2026.3.23-2、Codex0.162.1、OpenCode1.18.35、Pi0.85.1已通过本机真实模型回复；OpenClaw/Pi使用原生DeepSeek。Hermes Agent 0.12.0（官方安装方式）与 DeepSeek Harness（`dsh`，本机为源码构建 0.2.1-alpha.1，经发现清单的自定义入口接入）经各自内置 ACP 接入，已通过真实回复、跨 Hub 重启的原生恢复、思考与工具活动验收，见[ADR-031](docs/decisions/0031-hermes-and-deepseek-harness.md)与[验收记录](docs/verification/hermes-dsh-onboarding-2026-10-11.md)。Pi 与 DeepSeek Harness 的上述证据来自非官网安装，按 ADR-044 不再作为验收对象。Claude接入口绑定原Claude Code2.1.296及既有登录，账号周额度已用完。Cursor原安装已升级至2026.10.01-e373342，沿用本机登录、44项原生模型目录并通过独立短提示回复；原公共对话实测仍返回账号套餐升级提示，不能算该对话回复通过。Gemini0.62.0的个人登录被服务端停用，直连DeepSeek实际返回404（Google GenAI协议与DeepSeek接口不匹配），不能算回复通过。所有接入口版本与原程序版本分开解释，不把ACP适配器版本当原CLI版本。
 

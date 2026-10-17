@@ -1,4 +1,4 @@
-import { ManagementError, type HarnessManagementView, type InstallationJobStatus, type InstallationJobView, type InstallationLog, type InstallationTarget, type OfficialInstallFacts, type PreparedInstall, type ResolvedManagedControl, type NativeInstallPlan, type RuntimeRequirement, type ServiceRestartFact, type UninstallFacts } from "../../../contracts/management.js";
+import { ManagementError, type HarnessManagementView, type InstallationJobStatus, type InstallationJobView, type InstallationLog, type InstallationTarget, type OfficialInstallFacts, type PreparedInstall, type InstallationUpgradeFacts, type PreparedUpgrade, type ResolvedManagedControl, type NativeInstallPlan, type RuntimeRequirement, type ServiceRestartFact, type UninstallFacts } from "../../../contracts/management.js";
 import { installationJobId, installationRef, managementSlug, serviceLabel } from "./input.js";
 import { isAbsolute } from "node:path";
 
@@ -61,6 +61,18 @@ function officialFacts(value: unknown): OfficialInstallFacts {
       return { file: managementString(change.file, 1024), keys: change.keys.map(key => { const entry = managementObject(key, ["path", "value"]); return { path: managementString(entry.path, 256), value: entry.value === null ? null : managementString(entry.value, 256, true) }; }) }; }),
     blocked: texts(row.blocked, 16, 1024), installed: row.installed };
 }
+function changeLists(row: Record<string, unknown>): Pick<InstallationUpgradeFacts, "shellChanges" | "configChanges"> {
+  if (!Array.isArray(row.shellChanges) || row.shellChanges.length > 4 || !Array.isArray(row.configChanges) || row.configChanges.length > 4) throw new ManagementError("INVALID_DATA", "recorded changes are invalid");
+  return { shellChanges: (row.shellChanges as unknown[]).map(item => { const change = managementObject(item, ["file", "added", "removed"]); return { file: managementString(change.file, 1024), added: texts(change.added, 64), removed: texts(change.removed, 64) }; }),
+    configChanges: (row.configChanges as unknown[]).map(item => { const change = managementObject(item, ["file", "keys"]);
+      if (!Array.isArray(change.keys) || change.keys.length > 64) throw new ManagementError("INVALID_DATA", "recorded changes are invalid");
+      return { file: managementString(change.file, 1024), keys: change.keys.map(key => { const entry = managementObject(key, ["path", "value"]); return { path: managementString(entry.path, 256), value: entry.value === null ? null : managementString(entry.value, 256, true) }; }) }; }) };
+}
+function installationUpgradeFacts(value: unknown): InstallationUpgradeFacts {
+  const row = managementObject(value, ["label", "role", "kind", "command", "dependencies", "shellChanges", "configChanges", "blocked"]);
+  if (row.role !== "product" && row.role !== "adapter" || row.kind !== "version" && row.kind !== "self-update" && row.kind !== "rerun") throw new ManagementError("INVALID_DATA", "installation upgrade facts are invalid");
+  return { label: managementString(row.label, 256), role: row.role, kind: row.kind, command: managementString(row.command, 2048), dependencies: texts(row.dependencies, 64, 256), ...changeLists(row), blocked: texts(row.blocked, 16, 1024) };
+}
 export function parseManagementJob(value: unknown): InstallationJobView {
   const row = managementObject(value, ["id", "harnessId", "controlId", "action", "status", "phase", "cancelRequested", "createdAt", "updatedAt", "resolvedVersion", "installationId", "error", "logCursor", "native"]);
   const status = jobStatus(row.status), phase = managementString(row.phase, 32);
@@ -69,7 +81,7 @@ export function parseManagementJob(value: unknown): InstallationJobView {
   const resolvedVersion = row.resolvedVersion === null ? null : managementString(row.resolvedVersion, 128), installationId = row.installationId === null ? null : managementInstallationId(row.installationId), error = errorValue(row.error);
   let native: InstallationJobView["native"];
   if (row.native !== undefined) {
-    const value = managementObject(row.native, ["channel", "location", "beforeVersion", "actualVersion", "dispatched", "configurationPreserved", "restartServices", "closedConversations", "clearedRecords", "services", "configurationChangedByService", "uninstall", "official"]);
+    const value = managementObject(row.native, ["channel", "location", "beforeVersion", "actualVersion", "dispatched", "configurationPreserved", "restartServices", "closedConversations", "clearedRecords", "services", "configurationChangedByService", "uninstall", "official", "installation"]);
     if (typeof value.dispatched !== "boolean" || value.configurationPreserved !== null && typeof value.configurationPreserved !== "boolean") throw new ManagementError("INVALID_DATA", "native maintenance facts are invalid");
     if (value.restartServices !== undefined && (!Array.isArray(value.restartServices) || value.restartServices.length > 16 || value.restartServices.some(label => !serviceLabel(label)))
       || value.closedConversations !== undefined && managementInteger(value.closedConversations) > 1024 || value.clearedRecords !== undefined && managementInteger(value.clearedRecords) > 1024
@@ -82,7 +94,17 @@ export function parseManagementJob(value: unknown): InstallationJobView {
       ...(value.services === undefined ? {} : { services: (value.services as readonly unknown[]).map(serviceFact) }),
       ...(value.configurationChangedByService === undefined ? {} : { configurationChangedByService: value.configurationChangedByService as boolean }),
       ...(value.uninstall === undefined ? {} : { uninstall: uninstallFacts(value.uninstall) }),
-      ...(value.official === undefined ? {} : { official: officialFacts(value.official) }) };
+      ...(value.official === undefined ? {} : { official: officialFacts(value.official) }),
+      ...(value.installation === undefined ? {} : { installation: installationUpgradeFacts(value.installation) }) };
+  }
+  // An upgrade of one installation through its channel (ADR-044) publishes no private installation; it completes once the new version was read.
+  if (native?.installation !== undefined) {
+    if (row.action !== "upgrade" || installationId !== null || native.uninstall !== undefined || native.official !== undefined || native.restartServices !== undefined || native.services !== undefined
+        || status === "completed" && (error !== null || !native.dispatched || native.configurationPreserved !== true || native.actualVersion === null || resolvedVersion !== native.actualVersion)
+        || status === "queued" && (native.dispatched || error !== null))
+      throw new ManagementError("INVALID_DATA", "installation upgrade job facts are inconsistent");
+    return { id: installationJobId(row.id), harnessId: managementSlug(row.harnessId), controlId: managementSlug(row.controlId), action: "upgrade",
+      status, phase, cancelRequested: row.cancelRequested, createdAt: date(row.createdAt), updatedAt: date(row.updatedAt), resolvedVersion, installationId, error, logCursor: managementInteger(row.logCursor), native };
   }
   // An official install (ADR-044) publishes no private installation; it completes once the product was found in its channel.
   if (native?.official !== undefined) {
@@ -179,4 +201,25 @@ export function parseInstallRequest(value: unknown): PreparedInstall & { readonl
     args: texts(row.args, 8, 128), env: copied, writes: paths(row.writes), shellProfile: absolute(row.shellProfile, true), configFiles: paths(row.configFiles),
     package: row.package === null ? null : managementString(row.package, 214), version: row.version === null ? null : managementString(row.version, 128), prefix: absolute(row.prefix, true), npm: absolute(row.npm, true),
     entry: absolute(row.entry, false)!, command: managementString(row.command, 64), runtime: row.runtime === null ? null : runtimeRequirement(row.runtime), fingerprint: row.fingerprint };
+}
+/** A prepared installation upgrade as frozen with its job (management schema v6). */
+export function parseUpgradeRequest(value: unknown): PreparedUpgrade & { readonly fingerprint: string } {
+  const row = managementObject(value, ["target", "kind", "command", "executable", "args", "env", "writes", "shellProfile", "configFiles", "version", "dependencies", "script", "runtime", "fingerprint"]);
+  const absolute = (field: unknown): string => { const text = managementString(field); if (!isAbsolute(text)) throw new ManagementError("INVALID_DATA", "upgrade request paths must be absolute"); return text; };
+  if (row.kind !== "version" && row.kind !== "self-update" && row.kind !== "rerun" || typeof row.fingerprint !== "string" || !/^[a-f0-9]{64}$/u.test(row.fingerprint) || (row.kind === "rerun") !== (row.script !== null))
+    throw new ManagementError("INVALID_DATA", "upgrade request is inconsistent");
+  const env = managementObject(row.env, Object.keys(row.env !== null && typeof row.env === "object" ? row.env : {})), copied: Record<string, string> = {};
+  if (Object.keys(env).length > 24) throw new ManagementError("INVALID_DATA", "upgrade request environment is invalid");
+  for (const [key, item] of Object.entries(env)) { if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/u.test(key)) throw new ManagementError("INVALID_DATA", "upgrade request environment is invalid"); copied[key] = managementString(item, 4096, true); }
+  let script: PreparedUpgrade["script"] = null;
+  if (row.script !== null) {
+    const item = managementObject(row.script, ["path", "source", "sha256", "interpreter"]);
+    if (typeof item.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(item.sha256) || item.interpreter !== "bash" && item.interpreter !== "sh") throw new ManagementError("INVALID_DATA", "upgrade request script is invalid");
+    script = { path: absolute(item.path), source: managementString(item.source, 1024), sha256: item.sha256, interpreter: item.interpreter };
+  }
+  if (!Array.isArray(row.writes) || row.writes.length > 16 || !Array.isArray(row.configFiles) || row.configFiles.length > 8) throw new ManagementError("INVALID_DATA", "upgrade request paths are invalid");
+  return { target: parseInstallationTarget(row.target), kind: row.kind, command: managementString(row.command, 2048), executable: absolute(row.executable), args: texts(row.args, 16, 1024), env: copied,
+    writes: row.writes.map(absolute), shellProfile: row.shellProfile === null ? null : absolute(row.shellProfile), configFiles: row.configFiles.map(absolute),
+    version: row.version === null ? null : managementString(row.version, 128), dependencies: texts(row.dependencies, 64, 256), script,
+    runtime: row.runtime === null ? null : runtimeRequirement(row.runtime), fingerprint: row.fingerprint };
 }

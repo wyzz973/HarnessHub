@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { ManagementError, type ManagementInstallContext } from "../../src/contracts/management.js";
-import { homebrewSandboxIdentity, runHomebrewProtected } from "../../src/infrastructure/management/homebrew.js";
+import { homebrewCache, homebrewEnvironment, homebrewSandboxIdentity, runHomebrewProtected } from "../../src/infrastructure/management/homebrew.js";
+import { protectedConfigurationPaths } from "../../src/infrastructure/management/native.js";
 
-test("original Homebrew authenticates one inherited sandbox and denies configuration writes", { timeout: 60000 }, async t => {
+// Each run starts Homebrew's own Ruby, about 18 seconds with Homebrew 7.0.9 on 2026-10-17; three runs share one budget.
+test("original Homebrew authenticates one inherited sandbox and denies configuration writes", { timeout: 180000 }, async t => {
   assert.equal(process.platform, "darwin", "required native Homebrew protection acceptance needs its macOS host");
   const manager = "/opt/homebrew/bin/brew", root = await mkdtemp(join(tmpdir(), "brew-native-protection-")); t.after(() => rm(root, { recursive: true, force: true }));
   assert.match((await homebrewSandboxIdentity(manager))!, /^[a-f0-9]{64}$/);
@@ -27,4 +30,24 @@ test("original Homebrew authenticates one inherited sandbox and denies configura
   const repository = join(root, "repository"); await mkdir(repository);
   await assert.rejects(runHomebrewProtected(manager, ["ruby", "-e", "File.open(HOMEBREW_BREW_FILE, File::WRONLY) {}"], [], [], env, context(repository)), failed);
   assert.ok(logs.some(line => line.includes("Operation not permitted")));
+});
+
+test("Homebrew maintenance runs with the user's home and cache, and the user's configuration there stays unwritable (ADR-044)", { timeout: 180000 }, async t => {
+  assert.equal(process.platform, "darwin", "required native Homebrew protection acceptance needs its macOS host");
+  const manager = "/opt/homebrew/bin/brew", root = await realpath(await mkdtemp(join(tmpdir(), "brew-user-cache-"))); t.after(() => rm(root, { recursive: true, force: true }));
+  // A home of this test's own stands for the user's: its shell startup file and configuration directory, and Homebrew's cache under it.
+  const home = join(root, "home"); await mkdir(join(home, ".config"), { recursive: true }); await writeFile(join(home, ".zshrc"), "unchanged", { mode: 0o600 });
+  const source = { home, values: { HOME: home, PATH: process.env.PATH ?? "/usr/bin:/bin", USER: process.env.USER ?? "" } };
+  const { directories, files } = protectedConfigurationPaths(source), cache = homebrewCache(source), signal = new AbortController().signal, logs: string[] = [];
+  const context = async (name: string): Promise<ManagementInstallContext> => { const stage = join(root, name); await mkdir(stage); return { stage, signal, assertOwned() {}, log(_stream, line) { logs.push(line); } }; };
+  const failed = (error: unknown): boolean => error instanceof ManagementError && error.code === "PROCESS_FAILED";
+  assert.equal(cache, join(home, "Library", "Caches", "Homebrew"));
+  // Its cache is the user's, where its local records and downloads live.
+  await runHomebrewProtected(manager, ["ruby", "-e", "require 'fileutils'; FileUtils.mkdir_p(ARGV.fetch(0)); File.write(File.join(ARGV.fetch(0), 'probe'), 'cached'); puts ENV.fetch('HOMEBREW_CACHE')", cache],
+    directories, files, homebrewEnvironment(source, root), await context("cache"), { cache: "user" });
+  assert.equal(await readFile(join(cache, "probe"), "utf8"), "cached"); assert.ok(logs.includes(cache), "Homebrew used the user's cache");
+  // The user's shell startup file and configuration directory are denied, though the home is the user's own.
+  for (const [name, target] of [["zshrc", join(home, ".zshrc")], ["config", join(home, ".config", "written")]] as const)
+    await assert.rejects(runHomebrewProtected(manager, ["ruby", "-e", "File.write(ARGV.fetch(0), 'changed')", target], directories, files, homebrewEnvironment(source, root), await context(name), { cache: "user" }), failed, target);
+  assert.equal(await readFile(join(home, ".zshrc"), "utf8"), "unchanged"); assert.equal(existsSync(join(home, ".config", "written")), false);
 });

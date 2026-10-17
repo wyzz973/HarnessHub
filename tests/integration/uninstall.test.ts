@@ -98,8 +98,9 @@ test("G011-UN1 a script installation is removed exactly as its installer wrote i
 test("G011-UN2 management v4 keeps uninstall jobs with their frozen target; the documented downgrade to v3 removes exactly those and v3's rows stay", async t => {
   const root = await temporary(t, "uninstall-storage-");
   const storage = managementStorage(root, 1);
-  assert.equal(storage.db.prepare("PRAGMA user_version").get()?.user_version, 5);
-  // This build is v5; its official install requests go first (v5 to v4), which keeps every uninstall.
+  assert.equal(storage.db.prepare("PRAGMA user_version").get()?.user_version, 6);
+  // This build is v6; its installation upgrades and official install requests go first (v6 to v5 to v4), which keeps every uninstall.
+  storage.db.exec(await readFile(new URL("../../../tools/management-v6-to-v5.sql", import.meta.url), "utf8"));
   storage.db.exec(await readFile(new URL("../../../tools/management-v5-to-v4.sql", import.meta.url), "utf8"));
   assert.equal(storage.db.prepare("PRAGMA user_version").get()?.user_version, 4);
   const target = { harnessId: "claude", controlId: "claude-acp-npm", ref: "a".repeat(64), role: "product", channel: "npm", name: "@anthropic-ai/claude-code", root: "/opt/prefix/lib/node_modules/@anthropic-ai/claude-code",
@@ -128,14 +129,14 @@ test("G011-UN2 management v4 keeps uninstall jobs with their frozen target; the 
     assert.equal(db.prepare("SELECT count(*) AS n FROM sqlite_schema WHERE name='management_installation_targets'").get()?.n, 0);
   } finally { db.close(); }
   const reopened = managementStorage(root, 2);
-  try { assert.equal(reopened.db.prepare("PRAGMA user_version").get()?.user_version, 5); assert.equal(reopened.db.prepare("SELECT count(*) AS n FROM management_jobs").get()?.n, 1); } finally { reopened.db.close(); }
+  try { assert.equal(reopened.db.prepare("PRAGMA user_version").get()?.user_version, 6); assert.equal(reopened.db.prepare("SELECT count(*) AS n FROM management_jobs").get()?.n, 1); } finally { reopened.db.close(); }
 });
 
 /** A removal that changes nothing on the host: it records calls, and its usage is what the test sets. */
 function fakeRemoval(home: string) {
   const state = {
     calls: [] as string[], removed: false, failRemove: false, identity: "one", drift: 0,
-    usage: { servicesKnown: true, services: [] as { label: string; pid: number }[], resident: [] as { pid: number; name: string; stop?: string }[], processes: [] as { pid: number; name: string }[] },
+    usage: { servicesKnown: true, services: [] as { label: string; pid: number }[], resident: [] as { pid: number; name: string; stop?: string }[], processes: [] as { pid: number; name: string }[], own: [] as { pid: number; name: string }[] },
   };
   const port: InstallationRemovalPort = {
     identity: async () => state.identity,

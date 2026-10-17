@@ -9,7 +9,7 @@ import { OfficialManagementMetadata } from "./metadata.js";
 import { DefaultManagementInstaller, installedNpmEntry } from "./installer.js";
 import { runManagementProcess } from "./process.js";
 import { systemVersionFromOutput } from "./system-version.js";
-import { homebrewSandboxIdentity, runHomebrewProtected } from "./homebrew.js";
+import { homebrewEnvironment, homebrewSandboxIdentity, runHomebrewProtected } from "./homebrew.js";
 import { inspectProgramUsage, restartProgramService, systemProgramHost, type ProgramHost } from "./program-usage.js";
 
 const MAX_JSON = 2 * 1024 * 1024;
@@ -153,7 +153,9 @@ export class NativeManagement implements NativeManagementPort {
     if (plan.channel === "unsupported") throw new ManagementError("UNSUPPORTED_NATIVE_MANAGEMENT", plan.reason ?? "native channel is unsupported");
     if (plan.channel === "native-cli") return "vendor-latest";
     if (plan.channel === "brew-formula" || plan.channel === "brew-cask") {
-      const raw: unknown = JSON.parse(await this.process(plan.manager, ["info", "--json=v2", plan.channel === "brew-cask" ? "--cask" : "--formula", plan.reference], context));
+      // Homebrew's local records in the user's cache, read in a sandbox that may write only the stage and reach no network;
+      // the upgrade reads the same records, so the version checked is the version installed (ADR-044).
+      const raw: unknown = JSON.parse(await this.process(plan.manager, ["info", "--json=v2", plan.channel === "brew-cask" ? "--cask" : "--formula", plan.reference], context, "isolated", homebrewEnvironment(this.source, context.stage)));
       const rows = object(raw)[plan.channel === "brew-cask" ? "casks" : "formulae"]; if (!Array.isArray(rows) || rows.length !== 1) throw new ManagementError("INVALID_METADATA", "Homebrew returned an ambiguous installation");
       const row = object(rows[0]); return parseVersion(plan.channel === "brew-cask" ? row.version : object(row.versions).stable);
     }
@@ -220,7 +222,7 @@ export class NativeManagement implements NativeManagementPort {
       }
       case "brew-formula": case "brew-cask":
         { const { directories, files } = protectedConfigurationPaths(this.source);
-          await runHomebrewProtected(plan.manager, ["upgrade", plan.channel === "brew-cask" ? "--cask" : "--formula", plan.reference], directories, files, this.env(context.stage), context); break;
+          await runHomebrewProtected(plan.manager, ["upgrade", plan.channel === "brew-cask" ? "--cask" : "--formula", plan.reference], directories, files, homebrewEnvironment(this.source, context.stage), context, { cache: "user" }); break;
         }
       case "uv":
         await this.process(plan.manager, ["tool", "install", "--no-progress", "--force", plan.reference + "==" + version], context, "configuration", { UV_TOOL_DIR: plan.prefix, UV_TOOL_BIN_DIR: dirname(plan.entry), UV_CACHE_DIR: join(context.stage, "cache"), UV_PYTHON_DOWNLOADS: "never" }); break;

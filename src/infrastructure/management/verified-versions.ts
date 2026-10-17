@@ -37,6 +37,15 @@ export function versionVerification(harnessId: string, programVersion: string | 
   const inside = within(programVersion, verified.program) && (adapter === null || within(adapter, verified.adapter!));
   return { state: inside ? "verified" : "unverified", program: described(verified.program), ...(verified.adapter === undefined ? {} : { adapter: described(verified.adapter) }) };
 }
+/**
+ * Whether an adapter version in front of a product is one HarnessHub verified it with (ADR-038), for the upgrade of the
+ * adapter itself; null when no adapter was verified for this Harness or the version is not known.
+ */
+export function adapterVersionVerification(harnessId: string, adapterVersion: string | null): HarnessVersionVerification | null {
+  if (!Object.hasOwn(VERIFIED_VERSIONS, harnessId) || adapterVersion === null) return null;
+  const verified = VERIFIED_VERSIONS[harnessId]!; if (verified.adapter === undefined) return null;
+  return { state: within(adapterVersion, verified.adapter) ? "verified" : "unverified", program: described(verified.program), adapter: described(verified.adapter) };
+}
 
 /** The question placeholder of a one-question command; the user replaces it. */
 const QUESTION = "\"你的问题\"";

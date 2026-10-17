@@ -109,3 +109,12 @@ test("G011-UN7 a native program started by name, whose command line names no pat
   const missing = await inspectRootsUsage(["/nowhere"], ["/nowhere/claude.exe"], () => null, host({ jobs: async () => "", openers: async () => assert.fail("not asked") }), context());
   assert.deepEqual(missing.processes, []);
 });
+
+test("G011-UG5 HarnessHub's own processes running an installation are named apart, never with other programs", async () => {
+  const opened = " 7200  7000 claude\n 9300  9000 claude\n";
+  const usage = await inspectRootsUsage(installationRoots(plan), ["/bin/sh"], () => null,
+    host({ processes: async () => PROCESSES + opened, jobs: async () => "", openers: async () => "p7200\np9300\np" + SELF + "\n" }), context());
+  // A conversation's `openclaw acp` and its worker name the installation; a native program this process started by name has it open.
+  assert.deepEqual(usage.own, [{ pid: 7100, name: "openclaw" }, { pid: 7101, name: "worker.js" }, { pid: 7200, name: "claude" }]);
+  assert.deepEqual(usage.processes, [{ pid: 8100, name: "openclaw" }, { pid: 9300, name: "claude" }], "this process itself and its descendants are never other programs");
+});

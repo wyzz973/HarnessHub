@@ -14,6 +14,10 @@ export type MaintenanceView = Omit<import("./management.js").MaintenanceCheck, "
 };
 /** What installing a missing product the official way would run and change, for the user's confirmation (ADR-044). */
 export type InstallCheckView = import("./management.js").InstallCheck;
+/** What upgrading one installation through its channel would run and change, for the user's confirmation (ADR-044); conversations carry their titles. */
+export type InstallationUpgradeCheckView = Omit<import("./management.js").InstallationUpgradeCheck, "conversations"> & {
+  readonly conversations: readonly { readonly sessionId: string; readonly title: string; readonly busy: boolean }[];
+};
 /** What uninstalling one installation would remove, stop and leave, for the user's confirmation (ADR-044); conversations carry their titles. */
 export type UninstallCheckView = Omit<import("./management.js").UninstallCheck, "conversations"> & {
   readonly conversations: readonly { readonly sessionId: string; readonly title: string; readonly busy: boolean }[];
@@ -64,6 +68,14 @@ export interface InstallationView {
   readonly maintained: boolean;
   /** Whether HarnessHub can uninstall it: a maintained channel, and for a script its whitelisted layout. */
   readonly canUninstall: boolean;
+  /**
+   * How HarnessHub upgrades it (ADR-044): `version` to an exact newer version through its channel, `self-update` by the
+   * product's own updater, `rerun` by its official install script run again, `terminal` only by a command shown for the
+   * terminal, `maintenance` through the Harness's own upgrade (ADR-043); null when HarnessHub does not upgrade it.
+   */
+  readonly upgrade: "version" | "self-update" | "rerun" | "terminal" | "maintenance" | null;
+  /** The latest version its channel knew at the last update check (`homebrew-local`: Homebrew's local records); null before one. */
+  readonly latest: { readonly version: string | null; readonly source: "npm" | "homebrew-local"; readonly checkedAt: string; readonly error: string | null } | null;
 }
 export interface SessionSummary {
   readonly id: string;

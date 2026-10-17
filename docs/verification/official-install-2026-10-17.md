@@ -1,6 +1,6 @@
 # 按官网方式安装验收（2026-10-17）
 
-依据 [ADR-044](../decisions/0044-macos-official-channels.md) 第 3 步（按官网方式安装）与审批代理的第四轮裁决。脚本渠道的升级（第 4 步）尚未实现。
+依据 [ADR-044](../decisions/0044-macos-official-channels.md) 第 3 步（按官网方式安装）与审批代理的第四轮裁决。逐份升级（第 4 步）见[逐份升级验收](installation-upgrade-2026-10-17.md)。
 
 ## 起因
 

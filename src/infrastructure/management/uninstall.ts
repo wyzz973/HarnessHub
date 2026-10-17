@@ -7,7 +7,7 @@ import type { ScriptRemoval } from "../../contexts/catalog/domain/channels.js";
 import { productChannels, productMaintenance } from "../../adapters/catalog-channels.js";
 import { nativeBaseValues, nativeLaunchValues, nativeValues, type NativeEnvironment } from "../session/native-environment.js";
 import { runManagementProcess } from "./process.js";
-import { runHomebrewProtected } from "./homebrew.js";
+import { homebrewEnvironment, runHomebrewProtected } from "./homebrew.js";
 import { isolatedSandboxProfile, protectedConfigurationHashes, protectedConfigurationPaths, writeOnlySandboxProfile } from "./native.js";
 import { inspectRootsUsage, systemProgramHost, type ProgramHost } from "./program-usage.js";
 
@@ -171,7 +171,7 @@ export class LocalInstallationRemoval implements InstallationRemovalPort {
   async usage(target: InstallationObservation, context: ManagementInstallContext) {
     const resident = productMaintenance(target.harnessId).resident;
     const usage = await inspectRootsUsage(this.roots(target), [target.resolvedPath], command => { const found = resident.find(item => item.command.test(command)); return found === undefined ? null : { stop: found.stop }; }, this.host, context);
-    return { servicesKnown: usage.servicesKnown, services: usage.services.map(service => ({ label: service.label, pid: service.pid })), resident: usage.resident, processes: usage.processes };
+    return { servicesKnown: usage.servicesKnown, services: usage.services.map(service => ({ label: service.label, pid: service.pid })), resident: usage.resident, processes: usage.processes, own: usage.own };
   }
   async remains(target: InstallationObservation): Promise<boolean> {
     try { if (inside(await realpath(target.entry), target.root)) return true; } catch (error) { if (!missing(error)) throw error; }
@@ -211,7 +211,7 @@ export class LocalInstallationRemoval implements InstallationRemovalPort {
       case "brew-formula": case "brew-cask": {
         if (target.prefix === null) throw new ManagementError("INVALID_DATA", "a Homebrew installation has no prefix");
         const { directories, files } = protectedConfigurationPaths(this.source);
-        await runHomebrewProtected(join(target.prefix, "bin", "brew"), ["uninstall", target.channel === "brew-cask" ? "--cask" : "--formula", target.name], directories, files, this.env(context.stage, null), context);
+        await runHomebrewProtected(join(target.prefix, "bin", "brew"), ["uninstall", target.channel === "brew-cask" ? "--cask" : "--formula", target.name], directories, files, homebrewEnvironment(this.source, context.stage), context, { cache: "user" });
         if (!await gone(target.root)) throw new ManagementError("REMOVAL_INCOMPLETE", "Homebrew 卸载结束了，但安装目录仍在：" + target.root);
         break;
       }

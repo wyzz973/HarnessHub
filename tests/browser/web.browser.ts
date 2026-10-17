@@ -1567,10 +1567,10 @@ test("G054-OC1 a Harness lists each official installation with the one in use, a
   // The fixture's Codex shown with three npm installations and an adapter; its DeepSeek Harness only as a source checkout on PATH.
   const shaped = (harness: { id: string; installed: boolean; installations: unknown[]; unofficial: unknown; install: unknown; management: Record<string, unknown>; controls: { available: boolean }[] }) => harness.id === "codex" ? { ...harness,
     installations: [
-      { ref: "1".repeat(64), channel: "npm", label: "npm 全局（nvm v26.11.1）", command: "codex", version: "0.162.1", role: "product", active: true, maintained: true, canUninstall: true },
-      { ref: "2".repeat(64), channel: "npm", label: "npm 全局（Homebrew 的 Node.js）", command: "codex", version: "0.160.0", role: "product", active: false, maintained: true, canUninstall: true },
-      { ref: "3".repeat(64), channel: "pnpm", label: "pnpm 全局", command: "codex", version: "0.150.0", role: "product", active: false, maintained: false, canUninstall: false },
-      { ref: "4".repeat(64), channel: "npm", label: "npm 全局（Homebrew 的 Node.js）", command: "codex-acp", version: "0.9.0", role: "adapter", active: true, maintained: true, canUninstall: true }],
+      { ref: "1".repeat(64), channel: "npm", label: "npm 全局（nvm v26.11.1）", command: "codex", version: "0.162.1", role: "product", active: true, maintained: true, canUninstall: true, upgrade: null, latest: null },
+      { ref: "2".repeat(64), channel: "npm", label: "npm 全局（Homebrew 的 Node.js）", command: "codex", version: "0.160.0", role: "product", active: false, maintained: true, canUninstall: true, upgrade: null, latest: null },
+      { ref: "3".repeat(64), channel: "pnpm", label: "pnpm 全局", command: "codex", version: "0.150.0", role: "product", active: false, maintained: false, canUninstall: false, upgrade: null, latest: null },
+      { ref: "4".repeat(64), channel: "npm", label: "npm 全局（Homebrew 的 Node.js）", command: "codex-acp", version: "0.9.0", role: "adapter", active: true, maintained: true, canUninstall: true, upgrade: null, latest: null }],
     unofficial: { command: "codex", onPath: true, pathDefault: true } }
     : harness.id === "dsh" ? { ...harness, installed: false, installations: [], unofficial: { command: "dsh", onPath: true, pathDefault: true }, controls: harness.controls.map(control => ({ ...control, available: false })),
       management: { ...harness.management, source: "missing" } } : harness;
@@ -1613,7 +1613,7 @@ test("G054-UN1 uninstalling one installation first says what it stops, removes a
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   const ref = "e".repeat(64), fingerprint = "f".repeat(64), label = "npm 全局（Homebrew 的 Node.js）";
   const shaped = (harness: { id: string; installations: unknown[]; unofficial: unknown }) => harness.id !== "openclaw" ? harness : { ...harness, installed: true, unofficial: null,
-    installations: [{ ref, channel: "npm", label, command: "openclaw", version: "2026.3.23-2", role: "product", active: true, maintained: true, canUninstall: true }] };
+    installations: [{ ref, channel: "npm", label, command: "openclaw", version: "2026.3.23-2", role: "product", active: true, maintained: true, canUninstall: true, upgrade: null, latest: null }] };
   for (const path of ["**/api/v1/state", "**/api/v1/harnesses", "**/api/v1/harnesses/rescan"]) await page.route(path, async route => {
     const response = await route.fetch(), body = await response.json();
     await route.fulfill({ response, json: Array.isArray(body) ? body.map(shaped) : { ...body, harnesses: body.harnesses.map(shaped) } });
@@ -1721,5 +1721,84 @@ test("G054-IN1 installing a missing product the official way first says what run
   assert.match(String(commandId), /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u);
   assert.deepEqual(consent, { harnessId: "dsh", action: "install", expectedInstallFingerprint: fingerprint });
   await expect(page.getByRole("dialog", { name: "DeepSeek Harness 详情" }).locator(".installation-state")).toContainText("等待安装");
+  assert.deepEqual(errors, []);
+});
+
+test("G054-UG1 upgrading one installation first says the versions, what runs and who uses it, and sends exactly the confirmed check; Hermes is only shown for the terminal", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  const homebrewNode = "e".repeat(64), nvm = "d".repeat(64), checkout = "c".repeat(64), fingerprint = "f".repeat(64), label = "npm 全局（Homebrew 的 Node.js）";
+  const checkedAt = "2026-10-17T12:00:00.000Z";
+  const shaped = (harness: { id: string; installations: unknown[]; unofficial: unknown }) => harness.id === "claude" ? { ...harness, installed: true, unofficial: null, installations: [
+    { ref: nvm, channel: "npm", label: "npm 全局（nvm v26.11.1）", command: "claude", version: "2.1.302", role: "product", active: true, maintained: true, canUninstall: true, upgrade: "version", latest: { version: "2.1.302", source: "npm", checkedAt, error: null } },
+    { ref: homebrewNode, channel: "npm", label, command: "claude", version: "2.1.296", role: "product", active: false, maintained: true, canUninstall: true, upgrade: "version", latest: { version: "2.1.305", source: "npm", checkedAt, error: null } }] }
+    : harness.id === "hermes" ? { ...harness, installed: true, unofficial: null, installations: [
+      { ref: checkout, channel: "script", label: "官方安装脚本", command: "hermes", version: null, role: "product", active: true, maintained: true, canUninstall: true, upgrade: "terminal", latest: null }] } : harness;
+  for (const path of ["**/api/v1/state", "**/api/v1/harnesses", "**/api/v1/harnesses/rescan"]) await page.route(path, async route => {
+    const response = await route.fetch(), body = await response.json();
+    await route.fulfill({ response, json: Array.isArray(body) ? body.map(shaped) : { ...body, harnesses: body.harnesses.map(shaped) } });
+  });
+  let busy = true, submitted: Record<string, unknown> | null = null;
+  await page.route(`**/api/v1/harnesses/claude/installations/${homebrewNode}/upgrade`, route => route.fulfill({ json: { harnessId: "claude", ref: homebrewNode, checkedAt, fingerprint, expiresAt: "2026-10-17T12:15:00.000Z",
+    label, role: "product", channel: "npm", kind: "version", current: "2.1.296", target: "2.1.305", prerelease: false,
+    runs: "/opt/homebrew/bin/npm install --global --prefix /opt/homebrew @anthropic-ai/claude-code@2.1.305", writes: ["/opt/homebrew"], script: null, shellProfile: null, configFiles: [], dependencies: [], sharedRuntimes: [], runtime: null,
+    active: false, conversations: [{ sessionId: "s-busy", title: "正在回复的对话", busy }], otherUsers: [], processes: [{ pid: 4242, name: "claude" }],
+    verification: { state: "unverified", program: "2.1.296", adapter: "0.89.1" }, terminal: null,
+    notes: ["这不是 HarnessHub 当前使用的那份（当前使用 npm 全局（nvm v26.11.1））；升级后“当前使用”不变。"],
+    blocked: busy ? "有 1 个 HarnessHub 对话正在使用这份安装（正在回复或等你处理），等它们结束或停止后再升级。" : null } }));
+  const explains = "它会把 ~/.hermes/hermes-agent 里的本地改动先 git stash，再 git pull 或 git reset 到最新、重装依赖、迁移 ~/.hermes/config.yaml，并重启网关（QQ 等消息渠道会断开片刻）。HarnessHub 不代为运行，请在终端运行。";
+  await page.route(`**/api/v1/harnesses/hermes/installations/${checkout}/upgrade`, route => route.fulfill({ json: { harnessId: "hermes", ref: checkout, checkedAt, fingerprint: "a".repeat(64), expiresAt: checkedAt,
+    label: "官方安装脚本", role: "product", channel: "script", kind: "terminal", current: "0.12.0", target: null, prerelease: false, runs: "hermes update --yes", writes: [], script: null, shellProfile: null, configFiles: [],
+    dependencies: [], sharedRuntimes: [], runtime: null, active: true, conversations: [], otherUsers: [], processes: [], verification: null,
+    terminal: { command: "hermes update --yes", explains, localChanges: 2 }, notes: ["这份安装的目录里有 2 处没有提交的改动，hermes update --yes 会先把它们 git stash 起来。"],
+    blocked: "HarnessHub 不代为运行这个产品的更新，请在终端运行 hermes update --yes。" } }));
+  const job = { id: "management-99999999-9999-4999-8999-999999999999", harnessId: "claude", controlId: "claude-acp-npm", action: "upgrade", status: "completed", phase: "completed", cancelRequested: false,
+    createdAt: "2026-10-17T12:00:05.000Z", updatedAt: "2026-10-17T12:01:05.000Z", resolvedVersion: "2.1.305", installationId: null, error: null, logCursor: 0,
+    native: { channel: "npm", location: "/opt/homebrew/bin/claude", beforeVersion: "2.1.296", actualVersion: "2.1.305", dispatched: true, configurationPreserved: true,
+      installation: { label, role: "product", kind: "version", command: "/opt/homebrew/bin/npm install --global --prefix /opt/homebrew @anthropic-ai/claude-code@2.1.305", dependencies: [], shellChanges: [], configChanges: [], blocked: [] } } };
+  await page.route("**/api/v1/installation-jobs", async route => {
+    if (route.request().method() !== "POST") return route.fallback();
+    submitted = route.request().postDataJSON(); await route.fulfill({ status: 202, json: job });
+  });
+  await page.route(`**/api/v1/installation-jobs/${job.id}`, route => route.fulfill({ json: job }));
+  await page.route(`**/api/v1/installation-jobs/${job.id}/logs**`, route => route.fulfill({ json: { entries: [], nextSeq: 0, hasMore: false } }));
+  await page.goto(fixture.gateway.url);
+  await page.getByRole("button", { name: "我的 Agent", exact: true }).click();
+  await page.getByRole("button", { name: "查看 Claude Code 详情", exact: true }).click();
+  const detail = page.getByRole("dialog", { name: "Claude Code 详情" });
+  // Each installation says what the last update check found; the one behind offers its exact newer version.
+  await expect(detail.locator(".harness-installations li").nth(0)).toContainText("v2.1.302 · 已是最新");
+  await expect(detail.locator(".harness-installations li").nth(1)).toContainText("v2.1.296 · 可升级到 v2.1.305");
+  await detail.getByRole("button", { name: `升级到 v2.1.305：${label}里的 claude`, exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "升级 Claude Code" });
+  // A conversation replying with it blocks the upgrade, and the conversation can be opened from there.
+  await expect(dialog.locator(".upgrade-blocked")).toContainText("有 1 个 HarnessHub 对话正在使用这份安装");
+  await expect(dialog.getByRole("button", { name: "正在回复的对话" })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "升级", exact: true })).toBeDisabled();
+  await dialog.getByRole("button", { name: "取消", exact: true }).click(); await expect(dialog).toBeHidden();
+  assert.equal(submitted, null, "nothing is sent while the upgrade is blocked");
+  busy = false;
+  await detail.getByRole("button", { name: `升级到 v2.1.305：${label}里的 claude`, exact: true }).click();
+  for (const text of ["2.1.296 → 2.1.305", "/opt/homebrew/bin/npm install --global --prefix /opt/homebrew @anthropic-ai/claude-code@2.1.305", "/opt/homebrew；其他位置都不能写。",
+    "这些程序正在运行这份安装，不会被关闭，重开后才用新版本：claude（进程 4242）。", "2.1.305 还不是 HarnessHub 用真实程序验证过的版本（验证过的是 2.1.296）", "升级后“当前使用”不变。"]) await expect(dialog).toContainText(text);
+  await page.screenshot({ path: join(artifact, "installation-upgrade-confirmation.png"), animations: "disabled" });
+  await dialog.getByRole("button", { name: "升级", exact: true }).click(); await expect(dialog).toBeHidden();
+  await expect.poll(() => submitted).not.toBeNull();
+  const { commandId, ...consent } = submitted!;
+  assert.match(String(commandId), /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u);
+  assert.deepEqual(consent, { harnessId: "claude", action: "upgrade", installation: homebrewNode, expectedInstallationFingerprint: fingerprint }, "the request is exactly the confirmed check");
+  await expect(page.getByRole("dialog", { name: "Claude Code 详情" }).locator(".installation-state")).toContainText(`已升级${label}里的 Claude Code：2.1.296 → 2.1.305。`);
+  // Hermes updates only in a terminal: the command and what it does are shown, and nothing can be confirmed.
+  await page.getByRole("dialog", { name: "Claude Code 详情" }).getByRole("button", { name: "关闭 Harness 详情" }).click();
+  await page.getByRole("button", { name: "查看 Hermes Agent 详情", exact: true }).click();
+  await page.getByRole("dialog", { name: "Hermes Agent 详情" }).getByRole("button", { name: "更新方式：官方安装脚本里的 hermes", exact: true }).click();
+  const terminal = page.getByRole("dialog", { name: "升级 Hermes Agent" });
+  await expect(terminal.locator(".upgrade-terminal-command")).toHaveText("hermes update --yes");
+  await expect(terminal).toContainText(explains); await expect(terminal).toContainText("2 处没有提交的改动");
+  await expect(terminal.getByRole("button", { name: "升级", exact: true })).toHaveCount(0);
+  await terminal.getByRole("button", { name: "关闭", exact: true }).click(); await expect(terminal).toBeHidden();
   assert.deepEqual(errors, []);
 });

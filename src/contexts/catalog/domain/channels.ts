@@ -16,7 +16,17 @@ export interface ScriptLayout {
   readonly program: string | null;
   /** What removing the program deletes (ADR-044); null when HarnessHub does not uninstall this layout. */
   readonly removal: ScriptRemoval | null;
+  /** How the product updates an installation of this layout (ADR-044); null when HarnessHub does not upgrade it. */
+  readonly upgrade: ScriptUpgrade | null;
 }
+/**
+ * How a script installation updates (ADR-044): its own updater (`claude update`), its official script run again, or a
+ * command only shown for the terminal when the update does more than HarnessHub runs on the user's behalf.
+ */
+export type ScriptUpgrade =
+  | { readonly kind: "self-update"; readonly args: readonly string[]; readonly command: string }
+  | { readonly kind: "rerun" }
+  | { readonly kind: "terminal"; readonly command: string; readonly explains: string };
 /**
  * Exactly what an official installer writes, for removing the program and nothing else (ADR-044). Paths are relative to
  * the user's home. Configuration, sign-in and session data are never listed.

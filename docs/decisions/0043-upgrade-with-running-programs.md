@@ -90,6 +90,12 @@ HarnessHub 只对已加载、正在运行的任务执行 kickstart，不替产�
   - 测试 `the documented v3 to v2 downgrade keeps every job…`（`tests/integration/native-management.test.ts`）在副本上走完“v2→v3、写入带新字段的任务、执行降级、回到 v2 字段集合”，再由本构建重新打开为 v3。
   - 已部署构建的解析器能否打开降级后的副本，另做一次真实核对，结果见验收记录。
 
+## Homebrew 升级读用户的本地记录（2026-10-17 更正）
+
+- **原来的事实。** 这里的 Homebrew 检查（`brew info`）和升级都把 HOME 指到任务目录，升级还把 Homebrew 缓存放进任务目录。Homebrew 在那里找不到它的 API 数据，就重新下载，所以实际是按网上最新版检查和升级的，不是用户电脑上 Homebrew 的本地记录。
+- **现在。** 按 [ADR-044](0044-macos-official-channels.md) 第六轮裁决，检查与升级都用用户真实的 HOME、`HOMEBREW_*` 设置和缓存，带 `HOMEBREW_NO_AUTO_UPDATE=1`、`HOMEBREW_NO_INSTALL_CLEANUP=1`、`HOMEBREW_NO_AUTOREMOVE=1`。检查在禁写、禁网的沙箱里读本地记录，升级仍在 Homebrew 自己的继承沙箱里运行，用户配置照旧不可写。
+- **证据。** `tests/real/homebrew-native.real.ts` 在真实 Homebrew 下证明：以测试自己的家目录为 HOME 时，Homebrew 写的是那个家目录下的缓存，而 `~/.zshrc` 和 `~/.config` 仍然写不进去。
+
 ## 不做与未验证
 
 - Linux：不读 systemd，常驻进程只归入“不随升级重启”，提示自行重启，没有真实验证。Windows：原生升级仍不支持。

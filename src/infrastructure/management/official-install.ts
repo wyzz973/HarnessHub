@@ -106,6 +106,45 @@ async function readText(path: string): Promise<string | null> {
 }
 
 /**
+ * Runs an official installer or updater with the user's home and PATH, writes confined to `writes` (plus the stage, /dev,
+ * and the one shell startup file and product configuration files it is known to change), the network open (ADR-044).
+ * Parents of allowed directories it would create on its way are made first, empty. Resolves with its exit status and the
+ * lines and keys it changed in those files; a non-zero exit is a result, not an error.
+ */
+export async function runConfined(source: NativeEnvironment, run: { readonly executable: string; readonly args: readonly string[]; readonly env: Readonly<Record<string, string>>;
+  readonly writes: readonly string[]; readonly shellProfile: string | null; readonly configFiles: readonly string[] }, context: NativeInstallContext): Promise<{
+  readonly exitCode: number; readonly shellChanges: OfficialInstallFacts["shellChanges"]; readonly configChanges: OfficialInstallFacts["configChanges"] }> {
+  if (process.platform !== "darwin" || !(await executable("/usr/bin/sandbox-exec"))) throw new ManagementError("CONFIGURATION_PROTECTION_UNAVAILABLE", "安装和升级需要 macOS 的沙箱保护，这里不可用。");
+  const home = source.home, watched = [...(run.shellProfile === null ? [] : [run.shellProfile]), ...run.configFiles], before = new Map<string, string | null>();
+  for (const path of watched) before.set(path, await readText(path));
+  for (const path of run.writes) {
+    const parents: string[] = [];
+    for (let parent = dirname(path); parent.startsWith(home + "/"); parent = dirname(parent)) parents.unshift(parent);
+    for (const parent of parents) { try { await lstat(parent); } catch (error) { if (!missing(error)) throw error; await mkdir(parent, { mode: 0o755 }); context.log("system", "创建了空目录 " + parent + "，安装程序需要它。"); } }
+  }
+  const env: Record<string, string> = { ...nativeBaseValues(source, null), ...nativeLaunchValues(source, null), PATH: source.values.PATH ?? "/usr/bin:/bin", HOME: home, TMPDIR: context.stage, TERM: "dumb", NO_COLOR: "1",
+    ...(source.values.SHELL === undefined ? {} : { SHELL: source.values.SHELL }), ...run.env };
+  const profile = "(version 1)(allow default)(deny file-write*)(allow file-write* " + [...run.writes, context.stage, "/dev"].map(path => "(subpath " + JSON.stringify(path) + ")").join(" ")
+    + " " + watched.map(path => "(literal " + JSON.stringify(path) + ")").join(" ") + ")";
+  context.beginMutation();
+  let exitCode = 0;
+  try { await runManagementProcess("/usr/bin/sandbox-exec", ["-p", profile, run.executable, ...run.args], context.stage, env, context, MAX_OUTPUT); }
+  catch (error) { if (!(error instanceof ManagementError) || error.code !== "PROCESS_FAILED") throw error; exitCode = 1; }
+  const shellChanges: { file: string; added: readonly string[]; removed: readonly string[] }[] = [], configChanges: { file: string; keys: readonly { path: string; value: string | null }[] }[] = [];
+  if (run.shellProfile !== null) { const changes = lineChanges(before.get(run.shellProfile) ?? null, await readText(run.shellProfile)); if (changes.added.length || changes.removed.length) shellChanges.push({ file: run.shellProfile, ...changes }); }
+  for (const file of run.configFiles) { const keys = keyChanges(before.get(file) ?? null, await readText(file)); if (keys.length) configChanges.push({ file, keys }); }
+  return { exitCode, shellChanges, configChanges };
+}
+/** A program's version as discovery reads it: a write-protected run with a private home and no network; null when it reports none. */
+export async function protectedProgramVersion(entry: string, path: string, context: ManagementInstallContext): Promise<string | null> {
+  if (process.platform !== "darwin" || !(await executable("/usr/bin/sandbox-exec"))) throw new ManagementError("CONFIGURATION_PROTECTION_UNAVAILABLE", "读取版本需要 macOS 的沙箱保护，这里不可用。");
+  let output = "";
+  try { await runManagementProcess("/usr/bin/sandbox-exec", ["-p", isolatedSandboxProfile([context.stage]), entry, "--version"], context.stage, { PATH: path, HOME: context.stage, TMPDIR: context.stage, LANG: "C.UTF-8", NO_COLOR: "1" },
+    { ...context, log: (_stream, text) => { if (output.length < 65536) output += text + "\n"; } }, MAX_OUTPUT); }
+  catch (error) { if (!(error instanceof ManagementError) || error.code !== "PROCESS_FAILED") throw error; }
+  return systemVersionFromOutput(output) ?? null;
+}
+/**
  * Installs a missing product the way its official page does, on macOS (ADR-044): a script runs as the confirmed copy with
  * writes confined to the directories it installs into (and the one shell startup file or product configuration it is
  * known to change); npm installs the exact release into the prefix of the first Node.js on PATH, writing only that prefix.
@@ -176,26 +215,9 @@ export class LocalOfficialInstaller implements OfficialInstallPort {
     if (prepared.script === null || prepared.sha256 === null || prepared.interpreter === null) throw new ManagementError("INVALID_DATA", "script install request is incomplete");
     // What runs is the copy the user confirmed.
     if (createHash("sha256").update(await readFile(prepared.script)).digest("hex") !== prepared.sha256) throw new ManagementError("INSTALL_SOURCE_CHANGED", "安装脚本的副本和确认时不一致，没有运行。");
-    const home = this.source.home, before = new Map<string, string | null>();
-    for (const path of [...(prepared.shellProfile === null ? [] : [prepared.shellProfile]), ...prepared.configFiles]) before.set(path, await readText(path));
-    // Parents an installer would create on its way to an allowed directory (~/.local/share, say) are made here, empty.
-    for (const path of prepared.writes) {
-      const parents: string[] = [];
-      for (let parent = dirname(path); parent.startsWith(home + "/"); parent = dirname(parent)) parents.unshift(parent);
-      for (const parent of parents) { try { await lstat(parent); } catch (error) { if (!missing(error)) throw error; await mkdir(parent, { mode: 0o755 }); context.log("system", "创建了空目录 " + parent + "，安装脚本需要它。"); } }
-    }
-    const env: Record<string, string> = { ...nativeBaseValues(this.source, null), ...nativeLaunchValues(this.source, null), PATH: this.path(), HOME: home, TMPDIR: context.stage, TERM: "dumb", NO_COLOR: "1",
-      ...(this.source.values.SHELL === undefined ? {} : { SHELL: this.source.values.SHELL }), ...prepared.env };
-    const profile = "(version 1)(allow default)(deny file-write*)(allow file-write* " + [...prepared.writes, context.stage, "/dev"].map(path => "(subpath " + JSON.stringify(path) + ")").join(" ")
-      + " " + [...(prepared.shellProfile === null ? [] : [prepared.shellProfile]), ...prepared.configFiles].map(path => "(literal " + JSON.stringify(path) + ")").join(" ") + ")";
-    context.beginMutation();
-    let exitCode = 0;
-    try { await this.sandboxed(profile, "/bin/" + prepared.interpreter, [prepared.script, ...prepared.args], env, logged); }
-    catch (error) { if (!(error instanceof ManagementError) || error.code !== "PROCESS_FAILED") throw error; exitCode = 1; }
-    const shellChanges: { file: string; added: readonly string[]; removed: readonly string[] }[] = [], configChanges: { file: string; keys: readonly { path: string; value: string | null }[] }[] = [];
-    if (prepared.shellProfile !== null) { const changes = lineChanges(before.get(prepared.shellProfile) ?? null, await readText(prepared.shellProfile)); if (changes.added.length || changes.removed.length) shellChanges.push({ file: prepared.shellProfile, ...changes }); }
-    for (const file of prepared.configFiles) { const keys = keyChanges(before.get(file) ?? null, await readText(file)); if (keys.length) configChanges.push({ file, keys }); }
-    return { exitCode, facts: { method: "script", source: prepared.source, sha256: prepared.sha256, shellChanges, configChanges, blocked: blockedWrites(output) } };
+    const result = await runConfined(this.source, { executable: "/bin/" + prepared.interpreter, args: [prepared.script, ...prepared.args], env: prepared.env,
+      writes: prepared.writes, shellProfile: prepared.shellProfile, configFiles: prepared.configFiles }, logged);
+    return { exitCode: result.exitCode, facts: { method: "script", source: prepared.source, sha256: prepared.sha256, shellChanges: result.shellChanges, configChanges: result.configChanges, blocked: blockedWrites(output) } };
   }
   async verify(prepared: PreparedInstall, context: ManagementInstallContext): Promise<{ readonly entry: string; readonly version: string | null } | null> {
     let resolvedPath: string;
@@ -205,10 +227,6 @@ export class LocalOfficialInstaller implements OfficialInstallPort {
     const present = await exists(), channel = classifyProgram({ path: prepared.entry, resolvedPath }, channels, this.source.home, join(this.source.home, ".local", "share", "uv", "tools"), path => present.has(path));
     if (channel === null || (prepared.method === "npm" ? channel.kind !== "npm" || channel.prefix !== prepared.prefix : channel.kind !== "script")) return null;
     // The version, read the way discovery does: a write-protected run with a private home and no network.
-    let output = "";
-    try { await this.sandboxed(isolatedSandboxProfile([context.stage]), prepared.entry, ["--version"], { PATH: (prepared.prefix === null ? "" : join(prepared.prefix, "bin") + ":") + this.path(), HOME: context.stage, TMPDIR: context.stage, LANG: "C.UTF-8", NO_COLOR: "1" },
-      { ...context, log: (_stream, text) => { if (output.length < 65536) output += text + "\n"; } }); }
-    catch (error) { if (!(error instanceof ManagementError) || error.code !== "PROCESS_FAILED") throw error; }
-    return { entry: prepared.entry, version: systemVersionFromOutput(output) ?? null };
+    return { entry: prepared.entry, version: await protectedProgramVersion(prepared.entry, (prepared.prefix === null ? "" : join(prepared.prefix, "bin") + ":") + this.path(), context) };
   }
 }

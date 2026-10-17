@@ -58,6 +58,7 @@ test("builtin management recipes cover reviewed native package identities and mu
   assert.equal(recipes.filter(recipe => recipe.kind === "binary").length, 19);
 });
 test("G011-UN6 an uninstall request names one installation and the check the user confirmed, and nothing an install or upgrade takes", () => {
+  // An upgrade of one installation names it the same way (ADR-044, step 4); it takes no services to stop.
   const ref = "a".repeat(64), fingerprint = "b".repeat(64);
   assert.deepEqual(parseManagementInput({ harnessId: "claude", action: "uninstall", commandId: "u-1", installation: ref, expectedInstallationFingerprint: fingerprint, stopServices: ["b.service", "a.service"] }),
     { harnessId: "claude", action: "uninstall", commandId: "u-1", installation: ref, expectedInstallationFingerprint: fingerprint, stopServices: ["a.service", "b.service"] });
@@ -70,7 +71,9 @@ test("G011-UN6 an uninstall request names one installation and the check the use
     { harnessId: "claude", action: "uninstall", commandId: "u", installation: ref, expectedInstallationFingerprint: fingerprint, controlId: "claude-acp-npm" },
     { harnessId: "claude", action: "uninstall", commandId: "u", installation: ref, expectedInstallationFingerprint: fingerprint, stopServices: ["a.service", "a.service"] },
     { harnessId: "claude", action: "uninstall", commandId: "u", installation: ref, expectedInstallationFingerprint: fingerprint, stopServices: ["gui/501/a.service"] },
-    { harnessId: "claude", action: "upgrade", commandId: "u", installation: ref, expectedInstallationFingerprint: fingerprint },
+    { harnessId: "claude", action: "upgrade", commandId: "u", installation: ref, expectedInstallationFingerprint: fingerprint, stopServices: [] },
+    { harnessId: "claude", action: "upgrade", commandId: "u", installation: ref },
+    { harnessId: "claude", action: "install", commandId: "u", installation: ref, expectedInstallationFingerprint: fingerprint },
     { harnessId: "claude", action: "install", commandId: "u", stopServices: [] },
   ]) assert.throws(() => parseManagementInput(input), error => error instanceof ManagementError && error.code === "INVALID_INPUT", JSON.stringify(input));
 });

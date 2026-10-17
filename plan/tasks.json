@@ -1296,7 +1296,11 @@
         "src/infrastructure/management/official-install.ts",
         "tools/management-v5-to-v4.sql",
         "tests/integration/official-install.test.ts",
-        "tests/unit/official-install.test.ts"
+        "tests/unit/official-install.test.ts",
+        "src/infrastructure/management/installation-upgrade.ts",
+        "tools/management-v6-to-v5.sql",
+        "tests/integration/installation-upgrade.test.ts",
+        "tests/unit/installation-upgrade.test.ts"
       ],
       "requirements": [
         "R03",
@@ -1353,7 +1357,17 @@
         "G011-IN6",
         "G011-IN7",
         "G011-IN8",
-        "G011-UP9"
+        "G011-UP9",
+        "G011-UG1",
+        "G011-UG2",
+        "G011-UG3",
+        "G011-UG4",
+        "G011-UG5",
+        "G011-UG6",
+        "G011-UG7",
+        "G011-UG8",
+        "G011-UG9",
+        "G011-UG10"
       ],
       "active_slice": "upgrade-with-running-programs"
     },
@@ -3419,7 +3433,8 @@
         "docs/verification/frontend-redesign-2026-10-12.md",
         "web/src/components/UpgradeDialog.tsx",
         "web/src/components/UninstallDialog.tsx",
-        "web/src/components/InstallDialog.tsx"
+        "web/src/components/InstallDialog.tsx",
+        "web/src/components/InstallationUpgradeDialog.tsx"
       ],
       "requirements": [
         "R01",
@@ -3480,7 +3495,8 @@
         "G054-UP2",
         "G054-OC1",
         "G054-UN1",
-        "G054-IN1"
+        "G054-IN1",
+        "G054-UG1"
       ],
       "active_slice": "upgrade-with-running-programs"
     },

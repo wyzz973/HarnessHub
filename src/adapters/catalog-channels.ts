@@ -11,28 +11,34 @@ const products: Readonly<Record<string, OfficialChannels>> = {
   claude: { ...none, npm: ["@anthropic-ai/claude-code"], brewCasks: ["claude-code", "claude-code@latest"],
     // The setup page's "Uninstall a native installation": rm -f ~/.local/bin/claude; rm -rf ~/.local/share/claude.
     scripts: [{ root: ".local/share/claude/versions", launchers: [], program: null,
-      removal: { links: [".local/bin/claude"], launchers: [], files: [], directories: [".local/share/claude"], emptyDirectories: [], documented: true } }],
+      removal: { links: [".local/bin/claude"], launchers: [], files: [], directories: [".local/share/claude"], emptyDirectories: [], documented: true },
+      upgrade: { kind: "self-update", args: ["update"], command: "claude update" } }],
     source: { url: "https://code.claude.com/docs/en/setup", checkedAt: CHECKED } },
   codex: { ...none, npm: ["@openai/codex"], brewCasks: ["codex"],
     // The installer links codex and codex-code-mode-host into ~/.local/bin and keeps releases under ~/.codex/packages/standalone; it has no uninstall mode.
     scripts: [{ root: ".codex/packages/standalone", launchers: [], program: null,
-      removal: { links: [".local/bin/codex", ".local/bin/codex-code-mode-host"], launchers: [], files: [], directories: [".codex/packages/standalone"], emptyDirectories: [], documented: false } }],
+      removal: { links: [".local/bin/codex", ".local/bin/codex-code-mode-host"], launchers: [], files: [], directories: [".codex/packages/standalone"], emptyDirectories: [], documented: false },
+      upgrade: { kind: "rerun" } }],
     source: { url: "https://github.com/openai/codex", checkedAt: CHECKED } },
   opencode: { ...none, npm: ["opencode-ai"], brewFormulae: ["opencode"],
     // The installer writes only ~/.opencode/bin/opencode (and, without --no-modify-path, a PATH line HarnessHub never edits).
     scripts: [{ root: ".opencode/bin", launchers: [], program: null,
-      removal: { links: [], launchers: [], files: [".opencode/bin/opencode"], directories: [], emptyDirectories: [".opencode/bin"], documented: false } }],
+      removal: { links: [], launchers: [], files: [".opencode/bin/opencode"], directories: [], emptyDirectories: [".opencode/bin"], documented: false },
+      upgrade: { kind: "rerun" } }],
     source: { url: "https://opencode.ai/docs", checkedAt: CHECKED } },
   openclaw: { ...none, npm: ["openclaw"], source: { url: "https://docs.openclaw.ai/install", checkedAt: CHECKED } },
   gemini: { ...none, npm: ["@google/gemini-cli"], brewFormulae: ["gemini-cli"], source: { url: "https://github.com/google-gemini/gemini-cli", checkedAt: CHECKED } },
   // Cursor's page gives no uninstall; the installer writes versions under ~/.local/share/cursor-agent and links agent and cursor-agent.
   cursor: { ...none, scripts: [{ root: ".local/share/cursor-agent/versions", launchers: [], program: null,
-    removal: { links: [".local/bin/agent", ".local/bin/cursor-agent"], launchers: [], files: [], directories: [".local/share/cursor-agent"], emptyDirectories: [], documented: false } }],
+    removal: { links: [".local/bin/agent", ".local/bin/cursor-agent"], launchers: [], files: [], directories: [".local/share/cursor-agent"], emptyDirectories: [], documented: false },
+    upgrade: { kind: "self-update", args: ["update"], command: "agent update" } }],
     source: { url: "https://cursor.com/docs/cli/installation", checkedAt: CHECKED } },
   pi: { ...none, npm: ["@earendil-works/pi-coding-agent"], source: { url: "https://www.npmjs.com/package/@earendil-works/pi-coding-agent", checkedAt: CHECKED } },
   // Hermes's "Manual Uninstall": rm -f ~/.local/bin/hermes; rm -rf the hermes-agent checkout; ~/.hermes otherwise stays.
   hermes: { ...none, scripts: [{ root: ".hermes/hermes-agent", launchers: [".local/bin/hermes"], program: "venv/bin/hermes",
-    removal: { links: [], launchers: [".local/bin/hermes"], files: [], directories: [".hermes/hermes-agent"], emptyDirectories: [], documented: true } }],
+    removal: { links: [], launchers: [".local/bin/hermes"], files: [], directories: [".hermes/hermes-agent"], emptyDirectories: [], documented: true },
+    upgrade: { kind: "terminal", command: "hermes update --yes",
+      explains: "它会把 ~/.hermes/hermes-agent 里的本地改动先 git stash，再 git pull 或 git reset 到最新、重装依赖、迁移 ~/.hermes/config.yaml，并重启网关（QQ 等消息渠道会断开片刻）。HarnessHub 不代为运行，请在终端运行。" } }],
     source: { url: "https://github.com/NousResearch/hermes-agent/blob/a0556b861f2667a49ded048c9cfac88defff8c5f/README.md", checkedAt: CHECKED } },
   dsh: { ...none, npm: ["@deepseek-ai/dsh"], source: { url: "https://github.com/deepseek-ai/deepseek-harness/blob/5badb15009ae1756c3afe0ae0cef1faafc290ccc/README.md", checkedAt: CHECKED } },
 };
@@ -71,7 +77,7 @@ export function adapterChannels(harnessId: string, control: ControlRecipe): Offi
   return { ...none, source: { url: control.source.url, checkedAt: CHECKED },
     npm: control.package?.kind === "npm" ? [control.package.name] : [], uv: control.package?.kind === "python" ? [control.package.name] : [],
     // A registry archive is installed under ~/.local/share/harnesses/<id> (ADR-017).
-    scripts: control.distribution?.kind === "binary" ? [{ root: ".local/share/harnesses/" + harnessId, launchers: [], program: null, removal: null }] : [] };
+    scripts: control.distribution?.kind === "binary" ? [{ root: ".local/share/harnesses/" + harnessId, launchers: [], program: null, removal: null, upgrade: null }] : [] };
 }
 /** A product's services and data (ADR-044); a product without a record registers no service and its data is not named. */
 export function productMaintenance(harnessId: string): ProductMaintenance { return maintenance[harnessId] ?? { services: [], data: [], resident: [] }; }

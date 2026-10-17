@@ -895,7 +895,11 @@
         "src/web/shown-paths.ts",
         "web/src/components/UninstallDialog.tsx",
         "src/infrastructure/management/official-install.ts",
-        "web/src/components/InstallDialog.tsx"
+        "web/src/components/InstallDialog.tsx",
+        "src/infrastructure/management/installation-upgrade.ts",
+        "web/src/components/InstallationUpgradeDialog.tsx",
+        "src/infrastructure/management/homebrew.ts",
+        "src/infrastructure/management/verified-versions.ts"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/official-channels-2026-10-17.md"

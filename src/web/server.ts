@@ -10,7 +10,7 @@ import { ProviderError } from "../contracts/provider.js";
 import { ManagementError } from "../contracts/management.js";
 import { SessionError, parseNativeOptions, sessionId, type SelectionRequest, type SessionConfiguration, type SessionEvent, type SessionSnapshot } from "../contracts/session.js";
 import { MAX_CONTENT_BYTES, MAX_RUN_ATTACHMENTS } from "../contracts/content.js";
-import type { EventPage, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, MaintenanceView, NativeSessionListView, SessionSummary, SessionView, UninstallCheckView, InstallCheckView, WebState } from "../contracts/web.js";
+import type { EventPage, HarnessReadinessView, HarnessView, InstallationLogPage, InstallationUpgradeCheckView, KeptProcessView, MaintenanceView, NativeSessionListView, SessionSummary, SessionView, UninstallCheckView, InstallCheckView, WebState } from "../contracts/web.js";
 import { inventory, officialInstallation } from "../infrastructure/catalog/inventory-composition.js";
 import type { InstallationPolicy } from "../contexts/catalog/domain/catalog.js";
 import { harnessEntry, productCommand } from "./harness-entry.js";
@@ -367,7 +367,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
           entry: harnessEntry(control, observed.managedBindings.has(control.id)) })),
         providerProtocols: item.controls.some(control => control.state === "candidate" && ((item.id === "codex" && control.protocol === "codex-app-server") || (item.id === "gemini" && control.protocol === "acp-v1"))) ? supportedProviderProtocols(item.id) : [],
         management: { ...managed, source: managed.source === "managed" ? "managed" : installed ? "system" : "missing" }, install: installView(item.id),
-        installations: installationViews(item.id, item.installation, app.factory.discoveryEnvironment.home),
+        installations: installationViews(item.id, item.installation, app.factory.discoveryEnvironment.home, ref => app.management.installationUpgrade(item.id, ref)),
         unofficial: unofficialView(item.installation, observed.definitions.find(definition => definition.id === item.id)?.binaryNames[0]) };
       });
       return harnesses;
@@ -556,6 +556,19 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       if (homePathsIn(output, homeForms()).length) throw new HttpError(500, "PRIVACY_GUARD", "卸载检查的结果含有未隐去的本机路径，已拦截。");
       json(response, 200, output); return;
     }
+    // What upgrading one installation through its channel would run and change (ADR-044); prepares it, changes no installed program.
+    const upgradeRoute = /^\/api\/v1\/harnesses\/([a-z][a-z0-9-]{0,95})\/installations\/([a-f0-9]{64})\/upgrade$/u.exec(path);
+    if (upgradeRoute && method === "GET") {
+      queries(url, []); await rescan();
+      const check = await app.management.upgradeCheck(upgradeRoute[1]!, upgradeRoute[2]!);
+      const output: InstallationUpgradeCheckView = { ...check, conversations: check.conversations.map(item => {
+        let title = "对话";
+        try { title = summary(app.runtime.read(sessionId(item.sessionId))).title; } catch { /* a conversation closed meanwhile keeps the generic name */ }
+        return { ...item, title };
+      }) };
+      if (homePathsIn(output, homeForms()).length) throw new HttpError(500, "PRIVACY_GUARD", "升级检查的结果含有未隐去的本机路径，已拦截。");
+      json(response, 200, output); return;
+    }
     if (path === "/api/v1/harnesses/rescan" && method === "POST") { queries(url, []); record(await body(request), []); json(response, 200, await rescan()); return; }
     if (path === "/api/v1/harnesses/check-updates" && method === "POST") {
       queries(url, []); const input = record(await body(request), ["harnessIds"]);
@@ -576,6 +589,13 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         if (input.action === "install" && input.expectedInstallFingerprint !== undefined) {
           json(response, 202, app.management.submitOfficialInstall({ harnessId: text(input.harnessId, "Harness identity", 96), action: "install", commandId: command(input.commandId), expectedInstallFingerprint: input.expectedInstallFingerprint,
             ...(input.controlId === undefined ? {} : { controlId: input.controlId }), ...(input.expectedDefaultRevision === undefined ? {} : { expectedDefaultRevision: input.expectedDefaultRevision }),
+            ...(input.expectedNativeFingerprint === undefined ? {} : { expectedNativeFingerprint: input.expectedNativeFingerprint }), ...(input.restartServices === undefined ? {} : { restartServices: input.restartServices }) })); return;
+        }
+        if (input.action === "upgrade" && input.installation !== undefined) {
+          json(response, 202, await app.management.submitInstallationUpgrade({ harnessId: text(input.harnessId, "Harness identity", 96), action: "upgrade", commandId: command(input.commandId),
+            installation: input.installation, ...(input.expectedInstallationFingerprint === undefined ? {} : { expectedInstallationFingerprint: input.expectedInstallationFingerprint }),
+            ...(input.stopServices === undefined ? {} : { stopServices: input.stopServices }), ...(input.controlId === undefined ? {} : { controlId: input.controlId }),
+            ...(input.expectedDefaultRevision === undefined ? {} : { expectedDefaultRevision: input.expectedDefaultRevision }),
             ...(input.expectedNativeFingerprint === undefined ? {} : { expectedNativeFingerprint: input.expectedNativeFingerprint }), ...(input.restartServices === undefined ? {} : { restartServices: input.restartServices }) })); return;
         }
         if (input.action === "uninstall") {

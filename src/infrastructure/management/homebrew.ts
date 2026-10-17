@@ -2,6 +2,7 @@ import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { ManagementError, type ManagementInstallContext } from "../../contracts/management.js";
+import { nativeBaseValues, type NativeEnvironment } from "../session/native-environment.js";
 import { runManagementProcess } from "./process.js";
 
 const runner = String.raw`require 'sandbox'
@@ -30,8 +31,25 @@ export async function homebrewSandboxIdentity(manager: string): Promise<string |
   if (!chunks[0]!.includes("command.sandbox_inheritance = inheritance") || !chunks[1]!.includes("Sandbox::INHERITANCE_FD")) return null;
   return createHash("sha256").update(Buffer.concat(chunks)).digest("hex");
 }
-/** Homebrew creates and authenticates its own single sandbox; original CLI/native process group cleanup remains awaited. */
-export async function runHomebrewProtected(manager: string, args: readonly string[], directories: readonly string[], files: readonly string[], env: Readonly<Record<string, string>>, context: ManagementInstallContext): Promise<void> {
+/** The user's Homebrew cache: where Homebrew keeps its local records (the API data) and downloads. */
+export function homebrewCache(source: NativeEnvironment): string { return source.values.HOMEBREW_CACHE ?? join(source.home, "Library", "Caches", "Homebrew"); }
+/**
+ * The environment Homebrew runs with for maintenance (ADR-043, ADR-044): the user's real home, Homebrew settings and cache,
+ * so a check, a dry run and an upgrade read the same local records; never an automatic `brew update`, cleanup or autoremove.
+ */
+export function homebrewEnvironment(source: NativeEnvironment, stage: string): Record<string, string> {
+  const settings = Object.fromEntries(Object.entries(source.values).filter(([name]) => name.startsWith("HOMEBREW_")));
+  return { ...nativeBaseValues(source, null), ...settings, HOME: source.home, PATH: source.values.PATH ?? "/usr/bin:/bin:/opt/homebrew/bin", LANG: "C.UTF-8", TMPDIR: stage, NO_COLOR: "1",
+    HOMEBREW_CACHE: homebrewCache(source), HOMEBREW_NO_AUTO_UPDATE: "1", HOMEBREW_NO_INSTALL_CLEANUP: "1", HOMEBREW_NO_AUTOREMOVE: "1", HOMEBREW_NO_ANALYTICS: "1", HOMEBREW_NO_ENV_HINTS: "1" };
+}
+/**
+ * Homebrew creates and authenticates its own single sandbox; original CLI/native process group cleanup remains awaited.
+ * It may write the Homebrew prefix, its temporary directory and cache; `directories` and `files` stay unwritable. With
+ * `cache: "user"` it keeps the cache `env` names (the user's, with its local records); otherwise the stage holds one.
+ * Resolves with the command's standard output; a non-zero exit rejects with PROCESS_FAILED.
+ */
+export async function runHomebrewProtected(manager: string, args: readonly string[], directories: readonly string[], files: readonly string[], env: Readonly<Record<string, string>>, context: ManagementInstallContext,
+  options: { readonly cache?: "stage" | "user" } = {}): Promise<string> {
   context.assertOwned(); if (!(await homebrewSandboxIdentity(manager))) throw new ManagementError("CONFIGURATION_PROTECTION_UNAVAILABLE", "本机 Homebrew 没有受支持的沙箱继承接口。");
   const root = join(context.stage, "homebrew-protected"); await mkdir(root, { mode: 0o700 });
   const script = join(root, "run.rb"); await writeFile(script, runner, { flag: "wx", mode: 0o600 });
@@ -39,5 +57,6 @@ export async function runHomebrewProtected(manager: string, args: readonly strin
   for (const path of ["cache", "logs"]) await mkdir(join(root, path), { mode: 0o700 });
   context.assertOwned();
   if ("beginMutation" in context && typeof context.beginMutation === "function") context.beginMutation();
-  await runManagementProcess(manager, ["ruby", script], context.stage, { ...env, HOMEBREW_DEVELOPER: "1", HOMEBREW_CACHE: join(root, "cache"), HOMEBREW_LOGS: join(root, "logs"), HOMEBREW_TEMP: root, HOMEBREW_NO_AUTO_UPDATE: "1", HOMEBREW_NO_INSTALL_CLEANUP: "1", HOMEBREW_NO_ANALYTICS: "1", TERM: "dumb" }, context, 8 * 1024 * 1024);
+  return runManagementProcess(manager, ["ruby", script], context.stage, { ...env, HOMEBREW_DEVELOPER: "1", ...(options.cache === "user" ? {} : { HOMEBREW_CACHE: join(root, "cache") }), HOMEBREW_LOGS: join(root, "logs"), HOMEBREW_TEMP: root,
+    HOMEBREW_NO_AUTO_UPDATE: "1", HOMEBREW_NO_INSTALL_CLEANUP: "1", HOMEBREW_NO_AUTOREMOVE: "1", HOMEBREW_NO_ANALYTICS: "1", TERM: "dumb" }, context, 8 * 1024 * 1024);
 }

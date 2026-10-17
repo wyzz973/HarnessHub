@@ -43,6 +43,24 @@ export interface NativeJobFacts {
   readonly uninstall?: UninstallFacts;
   /** What an official install ran and changed (ADR-044); present on official install jobs only, from management schema v5. */
   readonly official?: OfficialInstallFacts;
+  /** What upgrading one installation through its channel did (ADR-044); present on those upgrade jobs only, from management schema v6. */
+  readonly installation?: InstallationUpgradeFacts;
+}
+/** How one installation is upgraded through its own channel (ADR-044). */
+export type UpgradeKind = "version" | "self-update" | "rerun";
+/** One installation upgrade's facts: which installation, how, and the versions before and after. */
+export interface InstallationUpgradeFacts {
+  readonly label: string;
+  readonly role: "product" | "adapter";
+  readonly kind: UpgradeKind;
+  /** The command that ran, with ~ for the home directory. */
+  readonly command: string;
+  /** Formulae Homebrew upgraded alongside, as its dry run listed them. */
+  readonly dependencies: readonly string[];
+  /** Lines the official script changed in the one shell startup file it may change, and key paths of a product configuration. */
+  readonly shellChanges: readonly { readonly file: string; readonly added: readonly string[]; readonly removed: readonly string[] }[];
+  readonly configChanges: readonly { readonly file: string; readonly keys: readonly { readonly path: string; readonly value: string | null }[] }[];
+  readonly blocked: readonly string[];
 }
 /** One official install's facts: how it ran and what it changed besides the program itself. */
 export interface OfficialInstallFacts {
@@ -309,9 +327,12 @@ export interface InstallationRemovalPort {
   identity(target: InstallationObservation): Promise<string>;
   /** What removing it runs and deletes. Refuses a script layout that resolves outside its whitelist. */
   preview(target: InstallationObservation, context: ManagementInstallContext): Promise<RemovalPreview>;
-  /** Programs running it now: launchd jobs, the product's resident programs, and other processes. Read once, never signalled. */
+  /**
+   * Programs running it now: launchd jobs, the product's resident programs, other processes, and `own`, HarnessHub's own
+   * processes (this Gateway's descendants, such as a conversation's native process). Read once, never signalled.
+   */
   usage(target: InstallationObservation, context: ManagementInstallContext): Promise<{ readonly servicesKnown: boolean; readonly services: readonly { readonly label: string; readonly pid: number }[];
-    readonly resident: readonly ProgramEntry[]; readonly processes: readonly ProgramEntry[] }>;
+    readonly resident: readonly ProgramEntry[]; readonly processes: readonly ProgramEntry[]; readonly own: readonly ProgramEntry[] }>;
   /** Whether any file of the installation is still there: its command resolving into it, its program or its directory. */
   remains(target: InstallationObservation): Promise<boolean>;
   /** Uncommitted changes in a git checkout the installer made, read without locking it; null when it is not one. */
@@ -395,6 +416,106 @@ export interface PreparedInstall {
   /** Where the command lands, absolute. */
   readonly entry: string;
   readonly command: string;
+  readonly runtime: RuntimeRequirement | null;
+}
+/** The latest version one installation's channel knows, read by an update check (ADR-044); kept in memory. */
+export interface InstallationUpdate {
+  readonly ref: string;
+  readonly latest: string | null;
+  /** `homebrew-local`: from Homebrew's local records, as current as its last `brew update`. */
+  readonly source: "npm" | "homebrew-local";
+  readonly checkedAt: string;
+  readonly error: string | null;
+}
+/** What upgrading one installation through its channel would run and change, read once for the user's confirmation (ADR-044). */
+export interface InstallationUpgradeCheck {
+  readonly harnessId: string;
+  readonly ref: string;
+  readonly checkedAt: string;
+  /** The installation and the prepared upgrade this check describes; a submission for another one, or after `expiresAt`, is refused. */
+  readonly fingerprint: string;
+  readonly expiresAt: string;
+  readonly label: string;
+  readonly role: "product" | "adapter";
+  readonly channel: MaintainedChannel;
+  /** `terminal`: HarnessHub only shows the product's own command (`terminal`); such a check cannot be confirmed. */
+  readonly kind: UpgradeKind | "terminal";
+  readonly current: string | null;
+  /** The exact version a versioned upgrade installs; null when the product's own updater or official script picks it. */
+  readonly target: string | null;
+  readonly prerelease: boolean;
+  /** What HarnessHub runs, with ~ for the home directory. */
+  readonly runs: string;
+  readonly writes: readonly string[];
+  /** The official script's final URL and SHA-256, for an upgrade that reruns it. */
+  readonly script: { readonly source: string; readonly sha256: string } | null;
+  readonly shellProfile: string | null;
+  readonly configFiles: readonly string[];
+  /** Other formulae Homebrew would upgrade with it (its dry run); `sharedRuntimes` are those other programs run on, such as node. */
+  readonly dependencies: readonly string[];
+  readonly sharedRuntimes: readonly string[];
+  readonly runtime: RuntimeRequirement | null;
+  readonly active: boolean;
+  /** HarnessHub conversations using it: busy ones block, idle kept processes close first. */
+  readonly conversations: readonly { readonly sessionId: string; readonly busy: boolean }[];
+  readonly otherUsers: readonly { readonly pid: number }[];
+  /** Other programs running it: not stopped; they keep the old version until restarted. */
+  readonly processes: readonly ProgramEntry[];
+  /** Whether HarnessHub verified the target (ADR-038); null when unknown before upgrading. */
+  readonly verification: HarnessVersionVerification | null;
+  /** The command to run in a terminal, what it does, and the uncommitted changes of the checkout it updates (null: not a checkout). */
+  readonly terminal: { readonly command: string; readonly explains: string; readonly localChanges: number | null } | null;
+  readonly notes: readonly string[];
+  readonly blocked: string | null;
+}
+/** The host side of an installation upgrade (ADR-044); replaced in tests that must not touch the user's programs or the network. */
+export interface InstallationUpgradePort {
+  /**
+   * How an installation upgrades through its channel: an exact newer version (npm, Homebrew), the product's own updater,
+   * its official script run again, or a command only shown for the terminal; null when HarnessHub does not upgrade it.
+   */
+  kind(target: InstallationObservation): UpgradeKind | "terminal" | null;
+  /** The latest version the channel knows: the npm registry's, or Homebrew's local records; null for channels that update themselves. */
+  latest(target: InstallationObservation, context: ManagementInstallContext): Promise<{ readonly version: string; readonly source: InstallationUpdate["source"] } | null>;
+  /**
+   * Prepares the upgrade without changing any installed program: the exact release, Homebrew's dry run (which may write
+   * its cache and is refused when it changed an installed package), or the downloaded official script in `directory`.
+   */
+  prepare(target: InstallationTarget, directory: string, context: ManagementInstallContext): Promise<PreparedUpgradeCheck>;
+  /**
+   * Runs the prepared upgrade confined to what it declares and resolves with what it changed besides the program; a
+   * non-zero exit is a result. Homebrew's plan is read again first and must be the one confirmed. Calls beginMutation
+   * before changing anything.
+   */
+  run(prepared: PreparedUpgrade, context: NativeInstallContext): Promise<{ readonly exitCode: number; readonly facts: Pick<InstallationUpgradeFacts, "shellChanges" | "configChanges" | "blocked"> }>;
+  /**
+   * The installation's version as the Harness list shows it: the one its channel records, or for a script without one
+   * what its program reports in a write-protected run without network; null when neither can be read.
+   */
+  version(target: InstallationObservation, context: ManagementInstallContext): Promise<string | null>;
+}
+/** A prepared installation upgrade and what its confirmation shows besides it. */
+export interface PreparedUpgradeCheck {
+  readonly prepared: PreparedUpgrade;
+  /** Packages of Homebrew's plan it marks deprecated or disabled. */
+  readonly deprecated: readonly string[];
+  /** When Homebrew's local records were last updated; null for other channels or when it has none. */
+  readonly records: string | null;
+}
+/** A prepared installation upgrade, frozen with its job. */
+export interface PreparedUpgrade {
+  readonly target: InstallationTarget;
+  readonly kind: UpgradeKind;
+  readonly command: string;
+  readonly executable: string;
+  readonly args: readonly string[];
+  readonly env: Readonly<Record<string, string>>;
+  readonly writes: readonly string[];
+  readonly shellProfile: string | null;
+  readonly configFiles: readonly string[];
+  readonly version: string | null;
+  readonly dependencies: readonly string[];
+  readonly script: { readonly path: string; readonly source: string; readonly sha256: string; readonly interpreter: "bash" | "sh" } | null;
   readonly runtime: RuntimeRequirement | null;
 }
 /** What uninstalling one installation would remove, stop and leave, read once for the user's confirmation (ADR-044). */

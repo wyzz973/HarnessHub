@@ -19,11 +19,12 @@ export function parseManagementInput(value: unknown): ManagementJobInput {
   if (Object.keys(row).some(key => !["harnessId", "controlId", "action", "commandId", "expectedDefaultRevision", "expectedNativeFingerprint", "restartServices", "installation", "expectedInstallationFingerprint", "stopServices", "expectedInstallFingerprint"].includes(key)))
     throw new ManagementError("INVALID_INPUT", "unknown management request fields");
   if (row.action !== "install" && row.action !== "upgrade" && row.action !== "uninstall") throw new ManagementError("INVALID_INPUT", "unsupported management action");
-  // An uninstall names one installation and the check the user confirmed; the other actions take neither (ADR-044).
-  const uninstall = row.action === "uninstall";
-  if (uninstall !== (row.installation !== undefined) || uninstall !== (row.expectedInstallationFingerprint !== undefined) || !uninstall && row.stopServices !== undefined
-      || uninstall && (row.controlId !== undefined || row.expectedDefaultRevision !== undefined || row.expectedNativeFingerprint !== undefined || row.restartServices !== undefined))
-    throw new ManagementError("INVALID_INPUT", "an uninstall names an installation and its confirmed check; other actions do not");
+  // An uninstall, or an upgrade of one installation, names it and the check the user confirmed; installs take neither (ADR-044).
+  const uninstall = row.action === "uninstall", perInstallation = row.installation !== undefined;
+  if (perInstallation !== (row.expectedInstallationFingerprint !== undefined) || uninstall && !perInstallation || row.action === "install" && perInstallation
+      || !uninstall && row.stopServices !== undefined
+      || perInstallation && (row.controlId !== undefined || row.expectedDefaultRevision !== undefined || row.expectedNativeFingerprint !== undefined || row.restartServices !== undefined))
+    throw new ManagementError("INVALID_INPUT", "an uninstall or an installation upgrade names an installation and its confirmed check; other actions do not");
   // An official install names only the check the user confirmed (ADR-044); the recipe fields belong to the other installs.
   if (row.expectedInstallFingerprint !== undefined && (row.action !== "install" || !installationRef(row.expectedInstallFingerprint) || row.controlId !== undefined
       || row.expectedDefaultRevision !== undefined || row.expectedNativeFingerprint !== undefined || row.restartServices !== undefined))
@@ -44,7 +45,7 @@ export function parseManagementInput(value: unknown): ManagementJobInput {
     ...(row.restartServices === undefined ? {} : { restartServices: [...row.restartServices as string[]].sort() }),
     ...(row.expectedInstallFingerprint === undefined ? {} : { expectedInstallFingerprint: row.expectedInstallFingerprint as string }),
     ...(row.installation === undefined ? {} : { installation: row.installation as string, expectedInstallationFingerprint: row.expectedInstallationFingerprint as string,
-      stopServices: [...(row.stopServices ?? []) as string[]].sort() }) };
+      ...(uninstall ? { stopServices: [...(row.stopServices ?? []) as string[]].sort() } : {}) }) };
 }
 /** An installation reference as the Harness list gives it: 64 lowercase hexadecimal digits. */
 export function installationRef(value: unknown): value is string { return typeof value === "string" && /^[a-f0-9]{64}$/u.test(value); }

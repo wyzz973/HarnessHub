@@ -1,7 +1,7 @@
 import { consumeSessionEventStream, SessionStreamError } from "./session-stream.js";
 import { readSseBlocks } from "./attention.js";
 import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
-import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, LoginShellView, MaintenanceView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, UninstallCheckView, InstallCheckView, WebState } from "../../src/contracts/web.js";
+import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, LoginShellView, MaintenanceView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, UninstallCheckView, InstallCheckView, InstallationUpgradeCheckView, WebState } from "../../src/contracts/web.js";
 import type { HarnessManagementView, InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
 import type { AttentionItem, HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
 import type { NativeExtensions, NativeInputs, NativeOption, NativeModelCatalog } from "../../src/contracts/control.js";
@@ -76,7 +76,9 @@ function decodeHarness(value: unknown): HarnessView {
       method: choice(install.method, ["script", "npm", "terminal"]), available: bool(install.available) },
     installations: list(row.installations, value => { const item = record(value);
       return { ref: text(item.ref), channel: item.channel === null ? null : choice(item.channel, ["npm", "brew-formula", "brew-cask", "script", "uv", "pnpm", "bun"]), label: text(item.label), command: text(item.command),
-        version: nullableText(item.version), role: choice(item.role, ["product", "adapter"]), active: bool(item.active), maintained: bool(item.maintained), canUninstall: bool(item.canUninstall) }; }, 64),
+        version: nullableText(item.version), role: choice(item.role, ["product", "adapter"]), active: bool(item.active), maintained: bool(item.maintained), canUninstall: bool(item.canUninstall),
+        upgrade: item.upgrade === null ? null : choice(item.upgrade, ["version", "self-update", "rerun", "terminal", "maintenance"]),
+        latest: item.latest === null ? null : (() => { const latest = record(item.latest); return { version: nullableText(latest.version), source: choice(latest.source, ["npm", "homebrew-local"]), checkedAt: text(latest.checkedAt), error: nullableText(latest.error) }; })() }; }, 64),
     unofficial: row.unofficial === null ? null : (() => { const item = record(row.unofficial); return { command: text(item.command), onPath: bool(item.onPath), pathDefault: bool(item.pathDefault) }; })() };
 }
 function decodeLoginShell(value: unknown): LoginShellView {
@@ -105,7 +107,31 @@ export function decodeInstallationJob(value: unknown): InstallationJobView {
       ...(native.official === undefined ? {} : { official: (() => { const facts = record(native.official); return { method: choice(facts.method, ["script", "npm"]), source: text(facts.source), sha256: nullableText(facts.sha256),
         shellChanges: list(facts.shellChanges, item => { const change = record(item); return { file: text(change.file), added: list(change.added, value => typeof value === "string" ? value : invalid(), 64), removed: list(change.removed, value => typeof value === "string" ? value : invalid(), 64) }; }, 4),
         configChanges: list(facts.configChanges, item => { const change = record(item); return { file: text(change.file), keys: list(change.keys, key => { const entry = record(key); return { path: text(entry.path), value: nullableText(entry.value) }; }, 64) }; }, 4),
-        blocked: list(facts.blocked, text, 16), installed: bool(facts.installed) }; })() }) }; })() }) };
+        blocked: list(facts.blocked, text, 16), installed: bool(facts.installed) }; })() }),
+      ...(native.installation === undefined ? {} : { installation: (() => { const facts = record(native.installation); return { label: text(facts.label), role: choice(facts.role, ["product", "adapter"]),
+        kind: choice(facts.kind, ["version", "self-update", "rerun"]), command: text(facts.command), dependencies: list(facts.dependencies, text, 64), ...changes(facts), blocked: list(facts.blocked, text, 16) }; })() }) }; })() }) };
+}
+/** Lines an installer changed in a shell startup file and key paths it changed in a product configuration (ADR-044). */
+function changes(facts: Record<string, unknown>): Pick<NonNullable<NonNullable<InstallationJobView["native"]>["installation"]>, "shellChanges" | "configChanges"> {
+  return { shellChanges: list(facts.shellChanges, item => { const change = record(item); return { file: text(change.file), added: list(change.added, value => typeof value === "string" ? value : invalid(), 64), removed: list(change.removed, value => typeof value === "string" ? value : invalid(), 64) }; }, 4),
+    configChanges: list(facts.configChanges, item => { const change = record(item); return { file: text(change.file), keys: list(change.keys, key => { const entry = record(key); return { path: text(entry.path), value: nullableText(entry.value) }; }, 64) }; }, 4) };
+}
+/** What upgrading one installation through its channel would run and change (ADR-044). */
+export function decodeUpgradeCheck(value: unknown): InstallationUpgradeCheckView {
+  const row = record(value), entry = (item: unknown) => { const program = record(item); return { pid: number(program.pid), name: text(program.name), ...(program.stop === undefined ? {} : { stop: text(program.stop) }) }; };
+  const runtime = row.runtime === null ? null : record(row.runtime), terminal = row.terminal === null ? null : record(row.terminal), script = row.script === null ? null : record(row.script);
+  return { harnessId: text(row.harnessId), ref: text(row.ref), checkedAt: text(row.checkedAt), fingerprint: text(row.fingerprint), expiresAt: text(row.expiresAt), label: text(row.label),
+    role: choice(row.role, ["product", "adapter"]), channel: choice(row.channel, ["npm", "brew-formula", "brew-cask", "script", "uv"]), kind: choice(row.kind, ["version", "self-update", "rerun", "terminal"]),
+    current: nullableText(row.current), target: nullableText(row.target), prerelease: bool(row.prerelease), runs: text(row.runs), writes: list(row.writes, text, 16),
+    script: script === null ? null : { source: text(script.source), sha256: text(script.sha256) }, shellProfile: nullableText(row.shellProfile), configFiles: list(row.configFiles, text, 8),
+    dependencies: list(row.dependencies, text, 64), sharedRuntimes: list(row.sharedRuntimes, text, 64),
+    runtime: runtime === null ? null : { runtime: choice(runtime.runtime, ["Node.js"]), required: text(runtime.required), found: nullableText(runtime.found), path: text(runtime.path),
+      satisfied: bool(runtime.satisfied), service: nullableText(runtime.service), restarted: bool(runtime.restarted), upgradeCommand: nullableText(runtime.upgradeCommand) },
+    active: bool(row.active), conversations: list(row.conversations, item => { const conversation = record(item); return { sessionId: text(conversation.sessionId), title: text(conversation.title), busy: bool(conversation.busy) }; }, 256),
+    otherUsers: list(row.otherUsers, item => ({ pid: number(record(item).pid) }), 256), processes: list(row.processes, entry, 128),
+    verification: row.verification === null ? null : (() => { const verification = record(row.verification); return { state: choice(verification.state, ["verified", "unverified"]), program: text(verification.program), ...(verification.adapter === undefined ? {} : { adapter: text(verification.adapter) }) }; })(),
+    terminal: terminal === null ? null : { command: text(terminal.command), explains: text(terminal.explains), localChanges: terminal.localChanges === null ? null : number(terminal.localChanges) },
+    notes: list(row.notes, text, 16), blocked: nullableText(row.blocked) };
 }
 /** What installing a missing product the official way would run and change (ADR-044). */
 export function decodeInstallCheck(value: unknown): InstallCheckView {
@@ -511,6 +537,9 @@ export class GatewayApi {
   /** Prepares installing a missing product the official way and reads what it would run and change (ADR-044); changes nothing of the user's. */
   installCheck(harnessId: string, signal?: AbortSignal): Promise<InstallCheckView> { return this.request(`/harnesses/${encodeURIComponent(harnessId)}/install`, "GET", undefined, decodeInstallCheck, signal); }
   /** Reads what uninstalling one installation would remove, stop and leave, for the confirmation (ADR-044); changes nothing. */
+  upgradeCheck(harnessId: string, ref: string, signal?: AbortSignal): Promise<InstallationUpgradeCheckView> {
+    return this.request(`/harnesses/${encodeURIComponent(harnessId)}/installations/${encodeURIComponent(ref)}/upgrade`, "GET", undefined, decodeUpgradeCheck, signal);
+  }
   uninstallCheck(harnessId: string, ref: string, signal?: AbortSignal): Promise<UninstallCheckView> {
     return this.request(`/harnesses/${encodeURIComponent(harnessId)}/installations/${encodeURIComponent(ref)}/uninstall`, "GET", undefined, decodeUninstallCheck, signal);
   }
