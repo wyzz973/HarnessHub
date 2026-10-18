@@ -93,7 +93,7 @@ export class CapabilityChanges {
       offer: (check, prepared) => { const fingerprint = randomBytes(32).toString("hex"), expires = this.now().getTime() + CAPABILITY_CHECK_MS, full: CapabilityChangeCheck = { ...check, fingerprint, expiresAt: new Date(expires).toISOString() };
         this.prepared.set(fingerprint, prepared(expires, full)); return full; } });
     this.mcp = new McpInventory({ environment: options.environment, store: this.store, now: () => this.now(), shown: path => this.shown(path), owned: () => this.owned(), tables: () => this.tables(),
-      runningNotes: harnessId => this.runningNotes(harnessId),
+      runningNotes: harnessId => this.runningNotes(harnessId, "mcp"),
       offerEdit: (change, harnessId, subject, enabled, file, read, plan, blocked, notes) => this.offerEdit(change, harnessId, subject, enabled, file, read, plan, blocked, notes, null) });
   }
 
@@ -211,7 +211,7 @@ export class CapabilityChanges {
     }
     const request: SwitchRequest = { harnessId: input.harnessId, name: input.name, enabled: input.enabled, folder };
     const { file, read, plan, blocked } = await this.plan(table, request);
-    return this.offerEdit("skill-switch", input.harnessId, input.name, input.enabled, file, read, plan, blocked, await this.runningNotes(input.harnessId), ["skills", "entries", input.name, "enabled"]);
+    return this.offerEdit("skill-switch", input.harnessId, input.name, input.enabled, file, read, plan, blocked, await this.runningNotes(input.harnessId, "skills"), ["skills", "entries", input.name, "enabled"]);
   }
   /**
    * Prepares making Hermes read the shared `~/.agents/skills` through its `skills.external_dirs` (`present`), or stop
@@ -466,8 +466,11 @@ export class CapabilityChanges {
       throw error;
     }
   }
-  /** Running sessions that read or overwrite the file (Claude Code, Gemini CLI), counted without their arguments. */
-  private async runningNotes(harnessId: string): Promise<readonly string[]> {
+  /**
+   * Running sessions that read or overwrite the file (Claude Code, Gemini CLI), counted without their arguments. Claude
+   * Code watches its skill switches; whether a running session picks up a new MCP server is not promised.
+   */
+  private async runningNotes(harnessId: string, setting: "skills" | "mcp"): Promise<readonly string[]> {
     const pattern = RUNNING[harnessId];
     if (!pattern) return [];
     let table: ReturnType<typeof parseProcessTable> = null;
@@ -476,7 +479,7 @@ export class CapabilityChanges {
     // Cursor's helper processes share its name; only the editor's main process and cursor-agent are counted.
     const count = table.filter(row => harnessId === "cursor" ? /\/Cursor\.app\/Contents\/MacOS\/Cursor(?:\s|$)/u.test(row.command) || programName(row.command) === "cursor-agent" : pattern.test(programName(row.command))).length;
     if (!count) return [];
-    return harnessId === "claude" ? ["有 " + count + " 个 Claude Code 进程在运行，它们会立即读到这次改动。"]
+    return harnessId === "claude" ? ["有 " + count + " 个 Claude Code 进程在运行" + (setting === "skills" ? "，它们会立即读到这次改动。" : "。")]
       : harnessId === "cursor" ? ["有 " + count + " 个 Cursor 进程在运行（编辑器或 cursor-agent），它可能自行改写 mcp.json；写入后会立即核对。"]
       : ["有 " + count + " 个 Gemini CLI 进程在运行。运行中的会话保存设置时会按启动时的快照覆盖 settings.json，可能冲掉这次改动；建议先退出它们。"];
   }

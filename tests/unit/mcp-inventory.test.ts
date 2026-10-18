@@ -135,7 +135,8 @@ test("G064-M4 Claude's MCP entries are written by its own commands, predicted on
     if (options.env.CLAUDE_CONFIG_DIR) value.migrationVersion ??= 11;
     await writeFile(target, JSON.stringify(value, null, 2));
   };
-  const changes = new CapabilityChanges({ root: join(root, "data"), generation: 1, assertOwner: () => {}, environment: { home, values: { HOME: home } }, homes: [home], processes: async () => "", claude });
+  // One Claude Code session is running while the server is written.
+  const changes = new CapabilityChanges({ root: join(root, "data"), generation: 1, assertOwner: () => {}, environment: { home, values: { HOME: home } }, homes: [home], processes: async () => "  4242     1 /opt/bin/claude --resume\n", claude });
   t.after(() => changes.close());
   const installed = [{ harnessId: "claude", name: "Claude Code", version: "2.1.302" }];
   await changes.saveMcpServer("docs", { ...DOCS }, false);
@@ -145,6 +146,7 @@ test("G064-M4 Claude's MCP entries are written by its own commands, predicted on
   assert.match(check.command ?? "", /^claude mcp add-json docs '\{.*\}' -s user$/u);
   assert.deepEqual([check.rewrite?.target, check.rewrite?.before, check.rewrite?.added], ["mcpServers.docs", null, ["migrationVersion"]]);
   assert.ok(check.notes.some(note => note.includes("可能按内存里的副本整份写回")));
+  assert.ok(check.notes.includes("有 1 个 Claude Code 进程在运行。") && !check.notes.some(note => note.includes("立即读到")), "a running session is not promised the new server: " + JSON.stringify(check.notes));
   assert.equal(runs[0]!.env.CLAUDE_CONFIG_DIR?.startsWith(root), false, "the copy is in a private folder of its own");
   assert.deepEqual(JSON.parse(await readFile(file, "utf8")).mcpServers, { other: { type: "stdio", command: "uvx", args: ["other"] } });
   // A running session rewrites another key between the check and the confirmation: only the server's entry must be as checked.
