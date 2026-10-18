@@ -42,7 +42,8 @@ function writePrivate(path: string, bytes: Buffer): void {
 }
 const SCHEMA: Readonly<Record<string, readonly string[]>> = { capability_owner: ["singleton", "generation"], capability_changes: ["id", "command_id", "payload_hash", "at", "view_json"],
   capability_backups: ["id", "file", "created_at", "bytes", "sha256", "change_id", "subject", "written_sha256"], capability_ledger: ["harness_id", "file", "key", "value_hash", "previous", "change_id", "at"],
-  skill_sources: ["name", "folder", "repository", "ref", "path", "commit_sha", "upstream_tree", "local_tree", "installed_at", "updated_at", "change_id"], skill_undo: ["change_id", "data_json"] };
+  skill_sources: ["name", "folder", "repository", "ref", "path", "commit_sha", "upstream_tree", "local_tree", "installed_at", "updated_at", "change_id"], skill_undo: ["change_id", "data_json"],
+  mcp_servers: ["name", "definition_json", "created_at", "updated_at"] };
 /** Tables of another shape than this build's are refused rather than read or altered. */
 function checkSchema(db: DatabaseSync): void {
   for (const [table, columns] of Object.entries(SCHEMA)) {
@@ -53,9 +54,10 @@ function checkSchema(db: DatabaseSync): void {
 function text(value: unknown): string { if (typeof value !== "string") throw new CapabilityError("INVALID_STORAGE", "capability storage row is invalid"); return value; }
 
 /**
- * HarnessHub's own record of capability changes (ADR-045 §10): `capabilities/capabilities.sqlite` (schema v2) under the
- * data root, with the backups and skill snapshots beside it. v2 adds the skills HarnessHub installed, which a v1 reader
- * rejects; `tools/capabilities-v2-to-v1.sql` goes back. A newer owner generation fences this one off:
+ * HarnessHub's own record of capability changes (ADR-045 §10): `capabilities/capabilities.sqlite` (schema v3) under the
+ * data root, with the backups and skill snapshots beside it. v2 adds the skills HarnessHub installed and v3 its MCP list,
+ * each rejected by the reader before; `tools/capabilities-v3-to-v2.sql` and `-v2-to-v1.sql` go back. A newer owner
+ * generation fences this one off:
  * every write first checks the directory, marker and database are the ones opened and the generation is still ours.
  */
 export class CapabilityStore {
@@ -75,7 +77,7 @@ export class CapabilityStore {
     try {
       db.exec("PRAGMA journal_mode=DELETE;PRAGMA synchronous=FULL;PRAGMA busy_timeout=1000");
       const version = db.prepare("PRAGMA user_version").get()?.user_version;
-      if (version !== 0 && version !== 1 && version !== 2) throw new CapabilityError("INVALID_STORAGE", "unknown capability storage schema");
+      if (version !== 0 && version !== 1 && version !== 2 && version !== 3) throw new CapabilityError("INVALID_STORAGE", "unknown capability storage schema");
       db.exec("CREATE TABLE IF NOT EXISTS capability_owner(singleton INTEGER PRIMARY KEY CHECK(singleton=1),generation INTEGER NOT NULL) STRICT;"
         + "CREATE TABLE IF NOT EXISTS capability_changes(id TEXT PRIMARY KEY,command_id TEXT NOT NULL UNIQUE,payload_hash TEXT NOT NULL,at TEXT NOT NULL,view_json TEXT NOT NULL CHECK(json_valid(view_json))) STRICT;"
         + "CREATE TABLE IF NOT EXISTS capability_backups(id TEXT PRIMARY KEY,file TEXT NOT NULL,created_at TEXT NOT NULL,bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,change_id TEXT NOT NULL,subject TEXT NOT NULL,written_sha256 TEXT) STRICT;"
@@ -84,7 +86,9 @@ export class CapabilityStore {
         + "CREATE TABLE IF NOT EXISTS skill_sources(name TEXT PRIMARY KEY,folder TEXT NOT NULL,repository TEXT NOT NULL,ref TEXT,path TEXT NOT NULL,commit_sha TEXT NOT NULL,upstream_tree TEXT NOT NULL,"
         + "local_tree TEXT NOT NULL,installed_at TEXT NOT NULL,updated_at TEXT NOT NULL,change_id TEXT NOT NULL) STRICT;"
         + "CREATE TABLE IF NOT EXISTS skill_undo(change_id TEXT PRIMARY KEY,data_json TEXT NOT NULL CHECK(json_valid(data_json))) STRICT;"
-        + "PRAGMA user_version=2");
+        // v3 (additive): HarnessHub's MCP list.
+        + "CREATE TABLE IF NOT EXISTS mcp_servers(name TEXT PRIMARY KEY,definition_json TEXT NOT NULL CHECK(json_valid(definition_json)),created_at TEXT NOT NULL,updated_at TEXT NOT NULL) STRICT;"
+        + "PRAGMA user_version=3");
       checkSchema(db);
       const previous = db.prepare("SELECT generation FROM capability_owner WHERE singleton=1").get()?.generation;
       if (typeof previous === "number" && previous > generation) throw new CapabilityError("OWNERSHIP_LOST", "capability owner generation is stale");
@@ -197,6 +201,17 @@ export class CapabilityStore {
     const row = this.db.prepare("SELECT data_json FROM skill_undo WHERE change_id=?").get(changeId);
     return row === undefined ? null : JSON.parse(text(row.data_json)) as unknown;
   }
+  /** HarnessHub's MCP list, by name: each definition as JSON (validated by its reader), with when it was made and last changed. */
+  mcpServers(): readonly { readonly name: string; readonly definition: unknown; readonly createdAt: string; readonly updatedAt: string }[] {
+    return this.db.prepare("SELECT name,definition_json,created_at,updated_at FROM mcp_servers ORDER BY name").all()
+      .map(row => ({ name: text(row.name), definition: JSON.parse(text(row.definition_json)) as unknown, createdAt: text(row.created_at), updatedAt: text(row.updated_at) }));
+  }
+  setMcpServer(name: string, definition: unknown, at: string): void {
+    this.check();
+    this.db.prepare("INSERT INTO mcp_servers(name,definition_json,created_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(name) DO UPDATE SET definition_json=excluded.definition_json,updated_at=excluded.updated_at")
+      .run(name, JSON.stringify(definition), at, at);
+  }
+  dropMcpServer(name: string): void { this.check(); this.db.prepare("DELETE FROM mcp_servers WHERE name=?").run(name); }
   /** Keeps the undo records of these changes only. */
   pruneSkillUndo(keep: readonly string[]): void {
     this.check();

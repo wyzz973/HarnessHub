@@ -27,3 +27,10 @@ export function maskSecrets(text: string): string {
   for (const shape of SHAPES) out = out.replace(shape, MASK);
   return out;
 }
+/**
+ * Whether a named value must not be kept as written (ADR-045 approval of step 3): its name looks like a credential's, or
+ * its value has a token's shape or carries a credential. Such a value is only ever referred to through a variable.
+ */
+export function looksSecret(name: string, value: string): boolean {
+  return new RegExp("^" + SECRET_KEY + "$", "iu").test(name) || maskSecrets(value) !== value || maskSecrets(name + "=" + value) !== name + "=" + value;
+}

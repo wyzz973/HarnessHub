@@ -2235,3 +2235,76 @@ test("G054-CA5 skills are added from a GitHub repository after reading it, updat
   assert.deepEqual(posted.map(item => item.fingerprint), ["1".repeat(64), "3".repeat(64), "4".repeat(64)]);
   assert.deepEqual(errors, []);
 });
+
+test("G054-CA6 the MCP list shows each server per Harness, imports what the Harnesses have with a claim, writes a server only through its shown check, and keeps no credential in a new one", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  const at = "2026-10-18T10:00:00.000Z", fs = { transport: "stdio", command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem"], cwd: null, url: null, env: [{ key: "FS_TOKEN", variable: "FS_TOKEN" }], headers: [] };
+  const harnesses = [{ harnessId: "claude", name: "Claude Code", writable: false, reason: "Claude Code 的 MCP 由它自己的命令写入，HarnessHub 下一步接入；现在只读。" }, { harnessId: "codex", name: "Codex", writable: true, reason: null },
+    { harnessId: "cursor", name: "Cursor", writable: true, reason: null }, { harnessId: "hermes", name: "Hermes Agent", writable: true, reason: null }];
+  let codexState = "absent";
+  const inventory = () => ({ harnesses, servers: [{ name: "fs", definition: fs, command: "npx -y @modelcontextprotocol/server-filesystem", variables: [{ name: "FS_TOKEN", set: false }], updatedAt: at,
+    targets: [{ harnessId: "claude", state: "unsupported", reason: harnesses[0]!.reason, file: null }, { harnessId: "codex", state: codexState, reason: null, file: "~/.codex/config.toml" },
+      { harnessId: "cursor", state: "claimable", reason: "定义与清单一致，还不是 HarnessHub 管理的", file: "~/.cursor/mcp.json" }, { harnessId: "hermes", state: "synced", reason: null, file: "~/.hermes/config.yaml" }] }],
+    candidates: [{ id: "a".repeat(32), name: "linear", definition: { transport: "http", command: null, args: [], cwd: null, url: "https://mcp.linear.app/sse", env: [], headers: [{ name: "Authorization", variable: "LINEAR_TOKEN", prefix: "Bearer " }] },
+      problem: null, foundIn: [{ harnessId: "cursor", file: "~/.cursor/mcp.json" }], state: "new" },
+      { id: "b".repeat(32), name: "github", definition: null, problem: "API_KEY 的值像是密钥，必须改成变量引用", foundIn: [{ harnessId: "claude", file: "~/.claude.json" }], state: "new" }] });
+  const requests: string[] = [], posted: { path: string; body: Record<string, unknown> }[] = [];
+  await page.route("**/api/v1/capabilities", route => route.fulfill({ json: capabilityView() }));
+  await page.route("**/api/v1/capabilities/history", route => route.fulfill({ json: { changes: [], backups: [], drift: [], ...HISTORY_EXTRA } }));
+  await page.route("**/api/v1/capabilities/mcp", route => route.fulfill({ json: inventory() }));
+  await page.route(/\/api\/v1\/capabilities\/mcp\/(sync|remove)\?/u, route => {
+    const url = new URL(route.request().url()); requests.push(url.pathname.replace("/api/v1/capabilities/", "") + url.search);
+    return route.fulfill({ json: { kind: "mcp-sync", harnessId: "codex", name: "fs", enabled: true, file: "~/.codex/config.toml", command: null, rewrite: null, links: [], current: "none", blocked: null,
+      diff: "--- a/~/.codex/config.toml\n+++ b/~/.codex/config.toml\n@@ -9,0 +10,4 @@\n+[mcp_servers.fs]\n+args = [\"-y\", \"@modelcontextprotocol/server-filesystem\"]\n+command = \"npx\"\n+env_vars = [\"FS_TOKEN\"]\n",
+      notes: ["目标 Harness 会以你的身份运行这个程序：npx -y @modelcontextprotocol/server-filesystem", "需要的环境变量：FS_TOKEN（HarnessHub 的环境里未设置）。值不写进配置文件。", "Codex 要重启后才读到改动。"],
+      fingerprint: "5".repeat(64), expiresAt: "2026-10-18T10:15:00.000Z" } });
+  });
+  await page.route(/\/api\/v1\/capabilities\/(changes|mcp\/import|mcp\/claim|mcp\/servers)$/u, async route => {
+    const path = new URL(route.request().url()).pathname.replace("/api/v1/capabilities/", ""), body = route.request().postDataJSON() as Record<string, unknown>; posted.push({ path, body });
+    if (path === "changes") { codexState = "synced"; return route.fulfill({ json: { id: "15555555-5555-4555-8555-555555555555", kind: "mcp-sync", harnessId: "codex", subject: "fs", file: "~/.codex/config.toml", status: "applied", diff: null, backupId: "16666666-6666-4666-8666-666666666666", error: null, notes: [], at } }); }
+    if (path === "mcp/servers") return route.fulfill({ json: { name: body.name } });
+    return route.fulfill({ json: [] });
+  });
+  await page.goto(fixture.gateway.url); await expect(page.getByRole("button", { name: "新对话", exact: true })).toBeVisible();
+  await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "能力", exact: true }).click();
+  await page.getByRole("tab", { name: /^MCP/u }).click();
+  // Each server per Harness: written, the same but not yet HarnessHub's, not written, not writable (with why); the variable it needs and whether it is set.
+  const panel = page.locator(".mcp-inventory"), row = panel.locator("tbody tr").filter({ hasText: "fs" });
+  await expect(row.locator("td")).toHaveText([/^—$/u, /未写入写入/u, /一致认领/u, /已写入移除/u]);
+  await expect(row).toContainText("FS_TOKEN 未设置");
+  // Writing goes through its check: the diff and the program it will run are shown, and only that check is sent.
+  await row.locator("td").nth(1).getByRole("button", { name: "写入", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "写入 fs 到 Codex" });
+  await expect(dialog.locator(".capability-diff .text-green")).toHaveText(["+[mcp_servers.fs]", "+args = [\"-y\", \"@modelcontextprotocol/server-filesystem\"]", "+command = \"npx\"", "+env_vars = [\"FS_TOKEN\"]"]);
+  await expect(dialog).toContainText("目标 Harness 会以你的身份运行这个程序：npx -y @modelcontextprotocol/server-filesystem");
+  assert.equal(posted.length, 0, "the check alone writes nothing");
+  await dialog.getByRole("button", { name: "写入", exact: true }).click(); await expect(dialog).toBeHidden();
+  await expect(row.locator("td").nth(1)).toHaveText(/已写入/u);
+  // Claiming an identical entry and importing what the Harnesses have change no file; a server with a literal credential cannot be imported.
+  await row.locator("td").nth(2).getByRole("button", { name: "认领", exact: true }).click();
+  await expect(page.locator(".capability-notice")).toContainText("已认领 fs");
+  await panel.getByRole("button", { name: "从现有配置导入（1）" }).click();
+  const importing = page.getByRole("dialog", { name: "从现有配置导入 MCP 服务器" });
+  await expect(importing.getByRole("checkbox", { name: "导入 github" })).toBeDisabled(); await expect(importing).toContainText("API_KEY 的值像是密钥");
+  await importing.getByRole("checkbox", { name: "导入 linear" }).check();
+  await expect(importing.getByRole("checkbox", { name: "认领 Cursor 里的这一项" })).toBeChecked();
+  await importing.getByRole("button", { name: "导入所选（1）" }).click(); await expect(importing).toBeHidden();
+  await expect(page.locator(".capability-notice")).toContainText("已导入 1 个服务器");
+  // A new server keeps the variable's name, never a value.
+  await panel.getByRole("button", { name: "新建服务器", exact: true }).click();
+  const form = page.getByRole("dialog", { name: "新建 MCP 服务器" });
+  await form.getByRole("textbox", { name: "服务器名称" }).fill("search"); await form.getByRole("textbox", { name: "程序" }).fill("uvx"); await form.getByRole("textbox", { name: "参数" }).fill("search-mcp\n--fast");
+  await form.getByRole("button", { name: "添加", exact: true }).click();
+  await form.getByRole("textbox", { name: "环境变量的名字" }).fill("SEARCH_TOKEN"); await form.getByRole("textbox", { name: "取值的变量" }).fill("SEARCH_TOKEN");
+  await form.getByRole("button", { name: "保存到清单", exact: true }).click(); await expect(form).toBeHidden();
+  assert.deepEqual(requests, ["mcp/sync?name=fs&harnessId=codex"]);
+  assert.deepEqual(posted.map(item => item.path), ["changes", "mcp/claim", "mcp/import", "mcp/servers"]);
+  assert.deepEqual(posted[1]!.body, { name: "fs", harnessIds: ["cursor"] });
+  assert.deepEqual(posted[2]!.body, { candidate: "a".repeat(32), claim: ["cursor"] });
+  assert.deepEqual(posted[3]!.body, { name: "search", replace: false, definition: { transport: "stdio", command: "uvx", args: ["search-mcp", "--fast"], cwd: null, url: null, env: [{ key: "SEARCH_TOKEN", variable: "SEARCH_TOKEN" }], headers: [] } });
+  assert.deepEqual(errors, []);
+});

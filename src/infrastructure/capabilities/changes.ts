@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { capabilityReadTables, harnessDirectories, type HarnessReadTable, type ReadEnvironment } from "../../adapters/capability-reads.js";
 import { CAPABILITY_CHECK_MS, CapabilityError, SKILL_SNAPSHOT_CHANGES, type CapabilityChangeCheck, type CapabilityChangeKind, type CapabilityChangeView, type CapabilityDrift, type CapabilityDriftState, type CapabilityHistory,
-  type CapabilityLinkChange, type CapabilityOrphan, type CapabilityRestoreCheck, type SkillSourceListing, type SkillUpdateView } from "../../contracts/capabilities.js";
+  type CapabilityLinkChange, type CapabilityOrphan, type CapabilityRestoreCheck, type McpDefinitionView, type McpInventoryView, type SkillSourceListing, type SkillUpdateView } from "../../contracts/capabilities.js";
 import { ManagementError } from "../../contracts/management.js";
 import { unifiedDiff } from "../control/unified-diff.js";
 import { isolatedSandboxProfile } from "../management/native.js";
@@ -21,6 +21,7 @@ import { resolveHermesHome, resolveOpenClawWorkspace } from "./service.js";
 import { CapabilityStore, sha256, type LedgerEntry, type StoredBackup } from "./store.js";
 import type { GithubFetch } from "./github.js";
 import { SkillChanges, type PreparedPackage } from "./skill-changes.js";
+import { McpInventory } from "./mcp-changes.js";
 import { SkillSnapshots, sweepStaging } from "./skill-packages.js";
 import { claudeSwitch, codexSwitch, externalDirsOf, heldValue, listSwitch, opencodeSwitch, openclawSwitch, sharedDirPlan, type SwitchContext, type SwitchPlan, type SwitchRequest } from "./switches.js";
 
@@ -45,7 +46,7 @@ export interface ChangeOptions {
 export type OpenclawRunner = (args: readonly string[], options: { readonly env: Readonly<Record<string, string>>; readonly writable: readonly string[] }, signal: AbortSignal) => Promise<void>;
 type Planned = Exclude<SwitchPlan, { kind: "none" }>;
 /** An edit of one file, or the Harness's own command; `predicted` is what that command wrote when run on a copy. */
-interface PreparedEdit { readonly kind: "edit"; readonly change: "skill-switch" | "shared-dir"; readonly harnessId: string; readonly subject: string; readonly expires: number; readonly plan: Planned | null;
+interface PreparedEdit { readonly kind: "edit"; readonly change: "skill-switch" | "shared-dir" | "mcp-sync" | "mcp-remove"; readonly harnessId: string; readonly subject: string; readonly expires: number; readonly plan: Planned | null;
   readonly before: Buffer | null; readonly predicted: Buffer | null; readonly mode: number; readonly check: CapabilityChangeCheck }
 /** Links to create or remove (absolute paths, targets as written), and what the ledger records of them. */
 interface PlannedLink { readonly path: string; readonly target: string; readonly action: "create" | "remove"; readonly ledger: "set" | "drop" | null }
@@ -75,6 +76,7 @@ export class CapabilityChanges {
   private readonly store: CapabilityStore;
   private readonly prepared = new Map<string, PreparedEdit | PreparedLinks | PreparedRestore | PreparedPackage>();
   private readonly skills: SkillChanges;
+  private readonly mcp: McpInventory;
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly running = new Set<Promise<unknown>>();
   private closed = false;
@@ -87,6 +89,9 @@ export class CapabilityChanges {
       serial: (key, work) => this.serial(key, work), tables: () => this.tables(), hermesReadsShared: () => this.hermesReadsShared(),
       offer: (check, prepared) => { const fingerprint = randomBytes(32).toString("hex"), expires = this.now().getTime() + CAPABILITY_CHECK_MS, full: CapabilityChangeCheck = { ...check, fingerprint, expiresAt: new Date(expires).toISOString() };
         this.prepared.set(fingerprint, prepared(expires, full)); return full; } });
+    this.mcp = new McpInventory({ environment: options.environment, store: this.store, now: () => this.now(), shown: path => this.shown(path), owned: () => this.owned(), tables: () => this.tables(),
+      runningNotes: harnessId => this.runningNotes(harnessId),
+      offerEdit: (change, harnessId, subject, enabled, file, read, plan, blocked, notes) => this.offerEdit(change, harnessId, subject, enabled, file, read, plan, blocked, notes, null) });
   }
 
   private now(): Date { return this.options.now?.() ?? new Date(); }
@@ -149,6 +154,20 @@ export class CapabilityChanges {
     if (!NAME.test(name)) return Promise.reject(new CapabilityError("INVALID_INPUT", "invalid skill name"));
     return this.checking(() => this.skills.checkDelete(name));
   }
+  /** HarnessHub's MCP list with each server's state per installed Harness, and the servers the Harnesses already have (ADR-045 §5). Read only. */
+  mcpInventory(installed: readonly InstalledHarness[]): Promise<McpInventoryView> { return this.checking(() => this.mcp.inventory(installed)); }
+  /** Keeps a server in the list (a definition typed by the user, checked by the approval's rules); `replace` changes a listed one. */
+  saveMcpServer(name: string, definition: McpDefinitionView, replace: boolean): Promise<{ readonly name: string }> { return this.checking(async () => ({ name: this.mcp.save(name, definition, replace) })); }
+  /** Removes a server from the list, refused while a Harness still has the entry HarnessHub wrote for it. */
+  removeMcpServer(name: string, installed: readonly InstalledHarness[]): Promise<{ readonly removed: true }> { return this.checking(async () => { await this.mcp.remove(name, installed); return { removed: true } as const; }); }
+  /** Lists a server the Harnesses already have and records the identical entries in `claim` as HarnessHub's (no file changes). */
+  importMcpServer(id: string, claim: readonly string[], installed: readonly InstalledHarness[]): Promise<readonly CapabilityChangeView[]> { return this.checking(() => this.mcp.importCandidate(id, claim, installed)); }
+  /** Records a listed server's identical entries in these Harnesses as HarnessHub's (no file changes). */
+  claimMcpServer(name: string, harnessIds: readonly string[], installed: readonly InstalledHarness[]): Promise<readonly CapabilityChangeView[]> { return this.checking(() => this.mcp.claim(name, harnessIds, installed)); }
+  /** Prepares writing a listed server into one Harness; `overwrite` for one HarnessHub wrote that someone changed or removed since. */
+  checkMcpSync(name: string, harnessId: string, overwrite: boolean, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> { return this.checking(() => this.mcp.checkSync(name, harnessId, overwrite, installed)); }
+  /** Prepares removing the entry HarnessHub wrote for a listed server from one Harness. */
+  checkMcpRemove(name: string, harnessId: string, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> { return this.checking(() => this.mcp.checkRemove(name, harnessId, installed)); }
   /** Whether Hermes reads the shared directory through its `skills.external_dirs` now. */
   private async hermesReadsShared(): Promise<boolean> {
     const { hermesHome, tables } = await this.tables(), file = tables.find(table => table.harnessId === "hermes")?.skills.externalDirs?.file;
@@ -239,7 +258,7 @@ export class CapabilityChanges {
     return all.entries.filter(entry => entry.kind === "skill" && entry.edges.some(edge => edge.status === "active") && !seen.has(entry.name)).map(entry => entry.name).sort();
   }
   /** An edit or command plan offered for confirmation, with the guard every edit passes and OpenClaw's prediction. */
-  private async offerEdit(change: "skill-switch" | "shared-dir", harnessId: string, subject: string, enabled: boolean, file: string, read: TargetRead, plan: SwitchPlan | null, blocked: string | null,
+  private async offerEdit(change: "skill-switch" | "shared-dir" | "mcp-sync" | "mcp-remove", harnessId: string, subject: string, enabled: boolean, file: string, read: TargetRead, plan: SwitchPlan | null, blocked: string | null,
     extraNotes: readonly string[], target: readonly string[] | null): Promise<CapabilityChangeCheck> {
     const before = read.state === "ok" ? read.bytes : null, beforeText = before?.toString("utf8") ?? "";
     const notes = [...(plan !== null && plan.kind !== "none" ? plan.notes : []), ...extraNotes];
@@ -543,7 +562,7 @@ export class CapabilityChanges {
   private async orphans(): Promise<readonly CapabilityOrphan[]> {
     const { tables } = await this.tables(), found: CapabilityOrphan[] = [];
     for (const entry of this.store.ledgerEntries()) {
-      if (entry.key.startsWith("link/") || entry.key.startsWith("skills.external_dirs/")) continue;
+      if (entry.key.startsWith("link/") || entry.key.startsWith("skills.external_dirs/") || entry.key.startsWith("mcp/")) continue;
       const table = tables.find(item => item.harnessId === entry.harnessId), rest = entry.key.slice(entry.key.indexOf("/") + 1);
       if (table === undefined) continue;
       const kept = entry.key.startsWith("skills.config/") ? existsSync(rest) : skillFolderSomewhere(rest, table);
@@ -558,7 +577,7 @@ export class CapabilityChanges {
   checkOrphanClear(id: string, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> {
     let entry: LedgerEntry;
     try { entry = this.driftEntry(id); } catch (error) { return Promise.reject(error); }
-    if (entry.key.startsWith("link/") || entry.key.startsWith("skills.external_dirs/")) return Promise.reject(new CapabilityError("CAPABILITY_NOT_FOUND", "这不是停用设置"));
+    if (entry.key.startsWith("link/") || entry.key.startsWith("skills.external_dirs/") || entry.key.startsWith("mcp/")) return Promise.reject(new CapabilityError("CAPABILITY_NOT_FOUND", "这不是停用设置"));
     const rest = entry.key.slice(entry.key.indexOf("/") + 1), codex = entry.key.startsWith("skills.config/");
     return this.checking(() => this.prepareSwitch({ harnessId: entry.harnessId, name: codex ? basename(dirname(rest)) : rest, enabled: true, via: codex ? this.shown(dirname(rest)) : null, orphan: entry }, installed));
   }
@@ -588,7 +607,7 @@ export class CapabilityChanges {
   }
   private driftView(entry: LedgerEntry, state: CapabilityDriftState): CapabilityDrift {
     const rest = entry.key.slice(entry.key.indexOf("/") + 1), change = this.store.changeById(entry.changeId);
-    const kind = entry.key.startsWith("link/") ? "skill-link" as const : entry.key.startsWith("skills.external_dirs/") ? "shared-dir" as const : "skill-switch" as const;
+    const kind = entry.key.startsWith("link/") ? "skill-link" as const : entry.key.startsWith("skills.external_dirs/") ? "shared-dir" as const : entry.key.startsWith("mcp/") ? "mcp" as const : "skill-switch" as const;
     const subject = kind === "shared-dir" ? SHARED_ENTRY : entry.key.startsWith("skills.config/") ? change?.subject ?? basename(dirname(rest))
       : kind === "skill-link" ? change?.subject ?? basename(rest) : rest;
     return { id: driftId(entry), kind, harnessId: entry.harnessId, subject, file: this.shown(entry.file), state, changeId: entry.changeId, at: entry.at };
@@ -608,6 +627,7 @@ export class CapabilityChanges {
     const view = this.driftView(entry, "removed");
     if (view.kind === "skill-link") return this.checkSkillLink({ harnessId: entry.harnessId, name: view.subject, present: true }, installed);
     if (view.kind === "shared-dir") return this.checkSharedDir({ harnessId: entry.harnessId, present: true }, installed);
+    if (view.kind === "mcp") return this.checkMcpSync(view.subject, entry.harnessId, true, installed);
     // OpenCode's ledger holds either the "deny" of turning a skill off or the "allow" that turned it on over another rule.
     const enabled = entry.key.startsWith("permission.skill/") && entry.valueHash === hash(JSON.stringify("allow"));
     const via = entry.key.startsWith("skills.config/") ? this.shown(dirname(entry.key.slice("skills.config/".length))) : null;

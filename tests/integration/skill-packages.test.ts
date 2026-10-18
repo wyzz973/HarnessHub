@@ -259,7 +259,7 @@ test("G064-W10 a skill npx skills installed is updated in its lock entry alone, 
   await f.clean();
 });
 
-test("G064-W11 a redirect off GitHub, a rate limit and a change after confirming are refused without writing, and the v2 to v1 downgrade keeps every other record", macOnly, async t => {
+test("G064-W11 a redirect off GitHub, a rate limit and a change after confirming are refused without writing, and the downgrade to v1 keeps every other record", macOnly, async t => {
   const repos = new Map<string, Repository>([["acme/skills", { head: commit(1), commits: new Map([[commit(1), SKILLS_C1], [commit(2), SKILLS_C2]]) }]]);
   const github = fakeGithub(repos), f = await gateway(t, github.fetcher);
   github.state.elsewhere = true;
@@ -290,6 +290,9 @@ test("G064-W11 a redirect off GitHub, a rate limit and a change after confirming
   const db = new DatabaseSync(copy);
   try {
     db.prepare("INSERT INTO capability_changes(id,command_id,payload_hash,at,view_json) VALUES(?,?,?,?,?)").run("11111111-1111-4111-8111-111111111111", "kept", "h", "2026-10-18T00:00:00.000Z", JSON.stringify({ kind: "skill-switch" }));
+    // A v3 database goes back to v2 first (the MCP list), then to v1.
+    db.exec(await readFile(new URL("../../../tools/capabilities-v3-to-v2.sql", import.meta.url), "utf8"));
+    assert.equal(db.prepare("PRAGMA user_version").get()?.user_version, 2);
     db.exec(await readFile(new URL("../../../tools/capabilities-v2-to-v1.sql", import.meta.url), "utf8"));
     assert.equal(db.prepare("PRAGMA user_version").get()?.user_version, 1);
     assert.deepEqual(db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(row => row.name), ["capability_backups", "capability_changes", "capability_ledger", "capability_owner"]);

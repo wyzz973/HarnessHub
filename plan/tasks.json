@@ -3503,7 +3503,8 @@
         "G054-CA2",
         "G054-CA3",
         "G054-CA4",
-        "G054-CA5"
+        "G054-CA5",
+        "G054-CA6"
       ],
       "active_slice": "upgrade-with-running-programs"
     },
@@ -4080,7 +4081,14 @@
         "src/infrastructure/capabilities/skill-packages.ts",
         "src/infrastructure/capabilities/skill-changes.ts",
         "tools/capabilities-v2-to-v1.sql",
-        "web/src/components/SkillAddDialog.tsx"
+        "web/src/components/SkillAddDialog.tsx",
+        "src/infrastructure/capabilities/mcp-definitions.ts",
+        "src/infrastructure/capabilities/mcp-edits.ts",
+        "src/infrastructure/capabilities/mcp-changes.ts",
+        "web/src/components/McpInventoryPanel.tsx",
+        "tests/unit/mcp-inventory.test.ts",
+        "tests/integration/mcp-inventory.test.ts",
+        "tools/capabilities-v3-to-v2.sql"
       ],
       "requirements": [
         "R27",
@@ -4117,7 +4125,10 @@
         "G064-W8",
         "G064-W9",
         "G064-W10",
-        "G064-W11"
+        "G064-W11",
+        "G064-M1",
+        "G064-M2",
+        "G064-M3"
       ]
     }
   ]

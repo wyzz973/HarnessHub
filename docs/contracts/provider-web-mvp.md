@@ -153,3 +153,18 @@ ADR-045 第 2 步（2026-10-18，添加、更新、删除技能）追加：
 - **清除孤立的停用设置**：`GET /api/v1/capabilities/orphans/:id/clear`，走开关检查。这个 Harness 仍能看到同名技能时返回 409 `CAPABILITY_TARGET_REFUSED`。
 - **视图**：`GET /api/v1/capabilities`里 HarnessHub 装的技能`owner`为`harnesshub`，`source`为它的仓库；两份 lock 都读，`$XDG_STATE_HOME/skills/.skill-lock.json`优先。
 - **存储**：升到`capabilities.sqlite` v2，新增`skill_sources`与`skill_undo`；快照在`capabilities/skills/`。降级用`tools/capabilities-v2-to-v1.sql`。
+
+ADR-045 第 3 步（2026-10-18，MCP 统一清单 3a）追加：
+- `GET /api/v1/capabilities/mcp`返回`McpInventoryView`：
+  - `servers`：清单里的服务器。每个带定义（路径以`~`书写）、打码后的命令行、所需变量及其在 HarnessHub 环境里是否已设置（只给布尔值），以及每个已安装 Harness 的状态`targets`：`synced`、`claimable`、`outdated`、`different`、`changed`、`removed`、`absent`、`unsupported`，附原因与文件。
+  - `candidates`：各 Harness 用户级配置里已有的服务器，按名字和定义归组；每项带不透明的`id`、定义或不能收进清单的原因`problem`、所在的 Harness，以及与清单的关系`state`（`new`、`listed`、`different`）。
+  - `harnesses`：每个 Harness 能否写入，不能时附原因。
+- 改清单（都不改任何 Harness 的文件）：
+  - `POST /api/v1/capabilities/mcp/servers`接受`{name, definition, replace?}`，`definition`即`McpDefinitionView`，不合格时返回 400 和原因；
+  - `POST /api/v1/capabilities/mcp/servers/delete`接受`{name}`，仍有 HarnessHub 写的条目时返回 409；
+  - `POST /api/v1/capabilities/mcp/import`接受`{candidate, claim?}`；
+  - `POST /api/v1/capabilities/mcp/claim`接受`{name, harnessIds}`；
+  - 认领返回`mcp-claim`修改记录。
+- 写入的检查：`GET /api/v1/capabilities/mcp/sync?name=&harnessId=[&overwrite=true]`与`GET /api/v1/capabilities/mcp/remove?name=&harnessId=`，返回`kind`为`mcp-sync`或`mcp-remove`的`CapabilityChangeCheck`。确认同样用`POST /api/v1/capabilities/changes`。HarnessHub 写的条目被外部改动或移除后，要带`overwrite=true`；用户自己的同名条目不会被覆盖。
+- 漂移：`history.drift`的`kind`可以是`mcp`，重新应用即带`overwrite`的写入检查。
+- 存储：升到`capabilities.sqlite` v3，新增`mcp_servers`。降级用`tools/capabilities-v3-to-v2.sql`，会删除清单、MCP 的修改记录与台账。

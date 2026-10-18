@@ -953,7 +953,14 @@
         "web/src/components/SkillAddDialog.tsx",
         "tests/unit/skill-packages.test.ts",
         "tests/integration/skill-packages.test.ts",
-        "tools/capabilities-v2-to-v1.sql"
+        "tools/capabilities-v2-to-v1.sql",
+        "src/infrastructure/capabilities/mcp-definitions.ts",
+        "src/infrastructure/capabilities/mcp-edits.ts",
+        "src/infrastructure/capabilities/mcp-changes.ts",
+        "web/src/components/McpInventoryPanel.tsx",
+        "tests/unit/mcp-inventory.test.ts",
+        "tests/integration/mcp-inventory.test.ts",
+        "tools/capabilities-v3-to-v2.sql"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/capabilities-view-2026-10-18.md"

@@ -9474,6 +9474,54 @@
       "evidence": null
     },
     {
+      "id": "G064-M1",
+      "task": "G064",
+      "requirements": [
+        "R27"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "planned_file": "tests/unit/mcp-inventory.test.ts",
+      "scenario": "MCP 服务器的中立定义、各 Harness 的写法与可表达子集，以及 Codex、Hermes、JSON 三种文件的定点编辑",
+      "expected": "六种写法读成同一个定义并按各自的变量引用写回；Codex 只能同名转发、请求头不能带前缀、不支持 SSE，Hermes 不支持 SSE，表达不了时拒绝并说明；名字或值像密钥的字面值、小写变量名、非本机 HTTP、带查询串的地址、shell 字符、含密钥的参数、相对工作目录被拒绝，普通设置可以是字面值；Codex 的表组整组增删、更新只改自有键并保留用户的超时与工具审批，其余字节不变；Hermes 在空映射里增删条目，最后一个删掉后回到 {} 且逐字节回原样；JSON 只改自有键，注释与用户的键保留",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G064-M2",
+      "task": "G064",
+      "requirements": [
+        "R27"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/mcp-inventory.test.ts",
+      "scenario": "经正式入口导入、认领、按各家写法写入、清单改动后更新与移除 MCP 服务器",
+      "expected": "列出各 Harness 已有的服务器，明文密钥与带令牌的地址不能导入；导入并认领一致的那一项不改文件；写入 Codex 只多出它自己的表，其余字节不变，确认框写明会以用户身份运行的程序与所需变量（只说是否已设置）；写入 Gemini、Cursor 用各自的引用，Cursor 提示编辑器共用文件；清单改动后各处显示待更新，更新只改自有键并保留用户加的超时；从 Cursor 移除只删 HarnessHub 写的一项；仍有 HarnessHub 写的条目时不能从清单删除；回答不含家目录绝对路径与凭据",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G064-M3",
+      "task": "G064",
+      "requirements": [
+        "R27"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/mcp-inventory.test.ts",
+      "scenario": "被外部改动的条目、同名的用户条目、表达不了的传输与非法定义，以及存储从 v3 降到 v2",
+      "expected": "用户自己的同名条目即使带 overwrite 也不覆盖；HarnessHub 写的条目被手改后显示被外部改动并进入漂移列表（不算孤立的停用设置），不带 overwrite 时阻止，经重新应用写回；SSE 服务器对 Codex、Hermes 显示不支持并拒绝写入；明文密钥、非本机 HTTP、shell 字符、参数中间的 ~/ 被拒绝，变量改名的服务器对 Codex 阻止；降级脚本删除清单、MCP 的修改记录与台账，保留备份与其他记录",
+      "status": "planned",
+      "evidence": null
+    },
+    {
       "id": "G054-CA3",
       "task": "G054",
       "requirements": [
@@ -9521,6 +9569,23 @@
       "planned_file": "tests/browser/web.browser.ts",
       "scenario": "添加、检查更新、更新、删除技能与清除孤立的停用设置",
       "expected": "先读取仓库再选择，被拒绝的技能不能选，读取不发送修改；确认框显示新增的文件夹、文件数与可执行文件数、来源与说明；检查更新后技能标出有新版本，更新的确认框逐个列出文件改动和 lock 的差异；删除的确认框按归属分组列出链接，并列出留在原处的停用设置；孤立的停用设置可以清除，确认后提示消失；历史为技能改动提供撤销；只发送确认过的检查；无页面错误",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G054-CA6",
+      "task": "G054",
+      "requirements": [
+        "R27",
+        "R22"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "e2e",
+      "planned_file": "tests/browser/web.browser.ts",
+      "scenario": "MCP 统一清单的矩阵、写入、认领、导入与新建",
+      "expected": "每个服务器按 Harness 显示已写入、一致、未写入、不可写，并标出所需变量是否已设置；写入先显示差异与将运行的程序，确认才发送且只发送这次检查；认领与导入不改文件，含明文密钥的不能导入；新建的服务器只保存变量名；无页面错误",
       "status": "planned",
       "evidence": null
     }

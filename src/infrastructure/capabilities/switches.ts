@@ -3,6 +3,8 @@ import { isDeepStrictEqual } from "node:util";
 import { at, record, type ConfigFormat } from "./formats.js";
 import { appendJsonItem, appendTomlBlock, appendYamlItem, onlyChanged, parsed, removeJsonItem, removeTomlBlock, removeYamlItem, setJson, setTomlKey, tomlBlocks, UnsafeEdit, type KeyPath } from "./edits.js";
 import type { LedgerEntry } from "./store.js";
+import { ownedOf, type McpStyle } from "./mcp-definitions.js";
+import { mcpEntry, mcpLocation } from "./mcp-edits.js";
 
 /** Turning one skill off or on in one Harness's own switch (ADR-045 §4). `folder` is the copy Codex switches by its path. */
 export interface SwitchRequest { readonly harnessId: string; readonly name: string; readonly enabled: boolean; readonly folder: string | null }
@@ -192,6 +194,7 @@ export function sharedDirPlan(file: string, text: string, present: boolean, entr
 
 /** The parser of each Harness's switch file. */
 const SWITCH_FORMATS: Readonly<Record<string, ConfigFormat>> = { claude: "jsonc", codex: "toml", gemini: "jsonc", hermes: "yaml", opencode: "jsonc", openclaw: "json5" };
+function isMcpStyle(harnessId: string): harnessId is McpStyle { return ["claude", "codex", "cursor", "opencode", "gemini", "hermes"].includes(harnessId); }
 /**
  * What a ledger key holds in its file now, read as the switch that wrote it reads it (undefined: not there), so HarnessHub
  * can tell whether the value it wrote is still in place. `shared` tells which entries of Hermes's `skills.external_dirs`
@@ -199,7 +202,10 @@ const SWITCH_FORMATS: Readonly<Record<string, ConfigFormat>> = { claude: "jsonc"
  * that does not parse.
  */
 export function heldValue(harnessId: string, key: string, text: string, shared: (raw: string) => boolean): unknown {
-  const slash = key.indexOf("/"), prefix = key.slice(0, slash), rest = key.slice(slash + 1), format = SWITCH_FORMATS[harnessId];
+  const slash = key.indexOf("/"), prefix = key.slice(0, slash), rest = key.slice(slash + 1);
+  // An MCP server HarnessHub wrote: its owned keys, read the way its writer reads them.
+  if (prefix === "mcp" && rest && isMcpStyle(harnessId)) { const style = harnessId; return ownedOf(mcpEntry(parsed(text, mcpLocation(style).format), style, rest), style); }
+  const format = SWITCH_FORMATS[harnessId];
   if (slash < 1 || !rest || format === undefined) throw new UnsafeEdit("台账里有这个版本不认识的设置");
   if (prefix === "skills.config" && harnessId === "codex") {
     parsed(text, "toml");

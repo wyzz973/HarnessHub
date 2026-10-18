@@ -31,7 +31,7 @@ import { nativeResume } from "../infrastructure/management/verified-versions.js"
 import { LoginShellStore, readLoginShellPath, type LoginShellDirectories } from "../infrastructure/discovery/login-shell.js";
 import { CapabilityService } from "../infrastructure/capabilities/service.js";
 import { CapabilityChanges } from "../infrastructure/capabilities/changes.js";
-import { CapabilityError } from "../contracts/capabilities.js";
+import { CapabilityError, type McpDefinitionView } from "../contracts/capabilities.js";
 import type { GithubFetch } from "../infrastructure/capabilities/github.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
@@ -67,6 +67,28 @@ export interface WebServerOptions {
   readonly github?: GithubFetch;
 }
 export interface WebServer { readonly url: string; close(): Promise<void> }
+/** A list of Harness identities in a request body: unique, at most 16. */
+function harnessList(value: unknown): readonly string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 16 || value.some(item => typeof item !== "string" || !/^[a-z][a-z0-9-]{0,95}$/u.test(item)) || new Set(value).size !== value.length)
+    throw new HttpError(400, "INVALID_INPUT", "Expected a bounded unique list of Harness identities");
+  return value as string[];
+}
+/** An MCP definition in a request body, shaped only; what it may hold is checked by the list (ADR-045 §5). */
+function mcpDefinition(value: unknown): McpDefinitionView {
+  const fail = (): never => { throw new HttpError(400, "INVALID_INPUT", "Expected an MCP server definition"); };
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return fail();
+  const input = value as Record<string, unknown>, keys = ["transport", "command", "args", "cwd", "url", "env", "headers"];
+  if (Object.keys(input).some(key => !keys.includes(key))) return fail();
+  const short = (item: unknown, limit: number): string => typeof item === "string" && item.length <= limit ? item : fail();
+  const nullable = (item: unknown, limit: number): string | null => item === null || item === undefined ? null : short(item, limit);
+  const rows = (item: unknown): Record<string, unknown>[] => item === undefined ? [] : Array.isArray(item) && item.length <= 64 && item.every(row => row !== null && typeof row === "object" && !Array.isArray(row)) ? item as Record<string, unknown>[] : fail();
+  const transport = input.transport === "stdio" || input.transport === "http" || input.transport === "sse" ? input.transport : fail();
+  const args = input.args === undefined ? [] : Array.isArray(input.args) && input.args.length <= 128 ? input.args.map(arg => short(arg, 4096)) : fail();
+  return { transport, command: nullable(input.command, 4096), args, cwd: nullable(input.cwd, 4096), url: nullable(input.url, 4096),
+    env: rows(input.env).map(row => typeof row.variable === "string" ? { key: short(row.key, 128), variable: short(row.variable, 128) } : { key: short(row.key, 128), value: short(row.value, 4096) }),
+    headers: rows(input.headers).map(row => typeof row.variable === "string" ? { name: short(row.name, 128), variable: short(row.variable, 128), prefix: typeof row.prefix === "string" ? short(row.prefix, 32) : "" } : { name: short(row.name, 128), value: short(row.value, 4096) }) };
+}
 function record(value: unknown, allowed: readonly string[], required: readonly string[] = []): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new HttpError(400, "INVALID_INPUT", "Expected a JSON object");
   const item = value as Record<string, unknown>;
@@ -482,6 +504,33 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     }
     if (path === "/api/v1/capabilities/skill-delete" && method === "GET") {
       queries(url, ["name"]); privateJson(response, await capabilityChanges.checkSkillDelete(text(url.searchParams.get("name"), "skill name", 255))); return;
+    }
+    // HarnessHub's MCP list (ADR-045 §5): reading it and editing the list change no Harness file; writing a server into a
+    // Harness goes through a check shown first and /changes.
+    if (path === "/api/v1/capabilities/mcp" && method === "GET") { queries(url, []); privateJson(response, await capabilityChanges.mcpInventory(await installedHarnesses())); return; }
+    if (path === "/api/v1/capabilities/mcp/servers" && method === "POST") {
+      queries(url, []); const input = record(await body(request), ["name", "definition", "replace"], ["name", "definition"]);
+      if (input.replace !== undefined && typeof input.replace !== "boolean") throw new HttpError(400, "INVALID_INPUT", "Expected replace to be a boolean");
+      privateJson(response, await capabilityChanges.saveMcpServer(text(input.name, "server name", 64), mcpDefinition(input.definition), input.replace === true)); return;
+    }
+    if (path === "/api/v1/capabilities/mcp/servers/delete" && method === "POST") {
+      queries(url, []); const input = record(await body(request), ["name"], ["name"]);
+      privateJson(response, await capabilityChanges.removeMcpServer(text(input.name, "server name", 64), await installedHarnesses())); return;
+    }
+    if (path === "/api/v1/capabilities/mcp/import" && method === "POST") {
+      queries(url, []); const input = record(await body(request), ["candidate", "claim"], ["candidate"]);
+      privateJson(response, await capabilityChanges.importMcpServer(text(input.candidate, "candidate", 64), harnessList(input.claim), await installedHarnesses())); return;
+    }
+    if (path === "/api/v1/capabilities/mcp/claim" && method === "POST") {
+      queries(url, []); const input = record(await body(request), ["name", "harnessIds"], ["name", "harnessIds"]);
+      privateJson(response, await capabilityChanges.claimMcpServer(text(input.name, "server name", 64), harnessList(input.harnessIds), await installedHarnesses())); return;
+    }
+    if ((path === "/api/v1/capabilities/mcp/sync" || path === "/api/v1/capabilities/mcp/remove") && method === "GET") {
+      queries(url, ["name", "harnessId", "overwrite"]); const overwrite = url.searchParams.get("overwrite");
+      if (overwrite !== null && overwrite !== "true" && overwrite !== "false") throw new HttpError(400, "INVALID_INPUT", "Expected overwrite=true or overwrite=false");
+      const name = text(url.searchParams.get("name"), "server name", 64), harnessId = text(url.searchParams.get("harnessId"), "Harness", 128);
+      privateJson(response, path.endsWith("/sync") ? await capabilityChanges.checkMcpSync(name, harnessId, overwrite === "true", await installedHarnesses())
+        : await capabilityChanges.checkMcpRemove(name, harnessId, await installedHarnesses())); return;
     }
     // A switch setting HarnessHub wrote for a skill its Harness no longer has: cleared through the usual switch check.
     if (path.startsWith("/api/v1/capabilities/orphans/") && path.endsWith("/clear") && method === "GET") {

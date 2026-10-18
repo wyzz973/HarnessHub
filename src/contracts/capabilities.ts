@@ -130,9 +130,10 @@ export class CapabilityError extends Error {
  * directory (`skills.external_dirs`); placing a shared skill in Claude Code by a link of its own; removing the links a
  * Harness no longer needs because it reads the shared directory itself; undoing a change of links; restoring a backup;
  * adding skills to the shared directory from a GitHub repository, updating one from its source, deleting one, and
- * undoing one of those three.
+ * undoing one of those three; writing an MCP server of HarnessHub's list into one Harness's file (`mcp-sync`), removing
+ * it (`mcp-remove`), and recording that an identical entry already there is HarnessHub's (`mcp-claim`, no file changes).
  */
-export const CAPABILITY_CHANGE_KINDS = ["skill-switch", "shared-dir", "skill-link", "link-cleanup", "link-undo", "restore", "skill-add", "skill-update", "skill-delete", "skill-undo"] as const;
+export const CAPABILITY_CHANGE_KINDS = ["skill-switch", "shared-dir", "skill-link", "link-cleanup", "link-undo", "restore", "skill-add", "skill-update", "skill-delete", "skill-undo", "mcp-sync", "mcp-remove", "mcp-claim"] as const;
 export type CapabilityChangeKind = typeof CAPABILITY_CHANGE_KINDS[number];
 /**
  * A link a change creates or removes: where (with ~) and what it points to, as written in the link. `owner` (for links a
@@ -237,9 +238,9 @@ export type CapabilityDriftState = typeof CAPABILITY_DRIFT_STATES[number];
 export interface CapabilityDrift {
   /** Names this ledger entry for re-applying or forgetting it; opaque. */
   readonly id: string;
-  readonly kind: "skill-switch" | "shared-dir" | "skill-link";
+  readonly kind: "skill-switch" | "shared-dir" | "skill-link" | "mcp";
   readonly harnessId: string;
-  /** A skill's name, or the shared directory. */
+  /** A skill's name, the shared directory, or an MCP server's name. */
   readonly subject: string;
   /** The file or link, with ~. */
   readonly file: string;
@@ -294,3 +295,54 @@ export interface SkillUpdateView {
   readonly skills: readonly { readonly name: string; readonly manager: "harnesshub" | "skills-cli"; readonly repository: string | null;
     readonly state: "current" | "available" | "gone" | "unknown" | "unsupported"; readonly modified: boolean | null; readonly reason: string | null }[];
 }
+
+/**
+ * One MCP server as HarnessHub's list keeps it (ADR-045 §5, approval of step 3): no value that looks like a credential,
+ * only the names of the user's variables; plain settings may be literal. Paths are shown with ~.
+ */
+export interface McpDefinitionView {
+  readonly transport: "stdio" | "http" | "sse";
+  readonly command: string | null;
+  readonly args: readonly string[];
+  readonly cwd: string | null;
+  readonly url: string | null;
+  readonly env: readonly ({ readonly key: string; readonly variable: string } | { readonly key: string; readonly value: string })[];
+  readonly headers: readonly ({ readonly name: string; readonly variable: string; readonly prefix: string } | { readonly name: string; readonly value: string })[];
+}
+/**
+ * Where a listed server stands in one Harness, comparing the list, HarnessHub's ledger and the file: written by HarnessHub
+ * and the same (`synced`); the same but not recorded as HarnessHub's (`claimable`); HarnessHub's but older than the list
+ * (`outdated`); someone else's with another definition (`different`, never overwritten); HarnessHub's but changed
+ * (`changed`) or removed (`removed`) by someone else since; not there (`absent`); or not writable there (`unsupported`).
+ */
+export const MCP_TARGET_STATES = ["synced", "claimable", "outdated", "different", "changed", "removed", "absent", "unsupported"] as const;
+export interface McpTargetView { readonly harnessId: string; readonly state: typeof MCP_TARGET_STATES[number]; readonly reason: string | null; readonly file: string | null }
+export interface McpServerView {
+  readonly name: string;
+  readonly definition: McpDefinitionView;
+  /** The command line it runs (credentials masked), or null for a remote server. */
+  readonly command: string | null;
+  /** The user's variables it needs, and whether each is set in the environment HarnessHub runs the Harnesses with. */
+  readonly variables: readonly { readonly name: string; readonly set: boolean }[];
+  readonly targets: readonly McpTargetView[];
+  readonly updatedAt: string;
+}
+/**
+ * A server found in a Harness's file, offered for the list: its definition, or why it cannot be listed (a credential
+ * written literally, say); where it was found; and how it compares with a listed server of the same name.
+ */
+export interface McpCandidateView {
+  readonly id: string;
+  readonly name: string;
+  readonly definition: McpDefinitionView | null;
+  readonly problem: string | null;
+  readonly foundIn: readonly { readonly harnessId: string; readonly file: string }[];
+  readonly state: "new" | "listed" | "different";
+}
+/** HarnessHub's MCP list, the servers the Harnesses already have, and which Harnesses it can write and why not. */
+export interface McpInventoryView {
+  readonly servers: readonly McpServerView[];
+  readonly candidates: readonly McpCandidateView[];
+  readonly harnesses: readonly { readonly harnessId: string; readonly name: string; readonly writable: boolean; readonly reason: string | null }[];
+}
+

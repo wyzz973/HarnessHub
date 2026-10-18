@@ -85,6 +85,12 @@ Web界面按用户确认的设计稿重写（[ADR-042](docs/decisions/0042-front
   - **删除**：连同指向它的链接（按 HarnessHub 放置的、其他工具建的分组列出）和 lock 条目一起删；HarnessHub 写的停用设置留在原处，显示为“孤立的停用设置”，可以单独清除。
   - **撤销**：被替换或删除的文件夹先存快照，三类修改都可以在“修改与备份”里撤销（保留最近 50 次修改的快照）。
   - **存储**：`capabilities.sqlite` 升到 v2（新增 `skill_sources`、`skill_undo`），降级先用 `tools/capabilities-v2-to-v1.sql`；快照在 `data/capabilities/skills/`。
+- MCP 统一清单（[验收记录](docs/verification/capability-mcp-2026-10-18.md)，第 3 步 3a）：
+  - **清单**：HarnessHub 保存一份 MCP 服务器清单。值像密钥的只记变量名，普通设置可以是字面值；不保存任何密钥值。
+  - **导入**：从各 Harness 现有配置导入时，与清单一致的条目可以认领，不改文件；含明文密钥或带令牌地址的不能导入，并说明原因。
+  - **写入**：按各 Harness 自己的写法写进它们的用户级配置，先显示差异、要运行的程序和所需变量。目前支持 Codex（TOML 表组）、Cursor、OpenCode、Gemini、Hermes；只改自有键，用户加的设置保留。Claude 与 OpenClaw 暂为只读。
+  - **状态**：矩阵显示每个服务器在每个 Harness 的状态；被外部改动或移除的不自动写回。
+  - **存储**：`capabilities.sqlite` 升到 v3（新增 `mcp_servers`），降级先用 `tools/capabilities-v3-to-v2.sql`。
 - 新增依赖 jsonc-parser 3.3.1、yaml 2.9.1、smol-toml 1.9.0。验收见[能力视图验收](docs/verification/capabilities-view-2026-10-18.md)。
 
 原版OpenClaw2026.3.23-2、Codex0.162.1、OpenCode1.18.35、Pi0.85.1已通过本机真实模型回复；OpenClaw/Pi使用原生DeepSeek。Hermes Agent 0.12.0（官方安装方式）与 DeepSeek Harness（`dsh`，本机为源码构建 0.2.1-alpha.1，经发现清单的自定义入口接入）经各自内置 ACP 接入，已通过真实回复、跨 Hub 重启的原生恢复、思考与工具活动验收，见[ADR-031](docs/decisions/0031-hermes-and-deepseek-harness.md)与[验收记录](docs/verification/hermes-dsh-onboarding-2026-10-11.md)。Pi 与 DeepSeek Harness 的上述证据来自非官网安装，按 ADR-044 不再作为验收对象。Claude接入口绑定原Claude Code2.1.296及既有登录，账号周额度已用完。Cursor原安装已升级至2026.10.01-e373342，沿用本机登录、44项原生模型目录并通过独立短提示回复；原公共对话实测仍返回账号套餐升级提示，不能算该对话回复通过。Gemini0.62.0的个人登录被服务端停用，直连DeepSeek实际返回404（Google GenAI协议与DeepSeek接口不匹配），不能算回复通过。所有接入口版本与原程序版本分开解释，不把ACP适配器版本当原CLI版本。

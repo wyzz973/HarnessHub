@@ -8,6 +8,7 @@ import { Badge, EmptyState, Notice, Spinner, Tip } from "../ui/primitives.js";
 import { BrandIcon } from "./BrandIcon.js";
 import { ChangeDialog, RestoreDialog, type ChangeRequest, type SwitchRequest } from "./CapabilityChangeDialog.js";
 import { PageShell } from "./PageShell.js";
+import { McpInventoryPanel } from "./McpInventoryPanel.js";
 import { SkillAddDialog } from "./SkillAddDialog.js";
 
 export const KIND_LABEL: Readonly<Record<CapabilityKind, string>> = { skill: "技能", mcp: "MCP", instructions: "指令", subagent: "子 Agent", command: "命令", hook: "Hooks", plugin: "插件" };
@@ -17,7 +18,7 @@ const STATUS_LABEL: Readonly<Record<CapabilityStatus, string>> = { active: "生�
 const OWNER_LABEL: Readonly<Record<CapabilityOwner, string>> = { user: "用户", harnesshub: "HarnessHub", "skills-cli": "vercel skills", "cc-switch": "cc-switch", magpie: "Magpie", clawhub: "ClawHub",
   "hermes-hub": "Hermes Hub", plugin: "插件", bundled: "随程序安装", synced: "账户同步" };
 const CHANGE_LABEL: Readonly<Record<CapabilityChangeView["kind"], string>> = { "skill-switch": "技能开关", "shared-dir": "共享目录", "skill-link": "放置技能", "link-cleanup": "清理链接", "link-undo": "撤销", restore: "恢复",
-  "skill-add": "添加技能", "skill-update": "更新技能", "skill-delete": "删除技能", "skill-undo": "撤销" };
+  "skill-add": "添加技能", "skill-update": "更新技能", "skill-delete": "删除技能", "skill-undo": "撤销", "mcp-sync": "写入 MCP", "mcp-remove": "移除 MCP", "mcp-claim": "认领 MCP" };
 type SkillUpdate = SkillUpdateView["skills"][number];
 /** A skill folder's name in the shared directory, from where the view shows it. */
 function folderName(entry: CapabilityEntry): string | null { return entry.shared ? entry.shared.folder.split("/").filter(Boolean).at(-1) ?? null : null; }
@@ -154,7 +155,7 @@ function DriftNotice({ api, drift, harnesses, onChange, onForgotten }: { readonl
   return <Notice tone="amber" className="capability-drift" title={"HarnessHub 写过的 " + drift.length + " 项设置已不在原处"}>
     <p className="m-0">多半是 Harness 自己重写了配置文件，或在别处改过。HarnessHub 不会自动改回：可以重新应用（先显示改动），或不再跟踪（文件不变）。</p>
     <ul className="m-0 mt-1.5 flex list-none flex-col gap-1 p-0">{drift.map(item => <li key={item.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-fg">
-      <strong className="font-medium">{harnesses.find(harness => harness.harnessId === item.harnessId)?.name ?? item.harnessId} · {CHANGE_LABEL[item.kind]} · {item.subject}</strong>
+      <strong className="font-medium">{harnesses.find(harness => harness.harnessId === item.harnessId)?.name ?? item.harnessId} · {item.kind === "mcp" ? "MCP" : CHANGE_LABEL[item.kind]} · {item.subject}</strong>
       <Badge tone="amber">{DRIFT_LABEL[item.state]}</Badge><code className="text-[11.5px] break-all text-fg-2">{item.file}</code>
       <button type="button" className="btn btn-sm" disabled={busy !== null} onClick={() => onChange({ title: "重新应用：" + item.subject, verb: "重新应用", on: item.kind === "skill-switch" ? false : item.kind === "shared-dir" ? true : null,
         done: "已重新应用：" + item.subject, load: () => api.checkReapply(item.id) })}>重新应用</button>
@@ -212,6 +213,7 @@ export function CapabilitiesPage({ api, initialHarness, onMenu, sidebarHidden, o
     done: "已在 " + request.harnessName + " 中" + (request.enabled ? "启用 " : "停用 ") + request.name, load: () => api.checkSkillSwitch(request.harnessId, request.name, request.enabled, request.via) });
   const [result, setResult] = useState<{ readonly view: CapabilityChangeView; readonly title: string } | null>(null);
   const [adding, setAdding] = useState(false), [updates, setUpdates] = useState<SkillUpdateView | null>(null), [checkingUpdates, setCheckingUpdates] = useState(false), [updateProblem, setUpdateProblem] = useState<string | null>(null);
+  const [reloads, setReloads] = useState(0), [notice, setNotice] = useState<{ readonly text: string; readonly failed: boolean } | null>(null);
   const updateOf = (entry: CapabilityEntry): SkillUpdate | undefined => { const folder = folderName(entry); return folder === null ? undefined : updates?.skills.find(item => item.name === folder); };
   const checkUpdates = () => {
     setCheckingUpdates(true); setUpdateProblem(null);
@@ -224,7 +226,7 @@ export function CapabilitiesPage({ api, initialHarness, onMenu, sidebarHidden, o
   const loadHistory = useCallback((signal?: AbortSignal) => { api.capabilityHistory(signal).then(setHistory, () => { if (!signal?.aborted) setHistory(null); }); }, [api]);
   useEffect(() => { const controller = new AbortController(); load(controller.signal); loadHistory(controller.signal); return () => controller.abort(); }, [load, loadHistory]);
   const finished = (view: CapabilityChangeView, title: string) => {
-    setChanging(null); setRestoring(null); setResult({ view, title }); load(); loadHistory();
+    setChanging(null); setRestoring(null); setResult({ view, title }); load(); loadHistory(); setReloads(value => value + 1);
     // A change of skill folders makes the known update states stale.
     if (view.skills?.length) setUpdates(null);
   };
@@ -245,6 +247,7 @@ export function CapabilitiesPage({ api, initialHarness, onMenu, sidebarHidden, o
     {result ? <Notice tone={result.view.status === "applied" ? "green" : "red"} className="capability-result" onDismiss={() => setResult(null)} title={result.view.status === "applied" ? result.title : result.title + "没有完成"}
       action={result.view.backupId ? <button type="button" className="btn btn-sm" onClick={() => setRestoring(result.view.backupId)}><RotateCcw size={13}/>恢复修改前的文件</button> : null}>
       {result.view.error ? result.view.error.message + "。" : null}{result.view.notes.join(" ")}</Notice> : null}
+    {notice ? <Notice tone={notice.failed ? "red" : "green"} className="capability-notice" onDismiss={() => setNotice(null)}>{notice.text}</Notice> : null}
     {view && history?.drift.length ? <DriftNotice api={api} drift={history.drift} harnesses={view.harnesses} onChange={change} onForgotten={() => loadHistory()}/> : null}
     {view && history?.orphans.length ? <OrphanNotice api={api} orphans={history.orphans} harnesses={view.harnesses} onChange={change}/> : null}
     {view?.truncated ? <Notice tone="amber">条目太多，只显示前一部分。</Notice> : null}
@@ -265,6 +268,7 @@ export function CapabilitiesPage({ api, initialHarness, onMenu, sidebarHidden, o
       <div role="tabpanel" id="capability-tabpanel" aria-labelledby={"capability-tab-" + kind} className="flex flex-col gap-3">
       {kind === "skill" ? <SharedDirectory api={api} harnesses={view.harnesses.filter(item => harness === null || item.harnessId === harness)} updates={updates} checking={checkingUpdates} updateProblem={updateProblem}
         onAdd={() => setAdding(true)} onCheckUpdates={checkUpdates} onChange={change}/> : null}
+      {kind === "mcp" ? <McpInventoryPanel api={api} harness={harness} reload={reloads} onChange={change} onNotice={(text, failed) => setNotice({ text, failed })}/> : null}
       {rows.length ? <div className="capability-matrix overflow-x-auto rounded-xl border border-line bg-surface shadow-sm">
         <table className="w-full border-collapse text-left text-[12.5px]">
           <thead><tr className="border-b border-line">
