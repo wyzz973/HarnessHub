@@ -197,3 +197,22 @@ test("G064-W2 OpenClaw's rewrite is predicted on a private copy, summarized for 
   assert.match(refused.blocked ?? "", /需要重启 Gateway 的设置（gateway\.port）/u);
   assert.equal(await readFile(config, "utf8"), original);
 });
+
+test("G064-W1 an atomic replacement keeps the file's mode whatever the Gateway's umask, and refuses a file changed since its check", async t => {
+  const { writeFile, stat, readFile, chmod } = await import("node:fs/promises");
+  const { replaceTarget, readTarget } = await import("../../src/infrastructure/capabilities/files.js");
+  const root = await realpath(await mkdtemp(join(tmpdir(), "capability-files-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const file = join(root, "settings.json");
+  await writeFile(file, "{}\n"); await chmod(file, 0o644);
+  const read = readTarget(file);
+  assert.ok(read.state === "ok" && read.mode === 0o644);
+  // 4317 runs with umask 077: the replacement must still be 0644, like the file it replaces.
+  const previous = process.umask(0o077);
+  try { replaceTarget(file, createHash("sha256").update("{}\n").digest("hex"), Buffer.from("{\"a\":1}\n"), read.state === "ok" ? read.mode : 0o600); }
+  finally { process.umask(previous); }
+  assert.equal((await stat(file)).mode & 0o777, 0o644);
+  assert.equal(await readFile(file, "utf8"), "{\"a\":1}\n");
+  assert.throws(() => replaceTarget(file, createHash("sha256").update("{}\n").digest("hex"), Buffer.from("x"), 0o644), (error: unknown) => error instanceof CapabilityError && error.code === "CAPABILITY_TARGET_CHANGED");
+  assert.equal(await readFile(file, "utf8"), "{\"a\":1}\n");
+});

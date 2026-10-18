@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, constants, fsyncSync, lstatSync, openSync, readSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, constants, fchmodSync, fsyncSync, lstatSync, openSync, readSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { CapabilityError } from "../../contracts/capabilities.js";
 import { sha256 } from "./store.js";
@@ -38,17 +38,19 @@ function unchanged(file: string, expected: string | null): void {
   if (!same) throw new CapabilityError("CAPABILITY_TARGET_CHANGED", "文件在确认之后被改动过，没有写入；请重新检查");
 }
 /**
- * Replaces a target with `bytes` atomically: a temporary file beside it with the same mode is written and synced, the
+ * Replaces a target with `bytes` atomically: a temporary file beside it with the same mode (whatever the process's
+ * umask) is written and synced, the
  * target is compared with `expected` (its hash, or null for absent) once more, and only then renamed over it.
  * Throws `CAPABILITY_TARGET_CHANGED` and writes nothing when the target is not as expected.
  */
 export function replaceTarget(file: string, expected: string | null, bytes: Buffer, mode: number): void {
   unchanged(file, expected);
   const temporary = join(dirname(file), "." + basename(file) + ".harnesshub-" + randomUUID() + ".tmp");
-  const descriptor = openSync(temporary, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, mode);
+  const descriptor = openSync(temporary, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
   let renamed = false;
   try {
-    try { let written = 0; while (written < bytes.length) written += writeSync(descriptor, bytes, written, bytes.length - written); fsyncSync(descriptor); } finally { closeSync(descriptor); }
+    // The mode is set explicitly: a Gateway started with umask 077 would otherwise leave a 0644 file 0600.
+    try { fchmodSync(descriptor, mode); let written = 0; while (written < bytes.length) written += writeSync(descriptor, bytes, written, bytes.length - written); fsyncSync(descriptor); } finally { closeSync(descriptor); }
     unchanged(file, expected);
     renameSync(temporary, file); renamed = true;
     const directory = openSync(dirname(file), constants.O_RDONLY);
