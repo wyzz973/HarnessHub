@@ -204,6 +204,14 @@ test("G064-W1 a shown diff masks credentials by key name, token shape, flag and 
     "path = \"~/.agents/skills/alpha/SKILL.md\"", "\"skillOverrides\": { \"alpha\": \"off\" }", "@@ -1,3 +1,4 @@"]) assert.equal(maskSecrets(line), line, line);
 });
 
+test("G064-W1 a shown diff ends a line at a final newline: a new file has no empty last line, and a change of the final newline alone is shown with git's marker", async () => {
+  const { unifiedDiff } = await import("../../src/infrastructure/control/unified-diff.js");
+  assert.equal(unifiedDiff("~/.dsh/cordis.patch.yml", null, "- insert:\n    - id: x\n"), "--- /dev/null\n+++ b/~/.dsh/cordis.patch.yml\n@@ -0,0 +1,2 @@\n+- insert:\n+    - id: x\n");
+  assert.equal(unifiedDiff("f", "a\nb\n", "a\nb\nc\n"), "--- a/f\n+++ b/f\n@@ -1,2 +1,3 @@\n a\n b\n+c\n", "no blank context line after the last line");
+  assert.equal(unifiedDiff("f", "a\nb", "a\nb\n"), "--- a/f\n+++ b/f\n@@ -1,2 +1,2 @@\n a\n-b\n\\ No newline at end of file\n+b\n");
+  assert.equal(unifiedDiff("f", "a\n", "a\n"), "--- a/f\n+++ b/f\n", "no change, no hunk");
+  assert.equal(unifiedDiff("f", "a\n", ""), "--- a/f\n+++ b/f\n@@ -1,1 +0,0 @@\n-a\n");
+});
 test("G064-W2 OpenClaw's rewrite is predicted on a private copy, summarized for the confirmation, and refused when it would touch keys that need a Gateway restart", async t => {
   const { mkdir, writeFile, readFile } = await import("node:fs/promises");
   const { CapabilityChanges } = await import("../../src/infrastructure/capabilities/changes.js");
