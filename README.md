@@ -85,11 +85,15 @@ Web界面按用户确认的设计稿重写（[ADR-042](docs/decisions/0042-front
   - **删除**：连同指向它的链接（按 HarnessHub 放置的、其他工具建的分组列出）和 lock 条目一起删；HarnessHub 写的停用设置留在原处，显示为“孤立的停用设置”，可以单独清除。
   - **撤销**：被替换或删除的文件夹先存快照，三类修改都可以在“修改与备份”里撤销（保留最近 50 次修改的快照）。
   - **存储**：`capabilities.sqlite` 升到 v2（新增 `skill_sources`、`skill_undo`），降级先用 `tools/capabilities-v2-to-v1.sql`；快照在 `data/capabilities/skills/`。
-- MCP 统一清单（[验收记录](docs/verification/capability-mcp-2026-10-18.md)，第 3 步 3a）：
+- MCP 统一清单（[验收记录](docs/verification/capability-mcp-2026-10-18.md)，第 3 步 3a–3c）：
   - **清单**：HarnessHub 保存一份 MCP 服务器清单。值像密钥的只记变量名，普通设置可以是字面值；不保存任何密钥值。
   - **导入**：从各 Harness 现有配置导入时，与清单一致的条目可以认领，不改文件；含明文密钥或带令牌地址的不能导入，并说明原因。
   - **写入**：按各 Harness 自己的写法写进它们的用户级配置，先显示差异、要运行的程序和所需变量。目前支持 Claude Code（用它自己的 `claude mcp add-json/remove`，先在私有副本上预演）、Codex（TOML 表组）、Cursor、OpenCode、Gemini、Hermes、DeepSeek Harness（`~/.dsh/cordis.patch.yml` 里 HarnessHub 自己的 insert）；只改自有键，用户加的设置保留。OpenClaw 暂为只读。
   - **状态**：矩阵显示每个服务器在每个 Harness 的状态；被外部改动或移除的不自动写回。
+  - **真实环境**：
+    - Codex 的 openaiDeveloperDocs 写进 Cursor 后保留。
+    - Claude Code 与 DeepSeek Harness 做了往返写入（写入、核对、移除），最后保持移除。
+    - DeepSeek Harness 启动时，客户端连接了服务器。
   - **存储**：`capabilities.sqlite` 升到 v3（新增 `mcp_servers`），降级先用 `tools/capabilities-v3-to-v2.sql`。
 - 新增依赖 jsonc-parser 3.3.1、yaml 2.9.1、smol-toml 1.9.0。验收见[能力视图验收](docs/verification/capabilities-view-2026-10-18.md)。
 
