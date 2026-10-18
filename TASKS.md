@@ -2036,12 +2036,14 @@
 - tests/unit/mcp-inventory.test.ts
 - tests/integration/mcp-inventory.test.ts
 - tools/capabilities-v3-to-v2.sql
+- src/infrastructure/capabilities/claude-mcp.ts
+- tests/real/claude-mcp.real.ts
 
 验收：
 - 统一视图的数量与本机统计一致
 - 页面与日志不含密钥值与家目录绝对路径
 - 每次写入先预览、经确认，只认领自己写入的条目
 
-场景：G064-R1, G064-R2, G064-R3, G064-R4, G064-R5, G064-W1, G064-W2, G064-W3, G064-W4, G064-W5, G064-W6, G064-W7, G064-W8, G064-W9, G064-W10, G064-W11, G064-M1, G064-M2, G064-M3。
+场景：G064-R1, G064-R2, G064-R3, G064-R4, G064-R5, G064-W1, G064-W2, G064-W3, G064-W4, G064-W5, G064-W6, G064-W7, G064-W8, G064-W9, G064-W10, G064-W11, G064-M1, G064-M2, G064-M3, G064-M4, G064-M5, G064-M6。
 
 禁止范围：不改项目级文件；不改模型、Provider 与登录配置；不运行会启动或连接 MCP 服务器的命令；OpenClaw 的 MCP 与插件装卸推迟到升级之后。

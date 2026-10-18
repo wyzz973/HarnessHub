@@ -22,6 +22,7 @@ import { CapabilityStore, sha256, type LedgerEntry, type StoredBackup } from "./
 import type { GithubFetch } from "./github.js";
 import { SkillChanges, type PreparedPackage } from "./skill-changes.js";
 import { McpInventory } from "./mcp-changes.js";
+import { sweepClaudeCopies, systemClaude, type ClaudeRunner } from "./claude-mcp.js";
 import { SkillSnapshots, sweepStaging } from "./skill-packages.js";
 import { claudeSwitch, codexSwitch, externalDirsOf, heldValue, listSwitch, opencodeSwitch, openclawSwitch, sharedDirPlan, type SwitchContext, type SwitchPlan, type SwitchRequest } from "./switches.js";
 
@@ -42,6 +43,8 @@ export interface ChangeOptions {
   readonly openclaw?: OpenclawRunner;
   /** Fetches from GitHub without following redirects (adding and updating skills); the platform's `fetch` by default. */
   readonly github?: GithubFetch;
+  /** Runs the user's `claude` for its own MCP commands, allowed to write only what it is given and never to use the network; the sandboxed system one by default. */
+  readonly claude?: ClaudeRunner;
 }
 export type OpenclawRunner = (args: readonly string[], options: { readonly env: Readonly<Record<string, string>>; readonly writable: readonly string[] }, signal: AbortSignal) => Promise<void>;
 type Planned = Exclude<SwitchPlan, { kind: "none" }>;
@@ -55,7 +58,7 @@ interface PreparedLinks { readonly kind: "links"; readonly change: "skill-link" 
 interface PreparedRestore { readonly kind: "restore"; readonly expires: number; readonly backup: StoredBackup; readonly current: string | null; readonly mode: number; readonly check: CapabilityRestoreCheck }
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,127}$/u, COMMAND = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u, FINGERPRINT = /^[a-f0-9]{64}$/u, CHANGE = /^[a-f0-9-]{36}$/u, DRIFT = /^[a-f0-9]{32}$/u;
-const RUNNING: Readonly<Record<string, RegExp>> = { claude: /^claude(?:\.exe)?$/u, gemini: /^gemini$/u };
+const RUNNING: Readonly<Record<string, RegExp>> = { claude: /^claude(?:\.exe)?$/u, gemini: /^gemini$/u, cursor: /^(?:Cursor|cursor-agent)$/u };
 const SHARED_ENTRY = "~/.agents/skills";
 function hash(value: string): string { return createHash("sha256").update(value).digest("hex"); }
 /** OpenClaw's file as compared with its prediction: parsed, without the time it stamps on every write. */
@@ -81,7 +84,7 @@ export class CapabilityChanges {
   private readonly running = new Set<Promise<unknown>>();
   private closed = false;
   constructor(private readonly options: ChangeOptions) {
-    this.store = CapabilityStore.open(options.root, options.generation); sweepCopies();
+    this.store = CapabilityStore.open(options.root, options.generation); sweepCopies(); sweepClaudeCopies();
     const shared = harnessDirectories(options.environment).shared;
     sweepStaging(shared);
     this.skills = new SkillChanges({ environment: options.environment, store: this.store, snapshots: new SkillSnapshots(join(realpathSync(options.root), "capabilities", "skills")),
@@ -271,7 +274,18 @@ export class CapabilityChanges {
       diff = displayed(unifiedDiff(this.shown(file), read.state === "ok" ? beforeText : null, plan.after, 2), this.options.homes);
     }
     let predicted: Buffer | null = null, rewrite: CapabilityChangeCheck["rewrite"] = null;
-    if (reason === null && plan?.kind === "command" && before !== null && target !== null) {
+    if (reason === null && plan?.kind === "command" && plan.runner === "claude") {
+      // Claude's own commands on a private copy of its file show what they will write, the keys Claude adds itself included.
+      try {
+        predicted = await this.predictClaude(plan.steps ?? [plan.args], before);
+        const after = predicted.toString("utf8");
+        diff = displayed(unifiedDiff(this.shown(file), before === null ? null : beforeText, after, 2), this.options.homes);
+        if (!plan.check(parsed(after, "jsonc"))) reason = "Claude 的命令在副本上没有写出预期的服务器，没有准备写入。";
+        const summary = rewriteSummary(before === null ? "{}" : beforeText, after, plan.subtree ?? []);
+        rewrite = { ...summary, before: summary.before === null ? null : maskSecrets(summary.before), after: summary.after === null ? null : maskSecrets(summary.after) };
+      } catch (error) { reason = "Claude 的预演没有通过，没有准备写入（" + (error instanceof Error ? error.message : "未知原因") + "）。"; }
+    }
+    else if (reason === null && plan?.kind === "command" && before !== null && target !== null) {
       // The same command on a private copy shows exactly what it will write, defaults it adds included.
       try { predicted = await this.predict(plan.args, before); diff = displayed(unifiedDiff(this.shown(file), beforeText, predicted.toString("utf8"), 2), this.options.homes); }
       catch (error) { reason = "OpenClaw 的预演没有通过，没有准备写入（" + (error instanceof Error ? error.message : "未知原因") + "）。"; }
@@ -281,7 +295,9 @@ export class CapabilityChanges {
         if (restart.length) reason = "OpenClaw 的命令还会改动需要重启 Gateway 的设置（" + restart.join("、") + "），HarnessHub 不做这项修改。";
       }
     }
-    return this.offer({ kind: change, harnessId, name: subject, enabled, file: this.shown(file), command: plan?.kind === "command" ? "openclaw " + plan.args.join(" ") : null, diff, rewrite, links: [],
+    const command = plan?.kind !== "command" ? null : plan.runner === "claude" ? maskSecrets((plan.steps ?? [plan.args]).map(step => "claude " + step.map(part => /^[\w@%+=:,./-]+$/u.test(part) ? part : "'" + part + "'").join(" ")).join("；"))
+      : "openclaw " + plan.args.join(" ");
+    return this.offer({ kind: change, harnessId, name: subject, enabled, file: this.shown(file), command, diff, rewrite, links: [],
       current: plan !== null && plan.kind !== "none" ? plan.current : "none", notes, blocked: reason },
       (_, expires, check) => ({ kind: "edit", change, harnessId, subject, expires, plan: plan === null || plan.kind === "none" ? null : plan, before, predicted, mode: read.state === "ok" ? read.mode : 0o600, check }));
   }
@@ -393,6 +409,19 @@ export class CapabilityChanges {
       (_, expires, check) => ({ kind: "links", change, harnessId, subject, expires, directory, links, createDirectory, check }));
   }
 
+  /**
+   * Runs Claude's commands on a copy of its file (`CLAUDE_CONFIG_DIR` and HOME pointing into a private 0700 directory
+   * that is removed afterwards) and returns what they wrote.
+   */
+  private async predictClaude(steps: readonly (readonly string[])[], before: Buffer | null): Promise<Buffer> {
+    const stage = await realpath(await mkdtemp(join(tmpdir(), "harnesshub-claude-copy-"))), config = join(stage, "config"), home = join(stage, "home"), copy = join(config, ".claude.json");
+    try {
+      await mkdir(config, { mode: 0o700 }); await mkdir(home, { mode: 0o700 });
+      if (before !== null) await writeFile(copy, before, { mode: 0o600 });
+      for (const step of steps) await (this.options.claude ?? systemClaude(this.options.environment))(step, { env: { CLAUDE_CONFIG_DIR: config, HOME: home }, writable: [stage], files: [] }, AbortSignal.timeout(60_000));
+      return await readFile(copy);
+    } finally { await rm(stage, { recursive: true, force: true }); }
+  }
   /** Runs OpenClaw's command on a copy of its file in a private state directory and returns what it wrote. */
   private async predict(args: readonly string[], before: Buffer): Promise<Buffer> {
     const stage = await realpath(await mkdtemp(join(tmpdir(), "harnesshub-openclaw-copy-"))), state = join(stage, "state"), copy = join(state, "openclaw.json");
@@ -444,9 +473,11 @@ export class CapabilityChanges {
     let table: ReturnType<typeof parseProcessTable> = null;
     try { table = parseProcessTable(await (this.options.processes ?? systemProcesses)(AbortSignal.timeout(5000))); } catch { table = null; }
     if (table === null) return ["没能读取正在运行的程序。"];
-    const count = table.filter(row => pattern.test(programName(row.command))).length;
+    // Cursor's helper processes share its name; only the editor's main process and cursor-agent are counted.
+    const count = table.filter(row => harnessId === "cursor" ? /\/Cursor\.app\/Contents\/MacOS\/Cursor(?:\s|$)/u.test(row.command) || programName(row.command) === "cursor-agent" : pattern.test(programName(row.command))).length;
     if (!count) return [];
     return harnessId === "claude" ? ["有 " + count + " 个 Claude Code 进程在运行，它们会立即读到这次改动。"]
+      : harnessId === "cursor" ? ["有 " + count + " 个 Cursor 进程在运行（编辑器或 cursor-agent），它可能自行改写 mcp.json；写入后会立即核对。"]
       : ["有 " + count + " 个 Gemini CLI 进程在运行。运行中的会话保存设置时会按启动时的快照覆盖 settings.json，可能冲掉这次改动；建议先退出它们。"];
   }
 
@@ -461,6 +492,7 @@ export class CapabilityChanges {
       return Promise.reject(new CapabilityError("CAPABILITY_TARGET_REFUSED", prepared.check.blocked ?? "这项检查不能执行"));
     this.prepared.delete(fingerprint);
     if (prepared.kind === "package") return this.skills.apply(prepared, view => { this.owned(); this.store.saveChange(commandId, hash(fingerprint), view); });
+    if (prepared.kind === "edit" && prepared.plan?.kind === "command" && prepared.plan.runner === "claude") return this.applyClaude(prepared, fingerprint, commandId);
     return prepared.kind === "edit" ? this.applyEdit(prepared, fingerprint, commandId) : this.applyLinks(prepared, fingerprint, commandId);
   }
   private applyEdit(prepared: PreparedEdit, fingerprint: string, commandId: string): Promise<CapabilityChangeView> {
@@ -499,6 +531,51 @@ export class CapabilityChanges {
       const view: CapabilityChangeView = { id, kind: prepared.change, harnessId: prepared.harnessId, subject: prepared.subject, file: this.shown(plan.file), status: error === null ? "applied" : "failed",
         diff: changed ? displayed(unifiedDiff(this.shown(plan.file), prepared.before === null ? null : beforeText, written!.toString("utf8"), 2), this.options.homes) : null,
         backupId: changed ? backupId : null, error, notes: error === null ? prepared.check.notes : [...(changed && backupId !== null ? ["可以在“修改与备份”里恢复修改前的文件。"] : [])], at };
+      this.store.saveChange(commandId, hash(fingerprint), view);
+      return view;
+    });
+  }
+  /**
+   * Makes a confirmed change through Claude's own commands. Running sessions rewrite `.claude.json` all the time, so only
+   * the server's entry must be as the check saw it; the file as it is now is backed up, the commands run in the sandbox
+   * (Claude's file and its siblings, its backups and telemetry folders, nothing else, no network), and the entry read back
+   * must be the one predicted. A session may still write its own copy back later: the drift list shows that.
+   */
+  private applyClaude(prepared: PreparedEdit, fingerprint: string, commandId: string): Promise<CapabilityChangeView> {
+    const plan = prepared.plan as Extract<SwitchPlan, { kind: "command" }>, subtree = plan.subtree ?? [];
+    return this.serial(plan.file, async () => {
+      this.owned();
+      const entry = (bytes: Buffer | null): string => { try { return JSON.stringify(at(bytes === null ? {} : parsed(bytes.toString("utf8"), "jsonc"), subtree) ?? null); } catch { return "unparsed"; } };
+      const current = readTarget(plan.file);
+      if (current.state === "refused") throw new CapabilityError("CAPABILITY_TARGET_REFUSED", "无法读取 " + this.shown(plan.file) + "：" + current.reason);
+      const now = current.state === "ok" ? current.bytes : null;
+      if (entry(now) !== entry(prepared.before)) throw new CapabilityError("CAPABILITY_TARGET_CHANGED", "这个服务器在确认之后被改动过，没有写入；请重新检查");
+      const id = randomUUID(), at_ = this.now().toISOString(), backupId = now === null ? null : randomUUID();
+      if (backupId !== null) this.store.saveBackup({ id: backupId, file: plan.file, createdAt: at_, changeId: id, subject: prepared.subject }, now!);
+      const configured = this.options.environment.values.CLAUDE_CONFIG_DIR, folder = configured ? configured.replace(/^~(?=$|\/)/u, this.options.environment.home) : join(this.options.environment.home, ".claude");
+      let error: { code: string; message: string } | null = null, written: Buffer | null = null;
+      try {
+        for (const step of plan.steps ?? [plan.args])
+          await (this.options.claude ?? systemClaude(this.options.environment))(step, { env: {}, writable: [join(folder, "backups"), join(folder, "telemetry")], files: [plan.file] }, AbortSignal.timeout(60_000));
+        const after = readTarget(plan.file);
+        if (after.state !== "ok") error = { code: "CAPABILITY_READBACK_FAILED", message: "写入后读不到这个文件" };
+        else {
+          written = after.bytes;
+          if (!plan.check(parsed(after.bytes.toString("utf8"), "jsonc")) || (prepared.predicted !== null && entry(after.bytes) !== entry(prepared.predicted))) error = { code: "CAPABILITY_READBACK_MISMATCH", message: "写入后的服务器与预演不一致" };
+        }
+      } catch (failure) {
+        error = { code: failure instanceof CapabilityError ? failure.code : "CAPABILITY_WRITE_FAILED", message: failure instanceof Error ? failure.message : "写入失败" };
+        const after = readTarget(plan.file); written = after.state === "ok" ? after.bytes : null;
+      }
+      if (backupId !== null && written !== null) this.store.setWritten(backupId, written);
+      if (error === null) {
+        if (plan.ledger === "set") this.store.setLedger({ harnessId: prepared.harnessId, file: plan.file, key: plan.key, valueHash: hash(JSON.stringify(plan.written ?? null)), previous: plan.previous, changeId: id, at: at_ }, plan.current === "harnesshub");
+        else this.store.dropLedger(prepared.harnessId, plan.file, plan.key);
+      }
+      const changed = written !== null && (now === null || !written.equals(now));
+      const view: CapabilityChangeView = { id, kind: prepared.change, harnessId: prepared.harnessId, subject: prepared.subject, file: this.shown(plan.file), status: error === null ? "applied" : "failed",
+        diff: changed ? displayed(unifiedDiff(this.shown(plan.file), now === null ? null : now.toString("utf8"), written!.toString("utf8"), 2), this.options.homes) : null,
+        backupId: changed ? backupId : null, error, notes: error === null ? prepared.check.notes : [...(changed && backupId !== null ? ["可以在“修改与备份”里恢复修改前的文件。"] : [])], at: at_ };
       this.store.saveChange(commandId, hash(fingerprint), view);
       return view;
     });

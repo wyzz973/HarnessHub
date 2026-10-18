@@ -10,6 +10,7 @@ import { harnessDirectories } from "../../adapters/capability-reads.js";
 import { skillVisibility, type ScannedRoot, type ScannedSkill, type SkillEdge } from "../../contexts/capabilities/domain/visibility.js";
 import { at, frontmatter, parseConfig, record, text, type ConfigFormat } from "./formats.js";
 import { lockFiles } from "./skill-packages.js";
+import { dshRows } from "./mcp-edits.js";
 
 const MAX_CONFIG_BYTES = 32 * 1024 * 1024;
 const MAX_DOCUMENT_BYTES = 1024 * 1024;
@@ -333,6 +334,15 @@ export class CapabilityScan {
       case "opencode":
         for (const file of source.files) add(at(await this.value(harnessId, file, "jsonc"), ["mcp"]), this.shown(file), opencodeFacts);
         break;
+      case "dsh": {
+        // Every profile's own patch layer, then the one for all profiles; each MCP client row is one server.
+        const profiles = (await readdir(source.profiles, { withFileTypes: true }).catch(() => [] as Dirent[])).filter(entry => entry.isDirectory()).map(entry => join(source.profiles, entry.name, "cordis.patch.yml")).sort();
+        for (const file of [...profiles, source.file]) {
+          const value = await this.value(harnessId, file, "yaml");
+          add(Object.fromEntries(dshRows(value).flatMap(row => typeof row.config.serverName === "string" ? [[row.config.serverName, row.config]] : [])), this.shown(file), dshFacts);
+        }
+        break;
+      }
       case "openclaw": add(at(await this.value(harnessId, harnessDirectories(this.environment).openclawConfig, "json5"), ["mcp", "servers"]), this.shown(harnessDirectories(this.environment).openclawConfig), definition => mcpFacts(definition, "dollar")); break;
     }
     return out;
@@ -634,6 +644,15 @@ function codexFacts(definition: Readonly<Record<string, unknown>>): { facts: Mcp
   return { facts: { kind: "mcp", transport: url !== null ? "http" : text(definition.command) !== null ? "stdio" : "unknown", program: programName(text(definition.command), strings(definition.args)), host: hostOf(url),
     variables: [...new Set([...names(definition.env), ...forwarded, ...(bearer ? [bearer] : [])])].slice(0, 64), headers: [...new Set([...names(definition.http_headers), ...envHeaders, ...(bearer ? ["Authorization"] : [])])].slice(0, 64),
     references: forwarded.length + envHeaders.length + (bearer ? 1 : 0), literal: env.length + headers.length, enabled: definition.enabled !== false }, literalNames: [...env, ...headers] };
+}
+/** DeepSeek Harness: a client row's `config`, its environment and headers plain values or `!!js` expressions (references). */
+function dshFacts(definition: Readonly<Record<string, unknown>>): { facts: McpFacts; literalNames: readonly string[] } {
+  const url = text(definition.url), literal = (map: unknown) => Object.entries(record(map)).filter(([, value]) => typeof value === "string" && value.length > 0).map(([name]) => name);
+  const expressions = (map: unknown) => Object.values(record(map)).filter(value => value !== null && typeof value === "object").length;
+  return { facts: { kind: "mcp", transport: definition.transport === "streamable-http" || (url !== null && definition.transport === undefined) ? "http" : definition.transport === "sse" ? "sse" : text(definition.command) !== null ? "stdio" : "unknown",
+    program: programName(text(definition.command), strings(definition.args)), host: hostOf(url), variables: names(definition.env), headers: names(definition.headers),
+    references: expressions(definition.env) + expressions(definition.headers), literal: literal(definition.env).length + literal(definition.headers).length, enabled: true },
+    literalNames: [...literal(definition.env), ...literal(definition.headers)] };
 }
 /** OpenCode: `type` local (a command array) or remote, `environment` with `{env:NAME}` references. */
 function opencodeFacts(definition: Readonly<Record<string, unknown>>): { facts: McpFacts; literalNames: readonly string[] } {

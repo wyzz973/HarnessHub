@@ -88,7 +88,7 @@ Web界面按用户确认的设计稿重写（[ADR-042](docs/decisions/0042-front
 - MCP 统一清单（[验收记录](docs/verification/capability-mcp-2026-10-18.md)，第 3 步 3a）：
   - **清单**：HarnessHub 保存一份 MCP 服务器清单。值像密钥的只记变量名，普通设置可以是字面值；不保存任何密钥值。
   - **导入**：从各 Harness 现有配置导入时，与清单一致的条目可以认领，不改文件；含明文密钥或带令牌地址的不能导入，并说明原因。
-  - **写入**：按各 Harness 自己的写法写进它们的用户级配置，先显示差异、要运行的程序和所需变量。目前支持 Codex（TOML 表组）、Cursor、OpenCode、Gemini、Hermes；只改自有键，用户加的设置保留。Claude 与 OpenClaw 暂为只读。
+  - **写入**：按各 Harness 自己的写法写进它们的用户级配置，先显示差异、要运行的程序和所需变量。目前支持 Claude Code（用它自己的 `claude mcp add-json/remove`，先在私有副本上预演）、Codex（TOML 表组）、Cursor、OpenCode、Gemini、Hermes、DeepSeek Harness（`~/.dsh/cordis.patch.yml` 里 HarnessHub 自己的 insert）；只改自有键，用户加的设置保留。OpenClaw 暂为只读。
   - **状态**：矩阵显示每个服务器在每个 Harness 的状态；被外部改动或移除的不自动写回。
   - **存储**：`capabilities.sqlite` 升到 v3（新增 `mcp_servers`），降级先用 `tools/capabilities-v3-to-v2.sql`。
 - 新增依赖 jsonc-parser 3.3.1、yaml 2.9.1、smol-toml 1.9.0。验收见[能力视图验收](docs/verification/capabilities-view-2026-10-18.md)。

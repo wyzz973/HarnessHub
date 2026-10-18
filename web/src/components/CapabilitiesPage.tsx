@@ -156,7 +156,7 @@ function DriftNotice({ api, drift, harnesses, onChange, onForgotten }: { readonl
     <p className="m-0">多半是 Harness 自己重写了配置文件，或在别处改过。HarnessHub 不会自动改回：可以重新应用（先显示改动），或不再跟踪（文件不变）。</p>
     <ul className="m-0 mt-1.5 flex list-none flex-col gap-1 p-0">{drift.map(item => <li key={item.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-fg">
       <strong className="font-medium">{harnesses.find(harness => harness.harnessId === item.harnessId)?.name ?? item.harnessId} · {item.kind === "mcp" ? "MCP" : CHANGE_LABEL[item.kind]} · {item.subject}</strong>
-      <Badge tone="amber">{DRIFT_LABEL[item.state]}</Badge><code className="text-[11.5px] break-all text-fg-2">{item.file}</code>
+      <Badge tone="amber">{item.kind === "mcp" && item.harnessId === "claude" && item.state === "removed" ? "写入丢失（可能被运行中的 Claude Code 会话冲掉）" : DRIFT_LABEL[item.state]}</Badge><code className="text-[11.5px] break-all text-fg-2">{item.file}</code>
       <button type="button" className="btn btn-sm" disabled={busy !== null} onClick={() => onChange({ title: "重新应用：" + item.subject, verb: "重新应用", on: item.kind === "skill-switch" ? false : item.kind === "shared-dir" ? true : null,
         done: "已重新应用：" + item.subject, load: () => api.checkReapply(item.id) })}>重新应用</button>
       <button type="button" className="btn btn-ghost btn-sm" disabled={busy !== null} title="HarnessHub 不再把它算作自己写的；文件不变" onClick={() => forget(item.id)}>{busy === item.id ? <Spinner size={13}/> : null}不再跟踪</button>

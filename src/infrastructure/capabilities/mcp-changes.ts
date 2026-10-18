@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import type { HarnessReadTable, ReadEnvironment } from "../../adapters/capability-reads.js";
 import { CapabilityError, type CapabilityChangeCheck, type CapabilityChangeView, type McpCandidateView, type McpDefinitionView, type McpInventoryView, type McpServerView, type McpTargetView } from "../../contracts/capabilities.js";
 import { parsed, UnsafeEdit } from "./edits.js";
 import { readTarget, type TargetRead } from "./files.js";
 import { canonical, commandLine, definitionProblem, MCP_NAME, mcpVariables, ownedOf, readMcp, renderMcp, sameMcp, type McpDefinition, type McpStyle } from "./mcp-definitions.js";
-import { editMcp, mcpEntry, mcpGuard, mcpLocation } from "./mcp-edits.js";
+import { dshRows, editMcp, mcpEntry, mcpGuard, mcpLocation } from "./mcp-edits.js";
 import type { InstalledHarness } from "./scan.js";
 import type { CapabilityStore } from "./store.js";
 import type { SwitchPlan } from "./switches.js";
@@ -23,22 +24,22 @@ export interface McpHost {
   /** Offers an edit through the usual check and confirmation (backup, atomic write, read back, ledger). */
   offerEdit(change: "mcp-sync" | "mcp-remove", harnessId: string, subject: string, enabled: boolean, file: string, read: TargetRead, plan: SwitchPlan | null, blocked: string | null, notes: readonly string[]): Promise<CapabilityChangeCheck>;
 }
-const WRITABLE: readonly McpStyle[] = ["codex", "cursor", "opencode", "gemini", "hermes"];
+const WRITABLE: readonly McpStyle[] = ["claude", "codex", "cursor", "opencode", "gemini", "hermes", "dsh"];
 const NOT_YET: Readonly<Record<string, string>> = {
-  claude: "Claude Code 的 MCP 由它自己的命令写入，HarnessHub 下一步接入；现在只读。",
   openclaw: "这个版本的 OpenClaw 改 MCP 会重启 Gateway、只支持 stdio，要等升级后再接入；现在只读。",
-  dsh: "DeepSeek Harness 的 MCP 写在 profile 的补丁行里，要按官网版本核实后再接入。",
   pi: "Pi 0.99 之前没有内置 MCP。",
 };
 const AFTER: Readonly<Record<string, string>> = {
+  claude: "运行中的 Claude Code 会话可能按内存里的副本整份写回 ~/.claude.json，冲掉这次写入：写入后会立即核对；之后被冲掉的，会在漂移列表里显示“写入丢失”，可以在没有会话运行时重新应用。新开的会话会读到它。",
   codex: "Codex 要重启后才读到改动。",
   cursor: "Cursor 编辑器也使用这个文件；新加的服务器可能要在 Cursor 里批准后才启用。",
   gemini: "改完后在 Gemini 里用 /mcp refresh 或重开会话才生效。",
   hermes: "长驻的 Hermes 进程要 /reload-mcp 或重启后生效；正在运行的 Hermes 网关不会被 HarnessHub 重启。",
   opencode: "OpenCode 要重开会话才读到改动。",
+  dsh: "写在 ~/.dsh/cordis.patch.yml（每个 profile 都会读，包括 HarnessHub 用的 acp）；新开的会话才读到改动。DeepSeek Harness 启动服务器时会去掉名字像凭据的环境变量，所以变量都显式写在 env 里。",
 };
 function hash(value: unknown): string { return createHash("sha256").update(JSON.stringify(value ?? null)).digest("hex"); }
-function isStyle(harnessId: string): harnessId is McpStyle { return ["claude", "codex", "cursor", "opencode", "gemini", "hermes"].includes(harnessId); }
+function isStyle(harnessId: string): harnessId is McpStyle { return ["claude", "codex", "cursor", "opencode", "gemini", "hermes", "dsh"].includes(harnessId); }
 
 /**
  * HarnessHub's MCP list (ADR-045 §5, approval of step 3): servers kept without any value that looks like a credential,
@@ -73,7 +74,8 @@ export class McpInventory {
     if (!isStyle(harnessId) || !WRITABLE.includes(harnessId)) return { reason: NOT_YET[harnessId] ?? "HarnessHub 不写这个 Harness 的 MCP 配置" };
     const source = table.mcp;
     if (source.style === "opencode") { const existing = source.files.filter(file => existsSync(file)); return { file: existing.at(-1) ?? source.files[1] ?? source.files[0]!, style: "opencode" }; }
-    if (source.style === "unsupported" || source.style === "openclaw" || source.style === "claude") return { reason: NOT_YET[harnessId] ?? "HarnessHub 不写这个 Harness 的 MCP 配置" };
+    if (source.style === "dsh") return { file: source.file, style: "dsh" };
+    if (source.style === "unsupported" || source.style === "openclaw") return { reason: NOT_YET[harnessId] ?? "HarnessHub 不写这个 Harness 的 MCP 配置" };
     return { file: source.file, style: harnessId };
   }
   /** A file's server entries, parsed; null when the file cannot be read or parsed. */
@@ -116,11 +118,15 @@ export class McpInventory {
     for (const harness of installed) {
       const table = tables.find(item => item.harnessId === harness.harnessId);
       if (table === undefined || !isStyle(harness.harnessId)) continue;
-      const style = harness.harnessId, files = table.mcp.style === "opencode" ? table.mcp.files : table.mcp.style === "unsupported" || table.mcp.style === "openclaw" ? [] : [table.mcp.file];
+      const style = harness.harnessId, source = table.mcp;
+      const files = source.style === "opencode" ? source.files : source.style === "dsh" ? [...(() => { try { return readdirSync(source.profiles, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => join(source.profiles, entry.name, "cordis.patch.yml")).sort(); } catch { return []; } })(), source.file]
+        : source.style === "unsupported" || source.style === "openclaw" ? [] : [source.file];
       for (const file of files) {
         const entries = this.entries(file, style);
         if (entries === null) continue;
-        for (const [name, raw] of Object.entries((() => { let node: unknown = entries.value; for (const key of mcpLocation(style).path) node = node !== null && typeof node === "object" ? (node as Record<string, unknown>)[key] : undefined; return node !== null && typeof node === "object" && !Array.isArray(node) ? node as Record<string, unknown> : {}; })())) {
+        const servers = style === "dsh" ? Object.fromEntries(dshRows(entries.value).flatMap(row => typeof row.config.serverName === "string" ? [[row.config.serverName, row.config]] : []))
+          : (() => { let node: unknown = entries.value; for (const key of mcpLocation(style).path) node = node !== null && typeof node === "object" ? (node as Record<string, unknown>)[key] : undefined; return node !== null && typeof node === "object" && !Array.isArray(node) ? node as Record<string, unknown> : {}; })();
+        for (const [name, raw] of Object.entries(servers)) {
           // A name HarnessHub cannot write everywhere is listed with the reason, not left out.
           const read = MCP_NAME.test(name) ? readMcp(raw, style) : { definition: null, problem: "服务器名只能用字母、数字、- 和 _（Codex 等不接受其他字符）；请在原处改名后再导入" };
           const key = name + "\0" + (read.definition !== null ? JSON.stringify(canonical(read.definition)) : "problem:" + harness.harnessId + ":" + read.problem);
@@ -210,8 +216,8 @@ export class McpInventory {
   async checkSync(name: string, harnessId: string, overwrite: boolean, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> {
     const { item, located, read, value } = await this.prepare(name, harnessId, installed);
     const state = this.target(name, item.definition, harnessId, located), rendered = renderMcp(item.definition, located.style);
-    const command = commandLine(item.definition), variables = mcpVariables(item.definition), values = this.host.environment.values;
-    const notes = [command === null ? "服务器在 " + item.definition.url + "，" + harnessId + " 会连接它。" : "目标 Harness 会以你的身份运行这个程序：" + this.shownText(command),
+    const command = commandLine(item.definition), variables = mcpVariables(item.definition), values = this.host.environment.values, harnessName = installed.find(harness => harness.harnessId === harnessId)?.name ?? harnessId;
+    const notes = [command === null ? "服务器在 " + item.definition.url + "，" + harnessName + " 会连接它。" : "目标 Harness 会以你的身份运行这个程序：" + this.shownText(command),
       ...(variables.length ? ["需要的环境变量：" + variables.map(variable => variable + (typeof values[variable] === "string" && values[variable] !== "" ? "（已设置）" : "（HarnessHub 的环境里未设置）")).join("、") + "。值不写进配置文件。"] : []),
       ...await this.host.runningNotes(harnessId), AFTER[harnessId] ?? ""].filter(Boolean);
     let blocked: string | null = null;
@@ -225,8 +231,10 @@ export class McpInventory {
       const settings = value !== null && typeof value === "object" ? value as Record<string, unknown> : {}, mcp = settings.mcp !== null && typeof settings.mcp === "object" ? settings.mcp as Record<string, unknown> : {};
       if ((Array.isArray(mcp.allowed) && !mcp.allowed.includes(name)) || (Array.isArray(mcp.excluded) && mcp.excluded.includes(name))) notes.push("Gemini 的 mcp.allowed / mcp.excluded 会让它不加载这个服务器；HarnessHub 不改这两项。");
     }
-    if (state.state === "changed") notes.push("会覆盖外部对这一项的改动（只改 HarnessHub 管理的键）。");
-    return this.offer("mcp-sync", harnessId, name, true, located, read, value, blocked === null && rendered.ok ? rendered.value : null, blocked, notes, state.state === "outdated" ? "harnesshub" : "none");
+    if (state.state === "changed") notes.push(located.style === "claude" ? "会覆盖外部对这一项的改动（Claude 的命令先删后加）。" : "会覆盖外部对这一项的改动（只改 HarnessHub 管理的键）。");
+    if (located.style === "claude" && item.definition.transport !== "stdio" && (state.state === "outdated" || state.state === "changed")) notes.push("Claude 更新服务器要先删后加，会丢掉这个远程服务器的 OAuth 登录，下次使用时要重新登录。");
+    const owned = blocked === null && rendered.ok ? (located.style === "dsh" ? canonical({ serverName: name, ...rendered.value }) : rendered.value) : null;
+    return this.offer("mcp-sync", harnessId, name, true, located, read, value, owned, blocked, notes, state.state === "outdated" ? "harnesshub" : "none");
   }
   /** Prepares removing a listed server's entry from one Harness: only the one HarnessHub wrote (or had claimed), unchanged since. */
   async checkRemove(name: string, harnessId: string, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> {
@@ -234,7 +242,8 @@ export class McpInventory {
     const state = this.target(name, item.definition, harnessId, located);
     const blocked = state.state === "synced" || state.state === "outdated" ? null : state.state === "absent" || state.state === "removed" ? "无需修改：" + harnessId + " 里没有这一项。"
       : "这一项不是 HarnessHub 写的（或已被外部改过），HarnessHub 不删。";
-    return this.offer("mcp-remove", harnessId, name, false, located, read, value, undefined, blocked, [AFTER[harnessId] ?? ""].filter(Boolean), "harnesshub");
+    const notes = [...(located.style === "claude" && item.definition.transport !== "stdio" ? ["Claude 删除服务器时会一并删除它的 OAuth 登录。"] : []), AFTER[harnessId] ?? ""].filter(Boolean);
+    return this.offer("mcp-remove", harnessId, name, false, located, read, value, undefined, blocked, notes, "harnesshub");
   }
   private async prepare(name: string, harnessId: string, installed: readonly InstalledHarness[]) {
     const item = this.list().find(entry => entry.name === name);
@@ -254,7 +263,15 @@ export class McpInventory {
     if (read.state === "refused") reason ??= "无法修改 " + this.host.shown(located.file) + "：" + read.reason + "。";
     else if (read.state === "missing" && !read.directory) reason ??= "无法修改：" + this.host.shown(located.file) + " 所在的目录不存在。";
     else if (value === null) reason ??= "配置文件无法解析，HarnessHub 不以空配置写回。";
-    if (reason === null && owned !== null) {
+    if (reason === null && owned !== null && located.style === "claude") {
+      // Claude's own commands: added when absent, removed and added again to change, removed to remove.
+      const key = "mcp/" + name, entry = mcpEntry(value, "claude", name), ledger = this.host.store.ledger(harnessId, located.file, key), written = owned === undefined ? undefined : ownedOf(owned, "claude");
+      const add = owned === undefined ? null : ["mcp", "add-json", name, JSON.stringify(owned), "-s", "user"], remove = ["mcp", "remove", name, "-s", "user"];
+      const steps = add === null ? [remove] : entry === undefined ? [add] : [remove, add];
+      plan = { kind: "command", runner: "claude", file: located.file, args: steps[0]!, steps, subtree: ["mcpServers", name], comments: false, key, written,
+        previous: entry === undefined ? null : JSON.stringify(ownedOf(entry, "claude")), current: entry === undefined ? "none" : ledger !== null && ledger.valueHash === hash(ownedOf(entry, "claude")) ? "harnesshub" : current === "harnesshub" ? "harnesshub" : "other",
+        notes: [], ledger: owned === undefined ? "drop" : "set", check: after => JSON.stringify(ownedOf(mcpEntry(after, "claude", name), "claude") ?? null) === JSON.stringify(written ?? null) };
+    } else if (reason === null && owned !== null) {
       const before = read.state === "ok" ? read.bytes.toString("utf8") : "", key = "mcp/" + name, entry = mcpEntry(value, located.style, name), ledger = this.host.store.ledger(harnessId, located.file, key);
       try {
         const after = editMcp(before, located.style, name, owned === undefined ? undefined : owned);

@@ -9501,7 +9501,7 @@
       "layer": "integration",
       "planned_file": "tests/integration/mcp-inventory.test.ts",
       "scenario": "经正式入口导入、认领、按各家写法写入、清单改动后更新与移除 MCP 服务器",
-      "expected": "列出各 Harness 已有的服务器，明文密钥与带令牌的地址不能导入；导入并认领一致的那一项不改文件；写入 Codex 只多出它自己的表，其余字节不变，确认框写明会以用户身份运行的程序与所需变量（只说是否已设置）；写入 Gemini、Cursor 用各自的引用，Cursor 提示编辑器共用文件；清单改动后各处显示待更新，更新只改自有键并保留用户加的超时；从 Cursor 移除只删 HarnessHub 写的一项；仍有 HarnessHub 写的条目时不能从清单删除；回答不含家目录绝对路径与凭据",
+      "expected": "列出各 Harness 已有的服务器，明文密钥与带令牌的地址不能导入；导入并认领一致的那一项不改文件；写入 Codex 只多出它自己的表，其余字节不变，确认框写明会以用户身份运行的程序与所需变量（只说是否已设置）；写入 Gemini、Cursor 用各自的引用，Cursor 提示编辑器共用文件；清单改动后各处显示待更新，更新只改自有键并保留用户加的超时；写入 DeepSeek Harness 时新建它对所有 profile 生效的补丁文件、只含 HarnessHub 自己的 insert，移除后留下 []；profile 里用户自己的服务器可以导入；从 Cursor 移除只删 HarnessHub 写的一项；仍有 HarnessHub 写的条目时不能从清单删除；回答不含家目录绝对路径与凭据",
       "status": "planned",
       "evidence": null
     },
@@ -9518,6 +9518,54 @@
       "planned_file": "tests/integration/mcp-inventory.test.ts",
       "scenario": "被外部改动的条目、同名的用户条目、表达不了的传输与非法定义，以及存储从 v3 降到 v2",
       "expected": "用户自己的同名条目即使带 overwrite 也不覆盖；HarnessHub 写的条目被手改后显示被外部改动并进入漂移列表（不算孤立的停用设置），不带 overwrite 时阻止，经重新应用写回；SSE 服务器对 Codex、Hermes 显示不支持并拒绝写入；明文密钥、非本机 HTTP、shell 字符、参数中间的 ~/ 被拒绝，变量改名的服务器对 Codex 阻止；降级脚本删除清单、MCP 的修改记录与台账，保留备份与其他记录",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G064-M4",
+      "task": "G064",
+      "requirements": [
+        "R27"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "planned_file": "tests/unit/mcp-inventory.test.ts",
+      "scenario": "Claude Code 的 MCP 经它自己的命令写入：副本预演、只比对服务器这一项、会话冲掉写入",
+      "expected": "检查在私有副本上运行 claude mcp add-json，真实文件不变，确认框显示命令与 Claude 自己补的键；确认前运行中的会话改了其他键也照常写入，真实运行只可写 Claude 的文件与它的 backups、telemetry 目录；更新先删后加；会话写回旧副本后显示被移除并进入漂移列表，不带 overwrite 时阻止；确认后服务器被改动时拒绝；移除只删 HarnessHub 写的这一项",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G064-M5",
+      "task": "G064",
+      "requirements": [
+        "R27"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "probe",
+      "planned_file": "tests/real/claude-mcp.real.ts",
+      "scenario": "本机真实的 Claude Code 在私有家目录与禁网沙箱里添加并删除一个服务器",
+      "expected": "副本预演通过且真实文件不变；应用后服务器按 Claude 的写法写入、变量引用保持原样，其他服务器、计数与项目设置不变，留有备份；删除后只剩原有的服务器；不读写真实的 ~/.claude.json",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G064-M6",
+      "task": "G064",
+      "requirements": [
+        "R27"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "planned_file": "tests/unit/mcp-inventory.test.ts",
+      "scenario": "DeepSeek Harness 的 MCP 客户端行与补丁列表",
+      "expected": "按 dsh 的写法读出服务器（!!js process.env.X 为引用，process.cwd() 等同不写工作目录），写回时变量与带前缀的请求头都是 !!js 表达式，不支持 SSE，读不了的表达式拒绝；空列表 [] 里加入一条后是块列表，第二条在后，原位替换，全部移除后逐字节回到原文件；原来没有的文件新建为列表、移除后留下 []，绝不留空文件；单行的非空列表与非列表的顶层被拒绝",
       "status": "planned",
       "evidence": null
     },
@@ -9585,7 +9633,7 @@
       "layer": "e2e",
       "planned_file": "tests/browser/web.browser.ts",
       "scenario": "MCP 统一清单的矩阵、写入、认领、导入与新建",
-      "expected": "每个服务器按 Harness 显示已写入、一致、未写入、不可写，并标出所需变量是否已设置；写入先显示差异与将运行的程序，确认才发送且只发送这次检查；认领与导入不改文件，含明文密钥的不能导入；新建的服务器只保存变量名；无页面错误",
+      "expected": "每个服务器按 Harness 显示已写入、一致、未写入、不可写，并标出所需变量是否已设置；写入先显示差异与将运行的程序，确认才发送且只发送这次检查；认领与导入不改文件，含明文密钥的不能导入；新建的服务器只保存变量名；Claude 里被会话冲掉的服务器在漂移列表里显示为写入丢失；无页面错误",
       "status": "planned",
       "evidence": null
     }

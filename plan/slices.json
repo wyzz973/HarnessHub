@@ -960,7 +960,9 @@
         "web/src/components/McpInventoryPanel.tsx",
         "tests/unit/mcp-inventory.test.ts",
         "tests/integration/mcp-inventory.test.ts",
-        "tools/capabilities-v3-to-v2.sql"
+        "tools/capabilities-v3-to-v2.sql",
+        "src/infrastructure/capabilities/claude-mcp.ts",
+        "tests/real/claude-mcp.real.ts"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/capabilities-view-2026-10-18.md"

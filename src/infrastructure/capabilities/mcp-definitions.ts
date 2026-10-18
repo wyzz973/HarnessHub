@@ -22,7 +22,19 @@ export interface McpDefinition {
   readonly headers: readonly McpHeader[];
 }
 /** The Harnesses whose MCP configuration HarnessHub reads into the list, by their file's style. */
-export type McpStyle = "claude" | "codex" | "cursor" | "opencode" | "gemini" | "hermes";
+export type McpStyle = "claude" | "codex" | "cursor" | "opencode" | "gemini" | "hermes" | "dsh";
+/**
+ * A JavaScript expression in DeepSeek Harness's YAML (`!!js …`), as the reader returns it; never evaluated. HarnessHub
+ * writes only `process.env.NAME` and `'<prefix>' + process.env.NAME` with a checked name and prefix.
+ */
+export interface JsExpression { readonly jsExpression: string }
+function jsReference(value: unknown): { readonly variable: string; readonly prefix: string } | "cwd" | null {
+  if (value === null || typeof value !== "object" || typeof (value as JsExpression).jsExpression !== "string") return null;
+  const expression = (value as JsExpression).jsExpression.trim();
+  if (/^process\.cwd\(\)$/u.test(expression)) return "cwd";
+  const match = /^(?:(['"])([A-Za-z0-9 _:-]{0,32})\1\s*\+\s*)?process\.env\.([A-Za-z_][A-Za-z0-9_]*)$/u.exec(expression);
+  return match ? { variable: match[3]!, prefix: match[2] ?? "" } : null;
+}
 export const MCP_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u, VARIABLE = /^[A-Z_][A-Z0-9_]{0,127}$/u, ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/u, HEADER = /^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,128}$/u;
 const SHELL = /[;&|$<>`\\"'\n\r]/u;
 
@@ -99,6 +111,22 @@ export function readMcp(raw: unknown, style: McpStyle): McpRead {
       for (const [name, item] of Object.entries(record(value.http_headers))) if (typeof item === "string") headers.push({ name, value: item });
       break;
     }
+    case "dsh": {
+      // The `config` of an insert row of `@deepseek-ai/dsh-mcp-client`: environment and headers may be `!!js` expressions.
+      url = text(value.url); command = text(value.command); args = value.args === undefined ? [] : strings(value.args);
+      transport = value.transport === "streamable-http" || (url !== null && value.transport === undefined) ? "http" : value.transport === "sse" ? "sse" : "stdio";
+      for (const [key, item] of Object.entries(record(value.env))) {
+        const found = jsReference(item);
+        if (typeof item === "string") env.push({ key, value: item }); else if (found !== null && found !== "cwd" && !found.prefix) env.push({ key, variable: found.variable }); else return { definition: null, problem: "环境变量 " + key + " 是 HarnessHub 读不了的表达式" };
+      }
+      for (const [name, item] of Object.entries(record(value.headers))) {
+        const found = jsReference(item);
+        if (typeof item === "string") headers.push({ name, value: item }); else if (found !== null && found !== "cwd") headers.push({ name, variable: found.variable, prefix: found.prefix }); else return { definition: null, problem: "请求头 " + name + " 是 HarnessHub 读不了的表达式" };
+      }
+      // `!!js process.cwd()` is the folder DeepSeek Harness runs in: the same as giving none.
+      if (value.cwd !== undefined && jsReference(value.cwd) !== "cwd" && typeof value.cwd !== "string") return { definition: null, problem: "工作目录是 HarnessHub 读不了的表达式" };
+      break;
+    }
     case "opencode": {
       const list = strings(value.command) ?? [];
       url = text(value.url); command = list[0] ?? null; args = list.slice(1);
@@ -114,7 +142,7 @@ export function readMcp(raw: unknown, style: McpStyle): McpRead {
     }
   }
   if (args === null) return { definition: null, problem: "参数不是字符串列表" };
-  const definition: McpDefinition = { transport, command: transport === "stdio" ? command : null, args: transport === "stdio" ? args : [], cwd: text(value.cwd), url: transport === "stdio" ? null : url,
+  const definition: McpDefinition = { transport, command: transport === "stdio" ? command : null, args: transport === "stdio" ? args : [], cwd: typeof value.cwd === "string" ? text(value.cwd) : null, url: transport === "stdio" ? null : url,
     env: [...env].sort((left, right) => left.key.localeCompare(right.key)), headers: [...headers].sort((left, right) => left.name.localeCompare(right.name)) };
   const problem = definitionProblem(definition);
   return problem === null ? { definition, problem: null } : { definition: null, problem };
@@ -140,6 +168,7 @@ export const MCP_OWNED: Readonly<Record<McpStyle, readonly string[]>> = {
   hermes: ["command", "args", "env", "cwd", "url", "headers"],
   opencode: ["type", "command", "environment", "url", "headers"],
   codex: ["command", "args", "env", "env_vars", "cwd", "url", "bearer_token_env_var", "env_http_headers", "http_headers"],
+  dsh: ["serverName", "transport", "command", "args", "env", "cwd", "url", "headers"],
 };
 /** The owned part of a server entry as written in a file, canonical; undefined when there is no such entry. */
 export function ownedOf(raw: unknown, style: McpStyle): unknown {
@@ -184,6 +213,16 @@ export function renderMcp(definition: McpDefinition, style: McpStyle): McpRender
     case "gemini":
       return definition.transport === "stdio" ? done({ command: definition.command, ...optional("args", definition.args), ...optional("env", env), ...optional("cwd", definition.cwd) })
         : done({ [definition.transport === "http" ? "httpUrl" : "url"]: definition.url, ...optional("headers", headers) });
+    case "dsh": {
+      if (definition.transport === "sse") return refuse("DeepSeek Harness 不支持 SSE 传输");
+      const js = (variable: string, prefix = ""): JsExpression => ({ jsExpression: (prefix ? "'" + prefix + "' + " : "") + "process.env." + variable });
+      if (definition.headers.some(item => "variable" in item && !/^[A-Za-z0-9 _:-]{0,32}$/u.test(item.prefix))) return refuse("请求头的前缀只能是字母、数字、空格和 _ : -");
+      const dshEnv = Object.fromEntries(definition.env.map(item => [item.key, "variable" in item ? js(item.variable) : item.value]));
+      const dshHeaders = Object.fromEntries(definition.headers.map(item => [item.name, "variable" in item ? js(item.variable, item.prefix) : item.value]));
+      // Its stdio bridge drops ambient variables whose names look like credentials, so every variable is passed explicitly.
+      return definition.transport === "stdio" ? done({ transport: "stdio", command: definition.command, args: [...definition.args], env: dshEnv, ...optional("cwd", definition.cwd) })
+        : done({ transport: "streamable-http", url: definition.url, ...optional("headers", dshHeaders) });
+    }
     case "claude": case "cursor":
       // Claude names the transport; Cursor's own entries carry none (it tells HTTP from SSE by itself).
       return definition.transport === "stdio" ? done({ ...(style === "claude" ? { type: "stdio" } : {}), command: definition.command, ...optional("args", definition.args), ...optional("env", env), ...optional("cwd", definition.cwd) })

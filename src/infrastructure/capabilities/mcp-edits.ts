@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { isMap, isScalar, parseDocument, stringify } from "yaml";
+import { isMap, isScalar, isSeq, parseDocument, stringify } from "yaml";
 import { parsed, setJson, UnsafeEdit } from "./edits.js";
 import type { ConfigFormat } from "./formats.js";
 import { record } from "./formats.js";
@@ -18,10 +18,22 @@ export function mcpLocation(style: McpStyle): { readonly path: readonly string[]
     case "opencode": return { path: ["mcp"], format: "jsonc" };
     case "hermes": return { path: ["mcp_servers"], format: "yaml" };
     case "codex": return { path: ["mcp_servers"], format: "toml" };
+    case "dsh": return { path: [], format: "yaml" };
   }
+}
+/** DeepSeek Harness's MCP client rows in a patch list: the patch's index, the row's id and its `config`. */
+const DSH_CLIENT = "@deepseek-ai/dsh-mcp-client", DSH_PREFIX = "harnesshub-mcp-";
+export function dshRows(value: unknown): readonly { readonly index: number; readonly id: string | null; readonly config: Readonly<Record<string, unknown>> }[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((patch, index) => (Array.isArray(record(patch).insert) ? record(patch).insert as unknown[] : []).flatMap(row => {
+    const item = record(row);
+    return item.name === DSH_CLIENT ? [{ index, id: typeof item.id === "string" ? item.id : null, config: record(item.config) }] : [];
+  }));
 }
 /** The entry of server `name` in a parsed file, or undefined. */
 export function mcpEntry(value: unknown, style: McpStyle, name: string): unknown {
+  // DeepSeek Harness: the config of the client row serving `name`, whoever wrote it.
+  if (style === "dsh") return dshRows(value).find(row => row.config.serverName === name)?.config;
   let current: unknown = value;
   for (const key of [...mcpLocation(style).path, name]) { const map = record(current); if (!Object.hasOwn(map, key)) return undefined; current = map[key]; }
   return current;
@@ -34,7 +46,8 @@ export function mcpEntry(value: unknown, style: McpStyle, name: string): unknown
 export function editMcp(text: string, style: McpStyle, name: string, owned: Readonly<Record<string, unknown>> | undefined): string {
   const { path, format } = mcpLocation(style), before = parsed(text, format), current = mcpEntry(before, style, name);
   let after: string;
-  if (format === "jsonc") {
+  if (style === "dsh") after = setDshPatch(text, name, owned);
+  else if (format === "jsonc") {
     if (owned === undefined || current === undefined) after = setJson(text, [...path, name], owned === undefined ? undefined : { ...owned });
     else {
       after = text;
@@ -55,6 +68,13 @@ export function editMcp(text: string, style: McpStyle, name: string, owned: Read
  * are what was asked (or it is gone), and the keys the user added to it stay. Returns why not, or null.
  */
 export function mcpGuard(before: unknown, after: unknown, style: McpStyle, name: string, owned: Readonly<Record<string, unknown>> | undefined): string | null {
+  if (style === "dsh") {
+    // The patch list is the same but for HarnessHub's own row of this server.
+    const ours = (value: unknown) => (Array.isArray(value) ? value : []).filter(patch => !(Array.isArray(record(patch).insert) && (record(patch).insert as unknown[]).some(row => record(row).id === DSH_PREFIX + name)));
+    if (!isDeepStrictEqual(JSON.parse(JSON.stringify(ours(before))), JSON.parse(JSON.stringify(ours(after))))) return "改动会超出这个服务器";
+    const written = mcpEntry(after, style, name);
+    return (owned === undefined ? written !== undefined : !isDeepStrictEqual(ownedOf(written, style), ownedOf(owned, style))) ? "服务器没有改成预期的样子" : null;
+  }
   const path = mcpLocation(style).path, current = mcpEntry(before, style, name), written = mcpEntry(after, style, name);
   if (!isDeepStrictEqual(withoutEntry(before, path, name), withoutEntry(after, path, name))) return "改动会超出这个服务器";
   if (owned === undefined ? written !== undefined : !isDeepStrictEqual(ownedOf(written, style), ownedOf(owned, style))) return "服务器没有改成预期的样子";
@@ -227,3 +247,58 @@ export function setTomlServer(text: string, name: string, owned: Readonly<Record
   const at = group.mainHeader + (next[group.mainHeader] === "\n" ? 1 : 0);
   return next.slice(0, at) + body(owned) + eol + next.slice(at);
 }
+
+// ---- YAML patch list (DeepSeek Harness) ----
+/** A config with `!!js` expressions as DeepSeek Harness reads them, as YAML text (expressions always double-quoted). */
+function dshConfig(config: Readonly<Record<string, unknown>>, indent: string, eol: string): string {
+  const expressions: string[] = [];
+  const plain = JSON.parse(JSON.stringify(config, (_, value: unknown) => value !== null && typeof value === "object" && typeof (value as { jsExpression?: unknown }).jsExpression === "string"
+    ? "__HARNESSHUB_JS_" + (expressions.push((value as { jsExpression: string }).jsExpression) - 1) + "__" : value)) as Record<string, unknown>;
+  return stringify(plain, { indent: 2, lineWidth: 0 }).replace(/\n$/u, "").replace(/__HARNESSHUB_JS_(\d+)__/gu, (_, index: string) => "!!js " + JSON.stringify(expressions[Number(index)]))
+    .split("\n").map(line => indent + line).join(eol);
+}
+/** One patch of the list: an insert of HarnessHub's own MCP client row for `name`. */
+function dshPatch(name: string, config: Readonly<Record<string, unknown>>, eol: string): string {
+  return "- insert:" + eol + "    - id: " + DSH_PREFIX + name + eol + "      name: \"" + DSH_CLIENT + "\"" + eol + "      config:" + eol + dshConfig(config, "        ", eol) + eol;
+}
+/**
+ * DeepSeek Harness's user patch layer (a top-level YAML array): HarnessHub's own insert of server `name` added, replaced
+ * or removed by whole lines. The list is never left empty or absent once it was there: an empty one is written as `[]`,
+ * since DeepSeek Harness refuses to start on a patch file that is not an array.
+ */
+export function setDshPatch(text: string, name: string, config: Readonly<Record<string, unknown>> | undefined): string {
+  const eol = text.includes("\r\n") ? "\r\n" : "\n", document = parseDocument(text, { uniqueKeys: false, customTags: [{ tag: "tag:yaml.org,2002:js", resolve: (value: string) => value }] });
+  if (document.errors.length) throw new UnsafeEdit("补丁文件无法解析");
+  const root = document.contents;
+  if (root !== null && !isSeq(root)) throw new UnsafeEdit("补丁文件的顶层不是列表");
+  const items = root === null ? [] : root.items, index = items.findIndex(item => {
+    const insert = isMap(item) ? item.get("insert", true) : null;
+    return isSeq(insert) && insert.items.some(row => isMap(row) && row.get("id") === DSH_PREFIX + name);
+  });
+  const block = config === undefined ? "" : dshPatch(name, { serverName: name, ...config }, eol);
+  if (root === null || (root.flow && items.length === 0)) {
+    if (config === undefined) return text;
+    // An empty list (`[]`, or a file of comments only) becomes a block list holding this patch.
+    if (root === null) return (text === "" || text.endsWith("\n") ? text : text + eol) + block;
+    const [start, end] = root.range!;
+    return text.slice(0, start) + block.replace(new RegExp(eol + "$", "u"), "") + text.slice(end);
+  }
+  if (root.flow) throw new UnsafeEdit("补丁列表用的是单行写法，HarnessHub 不改");
+  const range = (item: unknown): { start: number; end: number } => {
+    const node = item as { range?: [number, number, number] };
+    if (!node.range) throw new UnsafeEdit("补丁的写法无法定位");
+    let stop = node.range[1]; while (stop > 0 && /\s/u.test(text[stop - 1]!)) stop--;
+    const close = lineEnd(text, stop), dash = text.lastIndexOf("-", node.range[0]);
+    return { start: lineStart(text, dash < 0 ? node.range[0] : dash), end: close < text.length ? close + 1 : close };
+  };
+  if (index >= 0) {
+    const { start, end } = range(items[index]);
+    if (config !== undefined) return text.slice(0, start) + block + text.slice(end);
+    if (items.length === 1) return text.slice(0, start) + "[]" + eol + text.slice(end);
+    return text.slice(0, start) + text.slice(end);
+  }
+  if (config === undefined) return text;
+  const { end } = range(items.at(-1));
+  return text.slice(0, end) + (end === text.length && !text.endsWith("\n") ? eol : "") + block + text.slice(end);
+}
+

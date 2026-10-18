@@ -2254,7 +2254,9 @@ test("G054-CA6 the MCP list shows each server per Harness, imports what the Harn
       { id: "b".repeat(32), name: "github", definition: null, problem: "API_KEY 的值像是密钥，必须改成变量引用", foundIn: [{ harnessId: "claude", file: "~/.claude.json" }], state: "new" }] });
   const requests: string[] = [], posted: { path: string; body: Record<string, unknown> }[] = [];
   await page.route("**/api/v1/capabilities", route => route.fulfill({ json: capabilityView() }));
-  await page.route("**/api/v1/capabilities/history", route => route.fulfill({ json: { changes: [], backups: [], drift: [], ...HISTORY_EXTRA } }));
+  // A server HarnessHub wrote into Claude Code that a running session then wrote over.
+  const lost = { id: "d".repeat(32), kind: "mcp", harnessId: "claude", subject: "fs", file: "~/.claude.json", state: "removed", changeId: "17777777-7777-4777-8777-777777777777", at };
+  await page.route("**/api/v1/capabilities/history", route => route.fulfill({ json: { changes: [], backups: [], drift: [lost], ...HISTORY_EXTRA } }));
   await page.route("**/api/v1/capabilities/mcp", route => route.fulfill({ json: inventory() }));
   await page.route(/\/api\/v1\/capabilities\/mcp\/(sync|remove)\?/u, route => {
     const url = new URL(route.request().url()); requests.push(url.pathname.replace("/api/v1/capabilities/", "") + url.search);
@@ -2272,6 +2274,7 @@ test("G054-CA6 the MCP list shows each server per Harness, imports what the Harn
   await page.goto(fixture.gateway.url); await expect(page.getByRole("button", { name: "新对话", exact: true })).toBeVisible();
   await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "能力", exact: true }).click();
   await page.getByRole("tab", { name: /^MCP/u }).click();
+  await expect(page.locator(".capability-drift li")).toHaveText([/Claude Code · MCP · fs写入丢失（可能被运行中的 Claude Code 会话冲掉）~\/\.claude\.json/u]);
   // Each server per Harness: written, the same but not yet HarnessHub's, not written, not writable (with why); the variable it needs and whether it is set.
   const panel = page.locator(".mcp-inventory"), row = panel.locator("tbody tr").filter({ hasText: "fs" });
   await expect(row.locator("td")).toHaveText([/^—$/u, /未写入写入/u, /一致认领/u, /已写入移除/u]);

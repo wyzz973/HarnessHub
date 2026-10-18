@@ -37,6 +37,7 @@
     "test:real:native-extensions": "pnpm build && node --test dist/tests/real/native-extensions.real.js",
     "test:real:native-config": "pnpm build && node --test dist/tests/real/native-config.real.js",
     "test:real:openclaw-switch": "pnpm build && node --test dist/tests/real/openclaw-skill-switch.real.js",
+    "test:real:claude-mcp": "pnpm build && node --test dist/tests/real/claude-mcp.real.js",
     "test:real:native-import": "pnpm build && node --test dist/tests/real/native-import.real.js",
     "test:real:native-subagent": "pnpm build && node --test dist/tests/real/native-subagent.real.js",
     "test:real:native-question": "pnpm build && node --test dist/tests/real/native-question.real.js",

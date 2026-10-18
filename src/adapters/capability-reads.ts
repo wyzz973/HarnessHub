@@ -43,6 +43,8 @@ export type McpSource =
   | { readonly style: "codex" | "cursor" | "gemini" | "hermes"; readonly file: string }
   | { readonly style: "opencode"; readonly files: readonly string[] }
   | { readonly style: "openclaw" }
+  /** DeepSeek Harness: its user patch layers, the one for every profile (`file`) and each profile's own under `profiles`. */
+  | { readonly style: "dsh"; readonly file: string; readonly profiles: string }
   | { readonly style: "unsupported"; readonly reason: string };
 /** A user-level instructions file the Harness may read; `compat` marks another product's file it falls back to. */
 export interface InstructionCandidate { readonly path: string; readonly role: "own" | "compat" }
@@ -224,10 +226,11 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
     },
     {
       harnessId: "dsh", verified: ">=0.2.0 <0.3.0",
-      evidence: ["deepseek-ai/deepseek-harness 5badb15 docs/subsystems/skills.md（$DSH_HOME/skills 优先于 ~/.agents/skills）"],
+      evidence: ["deepseek-ai/deepseek-harness 5badb15 docs/subsystems/skills.md（$DSH_HOME/skills 优先于 ~/.agents/skills）",
+        "@deepseek-ai/dsh 0.2.0-rc.2 dsh-app-boot：依次应用各 bundle、profile 自己的 cordis.patch.yml、$DSH_HOME/cordis.patch.yml；补丁文件必须是顶层 YAML 数组（docs/user/guide/mcp-memory.md：MCP 客户端行 @deepseek-ai/dsh-mcp-client）"],
       skills: { roots: [{ role: "own", path: join(dirs.dsh, "skills"), precedence: 2, containment: false, depth: 1 }, { role: "shared", path: dirs.dshAgents, precedence: 1, containment: false, depth: 1 }],
         duplicates: "precedence", requiresDescription: true, nameMustMatchDirectory: false, switch: null },
-      mcp: { style: "unsupported", reason: "DeepSeek Harness 的 MCP 写在 profile 的补丁行里，统一视图暂不读取。" },
+      mcp: { style: "dsh", file: join(dirs.dsh, "cordis.patch.yml"), profiles: join(dirs.dsh, "profiles") },
       instructions: { kind: "files", candidates: [{ path: join(dirs.dsh, "AGENTS.md"), role: "own" }], rule: "first-existing" },
       subagents: null, commands: null, hooks: null, plugins: null,
       notes: ["DeepSeek Harness 没有按技能停用的开关。"],

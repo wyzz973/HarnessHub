@@ -52,6 +52,12 @@ test("G064-M2 through the formal Gateway, a server the Harnesses have is listed 
   const cursorFile = join(f.home, ".cursor", "mcp.json"), cursorConfig = JSON.parse(await readFile(cursorFile, "utf8")) as { mcpServers: Record<string, unknown> };
   cursorConfig.mcpServers["@scope/odd"] = { command: "npx", args: ["-y", "@scope/odd"] };
   await writeFile(cursorFile, JSON.stringify(cursorConfig));
+  // DeepSeek Harness's profile patch layers as it creates them, one holding a memory server of the user's.
+  const header = "# Your patch layer for this dsh profile, applied after every bundle layer:\n# a top-level YAML array of loader patch entries.\n";
+  await mkdir(join(f.home, ".dsh", "profiles", "acp"), { recursive: true }); await mkdir(join(f.home, ".dsh", "profiles", "web"), { recursive: true });
+  await writeFile(join(f.home, ".dsh", "profiles", "acp", "cordis.patch.yml"), header + "[]\n");
+  await writeFile(join(f.home, ".dsh", "profiles", "web", "cordis.patch.yml"), header + "- insert:\n    - id: memory-mine\n      name: '@deepseek-ai/dsh-mcp-client'\n      config:\n        serverName: dsh-mem\n"
+    + "        transport: stdio\n        command: memorix\n        args: [serve]\n        env: {}\n        cwd: !!js process.cwd()\n");
   const codexBefore = await readFile(codexFile, "utf8");
   // What the Harnesses have: the servers that can be listed, and those that cannot (credentials written literally, a token in the address).
   let view = await f.inventory();
@@ -64,8 +70,9 @@ test("G064-M2 through the formal Gateway, a server the Harnesses have is listed 
   assert.match(candidate("@scope/odd")?.problem ?? "", /服务器名只能用字母/u, "a name HarnessHub cannot write is listed with why");
   assert.ok(view.candidates.filter(item => item.name === "remote").every(item => /查询串/u.test(item.problem ?? "")));
   const writable = Object.fromEntries(view.harnesses.map(item => [item.harnessId, item.writable]));
-  assert.deepEqual(["claude", "codex", "cursor", "gemini", "hermes", "opencode", "openclaw"].map(id => writable[id]), [false, true, true, true, true, true, false]);
-  assert.match(view.harnesses.find(item => item.harnessId === "claude")?.reason ?? "", /Claude Code 的 MCP 由它自己的命令写入/u);
+  assert.deepEqual(["claude", "codex", "cursor", "gemini", "hermes", "opencode", "dsh", "openclaw"].map(id => writable[id]), [true, true, true, true, true, true, true, false]);
+  assert.deepEqual([candidate("dsh-mem")?.foundIn, candidate("dsh-mem")?.definition?.command, candidate("dsh-mem")?.definition?.cwd], [[{ harnessId: "dsh", file: "~/.dsh/profiles/web/cordis.patch.yml" }], "memorix", null]);
+  assert.match(view.harnesses.find(item => item.harnessId === "openclaw")?.reason ?? "", /重启 Gateway/u);
   // Listing fs and claiming Hermes's identical entry changes no file.
   const hermesFile = join(f.home, ".hermes", "config.yaml"), hermesBefore = await readFile(hermesFile, "utf8");
   const imported = await f.call<CapabilityChangeView[]>("/capabilities/mcp/import", { candidate: candidate("fs")!.id, claim: ["hermes"] });
@@ -73,7 +80,13 @@ test("G064-M2 through the formal Gateway, a server the Harnesses have is listed 
   assert.deepEqual(imported.value.map(change => [change.kind, change.harnessId, change.subject, change.diff]), [["mcp-claim", "hermes", "fs", null]]);
   assert.equal(await readFile(hermesFile, "utf8"), hermesBefore, "claiming writes nothing");
   view = await f.inventory();
-  assert.deepEqual([state(view, "fs", "hermes"), state(view, "fs", "codex"), state(view, "fs", "claude")], ["synced", "absent", "unsupported"]);
+  assert.deepEqual([state(view, "fs", "hermes"), state(view, "fs", "codex"), state(view, "fs", "claude"), state(view, "fs", "openclaw")], ["synced", "absent", "absent", "unsupported"]);
+  // Claude's own command predicts the write on a copy: the fixture's program fails, so nothing is prepared and nothing ran outside the sandbox.
+  const claudeFile = join(f.home, ".claude.json"), claudeBefore = await readFile(claudeFile, "utf8");
+  const toClaude = await f.sync("fs", "claude");
+  assert.match(toClaude.value.blocked ?? "", /Claude 的预演没有通过/u);
+  assert.match(toClaude.value.command ?? "", /^claude mcp add-json fs '\{.*\}' -s user$/u);
+  assert.equal(await readFile(claudeFile, "utf8"), claudeBefore);
   assert.deepEqual(view.servers[0]?.variables, [{ name: "FS_TOKEN", set: false }]);
   // Written into Codex its own way: a table of its own, the variable forwarded by name, every other byte as it was.
   const toCodex = await f.sync("fs", "codex");
@@ -109,6 +122,17 @@ test("G064-M2 through the formal Gateway, a server the Harnesses have is listed 
   const hermesUpdate = await f.sync("fs", "hermes");
   assert.equal((await f.apply(hermesUpdate.value.fingerprint, "fs-hermes")).value.status, "applied");
   assert.deepEqual((parseYaml(await readFile(hermesFile, "utf8")) as { mcp_servers: Record<string, { args: string[] }> }).mcp_servers.fs!.args.at(-1), join(f.home, "projects"));
+  // Into DeepSeek Harness: its patch layer for every profile is created holding HarnessHub's own insert, and goes back to `[]`.
+  const toDsh = await f.sync("fs", "dsh"), dshFile = join(f.home, ".dsh", "cordis.patch.yml");
+  assert.equal(toDsh.value.blocked, null, JSON.stringify(toDsh.value));
+  assert.ok(toDsh.value.notes.some(note => note.includes("~/.dsh/cordis.patch.yml")));
+  assert.equal((await f.apply(toDsh.value.fingerprint, "fs-dsh")).value.status, "applied");
+  const patch = await readFile(dshFile, "utf8");
+  assert.ok(patch.startsWith("- insert:\n    - id: harnesshub-mcp-fs\n      name: \"@deepseek-ai/dsh-mcp-client\"\n") && patch.includes("FS_TOKEN: !!js \"process.env.FS_TOKEN\""), patch);
+  assert.equal(state(await f.inventory(), "fs", "dsh"), "synced");
+  const offDsh = await f.call<CapabilityChangeCheck>("/capabilities/mcp/remove?" + new URLSearchParams({ name: "fs", harnessId: "dsh" }));
+  assert.equal((await f.apply(offDsh.value.fingerprint, "fs-dsh-off")).value.status, "applied");
+  assert.equal(await readFile(dshFile, "utf8"), "[]\n", "never an empty file DeepSeek Harness would refuse to start with");
   // Removing it from Cursor takes only HarnessHub's entry; the linear server there stays.
   const remove = await f.call<CapabilityChangeCheck>("/capabilities/mcp/remove?" + new URLSearchParams({ name: "fs", harnessId: "cursor" }));
   assert.equal(remove.value.blocked, null, JSON.stringify(remove.value));

@@ -420,3 +420,35 @@
 - **3b 的前置核实**（真实程序，私有目录，禁网沙箱）：Claude 2.1.302 的 `claude mcp add-json <名> '<json>' -s user` 把 `.claude.json` 写在 `$CLAUDE_CONFIG_DIR` 下，另写自己的 `backups/` 与 `telemetry/` 记录；全新配置时补 machineID、迁移版本等键。所以 3b 的预演差异要汇总显示 MCP 以外的改动，应用后只比对 `mcpServers.<名>` 子树。
 - **真实写入的授权边界**（审批代理，2026-10-18）：用户的“你帮我做，然后接着下一步”是持续授权，无密钥、可撤销、与统一配置直接相关的写入可以由我代为确认执行。以下两类的第一次仍要停下，等用户在页面上点：涉及密钥（变量引用以外）的同步；会触发网关重启或让运行中程序失效的写入。
 
+
+## 第 3 步实现记录（3b）：Claude Code 的 MCP（2026-10-18）
+
+- **已实现**：MCP 清单可以写入 Claude Code，按裁决 8 和 3b 的预演条件：
+  - **命令**：用它自己的命令。没有这一项时 `claude mcp add-json <名> '<json>' -s user`；更新时先 `claude mcp remove <名> -s user` 再 add-json；移除只用 remove。远程服务器更新或移除时，说明里写明会丢掉 OAuth 登录。
+  - **预演**：把 `~/.claude.json` 复制进私有的 0700 任务目录，`CLAUDE_CONFIG_DIR` 与 HOME 都指向那里。在沙箱里运行同样的命令（只可写任务目录，禁网），用完删除，服务启动时清扫十分钟前的残留。确认框显示精确差异，并汇总这一项的前后值（打码）和 Claude 自己补的其他键。
+  - **应用**：
+    - 只比对 `mcpServers.<名>` 这一项与检查时相同（运行中的会话会频繁改写这个文件的其他部分）。
+    - 先备份现在的文件，再在沙箱里运行命令。沙箱只可写 `.claude.json` 及它旁边的临时文件、`~/.claude/backups`、`~/.claude/telemetry` 和私有临时目录，禁网，并设置 `DISABLE_AUTOUPDATER`、`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`。
+    - 读回时这一项必须与预演相同；不同就记为失败，提供恢复。
+  - **写入丢失**：会话之后把旧副本写回、冲掉这一项时，漂移列表显示“写入丢失（可能被运行中的 Claude Code 会话冲掉）”，重新应用时要带 overwrite，不自动重试。
+  - **Cursor**：写入 Cursor 前检测运行中的 Cursor（编辑器主进程与 cursor-agent，不算辅助进程），有就提示它可能自行改写 `mcp.json`。远程服务器的说明改用 Harness 的名称。
+- **实现中的取舍**：
+  1. **沙箱放开的写入**：按真实程序的观察：只放开 `.claude.json` 这一个文件时，Claude 报“was not saved”，因为它经旁边的文件写入。所以按路径前缀放开 `.claude.json*`，并放开它自己的 backups 与 telemetry 目录，不放开整个 `~/.claude`。
+  2. **在哪个目录运行**：Claude 启动时会读当前目录，所以命令在私有临时目录里运行。
+- **验收**：G064-M4（单元，模拟的 Claude 命令）、G064-M5（本机真实的 Claude Code，私有家目录与禁网沙箱），见 [MCP 统一清单验收](../verification/capability-mcp-2026-10-18.md)。
+
+## 第 3 步实现记录（3c）：DeepSeek Harness 的 MCP（2026-10-18）
+
+- **按官网 0.2.0-rc.2 核实**（已安装的程序 `dsh-app-boot`，以及包里的 `docs/user/guide/mcp-memory.md`）：
+  - dsh 依次应用各 bundle 的补丁、profile 自己的 `cordis.patch.yml`、`$DSH_HOME/cordis.patch.yml`（每个 profile 都会读）。
+  - 补丁文件只要存在，就必须是顶层 YAML 数组；否则启动失败（`loadOptionalPatches` → `parsePatchList`）。
+  - MCP 服务器是一条 `insert`，`name: '@deepseek-ai/dsh-mcp-client'`，`config` 里有 `serverName`、`transport`（`stdio` 或 `streamable-http`）、`command/args/env/cwd` 或 `url/headers`。
+  - 它的 stdio 桥会去掉名字像凭据的环境变量。
+- **已实现**：
+  - **读取**：视图与清单读出每个 profile 的补丁和全局补丁里的 MCP 客户端行。`!!js process.env.X` 算作变量引用，`!!js process.cwd()` 等同于不写工作目录；读不了的表达式不能导入，并说明原因。
+  - **写入**：写到全局补丁 `~/.dsh/cordis.patch.yml`（每个 profile 都会读，包括 HarnessHub 用的 acp）。每个服务器是一条独立的 `insert`，`id` 为 `harnesshub-mcp-<名>`。
+    - 变量都显式写在 `env` 里，写成带引号的 `!!js "process.env.NAME"`；带前缀的请求头写成 `!!js "'Bearer ' + process.env.NAME"`，前缀只允许字母、数字、空格和 `_ : -`。
+    - 不支持 SSE。
+    - 按整行增删这一条；列表空了就写回 `[]`，原来没有的文件新建为列表、移除后也留下 `[]`，绝不留空文件。
+    - 用户自己的同名服务器（`id` 不同）不覆盖。
+- **验收**：G064-M6（单元），G064-M2 增加的流程（集成）。真实环境的写入另行报审批；写入后用 HarnessHub 的目录探测（`dsh --profile acp` 初始化）确认它能带着这份补丁正常启动。

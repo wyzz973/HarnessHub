@@ -4088,7 +4088,9 @@
         "web/src/components/McpInventoryPanel.tsx",
         "tests/unit/mcp-inventory.test.ts",
         "tests/integration/mcp-inventory.test.ts",
-        "tools/capabilities-v3-to-v2.sql"
+        "tools/capabilities-v3-to-v2.sql",
+        "src/infrastructure/capabilities/claude-mcp.ts",
+        "tests/real/claude-mcp.real.ts"
       ],
       "requirements": [
         "R27",
@@ -4128,7 +4130,10 @@
         "G064-W11",
         "G064-M1",
         "G064-M2",
-        "G064-M3"
+        "G064-M3",
+        "G064-M4",
+        "G064-M5",
+        "G064-M6"
       ]
     }
   ]

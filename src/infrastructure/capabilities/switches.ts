@@ -19,7 +19,12 @@ interface Common { readonly file: string; readonly key: string; readonly written
 export type SwitchPlan =
   | { readonly kind: "none"; readonly file: string; readonly reason: string }
   | (Common & { readonly kind: "edit"; readonly format: ConfigFormat; readonly after: string; readonly check: (before: unknown, after: unknown) => boolean })
-  | (Common & { readonly kind: "command"; readonly args: readonly string[]; readonly check: (after: unknown) => boolean; readonly comments: boolean });
+  | (Common & { readonly kind: "command"; readonly args: readonly string[]; readonly check: (after: unknown) => boolean; readonly comments: boolean;
+    /**
+     * Claude Code's own commands (`runner: "claude"`) instead of OpenClaw's: `steps` run in order (an update removes and
+     * adds), and only `subtree` of its file must be as the check saw it, since running sessions rewrite the rest.
+     */
+    readonly runner?: "claude"; readonly steps?: readonly (readonly string[])[]; readonly subtree?: readonly string[] });
 /** The ledger lookup of a setting and the hash the ledger records for a value. */
 export interface SwitchContext { readonly ledger: (file: string, key: string) => LedgerEntry | null; readonly hash: (value: unknown) => string }
 
@@ -194,7 +199,7 @@ export function sharedDirPlan(file: string, text: string, present: boolean, entr
 
 /** The parser of each Harness's switch file. */
 const SWITCH_FORMATS: Readonly<Record<string, ConfigFormat>> = { claude: "jsonc", codex: "toml", gemini: "jsonc", hermes: "yaml", opencode: "jsonc", openclaw: "json5" };
-function isMcpStyle(harnessId: string): harnessId is McpStyle { return ["claude", "codex", "cursor", "opencode", "gemini", "hermes"].includes(harnessId); }
+function isMcpStyle(harnessId: string): harnessId is McpStyle { return ["claude", "codex", "cursor", "opencode", "gemini", "hermes", "dsh"].includes(harnessId); }
 /**
  * What a ledger key holds in its file now, read as the switch that wrote it reads it (undefined: not there), so HarnessHub
  * can tell whether the value it wrote is still in place. `shared` tells which entries of Hermes's `skills.external_dirs`
