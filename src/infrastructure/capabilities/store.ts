@@ -9,6 +9,13 @@ const MAX_BACKUP_BYTES = 32 * 1024 * 1024;
 
 /** A setting HarnessHub wrote: where, the hash of the value it wrote, and what was there before (JSON, null when nothing was). */
 export interface LedgerEntry { readonly harnessId: string; readonly file: string; readonly key: string; readonly valueHash: string; readonly previous: string | null; readonly changeId: string; readonly at: string }
+/**
+ * A skill HarnessHub put in the shared directory from a repository: its folder, where it came from (repository URL, the
+ * ref asked for or null for the default branch, its folder inside the repository, the commit), the folder's tree id in
+ * the repository (everything included) and the tree id of the copy as written.
+ */
+export interface SkillSource { readonly name: string; readonly folder: string; readonly repository: string; readonly ref: string | null; readonly path: string; readonly commit: string;
+  readonly upstreamTree: string; readonly localTree: string; readonly installedAt: string; readonly updatedAt: string; readonly changeId: string }
 /** One backup: the file's bytes before a change, and the hash of the bytes that change then wrote (null until it wrote). */
 export interface StoredBackup { readonly id: string; readonly file: string; readonly createdAt: string; readonly bytes: number; readonly sha256: string; readonly changeId: string; readonly subject: string; readonly writtenSha256: string | null }
 
@@ -34,7 +41,8 @@ function writePrivate(path: string, bytes: Buffer): void {
   try { let written = 0; while (written < bytes.length) written += writeSync(descriptor, bytes, written, bytes.length - written); fsyncSync(descriptor); } finally { closeSync(descriptor); }
 }
 const SCHEMA: Readonly<Record<string, readonly string[]>> = { capability_owner: ["singleton", "generation"], capability_changes: ["id", "command_id", "payload_hash", "at", "view_json"],
-  capability_backups: ["id", "file", "created_at", "bytes", "sha256", "change_id", "subject", "written_sha256"], capability_ledger: ["harness_id", "file", "key", "value_hash", "previous", "change_id", "at"] };
+  capability_backups: ["id", "file", "created_at", "bytes", "sha256", "change_id", "subject", "written_sha256"], capability_ledger: ["harness_id", "file", "key", "value_hash", "previous", "change_id", "at"],
+  skill_sources: ["name", "folder", "repository", "ref", "path", "commit_sha", "upstream_tree", "local_tree", "installed_at", "updated_at", "change_id"], skill_undo: ["change_id", "data_json"] };
 /** Tables of another shape than this build's are refused rather than read or altered. */
 function checkSchema(db: DatabaseSync): void {
   for (const [table, columns] of Object.entries(SCHEMA)) {
@@ -45,8 +53,9 @@ function checkSchema(db: DatabaseSync): void {
 function text(value: unknown): string { if (typeof value !== "string") throw new CapabilityError("INVALID_STORAGE", "capability storage row is invalid"); return value; }
 
 /**
- * HarnessHub's own record of capability changes (ADR-045 §10): `capabilities/capabilities.sqlite` (schema v1) under the
- * data root, with the backups beside it. Older builds do not read it. A newer owner generation fences this one off:
+ * HarnessHub's own record of capability changes (ADR-045 §10): `capabilities/capabilities.sqlite` (schema v2) under the
+ * data root, with the backups and skill snapshots beside it. v2 adds the skills HarnessHub installed, which a v1 reader
+ * rejects; `tools/capabilities-v2-to-v1.sql` goes back. A newer owner generation fences this one off:
  * every write first checks the directory, marker and database are the ones opened and the generation is still ours.
  */
 export class CapabilityStore {
@@ -66,12 +75,16 @@ export class CapabilityStore {
     try {
       db.exec("PRAGMA journal_mode=DELETE;PRAGMA synchronous=FULL;PRAGMA busy_timeout=1000");
       const version = db.prepare("PRAGMA user_version").get()?.user_version;
-      if (version !== 0 && version !== 1) throw new CapabilityError("INVALID_STORAGE", "unknown capability storage schema");
+      if (version !== 0 && version !== 1 && version !== 2) throw new CapabilityError("INVALID_STORAGE", "unknown capability storage schema");
       db.exec("CREATE TABLE IF NOT EXISTS capability_owner(singleton INTEGER PRIMARY KEY CHECK(singleton=1),generation INTEGER NOT NULL) STRICT;"
         + "CREATE TABLE IF NOT EXISTS capability_changes(id TEXT PRIMARY KEY,command_id TEXT NOT NULL UNIQUE,payload_hash TEXT NOT NULL,at TEXT NOT NULL,view_json TEXT NOT NULL CHECK(json_valid(view_json))) STRICT;"
         + "CREATE TABLE IF NOT EXISTS capability_backups(id TEXT PRIMARY KEY,file TEXT NOT NULL,created_at TEXT NOT NULL,bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,change_id TEXT NOT NULL,subject TEXT NOT NULL,written_sha256 TEXT) STRICT;"
         + "CREATE TABLE IF NOT EXISTS capability_ledger(harness_id TEXT NOT NULL,file TEXT NOT NULL,key TEXT NOT NULL,value_hash TEXT NOT NULL,previous TEXT,change_id TEXT NOT NULL,at TEXT NOT NULL,PRIMARY KEY(harness_id,file,key)) STRICT;"
-        + "PRAGMA user_version=1");
+        // v2 (additive): the skills HarnessHub installed from a repository.
+        + "CREATE TABLE IF NOT EXISTS skill_sources(name TEXT PRIMARY KEY,folder TEXT NOT NULL,repository TEXT NOT NULL,ref TEXT,path TEXT NOT NULL,commit_sha TEXT NOT NULL,upstream_tree TEXT NOT NULL,"
+        + "local_tree TEXT NOT NULL,installed_at TEXT NOT NULL,updated_at TEXT NOT NULL,change_id TEXT NOT NULL) STRICT;"
+        + "CREATE TABLE IF NOT EXISTS skill_undo(change_id TEXT PRIMARY KEY,data_json TEXT NOT NULL CHECK(json_valid(data_json))) STRICT;"
+        + "PRAGMA user_version=2");
       checkSchema(db);
       const previous = db.prepare("SELECT generation FROM capability_owner WHERE singleton=1").get()?.generation;
       if (typeof previous === "number" && previous > generation) throw new CapabilityError("OWNERSHIP_LOST", "capability owner generation is stale");
@@ -163,6 +176,32 @@ export class CapabilityStore {
     return this.db.prepare("SELECT key FROM capability_ledger WHERE substr(key,1,?)=?").all(prefix.length, prefix).map(row => text(row.key));
   }
   dropLedgerForFile(file: string): void { this.check(); this.db.prepare("DELETE FROM capability_ledger WHERE file=?").run(file); }
+
+  /** The skills HarnessHub installed, by folder name. */
+  skillSources(): readonly SkillSource[] {
+    return this.db.prepare("SELECT name,folder,repository,ref,path,commit_sha,upstream_tree,local_tree,installed_at,updated_at,change_id FROM skill_sources ORDER BY name").all().map(row => ({
+      name: text(row.name), folder: text(row.folder), repository: text(row.repository), ref: row.ref === null ? null : text(row.ref), path: text(row.path), commit: text(row.commit_sha),
+      upstreamTree: text(row.upstream_tree), localTree: text(row.local_tree), installedAt: text(row.installed_at), updatedAt: text(row.updated_at), changeId: text(row.change_id) }));
+  }
+  skillSource(name: string): SkillSource | null { return this.skillSources().find(item => item.name === name) ?? null; }
+  setSkillSource(source: SkillSource): void {
+    this.check();
+    this.db.prepare("INSERT INTO skill_sources(name,folder,repository,ref,path,commit_sha,upstream_tree,local_tree,installed_at,updated_at,change_id) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET "
+      + "folder=excluded.folder,repository=excluded.repository,ref=excluded.ref,path=excluded.path,commit_sha=excluded.commit_sha,upstream_tree=excluded.upstream_tree,local_tree=excluded.local_tree,updated_at=excluded.updated_at,change_id=excluded.change_id")
+      .run(source.name, source.folder, source.repository, source.ref, source.path, source.commit, source.upstreamTree, source.localTree, source.installedAt, source.updatedAt, source.changeId);
+  }
+  dropSkillSource(name: string): void { this.check(); this.db.prepare("DELETE FROM skill_sources WHERE name=?").run(name); }
+  /** What undoing a change of skill folders needs that its view does not show (absolute paths, lock entries, the source record before). */
+  setSkillUndo(changeId: string, data: unknown): void { this.check(); this.db.prepare("INSERT INTO skill_undo(change_id,data_json) VALUES(?,?)").run(changeId, JSON.stringify(data)); }
+  skillUndo(changeId: string): unknown {
+    const row = this.db.prepare("SELECT data_json FROM skill_undo WHERE change_id=?").get(changeId);
+    return row === undefined ? null : JSON.parse(text(row.data_json)) as unknown;
+  }
+  /** Keeps the undo records of these changes only. */
+  pruneSkillUndo(keep: readonly string[]): void {
+    this.check();
+    for (const row of this.db.prepare("SELECT change_id FROM skill_undo").all()) { const id = text(row.change_id); if (!keep.includes(id)) this.db.prepare("DELETE FROM skill_undo WHERE change_id=?").run(id); }
+  }
   close(): void { this.db.close(); }
 }
 export { sha256 };

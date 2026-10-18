@@ -9,6 +9,7 @@ import type { ExternalSkillDirs, FileListSpec, HarnessReadTable, HookSource, Ins
 import { harnessDirectories } from "../../adapters/capability-reads.js";
 import { skillVisibility, type ScannedRoot, type ScannedSkill, type SkillEdge } from "../../contexts/capabilities/domain/visibility.js";
 import { at, frontmatter, parseConfig, record, text, type ConfigFormat } from "./formats.js";
+import { lockFiles } from "./skill-packages.js";
 
 const MAX_CONFIG_BYTES = 32 * 1024 * 1024;
 const MAX_DOCUMENT_BYTES = 1024 * 1024;
@@ -66,7 +67,8 @@ export class CapabilityScan {
    * `homes`: every spelling of the home directory, for ~ in shown paths; `hermesHome`: the Hermes home the read tables
    * were built with; `placed`: the links HarnessHub created for shared skills (absolute paths, from its ledger).
    */
-  constructor(private readonly environment: ReadEnvironment, homes: readonly string[], private readonly hermesHome: string | null, private readonly placed: ReadonlySet<string> = new Set()) {
+  constructor(private readonly environment: ReadEnvironment, homes: readonly string[], private readonly hermesHome: string | null, private readonly placed: ReadonlySet<string> = new Set(),
+    private readonly ours: ReadonlyMap<string, string> = new Map()) {
     this.homes = [...new Set(homes)].sort((left, right) => right.length - left.length);
   }
 
@@ -542,27 +544,30 @@ export class CapabilityScan {
       if (row.kind !== "skill" || row.location === null) continue;
       const path = row.location.startsWith("~/") ? join(this.environment.home, row.location.slice(2)) : row.location, real = await realpath(path).catch(() => null);
       if (real === null) continue;
-      const locked = shared !== null && inside(real, shared) ? lock.get(basename(real)) : undefined;
+      const inShared = shared !== null && inside(real, shared), locked = inShared ? lock.get(basename(real)) : undefined, installed = inShared && dirname(real) === shared ? this.ours.get(basename(real)) : undefined;
       if (synced !== null && inside(real, synced)) row.owner = "synced";
       else if (system !== null && inside(real, system)) row.owner = "bundled";
+      else if (installed !== undefined) { row.owner = "harnesshub"; row.source = installed; }
       else if (locked !== undefined) { row.owner = "skills-cli"; row.source = locked; }
       else if (ccSwitch !== null && inside(real, ccSwitch)) row.owner = "cc-switch";
       else if ((await lstat(join(real, ".clawhub", "origin.json")).catch(() => null))?.isFile()) row.owner = "clawhub";
       else if (await this.hermesBundled(real)) row.owner = "bundled";
       const size = await skillSize(real);
       row.facts = { kind: "skill", files: size.files, bytes: size.bytes };
+      if ((await lstat(join(real, ".claude-plugin", "plugin.json")).catch(() => null))?.isFile() && !row.warnings.some(warning => warning.text.includes("plugin.json")))
+        row.warnings.push({ kind: "cross", harnessId: null, text: "文件夹里带有插件清单 .claude-plugin/plugin.json。" });
     }
   }
-  /** The vercel-labs/skills lock (`.skill-lock.json` v3), XDG first: skill name → where it came from, without credentials. */
+  /** The vercel-labs/skills locks (`.skill-lock.json` v3), both read and the XDG one first: skill name → where it came from, without credentials. */
   private async skillLock(): Promise<ReadonlyMap<string, string | null>> {
-    const state = this.environment.values.XDG_STATE_HOME, candidates = [...(state ? [join(state, "skills", ".skill-lock.json")] : []), join(this.environment.home, ".agents", ".skill-lock.json")];
-    for (const file of candidates) {
+    const found = new Map<string, string | null>();
+    for (const file of lockFiles(this.environment)) {
       const read = await this.config(file, "json");
       if (read.state === "missing") continue;
-      if (read.state === "unreadable") { this.unreadableFile(null, file, read.reason); return new Map(); }
-      return new Map(Object.entries(record(at(read.value, ["skills"]))).map(([name, value]) => { const item = record(value); return [name, sourceText(text(item.sourceUrl) ?? text(item.source))]; }));
+      if (read.state === "unreadable") { this.unreadableFile(null, file, read.reason); continue; }
+      for (const [name, value] of Object.entries(record(at(read.value, ["skills"])))) { const item = record(value); if (!found.has(name)) found.set(name, sourceText(text(item.sourceUrl) ?? text(item.source))); }
     }
-    return new Map();
+    return found;
   }
   private hermesManifest: Promise<ReadonlySet<string>> | null = null;
   private async hermesBundled(real: string): Promise<boolean> {

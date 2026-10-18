@@ -34,7 +34,7 @@ function skillRuleOf(value: unknown, name: string): unknown { const rule = at(va
 function entryEnabledOf(value: unknown, name: string): unknown { return record(own(record(at(value, ["skills", "entries"])), name)).enabled; }
 function copiesOf(text: string, skill: string): ReturnType<typeof tomlBlocks> { return tomlBlocks(text, "skills.config").filter(block => block.keys.get("path")?.value === skill); }
 /** Hermes's `skills.external_dirs` as a list of strings; Hermes reads a single string as a list of one. */
-function externalDirsOf(value: unknown): readonly string[] { const raw = at(value, ["skills", "external_dirs"]); return (typeof raw === "string" ? [raw] : list(raw)).map(item => String(item)); }
+export function externalDirsOf(value: unknown): readonly string[] { const raw = at(value, ["skills", "external_dirs"]); return (typeof raw === "string" ? [raw] : list(raw)).map(item => String(item)); }
 
 /** Claude Code: `skillOverrides.<name>` in settings.json, "off" to turn it off; turning it on restores what HarnessHub replaced. */
 export function claudeSwitch(file: string, text: string, request: SwitchRequest, context: SwitchContext): SwitchPlan {

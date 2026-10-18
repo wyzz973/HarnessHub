@@ -945,7 +945,15 @@
         "web/src/components/CapabilityChangeDialog.tsx",
         "tests/unit/capability-edits.test.ts",
         "tests/integration/capability-changes.test.ts",
-        "tests/real/openclaw-skill-switch.real.ts"
+        "tests/real/openclaw-skill-switch.real.ts",
+        "src/infrastructure/capabilities/skill-tree.ts",
+        "src/infrastructure/capabilities/github.ts",
+        "src/infrastructure/capabilities/skill-packages.ts",
+        "src/infrastructure/capabilities/skill-changes.ts",
+        "web/src/components/SkillAddDialog.tsx",
+        "tests/unit/skill-packages.test.ts",
+        "tests/integration/skill-packages.test.ts",
+        "tools/capabilities-v2-to-v1.sql"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/capabilities-view-2026-10-18.md"

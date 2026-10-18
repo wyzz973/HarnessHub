@@ -104,7 +104,7 @@ test("G064-W3 a file changed after its check, a linked file, a Harness without a
   const refused = await f.apply(stale.value.fingerprint, "switch-stale");
   assert.deepEqual([refused.status, (refused.value as unknown as { code: string }).code], [409, "CAPABILITY_TARGET_CHANGED"]);
   assert.equal(await readFile(settings, "utf8"), edited, "the user's change is kept and nothing is written over it");
-  assert.deepEqual((await f.call<CapabilityHistory>("/capabilities/history")).value, { changes: [], backups: [], drift: [] });
+  assert.deepEqual((await f.call<CapabilityHistory>("/capabilities/history")).value, { changes: [], backups: [], drift: [], orphans: [], snapshots: { count: 0, bytes: 0, keep: 50 } });
   // A configuration file that is a link (dotfiles managers) is shown as refused and cannot be confirmed.
   const gemini = join(f.home, ".gemini", "settings.json");
   await writeFile(join(f.root, "dotfiles-settings.json"), await readFile(gemini)); await rm(gemini); await symlink(join(f.root, "dotfiles-settings.json"), gemini);

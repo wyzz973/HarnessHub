@@ -18,18 +18,19 @@ export class CapabilityService {
 
   /**
    * The view for these installations; rejects only on an unexpected failure, since unreadable files are part of the view.
-   * `placed`: the links HarnessHub placed for shared skills (absolute paths), shown on their entries.
+   * `placed`: the links HarnessHub placed for shared skills (absolute paths), shown on their entries. `ours`: the skills
+   * HarnessHub installed in the shared directory (folder name → repository), shown as HarnessHub's.
    */
-  view(installed: readonly InstalledHarness[], placed: ReadonlySet<string> = new Set()): Promise<CapabilitiesView> {
+  view(installed: readonly InstalledHarness[], placed: ReadonlySet<string> = new Set(), ours: ReadonlyMap<string, string> = new Map()): Promise<CapabilitiesView> {
     if (this.pending) return this.pending;
-    const pending = this.scan(installed, placed).finally(() => { if (this.pending === pending) this.pending = null; });
+    const pending = this.scan(installed, placed, ours).finally(() => { if (this.pending === pending) this.pending = null; });
     this.pending = pending;
     return pending;
   }
-  private async scan(installed: readonly InstalledHarness[], placed: ReadonlySet<string>): Promise<CapabilitiesView> {
+  private async scan(installed: readonly InstalledHarness[], placed: ReadonlySet<string>, ours: ReadonlyMap<string, string>): Promise<CapabilitiesView> {
     const home = this.environment.home, homes = [home, await realpath(home).catch(() => home)];
     const hermesHome = await resolveHermesHome(this.environment), openclawWorkspace = await resolveOpenClawWorkspace(this.environment);
-    return new CapabilityScan(this.environment, homes, hermesHome, placed).view(capabilityReadTables(this.environment, { hermesHome, openclawWorkspace }), installed, this.now().toISOString());
+    return new CapabilityScan(this.environment, homes, hermesHome, placed, ours).view(capabilityReadTables(this.environment, { hermesHome, openclawWorkspace }), installed, this.now().toISOString());
   }
 }
 

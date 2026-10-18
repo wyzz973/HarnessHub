@@ -3502,7 +3502,8 @@
         "G054-CA1",
         "G054-CA2",
         "G054-CA3",
-        "G054-CA4"
+        "G054-CA4",
+        "G054-CA5"
       ],
       "active_slice": "upgrade-with-running-programs"
     },
@@ -4071,7 +4072,15 @@
         "web/src/components/CapabilityChangeDialog.tsx",
         "tests/unit/capability-edits.test.ts",
         "tests/integration/capability-changes.test.ts",
-        "tests/real/openclaw-skill-switch.real.ts"
+        "tests/real/openclaw-skill-switch.real.ts",
+        "tests/integration/skill-packages.test.ts",
+        "tests/unit/skill-packages.test.ts",
+        "src/infrastructure/capabilities/skill-tree.ts",
+        "src/infrastructure/capabilities/github.ts",
+        "src/infrastructure/capabilities/skill-packages.ts",
+        "src/infrastructure/capabilities/skill-changes.ts",
+        "tools/capabilities-v2-to-v1.sql",
+        "web/src/components/SkillAddDialog.tsx"
       ],
       "requirements": [
         "R27",
@@ -4104,7 +4113,11 @@
         "G064-W4",
         "G064-W5",
         "G064-W6",
-        "G064-W7"
+        "G064-W7",
+        "G064-W8",
+        "G064-W9",
+        "G064-W10",
+        "G064-W11"
       ]
     }
   ]

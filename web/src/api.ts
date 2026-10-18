@@ -9,7 +9,7 @@ import { parseNativeOptions, commandId, messageId, runId, sessionId, switchId } 
 import { parseContentRef, type ContentRef } from "../../src/contracts/content.js";
 import type { NativeUsage } from "../../src/contracts/control.js";
 import { CAPABILITY_CHANGE_KINDS, CAPABILITY_DRIFT_STATES, CAPABILITY_KINDS, CAPABILITY_MECHANISMS, CAPABILITY_OWNERS, CAPABILITY_STATUSES, CAPABILITY_WARNINGS, MAX_CAPABILITY_ENTRIES, type CapabilitiesView, type CapabilityChangeCheck, type CapabilityChangeView,
-  type CapabilityEdge, type CapabilityFacts, type CapabilityHistory, type CapabilityLinkChange, type CapabilityRestoreCheck } from "../../src/contracts/capabilities.js";
+  type CapabilityEdge, type CapabilityFacts, type CapabilityHistory, type CapabilityLinkChange, type CapabilityRestoreCheck, type CapabilitySkillPlan, type SkillSourceListing, type SkillUpdateView } from "../../src/contracts/capabilities.js";
 
 export interface ToolDetailView { readonly kind?: string; readonly name?: string; readonly input?: string; readonly output?: string; readonly diff?: string; readonly parentId?: string; readonly locations?: readonly string[]; readonly exitCode?: number; readonly truncated?: boolean }
 /** Same-origin URL of stored native content for img/download use; the page cookie authorizes it. */
@@ -213,11 +213,24 @@ function decodeSharedReads(value: unknown): CapabilitiesView["harnesses"][number
   const row = record(value);
   return { reads: choice(row.reads, ["native", "external-dir", "links", "no"]), links: number(row.links), redundant: number(row.redundant), placeable: row.placeable === null ? null : choice(row.placeable, ["shared-dir", "skill-link"]) };
 }
-function decodeLink(value: unknown): CapabilityLinkChange { const row = record(value); return { path: text(row.path), target: text(row.target), action: choice(row.action, ["create", "remove"]) }; }
+function decodeLink(value: unknown): CapabilityLinkChange {
+  const row = record(value);
+  return { path: text(row.path), target: text(row.target), action: choice(row.action, ["create", "remove"]), ...(row.owner === undefined ? {} : { owner: choice(row.owner, ["harnesshub", "other"]) }) };
+}
+function decodeSkillPlan(value: unknown): CapabilitySkillPlan {
+  const row = record(value);
+  return { name: text(row.name), folder: text(row.folder), action: choice(row.action, ["add", "update", "delete", "restore"]), files: number(row.files), bytes: number(row.bytes), executables: number(row.executables), plugin: bool(row.plugin),
+    changes: list(row.changes, item => { const change = record(item); return { path: text(change.path), action: choice(change.action, ["add", "change", "remove"]) }; }, 256), overwrites: number(row.overwrites) };
+}
 export function decodeChangeCheck(value: unknown): CapabilityChangeCheck {
   const row = record(value);
   const rewrite = row.rewrite === null ? null : record(row.rewrite);
-  return { kind: choice(row.kind, ["skill-switch", "shared-dir", "skill-link", "link-cleanup", "link-undo"]), harnessId: text(row.harnessId), name: text(row.name), enabled: bool(row.enabled), file: text(row.file),
+  const source = row.source === undefined || row.source === null ? row.source : record(row.source), lock = row.lock === undefined || row.lock === null ? row.lock : record(row.lock);
+  return { kind: choice(row.kind, ["skill-switch", "shared-dir", "skill-link", "link-cleanup", "link-undo", "skill-add", "skill-update", "skill-delete", "skill-undo"]), harnessId: text(row.harnessId), name: text(row.name), enabled: bool(row.enabled), file: text(row.file),
+    ...(row.skills === undefined ? {} : { skills: list(row.skills, decodeSkillPlan, 64) }),
+    ...(source === undefined ? {} : { source: source === null ? null : { repository: text(source.repository), ref: nullableText(source.ref), commit: text(source.commit) } }),
+    ...(lock === undefined ? {} : { lock: lock === null ? null : { file: text(lock.file), diff: text(lock.diff) } }),
+    ...(row.orphans === undefined ? {} : { orphans: list(row.orphans, item => { const orphan = record(item); return { harnessId: text(orphan.harnessId), file: text(orphan.file) }; }, 64) }),
     command: nullableText(row.command), diff: nullableText(row.diff), links: list(row.links, decodeLink, 4096),
     rewrite: rewrite === null ? null : { target: text(rewrite.target), before: nullableText(rewrite.before), after: nullableText(rewrite.after), added: list(rewrite.added, text, 32), removed: list(rewrite.removed, text, 32),
       changed: list(rewrite.changed, text, 32), commentLines: number(rewrite.commentLines) },
@@ -227,14 +240,34 @@ export function decodeChange(value: unknown): CapabilityChangeView {
   const row = record(value), error = row.error === null ? null : record(row.error);
   return { id: text(row.id), kind: choice(row.kind, CAPABILITY_CHANGE_KINDS), harnessId: nullableText(row.harnessId), subject: text(row.subject), file: text(row.file), status: choice(row.status, ["applied", "failed"]),
     diff: nullableText(row.diff), backupId: nullableText(row.backupId), error: error === null ? null : { code: text(error.code), message: text(error.message) }, notes: list(row.notes, text, 32),
-    ...(row.links === undefined ? {} : { links: list(row.links, decodeLink, 4096) }), at: text(row.at) };
+    ...(row.links === undefined ? {} : { links: list(row.links, decodeLink, 4096) }),
+    ...(row.skills === undefined ? {} : { skills: list(row.skills, item => { const skill = record(item); return { name: text(skill.name), folder: text(skill.folder), before: nullableText(skill.before), after: nullableText(skill.after) }; }, 64) }),
+    at: text(row.at) };
 }
 function decodeHistory(value: unknown): CapabilityHistory {
   const row = record(value);
   return { changes: list(row.changes, decodeChange, 64), backups: list(row.backups, item => { const backup = record(item); return { id: text(backup.id), file: text(backup.file), createdAt: text(backup.createdAt), bytes: number(backup.bytes),
     changeId: text(backup.changeId), subject: text(backup.subject) }; }, 4096),
     drift: list(row.drift, item => { const drift = record(item); return { id: text(drift.id), kind: choice(drift.kind, ["skill-switch", "shared-dir", "skill-link"]), harnessId: text(drift.harnessId), subject: text(drift.subject),
-      file: text(drift.file), state: choice(drift.state, CAPABILITY_DRIFT_STATES), changeId: text(drift.changeId), at: text(drift.at) }; }, 4096) };
+      file: text(drift.file), state: choice(drift.state, CAPABILITY_DRIFT_STATES), changeId: text(drift.changeId), at: text(drift.at) }; }, 4096),
+    orphans: list(row.orphans, item => { const orphan = record(item); return { id: text(orphan.id), harnessId: text(orphan.harnessId), subject: text(orphan.subject), file: text(orphan.file) }; }, 4096),
+    snapshots: (() => { const snapshots = record(row.snapshots); return { count: number(snapshots.count), bytes: number(snapshots.bytes), keep: number(snapshots.keep) }; })() };
+}
+function decodeSkillListing(value: unknown): SkillSourceListing {
+  const row = record(value);
+  return { id: text(row.id), repository: text(row.repository), ref: nullableText(row.ref), commit: text(row.commit), expiresAt: text(row.expiresAt), skills: list(row.skills, item => {
+    const skill = record(item);
+    return { name: text(skill.name), installName: nullableText(skill.installName), description: nullableText(skill.description), folder: text(skill.folder), files: number(skill.files), bytes: number(skill.bytes),
+      executables: number(skill.executables), plugin: bool(skill.plugin), state: choice(skill.state, ["new", "installed", "conflict", "refused"]), reason: nullableText(skill.reason) };
+  }, 512) };
+}
+function decodeSkillUpdates(value: unknown): SkillUpdateView {
+  const row = record(value);
+  return { checkedAt: text(row.checkedAt), skills: list(row.skills, item => {
+    const skill = record(item);
+    return { name: text(skill.name), manager: choice(skill.manager, ["harnesshub", "skills-cli"]), repository: nullableText(skill.repository), state: choice(skill.state, ["current", "available", "gone", "unknown", "unsupported"]),
+      modified: skill.modified === null ? null : bool(skill.modified), reason: nullableText(skill.reason) };
+  }, 4096) };
 }
 function decodeRestoreCheck(value: unknown): CapabilityRestoreCheck {
   const row = record(value);
@@ -485,6 +518,15 @@ export class GatewayApi {
   checkReapply(driftId: string): Promise<CapabilityChangeCheck> { return this.request("/capabilities/drift/" + encodeURIComponent(driftId) + "/reapply", "GET", undefined, decodeChangeCheck); }
   /** Stops tracking what HarnessHub wrote that is no longer in place; no file changes. */
   forgetDrift(driftId: string): Promise<boolean> { return this.request("/capabilities/forget", "POST", { id: driftId }, value => bool(record(value).forgotten)); }
+  /** Downloads a GitHub repository version and lists its skills for adding; nothing is written. */
+  listSkillSource(source: string): Promise<SkillSourceListing> { return this.request("/capabilities/skill-sources?" + new URLSearchParams({ source }), "GET", undefined, decodeSkillListing); }
+  checkSkillAdd(listing: string, names: readonly string[]): Promise<CapabilityChangeCheck> { return this.request("/capabilities/skill-add?" + new URLSearchParams({ listing, names: names.join(",") }), "GET", undefined, decodeChangeCheck); }
+  /** Whether the skills with a known source have newer versions; kept ten minutes by the Gateway unless `refresh`. */
+  skillUpdates(refresh: boolean, signal?: AbortSignal): Promise<SkillUpdateView> { return this.request("/capabilities/skill-updates" + (refresh ? "?refresh=1" : ""), "GET", undefined, decodeSkillUpdates, signal); }
+  checkSkillUpdate(name: string, overwrite: boolean): Promise<CapabilityChangeCheck> { return this.request("/capabilities/skill-update?" + new URLSearchParams({ name, overwrite: String(overwrite) }), "GET", undefined, decodeChangeCheck); }
+  checkSkillDelete(name: string): Promise<CapabilityChangeCheck> { return this.request("/capabilities/skill-delete?" + new URLSearchParams({ name }), "GET", undefined, decodeChangeCheck); }
+  /** Clearing a switch setting HarnessHub wrote for a skill its Harness no longer has, through the usual switch check. */
+  checkOrphanClear(id: string): Promise<CapabilityChangeCheck> { return this.request("/capabilities/orphans/" + encodeURIComponent(id) + "/clear", "GET", undefined, decodeChangeCheck); }
   /** Native skills, MCP servers and plugins of the selected Harness in this workspace; null when its interface has no such list. */
   nativeExtensions(harness: string, control: string, workspace: string, signal?: AbortSignal): Promise<NativeExtensions | null> {
     return this.request(`/harnesses/${encodeURIComponent(harness)}/extensions?${new URLSearchParams({ controlId: control, workspace })}`, "GET", undefined, value => {

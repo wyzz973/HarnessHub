@@ -108,7 +108,7 @@ ADR-045 第 2 步（2026-10-18，技能开关）追加写入接口，只改用�
 - `GET /api/v1/capabilities/skill-switch?harnessId=&name=&enabled=true|false[&via=]`准备在一个 Harness 里停用（`enabled=false`）或启用一个技能，不写任何文件，返回`CapabilityChangeCheck`：改动的文件（`~`书写）、精确的统一差异（`~`代表家目录，凭据打码）、OpenClaw 的官方命令（`command`，其差异来自在私有副本上运行同一条命令）、现有设置由谁写的（`harnesshub`、`other`、`none`）、提示、`blocked`（无需修改或不能安全修改时的原因，这样的检查不能确认）、`fingerprint`与`expiresAt`（15 分钟、只能用一次）。`via`是 Codex 的那一份（它按 SKILL.md 的路径停用），其他 Harness 忽略它。没有开关的 Harness（Cursor、Pi、DeepSeek Harness）返回 409 `CAPABILITY_UNSUPPORTED`，看不到的技能或 Codex 不读的位置返回 404 `CAPABILITY_NOT_FOUND`。
 - `POST /api/v1/capabilities/changes`接受`{fingerprint, commandId}`，返回`CapabilityChangeView`：写入前再读比对，文件变了返回 409 `CAPABILITY_TARGET_CHANGED` 且什么都不写；确认过期、未知或已用过返回 409 `CAPABILITY_CHECK_EXPIRED`；`blocked`的检查返回 409 `CAPABILITY_TARGET_REFUSED`。写入前把原文件备份（每个文件留最近 10 份），原子替换，回读后字节必须与计划一致、解析后除目标设置外完全相等，否则`status`为`failed`并带`backupId`。同一`commandId`再次提交返回第一次的结果，同一编号用于另一项修改返回 400。
 - `GET /api/v1/capabilities/history`返回最近 50 次修改与保留的备份；`GET /api/v1/capabilities/backups/:id/restore`准备恢复一份备份，返回它此刻会造成的差异与`changedSince`（HarnessHub 改动之后文件是否又被改过）；`POST /api/v1/capabilities/restores`接受`{fingerprint, commandId}`，先备份当前文件再恢复。
-- 修改记录、备份索引与台账保存在数据根的`capabilities/capabilities.sqlite`（schema v1），备份在旁边的`backups/`；旧构建不读它们，回退时忽略即可。所有这些回答都经过同样的隐私检查。
+- 修改记录、备份索引与台账保存在数据根的`capabilities/capabilities.sqlite`（第 2 步初版为 schema v1，添加、更新、删除技能后为 v2，见下文），备份在旁边的`backups/`。所有这些回答都经过同样的隐私检查。
 
 ADR-045 第 2 步（2026-10-18，放置与清理）追加：
 - 视图里每个 Harness 带`shared`：它怎样读共享目录`~/.agents/skills`（`native`自己读、`external-dir`经配置加的目录、`links`经自己目录里的链接、`no`），自己目录里指向它的链接数`links`与其中多余的`redundant`，以及 HarnessHub 能改的方式`placeable`（`shared-dir`：Hermes；`skill-link`：Claude Code）。共享目录里的技能带`shared: {folder, placed}`：它在共享目录的文件夹和 HarnessHub 放置的链接（都以`~`书写）。
@@ -121,3 +121,35 @@ ADR-045 第 2 步（2026-10-18，放置与清理）追加：
 - `GET /api/v1/capabilities/drift/:id/reapply`：用原来的检查准备改回（开关、Hermes 的共享目录那一项、放置的链接），返回`CapabilityChangeCheck`，确认同样用`POST /api/v1/capabilities/changes`；未知的`id`返回 404 `CAPABILITY_NOT_FOUND`。
 - `POST /api/v1/capabilities/forget`接受`{id}`，不再跟踪这一项：只删台账，不改文件，返回`{forgotten}`；已不在台账里返回`{forgotten: false}`；仍是 HarnessHub 写的样子时返回 409 `CAPABILITY_TARGET_REFUSED`；格式不对的`id`返回 400。
 - 台账的原值：同一设置再次写入时，只有被替换的仍是 HarnessHub 自己的值，才保留它第一次写入前的原值；否则换成这次写入前的值。
+
+ADR-045 第 2 步（2026-10-18，添加、更新、删除技能）追加：
+- **读取仓库**：`GET /api/v1/capabilities/skill-sources?source=`。
+  - `source`为`owner/repo`、`owner/repo#ref`或`https://github.com/owner/repo[/tree/<ref>/<文件夹>]`；其他主机、HTTP、账号、查询串和点段返回 400。
+  - 下载这个版本的压缩包，不写任何文件，返回`SkillSourceListing`：
+    - `id`：不透明，15 分钟内用于检查；
+    - 仓库、`ref`、提交号；
+    - 每个技能的名字、文件夹名、说明、仓库内文件夹、文件数、字节数、可执行文件数、是否带插件清单，以及`state`（`new`、`installed`、`conflict`、`refused`）与`reason`。
+  - GitHub 拒绝或跳到 GitHub 以外的主机返回 502 `CAPABILITY_COMMAND_FAILED`；找不到仓库返回 404。
+- **添加的检查**：`GET /api/v1/capabilities/skill-add?listing=&names=a,b`，`names`是文件夹名，以逗号分隔。
+- **检查更新**：`GET /api/v1/capabilities/skill-updates[?refresh=1]`，返回`SkillUpdateView`。
+  - 范围：HarnessHub 装的技能，以及 lock 里记了 GitHub 来源的技能。
+  - 每项给出`manager`（`harnesshub`或`skills-cli`）、仓库、`state`（`current`、`available`、`gone`、`unknown`、`unsupported`）、`modified`（不知道时为 null）与`reason`。
+  - 每个“仓库 + ref”调一次 GitHub 的树接口；结果保留 10 分钟，`refresh=1`重新读取。
+- **更新的检查**：`GET /api/v1/capabilities/skill-update?name=[&overwrite=true]`。本地改过时`blocked`，带`overwrite=true`后`skills[].overwrites`给出覆盖的文件数。
+- **删除的检查**：`GET /api/v1/capabilities/skill-delete?name=`。
+- **这三类检查的`CapabilityChangeCheck`**：`kind`为`skill-add`、`skill-update`或`skill-delete`，另带：
+  - `skills`（`CapabilitySkillPlan`）：每个文件夹的动作、文件数、字节数、可执行文件数、是否带插件清单，更新时还有逐个文件的`changes`（最多 200 个）；
+  - `source`：仓库、ref、提交号；
+  - `lock`：lock 文件与打码的差异，不改 lock 时为 null；
+  - `orphans`：删除后留在原处的停用设置。
+  - `links`的每项带`owner`（`harnesshub`或`other`）。
+  - `current`在这里表示来源记录：`harnesshub`为 HarnessHub 装的，`other`为 npx skills 的 lock 里有，`none`为没有记录。
+  - 确认同样用`POST /api/v1/capabilities/changes`：应用前核对每个文件夹、链接与 lock 仍是检查时的样子，否则 409 `CAPABILITY_TARGET_CHANGED`，什么都不做。
+- **修改记录**：`CapabilityChangeView`另带`skills`：每个文件夹前后的 tree id，null 表示没有文件夹。
+- **撤销**：`GET /api/v1/capabilities/changes/:id/undo`也接受这三类修改，返回`kind`为`skill-undo`的检查；快照已清理时返回 404。
+- **历史**：`GET /api/v1/capabilities/history`另带：
+  - `orphans`（`CapabilityOrphan`）：HarnessHub 写的、技能已不在的停用设置；
+  - `snapshots`：保留的快照数`count`、字节数`bytes`，以及保留最近多少次修改的快照`keep`（50）。
+- **清除孤立的停用设置**：`GET /api/v1/capabilities/orphans/:id/clear`，走开关检查。这个 Harness 仍能看到同名技能时返回 409 `CAPABILITY_TARGET_REFUSED`。
+- **视图**：`GET /api/v1/capabilities`里 HarnessHub 装的技能`owner`为`harnesshub`，`source`为它的仓库；两份 lock 都读，`$XDG_STATE_HOME/skills/.skill-lock.json`优先。
+- **存储**：升到`capabilities.sqlite` v2，新增`skill_sources`与`skill_undo`；快照在`capabilities/skills/`。降级用`tools/capabilities-v2-to-v1.sql`。

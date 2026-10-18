@@ -1804,6 +1804,8 @@ test("G054-UG1 upgrading one installation first says the versions, what runs and
 });
 
 /** The capability view the page tests show: four Harnesses, a skill of each kind of visibility, and one unreadable file. */
+/** What a history holds besides its changes, backups and drift: no orphaned settings and no skill snapshots yet. */
+const HISTORY_EXTRA = { orphans: [] as unknown[], snapshots: { count: 0, bytes: 0, keep: 50 } };
 function capabilityView() {
   const all = { skill: "read", mcp: "read", instructions: "read", subagent: "read", command: "read", hook: "read", plugin: "read" };
   const view = { checkedAt: "2026-10-18T09:00:00.000Z", truncated: false,
@@ -1914,7 +1916,7 @@ test("G054-CA2 turning a skill off shows the file and the exact change first, se
   const fingerprint = "f".repeat(64), restoreFingerprint = "e".repeat(64), backupId = "11111111-2222-4333-8444-555555555555", at = "2026-10-18T09:30:00.000Z";
   const diff = "--- a/~/.claude/settings.json\n+++ b/~/.claude/settings.json\n@@ -2,5 +2,5 @@\n   \"model\": \"claude-opus-5-5\",\n   \"skillOverrides\": {\n-    \"alpha\": \"user-invocable-only\"\n+    \"alpha\": \"off\"\n   },\n";
   const checks: URLSearchParams[] = [], posted: Record<string, unknown>[] = [], restores: Record<string, unknown>[] = [];
-  let history = { changes: [] as unknown[], backups: [] as unknown[], drift: [] as unknown[] };
+  let history = { changes: [] as unknown[], backups: [] as unknown[], drift: [] as unknown[], ...HISTORY_EXTRA };
   const change = { id: "c-1", kind: "skill-switch", harnessId: "claude", subject: "alpha", file: "~/.claude/settings.json", status: "applied", diff, backupId, error: null, notes: ["Claude Code 会立即读到改动。"], at };
   // OpenClaw too: its switch is its own command, whose rewrite is summarized first.
   const view = capabilityView(), openclawKinds = { skill: "read", mcp: "read", instructions: "read", subagent: "unsupported", command: "unsupported", hook: "read", plugin: "read" };
@@ -1935,7 +1937,7 @@ test("G054-CA2 turning a skill off shows the file and the exact change first, se
   });
   await page.route("**/api/v1/capabilities/changes", async route => {
     posted.push(route.request().postDataJSON() as Record<string, unknown>);
-    history = { changes: [change], backups: [{ id: backupId, file: "~/.claude/settings.json", createdAt: at, bytes: 120, changeId: "c-1", subject: "alpha" }], drift: [] };
+    history = { changes: [change], backups: [{ id: backupId, file: "~/.claude/settings.json", createdAt: at, bytes: 120, changeId: "c-1", subject: "alpha" }], drift: [], ...HISTORY_EXTRA };
     await route.fulfill({ json: change });
   });
   await page.route(`**/api/v1/capabilities/backups/${backupId}/restore`, route => route.fulfill({ json: { backupId, file: "~/.claude/settings.json", diff: diff.replace("-    \"alpha\": \"user-invocable-only\"\n+    \"alpha\": \"off\"", "-    \"alpha\": \"off\"\n+    \"alpha\": \"user-invocable-only\""),
@@ -2016,7 +2018,7 @@ test("G054-CA3 the shared skills directory says how each Harness reads it, makes
     current: "none", notes: [], blocked: null, fingerprint: "a".repeat(64), expiresAt, ...extra });
   const cleanupLinks = [{ path: "~/.openclaw/skills/alpha", target: "../../.agents/skills/alpha", action: "remove" }, { path: "~/.openclaw/skills/beta", target: "../../.agents/skills/beta", action: "remove" }];
   const requests: string[] = [], posted: Record<string, unknown>[] = [];
-  let history = { changes: [] as unknown[], backups: [] as unknown[], drift: [] as unknown[] };
+  let history = { changes: [] as unknown[], backups: [] as unknown[], drift: [] as unknown[], ...HISTORY_EXTRA };
   await page.route("**/api/v1/capabilities", route => route.fulfill({ json: view }));
   await page.route("**/api/v1/capabilities/history", route => route.fulfill({ json: history }));
   await page.route(/\/api\/v1\/capabilities\/(shared-dir|skill-link|link-cleanup|changes\/[^/]+\/undo)/u, route => {
@@ -2042,7 +2044,7 @@ test("G054-CA3 the shared skills directory says how each Harness reads it, makes
       links: [{ path: "~/.claude/skills/delta", target: "~/.agents/skills/delta", action: "remove" }], at } };
   await page.route("**/api/v1/capabilities/changes", async route => {
     const body = route.request().postDataJSON() as Record<string, unknown>; posted.push(body);
-    const result = views[String(body.fingerprint)]; history = { changes: [result, ...history.changes], backups: [], drift: [] };
+    const result = views[String(body.fingerprint)]; history = { changes: [result, ...history.changes], backups: [], drift: [], ...HISTORY_EXTRA };
     await route.fulfill({ json: result });
   });
   await page.goto(fixture.gateway.url); await expect(page.getByRole("button", { name: "新对话", exact: true })).toBeVisible();
@@ -2096,7 +2098,7 @@ test("G054-CA4 what HarnessHub wrote and someone else then removed is shown with
   const at = "2026-10-18T10:00:00.000Z", hermesId = "a".repeat(32), alphaId = "b".repeat(32);
   const drift = [{ id: hermesId, kind: "shared-dir", harnessId: "hermes", subject: "~/.agents/skills", file: "~/.hermes/config.yaml", state: "removed", changeId: "11111111-1111-4111-8111-111111111111", at },
     { id: alphaId, kind: "skill-switch", harnessId: "claude", subject: "alpha", file: "~/.claude/settings.json", state: "changed", changeId: "12222222-2222-4222-8222-222222222222", at }];
-  let history = { changes: [] as unknown[], backups: [] as unknown[], drift: drift as unknown[] };
+  let history = { changes: [] as unknown[], backups: [] as unknown[], drift: drift as unknown[], ...HISTORY_EXTRA };
   const requests: string[] = [], posted: Record<string, unknown>[] = [], forgotten: unknown[] = [];
   await page.route("**/api/v1/capabilities", route => route.fulfill({ json: capabilityView() }));
   await page.route("**/api/v1/capabilities/history", route => route.fulfill({ json: history }));
@@ -2109,7 +2111,7 @@ test("G054-CA4 what HarnessHub wrote and someone else then removed is shown with
   await page.route("**/api/v1/capabilities/changes", async route => {
     const body = route.request().postDataJSON() as Record<string, unknown>; posted.push(body);
     const result = { id: "13333333-3333-4333-8333-333333333333", kind: "shared-dir", harnessId: "hermes", subject: "~/.agents/skills", file: "~/.hermes/config.yaml", status: "applied", diff: null, backupId: null, error: null, notes: [], at };
-    history = { changes: [result], backups: [], drift: history.drift.filter(item => (item as { id: string }).id !== hermesId) };
+    history = { changes: [result], backups: [], drift: history.drift.filter(item => (item as { id: string }).id !== hermesId), ...HISTORY_EXTRA };
     await route.fulfill({ json: result });
   });
   await page.route("**/api/v1/capabilities/forget", async route => {
@@ -2138,5 +2140,98 @@ test("G054-CA4 what HarnessHub wrote and someone else then removed is shown with
   assert.deepEqual(requests, ["drift/" + hermesId + "/reapply"]);
   assert.deepEqual(posted.map(item => item.fingerprint), ["7".repeat(64)]);
   assert.deepEqual(forgotten, [{ id: alphaId }]);
+  assert.deepEqual(errors, []);
+});
+
+test("G054-CA5 skills are added from a GitHub repository after reading it, updates are checked and shown file by file, a deletion lists the links and lock entry it removes, and orphaned switch settings can be cleared", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  const at = "2026-10-18T10:00:00.000Z", orphanId = "c".repeat(32), listingId = "d".repeat(32), sha = "e".repeat(40);
+  let history = { changes: [] as unknown[], backups: [] as unknown[], drift: [] as unknown[], orphans: [{ id: orphanId, harnessId: "claude", subject: "gone-skill", file: "~/.claude/settings.json" }] as unknown[],
+    snapshots: { count: 0, bytes: 0, keep: 50 } };
+  const requests: string[] = [], posted: Record<string, unknown>[] = [];
+  const check = (fields: Record<string, unknown>) => ({ harnessId: "", enabled: true, file: "~/.agents/skills", command: null, diff: null, rewrite: null, links: [], current: "none", blocked: null, notes: ["只改共享目录 ~/.agents/skills 和下面列出的链接与 lock 条目，不改任何 Harness 的模型或登录配置。"],
+    expiresAt: "2026-10-18T10:15:00.000Z", orphans: [], lock: null, source: null, ...fields });
+  await page.route("**/api/v1/capabilities", route => route.fulfill({ json: capabilityView() }));
+  await page.route("**/api/v1/capabilities/history", route => route.fulfill({ json: history }));
+  await page.route(/\/api\/v1\/capabilities\/(skill-sources|skill-add|skill-updates|skill-update|skill-delete|orphans)/u, route => {
+    const url = new URL(route.request().url()), path = url.pathname.replace("/api/v1/capabilities/", "");
+    requests.push(path + url.search);
+    if (path === "skill-sources") return route.fulfill({ json: { id: listingId, repository: "https://github.com/acme/skills", ref: null, commit: sha, expiresAt: "2026-10-18T10:15:00.000Z", skills: [
+      { name: "alpha-tools", installName: "alpha-tools", description: "Tools for alpha", folder: "skills/alpha-tools", files: 3, bytes: 2048, executables: 1, plugin: false, state: "new", reason: null },
+      { name: "beta", installName: "beta", description: null, folder: "skills/beta", files: 1, bytes: 100, executables: 0, plugin: false, state: "refused", reason: "包含链接 alias.md，HarnessHub 只装普通文件" }] } });
+    if (path === "skill-add") return route.fulfill({ json: check({ kind: "skill-add", name: "alpha-tools", fingerprint: "1".repeat(64), source: { repository: "https://github.com/acme/skills", ref: null, commit: sha },
+      skills: [{ name: "alpha-tools", folder: "~/.agents/skills/alpha-tools", action: "add", files: 3, bytes: 2048, executables: 1, plugin: false, changes: [], overwrites: 0 }] }) });
+    if (path === "skill-updates") return route.fulfill({ json: { checkedAt: at, skills: [{ name: "alpha", manager: "skills-cli", repository: "https://github.com/owner/repo", state: "available", modified: false, reason: null }] } });
+    if (path === "skill-update") return route.fulfill({ json: check({ kind: "skill-update", name: "alpha", current: "other", fingerprint: "2".repeat(64), source: { repository: "https://github.com/owner/repo", ref: null, commit: sha },
+      lock: { file: "~/.agents/.skill-lock.json", diff: "--- a/~/.agents/.skill-lock.json\n+++ b/~/.agents/.skill-lock.json\n@@ -8,1 +8,1 @@\n-      \"skillFolderHash\": \"old\",\n+      \"skillFolderHash\": \"new\",\n" },
+      skills: [{ name: "alpha", folder: "~/.agents/skills/alpha", action: "update", files: 2, bytes: 2100, executables: 0, plugin: false, changes: [{ path: "SKILL.md", action: "change" }, { path: "new.md", action: "add" }], overwrites: 0 }] }) });
+    if (path === "skill-delete") return route.fulfill({ json: check({ kind: "skill-delete", name: "alpha", enabled: false, current: "other", fingerprint: "3".repeat(64),
+      links: [{ path: "~/.claude/skills/alpha", target: "../../.agents/skills/alpha", action: "remove", owner: "other" }, { path: "~/.claude/skills/alpha-mine", target: "~/.agents/skills/alpha", action: "remove", owner: "harnesshub" }],
+      lock: { file: "~/.agents/.skill-lock.json", diff: "--- a/~/.agents/.skill-lock.json\n+++ b/~/.agents/.skill-lock.json\n@@ -3,3 +3,0 @@\n-    \"alpha\": {\n" }, orphans: [{ harnessId: "claude", file: "~/.claude/settings.json" }],
+      skills: [{ name: "alpha", folder: "~/.agents/skills/alpha", action: "delete", files: 2, bytes: 2048, executables: 0, plugin: false, changes: [], overwrites: 0 }] }) });
+    return route.fulfill({ json: check({ kind: "skill-switch", harnessId: "claude", name: "gone-skill", file: "~/.claude/settings.json", current: "harnesshub", fingerprint: "4".repeat(64),
+      diff: "--- a/~/.claude/settings.json\n+++ b/~/.claude/settings.json\n@@ -2,3 +2,1 @@\n-  \"skillOverrides\": {\n-    \"gone-skill\": \"off\"\n-  }\n", notes: [] }) });
+  });
+  await page.route("**/api/v1/capabilities/changes", async route => {
+    const body = route.request().postDataJSON() as Record<string, unknown>; posted.push(body);
+    const kind = body.fingerprint === "1".repeat(64) ? "skill-add" : body.fingerprint === "3".repeat(64) ? "skill-delete" : "skill-switch";
+    const result = { id: "1444444" + posted.length + "-4444-4444-8444-444444444444", kind, harnessId: kind === "skill-switch" ? "claude" : null, subject: kind === "skill-add" ? "alpha-tools" : kind === "skill-delete" ? "alpha" : "gone-skill",
+      file: "~/.agents/skills", status: "applied", diff: null, backupId: null, error: null, notes: [], at,
+      ...(kind === "skill-switch" ? {} : { skills: [{ name: kind === "skill-add" ? "alpha-tools" : "alpha", folder: "~/.agents/skills/x", before: kind === "skill-add" ? null : "a".repeat(40), after: kind === "skill-add" ? "b".repeat(40) : null }] }) };
+    history = { ...history, changes: [result, ...history.changes], orphans: kind === "skill-switch" ? [] : history.orphans };
+    await route.fulfill({ json: result });
+  });
+  await page.goto(fixture.gateway.url); await expect(page.getByRole("button", { name: "新对话", exact: true })).toBeVisible();
+  await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "能力", exact: true }).click();
+  // Adding: the repository is read first; the refused skill cannot be chosen, the new one is chosen, and the confirmation shows its folder.
+  await page.getByRole("button", { name: "从 GitHub 添加技能", exact: true }).click();
+  const adding = page.getByRole("dialog", { name: "从 GitHub 添加技能" });
+  await adding.getByRole("textbox", { name: "GitHub 仓库" }).fill("acme/skills"); await adding.getByRole("button", { name: "读取", exact: true }).click();
+  await expect(adding.locator(".skill-source-list li")).toHaveCount(2);
+  await expect(adding.getByRole("checkbox", { name: "选择 beta" })).toBeDisabled(); await expect(adding).toContainText("包含链接 alias.md");
+  await expect(adding.getByRole("checkbox", { name: "选择 alpha-tools" })).toBeChecked(); await expect(adding).toContainText("含 1 个可执行文件");
+  assert.equal(posted.length, 0, "reading a repository writes nothing");
+  await adding.getByRole("button", { name: "添加所选（1）" }).click();
+  const confirmAdd = page.getByRole("dialog", { name: "添加技能 alpha-tools" });
+  await expect(confirmAdd.locator(".skill-plans")).toContainText("新增 alpha-tools"); await expect(confirmAdd.locator(".skill-plans")).toContainText("3 个文件 · 2.0 KB · 含 1 个可执行文件");
+  await expect(confirmAdd).toContainText("https://github.com/acme/skills · eeeeeeeeeeee"); await expect(confirmAdd).toContainText("不改任何 Harness 的模型或登录配置");
+  await confirmAdd.getByRole("button", { name: "添加", exact: true }).click(); await expect(confirmAdd).toBeHidden();
+  await expect(page.locator(".capability-result")).toContainText("已添加技能 alpha-tools");
+  // Checking updates marks the skill with a newer version; its update is shown file by file with the lock entry it changes.
+  await page.getByRole("button", { name: "检查更新", exact: true }).click();
+  await expect(page.locator(".skill-update-summary")).toContainText("1 个技能有新版本");
+  const alphaRow = page.locator(".capability-matrix tbody tr").filter({ hasText: "alpha" }).first();
+  await expect(alphaRow.locator(".badge")).toContainText(["有新版本"]);
+  await alphaRow.getByRole("button", { name: /alpha/u }).click();
+  const detail = page.locator(".capability-detail");
+  await expect(detail.getByRole("button", { name: "覆盖本地改动并更新" })).toHaveCount(0);
+  await detail.getByRole("button", { name: "更新", exact: true }).click();
+  const confirmUpdate = page.getByRole("dialog", { name: "更新 alpha" });
+  await expect(confirmUpdate.locator(".skill-file-changes li")).toHaveText(["~ 修改SKILL.md", "+ 新增new.md"]);
+  await expect(confirmUpdate).toContainText("npx skills 的 lock 里有记录"); await expect(confirmUpdate.locator(".capability-diff .text-green")).toHaveText(["+      \"skillFolderHash\": \"new\","]);
+  await confirmUpdate.getByRole("button", { name: "取消", exact: true }).click(); await expect(confirmUpdate).toBeHidden();
+  // Deleting lists the links by who made them, the lock entry, and the switch settings that stay.
+  await detail.getByRole("button", { name: "删除", exact: true }).click();
+  const confirmDelete = page.getByRole("dialog", { name: "删除 alpha" });
+  await expect(confirmDelete).toContainText("HarnessHub 放置的链接（1）"); await expect(confirmDelete).toContainText("其他工具（多为 npx skills）建的链接（1）");
+  await expect(confirmDelete.locator(".skill-orphans")).toContainText("claude · ~/.claude/settings.json");
+  await confirmDelete.getByRole("button", { name: "删除", exact: true }).click(); await expect(confirmDelete).toBeHidden();
+  // An orphaned switch setting is cleared through the usual switch check.
+  const orphans = page.locator(".capability-orphans");
+  await expect(orphans).toContainText("孤立的停用设置（技能已删除）1 项"); await expect(orphans).toContainText("Claude Code · gone-skill");
+  await orphans.getByRole("button", { name: "清除", exact: true }).click();
+  const confirmClear = page.getByRole("dialog", { name: "清除停用设置：gone-skill" });
+  await expect(confirmClear.locator(".capability-diff .text-red")).toHaveText(["-  \"skillOverrides\": {", "-    \"gone-skill\": \"off\"", "-  }"]);
+  await confirmClear.getByRole("button", { name: "清除", exact: true }).click(); await expect(confirmClear).toBeHidden();
+  await expect(orphans).toBeHidden();
+  // The history offers undo for the skill changes.
+  await page.locator(".capability-history summary").click();
+  await expect(page.locator(".capability-history li").filter({ hasText: "删除技能 · alpha" }).getByRole("button", { name: "撤销" })).toBeVisible();
+  assert.deepEqual(requests, ["skill-sources?source=acme%2Fskills", "skill-add?listing=" + listingId + "&names=alpha-tools", "skill-updates?refresh=1", "skill-update?name=alpha&overwrite=false", "skill-delete?name=alpha", "orphans/" + orphanId + "/clear"]);
+  assert.deepEqual(posted.map(item => item.fingerprint), ["1".repeat(64), "3".repeat(64), "4".repeat(64)]);
   assert.deepEqual(errors, []);
 });

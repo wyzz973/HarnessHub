@@ -32,6 +32,7 @@ import { LoginShellStore, readLoginShellPath, type LoginShellDirectories } from 
 import { CapabilityService } from "../infrastructure/capabilities/service.js";
 import { CapabilityChanges } from "../infrastructure/capabilities/changes.js";
 import { CapabilityError } from "../contracts/capabilities.js";
+import type { GithubFetch } from "../infrastructure/capabilities/github.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -62,6 +63,8 @@ export interface WebServerOptions {
   readonly workspaceLockRoot?: string;
   /** What counts as an installation (ADR-044) when this server composes its own application; the composition's default otherwise. */
   readonly installations?: InstallationPolicy;
+  /** Fetches from GitHub without following redirects, for adding and updating skills (ADR-045 §4); the platform's `fetch` by default. */
+  readonly github?: GithubFetch;
 }
 export interface WebServer { readonly url: string; close(): Promise<void> }
 function record(value: unknown, allowed: readonly string[], required: readonly string[] = []): Record<string, unknown> {
@@ -332,7 +335,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   const homeForms = (): readonly string[] => { const home = app.factory.discoveryEnvironment.home; try { return [...new Set([home, realpathSync(home)])]; } catch { return [home]; } };
   // Changes to a Harness's own configuration (ADR-045 §3): checked, shown, applied once on confirmation, with backups.
   const capabilityChanges = new CapabilityChanges({ root: realpathSync(options.root), generation: app.store.ownerGeneration, assertOwner: () => app.store.assertOwner(),
-    environment: app.factory.discoveryEnvironment, homes: homeForms() });
+    environment: app.factory.discoveryEnvironment, homes: homeForms(), ...(options.github === undefined ? {} : { github: options.github }) });
   /** The installed Harnesses a capability read or change covers: each one's official installation the Gateway uses. */
   const installedHarnesses = async () => (await rescan()).flatMap(harness => {
     const products = harness.installations.filter(item => item.role === "product"), chosen = products.find(item => item.active) ?? products[0];
@@ -455,7 +458,35 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     }
     // Read-only (ADR-045 step 1): skills, MCP, instructions, subagents, commands, hooks and plugins of every installed
     // Harness, by its read table. Nothing is written or started; the view carries names and counts, never a value.
-    if (path === "/api/v1/capabilities" && method === "GET") { queries(url, []); privateJson(response, await capabilities.view(await installedHarnesses(), capabilityChanges.placedLinks())); return; }
+    if (path === "/api/v1/capabilities" && method === "GET") { queries(url, []); privateJson(response, await capabilities.view(await installedHarnesses(), capabilityChanges.placedLinks(), capabilityChanges.installedSkills())); return; }
+    // Adding, updating and deleting skills of the shared directory (ADR-045 §4): reading GitHub and each check change
+    // nothing; a check shows the folders, links and lock entry first, and the change is applied through /changes.
+    if (path === "/api/v1/capabilities/skill-sources" && method === "GET") {
+      queries(url, ["source"]); privateJson(response, await capabilityChanges.listSkillSource(text(url.searchParams.get("source"), "repository", 512))); return;
+    }
+    if (path === "/api/v1/capabilities/skill-add" && method === "GET") {
+      queries(url, ["listing", "names"]);
+      const names = text(url.searchParams.get("names"), "skill names", 64 * 129).split(",");
+      if (names.some(name => !/^[a-z0-9._-]{1,255}$/u.test(name))) throw new HttpError(400, "INVALID_INPUT", "Expected skill folder names separated by commas");
+      privateJson(response, await capabilityChanges.checkSkillAdd(text(url.searchParams.get("listing"), "listing", 64), names, await installedHarnesses())); return;
+    }
+    if (path === "/api/v1/capabilities/skill-updates" && method === "GET") {
+      queries(url, ["refresh"]); const refresh = url.searchParams.get("refresh");
+      if (refresh !== null && refresh !== "1") throw new HttpError(400, "INVALID_INPUT", "invalid refresh flag");
+      privateJson(response, await capabilityChanges.checkSkillUpdates(refresh === "1")); return;
+    }
+    if (path === "/api/v1/capabilities/skill-update" && method === "GET") {
+      queries(url, ["name", "overwrite"]); const overwrite = url.searchParams.get("overwrite");
+      if (overwrite !== null && overwrite !== "true" && overwrite !== "false") throw new HttpError(400, "INVALID_INPUT", "Expected overwrite=true or overwrite=false");
+      privateJson(response, await capabilityChanges.checkSkillUpdate(text(url.searchParams.get("name"), "skill name", 255), overwrite === "true")); return;
+    }
+    if (path === "/api/v1/capabilities/skill-delete" && method === "GET") {
+      queries(url, ["name"]); privateJson(response, await capabilityChanges.checkSkillDelete(text(url.searchParams.get("name"), "skill name", 255))); return;
+    }
+    // A switch setting HarnessHub wrote for a skill its Harness no longer has: cleared through the usual switch check.
+    if (path.startsWith("/api/v1/capabilities/orphans/") && path.endsWith("/clear") && method === "GET") {
+      queries(url, []); privateJson(response, await capabilityChanges.checkOrphanClear(decodeURIComponent(path.slice("/api/v1/capabilities/orphans/".length, -"/clear".length)), await installedHarnesses())); return;
+    }
     // Placing shared skills (ADR-045 §4): Hermes reads the shared directory, Claude Code takes single skills by links, and the
     // links a Harness no longer needs can be removed; each check shows the change first, and a change of links can be undone.
     if (path === "/api/v1/capabilities/shared-dir" && method === "GET") {

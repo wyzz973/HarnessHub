@@ -128,12 +128,34 @@ export class CapabilityError extends Error {
 /**
  * The kinds of change (ADR-045 §4): turning a skill off or on in a Harness's own switch; making Hermes read the shared
  * directory (`skills.external_dirs`); placing a shared skill in Claude Code by a link of its own; removing the links a
- * Harness no longer needs because it reads the shared directory itself; undoing a change of links; restoring a backup.
+ * Harness no longer needs because it reads the shared directory itself; undoing a change of links; restoring a backup;
+ * adding skills to the shared directory from a GitHub repository, updating one from its source, deleting one, and
+ * undoing one of those three.
  */
-export const CAPABILITY_CHANGE_KINDS = ["skill-switch", "shared-dir", "skill-link", "link-cleanup", "link-undo", "restore"] as const;
+export const CAPABILITY_CHANGE_KINDS = ["skill-switch", "shared-dir", "skill-link", "link-cleanup", "link-undo", "restore", "skill-add", "skill-update", "skill-delete", "skill-undo"] as const;
 export type CapabilityChangeKind = typeof CAPABILITY_CHANGE_KINDS[number];
-/** A link a change creates or removes: where (with ~) and what it points to, as written in the link. */
-export interface CapabilityLinkChange { readonly path: string; readonly target: string; readonly action: "create" | "remove" }
+/**
+ * A link a change creates or removes: where (with ~) and what it points to, as written in the link. `owner` (for links a
+ * deletion removes): placed by HarnessHub by its ledger, or made by another tool such as `npx skills`.
+ */
+export interface CapabilityLinkChange { readonly path: string; readonly target: string; readonly action: "create" | "remove"; readonly owner?: "harnesshub" | "other" }
+/**
+ * One skill folder a change adds, replaces, removes or puts back in the shared directory, as shown before confirming:
+ * what the folder holds (after the files `npx skills` leaves out too), how many of its files are executable, whether it
+ * carries a plugin manifest, and for an update the files it adds, changes and removes (at most 200) and how many of the
+ * user's own changes it overwrites.
+ */
+export interface CapabilitySkillPlan {
+  readonly name: string;
+  readonly folder: string;
+  readonly action: "add" | "update" | "delete" | "restore";
+  readonly files: number;
+  readonly bytes: number;
+  readonly executables: number;
+  readonly plugin: boolean;
+  readonly changes: readonly { readonly path: string; readonly action: "add" | "change" | "remove" }[];
+  readonly overwrites: number;
+}
 export interface CapabilityChangeCheck {
   readonly kind: Exclude<CapabilityChangeKind, "restore">;
   readonly harnessId: string;
@@ -165,6 +187,12 @@ export interface CapabilityChangeCheck {
   readonly blocked: string | null;
   readonly fingerprint: string;
   readonly expiresAt: string;
+  /** For a change of skill folders: each folder, the repository version it comes from, and the lock entry it changes (masked diff). */
+  readonly skills?: readonly CapabilitySkillPlan[];
+  readonly source?: { readonly repository: string; readonly ref: string | null; readonly commit: string } | null;
+  readonly lock?: { readonly file: string; readonly diff: string } | null;
+  /** The switch settings HarnessHub wrote for a skill being deleted: left in place, listed so they are not forgotten. */
+  readonly orphans?: readonly { readonly harnessId: string; readonly file: string }[];
 }
 /** What one applied change did. A change that wrote and then did not read back as planned is `failed`, with its backup. */
 export interface CapabilityChangeView {
@@ -183,6 +211,8 @@ export interface CapabilityChangeView {
   readonly notes: readonly string[];
   /** The links it created or removed, which an undo reverses; absent for an edit of a file. */
   readonly links?: readonly CapabilityLinkChange[];
+  /** The skill folders it added, replaced, removed or put back: their tree ids before and after (null: no folder). */
+  readonly skills?: readonly { readonly name: string; readonly folder: string; readonly before: string | null; readonly after: string | null }[];
   readonly at: string;
 }
 /** A file's bytes as they were before one HarnessHub change; the newest ten per file are kept. */
@@ -218,7 +248,49 @@ export interface CapabilityDrift {
   readonly changeId: string;
   readonly at: string;
 }
-/** HarnessHub's changes and backups, newest first, and what it wrote that is no longer in place. */
-export interface CapabilityHistory { readonly changes: readonly CapabilityChangeView[]; readonly backups: readonly CapabilityBackupView[]; readonly drift: readonly CapabilityDrift[] }
+/**
+ * A switch setting HarnessHub wrote for a skill the Harness no longer has (deleted, usually): it does nothing now and
+ * takes effect again if a skill of that name comes back. Cleared through the usual switch check.
+ */
+export interface CapabilityOrphan { readonly id: string; readonly harnessId: string; readonly subject: string; readonly file: string }
+/**
+ * HarnessHub's changes and backups, newest first, what it wrote that is no longer in place, its orphaned switch settings,
+ * and the snapshots of skill folders it keeps to undo with: those the newest `keep` changes name.
+ */
+export interface CapabilityHistory {
+  readonly changes: readonly CapabilityChangeView[];
+  readonly backups: readonly CapabilityBackupView[];
+  readonly drift: readonly CapabilityDrift[];
+  readonly orphans: readonly CapabilityOrphan[];
+  readonly snapshots: { readonly count: number; readonly bytes: number; readonly keep: number };
+}
 export const MAX_BACKUPS_PER_FILE = 10;
 export const CAPABILITY_CHECK_MS = 15 * 60 * 1000;
+/** Skill snapshots are kept for the newest this many changes; an older change of skill folders cannot be undone. */
+export const SKILL_SNAPSHOT_CHANGES = 50;
+
+/**
+ * The skills of one GitHub repository version, read to add some of them (ADR-045 §4): `id` names the downloaded archive
+ * for a check, until `expiresAt`. Each skill is new, already installed from this source (update it instead), in conflict
+ * with a different folder of the same name, or refused (with the reason).
+ */
+export interface SkillSourceListing {
+  readonly id: string;
+  readonly repository: string;
+  readonly ref: string | null;
+  readonly commit: string;
+  readonly skills: readonly { readonly name: string; readonly installName: string | null; readonly description: string | null; readonly folder: string; readonly files: number; readonly bytes: number;
+    readonly executables: number; readonly plugin: boolean; readonly state: "new" | "installed" | "conflict" | "refused"; readonly reason: string | null }[];
+  readonly expiresAt: string;
+}
+/**
+ * Whether the skills with a known source have a newer version upstream, and whether their folder still holds what was
+ * installed. `manager`: HarnessHub installed it, or `npx skills` (its lock). `state`: up to date, a newer version
+ * exists, its folder is no longer in the repository, it could not be checked (`reason`), or its source is not one
+ * HarnessHub updates. `modified`: the folder differs from what was installed; null when that is not known.
+ */
+export interface SkillUpdateView {
+  readonly checkedAt: string;
+  readonly skills: readonly { readonly name: string; readonly manager: "harnesshub" | "skills-cli"; readonly repository: string | null;
+    readonly state: "current" | "available" | "gone" | "unknown" | "unsupported"; readonly modified: boolean | null; readonly reason: string | null }[];
+}
