@@ -121,8 +121,9 @@ export class McpInventory {
         const entries = this.entries(file, style);
         if (entries === null) continue;
         for (const [name, raw] of Object.entries((() => { let node: unknown = entries.value; for (const key of mcpLocation(style).path) node = node !== null && typeof node === "object" ? (node as Record<string, unknown>)[key] : undefined; return node !== null && typeof node === "object" && !Array.isArray(node) ? node as Record<string, unknown> : {}; })())) {
-          if (!MCP_NAME.test(name)) continue;
-          const read = readMcp(raw, style), key = name + "\0" + (read.definition !== null ? JSON.stringify(canonical(read.definition)) : "problem:" + harness.harnessId + ":" + read.problem);
+          // A name HarnessHub cannot write everywhere is listed with the reason, not left out.
+          const read = MCP_NAME.test(name) ? readMcp(raw, style) : { definition: null, problem: "服务器名只能用字母、数字、- 和 _（Codex 等不接受其他字符）；请在原处改名后再导入" };
+          const key = name + "\0" + (read.definition !== null ? JSON.stringify(canonical(read.definition)) : "problem:" + harness.harnessId + ":" + read.problem);
           const group = groups.get(key) ?? { name, definition: read.definition, problem: read.problem, foundIn: [] };
           group.foundIn.push({ harnessId: harness.harnessId, file: this.host.shown(file) }); groups.set(key, group);
         }

@@ -38,6 +38,9 @@ test("G064-M1 a server reads into one definition from every Harness's way of wri
   assert.deepEqual(renderMcp(REMOTE, "codex"), { ok: true, value: { bearer_token_env_var: "EXAMPLE_TOKEN", url: "https://mcp.example.com/v1" } });
   assert.deepEqual(renderMcp(REMOTE, "gemini"), { ok: true, value: { headers: { Authorization: "Bearer ${EXAMPLE_TOKEN}" }, httpUrl: "https://mcp.example.com/v1" } });
   assert.deepEqual(renderMcp(REMOTE, "opencode"), { ok: true, value: { headers: { Authorization: "Bearer {env:EXAMPLE_TOKEN}" }, type: "remote", url: "https://mcp.example.com/v1" } });
+  // Cursor's own remote entries carry no transport name; Claude's do.
+  assert.deepEqual(renderMcp(REMOTE, "cursor"), { ok: true, value: { headers: { Authorization: "Bearer ${env:EXAMPLE_TOKEN}" }, url: "https://mcp.example.com/v1" } });
+  assert.deepEqual(renderMcp(REMOTE, "claude"), { ok: true, value: { headers: { Authorization: "Bearer ${EXAMPLE_TOKEN}" }, type: "http", url: "https://mcp.example.com/v1" } });
   assert.deepEqual(mcpVariables(DOCS), ["DOCS_TOKEN"]); assert.equal(commandLine(DOCS), "npx -y @acme/docs-mcp");
   // What a Harness cannot express is refused with the reason, never written another way.
   assert.match((renderMcp({ ...REMOTE, transport: "sse" }, "codex") as { reason: string }).reason, /SSE/u);

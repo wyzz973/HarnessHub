@@ -185,8 +185,9 @@ export function renderMcp(definition: McpDefinition, style: McpStyle): McpRender
       return definition.transport === "stdio" ? done({ command: definition.command, ...optional("args", definition.args), ...optional("env", env), ...optional("cwd", definition.cwd) })
         : done({ [definition.transport === "http" ? "httpUrl" : "url"]: definition.url, ...optional("headers", headers) });
     case "claude": case "cursor":
+      // Claude names the transport; Cursor's own entries carry none (it tells HTTP from SSE by itself).
       return definition.transport === "stdio" ? done({ ...(style === "claude" ? { type: "stdio" } : {}), command: definition.command, ...optional("args", definition.args), ...optional("env", env), ...optional("cwd", definition.cwd) })
-        : done({ type: definition.transport, url: definition.url, ...optional("headers", headers) });
+        : done({ ...(style === "claude" ? { type: definition.transport } : {}), url: definition.url, ...optional("headers", headers) });
   }
 }
 /** The variables a definition needs from the user's environment. */

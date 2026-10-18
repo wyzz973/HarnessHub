@@ -48,7 +48,11 @@ async function gateway(t: test.TestContext) {
 const state = (view: McpInventoryView, name: string, harnessId: string) => view.servers.find(server => server.name === name)?.targets.find(target => target.harnessId === harnessId)?.state;
 
 test("G064-M2 through the formal Gateway, a server the Harnesses have is listed and claimed, written into others their own way, brought up to date and removed, each shown first", macOnly, async t => {
-  const f = await gateway(t), codexFile = join(f.home, ".codex", "config.toml"), codexBefore = await readFile(codexFile, "utf8"), geminiFile = join(f.home, ".gemini", "settings.json");
+  const f = await gateway(t), codexFile = join(f.home, ".codex", "config.toml"), geminiFile = join(f.home, ".gemini", "settings.json");
+  const cursorFile = join(f.home, ".cursor", "mcp.json"), cursorConfig = JSON.parse(await readFile(cursorFile, "utf8")) as { mcpServers: Record<string, unknown> };
+  cursorConfig.mcpServers["@scope/odd"] = { command: "npx", args: ["-y", "@scope/odd"] };
+  await writeFile(cursorFile, JSON.stringify(cursorConfig));
+  const codexBefore = await readFile(codexFile, "utf8");
   // What the Harnesses have: the servers that can be listed, and those that cannot (credentials written literally, a token in the address).
   let view = await f.inventory();
   assert.deepEqual(view.servers, []);
@@ -57,6 +61,7 @@ test("G064-M2 through the formal Gateway, a server the Harnesses have is listed 
   assert.deepEqual(candidate("fs")?.definition, { transport: "stdio", command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem"], cwd: null, url: null, env: [{ key: "FS_TOKEN", variable: "FS_TOKEN" }], headers: [] });
   assert.match(candidate("github")?.problem ?? "", /API_KEY 的值像是密钥/u);
   assert.match(candidate("docs")?.problem ?? "", /参数里像是写着密钥/u);
+  assert.match(candidate("@scope/odd")?.problem ?? "", /服务器名只能用字母/u, "a name HarnessHub cannot write is listed with why");
   assert.ok(view.candidates.filter(item => item.name === "remote").every(item => /查询串/u.test(item.problem ?? "")));
   const writable = Object.fromEntries(view.harnesses.map(item => [item.harnessId, item.writable]));
   assert.deepEqual(["claude", "codex", "cursor", "gemini", "hermes", "opencode", "openclaw"].map(id => writable[id]), [false, true, true, true, true, true, false]);
@@ -108,7 +113,7 @@ test("G064-M2 through the formal Gateway, a server the Harnesses have is listed 
   const remove = await f.call<CapabilityChangeCheck>("/capabilities/mcp/remove?" + new URLSearchParams({ name: "fs", harnessId: "cursor" }));
   assert.equal(remove.value.blocked, null, JSON.stringify(remove.value));
   assert.equal((await f.apply(remove.value.fingerprint, "fs-cursor-off")).value.status, "applied");
-  assert.deepEqual(Object.keys((JSON.parse(await readFile(join(f.home, ".cursor", "mcp.json"), "utf8")) as { mcpServers: object }).mcpServers), ["linear"]);
+  assert.deepEqual(Object.keys((JSON.parse(await readFile(join(f.home, ".cursor", "mcp.json"), "utf8")) as { mcpServers: object }).mcpServers), ["linear", "@scope/odd"]);
   // The list entry cannot go while Harnesses still have HarnessHub's entries.
   const tooSoon = await f.call<{ code: string; message: string }>("/capabilities/mcp/servers/delete", { name: "fs" });
   assert.deepEqual([tooSoon.status, tooSoon.value.code], [409, "CAPABILITY_TARGET_REFUSED"]);
