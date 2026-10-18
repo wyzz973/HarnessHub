@@ -60,7 +60,14 @@
   - 版本取 npm 的 latest 标签，HarnessHub 验证过的是 0.2.1-alpha.1。
   - 装入 Gateway PATH 上第一个 Node.js（nvm v26.11.1）的前缀。
   - 提示：它会读取 `~/.dsh` 下已有的配置和 acp profile（包括源码版留下的），兼容性未验证。
-- 按审批，修正部署到 4317 之后重新检查、重新确认再安装；装完先由 HarnessHub 的探测确认 `dsh --profile acp` 能完成初始化。结果见下文。
+- 按审批，修正部署到 4317（`46163d2`）之后重新检查、重新确认再安装；装完先由 HarnessHub 的探测确认 `dsh --profile acp` 能完成初始化。
+  - 部署前后，三个存储的版本与计数相同：业务库 v12（会话 5、事件 1493），管理库 v6（任务 14、日志 31），能力库 v1（修改 5、备份 5、台账 1）。服务环境里没有代理变量。部署前的数据克隆核对后已删除。
+- **安装结果**：
+  - 重新检查的内容与修正前相同，确认框里有三点：装入 nvm v26.11.1 前缀；0.2.0-rc.2 是预发布版，HarnessHub 尚未验证；会读取 `~/.dsh` 下已有的配置。
+  - 4 分钟完成，npm 输出 “added 538 packages”。HarnessHub 核实 `dsh` 0.2.0-rc.2 装在官网渠道里；重新扫描后 DeepSeek Harness 显示为已安装、当前使用。
+  - npm 同样提示 5 个包的安装脚本“not yet covered by allowScripts”（`@deepseek-ai/dsh-subprocess-local`、koffi、node-pty、`@google/genai`、protobufjs）。node-pty 自带 darwin-arm64 的预编译程序，`spawn-helper` 是 0755。
+- **权限**（修正后）：包里 26657 个文件没有 0600 的，目录全是 0755，`package.json` 是 0644。
+- **目录探测**：经 4317 的 `GET /api/v1/harnesses/dsh/models?refresh=1` 启动 `dsh --profile acp`，3.7 秒内完成初始化并返回 3 个模型，默认模型 `deepseek-official / deepseek-v4-flash`，可以选择。它用的是 `~/.dsh` 下原有的配置；凭据文件没有读取或打印。
 
 ## 未验证与后续
 
