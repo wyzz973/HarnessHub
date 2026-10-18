@@ -3440,7 +3440,8 @@
         "R01",
         "R02",
         "R09",
-        "R22"
+        "R22",
+        "R27"
       ],
       "invariants": [
         "INV-01",
@@ -3496,7 +3497,8 @@
         "G054-OC1",
         "G054-UN1",
         "G054-IN1",
-        "G054-UG1"
+        "G054-UG1",
+        "G054-CA1"
       ],
       "active_slice": "upgrade-with-running-programs"
     },
@@ -4030,6 +4032,58 @@
         "G063-C01",
         "G063-C02",
         "G063-C03"
+      ]
+    },
+    {
+      "id": "G064",
+      "title": "统一管理各 Harness 的能力",
+      "context": "capabilities",
+      "phase": "implementation",
+      "status": "in_progress",
+      "active_slice": "capability-management",
+      "gate": "G1",
+      "depends_on": [
+        "G012",
+        "G054"
+      ],
+      "owns": [
+        "src/contracts/capabilities.ts",
+        "src/contexts/capabilities/domain/visibility.ts",
+        "src/adapters/capability-reads.ts",
+        "src/infrastructure/capabilities/formats.ts",
+        "src/infrastructure/capabilities/scan.ts",
+        "src/infrastructure/capabilities/service.ts",
+        "web/src/components/CapabilitiesPage.tsx",
+        "tests/unit/capability-visibility.test.ts",
+        "tests/unit/capability-readers.test.ts",
+        "tests/integration/capabilities.test.ts",
+        "tests/fixtures/capability-home.ts"
+      ],
+      "requirements": [
+        "R27",
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "scope": "ADR-045：先做只读统一视图（七类能力、谁读什么、可见机制与状态、四类提示），再分步做技能、MCP、指令、子 Agent 与命令、插件的写入",
+      "out_of_scope": [
+        "不改项目级文件",
+        "不改模型、Provider 与登录配置",
+        "不运行会启动或连接 MCP 服务器的命令",
+        "OpenClaw 的 MCP 与插件装卸推迟到升级之后"
+      ],
+      "acceptance": [
+        "统一视图的数量与本机统计一致",
+        "页面与日志不含密钥值与家目录绝对路径",
+        "每次写入先预览、经确认，只认领自己写入的条目"
+      ],
+      "test_cases": [
+        "G064-R1",
+        "G064-R2",
+        "G064-R3",
+        "G064-R4",
+        "G064-R5"
       ]
     }
   ]

@@ -1,4 +1,4 @@
-import { Bell, BellOff, Bot, Check, ChevronDown, CircleHelp, PanelLeft, Plus, Search, Settings, SlidersHorizontal, X } from "lucide-react";
+import { Bell, BellOff, Blocks, Bot, Check, ChevronDown, CircleHelp, PanelLeft, Plus, Search, Settings, SlidersHorizontal, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { AttentionItem } from "../../../src/contracts/session.js";
@@ -11,7 +11,7 @@ import { Menu, Popover } from "../ui/overlay.js";
 import { Badge, Kbd, LogoMark, Tip } from "../ui/primitives.js";
 import { BrandIcon } from "./BrandIcon.js";
 
-export type Page = "chat" | "providers" | "harnesses" | "settings";
+export type Page = "chat" | "providers" | "harnesses" | "capabilities" | "settings";
 
 /**
  * The user's switch for browser notifications of waiting approvals and questions (ADR-035). The browser is asked only
@@ -99,6 +99,7 @@ export function Sidebar(props: SidebarProps) {
     </div>
     <div className="flex flex-col gap-0.5 border-t border-line px-2 pt-2 pb-2.5">
       {nav("harnesses", "我的 Agent", <Bot size={16}/>, props.activeJobs ? <Badge tone="accent">{props.activeJobs} 个任务</Badge> : props.updates ? <Badge tone="amber">{props.updates} 个可升级</Badge> : null)}
+      {nav("capabilities", "能力", <Blocks size={16}/>)}
       {props.providerManagement ? nav("providers", "模型与账号", <SlidersHorizontal size={16}/>) : null}
       {nav("settings", "设置", <Settings size={16}/>)}
       <div className="flex items-center gap-2 px-2 pt-1.5 text-[12px] text-fg-3" role="status">

@@ -8,6 +8,7 @@ import type { NativeExtensions, NativeInputs, NativeOption, NativeModelCatalog }
 import { parseNativeOptions, commandId, messageId, runId, sessionId, switchId } from "../../src/contracts/session.js";
 import { parseContentRef, type ContentRef } from "../../src/contracts/content.js";
 import type { NativeUsage } from "../../src/contracts/control.js";
+import { CAPABILITY_KINDS, CAPABILITY_MECHANISMS, CAPABILITY_OWNERS, CAPABILITY_STATUSES, CAPABILITY_WARNINGS, MAX_CAPABILITY_ENTRIES, type CapabilitiesView, type CapabilityEdge, type CapabilityFacts } from "../../src/contracts/capabilities.js";
 
 export interface ToolDetailView { readonly kind?: string; readonly name?: string; readonly input?: string; readonly output?: string; readonly diff?: string; readonly parentId?: string; readonly locations?: readonly string[]; readonly exitCode?: number; readonly truncated?: boolean }
 /** Same-origin URL of stored native content for img/download use; the page cookie authorizes it. */
@@ -175,6 +176,36 @@ export function decodeMaintenance(value: unknown): MaintenanceView {
     target: row.target === null ? null : (() => { const target = record(row.target); return { state: choice(target.state, ["verified", "unverified"]), program: text(target.program), ...(target.adapter === undefined ? {} : { adapter: text(target.adapter) }) }; })(),
     runtimes: list(row.runtimes, value => { const runtime = record(value); return { runtime: choice(runtime.runtime, ["Node.js"]), required: text(runtime.required), found: nullableText(runtime.found), path: text(runtime.path),
       satisfied: bool(runtime.satisfied), service: nullableText(runtime.service), restarted: bool(runtime.restarted), upgradeCommand: nullableText(runtime.upgradeCommand) }; }, 32) };
+}
+function decodeCapabilityFacts(value: unknown): CapabilityFacts {
+  const row = record(value);
+  switch (choice(row.kind, CAPABILITY_KINDS)) {
+    case "skill": return { kind: "skill", files: number(row.files), bytes: number(row.bytes) };
+    case "mcp": return { kind: "mcp", transport: choice(row.transport, ["stdio", "http", "sse", "unknown"]), program: nullableText(row.program), host: nullableText(row.host), variables: list(row.variables, text, 64),
+      headers: list(row.headers, text, 64), references: number(row.references), literal: number(row.literal), enabled: bool(row.enabled) };
+    case "instructions": return { kind: "instructions", bytes: number(row.bytes), managedBlocks: list(row.managedBlocks, text, 16) };
+    case "subagent": return { kind: "subagent", format: choice(row.format, ["markdown", "toml"]) };
+    case "command": return { kind: "command", format: choice(row.format, ["markdown", "toml"]) };
+    case "hook": return { kind: "hook", event: text(row.event), matcher: nullableText(row.matcher), program: nullableText(row.program) };
+    case "plugin": return { kind: "plugin", version: nullableText(row.version), enabled: row.enabled === null ? null : bool(row.enabled) };
+  }
+}
+function decodeCapabilityEdge(value: unknown): CapabilityEdge {
+  const row = record(value);
+  return { harnessId: text(row.harnessId), mechanism: choice(row.mechanism, CAPABILITY_MECHANISMS), status: choice(row.status, CAPABILITY_STATUSES), via: text(row.via), reason: nullableText(row.reason),
+    ...(row.facts === undefined ? {} : { facts: decodeCapabilityFacts(row.facts) }) };
+}
+/** The capability view (ADR-045 step 1), validated field by field. */
+export function decodeCapabilities(value: unknown): CapabilitiesView {
+  const row = record(value), kindsOf = (item: unknown) => { const kinds = record(item); return Object.fromEntries(CAPABILITY_KINDS.map(kind => [kind, choice(kinds[kind], ["read", "unsupported", "invisible"])])) as CapabilitiesView["harnesses"][number]["kinds"]; };
+  return { checkedAt: text(row.checkedAt), truncated: bool(row.truncated),
+    harnesses: list(row.harnesses, item => { const harness = record(item); return { harnessId: text(harness.harnessId), name: text(harness.name), version: nullableText(harness.version), table: choice(harness.table, ["verified", "unverified"]),
+      kinds: kindsOf(harness.kinds), notes: list(harness.notes, text, 64) }; }, 64),
+    entries: list(row.entries, item => { const entry = record(item); return { kind: choice(entry.kind, CAPABILITY_KINDS), key: text(entry.key), name: text(entry.name), description: nullableText(entry.description),
+      owner: choice(entry.owner, CAPABILITY_OWNERS), source: nullableText(entry.source), location: nullableText(entry.location), edges: list(entry.edges, decodeCapabilityEdge, 256),
+      warnings: list(entry.warnings, warning => { const fields = record(warning); return { kind: choice(fields.kind, CAPABILITY_WARNINGS), harnessId: nullableText(fields.harnessId), text: text(fields.text) }; }, 256),
+      ...(entry.facts === undefined ? {} : { facts: decodeCapabilityFacts(entry.facts) }) }; }, MAX_CAPABILITY_ENTRIES),
+    unreadable: list(row.unreadable, item => { const fields = record(item); return { harnessId: nullableText(fields.harnessId), file: text(fields.file), reason: text(fields.reason) }; }, 1024) };
 }
 function decodeLogPage(value: unknown): InstallationLogPage {
   const row = record(value);
@@ -396,6 +427,8 @@ export class GatewayApi {
   importNativeSession(workspace: string, selection: SelectionRequest, nativeId: string, key: string): Promise<SessionView> {
     return this.request("/sessions/import", "POST", { workspace, selection, nativeId, commandId: key }, decodeSession);
   }
+  /** What every installed Harness reads besides its model (ADR-045 step 1); read from the user's files, nothing is written. */
+  capabilities(signal?: AbortSignal): Promise<CapabilitiesView> { return this.request("/capabilities", "GET", undefined, decodeCapabilities, signal); }
   /** Native skills, MCP servers and plugins of the selected Harness in this workspace; null when its interface has no such list. */
   nativeExtensions(harness: string, control: string, workspace: string, signal?: AbortSignal): Promise<NativeExtensions | null> {
     return this.request(`/harnesses/${encodeURIComponent(harness)}/extensions?${new URLSearchParams({ controlId: control, workspace })}`, "GET", undefined, value => {

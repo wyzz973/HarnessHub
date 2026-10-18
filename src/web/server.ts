@@ -29,6 +29,7 @@ import { conversationMarkdown } from "./conversation-export.js";
 import { runDiagnostics, scrubDiagnostics } from "./run-diagnostics.js";
 import { nativeResume } from "../infrastructure/management/verified-versions.js";
 import { LoginShellStore, readLoginShellPath, type LoginShellDirectories } from "../infrastructure/discovery/login-shell.js";
+import { CapabilityService } from "../infrastructure/capabilities/service.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -307,6 +308,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     report: problem => process.stderr.write("HarnessGateway: NATIVE_CATALOG_CACHE_UNAVAILABLE (" + problem + ")\n"), revision }));
   // Directories the user took from the login shell's PATH (G(ii)) extend discovery and new conversations until removed.
   const loginShells = new LoginShellStore(realpathSync(options.root));
+  // What each installed Harness reads besides its model (ADR-045 step 1), from the user's own files; read-only.
+  const capabilities = new CapabilityService(app.factory.discoveryEnvironment);
   let loginDirs: LoginShellDirectories | null = await loginShells.load();
   const searchDirs = (): readonly string[] => [...options.configuration.searchDirs, ...(loginDirs?.dirs ?? []).filter(dir => !options.configuration.searchDirs.includes(dir))];
   const loginShellView = () => ({ available: options.loginShell !== undefined && options.loginShell !== false && options.loginShell.shell !== null,
@@ -434,6 +437,18 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       queries(url, []); const input = record(await body(request), ["dir", "commandId"], ["dir", "commandId"]), dir = text(input.dir, "directory", 4096);
       if (loginDirs !== null && loginDirs.dirs.includes(dir)) { loginDirs = { ...loginDirs, dirs: loginDirs.dirs.filter(item => item !== dir) }; await loginShells.save(loginDirs); await rescanWith(); }
       json(response, 200, loginShellView()); return;
+    }
+    // Read-only (ADR-045 step 1): skills, MCP, instructions, subagents, commands, hooks and plugins of every installed
+    // Harness, by its read table. Nothing is written or started; the view carries names and counts, never a value.
+    if (path === "/api/v1/capabilities" && method === "GET") {
+      queries(url, []);
+      const installed = (await rescan()).flatMap(harness => {
+        const products = harness.installations.filter(item => item.role === "product"), chosen = products.find(item => item.active) ?? products[0];
+        return chosen ? [{ harnessId: harness.id, name: harness.name, version: chosen.version }] : [];
+      });
+      const view = await capabilities.view(installed);
+      if (homePathsIn(view, homeForms(), 1 << 20).length) throw new HttpError(500, "PRIVACY_GUARD", "the capability view named a path by its absolute home form");
+      json(response, 200, view); return;
     }
     // Read-only: what the latest catalog reads and Runs showed; nothing is started.
     if (path === "/api/v1/harnesses/readiness" && method === "GET") { queries(url, []); json(response, 200, { readiness: readinessViews(nativeModels.readiness(), app.store.list(100)) }); return; }

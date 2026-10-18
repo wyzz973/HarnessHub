@@ -497,3 +497,9 @@
 | G011-UG10 | G011 | integration | 逐份升级的使用者、服务、结果核实、终端方式与 ADR-043 的分工 | HarnessHub 自己的进程在运行这份安装时，正在回复的对话阻止升级，空闲保留进程先关闭；没有自己的进程时不关闭对话；后台服务在运行时拒绝；结果未知时核实只读版本、不重跑；Hermes 只给终端命令并提示本地改动；声明服务且控制入口在这份安装里的产品由 ADR-043 的升级负责 | planned |
 | G054-UG1 | G054 | e2e | 逐份升级的按钮与确认框 | 每份安装显示上次检查的结果；正在回复的对话阻止升级并可打开该对话；否则显示前后版本、实际运行的命令、可写位置、仍在运行的程序、未验证提示和“当前使用”说明；提交的内容正好是确认的安装和指纹；完成摘要写出前后版本；Hermes 只显示终端命令、它会做的事和本地改动，没有确认按钮；无页面错误 | planned |
 | G011-UP9 | G011 | integration | 升级安装期间别的程序改写受保护配置 | npm 在配置写保护沙箱里安装期间，测试进程改写 ~/.claude.json；升级照常完成，原配置判为保留，任务日志写明这些文件在升级期间有变化、来自仍在运行的程序 | planned |
+| G064-R1 | G064 | unit | 按“谁读什么”表计算技能对每个 Harness 的可见机制与状态 | 共享目录原生读取、逐个链接、自有副本、兼容目录、外部目录各有其机制；Claude 同一 realpath 只算一份，Codex 两份都可见，OpenCode 同名只保留一份且不确定是哪一份，Gemini、OpenClaw、Pi 按优先级遮蔽；OpenClaw 越界链接被跳过；断链、缺 SKILL.md 与不合规 frontmatter 各有状态；停用状态按各 Harness 的配置显示 | planned |
+| G064-R2 | G064 | unit | 各 Harness 配置的容错读取与停用状态 | 带注释的 JSONC、TOML 表数组、YAML（含 dsh 的 !!js 标签）都能读；Claude skillOverrides、Codex [[skills.config]]、Gemini skills.disabled、OpenCode permission.skill、Hermes skills.disabled 与 external_dirs、OpenClaw skills.entries 读成停用状态；解析失败的文件标为无法读取，不猜 | planned |
+| G064-R3 | G064 | unit | MCP 服务只读出不含值的事实 | 各家写法的传输方式、程序名、远程主机、变量名与引用写法都能识别；环境变量与请求头的值、URL 的路径与查询都不进入结果，只计明文值的个数；被停用的服务标为停用 | planned |
+| G064-R4 | G064 | unit | 指令、子 Agent、命令、Hooks 与插件的读取与交叉读取 | 按各家规则选出生效的用户级指令文件并标出遮蔽（OpenCode 回退读 CLAUDE.md 等）与其他管理器的标记；Cursor 读 Claude 与 Codex 的子 Agent、运行 Claude 的 Hooks 标为交叉；Hermes 标为不支持用户级指令；插件按各家状态文件列出 | planned |
+| G064-R5 | G064 | integration | 经正式入口读取统一视图 | 临时家目录里九个 Harness 的官网安装与布局经 GET /api/v1/capabilities 得到正确的条目、机制、状态与提示；响应不含密钥值与家目录绝对路径；无法读取的文件如实列出；只读文件，不运行任何 Harness 程序（OpenClaw 按 ADR-045 第 11 条以 JSON5 只读解析 openclaw.json） | planned |
+| G054-CA1 | G054 | e2e | 能力页面 | 侧栏的“能力”打开页面；七个页签各显示条目与每个 Harness 的状态，提示可展开；空状态如实说明；无页面错误 | planned |

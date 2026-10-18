@@ -1802,3 +1802,98 @@ test("G054-UG1 upgrading one installation first says the versions, what runs and
   await terminal.getByRole("button", { name: "关闭", exact: true }).click(); await expect(terminal).toBeHidden();
   assert.deepEqual(errors, []);
 });
+
+test("G054-CA1 the capability page opens from the sidebar and from a Harness's details, shows every kind as an entry × Harness matrix, and expands an entry's warnings", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  const all = { skill: "read", mcp: "read", instructions: "read", subagent: "read", command: "read", hook: "read", plugin: "read" };
+  const view = { checkedAt: "2026-10-18T09:00:00.000Z", truncated: false,
+    harnesses: [{ harnessId: "claude", name: "Claude Code", version: "2.1.302", table: "verified", kinds: all, notes: ["自定义命令已并入技能，同名时技能优先。"] },
+      { harnessId: "codex", name: "Codex", version: "0.162.1", table: "verified", kinds: all, notes: [] },
+      { harnessId: "cursor", name: "Cursor", version: "2026.10.01-e373342", table: "unverified", kinds: { ...all, instructions: "invisible", command: "unsupported", plugin: "invisible" }, notes: ["Cursor 的用户规则保存在应用设置里，不在磁盘上。"] },
+      { harnessId: "hermes", name: "Hermes Agent", version: "0.12.0", table: "verified", kinds: { ...all, instructions: "unsupported", subagent: "unsupported", command: "unsupported" }, notes: ["Hermes 0.12 不读 ~/.agents/skills。"] }],
+    entries: [
+      { kind: "skill", key: "skill:alpha", name: "alpha", description: "Shared alpha skill", owner: "skills-cli", source: "https://github.com/owner/repo.git", location: "~/.agents/skills/alpha",
+        edges: [{ harnessId: "claude", mechanism: "linked", status: "active", via: "~/.claude/skills/alpha", reason: null }, { harnessId: "codex", mechanism: "native-shared", status: "active", via: "~/.agents/skills/alpha", reason: null },
+          { harnessId: "codex", mechanism: "own-copy", status: "active", via: "~/.codex/skills/alpha", reason: null }, { harnessId: "cursor", mechanism: "native-shared", status: "duplicate", via: "~/.agents/skills/alpha", reason: "Cursor 没有说明同名技能怎样处理" },
+          { harnessId: "hermes", mechanism: "linked", status: "active", via: "~/.hermes/skills/alpha", reason: null }],
+        warnings: [{ kind: "duplicate", harnessId: "codex", text: "Codex 会同时列出 2 个名为 alpha 的技能：~/.agents/skills/alpha、~/.codex/skills/alpha。" }], facts: { kind: "skill", files: 2, bytes: 2048 } },
+      { kind: "skill", key: "skill:beta", name: "beta", description: null, owner: "user", source: null, location: "~/.agents/skills/beta",
+        edges: [{ harnessId: "claude", mechanism: "linked", status: "disabled", via: "~/.claude/skills/beta", reason: "settings.json 的 skillOverrides 把它设为 off" }, { harnessId: "codex", mechanism: "native-shared", status: "active", via: "~/.agents/skills/beta", reason: null }],
+        warnings: [], facts: { kind: "skill", files: 1, bytes: 300 } },
+      { kind: "mcp", key: "mcp:github", name: "github", description: null, owner: "user", source: null, location: "~/.claude.json",
+        edges: [{ harnessId: "claude", mechanism: "config", status: "active", via: "~/.claude.json", reason: null, facts: { kind: "mcp", transport: "stdio", program: "npx @modelcontextprotocol/server-github", host: null, variables: ["GITHUB_TOKEN"], headers: [], references: 1, literal: 0, enabled: true } }],
+        warnings: [], facts: { kind: "mcp", transport: "stdio", program: "npx @modelcontextprotocol/server-github", host: null, variables: ["GITHUB_TOKEN"], headers: [], references: 1, literal: 0, enabled: true } },
+      { kind: "instructions", key: "instructions:~/.claude/CLAUDE.md", name: "~/.claude/CLAUDE.md", description: null, owner: "user", source: null, location: "~/.claude/CLAUDE.md",
+        edges: [{ harnessId: "claude", mechanism: "config", status: "active", via: "~/.claude/CLAUDE.md", reason: null }], warnings: [], facts: { kind: "instructions", bytes: 120, managedBlocks: [] } },
+      { kind: "subagent", key: "subagent:reviewer", name: "reviewer", description: "Reviews changes", owner: "user", source: null, location: "~/.claude/agents/reviewer.md",
+        edges: [{ harnessId: "claude", mechanism: "own-copy", status: "active", via: "~/.claude/agents/reviewer.md", reason: null }, { harnessId: "cursor", mechanism: "compat-root", status: "active", via: "~/.claude/agents/reviewer.md", reason: null }],
+        warnings: [{ kind: "cross", harnessId: "cursor", text: "Cursor 也会使用 ~/.claude/agents/reviewer.md。" }], facts: { kind: "subagent", format: "markdown" } },
+      { kind: "hook", key: "hook:~/.claude/settings.json#PreToolUse#0.0", name: "PreToolUse（Bash）", description: "guard.sh", owner: "user", source: null, location: "~/.claude/settings.json",
+        edges: [{ harnessId: "claude", mechanism: "config", status: "active", via: "~/.claude/settings.json", reason: null }, { harnessId: "cursor", mechanism: "compat-root", status: "active", via: "~/.claude/settings.json", reason: null }],
+        warnings: [{ kind: "cross", harnessId: "cursor", text: "Cursor 默认也会运行这个 Hook（来自 ~/.claude/settings.json）。" }], facts: { kind: "hook", event: "PreToolUse", matcher: "Bash", program: "guard.sh" } },
+      { kind: "plugin", key: "plugin:claude:tool@market", name: "tool@market", description: null, owner: "user", source: null, location: "~/.claude/plugins/installed_plugins.json",
+        edges: [{ harnessId: "claude", mechanism: "config", status: "active", via: "~/.claude/plugins/installed_plugins.json", reason: null, facts: { kind: "plugin", version: "1.2.0", enabled: true } }], warnings: [], facts: { kind: "plugin", version: "1.2.0", enabled: true } }],
+    unreadable: [{ harnessId: "codex", file: "~/.codex/config.toml", reason: "无法解析（TomlError）" }] };
+  let requests = 0;
+  await page.route("**/api/v1/capabilities", route => { requests++; return route.fulfill({ json: view }); });
+  const ref = "a".repeat(64), shaped = (harness: { id: string; installations: unknown[]; unofficial: unknown }) => harness.id === "claude" ? { ...harness, installed: true, unofficial: null, installations: [
+    { ref, channel: "npm", label: "npm 全局（nvm v26.11.1）", command: "claude", version: "2.1.302", role: "product", active: true, maintained: true, canUninstall: true, upgrade: null, latest: null }] } : harness;
+  for (const path of ["**/api/v1/state", "**/api/v1/harnesses", "**/api/v1/harnesses/rescan"]) await page.route(path, async route => {
+    const response = await route.fetch(), body = await response.json();
+    await route.fulfill({ response, json: Array.isArray(body) ? body.map(shaped) : { ...body, harnesses: body.harnesses.map(shaped) } });
+  });
+  await page.goto(fixture.gateway.url); await expect(page.getByRole("button", { name: "新对话", exact: true })).toBeVisible();
+  await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "能力", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "能力", exact: true })).toBeVisible();
+  // Seven kinds, each with its count; the skills matrix has one column per Harness, saying how each sees each skill.
+  const tabs = page.getByRole("tablist", { name: "能力类别" });
+  for (const [label, count] of [["技能", 2], ["MCP", 1], ["指令", 1], ["子 Agent", 1], ["命令", 0], ["Hooks", 1], ["插件", 1]] as const) await expect(tabs.getByRole("tab", { name: label + " " + count, exact: true })).toBeVisible();
+  const matrix = page.locator(".capability-matrix");
+  await expect(matrix.locator("thead th")).toHaveText([/技能/u, /Claude Code.*v2\.1\.302/u, /Codex.*v0\.162\.1/u, /Cursor.*未核实/u, /Hermes Agent.*v0\.12\.0/u]);
+  const alpha = matrix.locator("tbody tr").filter({ hasText: "alpha" }).first();
+  await expect(alpha.locator("td").nth(0)).toHaveText("✓链接"); await expect(alpha.locator("td").nth(1)).toHaveText("✓共享目录✓自有目录"); await expect(alpha.locator("td").nth(2)).toHaveText("⧉重复");
+  await expect(matrix.locator("tbody tr").filter({ hasText: "beta" }).first().locator("td").nth(0)).toHaveText("⊘已停用");
+  await expect(alpha).toContainText("vercel skills"); await expect(alpha).toContainText("1 条提示");
+  // An entry expands to where each Harness finds it, why, and the warnings.
+  await alpha.getByRole("button", { name: /alpha/u }).click();
+  const detail = page.locator(".capability-detail");
+  for (const text of ["~/.agents/skills/alpha", "https://github.com/owner/repo.git", "2 个文件 · 2.0 KB", "Cursor 没有说明同名技能怎样处理", "Codex 会同时列出 2 个名为 alpha 的技能"]) await expect(detail).toContainText(text);
+  // A file that could not be read is said, with the reason.
+  await expect(page.getByText("有文件无法读取，其中的内容没有显示")).toBeVisible(); await expect(page.getByText("无法解析（TomlError）")).toBeVisible();
+  // Filters: search, one Harness, and only entries with warnings or not in use.
+  await page.getByRole("textbox", { name: "搜索能力" }).fill("bet"); await expect(matrix.locator("tbody tr")).toHaveCount(1); await page.getByRole("textbox", { name: "搜索能力" }).fill("");
+  await page.getByRole("checkbox", { name: "只看有提示或未生效的" }).check(); await expect(matrix.locator("tbody > tr").filter({ hasText: "beta" })).toHaveCount(1);
+  await page.getByRole("checkbox", { name: "只看有提示或未生效的" }).uncheck();
+  // Other kinds: a kind a Harness keeps off disk or does not have is marked in its column; an empty kind says so.
+  await tabs.getByRole("tab", { name: "指令 1", exact: true }).click();
+  const instructions = matrix.locator("tbody tr").first();
+  await expect(instructions.locator("td").nth(2)).toHaveText("?"); await expect(instructions.locator("td").nth(3)).toHaveText("—");
+  await tabs.getByRole("tab", { name: "Hooks 1", exact: true }).click();
+  await matrix.locator("tbody tr").first().getByRole("button").click();
+  await expect(page.locator(".capability-detail")).toContainText("Cursor 默认也会运行这个 Hook");
+  await tabs.getByRole("tab", { name: "命令 0", exact: true }).click();
+  await expect(page.getByText("这一类还没有条目")).toBeVisible();
+  await tabs.getByRole("tab", { name: "MCP 1", exact: true }).click();
+  await expect(matrix.locator("tbody tr").first().locator("td").nth(0)).toHaveText("✓配置");
+  await page.getByRole("combobox", { name: "只看一个 Harness" }).selectOption("codex");
+  await expect(page.getByText("这一类还没有条目")).toBeVisible();
+  await page.getByRole("combobox", { name: "只看一个 Harness" }).selectOption("");
+  await tabs.getByRole("tab", { name: "技能 2", exact: true }).click();
+  await page.screenshot({ path: join(artifact, "capabilities.png"), animations: "disabled" });
+  // From a Harness's details, the page opens on that Harness.
+  await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "我的 Agent" }).click();
+  await page.getByRole("button", { name: "查看 Claude Code 详情", exact: true }).click();
+  await page.getByRole("dialog", { name: "Claude Code 详情" }).getByRole("button", { name: "查看 Claude Code 的能力", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "能力", exact: true })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "只看一个 Harness" })).toHaveValue("claude");
+  await expect(page.locator(".capability-matrix thead th")).toHaveCount(2);
+  // At phone width the matrix scrolls inside its frame; the page itself does not scroll sideways.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  assert.ok(requests >= 2, "the view is read each time the page opens");
+  assert.deepEqual(errors, []);
+});

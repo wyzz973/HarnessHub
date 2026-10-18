@@ -85,6 +85,7 @@
 | G061 | 接通Harness管理HTTP入口 | G009, G011, G012, G013, G014, G015, C009 | G1 | in_progress |
 | G062 | 接通Provider管理HTTP入口 | G009, G010, G016, C009 | G1 | planned |
 | G063 | 建立依赖与公共类型边界检查 | G001, C008 | G1 | planned |
+| G064 | 统一管理各 Harness 的能力 | G012, G054 | G1 | in_progress |
 
 ## V001 验证并锁定工具链与依赖许可
 
@@ -1673,7 +1674,7 @@
 
 范围：建立薄Chat交互视图；仅交付所列文件与对应行为。
 
-依赖：G052, G059。需求：R01, R02, R09, R22。
+依赖：G052, G059。需求：R01, R02, R09, R22, R27。
 
 唯一交付物：
 - ui/chat.tsx
@@ -1753,7 +1754,7 @@
 - 不提前展示新Harness已生效
 - 可操作且不持有独立业务状态
 
-场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01, G054-NC1, G054-NC2, G054-NC3, G054-NC4, G054-NC5, G054-NC6, G054-NC7, G054-NC8, G054-NC9, G054-NC10, G054-NC11, G054-NC12, G054-NC13, G054-NC14, G054-NC15, G054-FR1, G054-FR2, G054-FR3, G054-FR4, G054-FR5, G054-FR6, G054-FR7, G054-FR8, G054-UP1, G054-UP2, G054-OC1, G054-UN1, G054-IN1, G054-UG1。
+场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01, G054-NC1, G054-NC2, G054-NC3, G054-NC4, G054-NC5, G054-NC6, G054-NC7, G054-NC8, G054-NC9, G054-NC10, G054-NC11, G054-NC12, G054-NC13, G054-NC14, G054-NC15, G054-FR1, G054-FR2, G054-FR3, G054-FR4, G054-FR5, G054-FR6, G054-FR7, G054-FR8, G054-UP1, G054-UP2, G054-OC1, G054-UN1, G054-IN1, G054-UG1, G054-CA1。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1991,3 +1992,31 @@
 场景：G063-C01, G063-C02, G063-C03。
 
 禁止范围：不实现业务执行或适配器；不把静态边界检查当行为验收。
+
+## G064 统一管理各 Harness 的能力
+
+范围：ADR-045：先做只读统一视图（七类能力、谁读什么、可见机制与状态、四类提示），再分步做技能、MCP、指令、子 Agent 与命令、插件的写入。
+
+依赖：G012, G054。需求：R27, R04。
+
+唯一交付物：
+- src/contracts/capabilities.ts
+- src/contexts/capabilities/domain/visibility.ts
+- src/adapters/capability-reads.ts
+- src/infrastructure/capabilities/formats.ts
+- src/infrastructure/capabilities/scan.ts
+- src/infrastructure/capabilities/service.ts
+- web/src/components/CapabilitiesPage.tsx
+- tests/unit/capability-visibility.test.ts
+- tests/unit/capability-readers.test.ts
+- tests/integration/capabilities.test.ts
+- tests/fixtures/capability-home.ts
+
+验收：
+- 统一视图的数量与本机统计一致
+- 页面与日志不含密钥值与家目录绝对路径
+- 每次写入先预览、经确认，只认领自己写入的条目
+
+场景：G064-R1, G064-R2, G064-R3, G064-R4, G064-R5。
+
+禁止范围：不改项目级文件；不改模型、Provider 与登录配置；不运行会启动或连接 MCP 服务器的命令；OpenClaw 的 MCP 与插件装卸推迟到升级之后。

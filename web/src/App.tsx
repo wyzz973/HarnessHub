@@ -1,4 +1,4 @@
-import { Bot, Columns2, Keyboard, MessageSquarePlus, Monitor, Moon, PanelLeft, RefreshCw, Settings, SlidersHorizontal, Sun } from "lucide-react";
+import { Blocks, Bot, Columns2, Keyboard, MessageSquarePlus, Monitor, Moon, PanelLeft, RefreshCw, Settings, SlidersHorizontal, Sun } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SelectionRequest } from "../../src/contracts/session.js";
 import type { ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
@@ -21,6 +21,7 @@ import type { ProviderProbeState } from "./components/ProvidersPage.js";
 import { Sidebar } from "./components/Sidebar.js";
 import type { Page } from "./components/Sidebar.js";
 import { SettingsPage } from "./components/SettingsPage.js";
+import { CapabilitiesPage } from "./components/CapabilitiesPage.js";
 import { CommandPalette, ShortcutsDialog, type PaletteCommand } from "./components/CommandPalette.js";
 import { BrandIcon } from "./components/BrandIcon.js";
 import { attachmentKind, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, MAX_MESSAGE_ATTACHMENT_BYTES, type AttachmentDraft } from "./components/Attachments.js";
@@ -130,7 +131,7 @@ interface PendingProviderWrite { input: ProviderWriteInput; key: string; current
 /** The page named in the address, so a reload stays where the user was; the conversation route is the default. */
 function pageRoute(): Page {
   const value = new URLSearchParams(window.location.hash.slice(1)).get("page");
-  return value === "harnesses" || value === "settings" || value === "providers" ? value : "chat";
+  return value === "harnesses" || value === "capabilities" || value === "settings" || value === "providers" ? value : "chat";
 }
 function writePageRoute(page: Exclude<Page, "chat">): void { window.history.replaceState(null, "", window.location.pathname + "#" + new URLSearchParams({ page }).toString()); }
 function sessionRoute(): { id: string | null; error: string | null } {
@@ -163,6 +164,8 @@ export function App() {
   const [bootError, setBootError] = useState<string | null>(null);
   const [bootAttempt, setBootAttempt] = useState(0);
   const [page, setPage] = useState<Page>(pageRoute);
+  // The Harness the capability page opens on, when it was opened from that Harness's details.
+  const [capabilityHarness, setCapabilityHarness] = useState<string | null>(null);
   // On a narrow screen the sidebar is a drawer; on a wide one the user may hide it (a preference of this browser).
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [preferences, setPreference] = usePreferences();
@@ -755,6 +758,7 @@ export function App() {
       ...state.sessions.slice(0, 200).map(item => ({ id: "session:" + item.id, group: "对话", label: item.title || "新对话", hint: harnessName(item.selection.harnessId), keywords: item.workspace, icon: <BrandIcon brand={item.selection.harnessId} name={harnessName(item.selection.harnessId)} size={16}/>, run: () => selectSession(item.id) })),
       ...state.harnesses.filter(harness => harness.controls.some(control => control.available)).map(harness => ({ id: "start:" + harness.id, group: "用 Agent 开始新对话", label: "用 " + harness.name + " 开始新对话", keywords: harness.id, icon: <BrandIcon brand={harness.id} name={harness.name} size={16}/>, run: () => chooseHarness(harness) })),
       { id: "harnesses", group: "前往", label: "我的 Agent", icon: <Bot size={16}/>, run: go("harnesses") },
+      { id: "capabilities", group: "前往", label: "能力", icon: <Blocks size={16}/>, run: () => { setCapabilityHarness(null); go("capabilities")(); } },
       { id: "settings", group: "前往", label: "设置", icon: <Settings size={16}/>, run: go("settings") },
       ...(state.providerManagement !== false ? [{ id: "providers", group: "前往", label: "模型与账号", icon: <SlidersHorizontal size={16}/>, run: go("providers") }] : []),
       { id: "panel", group: "显示", label: preferences.panel ? "隐藏详情栏" : "显示详情栏", icon: <Columns2 size={16}/>, shortcut: "⌘.", run: () => setPreference("panel", !preferences.panel) },
@@ -778,7 +782,7 @@ export function App() {
   const sidebar = <Sidebar providerManagement={state.providerManagement !== false} page={shown} sessions={state.sessions} attention={attention?.items ?? []} harnesses={state.harnesses} currentId={sessionId}
     interactionBusy={mutation !== null} activeJobs={state.jobs.filter(installationActive).length} updates={state.harnesses.filter(harness => harness.management.updateStatus === "available").length}
     groupBy={preferences.groupBy} onGroupBy={value => setPreference("groupBy", value)} connected={connectionError === null && managementConnectionError === null}
-    onCollapse={() => setPreference("sidebar", false)} {...(narrow ? { onClose: () => setSidebarOpen(false) } : {})} onPage={next => { setSidebarOpen(false); navigate(next); }} onNew={newChat} onSession={chooseAndClose} onPalette={() => { setSidebarOpen(false); setPalette(true); }}/>;
+    onCollapse={() => setPreference("sidebar", false)} {...(narrow ? { onClose: () => setSidebarOpen(false) } : {})} onPage={next => { setSidebarOpen(false); if (next === "capabilities") setCapabilityHarness(null); navigate(next); }} onNew={newChat} onSession={chooseAndClose} onPalette={() => { setSidebarOpen(false); setPalette(true); }}/>;
   const shell = { onMenu: () => setSidebarOpen(value => !value), sidebarHidden: !preferences.sidebar, onExpandSidebar: () => setPreference("sidebar", true), onChat: () => navigate("chat") };
   return <TipProvider delay={500}><div className="app-shell flex h-dvh overflow-hidden bg-app text-fg" data-page={shown}>
     <a className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[80] focus:rounded-lg focus:bg-surface focus:px-3 focus:py-2 focus:shadow-md" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>跳到主要内容</a>
@@ -803,8 +807,9 @@ export function App() {
         queued={queued} onQueue={queueMessage} onEditQueued={() => { if (queued) returnQueued(queued, null); }} onWithdrawQueued={withdrawQueued} queueNotice={queueNotice} onDismissQueueNotice={() => setQueueNotice(null)}
         preferences={preferences} onPreference={setPreference} conversations={state.sessions.length} sidebarHidden={!narrow && !preferences.sidebar} onExpandSidebar={shell.onExpandSidebar} onHarnesses={() => navigate("harnesses")} onSettings={() => navigate("settings")} onRescan={() => void rescan()} scanning={mutation === "scanning"}/>
         : shown === "providers" ? <ProvidersPage providers={state.providers} editor={editor} saving={mutation === "saving"} probes={probes} error={error} onEdit={provider => { setEditor(provider); setError(null); }} onBack={() => leave(() => { setEditor(null); setEditorDirty(false); setError(null); })} onSave={saveProvider} onProbe={provider => void probeProvider(provider)} onDirty={dirtyChanged} onDismissError={() => setError(null)} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
+        : shown === "capabilities" ? <CapabilitiesPage api={api} initialHarness={capabilityHarness} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
         : shown === "settings" ? <SettingsPage api={api} preferences={preferences} onPreference={setPreference} onRescan={() => void rescan()} scanning={mutation === "scanning"} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
-        : <HarnessesPage api={api} harnesses={state.harnesses} installationPolicy={state.installationPolicy} onUninstall={uninstall} onInstallOfficial={installOfficial} onUpgradeInstallation={upgradeInstallation} jobs={state.jobs} scanning={mutation === "scanning"} checking={checkingUpdates} submitting={submittingInstallations} cancelling={cancellingInstallations} unconfirmed={unconfirmedInstallations} error={error} connectionError={managementConnectionError} onRescan={() => void rescan()} onCheckUpdates={ids => void checkUpdates(ids)} onInstall={install} onOpenSession={selectSession} onConfirm={confirmInstallation} onCancelJob={job => void cancelInstallation(job)} onDismissError={() => setError(null)} onChoose={chooseHarness} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>}
+        : <HarnessesPage api={api} harnesses={state.harnesses} installationPolicy={state.installationPolicy} onUninstall={uninstall} onInstallOfficial={installOfficial} onUpgradeInstallation={upgradeInstallation} jobs={state.jobs} scanning={mutation === "scanning"} checking={checkingUpdates} submitting={submittingInstallations} cancelling={cancellingInstallations} unconfirmed={unconfirmedInstallations} error={error} connectionError={managementConnectionError} onRescan={() => void rescan()} onCheckUpdates={ids => void checkUpdates(ids)} onInstall={install} onOpenSession={selectSession} onConfirm={confirmInstallation} onCancelJob={job => void cancelInstallation(job)} onDismissError={() => setError(null)} onChoose={chooseHarness} onCapabilities={id => { setCapabilityHarness(id); navigate("capabilities"); }} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>}
     </main>
     {leaveAction ? <div className="fixed right-4 bottom-4 left-4 z-[70] mx-auto max-w-[560px]"><Notice tone="amber" title="有尚未保存的修改" action={<><button className="btn btn-sm" onClick={() => setLeaveAction(null)}>继续编辑</button><button className="btn btn-sm btn-primary" onClick={() => { const action = leaveAction; setLeaveAction(null); setEditorDirty(false); action(); }}>放弃修改，离开</button></>} onDismiss={() => setLeaveAction(null)}>离开会丢弃编辑草稿。已受理的请求可在列表中查看。</Notice></div> : null}
     <CommandPalette open={palette} onOpenChange={setPalette} commands={commands}/>

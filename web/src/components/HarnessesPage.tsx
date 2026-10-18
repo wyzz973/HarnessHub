@@ -97,6 +97,8 @@ interface HarnessProps {
   /** Opens a conversation, e.g. one that blocks an upgrade. */
   onOpenSession: (id: string) => void;
   onConfirm: (id: string) => void; onCancelJob: (job: InstallationJobView) => void; onDismissError: () => void; onMenu: () => void; onChoose: (harness: HarnessView) => void;
+  /** Opens the capability page for one Harness (ADR-045). */
+  onCapabilities: (harnessId: string) => void;
   sidebarHidden: boolean; onExpandSidebar: () => void; onChat: () => void;
 }
 function missing(harness: HarnessView): boolean { return harness.management.source === "missing" || !harness.controls.some(control => control.available); }
@@ -308,6 +310,8 @@ function HarnessDetail(props: HarnessProps & { harness: HarnessView; onClose: ()
       {missing(harness) && harness.install ? <DetailSection title="官方安装方式"><p className="m-0 text-[12.5px] text-fg-2">{officialInstallable(harness)
         ? `HarnessHub 可以按官网方式代为安装：点“安装”后先显示会运行什么、写到哪里，确认后才运行。`
         : harness.install.method === "terminal" ? `按 ${harness.name} 官方说明在终端安装，完成后重新检测即可使用。HarnessHub 不代为运行这条命令。` : `按 ${harness.name} 官方说明安装，完成后重新检测即可使用。`}命令于 {harness.install.checkedAt} 对照官方说明核对。</p><code className="block rounded-md bg-subtle px-2.5 py-2 text-[12px] break-all">{harness.install.command}</code><a className="text-[12.5px]" href={harness.install.docs} target="_blank" rel="noreferrer">查看官方说明</a></DetailSection> : null}
+      {harness.installations.some(item => item.role === "product") ? <DetailSection title="能力"><p className="m-0 text-[12.5px] text-fg-2">{harness.name} 读取的技能、MCP、指令、子 Agent、命令、Hooks 和插件，以及各自是否生效。</p>
+        <button type="button" className="btn btn-sm self-start" onClick={() => props.onCapabilities(harness.id)}>查看 {harness.name} 的能力</button></DetailSection> : null}
       <DetailSection title="模型与登录"><p className="m-0 text-[12.5px] text-fg-2">沿用 Harness 本机已有配置。统一 Provider 管理将在后续接入。</p></DetailSection>
     </div>
     <footer className="flex flex-wrap items-center gap-2 border-t border-line px-5 py-3">

@@ -903,6 +903,42 @@
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/official-channels-2026-10-17.md"
+    },
+    {
+      "id": "capability-management",
+      "status": "accepted",
+      "scope": "统一查看并管理各 Harness 的技能、MCP、指令、子 Agent、命令、Hooks 与插件（ADR-045）：先只读统一视图；写入只改用户级配置，先预览、经确认，只认领自己写入的条目",
+      "task_ids": [
+        "G064",
+        "G054",
+        "G050",
+        "G059"
+      ],
+      "decision": "docs/decisions/0045-unified-capability-management.md",
+      "allowed_files": [
+        "src/contracts/capabilities.ts",
+        "src/contexts/capabilities/domain/visibility.ts",
+        "src/adapters/capability-reads.ts",
+        "src/infrastructure/capabilities/formats.ts",
+        "src/infrastructure/capabilities/scan.ts",
+        "src/infrastructure/capabilities/service.ts",
+        "src/web/server.ts",
+        "src/contracts/web.ts",
+        "src/cli/session-application.ts",
+        "web/src/api.ts",
+        "web/src/App.tsx",
+        "web/src/components/Sidebar.tsx",
+        "web/src/components/CapabilitiesPage.tsx",
+        "src/web/shown-paths.ts",
+        "web/src/components/HarnessesPage.tsx",
+        "tests/fixtures/capability-home.ts",
+        "tests/unit/capability-visibility.test.ts",
+        "tests/unit/capability-readers.test.ts",
+        "tests/integration/capabilities.test.ts",
+        "tests/browser/web.browser.ts"
+      ],
+      "implementation_state": "in_progress",
+      "verification_record": "docs/verification/capabilities-view-2026-10-18.md"
     }
   ]
 }
