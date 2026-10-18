@@ -146,10 +146,10 @@ test("G064-M3 an entry someone else changed is left alone until the user writes 
   assert.equal(state(await f.inventory(), "fs", "gemini"), "synced");
   // A server whose argument holds the home in its middle is listed as read (absolute), and shown with ~.
   const withRoot = JSON.parse(await readFile(geminiFile, "utf8")) as { mcpServers: Record<string, unknown> };
-  withRoot.mcpServers.rooted = { command: "uvx", args: ["rooted-mcp", "--root=" + join(f.home, "work")] };
+  withRoot.mcpServers.rooted = { command: "uvx", args: ["rooted-mcp", "--root=" + join(f.home, "work")], env: { DATA_DIR: join(f.home, "data") } };
   await writeFile(geminiFile, JSON.stringify(withRoot));
   const rooted = (await f.inventory()).candidates.find(item => item.name === "rooted")!;
-  assert.deepEqual(rooted.definition?.args, ["rooted-mcp", "--root=~/work"]);
+  assert.deepEqual([rooted.definition?.args, rooted.definition?.env], [["rooted-mcp", "--root=~/work"], [{ key: "DATA_DIR", value: "~/data" }]]);
   assert.equal((await f.call("/capabilities/mcp/import", { candidate: rooted.id, claim: ["gemini"] })).status, 200);
   assert.equal(state(await f.inventory(), "rooted", "gemini"), "synced", "the claim matched the absolute argument as written");
   // Gemini's SSE server is listed, but Codex and Hermes cannot take SSE: refused with the reason, nothing written.

@@ -54,8 +54,11 @@ export class McpInventory {
   private shownText(value: string): string { const home = this.home(); return value === home ? "~" : value.split(home + "/").join("~/"); }
   /** A string as typed: a leading ~/ is the home directory. */
   private typed(value: string): string { return value === "~" ? this.home() : value.startsWith("~/") ? this.home() + value.slice(1) : value; }
+  /** A definition as shown: the home directory as ~ in every string a path can be in, literal values included. */
   private view(definition: McpDefinition): McpDefinitionView {
-    return { ...definition, command: definition.command === null ? null : this.shownText(definition.command), args: definition.args.map(arg => this.shownText(arg)), cwd: definition.cwd === null ? null : this.shownText(definition.cwd) };
+    return { ...definition, command: definition.command === null ? null : this.shownText(definition.command), args: definition.args.map(arg => this.shownText(arg)), cwd: definition.cwd === null ? null : this.shownText(definition.cwd),
+      env: definition.env.map(item => "value" in item ? { key: item.key, value: this.shownText(item.value) } : item),
+      headers: definition.headers.map(item => "value" in item ? { name: item.name, value: this.shownText(item.value) } : item) };
   }
   /** The list, each definition as stored; a row this build cannot read is skipped. */
   private list(): readonly { readonly name: string; readonly definition: McpDefinition; readonly updatedAt: string }[] {
@@ -137,7 +140,9 @@ export class McpInventory {
   save(name: string, input: McpDefinitionView, replace: boolean): McpServerView["name"] {
     if (!MCP_NAME.test(name)) throw new CapabilityError("INVALID_INPUT", "服务器名只能用字母、数字、- 和 _，最多 64 个字符");
     if (input.args.some(arg => arg.includes("~/") && !arg.startsWith("~/"))) throw new CapabilityError("INVALID_INPUT", "参数里的 ~/ 只在开头展开；请写完整路径");
-    const definition: McpDefinition = { ...input, command: input.command === null ? null : this.typed(input.command), args: input.args.map(arg => this.typed(arg)), cwd: input.cwd === null ? null : this.typed(input.cwd) };
+    if (input.env.some(item => "value" in item && item.value.includes("~/") && !item.value.startsWith("~/"))) throw new CapabilityError("INVALID_INPUT", "环境变量的值里的 ~/ 只在开头展开；请写完整路径");
+    const definition: McpDefinition = { ...input, command: input.command === null ? null : this.typed(input.command), args: input.args.map(arg => this.typed(arg)), cwd: input.cwd === null ? null : this.typed(input.cwd),
+      env: input.env.map(item => "value" in item ? { key: item.key, value: this.typed(item.value) } : item) };
     return this.keep(name, definition, replace);
   }
   /** Keeps a definition as it is (absolute paths), checked by the approval's rules. */
