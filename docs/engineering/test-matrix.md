@@ -309,6 +309,7 @@
 | G011-M02 | G011 | integration | 真实SQLite命令幂等/CAS/日志/全量恢复与默认指针损坏 | queued取消、active未知不重跑；缺或坏事实拒绝；旧默认不被替换 | planned |
 | G029-M01 | G029 | security | 真实gzip/bzip2/ZIP解包、合法内部链接与越界路径/类型 | 安全格式可解包，traversal/绝对/链接逃逸/特殊文件拒绝 | planned |
 | G029-M02 | G029 | integration | 真实外部安装进程与TERM/KILL/输出/父退出子孙 | 资源关闭独立确认，stdout/stderr分离，预算/取消/cleanup错误不冒充成功 | planned |
+| G029-M03 | G029 | integration | Gateway 以 umask 077 运行时启动安装、升级、卸载程序 | 程序按终端的 umask 022 运行，新建文件 0644、目录 0755；找不到或不可执行的程序仍是 PROCESS_START_FAILED；取消仍结束整个进程组 | planned |
 | G061-M01 | G061 | integration | 正式HTTP提交/取消/日志/checkupdates/真实管理与Driver升级 | 命令冲突409，安装后发现，V1运行中升级V2不改V1，下轮用V2 | planned |
 | G061-M02 | G061 | security | Owner inode被替换时关闭服务 | 即使持久Owner失败，自己拥有的安装PID也必须被清理并报告OwnerLost | planned |
 | G061-M03 | G061 | integration | 系统PATH与已发布受管版本同时存在、显式override阻塞 | 优先managed；明确override不fallback；不执行任何发现的程序 | planned |

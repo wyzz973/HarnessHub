@@ -5967,6 +5967,22 @@
       "planned_file": "tests/integration/management-process.test.ts"
     },
     {
+      "id": "G029-M03",
+      "task": "G029",
+      "requirements": [
+        "R11",
+        "R13",
+        "R20"
+      ],
+      "invariants": [],
+      "layer": "integration",
+      "scenario": "Gateway 以 umask 077 运行时启动安装、升级、卸载程序",
+      "expected": "程序按终端的 umask 022 运行，新建文件 0644、目录 0755；找不到或不可执行的程序仍是 PROCESS_START_FAILED；取消仍结束整个进程组",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/management-process.test.ts"
+    },
+    {
       "id": "G061-M01",
       "task": "G061",
       "requirements": [

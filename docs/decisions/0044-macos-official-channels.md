@@ -185,6 +185,21 @@
 - **存储与接口。** 管理库 v6 新增 `management_installation_upgrades`，冻结每个升级任务；`tools/management-v6-to-v5.sql` 降回 v5，会删除这些升级任务的记录。结果未知的升级可以“核实本机结果”，只读取现在的版本，不重跑。
 - **验收。** 见[逐份升级验收记录](../verification/installation-upgrade-2026-10-17.md)。
 
+## 修正：安装程序的 umask（2026-10-18）
+
+- **问题。** 用户要求经 4317 升级 Homebrew Node.js 前缀里的 Claude Code，升级完成后发现：装出来的包里普通文件是 0600、目录是 0700。用户在终端装的同一版本是 0644/0755。
+  - 原因：4317 以 umask 077 启动，用来保护数据目录；HarnessHub 启动的 npm、brew、官方脚本继承了这个 umask。
+  - 影响：对用户本人能用，但与官网命令在终端里的结果不一致。
+- **修正。** 管理用的子进程一律经 `/bin/sh -c 'umask 022 && exec "$@"'` 启动（`process.ts`）。
+  - 022 是 macOS 的默认值，也是终端运行官网命令时的 umask。
+  - 外壳在最外层：`/bin/sh` → `sandbox-exec` → 程序。外壳只设 umask 后 exec，PID、进程组、输出与取消语义不变，沙箱限制的仍是原来那条命令。
+  - 启动前先检查程序是否存在且可执行，找不到时仍报 PROCESS_START_FAILED。
+  - **取舍**：不读用户登录 shell 的 umask，因为登录 shell 只在用户请求时读一次，而且只读 PATH。自定义了 umask（如 027）的用户，装出来的权限按 022 计算。
+- **一次性修补**（审批代理同意）：
+  - 先核对 Homebrew 前缀那份与用户在终端装的 nvm v26.11.1 那份（同为 2.1.302）：文件清单和内容完全一致，只有权限不同。
+  - 然后把前者 14 项（9 个文件、5 个目录）的权限逐项设成后者的值，没有重新下载。
+  - 记录见[管理操作验收](../verification/management-actions-2026-10-18.md)。
+
 ## 影响
 
 - 这台电脑上，Pi（开发目录）和 DeepSeek Harness（源码构建）会显示为未安装。Claude Code 会列出三份 npm 安装。

@@ -2204,7 +2204,8 @@
         "G029-C03",
         "G029-C04",
         "G029-M01",
-        "G029-M02"
+        "G029-M02",
+        "G029-M03"
       ],
       "active_slice": "management-workbench"
     },

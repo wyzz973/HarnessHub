@@ -61,6 +61,7 @@ Web界面按用户确认的设计稿重写（[ADR-042](docs/decisions/0042-front
   - Claude Code、Cursor 的脚本安装运行产品自己的更新命令（“立即更新”），Codex、OpenCode 的脚本安装重新运行官方脚本；Hermes 只给终端命令 `hermes update --yes` 并说明它会做什么。
   - 确认框显示现版本与目标、实际运行的命令、可写位置和仍在运行它的程序；正在回复的对话、这份安装上的后台服务会阻止升级。OpenClaw 当前使用的那份仍走上面的升级与重启流程。
   - 管理库升到 v6，降级先用 `tools/management-v6-to-v5.sql`（会删除这些升级任务的记录）。
+- 安装、升级和卸载的程序都按终端的默认 umask 022 运行，不随 Gateway 自己的 umask（4317 用 077），装出来的权限与在终端运行官网命令相同（[管理操作验收](docs/verification/management-actions-2026-10-18.md)）。
 
 统一查看各 Harness 的能力（[ADR-045](docs/decisions/0045-unified-capability-management.md)，2026-10-18，第 1 步只读）：
 

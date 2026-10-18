@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -35,4 +35,16 @@ test("bulk short output lines remain valid while one oversized line is rejected"
   const output = await runManagementProcess(process.execPath, ["-e", 'process.stdout.write(("a".repeat(100)+"\\n").repeat(3000))'], root, {}, { ...context, log: () => { lines++; } }, 512 * 1024);
   assert.equal(lines, 3000); assert.equal(output.length, 303000);
   await assert.rejects(runManagementProcess(process.execPath, ["-e", 'process.stdout.write("a".repeat(70000)+"\\n")'], root, {}, context, 128 * 1024), error => error instanceof ManagementError && error.code === "OUTPUT_LIMIT");
+}));
+test("G029-M03 a management program runs with the terminal's umask 022 whatever the Gateway's own, and a missing one still fails to start", async () => fixture(async (root, _controller, context) => {
+  // 4317 runs with umask 077; what npm or an installer creates must still get the modes the official command gives in a terminal.
+  const previous = process.umask(0o077);
+  let output: string;
+  try { output = await runManagementProcess(process.execPath, ["-e", 'const fs=require("node:fs");fs.writeFileSync("made","x");fs.mkdirSync("folder");process.stdout.write(process.umask().toString(8))'], root, { HOME: root }, context); }
+  finally { process.umask(previous); }
+  assert.equal(output, "22");
+  assert.equal((await stat(join(root, "made"))).mode & 0o777, 0o644);
+  assert.equal((await stat(join(root, "folder"))).mode & 0o777, 0o755);
+  await assert.rejects(runManagementProcess(join(root, "missing"), [], root, {}, context), error => error instanceof ManagementError && error.code === "PROCESS_START_FAILED");
+  await assert.rejects(runManagementProcess(join(root, "made"), [], root, {}, context), error => error instanceof ManagementError && error.code === "PROCESS_START_FAILED");
 }));

@@ -1,11 +1,35 @@
 import { darwinExitedGroupIsQuiescent } from "../control/process-group.js";
 import { spawn } from "node:child_process";
+import { access, constants } from "node:fs/promises";
 import { StringDecoder } from "node:string_decoder";
 import { ManagementError, type ManagementInstallContext } from "../../contracts/management.js";
 
-/** Owns the process group and pipes until close; cancellation is not reported as completion. */
+/**
+ * The umask programs are installed, upgraded and removed with: macOS's default, which the official command gets in a
+ * terminal. The Gateway may run with a stricter one to keep its data private (4317 runs with 077); a child inheriting it
+ * would leave the installed package 0600/0700 where the terminal leaves it 0644/0755.
+ */
+const PROGRAM_UMASK = "022";
+
+/**
+ * Owns the process group and pipes until close; cancellation is not reported as completion. The program runs with umask
+ * 022 whatever the Gateway's own; it replaces the shell that sets it, so its PID and process group are the child's.
+ *
+ * The shell is outermost, `/bin/sh` → `sandbox-exec` → program: it runs nothing but `umask` and `exec`, the umask passes
+ * through sandbox-exec to the program, and the sandbox confines exactly the command it confined before. The shell adds
+ * PWD (the working directory) and SHLVL to the environment, nothing else.
+ */
 export function runManagementProcess(executable: string, args: readonly string[], cwd: string, env: Readonly<Record<string, string>>,
   context: ManagementInstallContext, captureLimit = 128 * 1024): Promise<string> {
+  if (context.signal.aborted) return Promise.reject(new ManagementError("CANCELLED", "installation was cancelled"));
+  context.assertOwned();
+  if (process.platform === "win32") return run(executable, args, cwd, env, context, captureLimit);
+  // The shell would report a missing program as its own failure; it is checked first so that it stays a start failure.
+  return access(executable, constants.X_OK).then(() => run("/bin/sh", ["-c", `umask ${PROGRAM_UMASK} && exec "$@"`, "harnesshub-management", executable, ...args], cwd, env, context, captureLimit),
+    () => { throw new ManagementError("PROCESS_START_FAILED", "installer process could not be started"); });
+}
+
+function run(executable: string, args: readonly string[], cwd: string, env: Readonly<Record<string, string>>, context: ManagementInstallContext, captureLimit: number): Promise<string> {
   if (context.signal.aborted) return Promise.reject(new ManagementError("CANCELLED", "installation was cancelled"));
   context.assertOwned();
   return new Promise((resolve, reject) => {
