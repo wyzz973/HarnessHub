@@ -94,7 +94,8 @@ export class CapabilityScan {
       await this.fileLists("command", table, harness.name, table.commands);
       await this.hooks(table, harness.name);
       await this.plugins(table, harness.name, notes);
-      harnesses.push({ harnessId: table.harnessId, name: harness.name, version: harness.version, table: covered(harness.version, table.verified) ? "verified" : "unverified", kinds: kindsOf(table), notes: [...notes, ...kindNotes(table)] });
+      harnesses.push({ harnessId: table.harnessId, name: harness.name, version: harness.version, table: covered(harness.version, table.verified) ? "verified" : "unverified", kinds: kindsOf(table),
+        skillSwitch: table.skills.switch === null ? null : table.skills.switch.kind === "openclaw-entries" ? "command" : "file", notes: [...notes, ...kindNotes(table)] });
     }
     await this.attributeSkills();
     const order = new Map(CAPABILITY_KINDS.map((kind, index) => [kind, index]));

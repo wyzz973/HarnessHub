@@ -8,7 +8,8 @@ import type { NativeExtensions, NativeInputs, NativeOption, NativeModelCatalog }
 import { parseNativeOptions, commandId, messageId, runId, sessionId, switchId } from "../../src/contracts/session.js";
 import { parseContentRef, type ContentRef } from "../../src/contracts/content.js";
 import type { NativeUsage } from "../../src/contracts/control.js";
-import { CAPABILITY_KINDS, CAPABILITY_MECHANISMS, CAPABILITY_OWNERS, CAPABILITY_STATUSES, CAPABILITY_WARNINGS, MAX_CAPABILITY_ENTRIES, type CapabilitiesView, type CapabilityEdge, type CapabilityFacts } from "../../src/contracts/capabilities.js";
+import { CAPABILITY_KINDS, CAPABILITY_MECHANISMS, CAPABILITY_OWNERS, CAPABILITY_STATUSES, CAPABILITY_WARNINGS, MAX_CAPABILITY_ENTRIES, type CapabilitiesView, type CapabilityChangeCheck, type CapabilityChangeView,
+  type CapabilityEdge, type CapabilityFacts, type CapabilityHistory, type CapabilityRestoreCheck } from "../../src/contracts/capabilities.js";
 
 export interface ToolDetailView { readonly kind?: string; readonly name?: string; readonly input?: string; readonly output?: string; readonly diff?: string; readonly parentId?: string; readonly locations?: readonly string[]; readonly exitCode?: number; readonly truncated?: boolean }
 /** Same-origin URL of stored native content for img/download use; the page cookie authorizes it. */
@@ -200,12 +201,35 @@ export function decodeCapabilities(value: unknown): CapabilitiesView {
   const row = record(value), kindsOf = (item: unknown) => { const kinds = record(item); return Object.fromEntries(CAPABILITY_KINDS.map(kind => [kind, choice(kinds[kind], ["read", "unsupported", "invisible"])])) as CapabilitiesView["harnesses"][number]["kinds"]; };
   return { checkedAt: text(row.checkedAt), truncated: bool(row.truncated),
     harnesses: list(row.harnesses, item => { const harness = record(item); return { harnessId: text(harness.harnessId), name: text(harness.name), version: nullableText(harness.version), table: choice(harness.table, ["verified", "unverified"]),
-      kinds: kindsOf(harness.kinds), notes: list(harness.notes, text, 64) }; }, 64),
+      kinds: kindsOf(harness.kinds), skillSwitch: harness.skillSwitch === null ? null : choice(harness.skillSwitch, ["file", "command"]), notes: list(harness.notes, text, 64) }; }, 64),
     entries: list(row.entries, item => { const entry = record(item); return { kind: choice(entry.kind, CAPABILITY_KINDS), key: text(entry.key), name: text(entry.name), description: nullableText(entry.description),
       owner: choice(entry.owner, CAPABILITY_OWNERS), source: nullableText(entry.source), location: nullableText(entry.location), edges: list(entry.edges, decodeCapabilityEdge, 256),
       warnings: list(entry.warnings, warning => { const fields = record(warning); return { kind: choice(fields.kind, CAPABILITY_WARNINGS), harnessId: nullableText(fields.harnessId), text: text(fields.text) }; }, 256),
       ...(entry.facts === undefined ? {} : { facts: decodeCapabilityFacts(entry.facts) }) }; }, MAX_CAPABILITY_ENTRIES),
     unreadable: list(row.unreadable, item => { const fields = record(item); return { harnessId: nullableText(fields.harnessId), file: text(fields.file), reason: text(fields.reason) }; }, 1024) };
+}
+export function decodeChangeCheck(value: unknown): CapabilityChangeCheck {
+  const row = record(value);
+  if (row.kind !== "skill-switch") return invalid();
+  const rewrite = row.rewrite === null ? null : record(row.rewrite);
+  return { kind: "skill-switch", harnessId: text(row.harnessId), name: text(row.name), enabled: bool(row.enabled), file: text(row.file), command: nullableText(row.command), diff: nullableText(row.diff),
+    rewrite: rewrite === null ? null : { target: text(rewrite.target), before: nullableText(rewrite.before), after: nullableText(rewrite.after), added: list(rewrite.added, text, 32), removed: list(rewrite.removed, text, 32),
+      changed: list(rewrite.changed, text, 32), commentLines: number(rewrite.commentLines) },
+    current: choice(row.current, ["harnesshub", "other", "none"]), notes: list(row.notes, text, 32), blocked: nullableText(row.blocked), fingerprint: text(row.fingerprint), expiresAt: text(row.expiresAt) };
+}
+export function decodeChange(value: unknown): CapabilityChangeView {
+  const row = record(value), error = row.error === null ? null : record(row.error);
+  return { id: text(row.id), kind: choice(row.kind, ["skill-switch", "restore"]), harnessId: nullableText(row.harnessId), subject: text(row.subject), file: text(row.file), status: choice(row.status, ["applied", "failed"]),
+    diff: nullableText(row.diff), backupId: nullableText(row.backupId), error: error === null ? null : { code: text(error.code), message: text(error.message) }, notes: list(row.notes, text, 32), at: text(row.at) };
+}
+function decodeHistory(value: unknown): CapabilityHistory {
+  const row = record(value);
+  return { changes: list(row.changes, decodeChange, 64), backups: list(row.backups, item => { const backup = record(item); return { id: text(backup.id), file: text(backup.file), createdAt: text(backup.createdAt), bytes: number(backup.bytes),
+    changeId: text(backup.changeId), subject: text(backup.subject) }; }, 4096) };
+}
+function decodeRestoreCheck(value: unknown): CapabilityRestoreCheck {
+  const row = record(value);
+  return { backupId: text(row.backupId), file: text(row.file), diff: text(row.diff), changedSince: bool(row.changedSince), notes: list(row.notes, text, 32), fingerprint: text(row.fingerprint), expiresAt: text(row.expiresAt) };
 }
 function decodeLogPage(value: unknown): InstallationLogPage {
   const row = record(value);
@@ -429,6 +453,15 @@ export class GatewayApi {
   }
   /** What every installed Harness reads besides its model (ADR-045 step 1); read from the user's files, nothing is written. */
   capabilities(signal?: AbortSignal): Promise<CapabilitiesView> { return this.request("/capabilities", "GET", undefined, decodeCapabilities, signal); }
+  /** Prepares turning one skill off or on in one Harness and shows the exact change; nothing is written (ADR-045 §4). */
+  checkSkillSwitch(harnessId: string, name: string, enabled: boolean, via: string | null): Promise<CapabilityChangeCheck> {
+    return this.request("/capabilities/skill-switch?" + new URLSearchParams({ harnessId, name, enabled: String(enabled), ...(via === null ? {} : { via }) }), "GET", undefined, decodeChangeCheck);
+  }
+  /** Applies a confirmed check once; the same key returns the first result. */
+  applyCapabilityChange(fingerprint: string, key: string): Promise<CapabilityChangeView> { return this.request("/capabilities/changes", "POST", { fingerprint, commandId: key }, decodeChange); }
+  capabilityHistory(signal?: AbortSignal): Promise<CapabilityHistory> { return this.request("/capabilities/history", "GET", undefined, decodeHistory, signal); }
+  checkRestore(backupId: string): Promise<CapabilityRestoreCheck> { return this.request("/capabilities/backups/" + encodeURIComponent(backupId) + "/restore", "GET", undefined, decodeRestoreCheck); }
+  restoreBackup(fingerprint: string, key: string): Promise<CapabilityChangeView> { return this.request("/capabilities/restores", "POST", { fingerprint, commandId: key }, decodeChange); }
   /** Native skills, MCP servers and plugins of the selected Harness in this workspace; null when its interface has no such list. */
   nativeExtensions(harness: string, control: string, workspace: string, signal?: AbortSignal): Promise<NativeExtensions | null> {
     return this.request(`/harnesses/${encodeURIComponent(harness)}/extensions?${new URLSearchParams({ controlId: control, workspace })}`, "GET", undefined, value => {

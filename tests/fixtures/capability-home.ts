@@ -4,12 +4,39 @@ import { dirname, join } from "node:path";
 /** Values written into the fixture's configuration that must never appear in a capability view. */
 export const SECRETS = ["sk-literal-secret", "sk-arg-secret", "literal-docs-secret", "literal-header-secret", "sk-hook-secret", "token=abc", "/v1/sse", "q=secret", "check-secret",
   "user:pass", "/Users/someone", "model-key-value"] as const;
+/**
+ * The credential values among them, which a diff of a changed file must mask even when they sit beside the change; the
+ * rest (a model name, a path in a command) may show in a diff's context, as in the user's own file.
+ */
+export const CREDENTIALS = ["sk-literal-secret", "sk-arg-secret", "literal-docs-secret", "literal-header-secret", "sk-hook-secret", "token=abc", "q=secret", "user:pass"] as const;
 export const SYNCED_BUCKET = "11111111-2222-4333-8444-555555555555_66666666-7777-4888-8999-000000000000";
 
-async function file(path: string, text: string): Promise<void> { await mkdir(dirname(path), { recursive: true }); await writeFile(path, text); }
+async function file(path: string, text: string, mode = 0o644): Promise<void> { await mkdir(dirname(path), { recursive: true }); await writeFile(path, text, { mode }); }
 async function link(target: string, path: string): Promise<void> { await mkdir(dirname(path), { recursive: true }); await symlink(target, path); }
 const skill = (name: string | null, description: string | null, body = "Do the thing.\n") =>
   "---\n" + (name === null ? "" : "name: " + name + "\n") + (description === null ? "" : "description: " + description + "\n") + "---\n" + body;
+
+/** A program that leaves a mark in $HOME when anything runs it unconfined. */
+const program = (name: string) => "#!/bin/sh\ntouch \"$HOME/ran-" + name + "\"\nexit 3\n";
+const NPM: readonly (readonly [string, string, string])[] = [["@anthropic-ai/claude-code", "claude", "2.1.300"], ["@openai/codex", "codex", "0.162.1"], ["opencode-ai", "opencode", "1.18.35"],
+  ["@google/gemini-cli", "gemini", "0.72.0"], ["openclaw", "openclaw", "2026.3.23-2"], ["@earendil-works/pi-coding-agent", "pi", "0.85.1"], ["@deepseek-ai/dsh", "dsh", "0.2.1-alpha.1"]];
+/**
+ * The nine Harnesses installed through their official channels as the installers leave them (ADR-044): npm global
+ * packages under an nvm prefix, and Cursor's and Hermes's install scripts. Returns the PATH directories; nothing here runs.
+ */
+export async function officialInstalls(home: string): Promise<readonly string[]> {
+  const prefix = join(home, ".nvm", "versions", "node", "v26.0.0");
+  for (const [pkg, command, version] of NPM) {
+    await file(join(prefix, "lib", "node_modules", pkg, "package.json"), JSON.stringify({ name: pkg, version, bin: { [command]: "cli.js" } }));
+    await file(join(prefix, "lib", "node_modules", pkg, "cli.js"), program(command), 0o755);
+    await link("../lib/node_modules/" + pkg + "/cli.js", join(prefix, "bin", command));
+  }
+  await file(join(home, ".local", "share", "cursor-agent", "versions", "2026.10.01-e373342", "cursor-agent"), program("cursor-agent"), 0o755);
+  await link(join(home, ".local", "share", "cursor-agent", "versions", "2026.10.01-e373342", "cursor-agent"), join(home, ".local", "bin", "cursor-agent"));
+  await file(join(home, ".hermes", "hermes-agent", "venv", "bin", "hermes"), program("hermes"), 0o755);
+  await link(join(home, ".hermes", "hermes-agent", "venv", "bin", "hermes"), join(home, ".local", "bin", "hermes"));
+  return [join(home, ".local", "bin"), join(prefix, "bin")];
+}
 
 /**
  * The user-level files of the nine Harnesses as they look on a machine where several of them are in use: shared skills

@@ -30,6 +30,8 @@ import { runDiagnostics, scrubDiagnostics } from "./run-diagnostics.js";
 import { nativeResume } from "../infrastructure/management/verified-versions.js";
 import { LoginShellStore, readLoginShellPath, type LoginShellDirectories } from "../infrastructure/discovery/login-shell.js";
 import { CapabilityService } from "../infrastructure/capabilities/service.js";
+import { CapabilityChanges } from "../infrastructure/capabilities/changes.js";
+import { CapabilityError } from "../contracts/capabilities.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -190,7 +192,7 @@ function view(snapshot: SessionSnapshot, permissions: SessionView["permissions"]
 }
 function publicFailure(error: unknown): { readonly status: number; readonly code: string; readonly message: string } {
   if (error instanceof HttpError || error instanceof SessionStreamError) return error;
-  if (error instanceof SessionError || error instanceof ProviderError || error instanceof ManagementError) {
+  if (error instanceof SessionError || error instanceof ProviderError || error instanceof ManagementError || error instanceof CapabilityError) {
     const code = error.code;
     const status = code.includes("NOT_FOUND") ? 404 : code === "INVALID_INPUT" ? 400 : code.includes("LIMIT") || code === "QUEUE_FULL" ? 429
       : code.startsWith("RECOVERY_") || code.includes("UNAVAILABLE") || code.includes("CLOSED") || code.includes("BLOCKED") || code.includes("CONFLICT") || code.includes("PENDING") || code.includes("REVISION") || code.includes("UNSUPPORTED") || code.includes("BUSY") || code.includes("ACTIVE") || code === "STALE_DEFAULT" || code.endsWith("_CHANGED") || code.includes("REFUSED") || code.endsWith("_EXPIRED") || code.includes("INCOMPATIBLE") ? 409 : 502;
@@ -328,6 +330,19 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   };
   /** The user's home as given and as resolved, for the privacy guard of confirmations (ADR-044). */
   const homeForms = (): readonly string[] => { const home = app.factory.discoveryEnvironment.home; try { return [...new Set([home, realpathSync(home)])]; } catch { return [home]; } };
+  // Changes to a Harness's own configuration (ADR-045 §3): checked, shown, applied once on confirmation, with backups.
+  const capabilityChanges = new CapabilityChanges({ root: realpathSync(options.root), generation: app.store.ownerGeneration, assertOwner: () => app.store.assertOwner(),
+    environment: app.factory.discoveryEnvironment, homes: homeForms() });
+  /** The installed Harnesses a capability read or change covers: each one's official installation the Gateway uses. */
+  const installedHarnesses = async () => (await rescan()).flatMap(harness => {
+    const products = harness.installations.filter(item => item.role === "product"), chosen = products.find(item => item.active) ?? products[0];
+    return chosen ? [{ harnessId: harness.id, name: harness.name, version: chosen.version }] : [];
+  });
+  /** Answers with a capability value only when it names no path by its absolute home form (ADR-044's privacy guard). */
+  const privateJson = (response: ServerResponse, value: unknown) => {
+    if (homePathsIn(value, homeForms(), 1 << 20).length) throw new HttpError(500, "PRIVACY_GUARD", "a capability answer named a path by its absolute home form");
+    json(response, 200, value);
+  };
   let origin = "", host = "", running = 0, stopping = false, closing: Promise<void> | null = null;
   const bootstrap = randomBytes(32).toString("hex"), bootstrapExpires = Date.now() + BOOTSTRAP_MS;
   let bootstrapAvailable = true;
@@ -440,15 +455,26 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     }
     // Read-only (ADR-045 step 1): skills, MCP, instructions, subagents, commands, hooks and plugins of every installed
     // Harness, by its read table. Nothing is written or started; the view carries names and counts, never a value.
-    if (path === "/api/v1/capabilities" && method === "GET") {
-      queries(url, []);
-      const installed = (await rescan()).flatMap(harness => {
-        const products = harness.installations.filter(item => item.role === "product"), chosen = products.find(item => item.active) ?? products[0];
-        return chosen ? [{ harnessId: harness.id, name: harness.name, version: chosen.version }] : [];
-      });
-      const view = await capabilities.view(installed);
-      if (homePathsIn(view, homeForms(), 1 << 20).length) throw new HttpError(500, "PRIVACY_GUARD", "the capability view named a path by its absolute home form");
-      json(response, 200, view); return;
+    if (path === "/api/v1/capabilities" && method === "GET") { queries(url, []); privateJson(response, await capabilities.view(await installedHarnesses())); return; }
+    // Turning one skill off or on in one Harness (ADR-045 §4): the check shows the exact change; nothing is written here.
+    if (path === "/api/v1/capabilities/skill-switch" && method === "GET") {
+      queries(url, ["harnessId", "name", "enabled", "via"]);
+      const enabled = url.searchParams.get("enabled");
+      if (enabled !== "true" && enabled !== "false") throw new HttpError(400, "INVALID_INPUT", "Expected enabled=true or enabled=false");
+      privateJson(response, await capabilityChanges.checkSkillSwitch({ harnessId: text(url.searchParams.get("harnessId"), "Harness", 128), name: text(url.searchParams.get("name"), "skill name", 128),
+        enabled: enabled === "true", via: url.searchParams.has("via") ? text(url.searchParams.get("via"), "skill location", 4096) : null }, await installedHarnesses())); return;
+    }
+    if (path === "/api/v1/capabilities/changes" && method === "POST") {
+      queries(url, []); const input = record(await body(request), ["fingerprint", "commandId"], ["fingerprint", "commandId"]);
+      privateJson(response, await capabilityChanges.apply(text(input.fingerprint, "confirmation", 128), command(input.commandId))); return;
+    }
+    if (path === "/api/v1/capabilities/history" && method === "GET") { queries(url, []); privateJson(response, capabilityChanges.history()); return; }
+    if (path.startsWith("/api/v1/capabilities/backups/") && path.endsWith("/restore") && method === "GET") {
+      queries(url, []); privateJson(response, await capabilityChanges.checkRestore(decodeURIComponent(path.slice("/api/v1/capabilities/backups/".length, -"/restore".length)))); return;
+    }
+    if (path === "/api/v1/capabilities/restores" && method === "POST") {
+      queries(url, []); const input = record(await body(request), ["fingerprint", "commandId"], ["fingerprint", "commandId"]);
+      privateJson(response, await capabilityChanges.restore(text(input.fingerprint, "confirmation", 128), command(input.commandId))); return;
     }
     // Read-only: what the latest catalog reads and Runs showed; nothing is started.
     if (path === "/api/v1/harnesses/readiness" && method === "GET") { queries(url, []); json(response, 200, { readiness: readinessViews(nativeModels.readiness(), app.store.list(100)) }); return; }
@@ -811,6 +837,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       try { await listener; } catch (error) { failure ??= error; } finally { clearTimeout(deadline); }
       try { await app.management.shutdown(); } catch (error) { failure ??= error; }
       try { await app.providers.shutdown(); } catch (error) { failure ??= error; }
+      try { await capabilityChanges.close(); } catch (error) { failure ??= error; }
       try { app.store.close(); } catch (error) { failure ??= error; }
       logins.clear();
       if (failure) throw failure;
@@ -836,7 +863,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   } catch (error) {
     streams.close(); attention.close();
     await nativeModels.close();
-    try { await app.runtime.close(); } finally { try { await app.management.shutdown(); } finally { try { await app.providers.shutdown(); } finally { app.store.close(); } } }
+    try { await app.runtime.close(); } finally { try { await app.management.shutdown(); } finally { try { await app.providers.shutdown(); } finally { try { await capabilityChanges.close(); } finally { app.store.close(); } } } }
     throw error;
   }
 }

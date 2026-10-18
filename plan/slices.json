@@ -935,7 +935,17 @@
         "tests/unit/capability-visibility.test.ts",
         "tests/unit/capability-readers.test.ts",
         "tests/integration/capabilities.test.ts",
-        "tests/browser/web.browser.ts"
+        "tests/browser/web.browser.ts",
+        "src/infrastructure/capabilities/edits.ts",
+        "src/infrastructure/capabilities/files.ts",
+        "src/infrastructure/capabilities/store.ts",
+        "src/infrastructure/capabilities/switches.ts",
+        "src/infrastructure/capabilities/changes.ts",
+        "src/infrastructure/capabilities/masking.ts",
+        "web/src/components/CapabilityChangeDialog.tsx",
+        "tests/unit/capability-edits.test.ts",
+        "tests/integration/capability-changes.test.ts",
+        "tests/real/openclaw-skill-switch.real.ts"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/capabilities-view-2026-10-18.md"

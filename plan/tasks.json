@@ -3498,7 +3498,8 @@
         "G054-UN1",
         "G054-IN1",
         "G054-UG1",
-        "G054-CA1"
+        "G054-CA1",
+        "G054-CA2"
       ],
       "active_slice": "upgrade-with-running-programs"
     },
@@ -4057,7 +4058,17 @@
         "tests/unit/capability-visibility.test.ts",
         "tests/unit/capability-readers.test.ts",
         "tests/integration/capabilities.test.ts",
-        "tests/fixtures/capability-home.ts"
+        "tests/fixtures/capability-home.ts",
+        "src/infrastructure/capabilities/edits.ts",
+        "src/infrastructure/capabilities/files.ts",
+        "src/infrastructure/capabilities/store.ts",
+        "src/infrastructure/capabilities/switches.ts",
+        "src/infrastructure/capabilities/changes.ts",
+        "src/infrastructure/capabilities/masking.ts",
+        "web/src/components/CapabilityChangeDialog.tsx",
+        "tests/unit/capability-edits.test.ts",
+        "tests/integration/capability-changes.test.ts",
+        "tests/real/openclaw-skill-switch.real.ts"
       ],
       "requirements": [
         "R27",
@@ -4083,7 +4094,11 @@
         "G064-R2",
         "G064-R3",
         "G064-R4",
-        "G064-R5"
+        "G064-R5",
+        "G064-W1",
+        "G064-W2",
+        "G064-W3",
+        "G064-W4"
       ]
     }
   ]

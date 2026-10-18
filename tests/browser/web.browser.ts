@@ -1803,18 +1803,14 @@ test("G054-UG1 upgrading one installation first says the versions, what runs and
   assert.deepEqual(errors, []);
 });
 
-test("G054-CA1 the capability page opens from the sidebar and from a Harness's details, shows every kind as an entry × Harness matrix, and expands an entry's warnings", { timeout: 120000 }, async t => {
-  const fixture = await launchFixture(false); let browser: Browser | null = null;
-  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
-  browser = await chromium.launch({ headless: true });
-  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
-  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+/** The capability view the page tests show: four Harnesses, a skill of each kind of visibility, and one unreadable file. */
+function capabilityView() {
   const all = { skill: "read", mcp: "read", instructions: "read", subagent: "read", command: "read", hook: "read", plugin: "read" };
   const view = { checkedAt: "2026-10-18T09:00:00.000Z", truncated: false,
-    harnesses: [{ harnessId: "claude", name: "Claude Code", version: "2.1.302", table: "verified", kinds: all, notes: ["自定义命令已并入技能，同名时技能优先。"] },
-      { harnessId: "codex", name: "Codex", version: "0.162.1", table: "verified", kinds: all, notes: [] },
-      { harnessId: "cursor", name: "Cursor", version: "2026.10.01-e373342", table: "unverified", kinds: { ...all, instructions: "invisible", command: "unsupported", plugin: "invisible" }, notes: ["Cursor 的用户规则保存在应用设置里，不在磁盘上。"] },
-      { harnessId: "hermes", name: "Hermes Agent", version: "0.12.0", table: "verified", kinds: { ...all, instructions: "unsupported", subagent: "unsupported", command: "unsupported" }, notes: ["Hermes 0.12 不读 ~/.agents/skills。"] }],
+    harnesses: [{ harnessId: "claude", name: "Claude Code", version: "2.1.302", table: "verified", kinds: all, skillSwitch: "file", notes: ["自定义命令已并入技能，同名时技能优先。"] },
+      { harnessId: "codex", name: "Codex", version: "0.162.1", table: "verified", kinds: all, skillSwitch: "file", notes: [] },
+      { harnessId: "cursor", name: "Cursor", version: "2026.10.01-e373342", table: "unverified", kinds: { ...all, instructions: "invisible", command: "unsupported", plugin: "invisible" }, skillSwitch: null, notes: ["Cursor 的用户规则保存在应用设置里，不在磁盘上。"] },
+      { harnessId: "hermes", name: "Hermes Agent", version: "0.12.0", table: "verified", kinds: { ...all, instructions: "unsupported", subagent: "unsupported", command: "unsupported" }, skillSwitch: "file", notes: ["Hermes 0.12 不读 ~/.agents/skills。"] }],
     entries: [
       { kind: "skill", key: "skill:alpha", name: "alpha", description: "Shared alpha skill", owner: "skills-cli", source: "https://github.com/owner/repo.git", location: "~/.agents/skills/alpha",
         edges: [{ harnessId: "claude", mechanism: "linked", status: "active", via: "~/.claude/skills/alpha", reason: null }, { harnessId: "codex", mechanism: "native-shared", status: "active", via: "~/.agents/skills/alpha", reason: null },
@@ -1838,6 +1834,16 @@ test("G054-CA1 the capability page opens from the sidebar and from a Harness's d
       { kind: "plugin", key: "plugin:claude:tool@market", name: "tool@market", description: null, owner: "user", source: null, location: "~/.claude/plugins/installed_plugins.json",
         edges: [{ harnessId: "claude", mechanism: "config", status: "active", via: "~/.claude/plugins/installed_plugins.json", reason: null, facts: { kind: "plugin", version: "1.2.0", enabled: true } }], warnings: [], facts: { kind: "plugin", version: "1.2.0", enabled: true } }],
     unreadable: [{ harnessId: "codex", file: "~/.codex/config.toml", reason: "无法解析（TomlError）" }] };
+  return view;
+}
+
+test("G054-CA1 the capability page opens from the sidebar and from a Harness's details, shows every kind as an entry × Harness matrix, and expands an entry's warnings", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  const view = capabilityView();
   let requests = 0;
   await page.route("**/api/v1/capabilities", route => { requests++; return route.fulfill({ json: view }); });
   const ref = "a".repeat(64), shaped = (harness: { id: string; installations: unknown[]; unofficial: unknown }) => harness.id === "claude" ? { ...harness, installed: true, unofficial: null, installations: [
@@ -1895,5 +1901,98 @@ test("G054-CA1 the capability page opens from the sidebar and from a Harness's d
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   assert.ok(requests >= 2, "the view is read each time the page opens");
+  assert.deepEqual(errors, []);
+});
+
+test("G054-CA2 turning a skill off shows the file and the exact change first, sends exactly the confirmed check, and the result can be restored", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  const fingerprint = "f".repeat(64), restoreFingerprint = "e".repeat(64), backupId = "11111111-2222-4333-8444-555555555555", at = "2026-10-18T09:30:00.000Z";
+  const diff = "--- a/~/.claude/settings.json\n+++ b/~/.claude/settings.json\n@@ -2,5 +2,5 @@\n   \"model\": \"claude-opus-5-5\",\n   \"skillOverrides\": {\n-    \"alpha\": \"user-invocable-only\"\n+    \"alpha\": \"off\"\n   },\n";
+  const checks: URLSearchParams[] = [], posted: Record<string, unknown>[] = [], restores: Record<string, unknown>[] = [];
+  let history = { changes: [] as unknown[], backups: [] as unknown[] };
+  const change = { id: "c-1", kind: "skill-switch", harnessId: "claude", subject: "alpha", file: "~/.claude/settings.json", status: "applied", diff, backupId, error: null, notes: ["Claude Code 会立即读到改动。"], at };
+  // OpenClaw too: its switch is its own command, whose rewrite is summarized first.
+  const view = capabilityView(), openclawKinds = { skill: "read", mcp: "read", instructions: "read", subagent: "unsupported", command: "unsupported", hook: "read", plugin: "read" };
+  view.harnesses.push({ harnessId: "openclaw", name: "OpenClaw", version: "2026.3.23-2", table: "verified", kinds: openclawKinds, skillSwitch: "command", notes: [] } as unknown as typeof view.harnesses[number]);
+  (view.entries[0]!.edges as unknown[]).push({ harnessId: "openclaw", mechanism: "native-shared", status: "active", via: "~/.agents/skills/alpha", reason: null });
+  await page.route("**/api/v1/capabilities", route => route.fulfill({ json: view }));
+  await page.route("**/api/v1/capabilities/history", route => route.fulfill({ json: history }));
+  await page.route("**/api/v1/capabilities/skill-switch?**", route => {
+    const query = new URL(route.request().url()).searchParams; checks.push(query);
+    if (query.get("harnessId") === "openclaw") return route.fulfill({ json: { kind: "skill-switch", harnessId: "openclaw", name: "alpha", enabled: false, file: "~/.openclaw/openclaw.json",
+      command: "openclaw config set skills.entries.alpha.enabled false --strict-json", diff: "--- a/~/.openclaw/openclaw.json\n+++ b/~/.openclaw/openclaw.json\n@@ -1,3 +1,9 @@\n-{\n-  // mine\n+{\n+  \"commands\": {}\n",
+      rewrite: { target: "skills.entries.alpha.enabled", before: null, after: "false", added: ["commands", "meta"], removed: [], changed: [], commentLines: 1 }, current: "none",
+      notes: ["正在运行的 OpenClaw Gateway（飞书、微信等频道）不会被 HarnessHub 重启。"], blocked: null, fingerprint: "c".repeat(64), expiresAt: "2026-10-18T09:45:00.000Z" } });
+    if (query.get("harnessId") === "hermes") return route.fulfill({ json: { kind: "skill-switch", harnessId: "hermes", name: "alpha", enabled: false, file: "~/.hermes/config.yaml", command: null, diff: null, rewrite: null, current: "none",
+      notes: [], blocked: "无需修改：它已经在 skills.disabled 里。", fingerprint: "d".repeat(64), expiresAt: "2026-10-18T09:45:00.000Z" } });
+    return route.fulfill({ json: { kind: "skill-switch", harnessId: query.get("harnessId"), name: "alpha", enabled: false, file: query.get("harnessId") === "codex" ? "~/.codex/config.toml" : "~/.claude/settings.json",
+      command: null, diff, rewrite: null, current: "other", notes: ["原来是 user-invocable-only；停用后改成 off，之后在这里启用会改回 user-invocable-only。"], blocked: null, fingerprint, expiresAt: "2026-10-18T09:45:00.000Z" } });
+  });
+  await page.route("**/api/v1/capabilities/changes", async route => {
+    posted.push(route.request().postDataJSON() as Record<string, unknown>);
+    history = { changes: [change], backups: [{ id: backupId, file: "~/.claude/settings.json", createdAt: at, bytes: 120, changeId: "c-1", subject: "alpha" }] };
+    await route.fulfill({ json: change });
+  });
+  await page.route(`**/api/v1/capabilities/backups/${backupId}/restore`, route => route.fulfill({ json: { backupId, file: "~/.claude/settings.json", diff: diff.replace("-    \"alpha\": \"user-invocable-only\"\n+    \"alpha\": \"off\"", "-    \"alpha\": \"off\"\n+    \"alpha\": \"user-invocable-only\""),
+    changedSince: false, notes: ["恢复前会先备份现在的文件。"], fingerprint: restoreFingerprint, expiresAt: "2026-10-18T09:45:00.000Z" } }));
+  await page.route("**/api/v1/capabilities/restores", async route => {
+    restores.push(route.request().postDataJSON() as Record<string, unknown>);
+    await route.fulfill({ json: { id: "c-2", kind: "restore", harnessId: null, subject: "alpha", file: "~/.claude/settings.json", status: "applied", diff: null, backupId: "22222222-2222-4333-8444-555555555555", error: null, notes: ["已恢复到“alpha”之前的样子。"], at } });
+  });
+  await page.goto(fixture.gateway.url); await expect(page.getByRole("button", { name: "新对话", exact: true })).toBeVisible();
+  await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "能力", exact: true }).click();
+  const matrix = page.locator(".capability-matrix");
+  await matrix.locator("tbody tr").filter({ hasText: "alpha" }).first().getByRole("button", { name: /alpha/u }).click();
+  // Each Harness with a switch offers it; Codex switches each copy; Cursor has none.
+  const switches = page.locator(".skill-switches");
+  await expect(switches.getByRole("button")).toHaveText(["在 Claude Code 中停用", "在 Codex 中停用（共享目录）", "在 Codex 中停用（自有目录）", "在 Hermes Agent 中停用", "在 OpenClaw 中停用"]);
+  await switches.getByRole("button", { name: "在 Claude Code 中停用", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "在 Claude Code 中停用 alpha" });
+  for (const text of ["~/.claude/settings.json", "不是 HarnessHub 写的", "原来是 user-invocable-only", "写入前先备份原文件"]) await expect(dialog).toContainText(text);
+  await expect(dialog.locator(".capability-diff .text-red")).toHaveText(["-    \"alpha\": \"user-invocable-only\""]);
+  await expect(dialog.locator(".capability-diff .text-green")).toHaveText(["+    \"alpha\": \"off\""]);
+  assert.deepEqual(Object.fromEntries(checks[0]!), { harnessId: "claude", name: "alpha", enabled: "false" }, "no copy is named for a Harness that switches by name");
+  assert.equal(posted.length, 0, "nothing is sent before the confirmation");
+  await page.screenshot({ path: join(artifact, "skill-switch-confirmation.png"), animations: "disabled" });
+  await dialog.getByRole("button", { name: "停用", exact: true }).click(); await expect(dialog).toBeHidden();
+  const { commandId, ...sent } = posted[0]!;
+  assert.match(String(commandId), /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u); assert.deepEqual(sent, { fingerprint }, "the request is exactly the confirmed check");
+  const result = page.locator(".capability-result");
+  await expect(result).toContainText("已在 Claude Code 中停用 alpha"); await expect(result).toContainText("Claude Code 会立即读到改动。");
+  // The history lists the change and its backup.
+  await page.locator(".capability-history summary").click();
+  await expect(page.locator(".capability-history")).toContainText("技能开关 · alpha"); await expect(page.locator(".capability-history")).toContainText("1 次修改 · 1 份备份");
+  // Codex names the copy it switches; a check that needs no change cannot be confirmed.
+  await switches.getByRole("button", { name: "在 Codex 中停用（共享目录）", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "在 Codex 中停用 alpha" })).toContainText("~/.codex/config.toml");
+  assert.equal(checks.at(-1)?.get("via"), "~/.agents/skills/alpha");
+  await page.getByRole("dialog", { name: "在 Codex 中停用 alpha" }).getByRole("button", { name: "取消", exact: true }).click();
+  await switches.getByRole("button", { name: "在 Hermes Agent 中停用", exact: true }).click();
+  const hermes = page.getByRole("dialog", { name: "在 Hermes Agent 中停用 alpha" });
+  await expect(hermes.locator(".switch-blocked")).toHaveText("无需修改：它已经在 skills.disabled 里。");
+  await expect(hermes.getByRole("button", { name: "停用", exact: true })).toBeDisabled();
+  await hermes.getByRole("button", { name: "取消", exact: true }).click();
+  // A whole-file rewrite shows the target and a summary; the full masked diff only on request, with its limit said.
+  await switches.getByRole("button", { name: "在 OpenClaw 中停用", exact: true }).click();
+  const claw = page.getByRole("dialog", { name: "在 OpenClaw 中停用 alpha" });
+  await expect(claw.locator(".switch-rewrite")).toContainText("skills.entries.alpha.enabled：（没有） → false");
+  await expect(claw.locator(".switch-rewrite")).toContainText("OpenClaw 的命令还会：新增 commands、meta；丢失 1 行注释。");
+  await expect(claw.locator(".capability-diff")).toHaveCount(0);
+  await claw.getByRole("button", { name: "显示完整差异（已打码）", exact: true }).click();
+  await expect(claw.locator(".capability-diff")).toBeVisible(); await expect(claw).toContainText("没有特征的值仍可能显示");
+  await expect(claw).toContainText("openclaw config set skills.entries.alpha.enabled false --strict-json");
+  await claw.getByRole("button", { name: "取消", exact: true }).click();
+  // The result offers the file as it was before; restoring shows its own diff first and sends exactly that check.
+  await result.getByRole("button", { name: "恢复修改前的文件", exact: true }).click();
+  const restore = page.getByRole("dialog", { name: "恢复修改前的文件" });
+  await expect(restore.locator(".capability-diff .text-green")).toHaveText(["+    \"alpha\": \"user-invocable-only\""]);
+  await restore.getByRole("button", { name: "恢复", exact: true }).click(); await expect(restore).toBeHidden();
+  const { commandId: restoreCommand, ...restored } = restores[0]!;
+  assert.match(String(restoreCommand), /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u); assert.deepEqual(restored, { fingerprint: restoreFingerprint });
+  await expect(page.locator(".capability-result")).toContainText("已恢复 ~/.claude/settings.json");
   assert.deepEqual(errors, []);
 });

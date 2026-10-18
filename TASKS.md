@@ -1754,7 +1754,7 @@
 - 不提前展示新Harness已生效
 - 可操作且不持有独立业务状态
 
-场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01, G054-NC1, G054-NC2, G054-NC3, G054-NC4, G054-NC5, G054-NC6, G054-NC7, G054-NC8, G054-NC9, G054-NC10, G054-NC11, G054-NC12, G054-NC13, G054-NC14, G054-NC15, G054-FR1, G054-FR2, G054-FR3, G054-FR4, G054-FR5, G054-FR6, G054-FR7, G054-FR8, G054-UP1, G054-UP2, G054-OC1, G054-UN1, G054-IN1, G054-UG1, G054-CA1。
+场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01, G054-NC1, G054-NC2, G054-NC3, G054-NC4, G054-NC5, G054-NC6, G054-NC7, G054-NC8, G054-NC9, G054-NC10, G054-NC11, G054-NC12, G054-NC13, G054-NC14, G054-NC15, G054-FR1, G054-FR2, G054-FR3, G054-FR4, G054-FR5, G054-FR6, G054-FR7, G054-FR8, G054-UP1, G054-UP2, G054-OC1, G054-UN1, G054-IN1, G054-UG1, G054-CA1, G054-CA2。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -2011,12 +2011,22 @@
 - tests/unit/capability-readers.test.ts
 - tests/integration/capabilities.test.ts
 - tests/fixtures/capability-home.ts
+- src/infrastructure/capabilities/edits.ts
+- src/infrastructure/capabilities/files.ts
+- src/infrastructure/capabilities/store.ts
+- src/infrastructure/capabilities/switches.ts
+- src/infrastructure/capabilities/changes.ts
+- src/infrastructure/capabilities/masking.ts
+- web/src/components/CapabilityChangeDialog.tsx
+- tests/unit/capability-edits.test.ts
+- tests/integration/capability-changes.test.ts
+- tests/real/openclaw-skill-switch.real.ts
 
 验收：
 - 统一视图的数量与本机统计一致
 - 页面与日志不含密钥值与家目录绝对路径
 - 每次写入先预览、经确认，只认领自己写入的条目
 
-场景：G064-R1, G064-R2, G064-R3, G064-R4, G064-R5。
+场景：G064-R1, G064-R2, G064-R3, G064-R4, G064-R5, G064-W1, G064-W2, G064-W3, G064-W4。
 
 禁止范围：不改项目级文件；不改模型、Provider 与登录配置；不运行会启动或连接 MCP 服务器的命令；OpenClaw 的 MCP 与插件装卸推迟到升级之后。
