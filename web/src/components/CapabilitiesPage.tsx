@@ -1,12 +1,12 @@
 import { ChevronDown, ChevronRight, Eye, History, RefreshCw, RotateCcw, Search } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { CAPABILITY_KINDS, type CapabilitiesView, type CapabilityChangeView, type CapabilityEdge, type CapabilityEntry, type CapabilityFacts, type CapabilityHistory, type CapabilityKind,
-  type CapabilityMechanism, type CapabilityOwner, type CapabilityStatus, type CapabilityWarning, type HarnessCapabilityReads } from "../../../src/contracts/capabilities.js";
+import { CAPABILITY_KINDS, type CapabilitiesView, type CapabilityChangeView, type CapabilityDrift, type CapabilityDriftState, type CapabilityEdge, type CapabilityEntry, type CapabilityFacts, type CapabilityHistory,
+  type CapabilityKind, type CapabilityMechanism, type CapabilityOwner, type CapabilityStatus, type CapabilityWarning, type HarnessCapabilityReads } from "../../../src/contracts/capabilities.js";
 import { errorMessage, type GatewayApi } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { Badge, EmptyState, Notice, Spinner, Tip } from "../ui/primitives.js";
 import { BrandIcon } from "./BrandIcon.js";
-import { RestoreDialog, SkillSwitchDialog, type SwitchRequest } from "./CapabilityChangeDialog.js";
+import { ChangeDialog, RestoreDialog, type ChangeRequest, type SwitchRequest } from "./CapabilityChangeDialog.js";
 import { PageShell } from "./PageShell.js";
 
 export const KIND_LABEL: Readonly<Record<CapabilityKind, string>> = { skill: "技能", mcp: "MCP", instructions: "指令", subagent: "子 Agent", command: "命令", hook: "Hooks", plugin: "插件" };
@@ -15,6 +15,8 @@ const MECHANISM_LABEL: Readonly<Record<CapabilityMechanism, string>> = { "native
 const STATUS_LABEL: Readonly<Record<CapabilityStatus, string>> = { active: "生效", disabled: "已停用", shadowed: "被覆盖", duplicate: "重复", rejected: "被跳过", "broken-link": "链接失效", invalid: "无效" };
 const OWNER_LABEL: Readonly<Record<CapabilityOwner, string>> = { user: "用户", harnesshub: "HarnessHub", "skills-cli": "vercel skills", "cc-switch": "cc-switch", magpie: "Magpie", clawhub: "ClawHub",
   "hermes-hub": "Hermes Hub", plugin: "插件", bundled: "随程序安装", synced: "账户同步" };
+const CHANGE_LABEL: Readonly<Record<CapabilityChangeView["kind"], string>> = { "skill-switch": "技能开关", "shared-dir": "共享目录", "skill-link": "放置技能", "link-cleanup": "清理链接", "link-undo": "撤销", restore: "恢复" };
+const DRIFT_LABEL: Readonly<Record<CapabilityDriftState, string>> = { removed: "已被外部移除", changed: "已被外部改动", unreadable: "文件无法读取，无法核对" };
 const WARNING_LABEL: Readonly<Record<CapabilityWarning["kind"], string>> = { duplicate: "重复", shadow: "遮蔽", cross: "交叉", invisible: "不可见", literal: "明文", redundant: "多余" };
 const STATUS_TONE: Readonly<Record<CapabilityStatus, string>> = { active: "text-green", disabled: "text-fg-3", shadowed: "text-fg-3", duplicate: "text-amber", rejected: "text-fg-3", "broken-link": "text-red", invalid: "text-amber" };
 
@@ -60,7 +62,20 @@ function SkillSwitches({ entry, harnesses, onSwitch }: { readonly entry: Capabil
     onClick={() => onSwitch({ harnessId: button.harness.harnessId, harnessName: button.harness.name, name: entry.name, enabled: button.off, via: button.via })}>
     {(button.off ? "在 " + button.harness.name + " 中启用" : "在 " + button.harness.name + " 中停用") + (button.which ? "（" + button.which + "）" : "")}</button>)}</div>;
 }
-function EntryDetail({ entry, harnesses, onSwitch }: { readonly entry: CapabilityEntry; readonly harnesses: readonly HarnessCapabilityReads[]; readonly onSwitch: (request: SwitchRequest) => void }) {
+/** Placing a shared skill in Claude Code by a link of its own, or removing a link HarnessHub placed there. */
+function ClaudePlacement({ api, entry, harnesses, onChange }: { readonly api: GatewayApi; readonly entry: CapabilityEntry; readonly harnesses: readonly HarnessCapabilityReads[]; readonly onChange: (request: ChangeRequest) => void }) {
+  const claude = harnesses.find(harness => harness.harnessId === "claude" && harness.shared.placeable === "skill-link");
+  if (!claude || !entry.shared) return null;
+  const sees = entry.edges.some(edge => edge.harnessId === "claude" && edge.status !== "broken-link" && edge.status !== "invalid");
+  const placed = entry.shared.placed.find(path => path.startsWith("~/.claude/") || path.includes("/.claude/"));
+  if (placed) return <button type="button" className="btn btn-sm" onClick={() => onChange({ title: "从 " + claude.name + " 移除 " + entry.name, verb: "移除", on: null, done: "已从 " + claude.name + " 移除 " + entry.name,
+    load: () => api.checkSkillLink("claude", entry.name, false) })}>从 {claude.name} 移除（HarnessHub 放置的）</button>;
+  if (sees) return null;
+  return <button type="button" className="btn btn-sm" onClick={() => onChange({ title: "把 " + entry.name + " 放到 " + claude.name, verb: "放置", on: null, done: "已把 " + entry.name + " 放到 " + claude.name,
+    load: () => api.checkSkillLink("claude", entry.name, true) })}>放到 {claude.name}</button>;
+}
+function EntryDetail({ api, entry, harnesses, onSwitch, onChange }: { readonly api: GatewayApi; readonly entry: CapabilityEntry; readonly harnesses: readonly HarnessCapabilityReads[];
+  readonly onSwitch: (request: SwitchRequest) => void; readonly onChange: (request: ChangeRequest) => void }) {
   const name = (id: string | null) => id === null ? null : harnesses.find(harness => harness.harnessId === id)?.name ?? id;
   return <div className="capability-detail flex flex-col gap-2 px-1 py-1 text-[12.5px]">
     {entry.description ? <p className="m-0 text-fg-2">{entry.description}</p> : null}
@@ -74,17 +89,59 @@ function EntryDetail({ entry, harnesses, onSwitch }: { readonly entry: Capabilit
       <code className="text-[11.5px] break-all text-fg-2">{edge.via}</code>{edge.reason ? <span className="w-full text-fg-2">{edge.reason}</span> : null}
       {edge.facts && entry.kind === "mcp" ? <span className="w-full text-fg-3">{factsText(edge.facts)}</span> : null}</li>)}</ul>
     {entry.warnings.length ? <ul className="m-0 flex list-none flex-col gap-1 p-0">{entry.warnings.map((warning, index) => <li key={index} className="flex items-start gap-2"><Badge tone={warning.kind === "literal" ? "red" : "amber"}>{WARNING_LABEL[warning.kind]}</Badge><span className="text-fg-2">{warning.text}</span></li>)}</ul> : null}
-    {entry.kind === "skill" ? <SkillSwitches entry={entry} harnesses={harnesses} onSwitch={onSwitch}/> : null}
+    {entry.kind === "skill" ? <div className="flex flex-wrap gap-1.5"><SkillSwitches entry={entry} harnesses={harnesses} onSwitch={onSwitch}/><ClaudePlacement api={api} entry={entry} harnesses={harnesses} onChange={onChange}/></div> : null}
   </div>;
 }
+const READS: Readonly<Record<HarnessCapabilityReads["shared"]["reads"], string>> = { native: "自己读取", "external-dir": "经 skills.external_dirs 读取", links: "经自己目录里的链接", no: "不读取" };
+/**
+ * How each Harness reads the shared `~/.agents/skills`, with what HarnessHub can change: make Hermes read it, place single
+ * skills in Claude Code, and remove the links a Harness no longer needs.
+ */
+function SharedDirectory({ api, harnesses, onChange }: { readonly api: GatewayApi; readonly harnesses: readonly HarnessCapabilityReads[]; readonly onChange: (request: ChangeRequest) => void }) {
+  return <section className="shared-directory rounded-xl border border-line bg-surface px-4 py-3 text-[12.5px]" aria-label="共享技能目录">
+    <div className="flex flex-wrap items-baseline justify-between gap-2"><strong className="text-[13px] font-semibold">共享技能目录 <code className="text-[12px] font-normal">~/.agents/skills</code></strong>
+      <span className="text-fg-3">技能放在这里一份，各 Harness 按自己的方式读取。</span></div>
+    <ul className="m-0 mt-2 flex list-none flex-col gap-1 p-0">{harnesses.map(harness => <li key={harness.harnessId} className="flex flex-wrap items-center gap-x-2 gap-y-1">
+      <span className="min-w-[110px] font-medium">{harness.name}</span><span className="text-fg-2">{READS[harness.shared.reads]}{harness.shared.links ? "；自己目录里有 " + harness.shared.links + " 个指向它的链接" + (harness.shared.redundant ? "，其中 " + harness.shared.redundant + " 个多余" : "") : ""}</span>
+      {harness.shared.placeable === "shared-dir" ? harness.shared.reads === "external-dir"
+        ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => onChange({ title: "让 " + harness.name + " 停止读取共享目录", verb: "停止读取", on: false, done: harness.name + " 已停止读取共享目录", load: () => api.checkSharedDir(harness.harnessId, false) })}>停止读取</button>
+        : <button type="button" className="btn btn-sm" onClick={() => onChange({ title: "让 " + harness.name + " 读取共享目录", verb: "读取", on: true, done: harness.name + " 已读取共享目录", load: () => api.checkSharedDir(harness.harnessId, true) })}>让 {harness.name} 读取共享目录</button>
+        : harness.shared.placeable === "skill-link" ? <span className="text-fg-3">（逐个放置：展开技能后点“放到 {harness.name}”）</span> : null}
+      {harness.shared.redundant && (harness.harnessId === "hermes" || harness.harnessId === "openclaw") ? <button type="button" className="btn btn-ghost btn-sm"
+        onClick={() => onChange({ title: "清理 " + harness.name + " 的多余链接", verb: "清理", on: null, done: "已清理 " + harness.name + " 的多余链接", load: () => api.checkLinkCleanup(harness.harnessId) })}>清理 {harness.shared.redundant} 个多余链接</button> : null}
+    </li>)}</ul>
+  </section>;
+}
+/**
+ * What HarnessHub wrote that is no longer as it wrote it (ADR-045 §10). Nothing is put back by itself: each can be
+ * re-applied through its usual check, or no longer tracked, which changes no file.
+ */
+function DriftNotice({ api, drift, harnesses, onChange, onForgotten }: { readonly api: GatewayApi; readonly drift: readonly CapabilityDrift[]; readonly harnesses: readonly HarnessCapabilityReads[];
+  readonly onChange: (request: ChangeRequest) => void; readonly onForgotten: () => void }) {
+  const [busy, setBusy] = useState<string | null>(null), [failure, setFailure] = useState<string | null>(null);
+  const forget = (id: string) => { setBusy(id); setFailure(null); api.forgetDrift(id).then(() => { setBusy(null); onForgotten(); }, error => { setBusy(null); setFailure(errorMessage(error)); }); };
+  return <Notice tone="amber" className="capability-drift" title={"HarnessHub 写过的 " + drift.length + " 项设置已不在原处"}>
+    <p className="m-0">多半是 Harness 自己重写了配置文件，或在别处改过。HarnessHub 不会自动改回：可以重新应用（先显示改动），或不再跟踪（文件不变）。</p>
+    <ul className="m-0 mt-1.5 flex list-none flex-col gap-1 p-0">{drift.map(item => <li key={item.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-fg">
+      <strong className="font-medium">{harnesses.find(harness => harness.harnessId === item.harnessId)?.name ?? item.harnessId} · {CHANGE_LABEL[item.kind]} · {item.subject}</strong>
+      <Badge tone="amber">{DRIFT_LABEL[item.state]}</Badge><code className="text-[11.5px] break-all text-fg-2">{item.file}</code>
+      <button type="button" className="btn btn-sm" disabled={busy !== null} onClick={() => onChange({ title: "重新应用：" + item.subject, verb: "重新应用", on: item.kind === "skill-switch" ? false : item.kind === "shared-dir" ? true : null,
+        done: "已重新应用：" + item.subject, load: () => api.checkReapply(item.id) })}>重新应用</button>
+      <button type="button" className="btn btn-ghost btn-sm" disabled={busy !== null} title="HarnessHub 不再把它算作自己写的；文件不变" onClick={() => forget(item.id)}>{busy === item.id ? <Spinner size={13}/> : null}不再跟踪</button>
+    </li>)}</ul>
+    {failure ? <p className="m-0 mt-1 text-red">{failure}</p> : null}
+  </Notice>;
+}
 /** HarnessHub's own changes to the Harnesses' files, newest first, and the backups it keeps (the newest ten per file). */
-function ChangeHistory({ history, onRestore }: { readonly history: CapabilityHistory; readonly onRestore: (backupId: string) => void }) {
+function ChangeHistory({ api, history, onRestore, onChange }: { readonly api: GatewayApi; readonly history: CapabilityHistory; readonly onRestore: (backupId: string) => void; readonly onChange: (request: ChangeRequest) => void }) {
   return <details className="capability-history rounded-xl border border-line bg-surface px-4 py-3 text-[12.5px]"><summary className="cursor-pointer font-medium"><History size={13} className="mr-1.5 inline" aria-hidden="true"/>修改与备份
     <span className="ml-1.5 font-normal text-fg-3">{history.changes.length} 次修改 · {history.backups.length} 份备份</span></summary>
     {history.changes.length === 0 ? <p className="m-0 mt-2 text-fg-3">HarnessHub 还没有改过任何 Harness 的配置。</p> : <ul className="m-0 mt-2 flex list-none flex-col gap-1.5 p-0">{history.changes.map(change =>
       <li key={change.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-lg border border-line px-2.5 py-1.5">
-        <span className="text-fg-3">{new Date(change.at).toLocaleString()}</span><strong className="font-medium">{change.kind === "restore" ? "恢复" : "技能开关"} · {change.subject}</strong>
+        <span className="text-fg-3">{new Date(change.at).toLocaleString()}</span><strong className="font-medium">{CHANGE_LABEL[change.kind]} · {change.subject}</strong>
         <Badge tone={change.status === "applied" ? "green" : "red"}>{change.status === "applied" ? "已完成" : "失败"}</Badge><code className="text-[11.5px] break-all text-fg-2">{change.file}</code>
+        {change.links?.length ? <span className="text-fg-3">{change.links.filter(link => link.action === "create").length ? "新建 " + change.links.filter(link => link.action === "create").length + " 个链接 " : ""}{change.links.filter(link => link.action === "remove").length ? "删除 " + change.links.filter(link => link.action === "remove").length + " 个链接" : ""}</span> : null}
+        {change.links?.length ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => onChange({ title: "撤销：" + change.subject, verb: "撤销", on: null, done: "已撤销：" + change.subject, load: () => api.checkUndo(change.id) })}><RotateCcw size={13}/>撤销</button> : null}
         {change.error ? <span className="w-full text-red">{change.error.message}</span> : null}</li>)}</ul>}
     {history.backups.length ? <><p className="m-0 mt-3 font-medium">备份</p><ul className="m-0 mt-1 flex list-none flex-col gap-1.5 p-0">{history.backups.map(backup =>
       <li key={backup.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5"><code className="text-[11.5px] break-all">{backup.file}</code><span className="text-fg-3">{new Date(backup.createdAt).toLocaleString()} · {backup.subject} 之前</span>
@@ -102,7 +159,10 @@ export function CapabilitiesPage({ api, initialHarness, onMenu, sidebarHidden, o
   const [view, setView] = useState<CapabilitiesView | null>(null), [loading, setLoading] = useState(true), [problem, setProblem] = useState<string | null>(null);
   const [kind, setKind] = useState<CapabilityKind>("skill"), [harness, setHarness] = useState<string | null>(initialHarness), [query, setQuery] = useState(""), [onlyWarnings, setOnlyWarnings] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
-  const [switching, setSwitching] = useState<SwitchRequest | null>(null), [restoring, setRestoring] = useState<string | null>(null), [history, setHistory] = useState<CapabilityHistory | null>(null);
+  const [changing, setChanging] = useState<ChangeRequest | null>(null), [restoring, setRestoring] = useState<string | null>(null), [history, setHistory] = useState<CapabilityHistory | null>(null);
+  const change = (request: ChangeRequest) => setChanging(request);
+  const switchSkill = (request: SwitchRequest) => change({ title: "在 " + request.harnessName + " 中" + (request.enabled ? "启用 " : "停用 ") + request.name, verb: request.enabled ? "启用" : "停用", on: request.enabled,
+    done: "已在 " + request.harnessName + " 中" + (request.enabled ? "启用 " : "停用 ") + request.name, load: () => api.checkSkillSwitch(request.harnessId, request.name, request.enabled, request.via) });
   const [result, setResult] = useState<{ readonly view: CapabilityChangeView; readonly title: string } | null>(null);
   const load = useCallback((signal?: AbortSignal) => {
     setLoading(true); setProblem(null);
@@ -110,7 +170,7 @@ export function CapabilitiesPage({ api, initialHarness, onMenu, sidebarHidden, o
   }, [api]);
   const loadHistory = useCallback((signal?: AbortSignal) => { api.capabilityHistory(signal).then(setHistory, () => { if (!signal?.aborted) setHistory(null); }); }, [api]);
   useEffect(() => { const controller = new AbortController(); load(controller.signal); loadHistory(controller.signal); return () => controller.abort(); }, [load, loadHistory]);
-  const finished = (view: CapabilityChangeView, title: string) => { setSwitching(null); setRestoring(null); setResult({ view, title }); load(); loadHistory(); };
+  const finished = (view: CapabilityChangeView, title: string) => { setChanging(null); setRestoring(null); setResult({ view, title }); load(); loadHistory(); };
   useEffect(() => setHarness(initialHarness), [initialHarness]);
   const columns = useMemo(() => view?.harnesses.filter(item => harness === null || item.harnessId === harness) ?? [], [view, harness]);
   const counts = useMemo(() => Object.fromEntries(CAPABILITY_KINDS.map(item => [item, view?.entries.filter(entry => entry.kind === item && (harness === null || entry.edges.some(edge => edge.harnessId === harness))).length ?? 0])) as Record<CapabilityKind, number>, [view, harness]);
@@ -128,6 +188,7 @@ export function CapabilitiesPage({ api, initialHarness, onMenu, sidebarHidden, o
     {result ? <Notice tone={result.view.status === "applied" ? "green" : "red"} className="capability-result" onDismiss={() => setResult(null)} title={result.view.status === "applied" ? result.title : result.title + "没有完成"}
       action={result.view.backupId ? <button type="button" className="btn btn-sm" onClick={() => setRestoring(result.view.backupId)}><RotateCcw size={13}/>恢复修改前的文件</button> : null}>
       {result.view.error ? result.view.error.message + "。" : null}{result.view.notes.join(" ")}</Notice> : null}
+    {view && history?.drift.length ? <DriftNotice api={api} drift={history.drift} harnesses={view.harnesses} onChange={change} onForgotten={() => loadHistory()}/> : null}
     {view?.truncated ? <Notice tone="amber">条目太多，只显示前一部分。</Notice> : null}
     {view && view.unreadable.length ? <Notice tone="amber" title="有文件无法读取，其中的内容没有显示">
       <ul className="m-0 mt-1 flex list-none flex-col gap-0.5 p-0">{view.unreadable.map((item, index) => <li key={index}><code className="text-[12px]">{item.file}</code>：{item.reason}</li>)}</ul></Notice> : null}
@@ -143,7 +204,8 @@ export function CapabilitiesPage({ api, initialHarness, onMenu, sidebarHidden, o
           <option value="">全部 Harness</option>{view.harnesses.map(item => <option key={item.harnessId} value={item.harnessId}>{item.name}</option>)}</select>
         <label className="flex items-center gap-1.5 text-[13px] text-fg-2"><input type="checkbox" checked={onlyWarnings} onChange={event => setOnlyWarnings(event.target.checked)}/>只看有提示或未生效的</label>
       </div>
-      <div role="tabpanel" id="capability-tabpanel" aria-labelledby={"capability-tab-" + kind}>
+      <div role="tabpanel" id="capability-tabpanel" aria-labelledby={"capability-tab-" + kind} className="flex flex-col gap-3">
+      {kind === "skill" ? <SharedDirectory api={api} harnesses={view.harnesses.filter(item => harness === null || item.harnessId === harness)} onChange={change}/> : null}
       {rows.length ? <div className="capability-matrix overflow-x-auto rounded-xl border border-line bg-surface shadow-sm">
         <table className="w-full border-collapse text-left text-[12.5px]">
           <thead><tr className="border-b border-line">
@@ -160,7 +222,7 @@ export function CapabilitiesPage({ api, initialHarness, onMenu, sidebarHidden, o
                   <span className="min-w-0"><span className="block font-medium break-all">{entry.name}</span>
                     <span className="mt-0.5 flex flex-wrap items-center gap-1"><span className="text-[11.5px] text-fg-3">{OWNER_LABEL[entry.owner]}</span>{warnings ? <Badge tone="amber">{warnings} 条提示</Badge> : null}</span></span></button></th>
               {columns.map(item => <td key={item.harnessId} className="px-2 py-2"><Cell edges={entry.edges.filter(edge => edge.harnessId === item.harnessId)} support={item.kinds[kind]}/></td>)}
-            </tr>{expanded ? <tr className="border-b border-line bg-subtle"><td colSpan={columns.length + 1} className="px-3 pb-3"><EntryDetail entry={entry} harnesses={view.harnesses} onSwitch={setSwitching}/></td></tr> : null}</Fragment>; })}</tbody>
+            </tr>{expanded ? <tr className="border-b border-line bg-subtle"><td colSpan={columns.length + 1} className="px-3 pb-3"><EntryDetail api={api} entry={entry} harnesses={view.harnesses} onSwitch={switchSkill} onChange={change}/></td></tr> : null}</Fragment>; })}</tbody>
         </table></div>
         : <EmptyState title={query || onlyWarnings ? "没有匹配的条目" : "这一类还没有条目"}>{columns.some(item => item.kinds[kind] !== "read") ? "部分 Harness 没有这类能力，或保存在磁盘之外。" : "各 Harness 的用户级配置里没有这一类。"}</EmptyState>}
       </div>
@@ -169,10 +231,9 @@ export function CapabilitiesPage({ api, initialHarness, onMenu, sidebarHidden, o
           <span className="ml-1.5 text-fg-3">{item.version ? "v" + item.version : "版本未知"} · {item.table === "verified" ? "规则已按这个版本核实" : "规则未按这个版本核实"}</span>
           <ul className="m-0 mt-0.5 list-disc pl-5 text-fg-2">{item.notes.map((note, index) => <li key={index}>{note}</li>)}</ul></li>)}</ul>
         <p className="m-0 mt-2 text-fg-3">读取时间 {new Date(view.checkedAt).toLocaleString()}。只显示名字与数量，不显示任何环境变量、请求头或参数的值。</p></details>
-      {history ? <ChangeHistory history={history} onRestore={setRestoring}/> : null}
+      {history ? <ChangeHistory api={api} history={history} onRestore={setRestoring} onChange={change}/> : null}
     </>}
-    <SkillSwitchDialog api={api} request={switching} onClose={() => setSwitching(null)}
-      onDone={change => finished(change, switching ? (switching.enabled ? "已在 " + switching.harnessName + " 中启用 " : "已在 " + switching.harnessName + " 中停用 ") + switching.name : "已修改")}/>
+    <ChangeDialog api={api} request={changing} onClose={() => setChanging(null)} onDone={finished}/>
     <RestoreDialog api={api} backupId={restoring} onClose={() => setRestoring(null)} onDone={change => finished(change, "已恢复 " + change.file)}/>
   </PageShell>;
 }

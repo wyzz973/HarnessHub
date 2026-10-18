@@ -55,6 +55,9 @@ export async function capabilityHome(home: string, outside: string): Promise<voi
   await file(join(shared, "Mismatch", "SKILL.md"), skill("mismatch-name", "Its name differs from its folder"));
   await file(join(shared, ".hidden", "SKILL.md"), skill("hidden", "Never read"));
   await file(join(shared, "nested", "inner", "SKILL.md"), skill("inner", "Only a recursive reader finds it"));
+  // A skill bundled inside another skill's folder, and a SKILL.md inside a .git folder that every reader skips.
+  await file(join(shared, "beta", "parts", "beta-part", "SKILL.md"), skill("beta-part", "A part of beta"));
+  await file(join(shared, "alpha", ".git", "x", "SKILL.md"), skill("in-git", "Inside .git"));
   await file(join(outside, "outside", "SKILL.md"), skill("outside", "A development link to a folder elsewhere"));
   await link(join(outside, "outside"), join(shared, "outside"));
   await link(join(home, "gone"), join(shared, "broken"));

@@ -11,11 +11,25 @@ export interface SkillRootSpec {
   readonly containment: boolean;
   /** How deep skill directories may sit below the root: 1 for `<root>/<name>/SKILL.md`, more for category folders. */
   readonly depth: number;
-  /** Entries directly under the root that belong to another root of the same table. Hidden entries are always skipped. */
+  /** Entries directly under the root that belong to another root of the same table. */
   readonly exclude?: readonly string[];
+  /**
+   * How the Harness finds skills below the root. Without it, a folder holding SKILL.md is one skill and nothing below it
+   * is read, and hidden entries are skipped. `files`: every SKILL.md at any depth is one, inside skill folders too
+   * (Hermes's `os.walk(followlinks=True)`, OpenCode's glob for SKILL.md at any depth), skipping the names in `skip` and, unless
+   * `hidden`, every hidden folder.
+   */
+  readonly find?: SkillFind;
 }
+export interface SkillFind { readonly mode: "files"; readonly hidden: boolean; readonly skip: readonly string[] }
+/** Hermes 0.12 `agent/skill_utils.py` `iter_skill_index_files`: every SKILL.md, links followed, only these folders skipped. */
+const HERMES_FIND: SkillFind = { mode: "files", hidden: true, skip: [".git", ".github", ".hub", ".archive"] };
+/** OpenCode 1.18.35 `skill/index.ts`: its glob for SKILL.md at any depth, which does not match hidden folders. */
+const OPENCODE_FIND: SkillFind = { mode: "files", hidden: false, skip: [] };
 /** A list of skill directories a Harness's configuration adds, read from `path` in `file`, with ~ expanded. */
-export interface ExternalSkillDirs { readonly file: string; readonly format: "yaml" | "json5"; readonly path: readonly string[]; readonly precedence: number; readonly containment: boolean; readonly depth: number }
+/** `relativeTo`: where a relative entry is resolved (Hermes: its home); without it, relative entries are not read. */
+export interface ExternalSkillDirs { readonly file: string; readonly format: "yaml" | "json5"; readonly path: readonly string[]; readonly precedence: number; readonly containment: boolean; readonly depth: number;
+  readonly find?: SkillFind; readonly relativeTo?: string }
 /** Where a Harness keeps its own switch for a skill, read to show `disabled` (writing it is a later step of ADR-045). */
 export type SkillSwitchSource =
   | { readonly kind: "claude-skill-overrides"; readonly file: string }
@@ -144,9 +158,9 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
     {
       harnessId: "opencode", verified: ">=1.18.0 <1.19.0",
       evidence: ["anomalyco/opencode v1.18.35 packages/opencode/src/skill/index.ts（发现 .claude 与 .agents 的 skills/**/SKILL.md 与配置目录；并发加载，同名后写入者覆盖并警告）", "opencode.ai/docs/rules（全局 AGENTS.md 回退读 ~/.claude/CLAUDE.md）"],
-      skills: { roots: [...(disableClaudeSkills ? [] : [{ role: "compat" as const, path: join(dirs.claude, "skills"), precedence: 1, containment: false, depth: 4 }]),
-        { role: "shared", path: dirs.shared, precedence: 1, containment: false, depth: 4 }, { role: "own", path: join(dirs.opencode, "skills"), precedence: 1, containment: false, depth: 4 },
-        { role: "own", path: join(dirs.opencode, "skill"), precedence: 1, containment: false, depth: 4 }],
+      skills: { roots: [...(disableClaudeSkills ? [] : [{ role: "compat" as const, path: join(dirs.claude, "skills"), precedence: 1, containment: false, depth: 8, find: OPENCODE_FIND }]),
+        { role: "shared", path: dirs.shared, precedence: 1, containment: false, depth: 8, find: OPENCODE_FIND }, { role: "own", path: join(dirs.opencode, "skills"), precedence: 1, containment: false, depth: 8, find: OPENCODE_FIND },
+        { role: "own", path: join(dirs.opencode, "skill"), precedence: 1, containment: false, depth: 8, find: OPENCODE_FIND }],
         duplicates: "last-wins-unordered", requiresDescription: true, nameMustMatchDirectory: false, switch: { kind: "opencode-permission", files: opencodeConfigs } },
       mcp: { style: "opencode", files: opencodeConfigs },
       instructions: { kind: "files", candidates: [{ path: join(dirs.opencode, "AGENTS.md"), role: "own" }, { path: join(dirs.claude, "CLAUDE.md"), role: "compat" }], rule: "first-existing" },
@@ -198,9 +212,9 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
     {
       harnessId: "hermes", verified: ">=0.12.0 <0.13.0",
       evidence: ["本机 hermes-agent a0556b8（v0.12.0）agent/skill_utils.py（$HERMES_HOME/skills 递归，加 skills.external_dirs，本地优先）", "hermes_cli/skills_config.py（skills.disabled、platform_disabled）", "website/docs/reference/mcp-config-reference.md（mcp_servers）"],
-      skills: { roots: [{ role: "own", path: join(hermes, "skills"), precedence: 2, containment: false, depth: 3 }], duplicates: "precedence", requiresDescription: false, nameMustMatchDirectory: false,
+      skills: { roots: [{ role: "own", path: join(hermes, "skills"), precedence: 2, containment: false, depth: 8, find: HERMES_FIND }], duplicates: "precedence", requiresDescription: false, nameMustMatchDirectory: false,
         switch: { kind: "hermes-skills-disabled", file: join(hermes, "config.yaml") },
-        externalDirs: { file: join(hermes, "config.yaml"), format: "yaml", path: ["skills", "external_dirs"], precedence: 1, containment: false, depth: 3 } },
+        externalDirs: { file: join(hermes, "config.yaml"), format: "yaml", path: ["skills", "external_dirs"], precedence: 1, containment: false, depth: 8, find: HERMES_FIND, relativeTo: hermes } },
       mcp: { style: "hermes", file: join(hermes, "config.yaml") },
       instructions: { kind: "unsupported", reason: "Hermes 没有用户级指令文件；SOUL.md 是人格文件，HarnessHub 不写它。" },
       subagents: null, commands: null,

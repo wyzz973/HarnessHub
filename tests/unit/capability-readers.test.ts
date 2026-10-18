@@ -45,7 +45,7 @@ test("G064-R2 skills are seen by each Harness by its read table, and each Harnes
   const { view } = await scanned(t);
   const alpha = entry(view, "skill", "alpha"), beta = entry(view, "skill", "beta");
   assert.equal(alpha.location, "~/.agents/skills/alpha"); assert.equal(alpha.owner, "skills-cli"); assert.equal(alpha.source, "https://github.com/owner/repo.git");
-  assert.deepEqual(alpha.facts, { kind: "skill", files: 2, bytes: alpha.facts?.kind === "skill" ? alpha.facts.bytes : -1 });
+  assert.deepEqual(alpha.facts, { kind: "skill", files: 3, bytes: alpha.facts?.kind === "skill" ? alpha.facts.bytes : -1 }, "SKILL.md, a script and a file under .git");
   // Claude: two links to one folder load once; Claude's user-invocable-only is not "off".
   assert.deepEqual(cells(alpha, "claude"), [["linked", "active", "~/.claude/skills/alpha"], ["linked", "duplicate", "~/.claude/skills/alpha-again"]]);
   // Codex lists its own copy beside the shared one; OpenClaw skips its redundant link; Hermes's own link wins over the external directory.
@@ -69,9 +69,14 @@ test("G064-R2 skills are seen by each Harness by its read table, and each Harnes
   assert.deepEqual(cells(entry(view, "skill", "broken"), "codex"), [["native-shared", "broken-link", "~/.agents/skills/broken"]]);
   assert.deepEqual(cells(entry(view, "skill", "outside"), "openclaw").map(cell => cell[1]), ["rejected"]);
   assert.deepEqual(cells(entry(view, "skill", "outside"), "codex").map(cell => cell[1]), ["active"]);
-  // Only the recursive readers find a nested skill: OpenCode's glob and Hermes's external directory. Hidden folders are never read.
+  // Only the readers that take every SKILL.md find a nested skill: OpenCode's glob and Hermes's walk of its external directory.
+  // Hidden folders are skipped by all but Hermes, whose walk skips only .git, .github, .hub and .archive.
   assert.deepEqual(entry(view, "skill", "inner").edges.map(edge => edge.harnessId), ["opencode", "hermes"]);
-  assert.equal(view.entries.some(item => item.name === "hidden"), false);
+  assert.deepEqual(entry(view, "skill", "hidden").edges.map(edge => edge.harnessId), ["hermes"]);
+  // A skill inside another skill's folder is found by the same two (OpenCode twice: also through Claude's link to beta);
+  // .git is skipped by every reader.
+  assert.deepEqual(entry(view, "skill", "beta-part").edges.map(edge => edge.harnessId), ["opencode", "opencode", "hermes"]);
+  assert.equal(view.entries.some(item => item.name === "in-git"), false);
   // Claude's synced skills, Codex's bundled ones, Hermes's bundled category folder, OpenClaw's workspace and extra directory.
   assert.deepEqual(cells(entry(view, "skill", "zeta"), "claude"), [["synced", "active", "~/.claude/skills/synced/" + SYNCED_BUCKET + "/zeta"]]);
   assert.equal(entry(view, "skill", "zeta").owner, "synced");

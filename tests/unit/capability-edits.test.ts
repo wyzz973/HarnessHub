@@ -7,7 +7,7 @@ import test from "node:test";
 import { CapabilityError, type CapabilityChangeView } from "../../src/contracts/capabilities.js";
 import { appendJsonItem, appendTomlBlock, appendYamlItem, onlyChanged, parsed, removeJsonItem, removeTomlBlock, removeYamlItem, setJson, setTomlKey, tomlBlocks } from "../../src/infrastructure/capabilities/edits.js";
 import { CapabilityStore } from "../../src/infrastructure/capabilities/store.js";
-import { claudeSwitch, codexSwitch, listSwitch, opencodePermission, opencodeSwitch, openclawSwitch, type SwitchContext, type SwitchRequest } from "../../src/infrastructure/capabilities/switches.js";
+import { claudeSwitch, codexSwitch, heldValue, listSwitch, opencodePermission, opencodeSwitch, openclawSwitch, sharedDirPlan, type SwitchContext, type SwitchRequest } from "../../src/infrastructure/capabilities/switches.js";
 import type { LedgerEntry } from "../../src/infrastructure/capabilities/store.js";
 
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value ?? null)).digest("hex");
@@ -131,6 +131,50 @@ test("G064-W2 each Harness's switch plans its own setting, restores what Harness
   assert.ok(clawOn.kind === "command" && clawOn.args.join(" ") === "config unset skills.entries.alpha.enabled" && !clawOn.comments && clawOn.check({ skills: { entries: { alpha: {} } } }));
 });
 
+test("G064-W2 the ledger reads what HarnessHub wrote back from each file as its switch reads it, so a removed or changed value is told from one still in place", () => {
+  const shared = (raw: string) => raw === "~/.agents/skills";
+  const held = (harnessId: string, key: string, text: string) => heldValue(harnessId, key, text, shared);
+  // Claude Code: the override itself, whatever it is now.
+  assert.deepEqual([held("claude", "skillOverrides/alpha", CLAUDE), held("claude", "skillOverrides/beta", CLAUDE)], ["user-invocable-only", undefined]);
+  // Codex: false while any copy at that path is off; the copy's own value once someone turned it back; nothing once its element is gone.
+  const skill = "/u/.agents/skills/beta/SKILL.md";
+  assert.equal(held("codex", "skills.config/" + skill, CODEX), false);
+  assert.equal(held("codex", "skills.config/" + skill, CODEX.replace("enabled = false", "enabled = true")), true);
+  assert.equal(held("codex", "skills.config//u/.agents/skills/alpha/SKILL.md", CODEX), undefined);
+  // Gemini and Hermes: whether the name is in skills.disabled.
+  assert.deepEqual([held("hermes", "skills.disabled/beta", HERMES), held("hermes", "skills.disabled/alpha", HERMES), held("gemini", "skills.disabled/beta", "{ \"skills\": { \"disabled\": [\"beta\"] } }")], [true, undefined, true]);
+  // OpenCode: its own rule for the name; a single rule for every skill is not one.
+  assert.deepEqual([held("opencode", "permission.skill/be*", OPENCODE), held("opencode", "permission.skill/alpha", "{ \"permission\": { \"skill\": \"deny\" } }")], ["deny", undefined]);
+  // OpenClaw: the entry's enabled, true once someone turned it back on.
+  assert.deepEqual([held("openclaw", "skills.entries/alpha", "{ skills: { entries: { alpha: { enabled: false } } } }"), held("openclaw", "skills.entries/alpha", "{ skills: { entries: { alpha: { enabled: true } } } }"),
+    held("openclaw", "skills.entries/alpha", "{}")], [false, true, undefined]);
+  // Hermes's external_dirs: the entries that are the shared directory, a single string included; none once it is rewritten without them.
+  assert.deepEqual(held("hermes", "skills.external_dirs/shared", "skills:\n  external_dirs: [/team/skills, \"~/.agents/skills\"]\n"), ["~/.agents/skills"]);
+  assert.deepEqual(held("hermes", "skills.external_dirs/shared", "skills:\n  external_dirs: ~/.agents/skills\n"), ["~/.agents/skills"]);
+  assert.equal(held("hermes", "skills.external_dirs/shared", "# rewritten\nskills:\n  external_dirs: [/team/skills]\n"), undefined);
+  // Invalid samples: a key this build does not write, one for another Harness, and a file that does not parse are refused, never read as removed.
+  assert.throws(() => held("cursor", "skillOverrides/alpha", "{}"), /不认识/u);
+  assert.throws(() => held("claude", "skills.disabled/alpha", "{}"), /不认识/u);
+  assert.throws(() => held("claude", "skillOverrides", "{}"), /不认识/u);
+  assert.throws(() => held("hermes", "skills.disabled/alpha", "skills: [unclosed\n"));
+  assert.throws(() => held("codex", "skills.config//x/SKILL.md", "[[skills.config]\npath = 1\n"));
+});
+
+test("G064-W2 the ledger keeps the value from before HarnessHub's first write while it replaces its own value, and starts again once someone else changed the setting", async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "capability-ledger-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = CapabilityStore.open(root, 1);
+  t.after(() => store.close());
+  const entry = (valueHash: string, previous: string | null, changeId: string): LedgerEntry => ({ harnessId: "opencode", file: "/o.json", key: "permission.skill/alpha", valueHash, previous, changeId, at: "2026-10-18T00:00:00.000Z" });
+  store.setLedger(entry(hash("deny"), "\"ask\"", "c1"), false);
+  // Turning it on over another rule replaces HarnessHub's own "deny" with an "allow": the user's "ask" is still the value to restore.
+  store.setLedger(entry(hash("allow"), "\"deny\"", "c2"), true);
+  assert.deepEqual(store.ledgerEntries().map(item => [item.valueHash, item.previous, item.changeId]), [[hash("allow"), "\"ask\"", "c2"]]);
+  // Someone else changed it since: the old value is no longer the one to restore.
+  store.setLedger(entry(hash("deny"), "\"allow-by-hand\"", "c3"), false);
+  assert.deepEqual(store.ledgerEntries().map(item => [item.previous, item.changeId]), [["\"allow-by-hand\"", "c3"]]);
+});
+
 test("G064-W2 the capability store keeps the newest ten backups per file, replays a command's change, and is fenced by a newer owner", async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "capability-store-")));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -215,4 +259,17 @@ test("G064-W1 an atomic replacement keeps the file's mode whatever the Gateway's
   assert.equal(await readFile(file, "utf8"), "{\"a\":1}\n");
   assert.throws(() => replaceTarget(file, createHash("sha256").update("{}\n").digest("hex"), Buffer.from("x"), 0o644), (error: unknown) => error instanceof CapabilityError && error.code === "CAPABILITY_TARGET_CHANGED");
   assert.equal(await readFile(file, "utf8"), "{\"a\":1}\n");
+});
+
+test("G064-W6 Hermes's shared directory entry is added once, removed by any spelling that resolves to it, and a single-string form is left alone", () => {
+  const resolves = (raw: string) => raw === "~/.agents/skills" || raw === "/u/.agents/skills";
+  const block = "# kept\nskills:\n  external_dirs:\n    - /team/skills  # theirs\n  disabled: []\n";
+  const add = sharedDirPlan("/c.yaml", block, true, "~/.agents/skills", resolves, context(), []);
+  assert.ok(add.kind === "edit" && add.after === "# kept\nskills:\n  external_dirs:\n    - /team/skills  # theirs\n    - \"~/.agents/skills\"\n  disabled: []\n" && add.ledger === "set");
+  assert.ok(add.kind === "edit" && add.check(parsed(block, "yaml"), parsed(add.after, "yaml")));
+  const absolute = "skills:\n  external_dirs: [/team/skills, /u/.agents/skills]\n";
+  const remove = sharedDirPlan("/c.yaml", absolute, false, "~/.agents/skills", resolves, context(), []);
+  assert.ok(remove.kind === "edit" && remove.after === "skills:\n  external_dirs: [/team/skills]\n" && remove.current === "other");
+  assert.equal(sharedDirPlan("/c.yaml", absolute, true, "~/.agents/skills", resolves, context(), []).kind, "none");
+  assert.throws(() => sharedDirPlan("/c.yaml", "skills:\n  external_dirs: ~/.agents/skills\n", false, "~/.agents/skills", resolves, context(), []), /单个字符串/u);
 });

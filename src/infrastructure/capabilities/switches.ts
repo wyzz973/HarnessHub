@@ -28,12 +28,19 @@ function owner(entry: LedgerEntry | null, current: unknown, context: SwitchConte
   return current === undefined ? "none" : entry !== null && entry.valueHash === context.hash(current) ? "harnesshub" : "other";
 }
 function none(file: string, reason: string): SwitchPlan { return { kind: "none", file, reason }; }
+// What each switch reads as a skill's current setting, shared with `heldValue`.
+function overrideOf(value: unknown, name: string): unknown { return own(record(at(value, ["skillOverrides"])), name); }
+function skillRuleOf(value: unknown, name: string): unknown { const rule = at(value, ["permission", "skill"]); return typeof rule === "string" ? undefined : own(record(rule), name); }
+function entryEnabledOf(value: unknown, name: string): unknown { return record(own(record(at(value, ["skills", "entries"])), name)).enabled; }
+function copiesOf(text: string, skill: string): ReturnType<typeof tomlBlocks> { return tomlBlocks(text, "skills.config").filter(block => block.keys.get("path")?.value === skill); }
+/** Hermes's `skills.external_dirs` as a list of strings; Hermes reads a single string as a list of one. */
+function externalDirsOf(value: unknown): readonly string[] { const raw = at(value, ["skills", "external_dirs"]); return (typeof raw === "string" ? [raw] : list(raw)).map(item => String(item)); }
 
 /** Claude Code: `skillOverrides.<name>` in settings.json, "off" to turn it off; turning it on restores what HarnessHub replaced. */
 export function claudeSwitch(file: string, text: string, request: SwitchRequest, context: SwitchContext): SwitchPlan {
-  const path: KeyPath = ["skillOverrides", request.name], current = own(record(at(parsed(text, "jsonc"), ["skillOverrides"])), request.name), key = path.join("/");
+  const path: KeyPath = ["skillOverrides", request.name], current = overrideOf(parsed(text, "jsonc"), request.name), key = path.join("/");
   const entry = context.ledger(file, key), by = owner(entry, current, context);
-  const holds = (value: unknown, expected: unknown) => isDeepStrictEqual(plain(own(record(at(value, ["skillOverrides"])), request.name)), plain(expected));
+  const holds = (value: unknown, expected: unknown) => isDeepStrictEqual(plain(overrideOf(value, request.name)), plain(expected));
   if (!request.enabled) {
     if (current === "off") return none(file, "Claude Code 里它已经是 off。");
     return { kind: "edit", file, format: "jsonc", after: setJson(text, path, "off"), key, written: "off", previous: current === undefined ? null : JSON.stringify(current), current: by, ledger: "set",
@@ -48,7 +55,7 @@ export function claudeSwitch(file: string, text: string, request: SwitchRequest,
 /** Codex: one `[[skills.config]]` element per copy, by the path of its SKILL.md, with `enabled = false`. */
 export function codexSwitch(file: string, text: string, request: SwitchRequest, context: SwitchContext): SwitchPlan {
   if (request.folder === null) throw new UnsafeEdit("Codex 按技能所在的路径停用，缺少路径");
-  const skill = join(request.folder, "SKILL.md"), key = "skills.config/" + skill, blocks = tomlBlocks(text, "skills.config").filter(block => block.keys.get("path")?.value === skill);
+  const skill = join(request.folder, "SKILL.md"), key = "skills.config/" + skill, blocks = copiesOf(text, skill);
   const off = blocks.filter(block => block.keys.get("enabled")?.value === false), entry = context.ledger(file, key), by = owner(entry, off.length ? false : undefined, context);
   const others = (value: unknown) => plain(list(at(value, ["skills", "config"])).filter(item => record(item).path !== skill));
   const matching = (value: unknown) => list(at(value, ["skills", "config"])).filter(item => record(item).path === skill);
@@ -106,7 +113,7 @@ function denyingRule(values: readonly unknown[], name: string): string | null {
  */
 export function opencodeSwitch(file: string, text: string, earlier: readonly unknown[], request: SwitchRequest, context: SwitchContext): SwitchPlan {
   const value = parsed(text, "jsonc"), rule = at(value, ["permission", "skill"]), path: KeyPath = ["permission", "skill"], key = "permission.skill/" + request.name;
-  const current = typeof rule === "string" ? undefined : own(record(rule), request.name), entry = context.ledger(file, key), by = owner(entry, current, context);
+  const current = skillRuleOf(value, request.name), entry = context.ledger(file, key), by = owner(entry, current, context);
   const effective = (parse: unknown) => opencodePermission([...earlier, parse], request.name);
   const moveTo = (source: string, decided: string): string => {
     const skillRule = at(parsed(source, "jsonc"), path);
@@ -146,14 +153,14 @@ export function opencodeSwitch(file: string, text: string, earlier: readonly unk
 export function openclawSwitch(file: string, text: string, request: SwitchRequest, context: SwitchContext): SwitchPlan {
   // The name becomes part of a command-line argument: only plain identifiers go in (2026.3.23-2 keeps bracket quotes in keys).
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(request.name)) throw new UnsafeEdit("技能名里有点号或其他符号，OpenClaw 的 config 命令无法安全定位它");
-  const value = parsed(text, "json5"), current = record(own(record(at(value, ["skills", "entries"])), request.name)).enabled, key = "skills.entries/" + request.name;
+  const value = parsed(text, "json5"), current = entryEnabledOf(value, request.name), key = "skills.entries/" + request.name;
   const entry = context.ledger(file, key), by = owner(entry, current === false ? false : undefined, context), target = "skills.entries." + request.name + ".enabled";
   let comments = false;
   if (text.trim()) { try { JSON.parse(text); } catch { comments = true; } }
   const notes = ["由 OpenClaw 自己的命令写入：它会把 openclaw.json 整份重写，并可能补上它自己的默认项；下面的改动是先在副本上运行同一条命令得到的。",
     "正在运行的 OpenClaw Gateway（飞书、微信等频道）不会被 HarnessHub 重启；按 OpenClaw 的文档，技能设置下一轮就生效，命令里“重启 Gateway”的提示对技能设置不是必需的。",
     ...(comments ? ["文件里的注释和 JSON5 写法会丢失。"] : [])];
-  const state = (after: unknown) => record(own(record(at(after, ["skills", "entries"])), request.name)).enabled;
+  const state = (after: unknown) => entryEnabledOf(after, request.name);
   if (!request.enabled) {
     if (current === false) return none(file, "OpenClaw 里它已经停用。");
     return { kind: "command", file, args: ["config", "set", target, "false", "--strict-json"], key, written: false, previous: current === undefined ? null : JSON.stringify(current), current: by, ledger: "set", notes, comments,
@@ -163,4 +170,47 @@ export function openclawSwitch(file: string, text: string, request: SwitchReques
   const restore = by === "harnesshub" && entry?.previous === "true";
   return { kind: "command", file, args: restore ? ["config", "set", target, "true", "--strict-json"] : ["config", "unset", target], key, written: restore ? true : undefined, previous: "false", current: by, ledger: "drop", notes, comments,
     check: after => state(after) !== false };
+}
+
+/**
+ * Hermes reads the shared directory through `skills.external_dirs` (ADR-045 §4, approval ruling 2): `present` adds
+ * `entry` when no listed directory resolves to it (`resolves`), otherwise removes every one that does. Hermes accepts a
+ * single string there too; that form is left to the user rather than rewritten.
+ */
+export function sharedDirPlan(file: string, text: string, present: boolean, entry: string, resolves: (raw: string) => boolean, context: SwitchContext, notes: readonly string[]): SwitchPlan {
+  const path = ["skills", "external_dirs"] as const, value = at(parsed(text, "yaml"), path);
+  if (typeof value === "string") throw new UnsafeEdit("skills.external_dirs 写成了单个字符串，HarnessHub 不改写它的形式");
+  if (value !== undefined && value !== null && !Array.isArray(value)) throw new UnsafeEdit("skills.external_dirs 不是列表");
+  const listed = list(value).map(item => String(item)), matching = listed.filter(resolves), key = "skills.external_dirs/shared";
+  const by = owner(context.ledger(file, key), matching.length ? matching : undefined, context);
+  if (present === matching.length > 0) return none(file, present ? "Hermes 已经读取共享目录。" : "Hermes 没有读取共享目录。");
+  const expected = present ? [...listed, entry] : listed.filter(item => !resolves(item));
+  const after = present ? appendYamlItem(text, path, entry) : matching.reduce((source, raw) => removeYamlItem(source, path, raw), text);
+  return { kind: "edit", file, format: "yaml", after, key, written: present ? [entry] : undefined, previous: matching.length ? JSON.stringify(matching) : null, current: by, ledger: present ? "set" : "drop", notes,
+    check: (before, after) => onlyChanged(before, after, path) && isDeepStrictEqual(plain(list(at(after, path)).map(item => String(item))), plain(expected)) };
+}
+
+/** The parser of each Harness's switch file. */
+const SWITCH_FORMATS: Readonly<Record<string, ConfigFormat>> = { claude: "jsonc", codex: "toml", gemini: "jsonc", hermes: "yaml", opencode: "jsonc", openclaw: "json5" };
+/**
+ * What a ledger key holds in its file now, read as the switch that wrote it reads it (undefined: not there), so HarnessHub
+ * can tell whether the value it wrote is still in place. `shared` tells which entries of Hermes's `skills.external_dirs`
+ * are the shared directory. Throws `UnsafeEdit` for a key this build does not write, and the parser's error for a file
+ * that does not parse.
+ */
+export function heldValue(harnessId: string, key: string, text: string, shared: (raw: string) => boolean): unknown {
+  const slash = key.indexOf("/"), prefix = key.slice(0, slash), rest = key.slice(slash + 1), format = SWITCH_FORMATS[harnessId];
+  if (slash < 1 || !rest || format === undefined) throw new UnsafeEdit("台账里有这个版本不认识的设置");
+  if (prefix === "skills.config" && harnessId === "codex") {
+    parsed(text, "toml");
+    const copies = copiesOf(text, rest);
+    return copies.some(block => block.keys.get("enabled")?.value === false) ? false : copies[0] ? copies[0].keys.get("enabled")?.value ?? null : undefined;
+  }
+  const value = parsed(text, format);
+  if (prefix === "skillOverrides" && harnessId === "claude") return overrideOf(value, rest);
+  if (prefix === "skills.disabled" && (harnessId === "gemini" || harnessId === "hermes")) return list(at(value, ["skills", "disabled"])).includes(rest) ? true : undefined;
+  if (prefix === "permission.skill" && harnessId === "opencode") return skillRuleOf(value, rest);
+  if (prefix === "skills.entries" && harnessId === "openclaw") return entryEnabledOf(value, rest);
+  if (prefix === "skills.external_dirs" && harnessId === "hermes") { const matching = externalDirsOf(value).filter(shared); return matching.length ? matching : undefined; }
+  throw new UnsafeEdit("台账里有这个版本不认识的设置");
 }

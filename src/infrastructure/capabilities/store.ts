@@ -94,6 +94,10 @@ export class CapabilityStore {
     this.check();
     this.db.prepare("INSERT INTO capability_changes(id,command_id,payload_hash,at,view_json) VALUES(?,?,?,?,?)").run(view.id, commandId, payloadHash, view.at, JSON.stringify(view));
   }
+  changeById(id: string): CapabilityChangeView | null {
+    const row = this.db.prepare("SELECT view_json FROM capability_changes WHERE id=?").get(id);
+    return row === undefined ? null : JSON.parse(text(row.view_json)) as CapabilityChangeView;
+  }
   changes(limit: number): readonly CapabilityChangeView[] {
     return this.db.prepare("SELECT view_json FROM capability_changes ORDER BY at DESC, rowid DESC LIMIT ?").all(limit).map(row => JSON.parse(text(row.view_json)) as CapabilityChangeView);
   }
@@ -137,12 +141,27 @@ export class CapabilityStore {
     const row = this.db.prepare("SELECT value_hash,previous,change_id,at FROM capability_ledger WHERE harness_id=? AND file=? AND key=?").get(harnessId, file, key);
     return row === undefined ? null : { harnessId, file, key, valueHash: text(row.value_hash), previous: row.previous === null ? null : text(row.previous), changeId: text(row.change_id), at: text(row.at) };
   }
-  setLedger(entry: LedgerEntry): void {
+  /**
+   * Records a setting as HarnessHub's. `keepPrevious`: the value replaced is HarnessHub's own, so an entry already there
+   * keeps the value from before HarnessHub's first write as the one to restore; otherwise the entry is stale (someone else
+   * changed the setting since) and `entry.previous` replaces it.
+   */
+  setLedger(entry: LedgerEntry, keepPrevious: boolean): void {
     this.check();
-    this.db.prepare("INSERT INTO capability_ledger(harness_id,file,key,value_hash,previous,change_id,at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(harness_id,file,key) DO UPDATE SET value_hash=excluded.value_hash,change_id=excluded.change_id,at=excluded.at")
-      .run(entry.harnessId, entry.file, entry.key, entry.valueHash, entry.previous, entry.changeId, entry.at);
+    this.db.prepare("INSERT INTO capability_ledger(harness_id,file,key,value_hash,previous,change_id,at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(harness_id,file,key) DO UPDATE SET value_hash=excluded.value_hash,"
+      + "previous=CASE WHEN ? THEN capability_ledger.previous ELSE excluded.previous END,change_id=excluded.change_id,at=excluded.at")
+      .run(entry.harnessId, entry.file, entry.key, entry.valueHash, entry.previous, entry.changeId, entry.at, keepPrevious ? 1 : 0);
+  }
+  /** Every ledger entry, oldest first. */
+  ledgerEntries(): readonly LedgerEntry[] {
+    return this.db.prepare("SELECT harness_id,file,key,value_hash,previous,change_id,at FROM capability_ledger ORDER BY at, rowid").all().map(row => ({ harnessId: text(row.harness_id), file: text(row.file),
+      key: text(row.key), valueHash: text(row.value_hash), previous: row.previous === null ? null : text(row.previous), changeId: text(row.change_id), at: text(row.at) }));
   }
   dropLedger(harnessId: string, file: string, key: string): void { this.check(); this.db.prepare("DELETE FROM capability_ledger WHERE harness_id=? AND file=? AND key=?").run(harnessId, file, key); }
+  /** The ledger's keys that start with `prefix`, of every Harness. */
+  ledgerKeys(prefix: string): readonly string[] {
+    return this.db.prepare("SELECT key FROM capability_ledger WHERE substr(key,1,?)=?").all(prefix.length, prefix).map(row => text(row.key));
+  }
   dropLedgerForFile(file: string): void { this.check(); this.db.prepare("DELETE FROM capability_ledger WHERE file=?").run(file); }
   close(): void { this.db.close(); }
 }

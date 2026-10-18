@@ -1807,16 +1807,17 @@ test("G054-UG1 upgrading one installation first says the versions, what runs and
 function capabilityView() {
   const all = { skill: "read", mcp: "read", instructions: "read", subagent: "read", command: "read", hook: "read", plugin: "read" };
   const view = { checkedAt: "2026-10-18T09:00:00.000Z", truncated: false,
-    harnesses: [{ harnessId: "claude", name: "Claude Code", version: "2.1.302", table: "verified", kinds: all, skillSwitch: "file", notes: ["自定义命令已并入技能，同名时技能优先。"] },
-      { harnessId: "codex", name: "Codex", version: "0.162.1", table: "verified", kinds: all, skillSwitch: "file", notes: [] },
-      { harnessId: "cursor", name: "Cursor", version: "2026.10.01-e373342", table: "unverified", kinds: { ...all, instructions: "invisible", command: "unsupported", plugin: "invisible" }, skillSwitch: null, notes: ["Cursor 的用户规则保存在应用设置里，不在磁盘上。"] },
-      { harnessId: "hermes", name: "Hermes Agent", version: "0.12.0", table: "verified", kinds: { ...all, instructions: "unsupported", subagent: "unsupported", command: "unsupported" }, skillSwitch: "file", notes: ["Hermes 0.12 不读 ~/.agents/skills。"] }],
+    harnesses: [{ harnessId: "claude", name: "Claude Code", version: "2.1.302", table: "verified", kinds: all, skillSwitch: "file", shared: { reads: "links", links: 1, redundant: 0, placeable: "skill-link" }, notes: ["自定义命令已并入技能，同名时技能优先。"] },
+      { harnessId: "codex", name: "Codex", version: "0.162.1", table: "verified", kinds: all, skillSwitch: "file", shared: { reads: "native", links: 0, redundant: 0, placeable: null }, notes: [] },
+      { harnessId: "cursor", name: "Cursor", version: "2026.10.01-e373342", table: "unverified", kinds: { ...all, instructions: "invisible", command: "unsupported", plugin: "invisible" }, skillSwitch: null, shared: { reads: "native", links: 0, redundant: 0, placeable: null }, notes: ["Cursor 的用户规则保存在应用设置里，不在磁盘上。"] },
+      { harnessId: "hermes", name: "Hermes Agent", version: "0.12.0", table: "verified", kinds: { ...all, instructions: "unsupported", subagent: "unsupported", command: "unsupported" }, skillSwitch: "file", shared: { reads: "links", links: 1, redundant: 0, placeable: "shared-dir" }, notes: ["Hermes 0.12 不读 ~/.agents/skills。"] }],
     entries: [
       { kind: "skill", key: "skill:alpha", name: "alpha", description: "Shared alpha skill", owner: "skills-cli", source: "https://github.com/owner/repo.git", location: "~/.agents/skills/alpha",
         edges: [{ harnessId: "claude", mechanism: "linked", status: "active", via: "~/.claude/skills/alpha", reason: null }, { harnessId: "codex", mechanism: "native-shared", status: "active", via: "~/.agents/skills/alpha", reason: null },
           { harnessId: "codex", mechanism: "own-copy", status: "active", via: "~/.codex/skills/alpha", reason: null }, { harnessId: "cursor", mechanism: "native-shared", status: "duplicate", via: "~/.agents/skills/alpha", reason: "Cursor 没有说明同名技能怎样处理" },
           { harnessId: "hermes", mechanism: "linked", status: "active", via: "~/.hermes/skills/alpha", reason: null }],
-        warnings: [{ kind: "duplicate", harnessId: "codex", text: "Codex 会同时列出 2 个名为 alpha 的技能：~/.agents/skills/alpha、~/.codex/skills/alpha。" }], facts: { kind: "skill", files: 2, bytes: 2048 } },
+        warnings: [{ kind: "duplicate", harnessId: "codex", text: "Codex 会同时列出 2 个名为 alpha 的技能：~/.agents/skills/alpha、~/.codex/skills/alpha。" }], facts: { kind: "skill", files: 2, bytes: 2048 },
+        shared: { folder: "~/.agents/skills/alpha", placed: [] } },
       { kind: "skill", key: "skill:beta", name: "beta", description: null, owner: "user", source: null, location: "~/.agents/skills/beta",
         edges: [{ harnessId: "claude", mechanism: "linked", status: "disabled", via: "~/.claude/skills/beta", reason: "settings.json 的 skillOverrides 把它设为 off" }, { harnessId: "codex", mechanism: "native-shared", status: "active", via: "~/.agents/skills/beta", reason: null }],
         warnings: [], facts: { kind: "skill", files: 1, bytes: 300 } },
@@ -1913,11 +1914,11 @@ test("G054-CA2 turning a skill off shows the file and the exact change first, se
   const fingerprint = "f".repeat(64), restoreFingerprint = "e".repeat(64), backupId = "11111111-2222-4333-8444-555555555555", at = "2026-10-18T09:30:00.000Z";
   const diff = "--- a/~/.claude/settings.json\n+++ b/~/.claude/settings.json\n@@ -2,5 +2,5 @@\n   \"model\": \"claude-opus-5-5\",\n   \"skillOverrides\": {\n-    \"alpha\": \"user-invocable-only\"\n+    \"alpha\": \"off\"\n   },\n";
   const checks: URLSearchParams[] = [], posted: Record<string, unknown>[] = [], restores: Record<string, unknown>[] = [];
-  let history = { changes: [] as unknown[], backups: [] as unknown[] };
+  let history = { changes: [] as unknown[], backups: [] as unknown[], drift: [] as unknown[] };
   const change = { id: "c-1", kind: "skill-switch", harnessId: "claude", subject: "alpha", file: "~/.claude/settings.json", status: "applied", diff, backupId, error: null, notes: ["Claude Code 会立即读到改动。"], at };
   // OpenClaw too: its switch is its own command, whose rewrite is summarized first.
   const view = capabilityView(), openclawKinds = { skill: "read", mcp: "read", instructions: "read", subagent: "unsupported", command: "unsupported", hook: "read", plugin: "read" };
-  view.harnesses.push({ harnessId: "openclaw", name: "OpenClaw", version: "2026.3.23-2", table: "verified", kinds: openclawKinds, skillSwitch: "command", notes: [] } as unknown as typeof view.harnesses[number]);
+  view.harnesses.push({ harnessId: "openclaw", name: "OpenClaw", version: "2026.3.23-2", table: "verified", kinds: openclawKinds, skillSwitch: "command", shared: { reads: "native", links: 52, redundant: 52, placeable: null }, notes: [] } as unknown as typeof view.harnesses[number]);
   (view.entries[0]!.edges as unknown[]).push({ harnessId: "openclaw", mechanism: "native-shared", status: "active", via: "~/.agents/skills/alpha", reason: null });
   await page.route("**/api/v1/capabilities", route => route.fulfill({ json: view }));
   await page.route("**/api/v1/capabilities/history", route => route.fulfill({ json: history }));
@@ -1925,16 +1926,16 @@ test("G054-CA2 turning a skill off shows the file and the exact change first, se
     const query = new URL(route.request().url()).searchParams; checks.push(query);
     if (query.get("harnessId") === "openclaw") return route.fulfill({ json: { kind: "skill-switch", harnessId: "openclaw", name: "alpha", enabled: false, file: "~/.openclaw/openclaw.json",
       command: "openclaw config set skills.entries.alpha.enabled false --strict-json", diff: "--- a/~/.openclaw/openclaw.json\n+++ b/~/.openclaw/openclaw.json\n@@ -1,3 +1,9 @@\n-{\n-  // mine\n+{\n+  \"commands\": {}\n",
-      rewrite: { target: "skills.entries.alpha.enabled", before: null, after: "false", added: ["commands", "meta"], removed: [], changed: [], commentLines: 1 }, current: "none",
+      rewrite: { target: "skills.entries.alpha.enabled", before: null, after: "false", added: ["commands", "meta"], removed: [], changed: [], commentLines: 1 }, links: [], current: "none",
       notes: ["正在运行的 OpenClaw Gateway（飞书、微信等频道）不会被 HarnessHub 重启。"], blocked: null, fingerprint: "c".repeat(64), expiresAt: "2026-10-18T09:45:00.000Z" } });
-    if (query.get("harnessId") === "hermes") return route.fulfill({ json: { kind: "skill-switch", harnessId: "hermes", name: "alpha", enabled: false, file: "~/.hermes/config.yaml", command: null, diff: null, rewrite: null, current: "none",
+    if (query.get("harnessId") === "hermes") return route.fulfill({ json: { kind: "skill-switch", harnessId: "hermes", name: "alpha", enabled: false, file: "~/.hermes/config.yaml", command: null, diff: null, rewrite: null, links: [], current: "none",
       notes: [], blocked: "无需修改：它已经在 skills.disabled 里。", fingerprint: "d".repeat(64), expiresAt: "2026-10-18T09:45:00.000Z" } });
     return route.fulfill({ json: { kind: "skill-switch", harnessId: query.get("harnessId"), name: "alpha", enabled: false, file: query.get("harnessId") === "codex" ? "~/.codex/config.toml" : "~/.claude/settings.json",
-      command: null, diff, rewrite: null, current: "other", notes: ["原来是 user-invocable-only；停用后改成 off，之后在这里启用会改回 user-invocable-only。"], blocked: null, fingerprint, expiresAt: "2026-10-18T09:45:00.000Z" } });
+      command: null, diff, rewrite: null, links: [], current: "other", notes: ["原来是 user-invocable-only；停用后改成 off，之后在这里启用会改回 user-invocable-only。"], blocked: null, fingerprint, expiresAt: "2026-10-18T09:45:00.000Z" } });
   });
   await page.route("**/api/v1/capabilities/changes", async route => {
     posted.push(route.request().postDataJSON() as Record<string, unknown>);
-    history = { changes: [change], backups: [{ id: backupId, file: "~/.claude/settings.json", createdAt: at, bytes: 120, changeId: "c-1", subject: "alpha" }] };
+    history = { changes: [change], backups: [{ id: backupId, file: "~/.claude/settings.json", createdAt: at, bytes: 120, changeId: "c-1", subject: "alpha" }], drift: [] };
     await route.fulfill({ json: change });
   });
   await page.route(`**/api/v1/capabilities/backups/${backupId}/restore`, route => route.fulfill({ json: { backupId, file: "~/.claude/settings.json", diff: diff.replace("-    \"alpha\": \"user-invocable-only\"\n+    \"alpha\": \"off\"", "-    \"alpha\": \"off\"\n+    \"alpha\": \"user-invocable-only\""),
@@ -1980,7 +1981,7 @@ test("G054-CA2 turning a skill off shows the file and the exact change first, se
   await switches.getByRole("button", { name: "在 OpenClaw 中停用", exact: true }).click();
   const claw = page.getByRole("dialog", { name: "在 OpenClaw 中停用 alpha" });
   await expect(claw.locator(".switch-rewrite")).toContainText("skills.entries.alpha.enabled：（没有） → false");
-  await expect(claw.locator(".switch-rewrite")).toContainText("OpenClaw 的命令还会：新增 commands、meta；丢失 1 行注释。");
+  await expect(claw.locator(".switch-rewrite")).toContainText("这条命令还会：新增 commands、meta；丢失 1 行注释。");
   await expect(claw.locator(".capability-diff")).toHaveCount(0);
   await claw.getByRole("button", { name: "显示完整差异（已打码）", exact: true }).click();
   await expect(claw.locator(".capability-diff")).toBeVisible(); await expect(claw).toContainText("没有特征的值仍可能显示");
@@ -1994,5 +1995,148 @@ test("G054-CA2 turning a skill off shows the file and the exact change first, se
   const { commandId: restoreCommand, ...restored } = restores[0]!;
   assert.match(String(restoreCommand), /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u); assert.deepEqual(restored, { fingerprint: restoreFingerprint });
   await expect(page.locator(".capability-result")).toContainText("已恢复 ~/.claude/settings.json");
+  assert.deepEqual(errors, []);
+});
+
+test("G054-CA3 the shared skills directory says how each Harness reads it, makes Hermes read it, removes redundant links with an undo, and places a skill in Claude Code", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  const view = capabilityView(), at = "2026-10-18T10:00:00.000Z", expiresAt = "2026-10-18T10:15:00.000Z";
+  view.harnesses.push({ harnessId: "openclaw", name: "OpenClaw", version: "2026.3.23-2", table: "verified", kinds: view.harnesses[0]!.kinds, skillSwitch: "command",
+    shared: { reads: "native", links: 2, redundant: 2, placeable: null }, notes: [] } as unknown as typeof view.harnesses[number]);
+  (view.entries as unknown[]).push({ kind: "skill", key: "skill:gamma", name: "gamma", description: "Only in the shared directory", owner: "user", source: null, location: "~/.agents/skills/gamma",
+    edges: [{ harnessId: "codex", mechanism: "native-shared", status: "active", via: "~/.agents/skills/gamma", reason: null }], warnings: [], facts: { kind: "skill", files: 1, bytes: 120 },
+    shared: { folder: "~/.agents/skills/gamma", placed: [] } }, { kind: "skill", key: "skill:delta", name: "delta", description: "Placed by HarnessHub", owner: "user", source: null, location: "~/.agents/skills/delta",
+    edges: [{ harnessId: "claude", mechanism: "linked", status: "active", via: "~/.claude/skills/delta", reason: null }], warnings: [], facts: { kind: "skill", files: 1, bytes: 120 },
+    shared: { folder: "~/.agents/skills/delta", placed: ["~/.claude/skills/delta"] } });
+  const check = (kind: string, name: string, extra: Record<string, unknown>) => ({ kind, harnessId: "x", name, enabled: false, file: "~/.hermes/config.yaml", command: null, diff: null, rewrite: null, links: [],
+    current: "none", notes: [], blocked: null, fingerprint: "a".repeat(64), expiresAt, ...extra });
+  const cleanupLinks = [{ path: "~/.openclaw/skills/alpha", target: "../../.agents/skills/alpha", action: "remove" }, { path: "~/.openclaw/skills/beta", target: "../../.agents/skills/beta", action: "remove" }];
+  const requests: string[] = [], posted: Record<string, unknown>[] = [];
+  let history = { changes: [] as unknown[], backups: [] as unknown[], drift: [] as unknown[] };
+  await page.route("**/api/v1/capabilities", route => route.fulfill({ json: view }));
+  await page.route("**/api/v1/capabilities/history", route => route.fulfill({ json: history }));
+  await page.route(/\/api\/v1\/capabilities\/(shared-dir|skill-link|link-cleanup|changes\/[^/]+\/undo)/u, route => {
+    const url = new URL(route.request().url()); requests.push(url.pathname.replace("/api/v1/capabilities/", "") + url.search);
+    if (url.pathname.endsWith("/shared-dir")) return route.fulfill({ json: check("shared-dir", "~/.agents/skills", { harnessId: "hermes", enabled: true, fingerprint: "1".repeat(64),
+      diff: "--- a/~/.hermes/config.yaml\n+++ b/~/.hermes/config.yaml\n@@ -4,3 +4,3 @@\n skills:\n-  external_dirs: []\n+  external_dirs: [\"~/.agents/skills\"]\n", notes: ["Hermes 会多看到 3 个共享技能：gamma、delta、epsilon。", "正在运行的 Hermes 网关（QQ 等消息渠道）不会被 HarnessHub 重启。"] }) });
+    if (url.pathname.endsWith("/link-cleanup")) return route.fulfill({ json: check("link-cleanup", "多余链接", { harnessId: "openclaw", file: "~/.openclaw/skills", fingerprint: "2".repeat(64), links: cleanupLinks,
+      notes: ["只删 ~/.openclaw/skills 里这 2 个指向 ~/.agents/skills 的链接，技能本身不动；可以在“修改与备份”里撤销。", "`npx skills` 以后可能会重新建这些链接。"] }) });
+    if (url.pathname.endsWith("/undo")) return route.fulfill({ json: check("link-undo", "多余链接", { harnessId: "openclaw", file: "~/.openclaw/skills", fingerprint: "3".repeat(64),
+      links: cleanupLinks.map(link => ({ ...link, action: "create" })) }) });
+    const present = url.searchParams.get("present") === "true";
+    return route.fulfill({ json: check("skill-link", url.searchParams.get("name")!, { harnessId: "claude", file: "~/.claude/skills", fingerprint: (present ? "4" : "5").repeat(64), enabled: present, current: present ? "none" : "harnesshub",
+      links: [{ path: "~/.claude/skills/" + url.searchParams.get("name"), target: "~/.agents/skills/" + url.searchParams.get("name"), action: present ? "create" : "remove" }] }) });
+  });
+  const views: Record<string, unknown> = {
+    ["1".repeat(64)]: { id: "11111111-1111-4111-8111-111111111111", kind: "shared-dir", harnessId: "hermes", subject: "~/.agents/skills", file: "~/.hermes/config.yaml", status: "applied", diff: null, backupId: "21111111-1111-4111-8111-111111111111", error: null, notes: [], at },
+    ["2".repeat(64)]: { id: "12222222-2222-4222-8222-222222222222", kind: "link-cleanup", harnessId: "openclaw", subject: "多余链接", file: "~/.openclaw/skills", status: "applied", diff: null, backupId: null, error: null, notes: [], links: cleanupLinks, at },
+    ["3".repeat(64)]: { id: "13333333-3333-4333-8333-333333333333", kind: "link-undo", harnessId: "openclaw", subject: "多余链接", file: "~/.openclaw/skills", status: "applied", diff: null, backupId: null, error: null, notes: [],
+      links: cleanupLinks.map(link => ({ ...link, action: "create" })), at },
+    ["4".repeat(64)]: { id: "14444444-4444-4444-8444-444444444444", kind: "skill-link", harnessId: "claude", subject: "gamma", file: "~/.claude/skills", status: "applied", diff: null, backupId: null, error: null, notes: [],
+      links: [{ path: "~/.claude/skills/gamma", target: "~/.agents/skills/gamma", action: "create" }], at },
+    ["5".repeat(64)]: { id: "15555555-5555-4555-8555-555555555555", kind: "skill-link", harnessId: "claude", subject: "delta", file: "~/.claude/skills", status: "applied", diff: null, backupId: null, error: null, notes: [],
+      links: [{ path: "~/.claude/skills/delta", target: "~/.agents/skills/delta", action: "remove" }], at } };
+  await page.route("**/api/v1/capabilities/changes", async route => {
+    const body = route.request().postDataJSON() as Record<string, unknown>; posted.push(body);
+    const result = views[String(body.fingerprint)]; history = { changes: [result, ...history.changes], backups: [], drift: [] };
+    await route.fulfill({ json: result });
+  });
+  await page.goto(fixture.gateway.url); await expect(page.getByRole("button", { name: "新对话", exact: true })).toBeVisible();
+  await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "能力", exact: true }).click();
+  // How each Harness reads the shared directory, with what can change.
+  const card = page.getByRole("region", { name: "共享技能目录" });
+  for (const text of ["Claude Code经自己目录里的链接；自己目录里有 1 个指向它的链接", "Codex自己读取", "Hermes Agent经自己目录里的链接", "OpenClaw自己读取；自己目录里有 2 个指向它的链接，其中 2 个多余"]) await expect(card).toContainText(text);
+  await card.getByRole("button", { name: "让 Hermes Agent 读取共享目录", exact: true }).click();
+  const hermes = page.getByRole("dialog", { name: "让 Hermes Agent 读取共享目录" });
+  await expect(hermes.locator(".capability-diff .text-green")).toHaveText(["+  external_dirs: [\"~/.agents/skills\"]"]);
+  for (const text of ["Hermes 会多看到 3 个共享技能", "不会被 HarnessHub 重启"]) await expect(hermes).toContainText(text);
+  await hermes.getByRole("button", { name: "读取", exact: true }).click(); await expect(hermes).toBeHidden();
+  await expect(page.locator(".capability-result")).toContainText("Hermes Agent 已读取共享目录");
+  // OpenClaw's redundant links: each one listed before anything is removed, and the change can be undone from the history.
+  await card.getByRole("button", { name: "清理 2 个多余链接", exact: true }).click();
+  const cleanup = page.getByRole("dialog", { name: "清理 OpenClaw 的多余链接" });
+  await expect(cleanup.locator(".capability-links li")).toHaveText(["− 删除~/.openclaw/skills/alpha → ../../.agents/skills/alpha", "− 删除~/.openclaw/skills/beta → ../../.agents/skills/beta"]);
+  await expect(cleanup).toContainText("`npx skills` 以后可能会重新建这些链接。");
+  await cleanup.getByRole("button", { name: "清理", exact: true }).click(); await expect(cleanup).toBeHidden();
+  await page.locator(".capability-history summary").click();
+  await expect(page.locator(".capability-history")).toContainText("清理链接 · 多余链接"); await expect(page.locator(".capability-history")).toContainText("删除 2 个链接");
+  await page.locator(".capability-history li").filter({ hasText: "清理链接" }).getByRole("button", { name: "撤销", exact: true }).click();
+  const undo = page.getByRole("dialog", { name: "撤销：多余链接" });
+  await expect(undo.locator(".capability-links li")).toHaveCount(2); await expect(undo.locator(".capability-links li").first()).toContainText("+ 新建");
+  await undo.getByRole("button", { name: "撤销", exact: true }).click(); await expect(undo).toBeHidden();
+  // Claude Code takes a shared skill it does not see by a link of its own; one HarnessHub placed can be removed again.
+  const matrix = page.locator(".capability-matrix");
+  await matrix.locator("tbody tr").filter({ hasText: "gamma" }).first().getByRole("button", { name: /gamma/u }).click();
+  await page.getByRole("button", { name: "放到 Claude Code", exact: true }).click();
+  const place = page.getByRole("dialog", { name: "把 gamma 放到 Claude Code" });
+  await expect(place.locator(".capability-links li")).toHaveText(["+ 新建~/.claude/skills/gamma → ~/.agents/skills/gamma"]);
+  await place.getByRole("button", { name: "放置", exact: true }).click(); await expect(place).toBeHidden();
+  await matrix.locator("tbody tr").filter({ hasText: "delta" }).first().getByRole("button", { name: /delta/u }).click();
+  await page.getByRole("button", { name: "从 Claude Code 移除（HarnessHub 放置的）", exact: true }).click();
+  const remove = page.getByRole("dialog", { name: "从 Claude Code 移除 delta" });
+  await expect(remove.locator(".capability-links li")).toHaveText(["− 删除~/.claude/skills/delta → ~/.agents/skills/delta"]);
+  await remove.getByRole("button", { name: "移除", exact: true }).click(); await expect(remove).toBeHidden();
+  assert.deepEqual(requests, ["shared-dir?harnessId=hermes&present=true", "link-cleanup?harnessId=openclaw", "changes/12222222-2222-4222-8222-222222222222/undo",
+    "skill-link?harnessId=claude&name=gamma&present=true", "skill-link?harnessId=claude&name=delta&present=false"]);
+  assert.deepEqual(posted.map(item => item.fingerprint), ["1", "2", "3", "4", "5"].map(digit => digit.repeat(64)), "each confirmation sends exactly its own check");
+  await page.screenshot({ path: join(artifact, "capabilities-shared-directory.png"), animations: "disabled" });
+  assert.deepEqual(errors, []);
+});
+
+test("G054-CA4 what HarnessHub wrote and someone else then removed is shown with re-apply and stop tracking, and nothing is put back without a confirmation", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  const at = "2026-10-18T10:00:00.000Z", hermesId = "a".repeat(32), alphaId = "b".repeat(32);
+  const drift = [{ id: hermesId, kind: "shared-dir", harnessId: "hermes", subject: "~/.agents/skills", file: "~/.hermes/config.yaml", state: "removed", changeId: "11111111-1111-4111-8111-111111111111", at },
+    { id: alphaId, kind: "skill-switch", harnessId: "claude", subject: "alpha", file: "~/.claude/settings.json", state: "changed", changeId: "12222222-2222-4222-8222-222222222222", at }];
+  let history = { changes: [] as unknown[], backups: [] as unknown[], drift: drift as unknown[] };
+  const requests: string[] = [], posted: Record<string, unknown>[] = [], forgotten: unknown[] = [];
+  await page.route("**/api/v1/capabilities", route => route.fulfill({ json: capabilityView() }));
+  await page.route("**/api/v1/capabilities/history", route => route.fulfill({ json: history }));
+  await page.route(/\/api\/v1\/capabilities\/drift\/[^/]+\/reapply/u, route => {
+    requests.push(new URL(route.request().url()).pathname.replace("/api/v1/capabilities/", ""));
+    return route.fulfill({ json: { kind: "shared-dir", harnessId: "hermes", name: "~/.agents/skills", enabled: true, file: "~/.hermes/config.yaml", command: null, rewrite: null, links: [], current: "none", blocked: null,
+      diff: "--- a/~/.hermes/config.yaml\n+++ b/~/.hermes/config.yaml\n@@ -4,3 +4,3 @@\n skills:\n-  external_dirs: []\n+  external_dirs: [\"~/.agents/skills\"]\n", notes: ["Hermes 会多看到 6 个共享技能。"],
+      fingerprint: "7".repeat(64), expiresAt: "2026-10-18T10:15:00.000Z" } });
+  });
+  await page.route("**/api/v1/capabilities/changes", async route => {
+    const body = route.request().postDataJSON() as Record<string, unknown>; posted.push(body);
+    const result = { id: "13333333-3333-4333-8333-333333333333", kind: "shared-dir", harnessId: "hermes", subject: "~/.agents/skills", file: "~/.hermes/config.yaml", status: "applied", diff: null, backupId: null, error: null, notes: [], at };
+    history = { changes: [result], backups: [], drift: history.drift.filter(item => (item as { id: string }).id !== hermesId) };
+    await route.fulfill({ json: result });
+  });
+  await page.route("**/api/v1/capabilities/forget", async route => {
+    const body = route.request().postDataJSON() as { id: string }; forgotten.push(body);
+    history = { ...history, drift: history.drift.filter(item => (item as { id: string }).id !== body.id) };
+    await route.fulfill({ json: { forgotten: true } });
+  });
+  await page.goto(fixture.gateway.url); await expect(page.getByRole("button", { name: "新对话", exact: true })).toBeVisible();
+  await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "能力", exact: true }).click();
+  // Each one says what HarnessHub wrote, where, and what became of it; nothing was sent yet.
+  const notice = page.locator(".capability-drift");
+  await expect(notice).toContainText("HarnessHub 写过的 2 项设置已不在原处"); await expect(notice).toContainText("HarnessHub 不会自动改回");
+  await expect(notice.locator("li")).toHaveText([/Hermes Agent · 共享目录 · ~\/\.agents\/skills已被外部移除~\/\.hermes\/config\.yaml/u, /Claude Code · 技能开关 · alpha已被外部改动~\/\.claude\/settings\.json/u]);
+  assert.deepEqual([requests, posted, forgotten], [[], [], []]);
+  // Re-applying shows the usual check first and sends exactly that check.
+  await notice.locator("li").filter({ hasText: "共享目录" }).getByRole("button", { name: "重新应用", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "重新应用：~/.agents/skills" });
+  await expect(dialog.locator(".capability-diff .text-green")).toHaveText(["+  external_dirs: [\"~/.agents/skills\"]"]);
+  assert.equal(posted.length, 0, "the check alone writes nothing");
+  await dialog.getByRole("button", { name: "重新应用", exact: true }).click(); await expect(dialog).toBeHidden();
+  await expect(page.locator(".capability-result")).toContainText("已重新应用：~/.agents/skills");
+  await expect(notice.locator("li")).toHaveCount(1);
+  // Stopping tracking sends the one entry and changes no file; the notice goes once nothing is left.
+  await notice.getByRole("button", { name: "不再跟踪", exact: true }).click();
+  await expect(notice).toBeHidden();
+  assert.deepEqual(requests, ["drift/" + hermesId + "/reapply"]);
+  assert.deepEqual(posted.map(item => item.fingerprint), ["7".repeat(64)]);
+  assert.deepEqual(forgotten, [{ id: alphaId }]);
   assert.deepEqual(errors, []);
 });

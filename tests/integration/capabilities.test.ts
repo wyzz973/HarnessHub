@@ -43,8 +43,14 @@ test("G064-R5 through the formal Gateway, the capability view of nine official i
   assert.deepEqual(find("skill", "beta").edges.filter(edge => edge.status === "disabled").map(edge => edge.harnessId), ["claude", "codex", "opencode", "opencode", "gemini", "openclaw", "hermes"]);
   assert.deepEqual(find("mcp", "remote").edges.map(edge => [edge.harnessId, edge.status]), [["claude", "active"], ["codex", "disabled"]]);
   assert.deepEqual(find("hook", "PreToolUse（Bash）").edges.map(edge => edge.harnessId), ["claude", "cursor"]);
+  // 19 skills: Hermes's walk also reads the hidden folder in ~/.agents/skills, which every other Harness skips, and
+  // OpenCode and Hermes find the part bundled inside beta's folder.
   assert.deepEqual(view.entries.reduce<Record<string, number>>((counts, item) => ({ ...counts, [item.kind]: (counts[item.kind] ?? 0) + 1 }), {}),
-    { skill: 17, mcp: 8, instructions: 8, subagent: 2, command: 5, hook: 6, plugin: 7 });
+    { skill: 19, mcp: 8, instructions: 8, subagent: 2, command: 5, hook: 6, plugin: 7 });
+  // How each Harness reads the shared directory, and its own links into it.
+  assert.deepEqual(view.harnesses.map(item => [item.harnessId, item.shared.reads, item.shared.links, item.shared.redundant, item.shared.placeable]), [["claude", "links", 3, 0, "skill-link"], ["codex", "native", 0, 0, null],
+    ["cursor", "native", 0, 0, null], ["opencode", "native", 0, 0, null], ["gemini", "native", 0, 0, null], ["openclaw", "native", 1, 1, null], ["pi", "native", 0, 0, null], ["hermes", "external-dir", 1, 1, "shared-dir"], ["dsh", "native", 0, 0, null]]);
+  assert.equal(view.entries.find(item => item.kind === "skill" && item.name === "alpha")?.shared?.folder, "~/.agents/skills/alpha");
   // A file that does not parse is listed, not guessed from; no value, home path or argument leaves the Gateway.
   assert.deepEqual(view.unreadable, [{ harnessId: "opencode", file: "~/.config/opencode/config.json", reason: view.unreadable[0]?.reason }]);
   const text = JSON.stringify(view);

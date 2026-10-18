@@ -102,6 +102,16 @@
 | `~/.codex/skills` 的目录 | 28 | 26 个自有技能、5 个内置技能 | 28 项里 `.system` 是放内置技能的目录，`codex-primary-runtime` 没有 SKILL.md |
 | MCP | Codex 5、Cursor 4 | Codex 5（1 个停用）、Cursor 4 | 一致 |
 
+## 计数口径的变化（第 2 步续，2026-10-18）
+
+第 2 步续把 Hermes 与 OpenCode 改为按它们自己的方式找技能（[放置与清理验收](capability-placement-2026-10-18.md)）：每个 SKILL.md 都算，包括技能文件夹里嵌套的；Hermes 读隐藏目录，只跳过 `.git/.github/.hub/.archive`，OpenCode 跳过隐藏目录。上文是第 1 步的数字，用改后的构建对真实家目录只读重算（只打印数量）：
+
+| Harness | 第 1 步 | 改后 | 说明 |
+|---|---|---|---|
+| Hermes | 157（自有 126 + 链接 31） | 163，全部生效 | 多出的 6 个是技能文件夹里嵌套的、或隐藏目录里的技能。Hermes 自己的发现函数（`tools/skills_tool.py` 的 `_find_all_skills`，在禁写、禁网的沙箱里运行）同样得到 163 个 |
+| OpenCode | 135 个“重复” | 175 份：26 个生效，149 个“重复” | 嵌套的技能经 `~/.claude/skills` 的链接和共享目录各看到一次，同名的每一份都标“重复”（OpenCode 只留一份，留哪份没有文档） |
+| 其他 | — | 不变 | Claude 93、Codex 99、Cursor 164（28 生效、133 重复、3 无效）、Gemini 70（1 被覆盖）、OpenClaw 124（70 生效、53 被跳过、1 被覆盖） |
+
 ## 未验证与后续
 
 - 视图只读。停用、添加、同步等写入是 ADR-045 第 2 步起的内容；第一次真实写入按审批第 13 条，由用户在页面上对 Claude Code 停用一个指定技能再恢复。

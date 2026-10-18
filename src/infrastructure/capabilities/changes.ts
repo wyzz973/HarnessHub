@@ -1,24 +1,25 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { accessSync, constants, existsSync, lstatSync, readdirSync, rmSync } from "node:fs";
+import { accessSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { isDeepStrictEqual } from "node:util";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, isAbsolute, join } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { capabilityReadTables, harnessDirectories, type HarnessReadTable, type ReadEnvironment } from "../../adapters/capability-reads.js";
-import { CAPABILITY_CHECK_MS, CapabilityError, type CapabilityChangeCheck, type CapabilityChangeView, type CapabilityHistory, type CapabilityRestoreCheck } from "../../contracts/capabilities.js";
+import { CAPABILITY_CHECK_MS, CapabilityError, type CapabilityChangeCheck, type CapabilityChangeKind, type CapabilityChangeView, type CapabilityDrift, type CapabilityDriftState, type CapabilityHistory,
+  type CapabilityLinkChange, type CapabilityRestoreCheck } from "../../contracts/capabilities.js";
 import { ManagementError } from "../../contracts/management.js";
 import { unifiedDiff } from "../control/unified-diff.js";
 import { isolatedSandboxProfile } from "../management/native.js";
 import { runManagementProcess } from "../management/process.js";
 import { parseProcessTable, programName } from "../management/program-usage.js";
 import { parsed, UnsafeEdit } from "./edits.js";
-import { record } from "./formats.js";
+import { at, record, text } from "./formats.js";
 import { maskSecrets } from "./masking.js";
 import { readTarget, replaceTarget, type TargetRead } from "./files.js";
 import { CapabilityScan, type InstalledHarness } from "./scan.js";
 import { resolveHermesHome, resolveOpenClawWorkspace } from "./service.js";
-import { CapabilityStore, sha256, type StoredBackup } from "./store.js";
-import { claudeSwitch, codexSwitch, listSwitch, opencodeSwitch, openclawSwitch, type SwitchContext, type SwitchPlan, type SwitchRequest } from "./switches.js";
+import { CapabilityStore, sha256, type LedgerEntry, type StoredBackup } from "./store.js";
+import { claudeSwitch, codexSwitch, heldValue, listSwitch, opencodeSwitch, openclawSwitch, sharedDirPlan, type SwitchContext, type SwitchPlan, type SwitchRequest } from "./switches.js";
 
 export interface ChangeOptions {
   /** The Gateway's data root; the changes keep their record and backups in `capabilities/` under it. */
@@ -38,28 +39,36 @@ export interface ChangeOptions {
 }
 export type OpenclawRunner = (args: readonly string[], options: { readonly env: Readonly<Record<string, string>>; readonly writable: readonly string[] }, signal: AbortSignal) => Promise<void>;
 type Planned = Exclude<SwitchPlan, { kind: "none" }>;
-/** `predicted`: for a change made by the Harness's own command, the file that command wrote when run on a copy. */
-interface PreparedSwitch { readonly kind: "switch"; readonly expires: number; readonly request: SwitchRequest; readonly plan: Planned | null; readonly before: Buffer | null; readonly predicted: Buffer | null; readonly mode: number; readonly check: CapabilityChangeCheck }
+/** An edit of one file, or the Harness's own command; `predicted` is what that command wrote when run on a copy. */
+interface PreparedEdit { readonly kind: "edit"; readonly change: "skill-switch" | "shared-dir"; readonly harnessId: string; readonly subject: string; readonly expires: number; readonly plan: Planned | null;
+  readonly before: Buffer | null; readonly predicted: Buffer | null; readonly mode: number; readonly check: CapabilityChangeCheck }
+/** Links to create or remove (absolute paths, targets as written), and what the ledger records of them. */
+interface PlannedLink { readonly path: string; readonly target: string; readonly action: "create" | "remove"; readonly ledger: "set" | "drop" | null }
+interface PreparedLinks { readonly kind: "links"; readonly change: "skill-link" | "link-cleanup" | "link-undo"; readonly harnessId: string; readonly subject: string; readonly expires: number;
+  readonly directory: string; readonly links: readonly PlannedLink[]; readonly createDirectory: boolean; readonly check: CapabilityChangeCheck }
 interface PreparedRestore { readonly kind: "restore"; readonly expires: number; readonly backup: StoredBackup; readonly current: string | null; readonly mode: number; readonly check: CapabilityRestoreCheck }
 
-const NAME = /^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,127}$/u, COMMAND = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u, FINGERPRINT = /^[a-f0-9]{64}$/u;
+const NAME = /^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,127}$/u, COMMAND = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u, FINGERPRINT = /^[a-f0-9]{64}$/u, CHANGE = /^[a-f0-9-]{36}$/u, DRIFT = /^[a-f0-9]{32}$/u;
 const RUNNING: Readonly<Record<string, RegExp>> = { claude: /^claude(?:\.exe)?$/u, gemini: /^gemini$/u };
+const SHARED_ENTRY = "~/.agents/skills";
 function hash(value: string): string { return createHash("sha256").update(value).digest("hex"); }
 /** OpenClaw's file as compared with its prediction: parsed, without the time it stamps on every write. */
 function openclawContent(bytes: Buffer): unknown { const value = record(parsed(bytes.toString("utf8"), "json5")), meta = { ...record(value.meta) }; delete meta.lastTouchedAt; return JSON.parse(JSON.stringify({ ...value, meta })) as unknown; }
 /** A diff as shown: the home directory as ~ and secret values masked. */
 function displayed(text: string, homes: readonly string[]): string { let out = text; for (const home of [...homes].sort((a, b) => b.length - a.length)) out = out.split(home + "/").join("~/"); return maskSecrets(out); }
+function code(error: unknown): string { return error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : ""; }
+function inside(path: string, root: string): boolean { return path === root || path.startsWith(root + "/"); }
 
 /**
- * Changes HarnessHub makes to a Harness's own user-level configuration (ADR-045 §3): each is checked and shown first,
- * applied once on the user's confirmation, and written only while the file is still as it was shown. Before writing,
- * the file's bytes are kept as a backup (the newest ten per file); the write is atomic, read back and checked against
- * the plan, and a result that is not as planned is reported as failed with its backup. Writes to one file run one at a
- * time; `close` waits for the running ones.
+ * Changes HarnessHub makes to a Harness's own user-level configuration (ADR-045 §3–4): each is checked and shown first,
+ * applied once on the user's confirmation, and made only while what it changes is still as it was shown. An edit keeps
+ * a backup of the file's bytes (the newest ten per file), is atomic, read back and checked against the plan; a change of
+ * links checks every link before touching any and records them so it can be undone. A result that is not as planned is
+ * reported as failed. Changes of one file or directory run one at a time; `close` waits for the running ones.
  */
 export class CapabilityChanges {
   private readonly store: CapabilityStore;
-  private readonly prepared = new Map<string, PreparedSwitch | PreparedRestore>();
+  private readonly prepared = new Map<string, PreparedEdit | PreparedLinks | PreparedRestore>();
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly running = new Set<Promise<unknown>>();
   private closed = false;
@@ -67,24 +76,22 @@ export class CapabilityChanges {
 
   private now(): Date { return this.options.now?.() ?? new Date(); }
   private shown(path: string): string { for (const home of [...this.options.homes].sort((a, b) => b.length - a.length)) { if (path === home) return "~"; if (path.startsWith(home + "/")) return "~/" + path.slice(home.length + 1); } return path; }
+  /** A path shown with ~, as an absolute path again. */
+  private absolute(shown: string): string { return shown === "~" ? this.options.environment.home : shown.startsWith("~/") ? join(this.options.environment.home, shown.slice(2)) : shown; }
   private owned(): void { if (this.closed) throw new CapabilityError("OWNERSHIP_LOST", "capability changes are closed"); this.options.assertOwner(); this.store.assertIdentity(); }
   private track<T>(work: Promise<T>): Promise<T> { this.running.add(work); void work.finally(() => this.running.delete(work)).catch(() => {}); return work; }
-  /** Runs `work` after every earlier write of the same file. */
-  private serial<T>(file: string, work: () => Promise<T>): Promise<T> {
-    const previous = this.queues.get(file) ?? Promise.resolve(), next = previous.catch(() => {}).then(work);
-    this.queues.set(file, next); void next.finally(() => { if (this.queues.get(file) === next) this.queues.delete(file); }).catch(() => {});
+  /** Runs `work` after every earlier change of the same file or directory. */
+  private serial<T>(key: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.queues.get(key) ?? Promise.resolve(), next = previous.catch(() => {}).then(work);
+    this.queues.set(key, next); void next.finally(() => { if (this.queues.get(key) === next) this.queues.delete(key); }).catch(() => {});
     return this.track(next);
   }
   private context(harnessId: string): SwitchContext { return { ledger: (file, key) => this.store.ledger(harnessId, file, key), hash: value => hash(JSON.stringify(value ?? null)) }; }
-
-  /**
-   * Prepares turning one skill off (`enabled` false) or on for one installed Harness: which file changes and the exact
-   * diff, or the Harness's own command; who wrote the setting it changes; and what to know before confirming.
-   * `via` is the copy (as the view shows it) for Codex, which switches copies by path; ignored by the others.
-   */
-  checkSkillSwitch(input: { readonly harnessId: string; readonly name: string; readonly enabled: boolean; readonly via: string | null }, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> {
+  /** Starts a check, which may run a Harness's command, as work `close` waits for. */
+  private checking<T>(work: () => Promise<T>): Promise<T> {
     if (this.closed) return Promise.reject(new CapabilityError("OWNERSHIP_LOST", "capability changes are closed"));
-    return this.track(this.prepareSwitch(input, installed));
+    this.prune();
+    return this.track(work());
   }
   /** Forgets confirmations past their time, and the oldest beyond 256 unused ones. */
   private prune(): void {
@@ -92,13 +99,35 @@ export class CapabilityChanges {
     for (const [fingerprint, prepared] of this.prepared) if (prepared.expires < now) this.prepared.delete(fingerprint);
     for (const fingerprint of [...this.prepared.keys()].slice(0, Math.max(0, this.prepared.size - 255))) this.prepared.delete(fingerprint);
   }
-  private async prepareSwitch(input: { readonly harnessId: string; readonly name: string; readonly enabled: boolean; readonly via: string | null }, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> {
-    this.prune();
-    if (!NAME.test(input.name)) throw new CapabilityError("INVALID_INPUT", "invalid skill name");
-    const harness = installed.find(item => item.harnessId === input.harnessId);
+  private async tables(): Promise<{ hermesHome: string; tables: readonly HarnessReadTable[] }> {
+    const environment = this.options.environment, hermesHome = await resolveHermesHome(environment);
+    return { hermesHome, tables: capabilityReadTables(environment, { hermesHome, openclawWorkspace: await resolveOpenClawWorkspace(environment) }) };
+  }
+  private installed(installed: readonly InstalledHarness[], harnessId: string): InstalledHarness {
+    const harness = installed.find(item => item.harnessId === harnessId);
     if (!harness) throw new CapabilityError("CAPABILITY_NOT_FOUND", "this Harness has no official installation here");
-    const environment = this.options.environment, hermesHome = await resolveHermesHome(environment), openclawWorkspace = await resolveOpenClawWorkspace(environment);
-    const table = capabilityReadTables(environment, { hermesHome, openclawWorkspace }).find(item => item.harnessId === input.harnessId);
+    return harness;
+  }
+  private offer(check: Omit<CapabilityChangeCheck, "fingerprint" | "expiresAt">, prepared: (fingerprint: string, expires: number, check: CapabilityChangeCheck) => PreparedEdit | PreparedLinks): CapabilityChangeCheck {
+    const fingerprint = randomBytes(32).toString("hex"), expires = this.now().getTime() + CAPABILITY_CHECK_MS, full: CapabilityChangeCheck = { ...check, fingerprint, expiresAt: new Date(expires).toISOString() };
+    this.prepared.set(fingerprint, prepared(fingerprint, expires, full));
+    return full;
+  }
+  /** The links HarnessHub placed for shared skills, by its ledger (absolute paths). */
+  placedLinks(): ReadonlySet<string> { return new Set(this.store.ledgerKeys("link/").map(key => key.slice("link/".length))); }
+
+  /**
+   * Prepares turning one skill off (`enabled` false) or on for one installed Harness: which file changes and the exact
+   * diff, or the Harness's own command; who wrote the setting it changes; and what to know before confirming.
+   * `via` is the copy (as the view shows it) for Codex, which switches copies by path; ignored by the others.
+   */
+  checkSkillSwitch(input: { readonly harnessId: string; readonly name: string; readonly enabled: boolean; readonly via: string | null }, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> {
+    return this.checking(() => this.prepareSwitch(input, installed));
+  }
+  private async prepareSwitch(input: { readonly harnessId: string; readonly name: string; readonly enabled: boolean; readonly via: string | null }, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> {
+    if (!NAME.test(input.name)) throw new CapabilityError("INVALID_INPUT", "invalid skill name");
+    const harness = this.installed(installed, input.harnessId), environment = this.options.environment, { hermesHome, tables } = await this.tables();
+    const table = tables.find(item => item.harnessId === input.harnessId);
     if (!table || table.skills.switch === null) throw new CapabilityError("CAPABILITY_UNSUPPORTED", harness.name + " 没有按技能停用的开关，它的技能始终可见");
     // The skill must be one this Harness sees, and Codex's copy one of the places it reads it from.
     const view = await new CapabilityScan(environment, this.options.homes, hermesHome).view([table], [harness], this.now().toISOString());
@@ -108,14 +137,65 @@ export class CapabilityChanges {
     if (table.skills.switch.kind === "codex-skills-config") {
       const edge = edges.find(item => item.via === input.via && item.status !== "broken-link");
       if (!edge) throw new CapabilityError("CAPABILITY_NOT_FOUND", "Codex 不在这个位置读取这个技能");
-      folder = edge.via.startsWith("~/") ? join(environment.home, edge.via.slice(2)) : edge.via;
+      folder = this.absolute(edge.via);
     }
     const request: SwitchRequest = { harnessId: input.harnessId, name: input.name, enabled: input.enabled, folder };
     const { file, read, plan, blocked } = await this.plan(table, request);
+    return this.offerEdit("skill-switch", input.harnessId, input.name, input.enabled, file, read, plan, blocked, await this.runningNotes(input.harnessId), ["skills", "entries", input.name, "enabled"]);
+  }
+  /**
+   * Prepares making Hermes read the shared `~/.agents/skills` through its `skills.external_dirs` (`present`), or stop
+   * (approval ruling 2). Only Hermes needs this: the others read the shared directory themselves, or (Claude Code) take
+   * single skills by links.
+   */
+  checkSharedDir(input: { readonly harnessId: string; readonly present: boolean }, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> {
+    return this.checking(async () => {
+      const harness = this.installed(installed, input.harnessId), { hermesHome, tables } = await this.tables(), table = tables.find(item => item.harnessId === input.harnessId);
+      if (!table?.skills.externalDirs || table.harnessId !== "hermes") throw new CapabilityError("CAPABILITY_UNSUPPORTED", harness.name + (table?.skills.roots.some(root => root.role === "shared")
+        ? " 自己读取共享目录，不需要放置" : " 不能整个读取共享目录；Claude Code 请逐个放置技能"));
+      const file = table.skills.externalDirs.file, read = readTarget(file);
+      if (realOf(harnessDirectories(this.options.environment).shared) === null) throw new CapabilityError("CAPABILITY_NOT_FOUND", "共享目录 ~/.agents/skills 不存在");
+      const resolves = this.sharedEntries(hermesHome);
+      const visible = await this.sharedGain(table, harness, hermesHome);
+      const notes = [...(input.present ? ["Hermes 会多看到 " + visible.length + " 个共享技能" + (visible.length ? "：" + visible.slice(0, 8).join("、") + (visible.length > 8 ? " 等" : "") : "") + "。"] : []),
+        "正在运行的 Hermes 网关（QQ 等消息渠道）不会被 HarnessHub 重启，它重启后才看到改动；长驻的 Hermes 进程要 /reload-skills 或重启后生效。",
+        ...(input.present ? ["现有的链接不动；它们指向同一份技能，Hermes 以本地链接为准。清理多余链接是单独的一步。"] : ["停止后，只经共享目录看到的技能会从 Hermes 里消失；本地链接里的技能不受影响。"])];
+      let plan: SwitchPlan | null = null, blocked: string | null = null;
+      if (read.state === "refused") blocked = "无法修改 " + this.shown(file) + "：" + read.reason + "。";
+      else if (read.state === "missing" && !read.directory) blocked = "无法修改：" + this.shown(dirname(file)) + " 不存在。";
+      else {
+        try { plan = sharedDirPlan(file, read.state === "ok" ? read.bytes.toString("utf8") : "", input.present, SHARED_ENTRY, resolves, this.context(input.harnessId), notes); }
+        catch (error) { if (!(error instanceof UnsafeEdit)) throw error; blocked = "无法安全修改 " + this.shown(file) + "：" + error.message + "。"; }
+      }
+      return this.offerEdit("shared-dir", input.harnessId, SHARED_ENTRY, input.present, file, read, plan, blocked, plan === null ? notes : [], null);
+    });
+  }
+  /**
+   * Which raw entries of Hermes's `skills.external_dirs` are the shared directory: expanded (~ and variables) and resolved
+   * against Hermes's home as Hermes does, or HarnessHub's own spelling of it while the directory is missing.
+   */
+  private sharedEntries(hermesHome: string): (raw: string) => boolean {
+    const shared = realOf(harnessDirectories(this.options.environment).shared), values = this.options.environment.values;
+    return raw => {
+      if (raw.trim() === SHARED_ENTRY) return true;
+      const expanded = raw.trim().replace(/^~(?=$|\/)/u, this.options.environment.home).replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/gu, (_, braced: string | undefined, bare: string | undefined) => values[braced ?? bare ?? ""] ?? "");
+      return shared !== null && realOf(isAbsolute(expanded) ? expanded : resolve(hermesHome, expanded)) === shared;
+    };
+  }
+  /** The shared skills a Harness does not see now, by name: what reading the shared directory adds. */
+  private async sharedGain(table: HarnessReadTable, harness: InstalledHarness, hermesHome: string): Promise<readonly string[]> {
+    const scan = new CapabilityScan(this.options.environment, this.options.homes, hermesHome), view = await scan.view([table], [harness], this.now().toISOString());
+    const seen = new Set(view.entries.filter(entry => entry.kind === "skill" && entry.edges.some(edge => edge.harnessId === harness.harnessId && edge.status !== "broken-link")).map(entry => entry.name));
+    const shared = new CapabilityScan(this.options.environment, this.options.homes, hermesHome), find = table.skills.roots[0]?.find;
+    const all = await shared.view([sharedOnly(table, harnessDirectories(this.options.environment).shared, 8, find)], [harness], this.now().toISOString());
+    return all.entries.filter(entry => entry.kind === "skill" && entry.edges.some(edge => edge.status === "active") && !seen.has(entry.name)).map(entry => entry.name).sort();
+  }
+  /** An edit or command plan offered for confirmation, with the guard every edit passes and OpenClaw's prediction. */
+  private async offerEdit(change: "skill-switch" | "shared-dir", harnessId: string, subject: string, enabled: boolean, file: string, read: TargetRead, plan: SwitchPlan | null, blocked: string | null,
+    extraNotes: readonly string[], target: readonly string[] | null): Promise<CapabilityChangeCheck> {
     const before = read.state === "ok" ? read.bytes : null, beforeText = before?.toString("utf8") ?? "";
-    const notes = plan !== null && plan.kind !== "none" ? [...plan.notes] : [];
+    const notes = [...(plan !== null && plan.kind !== "none" ? plan.notes : []), ...extraNotes];
     if (plan?.kind === "edit" && read.state === "missing") notes.push("会新建这个文件。");
-    notes.push(...await this.runningNotes(input.harnessId));
     let reason = blocked ?? (plan?.kind === "none" ? "无需修改：" + plan.reason : null), diff: string | null = null;
     if (reason === null && plan?.kind === "edit") {
       // The guard every edit passes: the planned file differs from the current one only at the setting it changes.
@@ -124,23 +204,124 @@ export class CapabilityChanges {
       diff = displayed(unifiedDiff(this.shown(file), read.state === "ok" ? beforeText : null, plan.after, 2), this.options.homes);
     }
     let predicted: Buffer | null = null, rewrite: CapabilityChangeCheck["rewrite"] = null;
-    if (reason === null && plan?.kind === "command" && before !== null) {
+    if (reason === null && plan?.kind === "command" && before !== null && target !== null) {
       // The same command on a private copy shows exactly what it will write, defaults it adds included.
       try { predicted = await this.predict(plan.args, before); diff = displayed(unifiedDiff(this.shown(file), beforeText, predicted.toString("utf8"), 2), this.options.homes); }
       catch (error) { reason = "OpenClaw 的预演没有通过，没有准备写入（" + (error instanceof Error ? error.message : "未知原因") + "）。"; }
       if (predicted !== null) {
-        rewrite = rewriteSummary(beforeText, predicted.toString("utf8"), ["skills", "entries", input.name, "enabled"]);
-        const restart = rewriteRestarts(beforeText, predicted.toString("utf8"), ["skills", "entries", input.name, "enabled"]);
+        rewrite = rewriteSummary(beforeText, predicted.toString("utf8"), target);
+        const restart = rewriteRestarts(beforeText, predicted.toString("utf8"), target);
         if (restart.length) reason = "OpenClaw 的命令还会改动需要重启 Gateway 的设置（" + restart.join("、") + "），HarnessHub 不做这项修改。";
       }
     }
-    const fingerprint = randomBytes(32).toString("hex"), expires = this.now().getTime() + CAPABILITY_CHECK_MS;
-    const check: CapabilityChangeCheck = { kind: "skill-switch", harnessId: input.harnessId, name: input.name, enabled: input.enabled, file: this.shown(file),
-      command: plan?.kind === "command" ? "openclaw " + plan.args.join(" ") : null, diff, rewrite, current: plan !== null && plan.kind !== "none" ? plan.current : "none", notes, blocked: reason,
-      fingerprint, expiresAt: new Date(expires).toISOString() };
-    this.prepared.set(fingerprint, { kind: "switch", expires, request, plan: plan === null || plan.kind === "none" ? null : plan, before, predicted, mode: read.state === "ok" ? read.mode : 0o600, check });
-    return check;
+    return this.offer({ kind: change, harnessId, name: subject, enabled, file: this.shown(file), command: plan?.kind === "command" ? "openclaw " + plan.args.join(" ") : null, diff, rewrite, links: [],
+      current: plan !== null && plan.kind !== "none" ? plan.current : "none", notes, blocked: reason },
+      (_, expires, check) => ({ kind: "edit", change, harnessId, subject, expires, plan: plan === null || plan.kind === "none" ? null : plan, before, predicted, mode: read.state === "ok" ? read.mode : 0o600, check }));
   }
+
+  /**
+   * Prepares placing one shared skill in Claude Code (`present`): an absolute link `~/.claude/skills/<folder>` to its folder
+   * in `~/.agents/skills` (ADR-045 §4), or removing such a link HarnessHub placed. Links others made are left to the
+   * switch; a place already taken is not overwritten.
+   */
+  checkSkillLink(input: { readonly harnessId: string; readonly name: string; readonly present: boolean }, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> {
+    return this.checking(async () => {
+      if (!NAME.test(input.name)) throw new CapabilityError("INVALID_INPUT", "invalid skill name");
+      const harness = this.installed(installed, input.harnessId), { hermesHome, tables } = await this.tables(), table = tables.find(item => item.harnessId === input.harnessId);
+      if (input.harnessId !== "claude" || !table) throw new CapabilityError("CAPABILITY_UNSUPPORTED", harness.name + " 不需要逐个放置：它自己读取共享目录" + (input.harnessId === "hermes" ? "，或经 skills.external_dirs 读取" : ""));
+      const dirs = harnessDirectories(this.options.environment), folders = await new CapabilityScan(this.options.environment, this.options.homes, hermesHome).view([sharedOnly(table, dirs.shared, 1, undefined)], [harness], this.now().toISOString());
+      const folder = folders.entries.find(entry => entry.kind === "skill" && entry.name === input.name)?.edges.find(edge => edge.status !== "broken-link")?.via;
+      if (folder === undefined) throw new CapabilityError("CAPABILITY_NOT_FOUND", "共享目录里没有名为 " + input.name + " 的技能");
+      const target = this.absolute(folder), directory = join(dirs.claude, "skills"), path = join(directory, basename(target)), key = "link/" + path;
+      const occupant = (() => { try { return lstatSync(path); } catch { return null; } })();
+      let blocked: string | null = null, links: PlannedLink[] = [], current: CapabilityChangeCheck["current"] = "none", createDirectory = false;
+      const notes = ["Claude Code 会立即读到这个改动（它监视技能目录）。"];
+      if (input.present) {
+        const view = await new CapabilityScan(this.options.environment, this.options.homes, hermesHome).view([table], [harness], this.now().toISOString());
+        const seen = view.entries.find(entry => entry.kind === "skill" && entry.name === input.name)?.edges.filter(edge => edge.harnessId === "claude" && edge.status !== "broken-link" && edge.status !== "invalid") ?? [];
+        if (seen.length) blocked = "无需修改：Claude Code 已经能看到它（" + seen.map(edge => edge.via).join("、") + "）。";
+        else if (occupant !== null) blocked = this.shown(path) + " 已被占用，没有放置。";
+        else if (!existsSync(dirs.claude)) blocked = "无法放置：" + this.shown(dirs.claude) + " 不存在。";
+        else {
+          createDirectory = !existsSync(directory);
+          links = [{ path, target, action: "create", ledger: "set" }];
+          notes.push("链接用绝对路径，指向共享目录里的这一份；共享目录里的更新会直接生效。", ...(createDirectory ? ["会新建 " + this.shown(directory) + "。"] : []));
+        }
+      } else {
+        const ours = this.store.ledger("claude", path, key);
+        const raw = occupant?.isSymbolicLink() ? (() => { try { return readlinkSync(path); } catch { return null; } })() : null;
+        if (raw === null || realOf(resolve(directory, raw)) !== realOf(target)) blocked = "无需修改：Claude Code 里没有指向共享目录这一份的链接 " + this.shown(path) + "。";
+        else if (ours === null) blocked = "这个链接不是 HarnessHub 建的（多见于 npx skills），HarnessHub 不删它；要让 Claude Code 不用这个技能，请用“在 Claude Code 中停用”。";
+        else { links = [{ path, target: raw, action: "remove", ledger: "drop" }]; current = "harnesshub"; }
+      }
+      return this.offerLinks("skill-link", "claude", input.name, input.present, directory, links, current, notes, blocked, createDirectory);
+    });
+  }
+  /**
+   * Prepares removing the links in a Harness's own skills directory that point into the shared directory, which it reads
+   * anyway (approval rulings 2 and 3): OpenClaw reads it itself and skips those links; Hermes only once it reads the shared
+   * directory through `skills.external_dirs`. Only links into `~/.agents/skills` are removed; they can be put back.
+   */
+  checkLinkCleanup(input: { readonly harnessId: string }, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> {
+    return this.checking(async () => {
+      const harness = this.installed(installed, input.harnessId), { hermesHome, tables } = await this.tables(), table = tables.find(item => item.harnessId === input.harnessId);
+      if (!table || (input.harnessId !== "hermes" && input.harnessId !== "openclaw")) throw new CapabilityError("CAPABILITY_UNSUPPORTED", harness.name + " 没有可以清理的多余链接");
+      const dirs = harnessDirectories(this.options.environment), shared = realOf(dirs.shared);
+      if (shared === null) throw new CapabilityError("CAPABILITY_NOT_FOUND", "共享目录 ~/.agents/skills 不存在");
+      const directory = input.harnessId === "hermes" ? join(hermesHome, "skills") : join(dirs.openclaw, "skills");
+      const view = await new CapabilityScan(this.options.environment, this.options.homes, hermesHome).view([table], [harness], this.now().toISOString());
+      const reads = view.harnesses[0]?.shared.reads;
+      let blocked: string | null = null;
+      if (reads !== "native" && reads !== "external-dir") blocked = harness.name + " 还没有读取共享目录；先让它读取共享目录，否则删掉这些链接会让这些技能从 " + harness.name + " 里消失。";
+      const links: PlannedLink[] = [];
+      let names: string[] = [];
+      try { names = readdirSync(directory).sort(); } catch { names = []; }
+      for (const name of names) {
+        const path = join(directory, name);
+        let raw: string | null = null;
+        try { if (lstatSync(path).isSymbolicLink()) raw = readlinkSync(path); } catch { raw = null; }
+        const real = raw === null ? null : realOf(path);
+        if (raw !== null && real !== null && inside(real, shared)) links.push({ path, target: raw, action: "remove", ledger: null });
+      }
+      if (blocked === null && !links.length) blocked = "无需修改：" + this.shown(directory) + " 里没有指向共享目录的链接。";
+      const notes = ["只删 " + this.shown(directory) + " 里这 " + links.length + " 个指向 ~/.agents/skills 的链接，技能本身不动；可以在“修改与备份”里撤销。", "`npx skills` 以后可能会重新建这些链接。",
+        input.harnessId === "openclaw" ? "OpenClaw 本来就跳过这些链接，直接从共享目录读取同一份。"
+          : "之后 Hermes 从共享目录读取这些技能。正在运行的 Hermes 网关（QQ 等消息渠道）不会被 HarnessHub 重启；长驻进程要 /reload-skills 或重启后生效。"];
+      return this.offerLinks("link-cleanup", input.harnessId, "多余链接", false, directory, links, "other", notes, blocked, false);
+    });
+  }
+  /** Prepares undoing a change of links: removing what it created and putting back what it removed, each only while still as it left it. */
+  checkUndo(changeId: string): Promise<CapabilityChangeCheck> {
+    return this.checking(async () => {
+      const change = CHANGE.test(changeId) ? this.store.changeById(changeId) : null;
+      if (change === null || !change.links?.length || change.status !== "applied") throw new CapabilityError("CAPABILITY_NOT_FOUND", "没有可以撤销的链接改动");
+      const links: PlannedLink[] = [];
+      let blocked: string | null = null;
+      for (const link of change.links) {
+        const path = this.absolute(link.path), occupant = (() => { try { return lstatSync(path); } catch { return null; } })(), target = link.target.startsWith("~/") ? this.absolute(link.target) : link.target;
+        const ledger = change.kind === "skill-link" ? (link.action === "create" ? "drop" as const : "set" as const) : null;
+        if (link.action === "create") {
+          const raw = occupant?.isSymbolicLink() ? (() => { try { return readlinkSync(path); } catch { return null; } })() : null;
+          if (raw !== target) { blocked = link.path + " 已不是当初建的链接，没有撤销。"; break; }
+          links.push({ path, target, action: "remove", ledger });
+        } else {
+          if (occupant !== null) { blocked = link.path + " 已被占用，没有撤销。"; break; }
+          if (realOf(resolve(dirname(path), target)) === null) { blocked = link.path + " 原来指向的 " + link.target + " 已不存在，没有撤销。"; break; }
+          links.push({ path, target, action: "create", ledger });
+        }
+      }
+      const directory = dirname(links[0]?.path ?? this.absolute(change.links[0]!.path));
+      return this.offerLinks("link-undo", change.harnessId ?? "", change.subject, false, directory, blocked === null ? links : [], "harnesshub",
+        ["撤销 " + change.links.length + " 个链接改动：删掉当初建的，放回当初删的。"], blocked, false);
+    });
+  }
+  private offerLinks(change: "skill-link" | "link-cleanup" | "link-undo", harnessId: string, subject: string, enabled: boolean, directory: string, links: readonly PlannedLink[],
+    current: CapabilityChangeCheck["current"], notes: readonly string[], blocked: string | null, createDirectory: boolean): CapabilityChangeCheck {
+    const shown = links.map((link): CapabilityLinkChange => ({ path: this.shown(link.path), target: isAbsolute(link.target) ? this.shown(link.target) : link.target, action: link.action }));
+    return this.offer({ kind: change, harnessId, name: subject, enabled, file: this.shown(directory), command: null, diff: null, rewrite: null, links: shown, current, notes, blocked },
+      (_, expires, check) => ({ kind: "links", change, harnessId, subject, expires, directory, links, createDirectory, check }));
+  }
+
   /** Runs OpenClaw's command on a copy of its file in a private state directory and returns what it wrote. */
   private async predict(args: readonly string[], before: Buffer): Promise<Buffer> {
     const stage = await realpath(await mkdtemp(join(tmpdir(), "harnesshub-openclaw-copy-"))), state = join(stage, "state"), copy = join(state, "openclaw.json");
@@ -170,15 +351,15 @@ export class CapabilityChanges {
     if (read.state === "refused") return { file, read, plan: null, blocked: "无法修改 " + this.shown(file) + "：" + read.reason + "。" };
     if (read.state === "missing" && !read.directory) return { file, read, plan: null, blocked: "无法修改：" + this.shown(dirname(file)) + " 不存在。" };
     if (read.state === "missing" && source.kind === "openclaw-entries") return { file, read, plan: null, blocked: "OpenClaw 还没有配置文件。" };
-    const text = read.state === "ok" ? read.bytes.toString("utf8") : "";
+    const content = read.state === "ok" ? read.bytes.toString("utf8") : "";
     try {
       switch (source.kind) {
-        case "claude-skill-overrides": return { file, read, plan: claudeSwitch(file, text, request, context), blocked: null };
-        case "codex-skills-config": return { file, read, plan: codexSwitch(file, text, request, context), blocked: null };
-        case "gemini-skills-disabled": return { file, read, plan: listSwitch(file, text, "jsonc", request, context, ["改完后在 Gemini 里用 /skills reload 或重开才生效。"]), blocked: null };
-        case "hermes-skills-disabled": return { file, read, plan: listSwitch(file, text, "yaml", request, context, ["正在运行的 Hermes 网关（QQ 等消息渠道）不会被 HarnessHub 重启；长驻的 Hermes 进程要 /reload-skills 或重启后才生效。"]), blocked: null };
-        case "opencode-permission": return { file, read, plan: opencodeSwitch(file, text, earlier, request, context), blocked: null };
-        case "openclaw-entries": return { file, read, plan: openclawSwitch(file, text, request, context), blocked: null };
+        case "claude-skill-overrides": return { file, read, plan: claudeSwitch(file, content, request, context), blocked: null };
+        case "codex-skills-config": return { file, read, plan: codexSwitch(file, content, request, context), blocked: null };
+        case "gemini-skills-disabled": return { file, read, plan: listSwitch(file, content, "jsonc", request, context, ["改完后在 Gemini 里用 /skills reload 或重开才生效。"]), blocked: null };
+        case "hermes-skills-disabled": return { file, read, plan: listSwitch(file, content, "yaml", request, context, ["正在运行的 Hermes 网关（QQ 等消息渠道）不会被 HarnessHub 重启；长驻的 Hermes 进程要 /reload-skills 或重启后才生效。"]), blocked: null };
+        case "opencode-permission": return { file, read, plan: opencodeSwitch(file, content, earlier, request, context), blocked: null };
+        case "openclaw-entries": return { file, read, plan: openclawSwitch(file, content, request, context), blocked: null };
       }
     } catch (error) {
       if (error instanceof UnsafeEdit) return { file, read, plan: null, blocked: "无法安全修改 " + this.shown(file) + "：" + error.message + "。" };
@@ -204,16 +385,20 @@ export class CapabilityChanges {
     const replay = this.replay(commandId, fingerprint);
     if (replay) return Promise.resolve(replay);
     const prepared = this.prepared.get(fingerprint);
-    if (!prepared || prepared.kind !== "switch" || prepared.expires < this.now().getTime()) return Promise.reject(new CapabilityError("CAPABILITY_CHECK_EXPIRED", "这次确认已过期或已用过，请重新检查"));
-    if (prepared.check.blocked !== null || prepared.plan === null) return Promise.reject(new CapabilityError("CAPABILITY_TARGET_REFUSED", prepared.check.blocked ?? "这项检查不能执行"));
+    if (!prepared || prepared.kind === "restore" || prepared.expires < this.now().getTime()) return Promise.reject(new CapabilityError("CAPABILITY_CHECK_EXPIRED", "这次确认已过期或已用过，请重新检查"));
+    if (prepared.check.blocked !== null || (prepared.kind === "edit" && prepared.plan === null) || (prepared.kind === "links" && !prepared.links.length))
+      return Promise.reject(new CapabilityError("CAPABILITY_TARGET_REFUSED", prepared.check.blocked ?? "这项检查不能执行"));
     this.prepared.delete(fingerprint);
-    const plan = prepared.plan;
+    return prepared.kind === "edit" ? this.applyEdit(prepared, fingerprint, commandId) : this.applyLinks(prepared, fingerprint, commandId);
+  }
+  private applyEdit(prepared: PreparedEdit, fingerprint: string, commandId: string): Promise<CapabilityChangeView> {
+    const plan = prepared.plan!;
     return this.serial(plan.file, async () => {
       this.owned();
       const current = readTarget(plan.file), expected = prepared.before === null ? null : sha256(prepared.before);
       if (!(expected === null ? current.state === "missing" : current.state === "ok" && sha256(current.bytes) === expected)) throw new CapabilityError("CAPABILITY_TARGET_CHANGED", "文件在确认之后被改动过，没有写入；请重新检查");
       const id = randomUUID(), at = this.now().toISOString(), backupId = prepared.before === null ? null : randomUUID();
-      if (backupId !== null) this.store.saveBackup({ id: backupId, file: plan.file, createdAt: at, changeId: id, subject: prepared.request.name }, prepared.before!);
+      if (backupId !== null) this.store.saveBackup({ id: backupId, file: plan.file, createdAt: at, changeId: id, subject: prepared.subject }, prepared.before!);
       const beforeText = prepared.before?.toString("utf8") ?? "";
       let error: { code: string; message: string } | null = null, written: Buffer | null = null;
       try {
@@ -235,13 +420,52 @@ export class CapabilityChanges {
       }
       if (backupId !== null && written !== null) this.store.setWritten(backupId, written);
       if (error === null) {
-        if (plan.ledger === "set") this.store.setLedger({ harnessId: prepared.request.harnessId, file: plan.file, key: plan.key, valueHash: hash(JSON.stringify(plan.written ?? null)), previous: plan.previous, changeId: id, at });
-        else this.store.dropLedger(prepared.request.harnessId, plan.file, plan.key);
+        if (plan.ledger === "set") this.store.setLedger({ harnessId: prepared.harnessId, file: plan.file, key: plan.key, valueHash: hash(JSON.stringify(plan.written ?? null)), previous: plan.previous, changeId: id, at }, plan.current === "harnesshub");
+        else this.store.dropLedger(prepared.harnessId, plan.file, plan.key);
       }
       const changed = written !== null && (prepared.before === null || !written.equals(prepared.before));
-      const view: CapabilityChangeView = { id, kind: "skill-switch", harnessId: prepared.request.harnessId, subject: prepared.request.name, file: this.shown(plan.file), status: error === null ? "applied" : "failed",
+      const view: CapabilityChangeView = { id, kind: prepared.change, harnessId: prepared.harnessId, subject: prepared.subject, file: this.shown(plan.file), status: error === null ? "applied" : "failed",
         diff: changed ? displayed(unifiedDiff(this.shown(plan.file), prepared.before === null ? null : beforeText, written!.toString("utf8"), 2), this.options.homes) : null,
         backupId: changed ? backupId : null, error, notes: error === null ? prepared.check.notes : [...(changed && backupId !== null ? ["可以在“修改与备份”里恢复修改前的文件。"] : [])], at };
+      this.store.saveChange(commandId, hash(fingerprint), view);
+      return view;
+    });
+  }
+  /**
+   * Makes a confirmed change of links: every link is checked to be as the check left it before any is touched (a
+   * difference refuses all of them), then each is created or removed and read back; what was done is recorded, so a
+   * partial failure can still be undone.
+   */
+  private applyLinks(prepared: PreparedLinks, fingerprint: string, commandId: string): Promise<CapabilityChangeView> {
+    return this.serial("links:" + prepared.directory, async () => {
+      this.owned();
+      const lstat = (path: string) => { try { return lstatSync(path); } catch { return null; } };
+      for (const link of prepared.links) {
+        const occupant = lstat(link.path);
+        const same = link.action === "create" ? occupant === null && realOf(resolve(dirname(link.path), link.target)) !== null
+          : occupant?.isSymbolicLink() === true && (() => { try { return readlinkSync(link.path) === link.target; } catch { return false; } })();
+        if (!same) throw new CapabilityError("CAPABILITY_TARGET_CHANGED", this.shown(link.path) + " 在确认之后变了，没有改动任何链接；请重新检查");
+      }
+      const id = randomUUID(), at = this.now().toISOString(), done: PlannedLink[] = [];
+      let error: { code: string; message: string } | null = null;
+      try {
+        if (prepared.createDirectory && !existsSync(prepared.directory)) mkdirSync(prepared.directory, { mode: 0o755 });
+        for (const link of prepared.links) {
+          if (link.action === "create") symlinkSync(link.target, link.path); else unlinkSync(link.path);
+          done.push(link);
+          const after = lstat(link.path);
+          const ok = link.action === "create" ? after?.isSymbolicLink() === true && readlinkSync(link.path) === link.target : after === null;
+          if (!ok) { error = { code: "CAPABILITY_READBACK_MISMATCH", message: this.shown(link.path) + " 改动后与计划不一致" }; break; }
+        }
+      } catch (failure) { error = { code: "CAPABILITY_WRITE_FAILED", message: (code(failure) ? code(failure) + " " : "") + this.shown(done.length < prepared.links.length ? prepared.links[done.length]!.path : prepared.directory) }; }
+      for (const link of done) {
+        const key = "link/" + link.path;
+        if (link.ledger === "set") this.store.setLedger({ harnessId: prepared.harnessId, file: link.path, key, valueHash: hash(JSON.stringify(link.target)), previous: null, changeId: id, at }, false);
+        if (link.ledger === "drop") this.store.dropLedger(prepared.harnessId, link.path, key);
+      }
+      const links = done.map((link): CapabilityLinkChange => ({ path: this.shown(link.path), target: isAbsolute(link.target) ? this.shown(link.target) : link.target, action: link.action }));
+      const view: CapabilityChangeView = { id, kind: prepared.change, harnessId: prepared.harnessId || null, subject: prepared.subject, file: this.shown(prepared.directory), status: error === null ? "applied" : "failed",
+        diff: null, backupId: null, error, notes: error === null ? prepared.check.notes : done.length ? ["已改动的 " + done.length + " 个链接可以撤销。"] : [], links, at };
       this.store.saveChange(commandId, hash(fingerprint), view);
       return view;
     });
@@ -253,15 +477,86 @@ export class CapabilityChanges {
     return stored.view;
   }
 
-  /** HarnessHub's recent changes and the backups it keeps, newest first. */
-  history(): CapabilityHistory {
-    return { changes: this.store.changes(50), backups: this.store.backups().map(item => ({ id: item.id, file: this.shown(item.file), createdAt: item.createdAt, bytes: item.bytes, changeId: item.changeId, subject: item.subject })) };
+  /** HarnessHub's recent changes and the backups it keeps, newest first, and what it wrote that is no longer in place. */
+  async history(): Promise<CapabilityHistory> {
+    return { changes: this.store.changes(50), backups: this.store.backups().map(item => ({ id: item.id, file: this.shown(item.file), createdAt: item.createdAt, bytes: item.bytes, changeId: item.changeId, subject: item.subject })),
+      drift: await this.drift() };
+  }
+  /**
+   * The settings and links HarnessHub's ledger says it wrote that are no longer as it wrote them (ADR-045 §10): each
+   * setting read from its file the way its switch reads it, each link read back. Read only; nothing is put back.
+   */
+  async drift(): Promise<readonly CapabilityDrift[]> {
+    const shared = this.sharedEntries(await resolveHermesHome(this.options.environment)), reads = new Map<string, TargetRead>();
+    return this.store.ledgerEntries().flatMap(entry => { const state = this.driftState(entry, shared, reads); return state === null ? [] : [this.driftView(entry, state)]; });
+  }
+  /** Whether a ledger entry still holds what HarnessHub wrote (null), or how it differs; `reads` keeps each file read once. */
+  private driftState(entry: LedgerEntry, shared: (raw: string) => boolean, reads: Map<string, TargetRead>): CapabilityDriftState | null {
+    if (entry.key.startsWith("link/")) {
+      const occupant = (() => { try { return lstatSync(entry.file); } catch { return null; } })();
+      if (occupant === null) return "removed";
+      const raw = occupant.isSymbolicLink() ? (() => { try { return readlinkSync(entry.file); } catch { return null; } })() : null;
+      return raw !== null && hash(JSON.stringify(raw)) === entry.valueHash ? null : "changed";
+    }
+    const read = reads.get(entry.file) ?? readTarget(entry.file);
+    reads.set(entry.file, read);
+    if (read.state === "missing") return "removed";
+    if (read.state === "refused") return "unreadable";
+    let value: unknown;
+    try { value = heldValue(entry.harnessId, entry.key, read.bytes.toString("utf8"), shared); } catch { return "unreadable"; }
+    return value === undefined ? "removed" : hash(JSON.stringify(value)) === entry.valueHash ? null : "changed";
+  }
+  private driftView(entry: LedgerEntry, state: CapabilityDriftState): CapabilityDrift {
+    const rest = entry.key.slice(entry.key.indexOf("/") + 1), change = this.store.changeById(entry.changeId);
+    const kind = entry.key.startsWith("link/") ? "skill-link" as const : entry.key.startsWith("skills.external_dirs/") ? "shared-dir" as const : "skill-switch" as const;
+    const subject = kind === "shared-dir" ? SHARED_ENTRY : entry.key.startsWith("skills.config/") ? change?.subject ?? basename(dirname(rest))
+      : kind === "skill-link" ? change?.subject ?? basename(rest) : rest;
+    return { id: driftId(entry), kind, harnessId: entry.harnessId, subject, file: this.shown(entry.file), state, changeId: entry.changeId, at: entry.at };
+  }
+  private driftEntry(id: string): LedgerEntry {
+    const entry = DRIFT.test(id) ? this.store.ledgerEntries().find(item => driftId(item) === id) : undefined;
+    if (entry === undefined) throw new CapabilityError("CAPABILITY_NOT_FOUND", "HarnessHub 没有在跟踪这项设置");
+    return entry;
+  }
+  /**
+   * Prepares putting back what HarnessHub wrote for a ledger entry, through that change's usual check: the switch, the
+   * shared directory entry, or the link. Nothing is put back without the user's confirmation.
+   */
+  checkReapply(id: string, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> {
+    let entry: LedgerEntry;
+    try { entry = this.driftEntry(id); } catch (error) { return Promise.reject(error); }
+    const view = this.driftView(entry, "removed");
+    if (view.kind === "skill-link") return this.checkSkillLink({ harnessId: entry.harnessId, name: view.subject, present: true }, installed);
+    if (view.kind === "shared-dir") return this.checkSharedDir({ harnessId: entry.harnessId, present: true }, installed);
+    // OpenCode's ledger holds either the "deny" of turning a skill off or the "allow" that turned it on over another rule.
+    const enabled = entry.key.startsWith("permission.skill/") && entry.valueHash === hash(JSON.stringify("allow"));
+    const via = entry.key.startsWith("skills.config/") ? this.shown(dirname(entry.key.slice("skills.config/".length))) : null;
+    return this.checkSkillSwitch({ harnessId: entry.harnessId, name: view.subject, enabled, via }, installed);
+  }
+  /**
+   * Stops tracking a ledger entry that is no longer as HarnessHub wrote it: HarnessHub then treats the setting or link
+   * as someone else's. No file changes. Refused while it still holds what HarnessHub wrote; an entry already forgotten
+   * returns `forgotten: false`.
+   */
+  forget(id: string): Promise<{ readonly forgotten: boolean }> {
+    if (!DRIFT.test(id)) return Promise.reject(new CapabilityError("INVALID_INPUT", "invalid ledger entry"));
+    const found = this.store.ledgerEntries().find(item => driftId(item) === id);
+    if (found === undefined) return Promise.resolve({ forgotten: false });
+    return this.serial(found.key.startsWith("link/") ? "links:" + dirname(found.file) : found.file, async () => {
+      this.owned();
+      const entry = this.store.ledgerEntries().find(item => driftId(item) === id);
+      if (entry === undefined) return { forgotten: false };
+      if (this.driftState(entry, this.sharedEntries(await resolveHermesHome(this.options.environment)), new Map()) === null)
+        throw new CapabilityError("CAPABILITY_TARGET_REFUSED", "它仍是 HarnessHub 写的样子，不需要停止跟踪");
+      this.store.dropLedger(entry.harnessId, entry.file, entry.key);
+      return { forgotten: true };
+    });
   }
   /** Prepares restoring a backup: what it changes now, and whether the file was changed by someone else after HarnessHub. */
   async checkRestore(backupId: string): Promise<CapabilityRestoreCheck> {
     if (this.closed) throw new CapabilityError("OWNERSHIP_LOST", "capability changes are closed");
     this.prune();
-    const backup = /^[a-f0-9-]{36}$/u.test(backupId) ? this.store.backup(backupId) : null;
+    const backup = CHANGE.test(backupId) ? this.store.backup(backupId) : null;
     if (backup === null) throw new CapabilityError("CAPABILITY_NOT_FOUND", "没有这份备份");
     const bytes = this.store.backupBytes(backupId), current = readTarget(backup.file);
     if (current.state === "refused") throw new CapabilityError("CAPABILITY_TARGET_REFUSED", "无法恢复：" + current.reason);
@@ -310,6 +605,15 @@ export class CapabilityChanges {
   }
 }
 
+/** A table reading only the shared directory, the way this Harness finds skills, without its switch or other roots. */
+function sharedOnly(table: HarnessReadTable, shared: string, depth: number, find: HarnessReadTable["skills"]["roots"][number]["find"]): HarnessReadTable {
+  const { duplicates, requiresDescription, nameMustMatchDirectory } = table.skills;
+  return { ...table, skills: { roots: [{ role: "shared", path: shared, precedence: 1, containment: false, depth, ...(find ? { find } : {}) }], duplicates, requiresDescription, nameMustMatchDirectory, switch: null } };
+}
+/** The opaque name of a ledger entry. */
+function driftId(entry: LedgerEntry): string { return hash(entry.harnessId + "\0" + entry.file + "\0" + entry.key).slice(0, 32); }
+/** A path's real path, or null when it does not resolve. */
+function realOf(path: string): string | null { try { return realpathSync(path); } catch { return null; } }
 type Difference = { readonly path: readonly string[]; readonly kind: "added" | "removed" | "changed" };
 function differences(left: unknown, right: unknown, path: readonly string[] = []): Difference[] {
   const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -327,10 +631,10 @@ const RESTART_KEYS = new Set(["gateway", "discovery", "canvasHost", "plugins"]);
 function rewriteRestarts(beforeText: string, afterText: string, target: readonly string[]): readonly string[] {
   return [...new Set(besideTarget(beforeText, afterText, target).filter(item => RESTART_KEYS.has(item.path[0] ?? "")).map(item => item.path.slice(0, 2).join(".")))];
 }
-function commentLines(text: string): number { return text.split("\n").filter(line => /(^|[^:"'\\])\/\/|\/\*/u.test(line)).length; }
+function commentLines(source: string): number { return source.split("\n").filter(line => /(^|[^:"'\\])\/\/|\/\*/u.test(line)).length; }
 /** A whole-file rewrite summarized for its confirmation: the target before and after, the other keys it touches, the comments it drops. */
 function rewriteSummary(beforeText: string, afterText: string, target: readonly string[]): NonNullable<CapabilityChangeCheck["rewrite"]> {
-  const value = (text: string): string | null => { let current: unknown = parsed(text, "json5"); for (const key of target) current = record(current)[key]; return current === undefined ? null : JSON.stringify(current); };
+  const value = (source: string): string | null => { const current = at(parsed(source, "json5"), target); return current === undefined ? null : JSON.stringify(current); };
   const keys = (kind: Difference["kind"]) => [...new Set(besideTarget(beforeText, afterText, target).filter(item => item.kind === kind).map(item => item.path.slice(0, 2).join(".")))].slice(0, 32);
   return { target: target.join("."), before: value(beforeText), after: value(afterText), added: keys("added"), removed: keys("removed"), changed: keys("changed"),
     commentLines: Math.max(0, commentLines(beforeText) - commentLines(afterText)) };

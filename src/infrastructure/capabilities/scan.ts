@@ -1,10 +1,11 @@
 import type { Dirent } from "node:fs";
 import { lstat, readdir, readFile, realpath, stat } from "node:fs/promises";
-import { basename, extname, isAbsolute, join, relative, sep } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { lstat as lstatLink, readlink } from "node:fs/promises";
 import { coerce, satisfies, valid } from "semver";
 import { CAPABILITY_KINDS, MAX_CAPABILITY_ENTRIES, type CapabilitiesView, type CapabilityEdge, type CapabilityEntry, type CapabilityFacts, type CapabilityKind, type CapabilityOwner,
   type CapabilityWarning, type HarnessCapabilityReads } from "../../contracts/capabilities.js";
-import type { ExternalSkillDirs, FileListSpec, HarnessReadTable, HookSource, InstructionSpec, McpSource, PluginSource, ReadEnvironment, SkillRootSpec, SkillSwitchSource } from "../../adapters/capability-reads.js";
+import type { ExternalSkillDirs, FileListSpec, HarnessReadTable, HookSource, InstructionSpec, McpSource, PluginSource, ReadEnvironment, SkillFind, SkillRootSpec, SkillSwitchSource } from "../../adapters/capability-reads.js";
 import { harnessDirectories } from "../../adapters/capability-reads.js";
 import { skillVisibility, type ScannedRoot, type ScannedSkill, type SkillEdge } from "../../contexts/capabilities/domain/visibility.js";
 import { at, frontmatter, parseConfig, record, text, type ConfigFormat } from "./formats.js";
@@ -28,7 +29,7 @@ interface RawSkill { readonly dirName: string; readonly path: string; readonly l
 interface RootScan { readonly realPath: string | null; readonly entries: readonly RawSkill[]; readonly truncated: boolean }
 type McpFacts = Extract<CapabilityFacts, { kind: "mcp" }>;
 interface Row { readonly kind: CapabilityKind; readonly key: string; readonly name: string; description: string | null; owner: CapabilityOwner; source: string | null; location: string | null;
-  readonly edges: CapabilityEdge[]; readonly warnings: CapabilityWarning[]; facts?: CapabilityFacts }
+  readonly edges: CapabilityEdge[]; readonly warnings: CapabilityWarning[]; facts?: CapabilityFacts; shared?: { folder: string; placed: string[] } }
 
 function code(error: unknown): string { return error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "未知错误"; }
 function clip(value: string | null, limit = MAX_DESCRIPTION): string | null { return value === null ? null : value.length > limit ? value.slice(0, limit - 1) + "…" : value; }
@@ -61,8 +62,13 @@ export class CapabilityScan {
   private readonly rows = new Map<string, Row>();
   private truncated = false;
 
-  /** `homes`: every spelling of the home directory, for ~ in shown paths; `hermesHome`: the Hermes home the read tables were built with. */
-  constructor(private readonly environment: ReadEnvironment, homes: readonly string[], private readonly hermesHome: string | null) { this.homes = [...new Set(homes)].sort((left, right) => right.length - left.length); }
+  /**
+   * `homes`: every spelling of the home directory, for ~ in shown paths; `hermesHome`: the Hermes home the read tables
+   * were built with; `placed`: the links HarnessHub created for shared skills (absolute paths, from its ledger).
+   */
+  constructor(private readonly environment: ReadEnvironment, homes: readonly string[], private readonly hermesHome: string | null, private readonly placed: ReadonlySet<string> = new Set()) {
+    this.homes = [...new Set(homes)].sort((left, right) => right.length - left.length);
+  }
 
   /** A path with ~ for the home directory, in any of the home's spellings. */
   shown(path: string): string {
@@ -87,7 +93,7 @@ export class CapabilityScan {
       const notes = [...table.notes];
       if (table.harnessId === "hermes" && this.hermesHome !== null && this.hermesHome !== join(this.environment.home, ".hermes")) notes.push("按当前 profile 读取 " + this.shown(this.hermesHome) + "。");
       if (table.harnessId === "openclaw" && Object.hasOwn(record(await this.value(table.harnessId, harnessDirectories(this.environment).openclawConfig, "json5")), "$include")) notes.push("openclaw.json 用了 $include，被包含的文件这里没有读取。");
-      await this.skills(table, harness.name, notes);
+      const shared = await this.skills(table, harness.name, notes);
       await this.mcp(table, harness.name, notes);
       await this.instructions(table, harness.name);
       await this.fileLists("subagent", table, harness.name, table.subagents);
@@ -95,14 +101,14 @@ export class CapabilityScan {
       await this.hooks(table, harness.name);
       await this.plugins(table, harness.name, notes);
       harnesses.push({ harnessId: table.harnessId, name: harness.name, version: harness.version, table: covered(harness.version, table.verified) ? "verified" : "unverified", kinds: kindsOf(table),
-        skillSwitch: table.skills.switch === null ? null : table.skills.switch.kind === "openclaw-entries" ? "command" : "file", notes: [...notes, ...kindNotes(table)] });
+        skillSwitch: table.skills.switch === null ? null : table.skills.switch.kind === "openclaw-entries" ? "command" : "file", shared, notes: [...notes, ...kindNotes(table)] });
     }
     await this.attributeSkills();
     const order = new Map(CAPABILITY_KINDS.map((kind, index) => [kind, index]));
     const rows = [...this.rows.values()].sort((left, right) => (order.get(left.kind)! - order.get(right.kind)!) || (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
     if (rows.length > MAX_CAPABILITY_ENTRIES) this.truncated = true;
     const entries: CapabilityEntry[] = rows.slice(0, MAX_CAPABILITY_ENTRIES).map(row => ({ kind: row.kind, key: row.key, name: row.name, description: row.description, owner: row.owner, source: row.source,
-      location: row.location, edges: row.edges, warnings: row.warnings, ...(row.facts === undefined ? {} : { facts: row.facts }) }));
+      location: row.location, edges: row.edges, warnings: row.warnings, ...(row.facts === undefined ? {} : { facts: row.facts }), ...(row.shared === undefined ? {} : { shared: row.shared }) }));
     return { checkedAt, harnesses, entries, unreadable: this.unreadable, truncated: this.truncated };
   }
 
@@ -153,35 +159,50 @@ export class CapabilityScan {
   }
 
   // ---- skills ----
-  private scanRoot(path: string, depth: number, exclude: readonly string[]): Promise<RootScan> {
-    const key = depth + "\u0000" + exclude.join("/") + "\u0000" + path;
+  private scanRoot(path: string, depth: number, exclude: readonly string[], find: SkillFind | undefined): Promise<RootScan> {
+    const key = depth + "\u0000" + exclude.join("/") + "\u0000" + JSON.stringify(find ?? null) + "\u0000" + path;
     let pending = this.roots.get(key);
-    if (!pending) { pending = this.walkRoot(path, depth, exclude); this.roots.set(key, pending); }
+    if (!pending) { pending = this.walkRoot(path, depth, exclude, find); this.roots.set(key, pending); }
     return pending;
   }
-  private async walkRoot(path: string, depth: number, exclude: readonly string[]): Promise<RootScan> {
+  /**
+   * The skills below one root as its Harness finds them: by default a folder holding SKILL.md is a skill and nothing below
+   * it is read; with `find`, every SKILL.md at any depth is one. Links are followed, each real folder once.
+   */
+  private async walkRoot(path: string, depth: number, exclude: readonly string[], find: SkillFind | undefined): Promise<RootScan> {
     const rootReal = await realpath(path).catch(() => null);
     if (rootReal === null) return { realPath: null, entries: [], truncated: false };
-    const entries: RawSkill[] = []; let truncated = false;
+    const entries: RawSkill[] = [], visited = new Set<string>([rootReal]); let truncated = false;
+    const holds = async (folder: string) => (await this.read(join(folder, "SKILL.md"), MAX_SKILL_FILE_BYTES)).state !== "missing";
+    const skipped = (name: string, level: number) => (name.startsWith(".") && !find?.hidden) || (find?.skip.includes(name) ?? false) || (level === 1 && exclude.includes(name));
     const walk = async (dir: string, level: number): Promise<void> => {
       let items;
       try { items = await readdir(dir, { withFileTypes: true }); } catch { return; }
       items.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
       for (const item of items) {
-        if (item.name.startsWith(".") || (level === 1 && exclude.includes(item.name))) continue;
+        if (skipped(item.name, level)) continue;
         if (entries.length >= MAX_ROOT_ENTRIES) { truncated = true; return; }
         const entry = join(dir, item.name);
-        if (item.isSymbolicLink()) {
-          const target = await realpath(entry).catch(() => null);
-          if (target === null) { entries.push({ dirName: item.name, path: entry, link: { target: null }, realPath: null, name: null, description: null, frontmatter: true }); continue; }
-          // A link to a file or to a folder without SKILL.md is ignored by every Harness here, as a real folder without one is.
-          if ((await stat(target).catch(() => null))?.isDirectory() && (await this.read(join(target, "SKILL.md"), MAX_SKILL_FILE_BYTES)).state !== "missing") entries.push(await this.skillAt(entry, item.name, target));
-        } else if (item.isDirectory()) {
-          if ((await this.read(join(entry, "SKILL.md"), MAX_SKILL_FILE_BYTES)).state !== "missing") entries.push(await this.skillAt(entry, item.name, null));
-          else if (level < depth) await walk(entry, level + 1);
+        if (!item.isSymbolicLink() && !item.isDirectory()) continue;
+        const target = item.isSymbolicLink() ? await realpath(entry).catch(() => null) : null;
+        if (item.isSymbolicLink() && target === null) {
+          if (level === 1) entries.push({ dirName: item.name, path: entry, link: { target: null }, realPath: null, name: null, description: null, frontmatter: true });
+          continue;
         }
+        // A link to a file, or a folder without SKILL.md where folders are skills, is ignored by every Harness here.
+        if (target !== null && !(await stat(target).catch(() => null))?.isDirectory()) continue;
+        // Every path to a skill counts (two links to one folder are two entries); a real folder is descended into once.
+        if (await holds(entry)) {
+          entries.push(await this.skillAt(entry, item.name, target));
+          if (find?.mode !== "files") continue;
+        }
+        const real = target ?? await realpath(entry).catch(() => null);
+        if (real === null || visited.has(real)) continue;
+        visited.add(real);
+        if (level < depth) await walk(entry, level + 1);
       }
     };
+    if (find?.mode === "files" && await holds(path)) entries.push(await this.skillAt(path, basename(path), null));
     await walk(path, 1);
     return { realPath: rootReal, entries, truncated };
   }
@@ -194,11 +215,16 @@ export class CapabilityScan {
     if (matter.value === null) return { ...base, name: null, description: null, frontmatter: false };
     return { ...base, name: this.clean(text(matter.value.name)), description: clip(this.clean(text(matter.value.description))), frontmatter: true };
   }
-  private async skills(table: HarnessReadTable, harnessName: string, notes: string[]): Promise<void> {
+  /** Every skill one Harness sees, into the rows; returns how it reads the shared directory and its links into it. */
+  private async skills(table: HarnessReadTable, harnessName: string, notes: string[]): Promise<HarnessCapabilityReads["shared"]> {
     const specs = [...table.skills.roots, ...await this.externalDirs(table.harnessId, table.skills.externalDirs, notes)];
-    const scanned: ScannedRoot[] = [], raw = new Map<string, RawSkill>();
+    const scanned: ScannedRoot[] = [], raw = new Map<string, RawSkill>(), sharedReal = await realpath(harnessDirectories(this.environment).shared).catch(() => null);
+    let native = false, external = false, links = 0;
     for (const spec of specs) {
-      const scan = await this.scanRoot(spec.path, spec.depth, spec.exclude ?? []);
+      const scan = await this.scanRoot(spec.path, spec.depth, spec.exclude ?? [], spec.find);
+      if (sharedReal !== null && scan.realPath === sharedReal) { native ||= spec.role === "shared"; external ||= spec.role === "external"; }
+      // Its own links into the shared directory, directly in its own skills directory.
+      if (sharedReal !== null && (spec.role === "own" || spec.role === "workspace")) links += scan.entries.filter(entry => entry.link?.target != null && inside(entry.link.target, sharedReal) && dirname(entry.path) === spec.path).length;
       if (scan.truncated) this.truncated = true;
       for (const entry of scan.entries) if (entry.realPath !== null) raw.set(entry.realPath, entry);
       scanned.push({ role: spec.role, shown: this.shown(spec.path), realPath: scan.realPath, precedence: spec.precedence, containment: spec.containment,
@@ -219,6 +245,8 @@ export class CapabilityScan {
       }
     }
     for (const warning of warnings) this.row("skill", "skill:" + warning.name, warning.name, () => ({ description: null, owner: "user", source: null, location: null })).warnings.push({ kind: warning.kind, harnessId: warning.harnessId, text: warning.text });
+    const reads = native ? "native" : external ? "external-dir" : links > 0 ? "links" : "no";
+    return { reads, links, redundant: reads === "native" || reads === "external-dir" ? links : 0, placeable: table.harnessId === "hermes" ? "shared-dir" : table.harnessId === "claude" ? "skill-link" : null };
   }
   /** The skill directories a Harness's configuration adds; one that is not an absolute path after ~ and variables is noted and skipped. */
   private async externalDirs(harnessId: string, spec: ExternalSkillDirs | undefined, notes: string[]): Promise<readonly SkillRootSpec[]> {
@@ -226,8 +254,8 @@ export class CapabilityScan {
     const listed = strings(at(await this.value(harnessId, spec.file, spec.format), spec.path)).slice(0, 64);
     return listed.flatMap(item => {
       const expanded = item.replace(/^~(?=$|\/)/u, this.environment.home).replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/gu, (_, braced: string | undefined, bare: string | undefined) => this.environment.values[braced ?? bare ?? ""] ?? "");
-      if (!isAbsolute(expanded)) { notes.push("配置里的技能目录 " + this.clean(item) + " 不是绝对路径，未读取。"); return []; }
-      return [{ role: "external" as const, path: expanded, precedence: spec.precedence, containment: spec.containment, depth: spec.depth }];
+      if (!isAbsolute(expanded) && spec.relativeTo === undefined) { notes.push("配置里的技能目录 " + this.clean(item) + " 不是绝对路径，未读取。"); return []; }
+      return [{ role: "external" as const, path: isAbsolute(expanded) ? expanded : resolve(spec.relativeTo!, expanded), precedence: spec.precedence, containment: spec.containment, depth: spec.depth, ...(spec.find ? { find: spec.find } : {}) }];
     });
   }
   /** Why a Harness has a skill off in its own configuration, by its own switch (ADR-045 §4); never written here. */
@@ -498,9 +526,19 @@ export class CapabilityScan {
   /** Who manages each skill row and where it came from (ADR-045 §2), then its size; run after every Harness was read. */
   private async attributeSkills(): Promise<void> {
     const dirs = harnessDirectories(this.environment), shared = await realpath(dirs.shared).catch(() => null);
+    // The shared directory's own skill folders, and the links HarnessHub placed for them.
+    const folders = new Map<string, string>();
+    for (const entry of (await this.scanRoot(dirs.shared, 1, [], undefined)).entries) if (entry.name !== null && !folders.has(entry.name)) folders.set(entry.name, entry.path);
+    const placedTo = new Map<string, string[]>();
+    for (const link of this.placed) {
+      const target = await readlink(link).catch(() => null);
+      if (target !== null && (await lstatLink(link).catch(() => null))?.isSymbolicLink()) { const absolute = resolve(dirname(link), target); placedTo.set(absolute, [...(placedTo.get(absolute) ?? []), this.shown(link)]); }
+    }
     const lock = await this.skillLock(), synced = await realpath(join(dirs.claude, "skills", "synced")).catch(() => null), system = await realpath(join(dirs.codex, "skills", ".system")).catch(() => null);
     const ccSwitch = await realpath(join(this.environment.home, ".cc-switch", "skills")).catch(() => null);
     for (const row of this.rows.values()) {
+      const folder = row.kind === "skill" ? folders.get(row.name) : undefined;
+      if (folder !== undefined) row.shared = { folder: this.shown(folder), placed: placedTo.get(folder) ?? [] };
       if (row.kind !== "skill" || row.location === null) continue;
       const path = row.location.startsWith("~/") ? join(this.environment.home, row.location.slice(2)) : row.location, real = await realpath(path).catch(() => null);
       if (real === null) continue;

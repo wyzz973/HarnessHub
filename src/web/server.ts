@@ -455,7 +455,27 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     }
     // Read-only (ADR-045 step 1): skills, MCP, instructions, subagents, commands, hooks and plugins of every installed
     // Harness, by its read table. Nothing is written or started; the view carries names and counts, never a value.
-    if (path === "/api/v1/capabilities" && method === "GET") { queries(url, []); privateJson(response, await capabilities.view(await installedHarnesses())); return; }
+    if (path === "/api/v1/capabilities" && method === "GET") { queries(url, []); privateJson(response, await capabilities.view(await installedHarnesses(), capabilityChanges.placedLinks())); return; }
+    // Placing shared skills (ADR-045 §4): Hermes reads the shared directory, Claude Code takes single skills by links, and the
+    // links a Harness no longer needs can be removed; each check shows the change first, and a change of links can be undone.
+    if (path === "/api/v1/capabilities/shared-dir" && method === "GET") {
+      queries(url, ["harnessId", "present"]); const present = url.searchParams.get("present");
+      if (present !== "true" && present !== "false") throw new HttpError(400, "INVALID_INPUT", "Expected present=true or present=false");
+      privateJson(response, await capabilityChanges.checkSharedDir({ harnessId: text(url.searchParams.get("harnessId"), "Harness", 128), present: present === "true" }, await installedHarnesses())); return;
+    }
+    if (path === "/api/v1/capabilities/skill-link" && method === "GET") {
+      queries(url, ["harnessId", "name", "present"]); const present = url.searchParams.get("present");
+      if (present !== "true" && present !== "false") throw new HttpError(400, "INVALID_INPUT", "Expected present=true or present=false");
+      privateJson(response, await capabilityChanges.checkSkillLink({ harnessId: text(url.searchParams.get("harnessId"), "Harness", 128), name: text(url.searchParams.get("name"), "skill name", 128), present: present === "true" },
+        await installedHarnesses())); return;
+    }
+    if (path === "/api/v1/capabilities/link-cleanup" && method === "GET") {
+      queries(url, ["harnessId"]);
+      privateJson(response, await capabilityChanges.checkLinkCleanup({ harnessId: text(url.searchParams.get("harnessId"), "Harness", 128) }, await installedHarnesses())); return;
+    }
+    if (path.startsWith("/api/v1/capabilities/changes/") && path.endsWith("/undo") && method === "GET") {
+      queries(url, []); privateJson(response, await capabilityChanges.checkUndo(decodeURIComponent(path.slice("/api/v1/capabilities/changes/".length, -"/undo".length)))); return;
+    }
     // Turning one skill off or on in one Harness (ADR-045 §4): the check shows the exact change; nothing is written here.
     if (path === "/api/v1/capabilities/skill-switch" && method === "GET") {
       queries(url, ["harnessId", "name", "enabled", "via"]);
@@ -468,7 +488,15 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       queries(url, []); const input = record(await body(request), ["fingerprint", "commandId"], ["fingerprint", "commandId"]);
       privateJson(response, await capabilityChanges.apply(text(input.fingerprint, "confirmation", 128), command(input.commandId))); return;
     }
-    if (path === "/api/v1/capabilities/history" && method === "GET") { queries(url, []); privateJson(response, capabilityChanges.history()); return; }
+    if (path === "/api/v1/capabilities/history" && method === "GET") { queries(url, []); privateJson(response, await capabilityChanges.history()); return; }
+    // What HarnessHub wrote that is no longer in place (ADR-045 §10): put back through its usual check, or no longer tracked.
+    if (path.startsWith("/api/v1/capabilities/drift/") && path.endsWith("/reapply") && method === "GET") {
+      queries(url, []); privateJson(response, await capabilityChanges.checkReapply(decodeURIComponent(path.slice("/api/v1/capabilities/drift/".length, -"/reapply".length)), await installedHarnesses())); return;
+    }
+    if (path === "/api/v1/capabilities/forget" && method === "POST") {
+      queries(url, []); const input = record(await body(request), ["id"], ["id"]);
+      privateJson(response, await capabilityChanges.forget(text(input.id, "ledger entry", 64))); return;
+    }
     if (path.startsWith("/api/v1/capabilities/backups/") && path.endsWith("/restore") && method === "GET") {
       queries(url, []); privateJson(response, await capabilityChanges.checkRestore(decodeURIComponent(path.slice("/api/v1/capabilities/backups/".length, -"/restore".length)))); return;
     }

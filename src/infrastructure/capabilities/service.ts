@@ -16,17 +16,20 @@ export class CapabilityService {
   private pending: Promise<CapabilitiesView> | null = null;
   constructor(private readonly environment: ReadEnvironment, private readonly now: () => Date = () => new Date()) {}
 
-  /** The view for these installations; rejects only on an unexpected failure, since unreadable files are part of the view. */
-  view(installed: readonly InstalledHarness[]): Promise<CapabilitiesView> {
+  /**
+   * The view for these installations; rejects only on an unexpected failure, since unreadable files are part of the view.
+   * `placed`: the links HarnessHub placed for shared skills (absolute paths), shown on their entries.
+   */
+  view(installed: readonly InstalledHarness[], placed: ReadonlySet<string> = new Set()): Promise<CapabilitiesView> {
     if (this.pending) return this.pending;
-    const pending = this.scan(installed).finally(() => { if (this.pending === pending) this.pending = null; });
+    const pending = this.scan(installed, placed).finally(() => { if (this.pending === pending) this.pending = null; });
     this.pending = pending;
     return pending;
   }
-  private async scan(installed: readonly InstalledHarness[]): Promise<CapabilitiesView> {
+  private async scan(installed: readonly InstalledHarness[], placed: ReadonlySet<string>): Promise<CapabilitiesView> {
     const home = this.environment.home, homes = [home, await realpath(home).catch(() => home)];
     const hermesHome = await resolveHermesHome(this.environment), openclawWorkspace = await resolveOpenClawWorkspace(this.environment);
-    return new CapabilityScan(this.environment, homes, hermesHome).view(capabilityReadTables(this.environment, { hermesHome, openclawWorkspace }), installed, this.now().toISOString());
+    return new CapabilityScan(this.environment, homes, hermesHome, placed).view(capabilityReadTables(this.environment, { hermesHome, openclawWorkspace }), installed, this.now().toISOString());
   }
 }
 

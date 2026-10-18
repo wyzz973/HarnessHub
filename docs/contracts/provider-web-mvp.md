@@ -109,3 +109,15 @@ ADR-045 第 2 步（2026-10-18，技能开关）追加写入接口，只改用�
 - `POST /api/v1/capabilities/changes`接受`{fingerprint, commandId}`，返回`CapabilityChangeView`：写入前再读比对，文件变了返回 409 `CAPABILITY_TARGET_CHANGED` 且什么都不写；确认过期、未知或已用过返回 409 `CAPABILITY_CHECK_EXPIRED`；`blocked`的检查返回 409 `CAPABILITY_TARGET_REFUSED`。写入前把原文件备份（每个文件留最近 10 份），原子替换，回读后字节必须与计划一致、解析后除目标设置外完全相等，否则`status`为`failed`并带`backupId`。同一`commandId`再次提交返回第一次的结果，同一编号用于另一项修改返回 400。
 - `GET /api/v1/capabilities/history`返回最近 50 次修改与保留的备份；`GET /api/v1/capabilities/backups/:id/restore`准备恢复一份备份，返回它此刻会造成的差异与`changedSince`（HarnessHub 改动之后文件是否又被改过）；`POST /api/v1/capabilities/restores`接受`{fingerprint, commandId}`，先备份当前文件再恢复。
 - 修改记录、备份索引与台账保存在数据根的`capabilities/capabilities.sqlite`（schema v1），备份在旁边的`backups/`；旧构建不读它们，回退时忽略即可。所有这些回答都经过同样的隐私检查。
+
+ADR-045 第 2 步（2026-10-18，放置与清理）追加：
+- 视图里每个 Harness 带`shared`：它怎样读共享目录`~/.agents/skills`（`native`自己读、`external-dir`经配置加的目录、`links`经自己目录里的链接、`no`），自己目录里指向它的链接数`links`与其中多余的`redundant`，以及 HarnessHub 能改的方式`placeable`（`shared-dir`：Hermes；`skill-link`：Claude Code）。共享目录里的技能带`shared: {folder, placed}`：它在共享目录的文件夹和 HarnessHub 放置的链接（都以`~`书写）。
+- `GET /api/v1/capabilities/shared-dir?harnessId=&present=true|false`：只用于 Hermes，在`skills.external_dirs`里加上或去掉共享目录（任何解析到它的写法都算），检查里写明会多看到哪些技能；其他 Harness 返回 409 `CAPABILITY_UNSUPPORTED`。
+- `GET /api/v1/capabilities/skill-link?harnessId=claude&name=&present=true|false`：为共享技能在`~/.claude/skills/<文件夹>`建绝对路径链接，或移除 HarnessHub 放置的链接；已能看到、位置已被占用、链接不是 HarnessHub 建的，都写在`blocked`里。
+- `GET /api/v1/capabilities/link-cleanup?harnessId=hermes|openclaw`：列出这个 Harness 自己目录里指向共享目录、且已多余的链接（Hermes 要先读取共享目录）。
+- `GET /api/v1/capabilities/changes/:id/undo`：撤销一次链接改动，删掉当初建的、放回当初删的（按当初写的目标，相对路径保持相对）。
+- 这些检查的`links`列出每个要新建或删除的链接；确认同样用`POST /api/v1/capabilities/changes`。应用前逐个核对链接与检查时一致，有一个变了就全部不做（409 `CAPABILITY_TARGET_CHANGED`）；做了的链接记在修改记录的`links`里，部分失败时也能撤销。
+- `GET /api/v1/capabilities/history`另带`drift`：台账里 HarnessHub 写过、现在已不是它写的样子的设置与链接（`CapabilityDrift`：不透明的`id`、`kind`为`skill-switch`、`shared-dir`或`skill-link`、`harnessId`、`subject`、以`~`书写的`file`、`state`为`removed`、`changed`或`unreadable`，以及写入它的`changeId`与`at`）。每项按写入它的开关的读法从文件读回比对；文件读不到或无法解析记为`unreadable`，不当作已移除。读取不改任何文件，也不自动改回。
+- `GET /api/v1/capabilities/drift/:id/reapply`：用原来的检查准备改回（开关、Hermes 的共享目录那一项、放置的链接），返回`CapabilityChangeCheck`，确认同样用`POST /api/v1/capabilities/changes`；未知的`id`返回 404 `CAPABILITY_NOT_FOUND`。
+- `POST /api/v1/capabilities/forget`接受`{id}`，不再跟踪这一项：只删台账，不改文件，返回`{forgotten}`；已不在台账里返回`{forgotten: false}`；仍是 HarnessHub 写的样子时返回 409 `CAPABILITY_TARGET_REFUSED`；格式不对的`id`返回 400。
+- 台账的原值：同一设置再次写入时，只有被替换的仍是 HarnessHub 自己的值，才保留它第一次写入前的原值；否则换成这次写入前的值。
