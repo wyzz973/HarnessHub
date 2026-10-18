@@ -57,3 +57,13 @@ export function replaceTarget(file: string, expected: string | null, bytes: Buff
     try { fsyncSync(directory); } finally { closeSync(directory); }
   } finally { if (!renamed) { try { unlinkSync(temporary); } catch { /* not created or already gone */ } } }
 }
+/**
+ * Deletes a target that is still `expected` (its hash): compared once more just before, then unlinked and its directory
+ * synced. Throws `CAPABILITY_TARGET_CHANGED` and deletes nothing when the target is not as expected.
+ */
+export function removeTarget(file: string, expected: string): void {
+  unchanged(file, expected);
+  unlinkSync(file);
+  const directory = openSync(dirname(file), constants.O_RDONLY);
+  try { fsyncSync(directory); } finally { closeSync(directory); }
+}

@@ -363,7 +363,7 @@ export class CapabilityScan {
       const shown = this.shown(item.path), used = chosen.includes(item), winner = chosen[0];
       const row = this.row("instructions", "instructions:" + shown, shown, () => ({ description: null, owner: "user", source: null, location: shown,
         facts: { kind: "instructions", bytes: item.bytes, managedBlocks: MANAGED_MARKERS.filter(([marker]) => item.text?.includes(marker)).map(([, name]) => name) } }));
-      const reason = used ? (table.harnessId === "codex" && item.bytes > 32 * 1024 ? "超过 Codex 默认的 32 KiB 上限，超出部分不读" : null)
+      const reason = used ? null
         : !item.text?.trim() && spec.rule === "first-nonempty" ? "文件是空的，" + harnessName + " 跳过它" : harnessName + " 只读 " + (winner ? this.shown(winner.path) : "另一个文件") + "，不读它";
       row.edges.push({ harnessId: table.harnessId, mechanism: item.role === "compat" ? "compat-root" : "config", status: used ? "active" : "shadowed", via: shown, reason });
       if (used && item.role === "compat") {

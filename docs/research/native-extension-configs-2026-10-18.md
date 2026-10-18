@@ -51,11 +51,11 @@
 | Harness | 用户级 | 项目 |
 |---|---|---|
 | Claude Code | `~/.claude/CLAUDE.md`，`@path` 导入最多 4 层；`~/.claude/rules/` | `CLAUDE.md`、`.claude/CLAUDE.md`、`CLAUDE.local.md`；只有都没有时才读 `AGENTS.md` |
-| Codex | `~/.codex/AGENTS.override.md`，没有时用 `AGENTS.md` | 根到 cwd 每级一个；默认 32 KiB |
+| Codex | `~/.codex/AGENTS.override.md`，没有时用 `AGENTS.md`（trim 后第一个非空者；整文件读，没有上限，2026-10-19 按 rust-v0.162.1 `codex-home/src/instructions/mod.rs` 更正） | 根到 cwd 每级一个；32 KiB 是项目文档的预算（`project_doc_max_bytes`），不限用户级文件 |
 | Cursor | User rules 不在磁盘上 | `.cursor/rules/*.mdc`、根目录 `AGENTS.md`、`CLAUDE.md` |
-| OpenCode | `~/.config/opencode/AGENTS.md`，没有时用 `~/.claude/CLAUDE.md` | `AGENTS.md`，没有时 `CLAUDE.md`；`instructions` 数组 |
+| OpenCode | `~/.config/opencode/AGENTS.md`，不存在时用 `~/.claude/CLAUDE.md`（只看是否存在，空文件也算；`OPENCODE_DISABLE_CLAUDE_CODE` 或 `…_PROMPT` 为真时不回退） | `AGENTS.md`，没有时 `CLAUDE.md`；`instructions` 数组 |
 | Gemini CLI | `~/.gemini/GEMINI.md`（`context.fileName` 可改名，默认不读 AGENTS.md） | 工作区及父目录的 GEMINI.md；`@file` 导入 |
-| OpenClaw | agent workspace 的 AGENTS.md、SOUL.md、TOOLS.md 等（默认 `~/.openclaw/workspace`） | ACP 下用 Gateway 的 workspace，不用会话 cwd |
+| OpenClaw | agent workspace 的 AGENTS.md、SOUL.md、TOOLS.md 等（默认 `~/.openclaw/workspace`）；单个文件超过 20000 字符（`agents.defaults.bootstrapMaxChars`）时保留头尾、挖掉中间 | ACP 下用 Gateway 的 workspace，不用会话 cwd |
 | Pi | `~/.pi/agent/AGENTS.md`；`SYSTEM.md`、`APPEND_SYSTEM.md` | 各级 AGENTS.md 或 CLAUDE.md 全部拼接；`AGENTS.override.md` |
 | Hermes | `~/.hermes/SOUL.md` | 只取一种：HERMES.md、AGENTS.md（只看 cwd）、CLAUDE.md、.cursorrules |
 | DeepSeek Harness | `~/.dsh/AGENTS.md` | git 根到 cwd 的 AGENTS/CLAUDE(.local).md 叠加 |

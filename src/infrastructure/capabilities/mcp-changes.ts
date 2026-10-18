@@ -39,6 +39,8 @@ const AFTER: Readonly<Record<string, string>> = {
   dsh: "写在 ~/.dsh/cordis.patch.yml（每个 profile 都会读，包括 HarnessHub 用的 acp）；新开的会话才读到改动。DeepSeek Harness 启动服务器时会去掉名字像凭据的环境变量，所以变量都显式写在 env 里。",
 };
 function hash(value: unknown): string { return createHash("sha256").update(JSON.stringify(value ?? null)).digest("hex"); }
+/** The ledger key recording that HarnessHub created a Harness's file (DeepSeek Harness's patch layer), so that it can delete it again once emptied. */
+export const CREATED_KEY = "file/created";
 function isStyle(harnessId: string): harnessId is McpStyle { return ["claude", "codex", "cursor", "opencode", "gemini", "hermes", "dsh"].includes(harnessId); }
 /** A listed server as one Harness would hold it, its name included in what that Harness must accept. */
 function rendering(name: string, definition: McpDefinition, style: McpStyle): McpRender {
@@ -263,7 +265,8 @@ export class McpInventory {
   }
   /** An edit plan through the usual offer: the file with the server's owned keys set (or the entry removed), checked. */
   private offer(change: "mcp-sync" | "mcp-remove", harnessId: string, name: string, enabled: boolean, located: { readonly file: string; readonly style: McpStyle }, read: TargetRead, value: unknown,
-    owned: Readonly<Record<string, unknown>> | null | undefined, blocked: string | null, notes: readonly string[], current: "harnesshub" | "none"): Promise<CapabilityChangeCheck> {
+    owned: Readonly<Record<string, unknown>> | null | undefined, blocked: string | null, given: readonly string[], current: "harnesshub" | "none"): Promise<CapabilityChangeCheck> {
+    let notes = given;
     let plan: SwitchPlan | null = null, reason = blocked;
     if (read.state === "refused") reason ??= "无法修改 " + this.host.shown(located.file) + "：" + read.reason + "。";
     else if (read.state === "missing" && !read.directory) reason ??= "无法修改：" + this.host.shown(located.file) + " 所在的目录不存在。";
@@ -281,9 +284,20 @@ export class McpInventory {
       try {
         const after = editMcp(before, located.style, name, owned === undefined ? undefined : owned);
         const written = owned === undefined ? undefined : ownedOf(owned, located.style), previous = entry === undefined ? null : JSON.stringify(ownedOf(entry, located.style));
-        plan = { kind: "edit", file: located.file, format: mcpLocation(located.style).format, after, key, written, previous, current: entry === undefined ? "none" : ledger !== null && ledger.valueHash === hash(ownedOf(entry, located.style)) ? "harnesshub" : current === "harnesshub" ? "harnesshub" : "other",
+        // DeepSeek Harness's patch file HarnessHub created goes again once only the empty list it would leave is in it (ADR-045
+        // step 4 ruling 3): the record that HarnessHub created it is kept with the write that created it.
+        const created = located.style === "dsh" ? this.host.store.ledger(harnessId, located.file, CREATED_KEY) !== null : false;
+        const remove = located.style === "dsh" && owned === undefined && created && after.trim() === "[]";
+        const alsoLedger = located.style !== "dsh" ? undefined : owned !== undefined && read.state === "missing" ? [{ file: located.file, key: CREATED_KEY, action: "set" as const }]
+          : remove ? [{ file: located.file, key: CREATED_KEY, action: "drop" as const }] : undefined;
+        if (remove) notes = [...notes, "这个文件是 HarnessHub 新建的，移除最后一个服务器后只剩空列表，会删除它，回到原来没有这个文件的样子。"];
+        else if (located.style === "dsh" && owned === undefined && after.trim() === "[]") notes = [...notes, "移除后列表为空，文件里留下 []（这个文件原来就有）。"];
+        plan = { kind: "edit", file: located.file, format: mcpLocation(located.style).format, after: remove ? "" : after, ...(remove ? { remove } : {}), ...(alsoLedger ? { alsoLedger } : {}), key, written, previous,
+          current: entry === undefined ? "none" : ledger !== null && ledger.valueHash === hash(ownedOf(entry, located.style)) ? "harnesshub" : current === "harnesshub" ? "harnesshub" : "other",
           notes: [], ledger: owned === undefined ? "drop" : "set",
-          check: (beforeValue, afterValue) => mcpGuard(beforeValue, afterValue, located.style, name, owned) === null };
+          // A deletion is checked on what is there: HarnessHub's one patch and nothing else.
+          check: remove ? beforeValue => Array.isArray(beforeValue) && beforeValue.length === 1 && dshRows(beforeValue).length === 1 && dshRows(beforeValue)[0]!.config.serverName === name
+            : (beforeValue, afterValue) => mcpGuard(beforeValue, afterValue, located.style, name, owned) === null };
       } catch (error) { if (!(error instanceof UnsafeEdit)) throw error; reason = "无法安全修改 " + this.host.shown(located.file) + "：" + error.message + "。"; }
     }
     return this.host.offerEdit(change, harnessId, name, enabled, located.file, read, plan, reason, notes);

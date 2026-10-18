@@ -122,7 +122,8 @@ test("G064-M2 through the formal Gateway, a server the Harnesses have is listed 
   const hermesUpdate = await f.sync("fs", "hermes");
   assert.equal((await f.apply(hermesUpdate.value.fingerprint, "fs-hermes")).value.status, "applied");
   assert.deepEqual((parseYaml(await readFile(hermesFile, "utf8")) as { mcp_servers: Record<string, { args: string[] }> }).mcp_servers.fs!.args.at(-1), join(f.home, "projects"));
-  // Into DeepSeek Harness: its patch layer for every profile is created holding HarnessHub's own insert, and goes back to `[]`.
+  // Into DeepSeek Harness: its patch layer for every profile is created holding HarnessHub's own insert, and deleted again
+  // with the last server, since HarnessHub created it; a patch file that was there goes back to its `[]`.
   const toDsh = await f.sync("fs", "dsh"), dshFile = join(f.home, ".dsh", "cordis.patch.yml");
   assert.equal(toDsh.value.blocked, null, JSON.stringify(toDsh.value));
   assert.ok(toDsh.value.notes.some(note => note.includes("~/.dsh/cordis.patch.yml")));
@@ -131,8 +132,18 @@ test("G064-M2 through the formal Gateway, a server the Harnesses have is listed 
   assert.ok(patch.startsWith("- insert:\n    - id: harnesshub-mcp-fs\n      name: \"@deepseek-ai/dsh-mcp-client\"\n") && patch.includes("FS_TOKEN: !!js \"process.env.FS_TOKEN\""), patch);
   assert.equal(state(await f.inventory(), "fs", "dsh"), "synced");
   const offDsh = await f.call<CapabilityChangeCheck>("/capabilities/mcp/remove?" + new URLSearchParams({ name: "fs", harnessId: "dsh" }));
-  assert.equal((await f.apply(offDsh.value.fingerprint, "fs-dsh-off")).value.status, "applied");
+  assert.ok(offDsh.value.notes.some(note => /HarnessHub 新建的.*会删除它/u.test(note)) && offDsh.value.notes.includes("会删除这个文件。"), JSON.stringify(offDsh.value.notes));
+  const dshDeleted = (await f.apply(offDsh.value.fingerprint, "fs-dsh-off")).value;
+  assert.equal(dshDeleted.status, "applied", JSON.stringify(dshDeleted));
+  await assert.rejects(readFile(dshFile, "utf8"), { code: "ENOENT" });
+  assert.equal(state(await f.inventory(), "fs", "dsh"), "absent");
+  await writeFile(dshFile, "[]\n");
+  assert.equal((await f.apply((await f.sync("fs", "dsh")).value.fingerprint, "fs-dsh-again")).value.status, "applied");
+  const offAgain = await f.call<CapabilityChangeCheck>("/capabilities/mcp/remove?" + new URLSearchParams({ name: "fs", harnessId: "dsh" }));
+  assert.ok(offAgain.value.notes.some(note => /留下 \[\]（这个文件原来就有）/u.test(note)), JSON.stringify(offAgain.value.notes));
+  assert.equal((await f.apply(offAgain.value.fingerprint, "fs-dsh-off-again")).value.status, "applied");
   assert.equal(await readFile(dshFile, "utf8"), "[]\n", "never an empty file DeepSeek Harness would refuse to start with");
+  assert.deepEqual((await f.call<CapabilityHistory>("/capabilities/history")).value.drift.filter(item => item.harnessId === "dsh"), [], "the record that HarnessHub created the file is not shown as drift");
   // Removing it from Cursor takes only HarnessHub's entry; the linear server there stays.
   const remove = await f.call<CapabilityChangeCheck>("/capabilities/mcp/remove?" + new URLSearchParams({ name: "fs", harnessId: "cursor" }));
   assert.equal(remove.value.blocked, null, JSON.stringify(remove.value));
@@ -204,12 +215,13 @@ test("G064-M3 an entry someone else changed is left alone until the user writes 
   assert.deepEqual([state(view, long, "dsh"), state(view, long, "codex")], ["unsupported", "absent"]);
   assert.match((await f.sync(long, "dsh")).value.blocked ?? "", /最多 32 个字符/u);
   assert.equal((await f.call("/capabilities/mcp/servers/delete", { name: long })).status, 200);
-  // The documented downgrade to v2: the list, the MCP history and the MCP ledger entries go; every other record stays.
+  // The documented downgrade to v2 (after v4's to v3): the list, the MCP history and the MCP ledger entries go; every other record stays.
   const copy = join(f.root, "downgrade.sqlite");
   await writeFile(copy, await readFile(join(f.root, "data", "capabilities", "capabilities.sqlite")));
   const db = new DatabaseSync(copy);
   try {
     assert.ok((db.prepare("SELECT COUNT(*) AS n FROM capability_ledger WHERE key LIKE 'mcp/%'").get()?.n as number) > 0);
+    db.exec(await readFile(new URL("../../../tools/capabilities-v4-to-v3.sql", import.meta.url), "utf8"));
     db.exec(await readFile(new URL("../../../tools/capabilities-v3-to-v2.sql", import.meta.url), "utf8"));
     assert.equal(db.prepare("PRAGMA user_version").get()?.user_version, 2);
     assert.deepEqual(db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(row => row.name), ["capability_backups", "capability_changes", "capability_ledger", "capability_owner", "skill_sources", "skill_undo"]);

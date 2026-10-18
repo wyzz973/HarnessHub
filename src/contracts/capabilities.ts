@@ -133,7 +133,8 @@ export class CapabilityError extends Error {
  * undoing one of those three; writing an MCP server of HarnessHub's list into one Harness's file (`mcp-sync`), removing
  * it (`mcp-remove`), and recording that an identical entry already there is HarnessHub's (`mcp-claim`, no file changes).
  */
-export const CAPABILITY_CHANGE_KINDS = ["skill-switch", "shared-dir", "skill-link", "link-cleanup", "link-undo", "restore", "skill-add", "skill-update", "skill-delete", "skill-undo", "mcp-sync", "mcp-remove", "mcp-claim"] as const;
+export const CAPABILITY_CHANGE_KINDS = ["skill-switch", "shared-dir", "skill-link", "link-cleanup", "link-undo", "restore", "skill-add", "skill-update", "skill-delete", "skill-undo", "mcp-sync", "mcp-remove", "mcp-claim",
+  "instructions-sync", "instructions-remove", "instructions-claim"] as const;
 export type CapabilityChangeKind = typeof CAPABILITY_CHANGE_KINDS[number];
 /**
  * A link a change creates or removes: where (with ~) and what it points to, as written in the link. `owner` (for links a
@@ -194,6 +195,11 @@ export interface CapabilityChangeCheck {
   readonly lock?: { readonly file: string; readonly diff: string } | null;
   /** The switch settings HarnessHub wrote for a skill being deleted: left in place, listed so they are not forgotten. */
   readonly orphans?: readonly { readonly harnessId: string; readonly file: string }[];
+  /**
+   * For a check blocked only until the user says so: the option that asks for the same check again with that said (another
+   * tool may rewrite the file, a fallback would stop, an edit made inside the block would be lost), and its button's words.
+   */
+  readonly proceed?: { readonly option: InstructionCheckOption; readonly label: string } | null;
 }
 /** What one applied change did. A change that wrote and then did not read back as planned is `failed`, with its backup. */
 export interface CapabilityChangeView {
@@ -238,9 +244,9 @@ export type CapabilityDriftState = typeof CAPABILITY_DRIFT_STATES[number];
 export interface CapabilityDrift {
   /** Names this ledger entry for re-applying or forgetting it; opaque. */
   readonly id: string;
-  readonly kind: "skill-switch" | "shared-dir" | "skill-link" | "mcp";
+  readonly kind: "skill-switch" | "shared-dir" | "skill-link" | "mcp" | "instructions";
   readonly harnessId: string;
-  /** A skill's name, the shared directory, or an MCP server's name. */
+  /** A skill's name, the shared directory, an MCP server's name, or the instructions block. */
   readonly subject: string;
   /** The file or link, with ~. */
   readonly file: string;
@@ -346,3 +352,40 @@ export interface McpInventoryView {
   readonly harnesses: readonly { readonly harnessId: string; readonly name: string; readonly writable: boolean; readonly reason: string | null }[];
 }
 
+/** What the user may say to a blocked instructions check: write although cc-switch may rewrite the file, create OpenCode's own file, overwrite an edited block. */
+export const INSTRUCTION_CHECK_OPTIONS = ["acknowledge-cc-switch", "create-own", "overwrite"] as const;
+export type InstructionCheckOption = typeof INSTRUCTION_CHECK_OPTIONS[number];
+/**
+ * Where HarnessHub's instructions stand in one Harness, comparing the texts, the ledger and the block in the file the
+ * Harness reads: written and the same (`synced`); HarnessHub's but older than the texts (`outdated`); edited inside the
+ * block or written by another record (`changed`, the user's from then on); recorded but gone from the file (`removed`);
+ * not there (`absent`); the same block without a record (`claimable`); HarnessHub's block in a file the Harness no longer
+ * reads (`shadowed`); read through another Harness's file (`elsewhere`, OpenCode's fallback to Claude Code's); a file or
+ * markers HarnessHub cannot use (`unreadable`); or no file HarnessHub can write (`unsupported`).
+ */
+export const INSTRUCTION_TARGET_STATES = ["synced", "outdated", "changed", "removed", "absent", "claimable", "shadowed", "elsewhere", "unreadable", "unsupported"] as const;
+export type InstructionTargetState = typeof INSTRUCTION_TARGET_STATES[number];
+export interface InstructionTargetView {
+  readonly harnessId: string;
+  readonly name: string;
+  /** The file HarnessHub writes for this Harness (or holds its block), with ~; null when it has none. */
+  readonly file: string | null;
+  readonly state: InstructionTargetState;
+  /** Why it is in this state, or why it cannot be written. */
+  readonly reason: string | null;
+  /** When the Harness reads a change, by its installed version's checked behavior. */
+  readonly effect: string | null;
+  /** What a write will ask about first: another tool that may rewrite the file, a fallback the new file would stop. */
+  readonly cautions: readonly string[];
+}
+/**
+ * HarnessHub's instructions (ADR-045 §6, step 4): one shared text and each Harness's addition, written as a marked block
+ * into the user-level instructions file each Harness reads; the rest of those files is never changed. `limitBytes` is the
+ * most each text may hold.
+ */
+export interface InstructionsView {
+  readonly shared: { readonly text: string; readonly updatedAt: string | null };
+  readonly additions: readonly { readonly harnessId: string; readonly text: string; readonly updatedAt: string }[];
+  readonly targets: readonly InstructionTargetView[];
+  readonly limitBytes: number;
+}

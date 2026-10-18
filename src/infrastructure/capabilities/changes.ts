@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { capabilityReadTables, harnessDirectories, type HarnessReadTable, type ReadEnvironment } from "../../adapters/capability-reads.js";
 import { CAPABILITY_CHECK_MS, CapabilityError, SKILL_SNAPSHOT_CHANGES, type CapabilityChangeCheck, type CapabilityChangeKind, type CapabilityChangeView, type CapabilityDrift, type CapabilityDriftState, type CapabilityHistory,
-  type CapabilityLinkChange, type CapabilityOrphan, type CapabilityRestoreCheck, type McpDefinitionView, type McpInventoryView, type SkillSourceListing, type SkillUpdateView } from "../../contracts/capabilities.js";
+  type CapabilityLinkChange, type CapabilityOrphan, type CapabilityRestoreCheck, type InstructionCheckOption, type InstructionsView, type McpDefinitionView, type McpInventoryView, type SkillSourceListing,
+  type SkillUpdateView } from "../../contracts/capabilities.js";
 import { ManagementError } from "../../contracts/management.js";
 import { unifiedDiff } from "../control/unified-diff.js";
 import { isolatedSandboxProfile } from "../management/native.js";
@@ -15,13 +16,14 @@ import { parseProcessTable, programName } from "../management/program-usage.js";
 import { parsed, UnsafeEdit } from "./edits.js";
 import { at, record, text } from "./formats.js";
 import { maskSecrets } from "./masking.js";
-import { readTarget, replaceTarget, type TargetRead } from "./files.js";
+import { readTarget, removeTarget, replaceTarget, type TargetRead } from "./files.js";
 import { CapabilityScan, type InstalledHarness } from "./scan.js";
 import { resolveHermesHome, resolveOpenClawWorkspace } from "./service.js";
-import { CapabilityStore, sha256, type LedgerEntry, type StoredBackup } from "./store.js";
+import { CapabilityStore, sha256, WRITTEN_DELETED, type LedgerEntry, type StoredBackup } from "./store.js";
 import type { GithubFetch } from "./github.js";
 import { SkillChanges, type PreparedPackage } from "./skill-changes.js";
 import { McpInventory } from "./mcp-changes.js";
+import { InstructionInventory } from "./instruction-changes.js";
 import { sweepClaudeCopies, systemClaude, type ClaudeRunner } from "./claude-mcp.js";
 import { SkillSnapshots, sweepStaging } from "./skill-packages.js";
 import { claudeSwitch, codexSwitch, externalDirsOf, heldValue, listSwitch, opencodeSwitch, openclawSwitch, sharedDirPlan, type SwitchContext, type SwitchPlan, type SwitchRequest } from "./switches.js";
@@ -48,8 +50,9 @@ export interface ChangeOptions {
 }
 export type OpenclawRunner = (args: readonly string[], options: { readonly env: Readonly<Record<string, string>>; readonly writable: readonly string[] }, signal: AbortSignal) => Promise<void>;
 type Planned = Exclude<SwitchPlan, { kind: "none" }>;
+type EditChange = "skill-switch" | "shared-dir" | "mcp-sync" | "mcp-remove" | "instructions-sync" | "instructions-remove";
 /** An edit of one file, or the Harness's own command; `predicted` is what that command wrote when run on a copy. */
-interface PreparedEdit { readonly kind: "edit"; readonly change: "skill-switch" | "shared-dir" | "mcp-sync" | "mcp-remove"; readonly harnessId: string; readonly subject: string; readonly expires: number; readonly plan: Planned | null;
+interface PreparedEdit { readonly kind: "edit"; readonly change: EditChange; readonly harnessId: string; readonly subject: string; readonly expires: number; readonly plan: Planned | null;
   readonly before: Buffer | null; readonly predicted: Buffer | null; readonly mode: number; readonly check: CapabilityChangeCheck }
 /** Links to create or remove (absolute paths, targets as written), and what the ledger records of them. */
 interface PlannedLink { readonly path: string; readonly target: string; readonly action: "create" | "remove"; readonly ledger: "set" | "drop" | null }
@@ -58,7 +61,7 @@ interface PreparedLinks { readonly kind: "links"; readonly change: "skill-link" 
 interface PreparedRestore { readonly kind: "restore"; readonly expires: number; readonly backup: StoredBackup; readonly current: string | null; readonly mode: number; readonly check: CapabilityRestoreCheck }
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,127}$/u, COMMAND = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u, FINGERPRINT = /^[a-f0-9]{64}$/u, CHANGE = /^[a-f0-9-]{36}$/u, DRIFT = /^[a-f0-9]{32}$/u;
-const RUNNING: Readonly<Record<string, RegExp>> = { claude: /^claude(?:\.exe)?$/u, gemini: /^gemini$/u, cursor: /^(?:Cursor|cursor-agent)$/u };
+const RUNNING: Readonly<Record<string, RegExp>> = { claude: /^claude(?:\.exe)?$/u, gemini: /^gemini$/u, cursor: /^(?:Cursor|cursor-agent)$/u, codex: /^codex$/u };
 const SHARED_ENTRY = "~/.agents/skills";
 function hash(value: string): string { return createHash("sha256").update(value).digest("hex"); }
 /** OpenClaw's file as compared with its prediction: parsed, without the time it stamps on every write. */
@@ -80,6 +83,7 @@ export class CapabilityChanges {
   private readonly prepared = new Map<string, PreparedEdit | PreparedLinks | PreparedRestore | PreparedPackage>();
   private readonly skills: SkillChanges;
   private readonly mcp: McpInventory;
+  private readonly instructions: InstructionInventory;
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly running = new Set<Promise<unknown>>();
   private closed = false;
@@ -94,6 +98,9 @@ export class CapabilityChanges {
         this.prepared.set(fingerprint, prepared(expires, full)); return full; } });
     this.mcp = new McpInventory({ environment: options.environment, store: this.store, now: () => this.now(), shown: path => this.shown(path), owned: () => this.owned(), tables: () => this.tables(),
       runningNotes: harnessId => this.runningNotes(harnessId, "mcp"),
+      offerEdit: (change, harnessId, subject, enabled, file, read, plan, blocked, notes) => this.offerEdit(change, harnessId, subject, enabled, file, read, plan, blocked, notes, null) });
+    this.instructions = new InstructionInventory({ environment: options.environment, store: this.store, homes: options.homes, now: () => this.now(), shown: path => this.shown(path), owned: () => this.owned(),
+      tables: () => this.tables(), runningNotes: harnessId => this.runningNotes(harnessId, "instructions"), ccSwitchRunning: () => this.ccSwitchRunning(),
       offerEdit: (change, harnessId, subject, enabled, file, read, plan, blocked, notes) => this.offerEdit(change, harnessId, subject, enabled, file, read, plan, blocked, notes, null) });
   }
 
@@ -170,6 +177,19 @@ export class CapabilityChanges {
   /** Prepares writing a listed server into one Harness; `overwrite` for one HarnessHub wrote that someone changed or removed since. */
   checkMcpSync(name: string, harnessId: string, overwrite: boolean, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> { return this.checking(() => this.mcp.checkSync(name, harnessId, overwrite, installed)); }
   /** Prepares removing the entry HarnessHub wrote for a listed server from one Harness. */
+  /** HarnessHub's instructions and where they stand in every installed Harness (ADR-045 §6, step 4). Read only. */
+  instructionsView(installed: readonly InstalledHarness[]): Promise<InstructionsView> { return this.checking(() => this.instructions.view(installed)); }
+  /** Saves the shared text and the additions in HarnessHub's own store; no Harness file changes. */
+  saveInstructions(shared: string, additions: Readonly<Record<string, string>>, installed: readonly InstalledHarness[]): Promise<InstructionsView> {
+    return this.checking(async () => { this.instructions.save(shared, additions, installed); return this.instructions.view(installed); });
+  }
+  claimInstructions(harnessId: string, installed: readonly InstalledHarness[]): Promise<CapabilityChangeView> { return this.checking(() => this.instructions.claim(harnessId, installed)); }
+  checkInstructionsSync(harnessId: string, options: ReadonlySet<InstructionCheckOption>, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> {
+    return this.checking(() => this.instructions.checkSync(harnessId, options, installed));
+  }
+  checkInstructionsRemove(harnessId: string, options: ReadonlySet<InstructionCheckOption>, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> {
+    return this.checking(() => this.instructions.checkRemove(harnessId, options, installed));
+  }
   checkMcpRemove(name: string, harnessId: string, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> { return this.checking(() => this.mcp.checkRemove(name, harnessId, installed)); }
   /** Whether Hermes reads the shared directory through its `skills.external_dirs` now. */
   private async hermesReadsShared(): Promise<boolean> {
@@ -261,11 +281,12 @@ export class CapabilityChanges {
     return all.entries.filter(entry => entry.kind === "skill" && entry.edges.some(edge => edge.status === "active") && !seen.has(entry.name)).map(entry => entry.name).sort();
   }
   /** An edit or command plan offered for confirmation, with the guard every edit passes and OpenClaw's prediction. */
-  private async offerEdit(change: "skill-switch" | "shared-dir" | "mcp-sync" | "mcp-remove", harnessId: string, subject: string, enabled: boolean, file: string, read: TargetRead, plan: SwitchPlan | null, blocked: string | null,
+  private async offerEdit(change: EditChange, harnessId: string, subject: string, enabled: boolean, file: string, read: TargetRead, plan: SwitchPlan | null, blocked: string | null,
     extraNotes: readonly string[], target: readonly string[] | null): Promise<CapabilityChangeCheck> {
     const before = read.state === "ok" ? read.bytes : null, beforeText = before?.toString("utf8") ?? "";
     const notes = [...(plan !== null && plan.kind !== "none" ? plan.notes : []), ...extraNotes];
     if (plan?.kind === "edit" && read.state === "missing") notes.push("会新建这个文件。");
+    if (plan?.kind === "edit" && plan.remove === true) notes.push("会删除这个文件。");
     let reason = blocked ?? (plan?.kind === "none" ? "无需修改：" + plan.reason : null), diff: string | null = null;
     if (reason === null && plan?.kind === "edit") {
       // The guard every edit passes: the planned file differs from the current one only at the setting it changes.
@@ -470,7 +491,7 @@ export class CapabilityChanges {
    * Running sessions that read or overwrite the file (Claude Code, Gemini CLI), counted without their arguments. Claude
    * Code watches its skill switches; whether a running session picks up a new MCP server is not promised.
    */
-  private async runningNotes(harnessId: string, setting: "skills" | "mcp"): Promise<readonly string[]> {
+  private async runningNotes(harnessId: string, setting: "skills" | "mcp" | "instructions"): Promise<readonly string[]> {
     const pattern = RUNNING[harnessId];
     if (!pattern) return [];
     let table: ReturnType<typeof parseProcessTable> = null;
@@ -481,7 +502,18 @@ export class CapabilityChanges {
     if (!count) return [];
     return harnessId === "claude" ? ["有 " + count + " 个 Claude Code 进程在运行" + (setting === "skills" ? "，它们会立即读到这次改动。" : "。")]
       : harnessId === "cursor" ? ["有 " + count + " 个 Cursor 进程在运行（编辑器或 cursor-agent），它可能自行改写 mcp.json；写入后会立即核对。"]
+      // ChatGPT's app and editor extensions bring their own Codex, which uses ~/.codex too.
+      : harnessId === "codex" ? ["有 " + count + " 个 Codex 进程在运行（可能是 ChatGPT 应用或编辑器扩展内置的 Codex，它们也用 ~/.codex）；运行中的会话不受影响，新开的会话才读到改动。"]
+      // A running Gemini CLI writes its settings back, not its instructions file.
+      : setting === "instructions" ? ["有 " + count + " 个 Gemini CLI 进程在运行；它们可以用 /memory refresh 重新读取指令。"]
       : ["有 " + count + " 个 Gemini CLI 进程在运行。运行中的会话保存设置时会按启动时的快照覆盖 settings.json，可能冲掉这次改动；建议先退出它们。"];
+  }
+
+  /** Whether cc-switch runs now (its app's program `cc-switch`); null when the running programs cannot be read. */
+  private async ccSwitchRunning(): Promise<boolean | null> {
+    let table: ReturnType<typeof parseProcessTable> = null;
+    try { table = parseProcessTable(await (this.options.processes ?? systemProcesses)(AbortSignal.timeout(5000))); } catch { table = null; }
+    return table === null ? null : table.some(row => /(?:^|\/)cc-switch(?:\s|$)/u.test(row.command));
   }
 
   /** Applies a confirmed check once; a replay of the same command returns its first result. */
@@ -509,10 +541,12 @@ export class CapabilityChanges {
       const beforeText = prepared.before?.toString("utf8") ?? "";
       let error: { code: string; message: string } | null = null, written: Buffer | null = null;
       try {
-        if (plan.kind === "edit") replaceTarget(plan.file, expected, Buffer.from(plan.after, "utf8"), prepared.mode);
+        if (plan.kind === "edit" && plan.remove === true) removeTarget(plan.file, expected!);
+        else if (plan.kind === "edit") replaceTarget(plan.file, expected, Buffer.from(plan.after, "utf8"), prepared.mode);
         else await (this.options.openclaw ?? systemOpenclaw(this.options.environment))(plan.args, { env: {}, writable: [dirname(plan.file)] }, AbortSignal.timeout(60_000));
         const after = readTarget(plan.file);
-        if (after.state !== "ok") error = { code: "CAPABILITY_READBACK_FAILED", message: "写入后读不到这个文件" };
+        if (plan.kind === "edit" && plan.remove === true) { if (after.state !== "missing") error = { code: "CAPABILITY_READBACK_MISMATCH", message: "删除后这个文件仍在" }; }
+        else if (after.state !== "ok") error = { code: "CAPABILITY_READBACK_FAILED", message: "写入后读不到这个文件" };
         else {
           written = after.bytes;
           const afterText = after.bytes.toString("utf8");
@@ -526,13 +560,20 @@ export class CapabilityChanges {
         const after = readTarget(plan.file); written = after.state === "ok" ? after.bytes : null;
       }
       if (backupId !== null && written !== null) this.store.setWritten(backupId, written);
+      // A file the change deleted: its backup records that the change left no file, so a later restore knows nobody changed it since.
+      else if (backupId !== null && plan.kind === "edit" && plan.remove === true && error === null) this.store.setWrittenDeleted(backupId);
       if (error === null) {
         if (plan.ledger === "set") this.store.setLedger({ harnessId: prepared.harnessId, file: plan.file, key: plan.key, valueHash: hash(JSON.stringify(plan.written ?? null)), previous: plan.previous, changeId: id, at }, plan.current === "harnesshub");
         else this.store.dropLedger(prepared.harnessId, plan.file, plan.key);
+        for (const other of plan.alsoLedger ?? []) {
+          if (other.action === "drop") this.store.dropLedger(prepared.harnessId, other.file, other.key);
+          else this.store.setLedger({ harnessId: prepared.harnessId, file: other.file, key: other.key, valueHash: hash(JSON.stringify(true)), previous: null, changeId: id, at }, false);
+        }
       }
-      const changed = written !== null && (prepared.before === null || !written.equals(prepared.before));
+      // A deleted file counts as changed: what it held is the diff, all removed.
+      const deleted = plan.kind === "edit" && plan.remove === true && error === null, changed = deleted || (written !== null && (prepared.before === null || !written.equals(prepared.before)));
       const view: CapabilityChangeView = { id, kind: prepared.change, harnessId: prepared.harnessId, subject: prepared.subject, file: this.shown(plan.file), status: error === null ? "applied" : "failed",
-        diff: changed ? displayed(unifiedDiff(this.shown(plan.file), prepared.before === null ? null : beforeText, written!.toString("utf8"), 2), this.options.homes) : null,
+        diff: changed ? displayed(unifiedDiff(this.shown(plan.file), prepared.before === null ? null : beforeText, deleted ? "" : written!.toString("utf8"), 2), this.options.homes) : null,
         backupId: changed ? backupId : null, error, notes: error === null ? prepared.check.notes : [...(changed && backupId !== null ? ["可以在“修改与备份”里恢复修改前的文件。"] : [])], at };
       this.store.saveChange(commandId, hash(fingerprint), view);
       return view;
@@ -642,7 +683,7 @@ export class CapabilityChanges {
   private async orphans(): Promise<readonly CapabilityOrphan[]> {
     const { tables } = await this.tables(), found: CapabilityOrphan[] = [];
     for (const entry of this.store.ledgerEntries()) {
-      if (entry.key.startsWith("link/") || entry.key.startsWith("skills.external_dirs/") || entry.key.startsWith("mcp/")) continue;
+      if (entry.key.startsWith("link/") || entry.key.startsWith("skills.external_dirs/") || entry.key.startsWith("mcp/") || entry.key.startsWith("instructions/") || entry.key.startsWith("file/")) continue;
       const table = tables.find(item => item.harnessId === entry.harnessId), rest = entry.key.slice(entry.key.indexOf("/") + 1);
       if (table === undefined) continue;
       const kept = entry.key.startsWith("skills.config/") ? existsSync(rest) : skillFolderSomewhere(rest, table);
@@ -657,7 +698,7 @@ export class CapabilityChanges {
   checkOrphanClear(id: string, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> {
     let entry: LedgerEntry;
     try { entry = this.driftEntry(id); } catch (error) { return Promise.reject(error); }
-    if (entry.key.startsWith("link/") || entry.key.startsWith("skills.external_dirs/") || entry.key.startsWith("mcp/")) return Promise.reject(new CapabilityError("CAPABILITY_NOT_FOUND", "这不是停用设置"));
+    if (entry.key.startsWith("link/") || entry.key.startsWith("skills.external_dirs/") || entry.key.startsWith("mcp/") || entry.key.startsWith("instructions/")) return Promise.reject(new CapabilityError("CAPABILITY_NOT_FOUND", "这不是停用设置"));
     const rest = entry.key.slice(entry.key.indexOf("/") + 1), codex = entry.key.startsWith("skills.config/");
     return this.checking(() => this.prepareSwitch({ harnessId: entry.harnessId, name: codex ? basename(dirname(rest)) : rest, enabled: true, via: codex ? this.shown(dirname(rest)) : null, orphan: entry }, installed));
   }
@@ -667,7 +708,8 @@ export class CapabilityChanges {
    */
   async drift(): Promise<readonly CapabilityDrift[]> {
     const shared = this.sharedEntries(await resolveHermesHome(this.options.environment)), reads = new Map<string, TargetRead>();
-    return this.store.ledgerEntries().flatMap(entry => { const state = this.driftState(entry, shared, reads); return state === null ? [] : [this.driftView(entry, state)]; });
+    // A fact about a file (that HarnessHub created it) is not something written into it.
+    return this.store.ledgerEntries().filter(entry => !entry.key.startsWith("file/")).flatMap(entry => { const state = this.driftState(entry, shared, reads); return state === null ? [] : [this.driftView(entry, state)]; });
   }
   /** Whether a ledger entry still holds what HarnessHub wrote (null), or how it differs; `reads` keeps each file read once. */
   private driftState(entry: LedgerEntry, shared: (raw: string) => boolean, reads: Map<string, TargetRead>): CapabilityDriftState | null {
@@ -687,13 +729,14 @@ export class CapabilityChanges {
   }
   private driftView(entry: LedgerEntry, state: CapabilityDriftState): CapabilityDrift {
     const rest = entry.key.slice(entry.key.indexOf("/") + 1), change = this.store.changeById(entry.changeId);
-    const kind = entry.key.startsWith("link/") ? "skill-link" as const : entry.key.startsWith("skills.external_dirs/") ? "shared-dir" as const : entry.key.startsWith("mcp/") ? "mcp" as const : "skill-switch" as const;
-    const subject = kind === "shared-dir" ? SHARED_ENTRY : entry.key.startsWith("skills.config/") ? change?.subject ?? basename(dirname(rest))
+    const kind = entry.key.startsWith("link/") ? "skill-link" as const : entry.key.startsWith("skills.external_dirs/") ? "shared-dir" as const : entry.key.startsWith("mcp/") ? "mcp" as const
+      : entry.key.startsWith("instructions/") ? "instructions" as const : "skill-switch" as const;
+    const subject = kind === "shared-dir" ? SHARED_ENTRY : kind === "instructions" ? "指令" : entry.key.startsWith("skills.config/") ? change?.subject ?? basename(dirname(rest))
       : kind === "skill-link" ? change?.subject ?? basename(rest) : rest;
     return { id: driftId(entry), kind, harnessId: entry.harnessId, subject, file: this.shown(entry.file), state, changeId: entry.changeId, at: entry.at };
   }
   private driftEntry(id: string): LedgerEntry {
-    const entry = DRIFT.test(id) ? this.store.ledgerEntries().find(item => driftId(item) === id) : undefined;
+    const entry = DRIFT.test(id) ? this.store.ledgerEntries().find(item => !item.key.startsWith("file/") && driftId(item) === id) : undefined;
     if (entry === undefined) throw new CapabilityError("CAPABILITY_NOT_FOUND", "HarnessHub 没有在跟踪这项设置");
     return entry;
   }
@@ -708,6 +751,7 @@ export class CapabilityChanges {
     if (view.kind === "skill-link") return this.checkSkillLink({ harnessId: entry.harnessId, name: view.subject, present: true }, installed);
     if (view.kind === "shared-dir") return this.checkSharedDir({ harnessId: entry.harnessId, present: true }, installed);
     if (view.kind === "mcp") return this.checkMcpSync(view.subject, entry.harnessId, true, installed);
+    if (view.kind === "instructions") return this.checkInstructionsSync(entry.harnessId, new Set(["overwrite"]), installed);
     // OpenCode's ledger holds either the "deny" of turning a skill off or the "allow" that turned it on over another rule.
     const enabled = entry.key.startsWith("permission.skill/") && entry.valueHash === hash(JSON.stringify("allow"));
     const via = entry.key.startsWith("skills.config/") ? this.shown(dirname(entry.key.slice("skills.config/".length))) : null;
@@ -720,7 +764,7 @@ export class CapabilityChanges {
    */
   forget(id: string): Promise<{ readonly forgotten: boolean }> {
     if (!DRIFT.test(id)) return Promise.reject(new CapabilityError("INVALID_INPUT", "invalid ledger entry"));
-    const found = this.store.ledgerEntries().find(item => driftId(item) === id);
+    const found = this.store.ledgerEntries().find(item => !item.key.startsWith("file/") && driftId(item) === id);
     if (found === undefined) return Promise.resolve({ forgotten: false });
     return this.serial(found.key.startsWith("link/") ? "links:" + dirname(found.file) : found.file, async () => {
       this.owned();
@@ -740,10 +784,12 @@ export class CapabilityChanges {
     if (backup === null) throw new CapabilityError("CAPABILITY_NOT_FOUND", "没有这份备份");
     const bytes = this.store.backupBytes(backupId), current = readTarget(backup.file);
     if (current.state === "refused") throw new CapabilityError("CAPABILITY_TARGET_REFUSED", "无法恢复：" + current.reason);
-    const currentSha = current.state === "ok" ? sha256(current.bytes) : null, changedSince = backup.writtenSha256 === null || currentSha !== backup.writtenSha256;
+    const currentSha = current.state === "ok" ? sha256(current.bytes) : null;
+    const changedSince = backup.writtenSha256 === null || (backup.writtenSha256 === WRITTEN_DELETED ? current.state !== "missing" : currentSha !== backup.writtenSha256);
     const fingerprint = randomBytes(32).toString("hex"), expires = this.now().getTime() + CAPABILITY_CHECK_MS;
     const check: CapabilityRestoreCheck = { backupId, file: this.shown(backup.file), diff: displayed(unifiedDiff(this.shown(backup.file), current.state === "ok" ? current.bytes.toString("utf8") : null, bytes.toString("utf8"), 2), this.options.homes),
-      changedSince, notes: [...(changedSince ? ["这个文件在 HarnessHub 改动之后又被改过，恢复会连这些改动一起撤销。"] : []), "恢复前会先备份现在的文件。"], fingerprint, expiresAt: new Date(expires).toISOString() };
+      changedSince, notes: [...(changedSince ? ["这个文件在 HarnessHub 改动之后又被改过，恢复会连这些改动一起撤销。"] : []), current.state === "ok" ? "恢复前会先备份现在的文件。" : "现在没有这个文件，恢复会重新建立它（权限 0600）。"],
+      fingerprint, expiresAt: new Date(expires).toISOString() };
     this.prepared.set(fingerprint, { kind: "restore", expires, backup, current: currentSha, mode: current.state === "ok" ? current.mode : 0o600, check });
     return check;
   }

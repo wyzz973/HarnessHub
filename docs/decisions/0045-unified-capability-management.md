@@ -455,7 +455,7 @@
     - 变量都显式写在 `env` 里，写成带引号的 `!!js "process.env.NAME"`；带前缀的请求头写成 `!!js "'Bearer ' + process.env.NAME"`，前缀只允许字母、数字、空格和 `_ : -`。
     - 不支持 SSE。
     - 服务器名最多 32 个字符：清单允许 64 个，超过 32 个的在 DeepSeek Harness 标为不支持并说明原因，不写入。
-    - 按整行增删这一条；列表空了就写回 `[]`，原来没有的文件新建为列表、移除后也留下 `[]`，绝不留空文件。
+    - 按整行增删这一条；列表空了就写回 `[]`，绝不留空文件。原来没有的文件新建为列表；按第 4 步裁决第 3 条，HarnessHub 新建的文件在移除最后一个服务器后删除（见第 4 步实现记录），原来就有的回到 `[]`。
     - 用户自己的同名服务器（`id` 不同）不覆盖。
 - **验收**：G064-M6（单元），G064-M2 增加的流程与 G064-M3 的名字长度（集成）。写入后的验证不用模型目录读取，因为它会新建一个原生会话。改为两步：
   1. `dsh --profile acp --dump-config`：dsh 按自己的补丁算法合成各层，不启动，不求值 `!!js`。
@@ -464,4 +464,146 @@
   - 写入、dsh 的合成、启动检查和移除都通过。
   - 启动期间采样到客户端连接服务器（:443），基线没有任何连接。会话里的工具没有验证。
   - 同样往返验证后保持移除，留下 `[]`。
-  - **待决**：移除最后一行时，是否删掉 HarnessHub 自建的文件。
+  - **待决（已决，2026-10-19）**：移除最后一行时删掉 HarnessHub 新建的文件；本机留下的 `[]` 由主代理按审批条件手工删除，见第 4 步实现记录。
+
+## 第 4 步设计：指令区块（2026-10-18 提案，2026-10-19 按审批更正事实）
+
+### 本机核实（只读，已装版本）
+
+| Harness | 用户级文件与本机现状 | 什么时候读到改动 | 上限 |
+|---|---|---|---|
+| Claude Code 2.1.302 | `~/.claude/CLAUDE.md`，不存在 | 新会话。HarnessHub 的会话经 claude-agent-acp 0.89.1 启动（`settingSources: ["user", "project", "local"]`），同样读它 | 无硬上限 |
+| Codex 0.162.1 | `~/.codex/AGENTS.override.md` 非空时用它，否则 `AGENTS.md`；本机 override 不存在，`AGENTS.md` 为 0 字节 | 新会话。本机有 ChatGPT 应用和编辑器扩展内置的 Codex 在运行，它们也用 `~/.codex` | 无：用户级文件整读（rust-v0.162.1 `codex-home/src/instructions/mod.rs`）；32 KiB 的 `project_doc_max_bytes` 只限项目里的文件（`core/src/agents_md.rs`） |
+| Gemini CLI 0.62.0 | `~/.gemini/GEMINI.md`，0 字节；`context.fileName` 未设置 | 新会话，或会话里 `/memory refresh` | — |
+| OpenCode 1.18.35 | `~/.config/opencode/AGENTS.md`，不存在时回退读 `~/.claude/CLAUDE.md`（`session/instruction.ts`）；两个都不存在。只看文件是否存在，空文件也会挡住回退。`OPENCODE_DISABLE_CLAUDE_CODE` 或 `OPENCODE_DISABLE_CLAUDE_CODE_PROMPT` 为真时不回退（`effect/runtime-flags.ts`） | 每一步都重新读：运行中的会话下一步就用新内容 | — |
+| OpenClaw 2026.3.23-2 | 工作区 `~/.openclaw/workspace/AGENTS.md`，7874 字节（OpenClaw 的模板）；工作区是 git 仓库；配置的频道为 `feishu`、`openclaw-weixin` | 网关按会话缓存（`bootstrap-cache`），新会话或会话重置后才读到；不需要重启网关 | 单个文件 20000 字符（`agents.defaults.bootstrapMaxChars`，按 `trimEnd()` 后的长度），超出时保留头尾、把中间换成截断说明（`trimBootstrapContent`）；所有文件合计 150000 |
+| DeepSeek Harness 0.2.0-rc.2 | `$DSH_HOME/AGENTS.md`（`dsh-agent-instructions`），不存在 | 每一步之前比对：运行中的会话下一步收到“Updated instructions” | 指令总预算 64 KiB，含项目里的文件 |
+| Hermes | 不支持：SOUL.md 是人格文件 | — | — |
+| Cursor | 用户规则在应用设置里，不在磁盘上 | — | — |
+
+**cc-switch**（本机装的是 3.15.0，`~/.cc-switch` 存在，当前未运行）。行为按 4.0.15（`77c6dc7`）的 `src-tauri/src/services/prompt.rs` 与 `prompt_files.rs` 读出；本机 3.15.0 的程序里只证实了 `CLAUDE.md`、`AGENTS.md`、`GEMINI.md`、`SOUL.md` 四个文件名，下面其余的文件按 4.0.15 保守列入：
+- 启用一个提示词时，把它整份写进对应文件：`~/.claude/CLAUDE.md`、`~/.codex/AGENTS.md`、`~/.gemini/GEMINI.md`、`~/.config/opencode/AGENTS.md`、`~/.openclaw/AGENTS.md`、`~/.hermes/SOUL.md`、`~/.pi/agent/AGENTS.md`。
+- 打开提示词列表或切换前，把文件当前的内容回填进已启用的那条提示词。
+- 停用最后一条启用中的提示词时，把文件清空成 0 字节。本机 Codex 与 Gemini 的两个 0 字节文件与此一致。
+- HarnessHub 不读 cc-switch 的数据库（用户规则），无从知道哪个应用启用了提示词。
+
+### 设计
+
+1. **内容**：
+   - 一份共享指令，加每个 Harness 的追加文本（可以为空）。
+   - 存在 `capabilities.sqlite` v4 的新表 `instruction_texts`，附降级脚本 `tools/capabilities-v4-to-v3.sql`。
+   - 文本校验：
+     - UTF-8，换行统一为 LF，每份最多 16 KiB；
+     - 不能含 `<!-- harnesshub:` 标记；
+     - 不能含家目录的绝对路径，要写成 `~`，与隐私检查一致，不做隐式替换。
+   - 保存只改 HarnessHub 自己的存储，不碰任何 Harness 的文件。
+2. **区块格式**：
+   ```
+   <!-- harnesshub:begin id=instructions sha=<正文 sha256 的前 12 位> -->
+   正文：共享指令；有追加文本时空一行再接上
+   <!-- harnesshub:end id=instructions -->
+   ```
+   - 每个文件最多一个区块。
+   - 第一次写入：追加到文件末尾，与原内容之间空一行。
+   - 之后：原地替换。
+   - 区块外的字节不变。回读校验：去掉区块和当初加的分隔后，与写入前逐字节相同，区块正文与计划相同。
+   - 换行符沿用文件原有的（CRLF 文件写 CRLF），BOM 保留。
+   - 区块标记残缺（只有开始或只有结束、开始不止一个、sha 格式不对）时拒绝写入，并说明原因。
+3. **移除**：
+   - 删掉区块和当初加的分隔。分隔记在台账里，所以文件能回到写入前的字节。
+   - HarnessHub 新建的文件，移除后为空时删除文件，回到“不存在”。原因：OpenCode 只看文件是否存在，留下空文件会挡住它对 CLAUDE.md 的回退。
+   - 原来就有的文件，哪怕是 0 字节，也只回到原来的字节。
+4. **目标文件**：按“谁读什么”表取实际生效的那个。
+   - Codex：有非空的 override 时写 override，并提示原因。
+   - Gemini：取 `context.fileName` 的第一个名字，已存在的优先。
+   - OpenClaw：写当前工作区的 AGENTS.md。
+   - 父目录不存在时拒绝：说明这个 Harness 还没有初始化。
+5. **状态**（每个目标一个）：
+   - 已同步。
+   - 可更新：区块是 HarnessHub 上次写的，内容与现在的指令不同。
+   - 已被改动：区块正文与标记里的 sha 或台账不符，说明有人改过，归用户。覆盖要单独确认（`overwrite`）。
+   - 已被外部移除：台账有记录，文件里没有区块。可以重新写入，或不再跟踪。
+   - 未写入。
+   - 可认领：文件里有 HarnessHub 区块但台账没有记录；只有内容与现在的指令完全相同才能认领。
+   - 不支持：Hermes、Cursor。
+6. **OpenCode 的回退**：
+   - 它自己的 AGENTS.md 存在：写进这个文件。
+   - 不存在，且回退读的 `~/.claude/CLAUDE.md` 有区块外的内容：新建 OpenCode 自己的文件会让回退失效，OpenCode 从此读不到那些内容。检查默认阻止，用户选“新建 OpenCode 自己的文件”（`createOwn`）后才给确认。
+   - 不存在，且回退文件不存在或只有 HarnessHub 区块：可以直接新建，确认框写明之后不再回退读 CLAUDE.md。
+   - 回退文件里已有 HarnessHub 区块：OpenCode 显示“经 Claude Code 的文件生效”，用的是 Claude Code 的追加文本。
+7. **cc-switch**：
+   - 条件：`~/.cc-switch` 目录存在（只看是否存在），且目标是 cc-switch 的提示词文件。
+   - 这时检查默认阻止，并说明 cc-switch 启用或切换提示词时会整份改写这个文件（区块随之消失，或被收进它的提示词），停用时会清空。
+   - 用户选“仍然写入”（`acknowledge=cc-switch`）后才给确认。
+8. **写入流程**：
+   - 沿用第 2 步：检查（精确差异，上下文 2 行）→ 确认（15 分钟、单次）→ 再读比对 → 备份 → 原子替换或删除 → 回读校验 → 台账 → 修改记录。
+   - 台账的键是 `instructions`，值是正文哈希；原值记录分隔和“是否新建”。
+   - 漂移检查加入指令区块：被移除、被改动、文件读不到。
+9. **运行中的程序**：
+   - 确认框按上表写明什么时候生效。
+   - Claude、Gemini 报运行中的会话数。
+   - OpenClaw 写明：飞书、微信等频道的会话，新会话或重置后才用到；不重启网关。工作区是 git 仓库时，写明这次改动会出现在它的 git status 里。
+10. **体积**（按审批更正）：
+    - Codex 的用户级文件没有上限，不提示。
+    - OpenClaw：写入后超过它的单个文件上限时阻止，因为它会挖掉中间的部分，区块或模板会残缺。
+    - DeepSeek Harness：写明总预算 64 KiB，含项目里的文件，只提示。
+11. **页面**：
+    - 指令页签上方新增“统一指令”卡片：共享指令编辑框、每个 Harness 的追加文本（折叠）、保存。
+    - 下面每个 Harness 一行：文件、状态、什么时候生效、操作（写入、更新、移除）。
+    - Cursor 一行提供“复制共享指令”，提示粘贴到 Cursor 设置的 User Rules。
+12. **不做**：
+    - 导入已有文件的内容：本机没有可导入的，Claude 的文件不存在，Codex 与 Gemini 的为空，OpenClaw 的是模板。
+    - 项目级文件。
+    - Hermes 的 SOUL.md。
+
+### 第一次真实写入（提案）
+
+- 用户没有给出指令内容，所以只做往返验证：共享指令写一行无害的验证文本，写入、核对、移除，最后回到原样。
+- **DeepSeek Harness**：
+  - 新建 `~/.dsh/AGENTS.md`。没有运行中的进程，也不是 cc-switch 的文件。
+  - 用 dsh 自己导出的 `loadBaselineInstructions` 只读核对它确实读到区块。这个函数只读文件，不建会话。
+  - 移除后文件删除。
+- **Codex**：
+  - 在原有的 0 字节 `~/.codex/AGENTS.md` 里写入。这是 cc-switch 的文件，需要确认 cc-switch。
+  - 移除后回到 0 字节。
+- **待决**：DeepSeek Harness 的 MCP 补丁是否也按第 3 条处理，即 HarnessHub 新建的文件，移除最后一项后只剩 HarnessHub 写的骨架时删除文件。若同意，现在留下的 3 字节 `[]` 是否一并删除。
+
+## 审批代理对第 4 步的裁决（2026-10-19）
+
+审批代理只读核对了提案、写入框架、已写出的实现与本机程序，更正了四处事实（已改进上面的设计），并逐条裁决：
+
+1. **事实更正**：本机 cc-switch 是 3.15.0；Codex 的用户级指令文件没有字节上限；OpenClaw 超长时保留头尾、挖掉中间；本机有 ChatGPT 应用内置的 Codex 在运行。
+2. **区块格式**：同意。文本另拒绝孤立的代理项和换行、制表符以外的控制字符；混合换行、BOM 加 CRLF 要有夹具；任何以 `<!-- harnesshub:` 开头却不是精确标记的行都视为残缺。
+3. **移除**：同意。删除文件前先备份、重验，回读必须已不存在；备份要能记下“这次改动删除了文件”，恢复时不误报“此后被改过”。新建的文件和恢复出的文件都是 0600。
+4. **家目录**：同意不做隐式替换；编辑框在输入前就提示写 `~`。
+5. **OpenCode 回退**：同意 `create-own`。阻止时给出替代做法（改写 Claude 的 CLAUDE.md）；`elsewhere` 的按钮写明“改为新建自己的文件（之后不再回退）”；Claude 的写入与移除说明 OpenCode 也受影响；关闭回退的环境变量按源码核实；两个文件都不存在时直接新建。
+6. **cc-switch**：同意，但只在第一次写入、区块被移除后重写、覆盖 HarnessHub 没有对应记录的完整区块时要求确认；更新 HarnessHub 自己的区块只提示。0 字节文件另加一句说明；cc-switch 在运行时写明；不读 `~/.cc-switch` 里的任何东西，以不可读的目录测试。
+7. **OpenClaw**：同意作为普通目标，附条件：确认框列出实际配置的频道名；超过单个文件上限时阻止；工作区文件不存在时阻止、不替它新建；配置了多个 agent 时说明只写默认 agent；**OpenClaw 的第一次真实写入由用户在页面上点**。
+8. **不做导入**：同意；认领要有成功与拒绝的测试。
+9. **其余**：存储 v4 与降级脚本同意，按先例测试；Gemini 的 settings.json 读取不应拒绝链接；sha 完好但与记录不符的区块说成“HarnessHub 更早写的版本（可能被别的工具写回）”；每个 Harness 只留一条区块记录，旧文件已没有区块的记录随新写入删除；`instructions/` 在孤立设置、漂移、重新应用、不再跟踪里都要识别；运行中的程序加 Codex；每次检查的第一句声明只改区块、不改模型与登录配置。
+10. **第一次真实写入**：同意由主代理代为执行 DeepSeek Harness 与 Codex 各一次往返，用规定的验证文本，最后保持移除；OpenClaw、Claude、Gemini、OpenCode 的第一次写入留给用户。
+11. **`[]` 文件**：同意统一规则“HarnessHub 新建的文件，移除最后一项后只剩 HarnessHub 写的骨架时删除”，并补上 DeepSeek Harness MCP 的实现；同意由主代理按前置核对手工删除本机现有的 `[]`，不伪造台账。
+
+## 第 4 步实现记录：指令区块（2026-10-19）
+
+- **已实现**：
+  - `instruction-blocks.ts`：区块的解析、写入、移除，与文本校验（16 KiB、NUL 与控制字符、孤立代理项、区块标记、家目录完整路径）。
+  - `instruction-changes.ts`：每个 Harness 的目标文件、状态、写入与移除的检查、认领。
+  - 写入框架：`format: "markdown"` 的编辑；`remove` 删除 HarnessHub 新建、已为空的文件；`alsoLedger` 随同一次写入记下或删掉同一 Harness 的其他记录；删除了文件的备份记为 `deleted`，恢复时据此判断有没有被改过。
+  - 存储 v4：`instruction_texts`；降级脚本 `tools/capabilities-v4-to-v3.sql`。
+  - 接口：`/capabilities/instructions`（读、存）、`/instructions/claim`、`/instructions/sync`、`/instructions/remove`；检查带 `options` 与 `proceed`，契约见 [provider-web-mvp](../contracts/provider-web-mvp.md)。
+  - 页面：指令页签上方的“统一指令”卡片；确认框对只差用户表态的检查显示 `proceed` 按钮，带上选项重新检查。
+  - DeepSeek Harness 的 MCP 补丁：HarnessHub 新建文件时随写入记下 `file/created`；移除最后一个服务器、只剩 `[]` 时删除文件并清掉这条记录。这条记录不进漂移列表，降级到 v3 时一并删除。
+  - 读取表：Codex 的指令证据改为用户级无上限；OpenCode 的回退在两个环境变量为真时不存在，回退路径按源码用家目录下的 `~/.claude/CLAUDE.md`；视图不再对 Codex 的大文件提示 32 KiB。
+- **实现中的取舍**：
+  1. **新建文件的权限**：沿用写入框架，新建的文件为 0600；从备份恢复一个被删除的文件也是 0600。
+  2. **恢复之后**：恢复会清掉这个文件的全部记录，所以恢复出的区块显示为“可认领”，不算 HarnessHub 记录里的区块。
+  3. **cc-switch 的进程**：按命令行里的 `cc-switch` 程序名识别（应用包路径里有空格，不能只取第一段）。
+  4. **Codex 的进程**：程序名为 `codex` 的都算，包括 ChatGPT 应用和编辑器扩展内置的；技能与 MCP 的检查也会显示这条说明。
+  5. **页面记住“仍然写入”**：审批允许但没有做，每次检查都要用户自己点。
+- **已知行为**：
+  - OpenClaw 升级或重新初始化工作区时可能重写模板，HarnessHub 的区块随之消失，漂移列表会显示“已被外部移除”。
+  - cc-switch 启用或切换提示词时整份改写它管理的文件，区块随之消失，同样显示在漂移列表里。
+  - 运行中的 Claude Code、Codex、Gemini 会话不读新内容；OpenCode 与 DeepSeek Harness 下一步就读到；OpenClaw 新会话或重置后读到。
+- **验收**：G064-I1（单元），G064-I2、G064-I3（集成），G064-M2 增加的 dsh 新建文件删除，G054-CA7（浏览器）；真实环境见[指令区块验收](../verification/capability-instructions-2026-10-19.md)。
+

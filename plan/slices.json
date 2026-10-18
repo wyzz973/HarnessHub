@@ -962,7 +962,13 @@
         "tests/integration/mcp-inventory.test.ts",
         "tools/capabilities-v3-to-v2.sql",
         "src/infrastructure/capabilities/claude-mcp.ts",
-        "tests/real/claude-mcp.real.ts"
+        "tests/real/claude-mcp.real.ts",
+        "src/infrastructure/capabilities/instruction-blocks.ts",
+        "src/infrastructure/capabilities/instruction-changes.ts",
+        "web/src/components/InstructionsPanel.tsx",
+        "tests/unit/instruction-blocks.test.ts",
+        "tests/integration/instructions.test.ts",
+        "tools/capabilities-v4-to-v3.sql"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/capabilities-view-2026-10-18.md"

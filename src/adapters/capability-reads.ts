@@ -109,7 +109,10 @@ export function harnessDirectories(environment: ReadEnvironment) {
  * by the caller: Hermes from HERMES_HOME or its active profile, OpenClaw from its own configuration.
  */
 export function capabilityReadTables(environment: ReadEnvironment, resolved: { readonly hermesHome: string; readonly openclawWorkspace: string }): readonly HarnessReadTable[] {
-  const dirs = harnessDirectories(environment), disableClaudeSkills = environment.values.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS || environment.values.OPENCODE_DISABLE_CLAUDE_CODE;
+  // OpenCode reads its flags as booleans (runtime-flags.ts `Config.boolean`): true, yes, on or 1.
+  const flag = (name: string) => /^(?:true|yes|on|1)$/iu.test(environment.values[name] ?? "");
+  const dirs = harnessDirectories(environment), disableClaudeSkills = flag("OPENCODE_DISABLE_CLAUDE_CODE_SKILLS") || flag("OPENCODE_DISABLE_CLAUDE_CODE");
+  const disableClaudePrompt = flag("OPENCODE_DISABLE_CLAUDE_CODE_PROMPT") || flag("OPENCODE_DISABLE_CLAUDE_CODE");
   const hermes = resolved.hermesHome, workspace = resolved.openclawWorkspace;
   const opencodeConfigs = [join(dirs.opencode, "config.json"), join(dirs.opencode, "opencode.json"), join(dirs.opencode, "opencode.jsonc")];
   return [
@@ -130,7 +133,8 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
     },
     {
       harnessId: "codex", verified: ">=0.158.0 <0.170.0",
-      evidence: ["learn.chatgpt.com/docs/build-skills（用户级 $HOME/.agents/skills；同名“both can appear”）", "openai/codex codex-rs/ext/skills/src/host_roots.rs（$CODEX_HOME/skills 已弃用但仍读取）", "config-reference（mcp_servers、[[skills.config]]）"],
+      evidence: ["learn.chatgpt.com/docs/build-skills（用户级 $HOME/.agents/skills；同名“both can appear”）", "openai/codex codex-rs/ext/skills/src/host_roots.rs（$CODEX_HOME/skills 已弃用但仍读取）", "config-reference（mcp_servers、[[skills.config]]）",
+        "openai/codex rust-v0.162.1 codex-rs/codex-home/src/instructions/mod.rs（用户级依次读 AGENTS.override.md、AGENTS.md，trim 后第一个非空者生效，整文件读、没有字节上限；project_doc_max_bytes 只限项目文件，见 core/src/agents_md.rs）"],
       skills: { roots: [{ role: "shared", path: dirs.shared, precedence: 1, containment: false, depth: 1 }, { role: "own", path: join(dirs.codex, "skills"), precedence: 1, containment: false, depth: 1 },
         { role: "bundled", path: join(dirs.codex, "skills", ".system"), precedence: 1, containment: false, depth: 1 }],
         duplicates: "all-visible", requiresDescription: true, nameMustMatchDirectory: false, switch: { kind: "codex-skills-config", file: join(dirs.codex, "config.toml") } },
@@ -159,13 +163,14 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
     },
     {
       harnessId: "opencode", verified: ">=1.18.0 <1.19.0",
-      evidence: ["anomalyco/opencode v1.18.35 packages/opencode/src/skill/index.ts（发现 .claude 与 .agents 的 skills/**/SKILL.md 与配置目录；并发加载，同名后写入者覆盖并警告）", "opencode.ai/docs/rules（全局 AGENTS.md 回退读 ~/.claude/CLAUDE.md）"],
+      evidence: ["anomalyco/opencode v1.18.35 packages/opencode/src/skill/index.ts（发现 .claude 与 .agents 的 skills/**/SKILL.md 与配置目录；并发加载，同名后写入者覆盖并警告）",
+        "anomalyco/opencode v1.18.35 packages/opencode/src/session/instruction.ts（全局指令取第一个存在的文件：配置目录的 AGENTS.md，然后 ~/.claude/CLAUDE.md；空文件也算存在；每一步重新读）与 effect/runtime-flags.ts（OPENCODE_DISABLE_CLAUDE_CODE 或 OPENCODE_DISABLE_CLAUDE_CODE_PROMPT 关掉回退）"],
       skills: { roots: [...(disableClaudeSkills ? [] : [{ role: "compat" as const, path: join(dirs.claude, "skills"), precedence: 1, containment: false, depth: 8, find: OPENCODE_FIND }]),
         { role: "shared", path: dirs.shared, precedence: 1, containment: false, depth: 8, find: OPENCODE_FIND }, { role: "own", path: join(dirs.opencode, "skills"), precedence: 1, containment: false, depth: 8, find: OPENCODE_FIND },
         { role: "own", path: join(dirs.opencode, "skill"), precedence: 1, containment: false, depth: 8, find: OPENCODE_FIND }],
         duplicates: "last-wins-unordered", requiresDescription: true, nameMustMatchDirectory: false, switch: { kind: "opencode-permission", files: opencodeConfigs } },
       mcp: { style: "opencode", files: opencodeConfigs },
-      instructions: { kind: "files", candidates: [{ path: join(dirs.opencode, "AGENTS.md"), role: "own" }, { path: join(dirs.claude, "CLAUDE.md"), role: "compat" }], rule: "first-existing" },
+      instructions: { kind: "files", candidates: [{ path: join(dirs.opencode, "AGENTS.md"), role: "own" }, ...(disableClaudePrompt ? [] : [{ path: join(environment.home, ".claude", "CLAUDE.md"), role: "compat" as const }])], rule: "first-existing" },
       subagents: [{ dir: join(dirs.opencode, "agents"), format: "markdown", role: "own", recursive: false }, { dir: join(dirs.opencode, "agent"), format: "markdown", role: "own", recursive: false }],
       commands: [{ dir: join(dirs.opencode, "commands"), format: "markdown", role: "own", recursive: false }, { dir: join(dirs.opencode, "command"), format: "markdown", role: "own", recursive: false }],
       hooks: null,

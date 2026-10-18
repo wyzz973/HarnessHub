@@ -9,6 +9,7 @@ import { BrandIcon } from "./BrandIcon.js";
 import { ChangeDialog, RestoreDialog, type ChangeRequest, type SwitchRequest } from "./CapabilityChangeDialog.js";
 import { PageShell } from "./PageShell.js";
 import { McpInventoryPanel } from "./McpInventoryPanel.js";
+import { InstructionsPanel } from "./InstructionsPanel.js";
 import { SkillAddDialog } from "./SkillAddDialog.js";
 
 export const KIND_LABEL: Readonly<Record<CapabilityKind, string>> = { skill: "技能", mcp: "MCP", instructions: "指令", subagent: "子 Agent", command: "命令", hook: "Hooks", plugin: "插件" };
@@ -18,7 +19,8 @@ const STATUS_LABEL: Readonly<Record<CapabilityStatus, string>> = { active: "生�
 const OWNER_LABEL: Readonly<Record<CapabilityOwner, string>> = { user: "用户", harnesshub: "HarnessHub", "skills-cli": "vercel skills", "cc-switch": "cc-switch", magpie: "Magpie", clawhub: "ClawHub",
   "hermes-hub": "Hermes Hub", plugin: "插件", bundled: "随程序安装", synced: "账户同步" };
 const CHANGE_LABEL: Readonly<Record<CapabilityChangeView["kind"], string>> = { "skill-switch": "技能开关", "shared-dir": "共享目录", "skill-link": "放置技能", "link-cleanup": "清理链接", "link-undo": "撤销", restore: "恢复",
-  "skill-add": "添加技能", "skill-update": "更新技能", "skill-delete": "删除技能", "skill-undo": "撤销", "mcp-sync": "写入 MCP", "mcp-remove": "移除 MCP", "mcp-claim": "认领 MCP" };
+  "skill-add": "添加技能", "skill-update": "更新技能", "skill-delete": "删除技能", "skill-undo": "撤销", "mcp-sync": "写入 MCP", "mcp-remove": "移除 MCP", "mcp-claim": "认领 MCP",
+  "instructions-sync": "写入指令", "instructions-remove": "移除指令", "instructions-claim": "认领指令" };
 type SkillUpdate = SkillUpdateView["skills"][number];
 /** A skill folder's name in the shared directory, from where the view shows it. */
 function folderName(entry: CapabilityEntry): string | null { return entry.shared ? entry.shared.folder.split("/").filter(Boolean).at(-1) ?? null : null; }
@@ -155,7 +157,7 @@ function DriftNotice({ api, drift, harnesses, onChange, onForgotten }: { readonl
   return <Notice tone="amber" className="capability-drift" title={"HarnessHub 写过的 " + drift.length + " 项设置已不在原处"}>
     <p className="m-0">多半是 Harness 自己重写了配置文件，或在别处改过。HarnessHub 不会自动改回：可以重新应用（先显示改动），或不再跟踪（文件不变）。</p>
     <ul className="m-0 mt-1.5 flex list-none flex-col gap-1 p-0">{drift.map(item => <li key={item.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-fg">
-      <strong className="font-medium">{harnesses.find(harness => harness.harnessId === item.harnessId)?.name ?? item.harnessId} · {item.kind === "mcp" ? "MCP" : CHANGE_LABEL[item.kind]} · {item.subject}</strong>
+      <strong className="font-medium">{harnesses.find(harness => harness.harnessId === item.harnessId)?.name ?? item.harnessId} · {item.kind === "mcp" ? "MCP" : item.kind === "instructions" ? "指令区块" : CHANGE_LABEL[item.kind]} · {item.subject}</strong>
       <Badge tone="amber">{item.kind === "mcp" && item.harnessId === "claude" && item.state === "removed" ? "写入丢失（可能被运行中的 Claude Code 会话冲掉）" : DRIFT_LABEL[item.state]}</Badge><code className="text-[11.5px] break-all text-fg-2">{item.file}</code>
       <button type="button" className="btn btn-sm" disabled={busy !== null} onClick={() => onChange({ title: "重新应用：" + item.subject, verb: "重新应用", on: item.kind === "skill-switch" ? false : item.kind === "shared-dir" ? true : null,
         done: "已重新应用：" + item.subject, load: () => api.checkReapply(item.id) })}>重新应用</button>
@@ -269,6 +271,7 @@ export function CapabilitiesPage({ api, initialHarness, onMenu, sidebarHidden, o
       {kind === "skill" ? <SharedDirectory api={api} harnesses={view.harnesses.filter(item => harness === null || item.harnessId === harness)} updates={updates} checking={checkingUpdates} updateProblem={updateProblem}
         onAdd={() => setAdding(true)} onCheckUpdates={checkUpdates} onChange={change}/> : null}
       {kind === "mcp" ? <McpInventoryPanel api={api} harness={harness} reload={reloads} onChange={change} onNotice={(text, failed) => setNotice({ text, failed })}/> : null}
+      {kind === "instructions" ? <InstructionsPanel api={api} harness={harness} reload={reloads} onChange={change} onNotice={(text, failed) => setNotice({ text, failed })}/> : null}
       {rows.length ? <div className="capability-matrix overflow-x-auto rounded-xl border border-line bg-surface shadow-sm">
         <table className="w-full border-collapse text-left text-[12.5px]">
           <thead><tr className="border-b border-line">

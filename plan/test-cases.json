@@ -9501,7 +9501,7 @@
       "layer": "integration",
       "planned_file": "tests/integration/mcp-inventory.test.ts",
       "scenario": "经正式入口导入、认领、按各家写法写入、清单改动后更新与移除 MCP 服务器",
-      "expected": "列出各 Harness 已有的服务器，明文密钥与带令牌的地址不能导入；导入并认领一致的那一项不改文件；写入 Codex 只多出它自己的表，其余字节不变，确认框写明会以用户身份运行的程序与所需变量（只说是否已设置）；写入 Gemini、Cursor 用各自的引用，Cursor 提示编辑器共用文件；清单改动后各处显示待更新，更新只改自有键并保留用户加的超时；写入 DeepSeek Harness 时新建它对所有 profile 生效的补丁文件、只含 HarnessHub 自己的 insert，移除后留下 []；profile 里用户自己的服务器可以导入；从 Cursor 移除只删 HarnessHub 写的一项；仍有 HarnessHub 写的条目时不能从清单删除；回答不含家目录绝对路径与凭据",
+      "expected": "列出各 Harness 已有的服务器，明文密钥与带令牌的地址不能导入；导入并认领一致的那一项不改文件；写入 Codex 只多出它自己的表，其余字节不变，确认框写明会以用户身份运行的程序与所需变量（只说是否已设置）；写入 Gemini、Cursor 用各自的引用，Cursor 提示编辑器共用文件；清单改动后各处显示待更新，更新只改自有键并保留用户加的超时；写入 DeepSeek Harness 时新建它对所有 profile 生效的补丁文件、只含 HarnessHub 自己的 insert，移除后留下 []；profile 里用户自己的服务器可以导入；从 Cursor 移除只删 HarnessHub 写的一项；仍有 HarnessHub 写的条目时不能从清单删除；回答不含家目录绝对路径与凭据；DeepSeek Harness 的补丁文件由 HarnessHub 新建时，移除最后一个服务器后删除文件（说明会删除），原来就有的回到 []，“由 HarnessHub 新建”的记录不进漂移列表",
       "status": "planned",
       "evidence": null
     },
@@ -9570,6 +9570,54 @@
       "evidence": null
     },
     {
+      "id": "G064-I1",
+      "task": "G064",
+      "requirements": [
+        "R27"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "planned_file": "tests/unit/instruction-blocks.test.ts",
+      "scenario": "HarnessHub 指令区块的解析、写入与移除",
+      "expected": "区块追加在文件末尾、与原内容空一行，记下加入的分隔；原地替换时区块前后的字节不变；移除后逐字节回到写入前（含 BOM、BOM 加 CRLF、混合换行、末尾无换行的情形，区块后有用户内容时保留分隔）；区块里的内容被改过时与开始标记的 sha 不符；无法识别的标记（id 不是 instructions、sha 大写、有前导空白）、重复或缺失的标记都被拒绝；文本超过 16 KiB（按 UTF-8 计）、含 NUL 或换行与制表符以外的控制字符、含孤立的代理项、含区块标记或写出家目录的完整路径时拒绝",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G064-I2",
+      "task": "G064",
+      "requirements": [
+        "R27"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/instructions.test.ts",
+      "scenario": "经正式 Gateway 保存指令，按各 Harness 的规则选文件写入、更新、移除与恢复；OpenCode 回退、Claude 文件、OpenClaw 工作区与 cc-switch 的确认",
+      "expected": "保存只改 HarnessHub 的存储，含家目录、控制字符、标记、孤立代理项或未安装 Harness 的文本被拒绝；每个 Harness 显示它读的文件或不写的原因；Codex 跳过空白的 override，Gemini 取 context.fileName 里第一个存在的名字；每次检查第一句声明只改区块、不改模型与登录配置；DeepSeek Harness 的区块接在原内容后、空一行，权限不变、有备份、命令重放不重写；Codex 写进非空的 AGENTS.override.md 并接上它的追加文本，不提 32 KiB；检查后文件被改时返回 409；更新原地替换并保留区块后的用户内容，移除后逐字节回到原样；HarnessHub 新建的文件为 0600，移除后删除，备份记下已删除，恢复时说明没有被改过并以 0600 重建；目标是符号链接时拒绝；OpenCode 回退读的 CLAUDE.md 有用户内容时要 create-own 并给出改写 Claude 文件的替代做法，两个文件都不存在时直接新建并说明不再回退，移除后删除文件并说明恢复回退；Claude 的检查说明 OpenCode 也会经回退读到、删除后它也读不到，之后 OpenCode 显示经 Claude 文件生效，再新建它自己的文件不用确认；OpenClaw 超过 bootstrapMaxChars 时阻止，列出配置的频道（不含频道里的值）与多个 agent 时只写默认 agent，提示 git，工作区文件不存在时阻止、不替它新建；有 ~/.cc-switch（目录不可读）时它写的 0 字节文件先提示与 cc-switch 停用状态一致，第一次写入要 acknowledge-cc-switch，更新 HarnessHub 自己的区块不再阻止，移除回到 0 字节；降级脚本删除指令文本、历史与台账，其他记录保留；回答里没有家目录路径与密钥",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G064-I3",
+      "task": "G064",
+      "requirements": [
+        "R27"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/instructions.test.ts",
+      "scenario": "外部改动后的状态与漂移、认领、Codex 出现 override 后的遮蔽与陈旧记录、未安装的 Harness、存储版本",
+      "expected": "未安装的 Pi 不出现；区块里被改过时显示被改动并进入漂移列表，覆盖与移除都要 overwrite，孤立设置列表为空；HarnessHub 更早写的版本被写回时如实说明；手工删掉的区块显示被移除，重新应用后回来；无法使用的标记在漂移里显示无法读取、阻止写入，可以不再跟踪；内容一致而无记录的区块可以认领且文件不变，不一致时拒绝；Codex 出现 override 后原区块显示被遮蔽，要先从原文件移除；原文件已没有区块的旧记录随新文件的写入删除；不留临时文件；读取器拒绝比它新的存储版本，降级后的 v3 数据库能重新打开并回到 v4，指令文本为空、备份数不变",
+      "status": "planned",
+      "evidence": null
+    },
+    {
       "id": "G054-CA3",
       "task": "G054",
       "requirements": [
@@ -9634,6 +9682,23 @@
       "planned_file": "tests/browser/web.browser.ts",
       "scenario": "MCP 统一清单的矩阵、写入、认领、导入与新建",
       "expected": "每个服务器按 Harness 显示已写入、一致、未写入、不可写，并标出所需变量是否已设置；写入先显示差异与将运行的程序，确认才发送且只发送这次检查；认领与导入不改文件，含明文密钥的不能导入；新建的服务器只保存变量名；Claude 里被会话冲掉的服务器在漂移列表里显示为写入丢失；无页面错误",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G054-CA7",
+      "task": "G054",
+      "requirements": [
+        "R27",
+        "R22"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "e2e",
+      "planned_file": "tests/browser/web.browser.ts",
+      "scenario": "统一指令卡片的编辑、保存与写入",
+      "expected": "每个 Harness 显示文件、状态、何时生效与写入前要确认的事；编辑后提示未保存并停用写入，保存只发送文本；写入的确认框被 cc-switch 阻止时，用户点“我知道，仍然写入”才重新检查并显示区块差异，只确认这次检查；Cursor 提供复制共享指令；无页面错误",
       "status": "planned",
       "evidence": null
     }

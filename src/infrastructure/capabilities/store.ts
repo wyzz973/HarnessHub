@@ -16,7 +16,9 @@ export interface LedgerEntry { readonly harnessId: string; readonly file: string
  */
 export interface SkillSource { readonly name: string; readonly folder: string; readonly repository: string; readonly ref: string | null; readonly path: string; readonly commit: string;
   readonly upstreamTree: string; readonly localTree: string; readonly installedAt: string; readonly updatedAt: string; readonly changeId: string }
-/** One backup: the file's bytes before a change, and the hash of the bytes that change then wrote (null until it wrote). */
+/** What a backup records as written when the change deleted the file (a file HarnessHub created and emptied again). */
+export const WRITTEN_DELETED = "deleted";
+/** One backup: the file's bytes before a change, and the hash of the bytes that change then wrote (null until it wrote; `WRITTEN_DELETED` when it deleted the file). */
 export interface StoredBackup { readonly id: string; readonly file: string; readonly createdAt: string; readonly bytes: number; readonly sha256: string; readonly changeId: string; readonly subject: string; readonly writtenSha256: string | null }
 
 function sha256(bytes: Buffer | string): string { return createHash("sha256").update(bytes).digest("hex"); }
@@ -43,7 +45,7 @@ function writePrivate(path: string, bytes: Buffer): void {
 const SCHEMA: Readonly<Record<string, readonly string[]>> = { capability_owner: ["singleton", "generation"], capability_changes: ["id", "command_id", "payload_hash", "at", "view_json"],
   capability_backups: ["id", "file", "created_at", "bytes", "sha256", "change_id", "subject", "written_sha256"], capability_ledger: ["harness_id", "file", "key", "value_hash", "previous", "change_id", "at"],
   skill_sources: ["name", "folder", "repository", "ref", "path", "commit_sha", "upstream_tree", "local_tree", "installed_at", "updated_at", "change_id"], skill_undo: ["change_id", "data_json"],
-  mcp_servers: ["name", "definition_json", "created_at", "updated_at"] };
+  mcp_servers: ["name", "definition_json", "created_at", "updated_at"], instruction_texts: ["scope", "text", "updated_at"] };
 /** Tables of another shape than this build's are refused rather than read or altered. */
 function checkSchema(db: DatabaseSync): void {
   for (const [table, columns] of Object.entries(SCHEMA)) {
@@ -54,10 +56,10 @@ function checkSchema(db: DatabaseSync): void {
 function text(value: unknown): string { if (typeof value !== "string") throw new CapabilityError("INVALID_STORAGE", "capability storage row is invalid"); return value; }
 
 /**
- * HarnessHub's own record of capability changes (ADR-045 §10): `capabilities/capabilities.sqlite` (schema v3) under the
- * data root, with the backups and skill snapshots beside it. v2 adds the skills HarnessHub installed and v3 its MCP list,
- * each rejected by the reader before; `tools/capabilities-v3-to-v2.sql` and `-v2-to-v1.sql` go back. A newer owner
- * generation fences this one off:
+ * HarnessHub's own record of capability changes (ADR-045 §10): `capabilities/capabilities.sqlite` (schema v4) under the
+ * data root, with the backups and skill snapshots beside it. v2 adds the skills HarnessHub installed, v3 its MCP list and
+ * v4 its instructions, each rejected by the reader before; `tools/capabilities-v4-to-v3.sql`, `-v3-to-v2.sql` and
+ * `-v2-to-v1.sql` go back. A newer owner generation fences this one off:
  * every write first checks the directory, marker and database are the ones opened and the generation is still ours.
  */
 export class CapabilityStore {
@@ -77,7 +79,7 @@ export class CapabilityStore {
     try {
       db.exec("PRAGMA journal_mode=DELETE;PRAGMA synchronous=FULL;PRAGMA busy_timeout=1000");
       const version = db.prepare("PRAGMA user_version").get()?.user_version;
-      if (version !== 0 && version !== 1 && version !== 2 && version !== 3) throw new CapabilityError("INVALID_STORAGE", "unknown capability storage schema");
+      if (version !== 0 && version !== 1 && version !== 2 && version !== 3 && version !== 4) throw new CapabilityError("INVALID_STORAGE", "unknown capability storage schema");
       db.exec("CREATE TABLE IF NOT EXISTS capability_owner(singleton INTEGER PRIMARY KEY CHECK(singleton=1),generation INTEGER NOT NULL) STRICT;"
         + "CREATE TABLE IF NOT EXISTS capability_changes(id TEXT PRIMARY KEY,command_id TEXT NOT NULL UNIQUE,payload_hash TEXT NOT NULL,at TEXT NOT NULL,view_json TEXT NOT NULL CHECK(json_valid(view_json))) STRICT;"
         + "CREATE TABLE IF NOT EXISTS capability_backups(id TEXT PRIMARY KEY,file TEXT NOT NULL,created_at TEXT NOT NULL,bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,change_id TEXT NOT NULL,subject TEXT NOT NULL,written_sha256 TEXT) STRICT;"
@@ -88,7 +90,9 @@ export class CapabilityStore {
         + "CREATE TABLE IF NOT EXISTS skill_undo(change_id TEXT PRIMARY KEY,data_json TEXT NOT NULL CHECK(json_valid(data_json))) STRICT;"
         // v3 (additive): HarnessHub's MCP list.
         + "CREATE TABLE IF NOT EXISTS mcp_servers(name TEXT PRIMARY KEY,definition_json TEXT NOT NULL CHECK(json_valid(definition_json)),created_at TEXT NOT NULL,updated_at TEXT NOT NULL) STRICT;"
-        + "PRAGMA user_version=3");
+        // v4 (additive): HarnessHub's instructions, the shared text (scope `shared`) and each Harness's addition (its id).
+        + "CREATE TABLE IF NOT EXISTS instruction_texts(scope TEXT PRIMARY KEY CHECK(length(scope) BETWEEN 1 AND 128),text TEXT NOT NULL CHECK(length(text)>0),updated_at TEXT NOT NULL) STRICT;"
+        + "PRAGMA user_version=4");
       checkSchema(db);
       const previous = db.prepare("SELECT generation FROM capability_owner WHERE singleton=1").get()?.generation;
       if (typeof previous === "number" && previous > generation) throw new CapabilityError("OWNERSHIP_LOST", "capability owner generation is stale");
@@ -137,6 +141,7 @@ export class CapabilityStore {
     try { unlinkSync(join(this.directory, "backups", id)); } catch { /* already gone */ }
   }
   setWritten(id: string, bytes: Buffer): void { this.check(); this.db.prepare("UPDATE capability_backups SET written_sha256=? WHERE id=?").run(sha256(bytes), id); }
+  setWrittenDeleted(id: string): void { this.check(); this.db.prepare("UPDATE capability_backups SET written_sha256=? WHERE id=?").run(WRITTEN_DELETED, id); }
   backup(id: string): StoredBackup | null {
     const row = this.db.prepare("SELECT id,file,created_at,bytes,sha256,change_id,subject,written_sha256 FROM capability_backups WHERE id=?").get(id);
     return row === undefined ? null : { id: text(row.id), file: text(row.file), createdAt: text(row.created_at), bytes: Number(row.bytes), sha256: text(row.sha256), changeId: text(row.change_id),
@@ -212,6 +217,21 @@ export class CapabilityStore {
       .run(name, JSON.stringify(definition), at, at);
   }
   dropMcpServer(name: string): void { this.check(); this.db.prepare("DELETE FROM mcp_servers WHERE name=?").run(name); }
+  /** HarnessHub's instructions: the shared text (`shared`) and each Harness's addition, by its id, with when each last changed. */
+  instructionTexts(): readonly { readonly scope: string; readonly text: string; readonly updatedAt: string }[] {
+    return this.db.prepare("SELECT scope,text,updated_at FROM instruction_texts ORDER BY scope").all().map(row => ({ scope: text(row.scope), text: text(row.text), updatedAt: text(row.updated_at) }));
+  }
+  /** Replaces the instructions at once: a scope missing from `texts` or empty there is dropped, an unchanged one keeps its time. */
+  setInstructionTexts(texts: ReadonlyMap<string, string>, at: string): void {
+    this.check();
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const row of this.db.prepare("SELECT scope FROM instruction_texts").all()) { const scope = text(row.scope); if (!texts.get(scope)) this.db.prepare("DELETE FROM instruction_texts WHERE scope=?").run(scope); }
+      for (const [scope, value] of texts) if (value) this.db.prepare("INSERT INTO instruction_texts(scope,text,updated_at) VALUES(?,?,?) ON CONFLICT(scope) DO UPDATE SET "
+        + "updated_at=CASE WHEN instruction_texts.text=excluded.text THEN instruction_texts.updated_at ELSE excluded.updated_at END,text=excluded.text").run(scope, value, at);
+      this.db.exec("COMMIT");
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+  }
   /** Keeps the undo records of these changes only. */
   pruneSkillUndo(keep: readonly string[]): void {
     this.check();

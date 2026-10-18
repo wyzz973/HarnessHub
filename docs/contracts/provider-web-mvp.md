@@ -168,5 +168,21 @@ ADR-045 第 3 步（2026-10-18，MCP 统一清单 3a）追加：
 - 写入的检查：`GET /api/v1/capabilities/mcp/sync?name=&harnessId=[&overwrite=true]`与`GET /api/v1/capabilities/mcp/remove?name=&harnessId=`，返回`kind`为`mcp-sync`或`mcp-remove`的`CapabilityChangeCheck`。确认同样用`POST /api/v1/capabilities/changes`。HarnessHub 写的条目被外部改动或移除后，要带`overwrite=true`；用户自己的同名条目不会被覆盖。
 - 漂移：`history.drift`的`kind`可以是`mcp`，重新应用即带`overwrite`的写入检查。
 - 存储：升到`capabilities.sqlite` v3，新增`mcp_servers`。降级用`tools/capabilities-v3-to-v2.sql`，会删除清单、MCP 的修改记录与台账。
-- 3c（2026-10-18）：DeepSeek Harness 也可读可写：读每个 profile 的补丁和 `~/.dsh/cordis.patch.yml` 里的 MCP 客户端行，写入全局补丁里 `id` 为 `harnesshub-mcp-<名>` 的独立 insert（`!!js` 引用），列表空了写回 `[]`。名字超过 32 个字符的服务器（它的客户端不接受）在这里显示 `unsupported` 并说明原因。
+- 3c（2026-10-18）：DeepSeek Harness 也可读可写：读每个 profile 的补丁和 `~/.dsh/cordis.patch.yml` 里的 MCP 客户端行，写入全局补丁里 `id` 为 `harnesshub-mcp-<名>` 的独立 insert（`!!js` 引用），列表空了写回 `[]`。名字超过 32 个字符的服务器（它的客户端不接受）在这里显示 `unsupported` 并说明原因。2026-10-19 起，补丁文件由 HarnessHub 新建时，移除最后一个服务器的检查说明“会删除这个文件”，应用后文件不存在；原来就有的文件回到 `[]`。
 - 3b（2026-10-18）：Claude Code 也可写。它的检查`command`是要运行的 Claude 命令（`claude mcp add-json …`，更新时为 remove 与 add-json 两条，以“；”分隔）；`rewrite`汇总这一项的前后值（打码）与 Claude 自己补的其他键；`diff`是在私有副本上预演的结果。确认后只比对这一项与检查时相同。
+
+ADR-045 第 4 步（2026-10-18，指令区块）追加：
+- `GET /api/v1/capabilities/instructions`返回`InstructionsView`：
+  - `shared`：共享指令的文本与保存时间（没保存过时为空文本和`null`）；`additions`：每个 Harness 的追加文本；`limitBytes`：每份文本的上限（16384 字节）。
+  - `targets`：每个已安装的 Harness 一项，带它读的文件`file`（以`~`书写，不写时为`null`）、状态`state`（`synced`、`outdated`、`changed`、`removed`、`absent`、`claimable`、`shadowed`、`elsewhere`、`unreadable`、`unsupported`）、原因`reason`、这个版本什么时候读到改动`effect`，以及写入前要先确认的事`cautions`。
+- `POST /api/v1/capabilities/instructions`接受`{shared, additions?}`（`additions`以 Harness 标识为键），返回新的视图，不改任何 Harness 的文件。文本超过 16 KiB、含 NUL、含 HarnessHub 的区块标记，或写出家目录的完整路径时返回 400 和原因。
+- `POST /api/v1/capabilities/instructions/claim`接受`{harnessId}`：文件里已有与现在的指令一致、但不在台账里的区块时，记为 HarnessHub 的，返回`instructions-claim`修改记录，文件不变。
+- 写入的检查：`GET /api/v1/capabilities/instructions/sync?harnessId=[&options=…]`与`GET /api/v1/capabilities/instructions/remove?harnessId=[&options=…]`，返回`kind`为`instructions-sync`或`instructions-remove`的`CapabilityChangeCheck`。
+  - `options`是逗号分隔的`acknowledge-cc-switch`、`create-own`、`overwrite`：分别表示知道 cc-switch 可能整份改写这个文件、同意新建 OpenCode 自己的文件（它的回退随之失效）、同意覆盖或移除被改过的区块。
+  - cc-switch 的确认只在第一次写入、区块被外部移除后重写、覆盖 HarnessHub 没有对应记录的完整区块时需要；更新 HarnessHub 自己的区块只在`notes`里提示。判断只看`~/.cc-switch`是否存在，不读里面的任何东西。
+  - OpenClaw：工作区的 AGENTS.md 不存在时阻止，不替它新建；写入后超过`agents.defaults.bootstrapMaxChars`（默认 20000 字符）时阻止；`notes`列出配置的频道名（不含频道里的值）。
+  - 每次检查`notes`的第一句声明只改（或只删）区块，不改任何模型、Provider 或登录配置。
+  - 只差用户表态的检查带`proceed: {option, label}`：页面以`label`为按钮，带上`option`重新检查。
+  - 确认同样用`POST /api/v1/capabilities/changes`。移除时，HarnessHub 新建、移除后为空的文件会被删除，回读要求它已不存在。
+- 漂移：`history.drift`的`kind`可以是`instructions`，重新应用即带`overwrite`的写入检查。
+- 存储：升到`capabilities.sqlite` v4，新增`instruction_texts`。降级用`tools/capabilities-v4-to-v3.sql`，会删除指令文本、指令的修改记录与台账，各 Harness 文件里的区块保留。

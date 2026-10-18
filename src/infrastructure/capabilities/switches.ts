@@ -5,12 +5,15 @@ import { appendJsonItem, appendTomlBlock, appendYamlItem, onlyChanged, parsed, r
 import type { LedgerEntry } from "./store.js";
 import { ownedOf, type McpStyle } from "./mcp-definitions.js";
 import { mcpEntry, mcpLocation } from "./mcp-edits.js";
+import { findBlock } from "./instruction-blocks.js";
 
 /** Turning one skill off or on in one Harness's own switch (ADR-045 §4). `folder` is the copy Codex switches by its path. */
 export interface SwitchRequest { readonly harnessId: string; readonly name: string; readonly enabled: boolean; readonly folder: string | null }
 export type Owner = "harnesshub" | "other" | "none";
 /** `ledger`: record the setting as HarnessHub's (`set`), or forget it because what it holds now is not HarnessHub's (`drop`). */
-interface Common { readonly file: string; readonly key: string; readonly written: unknown; readonly previous: string | null; readonly current: Owner; readonly notes: readonly string[]; readonly ledger: "set" | "drop" }
+interface Common { readonly file: string; readonly key: string; readonly written: unknown; readonly previous: string | null; readonly current: Owner; readonly notes: readonly string[]; readonly ledger: "set" | "drop";
+  /** Other ledger entries of the same Harness the change records once it is applied: a stale one it drops, or a fact about a file it sets. */
+  readonly alsoLedger?: readonly { readonly file: string; readonly key: string; readonly action: "set" | "drop" }[] }
 /**
  * What a switch needs: nothing (already so), an edit of the file whose result `check` verifies against the parse before
  * it, or the Harness's own command whose result `check` verifies. `written` is the value the setting holds afterwards
@@ -18,7 +21,8 @@ interface Common { readonly file: string; readonly key: string; readonly written
  */
 export type SwitchPlan =
   | { readonly kind: "none"; readonly file: string; readonly reason: string }
-  | (Common & { readonly kind: "edit"; readonly format: ConfigFormat; readonly after: string; readonly check: (before: unknown, after: unknown) => boolean })
+  /** `remove`: the file is deleted instead of written (`after` is then empty); only for a file HarnessHub created and nothing else is in. */
+  | (Common & { readonly kind: "edit"; readonly format: ConfigFormat; readonly after: string; readonly remove?: boolean; readonly check: (before: unknown, after: unknown) => boolean })
   | (Common & { readonly kind: "command"; readonly args: readonly string[]; readonly check: (after: unknown) => boolean; readonly comments: boolean;
     /**
      * Claude Code's own commands (`runner: "claude"`) instead of OpenClaw's: `steps` run in order (an update removes and
@@ -210,6 +214,8 @@ export function heldValue(harnessId: string, key: string, text: string, shared: 
   const slash = key.indexOf("/"), prefix = key.slice(0, slash), rest = key.slice(slash + 1);
   // An MCP server HarnessHub wrote: its owned keys, read the way its writer reads them.
   if (prefix === "mcp" && rest && isMcpStyle(harnessId)) { const style = harnessId; return ownedOf(mcpEntry(parsed(text, mcpLocation(style).format), style, rest), style); }
+  // HarnessHub's instructions block: its text; markers it cannot use make the file unreadable for it.
+  if (prefix === "instructions" && rest === "block") { const block = findBlock(text); if (block.kind === "broken") throw new UnsafeEdit(block.reason); return block.kind === "block" ? block.body : undefined; }
   const format = SWITCH_FORMATS[harnessId];
   if (slash < 1 || !rest || format === undefined) throw new UnsafeEdit("台账里有这个版本不认识的设置");
   if (prefix === "skills.config" && harnessId === "codex") {

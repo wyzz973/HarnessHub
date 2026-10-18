@@ -2311,3 +2311,68 @@ test("G054-CA6 the MCP list shows each server per Harness, imports what the Harn
   assert.deepEqual(posted[3]!.body, { name: "search", replace: false, definition: { transport: "stdio", command: "uvx", args: ["search-mcp", "--fast"], cwd: null, url: null, env: [{ key: "SEARCH_TOKEN", variable: "SEARCH_TOKEN" }], headers: [] } });
   assert.deepEqual(errors, []);
 });
+
+test("G054-CA7 the instructions are edited and saved without touching any Harness, written into a Harness only through its shown check, and a check another tool's file blocks goes on only when the user says so", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  const at = "2026-10-18T10:00:00.000Z", caution = "cc-switch 启用或切换提示词时会整份改写 ~/.gemini/GEMINI.md（区块随之消失，或被收进它的提示词），停用最后一个提示词时会清空它。";
+  let shared = { text: "", updatedAt: null as string | null }, geminiState = "absent";
+  const view = () => ({ shared, additions: [], limitBytes: 16384, targets: [
+    { harnessId: "claude", name: "Claude Code", file: "~/.claude/CLAUDE.md", state: "absent", reason: null, effect: "新开的 Claude Code 会话读到，包括 HarnessHub 里新开的会话；运行中的会话不受影响。", cautions: [] },
+    { harnessId: "gemini", name: "Gemini CLI", file: "~/.gemini/GEMINI.md", state: geminiState, reason: null, effect: "新开的 Gemini CLI 会话读到；运行中的会话可以用 /memory refresh 重新读取。", cautions: [caution] },
+    { harnessId: "cursor", name: "Cursor", file: null, state: "unsupported", reason: "Cursor 的用户规则保存在应用设置里，不在磁盘上；它只读项目根目录的 AGENTS.md 与 CLAUDE.md。", effect: null, cautions: [] },
+    { harnessId: "hermes", name: "Hermes Agent", file: null, state: "unsupported", reason: "Hermes 没有用户级指令文件；SOUL.md 是人格文件，HarnessHub 不写它。", effect: null, cautions: [] }] });
+  const checks: string[] = [], posted: { path: string; body: Record<string, unknown> }[] = [];
+  await page.route("**/api/v1/capabilities", route => route.fulfill({ json: capabilityView() }));
+  await page.route("**/api/v1/capabilities/history", route => route.fulfill({ json: { changes: [], backups: [], drift: [], ...HISTORY_EXTRA } }));
+  await page.route("**/api/v1/capabilities/instructions", route => {
+    if (route.request().method() === "GET") return route.fulfill({ json: view() });
+    const body = route.request().postDataJSON() as Record<string, unknown>; posted.push({ path: "instructions", body });
+    shared = { text: String(body.shared), updatedAt: at };
+    return route.fulfill({ json: view() });
+  });
+  await page.route(/\/api\/v1\/capabilities\/instructions\/(sync|remove)\?/u, route => {
+    const url = new URL(route.request().url()); checks.push(url.pathname.replace("/api/v1/capabilities/", "") + url.search);
+    const acknowledged = url.searchParams.get("options") === "acknowledge-cc-switch";
+    return route.fulfill({ json: { kind: "instructions-sync", harnessId: "gemini", name: "指令", enabled: true, file: "~/.gemini/GEMINI.md", command: null, rewrite: null, links: [], current: "none",
+      blocked: acknowledged ? null : caution, proceed: acknowledged ? null : { option: "acknowledge-cc-switch", label: "我知道，仍然写入" },
+      diff: acknowledged ? "--- a/~/.gemini/GEMINI.md\n+++ b/~/.gemini/GEMINI.md\n@@ -1,0 +1,3 @@\n+<!-- harnesshub:begin id=instructions sha=0123456789ab -->\n+回复使用中文。\n+<!-- harnesshub:end id=instructions -->\n" : null,
+      notes: ["新开的 Gemini CLI 会话读到；运行中的会话可以用 /memory refresh 重新读取。"], fingerprint: "6".repeat(64), expiresAt: "2026-10-18T10:15:00.000Z" } });
+  });
+  await page.route(/\/api\/v1\/capabilities\/changes$/u, route => {
+    posted.push({ path: "changes", body: route.request().postDataJSON() as Record<string, unknown> }); geminiState = "synced";
+    return route.fulfill({ json: { id: "18888888-8888-4888-8888-888888888888", kind: "instructions-sync", harnessId: "gemini", subject: "指令", file: "~/.gemini/GEMINI.md", status: "applied", diff: null, backupId: null, error: null, notes: [], at } });
+  });
+  await page.goto(fixture.gateway.url); await expect(page.getByRole("button", { name: "新对话", exact: true })).toBeVisible();
+  await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "能力", exact: true }).click();
+  await page.getByRole("tab", { name: /^指令/u }).click();
+  const panel = page.locator(".instructions-panel"), gemini = panel.locator("tbody tr[data-harness=gemini]");
+  // Each Harness's file, state and when it reads a change; what a write will ask about; why Cursor and Hermes have none.
+  await expect(gemini).toContainText("~/.gemini/GEMINI.md"); await expect(gemini).toContainText("未写入"); await expect(gemini).toContainText(caution);
+  await expect(panel.locator("tbody tr[data-harness=hermes]")).toContainText("SOUL.md 是人格文件");
+  // Editing marks the texts unsaved and holds back every write until they are saved; saving writes no Harness file.
+  await panel.getByRole("textbox", { name: "共享指令" }).fill("回复使用中文。");
+  await expect(panel).toContainText("有未保存的修改");
+  await expect(gemini.getByRole("button", { name: "写入", exact: true })).toBeDisabled();
+  await panel.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page.locator(".capability-notice")).toContainText("已保存指令");
+  await expect(panel.locator("tbody tr[data-harness=cursor]").getByRole("button", { name: "复制共享指令" })).toBeVisible();
+  // The write's check is blocked by cc-switch until the user says so; then the exact block is shown and only that check is confirmed.
+  await gemini.getByRole("button", { name: "写入", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "写入指令：Gemini CLI" });
+  await expect(dialog.locator(".switch-blocked")).toContainText("cc-switch 启用或切换提示词时会整份改写");
+  await expect(dialog.getByRole("button", { name: "写入", exact: true })).toBeDisabled();
+  await dialog.getByRole("button", { name: "我知道，仍然写入" }).click();
+  await expect(dialog.locator(".capability-diff .text-green")).toHaveText(["+<!-- harnesshub:begin id=instructions sha=0123456789ab -->", "+回复使用中文。", "+<!-- harnesshub:end id=instructions -->"]);
+  await expect(dialog).toContainText("只改 HarnessHub 的区块，区块外的内容不变");
+  await dialog.getByRole("button", { name: "写入", exact: true }).click(); await expect(dialog).toBeHidden();
+  await expect(gemini).toContainText("已写入");
+  assert.deepEqual(checks, ["instructions/sync?harnessId=gemini", "instructions/sync?harnessId=gemini&options=acknowledge-cc-switch"]);
+  assert.deepEqual(posted.map(item => item.path), ["instructions", "changes"]);
+  assert.deepEqual(posted[0]!.body, { shared: "回复使用中文。", additions: {} });
+  assert.equal(posted[1]!.body.fingerprint, "6".repeat(64));
+  assert.deepEqual(errors, []);
+});

@@ -1,6 +1,6 @@
 import { Download, Link2, Link2Off, Power, PowerOff, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { CapabilityChangeCheck, CapabilityChangeView, CapabilityRestoreCheck } from "../../../src/contracts/capabilities.js";
+import type { CapabilityChangeCheck, CapabilityChangeView, CapabilityRestoreCheck, InstructionCheckOption } from "../../../src/contracts/capabilities.js";
 import { errorMessage, requestKey, type GatewayApi } from "../api.js";
 import { Dialog } from "../ui/overlay.js";
 import { Fact, Notice, Spinner } from "../ui/primitives.js";
@@ -8,12 +8,14 @@ import { Fact, Notice, Spinner } from "../ui/primitives.js";
 /** A skill to turn off (`enabled` false) or on in one Harness; `via` is the copy Codex switches by its path. */
 export interface SwitchRequest { readonly harnessId: string; readonly harnessName: string; readonly name: string; readonly enabled: boolean; readonly via: string | null }
 /**
- * One change to confirm: its title, the word on its button, how to prepare its check, and the message once it is done.
- * `on` picks the button's icon: turning something on (true), off (false), or a change of links (null).
+ * One change to confirm: its title, the word on its button, how to prepare its check (with what the user has said to a
+ * blocked check so far), and the message once it is done. `on` picks the button's icon: turning something on (true), off
+ * (false), or a change of links (null).
  */
-export interface ChangeRequest { readonly title: string; readonly verb: string; readonly on: boolean | null; readonly done: string; readonly load: () => Promise<CapabilityChangeCheck>;
+export interface ChangeRequest { readonly title: string; readonly verb: string; readonly on: boolean | null; readonly done: string; readonly load: (options: readonly InstructionCheckOption[]) => Promise<CapabilityChangeCheck>;
   /** The button's icon for a change of skill folders. */ readonly icon?: "add" | "update" | "delete" | "undo" }
 
+const NOTHING_SAID: readonly InstructionCheckOption[] = [];
 const OWNER: Readonly<Record<CapabilityChangeCheck["current"], string>> = { harnesshub: "HarnessHub 之前写的", other: "不是 HarnessHub 写的", none: "还没有这项设置" };
 const SOURCE_OWNER: Readonly<Record<CapabilityChangeCheck["current"], string>> = { harnesshub: "HarnessHub 安装的", other: "npx skills 的 lock 里有记录", none: "没有来源记录" };
 const PLAN_ACTION: Readonly<Record<NonNullable<CapabilityChangeCheck["skills"]>[number]["action"], string>> = { add: "新增", update: "更新", delete: "删除", restore: "放回" };
@@ -54,14 +56,16 @@ function Links({ links }: { readonly links: CapabilityChangeCheck["links"] }) {
  */
 export function ChangeDialog({ api, request, onClose, onDone }: { readonly api: GatewayApi; readonly request: ChangeRequest | null; readonly onClose: () => void; readonly onDone: (view: CapabilityChangeView, title: string) => void }) {
   const [check, setCheck] = useState<CapabilityChangeCheck | null>(null), [failure, setFailure] = useState<string | null>(null), [busy, setBusy] = useState(false), [attempt, setAttempt] = useState(0);
-  const [whole, setWhole] = useState(false);
+  // What the user said to a blocked check belongs to that request; a new request starts from nothing said (one shared empty list, so it loads once).
+  const [said, setSaid] = useState<{ readonly request: ChangeRequest | null; readonly options: readonly InstructionCheckOption[] }>({ request: null, options: NOTHING_SAID });
+  const [whole, setWhole] = useState(false), options = said.request === request ? said.options : NOTHING_SAID;
   useEffect(() => {
     if (request === null) return;
     setWhole(false);
     let live = true; setCheck(null); setFailure(null);
-    request.load().then(value => { if (live) setCheck(value); }, error => { if (live) setFailure(errorMessage(error)); });
+    request.load(options).then(value => { if (live) setCheck(value); }, error => { if (live) setFailure(errorMessage(error)); });
     return () => { live = false; };
-  }, [api, request, attempt]);
+  }, [api, request, attempt, options]);
   const verb = request?.verb ?? "确认", rewrite = check?.rewrite ?? null, pkg = check !== null && check.skills !== undefined;
   // What the Harness's own command changes besides the target, said in one line.
   const extras = rewrite === null ? [] : [rewrite.added.length ? "新增 " + rewrite.added.join("、") : null, rewrite.removed.length ? "删除 " + rewrite.removed.join("、") : null,
@@ -76,7 +80,7 @@ export function ChangeDialog({ api, request, onClose, onDone }: { readonly api: 
       {failure ? <Notice tone="red" action={<button type="button" className="btn btn-sm" onClick={() => setAttempt(value => value + 1)}><RefreshCw size={13}/>重新检查</button>}>{failure}</Notice>
         : check === null ? <p className="m-0 flex items-center gap-2 text-[13px] text-fg-2"><Spinner size={14}/>正在读取配置并准备改动…</p>
         : <>
-          {check.blocked ? <Notice tone="amber" className="switch-blocked">{check.blocked}</Notice> : null}
+          {check.blocked ? <Notice tone="amber" className="switch-blocked" action={check.proceed ? <button type="button" className="btn btn-sm" onClick={() => setSaid({ request, options: [...options, check.proceed!.option] })}>{check.proceed.label}</button> : undefined}>{check.blocked}</Notice> : null}
           <dl className="m-0 grid grid-cols-[84px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-[12.5px]">
             <Fact label={pkg || check.links.length || check.kind === "skill-link" || check.kind === "link-cleanup" || check.kind === "link-undo" ? "目录" : "改动的文件"}><code className="text-[12px] break-all">{check.file}</code></Fact>
             {check.command ? <Fact label="运行命令"><code className="text-[12px] break-all">{check.command}</code></Fact> : null}
@@ -95,7 +99,8 @@ export function ChangeDialog({ api, request, onClose, onDone }: { readonly api: 
           </div>
             : check.diff ? <Diff text={check.diff}/> : check.links.length ? <Links links={check.links}/> : null}
           {check.notes.map(note => <p key={note} className="switch-note m-0 text-[12.5px] text-fg-2">{note}</p>)}
-          <p className="m-0 text-[12px] text-fg-3">{pkg ? "被替换或删除的文件夹会先存快照；改动记在“修改与备份”里，可以撤销。" : check.links.length ? "只改列出的这些链接；改动会记在“修改与备份”里，可以撤销。" : "只改这一项设置，文件的其他内容不变；写入前先备份原文件，可以在“修改与备份”里恢复。"}确认 15 分钟内有效。</p>
+          <p className="m-0 text-[12px] text-fg-3">{pkg ? "被替换或删除的文件夹会先存快照；改动记在“修改与备份”里，可以撤销。" : check.links.length ? "只改列出的这些链接；改动会记在“修改与备份”里，可以撤销。"
+            : check.kind === "instructions-sync" || check.kind === "instructions-remove" ? "只改 HarnessHub 的区块，区块外的内容不变；改动前先备份原文件，可以在“修改与备份”里恢复。" : "只改这一项设置，文件的其他内容不变；写入前先备份原文件，可以在“修改与备份”里恢复。"}确认 15 分钟内有效。</p>
         </>}
     </div>
     <div className="flex justify-end gap-2 border-t border-line px-5 py-3">

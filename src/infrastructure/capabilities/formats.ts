@@ -5,7 +5,8 @@ import JSON5 from "json5";
 
 /** A configuration file's content as parsed, or why it could not be: nothing is guessed from a file that does not parse. */
 export type Parsed = { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly reason: string };
-export type ConfigFormat = "json" | "jsonc" | "json5" | "toml" | "yaml";
+/** `markdown`: an instructions file, taken as its text (HarnessHub reads only its own block in it). */
+export type ConfigFormat = "json" | "jsonc" | "json5" | "toml" | "yaml" | "markdown";
 
 /** DeepSeek Harness writes `!!js process.env.NAME`; read it as a reference, never evaluated. */
 const jsTag: ScalarTag = { tag: "tag:yaml.org,2002:js", resolve: (text: string) => ({ jsExpression: text }) };
@@ -21,6 +22,7 @@ export function parseConfig(text: string, format: ConfigFormat): Parsed {
       case "json5": return { ok: true, value: JSON5.parse(text) as unknown };
       case "toml": return { ok: true, value: parseToml(text) as unknown };
       case "yaml": return { ok: true, value: parseYaml(text, { customTags: [jsTag], prettyErrors: false, uniqueKeys: false }) as unknown };
+      case "markdown": return { ok: true, value: text };
     }
   } catch (error) {
     return { ok: false, reason: "无法解析（" + (error instanceof Error ? error.name : "未知错误") + "）" };

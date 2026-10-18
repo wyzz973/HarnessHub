@@ -183,6 +183,7 @@ function without(value: unknown, path: KeyPath): unknown {
 export function onlyChanged(before: unknown, after: unknown, path: KeyPath): boolean { return isDeepStrictEqual(without(before ?? {}, path), without(after ?? {}, path)); }
 /** The parsed value of a text by format, or `UnsafeEdit` when it does not parse. */
 export function parsed(text: string, format: ConfigFormat): unknown {
+  if (format === "markdown") return text;
   if (text.trim() === "") return {};
   const result = parseConfig(text, format);
   if (!result.ok) throw new UnsafeEdit("文件无法解析：" + result.reason);

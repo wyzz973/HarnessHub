@@ -10,7 +10,7 @@ import { parseContentRef, type ContentRef } from "../../src/contracts/content.js
 import type { NativeUsage } from "../../src/contracts/control.js";
 import { CAPABILITY_CHANGE_KINDS, CAPABILITY_DRIFT_STATES, CAPABILITY_KINDS, CAPABILITY_MECHANISMS, CAPABILITY_OWNERS, CAPABILITY_STATUSES, CAPABILITY_WARNINGS, MAX_CAPABILITY_ENTRIES, type CapabilitiesView, type CapabilityChangeCheck, type CapabilityChangeView,
   type CapabilityEdge, type CapabilityFacts, type CapabilityHistory, type CapabilityLinkChange, type CapabilityRestoreCheck, type CapabilitySkillPlan, type McpDefinitionView, type McpInventoryView, MCP_TARGET_STATES,
-  type SkillSourceListing, type SkillUpdateView } from "../../src/contracts/capabilities.js";
+  type SkillSourceListing, type SkillUpdateView, INSTRUCTION_CHECK_OPTIONS, INSTRUCTION_TARGET_STATES, type InstructionCheckOption, type InstructionsView } from "../../src/contracts/capabilities.js";
 
 export interface ToolDetailView { readonly kind?: string; readonly name?: string; readonly input?: string; readonly output?: string; readonly diff?: string; readonly parentId?: string; readonly locations?: readonly string[]; readonly exitCode?: number; readonly truncated?: boolean }
 /** Same-origin URL of stored native content for img/download use; the page cookie authorizes it. */
@@ -227,7 +227,10 @@ export function decodeChangeCheck(value: unknown): CapabilityChangeCheck {
   const row = record(value);
   const rewrite = row.rewrite === null ? null : record(row.rewrite);
   const source = row.source === undefined || row.source === null ? row.source : record(row.source), lock = row.lock === undefined || row.lock === null ? row.lock : record(row.lock);
-  return { kind: choice(row.kind, ["skill-switch", "shared-dir", "skill-link", "link-cleanup", "link-undo", "skill-add", "skill-update", "skill-delete", "skill-undo", "mcp-sync", "mcp-remove"]), harnessId: text(row.harnessId), name: text(row.name), enabled: bool(row.enabled), file: text(row.file),
+  const proceed = row.proceed === undefined || row.proceed === null ? row.proceed : record(row.proceed);
+  return { kind: choice(row.kind, ["skill-switch", "shared-dir", "skill-link", "link-cleanup", "link-undo", "skill-add", "skill-update", "skill-delete", "skill-undo", "mcp-sync", "mcp-remove", "instructions-sync", "instructions-remove"]),
+    harnessId: text(row.harnessId), name: text(row.name), enabled: bool(row.enabled), file: text(row.file),
+    ...(proceed === undefined ? {} : { proceed: proceed === null ? null : { option: choice(proceed.option, INSTRUCTION_CHECK_OPTIONS), label: text(proceed.label) } }),
     ...(row.skills === undefined ? {} : { skills: list(row.skills, decodeSkillPlan, 64) }),
     ...(source === undefined ? {} : { source: source === null ? null : { repository: text(source.repository), ref: nullableText(source.ref), commit: text(source.commit) } }),
     ...(lock === undefined ? {} : { lock: lock === null ? null : { file: text(lock.file), diff: text(lock.diff) } }),
@@ -249,7 +252,7 @@ function decodeHistory(value: unknown): CapabilityHistory {
   const row = record(value);
   return { changes: list(row.changes, decodeChange, 64), backups: list(row.backups, item => { const backup = record(item); return { id: text(backup.id), file: text(backup.file), createdAt: text(backup.createdAt), bytes: number(backup.bytes),
     changeId: text(backup.changeId), subject: text(backup.subject) }; }, 4096),
-    drift: list(row.drift, item => { const drift = record(item); return { id: text(drift.id), kind: choice(drift.kind, ["skill-switch", "shared-dir", "skill-link", "mcp"]), harnessId: text(drift.harnessId), subject: text(drift.subject),
+    drift: list(row.drift, item => { const drift = record(item); return { id: text(drift.id), kind: choice(drift.kind, ["skill-switch", "shared-dir", "skill-link", "mcp", "instructions"]), harnessId: text(drift.harnessId), subject: text(drift.subject),
       file: text(drift.file), state: choice(drift.state, CAPABILITY_DRIFT_STATES), changeId: text(drift.changeId), at: text(drift.at) }; }, 4096),
     orphans: list(row.orphans, item => { const orphan = record(item); return { id: text(orphan.id), harnessId: text(orphan.harnessId), subject: text(orphan.subject), file: text(orphan.file) }; }, 4096),
     snapshots: (() => { const snapshots = record(row.snapshots); return { count: number(snapshots.count), bytes: number(snapshots.bytes), keep: number(snapshots.keep) }; })() };
@@ -280,6 +283,13 @@ function decodeMcpInventory(value: unknown): McpInventoryView {
       state: choice(candidate.state, ["new", "listed", "different"]) }; }, 512),
     harnesses: list(row.harnesses, item => { const harness = record(item); return { harnessId: text(harness.harnessId), name: text(harness.name), writable: bool(harness.writable), reason: nullableText(harness.reason) }; }, 32),
   };
+}
+function decodeInstructions(value: unknown): InstructionsView {
+  const row = record(value), shared = record(row.shared);
+  return { shared: { text: text(shared.text), updatedAt: nullableText(shared.updatedAt) }, limitBytes: number(row.limitBytes),
+    additions: list(row.additions, item => { const addition = record(item); return { harnessId: text(addition.harnessId), text: text(addition.text), updatedAt: text(addition.updatedAt) }; }, 32),
+    targets: list(row.targets, item => { const target = record(item); return { harnessId: text(target.harnessId), name: text(target.name), file: nullableText(target.file), state: choice(target.state, INSTRUCTION_TARGET_STATES),
+      reason: nullableText(target.reason), effect: nullableText(target.effect), cautions: list(target.cautions, text, 8) }; }, 32) };
 }
 function decodeSkillUpdates(value: unknown): SkillUpdateView {
   const row = record(value);
@@ -557,6 +567,15 @@ export class GatewayApi {
     return this.request("/capabilities/mcp/sync?" + new URLSearchParams({ name, harnessId, ...(overwrite ? { overwrite: "true" } : {}) }), "GET", undefined, decodeChangeCheck);
   }
   checkMcpRemove(name: string, harnessId: string): Promise<CapabilityChangeCheck> { return this.request("/capabilities/mcp/remove?" + new URLSearchParams({ name, harnessId }), "GET", undefined, decodeChangeCheck); }
+  /** HarnessHub's instructions and where they stand in each Harness. */
+  instructions(signal?: AbortSignal): Promise<InstructionsView> { return this.request("/capabilities/instructions", "GET", undefined, decodeInstructions, signal); }
+  /** Saves the shared text and each Harness's addition in HarnessHub; no Harness file changes. */
+  saveInstructions(shared: string, additions: Readonly<Record<string, string>>): Promise<InstructionsView> { return this.request("/capabilities/instructions", "POST", { shared, additions }, decodeInstructions); }
+  claimInstructions(harnessId: string): Promise<CapabilityChangeView> { return this.request("/capabilities/instructions/claim", "POST", { harnessId }, decodeChange); }
+  /** Checks writing (`sync`) or removing the block in one Harness, with what the user has said to a blocked check so far. */
+  checkInstructions(action: "sync" | "remove", harnessId: string, options: readonly InstructionCheckOption[]): Promise<CapabilityChangeCheck> {
+    return this.request("/capabilities/instructions/" + action + "?" + new URLSearchParams({ harnessId, ...(options.length ? { options: options.join(",") } : {}) }), "GET", undefined, decodeChangeCheck);
+  }
   /** Clearing a switch setting HarnessHub wrote for a skill its Harness no longer has, through the usual switch check. */
   checkOrphanClear(id: string): Promise<CapabilityChangeCheck> { return this.request("/capabilities/orphans/" + encodeURIComponent(id) + "/clear", "GET", undefined, decodeChangeCheck); }
   /** Native skills, MCP servers and plugins of the selected Harness in this workspace; null when its interface has no such list. */

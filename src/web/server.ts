@@ -31,7 +31,7 @@ import { nativeResume } from "../infrastructure/management/verified-versions.js"
 import { LoginShellStore, readLoginShellPath, type LoginShellDirectories } from "../infrastructure/discovery/login-shell.js";
 import { CapabilityService } from "../infrastructure/capabilities/service.js";
 import { CapabilityChanges } from "../infrastructure/capabilities/changes.js";
-import { CapabilityError, type McpDefinitionView } from "../contracts/capabilities.js";
+import { CapabilityError, INSTRUCTION_CHECK_OPTIONS, type InstructionCheckOption, type McpDefinitionView } from "../contracts/capabilities.js";
 import type { GithubFetch } from "../infrastructure/capabilities/github.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
@@ -88,6 +88,25 @@ function mcpDefinition(value: unknown): McpDefinitionView {
   return { transport, command: nullable(input.command, 4096), args, cwd: nullable(input.cwd, 4096), url: nullable(input.url, 4096),
     env: rows(input.env).map(row => typeof row.variable === "string" ? { key: short(row.key, 128), variable: short(row.variable, 128) } : { key: short(row.key, 128), value: short(row.value, 4096) }),
     headers: rows(input.headers).map(row => typeof row.variable === "string" ? { name: short(row.name, 128), variable: short(row.variable, 128), prefix: typeof row.prefix === "string" ? short(row.prefix, 32) : "" } : { name: short(row.name, 128), value: short(row.value, 4096) }) };
+}
+/** An instructions text in a request body: a string within the body's bounds; what it may hold is checked by the instructions (ADR-045 §6). */
+function instructionText(value: unknown): string {
+  if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > 64 * 1024) throw new HttpError(400, "INVALID_INPUT", "Expected an instructions text");
+  return value;
+}
+/** Each Harness's addition to the instructions, by its identity: at most 16. */
+function instructionAdditions(value: unknown): Readonly<Record<string, string>> {
+  if (value === undefined) return {};
+  if (value === null || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length > 16 || Object.keys(value).some(key => !/^[a-z][a-z0-9-]{0,95}$/u.test(key)))
+    throw new HttpError(400, "INVALID_INPUT", "Expected the additions by Harness identity");
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, instructionText(item)]));
+}
+/** What the user said to a blocked instructions check, as `options=a,b`: known options, each once. */
+function instructionOptions(value: string | null): ReadonlySet<InstructionCheckOption> {
+  if (value === null || value === "") return new Set();
+  const items = value.split(",");
+  if (items.some(item => !(INSTRUCTION_CHECK_OPTIONS as readonly string[]).includes(item)) || new Set(items).size !== items.length) throw new HttpError(400, "INVALID_INPUT", "Unknown instructions check option");
+  return new Set(items as InstructionCheckOption[]);
 }
 function record(value: unknown, allowed: readonly string[], required: readonly string[] = []): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new HttpError(400, "INVALID_INPUT", "Expected a JSON object");
@@ -531,6 +550,22 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       const name = text(url.searchParams.get("name"), "server name", 64), harnessId = text(url.searchParams.get("harnessId"), "Harness", 128);
       privateJson(response, path.endsWith("/sync") ? await capabilityChanges.checkMcpSync(name, harnessId, overwrite === "true", await installedHarnesses())
         : await capabilityChanges.checkMcpRemove(name, harnessId, await installedHarnesses())); return;
+    }
+    // HarnessHub's instructions (ADR-045 §6, step 4): saving the texts changes no Harness file; writing them into a Harness
+    // goes through a check shown first and /changes.
+    if (path === "/api/v1/capabilities/instructions" && method === "GET") { queries(url, []); privateJson(response, await capabilityChanges.instructionsView(await installedHarnesses())); return; }
+    if (path === "/api/v1/capabilities/instructions" && method === "POST") {
+      queries(url, []); const input = record(await body(request), ["shared", "additions"], ["shared"]);
+      privateJson(response, await capabilityChanges.saveInstructions(instructionText(input.shared), instructionAdditions(input.additions), await installedHarnesses())); return;
+    }
+    if (path === "/api/v1/capabilities/instructions/claim" && method === "POST") {
+      queries(url, []); const input = record(await body(request), ["harnessId"], ["harnessId"]);
+      privateJson(response, await capabilityChanges.claimInstructions(text(input.harnessId, "Harness", 128), await installedHarnesses())); return;
+    }
+    if ((path === "/api/v1/capabilities/instructions/sync" || path === "/api/v1/capabilities/instructions/remove") && method === "GET") {
+      queries(url, ["harnessId", "options"]); const harnessId = text(url.searchParams.get("harnessId"), "Harness", 128), options = instructionOptions(url.searchParams.get("options"));
+      privateJson(response, path.endsWith("/sync") ? await capabilityChanges.checkInstructionsSync(harnessId, options, await installedHarnesses())
+        : await capabilityChanges.checkInstructionsRemove(harnessId, options, await installedHarnesses())); return;
     }
     // A switch setting HarnessHub wrote for a skill its Harness no longer has: cleared through the usual switch check.
     if (path.startsWith("/api/v1/capabilities/orphans/") && path.endsWith("/clear") && method === "GET") {
