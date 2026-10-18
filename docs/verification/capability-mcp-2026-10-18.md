@@ -60,6 +60,32 @@
 - **Cursor 的远程条目**：本机 Cursor 的远程条目只写 `url`，不带 `type`（只看了键名）。原来写入 Cursor 时会加上 `type: "http"`，改为与 Cursor 自己的写法一致；Claude 仍写 `type`。
 - **名字不合规的服务器**：Cursor 里有一个名字带 `@` 和 `/` 的服务器，原来被静默跳过。现在列出来并说明原因（Codex 等不接受这类名字，请在原处改名后再导入）。G064-M2 加了这种情况的断言。
 
+## 4317 部署与真实环境的只读核对
+
+- **部署**：提交 `0fdd5c4`，修正 `596de9c`、`5dd63d4`，每次都按惯例进行：先确认空闲，克隆数据，在登录 shell 环境里构建、启动，核对后删除克隆。能力库由 v2 升到 v3。部署前后：会话 5、事件 1493、管理任务 15、能力修改 8、备份 8、台账 1。
+- **可写**：Codex、Cursor、Gemini、OpenCode、Hermes。不可写的各附原因：Claude（下一步）、OpenClaw（等升级）、DeepSeek Harness（3c）。
+- **9 个服务器**（Codex 5、Cursor 4），只打印了名字、传输方式和计数：
+  - 可以收进清单：Codex 的 figma、langchain-docs、openaiDeveloperDocs（HTTP）和 node_repl（stdio，15 个普通字面值）；Cursor 的 Context7（HTTP）和 BroswerTools（stdio）。
+  - 不能收进清单：postman（`POSTMAN_API_KEY` 是明文密钥，页面只出现键名）、computer-use（工作目录不是绝对路径）、@21st-dev/magic（名字不合规）。
+
+## 第一次真实写入（审批同意，由我代为执行）
+
+对象：Codex 的 openaiDeveloperDocs（HTTP，无请求头、无变量、无密钥）。经 4317 的接口执行：
+
+| 步骤 | 核对 | 结果 |
+|---|---|---|
+| 写前 | `ps` 检测运行中的 Cursor：编辑器 0 个，cursor-agent 0 个；没有运行 `cursor-agent mcp list` | — |
+| 导入并认领 Codex 的这一项 | 修改记录为 `mcp-claim`；`~/.codex/config.toml` 的 sha256 前后相同；清单里 Codex 显示“已写入” | 通过 |
+| 写入 Cursor | 检查显示 3 行新增；实际改动与检查相同；只多了只含 `url` 的这一项 | 通过 |
+| | 其他 4 个服务器（含 postman）与文件其余部分不变；缩进（2 个空格）、键序、末尾无换行、LF 都不变；权限 0644 与所有者不变；硬链接数 1；备份 0600 | 通过 |
+| | Cursor 与 Codex 都显示“已写入”；漂移 0 | 通过 |
+| 往返：从备份恢复 | 恢复后逐字节回到写入前；Cursor 显示“未写入”（恢复是 HarnessHub 自己的动作，台账一并撤回），不是“被外部移除” | 通过 |
+| 再写回 | 与第一次写入的字节完全相同；两处都显示“已写入”；漂移 0 | 通过 |
+
+- 修改记录依次是 `mcp-claim`、`mcp-sync`、`restore`、`mcp-sync`。
+- Cursor 里可能要批准一次这个新服务器。postman 在 Cursor 配置里是明文密钥，建议用户自己改成环境变量引用，HarnessHub 不替他搬值。
+- **待改进**：写入远程服务器时，检查的说明里写的是 Harness 的标识而不是名称（“cursor 会连接它”）；检测运行中的 Cursor 还没有做进产品，这次是脚本里做的。两处在 3b 一并修改。
+
 ## 3b 的前置核实：Claude 的官方命令（真实程序，私有目录）
 
 按审批第 5 条，先用真实程序确认 `CLAUDE_CONFIG_DIR` 下 `.claude.json` 的位置。
@@ -75,5 +101,4 @@
 
 ## 未验证与后续
 
-- 4317 部署与真实环境的只读核对、第一次真实写入（按裁决：把 Codex 现有的一个无密钥服务器导入、认领，再经确认同步到 Cursor），见部署后补充。
 - 3b：Claude（官方命令与预演）。3c：DeepSeek Harness。OpenClaw 等升级后再接入。
