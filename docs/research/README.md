@@ -9,6 +9,8 @@
 - [第一链路调研：Multica、多 Harness 统一界面产品与 Hermes / dsh 的 ACP 接入](first-chain-products-2026-10-11.md)（2026-10-11）：Multica 的发现、启动、恢复、审批、事件与错误分类；Zed、JetBrains、Toad、AionUi、Vibe Kanban、Happy 的第一链路做法；Hermes 与 dsh 的官方 ACP 面；按影响排序的 10 条差距。源码链接固定到 commit。
 - [检测与适配配方](harness-discovery.md)：Magpie、sandbox-agent、acpx、OpenHands 的安装线索、可执行解析、适配器与后端职责。
 - [发现与适配扩展提案](../proposals/harness-discovery-adaptation.md)：本轮核对 CC Switch v4.0.5、Magpie 最新主分支和 42 条 ACP 候选目录；追加固定 82 份材料及选读范围见[本轮来源清单](harness-expansion-sources-2026-10-09.json)，与上面的基线来源锁分别保存。
+- [九个 Harness 的扩展能力配置](native-extension-configs-2026-10-18.md)（2026-10-18）：技能、MCP、指令文件、插件、子 Agent、自定义命令与 Hooks 在本机版本中的用户级位置、格式、官方命令、密钥写法与写入风险，以及与旧版 Library 假设的冲突。
+- [跨 Agent 统一管理能力的开源做法](capability-managers-2026-10-18.md)（2026-10-18）：技能、MCP、指令、子 Agent、命令、Hooks 与插件的管理器（vercel-labs/skills、cc-switch、magpie、rulesync、skillshare 等）的数据模型、写入与归属、更新检测、密钥处理与事故，以及对 HarnessHub 的启发。
 - 公开文档定位、DDD 原则、存储、进程监督、AI 协作与测试实践。
 
 来源锁表示抓取快照与选读范围，不表示全部源码审计。完整外部内容仅在被忽略的 .research-cache 中用于研究，不作为项目代码或依赖发布。曾抓取的 Codex v2.rs 路径已经拆分，404 记录保留并指向实际的 v2/mod.rs、thread.rs、turn.rs，不假称旧路径仍存在。
