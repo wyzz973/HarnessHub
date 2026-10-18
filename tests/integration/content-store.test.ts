@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { realpathSync } from "node:fs";
 import { join } from "node:path";
@@ -34,7 +34,8 @@ test("collection keeps referenced and recent content and removes only unreferenc
   const kept = await store.storeOutput({ workspace: "/w", name: "kept.txt", mediaType: "text/plain", data: Buffer.from("kept") });
   const orphan = await store.storeOutput({ workspace: "/w", name: "orphan.txt", mediaType: "text/plain", data: Buffer.from("orphan") });
   // An interrupted write leaves a partial file; it is collected only after its own age passes the partial window.
-  await writeFile(join(data, "content", "partial", "stale"), "x", { mode: 0o600 });
+  // Its age is measured on this test's clock, not the computer's: once the real date passed the fixed one, a fresh mtime never aged.
+  await writeFile(join(data, "content", "partial", "stale"), "x", { mode: 0o600 }); await utimes(join(data, "content", "partial", "stale"), new Date(now), new Date(now));
   now += CONTENT_RETENTION_MS + 1;
   const later = new LocalContentStore(data, () => {}, () => now);
   const recent = await later.storeOutput({ workspace: "/w", name: "recent.txt", mediaType: "text/plain", data: Buffer.from("recent") });
