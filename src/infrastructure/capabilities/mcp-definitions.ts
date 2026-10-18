@@ -179,6 +179,10 @@ export function ownedOf(raw: unknown, style: McpStyle): unknown {
 
 /** What a definition is written as in one Harness's file (its owned keys), or why that Harness cannot express it. */
 export type McpRender = { readonly ok: true; readonly value: Readonly<Record<string, unknown>> } | { readonly ok: false; readonly reason: string };
+/** Why a Harness cannot take a server of this name, or null: DeepSeek Harness's client accepts names of 32 characters at most. */
+export function mcpNameProblem(name: string, style: McpStyle): string | null {
+  return style === "dsh" && name.length > 32 ? "DeepSeek Harness 的服务器名最多 32 个字符" : null;
+}
 /**
  * A definition as one Harness writes it: its own variable reference syntax and transport names. What a Harness cannot
  * express (SSE, a renamed variable, a header prefix) is refused with the reason, never written another way.

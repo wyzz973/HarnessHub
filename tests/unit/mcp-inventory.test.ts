@@ -4,7 +4,7 @@ import { parse as parseToml } from "smol-toml";
 import { parse as parseYaml } from "yaml";
 import { UnsafeEdit } from "../../src/infrastructure/capabilities/edits.js";
 import { editMcp, mcpEntry } from "../../src/infrastructure/capabilities/mcp-edits.js";
-import { commandLine, definitionProblem, mcpVariables, ownedOf, readMcp, renderMcp, sameMcp, type McpDefinition } from "../../src/infrastructure/capabilities/mcp-definitions.js";
+import { commandLine, definitionProblem, mcpNameProblem, mcpVariables, ownedOf, readMcp, renderMcp, sameMcp, type McpDefinition } from "../../src/infrastructure/capabilities/mcp-definitions.js";
 
 const DOCS: McpDefinition = { transport: "stdio", command: "npx", args: ["-y", "@acme/docs-mcp"], cwd: null, url: null,
   env: [{ key: "DOCS_TOKEN", variable: "DOCS_TOKEN" }, { key: "LOG_LEVEL", value: "info" }], headers: [] };
@@ -192,6 +192,9 @@ test("G064-M6 DeepSeek Harness's MCP rows read and write with !!js references, a
   assert.deepEqual(renderMcp(DOCS, "dsh"), { ok: true, value: { args: ["-y", "@acme/docs-mcp"], command: "npx", env: { DOCS_TOKEN: { jsExpression: "process.env.DOCS_TOKEN" }, LOG_LEVEL: "info" }, transport: "stdio" } });
   assert.deepEqual(renderMcp(REMOTE, "dsh"), { ok: true, value: { headers: { Authorization: { jsExpression: "'Bearer ' + process.env.EXAMPLE_TOKEN" } }, transport: "streamable-http", url: "https://mcp.example.com/v1" } });
   assert.match((renderMcp({ ...REMOTE, transport: "sse" }, "dsh") as { reason: string }).reason, /SSE/u);
+  // Its client takes names of 32 characters at most; the list allows 64, which other Harnesses take.
+  assert.deepEqual([mcpNameProblem("a".repeat(32), "dsh"), mcpNameProblem("a".repeat(64), "codex")], [null, null]);
+  assert.match(mcpNameProblem("a".repeat(33), "dsh") ?? "", /最多 32 个字符/u);
   assert.match(readMcp({ serverName: "x", transport: "stdio", command: "npx", env: { A: { jsExpression: "require('fs')" } } }, "dsh").problem ?? "", /读不了的表达式/u, "an expression HarnessHub cannot read refuses the row");
   // Added to an empty list, the patch is a block list; a second goes after it; each reads back as the same server.
   const docs = (renderMcp(DOCS, "dsh") as { value: Record<string, unknown> }).value, remote = (renderMcp(REMOTE, "dsh") as { value: Record<string, unknown> }).value;

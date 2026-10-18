@@ -5,7 +5,7 @@ import type { HarnessReadTable, ReadEnvironment } from "../../adapters/capabilit
 import { CapabilityError, type CapabilityChangeCheck, type CapabilityChangeView, type McpCandidateView, type McpDefinitionView, type McpInventoryView, type McpServerView, type McpTargetView } from "../../contracts/capabilities.js";
 import { parsed, UnsafeEdit } from "./edits.js";
 import { readTarget, type TargetRead } from "./files.js";
-import { canonical, commandLine, definitionProblem, MCP_NAME, mcpVariables, ownedOf, readMcp, renderMcp, sameMcp, type McpDefinition, type McpStyle } from "./mcp-definitions.js";
+import { canonical, commandLine, definitionProblem, MCP_NAME, mcpNameProblem, mcpVariables, ownedOf, readMcp, renderMcp, sameMcp, type McpDefinition, type McpRender, type McpStyle } from "./mcp-definitions.js";
 import { dshRows, editMcp, mcpEntry, mcpGuard, mcpLocation } from "./mcp-edits.js";
 import type { InstalledHarness } from "./scan.js";
 import type { CapabilityStore } from "./store.js";
@@ -40,6 +40,11 @@ const AFTER: Readonly<Record<string, string>> = {
 };
 function hash(value: unknown): string { return createHash("sha256").update(JSON.stringify(value ?? null)).digest("hex"); }
 function isStyle(harnessId: string): harnessId is McpStyle { return ["claude", "codex", "cursor", "opencode", "gemini", "hermes", "dsh"].includes(harnessId); }
+/** A listed server as one Harness would hold it, its name included in what that Harness must accept. */
+function rendering(name: string, definition: McpDefinition, style: McpStyle): McpRender {
+  const problem = mcpNameProblem(name, style);
+  return problem === null ? renderMcp(definition, style) : { ok: false, reason: problem };
+}
 
 /**
  * HarnessHub's MCP list (ADR-045 §5, approval of step 3): servers kept without any value that looks like a credential,
@@ -88,7 +93,7 @@ export class McpInventory {
   /** Where one listed server stands in one Harness: the list, HarnessHub's ledger and the file compared. */
   private target(name: string, definition: McpDefinition, harnessId: string, located: { readonly file: string; readonly style: McpStyle } | { readonly reason: string }): McpTargetView {
     if ("reason" in located) return { harnessId, state: "unsupported", reason: located.reason, file: null };
-    const rendered = renderMcp(definition, located.style), shown = this.host.shown(located.file);
+    const rendered = rendering(name, definition, located.style), shown = this.host.shown(located.file);
     if (!rendered.ok) return { harnessId, state: "unsupported", reason: rendered.reason, file: shown };
     const file = this.entries(located.file, located.style);
     if (file === null) return { harnessId, state: "unsupported", reason: "配置文件无法读取或解析", file: shown };
@@ -215,7 +220,7 @@ export class McpInventory {
    */
   async checkSync(name: string, harnessId: string, overwrite: boolean, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> {
     const { item, located, read, value } = await this.prepare(name, harnessId, installed);
-    const state = this.target(name, item.definition, harnessId, located), rendered = renderMcp(item.definition, located.style);
+    const state = this.target(name, item.definition, harnessId, located), rendered = rendering(name, item.definition, located.style);
     const command = commandLine(item.definition), variables = mcpVariables(item.definition), values = this.host.environment.values, harnessName = installed.find(harness => harness.harnessId === harnessId)?.name ?? harnessId;
     const notes = [command === null ? "服务器在 " + item.definition.url + "，" + harnessName + " 会连接它。" : "目标 Harness 会以你的身份运行这个程序：" + this.shownText(command),
       ...(variables.length ? ["需要的环境变量：" + variables.map(variable => variable + (typeof values[variable] === "string" && values[variable] !== "" ? "（已设置）" : "（HarnessHub 的环境里未设置）")).join("、") + "。值不写进配置文件。"] : []),

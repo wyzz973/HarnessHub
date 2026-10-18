@@ -197,6 +197,13 @@ test("G064-M3 an entry someone else changed is left alone until the user writes 
   assert.equal((await save({ transport: "stdio", command: "npx", args: ["renamed"], env: [{ key: "TOKEN", variable: "MY_TOKEN" }] })).status, 200);
   assert.match((await f.sync("bad", "codex")).value.blocked ?? "", /同名的环境变量/u);
   assert.equal((await f.call("/capabilities/mcp/servers/delete", { name: "bad" })).status, 200);
+  // A name the list allows but DeepSeek Harness's client does not (more than 32 characters): refused there only.
+  const long = "docs-" + "x".repeat(30);
+  assert.equal((await f.call("/capabilities/mcp/servers", { name: long, definition: { transport: "http", url: "https://mcp.example.com/" } })).status, 200);
+  view = await f.inventory();
+  assert.deepEqual([state(view, long, "dsh"), state(view, long, "codex")], ["unsupported", "absent"]);
+  assert.match((await f.sync(long, "dsh")).value.blocked ?? "", /最多 32 个字符/u);
+  assert.equal((await f.call("/capabilities/mcp/servers/delete", { name: long })).status, 200);
   // The documented downgrade to v2: the list, the MCP history and the MCP ledger entries go; every other record stays.
   const copy = join(f.root, "downgrade.sqlite");
   await writeFile(copy, await readFile(join(f.root, "data", "capabilities", "capabilities.sqlite")));

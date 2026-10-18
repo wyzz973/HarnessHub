@@ -168,5 +168,5 @@ ADR-045 第 3 步（2026-10-18，MCP 统一清单 3a）追加：
 - 写入的检查：`GET /api/v1/capabilities/mcp/sync?name=&harnessId=[&overwrite=true]`与`GET /api/v1/capabilities/mcp/remove?name=&harnessId=`，返回`kind`为`mcp-sync`或`mcp-remove`的`CapabilityChangeCheck`。确认同样用`POST /api/v1/capabilities/changes`。HarnessHub 写的条目被外部改动或移除后，要带`overwrite=true`；用户自己的同名条目不会被覆盖。
 - 漂移：`history.drift`的`kind`可以是`mcp`，重新应用即带`overwrite`的写入检查。
 - 存储：升到`capabilities.sqlite` v3，新增`mcp_servers`。降级用`tools/capabilities-v3-to-v2.sql`，会删除清单、MCP 的修改记录与台账。
-- 3c（2026-10-18）：DeepSeek Harness 也可读可写：读每个 profile 的补丁和 `~/.dsh/cordis.patch.yml` 里的 MCP 客户端行，写入全局补丁里 `id` 为 `harnesshub-mcp-<名>` 的独立 insert（`!!js` 引用），列表空了写回 `[]`。
+- 3c（2026-10-18）：DeepSeek Harness 也可读可写：读每个 profile 的补丁和 `~/.dsh/cordis.patch.yml` 里的 MCP 客户端行，写入全局补丁里 `id` 为 `harnesshub-mcp-<名>` 的独立 insert（`!!js` 引用），列表空了写回 `[]`。名字超过 32 个字符的服务器（它的客户端不接受）在这里显示 `unsupported` 并说明原因。
 - 3b（2026-10-18）：Claude Code 也可写。它的检查`command`是要运行的 Claude 命令（`claude mcp add-json …`，更新时为 remove 与 add-json 两条，以“；”分隔）；`rewrite`汇总这一项的前后值（打码）与 Claude 自己补的其他键；`diff`是在私有副本上预演的结果。确认后只比对这一项与检查时相同。

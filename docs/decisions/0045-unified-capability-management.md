@@ -444,11 +444,15 @@
   - 补丁文件只要存在，就必须是顶层 YAML 数组；否则启动失败（`loadOptionalPatches` → `parsePatchList`）。
   - MCP 服务器是一条 `insert`，`name: '@deepseek-ai/dsh-mcp-client'`，`config` 里有 `serverName`、`transport`（`stdio` 或 `streamable-http`）、`command/args/env/cwd` 或 `url/headers`。
   - 它的 stdio 桥会去掉名字像凭据的环境变量。
+  - 客户端的 `serverName` 必须匹配 `^[A-Za-z0-9_-]{1,32}$`。连不上的服务器不会让启动失败（`failOnStartupError` 默认 false），只记警告并按策略重连。
 - **已实现**：
   - **读取**：视图与清单读出每个 profile 的补丁和全局补丁里的 MCP 客户端行。`!!js process.env.X` 算作变量引用，`!!js process.cwd()` 等同于不写工作目录；读不了的表达式不能导入，并说明原因。
   - **写入**：写到全局补丁 `~/.dsh/cordis.patch.yml`（每个 profile 都会读，包括 HarnessHub 用的 acp）。每个服务器是一条独立的 `insert`，`id` 为 `harnesshub-mcp-<名>`。
     - 变量都显式写在 `env` 里，写成带引号的 `!!js "process.env.NAME"`；带前缀的请求头写成 `!!js "'Bearer ' + process.env.NAME"`，前缀只允许字母、数字、空格和 `_ : -`。
     - 不支持 SSE。
+    - 服务器名最多 32 个字符：清单允许 64 个，超过 32 个的在 DeepSeek Harness 标为不支持并说明原因，不写入。
     - 按整行增删这一条；列表空了就写回 `[]`，原来没有的文件新建为列表、移除后也留下 `[]`，绝不留空文件。
     - 用户自己的同名服务器（`id` 不同）不覆盖。
-- **验收**：G064-M6（单元），G064-M2 增加的流程（集成）。真实环境的写入另行报审批；写入后用 HarnessHub 的目录探测（`dsh --profile acp` 初始化）确认它能带着这份补丁正常启动。
+- **验收**：G064-M6（单元），G064-M2 增加的流程与 G064-M3 的名字长度（集成）。真实环境的写入另行报审批。写入后的验证不用模型目录读取，因为它会新建一个原生会话。改为两步：
+  1. `dsh --profile acp --dump-config`：dsh 按自己的补丁算法合成各层，不启动，不求值 `!!js`。
+  2. 只发 ACP `initialize` 启动一次 acp，不新建会话，确认 dsh 能带着这份补丁启动、没有停用或未激活的条目。

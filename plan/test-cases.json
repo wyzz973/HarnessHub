@@ -9516,8 +9516,8 @@
       ],
       "layer": "integration",
       "planned_file": "tests/integration/mcp-inventory.test.ts",
-      "scenario": "被外部改动的条目、同名的用户条目、表达不了的传输与非法定义，以及存储从 v3 降到 v2",
-      "expected": "用户自己的同名条目即使带 overwrite 也不覆盖；HarnessHub 写的条目被手改后显示被外部改动并进入漂移列表（不算孤立的停用设置），不带 overwrite 时阻止，经重新应用写回；SSE 服务器对 Codex、Hermes 显示不支持并拒绝写入；明文密钥、非本机 HTTP、shell 字符、参数中间的 ~/ 被拒绝，变量改名的服务器对 Codex 阻止；降级脚本删除清单、MCP 的修改记录与台账，保留备份与其他记录",
+      "scenario": "被外部改动的条目、同名的用户条目、表达不了的传输、名字与非法定义，以及存储从 v3 降到 v2",
+      "expected": "用户自己的同名条目即使带 overwrite 也不覆盖；HarnessHub 写的条目被手改后显示被外部改动并进入漂移列表（不算孤立的停用设置），不带 overwrite 时阻止，经重新应用写回；SSE 服务器对 Codex、Hermes 显示不支持并拒绝写入；名字超过 32 个字符的服务器对 DeepSeek Harness 显示不支持并拒绝写入，对其他 Harness 不受影响；明文密钥、非本机 HTTP、shell 字符、参数中间的 ~/ 被拒绝，变量改名的服务器对 Codex 阻止；降级脚本删除清单、MCP 的修改记录与台账，保留备份与其他记录",
       "status": "planned",
       "evidence": null
     },
