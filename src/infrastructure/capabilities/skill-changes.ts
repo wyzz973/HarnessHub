@@ -8,7 +8,7 @@ import { CAPABILITY_CHECK_MS, CapabilityError, SKILL_SNAPSHOT_CHANGES, type Capa
   type SkillSourceListing, type SkillUpdateView } from "../../contracts/capabilities.js";
 import { unifiedDiff } from "../control/unified-diff.js";
 import { readTarget, replaceTarget } from "./files.js";
-import { downloadRepository, listArchive, parseGithubSource, repositoryTree, sourceUrl, type GithubFetch, type GithubSource } from "./github.js";
+import { downloadRepository, listArchive, parseGithubSource, repositoryTree, settledCommit, sourceUrl, type GithubFetch, type GithubSource } from "./github.js";
 import type { InstalledHarness } from "./scan.js";
 import { editLock, findSkills, linksInto, lockSkills, readLockEntries, SkillSnapshots, skillFolderName, stagingFolder, writeSkill, type FoundSkill, type LockEntry } from "./skill-packages.js";
 import { folderTree, npxExcludedPath, remoteFolderTree, treeId, type RemoteTreeEntry, type TreeItem } from "./skill-tree.js";
@@ -148,7 +148,8 @@ export class SkillChanges {
    * in conflict with another folder of the same name, or refused with the reason. Nothing is written.
    */
   async listSource(input: string): Promise<SkillSourceListing> {
-    const source = parseGithubSource(input), { commit, archive } = await downloadRepository(source, this.host.github), skills = findSkills(await listArchive(archive), source.path);
+    const source = parseGithubSource(input), download = await downloadRepository(source, this.host.github), archive = download.archive, listed = await listArchive(archive);
+    const commit = settledCommit(download.commit, listed.commit), skills = findSkills(listed, source.path);
     const shared = this.shared(), tracked = (await this.tracked()).list, now = this.host.now().getTime();
     for (const [key, listing] of this.listings) if (listing.expires < now) this.listings.delete(key);
     while (this.listings.size >= MAX_LISTINGS) this.listings.delete(this.listings.keys().next().value!);
@@ -255,7 +256,8 @@ export class SkillChanges {
     const recorded = await repositoryTree(item, item.recorded, this.host.github).then(old => remoteItems(old.entries, ""), () => null);
     const overwritten = recorded === null ? null : fileChanges(recorded, local.items).length;
     const modified = item.manager === "harnesshub" ? local.id !== item.source!.localTree : recorded === null ? null : treeId(recorded) !== local.id;
-    const { commit, archive } = await downloadRepository({ owner: item.owner, repo: item.repo, ref: item.ref, path: null }, this.host.github), listing = await listArchive(archive);
+    const download = await downloadRepository({ owner: item.owner, repo: item.repo, ref: item.ref, path: null }, this.host.github), archive = download.archive, listing = await listArchive(archive);
+    const commit = settledCommit(download.commit, listing.commit);
     const skill = findSkills(listing, item.path).find(found => found.folder === item.path);
     let blocked: string | null = null;
     if (skill === undefined) blocked = "下载的版本里没有这个技能（仓库在两次读取之间变了），请重新检查。";

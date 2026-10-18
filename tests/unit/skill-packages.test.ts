@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { gzipSync } from "node:zlib";
-import { c as createTar, Header } from "tar";
+import { c as createTar, Header, Pax } from "tar";
 import { CapabilityError } from "../../src/contracts/capabilities.js";
-import { listArchive, parseGithubSource } from "../../src/infrastructure/capabilities/github.js";
+import { listArchive, parseGithubSource, settledCommit } from "../../src/infrastructure/capabilities/github.js";
 import { editLock, findSkills, linksInto, lockSkills, SkillSnapshots, skillFolderName, writeSkill } from "../../src/infrastructure/capabilities/skill-packages.js";
 import { blobId, folderTree, npxExcluded, npxExcludedPath, remoteFolderTree, treeId } from "../../src/infrastructure/capabilities/skill-tree.js";
 import type { HarnessReadTable } from "../../src/adapters/capability-reads.js";
@@ -153,4 +153,15 @@ test("G064-W8 the links into a skill folder are found in the Harnesses' own skil
   assert.deepEqual(found.map(link => [link.path.slice(root.length), link.target.replace(root, "")]),
     [["/claude-skills/alpha", "../shared/alpha"], ["/claude-skills/into-file", "/shared/alpha/SKILL.md"], ["/hermes-skills/category/alpha", "/shared/alpha"]]);
   assert.equal((await readFile(join(shared, "alpha", "SKILL.md"), "utf8")).length > 0, true);
+});
+
+test("G064-W8 a version's commit comes from GitHub's redirect or the archive's own record, and the two must agree", async () => {
+  const sha = "f".repeat(40), entries = [new Pax({ comment: sha } as ConstructorParameters<typeof Pax>[0], true).encode()];
+  const header = Buffer.alloc(512); new Header({ path: "repo-x/", type: "Directory", size: 0, mode: 0o755, mtime: new Date(0) }).encode(header);
+  const archive = gzipSync(Buffer.concat([...entries, header, Buffer.alloc(1024)]));
+  assert.equal((await listArchive(archive)).commit, sha, "GitHub's global header records the commit as its comment");
+  assert.equal((await listArchive(rawTar([{ path: "r/", type: "Directory" }]))).commit, null);
+  assert.deepEqual([settledCommit(sha, null), settledCommit(null, sha), settledCommit(sha, sha)], [sha, sha, sha]);
+  assert.throws(() => settledCommit(sha, "e".repeat(40)), (error: unknown) => error instanceof CapabilityError && error.code === "CAPABILITY_TARGET_REFUSED", "the two disagree");
+  assert.throws(() => settledCommit(null, null), (error: unknown) => error instanceof CapabilityError && error.code === "CAPABILITY_COMMAND_FAILED", "neither is known");
 });

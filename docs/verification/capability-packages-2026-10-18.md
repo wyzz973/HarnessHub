@@ -36,7 +36,7 @@
 | 检查 | 命令 | 结果 |
 |---|---|---|
 | 类型检查与构建 | `pnpm build`、`pnpm web:build` | 通过 |
-| 单元 | `node --test dist/tests/unit/*.test.js` | 181 通过，0 失败 |
+| 单元 | `node --test dist/tests/unit/*.test.js` | 182 通过，0 失败（含后补的提交号核对） |
 | 集成 | `node --test dist/tests/integration/*.test.js` | 398 通过，0 失败 |
 | 浏览器 | `node --test dist/tests/browser/web.browser.js` | 39 通过，0 失败 |
 | 设计检查 | `python3 tools/check_design.py` | 通过；新增场景 G064-W8～W11、G054-CA5 |

@@ -100,20 +100,22 @@ async function body(response: Response, maximum: number, what: string): Promise<
 }
 
 /**
- * The commit a branch, tag or commit names now, read from where GitHub's archive link redirects (no rate-limited call),
- * and that commit's archive, at most 64 MB.
+ * A repository version's archive, at most 64 MB, and the commit it is: read from where GitHub's archive link redirects
+ * (no rate-limited call), or null when the redirect does not name one; the archive's own record (`listArchive`'s
+ * `commit`) is the fallback, and the two must agree when both are known.
  */
-export async function downloadRepository(source: GithubSource, fetcher: GithubFetch, signal = AbortSignal.timeout(TIMEOUT_MS)): Promise<{ readonly commit: string; readonly archive: Buffer }> {
-  const ref = source.ref ?? "HEAD";
-  let commit: string;
-  if (/^[a-f0-9]{40}$/u.test(ref)) commit = ref;
+export async function downloadRepository(source: GithubSource, fetcher: GithubFetch, signal = AbortSignal.timeout(TIMEOUT_MS)): Promise<{ readonly commit: string | null; readonly archive: Buffer }> {
+  const ref = source.ref ?? "HEAD", follow = (url: URL): void => {
+    if (url.protocol !== "https:" || !GITHUB_HOSTS.has(url.hostname) || url.username || url.password || url.port) throw new CapabilityError("CAPABILITY_COMMAND_FAILED", "GitHub 把请求转到了 " + url.hostname + "，HarnessHub 不跟随");
+  };
+  let commit: string | null = null, archiveUrl: URL | null = null;
+  if (/^[a-f0-9]{40}$/u.test(ref)) { commit = ref; archiveUrl = new URL("https://codeload.github.com/" + source.owner + "/" + source.repo + "/tar.gz/" + ref); }
   else {
-    let current = new URL("https://github.com/" + source.owner + "/" + source.repo + "/archive/" + ref.split("/").map(encodeURIComponent).join("/") + ".tar.gz"), found: string | null = null;
-    // Each hop is checked like any other request; the codeload address it reaches carries the commit.
-    for (let hop = 0; hop < 5 && found === null; hop++) {
-      if (current.protocol !== "https:" || !GITHUB_HOSTS.has(current.hostname) || current.username || current.password || current.port) throw new CapabilityError("CAPABILITY_COMMAND_FAILED", "GitHub 把请求转到了 " + current.hostname + "，HarnessHub 不跟随");
-      const match = current.hostname === "codeload.github.com" ? /^\/[^/]+\/[^/]+\/tar\.gz\/([a-f0-9]{40})$/u.exec(current.pathname) : null;
-      if (match) { found = match[1]!; break; }
+    // Each hop is checked like any other request; the codeload address it reaches is the archive, and names its commit.
+    let current = new URL("https://github.com/" + source.owner + "/" + source.repo + "/archive/" + ref.split("/").map(encodeURIComponent).join("/") + ".tar.gz");
+    for (let hop = 0; hop < 5 && archiveUrl === null; hop++) {
+      follow(current);
+      if (current.hostname === "codeload.github.com") { commit = /\/tar\.gz\/([a-f0-9]{40})$/u.exec(current.pathname)?.[1] ?? null; archiveUrl = current; break; }
       let response: Response;
       try { response = await fetcher(current.toString(), { signal, redirect: "manual", headers: { "User-Agent": "HarnessHub" } }); }
       catch (error) { if (signal.aborted) throw new CapabilityError("CAPABILITY_COMMAND_FAILED", "连接 GitHub 超过 60 秒"); throw new CapabilityError("CAPABILITY_COMMAND_FAILED", "连不上 GitHub（" + (error instanceof Error ? error.message : "网络错误") + "）"); }
@@ -122,12 +124,18 @@ export async function downloadRepository(source: GithubSource, fetcher: GithubFe
       await response.body?.cancel();
       current = new URL(next, current);
     }
-    if (found === null) throw new CapabilityError("CAPABILITY_COMMAND_FAILED", "GitHub 没有给出这个版本对应的提交");
-    commit = found;
+    if (archiveUrl === null) throw new CapabilityError("CAPABILITY_COMMAND_FAILED", "GitHub 的重定向过多");
   }
-  const { response } = await request("https://codeload.github.com/" + source.owner + "/" + source.repo + "/tar.gz/" + commit, fetcher, signal);
+  const { response } = await request(archiveUrl.toString(), fetcher, signal);
   if (!response.ok) throw await failure(response, "仓库的压缩包");
   return { commit, archive: await body(response, MAX_ARCHIVE_BYTES, "仓库的压缩包") };
+}
+/** The commit of a downloaded version: the redirect's and the archive's own must agree; one of them must be known. */
+export function settledCommit(redirected: string | null, archived: string | null): string {
+  if (redirected !== null && archived !== null && redirected !== archived) throw new CapabilityError("CAPABILITY_TARGET_REFUSED", "压缩包记录的提交与 GitHub 给出的不一致");
+  const commit = redirected ?? archived;
+  if (commit === null) throw new CapabilityError("CAPABILITY_COMMAND_FAILED", "GitHub 没有给出这个版本对应的提交");
+  return commit;
 }
 
 /** A repository's whole tree at `ref` (GitHub's recursive listing); `truncated` when GitHub cut it short. */
@@ -151,8 +159,8 @@ export async function repositoryTree(source: Pick<GithubSource, "owner" | "repo"
 /** One entry of a repository archive, by its path inside the repository. */
 export interface ArchiveEntry { readonly path: string; readonly type: "file" | "directory" | "symlink" | "hardlink" | "other"; readonly executable: boolean; readonly size: number;
   /** Git's blob id of a file's bytes. */ readonly id: string | null }
-/** A repository archive as listed: every entry, and the text of each SKILL.md (at most 256 KiB each). */
-export interface ArchiveListing { readonly entries: readonly ArchiveEntry[]; readonly skillFiles: ReadonlyMap<string, string> }
+/** A repository archive as listed: every entry, the text of each SKILL.md (at most 256 KiB each), and the commit its global header records (GitHub's `comment`). */
+export interface ArchiveListing { readonly entries: readonly ArchiveEntry[]; readonly skillFiles: ReadonlyMap<string, string>; readonly commit: string | null }
 
 /** Checks an entry's path and returns it relative to the archive's single top folder; null for that folder itself. */
 function entryPath(raw: string, root: { value: string | null }): string | null {
@@ -173,8 +181,9 @@ function kind(type: ReadEntry["type"]): ArchiveEntry["type"] {
  * are written (`write` receives their bytes), and nothing else is kept. Throws for an unsafe path, more than 20000 entries
  * or 256 MB unpacked.
  */
-async function walkArchive(archive: Buffer, visit: (entry: ArchiveEntry, data: Buffer | null) => void | Promise<void>, keep: (path: string, size: number) => boolean): Promise<void> {
+async function walkArchive(archive: Buffer, visit: (entry: ArchiveEntry, data: Buffer | null) => void | Promise<void>, keep: (path: string, size: number) => boolean): Promise<{ readonly commit: string | null }> {
   const root = { value: null as string | null }, pending: Promise<void>[] = [];
+  let commit: string | null | undefined;
   let entries = 0, unpacked = 0, problem: unknown = null;
   await new Promise<void>((resolve, reject) => {
     const parser = new Parser({ strict: true });
@@ -183,6 +192,8 @@ async function walkArchive(archive: Buffer, visit: (entry: ArchiveEntry, data: B
       try {
         if (entry.type === "ExtendedHeader" || entry.type === "GlobalExtendedHeader" || entry.type === "NextFileHasLongPath" || entry.type === "NextFileHasLongLinkpath") { entry.resume(); return; }
         if (++entries > MAX_ARCHIVE_ENTRIES) throw new CapabilityError("CAPABILITY_TARGET_REFUSED", "压缩包的条目超过 " + MAX_ARCHIVE_ENTRIES + " 个");
+        // The global header's fields are carried by every entry after it; GitHub records the commit as its comment.
+        if (commit === undefined) { const comment = (entry as unknown as { comment?: unknown }).comment; commit = typeof comment === "string" && /^[a-f0-9]{40}$/u.test(comment) ? comment : null; }
         const path = entryPath(entry.path, root), type = kind(entry.type), size = entry.size ?? 0;
         if (path === null) { entry.resume(); return; }
         unpacked += type === "file" ? size : 0;
@@ -202,13 +213,14 @@ async function walkArchive(archive: Buffer, visit: (entry: ArchiveEntry, data: B
   await Promise.all(pending);
   if (problem !== null) throw problem instanceof CapabilityError ? problem : new CapabilityError("CAPABILITY_TARGET_REFUSED", "压缩包无法读取");
   if (root.value === null) throw new CapabilityError("CAPABILITY_TARGET_REFUSED", "压缩包是空的");
+  return { commit: commit ?? null };
 }
 /** Lists an archive without writing anything: entries with their blob ids, and the text of every SKILL.md. */
 export async function listArchive(archive: Buffer): Promise<ArchiveListing> {
   const entries: ArchiveEntry[] = [], skillFiles = new Map<string, string>();
-  await walkArchive(archive, (entry, data) => { entries.push(entry); if (data !== null) skillFiles.set(entry.path, data.toString("utf8")); },
+  const { commit } = await walkArchive(archive, (entry, data) => { entries.push(entry); if (data !== null) skillFiles.set(entry.path, data.toString("utf8")); },
     (path, size) => (path === "SKILL.md" || path.endsWith("/SKILL.md")) && size <= 256 * 1024);
-  return { entries, skillFiles };
+  return { entries, skillFiles, commit };
 }
 /** Reads the files of an archive inside `folder` (a path inside the repository; "" for its root) with their bytes. */
 export async function readArchiveFolder(archive: Buffer, folder: string): Promise<readonly { readonly entry: ArchiveEntry; readonly data: Buffer | null }[]> {
