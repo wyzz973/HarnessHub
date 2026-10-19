@@ -709,4 +709,9 @@
   - Claude Code 只检测会话启动时已存在的目录；第一次建 `~/.claude/agents` 后，运行中的会话看不到。
   - 用 HarnessHub 管理的 Provider 的 Codex、Gemini 会话读不到用户级子 Agent。
 - **验收**：G064-A1（单元），G064-A2～A4（集成），G054-CA8（浏览器），G064-R4 按读取表更正；真实环境见[子 Agent 验收](../verification/capability-subagents-2026-10-19.md)。
+- **真实环境**（2026-10-19，审批同意）：
+  - 一个核对用子 Agent 依次写入 OpenCode、Gemini、Codex、Claude Code，四个目录都由 HarnessHub 新建。
+  - 文件字节与计划一致，按各家格式读回无误，30 秒内没有变化。
+  - 移除后文件与目录都不存在，各家配置目录回到写入前。
+  - 各家会话里能否列出这个子 Agent 没有验证；新建技能的第一次真实写入留给用户。
 
