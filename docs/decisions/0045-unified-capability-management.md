@@ -877,3 +877,35 @@
    - Claude：记下写前的 sha256 → 停用 → 回读只有这一项从 true 变成 false → 30 秒后复查没有外部改动 → 启用 → `settings.json` 与写前逐字节一致，`installed_plugins.json` 没变，台账与漂移为空。
    - Codex：差异恰好是第 278 行那张表下的一行，恢复后逐字节一致。
    - 验证记录写进 `docs/verification/capability-plugins-2026-10-19.md`，并写明没有验证往返期间新会话是否真的少了 swift-lsp。
+
+## 第 6a 步实现记录：插件启停（2026-10-19）
+
+- **已实现**：
+  - `claude-plugins.ts`：Claude Code 插件模型。
+    - 用户级安装来自 `installed_plugins.json`，只装在项目里的计数；账户同步插件来自各账户的 `manifest.json`，按名字去重，从代际目录读清单。
+    - 有效状态：用户级条目 → 市场条目的 `defaultEnabled` → `plugin.json` 的 → `true`，再加上依赖规则（没有条目、被启用插件依赖的也算启用）；`syncClaudeAiPlugins: false` 时同步插件全部停用。
+    - 依赖取 `plugin.json` 与市场条目的并集，三种写法；读不到时记为无法核对。
+    - 管理设置：主文件与 `.d`，MDM 描述文件存在即无法确定。
+  - `switches.ts`：`claudePluginSwitch` 与 `codexPluginSwitch`；`heldValue` 认识 `plugin/` 前缀。
+  - `edits.ts`：
+    - 表头按 TOML 规则解析（`tomlHeader`），新增 `tomlTable` 与 `oneLineChange`；
+    - `setTomlKey` 改值时保留行尾注释，插入时沿用缩进；
+    - 修正 CRLF 文件插入新行时落在 `\r` 之后的错误（也影响第 2 步 Codex 技能开关的插入）。
+  - `changes.ts`：
+    - 插件开关的检查：依赖、管理设置、保留来源与账户同步、未安装、确认框的生效时机与覆盖提示、运行中的进程；
+    - 漂移与重新应用、不再跟踪、孤立设置（Claude 已卸载插件上 HarnessHub 写的 `false`）都识别 `plugin/`。
+  - `scan.ts` 与读取表：
+    - Claude 与 Codex 都有的 `名@市场` 插件合成一行；各家写明有没有开关、只读的原因；
+    - Codex 读缓存版本、标出随 Codex 安装的插件；
+    - OpenCode、Hermes、DeepSeek Harness 按设计第 6 条改正。
+  - 接口：`GET /api/v1/capabilities/plugin-switch`；视图字段 `pluginSwitch`、`pluginReason`、插件的 `switchable`、孤立设置的 `kind`。契约见 [provider-web-mvp](../contracts/provider-web-mvp.md)。
+  - 页面：插件页上方写明哪些 Harness 能启停、其余为什么只读；展开插件后每家一个开关，各自显示版本与状态。
+- **实现中的取舍**：
+  1. **系统根目录**：管理设置在 `/Library` 下。`NativeEnvironment` 与 `ReadEnvironment` 增加可选的 `system`（缺省 `/`），只让测试指向私有目录，集成测试因此不受运行机器上管理设置的影响。`native-environment.ts` 归 G026，这里只加了一个可选字段，G026 的行为不变。
+  2. **孤立设置只收 `false`**：HarnessHub 为已卸载插件写过的 `true` 不列为孤立设置，因为它和默认状态一样，不会在重装后造成意外。
+  3. **账户同步插件的依赖**：读不到清单的同步插件不挡停用，只在确认框里说明没有核对；用户级插件读不到依赖时挡停用（裁决第 3 条）。
+  4. **测试编号**：TOML 表与 Codex 开关是 G064-P1，Claude 开关是 G064-P2，插件模型与管理设置是 G064-P3，正式入口是 G064-P4，读取器是 G064-R6，页面是 G054-CA9。
+- **已知行为**：
+  - Claude 的运行中会话可能把旧值写回 `settings.json`，由漂移列表显示，不自动重试。
+  - 存储不升版本；回退到旧构建时，`plugin/` 台账行在漂移列表里显示为“无法读取”。
+- **验收**：G064-P1～P3、G064-R6（单元），G064-P4（集成），G054-CA9（浏览器）；变异核对：去掉依赖拒绝，或撤回 CRLF 修正，对应测试都会失败。真实环境见[插件验收](../verification/capability-plugins-2026-10-19.md)。

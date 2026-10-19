@@ -9782,6 +9782,103 @@
       "expected": "每个子 Agent 按可写的 Harness 显示状态，不写的 Harness 在表格下说明原因；写入先显示新文件与继承说明，只确认这次检查；新建子 Agent 只发送名字、说明与正文；新建技能的对话框收集文本后走自己的检查，显示 SKILL.md 差异与参数说明；无页面错误",
       "status": "planned",
       "evidence": null
+    },
+    {
+      "id": "G064-P1",
+      "task": "G064",
+      "requirements": [
+        "R27"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "planned_file": "tests/unit/plugin-switches.test.ts",
+      "scenario": "Codex 插件表的定位与启停只改一行",
+      "expected": "表头按 TOML 规则解析（裸键、含转义的双引号键、单引号键、点号两侧空白、行尾注释），多行字符串里的表头和非表头行不算；按段定位 [plugins.\"<id>\"]，紧随的子表不算；enabled 原地改值、保留行尾注释，缺键时插在表内最后一个键之后（CRLF 文件插在 \\r 之前，技能开关的表数组同样适用），差异恰好一行且 smol-toml 仍能解析；写在 [plugins] 下的点号键、内联表、没有这个插件、enabled 不是布尔值、同名表出现两次时拒绝；原值为显式 true 时启用写回并删除台账，缺键时启用写明 enabled = true 并记台账；他人写的 false 标明来源",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G064-P2",
+      "task": "G064",
+      "requirements": [
+        "R27"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "planned_file": "tests/unit/plugin-switches.test.ts",
+      "scenario": "Claude Code 插件开关的定点编辑与台账规则",
+      "expected": "只改 enabledPlugins.<id>：停用原地改成 false，或新增 false 并注明原来按默认启用；已是目标状态时无需修改；启用 HarnessHub 停用的插件时写回原值（原来没有条目且默认启用时删掉这一项，文件逐字节回到原样），原来没有条目而默认停用时写 true 并记台账；他人写的 false 改成 true 并注明；条目不是布尔值时拒绝；改动其他键的无效样例被校验拦下；台账读取认识 plugin/ 前缀",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G064-P3",
+      "task": "G064",
+      "requirements": [
+        "R27"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "planned_file": "tests/unit/plugin-switches.test.ts",
+      "scenario": "Claude Code 插件模型：条目、默认、依赖、账户同步与管理设置",
+      "expected": "用户级安装逐个列出，只装在项目里的计数；defaultEnabled 市场条目优先于 plugin.json，缺省 true；依赖取 plugin.json 与市场条目的并集，三种写法，版本约束不求值，无法识别时报问题；没有 plugin.json 时市场条目就是清单；没有条目、被启用插件依赖的插件算启用；安装目录不存在或市场清单读不到时依赖记为无法核对；账户同步插件按名字跨账户去重、按代际目录读清单、裸依赖按它的市场解析，读不到的清单不带账户 ID；syncClaudeAiPlugins: false 时全部停用；管理设置先读主文件、再按名字序读 .d 的 .json（点文件除外），后者覆盖前者；MDM 描述文件存在、文件或目录读不到、值不是布尔值时为无法确定",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G064-P4",
+      "task": "G064",
+      "requirements": [
+        "R27"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/plugins.test.ts",
+      "scenario": "经正式入口启停 Claude Code 与 Codex 的插件",
+      "expected": "Claude 停用只改一行，确认框写明生效时机与各级覆盖，再启用后 settings.json 逐字节回到原样、没有漂移；停用被启用插件依赖的插件、启用依赖已停用的插件都被拒绝并点名，提示 claude plugin enable 会连带启用；保留来源、账户同步、未安装的插件被拒绝，只读的 Harness 返回 CAPABILITY_UNSUPPORTED，非法 id 返回 400；管理设置文件与 .d 决定插件、MDM 描述文件存在时都拒绝；检查之后文件变了，确认返回 CAPABILITY_TARGET_CHANGED；被外部改回的进入漂移，可重新应用、可不再跟踪；插件卸载后 HarnessHub 写的 false 列为孤立设置，清除后写回原值；Codex 原地改一行、保留注释与子表，启用后逐字节回到原样，缺键的表插入一行、启用写明 true，外部改动进入漂移；回答里没有凭据与家目录",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G064-R6",
+      "task": "G064",
+      "requirements": [
+        "R27"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "planned_file": "tests/unit/capability-readers.test.ts",
+      "scenario": "各家插件按自己的规则读取",
+      "expected": "Claude 与 Codex 都有的 名@市场 插件合成一行，各自显示版本与位置；没有条目的按默认显示，并计入依赖；有条目但未安装的、inline 等来源不提供开关；账户同步插件按名字去重，位置只到 ~/.claude/plugins/synced，视图不含账户 ID；随 Codex 安装的标明归属，缺 enabled 的写明缺省值未核实；OpenCode 读 plugin/ 与 plugins/ 的 .ts、.js（含点文件、跟随链接）与 tuple 条目并去重，tui.json 的标为 TUI 插件；Hermes 的 disabled 优先、分类布局与 plugin.yml、记忆提供方由 provider 选择、模型提供方不受 enabled 约束、隐藏目录也算、缺 plugins.enabled 时都不启用；DeepSeek Harness 读各 profile 的依赖；每家写明有没有开关及只读的原因",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G054-CA9",
+      "task": "G054",
+      "requirements": [
+        "R27",
+        "R22"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "e2e",
+      "planned_file": "tests/browser/web.browser.ts",
+      "scenario": "插件页的开关说明与合成行的启停",
+      "expected": "插件页写明哪些 Harness 可以启停、其余只读的原因；Claude 与 Codex 都有的插件只占一行，展开后各自显示版本、状态与开关；确认框显示文件、一行差异、生效时机与覆盖提示，确认前不发送、只发送这次检查；被依赖拦下的检查不能确认；历史里有插件开关；无页面错误",
+      "status": "planned",
+      "evidence": null
     }
   ]
 }

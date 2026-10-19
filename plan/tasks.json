@@ -3506,7 +3506,8 @@
         "G054-CA5",
         "G054-CA6",
         "G054-CA7",
-        "G054-CA8"
+        "G054-CA8",
+        "G054-CA9"
       ],
       "active_slice": "upgrade-with-running-programs"
     },
@@ -4107,7 +4108,10 @@
         "tests/unit/subagent-definitions.test.ts",
         "tests/integration/subagents.test.ts",
         "tests/integration/skill-create.test.ts",
-        "tools/capabilities-v5-to-v4.sql"
+        "tools/capabilities-v5-to-v4.sql",
+        "src/infrastructure/capabilities/claude-plugins.ts",
+        "tests/unit/plugin-switches.test.ts",
+        "tests/integration/plugins.test.ts"
       ],
       "requirements": [
         "R27",
@@ -4157,7 +4161,12 @@
         "G064-A1",
         "G064-A2",
         "G064-A3",
-        "G064-A4"
+        "G064-A4",
+        "G064-P1",
+        "G064-P2",
+        "G064-P3",
+        "G064-P4",
+        "G064-R6"
       ]
     }
   ]

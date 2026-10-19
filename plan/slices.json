@@ -977,7 +977,10 @@
         "tests/unit/subagent-definitions.test.ts",
         "tests/integration/subagents.test.ts",
         "tests/integration/skill-create.test.ts",
-        "tools/capabilities-v5-to-v4.sql"
+        "tools/capabilities-v5-to-v4.sql",
+        "src/infrastructure/capabilities/claude-plugins.ts",
+        "tests/unit/plugin-switches.test.ts",
+        "tests/integration/plugins.test.ts"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/capabilities-view-2026-10-18.md"

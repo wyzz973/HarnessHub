@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { capabilityReadTables } from "../../src/adapters/capability-reads.js";
 import type { CapabilitiesView, CapabilityEntry } from "../../src/contracts/capabilities.js";
@@ -175,4 +175,90 @@ test("G064-R2 Hermes is read from its active profile, and OpenClaw's workspace f
   assert.equal(await resolveOpenClawWorkspace({ home: root, values: { OPENCLAW_PROFILE: "lab" } }), join(root, ".openclaw", "workspace-lab"));
   await mkdir(join(root, ".openclaw")); await writeFile(join(root, ".openclaw", "openclaw.json"), "{ agents: { list: [{ id: 'a', default: true, workspace: '~/ws-a' }], defaults: { workspace: '~/ws' } } }");
   assert.equal(await resolveOpenClawWorkspace({ home: root, values: {} }), join(root, "ws-a"));
+});
+
+test("G064-R6 plugins are read by each Harness's rules: Claude Code's entries, defaults, dependencies and synced plugins, Codex's tables, OpenCode's lists and folders, Hermes's kinds, DeepSeek Harness's profiles", async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "capability-plugins-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const home = join(root, "home"), outside = join(root, "elsewhere");
+  await mkdir(home); await capabilityHome(home, outside);
+  const put = async (path: string, content: string) => { await mkdir(dirname(path), { recursive: true }); await writeFile(path, content); };
+  const claude = join(home, ".claude"), market = join(claude, "plugins", "marketplaces", "market"), bucket = "11111111-2222-4333-8444-555555555555_66666666-7777-4888-9999-000000000000";
+  // Claude Code: tool depends on needed (off by default, so on only through tool); quiet is off by default; entries without an install.
+  await put(join(claude, "settings.json"), JSON.stringify({ enabledPlugins: { "tool@market": true, "stale@market": false, "x@inline": true, "s-one@synced": false } }));
+  await put(join(claude, "plugins", "known_marketplaces.json"), JSON.stringify({ market: { installLocation: market } }));
+  await put(join(market, ".claude-plugin", "marketplace.json"), JSON.stringify({ plugins: [{ name: "tool", description: "A tool" }, { name: "quiet", defaultEnabled: false }, { name: "needed", defaultEnabled: false }] }));
+  await put(join(claude, "plugins", "installed_plugins.json"), JSON.stringify({ version: 2, plugins: { "tool@market": [{ scope: "user", version: "1.2.0", installPath: join(claude, "plugins", "cache", "market", "tool", "1.2.0") }],
+    "quiet@market": [{ scope: "user", installPath: join(claude, "plugins", "cache", "market", "quiet", "1.0.0") }], "needed@market": [{ scope: "user", installPath: join(claude, "plugins", "cache", "market", "needed", "1.0.0") }],
+    "project@market": [{ scope: "project", projectPath: "/p" }] } }));
+  await put(join(claude, "plugins", "cache", "market", "tool", "1.2.0", ".claude-plugin", "plugin.json"), JSON.stringify({ name: "tool", dependencies: ["needed"] }));
+  await mkdir(join(claude, "plugins", "cache", "market", "quiet", "1.0.0"), { recursive: true }); await mkdir(join(claude, "plugins", "cache", "market", "needed", "1.0.0"), { recursive: true });
+  // Synced from claude.ai: one manifest per account; s-one is in two accounts and shown once, its newest copy in s-one~g2.
+  await put(join(claude, "plugins", "synced", bucket, "manifest.json"), JSON.stringify({ plugins: [{ name: "s-one", generation: 2, marketplaceName: "kw", version: "0040" }, { name: "s-two", marketplaceName: "kw" }] }));
+  await put(join(claude, "plugins", "synced", "second-account", "manifest.json"), JSON.stringify({ plugins: [{ name: "s-one", generation: 1, marketplaceName: "kw" }] }));
+  await put(join(claude, "plugins", "synced", ".bucket-" + bucket), "{}");
+  // Codex: the same tool in its own table with its own cached version, and a bundled plugin whose table has no enabled.
+  await writeFile(join(home, ".codex", "config.toml"), (await readFile(join(home, ".codex", "config.toml"), "utf8")) + "\n[plugins.\"tool@market\"]\nenabled = true\n\n[plugins.\"bundled-one@openai-bundled\"]\n");
+  await mkdir(join(home, ".codex", "plugins", "cache", "market", "tool", "1.1.0"), { recursive: true });
+  // OpenCode: a tuple with options, the same spec twice, both plugin folders (dot files and links too, .mjs and folders not), and the TUI's list.
+  const opencode = join(home, ".config", "opencode");
+  await put(join(opencode, "opencode.jsonc"), "{\n  \"plugin\": [\"opencode-foo@1.0.0\", [\"tuple-plugin@2.0.0\", { \"level\": 1 }], \"opencode-foo@1.0.0\"],\n}\n");
+  await put(join(opencode, "plugin", "one.ts"), "export default {}\n"); await put(join(opencode, "plugin", ".dotted.js"), "export default {}\n");
+  await put(join(opencode, "plugin", "skip.mjs"), "export default {}\n"); await mkdir(join(opencode, "plugins", "folder.js"), { recursive: true });
+  await put(join(root, "linked-plugin.js"), "export default {}\n"); await symlink(join(root, "linked-plugin.js"), join(opencode, "plugins", "two.js"));
+  await put(join(opencode, "tui.json"), JSON.stringify({ plugin: ["tui-thing"] }));
+  // Hermes: disabled wins over enabled, a category folder with plugin.yml, a memory provider told by its __init__.py, a model provider, a hidden folder.
+  const hermes = join(home, ".hermes");
+  await put(join(hermes, "config.yaml"), "plugins:\n  enabled: [plug-one, memo, image_gen/openai-off]\n  disabled: [plug-one]\n");
+  await put(join(hermes, "plugins", "image_gen", "openai", "plugin.yml"), "name: openai\nkind: backend\n");
+  await put(join(hermes, "plugins", "memo", "plugin.yaml"), "name: memo\n"); await put(join(hermes, "plugins", "memo", "__init__.py"), "def register(ctx):\n    ctx.register_memory_provider(Memo())\n");
+  await put(join(hermes, "plugins", "prov", "plugin.yaml"), "name: prov\nkind: model-provider\n"); await put(join(hermes, "plugins", ".hidden-plug", "plugin.yaml"), "name: hidden-plug\n");
+  // DeepSeek Harness: a profile's dependency is a plugin; node_modules is not a profile.
+  await put(join(home, ".dsh", "profiles", "acp", "package.json"), JSON.stringify({ name: "acp", private: true, dependencies: { "@x/dsh-plugin-a": "^1.0.0" } }));
+  await put(join(home, ".dsh", "profiles", "node_modules", "package.json"), JSON.stringify({ dependencies: { "not-a-plugin": "1" } }));
+
+  const environment = { home, values: { HOME: home } }, hermesHome = await resolveHermesHome(environment), openclawWorkspace = await resolveOpenClawWorkspace(environment);
+  const view = await new CapabilityScan(environment, [home], hermesHome).view(capabilityReadTables(environment, { hermesHome, openclawWorkspace }), INSTALLED, "2026-10-19T00:00:00.000Z");
+  const reads = Object.fromEntries(view.harnesses.map(item => [item.harnessId, [item.pluginSwitch, item.pluginReason !== null]]));
+  assert.deepEqual(reads, { claude: ["file", false], codex: ["file", false], cursor: [null, true], opencode: [null, true], gemini: [null, true], openclaw: [null, true], pi: [null, false], hermes: [null, true], dsh: [null, true] });
+  const plugin = (name: string, harnessId?: string) => { const found = view.entries.find(item => item.kind === "plugin" && item.name === name && (harnessId === undefined || item.edges.some(edge => edge.harnessId === harnessId))); assert.ok(found, name); return found; };
+  const edge = (name: string, harnessId: string) => { const found = plugin(name, harnessId).edges.find(item => item.harnessId === harnessId)!;
+    return [found.status, found.facts?.kind === "plugin" ? found.facts.enabled : "?", found.facts?.kind === "plugin" ? found.facts.switchable : "?", found.reason]; };
+  // One row for the plugin both Claude Code and Codex have, each with its own version and place.
+  const tool = plugin("tool@market");
+  assert.equal(tool.key, "plugin:tool@market");
+  assert.deepEqual(tool.edges.map(item => [item.harnessId, item.status, item.via, item.facts?.kind === "plugin" ? item.facts.version : null]),
+    [["claude", "active", "~/.claude/plugins/installed_plugins.json", "1.2.0"], ["codex", "active", "~/.codex/config.toml", "1.1.0"]]);
+  assert.equal(tool.description, "A tool");
+  assert.deepEqual(edge("quiet@market", "claude"), ["disabled", false, true, "按默认停用（enabledPlugins 里没有这一项）"]);
+  assert.deepEqual(edge("needed@market", "claude"), ["active", true, true, "按默认启用（enabledPlugins 里没有这一项）"], "an enabled plugin depending on it turns it on");
+  assert.deepEqual(edge("stale@market", "claude").slice(0, 3), ["rejected", false, false]); assert.match(String(edge("stale@market", "claude")[3]), /有条目但未安装/u);
+  assert.deepEqual(edge("x@inline", "claude").slice(0, 3), ["active", true, false]); assert.match(String(edge("x@inline", "claude")[3]), /从 inline 加载/u);
+  const synced = view.entries.filter(item => item.kind === "plugin" && item.name.endsWith("@synced"));
+  assert.deepEqual(synced.map(item => [item.name, item.owner, item.edges[0]?.mechanism, item.edges[0]?.status, item.edges[0]?.via]),
+    [["s-one@synced", "synced", "synced", "disabled", "~/.claude/plugins/synced"], ["s-two@synced", "synced", "synced", "active", "~/.claude/plugins/synced"]]);
+  assert.ok(synced.every(item => item.edges[0]?.facts?.kind === "plugin" && !item.edges[0].facts.switchable));
+  assert.equal(JSON.stringify(view).includes(bucket), false, "the account a synced plugin belongs to is never shown");
+  assert.ok(view.harnesses.find(item => item.harnessId === "claude")?.notes.includes("另有 1 个插件只装在项目里，这里不列出。"));
+  assert.deepEqual(edge("bundled-one@openai-bundled", "codex"), ["active", null, true, "表里没有 enabled，Codex 的缺省值没有核实"]);
+  assert.equal(plugin("bundled-one@openai-bundled").owner, "bundled");
+  // OpenCode: what its loader reads, each once; .mjs files and folders are not plugins; the TUI's plugins are marked.
+  const opencodes = view.entries.filter(item => item.kind === "plugin" && item.edges.some(item2 => item2.harnessId === "opencode")).map(item => item.name).sort();
+  assert.deepEqual(opencodes, [".dotted.js", "one.ts", "opencode-foo@1.0.0", "tui-thing", "tuple-plugin@2.0.0", "two.js"]);
+  assert.match(String(edge("tui-thing", "opencode")[3]), /TUI 插件/u);
+  // Hermes: disabled first; memory providers by their provider setting; model providers always; a category's key is its path.
+  assert.deepEqual(edge("plug-one", "hermes").slice(0, 2), ["disabled", false]); assert.match(String(edge("plug-one", "hermes")[3]), /plugins\.disabled/u);
+  assert.deepEqual(edge("image_gen/openai", "hermes").slice(0, 2), ["disabled", false]); assert.equal(edge("image_gen/openai", "hermes")[3], "不在 plugins.enabled 里");
+  assert.deepEqual(edge("memo", "hermes").slice(0, 2), ["active", null]); assert.match(String(edge("memo", "hermes")[3]), /memory\.provider/u);
+  assert.deepEqual(edge("prov", "hermes").slice(0, 2), ["active", true]); assert.deepEqual(edge("hidden-plug", "hermes").slice(0, 2), ["disabled", false]);
+  // DeepSeek Harness: each profile's dependencies, node_modules is not a profile.
+  assert.deepEqual(edge("@x/dsh-plugin-a", "dsh"), ["active", true, false, "装在 profile acp 里，装上即启用"]);
+  assert.equal(view.entries.some(item => item.name === "not-a-plugin"), false);
+  assert.deepEqual(homePathsIn(view, [home], 1 << 20), []);
+
+  // Hermes without a plugins.enabled list enables none of the user's plugins.
+  await writeFile(join(hermes, "config.yaml"), "model:\n  default: x\n");
+  const plain = await new CapabilityScan(environment, [home], hermesHome).view(capabilityReadTables(environment, { hermesHome, openclawWorkspace }), INSTALLED, "2026-10-19T00:00:00.000Z");
+  const prov = plain.entries.find(item => item.kind === "plugin" && item.name === "hidden-plug")?.edges[0];
+  assert.deepEqual([prov?.status, prov?.reason], ["disabled", "config.yaml 没有 plugins.enabled，Hermes 一个用户插件都不启用"]);
 });

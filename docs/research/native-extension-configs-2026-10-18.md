@@ -64,15 +64,15 @@
 
 | Harness | 是什么 | 命令 |
 |---|---|---|
-| Claude Code | 插件可含 skills、commands、agents、hooks、MCP、LSP、bin 等；marketplace | `claude plugin install/uninstall/enable/disable/update/list --json`，带作用域；会话启动或 `/reload-plugins` 生效 |
-| Codex | 插件可含 skills、MCP、hooks、apps | `codex plugin add/remove/list`、`marketplace add/list/upgrade/remove`；新会话生效 |
+| Claude Code | 插件可含 skills、commands、agents、hooks、MCP、LSP、bin 等；marketplace | `claude plugin install/uninstall/enable/disable/update/list --json`，带作用域；会话启动或 `/reload-plugins` 生效。启停就是 `settings.json` 的 `enabledPlugins.<名@市场>`（没有条目时按 `defaultEnabled`，市场条目优先、缺省 true）；claude.ai 同步的插件以 `<名>@synced` 加载，清单在 `plugins/synced/<账户>/manifest.json`；2.1.303 不读 `plugins/blocklist.json`（旧版留下的文件）。运行命令会补齐插件缓存，新的配置目录里还会执行 `npm ci` |
+| Codex | 插件可含 skills、MCP、hooks、apps | `codex plugin add/remove/list`、`marketplace add/list/upgrade/remove`；新会话生效。没有启停命令：`/plugins` 与 app-server 都改 `config.toml` 的 `[plugins."名@市场"].enabled`；缓存在 `plugins/cache/<市场>/<名>/<版本>` |
 | Cursor | 插件可含 rules、skills、agents、commands、hooks、MCP | shell 里只能管理 marketplace；安装要在会话内 `/plugin` |
-| OpenCode | JS/TS 插件 | `opencode plugin <module> [-g]`，没有卸载 |
+| OpenCode | JS/TS 插件 | `opencode plugin <module> [-g]`，没有卸载。读 `{plugin,plugins}/*.{ts,js}`（含点开头的文件、跟随链接）与 `plugin` 数组（`string` 或 `[string, 选项]`）；`tui.json` 的 `plugin` 只在终端界面加载 |
 | Gemini CLI | 扩展可含 MCP、上下文、commands、skills、agents、hooks、策略、主题 | `gemini extensions install/uninstall/enable/disable/update/list` |
 | OpenClaw | native 插件，以及兼容 Claude/Codex/Cursor 布局的 bundle | `openclaw plugins install/uninstall/enable/disable/list/update`；本机版改 `plugins.*` 会让 Gateway 自动重启 |
 | Pi | TS 扩展与 npm/git 包 | `pi install/remove/list/update [-l]` |
-| Hermes | Python 插件，需显式启用 | `hermes plugins install/remove/enable/disable/list`；`remove` 不清理启用列表 |
-| DeepSeek Harness | 插件就是 npm bundle | `dsh plugin --profile <名> add/remove <包>`，要重启该 profile |
+| Hermes | Python 插件，需显式启用 | `hermes plugins install/remove/enable/disable/list`；`remove` 不清理启用列表。`plugins.enabled` 缺失时一个用户插件都不启用，`disabled` 优先；`<分类>/<名>` 布局，键按路径；记忆提供方由 `<分类>.provider` 选择，模型提供方不受启用列表约束；`enable` 经 `save_config` 整份重写 `config.yaml` |
+| DeepSeek Harness | 插件就是 npm bundle | `dsh plugin --profile <名> add/remove <包>`，要重启该 profile；插件是 `$DSH_HOME/profiles/<名>/package.json` 的依赖，参数原样交给 pnpm |
 
 ## 子 Agent、自定义命令与 Hooks
 

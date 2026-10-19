@@ -22,7 +22,7 @@ const OWNER_LABEL: Readonly<Record<CapabilityOwner, string>> = { user: "用户",
   "hermes-hub": "Hermes Hub", plugin: "插件", bundled: "随程序安装", synced: "账户同步" };
 const CHANGE_LABEL: Readonly<Record<CapabilityChangeView["kind"], string>> = { "skill-switch": "技能开关", "shared-dir": "共享目录", "skill-link": "放置技能", "link-cleanup": "清理链接", "link-undo": "撤销", restore: "恢复",
   "skill-add": "添加技能", "skill-update": "更新技能", "skill-delete": "删除技能", "skill-undo": "撤销", "skill-create": "新建技能", "skill-edit": "编辑技能", "mcp-sync": "写入 MCP", "mcp-remove": "移除 MCP", "mcp-claim": "认领 MCP",
-  "instructions-sync": "写入指令", "instructions-remove": "移除指令", "instructions-claim": "认领指令", "subagent-sync": "写入子 Agent", "subagent-remove": "移除子 Agent", "subagent-claim": "认领子 Agent" };
+  "instructions-sync": "写入指令", "instructions-remove": "移除指令", "instructions-claim": "认领指令", "subagent-sync": "写入子 Agent", "subagent-remove": "移除子 Agent", "subagent-claim": "认领子 Agent", "plugin-switch": "插件开关" };
 type SkillUpdate = SkillUpdateView["skills"][number];
 /** A skill folder's name in the shared directory, from where the view shows it. */
 function folderName(entry: CapabilityEntry): string | null { return entry.shared ? entry.shared.folder.split("/").filter(Boolean).at(-1) ?? null : null; }
@@ -72,6 +72,32 @@ function SkillSwitches({ entry, harnesses, onSwitch }: { readonly entry: Capabil
     onClick={() => onSwitch({ harnessId: button.harness.harnessId, harnessName: button.harness.name, name: entry.name, enabled: button.off, via: button.via })}>
     {(button.off ? "在 " + button.harness.name + " 中启用" : "在 " + button.harness.name + " 中停用") + (button.which ? "（" + button.which + "）" : "")}</button>)}</div>;
 }
+/** Turning one plugin off or on in one Harness's own file. */
+interface PluginSwitch { readonly harnessId: string; readonly harnessName: string; readonly id: string; readonly enabled: boolean }
+/**
+ * The switches of one plugin (ADR-045 step 6a): per Harness HarnessHub can switch it in (Claude Code, Codex), off or back
+ * on there. A state the Harness's rules leave unknown (Codex without `enabled`) offers both.
+ */
+function PluginSwitches({ entry, harnesses, onSwitch }: { readonly entry: CapabilityEntry; readonly harnesses: readonly HarnessCapabilityReads[]; readonly onSwitch: (request: PluginSwitch) => void }) {
+  const buttons = entry.edges.flatMap(edge => {
+    const harness = harnesses.find(item => item.harnessId === edge.harnessId && item.pluginSwitch !== null);
+    if (harness === undefined || edge.facts?.kind !== "plugin" || !edge.facts.switchable) return [];
+    return (edge.facts.enabled === null ? [false, true] : [!edge.facts.enabled]).map(enabled => ({ harness, enabled }));
+  });
+  if (!buttons.length) return null;
+  return <div className="plugin-switches flex flex-wrap gap-1.5">{buttons.map(button => <button key={button.harness.harnessId + String(button.enabled)} type="button" className="btn btn-sm"
+    onClick={() => onSwitch({ harnessId: button.harness.harnessId, harnessName: button.harness.name, id: entry.name, enabled: button.enabled })}>
+    {"在 " + button.harness.name + (button.enabled ? " 中启用" : " 中停用")}</button>)}</div>;
+}
+/** Which Harnesses' plugins HarnessHub can switch, and why it only reads the others'. */
+function PluginSupport({ harnesses }: { readonly harnesses: readonly HarnessCapabilityReads[] }) {
+  const switching = harnesses.filter(harness => harness.pluginSwitch !== null), reading = harnesses.filter(harness => harness.pluginReason !== null);
+  return <section className="plugin-support rounded-xl border border-line bg-surface px-4 py-3 text-[12.5px]" aria-label="插件开关">
+    <p className="m-0">{switching.length ? switching.map(harness => harness.name).join("、") + " 的插件可以在这里停用或启用：展开插件后点按钮，先显示要改的那一行，确认后才写入，并保留备份。" : "这里列出的插件都只读。"}
+      <span className="text-fg-3">安装与卸载还没有提供。</span></p>
+    {reading.length ? <ul className="m-0 mt-1.5 list-disc pl-5 text-fg-2">{reading.map(harness => <li key={harness.harnessId}><span className="font-medium text-fg">{harness.name}</span>：{harness.pluginReason}</li>)}</ul> : null}
+  </section>;
+}
 /** Placing a shared skill in Claude Code by a link of its own, or removing a link HarnessHub placed there. */
 function ClaudePlacement({ api, entry, harnesses, onChange }: { readonly api: GatewayApi; readonly entry: CapabilityEntry; readonly harnesses: readonly HarnessCapabilityReads[]; readonly onChange: (request: ChangeRequest) => void }) {
   const claude = harnesses.find(harness => harness.harnessId === "claude" && harness.shared.placeable === "skill-link");
@@ -101,8 +127,8 @@ function SkillLifecycle({ api, entry, update, onChange, onEdit }: { readonly api
     <button type="button" className="btn btn-ghost btn-sm" onClick={() => onChange({ title: "删除 " + folder, verb: "删除", on: null, icon: "delete", done: "已删除 " + folder, load: () => api.checkSkillDelete(folder) })}><Trash2 size={13}/>删除</button>
   </>;
 }
-function EntryDetail({ api, entry, harnesses, update, onSwitch, onChange, onEdit }: { readonly api: GatewayApi; readonly entry: CapabilityEntry; readonly harnesses: readonly HarnessCapabilityReads[]; readonly update: SkillUpdate | undefined;
-  readonly onSwitch: (request: SwitchRequest) => void; readonly onChange: (request: ChangeRequest) => void; readonly onEdit: (name: string) => void }) {
+function EntryDetail({ api, entry, harnesses, update, onSwitch, onPlugin, onChange, onEdit }: { readonly api: GatewayApi; readonly entry: CapabilityEntry; readonly harnesses: readonly HarnessCapabilityReads[]; readonly update: SkillUpdate | undefined;
+  readonly onSwitch: (request: SwitchRequest) => void; readonly onPlugin: (request: PluginSwitch) => void; readonly onChange: (request: ChangeRequest) => void; readonly onEdit: (name: string) => void }) {
   const name = (id: string | null) => id === null ? null : harnesses.find(harness => harness.harnessId === id)?.name ?? id;
   return <div className="capability-detail flex flex-col gap-2 px-1 py-1 text-[12.5px]">
     {entry.description ? <p className="m-0 text-fg-2">{entry.description}</p> : null}
@@ -110,15 +136,16 @@ function EntryDetail({ api, entry, harnesses, update, onSwitch, onChange, onEdit
       {entry.location ? <><dt className="text-fg-3">位置</dt><dd className="m-0"><code className="text-[12px] break-all">{entry.location}</code></dd></> : null}
       <dt className="text-fg-3">归属</dt><dd className="m-0">{OWNER_LABEL[entry.owner]}{entry.source ? <span className="text-fg-3"> · 来源 <span className="break-all">{entry.source}</span></span> : null}</dd>
       {update ? <><dt className="text-fg-3">更新</dt><dd className="m-0">{UPDATE_LABEL[update.state]}{update.modified ? "；本地改过" : ""}{update.reason ? <span className="text-fg-3"> · {update.reason}</span> : null}</dd></> : null}
-      {entry.facts ? <><dt className="text-fg-3">内容</dt><dd className="m-0">{factsText(entry.facts)}</dd></> : null}
+      {entry.facts && entry.kind !== "plugin" ? <><dt className="text-fg-3">内容</dt><dd className="m-0">{factsText(entry.facts)}</dd></> : null}
     </dl>
     <ul className="m-0 flex list-none flex-col gap-1 p-0">{entry.edges.map((edge, index) => <li key={index} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-lg border border-line px-2.5 py-1.5">
       <strong className="font-medium">{name(edge.harnessId)}</strong><span className={STATUS_TONE[edge.status]}>{STATUS_LABEL[edge.status]}</span><span className="text-fg-3">{MECHANISM_LABEL[edge.mechanism]}</span>
       <code className="text-[11.5px] break-all text-fg-2">{edge.via}</code>{edge.reason ? <span className="w-full text-fg-2">{edge.reason}</span> : null}
-      {edge.facts && entry.kind === "mcp" ? <span className="w-full text-fg-3">{factsText(edge.facts)}</span> : null}</li>)}</ul>
+      {edge.facts && (entry.kind === "mcp" || entry.kind === "plugin") ? <span className="w-full text-fg-3">{factsText(edge.facts)}</span> : null}</li>)}</ul>
     {entry.warnings.length ? <ul className="m-0 flex list-none flex-col gap-1 p-0">{entry.warnings.map((warning, index) => <li key={index} className="flex items-start gap-2"><Badge tone={warning.kind === "literal" ? "red" : "amber"}>{WARNING_LABEL[warning.kind]}</Badge><span className="text-fg-2">{warning.text}</span></li>)}</ul> : null}
     {entry.kind === "skill" ? <div className="flex flex-wrap gap-1.5"><SkillSwitches entry={entry} harnesses={harnesses} onSwitch={onSwitch}/><ClaudePlacement api={api} entry={entry} harnesses={harnesses} onChange={onChange}/>
       <SkillLifecycle api={api} entry={entry} update={update} onChange={onChange} onEdit={onEdit}/></div> : null}
+    {entry.kind === "plugin" ? <PluginSwitches entry={entry} harnesses={harnesses} onSwitch={onPlugin}/> : null}
   </div>;
 }
 const READS: Readonly<Record<HarnessCapabilityReads["shared"]["reads"], string>> = { native: "自己读取", "external-dir": "经 skills.external_dirs 读取", links: "经自己目录里的链接", no: "不读取" };
@@ -163,7 +190,7 @@ function DriftNotice({ api, drift, harnesses, onChange, onForgotten }: { readonl
   return <Notice tone="amber" className="capability-drift" title={"HarnessHub 写过的 " + drift.length + " 项设置已不在原处"}>
     <p className="m-0">多半是 Harness 自己重写了配置文件，或在别处改过。HarnessHub 不会自动改回：可以重新应用（先显示改动），或不再跟踪（文件不变）。</p>
     <ul className="m-0 mt-1.5 flex list-none flex-col gap-1 p-0">{drift.map(item => <li key={item.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-fg">
-      <strong className="font-medium">{harnesses.find(harness => harness.harnessId === item.harnessId)?.name ?? item.harnessId} · {item.kind === "mcp" ? "MCP" : item.kind === "instructions" ? "指令区块" : item.kind === "subagent" ? "子 Agent" : CHANGE_LABEL[item.kind]} · {item.subject}</strong>
+      <strong className="font-medium">{harnesses.find(harness => harness.harnessId === item.harnessId)?.name ?? item.harnessId} · {item.kind === "mcp" ? "MCP" : item.kind === "instructions" ? "指令区块" : item.kind === "subagent" ? "子 Agent" : item.kind === "plugin" ? "插件" : CHANGE_LABEL[item.kind]} · {item.subject}</strong>
       <Badge tone="amber">{item.kind === "mcp" && item.harnessId === "claude" && item.state === "removed" ? "写入丢失（可能被运行中的 Claude Code 会话冲掉）" : DRIFT_LABEL[item.state]}</Badge><code className="text-[11.5px] break-all text-fg-2">{item.file}</code>
       <button type="button" className="btn btn-sm" disabled={busy !== null} onClick={() => onChange({ title: "重新应用：" + item.subject, verb: "重新应用", on: item.kind === "skill-switch" ? false : item.kind === "shared-dir" ? true : null,
         done: "已重新应用：" + item.subject, load: () => api.checkReapply(item.id) })}>重新应用</button>
@@ -177,10 +204,12 @@ function DriftNotice({ api, drift, harnesses, onChange, onForgotten }: { readonl
  * effect again if a skill of that name comes back. Each can be cleared through the usual switch check.
  */
 function OrphanNotice({ api, orphans, harnesses, onChange }: { readonly api: GatewayApi; readonly orphans: readonly CapabilityOrphan[]; readonly harnesses: readonly HarnessCapabilityReads[]; readonly onChange: (request: ChangeRequest) => void }) {
-  return <Notice tone="neutral" className="capability-orphans" title={"孤立的停用设置（技能已删除）" + orphans.length + " 项"}>
-    <p className="m-0">HarnessHub 为这些技能写的停用设置还在，技能已经不在了：现在不起作用，以后添加同名技能时会再次生效。</p>
+  const skills = orphans.some(item => item.kind === "skill"), plugins = orphans.some(item => item.kind === "plugin");
+  return <Notice tone="neutral" className="capability-orphans" title={"孤立的停用设置（" + (skills && plugins ? "技能已删除或插件已卸载" : plugins ? "插件已卸载" : "技能已删除") + "）" + orphans.length + " 项"}>
+    <p className="m-0">{skills && plugins ? "HarnessHub 写的这些停用设置还在，技能已经不在或插件已经卸载：现在不起作用，以后再出现同名的技能或插件时会再次生效。"
+      : plugins ? "HarnessHub 为这些插件写的停用设置还在，插件已经卸载：现在不起作用，以后再装同名插件时会再次生效。" : "HarnessHub 为这些技能写的停用设置还在，技能已经不在了：现在不起作用，以后添加同名技能时会再次生效。"}</p>
     <ul className="m-0 mt-1.5 flex list-none flex-col gap-1 p-0">{orphans.map(item => <li key={item.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-fg">
-      <strong className="font-medium">{harnesses.find(harness => harness.harnessId === item.harnessId)?.name ?? item.harnessId} · {item.subject}</strong><code className="text-[11.5px] break-all text-fg-2">{item.file}</code>
+      <strong className="font-medium">{harnesses.find(harness => harness.harnessId === item.harnessId)?.name ?? item.harnessId} · {skills && plugins ? (item.kind === "plugin" ? "插件 · " : "技能 · ") : ""}{item.subject}</strong><code className="text-[11.5px] break-all text-fg-2">{item.file}</code>
       <button type="button" className="btn btn-sm" onClick={() => onChange({ title: "清除停用设置：" + item.subject, verb: "清除", on: true, done: "已清除 " + item.subject + " 的停用设置", load: () => api.checkOrphanClear(item.id) })}>清除</button>
     </li>)}</ul>
   </Notice>;
@@ -219,6 +248,8 @@ export function CapabilitiesPage({ api, initialHarness, onMenu, sidebarHidden, o
   const change = (request: ChangeRequest) => setChanging(request);
   const switchSkill = (request: SwitchRequest) => change({ title: "在 " + request.harnessName + " 中" + (request.enabled ? "启用 " : "停用 ") + request.name, verb: request.enabled ? "启用" : "停用", on: request.enabled,
     done: "已在 " + request.harnessName + " 中" + (request.enabled ? "启用 " : "停用 ") + request.name, load: () => api.checkSkillSwitch(request.harnessId, request.name, request.enabled, request.via) });
+  const switchPlugin = (request: PluginSwitch) => change({ title: "在 " + request.harnessName + " 中" + (request.enabled ? "启用插件 " : "停用插件 ") + request.id, verb: request.enabled ? "启用" : "停用", on: request.enabled,
+    done: "已在 " + request.harnessName + " 中" + (request.enabled ? "启用 " : "停用 ") + request.id, load: () => api.checkPluginSwitch(request.harnessId, request.id, request.enabled) });
   const [result, setResult] = useState<{ readonly view: CapabilityChangeView; readonly title: string } | null>(null);
   const [adding, setAdding] = useState(false), [updates, setUpdates] = useState<SkillUpdateView | null>(null), [checkingUpdates, setCheckingUpdates] = useState(false), [updateProblem, setUpdateProblem] = useState<string | null>(null);
   const [reloads, setReloads] = useState(0), [notice, setNotice] = useState<{ readonly text: string; readonly failed: boolean } | null>(null);
@@ -259,7 +290,7 @@ export function CapabilitiesPage({ api, initialHarness, onMenu, sidebarHidden, o
   }, [view, kind, harness, query, onlyWarnings]);
   const warningCount = (entry: CapabilityEntry) => entry.warnings.filter(warning => harness === null || warning.harnessId === null || warning.harnessId === harness).length;
   return <PageShell title="能力" titleId="capabilities-title" onMenu={onMenu} sidebarHidden={sidebarHidden} onExpandSidebar={onExpandSidebar} onBack={onChat} wide
-    description="各 Harness 除模型外还会读取的技能、MCP、指令、子 Agent、命令、Hooks 和插件，按各自的规则显示谁能看到、经由哪里、是否生效。技能可以从 GitHub 添加到共享目录、按来源更新、删除，也可以在各 Harness 中停用或启用：先显示要改的内容，确认后才写入，并保留备份或快照。读取不启动 MCP 服务器。"
+    description="各 Harness 除模型外还会读取的技能、MCP、指令、子 Agent、命令、Hooks 和插件，按各自的规则显示谁能看到、经由哪里、是否生效。技能可以从 GitHub 添加到共享目录、按来源更新、删除，也可以在各 Harness 中停用或启用；插件可以在 Claude Code 和 Codex 中停用或启用。都是先显示要改的内容，确认后才写入，并保留备份或快照。读取不启动 MCP 服务器。"
     actions={<Tip label="重新读取"><button type="button" className="icon-btn" aria-label="重新读取" onClick={() => load()} disabled={loading}>{loading ? <Spinner size={15}/> : <RefreshCw size={16}/>}</button></Tip>}>
     {problem ? <Notice tone="red" action={<button type="button" className="btn btn-sm" onClick={() => load()}>重试</button>}>{problem}</Notice> : null}
     {result ? <Notice tone={result.view.status === "applied" ? "green" : "red"} className="capability-result" onDismiss={() => setResult(null)} title={result.view.status === "applied" ? result.title : result.title + "没有完成"}
@@ -289,6 +320,7 @@ export function CapabilitiesPage({ api, initialHarness, onMenu, sidebarHidden, o
       {kind === "mcp" ? <McpInventoryPanel api={api} harness={harness} reload={reloads} onChange={change} onNotice={(text, failed) => setNotice({ text, failed })}/> : null}
       {kind === "instructions" ? <InstructionsPanel api={api} harness={harness} reload={reloads} onChange={change} onNotice={(text, failed) => setNotice({ text, failed })}/> : null}
       {kind === "subagent" ? <SubagentsPanel api={api} harness={harness} reload={reloads} onChange={change} onNotice={(text, failed) => setNotice({ text, failed })}/> : null}
+      {kind === "plugin" ? <PluginSupport harnesses={columns}/> : null}
       {rows.length ? <div className="capability-matrix overflow-x-auto rounded-xl border border-line bg-surface shadow-sm">
         <table className="w-full border-collapse text-left text-[12.5px]">
           <thead><tr className="border-b border-line">
@@ -306,7 +338,7 @@ export function CapabilitiesPage({ api, initialHarness, onMenu, sidebarHidden, o
                     <span className="mt-0.5 flex flex-wrap items-center gap-1"><span className="text-[11.5px] text-fg-3">{OWNER_LABEL[entry.owner]}</span>{warnings ? <Badge tone="amber">{warnings} 条提示</Badge> : null}
                       {updateOf(entry)?.state === "available" ? <Badge tone="accent">有新版本</Badge> : null}</span></span></button></th>
               {columns.map(item => <td key={item.harnessId} className="px-2 py-2"><Cell edges={entry.edges.filter(edge => edge.harnessId === item.harnessId)} support={item.kinds[kind]}/></td>)}
-            </tr>{expanded ? <tr className="border-b border-line bg-subtle"><td colSpan={columns.length + 1} className="px-3 pb-3"><EntryDetail api={api} entry={entry} harnesses={view.harnesses} update={updateOf(entry)} onSwitch={switchSkill} onChange={change} onEdit={editSkill}/></td></tr> : null}</Fragment>; })}</tbody>
+            </tr>{expanded ? <tr className="border-b border-line bg-subtle"><td colSpan={columns.length + 1} className="px-3 pb-3"><EntryDetail api={api} entry={entry} harnesses={view.harnesses} update={updateOf(entry)} onSwitch={switchSkill} onPlugin={switchPlugin} onChange={change} onEdit={editSkill}/></td></tr> : null}</Fragment>; })}</tbody>
         </table></div>
         : <EmptyState title={query || onlyWarnings ? "没有匹配的条目" : "这一类还没有条目"}>{columns.some(item => item.kinds[kind] !== "read") ? "部分 Harness 没有这类能力，或保存在磁盘之外。" : "各 Harness 的用户级配置里没有这一类。"}</EmptyState>}
       </div>

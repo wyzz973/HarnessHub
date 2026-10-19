@@ -190,7 +190,7 @@ function decodeCapabilityFacts(value: unknown): CapabilityFacts {
     case "subagent": return { kind: "subagent", format: choice(row.format, ["markdown", "toml"]) };
     case "command": return { kind: "command", format: choice(row.format, ["markdown", "toml"]) };
     case "hook": return { kind: "hook", event: text(row.event), matcher: nullableText(row.matcher), program: nullableText(row.program) };
-    case "plugin": return { kind: "plugin", version: nullableText(row.version), enabled: row.enabled === null ? null : bool(row.enabled) };
+    case "plugin": return { kind: "plugin", version: nullableText(row.version), enabled: row.enabled === null ? null : bool(row.enabled), switchable: bool(row.switchable) };
   }
 }
 function decodeCapabilityEdge(value: unknown): CapabilityEdge {
@@ -203,7 +203,8 @@ export function decodeCapabilities(value: unknown): CapabilitiesView {
   const row = record(value), kindsOf = (item: unknown) => { const kinds = record(item); return Object.fromEntries(CAPABILITY_KINDS.map(kind => [kind, choice(kinds[kind], ["read", "unsupported", "invisible"])])) as CapabilitiesView["harnesses"][number]["kinds"]; };
   return { checkedAt: text(row.checkedAt), truncated: bool(row.truncated),
     harnesses: list(row.harnesses, item => { const harness = record(item); return { harnessId: text(harness.harnessId), name: text(harness.name), version: nullableText(harness.version), table: choice(harness.table, ["verified", "unverified"]),
-      kinds: kindsOf(harness.kinds), skillSwitch: harness.skillSwitch === null ? null : choice(harness.skillSwitch, ["file", "command"]), shared: decodeSharedReads(harness.shared), notes: list(harness.notes, text, 64) }; }, 64),
+      kinds: kindsOf(harness.kinds), skillSwitch: harness.skillSwitch === null ? null : choice(harness.skillSwitch, ["file", "command"]),
+      pluginSwitch: harness.pluginSwitch === null ? null : choice(harness.pluginSwitch, ["file"]), pluginReason: nullableText(harness.pluginReason), shared: decodeSharedReads(harness.shared), notes: list(harness.notes, text, 64) }; }, 64),
     entries: list(row.entries, item => { const entry = record(item); return { kind: choice(entry.kind, CAPABILITY_KINDS), key: text(entry.key), name: text(entry.name), description: nullableText(entry.description),
       owner: choice(entry.owner, CAPABILITY_OWNERS), source: nullableText(entry.source), location: nullableText(entry.location), edges: list(entry.edges, decodeCapabilityEdge, 256),
       warnings: list(entry.warnings, warning => { const fields = record(warning); return { kind: choice(fields.kind, CAPABILITY_WARNINGS), harnessId: nullableText(fields.harnessId), text: text(fields.text) }; }, 256),
@@ -230,7 +231,7 @@ export function decodeChangeCheck(value: unknown): CapabilityChangeCheck {
   const source = row.source === undefined || row.source === null ? row.source : record(row.source), lock = row.lock === undefined || row.lock === null ? row.lock : record(row.lock);
   const proceed = row.proceed === undefined || row.proceed === null ? row.proceed : record(row.proceed);
   return { kind: choice(row.kind, ["skill-switch", "shared-dir", "skill-link", "link-cleanup", "link-undo", "skill-add", "skill-update", "skill-delete", "skill-undo", "mcp-sync", "mcp-remove", "instructions-sync", "instructions-remove",
-    "subagent-sync", "subagent-remove", "skill-create", "skill-edit"]),
+    "subagent-sync", "subagent-remove", "skill-create", "skill-edit", "plugin-switch"]),
     harnessId: text(row.harnessId), name: text(row.name), enabled: bool(row.enabled), file: text(row.file),
     ...(proceed === undefined ? {} : { proceed: proceed === null ? null : { option: choice(proceed.option, INSTRUCTION_CHECK_OPTIONS), label: text(proceed.label) } }),
     ...(row.skills === undefined ? {} : { skills: list(row.skills, decodeSkillPlan, 64) }),
@@ -254,9 +255,9 @@ function decodeHistory(value: unknown): CapabilityHistory {
   const row = record(value);
   return { changes: list(row.changes, decodeChange, 64), backups: list(row.backups, item => { const backup = record(item); return { id: text(backup.id), file: text(backup.file), createdAt: text(backup.createdAt), bytes: number(backup.bytes),
     changeId: text(backup.changeId), subject: text(backup.subject) }; }, 4096),
-    drift: list(row.drift, item => { const drift = record(item); return { id: text(drift.id), kind: choice(drift.kind, ["skill-switch", "shared-dir", "skill-link", "mcp", "instructions", "subagent"]), harnessId: text(drift.harnessId), subject: text(drift.subject),
+    drift: list(row.drift, item => { const drift = record(item); return { id: text(drift.id), kind: choice(drift.kind, ["skill-switch", "shared-dir", "skill-link", "mcp", "instructions", "subagent", "plugin"]), harnessId: text(drift.harnessId), subject: text(drift.subject),
       file: text(drift.file), state: choice(drift.state, CAPABILITY_DRIFT_STATES), changeId: text(drift.changeId), at: text(drift.at) }; }, 4096),
-    orphans: list(row.orphans, item => { const orphan = record(item); return { id: text(orphan.id), harnessId: text(orphan.harnessId), subject: text(orphan.subject), file: text(orphan.file) }; }, 4096),
+    orphans: list(row.orphans, item => { const orphan = record(item); return { id: text(orphan.id), kind: choice(orphan.kind, ["skill", "plugin"]), harnessId: text(orphan.harnessId), subject: text(orphan.subject), file: text(orphan.file) }; }, 4096),
     snapshots: (() => { const snapshots = record(row.snapshots); return { count: number(snapshots.count), bytes: number(snapshots.bytes), keep: number(snapshots.keep) }; })() };
 }
 function decodeSkillListing(value: unknown): SkillSourceListing {
@@ -539,6 +540,10 @@ export class GatewayApi {
   /** Prepares turning one skill off or on in one Harness and shows the exact change; nothing is written (ADR-045 §4). */
   checkSkillSwitch(harnessId: string, name: string, enabled: boolean, via: string | null): Promise<CapabilityChangeCheck> {
     return this.request("/capabilities/skill-switch?" + new URLSearchParams({ harnessId, name, enabled: String(enabled), ...(via === null ? {} : { via }) }), "GET", undefined, decodeChangeCheck);
+  }
+  /** Prepares turning one plugin off or on in Claude Code or Codex and shows the exact change; nothing is written (ADR-045 step 6a). */
+  checkPluginSwitch(harnessId: string, id: string, enabled: boolean): Promise<CapabilityChangeCheck> {
+    return this.request("/capabilities/plugin-switch?" + new URLSearchParams({ harnessId, id, enabled: String(enabled) }), "GET", undefined, decodeChangeCheck);
   }
   /** Prepares making Hermes read the shared skills directory, or stop; nothing is written. */
   checkSharedDir(harnessId: string, present: boolean): Promise<CapabilityChangeCheck> { return this.request("/capabilities/shared-dir?" + new URLSearchParams({ harnessId, present: String(present) }), "GET", undefined, decodeChangeCheck); }

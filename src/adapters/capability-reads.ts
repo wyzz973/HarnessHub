@@ -1,8 +1,11 @@
 import { join } from "node:path";
 import type { DuplicateRule, SkillRootRole } from "../contexts/capabilities/domain/visibility.js";
 
-/** The home directory and environment a Harness resolves its paths from; nothing here reads the process environment. */
-export interface ReadEnvironment { readonly home: string; readonly values: Readonly<Record<string, string | undefined>> }
+/**
+ * The home directory and environment a Harness resolves its paths from; nothing here reads the process environment.
+ * `system`: the root under which system-wide settings are read (an organization's managed settings), `/` when absent.
+ */
+export interface ReadEnvironment { readonly home: string; readonly values: Readonly<Record<string, string | undefined>>; readonly system?: string }
 export interface SkillRootSpec {
   readonly role: SkillRootRole;
   readonly path: string;
@@ -59,14 +62,31 @@ export type InstructionSpec =
 export interface FileListSpec { readonly dir: string; readonly format: "markdown" | "toml"; readonly role: "own" | "compat"; readonly recursive: boolean; readonly separator?: "/" | ":";
   readonly regularOnly?: boolean; readonly skipPrefix?: string }
 export interface HookSource { readonly file: string; readonly style: "claude" | "codex-json" | "codex-toml" | "cursor" | "gemini" | "hermes" | "openclaw-dirs"; readonly role: "own" | "compat" }
+/**
+ * Where a Harness keeps its plugins and their state (ADR-045 §9, step 6a). Claude Code: its install record and settings,
+ * the marketplaces it knows (for `defaultEnabled` and `dependencies`), the plugins synced from claude.ai, and the managed
+ * settings an organization may set. Codex: its `[plugins]` tables and plugin cache. OpenCode: the `plugin` lists of its
+ * configuration files, its plugin directories and `tui.json`. DeepSeek Harness: each profile's `package.json`.
+ */
 export type PluginSource =
-  | { readonly kind: "claude"; readonly installed: string; readonly settings: string }
-  | { readonly kind: "codex"; readonly config: string }
+  | { readonly kind: "claude"; readonly installed: string; readonly settings: string; readonly marketplaces: string; readonly synced: string; readonly managed: ClaudeManagedSettings }
+  | { readonly kind: "codex"; readonly config: string; readonly cache: string }
   | { readonly kind: "gemini"; readonly extensions: string; readonly enablement: string }
-  | { readonly kind: "opencode"; readonly files: readonly string[]; readonly dir: string }
+  | { readonly kind: "opencode"; readonly files: readonly string[]; readonly dirs: readonly string[]; readonly tui: string }
   | { readonly kind: "hermes"; readonly dir: string; readonly config: string }
+  | { readonly kind: "dsh"; readonly profiles: string }
   | { readonly kind: "openclaw"; readonly dir: string }
   | { readonly kind: "invisible"; readonly reason: string };
+/**
+ * Claude Code's managed settings on macOS (code.claude.com/docs/en/managed-settings): the file and its drop-in directory,
+ * which HarnessHub reads, and the MDM profiles (`com.anthropic.claudecode`), which it does not. Settings delivered from
+ * claude.ai's console are cached elsewhere and cannot be told from files.
+ */
+export interface ClaudeManagedSettings { readonly file: string; readonly dropIns: string; readonly profiles: readonly string[] }
+/** How HarnessHub turns a plugin off and on in a Harness (ADR-045 step 6a): the file it edits, or why it only reads them there. */
+export type PluginSwitchSource =
+  | { readonly kind: "claude-enabled-plugins" | "codex-plugins"; readonly file: string }
+  | { readonly kind: "read-only"; readonly reason: string };
 
 /**
  * What one Harness reads besides its model, for the versions `verified` names (ADR-045). Every rule carries its evidence;
@@ -89,6 +109,8 @@ export interface HarnessReadTable {
   readonly commands: readonly FileListSpec[] | null;
   readonly hooks: readonly HookSource[] | null;
   readonly plugins: PluginSource | null;
+  /** Null for a Harness without plugins. */
+  readonly pluginSwitch: PluginSwitchSource | null;
   readonly notes: readonly string[];
 }
 
@@ -110,6 +132,7 @@ export function harnessDirectories(environment: ReadEnvironment) {
     pi: value("PI_CODING_AGENT_DIR") ?? join(environment.home, ".pi", "agent"),
     dsh: value("DSH_HOME") ?? join(environment.home, ".dsh"),
     dshAgents: join(value("DSH_AGENTS_HOME") ?? join(environment.home, ".agents"), "skills"),
+    system: environment.system ?? "/",
   };
 }
 
@@ -131,7 +154,9 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
       evidence: ["code.claude.com/docs/en/skills、mcp、memory、sub-agents、hooks、plugins/loading（2026-10-18，页面引用到 v2.1.296）",
         "本机 2.1.302 程序：skills/synced/<org>_<account>/ 下的技能以 syncedSkills 加载；skillOverrides 取值 on、name-only、user-invocable-only、off",
         "code.claude.com/docs/en/sub-agents（2026-10-19：~/.claude/agents 递归，身份只看 name，同名的用户子 Agent 顶替内置；运行中的会话不检测新建的目录）；本机 2.1.303 包的 agentType 字符串（general-purpose、statusline-setup、claude、Plan、Explore、comment-thread-analyst、teammate、agent、subagent、main、main-session）与 claude-code-guide",
-        "code.claude.com/docs/en/commands（2026-10-19：内置命令与捆绑技能共 119 个，另有别名；同名的用户技能与它们争用 / 命令）"],
+        "code.claude.com/docs/en/commands（2026-10-19：内置命令与捆绑技能共 119 个，另有别名；同名的用户技能与它们争用 / 命令）",
+        "code.claude.com/docs/en/settings-reference#enabledplugins（键 插件名@市场名，没有条目时按 defaultEnabled；/plugin 与 claude plugin enable 写的就是它；项目、本地、--settings、管理设置依次覆盖用户级）、plugins/manifest-reference（defaultEnabled 缺省 true、市场条目的优先；dependencies 写作 名、名@市场 或对象，裸名按本插件的市场；被启用插件依赖的插件也启用）、managed-settings（managed-settings.json 与 managed-settings.d，MDM 域 com.anthropic.claudecode）（2026-10-19）",
+        "本机 2.1.303：claude.ai 同步的插件以 <名>@synced 加载，清单在 plugins/synced/<账户>/manifest.json，按代际放在 <名>~g<代>；程序里没有 blocklist.json（那是旧版留下的文件）"],
       skills: { roots: [{ role: "own", path: join(dirs.claude, "skills"), precedence: 1, containment: false, depth: 1, exclude: ["synced"] },
         { role: "synced", path: join(dirs.claude, "skills", "synced"), precedence: 1, containment: false, depth: 2 }], duplicates: "dedupe-realpath", requiresDescription: false,
         nameMustMatchDirectory: false, switch: { kind: "claude-skill-overrides", file: join(dirs.claude, "settings.json") }, separate: ["synced"] },
@@ -142,7 +167,11 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
       builtinCommands: ["add-dir", "advisor", "agents", "artifact-capabilities", "artifact-diagramming", "artifacts", "auto-mode-setup", "autocompact", "autofix-pr", "background", "batch", "branch", "btw", "bug", "cd", "chrome", "claude-api", "claude-in-chrome", "clear", "code-review", "color", "compact", "config", "context", "copy", "cost", "dataviz", "debug", "deep-research", "design", "design-login", "design-sync", "desktop", "diff", "doctor", "effort", "exit", "export", "fast", "feedback", "fewer-permission-prompts", "focus", "fork", "goal", "heapdump", "help", "hooks", "ide", "import", "init", "insights", "install-github-app", "install-slack-app", "keybindings", "list-agents", "login", "logout", "loop", "mcp", "memory", "mobile", "model", "output-style", "passes", "permissions", "plan", "plugin", "plugin-authoring", "powerup", "pr-comments", "privacy-settings", "radio", "rate-limit-options", "recap", "release-notes", "reload-plugins", "reload-skills", "remote-control", "remote-env", "rename", "resume", "review", "rewind", "run", "run-skill-generator", "sandbox", "schedule", "scroll-speed", "security-review", "setup-bedrock", "setup-vertex", "simplify", "skill-doctor", "skills", "slides", "stats", "status", "statusline", "stickers", "stop", "subtask", "tasks", "team-onboarding", "teleport", "terminal-setup", "theme", "tui", "ultraplan", "ultrareview", "update-config", "upgrade", "usage", "usage-credits", "verify", "vim", "voice", "web-setup", "workflow-authoring", "workflows", "bg", "share", "reset", "new", "settings", "app", "checkup", "quit", "proactive", "ios", "android", "allowed-tools", "rc", "continue", "checkpoint", "undo", "routines"],
       commands: [{ dir: join(dirs.claude, "commands"), format: "markdown", role: "own", recursive: true }],
       hooks: [{ file: join(dirs.claude, "settings.json"), style: "claude", role: "own" }],
-      plugins: { kind: "claude", installed: join(dirs.claude, "plugins", "installed_plugins.json"), settings: join(dirs.claude, "settings.json") },
+      plugins: { kind: "claude", installed: join(dirs.claude, "plugins", "installed_plugins.json"), settings: join(dirs.claude, "settings.json"), marketplaces: join(dirs.claude, "plugins", "known_marketplaces.json"),
+        synced: join(dirs.claude, "plugins", "synced"), managed: { file: join(dirs.system, "Library", "Application Support", "ClaudeCode", "managed-settings.json"),
+          dropIns: join(dirs.system, "Library", "Application Support", "ClaudeCode", "managed-settings.d"),
+          profiles: [join(dirs.system, "Library", "Managed Preferences", "com.anthropic.claudecode.plist"), ...(environment.values.USER ? [join(dirs.system, "Library", "Managed Preferences", environment.values.USER, "com.anthropic.claudecode.plist")] : [])] } },
+      pluginSwitch: { kind: "claude-enabled-plugins", file: join(dirs.claude, "settings.json") },
       notes: ["自定义命令已并入技能，同名时技能优先。"],
     },
     {
@@ -150,7 +179,8 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
       evidence: ["learn.chatgpt.com/docs/build-skills（用户级 $HOME/.agents/skills；同名“both can appear”）", "openai/codex codex-rs/ext/skills/src/host_roots.rs（$CODEX_HOME/skills 已弃用但仍读取）", "config-reference（mcp_servers、[[skills.config]]）",
         "openai/codex rust-v0.162.1 codex-rs/codex-home/src/instructions/mod.rs（用户级依次读 AGENTS.override.md、AGENTS.md，trim 后第一个非空者生效，整文件读、没有字节上限；project_doc_max_bytes 只限项目文件，见 core/src/agents_md.rs）",
         "rust-v0.162.1 agent-roles/src/discovery.rs、loader.rs、agent_role_config.rs（agents/**/*.toml 递归，必填 name、description、developer_instructions，名字以 name 为准；config.toml 的 [agents.<名>] 也声明角色）与 core/src/agent/role.rs（内置 default、explorer、worker，awaiter 已注释；同名的用户角色优先）",
-        "rust-v0.118.0 PR #16115（删除自定义 prompts，~/.codex/prompts 不再读取，官方改用技能）"],
+        "rust-v0.118.0 PR #16115（删除自定义 prompts，~/.codex/prompts 不再读取，官方改用技能）",
+        "config-reference（plugins.<插件名@市场名>.enabled；受信任项目的 .codex/config.toml 可覆盖用户级）与 rust-v0.162.1 core-plugins/src/toggles.rs（TUI /plugins 与 app-server 的 SetPluginEnabled 写同一个键）；本机 0.162.1 的 codex plugin 只有 add、list、remove、marketplace，缓存在 plugins/cache/<市场>/<名>/<版本>"],
       skills: { roots: [{ role: "shared", path: dirs.shared, precedence: 1, containment: false, depth: 1 }, { role: "own", path: join(dirs.codex, "skills"), precedence: 1, containment: false, depth: 1 },
         { role: "bundled", path: join(dirs.codex, "skills", ".system"), precedence: 1, containment: false, depth: 1 }],
         duplicates: "all-visible", requiresDescription: true, nameMustMatchDirectory: false, switch: { kind: "codex-skills-config", file: join(dirs.codex, "config.toml") } },
@@ -160,7 +190,8 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
       reservedSubagents: ["default", "explorer", "worker", "awaiter"],
       commands: null,
       hooks: [{ file: join(dirs.codex, "hooks.json"), style: "codex-json", role: "own" }, { file: join(dirs.codex, "config.toml"), style: "codex-toml", role: "own" }],
-      plugins: { kind: "codex", config: join(dirs.codex, "config.toml") },
+      plugins: { kind: "codex", config: join(dirs.codex, "config.toml"), cache: join(dirs.codex, "plugins", "cache") },
+      pluginSwitch: { kind: "codex-plugins", file: join(dirs.codex, "config.toml") },
       notes: ["0.118.0 起不再读取 ~/.codex/prompts，自定义命令改用技能。config.toml 的 [agents.<名>] 也能声明子 Agent。改 config.toml 后要重启 Codex。"],
     },
     {
@@ -176,6 +207,7 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
       commands: [{ dir: join(dirs.cursor, "commands"), format: "markdown", role: "own", recursive: false }, { dir: join(dirs.claude, "commands"), format: "markdown", role: "compat", recursive: false }],
       hooks: [{ file: join(dirs.cursor, "hooks.json"), style: "cursor", role: "own" }, { file: join(dirs.claude, "settings.json"), style: "claude", role: "compat" }],
       plugins: { kind: "invisible", reason: "Cursor 不在磁盘上记录已装的插件，只能在会话里用 /plugin 查看；它默认导入 Claude Code 已装的插件。" },
+      pluginSwitch: { kind: "read-only", reason: "Cursor 不在磁盘上记录插件。" },
       notes: ["Cursor 没有按技能停用的开关。", "~/.cursor/mcp.json 与 Cursor 编辑器共用。", "本机 CLI 只读工作区里的子 Agent；文档所列的家目录位置在 CLI 程序里没有，编辑器是否读取未核实。"],
     },
     {
@@ -183,7 +215,8 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
       evidence: ["anomalyco/opencode v1.18.35 packages/opencode/src/skill/index.ts（发现 .claude 与 .agents 的 skills/**/SKILL.md 与配置目录；并发加载，同名后写入者覆盖并警告）",
         "anomalyco/opencode v1.18.35 packages/opencode/src/session/instruction.ts（全局指令取第一个存在的文件：配置目录的 AGENTS.md，然后 ~/.claude/CLAUDE.md；空文件也算存在；每一步重新读）与 effect/runtime-flags.ts（OPENCODE_DISABLE_CLAUDE_CODE 或 OPENCODE_DISABLE_CLAUDE_CODE_PROMPT 关掉回退）",
         "v1.18.35 config/agent.ts（{agent,agents}/**/*.md 递归，名字是相对路径、以 / 连接；{mode,modes}/*.md 也定义 Agent）、config/command.ts（{command,commands}/**/*.md）、agent/agent.ts（内置 build、plan、general、explore、compaction、title、summary，同名文件逐字段覆盖）",
-        "v1.18.35 command/index.ts（内置命令 init、review；技能在名字未被占用时补成命令）与 session/prompt.ts（命令与技能模板里的 !`cmd` 不经权限检查就执行）"],
+        "v1.18.35 command/index.ts（内置命令 init、review；技能在名字未被占用时补成命令）与 session/prompt.ts（命令与技能模板里的 !`cmd` 不经权限检查就执行）",
+        "v1.18.35 config/plugin.ts（ConfigPlugin.load 用 Glob.scan(\"{plugin,plugins}/*.{ts,js}\", { dot: true, symlink: true })）与 core/v1/config/plugin.ts（plugin 条目是 string 或 [string, 选项]）；tui.json 的 plugin 是 TUI 插件，只在终端界面里加载"],
       skills: { roots: [...(disableClaudeSkills ? [] : [{ role: "compat" as const, path: join(dirs.claude, "skills"), precedence: 1, containment: false, depth: 8, find: OPENCODE_FIND }]),
         { role: "shared", path: dirs.shared, precedence: 1, containment: false, depth: 8, find: OPENCODE_FIND }, { role: "own", path: join(dirs.opencode, "skills"), precedence: 1, containment: false, depth: 8, find: OPENCODE_FIND },
         { role: "own", path: join(dirs.opencode, "skill"), precedence: 1, containment: false, depth: 8, find: OPENCODE_FIND }],
@@ -196,7 +229,8 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
       builtinCommands: ["init", "review"],
       commands: [{ dir: join(dirs.opencode, "commands"), format: "markdown", role: "own", recursive: true, separator: "/" }, { dir: join(dirs.opencode, "command"), format: "markdown", role: "own", recursive: true, separator: "/" }],
       hooks: null,
-      plugins: { kind: "opencode", files: opencodeConfigs, dir: join(dirs.opencode, "plugins") },
+      plugins: { kind: "opencode", files: opencodeConfigs, dirs: [join(dirs.opencode, "plugin"), join(dirs.opencode, "plugins")], tui: join(dirs.opencode, "tui.json") },
+      pluginSwitch: { kind: "read-only", reason: "OpenCode 没有插件开关：写在配置或放进插件目录就加载。" },
       notes: [disableClaudeSkills ? "环境里设置了关闭 .claude 技能来源的变量，OpenCode 不读 ~/.claude/skills。" : "OpenCode 也读 ~/.claude/skills；可以在终端环境里设置 OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1 关掉这个来源。", "OpenCode 没有声明式的 Hooks，由插件实现。"],
     },
     {
@@ -212,6 +246,7 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
       commands: [{ dir: join(dirs.gemini, "commands"), format: "toml", role: "own", recursive: true }],
       hooks: [{ file: join(dirs.gemini, "settings.json"), style: "gemini", role: "own" }],
       plugins: { kind: "gemini", extensions: join(dirs.gemini, "extensions"), enablement: join(dirs.gemini, "extensions", "extension-enablement.json") },
+      pluginSwitch: { kind: "read-only", reason: "扩展的启停（gemini extensions enable、disable）还没有在已装版本上核实，暂时只读。" },
       notes: ["Gemini CLI 已对免费层与 Google One 用户停止服务（2026-06-18），由 Antigravity CLI 取代；Antigravity 不共用这些配置。", "运行中的 Gemini 会话保存设置时，会按启动时的快照覆盖 settings.json。",
         "Gemini 以 --acp 运行时不展开自定义命令，HarnessHub 的会话里用不了；终端里可以。"],
     },
@@ -227,6 +262,7 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
       subagents: null, commands: null,
       hooks: [{ file: join(dirs.openclaw, "hooks"), style: "openclaw-dirs", role: "own" }],
       plugins: { kind: "openclaw", dir: join(dirs.openclaw, "extensions") },
+      pluginSwitch: { kind: "read-only", reason: "本机版改 plugins.* 会让 Gateway 自动重启（ADR-045 裁决第 9 条），只读。" },
       notes: ["本机版改 MCP 或插件会让 Gateway 自动重启，HarnessHub 暂不写入（ADR-045 第 9 条）。", "另有随程序附带的内置技能，这里不列出。"],
     },
     {
@@ -238,12 +274,13 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
       instructions: { kind: "files", candidates: [{ path: join(dirs.pi, "AGENTS.md"), role: "own" }, { path: join(dirs.pi, "CLAUDE.md"), role: "own" }], rule: "first-existing" },
       subagents: null,
       commands: [{ dir: join(dirs.pi, "prompts"), format: "markdown", role: "own", recursive: false }],
-      hooks: null, plugins: null,
+      hooks: null, plugins: null, pluginSwitch: null,
       notes: ["Pi 在官网安装存在并验证之前，不提供停用。"],
     },
     {
       harnessId: "hermes", verified: ">=0.12.0 <0.13.0",
-      evidence: ["本机 hermes-agent a0556b8（v0.12.0）agent/skill_utils.py（$HERMES_HOME/skills 递归，加 skills.external_dirs，本地优先）", "hermes_cli/skills_config.py（skills.disabled、platform_disabled）", "website/docs/reference/mcp-config-reference.md（mcp_servers）"],
+      evidence: ["本机 hermes-agent a0556b8（v0.12.0）agent/skill_utils.py（$HERMES_HOME/skills 递归，加 skills.external_dirs，本地优先）", "hermes_cli/skills_config.py（skills.disabled、platform_disabled）", "website/docs/reference/mcp-config-reference.md（mcp_servers）",
+        "hermes_cli/plugins.py（$HERMES_HOME/plugins/<名> 或 <分类>/<名>，plugin.yaml 或 plugin.yml，键按路径取也认裸名；plugins.disabled 优先；plugins.enabled 缺失表示一个都不启用；exclusive 由 <分类>.provider 选择，model-provider 不受 plugins.enabled 约束；没写 kind 时按 __init__.py 前 8 KiB 归类；hermes plugins enable 经 save_config 整份重写 config.yaml）"],
       skills: { roots: [{ role: "own", path: join(hermes, "skills"), precedence: 2, containment: false, depth: 8, find: HERMES_FIND }], duplicates: "precedence", requiresDescription: false, nameMustMatchDirectory: false,
         switch: { kind: "hermes-skills-disabled", file: join(hermes, "config.yaml") },
         externalDirs: { file: join(hermes, "config.yaml"), format: "yaml", path: ["skills", "external_dirs"], precedence: 1, containment: false, depth: 8, find: HERMES_FIND, relativeTo: hermes } },
@@ -252,17 +289,20 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
       subagents: null, commands: null,
       hooks: [{ file: join(hermes, "config.yaml"), style: "hermes", role: "own" }],
       plugins: { kind: "hermes", dir: join(hermes, "plugins"), config: join(hermes, "config.yaml") },
+      pluginSwitch: { kind: "read-only", reason: "hermes plugins enable 会经 save_config 整份重写 config.yaml（丢掉注释、补上默认项），暂时只读。" },
       notes: ["Hermes 0.12 不读 ~/.agents/skills；长驻进程要 /reload-skills 或重启才看到新技能。"],
     },
     {
       harnessId: "dsh", verified: ">=0.2.0 <0.3.0",
       evidence: ["deepseek-ai/deepseek-harness 5badb15 docs/subsystems/skills.md（$DSH_HOME/skills 优先于 ~/.agents/skills）",
-        "@deepseek-ai/dsh 0.2.0-rc.2 dsh-app-boot：依次应用各 bundle、profile 自己的 cordis.patch.yml、$DSH_HOME/cordis.patch.yml；补丁文件必须是顶层 YAML 数组（docs/user/guide/mcp-memory.md：MCP 客户端行 @deepseek-ai/dsh-mcp-client）"],
+        "@deepseek-ai/dsh 0.2.0-rc.2 dsh-app-boot：依次应用各 bundle、profile 自己的 cordis.patch.yml、$DSH_HOME/cordis.patch.yml；补丁文件必须是顶层 YAML 数组（docs/user/guide/mcp-memory.md：MCP 客户端行 @deepseek-ai/dsh-mcp-client）",
+        "5badb15 apps/cli/src/plugin.ts（dsh plugin --profile <名> 把参数交给 pnpm；插件是 $DSH_HOME/profiles/<名>/package.json 的依赖，装上即启用）"],
       skills: { roots: [{ role: "own", path: join(dirs.dsh, "skills"), precedence: 2, containment: false, depth: 1 }, { role: "shared", path: dirs.dshAgents, precedence: 1, containment: false, depth: 1 }],
         duplicates: "precedence", requiresDescription: true, nameMustMatchDirectory: false, switch: null },
       mcp: { style: "dsh", file: join(dirs.dsh, "cordis.patch.yml"), profiles: join(dirs.dsh, "profiles") },
       instructions: { kind: "files", candidates: [{ path: join(dirs.dsh, "AGENTS.md"), role: "own" }], rule: "first-existing" },
-      subagents: null, commands: null, hooks: null, plugins: null,
+      subagents: null, commands: null, hooks: null, plugins: { kind: "dsh", profiles: join(dirs.dsh, "profiles") },
+      pluginSwitch: { kind: "read-only", reason: "DeepSeek Harness 没有插件开关：装进 profile 就启用。" },
       notes: ["DeepSeek Harness 没有按技能停用的开关。"],
     },
   ];

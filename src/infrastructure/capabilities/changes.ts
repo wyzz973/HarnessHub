@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promi
 import { isDeepStrictEqual } from "node:util";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
-import { capabilityReadTables, harnessDirectories, type HarnessReadTable, type ReadEnvironment } from "../../adapters/capability-reads.js";
+import { capabilityReadTables, harnessDirectories, type HarnessReadTable, type PluginSource, type ReadEnvironment } from "../../adapters/capability-reads.js";
 import { CAPABILITY_CHECK_MS, CapabilityError, LOCAL_SKILL_SOURCE, SKILL_SNAPSHOT_CHANGES, type CapabilityChangeCheck, type CapabilityChangeKind, type CapabilityChangeView, type CapabilityDrift, type CapabilityDriftState, type CapabilityHistory,
   type CapabilityLinkChange, type CapabilityOrphan, type CapabilityRestoreCheck, type InstructionCheckOption, type InstructionsView, type McpDefinitionView, type McpInventoryView, type SkillSourceListing,
   type SkillTextView, type SkillUpdateView, type SubagentDefinitionView, type SubagentInventoryView } from "../../contracts/capabilities.js";
@@ -27,7 +27,9 @@ import { InstructionInventory } from "./instruction-changes.js";
 import { SubagentInventory } from "./subagent-changes.js";
 import { sweepClaudeCopies, systemClaude, type ClaudeRunner } from "./claude-mcp.js";
 import { SkillSnapshots, sweepStaging } from "./skill-packages.js";
-import { claudeSwitch, codexSwitch, externalDirsOf, heldValue, listSwitch, opencodeSwitch, openclawSwitch, sharedDirPlan, type SwitchContext, type SwitchPlan, type SwitchRequest } from "./switches.js";
+import { claudePluginSwitch, claudeSwitch, codexPluginSwitch, codexSwitch, externalDirsOf, heldValue, listSwitch, opencodeSwitch, openclawSwitch, sharedDirPlan, type PluginSwitchRequest, type SwitchContext, type SwitchPlan,
+  type SwitchRequest } from "./switches.js";
+import { CLAUDE_UNINSTALLED_SOURCES, managedPluginSetting, PLUGIN_ID, pluginParts, readClaudePlugins, systemPluginFiles, type PluginFiles } from "./claude-plugins.js";
 
 export interface ChangeOptions {
   /** The Gateway's data root; the changes keep their record and backups in `capabilities/` under it. */
@@ -48,10 +50,12 @@ export interface ChangeOptions {
   readonly github?: GithubFetch;
   /** Runs the user's `claude` for its own MCP commands, allowed to write only what it is given and never to use the network; the sandboxed system one by default. */
   readonly claude?: ClaudeRunner;
+  /** Reads plugin manifests and managed settings for plugin switches; this computer's files by default. */
+  readonly pluginFiles?: PluginFiles;
 }
 export type OpenclawRunner = (args: readonly string[], options: { readonly env: Readonly<Record<string, string>>; readonly writable: readonly string[] }, signal: AbortSignal) => Promise<void>;
 type Planned = Exclude<SwitchPlan, { kind: "none" }>;
-type EditChange = "skill-switch" | "shared-dir" | "mcp-sync" | "mcp-remove" | "instructions-sync" | "instructions-remove" | "subagent-sync" | "subagent-remove";
+type EditChange = "skill-switch" | "shared-dir" | "mcp-sync" | "mcp-remove" | "instructions-sync" | "instructions-remove" | "subagent-sync" | "subagent-remove" | "plugin-switch";
 /** An edit of one file, or the Harness's own command; `predicted` is what that command wrote when run on a copy. */
 interface PreparedEdit { readonly kind: "edit"; readonly change: EditChange; readonly harnessId: string; readonly subject: string; readonly expires: number; readonly plan: Planned | null;
   readonly before: Buffer | null; readonly predicted: Buffer | null; readonly mode: number; readonly check: CapabilityChangeCheck }
@@ -64,6 +68,17 @@ interface PreparedRestore { readonly kind: "restore"; readonly expires: number; 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,127}$/u, COMMAND = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u, FINGERPRINT = /^[a-f0-9]{64}$/u, CHANGE = /^[a-f0-9-]{36}$/u, DRIFT = /^[a-f0-9]{32}$/u;
 const RUNNING: Readonly<Record<string, RegExp>> = { claude: /^claude(?:\.exe)?$/u, gemini: /^gemini$/u, cursor: /^(?:Cursor|cursor-agent)$/u, codex: /^codex$/u };
 const SHARED_ENTRY = "~/.agents/skills";
+/** What a Claude Code plugin switch tells before confirming: when it takes effect, and what overrides the user's settings. */
+const CLAUDE_PLUGIN_NOTES = ["新开的 Claude Code 会话才读到这次改动，包括 HarnessHub 新开的会话；运行中的会话要 /reload-plugins，HarnessHub 的会话里没有这个命令。",
+  "Claude Code 的桌面应用与 VS Code 扩展读同一个 settings.json。",
+  "项目的 .claude/settings.json、.claude/settings.local.json、--settings 与组织的管理设置都能覆盖这里：在用户级写 false 关不掉项目启用的插件。claude.ai 下发的管理设置无法从文件核对。"];
+/** What a Codex plugin switch tells before confirming, from its config.toml as it is. */
+function codexPluginNotes(content: string, id: string): readonly string[] {
+  const value = parsed(content, "toml");
+  return ["新开的 Codex 线程才读到这次改动，包括 ChatGPT 应用和编辑器扩展内置的 Codex。", "受信任项目的 .codex/config.toml 可以覆盖这里；Codex 的管理层（cloud-managed、/etc/codex）HarnessHub 无法核对。",
+    ...(at(value, ["features", "plugins"]) === false ? ["config.toml 的 [features] plugins = false 关掉了整个插件功能，在重新打开它之前，这项改动不起作用。"] : []),
+    ...(pluginParts(id).marketplace === "openai-bundled" ? ["这个插件随 Codex 安装。"] : [])];
+}
 /** Ledger keys that record a fact about a file or directory (HarnessHub created it), not something written into one. */
 const FACT = /^(?:file|dir)\/created$/u;
 function hash(value: string): string { return createHash("sha256").update(value).digest("hex"); }
@@ -73,6 +88,7 @@ function openclawContent(bytes: Buffer): unknown { const value = record(parsed(b
 function displayed(text: string, homes: readonly string[]): string { let out = text; for (const home of [...homes].sort((a, b) => b.length - a.length)) out = out.split(home + "/").join("~/"); return maskSecrets(out); }
 function code(error: unknown): string { return error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : ""; }
 function inside(path: string, root: string): boolean { return path === root || path.startsWith(root + "/"); }
+function own(value: Readonly<Record<string, unknown>>, key: string): unknown { return Object.hasOwn(value, key) ? value[key] : undefined; }
 
 /**
  * Changes HarnessHub makes to a Harness's own user-level configuration (ADR-045 §3–4): each is checked and shown first,
@@ -263,6 +279,72 @@ export class CapabilityChanges {
     const { file, read, plan, blocked } = await this.plan(table, request);
     return this.offerEdit("skill-switch", input.harnessId, input.name, input.enabled, file, read, plan, blocked, await this.runningNotes(input.harnessId, "skills"), ["skills", "entries", input.name, "enabled"]);
   }
+  /**
+   * Prepares turning one plugin off (`enabled` false) or on in one Harness's own file (ADR-045 step 6a): Claude Code's
+   * `enabledPlugins`, Codex's `[plugins."<id>"]` table. Every other Harness's plugins are read only. A Claude Code plugin is
+   * refused while its dependencies (turning it on) or the enabled plugins that depend on it (turning it off) say
+   * otherwise, while those cannot be read, and while an organization's managed settings decide it or might.
+   */
+  checkPluginSwitch(input: { readonly harnessId: string; readonly id: string; readonly enabled: boolean }, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> {
+    return this.checking(() => this.preparePluginSwitch(input, installed));
+  }
+  private async preparePluginSwitch(input: { readonly harnessId: string; readonly id: string; readonly enabled: boolean; readonly orphan?: LedgerEntry }, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> {
+    if (!PLUGIN_ID.test(input.id) || input.id.length > 256) throw new CapabilityError("INVALID_INPUT", "invalid plugin id");
+    const harness = this.installed(installed, input.harnessId), { tables } = await this.tables(), table = tables.find(item => item.harnessId === input.harnessId), switching = table?.pluginSwitch ?? null;
+    if (table === undefined || switching === null || switching.kind === "read-only") throw new CapabilityError("CAPABILITY_UNSUPPORTED", harness.name + " 的插件 HarnessHub 只读" + (switching?.kind === "read-only" ? "：" + switching.reason : "。"));
+    const file = switching.file, read = readTarget(file), request: PluginSwitchRequest = { harnessId: input.harnessId, id: input.id, enabled: input.enabled }, context = this.context(input.harnessId);
+    const notes = [...await this.runningNotes(input.harnessId, "plugins")];
+    let plan: SwitchPlan | null = null, blocked: string | null = null;
+    if (read.state === "refused") blocked = "无法修改 " + this.shown(file) + "：" + read.reason + "。";
+    else if (read.state === "missing" && (!read.directory || switching.kind === "codex-plugins")) blocked = switching.kind === "codex-plugins" ? "Codex 还没有 config.toml。" : "无法修改：" + this.shown(dirname(file)) + " 不存在。";
+    else {
+      const content = read.state === "ok" ? read.bytes.toString("utf8") : "";
+      try {
+        if (switching.kind === "claude-enabled-plugins" && table.plugins?.kind === "claude") ({ plan, blocked } = await this.claudePluginPlan(table.plugins, file, content, request, context, notes, input.orphan !== undefined));
+        else if (switching.kind === "codex-plugins") plan = codexPluginSwitch(file, content, request, context, codexPluginNotes(content, input.id));
+        else blocked = harness.name + " 的插件来源与开关不一致，没有准备写入。";
+      } catch (error) { if (!(error instanceof UnsafeEdit)) throw error; blocked = "无法安全修改 " + this.shown(file) + "：" + error.message + "。"; }
+    }
+    return this.offerEdit("plugin-switch", input.harnessId, input.id, input.enabled, file, read, plan, blocked, notes, null);
+  }
+  /**
+   * Claude Code's side of a plugin switch: the plugin must be installed for the user (an orphaned setting excepted), not
+   * decided by managed settings, and its dependencies — or, turning it off, the enabled plugins depending on it, synced
+   * ones included — must allow it. HarnessHub never turns a dependency on or off along with it.
+   */
+  private async claudePluginPlan(source: Extract<PluginSource, { kind: "claude" }>, file: string, content: string, request: PluginSwitchRequest, context: SwitchContext, notes: string[], orphan: boolean)
+    : Promise<{ plan: SwitchPlan | null; blocked: string | null }> {
+    const files = this.options.pluginFiles ?? systemPluginFiles(), { marketplace } = pluginParts(request.id);
+    if (CLAUDE_UNINSTALLED_SOURCES.includes(marketplace)) return { plan: null, blocked: marketplace === "synced" ? "账户同步的插件 HarnessHub 暂不提供开关；Claude Code 里用 /plugin 可以停用它（组织要求的除外）。"
+      : "Claude Code 从 " + marketplace + " 加载它，没有安装记录；HarnessHub 不提供开关。" };
+    const state = await readClaudePlugins(source, files), plugin = state.plugins.find(item => item.id === request.id && !item.synced);
+    if (plugin === undefined && !orphan) return { plan: null, blocked: "Claude Code 的用户级没有安装 " + request.id + "。" };
+    const managed = await managedPluginSetting(source.managed, request.id, files);
+    if (managed.state === "set") return { plan: null, blocked: managed.value ? "组织的管理设置强制启用了它（" + this.shown(managed.file) + "），在用户级停用不起作用。" : "组织的管理设置阻止了它（" + this.shown(managed.file) + "），不能启用。" };
+    if (managed.state === "unknown") return { plan: null, blocked: this.shownIn(managed.reason) + "。" };
+    notes.push(...CLAUDE_PLUGIN_NOTES);
+    if (plugin !== undefined && !orphan && request.enabled) {
+      if (plugin.dependencies === null) return { plan: null, blocked: "无法核对它的依赖：" + plugin.problem + "。" };
+      const missing = plugin.dependencies.filter(id => !state.plugins.some(item => item.id === id && !item.synced)), off = plugin.dependencies.filter(id => !missing.includes(id) && state.enabled.get(id) === false);
+      if (missing.length || off.length) return { plan: null, blocked: [missing.length ? "它依赖的 " + missing.join("、") + " 没有安装" : null, off.length ? "它依赖的 " + off.join("、") + " 已停用" : null].filter(Boolean).join("；")
+        + "。HarnessHub 不连带改动依赖；在 Claude Code 里用 /plugin 或 claude plugin enable 会连带启用已装的依赖。" };
+    }
+    if (plugin !== undefined && !orphan && !request.enabled) {
+      const others = state.plugins.filter(item => item.id !== request.id && state.enabled.get(item.id) === true);
+      const unknown = others.filter(item => !item.synced && item.dependencies === null);
+      if (unknown.length) return { plan: null, blocked: "无法核对启用中的 " + unknown.map(item => item.id).join("、") + " 是否依赖它（" + unknown[0]!.problem + "）。" };
+      const dependents = others.filter(item => (item.dependencies ?? []).includes(request.id));
+      if (dependents.length) return { plan: null, blocked: "启用中的 " + dependents.map(item => item.id).join("、") + " 依赖它，停用会让它们缺少依赖。" };
+      const unread = others.filter(item => item.synced && item.dependencies === null).length;
+      if (unread) notes.push("有 " + unread + " 个账户同步的插件读不到清单，HarnessHub 没有核对它们是否依赖这个插件。");
+      if (state.projectOnly) notes.push("另有 " + state.projectOnly + " 个插件只装在项目里，HarnessHub 没有核对它们是否依赖这个插件。");
+    }
+    // Without an entry the plugin is on by its default, or because an enabled plugin depends on it.
+    const fallback = plugin === undefined || plugin.defaultEnabled || state.plugins.some(item => item.id !== plugin.id && state.enabled.get(item.id) === true && (item.dependencies ?? []).includes(plugin.id));
+    return { plan: claudePluginSwitch(file, content, request, fallback, context), blocked: null };
+  }
+  /** Free text naming a path (a managed settings file, say), with ~ for the home directory. */
+  private shownIn(text: string): string { let out = text; for (const home of [...this.options.homes].sort((a, b) => b.length - a.length)) out = out.split(home + "/").join("~/"); return out; }
   /**
    * Prepares making Hermes read the shared `~/.agents/skills` through its `skills.external_dirs` (`present`), or stop
    * (approval ruling 2). Only Hermes needs this: the others read the shared directory themselves, or (Claude Code) take
@@ -521,7 +603,7 @@ export class CapabilityChanges {
    * Running sessions that read or overwrite the file (Claude Code, Gemini CLI), counted without their arguments. Claude
    * Code watches its skill switches; whether a running session picks up a new MCP server is not promised.
    */
-  private async runningNotes(harnessId: string, setting: "skills" | "mcp" | "instructions" | "subagents"): Promise<readonly string[]> {
+  private async runningNotes(harnessId: string, setting: "skills" | "mcp" | "instructions" | "subagents" | "plugins"): Promise<readonly string[]> {
     const pattern = RUNNING[harnessId];
     if (!pattern) return [];
     let table: ReturnType<typeof parseProcessTable> = null;
@@ -530,10 +612,11 @@ export class CapabilityChanges {
     // Cursor's helper processes share its name; only the editor's main process and cursor-agent are counted.
     const count = table.filter(row => harnessId === "cursor" ? /\/Cursor\.app\/Contents\/MacOS\/Cursor(?:\s|$)/u.test(row.command) || programName(row.command) === "cursor-agent" : pattern.test(programName(row.command))).length;
     if (!count) return [];
-    return harnessId === "claude" ? ["有 " + count + " 个 Claude Code 进程在运行" + (setting === "skills" ? "，它们会立即读到这次改动。" : "。")]
+    return harnessId === "claude" ? ["有 " + count + " 个 Claude Code 进程在运行" + (setting === "skills" ? "，它们会立即读到这次改动。" : setting === "plugins" ? "；运行中的会话可能把旧的设置写回，那时漂移列表会显示。" : "。")]
       : harnessId === "cursor" ? ["有 " + count + " 个 Cursor 进程在运行（编辑器或 cursor-agent），它可能自行改写 mcp.json；写入后会立即核对。"]
       // ChatGPT's app and editor extensions bring their own Codex, which uses ~/.codex too.
-      : harnessId === "codex" ? ["有 " + count + " 个 Codex 进程在运行（可能是 ChatGPT 应用或编辑器扩展内置的 Codex，它们也用 ~/.codex）；运行中的会话不受影响，新开的会话才读到改动。"]
+      : harnessId === "codex" ? ["有 " + count + " 个 Codex 进程在运行（可能是 ChatGPT 应用或编辑器扩展内置的 Codex，它们也用 ~/.codex）；运行中的会话不受影响，新开的会话才读到改动。"
+        + (setting === "plugins" ? "它们也可能改写 config.toml：确认前文件变了会要求重新检查，事后被改回会出现在漂移列表里。" : "")]
       // A running Gemini CLI writes its settings back, not its instructions file.
       : setting === "instructions" ? ["有 " + count + " 个 Gemini CLI 进程在运行；它们可以用 /memory refresh 重新读取指令。"]
       : setting === "subagents" ? ["有 " + count + " 个 Gemini CLI 进程在运行；运行中的会话不读新的子 Agent，新会话才读到。"]
@@ -723,11 +806,23 @@ export class CapabilityChanges {
   private async orphans(): Promise<readonly CapabilityOrphan[]> {
     const { tables } = await this.tables(), found: CapabilityOrphan[] = [];
     for (const entry of this.store.ledgerEntries()) {
-      if (entry.key.startsWith("link/") || entry.key.startsWith("skills.external_dirs/") || entry.key.startsWith("mcp/") || entry.key.startsWith("instructions/") || entry.key.startsWith("subagent/") || FACT.test(entry.key)) continue;
+      if (entry.key.startsWith("link/") || entry.key.startsWith("skills.external_dirs/") || entry.key.startsWith("mcp/") || entry.key.startsWith("instructions/") || entry.key.startsWith("subagent/") || entry.key.startsWith("plugin/") || FACT.test(entry.key)) continue;
       const table = tables.find(item => item.harnessId === entry.harnessId), rest = entry.key.slice(entry.key.indexOf("/") + 1);
       if (table === undefined) continue;
       const kept = entry.key.startsWith("skills.config/") ? existsSync(rest) : skillFolderSomewhere(rest, table);
-      if (!kept) found.push({ id: driftId(entry), harnessId: entry.harnessId, subject: entry.key.startsWith("skills.config/") ? basename(dirname(rest)) : rest, file: this.shown(entry.file) });
+      if (!kept) found.push({ id: driftId(entry), kind: "skill", harnessId: entry.harnessId, subject: entry.key.startsWith("skills.config/") ? basename(dirname(rest)) : rest, file: this.shown(entry.file) });
+    }
+    // HarnessHub's `false` for a Claude Code plugin no longer installed for the user, still in place (a changed one is drift).
+    const claude = tables.find(item => item.harnessId === "claude")?.plugins, offs = this.store.ledgerEntries().filter(entry => entry.harnessId === "claude" && entry.key.startsWith("plugin/") && entry.valueHash === hash(JSON.stringify(false)));
+    if (claude?.kind === "claude" && offs.length) {
+      const installRecord = readTarget(claude.installed);
+      let installs: Readonly<Record<string, unknown>> | null = null;
+      try { installs = installRecord.state === "ok" ? record(at(parsed(installRecord.bytes.toString("utf8"), "json"), ["plugins"])) : installRecord.state === "missing" ? {} : null; } catch { installs = null; }
+      const shared = this.sharedEntries(await resolveHermesHome(this.options.environment));
+      for (const entry of installs === null ? [] : offs) {
+        const id = entry.key.slice("plugin/".length), value = own(installs!, id), user = (Array.isArray(value) ? value : value === undefined ? [] : [value]).map(record).some(item => item.scope === undefined || item.scope === "user");
+        if (!user && this.driftState(entry, shared, new Map()) === null) found.push({ id: driftId(entry), kind: "plugin", harnessId: entry.harnessId, subject: id, file: this.shown(entry.file) });
+      }
     }
     return found;
   }
@@ -738,6 +833,11 @@ export class CapabilityChanges {
   checkOrphanClear(id: string, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> {
     let entry: LedgerEntry;
     try { entry = this.driftEntry(id); } catch (error) { return Promise.reject(error); }
+    if (entry.key.startsWith("plugin/")) {
+      const plugin = entry;
+      if (plugin.valueHash !== hash(JSON.stringify(false))) return Promise.reject(new CapabilityError("CAPABILITY_NOT_FOUND", "这不是停用设置"));
+      return this.checking(() => this.preparePluginSwitch({ harnessId: plugin.harnessId, id: plugin.key.slice("plugin/".length), enabled: true, orphan: plugin }, installed));
+    }
     if (entry.key.startsWith("link/") || entry.key.startsWith("skills.external_dirs/") || entry.key.startsWith("mcp/") || entry.key.startsWith("instructions/") || entry.key.startsWith("subagent/") || FACT.test(entry.key))
       return Promise.reject(new CapabilityError("CAPABILITY_NOT_FOUND", "这不是停用设置"));
     const rest = entry.key.slice(entry.key.indexOf("/") + 1), codex = entry.key.startsWith("skills.config/");
@@ -771,7 +871,7 @@ export class CapabilityChanges {
   private driftView(entry: LedgerEntry, state: CapabilityDriftState): CapabilityDrift {
     const rest = entry.key.slice(entry.key.indexOf("/") + 1), change = this.store.changeById(entry.changeId);
     const kind = entry.key.startsWith("link/") ? "skill-link" as const : entry.key.startsWith("skills.external_dirs/") ? "shared-dir" as const : entry.key.startsWith("mcp/") ? "mcp" as const
-      : entry.key.startsWith("instructions/") ? "instructions" as const : entry.key.startsWith("subagent/") ? "subagent" as const : "skill-switch" as const;
+      : entry.key.startsWith("instructions/") ? "instructions" as const : entry.key.startsWith("subagent/") ? "subagent" as const : entry.key.startsWith("plugin/") ? "plugin" as const : "skill-switch" as const;
     const subject = kind === "shared-dir" ? SHARED_ENTRY : kind === "instructions" ? "指令" : entry.key.startsWith("skills.config/") ? change?.subject ?? basename(dirname(rest))
       : kind === "skill-link" ? change?.subject ?? basename(rest) : rest;
     return { id: driftId(entry), kind, harnessId: entry.harnessId, subject, file: this.shown(entry.file), state, changeId: entry.changeId, at: entry.at };
@@ -794,6 +894,7 @@ export class CapabilityChanges {
     if (view.kind === "mcp") return this.checkMcpSync(view.subject, entry.harnessId, true, installed);
     if (view.kind === "instructions") return this.checkInstructionsSync(entry.harnessId, new Set(["overwrite"]), installed);
     if (view.kind === "subagent") return this.checkSubagentSync(view.subject, entry.harnessId, true, installed);
+    if (view.kind === "plugin") return this.checkPluginSwitch({ harnessId: entry.harnessId, id: view.subject, enabled: entry.valueHash === hash(JSON.stringify(true)) }, installed);
     // OpenCode's ledger holds either the "deny" of turning a skill off or the "allow" that turned it on over another rule.
     const enabled = entry.key.startsWith("permission.skill/") && entry.valueHash === hash(JSON.stringify("allow"));
     const via = entry.key.startsWith("skills.config/") ? this.shown(dirname(entry.key.slice("skills.config/".length))) : null;

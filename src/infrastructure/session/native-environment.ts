@@ -2,8 +2,11 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { readFile, stat } from "node:fs/promises";
 
-/** Captured host profile. Values remain private and never enter Web/Session DTOs. */
-export interface NativeEnvironment { readonly home: string; readonly values: Readonly<Record<string, string>> }
+/**
+ * Captured host profile. Values remain private and never enter Web/Session DTOs. `system`: the root system-wide settings
+ * are read under (an organization's managed settings), `/` when absent; tests point it at a private directory.
+ */
+export interface NativeEnvironment { readonly home: string; readonly values: Readonly<Record<string, string>>; readonly system?: string }
 const piCredentialVariables = new Set(["COPILOT_GITHUB_TOKEN", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANT_LING_API_KEY", "QWEN_TOKEN_PLAN_API_KEY", "QWEN_TOKEN_PLAN_CN_API_KEY", "OPENAI_API_KEY", "AZURE_OPENAI_API_KEY", "NVIDIA_API_KEY", "DEEPSEEK_API_KEY", "GEMINI_API_KEY", "GOOGLE_CLOUD_API_KEY", "GROQ_API_KEY", "CEREBRAS_API_KEY", "XAI_API_KEY", "RADIUS_API_KEY", "OPENROUTER_API_KEY", "AI_GATEWAY_API_KEY", "ZAI_API_KEY", "ZAI_CODING_CN_API_KEY", "MISTRAL_API_KEY", "MINIMAX_API_KEY", "MINIMAX_CN_API_KEY", "MOONSHOT_API_KEY", "HF_TOKEN", "FIREWORKS_API_KEY", "TOGETHER_API_KEY", "BASETEN_API_KEY", "OPENCODE_API_KEY", "KIMI_API_KEY", "CLOUDFLARE_API_KEY", "XIAOMI_API_KEY", "XIAOMI_TOKEN_PLAN_CN_API_KEY", "XIAOMI_TOKEN_PLAN_AMS_API_KEY", "XIAOMI_TOKEN_PLAN_SGP_API_KEY"]);
 export function captureNativeEnvironment(values: NodeJS.ProcessEnv = process.env): NativeEnvironment {
   const snapshot = Object.fromEntries(Object.entries(values).filter((entry): entry is [string, string] => typeof entry[1] === "string"));

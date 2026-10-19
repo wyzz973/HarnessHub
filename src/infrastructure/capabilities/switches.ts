@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { at, record, type ConfigFormat } from "./formats.js";
-import { appendJsonItem, appendTomlBlock, appendYamlItem, onlyChanged, parsed, removeJsonItem, removeTomlBlock, removeYamlItem, setJson, setTomlKey, tomlBlocks, UnsafeEdit, type KeyPath } from "./edits.js";
+import { appendJsonItem, appendTomlBlock, appendYamlItem, oneLineChange, onlyChanged, parsed, removeJsonItem, removeTomlBlock, removeYamlItem, setJson, setTomlKey, tomlBlocks, tomlTable, UnsafeEdit, type KeyPath } from "./edits.js";
 import type { LedgerEntry } from "./store.js";
 import { ownedOf, type McpStyle } from "./mcp-definitions.js";
 import { mcpEntry, mcpLocation } from "./mcp-edits.js";
@@ -9,6 +9,8 @@ import { findBlock } from "./instruction-blocks.js";
 
 /** Turning one skill off or on in one Harness's own switch (ADR-045 §4). `folder` is the copy Codex switches by its path. */
 export interface SwitchRequest { readonly harnessId: string; readonly name: string; readonly enabled: boolean; readonly folder: string | null }
+/** Turning one plugin (`name@marketplace`) off or on in one Harness's own file (ADR-045 step 6a). */
+export interface PluginSwitchRequest { readonly harnessId: string; readonly id: string; readonly enabled: boolean }
 export type Owner = "harnesshub" | "other" | "none";
 /** `ledger`: record the setting as HarnessHub's (`set`), or forget it because what it holds now is not HarnessHub's (`drop`). */
 interface Common { readonly file: string; readonly key: string; readonly written: unknown; readonly previous: string | null; readonly current: Owner; readonly notes: readonly string[]; readonly ledger: "set" | "drop";
@@ -48,6 +50,8 @@ function overrideOf(value: unknown, name: string): unknown { return own(record(a
 function skillRuleOf(value: unknown, name: string): unknown { const rule = at(value, ["permission", "skill"]); return typeof rule === "string" ? undefined : own(record(rule), name); }
 function entryEnabledOf(value: unknown, name: string): unknown { return record(own(record(at(value, ["skills", "entries"])), name)).enabled; }
 function copiesOf(text: string, skill: string): ReturnType<typeof tomlBlocks> { return tomlBlocks(text, "skills.config").filter(block => block.keys.get("path")?.value === skill); }
+function pluginEntryOf(value: unknown, id: string): unknown { return own(record(at(value, ["enabledPlugins"])), id); }
+function pluginTableOf(value: unknown, id: string): unknown { return own(record(at(value, ["plugins"])), id); }
 /** Hermes's `skills.external_dirs` as a list of strings; Hermes reads a single string as a list of one. */
 export function externalDirsOf(value: unknown): readonly string[] { const raw = at(value, ["skills", "external_dirs"]); return (typeof raw === "string" ? [raw] : list(raw)).map(item => String(item)); }
 
@@ -188,6 +192,66 @@ export function openclawSwitch(file: string, text: string, request: SwitchReques
 }
 
 /**
+ * Claude Code: `enabledPlugins.<id>` in settings.json (ADR-045 step 6a), the key its own `/plugin` and `claude plugin
+ * enable` write. `fallback` is whether the plugin is on without an entry (its `defaultEnabled`, or an enabled plugin
+ * depending on it). Turning on a plugin HarnessHub turned off puts back the entry it replaced, unless that leaves the
+ * plugin off (no entry and a default of off): then, as for anyone else's `false`, it writes true.
+ */
+export function claudePluginSwitch(file: string, text: string, request: PluginSwitchRequest, fallback: boolean, context: SwitchContext): SwitchPlan {
+  const path: KeyPath = ["enabledPlugins", request.id], key = "plugin/" + request.id, current = pluginEntryOf(parsed(text, "jsonc"), request.id);
+  if (current !== undefined && typeof current !== "boolean") throw new UnsafeEdit("enabledPlugins 里这一项不是 true 或 false");
+  const entry = context.ledger(file, key), by = owner(entry, current, context);
+  const holds = (value: unknown, expected: unknown) => isDeepStrictEqual(plain(pluginEntryOf(value, request.id)), plain(expected));
+  const previous = current === undefined ? null : JSON.stringify(current);
+  if (!request.enabled) {
+    if (current === false) return none(file, "Claude Code 里它已经停用。");
+    return { kind: "edit", file, format: "jsonc", after: setJson(text, path, false), key, written: false, previous, current: by, ledger: "set",
+      notes: current === undefined ? ["enabledPlugins 里原来没有这一项（按默认" + (fallback ? "启用" : "停用") + "），停用会写入 false。"] : [], check: (before, after) => onlyChanged(before, after, path) && holds(after, false) };
+  }
+  if (current === true) return none(file, "Claude Code 里它已经启用。");
+  if (current === undefined && fallback) return none(file, "Claude Code 按默认启用它（enabledPlugins 里没有这一项）。");
+  if (by === "harnesshub" && current === false) {
+    // HarnessHub's own `false`: the entry it replaced comes back, when that turns the plugin on.
+    const original = entry?.previous == null ? undefined : JSON.parse(entry.previous) as unknown;
+    if (original === true || (original === undefined && fallback))
+      return { kind: "edit", file, format: "jsonc", after: setJson(text, path, original), key, written: original, previous, current: by, ledger: "drop",
+        notes: original === undefined ? ["改回停用之前的样子：删掉 enabledPlugins 里的这一项，按默认启用。"] : [], check: (before, after) => onlyChanged(before, after, path) && holds(after, original) };
+  }
+  const why = current === undefined ? "这个插件默认停用，所以写入 true。" : by === "harnesshub" ? "停用之前 enabledPlugins 里没有这一项，而它默认停用；删掉这一项不会启用它，所以写入 true。"
+    : "这个 false 不是 HarnessHub 写的（可能是在 Claude Code 里停用的），启用会改成 true。";
+  return { kind: "edit", file, format: "jsonc", after: setJson(text, path, true), key, written: true, previous, current: by, ledger: "set", notes: [why],
+    check: (before, after) => onlyChanged(before, after, path) && holds(after, true) };
+}
+
+/**
+ * Codex: `enabled` in its `[plugins."<id>"]` table (ADR-045 step 6a), the key its own `/plugins` writes: the value is
+ * replaced in place, or the key added after the table's last key, so exactly one line changes. A plugin defined some
+ * other way (dotted keys, an inline table) is refused, and no second table is ever added. Codex's default for a table
+ * without `enabled` is not verified, so turning a plugin on writes `enabled = true` rather than removing the line.
+ */
+export function codexPluginSwitch(file: string, text: string, request: PluginSwitchRequest, context: SwitchContext, notes: readonly string[]): SwitchPlan {
+  const value = parsed(text, "toml"), key = "plugin/" + request.id, path: KeyPath = ["plugins", request.id, "enabled"];
+  if (pluginTableOf(value, request.id) === undefined) throw new UnsafeEdit("config.toml 里没有这个插件");
+  const table = tomlTable(text, ["plugins", request.id]);
+  if (table === null) throw new UnsafeEdit("这个插件不是写成 [plugins.\"" + request.id + "\"] 表（可能写在 [plugins] 下，或写成了内联表），HarnessHub 不改写它的写法");
+  const current = record(pluginTableOf(value, request.id)).enabled;
+  if (current !== undefined && typeof current !== "boolean") throw new UnsafeEdit("enabled 不是 true 或 false");
+  const entry = context.ledger(file, key), by = owner(entry, current, context), previous = current === undefined ? null : JSON.stringify(current);
+  const plan = (written: boolean, ledger: "set" | "drop", extra: readonly string[]): SwitchPlan => {
+    const after = setTomlKey(text, table, "enabled", written);
+    if (!oneLineChange(text, after)) throw new UnsafeEdit("改动超出了一行");
+    return { kind: "edit", file, format: "toml", after, key, written, previous, current: by, ledger, notes: [...notes, ...extra],
+      check: (before, after) => onlyChanged(before, after, path) && record(pluginTableOf(after, request.id)).enabled === written };
+  };
+  if (!request.enabled) return current === false ? none(file, "Codex 里它已经停用。") : plan(false, "set", current === undefined ? ["这张表里原来没有 enabled（Codex 的缺省值没有核实），停用会加上 enabled = false。"] : []);
+  if (current === true) return none(file, "Codex 里它已经启用。");
+  // HarnessHub's own `false` over an explicit `true` goes back to it; over a missing key it stays explicit (default unverified).
+  if (by === "harnesshub" && current === false && entry?.previous === "true") return plan(true, "drop", []);
+  return plan(true, "set", current === undefined ? ["这张表里原来没有 enabled（Codex 的缺省值没有核实），启用会写明 enabled = true。"]
+    : by === "harnesshub" ? ["停用之前这张表里没有 enabled；Codex 的缺省值没有核实，所以写明 enabled = true，不删这一行。"] : ["这个 false 不是 HarnessHub 写的（可能是在 Codex 里停用的），启用会改成 true。"]);
+}
+
+/**
  * Hermes reads the shared directory through `skills.external_dirs` (ADR-045 §4, approval ruling 2): `present` adds
  * `entry` when no listed directory resolves to it (`resolves`), otherwise removes every one that does. Hermes accepts a
  * single string there too; that form is left to the user rather than rewritten.
@@ -220,6 +284,9 @@ export function heldValue(harnessId: string, key: string, text: string, shared: 
   if (prefix === "mcp" && rest && isMcpStyle(harnessId)) { const style = harnessId; return ownedOf(mcpEntry(parsed(text, mcpLocation(style).format), style, rest), style); }
   // A subagent file HarnessHub wrote: the whole file is HarnessHub's, so its text is the value.
   if (prefix === "subagent" && rest) return text;
+  // A plugin switch: Claude Code's `enabledPlugins.<id>`, Codex's `enabled` in the plugin's table (undefined: not there).
+  if (prefix === "plugin" && rest && harnessId === "claude") return pluginEntryOf(parsed(text, "jsonc"), rest);
+  if (prefix === "plugin" && rest && harnessId === "codex") { const table = pluginTableOf(parsed(text, "toml"), rest); return table === undefined ? undefined : record(table).enabled; }
   // HarnessHub's instructions block: its text; markers it cannot use make the file unreadable for it.
   if (prefix === "instructions" && rest === "block") { const block = findBlock(text); if (block.kind === "broken") throw new UnsafeEdit(block.reason); return block.kind === "block" ? block.body : undefined; }
   const format = SWITCH_FORMATS[harnessId];

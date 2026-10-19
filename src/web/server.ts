@@ -642,6 +642,14 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       privateJson(response, await capabilityChanges.checkSkillSwitch({ harnessId: text(url.searchParams.get("harnessId"), "Harness", 128), name: text(url.searchParams.get("name"), "skill name", 128),
         enabled: enabled === "true", via: url.searchParams.has("via") ? text(url.searchParams.get("via"), "skill location", 4096) : null }, await installedHarnesses())); return;
     }
+    // Turning a plugin off or on in Claude Code's or Codex's own file (ADR-045 step 6a), checked and shown first.
+    if (path === "/api/v1/capabilities/plugin-switch" && method === "GET") {
+      queries(url, ["harnessId", "id", "enabled"]);
+      const enabled = url.searchParams.get("enabled");
+      if (enabled !== "true" && enabled !== "false") throw new HttpError(400, "INVALID_INPUT", "Expected enabled=true or enabled=false");
+      privateJson(response, await capabilityChanges.checkPluginSwitch({ harnessId: text(url.searchParams.get("harnessId"), "Harness", 128), id: text(url.searchParams.get("id"), "plugin id", 256),
+        enabled: enabled === "true" }, await installedHarnesses())); return;
+    }
     if (path === "/api/v1/capabilities/changes" && method === "POST") {
       queries(url, []); const input = record(await body(request), ["fingerprint", "commandId"], ["fingerprint", "commandId"]);
       privateJson(response, await capabilityChanges.apply(text(input.fingerprint, "confirmation", 128), command(input.commandId))); return;

@@ -1809,10 +1809,11 @@ const HISTORY_EXTRA = { orphans: [] as unknown[], snapshots: { count: 0, bytes: 
 function capabilityView() {
   const all = { skill: "read", mcp: "read", instructions: "read", subagent: "read", command: "read", hook: "read", plugin: "read" };
   const view = { checkedAt: "2026-10-18T09:00:00.000Z", truncated: false,
-    harnesses: [{ harnessId: "claude", name: "Claude Code", version: "2.1.302", table: "verified", kinds: all, skillSwitch: "file", shared: { reads: "links", links: 1, redundant: 0, placeable: "skill-link" }, notes: ["自定义命令已并入技能，同名时技能优先。"] },
-      { harnessId: "codex", name: "Codex", version: "0.162.1", table: "verified", kinds: all, skillSwitch: "file", shared: { reads: "native", links: 0, redundant: 0, placeable: null }, notes: [] },
-      { harnessId: "cursor", name: "Cursor", version: "2026.10.01-e373342", table: "unverified", kinds: { ...all, instructions: "invisible", command: "unsupported", plugin: "invisible" }, skillSwitch: null, shared: { reads: "native", links: 0, redundant: 0, placeable: null }, notes: ["Cursor 的用户规则保存在应用设置里，不在磁盘上。"] },
-      { harnessId: "hermes", name: "Hermes Agent", version: "0.12.0", table: "verified", kinds: { ...all, instructions: "unsupported", subagent: "unsupported", command: "unsupported" }, skillSwitch: "file", shared: { reads: "links", links: 1, redundant: 0, placeable: "shared-dir" }, notes: ["Hermes 0.12 不读 ~/.agents/skills。"] }],
+    harnesses: [{ harnessId: "claude", name: "Claude Code", version: "2.1.302", table: "verified", kinds: all, skillSwitch: "file", pluginSwitch: "file", pluginReason: null, shared: { reads: "links", links: 1, redundant: 0, placeable: "skill-link" }, notes: ["自定义命令已并入技能，同名时技能优先。"] },
+      { harnessId: "codex", name: "Codex", version: "0.162.1", table: "verified", kinds: all, skillSwitch: "file", pluginSwitch: "file", pluginReason: null, shared: { reads: "native", links: 0, redundant: 0, placeable: null }, notes: [] },
+      { harnessId: "cursor", name: "Cursor", version: "2026.10.01-e373342", table: "unverified", kinds: { ...all, instructions: "invisible", command: "unsupported", plugin: "invisible" }, skillSwitch: null, pluginSwitch: null, pluginReason: "Cursor 不在磁盘上记录插件。", shared: { reads: "native", links: 0, redundant: 0, placeable: null }, notes: ["Cursor 的用户规则保存在应用设置里，不在磁盘上。"] },
+      { harnessId: "hermes", name: "Hermes Agent", version: "0.12.0", table: "verified", kinds: { ...all, instructions: "unsupported", subagent: "unsupported", command: "unsupported" }, skillSwitch: "file", pluginSwitch: null,
+        pluginReason: "hermes plugins enable 会经 save_config 整份重写 config.yaml（丢掉注释、补上默认项），暂时只读。", shared: { reads: "links", links: 1, redundant: 0, placeable: "shared-dir" }, notes: ["Hermes 0.12 不读 ~/.agents/skills。"] }],
     entries: [
       { kind: "skill", key: "skill:alpha", name: "alpha", description: "Shared alpha skill", owner: "skills-cli", source: "https://github.com/owner/repo.git", location: "~/.agents/skills/alpha",
         edges: [{ harnessId: "claude", mechanism: "linked", status: "active", via: "~/.claude/skills/alpha", reason: null }, { harnessId: "codex", mechanism: "native-shared", status: "active", via: "~/.agents/skills/alpha", reason: null },
@@ -1834,8 +1835,11 @@ function capabilityView() {
       { kind: "hook", key: "hook:~/.claude/settings.json#PreToolUse#0.0", name: "PreToolUse（Bash）", description: "guard.sh", owner: "user", source: null, location: "~/.claude/settings.json",
         edges: [{ harnessId: "claude", mechanism: "config", status: "active", via: "~/.claude/settings.json", reason: null }, { harnessId: "cursor", mechanism: "compat-root", status: "active", via: "~/.claude/settings.json", reason: null }],
         warnings: [{ kind: "cross", harnessId: "cursor", text: "Cursor 默认也会运行这个 Hook（来自 ~/.claude/settings.json）。" }], facts: { kind: "hook", event: "PreToolUse", matcher: "Bash", program: "guard.sh" } },
-      { kind: "plugin", key: "plugin:claude:tool@market", name: "tool@market", description: null, owner: "user", source: null, location: "~/.claude/plugins/installed_plugins.json",
-        edges: [{ harnessId: "claude", mechanism: "config", status: "active", via: "~/.claude/plugins/installed_plugins.json", reason: null, facts: { kind: "plugin", version: "1.2.0", enabled: true } }], warnings: [], facts: { kind: "plugin", version: "1.2.0", enabled: true } }],
+      // One plugin both Claude Code and Codex have: one row, each Harness with its own version, state and switch.
+      { kind: "plugin", key: "plugin:tool@market", name: "tool@market", description: null, owner: "user", source: null, location: "~/.claude/plugins/installed_plugins.json",
+        edges: [{ harnessId: "claude", mechanism: "config", status: "active", via: "~/.claude/plugins/installed_plugins.json", reason: null, facts: { kind: "plugin", version: "1.2.0", enabled: true, switchable: true } },
+          { harnessId: "codex", mechanism: "config", status: "disabled", via: "~/.codex/config.toml", reason: "Codex 停用了它", facts: { kind: "plugin", version: "1.1.0", enabled: false, switchable: true } }],
+        warnings: [], facts: { kind: "plugin", version: "1.2.0", enabled: true, switchable: true } }],
     unreadable: [{ harnessId: "codex", file: "~/.codex/config.toml", reason: "无法解析（TomlError）" }] };
   return view;
 }
@@ -1920,7 +1924,7 @@ test("G054-CA2 turning a skill off shows the file and the exact change first, se
   const change = { id: "c-1", kind: "skill-switch", harnessId: "claude", subject: "alpha", file: "~/.claude/settings.json", status: "applied", diff, backupId, error: null, notes: ["Claude Code 会立即读到改动。"], at };
   // OpenClaw too: its switch is its own command, whose rewrite is summarized first.
   const view = capabilityView(), openclawKinds = { skill: "read", mcp: "read", instructions: "read", subagent: "unsupported", command: "unsupported", hook: "read", plugin: "read" };
-  view.harnesses.push({ harnessId: "openclaw", name: "OpenClaw", version: "2026.3.23-2", table: "verified", kinds: openclawKinds, skillSwitch: "command", shared: { reads: "native", links: 52, redundant: 52, placeable: null }, notes: [] } as unknown as typeof view.harnesses[number]);
+  view.harnesses.push({ harnessId: "openclaw", name: "OpenClaw", version: "2026.3.23-2", table: "verified", kinds: openclawKinds, skillSwitch: "command", pluginSwitch: null, pluginReason: "本机版改 plugins.* 会让 Gateway 自动重启（ADR-045 裁决第 9 条），只读。", shared: { reads: "native", links: 52, redundant: 52, placeable: null }, notes: [] } as unknown as typeof view.harnesses[number]);
   (view.entries[0]!.edges as unknown[]).push({ harnessId: "openclaw", mechanism: "native-shared", status: "active", via: "~/.agents/skills/alpha", reason: null });
   await page.route("**/api/v1/capabilities", route => route.fulfill({ json: view }));
   await page.route("**/api/v1/capabilities/history", route => route.fulfill({ json: history }));
@@ -2008,7 +2012,7 @@ test("G054-CA3 the shared skills directory says how each Harness reads it, makes
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   const view = capabilityView(), at = "2026-10-18T10:00:00.000Z", expiresAt = "2026-10-18T10:15:00.000Z";
   view.harnesses.push({ harnessId: "openclaw", name: "OpenClaw", version: "2026.3.23-2", table: "verified", kinds: view.harnesses[0]!.kinds, skillSwitch: "command",
-    shared: { reads: "native", links: 2, redundant: 2, placeable: null }, notes: [] } as unknown as typeof view.harnesses[number]);
+    pluginSwitch: null, pluginReason: "本机版改 plugins.* 会让 Gateway 自动重启（ADR-045 裁决第 9 条），只读。", shared: { reads: "native", links: 2, redundant: 2, placeable: null }, notes: [] } as unknown as typeof view.harnesses[number]);
   (view.entries as unknown[]).push({ kind: "skill", key: "skill:gamma", name: "gamma", description: "Only in the shared directory", owner: "user", source: null, location: "~/.agents/skills/gamma",
     edges: [{ harnessId: "codex", mechanism: "native-shared", status: "active", via: "~/.agents/skills/gamma", reason: null }], warnings: [], facts: { kind: "skill", files: 1, bytes: 120 },
     shared: { folder: "~/.agents/skills/gamma", placed: [] } }, { kind: "skill", key: "skill:delta", name: "delta", description: "Placed by HarnessHub", owner: "user", source: null, location: "~/.agents/skills/delta",
@@ -2150,7 +2154,7 @@ test("G054-CA5 skills are added from a GitHub repository after reading it, updat
   const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   const at = "2026-10-18T10:00:00.000Z", orphanId = "c".repeat(32), listingId = "d".repeat(32), sha = "e".repeat(40);
-  let history = { changes: [] as unknown[], backups: [] as unknown[], drift: [] as unknown[], orphans: [{ id: orphanId, harnessId: "claude", subject: "gone-skill", file: "~/.claude/settings.json" }] as unknown[],
+  let history = { changes: [] as unknown[], backups: [] as unknown[], drift: [] as unknown[], orphans: [{ id: orphanId, kind: "skill", harnessId: "claude", subject: "gone-skill", file: "~/.claude/settings.json" }] as unknown[],
     snapshots: { count: 0, bytes: 0, keep: 50 } };
   const requests: string[] = [], posted: Record<string, unknown>[] = [];
   const check = (fields: Record<string, unknown>) => ({ harnessId: "", enabled: true, file: "~/.agents/skills", command: null, diff: null, rewrite: null, links: [], current: "none", blocked: null, notes: ["只改共享目录 ~/.agents/skills 和下面列出的链接与 lock 条目，不改任何 Harness 的模型或登录配置。"],
@@ -2445,4 +2449,71 @@ test("G054-CA8 the subagent list writes a subagent into each Harness only throug
   assert.deepEqual(posted[1]!.body, { name: "test-writer", definition: { description: "Writes tests", prompt: "Write tests first." }, replace: false });
   assert.deepEqual(posted[2]!.body, { name: "standup-notes", description: "Writes my standup notes", body: "Summarize yesterday." });
   assert.deepEqual(errors, []);
+});
+
+test("G054-CA9 the plugins tab says whose plugins can be switched and why the others are read only; a plugin both Claude Code and Codex have is one row with a switch each, shown and confirmed like any change", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  const fingerprint = "a".repeat(64), at = "2026-10-19T09:30:00.000Z", checks: URLSearchParams[] = [], posted: Record<string, unknown>[] = [];
+  const diff = "--- a/~/.claude/settings.json\n+++ b/~/.claude/settings.json\n@@ -2,4 +2,4 @@\n   \"enabledPlugins\": {\n-    \"tool@market\": true,\n+    \"tool@market\": false,\n     \"lone@market\": true\n";
+  const notes = ["新开的 Claude Code 会话才读到这次改动，包括 HarnessHub 新开的会话；运行中的会话要 /reload-plugins，HarnessHub 的会话里没有这个命令。",
+    "项目的 .claude/settings.json、.claude/settings.local.json、--settings 与组织的管理设置都能覆盖这里：在用户级写 false 关不掉项目启用的插件。claude.ai 下发的管理设置无法从文件核对。"];
+  let history = { changes: [] as unknown[], backups: [] as unknown[], drift: [] as unknown[], ...HISTORY_EXTRA };
+  const change = { id: "p-1", kind: "plugin-switch", harnessId: "claude", subject: "tool@market", file: "~/.claude/settings.json", status: "applied", diff, backupId: "33333333-2222-4333-8444-555555555555", error: null, notes, at };
+  await page.route("**/api/v1/capabilities", route => route.fulfill({ json: capabilityView() }));
+  await page.route("**/api/v1/capabilities/history", route => route.fulfill({ json: history }));
+  await page.route("**/api/v1/capabilities/plugin-switch?**", route => {
+    const query = new URL(route.request().url()).searchParams; checks.push(query);
+    if (query.get("harnessId") === "codex") return route.fulfill({ json: { kind: "plugin-switch", harnessId: "codex", name: "tool@market", enabled: true, file: "~/.codex/config.toml", command: null, diff: null, rewrite: null,
+      links: [], current: "other", notes: [], blocked: "它依赖的 needed@market 已停用。HarnessHub 不连带改动依赖。", fingerprint: "b".repeat(64), expiresAt: "2026-10-19T09:45:00.000Z" } });
+    return route.fulfill({ json: { kind: "plugin-switch", harnessId: "claude", name: "tool@market", enabled: false, file: "~/.claude/settings.json", command: null, diff, rewrite: null, links: [], current: "other", notes,
+      blocked: null, fingerprint, expiresAt: "2026-10-19T09:45:00.000Z" } });
+  });
+  await page.route("**/api/v1/capabilities/changes", async route => {
+    posted.push(route.request().postDataJSON() as Record<string, unknown>);
+    history = { changes: [change], backups: [{ id: change.backupId, file: "~/.claude/settings.json", createdAt: at, bytes: 120, changeId: "p-1", subject: "tool@market" }], drift: [], ...HISTORY_EXTRA };
+    await route.fulfill({ json: change });
+  });
+  await page.goto(fixture.gateway.url); await expect(page.getByRole("button", { name: "新对话", exact: true })).toBeVisible();
+  await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "能力", exact: true }).click();
+  await page.getByRole("tab", { name: "插件 1", exact: true }).click();
+  // Who can switch, and why the others only read.
+  const support = page.locator(".plugin-support");
+  await expect(support).toContainText("Claude Code、Codex 的插件可以在这里停用或启用"); await expect(support).toContainText("安装与卸载还没有提供。");
+  await expect(support.locator("li")).toHaveText(["Cursor：Cursor 不在磁盘上记录插件。", "Hermes Agent：hermes plugins enable 会经 save_config 整份重写 config.yaml（丢掉注释、补上默认项），暂时只读。"]);
+  // One row; each Harness its own version, state and switch.
+  const matrix = page.locator(".capability-matrix");
+  await expect(matrix.locator("tbody tr")).toHaveCount(1);
+  await matrix.locator("tbody tr").first().getByRole("button", { name: /tool@market/u }).click();
+  const detail = page.locator(".capability-detail");
+  await expect(detail).toContainText("v1.2.0 · 已启用"); await expect(detail).toContainText("v1.1.0 · 已停用"); await expect(detail).toContainText("Codex 停用了它");
+  const switches = page.locator(".plugin-switches");
+  await expect(switches.getByRole("button")).toHaveText(["在 Claude Code 中停用", "在 Codex 中启用"]);
+  await switches.getByRole("button", { name: "在 Claude Code 中停用", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "在 Claude Code 中停用插件 tool@market" });
+  for (const text of ["~/.claude/settings.json", "/reload-plugins", "关不掉项目启用的插件", "写入前先备份原文件"]) await expect(dialog).toContainText(text);
+  await expect(dialog.locator(".capability-diff .text-red")).toHaveText(["-    \"tool@market\": true,"]);
+  await expect(dialog.locator(".capability-diff .text-green")).toHaveText(["+    \"tool@market\": false,"]);
+  assert.deepEqual(Object.fromEntries(checks[0]!), { harnessId: "claude", id: "tool@market", enabled: "false" });
+  assert.equal(posted.length, 0, "nothing is sent before the confirmation");
+  await page.screenshot({ path: join(artifact, "plugin-switch-confirmation.png"), animations: "disabled" });
+  await dialog.getByRole("button", { name: "停用", exact: true }).click(); await expect(dialog).toBeHidden();
+  const { commandId, ...sent } = posted[0]!;
+  assert.match(String(commandId), /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u); assert.deepEqual(sent, { fingerprint }, "the request is exactly the confirmed check");
+  await expect(page.locator(".capability-result")).toContainText("已在 Claude Code 中停用 tool@market");
+  await page.locator(".capability-history summary").click();
+  await expect(page.locator(".capability-history")).toContainText("插件开关 · tool@market");
+  // A check refused for a dependency cannot be confirmed.
+  await matrix.locator("tbody tr").first().getByRole("button", { name: /tool@market/u }).click();
+  if (!(await switches.isVisible())) await matrix.locator("tbody tr").first().getByRole("button", { name: /tool@market/u }).click();
+  await switches.getByRole("button", { name: "在 Codex 中启用", exact: true }).click();
+  const codex = page.getByRole("dialog", { name: "在 Codex 中启用插件 tool@market" });
+  await expect(codex.locator(".switch-blocked")).toHaveText("它依赖的 needed@market 已停用。HarnessHub 不连带改动依赖。");
+  await expect(codex.getByRole("button", { name: "启用", exact: true })).toBeDisabled();
+  assert.deepEqual(Object.fromEntries(checks.at(-1)!), { harnessId: "codex", id: "tool@market", enabled: "true" });
+  await codex.getByRole("button", { name: "取消", exact: true }).click();
+  assert.equal(posted.length, 1); assert.deepEqual(errors, []);
 });

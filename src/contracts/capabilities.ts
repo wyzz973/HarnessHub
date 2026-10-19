@@ -39,7 +39,11 @@ export type CapabilityFacts =
   | { readonly kind: "instructions"; readonly bytes: number; readonly managedBlocks: readonly string[] }
   | { readonly kind: "subagent" | "command"; readonly format: "markdown" | "toml" }
   | { readonly kind: "hook"; readonly event: string; readonly matcher: string | null; readonly program: string | null }
-  | { readonly kind: "plugin"; readonly version: string | null; readonly enabled: boolean | null };
+  /**
+   * `enabled`: null when the Harness's rule for it is not known (Codex without `enabled`, Hermes's memory providers);
+   * `switchable`: HarnessHub can turn it off and on in this Harness (ADR-045 step 6a: Claude Code and Codex only).
+   */
+  | { readonly kind: "plugin"; readonly version: string | null; readonly enabled: boolean | null; readonly switchable: boolean };
 
 /** One way one Harness sees one entry. */
 export interface CapabilityEdge {
@@ -95,6 +99,10 @@ export interface HarnessCapabilityReads {
    * path; the others switch a skill by its name.
    */
   readonly skillSwitch: "file" | "command" | null;
+  /** How HarnessHub turns a plugin off and on (ADR-045 step 6a): by editing the Harness's own file (Claude Code, Codex), or not at all. */
+  readonly pluginSwitch: "file" | null;
+  /** Why HarnessHub only reads this Harness's plugins; null when it can switch them or the Harness has none. */
+  readonly pluginReason: string | null;
   /**
    * How it reads the shared `~/.agents/skills`: itself (`native`), through a directory its configuration adds
    * (`external-dir`, Hermes), through links in its own directory (`links`), or not at all; `links` counts its own links
@@ -131,10 +139,12 @@ export class CapabilityError extends Error {
  * Harness no longer needs because it reads the shared directory itself; undoing a change of links; restoring a backup;
  * adding skills to the shared directory from a GitHub repository, updating one from its source, deleting one, and
  * undoing one of those three; writing an MCP server of HarnessHub's list into one Harness's file (`mcp-sync`), removing
- * it (`mcp-remove`), and recording that an identical entry already there is HarnessHub's (`mcp-claim`, no file changes).
+ * it (`mcp-remove`), and recording that an identical entry already there is HarnessHub's (`mcp-claim`, no file changes);
+ * the same for instructions and subagents; writing a skill from the user's text; and turning a plugin off or on in one
+ * Harness's own file (`plugin-switch`).
  */
 export const CAPABILITY_CHANGE_KINDS = ["skill-switch", "shared-dir", "skill-link", "link-cleanup", "link-undo", "restore", "skill-add", "skill-update", "skill-delete", "skill-undo", "mcp-sync", "mcp-remove", "mcp-claim",
-  "instructions-sync", "instructions-remove", "instructions-claim", "subagent-sync", "subagent-remove", "subagent-claim", "skill-create", "skill-edit"] as const;
+  "instructions-sync", "instructions-remove", "instructions-claim", "subagent-sync", "subagent-remove", "subagent-claim", "skill-create", "skill-edit", "plugin-switch"] as const;
 export type CapabilityChangeKind = typeof CAPABILITY_CHANGE_KINDS[number];
 /**
  * A link a change creates or removes: where (with ~) and what it points to, as written in the link. `owner` (for links a
@@ -244,9 +254,9 @@ export type CapabilityDriftState = typeof CAPABILITY_DRIFT_STATES[number];
 export interface CapabilityDrift {
   /** Names this ledger entry for re-applying or forgetting it; opaque. */
   readonly id: string;
-  readonly kind: "skill-switch" | "shared-dir" | "skill-link" | "mcp" | "instructions" | "subagent";
+  readonly kind: "skill-switch" | "shared-dir" | "skill-link" | "mcp" | "instructions" | "subagent" | "plugin";
   readonly harnessId: string;
-  /** A skill's name, the shared directory, an MCP server's name, the instructions block, or a subagent's name. */
+  /** A skill's name, the shared directory, an MCP server's name, the instructions block, a subagent's name, or a plugin's id. */
   readonly subject: string;
   /** The file or link, with ~. */
   readonly file: string;
@@ -256,10 +266,11 @@ export interface CapabilityDrift {
   readonly at: string;
 }
 /**
- * A switch setting HarnessHub wrote for a skill the Harness no longer has (deleted, usually): it does nothing now and
- * takes effect again if a skill of that name comes back. Cleared through the usual switch check.
+ * A switch setting HarnessHub wrote for a skill the Harness no longer has (deleted, usually), or for a plugin no longer
+ * installed for the user: it does nothing now and takes effect again if one of that name comes back. Cleared through the
+ * usual switch check.
  */
-export interface CapabilityOrphan { readonly id: string; readonly harnessId: string; readonly subject: string; readonly file: string }
+export interface CapabilityOrphan { readonly id: string; readonly kind: "skill" | "plugin"; readonly harnessId: string; readonly subject: string; readonly file: string }
 /**
  * HarnessHub's changes and backups, newest first, what it wrote that is no longer in place, its orphaned switch settings,
  * and the snapshots of skill folders it keeps to undo with: those the newest `keep` changes name.

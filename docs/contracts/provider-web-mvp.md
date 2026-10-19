@@ -196,3 +196,13 @@ ADR-045 第 5 步（2026-10-19，子 Agent 与新建技能）追加：
 - 新建技能：`POST /api/v1/capabilities/skill-create`接受`{name, description, body}`，`POST /api/v1/capabilities/skill-edit`接受`{name, description, body, overwrite?}`，都返回`CapabilityChangeCheck`（`kind`为`skill-create`、`skill-edit`，带 SKILL.md 的差异）；文件夹被改过时编辑检查带`proceed: {option: "overwrite"}`。`GET /api/v1/capabilities/skill-text?name=`返回`{text: {description, body} | null}`，只对 HarnessHub 新建的技能。视图里这类技能的`source`为`HarnessHub 新建`。
 - 漂移：`history.drift`的`kind`可以是`subagent`，重新应用即带`overwrite`的写入检查。
 - 存储：升到`capabilities.sqlite` v5，新增`subagents`与`skill_sources.kind`。降级用`tools/capabilities-v5-to-v4.sql`。
+
+ADR-045 第 6a 步（2026-10-19，插件启停）追加：
+- `GET /api/v1/capabilities`的变化：
+  - 每个 Harness 多了`pluginSwitch`（`"file"`或`null`）与`pluginReason`（只读的原因，或`null`）。
+  - 插件的`facts`多了`switchable`；`enabled`为`null`表示按这家的规则无法确定（Codex 的表里没有`enabled`、Hermes 的记忆提供方）。
+  - Claude Code 与 Codex 都有的`名@市场`插件合成一条，`key`为`plugin:<id>`，每家一条`edges`，各带自己的版本与位置；其他插件的`key`仍是`plugin:<harnessId>:<id>`。
+  - Claude Code 的账户同步插件以`<名>@synced`列出，`mechanism`与`owner`为`synced`，位置只到`~/.claude/plugins/synced`，不含账户 ID。
+- 检查：`GET /api/v1/capabilities/plugin-switch?harnessId=&id=&enabled=`，`id`为`名@市场`。返回`kind`为`plugin-switch`的`CapabilityChangeCheck`：Claude Code 改`~/.claude/settings.json`的`enabledPlugins.<id>`，Codex 改`~/.codex/config.toml`里这个插件表的`enabled`一行。依赖、管理设置、未安装与账户同步的情况以`blocked`说明原因。只读的 Harness 返回 409 `CAPABILITY_UNSUPPORTED`，非法`id`返回 400。确认用`POST /api/v1/capabilities/changes`。
+- 漂移与孤立：`history.drift`的`kind`可以是`plugin`，重新应用即按 HarnessHub 写入的值再检查一次。`history.orphans`的每项多了`kind`（`skill`或`plugin`）；插件的孤立设置是 HarnessHub 为已卸载插件写的`false`，清除即写回原值。
+- 存储不升版本（沿用台账表）；回退到旧构建时，这些台账行在漂移列表里显示为“无法读取”。

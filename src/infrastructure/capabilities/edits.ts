@@ -58,21 +58,59 @@ export function removeJsonItem(text: string, path: KeyPath, item: string): strin
 }
 
 interface TomlLine { readonly start: number; readonly end: number; readonly text: string }
-/** One `[[name]]` element: from its header to its last key line; comments and blank lines after it belong to what follows. */
+/**
+ * One table of a TOML text: a `[[name]]` element or a `[name]` table, from its header to its last key line; comments and
+ * blank lines after it belong to what follows, and so do its sub-tables.
+ */
 export interface TomlBlock { readonly start: number; readonly end: number; readonly keys: ReadonlyMap<string, { readonly line: TomlLine; readonly value: unknown }> }
 function tomlLines(text: string): TomlLine[] {
   const lines: TomlLine[] = []; let start = 0;
   while (start < text.length) { const newline = text.indexOf("\n", start), end = newline < 0 ? text.length : newline; lines.push({ start, end, text: text.slice(start, end).replace(/\r$/u, "") }); start = end + 1; }
   return lines;
 }
-/** The elements of the array of tables `name` in a TOML text, found by lines outside multi-line strings. */
-export function tomlBlocks(text: string, name: string): TomlBlock[] {
+/** A basic string's escapes as TOML reads them; null for one it does not allow. */
+function basicString(raw: string): string | null {
+  let bad = false;
+  const value = raw.replace(/\\(?:(["\\bfnrt])|u([0-9A-Fa-f]{4})|U([0-9A-Fa-f]{8})|([\s\S]))/gu, (_, simple: string | undefined, short: string | undefined, long: string | undefined) => {
+    if (simple !== undefined) return ({ "\"": "\"", "\\": "\\", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" } as Record<string, string>)[simple]!;
+    const point = parseInt(short ?? long ?? "", 16);
+    if (Number.isNaN(point) || point > 0x10ffff || (point >= 0xd800 && point <= 0xdfff)) { bad = true; return ""; }
+    return String.fromCodePoint(point);
+  });
+  return bad ? null : value;
+}
+/**
+ * A table header's key path as TOML reads it — bare keys, `"…"` and `'…'` keys, whitespace around the dots — and whether
+ * it names an array of tables; null for a line that is not a header this reader understands.
+ */
+export function tomlHeader(line: string): { readonly array: boolean; readonly path: readonly string[] } | null {
+  const opening = /^[ \t]*(\[\[?)/u.exec(line);
+  if (!opening) return null;
+  const array = opening[1] === "[[", path: string[] = [];
+  let rest = line.slice(opening[0].length);
+  for (;;) {
+    rest = rest.replace(/^[ \t]+/u, "");
+    const bare = /^[A-Za-z0-9_-]+/u.exec(rest), quoted = bare ? null : /^"((?:[^"\\\n]|\\.)*)"/u.exec(rest), literal = bare || quoted ? null : /^'([^'\n]*)'/u.exec(rest);
+    const key = bare ? bare[0] : quoted ? basicString(quoted[1]!) : literal ? literal[1]! : null;
+    if (key === null) return null;
+    path.push(key);
+    rest = rest.slice((bare ?? quoted ?? literal)![0].length).replace(/^[ \t]+/u, "");
+    if (!rest.startsWith(".")) break;
+    rest = rest.slice(1);
+  }
+  const close = array ? "]]" : "]";
+  if (!rest.startsWith(close)) return null;
+  rest = rest.slice(close.length).replace(/^[ \t]+/u, "");
+  return rest === "" || rest.startsWith("#") ? { array, path } : null;
+}
+/** The tables of a TOML text whose header `matches`, found by lines outside multi-line strings. */
+function tomlTables(text: string, matches: (header: { readonly array: boolean; readonly path: readonly string[] }) => boolean): TomlBlock[] {
   const blocks: TomlBlock[] = []; let current: { start: number; end: number; keys: Map<string, { line: TomlLine; value: unknown }> } | null = null, quote: string | null = null;
   for (const line of tomlLines(text)) {
     const opening: string | null = quote === null ? /"""|'''/u.exec(line.text)?.[0] ?? null : null;
     if (quote !== null) { if (line.text.split(quote).length % 2 === 0) quote = null; continue; }
-    const header = /^\s*(\[\[?)\s*([^\]#]+?)\s*\]\]?\s*(?:#.*)?$/u.exec(line.text);
-    if (header) { if (current) blocks.push(current); current = header[1] === "[[" && header[2]!.replace(/\s+/gu, "") === name ? { start: line.start, end: line.end, keys: new Map() } : null; continue; }
+    const header = tomlHeader(line.text);
+    if (header) { if (current) blocks.push(current); current = matches(header) ? { start: line.start, end: line.end, keys: new Map() } : null; continue; }
     if (current && /^\s*[A-Za-z0-9_"'-]/u.test(line.text)) {
       const pair = /^\s*([A-Za-z0-9_-]+|"[^"]+")\s*=/u.exec(line.text);
       if (pair) {
@@ -86,17 +124,53 @@ export function tomlBlocks(text: string, name: string): TomlBlock[] {
   if (current) blocks.push(current);
   return blocks;
 }
+/** The elements of the array of tables `name` (a dotted path of bare keys, such as `skills.config`) in a TOML text. */
+export function tomlBlocks(text: string, name: string): TomlBlock[] {
+  const path = name.split(".");
+  return tomlTables(text, header => header.array && isDeepStrictEqual(header.path, path));
+}
+/**
+ * The standard table `[path]` of a TOML text (`[plugins."name@market"]`, however its keys are quoted), or null when no
+ * header names it — the table may still be defined by dotted keys or inline, which these edits do not change. More than
+ * one such header is not valid TOML and refused.
+ */
+export function tomlTable(text: string, path: readonly string[]): TomlBlock | null {
+  const found = tomlTables(text, header => !header.array && isDeepStrictEqual(header.path, path));
+  if (found.length > 1) throw new UnsafeEdit("config.toml 里同一张表出现了不止一次");
+  return found[0] ?? null;
+}
+/** Whether `after` differs from `before` in exactly one line: one line changed, or one line inserted. */
+export function oneLineChange(before: string, after: string): boolean {
+  const left = before.split("\n"), right = after.split("\n");
+  if (left.length === right.length) return left.filter((line, index) => line !== right[index]).length === 1;
+  if (right.length !== left.length + 1) return false;
+  let index = 0;
+  while (index < left.length && left[index] === right[index]) index++;
+  return left.slice(index).every((line, offset) => line === right[index + 1 + offset]);
+}
 function tomlString(value: string): string { return "\"" + value.replace(/\\/gu, "\\\\").replace(/"/gu, "\\\"") + "\""; }
 /** Appends one `[[name]]` element with these keys at the end of a TOML text, after one blank line. */
 export function appendTomlBlock(text: string, name: string, keys: readonly (readonly [string, string | boolean])[]): string {
   const eol = text.includes("\r\n") ? "\r\n" : "\n", body = text === "" ? "" : text.endsWith("\n") ? text + eol : text + eol + eol;
   return body + "[[" + name + "]]" + eol + keys.map(([key, value]) => key + " = " + (typeof value === "string" ? tomlString(value) : String(value))).join(eol) + eol;
 }
-/** Sets one key of a TOML element to a boolean: its line is rewritten in place, or added after the element's last key. */
+/**
+ * Sets one key of a TOML table to a boolean: a boolean already there is replaced in place (the rest of its line, such as
+ * a comment, stays), another value's line is rewritten, and a missing key is added after the table's last key with its
+ * indentation.
+ */
 export function setTomlKey(text: string, block: TomlBlock, key: string, value: boolean): string {
   const existing = block.keys.get(key), eol = text.includes("\r\n") ? "\r\n" : "\n";
-  if (existing) { const indent = /^\s*/u.exec(existing.line.text)![0]; return text.slice(0, existing.line.start) + indent + key + " = " + String(value) + text.slice(existing.line.start + existing.line.text.length); }
-  return text.slice(0, block.end) + eol + key + " = " + String(value) + text.slice(block.end);
+  if (existing) {
+    const token = /^(\s*(?:[A-Za-z0-9_-]+|"[^"]+")\s*=\s*)(?:true|false)(?=\s*(?:#|$))/u.exec(existing.line.text);
+    if (token) return text.slice(0, existing.line.start + token[1]!.length) + String(value) + text.slice(existing.line.start + token[0].length);
+    const indent = /^\s*/u.exec(existing.line.text)![0];
+    return text.slice(0, existing.line.start) + indent + key + " = " + String(value) + text.slice(existing.line.start + existing.line.text.length);
+  }
+  const last = [...block.keys.values()].sort((left, right) => left.line.start - right.line.start).at(-1), indent = last ? /^[ \t]*/u.exec(last.line.text)![0] : "";
+  // After the last line's text, before its line ending: with CRLF that is before the \r.
+  const at = block.end > 0 && text[block.end - 1] === "\r" ? block.end - 1 : block.end;
+  return text.slice(0, at) + eol + indent + key + " = " + String(value) + text.slice(at);
 }
 /** Removes one TOML element and the blank line before it. */
 export function removeTomlBlock(text: string, block: TomlBlock): string {

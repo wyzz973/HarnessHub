@@ -3,13 +3,14 @@ import { lstat, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { lstat as lstatLink, readlink } from "node:fs/promises";
 import { coerce, satisfies, valid } from "semver";
-import { CAPABILITY_KINDS, MAX_CAPABILITY_ENTRIES, type CapabilitiesView, type CapabilityEdge, type CapabilityEntry, type CapabilityFacts, type CapabilityKind, type CapabilityOwner,
-  type CapabilityWarning, type HarnessCapabilityReads } from "../../contracts/capabilities.js";
+import { CAPABILITY_KINDS, MAX_CAPABILITY_ENTRIES, type CapabilitiesView, type CapabilityEdge, type CapabilityEntry, type CapabilityFacts, type CapabilityKind, type CapabilityMechanism, type CapabilityOwner,
+  type CapabilityStatus, type CapabilityWarning, type HarnessCapabilityReads } from "../../contracts/capabilities.js";
 import type { ExternalSkillDirs, FileListSpec, HarnessReadTable, HookSource, InstructionSpec, McpSource, PluginSource, ReadEnvironment, SkillFind, SkillRootSpec, SkillSwitchSource } from "../../adapters/capability-reads.js";
 import { harnessDirectories } from "../../adapters/capability-reads.js";
 import { skillVisibility, type ScannedRoot, type ScannedSkill, type SkillEdge } from "../../contexts/capabilities/domain/visibility.js";
 import { at, frontmatter, parseConfig, record, text, type ConfigFormat } from "./formats.js";
 import { lockFiles } from "./skill-packages.js";
+import { CLAUDE_UNINSTALLED_SOURCES, PLUGIN_ID, pluginParts, readClaudePlugins, type PluginFiles } from "./claude-plugins.js";
 import { dshRows } from "./mcp-edits.js";
 
 const MAX_CONFIG_BYTES = 32 * 1024 * 1024;
@@ -30,6 +31,11 @@ type ConfigRead = { readonly state: "missing" } | { readonly state: "unreadable"
 interface RawSkill { readonly dirName: string; readonly path: string; readonly link?: { readonly target: string | null }; readonly realPath: string | null; readonly name: string | null; readonly description: string | null; readonly frontmatter: boolean }
 interface RootScan { readonly realPath: string | null; readonly entries: readonly RawSkill[]; readonly truncated: boolean }
 type McpFacts = Extract<CapabilityFacts, { kind: "mcp" }>;
+/** One plugin as one Harness has it; `reason` replaces the default wording of its state, `status` its default status. */
+interface ListedPlugin { readonly id: string; readonly version: string | null; readonly enabled: boolean | null; readonly via: string; readonly description: string | null; readonly mechanism: CapabilityMechanism;
+  readonly owner: CapabilityOwner; readonly source: string | null; readonly switchable: boolean; readonly reason?: string | null; readonly status?: CapabilityStatus }
+/** `hermes_cli/plugins.py` `_VALID_PLUGIN_KINDS`; any other kind is read as standalone. */
+const HERMES_PLUGIN_KINDS: ReadonlySet<string> = new Set(["standalone", "backend", "exclusive", "platform", "model-provider"]);
 interface Row { readonly kind: CapabilityKind; readonly key: string; readonly name: string; description: string | null; owner: CapabilityOwner; source: string | null; location: string | null;
   readonly edges: CapabilityEdge[]; readonly warnings: CapabilityWarning[]; facts?: CapabilityFacts; shared?: { folder: string; placed: string[] } }
 
@@ -37,6 +43,7 @@ function code(error: unknown): string { return error !== null && typeof error ==
 function clip(value: string | null, limit = MAX_DESCRIPTION): string | null { return value === null ? null : value.length > limit ? value.slice(0, limit - 1) + "…" : value; }
 function own(value: Readonly<Record<string, unknown>>, key: string): unknown { return Object.hasOwn(value, key) ? value[key] : undefined; }
 function strings(value: unknown): readonly string[] { return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.length > 0) : []; }
+function list(value: unknown): readonly unknown[] { return Array.isArray(value) ? value : []; }
 function inside(path: string, root: string): boolean { return path === root || path.startsWith(root + sep); }
 /** A text value names a variable instead of holding one, in the Harness's own syntax. */
 function referenceIn(value: string, style: "dollar" | "brace-env" | "cursor" | "gemini"): boolean {
@@ -104,7 +111,9 @@ export class CapabilityScan {
       await this.hooks(table, harness.name);
       await this.plugins(table, harness.name, notes);
       harnesses.push({ harnessId: table.harnessId, name: harness.name, version: harness.version, table: covered(harness.version, table.verified) ? "verified" : "unverified", kinds: kindsOf(table),
-        skillSwitch: table.skills.switch === null ? null : table.skills.switch.kind === "openclaw-entries" ? "command" : "file", shared, notes: [...notes, ...kindNotes(table)] });
+        skillSwitch: table.skills.switch === null ? null : table.skills.switch.kind === "openclaw-entries" ? "command" : "file",
+        pluginSwitch: table.pluginSwitch === null || table.pluginSwitch.kind === "read-only" ? null : "file", pluginReason: table.pluginSwitch?.kind === "read-only" ? table.pluginSwitch.reason : null,
+        shared, notes: [...notes, ...kindNotes(table)] });
     }
     await this.attributeSkills();
     const order = new Map(CAPABILITY_KINDS.map((kind, index) => [kind, index]));
@@ -465,54 +474,114 @@ export class CapabilityScan {
   }
 
   // ---- plugins ----
+  /**
+   * The plugins each Harness has (ADR-045 §9, step 6a). Claude Code's and Codex's `name@marketplace` ids are one row
+   * across both, each Harness an edge with its own version, place and state; the other Harnesses' plugins are rows of
+   * their own. `switchable` marks the edges HarnessHub can turn off and on.
+   */
   private async plugins(table: HarnessReadTable, harnessName: string, notes: string[]): Promise<void> {
     const source = table.plugins;
     if (source === null || source.kind === "invisible") return;
+    const switches = table.pluginSwitch !== null && table.pluginSwitch.kind !== "read-only";
     for (const listed of await this.pluginList(table.harnessId, source, notes)) {
-      const plugin = { ...listed, id: this.clean(listed.id), version: this.clean(listed.version), description: this.clean(listed.description) };
-      const row = this.row("plugin", "plugin:" + table.harnessId + ":" + plugin.id, plugin.id, () => ({ description: plugin.description, owner: "user", source: null, location: plugin.via,
-        facts: { kind: "plugin", version: plugin.version, enabled: plugin.enabled } }));
-      row.edges.push({ harnessId: table.harnessId, mechanism: "config", status: plugin.enabled === false ? "disabled" : "active", via: plugin.via,
-        reason: plugin.enabled === false ? harnessName + " 停用了它" : plugin.enabled === null ? "启停状态没有记录在用户级配置里" : null, facts: { kind: "plugin", version: plugin.version, enabled: plugin.enabled } });
+      const id = this.clean(listed.id), merged = (table.harnessId === "claude" || table.harnessId === "codex") && PLUGIN_ID.test(listed.id) && !listed.id.endsWith("@synced");
+      const facts: CapabilityFacts = { kind: "plugin", version: this.clean(listed.version), enabled: listed.enabled, switchable: switches && listed.switchable };
+      const row = this.row("plugin", "plugin:" + (merged ? "" : table.harnessId + ":") + id, id, () => ({ description: this.clean(listed.description), owner: listed.owner, source: listed.source, location: listed.via, facts }));
+      row.edges.push({ harnessId: table.harnessId, mechanism: listed.mechanism, status: listed.status ?? (listed.enabled === false ? "disabled" : "active"), via: listed.via,
+        reason: listed.reason !== undefined ? this.clean(listed.reason) : listed.enabled === false ? harnessName + " 停用了它" : listed.enabled === null ? "启停状态没有记录在用户级配置里" : null, facts });
     }
   }
-  private async pluginList(harnessId: string, source: Exclude<PluginSource, { kind: "invisible" }>, notes: string[]): Promise<readonly { id: string; version: string | null; enabled: boolean | null; via: string; description: string | null }[]> {
-    const out: { id: string; version: string | null; enabled: boolean | null; via: string; description: string | null }[] = [];
+  private async pluginList(harnessId: string, source: Exclude<PluginSource, { kind: "invisible" }>, notes: string[]): Promise<readonly ListedPlugin[]> {
+    const out: ListedPlugin[] = [], plain = { description: null, mechanism: "config", owner: "user", source: null, switchable: false } as const;
     switch (source.kind) {
       case "claude": {
-        const installed = record(at(await this.value(harnessId, source.installed, "json"), ["plugins"])), enabled = record(at(await this.value(harnessId, source.settings, "json"), ["enabledPlugins"]));
-        let skipped = 0;
-        for (const [id, value] of Object.entries(installed)) {
-          const installs = (Array.isArray(value) ? value : [value]).map(record), user = installs.find(item => item.scope === undefined || item.scope === "user");
-          if (!user) { skipped++; continue; }
-          const state = own(enabled, id);
-          out.push({ id, version: text(user.version), enabled: typeof state === "boolean" ? state : null, via: this.shown(source.installed), description: null });
+        const state = await readClaudePlugins(source, this.pluginFiles());
+        for (const item of state.unreadable) this.unreadableFile(harnessId, item.file, item.reason);
+        for (const plugin of state.plugins) {
+          const enabled = state.enabled.get(plugin.id) ?? null;
+          if (plugin.synced) {
+            out.push({ id: plugin.id, version: plugin.version, enabled, via: this.shown(source.synced), description: plugin.description, mechanism: "synced", owner: "synced", source: "claude.ai 账户同步（" + plugin.marketplace + "）", switchable: false,
+              reason: (state.syncOff ? "syncClaudeAiPlugins 为 false，账户同步的插件全部停用。" : plugin.entry === false ? "enabledPlugins 停用了它。" : "")
+                + "HarnessHub 暂不提供开关；Claude Code 用 enabledPlugins 的 " + plugin.id + " 停用它，组织要求的除外。" });
+            continue;
+          }
+          out.push({ ...plain, id: plugin.id, version: plugin.version, enabled, via: this.shown(source.installed), description: plugin.description, switchable: plugin.entry !== "invalid" && PLUGIN_ID.test(plugin.id),
+            reason: plugin.entry === "invalid" ? "enabledPlugins 里这一项不是 true 或 false" : plugin.entry === undefined ? "按默认" + (enabled ? "启用" : "停用") + "（enabledPlugins 里没有这一项）"
+              : enabled === false ? "Claude Code 停用了它" : null });
         }
-        if (skipped) notes.push("另有 " + skipped + " 个插件只装在项目里，这里不列出。");
+        for (const [id, value] of Object.entries(state.entries)) {
+          if (state.plugins.some(plugin => plugin.id === id)) continue;
+          const from = pluginParts(id).marketplace, uninstalled = from !== "synced" && CLAUDE_UNINSTALLED_SOURCES.includes(from);
+          out.push({ ...plain, id, version: null, enabled: typeof value === "boolean" ? value : null, via: this.shown(source.settings), ...(uninstalled ? {} : { status: "rejected" as const }),
+            reason: uninstalled ? "Claude Code 从 " + from + " 加载它，没有安装记录；HarnessHub 不提供开关" : "有条目但未安装：enabledPlugins 里有这一项，用户级没有安装它（可能是卸载后的残留，或只装在项目里）" });
+        }
+        if (state.projectOnly) notes.push("另有 " + state.projectOnly + " 个插件只装在项目里，这里不列出。");
         break;
       }
-      case "codex":
-        for (const [id, value] of Object.entries(record(at(await this.value(harnessId, source.config, "toml"), ["plugins"])))) out.push({ id, version: null, enabled: record(value).enabled === false ? false : true, via: this.shown(source.config), description: null });
+      case "codex": {
+        const value = await this.value(harnessId, source.config, "toml"), off = at(value, ["features", "plugins"]) === false;
+        if (off) notes.push("config.toml 的 [features] plugins = false 关掉了 Codex 的整个插件功能。");
+        for (const [id, raw] of Object.entries(record(at(value, ["plugins"])))) {
+          const enabled = record(raw).enabled, { name, marketplace } = pluginParts(id), valid = PLUGIN_ID.test(id);
+          const versions = valid ? await this.directories(join(source.cache, marketplace, name)) : [];
+          out.push({ ...plain, id, version: versions.length === 1 ? versions[0]! : null, enabled: typeof enabled === "boolean" ? enabled : null, via: this.shown(source.config),
+            owner: marketplace === "openai-bundled" ? "bundled" : "user", switchable: valid && (enabled === undefined || typeof enabled === "boolean"), status: off || enabled === false ? "disabled" : "active",
+            reason: off ? "Codex 的插件功能被 [features] plugins = false 关掉了" : enabled === false ? "Codex 停用了它" : typeof enabled === "boolean" ? null
+              : enabled === undefined ? "表里没有 enabled，Codex 的缺省值没有核实" : "enabled 不是 true 或 false" });
+        }
         break;
+      }
       case "gemini": {
         const enablement = record(await this.value(harnessId, source.enablement, "json"));
         for (const dir of await this.directories(source.extensions)) {
           const manifest = record(await this.value(harnessId, join(source.extensions, dir, "gemini-extension.json"), "json")), id = text(manifest.name) ?? dir, overrides = strings(record(own(enablement, id)).overrides);
-          out.push({ id, version: text(manifest.version), enabled: overrides.length ? null : true, via: this.shown(join(source.extensions, dir)), description: clip(text(manifest.description)) });
+          out.push({ ...plain, id, version: text(manifest.version), enabled: overrides.length ? null : true, via: this.shown(join(source.extensions, dir)), description: clip(text(manifest.description)) });
         }
         break;
       }
       case "opencode": {
-        for (const file of source.files) for (const spec of strings(at(await this.value(harnessId, file, "jsonc"), ["plugin"]))) if (!out.some(item => item.id === spec)) out.push({ id: spec, version: null, enabled: true, via: this.shown(file), description: null });
-        let items: Dirent[]; try { items = await readdir(source.dir, { withFileTypes: true }); } catch { items = []; }
-        for (const item of items) if (item.isFile() && /\.(?:[cm]?js|ts)$/u.test(item.name) && !item.name.startsWith(".")) out.push({ id: item.name, version: null, enabled: true, via: this.shown(join(source.dir, item.name)), description: null });
+        // `plugin` lists, then {plugin,plugins}/*.{ts,js} (dot files too, links followed), then the TUI's own list.
+        const spec = (item: unknown): string | null => typeof item === "string" && item !== "" ? item : Array.isArray(item) && typeof item[0] === "string" && item[0] !== "" ? item[0] : null;
+        const seen = new Set<string>();
+        for (const file of source.files) for (const item of list(at(await this.value(harnessId, file, "jsonc"), ["plugin"]))) {
+          const id = spec(item);
+          if (id !== null && !seen.has(id)) { seen.add(id); out.push({ ...plain, id, version: null, enabled: true, via: this.shown(file) }); }
+        }
+        for (const dir of source.dirs) {
+          let items: Dirent[]; try { items = await readdir(dir, { withFileTypes: true }); } catch { items = []; }
+          for (const item of items.sort((left, right) => left.name < right.name ? -1 : 1)) {
+            const path = join(dir, item.name);
+            if (!/\.(?:ts|js)$/u.test(item.name) || !(item.isFile() || (item.isSymbolicLink() && (await stat(path).catch(() => null))?.isFile() === true))) continue;
+            out.push({ ...plain, id: item.name, version: null, enabled: true, via: this.shown(path) });
+          }
+        }
+        for (const item of list(at(await this.value(harnessId, source.tui, "jsonc"), ["plugin"]))) {
+          const id = spec(item);
+          if (id !== null) out.push({ ...plain, id, version: null, enabled: true, via: this.shown(source.tui), reason: "TUI 插件：只在 OpenCode 的终端界面里加载，HarnessHub 的会话不加载它" });
+        }
         break;
       }
       case "hermes": {
-        const settings = await this.value(harnessId, source.config, "yaml"), enabledList = at(settings, ["plugins", "enabled"]), disabledList = new Set(strings(at(settings, ["plugins", "disabled"])));
-        for (const dir of await this.directories(source.dir)) {
-          const manifest = record(await this.value(harnessId, join(source.dir, dir, "plugin.yaml"), "yaml")), id = text(manifest.name) ?? dir;
-          out.push({ id, version: text(manifest.version), enabled: disabledList.has(id) ? false : Array.isArray(enabledList) ? strings(enabledList).includes(id) : null, via: this.shown(join(source.dir, dir)), description: clip(text(manifest.description)) });
+        // hermes_cli/plugins.py: `disabled` wins; without an `enabled` list nothing is enabled; memory providers and model providers have their own rules.
+        const settings = record(at(await this.value(harnessId, source.config, "yaml"), ["plugins"])), enabledList = Array.isArray(settings.enabled) ? strings(settings.enabled) : null;
+        const disabled = new Set(Array.isArray(settings.disabled) ? strings(settings.disabled) : []);
+        for (const found of await this.hermesPlugins(harnessId, source.dir)) {
+          const named = (names: readonly string[] | ReadonlySet<string>) => [found.key, found.name].some(name => Array.isArray(names) ? names.includes(name) : (names as ReadonlySet<string>).has(name));
+          const [enabled, reason]: [boolean | null, string | null] = named(disabled) ? [false, "plugins.disabled 停用了它（优先于 plugins.enabled）"]
+            : found.kind === "exclusive" ? [null, "记忆提供方插件：由 config.yaml 的 " + (found.key.includes("/") ? found.key.split("/")[0] : "memory") + ".provider 选择"]
+            : found.kind === "model-provider" ? [true, "模型提供方插件：不受 plugins.enabled 约束，由 Hermes 的 providers 发现加载"]
+            : enabledList === null ? [false, "config.yaml 没有 plugins.enabled，Hermes 一个用户插件都不启用"]
+            : named(enabledList) ? [true, null] : [false, "不在 plugins.enabled 里"];
+          out.push({ ...plain, id: found.key, version: text(found.manifest.version), enabled, via: this.shown(found.dir), description: clip(text(found.manifest.description)), reason });
+        }
+        break;
+      }
+      case "dsh": {
+        for (const profile of await this.directories(source.profiles)) {
+          if (profile === "node_modules") continue;
+          const file = join(source.profiles, profile, "package.json");
+          for (const [id, version] of Object.entries(record(record(await this.value(harnessId, file, "json")).dependencies)))
+            out.push({ ...plain, id, version: typeof version === "string" ? version : null, enabled: true, via: this.shown(file), reason: "装在 profile " + profile + " 里，装上即启用" });
         }
         break;
       }
@@ -521,12 +590,59 @@ export class CapabilityScan {
         for (const dir of await this.directories(source.dir)) {
           const manifest = record(await this.value(harnessId, join(source.dir, dir, "openclaw.plugin.json"), "json")), id = text(manifest.id) ?? dir, state = record(own(entries, id)).enabled;
           const version = text(manifest.version) ?? text(record(await this.value(harnessId, join(source.dir, dir, "package.json"), "json")).version);
-          out.push({ id, version, enabled: typeof state === "boolean" ? state : null, via: this.shown(join(source.dir, dir)), description: clip(text(manifest.description)) });
+          out.push({ ...plain, id, version, enabled: typeof state === "boolean" ? state : null, via: this.shown(join(source.dir, dir)), description: clip(text(manifest.description)) });
         }
         break;
       }
     }
     return out;
+  }
+  /** Files as Claude Code's plugin model reads them, through this scan's bounded, cached reads. */
+  private pluginFiles(): PluginFiles {
+    return {
+      json: path => this.config(path, "json"),
+      entries: async path => {
+        let items;
+        try { items = await readdir(path, { withFileTypes: true }); } catch (error) { if (code(error) === "ENOENT" || code(error) === "ENOTDIR") return null; throw error; }
+        return Promise.all(items.map(async item => ({ name: item.name, directory: item.isDirectory() || (item.isSymbolicLink() && (await stat(join(path, item.name)).catch(() => null))?.isDirectory() === true) })));
+      },
+      exists: path => stat(path).then(() => true, error => code(error) !== "ENOENT" && code(error) !== "ENOTDIR"),
+    };
+  }
+  /**
+   * Hermes's user plugins as `hermes_cli/plugins.py` finds them: `<name>/plugin.yaml` (or `plugin.yml`), or one level down
+   * in a category folder that has none, keyed `<category>/<name>`; hidden folders count too. A manifest that does not
+   * parse is skipped, as Hermes skips it.
+   */
+  private async hermesPlugins(harnessId: string, root: string): Promise<readonly { readonly key: string; readonly name: string; readonly dir: string; readonly manifest: Readonly<Record<string, unknown>>; readonly kind: string }[]> {
+    const out: { key: string; name: string; dir: string; manifest: Readonly<Record<string, unknown>>; kind: string }[] = [];
+    const level = async (path: string, prefix: string, depth: number): Promise<void> => {
+      let items: Dirent[]; try { items = await readdir(path, { withFileTypes: true }); } catch { return; }
+      for (const item of items.sort((left, right) => left.name < right.name ? -1 : 1)) {
+        const child = join(path, item.name);
+        if (out.length >= MAX_LISTED_FILES || !(item.isDirectory() || (item.isSymbolicLink() && (await stat(child).catch(() => null))?.isDirectory() === true))) continue;
+        const yaml = (await this.read(join(child, "plugin.yaml"), MAX_CONFIG_BYTES)).state !== "missing" ? join(child, "plugin.yaml") : join(child, "plugin.yml");
+        const read = await this.config(yaml, "yaml");
+        if (read.state === "unreadable") { this.unreadableFile(harnessId, yaml, read.reason); continue; }
+        if (read.state === "ok") {
+          const manifest = record(read.value), name = text(manifest.name) ?? item.name;
+          out.push({ key: prefix ? prefix + "/" + item.name : name, name, dir: child, manifest, kind: await this.hermesKind(manifest, child) });
+          continue;
+        }
+        if (depth === 0) await level(child, item.name, 1);
+      }
+    };
+    await level(root, "", 0);
+    return out;
+  }
+  /** A Hermes plugin's kind: as its manifest says, or for one that says none, by what its `__init__.py` registers (first 8192 characters). */
+  private async hermesKind(manifest: Readonly<Record<string, unknown>>, dir: string): Promise<string> {
+    const raw = manifest.kind, named = typeof raw === "string" ? raw.trim().toLowerCase() : "standalone", kind = HERMES_PLUGIN_KINDS.has(named) ? named : "standalone";
+    if (kind !== "standalone" || Object.hasOwn(manifest, "kind")) return kind;
+    const init = await this.read(join(dir, "__init__.py"), MAX_DOCUMENT_BYTES);
+    if (init.state !== "ok") return kind;
+    const head = init.text.slice(0, 8192);
+    return head.includes("register_memory_provider") || head.includes("MemoryProvider") ? "exclusive" : head.includes("register_provider") && head.includes("ProviderProfile") ? "model-provider" : kind;
   }
   private async directories(dir: string): Promise<readonly string[]> {
     let items; try { items = await readdir(dir, { withFileTypes: true }); } catch { return []; }
