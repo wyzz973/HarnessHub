@@ -55,3 +55,60 @@
   - 编辑后提示未保存并停用写入，保存只发送文本。
   - 写入的确认框被 cc-switch 阻止，点“我知道，仍然写入”后带上选项重新检查，显示区块差异，只确认这次检查。
   - Cursor 一行提供复制共享指令。
+
+## 第一次真实写入（2026-10-19，审批同意，由我代为执行）
+
+按审批裁决第二节：DeepSeek Harness 与 Codex 各做一次往返，用规定的验证文本，最后保持移除。4317 运行 `0fb4d59`。脚本只打印状态、哈希、权限、大小、计数和标识，不打印任何配置的值。
+
+- **写入前**：
+  - 指令视图：dsh 与 Codex 都是“未写入”（`~/.dsh/AGENTS.md`、`~/.codex/AGENTS.md`）。Claude、Codex、Gemini、OpenCode 带 cc-switch 提示，其中 Codex 与 Gemini 另有“0 字节”一句；OpenCode 另有“新建后不再回退”。Cursor、Hermes 不支持；Pi 没有安装，不在列表里。没有漂移。
+  - 没有 dsh 进程；`~/.codex/AGENTS.override.md` 不存在；`~/.codex/AGENTS.md` 为 0 字节、0644、单链接。
+  - 运行中的 Codex：ChatGPT 应用内置的 2 个，编辑器扩展内置的 1 个。
+- **第一次运行（PID 33113）**：
+  - 保存验证文本：只改 HarnessHub 的存储，两个文件不变。
+  - dsh 的写入（change `8b7346b2`）完全符合计划：
+    - 检查的差异只新增区块，第一句是“只改 … 区块”的声明，并写明“下一步就会收到更新”；
+    - 新文件 322 字节、0600、本人所有、单链接，字节与计划一致，没有备份（原来没有文件）；
+    - 状态“已同步”，没有漂移，`~/.dsh` 里其他条目没有变化。
+  - 随后脚本在“dsh 自己读取”这一步停下。原因在我的核对脚本：`loadBaselineInstructions` 返回 `{ text, omitted, truncated }`，脚本把它当成字符串，独立的 node 进程报 TypeError 退出。审批列出的停止条件一条都没有触发。
+  - 区块在 `~/.dsh/AGENTS.md` 里留了一段时间，期间没有 dsh 进程运行。
+- **接着运行**：
+  - 中间脚本保存的登录会话已失效（401），启动口令只能用一次。按惯例确认空闲（没有子进程、没有进行中的管理任务）、APFS 克隆数据后重启，PID 变为 32408；各表行数与重启前一致，克隆随后删除。
+  - 续跑先确认现场与停下时相同：验证文本仍在；dsh 仍为“已同步”且字节与计划一致；Codex 未动；台账里只有 dsh 一行。
+  - **dsh 的读取**：在禁网、家目录禁写的沙箱里，用独立的 node 进程调用 dsh 0.2.0-rc.2 自带的 `loadBaselineInstructions({ cwd: 空目录, dshHome: ~/.dsh, maxBytes: 65536 })`。渲染结果 633 字节，包含验证句和“Instructions from: ~/.dsh/AGENTS.md”。`~/.dsh/sessions`、`storages` 的条目数为 653、274，与第一次运行时相同。
+  - **Codex 的写入**（change `6b124ec7`）：
+    - 第一次检查因 cc-switch 阻止，`proceed` 为 `acknowledge-cc-switch`；带上它重新检查后不再阻止。
+    - 确认框第一句是声明，写明“有 3 个 Codex 进程在运行”和“新开的 Codex 会话读到”；差异只新增两段的区块。
+    - 应用后 399 字节、仍是 0644、单链接，字节与计划一致；有一份 0 字节的备份（0600）。状态“已同步”，没有漂移。
+  - 30 秒后两个文件的哈希都没变；没有新的 dsh 进程或 Codex 进程。
+  - **移除**：
+    - dsh（change `18c1cec6`）：检查写明“会删除这个文件”。应用后文件已删除，留有 322 字节的备份（0600），`~/.dsh` 其他条目没有变化。
+    - Codex（change `727e3541`）：回到 0 字节、0644、单链接，哈希与空文件相同，留有 399 字节的备份（0600）。
+  - **结束**：
+    - 没有漂移，台账里指令记录为 0；历史里四条修改都是“已应用”。
+    - 验证文本已清空，HarnessHub 不再保存任何指令文本。
+    - 各 Harness 都回到“未写入”或“不支持”。
+- **目录对照的口径**：审批的停止条件包括“目标以外的任何文件大小或 mtime 变化”。运行中的 ChatGPT 与编辑器扩展的 Codex 一直在改它们自己的状态文件，所以有两类条目不算 HarnessHub 的改动：
+  - 写入前两次相隔 10 秒的目录清单之间就变了的；
+  - 名字是运行状态的：`*.sqlite*`、`sessions`、`log`、`logs`、`.tmp`、`tmp`、`cache`、`shell_snapshots`。
+
+  这次被排除的有：`.tmp`、`cache`、`goals_1.sqlite`、`log`、`logs_2.sqlite`（含 `-shm`、`-wal`）、`memories_1.sqlite`、`queue_1.sqlite`（含 `-shm`、`-wal`）、`sessions`、`shell_snapshots`、`state_5.sqlite`、`thread_history_1.sqlite`、`tmp`。其余条目在整个过程中没有变化。`~/.dsh` 没有需要排除的条目。
+
+## DeepSeek Harness 留下的 `[]`（2026-10-19，审批同意，产品流程外的清理）
+
+3c 的第一次真实写入新建了 `~/.dsh/cordis.patch.yml`，移除后留下 `[]`。按审批裁决第三节手工删除，不伪造台账记录；之后 HarnessHub 新建的补丁文件由产品流程自己删除（见上）。
+
+- **删除前核对**：
+  - 没有 dsh 进程；文件 3 字节，sha256 前缀 `37517e5f3dc6`，与 `[]\n` 相同；0600、本人所有、单链接，不是链接。
+  - 台账里没有 dsh 的 `mcp/` 或 `file/` 记录。
+  - 三个 profile 的补丁文件哈希都记下了。
+- **删除后**：
+  - `dsh --profile acp --dump-config` 退出 0，输出 380 行，没有家目录层，MCP 客户端行为 0，stderr 为空，与 3c 之前相同。
+  - profile 的补丁文件不变；没有 dsh 进程。
+
+## 未验证与后续
+
+- **Codex 是否真的读到**：只验证了文件级的契约；会话里能不能读到没有验证，因为没有不建会话的官方核对手段。
+- **其余 Harness 的第一次写入**：OpenClaw、Claude Code、Gemini、OpenCode 留给用户在页面上点。审批要求 OpenClaw 的第一次由用户点。
+- **页面记住“仍然写入”**：审批允许，但没有做。
+- **平台**：只在 macOS 上验证。
