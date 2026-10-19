@@ -715,3 +715,165 @@
   - 移除后文件与目录都不存在，各家配置目录回到写入前。
   - 各家会话里能否列出这个子 Agent 没有验证；新建技能的第一次真实写入留给用户。
 
+
+## 第 6 步设计：插件（2026-10-19 提案，同日按审批更正事实）
+
+### 本机核实（只读；两路调研读已装包、tag 源码与文档；Claude 的停用另在禁网沙箱里对私有副本实测一次）
+
+| Harness | 启用 / 停用 | 卸载 | 安装 | 何时生效 | 本机 |
+|---|---|---|---|---|---|
+| Claude Code 2.1.303（nvm）、2.1.302（Homebrew） | 设置项 `enabledPlugins`：键是 `插件名@市场名`，值是布尔（设置参考 `#enabledplugins`）。<br>没有条目时按 `defaultEnabled`：市场条目的值优先，其次 `plugin.json`，缺省 `true`；被启用插件依赖的插件即使没有条目也会启用。<br>`/plugin` 与 `claude plugin enable` 写的就是这个键。命令启用时会连带启用已装的依赖，依赖未装则失败；停用时，如果另一个启用中的插件需要它，就拒绝。<br>来源优先级：`--add-dir` < 用户 < 项目 < 本地 < `--settings` < 管理设置，按 id 逐键合并 | `uninstall`：最后一个作用域时删掉 `data/`、`pluginConfigs` 与钥匙串里的密钥（`--keep-data` 保留数据） | 联网；command 型来源要确认 | 新会话（HarnessHub 的每个 ACP 会话都是新进程）；运行中的会话要 `/reload-plugins`，ACP 里隐藏了这个命令 | 已装 18 个（启用 17，superpowers 停用），都显式写在 `enabledPlugins` 里。<br>插件清单和 5 个市场清单的 319 个条目都没有声明依赖。<br>claude.ai 同步的 5 个以 `<名>@synced` 加载，清单在 `plugins/synced/<账户>/manifest.json`，按代际放在 `<名>~g<代>` 目录，不在 `installed_plugins.json`。<br>`plugins/blocklist.json` 是旧版本留下的文件，2.1.303 不引用它（二进制里没有这个文件名；列在里面的 `code-review` 在会话里照常加载）。<br>管理设置（文件、`.d`、MDM 描述文件）本机都不存在 |
+| Codex 0.162.1 | 没有命令；配置参考列出 `plugins.<插件名@市场名>.enabled`；TUI `/plugins` 与 app-server 的 `SetPluginEnabled` 写的也是它（上游 `core-plugins/src/toggles.rs`）。<br>受信任项目的 `.codex/config.toml` 可以覆盖用户级。<br>`[features] plugins = false` 会关掉整个插件功能 | `codex plugin remove`：删掉缓存里所有版本与整个 `[plugins."id"]` 表（含用户加的子键） | 联网（Git、npm、远端市场） | 新线程 | `[plugins]` 41 张表都显式写了 `enabled`（停用的是 superpowers、minimax-skills），`playwright` 那张后面跟着 5 个 `mcp_servers` 子表。<br>`@openai-bundled` 8 个随 Codex 安装。<br>没有设置 `features.plugins` |
+| Gemini CLI 0.62.0 | `gemini extensions enable\|disable <名> --scope user`：改 `extension-enablement.json` | 删扩展目录 | 联网，要 `--consent` | 新会话 | 0 个扩展，未实测 |
+| OpenCode 1.18.35 | 没有启停：`ConfigPlugin.load` 用 `{plugin,plugins}/*.{ts,js}`（含点开头的文件、跟随链接）；`plugin` 数组的条目是 `string \| [string, 选项]`。<br>`tui.json` 的 `plugin` 是 TUI 插件 | 没有命令 | `opencode plugin`：先引导实例、运行已配置的插件 | 新进程 | npm 插件 0；`~/.config/opencode/plugin/` 里有 1 个本地文件（视图漏读了单数目录） |
+| Hermes 0.12.0 | `hermes plugins enable\|disable` 经 `save_config` 整份重写 `config.yaml`（注释丢失、写入默认键）。<br>`hermes_cli/plugins.py`：<br>- `plugins.disabled` 永远优先；`plugins.enabled` 缺失表示一个都没启用。<br>- 键按路径取（`<名>` 或 `<分类>/<名>`），也认裸名；`plugin.yaml` 或 `plugin.yml`。<br>- `exclusive`（记忆提供方）由 `<分类>.provider` 选择；`model-provider` 不受 `plugins.enabled` 约束。<br>- 没写 `kind` 时，按 `__init__.py` 前 8 KiB 归类 | 删整个插件目录，不清启用列表 | git clone，可能询问并写 `.env` | 新的 `hermes acp` 进程；ACP 会话里看不到插件工具 | 用户插件 0 |
+| DeepSeek Harness 0.2.0-rc.2 | 没有命令；插件是各 profile `package.json` 的依赖（`dsh plugin` 把参数交给 pnpm） | `dsh plugin --profile <名> remove`（pnpm 透传） | `add` 联网，装上即启用 | 新的 acp 进程 | `~/.dsh/profiles/{acp,headless,web}/package.json` 的依赖都是 0 |
+| OpenClaw 2026.3.23-2 | `openclaw plugins …`：写 `plugins.*`，运行中的网关按 `hybrid` 模式排队重启（`gateway-cli-*.js` 的重载规则） | 同左 | 同左 | — | 按裁决第 9 条继续只读 |
+
+**副本实测**：
+- 条件：Claude 2.1.303；`CLAUDE_CONFIG_DIR` 指向私有目录，里面只放 `enabledPlugins` 与两个插件清单的副本；禁网，只能写这个目录。
+- 结果：`claude plugin disable swift-lsp@claude-plugins-official --scope user --json` 退出码 0，`settings.json` 只有这一项从 true 变成 false。
+- 副作用：Claude 启动时按自己的缓存路径把 15 个插件重新铺了一遍（从本地市场目录复制），claude-hud 还执行了 `npm ci --ignore-scripts`。因为禁网，`npm ci` 失败了，但命令照样报告成功。这与 loading 文档“启用的插件还没缓存时，会话开始时会安装”一致。
+- 结论：“在副本上预演”对插件不成立，副本本身就会触发安装。实验目录已删除。
+
+### 设计（6a：启停与视图；6b：装卸）
+
+1. **分两步**：
+   - ADR 定的第 6 步包括装卸与启停。6a 先做启停和视图改正；6b 做装卸（官方命令），在 6a 真机往返通过后设计并送审。
+   - 装卸要联网，装上后第三方代码会在 Harness 进程里运行；卸载会删数据和密钥。所以 6b 单独审批，第一次真实写入留给用户点。
+   - 6a 只有 Claude Code 与 Codex 有开关。其余只读，视图逐家写明原因：
+     - Gemini：本机 0 个扩展，没有核实；
+     - Hermes：`hermes plugins enable` 经 `save_config` 整份重写 `config.yaml`；
+     - OpenCode、DeepSeek Harness：没有启停；
+     - OpenClaw：裁决第 9 条；
+     - Cursor：不在磁盘上记录。
+2. **Claude Code 的启停**：定点改 `~/.claude/settings.json` 的 `enabledPlugins.<id>`，做法与第 2 步的 `skillOverrides` 相同。
+   - 精确的字节差异、确认后再读比对（变了就 409）、备份、原子替换、回读 `onlyChanged(["enabledPlugins", id])` 且目标值符合预期。
+   - **这一条修改了第 9 节“启停委托给官方命令”**，依据有三：
+     - 设置参考写明，`/plugin` 与 `claude plugin enable` 写的就是这个键；
+     - 副本实测中，命令对 `settings.json` 的改动也只有这一项；
+     - 运行命令会启动 Claude 的插件整理（补齐缓存、`npm ci`），超出一个开关该做的事，也没法预演。
+     装卸（6b）仍用官方命令。
+   - **范围**：id 必须是 `^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9._-]*$`。以下几类不提供开关：
+     - `@inline`、`@skills-dir`、`@builtin` 这些保留来源；
+     - `@synced`（见第 6 条）；
+     - `enabledPlugins` 里有条目但用户级没有安装的。
+   - **有效状态**：用户级条目 → 取值；没有条目 → 市场条目的 `defaultEnabled` → `plugin.json` 的 `defaultEnabled` → `true`。另外，被启用的插件依赖的插件也算启用。视图写“按默认启用（没有条目）”。
+   - **依赖**：Claude 的命令会连带启用依赖、拒绝停用被依赖的插件。HarnessHub 不做连带改动，改为拒绝并点名原因；提示写“在 Claude 里用 `/plugin` 或 `claude plugin enable` 会连带启用依赖”。
+     - 依赖取 `installPath/.claude-plugin/plugin.json` 与市场条目的 `dependencies` 的并集。
+     - 写法有三种：`"名"`（同一市场）、`"名@市场"`、`{name, marketplace, version}`。版本约束 HarnessHub 不求值。
+     - 启用时，依赖里有解析不到已装 id 的、没装的或停用的，就拒绝。
+     - 停用时，用户级已装且有效启用的插件，以及读得到清单的账户同步插件里，有依赖它的，就拒绝。只装在项目里的不算，但要提示。
+     - 读不到要用的清单（`installPath` 不存在、市场清单读不到）就拒绝，写“无法核对依赖”。
+   - **管理设置**：读 `/Library/Application Support/ClaudeCode/managed-settings.json` 与 `managed-settings.d/*.json`（先主文件，再按字母序，嵌套块逐键合并）。
+     - 写了这一项就拒绝：`true` 写“强制启用，停用无效”；`false` 写“被组织策略阻止”。
+     - MDM 描述文件（`/Library/Managed Preferences/` 下的 `com.anthropic.claudecode.plist`，含按用户的）存在就拒绝，因为 HarnessHub 不读它。
+     - 说明里写明：服务器下发的管理设置无法从文件核对。
+   - **开关规则**，与第 2 步的技能开关相同，并加一条例外：
+     - 停用写 false，台账记下原值；
+     - 启用一个 HarnessHub 停用的插件，就写回原值，并删除台账；
+     - 例外：原值是“没有条目”，而默认会让它停用（`defaultEnabled` 为 false）时，写 `true` 并记台账；
+     - 其他情况写 `true` 并记台账。
+   - **确认框写明**：
+     - 新会话生效，包括 HarnessHub 的 ACP 会话；运行中的会话要 `/reload-plugins`；
+     - 桌面应用与 VS Code 扩展读同一个文件；
+     - 项目的 `.claude/settings.json`、`settings.local.json`、`--settings` 与管理设置都能覆盖用户级（用户级写 `false` 关不掉项目启用的插件）；
+     - 运行中的会话随后把旧值写回时，由漂移列表显示，不自动重试。
+3. **Codex 的启停**：定点改 `[plugins."<id>"].enabled`。
+   - 新的 TOML 定位器按 TOML 规则解析表头：裸键、`"…"`、`'…'`、点号两侧的空白都认，逐段比较 `["plugins", id]`。表的范围到下一个表头为止，后面的 `[plugins."…".mcp_servers.…]` 子表不动。
+   - 解析结果里有 `plugins[id]`，却找不到这样的表头（写在 `[plugins]` 下的点号键、内联表）就拒绝。**绝不追加第二张同名表**：那样整个 `config.toml` 都会无效。
+   - 表里没有 `enabled` 时，停用就在表里最后一个键之后插入 `enabled = false`。原值是“没有键”时，启用写显式的 `enabled = true` 并记台账，不删行（Codex 的缺省值没有核实）；视图对缺键的写“Codex 缺省值未核实”。
+   - 回读：`onlyChanged(["plugins", id, "enabled"])`，smol-toml 重新解析成功，字节差异恰好一行（改值或插入一行）。
+   - 提示：
+     - 新线程生效；
+     - 本机运行着 Codex 进程和 ChatGPT 应用，它们可能改写同一个文件，表现为 409 或漂移；
+     - `features.plugins = false` 会关掉整个插件功能（设置了就写明）；
+     - 受信任项目的 `.codex/config.toml` 可以覆盖用户级，管理层（cloud-managed、`/etc/codex`）无法核对；
+     - `@openai-bundled` 的归属显示“随 Codex 安装”。
+4. **视图**：
+   - 只把 `名@市场` 形式、在 Claude 与 Codex 都出现的 id 合成一行，按 Harness 显示各自的版本、位置、状态与开关。例如 `swift-lsp@claude-plugins-official` 在两边都启用，就是一行两个开关，各管各的、互不连带。
+   - Hermes、Gemini、OpenCode、DeepSeek Harness 的条目各自成行，不跨家合并。
+   - 没有开关的 Harness 只显示状态与原因。
+5. **台账与漂移**：
+   - 按 `plugin/<id>` 记台账，值是写入的布尔，同时记下原值。`heldValue` 认识这个前缀：Claude 读 `enabledPlugins.<id>`，Codex 读表里的 `enabled`，缺失为 undefined。
+   - 被外部改回的进入漂移列表；“重新应用”走原检查，“不再跟踪”只删台账。
+   - 孤立设置：插件已从用户级卸载，但 HarnessHub 写的条目还在，列入孤立列表，清除走开关检查。
+   - 沿用现有台账表，存储不升版本。回退到旧构建时，这些台账行在漂移列表里会显示为“无法读取”（旧版的 `heldValue` 不认识这个前缀），无害；升版本则会让旧构建整个打不开能力库，所以选择不升。
+6. **视图改正**（只读）：
+   - **Claude**：
+     - 账户同步插件按 `synced/<账户>/manifest.json` 的 `plugins[].name/version/marketplaceName` 列出，按名字去重，不按目录名（同一插件有多个代际目录）。
+     - 位置只显示到 `~/.claude/plugins/synced`，不显示账户 ID；来源标为“claude.ai 账户同步”。
+     - 有效状态按 `enabledPlugins["<名>@synced"]` 与它的 `plugin.json` 的 `defaultEnabled` 计算；`syncClaudeAiPlugins: false` 时全部停用。
+     - 6a 不提供开关，原因写“6a 不做；Claude 用 `<名>@synced` 条目停用，组织要求的除外”。
+     - `enabledPlugins` 里有、却没有安装的条目，显示“有条目但未安装”。
+   - **OpenCode**：
+     - 读 `plugin/` 与 `plugins/` 两个目录，只认 `.ts`、`.js`，含点开头的文件、跟随链接；
+     - `plugin` 数组里 `[spec, {…}]` 形式的条目也读；
+     - `tui.json` 里的插件标为 TUI 插件，并写明 HarnessHub 的 ACP 会话不加载它们。
+   - **Hermes**：按上表的规则逐条显示，并按 `kind` 写明为什么启用或没启用。
+   - **DeepSeek Harness**：读各 profile `package.json` 的依赖，只读。
+7. **什么时候生效**（确认框里写明）：
+   - Claude：新会话，包括 HarnessHub 新开的会话；运行中的会话不变。
+   - Codex：新线程，包括 ChatGPT 应用和编辑器扩展内置的 Codex。
+8. **测试**：
+   - **单元测试**：
+     - TOML 表定位：各种引号、点号空白、紧随的子表、注释、CRLF、没有 `enabled` 的表；点号键、内联表与缺 `[plugins]` 都拒绝；编辑后必须能解析；用接近本机形态的夹具证明其余字节不变。
+     - Claude 开关：停用、启用、恢复缺失，以及缺失且默认 false 时写 true；id 校验与保留来源；有效状态的解析顺序。
+     - 依赖：并集、三种写法、两个方向的拒绝、依赖者已停用时不阻止、清单读不到时拒绝。
+     - 管理设置：主文件与 `.d` 的合并顺序、`true` 与 `false` 两种拒绝、plist 存在就拒绝、全都缺失时的说明。
+     - 读取器：同步清单去重且输出不含账户 ID、残留条目、只装在项目里的提示；OpenCode 的两个目录、点文件、链接、tuple、`tui.json`；Hermes 的分类布局、`plugin.yml`、缺 `plugins.enabled`、`disabled` 优先、各种 `kind`；DeepSeek Harness 的三个 profile。
+   - **集成测试**（临时家目录，经正式入口）：
+     - Claude：往返、外部改动后的漂移与重新应用、不再跟踪、卸载后的孤立设置；
+     - Codex：带 `mcp_servers` 子表与注释的表、没有 `enabled` 的表、外部重写后的漂移。
+   - **浏览器测试**：合成后的一行、两个开关、确认框里的生效时机与覆盖提示。
+
+### 第一次真实写入（提案）
+
+- **插件**：`swift-lsp@claude-plugins-official`。它在两边都启用，只给 Swift 文件提供语言服务；往返期间新开的会话少了它，影响最小。
+- **Claude Code**：停用，回读核对只改了这一项；再启用（按开关规则写回原值、删除台账），`settings.json` 逐字节回到原样。
+- **Codex**：同样往返，`config.toml` 逐字节回到原样。
+- **授权**：只改启停的布尔，不涉及安装、卸载与网络，属于无密钥、可撤销的写入，由主代理代为执行。
+
+## 审批代理对第 6 步的裁决（2026-10-19）
+
+审批代理只读核对了设计、写入框架、本机 Claude 2.1.303 与 Codex 0.162.1 的二进制、Codex 上游源码、Hermes 与 OpenCode 的源码、本机配置的键名，以及 Claude 和 Codex 的官方文档。它更正了四处事实（已改进上面的设计），并逐条裁决：
+
+1. **拆成 6a 与 6b**：同意附条件。
+   - 6a 写明只有 Claude Code 与 Codex 有开关，其余逐家写明只读原因；
+   - 6b 在 6a 真机往返通过后再设计。
+2. **Claude 改为定点编辑 `enabledPlugins.<id>`**：同意附条件。
+   - 沿用 `skillOverrides` 的框架；
+   - 校验 id，保留来源不给开关；
+   - 有效状态按“条目 → 市场条目 → `plugin.json` → `true`”计算；
+   - 恢复“没有条目”而默认停用时，写 `true`；
+   - 确认框写明生效时机与各级覆盖；
+   - 被会话写回由漂移列表显示，不重试。
+3. **依赖拒绝并点名**：同意附条件。
+   - 依赖来源是 `plugin.json` 与市场条目的并集；原设计按 `strict` 区分是错的：没有 `plugin.json` 时，不论 `strict`，市场条目就是清单；
+   - 三种写法，版本约束不求值；
+   - 依赖者包括可读的账户同步插件；
+   - 读不到就拒绝。
+4. **黑名单不同意**。2.1.303 不引用 `plugins/blocklist.json`，相关判定与测试删除。管理设置与项目覆盖同意附条件：
+   - 读文件与 `.d`，plist 存在就拒绝，说明服务器下发的无法核对；
+   - 提示 `--settings`；
+   - Codex 侧提示受信任项目与管理层。
+5. **Codex 定点改 `enabled`**：同意附条件。
+   - 按 TOML 规则解析表头，子表不动；
+   - 点号键或内联表形式就拒绝，绝不追加同名表；
+   - 缺键时启用写显式 `true`；
+   - 回读核对一行差异；
+   - 提示 `features.plugins`、运行中的进程与随 Codex 安装的插件。
+6. **合成一行**：同意附条件。只合并 `名@市场` 形式且两家都有的 id，其他各自成行；行内按 Harness 显示版本与位置。
+7. **台账**：同意附条件。
+   - 沿用第 2 步的规则，加上第 2 条的例外；
+   - `heldValue`、漂移、重新应用、不再跟踪、孤立设置都识别 `plugin/`；
+   - 不升存储版本可以，但要写明回退到旧构建时的表现（已写在第 5 条）。
+8. **视图改正**：同意附条件。
+   - 账户同步插件“没有文档说明”不实，已更正为 `<名>@synced` 规则；列表按 `manifest.json` 去重；
+   - OpenCode 含点文件、跟随链接，`tui.json` 标明；
+   - Hermes 补上 `model-provider` 与随程序安装的类别。
+9. **第一次真实写入**：同意，由主代理经 4317 的正式入口代为执行，不运行 `claude plugin` 或 `codex` 命令，Harness 一律不重启。
+   - 顺序是 Claude 先、Codex 后；出现 409、回读不符或外部改动，就停下报告，用页面的恢复功能，不重试。
+   - Claude：记下写前的 sha256 → 停用 → 回读只有这一项从 true 变成 false → 30 秒后复查没有外部改动 → 启用 → `settings.json` 与写前逐字节一致，`installed_plugins.json` 没变，台账与漂移为空。
+   - Codex：差异恰好是第 278 行那张表下的一行，恢复后逐字节一致。
+   - 验证记录写进 `docs/verification/capability-plugins-2026-10-19.md`，并写明没有验证往返期间新会话是否真的少了 swift-lsp。
