@@ -21,8 +21,12 @@ interface Common { readonly file: string; readonly key: string; readonly written
  */
 export type SwitchPlan =
   | { readonly kind: "none"; readonly file: string; readonly reason: string }
-  /** `remove`: the file is deleted instead of written (`after` is then empty); only for a file HarnessHub created and nothing else is in. */
-  | (Common & { readonly kind: "edit"; readonly format: ConfigFormat; readonly after: string; readonly remove?: boolean; readonly check: (before: unknown, after: unknown) => boolean })
+  /**
+   * `remove`: the file is deleted instead of written (`after` is then empty); only for a file HarnessHub created and
+   * nothing else is in. `directory`: the file's directory is created first (`create`, 0700; its parent must exist), or
+   * removed after the file when nothing else is left in it (`remove`) — for a directory HarnessHub created.
+   */
+  | (Common & { readonly kind: "edit"; readonly format: ConfigFormat; readonly after: string; readonly remove?: boolean; readonly directory?: "create" | "remove"; readonly check: (before: unknown, after: unknown) => boolean })
   | (Common & { readonly kind: "command"; readonly args: readonly string[]; readonly check: (after: unknown) => boolean; readonly comments: boolean;
     /**
      * Claude Code's own commands (`runner: "claude"`) instead of OpenClaw's: `steps` run in order (an update removes and
@@ -214,6 +218,8 @@ export function heldValue(harnessId: string, key: string, text: string, shared: 
   const slash = key.indexOf("/"), prefix = key.slice(0, slash), rest = key.slice(slash + 1);
   // An MCP server HarnessHub wrote: its owned keys, read the way its writer reads them.
   if (prefix === "mcp" && rest && isMcpStyle(harnessId)) { const style = harnessId; return ownedOf(mcpEntry(parsed(text, mcpLocation(style).format), style, rest), style); }
+  // A subagent file HarnessHub wrote: the whole file is HarnessHub's, so its text is the value.
+  if (prefix === "subagent" && rest) return text;
   // HarnessHub's instructions block: its text; markers it cannot use make the file unreadable for it.
   if (prefix === "instructions" && rest === "block") { const block = findBlock(text); if (block.kind === "broken") throw new UnsafeEdit(block.reason); return block.kind === "block" ? block.body : undefined; }
   const format = SWITCH_FORMATS[harnessId];

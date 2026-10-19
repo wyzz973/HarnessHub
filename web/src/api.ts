@@ -10,7 +10,8 @@ import { parseContentRef, type ContentRef } from "../../src/contracts/content.js
 import type { NativeUsage } from "../../src/contracts/control.js";
 import { CAPABILITY_CHANGE_KINDS, CAPABILITY_DRIFT_STATES, CAPABILITY_KINDS, CAPABILITY_MECHANISMS, CAPABILITY_OWNERS, CAPABILITY_STATUSES, CAPABILITY_WARNINGS, MAX_CAPABILITY_ENTRIES, type CapabilitiesView, type CapabilityChangeCheck, type CapabilityChangeView,
   type CapabilityEdge, type CapabilityFacts, type CapabilityHistory, type CapabilityLinkChange, type CapabilityRestoreCheck, type CapabilitySkillPlan, type McpDefinitionView, type McpInventoryView, MCP_TARGET_STATES,
-  type SkillSourceListing, type SkillUpdateView, INSTRUCTION_CHECK_OPTIONS, INSTRUCTION_TARGET_STATES, type InstructionCheckOption, type InstructionsView } from "../../src/contracts/capabilities.js";
+  type SkillSourceListing, type SkillUpdateView, INSTRUCTION_CHECK_OPTIONS, INSTRUCTION_TARGET_STATES, type InstructionCheckOption, type InstructionsView, type SubagentDefinitionView,
+  type SubagentInventoryView, type SkillTextView } from "../../src/contracts/capabilities.js";
 
 export interface ToolDetailView { readonly kind?: string; readonly name?: string; readonly input?: string; readonly output?: string; readonly diff?: string; readonly parentId?: string; readonly locations?: readonly string[]; readonly exitCode?: number; readonly truncated?: boolean }
 /** Same-origin URL of stored native content for img/download use; the page cookie authorizes it. */
@@ -228,7 +229,8 @@ export function decodeChangeCheck(value: unknown): CapabilityChangeCheck {
   const rewrite = row.rewrite === null ? null : record(row.rewrite);
   const source = row.source === undefined || row.source === null ? row.source : record(row.source), lock = row.lock === undefined || row.lock === null ? row.lock : record(row.lock);
   const proceed = row.proceed === undefined || row.proceed === null ? row.proceed : record(row.proceed);
-  return { kind: choice(row.kind, ["skill-switch", "shared-dir", "skill-link", "link-cleanup", "link-undo", "skill-add", "skill-update", "skill-delete", "skill-undo", "mcp-sync", "mcp-remove", "instructions-sync", "instructions-remove"]),
+  return { kind: choice(row.kind, ["skill-switch", "shared-dir", "skill-link", "link-cleanup", "link-undo", "skill-add", "skill-update", "skill-delete", "skill-undo", "mcp-sync", "mcp-remove", "instructions-sync", "instructions-remove",
+    "subagent-sync", "subagent-remove", "skill-create", "skill-edit"]),
     harnessId: text(row.harnessId), name: text(row.name), enabled: bool(row.enabled), file: text(row.file),
     ...(proceed === undefined ? {} : { proceed: proceed === null ? null : { option: choice(proceed.option, INSTRUCTION_CHECK_OPTIONS), label: text(proceed.label) } }),
     ...(row.skills === undefined ? {} : { skills: list(row.skills, decodeSkillPlan, 64) }),
@@ -252,7 +254,7 @@ function decodeHistory(value: unknown): CapabilityHistory {
   const row = record(value);
   return { changes: list(row.changes, decodeChange, 64), backups: list(row.backups, item => { const backup = record(item); return { id: text(backup.id), file: text(backup.file), createdAt: text(backup.createdAt), bytes: number(backup.bytes),
     changeId: text(backup.changeId), subject: text(backup.subject) }; }, 4096),
-    drift: list(row.drift, item => { const drift = record(item); return { id: text(drift.id), kind: choice(drift.kind, ["skill-switch", "shared-dir", "skill-link", "mcp", "instructions"]), harnessId: text(drift.harnessId), subject: text(drift.subject),
+    drift: list(row.drift, item => { const drift = record(item); return { id: text(drift.id), kind: choice(drift.kind, ["skill-switch", "shared-dir", "skill-link", "mcp", "instructions", "subagent"]), harnessId: text(drift.harnessId), subject: text(drift.subject),
       file: text(drift.file), state: choice(drift.state, CAPABILITY_DRIFT_STATES), changeId: text(drift.changeId), at: text(drift.at) }; }, 4096),
     orphans: list(row.orphans, item => { const orphan = record(item); return { id: text(orphan.id), harnessId: text(orphan.harnessId), subject: text(orphan.subject), file: text(orphan.file) }; }, 4096),
     snapshots: (() => { const snapshots = record(row.snapshots); return { count: number(snapshots.count), bytes: number(snapshots.bytes), keep: number(snapshots.keep) }; })() };
@@ -281,6 +283,15 @@ function decodeMcpInventory(value: unknown): McpInventoryView {
     candidates: list(row.candidates, item => { const candidate = record(item); return { id: text(candidate.id), name: text(candidate.name), definition: candidate.definition === null ? null : decodeMcpDefinition(candidate.definition),
       problem: nullableText(candidate.problem), foundIn: list(candidate.foundIn, entry => { const found = record(entry); return { harnessId: text(found.harnessId), file: text(found.file) }; }, 32),
       state: choice(candidate.state, ["new", "listed", "different"]) }; }, 512),
+    harnesses: list(row.harnesses, item => { const harness = record(item); return { harnessId: text(harness.harnessId), name: text(harness.name), writable: bool(harness.writable), reason: nullableText(harness.reason) }; }, 32),
+  };
+}
+function decodeSubagents(value: unknown): SubagentInventoryView {
+  const row = record(value);
+  return {
+    subagents: list(row.subagents, item => { const agent = record(item), definition = record(agent.definition); return { name: text(agent.name), definition: { description: text(definition.description), prompt: text(definition.prompt) },
+      targets: list(agent.targets, entry => { const target = record(entry); return { harnessId: text(target.harnessId), state: choice(target.state, MCP_TARGET_STATES), reason: nullableText(target.reason), file: nullableText(target.file) }; }, 32),
+      updatedAt: text(agent.updatedAt) }; }, 512),
     harnesses: list(row.harnesses, item => { const harness = record(item); return { harnessId: text(harness.harnessId), name: text(harness.name), writable: bool(harness.writable), reason: nullableText(harness.reason) }; }, 32),
   };
 }
@@ -555,6 +566,14 @@ export class GatewayApi {
   skillUpdates(refresh: boolean, signal?: AbortSignal): Promise<SkillUpdateView> { return this.request("/capabilities/skill-updates" + (refresh ? "?refresh=1" : ""), "GET", undefined, decodeSkillUpdates, signal); }
   checkSkillUpdate(name: string, overwrite: boolean): Promise<CapabilityChangeCheck> { return this.request("/capabilities/skill-update?" + new URLSearchParams({ name, overwrite: String(overwrite) }), "GET", undefined, decodeChangeCheck); }
   checkSkillDelete(name: string): Promise<CapabilityChangeCheck> { return this.request("/capabilities/skill-delete?" + new URLSearchParams({ name }), "GET", undefined, decodeChangeCheck); }
+  /** Checks writing a new skill from these texts into the shared directory; nothing is written. */
+  checkSkillCreate(name: string, text: SkillTextView): Promise<CapabilityChangeCheck> { return this.request("/capabilities/skill-create", "POST", { name, ...text }, decodeChangeCheck); }
+  /** Checks changing a skill HarnessHub wrote; `overwrite` replaces a folder changed since. */
+  checkSkillEdit(name: string, text: SkillTextView, overwrite: boolean): Promise<CapabilityChangeCheck> { return this.request("/capabilities/skill-edit", "POST", { name, ...text, overwrite }, decodeChangeCheck); }
+  /** The texts of a skill HarnessHub wrote, as its SKILL.md holds them now; null when it does not read as one. */
+  skillText(name: string): Promise<SkillTextView | null> {
+    return this.request("/capabilities/skill-text?" + new URLSearchParams({ name }), "GET", undefined, value => { const row = record(value); if (row.text === null) return null; const item = record(row.text); return { description: text(item.description), body: text(item.body) }; });
+  }
   /** HarnessHub's MCP list with each server's state per Harness, and the servers the Harnesses already have. */
   mcpInventory(signal?: AbortSignal): Promise<McpInventoryView> { return this.request("/capabilities/mcp", "GET", undefined, decodeMcpInventory, signal); }
   /** Keeps a server in the list; `replace` changes a listed one. No Harness file changes. */
@@ -567,6 +586,15 @@ export class GatewayApi {
     return this.request("/capabilities/mcp/sync?" + new URLSearchParams({ name, harnessId, ...(overwrite ? { overwrite: "true" } : {}) }), "GET", undefined, decodeChangeCheck);
   }
   checkMcpRemove(name: string, harnessId: string): Promise<CapabilityChangeCheck> { return this.request("/capabilities/mcp/remove?" + new URLSearchParams({ name, harnessId }), "GET", undefined, decodeChangeCheck); }
+  /** HarnessHub's subagent list with each subagent's state per Harness. */
+  subagents(signal?: AbortSignal): Promise<SubagentInventoryView> { return this.request("/capabilities/subagents", "GET", undefined, decodeSubagents, signal); }
+  /** Keeps a subagent in the list; `replace` changes a listed one. No Harness file changes. */
+  saveSubagent(name: string, definition: SubagentDefinitionView, replace: boolean): Promise<string> { return this.request("/capabilities/subagents/save", "POST", { name, definition, replace }, value => text(record(value).name)); }
+  removeSubagent(name: string): Promise<boolean> { return this.request("/capabilities/subagents/delete", "POST", { name }, value => bool(record(value).removed)); }
+  claimSubagent(name: string, harnessIds: readonly string[]): Promise<readonly CapabilityChangeView[]> { return this.request("/capabilities/subagents/claim", "POST", { name, harnessIds }, value => list(value, decodeChange, 32)); }
+  checkSubagent(action: "sync" | "remove", name: string, harnessId: string, overwrite: boolean): Promise<CapabilityChangeCheck> {
+    return this.request("/capabilities/subagents/" + action + "?" + new URLSearchParams({ name, harnessId, ...(overwrite ? { overwrite: "true" } : {}) }), "GET", undefined, decodeChangeCheck);
+  }
   /** HarnessHub's instructions and where they stand in each Harness. */
   instructions(signal?: AbortSignal): Promise<InstructionsView> { return this.request("/capabilities/instructions", "GET", undefined, decodeInstructions, signal); }
   /** Saves the shared text and each Harness's addition in HarnessHub; no Harness file changes. */

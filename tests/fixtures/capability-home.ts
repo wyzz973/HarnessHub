@@ -77,6 +77,9 @@ export async function capabilityHome(home: string, outside: string): Promise<voi
   await file(join(claude, "CLAUDE.md"), "# Mine\n<!-- harnesshub:begin id=shared sha=0 -->\nshared\n<!-- harnesshub:end -->\n");
   await file(join(claude, "agents", "reviewer.md"), "---\nname: reviewer\ndescription: Reviews changes\n---\nReview.\n");
   await file(join(claude, "commands", "frontend", "review.md"), "---\ndescription: Review the frontend\n---\nGo.\n");
+  // Claude reads its agents recursively, named by `name`; a top-level command of Claude's is one Cursor's CLI reads too.
+  await file(join(claude, "agents", "team", "lead.md"), "---\nname: lead\ndescription: Leads the team\n---\nLead.\n");
+  await file(join(claude, "commands", "standup.md"), "---\ndescription: Daily standup\n---\nStandup.\n");
   await file(join(claude, "plugins", "installed_plugins.json"), JSON.stringify({ version: 2, plugins: { "tool@market": [{ scope: "user", version: "1.2.0", installPath: "/x" }],
     "off@market": [{ scope: "user", version: "0.1.0" }], "project@market": [{ scope: "project", projectPath: "/p", version: "9.9.9" }] } }));
   await file(join(home, ".claude.json"), JSON.stringify({ numStartups: 3, mcpServers: {
@@ -96,6 +99,7 @@ export async function capabilityHome(home: string, outside: string): Promise<voi
   await file(join(codex, "AGENTS.md"), "Base rules\n");
   await file(join(codex, "AGENTS.override.md"), "Override rules\n");
   await file(join(codex, "agents", "helper.toml"), "name = \"helper\"\ndescription = \"Helps\"\ndeveloper_instructions = \"Help.\"\n");
+  await file(join(codex, "agents", "team", "scout-file.toml"), "name = \"scout\"\ndescription = \"Scouts\"\ndeveloper_instructions = \"Scout.\"\n");
   await file(join(codex, "prompts", "fix.md"), "Fix it.\n");
   await file(join(codex, "hooks.json"), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: "notify-send done" }] }] } }));
 
@@ -103,6 +107,7 @@ export async function capabilityHome(home: string, outside: string): Promise<voi
   const cursor = join(home, ".cursor");
   await file(join(cursor, "mcp.json"), JSON.stringify({ mcpServers: { linear: { url: "https://mcp.linear.app/sse", headers: { Authorization: "Bearer ${env:LINEAR_TOKEN}" } } } }));
   await file(join(cursor, "hooks.json"), JSON.stringify({ version: 1, hooks: { beforeShellExecution: [{ command: "./audit.sh" }] } }));
+  await file(join(cursor, "commands", "ship.md"), "Ship it.\n");
 
   // OpenCode: JSONC with comments and a permission rule; no AGENTS.md of its own, so it falls back to ~/.claude/CLAUDE.md.
   const opencode = join(home, ".config", "opencode");
@@ -110,6 +115,10 @@ export async function capabilityHome(home: string, outside: string): Promise<voi
     + "  \"mcp\": { \"local-one\": { \"type\": \"local\", \"command\": [\"bunx\", \"some-mcp\"], \"environment\": { \"TOKEN\": \"{env:OC_TOKEN}\" } } },\n  \"plugin\": [\"opencode-foo@1.0.0\"],\n}\n");
   await file(join(opencode, "config.json"), "{ \"broken\": ");
   await file(join(opencode, "commands", "deploy.md"), "---\ndescription: Deploy\n---\nDeploy.\n");
+  // OpenCode names nested agents and commands by their path with /, and reads modes as agents too.
+  await file(join(opencode, "agents", "review", "strict.md"), "---\ndescription: Strict review\nmode: subagent\n---\nBe strict.\n");
+  await file(join(opencode, "modes", "focus.md"), "---\ndescription: Focus mode\n---\nFocus.\n");
+  await file(join(opencode, "commands", "ops", "restart.md"), "---\ndescription: Restart\n---\nRestart.\n");
 
   // Gemini CLI: shared skills win over its own copy; context.fileName names two files; an excluded server.
   const gemini = join(home, ".gemini");
@@ -119,6 +128,11 @@ export async function capabilityHome(home: string, outside: string): Promise<voi
     hooks: { BeforeTool: [{ matcher: "write_file", hooks: [{ type: "command", command: "lint.sh" }] }] }, context: { fileName: ["GEMINI.md", "AGENTS.md"] } }));
   await file(join(gemini, "GEMINI.md"), "Gemini rules\n");
   await file(join(gemini, "AGENTS.md"), "Shared rules\n");
+  // Gemini reads only regular files at the top of its agents directory, and skips names starting with _.
+  await file(join(gemini, "agents", "scribe.md"), "---\nname: scribe\ndescription: Writes notes\n---\nWrite.\n");
+  await file(join(gemini, "agents", "_draft.md"), "---\nname: draft\ndescription: A draft\n---\nDraft.\n");
+  await file(join(home, "agent-elsewhere.md"), "---\nname: linked\ndescription: Linked in\n---\nLinked.\n");
+  await link(join(home, "agent-elsewhere.md"), join(gemini, "agents", "linked.md"));
   await file(join(gemini, "extensions", "ext-one", "gemini-extension.json"), JSON.stringify({ name: "ext-one", version: "0.3.0" }));
   await file(join(gemini, "extensions", "extension-enablement.json"), "{}");
   await file(join(gemini, "commands", "git", "commit.toml"), "description = \"Commit\"\nprompt = \"Commit {{args}}\"\n");

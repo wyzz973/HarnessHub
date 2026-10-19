@@ -25,19 +25,23 @@ export function instructionBody(shared: string, addition: string): string {
 }
 
 /**
- * Why a text cannot be saved as the shared text or an addition, or null: too long, a NUL or another control character
- * than a line break or tab (line breaks are LF by then), half of a surrogate pair (it would be written as U+FFFD and read
- * back differently), HarnessHub's own marker, or the home directory written out (it is shown as ~ everywhere, so it is
- * asked for as ~ rather than replaced silently).
+ * Why a text the user wrote cannot go into a Harness's file, or null: a NUL or another control character than a line
+ * break or tab (line breaks are LF by then), half of a surrogate pair (it would be written as U+FFFD and read back
+ * differently), or the home directory written out (it is shown as ~ everywhere, so it is asked for as ~ rather than
+ * replaced silently).
  */
-export function instructionTextProblem(text: string, homes: readonly string[]): string | null {
-  if (Buffer.byteLength(text, "utf8") > INSTRUCTION_TEXT_BYTES) return "最多 16 KiB";
+export function userTextProblem(text: string, homes: readonly string[]): string | null {
   if (text.includes("\0")) return "不能含 NUL 字符";
   if (/(?![\t\n])\p{Cc}/u.test(text)) return "不能含换行和制表符以外的控制字符";
   if (/\p{Cs}/u.test(text)) return "含有不完整的字符（孤立的代理项）";
-  if (text.includes(MARKER)) return "不能含 HarnessHub 的区块标记 " + MARKER;
   const home = homes.find(item => item.length > 1 && (text.includes(item + "/") || new RegExp("(^|[\\s\"'=(（])" + item.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&") + "(?=$|[\\s\"')）。，])", "u").test(text)));
   return home === undefined ? null : "家目录请写成 ~（例如 ~/projects），不要写完整路径";
+}
+/** Why a text cannot be saved as the shared text or an addition, or null: too long, HarnessHub's own marker, or what `userTextProblem` refuses. */
+export function instructionTextProblem(text: string, homes: readonly string[]): string | null {
+  if (Buffer.byteLength(text, "utf8") > INSTRUCTION_TEXT_BYTES) return "最多 16 KiB";
+  if (text.includes(MARKER)) return "不能含 HarnessHub 的区块标记 " + MARKER;
+  return userTextProblem(text, homes);
 }
 
 /** HarnessHub's block in a file's text, by its marker lines: any other line starting with HarnessHub's marker, or markers out of order, make it unusable. */

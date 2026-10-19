@@ -9243,7 +9243,7 @@
       "layer": "unit",
       "planned_file": "tests/unit/capability-readers.test.ts",
       "scenario": "指令、子 Agent、命令、Hooks 与插件的读取与交叉读取",
-      "expected": "按各家规则选出生效的用户级指令文件并标出遮蔽（OpenCode 回退读 CLAUDE.md 等）与其他管理器的标记；Cursor 读 Claude 与 Codex 的子 Agent、运行 Claude 的 Hooks 标为交叉；Hermes 标为不支持用户级指令；插件按各家状态文件列出",
+      "expected": "按各家规则选出生效的用户级指令文件并标出遮蔽（OpenCode 回退读 CLAUDE.md 等）与其他管理器的标记；Cursor 读 Claude 与 Codex 的子 Agent、运行 Claude 的 Hooks 标为交叉；Hermes 标为不支持用户级指令；插件按各家状态文件列出；子 Agent 与命令按本机版本读取：Claude、Codex 的子 Agent 递归、按 name；OpenCode 的子 Agent 与命令递归、嵌套名用 / 连接、modes 也算 Agent；Gemini 只读顶层普通文件，_ 开头的与链接列出并写明不读；Cursor CLI 不读家目录的子 Agent，读 ~/.cursor/commands 与 ~/.claude/commands 顶层；Codex 0.118 起不读 prompts",
       "status": "planned",
       "evidence": null
     },
@@ -9618,6 +9618,70 @@
       "evidence": null
     },
     {
+      "id": "G064-A1",
+      "task": "G064",
+      "requirements": [
+        "R27"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "planned_file": "tests/unit/subagent-definitions.test.ts",
+      "scenario": "子 Agent 的四家格式、名字与文本规则、同名查找",
+      "expected": "Claude、Gemini 只写 name 与 description 的 frontmatter，OpenCode 写 description 与 mode: subagent，Codex 只写 name、description、developer_instructions（多行基本字符串，转义引号与反斜杠）；引号、反斜杠、#、像 frontmatter 的行在四种格式里都原样读回；两段文本按存储方式去掉首尾空白；读取表列出的四家内置名全部被拒绝并写明是哪家的；名字不合规、说明多行或超过 1024、正文为空、超过 32 KiB、以 --- 行开头、含控制字符、孤立代理项或家目录完整路径时拒绝；Gemini 的正文含 ${ 时不支持；同名查找按各家规则：Codex 与 Claude 递归看 name，Gemini 只看顶层普通文件、跳过 _ 开头的与链接，OpenCode 看路径（frontmatter 的 name 优先）",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G064-A2",
+      "task": "G064",
+      "requirements": [
+        "R27"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/subagents.test.ts",
+      "scenario": "经正式 Gateway 把清单里的子 Agent 写入四家、更新并移除，必要时新建并删除目录",
+      "expected": "Claude、Codex、Gemini、OpenCode 可写，Cursor（本机 CLI 只读工作区）、Pi、Hermes、OpenClaw、DeepSeek Harness 说明为什么不写；内置名、不合规的名字、以 --- 开头的正文、家目录路径、多行说明被拒绝，文本按去掉首尾空白保存；检查第一句声明只新建 HarnessHub 自己的文件、不写工具与权限，并写明继承什么；文件 0600、内容与各家格式一致；OpenCode 没有 agents 目录时新建为 0700 并记为 HarnessHub 新建，移除最后一个文件后删除，原有目录保留；命令重放返回第一次的结果；检查后文件被改返回 409，改过的需要覆盖；清单在 HarnessHub 的文件还在时不能删除；没有漂移",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G064-A3",
+      "task": "G064",
+      "requirements": [
+        "R27"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/subagents.test.ts",
+      "scenario": "同名定义、认领、外部改动与移除后的子 Agent 状态",
+      "expected": "Claude 的 team/lead.md、OpenCode 的 modes/focus.md、Codex config.toml 的 [agents.<名>] 都算同名定义，不覆盖；Gemini 不读的 _ 开头文件不算冲突，目标位置是链接时不经它写入；Gemini 正文含 ${ 时只在 Gemini 不支持；config.toml 无法解析时不写 Codex；内容一致的文件可以认领、文件不变；被改动的进入漂移列表、要覆盖才写回，被删除的经重新应用写回；HarnessHub 的文件旁出现同名定义时状态保持并说明，仍可移除；孤立设置列表为空；配置目录不存在时不替它新建",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G064-A4",
+      "task": "G064",
+      "requirements": [
+        "R27"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/skill-create.test.ts",
+      "scenario": "由文本新建、编辑、撤销与删除共享技能",
+      "expected": "不合规的名字、含 !`…` 或 ```! 的正文、家目录路径被拒绝；与现有文件夹不分大小写同名时阻止，与 Claude、OpenCode 内置命令同名时警告；检查显示 SKILL.md 的差异与各家参数的差别、提示放到 Claude Code；写入文件夹 0755、SKILL.md 0644，不写 lock，视图里归 HarnessHub、来源为“HarnessHub 新建”；检查更新时说明没有上游；编辑读回文本、无变化时不写、文件夹被改过时要覆盖并列出改动数，改写后可以撤销；删除走现有删除流程；新建后撤销不留文件夹与记录",
+      "status": "planned",
+      "evidence": null
+    },
+    {
       "id": "G054-CA3",
       "task": "G054",
       "requirements": [
@@ -9699,6 +9763,23 @@
       "planned_file": "tests/browser/web.browser.ts",
       "scenario": "统一指令卡片的编辑、保存与写入",
       "expected": "每个 Harness 显示文件、状态、何时生效与写入前要确认的事；编辑后提示未保存并停用写入，保存只发送文本；写入的确认框被 cc-switch 阻止时，用户点“我知道，仍然写入”才重新检查并显示区块差异，只确认这次检查；Cursor 提供复制共享指令；无页面错误",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G054-CA8",
+      "task": "G054",
+      "requirements": [
+        "R27",
+        "R22"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "e2e",
+      "planned_file": "tests/browser/web.browser.ts",
+      "scenario": "统一子 Agent 卡片与新建技能对话框",
+      "expected": "每个子 Agent 按可写的 Harness 显示状态，不写的 Harness 在表格下说明原因；写入先显示新文件与继承说明，只确认这次检查；新建子 Agent 只发送名字、说明与正文；新建技能的对话框收集文本后走自己的检查，显示 SKILL.md 差异与参数说明；无页面错误",
       "status": "planned",
       "evidence": null
     }

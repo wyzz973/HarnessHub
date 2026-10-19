@@ -186,3 +186,13 @@ ADR-045 第 4 步（2026-10-18，指令区块）追加：
   - 确认同样用`POST /api/v1/capabilities/changes`。移除时，HarnessHub 新建、移除后为空的文件会被删除，回读要求它已不存在。
 - 漂移：`history.drift`的`kind`可以是`instructions`，重新应用即带`overwrite`的写入检查。
 - 存储：升到`capabilities.sqlite` v4，新增`instruction_texts`。降级用`tools/capabilities-v4-to-v3.sql`，会删除指令文本、指令的修改记录与台账，各 Harness 文件里的区块保留。
+
+ADR-045 第 5 步（2026-10-19，子 Agent 与新建技能）追加：
+- `GET /api/v1/capabilities/subagents`返回`SubagentInventoryView`：
+  - `subagents`：清单里的子 Agent，带定义（`description`、`prompt`）、每个已安装 Harness 的状态`targets`（取值同 MCP 清单：`synced`、`claimable`、`outdated`、`different`、`changed`、`removed`、`absent`、`unsupported`，附原因与文件）。
+  - `harnesses`：每个 Harness 能否写入，不能时附原因（Cursor 的本机 CLI 不读家目录的子 Agent；Pi、Hermes、OpenClaw、DeepSeek Harness 没有子 Agent 文件）。
+- 改清单（都不改任何 Harness 的文件）：`POST /api/v1/capabilities/subagents/save`接受`{name, definition: {description, prompt}, replace?}`，不合格时返回 400；`POST /api/v1/capabilities/subagents/delete`接受`{name}`，HarnessHub 的文件还在时返回 409；`POST /api/v1/capabilities/subagents/claim`接受`{name, harnessIds}`，返回`subagent-claim`修改记录。
+- 写入的检查：`GET /api/v1/capabilities/subagents/sync?name=&harnessId=[&overwrite=true]`与`GET /api/v1/capabilities/subagents/remove?name=&harnessId=`，返回`kind`为`subagent-sync`或`subagent-remove`的`CapabilityChangeCheck`；确认用`POST /api/v1/capabilities/changes`。别的同名定义一律不覆盖；需要时新建目录（0700），移除最后一个文件后删除 HarnessHub 新建的空目录。
+- 新建技能：`POST /api/v1/capabilities/skill-create`接受`{name, description, body}`，`POST /api/v1/capabilities/skill-edit`接受`{name, description, body, overwrite?}`，都返回`CapabilityChangeCheck`（`kind`为`skill-create`、`skill-edit`，带 SKILL.md 的差异）；文件夹被改过时编辑检查带`proceed: {option: "overwrite"}`。`GET /api/v1/capabilities/skill-text?name=`返回`{text: {description, body} | null}`，只对 HarnessHub 新建的技能。视图里这类技能的`source`为`HarnessHub 新建`。
+- 漂移：`history.drift`的`kind`可以是`subagent`，重新应用即带`overwrite`的写入检查。
+- 存储：升到`capabilities.sqlite` v5，新增`subagents`与`skill_sources.kind`。降级用`tools/capabilities-v5-to-v4.sql`。

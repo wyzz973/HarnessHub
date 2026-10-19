@@ -614,3 +614,99 @@
   - 第一次运行在 dsh 读取的核对处停下：我的脚本把读取函数返回的对象当成了字符串，审批的停止条件没有触发。修正后续跑；中间登录会话过期，重启 4317 拿了新口令。
   - 本机留下的 `~/.dsh/cordis.patch.yml`（`[]`）按审批核对后手工删除，属于产品流程外的清理。dsh 的配置合成回到 3c 之前的 380 行。
 
+
+## 第 5 步设计：子 Agent 与命令（2026-10-19 提案，同日按审批更正事实）
+
+### 本机核实（只读，已装版本；两路调研的证据见文末各条）
+
+本机所有 Harness 的用户级子 Agent 与命令目录都不存在，现在一个都没有。
+
+| Harness | 子 Agent | 命令 |
+|---|---|---|
+| Claude Code 2.1.302（nvm 那份 2026-10-19 自动升到 2.1.303） | `~/.claude/agents/**/*.md`，必填 `name`、`description`（名字不能含 `:`、不能以 `-` 开头），正文是系统提示；未知字段忽略；与内置同名时顶替内置（如 `Explore`）。不写 `tools` 即继承全部工具；`hooks`、`mcpServers` 不经信任对话框就运行。会话启动时加载；只有启动时已存在的目录才会热加载。HarnessHub 的会话经 claude-agent-acp 0.89.1（`settingSources` 含 `user`）同样加载 | `~/.claude/commands/**/*.md` 仍读（已并入技能），`$0` 是第一个参数，`` !`cmd` `` 经权限检查；Cursor CLI 也读这个目录，但 `$1` 才是第一个参数、不解析 frontmatter |
+| Codex 0.162.1 | `~/.codex/agents/**/*.toml`（递归），另有 `config.toml` 的 `[agents.<名>]` 也声明角色；必填 `name`、`description`、`developer_instructions`；名字以 `name` 字段为准；未知键会让整个文件被拒；`default`、`explorer`、`worker`（`awaiter` 已注释）会被同名的用户角色顶替；角色能改模型、推理强度、features、skills 等，但不能放宽父会话的沙箱与审批。默认启用（`[agents] enabled` 与 `features.multi_agent` 缺省都为 true，本机显式写了 true）。app-server 每次新线程重读 | `~/.codex/prompts` 自 0.118.0 起不再读取（代码已删除），官方改用技能；技能没有参数占位符 |
+| Gemini CLI 0.62.0 | `~/.gemini/agents/*.md`（只看顶层、只认普通文件），必填 `name`（`^[a-z0-9-_]+$`）、`description`；字段严格校验，未知键整个文件失败；不写 `tools` 即继承全部工具；正文里的 `${…}` 是模板，只认 `query`、`cliVersion`、`activeModel`、`today`，别的名字调用时失败；内置名 `codebase_investigator`、`cli_help`、`generalist`、`browser_agent` 先注册、同名的用户 Agent 被忽略。默认启用。ACP 每个新会话重读 | `~/.gemini/commands/**/*.toml`（`prompt`、`description`，`{{args}}`、`!{…}`、`@{…}`）；**`--acp` 模式不展开自定义命令**，HarnessHub 的会话里用不了 |
+| OpenCode 1.18.35 | `~/.config/opencode/{agent,agents}/**/*.md`（另有 `{mode,modes}/*.md` 也定义 Agent），名字取自相对路径，以 `/` 连接，frontmatter 的 `name` 优先；字段代码上都可选，但类型写错可能让整个实例起不来，未知键会被送进模型请求参数；不写 `mode` 默认 `all`（同时出现在主模式列表）；内置 `build`、`plan`、`general`、`explore`、`compaction`、`title`、`summary` 可被同名文件逐字段覆盖。建实例时读一次，HarnessHub 每个会话起新进程 | `~/.config/opencode/{command,commands}/**/*.md`，`$1` 起 1 基；`` !`cmd` `` 在参数替换后执行，**不经权限检查** |
+| Cursor（cursor-agent 2026.10.01） | 文档写读 `~/.cursor/agents`、`~/.claude/agents`、`~/.codex/agents`，**本机 CLI 只读工作区里的** `.cursor/agents`、`.claude/agents`、`.grok/agents`（`index.js` 的 `computeAgentsDirs`），不读家目录；编辑器是否读取未核实 | CLI 读 `~/.cursor/commands` 与 `~/.claude/commands` 顶层的 `.md`（`9577.index.js` 的 `loadCommandsFromDirectory`），不解析 frontmatter |
+| Pi | 未安装 | 未安装 |
+| Hermes、OpenClaw、DeepSeek Harness | 没有子 Agent 文件格式 | 没有 |
+
+另外：选了 HarnessHub 管理的 Provider 的 Codex、Gemini 会话用私有目录，读不到用户级子 Agent。
+
+### 设计
+
+1. **统一子 Agent 清单**（与 MCP 清单同一模式）：
+   - 中立定义只有三样：`name`（`^[a-z][a-z0-9-]{0,63}$`，四家都能用）、`description`（一行，最多 1024 字符）、`prompt`（正文，最多 32 KiB）。文本校验与指令相同（控制字符、孤立代理项、家目录完整路径）。
+   - **不写**工具、模型、权限、hooks、MCP：子 Agent 继承父会话的模型、工具和权限；HarnessHub 不写任何会放宽权限或拉起程序的字段。确认框写明“这个子 Agent 继承父会话的全部工具和权限”。
+   - 保留名：四家内置的名字一律拒绝（`default`、`explorer`、`worker`、`generalist`、`build`、`plan`、`general`、`explore`、`compaction`、`title`、`summary`、`general-purpose`、`statusline-setup`、`claude-code-guide`、`claude`），以免顶替内置。
+   - 存在 `capabilities.sqlite` v5 的 `subagents` 表，附降级脚本。
+2. **按家写成 HarnessHub 自己的文件**（整份归 HarnessHub，台账记文件哈希）：
+   - Claude Code：`~/.claude/agents/<名>.md`，frontmatter 只有 `name`、`description`。
+   - Codex：`~/.codex/agents/<名>.toml`，只有 `name`、`description`、`developer_instructions` 三个键。
+   - Gemini：`~/.gemini/agents/<名>.md`，frontmatter 只有 `name`、`description`。正文含 `${` 时 Gemini 标为不支持并说明原因。
+   - OpenCode：`~/.config/opencode/agents/<名>.md`，frontmatter 只有 `description` 和 `mode: subagent`。
+   - Cursor 不写：本机 CLI 不读家目录的子 Agent。Pi 未安装；Hermes、OpenClaw、DeepSeek Harness 不支持。
+3. **状态与冲突**：已写入、待更新、被外部改动、被外部移除、未写入、一致可认领、同名不同（不覆盖）、不支持。同名的判断按各家的命名规则扫描整个目录：Claude、Codex、Gemini 看 `name` 字段，OpenCode 看路径；别人的同名定义一律不覆盖。
+4. **目录**：四个目录本机都不存在。第一次写入时建目录（0700），并记下“由 HarnessHub 新建”；移除最后一个文件后目录为空就删除，与裁决第 3 条对文件的规则一致。
+5. **写入流程**：沿用框架：检查（新文件或差异）→ 确认 → 再读比对 → 备份 → 原子写或删除 → 回读校验（按各家格式解析，只含这几个键）→ 台账 → 修改记录；漂移检查加入子 Agent。
+6. **什么时候生效**：
+   - Claude：新会话；运行中的会话只有在目录早已存在时才热加载，所以第一次建目录要开新会话。
+   - Codex：新线程，包括 ChatGPT 应用、编辑器扩展内置的 Codex。
+   - Gemini：新会话，或会话里 `/agents reload`。
+   - OpenCode：新会话（新进程）。
+   - 用 HarnessHub 管理的 Provider 的 Codex、Gemini 会话读不到。
+7. **命令：不写各家的原生命令文件**，理由：
+   - 本机一个命令都没有；Codex 已不读；Gemini 在 HarnessHub 的 ACP 会话里不展开；`~/.claude/commands` 同时被 Cursor 读、参数下标不同；OpenCode 的 `` !`cmd` `` 不经权限检查。
+   - 统一的做法是**共享技能**：`~/.agents/skills` 被本机所有 Harness 读取，Claude、OpenCode、Cursor 把技能列成 `/` 命令，Codex 用 `$名`。
+   - 提案在技能页签加“新建技能”：名称、说明、正文写成 `~/.agents/skills/<名>/SKILL.md`，走现有的添加流程（快照、撤销、删除），来源记为“HarnessHub 新建”。确认框说明各家参数占位符不同、Codex 的技能没有参数。
+   - 命令页签保持只读，并说明上面的取舍。
+8. **读取表更正**（视图的准确性）：
+   - Cursor：子 Agent 改为“本机 CLI 不读家目录”，命令改为读 `~/.cursor/commands` 与 `~/.claude/commands` 顶层。
+   - Codex：命令（prompts）改为不支持并写明 0.118 起删除；子 Agent 改为递归。
+   - Claude、OpenCode 的子 Agent 改为递归；Gemini 的子 Agent 只认普通文件。
+
+### 第一次真实写入（提案）
+
+- 用一个只做核对的子 Agent：名字 `harnesshub-roundtrip-check`，说明“HarnessHub 往返核对用，请不要调用”，正文“这个子 Agent 只用于核对写入与移除，不做任何事。”
+- 依次写入 Codex、OpenCode、Gemini、Claude Code，核对后全部移除。四个目录都由 HarnessHub 新建，移除后删除，最后回到原样。
+- 只验证文件级契约：按各家规则解析，并确认目录里没有同名冲突。各家会话里是否列出这个子 Agent 不验证，因为要新建会话。
+- “新建技能”的第一次真实写入留给用户。
+
+## 审批代理对第 5 步的裁决（2026-10-19）
+
+审批代理只读核对了提案与本机程序、上游源码，补正了事实（已改进上面的设计），并逐条裁决：
+
+1. **子 Agent 只写三样**：同意附条件。
+   - 确认框按家写明继承什么：Claude 继承全部工具与权限模式、加载 CLAUDE.md；Codex 不能放宽父会话沙箱与审批；Gemini 继承全部工具、用户级不需确认；OpenCode 继承全局权限配置。
+   - 保留名按证据扩充，写进读取表并附证据：Claude 另有 `comment-thread-analyst`、`teammate`、`agent`、`subagent`、`main`、`main-session`；Codex 加 `awaiter`；Gemini、OpenCode 各自的内置名。
+   - 文本：说明单行、去掉首尾空白、最多 1024；正文去掉首尾空白、最多 32 KiB、不得以 `---` 行开头。
+   - 不做每家覆盖块。
+2. **渲染**：同意附条件。Codex 的正文用多行基本字符串转义；Codex 关了子 Agent 时写明“文件写入但不会被用”；回读按各家格式核对三个字段、没有多余键；文件 0600、目录 0700。
+3. **同名与目录**：同意附条件。Codex 还要查 `config.toml` 的 `[agents.<名>]`（无法解析时阻止）；OpenCode 还要查 `{mode,modes}`；目录由 HarnessHub 新建时记下，移除最后一个文件后目录完全为空（含点文件）才删除；父目录不存在时阻止，不替它新建。
+4. **命令改为“新建技能”**：同意附条件。名字按 agentskills 规范、与现有文件夹不分大小写比较；与各家内置命令同名时警告；只写 `name`、`description`；拒绝 `` !`…` `` 与 ```` ```! ````（OpenCode 不经权限执行）；来源记为 HarnessHub 新建（存储 v5）、不写 lock；编辑走更新流程（快照、本地改动检测、撤销）；完成后提示放到 Claude Code。
+5. **读取表更正**：同意附条件；Cursor 命令要给出代码位置（已给出 `9577.index.js`）。
+6. **第一次真实写入**：同意，由主代理代为执行一个核对用子 Agent 在四家的往返，最后全部移除；“新建技能”的第一次真实写入留给用户。
+7. **其他**：存储 v5 与降级脚本；`subagent/`、`file/created`、`dir/created` 在漂移、重新应用、不再跟踪、孤立设置里都要识别；测试 G064-A1～A3；验证记录 `capability-subagents-2026-10-19.md`。
+
+## 第 5 步实现记录：子 Agent 与新建技能（2026-10-19）
+
+- **已实现**：
+  - `subagent-definitions.ts`：中立定义的校验、四家格式的生成与读回、按各家命名规则查同名。
+  - `subagent-changes.ts`：子 Agent 清单、每家的状态、写入与移除的检查、认领。
+  - 写入框架：编辑计划可以先建目录（0700，父目录须已存在）或在删除文件后删掉 HarnessHub 新建、已空的目录；`dir/created` 与 `file/created` 一样只是记录，不进漂移。
+  - `skill-text.ts` 与技能改动：由文本新建技能、编辑 HarnessHub 新建的技能（快照与撤销沿用），来源记为 `local`；检查更新时说明没有上游。
+  - 存储 v5：`subagents` 表与 `skill_sources.kind`；降级脚本 `tools/capabilities-v5-to-v4.sql`（删除子 Agent 与 HarnessHub 新建技能的记录，文件夹留给用户）。
+  - 接口：`/capabilities/subagents`（读）、`/subagents/save`、`/subagents/delete`、`/subagents/claim`、`/subagents/sync`、`/subagents/remove`；`/skill-create`、`/skill-edit`（POST 检查）、`/skill-text`。契约见 [provider-web-mvp](../contracts/provider-web-mvp.md)。
+  - 页面：子 Agent 页签上方的“统一子 Agent”卡片；共享目录卡片的“新建技能”，HarnessHub 新建的技能在详情里“编辑”；编辑被本地改动挡住时，确认框给出“覆盖本地改动并改写”。
+  - 读取表与视图：按第 5 条更正；Gemini 不读的文件列出并写明原因。
+- **实现中的取舍**：
+  1. **同名冲突与已写入的文件**：HarnessHub 写入之后旁边出现同名定义，状态保持“已写入”并说明“只会用其中一个”；再写入被阻止，移除仍可以。
+  2. **Codex 子 Agent 关闭的判断**：只有显式写了 `[agents] enabled = false` 或 `features.multi_agent = false` 才提示；缺省时两者都是开启（`config/mod.rs`、`features/src/lib.rs`），与审批第 2 条“缺省也提示”不同，如实写在这里。
+  3. **测试编号**：同名冲突与漂移是 G064-A3，新建技能单列为 G064-A4。
+  4. **页面记住选项**：没有做，每次检查都要用户自己点。
+- **已知行为**：
+  - 新建的子 Agent 文件为 0600，HarnessHub 新建的子 Agent 目录为 0700；新建技能的文件夹 0755、SKILL.md 0644。
+  - Claude Code 只检测会话启动时已存在的目录；第一次建 `~/.claude/agents` 后，运行中的会话看不到。
+  - 用 HarnessHub 管理的 Provider 的 Codex、Gemini 会话读不到用户级子 Agent。
+- **验收**：G064-A1（单元），G064-A2～A4（集成），G054-CA8（浏览器），G064-R4 按读取表更正；真实环境见[子 Agent 验收](../verification/capability-subagents-2026-10-19.md)。
+

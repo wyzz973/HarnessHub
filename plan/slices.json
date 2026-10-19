@@ -968,7 +968,16 @@
         "web/src/components/InstructionsPanel.tsx",
         "tests/unit/instruction-blocks.test.ts",
         "tests/integration/instructions.test.ts",
-        "tools/capabilities-v4-to-v3.sql"
+        "tools/capabilities-v4-to-v3.sql",
+        "src/infrastructure/capabilities/subagent-definitions.ts",
+        "src/infrastructure/capabilities/subagent-changes.ts",
+        "src/infrastructure/capabilities/skill-text.ts",
+        "web/src/components/SubagentsPanel.tsx",
+        "web/src/components/SkillTextDialog.tsx",
+        "tests/unit/subagent-definitions.test.ts",
+        "tests/integration/subagents.test.ts",
+        "tests/integration/skill-create.test.ts",
+        "tools/capabilities-v5-to-v4.sql"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/capabilities-view-2026-10-18.md"

@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { existsSync, lstatSync, readlinkSync, realpathSync, symlinkSync, unlinkSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, symlinkSync, unlinkSync } from "node:fs";
 import { rename, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -10,7 +10,8 @@ import { unifiedDiff } from "../control/unified-diff.js";
 import { readTarget, replaceTarget } from "./files.js";
 import { downloadRepository, listArchive, parseGithubSource, repositoryTree, settledCommit, sourceUrl, type GithubFetch, type GithubSource } from "./github.js";
 import type { InstalledHarness } from "./scan.js";
-import { editLock, findSkills, linksInto, lockSkills, readLockEntries, SkillSnapshots, skillFolderName, stagingFolder, writeSkill, type FoundSkill, type LockEntry } from "./skill-packages.js";
+import { editLock, findSkills, linksInto, lockSkills, readLockEntries, SkillSnapshots, skillFolderName, stagingFolder, writeSkill, writeSkillText, type FoundSkill, type LockEntry } from "./skill-packages.js";
+import { canonicalSkillText, readSkillText, renderSkillText, skillTextProblem, type SkillText } from "./skill-text.js";
 import { folderTree, npxExcludedPath, remoteFolderTree, treeId, type RemoteTreeEntry, type TreeItem } from "./skill-tree.js";
 import { sha256, type CapabilityStore, type LedgerEntry, type SkillSource } from "./store.js";
 
@@ -32,8 +33,9 @@ export interface SkillHost {
   /** Registers a prepared change under a new fingerprint and returns the check shown for it. */
   offer(check: Omit<CapabilityChangeCheck, "fingerprint" | "expiresAt">, prepared: (expires: number, check: CapabilityChangeCheck) => PreparedPackage): CapabilityChangeCheck;
 }
-export type PackageChange = "skill-add" | "skill-update" | "skill-delete" | "skill-undo";
-type Replacement = { readonly kind: "archive"; readonly skill: FoundSkill; readonly archive: Buffer } | { readonly kind: "snapshot"; readonly id: string };
+export type PackageChange = "skill-add" | "skill-update" | "skill-delete" | "skill-undo" | "skill-create" | "skill-edit";
+/** What a replaced folder becomes: a repository version, a snapshot put back, or a SKILL.md the user wrote in HarnessHub. */
+type Replacement = { readonly kind: "archive"; readonly skill: FoundSkill; readonly archive: Buffer } | { readonly kind: "snapshot"; readonly id: string } | { readonly kind: "text"; readonly text: string };
 interface PlannedLink { readonly path: string; readonly target: string; readonly action: "create" | "remove"; readonly owner: "harnesshub" | "other"; readonly harnessId: string | null }
 interface PlannedLock { readonly file: string; readonly before: Buffer; readonly after: string; readonly mode: number; readonly name: string;
   readonly entryBefore: Readonly<Record<string, unknown>> | null; readonly entryAfter: Readonly<Record<string, unknown>> | null }
@@ -41,7 +43,8 @@ interface PlannedLock { readonly file: string; readonly before: Buffer; readonly
 export interface PackageSteps {
   readonly shared: string;
   readonly subject: string;
-  readonly adds: readonly { readonly name: string; readonly folder: string; readonly skill: FoundSkill; readonly archive: Buffer }[];
+  /** New folders: from a repository version, or holding only a SKILL.md the user wrote (`text`). */
+  readonly adds: readonly ({ readonly name: string; readonly folder: string; readonly skill: FoundSkill; readonly archive: Buffer } | { readonly name: string; readonly folder: string; readonly text: string })[];
   readonly replaces: readonly { readonly name: string; readonly folder: string; readonly expected: string; readonly by: Replacement }[];
   readonly removes: readonly { readonly name: string; readonly folder: string; readonly expected: string }[];
   readonly restores: readonly { readonly name: string; readonly folder: string; readonly snapshot: string }[];
@@ -119,6 +122,7 @@ export class SkillChanges {
   private async tracked(): Promise<{ readonly list: readonly Tracked[]; readonly unsupported: readonly { readonly name: string; readonly reason: string }[] }> {
     const shared = this.shared(), list: Tracked[] = [], unsupported: { name: string; reason: string }[] = [], seen = new Set<string>();
     for (const source of this.host.store.skillSources()) {
+      if (source.kind === "local") { if (realDirectory(source.folder)) { seen.add(source.name); unsupported.push({ name: source.name, reason: "HarnessHub 新建的技能，没有上游；要改它请用“编辑”" }); } continue; }
       const match = /^https:\/\/github\.com\/([^/]+)\/([^/]+)$/u.exec(source.repository);
       if (!match || !realDirectory(source.folder)) continue;
       seen.add(source.name);
@@ -172,7 +176,7 @@ export class SkillChanges {
     const listing = LISTING.test(listingId) ? this.listings.get(listingId) : undefined;
     if (listing === undefined || listing.expires < this.host.now().getTime()) throw new CapabilityError("CAPABILITY_CHECK_EXPIRED", "仓库的读取已过期，请重新读取");
     if (!names.length || names.length > 64 || new Set(names).size !== names.length) throw new CapabilityError("INVALID_INPUT", "请选择要添加的技能");
-    const shared = this.shared(), tracked = (await this.tracked()).list, adds: PackageSteps["adds"][number][] = [], plans: CapabilitySkillPlan[] = [];
+    const shared = this.shared(), tracked = (await this.tracked()).list, adds: { readonly name: string; readonly folder: string; readonly skill: FoundSkill; readonly archive: Buffer }[] = [], plans: CapabilitySkillPlan[] = [];
     let blocked: string | null = null;
     const notes = [SCOPE, EXCLUSIONS];
     for (const name of names) {
@@ -192,7 +196,7 @@ export class SkillChanges {
     notes.push(...await this.readers(installed));
     const steps: PackageSteps = { shared, subject: names.join("、"), adds, replaces: [], removes: [], restores: [], links: [], lock: null,
       sources: adds.map(item => ({ name: item.name, before: null, after: { name: item.name, folder: item.folder, repository: sourceUrl(listing.source), ref: listing.source.ref, path: item.skill.folder, commit: listing.commit,
-        upstreamTree: item.skill.upstreamTree!, localTree: item.skill.copyTree!, installedAt: "", updatedAt: "", changeId: "" } })) };
+        upstreamTree: item.skill.upstreamTree!, localTree: item.skill.copyTree!, installedAt: "", updatedAt: "", changeId: "", kind: "github" } })) };
     return this.offer("skill-add", steps, plans, { repository: sourceUrl(listing.source), ref: listing.source.ref, commit: listing.commit }, null, [], "none", notes, blocked);
   }
   /** Who sees a skill once it is in the shared directory, among the installed Harnesses, by their read tables. */
@@ -292,6 +296,60 @@ export class SkillChanges {
     return this.offer("skill-update", steps, plans, { repository: sourceUrl(item), ref: item.ref, commit }, lockDiff, [], item.manager === "harnesshub" ? "harnesshub" : "other", notes, blocked);
   }
   /**
+   * Prepares writing a new skill from the user's texts (commands become shared skills, ADR-045 step 5): a folder
+   * `~/.agents/skills/<name>` holding only its SKILL.md, recorded as HarnessHub's own (no `.skill-lock.json` entry). A
+   * name taken by any folder there, compared without case as the file system does, is refused; one a Harness's built-in
+   * command or bundled skill has is warned about.
+   */
+  async checkCreate(name: string, input: SkillText, homes: readonly string[], installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> {
+    const problem = skillTextProblem(name, input, homes);
+    if (problem !== null) throw new CapabilityError("INVALID_INPUT", problem);
+    const shared = this.shared(), real = this.sharedReal(), folder = join(shared, name), text = renderSkillText(name, input), { tables } = await this.host.tables();
+    const taken = readdirSync(real).find(entry => entry.toLowerCase() === name);
+    const notes = [SCOPE, "会新建 " + this.host.shown(join(folder, "SKILL.md")) + "（文件夹 0755、文件 0644），来源记为 HarnessHub 新建，不写 npx skills 的 lock。",
+      "参数占位符各家不同：Claude Code 的 $0 是第一个参数，OpenCode、Cursor 的 $1 才是；Codex 的技能没有参数。没有占位符时，各家都把调用时跟的文字交给模型。"];
+    for (const table of tables) if (installed.some(item => item.harnessId === table.harnessId) && table.builtinCommands?.includes(name))
+      notes.push((installed.find(item => item.harnessId === table.harnessId)?.name ?? table.harnessId) + " 有同名的内置命令或捆绑技能 /" + name + "，这个技能会与它争用。");
+    notes.push(...await this.readers(installed));
+    notes.push("Claude Code 只读 ~/.claude/skills：建好后可以在技能详情里“放到 Claude Code”。");
+    const steps: PackageSteps = { shared, subject: name, adds: taken === undefined ? [{ name, folder, text }] : [], replaces: [], removes: [], restores: [], links: [], lock: null,
+      sources: [{ name, before: null, after: { name, folder, repository: "", ref: null, path: "", commit: "", upstreamTree: "", localTree: "", installedAt: "", updatedAt: "", changeId: "", kind: "local" } }] };
+    const plans: CapabilitySkillPlan[] = [{ name, folder: this.host.shown(folder), action: "add", files: 1, bytes: Buffer.byteLength(text, "utf8"), executables: 0, plugin: false, changes: [{ path: "SKILL.md", action: "add" }], overwrites: 0 }];
+    return this.offer("skill-create", steps, plans, null, null, [], "none", notes, taken === undefined ? null : "共享目录里已有 " + taken + "（不分大小写），换一个名字。",
+      this.host.display(unifiedDiff(this.host.shown(join(folder, "SKILL.md")), null, text, 2)));
+  }
+  /**
+   * Prepares changing a skill HarnessHub wrote from text: its folder replaced by one holding the new SKILL.md (a snapshot
+   * kept to undo with). A folder someone changed since HarnessHub wrote it is replaced only with `overwrite`.
+   */
+  async checkEdit(name: string, input: SkillText, homes: readonly string[], overwrite: boolean): Promise<CapabilityChangeCheck> {
+    const problem = skillTextProblem(name, input, homes);
+    if (problem !== null) throw new CapabilityError("INVALID_INPUT", problem);
+    const source = this.host.store.skillSource(name);
+    if (source === null || source.kind !== "local" || !realDirectory(source.folder)) throw new CapabilityError("CAPABILITY_NOT_FOUND", name + " 不是 HarnessHub 新建的技能");
+    const local = await folderTree(source.folder), skillFile = join(source.folder, "SKILL.md"), before = (() => { try { return readFileSync(skillFile, "utf8"); } catch { return ""; } })(), text = renderSkillText(name, input);
+    const modified = local.id !== source.localTree, changes = fileChanges(local.items, [{ path: "SKILL.md", mode: "100644", id: "" }]).filter(change => change.path !== "SKILL.md" || before !== text);
+    const notes = [SCOPE, "替换的一瞬间这个技能的文件夹会短暂缺失，正在监视技能目录的 Harness 可能看到它消失又出现。"];
+    let blocked: string | null = null;
+    if (before === text && !modified) blocked = "无需修改：SKILL.md 已是这些内容。";
+    else if (modified && !overwrite) blocked = "这个技能在 HarnessHub 写入之后被改过；要改写，请选择“覆盖本地改动并改写”，旧版本会留快照，可以撤销。";
+    if (modified) notes.push("会覆盖本地的改动，文件夹里只留下新的 SKILL.md；旧版本留有快照，可以撤销。");
+    const steps: PackageSteps = { shared: this.shared(), subject: name, adds: [], removes: [], restores: [], links: [], lock: null,
+      replaces: [{ name, folder: source.folder, expected: local.id!, by: { kind: "text", text } }], sources: [{ name, before: source, after: { ...source, upstreamTree: "", localTree: "", updatedAt: "" } }] };
+    const plans: CapabilitySkillPlan[] = [{ name, folder: this.host.shown(source.folder), action: "update", files: 1, bytes: Buffer.byteLength(text, "utf8"), executables: 0, plugin: false, changes, overwrites: modified ? changes.length : 0 }];
+    const check = this.offer("skill-edit", steps, plans, null, null, [], "harnesshub", notes, blocked, this.host.display(unifiedDiff(this.host.shown(skillFile), before, text, 2)));
+    // Only the user's say-so is missing when the folder was changed since: the page asks again with overwrite.
+    return modified && !overwrite ? { ...check, proceed: { option: "overwrite", label: "覆盖本地改动并改写" } } : check;
+  }
+  /** The texts of a skill HarnessHub wrote, read from its SKILL.md as it is now, for editing; null when that does not read as one. */
+  localText(name: string): (SkillText & { readonly modified: boolean }) | null {
+    const source = this.host.store.skillSource(name);
+    if (source === null || source.kind !== "local") throw new CapabilityError("CAPABILITY_NOT_FOUND", name + " 不是 HarnessHub 新建的技能");
+    let content: string; try { content = readFileSync(join(source.folder, "SKILL.md"), "utf8"); } catch { return null; }
+    const read = readSkillText(content);
+    return read === null ? null : { ...canonicalSkillText(read), modified: false };
+  }
+  /**
    * Prepares deleting one skill folder of the shared directory: kept as a snapshot first, then the links that lead into it
    * (HarnessHub's and other tools') removed, the folder removed, its lock entry and HarnessHub's record of it dropped. The
    * switch settings HarnessHub wrote for it stay and are listed.
@@ -375,10 +433,10 @@ export class SkillChanges {
     return this.offer("skill-undo", steps, plans, null, lockDiff, [], "harnesshub", [SCOPE, "撤销“" + change.subject + "”：放回当初的文件夹、链接和 lock 条目。"], blocked);
   }
   private offer(change: PackageChange, steps: PackageSteps, skills: readonly CapabilitySkillPlan[], source: NonNullable<CapabilityChangeCheck["source"]> | null, lock: NonNullable<CapabilityChangeCheck["lock"]> | null, orphans: NonNullable<CapabilityChangeCheck["orphans"]>,
-    current: CapabilityChangeCheck["current"], notes: readonly string[], blocked: string | null): CapabilityChangeCheck {
+    current: CapabilityChangeCheck["current"], notes: readonly string[], blocked: string | null, diff: string | null = null): CapabilityChangeCheck {
     const links: CapabilityLinkChange[] = steps.links.map(link => ({ path: this.host.shown(link.path), target: link.target.startsWith("/") ? this.host.shown(link.target) : link.target, action: link.action, owner: link.owner }));
     const empty = !steps.adds.length && !steps.replaces.length && !steps.removes.length && !steps.restores.length && !steps.links.length && steps.lock === null;
-    return this.host.offer({ kind: change, harnessId: "", name: steps.subject, enabled: change !== "skill-delete", file: this.host.shown(steps.shared), command: null, diff: null, rewrite: null, links, current,
+    return this.host.offer({ kind: change, harnessId: "", name: steps.subject, enabled: change !== "skill-delete", file: this.host.shown(steps.shared), command: null, diff, rewrite: null, links, current,
       notes, blocked: blocked ?? (empty ? "无需修改。" : null), skills, source, lock, orphans }, (expires, check) => ({ kind: "package", change, expires, steps, check }));
   }
 
@@ -404,14 +462,16 @@ export class SkillChanges {
         }
         for (const item of steps.replaces) {
           const fresh = join(staging, "new-" + item.name), aside = join(staging, "old-" + item.name);
-          const written = item.by.kind === "archive" ? (await writeSkill(item.by.archive, item.by.skill, fresh)).id : (await this.host.snapshots.restore(item.by.id, fresh), item.by.id);
+          const written = item.by.kind === "archive" ? (await writeSkill(item.by.archive, item.by.skill, fresh)).id : item.by.kind === "text" ? (await writeSkillText(item.by.text, fresh)).id
+            : (await this.host.snapshots.restore(item.by.id, fresh), item.by.id);
           await rename(item.folder, aside);
           try { await rename(fresh, item.folder); } catch (failure) { await rename(aside, item.folder); throw failure; }
           rollback.push(async () => { await rename(item.folder, fresh); await rename(aside, item.folder); }); after.set(item.folder, written);
         }
         for (const item of [...steps.adds.map(add => ({ ...add, kind: "add" as const })), ...steps.restores.map(restore => ({ ...restore, kind: "restore" as const }))]) {
           const fresh = join(staging, "new-" + item.name);
-          const written = item.kind === "add" ? (await writeSkill(item.archive, item.skill, fresh)).id : (await this.host.snapshots.restore(item.snapshot, fresh), item.snapshot);
+          const written = item.kind === "restore" ? (await this.host.snapshots.restore(item.snapshot, fresh), item.snapshot) : "text" in item ? (await writeSkillText(item.text, fresh)).id
+            : (await writeSkill(item.archive, item.skill, fresh)).id;
           if (present(item.folder)) throw new CapabilityError("CAPABILITY_TARGET_CHANGED", this.host.shown(item.folder) + " 在确认之后被占用");
           await rename(fresh, item.folder); rollback.push(() => rename(item.folder, join(staging, "undone-" + item.name))); after.set(item.folder, written);
         }
@@ -434,8 +494,11 @@ export class SkillChanges {
       }
       // A rollback that did not complete leaves the staging folder for the user, with whatever it still holds.
       if (!stuck) await rm(staging, { recursive: true, force: true });
+      // A skill written from text gets its trees once it is written: the folder as written is both its source and its copy.
+      const sources = steps.sources.map(item => item.after !== null && item.after.kind === "local" ? { ...item, after: { ...item.after, upstreamTree: after.get(item.after.folder) ?? item.after.upstreamTree,
+        localTree: after.get(item.after.folder) ?? item.after.localTree } } : item);
       if (error === null) {
-        for (const item of steps.sources) {
+        for (const item of sources) {
           if (item.after === null) this.host.store.dropSkillSource(item.name);
           else this.host.store.setSkillSource({ ...item.after, installedAt: item.after.installedAt || at, updatedAt: at, changeId: id });
         }
@@ -454,7 +517,7 @@ export class SkillChanges {
       record(view);
       if (error === null && prepared.change !== "skill-undo") this.host.store.setSkillUndo(id, {
         skills: skills.map(item => ({ ...item, snapshot: item.before === null ? null : snapshots.get(item.folder) ?? (steps.restores.find(restore => restore.folder === item.folder)?.snapshot ?? null) })),
-        links: steps.links, lock: steps.lock === null ? null : { file: steps.lock.file, name: steps.lock.name, before: steps.lock.entryBefore, after: steps.lock.entryAfter }, sources: steps.sources.map(item => ({ name: item.name, before: item.before, after: item.after === null ? null : { ...item.after, changeId: id } })) } satisfies UndoRecord);
+        links: steps.links, lock: steps.lock === null ? null : { file: steps.lock.file, name: steps.lock.name, before: steps.lock.entryBefore, after: steps.lock.entryAfter }, sources: sources.map(item => ({ name: item.name, before: item.before, after: item.after === null ? null : { ...item.after, changeId: id } })) } satisfies UndoRecord);
       await this.prune();
       if (error === null) this.updates = null;
       return view;

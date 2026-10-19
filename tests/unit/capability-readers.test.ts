@@ -135,11 +135,19 @@ test("G064-R4 instructions, subagents, commands, hooks and plugins are read with
   const reads = Object.fromEntries(view.harnesses.map(item => [item.harnessId, item]));
   assert.equal(reads.hermes?.kinds.instructions, "unsupported"); assert.ok(reads.hermes?.notes.some(note => note.includes("SOUL.md")));
   assert.equal(reads.cursor?.kinds.instructions, "invisible"); assert.equal(reads.cursor?.kinds.plugin, "invisible");
-  // Subagents and commands: Cursor uses Claude's and Codex's subagents, said as a cross read; nested commands are namespaced.
-  assert.deepEqual(entry(view, "subagent", "reviewer").edges.map(edge => [edge.harnessId, edge.mechanism]), [["claude", "own-copy"], ["cursor", "compat-root"]]);
-  assert.ok(entry(view, "subagent", "reviewer").warnings.some(warning => warning.kind === "cross" && warning.harnessId === "cursor"));
-  assert.deepEqual(entry(view, "subagent", "helper").edges.map(edge => [edge.harnessId, edge.mechanism]), [["codex", "own-copy"], ["cursor", "compat-root"]]);
-  assert.deepEqual(["frontend:review", "fix", "deploy", "git:commit", "hello"].map(name => entry(view, "command", name).edges.map(edge => edge.harnessId)), [["claude"], ["codex"], ["opencode"], ["gemini"], ["pi"]]);
+  // Subagents, as each installed version reads them: Claude and Codex recursively by `name`; OpenCode by path with / and its
+  // modes too; Gemini only regular files at the top, the others listed as not read. Cursor's CLI reads none at user level.
+  assert.deepEqual(["reviewer", "lead", "helper", "scout", "review/strict", "focus", "scribe"].map(name => entry(view, "subagent", name).edges.map(edge => [edge.harnessId, edge.status])),
+    [[["claude", "active"]], [["claude", "active"]], [["codex", "active"]], [["codex", "active"]], [["opencode", "active"]], [["opencode", "active"]], [["gemini", "active"]]]);
+  assert.deepEqual(["draft", "linked"].map(name => entry(view, "subagent", name).edges.map(edge => [edge.harnessId, edge.status, edge.reason])), [[["gemini", "rejected", "不读以 _ 开头的文件"]], [["gemini", "rejected", "不读符号链接"]]]);
+  assert.equal(reads.cursor?.kinds.subagent, "unsupported");
+  assert.ok(reads.cursor?.notes.some(note => note.includes("只读工作区里的子 Agent")));
+  // Commands: Codex no longer reads its prompts; Cursor's CLI reads its own and Claude's top-level commands; OpenCode names nested ones with /.
+  assert.equal(reads.codex?.kinds.command, "unsupported");
+  assert.equal(view.entries.some(item => item.kind === "command" && item.name === "fix"), false);
+  assert.deepEqual(["frontend:review", "standup", "ship", "deploy", "ops/restart", "git:commit", "hello"].map(name => entry(view, "command", name).edges.map(edge => [edge.harnessId, edge.mechanism])),
+    [[["claude", "own-copy"]], [["claude", "own-copy"], ["cursor", "compat-root"]], [["cursor", "own-copy"]], [["opencode", "own-copy"]], [["opencode", "own-copy"]], [["gemini", "own-copy"]], [["pi", "own-copy"]]]);
+  assert.ok(entry(view, "command", "standup").warnings.some(warning => warning.kind === "cross" && warning.harnessId === "cursor"));
   // Hooks: a program by its base name only; Cursor also runs Claude's; OpenClaw's own switch is read.
   const guard = view.entries.find(item => item.kind === "hook" && item.name === "PreToolUse（Bash）");
   assert.deepEqual(guard?.facts, { kind: "hook", event: "PreToolUse", matcher: "Bash", program: "guard.sh" });

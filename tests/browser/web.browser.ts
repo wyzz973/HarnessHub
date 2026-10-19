@@ -2376,3 +2376,73 @@ test("G054-CA7 the instructions are edited and saved without touching any Harnes
   assert.equal(posted[1]!.body.fingerprint, "6".repeat(64));
   assert.deepEqual(errors, []);
 });
+
+test("G054-CA8 the subagent list writes a subagent into each Harness only through its shown check, says why some Harnesses take none, and a skill written from text goes through its own check", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  const at = "2026-10-19T10:00:00.000Z";
+  let codexState = "absent";
+  const inventory = () => ({ subagents: [{ name: "code-checker", definition: { description: "Checks a change for what it breaks", prompt: "You check one change." }, updatedAt: at,
+    targets: [{ harnessId: "claude", state: "synced", reason: null, file: "~/.claude/agents/code-checker.md" }, { harnessId: "codex", state: codexState, reason: null, file: "~/.codex/agents/code-checker.toml" },
+      { harnessId: "cursor", state: "unsupported", reason: "本机 cursor-agent 只读工作区里的子 Agent，不读家目录", file: null }] }],
+    harnesses: [{ harnessId: "claude", name: "Claude Code", writable: true, reason: null }, { harnessId: "codex", name: "Codex", writable: true, reason: null },
+      { harnessId: "cursor", name: "Cursor", writable: false, reason: "本机 cursor-agent 只读工作区里的子 Agent，不读家目录" }] });
+  const checks: string[] = [], posted: { path: string; body: Record<string, unknown> }[] = [];
+  await page.route("**/api/v1/capabilities", route => route.fulfill({ json: capabilityView() }));
+  await page.route("**/api/v1/capabilities/history", route => route.fulfill({ json: { changes: [], backups: [], drift: [], ...HISTORY_EXTRA } }));
+  await page.route("**/api/v1/capabilities/subagents", route => route.fulfill({ json: inventory() }));
+  await page.route(/\/api\/v1\/capabilities\/subagents\/(sync|remove)\?/u, route => {
+    const url = new URL(route.request().url()); checks.push(url.pathname.replace("/api/v1/capabilities/", "") + url.search);
+    return route.fulfill({ json: { kind: "subagent-sync", harnessId: "codex", name: "code-checker", enabled: true, file: "~/.codex/agents/code-checker.toml", command: null, rewrite: null, links: [], current: "none", blocked: null,
+      diff: "--- /dev/null\n+++ b/~/.codex/agents/code-checker.toml\n@@ -0,0 +1,4 @@\n+name = \"code-checker\"\n+description = \"Checks a change for what it breaks\"\n+developer_instructions = \"\"\"\n+You check one change.\"\"\"\n",
+      notes: ["只新建 HarnessHub 自己的文件 ~/.codex/agents/code-checker.toml，不写工具、权限、hooks、MCP，不改模型与登录配置。", "这个子 Agent 用父会话的模型与设置，不能放宽父会话的沙箱和审批。"],
+      fingerprint: "7".repeat(64), expiresAt: "2026-10-19T10:15:00.000Z" } });
+  });
+  await page.route(/\/api\/v1\/capabilities\/(changes|subagents\/save|skill-create)$/u, async route => {
+    const path = new URL(route.request().url()).pathname.replace("/api/v1/capabilities/", ""), body = route.request().postDataJSON() as Record<string, unknown>; posted.push({ path, body });
+    if (path === "subagents/save") return route.fulfill({ json: { name: body.name } });
+    if (path === "skill-create") return route.fulfill({ json: { kind: "skill-create", harnessId: "", name: "standup-notes", enabled: true, file: "~/.agents/skills", command: null, rewrite: null, links: [], current: "none", blocked: null,
+      diff: "--- /dev/null\n+++ b/~/.agents/skills/standup-notes/SKILL.md\n@@ -0,0 +1,6 @@\n+---\n+name: standup-notes\n+description: \"Writes my standup notes\"\n+---\n+\n+Summarize yesterday.\n",
+      skills: [{ name: "standup-notes", folder: "~/.agents/skills/standup-notes", action: "add", files: 1, bytes: 90, executables: 0, plugin: false, changes: [{ path: "SKILL.md", action: "add" }], overwrites: 0 }], source: null, lock: null,
+      notes: ["参数占位符各家不同：Claude Code 的 $0 是第一个参数，OpenCode、Cursor 的 $1 才是；Codex 的技能没有参数。"], fingerprint: "8".repeat(64), expiresAt: "2026-10-19T10:15:00.000Z" } });
+    codexState = "synced";
+    return route.fulfill({ json: { id: "19999999-9999-4999-8999-999999999999", kind: "subagent-sync", harnessId: "codex", subject: "code-checker", file: "~/.codex/agents/code-checker.toml", status: "applied", diff: null, backupId: null, error: null, notes: [], at } });
+  });
+  await page.goto(fixture.gateway.url); await expect(page.getByRole("button", { name: "新对话", exact: true })).toBeVisible();
+  await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "能力", exact: true }).click();
+  await page.getByRole("tab", { name: /^子 Agent/u }).click();
+  // Each subagent per writable Harness; why Cursor takes none is said under the table, not as a column.
+  const panel = page.locator(".subagent-inventory"), row = panel.locator("tbody tr").filter({ hasText: "code-checker" });
+  await expect(row.locator("td")).toHaveText([/已写入移除/u, /未写入写入/u]);
+  await expect(panel).toContainText("Cursor：本机 cursor-agent 只读工作区里的子 Agent，不读家目录");
+  // Writing goes through its check: the new file and what the subagent inherits are shown, and only that check is confirmed.
+  await row.locator("td").nth(1).getByRole("button", { name: "写入", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "写入 code-checker 到 Codex" });
+  await expect(dialog.locator(".capability-diff .text-green")).toHaveText(["+name = \"code-checker\"", "+description = \"Checks a change for what it breaks\"", "+developer_instructions = \"\"\"", "+You check one change.\"\"\""]);
+  await expect(dialog).toContainText("不能放宽父会话的沙箱和审批");
+  await dialog.getByRole("button", { name: "写入", exact: true }).click(); await expect(dialog).toBeHidden();
+  await expect(row.locator("td").nth(1)).toHaveText(/已写入/u);
+  // A new subagent keeps only its name, description and prompt.
+  await panel.getByRole("button", { name: "新建子 Agent" }).click();
+  const form = page.getByRole("dialog", { name: "新建子 Agent" });
+  await form.getByRole("textbox", { name: "子 Agent 名字" }).fill("test-writer"); await form.getByRole("textbox", { name: "子 Agent 说明" }).fill("Writes tests"); await form.getByRole("textbox", { name: "子 Agent 正文" }).fill("Write tests first.");
+  await form.getByRole("button", { name: "保存到清单" }).click(); await expect(form).toBeHidden();
+  // A skill written from text: the dialog collects the texts, and the change is shown and confirmed like any other.
+  await page.getByRole("tab", { name: /^技能/u }).click();
+  await page.getByRole("button", { name: "新建技能", exact: true }).click();
+  const skillForm = page.getByRole("dialog", { name: "新建技能" });
+  await skillForm.getByRole("textbox", { name: "技能名字" }).fill("standup-notes"); await skillForm.getByRole("textbox", { name: "技能说明" }).fill("Writes my standup notes"); await skillForm.getByRole("textbox", { name: "技能正文" }).fill("Summarize yesterday.");
+  await skillForm.getByRole("button", { name: "检查改动" }).click();
+  const confirmSkill = page.getByRole("dialog", { name: "新建技能 standup-notes" });
+  await expect(confirmSkill.locator(".capability-diff")).toContainText("+name: standup-notes");
+  await expect(confirmSkill).toContainText("Codex 的技能没有参数");
+  await confirmSkill.getByRole("button", { name: "取消" }).click();
+  assert.deepEqual(checks, ["subagents/sync?name=code-checker&harnessId=codex"]);
+  assert.deepEqual(posted.map(item => item.path), ["changes", "subagents/save", "skill-create"]);
+  assert.deepEqual(posted[1]!.body, { name: "test-writer", definition: { description: "Writes tests", prompt: "Write tests first." }, replace: false });
+  assert.deepEqual(posted[2]!.body, { name: "standup-notes", description: "Writes my standup notes", body: "Summarize yesterday." });
+  assert.deepEqual(errors, []);
+});

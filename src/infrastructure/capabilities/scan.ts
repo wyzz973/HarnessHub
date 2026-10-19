@@ -387,8 +387,9 @@ export class CapabilityScan {
     const seen = new Map<string, CapabilityEdge[]>();
     for (const spec of specs) for (const file of await this.listFiles(table.harnessId, spec, kind)) {
       const row = this.row(kind, kind + ":" + file.name, file.name, () => ({ description: file.description, owner: "user", source: null, location: file.shown, facts: { kind, format: spec.format } }));
-      const edge: CapabilityEdge = { harnessId: table.harnessId, mechanism: spec.role === "compat" ? "compat-root" : "own-copy", status: "active", via: file.shown, reason: null };
-      row.edges.push(edge); seen.set(file.name, [...(seen.get(file.name) ?? []), edge]);
+      const edge: CapabilityEdge = { harnessId: table.harnessId, mechanism: spec.role === "compat" ? "compat-root" : "own-copy", status: file.rejected === null ? "active" : "rejected", via: file.shown, reason: file.rejected };
+      row.edges.push(edge);
+      if (file.rejected === null) seen.set(file.name, [...(seen.get(file.name) ?? []), edge]);
       if (spec.role === "compat") row.warnings.push({ kind: "cross", harnessId: table.harnessId, text: harnessName + " 也会使用 " + file.shown + "。" });
     }
     for (const [name, edges] of seen) if (edges.length > 1) {
@@ -397,8 +398,9 @@ export class CapabilityScan {
       row.warnings.push({ kind: "duplicate", harnessId: table.harnessId, text: harnessName + " 在 " + edges.map(edge => edge.via).join("、") + " 都找到 " + name + "。" });
     }
   }
-  private async listFiles(harnessId: string, spec: FileListSpec, kind: "subagent" | "command"): Promise<readonly { name: string; description: string | null; shown: string }[]> {
-    const out: { name: string; description: string | null; shown: string }[] = [], suffix = spec.format === "toml" ? ".toml" : ".md";
+  /** The files of one directory as its Harness names them; one it does not read (Gemini's links and `_` names) comes with why. */
+  private async listFiles(harnessId: string, spec: FileListSpec, kind: "subagent" | "command"): Promise<readonly { name: string; description: string | null; shown: string; rejected: string | null }[]> {
+    const out: { name: string; description: string | null; shown: string; rejected: string | null }[] = [], suffix = spec.format === "toml" ? ".toml" : ".md";
     const walk = async (dir: string, level: number): Promise<void> => {
       let items; try { items = await readdir(dir, { withFileTypes: true }); } catch { return; }
       items.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
@@ -407,13 +409,14 @@ export class CapabilityScan {
         const path = join(dir, item.name), info = item.isSymbolicLink() ? await stat(path).catch(() => null) : item;
         if (info?.isDirectory()) { if (spec.recursive && level < 3) await walk(path, level + 1); continue; }
         if (!info?.isFile() || extname(item.name) !== suffix) continue;
-        const file = await this.read(path, MAX_DOCUMENT_BYTES), stem = relative(spec.dir, path).slice(0, -suffix.length).split(sep).join(":");
+        const file = await this.read(path, MAX_DOCUMENT_BYTES), stem = relative(spec.dir, path).slice(0, -suffix.length).split(sep).join(spec.separator ?? ":");
+        const rejected = spec.skipPrefix !== undefined && item.name.startsWith(spec.skipPrefix) ? "不读以 " + spec.skipPrefix + " 开头的文件" : spec.regularOnly && item.isSymbolicLink() ? "不读符号链接" : null;
         if (file.state === "unreadable") { this.unreadableFile(harnessId, path, file.reason); continue; }
         if (file.state !== "ok") continue;
         let fields: Readonly<Record<string, unknown>> = {};
         if (spec.format === "toml") { const parsed = parseConfig(file.text, "toml"); if (!parsed.ok) { this.unreadableFile(harnessId, path, parsed.reason); continue; } fields = record(parsed.value); }
         else fields = frontmatter(file.text).value ?? {};
-        out.push({ name: this.clean(kind === "subagent" ? text(fields.name) ?? stem : stem), description: clip(this.clean(text(fields.description))), shown: this.shown(path) });
+        out.push({ name: this.clean(kind === "subagent" ? text(fields.name) ?? stem : stem), description: clip(this.clean(text(fields.description))), shown: this.shown(path), rejected });
       }
     };
     await walk(spec.dir, 1);

@@ -1754,7 +1754,7 @@
 - 不提前展示新Harness已生效
 - 可操作且不持有独立业务状态
 
-场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01, G054-NC1, G054-NC2, G054-NC3, G054-NC4, G054-NC5, G054-NC6, G054-NC7, G054-NC8, G054-NC9, G054-NC10, G054-NC11, G054-NC12, G054-NC13, G054-NC14, G054-NC15, G054-FR1, G054-FR2, G054-FR3, G054-FR4, G054-FR5, G054-FR6, G054-FR7, G054-FR8, G054-UP1, G054-UP2, G054-OC1, G054-UN1, G054-IN1, G054-UG1, G054-CA1, G054-CA2, G054-CA3, G054-CA4, G054-CA5, G054-CA6, G054-CA7。
+场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01, G054-NC1, G054-NC2, G054-NC3, G054-NC4, G054-NC5, G054-NC6, G054-NC7, G054-NC8, G054-NC9, G054-NC10, G054-NC11, G054-NC12, G054-NC13, G054-NC14, G054-NC15, G054-FR1, G054-FR2, G054-FR3, G054-FR4, G054-FR5, G054-FR6, G054-FR7, G054-FR8, G054-UP1, G054-UP2, G054-OC1, G054-UN1, G054-IN1, G054-UG1, G054-CA1, G054-CA2, G054-CA3, G054-CA4, G054-CA5, G054-CA6, G054-CA7, G054-CA8。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -2044,12 +2044,21 @@
 - tests/unit/instruction-blocks.test.ts
 - tests/integration/instructions.test.ts
 - tools/capabilities-v4-to-v3.sql
+- src/infrastructure/capabilities/subagent-definitions.ts
+- src/infrastructure/capabilities/subagent-changes.ts
+- src/infrastructure/capabilities/skill-text.ts
+- web/src/components/SubagentsPanel.tsx
+- web/src/components/SkillTextDialog.tsx
+- tests/unit/subagent-definitions.test.ts
+- tests/integration/subagents.test.ts
+- tests/integration/skill-create.test.ts
+- tools/capabilities-v5-to-v4.sql
 
 验收：
 - 统一视图的数量与本机统计一致
 - 页面与日志不含密钥值与家目录绝对路径
 - 每次写入先预览、经确认，只认领自己写入的条目
 
-场景：G064-R1, G064-R2, G064-R3, G064-R4, G064-R5, G064-W1, G064-W2, G064-W3, G064-W4, G064-W5, G064-W6, G064-W7, G064-W8, G064-W9, G064-W10, G064-W11, G064-M1, G064-M2, G064-M3, G064-M4, G064-M5, G064-M6, G064-I1, G064-I2, G064-I3。
+场景：G064-R1, G064-R2, G064-R3, G064-R4, G064-R5, G064-W1, G064-W2, G064-W3, G064-W4, G064-W5, G064-W6, G064-W7, G064-W8, G064-W9, G064-W10, G064-W11, G064-M1, G064-M2, G064-M3, G064-M4, G064-M5, G064-M6, G064-I1, G064-I2, G064-I3, G064-A1, G064-A2, G064-A3, G064-A4。
 
 禁止范围：不改项目级文件；不改模型、Provider 与登录配置；不运行会启动或连接 MCP 服务器的命令；OpenClaw 的 MCP 与插件装卸推迟到升级之后。

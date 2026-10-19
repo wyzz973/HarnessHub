@@ -134,7 +134,7 @@ export class CapabilityError extends Error {
  * it (`mcp-remove`), and recording that an identical entry already there is HarnessHub's (`mcp-claim`, no file changes).
  */
 export const CAPABILITY_CHANGE_KINDS = ["skill-switch", "shared-dir", "skill-link", "link-cleanup", "link-undo", "restore", "skill-add", "skill-update", "skill-delete", "skill-undo", "mcp-sync", "mcp-remove", "mcp-claim",
-  "instructions-sync", "instructions-remove", "instructions-claim"] as const;
+  "instructions-sync", "instructions-remove", "instructions-claim", "subagent-sync", "subagent-remove", "subagent-claim", "skill-create", "skill-edit"] as const;
 export type CapabilityChangeKind = typeof CAPABILITY_CHANGE_KINDS[number];
 /**
  * A link a change creates or removes: where (with ~) and what it points to, as written in the link. `owner` (for links a
@@ -244,9 +244,9 @@ export type CapabilityDriftState = typeof CAPABILITY_DRIFT_STATES[number];
 export interface CapabilityDrift {
   /** Names this ledger entry for re-applying or forgetting it; opaque. */
   readonly id: string;
-  readonly kind: "skill-switch" | "shared-dir" | "skill-link" | "mcp" | "instructions";
+  readonly kind: "skill-switch" | "shared-dir" | "skill-link" | "mcp" | "instructions" | "subagent";
   readonly harnessId: string;
-  /** A skill's name, the shared directory, an MCP server's name, or the instructions block. */
+  /** A skill's name, the shared directory, an MCP server's name, the instructions block, or a subagent's name. */
   readonly subject: string;
   /** The file or link, with ~. */
   readonly file: string;
@@ -352,6 +352,10 @@ export interface McpInventoryView {
   readonly harnesses: readonly { readonly harnessId: string; readonly name: string; readonly writable: boolean; readonly reason: string | null }[];
 }
 
+/** The source shown for a skill HarnessHub wrote from the user's text (ADR-045 step 5), where a repository's address is shown otherwise. */
+export const LOCAL_SKILL_SOURCE = "HarnessHub 新建";
+/** A skill's texts as HarnessHub writes them into its SKILL.md: the one-paragraph description and the body. */
+export interface SkillTextView { readonly description: string; readonly body: string }
 /** What the user may say to a blocked instructions check: write although cc-switch may rewrite the file, create OpenCode's own file, overwrite an edited block. */
 export const INSTRUCTION_CHECK_OPTIONS = ["acknowledge-cc-switch", "create-own", "overwrite"] as const;
 export type InstructionCheckOption = typeof INSTRUCTION_CHECK_OPTIONS[number];
@@ -389,3 +393,22 @@ export interface InstructionsView {
   readonly targets: readonly InstructionTargetView[];
   readonly limitBytes: number;
 }
+
+/**
+ * A subagent as HarnessHub's list keeps it (ADR-045 §7, step 5): its description and its prompt (the system prompt), the
+ * only things every Harness keeps alike. It works with its parent session's model, tools and permissions.
+ */
+export interface SubagentDefinitionView { readonly description: string; readonly prompt: string }
+/**
+ * Where a listed subagent stands in one Harness, comparing the list, the ledger and the files of that Harness's directory:
+ * the states of the MCP list (`different`: another definition of this name is there, by that Harness's naming, and is never
+ * overwritten).
+ */
+export interface SubagentTargetView { readonly harnessId: string; readonly state: typeof MCP_TARGET_STATES[number]; readonly reason: string | null; readonly file: string | null }
+export interface SubagentView { readonly name: string; readonly definition: SubagentDefinitionView; readonly targets: readonly SubagentTargetView[]; readonly updatedAt: string }
+/** HarnessHub's subagent list, and which Harnesses it can write and why not. */
+export interface SubagentInventoryView {
+  readonly subagents: readonly SubagentView[];
+  readonly harnesses: readonly { readonly harnessId: string; readonly name: string; readonly writable: boolean; readonly reason: string | null }[];
+}
+

@@ -1,6 +1,6 @@
-import { ChevronDown, ChevronRight, Download, Eye, History, RefreshCw, RotateCcw, Search, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Download, Eye, History, Pencil, Plus, RefreshCw, RotateCcw, Search, Trash2 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { CAPABILITY_KINDS, type CapabilitiesView, type CapabilityChangeView, type CapabilityDrift, type CapabilityDriftState, type CapabilityEdge, type CapabilityEntry, type CapabilityFacts, type CapabilityHistory,
+import { CAPABILITY_KINDS, LOCAL_SKILL_SOURCE, type SkillTextView, type CapabilitiesView, type CapabilityChangeView, type CapabilityDrift, type CapabilityDriftState, type CapabilityEdge, type CapabilityEntry, type CapabilityFacts, type CapabilityHistory,
   type CapabilityKind, type CapabilityMechanism, type CapabilityOrphan, type CapabilityOwner, type CapabilityStatus, type CapabilityWarning, type HarnessCapabilityReads, type SkillUpdateView } from "../../../src/contracts/capabilities.js";
 import { errorMessage, type GatewayApi } from "../api.js";
 import { cn } from "../lib/cn.js";
@@ -10,6 +10,8 @@ import { ChangeDialog, RestoreDialog, type ChangeRequest, type SwitchRequest } f
 import { PageShell } from "./PageShell.js";
 import { McpInventoryPanel } from "./McpInventoryPanel.js";
 import { InstructionsPanel } from "./InstructionsPanel.js";
+import { SubagentsPanel } from "./SubagentsPanel.js";
+import { SkillTextDialog } from "./SkillTextDialog.js";
 import { SkillAddDialog } from "./SkillAddDialog.js";
 
 export const KIND_LABEL: Readonly<Record<CapabilityKind, string>> = { skill: "技能", mcp: "MCP", instructions: "指令", subagent: "子 Agent", command: "命令", hook: "Hooks", plugin: "插件" };
@@ -19,8 +21,8 @@ const STATUS_LABEL: Readonly<Record<CapabilityStatus, string>> = { active: "生�
 const OWNER_LABEL: Readonly<Record<CapabilityOwner, string>> = { user: "用户", harnesshub: "HarnessHub", "skills-cli": "vercel skills", "cc-switch": "cc-switch", magpie: "Magpie", clawhub: "ClawHub",
   "hermes-hub": "Hermes Hub", plugin: "插件", bundled: "随程序安装", synced: "账户同步" };
 const CHANGE_LABEL: Readonly<Record<CapabilityChangeView["kind"], string>> = { "skill-switch": "技能开关", "shared-dir": "共享目录", "skill-link": "放置技能", "link-cleanup": "清理链接", "link-undo": "撤销", restore: "恢复",
-  "skill-add": "添加技能", "skill-update": "更新技能", "skill-delete": "删除技能", "skill-undo": "撤销", "mcp-sync": "写入 MCP", "mcp-remove": "移除 MCP", "mcp-claim": "认领 MCP",
-  "instructions-sync": "写入指令", "instructions-remove": "移除指令", "instructions-claim": "认领指令" };
+  "skill-add": "添加技能", "skill-update": "更新技能", "skill-delete": "删除技能", "skill-undo": "撤销", "skill-create": "新建技能", "skill-edit": "编辑技能", "mcp-sync": "写入 MCP", "mcp-remove": "移除 MCP", "mcp-claim": "认领 MCP",
+  "instructions-sync": "写入指令", "instructions-remove": "移除指令", "instructions-claim": "认领指令", "subagent-sync": "写入子 Agent", "subagent-remove": "移除子 Agent", "subagent-claim": "认领子 Agent" };
 type SkillUpdate = SkillUpdateView["skills"][number];
 /** A skill folder's name in the shared directory, from where the view shows it. */
 function folderName(entry: CapabilityEntry): string | null { return entry.shared ? entry.shared.folder.split("/").filter(Boolean).at(-1) ?? null : null; }
@@ -86,10 +88,12 @@ function ClaudePlacement({ api, entry, harnesses, onChange }: { readonly api: Ga
  * Updating a shared skill from its source, when a newer version is known, and deleting it from the shared directory; both
  * go through the usual confirmation, which keeps a snapshot of the folder first.
  */
-function SkillLifecycle({ api, entry, update, onChange }: { readonly api: GatewayApi; readonly entry: CapabilityEntry; readonly update: SkillUpdate | undefined; readonly onChange: (request: ChangeRequest) => void }) {
+function SkillLifecycle({ api, entry, update, onChange, onEdit }: { readonly api: GatewayApi; readonly entry: CapabilityEntry; readonly update: SkillUpdate | undefined; readonly onChange: (request: ChangeRequest) => void;
+  readonly onEdit: (name: string) => void }) {
   const folder = folderName(entry);
   if (folder === null) return null;
   return <>
+    {entry.owner === "harnesshub" && entry.source === LOCAL_SKILL_SOURCE ? <button type="button" className="btn btn-sm" onClick={() => onEdit(folder)}><Pencil size={13}/>编辑</button> : null}
     {update?.state === "available" ? <button type="button" className="btn btn-sm" onClick={() => onChange({ title: "更新 " + folder, verb: "更新", on: null, icon: "update", done: "已更新 " + folder, load: () => api.checkSkillUpdate(folder, false) })}>
       <RefreshCw size={13}/>更新</button> : null}
     {update?.state === "available" && update.modified !== false ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => onChange({ title: "覆盖本地改动并更新 " + folder, verb: "覆盖并更新", on: null, icon: "update",
@@ -97,8 +101,8 @@ function SkillLifecycle({ api, entry, update, onChange }: { readonly api: Gatewa
     <button type="button" className="btn btn-ghost btn-sm" onClick={() => onChange({ title: "删除 " + folder, verb: "删除", on: null, icon: "delete", done: "已删除 " + folder, load: () => api.checkSkillDelete(folder) })}><Trash2 size={13}/>删除</button>
   </>;
 }
-function EntryDetail({ api, entry, harnesses, update, onSwitch, onChange }: { readonly api: GatewayApi; readonly entry: CapabilityEntry; readonly harnesses: readonly HarnessCapabilityReads[]; readonly update: SkillUpdate | undefined;
-  readonly onSwitch: (request: SwitchRequest) => void; readonly onChange: (request: ChangeRequest) => void }) {
+function EntryDetail({ api, entry, harnesses, update, onSwitch, onChange, onEdit }: { readonly api: GatewayApi; readonly entry: CapabilityEntry; readonly harnesses: readonly HarnessCapabilityReads[]; readonly update: SkillUpdate | undefined;
+  readonly onSwitch: (request: SwitchRequest) => void; readonly onChange: (request: ChangeRequest) => void; readonly onEdit: (name: string) => void }) {
   const name = (id: string | null) => id === null ? null : harnesses.find(harness => harness.harnessId === id)?.name ?? id;
   return <div className="capability-detail flex flex-col gap-2 px-1 py-1 text-[12.5px]">
     {entry.description ? <p className="m-0 text-fg-2">{entry.description}</p> : null}
@@ -114,7 +118,7 @@ function EntryDetail({ api, entry, harnesses, update, onSwitch, onChange }: { re
       {edge.facts && entry.kind === "mcp" ? <span className="w-full text-fg-3">{factsText(edge.facts)}</span> : null}</li>)}</ul>
     {entry.warnings.length ? <ul className="m-0 flex list-none flex-col gap-1 p-0">{entry.warnings.map((warning, index) => <li key={index} className="flex items-start gap-2"><Badge tone={warning.kind === "literal" ? "red" : "amber"}>{WARNING_LABEL[warning.kind]}</Badge><span className="text-fg-2">{warning.text}</span></li>)}</ul> : null}
     {entry.kind === "skill" ? <div className="flex flex-wrap gap-1.5"><SkillSwitches entry={entry} harnesses={harnesses} onSwitch={onSwitch}/><ClaudePlacement api={api} entry={entry} harnesses={harnesses} onChange={onChange}/>
-      <SkillLifecycle api={api} entry={entry} update={update} onChange={onChange}/></div> : null}
+      <SkillLifecycle api={api} entry={entry} update={update} onChange={onChange} onEdit={onEdit}/></div> : null}
   </div>;
 }
 const READS: Readonly<Record<HarnessCapabilityReads["shared"]["reads"], string>> = { native: "自己读取", "external-dir": "经 skills.external_dirs 读取", links: "经自己目录里的链接", no: "不读取" };
@@ -123,14 +127,16 @@ const UPDATE_LABEL: Readonly<Record<SkillUpdate["state"], string>> = { current: 
  * How each Harness reads the shared `~/.agents/skills`, with what HarnessHub can change: make Hermes read it, place single
  * skills in Claude Code, and remove the links a Harness no longer needs.
  */
-function SharedDirectory({ api, harnesses, updates, checking, updateProblem, onAdd, onCheckUpdates, onChange }: { readonly api: GatewayApi; readonly harnesses: readonly HarnessCapabilityReads[];
-  readonly updates: SkillUpdateView | null; readonly checking: boolean; readonly updateProblem: string | null; readonly onAdd: () => void; readonly onCheckUpdates: () => void; readonly onChange: (request: ChangeRequest) => void }) {
+function SharedDirectory({ api, harnesses, updates, checking, updateProblem, onAdd, onCreate, onCheckUpdates, onChange }: { readonly api: GatewayApi; readonly harnesses: readonly HarnessCapabilityReads[];
+  readonly updates: SkillUpdateView | null; readonly checking: boolean; readonly updateProblem: string | null; readonly onAdd: () => void; readonly onCreate: () => void; readonly onCheckUpdates: () => void;
+  readonly onChange: (request: ChangeRequest) => void }) {
   const available = updates?.skills.filter(item => item.state === "available").length ?? 0, unknown = updates?.skills.filter(item => item.state === "unknown").length ?? 0;
   return <section className="shared-directory rounded-xl border border-line bg-surface px-4 py-3 text-[12.5px]" aria-label="共享技能目录">
     <div className="flex flex-wrap items-baseline justify-between gap-2"><strong className="text-[13px] font-semibold">共享技能目录 <code className="text-[12px] font-normal">~/.agents/skills</code></strong>
       <span className="text-fg-3">技能放在这里一份，各 Harness 按自己的方式读取。</span></div>
     <div className="skill-library mt-2 flex flex-wrap items-center gap-2">
       <button type="button" className="btn btn-sm" onClick={onAdd}><Download size={13}/>从 GitHub 添加技能</button>
+      <button type="button" className="btn btn-ghost btn-sm" onClick={onCreate}><Plus size={13}/>新建技能</button>
       <button type="button" className="btn btn-ghost btn-sm" disabled={checking} onClick={onCheckUpdates}>{checking ? <Spinner size={13}/> : <RefreshCw size={13}/>}检查更新</button>
       {updates ? <span className="skill-update-summary text-fg-2">{available ? available + " 个技能有新版本（展开后更新）" : "已知来源的技能都是最新的"}{unknown ? "；" + unknown + " 个无法检查" : ""} · 检查于 {new Date(updates.checkedAt).toLocaleTimeString()}</span> : null}
       {updateProblem ? <span className="text-red">{updateProblem}</span> : null}
@@ -157,7 +163,7 @@ function DriftNotice({ api, drift, harnesses, onChange, onForgotten }: { readonl
   return <Notice tone="amber" className="capability-drift" title={"HarnessHub 写过的 " + drift.length + " 项设置已不在原处"}>
     <p className="m-0">多半是 Harness 自己重写了配置文件，或在别处改过。HarnessHub 不会自动改回：可以重新应用（先显示改动），或不再跟踪（文件不变）。</p>
     <ul className="m-0 mt-1.5 flex list-none flex-col gap-1 p-0">{drift.map(item => <li key={item.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-fg">
-      <strong className="font-medium">{harnesses.find(harness => harness.harnessId === item.harnessId)?.name ?? item.harnessId} · {item.kind === "mcp" ? "MCP" : item.kind === "instructions" ? "指令区块" : CHANGE_LABEL[item.kind]} · {item.subject}</strong>
+      <strong className="font-medium">{harnesses.find(harness => harness.harnessId === item.harnessId)?.name ?? item.harnessId} · {item.kind === "mcp" ? "MCP" : item.kind === "instructions" ? "指令区块" : item.kind === "subagent" ? "子 Agent" : CHANGE_LABEL[item.kind]} · {item.subject}</strong>
       <Badge tone="amber">{item.kind === "mcp" && item.harnessId === "claude" && item.state === "removed" ? "写入丢失（可能被运行中的 Claude Code 会话冲掉）" : DRIFT_LABEL[item.state]}</Badge><code className="text-[11.5px] break-all text-fg-2">{item.file}</code>
       <button type="button" className="btn btn-sm" disabled={busy !== null} onClick={() => onChange({ title: "重新应用：" + item.subject, verb: "重新应用", on: item.kind === "skill-switch" ? false : item.kind === "shared-dir" ? true : null,
         done: "已重新应用：" + item.subject, load: () => api.checkReapply(item.id) })}>重新应用</button>
@@ -190,7 +196,7 @@ function ChangeHistory({ api, history, onRestore, onChange }: { readonly api: Ga
         <Badge tone={change.status === "applied" ? "green" : "red"}>{change.status === "applied" ? "已完成" : "失败"}</Badge><code className="text-[11.5px] break-all text-fg-2">{change.file}</code>
         {change.links?.length ? <span className="text-fg-3">{change.links.filter(link => link.action === "create").length ? "新建 " + change.links.filter(link => link.action === "create").length + " 个链接 " : ""}{change.links.filter(link => link.action === "remove").length ? "删除 " + change.links.filter(link => link.action === "remove").length + " 个链接" : ""}</span> : null}
         {change.skills?.length ? <span className="text-fg-3">{change.skills.length} 个技能文件夹</span> : null}
-        {(change.links?.length && change.kind !== "skill-undo") || ((change.kind === "skill-add" || change.kind === "skill-update" || change.kind === "skill-delete") && change.status === "applied")
+        {(change.links?.length && change.kind !== "skill-undo") || ((change.kind === "skill-add" || change.kind === "skill-update" || change.kind === "skill-delete" || change.kind === "skill-create" || change.kind === "skill-edit") && change.status === "applied")
           ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => onChange({ title: "撤销：" + change.subject, verb: "撤销", on: null, icon: "undo", done: "已撤销：" + change.subject, load: () => api.checkUndo(change.id) })}><RotateCcw size={13}/>撤销</button> : null}
         {change.error ? <span className="w-full text-red">{change.error.message}</span> : null}</li>)}</ul>}
     {history.backups.length ? <><p className="m-0 mt-3 font-medium">备份</p><ul className="m-0 mt-1 flex list-none flex-col gap-1.5 p-0">{history.backups.map(backup =>
@@ -216,6 +222,16 @@ export function CapabilitiesPage({ api, initialHarness, onMenu, sidebarHidden, o
   const [result, setResult] = useState<{ readonly view: CapabilityChangeView; readonly title: string } | null>(null);
   const [adding, setAdding] = useState(false), [updates, setUpdates] = useState<SkillUpdateView | null>(null), [checkingUpdates, setCheckingUpdates] = useState(false), [updateProblem, setUpdateProblem] = useState<string | null>(null);
   const [reloads, setReloads] = useState(0), [notice, setNotice] = useState<{ readonly text: string; readonly failed: boolean } | null>(null);
+  // A skill written from text: new (`name` null) or one HarnessHub wrote, opened with its texts as they are now.
+  const [writing, setWriting] = useState<{ readonly name: string | null; readonly text: SkillTextView } | null>(null);
+  const editSkill = (name: string) => api.skillText(name).then(text => text === null ? setNotice({ text: name + " 的 SKILL.md 读不出说明和正文，没法在这里编辑。", failed: true }) : setWriting({ name, text }),
+    error => setNotice({ text: errorMessage(error), failed: true }));
+  const writeSkill = (name: string, text: SkillTextView) => {
+    const creating = writing?.name === null;
+    setWriting(null);
+    change(creating ? { title: "新建技能 " + name, verb: "新建", on: null, icon: "add", done: "已新建技能 " + name, load: () => api.checkSkillCreate(name, text) }
+      : { title: "编辑技能 " + name, verb: "改写", on: null, icon: "update", done: "已改写技能 " + name, load: options => api.checkSkillEdit(name, text, options.includes("overwrite")) });
+  };
   const updateOf = (entry: CapabilityEntry): SkillUpdate | undefined => { const folder = folderName(entry); return folder === null ? undefined : updates?.skills.find(item => item.name === folder); };
   const checkUpdates = () => {
     setCheckingUpdates(true); setUpdateProblem(null);
@@ -269,9 +285,10 @@ export function CapabilitiesPage({ api, initialHarness, onMenu, sidebarHidden, o
       </div>
       <div role="tabpanel" id="capability-tabpanel" aria-labelledby={"capability-tab-" + kind} className="flex flex-col gap-3">
       {kind === "skill" ? <SharedDirectory api={api} harnesses={view.harnesses.filter(item => harness === null || item.harnessId === harness)} updates={updates} checking={checkingUpdates} updateProblem={updateProblem}
-        onAdd={() => setAdding(true)} onCheckUpdates={checkUpdates} onChange={change}/> : null}
+        onAdd={() => setAdding(true)} onCreate={() => setWriting({ name: null, text: { description: "", body: "" } })} onCheckUpdates={checkUpdates} onChange={change}/> : null}
       {kind === "mcp" ? <McpInventoryPanel api={api} harness={harness} reload={reloads} onChange={change} onNotice={(text, failed) => setNotice({ text, failed })}/> : null}
       {kind === "instructions" ? <InstructionsPanel api={api} harness={harness} reload={reloads} onChange={change} onNotice={(text, failed) => setNotice({ text, failed })}/> : null}
+      {kind === "subagent" ? <SubagentsPanel api={api} harness={harness} reload={reloads} onChange={change} onNotice={(text, failed) => setNotice({ text, failed })}/> : null}
       {rows.length ? <div className="capability-matrix overflow-x-auto rounded-xl border border-line bg-surface shadow-sm">
         <table className="w-full border-collapse text-left text-[12.5px]">
           <thead><tr className="border-b border-line">
@@ -289,7 +306,7 @@ export function CapabilitiesPage({ api, initialHarness, onMenu, sidebarHidden, o
                     <span className="mt-0.5 flex flex-wrap items-center gap-1"><span className="text-[11.5px] text-fg-3">{OWNER_LABEL[entry.owner]}</span>{warnings ? <Badge tone="amber">{warnings} 条提示</Badge> : null}
                       {updateOf(entry)?.state === "available" ? <Badge tone="accent">有新版本</Badge> : null}</span></span></button></th>
               {columns.map(item => <td key={item.harnessId} className="px-2 py-2"><Cell edges={entry.edges.filter(edge => edge.harnessId === item.harnessId)} support={item.kinds[kind]}/></td>)}
-            </tr>{expanded ? <tr className="border-b border-line bg-subtle"><td colSpan={columns.length + 1} className="px-3 pb-3"><EntryDetail api={api} entry={entry} harnesses={view.harnesses} update={updateOf(entry)} onSwitch={switchSkill} onChange={change}/></td></tr> : null}</Fragment>; })}</tbody>
+            </tr>{expanded ? <tr className="border-b border-line bg-subtle"><td colSpan={columns.length + 1} className="px-3 pb-3"><EntryDetail api={api} entry={entry} harnesses={view.harnesses} update={updateOf(entry)} onSwitch={switchSkill} onChange={change} onEdit={editSkill}/></td></tr> : null}</Fragment>; })}</tbody>
         </table></div>
         : <EmptyState title={query || onlyWarnings ? "没有匹配的条目" : "这一类还没有条目"}>{columns.some(item => item.kinds[kind] !== "read") ? "部分 Harness 没有这类能力，或保存在磁盘之外。" : "各 Harness 的用户级配置里没有这一类。"}</EmptyState>}
       </div>
@@ -302,6 +319,7 @@ export function CapabilitiesPage({ api, initialHarness, onMenu, sidebarHidden, o
     </>}
     <ChangeDialog api={api} request={changing} onClose={() => setChanging(null)} onDone={finished}/>
     <SkillAddDialog api={api} open={adding} onClose={() => setAdding(false)} onChange={change}/>
+    <SkillTextDialog editing={writing} onClose={() => setWriting(null)} onSubmit={writeSkill}/>
     <RestoreDialog api={api} backupId={restoring} onClose={() => setRestoring(null)} onDone={change => finished(change, "已恢复 " + change.file)}/>
   </PageShell>;
 }

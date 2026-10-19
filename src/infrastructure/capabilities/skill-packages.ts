@@ -99,6 +99,13 @@ export function findSkills(listing: ArchiveListing, under: string | null): reado
  * Writes one found skill's copy from the archive into `destination` (which must not exist): folders 0755, files 0644 or,
  * when executable, 0755, whatever the Gateway's umask. Returns the written tree, which must match the listed one.
  */
+/** Writes a skill the user wrote as text: a new folder (0755) holding its SKILL.md (0644), synced; returns the folder's tree. */
+export async function writeSkillText(text: string, destination: string): Promise<FolderTree> {
+  await mkdir(destination, { mode: 0o755 }); await chmod(destination, 0o755);
+  const handle = await open(join(destination, "SKILL.md"), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o644);
+  try { await handle.writeFile(text, "utf8"); await handle.chmod(0o644); await handle.sync(); } finally { await handle.close(); }
+  return folderTree(destination);
+}
 export async function writeSkill(archive: Buffer, skill: FoundSkill, destination: string): Promise<FolderTree> {
   const prefix = skill.folder === "" ? "" : skill.folder + "/";
   await mkdir(destination, { mode: 0o755 }); await chmod(destination, 0o755);

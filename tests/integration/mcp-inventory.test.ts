@@ -221,6 +221,7 @@ test("G064-M3 an entry someone else changed is left alone until the user writes 
   const db = new DatabaseSync(copy);
   try {
     assert.ok((db.prepare("SELECT COUNT(*) AS n FROM capability_ledger WHERE key LIKE 'mcp/%'").get()?.n as number) > 0);
+    db.exec(await readFile(new URL("../../../tools/capabilities-v5-to-v4.sql", import.meta.url), "utf8"));
     db.exec(await readFile(new URL("../../../tools/capabilities-v4-to-v3.sql", import.meta.url), "utf8"));
     db.exec(await readFile(new URL("../../../tools/capabilities-v3-to-v2.sql", import.meta.url), "utf8"));
     assert.equal(db.prepare("PRAGMA user_version").get()?.user_version, 2);

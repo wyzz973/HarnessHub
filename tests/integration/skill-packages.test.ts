@@ -291,6 +291,7 @@ test("G064-W11 a redirect off GitHub, a rate limit and a change after confirming
   try {
     db.prepare("INSERT INTO capability_changes(id,command_id,payload_hash,at,view_json) VALUES(?,?,?,?,?)").run("11111111-1111-4111-8111-111111111111", "kept", "h", "2026-10-18T00:00:00.000Z", JSON.stringify({ kind: "skill-switch" }));
     // A v4 database goes back to v3 first (the instructions), then to v2 (the MCP list), then to v1.
+    db.exec(await readFile(new URL("../../../tools/capabilities-v5-to-v4.sql", import.meta.url), "utf8"));
     db.exec(await readFile(new URL("../../../tools/capabilities-v4-to-v3.sql", import.meta.url), "utf8"));
     assert.equal(db.prepare("PRAGMA user_version").get()?.user_version, 3);
     db.exec(await readFile(new URL("../../../tools/capabilities-v3-to-v2.sql", import.meta.url), "utf8"));

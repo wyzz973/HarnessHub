@@ -10,12 +10,13 @@ const MAX_BACKUP_BYTES = 32 * 1024 * 1024;
 /** A setting HarnessHub wrote: where, the hash of the value it wrote, and what was there before (JSON, null when nothing was). */
 export interface LedgerEntry { readonly harnessId: string; readonly file: string; readonly key: string; readonly valueHash: string; readonly previous: string | null; readonly changeId: string; readonly at: string }
 /**
- * A skill HarnessHub put in the shared directory from a repository: its folder, where it came from (repository URL, the
- * ref asked for or null for the default branch, its folder inside the repository, the commit), the folder's tree id in
- * the repository (everything included) and the tree id of the copy as written.
+ * A skill HarnessHub put in the shared directory: from a repository (`github`: repository URL, the ref asked for or null
+ * for the default branch, its folder inside the repository, the commit, the folder's tree id there with everything
+ * included) or written from the user's text (`local`: no repository, ref, path or commit; the upstream tree is the tree
+ * written), and the tree id of the copy as written.
  */
 export interface SkillSource { readonly name: string; readonly folder: string; readonly repository: string; readonly ref: string | null; readonly path: string; readonly commit: string;
-  readonly upstreamTree: string; readonly localTree: string; readonly installedAt: string; readonly updatedAt: string; readonly changeId: string }
+  readonly upstreamTree: string; readonly localTree: string; readonly installedAt: string; readonly updatedAt: string; readonly changeId: string; readonly kind: "github" | "local" }
 /** What a backup records as written when the change deleted the file (a file HarnessHub created and emptied again). */
 export const WRITTEN_DELETED = "deleted";
 /** One backup: the file's bytes before a change, and the hash of the bytes that change then wrote (null until it wrote; `WRITTEN_DELETED` when it deleted the file). */
@@ -44,8 +45,8 @@ function writePrivate(path: string, bytes: Buffer): void {
 }
 const SCHEMA: Readonly<Record<string, readonly string[]>> = { capability_owner: ["singleton", "generation"], capability_changes: ["id", "command_id", "payload_hash", "at", "view_json"],
   capability_backups: ["id", "file", "created_at", "bytes", "sha256", "change_id", "subject", "written_sha256"], capability_ledger: ["harness_id", "file", "key", "value_hash", "previous", "change_id", "at"],
-  skill_sources: ["name", "folder", "repository", "ref", "path", "commit_sha", "upstream_tree", "local_tree", "installed_at", "updated_at", "change_id"], skill_undo: ["change_id", "data_json"],
-  mcp_servers: ["name", "definition_json", "created_at", "updated_at"], instruction_texts: ["scope", "text", "updated_at"] };
+  skill_sources: ["name", "folder", "repository", "ref", "path", "commit_sha", "upstream_tree", "local_tree", "installed_at", "updated_at", "change_id", "kind"], skill_undo: ["change_id", "data_json"],
+  mcp_servers: ["name", "definition_json", "created_at", "updated_at"], instruction_texts: ["scope", "text", "updated_at"], subagents: ["name", "definition_json", "created_at", "updated_at"] };
 /** Tables of another shape than this build's are refused rather than read or altered. */
 function checkSchema(db: DatabaseSync): void {
   for (const [table, columns] of Object.entries(SCHEMA)) {
@@ -56,10 +57,10 @@ function checkSchema(db: DatabaseSync): void {
 function text(value: unknown): string { if (typeof value !== "string") throw new CapabilityError("INVALID_STORAGE", "capability storage row is invalid"); return value; }
 
 /**
- * HarnessHub's own record of capability changes (ADR-045 §10): `capabilities/capabilities.sqlite` (schema v4) under the
- * data root, with the backups and skill snapshots beside it. v2 adds the skills HarnessHub installed, v3 its MCP list and
- * v4 its instructions, each rejected by the reader before; `tools/capabilities-v4-to-v3.sql`, `-v3-to-v2.sql` and
- * `-v2-to-v1.sql` go back. A newer owner generation fences this one off:
+ * HarnessHub's own record of capability changes (ADR-045 §10): `capabilities/capabilities.sqlite` (schema v5) under the
+ * data root, with the backups and skill snapshots beside it. v2 adds the skills HarnessHub installed, v3 its MCP list, v4
+ * its instructions and v5 its subagent list and the kind of each installed skill's source, each rejected by the reader
+ * before; `tools/capabilities-v5-to-v4.sql` and the scripts after it go back. A newer owner generation fences this one off:
  * every write first checks the directory, marker and database are the ones opened and the generation is still ours.
  */
 export class CapabilityStore {
@@ -79,20 +80,24 @@ export class CapabilityStore {
     try {
       db.exec("PRAGMA journal_mode=DELETE;PRAGMA synchronous=FULL;PRAGMA busy_timeout=1000");
       const version = db.prepare("PRAGMA user_version").get()?.user_version;
-      if (version !== 0 && version !== 1 && version !== 2 && version !== 3 && version !== 4) throw new CapabilityError("INVALID_STORAGE", "unknown capability storage schema");
+      if (version !== 0 && version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5) throw new CapabilityError("INVALID_STORAGE", "unknown capability storage schema");
       db.exec("CREATE TABLE IF NOT EXISTS capability_owner(singleton INTEGER PRIMARY KEY CHECK(singleton=1),generation INTEGER NOT NULL) STRICT;"
         + "CREATE TABLE IF NOT EXISTS capability_changes(id TEXT PRIMARY KEY,command_id TEXT NOT NULL UNIQUE,payload_hash TEXT NOT NULL,at TEXT NOT NULL,view_json TEXT NOT NULL CHECK(json_valid(view_json))) STRICT;"
         + "CREATE TABLE IF NOT EXISTS capability_backups(id TEXT PRIMARY KEY,file TEXT NOT NULL,created_at TEXT NOT NULL,bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,change_id TEXT NOT NULL,subject TEXT NOT NULL,written_sha256 TEXT) STRICT;"
         + "CREATE TABLE IF NOT EXISTS capability_ledger(harness_id TEXT NOT NULL,file TEXT NOT NULL,key TEXT NOT NULL,value_hash TEXT NOT NULL,previous TEXT,change_id TEXT NOT NULL,at TEXT NOT NULL,PRIMARY KEY(harness_id,file,key)) STRICT;"
         // v2 (additive): the skills HarnessHub installed from a repository.
         + "CREATE TABLE IF NOT EXISTS skill_sources(name TEXT PRIMARY KEY,folder TEXT NOT NULL,repository TEXT NOT NULL,ref TEXT,path TEXT NOT NULL,commit_sha TEXT NOT NULL,upstream_tree TEXT NOT NULL,"
-        + "local_tree TEXT NOT NULL,installed_at TEXT NOT NULL,updated_at TEXT NOT NULL,change_id TEXT NOT NULL) STRICT;"
+        + "local_tree TEXT NOT NULL,installed_at TEXT NOT NULL,updated_at TEXT NOT NULL,change_id TEXT NOT NULL,kind TEXT NOT NULL DEFAULT 'github' CHECK(kind IN ('github','local'))) STRICT;"
         + "CREATE TABLE IF NOT EXISTS skill_undo(change_id TEXT PRIMARY KEY,data_json TEXT NOT NULL CHECK(json_valid(data_json))) STRICT;"
         // v3 (additive): HarnessHub's MCP list.
         + "CREATE TABLE IF NOT EXISTS mcp_servers(name TEXT PRIMARY KEY,definition_json TEXT NOT NULL CHECK(json_valid(definition_json)),created_at TEXT NOT NULL,updated_at TEXT NOT NULL) STRICT;"
         // v4 (additive): HarnessHub's instructions, the shared text (scope `shared`) and each Harness's addition (its id).
         + "CREATE TABLE IF NOT EXISTS instruction_texts(scope TEXT PRIMARY KEY CHECK(length(scope) BETWEEN 1 AND 128),text TEXT NOT NULL CHECK(length(text)>0),updated_at TEXT NOT NULL) STRICT;"
-        + "PRAGMA user_version=4");
+        // v5 (additive): HarnessHub's subagent list, and whether an installed skill came from a repository or the user's text.
+        + "CREATE TABLE IF NOT EXISTS subagents(name TEXT PRIMARY KEY,definition_json TEXT NOT NULL CHECK(json_valid(definition_json)),created_at TEXT NOT NULL,updated_at TEXT NOT NULL) STRICT;");
+      if (!db.prepare("SELECT name FROM pragma_table_info('skill_sources')").all().some(row => row.name === "kind"))
+        db.exec("ALTER TABLE skill_sources ADD COLUMN kind TEXT NOT NULL DEFAULT 'github' CHECK(kind IN ('github','local'))");
+      db.exec("PRAGMA user_version=5");
       checkSchema(db);
       const previous = db.prepare("SELECT generation FROM capability_owner WHERE singleton=1").get()?.generation;
       if (typeof previous === "number" && previous > generation) throw new CapabilityError("OWNERSHIP_LOST", "capability owner generation is stale");
@@ -188,16 +193,17 @@ export class CapabilityStore {
 
   /** The skills HarnessHub installed, by folder name. */
   skillSources(): readonly SkillSource[] {
-    return this.db.prepare("SELECT name,folder,repository,ref,path,commit_sha,upstream_tree,local_tree,installed_at,updated_at,change_id FROM skill_sources ORDER BY name").all().map(row => ({
+    return this.db.prepare("SELECT name,folder,repository,ref,path,commit_sha,upstream_tree,local_tree,installed_at,updated_at,change_id,kind FROM skill_sources ORDER BY name").all().map(row => ({
       name: text(row.name), folder: text(row.folder), repository: text(row.repository), ref: row.ref === null ? null : text(row.ref), path: text(row.path), commit: text(row.commit_sha),
-      upstreamTree: text(row.upstream_tree), localTree: text(row.local_tree), installedAt: text(row.installed_at), updatedAt: text(row.updated_at), changeId: text(row.change_id) }));
+      upstreamTree: text(row.upstream_tree), localTree: text(row.local_tree), installedAt: text(row.installed_at), updatedAt: text(row.updated_at), changeId: text(row.change_id), kind: row.kind === "local" ? "local" as const : "github" as const }));
   }
   skillSource(name: string): SkillSource | null { return this.skillSources().find(item => item.name === name) ?? null; }
   setSkillSource(source: SkillSource): void {
     this.check();
-    this.db.prepare("INSERT INTO skill_sources(name,folder,repository,ref,path,commit_sha,upstream_tree,local_tree,installed_at,updated_at,change_id) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET "
-      + "folder=excluded.folder,repository=excluded.repository,ref=excluded.ref,path=excluded.path,commit_sha=excluded.commit_sha,upstream_tree=excluded.upstream_tree,local_tree=excluded.local_tree,updated_at=excluded.updated_at,change_id=excluded.change_id")
-      .run(source.name, source.folder, source.repository, source.ref, source.path, source.commit, source.upstreamTree, source.localTree, source.installedAt, source.updatedAt, source.changeId);
+    // An undo record written before v5 has no kind: its skill came from a repository.
+    this.db.prepare("INSERT INTO skill_sources(name,folder,repository,ref,path,commit_sha,upstream_tree,local_tree,installed_at,updated_at,change_id,kind) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET "
+      + "folder=excluded.folder,repository=excluded.repository,ref=excluded.ref,path=excluded.path,commit_sha=excluded.commit_sha,upstream_tree=excluded.upstream_tree,local_tree=excluded.local_tree,updated_at=excluded.updated_at,change_id=excluded.change_id,kind=excluded.kind")
+      .run(source.name, source.folder, source.repository, source.ref, source.path, source.commit, source.upstreamTree, source.localTree, source.installedAt, source.updatedAt, source.changeId, source.kind ?? "github");
   }
   dropSkillSource(name: string): void { this.check(); this.db.prepare("DELETE FROM skill_sources WHERE name=?").run(name); }
   /** What undoing a change of skill folders needs that its view does not show (absolute paths, lock entries, the source record before). */
@@ -217,6 +223,17 @@ export class CapabilityStore {
       .run(name, JSON.stringify(definition), at, at);
   }
   dropMcpServer(name: string): void { this.check(); this.db.prepare("DELETE FROM mcp_servers WHERE name=?").run(name); }
+  /** HarnessHub's subagent list, by name: each definition as JSON (validated by its reader), with when it was made and last changed. */
+  subagents(): readonly { readonly name: string; readonly definition: unknown; readonly createdAt: string; readonly updatedAt: string }[] {
+    return this.db.prepare("SELECT name,definition_json,created_at,updated_at FROM subagents ORDER BY name").all()
+      .map(row => ({ name: text(row.name), definition: JSON.parse(text(row.definition_json)) as unknown, createdAt: text(row.created_at), updatedAt: text(row.updated_at) }));
+  }
+  setSubagent(name: string, definition: unknown, at: string): void {
+    this.check();
+    this.db.prepare("INSERT INTO subagents(name,definition_json,created_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(name) DO UPDATE SET definition_json=excluded.definition_json,updated_at=excluded.updated_at")
+      .run(name, JSON.stringify(definition), at, at);
+  }
+  dropSubagent(name: string): void { this.check(); this.db.prepare("DELETE FROM subagents WHERE name=?").run(name); }
   /** HarnessHub's instructions: the shared text (`shared`) and each Harness's addition, by its id, with when each last changed. */
   instructionTexts(): readonly { readonly scope: string; readonly text: string; readonly updatedAt: string }[] {
     return this.db.prepare("SELECT scope,text,updated_at FROM instruction_texts ORDER BY scope").all().map(row => ({ scope: text(row.scope), text: text(row.text), updatedAt: text(row.updated_at) }));

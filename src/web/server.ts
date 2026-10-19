@@ -101,6 +101,13 @@ function instructionAdditions(value: unknown): Readonly<Record<string, string>> 
     throw new HttpError(400, "INVALID_INPUT", "Expected the additions by Harness identity");
   return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, instructionText(item)]));
 }
+/** A subagent definition in a request body, shaped only; what it may hold is checked by the list (ADR-045 §7). */
+function subagentDefinition(value: unknown): { readonly description: string; readonly prompt: string } {
+  const input = record(value, ["description", "prompt"], ["description", "prompt"]);
+  if (typeof input.description !== "string" || typeof input.prompt !== "string" || Buffer.byteLength(input.description, "utf8") > 8192 || Buffer.byteLength(input.prompt, "utf8") > 64 * 1024)
+    throw new HttpError(400, "INVALID_INPUT", "Expected a subagent definition");
+  return { description: input.description, prompt: input.prompt };
+}
 /** What the user said to a blocked instructions check, as `options=a,b`: known options, each once. */
 function instructionOptions(value: string | null): ReadonlySet<InstructionCheckOption> {
   if (value === null || value === "") return new Set();
@@ -521,6 +528,19 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       if (overwrite !== null && overwrite !== "true" && overwrite !== "false") throw new HttpError(400, "INVALID_INPUT", "Expected overwrite=true or overwrite=false");
       privateJson(response, await capabilityChanges.checkSkillUpdate(text(url.searchParams.get("name"), "skill name", 255), overwrite === "true")); return;
     }
+    // Writing a skill from the user's texts (ADR-045 step 5: commands become shared skills), and changing one HarnessHub
+    // wrote: the check is a POST because the texts are long; nothing is written until /changes.
+    if ((path === "/api/v1/capabilities/skill-create" || path === "/api/v1/capabilities/skill-edit") && method === "POST") {
+      queries(url, []); const input = record(await body(request), ["name", "description", "body", "overwrite"], ["name", "description", "body"]);
+      if (typeof input.description !== "string" || typeof input.body !== "string" || Buffer.byteLength(input.description, "utf8") > 8192 || Buffer.byteLength(input.body, "utf8") > 64 * 1024)
+        throw new HttpError(400, "INVALID_INPUT", "Expected a skill's description and body");
+      if (input.overwrite !== undefined && typeof input.overwrite !== "boolean") throw new HttpError(400, "INVALID_INPUT", "Expected overwrite to be a boolean");
+      const name = text(input.name, "skill name", 64), texts = { description: input.description, body: input.body };
+      privateJson(response, path.endsWith("/skill-create") ? await capabilityChanges.checkSkillCreate(name, texts, await installedHarnesses()) : await capabilityChanges.checkSkillEdit(name, texts, input.overwrite === true)); return;
+    }
+    if (path === "/api/v1/capabilities/skill-text" && method === "GET") {
+      queries(url, ["name"]); privateJson(response, { text: await capabilityChanges.skillText(text(url.searchParams.get("name"), "skill name", 64)) }); return;
+    }
     if (path === "/api/v1/capabilities/skill-delete" && method === "GET") {
       queries(url, ["name"]); privateJson(response, await capabilityChanges.checkSkillDelete(text(url.searchParams.get("name"), "skill name", 255))); return;
     }
@@ -566,6 +586,29 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       queries(url, ["harnessId", "options"]); const harnessId = text(url.searchParams.get("harnessId"), "Harness", 128), options = instructionOptions(url.searchParams.get("options"));
       privateJson(response, path.endsWith("/sync") ? await capabilityChanges.checkInstructionsSync(harnessId, options, await installedHarnesses())
         : await capabilityChanges.checkInstructionsRemove(harnessId, options, await installedHarnesses())); return;
+    }
+    // HarnessHub's subagent list (ADR-045 §7, step 5): reading and editing the list change no Harness file; writing a
+    // subagent into a Harness goes through a check shown first and /changes.
+    if (path === "/api/v1/capabilities/subagents" && method === "GET") { queries(url, []); privateJson(response, await capabilityChanges.subagentInventory(await installedHarnesses())); return; }
+    if (path === "/api/v1/capabilities/subagents/save" && method === "POST") {
+      queries(url, []); const input = record(await body(request), ["name", "definition", "replace"], ["name", "definition"]);
+      if (input.replace !== undefined && typeof input.replace !== "boolean") throw new HttpError(400, "INVALID_INPUT", "Expected replace to be a boolean");
+      privateJson(response, await capabilityChanges.saveSubagent(text(input.name, "subagent name", 64), subagentDefinition(input.definition), input.replace === true)); return;
+    }
+    if (path === "/api/v1/capabilities/subagents/delete" && method === "POST") {
+      queries(url, []); const input = record(await body(request), ["name"], ["name"]);
+      privateJson(response, await capabilityChanges.removeSubagent(text(input.name, "subagent name", 64), await installedHarnesses())); return;
+    }
+    if (path === "/api/v1/capabilities/subagents/claim" && method === "POST") {
+      queries(url, []); const input = record(await body(request), ["name", "harnessIds"], ["name", "harnessIds"]);
+      privateJson(response, await capabilityChanges.claimSubagent(text(input.name, "subagent name", 64), harnessList(input.harnessIds), await installedHarnesses())); return;
+    }
+    if ((path === "/api/v1/capabilities/subagents/sync" || path === "/api/v1/capabilities/subagents/remove") && method === "GET") {
+      queries(url, ["name", "harnessId", "overwrite"]); const overwrite = url.searchParams.get("overwrite");
+      if (overwrite !== null && overwrite !== "true" && overwrite !== "false") throw new HttpError(400, "INVALID_INPUT", "Expected overwrite=true or overwrite=false");
+      const name = text(url.searchParams.get("name"), "subagent name", 64), harnessId = text(url.searchParams.get("harnessId"), "Harness", 128);
+      privateJson(response, path.endsWith("/sync") ? await capabilityChanges.checkSubagentSync(name, harnessId, overwrite === "true", await installedHarnesses())
+        : await capabilityChanges.checkSubagentRemove(name, harnessId, await installedHarnesses())); return;
     }
     // A switch setting HarnessHub wrote for a skill its Harness no longer has: cleared through the usual switch check.
     if (path.startsWith("/api/v1/capabilities/orphans/") && path.endsWith("/clear") && method === "GET") {

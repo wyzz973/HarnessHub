@@ -51,7 +51,13 @@ export interface InstructionCandidate { readonly path: string; readonly role: "o
 export type InstructionSpec =
   | { readonly kind: "files"; readonly candidates: readonly InstructionCandidate[]; readonly rule: "first-existing" | "first-nonempty" }
   | { readonly kind: "unsupported" | "invisible"; readonly reason: string };
-export interface FileListSpec { readonly dir: string; readonly format: "markdown" | "toml"; readonly role: "own" | "compat"; readonly recursive: boolean }
+/**
+ * A directory of subagent or command files. `separator` joins the parts of a nested file's name (`:` by default,
+ * OpenCode's `/`); `regularOnly` and `skipPrefix` name files the Harness does not read (Gemini skips links and names
+ * starting with `_`), listed with why.
+ */
+export interface FileListSpec { readonly dir: string; readonly format: "markdown" | "toml"; readonly role: "own" | "compat"; readonly recursive: boolean; readonly separator?: "/" | ":";
+  readonly regularOnly?: boolean; readonly skipPrefix?: string }
 export interface HookSource { readonly file: string; readonly style: "claude" | "codex-json" | "codex-toml" | "cursor" | "gemini" | "hermes" | "openclaw-dirs"; readonly role: "own" | "compat" }
 export type PluginSource =
   | { readonly kind: "claude"; readonly installed: string; readonly settings: string }
@@ -76,6 +82,10 @@ export interface HarnessReadTable {
   readonly mcp: McpSource;
   readonly instructions: InstructionSpec;
   readonly subagents: readonly FileListSpec[] | null;
+  /** The Harness's built-in subagents, by evidence: a user-level one of the same name replaces or loses to it, so HarnessHub writes none. */
+  readonly reservedSubagents?: readonly string[];
+  /** The Harness's built-in commands and bundled skills, by evidence: a skill of the same name competes with one (a warning when one is made). */
+  readonly builtinCommands?: readonly string[];
   readonly commands: readonly FileListSpec[] | null;
   readonly hooks: readonly HookSource[] | null;
   readonly plugins: PluginSource | null;
@@ -119,13 +129,17 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
     {
       harnessId: "claude", verified: ">=2.1.277 <2.2.0",
       evidence: ["code.claude.com/docs/en/skills、mcp、memory、sub-agents、hooks、plugins/loading（2026-10-18，页面引用到 v2.1.296）",
-        "本机 2.1.302 程序：skills/synced/<org>_<account>/ 下的技能以 syncedSkills 加载；skillOverrides 取值 on、name-only、user-invocable-only、off"],
+        "本机 2.1.302 程序：skills/synced/<org>_<account>/ 下的技能以 syncedSkills 加载；skillOverrides 取值 on、name-only、user-invocable-only、off",
+        "code.claude.com/docs/en/sub-agents（2026-10-19：~/.claude/agents 递归，身份只看 name，同名的用户子 Agent 顶替内置；运行中的会话不检测新建的目录）；本机 2.1.303 包的 agentType 字符串（general-purpose、statusline-setup、claude、Plan、Explore、comment-thread-analyst、teammate、agent、subagent、main、main-session）与 claude-code-guide",
+        "code.claude.com/docs/en/commands（2026-10-19：内置命令与捆绑技能共 119 个，另有别名；同名的用户技能与它们争用 / 命令）"],
       skills: { roots: [{ role: "own", path: join(dirs.claude, "skills"), precedence: 1, containment: false, depth: 1, exclude: ["synced"] },
         { role: "synced", path: join(dirs.claude, "skills", "synced"), precedence: 1, containment: false, depth: 2 }], duplicates: "dedupe-realpath", requiresDescription: false,
         nameMustMatchDirectory: false, switch: { kind: "claude-skill-overrides", file: join(dirs.claude, "settings.json") }, separate: ["synced"] },
       mcp: { style: "claude", file: dirs.claudeJson },
       instructions: { kind: "files", candidates: [{ path: join(dirs.claude, "CLAUDE.md"), role: "own" }], rule: "first-existing" },
-      subagents: [{ dir: join(dirs.claude, "agents"), format: "markdown", role: "own", recursive: false }],
+      subagents: [{ dir: join(dirs.claude, "agents"), format: "markdown", role: "own", recursive: true }],
+      reservedSubagents: ["general-purpose", "statusline-setup", "claude-code-guide", "claude", "explore", "plan", "comment-thread-analyst", "teammate", "agent", "subagent", "main", "main-session"],
+      builtinCommands: ["add-dir", "advisor", "agents", "artifact-capabilities", "artifact-diagramming", "artifacts", "auto-mode-setup", "autocompact", "autofix-pr", "background", "batch", "branch", "btw", "bug", "cd", "chrome", "claude-api", "claude-in-chrome", "clear", "code-review", "color", "compact", "config", "context", "copy", "cost", "dataviz", "debug", "deep-research", "design", "design-login", "design-sync", "desktop", "diff", "doctor", "effort", "exit", "export", "fast", "feedback", "fewer-permission-prompts", "focus", "fork", "goal", "heapdump", "help", "hooks", "ide", "import", "init", "insights", "install-github-app", "install-slack-app", "keybindings", "list-agents", "login", "logout", "loop", "mcp", "memory", "mobile", "model", "output-style", "passes", "permissions", "plan", "plugin", "plugin-authoring", "powerup", "pr-comments", "privacy-settings", "radio", "rate-limit-options", "recap", "release-notes", "reload-plugins", "reload-skills", "remote-control", "remote-env", "rename", "resume", "review", "rewind", "run", "run-skill-generator", "sandbox", "schedule", "scroll-speed", "security-review", "setup-bedrock", "setup-vertex", "simplify", "skill-doctor", "skills", "slides", "stats", "status", "statusline", "stickers", "stop", "subtask", "tasks", "team-onboarding", "teleport", "terminal-setup", "theme", "tui", "ultraplan", "ultrareview", "update-config", "upgrade", "usage", "usage-credits", "verify", "vim", "voice", "web-setup", "workflow-authoring", "workflows", "bg", "share", "reset", "new", "settings", "app", "checkup", "quit", "proactive", "ios", "android", "allowed-tools", "rc", "continue", "checkpoint", "undo", "routines"],
       commands: [{ dir: join(dirs.claude, "commands"), format: "markdown", role: "own", recursive: true }],
       hooks: [{ file: join(dirs.claude, "settings.json"), style: "claude", role: "own" }],
       plugins: { kind: "claude", installed: join(dirs.claude, "plugins", "installed_plugins.json"), settings: join(dirs.claude, "settings.json") },
@@ -134,61 +148,72 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
     {
       harnessId: "codex", verified: ">=0.158.0 <0.170.0",
       evidence: ["learn.chatgpt.com/docs/build-skills（用户级 $HOME/.agents/skills；同名“both can appear”）", "openai/codex codex-rs/ext/skills/src/host_roots.rs（$CODEX_HOME/skills 已弃用但仍读取）", "config-reference（mcp_servers、[[skills.config]]）",
-        "openai/codex rust-v0.162.1 codex-rs/codex-home/src/instructions/mod.rs（用户级依次读 AGENTS.override.md、AGENTS.md，trim 后第一个非空者生效，整文件读、没有字节上限；project_doc_max_bytes 只限项目文件，见 core/src/agents_md.rs）"],
+        "openai/codex rust-v0.162.1 codex-rs/codex-home/src/instructions/mod.rs（用户级依次读 AGENTS.override.md、AGENTS.md，trim 后第一个非空者生效，整文件读、没有字节上限；project_doc_max_bytes 只限项目文件，见 core/src/agents_md.rs）",
+        "rust-v0.162.1 agent-roles/src/discovery.rs、loader.rs、agent_role_config.rs（agents/**/*.toml 递归，必填 name、description、developer_instructions，名字以 name 为准；config.toml 的 [agents.<名>] 也声明角色）与 core/src/agent/role.rs（内置 default、explorer、worker，awaiter 已注释；同名的用户角色优先）",
+        "rust-v0.118.0 PR #16115（删除自定义 prompts，~/.codex/prompts 不再读取，官方改用技能）"],
       skills: { roots: [{ role: "shared", path: dirs.shared, precedence: 1, containment: false, depth: 1 }, { role: "own", path: join(dirs.codex, "skills"), precedence: 1, containment: false, depth: 1 },
         { role: "bundled", path: join(dirs.codex, "skills", ".system"), precedence: 1, containment: false, depth: 1 }],
         duplicates: "all-visible", requiresDescription: true, nameMustMatchDirectory: false, switch: { kind: "codex-skills-config", file: join(dirs.codex, "config.toml") } },
       mcp: { style: "codex", file: join(dirs.codex, "config.toml") },
       instructions: { kind: "files", candidates: [{ path: join(dirs.codex, "AGENTS.override.md"), role: "own" }, { path: join(dirs.codex, "AGENTS.md"), role: "own" }], rule: "first-nonempty" },
-      subagents: [{ dir: join(dirs.codex, "agents"), format: "toml", role: "own", recursive: false }],
-      commands: [{ dir: join(dirs.codex, "prompts"), format: "markdown", role: "own", recursive: false }],
+      subagents: [{ dir: join(dirs.codex, "agents"), format: "toml", role: "own", recursive: true }],
+      reservedSubagents: ["default", "explorer", "worker", "awaiter"],
+      commands: null,
       hooks: [{ file: join(dirs.codex, "hooks.json"), style: "codex-json", role: "own" }, { file: join(dirs.codex, "config.toml"), style: "codex-toml", role: "own" }],
       plugins: { kind: "codex", config: join(dirs.codex, "config.toml") },
-      notes: ["自定义 prompts 已弃用。改 config.toml 后要重启 Codex。"],
+      notes: ["0.118.0 起不再读取 ~/.codex/prompts，自定义命令改用技能。config.toml 的 [agents.<名>] 也能声明子 Agent。改 config.toml 后要重启 Codex。"],
     },
     {
       harnessId: "cursor", verified: ">=2026.6.0 <2027.0.0",
-      evidence: ["cursor.com/docs/context/skills（四个用户级位置，含 Claude、Codex 的兼容目录）", "cursor.com/docs/context/subagents、reference/third-party-hooks（读 Claude 的子 Agent 与 Hooks）"],
+      evidence: ["cursor.com/docs/context/skills（四个用户级位置，含 Claude、Codex 的兼容目录）", "cursor.com/docs/context/subagents、reference/third-party-hooks（读 Claude 的子 Agent 与 Hooks）",
+        "本机 cursor-agent 2026.10.01：index.js 的 computeAgentsDirs 只有工作区的 .cursor/agents、.claude/agents、.grok/agents，没有家目录；9577.index.js 的 loadCommandsFromDirectory 读 ~/.claude/commands（claude-user）与 ~/.cursor/commands（user）顶层的 .md"],
       skills: { roots: [{ role: "shared", path: dirs.shared, precedence: 2, containment: false, depth: 1 }, { role: "own", path: join(dirs.cursor, "skills"), precedence: 2, containment: false, depth: 1 },
         { role: "compat", path: join(dirs.claude, "skills"), precedence: 1, containment: false, depth: 1 }, { role: "compat", path: join(dirs.codex, "skills"), precedence: 1, containment: false, depth: 1 }],
         duplicates: "unknown", requiresDescription: true, nameMustMatchDirectory: true, switch: null },
       mcp: { style: "cursor", file: join(dirs.cursor, "mcp.json") },
       instructions: { kind: "invisible", reason: "Cursor 的用户规则保存在应用设置里，不在磁盘上；它只读项目根目录的 AGENTS.md 与 CLAUDE.md。" },
-      subagents: [{ dir: join(dirs.cursor, "agents"), format: "markdown", role: "own", recursive: false }, { dir: join(dirs.claude, "agents"), format: "markdown", role: "compat", recursive: false },
-        { dir: join(dirs.codex, "agents"), format: "toml", role: "compat", recursive: false }],
-      commands: null,
+      subagents: null,
+      commands: [{ dir: join(dirs.cursor, "commands"), format: "markdown", role: "own", recursive: false }, { dir: join(dirs.claude, "commands"), format: "markdown", role: "compat", recursive: false }],
       hooks: [{ file: join(dirs.cursor, "hooks.json"), style: "cursor", role: "own" }, { file: join(dirs.claude, "settings.json"), style: "claude", role: "compat" }],
       plugins: { kind: "invisible", reason: "Cursor 不在磁盘上记录已装的插件，只能在会话里用 /plugin 查看；它默认导入 Claude Code 已装的插件。" },
-      notes: ["Cursor 没有按技能停用的开关。", "~/.cursor/mcp.json 与 Cursor 编辑器共用。"],
+      notes: ["Cursor 没有按技能停用的开关。", "~/.cursor/mcp.json 与 Cursor 编辑器共用。", "本机 CLI 只读工作区里的子 Agent；文档所列的家目录位置在 CLI 程序里没有，编辑器是否读取未核实。"],
     },
     {
       harnessId: "opencode", verified: ">=1.18.0 <1.19.0",
       evidence: ["anomalyco/opencode v1.18.35 packages/opencode/src/skill/index.ts（发现 .claude 与 .agents 的 skills/**/SKILL.md 与配置目录；并发加载，同名后写入者覆盖并警告）",
-        "anomalyco/opencode v1.18.35 packages/opencode/src/session/instruction.ts（全局指令取第一个存在的文件：配置目录的 AGENTS.md，然后 ~/.claude/CLAUDE.md；空文件也算存在；每一步重新读）与 effect/runtime-flags.ts（OPENCODE_DISABLE_CLAUDE_CODE 或 OPENCODE_DISABLE_CLAUDE_CODE_PROMPT 关掉回退）"],
+        "anomalyco/opencode v1.18.35 packages/opencode/src/session/instruction.ts（全局指令取第一个存在的文件：配置目录的 AGENTS.md，然后 ~/.claude/CLAUDE.md；空文件也算存在；每一步重新读）与 effect/runtime-flags.ts（OPENCODE_DISABLE_CLAUDE_CODE 或 OPENCODE_DISABLE_CLAUDE_CODE_PROMPT 关掉回退）",
+        "v1.18.35 config/agent.ts（{agent,agents}/**/*.md 递归，名字是相对路径、以 / 连接；{mode,modes}/*.md 也定义 Agent）、config/command.ts（{command,commands}/**/*.md）、agent/agent.ts（内置 build、plan、general、explore、compaction、title、summary，同名文件逐字段覆盖）",
+        "v1.18.35 command/index.ts（内置命令 init、review；技能在名字未被占用时补成命令）与 session/prompt.ts（命令与技能模板里的 !`cmd` 不经权限检查就执行）"],
       skills: { roots: [...(disableClaudeSkills ? [] : [{ role: "compat" as const, path: join(dirs.claude, "skills"), precedence: 1, containment: false, depth: 8, find: OPENCODE_FIND }]),
         { role: "shared", path: dirs.shared, precedence: 1, containment: false, depth: 8, find: OPENCODE_FIND }, { role: "own", path: join(dirs.opencode, "skills"), precedence: 1, containment: false, depth: 8, find: OPENCODE_FIND },
         { role: "own", path: join(dirs.opencode, "skill"), precedence: 1, containment: false, depth: 8, find: OPENCODE_FIND }],
         duplicates: "last-wins-unordered", requiresDescription: true, nameMustMatchDirectory: false, switch: { kind: "opencode-permission", files: opencodeConfigs } },
       mcp: { style: "opencode", files: opencodeConfigs },
       instructions: { kind: "files", candidates: [{ path: join(dirs.opencode, "AGENTS.md"), role: "own" }, ...(disableClaudePrompt ? [] : [{ path: join(environment.home, ".claude", "CLAUDE.md"), role: "compat" as const }])], rule: "first-existing" },
-      subagents: [{ dir: join(dirs.opencode, "agents"), format: "markdown", role: "own", recursive: false }, { dir: join(dirs.opencode, "agent"), format: "markdown", role: "own", recursive: false }],
-      commands: [{ dir: join(dirs.opencode, "commands"), format: "markdown", role: "own", recursive: false }, { dir: join(dirs.opencode, "command"), format: "markdown", role: "own", recursive: false }],
+      subagents: [{ dir: join(dirs.opencode, "agents"), format: "markdown", role: "own", recursive: true, separator: "/" }, { dir: join(dirs.opencode, "agent"), format: "markdown", role: "own", recursive: true, separator: "/" },
+        { dir: join(dirs.opencode, "modes"), format: "markdown", role: "own", recursive: false, separator: "/" }, { dir: join(dirs.opencode, "mode"), format: "markdown", role: "own", recursive: false, separator: "/" }],
+      reservedSubagents: ["build", "plan", "general", "explore", "compaction", "title", "summary"],
+      builtinCommands: ["init", "review"],
+      commands: [{ dir: join(dirs.opencode, "commands"), format: "markdown", role: "own", recursive: true, separator: "/" }, { dir: join(dirs.opencode, "command"), format: "markdown", role: "own", recursive: true, separator: "/" }],
       hooks: null,
       plugins: { kind: "opencode", files: opencodeConfigs, dir: join(dirs.opencode, "plugins") },
       notes: [disableClaudeSkills ? "环境里设置了关闭 .claude 技能来源的变量，OpenCode 不读 ~/.claude/skills。" : "OpenCode 也读 ~/.claude/skills；可以在终端环境里设置 OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1 关掉这个来源。", "OpenCode 没有声明式的 Hooks，由插件实现。"],
     },
     {
       harnessId: "gemini", verified: ">=0.60.0 <0.70.0",
-      evidence: ["google-gemini/gemini-cli v0.62.0 docs/cli/skills.md 与 packages/core/src/skills（用户层 ~/.gemini/skills 与 ~/.agents/skills，同层 .agents 优先）", "docs/reference/configuration.md（mcpServers、skills.disabled、hooks）"],
+      evidence: ["google-gemini/gemini-cli v0.62.0 docs/cli/skills.md 与 packages/core/src/skills（用户层 ~/.gemini/skills 与 ~/.agents/skills，同层 .agents 优先）", "docs/reference/configuration.md（mcpServers、skills.disabled、hooks）",
+        "本机 0.62.0 bundle：loadAgentsFromDirectory 只读 ~/.gemini/agents 顶层、isFile 的 .md，跳过以 _ 开头的与符号链接；本地 Agent 的 schema 是 strict（name 为 slug、description 必填）；内置 codebase_investigator、cli_help、generalist、browser_agent 先注册，同名的用户 Agent 被忽略；acpCommandHandler 只有内置命令，--acp 不展开自定义命令"],
       skills: { roots: [{ role: "own", path: join(dirs.gemini, "skills"), precedence: 1, containment: false, depth: 1 }, { role: "shared", path: dirs.shared, precedence: 2, containment: false, depth: 1 }],
         duplicates: "precedence", requiresDescription: true, nameMustMatchDirectory: false, switch: { kind: "gemini-skills-disabled", file: join(dirs.gemini, "settings.json") } },
       mcp: { style: "gemini", file: join(dirs.gemini, "settings.json") },
       instructions: { kind: "files", candidates: [{ path: join(dirs.gemini, "GEMINI.md"), role: "own" }], rule: "first-existing" },
-      subagents: [{ dir: join(dirs.gemini, "agents"), format: "markdown", role: "own", recursive: false }],
+      subagents: [{ dir: join(dirs.gemini, "agents"), format: "markdown", role: "own", recursive: false, regularOnly: true, skipPrefix: "_" }],
+      reservedSubagents: ["generalist", "codebase_investigator", "cli_help", "browser_agent"],
       commands: [{ dir: join(dirs.gemini, "commands"), format: "toml", role: "own", recursive: true }],
       hooks: [{ file: join(dirs.gemini, "settings.json"), style: "gemini", role: "own" }],
       plugins: { kind: "gemini", extensions: join(dirs.gemini, "extensions"), enablement: join(dirs.gemini, "extensions", "extension-enablement.json") },
-      notes: ["Gemini CLI 已对免费层与 Google One 用户停止服务（2026-06-18），由 Antigravity CLI 取代；Antigravity 不共用这些配置。", "运行中的 Gemini 会话保存设置时，会按启动时的快照覆盖 settings.json。"],
+      notes: ["Gemini CLI 已对免费层与 Google One 用户停止服务（2026-06-18），由 Antigravity CLI 取代；Antigravity 不共用这些配置。", "运行中的 Gemini 会话保存设置时，会按启动时的快照覆盖 settings.json。",
+        "Gemini 以 --acp 运行时不展开自定义命令，HarnessHub 的会话里用不了；终端里可以。"],
     },
     {
       harnessId: "openclaw", verified: ">=2026.3.0 <2026.4.0",

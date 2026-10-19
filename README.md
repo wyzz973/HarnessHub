@@ -103,6 +103,10 @@ Web界面按用户确认的设计稿重写（[ADR-042](docs/decisions/0042-front
   - **移除**：文件回到写入前的字节；HarnessHub 新建的文件在移除后删除。被外部改动或移除的区块进入漂移列表，不自动写回。
   - **存储**：`capabilities.sqlite` 升到 v4（新增 `instruction_texts`），降级先用 `tools/capabilities-v4-to-v3.sql`。
   - **真实环境**：DeepSeek Harness 与 Codex 做了往返写入，最后保持移除。dsh 自带的读取函数读到了区块；Codex 只验证了文件，会话里是否读到未验证。
+- 统一子 Agent 与新建技能（[验收记录](docs/verification/capability-subagents-2026-10-19.md)，第 5 步）：
+  - **子 Agent**：HarnessHub 保存一份子 Agent 清单（名字、说明、正文），按各家格式写进 Claude Code、Codex、Gemini、OpenCode 的用户级目录；不写工具、模型、权限，子 Agent 继承父会话。各家的内置名不能用，别人的同名定义不覆盖。Cursor 的本机 CLI 不读家目录的子 Agent，不写。
+  - **命令**：不写各家的原生命令文件，改为在技能页“新建技能”：写进共享目录，本机所有 Harness 都读得到；正文不能含 `` !`…` ``（OpenCode 会不经确认执行）。
+  - **存储**：`capabilities.sqlite` 升到 v5（新增 `subagents` 与技能来源种类），降级先用 `tools/capabilities-v5-to-v4.sql`。
 - 新增依赖 jsonc-parser 3.3.1、yaml 2.9.1、smol-toml 1.9.0。验收见[能力视图验收](docs/verification/capabilities-view-2026-10-18.md)。
 
 原版OpenClaw2026.3.23-2、Codex0.162.1、OpenCode1.18.35、Pi0.85.1已通过本机真实模型回复；OpenClaw/Pi使用原生DeepSeek。Hermes Agent 0.12.0（官方安装方式）与 DeepSeek Harness（`dsh`，本机为源码构建 0.2.1-alpha.1，经发现清单的自定义入口接入）经各自内置 ACP 接入，已通过真实回复、跨 Hub 重启的原生恢复、思考与工具活动验收，见[ADR-031](docs/decisions/0031-hermes-and-deepseek-harness.md)与[验收记录](docs/verification/hermes-dsh-onboarding-2026-10-11.md)。Pi 与 DeepSeek Harness 的上述证据来自非官网安装，按 ADR-044 不再作为验收对象。Claude接入口绑定原Claude Code2.1.296及既有登录，账号周额度已用完。Cursor原安装已升级至2026.10.01-e373342，沿用本机登录、44项原生模型目录并通过独立短提示回复；原公共对话实测仍返回账号套餐升级提示，不能算该对话回复通过。Gemini0.62.0的个人登录被服务端停用，直连DeepSeek实际返回404（Google GenAI协议与DeepSeek接口不匹配），不能算回复通过。所有接入口版本与原程序版本分开解释，不把ACP适配器版本当原CLI版本。

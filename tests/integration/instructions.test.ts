@@ -156,65 +156,66 @@ test("G064-I2 through the formal Gateway, the instructions are saved, written as
   await writeFile(copy, await readFile(join(f.root, "data", "capabilities", "capabilities.sqlite")));
   const db = new DatabaseSync(copy);
   try {
-      assert.ok((db.prepare("SELECT COUNT(*) AS n FROM capability_ledger WHERE key LIKE 'instructions/%'").get()?.n as number) > 0);
-      db.exec(await readFile(new URL("../../../tools/capabilities-v4-to-v3.sql", import.meta.url), "utf8"));
-      assert.equal(db.prepare("PRAGMA user_version").get()?.user_version, 3);
-      assert.deepEqual(db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(row => row.name), ["capability_backups", "capability_changes", "capability_ledger", "capability_owner", "mcp_servers", "skill_sources", "skill_undo"]);
-      assert.deepEqual([db.prepare("SELECT COUNT(*) AS n FROM capability_ledger WHERE key LIKE 'instructions/%'").get()?.n, db.prepare("SELECT COUNT(*) AS n FROM capability_changes WHERE json_extract(view_json, '$.kind') LIKE 'instructions-%'").get()?.n], [0, 0]);
-      assert.ok((db.prepare("SELECT COUNT(*) AS n FROM capability_changes WHERE json_extract(view_json, '$.kind') = 'restore'").get()?.n as number) > 0, "other changes stay");
-      assert.ok((db.prepare("SELECT COUNT(*) AS n FROM capability_backups").get()?.n as number) > 0, "the backups stay");
-    } finally { db.close(); }
-    await f.clean();
-  });
+    assert.ok((db.prepare("SELECT COUNT(*) AS n FROM capability_ledger WHERE key LIKE 'instructions/%'").get()?.n as number) > 0);
+    db.exec(await readFile(new URL("../../../tools/capabilities-v5-to-v4.sql", import.meta.url), "utf8"));
+    db.exec(await readFile(new URL("../../../tools/capabilities-v4-to-v3.sql", import.meta.url), "utf8"));
+    assert.equal(db.prepare("PRAGMA user_version").get()?.user_version, 3);
+    assert.deepEqual(db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(row => row.name), ["capability_backups", "capability_changes", "capability_ledger", "capability_owner", "mcp_servers", "skill_sources", "skill_undo"]);
+    assert.deepEqual([db.prepare("SELECT COUNT(*) AS n FROM capability_ledger WHERE key LIKE 'instructions/%'").get()?.n, db.prepare("SELECT COUNT(*) AS n FROM capability_changes WHERE json_extract(view_json, '$.kind') LIKE 'instructions-%'").get()?.n], [0, 0]);
+    assert.ok((db.prepare("SELECT COUNT(*) AS n FROM capability_changes WHERE json_extract(view_json, '$.kind') = 'restore'").get()?.n as number) > 0, "other changes stay");
+    assert.ok((db.prepare("SELECT COUNT(*) AS n FROM capability_backups").get()?.n as number) > 0, "the backups stay");
+  } finally { db.close(); }
+  await f.clean();
+});
 
-  test("G064-I2 OpenCode's fallback, Claude Code's file it falls back to, OpenClaw's workspace and cc-switch's files each say what a write means before it is made", { timeout: 180000 }, async t => {
-    const f = await gateway(t), home = f.home, claudeFile = join(home, ".claude", "CLAUDE.md"), opencodeFile = join(home, ".config", "opencode", "AGENTS.md");
-    assert.equal((await f.save("Reply in Chinese.")).status, 200);
-    // OpenCode falls back to ~/.claude/CLAUDE.md, which holds the user's own text: its own file waits for the user, and the other way is named.
-    const asked = await f.check("sync", "opencode");
-    assert.match(asked.value.blocked ?? "", /读不到那些内容.*也可以改为写入 Claude Code 的 ~\/\.claude\/CLAUDE\.md/u);
-    assert.deepEqual(asked.value.proceed, { option: "create-own", label: "新建 OpenCode 自己的文件" });
-    // With neither file, OpenCode's own file is created without asking; the check says the fallback ends, the removal that it comes back.
-    await rm(claudeFile);
-    assert.equal(state(await f.view(), "claude")?.state, "absent");
-    const direct = await f.check("sync", "opencode");
-    assert.ok(direct.value.notes.some(note => /会新建 ~\/\.config\/opencode\/AGENTS\.md；之后 OpenCode 不再回退读 ~\/\.claude\/CLAUDE\.md/u.test(note)), JSON.stringify(direct.value.notes));
-    await f.apply(direct);
-    assert.equal(await readFile(opencodeFile, "utf8"), block("Reply in Chinese."));
-    assert.equal(await mode(opencodeFile), "600", "a file HarnessHub creates is private");
-    const back = await f.check("remove", "opencode");
-    assert.ok(back.value.notes.some(note => /会删除它，OpenCode 随后重新回退读 ~\/\.claude\/CLAUDE\.md/u.test(note)), JSON.stringify(back.value.notes));
-    await f.apply(back);
-    await assert.rejects(stat(opencodeFile), { code: "ENOENT" });
-    // Claude Code's file is the one OpenCode falls back to: its write and removal say so; OpenCode then shows it reads Claude's block.
-    const claudeCheck = await f.check("sync", "claude");
-    assert.ok(claudeCheck.value.notes.some(note => /OpenCode 没有自己的指令文件，也会经回退读到这个文件/u.test(note)), JSON.stringify(claudeCheck.value.notes));
-    await f.apply(claudeCheck);
-    let view = await f.view();
-    assert.deepEqual([state(view, "claude")?.state, state(view, "opencode")?.state], ["synced", "elsewhere"]);
-    const claudeRemove = await f.check("remove", "claude");
-    assert.ok(claudeRemove.value.notes.some(note => /删除后它也读不到这些指令/u.test(note)), JSON.stringify(claudeRemove.value.notes));
-    // From there OpenCode's own file is created without asking, since the fallback holds nothing but HarnessHub's block.
-    await f.apply(await f.check("sync", "opencode"));
-    assert.equal(state(await f.view(), "opencode")?.state, "synced");
-    // OpenClaw: only its default agent's workspace file, never created, never past its per-file limit; the channels it answers in are named.
-    const config = join(home, ".openclaw", "openclaw.json"), workspaceFile = join(home, "claw-ws", "AGENTS.md");
-    await writeFile(config, "{\n  // JSON5\n  agents: { defaults: { workspace: '~/claw-ws', bootstrapMaxChars: 120 }, list: [{ id: 'main', default: true }, { id: 'helper' }] },\n"
-      + "  channels: { feishu: { appSecret: 'sk-literal-secret' }, 'openclaw-weixin': {} },\n}\n");
-    await mkdir(join(home, "claw-ws", ".git"));
-    const tooLong = await f.check("sync", "openclaw");
-    assert.match(tooLong.value.blocked ?? "", /超过 OpenClaw 的单个文件上限 120 个字符.*挖掉中间的部分/u);
-    await writeFile(config, "{ agents: { defaults: { workspace: '~/claw-ws' }, list: [{ id: 'main', default: true }, { id: 'helper' }] }, channels: { feishu: {}, 'openclaw-weixin': {} } }\n");
-    const openclaw = await f.check("sync", "openclaw");
-    assert.equal(openclaw.value.blocked, null, openclaw.value.blocked ?? "");
-    for (const pattern of [/OpenClaw 配置的频道：feishu、openclaw-weixin。这些频道里的新会话或重置后的会话会按新指令回答；运行中的会话不变；HarnessHub 不重启网关/u, /配置了 2 个 agent，这里只写默认 agent 的工作区/u, /git status/u])
-      assert.ok(openclaw.value.notes.some(note => pattern.test(note)), pattern.source + " " + JSON.stringify(openclaw.value.notes));
-    await rm(workspaceFile);
-    assert.match((await f.check("sync", "openclaw")).value.blocked ?? "", /还没有生成工作区里的 AGENTS\.md.*不替它新建/u);
-    // cc-switch writes GEMINI.md whole: once it is set up here, a first write waits for the user and an update of HarnessHub's block does not.
-    // Its directory is unreadable here: only that it exists is looked at.
-    await writeFile(join(home, ".gemini", "GEMINI.md"), "");
-    await mkdir(join(home, ".cc-switch")); await writeFile(join(home, ".cc-switch", "cc-switch.db"), "not read"); await chmod(join(home, ".cc-switch"), 0o000);
+test("G064-I2 OpenCode's fallback, Claude Code's file it falls back to, OpenClaw's workspace and cc-switch's files each say what a write means before it is made", { timeout: 180000 }, async t => {
+  const f = await gateway(t), home = f.home, claudeFile = join(home, ".claude", "CLAUDE.md"), opencodeFile = join(home, ".config", "opencode", "AGENTS.md");
+  assert.equal((await f.save("Reply in Chinese.")).status, 200);
+  // OpenCode falls back to ~/.claude/CLAUDE.md, which holds the user's own text: its own file waits for the user, and the other way is named.
+  const asked = await f.check("sync", "opencode");
+  assert.match(asked.value.blocked ?? "", /读不到那些内容.*也可以改为写入 Claude Code 的 ~\/\.claude\/CLAUDE\.md/u);
+  assert.deepEqual(asked.value.proceed, { option: "create-own", label: "新建 OpenCode 自己的文件" });
+  // With neither file, OpenCode's own file is created without asking; the check says the fallback ends, the removal that it comes back.
+  await rm(claudeFile);
+  assert.equal(state(await f.view(), "claude")?.state, "absent");
+  const direct = await f.check("sync", "opencode");
+  assert.ok(direct.value.notes.some(note => /会新建 ~\/\.config\/opencode\/AGENTS\.md；之后 OpenCode 不再回退读 ~\/\.claude\/CLAUDE\.md/u.test(note)), JSON.stringify(direct.value.notes));
+  await f.apply(direct);
+  assert.equal(await readFile(opencodeFile, "utf8"), block("Reply in Chinese."));
+  assert.equal(await mode(opencodeFile), "600", "a file HarnessHub creates is private");
+  const back = await f.check("remove", "opencode");
+  assert.ok(back.value.notes.some(note => /会删除它，OpenCode 随后重新回退读 ~\/\.claude\/CLAUDE\.md/u.test(note)), JSON.stringify(back.value.notes));
+  await f.apply(back);
+  await assert.rejects(stat(opencodeFile), { code: "ENOENT" });
+  // Claude Code's file is the one OpenCode falls back to: its write and removal say so; OpenCode then shows it reads Claude's block.
+  const claudeCheck = await f.check("sync", "claude");
+  assert.ok(claudeCheck.value.notes.some(note => /OpenCode 没有自己的指令文件，也会经回退读到这个文件/u.test(note)), JSON.stringify(claudeCheck.value.notes));
+  await f.apply(claudeCheck);
+  let view = await f.view();
+  assert.deepEqual([state(view, "claude")?.state, state(view, "opencode")?.state], ["synced", "elsewhere"]);
+  const claudeRemove = await f.check("remove", "claude");
+  assert.ok(claudeRemove.value.notes.some(note => /删除后它也读不到这些指令/u.test(note)), JSON.stringify(claudeRemove.value.notes));
+  // From there OpenCode's own file is created without asking, since the fallback holds nothing but HarnessHub's block.
+  await f.apply(await f.check("sync", "opencode"));
+  assert.equal(state(await f.view(), "opencode")?.state, "synced");
+  // OpenClaw: only its default agent's workspace file, never created, never past its per-file limit; the channels it answers in are named.
+  const config = join(home, ".openclaw", "openclaw.json"), workspaceFile = join(home, "claw-ws", "AGENTS.md");
+  await writeFile(config, "{\n  // JSON5\n  agents: { defaults: { workspace: '~/claw-ws', bootstrapMaxChars: 120 }, list: [{ id: 'main', default: true }, { id: 'helper' }] },\n"
+    + "  channels: { feishu: { appSecret: 'sk-literal-secret' }, 'openclaw-weixin': {} },\n}\n");
+  await mkdir(join(home, "claw-ws", ".git"));
+  const tooLong = await f.check("sync", "openclaw");
+  assert.match(tooLong.value.blocked ?? "", /超过 OpenClaw 的单个文件上限 120 个字符.*挖掉中间的部分/u);
+  await writeFile(config, "{ agents: { defaults: { workspace: '~/claw-ws' }, list: [{ id: 'main', default: true }, { id: 'helper' }] }, channels: { feishu: {}, 'openclaw-weixin': {} } }\n");
+  const openclaw = await f.check("sync", "openclaw");
+  assert.equal(openclaw.value.blocked, null, openclaw.value.blocked ?? "");
+  for (const pattern of [/OpenClaw 配置的频道：feishu、openclaw-weixin。这些频道里的新会话或重置后的会话会按新指令回答；运行中的会话不变；HarnessHub 不重启网关/u, /配置了 2 个 agent，这里只写默认 agent 的工作区/u, /git status/u])
+    assert.ok(openclaw.value.notes.some(note => pattern.test(note)), pattern.source + " " + JSON.stringify(openclaw.value.notes));
+  await rm(workspaceFile);
+  assert.match((await f.check("sync", "openclaw")).value.blocked ?? "", /还没有生成工作区里的 AGENTS\.md.*不替它新建/u);
+  // cc-switch writes GEMINI.md whole: once it is set up here, a first write waits for the user and an update of HarnessHub's block does not.
+  // Its directory is unreadable here: only that it exists is looked at.
+  await writeFile(join(home, ".gemini", "GEMINI.md"), "");
+  await mkdir(join(home, ".cc-switch")); await writeFile(join(home, ".cc-switch", "cc-switch.db"), "not read"); await chmod(join(home, ".cc-switch"), 0o000);
   try {
     view = await f.view();
     assert.match(state(view, "gemini")?.cautions.join("") ?? "", /cc-switch 启用或切换提示词时会整份改写 ~\/\.gemini\/GEMINI\.md.*现在是 0 字节，与 cc-switch 停用提示词后的状态一致/u);
@@ -302,21 +303,25 @@ test("G064-I3 what HarnessHub wrote and someone then changed, removed or moved i
   assert.deepEqual((await f.history()).drift, [], "the stale record went with the new write");
   assert.equal(await readFile(override, "utf8"), "Override rules\n\n" + block("Reply in Chinese."));
   assert.equal((await readdir(join(home, ".codex"))).some(name => name.includes(".harnesshub-")), false, "no temporary file is left");
-  // Storage: a reader refuses a schema newer than it knows, as a v3 build refuses v4; after the downgrade, the v3 database opens and comes back to v4.
+  // Storage: a reader refuses a schema newer than it knows, as a v3 build refuses v4; after the downgrades, the v3 database opens and comes back to the current v5.
   const data = join(f.root, "data", "capabilities"), newer = join(f.root, "newer"), older = join(f.root, "older");
   for (const target of [newer, older]) {
     await mkdir(target); await cp(data, join(target, "capabilities"), { recursive: true });
     await chmod(target, 0o700); await chmod(join(target, "capabilities"), 0o700); await chmod(join(target, "capabilities", "backups"), 0o700);
     for (const name of await readdir(join(target, "capabilities"))) if (name !== "backups" && name !== "skills") await chmod(join(target, "capabilities", name), 0o600);
   }
-  let db = new DatabaseSync(join(newer, "capabilities", "capabilities.sqlite")); db.exec("PRAGMA user_version=5"); db.close();
+  let db = new DatabaseSync(join(newer, "capabilities", "capabilities.sqlite")); db.exec("PRAGMA user_version=6"); db.close();
   assert.throws(() => CapabilityStore.open(newer, 1_000_000), /unknown capability storage schema/u);
   db = new DatabaseSync(join(older, "capabilities", "capabilities.sqlite"));
   const backups = db.prepare("SELECT COUNT(*) AS n FROM capability_backups").get()?.n;
+  db.exec(await readFile(new URL("../../../tools/capabilities-v5-to-v4.sql", import.meta.url), "utf8"));
   db.exec(await readFile(new URL("../../../tools/capabilities-v4-to-v3.sql", import.meta.url), "utf8")); db.close();
   const reopened = CapabilityStore.open(older, 1_000_000);
   try { assert.deepEqual([reopened.instructionTexts(), reopened.backups().length, reopened.ledgerEntries().filter(item => item.key.startsWith("instructions/")).length], [[], backups, 0]); } finally { reopened.close(); }
   db = new DatabaseSync(join(older, "capabilities", "capabilities.sqlite"));
-  try { assert.equal(db.prepare("PRAGMA user_version").get()?.user_version, 4); } finally { db.close(); }
+  try {
+    assert.equal(db.prepare("PRAGMA user_version").get()?.user_version, 5, "a v3 database comes back to the current schema");
+    assert.equal(db.prepare("SELECT name FROM pragma_table_info('skill_sources')").all().map(row => row.name).at(-1), "kind", "v5 adds the source kind to the skills already recorded");
+  } finally { db.close(); }
   await f.clean();
 });

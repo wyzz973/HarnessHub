@@ -76,8 +76,8 @@
 
 ## 子 Agent、自定义命令与 Hooks
 
-- **子 Agent**：Claude `~/.claude/agents/*.md`；Codex `~/.codex/agents/*.toml`（必填 `developer_instructions`）；Cursor 读 `.cursor/agents`、`.claude/agents`、`.codex/agents`（含用户级）；OpenCode `~/.config/opencode/agents/*.md`；Gemini `~/.gemini/agents/*.md`；OpenClaw 用 `openclaw agents` 管理多 agent；Pi、Hermes、DeepSeek Harness 没有同类文件格式（DeepSeek Harness 的 agent preset 在 Web 界面里）。
-- **自定义命令**：Claude `~/.claude/commands/*.md`（已并入 skills）；Codex `~/.codex/prompts/*.md`（已弃用）；OpenCode `~/.config/opencode/commands/*.md`；Gemini `~/.gemini/commands/*.toml`；Pi `~/.pi/agent/prompts/*.md`；Cursor `.cursor/commands/*.md`。
+- **子 Agent**：Claude `~/.claude/agents/**/*.md`（递归，按 `name`）；Codex `~/.codex/agents/**/*.toml`（递归，必填 `name`、`description`、`developer_instructions`；`config.toml` 的 `[agents.<名>]` 也声明角色）；Cursor 的文档写读 `.cursor/agents`、`.claude/agents`、`.codex/agents`（含用户级），但本机 cursor-agent 2026.10.01 只读工作区里的；OpenCode `~/.config/opencode/{agent,agents}/**/*.md` 与 `{mode,modes}/*.md`；Gemini `~/.gemini/agents/*.md`（只读顶层普通文件，跳过 `_` 开头的与链接）；OpenClaw 用 `openclaw agents` 管理多 agent；Pi、Hermes、DeepSeek Harness 没有同类文件格式（DeepSeek Harness 的 agent preset 在 Web 界面里）。2026-10-19 按已装版本补正，见 ADR-045 第 5 步。
+- **自定义命令**：Claude `~/.claude/commands/*.md`（已并入 skills）；Codex `~/.codex/prompts/*.md` 自 0.118.0 起不再读取（代码已删除）；OpenCode `~/.config/opencode/{command,commands}/**/*.md`（`` !`cmd` `` 不经权限执行）；Gemini `~/.gemini/commands/*.toml`（`--acp` 不展开）；Pi `~/.pi/agent/prompts/*.md`；Cursor CLI 读 `~/.cursor/commands` 与 `~/.claude/commands` 顶层。
 - **Hooks**：Claude 在 settings.json 的 `hooks`；Codex `~/.codex/hooks.json`，非托管 hook 要按哈希信任；Cursor `~/.cursor/hooks.json`，还会合并 Claude 的 hooks；Gemini settings.json 的 `hooks`，有 `gemini hooks migrate --from-claude`；OpenClaw `HOOK.md` 加 handler，`openclaw hooks enable/disable`；Hermes config.yaml 的 `hooks`，首次运行要确认；DeepSeek Harness 用 hooks 行指向 Claude 或 Codex 的 hooks.json。Hooks 会执行命令，事件名各家不同。
 
 ## 与旧版 Library 假设的冲突
