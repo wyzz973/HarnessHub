@@ -70,9 +70,25 @@ Claude Code 插件模型：
 
 Codex：没有设置 `features.plugins`；`swift-lsp` 的表头在第 278 行，第 279 行是 `enabled = true`。
 
-## 第一次真实写入
+## 第一次真实写入（2026-10-19，审批同意，由我代为执行）
 
-（待填）
+按审批裁决第 9 条：`swift-lsp@claude-plugins-official` 先在 Claude Code、再在 Codex 各往返一次。都经 4317 的正式入口，不运行 `claude plugin` 或 `codex` 命令，不重启任何 Harness；出现 409、回读不符或外部改动就停下，不重试（这次都没有出现）。4317 运行 `6876e92`（PID 74642）。部署时数据各表行数与部署前的克隆一致，只有运行中服务独占的 `owner.sqlite` 读不到行数；克隆核对后已删除。
+
+- **写入前**：
+  - 两家的这个插件都是“启用、可启停”；台账里没有 `plugin/` 记录，没有漂移。
+  - `settings.json` 的 sha256 前缀 `8598482ed2ec`、权限 644；`config.toml` 为 `0e108a92ede1`、600；`installed_plugins.json` 为 `ea61dd31d801`。
+  - 6 个 Claude Code 进程（含这次操作所在的会话）、3 个 Codex 进程在运行。
+- **Claude Code 停用**（change `639b1410`，备份 `8e4df85f`）：
+  - 检查：当前设置“不是 HarnessHub 写的”，差异 1 行删、1 行增，4 条说明（生效时机、桌面应用与编辑器扩展、各级覆盖、运行中的进程）。
+  - 回读：只有第 191 行从 `"swift-lsp@claude-plugins-official": true` 变成 `false`；权限仍是 644，`installed_plugins.json` 没变；视图里 Claude 一侧变为停用，Codex 一侧仍启用；台账记下一条。
+  - 30 秒后：文件没有被改动，没有漂移。
+- **Claude Code 启用**（change `6ed73a72`）：检查写明当前设置是 HarnessHub 写的；写入后 `settings.json` 与写前逐字节一致，台账清空，没有漂移。
+- **Codex 停用**（change `e0e9a5f8`，备份 `36493302`）：
+  - 检查：差异 1 行删、1 行增，3 条说明。
+  - 回读：表头在第 278 行，只有第 279 行从 `enabled = true` 变成 `enabled = false`；权限仍是 600；视图里只有 Codex 一侧变为停用。
+  - 30 秒后：文件没有被改动，没有漂移。
+- **Codex 启用**（change `f56dc53f`）：写入后 `config.toml` 与写前逐字节一致，台账清空，没有漂移。
+- **结束**：历史里 4 条插件开关都是“已应用”；两个文件的哈希与写入前相同。
 
 ## 未验证与后续
 
