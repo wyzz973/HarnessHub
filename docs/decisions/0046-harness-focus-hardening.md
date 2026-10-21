@@ -10,7 +10,7 @@
 
 总指挥在 440ba52 上做了一轮只读评估：没有运行任何 Harness，没有读凭据，没有触碰 4317 上运行的服务。与本切片直接相关的事实如下，均按 file:line 复核过：
 
-- **已验证版本表与本机脱节。** `src/infrastructure/management/verified-versions.ts:13` 把 Claude Code 记为 `2.1.296`，本机是 2.1.306（nvm，当前使用）与 2.1.302（Homebrew）；`:21` 把 dsh 记为 `0.2.1-alpha.1`，本机是 npm 官网的 0.2.0-rc.2（2026-10-18 经 4317 安装）。`src/adapters/catalog.ts:35` 的 dsh 包版本也还是 `0.2.1-alpha.1`。选择器因此把两个焦点 Harness 都标为“未经验证的版本”。
+- **已验证版本表与本机脱节。** `src/infrastructure/management/verified-versions.ts:13` 把 Claude Code 记为 `2.1.296`，本机是 2.1.306（nvm，当前使用）与 2.1.302（npm，Homebrew 前缀）；`:21` 把 dsh 记为 `0.2.1-alpha.1`，本机是 npm 官网的 0.2.0-rc.2（2026-10-18 经 4317 安装）。`src/adapters/catalog.ts:35` 的 dsh 包版本也还是 `0.2.1-alpha.1`。选择器因此把两个焦点 Harness 都标为“未经验证的版本”。
 - **dsh 的读表区间按 semver 不含 0.2.0-rc.2。** `src/adapters/capability-reads.ts:296` 写 `>=0.2.0 <0.3.0`，`src/infrastructure/capabilities/scan.ts:804-805` 以 `satisfies(…, { includePrerelease: true })` 判定；按 semver，预发布版本 `0.2.0-rc.2` 小于 `0.2.0`，所以能力页把本机 dsh 标为“未核实”。同一台机器上，选择器说“未经验证”，能力页说“未核实”，两套版本语义并存。
 - **dsh 的继续命令有一条不成立。** `verified-versions.ts:69` 给 dsh 的交互命令是 `dsh tui --resume`；总指挥只读核对本机安装的 `dsh-app-boot/lib/index.js`，rc.2 发运的 profile 只有 acp、web、headless、sdk、sdk-minimal，没有 tui，对不存在的 profile 直接抛错。
 - **Hermes 的版本读不到。** Hermes 是官方脚本渠道，`src/infrastructure/discovery/installation-channels.ts` 的 `script` 分支只认 `…/versions/<版本>` 的布局，Hermes 没有这种布局，所以版本恒为 null；而它的 venv 里有 `site-packages/hermes_agent-0.12.0.dist-info`，能给出版本。

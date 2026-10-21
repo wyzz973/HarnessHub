@@ -10,7 +10,7 @@
 
 | Harness | 本机安装 | HarnessHub 已验证版本（ADR-038） | 现状 |
 |---|---|---|---|
-| Claude Code | 2.1.306（nvm，当前使用）、2.1.302（Homebrew）；适配器 claude-agent-acp 0.89.1 | 2.1.296 | 当前版本没有一格真实证据；Claude 每周自更新 |
+| Claude Code | 2.1.306（nvm，当前使用）、2.1.302（npm，Homebrew 前缀）；适配器 claude-agent-acp 0.89.1 | 2.1.296 | 当前版本没有一格真实证据；Claude 每周自更新 |
 | Codex | 0.162.1（Homebrew cask） | 0.162.1 | 深度接入；上游已发 0.163.x |
 | OpenCode | 1.18.35（Homebrew formula；Cellar 另有 1.1.21） | 1.18.35 | 深度接入；隐藏 `/compact` 未接 |
 | Hermes Agent | 0.12.0（官方脚本；网关在运行，从未触碰） | 0.12.0 | 审批是上游缺陷；`hermes update` 会拉 origin/main，上游 main 的 `hermes acp` 是网关投影 |
@@ -42,7 +42,7 @@
   - 仓库唯一的 A→B→A 真实切换证据是 codex↔gemini（`docs/engineering/testing.md` 第 4 节要求至少两个 Harness 的 A→B→A）；
   - 本机 OpenClaw 网关正在运行并接着微信、飞书，它的升级与重启（ADR-043 的真实验收来自它）由 HarnessHub 管理，删除后只能在终端维护；
   - 旧对话续聊：ADR-044 第 6 条承诺历史对话保留，删除适配器后只能看、不能续；
-  - 还牵动 `tests/unit/verified-versions.test.ts` 把已验证表的键集合与矩阵 Harness 集合绑死的断言、`tools/check_design.py` 的矩阵 Harness 集合、注册表快照与品牌资产。
+  - 还牵动 `tests/unit/verified-versions.test.ts` 把已验证表的键集合与矩阵 Harness 集合绑死的断言、`plan/native-capabilities.json` 的 Harness 列表（设计检查按它校验每格与证据路径）、注册表快照与品牌资产。
 
 ### 2. WorkBuddy 的接入路线
 
