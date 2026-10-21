@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, request } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { application } from "../../src/cli/session-application.js";
+import { ManagementError } from "../../src/contracts/management.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { startWebServer, type WebServer } from "../../src/web/server.js";
+import { homePathsIn } from "../../src/web/shown-paths.js";
 import { conversationMarkdown } from "../../src/web/conversation-export.js";
 import type { SessionView } from "../../src/contracts/web.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
@@ -433,4 +436,32 @@ test("a Turn's diagnostics are assembled on request, scrubbed by the Gateway and
   assert.equal((await read("?content=2")).status, 400);
   assert.equal((await call(f, `/api/v1/sessions/${id}/runs/run-missing/diagnostics`)).status, 404);
   assert.equal((await fetch(f.origin + `/api/v1/sessions/${id}/runs/${run.id}/diagnostics`, { headers: { Origin: f.origin } })).status, 401);
+});
+
+test("a domain error's public message writes the user's home as ~ in every spelling the privacy guard knows, keeping its code and status; the Gateway's own errors keep their words", async t => {
+  // A private home reached through a link whose real path ends with the given one, as /var/folders/… is /private/var/folders/…
+  // on macOS: the Gateway knows the home by both spellings.
+  const root = await realpath(await mkdtemp(join(tmpdir(), "harness-web-home-"))), home = join(root, "home"), resolved = join(root, root.slice(1), "home"), workspace = join(root, "workspace");
+  await mkdir(resolved, { recursive: true }); await symlink(resolved, home); await mkdir(workspace);
+  const program = join(resolved, ".nvm", "versions", "node", "v26.0.0", "bin", "dsh");
+  const gateway = await startWebServer({ root: join(root, "data"), configuration: await prepareConfiguration({ workspace, pathOnly: true }), port: 0, workspaceLockRoot: join(root, "locks"),
+    application: (data, publish) => {
+      const app = application(data, publish, { nativeEnvironment: { home, values: { HOME: home, PATH: "/usr/bin:/bin" } }, installations: "official", workspaceLockRoot: join(root, "locks") });
+      // Failures injected at the management service in the words of its own checks (an upgrade check names the program it
+      // would replace by its real path); the HTTP answer under test is the formal one.
+      app.management.upgradeCheck = async () => { throw new ManagementError("NATIVE_DESTINATION_CONFLICT", "新版本会替换 " + program + "，它现在属于另一个程序。没有升级。"); };
+      app.management.maintenance = async () => { throw new ManagementError("MAINTENANCE_UNAVAILABLE", "HOME=" + home + " 下找不到程序（" + home + "）"); };
+      return app;
+    } });
+  t.after(async () => { await gateway.close(); await rm(root, { recursive: true, force: true }); });
+  const launch = new URL(gateway.url), origin = launch.origin;
+  const boot = await fetch(origin + "/api/v1/auth/bootstrap", { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ token: new URLSearchParams(launch.hash.slice(1)).get("token") }) });
+  assert.equal(boot.status, 200); const cookie = boot.headers.get("set-cookie")!.split(";", 1)[0]!;
+  const read = async (path: string) => { const response = await fetch(origin + path, { headers: { Cookie: cookie } }); return { status: response.status, data: await response.json() as unknown }; };
+  // Mutation check (run by hand, not kept): with publicFailure's message as it was, both answers name the home by its absolute path.
+  const upgrade = await read("/api/v1/harnesses/dsh/installations/" + "a".repeat(64) + "/upgrade"), maintenance = await read("/api/v1/harnesses/dsh/maintenance");
+  assert.deepEqual(upgrade, { status: 409, data: { code: "NATIVE_DESTINATION_CONFLICT", message: "新版本会替换 ~/.nvm/versions/node/v26.0.0/bin/dsh，它现在属于另一个程序。没有升级。" } });
+  assert.deepEqual(maintenance, { status: 409, data: { code: "MAINTENANCE_UNAVAILABLE", message: "HOME=~ 下找不到程序（~）" } });
+  assert.deepEqual(homePathsIn([upgrade, maintenance], [home, resolved]), []);
+  assert.deepEqual(await read("/api/v1/harnesses/dsh/unknown"), { status: 404, data: { code: "NOT_FOUND", message: "API route not found" } });
 });

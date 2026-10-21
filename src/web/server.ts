@@ -30,7 +30,7 @@ import { runDiagnostics, scrubDiagnostics } from "./run-diagnostics.js";
 import { nativeResume } from "../infrastructure/management/verified-versions.js";
 import { LoginShellStore, readLoginShellPath, type LoginShellDirectories } from "../infrastructure/discovery/login-shell.js";
 import { CapabilityService } from "../infrastructure/capabilities/service.js";
-import { CapabilityChanges } from "../infrastructure/capabilities/changes.js";
+import { CapabilityChanges, homeText } from "../infrastructure/capabilities/changes.js";
 import { CapabilityError, INSTRUCTION_CHECK_OPTIONS, type InstructionCheckOption, type McpDefinitionView } from "../contracts/capabilities.js";
 import type { GithubFetch } from "../infrastructure/capabilities/github.js";
 
@@ -241,13 +241,20 @@ function view(snapshot: SessionSnapshot, permissions: SessionView["permissions"]
     ...(snapshot.origin === undefined ? {} : { origin: snapshot.origin }), ...(queue === null ? {} : { queue }), ...(Object.keys(busyHolders).length ? { busyHolders } : {}),
     ...(snapshot.schemaVersion < 11 ? {} : { retention: { enabled: snapshot.retainNative === true, process: kept, ...(lost === null ? {} : { lost }), ...(outside === null ? {} : { outside }), ...(upgraded === null ? {} : { upgraded }) } }), messages: snapshot.messages, runs: snapshot.runs, switches: snapshot.switches };
 }
-function publicFailure(error: unknown): { readonly status: number; readonly code: string; readonly message: string } {
+/**
+ * The status, code and message a failure answers with. The domain errors keep their code and message, cut to 512
+ * characters, with every spelling of the user's home in `homes` written as ~ (ADR-044): a management or capability
+ * error may name a program or file by its absolute path. An HttpError or a stream error keeps its own words; anything
+ * else is a generic 500.
+ */
+function publicFailure(error: unknown, homes: readonly string[]): { readonly status: number; readonly code: string; readonly message: string } {
   if (error instanceof HttpError || error instanceof SessionStreamError) return error;
   if (error instanceof SessionError || error instanceof ProviderError || error instanceof ManagementError || error instanceof CapabilityError) {
     const code = error.code;
     const status = code.includes("NOT_FOUND") ? 404 : code === "INVALID_INPUT" ? 400 : code.includes("LIMIT") || code === "QUEUE_FULL" ? 429
       : code.startsWith("RECOVERY_") || code.includes("UNAVAILABLE") || code.includes("CLOSED") || code.includes("BLOCKED") || code.includes("CONFLICT") || code.includes("PENDING") || code.includes("REVISION") || code.includes("UNSUPPORTED") || code.includes("BUSY") || code.includes("ACTIVE") || code === "STALE_DEFAULT" || code.endsWith("_CHANGED") || code.includes("REFUSED") || code.endsWith("_EXPIRED") || code.includes("INCOMPATIBLE") ? 409 : 502;
-    return { status, code, message: error.message.slice(0, 512) };
+    // Cut before writing ~: a cut made afterwards could end a longer path exactly at the home, which then reads as the home.
+    return { status, code, message: homeText(homes)(error.message.slice(0, 512)) };
   }
   return { status: 500, code: "GATEWAY_FAILED", message: "Gateway operation failed" };
 }
@@ -342,7 +349,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     queueOf(snapshot.id), Object.fromEntries(snapshot.runs.flatMap(run => { const holder = app.runtime.busyHolderOf(run.id); return holder === null ? [] : [[run.id, holder]]; })),
     app.runtime.keptOutside(snapshot.id), app.runtime.keptUpgrade(snapshot.id));
   const streams = new SessionStreamHub(id => sessionView(app.runtime.read(id), app.runtime.permissionRequests(id)), {}, failure => {
-    const fault = publicFailure(failure.error);
+    const fault = publicFailure(failure.error, homeForms());
     process.stderr.write("HarnessGateway: SESSION_STREAM_READ_FAILED (" + app.providers.redact(fault.code).slice(0, 128) + ")\n");
   }, () => attention.frame());
   // Waiting approvals and questions of every conversation, refreshed after each published event (ADR-035). A page with a
@@ -654,6 +661,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       queries(url, []); const input = record(await body(request), ["fingerprint", "commandId"], ["fingerprint", "commandId"]);
       privateJson(response, await capabilityChanges.apply(text(input.fingerprint, "confirmation", 128), command(input.commandId))); return;
     }
+    // The stored records come back with ~ already, one by one; the guard refuses only what is still absolute after that.
     if (path === "/api/v1/capabilities/history" && method === "GET") { queries(url, []); privateJson(response, await capabilityChanges.history()); return; }
     // What HarnessHub wrote that is no longer in place (ADR-045 §10): put back through its usual check, or no longer tracked.
     if (path.startsWith("/api/v1/capabilities/drift/") && path.endsWith("/reapply") && method === "GET") {
@@ -1011,7 +1019,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (running >= MAX_REQUESTS) { json(response, 429, { code: "CLIENT_LIMIT", message: "Too many concurrent requests" }); request.resume(); return; }
     running++;
     void route(request, response).catch(error => {
-      const fault = publicFailure(error);
+      const fault = publicFailure(error, homeForms());
       json(response, fault.status, { code: fault.code, message: app.providers.redact(fault.message) }); request.resume();
     }).finally(() => { running--; });
   });
