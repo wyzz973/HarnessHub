@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { test, type TestContext } from "node:test";
-import { SessionError, commandId, messageId, runId, sessionId, type EventDraft, type SessionSnapshot } from "../../src/contracts/session.js";
+import { SessionError, commandId, messageId, runId, sessionId, type EventDraft, type SessionEvent, type SessionSnapshot } from "../../src/contracts/session.js";
 import { parseSession } from "../../src/contexts/session/domain/state.js";
 import { SqliteSessionReader, SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
 
@@ -100,8 +100,9 @@ test("corruption in a later legacy Session rolls back every migrated row and the
 
 test("G008-NC9 a v1 business database is copied to backups with VACUUM INTO before it is migrated to v12", t => {
   const { root, state } = legacyRoot(t), legacy = database(root), before = rows(legacy); legacy.close();
-  const upgraded = new SqliteSessionStore(root, clock("2026-10-22T08:09:10.000Z")), events = upgraded.events(state.id, 0);
-  try { assert.deepEqual(upgraded.get(state.id), state); } finally { upgraded.close(); }
+  const upgraded = new SqliteSessionStore(root, clock("2026-10-22T08:09:10.000Z"));
+  let events: readonly SessionEvent[];
+  try { assert.deepEqual(upgraded.get(state.id), state); events = upgraded.events(state.id, 0); } finally { upgraded.close(); }
   const folder = join(root, "backups"), [name, ...more] = readdirSync(folder);
   assert.deepEqual(more, []); assert.match(name ?? "", /^gateway-v1-20261022T080910Z-[0-9a-f]{8}\.sqlite$/u);
   const backup = join(folder, name ?? "");

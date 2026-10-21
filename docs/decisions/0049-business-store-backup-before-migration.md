@@ -4,7 +4,7 @@
 
 ## 背景
 
-- 业务库 `gateway.sqlite` 保存 Session 快照与事件。它的迁移在 `claimAndRecover` 的一个 `BEGIN IMMEDIATE` 事务里逐级改写每个 Session 并提高 `user_version`，任何一行不合法就整笔回滚。但迁移只进不退：没有降级 SQL，旧构建的 Store 与 `SqliteSessionReader` 都拒绝不认识的版本。回退旧构建只能靠升级前的副本，而此前只有 README 与[公共 Session 契约](../contracts/public-session-mvp.md)里“升级前备份数据目录”的提示，做不做全靠用户。
+- 业务库 `gateway.sqlite` 保存 Session 快照与事件。它的迁移在 `claimAndRecover` 的一个 `BEGIN IMMEDIATE` 事务里逐级改写每个 Session 并提高 `user_version`，任何一行不合法就整笔回滚。但迁移只进不退：没有降级 SQL，旧构建的 Store 与 `SqliteSessionReader` 都拒绝不认识的版本。回退旧构建只能靠升级前的副本，而此前只有 README 与[公共 Session 契约](../contracts/public-session-mvp.md)里要用户升级前自行备份、回退前恢复的提示，做不做全靠用户。
 - 本机磁盘紧张：自动备份的份数要有上限，裁剪不能碰不属于 HarnessHub 的文件。
 - `VACUUM INTO` 不能在事务里执行。owner 排他锁（`owner.sqlite` 上的 `BEGIN EXCLUSIVE`）在打开业务库之前已经持有；此后到迁移事务开始之前，没有别的 owner 能写这个数据根。
 - 后续的 Session 格式升级（例如 M5 的 T-PERF-03，Session v13）以有自动备份为前提。
@@ -43,8 +43,8 @@
   - `G008-NC11`（无效样例）：`backups` 是普通文件、指向别处的链接、对组开放的目录、不可写的目录，以及源库一页损坏、使 `VACUUM INTO` 在 `.partial` 建出之后失败。每种都以 `STORAGE_BACKUP_FAILED` 失败，消息给出步骤与原因且不含路径；`user_version` 仍为 1，快照仍是 v1，`owner_metadata` 的代次与活动标记不变，没有留下备份或 `.partial`。修好后打开成功（代次 2），恰好产生一份备份。
   - 已有用例“后面的坏 Session 让整个迁移回滚”补一条断言：迁移失败后，迁移前的备份仍在。
 - 变异核对（人工；在编译产物上一次改一处，只跑本文件，跑完还原）：
-  - 不做备份：`G008-NC9`、`NC10`、`NC11` 与上面补了断言的回滚用例失败。
-  - 去掉 `VACUUM INTO`：空的 `.partial` 回读不通过（`could not verify the backup … (SQL logic error)`），`G008-NC9`～`NC11` 与全部迁移用例失败。
+  - 不做备份：`G008-NC9` 的迁移用例、`NC10`、`NC11` 与上面补了断言的回滚用例失败（4 个）。
+  - 去掉 `VACUUM INTO`：空的 `.partial` 回读不通过（`could not verify the backup … (SQL logic error)`），打开旧版本库的 15 个用例全部失败，含 `G008-NC9` 的迁移用例、`NC10`、`NC11`。
   - 去掉裁剪、改为按整个文件名排序、把目录与链接当作备份、不删崩溃留下的 `.partial`：各自使 `G008-NC10` 失败。
   - 失败时吞掉错误继续迁移（第一个样例就没有抛出）、失败时不删本次写出的文件（损坏页样例留下 `.partial`）、接受对组开放的目录：各自使 `G008-NC11` 失败。
 - 没有在 4317 的真实数据根上运行；真实业务库为 v12，不会触发备份。只面向 macOS（ADR-044）。
