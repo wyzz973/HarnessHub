@@ -159,7 +159,9 @@ export class OpenClawControl extends AcpControl {
   override async importSession(): Promise<NativeSessionImport> { throw new ControlError("NATIVE_SESSION_LIST_UNAVAILABLE", "OpenClaw sessions are not continued from the Hub"); }
   /**
    * The Gateway's own read-only reports: the workspace skill status (eligible, disabled or blocked by the allowlist) and the
-   * plugin tool groups of the tool catalog. OpenClaw has no MCP servers. The agent uses its skills itself; nothing is invoked.
+   * plugin tool groups of the tool catalog. These reports carry no MCP servers; OpenClaw 2026.3.23-2 keeps them in
+   * openclaw.json `mcp.servers`, which the capabilities page reads, read-only (ADR-045). The agent uses its skills itself;
+   * nothing is invoked.
    */
   async extensions(): Promise<NativeExtensions> {
     const [status, catalog] = await Promise.all([this.call("skills.status", {}), this.call("tools.catalog", { includePlugins: true })]);
