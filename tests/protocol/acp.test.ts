@@ -928,3 +928,30 @@ test("G032-NC23 for any other ACP agent, _auth/status_update stays an unsupporte
     assert.equal((await driver.models()).authentication, "unknown");
   } finally { await driver.close(); }
 });
+test("G032-NC24 OpenCode 1.18 offers its unlisted native /compact and receives it as typed; other versions, an unreadable version and a compact that OpenCode lists itself get nothing added (ADR-019, ADR-024)", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-opencode-compact-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
+  const opencode = (env: Record<string, string> = {}) => new OpenCodeControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "opencode-compact"], env: { FIXTURE_TRACE: trace, ...env } }, options);
+  const compacts = (commands: readonly { readonly name: string; readonly description: string }[] | undefined) => (commands ?? []).filter(command => command.name === "compact");
+  const driver = opencode();
+  try {
+    assert.equal((await driver.initialize()).agentVersion, "1.18.35");
+    const id = await driver.open(process.cwd()), commands = (await driver.models()).commands;
+    assert.deepEqual(compacts(commands), [{ name: "compact", description: "压缩上下文（OpenCode 1.18 的原生 /compact，ACP 目录未列出）" }]);
+    assert.deepEqual(commands?.map(command => command.name), ["init", "review", "compact"], "its own commands stay as announced");
+    const events: ControlEvent[] = [];
+    assert.deepEqual(await (await driver.startText(id, "/compact", event => events.push(event))).result, { status: "completed", reason: "end_turn" });
+    assert.deepEqual(texts(events), ["compacted"]);
+    const prompts = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { method?: string; params?: { prompt?: unknown } }).filter(row => row.method === "session/prompt");
+    assert.deepEqual(prompts.map(row => row.params?.prompt), [[{ type: "text", text: "/compact" }]], "sent as typed, with nothing added");
+  } finally { await driver.close(); }
+  for (const version of ["1.19.0", "1.17.9", "absent", "local"]) {
+    const other = opencode({ FIXTURE_AGENT_VERSION: version });
+    try {
+      assert.equal((await other.initialize()).agentVersion, version === "absent" ? null : version);
+      await other.open(process.cwd()); assert.deepEqual(compacts((await other.models()).commands), [], version);
+    } finally { await other.close(); }
+  }
+  const listed = opencode({ FIXTURE_COMPACT_LISTED: "1" });
+  try { await listed.initialize(); await listed.open(process.cwd()); assert.deepEqual(compacts((await listed.models()).commands), [{ name: "compact", description: "OpenCode's own compact" }]); }
+  finally { await listed.close(); }
+});
