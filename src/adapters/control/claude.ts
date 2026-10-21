@@ -9,15 +9,39 @@ import { AcpControl } from "./acp.js";
 const EXPORT = { name: "export", description: "导出原生会话记录（Claude Code 转录 JSONL）" } as const;
 /** Project directories searched for a transcript, as claude-agent-acp itself searches them. */
 const MAX_PROJECT_DIRECTORIES = 4096;
+/** claude-agent-acp's connection-level report of the sign-in it uses (auth-status.js in 0.89.1). */
+const AUTH_STATUS = "_auth/status_update";
+/**
+ * The report kinds that name an identity the agent uses: a claude.ai subscription, an API key, an external cloud backend
+ * or a model gateway.
+ */
+const SIGNED_IN: ReadonlySet<string> = new Set(["account", "api_key", "external", "gateway"]);
 
 /**
  * Claude Code keeps each session's transcript in its configuration directory (`projects/<project>/<session>.jsonl`), where
  * claude-agent-acp itself looks it up; ACP has no export method. When the agent lists no `export` command of its own, the
  * Hub offers `/export`, which copies that transcript read-only as an output of the Run. Nothing is sent to the model.
+ *
+ * claude-agent-acp also pushes its sign-in on `_auth/status_update` ({authStatus: {kind, label, …}}). The client never
+ * requests it. The agent pushes it after initialize, at each session creation and when each prompt starts, but only when it
+ * has changed. The report becomes the catalog's readiness (ADR-033): a kind that names an identity is "ready", and any other
+ * kind is "unknown". Only the kind is read: the label, detail and account name the user and are never kept, logged or shown.
+ * "none" is unknown and not "missing", so no session is refused because of it. In 0.89.1, `fromCliStatus` maps
+ * `claude auth status --json` through `mapAuthFields`. That output has `loggedIn: true` for a token login
+ * (ANTHROPIC_AUTH_TOKEN, CLAUDE_CODE_OAUTH_TOKEN), but `apiKeySource` is set only for a key and `subscriptionType` only
+ * for a claude.ai login (CLI 2.1.302 and 2.1.306). With neither field present, the mapping falls through to "none" for a
+ * CLI that works. A CLI that is really signed out still fails its first prompt: claude-agent-acp turns the "Please run
+ * /login" reply into ACP auth_required, which is reported as NATIVE_AUTH_REQUIRED.
  */
 export class ClaudeControl extends AcpControl {
   private hubExport = false;
   constructor(private readonly claudeLaunch: ControlLaunch, options: ControlOptions) { super(claudeLaunch, options); }
+  protected override extensionNotification(method: string, params: Readonly<Record<string, unknown>>): boolean {
+    if (method !== AUTH_STATUS) return false;
+    const status = params.authStatus, kind = typeof status === "object" && status !== null && "kind" in status ? status.kind : undefined;
+    this.setAuthentication(typeof kind === "string" && SIGNED_IN.has(kind) ? "ready" : "unknown");
+    return true;
+  }
   override async models(): Promise<NativeModelCatalog> {
     const catalog = await super.models();
     this.hubExport = !(catalog.commands ?? []).some(command => command.name === EXPORT.name);

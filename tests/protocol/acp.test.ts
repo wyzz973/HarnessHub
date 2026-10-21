@@ -838,3 +838,93 @@ test("Hermes's completed calls that say they failed are failed, and a refusal it
     assert.equal(finalStatus(events, "terminal-blocked"), "failed"); assert.deepEqual(notices(events), []);
   } finally { await other.close(); }
 });
+
+/** The reply text a Turn streamed, chunk by chunk. */
+function texts(events: readonly ControlEvent[]): string[] { return events.flatMap(event => event.type === "text" ? [event.text] : []); }
+const authRequired = (error: unknown) => error instanceof ControlError && error.code === "NATIVE_AUTH_REQUIRED";
+/**
+ * A driver for an agent whose sign-out report can be trusted: a reported "none" is missing, and any other report is ready.
+ * It exercises the extension point the way Hermes's advertised methods exercise the "missing" state.
+ */
+class ReportedSignIn extends AcpControl {
+  protected override extensionNotification(method: string, params: Readonly<Record<string, unknown>>): boolean {
+    if (method !== "_auth/status_update") return false;
+    const status = params.authStatus;
+    this.setAuthentication(typeof status === "object" && status !== null && "kind" in status && status.kind === "none" ? "missing" : "ready");
+    return true;
+  }
+}
+test("G032-NC23 a sign-in state that a driver reads from its agent's own notification becomes the catalog's readiness; while it is missing, later sessions are refused and a running Turn is left alone (ADR-033)", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-acp-auth-")); t.after(() => rm(directory, { recursive: true, force: true }));
+  const peer = (trace: string, env: Record<string, string> = {}) => ({ protocol: "acp-v1" as const, executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "claude-auth"], env: { FIXTURE_TRACE: join(directory, trace), ...env } });
+  // Pushed after the session opened, as a catalog read sees it: the state is missing, and another session is refused.
+  const opened = new ReportedSignIn(peer("opened"), options);
+  try {
+    await opened.initialize(); await opened.open(process.cwd());
+    assert.equal((await opened.models()).authentication, "missing");
+    await assert.rejects(opened.open(process.cwd()), authRequired);
+  } finally { await opened.close(); }
+  // Pushed in the same chunk as the initialize response, before initialize() weighs the advertised methods: no session is
+  // requested. Mutation check: if initialize() applies its methods over the report, open() sends session/new and resolves.
+  const early = new ReportedSignIn(peer("early", { FIXTURE_AUTH_AT: "initialize" }), options);
+  try { await early.initialize(); await assert.rejects(early.open(process.cwd()), authRequired); }
+  finally { await early.close(); }
+  const sent = (await readFile(join(directory, "early"), "utf8")).trim().split("\n").map(line => (JSON.parse(line) as { method?: string }).method ?? "");
+  assert.equal(sent.some(method => method.startsWith("session/")), false, "a refused session sends nothing");
+  // A push that arrives during a Turn leaves the Turn as the agent runs it; only later reads and sessions see the new state.
+  const running = new ReportedSignIn(peer("running", { FIXTURE_AUTH_KIND: "account", FIXTURE_AUTH_TURN_KIND: "none" }), options);
+  try {
+    await running.initialize(); const id = await running.open(process.cwd());
+    assert.equal((await running.models()).authentication, "ready");
+    const events: ControlEvent[] = [];
+    assert.deepEqual(await (await running.startText(id, "hello", event => events.push(event))).result, { status: "completed", reason: "end_turn" });
+    assert.deepEqual(texts(events), ["你好 fixture"]);
+    assert.equal((await running.models()).authentication, "missing");
+    await assert.rejects(running.open(process.cwd()), authRequired);
+  } finally { await running.close(); }
+});
+test("G032-NC23 Claude's own sign-in report sets its readiness: a named identity is ready, any other report is unknown, no session is refused, and the label is never kept (ADR-033)", async () => {
+  const claude = (env: Record<string, string>) => new ClaudeControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "claude-auth"], env }, options);
+  // The label, detail and account in a report name the user: none of them may reach the catalog or a Run.
+  const leaks = (value: unknown) => JSON.stringify(value).includes("private-");
+  for (const kind of ["account", "api_key", "external", "gateway"]) {
+    const driver = claude({ FIXTURE_AUTH_KIND: kind });
+    try {
+      await driver.initialize(); await driver.open(process.cwd()); const catalog = await driver.models();
+      assert.equal(catalog.authentication, "ready", kind); assert.equal(leaks(catalog), false, kind);
+    } finally { await driver.close(); }
+  }
+  // claude-agent-acp 0.89.1 also reports "none" for a CLI signed in with a token, so "none" refuses nothing, even when it
+  // arrives with the initialize response.
+  const none = claude({ FIXTURE_AUTH_AT: "initialize" });
+  try { await none.initialize(); await none.open(process.cwd()); assert.equal((await none.models()).authentication, "unknown"); }
+  finally { await none.close(); }
+  // A push during a Turn records no diagnostic and leaves the Turn alone. "none", a missing kind, an unknown kind and a
+  // malformed report all make the readiness unknown again. Mutation check: if the hook returns false, each of these Turns
+  // records "Unsupported ACP notification: _auth/status_update".
+  for (const kind of ["none", "omitted", "future_kind", "malformed"]) {
+    const driver = claude({ FIXTURE_AUTH_KIND: "account", FIXTURE_AUTH_TURN_KIND: kind });
+    try {
+      await driver.initialize(); const id = await driver.open(process.cwd());
+      assert.equal((await driver.models()).authentication, "ready", kind);
+      const events: ControlEvent[] = [];
+      assert.deepEqual(await (await driver.startText(id, "hello", event => events.push(event))).result, { status: "completed", reason: "end_turn" }, kind);
+      assert.deepEqual(texts(events), ["你好 fixture"], kind);
+      assert.deepEqual(events.filter(event => event.type === "diagnostic"), [], kind);
+      const catalog = await driver.models();
+      assert.equal(catalog.authentication, "unknown", kind); assert.equal(leaks([catalog, events]), false, kind);
+    } finally { await driver.close(); }
+  }
+});
+test("G032-NC23 for any other ACP agent, _auth/status_update stays an unsupported notification: one diagnostic on the Run that names only the method, with the readiness untouched (ADR-033)", async () => {
+  const driver = control("claude-auth", { FIXTURE_AUTH_KIND: "account", FIXTURE_AUTH_TURN_KIND: "none" });
+  try {
+    const id = await ready(driver);
+    assert.equal((await driver.models()).authentication, "unknown", "the push after session creation is not read");
+    const events: ControlEvent[] = [];
+    assert.equal((await (await driver.startText(id, "hello", event => events.push(event))).result).status, "completed");
+    assert.deepEqual(events.filter(event => event.type === "diagnostic"), [{ type: "diagnostic", message: "Unsupported ACP notification: _auth/status_update" }]);
+    assert.equal(JSON.stringify(events).includes("private-"), false);
+    assert.equal((await driver.models()).authentication, "unknown");
+  } finally { await driver.close(); }
+});

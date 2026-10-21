@@ -59,6 +59,24 @@ function openclawPresentation() { return { configOptions: [
   ...[["fast_mode", ["off", "on"]], ["verbose_level", ["off", "on", "full"]], ["reasoning_level", ["off", "on", "stream"]], ["response_usage", ["off", "tokens", "full"]], ["elevated_level", ["off", "on", "ask", "full"]]]
     .map(([id, values]) => ({ id, name: id, type: "select", currentValue: "off", options: values.map(value => ({ value, name: value })) })),
 ], modes: { currentModeId: "adaptive", availableModes: openclawLevels.map(row => ({ id: row.value, name: row.name })) } }; }
+/**
+ * The identity the agent reports in initialize: claude-agent-acp 0.89.1 for claude-auth; otherwise Hermes when
+ * FIXTURE_AGENT_VERSION is set, and the plain fixture when it is not.
+ */
+function agentInfo() {
+  if (scenario === "claude-auth") return { name: "@agentclientprotocol/claude-agent-acp", title: "Claude Agent", version: "0.89.1" };
+  return process.env.FIXTURE_AGENT_VERSION ? { name: "hermes-agent", version: process.env.FIXTURE_AGENT_VERSION } : { name: "fixture", version: "1.0" };
+}
+/**
+ * The params of claude-agent-acp's `_auth/status_update` for one kind, shaped like auth-status.js in 0.89.1 builds them.
+ * "omitted" leaves the kind out, and "malformed" sends a string instead of an object. The label, detail and account fields
+ * carry "private-" markers, which a client must never keep or show.
+ */
+function claudeAuthStatus(kind = "none") {
+  if (kind === "malformed") return { authStatus: "private-auth-label" };
+  return { authStatus: { ...(kind === "omitted" ? {} : { kind }), label: "private-auth-label " + kind,
+    ...(kind === "account" ? { account: { plan: "max", email: "private-account@example.invalid" } } : kind === "api_key" || kind === "gateway" ? { detail: "private-auth-detail" } : {}) } };
+}
 function emit(message) {
   const envelope = protocol === "acp-v1" ? { jsonrpc: "2.0", ...message } : message;
   const bytes = Buffer.from(`${JSON.stringify(envelope)}\n`);
@@ -117,10 +135,13 @@ lines.on("line", line => {
     if (scenario === "remote-error") { emit({ id: message.id, error: { code: -32001, message: "test remote error" } }); return; }
     if (scenario === "stderr") process.stderr.write("diagnostic".repeat(100000));
     const result = protocol === "acp-v1"
-      ? { protocolVersion: scenario === "version" ? 2 : 1, agentCapabilities: { loadSession: ["native-resume", "resume-fails", "resume-wrong-identity", "load-trailing-replay", "native-config", "openclaw-settings", "session-list", "hermes"].includes(scenario), ...(scenario === "hermes" ? { sessionCapabilities: { resume: {}, list: {}, fork: {} }, promptCapabilities: { image: true } } : {}), ...(scenario === "session-list" ? { sessionCapabilities: { list: {} } } : {}), ...(scenario === "attachments" || scenario === "openclaw-settings" ? { promptCapabilities: { image: true, audio: true, embeddedContext: true } } : {}), ...(scenario === "forkable" ? { sessionCapabilities: { fork: {} } } : {}) }, ...(process.env.FIXTURE_AUTH === "none" ? {} : { authMethods: process.env.FIXTURE_AUTH === "terminal" ? [{ id: "hermes-setup", name: "Set up Hermes", type: "terminal", args: ["--setup"] }] : process.env.FIXTURE_AUTH === "invalid" ? { id: "fixture-login" } : [{ id: "fixture-login", name: "Fixture Login" }] }), agentInfo: process.env.FIXTURE_AGENT_VERSION ? { name: "hermes-agent", version: process.env.FIXTURE_AGENT_VERSION } : { name: "fixture", version: "1.0" } }
+      ? { protocolVersion: scenario === "version" ? 2 : 1, agentCapabilities: { loadSession: ["native-resume", "resume-fails", "resume-wrong-identity", "load-trailing-replay", "native-config", "openclaw-settings", "session-list", "hermes"].includes(scenario), ...(scenario === "hermes" ? { sessionCapabilities: { resume: {}, list: {}, fork: {} }, promptCapabilities: { image: true } } : {}), ...(scenario === "session-list" ? { sessionCapabilities: { list: {} } } : {}), ...(scenario === "attachments" || scenario === "openclaw-settings" ? { promptCapabilities: { image: true, audio: true, embeddedContext: true } } : {}), ...(scenario === "forkable" ? { sessionCapabilities: { fork: {} } } : {}), ...(scenario === "claude-auth" ? { _meta: { claudeCode: { promptQueueing: true }, authStatus: {} } } : {}) }, ...(process.env.FIXTURE_AUTH === "none" ? {} : { authMethods: process.env.FIXTURE_AUTH === "terminal" ? [{ id: "hermes-setup", name: "Set up Hermes", type: "terminal", args: ["--setup"] }] : process.env.FIXTURE_AUTH === "invalid" ? { id: "fixture-login" } : [{ id: "fixture-login", name: "Fixture Login" }] }), agentInfo: agentInfo() }
       : { userAgent: scenario === "plan-mode" ? "codex_cli_rs/0.162.1 (fixture)" : scenario === "plan-old" ? "codex_cli_rs/0.161.0 (fixture)" : "fixture-codex/1.0", codexHome: process.cwd(), platformFamily: "unix", platformOs: process.platform };
     if (protocol === "codex-app-server") experimental = message.params?.capabilities?.experimentalApi === true;
-    answer(message.id, result);
+    // claude-agent-acp pushes its sign-in report after the initialize response. FIXTURE_AUTH_AT=initialize sends the report
+    // in the same write, so the client reads both from one chunk.
+    if (scenario === "claude-auth" && process.env.FIXTURE_AUTH_AT === "initialize") emitAtomicBatch([{ id: message.id, result }, { method: "_auth/status_update", params: claudeAuthStatus(process.env.FIXTURE_AUTH_KIND) }]);
+    else answer(message.id, result);
     if (scenario === "flood") {
       let remaining = 10000;
       const frame = `${JSON.stringify({ jsonrpc: "2.0", method: "fixture/flood", params: { text: "x".repeat(2048) } })}\n`;
@@ -155,6 +176,14 @@ lines.on("line", line => {
   if (scenario === "hermes" && message.method === "session/new") { answer(message.id, { sessionId: "session-fixture", models: hermesModels() }); return; }
   // An ACP agent that needs its own sign-in before it opens a session (ACP auth_required).
   if (scenario === "auth-session" && message.method === "session/new") { emit({ id: message.id, error: { code: -32000, message: "Authentication required" } }); return; }
+  // claude-agent-acp sends the session response, then its sign-in report (FIXTURE_AUTH_KIND, unless the report already came
+  // with initialize), then its commands. A catalog read that waits for the commands has therefore read the report.
+  if (scenario === "claude-auth" && message.method === "session/new") {
+    answer(message.id, { sessionId: "session-fixture" });
+    if (process.env.FIXTURE_AUTH_AT !== "initialize") notification("_auth/status_update", claudeAuthStatus(process.env.FIXTURE_AUTH_KIND));
+    notification("session/update", { sessionId: "session-fixture", update: { sessionUpdate: "available_commands_update", availableCommands: [{ name: "compact", description: "Clear conversation history but keep a summary in context" }] } });
+    return;
+  }
   if (message.method === "session/new" && scenario === "attachments") {
     answer(message.id, { sessionId: "session-fixture", configOptions: [{ id: "model", category: "model", type: "select", currentValue: "native/model-a", options: [{ value: "native/model-a", name: "Model A" }, { value: "native/model-b", name: "Model B" }] }] }); return;
   }
@@ -294,6 +323,8 @@ lines.on("line", line => {
     if (scenario === "prompt-rejected") { emit({ id: message.id, error: { code: -32001, message: "private rejected request synthetic-key" } }); return; }
     promptId = message.id; turn += 1;
     if (scenario === "exit-zero") { process.exit(0); }
+    // claude-agent-acp re-reads its sign-in when each prompt starts and pushes any change mid-turn (FIXTURE_AUTH_TURN_KIND).
+    if (scenario === "claude-auth" && process.env.FIXTURE_AUTH_TURN_KIND) notification("_auth/status_update", claudeAuthStatus(process.env.FIXTURE_AUTH_TURN_KIND));
     // A native command changes a session setting and the agent announces it, as ACP agents do for their own changes.
     if (scenario === "native-config" && JSON.stringify(message.params.prompt).includes("/native-fast on")) {
       fast = "on"; notification("session/update", { sessionId: message.params.sessionId, update: { sessionUpdate: "config_option_update", configOptions: nativeConfiguration() } });
