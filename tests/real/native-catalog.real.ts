@@ -44,8 +44,9 @@ test("installed Harnesses report their native capabilities and catalogs without 
         proof.capabilities = { loadSession: capabilities.loadSession === true, sessionCapabilities: keys(sessions), promptCapabilities: prompt !== null && typeof prompt === "object" ? Object.fromEntries(Object.entries(prompt).filter(([, value]) => typeof value === "boolean")) : {}, mcpCapabilities: keys(capabilities.mcpCapabilities) };
         if (observation.protocol === "acp-v1") { await binding.control.open(workspace); await new Promise(resolve => setTimeout(resolve, 1500)); }
         const catalog = await binding.control.models?.();
-        proof.catalog = catalog === undefined ? null : { models: catalog.models.length, defaultModel: catalog.defaultModel, canSelect: catalog.canSelect, authentication: catalog.authentication,
-          selectionError: catalog.selectionError?.code ?? null, options: [...(catalog.options ?? []), ...(catalog.models.find(row => row.id === catalog.defaultModel)?.options ?? [])].map(option => ({ id: option.id, category: option.category, values: option.values.length })),
+        // Model and setting ids too (no names or descriptions): the acceptance recipes pick HH_REAL_MODEL_<ID> and HH_REAL_OPTIONS_<ID> from them.
+        proof.catalog = catalog === undefined ? null : { models: catalog.models.length, modelIds: catalog.models.map(row => row.id).slice(0, 64), defaultModel: catalog.defaultModel, canSelect: catalog.canSelect, authentication: catalog.authentication,
+          selectionError: catalog.selectionError?.code ?? null, options: [...(catalog.options ?? []), ...(catalog.models.find(row => row.id === catalog.defaultModel)?.options ?? [])].map(option => ({ id: option.id, category: option.category, values: option.values.length, valueIds: option.values.map(item => item.value).slice(0, 32) })),
           commands: catalog.commands?.length ?? 0 };
       } catch (error) {
         proof.failure = { code: error !== null && typeof error === "object" && "code" in error ? String(error.code) : "CATALOG_READ_FAILED", message: error instanceof Error ? error.message.slice(0, 300) : "failed" };
