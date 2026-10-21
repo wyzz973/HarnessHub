@@ -40,7 +40,7 @@ Provider 保存名称、协议、Base URL、模型列表、默认模型、启用
 
 服务只绑定127.0.0.1，同源静态页面与/api/v1。一次性启动链接fragment token不进入HTTP URL，兑换HttpOnly/SameSite=Strict cookie；写需要精确Origin与CSRF/JSON，精确Host防重绑定。刷新凭cookie重新取得内存CSRF；浏览器不保存Provider key。
 
-Web DTO屏蔽commands/fingerprints与私有configuration引用，保留Run/switch/selection/messaging事实。认证失败不可继续；运行前需实际可用control；错误保留可读说明，未知/blocked不能自动恢复。关闭页面不会取消Run。JSON事件查询仍从已提交seq读取1..100个事件；正常对话通过下述事实流更新，失败不造成功状态。
+Web DTO屏蔽commands/fingerprints与私有configuration引用，保留Run/switch/selection/messaging事实。认证失败不可继续；运行前需实际可用control；错误保留可读说明，未知/blocked不能自动恢复。Session、Provider、管理与能力错误的公开`message`（4xx/5xx）把家目录的绝对路径——隐私检查认得的每种写法（给定的与解析后的）——写成`~`（ADR-044），HTTP 层自己的说明不变。关闭页面不会取消Run。JSON事件查询仍从已提交seq读取1..100个事件；正常对话通过下述事实流更新，失败不造成功状态。
 
 ### 实时对话事实流（ADR-013）
 
@@ -106,8 +106,8 @@ ADR-045 第 1 步（2026-10-18）追加只读`GET /api/v1/capabilities`，返回
 
 ADR-045 第 2 步（2026-10-18，技能开关）追加写入接口，只改用户级配置，每次先检查后确认：
 - `GET /api/v1/capabilities/skill-switch?harnessId=&name=&enabled=true|false[&via=]`准备在一个 Harness 里停用（`enabled=false`）或启用一个技能，不写任何文件，返回`CapabilityChangeCheck`：改动的文件（`~`书写）、精确的统一差异（`~`代表家目录，凭据打码）、OpenClaw 的官方命令（`command`，其差异来自在私有副本上运行同一条命令）、现有设置由谁写的（`harnesshub`、`other`、`none`）、提示、`blocked`（无需修改或不能安全修改时的原因，这样的检查不能确认）、`fingerprint`与`expiresAt`（15 分钟、只能用一次）。`via`是 Codex 的那一份（它按 SKILL.md 的路径停用），其他 Harness 忽略它。没有开关的 Harness（Cursor、Pi、DeepSeek Harness）返回 409 `CAPABILITY_UNSUPPORTED`，看不到的技能或 Codex 不读的位置返回 404 `CAPABILITY_NOT_FOUND`。
-- `POST /api/v1/capabilities/changes`接受`{fingerprint, commandId}`，返回`CapabilityChangeView`：写入前再读比对，文件变了返回 409 `CAPABILITY_TARGET_CHANGED` 且什么都不写；确认过期、未知或已用过返回 409 `CAPABILITY_CHECK_EXPIRED`；`blocked`的检查返回 409 `CAPABILITY_TARGET_REFUSED`。写入前把原文件备份（每个文件留最近 10 份），原子替换，回读后字节必须与计划一致、解析后除目标设置外完全相等，否则`status`为`failed`并带`backupId`。同一`commandId`再次提交返回第一次的结果，同一编号用于另一项修改返回 400。
-- `GET /api/v1/capabilities/history`返回最近 50 次修改与保留的备份；`GET /api/v1/capabilities/backups/:id/restore`准备恢复一份备份，返回它此刻会造成的差异与`changedSince`（HarnessHub 改动之后文件是否又被改过）；`POST /api/v1/capabilities/restores`接受`{fingerprint, commandId}`，先备份当前文件再恢复。
+- `POST /api/v1/capabilities/changes`接受`{fingerprint, commandId}`，返回`CapabilityChangeView`：写入前再读比对，文件变了返回 409 `CAPABILITY_TARGET_CHANGED` 且什么都不写；确认过期、未知或已用过返回 409 `CAPABILITY_CHECK_EXPIRED`；`blocked`的检查返回 409 `CAPABILITY_TARGET_REFUSED`。写入前把原文件备份（每个文件留最近 10 份），原子替换，回读后字节必须与计划一致、解析后除目标设置外完全相等，否则`status`为`failed`并带`backupId`。同一`commandId`再次提交返回第一次的结果，同一编号用于另一项修改返回 400。写入开始后失败的修改照样返回 200、`status`为`failed`；记录与回答里的`error`只含错误码与以`~`书写的位置，例如“写入 ~/.codex/config.toml 失败（EACCES）”，不含系统错误的原文（其中有目标旁临时文件的绝对路径）。恢复备份、Claude Code 的命令与技能文件夹的改动失败时同样如此。
+- `GET /api/v1/capabilities/history`返回最近 50 次修改与保留的备份；`GET /api/v1/capabilities/backups/:id/restore`准备恢复一份备份，返回它此刻会造成的差异与`changedSince`（HarnessHub 改动之后文件是否又被改过）；`POST /api/v1/capabilities/restores`接受`{fingerprint, commandId}`，先备份当前文件再恢复。history 读出修改记录与备份说明时把其中家目录的绝对路径写成`~`：旧版本留下、含绝对路径的失败记录逐条这样降级显示（同一`commandId`的重放也一样），不再让整个 history 被隐私检查拒绝；写成`~`之后仍含家目录绝对路径的，隐私检查照旧返回 500 `PRIVACY_GUARD`。
 - 修改记录、备份索引与台账保存在数据根的`capabilities/capabilities.sqlite`（第 2 步初版为 schema v1，添加、更新、删除技能后为 v2，见下文），备份在旁边的`backups/`。所有这些回答都经过同样的隐私检查。
 
 ADR-045 第 2 步（2026-10-18，放置与清理）追加：
