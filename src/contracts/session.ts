@@ -314,6 +314,12 @@ export const DEFAULT_WAIT_BUDGET_MS = 30 * 60_000, MAX_WAIT_BUDGET_MS = 2 * 60 *
 /** How many conversations run work at once (ADR-036); the same as the kept-process limit. */
 export const MAX_PARALLEL_CONVERSATIONS = 4;
 export const STOP_GRACE_MS = 15_000;
+/**
+ * Streamed reply text and thinking are committed per window, not per chunk (ADR-047): a window is committed once it is this
+ * old or holds this many bytes, and earlier whenever anything else of its Turn is committed. An uncommitted window is never
+ * published and does not advance the persistent cursor.
+ */
+export const STREAM_WINDOW_MS = 100, STREAM_WINDOW_BYTES = 16 * 1024;
 /** The drivers' own per-Turn timeout: only a backstop against a hung protocol, beyond both budgets at their largest. */
 export const NATIVE_TURN_HARD_CAP_MS = MAX_EXECUTION_BUDGET_MS + MAX_WAIT_BUDGET_MS + 60 * 60_000;
 /**
@@ -362,6 +368,11 @@ export interface SessionRuntimeOptions {
   readonly stopGraceMs?: number;
   /** Recognizes kept process groups across owner restarts; without it a previous owner's kept process cannot be ended. */
   readonly processes?: ProcessGroupPort;
+  /**
+   * Runs `fn` once after `ms` milliseconds and returns what cancels it: the timer that commits a window of streamed text
+   * (ADR-047). Tests inject one and expire windows themselves; setTimeout, kept from holding the process open, unless set.
+   */
+  readonly schedule?: (fn: () => void, ms: number) => () => void;
 }
 export interface SendReceipt { readonly sessionId: SessionId; readonly runId: RunId; readonly replayed: boolean }
 export interface SwitchReceipt { readonly sessionId: SessionId; readonly switchId: SwitchId; readonly replayed: boolean }

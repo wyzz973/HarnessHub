@@ -2,7 +2,7 @@ import { parseProviderTarget } from "../../../contracts/provider.js";
 import { TOOL_DIFF_BYTES, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type BackendResult, type CleanupEvidence, type ControlEvent, type ControlRun, type NativeConversationId, type NativeToolDetail, type NativeUsage } from "../../../contracts/control.js";
 import { MAX_RUN_ATTACHMENTS, MAX_RUN_OUTPUTS, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
 import {
-  SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId, DEFAULT_EXECUTION_BUDGET_MS, DEFAULT_WAIT_BUDGET_MS, MAX_PARALLEL_CONVERSATIONS, STOP_GRACE_MS,
+  SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId, DEFAULT_EXECUTION_BUDGET_MS, DEFAULT_WAIT_BUDGET_MS, MAX_PARALLEL_CONVERSATIONS, STOP_GRACE_MS, STREAM_WINDOW_BYTES, STREAM_WINDOW_MS,
   type AttentionItem, type ForkedMessage, type HarnessSelection, type KeptProcessIdentity, type OutsideEvidence, type OutsideProcess, type NativeConfiguration, type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicNotice, type PublicRun, type RunTiming,
   type SelectionRequest, type SendReceipt, type SessionBindingFactory, type SessionCommit, type SessionConfiguration,
   type SessionId, type SessionEvent, type SessionMutation, type SessionRuntimeOptions, type SessionSnapshot, type SessionStore, type SwitchReceipt,
@@ -36,6 +36,14 @@ interface ActiveExecution {
   stopReason: "RUN_TIMEOUT" | "WAIT_EXPIRED" | null;
   /** Ends the program when it has not settled once the stop grace has passed. */
   grace: ReturnType<typeof setTimeout> | null;
+  /**
+   * What the program streamed and this Turn has not committed yet (ADR-047): one window of reply text or thinking, the UTF-8
+   * bytes of that kind as they stand once the window is committed (`committedBytes` of them were committed before it; `last`
+   * is the final UTF-16 code unit, so a pair split between chunks is counted once), and the window's timer, owned by the Turn.
+   */
+  readonly stream: { kind: "text" | "thinking" | null; text: string; committedBytes: number; bytes: number; last: string; cancel: (() => void) | null };
+  /** A window refused outside a driver callback (by its timer, a stop or a close); reported as the Turn's failure. */
+  streamFailure: unknown;
 }
 /** A conversation's kept native process (ADR-030): the binding of its last Run, idle between Turns and owned by the runtime. */
 interface KeptProcess {
@@ -89,6 +97,13 @@ function logged(value: ControlEvent): ControlEvent | Readonly<Record<string, unk
   return value;
 }
 function safeName(value: string): string { return value.replace(/[^A-Za-z0-9._-]+/gu, "_").slice(0, 96) || "tool"; }
+/**
+ * UTF-8 bytes of `prior + next` from `priorBytes`, re-encoding only the last code unit of `prior`: a surrogate pair split
+ * between two chunks is three bytes on each side alone and four together, so a window's count stays exact (ADR-047).
+ */
+function joinedBytes(priorBytes: number, priorLast: string, next: string): number {
+  return priorBytes - utf8Bytes(priorLast) + utf8Bytes(priorLast + next);
+}
 const MAX_PENDING_CREATES = 16;
 function requested(value: SelectionRequest): SelectionRequest {
   if (value === null || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => key !== "harnessId" && key !== "controlId" && key !== "provider" && key !== "nativeModel" && key !== "nativeOptions") ||
@@ -633,12 +648,14 @@ export class SessionRuntime {
     if (prior) { await this.wait(id); return this.load(id); }
     this.commandBudget(state); this.closingSessions.add(id);
     try {
+      // Text the active Turn streamed before the close is committed first, so the close never precedes it in the log (ADR-047).
+      const active = this.actives.get(id); if (active) this.flushStreamQuietly(active);
       this.commit(id, current => {
         const next = this.cancelPending(current);
         return { next: { ...next, commands: [...next.commands, { id: command, kind: "close", fingerprint, resultId: id }] },
           events: [event("session.close_requested", { cancelledRunIds: current.runs.filter(run => run.status === "queued").map(run => run.id) })] };
       });
-      const active = this.actives.get(id); if (active) this.stop(active);
+      if (active) this.stop(active);
       this.stopSwitch(id); this.drive();
       if (this.kept.has(id)) void this.requestRelease(id, "conversation_closed");
       await this.wait(id);
@@ -660,8 +677,11 @@ export class SessionRuntime {
     try {
       for (const id of this.managedSessions) {
         const state = this.load(id);
-        if (state.runs.some(run => !terminal(run.status)) || state.pendingSwitchId !== null)
+        if (state.runs.some(run => !terminal(run.status)) || state.pendingSwitchId !== null) {
+          // Text the active Turn streamed before the stop is committed first, so the stop never precedes it in the log (ADR-047).
+          const active = this.actives.get(id); if (active) this.flushStreamQuietly(active);
           this.commit(state.id, current => ({ next: this.cancelPending(current), events: [event("runtime.stopping", {})] }));
+        }
       }
     } catch (error) { problem = error; this.fail(error); }
     for (const execution of [...this.actives.values()]) this.stop(execution);
@@ -696,13 +716,16 @@ export class SessionRuntime {
     const selected = target === undefined ? state.activeRunId : target;
     const run = selected === null ? undefined : state.runs.find(run => run.id === selected);
     if (selected !== null && !run) throw new SessionError("NOT_FOUND", "Run does not belong to this Session");
+    // Text the Turn streamed before the user's stop is committed first, so the stop never precedes it in the log (ADR-047).
+    const active = this.actives.get(id), stopping = active !== undefined && active.runId === selected ? active : null;
+    if (stopping) this.flushStreamQuietly(stopping);
     this.commit(id, current => {
       let next = current;
       if (run && !terminal(run.status)) next = updatedRun(current, run.id, { cancelRequested: true, ...(run.status === "queued" ? { status: "cancelled" as const, ...phase(current, run.id, "endedAt", this.options.now().getTime()) } : {}) });
       return { next: { ...next, commands: [...next.commands, { id: command, kind: "cancel", fingerprint, resultId: selected ?? "none" }] },
         events: [event("run.cancel_requested", { runId: selected, beforeStart: run?.status === "queued", alreadyTerminal: run === undefined || terminal(run.status) })] };
     });
-    const active = this.actives.get(id); if (active && active.runId === selected) this.stop(active);
+    if (stopping) this.stop(stopping);
     this.schedule(id); return { sessionId: id, target: selected, replayed: false };
   }
 
@@ -987,6 +1010,8 @@ export class SessionRuntime {
     return run;
   }
   private stop(execution: ActiveExecution): void {
+    // What the program streamed before the stop is committed first, so the stop request never precedes it in the log (ADR-047).
+    this.flushStreamQuietly(execution);
     // A program that has not settled once the stop grace has passed is ended; its Turn is then unknown (ADR-036).
     if (execution.grace === null && !execution.backendSettled) {
       execution.grace = setTimeout(() => {
@@ -1060,6 +1085,8 @@ export class SessionRuntime {
   private expire(execution: ActiveExecution, kind: "execution" | "wait"): void {
     if (execution.stopReason !== null || execution.backendSettled || this.actives.get(execution.sessionId) !== execution) return;
     execution.stopReason = kind === "wait" ? "WAIT_EXPIRED" : "RUN_TIMEOUT";
+    // Text streamed before the budget ran out is committed first, so the expiry never precedes it in the log (ADR-047).
+    this.flushStreamQuietly(execution);
     try {
       const waiting = [...this.permissions.entries()].filter(([, value]) => value.execution === execution && value.option === null).map(([permissionId]) => permissionId);
       for (const permissionId of waiting) this.permissions.delete(permissionId);
@@ -1072,11 +1099,17 @@ export class SessionRuntime {
     this.stop(execution);
   }
 
+  /**
+   * One native event of the Turn. Reply text and thinking are committed per window (ADR-047); everything else is committed
+   * on arrival, after the window open before it, so the log keeps the order in which the program sent its events. A refused
+   * commit is thrown to the driver, which ends the Turn with it.
+   */
   private output(execution: ActiveExecution, value: ControlEvent): void {
+    if (value.type === "text" || value.type === "thinking") { this.streamChunk(execution, value); return; }
+    this.flushStream(execution);
     const state = this.owned(execution), run = state.runs.find(run => run.id === execution.runId)!;
     if (run.status !== "running") throw new SessionError("STALE_EVENT", "output arrived outside its active Run");
-    if (VISIBLE_OUTPUT.has(value.type) && run.timing !== undefined && run.timing.firstOutputAt === undefined)
-      this.commit(state.id, current => ({ next: updatedRun(current, run.id, phase(current, run.id, "firstOutputAt", this.options.now().getTime())), events: [event("run.first_output", { runId: run.id })] }));
+    if (VISIBLE_OUTPUT.has(value.type)) this.firstOutput(state, run);
     if (value.type === "permission_requested") {
       if (this.permissions.size >= 32) throw new SessionError("PERMISSION_LIMIT", "too many pending native permissions");
       // The Turn now waits for the user: its execution budget pauses and its wait budget runs (ADR-036). The request expires at
@@ -1120,9 +1153,6 @@ export class SessionRuntime {
     if (value.type === "activity" && !(run.activities ?? []).some(item => item.id === value.id) && (run.activities ?? []).length >= MAX_RUN_ACTIVITIES) return;
     this.commit(state.id, current => {
       let next = current;
-      if (value.type === "thinking") {
-        const thinking = (run.thinking ?? "") + value.text; if (utf8Bytes(thinking) > MAX_OUTPUT_BYTES) throw new SessionError("OUTPUT_LIMIT", "native thinking exceeded its budget"); next = updatedRun(current, run.id, { thinking });
-      }
       if (value.type === "plan") next = updatedRun(current, run.id, { plan: { entries: value.entries.slice(0, MAX_PLAN_ENTRIES).map(entry => ({ ...entry, content: bounded(entry.content, 4096).text || "…" })), ...(value.explanation ? { explanation: bounded(value.explanation, 4096).text } : {}) } });
       if (value.type === "usage") next = updatedRun(current, run.id, { usage: { ...run.usage, ...(value.usage.turn === undefined ? {} : { turn: { ...run.usage?.turn, ...value.usage.turn } }), ...(value.usage.context === undefined ? {} : { context: value.usage.context }), ...(value.usage.cost === undefined ? {} : { cost: value.usage.cost }) } satisfies NativeUsage });
       if (value.type === "notice") {
@@ -1136,15 +1166,95 @@ export class SessionRuntime {
         if (index >= 0) activities[index] = activity; else activities.push(activity);
         next = updatedRun(current, run.id, { activities });
       }
-      if (value.type === "text") {
-        const message = current.messages.find(message => message.id === run.assistantMessageId);
-        const text = (message?.text ?? "") + value.text;
-        if (utf8Bytes(text) > MAX_OUTPUT_BYTES) throw new SessionError("OUTPUT_LIMIT", "Run public output byte budget exhausted");
-        next = { ...current, messages: message ? current.messages.map(item => item.id === message.id ? { ...item, text } : item)
-          : [...current.messages, { id: run.assistantMessageId, runId: run.id, role: "assistant", text, seq: current.lastSeq + 1, status: run.status }] };
-      }
       return { next, events: [event("run.output", { runId: run.id, event: logged(value) })] };
     });
+  }
+  /** Records the Run's first visible output at the clock's reading now, once, as its own committed fact (never held in a window). */
+  private firstOutput(state: SessionSnapshot, run: PublicRun): void {
+    if (run.timing === undefined || run.timing.firstOutputAt !== undefined) return;
+    this.commit(state.id, current => ({ next: updatedRun(current, run.id, phase(current, run.id, "firstOutputAt", this.options.now().getTime())), events: [event("run.first_output", { runId: run.id })] }));
+  }
+  /**
+   * A chunk of reply text or thinking joins the window open for its kind, or opens one (ADR-047); a window of the other
+   * kind is committed first, so the log keeps their order. A window is committed when its timer runs out, when it holds
+   * STREAM_WINDOW_BYTES, and before anything else of the Turn is committed. Ownership, the Run's status and its first output
+   * are checked when a window opens, so at least once per window. The output budget is counted exactly per chunk: the chunk
+   * that would exceed it commits the window before it and is refused, as it was refused on its own commit before.
+   */
+  private streamChunk(execution: ActiveExecution, value: Extract<ControlEvent, { type: "text" | "thinking" }>): void {
+    const stream = execution.stream;
+    if (stream.kind !== null && stream.kind !== value.type) this.flushStream(execution);
+    let { committedBytes, bytes, last } = stream;
+    if (stream.kind === null) {
+      // A window opens on the Run's facts as committed: ownership, status, first output, and the bytes of its kind so far.
+      const state = this.owned(execution), run = state.runs.find(run => run.id === execution.runId)!;
+      if (run.status !== "running") throw new SessionError("STALE_EVENT", "output arrived outside its active Run");
+      this.firstOutput(state, run);
+      const committed = value.type === "text" ? state.messages.find(message => message.id === run.assistantMessageId)?.text ?? "" : run.thinking ?? "";
+      committedBytes = bytes = utf8Bytes(committed); last = committed.slice(-1);
+    }
+    const joined = joinedBytes(bytes, last, value.text);
+    if (joined > MAX_OUTPUT_BYTES) {
+      // A refused chunk opens no window (nothing empty is committed); what was open before it is committed first.
+      this.flushStream(execution);
+      throw new SessionError("OUTPUT_LIMIT", value.type === "text" ? "Run public output byte budget exhausted" : "native thinking exceeded its budget");
+    }
+    if (stream.kind === null) { stream.kind = value.type; stream.text = ""; stream.committedBytes = committedBytes; }
+    stream.text += value.text; stream.bytes = joined; stream.last = value.text ? value.text.slice(-1) : last;
+    if (stream.bytes - stream.committedBytes >= STREAM_WINDOW_BYTES) { this.flushStream(execution); return; }
+    stream.cancel ??= this.timer(() => this.windowExpired(execution), STREAM_WINDOW_MS);
+  }
+  /**
+   * Commits the open window as one run.output event of its kind, with the window's text (ADR-047); no open window is nothing
+   * to do. The window is taken before the commit, so a refused commit loses that window only and never commits it twice;
+   * ownership and the Run's running status are checked as for any output.
+   */
+  private flushStream(execution: ActiveExecution): void {
+    const stream = execution.stream;
+    if (stream.kind === null) return;
+    const kind = stream.kind, text = stream.text;
+    this.discardStream(execution);
+    const state = this.owned(execution), run = state.runs.find(run => run.id === execution.runId)!;
+    if (run.status !== "running") throw new SessionError("STALE_EVENT", "output arrived outside its active Run");
+    this.commit(state.id, current => {
+      let next: SessionSnapshot;
+      if (kind === "thinking") {
+        const thinking = (current.runs.find(item => item.id === run.id)?.thinking ?? "") + text;
+        if (utf8Bytes(thinking) > MAX_OUTPUT_BYTES) throw new SessionError("OUTPUT_LIMIT", "native thinking exceeded its budget");
+        next = updatedRun(current, run.id, { thinking });
+      } else {
+        const message = current.messages.find(message => message.id === run.assistantMessageId), merged = (message?.text ?? "") + text;
+        if (utf8Bytes(merged) > MAX_OUTPUT_BYTES) throw new SessionError("OUTPUT_LIMIT", "Run public output byte budget exhausted");
+        next = { ...current, messages: message ? current.messages.map(item => item.id === message.id ? { ...item, text: merged } : item)
+          : [...current.messages, { id: run.assistantMessageId, runId: run.id, role: "assistant", text: merged, seq: current.lastSeq + 1, status: run.status }] };
+      }
+      return { next, events: [event("run.output", { runId: run.id, event: { type: kind, text } })] };
+    });
+  }
+  /**
+   * Commits the open window from outside a driver callback (its timer, a stop, a close): a refused commit is kept as the
+   * Turn's failure instead of being thrown where nothing reports it. Whether the window was committed, or there was none.
+   */
+  private flushStreamQuietly(execution: ActiveExecution): boolean {
+    try { this.flushStream(execution); return true; }
+    catch (error) { execution.streamFailure ??= error; return false; }
+  }
+  /** Drops the open window and its timer; what it held is the caller's to commit or to lose with the Turn. */
+  private discardStream(execution: ActiveExecution): void {
+    const stream = execution.stream;
+    stream.cancel?.(); stream.cancel = null; stream.kind = null; stream.text = "";
+  }
+  /** The window's timer ran out: a Turn that has ended holds nothing; a window refused here stops the Turn with its failure. */
+  private windowExpired(execution: ActiveExecution): void {
+    execution.stream.cancel = null;
+    if (this.actives.get(execution.sessionId) !== execution) return;
+    if (!this.flushStreamQuietly(execution)) this.stop(execution);
+  }
+  /** Runs `fn` once after `ms` through the injected scheduler, or a setTimeout kept from holding the process open; returns its cancel. */
+  private timer(fn: () => void, ms: number): () => void {
+    if (this.options.schedule !== undefined) return this.options.schedule(fn, ms);
+    const handle = setTimeout(fn, ms); handle.unref?.();
+    return () => clearTimeout(handle);
   }
   /** Stores one tool's latest bounded detail and publishes its reference. Storage trouble is reported, not hidden. */
   private storeDetail(execution: ActiveExecution, toolId: string): void {
@@ -1205,7 +1315,8 @@ export class SessionRuntime {
     const execution: ActiveExecution = { sessionId: id, runId: target, binding: null, run: null, dispatched: false,
       backendSettled: false, stop: null, earlyClose: null, details: new Map(), dirty: new Set(), writes: Promise.resolve(), writeFailure: null, diagnosticMark: null,
       budget: { executionLeftMs: this.options.executionBudgetMs ?? DEFAULT_EXECUTION_BUDGET_MS, waitLeftMs: (this.options.waitBudgetMs ?? DEFAULT_WAIT_BUDGET_MS) - (this.waitUsed.get(target) ?? 0),
-        waiting: false, since: performance.now(), timer: null }, stopReason: null, grace: null };
+        waiting: false, since: performance.now(), timer: null }, stopReason: null, grace: null,
+      stream: { kind: null, text: "", committedBytes: 0, bytes: 0, last: "", cancel: null }, streamFailure: null };
     if (this.actives.has(id)) throw new SessionError("OWNERSHIP_LOST", "another Turn of this conversation is active");
     this.actives.set(id, execution); this.waitUsed.delete(target);
     // The execution budget runs from here: starting the program, its model, tools and result (ADR-036).
@@ -1309,6 +1420,8 @@ export class SessionRuntime {
       if (this.load(id).runs.find(run => run.id === target)!.cancelRequested || !this.accepting || this.fatal || this.closingSessions.has(id)) this.stop(execution);
       backend = await execution.run.result; execution.backendSettled = true;
       this.owned(execution);
+      // Text still in its window is committed before the settlement, so the reply precedes run.backend_settled (ADR-047).
+      this.flushStream(execution);
       this.commit(id, current => ({ next: updatedRun(current, target, { status: "settling", backend }), events: [event("run.backend_settled", { runId: target, backend })] }));
       if (checkpointStored) {
         const after = await execution.binding.control.checkpoint!(); this.owned(execution);
@@ -1325,6 +1438,11 @@ export class SessionRuntime {
       }
     } catch (error) { problem = fault(error); }
     finally {
+      // A window still open is committed before the Turn's end (ADR-047). Once the program was ended early its lease is gone,
+      // so the window goes with the Turn, which is unknown then; a window refused outside a driver callback is the Turn's failure.
+      if (execution.earlyClose === null) { try { this.flushStream(execution); } catch (error) { problem ??= fault(error); } }
+      else this.discardStream(execution);
+      if (execution.streamFailure !== null) problem ??= fault(execution.streamFailure);
       const abandoned = [...this.permissions.entries()].filter(([, permission]) => permission.execution === execution);
       for (const [permissionId] of abandoned) this.permissions.delete(permissionId);
       if (abandoned.length) this.commit(id, current => ({ next: current, events: abandoned.map(([permissionId]) => event("permission.closed", { permissionId, runId: target })) }));
@@ -1396,6 +1514,7 @@ export class SessionRuntime {
       if (this.actives.get(id) === execution) this.actives.delete(id);
       if (execution.budget.timer !== null) clearTimeout(execution.budget.timer);
       if (execution.grace !== null) clearTimeout(execution.grace);
+      this.discardStream(execution);
     }
   }
 
