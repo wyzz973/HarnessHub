@@ -545,3 +545,18 @@
 | G064-R6 | G064 | unit | 各家插件按自己的规则读取 | Claude 与 Codex 都有的 名@市场 插件合成一行，各自显示版本与位置；没有条目的按默认显示，并计入依赖；有条目但未安装的、inline 等来源不提供开关；账户同步插件按名字去重，位置只到 ~/.claude/plugins/synced，视图不含账户 ID；随 Codex 安装的标明归属，缺 enabled 的写明缺省值未核实；OpenCode 读 plugin/ 与 plugins/ 的 .ts、.js（含点文件、跟随链接）与 tuple 条目并去重，tui.json 的标为 TUI 插件；Hermes 的 disabled 优先、分类布局与 plugin.yml、记忆提供方由 provider 选择、模型提供方不受 enabled 约束、隐藏目录也算、缺 plugins.enabled 时都不启用；DeepSeek Harness 读各 profile 的依赖；每家写明有没有开关及只读的原因 | planned |
 | G054-CA9 | G054 | e2e | 插件页的开关说明与合成行的启停 | 插件页写明哪些 Harness 可以启停、其余只读的原因；Claude 与 Codex 都有的插件只占一行，展开后各自显示版本、状态与开关；确认框显示文件、一行差异、生效时机与覆盖提示，确认前不发送、只发送这次检查；被依赖拦下的检查不能确认；历史里有插件开关；无页面错误 | planned |
 | G065-A01 | G065 | review | 六项加固的验收记录与 ADR-046 验证节逐项对账：版本来源、审计记录、流式合并、边界检查、控制层、冻结 | 每项都有对应层的测试或检查通过的记录；真实引擎通过与测试通过分别表述；非焦点三个（Cursor、Gemini CLI、Pi）的矩阵 ✅ 数与已验证版本未增长；全程未写用户真实配置 | planned |
+| G060-NC14 | G060 | unit | 真实验收守护：对受守护的共享配置文件做快照并在套件前后比对 | 改动任一受守护文件（内容、权限或存在性）即判为已改动并点名文件，未改动时通过；凭据文件（~/.codex/auth.json、~/.hermes/.env、~/.hermes/auth.json、~/.dsh/.credentials.yaml 等）只核对存在与元数据，不读内容；快照不含文件内容 | planned |
+| G060-NC15 | G060 | unit | 真实验收记录的证据头 | 证据头含 commit、安装策略（official 或 any）、每个参与 Harness 的渠道、版本与角色；不含任何路径、家目录或凭据；缺项或含路径的证据头被拒绝 | planned |
+| G060-NC16 | G060 | review | 真实套件集合的逐套件审阅：每个 tests/real 套件在前后断言守护未变并写证据头 | 每个真实套件都在开始时快照、结束时断言守护未变，并写出 NC15 格式的证据头；缺一项的套件在操作手册中标为不合格；文档列出套件集合、运行方式与记录格式 | planned |
+| G054-FZ1 | G054 | e2e | 冻结的三个 Harness（Cursor、Gemini CLI、Pi）默认隐藏（ADR-048 决定 1） | 默认不出现在选择器、欢迎页、“我的 Agent”与能力页的列里；设置开关“显示冻结的 Harness”打开后出现；停在冻结 Harness 上的对话照常打开并显示其名称；无页面错误 | planned |
+| G054-FZ2 | G054 | e2e | 没有后台轮询（ADR-048 决定 8） | 空闲 12 秒内页面不请求 /state；窗口重新获焦且距上次检测 ≥60 秒时触发一次重新检测，不足 60 秒不触发；安装任务进行期间以 800 ms 轮询 /state，任务完成后重新检测一次；手动按钮重新检测 | planned |
+| G054-FZ3 | G054 | e2e | 在原程序中继续：只有只问一次命令的已验证程序 | 详情栏显示只问一次的命令与两条提示，不显示交互命令；未验证版本或未验证产品只显示 ID | planned |
+| G050-NC9 | G050 | integration | GET /state 与 GET /harnesses 不启动发现 | 两者返回上次扫描结果并带 harnessesScannedAt，不触发发现；只有 POST rescan 才扫描并更新 harnessesScannedAt；HarnessView 带 tier（focus、frozen 或 catalog） | planned |
+| G050-NC10 | G050 | integration | publicFailure 的顺序：先把家目录写成 ~ 再截断 | 含家目录绝对路径且超过 512 字的失败消息先把家目录替换为 ~ 再截到 512 字，结果不含家目录；不足 512 字的消息只替换不截断 | planned |
+| G011-NC3 | G011 | unit | harnessTier：目录的三层分层 | 七个焦点 id（claude、codex、opencode、dsh、hermes、openclaw、workbuddy）返回 focus，三个冻结 id（cursor、gemini、pi）返回 frozen，目录中的其余条目返回 catalog | planned |
+| G008-NC9 | G008 | integration | 业务库 v1→v12 迁移前的备份（ADR-048 决定 6） | 迁移前在 <root>/backups 用 VACUUM INTO 留一份备份；备份的 user_version 与各表行数等于迁移前；迁移后业务库为 v12 且数据不变 | planned |
+| G008-NC10 | G008 | integration | 备份只保留最新 2 份 | 连续三次需要备份的版本提升后 backups 目录只剩最新 2 份，被删的是最旧的；目录里不相干的文件不动 | planned |
+| G008-NC11 | G008 | integration | 备份失败则不迁移 | VACUUM INTO 失败（备份目录不可写或写入故障注入）时 user_version 不变、不接管 owner，打开以 STORAGE_BACKUP_FAILED 失败且原库字节不变 | planned |
+| G032-NC25 | G032 | protocol | OpenClaw 目录探测不写 Gateway，模型覆盖延迟到首回合 | 带模型的目录探测不调用 sessions.patch；模型与默认相同时整个会话不 patch；不同时在第一个 session/prompt 之前 patch 一次并核对 resolved，不一致以 MODEL_MISMATCH 让回合在发提示前失败 | planned |
+| G032-NC26 | G032 | protocol | OpenClaw 桥的模式选项与思考档位去重 | 桥的模式选项与思考档位取值相同时，目录与配置读回都不再出现模式选项；取值不同时保留两者 | planned |
+| G032-NC27 | G032 | protocol | OpenClaw 转录断档诊断 | 转录只读到最后 200 条且最早一条的 seq 大于回合起点 +1 时发出诊断并如实标明可能缺失；未断档时没有诊断 | planned |

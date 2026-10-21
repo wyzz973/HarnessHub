@@ -1153,7 +1153,10 @@
         "G008-NC5",
         "G008-NC6",
         "G008-NC7",
-        "G008-NC8"
+        "G008-NC8",
+        "G008-NC9",
+        "G008-NC10",
+        "G008-NC11"
       ],
       "active_slice": "native-installation-management"
     },
@@ -1366,7 +1369,8 @@
         "G011-UG7",
         "G011-UG8",
         "G011-UG9",
-        "G011-UG10"
+        "G011-UG10",
+        "G011-NC3"
       ],
       "active_slice": "upgrade-with-running-programs"
     },
@@ -2384,7 +2388,10 @@
         "G032-NC21",
         "G032-NC22",
         "G032-NC23",
-        "G032-NC24"
+        "G032-NC24",
+        "G032-NC25",
+        "G032-NC26",
+        "G032-NC27"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3215,7 +3222,9 @@
         "G050-NC5",
         "G050-NC6",
         "G050-NC7",
-        "G050-NC8"
+        "G050-NC8",
+        "G050-NC9",
+        "G050-NC10"
       ],
       "active_slice": "upgrade-with-running-programs"
     },
@@ -3508,7 +3517,10 @@
         "G054-CA6",
         "G054-CA7",
         "G054-CA8",
-        "G054-CA9"
+        "G054-CA9",
+        "G054-FZ1",
+        "G054-FZ2",
+        "G054-FZ3"
       ],
       "active_slice": "upgrade-with-running-programs"
     },
@@ -3834,7 +3846,10 @@
         "tests/real/native-subagent.real.ts",
         "tests/real/native-question.real.ts",
         "tests/real/native-thinking.real.ts",
-        "tests/real/native-options.real.ts"
+        "tests/real/native-options.real.ts",
+        "tests/real/guard.ts",
+        "tests/unit/real-guard.test.ts",
+        "docs/engineering/real-acceptance.md"
       ],
       "requirements": [
         "R04",
@@ -3884,7 +3899,10 @@
         "G060-NC10",
         "G060-NC11",
         "G060-NC12",
-        "G060-NC13"
+        "G060-NC13",
+        "G060-NC14",
+        "G060-NC15",
+        "G060-NC16"
       ],
       "active_slice": "native-installation-management"
     },
@@ -4212,7 +4230,8 @@
         "每回合的事件数与提交成本按 ADR-047 下降，先提交再发布不变",
         "边界检查进入 pnpm check，每条规则有无效 fixture 且失败非零退出",
         "Claude 的认证状态进入就绪状态而不是诊断；OpenCode 1.18.x 的命令目录含 /compact",
-        "全程未写用户真实配置，设计采纳、代码完成、测试通过与真实引擎通过分别表述"
+        "全程未写用户真实配置，设计采纳、代码完成、测试通过与真实引擎通过分别表述",
+        "第二批六项（C1 治理与证据规则、C2 真实验收守护与证据格式、C3 Harness 分层与按需刷新、C4 业务库迁移前备份、C5 OpenClaw 驱动、C6 Hermes 与 OpenClaw 升级就绪研究）的用例登记在所属任务下，状态 planned；完成后分别表述设计采纳、代码完成、测试通过与真实引擎通过"
       ],
       "test_cases": [
         "G065-A01"
