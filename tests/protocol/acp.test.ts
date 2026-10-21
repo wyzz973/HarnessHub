@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -552,20 +552,28 @@ test("ACP sends attachments as native content blocks within the agent's declared
 });
 test("OpenClaw refuses images its Gateway would drop or its running model cannot see", async t => {
   const root = await mkdtemp(join(tmpdir(), "openclaw-attachments-")); t.after(() => rm(root, { recursive: true, force: true }));
-  const catalog = async () => ({ models: [{ provider: "vision", id: "large", name: "Vision", input: ["text", "image"] }, { provider: "deepseek", id: "deepseek-chat", name: "DeepSeek Chat", input: ["text"] }] });
+  const methods: string[] = [];
+  const catalog = async (method: string) => { methods.push(method); return { models: [{ provider: "vision", id: "large", name: "Vision", input: ["text", "image"] }, { provider: "deepseek", id: "deepseek-chat", name: "DeepSeek Chat", input: ["text"] }] }; };
   const image = { ...attachment(root, "big.png", "image/png", "image", Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), bytes: 5_000_001 };
-  for (const [model, check] of [["vision/large", async (driver: OpenClawControl) => {
+  const unsupported = (error: unknown) => error instanceof ControlError && error.code === "ATTACHMENT_UNSUPPORTED";
+  // [configured model, model selected at open, check]. A selection decides from open() on, before the first prompt applies it.
+  for (const [model, selected, check] of [["vision/large", undefined, async (driver: OpenClawControl) => {
     await assert.rejects(driver.checkAttachments([image]), (error: unknown) => error instanceof ControlError && error.code === "ATTACHMENT_LIMIT" && error.message.includes("big.png"));
     await driver.checkAttachments([{ ...image, bytes: 5_000_000 }]);
-  }], ["deepseek/deepseek-chat", async (driver: OpenClawControl) => {
+  }], ["deepseek/deepseek-chat", undefined, async (driver: OpenClawControl) => {
     assert.deepEqual((await driver.models()).models.find(row => row.id === "deepseek/deepseek-chat")?.inputs, { image: false, audio: false, file: true });
-    await assert.rejects(driver.checkAttachments([{ ...image, bytes: 10 }]), (error: unknown) => error instanceof ControlError && error.code === "ATTACHMENT_UNSUPPORTED");
+    await assert.rejects(driver.checkAttachments([{ ...image, bytes: 10 }]), unsupported);
+  }], ["vision/large", "deepseek/deepseek-chat", async (driver: OpenClawControl) => {
+    await assert.rejects(driver.checkAttachments([{ ...image, bytes: 10 }]), unsupported, "the selected text-only model decides, not the configured vision model");
+  }], ["deepseek/deepseek-chat", "vision/large", async (driver: OpenClawControl) => {
+    await driver.checkAttachments([{ ...image, bytes: 10 }]);
   }]] as const) {
     const config = join(root, "openclaw.json"); await writeFile(config, `{agents:{list:[{id:"main",default:true}],defaults:{model:{primary:"${model}"}}}}`);
     const env = { HOME: root, OPENCLAW_CONFIG_PATH: config };
     const driver = new OpenClawControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "attachments"], env }, { ...options, env }, catalog);
-    try { await ready(driver); await check(driver); } finally { await driver.close(); }
+    try { await driver.initialize(); await driver.open(process.cwd(), selected); await check(driver); } finally { await driver.close(); }
   }
+  assert.deepEqual([...new Set(methods)], ["models.list"], "gating reads the catalog and writes nothing");
 });
 test("OpenCode refines agent image support with each model's input kinds from the original CLI catalog", async t => {
   const root = await mkdtemp(join(tmpdir(), "opencode-attachments-")); t.after(() => rm(root, { recursive: true, force: true }));
@@ -954,4 +962,101 @@ test("G032-NC24 OpenCode 1.18 offers its unlisted native /compact and receives i
   const listed = opencode({ FIXTURE_COMPACT_LISTED: "1" });
   try { await listed.initialize(); await listed.open(process.cwd()); assert.deepEqual(compacts((await listed.models()).commands), [{ name: "compact", description: "OpenCode's own compact" }]); }
   finally { await listed.close(); }
+});
+
+/**
+ * An OpenClaw driver on the bridge fixture (`openclaw-settings`: it restores sessions and answers prompts) whose Gateway
+ * a recorder answers. The configured model is deepseek/deepseek-chat; the catalog also lists vision/large and other/model.
+ * sessions.list holds `row` under the searched key (none when absent; "unreadable" fails the read), and sessions.patch
+ * resolves the model `resolves` returns. Every call is recorded and also marked in the fixture's trace, which so orders
+ * the Gateway calls against the messages the bridge received.
+ */
+async function openclawGateway(root: string, name: string, gateway: { readonly row?: Readonly<Record<string, unknown>> | "unreadable"; readonly resolves?: (model: string) => string } = {}) {
+  const config = join(root, name + ".json"), trace = join(root, name + ".trace");
+  await writeFile(config, '{agents:{list:[{id:"main",default:true}],defaults:{model:{primary:"deepseek/deepseek-chat"}}}}');
+  const calls: { readonly method: string; readonly params: Readonly<Record<string, unknown>> }[] = [];
+  const request = async (method: string, params: Readonly<Record<string, unknown>>): Promise<unknown> => {
+    calls.push({ method, params }); appendFileSync(trace, JSON.stringify({ gateway: method }) + "\n");
+    if (method === "models.list") return { models: [{ provider: "deepseek", id: "deepseek-chat", name: "DeepSeek Chat", input: ["text"] }, { provider: "vision", id: "large", name: "Vision", input: ["text", "image"] }, { provider: "other", id: "model", name: "Other" }] };
+    if (method === "sessions.patch") { const [provider, ...model] = (gateway.resolves ?? (value => value))(String(params.model)).split("/"); return { ok: true, key: params.key, resolved: { modelProvider: provider, model: model.join("/") } }; }
+    if (method === "sessions.list") { if (gateway.row === "unreadable") throw new ControlError("NATIVE_REQUEST_FAILED", "original native CLI request failed"); return { sessions: gateway.row === undefined ? [] : [{ ...gateway.row, key: params.search }] }; }
+    if (method === "sessions.get") return { messages: [] };
+    if (method === "chat.history") return { messages: [], fastMode: false };
+    throw new Error("unexpected OpenClaw method " + method);
+  };
+  const env = { HOME: root, OPENCLAW_CONFIG_PATH: config, FIXTURE_TRACE: trace };
+  const driver = new OpenClawControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "openclaw-settings"], env }, { ...options, env }, request);
+  /** The trace, read once the driver is closed (the bridge has then logged every message it received). */
+  const received = async () => (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { readonly method?: string; readonly gateway?: string; readonly params?: { readonly _meta?: { readonly sessionKey?: string } } });
+  /** Model patches and prompts, in the order the trace holds them. */
+  const order = async () => (await received()).flatMap(row => row.gateway === "sessions.patch" ? ["patch"] : row.method === "session/prompt" ? ["prompt"] : []);
+  return { driver, calls, patches: () => calls.filter(call => call.method === "sessions.patch").map(call => call.params), received, order };
+}
+const turnEnded = { status: "completed", reason: "end_turn" } as const;
+test("G032-NC25 (a) OpenClaw writes nothing to its Gateway to run the configured model: neither opening with it nor the first prompt patches the session (T-OC-03)", async t => {
+  const root = await mkdtemp(join(tmpdir(), "openclaw-nc25-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const { driver, patches, order } = await openclawGateway(root, "configured");
+  try {
+    await driver.initialize(); const id = await driver.open(process.cwd(), "deepseek/deepseek-chat");
+    assert.deepEqual(patches(), [], "opening with the configured model");
+    assert.deepEqual(await (await driver.startText(id, "hello", () => {})).result, turnEnded);
+    assert.deepEqual(patches(), [], "the first prompt of a session that already runs it");
+  } finally { await driver.close(); }
+  assert.deepEqual(await order(), ["prompt"]);
+});
+test("G032-NC25 (b) another model is patched on the Hub's own key after open() and before the bridge receives the first prompt, then not again (T-OC-03)", async t => {
+  const root = await mkdtemp(join(tmpdir(), "openclaw-nc25-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const { driver, patches, received, order } = await openclawGateway(root, "other");
+  try {
+    await driver.initialize(); const id = await driver.open(process.cwd(), "other/model");
+    assert.deepEqual(patches(), [], "open() only checks the model against the catalog");
+    for (const prompt of ["first", "second"]) assert.deepEqual(await (await driver.startText(id, prompt, () => {})).result, turnEnded, prompt);
+  } finally { await driver.close(); }
+  const key = (await received()).find(row => row.method === "session/new")?.params?._meta?.sessionKey;
+  assert.match(String(key), /^agent:main:harnesshub:[0-9a-f-]{36}$/u);
+  assert.deepEqual(patches(), [{ key, model: "other/model" }], "one patch, on the session's own key");
+  assert.deepEqual(await order(), ["patch", "prompt", "prompt"], "the bridge received the first prompt only after the patch");
+});
+test("G032-NC25 (c) a Gateway that resolves another model fails the Turn with MODEL_MISMATCH before its prompt is sent (T-OC-03)", async t => {
+  const root = await mkdtemp(join(tmpdir(), "openclaw-nc25-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const { driver, patches, order } = await openclawGateway(root, "mismatch", { resolves: () => "deepseek/deepseek-chat" });
+  try {
+    await driver.initialize(); const id = await driver.open(process.cwd(), "vision/large"), events: ControlEvent[] = [];
+    const run = await driver.startText(id, "hello", event => events.push(event));
+    assert.deepEqual(await run.result, { status: "failed", reason: "model_not_applied", error: { code: "MODEL_MISMATCH", message: "OpenClaw 没有确认所选模型，这条消息没有发出。" } });
+    assert.deepEqual(events, []);
+    await assert.rejects(run.requestStop(), (error: unknown) => error instanceof ControlError && error.code === "INVALID_STATE", "there is no prompt to stop");
+    assert.deepEqual(patches().map(params => params.model), ["vision/large"]);
+  } finally { await driver.close(); }
+  assert.deepEqual(await order(), ["patch"], "the bridge never received the prompt");
+});
+test("G032-NC25 (d) a restored session is patched before its first prompt only when the selection differs from its Gateway row's model, or the row cannot be read (T-OC-03)", async t => {
+  const root = await mkdtemp(join(tmpdir(), "openclaw-nc25-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const key = "agent:main:harnesshub:00000000-0000-0000-0000-00000000000d", checkpoint = JSON.stringify({ conversation: "session-fixture", key });
+  // The restored row runs vision/large, so the configured deepseek/deepseek-chat is a change for it.
+  for (const [name, row, model, patched] of [["same", { modelProvider: "vision", model: "large" }, "vision/large", false],
+    ["configured", { modelProvider: "vision", model: "large" }, "deepseek/deepseek-chat", true], ["unreadable", "unreadable", "deepseek/deepseek-chat", true]] as const) {
+    const { driver, patches, order } = await openclawGateway(root, name, { row });
+    try {
+      await driver.initialize(); const id = await driver.open(process.cwd(), model, undefined, checkpoint);
+      assert.deepEqual(patches(), [], name + ": restoring writes nothing");
+      assert.deepEqual(await (await driver.startText(id, "again", () => {})).result, turnEnded, name);
+    } finally { await driver.close(); }
+    assert.deepEqual(patches(), patched ? [{ key, model }] : [], name);
+    assert.deepEqual(await order(), patched ? ["patch", "prompt"] : ["prompt"], name);
+  }
+});
+test("G032-NC25 (e) a catalog read with a selected model opens, reads and closes without writing to the Gateway; an unlisted model is still refused (T-OC-03)", async t => {
+  const root = await mkdtemp(join(tmpdir(), "openclaw-nc25-")); t.after(() => rm(root, { recursive: true, force: true }));
+  for (const [name, model] of [["probe", "other/model"], ["unlisted", "missing/model"]] as const) {
+    const { driver, calls } = await openclawGateway(root, name);
+    try {
+      await driver.initialize();
+      // discoverModels: open with the selection, read the catalog, close; an unlisted selection is its selectionError.
+      if (model === "missing/model") await assert.rejects(driver.open(process.cwd(), model), (error: unknown) => error instanceof ControlError && error.code === "MODEL_UNAVAILABLE");
+      else await driver.open(process.cwd(), model);
+      assert.equal((await driver.models()).defaultModel, "deepseek/deepseek-chat", name + ": the configured default, not the selection");
+    } finally { await driver.close(); }
+    assert.deepEqual(calls.map(call => call.method), ["models.list"], name + ": only the catalog was read");
+  }
 });

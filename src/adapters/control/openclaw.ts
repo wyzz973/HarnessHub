@@ -12,6 +12,13 @@ import { checkInputs } from "../../infrastructure/control/attachments.js";
 import type { ContentRef, ControlAttachment } from "../../contracts/content.js";
 
 type OpenClawMethod = "models.list" | "sessions.patch" | "sessions.get" | "sessions.list" | "chat.history" | "skills.status" | "tools.catalog";
+/** The Hub's own Gateway session keys; no other key is patched or continued. */
+const HUB_KEY = /^agent:[a-z0-9_-]+:harnesshub:[a-f0-9-]+$/u;
+/** A Turn that ended before its prompt because the selected model could not be confirmed: failed, and nothing was sent. */
+function notSent(error: ControlError): ControlRun {
+  return { result: Promise.resolve({ status: "failed", reason: "model_not_applied", error: { code: error.code, message: "OpenClaw 没有确认所选模型，这条消息没有发出。" } }),
+    requestStop: () => Promise.reject(new ControlError("INVALID_STATE", "this Turn ended before its prompt was sent")) };
+}
 /** A Gateway session row's model in the catalog's provider/model form. */
 function rowModel(row: Record<string, unknown>): string | null {
   return typeof row.modelProvider === "string" && typeof row.model === "string" && row.modelProvider && row.model && (row.modelProvider + "/" + row.model).length <= 1024 && !/[\0\r\n]/u.test(row.modelProvider + row.model) ? row.modelProvider + "/" + row.model : null;
@@ -73,8 +80,10 @@ function reconcileTurn(entries: readonly unknown[], backend: BackendResult, emit
 /** The installed OpenClaw bridge accepts sessionKey in _meta. A normal chat key avoids its ACP-runtime namespace. */
 export class OpenClawControl extends AcpControl {
   private configuredModel: string | null = null;
-  /** Session-local model applied with sessions.patch; otherwise the agent's configured model runs. */
-  private openedModel: string | undefined;
+  /** The model chosen at open(), found in the original catalog; the session runs it from its first prompt on. */
+  private selectedModel: string | undefined;
+  /** The selected model once confirmed as the session's own before its first prompt; later Turns leave the model alone. */
+  private appliedModel: string | undefined;
   private sessionKey: string | null = null;
   private restoredKey: string | null = null;
   private readonly abort = new AbortController();
@@ -161,27 +170,55 @@ export class OpenClawControl extends AcpControl {
     const conversation = await super.checkpoint();
     return conversation !== null && this.sessionKey !== null ? JSON.stringify({ conversation, key: this.sessionKey }) : null;
   }
+  /**
+   * Opens or restores the Hub's own session and only checks a selected model against the original catalog
+   * (MODEL_UNAVAILABLE): nothing is written to the Gateway here, so a catalog probe that opens, reads and closes leaves
+   * no session row behind. The selection is applied before the first prompt (applySelectedModel).
+   */
   override async open(cwd: string, model?: string, options?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> {
     let conversation: string | undefined;
     if (checkpoint !== undefined) {
       let parsed: unknown; try { parsed = JSON.parse(checkpoint); } catch { throw new ControlError("INVALID_CHECKPOINT", "invalid native recovery reference"); }
       const value = object(parsed, "OpenClaw recovery reference");
-      if (Object.keys(value).some(key => !["conversation", "key"].includes(key)) || typeof value.key !== "string" || !/^agent:[a-z0-9_-]+:harnesshub:[a-f0-9-]+$/u.test(value.key)) throw new ControlError("INVALID_CHECKPOINT", "native key is not a Hub-owned conversation");
+      if (Object.keys(value).some(key => !["conversation", "key"].includes(key)) || typeof value.key !== "string" || !HUB_KEY.test(value.key)) throw new ControlError("INVALID_CHECKPOINT", "native key is not a Hub-owned conversation");
       this.restoredKey = value.key; conversation = string(value.conversation, "native conversation");
     }
     const id = await super.open(cwd, undefined, options, conversation);
     if (model !== undefined) {
       if (!(await this.readNativeModels()).some(row => row.id === model)) throw new ControlError("MODEL_UNAVAILABLE", "model unavailable in original OpenClaw catalog");
-      if (this.sessionKey === null || !/^agent:[a-z0-9_-]+:harnesshub:[a-f0-9-]+$/u.test(this.sessionKey)) throw new ControlError("IDENTITY_MISMATCH", "OpenClaw session override has no owned key");
-      const patched = object(await this.call("sessions.patch", { key: this.sessionKey, model }), "OpenClaw model override");
-      const resolved = object(patched.resolved, "OpenClaw resolved model");
-      if (resolved.modelProvider + "/" + resolved.model !== model) throw new ControlError("MODEL_MISMATCH", "OpenClaw did not apply the selected session model");
-      this.openedModel = model;
-
+      this.selectedModel = model;
     }
     return id;
   }
-  /** This key's Gateway session row; undefined until the session's first prompt or patch creates it. */
+  /**
+   * Makes the model chosen at open() the session's own just before its first prompt. Nothing is written when the session
+   * already runs it: a new session runs the agent's configured model, a restored one the model its Gateway row holds
+   * (unknown when the row cannot be read, so the selection is then applied). Otherwise sessions.patch, an operator.admin
+   * write that also creates a new session's row, sets it on the Hub's own key, and the Gateway must resolve exactly the
+   * selected model (MODEL_MISMATCH). Rejects with the failing ControlError and leaves the selection unapplied; once it is
+   * confirmed, later Turns of this connection do not apply it again, so a native /model change then stands. The Gateway
+   * calls it makes are owned like every other command and awaited by close(). One Turn at a time, as the Runtime runs them.
+   */
+  private async applySelectedModel(): Promise<void> {
+    const model = this.selectedModel;
+    if (model === undefined || this.appliedModel === model) return;
+    let running = this.configuredModel;
+    if (this.restoredKey !== null) {
+      // The row only spares a write; when it cannot be read, the selection is applied and confirmed below all the same.
+      try { const row = await this.sessionRow(this.restoredKey); running = row === undefined ? null : rowModel(row); } catch { running = null; }
+    }
+    if (model !== running) {
+      if (this.sessionKey === null || !HUB_KEY.test(this.sessionKey)) throw new ControlError("IDENTITY_MISMATCH", "OpenClaw session override has no owned key");
+      const patched = object(await this.call("sessions.patch", { key: this.sessionKey, model }), "OpenClaw model override");
+      const resolved = object(patched.resolved, "OpenClaw resolved model");
+      if (resolved.modelProvider + "/" + resolved.model !== model) throw new ControlError("MODEL_MISMATCH", "OpenClaw did not apply the selected session model");
+    }
+    this.appliedModel = model;
+  }
+  /**
+   * This key's Gateway session row; undefined until the session's first prompt, or the model patch just before it,
+   * creates it. A catalog probe never patches, so it leaves no row.
+   */
   private async sessionRow(key: string): Promise<Record<string, unknown> | undefined> {
     const rows = object(await this.call("sessions.list", { search: key, limit: 50 }), "OpenClaw sessions").sessions;
     if (!Array.isArray(rows) || rows.length > 50) throw new ControlError("INVALID_NATIVE_METADATA", "invalid OpenClaw session list");
@@ -191,9 +228,10 @@ export class OpenClawControl extends AcpControl {
   override async checkAttachments(attachments: readonly ContentRef[]): Promise<void> {
     await super.checkAttachments(attachments);
     if (!attachments.some(item => item.kind === "image")) return;
-    // A restored session runs the model its Gateway row holds (a native /model change persists there), not necessarily the configured one.
-    const restored = this.openedModel === undefined && this.restoredKey !== null ? await this.sessionRow(this.restoredKey) : undefined;
-    const model = this.openedModel ?? (restored === undefined ? null : rowModel(restored)) ?? this.configuredModel, entry = (await this.readNativeModels()).find(row => row.id === model);
+    // The model the session is about to run: the selection (applied before the first prompt, so not yet before it), else the
+    // model a restored session's Gateway row holds (a native /model change persists there), else the configured one.
+    const restored = this.selectedModel === undefined && this.restoredKey !== null ? await this.sessionRow(this.restoredKey) : undefined;
+    const model = this.selectedModel ?? (restored === undefined ? null : rowModel(restored)) ?? this.configuredModel, entry = (await this.readNativeModels()).find(row => row.id === model);
     if (entry?.inputs) checkInputs(attachments, entry.inputs);
   }
   /** Highest transcript sequence of the Hub-owned session; null when it cannot be read (the turn then stays as the bridge reported it). */
@@ -206,11 +244,15 @@ export class OpenClawControl extends AcpControl {
     } catch { return null; }
   }
   /**
-   * The ACP bridge forwards only reply text and reports Gateway errors as end_turn. After the turn, this session's own
-   * transcript (read through the original CLI) supplies the tool calls and results, reasoning, per-call usage and the
-   * real stop reason of exactly the messages this turn appended.
+   * The ACP bridge forwards only reply text and reports Gateway errors as end_turn. Before the prompt, the model chosen at
+   * open() is applied (applySelectedModel); when it cannot be confirmed the Turn's result is failed and no prompt is sent.
+   * After the turn, this session's own transcript (read through the original CLI) supplies the tool calls and results,
+   * reasoning, per-call usage and the real stop reason of exactly the messages this turn appended.
    */
   override async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
+    // Nothing was sent, so this is the Turn's own failure rather than a dispatch with an unknown outcome.
+    try { await this.applySelectedModel(); }
+    catch (error) { if (error instanceof ControlError) return notSent(error); throw error; }
     const before = await this.transcriptSeq();
     let thought = false;
     const run = await super.startText(id, prompt, event => { if (event.type === "thinking") thought = true; onEvent(event); }, attachments);
