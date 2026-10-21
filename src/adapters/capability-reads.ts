@@ -293,14 +293,21 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
       notes: ["Hermes 0.12 不读 ~/.agents/skills；长驻进程要 /reload-skills 或重启才看到新技能。"],
     },
     {
-      harnessId: "dsh", verified: ">=0.2.0 <0.3.0",
-      evidence: ["deepseek-ai/deepseek-harness 5badb15 docs/subsystems/skills.md（$DSH_HOME/skills 优先于 ~/.agents/skills）",
-        "@deepseek-ai/dsh 0.2.0-rc.2 dsh-app-boot：依次应用各 bundle、profile 自己的 cordis.patch.yml、$DSH_HOME/cordis.patch.yml；补丁文件必须是顶层 YAML 数组（docs/user/guide/mcp-memory.md：MCP 客户端行 @deepseek-ai/dsh-mcp-client）",
-        "5badb15 apps/cli/src/plugin.ts（dsh plugin --profile <名> 把参数交给 pnpm；插件是 $DSH_HOME/profiles/<名>/package.json 的依赖，装上即启用）"],
+      // The prerelease the official npm channel carries (0.2.0-rc.2) is the lower end: ADR-045 steps 3c and 4 checked these
+      // rules on it. Ranges are compared with prereleases included (ADR-038, 2026-10-21), so 0.2.1-alpha.1 is inside too.
+      harnessId: "dsh", verified: ">=0.2.0-rc.2 <0.3.0",
+      evidence: ["@deepseek-ai/dsh 0.2.0-rc.2 包内 dsh-skill-filesystem 的 README（Roots and priority：<dshHome>/skills 排在 <agentsHome>/skills 之前，dshHome 为 $DSH_HOME 或 ~/.dsh，agentsHome 为 $DSH_AGENTS_HOME 或 ~/.agents；name 与 description 必填）",
+        "@deepseek-ai/dsh 0.2.0-rc.2 dsh-app-boot：依次应用各 bundle、profile 自己的 cordis.patch.yml、$DSH_HOME/cordis.patch.yml；补丁文件必须是顶层 YAML 数组（docs/user/guide/mcp-memory.md：MCP 客户端行 @deepseek-ai/dsh-mcp-client）；发运的 profile 模板只有 acp、web、headless、sdk、sdk-minimal（PROFILE_TEMPLATES）",
+        "历史：deepseek-ai/deepseek-harness 5badb15 docs/subsystems/skills.md（$DSH_HOME/skills 优先于 ~/.agents/skills）",
+        "历史：5badb15 apps/cli/src/plugin.ts（dsh plugin --profile <名> 把参数交给 pnpm；插件是 $DSH_HOME/profiles/<名>/package.json 的依赖，装上即启用）"],
+      // 0.2.0-rc.2's skill provider also takes a flat <name>.md at the top of a root and the roots in customSkillDirs;
+      // neither is read here yet.
       skills: { roots: [{ role: "own", path: join(dirs.dsh, "skills"), precedence: 2, containment: false, depth: 1 }, { role: "shared", path: dirs.dshAgents, precedence: 1, containment: false, depth: 1 }],
         duplicates: "precedence", requiresDescription: true, nameMustMatchDirectory: false, switch: null },
       mcp: { style: "dsh", file: join(dirs.dsh, "cordis.patch.yml"), profiles: join(dirs.dsh, "profiles") },
       instructions: { kind: "files", candidates: [{ path: join(dirs.dsh, "AGENTS.md"), role: "own" }], rule: "first-existing" },
+      // Plugins are read as 5badb15 keeps them. 0.2.0-rc.2 also lists bundles in a profile's manifest and can turn a plugin
+      // off at start (a patch row's `disabled`, an incompatible peer); those are not read yet.
       subagents: null, commands: null, hooks: null, plugins: { kind: "dsh", profiles: join(dirs.dsh, "profiles") },
       pluginSwitch: { kind: "read-only", reason: "DeepSeek Harness 没有插件开关：装进 profile 就启用。" },
       notes: ["DeepSeek Harness 没有按技能停用的开关。"],

@@ -19,7 +19,7 @@ const skill = (name: string | null, description: string | null, body = "Do the t
 /** A program that leaves a mark in $HOME when anything runs it unconfined. */
 const program = (name: string) => "#!/bin/sh\ntouch \"$HOME/ran-" + name + "\"\nexit 3\n";
 const NPM: readonly (readonly [string, string, string])[] = [["@anthropic-ai/claude-code", "claude", "2.1.300"], ["@openai/codex", "codex", "0.162.1"], ["opencode-ai", "opencode", "1.18.35"],
-  ["@google/gemini-cli", "gemini", "0.72.0"], ["openclaw", "openclaw", "2026.3.23-2"], ["@earendil-works/pi-coding-agent", "pi", "0.85.1"], ["@deepseek-ai/dsh", "dsh", "0.2.1-alpha.1"]];
+  ["@google/gemini-cli", "gemini", "0.72.0"], ["openclaw", "openclaw", "2026.3.23-2"], ["@earendil-works/pi-coding-agent", "pi", "0.85.1"], ["@deepseek-ai/dsh", "dsh", "0.2.0-rc.2"]];
 /**
  * The nine Harnesses installed through their official channels as the installers leave them (ADR-044): npm global
  * packages under an nvm prefix, and Cursor's and Hermes's install scripts. Returns the PATH directories; nothing here runs.

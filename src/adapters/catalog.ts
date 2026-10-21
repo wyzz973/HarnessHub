@@ -31,8 +31,10 @@ const nativeDefinitions: readonly HarnessDefinition[] = [
     id: "dsh", name: "DeepSeek Harness", aliases: [], binaryNames: ["dsh"], configHints: [".dsh"],
     // Found like other agent CLIs: `dsh` on PATH or in a standard directory (npm -g, the Desktop app's registered command,
     // the Python SDK). npx caches are not installations; a source checkout is an explicit entry in the discovery manifest.
+    // The package version is the official npm `latest`, installed through 4317 on 2026-10-18
+    // (docs/verification/management-actions-2026-10-18.md); the verified 0.2.1-alpha.1 was a source build (ADR-038).
     controls: [{ id: "dsh-native", protocol: "acp-v1", executableNames: ["dsh"], args: ["--profile", "acp"], env: {},
-      package: { kind: "npm", name: "@deepseek-ai/dsh", version: "0.2.1-alpha.1", binNames: ["dsh"] }, distribution: null, requiredExecutables: [],
+      package: { kind: "npm", name: "@deepseek-ai/dsh", version: "0.2.0-rc.2", binNames: ["dsh"] }, distribution: null, requiredExecutables: [],
       source: { repository: "deepseek-ai/deepseek-harness", revision: "5badb15009ae1756c3afe0ae0cef1faafc290ccc", upstreamId: "dsh", url: "https://github.com/deepseek-ai/deepseek-harness/blob/5badb15009ae1756c3afe0ae0cef1faafc290ccc/packages/acp/acp/README.md" } }],
   },
 ];
