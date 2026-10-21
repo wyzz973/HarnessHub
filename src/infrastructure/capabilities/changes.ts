@@ -87,6 +87,15 @@ function openclawContent(bytes: Buffer): unknown { const value = record(parsed(b
 /** A diff as shown: the home directory as ~ and secret values masked. */
 function displayed(text: string, homes: readonly string[]): string { let out = text; for (const home of [...homes].sort((a, b) => b.length - a.length)) out = out.split(home + "/").join("~/"); return maskSecrets(out); }
 function code(error: unknown): string { return error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : ""; }
+/**
+ * What a failed write records and answers (ADR-044): the action, the file with ~ and the error's code (`EACCES`, or
+ * HarnessHub's own), never the error's own text. A file system error names private paths, such as the temporary file
+ * beside the target, and a parser's may quote the file.
+ */
+function failedMessage(action: string, shown: string, failure: unknown): string {
+  const reason = code(failure);
+  return action + " " + shown + " 失败" + (/^[A-Z][A-Z0-9_]{0,63}$/u.test(reason) ? "（" + reason + "）" : "");
+}
 function inside(path: string, root: string): boolean { return path === root || path.startsWith(root + "/"); }
 function own(value: Readonly<Record<string, unknown>>, key: string): unknown { return Object.hasOwn(value, key) ? value[key] : undefined; }
 
@@ -95,7 +104,8 @@ function own(value: Readonly<Record<string, unknown>>, key: string): unknown { r
  * applied once on the user's confirmation, and made only while what it changes is still as it was shown. An edit keeps
  * a backup of the file's bytes (the newest ten per file), is atomic, read back and checked against the plan; a change of
  * links checks every link before touching any and records them so it can be undone. A result that is not as planned is
- * reported as failed. Changes of one file or directory run one at a time; `close` waits for the running ones.
+ * reported as failed; a failure is recorded with its code and the file with ~, never the error's own text (ADR-044).
+ * Changes of one file or directory run one at a time; `close` waits for the running ones.
  */
 export class CapabilityChanges {
   private readonly store: CapabilityStore;
@@ -630,7 +640,10 @@ export class CapabilityChanges {
     return table === null ? null : table.some(row => /(?:^|\/)cc-switch(?:\s|$)/u.test(row.command));
   }
 
-  /** Applies a confirmed check once; a replay of the same command returns its first result. */
+  /**
+   * Applies a confirmed check once; a replay of the same command returns its first result, as `history` shows it. A write
+   * that fails once started is answered and recorded as `failed` rather than thrown.
+   */
   apply(fingerprint: string, commandId: string): Promise<CapabilityChangeView> {
     if (!FINGERPRINT.test(fingerprint) || !COMMAND.test(commandId)) return Promise.reject(new CapabilityError("INVALID_INPUT", "invalid change confirmation"));
     const replay = this.replay(commandId, fingerprint);
@@ -677,7 +690,7 @@ export class CapabilityChanges {
       } catch (failure) {
         if (made) { try { if (readdirSync(dirname(plan.file)).length === 0) rmdirSync(dirname(plan.file)); } catch { /* left as it is */ } }
         if (failure instanceof CapabilityError && failure.code === "CAPABILITY_TARGET_CHANGED") { if (backupId !== null) this.store.dropBackup(backupId); throw failure; }
-        error = { code: failure instanceof CapabilityError ? failure.code : "CAPABILITY_WRITE_FAILED", message: failure instanceof Error ? failure.message : "写入失败" };
+        error = { code: failure instanceof CapabilityError ? failure.code : "CAPABILITY_WRITE_FAILED", message: failedMessage(plan.kind === "edit" && plan.remove === true ? "删除" : "写入", this.shown(plan.file), failure) };
         const after = readTarget(plan.file); written = after.state === "ok" ? after.bytes : null;
       }
       if (backupId !== null && written !== null) this.store.setWritten(backupId, written);
@@ -731,7 +744,7 @@ export class CapabilityChanges {
           if (!plan.check(parsed(after.bytes.toString("utf8"), "jsonc")) || (prepared.predicted !== null && entry(after.bytes) !== entry(prepared.predicted))) error = { code: "CAPABILITY_READBACK_MISMATCH", message: "写入后的服务器与预演不一致" };
         }
       } catch (failure) {
-        error = { code: failure instanceof CapabilityError ? failure.code : "CAPABILITY_WRITE_FAILED", message: failure instanceof Error ? failure.message : "写入失败" };
+        error = { code: failure instanceof CapabilityError ? failure.code : "CAPABILITY_WRITE_FAILED", message: failedMessage("写入", this.shown(plan.file), failure) };
         const after = readTarget(plan.file); written = after.state === "ok" ? after.bytes : null;
       }
       if (backupId !== null && written !== null) this.store.setWritten(backupId, written);
@@ -936,7 +949,7 @@ export class CapabilityChanges {
     this.prepared.set(fingerprint, { kind: "restore", expires, backup, current: currentSha, mode: current.state === "ok" ? current.mode : 0o600, check });
     return check;
   }
-  /** Restores a confirmed backup once, after backing up the file as it is now. */
+  /** Restores a confirmed backup once, after backing up the file as it is now; a write that fails is recorded as `failed`, like `apply`. */
   restore(fingerprint: string, commandId: string): Promise<CapabilityChangeView> {
     if (!FINGERPRINT.test(fingerprint) || !COMMAND.test(commandId)) return Promise.reject(new CapabilityError("INVALID_INPUT", "invalid restore confirmation"));
     const replay = this.replay(commandId, fingerprint);
@@ -956,7 +969,7 @@ export class CapabilityChanges {
       try { replaceTarget(file, prepared.current, bytes, prepared.mode); const after = readTarget(file); if (after.state !== "ok" || !after.bytes.equals(bytes)) error = { code: "CAPABILITY_READBACK_MISMATCH", message: "恢复后的内容与备份不一致" }; }
       catch (failure) {
         if (failure instanceof CapabilityError && failure.code === "CAPABILITY_TARGET_CHANGED") { if (backupId !== null) this.store.dropBackup(backupId); throw failure; }
-        error = { code: "CAPABILITY_WRITE_FAILED", message: failure instanceof Error ? failure.message : "恢复失败" };
+        error = { code: "CAPABILITY_WRITE_FAILED", message: failedMessage("恢复", this.shown(file), failure) };
       }
       if (error === null) { this.store.dropLedgerForFile(file); if (backupId !== null) this.store.setWritten(backupId, bytes); }
       const view: CapabilityChangeView = { id, kind: "restore", harnessId: null, subject: prepared.backup.subject, file: this.shown(file), status: error === null ? "applied" : "failed",

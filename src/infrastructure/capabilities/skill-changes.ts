@@ -440,7 +440,11 @@ export class SkillChanges {
       notes, blocked: blocked ?? (empty ? "无需修改。" : null), skills, source, lock, orphans }, (expires, check) => ({ kind: "package", change, expires, steps, check }));
   }
 
-  /** Makes a confirmed change of skill folders: everything is checked to be as shown before the first step. */
+  /**
+   * Makes a confirmed change of skill folders: everything is checked to be as shown before the first step. A step that
+   * fails rolls back the earlier ones, and the change is recorded as `failed` with that step's place (with ~) and the
+   * error's code.
+   */
   apply(prepared: PreparedPackage, record: (view: CapabilityChangeView) => void): Promise<CapabilityChangeView> {
     const steps = prepared.steps;
     return this.host.serial("skills:" + steps.shared, async () => {
@@ -453,15 +457,16 @@ export class SkillChanges {
         snapshots.set(item.folder, snapshot.id);
       }
       const staging = await stagingFolder(steps.shared), rollback: (() => Promise<void>)[] = [], after = new Map<string, string | null>();
-      let error: { code: string; message: string } | null = null, stuck = false, backupId: string | null = null;
+      // `step`: the link, folder or lock the change is at, which a failure names.
+      let error: { code: string; message: string } | null = null, stuck = false, backupId: string | null = null, step = steps.shared;
       try {
-        for (const link of steps.links.filter(item => item.action === "remove")) { unlinkSync(link.path); rollback.push(async () => { symlinkSync(link.target, link.path); }); }
+        for (const link of steps.links.filter(item => item.action === "remove")) { step = link.path; unlinkSync(link.path); rollback.push(async () => { symlinkSync(link.target, link.path); }); }
         for (const item of steps.removes) {
-          const aside = join(staging, "old-" + item.name);
+          const aside = join(staging, "old-" + item.name); step = item.folder;
           await rename(item.folder, aside); rollback.push(() => rename(aside, item.folder)); after.set(item.folder, null);
         }
         for (const item of steps.replaces) {
-          const fresh = join(staging, "new-" + item.name), aside = join(staging, "old-" + item.name);
+          const fresh = join(staging, "new-" + item.name), aside = join(staging, "old-" + item.name); step = item.folder;
           const written = item.by.kind === "archive" ? (await writeSkill(item.by.archive, item.by.skill, fresh)).id : item.by.kind === "text" ? (await writeSkillText(item.by.text, fresh)).id
             : (await this.host.snapshots.restore(item.by.id, fresh), item.by.id);
           await rename(item.folder, aside);
@@ -469,16 +474,16 @@ export class SkillChanges {
           rollback.push(async () => { await rename(item.folder, fresh); await rename(aside, item.folder); }); after.set(item.folder, written);
         }
         for (const item of [...steps.adds.map(add => ({ ...add, kind: "add" as const })), ...steps.restores.map(restore => ({ ...restore, kind: "restore" as const }))]) {
-          const fresh = join(staging, "new-" + item.name);
+          const fresh = join(staging, "new-" + item.name); step = item.folder;
           const written = item.kind === "restore" ? (await this.host.snapshots.restore(item.snapshot, fresh), item.snapshot) : "text" in item ? (await writeSkillText(item.text, fresh)).id
             : (await writeSkill(item.archive, item.skill, fresh)).id;
           if (present(item.folder)) throw new CapabilityError("CAPABILITY_TARGET_CHANGED", this.host.shown(item.folder) + " 在确认之后被占用");
           await rename(fresh, item.folder); rollback.push(() => rename(item.folder, join(staging, "undone-" + item.name))); after.set(item.folder, written);
         }
-        for (const link of steps.links.filter(item => item.action === "create")) { symlinkSync(link.target, link.path); rollback.push(async () => { unlinkSync(link.path); }); }
+        for (const link of steps.links.filter(item => item.action === "create")) { step = link.path; symlinkSync(link.target, link.path); rollback.push(async () => { unlinkSync(link.path); }); }
         if (steps.lock !== null) {
           const lock = steps.lock;
-          backupId = randomUUID();
+          step = lock.file; backupId = randomUUID();
           this.host.store.saveBackup({ id: backupId, file: lock.file, createdAt: at, changeId: id, subject: "lock：" + steps.subject }, lock.before);
           replaceTarget(lock.file, sha256(lock.before), Buffer.from(lock.after, "utf8"), lock.mode);
           rollback.push(async () => { replaceTarget(lock.file, sha256(Buffer.from(lock.after, "utf8")), lock.before, lock.mode); });
@@ -487,7 +492,9 @@ export class SkillChanges {
           this.host.store.setWritten(backupId, read.bytes);
         }
       } catch (failure) {
-        error = { code: failure instanceof CapabilityError ? failure.code : "CAPABILITY_WRITE_FAILED", message: (failure instanceof Error ? failure.message : "修改失败") + (code(failure) ? "（" + code(failure) + "）" : "") };
+        // The record names the place with ~ and the error's code, never the error's own text, which names private paths (ADR-044).
+        const reason = code(failure);
+        error = { code: failure instanceof CapabilityError ? failure.code : "CAPABILITY_WRITE_FAILED", message: "修改 " + this.host.shown(step) + " 失败" + (/^[A-Z][A-Z0-9_]{0,63}$/u.test(reason) ? "（" + reason + "）" : "") };
         for (const undo of rollback.reverse()) { try { await undo(); } catch { stuck = true; } }
         if (backupId !== null && !stuck) { this.host.store.dropBackup(backupId); backupId = null; }
         if (failure instanceof CapabilityError && failure.code === "CAPABILITY_TARGET_CHANGED" && !stuck) { await rm(staging, { recursive: true, force: true }); throw failure; }

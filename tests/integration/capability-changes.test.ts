@@ -287,3 +287,63 @@ test("G064-W7 what HarnessHub wrote and someone else then removed or changed is 
   assert.deepEqual([(await reapply("0".repeat(32))).status, (await forget("not-an-id")).status], [404, 400]);
   await f.clean();
 });
+
+test("G064-W3 a write that fails after its confirmation is answered and recorded as failed with its code and the file with ~, never the system's message, and the history keeps answering", macOnly, async t => {
+  const { chmod, stat } = await import("node:fs/promises");
+  const f = await gateway(t), settings = join(f.home, ".claude", "settings.json"), gemini = join(f.home, ".gemini"), geminiSettings = join(gemini, "settings.json");
+  // Something HarnessHub wrote and the user then changed by hand: drift for the history to show beside the failure.
+  assert.equal((await f.apply((await f.check("claude", "alpha", false)).value.fingerprint, "failure-drift")).value.status, "applied");
+  await writeFile(settings, (await readFile(settings, "utf8")).replace("\"alpha\":\"off\"", "\"alpha\":\"on\""));
+  const check = await f.check("gemini", "gamma", false), before = await readFile(geminiSettings, "utf8"), mode = (await stat(gemini)).mode & 0o777;
+  assert.equal(check.value.blocked, null, JSON.stringify(check.value));
+  // ~/.gemini turns read-only after the confirmation, so the temporary file beside settings.json cannot be made, and Node's own
+  // message names it by its absolute path: "EACCES: permission denied, open '<home>/.gemini/.settings.json.harnesshub-….tmp'".
+  // Mutation check (run by hand, not kept): recording `failure.message` again in applyEdit makes this answer 500 PRIVACY_GUARD.
+  await chmod(gemini, 0o500);
+  let failed: { status: number; value: CapabilityChangeView };
+  try { failed = await f.apply(check.value.fingerprint, "failure-read-only"); } finally { await chmod(gemini, mode); }
+  assert.equal(failed.status, 200, JSON.stringify(failed.value));
+  assert.deepEqual([failed.value.status, failed.value.file, failed.value.error, failed.value.diff, failed.value.backupId],
+    ["failed", "~/.gemini/settings.json", { code: "CAPABILITY_WRITE_FAILED", message: "写入 ~/.gemini/settings.json 失败（EACCES）" }, null, null]);
+  assert.equal(await readFile(geminiSettings, "utf8"), before, "nothing was written");
+  // The history answers with the failure, and with the drift and the orphaned settings beside it.
+  const history = await f.call<CapabilityHistory>("/capabilities/history");
+  assert.equal(history.status, 200, JSON.stringify(history.value));
+  assert.deepEqual(history.value.changes[0], failed.value);
+  assert.deepEqual(history.value.drift.map(item => [item.kind, item.harnessId, item.subject, item.state]), [["skill-switch", "claude", "alpha", "changed"]]);
+  assert.deepEqual(history.value.orphans, []);
+  // The same command answers the same record; with the folder writable again, a new check makes the change.
+  assert.deepEqual(await f.apply(check.value.fingerprint, "failure-read-only"), { status: 200, value: failed.value });
+  assert.equal((await f.apply((await f.check("gemini", "gamma", false)).value.fingerprint, "failure-writable")).value.status, "applied");
+  await f.clean();
+});
+
+test("G064-W3 a restore and a change of skill folders that fail are recorded the same way: the error's code and the place with ~", macOnly, async t => {
+  const { chmod, stat } = await import("node:fs/promises");
+  const f = await gateway(t), claude = join(f.home, ".claude"), settings = join(claude, "settings.json"), agents = join(f.home, ".agents"), shared = join(agents, "skills");
+  const off = await f.apply((await f.check("claude", "alpha", false)).value.fingerprint, "restore-source");
+  assert.equal(off.value.status, "applied", JSON.stringify(off.value));
+  const switched = await readFile(settings, "utf8"), backup = (await f.call<CapabilityHistory>("/capabilities/history")).value.backups.find(item => item.changeId === off.value.id)!;
+  const restoreCheck = await f.call<CapabilityRestoreCheck>("/capabilities/backups/" + backup.id + "/restore"), claudeMode = (await stat(claude)).mode & 0o777;
+  await chmod(claude, 0o500);
+  let restored: { status: number; value: CapabilityChangeView };
+  try { restored = await f.call<CapabilityChangeView>("/capabilities/restores", { fingerprint: restoreCheck.value.fingerprint, commandId: "restore-read-only" }); } finally { await chmod(claude, claudeMode); }
+  assert.equal(restored.status, 200, JSON.stringify(restored.value));
+  assert.deepEqual([restored.value.kind, restored.value.status, restored.value.error], ["restore", "failed", { code: "CAPABILITY_WRITE_FAILED", message: "恢复 ~/.claude/settings.json 失败（EACCES）" }]);
+  assert.equal(await readFile(settings, "utf8"), switched, "nothing was restored");
+  // A new skill whose folder cannot be put into the shared directory: the change rolls back and names the folder.
+  const create = await f.call<CapabilityChangeCheck>("/capabilities/skill-create", { name: "kappa", description: "Checks how a failure is recorded", body: "Do nothing.\n" });
+  assert.equal(create.value.blocked, null, JSON.stringify(create.value));
+  const sharedMode = (await stat(shared)).mode & 0o777;
+  await chmod(shared, 0o500);
+  let created: { status: number; value: CapabilityChangeView };
+  try { created = await f.apply(create.value.fingerprint, "skill-read-only"); } finally { await chmod(shared, sharedMode); }
+  assert.equal(created.status, 200, JSON.stringify(created.value));
+  assert.deepEqual([created.value.kind, created.value.status, created.value.error, created.value.notes],
+    ["skill-create", "failed", { code: "CAPABILITY_WRITE_FAILED", message: "修改 ~/.agents/skills/kappa 失败（EACCES）" }, ["已全部回滚，没有留下改动。"]]);
+  assert.deepEqual([(await readdir(shared)).includes("kappa"), (await readdir(agents)).filter(name => name.startsWith(".harnesshub-staging-"))], [false, []]);
+  const history = await f.call<CapabilityHistory>("/capabilities/history");
+  assert.equal(history.status, 200, JSON.stringify(history.value));
+  assert.deepEqual(history.value.changes.slice(0, 2).map(change => [change.kind, change.status]), [["skill-create", "failed"], ["restore", "failed"]]);
+  await f.clean();
+});
