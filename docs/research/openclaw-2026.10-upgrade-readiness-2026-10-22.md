@@ -5,7 +5,7 @@
 ## 方法与边界
 
 - 纯只读。没有运行 `openclaw`（包括 `--version`），没有触碰用户的 Gateway 与 Node 服务，没有读 `~/.openclaw/openclaw.json` 或任何凭据。插件目录只读了 `~/.openclaw/extensions/openclaw-weixin/` 的 `package.json` 与 `openclaw.plugin.json` 中的 `name`、`version`、`openclaw.install`、`peerDependencies`、`engines`、`id`、`channels` 几个键，没有读 `configSchema` 以外的内容。
-- 材料：本机包 `/opt/homebrew/lib/node_modules/openclaw`（`package.json`、`docs/`、`dist/`）；`registry.npmjs.org` 的元数据（`npm view`，缓存指到本任务的临时目录）；两个候选版本 tarball 的流式列目录与少量文件抽取（清单见文末）；GitHub `openclaw/openclaw` 的 `v2026.10.5`、`v2026.9.33` 标签源码（`src/acp/*.ts`、`src/gateway/{method-scopes,operator-scopes,device-scope-upgrade}.ts`、`src/gateway/methods/core-method-policy.ts`）与标签内文档（`docs/cli/update/how-updates-run.md`、`docs/cli/gateway/{query,service}.md`）；主代理此前抓取的 main 文档（commit 62cb03ac，2026-10-17）与 2026.10.4 包文档。引用写作 `<版本>:<路径>:<行>`。
+- 材料：本机包 `/opt/homebrew/lib/node_modules/openclaw`（`package.json`、`docs/`、`dist/`）；`registry.npmjs.org` 的元数据（`npm view`，缓存指到本任务的临时目录）；两个候选版本 tarball 的流式列目录与少量文件抽取（清单见文末）；GitHub `openclaw/openclaw` 的 `v2026.10.5`、`v2026.9.33` 标签源码（`src/acp/*.ts`、`src/gateway/{method-scopes,operator-scopes,device-scope-upgrade}.ts`、`src/gateway/methods/core-method-policy.ts`）与标签内文档（`docs/cli/update/how-updates-run.md`、`docs/cli/gateway/{query,service}.md`）；主代理此前抓取的 main 文档（commit 62cb03ac，2026-10-17）与 2026.10.4 包文档。引用写作 `<版本>:<路径>:<行>`：`2026.10.5:`、`2026.9.33:` 指 npm 包副本（tarball 流式抽取），`v2026.10.5:`、`v2026.9.33:` 指 GitHub 标签副本；行号各按所标副本核对，本轮核对过的同名文档两种副本内容一致。
 - 任务说明里的 `oc-src/` 实际是 OpenCode（sst/opencode）源码，不是 OpenClaw，本页没有使用。
 
 ## 版本线（2026-10-22 查询）
@@ -18,7 +18,7 @@
 | 生命周期脚本 | 只有 `prepack`、`prepare` | `preinstall`、`postinstall` | 同左 |
 | 随包的 `dist/extensions/` 目录数 | 含 `deepseek`、`feishu` | 65，不含两者 | 67，不含两者 |
 
-其他 dist-tag：`beta` 2026.10.10-beta.3。桥接版本 2026.9.5（2026-09-19 发布）的 `engines.node` 与两个候选相同。
+其他 dist-tag：`beta` 2026.10.10-beta.3。桥接版本 2026.9.5（2026-09-19 发布）的 `engines.node` 与两个候选相同，也带同名的 `preinstall`、`postinstall` 两个生命周期脚本（npm `scripts`）。
 
 ## 问题 1：包、脚本与 `openclaw update`
 
@@ -37,17 +37,17 @@
 - 只在 Bun 下安装 Bun CLI 启动器（403-417）。
 - `OPENCLAW_DISABLE_BUNDLED_PLUGIN_POSTINSTALL` 可关闭（21）。
 
-它不安装任何插件，也不下载任何东西。`preinstall-package-manager-warning.mjs` 只核对包管理器与 Node 版本并打印警告（1-16 行）。
+它不安装任何插件，也不下载任何东西。`preinstall-package-manager-warning.mjs`（`2026.10.5:scripts/preinstall-package-manager-warning.mjs`，430 行）不只是警告：作为入口运行时（:424-430）先核对 Node 运行时是否满足包的 `engines.node`，不满足就打印错误并把 `process.exitCode` 置 1，preinstall 失败则安装失败（`enforceSupportedNodeRuntime`，:285-329）；通过后删除 2026.8.1 的旧安装守卫标记文件（`removeLegacyPackageInstallGuard`，:340-358，删不掉同样退出码 1）；最后只在非 pnpm 的包管理器下打印一条警告（`warnIfNonPnpmLifecycle`，:409-422）。
 
 ### `--ignore-scripts` 安装后 deepseek 与 feishu 能否使用
 
-不能，但与脚本无关：两者根本不在包里。`--ignore-scripts` 只会跳过上面的清理与标记清除；残留的 `.openclaw-lifecycle-pending` 由谁消费、是否告警，未核实。官方文档写的安装命令是 `npm install -g openclaw@<版本> --allow-scripts=openclaw`（npm 12 或 11.16+；更早的 npm 省略该参数，`2026.10.5:docs/install/updating.md:82-103`）。本机 nvm 下的 npm 是 11.20.0（[升级与重启验收](../verification/upgrade-restart-2026-10-12.md)）。HarnessHub 现在两处都带 `--ignore-scripts`（`src/infrastructure/management/native.ts:193`、`:218`）。
+不能，但与脚本无关：两者根本不在包里。`--ignore-scripts` 只会跳过 postinstall 的清理与标记清除，以及 preinstall 的 Node 核对与旧守卫删除；残留的 `.openclaw-lifecycle-pending` 由谁消费、是否告警，未核实。官方文档写的安装命令是 `npm install -g openclaw@<版本> --allow-scripts=openclaw`（npm 12 或 11.16+；更早的 npm 省略该参数，`2026.10.5:docs/install/updating.md:82-103`）。本机 nvm 下的 npm 是 11.20.0（[升级与重启验收](../verification/upgrade-restart-2026-10-12.md)）。HarnessHub 现在两处都带 `--ignore-scripts`（`src/infrastructure/management/native.ts:193`、`:218`）。
 
 ### `openclaw update` 的流程（候选版本）
 
 依据 `2026.10.5:docs/cli/update.md` 与 `v2026.10.5:docs/cli/update/how-updates-run.md`：
 
-- 轨道：`stable`、`extended-stable`、`beta`、`dev`（update.md:15）。选项：`--channel <轨道>`（成功后持久化；extended-stable 只对包安装）、`--tag <dist-tag|版本|spec>`（只对本次，不能与生效中的 extended-stable 轨道同用）、`--dry-run`（不写配置、不安装、不同步插件、不重启，也不预演候选）、`--json`（输出 `UpdateRunResult`）、`--no-restart`、`--yes`、`--admission <auto|installed>`、`--timeout`（update.md:649-657）。
+- 轨道：`stable`、`extended-stable`、`beta`、`dev`（update.md:14）。选项（标志表 update.md:648-658）：`--channel <轨道>`（成功后持久化；extended-stable 只对包安装）、`--tag <dist-tag|版本|spec>`（只对本次，不能与生效中的 extended-stable 轨道同用）、`--dry-run`（不写配置、不安装、不同步插件、不重启，也不预演候选）、`--json`（输出 `UpdateRunResult`）、`--no-restart`、`--yes`、`--admission <auto|installed>`、`--timeout <秒>`（每步的可选期限；**省略时包安装、延后的生命周期脚本与候选 Doctor 没有工作期限**，update.md:638-639、:654，:806 的默认值列为 Unset；整份 update.md 没有 1200 秒或 20 分钟的字样）。本机 2026.3.23-2 的更新器则每步默认 1200 秒（本机 `docs/cli/update.md:38`；`dist/update-cli-6OGXKQdy.js:1361` 传给 `runPackageInstallUpdate` 的 `timeoutMs ?? 20 * 6e4`，:1037、:1287 同值）；2026.9.5 更新器的默认值未核实。
 - 候选自治的准入：目标包先私下预演，由候选自己判断配置、数据库 schema、Node 要求与插件可用性，再激活（update.md:442-525）。
 - Doctor：目标版本的 Doctor 在激活前运行（update.md:720）；更新时在候选配置校验之前先套用已知迁移（config-migrations.md:27-29）；配置无效导致 schema 预检读不到路径时拒绝并列出文件与字段，不改配置（update.md:734-737）。
 - 重启：更新器自己做受管重启；对 npm 全局安装，即使 `--no-restart`，正在运行的 Gateway 也会在它的监视器发现安装被替换后自行重启（update.md:667-670）。在 LaunchAgent 内运行 `openclaw update` 会交给受管服务助手并以退出码 75 返回（how-updates-run.md:873-900）。
@@ -67,7 +67,7 @@
 - 严格校验：“OpenClaw 只接受完全符合 schema 的配置。未知键、类型错误或非法值会让 Gateway **拒绝启动**。启动 Gateway 前先运行 `openclaw doctor --fix` 修复旧键”（`2026.10.5:docs/gateway/configuration.md:80-81`）。所以：只装新版本、不跑 Doctor、直接重启（HarnessHub 现在的 ADR-043 路径），Gateway 会起不来，渠道中断直到有人运行 `openclaw doctor --fix`。
 - Doctor 直接拒绝的退役输入（要求先经 2026.9.5）包括 `channels.feishu.accounts.<id>.botName`、`messages.queue.mode` 的 `queue`/`steer-backlog`/`steer+backlog`、顶层 `heartbeat`、`routing.allowFrom`、`channels.webchat`、非空 `plugins.installs` 等（`2026.10.5:docs/gateway/doctor/config-migrations.md:242-262`）。本机配置是否含这些键：未核实（没有读配置）。
 - 渠道配置需修复时：候选的 Doctor 在私有副本上逐项修复，某项抛错就保留该项之前的配置并继续（config-migrations.md:13-17）；缺失的插件不阻止启动（:633-638）；配置本身非法则拒绝启动（上一条）。
-- 热重载对无效编辑的处理：无效编辑保留上一份可用的运行时；重启读的是同一份配置，所以停掉后要先 `openclaw doctor --fix` 再重启（`2026.10.5:docs/gateway/configuration/hot-reload.md:110-136`）。
+- 热重载对无效编辑的处理：无效编辑保留上一份可用的运行时；重启读的是同一份配置，所以停掉后要先 `openclaw doctor --fix` 再重启（`2026.10.5:docs/gateway/configuration/hot-reload.md:65-67`）。
 
 ## 问题 3：ACP 桥
 
@@ -81,10 +81,10 @@
 | 思考流 | 已实现：`thinking` 块映射为 `agent_thought_chunk`，`text` 为 `agent_message_chunk`（`translator.prompt-stream.ts:510-513`） | 本机 `acp-runtime-BHZj-SLU.js` 没有 `agent_thought_chunk`（grep 为 0），思考由转录对账补记 |
 | 工具流 | 部分：`tool_call`/`tool_call_update` 含原始输入输出与尽力给出的文件位置（acp.md；`translator.agent-events.ts:110`） | 由转录对账补记 |
 | 审批中继 | 部分：本回合内 Gateway 的 exec 审批经 `session/request_permission` 中继，选项 allow-once / allow-always / deny（`permission-relay.ts:25-30`；`translator.agent-events.ts:57`、`:144`）；其他会话的审批忽略 | 本机 `acp-runtime` 没有 `request_permission`（grep 为 0） |
-| 默认键前缀 | `acp-bridge:<uuid>`（`translator.session-lifecycle.ts:67`）；这类会话是“合成、可丢弃”的，受过期清理（acp.md “Session mapping”） | HarnessHub 用 `agent:<agent>:harnesshub:<uuid>`（`src/adapters/control/openclaw.ts:102`），不带该前缀 |
+| 默认键前缀 | `acp-bridge:<uuid>`（`translator.session-lifecycle.ts:67`）；这类会话是“合成、可丢弃”的，受过期清理（acp.md “Session mapping”） | HarnessHub 用 `agent:<agent>:harnesshub:<uuid>`（`src/adapters/control/openclaw.ts:110`，6eee665 时的行号：`sessionParameters` 里的 `this.sessionKey = this.restoredKey ?? "agent:" + agent.toLowerCase() + ":harnesshub:" + randomUUID()`），不带该前缀 |
 | `_meta` 受理的键 | `sessionKey`（别名 `session`、`key`）、`sessionLabel`（`label`）、`resetSession`（`reset`）、`requireExistingSession`（`requireExisting`）、`prefixCwd`（`session-mapper.ts:13-25`；2026.9.33 同一组键） | `acp-cli-BQ740PFm.js` 含 `requireExistingSession`（grep） |
 | 每会话 `mcpServers` | 桥模式拒绝（acp.md） | 未核实 |
-| `gateway call` 的 operator scope | acp.md:136（两个候选）：“`openclaw gateway call sessions.list` 这条 CLI 路径可能请求一次 fresh-token 的 operator scope 升级”。`src/gateway/method-scopes.ts:45-53` 给 CLI/operator 客户端的默认 scope 集合是 admin、read、write、approvals、questions、pairing、talk-secrets；`sessions.patch` 是动态方法，所需 scope 为 `resolveDynamicSessionMutationRequiredScope(method, params) ?? operator.write`（:157-165）；未分类方法默认拒绝（:187-191）。`models.list`、`sessions.list`、`chat.history`、`skills.status`、`tools.catalog`、`sessions.get` 的静态 scope 来自生成的核心方法元数据（`core-method-policy.ts:62`），本轮没有抓到那份表：未核实。scope 升级流程在 `device-scope-upgrade.ts`（配对设备的升级等待，终态宽限 15 秒） | HarnessHub 经 `openclaw gateway call` 调用这 7 个方法（`openclaw.ts:14`、`:108`） |
+| `gateway call` 的 operator scope | acp.md:136（两个候选）：“`openclaw gateway call sessions.list` 这条 CLI 路径可能请求一次 fresh-token 的 operator scope 升级”。`src/gateway/method-scopes.ts:45-53` 给 CLI/operator 客户端的默认 scope 集合是 admin、read、write、approvals、questions、pairing、talk-secrets；`sessions.patch` 是动态方法，所需 scope 为 `resolveDynamicSessionMutationRequiredScope(method, params) ?? operator.write`（:157-165）；未分类方法默认拒绝（:187-191）。`models.list`、`sessions.list`、`chat.history`、`skills.status`、`tools.catalog`、`sessions.get` 的静态 scope 来自生成的核心方法元数据（`core-method-policy.ts:62`），本轮没有抓到那份表：未核实。scope 升级流程在 `device-scope-upgrade.ts`（配对设备的升级等待，终态宽限 15 秒） | HarnessHub 经 `openclaw gateway call` 调用这 7 个方法（`openclaw.ts:14` 的 `OpenClawMethod` 联合；`:117`，6eee665 时的行号：私有方法 `call` 里的 `nativeCommand(…, "gateway", "call", method, "--json", "--params", …)`） |
 
 ## 问题 4：热重载、会话维护、hooks 与插件读法
 
@@ -136,6 +136,7 @@
 7. openclaw-weixin 2.0.1 在 2026.10.x 宿主上的运行时兼容性，以及它的安装来源记录。
 8. HarnessHub 的 `agent:…:harnesshub:` 会话键在新版会话维护中算普通会话还是合成会话。
 9. 升级后 HarnessHub 自己的 `launchctl kickstart -k`（ADR-043）与新版 Gateway 的自重启是否会叠加。
+10. 本机 2026.3.23-2 的更新器发起的 npm 安装（见 ADR-052 路线 A 第一跳）在本机 npm 11.20.0 下会不会运行 2026.9.5 的 `preinstall`/`postinstall`：它的参数是 `npm i -g <spec>` 加静默参数 `--no-fund --no-audit --loglevel=error`（`dist/server-startup-matrix-migration-DR8lh8kT.js:682-702` 的 `globalInstallArgs` 与 `:547-551`，由 `dist/update-cli-6OGXKQdy.js:978-1003` 的 `runPackageInstallUpdate` 调用），整个本机 `dist/` 没有 `allow-scripts` 字样，`ignore-scripts` 只出现在技能与插件安装的分块里；候选文档要求 npm 12 或 11.16+ 加 `--allow-scripts=openclaw` 才运行这两个脚本（`2026.10.5:docs/install/updating.md:102-103`）。另外 2026.9.5 更新器的 `--timeout` 默认值也未核实。
 
 ## 对 HarnessHub 的直接影响
 
@@ -152,8 +153,8 @@
 
 | 目标 | 内容 |
 |---|---|
-| `registry.npmjs.org` | `npm view openclaw dist-tags`；`npm view openclaw@2026.10.5` 与 `@2026.9.33` 的 `version engines files scripts dist`；`npm view openclaw time`；`npm view openclaw@2026.9.5 version engines`；`npm view openclaw-weixin`；`npm view @openclaw/weixin`（404）；`npm view @tencent-weixin/openclaw-weixin` 的 `versions` 与 2.0.1、2.4.6、3.0.0（404）、3.3.1（404）的元数据 |
-| `registry.npmjs.org/openclaw/-/openclaw-2026.10.5.tgz` | 流式 `tar -tzf` 列目录一次；流式抽取一次（清单见下） |
+| `registry.npmjs.org` | `npm view openclaw dist-tags`；`npm view openclaw@2026.10.5` 与 `@2026.9.33` 的 `version engines files scripts dist`；`npm view openclaw time`；`npm view openclaw@2026.9.5 version engines`；`npm view openclaw-weixin`；`npm view @openclaw/weixin`（404）；`npm view @tencent-weixin/openclaw-weixin` 的 `versions` 与 2.0.1、2.4.6、3.0.0（404）、3.3.1（404）的元数据；修订轮：`npm view openclaw@2026.10.5 dist.tarball`、`npm view openclaw@2026.9.5 version engines scripts` |
+| `registry.npmjs.org/openclaw/-/openclaw-2026.10.5.tgz` | 流式 `tar -tzf` 列目录一次；流式抽取一次（清单见下）；修订轮再流式抽取一次，只取 `package/docs/cli/update.md`、`package/docs/gateway/configuration/hot-reload.md`、`package/scripts/preinstall-package-manager-warning.mjs`、`package/docs/cli/plugins/install.md`、`package/docs/install/updating.md` 五个文件（临时目录 19 MB，核对后删除） |
 | `registry.npmjs.org/openclaw/-/openclaw-2026.9.33.tgz` | 同上 |
 | `api.github.com/repos/openclaw/openclaw` | `git/ref/tags/v2026.10.5`、`v2026.9.33`；`contents/src/acp?ref=v2026.10.5`、`contents/scripts?ref=v2026.10.5`、`contents/src/cli/gateway-cli?ref=v2026.10.5`、`contents/src/gateway?ref=v2026.10.5` |
 | `raw.githubusercontent.com/openclaw/openclaw/v2026.10.5` 与 `v2026.9.33` | `src/acp/` 下 15 个文件各两份：`server.ts`、`translator.ts`、`translator.session-lifecycle.ts`、`translator.session-list.ts`、`translator.session-state.ts`、`session-mapper.ts`、`persistent-bindings.types.ts`、`permission-relay.ts`、`translator.agent-events.ts`、`event-mapper.ts`、`policy.ts`、`commands.ts`、`types.ts`、`translator.session-updates.ts`、`translator.prompt-stream.ts` |
