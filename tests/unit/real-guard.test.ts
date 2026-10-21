@@ -95,7 +95,8 @@ test("G060-NC14 a snapshot holds digests, entry names and link targets only; com
   assert.deepEqual(entry(before, "~/.dsh/AGENTS.md"), { path: "~/.dsh/AGENTS.md", groups: ["dsh"], kind: "missing" });
   const settings = entry(before, "~/.claude/settings.json");
   assert.ok(settings?.kind === "file" && /^[0-9a-f]{64}$/u.test(settings.sha256) && settings.part === undefined);
-  assert.equal(entry(before, "~/.claude.json")?.kind === "file" && entry(before, "~/.claude.json")?.groups.join(), "claude");
+  const servers = entry(before, "~/.claude.json");
+  assert.ok(servers?.kind === "file" && servers.part === "mcpServers" && /^[0-9a-f]{64}$/u.test(servers.sha256)); assert.deepEqual(servers.groups, ["claude"]);
   assert.deepEqual([...new Set(before.paths.map(item => item.path))].length, before.paths.length, "each location once");
   // Nothing changed: unchanged, also after the snapshot went through a file.
   assert.deepEqual(compare(before, await snapshot(ids, source)), { unchanged: true, changed: [] });

@@ -537,14 +537,14 @@ export interface TestOutcome { completed: boolean; readonly details: Record<stri
 /**
  * Ends one test under the guard. Call it once the test has registered its own cleanup hooks: the hook registered here runs
  * after them (node:test runs a test's after hooks in order), also when the test failed. It takes the second snapshot of
- * `before`'s Harnesses, appends `{ test, harnesses, outcome, guard, ...details }` to `evidence.results`, writes
+ * `before`'s Harnesses, appends `{ test, harnesses, ...details, outcome, guard }` to `evidence.results`, writes
  * `{ header, results }` to `evidencePath` (0600) when one is given, and then fails the test with the changed ~ paths.
  */
 export function guardTest(t: TestContext, before: GuardSnapshot, source: GuardSource, evidencePath: string | undefined, evidence: SuiteEvidence): TestOutcome {
   const outcome: TestOutcome = { completed: false, details: {} };
   t.after(async () => {
     const guard = await recheck(before, source);
-    evidence.results.push({ test: t.name, harnesses: before.harnesses, outcome: outcome.completed ? "completed" : "failed", guard, ...outcome.details });
+    evidence.results.push({ test: t.name, harnesses: before.harnesses, ...outcome.details, outcome: outcome.completed ? "completed" : "failed", guard });
     if (evidencePath !== undefined) await writeFile(evidencePath, JSON.stringify({ header: evidence.header, results: evidence.results }, null, 2) + "\n", { mode: 0o600 });
     assert.ok(guard.unchanged, "the user's own configuration must remain unchanged: " + describeGuard(guard));
   });
@@ -569,7 +569,7 @@ export async function main(args: readonly string[], io: { readonly source?: Guar
     try { guardTargets(ids); } catch (error) { return usage(error instanceof Error ? error.message : "invalid Harness ids"); }
     let taken: GuardSnapshot;
     try { taken = await snapshot(ids, io.source ?? captureNativeEnvironment()); }
-    catch (error) { errors("guard: " + (error instanceof GuardError ? error.code + ": " + error.message : "the snapshot failed") + "\n"); return 70; }
+    catch (error) { errors("guard: " + (error instanceof GuardError ? error.code + ": " + error.message : "the snapshot failed (" + errno(error) + ")") + "\n"); return 70; }
     try { await writeFile(resolve(second), JSON.stringify(taken, null, 2) + "\n", { mode: 0o600, flag: "wx" }); }
     catch (error) { errors("guard: the snapshot file could not be created (" + errno(error) + "); a snapshot never replaces an existing file\n"); return 73; }
     output("guard: " + taken.paths.length + " locations of " + taken.harnesses.join(", ") + " and the shared list, digests only\n");
