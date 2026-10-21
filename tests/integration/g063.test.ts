@@ -13,6 +13,14 @@ const script = join(repository, "tools", "check-boundaries.mjs");
 const rulesFile = join(repository, "tools", "boundary-rules.json");
 const samples = join(repository, "tools", "fixtures", "boundaries");
 
+/** Adding an exception is a decision: it is listed here and, with its reason, in tools/boundary-rules.json. */
+const registered = [
+  { rule: "B3", file: "src/contracts/control.ts", key: "src/contexts/catalog/domain/catalog.js" },
+  { rule: "B3", file: "src/contracts/control.ts", key: "src/contexts/catalog/domain/discovery.js" },
+  { rule: "B3", file: "src/contracts/management.ts", key: "src/contexts/catalog/domain/catalog.js" },
+  { rule: "B9", file: "tests/integration/login-shell.test.ts", key: "--allow-unofficial" },
+];
+
 interface Reported { readonly file: string; readonly line: number; readonly rule: string; readonly text: string }
 interface Report { readonly status: number | null; readonly stdout: string; readonly stderr: string; readonly violations: readonly Reported[]; readonly exceptions: readonly string[] }
 
@@ -92,13 +100,7 @@ test("G063-C01 the repository satisfies every boundary rule and only its registe
   const report = check([]);
   assert.equal(report.status, 0, report.stdout + report.stderr);
   assert.deepEqual(report.violations, [], report.stdout);
-  // Adding an exception is a decision: it is listed here and, with its reason, in tools/boundary-rules.json.
-  assert.deepEqual(report.exceptions.map(line => /^registered exception (B\d+) (\S+?):\d+ (\S+)/u.exec(line)!.slice(1).join(" ")).sort(), [
-    "B3 src/contracts/control.ts src/contexts/catalog/domain/catalog.js",
-    "B3 src/contracts/control.ts src/contexts/catalog/domain/discovery.js",
-    "B3 src/contracts/management.ts src/contexts/catalog/domain/catalog.js",
-    "B9 tests/integration/login-shell.test.ts --allow-unofficial",
-  ]);
+  assert.deepEqual(report.exceptions.map(line => /^registered exception (B\d+) (\S+?):\d+ (\S+)/u.exec(line)!.slice(1).join(" ")).sort(), registered.map(item => `${item.rule} ${item.file} ${item.key}`).sort());
   // A pass over nothing is not a pass: every scan root contributed files.
   const scanned = /scanned (\d+) files \(src (\d+), web\/src (\d+), tests (\d+)\)/u.exec(report.stdout);
   assert.ok(scanned !== null, report.stdout);
@@ -166,9 +168,7 @@ test("G063-C02 flags that come from another file are reported as not visible, wi
 test("G063-C02 the real code is rejected once the registered exceptions are withdrawn", async t => {
   const report = check(["--rules", await rulesWithoutExceptions(t)]);
   assert.equal(report.status, 1, report.stdout + report.stderr);
-  assert.deepEqual(report.violations.map(item => `${item.rule} ${item.file}`).sort(), [
-    "B3 src/contracts/control.ts", "B3 src/contracts/control.ts", "B3 src/contracts/management.ts", "B9 tests/integration/login-shell.test.ts",
-  ], report.stdout);
+  assert.deepEqual(report.violations.map(item => `${item.rule} ${item.file}`).sort(), registered.map(item => `${item.rule} ${item.file}`).sort(), report.stdout);
 });
 
 test("G063-C02 an exception covers only its own file, import and kind, and no more occurrences than registered", async t => {
