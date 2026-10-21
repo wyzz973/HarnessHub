@@ -133,6 +133,8 @@ export class AcpControl implements HarnessControl {
   private active: ActivePrompt | null = null;
   private failure: Error | null = null;
   private catalog: NativeModelCatalog = { models: [], defaultModel: null, authentication: "unknown", canSelect: false };
+  /** A sign-in state the agent reported on its own (setAuthentication); null until it reports one. */
+  private reportedAuthentication: NativeModelCatalog["authentication"] | null = null;
   private interactivePermissions = false;
   /** Pending native interactions; `reply` maps the user's choice for a form question, otherwise the option is selected. */
   private readonly permissions = new Map<string, { options: readonly string[]; resolve: (value: unknown) => void; reply?: (option: string, input?: string) => unknown }>();
@@ -188,7 +190,8 @@ export class AcpControl implements HarnessControl {
         agentVersion: info === null ? null : string(info.version, "agent version"),
         authenticationMethods: methods.map(method => method.id), capabilities };
       this.version = observation.agentVersion;
-      this.catalog = { ...this.catalog, authentication: this.authentication(methods) };
+      // A report read together with this response (same stdout chunk) is the agent's own word and outranks its methods.
+      this.catalog = { ...this.catalog, authentication: this.reportedAuthentication ?? this.authentication(methods) };
       this.initialized = true;
       return observation;
     } catch (error) { const failure = this.nativeFailure(error); this.rpc.abort(failure); throw failure; }
@@ -398,6 +401,26 @@ export class AcpControl implements HarnessControl {
    */
   protected authentication(methods: readonly { readonly id: string; readonly type: string }[]): NativeModelCatalog["authentication"] { return "unknown"; }
   /**
+   * Records a sign-in state that the agent reported on its own, outside initialize. From then on, catalog reads return
+   * it, and open() refuses with NATIVE_AUTH_REQUIRED while it is "missing". A session that is already being opened and a
+   * Turn that is already running are left alone: the agent itself decides whether they still reach a model. The reported
+   * state outranks what the advertised authentication methods suggest, including when it arrives in the same stdout
+   * chunk as the initialize response.
+   */
+  protected setAuthentication(state: NativeModelCatalog["authentication"]): void {
+    this.reportedAuthentication = state; this.catalog = { ...this.catalog, authentication: state };
+  }
+  /**
+   * Handles a notification outside session/update that this agent's driver understands, such as claude-agent-acp's
+   * connection-level `_auth/status_update`. Returning true means the driver handled it, so the active Run records no
+   * "Unsupported ACP notification" diagnostic. The default handles nothing. If the parameters name a session, the
+   * notification reaches this hook only after that session is matched against the owned one. The hook runs on the
+   * connection's reader, in stream order: it can run before initialize() resolves, during session setup, and during or
+   * between Turns, so it must return without waiting. Throwing fails the connection, as a malformed message does, so a
+   * driver should read the fields it needs leniently. Nothing from the parameters reaches a Run unless the driver emits it.
+   */
+  protected extensionNotification(_method: string, _params: Readonly<Record<string, unknown>>): boolean { return false; }
+  /**
    * What one of the agent's own approval options changes beyond this request, shown with the request; empty when the
    * option names already say it (Claude's name the rule they would write).
    */
@@ -539,7 +562,7 @@ export class AcpControl implements HarnessControl {
     if (method !== "session/update") {
       const params = raw === undefined ? {} : object(raw, "ACP notification params");
       if (params.sessionId !== undefined) this.scope(params);
-      this.active?.event({ type: "diagnostic", message: `Unsupported ACP notification: ${method}` });
+      if (!this.extensionNotification(method, params)) this.active?.event({ type: "diagnostic", message: `Unsupported ACP notification: ${method}` });
       return;
     }
     const params = object(raw, "ACP notification params");
