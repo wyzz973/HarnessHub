@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { createHash, randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { deflateSync } from "node:zlib";
@@ -9,6 +9,8 @@ import { application } from "../../src/cli/session-application.js";
 import type { ContentRef } from "../../src/contracts/content.js";
 import type { PublicRun, SessionId } from "../../src/contracts/session.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
+import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
+import { describeGuard, evidenceHeader, guardTargets, recheck, snapshot, type EvidenceHeader, type GuardCheck } from "./guard.js";
 /** A development manifest (HH_REAL_MANIFEST) names non-official entries, which only the development policy reads (ADR-044). */
 const realInstallations = process.env.HH_REAL_MANIFEST ? "any" as const : "official" as const;
 
@@ -19,22 +21,9 @@ const realInstallations = process.env.HH_REAL_MANIFEST ? "any" as const : "offic
  */
 const harnesses = (process.env.HH_REAL_HARNESSES ?? "").split(",").map(value => value.trim()).filter(Boolean);
 const evidencePath = process.env.HH_REAL_EVIDENCE;
-const home = process.env.HOME ?? homedir();
-const configFiles: Readonly<Record<string, readonly string[]>> = {
-  codex: [join(home, ".codex", "config.toml")],
-  claude: [join(home, ".claude", "settings.json")],
-  opencode: [join(home, ".config", "opencode", "opencode.json")],
-  openclaw: [join(home, ".openclaw", "openclaw.json")],
-  pi: [join(home, ".pi", "agent", "settings.json"), join(home, ".pi", "agent", "models.json")],
-  gemini: [join(home, ".gemini", "settings.json")],
-  hermes: [join(home, ".hermes", "config.yaml")],
-  dsh: [join(home, ".dsh", "settings.yaml"), join(home, ".dsh", "profiles", "acp", "cordis.patch.yml")],
-};
+/** The user's home and environment as the Harness runs with them; the shared guard (./guard.ts) snapshots its configuration from them. */
+const environment = captureNativeEnvironment();
 const TERMINAL = new Set<PublicRun["status"]>(["completed", "failed", "cancelled", "unknown"]);
-async function digest(path: string): Promise<string> {
-  try { return createHash("sha256").update(await readFile(path)).digest("hex"); }
-  catch (error) { if (error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT") return "missing"; throw error; }
-}
 const CRC = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
 function crc32(data: Buffer): number { let c = 0xffffffff; for (const byte of data) c = CRC[(c ^ byte) & 0xff]! ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
 function chunk(type: string, data: Buffer): Buffer {
@@ -70,18 +59,20 @@ async function* bytes(value: Buffer) { yield value; }
 
 test("installed Harness reads a text attachment, sees an image it declares, and an undeclared image is refused before dispatch", { timeout: 20 * 60 * 1000 }, async () => {
   assert.ok(harnesses.length, "set HH_REAL_HARNESSES to the installed Harness identities under acceptance");
-  assert.ok(evidencePath, "set HH_REAL_EVIDENCE to an ignored evidence file path");
+  assert.ok(evidencePath, "set HH_REAL_EVIDENCE to an ignored evidence file path"); guardTargets(harnesses);
   const root = await realpath(await mkdtemp(join(process.env.HH_REAL_TMP ?? tmpdir(), "hh-native-attachments-")));
   const results: Record<string, unknown>[] = [], failures: string[] = [];
+  let header: EvidenceHeader | null = null;
   try {
     for (const harnessId of harnesses) {
-      const files = configFiles[harnessId] ?? [], before = await Promise.all(files.map(digest));
+      const before = await snapshot([harnessId], environment);
       const data = join(root, harnessId + "-data"), workspace = join(root, harnessId + "-workspace");
       await mkdir(workspace);
       const configuration = await prepareConfiguration({ workspace, ...(process.env.HH_REAL_MANIFEST ? { manifestPath: process.env.HH_REAL_MANIFEST } : {}) });
       const proof: Record<string, unknown> = { harnessId, startedAt: new Date().toISOString() };
       const app = application(data, () => {}, { installations: realInstallations, workspaceLockRoot: join(root, "locks") });
       try {
+        header ??= await evidenceHeader(app, harnesses, { configuration });
         const requested = process.env["HH_REAL_MODEL_" + harnessId.toUpperCase()];
         const catalog = await app.factory.discoverModels({ harnessId }, configuration, new AbortController().signal);
         const model = requested ?? catalog.defaultModel ?? undefined, inputs = catalog.models.find(row => row.id === model)?.inputs ?? catalog.inputs;
@@ -110,12 +101,12 @@ test("installed Harness reads a text attachment, sees an image it declares, and 
         failures.push(harnessId + ": " + (proof.failure as { code: string }).code);
       } finally {
         await closeApp(app);
-        const after = await Promise.all(files.map(digest));
-        proof.configuration = files.map((path, index) => ({ path, unchanged: before[index] === after[index] }));
-        if (!(proof.configuration as { unchanged: boolean }[]).every(row => row.unchanged)) failures.push(harnessId + ": configuration changed");
+        const guard: GuardCheck = await recheck(before, environment);
+        proof.guard = guard;
+        if (!guard.unchanged) failures.push(harnessId + ": " + describeGuard(guard));
         proof.finishedAt = new Date().toISOString();
         results.push(proof);
-        await writeFile(evidencePath, JSON.stringify(results, null, 2) + "\n", { mode: 0o600 });
+        await writeFile(evidencePath, JSON.stringify({ header, results }, null, 2) + "\n", { mode: 0o600 });
       }
     }
   } finally { await rm(root, { recursive: true, force: true }); }
