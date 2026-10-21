@@ -209,7 +209,7 @@ test:real:session会运行真实Codex三轮、两个独立入口并检查实际�
 - [测试计划](docs/engineering/testing.md)与[场景矩阵](docs/engineering/test-matrix.md)：保留完整蓝图和当前切片场景，含后置项目；当前实际测试见[验证记录](docs/verification/catalog-control-2026-10-09.md)。
 - [范围与门禁](docs/engineering/readiness.md)：本机目录、控制、公共Session、Provider与工作台切片已开放；完整未来模型代理/账本/路由仍按各自契约推进。
 - [目录与控制验证](docs/verification/catalog-control-2026-10-09.md)：当前实现、测试和未验证范围；[旧检测记录](docs/verification/discovery-2026-10-09.md)与[初始设计记录](docs/verification/design-review-2026-10-09.md)保留基线证据。
-- [聚焦七个 Harness（ADR-046）](docs/decisions/0046-harness-focus-hardening.md)：2026-10-21 起只做精 Claude Code、Codex、OpenCode、DeepSeek Harness、WorkBuddy、Hermes Agent、OpenClaw，第一批六项工程加固，非焦点三个（Cursor、Gemini CLI、Pi）冻结；范围收窄与 WorkBuddy 接入路线的用户待决项见[ADR-048](docs/decisions/0048-harness-scope-and-workbuddy.md)（proposed）。
+- [聚焦七个 Harness（ADR-046）](docs/decisions/0046-harness-focus-hardening.md)：2026-10-21 起只做精 Claude Code、Codex、OpenCode、DeepSeek Harness、WorkBuddy、Hermes Agent、OpenClaw，第一批六项工程加固，非焦点三个（Cursor、Gemini CLI、Pi）冻结；用户 2026-10-21 对范围、WorkBuddy 接入路线、版本基线、备份、审计与刷新时机的决定见[ADR-048](docs/decisions/0048-harness-scope-and-workbuddy.md)（accepted）。
 
 ## 现在可运行的检查
 

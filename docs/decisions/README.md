@@ -121,6 +121,7 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
   - 切片 harness-focus 承接第一批六项加固：版本单一来源与一致性检查（预发布语义）、失败写入记录去路径化与 history 逐条降级、流式输出按窗口合并提交（ADR-047）、G063 边界检查落地、Claude 认证状态与 OpenCode `/compact` 接出、非焦点三个（Cursor、Gemini CLI、Pi）即日冻结。
   - 处置 ADR-001～007（见上表）；`VERIFIED_VERSIONS` 的数字在真实重验收前不改。
 - [ADR-047：流式输出按窗口合并提交](0047-stream-output-coalescing.md)（accepted，2026-10-21，总指挥兼审批代理裁决）：每回合的事件数与提交成本降一个量级，先提交再发布不变。
-- [ADR-048：七个焦点 Harness 的范围、完成定义与 WorkBuddy 接入路线](0048-harness-scope-and-workbuddy.md)（proposed，等待用户决定）：
+- [ADR-048：七个焦点 Harness 的范围、完成定义与 WorkBuddy 接入路线](0048-harness-scope-and-workbuddy.md)（accepted，2026-10-21，用户回复“全部按推荐”）：
   - 五层完成定义（设计采纳 / 代码完成 / 测试通过 / 真实引擎通过 / 只面向 macOS）与“做精”的判据。
-  - 用户待决项各给选项与推荐：非焦点三个冻结 / 冻结并默认隐藏（推荐）/ 删除；WorkBuddy 接入路线 npm / 应用内嵌 CLI 共享 `~/.workbuddy`（推荐）/ 并列；Harness id 与显示名；遥测、自动记忆、cron；运行时；两个永远为 false 的门禁标志与 G0～G5。
+  - 用户决定：非焦点三个冻结并默认隐藏；WorkBuddy 接应用内嵌 CLI、共用 `~/.workbuddy`，id `workbuddy`；Claude 按版本区间加冒烟；dsh 以 0.2.0-rc.2 为基线尽快重验；Hermes 先只读研究；业务库迁移前备份保留 2 份；审计保留 90 天、可导出、手工操作补记、凭据默认打码；页面在重新检测、任务完成与切回窗口（至少间隔 60 秒）时刷新，不再轮询。
+  - 待定：WorkBuddy 的遥测开关（用户）；门禁标志与 G0～G5（审批代理）。
