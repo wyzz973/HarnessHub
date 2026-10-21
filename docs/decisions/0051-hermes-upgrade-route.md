@@ -4,7 +4,7 @@
 
 ## 背景
 
-- 本机 Hermes 是 0.12.0（2026-05-06 的 main 检出 a0556b8，官方脚本安装）。HarnessHub 验证过的版本是 0.12.0（`src/infrastructure/management/verified-versions.ts:28`），能力矩阵 Hermes 列 27 格中 16 格有真实证据（12 格通过、1 格部分通过、2 格受阻、1 格部分）。
+- 本机 Hermes 是 0.12.0（2026-05-06 的 main 检出 a0556b8，官方脚本安装）。HarnessHub 验证过的版本是 0.12.0（`src/infrastructure/management/verified-versions.ts:28`），能力矩阵 Hermes 列 27 格中 16 格有真实证据（`plan/native-capabilities.json` 的 `real`：13 格通过、1 格部分、2 格受阻；其余 6 格原接口不提供、5 格没有真实证据）。
 - 0.12.0 的两个已知缺陷：ACP 审批桥永远拒绝（审批格受阻），审批期限硬编码 60 秒。上游在 v2026.5.16（0.14.0）修了前者、v2026.9.21（0.21.4）修了后者。
 - 上游从 v0.21.6（2026-10-08）起改为语义版本的稳定发布线；**v0.22.2（10-15）是最后一个 `hermes acp` 仍在自己进程里跑模型的发布**；v0.22.3（10-21）与 main 把 `hermes acp` 改成网关的查看器：没有网关就自己起一个，有网关就附着，同一 home 上的旧版网关会被它停掉换新。
 - `hermes update` 的落点：从 0.12.0 运行落到 main 顶端；从 v0.22.x 运行落到 stable 轨道头（今天是 v0.22.3）。两者都是网关投影。精确停在 v0.22.2 只能用 `install.sh --commit d923a5eb…`。
