@@ -1,6 +1,6 @@
 # 设计就绪与开始开发的门禁
 
-更新：2026-10-22。两个常为 false 的门禁标志（`plan/tasks.json` 的 `application_implementation_allowed`、`plan/slices.json` 的 `gateway_execution_implementation_allowed`）已删除（[ADR-048](../decisions/0048-harness-scope-and-workbuddy.md) 第 6 项，审批代理裁决）：源码范围只由各已接受切片的 `allowed_files` 放开，`src/`、`web/` 下不在其中的文件被设计检查拒绝，没有任何已接受切片时整个目录被拒绝；“后续实现门禁”一节同日按五层完成定义改写。此前（2026-10-09）当前按本机MVP推进。ADR-008/009及[ADR-010](../decisions/0010-public-session-mvp.md)认可S01–S04限定范围，目录/控制/公共Session/手动切换已实现。另[ADR-011](../decisions/0011-provider-web-mvp.md)认可Provider/本机HTTP工作台，自动择优明确后置。下文完整G1仍是未来完整模型/路由/HTTP等工程地图，不阻塞已冻结独立切片。
+更新：2026-10-22。两个常为 false 的门禁标志（`plan/tasks.json` 的 `application_implementation_allowed`、`plan/slices.json` 的 `gateway_execution_implementation_allowed`）已删除（[ADR-048](../decisions/0048-harness-scope-and-workbuddy.md) 第 6 项，审批代理裁决）：源码范围只由各已接受切片的 `allowed_files` 放开，`src/`、`web/` 下不在其中的文件被设计检查拒绝，没有任何已接受切片时这两个目录下的每个文件都被拒绝；原“后续实现门禁”一节同日改写为下文“完成定义的门禁（G0～G5）”——它们是宣称一项功能完成时分别出示的五层证据，不阻塞已接受的切片。此前（2026-10-09）当前按本机MVP推进。ADR-008/009及[ADR-010](../decisions/0010-public-session-mvp.md)认可S01–S04限定范围，目录/控制/公共Session/手动切换已实现。另[ADR-011](../decisions/0011-provider-web-mvp.md)认可Provider/本机HTTP工作台，自动择优明确后置。
 
 当前范围见 plan/slices.json 与 [MVP](mvp.md)。切片认可只允许所列 owner 路径，不能自动解锁 Session/执行/切换；设计检查有合法范围与越界源码拒绝样例。
 
@@ -41,4 +41,4 @@
 - G4 真实引擎通过：在本机官网安装、`VERIFIED_VERSIONS` 所记的版本上真实通过，`docs/verification/` 有写明命令、版本、渠道与局限的记录。
 - G5 平台：并入“只面向 macOS”（[ADR-044](../decisions/0044-macos-official-channels.md)），不再单列发行平台、容量与恢复门禁；性能与安全按各自任务的证据表述。
 
-没有测试代码或没有宿主时写 planned/未验证，不写 passed。各本机切片先完成必要设计和测试再实现；完整未来工程门禁不能被误解为当前每个功能都必须先做完跨平台发布准备。
+没有测试代码或没有宿主时写 planned/未验证，不写 passed。各本机切片先完成必要设计和测试再实现；一项功能走到哪一层就如实报告到哪一层，不把低层的证据写成高层通过。
