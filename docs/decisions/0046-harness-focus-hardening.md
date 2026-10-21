@@ -123,3 +123,7 @@
   - `src/web/shown-paths.ts` 的家目录检测还不认全角标点边界。
   - 版本区间判断在 `verified-versions.ts` 与 `capabilities/scan.ts` 各有一份。
   - G063 的公共类型面检查（`check-contract-surface`）未落地。
+
+## 2026-10-22 补记
+
+第 5 项的 OpenCode `/compact` 已在 1.18.35 上真实核对通过：压缩以回复文本交回，压缩后仍记得先前事实，见 [opencode-compact-2026-10-22.md](../verification/opencode-compact-2026-10-22.md)。第 2 项中 Claude 与 dsh 的“真实重验收前不改数字”同日按记录更新，见 ADR-038 的两条 2026-10-22 补充。

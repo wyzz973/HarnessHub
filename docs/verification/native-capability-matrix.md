@@ -32,7 +32,7 @@
 | 会话 | 原生会话恢复 | ✅ | ✅ | ✅ | ✅ | ✕ | ✕ | ✅ | ✅ | ✅ |
 | 会话 | 原生会话列表/接续 | ✅ | ✅ | ✅ | ○ | — | ✕ | — | ✅ | ✅ |
 | 会话 | 原生分支 | ✅ | ✅ | ✅ | — | — | — | ✅ | ✅ | — |
-| 会话 | 上下文压缩 | ✅ | ✅ | ◐ | ✅ | — | ？ | ✅ | ✅ | ○ |
+| 会话 | 上下文压缩 | ✅ | ✅ | ✅ | ✅ | — | ？ | ✅ | ✅ | ○ |
 | 会话 | 回滚/回退 | ○ | — | ？ | — | ○ | — | ○ | — | — |
 | 并发与后台 | 子 Agent | ✅ | ✅ | ○ | ◑ | ？ | ○ | — | ◑ | ◑ |
 | 并发与后台 | 后台任务 | ◐ | ✅ | ？ | ○ | ？ | ？ | — | ◐ | ◐ |
@@ -42,7 +42,7 @@
 |---|---|---|---|---|---|---|---|---|
 | Codex | 14 | 1 | 3 | 5 | 1 | 2 | 1 | 0 |
 | Claude Code | 17 | 2 | 1 | 3 | 0 | 2 | 2 | 0 |
-| OpenCode | 12 | 0 | 3 | 3 | 1 | 1 | 2 | 5 |
+| OpenCode | 13 | 0 | 2 | 3 | 1 | 1 | 2 | 5 |
 | OpenClaw | 5 | 3 | 2 | 6 | 5 | 0 | 6 | 0 |
 | Gemini CLI（冻结） | 0 | 0 | 0 | 2 | 1 | 12 | 6 | 6 |
 | Cursor（冻结） | 0 | 0 | 2 | 4 | 2 | 11 | 5 | 3 |
@@ -146,7 +146,7 @@
 | 原生会话恢复 | 具备 | session/resume（不回放）；跨 Hub 进程重启 | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；.tmp/cc-opencode-native-resume.json；.tmp/cc-native-resume-commands-2026-10-12.json；docs/verification/native-capabilities-round2-2026-10-11.md | 在原程序中继续：`opencode -s <id>`（help 确认），以 `opencode run -s <id> "…"` 真实验证答出标记（ADR-039） |
 | 原生会话列表/接续 | 具备 | session/list（每页 100，根会话）、session/load 回放全部历史 | 已接出 | 通过 | 通过 | .tmp/cc-native-import-opencode.json；docs/verification/native-session-import-2026-10-11.md | 通用 ACP 实现；opencode run 在新工作区创建的会话被列出、接续并答出标记 |
 | 原生分支 | 具备 | session/fork | 已接出 | 通过 | 通过 | .tmp/cc-native-branch-codex-acp.json；docs/verification/native-branch-2026-10-11.md | session/fork 建立原生副本，复制历史的回放不归属；更早位置以公共历史分支 |
-| 上下文压缩 | 具备 | /compact 原生命令；1.18.x 的 ACP 模块接受不列出的 compact（调用 session.summarize） | 已接出 | 通过 | 未接出 | — | OpenCode 的 ACP 命令目录不列出压缩命令；Hub 在 1.18.x 上补入 /compact 并原样转发（ADR-046 第 5 项，G032-NC24）；真实回合待重验收 |
+| 上下文压缩 | 具备 | /compact 原生命令；1.18.x 的 ACP 模块接受不列出的 compact（调用 session.summarize） | 已接出 | 通过 | 通过 | docs/verification/opencode-compact-2026-10-22.md | OpenCode 的 ACP 命令目录不列出压缩命令；Hub 在 1.18.x 上补入 /compact 并原样转发（ADR-046 第 5 项，G032-NC24）；2026-10-22 真实回合：压缩完成并以回复文本交回，压缩后仍记得先前事实，没有压缩活动 |
 | 回滚/回退 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
 | 子 Agent | 具备 | 子会话（task 子 Agent）权限请求 | 未接出 | 未接出 | 未接出 | — | task 子 Agent 的子会话工具不经 ACP 转发；子会话的权限请求被原程序丢弃（原程序限制） |
 | 后台任务 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |

@@ -1063,9 +1063,11 @@
           "source": "/compact 原生命令；1.18.x 的 ACP 模块接受不列出的 compact（调用 session.summarize）",
           "hub": "done",
           "protocol": "pass",
-          "real": "none",
-          "evidence": [],
-          "note": "OpenCode 的 ACP 命令目录不列出压缩命令；Hub 在 1.18.x 上补入 /compact 并原样转发（ADR-046 第 5 项，G032-NC24）；真实回合待重验收"
+          "real": "pass",
+          "evidence": [
+            "docs/verification/opencode-compact-2026-10-22.md"
+          ],
+          "note": "OpenCode 的 ACP 命令目录不列出压缩命令；Hub 在 1.18.x 上补入 /compact 并原样转发（ADR-046 第 5 项，G032-NC24）；2026-10-22 真实回合：压缩完成并以回复文本交回，压缩后仍记得先前事实，没有压缩活动"
         },
         "rollback": {
           "native": "unknown",
