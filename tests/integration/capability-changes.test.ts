@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import type { CapabilitiesView, CapabilityChangeCheck, CapabilityChangeView, CapabilityHistory, CapabilityRestoreCheck } from "../../src/contracts/capabilities.js";
 import { application } from "../../src/cli/session-application.js";
+import { CapabilityChanges } from "../../src/infrastructure/capabilities/changes.js";
+import type { ClaudeRunner } from "../../src/infrastructure/capabilities/claude-mcp.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { startWebServer } from "../../src/web/server.js";
 import { homePathsIn } from "../../src/web/shown-paths.js";
@@ -346,4 +350,65 @@ test("G064-W3 a restore and a change of skill folders that fail are recorded the
   assert.equal(history.status, 200, JSON.stringify(history.value));
   assert.deepEqual(history.value.changes.slice(0, 2).map(change => [change.kind, change.status]), [["skill-create", "failed"], ["restore", "failed"]]);
   await f.clean();
+});
+
+test("G064-W3 a change an older build recorded with an absolute home path is shown with ~ in the history and in its replay instead of failing them, and what stays absolute is still refused", macOnly, async t => {
+  const f = await gateway(t);
+  /** Puts a record into the capability storage as an older build kept it; `fingerprint` is the confirmation that replays it. */
+  const record = (view: Readonly<Record<string, unknown>>, commandId: string, fingerprint: string) => {
+    const database = new DatabaseSync(join(f.root, "data", "capabilities", "capabilities.sqlite"));
+    try { database.prepare("INSERT INTO capability_changes(id,command_id,payload_hash,at,view_json) VALUES(?,?,?,?,?)").run(String(view.id), commandId, createHash("sha256").update(fingerprint).digest("hex"), String(view.at), JSON.stringify(view)); }
+    finally { database.close(); }
+  };
+  // What applyEdit kept for a failed write before: Node's own message, naming the temporary file beside the target by its absolute path.
+  const temporary = ".config.toml.harnesshub-0f1e2d3c-4b5a-4968-8776-655443322110.tmp", fingerprint = "a".repeat(64);
+  const old = { id: "6c0f9a52-1b8e-4f3a-9d2c-7e5b4a3f2e10", kind: "skill-switch", harnessId: "codex", subject: "alpha", file: "~/.codex/config.toml", status: "failed", diff: null, backupId: null,
+    error: { code: "CAPABILITY_WRITE_FAILED", message: "ENOENT: no such file or directory, open '" + join(f.home, ".codex", temporary) + "'" }, notes: ["HOME=" + f.home], at: "2026-01-02T03:04:05.000Z" };
+  record(old, "old-failure", fingerprint);
+  // Mutation check (run by hand, not kept): without `recorded` in history(), this answer is 500 PRIVACY_GUARD.
+  const shown = { ...old, error: { code: "CAPABILITY_WRITE_FAILED", message: "ENOENT: no such file or directory, open '~/.codex/" + temporary + "'" }, notes: ["HOME=~"] };
+  const history = await f.call<CapabilityHistory>("/capabilities/history");
+  assert.equal(history.status, 200, JSON.stringify(history.value));
+  assert.deepEqual(history.value.changes, [shown]);
+  assert.deepEqual(await f.apply(fingerprint, "old-failure"), { status: 200, value: shown }, "its command replays it the same way");
+  // The privacy guard is still the last line: what stays absolute is refused (here a key, which records never have and which is not rewritten).
+  record({ ...old, id: "7d1fab63-2c9f-4a4b-8e3d-8f6c5b4a3f21", at: "2026-01-02T04:04:05.000Z", [join(f.home, "key")]: true }, "malformed", "b".repeat(64));
+  const refused = await f.call<{ code: string }>("/capabilities/history");
+  assert.deepEqual([refused.status, refused.value.code], [500, "PRIVACY_GUARD"]);
+  await f.clean();
+});
+
+test("G064-W3 a Claude Code command that fails is recorded with its code and the file with ~, and an older record shows ~ for either spelling of the home", { timeout: 90000 }, async t => {
+  // A home reached through a link whose real path ends with the given one, as /var/folders/… is /private/var/folders/… on macOS:
+  // HarnessHub knows the home by both spellings, and the longer must be written as ~ first.
+  const root = await realpath(await mkdtemp(join(tmpdir(), "capability-failures-"))), home = join(root, "home"), resolved = join(root, root.slice(1), "home"), closers: (() => Promise<void>)[] = [];
+  t.after(async () => { for (const close of closers.reverse()) await close(); await rm(root, { recursive: true, force: true }); });
+  await mkdir(join(resolved, ".claude"), { recursive: true }); await symlink(resolved, home); await mkdir(join(root, "data"));
+  assert.equal(await realpath(home), resolved);
+  await writeFile(join(home, ".claude.json"), JSON.stringify({ mcpServers: {} }, null, 2));
+  // Claude Code's own command, faked: on the private copy it adds the server; on the user's file it fails as the system reports it.
+  const claude: ClaudeRunner = async (args, options) => {
+    const config = options.env.CLAUDE_CONFIG_DIR;
+    if (config === undefined) throw Object.assign(new Error("EACCES: permission denied, open '" + join(resolved, ".claude.json.tmp.4242") + "'"), { code: "EACCES" });
+    const copy = join(config, ".claude.json"), value = JSON.parse(await readFile(copy, "utf8")) as { mcpServers?: Record<string, unknown> };
+    await writeFile(copy, JSON.stringify({ ...value, mcpServers: { ...value.mcpServers, [args[2]!]: JSON.parse(args[3]!) as unknown } }, null, 2));
+  };
+  const changes = new CapabilityChanges({ root: join(root, "data"), generation: 1, assertOwner: () => {}, environment: { home, values: { HOME: home } }, homes: [home, resolved], processes: async () => "", claude });
+  closers.push(() => changes.close());
+  const installed = [{ harnessId: "claude", name: "Claude Code", version: "2.1.302" }];
+  await changes.saveMcpServer("docs", { transport: "stdio", command: "npx", args: ["-y", "@acme/docs-mcp"], cwd: null, url: null, env: [], headers: [] }, false);
+  const check = await changes.checkMcpSync("docs", "claude", false, installed);
+  assert.equal(check.blocked, null, JSON.stringify(check));
+  const failed = await changes.apply(check.fingerprint, "claude-fails");
+  assert.deepEqual([failed.status, failed.file, failed.error], ["failed", "~/.claude.json", { code: "CAPABILITY_WRITE_FAILED", message: "写入 ~/.claude.json 失败（EACCES）" }]);
+  // An older record of such a failure names the file by the resolved spelling and the home by the given one.
+  // Mutation check (run by hand, not kept): with the shorter spelling written as ~ first, the file shows as "<root>~/.claude.json.tmp.4242".
+  const database = new DatabaseSync(join(root, "data", "capabilities", "capabilities.sqlite"));
+  try {
+    database.prepare("INSERT INTO capability_changes(id,command_id,payload_hash,at,view_json) VALUES(?,?,?,?,?)").run("8e2a0b74-3d0a-4b5c-9f4e-9a7d6c5b4a32", "older", "0".repeat(64), "2026-01-02T03:04:05.000Z",
+      JSON.stringify({ ...failed, id: "8e2a0b74-3d0a-4b5c-9f4e-9a7d6c5b4a32", at: "2026-01-02T03:04:05.000Z", error: { code: "CAPABILITY_WRITE_FAILED", message: "EACCES: permission denied, open '" + join(resolved, ".claude.json.tmp.4242") + "' (HOME=" + home + ")" } }));
+  } finally { database.close(); }
+  const history = await changes.history();
+  assert.deepEqual(history.changes.map(change => change.error?.message), ["写入 ~/.claude.json 失败（EACCES）", "EACCES: permission denied, open '~/.claude.json.tmp.4242' (HOME=~)"]);
+  assert.deepEqual(homePathsIn(history, [home, resolved]), []);
 });

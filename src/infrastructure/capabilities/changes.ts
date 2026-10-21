@@ -88,6 +88,29 @@ function openclawContent(bytes: Buffer): unknown { const value = record(parsed(b
 function displayed(text: string, homes: readonly string[]): string { let out = text; for (const home of [...homes].sort((a, b) => b.length - a.length)) out = out.split(home + "/").join("~/"); return maskSecrets(out); }
 function code(error: unknown): string { return error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : ""; }
 /**
+ * Writes the home directory as ~ for every spelling in `homes`, in text HarnessHub did not build itself, such as stored
+ * records and errors' messages (ADR-044): `<home>/…` anywhere, and the home standing alone, which no ASCII letter, digit,
+ * `.`, `_` or `-` of a longer name touches (so `（<home>）` and `<home>。` too). That covers every absolute home path the
+ * privacy guard (`homePathsIn`) reads. Longer spellings go first, since the resolved home may end with the given one, and
+ * the pass repeats until none is left, since a replacement can join what follows into another such path.
+ */
+export function homeText(homes: readonly string[]): (text: string) => string {
+  const forms = [...homes].filter(home => home.length > 1).sort((a, b) => b.length - a.length)
+    .map(home => ({ prefix: home + "/", alone: new RegExp("(?<![A-Za-z0-9._/~-])" + home.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&") + "(?![A-Za-z0-9_-]|\\.[A-Za-z0-9_-])", "gu") }));
+  return text => {
+    let out = text;
+    for (let before = ""; out !== before;) { before = out; for (const form of forms) out = out.split(form.prefix).join("~/").replace(form.alone, "~"); }
+    return out;
+  };
+}
+/** Every string of a stored value through `show`; the keys stay as they are. */
+function textsThrough(value: unknown, show: (text: string) => string): unknown {
+  if (typeof value === "string") return show(value);
+  if (Array.isArray(value)) return value.map(item => textsThrough(item, show));
+  if (value !== null && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, textsThrough(item, show)]));
+  return value;
+}
+/**
  * What a failed write records and answers (ADR-044): the action, the file with ~ and the error's code (`EACCES`, or
  * HarnessHub's own), never the error's own text. A file system error names private paths, such as the temporary file
  * beside the target, and a parser's may quote the file.
@@ -803,13 +826,23 @@ export class CapabilityChanges {
     const stored = this.store.change(commandId);
     if (stored === null) return null;
     if (stored.payloadHash !== hash(fingerprint)) throw new CapabilityError("INVALID_INPUT", "这个命令编号已用于另一项修改");
-    return stored.view;
+    return this.recorded(stored.view);
   }
+  /**
+   * A stored change as answered: every string in it through `homeText`. A record an older build wrote may name a path by
+   * its absolute home form (a failed write kept the system's message then); it is shown with ~, one record at a time,
+   * where the privacy guard would otherwise refuse the whole answer.
+   */
+  private recorded(view: CapabilityChangeView, show = homeText(this.options.homes)): CapabilityChangeView { return textsThrough(view, show) as CapabilityChangeView; }
 
-  /** HarnessHub's recent changes and the backups it keeps, newest first, and what it wrote that is no longer in place. */
+  /**
+   * HarnessHub's recent changes and the backups it keeps, newest first, and what it wrote that is no longer in place. The
+   * stored text is shown with ~ for the home directory (`recorded`), so an older record cannot keep the history from answering.
+   */
   async history(): Promise<CapabilityHistory> {
-    const snapshots = await this.skills.snapshotStats();
-    return { changes: this.store.changes(50), backups: this.store.backups().map(item => ({ id: item.id, file: this.shown(item.file), createdAt: item.createdAt, bytes: item.bytes, changeId: item.changeId, subject: item.subject })),
+    const snapshots = await this.skills.snapshotStats(), show = homeText(this.options.homes);
+    return { changes: this.store.changes(50).map(view => this.recorded(view, show)),
+      backups: this.store.backups().map(item => ({ id: item.id, file: this.shown(item.file), createdAt: item.createdAt, bytes: item.bytes, changeId: item.changeId, subject: show(item.subject) })),
       drift: await this.drift(), orphans: await this.orphans(), snapshots: { ...snapshots, keep: SKILL_SNAPSHOT_CHANGES } };
   }
   /**
