@@ -31,7 +31,7 @@
 
 ## 4. 平台与组合
 
-测试隔离：组合应用、启动 Gateway 或运行 `chat`、`sessions`、`web` 命令的测试，必须使用测试自己的临时工作区租约目录（`workspaceLockRoot` 或 `--workspace-lock-root`），不得写入每个本机用户共用的 `/tmp/harnessgateway-workspaces-<uid>`（[ADR-041](../decisions/0041-workspace-lock-root.md)）。检查方式：人工审查新增的组合点；完整测试前后对比共享目录的文件数。尚无自动检查。
+测试隔离：组合应用、启动 Gateway 或运行 `chat`、`sessions`、`web` 命令的测试，必须使用测试自己的临时工作区租约目录（`workspaceLockRoot` 或 `--workspace-lock-root`），不得写入每个本机用户共用的 `/tmp/harnessgateway-workspaces-<uid>`（[ADR-041](../decisions/0041-workspace-lock-root.md)）。检查方式：`pnpm check:boundaries` 的 B8 拒绝没有给出 `workspaceLockRoot` 的 `application(` 和 `startWebServer(` 调用，B9 拒绝没有带 `--workspace-lock-root` 的 `web`、`chat`、`sessions` 启动（规则与范围限度见[开发与工程规则](development.md#模块边界检查g063)）；经其他文件的辅助函数组合、`.mjs` 夹具和不带参数的 `resolveWorkspaceLockRoot()` 不在静态检查内，仍以完整测试前后对比共享目录的文件数核对。
 
 平台只面向 macOS（[ADR-044](../decisions/0044-macos-official-channels.md)）：进程组、脱离组后代、父进程先退出、中文/空格路径、软链接与权限在 macOS 上验证。Windows、Linux 不再计划和验证，报告里不再列“未验证”，直接写明只面向 macOS；跳过的必需检查仍不能算通过。
 
@@ -39,7 +39,7 @@
 
 卸载测试（ADR-044）不碰本机真实安装：脚本渠道用临时家目录，npm 渠道用临时前缀和本地打包的测试包，服务停止用不改动本机的替身；只读的 `ps`、`launchctl list` 可以照常运行。真实卸载只由用户点击。
 
-安装策略：正式入口默认只认官网渠道（ADR-044）。用测试假程序或发现清单的测试必须显式使用开发策略：组合时传 `installations: "any"`，命令行加 `--allow-unofficial`。检查方式：人工审查新增的组合点和命令行调用；漏传时这类测试会因 Harness 未安装而失败。
+安装策略：正式入口默认只认官网渠道（ADR-044）。用测试假程序或发现清单的测试必须显式使用开发策略：组合时传 `installations: "any"`，命令行加 `--allow-unofficial`。检查方式：命令行一半由 B9 自动检查（`--manifest` 必须同时传 `--allow-unofficial`，现有一处已登记的例外见 [tools/boundary-rules.json](../../tools/boundary-rules.json)）；组合一半（`installations: "any"`）尚无自动检查，靠人工审查新增的组合点，漏传时这类测试会因 Harness 未安装而失败。
 
 真实组合按 Harness、Adapter、protocol/SDK、Provider/模型、OS/架构、权限/工具、恢复等级记录。至少验证两个 Harness 与两个兼容模型目标的独立切换，包含 A→B→A。
 
