@@ -39,6 +39,7 @@ OpenClaw 的会话转录是 Pi 格式的消息：助手消息带 `thinking`、`t
    - 所选模型未能确认时，本回合的结果是失败（`reason` 为 `model_not_applied`，错误代码如 `MODEL_MISMATCH`），提示没有发出。驱动不抛出：Runtime 把 `run.dispatched` 之后 `startText` 的抛出记为结果未知并暂停对话，而这里确定什么都没有发出。界面对 `MODEL_MISMATCH` 的说明（这条消息没有发出）因此成立。
    - 理由：`sessions.patch` 是 operator.admin 级写入（本机 dist/method-scopes 读出），它会在用户的 Gateway 上创建会话行。带模型的目录读取过去每次都留下一行：本机会话库有 32 个 harnesshub 键，其中 8 个没有转录。读目录不应改变用户的 Gateway，探测和测试产生的数据也不应留下；选择与配置模型相同时，本来就不需要写。
 2. **模式选项去重（G032-NC26）。** 2026.3.23-2 的桥用同一份思考档位列表生成 `modes` 和 `thought_level` 选项，`session/set_mode` 写的也是 `thinkingLevel`（本机 dist/acp-cli-BQ740PFm.js 的 buildSessionPresentation 与 setSessionMode）。通用层把桥的 modes 记为 `__mode` 选项（category 为 mode）。两者取值集合相同时，驱动从目录里去掉 `__mode`，回合后的设置回读也不再产出 `__mode`。取值不同时保留：Gateway 会话行没有对应字段，`nativeConfig()` 报告桥自己宣布的当前模式。旧选择若仍带 `__mode`，通用层照常用 `session/set_mode` 应用。
+3. **转录断档诊断（G032-NC27）。** 回合后读回的转录窗口（最多 200 条）已满，并且其中最小的 `seq` 大于回合前的最高序号加一时，发一条诊断：“OpenClaw transcript window held 200 entries; N earlier entries of this turn were not reconciled”，N 为窗口之前缺失的本轮条数。窗口里的条目照常对账；窗口未满或没有断档时不发。
 
 验证：协议测试只用 `control-peer.mjs` 夹具和注入的 Gateway 记录器，包含反例与变异核对；没有运行 openclaw，也没有接触用户的 Gateway。真实复验在 M3 的 T-OC-08（`HH_REAL_READONLY=1`）：届时只计数，核对一次目录读取前后 harnesshub 键的数量不变。
 

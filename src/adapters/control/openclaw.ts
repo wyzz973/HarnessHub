@@ -14,6 +14,8 @@ import type { ContentRef, ControlAttachment } from "../../contracts/content.js";
 type OpenClawMethod = "models.list" | "sessions.patch" | "sessions.get" | "sessions.list" | "chat.history" | "skills.status" | "tools.catalog";
 /** The Hub's own Gateway session keys; no other key is patched or continued. */
 const HUB_KEY = /^agent:[a-z0-9_-]+:harnesshub:[a-f0-9-]+$/u;
+/** Transcript entries read back after a Turn (ADR-027); a longer Turn's earliest entries fall outside this window. */
+const TRANSCRIPT_WINDOW = 200;
 /**
  * Whether the bridge's ACP modes (the generic layer's `__mode` option) offer exactly its thinking levels. OpenClaw
  * 2026.3.23-2 builds both from one list and its set_mode patches thinkingLevel, so such a mode is the thinking level again.
@@ -255,7 +257,8 @@ export class OpenClawControl extends AcpControl {
    * The ACP bridge forwards only reply text and reports Gateway errors as end_turn. Before the prompt, the model chosen at
    * open() is applied (applySelectedModel); when it cannot be confirmed the Turn's result is failed and no prompt is sent.
    * After the turn, this session's own transcript (read through the original CLI) supplies the tool calls and results,
-   * reasoning, per-call usage and the real stop reason of exactly the messages this turn appended.
+   * reasoning, per-call usage and the real stop reason of exactly the messages this turn appended; a full window that
+   * starts after the turn's first entry is reported as a diagnostic, and the entries it holds are still reconciled.
    */
   override async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
     // Nothing was sent, so this is the Turn's own failure rather than a dispatch with an unknown outcome.
@@ -268,9 +271,12 @@ export class OpenClawControl extends AcpControl {
       if (this.sessionKey !== null) { const pending = this.readSessionSettings(this.sessionKey); this.sessionSettings = pending; pending.catch(() => {}); }
       if (before === null || this.sessionKey === null || backend.status === "cancelled") return backend;
       let messages: unknown;
-      try { messages = object(await this.call("sessions.get", { key: this.sessionKey, limit: 200 }), "OpenClaw transcript").messages; }
+      try { messages = object(await this.call("sessions.get", { key: this.sessionKey, limit: TRANSCRIPT_WINDOW }), "OpenClaw transcript").messages; }
       catch { onEvent({ type: "diagnostic", message: "OpenClaw transcript was not readable after the turn" }); return backend; }
       if (!Array.isArray(messages)) return backend;
+      const first = messages.reduce<number | null>((lowest, value) => { const seq = transcriptSeq(value); return seq !== null && (lowest === null || seq < lowest) ? seq : lowest; }, null);
+      if (messages.length >= TRANSCRIPT_WINDOW && first !== null && first > before + 1)
+        onEvent({ type: "diagnostic", message: `OpenClaw transcript window held ${messages.length} entries; ${first - before - 1} earlier entries of this turn were not reconciled` });
       return reconcileTurn(messages.filter(value => (transcriptSeq(value) ?? 0) > before), backend, onEvent, !thought);
     });
     return { result, requestStop: run.requestStop };

@@ -1091,3 +1091,27 @@ test("G032-NC26 OpenClaw offers its modes once, as thought_level, when they only
   const sent = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { readonly method?: string; readonly params?: { readonly modeId?: string } });
   assert.deepEqual(sent.filter(row => row.method === "session/set_mode").map(row => row.params?.modeId), ["high"]);
 });
+test("G032-NC27 OpenClaw reports a full transcript window that starts after the turn's first entry, and still reconciles the entries it holds (T-OC-08, ADR-027)", async t => {
+  const root = await mkdtemp(join(tmpdir(), "openclaw-nc27-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const config = join(root, "openclaw.json"); await writeFile(config, '{agents:{list:[{id:"main",default:true}]}}');
+  const env = { HOME: root, OPENCLAW_CONFIG_PATH: config }, before = 5;
+  const earlier = { role: "assistant", content: [{ type: "text", text: "earlier turn" }], __openclaw: { seq: before } };
+  // `count` transcript entries from seq `from` on; the last two are a tool call and its result.
+  const window = (from: number, count: number) => Array.from({ length: count }, (_, index) => ({ __openclaw: { seq: from + index },
+    ...(index === count - 2 ? { role: "assistant", content: [{ type: "toolCall", id: "call-late", name: "exec", arguments: { command: "echo late" } }] }
+      : index === count - 1 ? { role: "toolResult", toolCallId: "call-late", toolName: "exec", content: [{ type: "text", text: "late" }], isError: false }
+      : { role: "assistant", content: [{ type: "text", text: "step " + index }] }) }));
+  // [first seq in the window, entries, diagnostics]: 4 entries (seq 6 to 9) of the turn fell outside a full window.
+  for (const [from, count, diagnostics] of [[before + 5, 200, ["OpenClaw transcript window held 200 entries; 4 earlier entries of this turn were not reconciled"]],
+    [before + 1, 200, []], [before - 2, 200, []], [before + 5, 199, []]] as const) {
+    let reads = 0;
+    const driver = new OpenClawControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "basic"], env }, { ...options, env },
+      async method => method === "sessions.get" ? { messages: reads++ === 0 ? [earlier] : window(from, count) } : { models: [] });
+    try {
+      const id = await ready(driver), events: ControlEvent[] = [];
+      assert.deepEqual(await (await driver.startText(id, "go", event => events.push(event))).result, turnEnded);
+      assert.deepEqual(events.flatMap(event => event.type === "diagnostic" ? [event.message] : []), diagnostics, `${count} entries from seq ${from}`);
+      assert.deepEqual(events.flatMap(event => event.type === "tool" ? [event.id + " " + event.status] : []), ["call-late completed"], "the entries the window holds are reconciled");
+    } finally { await driver.close(); }
+  }
+});
