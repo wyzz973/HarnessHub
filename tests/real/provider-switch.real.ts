@@ -8,6 +8,8 @@ import test from "node:test";
 import { application } from "../../src/cli/session-application.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import type { ProviderView } from "../../src/contracts/provider.js";
+import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
+import { evidenceHeader, guardTest, snapshot, type SuiteEvidence } from "./guard.js";
 
 async function codex(): Promise<string> {
   for (const directory of new Set([...(process.env.PATH ?? "").split(":"), "/opt/homebrew/bin", "/usr/local/bin"])) {
@@ -17,6 +19,8 @@ async function codex(): Promise<string> {
   }
   throw new Error("real Provider acceptance requires an installed Codex executable; missing is not a skipped pass");
 }
+/** The user's own environment: the guard (./guard.ts) proves its configuration untouched; HH_REAL_EVIDENCE, when set, receives the record (0600). */
+const environment = captureNativeEnvironment(), evidencePath = process.env.HH_REAL_EVIDENCE, evidence: SuiteEvidence = { header: null, results: [] };
 class Gate { readonly promise: Promise<void>; resolve!: () => void; constructor() { this.promise = new Promise(resolve => { this.resolve = resolve; }); } }
 function sse(response: ServerResponse, model: string, answer: string): void {
   const content = { type: "output_text", text: answer, annotations: [], logprobs: [] };
@@ -43,6 +47,8 @@ async function body(request: IncomingMessage): Promise<Record<string, unknown>> 
 function target(provider: ProviderView) { return { providerId: provider.id, revision: provider.revision, model: provider.defaultModel }; }
 
 test("real Codex switches managed Provider A to B to edited A with pinned key/model and persistent public history", { timeout: 90000 }, async t => {
+  // The Providers are HarnessHub's own; the user's Codex configuration is snapshotted first and compared after the cleanup.
+  const before = await snapshot(["codex"], environment);
   const executable = await codex(), root = await mkdtemp(join(tmpdir(), "harness-managed-real-"));
   const workspace = join(root, "workspace"), data = join(root, "data"), manifest = join(root, "catalog.json"); await mkdir(workspace);
   const received = new Gate(), release = new Gate();
@@ -64,7 +70,9 @@ test("real Codex switches managed Provider A to B to edited A with pinned key/mo
   await writeFile(manifest, JSON.stringify({ version: 2, definitions: [], overrides: { "codex-native": { executable } } }));
   const app = application(data, () => {}, { installations: "any", workspaceLockRoot: join(root, "locks") });
   t.after(async () => { release.resolve(); try { await app.runtime.close(); } finally { await app.management.shutdown(); await app.providers.shutdown(); app.store.close(); a.server.closeAllConnections(); b.server.closeAllConnections(); await Promise.all([new Promise<void>(r => a.server.close(() => r())), new Promise<void>(r => b.server.close(() => r()))]); await rm(root, { recursive: true, force: true }); } });
+  const outcome = guardTest(t, before, environment, evidencePath, evidence);
   const config = await prepareConfiguration({ workspace, manifestPath: manifest, searchDirs: [join(executable, "..")], pathOnly: true });
+  evidence.header ??= await evidenceHeader(app, ["codex"], { configuration: config });
   const make = (name: string, baseUrl: string, model: string, apiKey: string) => ({ name, protocol: "openai-responses", baseUrl, models: [model], defaultModel: model, enabled: true, apiKey });
   const firstA = app.providers.create(make("Provider A", a.url, "fixture-model-a1", "synthetic-key-A-v1"), "real-create-a");
   const firstB = app.providers.create(make("Provider B", b.url, "fixture-model-b1", "synthetic-key-B-v1"), "real-create-b");
@@ -85,4 +93,5 @@ test("real Codex switches managed Provider A to B to edited A with pinned key/mo
   const final = app.runtime.read(session.id); assert.equal(final.runs.length, 3); assert.ok(final.runs.every(run => run.status === "completed" && run.cleanup?.closed)); assert.equal(final.epoch, 3);
   const publicData = JSON.stringify({ snapshot: final, events: app.store.events(session.id, 0) });
   assert.ok(!publicData.includes("synthetic-key")); assert.ok(!(await readFile(join(data, "providers", "providers.sqlite"))).includes(Buffer.from("synthetic-key")));
+  outcome.completed = true;
 });

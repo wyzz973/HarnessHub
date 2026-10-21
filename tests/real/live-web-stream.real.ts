@@ -7,11 +7,15 @@ import { dirname, isAbsolute, join } from "node:path";
 import test from "node:test";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { startWebServer, type WebServer } from "../../src/web/server.js";
+import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
+import { guardTest, snapshot, standaloneHeader, type SuiteEvidence } from "./guard.js";
 
 const MODEL = "fixture-real-live-model";
 const KEY = "synthetic-real-live-stream-key";
 const FIRST = "FIRST 中文\n";
 const SECOND = "SECOND 🌱";
+/** The user's own environment: the guard (./guard.ts) proves its configuration untouched; HH_REAL_EVIDENCE, when set, receives the record (0600). */
+const environment = captureNativeEnvironment(), evidencePath = process.env.HH_REAL_EVIDENCE, evidence: SuiteEvidence = { header: null, results: [] };
 class Gate { readonly promise: Promise<void>; resolve!: () => void; constructor() { this.promise = new Promise(done => { this.resolve = done; }); } }
 function record(value: unknown): Record<string, unknown> { assert.ok(value !== null && typeof value === "object" && !Array.isArray(value)); return value as Record<string, unknown>; }
 async function codex(): Promise<string> {
@@ -70,6 +74,8 @@ class FactStream {
 }
 
 test("real Codex delivers partial text over authenticated web SSE before model completion and survives reconnect", { timeout: 45000 }, async t => {
+  // The Provider is HarnessHub's own; the user's Codex configuration is snapshotted first and compared after the cleanup.
+  const before = await snapshot(["codex"], environment);
   const executable = await codex(), root = await mkdtemp(join(tmpdir(), "harness-real-web-stream-")), workspace = join(root, "workspace"), data = join(root, "data"), manifest = join(root, "catalog.json");
   await mkdir(workspace); await writeFile(join(workspace, "keep.txt"), "workspace configuration unchanged\n");
   const release = new Gate(), calls: Record<string, unknown>[] = [], failures: unknown[] = [], streams: FactStream[] = []; let finished = false, gateway: WebServer | undefined;
@@ -87,9 +93,13 @@ test("real Codex delivers partial text over authenticated web SSE before model c
     provider.closeAllConnections(); if (provider.listening) await new Promise<void>((done, reject) => provider.close(error => error ? reject(error) : done())).catch(error => { failure ??= error; });
     await rm(root, { recursive: true, force: true }); if (failure) throw failure;
   });
+  const outcome = guardTest(t, before, environment, evidencePath, evidence);
   await new Promise<void>(done => provider.listen(0, "127.0.0.1", done)); const address = provider.address(); assert.ok(address && typeof address !== "string");
   await writeFile(manifest, JSON.stringify({ version: 2, definitions: [], overrides: { "codex-native": { executable } } }));
-  gateway = await startWebServer({ installations: "any", root: data, configuration: await prepareConfiguration({ workspace, manifestPath: manifest, searchDirs: [dirname(executable)], pathOnly: true }), port: 0, workspaceLockRoot: join(root, "locks") });
+  const configuration = await prepareConfiguration({ workspace, manifestPath: manifest, searchDirs: [dirname(executable)], pathOnly: true });
+  // The Gateway composes its own application; a short-lived one with the same policy and discovery reads the header.
+  evidence.header ??= await standaloneHeader(["codex"], { root, workspaceLockRoot: join(root, "locks"), policy: "any", configuration });
+  gateway = await startWebServer({ installations: "any", root: data, configuration, port: 0, workspaceLockRoot: join(root, "locks") });
   const startup = new URL(gateway.url), origin = startup.origin;
   const boot = await fetch(origin + "/api/v1/auth/bootstrap", { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ token: new URLSearchParams(startup.hash.slice(1)).get("token") }) }); assert.equal(boot.status, 200);
   const cookie = boot.headers.get("set-cookie")!.split(";", 1)[0]!, csrf = String(record(await boot.json()).csrfToken);
@@ -115,4 +125,5 @@ test("real Codex delivers partial text over authenticated web SSE before model c
   assert.equal(finished, true); assert.equal(calls.length, 1); assert.deepEqual(failures, []); assert.equal(JSON.stringify({ partial, canonical, ended, managed }).includes(KEY), false);
   assert.equal(await readFile(join(workspace, "keep.txt"), "utf8"), "workspace configuration unchanged\n");
   assert.equal((await readFile(join(data, "providers", "providers.sqlite"))).includes(Buffer.from(KEY)), false);
+  outcome.completed = true;
 });

@@ -9,11 +9,15 @@ import { application } from "../../src/cli/session-application.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { loadBuiltinCatalog } from "../../src/adapters/catalog.js";
 import { catalogTarget } from "../../src/infrastructure/catalog/platform.js";
+import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
+import { evidenceHeader, guardTest, snapshot, type SuiteEvidence } from "./guard.js";
 
 const MODEL = "gemini-2.5-flash";
 const KEY = "synthetic-gemini-key-private-acceptance";
 const MARKER = "GEMINI-MANAGED-PUBLIC-INPUT-MARKER";
 const ANSWER = "Managed Gemini local Provider answer.";
+/** The user's own environment: the guard (./guard.ts) proves its configuration untouched; HH_REAL_EVIDENCE, when set, receives the record (0600). */
+const environment = captureNativeEnvironment(), evidencePath = process.env.HH_REAL_EVIDENCE, evidence: SuiteEvidence = { header: null, results: [] };
 interface Call { readonly path: string; readonly key: string; readonly input: Record<string, unknown> }
 function object(value: unknown): Record<string, unknown> {
   assert.ok(value !== null && typeof value === "object" && !Array.isArray(value)); return value as Record<string, unknown>;
@@ -43,6 +47,8 @@ function content(response: ServerResponse, stream: boolean): void {
 
 /** Real installed CLI, real application/SQLite/ACP; only the external model HTTP service is deterministic. */
 test("real Gemini uses a managed private Provider endpoint, explicit model/key and committed public input", { timeout: 45000 }, async t => {
+  // The Provider is HarnessHub's own; the user's Gemini configuration is snapshotted first and compared after the cleanup.
+  const before = await snapshot(["gemini"], environment);
   const binary = await executable(), root = await mkdtemp(join(tmpdir(), "harness-gemini-managed-real-"));
   const workspace = join(root, "workspace"), data = join(root, "data"), manifest = join(root, "catalog.json"); await mkdir(workspace);
   const original = "fixture workspace configuration must remain unchanged\n";
@@ -75,6 +81,7 @@ test("real Gemini uses a managed private Provider endpoint, explicit model/key a
     await rm(root, { recursive: true, force: true });
     if (failure) throw failure;
   });
+  const outcome = guardTest(t, before, environment, evidencePath, evidence);
   await new Promise<void>(done => endpoint.listen(0, "127.0.0.1", done));
   const address = endpoint.address(); assert.ok(address && typeof address !== "string");
   const control = loadBuiltinCatalog(catalogTarget()).find(item => item.id === "gemini")?.controls.find(item => item.protocol === "acp-v1");
@@ -84,6 +91,7 @@ test("real Gemini uses a managed private Provider endpoint, explicit model/key a
   const provider = app.providers.create({ name: "Managed Gemini fixture", protocol: "gemini", baseUrl: `http://127.0.0.1:${address.port}`,
     models: [MODEL], defaultModel: MODEL, enabled: true, apiKey: KEY }, "real-gemini-provider");
   const configuration = await prepareConfiguration({ workspace, manifestPath: manifest, searchDirs: [dirname(binary)], pathOnly: true });
+  evidence.header ??= await evidenceHeader(app, ["gemini"], { configuration });
   const target = { providerId: provider.id, revision: provider.revision, model: MODEL };
   const session = await app.runtime.create(configuration, { harnessId: "gemini", provider: target }, "real-gemini-session");
   app.runtime.send(session.id, MARKER + ": reply briefly without calling tools", "real-gemini-message");
@@ -103,4 +111,5 @@ test("real Gemini uses a managed private Provider endpoint, explicit model/key a
   assert.equal((await readFile(join(data, "providers", "providers.sqlite"))).includes(Buffer.from(KEY)), false);
   assert.equal(await readFile(join(workspace, "keep.txt"), "utf8"), original);
   assert.deepEqual(await readdir(workspace), ["keep.txt"], "Gemini modified the workspace configuration");
+  outcome.completed = true;
 });

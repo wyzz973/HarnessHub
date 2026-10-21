@@ -5,12 +5,18 @@ import { join } from "node:path";
 import test from "node:test";
 import JSON5 from "json5";
 import { CapabilityChanges } from "../../src/infrastructure/capabilities/changes.js";
+import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
+import { guardTest, snapshot, standaloneHeader, type SuiteEvidence } from "./guard.js";
+/** The user's own environment: the guard (./guard.ts) proves its configuration untouched; HH_REAL_EVIDENCE, when set, receives the record (0600). */
+const userEnvironment = captureNativeEnvironment(), evidencePath = process.env.HH_REAL_EVIDENCE, evidence: SuiteEvidence = { header: null, results: [] };
 
 // The user's own OpenClaw (the first on PATH) with a private home and state directory, under the sandbox HarnessHub uses:
 // it may write only that state directory and its temporary one, and every network operation is denied. Nothing here
 // reads or writes the real ~/.openclaw, and the real Gateway is neither contacted nor restarted.
 test("G064-W4 OpenClaw's own config set and unset switch a skill off and back on in a sandbox without the network, as predicted on a private copy first", { timeout: 180000 }, async t => {
   assert.equal(process.platform, "darwin", "OpenClaw's skill switch runs under macOS's sandbox");
+  // The real ~/.openclaw configuration, agent instructions and skills are snapshotted first and compared after every cleanup.
+  const before = await snapshot(["openclaw"], userEnvironment);
   const root = await realpath(await mkdtemp(join(tmpdir(), "openclaw-switch-real-"))), home = join(root, "home"), state = join(home, ".openclaw");
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(state, "skills", "real-switch"), { recursive: true }); await mkdir(join(root, "data"));
@@ -20,6 +26,8 @@ test("G064-W4 OpenClaw's own config set and unset switch a skill off and back on
   const environment = { home, values: { HOME: home, OPENCLAW_STATE_DIR: state, PATH: process.env.PATH ?? "/opt/homebrew/bin:/usr/bin:/bin", LANG: "en_US.UTF-8" } };
   const changes = new CapabilityChanges({ root: join(root, "data"), generation: 1, assertOwner: () => {}, environment, homes: [home], processes: async () => "" });
   t.after(() => changes.close());
+  const outcome = guardTest(t, before, userEnvironment, evidencePath, evidence);
+  evidence.header ??= await standaloneHeader(["openclaw"], { root, workspaceLockRoot: join(root, "locks"), policy: "any" });
   const installed = [{ harnessId: "openclaw", name: "OpenClaw", version: "2026.3.23-2" }];
   const off = await changes.checkSkillSwitch({ harnessId: "openclaw", name: "real-switch", enabled: false, via: null }, installed);
   assert.equal(off.blocked, null, "the run on a private copy passes");
@@ -42,4 +50,5 @@ test("G064-W4 OpenClaw's own config set and unset switch a skill off and back on
   const restore = await changes.checkRestore(applied.backupId!);
   assert.equal((await changes.restore(restore.fingerprint, "real-switch-restore")).status, "applied");
   assert.equal(await readFile(config, "utf8"), original);
+  outcome.completed = true;
 });

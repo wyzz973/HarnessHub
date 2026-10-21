@@ -1,8 +1,10 @@
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants, realpathSync } from "node:fs";
 import { lstat, open, readdir, readlink, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join, normalize, resolve } from "node:path";
+import type { TestContext } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { harnessDirectories } from "../../src/adapters/capability-reads.js";
 import { application } from "../../src/cli/session-application.js";
@@ -526,6 +528,27 @@ export async function standaloneHeader(harnessIds: readonly string[], options: S
     try { return await evidenceHeader(app, harnessIds, { ...(options.configuration === undefined ? {} : { configuration: options.configuration }), ...(options.repository === undefined ? {} : { repository: options.repository }) }); }
     finally { try { await app.runtime.close(); } finally { try { await app.management.shutdown(); } finally { try { await app.providers.shutdown(); } finally { app.store.close(); } } } }
   } finally { await rm(data, { recursive: true, force: true }); }
+}
+
+/** The evidence of a suite whose tests run in private homes: its header once read, and one record per test whose guard has run. */
+export interface SuiteEvidence { header: EvidenceHeader | null; readonly results: Record<string, unknown>[] }
+/** How a guarded test ended: failed until the test marks it completed at its end; `details` join its evidence record. */
+export interface TestOutcome { completed: boolean; readonly details: Record<string, unknown> }
+/**
+ * Ends one test under the guard. Call it once the test has registered its own cleanup hooks: the hook registered here runs
+ * after them (node:test runs a test's after hooks in order), also when the test failed. It takes the second snapshot of
+ * `before`'s Harnesses, appends `{ test, harnesses, outcome, guard, ...details }` to `evidence.results`, writes
+ * `{ header, results }` to `evidencePath` (0600) when one is given, and then fails the test with the changed ~ paths.
+ */
+export function guardTest(t: TestContext, before: GuardSnapshot, source: GuardSource, evidencePath: string | undefined, evidence: SuiteEvidence): TestOutcome {
+  const outcome: TestOutcome = { completed: false, details: {} };
+  t.after(async () => {
+    const guard = await recheck(before, source);
+    evidence.results.push({ test: t.name, harnesses: before.harnesses, outcome: outcome.completed ? "completed" : "failed", guard, ...outcome.details });
+    if (evidencePath !== undefined) await writeFile(evidencePath, JSON.stringify({ header: evidence.header, results: evidence.results }, null, 2) + "\n", { mode: 0o600 });
+    assert.ok(guard.unchanged, "the user's own configuration must remain unchanged: " + describeGuard(guard));
+  });
+  return outcome;
 }
 
 const USAGE = [

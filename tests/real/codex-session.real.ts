@@ -10,6 +10,8 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { type SessionId } from "../../src/contracts/session.js";
 import { SqliteSessionReader } from "../../src/infrastructure/session/sqlite-store.js";
+import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
+import { guardTest, snapshot, standaloneHeader, type SuiteEvidence } from "./guard.js";
 
 const MODEL = "harnessgateway-session-fixture-model";
 const KEY_NAME = "HARNESS_GATEWAY_SESSION_FIXTURE_KEY";
@@ -18,6 +20,8 @@ const PROMPTS = ["first public Session turn", "second public Session turn", "thi
 const ANSWERS = ["Local Session answer one.", "Local Session answer two.", "Local Session answer three."] as const;
 const cli = fileURLToPath(new URL("../../src/cli/chat.js", import.meta.url));
 const MAX_HTTP_BYTES = 1024 * 1024, MAX_CLI_BYTES = 4 * 1024 * 1024;
+/** The user's own environment: the guard (./guard.ts) proves its configuration untouched; HH_REAL_EVIDENCE, when set, receives the record (0600). */
+const environment = captureNativeEnvironment(), evidencePath = process.env.HH_REAL_EVIDENCE, evidence: SuiteEvidence = { header: null, results: [] };
 function record(value: unknown, label = "value"): Record<string, unknown> {
   assert.ok(value !== null && typeof value === "object" && !Array.isArray(value), label + " must be an object");
   return value as Record<string, unknown>;
@@ -110,6 +114,8 @@ async function invoke(args: readonly string[], prompts: readonly string[], cwd: 
 test("real Codex preserves public history across two turns and a new formal chat process using only a local deterministic provider", { timeout: 120000 }, async t => {
   assert.notEqual(process.platform, "win32", "current real acceptance requires POSIX control");
   assert.ok((await stat(cli)).isFile(), "build the formal chat before acceptance");
+  // The run uses a private home; the user's own Codex configuration is snapshotted first and compared after the cleanup.
+  const before = await snapshot(["codex"], environment), outcome = guardTest(t, before, environment, evidencePath, evidence);
   const executable = await localCodex(), root = await mkdtemp(join(tmpdir(), "harness-real-codex-session-"));
   const home = join(root, "home"), workspace = join(root, "workspace"), temporary = join(root, "temporary"), data = join(root, "data"), manifest = join(root, "manifest.json");
   const sockets = new Set<Socket>(), requests: Record<string, unknown>[] = [], errors: Error[] = [];
@@ -146,6 +152,7 @@ test("real Codex preserves public history across two turns and a new formal chat
   try {
     await mkdir(home); await mkdir(workspace); await mkdir(temporary);
     for (const directory of ["config", "data", "state", "cache", "codex", "claude", "opencode"]) await mkdir(join(home, directory));
+    evidence.header ??= await standaloneHeader(["codex"], { root, workspaceLockRoot: join(root, "locks"), policy: "any" });
     await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", () => { server.off("error", reject); listening = true; resolve(); }); });
     const address = server.address(); assert.ok(address !== null && typeof address !== "string");
     await writeFile(join(home, "codex", "config.toml"), [
@@ -185,6 +192,7 @@ test("real Codex preserves public history across two turns and a new formal chat
     t.diagnostic(JSON.stringify({ realHarness: "codex", executable, publicSession: id, turns: 3, processReopen: true,
       provider: "local deterministic HTTP Responses SSE", model: MODEL, requests: requests.length, cleanup: "closed", realModelValidated: false,
       credentials: "synthetic private key only", continuity: "public_context_rehydrate" }));
+    outcome.completed = true;
   } finally {
     for (const socket of sockets) socket.destroy();
     if (listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));

@@ -8,6 +8,8 @@ import { isAbsolute, join } from "node:path";
 import type { Socket } from "node:net";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
+import { guardTest, snapshot, standaloneHeader, type SuiteEvidence } from "./guard.js";
 
 const MODEL = "harnessgateway-fixture-model";
 const KEY_NAME = "HARNESS_GATEWAY_LOCAL_FIXTURE_KEY";
@@ -17,6 +19,8 @@ const ANSWER = "HarnessGateway real Codex with local deterministic provider pass
 const MAX_HTTP_BYTES = 1024 * 1024;
 const MAX_CLI_BYTES = 4 * 1024 * 1024;
 const cli = fileURLToPath(new URL("../../src/cli/control.js", import.meta.url));
+/** The user's own environment: the guard (./guard.ts) proves its configuration untouched; HH_REAL_EVIDENCE, when set, receives the record (0600). */
+const environment = captureNativeEnvironment(), evidencePath = process.env.HH_REAL_EVIDENCE, evidence: SuiteEvidence = { header: null, results: [] };
 
 function record(value: unknown, label: string): Record<string, unknown> {
   assert.ok(value !== null && typeof value === "object" && !Array.isArray(value), `${label} must be an object`);
@@ -100,6 +104,8 @@ function invoke(args: readonly string[], cwd: string, home: string, temporary: s
 test("real local Codex through the formal gateway CLI uses only its deterministic local Responses provider", { timeout: 45000 }, async t => {
   assert.notEqual(process.platform, "win32", "current real acceptance requires the implemented POSIX control host");
   assert.ok((await stat(cli)).isFile(), "build the formal CLI before running real acceptance");
+  // The run uses a private home; the user's own Codex configuration is snapshotted first and compared after the cleanup.
+  const before = await snapshot(["codex"], environment), outcome = guardTest(t, before, environment, evidencePath, evidence);
   const executable = await localCodex();
   const root = await mkdtemp(join(tmpdir(), "harness-real-codex-local-"));
   const home = join(root, "home"), workspace = join(root, "workspace"), temporary = join(root, "temporary");
@@ -132,6 +138,7 @@ test("real local Codex through the formal gateway CLI uses only its deterministi
   try {
     await mkdir(home); await mkdir(workspace); await mkdir(temporary);
     for (const directory of ["config", "data", "state", "cache", "codex", "claude", "opencode"]) await mkdir(join(home, directory));
+    evidence.header ??= await standaloneHeader(["codex"], { root, workspaceLockRoot: join(root, "locks"), policy: "any" });
     await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", () => { server.off("error", reject); listening = true; resolve(); }); });
     const address = server.address(); assert.ok(address !== null && typeof address !== "string");
     await writeFile(join(home, "codex", "config.toml"), [
@@ -167,6 +174,7 @@ test("real local Codex through the formal gateway CLI uses only its deterministi
     t.diagnostic(JSON.stringify({ realHarness: "codex", executable, userAgent: record(protocol.capabilities, "protocol capabilities").userAgent,
       provider: "local deterministic HTTP Responses SSE", model: MODEL, requests: requests.length,
       result: "completed", cleanup: "closed", realModelValidated: false, credentials: "synthetic private test key only" }));
+    outcome.completed = true;
   } finally {
     for (const socket of sockets) socket.destroy();
     if (listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));

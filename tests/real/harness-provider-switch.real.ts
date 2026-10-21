@@ -10,12 +10,16 @@ import { application } from "../../src/cli/session-application.js";
 import type { ProviderView } from "../../src/contracts/provider.js";
 import { catalogTarget } from "../../src/infrastructure/catalog/platform.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
+import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
+import { evidenceHeader, guardTest, snapshot, type SuiteEvidence } from "./guard.js";
 
 const CODEX_MODEL = "fixture-cross-harness-codex";
 const GEMINI_MODEL = "gemini-2.5-flash";
 const CODEX_KEY = "synthetic-cross-harness-codex-key";
 const GEMINI_KEY = "synthetic-cross-harness-gemini-key";
 const MARKERS = ["CROSS-HARNESS-FIRST-CODEX", "CROSS-HARNESS-SECOND-GEMINI", "CROSS-HARNESS-THIRD-CODEX"] as const;
+/** The user's own environment: the guard (./guard.ts) proves its configuration untouched; HH_REAL_EVIDENCE, when set, receives the record (0600). */
+const environment = captureNativeEnvironment(), evidencePath = process.env.HH_REAL_EVIDENCE, evidence: SuiteEvidence = { header: null, results: [] };
 interface Call { readonly harness: "codex" | "gemini"; readonly path: string; readonly key: string; readonly input: Record<string, unknown> }
 function object(value: unknown): Record<string, unknown> {
   assert.ok(value !== null && typeof value === "object" && !Array.isArray(value)); return value as Record<string, unknown>;
@@ -58,6 +62,8 @@ function target(provider: ProviderView) { return { providerId: provider.id, revi
 
 /** Public history is rehydrated into fresh real native conversations; no native checkpoint is transferred. */
 test("real Codex→Gemini→Codex uses the same public Session with explicit Providers and complete rehydrated history", { timeout: 60000 }, async t => {
+  // The Providers are HarnessHub's own; the user's Codex and Gemini configuration is snapshotted first and compared after the cleanup.
+  const before = await snapshot(["codex", "gemini"], environment);
   const [codexBinary, geminiBinary] = await Promise.all([executable("codex"), executable("gemini")]);
   const root = await mkdtemp(join(tmpdir(), "harness-cross-real-")), workspace = join(root, "workspace"), data = join(root, "data"), manifest = join(root, "catalog.json");
   await mkdir(workspace); const keep = "cross-Harness workspace marker\n"; await writeFile(join(workspace, "keep.txt"), keep);
@@ -78,6 +84,7 @@ test("real Codex→Gemini→Codex uses the same public Session with explicit Pro
     }
     await rm(root, { recursive: true, force: true }); if (failure) throw failure;
   });
+  const outcome = guardTest(t, before, environment, evidencePath, evidence);
   async function endpoint(harness: Call["harness"]): Promise<string> {
     const server = createServer((request, response) => {
       void (async () => {
@@ -104,6 +111,7 @@ test("real Codex→Gemini→Codex uses the same public Session with explicit Pro
   const codexProvider = app.providers.create({ name: "Cross Codex", protocol: "openai-responses", baseUrl: codexUrl, models: [CODEX_MODEL], defaultModel: CODEX_MODEL, enabled: true, apiKey: CODEX_KEY }, "cross-provider-codex");
   const geminiProvider = app.providers.create({ name: "Cross Gemini", protocol: "gemini", baseUrl: geminiUrl, models: [GEMINI_MODEL], defaultModel: GEMINI_MODEL, enabled: true, apiKey: GEMINI_KEY }, "cross-provider-gemini");
   const configuration = await prepareConfiguration({ workspace, manifestPath: manifest, searchDirs: [...new Set([dirname(codexBinary), dirname(geminiBinary)])], pathOnly: true });
+  evidence.header ??= await evidenceHeader(app, ["codex", "gemini"], { configuration });
   const session = await app.runtime.create(configuration, { harnessId: "codex", controlId: codexControl.id, provider: target(codexProvider) }, "cross-session");
   async function send(index: number): Promise<void> {
     const before = calls.length; app.runtime.send(session.id, MARKERS[index]! + ": reply briefly and do not use tools", "cross-message-" + index);
@@ -132,4 +140,5 @@ test("real Codex→Gemini→Codex uses the same public Session with explicit Pro
   assert.ok(!publicData.includes(CODEX_KEY) && !publicData.includes(GEMINI_KEY)); assert.ok(final.messages.filter(message => message.role === "assistant").every(message => message.text.includes("[redacted]")));
   const database = await readFile(join(data, "providers", "providers.sqlite")); assert.ok(!database.includes(Buffer.from(CODEX_KEY)) && !database.includes(Buffer.from(GEMINI_KEY)));
   assert.equal(await readFile(join(workspace, "keep.txt"), "utf8"), keep); assert.deepEqual(await readdir(workspace), ["keep.txt"]);
+  outcome.completed = true;
 });

@@ -4,12 +4,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { CapabilityChanges } from "../../src/infrastructure/capabilities/changes.js";
+import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
+import { guardTest, snapshot, standaloneHeader, type SuiteEvidence } from "./guard.js";
+/** The user's own environment: the guard (./guard.ts) proves its configuration untouched; HH_REAL_EVIDENCE, when set, receives the record (0600). */
+const userEnvironment = captureNativeEnvironment(), evidencePath = process.env.HH_REAL_EVIDENCE, evidence: SuiteEvidence = { header: null, results: [] };
 
 // The user's own Claude Code (the first `claude` on PATH) with a private home, under the sandbox HarnessHub uses: the
 // prediction may write only a private copy, the real run only Claude's file, its siblings and its own backups and
 // telemetry folders, and every network operation is denied. Nothing here reads or writes the real ~/.claude.json.
 test("G064-M5 Claude Code's own mcp add-json and remove write and take back a server in a sandbox without the network, as predicted on a private copy first", { timeout: 180000 }, async t => {
   assert.equal(process.platform, "darwin", "Claude's MCP commands run under macOS's sandbox");
+  // The real ~/.claude.json, settings and instructions are snapshotted first and compared after every cleanup.
+  const before = await snapshot(["claude"], userEnvironment);
   const root = await realpath(await mkdtemp(join(tmpdir(), "claude-mcp-real-"))), home = join(root, "home"), file = join(home, ".claude.json");
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(home, ".claude"), { recursive: true }); await mkdir(join(root, "data"));
@@ -19,6 +25,8 @@ test("G064-M5 Claude Code's own mcp add-json and remove write and take back a se
   const environment = { home, values: { HOME: home, PATH: process.env.PATH ?? "/usr/bin:/bin", LANG: "en_US.UTF-8" } };
   const changes = new CapabilityChanges({ root: join(root, "data"), generation: 1, assertOwner: () => {}, environment, homes: [home], processes: async () => "" });
   t.after(() => changes.close());
+  const outcome = guardTest(t, before, userEnvironment, evidencePath, evidence);
+  evidence.header ??= await standaloneHeader(["claude"], { root, workspaceLockRoot: join(root, "locks"), policy: "any" });
   const installed = [{ harnessId: "claude", name: "Claude Code", version: "2.1.302" }];
   await changes.saveMcpServer("real-docs", { transport: "stdio", command: "npx", args: ["-y", "@acme/docs-mcp"], cwd: null, url: null, env: [{ key: "DOCS_TOKEN", variable: "DOCS_TOKEN" }], headers: [] }, false);
   const add = await changes.checkMcpSync("real-docs", "claude", false, installed);
@@ -40,4 +48,5 @@ test("G064-M5 Claude Code's own mcp add-json and remove write and take back a se
   const after = JSON.parse(await readFile(file, "utf8")) as { mcpServers: Record<string, unknown> };
   assert.deepEqual(Object.keys(after.mcpServers), ["existing"]);
   assert.equal((await changes.mcpInventory(installed)).servers[0]!.targets[0]!.state, "absent");
+  outcome.completed = true;
 });

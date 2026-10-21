@@ -219,6 +219,33 @@ test("G060-NC14 the command line: snapshot writes a new 0600 file of digests, co
   assert.equal(asTest.status, 0, asTest.stdout + asTest.stderr); assert.doesNotMatch(asTest.stdout + asTest.stderr, /usage:/u);
 });
 
+test("G060-NC14 a test ended under the guard fails with the changed ~ paths after its own cleanup, and its 0600 evidence records the guard either way", async t => {
+  const home = await temporary(t, "real-guard-test-"), suite = join(home, "suite.test.mjs"), record = join(home, "evidence.json");
+  await put(join(home, ".dsh", "settings.yaml"), MARKER);
+  // A suite as the real ones are written: snapshot first, its own cleanup hook, then guardTest; CHANGE=1 edits the user's file.
+  await writeFile(suite, [
+    'import test from "node:test";', 'import { writeFile } from "node:fs/promises";',
+    "import { guardTest, snapshot } from " + JSON.stringify(new URL("../real/guard.js", import.meta.url).href) + ";",
+    "const source = { home: process.env.HOME, values: { HOME: process.env.HOME } }, evidence = { header: null, results: [] };",
+    'test("guarded fixture", async t => {',
+    '  const before = await snapshot(["dsh"], source);',
+    '  t.after(() => { console.log("cleanup before the guard"); });',
+    "  const outcome = guardTest(t, before, source, process.env.HH_REAL_EVIDENCE, evidence);",
+    '  outcome.details.note = "fixture";',
+    '  if (process.env.CHANGE === "1") await writeFile(process.env.HOME + "/.dsh/settings.yaml", "changed");',
+    "  outcome.completed = true;", "});", ""].join("\n"));
+  const run = (change: string) => spawnSync(process.execPath, ["--test", suite], { cwd: home, env: { HOME: home, PATH: "/usr/bin:/bin", LANG: "C.UTF-8", HH_REAL_EVIDENCE: record, CHANGE: change }, encoding: "utf8", timeout: 120_000 });
+  const read = async () => JSON.parse(await readFile(record, "utf8")) as { header: unknown; results: { test: string; harnesses: string[]; outcome: string; note: string; guard: { unchanged: boolean; changed: string[] } }[] };
+  const kept = run("0");
+  assert.equal(kept.status, 0, kept.stdout + kept.stderr); assert.match(kept.stdout, /cleanup before the guard/u);
+  assert.deepEqual((await read()).results, [{ test: "guarded fixture", harnesses: ["dsh"], outcome: "completed", guard: { unchanged: true, changed: [] }, note: "fixture" }]);
+  assert.equal((await stat(record)).mode & 0o777, 0o600);
+  const changed = run("1");
+  assert.equal(changed.status, 1, "a changed configuration fails the test"); assert.match(changed.stdout, /configuration changed: ~\/\.dsh\/settings\.yaml/u);
+  assert.ok(!(changed.stdout + changed.stderr).includes(MARKER));
+  assert.deepEqual((await read()).results.map(item => [item.outcome, item.guard]), [["completed", { unchanged: false, changed: ["~/.dsh/settings.yaml"] }]]);
+});
+
 test("G060-NC15 the evidence header names the commit, policy and each Harness's channel, version and role from discovery, with no path and no program started", async t => {
   const root = await temporary(t, "real-guard-header-"), home = join(root, "home"), prefix = join(home, ".nvm", "versions", "node", "v26.11.1"), bin = join(prefix, "bin");
   const started = join(root, "started"), program = "#!/bin/sh\necho started >> '" + started + "'\nexit 3\n";
