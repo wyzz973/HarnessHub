@@ -2616,12 +2616,15 @@ test("G054-FZ1 the frozen Harnesses stay out of the picker, the welcome, the pal
   assert.deepEqual(errors, []);
 });
 
-test("G054-FZ2 an idle page asks the Gateway nothing; coming back reads the state and scans at most once a minute, the button scans at once, and a running task is read every 800 ms and scanned once it ends (ADR-050)", { timeout: 120000 }, async t => {
+test("G054-FZ2 an idle page asks the Gateway nothing; coming back reads the state and scans at most once a minute, the button scans at once, and a running task is read every 800 ms and scanned once it ends, asked again on coming back if that failed (ADR-050)", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
   const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
-  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  // The one scan request the test refuses is an expected 503, which the browser logs as a failed resource.
+  let refusals = 0;
+  page.on("pageerror", error => errors.push(error.message));
+  page.on("console", entry => { if (entry.type() !== "error") return; if (entry.location().url.endsWith("/api/v1/harnesses/rescan") && entry.text().includes("503")) refusals++; else errors.push(entry.text()); });
   // The Gateway's state, with its last scan made a minute old and a task of its own added when the test says so (G054-UP1's way).
   let stale = false, task: "none" | "running" | "ended" = "none", started = "", ended = "";
   const job = (status: "installing" | "completed", updatedAt: string) => ({ id: "management-00000000-0000-4000-8000-000000000054", harnessId: "codex", controlId: "codex-native", action: "upgrade",
@@ -2666,12 +2669,22 @@ test("G054-FZ2 an idle page asks the Gateway nothing; coming back reads the stat
   const gaps = reads.slice(before + 1).map((at, index, list) => at - (index === 0 ? reads[before]! : list[index - 1]!));
   assert.ok(gaps.every(gap => gap >= 700 && gap <= 3000), "reads while the task runs: " + gaps.join(", ") + " ms apart");
   assert.equal(scans.length, 2, "a running task asks for no scan");
+  // The first ask after the end is refused; the page says so, and asks again when it next comes back.
+  let refuse = true;
+  await page.route("**/api/v1/harnesses/rescan", async route => {
+    if (refuse && (route.request().postDataJSON() as { after?: string }).after !== undefined) { refuse = false; await route.fulfill({ status: 503, json: { code: "MANAGEMENT_UNAVAILABLE", message: "refused by the test" } }); return; }
+    await route.fallback();
+  });
   ended = new Date().toISOString(); task = "ended";
   await expect.poll(() => scans.length, { timeout: 10000 }).toBe(3);
   assert.deepEqual(scans[2]!.body, { after: ended });
+  await expect(page.locator(".connection-notice")).toBeVisible();
   const settled = reads.length; await page.waitForTimeout(3000);
   assert.equal(reads.length, settled, "nothing is read once the task has ended"); assert.equal(scans.length, 3);
-  assert.deepEqual(errors, []);
+  await focus(); await expect.poll(() => scans.length).toBe(4);
+  assert.deepEqual(scans[3]!.body, { after: ended }); await expect(page.locator(".connection-notice")).toHaveCount(0);
+  await page.waitForTimeout(1000); assert.equal(scans.length, 4, "asked once more, and once only");
+  assert.equal(refusals, 1); assert.deepEqual(errors, []);
 });
 
 test("G054-FZ3 a verified program whose verified command asks once shows that command with its notes, and no resume command (ADR-039, ADR-050)", { timeout: 120000 }, async t => {

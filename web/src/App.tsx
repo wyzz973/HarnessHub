@@ -381,13 +381,14 @@ export function App() {
     timer = setTimeout(() => void read(), TASK_READ_MS);
     return () => { stopped = true; if (timer !== null) clearTimeout(timer); controller.abort(); };
   }, [tasksRunning, readState]);
-  // A task that ended after the last scan asks once for a scan that began after its end, whichever read brought the news;
-  // its own effect owns it, so the task reads stopping at that moment do not cancel it.
-  const settled = state === null ? [] : state.jobs.filter(job => !installationActive(job) && !scanCovers(state.harnessesScannedAt, job.updatedAt));
-  const settledKeys = settled.map(job => job.id + "@" + job.updatedAt).join(",");
-  useEffect(() => {
-    for (const key of [...settledScans.current]) if (!settledKeys.split(",").includes(key)) settledScans.current.delete(key);
-    const fresh = settled.filter(job => !settledScans.current.has(job.id + "@" + job.updatedAt));
+  // A task that ended after the last scan asks once for a scan that began at or after its end, whichever read brought
+  // the news. Not tied to the task reads, so their stopping at that moment does not cancel it; a failed ask is asked
+  // again when the page next reads the state on coming back.
+  const scanSettled = useCallback((snapshot: WebState) => {
+    const ended = snapshot.jobs.filter(job => !installationActive(job) && !scanCovers(snapshot.harnessesScannedAt, job.updatedAt));
+    const keys = new Set(ended.map(job => job.id + "@" + job.updatedAt));
+    for (const key of [...settledScans.current]) if (!keys.has(key)) settledScans.current.delete(key);
+    const fresh = ended.filter(job => !settledScans.current.has(job.id + "@" + job.updatedAt));
     if (!fresh.length) return;
     for (const job of fresh) settledScans.current.add(job.id + "@" + job.updatedAt);
     const after = fresh.map(job => job.updatedAt).reduce((latest, time) => Date.parse(time) > Date.parse(latest) ? time : latest);
@@ -395,7 +396,9 @@ export function App() {
       for (const job of fresh) settledScans.current.delete(job.id + "@" + job.updatedAt);
       if (mounted.current) setManagementConnectionError(errorMessage(failure));
     });
-  }, [settledKeys, scanHarnesses]);
+  }, [scanHarnesses]);
+  const settledKeys = state === null ? "" : state.jobs.filter(job => !installationActive(job) && !scanCovers(state.harnessesScannedAt, job.updatedAt)).map(job => job.id + "@" + job.updatedAt).join(",");
+  useEffect(() => { if (state !== null) scanSettled(state); }, [settledKeys, scanSettled]);
   // Coming back into view reads the state again, which is cheap, and scans when the last scan is a minute old.
   useEffect(() => {
     if (!state) return;
@@ -407,13 +410,13 @@ export function App() {
       void readState(controller.signal).then(async snapshot => {
         if (stopped) return;
         setManagementConnectionError(null);
-        if (snapshot !== null) await scanIfStale(snapshot, controller.signal);
+        if (snapshot !== null) { scanSettled(snapshot); await scanIfStale(snapshot, controller.signal); }
       }).catch((failure: unknown) => { if (!stopped) setManagementConnectionError(errorMessage(failure)); }).finally(() => { reading = false; });
     };
     const visible = () => { if (document.visibilityState === "visible") returned(); };
     window.addEventListener("focus", returned); document.addEventListener("visibilitychange", visible);
     return () => { stopped = true; controller.abort(); window.removeEventListener("focus", returned); document.removeEventListener("visibilitychange", visible); };
-  }, [state !== null, readState, scanIfStale]);
+  }, [state !== null, readState, scanIfStale, scanSettled]);
   // Without a conversation open, the page subscribes to waiting requests alone; with one open, that conversation's stream
   // carries them, so a page holds one long-lived connection either way.
   useEffect(() => {
