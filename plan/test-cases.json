@@ -5665,7 +5665,7 @@
         "R24"
       ],
       "invariants": [
-        "INV-25"
+        "INV-03"
       ],
       "layer": "integration",
       "planned_file": "tests/integration/g063.test.ts",
