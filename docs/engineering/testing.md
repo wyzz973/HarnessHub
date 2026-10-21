@@ -39,7 +39,7 @@
 
 卸载测试（ADR-044）不碰本机真实安装：脚本渠道用临时家目录，npm 渠道用临时前缀和本地打包的测试包，服务停止用不改动本机的替身；只读的 `ps`、`launchctl list` 可以照常运行。真实卸载只由用户点击。
 
-安装策略：正式入口默认只认官网渠道（ADR-044）。用测试假程序或发现清单的测试必须显式使用开发策略：组合时传 `installations: "any"`，命令行加 `--allow-unofficial`。检查方式：命令行一半由 B9 自动检查（`--manifest` 必须同时传 `--allow-unofficial`，现有一处已登记的例外见 [tools/boundary-rules.json](../../tools/boundary-rules.json)）；组合一半（`installations: "any"`）尚无自动检查，靠人工审查新增的组合点，漏传时这类测试会因 Harness 未安装而失败。
+安装策略：正式入口默认只认官网渠道（ADR-044）。用测试假程序或发现清单的测试必须显式使用开发策略：组合时传 `installations: "any"`，命令行加 `--allow-unofficial`。检查方式：命令行一半由 B9 自动检查（`--manifest` 必须同时传 `--allow-unofficial`，没有登记的例外）；组合一半（`installations: "any"`）尚无自动检查，靠人工审查新增的组合点，漏传时这类测试会因 Harness 未安装而失败。
 
 真实组合按 Harness、Adapter、protocol/SDK、Provider/模型、OS/架构、权限/工具、恢复等级记录。至少验证两个 Harness 与两个兼容模型目标的独立切换，包含 A→B→A。
 
@@ -57,4 +57,4 @@ tools 自检随 `pnpm check` 运行（`check:tools`，即 `python3 -I -B -m unit
 
 记录 commit、任务/需求/场景 ID、平台、版本、fixture/seed、精确命令、结果、事件/产物/清理、跳过和局限。真实数据脱敏，不提交凭据。测试检查自身也必须有无效样例与非零退出证明。
 
-真实验收记录的格式（证据头：commit、安装策略、每个 Harness 的渠道/版本/角色，不含路径）与真实套件集合、共享配置守护清单见 `docs/engineering/real-acceptance.md`（第二批 C2 新增）。能力矩阵里真实验收为通过或部分通过的格至少引用一项仓库内的记录，`.tmp/` 文件只作补充（设计检查规则，ADR-048 裁决 5）。
+真实验收记录的格式（证据头：commit、安装策略、每个 Harness 的渠道/版本/角色，不含路径）与真实套件集合、共享配置守护清单见 [真实验收手册](real-acceptance.md)。能力矩阵里真实验收为通过或部分通过的格至少引用一项仓库内的记录，`.tmp/` 文件只作补充（设计检查规则，ADR-048 裁决 5）。

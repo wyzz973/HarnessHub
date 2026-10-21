@@ -137,7 +137,7 @@ test("whether the login shell is offered is decided once at the web command: nev
   const help = spawnSync(process.execPath, [web, "--help"], { env, encoding: "utf8", timeout: 10000 });
   assert.equal(help.status, 0); assert.match(help.stdout, /\[--no-login-shell\]/u);
   const offered = async (flags: readonly string[], data: string) => {
-    const child = spawn(process.execPath, [web, "--cwd", workspace, "--data-dir", join(root, data), "--port", "0", "--manifest", manifest, "--path-only", "--assets-dir", assets, "--workspace-lock-root", join(root, "locks"), ...flags], { env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(process.execPath, [web, "--cwd", workspace, "--data-dir", join(root, data), "--port", "0", "--manifest", manifest, "--allow-unofficial", "--path-only", "--assets-dir", assets, "--workspace-lock-root", join(root, "locks"), ...flags], { env, stdio: ["ignore", "pipe", "pipe"] });
     const exited = new Promise<number | null>(done => child.once("exit", code => done(code)));
     let output = "", errors = "", view: Record<string, unknown> = {}, code: number | null = null;
     child.stderr.on("data", (chunk: Buffer) => { errors += chunk.toString("utf8"); });

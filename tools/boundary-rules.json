@@ -110,13 +110,7 @@
       "requiredFlag": "--workspace-lock-root",
       "pairs": [{ "when": "--manifest", "requires": "--allow-unofficial" }],
       "exemptFlags": ["--help", "-h"],
-      "exceptions": [
-        {
-          "file": "tests/integration/login-shell.test.ts",
-          "key": "--allow-unofficial",
-          "reason": "2026-10-21 登记的现状：该测试只检查登录 shell 的开关，传入的发现清单没有任何定义（definitions 为空），web 命令因此只打印 MANIFEST_IGNORED 后照常运行，断言不依赖清单。应在测试里去掉 --manifest 或补上 --allow-unofficial，之后删除本例外。"
-        }
-      ]
+      "exceptions": []
     },
     {
       "id": "B10",

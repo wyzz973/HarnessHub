@@ -4,7 +4,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { satisfies } from "semver";
 import { capabilityReadTables } from "../../src/adapters/capability-reads.js";
-import { loadBuiltinCatalog } from "../../src/adapters/catalog.js";
+import { harnessTier, loadBuiltinCatalog } from "../../src/adapters/catalog.js";
 import { VERIFIED_VERSIONS, nativeResume, versionConsistency, versionVerification, type VersionConsistencyInput, type VerifiedVersions } from "../../src/infrastructure/management/verified-versions.js";
 
 test("a version is verified only where HarnessHub ran it for real; unknown versions and Harnesses claim nothing", () => {
@@ -34,6 +34,13 @@ test("the verified versions are the installations the capability matrix records 
     assert.ok(installation.includes(verified.program[1]), `${id}: the matrix was checked on ${verified.program[1]}: ${installation}`);
     if (verified.adapter) assert.ok(installation.includes(verified.adapter[1]), `${id}: the matrix names adapter ${verified.adapter[1]}`);
   }
+});
+
+test("the capability matrix records the tier the catalog gives each Harness, and exactly Cursor, Gemini CLI and Pi are frozen (ADR-048, ADR-050)", () => {
+  const matrix = JSON.parse(readFileSync(fileURLToPath(new URL("../../../plan/native-capabilities.json", import.meta.url)), "utf8")) as { harnesses: { id: string; tier: string }[] };
+  for (const harness of matrix.harnesses) assert.equal(harness.tier, harnessTier(harness.id), `${harness.id}: the matrix and the catalog name one tier`);
+  assert.deepEqual(matrix.harnesses.filter(harness => harness.tier === "frozen").map(harness => harness.id).sort(), ["cursor", "gemini", "pi"]);
+  assert.deepEqual(loadBuiltinCatalog("darwin-aarch64").filter(definition => harnessTier(definition.id) === "frozen").map(definition => definition.id).sort(), ["cursor", "gemini", "pi"], "the catalog freezes the same three");
 });
 
 /** The capability matrix's Harnesses as `plan/native-capabilities.json` records them. */

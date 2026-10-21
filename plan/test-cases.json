@@ -6562,7 +6562,7 @@
       ],
       "layer": "unit",
       "scenario": "判断本机版本是否为真实验证过的版本",
-      "expected": "产品版本与不同于它的适配器版本都在验证范围内才算已验证；semver 按范围比较，其他版本只按完全相同判断；版本未知或从未验证的 Harness 不下结论；表中版本与能力矩阵记录的安装版本一致，任一处单独改动都使测试失败",
+      "expected": "产品版本与不同于它的适配器版本都在验证范围内才算已验证；semver 按范围比较，其他版本只按完全相同判断；版本未知或从未验证的 Harness 不下结论；表中版本与能力矩阵记录的安装版本一致；能力矩阵为每个 Harness 记的分层与目录的 harnessTier 一致，冻结的恰为 Cursor、Gemini CLI、Pi；任一处单独改动都使测试失败",
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/unit/verified-versions.test.ts"

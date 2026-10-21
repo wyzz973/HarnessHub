@@ -30,7 +30,7 @@
 | B6 | 前端 `web/src` 只引用自身和 `src/contracts`，不引用 node 内置模块；前端自己的第三方依赖不受限 |
 | B7 | `src` 不导入 `tests` 和前端目录 `web`；`src/web` 是网关的服务端代码，不受此限 |
 | B8 | 测试里每次 `application(` 和 `startWebServer(` 必须在调用处给出 `workspaceLockRoot`，`startWebServer` 也可以改传自带租约目录的 `application` 组合器，不得落到各用户共用的租约目录（[ADR-041](../decisions/0041-workspace-lock-root.md)） |
-| B9 | 测试启动正式命令 `web`、`chat`、`sessions` 必须带 `--workspace-lock-root`，带 `--help` 或 `-h` 的除外；传 `--manifest` 必须同时传 `--allow-unofficial`，否则清单被忽略（[ADR-041](../decisions/0041-workspace-lock-root.md)、[ADR-044](../decisions/0044-macos-official-channels.md)）。现有一处例外：`login-shell.test.ts` 传了没有任何定义的清单 |
+| B9 | 测试启动正式命令 `web`、`chat`、`sessions` 必须带 `--workspace-lock-root`，带 `--help` 或 `-h` 的除外；传 `--manifest` 必须同时传 `--allow-unofficial`，否则清单被忽略（[ADR-041](../decisions/0041-workspace-lock-root.md)、[ADR-044](../decisions/0044-macos-official-channels.md)）。 |
 | B10 | 第三方包只允许出现在 `src/infrastructure` 和 `src/adapters`，且限于 semver、yaml、jsonc-parser、tar、smol-toml、json5、yauzl、unbzip2-stream |
 | B0 | 检查自身的完整性：文件无法解析、扫描目录缺失或没有源码、无法归类的导入（非字面量的 `import()`、指向仓库外的相对路径）、不再对应代码的例外。B0 不能登记例外 |
 

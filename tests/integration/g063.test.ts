@@ -18,7 +18,6 @@ const registered = [
   { rule: "B3", file: "src/contracts/control.ts", key: "src/contexts/catalog/domain/catalog.js" },
   { rule: "B3", file: "src/contracts/control.ts", key: "src/contexts/catalog/domain/discovery.js" },
   { rule: "B3", file: "src/contracts/management.ts", key: "src/contexts/catalog/domain/catalog.js" },
-  { rule: "B9", file: "tests/integration/login-shell.test.ts", key: "--allow-unofficial" },
 ];
 
 interface Reported { readonly file: string; readonly line: number; readonly rule: string; readonly text: string }
