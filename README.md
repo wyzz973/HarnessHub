@@ -19,13 +19,13 @@ pnpm web --cwd /absolute/workspace --data-dir data --port 4317
 
 对话现通过已提交事实的SSE实时显示回复，刷新或重连不会重新执行消息。消息区支持流式Markdown、生成反馈、阅读时暂停滚动、复制与执行详情；停止后保留部分内容。输入区为自动增长文本框和紧凑选择器，高级配置按需展开。短回复若模型几乎同时返回，仍可能一次显示；没有人工打字延迟。验收见[实时对话记录](docs/verification/live-chat-2026-10-10.md)，可单独运行 `pnpm test:real:stream` 验证真实Codex和本地确定性Provider的首块/重连。
 
-Harness连接或目标切换失败时，历史与原选择保留，可继续使用当前选择或明确重试。草稿在当前标签页按对话保存，刷新也可恢复。旧blocked会话可选择Harness并“检查连接并恢复对话”；未知结果需明确确认，清理未确认仍需先处理资源，不自动重跑旧任务。结束会话前说明后果并确认。审查见[对话恢复记录](docs/verification/conversation-recovery-2026-10-10.md)。当前业务存储为v10（保留v1→v2→v3→v4→v5→v6→v7→v8→v9→v10事务迁移）；更新前备份本机data，回退旧程序前停止服务并恢复旧备份。
+Harness连接或目标切换失败时，历史与原选择保留，可继续使用当前选择或明确重试。草稿在当前标签页按对话保存，刷新也可恢复。旧blocked会话可选择Harness并“检查连接并恢复对话”；未知结果需明确确认，清理未确认仍需先处理资源，不自动重跑旧任务。结束会话前说明后果并确认。审查见[对话恢复记录](docs/verification/conversation-recovery-2026-10-10.md)。当前业务存储为v12（保留v1→v2→v3→v4→v5→v6→v7→v8→v9→v10→v11→v12事务迁移）；更新前备份本机data，回退旧程序前停止服务并恢复旧备份。
 
 所有接入的Harness使用本机已安装入口，默认沿用本机模型配置和登录。模型列表由所选Harness原生接口读取，未指定时跟随其本机默认；不写全局模型配置，不创建空native HOME。选择Harness、Provider或模型后直接提出切换，不再点“应用”；当前回复保持原选择，新消息等待最后一次选择生效。配置验证失败保留原选择与草稿，快速改选只推进最新未受理选择。普通切换不启动目标进程，effective表示下一轮配置选择已保存；原生连接、认证与额度在发送时分别核实。选择器显示每个入口上次读取模型目录时的状态（已就绪、需要登录或配置、读取失败）和通常启动用时；目录按配置指纹复用最长24小时并跨重启保存在数据根的`native-catalogs.json`，读取目录时原程序建出的空会话默认不在“本机会话”中列出（[ADR-033](docs/decisions/0033-native-catalog-cache-and-readiness.md)）。对话可在执行配置里开启“保持原生进程”（默认关闭）：回合之间不关闭原程序，后台任务可以继续，下一条消息直接复用它而不必冷启动；空闲30分钟后结束，同时最多保留4个，切换、关闭、重建、分支与服务关闭时先结束并留证；服务异常退出后，下一次启动先结束上一服务遗留的进程组，确认后才释放工作区，无法确认时工作区保持隔离；关闭或接管时记录离开进程组的后台任务，HarnessHub不结束它们，仍在运行时在对话中提示一次（[ADR-030](docs/decisions/0030-retained-native-processes.md)，业务格式v12；升级前备份数据目录，回退旧程序需恢复升级前备份）。审批与提问显示期限及来源（原程序自己的期限或HarnessHub的等待期限）；侧栏把等待你处理的对话排在最前并倒计时，侧栏顶部的铃铛列出所有对话中等待的审批与提问，决定在对话内完成；浏览器通知默认关闭，由你在铃铛或设置中开启（[ADR-035](docs/decisions/0035-attention-and-request-deadlines.md)）。每个回合的执行时间上限默认300秒，等待你决定的时间不计入，另有默认30分钟的等待期限，到期本回合取消、原程序不会收到决定；可用`--execution-budget <秒>`与`--wait-budget <分钟>`调整。不同工作区的对话最多4个同时执行；同一工作区的后一个对话排队，并说明在等哪个对话、它是否在等你，可以打开那个对话或取消排队（[ADR-036](docs/decisions/0036-approval-wait-budget.md)）。本机版本不是HarnessHub用真实程序验证过的版本时，Harness选择器与Harnesses列表提示“未经验证的版本”，仍可使用（[ADR-038](docs/decisions/0038-verified-version-hint.md)）。设置页的“发现”可以由你触发，从登录shell的PATH补充搜索目录（会执行你的shell登录配置，只在点击时读取一次，可逐项移除；[ADR-040](docs/decisions/0040-login-shell-search-directories.md)）。对话的详情栏“执行”页显示原生会话ID，并给出在原程序中继续的命令（交互形式按原程序帮助给出，恢复机制以真实回合验证），只供复制，HarnessHub不执行（[ADR-039](docs/decisions/0039-continue-in-the-original-program.md)）。每轮的执行详情可以复制诊断信息：版本、阶段耗时、结束原因、清理状态与本轮stderr的最后4 KiB，服务端已隐去路径、环境变量值和密钥样式的字符串，默认不含对话内容（[ADR-037](docs/decisions/0037-run-diagnostics.md)）。
 
 Web界面按用户确认的设计稿重写（[ADR-042](docs/decisions/0042-frontend-redesign.md)，[验收记录](docs/verification/frontend-redesign-2026-10-12.md)）：以对话为中心，侧栏按状态分组；每轮的工具默认折叠为一行摘要（失败与未完成的数量写在摘要里），可切换为详细；右侧详情栏分改动、过程、计划、后台与执行；回复进行中可以先写下一条，本轮正常结束后自动发出一次，其他情况放回输入框；⌘K命令面板、⌘/快捷键表、⇧⌘O新对话；浅色、深色或跟随系统。Geist 字体随前端打包；中文按用户选择从 Google Fonts 加载 Noto Sans SC，内容安全策略只为这一项放开两个字体域名，没有网络时回退到系统字体。
 
-当前生产页面只使用各Harness本机已配置的模型，统一Provider管理后置。旧Provider接口与实验验收保留，已有显式Provider会话不会静默改成原生模式。原生模型选择/直接切换见[ADR-015](docs/decisions/0015-native-harness-models-and-switching.md)、[Multica调研](docs/research/multica-native-models.md)及[验收](docs/verification/native-models-2026-10-11.md)。业务格式现为v10，升级前备份，回退旧程序前恢复旧备份。
+当前生产页面只使用各Harness本机已配置的模型，统一Provider管理后置。旧Provider接口与实验验收保留，已有显式Provider会话不会静默改成原生模式。原生模型选择/直接切换见[ADR-015](docs/decisions/0015-native-harness-models-and-switching.md)、[Multica调研](docs/research/multica-native-models.md)及[验收](docs/verification/native-models-2026-10-11.md)。业务格式现为v12，升级前备份，回退旧程序前恢复旧备份。
 
 当前受管组合为 **Codex + OpenAI Responses**、**Gemini CLI + Gemini（API Key）**。其他产品继续检测，但协议/受管配置能力单独标明。OpenAI/Anthropic连接地址通常含/v1；Gemini填写API服务根。密钥只写入本机加密vault，不回显到UI/Session；同OS用户可访问主密钥，本版不宣称系统钥匙串隔离。
 
@@ -116,7 +116,7 @@ Web界面按用户确认的设计稿重写（[ADR-042](docs/decisions/0042-front
   - **真实环境**：`swift-lsp` 插件在 Claude Code 与 Codex 各往返一次，每次只改一行，启用后两个文件都逐字节回到原样；新会话里是否真的少了它，没有验证。
 - 新增依赖 jsonc-parser 3.3.1、yaml 2.9.1、smol-toml 1.9.0。验收见[能力视图验收](docs/verification/capabilities-view-2026-10-18.md)。
 
-原版OpenClaw2026.3.23-2、Codex0.162.1、OpenCode1.18.35、Pi0.85.1已通过本机真实模型回复；OpenClaw/Pi使用原生DeepSeek。Hermes Agent 0.12.0（官方安装方式）与 DeepSeek Harness（`dsh`，本机为源码构建 0.2.1-alpha.1，经发现清单的自定义入口接入）经各自内置 ACP 接入，已通过真实回复、跨 Hub 重启的原生恢复、思考与工具活动验收，见[ADR-031](docs/decisions/0031-hermes-and-deepseek-harness.md)与[验收记录](docs/verification/hermes-dsh-onboarding-2026-10-11.md)。Pi 与 DeepSeek Harness 的上述证据来自非官网安装，按 ADR-044 不再作为验收对象。Claude接入口绑定原Claude Code2.1.296及既有登录，账号周额度已用完。Cursor原安装已升级至2026.10.01-e373342，沿用本机登录、44项原生模型目录并通过独立短提示回复；原公共对话实测仍返回账号套餐升级提示，不能算该对话回复通过。Gemini0.62.0的个人登录被服务端停用，直连DeepSeek实际返回404（Google GenAI协议与DeepSeek接口不匹配），不能算回复通过。所有接入口版本与原程序版本分开解释，不把ACP适配器版本当原CLI版本。
+原版OpenClaw2026.3.23-2、Codex0.162.1、OpenCode1.18.35、Pi0.85.1已通过本机真实模型回复；OpenClaw/Pi使用原生DeepSeek。Hermes Agent 0.12.0（官方安装方式）与 DeepSeek Harness（`dsh`）经各自内置 ACP 接入，已通过真实回复、跨 Hub 重启的原生恢复、思考与工具活动验收，见[ADR-031](docs/decisions/0031-hermes-and-deepseek-harness.md)与[验收记录](docs/verification/hermes-dsh-onboarding-2026-10-11.md)。dsh 本机现为 npm 官网的 0.2.0-rc.2（2026-10-18 经 4317 安装）；上述验收时它是源码构建 0.2.1-alpha.1、经发现清单的自定义入口接入，Pi 与 DeepSeek Harness 的这些证据来自非官网安装，按 ADR-044 为历史证据，不再作为验收对象，rc.2 待重验收。Claude接入口绑定本机Claude Code及既有登录：本机现为 2.1.306（nvm，当前使用）与 2.1.302（Homebrew），HarnessHub 已验证的版本仍为 2.1.296，待重验收（[ADR-046](docs/decisions/0046-harness-focus-hardening.md)）。Cursor原安装已升级至2026.10.01-e373342，沿用本机登录、44项原生模型目录并通过独立短提示回复；原公共对话实测仍返回账号套餐升级提示，不能算该对话回复通过。Gemini0.62.0的个人登录被服务端停用，直连DeepSeek实际返回404（Google GenAI协议与DeepSeek接口不匹配），不能算回复通过。所有接入口版本与原程序版本分开解释，不把ACP适配器版本当原CLI版本。
 
 Provider统一管理仍是用户→HarnessHub→不同Harness→Provider统一管理的后续环节；当前原生接入直接使用各Harness已配置模型，不通过本项目Provider来完成DeepSeek测试。
 
@@ -126,7 +126,7 @@ Provider统一管理仍是用户→HarnessHub→不同Harness→Provider统一�
 
 点击“检查更新”读取发行方版本。系统安装可“更新并管理”：新版写入HarnessHub私有版本目录，系统安装保留；后续网关使用受管默认。每次升级创建独立版本，旧版运行仍使用捕获的路径，下一轮记录实际安装身份。不同版本文件不互相覆盖。
 
-当前实现npm、Python/uv与归档安装方式；Codex原生采用官方npm包，ACP包装器单独描述。运行环境不匹配时可为目标准备一个私有Node24；不改宿主Node或个人配置。未登记、缺运行时、上游迁移或当前不支持的配方会明确解释，不能把43个目录项叫43个已验收安装/执行组合。安装成功后登录/Provider兼容与真实任务仍需分别验证。
+当前实现npm、Python/uv与归档安装方式；Codex原生采用官方npm包，ACP包装器单独描述。运行环境不匹配时可为目标准备一个私有Node24；不改宿主Node或个人配置。未登记、缺运行时、上游迁移或当前不支持的配方会明确解释，不能把45个目录项叫45个已验收安装/执行组合。安装成功后登录/Provider兼容与真实任务仍需分别验证。
 
 管理任务和默认版本独立持久保存；刷新/关浏览器不会重跑或取消。结果未知不自动恢复执行，旧默认保留。详细契约和证据见[ADR-012](docs/decisions/0012-harness-management-workbench.md)、[调研](docs/research/harness-management.md)、[验证](docs/verification/harness-management-2026-10-10.md)。
 
@@ -209,6 +209,7 @@ test:real:session会运行真实Codex三轮、两个独立入口并检查实际�
 - [测试计划](docs/engineering/testing.md)与[场景矩阵](docs/engineering/test-matrix.md)：保留完整蓝图和当前切片场景，含后置项目；当前实际测试见[验证记录](docs/verification/catalog-control-2026-10-09.md)。
 - [范围与门禁](docs/engineering/readiness.md)：本机目录、控制、公共Session、Provider与工作台切片已开放；完整未来模型代理/账本/路由仍按各自契约推进。
 - [目录与控制验证](docs/verification/catalog-control-2026-10-09.md)：当前实现、测试和未验证范围；[旧检测记录](docs/verification/discovery-2026-10-09.md)与[初始设计记录](docs/verification/design-review-2026-10-09.md)保留基线证据。
+- [聚焦六个 Harness（ADR-046）](docs/decisions/0046-harness-focus-hardening.md)：2026-10-21 起只做精 Claude Code、Codex、OpenCode、DeepSeek Harness、WorkBuddy、Hermes Agent，第一批六项工程加固，非焦点四个冻结；范围收窄与 WorkBuddy 接入路线的用户待决项见[ADR-048](docs/decisions/0048-harness-scope-and-workbuddy.md)（proposed）。
 
 ## 现在可运行的检查
 
@@ -227,7 +228,7 @@ python3 -m unittest discover -s tools -p 'test_*.py' -v
 
 快速切换、原生思考档位、选项、命令与工具审批按[ADR-019](docs/decisions/0019-native-session-experience.md)实现。原OpenClaw可读取其Gateway模型目录，仅为Hub自己的会话覆盖模型；Codex与Pi档位来自原安装接口。统一聊天界面承接原生审批与Pi输入交互，配置/登录保持本机来源。当前实测选择提交52–96ms；首次模型目录读取和首条回复仍受原程序启动及网络影响。范围与实际证据见[本轮验收](docs/verification/native-session-experience-2026-10-11.md)，不将这些结果称为全部Harness原生功能等价。
 
-所有Harness以[ADR-020](docs/decisions/0020-complete-native-harness-capabilities.md)的完整原生能力标准验收；当前通用原生恢复已接入，OpenClaw/Codex/Pi真实恢复通过。未确认的原生状态不能自动继续；高级配置可明确重新建立原生会话并保留旧记录。业务库为v9，升级前备份；其余能力缺口及七个原接口审查见[验收记录](docs/verification/complete-native-capabilities-2026-10-11.md)，完整目标仍进行中。
+所有Harness以[ADR-020](docs/decisions/0020-complete-native-harness-capabilities.md)的完整原生能力标准验收；当前通用原生恢复已接入，OpenClaw/Codex/Pi真实恢复通过。未确认的原生状态不能自动继续；高级配置可明确重新建立原生会话并保留旧记录。业务库现为v12，升级前备份；其余能力缺口及七个原接口审查见[验收记录](docs/verification/complete-native-capabilities-2026-10-11.md)，完整目标仍进行中。
 
 逐Harness原生能力与验收状态以[能力矩阵](docs/verification/native-capability-matrix.md)为准（机器权威`plan/native-capabilities.json`，设计检查拒绝无证据的完整声明），来源见[七个原安装的能力面调研](docs/research/native-capability-surfaces-2026-10-11.md)。[ADR-021](docs/decisions/0021-native-profile-and-deviation-tolerance.md)起，原生模式只透传用户真实设置的配置位置变量（Cursor因此回到原`~/.cursor`并加载原MCP配置）；原生协议的正常偏差（迟到输出、外部线程、重复工具id、多行标题、load后回放）归一而不归属，不再中断回合；会改写全局默认值的原生设置（Cursor模型、Pi全局settings命令）不由Hub执行。本轮OpenCode、OpenClaw、Codex、Pi跨Hub进程重启的原生恢复真实通过，见[第二轮验收](docs/verification/native-capabilities-round2-2026-10-11.md)；完整能力仍在进行中。
 
