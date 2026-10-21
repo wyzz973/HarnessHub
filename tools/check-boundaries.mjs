@@ -12,6 +12,13 @@
 //   missing or empty, an import that cannot be classified, an exception that no longer matches anything); 2 unusable
 //   arguments, root or rule file. A required check that cannot run is a failure, never a pass.
 //
+// Rule file: { version, description, scan: { roots, extensions, skipDirectories }, rules }. Every rule has an id (B<n>), a title,
+// a kind, appliesTo (path patterns for the files it governs) and exceptions ({ file, key, reason, count?, typeOnly? }).
+//   imports      node { allow | deny: ["node:<module>"] }, packages { allow, inPaths? }, paths { allow?, deny? }
+//   isolated     groups: a pattern such as src/contexts/*; a file of one group may not import another group
+//   call-options calls [{ callee, argument, anyOf }]: the argument of that call must visibly carry one of the properties
+//   spawn-flags  entries, spawners, requiredFlag, pairs [{ when, requires }], exemptFlags: flags of the official commands
+//
 // The analysis is static and per file. It sees import / export ... from / import() / require() / import type, and in tests
 // the options of the `application(` and `startWebServer(` calls and the arguments of the processes that start the official
 // commands. It does not follow values across files, and it does not read `/// <reference>` directives, path strings built
@@ -712,6 +719,7 @@ function applyExceptions(rules, violations, rulesLabel, problems) {
   return excepted;
 }
 
+/** Runs the check and returns the exit code. Throws UsageError for arguments, a root or a rule file that cannot be used. */
 function main(argv) {
   let options;
   try { options = parseArgs({ args: argv, options: { root: { type: "string" }, rules: { type: "string" }, help: { type: "boolean", short: "h" } }, strict: true, allowPositionals: false }).values; }

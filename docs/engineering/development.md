@@ -18,7 +18,7 @@
 
 ### 模块边界检查（G063）
 
-模块边界由 `tools/check-boundaries.mjs` 自动检查（`pnpm check:boundaries`，已并入 `pnpm check`），规则见 [tools/boundary-rules.json](../../tools/boundary-rules.json)：每条规则登记适用目录、允许或禁止的导入和显式例外；例外必须写明原因，不再对应任何代码的例外使检查失败。检查用 TypeScript 解析 `src`、`web/src`、`tests` 里的 import、export from、动态 `import()`、`require` 和 import 类型，违规按 `文件:行 规则ID 说明` 输出并以非零退出；`--root`、`--rules` 可指向其他目录和规则文件，无效样例就这样运行。
+模块边界由 `tools/check-boundaries.mjs` 自动检查（`pnpm check:boundaries`，已并入 `pnpm check`），规则见 [tools/boundary-rules.json](../../tools/boundary-rules.json)：每条规则登记适用目录、允许或禁止的导入和显式例外；例外按 `file`、`key`（被导入的仓库路径、node 模块或包名；B8 是被调用的函数，B9 是缺少的标志）和 `reason` 登记，import 类的可限定 `typeOnly`，`count` 限定出现次数；它登记的是现状，不是新代码的许可，原因里写明消除办法。不再对应任何代码的例外使检查失败。检查用 TypeScript 解析 `src`、`web/src`、`tests` 里的 import、export from、动态 `import()`、`require` 和 import 类型，违规按 `文件:行 规则ID 说明` 输出并以非零退出；`--root`、`--rules` 可指向其他目录和规则文件，无效样例就这样运行。
 
 | 规则 | 约束 |
 |---|---|
