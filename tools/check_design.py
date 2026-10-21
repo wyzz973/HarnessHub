@@ -24,8 +24,6 @@ def check_plan(requirements: dict, task_plan: dict, test_plan: dict) -> list[str
     cases = test_plan.get("cases", [])
     if not reqs or not tasks or not cases:
         errors.append("requirements/tasks/cases must all be non-empty")
-    if task_plan.get("application_implementation_allowed") is not False:
-        errors.append("application implementation gate must remain closed in design phase")
     for name, items in [("requirement", reqs), ("task", tasks), ("case", cases)]:
         ids = [item.get("id") for item in items]
         if any(not isinstance(value, str) or not value for value in ids):
@@ -142,11 +140,21 @@ CAPABILITY_LEVELS = {
     "real": {"pass", "partial", "fail", "blocked", "none", "n/a"},
 }
 CAPABILITY_FIELDS = {"native", "source", "hub", "protocol", "real", "evidence", "note"}
+# Harness-level record: focus Harnesses are the seven being polished (ADR-046/048), frozen ones keep their ✅ count at the
+# freeze; `historical` marks evidence from an installation that is not the official channel (ADR-044).
+HARNESS_TIERS = {"focus", "frozen"}
+HARNESS_FIELDS = {"id", "name", "installation", "control", "capabilities", "tier", "complete_at_freeze", "historical"}
 CAPABILITY_VIEW = "docs/verification/native-capability-matrix.md"
 
 
+def repository_evidence(item: str) -> bool:
+    """A project path that is kept in the repository; `.tmp/` files of the main checkout are supplementary only."""
+    return PurePosixPath(item.split("#", 1)[0]).parts[:1] != (".tmp",)
+
+
 def check_capabilities(matrix: dict, root: Path | None = None) -> list[str]:
-    """Per-Harness native capability claims. Completion needs native, Hub, protocol and real evidence."""
+    """Per-Harness native capability claims. Completion needs native, Hub, protocol and real evidence kept in the repository;
+    a frozen Harness cannot grow past its complete_at_freeze; a partially provided native interface passed for real needs a note."""
     errors: list[str] = []
     features, harnesses = matrix.get("features"), matrix.get("harnesses")
     if not isinstance(features, list) or not features or not isinstance(harnesses, list) or not harnesses:
@@ -170,13 +178,27 @@ def check_capabilities(matrix: dict, root: Path | None = None) -> list[str]:
             errors.append("invalid capability Harness id: " + str(hid))
             continue
         harness_ids.append(hid)
+        unknown = set(harness) - HARNESS_FIELDS
+        if unknown:
+            errors.append(hid + " has unknown Harness fields: " + ", ".join(sorted(unknown)))
         for field in ["name", "installation", "control"]:
             if not isinstance(harness.get(field), str) or not harness[field].strip():
                 errors.append(hid + " capability record lacks " + field)
+        tier, freeze = harness.get("tier"), harness.get("complete_at_freeze")
+        if tier not in HARNESS_TIERS:
+            errors.append(hid + " needs a tier of focus or frozen")
+        frozen_count = isinstance(freeze, int) and not isinstance(freeze, bool) and freeze >= 0
+        if tier == "frozen" and not frozen_count:
+            errors.append(hid + " frozen Harness needs an integer complete_at_freeze")
+        elif tier != "frozen" and "complete_at_freeze" in harness:
+            errors.append(hid + " only a frozen Harness records complete_at_freeze")
+        if "historical" in harness and not isinstance(harness["historical"], bool):
+            errors.append(hid + " historical must be a boolean")
         cells = harness.get("capabilities")
         if not isinstance(cells, dict) or set(cells) != set(feature_ids):
             errors.append(hid + " capabilities must cover exactly the declared features")
             continue
+        complete = 0
         for fid, entry in cells.items():
             label = hid + "/" + fid
             if not isinstance(entry, dict) or set(entry) - CAPABILITY_FIELDS:
@@ -207,14 +229,22 @@ def check_capabilities(matrix: dict, root: Path | None = None) -> list[str]:
                 errors.append(label + " real verification needs a Hub implementation")
             if real in {"pass", "partial"} and not evidence:
                 errors.append(label + " real verification needs evidence")
+            elif real in {"pass", "partial"} and not any(repository_evidence(item) for item in evidence):
+                errors.append(label + " real verification needs repository evidence, not only .tmp/ files")
             if real in {"fail", "blocked", "partial"} and not note.strip():
                 errors.append(label + " incomplete real verification needs a reason")
+            if native == "partial" and real == "pass" and not note.strip():
+                errors.append(label + " partially provided native capability passed for real: the note must say what the native interface lacks")
             for item in evidence:
                 path = PurePosixPath(item.split("#", 1)[0])
                 if path.is_absolute() or ".." in path.parts:
                     errors.append(label + " evidence must be a project-relative path")
-                elif root is not None and path.parts and path.parts[0] != ".tmp" and not (root / path).exists():
+                elif root is not None and repository_evidence(item) and path.parts and not (root / path).exists():
                     errors.append(label + " evidence path is missing: " + item)
+            if capability_symbol(entry) == "✅":
+                complete += 1
+        if tier == "frozen" and frozen_count and complete > freeze:
+            errors.append(hid + " frozen Harness has " + str(complete) + " complete capabilities, more than complete_at_freeze " + str(freeze))
     for value, count in Counter(harness_ids).items():
         if count != 1:
             errors.append("duplicate capability Harness: " + value)
@@ -231,6 +261,8 @@ def capability_symbol(entry: dict) -> str:
         return "✕"
     if native == "yes" and hub == "done" and protocol == "pass" and real == "pass":
         return "✅"
+    if native == "partial" and hub == "done" and protocol == "pass" and real == "pass":
+        return "☑"
     if hub == "none":
         return "○"
     if hub == "done" and protocol == "pass":
@@ -238,26 +270,45 @@ def capability_symbol(entry: dict) -> str:
     return "◑"
 
 
+def count_symbol(matrix: dict, symbol: str, official: bool = False) -> int:
+    """How many cells render as `symbol`; `official` leaves out Harnesses whose evidence is historical (ADR-044)."""
+    return sum(1 for item in matrix["harnesses"] if not (official and item.get("historical") is True)
+               for entry in item["capabilities"].values() if capability_symbol(entry) == symbol)
+
+
+def harness_label(item: dict) -> str:
+    marks = [mark for mark, flagged in [("冻结", item.get("tier") == "frozen"), ("历史", item.get("historical") is True)] if flagged]
+    return item["name"] + ("（" + "、".join(marks) + "）" if marks else "")
+
+
+SYMBOLS = ["✅", "☑", "◐", "◑", "○", "✕", "—", "？"]
+
+
 def render_capabilities(matrix: dict) -> str:
     features, harnesses = matrix["features"], matrix["harnesses"]
     lines = ["# 逐Harness原生能力矩阵", "",
              "生成自 plan/native-capabilities.json；使用 python3 tools/check_design.py --write 更新。设计检查要求每个Harness覆盖全部能力项，"
-             "完整（✅）必须同时满足原接口具备、Hub契约/执行/界面已接出、协议测试通过和本机原安装真实验收通过；其余状态均不算完整接入。", "",
-             "图例：✅ 完整；◐ 已接出并通过协议测试，真实原安装未验收；◑ 部分接出；○ 原接口具备但Hub未接出；✕ 真实验收失败或受阻；— 原接口不提供；？ 未核实。", "",
-             "证据中的 .tmp/ 路径相对于主检出 HarnessGateway（本机运行服务的检出），该目录被忽略、不入库；可复核的命令、版本、结果与局限写在 docs/verification/ 的验收记录中。", "",
-             "| 分组 | 能力 | " + " | ".join(cell(item["name"]) for item in harnesses) + " |",
+             "完整（✅）必须同时满足原接口具备、Hub契约/执行/界面已接出、协议测试通过和本机原安装真实验收通过；"
+             "原接口只部分提供时，后三项同样满足且说明写明原接口缺什么的格记为 ☑（Hub 已尽，按 ADR-048 计为终态）；其余状态均不算完整接入。", "",
+             "图例：✅ 完整；☑ 原接口部分提供，Hub 已尽；◐ 已接出并通过协议测试，真实原安装未验收；◑ 部分接出；○ 原接口具备但Hub未接出；✕ 真实验收失败或受阻；— 原接口不提供；？ 未核实。", "",
+             "列名后的（冻结）表示该 Harness 已冻结（tier=frozen，ADR-046 第 6 项与 ADR-048 决定 1）：不再新增 ✅，设计检查拒绝 ✅ 数超过冻结时的 complete_at_freeze；"
+             "（历史）表示原安装不是官网渠道，证据按 ADR-044 为历史，不计入摘要的 native_capabilities_complete_official。", "",
+             "证据中的 .tmp/ 路径相对于主检出 HarnessGateway（本机运行服务的检出），该目录被忽略、不入库，只作补充：真实验收为通过或部分通过的格至少有一项仓库内证据，"
+             "可复核的命令、版本、结果与局限写在 docs/verification/ 的验收记录中。", "",
+             "| 分组 | 能力 | " + " | ".join(cell(harness_label(item)) for item in harnesses) + " |",
              "|---|---|" + "---|" * len(harnesses)]
     for feature in features:
         lines.append("| " + cell(feature["group"]) + " | " + cell(feature["title"]) + " | " +
                      " | ".join(capability_symbol(item["capabilities"][feature["id"]]) for item in harnesses) + " |")
-    lines += ["", "| Harness | ✅ | ◐ | ◑ | ○ | ✕ | — | ？ |", "|---|---|---|---|---|---|---|---|"]
+    lines += ["", "| Harness | " + " | ".join(SYMBOLS) + " |", "|---|" + "---|" * len(SYMBOLS)]
     for item in harnesses:
         counts = Counter(capability_symbol(item["capabilities"][feature["id"]]) for feature in features)
-        lines.append("| " + cell(item["name"]) + " | " + " | ".join(str(counts.get(symbol, 0)) for symbol in ["✅", "◐", "◑", "○", "✕", "—", "？"]) + " |")
+        lines.append("| " + cell(harness_label(item)) + " | " + " | ".join(str(counts.get(symbol, 0)) for symbol in SYMBOLS) + " |")
     names = {"yes": "具备", "partial": "部分", "no": "不提供", "unknown": "未核实", "done": "已接出", "none": "未接出",
              "n/a": "不适用", "pass": "通过", "fail": "失败", "blocked": "受阻"}
     for item in harnesses:
-        lines += ["", "## " + item["name"], "", "原安装：" + item["installation"] + "；控制入口：" + item["control"] + "。", "",
+        tier = "冻结（冻结时 ✅ " + str(item.get("complete_at_freeze")) + "）" if item.get("tier") == "frozen" else "焦点"
+        lines += ["", "## " + harness_label(item), "", "原安装：" + item["installation"] + "；控制入口：" + item["control"] + "；分层：" + tier + "。", "",
                   "| 能力 | 原接口 | 来源 | Hub | 协议 | 真实原安装 | 证据 | 说明 |", "|---|---|---|---|---|---|---|---|"]
         for feature in features:
             entry = item["capabilities"][feature["id"]]
@@ -277,7 +328,7 @@ def render_views(requirements: dict, tasks: dict, cases: dict) -> dict[str, str]
                  "| ID | 需求 | 行为 | 来源 |", "|---|---|---|---|"]
     for req in requirements["requirements"]:
         req_lines.append("| " + " | ".join(cell(req[k]) for k in ["id", "title", "statement", "origin"]) + " |")
-    task_lines = ["# 原子任务与唯一交付物", "", "生成自 plan/tasks.json。完整工程地图保留；当前小切片优先级与允许路径见 plan/slices.json 和 docs/engineering/mvp.md。V 为验证/评审，C 为契约，G 为实现。状态不代表真实验证通过，延期不算通过；路径也不表示均已存在。", "",
+    task_lines = ["# 原子任务与唯一交付物", "", "生成自 plan/tasks.json。完整工程地图保留；当前小切片优先级与允许路径见 plan/slices.json 和 docs/engineering/mvp.md。V 为验证/评审，C 为契约，G 为实现。门禁列只区分设计交付（G0）与实现（G1），完成定义的五层门禁见 docs/engineering/readiness.md。状态不代表真实验证通过，延期不算通过；路径也不表示均已存在。", "",
                   "| ID | 职责 | 前置任务 | 门禁 | 状态 |", "|---|---|---|---|---|"]
     for task in tasks["tasks"]:
         task_lines.append("| " + " | ".join([task["id"], cell(task["title"]), ", ".join(task["depends_on"]) or "无", task["gate"], task["status"]]) + " |")
@@ -368,8 +419,6 @@ def check_files(root: Path, views: dict[str, str], verify_cache: bool) -> list[s
                 active = accepted_slices.get(task.get("active_slice"))
                 if active is None or task["id"] not in active.get("task_ids", []):
                     errors.append("in-progress task lacks accepted slice: " + task["id"])
-        if slices.get("gateway_execution_implementation_allowed") is not False:
-            errors.append("a local slice cannot unlock gateway execution")
         for item in slices.get("slices", []):
             if item.get("status") != "accepted":
                 continue
@@ -386,7 +435,7 @@ def check_files(root: Path, views: dict[str, str], verify_cache: bool) -> list[s
         if (root / directory).exists():
             files = [file for file in (root / directory).rglob("*") if file.is_file() and not (directory == "web" and file.relative_to(root / directory).parts[0] == "dist")]
             if not files and not allowed:
-                errors.append("application source exists while implementation gate is closed: " + directory)
+                errors.append("application source outside approved slice: no accepted slice allows " + directory)
             for file in files:
                 relative = file.relative_to(root).as_posix()
                 if relative not in allowed:
@@ -428,8 +477,9 @@ def main() -> int:
                           "tasks": len(tasks["tasks"]),
                           "planned_test_scenarios": len(cases["cases"]),
                           "native_capability_cells": sum(len(item["capabilities"]) for item in matrix["harnesses"]) if matrix is not None else 0,
-                          "native_capabilities_complete": sum(1 for item in matrix["harnesses"] for entry in item["capabilities"].values() if capability_symbol(entry) == "✅") if matrix is not None else 0,
-                          "application_implementation_allowed": False,
+                          "native_capabilities_complete": count_symbol(matrix, "✅") if matrix is not None else 0,
+                          "native_capabilities_complete_official": count_symbol(matrix, "✅", official=True) if matrix is not None else 0,
+                          "native_capabilities_exhausted": count_symbol(matrix, "☑") if matrix is not None else 0,
                           "approved_slices": [item["id"] for item in json.loads((ROOT / "plan/slices.json").read_text()).get("slices", []) if item.get("status") == "accepted"] if (ROOT / "plan/slices.json").exists() else [],
                           "runtime_tests_executed_by_this_check": 0,
                           "cache_verified": args.verify_cache}, ensure_ascii=False))

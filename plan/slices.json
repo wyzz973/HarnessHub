@@ -1,6 +1,5 @@
 {
   "version": 1,
-  "gateway_execution_implementation_allowed": false,
   "slices": [
     {
       "id": "catalog-discovery",

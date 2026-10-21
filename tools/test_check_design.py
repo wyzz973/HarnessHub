@@ -17,7 +17,7 @@ spec.loader.exec_module(checker)
 class DesignChecks(unittest.TestCase):
     def records(self):
         req = {"requirements": [{"id": "R01"}]}
-        task = {"application_implementation_allowed": False, "tasks": [
+        task = {"tasks": [
             {"id": "A", "title": "Accept input", "scope": "one command",
              "context": "interaction", "phase": "implementation", "gate": "G1",
              "status": "planned", "depends_on": [], "owns": ["src/accept.ts", "tests/unit/a.test.ts"],
@@ -80,9 +80,6 @@ class DesignChecks(unittest.TestCase):
 
     def test_rejects_false_runtime_success(self):
         self.rejected(lambda r, t, c: c["cases"][0].update(status="passed", evidence="demo"), "cannot claim runtime")
-
-    def test_rejects_open_implementation_gate(self):
-        self.rejected(lambda r, t, c: t.update(application_implementation_allowed=True), "must remain closed")
 
     def test_rejects_missing_expected_result(self):
         self.rejected(lambda r, t, c: c["cases"][0].update(expected=""), "missing expected")
@@ -165,7 +162,7 @@ class DesignChecks(unittest.TestCase):
 
     def test_rejects_production_code_before_gate(self):
         errors = self.file_fixture_errors(lambda root, views: (root / "src").mkdir())
-        self.assertTrue(any("implementation gate is closed" in item for item in errors))
+        self.assertTrue(any("outside approved slice: no accepted slice allows src" in item for item in errors), errors)
 
     def approved_slice(self, root, views):
         (root / "src").mkdir()
@@ -175,7 +172,6 @@ class DesignChecks(unittest.TestCase):
         records["tasks"][0].update(status="in_progress", active_slice="read-only")
         (root / "plan/tasks.json").write_text(json.dumps(records))
         (root / "plan/slices.json").write_text(json.dumps({
-            "gateway_execution_implementation_allowed": False,
             "slices": [{"id": "read-only", "status": "accepted", "task_ids": ["A"],
                         "decision": "decision.md", "allowed_files": ["src/accept.ts"]}]
         }))
@@ -217,10 +213,11 @@ class DesignChecks(unittest.TestCase):
         self.assertTrue(any("lacks task ownership" in item for item in errors))
 
     def matrix(self):
-        complete = {"native": "yes", "source": "native schema", "hub": "done", "protocol": "pass", "real": "pass", "evidence": [".tmp/real.json"], "note": ""}
+        complete = {"native": "yes", "source": "native schema", "hub": "done", "protocol": "pass", "real": "pass",
+                    "evidence": ["docs/verification/real.md", ".tmp/real.json"], "note": ""}
         absent = {"native": "no", "source": "native schema", "hub": "n/a", "protocol": "n/a", "real": "n/a", "evidence": [], "note": ""}
         return {"version": 1, "features": [{"id": "models", "group": "配置", "title": "模型"}, {"id": "audio", "group": "输入", "title": "音频"}],
-                "harnesses": [{"id": "fixture", "name": "Fixture", "installation": "1.0", "control": "acp-v1",
+                "harnesses": [{"id": "fixture", "name": "Fixture", "installation": "1.0", "control": "acp-v1", "tier": "focus",
                                "capabilities": {"models": complete, "audio": absent}}]}
 
     def matrix_rejected(self, mutate, expected):
@@ -231,14 +228,75 @@ class DesignChecks(unittest.TestCase):
     def test_accepts_valid_capability_matrix(self):
         self.assertEqual(checker.check_capabilities(self.matrix()), [])
         view = checker.render_capabilities(self.matrix())
+        self.assertIn("| 分组 | 能力 | Fixture |", view)
         self.assertIn("| 配置 | 模型 | ✅ |", view)
         self.assertIn("| 输入 | 音频 | — |", view)
+        self.assertIn("分层：焦点。", view)
+        self.assertEqual(checker.count_symbol(self.matrix(), "✅"), 1)
+        self.assertEqual(checker.count_symbol(self.matrix(), "✅", official=True), 1)
 
     def test_rejects_missing_capability_cell(self):
         self.matrix_rejected(lambda m: m["harnesses"][0]["capabilities"].pop("audio"), "cover exactly")
 
     def test_rejects_real_pass_without_evidence(self):
         self.matrix_rejected(lambda m: m["harnesses"][0]["capabilities"]["models"].update(evidence=[]), "needs evidence")
+
+    def test_rejects_real_pass_with_only_tmp_evidence(self):
+        self.matrix_rejected(lambda m: m["harnesses"][0]["capabilities"]["models"].update(evidence=[".tmp/real.json", ".tmp/again.json"]),
+                             "needs repository evidence")
+
+    def test_rejects_real_partial_with_only_tmp_evidence(self):
+        self.matrix_rejected(lambda m: m["harnesses"][0]["capabilities"]["models"].update(real="partial", note="half", evidence=[".tmp/real.json"]),
+                             "needs repository evidence")
+
+    def test_rejects_exhausted_native_capability_without_note(self):
+        self.matrix_rejected(lambda m: m["harnesses"][0]["capabilities"]["models"].update(native="partial", note="  "),
+                             "what the native interface lacks")
+
+    def test_exhausted_native_capability_renders_as_checked_box(self):
+        value = self.matrix(); value["harnesses"][0]["capabilities"]["models"].update(native="partial", note="no file input; the copy's path goes into the prompt")
+        self.assertEqual(checker.check_capabilities(value), [])
+        self.assertIn("| 配置 | 模型 | ☑ |", checker.render_capabilities(value))
+        self.assertEqual(checker.count_symbol(value, "☑"), 1)
+        self.assertEqual(checker.count_symbol(value, "✅"), 0)
+
+    def test_rejects_harness_without_tier(self):
+        self.matrix_rejected(lambda m: m["harnesses"][0].pop("tier"), "needs a tier")
+
+    def test_rejects_unknown_tier(self):
+        self.matrix_rejected(lambda m: m["harnesses"][0].update(tier="paused"), "needs a tier")
+
+    def test_rejects_frozen_harness_without_freeze_count(self):
+        self.matrix_rejected(lambda m: m["harnesses"][0].update(tier="frozen"), "integer complete_at_freeze")
+
+    def test_rejects_boolean_freeze_count(self):
+        self.matrix_rejected(lambda m: m["harnesses"][0].update(tier="frozen", complete_at_freeze=True), "integer complete_at_freeze")
+
+    def test_rejects_frozen_harness_growing_past_its_freeze(self):
+        self.matrix_rejected(lambda m: m["harnesses"][0].update(tier="frozen", complete_at_freeze=0), "more than complete_at_freeze 0")
+
+    def test_rejects_freeze_count_on_focus_harness(self):
+        self.matrix_rejected(lambda m: m["harnesses"][0].update(complete_at_freeze=1), "only a frozen Harness")
+
+    def test_accepts_frozen_harness_at_its_freeze(self):
+        value = self.matrix(); value["harnesses"][0].update(tier="frozen", complete_at_freeze=1)
+        self.assertEqual(checker.check_capabilities(value), [])
+        view = checker.render_capabilities(value)
+        self.assertIn("| 分组 | 能力 | Fixture（冻结） |", view)
+        self.assertIn("分层：冻结（冻结时 ✅ 1）。", view)
+
+    def test_rejects_non_boolean_historical(self):
+        self.matrix_rejected(lambda m: m["harnesses"][0].update(historical="yes"), "historical must be a boolean")
+
+    def test_historical_harness_is_labelled_and_left_out_of_the_official_count(self):
+        value = self.matrix(); value["harnesses"][0].update(tier="frozen", complete_at_freeze=1, historical=True)
+        self.assertEqual(checker.check_capabilities(value), [])
+        self.assertIn("| 分组 | 能力 | Fixture（冻结、历史） |", checker.render_capabilities(value))
+        self.assertEqual(checker.count_symbol(value, "✅"), 1)
+        self.assertEqual(checker.count_symbol(value, "✅", official=True), 0)
+
+    def test_rejects_unknown_harness_field(self):
+        self.matrix_rejected(lambda m: m["harnesses"][0].update(colour="blue"), "unknown Harness fields: colour")
 
     def test_rejects_completion_without_protocol_test(self):
         self.matrix_rejected(lambda m: m["harnesses"][0]["capabilities"]["models"].update(protocol="none"), "needs protocol verification")

@@ -1,6 +1,6 @@
 # 原子任务与唯一交付物
 
-生成自 plan/tasks.json。完整工程地图保留；当前小切片优先级与允许路径见 plan/slices.json 和 docs/engineering/mvp.md。V 为验证/评审，C 为契约，G 为实现。状态不代表真实验证通过，延期不算通过；路径也不表示均已存在。
+生成自 plan/tasks.json。完整工程地图保留；当前小切片优先级与允许路径见 plan/slices.json 和 docs/engineering/mvp.md。V 为验证/评审，C 为契约，G 为实现。门禁列只区分设计交付（G0）与实现（G1），完成定义的五层门禁见 docs/engineering/readiness.md。状态不代表真实验证通过，延期不算通过；路径也不表示均已存在。
 
 | ID | 职责 | 前置任务 | 门禁 | 状态 |
 |---|---|---|---|---|

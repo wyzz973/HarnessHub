@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-10-12",
+  "updated": "2026-10-22",
   "research": "docs/research/native-capability-surfaces-2026-10-11.md",
   "features": [
     {
@@ -145,6 +145,7 @@
       "name": "Codex",
       "installation": "Codex CLI 0.162.1（Homebrew cask，本机 ChatGPT 登录）",
       "control": "codex-app-server",
+      "tier": "focus",
       "capabilities": {
         "models": {
           "native": "yes",
@@ -465,6 +466,7 @@
       "name": "Claude Code",
       "installation": "Claude Code 2.1.296 + claude-agent-acp 0.89.1（本机登录；2026-10-11 晚账号额度已恢复）",
       "control": "acp-v1（claude-agent-acp）",
+      "tier": "focus",
       "capabilities": {
         "models": {
           "native": "yes",
@@ -793,6 +795,7 @@
       "name": "OpenCode",
       "installation": "OpenCode 1.18.35（Homebrew，本机原配置）",
       "control": "acp-v1（opencode acp）",
+      "tier": "focus",
       "capabilities": {
         "models": {
           "native": "yes",
@@ -1009,7 +1012,8 @@
           "evidence": [
             ".tmp/cc-native-resume-batch1.json",
             ".tmp/cc-opencode-native-resume.json",
-            ".tmp/cc-native-resume-commands-2026-10-12.json"
+            ".tmp/cc-native-resume-commands-2026-10-12.json",
+            "docs/verification/native-capabilities-round2-2026-10-11.md"
           ],
           "note": "在原程序中继续：`opencode -s <id>`（help 确认），以 `opencode run -s <id> \"…\"` 真实验证答出标记（ADR-039）"
         },
@@ -1089,6 +1093,7 @@
       "name": "OpenClaw",
       "installation": "OpenClaw 2026.3.23-2（npm 全局，原 Gateway 守护进程）",
       "control": "acp-v1（openclaw acp）+ gateway call",
+      "tier": "focus",
       "capabilities": {
         "models": {
           "native": "yes",
@@ -1101,7 +1106,7 @@
             ".tmp/native-complete-real-combined.json",
             "docs/verification/complete-native-capabilities-2026-10-11.md"
           ],
-          "note": "deepseek/deepseek-chat"
+          "note": "deepseek/deepseek-chat（2026-10-11 的验证早于 ADR-047 与 B6，.tmp 证据已不存在，待 M3 T-OC-08 在当前代码上重验）"
         },
         "thought-level": {
           "native": "yes",
@@ -1113,7 +1118,7 @@
             ".tmp/native-complete-real-combined.json",
             "docs/verification/complete-native-capabilities-2026-10-11.md"
           ],
-          "note": "low 档真实使用"
+          "note": "low 档真实使用（2026-10-11 的验证早于 ADR-047 与 B6，.tmp 证据已不存在，待 M3 T-OC-08 在当前代码上重验）"
         },
         "modes-settings": {
           "native": "yes",
@@ -1122,9 +1127,10 @@
           "protocol": "pass",
           "real": "partial",
           "evidence": [
-            ".tmp/native-complete-real-combined.json"
+            ".tmp/native-complete-real-combined.json",
+            "docs/verification/complete-native-capabilities-2026-10-11.md"
           ],
-          "note": "仅思考档位真实使用；__mode 与思考档位重复"
+          "note": "仅思考档位 low 真实使用；verbose/reasoning/usage/elevated 未真实使用；桥的模式选项与思考档位重复（C5 去重）"
         },
         "commands": {
           "native": "yes",
@@ -1136,7 +1142,7 @@
             ".tmp/cc-native-commands-acp.json",
             "docs/verification/native-session-actions-2026-10-11.md"
           ],
-          "note": "原生 /compact 真实执行；固定 27 条命令（缺 /fast /exec /approve 等）"
+          "note": "原生 /compact 真实执行；固定 27 条命令（缺 /fast /exec /approve 等）（2026-10-11 的验证早于 ADR-047 与 B6，.tmp 证据已不存在，待 M3 T-OC-08 在当前代码上重验）"
         },
         "config-sync": {
           "native": "partial",
@@ -1281,13 +1287,13 @@
           "note": "“原生扩展”面板列出 Gateway skills.status 的技能（124 个，105 个可用）；技能由原程序按需使用，Hub 不单独调用（桥未提供 /skill 命令）"
         },
         "mcp": {
-          "native": "no",
-          "source": "ACP 桥不使用 mcpServers",
-          "hub": "n/a",
-          "protocol": "n/a",
-          "real": "n/a",
+          "native": "partial",
+          "source": "2026.3.23-2 的 openclaw.json（JSON5）有 mcp.servers，另有隐藏的 openclaw mcp set/unset/list/show 命令（docs/research/native-extension-configs-2026-10-18.md:42）；ACP 桥的扩展报告不含 MCP（src/adapters/control/openclaw.ts 的 extensions 返回 mcpServers: []）",
+          "hub": "none",
+          "protocol": "none",
+          "real": "none",
           "evidence": [],
-          "note": ""
+          "note": "ACP 桥不报告 MCP；能力页按 ADR-045 只读 openclaw.json 的 mcp.servers（src/adapters/capability-reads.ts 的 mcp: { style: \"openclaw\" }，不计入本格），写入按 ADR-045 裁决第 9 条推迟到升级之后"
         },
         "plugins": {
           "native": "partial",
@@ -1312,7 +1318,7 @@
             ".tmp/native-complete-real-combined.json",
             "docs/verification/complete-native-capabilities-2026-10-11.md"
           ],
-          "note": "在原程序中继续：不显示（会话在用户自己的 OpenClaw Gateway 中，Hub 不读取其目录，ADR-039）"
+          "note": "在原程序中继续：不显示（会话在用户自己的 OpenClaw Gateway 中，Hub 不读取其目录，ADR-039）（2026-10-11 的验证早于 ADR-047 与 B6，.tmp 证据已不存在，待 M3 T-OC-08 在当前代码上重验）"
         },
         "session-list": {
           "native": "partial",
@@ -1344,7 +1350,7 @@
             ".tmp/cc-native-commands-acp.json",
             "docs/verification/native-session-actions-2026-10-11.md"
           ],
-          "note": "原生 /compact 命令真实执行，压缩后仍记得先前事实；桥不发压缩活动"
+          "note": "原生 /compact 命令真实执行，压缩后仍记得先前事实；桥不发压缩活动（2026-10-11 的验证早于 ADR-047 与 B6，.tmp 证据已不存在，待 M3 T-OC-08 在当前代码上重验）"
         },
         "rollback": {
           "native": "no",
@@ -1358,11 +1364,11 @@
         "subagents": {
           "native": "partial",
           "source": "sessions_spawn 子会话在桥中不可见",
-          "hub": "none",
+          "hub": "partial",
           "protocol": "none",
           "real": "none",
           "evidence": [],
-          "note": ""
+          "note": "sessions_spawn 在转录对账中映射为子 Agent 工具（src/adapters/control/openclaw.ts 的 TOOL_KIND），只显示调用本身；子会话的内容在桥中不可见，子会话事件没有协议测试"
         },
         "background": {
           "native": "partial",
@@ -1389,6 +1395,8 @@
       "name": "Gemini CLI",
       "installation": "Gemini CLI 0.62.0（Homebrew，个人账号）",
       "control": "acp-v1（gemini --acp）",
+      "tier": "frozen",
+      "complete_at_freeze": 0,
       "capabilities": {
         "models": {
           "native": "yes",
@@ -1644,6 +1652,8 @@
       "name": "Cursor",
       "installation": "Cursor Agent 2026.10.01-e373342（官方安装，原 ~/.cursor 登录）",
       "control": "acp-v1（cursor-agent acp）",
+      "tier": "frozen",
+      "complete_at_freeze": 0,
       "capabilities": {
         "models": {
           "native": "partial",
@@ -1904,6 +1914,9 @@
       "name": "Pi",
       "installation": "Pi 0.85.1（本机开发安装；安装渠道非官网，按 ADR-044 不再作为验收对象，以下证据保留为历史）",
       "control": "pi-rpc（pi --mode rpc）",
+      "tier": "frozen",
+      "complete_at_freeze": 11,
+      "historical": true,
       "capabilities": {
         "models": {
           "native": "yes",
@@ -2065,7 +2078,7 @@
             ".tmp/cc-native-attachments-pi.json",
             "docs/verification/native-attachments-2026-10-11.md"
           ],
-          "note": ""
+          "note": "原接口缺口：Pi 的 RPC 没有文件附件输入（prompt 只带 images），Hub 把只读副本路径写入提示、由原 read 工具读取（docs/verification/native-attachments-2026-10-11.md：文本附件由原 read 工具读取副本并回复代码）"
         },
         "output-media": {
           "native": "partial",
@@ -2201,6 +2214,7 @@
       "name": "Hermes Agent",
       "installation": "Hermes Agent 0.12.0（官方安装方式：~/.hermes/hermes-agent，启动器 ~/.local/bin/hermes；本机 DeepSeek deepseek-v4-pro）",
       "control": "acp-v1（hermes acp）",
+      "tier": "focus",
       "capabilities": {
         "models": {
           "native": "yes",
@@ -2493,6 +2507,8 @@
       "name": "DeepSeek Harness",
       "installation": "DeepSeek Harness 0.2.1-alpha.1（本机源码构建，经显式入口；安装渠道非官网，按 ADR-044 不再作为验收对象，以下证据保留为历史；官方分发为 npm 包 @deepseek-ai/dsh）",
       "control": "acp-v1（dsh --profile acp）",
+      "tier": "focus",
+      "historical": true,
       "capabilities": {
         "models": {
           "native": "yes",
@@ -2573,7 +2589,8 @@
           "evidence": [
             ".tmp/cc-hermes-dsh-activity.json",
             "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
-          ]
+          ],
+          "note": "原接口缺口：工具 kind 恒为 other，不带差异与位置，只有工具名、rawInput 与结果文本（docs/research/first-chain-products-2026-10-11.md 的 dsh 输出一行，依据 packages/acp/acp/src/updates.ts）；验收记录只记工具详情可读（todo_write、bash、read、edit）"
         },
         "plan": {
           "native": "no",
@@ -2592,7 +2609,8 @@
           "evidence": [
             ".tmp/cc-hermes-dsh-resume.json",
             "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
-          ]
+          ],
+          "note": "原接口缺口：只发 usage_update 的上下文占用与窗口，session/prompt 结果不带 token 用量与费用（docs/research/first-chain-products-2026-10-11.md 的 dsh 输出一行）；验收记录只记“上下文占用显示”"
         },
         "approvals": {
           "native": "yes",
