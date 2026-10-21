@@ -290,6 +290,7 @@
 | G063-C01 | G063 | integration | 合法上下文/Adapter/组合根依赖 | 合法依赖与发布类型通过 | planned |
 | G063-C02 | G063 | integration | 领域导入SDK/HTTP/SQLite/子进程或泄露第三方类型 | 静态门禁拒绝错误且有定位 | planned |
 | G063-C03 | G063 | integration | 漏扫描目录或工具吞错 | 必需检查非零退出，不虚构覆盖 | planned |
+| G063-C04 | G063 | integration | 测试隔离静态规则：组合应用或启动 Gateway 的测试没有使用自己的临时租约目录（workspaceLockRoot 或 --workspace-lock-root，ADR-041） | 检查以非零退出并指出文件；使用临时租约目录的测试通过；检查纳入 pnpm check，漏扫描目录不算通过 | planned |
 | V008-C04 | V008 | review | 所有核心ADR及其契约/版本/验证引用 | accepted有来源与范围、索引与独立文件一致、未决项明确阻塞 | planned |
 | V008-C05 | V008 | review | 核心ADR仍proposed、缺独立记录或缺验证证据 | G1保持关闭，不能凭计划结构通过自动采纳设计 | planned |
 | G008-P01 | G008 | integration | 合法v1快照编号升级到v2 | 身份、commands/create_key、事件序号和业务version完全保留 | planned |
@@ -541,3 +542,4 @@
 | G064-P4 | G064 | integration | 经正式入口启停 Claude Code 与 Codex 的插件 | Claude 停用只改一行，确认框写明生效时机与各级覆盖，再启用后 settings.json 逐字节回到原样、没有漂移；停用被启用插件依赖的插件、启用依赖已停用的插件都被拒绝并点名，提示 claude plugin enable 会连带启用；保留来源、账户同步、未安装的插件被拒绝，只读的 Harness 返回 CAPABILITY_UNSUPPORTED，非法 id 返回 400；管理设置文件与 .d 决定插件、MDM 描述文件存在时都拒绝；检查之后文件变了，确认返回 CAPABILITY_TARGET_CHANGED；被外部改回的进入漂移，可重新应用、可不再跟踪；插件卸载后 HarnessHub 写的 false 列为孤立设置，清除后写回原值；Codex 原地改一行、保留注释与子表，启用后逐字节回到原样，缺键的表插入一行、启用写明 true，外部改动进入漂移；回答里没有凭据与家目录 | planned |
 | G064-R6 | G064 | unit | 各家插件按自己的规则读取 | Claude 与 Codex 都有的 名@市场 插件合成一行，各自显示版本与位置；没有条目的按默认显示，并计入依赖；有条目但未安装的、inline 等来源不提供开关；账户同步插件按名字去重，位置只到 ~/.claude/plugins/synced，视图不含账户 ID；随 Codex 安装的标明归属，缺 enabled 的写明缺省值未核实；OpenCode 读 plugin/ 与 plugins/ 的 .ts、.js（含点文件、跟随链接）与 tuple 条目并去重，tui.json 的标为 TUI 插件；Hermes 的 disabled 优先、分类布局与 plugin.yml、记忆提供方由 provider 选择、模型提供方不受 enabled 约束、隐藏目录也算、缺 plugins.enabled 时都不启用；DeepSeek Harness 读各 profile 的依赖；每家写明有没有开关及只读的原因 | planned |
 | G054-CA9 | G054 | e2e | 插件页的开关说明与合成行的启停 | 插件页写明哪些 Harness 可以启停、其余只读的原因；Claude 与 Codex 都有的插件只占一行，展开后各自显示版本、状态与开关；确认框显示文件、一行差异、生效时机与覆盖提示，确认前不发送、只发送这次检查；被依赖拦下的检查不能确认；历史里有插件开关；无页面错误 | planned |
+| G065-A01 | G065 | review | 六项加固的验收记录与 ADR-046 验证节逐项对账：版本来源、审计记录、流式合并、边界检查、控制层、冻结 | 每项都有对应层的测试或检查通过的记录；真实引擎通过与测试通过分别表述；非焦点四个的矩阵 ✅ 数与已验证版本未增长；全程未写用户真实配置 | planned |

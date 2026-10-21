@@ -5658,6 +5658,23 @@
       "planned_file": "tests/integration/g063.test.ts"
     },
     {
+      "id": "G063-C04",
+      "task": "G063",
+      "requirements": [
+        "R23",
+        "R24"
+      ],
+      "invariants": [
+        "INV-25"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/g063.test.ts",
+      "scenario": "测试隔离静态规则：组合应用或启动 Gateway 的测试没有使用自己的临时租约目录（workspaceLockRoot 或 --workspace-lock-root，ADR-041）",
+      "expected": "检查以非零退出并指出文件；使用临时租约目录的测试通过；检查纳入 pnpm check，漏扫描目录不算通过",
+      "status": "planned",
+      "evidence": null
+    },
+    {
       "id": "V008-C04",
       "task": "V008",
       "requirements": [
@@ -9877,6 +9894,24 @@
       "planned_file": "tests/browser/web.browser.ts",
       "scenario": "插件页的开关说明与合成行的启停",
       "expected": "插件页写明哪些 Harness 可以启停、其余只读的原因；Claude 与 Codex 都有的插件只占一行，展开后各自显示版本、状态与开关；确认框显示文件、一行差异、生效时机与覆盖提示，确认前不发送、只发送这次检查；被依赖拦下的检查不能确认；历史里有插件开关；无页面错误",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G065-A01",
+      "task": "G065",
+      "requirements": [
+        "R04",
+        "R19",
+        "R23"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "review",
+      "planned_file": "docs/decisions/0046-harness-focus-hardening.md",
+      "scenario": "六项加固的验收记录与 ADR-046 验证节逐项对账：版本来源、审计记录、流式合并、边界检查、控制层、冻结",
+      "expected": "每项都有对应层的测试或检查通过的记录；真实引擎通过与测试通过分别表述；非焦点四个的矩阵 ✅ 数与已验证版本未增长；全程未写用户真实配置",
       "status": "planned",
       "evidence": null
     }

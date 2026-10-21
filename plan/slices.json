@@ -984,6 +984,20 @@
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/capabilities-view-2026-10-18.md"
+    },
+    {
+      "id": "harness-focus",
+      "status": "accepted",
+      "scope": "聚焦六个 Harness（Claude Code、Codex、OpenCode、DeepSeek Harness、WorkBuddy、Hermes Agent）并做精（ADR-046）：第一批六项工程加固——版本单一来源与一致性检查（预发布语义、Hermes 版本、dsh 继续命令与读表区间）、失败写入记录只存错误码与 ~ 路径且 history 逐条降级、流式输出按窗口合并提交（ADR-047）、G063 边界检查落地、ClaudeControl 读 _auth/status_update 与 OpenCodeControl 补 /compact、非焦点四个冻结；不写用户真实配置，不运行 Harness 做验收",
+      "task_ids": [
+        "G063",
+        "G065"
+      ],
+      "decision": "docs/decisions/0046-harness-focus-hardening.md",
+      "allowed_files": [],
+      "note": "第一批不新增 src/web 文件，所改的源码文件都已在其他已接受切片的 allowed_files 内，所以这里为空；以后按描述模块新增的 src/web 文件登记在此。verification_record 暂指向 ADR-046，验收记录待补：第一批集成后另立 docs/verification/ 记录并把这里改过去",
+      "implementation_state": "in_progress",
+      "verification_record": "docs/decisions/0046-harness-focus-hardening.md"
     }
   ]
 }

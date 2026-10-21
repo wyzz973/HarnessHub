@@ -84,8 +84,9 @@
 | G060 | 运行真实协议与平台兼容验收 | G059 | G1 | in_progress |
 | G061 | 接通Harness管理HTTP入口 | G009, G011, G012, G013, G014, G015, C009 | G1 | in_progress |
 | G062 | 接通Provider管理HTTP入口 | G009, G010, G016, C009 | G1 | planned |
-| G063 | 建立依赖与公共类型边界检查 | G001, C008 | G1 | planned |
+| G063 | 建立依赖与公共类型边界检查 | G001, C008 | G1 | in_progress |
 | G064 | 统一管理各 Harness 的能力 | G012, G054 | G1 | in_progress |
+| G065 | 六焦点工程加固（ADR-046） | 无 | G1 | in_progress |
 
 ## V001 验证并锁定工具链与依赖许可
 
@@ -1989,7 +1990,7 @@
 - 领域导入SDK/HTTP/SQLite/子进程及私有类型泄露被拒绝
 - 检查自身无效fixture非零退出
 
-场景：G063-C01, G063-C02, G063-C03。
+场景：G063-C01, G063-C02, G063-C03, G063-C04。
 
 禁止范围：不实现业务执行或适配器；不把静态边界检查当行为验收。
 
@@ -2065,3 +2066,25 @@
 场景：G064-R1, G064-R2, G064-R3, G064-R4, G064-R5, G064-W1, G064-W2, G064-W3, G064-W4, G064-W5, G064-W6, G064-W7, G064-W8, G064-W9, G064-W10, G064-W11, G064-M1, G064-M2, G064-M3, G064-M4, G064-M5, G064-M6, G064-I1, G064-I2, G064-I3, G064-A1, G064-A2, G064-A3, G064-A4, G064-P1, G064-P2, G064-P3, G064-P4, G064-R6。
 
 禁止范围：不改项目级文件；不改模型、Provider 与登录配置；不运行会启动或连接 MCP 服务器的命令；OpenClaw 的 MCP 与插件装卸推迟到升级之后。
+
+## G065 六焦点工程加固（ADR-046）
+
+范围：按 ADR-046 承接六个焦点 Harness 的第一批工程加固：版本单一来源与一致性检查（预发布语义、Hermes 从 venv dist-info 读版本、dsh 继续命令只保留 headless、读表区间覆盖 0.2.0-rc.2）、失败写入记录只存错误码与 ~ 路径且 history 逐条降级、流式输出按窗口合并提交（ADR-047）、G063 边界检查落地、ClaudeControl 读 _auth/status_update 与 OpenCodeControl 1.18.x 补 /compact、非焦点四个冻结；各项的源码与测试文件归其既有所有者，本任务只持有两份 ADR。
+
+依赖：无。需求：R04, R17, R19, R23, R26。
+
+唯一交付物：
+- docs/decisions/0046-harness-focus-hardening.md
+- docs/decisions/0048-harness-scope-and-workbuddy.md
+
+验收：
+- 已验证版本、目录包版本与读表区间来自同一来源，三处不一致的无效样例被测试拒绝；0.2.0-rc.2 命中 dsh 读表；Hermes 的 dist-info 给出版本
+- 含家目录绝对路径的失败写入之后 history 仍能逐条读取，坏记录单条标明；公开错误消息不含家目录
+- 每回合的事件数与提交成本按 ADR-047 下降，先提交再发布不变
+- 边界检查进入 pnpm check，每条规则有无效 fixture 且失败非零退出
+- Claude 的认证状态进入就绪状态而不是诊断；OpenCode 1.18.x 的命令目录含 /compact
+- 全程未写用户真实配置，设计采纳、代码完成、测试通过与真实引擎通过分别表述
+
+场景：G065-A01。
+
+禁止范围：不写用户的真实 Harness 配置，不改全局环境；测试只用临时家目录、临时数据根与临时租约目录（ADR-041）；不改 VERIFIED_VERSIONS 的数字；不为 Cursor、Gemini CLI、OpenClaw、Pi 新增矩阵 ✅ 或更新已验证版本；不运行任何 Harness 做验收；Claude 2.1.306 与 dsh 0.2.0-rc.2 的真实重验收另立任务；不删除非焦点 Harness 的适配器、测试与历史证据；默认隐藏或删除由用户在 ADR-048 决定。

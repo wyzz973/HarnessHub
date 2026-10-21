@@ -4006,7 +4006,8 @@
       "title": "建立依赖与公共类型边界检查",
       "context": "engineering",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
+      "active_slice": "harness-focus",
       "gate": "G1",
       "depends_on": [
         "G001",
@@ -4040,7 +4041,8 @@
       "test_cases": [
         "G063-C01",
         "G063-C02",
-        "G063-C03"
+        "G063-C03",
+        "G063-C04"
       ]
     },
     {
@@ -4167,6 +4169,51 @@
         "G064-P3",
         "G064-P4",
         "G064-R6"
+      ]
+    },
+    {
+      "id": "G065",
+      "title": "六焦点工程加固（ADR-046）",
+      "context": "engineering",
+      "phase": "implementation",
+      "status": "in_progress",
+      "active_slice": "harness-focus",
+      "gate": "G1",
+      "depends_on": [],
+      "owns": [
+        "docs/decisions/0046-harness-focus-hardening.md",
+        "docs/decisions/0048-harness-scope-and-workbuddy.md"
+      ],
+      "requirements": [
+        "R04",
+        "R17",
+        "R19",
+        "R23",
+        "R26"
+      ],
+      "invariants": [
+        "INV-06",
+        "INV-16",
+        "INV-17",
+        "INV-20"
+      ],
+      "scope": "按 ADR-046 承接六个焦点 Harness 的第一批工程加固：版本单一来源与一致性检查（预发布语义、Hermes 从 venv dist-info 读版本、dsh 继续命令只保留 headless、读表区间覆盖 0.2.0-rc.2）、失败写入记录只存错误码与 ~ 路径且 history 逐条降级、流式输出按窗口合并提交（ADR-047）、G063 边界检查落地、ClaudeControl 读 _auth/status_update 与 OpenCodeControl 1.18.x 补 /compact、非焦点四个冻结；各项的源码与测试文件归其既有所有者，本任务只持有两份 ADR",
+      "out_of_scope": [
+        "不写用户的真实 Harness 配置，不改全局环境；测试只用临时家目录、临时数据根与临时租约目录（ADR-041）",
+        "不改 VERIFIED_VERSIONS 的数字；不为 Cursor、Gemini CLI、OpenClaw、Pi 新增矩阵 ✅ 或更新已验证版本",
+        "不运行任何 Harness 做验收；Claude 2.1.306 与 dsh 0.2.0-rc.2 的真实重验收另立任务",
+        "不删除非焦点 Harness 的适配器、测试与历史证据；默认隐藏或删除由用户在 ADR-048 决定"
+      ],
+      "acceptance": [
+        "已验证版本、目录包版本与读表区间来自同一来源，三处不一致的无效样例被测试拒绝；0.2.0-rc.2 命中 dsh 读表；Hermes 的 dist-info 给出版本",
+        "含家目录绝对路径的失败写入之后 history 仍能逐条读取，坏记录单条标明；公开错误消息不含家目录",
+        "每回合的事件数与提交成本按 ADR-047 下降，先提交再发布不变",
+        "边界检查进入 pnpm check，每条规则有无效 fixture 且失败非零退出",
+        "Claude 的认证状态进入就绪状态而不是诊断；OpenCode 1.18.x 的命令目录含 /compact",
+        "全程未写用户真实配置，设计采纳、代码完成、测试通过与真实引擎通过分别表述"
+      ],
+      "test_cases": [
+        "G065-A01"
       ]
     }
   ]
