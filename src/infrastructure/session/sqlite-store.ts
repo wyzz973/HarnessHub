@@ -1,5 +1,5 @@
-import { constants, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { constants, closeSync, existsSync, fchmodSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { randomBytes, randomUUID } from "node:crypto";
 import { isAbsolute, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
@@ -116,6 +116,27 @@ function sqliteError(error: unknown): boolean {
 function storageFailure(error: unknown): SessionError {
   const failure = new SessionError("STORAGE_UNAVAILABLE", "SQLite operation failed; new dispatch is disabled"); failure.cause = error; return failure;
 }
+/** Migration backups in `<root>/backups` (ADR-049); only regular files named by these two patterns are HarnessHub's to remove. */
+const BACKUPS_KEPT = 2;
+const BACKUP_NAME = /^gateway-v\d+-(\d{8}T\d{6}Z)-[0-9a-f]{8}\.sqlite$/u;
+const PARTIAL_BACKUP_NAME = /^gateway-v\d+-\d{8}T\d{6}Z-[0-9a-f]{8}\.sqlite\.partial$/u;
+function errorCode(error: unknown): unknown { return error !== null && typeof error === "object" && "code" in error ? error.code : undefined; }
+/** A failure's reason without paths: this file's own message, SQLite's generic error text or the system error code. */
+function reason(error: unknown): string {
+  if (error instanceof SessionError) return error.message;
+  if (!(error instanceof Error)) return "unknown failure";
+  const row = object(error, "backup failure");
+  return typeof row.errstr === "string" ? row.errstr : typeof row.code === "string" ? row.code : error.name;
+}
+function newestFirst(left: string, right: string): number { return left < right ? 1 : left > right ? -1 : 0; }
+function syncPath(path: string): void {
+  const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
+}
+function rowCounts(database: DatabaseSync): { readonly sessions: number; readonly events: number } {
+  const row = object(database.prepare("SELECT (SELECT count(*) FROM sessions) AS sessions,(SELECT count(*) FROM events) AS events").get(), "business row counts");
+  return { sessions: integer(row.sessions, "Session row count"), events: integer(row.events, "event row count") };
+}
 function freeze(value: unknown): void {
   if (value === null || typeof value !== "object" || Object.isFrozen(value)) return;
   for (const item of Object.values(value)) freeze(item); Object.freeze(value);
@@ -185,6 +206,23 @@ export class SqliteSessionStore implements SessionStore {
   private closed = false;
   private failed: SessionError | null = null;
 
+  /**
+   * Opens `root` as its single owner: takes the OS lock (`owner.sqlite`), then in one transaction migrates a v1–v11 business
+   * database to v12, advances the owner generation and recovers unfinished executions.
+   *
+   * Before such a migration, with the lock already held and before that transaction begins, the business database is copied
+   * with VACUUM INTO to `backups/gateway-v<from>-<UTC yyyymmddThhmmssZ>-<8 hex>.sqlite` under the root (directory 0700, file
+   * 0600, time from `now`). The copy is written as `<name>.partial`, read back (same user_version, as many sessions and events
+   * rows, quick_check ok) and synced before it takes its name. Just before writing, every backup but the newest by the time in
+   * its name is removed, so two remain. A new (v0) or current (v12) database is not copied, nor is one opened by
+   * SqliteSessionReader.
+   *
+   * Throws STORAGE_BACKUP_FAILED, with the cause kept, when any of that fails: nothing was migrated or claimed, the business
+   * database's rows and version are as they were, the files this attempt wrote are removed and the lock is released.
+   *
+   * The backups belong to the user: HarnessHub never reads or restores them, removes only regular files named by its own two
+   * patterns (older backups, and `.partial` files a crashed backup left) and leaves everything else in `backups` alone.
+   */
   constructor(root: string, options: { readonly now?: () => Date } = {}) {
     if (!isAbsolute(root) || root.includes("\0") || utf8Bytes(root) > 4096) throw new SessionError("INVALID_INPUT", "data root must be a bounded absolute path");
     this.now = options.now ?? (() => new Date());
@@ -207,6 +245,7 @@ export class SqliteSessionStore implements SessionStore {
       database = new DatabaseSync(this.databasePath, { timeout: 0, allowExtension: false, enableForeignKeyConstraints: true });
       this.database = database;
       database.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON");
+      this.backupBeforeMigration();
       this.ownerGeneration = this.claimAndRecover();
     } catch (error) {
       if (database?.isOpen) database.close();
@@ -347,6 +386,67 @@ export class SqliteSessionStore implements SessionStore {
     if (!this.owner.isOpen || !this.owner.isTransaction || !this.database.isOpen || !sameFile(this.rootIdentity, pathIdentity(this.root, true)) || !sameFile(this.markerIdentity, pathIdentity(this.markerPath)) || !sameFile(this.ownerIdentity, pathIdentity(this.ownerPath)) || !sameFile(this.databaseIdentity, pathIdentity(this.databasePath))) throw new SessionError("OWNER_LOST", "owner lock transaction or storage path identity was lost");
   }
   private readOwner(): OwnerRow { return ownerRow(this.database.prepare("SELECT owner_generation,owner_pid,owner_token,owner_active FROM owner_metadata WHERE singleton=1").get()); }
+  /**
+   * Copies a v1–v11 business database to `<root>/backups` before claimAndRecover migrates it (ADR-049). It runs with the owner
+   * lock held and outside any transaction, as VACUUM INTO requires, and only reads the business database.
+   */
+  private backupBeforeMigration(): void {
+    const from = integer(object(this.database.prepare("PRAGMA user_version").get(), "database schema version").user_version, "database schema version");
+    // v0 is created directly as v12 and v12 is current; claimAndRecover refuses any other version without migrating.
+    if (from < 1 || from > 11) return;
+    const folder = join(this.root, "backups");
+    let step = "prepare the backups directory", created = false, partial: string | null = null, published: string | null = null;
+    try {
+      try { mkdirSync(folder, { mode: 0o700 }); created = true; } catch (error) { if (errorCode(error) !== "EEXIST") throw error; }
+      const directory = lstatSync(folder);
+      if (directory.isSymbolicLink() || !directory.isDirectory() || (directory.mode & 0o077) !== 0 || (process.getuid !== undefined && directory.uid !== process.getuid()))
+        throw new SessionError("INVALID_STORAGE", "the backups directory must be a private directory owned by this user");
+      step = "remove older backups";
+      const files = readdirSync(folder, { withFileTypes: true }).filter(entry => entry.isFile()).map(entry => entry.name);
+      // A partial file is only left by a backup that crashed: the owner lock rules out one being written now.
+      for (const name of files) if (PARTIAL_BACKUP_NAME.test(name)) unlinkSync(join(folder, name));
+      // The oldest go before the copy is written, so the disk never holds more than the kept backups and the new copy.
+      const backups = files.flatMap(name => { const time = BACKUP_NAME.exec(name)?.[1]; return time === undefined ? [] : [{ name, time }]; });
+      backups.sort((left, right) => newestFirst(left.time, right.time) || newestFirst(left.name, right.name));
+      for (const old of backups.slice(BACKUPS_KEPT - 1)) unlinkSync(join(folder, old.name));
+      step = "write the backup";
+      let time: string;
+      try { time = this.now().toISOString(); } catch { throw new SessionError("INVALID_INPUT", "clock did not provide a valid Date"); }
+      const name = "gateway-v" + from + "-" + time.slice(0, 19).replace(/[-:]/gu, "") + "Z-" + randomBytes(4).toString("hex") + ".sqlite";
+      if (!BACKUP_NAME.test(name)) throw new SessionError("INVALID_INPUT", "clock time cannot name a backup");
+      // Written under a name never taken for a backup; it takes its name only once it has been read back and synced.
+      const path = join(folder, name + ".partial"), descriptor = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+      partial = path;
+      // SQLite writes into this empty file rather than creating one with its default 0644; the mode is set explicitly so no
+      // umask can narrow it below what VACUUM INTO needs.
+      try { fchmodSync(descriptor, 0o600); } finally { closeSync(descriptor); }
+      this.database.prepare("VACUUM INTO ?").run(path);
+      step = "verify the backup";
+      const written = lstatSync(path), source = rowCounts(this.database), copy = new DatabaseSync(path, { readOnly: true, timeout: 0, allowExtension: false });
+      try {
+        const counts = rowCounts(copy), check = copy.prepare("PRAGMA quick_check").all();
+        if (!written.isFile() || written.nlink !== 1 || (written.mode & 0o777) !== 0o600 || copy.prepare("PRAGMA user_version").get()?.user_version !== from ||
+            counts.sessions !== source.sessions || counts.events !== source.events || check.length !== 1 || check[0]?.quick_check !== "ok")
+          throw new SessionError("INVALID_DATA", "the backup does not read back as the business database it copies");
+      } finally { copy.close(); }
+      step = "publish the backup";
+      syncPath(path);
+      const target = join(folder, name);
+      linkSync(path, target); published = target;
+      unlinkSync(path); partial = null;
+      syncPath(folder); if (created) syncPath(this.root);
+    } catch (error) {
+      // Only what this attempt wrote is removed; older backups removed above stay removed.
+      let remains = false;
+      for (const path of [partial, published]) {
+        if (path === null) continue;
+        try { unlinkSync(path); } catch (cleanup) { if (errorCode(cleanup) !== "ENOENT") remains = true; }
+      }
+      const failure = new SessionError("STORAGE_BACKUP_FAILED", "could not " + step + " before migrating the business database from v" + from + " (" + reason(error) + "); nothing was migrated" +
+        (remains ? ", and an unfinished backup file remains in the backups directory" : ""));
+      failure.cause = error; throw failure;
+    }
+  }
   private claimAndRecover(): number {
     const db = this.database;
     db.exec("BEGIN IMMEDIATE");

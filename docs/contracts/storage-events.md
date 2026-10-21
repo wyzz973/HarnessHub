@@ -39,3 +39,14 @@ Session 状态/消息/输入幂等/outbox；Harness revisions 与 capability evi
 幂等记录、事件、原生 checkpoint 和 Artifact 保留期分别定义。存在历史 revision、恢复材料或 pin 引用时不直接删对象。删除数据、备份一致快照与导出恢复是独立命令，不通过清库“修复”状态。
 
 SQLite [原子提交](https://www.sqlite.org/atomiccommit.html)与[WAL](https://www.sqlite.org/wal.html)是选型参考；持久性还依赖真实磁盘、fsync、journal 设置和故障测试，不能仅凭 SQLite 名称作保证。
+
+### 业务库迁移前备份（[ADR-049](../decisions/0049-business-store-backup-before-migration.md)）
+
+业务库 `gateway.sqlite` 的编号迁移只进不退，没有降级脚本；每次存储版本提升之前由 Store 自动备份一次，供手动回退旧构建。它只在版本提升时发生，不是上文所说的独立备份命令。
+
+- **时机与范围**：Store owner 取得数据根排他锁之后、迁移与接管事务开始之前，在没有事务的状态下读 `user_version`；只有 1～11（将被迁移到 12）才备份。新库（v0）、当前版本（v12）、未知版本（随后以 `INVALID_DATA` 拒绝）与只读的 `SqliteSessionReader` 都不备份。只覆盖业务库：内容存储、Provider、管理库与能力库不在其中，管理库与能力库在 M2 随 OwnerScopedStore 补上。
+- **位置与命名**：`<数据根>/backups/gateway-v<原版本>-<UTC yyyymmddThhmmssZ>-<8 位随机十六进制>.sqlite`，例如 `gateway-v11-20261022T080910Z-3fa9c2d1.sqlite`。目录不存在时以 0700 新建；已存在时必须是当前用户所有、不对组和其他用户开放的真实目录（不是链接）。文件 0600。
+- **写出与核对**：`VACUUM INTO` 先写到 `<正式名>.partial`，以只读连接回读：`user_version` 等于原版本，`sessions` 与 `events` 行数等于原库，`quick_check` 为 ok；fsync 后才取得正式名字（不覆盖同名文件），再 fsync 目录。正式名字只属于完整且核对过的副本。
+- **保留**：最近 2 份。写新副本之前，按文件名中的时间只留最新的 1 份、删除其余，写完正好 2 份；先前崩溃留下的 `.partial` 文件同时删除。HarnessHub 只删除符合这两种命名的普通文件，`backups` 里的其他文件、目录与链接原样保留。备份归用户所有，HarnessHub 不读取、不自动恢复。
+- **失败**：任一步失败（目录不合要求、空间不足、源库损坏、回读不一致）时，Store 构造以 `STORAGE_BACKUP_FAILED` 失败，消息写明失败的步骤和不含路径的原因，原错误保留为 cause。此时只删除本次写出的文件；迁移事务没有开始，owner 没有接管（`owner_metadata` 不变），业务库的行与 `user_version` 不变，排他锁释放。修好原因后重新启动，即重新备份并迁移。备份成功而迁移本身失败（例如 `INVALID_DATA` 整笔回滚）时，这份备份保留。
+- **手动恢复**：1. 停止服务，等它退出；2. 用一份备份替换数据根中的 `gateway.sqlite`（复制过去，备份本身留在 `backups`）；3. 删除同目录的 `gateway.sqlite-wal` 与 `gateway.sqlite-shm`，它们属于被替换的库，留着会损坏恢复后的库；4. 用能读文件名中那个版本的旧构建启动。若用当前构建启动，它会再次备份并迁移。

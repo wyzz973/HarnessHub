@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,6 +38,33 @@ function completedHistory(store: SqliteSessionStore, root: string): SessionSnaps
     commands: [...current.commands, { id: commandId("send-history"), kind: "send", fingerprint: "b".repeat(64), resultId: run }],
   }, events: [{ type: "message.accepted", data: { runId: run } }, { type: "run.ended", data: { runId: run, status: "completed", fixtureOnly: true } }] })).session;
 }
+const BACKUP = /^gateway-v\d+-\d{8}T\d{6}Z-[0-9a-f]{8}\.sqlite$/u;
+function clock(iso: string): { readonly now: () => Date } { return { now: () => new Date(iso) }; }
+/** Puts the business database back at a legacy version, as a build of that version would have left it. */
+function downgrade(root: string, state: SessionSnapshot, version: number): void {
+  const db = database(root); db.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify({ ...state, schemaVersion: version }), state.id);
+  db.exec("PRAGMA user_version=" + version); db.close();
+}
+function legacyRoot(t: TestContext, version = 1): { readonly root: string; readonly state: SessionSnapshot } {
+  const root = directory(t), original = new SqliteSessionStore(root), state = completedHistory(original, root); original.close();
+  downgrade(root, state, version); return { root, state };
+}
+/** Every row of the four business tables, to compare a backup with the database it copied. */
+function rows(db: DatabaseSync): unknown {
+  return ["owner_metadata ORDER BY singleton", "sessions ORDER BY id", "create_keys ORDER BY command_id", "events ORDER BY session_id,seq"].map(table => db.prepare("SELECT * FROM " + table).all());
+}
+function backupFiles(root: string): string[] {
+  return readdirSync(join(root, "backups"), { withFileTypes: true }).filter(entry => entry.isFile() && BACKUP.test(entry.name)).map(entry => entry.name);
+}
+/** Overwrites the header of a table's root page: reading that table fails while the file header and schema stay readable. */
+function damage(root: string, table: string): () => void {
+  const db = database(root), size = Number(db.prepare("PRAGMA page_size").get()?.page_size), page = Number(db.prepare("SELECT rootpage FROM sqlite_schema WHERE name=?").get(table)?.rootpage); db.close();
+  const path = join(root, "gateway.sqlite"), offset = (page - 1) * size, original = Buffer.alloc(8);
+  const write = (bytes: Buffer): void => { const descriptor = openSync(path, "r+"); try { writeSync(descriptor, bytes, 0, bytes.length, offset); } finally { closeSync(descriptor); } };
+  assert.ok(page > 1 && size >= 512 && !existsSync(path + "-wal"), "the page is in the database file itself");
+  const descriptor = openSync(path, "r"); try { readSync(descriptor, original, 0, original.length, offset); } finally { closeSync(descriptor); }
+  write(Buffer.alloc(original.length, 0xff)); return () => write(original);
+}
 
 test("numbered v1-to-v2-to-v3 migration preserves public identities, history, commands and event cursors", t => {
   const root = directory(t), original = new SqliteSessionStore(root);
@@ -68,6 +95,99 @@ test("corruption in a later legacy Session rolls back every migrated row and the
   assert.equal(verify.prepare("PRAGMA user_version").get()?.user_version, 1);
   assert.equal(JSON.parse(String(verify.prepare("SELECT snapshot FROM sessions WHERE id=?").get(one.id)?.snapshot)).schemaVersion, 1);
   assert.equal(verify.prepare("SELECT COUNT(*) AS total FROM events").get()?.total, 2); verify.close();
+  assert.equal(backupFiles(root).length, 1, "the backup taken before the migration stays after the migration fails");
+});
+
+test("G008-NC9 a v1 business database is copied to backups with VACUUM INTO before it is migrated to v12", t => {
+  const { root, state } = legacyRoot(t), legacy = database(root), before = rows(legacy); legacy.close();
+  const upgraded = new SqliteSessionStore(root, clock("2026-10-22T08:09:10.000Z")), events = upgraded.events(state.id, 0);
+  try { assert.deepEqual(upgraded.get(state.id), state); } finally { upgraded.close(); }
+  const folder = join(root, "backups"), [name, ...more] = readdirSync(folder);
+  assert.deepEqual(more, []); assert.match(name ?? "", /^gateway-v1-20261022T080910Z-[0-9a-f]{8}\.sqlite$/u);
+  const backup = join(folder, name ?? "");
+  assert.equal(statSync(folder).mode & 0o777, 0o700); assert.equal(statSync(backup).mode & 0o777, 0o600);
+  const copy = new DatabaseSync(backup, { readOnly: true });
+  try {
+    assert.equal(copy.prepare("PRAGMA user_version").get()?.user_version, 1);
+    assert.equal(copy.prepare("SELECT COUNT(*) AS count FROM sessions").get()?.count, 1);
+    assert.equal(copy.prepare("SELECT COUNT(*) AS count FROM events").get()?.count, events.length);
+    assert.deepEqual(rows(copy), before);
+  } finally { copy.close(); }
+  const live = database(root); assert.equal(live.prepare("PRAGMA user_version").get()?.user_version, 12); live.close();
+  // The manual restore of the storage contract: with the store stopped, the backup replaces gateway.sqlite and its -wal/-shm go.
+  copyFileSync(backup, join(root, "gateway.sqlite"));
+  for (const suffix of ["-wal", "-shm"]) rmSync(join(root, "gateway.sqlite" + suffix), { force: true });
+  const reader = new SqliteSessionReader(root);
+  try { assert.deepEqual(reader.get(state.id), { ...state, schemaVersion: 1 }); assert.deepEqual(reader.events(state.id, 0), events); } finally { reader.close(); }
+});
+
+test("G008-NC9 only a migration writes a backup: not a new or current database, an unknown version or the read-only reader", t => {
+  const root = directory(t), store = new SqliteSessionStore(root), created = store.create(initial(root), draft()).session; store.close();
+  new SqliteSessionStore(root).close();
+  assert.equal(existsSync(join(root, "backups")), false, "v0 and v12");
+  downgrade(root, created, 1);
+  const reader = new SqliteSessionReader(root); assert.equal(reader.get(created.id).schemaVersion, 1); reader.close();
+  assert.equal(existsSync(join(root, "backups")), false, "the reader of a v1 database");
+  const unknown = database(root); unknown.exec("PRAGMA user_version=99"); unknown.close();
+  assert.throws(() => new SqliteSessionStore(root), code("INVALID_DATA"));
+  assert.equal(existsSync(join(root, "backups")), false, "an unknown version");
+});
+
+test("G008-NC10 migration backups keep the newest two by the time in their names and leave every other file alone", t => {
+  const { root, state } = legacyRoot(t), folder = join(root, "backups");
+  mkdirSync(folder, { mode: 0o700 });
+  // By name v9 sorts after v10; by the time in its name it is the oldest backup.
+  const oldest = "gateway-v9-20261001T000000Z-0000000a.sqlite", older = "gateway-v10-20261002T000000Z-0000000b.sqlite";
+  const others = ["notes.txt", "gateway-v1-latest.sqlite", "gateway-v1-20261003T000000Z-0000000C.sqlite", "gateway-v1-20261003T000000Z-0000000c.sqlite.bak"];
+  for (const name of [oldest, older, ...others]) writeFileSync(join(folder, name), name, { mode: 0o600 });
+  // Named like the oldest backups but not regular files: a directory and a link are not HarnessHub's to remove.
+  const directoryNamed = "gateway-v1-20250101T000000Z-0000000d.sqlite", linkNamed = "gateway-v1-20250102T000000Z-0000000e.sqlite";
+  mkdirSync(join(folder, directoryNamed)); symlinkSync(join(folder, "notes.txt"), join(folder, linkNamed));
+  writeFileSync(join(folder, "gateway-v1-20261004T000000Z-0000000f.sqlite.partial"), "left by a backup that crashed", { mode: 0o600 });
+  new SqliteSessionStore(root, clock("2026-10-22T08:00:00.000Z")).close();
+  const first = backupFiles(root), made = first.filter(name => name !== older);
+  assert.equal(first.length, 2); assert.ok(first.includes(older)); assert.match(made[0] ?? "", /^gateway-v1-20261022T080000Z-[0-9a-f]{8}\.sqlite$/u);
+  assert.equal(readFileSync(join(folder, older), "utf8"), older);
+  downgrade(root, state, 1);
+  new SqliteSessionStore(root, clock("2026-10-22T09:00:00.000Z")).close();
+  const second = backupFiles(root), latest = second.filter(name => name !== made[0]);
+  assert.equal(second.length, 2); assert.ok(second.includes(made[0] ?? "")); assert.match(latest[0] ?? "", /^gateway-v1-20261022T090000Z-[0-9a-f]{8}\.sqlite$/u);
+  assert.deepEqual(readdirSync(folder).sort(), [...others, directoryNamed, linkNamed, ...second].sort());
+  for (const name of others) assert.equal(readFileSync(join(folder, name), "utf8"), name);
+  assert.ok(statSync(join(folder, directoryNamed)).isDirectory()); assert.equal(readFileSync(join(folder, linkNamed), "utf8"), "notes.txt");
+});
+
+test("G008-NC11 a backup that cannot be made leaves the v1 database unmigrated and unclaimed until the cause is fixed", t => {
+  const { root, state } = legacyRoot(t), folder = join(root, "backups"), outside = directory(t);
+  // The message names the step and a reason without paths; the original error stays as the cause.
+  const refused = (label: string, message: RegExp): void => {
+    assert.throws(() => new SqliteSessionStore(root), error => error instanceof SessionError && error.code === "STORAGE_BACKUP_FAILED" && error.cause !== undefined &&
+      message.test(error.message) && error.message.endsWith("; nothing was migrated") && !error.message.includes(root), label);
+    const db = database(root);
+    try {
+      assert.equal(db.prepare("PRAGMA user_version").get()?.user_version, 1, label);
+      assert.equal(JSON.parse(String(db.prepare("SELECT snapshot FROM sessions WHERE id=?").get(state.id)?.snapshot)).schemaVersion, 1, label);
+      const owner = db.prepare("SELECT owner_generation,owner_active FROM owner_metadata").get();
+      assert.deepEqual([owner?.owner_generation, owner?.owner_active], [1, 0], label);
+    } finally { db.close(); }
+  };
+  const directoryRefused = /^could not prepare the backups directory before migrating the business database from v1 \(the backups directory must be a private directory owned by this user\)/u;
+  writeFileSync(folder, "a file of the user's", { mode: 0o600 });
+  refused("backups is a regular file", directoryRefused); assert.equal(readFileSync(folder, "utf8"), "a file of the user's"); rmSync(folder);
+  symlinkSync(outside, folder);
+  refused("backups is a link", directoryRefused); assert.deepEqual(readdirSync(outside), []); rmSync(folder);
+  mkdirSync(folder, { mode: 0o700 }); chmodSync(folder, 0o750);
+  refused("backups is open to the group", directoryRefused); assert.deepEqual(readdirSync(folder), []);
+  chmodSync(folder, 0o500);
+  refused("backups cannot be written", /^could not write the backup .* \(EACCES\)/u); assert.deepEqual(readdirSync(folder), []);
+  chmodSync(folder, 0o700);
+  // VACUUM INTO meets the damaged page after the partial file exists: that file goes, and the database is left as it was.
+  const repair = damage(root, "create_keys");
+  refused("the database has a damaged page", /^could not write the backup .* \(database disk image is malformed\)/u); assert.deepEqual(readdirSync(folder), []);
+  repair();
+  const store = new SqliteSessionStore(root);
+  try { assert.deepEqual(store.get(state.id), state); assert.equal(store.ownerGeneration, 2); } finally { store.close(); }
+  assert.equal(backupFiles(root).length, 1); assert.equal(readdirSync(folder).length, 1);
 });
 interface PeerMessage { readonly type: string; readonly code?: string; readonly generation?: number }
 async function peer(t: TestContext, root: string, mode = "hold"): Promise<{ readonly child: ChildProcess; readonly message: PeerMessage }> {
