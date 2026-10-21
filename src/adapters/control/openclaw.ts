@@ -184,8 +184,10 @@ export class OpenClawControl extends AcpControl {
   }
   /**
    * Opens or restores the Hub's own session and only checks a selected model against the original catalog
-   * (MODEL_UNAVAILABLE): nothing is written to the Gateway here, so a catalog probe that opens, reads and closes leaves
-   * no session row behind. The selection is applied before the first prompt (applySelectedModel).
+   * (MODEL_UNAVAILABLE); the model is applied before the first prompt (applySelectedModel). The driver writes nothing to
+   * the Gateway here, so a catalog probe, which opens with at most a model, reads and closes, leaves no session row behind.
+   * Native options given here are still applied by the bridge itself (session/set_config_option, session/set_mode), which
+   * records them in the session row.
    */
   override async open(cwd: string, model?: string, options?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> {
     let conversation: string | undefined;
@@ -207,9 +209,10 @@ export class OpenClawControl extends AcpControl {
    * already runs it: a new session runs the agent's configured model, a restored one the model its Gateway row holds
    * (unknown when the row cannot be read, so the selection is then applied). Otherwise sessions.patch, an operator.admin
    * write that also creates a new session's row, sets it on the Hub's own key, and the Gateway must resolve exactly the
-   * selected model (MODEL_MISMATCH). Rejects with the failing ControlError and leaves the selection unapplied; once it is
-   * confirmed, later Turns of this connection do not apply it again, so a native /model change then stands. The Gateway
-   * calls it makes are owned like every other command and awaited by close(). One Turn at a time, as the Runtime runs them.
+   * selected model (MODEL_MISMATCH). Rejects with the failing ControlError; the selection then still counts as unapplied,
+   * so the connection's next Turn tries again. Once it is confirmed, later Turns of this connection do not apply it again,
+   * so a native /model change then stands. The Gateway calls it makes are owned like every other command and awaited by
+   * close(). One Turn at a time, as the Runtime runs them.
    */
   private async applySelectedModel(): Promise<void> {
     const model = this.selectedModel;
@@ -228,8 +231,8 @@ export class OpenClawControl extends AcpControl {
     this.appliedModel = model;
   }
   /**
-   * This key's Gateway session row; undefined until the session's first prompt, or the model patch just before it,
-   * creates it. A catalog probe never patches, so it leaves no row.
+   * This key's Gateway session row; undefined until something writes the session: the bridge applying native options at
+   * open(), the model patch just before the first prompt, or that prompt. A catalog probe writes nothing, so it leaves no row.
    */
   private async sessionRow(key: string): Promise<Record<string, unknown> | undefined> {
     const rows = object(await this.call("sessions.list", { search: key, limit: 50 }), "OpenClaw sessions").sessions;
