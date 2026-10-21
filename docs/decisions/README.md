@@ -124,4 +124,9 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
 - [ADR-048：七个焦点 Harness 的范围、完成定义与 WorkBuddy 接入路线](0048-harness-scope-and-workbuddy.md)（accepted，2026-10-21，用户回复“全部按推荐”）：
   - 五层完成定义（设计采纳 / 代码完成 / 测试通过 / 真实引擎通过 / 只面向 macOS）与“做精”的判据。
   - 用户决定：非焦点三个冻结并默认隐藏；WorkBuddy 接应用内嵌 CLI、共用 `~/.workbuddy`，id `workbuddy`；Claude 按版本区间加冒烟；dsh 以 0.2.0-rc.2 为基线尽快重验；Hermes 先只读研究；业务库迁移前备份保留 2 份；审计保留 90 天、可导出、手工操作补记、凭据默认打码；页面在重新检测、任务完成与切回窗口（至少间隔 60 秒）时刷新，不再轮询。
-  - 待定：WorkBuddy 的遥测开关（用户）；门禁标志与 G0～G5（审批代理）。
+  - 审批代理裁决（2026-10-22）：两个门禁标志删除，G0～G5 改写为五层完成定义的门禁；矩阵新增 ☑ 终态（原接口部分提供、Hub 已尽，须写明缺口）、Harness 分层（焦点/冻结，冻结的 ✅ 数不得超过 `complete_at_freeze`）、仓库内证据规则与 `historical` 标记；OpenClaw 的卸载以替身验证代替真实执行。
+  - 待定：WorkBuddy 的遥测开关（用户）。
+- ADR-049：业务库迁移前备份（accepted，2026-10-22，第二批 C4）：每次业务库版本提升前用 `VACUUM INTO` 在数据根的 backups 目录留备份，只保留最新 2 份；备份失败则迁移不发生（`STORAGE_BACKUP_FAILED`，user_version 不变、不接管 owner）。文件 docs/decisions/0049-business-store-backup-before-migration.md 由 C4 交付，集成后改为链接。
+- ADR-050：Harness 分层与按需刷新（accepted，2026-10-22，第二批 C3）：目录按 focus、frozen、catalog 分层（`HarnessView.tier`），冻结的三个默认不在选择器、欢迎页、“我的 Agent”与能力页里，设置开关可再显示，停在它们上面的对话照常打开；页面不再后台轮询，重新检测、安装任务完成与窗口重新获焦（至少间隔 60 秒）时刷新。文件 docs/decisions/0050-harness-tiers-and-on-demand-refresh.md 由 C3 交付，集成后改为链接。
+- ADR-051：Hermes 升级路线（proposed，2026-10-22，第二批 C6）：对 v0.22.2 标签与当时 main 的只读研究（网关投影的启用条件、认证、审批期限、`/model` 回复、会话导出、迁移）后的升级路线草案；期间停在 0.12.0。文件 docs/decisions/0051-hermes-upgrade-route.md 由 C6 交付，集成后改为链接。
+- ADR-052：OpenClaw 升级路线（proposed，2026-10-22，第二批 C6）：2026.10.x 升级就绪研究后的路线草案；2026-10-17 用户点击升级被目标版本的配置校验拦下，原安装 2026.3.23-2 保留。文件 docs/decisions/0052-openclaw-upgrade-route.md 由 C6 交付，集成后改为链接。

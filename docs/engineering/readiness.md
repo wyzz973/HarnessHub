@@ -1,6 +1,6 @@
 # 设计就绪与开始开发的门禁
 
-更新：2026-10-09。当前按本机MVP推进。ADR-008/009及[ADR-010](../decisions/0010-public-session-mvp.md)认可S01–S04限定范围，目录/控制/公共Session/手动切换已实现。另[ADR-011](../decisions/0011-provider-web-mvp.md)认可Provider/本机HTTP工作台，自动择优明确后置。下文完整G1仍是未来完整模型/路由/HTTP等工程地图，不阻塞已冻结独立切片。
+更新：2026-10-22。两个常为 false 的门禁标志（`plan/tasks.json` 的 `application_implementation_allowed`、`plan/slices.json` 的 `gateway_execution_implementation_allowed`）已删除（[ADR-048](../decisions/0048-harness-scope-and-workbuddy.md) 第 6 项，审批代理裁决）：源码范围只由各已接受切片的 `allowed_files` 放开，`src/`、`web/` 下不在其中的文件被设计检查拒绝，没有任何已接受切片时整个目录被拒绝；“后续实现门禁”一节同日按五层完成定义改写。此前（2026-10-09）当前按本机MVP推进。ADR-008/009及[ADR-010](../decisions/0010-public-session-mvp.md)认可S01–S04限定范围，目录/控制/公共Session/手动切换已实现。另[ADR-011](../decisions/0011-provider-web-mvp.md)认可Provider/本机HTTP工作台，自动择优明确后置。下文完整G1仍是未来完整模型/路由/HTTP等工程地图，不阻塞已冻结独立切片。
 
 当前范围见 plan/slices.json 与 [MVP](mvp.md)。切片认可只允许所列 owner 路径，不能自动解锁 Session/执行/切换；设计检查有合法范围与越界源码拒绝样例。
 
@@ -30,13 +30,15 @@
 
 相关 ADR 的独立文件由所属 C 任务交付，V008 独占索引维护和就绪核对；核心 ADR 的接受状态、验证引用或独立记录缺失时 G1 继续关闭。此项不是当前结构检查能够替代的语义评审。
 
-## 后续实现门禁
+## 完成定义的门禁（G0～G5）
 
-- G0：资料、来源、任务与场景可追溯；独立评审无未报告严重矛盾。
-- G1：关键能力与工具链验证，相关 ADR/契约冻结。
-- G2：领域、数据与协议性质/集成测试通过，失败样例能被拒绝。
-- G3：合成完整入口链路通过；数据库/IPC/进程保持真实。
-- G4：真实双 Harness/双 Provider 的 Session 接续、路由和控制通过。
-- G5：各发行平台、容量、安全与恢复通过。
+按 [ADR-048](../decisions/0048-harness-scope-and-workbuddy.md) 的五层完成定义改写（2026-10-22，审批代理裁决）。`plan/tasks.json` 的 `gate` 字段只区分设计交付（验证与契约任务为 G0）与实现（G 类任务为 G1），由设计检查校验，字段值不随本节改变；下面各层是对一项功能宣称完成时要分别出示的证据，不是任务字段，也不能互相替代。
+
+- G0 资料可追溯：plan（需求、任务、场景）、docs 与 `docs/research/source-lock.json` 互相引用一致，设计检查通过。
+- G1 设计采纳：切片的 ADR 为 accepted 并登记在 `plan/slices.json`；源码在该切片的 `allowed_files` 内。
+- G2 测试通过：对应层（unit、integration、protocol、browser）的测试与 tools 自检（`pnpm check:tools`）通过；新增的检查规则有无效样例证明会拒绝错误。
+- G3 正式入口链路通过：经 Gateway/CLI 正式入口的集成通过；SQLite、IPC 与进程保持真实，只替代外部 Harness 与模型。
+- G4 真实引擎通过：在本机官网安装、`VERIFIED_VERSIONS` 所记的版本上真实通过，`docs/verification/` 有写明命令、版本、渠道与局限的记录。
+- G5 平台：并入“只面向 macOS”（[ADR-044](../decisions/0044-macos-official-channels.md)），不再单列发行平台、容量与恢复门禁；性能与安全按各自任务的证据表述。
 
 没有测试代码或没有宿主时写 planned/未验证，不写 passed。各本机切片先完成必要设计和测试再实现；完整未来工程门禁不能被误解为当前每个功能都必须先做完跨平台发布准备。

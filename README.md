@@ -209,7 +209,7 @@ test:real:session会运行真实Codex三轮、两个独立入口并检查实际�
 - [测试计划](docs/engineering/testing.md)与[场景矩阵](docs/engineering/test-matrix.md)：保留完整蓝图和当前切片场景，含后置项目；当前实际测试见[验证记录](docs/verification/catalog-control-2026-10-09.md)。
 - [范围与门禁](docs/engineering/readiness.md)：本机目录、控制、公共Session、Provider与工作台切片已开放；完整未来模型代理/账本/路由仍按各自契约推进。
 - [目录与控制验证](docs/verification/catalog-control-2026-10-09.md)：当前实现、测试和未验证范围；[旧检测记录](docs/verification/discovery-2026-10-09.md)与[初始设计记录](docs/verification/design-review-2026-10-09.md)保留基线证据。
-- [聚焦七个 Harness（ADR-046）](docs/decisions/0046-harness-focus-hardening.md)：2026-10-21 起只做精 Claude Code、Codex、OpenCode、DeepSeek Harness、WorkBuddy、Hermes Agent、OpenClaw，第一批六项工程加固，非焦点三个（Cursor、Gemini CLI、Pi）冻结；用户 2026-10-21 对范围、WorkBuddy 接入路线、版本基线、备份、审计与刷新时机的决定见[ADR-048](docs/decisions/0048-harness-scope-and-workbuddy.md)（accepted）。
+- [聚焦七个 Harness（ADR-046）](docs/decisions/0046-harness-focus-hardening.md)：2026-10-21 起只做精 Claude Code、Codex、OpenCode、DeepSeek Harness、WorkBuddy、Hermes Agent、OpenClaw，第一批六项工程加固，非焦点三个（Cursor、Gemini CLI、Pi）冻结；用户 2026-10-21 对范围、WorkBuddy 接入路线、版本基线、备份、审计与刷新时机的决定见[ADR-048](docs/decisions/0048-harness-scope-and-workbuddy.md)（accepted；第 6 项由审批代理 2026-10-22 裁决：门禁标志删除、G0～G5 改写为五层完成定义、矩阵新增 ☑ 终态与分层/冻结/仓库内证据规则）。
 
 ## 现在可运行的检查
 
@@ -220,11 +220,11 @@ python3 tools/check_design.py
 python3 -m unittest discover -s tools -p 'test_*.py' -v
 ~~~
 
-安装应用依赖（`pnpm install`）后，`pnpm check` 依次运行构建、前端构建、设计检查与依赖边界检查（`pnpm check:boundaries`，规则在 tools/boundary-rules.json，范围与限制见[开发规范](docs/engineering/development.md)）；`pnpm test` 运行单元、集成与协议测试，`pnpm test:web` 运行浏览器测试。
+安装应用依赖（`pnpm install`）后，`pnpm check` 依次运行构建、前端构建、设计检查、依赖边界检查（`pnpm check:boundaries`，规则在 tools/boundary-rules.json，范围与限制见[开发规范](docs/engineering/development.md)）与 tools 自检（`pnpm check:tools`，即上面的 unittest，设计检查每条规则的无效样例）；`pnpm test` 运行单元、集成与协议测试，`pnpm test:web` 运行浏览器测试。
 
 修改 plan 中的结构化来源后运行 python3 tools/check_design.py --write 更新人读清单，再运行默认检查。仅本机已抓取缓存可追加 --verify-cache 核对内容 SHA-256；缓存不入库，其他机器必须重新取得对应来源才能执行该项检查。版本化网页可能重新渲染，哈希变化需要重新审阅，不自动改来源锁。
 
-设计检查实际保证 ID/依赖、唯一路径所有权（含大小写/NFC）、获准切片源码范围、需求/测试关联、生成新鲜度、简单相对文件链接及来源元数据。它不证明任务语义天然原子、DDD 正确、外部 URL 永久有效、Markdown 全语法、运行时行为或平台能力。
+设计检查实际保证 ID/依赖、唯一路径所有权（含大小写/NFC）、获准切片源码范围（源码不在任何已接受切片的 allowed_files 内即拒绝；没有单独的门禁标志）、需求/测试关联、生成新鲜度、简单相对文件链接、来源元数据，以及能力矩阵的规则：每个 Harness 标 tier（焦点或冻结），冻结的 ✅ 数不得超过 complete_at_freeze，真实验收通过的格至少一项仓库内证据，原接口部分提供而真实通过的格（☑）必须写明原接口缺什么。它不证明任务语义天然原子、DDD 正确、外部 URL 永久有效、Markdown 全语法、运行时行为或平台能力。
 
 原CLI恢复与原Homebrew升级证据见[ADR-018](docs/decisions/0018-native-cli-recovery.md)与[恢复验收](docs/verification/native-cli-recovery-2026-10-11.md)。
 
