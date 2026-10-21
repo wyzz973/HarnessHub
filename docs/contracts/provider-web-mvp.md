@@ -40,7 +40,7 @@ Provider 保存名称、协议、Base URL、模型列表、默认模型、启用
 
 服务只绑定127.0.0.1，同源静态页面与/api/v1。一次性启动链接fragment token不进入HTTP URL，兑换HttpOnly/SameSite=Strict cookie；写需要精确Origin与CSRF/JSON，精确Host防重绑定。刷新凭cookie重新取得内存CSRF；浏览器不保存Provider key。
 
-Web DTO屏蔽commands/fingerprints与私有configuration引用，保留Run/switch/selection/messaging事实。认证失败不可继续；运行前需实际可用control；错误保留可读说明，未知/blocked不能自动恢复。Session、Provider、管理与能力错误的公开`message`（4xx/5xx）把家目录的绝对路径——隐私检查认得的每种写法（给定的与解析后的）——写成`~`（ADR-044），HTTP 层自己的说明不变。关闭页面不会取消Run。JSON事件查询仍从已提交seq读取1..100个事件；正常对话通过下述事实流更新，失败不造成功状态。
+Web DTO屏蔽commands/fingerprints与私有configuration引用，保留Run/switch/selection/messaging事实。认证失败不可继续；运行前需实际可用control；错误保留可读说明，未知/blocked不能自动恢复。Session、Provider、管理与能力错误的公开`message`（4xx/5xx）把家目录的绝对路径——隐私检查认得的每种写法（给定的与解析后的）——写成`~`（ADR-044），再截到 512 个字符：先替换再截断，跨过截断点的家目录不会留下半截（ADR-050）。HTTP 层自己的说明不变。关闭页面不会取消Run。JSON事件查询仍从已提交seq读取1..100个事件；正常对话通过下述事实流更新，失败不造成功状态。
 
 ### 实时对话事实流（ADR-013）
 
@@ -48,7 +48,7 @@ Web DTO屏蔽commands/fingerprints与私有configuration引用，保留Run/switc
 
 订阅先登记再读快照；默认同时最多8条流、每帧最多8MiB、15秒心跳、单连接最多60秒且不超过登录有效期。写背压只保留一个“需要最新快照”标记，drain后读持久事实；10秒仍未drain则关闭该订阅。HTTP关闭先关闭所有订阅，再等待执行与存储关闭。网络错误只影响订阅，权威读取错误保持原来的fail-closed责任并可在关闭时报告。
 
-浏览器验证UTF-8/帧字节、JSON字段、消息归属和递增水位；按浏览器刷新周期合并显示，原始文本仍来自真实提交。异常连接最多连续尝试8次，退避有上限且可取消；认证失败停止，用户可显式重新连接。连接正常到期则重新读取快照。500ms完整Session轮询退出对话更新路径，目录和安装状态仍独立刷新。
+浏览器验证UTF-8/帧字节、JSON字段、消息归属和递增水位；按浏览器刷新周期合并显示，原始文本仍来自真实提交。异常连接最多连续尝试8次，退避有上限且可取消；认证失败停止，用户可显式重新连接。连接正常到期则重新读取快照。500ms完整Session轮询退出对话更新路径；本机 Harness 的目录与安装状态按需刷新，不定时轮询（ADR-050，见文末）。
 
 消息区使用有界阅读宽度、流式Markdown和生成反馈；自动跟随最新回复，用户上滚后暂停跟随。复制取得原始Markdown，编辑只放回草稿；执行详情按需展开，正常结束不常驻每轮页脚。失败、停止和unknown保留已收到的内容。closed只读；blocked仍可写草稿、改选择、检查恢复或明确结束，普通发送等待恢复成功。输入框自动增长，选择器为紧凑chip，高级控制入口与固定Provider版本放入披露面板；IME、窄屏和reduced-motion分别验证。流式依据见[ADR-013](../decisions/0013-live-chat-experience.md)与[验收](../verification/live-chat-2026-10-10.md)，故障/恢复调整由下节和ADR-014拥有。
 
@@ -206,3 +206,11 @@ ADR-045 第 6a 步（2026-10-19，插件启停）追加：
 - 检查：`GET /api/v1/capabilities/plugin-switch?harnessId=&id=&enabled=`，`id`为`名@市场`。返回`kind`为`plugin-switch`的`CapabilityChangeCheck`：Claude Code 改`~/.claude/settings.json`的`enabledPlugins.<id>`，Codex 改`~/.codex/config.toml`里这个插件表的`enabled`一行。依赖、管理设置、未安装与账户同步的情况以`blocked`说明原因。只读的 Harness 返回 409 `CAPABILITY_UNSUPPORTED`，非法`id`返回 400。确认用`POST /api/v1/capabilities/changes`。
 - 漂移与孤立：`history.drift`的`kind`可以是`plugin`，重新应用即按 HarnessHub 写入的值再检查一次。`history.orphans`的每项多了`kind`（`skill`或`plugin`）；插件的孤立设置是 HarnessHub 为已卸载插件写的`false`，清除即写回原值。
 - 存储不升版本（沿用台账表）；回退到旧构建时，这些台账行在漂移列表里显示为“无法读取”。
+
+ADR-050（2026-10-22，Harness 分层与按需刷新，依据 ADR-048 用户决定第 1、8 项）追加：
+- 分层：Harness 视图带必填的`tier`：`focus`（ADR-048 的七个焦点 Harness）、`frozen`（Cursor、Gemini CLI、Pi）或`catalog`（其余目录条目），由`src/adapters/catalog.ts`的`harnessTier`给出。`WebState`带必填的`harnessesScannedAt`：上次完成的扫描开始读取本机的 ISO 时间（`toISOString`格式）；在它之后的变化，例如之后才结束的任务，可能不在`harnesses`里。页面严格解码两项，缺失、取值不在列表中或时间格式不对都是`INVALID_RESPONSE`。
+- 读取不扫描：`GET /api/v1/state`与`GET /api/v1/harnesses`返回上次完成的扫描，不启动发现；有扫描正在进行时返回上次的结果，不等待。启动扫描在监听开始前完成，所以总有结果。
+- 扫描时机：启动；`POST /api/v1/harnesses/rescan`（客户端能要求的唯一完整扫描；正在进行的扫描直接共用。可带`{after}`：这个 Gateway 时钟的 ISO 时间，等到一次开始于该时刻或之后的扫描结束再返回；时钟只到毫秒，同一毫秒算作之后。格式不对返回 400）；登录 shell 目录变化后；管理任务的检查与提交前；检查更新后；管理任务的结束经`GET /api/v1/installation-jobs/:id`读到时（任务结束于上次扫描开始之后才扫，同一个结束只扫一次）。管理服务没有任务完成回调，所以由读到结束的这一次读取承担；等任务结束再读 Harness 列表的客户端因此读到任务留下的结果。能力页的读取与检查、原生恢复命令仍在请求时扫描；导出只用上次扫描里的名称。
+- 页面不定时请求：打开页面或回到页面（窗口获焦、`visibilitychange`变为可见）时读一次 state，上次扫描开始已满 60 秒、并且本页 60 秒内没有因此要求过扫描时`POST rescan`；有任务进行时每 800 ms 读一次 state（页面隐藏时 10 秒）；任务结束于上次扫描开始之后时，以该结束时间为`after`要求一次扫描；“重新检测”按钮随时扫描。其他时候不发请求。没有打开的对话在侧栏里的状态因此只在这些时机更新，等你处理的审批与提问仍由推送实时更新（ADR-035）；页面自己打开的对话按 Gateway 的规则命名（`conversationTitle`），不再靠轮询纠正标题。
+- 冻结默认隐藏：偏好`showFrozen`（默认关），设置页“发现”一节的开关“显示冻结的 Harness（Cursor、Gemini CLI、Pi）”。关时 Composer 的 Harness 选择器、欢迎页列表、命令面板的“用 X 开始新对话”、“我的 Agent”列表与计数（列表下写“已隐藏 N 个冻结的 Harness，可在设置里显示”并可跳转），以及能力页的列、“只看一个 Harness”下拉、共享目录与插件说明中的逐个 Harness 行、读取规则列表和只被隐藏 Harness 看到的条目，都不含冻结的 Harness；当前对话的选择与草稿所选的 Harness 永远不隐藏，能力页正在看的那个也不隐藏。名称查找、Inbox、详情栏、条目详情、分支与切换历史仍用完整列表，停在冻结 Harness 上的对话照常打开。开关打开时，“我的 Agent”给冻结项加“冻结”标记。能力页 MCP、指令、子 Agent 面板里逐个 Harness 的行这次不过滤。
+- 原生恢复（ADR-039）：已验证程序只有`once`、没有`interactive`时（DeepSeek Harness），详情栏显示“只问一次（已用真实回合验证）”的命令及其复制按钮、`onceNote`和两条提示，不显示“复制恢复命令”。
