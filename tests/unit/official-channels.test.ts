@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { classifyProgram } from "../../src/contexts/catalog/domain/channels.js";
 import { adapterChannels, productChannels } from "../../src/adapters/catalog-channels.js";
 import { loadBuiltinCatalog } from "../../src/adapters/catalog.js";
+import { LocalInstallationClassifier } from "../../src/infrastructure/discovery/installation-channels.js";
 
 const HOME = "/Users/me", UV = HOME + "/.local/share/uv/tools";
 const at = (path: string, resolvedPath = path) => ({ path, resolvedPath });
@@ -56,4 +60,41 @@ test("G012-OC1 an adapter is official through the package its registry entry pub
     const recorded = productChannels(id); assert.ok(recorded, id); assert.match(recorded.source.url, /^https:\/\//u); assert.equal(recorded.source.checkedAt, "2026-10-17");
     assert.ok(recorded.npm.length + recorded.brewFormulae.length + recorded.brewCasks.length + recorded.scripts.length + recorded.uv.length > 0, id);
   }
+});
+
+test("G012-OC1 a script installation's version is read from its files: Hermes's from its virtual environment's dist-info, none without one", async t => {
+  const home = await realpath(await mkdtemp(join(tmpdir(), "official-channels-")));
+  const root = join(home, ".hermes", "hermes-agent"), program = join(root, "venv", "bin", "hermes"), launcher = join(home, ".local", "bin", "hermes");
+  const site = join(root, "venv", "lib", "python3.11", "site-packages");
+  t.after(async () => {
+    // The environment is made unreadable below; it is restored first so that the whole home can be removed.
+    try { await chmod(site, 0o755); } catch (error: unknown) { if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error; }
+    await rm(home, { recursive: true, force: true });
+  });
+  const put = async (path: string, text: string, mode = 0o644) => { await mkdir(dirname(path), { recursive: true }); await writeFile(path, text, { mode }); };
+  // As the official installer leaves it: the program inside the checkout's environment and a launcher that starts it.
+  await put(program, "#!/bin/sh\nexit 3\n", 0o755);
+  await put(launcher, "#!/bin/bash\nexec \"" + program + "\" \"$@\"\n", 0o755);
+  const classifier = new LocalInstallationClassifier(home, join(home, ".local", "share", "uv", "tools"));
+  const read = async (harness: string, path: string) => classifier.classify({ path, resolvedPath: await realpath(path), source: "path", entries: [] }, productChannels(harness)!);
+  // Without dist-info the installation is official, and its version unknown.
+  assert.deepEqual(await read("hermes", launcher), { channel: { kind: "script", name: ".hermes/hermes-agent", root, prefix: null }, version: null });
+  // Another distribution's dist-info, or one whose METADATA names another distribution, is not Hermes's version.
+  await put(join(site, "hermes_agent_tools-1.0.0.dist-info", "METADATA"), "Name: hermes-agent-tools\nVersion: 1.0.0\n");
+  await put(join(site, "hermes_agent-9.9.9.dist-info", "METADATA"), "Name: other-agent\nVersion: 9.9.9\n");
+  assert.equal((await read("hermes", launcher))?.version, null);
+  // Its own dist-info: the version, through the launcher or the program itself.
+  await put(join(site, "hermes_agent-0.12.0.dist-info", "METADATA"), "Metadata-Version: 2.4\nName: hermes-agent\nVersion: 0.12.0\n");
+  assert.equal((await read("hermes", launcher))?.version, "0.12.0");
+  assert.equal((await read("hermes", program))?.version, "0.12.0");
+  // An environment that cannot be read leaves the version unknown; the installation still counts.
+  await chmod(site, 0o000);
+  assert.deepEqual(await read("hermes", launcher), { channel: { kind: "script", name: ".hermes/hermes-agent", root, prefix: null }, version: null });
+  await chmod(site, 0o755);
+  // A layout that keeps versions side by side is read by its directory; one with neither has no version to read.
+  const versioned = join(home, ".local", "share", "claude", "versions", "2.1.296");
+  await put(versioned, "#!/bin/sh\nexit 3\n", 0o755); await symlink(versioned, join(home, ".local", "bin", "claude"));
+  assert.equal((await read("claude", join(home, ".local", "bin", "claude")))?.version, "2.1.296");
+  await put(join(home, ".opencode", "bin", "opencode"), "#!/bin/sh\nexit 3\n", 0o755);
+  assert.deepEqual(await read("opencode", join(home, ".opencode", "bin", "opencode")), { channel: { kind: "script", name: ".opencode/bin", root: join(home, ".opencode", "bin"), prefix: null }, version: null });
 });

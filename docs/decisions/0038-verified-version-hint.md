@@ -43,3 +43,4 @@ Pi 0.85.1 与 DeepSeek Harness 0.2.1-alpha.1 的已验证版本来自非官网�
   - 目录包版本由 `0.2.1-alpha.1` 改为 `0.2.0-rc.2`（2026-10-18 经 4317 安装，见[管理操作验收](../verification/management-actions-2026-10-18.md)）。它只作为“目录参考”显示，官网安装仍按 npm latest。
   - 已验证版本仍是 `0.2.1-alpha.1`，所以 Harness 列表照旧对 `0.2.0-rc.2` 提示“未经验证的版本”，直到用官网渠道真实重验收。
   - 已知差距（未改）：0.2.0-rc.2 还把技能目录顶层的 `<名>.md` 和 `customSkillDirs` 里的目录当作技能来源，profile 的清单另有 `bundles`，启动时会停用补丁行写了 `disabled` 或与本版本不兼容的插件；读表还没有读这些。
+- **Hermes 的版本。** 脚本渠道原来只认 `versions/<版本>` 的布局，Hermes（`~/.hermes/hermes-agent`，程序在 `venv/bin/hermes`）的版本因此总是未知，能力页一直标“未核实”。现在读它自己的虚拟环境里 `hermes-agent` 分发的 dist-info（`venv/lib/python3.x/site-packages/hermes_agent-<版本>.dist-info/METADATA`），不运行程序。读不到时版本仍为未知，安装照样算官网安装。分发名暂时按渠道目录登记在 `src/infrastructure/discovery/installation-channels.ts`，以后迁入产品描述。只在测试夹具上验证过，本机真实读取待在正式入口核对。

@@ -91,8 +91,12 @@ async function pythonEnvironment(executable: string): Promise<string | null> {
 /** PEP 503 name comparison; dist-info directories spell the normalised name with underscores. */
 function distribution(name: string): string { return name.toLowerCase().replace(/[-_.]+/gu, "-"); }
 
-/** The installed version a Python distribution records in its dist-info METADATA inside the environment. */
-async function pythonDistribution(environment: string, name: string): Promise<{ readonly version: string; readonly manifest: string } | null> {
+/**
+ * The installed version a Python distribution records in its dist-info METADATA inside the environment, matched by its
+ * PEP 503 name (`hermes-agent` finds `hermes_agent-0.12.0.dist-info` whose METADATA names it). Null when the environment,
+ * its site-packages or such a distribution is missing; other filesystem errors are thrown. Reads files only, each bounded.
+ */
+export async function pythonDistribution(environment: string, name: string): Promise<{ readonly version: string; readonly manifest: string } | null> {
   const wanted = distribution(name), prefix = wanted.replaceAll("-", "_") + "-", lib = join(environment, "lib");
   let pythons: string[];
   try { pythons = (await readdir(lib)).filter(entry => /^python3\.[0-9]+$/u.test(entry)).sort().slice(0, 8); }

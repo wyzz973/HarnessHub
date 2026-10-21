@@ -22,7 +22,8 @@ const NPM: readonly (readonly [string, string, string])[] = [["@anthropic-ai/cla
   ["@google/gemini-cli", "gemini", "0.72.0"], ["openclaw", "openclaw", "2026.3.23-2"], ["@earendil-works/pi-coding-agent", "pi", "0.85.1"], ["@deepseek-ai/dsh", "dsh", "0.2.0-rc.2"]];
 /**
  * The nine Harnesses installed through their official channels as the installers leave them (ADR-044): npm global
- * packages under an nvm prefix, and Cursor's and Hermes's install scripts. Returns the PATH directories; nothing here runs.
+ * packages under an nvm prefix, and Cursor's and Hermes's install scripts, Hermes's with the dist-info its virtual
+ * environment records its version in. Returns the PATH directories; nothing here runs.
  */
 export async function officialInstalls(home: string): Promise<readonly string[]> {
   const prefix = join(home, ".nvm", "versions", "node", "v26.0.0");
@@ -34,6 +35,8 @@ export async function officialInstalls(home: string): Promise<readonly string[]>
   await file(join(home, ".local", "share", "cursor-agent", "versions", "2026.10.01-e373342", "cursor-agent"), program("cursor-agent"), 0o755);
   await link(join(home, ".local", "share", "cursor-agent", "versions", "2026.10.01-e373342", "cursor-agent"), join(home, ".local", "bin", "cursor-agent"));
   await file(join(home, ".hermes", "hermes-agent", "venv", "bin", "hermes"), program("hermes"), 0o755);
+  await file(join(home, ".hermes", "hermes-agent", "venv", "lib", "python3.11", "site-packages", "hermes_agent-0.12.0.dist-info", "METADATA"),
+    "Metadata-Version: 2.4\nName: hermes-agent\nVersion: 0.12.0\nSummary: The self-improving AI agent\n");
   await link(join(home, ".hermes", "hermes-agent", "venv", "bin", "hermes"), join(home, ".local", "bin", "hermes"));
   return [join(home, ".local", "bin"), join(prefix, "bin")];
 }
