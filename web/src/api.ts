@@ -2,6 +2,7 @@ import { consumeSessionEventStream, SessionStreamError } from "./session-stream.
 import { readSseBlocks } from "./attention.js";
 import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
 import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, LoginShellView, MaintenanceView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, UninstallCheckView, InstallCheckView, InstallationUpgradeCheckView, WebState } from "../../src/contracts/web.js";
+import { HARNESS_TIERS } from "../../src/contracts/web.js";
 import type { HarnessManagementView, InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
 import type { AttentionItem, HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
 import type { NativeExtensions, NativeInputs, NativeOption, NativeModelCatalog } from "../../src/contracts/control.js";
@@ -69,10 +70,15 @@ export function decodeProvider(value: unknown): ProviderView {
   return { id: text(row.id), revision: number(row.revision), name: text(row.name), protocol: choice(row.protocol, PROVIDER_PROTOCOLS),
     baseUrl: text(row.baseUrl), models: list(row.models, text, 256), defaultModel: text(row.defaultModel), enabled: bool(row.enabled), hasCredential: bool(row.hasCredential) };
 }
+/** An ISO time as the Gateway writes it (`toISOString`); anything else is an invalid response. */
+function isoTime(value: unknown): string {
+  const time = text(value);
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(time) && Number.isFinite(Date.parse(time)) ? time : invalid();
+}
 function decodeHarness(value: unknown): HarnessView {
   const row = record(value);
   const install = row.install === null ? null : record(row.install);
-  return { id: text(row.id), name: text(row.name), installed: bool(row.installed), defaultControlId: nullableText(row.defaultControlId), providerProtocols: list(row.providerProtocols, text, 16), management: decodeManagement(row.management),
+  return { id: text(row.id), name: text(row.name), tier: choice(row.tier, HARNESS_TIERS), installed: bool(row.installed), defaultControlId: nullableText(row.defaultControlId), providerProtocols: list(row.providerProtocols, text, 16), management: decodeManagement(row.management),
     controls: list(row.controls, value => { const control = record(value), entry = control.entry === null ? null : record(control.entry);
       return { id: text(control.id), protocol: text(control.protocol), available: bool(control.available), reason: nullableText(control.reason),
         entry: entry === null ? null : { source: choice(entry.source, ["path", "standard-directory", "custom-entry", "package-root", "managed"]) } }; }, 64),
@@ -442,7 +448,8 @@ function decodeReadiness(value: unknown): HarnessReadinessView {
 }
 function decodeState(value: unknown): WebState {
   const row = record(value);
-  return { ...(row.providerManagement === undefined ? {} : { providerManagement: bool(row.providerManagement) }), workspace: text(row.workspace), providers: list(row.providers, decodeProvider, 256), harnesses: list(row.harnesses, decodeHarness, 256), sessions: list(row.sessions, decodeSummary, 1000), jobs: list(row.jobs, decodeInstallationJob, 100),
+  return { ...(row.providerManagement === undefined ? {} : { providerManagement: bool(row.providerManagement) }), workspace: text(row.workspace), providers: list(row.providers, decodeProvider, 256), harnesses: list(row.harnesses, decodeHarness, 256),
+    harnessesScannedAt: isoTime(row.harnessesScannedAt), sessions: list(row.sessions, decodeSummary, 1000), jobs: list(row.jobs, decodeInstallationJob, 100),
     readiness: list(row.readiness, decodeReadiness, 512), installationPolicy: choice(row.installationPolicy, ["official", "any"]) };
 }
 function decodeAuth(value: unknown): AuthSession { return { csrfToken: text(record(value).csrfToken) }; }
@@ -742,8 +749,12 @@ export class GatewayApi {
       const row = record(value); if (row.status !== "models_reachable") return invalid(); return list(row.models, text, 1024);
     });
   }
-  async rescan(signal?: AbortSignal): Promise<readonly HarnessView[]> {
-    return this.request("/harnesses/rescan", "POST", {}, value => list(value, decodeHarness, 256), signal);
+  /**
+   * Scans this computer's Harnesses again (ADR-050), joining a scan already running; with `after` (an ISO time of the
+   * Gateway's clock, such as a task's end), answers once a scan that began then or later has ended.
+   */
+  async rescan(signal?: AbortSignal, after?: string): Promise<readonly HarnessView[]> {
+    return this.request("/harnesses/rescan", "POST", after === undefined ? {} : { after }, value => list(value, decodeHarness, 256), signal);
   }
   checkUpdates(harnessIds?: readonly string[]): Promise<readonly HarnessView[]> {
     return this.request("/harnesses/check-updates", "POST", harnessIds ? { harnessIds } : {}, value => list(value, decodeHarness, 256));

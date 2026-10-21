@@ -7,7 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { application } from "../../src/cli/session-application.js";
-import { ManagementError } from "../../src/contracts/management.js";
+import { ManagementError, type InstallationJobView } from "../../src/contracts/management.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { startWebServer, type WebServer } from "../../src/web/server.js";
 import { homePathsIn } from "../../src/web/shown-paths.js";
@@ -464,4 +464,94 @@ test("a domain error's public message writes the user's home as ~ in every spell
   assert.deepEqual(maintenance, { status: 409, data: { code: "MAINTENANCE_UNAVAILABLE", message: "HOME=~ 下找不到程序（~）" } });
   assert.deepEqual(homePathsIn([upgrade, maintenance], [home, resolved]), []);
   assert.deepEqual(await read("/api/v1/harnesses/dsh/unknown"), { status: 404, data: { code: "NOT_FOUND", message: "API route not found" } });
+});
+
+test("G050-NC9 the state and the Harness list answer with the last completed scan and start none; a rescan, a rescan after a time and a task's end each scan once (ADR-050)", async t => {
+  const root = await mkdtemp(join(tmpdir(), "harness-web-scans-")), workspace = join(root, "workspace"), assets = join(root, "assets");
+  await mkdir(workspace); await mkdir(assets); await writeFile(join(assets, "index.html"), "<!doctype html><title>fixture</title>");
+  // Each scan reads the system versions once: counted at the management service, and held there while `gate` is set.
+  let scans = 0, gate: Promise<void> | null = null;
+  // A management task the service reports, standing in for one that runs (the HTTP route under test is the formal one).
+  let job: InstallationJobView | null = null;
+  const gateway = await startWebServer({ root: join(root, "data"), configuration: await prepareConfiguration({ workspace, pathOnly: true }), port: 0, assetsDirectory: assets,
+    application: (data, publish) => {
+      const app = application(data, publish, { installations: "any", nativeEnvironment: { home: root, values: { HOME: root, PATH: "/usr/bin:/bin" } }, workspaceLockRoot: join(root, "locks") });
+      const versions = app.management.refreshSystemVersions.bind(app.management), read = app.management.readJob.bind(app.management);
+      app.management.refreshSystemVersions = async () => { scans++; if (gate !== null) await gate; return versions(); };
+      app.management.readJob = (id: string) => job !== null && id === job.id ? job : read(id);
+      return app;
+    } });
+  t.after(async () => { await gateway.close(); await rm(root, { recursive: true, force: true }); });
+  const launch = new URL(gateway.url), origin = launch.origin;
+  const boot = await fetch(origin + "/api/v1/auth/bootstrap", { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ token: new URLSearchParams(launch.hash.slice(1)).get("token") }) });
+  const cookie = boot.headers.get("set-cookie")!.split(";", 1)[0]!, csrf = String(row(await boot.json()).csrfToken);
+  const call = async (path: string, input?: unknown) => {
+    const response = await fetch(origin + path, { method: input === undefined ? "GET" : "POST", headers: { Cookie: cookie, Origin: origin, ...(input === undefined ? {} : { "Content-Type": "application/json", "X-CSRF-Token": csrf }) },
+      ...(input === undefined ? {} : { body: JSON.stringify(input) }) });
+    return { status: response.status, data: await response.json() as unknown };
+  };
+  const scannedAt = async () => String(row((await call("/api/v1/state")).data).harnessesScannedAt);
+  assert.equal(scans, 1, "the startup scan");
+  // Mutation check (run by hand, not kept): with /state scanning as before, the first read below makes this test fail.
+  const first = row((await call("/api/v1/state")).data), harnesses = first.harnesses as { id: string; tier: string }[];
+  const at = String(first.harnessesScannedAt); assert.match(at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u);
+  assert.deepEqual(["codex", "gemini", "autohand"].map(id => harnesses.find(item => item.id === id)?.tier), ["focus", "frozen", "catalog"]);
+  for (let index = 0; index < 3; index++) {
+    assert.equal(await scannedAt(), at);
+    assert.deepEqual((await call("/api/v1/harnesses")).data, harnesses);
+  }
+  assert.equal(scans, 1, "reading the state and the Harness list starts no scan");
+  // The rescan a client asks for scans once and moves the time on.
+  assert.equal((await call("/api/v1/harnesses/rescan", {})).status, 200); assert.equal(scans, 2);
+  const second = await scannedAt(); assert.ok(Date.parse(second) > Date.parse(at), second + " after " + at);
+  // A scan still running is not waited for: the state answers with the last completed one meanwhile.
+  let release!: () => void; gate = new Promise<void>(done => { release = done; });
+  const running = call("/api/v1/harnesses/rescan", {});
+  for (const end = Date.now() + 10000; scans < 3;) { assert.ok(Date.now() < end, "the held scan did not start"); await delay(5); }
+  assert.equal(await scannedAt(), second, "answered while the scan runs");
+  gate = null; release(); assert.equal((await running).status, 200);
+  const third = await scannedAt(); assert.ok(Date.parse(third) > Date.parse(second));
+  // With a time: a scan that began then or later is enough; otherwise one more scan. Anything but such a time is refused.
+  const now = () => new Date().toISOString();
+  assert.equal((await call("/api/v1/harnesses/rescan", { after: second })).status, 200); assert.equal(scans, 3, "the last scan began after it");
+  assert.equal((await call("/api/v1/harnesses/rescan", { after: third })).status, 200); assert.equal(scans, 3, "the last scan began at that very time");
+  await delay(2); const later = now();
+  assert.equal((await call("/api/v1/harnesses/rescan", { after: later })).status, 200); assert.equal(scans, 4, "no scan began then or later");
+  assert.ok(Date.parse(await scannedAt()) >= Date.parse(later));
+  for (const input of [{ after: "yesterday" }, { after: "2026-10-22T08:00:00Z" }, { after: "2026-13-40T99:00:00.000Z" }, { after: 1 }, { since: third }])
+    assert.equal((await call("/api/v1/harnesses/rescan", input)).status, 400, JSON.stringify(input));
+  assert.equal(scans, 4);
+  // A task's end, read through its record, scans once; a running task, and the same end read again, do not.
+  job = { id: "management-00000000-0000-4000-8000-000000000050", harnessId: "codex", controlId: "codex-native", action: "install", status: "installing", phase: "installing", cancelRequested: false,
+    createdAt: now(), updatedAt: now(), resolvedVersion: null, installationId: null, error: null, logCursor: 0 };
+  assert.equal(row((await call("/api/v1/installation-jobs/" + job.id)).data).status, "installing"); assert.equal(scans, 4);
+  await delay(2); job = { ...job, status: "completed", phase: "completed", updatedAt: now() };
+  const ended = job.updatedAt;
+  assert.equal(row((await call("/api/v1/installation-jobs/" + job.id)).data).status, "completed"); assert.equal(scans, 5);
+  assert.ok(Date.parse(await scannedAt()) >= Date.parse(ended), "the Harness list now shows what the task left");
+  assert.equal(row((await call("/api/v1/installation-jobs/" + job.id)).data).status, "completed"); assert.equal(scans, 5);
+});
+
+test("G050-NC10 a domain error whose message names the home across the 512th character writes it as ~ before the cut, leaving no part of it (ADR-044, ADR-050)", async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "harness-web-cut-"))), home = join(root, "home"), resolved = join(root, root.slice(1), "home"), workspace = join(root, "workspace");
+  await mkdir(resolved, { recursive: true }); await symlink(resolved, home); await mkdir(workspace);
+  // The resolved home starts at the 506th character and runs past the 512th; what follows it is longer than the rest of the cut.
+  const before = "x".repeat(505), message = before + resolved + "/" + "y".repeat(100);
+  assert.ok(before.length < 512 && before.length + resolved.length > 512);
+  const gateway = await startWebServer({ root: join(root, "data"), configuration: await prepareConfiguration({ workspace, pathOnly: true }), port: 0, workspaceLockRoot: join(root, "locks"),
+    application: (data, publish) => {
+      const app = application(data, publish, { nativeEnvironment: { home, values: { HOME: home, PATH: "/usr/bin:/bin" } }, installations: "official", workspaceLockRoot: join(root, "locks") });
+      app.management.maintenance = async () => { throw new ManagementError("MAINTENANCE_UNAVAILABLE", message); };
+      return app;
+    } });
+  t.after(async () => { await gateway.close(); await rm(root, { recursive: true, force: true }); });
+  const launch = new URL(gateway.url), origin = launch.origin;
+  const boot = await fetch(origin + "/api/v1/auth/bootstrap", { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ token: new URLSearchParams(launch.hash.slice(1)).get("token") }) });
+  const response = await fetch(origin + "/api/v1/harnesses/dsh/maintenance", { headers: { Cookie: boot.headers.get("set-cookie")!.split(";", 1)[0]! } });
+  // Mutation check (run by hand, not kept): with the cut made before writing ~, the answer ends with the home's first 7 characters.
+  const answer = row(await response.json());
+  assert.equal(response.status, 409);
+  assert.deepEqual(answer, { code: "MAINTENANCE_UNAVAILABLE", message: (before + "~/" + "y".repeat(100)).slice(0, 512) });
+  assert.equal(String(answer.message).includes(resolved.slice(0, 7)), false, "no part of the home is left");
+  assert.deepEqual(homePathsIn(answer, [home, resolved]), []);
 });

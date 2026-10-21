@@ -7,6 +7,13 @@ import type { HarnessSelection, PublicMessage, PublicRun, PublicSwitch, Selectio
  * custom entry from the discovery manifest, in an explicit package root, or as a HarnessHub-managed installation.
  */
 export type HarnessEntrySource = "path" | "standard-directory" | "custom-entry" | "package-root" | "managed";
+/**
+ * How far HarnessHub carries a Harness (ADR-048, ADR-050): `focus` for the seven it supports in full, `frozen` for the three
+ * whose adapters, tests and history stay but which get no new work (the page hides them unless the user shows them), and
+ * `catalog` for every other catalog entry. `harnessTier` in the catalog assigns it.
+ */
+export const HARNESS_TIERS = ["focus", "frozen", "catalog"] as const;
+export type HarnessTier = typeof HARNESS_TIERS[number];
 /** Browser-safe observations. Available means resolved control, not task acceptance. */
 /** What upgrading a Harness would touch, for the user's confirmation (ADR-043); conversations carry their titles. */
 export type MaintenanceView = Omit<import("./management.js").MaintenanceCheck, "conversations"> & {
@@ -25,6 +32,8 @@ export type UninstallCheckView = Omit<import("./management.js").UninstallCheck, 
 export interface HarnessView {
   readonly id: string;
   readonly name: string;
+  /** How far HarnessHub carries it (ADR-050); a fact of the catalog, the same in every scan. */
+  readonly tier: HarnessTier;
   readonly installed: boolean;
   readonly defaultControlId: string | null;
   readonly controls: readonly { readonly id: string; readonly protocol: string; readonly available: boolean; readonly reason: string | null;
@@ -204,7 +213,13 @@ export interface WebState {
   readonly providerManagement?: boolean;
   readonly workspace: string;
   readonly providers: readonly ProviderView[];
+  /** The last completed scan of this computer's Harnesses (ADR-050); reading the state never starts one. */
   readonly harnesses: readonly HarnessView[];
+  /**
+   * When that scan began reading this computer, as an ISO time: a change made after it, such as a task that ended later,
+   * may be missing from `harnesses`.
+   */
+  readonly harnessesScannedAt: string;
   readonly sessions: readonly SessionSummary[];
   readonly jobs: readonly InstallationJobView[];
   readonly readiness: readonly HarnessReadinessView[];

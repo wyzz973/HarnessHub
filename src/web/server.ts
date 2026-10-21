@@ -17,6 +17,8 @@ import { harnessEntry, productCommand } from "./harness-entry.js";
 import { installationObservations, installationViews, unofficialView } from "./harness-installations.js";
 import { homePathsIn } from "./shown-paths.js";
 import { officialInstallMethod } from "../adapters/catalog-channels.js";
+import { harnessTier } from "../adapters/catalog.js";
+import type { InstallationJobView } from "../contracts/management.js";
 import { prepareConfiguration } from "../infrastructure/session/binding-factory.js";
 import { supportedProviderProtocols } from "../contexts/provider/domain/provider.js";
 import { carriedNativeConfiguration } from "../contexts/session/domain/state.js";
@@ -135,6 +137,18 @@ function cursor(value: string | null, fallback: number, minimum: number, maximum
   if (!/^(0|[1-9][0-9]*)$/u.test(value)) throw new HttpError(400, "INVALID_INPUT", "Invalid cursor or limit");
   return integer(Number(value), minimum, maximum, "cursor or limit");
 }
+/** An ISO time in a request body, written as this Gateway writes its own (`toISOString`). */
+function isoTime(value: unknown, label: string): string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value) || !Number.isFinite(Date.parse(value))) throw new HttpError(400, "INVALID_INPUT", "Invalid " + label);
+  return value;
+}
+/** Whether a management task has ended (completed, cancelled, failed or unknown), after which it changes nothing by itself. */
+function settled(status: InstallationJobView["status"]): boolean {
+  switch (status) {
+    case "queued": case "resolving": case "installing": case "verifying": case "activating": return false;
+    case "completed": case "cancelled": case "failed": case "unknown": return true;
+  }
+}
 function select(value: unknown): SelectionRequest {
   const item = record(value, ["harnessId", "controlId", "provider", "nativeModel", "nativeOptions"], ["harnessId"]);
   if (typeof item.harnessId !== "string" || !/^[a-z][a-z0-9-]{0,95}$/u.test(item.harnessId) ||
@@ -242,10 +256,10 @@ function view(snapshot: SessionSnapshot, permissions: SessionView["permissions"]
     ...(snapshot.schemaVersion < 11 ? {} : { retention: { enabled: snapshot.retainNative === true, process: kept, ...(lost === null ? {} : { lost }), ...(outside === null ? {} : { outside }), ...(upgraded === null ? {} : { upgraded }) } }), messages: snapshot.messages, runs: snapshot.runs, switches: snapshot.switches };
 }
 /**
- * The status, code and message a failure answers with. The domain errors keep their code and message, cut to 512
- * characters, with every spelling of the user's home in `homes` written as ~ (ADR-044): a management or capability
- * error may name a program or file by its absolute path. An HttpError or a stream error keeps its own words; anything
- * else is a generic 500.
+ * The status, code and message a failure answers with. The domain errors keep their code and message, with every
+ * spelling of the user's home in `homes` written as ~ (ADR-044) and then cut to 512 characters: a management or
+ * capability error may name a program or file by its absolute path. An HttpError or a stream error keeps its own words;
+ * anything else is a generic 500.
  */
 function publicFailure(error: unknown, homes: readonly string[]): { readonly status: number; readonly code: string; readonly message: string } {
   if (error instanceof HttpError || error instanceof SessionStreamError) return error;
@@ -253,8 +267,9 @@ function publicFailure(error: unknown, homes: readonly string[]): { readonly sta
     const code = error.code;
     const status = code.includes("NOT_FOUND") ? 404 : code === "INVALID_INPUT" ? 400 : code.includes("LIMIT") || code === "QUEUE_FULL" ? 429
       : code.startsWith("RECOVERY_") || code.includes("UNAVAILABLE") || code.includes("CLOSED") || code.includes("BLOCKED") || code.includes("CONFLICT") || code.includes("PENDING") || code.includes("REVISION") || code.includes("UNSUPPORTED") || code.includes("BUSY") || code.includes("ACTIVE") || code === "STALE_DEFAULT" || code.endsWith("_CHANGED") || code.includes("REFUSED") || code.endsWith("_EXPIRED") || code.includes("INCOMPATIBLE") ? 409 : 502;
-    // Cut before writing ~: a cut made afterwards could end a longer path exactly at the home, which then reads as the home.
-    return { status, code, message: homeText(homes)(error.message.slice(0, 512)) };
+    // Write ~ before cutting: every whole spelling of the home is replaced first, so a home that crosses the 512th
+    // character can no longer leave its first half in the answer; the cut then only shortens text that already says ~.
+    return { status, code, message: homeText(homes)(error.message).slice(0, 512) };
   }
   return { status: 500, code: "GATEWAY_FAILED", message: "Gateway operation failed" };
 }
@@ -391,7 +406,10 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   // Changes to a Harness's own configuration (ADR-045 §3): checked, shown, applied once on confirmation, with backups.
   const capabilityChanges = new CapabilityChanges({ root: realpathSync(options.root), generation: app.store.ownerGeneration, assertOwner: () => app.store.assertOwner(),
     environment: app.factory.discoveryEnvironment, homes: homeForms(), ...(options.github === undefined ? {} : { github: options.github }) });
-  /** The installed Harnesses a capability read or change covers: each one's official installation the Gateway uses. */
+  /**
+   * The installed Harnesses a capability read or change covers: each one's official installation the Gateway uses, as a
+   * scan at this request finds them (these reads and checks are the user's own requests; ADR-050 leaves them as they were).
+   */
   const installedHarnesses = async () => (await rescan()).flatMap(harness => {
     const products = harness.installations.filter(item => item.role === "product"), chosen = products.find(item => item.active) ?? products[0];
     return chosen ? [{ harnessId: harness.id, name: harness.name, version: chosen.version }] : [];
@@ -405,12 +423,34 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   const bootstrap = randomBytes(32).toString("hex"), bootstrapExpires = Date.now() + BOOTSTRAP_MS;
   let bootstrapAvailable = true;
   const logins = new Map<string, Login>();
+  // The last completed scan of this computer's Harnesses and when it began (ADR-050). Reading the state shows these and
+  // never scans. A scan runs at startup, on the user's request, after the login shell's directories change, before a
+  // management task is checked or accepted, after an update check, and once a task's end has been read.
   let harnesses: readonly HarnessView[] = [];
-  let scan: Promise<readonly HarnessView[]> | null = null;
+  let scannedAt = "";
+  let scan: { readonly startedAt: string; readonly done: Promise<readonly HarnessView[]> } | null = null;
+  /**
+   * Ends once a completed scan began at or after `time` (an ISO time of this Gateway's clock, such as a task's end; the
+   * clock counts milliseconds, so the same one counts): at once when the last one did, with the running one when it began
+   * then, otherwise with a new one after the running one.
+   */
+  const scanAfter = async (time: string): Promise<void> => {
+    const after = Date.parse(time), covered = () => Date.parse(scannedAt) >= after;
+    if (covered()) return;
+    const running = scan;
+    if (running !== null) {
+      if (Date.parse(running.startedAt) >= after) { await running.done; return; }
+      // It began too early to count: its failure is for its own request to report, and this one scans again.
+      await running.done.catch(() => []);
+      if (covered()) return;
+    }
+    await rescan();
+  };
   /** A scan with the current search directories, after any scan still running with the previous ones. */
-  const rescanWith = async (): Promise<void> => { if (scan) await scan.catch(() => []); scan = null; await rescan(); };
+  const rescanWith = (): Promise<void> => scanAfter(new Date().toISOString());
   const rescan = (): Promise<readonly HarnessView[]> => {
-    if (scan) return scan;
+    if (scan) return scan.done;
+    const startedAt = new Date().toISOString();
     const pending = inventory({ ...(options.configuration.manifestPath === null ? {} : { manifest: options.configuration.manifestPath }),
       environment: app.factory.discoveryEnvironment.values, home: app.factory.discoveryEnvironment.home,
       searchDirs: searchDirs(), packageRoots: options.configuration.packageRoots, pathOnly: options.configuration.pathOnly,
@@ -429,14 +469,14 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       await app.management.refreshSystemVersions();
       await app.management.refreshNativeCapabilities();
       const management = new Map(app.management.views(observed.report.harnesses.map(item => item.id)).map(item => [item.harnessId, item]));
-      harnesses = observed.report.harnesses.map(item => {
+      const views = observed.report.harnesses.map((item): HarnessView => {
         const managed = management.get(item.id);
         if (!managed) throw new HttpError(503, "MANAGEMENT_UNAVAILABLE", "Harness management observation is unavailable");
         const installed = item.installation.candidates.length > 0 || item.controls.some(control => control.state === "candidate");
         const available = item.controls.filter(control => control.state === "candidate" && (control.protocol === "acp-v1" || control.protocol === "codex-app-server" || control.protocol === "pi-rpc"));
         const managedControls = available.filter(control => observed.managedBindings.has(control.id));
         const defaultControlId = managedControls.length === 1 ? managedControls[0]!.id : managedControls.length === 0 && available.length === 1 ? available[0]!.id : null;
-        return { id: item.id, name: item.name, installed, defaultControlId,
+        return { id: item.id, name: item.name, tier: harnessTier(item.id), installed, defaultControlId,
         controls: item.controls.map(control => ({ id: control.id, protocol: control.protocol, available: control.state === "candidate" && (control.protocol === "acp-v1" || control.protocol === "codex-app-server" || control.protocol === "pi-rpc"),
           reason: control.state === "candidate" ? (control.protocol === "acp-v1" || control.protocol === "codex-app-server" || control.protocol === "pi-rpc" ? null : "Control Driver is not implemented")
             : observed.customEntries.has(control.id) ? "发现清单中的自定义入口不可用（不存在或不可执行）" : control.missingDependencies.length ? "Missing: " + control.missingDependencies.join(", ") : "Control entry unavailable",
@@ -446,10 +486,13 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         installations: installationViews(item.id, item.installation, app.factory.discoveryEnvironment.home, ref => app.management.installationUpgrade(item.id, ref)),
         unofficial: unofficialView(item.installation, observed.definitions.find(definition => definition.id === item.id)?.binaryNames[0]) };
       });
-      return harnesses;
+      // A scan that began earlier never replaces one that began later, whichever ends first.
+      if (scannedAt === "" || Date.parse(startedAt) >= Date.parse(scannedAt)) { harnesses = views; scannedAt = startedAt; }
+      return views;
     });
-    scan = pending;
-    void pending.then(() => { if (scan === pending) scan = null; }, () => { if (scan === pending) scan = null; });
+    const running = { startedAt, done: pending };
+    scan = running;
+    void pending.then(() => { if (scan === running) scan = null; }, () => { if (scan === running) scan = null; });
     return pending;
   };
   const authenticated = (request: IncomingMessage): Login => {
@@ -485,12 +528,15 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     const login = authenticated(request);
     if (write && (typeof request.headers["x-csrf-token"] !== "string" || !equal(request.headers["x-csrf-token"], login.csrf))) throw new HttpError(403, "CSRF_REJECTED", "Invalid write token");
     if (path === "/api/v1/auth/session" && method === "GET") { queries(url, []); json(response, 200, { csrfToken: login.csrf }); return; }
+    // Both answer with the last completed scan (ADR-050): reading them starts no discovery, and a scan still running is
+    // not waited for. The startup scan ends before the listener opens, so there always is one.
     if (path === "/api/v1/state" && method === "GET") {
       queries(url, []); const snapshots = app.store.list(100);
-      const output: WebState = { providerManagement: options.providerManagement ?? true, workspace: options.configuration.workspace, providers: app.providers.list(), harnesses: await rescan(), sessions: snapshots.map(summary), jobs: app.management.listJobs().slice(0, 50),
-        readiness: readinessViews(nativeModels.readiness(), snapshots), installationPolicy: app.factory.installations }; json(response, 200, output); return;
+      const output: WebState = { providerManagement: options.providerManagement ?? true, workspace: options.configuration.workspace, providers: app.providers.list(), harnesses, harnessesScannedAt: scannedAt,
+        sessions: snapshots.map(summary), jobs: app.management.listJobs().slice(0, 50), readiness: readinessViews(nativeModels.readiness(), snapshots), installationPolicy: app.factory.installations };
+      json(response, 200, output); return;
     }
-    if (path === "/api/v1/harnesses" && method === "GET") { queries(url, []); json(response, 200, await rescan()); return; }
+    if (path === "/api/v1/harnesses" && method === "GET") { queries(url, []); json(response, 200, harnesses); return; }
     // The login shell's PATH, read once on the user's request: it runs the shell's login configuration (G(ii)).
     if (path === "/api/v1/discovery/login-shell") {
       if (method === "GET") { queries(url, []); json(response, 200, loginShellView()); return; }
@@ -812,7 +858,13 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       if (homePathsIn(output, homeForms()).length) throw new HttpError(500, "PRIVACY_GUARD", "升级检查的结果含有未隐去的本机路径，已拦截。");
       json(response, 200, output); return;
     }
-    if (path === "/api/v1/harnesses/rescan" && method === "POST") { queries(url, []); record(await body(request), []); json(response, 200, await rescan()); return; }
+    // The one full scan a client asks for (ADR-050): it joins a scan already running, or with `after` (an ISO time of this
+    // Gateway's clock, such as a task's end) answers once a scan that began then or later has ended.
+    if (path === "/api/v1/harnesses/rescan" && method === "POST") {
+      queries(url, []); const input = record(await body(request), ["after"]);
+      if (input.after === undefined) { json(response, 200, await rescan()); return; }
+      await scanAfter(isoTime(input.after, "scan time")); json(response, 200, harnesses); return;
+    }
     if (path === "/api/v1/harnesses/check-updates" && method === "POST") {
       queries(url, []); const input = record(await body(request), ["harnessIds"]);
       let ids: readonly string[] | undefined;
@@ -857,7 +909,13 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     const jobRoute = /^\/api\/v1\/installation-jobs\/([^/]+)(?:\/(logs|cancel|inspect))?$/u.exec(path);
     if (jobRoute) {
       const id = jobRoute[1]!, action = jobRoute[2];
-      if (action === undefined && method === "GET") { queries(url, []); json(response, 200, app.management.readJob(id)); return; }
+      if (action === undefined && method === "GET") {
+        queries(url, []); const job = app.management.readJob(id);
+        // A task's end, read here, is when the Gateway looks at this computer again (ADR-050): the management service
+        // offers no completion callback, and a client that waited for the task through its record then reads what it left.
+        if (settled(job.status)) await scanAfter(job.updatedAt);
+        json(response, 200, job); return;
+      }
       if (action === "logs" && method === "GET") {
         queries(url, ["afterSeq", "limit"]);
         const after = cursor(url.searchParams.get("afterSeq"), 0, 0, Number.MAX_SAFE_INTEGER), entries = app.management.logs(id, after, cursor(url.searchParams.get("limit"), 50, 1, 100));
@@ -958,7 +1016,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         // A download of the public conversation; private native state and stored bytes stay out.
         queries(url, ["format"]); const format = url.searchParams.get("format") ?? "markdown";
         if (format !== "markdown" && format !== "json") throw new HttpError(400, "INVALID_INPUT", "export format must be markdown or json");
-        const current = sessionView(app.runtime.read(id)), now = new Date(), names = new Map((await rescan()).map(harness => [harness.id, harness.name]));
+        // Names come from the catalog, the same in every scan: the last one is enough.
+        const current = sessionView(app.runtime.read(id)), now = new Date(), names = new Map(harnesses.map(harness => [harness.id, harness.name]));
         const bytes = Buffer.from(format === "json" ? JSON.stringify({ application: "HarnessHub", exportedAt: now.toISOString(), session: current }, null, 2) + "\n" : conversationMarkdown(current, harnessId => names.get(harnessId) ?? harnessId, now));
         if (bytes.length > MAX_RESPONSE_BYTES) throw new HttpError(413, "RESPONSE_LIMIT", "Conversation export exceeds its byte budget");
         if (response.destroyed || response.writableEnded) return;
@@ -971,6 +1030,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       if (action === "native-resume" && method === "GET") {
         queries(url, []); const snapshot = app.runtime.read(id), selection = snapshot.selection;
         const binding = selection.provider === undefined ? snapshot.nativeBindings?.find(item => item.harnessId === selection.harnessId && item.controlId === selection.controlId && item.status === "ready") : undefined;
+        // A command to run is only given for the version installed now, so this read scans like a management check (ADR-050).
         const verification = binding === undefined ? null : (await rescan()).find(harness => harness.id === selection.harnessId)?.management.verification ?? null;
         // Whether the workspace is a Git repository decides one program's flag; it is only looked at.
         const git = binding === undefined ? false : await stat(join(snapshot.configuration.workspace, ".git")).then(() => true, () => false);

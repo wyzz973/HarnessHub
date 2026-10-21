@@ -2,6 +2,21 @@ import snapshot from "../infrastructure/catalog/acp-registry.json" with { type: 
 import { importRegistry } from "../infrastructure/catalog/registry.js";
 import { validateDefinitions } from "../contexts/catalog/domain/catalog-parser.js";
 import type { HarnessDefinition } from "../contexts/catalog/domain/catalog.js";
+import type { HarnessTier } from "../contracts/web.js";
+
+export type { HarnessTier };
+/** The seven Harnesses HarnessHub supports in full (ADR-048); WorkBuddy has no catalog definition yet and counts already. */
+const FOCUS: ReadonlySet<string> = new Set(["claude", "codex", "opencode", "dsh", "hermes", "openclaw", "workbuddy"]);
+/** Frozen by ADR-046 item 6 and hidden by default by ADR-048 decision 1: adapters, tests and history stay, new work does not come. */
+const FROZEN: ReadonlySet<string> = new Set(["cursor", "gemini", "pi"]);
+/**
+ * A Harness's tier by its catalog identity (ADR-048, ADR-050): `focus` for the seven above, `frozen` for Cursor, Gemini CLI
+ * and Pi, and `catalog` for anything else, including identities the catalog does not know. Pure. The capability matrix
+ * (`plan/native-capabilities.json`) records a tier for each of its Harnesses as well, and the two must agree.
+ */
+export function harnessTier(id: string): HarnessTier {
+  return FOCUS.has(id) ? "focus" : FROZEN.has(id) ? "frozen" : "catalog";
+}
 
 const nativeDefinitions: readonly HarnessDefinition[] = [
   {

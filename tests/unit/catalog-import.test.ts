@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import snapshot from "../../src/infrastructure/catalog/acp-registry.json" with { type: "json" };
 import { importRegistry } from "../../src/infrastructure/catalog/registry.js";
-import { loadBuiltinCatalog } from "../../src/adapters/catalog.js";
+import { harnessTier, loadBuiltinCatalog } from "../../src/adapters/catalog.js";
 
 function changedAgent(index: number, change: (agent: Record<string, unknown>) => void): unknown {
   const modified = structuredClone(snapshot);
@@ -82,6 +82,20 @@ test("builtin catalog explicitly combines native and ACP controls while retainin
   assert.deepEqual(definitions.find((definition) => definition.id === "dsh")?.controls.map((control) => [control.protocol, ...control.args]), [["acp-v1", "--profile", "acp"]]);
   assert.equal(definitions.filter((definition) => definition.id === "cursor").length, 1);
   assert.deepEqual(definitions.find((definition) => definition.id === "claude")?.aliases, ["claude-acp"]);
+});
+
+test("G011-NC3 the catalog's tiers: the seven focus Harnesses, the three frozen ones, and every other registry entry as catalog (ADR-048, ADR-050)", () => {
+  const focus = ["claude", "codex", "opencode", "dsh", "hermes", "openclaw", "workbuddy"], frozen = ["cursor", "gemini", "pi"];
+  for (const id of focus) assert.equal(harnessTier(id), "focus", id);
+  for (const id of frozen) assert.equal(harnessTier(id), "frozen", id);
+  // Two registry entries, the registry's own CodeBuddy entry (WorkBuddy will be its own identity) and an unknown identity.
+  for (const id of ["autohand", "qwen", "codebuddy-code", "no-such-harness"]) assert.equal(harnessTier(id), "catalog", id);
+  // Every tiered identity but WorkBuddy, which has no definition yet, names a builtin definition, so a misspelt one fails here.
+  const definitions = loadBuiltinCatalog("darwin-aarch64"), ids = new Set(definitions.map(definition => definition.id));
+  for (const id of [...focus, ...frozen].filter(id => id !== "workbuddy")) assert.ok(ids.has(id), id + " is a catalog identity");
+  assert.equal(ids.has("workbuddy"), false, "WorkBuddy is focus before its definition exists");
+  const tiers = definitions.map(definition => harnessTier(definition.id));
+  assert.deepEqual([tiers.filter(tier => tier === "focus").length, tiers.filter(tier => tier === "frozen").length, tiers.filter(tier => tier === "catalog").length], [6, 3, 36]);
 });
 
 test("malformed envelope, unknown fields, hash corruption and duplicate upstream IDs reject", () => {

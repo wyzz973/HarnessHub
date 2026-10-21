@@ -96,6 +96,36 @@ test("the attention stream hands over whole frames and rejects one whose identit
   await assert.rejects(client.streamAttention(new AbortController().signal, () => {}), code("INVALID_RESPONSE"));
 });
 
+/** A state the Gateway could send: one Harness, with whatever `harness` and `state` change. */
+function stateBody(harness: Record<string, unknown> = {}, state: Record<string, unknown> = {}): Record<string, unknown> {
+  const management = { harnessId: "gemini", recipe: null, source: "missing", installedVersion: null, programVersion: null, latestVersion: null, updateStatus: "unsupported", checkedAt: null,
+    activeJobId: null, installationId: null, defaultRevision: 0, error: null };
+  return { workspace: "/work", providers: [], harnesses: [{ id: "gemini", name: "Gemini CLI", tier: "frozen", installed: false, defaultControlId: null, controls: [], providerProtocols: [], management,
+    install: null, installations: [], unofficial: null, ...harness }], harnessesScannedAt: "2026-10-22T08:00:00.000Z", sessions: [], jobs: [], readiness: [], installationPolicy: "official", ...state };
+}
+
+test("the state carries each Harness's tier and when the last scan began, and a state without either, or with an unknown or malformed one, is refused (ADR-050)", async t => {
+  let body: Record<string, unknown> = stateBody();
+  const client = api(t, async () => new Response(JSON.stringify(body), { status: 200 }));
+  const state = await client.state();
+  assert.equal(state.harnesses[0]?.tier, "frozen"); assert.equal(state.harnessesScannedAt, "2026-10-22T08:00:00.000Z");
+  // JSON leaves an undefined field out: those candidates lack the field altogether.
+  for (const candidate of [stateBody({ tier: undefined }), stateBody({ tier: "hidden" }), stateBody({ tier: null }), stateBody({}, { harnessesScannedAt: undefined }), stateBody({}, { harnessesScannedAt: null }),
+    stateBody({}, { harnessesScannedAt: "yesterday" }), stateBody({}, { harnessesScannedAt: "2026-10-22T08:00:00Z" }), stateBody({}, { harnessesScannedAt: "2026-13-40T99:00:00.000Z" }),
+    stateBody({}, { harnessesScannedAt: 1761120000000 })]) {
+    body = JSON.parse(JSON.stringify(candidate)) as Record<string, unknown>;
+    await assert.rejects(client.state(), code("INVALID_RESPONSE"), JSON.stringify(candidate).slice(-160));
+  }
+});
+
+test("a rescan asks for a scan after a time only when given one, and sends nothing else (ADR-050)", async t => {
+  const bodies: unknown[] = [];
+  const client = api(t, async (_input, init) => { bodies.push(JSON.parse(String(init?.body))); return new Response("[]", { status: 200 }); });
+  assert.deepEqual(await client.rescan(), []);
+  assert.deepEqual(await client.rescan(undefined, "2026-10-22T08:00:00.000Z"), []);
+  assert.deepEqual(bodies, [{}, { after: "2026-10-22T08:00:00.000Z" }]);
+});
+
 test("a cancelled Turn says why: its execution budget, its wait for the user, a restart before it was sent, or the user's stop", () => {
   assert.equal(cancelledLabel({ error: { code: "RUN_TIMEOUT" }, cancelRequested: false }), "已取消（执行预算用尽）");
   assert.equal(cancelledLabel({ error: { code: "WAIT_EXPIRED" }, cancelRequested: true }), "已取消（等待你的决定超时）");
