@@ -53,12 +53,17 @@ function nativeConfiguration() { return [
 // Hermes lists `<provider>:<model>` choices from its curated catalogue (unstable session model state).
 function hermesModels() { return { currentModelId: "deepseek:deepseek-v4-pro", availableModels: [{ modelId: "deepseek:deepseek-v4-pro", name: "deepseek-v4-pro" }, { modelId: "deepseek:deepseek-v4-flash", name: "deepseek-v4-flash" }] }; }
 // The OpenClaw bridge's session presentation: six select options and the same thinking levels again as modes.
+// FIXTURE_OPENCLAW_MODES=distinct stands in for a bridge whose modes are not its thinking levels: as many modes, one of
+// them ("plan", the current one) no thinking level.
 const openclawLevels = ["off", "minimal", "low", "medium", "high", "adaptive"].map(value => ({ value, name: value }));
+const openclawModes = process.env.FIXTURE_OPENCLAW_MODES === "distinct"
+  ? { currentModeId: "plan", availableModes: [...openclawLevels.slice(0, -1), { value: "plan", name: "Plan" }].map(row => ({ id: row.value, name: row.name })) }
+  : { currentModeId: "adaptive", availableModes: openclawLevels.map(row => ({ id: row.value, name: row.name })) };
 function openclawPresentation() { return { configOptions: [
   { id: "thought_level", name: "Thinking", category: "thought_level", type: "select", currentValue: "adaptive", options: openclawLevels },
   ...[["fast_mode", ["off", "on"]], ["verbose_level", ["off", "on", "full"]], ["reasoning_level", ["off", "on", "stream"]], ["response_usage", ["off", "tokens", "full"]], ["elevated_level", ["off", "on", "ask", "full"]]]
     .map(([id, values]) => ({ id, name: id, type: "select", currentValue: "off", options: values.map(value => ({ value, name: value })) })),
-], modes: { currentModeId: "adaptive", availableModes: openclawLevels.map(row => ({ id: row.value, name: row.name })) } }; }
+], modes: openclawModes }; }
 /**
  * The identity the agent reports in initialize: claude-agent-acp 0.89.1 for claude-auth; OpenCode for opencode-compact,
  * with the version from FIXTURE_AGENT_VERSION (default 1.18.35; "absent" omits agentInfo); otherwise Hermes when

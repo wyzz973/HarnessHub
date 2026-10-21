@@ -38,6 +38,7 @@ OpenClaw 的会话转录是 Pi 格式的消息：助手消息带 `thinking`、`t
 1. **目录读取不写 Gateway，模型覆盖推迟到第一个回合发送提示之前（G032-NC25）。** `open()` 只按原 CLI 的 `models.list` 核对所选模型：不在目录中仍是 `MODEL_UNAVAILABLE`，目录读取的 `selectionError` 不变，但不再 `sessions.patch`。第一个回合发送提示之前才应用所选模型。会话已在运行这个模型时不写：新会话运行 agent 的配置模型，恢复的会话运行它的 Gateway 会话行里的模型；会话行读不到时视为未知，照常应用。其余情况对 Hub 自己的键调用 `sessions.patch`，并核对 Gateway 解析出的模型，不一致为 `MODEL_MISMATCH`。确认之后，本连接的后续回合不再写，原生 `/model` 的改动因此保留（[ADR-028](0028-native-configuration-sync.md)）。图片按会话将要运行的模型门控：所选模型，否则恢复会话行的模型，否则配置模型。
    - 所选模型未能确认时，本回合的结果是失败（`reason` 为 `model_not_applied`，错误代码如 `MODEL_MISMATCH`），提示没有发出。驱动不抛出：Runtime 把 `run.dispatched` 之后 `startText` 的抛出记为结果未知并暂停对话，而这里确定什么都没有发出。界面对 `MODEL_MISMATCH` 的说明（这条消息没有发出）因此成立。
    - 理由：`sessions.patch` 是 operator.admin 级写入（本机 dist/method-scopes 读出），它会在用户的 Gateway 上创建会话行。带模型的目录读取过去每次都留下一行：本机会话库有 32 个 harnesshub 键，其中 8 个没有转录。读目录不应改变用户的 Gateway，探测和测试产生的数据也不应留下；选择与配置模型相同时，本来就不需要写。
+2. **模式选项去重（G032-NC26）。** 2026.3.23-2 的桥用同一份思考档位列表生成 `modes` 和 `thought_level` 选项，`session/set_mode` 写的也是 `thinkingLevel`（本机 dist/acp-cli-BQ740PFm.js 的 buildSessionPresentation 与 setSessionMode）。通用层把桥的 modes 记为 `__mode` 选项（category 为 mode）。两者取值集合相同时，驱动从目录里去掉 `__mode`，回合后的设置回读也不再产出 `__mode`。取值不同时保留：Gateway 会话行没有对应字段，`nativeConfig()` 报告桥自己宣布的当前模式。旧选择若仍带 `__mode`，通用层照常用 `session/set_mode` 应用。
 
 验证：协议测试只用 `control-peer.mjs` 夹具和注入的 Gateway 记录器，包含反例与变异核对；没有运行 openclaw，也没有接触用户的 Gateway。真实复验在 M3 的 T-OC-08（`HH_REAL_READONLY=1`）：届时只计数，核对一次目录读取前后 harnesshub 键的数量不变。
 

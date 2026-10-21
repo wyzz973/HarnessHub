@@ -3,7 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import JSON5 from "json5";
-import { MAX_NATIVE_EXTENSIONS, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type NativeExtensions, type NativeSessionImport, type NativeSessionPage, type BackendResult, type ControlEvent, type ControlRun, type ControlLaunch, type ControlOptions, type NativeConversationId, type NativeModelCatalog, type NativeOptions, type NativeToolDetail, type CleanupEvidence } from "../../contracts/control.js";
+import { MAX_NATIVE_EXTENSIONS, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type NativeExtensions, type NativeSessionImport, type NativeSessionPage, type BackendResult, type ControlEvent, type ControlRun, type ControlLaunch, type ControlOptions, type NativeConversationId, type NativeModelCatalog, type NativeOption, type NativeOptions, type NativeToolDetail, type CleanupEvidence } from "../../contracts/control.js";
 import { AcpControl } from "./acp.js";
 import { classifyRemoteFailure, ControlError, object } from "../../infrastructure/control/json-rpc-process.js";
 import { nativeCommand } from "../../infrastructure/control/native-command.js";
@@ -14,6 +14,14 @@ import type { ContentRef, ControlAttachment } from "../../contracts/content.js";
 type OpenClawMethod = "models.list" | "sessions.patch" | "sessions.get" | "sessions.list" | "chat.history" | "skills.status" | "tools.catalog";
 /** The Hub's own Gateway session keys; no other key is patched or continued. */
 const HUB_KEY = /^agent:[a-z0-9_-]+:harnesshub:[a-f0-9-]+$/u;
+/**
+ * Whether the bridge's ACP modes (the generic layer's `__mode` option) offer exactly its thinking levels. OpenClaw
+ * 2026.3.23-2 builds both from one list and its set_mode patches thinkingLevel, so such a mode is the thinking level again.
+ */
+function repeatsThinking(options: readonly NativeOption[] | undefined): boolean {
+  const mode = options?.find(option => option.id === "__mode"), levels = new Set(options?.find(option => option.id === "thought_level")?.values.map(row => row.value));
+  return mode !== undefined && levels.size > 0 && mode.values.length === levels.size && mode.values.every(row => levels.has(row.value));
+}
 /** A Turn that ended before its prompt because the selected model could not be confirmed: failed, and nothing was sent. */
 function notSent(error: ControlError): ControlRun {
   return { result: Promise.resolve({ status: "failed", reason: "model_not_applied", error: { code: error.code, message: "OpenClaw 没有确认所选模型，这条消息没有发出。" } }),
@@ -269,27 +277,35 @@ export class OpenClawControl extends AcpControl {
   }
   /**
    * The Gateway session row holds the model and the settings the bridge offers (thinking, verbose, reasoning, usage
-   * footer, elevated); fast mode is only in chat.history. Values follow the bridge's own defaults for unset fields.
+   * footer, elevated); fast mode is only in chat.history. Values follow the bridge's own defaults for unset fields. The
+   * row has no field for a mode: the bridge's modes repeat the thinking level, which thought_level already reports.
    */
   private async readSessionSettings(key: string): Promise<{ readonly model: string | null; readonly values: Readonly<Record<string, string>> }> {
     const [row, history] = await Promise.all([this.sessionRow(key), this.call("chat.history", { sessionKey: key, limit: 1 })]);
     if (row === undefined) throw new ControlError("NATIVE_CONFIG_UNAVAILABLE", "the Hub-owned OpenClaw session is not listed");
     const setting = (value: unknown, fallback: string) => typeof value === "string" && value && value.length <= 128 && !/[\0\r\n]/u.test(value) ? value : fallback;
     const thinking = setting(row.thinkingLevel, "adaptive"), fast = object(history, "OpenClaw chat history").fastMode === true ? "on" : "off";
-    return { model: rowModel(row), values: { thought_level: thinking, __mode: thinking, fast_mode: fast, verbose_level: setting(row.verboseLevel, "off"), reasoning_level: setting(row.reasoningLevel, "off"),
+    return { model: rowModel(row), values: { thought_level: thinking, fast_mode: fast, verbose_level: setting(row.verboseLevel, "off"), reasoning_level: setting(row.reasoningLevel, "off"),
       response_usage: setting(row.responseUsage, "off"), elevated_level: setting(row.elevatedLevel, "off") } };
   }
-  /** The bridge's option ids with the values the Gateway holds after the Turn, including changes made by /think, /model and the like. */
+  /**
+   * The bridge's option ids with the values the Gateway holds after the Turn, including changes made by /think, /model and
+   * the like. A mode that only repeats the thinking levels is left out, as the catalog leaves it out; a mode with other
+   * values has no Gateway field, so the value the bridge announced for it is reported.
+   */
   override async nativeConfig(): Promise<{ readonly model: string | null; readonly options: NativeOptions }> {
     const announced = await super.nativeConfig();
     if (this.sessionSettings === null) throw new ControlError("NATIVE_CONFIG_UNAVAILABLE", "OpenClaw settings were not read after the turn");
     const current = await this.sessionSettings;
-    return { model: current.model, options: Object.fromEntries(Object.keys(announced.options).flatMap(id => current.values[id] === undefined ? [] : [[id, current.values[id]!]])) };
+    const mode = announced.options.__mode !== undefined && !repeatsThinking((await super.models()).options) ? announced.options.__mode : undefined;
+    return { model: current.model, options: { ...Object.fromEntries(Object.keys(announced.options).flatMap(id => current.values[id] === undefined ? [] : [[id, current.values[id]!]])), ...(mode === undefined ? {} : { __mode: mode }) } };
   }
+  /** The original catalog and configured default; the bridge's modes are offered once, as thought_level, when they only repeat its thinking levels. */
   override async models(): Promise<NativeModelCatalog> {
     const catalog = await super.models();
     const models = await this.readNativeModels();
-    return { ...catalog, defaultModel: this.configuredModel, models, canSelect: models.length > 0 };
+    const options = catalog.options !== undefined && repeatsThinking(catalog.options) ? catalog.options.filter(option => option.id !== "__mode") : catalog.options;
+    return { ...catalog, ...(options === undefined ? {} : { options }), defaultModel: this.configuredModel, models, canSelect: models.length > 0 };
   }
   override async close(): Promise<CleanupEvidence> { this.abort.abort(); const commands = [...this.commands]; const results = await Promise.allSettled(commands); const cleanup = await super.close(); const failed = results.find(result => result.status === "rejected" && result.reason instanceof ControlError && result.reason.code === "CLEANUP_FAILED"); if (failed?.status === "rejected") throw failed.reason; return cleanup; }
 }

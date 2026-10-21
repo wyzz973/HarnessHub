@@ -671,7 +671,8 @@ test("OpenClaw reads its settings back after each turn as slash commands leave t
     const id = await ready(first);
     await assert.rejects(first.nativeConfig(), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_CONFIG_UNAVAILABLE", "nothing is reported before a turn");
     assert.equal((await (await first.startText(id, "/think high", () => {})).result).status, "completed");
-    assert.deepEqual(await first.nativeConfig(), { model: "vision/large", options: { thought_level: "high", __mode: "high", fast_mode: "on", verbose_level: "full", reasoning_level: "stream", response_usage: "tokens", elevated_level: "off" } });
+    // The bridge's modes only repeat its thinking levels, so thought_level alone reports them (G032-NC26).
+    assert.deepEqual(await first.nativeConfig(), { model: "vision/large", options: { thought_level: "high", fast_mode: "on", verbose_level: "full", reasoning_level: "stream", response_usage: "tokens", elevated_level: "off" } });
     assert.ok(calls.includes("sessions.list") && calls.includes("chat.history"));
     checkpoint = await first.checkpoint(); assert.ok(checkpoint);
   } finally { await first.close(); }
@@ -1059,4 +1060,34 @@ test("G032-NC25 (e) a catalog read with a selected model opens, reads and closes
     } finally { await driver.close(); }
     assert.deepEqual(calls.map(call => call.method), ["models.list"], name + ": only the catalog was read");
   }
+});
+test("G032-NC26 OpenClaw offers its modes once, as thought_level, when they only repeat its thinking levels; modes with other values stay in its catalog and settings report (T-OC-08)", async t => {
+  const root = await mkdtemp(join(tmpdir(), "openclaw-nc26-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const config = join(root, "openclaw.json"), trace = join(root, "trace"); await writeFile(config, '{agents:{list:[{id:"main",default:true}]}}');
+  // What the Gateway holds after `/think high`; its row has no field for a mode.
+  const request = async (method: string, params: Readonly<Record<string, unknown>>): Promise<unknown> => {
+    if (method === "sessions.list") return { sessions: [{ key: params.search, thinkingLevel: "high" }] };
+    if (method === "chat.history") return { messages: [], fastMode: false };
+    if (method === "sessions.get") return { messages: [] };
+    if (method === "models.list") return { models: [] };
+    throw new Error("unexpected OpenClaw method " + method);
+  };
+  const launch = (env: Readonly<Record<string, string>>) => new OpenClawControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "openclaw-settings"], env }, { ...options, env }, request);
+  const settings = ["thought_level", "fast_mode", "verbose_level", "reasoning_level", "response_usage", "elevated_level"];
+  for (const [modes, mode] of [[undefined, undefined], ["distinct", "plan"]] as const) {
+    const driver = launch({ HOME: root, OPENCLAW_CONFIG_PATH: config, ...(modes === undefined ? {} : { FIXTURE_OPENCLAW_MODES: modes }) });
+    try {
+      const id = await ready(driver), offered = (await driver.models()).options ?? [];
+      assert.deepEqual(offered.map(option => option.id), mode === undefined ? settings : [...settings, "__mode"], modes ?? "repeated");
+      if (mode !== undefined) assert.deepEqual(offered.find(option => option.id === "__mode")?.values.map(row => row.value), ["off", "minimal", "low", "medium", "high", "plan"]);
+      assert.equal((await (await driver.startText(id, "/think high", () => {})).result).status, "completed");
+      // A mode with other values has no Gateway field: the bridge's own current mode is reported for it.
+      assert.deepEqual(await driver.nativeConfig(), { model: null, options: { thought_level: "high", fast_mode: "off", verbose_level: "off", reasoning_level: "off", response_usage: "off", elevated_level: "off", ...(mode === undefined ? {} : { __mode: mode }) } }, modes ?? "repeated");
+    } finally { await driver.close(); }
+  }
+  // A selection that still carries the repeated mode is applied as before, since the bridge keeps offering it.
+  const kept = launch({ HOME: root, OPENCLAW_CONFIG_PATH: config, FIXTURE_TRACE: trace });
+  try { await kept.initialize(); await kept.open(process.cwd(), undefined, { __mode: "high" }); } finally { await kept.close(); }
+  const sent = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { readonly method?: string; readonly params?: { readonly modeId?: string } });
+  assert.deepEqual(sent.filter(row => row.method === "session/set_mode").map(row => row.params?.modeId), ["high"]);
 });
