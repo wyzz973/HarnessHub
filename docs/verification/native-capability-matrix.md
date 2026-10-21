@@ -8,7 +8,7 @@
 
 证据中的 .tmp/ 路径相对于主检出 HarnessGateway（本机运行服务的检出），该目录被忽略、不入库，只作补充：真实验收为通过或部分通过的格至少有一项仓库内证据，可复核的命令、版本、结果与局限写在 docs/verification/ 的验收记录中。
 
-| 分组 | 能力 | Codex | Claude Code | OpenCode | OpenClaw | Gemini CLI（冻结） | Cursor（冻结） | Pi（冻结、历史） | Hermes Agent | DeepSeek Harness（历史） |
+| 分组 | 能力 | Codex | Claude Code | OpenCode | OpenClaw | Gemini CLI（冻结） | Cursor（冻结） | Pi（冻结、历史） | Hermes Agent | DeepSeek Harness |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 配置与模型 | 模型目录与选择 | ✅ | ✅ | ◐ | ✅ | ✕ | ◑ | ✅ | ✅ | ✅ |
 | 配置与模型 | 思考档位 | ✅ | ✅ | ✕ | ✅ | — | ○ | ✅ | — | ✅ |
@@ -48,7 +48,7 @@
 | Cursor（冻结） | 0 | 0 | 2 | 4 | 2 | 11 | 5 | 3 |
 | Pi（冻结、历史） | 11 | 1 | 4 | 1 | 2 | 1 | 7 | 0 |
 | Hermes Agent | 12 | 1 | 1 | 1 | 4 | 2 | 6 | 0 |
-| DeepSeek Harness（历史） | 7 | 2 | 2 | 1 | 5 | 2 | 8 | 0 |
+| DeepSeek Harness | 7 | 2 | 2 | 1 | 5 | 2 | 8 | 0 |
 
 ## Codex
 
@@ -322,33 +322,33 @@
 | 后台任务 | 具备 | process 工具管理后台进程；随每回合结束的 ACP 进程一起结束（toolsets.py） | 已接出 | 通过 | 未接出 | docs/decisions/0030-retained-native-processes.md；docs/verification/first-chain-polish-2026-10-11.md | 同一保留机制：开启后回合之间保留 ACP 进程，后台工作随进程继续（ACP 测试替身经正式运行时验证）；真实后台任务未验证 |
 | 导出与产物 | 具备 | hermes sessions export - --session-id <id> 输出 JSONL（hermes_cli/main.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-export-2026-10-12.json；docs/verification/first-chain-polish-2026-10-11.md | Hermes 没有列出自己的 export 命令时，Hub 提供 /export：只在用户执行时运行一次 hermes sessions export - --session-id <id>（5 秒、8 MiB 上限，只接受普通标识符；未知会话的提示句与超限、超时都明确失败，不记录部分内容），会话的 JSON 行作为产物登记；sessions 子命令不触发插件发现与更新检查，真实运行时进程中只有这一条子命令，用户的 gateway 不受影响 |
 
-## DeepSeek Harness（历史）
+## DeepSeek Harness
 
-原安装：DeepSeek Harness 0.2.1-alpha.1（本机源码构建，经显式入口；安装渠道非官网，按 ADR-044 不再作为验收对象，以下证据保留为历史；官方分发为 npm 包 @deepseek-ai/dsh）；控制入口：acp-v1（dsh --profile acp）；分层：焦点。
+原安装：DeepSeek Harness 0.2.0-rc.2（npm 官网 @deepseek-ai/dsh，nvm 全局安装；2026-10-22 经官网渠道真实重验，此前源码版 0.2.1-alpha.1 的记录按 ADR-044 为历史）；控制入口：acp-v1（dsh --profile acp）；分层：焦点。
 
 | 能力 | 原接口 | 来源 | Hub | 协议 | 真实原安装 | 证据 | 说明 |
 |---|---|---|---|---|---|---|---|
-| 模型目录与选择 | 具备 | session/new 的 model 配置项（实时服务目录）与 session/set_config_option（packages/acp/acp/src/model-control.ts） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-catalog.json；.tmp/cc-dsh-options.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
-| 思考档位 | 具备 | reasoning_effort 配置项（category thought_level，模型声明推理选项时提供）（packages/acp/acp/src/model-control.ts） | 已接出 | 通过 | 通过 | .tmp/cc-dsh-options.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
+| 模型目录与选择 | 具备 | session/new 的 model 配置项（实时服务目录）与 session/set_config_option（packages/acp/acp/src/model-control.ts） | 已接出 | 通过 | 通过 | docs/verification/dsh-rc2-reverification-2026-10-22.md | — |
+| 思考档位 | 具备 | reasoning_effort 配置项（category thought_level，模型声明推理选项时提供）（packages/acp/acp/src/model-control.ts） | 已接出 | 通过 | 通过 | docs/verification/dsh-rc2-reverification-2026-10-22.md | — |
 | 模式与原生设置 | 不提供 | ACP 自动化界面不提供 mode（packages/acp/acp/README.md） | 不适用 | 不适用 | 不适用 | — | — |
 | 原生命令目录与执行 | 不提供 | ACP 自动化界面不提供命令（packages/acp/acp/README.md） | 不适用 | 不适用 | 不适用 | — | — |
 | 原生命令改配置后的同步 | 不提供 | 没有原生命令；配置只经 session/set_config_option 改变 | 不适用 | 不适用 | 不适用 | — | — |
-| 思考输出 | 具备 | 已提交的 reasoning 块 → agent_thought_chunk（packages/acp/acp/src/updates.ts） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-thinking.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 按整块到达，不是逐字增量 |
-| 工具状态 | 具备 | tool/call、tool/result → tool_call（in_progress）与 tool_call_update（completed/failed）（packages/acp/acp/src/updates.ts） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-activity.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
-| 工具输入/输出/差异 | 部分 | 工具名、rawInput、结果内容；kind 恒为 other，没有差异和位置（packages/acp/acp/src/updates.ts） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-activity.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 原接口缺口：工具 kind 恒为 other，不带差异与位置，只有工具名、rawInput 与结果文本（docs/research/first-chain-products-2026-10-11.md 的 dsh 输出一行，依据 packages/acp/acp/src/updates.ts）；验收记录只记工具详情可读（todo_write、bash、read、edit） |
+| 思考输出 | 具备 | 已提交的 reasoning 块 → agent_thought_chunk（packages/acp/acp/src/updates.ts） | 已接出 | 通过 | 通过 | docs/verification/dsh-rc2-reverification-2026-10-22.md | 思考与回复分开到达；0.2.1-alpha.1 时观察到按整块到达、不是逐字增量，rc.2 未记录到达方式 |
+| 工具状态 | 具备 | tool/call、tool/result → tool_call（in_progress）与 tool_call_update（completed/failed）（packages/acp/acp/src/updates.ts） | 已接出 | 通过 | 通过 | docs/verification/dsh-rc2-reverification-2026-10-22.md | — |
+| 工具输入/输出/差异 | 部分 | 工具名、rawInput、结果内容；kind 恒为 other，没有差异和位置（packages/acp/acp/src/updates.ts） | 已接出 | 通过 | 通过 | docs/verification/dsh-rc2-reverification-2026-10-22.md | 原接口缺口：工具 kind 恒为 other，不带差异与位置，只有工具名、rawInput 与结果文本（docs/research/first-chain-products-2026-10-11.md 的 dsh 输出一行，依据 packages/acp/acp/src/updates.ts）；rc.2 重验：todo_write、bash、read、edit 的详情可读，edit 不带差异，native-activity 的 editDiff 判据因此未通过 |
 | 计划 | 不提供 | ACP 界面不提供计划与 todo（packages/acp/acp/README.md） | 不适用 | 不适用 | 不适用 | — | — |
-| 用量/上下文/费用 | 部分 | usage_update（上下文占用与窗口）；session/prompt 结果不带用量（packages/acp/acp/src/updates.ts） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-resume.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 原接口缺口：只发 usage_update 的上下文占用与窗口，session/prompt 结果不带 token 用量与费用（docs/research/first-chain-products-2026-10-11.md 的 dsh 输出一行）；验收记录只记“上下文占用显示” |
-| 工具审批 | 具备 | session/request_permission（允许一次、拒绝）（packages/acp/acp/src/index.ts） | 已接出 | 通过 | 受阻 | .tmp/cc-hermes-dsh-activity.json；.tmp/cc-dsh-options.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 受阻：无法观察生效预设。Hub 会话按 dsh 为新会话设定的默认预设运行（permission.defaultPreset，未设置时由 dsh 推断）；本机为 danger-full-access，不会请求审批。ACP 入口不回报预设、不处理 /permission；界面只说明规则，不读取 dsh 设置 |
+| 用量/上下文/费用 | 部分 | usage_update（上下文占用与窗口）；session/prompt 结果不带用量（packages/acp/acp/src/updates.ts） | 已接出 | 通过 | 通过 | docs/verification/dsh-rc2-reverification-2026-10-22.md | 原接口缺口：只发 usage_update 的上下文占用与窗口，session/prompt 结果不带 token 用量与费用（docs/research/first-chain-products-2026-10-11.md 的 dsh 输出一行）；rc.2 重验回报了上下文占用与窗口（1,000,000） |
+| 工具审批 | 具备 | session/request_permission（允许一次、拒绝）（packages/acp/acp/src/index.ts） | 已接出 | 通过 | 受阻 | docs/verification/dsh-rc2-reverification-2026-10-22.md | 受阻：无法观察生效预设。rc.2 重验中 bash 与 edit 都没有请求审批；ACP 入口不回报预设、不处理 /permission，HarnessHub 也不读取 dsh 设置，所以不知道当时按哪个预设运行；界面只说明规则 |
 | 原生提问与表单 | 不提供 | 不提供 elicitation（packages/acp/acp/README.md） | 不适用 | 不适用 | 不适用 | — | — |
-| 图片输入 | 部分 | 只有挂载持久附件存储且路由支持图片时才公布 promptCapabilities.image（packages/acp/acp/src/index.ts） | 已接出 | 通过 | 受阻 | .tmp/cc-hermes-dsh-attachments.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 本机 acp profile 未公布图片输入；Hub 在派发前拒绝图片已在真实环境确认 |
+| 图片输入 | 部分 | 只有挂载持久附件存储且路由支持图片时才公布 promptCapabilities.image（packages/acp/acp/src/index.ts） | 已接出 | 通过 | 受阻 | docs/verification/dsh-rc2-reverification-2026-10-22.md | rc.2 的 acp profile 仍不声明图片输入；Hub 在派发前拒绝图片（ATTACHMENT_UNSUPPORTED）已在真实环境确认 |
 | 音频输入 | 不提供 | promptCapabilities.audio=false（packages/acp/acp/src/index.ts） | 不适用 | 不适用 | 不适用 | — | — |
-| 文件/文档输入 | 具备 | resource_link 以 [resource_link name=… uri=…] 交给模型，由它的工具读取（packages/acp/acp/README.md、src/content.ts） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-attachments.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
+| 文件/文档输入 | 具备 | resource_link 以 [resource_link name=… uri=…] 交给模型，由它的工具读取（packages/acp/acp/README.md、src/content.ts） | 已接出 | 通过 | 通过 | docs/verification/dsh-rc2-reverification-2026-10-22.md | — |
 | 非文本输出 | 具备 | assistant 图片块经附件存储转为 ACP image（packages/acp/acp/src/content.ts assistantBlockToAcp） | 已接出 | 通过 | 未接出 | — | — |
 | Skills | 部分 | skill 插件；ACP 没有技能列表 | 未接出 | 未接出 | 未接出 | — | — |
 | MCP | 部分 | session/new 可挂载 stdio/HTTP MCP；ACP 不列出用户自己的 MCP（packages/acp/acp/README.md、src/mcp.ts） | 未接出 | 未接出 | 未接出 | — | — |
 | 插件/扩展 | 部分 | profile bundles 插件机制（dsh plugin）；ACP 没有列表 | 未接出 | 未接出 | 未接出 | — | — |
-| 原生会话恢复 | 具备 | session/resume 恢复持久会话，不回放旧更新（packages/acp/acp/src/index.ts） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-resume.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md；.tmp/cc-native-resume-commands-2026-10-12.json | 在原程序中继续：官网 0.2.0-rc.2 只给 `dsh headless --session-id <id> "…"`（rc.2 没有 tui profile，ADR-039 的 2026-10-21 补记）；`dsh tui --resume <id>`（help 确认）与以 headless 真实答出标记都是 0.2.1-alpha.1 源码版的历史证据（ADR-044） |
-| 原生会话列表/接续 | 具备 | session/list：从新到旧列出持久根会话（无标题、无时间），可按 cwd 过滤（packages/acp/acp/src/index.ts） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-import.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 不支持 session/load，接续时没有历史可引用（如实标出），接续后由原生会话回答 |
+| 原生会话恢复 | 具备 | session/resume 恢复持久会话，不回放旧更新（packages/acp/acp/src/index.ts） | 已接出 | 通过 | 通过 | docs/verification/dsh-rc2-reverification-2026-10-22.md | 在原程序中继续：官网 0.2.0-rc.2 只给 `dsh headless --session-id <id> "…"`（rc.2 没有 tui profile，ADR-039），2026-10-22 真实核对：退出码 0，只输出标记一行；`dsh tui --resume <id>` 是 0.2.1-alpha.1 源码版的历史证据（ADR-044） |
+| 原生会话列表/接续 | 具备 | session/list：从新到旧列出持久根会话（无标题、无时间），可按 cwd 过滤（packages/acp/acp/src/index.ts） | 已接出 | 通过 | 通过 | docs/verification/dsh-rc2-reverification-2026-10-22.md | 不支持 session/load，接续时没有历史可引用（如实标出），接续后由原生会话回答 |
 | 原生分支 | 不提供 | 不支持 fork（packages/acp/acp/README.md） | 不适用 | 不适用 | 不适用 | — | — |
 | 上下文压缩 | 部分 | 自动压缩插件（compaction-basic、tool-result-pruner）；ACP 没有压缩命令或更新 | 未接出 | 未接出 | 未接出 | — | — |
 | 回滚/回退 | 不提供 | ACP 界面不提供（packages/acp/acp/README.md） | 不适用 | 不适用 | 不适用 | — | — |

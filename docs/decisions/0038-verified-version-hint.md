@@ -56,3 +56,12 @@ Pi 0.85.1 与 DeepSeek Harness 0.2.1-alpha.1 的已验证版本来自非官网�
   - 已验证版本仍是 `0.2.1-alpha.1`，所以 Harness 列表照旧对 `0.2.0-rc.2` 提示“未经验证的版本”，直到用官网渠道真实重验收。
   - 已知差距（未改）：0.2.0-rc.2 还把技能目录顶层的 `<名>.md` 和 `customSkillDirs` 里的目录当作技能来源，profile 的清单另有 `bundles`，启动时会停用补丁行写了 `disabled` 或与本版本不兼容的插件；读表还没有读这些。
 - **Hermes 的版本。** 脚本渠道原来只认 `versions/<版本>` 的布局，Hermes（`~/.hermes/hermes-agent`，程序在 `venv/bin/hermes`）的版本因此总是未知，能力页一直标“未核实”。现在读它自己的虚拟环境里 `hermes-agent` 分发的 dist-info（`venv/lib/python3.x/site-packages/hermes_agent-<版本>.dist-info/METADATA`），不运行程序。读不到时版本仍为未知，安装照样算官网安装。分发名暂时按渠道目录登记在 `src/infrastructure/discovery/installation-channels.ts`，以后迁入产品描述。只在测试夹具上验证过，本机真实读取待在正式入口核对。
+
+## 2026-10-22 补充：DeepSeek Harness 0.2.0-rc.2 真实重验
+
+按 [ADR-048](0048-harness-scope-and-workbuddy.md) 用户决定 4，在官网 npm 渠道的 0.2.0-rc.2 上重新真实验收，记录见 [dsh-rc2-reverification-2026-10-22.md](../verification/dsh-rc2-reverification-2026-10-22.md)。8 个套件中 7 个通过，native-activity 只差 `editDiff`（原接口不带差异，矩阵早已记为缺口）；`dsh headless --session-id <id> "…"` 真实核对通过；配置守护前后一致。
+
+- 本表的 dsh 改为 `["0.2.0-rc.2", "0.2.0-rc.2"]`，去掉 `unofficial`。源码版 0.2.1-alpha.1 不再是已验证版本，Harness 列表对它提示“未经验证的版本”。
+- 矩阵的安装说明改为官网 npm 0.2.0-rc.2，去掉 `historical`。重验各格的证据指向上面的记录。
+- 读表区间 `>=0.2.0-rc.2 <0.3.0` 与目录包 `0.2.0-rc.2` 不变，对账为空。
+- 目前只有 Pi（冻结）还标着 `unofficial`。

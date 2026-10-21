@@ -17,9 +17,9 @@ test("a version is verified only where HarnessHub ran it for real; unknown versi
   assert.equal(versionVerification("codex", "0.162.1-alpha.2", "0.162.1-alpha.2")?.state, "unverified", "a prerelease of the verified version");
   assert.equal(versionVerification("cursor", "2026.10.01-e373342", null)?.state, "verified", "a version that is not semver matches exactly");
   assert.equal(versionVerification("cursor", "2026.10.02-a1b2c3d", null)?.state, "unverified");
-  assert.equal(versionVerification("dsh", "0.2.1-alpha.1", null)?.state, "verified");
+  assert.equal(versionVerification("dsh", "0.2.0-rc.2", null)?.state, "verified", "the official channel's prerelease, re-verified for real on 2026-10-22");
   assert.equal(versionVerification("dsh", "0.2.1", null)?.state, "unverified", "the release after the verified prerelease");
-  assert.equal(versionVerification("dsh", "0.2.0-rc.2", null)?.state, "unverified", "the official channel's prerelease, whose rules were read but no Turn verified");
+  assert.equal(versionVerification("dsh", "0.2.1-alpha.1", null)?.state, "unverified", "the earlier source build is no verified version any more");
   assert.equal(versionVerification("gemini", null, "0.62.0"), null, "no product version, no claim");
   assert.equal(versionVerification("autohand", "1.0.0", "1.0.0"), null, "a Harness never verified");
   assert.equal(versionVerification("constructor", "1.0.0", null), null, "no inherited key counts as a Harness");
@@ -71,13 +71,13 @@ test("the verified versions, the capability matrix, the read tables and the cata
   assert.deepEqual(versionConsistency(input), []);
   // The check covered real packages: Hermes's names the verified version, DeepSeek Harness's the official npm latest.
   assert.deepEqual([...input.catalogPackages].sort((a, b) => a.harnessId.localeCompare(b.harnessId)), [{ harnessId: "dsh", version: "0.2.0-rc.2" }, { harnessId: "hermes", version: "0.12.0" }]);
-  // DeepSeek Harness's verified record is from a source build; its read range starts at the prerelease the official channel
-  // carries and still covers that record, but only when prereleases are compared as the capability page compares them.
+  // DeepSeek Harness's verified version is the prerelease the official channel carries, the lower end of its read range; the
+  // range also covers the earlier source build, but only when prereleases are compared as the capability page compares them.
   const dsh = input.readTables.find(table => table.harnessId === "dsh")!.verified;
-  assert.equal(dsh, ">=0.2.0-rc.2 <0.3.0"); assert.equal(VERIFIED_VERSIONS.dsh?.unofficial, true);
+  assert.equal(dsh, ">=0.2.0-rc.2 <0.3.0"); assert.equal(VERIFIED_VERSIONS.dsh?.unofficial, undefined);
   assert.equal(satisfies("0.2.0-rc.2", dsh, { includePrerelease: true }), true);
   assert.equal(satisfies("0.2.1-alpha.1", dsh, { includePrerelease: true }), true);
-  assert.equal(satisfies("0.2.1-alpha.1", dsh), false, "without prereleases the verified record would fall outside");
+  assert.equal(satisfies("0.2.1-alpha.1", dsh), false, "without prereleases the earlier source build would fall outside");
 });
 
 test("the consistency check rejects every kind of disagreement it names", () => {
@@ -103,19 +103,19 @@ test("the consistency check rejects every kind of disagreement it names", () => 
   const widened = matrix("codex", "Codex CLI 0.170.0", verified({ codex: { program: ["0.162.1", "0.170.0"] } }));
   assert.deepEqual(kinds(widened), [["codex", "read-range"]], "the upper end outside");
   assert.deepEqual(kinds(table("hermes", ">=0.12 <")), [["hermes", "read-range"]], "no range");
-  // Prereleases: once the prerelease the official channel carries is verified for real, the earlier range misses it
-  // (0.2.0-rc.2 comes before 0.2.0) and the range starting at it holds it. A range starting at 0.2.1 misses the
-  // verified 0.2.1-alpha.1, and the catalog's 0.2.0-rc.2 with it.
-  const reverified = matrix("dsh", "DeepSeek Harness 0.2.0-rc.2（npm 官网）", verified({ dsh: { program: ["0.2.0-rc.2", "0.2.0-rc.2"] } }));
-  assert.deepEqual(kinds(table("dsh", ">=0.2.0 <0.3.0", reverified)), [["dsh", "read-range"]]);
-  assert.deepEqual(kinds(reverified), []);
-  assert.deepEqual(kinds(table("dsh", ">=0.2.1 <0.3.0")), [["dsh", "read-range"], ["dsh", "catalog-package"]]);
+  // Prereleases: the prerelease the official channel carries is verified for real (2026-10-22); a range starting at 0.2.0
+  // misses it (0.2.0-rc.2 comes before 0.2.0), and so does one starting at 0.2.1.
+  assert.deepEqual(kinds(table("dsh", ">=0.2.0 <0.3.0")), [["dsh", "read-range"]]);
+  assert.deepEqual(kinds(table("dsh", ">=0.2.1 <0.3.0")), [["dsh", "read-range"]]);
   // (d) A Harness's own catalog package names the verified version...
   assert.deepEqual(kinds(catalog("hermes", "0.12.1")), [["hermes", "catalog-package"]]);
-  assert.deepEqual(kinds(verified({ dsh: { program: ["0.2.1-alpha.1", "0.2.1-alpha.1"] } })), [["dsh", "catalog-package"]], "without the unofficial mark, today's DeepSeek Harness disagrees");
+  const source = matrix("dsh", "DeepSeek Harness 0.2.1-alpha.1", verified({ dsh: { program: ["0.2.1-alpha.1", "0.2.1-alpha.1"] } }));
+  assert.deepEqual(kinds(source), [["dsh", "catalog-package"]], "the source build recorded before 2026-10-22, without the unofficial mark, disagrees");
   // ...or, for a record from an unofficial installation, a version its read rules were checked on.
-  assert.deepEqual(kinds(catalog("dsh", "0.3.0")), [["dsh", "catalog-package"]]);
-  assert.deepEqual(kinds(catalog("dsh", "0.2.0-rc.1")), [["dsh", "catalog-package"]]);
+  const unofficial = matrix("dsh", "DeepSeek Harness 0.2.1-alpha.1", verified({ dsh: { program: ["0.2.1-alpha.1", "0.2.1-alpha.1"], unofficial: true } }));
+  assert.deepEqual(kinds(unofficial), []);
+  assert.deepEqual(kinds(catalog("dsh", "0.3.0", unofficial)), [["dsh", "catalog-package"]]);
+  assert.deepEqual(kinds(catalog("dsh", "0.2.0-rc.1", unofficial)), [["dsh", "catalog-package"]]);
   assert.deepEqual(kinds({ ...base, catalogPackages: [...base.catalogPackages, { harnessId: "workbuddy", version: "2.115.0" }] }), [["workbuddy", "catalog-package"]], "nothing verified to compare with");
   assert.deepEqual(kinds({ ...base, catalogPackages: [...base.catalogPackages, { harnessId: "hermes", version: "0.12.0" }] }), [["hermes", "catalog-package"]], "a second package of its own");
   // Each finding says what disagrees.
@@ -135,7 +135,7 @@ test("continuing in the original program gives the verified commands only for a 
   assert.equal(nativeResume("opencode", "ses_ed322dcf7ffe892PKrBGRgoBKW", { state: "verified", program: "1.18.35" }, outside)?.interactive, "opencode -s ses_ed322dcf7ffe892PKrBGRgoBKW");
   assert.equal(nativeResume("hermes", id, { state: "verified", program: "0.12.0" }, outside)?.once, "hermes chat --resume " + id + " -q \"你的问题\"");
   // DeepSeek Harness ships no interactive profile to resume in (no tui), so only its one-question form is given, with no interactive field.
-  assert.deepEqual(nativeResume("dsh", id, { state: "verified", program: "0.2.1-alpha.1" }, outside), { harnessId: "dsh", nativeId: id, once: "dsh headless --session-id " + id + " \"你的问题\"" });
+  assert.deepEqual(nativeResume("dsh", id, { state: "verified", program: "0.2.0-rc.2" }, outside), { harnessId: "dsh", nativeId: id, once: "dsh headless --session-id " + id + " \"你的问题\"" });
   // Another version, a version not known, or a program whose resume was never verified: the identifier alone, and why.
   assert.deepEqual(nativeResume("claude", id, unverified, outside), { harnessId: "claude", nativeId: id, note: "version-unverified" });
   assert.deepEqual(nativeResume("claude", id, null, outside), { harnessId: "claude", nativeId: id, note: "version-unverified" });

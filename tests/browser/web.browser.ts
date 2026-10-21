@@ -2689,7 +2689,7 @@ test("G054-FZ2 an idle page asks the Gateway nothing; coming back reads the stat
 
 test("G054-FZ3 a verified program whose verified command asks once shows that command with its notes, and no resume command (ADR-039, ADR-050)", { timeout: 120000 }, async t => {
   // The control-peer stands in for DeepSeek Harness, reporting the version HarnessHub verified (verified-versions.ts).
-  const fixture = await launchFixture(false, null, null, false, undefined, undefined, { dsh: "0.2.1-alpha.1" }); let browser: Browser | null = null;
+  const fixture = await launchFixture(false, null, null, false, undefined, undefined, { dsh: "0.2.0-rc.2" }); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
   const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
@@ -2698,7 +2698,7 @@ test("G054-FZ3 a verified program whose verified command asks once shows that co
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click();
   const option = page.getByRole("option", { name: "DeepSeek Harness", exact: true });
-  await expect(option).toContainText("v0.2.1-alpha.1"); await expect(option).not.toContainText("未经验证"); await option.click();
+  await expect(option).toContainText("v0.2.0-rc.2"); await expect(option).not.toContainText("未经验证"); await option.click();
   await composer.fill("hello"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
   await expect(log.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
   // Mutation check (run by hand, not kept): without NativeResume's once-only branch, only the identifier is shown.

@@ -26,7 +26,7 @@ export const VERIFIED_VERSIONS: Readonly<Record<string, VerifiedVersions>> = {
   pi: { program: ["0.85.1", "0.85.1"], unofficial: true },
   openclaw: { program: ["2026.3.23-2", "2026.3.23-2"] },
   hermes: { program: ["0.12.0", "0.12.0"] },
-  dsh: { program: ["0.2.1-alpha.1", "0.2.1-alpha.1"], unofficial: true },
+  dsh: { program: ["0.2.0-rc.2", "0.2.0-rc.2"] },
 };
 function within(version: string, [from, to]: VersionRange): boolean {
   if (version === from || version === to) return true;

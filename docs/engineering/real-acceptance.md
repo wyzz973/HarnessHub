@@ -10,10 +10,10 @@
 
 1. **代码与构建。** 在集成后的树上 `pnpm build`，之后都从仓库根目录运行 `node --test dist/tests/real/<套件>.real.js`（`pnpm test:real:*` 脚本同样可用，但它们会先再构建一次）。证据头记录 `git rev-parse HEAD`；工作树里有未提交的改动时，证据头写 `uncommittedChanges: true`，应先提交再跑。
 2. **不碰正在运行的服务。** 不停止、不重启 4317；不运行 OpenClaw 网关或 Hermes 网关的任何命令；不读 4317 的 `data/`。
-3. **干净环境与登录 shell 的 PATH。** 与 4317 用同样的 PATH，且不带沙箱或终端注入的代理变量。PATH 用登录 shell 读一次（会执行你的登录配置，与 [ADR-040](../decisions/0040-login-shell-search-directories.md) 的读法相同，只取标记之间的一行）：
+3. **干净环境与登录 shell 的 PATH。** 与 4317 用同样的 PATH，且不带沙箱或终端注入的代理变量。PATH 用交互式登录 shell 读一次（`-lic`，与 4317 的启动方式相同；会执行你的登录配置与 `~/.zshrc`，只取标记之间的一行）。只用 `-l -c` 时不执行 `~/.zshrc`，nvm 的目录不在 PATH 上，装在 nvm 下的 dsh、claude 都找不到（2026-10-22 重验 dsh 时发现）：
 
    ```sh
-   LOGIN_PATH="$(env -i HOME="$HOME" USER="$USER" LOGNAME="$LOGNAME" LANG="$LANG" TMPDIR="$TMPDIR" "$SHELL" -l -c 'printf "\n__HH_PATH__%s__END__\n" "$PATH"' | sed -n 's/^__HH_PATH__\(.*\)__END__$/\1/p')"
+   LOGIN_PATH="$(env -i HOME="$HOME" USER="$USER" LOGNAME="$LOGNAME" LANG="$LANG" TMPDIR="$TMPDIR" TERM=dumb "$SHELL" -lic 'printf "\n__HH_PATH__%s__END__\n" "$PATH"' </dev/null 2>/dev/null | sed -n 's/^__HH_PATH__\(.*\)__END__$/\1/p')"
    RUN() { env -i HOME="$HOME" USER="$USER" LOGNAME="$LOGNAME" SHELL="$SHELL" TERM=dumb LANG="$LANG" TMPDIR="$TMPDIR" PATH="$LOGIN_PATH" \
      HH_REAL_TMP="$HOME/.cache/harnesshub-acceptance" "$@"; }
    mkdir -p -m 700 "$HOME/.cache/harnesshub-acceptance"
@@ -318,7 +318,7 @@ dsh 的 ACP 自报版本恒为 0.0.1，所以版本一律以证据头的 `instal
 1. [`VERIFIED_VERSIONS`](../../src/infrastructure/management/verified-versions.ts)：已验证区间扩到新版本，两端都要有真实记录，例如 Claude `program: ["2.1.296", "2.1.306"]`、适配器按证据头核实后的版本（0.89.1 时仍为 `["0.89.1", "0.89.1"]`）；dsh `program: ["0.2.0-rc.2", "0.2.0-rc.2"]` 并删除 `unofficial`。没有真实记录之前一个数字都不改。
 2. `plan/native-capabilities.json`：该 Harness 的 `installation` 文本按完整版本号写出新的上界（有适配器时也写出适配器版本），例如“DeepSeek Harness 0.2.0-rc.2（npm 官网 @deepseek-ai/dsh）”，删去“非官网、保留为历史”的说法；各格的 `real`、`note` 按记录更新，`evidence` 指向新的 `docs/verification/` 记录；受阻的格写明观察结果（例如 dsh 的 approvals）。
 3. 目录包：Harness 自己在 `src/adapters/catalog.ts` 里的包版本等于已验证上界（dsh 已是 0.2.0-rc.2；Claude 的入口来自 ACP 注册表，不受这条约束）。能力读表 `src/adapters/capability-reads.ts` 的 `verified` 区间要覆盖已验证区间的两端（Claude `>=2.1.277 <2.2.0`、dsh `>=0.2.0-rc.2 <0.3.0` 已覆盖）。
-4. 依赖旧数字的测试作为合法的行为变化一并改，并在提交说明里写原因。例如 `tests/unit/verified-versions.test.ts` 断言 Claude 2.1.300 与 dsh 0.2.0-rc.2 为未验证、dsh 0.2.1-alpha.1 为已验证，改数字后这些断言要相应更新；其余因此失败的断言逐条核对后再改，不放宽。
+4. 依赖旧数字的测试作为合法的行为变化一并改，并在提交说明里写原因。例如 `tests/unit/verified-versions.test.ts` 断言 Claude 2.1.300 为未验证（dsh 的这类断言已在 2026-10-22 的配方提交里随 0.2.0-rc.2 更新），改数字后这些断言要相应更新；其余因此失败的断言逐条核对后再改，不放宽。
 5. ADR-038 补记哪个版本由哪份记录验证；ADR-039 的表补上新版本的续接命令（只写经第 7 节真实核对过的形式）。
 6. 运行 `python3 -I tools/check_design.py --write` 重新生成矩阵视图；`versionConsistency` 必须为空，由 `tests/unit/verified-versions.test.ts` 核对；`pnpm check` 与 `pnpm test` 全部通过后才提交。
 

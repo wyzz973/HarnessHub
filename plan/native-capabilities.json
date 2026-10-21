@@ -2505,10 +2505,9 @@
     {
       "id": "dsh",
       "name": "DeepSeek Harness",
-      "installation": "DeepSeek Harness 0.2.1-alpha.1（本机源码构建，经显式入口；安装渠道非官网，按 ADR-044 不再作为验收对象，以下证据保留为历史；官方分发为 npm 包 @deepseek-ai/dsh）",
+      "installation": "DeepSeek Harness 0.2.0-rc.2（npm 官网 @deepseek-ai/dsh，nvm 全局安装；2026-10-22 经官网渠道真实重验，此前源码版 0.2.1-alpha.1 的记录按 ADR-044 为历史）",
       "control": "acp-v1（dsh --profile acp）",
       "tier": "focus",
-      "historical": true,
       "capabilities": {
         "models": {
           "native": "yes",
@@ -2517,9 +2516,7 @@
           "protocol": "pass",
           "real": "pass",
           "evidence": [
-            ".tmp/cc-hermes-dsh-catalog.json",
-            ".tmp/cc-dsh-options.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+            "docs/verification/dsh-rc2-reverification-2026-10-22.md"
           ]
         },
         "thought-level": {
@@ -2529,8 +2526,7 @@
           "protocol": "pass",
           "real": "pass",
           "evidence": [
-            ".tmp/cc-dsh-options.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+            "docs/verification/dsh-rc2-reverification-2026-10-22.md"
           ]
         },
         "modes-settings": {
@@ -2564,10 +2560,9 @@
           "protocol": "pass",
           "real": "pass",
           "evidence": [
-            ".tmp/cc-hermes-dsh-thinking.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+            "docs/verification/dsh-rc2-reverification-2026-10-22.md"
           ],
-          "note": "按整块到达，不是逐字增量"
+          "note": "思考与回复分开到达；0.2.1-alpha.1 时观察到按整块到达、不是逐字增量，rc.2 未记录到达方式"
         },
         "tool-status": {
           "native": "yes",
@@ -2576,8 +2571,7 @@
           "protocol": "pass",
           "real": "pass",
           "evidence": [
-            ".tmp/cc-hermes-dsh-activity.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+            "docs/verification/dsh-rc2-reverification-2026-10-22.md"
           ]
         },
         "tool-detail": {
@@ -2587,10 +2581,9 @@
           "protocol": "pass",
           "real": "pass",
           "evidence": [
-            ".tmp/cc-hermes-dsh-activity.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+            "docs/verification/dsh-rc2-reverification-2026-10-22.md"
           ],
-          "note": "原接口缺口：工具 kind 恒为 other，不带差异与位置，只有工具名、rawInput 与结果文本（docs/research/first-chain-products-2026-10-11.md 的 dsh 输出一行，依据 packages/acp/acp/src/updates.ts）；验收记录只记工具详情可读（todo_write、bash、read、edit）"
+          "note": "原接口缺口：工具 kind 恒为 other，不带差异与位置，只有工具名、rawInput 与结果文本（docs/research/first-chain-products-2026-10-11.md 的 dsh 输出一行，依据 packages/acp/acp/src/updates.ts）；rc.2 重验：todo_write、bash、read、edit 的详情可读，edit 不带差异，native-activity 的 editDiff 判据因此未通过"
         },
         "plan": {
           "native": "no",
@@ -2607,10 +2600,9 @@
           "protocol": "pass",
           "real": "pass",
           "evidence": [
-            ".tmp/cc-hermes-dsh-resume.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+            "docs/verification/dsh-rc2-reverification-2026-10-22.md"
           ],
-          "note": "原接口缺口：只发 usage_update 的上下文占用与窗口，session/prompt 结果不带 token 用量与费用（docs/research/first-chain-products-2026-10-11.md 的 dsh 输出一行）；验收记录只记“上下文占用显示”"
+          "note": "原接口缺口：只发 usage_update 的上下文占用与窗口，session/prompt 结果不带 token 用量与费用（docs/research/first-chain-products-2026-10-11.md 的 dsh 输出一行）；rc.2 重验回报了上下文占用与窗口（1,000,000）"
         },
         "approvals": {
           "native": "yes",
@@ -2619,11 +2611,9 @@
           "protocol": "pass",
           "real": "blocked",
           "evidence": [
-            ".tmp/cc-hermes-dsh-activity.json",
-            ".tmp/cc-dsh-options.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+            "docs/verification/dsh-rc2-reverification-2026-10-22.md"
           ],
-          "note": "受阻：无法观察生效预设。Hub 会话按 dsh 为新会话设定的默认预设运行（permission.defaultPreset，未设置时由 dsh 推断）；本机为 danger-full-access，不会请求审批。ACP 入口不回报预设、不处理 /permission；界面只说明规则，不读取 dsh 设置"
+          "note": "受阻：无法观察生效预设。rc.2 重验中 bash 与 edit 都没有请求审批；ACP 入口不回报预设、不处理 /permission，HarnessHub 也不读取 dsh 设置，所以不知道当时按哪个预设运行；界面只说明规则"
         },
         "questions": {
           "native": "no",
@@ -2640,10 +2630,9 @@
           "protocol": "pass",
           "real": "blocked",
           "evidence": [
-            ".tmp/cc-hermes-dsh-attachments.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+            "docs/verification/dsh-rc2-reverification-2026-10-22.md"
           ],
-          "note": "本机 acp profile 未公布图片输入；Hub 在派发前拒绝图片已在真实环境确认"
+          "note": "rc.2 的 acp profile 仍不声明图片输入；Hub 在派发前拒绝图片（ATTACHMENT_UNSUPPORTED）已在真实环境确认"
         },
         "input-audio": {
           "native": "no",
@@ -2660,8 +2649,7 @@
           "protocol": "pass",
           "real": "pass",
           "evidence": [
-            ".tmp/cc-hermes-dsh-attachments.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+            "docs/verification/dsh-rc2-reverification-2026-10-22.md"
           ]
         },
         "output-media": {
@@ -2703,11 +2691,9 @@
           "protocol": "pass",
           "real": "pass",
           "evidence": [
-            ".tmp/cc-hermes-dsh-resume.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md",
-            ".tmp/cc-native-resume-commands-2026-10-12.json"
+            "docs/verification/dsh-rc2-reverification-2026-10-22.md"
           ],
-          "note": "在原程序中继续：官网 0.2.0-rc.2 只给 `dsh headless --session-id <id> \"…\"`（rc.2 没有 tui profile，ADR-039 的 2026-10-21 补记）；`dsh tui --resume <id>`（help 确认）与以 headless 真实答出标记都是 0.2.1-alpha.1 源码版的历史证据（ADR-044）"
+          "note": "在原程序中继续：官网 0.2.0-rc.2 只给 `dsh headless --session-id <id> \"…\"`（rc.2 没有 tui profile，ADR-039），2026-10-22 真实核对：退出码 0，只输出标记一行；`dsh tui --resume <id>` 是 0.2.1-alpha.1 源码版的历史证据（ADR-044）"
         },
         "session-list": {
           "native": "yes",
@@ -2716,8 +2702,7 @@
           "protocol": "pass",
           "real": "pass",
           "evidence": [
-            ".tmp/cc-hermes-dsh-import.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+            "docs/verification/dsh-rc2-reverification-2026-10-22.md"
           ],
           "note": "不支持 session/load，接续时没有历史可引用（如实标出），接续后由原生会话回答"
         },

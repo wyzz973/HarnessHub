@@ -294,7 +294,8 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
     },
     {
       // The prerelease the official npm channel carries (0.2.0-rc.2) is the lower end: ADR-045 steps 3c and 4 checked these
-      // rules on it. Ranges are compared with prereleases included (ADR-038, 2026-10-21), so 0.2.1-alpha.1 is inside too.
+      // rules on it, and it is the verified version since 2026-10-22. Ranges are compared with prereleases included
+      // (ADR-038, 2026-10-21), so the earlier source build 0.2.1-alpha.1 is inside too.
       harnessId: "dsh", verified: ">=0.2.0-rc.2 <0.3.0",
       evidence: ["@deepseek-ai/dsh 0.2.0-rc.2 包内 dsh-skill-filesystem 的 README（Roots and priority：<dshHome>/skills 排在 <agentsHome>/skills 之前，dshHome 为 $DSH_HOME 或 ~/.dsh，agentsHome 为 $DSH_AGENTS_HOME 或 ~/.agents；name 与 description 必填）",
         "@deepseek-ai/dsh 0.2.0-rc.2 dsh-app-boot：依次应用各 bundle、profile 自己的 cordis.patch.yml、$DSH_HOME/cordis.patch.yml；补丁文件必须是顶层 YAML 数组（docs/user/guide/mcp-memory.md：MCP 客户端行 @deepseek-ai/dsh-mcp-client）；发运的 profile 模板只有 acp、web、headless、sdk、sdk-minimal（PROFILE_TEMPLATES）",
