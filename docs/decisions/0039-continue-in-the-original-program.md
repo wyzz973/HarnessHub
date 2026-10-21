@@ -21,7 +21,7 @@
 
    | Harness | 交互形式 | 已验证的非交互形式 | 结论 |
    |---|---|---|---|
-   | Claude Code 2.1.296（claude-agent-acp 0.89.1） | `claude --resume <id>` | `claude -p --resume <id> "…"` | 给出 |
+   | Claude Code 2.1.296～2.1.306（claude-agent-acp 0.89.1） | `claude --resume <id>` | `claude -p --resume <id> "…"`（2.1.296 与 2.1.306 上各真实核对一次） | 给出 |
    | Codex 0.162.1 | `codex resume <id>` | `codex exec --skip-git-repo-check resume <id> "…"` | 给出；`--skip-git-repo-check` 绕过 Codex 的 Git 仓库检查，只在工作区不是 Git 仓库时加入，并注明原因，是仓库时为 `codex exec resume <id> "…"`。`codex resume` 的帮助中没有这个标志，交互形式不加 |
    | OpenCode 1.18.35 | `opencode -s <id>` | `opencode run -s <id> "…"` | 给出 |
    | Hermes 0.12.0 | `hermes --resume <id>`（Hermes 自己在回合结束时也打印这条命令） | `hermes chat --resume <id> -q "…"` | 给出 |
@@ -63,3 +63,7 @@
 
 - 按[真实验收操作手册](../engineering/real-acceptance.md)第 7 节核对。用私有实例建出 dsh 对话，取原生会话 ID，在同一工作区用干净环境运行 `dsh headless --session-id <id> "…"`。结果：退出码 0，标准输出只有答案一行，答对标记，标准错误为空。记录见 [dsh-rc2-reverification-2026-10-22.md](../verification/dsh-rc2-reverification-2026-10-22.md)。
 - 已验证版本随之改为 0.2.0-rc.2（ADR-038 同日补充）。本机详情栏的“在原程序中继续”现在会给出这条一次性命令，并注明“只问一次”。这个显示由 [ADR-050](0050-harness-tiers-and-on-demand-refresh.md) 实现，上文 2026-10-21 补充里“界面（未改）”一条的差距随之关闭。
+
+## 2026-10-22 补充：Claude Code 2.1.306 上的一次性命令
+
+用与 DeepSeek Harness 相同的做法，在 2.1.306 上真实核对了 `claude -p --resume <id> "…"`：退出码 0，标准输出只有答案一行，答对标记。记录见 [claude-2.1.306-rebaseline-2026-10-22.md](../verification/claude-2.1.306-rebaseline-2026-10-22.md)。交互形式没有真实运行：它会询问是否信任目录，接受后会写入全局配置。交互形式仍以帮助确认为准。已验证版本扩到 2.1.296～2.1.306（ADR-038 同日补充），本机详情栏随之给出两种命令。

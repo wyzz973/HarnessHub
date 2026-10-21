@@ -8,8 +8,10 @@ import { harnessTier, loadBuiltinCatalog } from "../../src/adapters/catalog.js";
 import { VERIFIED_VERSIONS, nativeResume, versionConsistency, versionVerification, type VersionConsistencyInput, type VerifiedVersions } from "../../src/infrastructure/management/verified-versions.js";
 
 test("a version is verified only where HarnessHub ran it for real; unknown versions and Harnesses claim nothing", () => {
-  assert.deepEqual(versionVerification("claude", "2.1.296", "0.89.1"), { state: "verified", program: "2.1.296", adapter: "0.89.1" });
-  assert.equal(versionVerification("claude", "2.1.300", "0.89.1")?.state, "unverified", "a newer product");
+  assert.deepEqual(versionVerification("claude", "2.1.296", "0.89.1"), { state: "verified", program: "2.1.296–2.1.306", adapter: "0.89.1" }, "the lower end; a range is described by both ends");
+  assert.equal(versionVerification("claude", "2.1.300", "0.89.1")?.state, "verified", "inside the verified range 2.1.296–2.1.306");
+  assert.deepEqual(versionVerification("claude", "2.1.306", "0.89.1"), { state: "verified", program: "2.1.296–2.1.306", adapter: "0.89.1" }, "the upper end, re-verified on 2026-10-22");
+  assert.equal(versionVerification("claude", "2.1.307", "0.89.1")?.state, "unverified", "a newer product");
   assert.equal(versionVerification("claude", "2.1.296", "0.90.0")?.state, "unverified", "a newer adapter in front of a verified product");
   assert.equal(versionVerification("claude", "2.1.296", "2.1.296")?.state, "verified", "an entry without its own version");
   assert.deepEqual(versionVerification("codex", "0.162.1", "0.162.1"), { state: "verified", program: "0.162.1" });
@@ -93,11 +95,11 @@ test("the consistency check rejects every kind of disagreement it names", () => 
   assert.deepEqual(kinds({ ...base, readTables: [...base.readTables, { harnessId: "workbuddy", verified: ">=5.0.0 <6.0.0" }] }), [["workbuddy", "ids"], ["workbuddy", "ids"]], "missing from the verified versions and the matrix");
   assert.deepEqual(kinds({ ...base, matrix: [...base.matrix, base.matrix[0]!] }), [[base.matrix[0]!.id, "ids"]], "named twice");
   // (b) The matrix's installation names the verified version whole, and the adapter's.
-  assert.deepEqual(kinds(matrix("claude", "Claude Code 2.1.300 + claude-agent-acp 0.89.1")), [["claude", "matrix"]]);
-  assert.deepEqual(kinds(matrix("claude", "Claude Code 2.1.2960 + claude-agent-acp 0.89.1")), [["claude", "matrix"]], "a longer version is not the verified one");
-  assert.deepEqual(kinds(matrix("claude", "Claude Code 2.1.296.1 + claude-agent-acp 0.89.1")), [["claude", "matrix"]], "nor one with another part");
-  assert.deepEqual(kinds(matrix("claude", "Claude Code 2.1.296")), [["claude", "matrix"]], "the adapter is named too");
-  assert.deepEqual(kinds(matrix("claude", "Claude Code v2.1.296, claude-agent-acp 0.89.1.")), [], "a v before it and a full stop after it still name it");
+  assert.deepEqual(kinds(matrix("claude", "Claude Code 2.1.300 + claude-agent-acp 0.89.1")), [["claude", "matrix"]], "a version inside the range is not its upper end");
+  assert.deepEqual(kinds(matrix("claude", "Claude Code 2.1.3060 + claude-agent-acp 0.89.1")), [["claude", "matrix"]], "a longer version is not the verified one");
+  assert.deepEqual(kinds(matrix("claude", "Claude Code 2.1.306.1 + claude-agent-acp 0.89.1")), [["claude", "matrix"]], "nor one with another part");
+  assert.deepEqual(kinds(matrix("claude", "Claude Code 2.1.306")), [["claude", "matrix"]], "the adapter is named too");
+  assert.deepEqual(kinds(matrix("claude", "Claude Code v2.1.306, claude-agent-acp 0.89.1.")), [], "a v before it and a full stop after it still name it");
   // (c) The read range covers both ends of the verified range, and is a range.
   assert.deepEqual(kinds(table("claude", ">=2.1.297 <2.2.0")), [["claude", "read-range"]], "the lower end outside");
   const widened = matrix("codex", "Codex CLI 0.170.0", verified({ codex: { program: ["0.162.1", "0.170.0"] } }));

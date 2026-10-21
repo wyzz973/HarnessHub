@@ -18,7 +18,7 @@ export interface VerifiedVersions { readonly program: VersionRange; readonly ada
  * reconciles it with the matrix, the read tables and the catalog.
  */
 export const VERIFIED_VERSIONS: Readonly<Record<string, VerifiedVersions>> = {
-  claude: { program: ["2.1.296", "2.1.296"], adapter: ["0.89.1", "0.89.1"] },
+  claude: { program: ["2.1.296", "2.1.306"], adapter: ["0.89.1", "0.89.1"] },
   codex: { program: ["0.162.1", "0.162.1"] },
   cursor: { program: ["2026.10.01-e373342", "2026.10.01-e373342"] },
   gemini: { program: ["0.62.0", "0.62.0"] },

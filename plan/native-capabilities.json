@@ -464,7 +464,7 @@
     {
       "id": "claude",
       "name": "Claude Code",
-      "installation": "Claude Code 2.1.296 + claude-agent-acp 0.89.1（本机登录；2026-10-11 晚账号额度已恢复）",
+      "installation": "Claude Code 2.1.306 + claude-agent-acp 0.89.1（本机登录；已验证区间 2.1.296～2.1.306：2.1.296 见 2026-10-11 的记录，2.1.306 见 2026-10-22 的重验记录）",
       "control": "acp-v1（claude-agent-acp）",
       "tier": "focus",
       "capabilities": {
@@ -478,7 +478,8 @@
             ".tmp/cc-native-catalog-claude.json",
             ".tmp/cc-native-resume-claude.json",
             ".tmp/cc-native-config-claude-model.json",
-            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md",
+            "docs/verification/claude-2.1.306-rebaseline-2026-10-22.md"
           ],
           "note": "目录真实读取 13 个模型；本会话选择 haiku、sonnet 真实生效（只作用于 Hub 会话，不改全局配置）"
         },
@@ -502,7 +503,8 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-native-activity-claude.json",
-            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md",
+            "docs/verification/claude-2.1.306-rebaseline-2026-10-22.md"
           ],
           "note": "mode=default（手动审批）真实生效：编辑前请求审批"
         },
@@ -515,9 +517,10 @@
           "evidence": [
             ".tmp/cc-native-commands-claude.json",
             ".tmp/cc-native-config-claude-model.json",
-            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md",
+            "docs/verification/claude-2.1.306-rebaseline-2026-10-22.md"
           ],
-          "note": "目录真实读取 223 条命令；/compact、/model 作为原生命令真实执行"
+          "note": "目录真实读取 223 条（2.1.296）、224 条（2.1.306）命令；/compact、/model 作为原生命令真实执行"
         },
         "config-sync": {
           "native": "yes",
@@ -528,7 +531,8 @@
           "evidence": [
             ".tmp/cc-native-config-claude-model.json",
             ".tmp/cc-native-config-claude.json",
-            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md",
+            "docs/verification/claude-2.1.306-rebaseline-2026-10-22.md"
           ],
           "note": "/model haiku 后代理宣告新模型，下一回合沿用、显式切换后恢复所选；/effort 不被宣告，因此不沿用"
         },
@@ -553,7 +557,8 @@
           "evidence": [
             ".tmp/cc-native-activity-claude.json",
             "docs/verification/claude-real-and-approval-detail-2026-10-11.md",
-            ".tmp/cc-parallel-budgets-2026-10-12.json"
+            ".tmp/cc-parallel-budgets-2026-10-12.json",
+            "docs/verification/claude-2.1.306-rebaseline-2026-10-22.md"
           ],
           "note": "Bash、Read、Edit、ToolSearch 工具真实回合；已知版本偏差：claude-agent-acp 0.89.1 在前台命令运行期间一直把工具报告为 pending（2026-10-12 执行预算检查时 ping 正在运行），回合中途结束时 Hub 显示“未完成（原程序未报告结束）”，不推断是否执行过"
         },
@@ -565,7 +570,8 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-native-activity-claude.json",
-            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md",
+            "docs/verification/claude-2.1.306-rebaseline-2026-10-22.md"
           ],
           "note": "命令输入输出、读取位置与编辑差异真实存储为可读详情"
         },
@@ -589,7 +595,8 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-native-activity-claude.json",
-            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md",
+            "docs/verification/claude-2.1.306-rebaseline-2026-10-22.md"
           ],
           "note": "回合 token、上下文占用（窗口 1,000,000）与会话费用（USD）"
         },
@@ -604,7 +611,8 @@
             ".tmp/cc-native-activity-claude.json",
             ".tmp/cc-attention-2026-10-12.json",
             "docs/verification/claude-real-and-approval-detail-2026-10-11.md",
-            ".tmp/cc-parallel-budgets-2026-10-12.json"
+            ".tmp/cc-parallel-budgets-2026-10-12.json",
+            "docs/verification/claude-2.1.306-rebaseline-2026-10-22.md"
           ],
           "note": "手动模式下编辑请求审批并一次允许；审批卡显示将要修改的差异；allow_always 会由原程序写入项目设置，验收只选一次允许；审批的期限为 HarnessHub 的等待预算（默认 30 分钟；Claude 没有自己的期限），侧栏与审批卡显示“等待期限 · 剩余 N 分”；等待 349.6 秒后批准，命令执行、回合完成；等待预算到期时以 WAIT_EXPIRED 取消，原程序没有收到批准（ADR-035、ADR-036，真实通过）"
         },
@@ -616,7 +624,8 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-native-question-claude.json",
-            "docs/verification/native-questions-2026-10-11.md"
+            "docs/verification/native-questions-2026-10-11.md",
+            "docs/verification/claude-2.1.306-rebaseline-2026-10-22.md"
           ],
           "note": "声明 elicitation.form 后 AskUserQuestion 可用：表单逐题在对话中提问（选项、自填、跳过、取消）；多选题以单个选项加自填回答；含数字等字段的表单整表拒绝"
         },
@@ -628,7 +637,8 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-native-attachments-claude.json",
-            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md",
+            "docs/verification/claude-2.1.306-rebaseline-2026-10-22.md"
           ],
           "note": "红色图片真实识别"
         },
@@ -649,7 +659,8 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-native-attachments-claude.json",
-            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md",
+            "docs/verification/claude-2.1.306-rebaseline-2026-10-22.md"
           ],
           "note": "原接口缺口：blob 被丢弃，resource_link 只成链接文本，只有文本 resource 以 <context> 注入；Hub 把小文本文件以嵌入资源发送并真实读取（文件内标记被答出），其余作文件链接"
         },
@@ -700,9 +711,10 @@
           "evidence": [
             ".tmp/cc-native-resume-claude.json",
             "docs/verification/claude-real-and-approval-detail-2026-10-11.md",
-            ".tmp/cc-native-resume-commands-2026-10-12.json"
+            ".tmp/cc-native-resume-commands-2026-10-12.json",
+            "docs/verification/claude-2.1.306-rebaseline-2026-10-22.md"
           ],
-          "note": "第二回合以原生会话恢复，未注入公共上下文并答对；在原程序中继续：`claude --resume <id>`（help 确认），以 `claude -p --resume <id> \"…\"` 真实验证答出标记（ADR-039）"
+          "note": "第二回合以原生会话恢复，未注入公共上下文并答对；在原程序中继续：`claude --resume <id>`（help 确认），以 `claude -p --resume <id> \"…\"` 真实验证答出标记（ADR-039；2.1.296 与 2.1.306 各一次，2.1.306 上只输出标记一行）"
         },
         "session-list": {
           "native": "yes",
@@ -712,7 +724,8 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-native-import-claude.json",
-            "docs/verification/native-session-import-2026-10-11.md"
+            "docs/verification/native-session-import-2026-10-11.md",
+            "docs/verification/claude-2.1.306-rebaseline-2026-10-22.md"
           ],
           "note": "通用 ACP 实现；claude -p 在新工作区创建的会话被列出、接续并答出标记"
         },
@@ -724,7 +737,8 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-native-branch-claude.json",
-            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md",
+            "docs/verification/claude-2.1.306-rebaseline-2026-10-22.md"
           ],
           "note": "session/fork 建立原生副本：分支答出源标记，源对话不知道分支标记"
         },
@@ -736,7 +750,8 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-native-commands-claude.json",
-            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md",
+            "docs/verification/claude-2.1.306-rebaseline-2026-10-22.md"
           ],
           "note": "/compact 原生命令执行，compaction_update 以活动显示完成；压缩后仍记得先前事实"
         },
@@ -757,7 +772,8 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-native-subagent-claude.json",
-            "docs/verification/native-subagents-2026-10-11.md"
+            "docs/verification/native-subagents-2026-10-11.md",
+            "docs/verification/claude-2.1.306-rebaseline-2026-10-22.md"
           ],
           "note": "未协商原生子会话时，子 Agent 工具平铺在根会话并带 parentToolUseId；Hub 记录关联并在 Agent 调用下嵌套显示，子 Agent 文字不进入主回复"
         },
@@ -784,7 +800,8 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-native-commands-claude-export.json",
-            "docs/verification/claude-export-2026-10-11.md"
+            "docs/verification/claude-export-2026-10-11.md",
+            "docs/verification/claude-2.1.306-rebaseline-2026-10-22.md"
           ],
           "note": "原接口缺口：ACP 没有导出方法，代理也没有自己的 export 命令；Hub 提供 /export，只读复制本会话转录（<CLAUDE_CONFIG_DIR 或 ~/.claude>/projects 下的 jsonl）作为产物，找不到转录时明确失败"
         }

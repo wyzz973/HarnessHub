@@ -94,7 +94,7 @@ test("G011-UG3 every script layout says how it updates: the product's own update
   // A self-updating product updates inside what its official install may write.
   for (const id of ["claude", "cursor"]) assert.equal(officialInstallMethod(id)?.kind, "script", id);
   // An adapter version is verified against the adapter HarnessHub ran, not the product.
-  assert.deepEqual(adapterVersionVerification("claude", "0.89.1"), { state: "verified", program: "2.1.296", adapter: "0.89.1" });
+  assert.deepEqual(adapterVersionVerification("claude", "0.89.1"), { state: "verified", program: "2.1.296–2.1.306", adapter: "0.89.1" });
   assert.equal(adapterVersionVerification("claude", "0.90.0")?.state, "unverified");
   assert.equal(adapterVersionVerification("codex", "1.0.0"), null);
 });
