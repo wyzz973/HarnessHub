@@ -34,7 +34,7 @@ ADR-001 由 C003，ADR-002/003 由 C008，ADR-004 由 C007，ADR-005 由 C004，
 
 V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/验证证据、独立文件与索引一致性以及阻塞项。核心记录仍 proposed、缺证据或未交付时 G1 不通过；不能因为依赖图与格式检查通过就自动接受决定。
 
-- [0016：本机原安装优先与OpenClaw原生接入](0016-local-installation-and-openclaw.md)（accepted；2026-10-11 “非标准安装通过自定义入口接入”的约定被 [ADR-044](0044-macos-official-channels.md) 部分取代，正式入口只认官网渠道）。
+- [0016：本机原安装优先与OpenClaw原生接入](0016-local-installation-and-openclaw.md)（accepted；决定第一条“本机PATH/显式入口保持发现与执行权威”中的显式入口（发现清单）一项被 [ADR-044](0044-macos-official-channels.md) 部分取代：自 ADR-044 起正式入口不读发现清单，只在开发模式 `--allow-unofficial` 下读取）。
 - [0017：原渠道安装管理与原生接入](0017-native-installation-management.md)（accepted；被 [ADR-043](0043-upgrade-with-running-programs.md) 与 [ADR-044](0044-macos-official-channels.md) 各部分取代一条：“发现活动本机进程时拒绝原地升级”改为先确认再按产品方式重启，“开发目录链接保留原入口”改为非官网安装不维护）：覆盖生产私有安装默认；真实本机管理、配置保护和明确能力边界，统一Provider管理后置。
 
 - [0018：原生CLI认证与Homebrew单沙箱恢复](0018-native-cli-recovery.md)（accepted）：原Homebrew SDK配置保护恢复、Cursor原生更新/登录和Gemini直连协议边界。
@@ -63,7 +63,7 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
 
 - [ADR-030：在回合之间保留原生进程以运行后台任务](0030-retained-native-processes.md)（accepted，2026-10-12 实施，Session v11、v12）：采纳“需要时由用户选择结束后台进程”；按对话显式开启、默认关闭，空闲 30 分钟结束，最多保留 4 个；下一回合复用保留的进程，各种关闭都留证据；服务异常退出后，下一次启动按进程组号和启动时间识别并结束遗留的进程组，确认后才释放工作区；真实 Claude 后台任务跨回合与重启清理通过。
 
-- [ADR-031：接入 Hermes Agent 与 DeepSeek Harness](0031-hermes-and-deepseek-harness.md)（accepted；“固定探测目录并复用探测会话”与“dsh 醒目显示权限预设”两项分别被 [ADR-033](0033-native-catalog-cache-and-readiness.md) 与[第一链路打磨](../verification/first-chain-polish-2026-10-11.md)部分取代）：两者经内置 ACP 接入；Hermes 恢复只用 session/load、文件改为文本指针、60 秒审批期限、/model 回复同步；通用 ACP 的 load 回放窗口从响应开始；发现只走 PATH/标准目录与显式自定义入口。
+- [ADR-031：接入 Hermes Agent 与 DeepSeek Harness](0031-hermes-and-deepseek-harness.md)（accepted；“固定探测目录并复用探测会话”与“dsh 醒目显示权限预设”两项分别被 [ADR-033](0033-native-catalog-cache-and-readiness.md) 与[第一链路打磨](../verification/first-chain-polish-2026-10-11.md)部分取代；发现方式一节“非标准安装通过显式自定义入口接入”一条被 [ADR-044](0044-macos-official-channels.md) 取代——正式入口不读发现清单）：两者经内置 ACP 接入；Hermes 恢复只用 session/load、文件改为文本指针、60 秒审批期限、/model 回复同步；通用 ACP 的 load 回放窗口从响应开始；发现只走 PATH/标准目录与显式自定义入口（ADR-044 之前的做法，自定义入口现只用于开发和测试）。
 
 - [ADR-032：记录并显示回合阶段与首字延迟](0032-run-phases-and-first-output.md)（accepted）：Run 记录受理、准备、就绪、发送、首个输出与结束（Session v10）；界面按阶段显示已用时间，结束后显示首字与用时。
 
