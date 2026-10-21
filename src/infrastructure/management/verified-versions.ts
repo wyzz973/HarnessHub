@@ -150,15 +150,15 @@ export function versionConsistency(input: VersionConsistencyInput): readonly Ver
 
 /** The question placeholder of a one-question command; the user replaces it. */
 const QUESTION = "\"你的问题\"";
-/**
- * How each Harness's own program continues one of its sessions (ADR-039): the interactive command exactly as the installed
- * version's help gives it, and the one-question command that a real Turn verified on the version in VERIFIED_VERSIONS.
- * Pi's session reference is a file path, so it is only pointed to; OpenClaw's sessions live in the user's own OpenClaw
- * Gateway, so nothing is shown. Changed together with VERIFIED_VERSIONS and the verification record.
- */
 /** What a command may depend on in the conversation's workspace, read without changing it. */
 export interface ResumeWorkspace { readonly git: boolean }
-type ResumeCommands = { readonly interactive: (id: string) => string; readonly once: (id: string, workspace: ResumeWorkspace) => string; readonly onceNote?: (workspace: ResumeWorkspace) => string | null };
+type ResumeCommands = { readonly interactive?: (id: string) => string; readonly once: (id: string, workspace: ResumeWorkspace) => string; readonly onceNote?: (workspace: ResumeWorkspace) => string | null };
+/**
+ * How each Harness's own program continues one of its sessions (ADR-039): the interactive command exactly as the installed
+ * version's help gives it, for a program that has one, and the one-question command that a real Turn verified on the
+ * version in VERIFIED_VERSIONS. Pi's session reference is a file path, so it is only pointed to; OpenClaw's sessions live
+ * in the user's own OpenClaw Gateway, so nothing is shown. Changed together with VERIFIED_VERSIONS and the verification record.
+ */
 const RESUME_COMMANDS: Readonly<Record<string, ResumeCommands | { readonly list: string } | { readonly hidden: true }>> = {
   claude: { interactive: id => `claude --resume ${id}`, once: id => `claude -p --resume ${id} ${QUESTION}` },
   // `codex exec` refuses a directory outside a Git repository unless told otherwise; the flag bypasses that check, so it is
@@ -167,7 +167,10 @@ const RESUME_COMMANDS: Readonly<Record<string, ResumeCommands | { readonly list:
     onceNote: workspace => workspace.git ? null : "工作区不是 git 仓库，Codex 需要这个标志" },
   opencode: { interactive: id => `opencode -s ${id}`, once: id => `opencode run -s ${id} ${QUESTION}` },
   hermes: { interactive: id => `hermes --resume ${id}`, once: id => `hermes chat --resume ${id} -q ${QUESTION}` },
-  dsh: { interactive: id => `dsh tui --resume ${id}`, once: id => `dsh headless --session-id ${id} ${QUESTION}` },
+  // DeepSeek Harness has no interactive form to give: the profiles 0.2.0-rc.2 ships are acp, web, headless, sdk and
+  // sdk-minimal (dsh-app-boot PROFILE_TEMPLATES), and `dsh tui --resume <session>`, an example in its help, starts a tui
+  // profile only a user made; without one dsh stops with "profile "tui" does not exist". The headless form keeps --session-id.
+  dsh: { once: id => `dsh headless --session-id ${id} ${QUESTION}` },
   pi: { list: "见 Pi 自己的会话列表" },
   openclaw: { hidden: true },
 };
@@ -176,8 +179,8 @@ const PLAIN_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 /**
  * How the user can continue a conversation's native session in the Harness's own program (ADR-039), from its native
  * reference and whether the installed version was verified. Commands are given only for a verified version and a plain
- * identifier; otherwise the identifier alone, with why. Null for a hidden program and for a reference that is no plain
- * identifier. Nothing here runs a program.
+ * identifier, the interactive one only for a program that has one; otherwise the identifier alone, with why. Null for a
+ * hidden program and for a reference that is no plain identifier. Nothing here runs a program.
  */
 export function nativeResume(harnessId: string, reference: string, verification: HarnessVersionVerification | null, workspace: ResumeWorkspace): NativeResumeView | null {
   const commands = Object.hasOwn(RESUME_COMMANDS, harnessId) ? RESUME_COMMANDS[harnessId]! : null;
@@ -187,5 +190,6 @@ export function nativeResume(harnessId: string, reference: string, verification:
   if (commands === null) return { harnessId, nativeId: reference, note: "not-verified" };
   if (verification?.state !== "verified") return { harnessId, nativeId: reference, note: "version-unverified" };
   const note = commands.onceNote?.(workspace) ?? null;
-  return { harnessId, nativeId: reference, interactive: commands.interactive(reference), once: commands.once(reference, workspace), ...(note === null ? {} : { onceNote: note }) };
+  return { harnessId, nativeId: reference, ...(commands.interactive === undefined ? {} : { interactive: commands.interactive(reference) }),
+    once: commands.once(reference, workspace), ...(note === null ? {} : { onceNote: note }) };
 }

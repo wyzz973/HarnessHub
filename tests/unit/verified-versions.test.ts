@@ -127,10 +127,12 @@ test("continuing in the original program gives the verified commands only for a 
   assert.equal(nativeResume("claude", id, verified, repository)?.once, "claude -p --resume " + id + " \"你的问题\"", "no other program depends on it");
   assert.equal(nativeResume("opencode", "ses_ed322dcf7ffe892PKrBGRgoBKW", { state: "verified", program: "1.18.35" }, outside)?.interactive, "opencode -s ses_ed322dcf7ffe892PKrBGRgoBKW");
   assert.equal(nativeResume("hermes", id, { state: "verified", program: "0.12.0" }, outside)?.once, "hermes chat --resume " + id + " -q \"你的问题\"");
-  assert.equal(nativeResume("dsh", id, { state: "verified", program: "0.2.1-alpha.1" }, outside)?.interactive, "dsh tui --resume " + id);
+  // DeepSeek Harness ships no interactive profile to resume in (no tui), so only its one-question form is given, with no interactive field.
+  assert.deepEqual(nativeResume("dsh", id, { state: "verified", program: "0.2.1-alpha.1" }, outside), { harnessId: "dsh", nativeId: id, once: "dsh headless --session-id " + id + " \"你的问题\"" });
   // Another version, a version not known, or a program whose resume was never verified: the identifier alone, and why.
   assert.deepEqual(nativeResume("claude", id, unverified, outside), { harnessId: "claude", nativeId: id, note: "version-unverified" });
   assert.deepEqual(nativeResume("claude", id, null, outside), { harnessId: "claude", nativeId: id, note: "version-unverified" });
+  assert.deepEqual(nativeResume("dsh", id, { state: "unverified", program: "0.2.1-alpha.1" }, outside), { harnessId: "dsh", nativeId: id, note: "version-unverified" });
   assert.deepEqual(nativeResume("cursor", id, { state: "verified", program: "2026.10.01-e373342" }, outside), { harnessId: "cursor", nativeId: id, note: "not-verified" });
   // Pi's reference is a private file path: only where Pi lists its sessions. OpenClaw: nothing.
   assert.deepEqual(nativeResume("pi", JSON.stringify({ path: "/Users/someone/.pi/sessions/a.jsonl", id: "a" }), { state: "verified", program: "0.85.1" }, outside), { harnessId: "pi", list: "见 Pi 自己的会话列表" });
