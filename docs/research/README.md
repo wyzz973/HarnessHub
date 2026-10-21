@@ -11,6 +11,8 @@
 - [发现与适配扩展提案](../proposals/harness-discovery-adaptation.md)：本轮核对 CC Switch v4.0.5、Magpie 最新主分支和 42 条 ACP 候选目录；追加固定 82 份材料及选读范围见[本轮来源清单](harness-expansion-sources-2026-10-09.json)，与上面的基线来源锁分别保存。
 - [九个 Harness 的扩展能力配置](native-extension-configs-2026-10-18.md)（2026-10-18）：技能、MCP、指令文件、插件、子 Agent、自定义命令与 Hooks 在本机版本中的用户级位置、格式、官方命令、密钥写法与写入风险，以及与旧版 Library 假设的冲突。
 - [跨 Agent 统一管理能力的开源做法](capability-managers-2026-10-18.md)（2026-10-18）：技能、MCP、指令、子 Agent、命令、Hooks 与插件的管理器（vercel-labs/skills、cc-switch、magpie、rulesync、skillshare 等）的数据模型、写入与归属、更新检测、密钥处理与事故，以及对 HarnessHub 的启发。
+- [Hermes v0.22.2 与 main 的升级就绪](hermes-upgrade-readiness-2026-10-22.md)（2026-10-22，只读）：0.12.0 → v0.22.2 → main 的版本线与 `hermes update` 的落点、`hermes acp` 的进程模型（v0.22.2 仍在进程内，v0.22.3 与 main 改为网关投影）、审批缺陷与期限的修复标签、配置与 state.db 的迁移、版本读取方式，以及对本机 QQ 网关的风险；选项见 [ADR-051](../decisions/0051-hermes-upgrade-route.md)。
+- [OpenClaw 2026.10.x 升级就绪](openclaw-2026.10-upgrade-readiness-2026-10-22.md)（2026-10-22，只读）：latest 2026.10.5 与 extended-stable 2026.9.33 的 `engines`、`files`、postinstall、`openclaw update` 流程与必经的 2026.9.5 桥接、配置迁移与严格校验、ACP 桥、热重载表、会话维护默认值、hooks 与插件读法、openclaw-weixin 2.0.1 与 Node；选项见 [ADR-052](../decisions/0052-openclaw-upgrade-route.md)。
 - 公开文档定位、DDD 原则、存储、进程监督、AI 协作与测试实践。
 
 来源锁表示抓取快照与选读范围，不表示全部源码审计。完整外部内容仅在被忽略的 .research-cache 中用于研究，不作为项目代码或依赖发布。曾抓取的 Codex v2.rs 路径已经拆分，404 记录保留并指向实际的 v2/mod.rs、thread.rs、turn.rs，不假称旧路径仍存在。
