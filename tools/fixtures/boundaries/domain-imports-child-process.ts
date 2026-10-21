@@ -4,6 +4,9 @@
 // @@ file: src/contexts/session/domain/leak.ts
 import { spawn } from "node:child_process"; // expect: B1
 import { readFileSync } from "node:fs"; // expect: B1
+import { writeFileSync } from "fs"; // expect: B1
+import { readFile } from "fs/promises"; // expect: B1
+import { posix } from "path/posix";
 import { DatabaseSync } from "node:sqlite"; // expect: B1
 import YAML from "yaml"; // expect: B1, B10
 import { Runtime } from "../application/runtime.js"; // expect: B1
@@ -13,7 +16,7 @@ import { join } from "node:path";
 import type { SessionId } from "../../../contracts/session.js";
 import { reduce } from "./state.js";
 
-export const leak = { spawn, readFileSync, DatabaseSync, YAML, Runtime, createHash, join, reduce };
+export const leak = { spawn, readFileSync, writeFileSync, readFile, posix, DatabaseSync, YAML, Runtime, createHash, join, reduce };
 export type Leak = [SqliteSessionStore, SessionId];
 
 // @@ file: src/contexts/session/application/leak.ts

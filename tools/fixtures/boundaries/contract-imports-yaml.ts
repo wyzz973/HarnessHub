@@ -10,6 +10,11 @@ import type { SessionState } from "../contexts/session/domain/state.js"; // expe
 import type { ResolvedCommand } from "../contexts/catalog/domain/catalog.js"; // expect: B3
 import { sessionId } from "./session.js";
 import type { ProviderId } from "./provider.js";
+export { readFileSync as read } from "node:fs"; // expect: B3
+export type { Readable as Stream } from "node:stream"; // expect: B3
+export * from "yaml"; // expect: B3, B10
+export type Hidden = import("../infrastructure/session/sqlite-store.js").SqliteSessionStore; // expect: B3
+export type Visible = import("./session.js").SessionId;
 
 export const leak = { YAML, readFileSync, sessionId };
 export type Leak = [Readable, SqliteSessionStore, SessionState, ResolvedCommand, ProviderId];

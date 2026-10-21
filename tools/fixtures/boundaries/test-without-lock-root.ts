@@ -52,12 +52,16 @@ import { promisify } from "node:util";
 import * as sessionApplication from "../../src/cli/session-application.js";
 import { application as compose } from "../../src/cli/session-application.js";
 import { startWebServer as boot } from "../../src/web/server.js";
+import { importedFlags } from "../fixtures/flags.js";
 
 const chat = fileURLToPath(new URL("../../src/cli/chat.js", import.meta.url));
 const web = fileURLToPath(new URL("../../src/cli/web.js", import.meta.url));
 const locks = join(root, "locks");
 const base = { installations: "any" as const, workspaceLockRoot: locks };
+const common = ["--data-dir", data, "--workspace-lock-root", locks];
+const withFlags = (extra: readonly string[]) => [...common, ...extra];
 const execFileAsync = promisify(execFile);
+function application(root: string) { return root; }
 
 // B8 follows aliases and namespaces, and wants the option to be visible in this file.
 compose(data, () => {}, { installations: "any" }); // expect: B8
@@ -68,6 +72,7 @@ sessionApplication.application(data, () => {}); // expect: B8
 boot({ root: data, configuration, port: 0 }); // expect: B8
 boot({ root: data, configuration, port: 0, workspaceLockRoot: locks });
 function open(options: StartOptions) { return boot(options); } // expect: B8
+application(data); // a function of the same name that is declared here is not the Gateway's
 
 // B9 follows aliases, namespaces and promisify, takes --flag=value, and cannot see a flag that only one branch passes.
 launch(process.execPath, [chat, "--data-dir", data]); // expect: B9
@@ -76,6 +81,9 @@ await execFileAsync(process.execPath, [chat, "--data-dir", data]); // expect: B9
 spawnSync(process.execPath, [chat, ...["--workspace-lock-root", locks].filter(flag => flag !== "--workspace-lock-root")]); // expect: B9
 spawnSync(process.execPath, [chat, ...(official ? ["--workspace-lock-root", locks] : [])]); // expect: B9
 spawnSync(process.execPath, [chat, ...imported.flags]); // expect: B9
+spawnSync(process.execPath, [chat, ...importedFlags]); // expect: B9
+spawnSync(process.execPath, [web, ...(quick ? ["--help"] : [])]); // expect: B9
+spawnSync(process.execPath, [chat, ...withFlags(["--harness", "fixture"])]);
 launch(process.execPath, [chat, "--data-dir", data, "--workspace-lock-root", locks]);
 childProcess.spawnSync(process.execPath, [web, "--workspace-lock-root=" + locks, "--port", "0"]);
 spawnSync(process.execPath, [chat, `--workspace-lock-root=${locks}`]);
