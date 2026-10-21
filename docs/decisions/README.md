@@ -1,32 +1,32 @@
 # 决策记录
 
-下表七项完整架构议程仍为 proposed，记录建议、替代与代价；没有因生成文档而自动变为 accepted。
+下表七项完整架构议程的状态按 [ADR-046](0046-harness-focus-hardening.md) 的“对 ADR-001～007 的处置”一节记录（2026-10-21）：五项 accepted-by-implementation、ADR-005 部分实现、ADR-004 deferred。表中的建议、替代与代价保留；没有因生成文档而自动变为 accepted，accepted-by-implementation 也不等于原议程要求的独立 ADR 文件已交付。
 
-已接受：[ADR-008](0008-local-first-mvp.md)开放本机只读检测；[ADR-009](0009-catalog-control-slice.md)依据用户开始实现的授权，开放目录扩展与受控原生控制连接。范围不等于全部未来架构已冻结。
+已接受：[ADR-008](0008-local-first-mvp.md)（accepted）开放本机只读检测；[ADR-009](0009-catalog-control-slice.md)（accepted）依据用户开始实现的授权，开放目录扩展与受控原生控制连接。范围不等于全部未来架构已冻结。
 
-[ADR-010](0010-public-session-mvp.md)采纳本机公共Session、SQLite事实日志与每轮public_context_rehydrate、静止Harness切换；不自动采纳整套未来HTTP/模型转发/路由方案。
+[ADR-010](0010-public-session-mvp.md)（accepted）采纳本机公共Session、SQLite事实日志与每轮public_context_rehydrate、静止Harness切换；不自动采纳整套未来HTTP/模型转发/路由方案。
 
-[ADR-011](0011-provider-web-mvp.md)采纳本机Provider资源、不可变revision、私有配置与同源图形工作台；自动择优由用户明确后置。
+[ADR-011](0011-provider-web-mvp.md)（accepted）采纳本机Provider资源、不可变revision、私有配置与同源图形工作台；自动择优由用户明确后置。
 
-[ADR-012](0012-harness-management-workbench.md)按用户授权采纳本机Harness安装/升级与品牌化原生工作台，默认私有受管目录，自动择优不变。
+[ADR-012](0012-harness-management-workbench.md)（accepted）按用户授权采纳本机Harness安装/升级与品牌化原生工作台，默认私有受管目录，自动择优不变。
 
-[ADR-013](0013-live-chat-experience.md)按实际对话反馈采纳实时会话SSE及紧凑聊天组件；不改变Run/选择/重试语义。
+[ADR-013](0013-live-chat-experience.md)（accepted）按实际对话反馈采纳实时会话SSE及紧凑聊天组件；不改变Run/选择/重试语义。
 
-[ADR-014](0014-conversation-failure-recovery.md)按用户审查要求区分连接失败/执行未知/清理未知，保留对话与草稿，加入显式恢复和结束确认；存储v3保留历史与未知事实，未知任务不自动重跑。
+[ADR-014](0014-conversation-failure-recovery.md)（accepted）按用户审查要求区分连接失败/执行未知/清理未知，保留对话与草稿，加入显式恢复和结束确认；存储v3保留历史与未知事实，未知任务不自动重跑。
 
-[ADR-015](0015-native-harness-models-and-switching.md)按用户明确要求沿用所有本机Harness既有配置/登录，读取原生模型，并直接切换选择；覆盖先前native空HOME默认，追加v4格式。
+[ADR-015](0015-native-harness-models-and-switching.md)（accepted）按用户明确要求沿用所有本机Harness既有配置/登录，读取原生模型，并直接切换选择；覆盖先前native空HOME默认，追加v4格式。
 
-| ADR | 建议 | 替代/代价 | 关闭条件 |
-|---|---|---|---|
-| ADR-001 | 公共 Session 与原生 BackendBinding 分离 | 直接暴露原生 ID 简单，但锁定 Harness，无法承载公共连续性 | D-02 与 D-04 冻结 |
-| ADR-002 | 模块化单体、DDD 上下文与防腐 Adapter | 微服务有部署/一致性成本；巨型统一模型会污染领域 | 边界与应用契约评审 |
-| ADR-003 | ACP v1 优先，原生协议单独适配 | 全部套 ACP 会丢失真实能力；只用 native 会重复生命周期逻辑 | D-01 能力报告 |
-| ADR-004 | 规则式路由、硬约束优先、质量未知如实表达 | LLM/学习排名可扩展，但缺校准证据、成本与可复现性 | D-07 基线与策略版本 |
-| ADR-005 | 持久意图/outbox、epoch fencing、先提交后发布 | 直接调用简单，但响应丢失/重启会重复副作用；全量 Event Sourcing 复杂度高 | D-02 与故障模型评审 |
-| ADR-006 | 静止交接、public_context_rehydrate 为明确等级 | 把原生内部状态强行互换无法泛化；只允许换新公共 Session 不符合需求 | D-03/D-04 冻结 |
-| ADR-007 | 模型目标独立，最小同协议桥接并记录调用 | 首版完整 N×M 转换扩大范围；直接传 Provider 秘密给 Harness 削弱归属 | D-01/D-06 与模型路径验证 |
+| ADR | 建议 | 替代/代价 | 关闭条件 | 状态（ADR-046 处置） |
+|---|---|---|---|---|
+| ADR-001 | 公共 Session 与原生 BackendBinding 分离 | 直接暴露原生 ID 简单，但锁定 Harness，无法承载公共连续性 | D-02 与 D-04 冻结 | accepted-by-implementation（`src/contracts/session.ts` 的 nativeBindings） |
+| ADR-002 | 模块化单体、DDD 上下文与防腐 Adapter | 微服务有部署/一致性成本；巨型统一模型会污染领域 | 边界与应用契约评审 | accepted-by-implementation（`src/contexts/` 的五个上下文） |
+| ADR-003 | ACP v1 优先，原生协议单独适配 | 全部套 ACP 会丢失真实能力；只用 native 会重复生命周期逻辑 | D-01 能力报告 | accepted-by-implementation（`src/adapters/control/factory.ts`） |
+| ADR-004 | 规则式路由、硬约束优先、质量未知如实表达 | LLM/学习排名可扩展，但缺校准证据、成本与可复现性 | D-07 基线与策略版本 | deferred（自动择优后置，ADR-011） |
+| ADR-005 | 持久意图/outbox、epoch fencing、先提交后发布 | 直接调用简单，但响应丢失/重启会重复副作用；全量 Event Sourcing 复杂度高 | D-02 与故障模型评审 | 部分实现（先提交后发布与 epoch fencing 已实现；outbox 未实现） |
+| ADR-006 | 静止交接、public_context_rehydrate 为明确等级 | 把原生内部状态强行互换无法泛化；只允许换新公共 Session 不符合需求 | D-03/D-04 冻结 | accepted-by-implementation（`src/contexts/session/domain/context.ts` 的 public_context_rehydrate） |
+| ADR-007 | 模型目标独立，最小同协议桥接并记录调用 | 首版完整 N×M 转换扩大范围；直接传 Provider 秘密给 Harness 削弱归属 | D-01/D-06 与模型路径验证 | accepted-by-implementation（ADR-011） |
 
-每条被采纳时拆成独立 ADR 文件，写清上下文、证据、决定、否决方案、失败边界、测试、迁移与日期。当前表是决策议程，不能在开发中以“表里写了”绕过未决条件。
+每条被采纳时拆成独立 ADR 文件，写清上下文、证据、决定、否决方案、失败边界、测试、迁移与日期。当前表是决策议程，不能在开发中以“表里写了”绕过未决条件。ADR-046 只记录处置与落地位置；独立文件是否补写由后续的契约 as-built 改写决定。
 
 ## 冻结交付所有权
 
@@ -34,14 +34,14 @@ ADR-001 由 C003，ADR-002/003 由 C008，ADR-004 由 C007，ADR-005 由 C004，
 
 V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/验证证据、独立文件与索引一致性以及阻塞项。核心记录仍 proposed、缺证据或未交付时 G1 不通过；不能因为依赖图与格式检查通过就自动接受决定。
 
-- [0016：本机原安装优先与OpenClaw原生接入](0016-local-installation-and-openclaw.md)（accepted）。
-- [0017：原渠道安装管理与原生接入](0017-native-installation-management.md)（accepted）：覆盖生产私有安装默认；真实本机管理、配置保护和明确能力边界，统一Provider管理后置。
+- [0016：本机原安装优先与OpenClaw原生接入](0016-local-installation-and-openclaw.md)（accepted；2026-10-11 “非标准安装通过自定义入口接入”的约定被 [ADR-044](0044-macos-official-channels.md) 部分取代，正式入口只认官网渠道）。
+- [0017：原渠道安装管理与原生接入](0017-native-installation-management.md)（accepted；被 [ADR-043](0043-upgrade-with-running-programs.md) 与 [ADR-044](0044-macos-official-channels.md) 各部分取代一条：“发现活动本机进程时拒绝原地升级”改为先确认再按产品方式重启，“开发目录链接保留原入口”改为非官网安装不维护）：覆盖生产私有安装默认；真实本机管理、配置保护和明确能力边界，统一Provider管理后置。
 
 - [0018：原生CLI认证与Homebrew单沙箱恢复](0018-native-cli-recovery.md)（accepted）：原Homebrew SDK配置保护恢复、Cursor原生更新/登录和Gemini直连协议边界。
 
 - [0019：快速选择与原生会话能力](0019-native-session-experience.md)（accepted）：选择与连接分离；本机配置/思考/命令/审批及v5迁移。统一聊天界面承载各Harness原生功能。
 
-- [ADR-020：全部接入的Harness按原生能力接出](0020-complete-native-harness-capabilities.md)：所有Harness的完整接入标准、原生绑定与恢复、能力缺口及逐项验收。
+- [ADR-020：全部接入的Harness按原生能力接出](0020-complete-native-harness-capabilities.md)（accepted，2026-10-11；完整能力仍进行中）：所有Harness的完整接入标准、原生绑定与恢复、能力缺口及逐项验收。
 
 - [ADR-021：原生配置来源透传、原生协议偏差容忍与能力矩阵](0021-native-profile-and-deviation-tolerance.md)（accepted）：只透传用户真实设置的配置位置变量；正常协议偏差归一而不归属；不代为执行原生全局写；逐Harness能力矩阵由设计检查校验。
 
@@ -53,7 +53,7 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
 
 - [ADR-025：对话分支与原生会话副本](0025-conversation-branches.md)（accepted）：分支为带引用历史的新Session；原生会话恰好在分支点时由Runner建立原生副本，否则以公共历史继续；Session v8。
 
-- [ADR-026：原生扩展的只读视图与技能调用](0026-native-extensions.md)（accepted）：Codex/Pi 技能、MCP 与插件按需只读列出；Codex 技能以原生 skill 输入经命令调用。
+- [ADR-026：原生扩展的只读视图与技能调用](0026-native-extensions.md)（accepted；否决“由 Hub 写技能或 MCP 配置”一条 2026-10-18 起被 [ADR-045](0045-unified-capability-management.md) 部分取代）：Codex/Pi 技能、MCP 与插件按需只读列出；Codex 技能以原生 skill 输入经命令调用。
 
 - [ADR-027：OpenClaw 回合按原生转录对账](0027-openclaw-transcript-reconciliation.md)（accepted）：桥结束后读取本会话本轮追加的原生转录，补记工具、思考与用量并修正真实停止原因；直连 Gateway 暂缓（条件见正文）。
 
@@ -63,7 +63,7 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
 
 - [ADR-030：在回合之间保留原生进程以运行后台任务](0030-retained-native-processes.md)（accepted，2026-10-12 实施，Session v11、v12）：采纳“需要时由用户选择结束后台进程”；按对话显式开启、默认关闭，空闲 30 分钟结束，最多保留 4 个；下一回合复用保留的进程，各种关闭都留证据；服务异常退出后，下一次启动按进程组号和启动时间识别并结束遗留的进程组，确认后才释放工作区；真实 Claude 后台任务跨回合与重启清理通过。
 
-- [ADR-031：接入 Hermes Agent 与 DeepSeek Harness](0031-hermes-and-deepseek-harness.md)（accepted）：两者经内置 ACP 接入；Hermes 恢复只用 session/load、文件改为文本指针、60 秒审批期限、/model 回复同步；通用 ACP 的 load 回放窗口从响应开始；发现只走 PATH/标准目录与显式自定义入口。
+- [ADR-031：接入 Hermes Agent 与 DeepSeek Harness](0031-hermes-and-deepseek-harness.md)（accepted；“固定探测目录并复用探测会话”与“dsh 醒目显示权限预设”两项分别被 [ADR-033](0033-native-catalog-cache-and-readiness.md) 与[第一链路打磨](../verification/first-chain-polish-2026-10-11.md)部分取代）：两者经内置 ACP 接入；Hermes 恢复只用 session/load、文件改为文本指针、60 秒审批期限、/model 回复同步；通用 ACP 的 load 回放窗口从响应开始；发现只走 PATH/标准目录与显式自定义入口。
 
 - [ADR-032：记录并显示回合阶段与首字延迟](0032-run-phases-and-first-output.md)（accepted）：Run 记录受理、准备、就绪、发送、首个输出与结束（Session v10）；界面按阶段显示已用时间，结束后显示首字与用时。
 
@@ -84,6 +84,7 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
   - 每个 Harness 记录真实验证过的版本范围（经适配器接入的还记录适配器版本），由测试与能力矩阵保持一致。
   - 本机版本不在范围内时，选择器与 Harnesses 列表提示“未经验证的版本”，不阻止使用。
   - 版本未知或从未验证的 Harness 不下结论。
+  - Pi 与 DeepSeek Harness 两行的已验证版本来自非官网安装，按 [ADR-044](0044-macos-official-channels.md) 为历史证据（部分取代）；dsh 的继续命令与 Hermes 的版本读取由 ADR-046 第 1 项更新。
 - [ADR-039：在原程序中继续原生会话](0039-continue-in-the-original-program.md)（accepted）：
   - 对话的执行配置显示原生会话 ID，并给出在原程序中继续的命令。
   - 交互形式按已安装版本的帮助给出，恢复机制以非交互形式真实验证；版本在验证范围内才给出命令。
@@ -115,3 +116,11 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
   - 技能、MCP、指令、子 Agent、命令、Hooks、插件在一个“能力”页统一查看；只改用户级配置，每次写入先预览并经用户确认，只认领自己写入的条目。取代 ADR-026 的否决条。
   - 技能以 `~/.agents/skills` 为唯一实体，只给 Claude（逐个链接）和 Hermes（`external_dirs`）放置；按 Harness 停用写各家自己的配置。
   - MCP 由 HarnessHub 保存只含变量名的清单，按各家格式写入；OpenClaw 的 MCP 与插件装卸推迟到升级之后。分六步实施，第 1 步是只读统一视图。
+- [ADR-046：聚焦六个 Harness 的工程加固切片](0046-harness-focus-hardening.md)（accepted，2026-10-21，总指挥兼审批代理裁决）：
+  - 方向由用户决定：只支持 Claude Code、Codex、OpenCode、DeepSeek Harness、WorkBuddy、Hermes Agent 六个并做精。
+  - 切片 harness-focus 承接第一批六项加固：版本单一来源与一致性检查（预发布语义）、失败写入记录去路径化与 history 逐条降级、流式输出按窗口合并提交（ADR-047）、G063 边界检查落地、Claude 认证状态与 OpenCode `/compact` 接出、非焦点四个（Cursor、Gemini CLI、OpenClaw、Pi）即日冻结。
+  - 处置 ADR-001～007（见上表）；`VERIFIED_VERSIONS` 的数字在真实重验收前不改。
+- ADR-047：流式输出按窗口合并提交（accepted；由并行任务撰写，文件 `0047-stream-output-coalescing.md`，索引先登记标题与状态，链接在集成时补）：每回合的事件数与提交成本降一个量级，先提交再发布不变。
+- [ADR-048：六个焦点 Harness 的范围、完成定义与 WorkBuddy 接入路线](0048-harness-scope-and-workbuddy.md)（proposed，等待用户决定）：
+  - 五层完成定义（设计采纳 / 代码完成 / 测试通过 / 真实引擎通过 / 只面向 macOS）与“做精”的判据。
+  - 用户待决项各给选项与推荐：非焦点四个冻结 / 冻结并默认隐藏（推荐）/ 删除；WorkBuddy 接入路线 npm / 应用内嵌 CLI 共享 `~/.workbuddy`（推荐）/ 并列；Harness id 与显示名；遥测、自动记忆、cron；运行时；两个永远为 false 的门禁标志与 G0～G5。
