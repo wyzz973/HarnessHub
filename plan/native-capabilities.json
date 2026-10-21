@@ -317,7 +317,7 @@
             ".tmp/cc-native-attachments-codex.json",
             "docs/verification/native-attachments-2026-10-11.md"
           ],
-          "note": "只读副本路径写入提示，原程序用自己的工具读取"
+          "note": "原接口缺口：没有 file 输入类型（仅 localImage/localAudio/mention(app/plugin) 与文本路径）；Hub 把只读副本路径写入提示，原程序用自己的工具读取"
         },
         "output-media": {
           "native": "partial",
@@ -651,7 +651,7 @@
             ".tmp/cc-native-attachments-claude.json",
             "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
           ],
-          "note": "小文本文件以嵌入资源发送并真实读取（文件内标记被答出）；其余为文件链接"
+          "note": "原接口缺口：blob 被丢弃，resource_link 只成链接文本，只有文本 resource 以 <context> 注入；Hub 把小文本文件以嵌入资源发送并真实读取（文件内标记被答出），其余作文件链接"
         },
         "output-media": {
           "native": "partial",
@@ -786,7 +786,7 @@
             ".tmp/cc-native-commands-claude-export.json",
             "docs/verification/claude-export-2026-10-11.md"
           ],
-          "note": "代理没有自己的 export 命令时 Hub 提供 /export：只读复制本会话转录作为产物；找不到转录时明确失败"
+          "note": "原接口缺口：ACP 没有导出方法，代理也没有自己的 export 命令；Hub 提供 /export，只读复制本会话转录（<CLAUDE_CONFIG_DIR 或 ~/.claude>/projects 下的 jsonl）作为产物，找不到转录时明确失败"
         }
       }
     },
@@ -1155,7 +1155,7 @@
             ".tmp/cc-native-config-openclaw-fast.json",
             "docs/verification/native-config-sync-2026-10-11.md"
           ],
-          "note": "每回合后经原 CLI 读回会话行与 chat.history；/think high、/fast on 后下一回合沿用，同选择显式切换后恢复所选；恢复的会话按会话行模型检查图片"
+          "note": "原接口缺口：ACP 桥不推送 config_option_update，原生指令改过的会话设置不会主动通知 Hub；Hub 每回合后经原 CLI 读回会话行与 chat.history；/think high、/fast on 后下一回合沿用，同选择显式切换后恢复所选；恢复的会话按会话行模型检查图片"
         },
         "thinking": {
           "native": "partial",
@@ -1211,7 +1211,7 @@
             ".tmp/cc-native-activity-openclaw.json",
             "docs/verification/openclaw-transcript-2026-10-11.md"
           ],
-          "note": "本轮逐次调用用量与费用来自原生转录；上下文占用来自桥"
+          "note": "原接口缺口：桥的 usage_update 只有近似的 {used,size}，没有费用；Hub 的本轮逐次调用用量与费用来自原生转录，上下文占用来自桥"
         },
         "approvals": {
           "native": "partial",
@@ -1263,7 +1263,7 @@
             ".tmp/cc-native-attachments-opencode-openclaw.json",
             "docs/verification/native-attachments-2026-10-11.md"
           ],
-          "note": "文本资源由桥展开为文本；文件链接成为文本路径"
+          "note": "原接口缺口：桥丢弃 blob，resource_link 只成文本，只有文本 resource 追加为文本；Hub 的文本资源由桥展开为文本，文件链接成为文本路径"
         },
         "output-media": {
           "native": "no",
@@ -2375,7 +2375,7 @@
             ".tmp/cc-hermes-dsh-attachments.json",
             "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
           ],
-          "note": "Hub 改为在提示词中附上只读副本路径，由 Hermes 用自己的文件工具读取"
+          "note": "原接口缺口：resource_link 与嵌入资源都不会交给模型（acp_adapter/server.py）；Hub 改为在提示词中附上只读副本路径，由 Hermes 用自己的文件工具读取"
         },
         "output-media": {
           "native": "no",

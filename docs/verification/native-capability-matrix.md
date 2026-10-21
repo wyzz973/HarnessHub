@@ -70,7 +70,7 @@
 | 原生提问与表单 | 具备 | item/tool/requestUserInput、mcpServer/elicitation/request | 部分 | 通过 | 未接出 | — | requestUserInput 已接出；MCP elicitation 仍被 -32601 拒绝 |
 | 图片输入 | 具备 | UserInput.image(data URL)/localImage；Model.inputModalities | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-codex.json；docs/verification/native-attachments-2026-10-11.md | localImage 指向只读副本；按所开模型 inputModalities 门控 |
 | 音频输入 | 部分 | UserInput.audio/localAudio，仅 inputModalities 含 audio 的模型 | 已接出 | 通过 | 受阻 | — | localAudio 已接出；本机模型目录没有声明音频输入的模型，真实无法验收 |
-| 文件/文档输入 | 部分 | 无 file 输入类型；仅 localImage/localAudio/mention(app/plugin) 与文本路径 | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-codex.json；docs/verification/native-attachments-2026-10-11.md | 只读副本路径写入提示，原程序用自己的工具读取 |
+| 文件/文档输入 | 部分 | 无 file 输入类型；仅 localImage/localAudio/mention(app/plugin) 与文本路径 | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-codex.json；docs/verification/native-attachments-2026-10-11.md | 原接口缺口：没有 file 输入类型（仅 localImage/localAudio/mention(app/plugin) 与文本路径）；Hub 把只读副本路径写入提示，原程序用自己的工具读取 |
 | 非文本输出 | 部分 | imageGeneration.savedPath、imageView.path | 已接出 | 通过 | 未接出 | — | imageGeneration.savedPath 读取为产物（回合等待读取完成）、imageView 显示路径；真实图片生成未验收 |
 | Skills | 具备 | skills/list、UserInput.skill | 已接出 | 通过 | 通过 | .tmp/cc-native-extensions.json；docs/verification/native-extensions-2026-10-11.md | skills/list 列出用户、系统与工作区技能（真实 173 项）；启用的技能以 /skill:名称 作为 Codex 自己的 skill 输入调用，工作区技能真实调用成功 |
 | MCP | 具备 | 用户 MCP 按原配置加载；mcpServerStatus/list、mcpServer/oauth/login | 部分 | 通过 | 通过 | .tmp/cc-native-extensions.json；docs/verification/native-extensions-2026-10-11.md | 原生扩展面板只读显示 MCP 服务器状态、认证与工具数（真实 14 个）；登录与重载在原程序中进行 |
@@ -104,7 +104,7 @@
 | 原生提问与表单 | 具备 | AskUserQuestion/MCP 表单经 elicitation/create，需客户端声明 elicitation.form | 已接出 | 通过 | 通过 | .tmp/cc-native-question-claude.json；docs/verification/native-questions-2026-10-11.md | 声明 elicitation.form 后 AskUserQuestion 可用：表单逐题在对话中提问（选项、自填、跳过、取消）；多选题以单个选项加自填回答；含数字等字段的表单整表拒绝 |
 | 图片输入 | 具备 | promptCapabilities.image；image block base64 | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | 红色图片真实识别 |
 | 音频输入 | 不提供 | 未声明 audio，音频块被静默丢弃 | 不适用 | 不适用 | 不适用 | — | — |
-| 文件/文档输入 | 部分 | 文本 resource 以 <context> 注入；blob 被丢弃；resource_link 只成链接文本 | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | 小文本文件以嵌入资源发送并真实读取（文件内标记被答出）；其余为文件链接 |
+| 文件/文档输入 | 部分 | 文本 resource 以 <context> 注入；blob 被丢弃；resource_link 只成链接文本 | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | 原接口缺口：blob 被丢弃，resource_link 只成链接文本，只有文本 resource 以 <context> 注入；Hub 把小文本文件以嵌入资源发送并真实读取（文件内标记被答出），其余作文件链接 |
 | 非文本输出 | 部分 | assistant 图片块（少见）与工具结果中的图片 | 已接出 | 通过 | 未接出 | docs/verification/claude-real-and-approval-detail-2026-10-11.md | 账号额度已恢复；非文本输出尚未单独真实验收 |
 | Skills | 具备 | skills 出现在原生命令目录并按原配置加载 | 部分 | 通过 | 未接出 | — | 通过原生命令执行；无独立技能管理界面 |
 | MCP | 具备 | 用户/项目/插件 MCP 默认加载；MCP OAuth 需 elicitation.url | 部分 | 未接出 | 未接出 | — | 原程序加载；Hub 无状态/OAuth 界面 |
@@ -116,7 +116,7 @@
 | 回滚/回退 | 不提供 | 非 JetBrains AIR 客户端无指定消息回退 | 不适用 | 不适用 | 不适用 | — | — |
 | 子 Agent | 具备 | 子会话 subagent_spawned/state_update 需 subagents 能力；否则工具带 parentToolUseId | 已接出 | 通过 | 通过 | .tmp/cc-native-subagent-claude.json；docs/verification/native-subagents-2026-10-11.md | 未协商原生子会话时，子 Agent 工具平铺在根会话并带 parentToolUseId；Hub 记录关联并在 Agent 调用下嵌套显示，子 Agent 文字不进入主回复 |
 | 后台任务 | 具备 | 后台 shell 与自主后续回合；async_task_* 仅 AIR | 已接出 | 通过 | 通过 | .tmp/cc-kept-process-2026-10-12.json；.tmp/cc-kept-orphan-2026-10-12.json；.tmp/cc-kept-outside-2026-10-12.json；docs/decisions/0030-retained-native-processes.md；docs/verification/first-chain-polish-2026-10-11.md | 按对话开启“保持原生进程”（默认关闭，新对话可在首条消息前开启）；回合之间保留 claude-agent-acp 进程，后台 shell 继续运行，下一回合复用进程读取其输出（真实通过：启动 7 毫秒，读到后台输出）；回合外更新只计数；空闲 30 分钟、切换、关闭、重建、分支与服务关闭时先结束并留证；服务被强制结束后，下一次启动按进程组号与启动时间接管：真实验证中 Claude Code 在输入关闭后自行结束（含后台任务），延迟重启记为已结束，立即重启时由 Hub 结束进程组，两种情况都在确认后释放工作区；Claude 的后台 Bash 在自己的进程组里，靠原程序自己清理；结束或接管前枚举离开进程组的后代，不向它们发信号，仍在运行时提示一次：真实验证找到 3 个、仍在运行 0 个（Claude 自己结束了后台任务），真实场景未出现仍在运行大于 0 的情况，只在集成与浏览器测试中覆盖 |
-| 导出与产物 | 部分 | ACP 无导出方法；转录在 <CLAUDE_CONFIG_DIR 或 ~/.claude>/projects/<项目>/<会话>.jsonl（claude-agent-acp 也在此查找） | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-claude-export.json；docs/verification/claude-export-2026-10-11.md | 代理没有自己的 export 命令时 Hub 提供 /export：只读复制本会话转录作为产物；找不到转录时明确失败 |
+| 导出与产物 | 部分 | ACP 无导出方法；转录在 <CLAUDE_CONFIG_DIR 或 ~/.claude>/projects/<项目>/<会话>.jsonl（claude-agent-acp 也在此查找） | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-claude-export.json；docs/verification/claude-export-2026-10-11.md | 原接口缺口：ACP 没有导出方法，代理也没有自己的 export 命令；Hub 提供 /export，只读复制本会话转录（<CLAUDE_CONFIG_DIR 或 ~/.claude>/projects 下的 jsonl）作为产物，找不到转录时明确失败 |
 
 ## OpenCode
 
@@ -162,17 +162,17 @@
 | 思考档位 | 具备 | configOptions thought_level | 已接出 | 通过 | 通过 | .tmp/native-complete-real-combined.json；docs/verification/complete-native-capabilities-2026-10-11.md | low 档真实使用（2026-10-11 的验证早于 ADR-047 与 B6，.tmp 证据已不存在，待 M3 T-OC-08 在当前代码上重验） |
 | 模式与原生设置 | 具备 | fast_mode/verbose_level/reasoning_level/response_usage/elevated_level | 已接出 | 通过 | 部分通过 | .tmp/native-complete-real-combined.json；docs/verification/complete-native-capabilities-2026-10-11.md | 仅思考档位 low 真实使用；verbose/reasoning/usage/elevated 未真实使用；桥的模式选项与思考档位重复（C5 去重） |
 | 原生命令目录与执行 | 具备 | 固定 27 条命令（缺 /fast /exec /approve 等） | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-acp.json；docs/verification/native-session-actions-2026-10-11.md | 原生 /compact 真实执行；固定 27 条命令（缺 /fast /exec /approve 等）（2026-10-11 的验证早于 ADR-047 与 B6，.tmp 证据已不存在，待 M3 T-OC-08 在当前代码上重验） |
-| 原生命令改配置后的同步 | 部分 | /think、/fast、/verbose、/reasoning、/elevated、/model 等指令持久修改 Gateway 会话设置，但 ACP 桥不推送 config_option_update | 已接出 | 通过 | 通过 | .tmp/cc-native-config-openclaw.json；.tmp/cc-native-config-openclaw-fast.json；docs/verification/native-config-sync-2026-10-11.md | 每回合后经原 CLI 读回会话行与 chat.history；/think high、/fast on 后下一回合沿用，同选择显式切换后恢复所选；恢复的会话按会话行模型检查图片 |
+| 原生命令改配置后的同步 | 部分 | /think、/fast、/verbose、/reasoning、/elevated、/model 等指令持久修改 Gateway 会话设置，但 ACP 桥不推送 config_option_update | 已接出 | 通过 | 通过 | .tmp/cc-native-config-openclaw.json；.tmp/cc-native-config-openclaw-fast.json；docs/verification/native-config-sync-2026-10-11.md | 原接口缺口：ACP 桥不推送 config_option_update，原生指令改过的会话设置不会主动通知 Hub；Hub 每回合后经原 CLI 读回会话行与 chat.history；/think high、/fast on 后下一回合沿用，同选择显式切换后恢复所选；恢复的会话按会话行模型检查图片 |
 | 思考输出 | 部分 | ACP 桥不实时转发思考，仅 load 回放 | 部分 | 通过 | 未接出 | .tmp/cc-native-thinking-openclaw-gpt.json | 桥未流式转发思考时，回合结束后从原生转录补记；deepseek-chat 无思考输出，推理模型 openai-codex/gpt-5.4 在本机请求失败，真实未验收 |
 | 工具状态 | 部分 | 桥未声明 tool-events，工具事件很可能不会到达 | 部分 | 通过 | 通过 | .tmp/cc-native-activity-openclaw.json；docs/verification/openclaw-transcript-2026-10-11.md | ACP 桥不转发工具事件；回合结束后按本会话原生转录补记工具与结果（非实时） |
 | 工具输入/输出/差异 | 部分 | Gateway agent 事件含工具输入输出（需 tool-events 与 verbose=full） | 部分 | 通过 | 通过 | .tmp/cc-native-activity-openclaw.json；docs/verification/openclaw-transcript-2026-10-11.md | 工具参数与结果来自本会话原生转录，回合结束后补记；实时工具流需直连 Gateway |
 | 计划 | 不提供 | 桥从不发送 plan | 不适用 | 不适用 | 不适用 | — | — |
-| 用量/上下文/费用 | 部分 | usage_update 近似 {used,size}，无费用；sessions.list 含 token/估算费用 | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-openclaw.json；docs/verification/openclaw-transcript-2026-10-11.md | 本轮逐次调用用量与费用来自原生转录；上下文占用来自桥 |
+| 用量/上下文/费用 | 部分 | usage_update 近似 {used,size}，无费用；sessions.list 含 token/估算费用 | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-openclaw.json；docs/verification/openclaw-transcript-2026-10-11.md | 原接口缺口：桥的 usage_update 只有近似的 {used,size}，没有费用；Hub 的本轮逐次调用用量与费用来自原生转录，上下文占用来自桥 |
 | 工具审批 | 部分 | exec.approval.* 只走 Gateway RPC/事件；经 ACP 会静默等待约 120 秒后拒绝 | 未接出 | 未接出 | 未接出 | — | — |
 | 原生提问与表单 | 不提供 | ACP 桥不发送提问 | 不适用 | 不适用 | 不适用 | — | — |
 | 图片输入 | 具备 | image block → chat.send attachment（≤5 MB） | 已接出 | 通过 | 部分通过 | .tmp/cc-native-attachments-opencode-openclaw.json；docs/verification/native-attachments-2026-10-11.md；.tmp/cc-native-attachments-openclaw-gpt.json | 按 models.list 的模型 input 与 5 MB 上限门控；默认 deepseek-chat 在派发前拒绝；识图模型 openai-codex/gpt-5.4 在本机 OpenClaw 中请求失败（原生转录记录错误，Hub 判为失败），识图未真实验收 |
 | 音频输入 | 不提供 | 音频块被丢弃 | 不适用 | 不适用 | 不适用 | — | — |
-| 文件/文档输入 | 部分 | 文本 resource 追加为文本；blob 丢弃；resource_link 成文本 | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-opencode-openclaw.json；docs/verification/native-attachments-2026-10-11.md | 文本资源由桥展开为文本；文件链接成为文本路径 |
+| 文件/文档输入 | 部分 | 文本 resource 追加为文本；blob 丢弃；resource_link 成文本 | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-opencode-openclaw.json；docs/verification/native-attachments-2026-10-11.md | 原接口缺口：桥丢弃 blob，resource_link 只成文本，只有文本 resource 追加为文本；Hub 的文本资源由桥展开为文本，文件链接成为文本路径 |
 | 非文本输出 | 不提供 | 桥不转发图片/媒体；MEDIA: 行以原文出现 | 不适用 | 不适用 | 不适用 | — | — |
 | Skills | 具备 | Gateway skills.status 与技能命令 | 部分 | 通过 | 通过 | .tmp/cc-native-extensions-openclaw.json；docs/verification/native-extensions-2026-10-11.md | “原生扩展”面板列出 Gateway skills.status 的技能（124 个，105 个可用）；技能由原程序按需使用，Hub 不单独调用（桥未提供 /skill 命令） |
 | MCP | 部分 | 2026.3.23-2 的 openclaw.json（JSON5）有 mcp.servers，另有隐藏的 openclaw mcp set/unset/list/show 命令（docs/research/native-extension-configs-2026-10-18.md:42）；ACP 桥的扩展报告不含 MCP（src/adapters/control/openclaw.ts 的 extensions 返回 mcpServers: []） | 未接出 | 未接出 | 未接出 | — | ACP 桥不报告 MCP；能力页按 ADR-045 只读 openclaw.json 的 mcp.servers（src/adapters/capability-reads.ts 的 mcp: { style: "openclaw" }，不计入本格），写入按 ADR-045 裁决第 9 条推迟到升级之后 |
@@ -308,7 +308,7 @@
 | 原生提问与表单 | 不提供 | hermes-acp 工具集不含 clarify（toolsets.py） | 不适用 | 不适用 | 不适用 | — | — |
 | 图片输入 | 具备 | promptCapabilities.image；图片转为 OpenAI image_url 交给模型（acp_adapter/server.py） | 已接出 | 通过 | 受阻 | .tmp/cc-hermes-dsh-attachments.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | Hermes 公布并转发图片，但本机模型 deepseek-v4-pro 回复看不到图片 |
 | 音频输入 | 不提供 | 未公布 audio，音频块被丢弃（acp_adapter/server.py _content_blocks_to_openai_user_content） | 不适用 | 不适用 | 不适用 | — | — |
-| 文件/文档输入 | 部分 | resource_link 与嵌入资源不会交给模型（acp_adapter/server.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-attachments.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | Hub 改为在提示词中附上只读副本路径，由 Hermes 用自己的文件工具读取 |
+| 文件/文档输入 | 部分 | resource_link 与嵌入资源不会交给模型（acp_adapter/server.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-attachments.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 原接口缺口：resource_link 与嵌入资源都不会交给模型（acp_adapter/server.py）；Hub 改为在提示词中附上只读副本路径，由 Hermes 用自己的文件工具读取 |
 | 非文本输出 | 不提供 | agent_message_chunk 只发文本（acp_adapter/events.py）；hermes-acp 工具集不含图像生成 | 不适用 | 不适用 | 不适用 | — | — |
 | Skills | 部分 | skills_list、skill_view、skill_manage 工具与 ~/.hermes/skills；ACP 没有技能列表（toolsets.py） | 未接出 | 未接出 | 未接出 | — | — |
 | MCP | 部分 | config.yaml 的 mcp_servers 在启动时注册，会话也可附加 MCP 服务器；ACP 没有列表（acp_adapter/entry.py、server.py） | 未接出 | 未接出 | 未接出 | — | — |

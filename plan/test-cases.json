@@ -10060,7 +10060,7 @@
         "R22"
       ],
       "invariants": [
-        "INV-17"
+        "INV-16"
       ],
       "layer": "integration",
       "planned_file": "tests/integration/web-server.test.ts",
@@ -10094,7 +10094,7 @@
         "R04"
       ],
       "invariants": [
-        "INV-15"
+        "INV-16"
       ],
       "layer": "unit",
       "planned_file": "tests/unit/catalog-import.test.ts",
