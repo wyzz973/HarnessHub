@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "description": "G063 依赖边界与测试隔离规则，由 tools/check-boundaries.mjs 解释执行（pnpm check:boundaries，已并入 pnpm check）。规则和显式例外只在本文件登记；新增例外必须写明原因，例外与代码不再对应时检查失败（B0）。说明见 docs/engineering/development.md 第 2 节。路径模式：* 匹配一段目录名，** 匹配零段或多段；node: 模块按基础名匹配，含子路径（node:fs 同时覆盖 node:fs/promises）。",
+  "scan": {
+    "roots": ["src", "web/src", "tests"],
+    "extensions": [".ts", ".tsx", ".mts", ".cts"],
+    "skipDirectories": ["node_modules", "dist", ".git"]
+  },
+  "rules": [
+    {
+      "id": "B1",
+      "title": "领域层只依赖契约和同层领域代码，不碰文件、网络、数据库、子进程或第三方包",
+      "kind": "imports",
+      "appliesTo": ["src/contexts/*/domain/**"],
+      "node": { "allow": ["node:path", "node:crypto", "node:buffer", "node:util", "node:url", "node:string_decoder"] },
+      "packages": { "allow": [] },
+      "paths": { "allow": ["src/contracts/**", "src/contexts/*/domain/**"] },
+      "exceptions": []
+    },
+    {
+      "id": "B2",
+      "title": "应用层只依赖契约、领域层和同层应用代码，I/O 由注入的端口承担",
+      "kind": "imports",
+      "appliesTo": ["src/contexts/*/application/**"],
+      "node": { "allow": ["node:path", "node:crypto", "node:buffer", "node:util", "node:url", "node:string_decoder", "node:events", "node:perf_hooks"] },
+      "packages": { "allow": [] },
+      "paths": { "allow": ["src/contracts/**", "src/contexts/*/domain/**", "src/contexts/*/application/**"] },
+      "exceptions": []
+    },
+    {
+      "id": "B3",
+      "title": "契约层自足：只导入契约层，不含 node 内置模块或第三方包，不依赖实现层",
+      "kind": "imports",
+      "appliesTo": ["src/contracts/**"],
+      "node": { "allow": [] },
+      "packages": { "allow": [] },
+      "paths": { "allow": ["src/contracts/**"] },
+      "exceptions": [
+        {
+          "file": "src/contracts/control.ts",
+          "key": "src/contexts/catalog/domain/discovery.js",
+          "typeOnly": true,
+          "reason": "2026-10-21 登记的现状：控制契约以 import type 引用目录领域的 ControlProtocol，只在类型层，没有运行时依赖。不得扩大；新增引用须另行登记，消除办法是把该类型移入契约层。"
+        },
+        {
+          "file": "src/contracts/control.ts",
+          "key": "src/contexts/catalog/domain/catalog.js",
+          "typeOnly": true,
+          "reason": "2026-10-21 登记的现状：控制契约以 import type 引用目录领域的 ResolvedCommand，只在类型层，没有运行时依赖。不得扩大；新增引用须另行登记，消除办法是把该类型移入契约层。"
+        },
+        {
+          "file": "src/contracts/management.ts",
+          "key": "src/contexts/catalog/domain/catalog.js",
+          "typeOnly": true,
+          "reason": "2026-10-21 登记的现状：管理契约以 import type 引用目录领域的 ResolvedCommand，只在类型层，没有运行时依赖。不得扩大；新增引用须另行登记，消除办法是把该类型移入契约层。"
+        }
+      ]
+    },
+    {
+      "id": "B4",
+      "title": "限界上下文互不导入，跨上下文只经 src/contracts",
+      "kind": "isolated",
+      "appliesTo": ["src/contexts/**"],
+      "groups": "src/contexts/*",
+      "exceptions": []
+    },
+    {
+      "id": "B5",
+      "title": "Adapter 不依赖网络入口 src/web 和命令行入口 src/cli",
+      "kind": "imports",
+      "appliesTo": ["src/adapters/**"],
+      "paths": { "deny": ["src/web/**", "src/cli/**"] },
+      "exceptions": []
+    },
+    {
+      "id": "B6",
+      "title": "前端 web/src 只引用自身和 src/contracts，不引用 node 内置模块",
+      "kind": "imports",
+      "appliesTo": ["web/src/**"],
+      "node": { "allow": [] },
+      "paths": { "allow": ["web/src/**", "src/contracts/**"] },
+      "exceptions": []
+    },
+    {
+      "id": "B7",
+      "title": "网关源码 src 不导入 tests 和前端目录 web（src/web 是网关的服务端代码，不受此限）",
+      "kind": "imports",
+      "appliesTo": ["src/**"],
+      "paths": { "deny": ["tests/**", "web/**"] },
+      "exceptions": []
+    },
+    {
+      "id": "B8",
+      "title": "测试组合应用或启动 Gateway 时必须给出自己的工作区租约目录（ADR-041）",
+      "kind": "call-options",
+      "appliesTo": ["tests/**"],
+      "calls": [
+        { "callee": "application", "argument": 2, "anyOf": ["workspaceLockRoot"] },
+        { "callee": "startWebServer", "argument": 0, "anyOf": ["workspaceLockRoot", "application"] }
+      ],
+      "exceptions": []
+    },
+    {
+      "id": "B9",
+      "title": "测试启动正式命令 web、chat、sessions 时必须带 --workspace-lock-root（ADR-041），--manifest 必须配 --allow-unofficial（ADR-044）",
+      "kind": "spawn-flags",
+      "appliesTo": ["tests/**"],
+      "entries": ["src/cli/web.js", "src/cli/chat.js", "src/cli/sessions.js"],
+      "spawners": ["spawn", "spawnSync", "execFile", "execFileSync", "fork", "exec", "execSync"],
+      "requiredFlag": "--workspace-lock-root",
+      "pairs": [{ "when": "--manifest", "requires": "--allow-unofficial" }],
+      "exemptFlags": ["--help", "-h"],
+      "exceptions": [
+        {
+          "file": "tests/integration/login-shell.test.ts",
+          "key": "--allow-unofficial",
+          "reason": "2026-10-21 登记的现状：该测试只检查登录 shell 的开关，传入的发现清单没有任何定义（definitions 为空），web 命令因此只打印 MANIFEST_IGNORED 后照常运行，断言不依赖清单。应在测试里去掉 --manifest 或补上 --allow-unofficial，之后删除本例外。"
+        }
+      ]
+    },
+    {
+      "id": "B10",
+      "title": "第三方包只允许出现在 src/infrastructure 和 src/adapters，且限于登记的包",
+      "kind": "imports",
+      "appliesTo": ["src/**"],
+      "packages": {
+        "allow": ["semver", "yaml", "jsonc-parser", "tar", "smol-toml", "json5", "yauzl", "unbzip2-stream"],
+        "inPaths": ["src/infrastructure/**", "src/adapters/**"]
+      },
+      "exceptions": []
+    }
+  ]
+}
