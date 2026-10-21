@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -9,8 +9,9 @@ import { fileURLToPath } from "node:url";
 import { AcpControl } from "../../src/adapters/control/acp.js";
 import { CodexControl } from "../../src/adapters/control/codex.js";
 import { nativeConversationId, type BackendResult, type CleanupEvidence, type ControlEvent, type ControlRun, type HarnessControl, type NativeConversationId, type ProtocolObservation } from "../../src/contracts/control.js";
-import { SessionError, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId } from "../../src/contracts/session.js";
+import { SessionError, STREAM_WINDOW_MS, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId } from "../../src/contracts/session.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
+import { MAX_OUTPUT_BYTES } from "../../src/contexts/session/domain/state.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
 import { LocalContentStore } from "../../src/infrastructure/session/content-store.js";
 import { SqliteWorkspaceLeaseProvider } from "../../src/infrastructure/session/workspace-lease.js";
@@ -33,7 +34,8 @@ async function fixture(t: test.TestContext): Promise<Fixture> {
   t.after(async () => {
     for (const app of runtimes) {
       try { await app.close(); }
-      catch (error) { if (!(error instanceof SessionError) || !["SESSION_BLOCKED", "PUBLICATION_FAILED", "STORAGE_UNAVAILABLE"].includes(error.code)) throw error; }
+      // A fault test may already have poisoned its Store, or replaced the owner marker (the ADR-047 owner-loss case).
+      catch (error) { if (!(error instanceof SessionError) || !["SESSION_BLOCKED", "PUBLICATION_FAILED", "STORAGE_UNAVAILABLE", "OWNER_LOST"].includes(error.code)) throw error; }
     }
     for (const owned of stores) try { owned.close(); } catch { /* A fault test may already poison its Store. */ }
     await rm(root, { recursive: true, force: true });
@@ -889,4 +891,233 @@ test("a native session continues as a new conversation that quotes its recent hi
   delete (factory as SessionBindingFactory).readNativeSession;
   await assert.rejects(app.importNative(f.configuration, { harnessId: "alpha" }, "native-d", "import-four"), (error: unknown) => error instanceof SessionError && error.code === "NATIVE_SESSION_LIST_UNAVAILABLE");
   await assert.rejects(app.importNative(f.configuration, { harnessId: "alpha" }, "bad\nid", "import-five"), (error: unknown) => error instanceof SessionError && error.code === "INVALID_INPUT");
+});
+
+/** Timers the test fires itself: an ADR-047 window never waits for real time here. */
+class ManualTimers {
+  private readonly armed = new Map<number, () => void>();
+  private count = 0;
+  readonly schedule = (fn: () => void, ms: number): (() => void) => {
+    assert.equal(ms, STREAM_WINDOW_MS, "a window is armed for the contract's window");
+    const id = ++this.count; this.armed.set(id, fn); return () => { this.armed.delete(id); };
+  };
+  get pending(): number { return this.armed.size; }
+  /** Runs every timer armed so far, in order, and says how many; one armed while running waits for the next call. */
+  fire(): number { const due = [...this.armed.values()]; this.armed.clear(); for (const fn of due) fn(); return due.length; }
+}
+interface StreamingTurn { readonly emit: (event: ControlEvent) => void; readonly result: Gate<BackendResult>; readonly stopped: Gate<void>; stops: number }
+/** A program the test plays itself: each Turn hands out its event callback and settles when the test says (ADR-047 cases). */
+class StreamingFactory implements SessionBindingFactory {
+  readonly turns: StreamingTurn[] = [];
+  closes = 0;
+  private readonly waiting = new Map<number, (turn: StreamingTurn) => void>();
+  async validate(request: SelectionRequest): Promise<HarnessSelection> { return selection(request); }
+  async prepare(_selected: HarnessSelection, configuration: SessionConfiguration): Promise<PreparedSessionBinding> {
+    const mine: StreamingTurn[] = [];
+    const control: HarnessControl = {
+      initialize: async () => ({ protocol: "acp-v1", protocolVersion: 1, agentName: "streaming-fixture", agentVersion: "1", authenticationMethods: [], capabilities: {} } satisfies ProtocolObservation),
+      open: async () => nativeConversationId("streaming-fixture"),
+      startText: async (_id: NativeConversationId, _text: string, output: (event: ControlEvent) => void): Promise<ControlRun> => {
+        const turn: StreamingTurn = { emit: output, result: new Gate<BackendResult>(), stopped: new Gate<void>(), stops: 0 };
+        this.turns.push(turn); mine.push(turn);
+        // Handed to the test only once the Runtime holds the Turn's handle, as a real program's first chunk arrives by I/O after that.
+        const waiter = this.waiting.get(this.turns.length); this.waiting.delete(this.turns.length);
+        if (waiter) setImmediate(() => waiter(turn));
+        return { result: turn.result.promise, requestStop: async () => { turn.stops += 1; turn.stopped.resolve(); return { requested: true }; } };
+      },
+      // A closed connection settles nothing more: a Turn the test did not settle ends like one whose process was ended.
+      close: async () => { this.closes += 1; for (const turn of mine) turn.result.reject(new SessionError("PROCESS_EXITED", "fixture connection closed")); return clean; },
+    };
+    return { control, workspace: configuration.workspace, assertOwned: () => {}, close: () => control.close() };
+  }
+  /** The `index`th Turn (from one) once the Runtime has dispatched it. */
+  dispatched(index: number): Promise<StreamingTurn> {
+    const turn = this.turns[index - 1];
+    return turn === undefined ? new Promise(resolve => { this.waiting.set(index, resolve); }) : Promise.resolve(turn);
+  }
+}
+/** A Runtime whose ADR-047 windows expire only when the test fires its timers; the clock steps a millisecond per reading. */
+function windowed(f: Fixture, factory: SessionBindingFactory, options: { readonly publish?: (event: SessionEvent) => void; readonly executionBudgetMs?: number } = {}): { readonly app: SessionRuntime; readonly timers: ManualTimers } {
+  const timers = new ManualTimers(); let id = 0, clock = Date.parse("2026-10-21T00:00:00Z");
+  const app = new SessionRuntime(f.store, factory, { id: () => "window-" + String(++id), now: () => new Date(clock += 1), publish: options.publish ?? (() => {}),
+    fingerprint: value => createHash("sha256").update(value).digest("hex"), schedule: timers.schedule, ...(options.executionBudgetMs === undefined ? {} : { executionBudgetMs: options.executionBudgetMs }) });
+  f.runtimes.push(app); return { app, timers };
+}
+/** The whole committed log of a Session, oldest first (the Store pages it). */
+function log(f: Fixture, id: SessionId): SessionEvent[] {
+  const rows: SessionEvent[] = [];
+  for (let after = 0;;) { const page = f.store.events(id, after, 100); if (!page.length) return rows; rows.push(...page); after = page.at(-1)!.seq; }
+}
+/** Every committed native output as "kind" or "text:…"/"thinking:…", with the requests the program made, in log order. */
+function outputs(f: Fixture, id: SessionId): string[] {
+  return log(f, id).flatMap(row => {
+    if (row.type === "permission.requested") return ["permission"];
+    if (row.type !== "run.output") return [];
+    const native = row.data.event; assert.ok(native !== null && typeof native === "object" && "type" in native && typeof native.type === "string");
+    return [native.type === "text" || native.type === "thinking" ? native.type + ":" + String("text" in native ? native.text : "") : native.type];
+  });
+}
+/** The `index`th assistant reply of a Session, as committed. */
+function reply(app: SessionRuntime, id: SessionId, index = 0): string | undefined { return app.read(id).messages.filter(message => message.role === "assistant")[index]?.text; }
+/** Replaces the owner marker, so the Store's next ownership check fails with OWNER_LOST (as a taken-over data root does). */
+async function loseOwner(f: Fixture): Promise<void> {
+  const data = join(f.root, "data");
+  await rename(join(data, "owner.sqlite"), join(data, "old-owner.sqlite")); await writeFile(join(data, "owner.sqlite"), Buffer.alloc(0), { mode: 0o600 });
+}
+
+test("INV-06/INV-20 ADR-047: 200 text chunks a millisecond apart are committed as windows, the reply is the chunks byte for byte, and the first chunk marks the first output at once; thinking the same", async t => {
+  const f = await fixture(t), factory = new StreamingFactory(), published: SessionEvent[] = [];
+  const { app, timers } = windowed(f, factory, { publish: event => { assert.ok(f.store.events(event.sessionId, event.seq - 1, 1).some(row => row.seq === event.seq), "published before its commit"); published.push(event); } });
+  const session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  const chunks = Array.from({ length: 200 }, (_, index) => `第${index}块 🌱 `);
+  const first = factory.dispatched(1); app.send(session.id, "stream text", "text"); const turn = await first;
+  turn.emit({ type: "text", text: chunks[0]! });
+  // The first output is its own committed fact at the chunk's arrival; the text waits for its window.
+  assert.deepEqual(log(f, session.id).filter(row => row.type === "run.first_output" || row.type === "run.output").map(row => row.type), ["run.first_output"]);
+  assert.equal(timers.pending, 1, "the first chunk arms the window"); assert.equal(reply(app, session.id), undefined, "an open window is not committed");
+  const firstOutputAt = app.read(session.id).runs[0]!.timing!.firstOutputAt!;
+  // A millisecond between chunks: the window's timer is due after a hundred of them, so it is fired after each hundred.
+  for (const [index, text] of chunks.entries()) { if (index > 0) turn.emit({ type: "text", text }); if ((index + 1) % 100 === 0) assert.equal(timers.fire(), 1, "one window is armed at a time"); }
+  assert.equal(reply(app, session.id), chunks.join(""), "both windows were committed when their timers ran out");
+  turn.result.resolve({ status: "completed", reason: "fixture" }); await app.wait(session.id);
+  const run = app.read(session.id).runs[0]!, windows = outputs(f, session.id).filter(row => row.startsWith("text:"));
+  assert.equal(run.status, "completed"); assert.equal(reply(app, session.id), chunks.join(""));
+  assert.ok(windows.length <= chunks.length / 10, `${windows.length} run.output events for ${chunks.length} chunks`);
+  t.diagnostic(`ADR-047 text: ${chunks.length} chunks became ${windows.length} run.output events (one per chunk before)`);
+  assert.equal(windows.map(row => row.slice("text:".length)).join(""), chunks.join(""), "the log's windows, joined, are the chunks");
+  assert.equal(run.timing!.firstOutputAt, firstOutputAt, "the first output keeps the first chunk's arrival"); assert.ok(firstOutputAt < run.timing!.endedAt!);
+  assert.equal(published.filter(event => event.type === "run.output").length, windows.length, "each window is published once, after its commit");
+  assert.equal(timers.pending, 0, "no timer outlives the Turn");
+  // Thinking is windowed the same way, in windows of its own.
+  const thoughts = Array.from({ length: 200 }, (_, index) => `思考 ${index} `);
+  const second = factory.dispatched(2); app.send(session.id, "stream thinking", "thinking"); const next = await second;
+  for (const [index, text] of thoughts.entries()) { next.emit({ type: "thinking", text }); if ((index + 1) % 100 === 0) assert.equal(timers.fire(), 1); }
+  next.result.resolve({ status: "completed", reason: "fixture" }); await app.wait(session.id);
+  const thinking = outputs(f, session.id).filter(row => row.startsWith("thinking:"));
+  assert.equal(app.read(session.id).runs[1]!.thinking, thoughts.join("")); assert.ok(thinking.length <= thoughts.length / 10, `${thinking.length} thinking events for ${thoughts.length} chunks`);
+  t.diagnostic(`ADR-047 thinking: ${thoughts.length} chunks became ${thinking.length} run.output events (one per chunk before)`);
+  assert.equal(thinking.map(row => row.slice("thinking:".length)).join(""), thoughts.join(""));
+  assert.equal(log(f, session.id).filter(row => row.type === "run.first_output").length, 2, "one first output per Turn");
+});
+
+// Directed mutation (checked by hand): without the flush before a non-text event in output(), or without the flush on a
+// change of kind in streamChunk(), the windows land after the tool, plan, usage, request, output, activity and notice they
+// preceded, and this case fails on the order asserted below.
+test("INV-06 ADR-047: text open when any other event arrives is committed before it, in arrival order, and thinking and text never share a window", async t => {
+  const f = await fixture(t), factory = new StreamingFactory(), { app, timers } = windowed(f, factory);
+  const session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  const first = factory.dispatched(1); app.send(session.id, "order", "order"); const turn = await first;
+  turn.emit({ type: "thinking", text: "think " }); turn.emit({ type: "thinking", text: "more" });
+  turn.emit({ type: "text", text: "a" });
+  turn.emit({ type: "tool", id: "t1", title: "ls", status: "completed" });
+  turn.emit({ type: "text", text: "b" });
+  turn.emit({ type: "plan", entries: [{ content: "step", status: "pending" }] });
+  turn.emit({ type: "text", text: "c" });
+  turn.emit({ type: "usage", usage: { turn: { input: 1, output: 2 } } });
+  turn.emit({ type: "text", text: "d" });
+  turn.emit({ type: "permission_requested", id: "ask", title: "May I?", options: [{ id: "yes", name: "Yes" }] });
+  turn.emit({ type: "text", text: "e" });
+  turn.emit({ type: "output", output: { kind: "link", uri: "https://example.invalid/r", name: "r" } });
+  turn.emit({ type: "text", text: "f" });
+  turn.emit({ type: "activity", id: "c1", kind: "compaction", title: "压缩", status: "running" });
+  turn.emit({ type: "text", text: "g" });
+  turn.emit({ type: "notice", severity: "info", title: "note" });
+  turn.emit({ type: "text", text: "h1" }); turn.emit({ type: "text", text: "h2" });
+  turn.emit({ type: "thinking", text: "late" });
+  assert.deepEqual(outputs(f, session.id), ["thinking:think more", "text:a", "tool", "text:b", "plan", "text:c", "usage", "text:d", "permission", "text:e", "output", "text:f", "activity", "text:g", "notice", "text:h1h2"]);
+  assert.equal(timers.pending, 1, "only the window still open, the late thinking, is armed");
+  turn.result.resolve({ status: "completed", reason: "fixture" }); await app.wait(session.id);
+  assert.deepEqual(outputs(f, session.id).slice(-2), ["text:h1h2", "thinking:late"], "the open window is committed at the settlement");
+  assert.equal(reply(app, session.id), "abcdefgh1h2"); assert.equal(app.read(session.id).runs[0]!.thinking, "think morelate");
+  assert.equal(app.read(session.id).runs[0]!.status, "completed"); assert.equal(timers.pending, 0);
+});
+
+test("INV-06 ADR-047: an open window is committed before the settlement, and before a cancel's request and stop; what streams after the stop is kept too", async t => {
+  const f = await fixture(t), factory = new StreamingFactory(), { app, timers } = windowed(f, factory);
+  const session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  const first = factory.dispatched(1); app.send(session.id, "settle", "settle"); const settled = await first;
+  settled.emit({ type: "text", text: "x1" }); settled.emit({ type: "text", text: "x2" }); assert.equal(timers.pending, 1);
+  settled.result.resolve({ status: "completed", reason: "fixture" }); await app.wait(session.id);
+  let types = log(f, session.id).map(row => row.type);
+  assert.ok(types.includes("run.output") && types.indexOf("run.output") < types.indexOf("run.backend_settled"), "the window precedes the settlement");
+  assert.equal(reply(app, session.id), "x1x2"); assert.equal(timers.pending, 0, "the settlement took the window's timer");
+  const second = factory.dispatched(2), receipt = app.send(session.id, "cancel me", "cancel-me"), stopped = await second;
+  stopped.emit({ type: "text", text: "y1" });
+  app.cancel(session.id, "cancel", receipt.runId);
+  for (let at = 0; at < 100 && !log(f, session.id).some(row => row.type === "run.stop_requested"); at++) await new Promise(resolve => setImmediate(resolve));
+  stopped.emit({ type: "text", text: "y2" });
+  stopped.result.resolve({ status: "cancelled", reason: "fixture" }); await app.wait(session.id);
+  types = log(f, session.id).map(row => row.type);
+  const cancelAt = types.indexOf("run.cancel_requested"), stopAt = types.indexOf("run.stop_requested");
+  assert.equal(types[cancelAt - 1], "run.output", "the window precedes the cancel"); assert.equal(stopAt, cancelAt + 1, "the stop request follows the cancel");
+  assert.deepEqual(types.slice(stopAt + 1, stopAt + 3), ["run.output", "run.backend_settled"], "text after the stop is committed before the settlement");
+  assert.equal(app.read(session.id).runs[1]!.status, "cancelled"); assert.equal(reply(app, session.id, 1), "y1y2"); assert.equal(stopped.stops, 1);
+});
+
+test("INV-10 ADR-047: an open window is committed before a budget's end is recorded, and the Turn ends cancelled by its budget with the text kept", async t => {
+  const f = await fixture(t), factory = new StreamingFactory(), { app, timers } = windowed(f, factory, { executionBudgetMs: 150 });
+  const session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  const first = factory.dispatched(1); app.send(session.id, "slow", "slow"); const turn = await first;
+  turn.emit({ type: "text", text: "z1" }); assert.equal(timers.pending, 1);
+  // The execution budget (real time, its own timer) runs out: the Runtime asks the program to stop.
+  await turn.stopped.promise;
+  const types = log(f, session.id).map(row => row.type);
+  assert.ok(types.indexOf("run.output") < types.indexOf("run.budget_expired"), "the window precedes the expiry");
+  assert.equal(timers.pending, 0, "the expiry took the window's timer");
+  turn.result.resolve({ status: "cancelled", reason: "fixture" }); await app.wait(session.id);
+  const run = app.read(session.id).runs[0]!;
+  assert.equal(run.status, "cancelled"); assert.equal(run.error?.code, "RUN_TIMEOUT"); assert.equal(reply(app, session.id), "z1");
+});
+
+test("INV-20 ADR-047: the output budget is counted per chunk, exactly, across a window: the chunk that would exceed it commits the window before it and is refused", async t => {
+  const f = await fixture(t), factory = new StreamingFactory(), { app, timers } = windowed(f, factory);
+  const session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  const first = factory.dispatched(1); app.send(session.id, "fill", "fill"); const turn = await first;
+  const text = () => outputs(f, session.id).filter(row => row.startsWith("text:")), bytes = () => Buffer.byteLength(reply(app, session.id) ?? "");
+  // A chunk at or above the window's bytes is committed at once; 1,024,000 bytes then stand, 24,576 short of the budget.
+  turn.emit({ type: "text", text: "a".repeat(600 * 1024) }); turn.emit({ type: "text", text: "b".repeat(400 * 1024) });
+  assert.equal(text().length, 2); assert.equal(bytes(), 1_024_000); assert.equal(timers.pending, 0);
+  // A pair split between two chunks is four bytes, not six; with it the open window holds 104 bytes.
+  turn.emit({ type: "text", text: "c".repeat(100) }); turn.emit({ type: "text", text: "🌱".slice(0, 1) }); turn.emit({ type: "text", text: "🌱".slice(1) });
+  assert.equal(text().length, 2); assert.equal(timers.pending, 1);
+  // One byte over the budget: refused as on its own commit before, with the window before it committed first.
+  assert.throws(() => turn.emit({ type: "text", text: "d".repeat(24_473) }), (error: unknown) => error instanceof SessionError && error.code === "OUTPUT_LIMIT");
+  assert.equal(text().length, 3); assert.equal(bytes(), 1_024_104); assert.equal(reply(app, session.id)?.endsWith("c🌱"), true); assert.equal(timers.pending, 0);
+  // Exactly the budget is accepted (and committed by its size); the byte after it is refused with nothing left to commit.
+  turn.emit({ type: "text", text: "d".repeat(24_472) });
+  assert.equal(text().length, 4); assert.equal(bytes(), MAX_OUTPUT_BYTES);
+  assert.throws(() => turn.emit({ type: "text", text: "e" }), (error: unknown) => error instanceof SessionError && error.code === "OUTPUT_LIMIT");
+  assert.equal(text().length, 4, "a refused chunk opens no window: nothing empty is committed"); assert.equal(bytes(), MAX_OUTPUT_BYTES); assert.equal(timers.pending, 0);
+  // A driver ends its connection with the refusal it was thrown, so the program never settles: the Turn is unknown, as it was
+  // before windows, and the committed reply stays.
+  turn.result.reject(new SessionError("OUTPUT_LIMIT", "Run public output byte budget exhausted"));
+  await assert.rejects(app.wait(session.id), (error: unknown) => error instanceof SessionError && error.code === "SESSION_BLOCKED");
+  const run = app.read(session.id).runs[0]!;
+  assert.equal(run.status, "unknown"); assert.equal(run.error?.code, "OUTPUT_LIMIT"); assert.equal(bytes(), MAX_OUTPUT_BYTES); assert.equal(factory.closes, 1);
+});
+
+test("INV-06/INV-28 ADR-047: a window its timer commits is published after its commit; once the owner is lost, no window is committed or published", async t => {
+  const f = await fixture(t), factory = new StreamingFactory(), published: SessionEvent[] = [];
+  const { app, timers } = windowed(f, factory, { publish: event => { assert.ok(f.store.events(event.sessionId, event.seq - 1, 1).some(row => row.seq === event.seq), "published before its commit"); published.push(event); } });
+  const session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  const first = factory.dispatched(1); app.send(session.id, "lose the owner", "lose"); const turn = await first;
+  const windows = () => published.filter(event => event.type === "run.output").length;
+  turn.emit({ type: "text", text: "w1" }); assert.equal(windows(), 0, "an open window is not published");
+  assert.equal(timers.fire(), 1); assert.equal(windows(), 1); assert.equal(reply(app, session.id), "w1");
+  turn.emit({ type: "text", text: "w2" }); assert.equal(timers.pending, 1);
+  await loseOwner(f);
+  assert.equal(timers.fire(), 1, "the window's timer runs; its commit is refused and stops the Turn");
+  await turn.stopped.promise;
+  turn.result.resolve({ status: "cancelled", reason: "fixture" });
+  await assert.rejects(app.wait(session.id), (error: unknown) => error instanceof SessionError && error.code === "OWNER_LOST");
+  assert.equal(windows(), 1, "nothing was published after the owner was lost");
+  const db = new DatabaseSync(join(f.root, "data", "gateway.sqlite"));
+  try {
+    const count = db.prepare("SELECT COUNT(*) AS n FROM events WHERE session_id=? AND json_extract(event_json,'$.type')='run.output'").get(session.id);
+    assert.equal(count?.n, 1, "nothing was committed after the owner was lost");
+    const row = db.prepare("SELECT snapshot FROM sessions WHERE id=?").get(session.id); assert.ok(row && typeof row.snapshot === "string");
+    const persisted = JSON.parse(row.snapshot) as { messages: readonly { role: string; text: string }[] };
+    assert.equal(persisted.messages.find(message => message.role === "assistant")?.text, "w1");
+  } finally { db.close(); }
+  assert.equal(timers.pending, 0);
 });

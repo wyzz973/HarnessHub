@@ -9,7 +9,7 @@ import { AcpControl } from "../../src/adapters/control/acp.js";
 import { CodexControl } from "../../src/adapters/control/codex.js";
 import { PiControl } from "../../src/adapters/control/pi.js";
 import type { CleanupEvidence } from "../../src/contracts/control.js";
-import { SessionError, resolveTurnBudgets, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionId } from "../../src/contracts/session.js";
+import { SessionError, STREAM_WINDOW_MS, resolveTurnBudgets, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionId } from "../../src/contracts/session.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
 import { SqliteWorkspaceLeaseProvider } from "../../src/infrastructure/session/workspace-lease.js";
@@ -42,7 +42,19 @@ class CountingFactory implements SessionBindingFactory {
     } };
   }
 }
-async function setup(t: test.TestContext, maxParallel?: number, limits: { readonly executionBudgetMs?: number; readonly waitBudgetMs?: number; readonly stopGraceMs?: number } = {},
+/** Timers the test fires itself: an ADR-047 window never waits for real time here. */
+class ManualTimers {
+  private readonly armed = new Map<number, () => void>();
+  private count = 0;
+  readonly schedule = (fn: () => void, ms: number): (() => void) => {
+    assert.equal(ms, STREAM_WINDOW_MS, "a window is armed for the contract's window");
+    const id = ++this.count; this.armed.set(id, fn); return () => { this.armed.delete(id); };
+  };
+  get pending(): number { return this.armed.size; }
+  /** Runs every timer armed so far, in order, and says how many. */
+  fire(): number { const due = [...this.armed.values()]; this.armed.clear(); for (const fn of due) fn(); return due.length; }
+}
+async function setup(t: test.TestContext, maxParallel?: number, limits: { readonly executionBudgetMs?: number; readonly waitBudgetMs?: number; readonly stopGraceMs?: number; readonly schedule?: (fn: () => void, ms: number) => () => void } = {},
   scenario?: (session: SessionId) => string) {
   const root = await mkdtemp(join(tmpdir(), "harness-parallel-")), store = new SqliteSessionStore(join(root, "data")), factory = new CountingFactory(root, scenario);
   let id = 0, clock = 1_791_000_000_000;
@@ -243,6 +255,27 @@ for (const [driver, scenario, decision] of [["Codex", "codex:permission", "accep
     assert.deepEqual(events(session.id, "run.waiting").map(data => data.kind), ["user"]); assert.equal(events(session.id, "run.waiting_ended").length, 1);
   });
 }
+
+test("ADR-047: four conversations streaming at once each hold their own window, and each window commits only its own conversation's text", async t => {
+  const timers = new ManualTimers();
+  const { app, workspace, until, events } = await setup(t, 4, { schedule: timers.schedule }, () => "stop");
+  const sessions: SessionId[] = [];
+  for (const name of ["one", "two", "three", "four"]) sessions.push((await app.create(await workspace(name), { harnessId: "alpha" }, "create-" + name)).id);
+  for (const [index, id] of sessions.entries()) app.send(id, "work until stopped", "send-" + index);
+  // Every program streamed its greeting into its own Turn's window; none is committed before its window closes.
+  await until(() => timers.pending === 4);
+  assert.ok(sessions.every(id => !app.read(id).messages.some(message => message.role === "assistant")), "an open window is not committed");
+  assert.deepEqual(sessions.map(id => events(id, "run.output").length), [0, 0, 0, 0]);
+  assert.equal(timers.fire(), 4);
+  for (const id of sessions) {
+    assert.equal(app.read(id).messages.find(message => message.role === "assistant")?.text, "你好 fixture");
+    assert.deepEqual(events(id, "run.output").map(data => data.event), [{ type: "text", text: "你好 fixture" }], "one window, with this conversation's text only");
+  }
+  for (const [index, id] of sessions.entries()) app.cancel(id, "cancel-" + index);
+  for (const id of sessions) await app.wait(id);
+  assert.deepEqual(sessions.map(id => app.read(id).runs[0]!.status), ["cancelled", "cancelled", "cancelled", "cancelled"]);
+  assert.ok(sessions.every(id => app.read(id).messages.find(message => message.role === "assistant")?.text === "你好 fixture"), "the text survives the stop");
+});
 
 test("the budgets are whole seconds and minutes within their bounds, and anything else fails before the service starts", () => {
   assert.deepEqual(resolveTurnBudgets(), { executionBudgetMs: 300_000, waitBudgetMs: 1_800_000 });
