@@ -17,6 +17,7 @@ function Row({ label, value, copy, title }: { readonly label?: string; readonly 
 /**
  * How to continue this conversation's native session in the Harness's own program (ADR-039), read once when shown. The
  * interactive command follows the installed program's help; the one-question command is the form a real Turn verified.
+ * A program with no interactive form to give (DeepSeek Harness) shows its one-question command as the way to continue.
  * HarnessHub only offers them for copying.
  */
 export function NativeResume({ load }: { readonly load: (signal: AbortSignal) => Promise<NativeResumeView | null> }) {
@@ -31,6 +32,12 @@ export function NativeResume({ load }: { readonly load: (signal: AbortSignal) =>
   if (!view) return null;
   const note = "native-resume-note m-0 text-[12px] text-fg-3";
   if (view.list) return <small className={note}>在原程序中继续：{view.list}</small>;
+  const onceNote = view.onceNote ? <small className={note}>{view.onceNote}</small> : null;
+  // What either command means for the workspace and for the two sides' Turns.
+  const notes = <>
+    <small className={note}>原程序首次在这个目录运行时可能先询问是否信任这个目录；接受会写入它自己的全局配置。</small>
+    <small className={note}>在原程序中继续会使两边的回合交错；回到 HarnessHub 继续前，先在原程序中结束。</small>
+  </>;
   return <div className="native-resume flex flex-col gap-2" aria-label="在原程序中继续" role="group">
     {view.nativeId ? <Row label="原生会话 ID" value={view.nativeId} copy="复制原生会话 ID"/> : null}
     {view.interactive ? <>
@@ -38,10 +45,12 @@ export function NativeResume({ load }: { readonly load: (signal: AbortSignal) =>
       {view.once ? <div>
         <button type="button" aria-expanded={once} onClick={() => setOnce(value => !value)} className="flex items-center gap-1 rounded-md border-none bg-transparent px-1 py-0.5 text-[12px] text-fg-2 hover:bg-hover">
           <ChevronRight size={12} className={cn("transition-transform duration-150", once && "rotate-90")} aria-hidden="true"/>只问一次（已用真实回合验证）</button>
-        {once ? <div className="mt-1.5 flex flex-col gap-1"><Row value={view.once} copy="复制只问一次的命令" {...(view.onceNote ? { title: view.onceNote } : {})}/>{view.onceNote ? <small className={note}>{view.onceNote}</small> : null}</div> : null}
+        {once ? <div className="mt-1.5 flex flex-col gap-1"><Row value={view.once} copy="复制只问一次的命令" {...(view.onceNote ? { title: view.onceNote } : {})}/>{onceNote}</div> : null}
       </div> : null}
-      <small className={note}>原程序首次在这个目录运行时可能先询问是否信任这个目录；接受会写入它自己的全局配置。</small>
-      <small className={note}>在原程序中继续会使两边的回合交错；回到 HarnessHub 继续前，先在原程序中结束。</small>
+      {notes}
+    </> : view.once ? <>
+      <Row label="只问一次（已用真实回合验证）· 在该对话的工作区目录中运行" value={view.once} copy="复制只问一次的命令" {...(view.onceNote ? { title: view.onceNote } : {})}/>
+      {onceNote}{notes}
     </> : view.note === "version-unverified" ? <small className={note}>恢复命令未在此版本验证。</small>
       : view.note === "not-verified" ? <small className={note}>这个程序的恢复命令没有经过验证。</small> : null}
   </div>;

@@ -1,6 +1,18 @@
 import type { ProviderView } from "./provider.js";
 import type { HarnessManagementView, InstallationJobView, InstallationLog } from "./management.js";
-import type { HarnessSelection, PublicMessage, PublicRun, PublicSwitch, SelectionRequest, SessionEvent, SessionSnapshot } from "./session.js";
+import type { HarnessSelection, PublicMessage, PublicRun, PublicSwitch, SelectionRequest, SessionEvent, SessionOrigin, SessionSnapshot } from "./session.js";
+
+/**
+ * A conversation's title as summaries and the sidebar give it, the same in the Gateway and the page: its first message,
+ * else where it came from ("接续 · …" for a continued native session, "分支 · …" for a branch), else "新对话"; spaces
+ * folded, at most 80 characters. The page names a conversation it opens itself this way, with no state read to correct it.
+ */
+export function conversationTitle(conversation: { readonly messages: readonly { readonly role: string; readonly text: string }[]; readonly origin?: SessionOrigin | undefined }): string {
+  const first = conversation.messages.find(message => message.role === "user")?.text.replace(/\s+/gu, " ").trim();
+  const origin = conversation.origin, quoted = origin?.history.find(message => message.role === "user")?.text.replace(/\s+/gu, " ").trim();
+  const inherited = origin?.kind === "import" ? "接续 · " + (origin.title ?? quoted ?? origin.harnessId) : quoted ? "分支 · " + quoted : null;
+  return first ? first.slice(0, 80) : inherited ? inherited.slice(0, 80) : "新对话";
+}
 
 /**
  * Where a control entry was found: on PATH or in a standard directory like comparable products search, as an explicit

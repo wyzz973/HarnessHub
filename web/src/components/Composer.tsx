@@ -118,7 +118,8 @@ export function Composer(props: ComposerProps) {
     catch { /* The parent owns the request and its error; an unconfirmed send retains the draft. */ }
     finally { sending.current = false; }
   };
-  const harnessChoices = harnessOptions(harnesses, props.readiness, draft);
+  // The picker offers what the user can start with (ADR-050); the current choice is never among the hidden ones.
+  const harnessChoices = harnessOptions(harnesses.filter(row => !props.hiddenHarnesses.has(row.id)), props.readiness, draft);
   const providerOptions: PickerOption[] = [{ value: "", label: "Harness 原生连接", description: "由 Harness 提供模型连接，需要完成相应认证", icon: <LogoMark size={18}/> }, ...providers.map(row => {
     const supported = !harness || harness.providerProtocols.includes(row.protocol);
     const missingKey = row.protocol === "gemini" && !row.hasCredential;

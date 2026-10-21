@@ -63,7 +63,11 @@ export interface QueuedMessage {
 export interface ChatProps {
   nativeModels: NativeModelCatalog | null; nativeModelsLoading: boolean; nativeModelsError: string | null; onRefreshModels: () => void;
   providerManagement?: boolean;
-  session: SessionView | null; sessionRequested: boolean; sessionError: string | null; loading: boolean; draft: SelectionDraft; providers: readonly ProviderView[]; harnesses: readonly HarnessView[];
+  session: SessionView | null; sessionRequested: boolean; sessionError: string | null; loading: boolean; draft: SelectionDraft; providers: readonly ProviderView[];
+  /** Every Harness, for names, details and history. */
+  harnesses: readonly HarnessView[];
+  /** The Harnesses the picker and the welcome leave out (ADR-050): frozen ones unless shown, never this conversation's or the draft's. */
+  hiddenHarnesses: ReadonlySet<string>;
   /** What the latest catalog reads and Runs showed of each Harness entry. */
   readiness?: readonly HarnessReadinessView[];
   /** The last native choice sent with a Harness from this browser, offered when a conversation picks it for the first time. */
@@ -324,7 +328,7 @@ export function ChatPage(props: ChatProps) {
         }}>
           {props.sessionError ? <EmptyState title="无法打开这个对话" action={<button className="btn" onClick={props.onNew}>新建对话</button>}>{props.sessionError}</EmptyState>
             : props.loading ? <div className="flex items-center justify-center gap-2 py-24 text-[13px] text-fg-2"><Spinner/><span>正在读取对话</span></div>
-            : session === null ? <Welcome harnesses={harnesses} readiness={props.readiness ?? []} firstUse={props.conversations === 0} selected={draft.harnessId} workspace={props.workspace} onWorkspace={props.onWorkspace}
+            : session === null ? <Welcome harnesses={harnesses.filter(harness => !props.hiddenHarnesses.has(harness.id))} readiness={props.readiness ?? []} firstUse={props.conversations === 0} selected={draft.harnessId} workspace={props.workspace} onWorkspace={props.onWorkspace}
               onSuggest={fillDraft} onHarnesses={props.onHarnesses} onSettings={props.onSettings} onRescan={props.onRescan} scanning={props.scanning} composer={composer}
               onChoose={harness => {
                 // Another Harness's model and options never carry over; this Harness's last choice from this browser does.

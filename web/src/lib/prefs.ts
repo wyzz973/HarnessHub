@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import type { HarnessView } from "../../../src/contracts/web.js";
 
 /**
  * Per-browser display preferences (ADR-042). They are conveniences only: storage can be unavailable, in which case each
@@ -12,12 +13,23 @@ export interface Preferences {
   readonly panel: boolean;
   readonly sidebar: boolean;
   readonly groupBy: "status" | "harness" | "workspace";
+  /** Whether the frozen Harnesses (Cursor, Gemini CLI, Pi) are listed for new work as well (ADR-050); off by default. */
+  readonly showFrozen: boolean;
 }
-export const DEFAULT_PREFERENCES: Preferences = { theme: "system", density: "compact", panel: true, sidebar: true, groupBy: "status" };
+export const DEFAULT_PREFERENCES: Preferences = { theme: "system", density: "compact", panel: true, sidebar: true, groupBy: "status", showFrozen: false };
 const KEY = "harnesshub:preferences";
 const CHOICES: { readonly [K in keyof Preferences]: readonly Preferences[K][] } = {
-  theme: ["system", "light", "dark"], density: ["compact", "detailed"], panel: [true, false], sidebar: [true, false], groupBy: ["status", "harness", "workspace"],
+  theme: ["system", "light", "dark"], density: ["compact", "detailed"], panel: [true, false], sidebar: [true, false], groupBy: ["status", "harness", "workspace"], showFrozen: [false, true],
 };
+/**
+ * The Harnesses that the lists offering one for new work leave out (ADR-050, ADR-048 decision 1): the frozen ones, unless
+ * `showFrozen`. Those in `keep` — the open conversation's and the draft's choice — stay listed, so hiding never takes away
+ * what is already chosen. Names, the inbox, details and history look Harnesses up in the full list and never use this.
+ */
+export function hiddenHarnesses(harnesses: readonly Pick<HarnessView, "id" | "tier">[], showFrozen: boolean, keep: readonly string[]): ReadonlySet<string> {
+  if (showFrozen) return new Set();
+  return new Set(harnesses.flatMap(harness => harness.tier === "frozen" && !keep.includes(harness.id) ? [harness.id] : []));
+}
 export function readPreferences(): Preferences {
   try {
     const raw = localStorage.getItem(KEY);

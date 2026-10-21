@@ -238,8 +238,11 @@ function ChangeHistory({ api, history, onRestore, onChange }: { readonly api: Ga
  * The capability page (ADR-045 step 1): what each installed Harness reads besides its model, as an entry × Harness
  * matrix per kind with the mechanism and status of every cell and the warnings the user should know. Read-only.
  */
-export function CapabilitiesPage({ api, initialHarness, onMenu, sidebarHidden, onExpandSidebar, onChat }: {
-  readonly api: GatewayApi; readonly initialHarness: string | null; readonly onMenu: () => void; readonly sidebarHidden: boolean; readonly onExpandSidebar: () => void; readonly onChat: () => void;
+export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarHidden, onExpandSidebar, onChat }: {
+  readonly api: GatewayApi; readonly initialHarness: string | null;
+  /** The Harnesses the columns, the Harness list and the per-Harness notes leave out (ADR-050): frozen ones unless shown. */
+  readonly hidden: ReadonlySet<string>;
+  readonly onMenu: () => void; readonly sidebarHidden: boolean; readonly onExpandSidebar: () => void; readonly onChat: () => void;
 }) {
   const [view, setView] = useState<CapabilitiesView | null>(null), [loading, setLoading] = useState(true), [problem, setProblem] = useState<string | null>(null);
   const [kind, setKind] = useState<CapabilityKind>("skill"), [harness, setHarness] = useState<string | null>(initialHarness), [query, setQuery] = useState(""), [onlyWarnings, setOnlyWarnings] = useState(false);
@@ -280,14 +283,19 @@ export function CapabilitiesPage({ api, initialHarness, onMenu, sidebarHidden, o
     if (view.skills?.length) setUpdates(null);
   };
   useEffect(() => setHarness(initialHarness), [initialHarness]);
-  const columns = useMemo(() => view?.harnesses.filter(item => harness === null || item.harnessId === harness) ?? [], [view, harness]);
-  const counts = useMemo(() => Object.fromEntries(CAPABILITY_KINDS.map(item => [item, view?.entries.filter(entry => entry.kind === item && (harness === null || entry.edges.some(edge => edge.harnessId === harness))).length ?? 0])) as Record<CapabilityKind, number>, [view, harness]);
+  // The Harnesses this page lists (ADR-050): hidden ones stay out unless the page is on one of them. Entries only they
+  // see stay out with them; an entry no Harness sees stays in. Details and notices still name every Harness.
+  const away = useMemo(() => new Set([...hidden].filter(id => id !== harness)), [hidden, harness]);
+  const shown = useMemo(() => view?.harnesses.filter(item => !away.has(item.harnessId)) ?? [], [view, away]);
+  const columns = useMemo(() => shown.filter(item => harness === null || item.harnessId === harness), [shown, harness]);
+  const listed = useMemo(() => (view?.entries ?? []).filter(entry => !entry.edges.length || entry.edges.some(edge => !away.has(edge.harnessId))), [view, away]);
+  const counts = useMemo(() => Object.fromEntries(CAPABILITY_KINDS.map(item => [item, listed.filter(entry => entry.kind === item && (harness === null || entry.edges.some(edge => edge.harnessId === harness))).length])) as Record<CapabilityKind, number>, [listed, harness]);
   const rows = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
-    return (view?.entries ?? []).filter(entry => entry.kind === kind && (harness === null || entry.edges.some(edge => edge.harnessId === harness))
+    return listed.filter(entry => entry.kind === kind && (harness === null || entry.edges.some(edge => edge.harnessId === harness))
       && (!onlyWarnings || entry.warnings.some(warning => harness === null || warning.harnessId === null || warning.harnessId === harness) || entry.edges.some(edge => edge.status !== "active"))
       && (!needle || [entry.name, entry.description ?? "", entry.location ?? ""].some(value => value.toLocaleLowerCase().includes(needle))));
-  }, [view, kind, harness, query, onlyWarnings]);
+  }, [listed, kind, harness, query, onlyWarnings]);
   const warningCount = (entry: CapabilityEntry) => entry.warnings.filter(warning => harness === null || warning.harnessId === null || warning.harnessId === harness).length;
   return <PageShell title="能力" titleId="capabilities-title" onMenu={onMenu} sidebarHidden={sidebarHidden} onExpandSidebar={onExpandSidebar} onBack={onChat} wide
     description="各 Harness 除模型外还会读取的技能、MCP、指令、子 Agent、命令、Hooks 和插件，按各自的规则显示谁能看到、经由哪里、是否生效。技能可以从 GitHub 添加到共享目录、按来源更新、删除，也可以在各 Harness 中停用或启用；插件可以在 Claude Code 和 Codex 中停用或启用。都是先显示要改的内容，确认后才写入，并保留备份或快照。读取不启动 MCP 服务器。"
@@ -311,11 +319,11 @@ export function CapabilitiesPage({ api, initialHarness, onMenu, sidebarHidden, o
         <label className="flex h-9 min-w-[200px] flex-1 items-center gap-2 rounded-lg border border-line-strong bg-surface px-3"><Search size={15} className="text-fg-3" aria-hidden="true"/>
           <input className="min-w-0 flex-1 border-none bg-transparent text-[13.5px] outline-none" aria-label="搜索能力" placeholder="搜索名称、说明或位置" value={query} onChange={event => setQuery(event.target.value)}/></label>
         <select className="h-9 rounded-lg border border-line-strong bg-surface px-2.5 text-[13px]" aria-label="只看一个 Harness" value={harness ?? ""} onChange={event => setHarness(event.target.value || null)}>
-          <option value="">全部 Harness</option>{view.harnesses.map(item => <option key={item.harnessId} value={item.harnessId}>{item.name}</option>)}</select>
+          <option value="">全部 Harness</option>{shown.map(item => <option key={item.harnessId} value={item.harnessId}>{item.name}</option>)}</select>
         <label className="flex items-center gap-1.5 text-[13px] text-fg-2"><input type="checkbox" checked={onlyWarnings} onChange={event => setOnlyWarnings(event.target.checked)}/>只看有提示或未生效的</label>
       </div>
       <div role="tabpanel" id="capability-tabpanel" aria-labelledby={"capability-tab-" + kind} className="flex flex-col gap-3">
-      {kind === "skill" ? <SharedDirectory api={api} harnesses={view.harnesses.filter(item => harness === null || item.harnessId === harness)} updates={updates} checking={checkingUpdates} updateProblem={updateProblem}
+      {kind === "skill" ? <SharedDirectory api={api} harnesses={columns} updates={updates} checking={checkingUpdates} updateProblem={updateProblem}
         onAdd={() => setAdding(true)} onCreate={() => setWriting({ name: null, text: { description: "", body: "" } })} onCheckUpdates={checkUpdates} onChange={change}/> : null}
       {kind === "mcp" ? <McpInventoryPanel api={api} harness={harness} reload={reloads} onChange={change} onNotice={(text, failed) => setNotice({ text, failed })}/> : null}
       {kind === "instructions" ? <InstructionsPanel api={api} harness={harness} reload={reloads} onChange={change} onNotice={(text, failed) => setNotice({ text, failed })}/> : null}
@@ -343,7 +351,7 @@ export function CapabilitiesPage({ api, initialHarness, onMenu, sidebarHidden, o
         : <EmptyState title={query || onlyWarnings ? "没有匹配的条目" : "这一类还没有条目"}>{columns.some(item => item.kinds[kind] !== "read") ? "部分 Harness 没有这类能力，或保存在磁盘之外。" : "各 Harness 的用户级配置里没有这一类。"}</EmptyState>}
       </div>
       <details className="rounded-xl border border-line bg-surface px-4 py-3 text-[12.5px]"><summary className="cursor-pointer font-medium"><Eye size={13} className="mr-1.5 inline" aria-hidden="true"/>各 Harness 的读取规则与说明</summary>
-        <ul className="m-0 mt-2 flex list-none flex-col gap-2 p-0">{view.harnesses.map(item => <li key={item.harnessId}><strong className="font-medium">{item.name}</strong>
+        <ul className="m-0 mt-2 flex list-none flex-col gap-2 p-0">{shown.map(item => <li key={item.harnessId}><strong className="font-medium">{item.name}</strong>
           <span className="ml-1.5 text-fg-3">{item.version ? "v" + item.version : "版本未知"} · {item.table === "verified" ? "规则已按这个版本核实" : "规则未按这个版本核实"}</span>
           <ul className="m-0 mt-0.5 list-disc pl-5 text-fg-2">{item.notes.map((note, index) => <li key={index}>{note}</li>)}</ul></li>)}</ul>
         <p className="m-0 mt-2 text-fg-3">读取时间 {new Date(view.checkedAt).toLocaleString()}。只显示名字与数量，不显示任何环境变量、请求头或参数的值。</p></details>

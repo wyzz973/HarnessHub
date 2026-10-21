@@ -1,9 +1,9 @@
 import { Blocks, Bot, Columns2, Keyboard, MessageSquarePlus, Monitor, Moon, PanelLeft, RefreshCw, Settings, SlidersHorizontal, Sun } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SelectionRequest } from "../../src/contracts/session.js";
 import type { ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
 import { parseProviderTarget } from "../../src/contracts/provider.js";
-import type { AttentionFrame, HarnessView, InstallationView, SessionView, WebState } from "../../src/contracts/web.js";
+import { conversationTitle, type AttentionFrame, type HarnessView, type InstallationView, type SessionView, type WebState } from "../../src/contracts/web.js";
 import type { NativeModelCatalog } from "../../src/contracts/control.js";
 import type { InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
 import { parseNativeOptions, sessionId as validateSessionId } from "../../src/contracts/session.js";
@@ -26,7 +26,7 @@ import { CommandPalette, ShortcutsDialog, type PaletteCommand } from "./componen
 import { BrandIcon } from "./components/BrandIcon.js";
 import { attachmentKind, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, MAX_MESSAGE_ATTACHMENT_BYTES, type AttachmentDraft } from "./components/Attachments.js";
 import { parseContentRef, type ContentRef } from "../../src/contracts/content.js";
-import { useMedia, usePreferences } from "./lib/prefs.js";
+import { hiddenHarnesses, useMedia, usePreferences } from "./lib/prefs.js";
 import { finished } from "./lib/turn.js";
 import { cn } from "./lib/cn.js";
 import { Dialog } from "./ui/overlay.js";
@@ -128,6 +128,18 @@ function restoreQueued(draft: { readonly message: string; readonly attachments: 
   return { message: queued.text + (draft.message.trim() ? "\n\n" + draft.message : ""), attachments: [...queued.attachments, ...draft.attachments.filter(ref => !queued.attachments.some(item => item.id === ref.id))].slice(0, MAX_ATTACHMENTS) };
 }
 interface PendingProviderWrite { input: ProviderWriteInput; key: string; current: ProviderView | undefined }
+/**
+ * How old the last scan of this computer's Harnesses must be before a page that is opened or comes back into view asks
+ * for another (ADR-050). Nothing scans on a timer, and a page that keeps gaining focus scans at most once in this time.
+ */
+const RETURN_SCAN_MS = 60_000;
+/** While a management task runs, how often the page reads the Gateway's state, which scans nothing, and how often when hidden. */
+const TASK_READ_MS = 800, HIDDEN_TASK_READ_MS = 10_000;
+/**
+ * Whether a scan that began at `scannedAt` saw what a task left at `endedAt`: both are ISO times of the Gateway's clock,
+ * which counts milliseconds, so a scan that began in the same one counts, as the Gateway counts it.
+ */
+function scanCovers(scannedAt: string, endedAt: string): boolean { return Date.parse(scannedAt) >= Date.parse(endedAt); }
 /** The page named in the address, so a reload stays where the user was; the conversation route is the default. */
 function pageRoute(): Page {
   const value = new URLSearchParams(window.location.hash.slice(1)).get("page");
@@ -206,7 +218,10 @@ export function App() {
   const installationCancels = useRef(new Map<string, string>());
   const installationRequests = useRef(new Set<string>());
   const cancellationRequests = useRef(new Set<string>());
-  const completedInstallations = useRef(new Set<string>());
+  // Tasks that ended after the last scan and already asked for one, by identity and end (ADR-050); each asks once.
+  const settledScans = useRef(new Set<string>());
+  // When this page last asked for a scan on being opened or coming back into view.
+  const lastReturnScan = useRef(0);
   const viewGeneration = useRef(0);
   const liveState = useRef<WebState | null>(null); liveState.current = state;
   const sessionIdRef = useRef<string | null>(initialRoute.id);
@@ -224,6 +239,25 @@ export function App() {
   const observedVersion = useRef<{ id: string; version: number } | null>(null);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  /** Reads the Gateway's state, which scans nothing (ADR-050), and keeps it unless this page changed something meanwhile. */
+  const readState = useCallback(async (signal?: AbortSignal): Promise<WebState | null> => {
+    const generation = viewGeneration.current;
+    const value = await api.state(signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000));
+    if (!mounted.current || generation !== viewGeneration.current) return null;
+    setState(value); return value;
+  }, [api]);
+  /** Asks the Gateway to scan this computer's Harnesses again; with `after`, for a scan that began after that time. */
+  const scanHarnesses = useCallback(async (signal?: AbortSignal, after?: string): Promise<void> => {
+    const generation = viewGeneration.current;
+    const harnesses = await api.rescan(signal, after);
+    if (mounted.current && generation === viewGeneration.current) setState(current => current ? { ...current, harnesses } : current);
+  }, [api]);
+  /** Opening the page and coming back to it ask for a scan when the last one is a minute old, at most once a minute. */
+  const scanIfStale = useCallback(async (snapshot: WebState, signal?: AbortSignal): Promise<void> => {
+    const now = Date.now();
+    if (now - Date.parse(snapshot.harnessesScannedAt) < RETURN_SCAN_MS || now - lastReturnScan.current < RETURN_SCAN_MS) return;
+    lastReturnScan.current = now; await scanHarnesses(signal);
+  }, [scanHarnesses]);
   useEffect(() => {
     let ignored = false;
     const controller = new AbortController();
@@ -235,9 +269,10 @@ export function App() {
         if (ignored) return;
         const snapshot = await api.state(AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]));
         if (!ignored) {
-          snapshot.jobs.filter(job => job.status === "completed").forEach(job => completedInstallations.current.add(job.id)); setState(snapshot); setWorkspace(snapshot.workspace);
+          setState(snapshot); setWorkspace(snapshot.workspace);
           const key = sessionIdRef.current ?? "new", saved = savedChatDraft(snapshot.workspace, key);
           if (saved && !chatDrafts.current.has(key)) { chatDrafts.current.set(key, saved); setMessageDraft(saved.message); setAttachments(draftAttachments(saved.attachments)); setDraft(saved.selection); pendingMessage.current = saved.messageIntent; pendingSwitchWrite.current = saved.selectionIntent; }
+          void scanIfStale(snapshot, controller.signal).catch((failure: unknown) => { if (!ignored) setManagementConnectionError(errorMessage(failure)); });
         }
       } catch (failure: unknown) {
         // Without a session the page says so in the product's words; the help below names the startup link.
@@ -247,11 +282,7 @@ export function App() {
     return () => { ignored = true; controller.abort(); };
   }, [api, bootAttempt]);
 
-  const refreshState = useCallback(async () => {
-    const generation = viewGeneration.current;
-    const value = await api.state(AbortSignal.timeout(15_000));
-    if (mounted.current && generation === viewGeneration.current) setState(value);
-  }, [api]);
+  const refreshState = useCallback(async () => { await readState(); }, [readState]);
   const acceptSession = useCallback((value: SessionView) => {
     if (!mounted.current || sessionIdRef.current !== value.id) return;
     const live = liveSession.current;
@@ -280,7 +311,8 @@ export function App() {
     if (pendingMessage.current?.sessionId === value.id && value.runs.some(run => run.commandId === pendingMessage.current?.sendKey)) pendingMessage.current.committed = true;
     setState(current => {
       if (!current) return current;
-      const summary = { id: value.id, title: value.messages.find(message => message.role === "user")?.text.slice(0, 80) ?? "新对话",
+      // Titled as the Gateway titles it: nothing reads the state again to correct it (ADR-050).
+      const summary = { id: value.id, title: conversationTitle(value),
         status: value.status, workspace: value.workspace, selection: value.selection, updatedSeq: value.lastSeq, activeRunId: value.activeRunId };
       return { ...current, sessions: current.sessions.some(item => item.id === value.id)
         ? current.sessions.map(item => item.id === value.id ? summary : item) : [summary, ...current.sessions].slice(0, 1000) };
@@ -329,37 +361,59 @@ export function App() {
     })();
     return () => { stopped = true; controller.abort(); if (animation !== null) cancelAnimationFrame(animation); pending = null; };
   }, [api, sessionId, state !== null, streamAttempt, acceptSession, acceptAttention]);
+  // This computer's Harnesses are read on demand, never on a timer (ADR-050). While a management task runs the page follows
+  // it by reading the state; otherwise it sends nothing until it is opened again, comes back into view, or the user asks.
+  const tasksRunning = state?.jobs.some(installationActive) ?? false;
   useEffect(() => {
-    if (!state) return;
+    if (!tasksRunning) return;
     let stopped = false, failures = 0;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const controller = new AbortController();
-    const poll = async () => {
-      let delay = 5000;
-      const generation = viewGeneration.current;
-      try {
-        const snapshot = await api.state(AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]));
-        if (stopped) return;
-        failures = 0; setManagementConnectionError(null);
-        if (generation === viewGeneration.current) setState(snapshot);
-        const newlyCompleted = snapshot.jobs.filter(job => job.status === "completed" && !completedInstallations.current.has(job.id));
-        if (newlyCompleted.length) {
-          const harnesses = await api.rescan(AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]));
-          if (!stopped && generation === viewGeneration.current) {
-            newlyCompleted.forEach(job => completedInstallations.current.add(job.id));
-            setState(current => current ? { ...current, harnesses } : current);
-          }
-        }
-        delay = snapshot.jobs.some(installationActive) ? 800 : 5000;
-      } catch (failure: unknown) {
+    const read = async () => {
+      let delay = TASK_READ_MS;
+      try { await readState(controller.signal); if (stopped) return; failures = 0; setManagementConnectionError(null); }
+      catch (failure: unknown) {
         if (stopped) return;
         failures += 1; setManagementConnectionError(errorMessage(failure)); delay = Math.min(15_000, 1000 * 2 ** Math.min(failures, 4));
       }
-      if (!stopped) timer = setTimeout(() => void poll(), document.hidden ? Math.max(delay, 10_000) : delay);
+      if (!stopped) timer = setTimeout(() => void read(), document.visibilityState === "hidden" ? Math.max(delay, HIDDEN_TASK_READ_MS) : delay);
     };
-    timer = setTimeout(() => void poll(), liveState.current?.jobs.some(installationActive) ? 800 : 1500);
+    timer = setTimeout(() => void read(), TASK_READ_MS);
     return () => { stopped = true; if (timer !== null) clearTimeout(timer); controller.abort(); };
-  }, [api, state !== null]);
+  }, [tasksRunning, readState]);
+  // A task that ended after the last scan asks once for a scan that began after its end, whichever read brought the news;
+  // its own effect owns it, so the task reads stopping at that moment do not cancel it.
+  const settled = state === null ? [] : state.jobs.filter(job => !installationActive(job) && !scanCovers(state.harnessesScannedAt, job.updatedAt));
+  const settledKeys = settled.map(job => job.id + "@" + job.updatedAt).join(",");
+  useEffect(() => {
+    for (const key of [...settledScans.current]) if (!settledKeys.split(",").includes(key)) settledScans.current.delete(key);
+    const fresh = settled.filter(job => !settledScans.current.has(job.id + "@" + job.updatedAt));
+    if (!fresh.length) return;
+    for (const job of fresh) settledScans.current.add(job.id + "@" + job.updatedAt);
+    const after = fresh.map(job => job.updatedAt).reduce((latest, time) => Date.parse(time) > Date.parse(latest) ? time : latest);
+    void scanHarnesses(undefined, after).catch((failure: unknown) => {
+      for (const job of fresh) settledScans.current.delete(job.id + "@" + job.updatedAt);
+      if (mounted.current) setManagementConnectionError(errorMessage(failure));
+    });
+  }, [settledKeys, scanHarnesses]);
+  // Coming back into view reads the state again, which is cheap, and scans when the last scan is a minute old.
+  useEffect(() => {
+    if (!state) return;
+    let stopped = false, reading = false;
+    const controller = new AbortController();
+    const returned = () => {
+      if (stopped || reading || document.visibilityState === "hidden") return;
+      reading = true;
+      void readState(controller.signal).then(async snapshot => {
+        if (stopped) return;
+        setManagementConnectionError(null);
+        if (snapshot !== null) await scanIfStale(snapshot, controller.signal);
+      }).catch((failure: unknown) => { if (!stopped) setManagementConnectionError(errorMessage(failure)); }).finally(() => { reading = false; });
+    };
+    const visible = () => { if (document.visibilityState === "visible") returned(); };
+    window.addEventListener("focus", returned); document.addEventListener("visibilitychange", visible);
+    return () => { stopped = true; controller.abort(); window.removeEventListener("focus", returned); document.removeEventListener("visibilitychange", visible); };
+  }, [state !== null, readState, scanIfStale]);
   // Without a conversation open, the page subscribes to waiting requests alone; with one open, that conversation's stream
   // carries them, so a page holds one long-lived connection either way.
   useEffect(() => {
@@ -749,6 +803,10 @@ export function App() {
   };
   const dirtyChanged = useCallback((dirty: boolean) => setEditorDirty(dirty), []);
   const harnessName = (id: string) => state?.harnesses.find(harness => harness.id === id)?.name ?? id;
+  // What the lists offering a Harness for new work leave out (ADR-050): the frozen ones unless shown, never the open
+  // conversation's or the draft's choice. Names, the inbox, details and history keep using every Harness.
+  const currentHarness = session?.selection.harnessId ?? "";
+  const hidden = useMemo(() => hiddenHarnesses(state?.harnesses ?? [], preferences.showFrozen, [draft.harnessId, currentHarness]), [state?.harnesses, preferences.showFrozen, draft.harnessId, currentHarness]);
   const commands = ((): readonly PaletteCommand[] => {
     if (!state) return [];
     const go = (target: Page) => () => navigate(target);
@@ -756,7 +814,7 @@ export function App() {
     return [
       { id: "new", group: "操作", label: "新对话", icon: <MessageSquarePlus size={16}/>, shortcut: "⇧⌘O", run: newChat },
       ...state.sessions.slice(0, 200).map(item => ({ id: "session:" + item.id, group: "对话", label: item.title || "新对话", hint: harnessName(item.selection.harnessId), keywords: item.workspace, icon: <BrandIcon brand={item.selection.harnessId} name={harnessName(item.selection.harnessId)} size={16}/>, run: () => selectSession(item.id) })),
-      ...state.harnesses.filter(harness => harness.controls.some(control => control.available)).map(harness => ({ id: "start:" + harness.id, group: "用 Agent 开始新对话", label: "用 " + harness.name + " 开始新对话", keywords: harness.id, icon: <BrandIcon brand={harness.id} name={harness.name} size={16}/>, run: () => chooseHarness(harness) })),
+      ...state.harnesses.filter(harness => !hidden.has(harness.id) && harness.controls.some(control => control.available)).map(harness => ({ id: "start:" + harness.id, group: "用 Agent 开始新对话", label: "用 " + harness.name + " 开始新对话", keywords: harness.id, icon: <BrandIcon brand={harness.id} name={harness.name} size={16}/>, run: () => chooseHarness(harness) })),
       { id: "harnesses", group: "前往", label: "我的 Agent", icon: <Bot size={16}/>, run: go("harnesses") },
       { id: "capabilities", group: "前往", label: "能力", icon: <Blocks size={16}/>, run: () => { setCapabilityHarness(null); go("capabilities")(); } },
       { id: "settings", group: "前往", label: "设置", icon: <Settings size={16}/>, run: go("settings") },
@@ -798,7 +856,7 @@ export function App() {
           try { const holder=(await api.keptProcesses()).find(item=>item.workspace===session.workspace&&item.sessionId!==session.id); if(holder) await api.endKeptProcess(holder.sessionId,requestKey()); await send(run.input,run.attachments ?? []); }
           catch(failure){ setError(errorMessage(failure)); } }} onPermission={(permission,option,input)=>{ if(!sessionId||!startOperation("permission"))return; void api.decidePermission(sessionId,permission,option,requestKey(),input).then(()=>api.session(sessionId)).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
         nativeModels={nativeCatalog} nativeModelsLoading={nativeLoading} nativeModelsError={nativeError} onRefreshModels={refreshNativeModels} key={chatKey} session={session} sessionRequested={sessionId !== null} sessionError={sessionError} loading={sessionLoading} draft={draft}
-        messageDraft={messageDraft} onMessageDraft={setMessageDraft} providers={state.providers} harnesses={state.harnesses} readiness={state.readiness} rememberedChoice={rememberedChoice} workspace={workspace} mutation={mutation} error={error ?? draftStorageError} connectionError={connectionError}
+        messageDraft={messageDraft} onMessageDraft={setMessageDraft} providers={state.providers} harnesses={state.harnesses} hiddenHarnesses={hidden} readiness={state.readiness} rememberedChoice={rememberedChoice} workspace={workspace} mutation={mutation} error={error ?? draftStorageError} connectionError={connectionError}
         onRetryConnection={() => setStreamAttempt(value => value + 1)} onDraft={changeSelection} onWorkspace={setWorkspace} onSend={send} attachments={attachments} onAttach={attachFiles} onRemoveAttachment={removeAttachment} onBranch={branch} onOpenSession={selectSession}
         sessionTitle={id => state.sessions.find(item => item.id === id)?.title ?? null} attention={attention?.items ?? null} onCancelQueued={cancelQueued} onLoadNativeResume={session ? signal => api.nativeResume(session.id, signal) : undefined}
         onLoadExtensions={signal => api.nativeExtensions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, signal)} onLoadNativeSessions={(cursor, signal, probes) => api.nativeSessions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, cursor, signal, probes)}
@@ -807,9 +865,9 @@ export function App() {
         queued={queued} onQueue={queueMessage} onEditQueued={() => { if (queued) returnQueued(queued, null); }} onWithdrawQueued={withdrawQueued} queueNotice={queueNotice} onDismissQueueNotice={() => setQueueNotice(null)}
         preferences={preferences} onPreference={setPreference} conversations={state.sessions.length} sidebarHidden={!narrow && !preferences.sidebar} onExpandSidebar={shell.onExpandSidebar} onHarnesses={() => navigate("harnesses")} onSettings={() => navigate("settings")} onRescan={() => void rescan()} scanning={mutation === "scanning"}/>
         : shown === "providers" ? <ProvidersPage providers={state.providers} editor={editor} saving={mutation === "saving"} probes={probes} error={error} onEdit={provider => { setEditor(provider); setError(null); }} onBack={() => leave(() => { setEditor(null); setEditorDirty(false); setError(null); })} onSave={saveProvider} onProbe={provider => void probeProvider(provider)} onDirty={dirtyChanged} onDismissError={() => setError(null)} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
-        : shown === "capabilities" ? <CapabilitiesPage api={api} initialHarness={capabilityHarness} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
+        : shown === "capabilities" ? <CapabilitiesPage api={api} initialHarness={capabilityHarness} hidden={hidden} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
         : shown === "settings" ? <SettingsPage api={api} preferences={preferences} onPreference={setPreference} onRescan={() => void rescan()} scanning={mutation === "scanning"} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
-        : <HarnessesPage api={api} harnesses={state.harnesses} installationPolicy={state.installationPolicy} onUninstall={uninstall} onInstallOfficial={installOfficial} onUpgradeInstallation={upgradeInstallation} jobs={state.jobs} scanning={mutation === "scanning"} checking={checkingUpdates} submitting={submittingInstallations} cancelling={cancellingInstallations} unconfirmed={unconfirmedInstallations} error={error} connectionError={managementConnectionError} onRescan={() => void rescan()} onCheckUpdates={ids => void checkUpdates(ids)} onInstall={install} onOpenSession={selectSession} onConfirm={confirmInstallation} onCancelJob={job => void cancelInstallation(job)} onDismissError={() => setError(null)} onChoose={chooseHarness} onCapabilities={id => { setCapabilityHarness(id); navigate("capabilities"); }} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>}
+        : <HarnessesPage api={api} harnesses={state.harnesses} hidden={hidden} onSettings={() => navigate("settings")} installationPolicy={state.installationPolicy} onUninstall={uninstall} onInstallOfficial={installOfficial} onUpgradeInstallation={upgradeInstallation} jobs={state.jobs} scanning={mutation === "scanning"} checking={checkingUpdates} submitting={submittingInstallations} cancelling={cancellingInstallations} unconfirmed={unconfirmedInstallations} error={error} connectionError={managementConnectionError} onRescan={() => void rescan()} onCheckUpdates={ids => void checkUpdates(ids)} onInstall={install} onOpenSession={selectSession} onConfirm={confirmInstallation} onCancelJob={job => void cancelInstallation(job)} onDismissError={() => setError(null)} onChoose={chooseHarness} onCapabilities={id => { setCapabilityHarness(id); navigate("capabilities"); }} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>}
     </main>
     {leaveAction ? <div className="fixed right-4 bottom-4 left-4 z-[70] mx-auto max-w-[560px]"><Notice tone="amber" title="有尚未保存的修改" action={<><button className="btn btn-sm" onClick={() => setLeaveAction(null)}>继续编辑</button><button className="btn btn-sm btn-primary" onClick={() => { const action = leaveAction; setLeaveAction(null); setEditorDirty(false); action(); }}>放弃修改，离开</button></>} onDismiss={() => setLeaveAction(null)}>离开会丢弃编辑草稿。已受理的请求可在列表中查看。</Notice></div> : null}
     <CommandPalette open={palette} onOpenChange={setPalette} commands={commands}/>

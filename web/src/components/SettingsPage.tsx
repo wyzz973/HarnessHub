@@ -4,7 +4,7 @@ import type { LoginShellView } from "../../../src/contracts/web.js";
 import { errorMessage, GatewayApi } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { DEFAULT_PREFERENCES, type Preferences } from "../lib/prefs.js";
-import { Kbd, Spinner } from "../ui/primitives.js";
+import { Kbd, Spinner, Switch } from "../ui/primitives.js";
 import { Card, PageShell, Section } from "./PageShell.js";
 import { NotifyToggle } from "./Sidebar.js";
 
@@ -57,7 +57,12 @@ export function SettingsPage({ api, preferences, onPreference, onRescan, scannin
     <Section title="发现" description="HarnessHub 按各产品的官方命令名和标准安装目录查找本机的 Harness，也读取启动时给出的发现清单中的自定义入口。">
       <Card className="flex flex-col gap-4 p-4">
         <LoginShellPanel api={api} onChanged={onRescan}/>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3.5"><small className="text-[12.5px] text-fg-2">安装或升级了某个 Harness 之后，重新检测一次即可看到。</small><button type="button" className="btn" onClick={onRescan} disabled={scanning}>{scanning ? <Spinner size={13}/> : <RefreshCw size={14}/>}重新检测本机入口</button></div>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3.5"><small className="text-[12.5px] text-fg-2">页面不在后台定时检测。在终端里安装或升级了 Harness 后，回到这个页面时会自动检测（距上次检测超过一分钟时），也可以在这里立即重新检测。</small><button type="button" className="btn" onClick={onRescan} disabled={scanning}>{scanning ? <Spinner size={13}/> : <RefreshCw size={14}/>}重新检测本机入口</button></div>
+        {/* Cursor, Gemini CLI and Pi are frozen (ADR-048): listed for new work only when the user asks (ADR-050). */}
+        <div className="frozen-setting flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3.5">
+          <div className="min-w-0 flex-1"><strong className="block text-[13.5px] font-medium">显示冻结的 Harness（Cursor、Gemini CLI、Pi）</strong>
+            <small className="text-[12.5px] text-fg-2">冻结：保留适配与历史对话，不再打磨；停在它们上面的对话照常打开。</small></div>
+          <Switch checked={preferences.showFrozen} onChange={value => onPreference("showFrozen", value)} label="显示冻结的 Harness（Cursor、Gemini CLI、Pi）"/></div>
       </Card>
     </Section>
     <Section title="快捷键">

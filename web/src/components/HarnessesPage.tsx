@@ -85,7 +85,12 @@ function serviceOutcome(service: NonNullable<NonNullable<InstallationJobView["na
   return "已重启（进程 " + service.pid + "）" + (service.ready === true ? "，正在监听" : service.ready === false ? "，没有在端口上监听" : "，可用性未验证");
 }
 interface HarnessProps {
-  api: GatewayApi; harnesses: readonly HarnessView[]; installationPolicy: "official" | "any"; jobs: readonly InstallationJobView[]; scanning: boolean; checking: boolean;
+  api: GatewayApi; harnesses: readonly HarnessView[];
+  /** The Harnesses the list leaves out (ADR-050): the frozen ones, unless the user shows them in the settings. */
+  hidden: ReadonlySet<string>;
+  /** Opens the settings, where the frozen Harnesses can be shown. */
+  onSettings: () => void;
+  installationPolicy: "official" | "any"; jobs: readonly InstallationJobView[]; scanning: boolean; checking: boolean;
   submitting: readonly string[]; cancelling: readonly string[]; error: string | null; connectionError: string | null; unconfirmed: readonly UnconfirmedInstallation[];
   onRescan: () => void; onCheckUpdates: (ids?: readonly string[]) => void; onInstall: (harness: HarnessView, action: "install" | "upgrade", consent?: UpgradeConsent) => void;
   /** Uninstalls one installation the user confirmed (ADR-044). */
@@ -159,8 +164,10 @@ export function HarnessesPage(props: HarnessProps) {
   };
   const closeConfirmation = () => { const from = confirming?.fromDetail ? confirming.harness.id : null; setConfirming(null); if (from) setSelectedId(from); };
   const active = jobs.filter(installationActive);
-  const counts = { all: harnesses.length, installed: harnesses.filter(h => !missing(h)).length, missing: harnesses.filter(missing).length, updates: harnesses.filter(h => h.management.updateStatus === "available").length };
-  const visible = harnesses.filter(harness => (filter === "all" || filter === "installed" && !missing(harness) || filter === "missing" && missing(harness) || filter === "updates" && harness.management.updateStatus === "available") && `${harness.id} ${harness.name}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
+  // The list and its counts leave out the hidden Harnesses; details, tasks and names still find every one.
+  const listed = harnesses.filter(harness => !props.hidden.has(harness.id)), hiddenCount = harnesses.length - listed.length;
+  const counts = { all: listed.length, installed: listed.filter(h => !missing(h)).length, missing: listed.filter(missing).length, updates: listed.filter(h => h.management.updateStatus === "available").length };
+  const visible = listed.filter(harness => (filter === "all" || filter === "installed" && !missing(harness) || filter === "missing" && missing(harness) || filter === "updates" && harness.management.updateStatus === "available") && `${harness.id} ${harness.name}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
     .sort((a, b) => Number(missing(a)) - Number(missing(b)) || a.name.localeCompare(b.name));
   return <PageShell title="我的 Agent" titleId="harnesses-title" onMenu={props.onMenu} sidebarHidden={props.sidebarHidden} onExpandSidebar={props.onExpandSidebar} onBack={props.onChat} wide bodyClassName="harness-management-body"
     description="这台电脑上的 Harness：版本、来源和维护都沿用它们自己的安装渠道。模型配置、登录状态与对话历史都保留在原程序中。"
@@ -197,7 +204,9 @@ export function HarnessesPage(props: HarnessProps) {
       return <article key={harness.id} className={cn("harness-table-row flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 md:grid md:grid-cols-[minmax(0,1fr)_230px_190px]", index > 0 && "border-t border-line", selectedId === harness.id && "bg-subtle")}>
         <button type="button" onClick={() => setSelectedId(harness.id)} aria-label={`查看 ${harness.name} 详情`} className="flex min-w-[200px] flex-1 items-center gap-3 border-none bg-transparent p-0 text-left md:min-w-0">
           <BrandIcon brand={harness.id} name={harness.name} size={30}/>
-          <span className="min-w-0"><strong className="block truncate text-[14px] font-semibold">{harness.name}</strong><small className={cn("text-[12px]", available ? "text-fg-3" : "text-fg-3")}>{job ? installationStatus(job) : available ? "控制入口已解析" : harness.installed ? "需要控制适配器" : "安装后即可尝试连接"}</small></span>
+          <span className="min-w-0"><span className="flex min-w-0 items-center gap-1.5"><strong className="block truncate text-[14px] font-semibold">{harness.name}</strong>
+            {harness.tier === "frozen" ? <Badge tone="neutral" className="harness-frozen flex-none" title="冻结：保留适配与历史对话，不再打磨">冻结</Badge> : null}</span>
+            <small className={cn("text-[12px]", available ? "text-fg-3" : "text-fg-3")}>{job ? installationStatus(job) : available ? "控制入口已解析" : harness.installed ? "需要控制适配器" : "安装后即可尝试连接"}</small></span>
         </button>
         <div className="flex min-w-[170px] flex-col text-[12.5px]">
           <span className="flex items-center gap-1.5 font-medium">{versionOf(harness) ? `v${versionOf(harness)}` : harness.installed ? "版本待检测" : "未安装"}{hint ? <span className="version-unverified badge badge-amber" title={hint}>未经验证</span> : null}</span>
@@ -213,6 +222,7 @@ export function HarnessesPage(props: HarnessProps) {
         </div>
       </article>;
     })}</div> : <EmptyState title={query ? "没有匹配的 Harness" : "这个分类中暂无 Harness"} action={<button className="btn" onClick={() => { setQuery(""); setFilter("all"); }}>查看全部</button>}>试试其他名称或切换分类。</EmptyState>}
+    {hiddenCount > 0 ? <p className="hidden-frozen m-0 text-[12.5px] text-fg-3">已隐藏 {hiddenCount} 个冻结的 Harness，<button type="button" className="link-btn text-[12.5px]" onClick={props.onSettings}>可在设置里显示</button></p> : null}
     <p className="m-0 flex items-start gap-2 text-[12.5px] text-fg-3"><ShieldCheck size={14} className="mt-0.5 flex-none"/><span>本机安装升级沿用原渠道。执行期间暂停对应程序的新任务；模型配置、登录状态与对话历史保留。搜索目录可以在“设置 → 发现”中补充。</span></p>
     <Dialog open={selected !== null} onOpenChange={open => { if (!open) setSelectedId(null); }} title={selected ? `${selected.name} 详情` : "Harness 详情"} kind="drawer">
       {selected ? <HarnessDetail {...props} harness={selected} onClose={() => setSelectedId(null)} onRequest={harness => request(harness, true)} onInstallRequest={harness => installOfficial(harness, true)}

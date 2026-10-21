@@ -3,6 +3,7 @@ import test from "node:test";
 import { ApiError, GatewayApi } from "../../web/src/api.js";
 import { toolParents } from "../../web/src/tool-tree.js";
 import { liveItems, mostUrgent, remaining } from "../../web/src/attention.js";
+import { hiddenHarnesses } from "../../web/src/lib/prefs.js";
 import { cancelledLabel, type AttentionItem } from "../../src/contracts/session.js";
 
 function api(t: test.TestContext, fetcher: typeof fetch): GatewayApi {
@@ -124,6 +125,14 @@ test("a rescan asks for a scan after a time only when given one, and sends nothi
   assert.deepEqual(await client.rescan(), []);
   assert.deepEqual(await client.rescan(undefined, "2026-10-22T08:00:00.000Z"), []);
   assert.deepEqual(bodies, [{}, { after: "2026-10-22T08:00:00.000Z" }]);
+});
+
+test("the frozen Harnesses are hidden from new work unless shown, and the open conversation's and the draft's choice never are (ADR-050)", () => {
+  const harnesses = [{ id: "codex", tier: "focus" as const }, { id: "gemini", tier: "frozen" as const }, { id: "cursor", tier: "frozen" as const }, { id: "pi", tier: "frozen" as const }, { id: "autohand", tier: "catalog" as const }];
+  assert.deepEqual([...hiddenHarnesses(harnesses, false, ["", ""])].sort(), ["cursor", "gemini", "pi"]);
+  assert.deepEqual([...hiddenHarnesses(harnesses, true, ["", ""])], [], "shown: nothing is hidden");
+  assert.deepEqual([...hiddenHarnesses(harnesses, false, ["gemini", "pi"])], ["cursor"], "the draft's and the conversation's choice stay listed");
+  assert.deepEqual([...hiddenHarnesses(harnesses, false, ["codex", "autohand"])].sort(), ["cursor", "gemini", "pi"], "keeping a listed Harness changes nothing");
 });
 
 test("a cancelled Turn says why: its execution budget, its wait for the user, a restart before it was sent, or the user's stop", () => {

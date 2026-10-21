@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { chromium, expect, type Browser, type BrowserContextOptions } from "@playwright/test";
+import { chromium, expect, type Browser, type BrowserContextOptions, type Page } from "@playwright/test";
 import { application } from "../../src/cli/session-application.js";
 import { runManagementProcess } from "../../src/infrastructure/management/process.js";
 import type { ManagementMetadataPort, ManagementInstallerPort } from "../../src/contracts/management.js";
@@ -22,16 +22,36 @@ async function isolatedContext(browser: Browser, options?: BrowserContextOptions
   return context;
 }
 const peer = fileURLToPath(new URL("../../../tests/fixtures/web-harness-peer.mjs", import.meta.url));
+const controlPeer = pathToFileURL(fileURLToPath(new URL("../../../tests/fixtures/control-peer.mjs", import.meta.url))).href;
 const artifact = resolve("artifacts/chat-v3");
+/**
+ * The control-peer's ACP agent in `scenario` under a catalog Harness's own entry (ADR-050 tests): `--version` answers
+ * `version`, the way the Gateway's version probe asks, and anything else starts the agent.
+ */
+function catalogShim(version: string, scenario: string): string {
+  return "#!" + process.execPath + "\nif (process.argv.includes(\"--version\")) { process.stdout.write(" + JSON.stringify(version + "\n") + "); process.exit(0); }\n"
+    + "process.argv.splice(2, Infinity, \"acp-v1\", " + JSON.stringify(scenario) + ");\nawait import(" + JSON.stringify(controlPeer) + ");\n";
+}
 async function launchFixture(providerManagement = true, nativeAcp: { readonly name: string; readonly scenario: string; readonly env?: Readonly<Record<string, string>> } | null = null, nativeCodex: { readonly name: string; readonly scenario: string } | null = null, hermes = false,
-  budgets?: { readonly executionBudgetMs: number; readonly waitBudgetMs: number }, loginShell?: { readonly shell: string; readonly shells: string }) {
+  budgets?: { readonly executionBudgetMs: number; readonly waitBudgetMs: number }, loginShell?: { readonly shell: string; readonly shells: string },
+  /**
+   * Catalog Harnesses the control-peer stands in for, by the version their entry reports. With any, discovery's PATH holds
+   * Node.js alone instead of its whole directory, where this computer's own `dsh` or `claude` may be installed.
+   */
+  shims: { readonly gemini?: string; readonly dsh?: string } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "harness-web-browser-")));
   const workspace = join(root, "workspace"), shim = join(root, "codex-fixture.mjs"); await mkdir(workspace);
   await writeFile(shim, "#!" + process.execPath + "\nimport " + JSON.stringify(pathToFileURL(peer).href) + ";\n", { mode: 0o700 });
   // Hermes 0.12 as its own entry: the control-peer's Hermes behaviour under the version whose approvals wait 60 seconds.
   const hermesShim = join(root, "hermes-fixture.mjs");
   if (hermes) await writeFile(hermesShim, "#!" + process.execPath + "\nprocess.argv.splice(2, Infinity, \"acp-v1\", \"hermes\");\nprocess.env.FIXTURE_AGENT_VERSION = \"0.12.0\";\nawait import("
-    + JSON.stringify(pathToFileURL(fileURLToPath(new URL("../../../tests/fixtures/control-peer.mjs", import.meta.url))).href) + ");\n", { mode: 0o700 });
+    + JSON.stringify(controlPeer) + ");\n", { mode: 0o700 });
+  const geminiShim = join(root, "gemini-fixture.mjs"), dshShim = join(root, "dsh-fixture.mjs"), nodeOnly = join(root, "node-bin");
+  if (shims.gemini !== undefined) await writeFile(geminiShim, catalogShim(shims.gemini, "basic"), { mode: 0o700 });
+  // DeepSeek Harness keeps its sessions for loading again, as the "native-resume" scenario does.
+  if (shims.dsh !== undefined) await writeFile(dshShim, catalogShim(shims.dsh, "native-resume"), { mode: 0o700 });
+  const isolated = shims.gemini !== undefined || shims.dsh !== undefined;
+  if (isolated) { await mkdir(nodeOnly); await symlink(process.execPath, join(nodeOnly, "node")); }
   const manifest = join(root, "catalog.json"), authShim = join(root, "gateway-auth-fixture.mjs");
   await writeFile(authShim, "#!" + process.execPath + "\nprocess.stderr.write('unauthorized: gateway token missing\\n');process.exit(1);\n", { mode: 0o700 });
   // An ACP agent whose native command changes one of its own settings and announces it (control-peer "native-config").
@@ -43,7 +63,8 @@ async function launchFixture(providerManagement = true, nativeAcp: { readonly na
     args: [fileURLToPath(new URL("../../../tests/fixtures/control-peer.mjs", import.meta.url)), "codex-app-server", nativeCodex.scenario], env: {}, package: null, distribution: null, requiredExecutables: [],
     source: { repository: "fixture", revision: nativeCodex.scenario, upstreamId: "fixture", url: "https://example.invalid/" + nativeCodex.scenario } }] };
   await writeFile(manifest, JSON.stringify({ version: 2, definitions: [...(acp ? [acp] : []), ...(codex ? [codex] : [])], overrides: { "codex-native": { executable: shim }, "openclaw-native": { executable: authShim }, ...(hermes ? { "hermes-native": { executable: hermesShim } } : {}),
-    ...(acp ? { "native-acp": { executable: process.execPath } } : {}), ...(codex ? { "native-codex": { executable: process.execPath } } : {}) } }));
+    ...(acp ? { "native-acp": { executable: process.execPath } } : {}), ...(codex ? { "native-codex": { executable: process.execPath } } : {}),
+    ...(shims.gemini !== undefined ? { "gemini-npm": { executable: geminiShim } } : {}), ...(shims.dsh !== undefined ? { "dsh-native": { executable: dshShim } } : {}) } }));
   const modelServer = createServer((req, res) => { assert.equal(req.method, "GET"); assert.equal(req.url, "/v1/models"); res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ data: [{ id: "model-a" }, { id: "model-b" }] })); });
   await new Promise<void>(done => modelServer.listen(0, "127.0.0.1", done));
   const address = modelServer.address(); assert.ok(address && typeof address === "object");
@@ -58,8 +79,16 @@ async function launchFixture(providerManagement = true, nativeAcp: { readonly na
   let composed: ReturnType<typeof application> | null = null;
   const gateway = await startWebServer({ root: join(root, "data"), configuration: await prepareConfiguration({ workspace, manifestPath: manifest, pathOnly: true }), port: 0, providerManagement, ...(loginShell === undefined ? {} : { loginShell }),
     // The fixture's Harnesses are discovery-manifest entries, which only a development Gateway reads (ADR-044).
-    application: (data, publish) => (composed = application(data, publish, { installations: "any", management: { installationMode: "private-fixture", metadata, installer }, nativeEnvironment: { home: root, values: { HOME: root, PATH: dirname(process.execPath) + ":/usr/bin:/bin" } }, ...(budgets === undefined ? {} : { budgets }), workspaceLockRoot: join(root, "locks") })) });
+    application: (data, publish) => (composed = application(data, publish, { installations: "any", management: { installationMode: "private-fixture", metadata, installer }, nativeEnvironment: { home: root, values: { HOME: root, PATH: (isolated ? nodeOnly : dirname(process.execPath)) + ":/usr/bin:/bin" } }, ...(budgets === undefined ? {} : { budgets }), workspaceLockRoot: join(root, "locks") })) });
   return { root, gateway, runtime: () => { assert.ok(composed); return composed.runtime; }, setVersion: (value: string) => { fixtureVersion = value; }, baseUrl: `http://127.0.0.1:${address.port}/v1`, close: async () => { await gateway.close(); modelServer.closeAllConnections(); await new Promise<void>(done => modelServer.close(() => done())); await rm(root, { recursive: true, force: true }); } };
+}
+/** The settings switch that lists the frozen Harnesses (Cursor, Gemini CLI, Pi) for new work as well (ADR-050). */
+const FROZEN_SWITCH = "显示冻结的 Harness（Cursor、Gemini CLI、Pi）";
+/** Shows the frozen Harnesses through the settings page, as a user does; the page stays on the settings. */
+async function showFrozenHarnesses(page: Page): Promise<void> {
+  await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "设置", exact: true }).click();
+  const toggle = page.getByRole("switch", { name: FROZEN_SWITCH });
+  await toggle.click(); await expect(toggle).toBeChecked();
 }
 
 test("real browser validates Provider management, public chat switching, cancellation and responsive layouts", { timeout: 120000 }, async t => {
@@ -1109,7 +1138,8 @@ test("a Harness version HarnessHub has not run for real is marked in the Harness
   const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url);
-  // HarnessHub verified Gemini CLI 0.62.0; the fixture installs 1.0.0 of it.
+  // HarnessHub verified Gemini CLI 0.62.0; the fixture installs 1.0.0 of it. Gemini CLI is frozen, so it is shown first (ADR-050).
+  await showFrozenHarnesses(page);
   await page.getByRole("button", { name: "我的 Agent", exact: true }).click();
   const row = page.locator(".harness-table-row").filter({ has: page.getByRole("button", { name: "查看 Gemini CLI 详情", exact: true }) });
   await row.getByRole("button", { name: "安装", exact: true }).click();
@@ -1579,6 +1609,8 @@ test("G054-OC1 a Harness lists each official installation with the one in use, a
     await route.fulfill({ response, json: Array.isArray(body) ? body.map(shaped) : { ...body, harnesses: body.harnesses.map(shaped) } });
   });
   await page.goto(fixture.gateway.url);
+  // Gemini CLI below is frozen, so the frozen Harnesses are shown first (ADR-050).
+  await showFrozenHarnesses(page);
   await page.getByRole("button", { name: "我的 Agent", exact: true }).click();
   await page.getByRole("button", { name: "查看 Codex 详情", exact: true }).click();
   const codex = page.getByRole("dialog", { name: "Codex 详情" });
@@ -1860,12 +1892,18 @@ test("G054-CA1 the capability page opens from the sidebar and from a Harness's d
     await route.fulfill({ response, json: Array.isArray(body) ? body.map(shaped) : { ...body, harnesses: body.harnesses.map(shaped) } });
   });
   await page.goto(fixture.gateway.url); await expect(page.getByRole("button", { name: "新对话", exact: true })).toBeVisible();
-  await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "能力", exact: true }).click();
+  const navigation = page.getByRole("complementary", { name: "主导航" });
+  await navigation.getByRole("button", { name: "能力", exact: true }).click();
   await expect(page.getByRole("heading", { name: "能力", exact: true })).toBeVisible();
+  // Cursor is frozen: its column, its place in the Harness list and its reading rules stay out until the settings show it (ADR-050).
+  const matrix = page.locator(".capability-matrix");
+  await expect(matrix.locator("thead th")).toHaveText([/技能/u, /Claude Code/u, /Codex/u, /Hermes Agent/u]);
+  await expect(page.getByRole("combobox", { name: "只看一个 Harness" }).locator("option")).toHaveText(["全部 Harness", "Claude Code", "Codex", "Hermes Agent"]);
+  await showFrozenHarnesses(page);
+  await navigation.getByRole("button", { name: "能力", exact: true }).click();
   // Seven kinds, each with its count; the skills matrix has one column per Harness, saying how each sees each skill.
   const tabs = page.getByRole("tablist", { name: "能力类别" });
   for (const [label, count] of [["技能", 2], ["MCP", 1], ["指令", 1], ["子 Agent", 1], ["命令", 0], ["Hooks", 1], ["插件", 1]] as const) await expect(tabs.getByRole("tab", { name: label + " " + count, exact: true })).toBeVisible();
-  const matrix = page.locator(".capability-matrix");
   await expect(matrix.locator("thead th")).toHaveText([/技能/u, /Claude Code.*v2\.1\.302/u, /Codex.*v0\.162\.1/u, /Cursor.*未核实/u, /Hermes Agent.*v0\.12\.0/u]);
   const alpha = matrix.locator("tbody tr").filter({ hasText: "alpha" }).first();
   await expect(alpha.locator("td").nth(0)).toHaveText("✓链接"); await expect(alpha.locator("td").nth(1)).toHaveText("✓共享目录✓自有目录"); await expect(alpha.locator("td").nth(2)).toHaveText("⧉重复");
@@ -2483,7 +2521,8 @@ test("G054-CA9 the plugins tab says whose plugins can be switched and why the ot
   // Who can switch, and why the others only read.
   const support = page.locator(".plugin-support");
   await expect(support).toContainText("Claude Code、Codex 的插件可以在这里停用或启用"); await expect(support).toContainText("安装与卸载还没有提供。");
-  await expect(support.locator("li")).toHaveText(["Cursor：Cursor 不在磁盘上记录插件。", "Hermes Agent：hermes plugins enable 会经 save_config 整份重写 config.yaml（丢掉注释、补上默认项），暂时只读。"]);
+  // Cursor is frozen and hidden by default, with its line (ADR-050).
+  await expect(support.locator("li")).toHaveText(["Hermes Agent：hermes plugins enable 会经 save_config 整份重写 config.yaml（丢掉注释、补上默认项），暂时只读。"]);
   // One row; each Harness its own version, state and switch.
   const matrix = page.locator(".capability-matrix");
   await expect(matrix.locator("tbody tr")).toHaveCount(1);
@@ -2516,4 +2555,147 @@ test("G054-CA9 the plugins tab says whose plugins can be switched and why the ot
   assert.deepEqual(Object.fromEntries(checks.at(-1)!), { harnessId: "codex", id: "tool@market", enabled: "true" });
   await codex.getByRole("button", { name: "取消", exact: true }).click();
   assert.equal(posted.length, 1); assert.deepEqual(errors, []);
+});
+
+test("G054-FZ1 the frozen Harnesses stay out of the picker, the welcome, the palette and my Agents until the settings show them, and a conversation on one still opens with its choice (ADR-050)", { timeout: 120000 }, async t => {
+  // The control-peer stands in for Gemini CLI under its own catalog entry.
+  const fixture = await launchFixture(false, null, null, false, undefined, undefined, { gemini: "0.62.0" }); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url); await expect(page.getByRole("button", { name: "新对话", exact: true })).toBeVisible();
+  const frozen = ["Gemini CLI", "Cursor", "Pi"], picker = page.getByRole("button", { name: "选择 Harness", exact: true });
+  const welcome = page.getByRole("region", { name: "本机发现的 Harness" }), navigation = page.getByRole("complementary", { name: "主导航" });
+  const row = (name: string) => page.locator(".harness-table-row").filter({ has: page.getByRole("button", { name: `查看 ${name} 详情`, exact: true }) });
+  // By default none of them is offered for new work, though Gemini CLI is installed and ready.
+  await expect(welcome.getByRole("button", { name: "选择 Codex", exact: true })).toBeVisible();
+  await expect(welcome.getByRole("button", { name: "选择 Gemini CLI", exact: true })).toHaveCount(0);
+  await picker.click(); await expect(page.getByRole("option", { name: "Codex", exact: true })).toBeVisible();
+  for (const name of frozen) await expect(page.getByRole("option", { name, exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("ControlOrMeta+K"); await page.getByRole("combobox", { name: "搜索对话、页面或操作", exact: true }).fill("开始新对话");
+  await expect(page.getByText("用 Codex 开始新对话", { exact: true })).toBeVisible(); await expect(page.getByText("用 Gemini CLI 开始新对话", { exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await navigation.getByRole("button", { name: "我的 Agent", exact: true }).click();
+  await expect(row("Codex")).toBeVisible();
+  for (const name of frozen) await expect(row(name)).toHaveCount(0);
+  // The list says how many it left out, and leads to the switch that shows them.
+  const note = page.locator(".hidden-frozen");
+  await expect(note).toHaveText("已隐藏 3 个冻结的 Harness，可在设置里显示");
+  await note.getByRole("button", { name: "可在设置里显示", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "设置", exact: true })).toBeVisible();
+  const toggle = page.getByRole("switch", { name: FROZEN_SWITCH });
+  await expect(page.locator(".frozen-setting")).toContainText("冻结：保留适配与历史对话，不再打磨；停在它们上面的对话照常打开。");
+  await expect(toggle).not.toBeChecked(); await toggle.click(); await expect(toggle).toBeChecked();
+  // Shown: each is listed with its mark, and only they carry it.
+  await navigation.getByRole("button", { name: "我的 Agent", exact: true }).click();
+  for (const name of frozen) await expect(row(name).locator(".harness-frozen")).toHaveText("冻结");
+  await expect(row("Codex").locator(".harness-frozen")).toHaveCount(0); await expect(note).toHaveCount(0);
+  await page.screenshot({ path: join(artifact, "frozen-shown.png"), animations: "disabled" });
+  // A conversation on Gemini CLI.
+  await page.getByRole("button", { name: "返回对话", exact: true }).click();
+  await picker.click(); await page.getByRole("option", { name: "Gemini CLI", exact: true }).click();
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
+  await composer.fill("frozen work"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
+  await expect(log).toContainText("你好 fixture", { timeout: 15000 });
+  // Hidden again: the conversation still opens on Gemini CLI and keeps it chosen and offered; a new conversation does not offer it.
+  await navigation.getByRole("button", { name: "设置", exact: true }).click();
+  await expect(toggle).toBeChecked(); await toggle.click(); await expect(toggle).not.toBeChecked();
+  await navigation.getByRole("button", { name: "frozen work", exact: true }).click();
+  await expect(page.locator("#chat-title")).toHaveText("frozen work");
+  await expect(page.locator(".chat-page header")).toContainText("Gemini CLI");
+  await expect(log).toContainText("你好 fixture");
+  await expect(picker).toContainText("Gemini CLI");
+  await picker.click(); await expect(page.getByRole("option", { name: "Gemini CLI", exact: true })).toBeVisible(); await page.keyboard.press("Escape");
+  await expect(navigation.getByRole("button", { name: "frozen work", exact: true })).toHaveAccessibleDescription("Gemini CLI");
+  await navigation.getByRole("button", { name: "新对话", exact: true }).click();
+  await expect(picker).toContainText("选择 Harness");
+  await picker.click(); await expect(page.getByRole("option", { name: "Gemini CLI", exact: true })).toHaveCount(0); await page.keyboard.press("Escape");
+  await expect(welcome.getByRole("button", { name: "选择 Gemini CLI", exact: true })).toHaveCount(0);
+  assert.deepEqual(errors, []);
+});
+
+test("G054-FZ2 an idle page asks the Gateway nothing; coming back reads the state and scans at most once a minute, the button scans at once, and a running task is read every 800 ms and scanned once it ends (ADR-050)", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  // The Gateway's state, with its last scan made a minute old and a task of its own added when the test says so (G054-UP1's way).
+  let stale = false, task: "none" | "running" | "ended" = "none", started = "", ended = "";
+  const job = (status: "installing" | "completed", updatedAt: string) => ({ id: "management-00000000-0000-4000-8000-000000000054", harnessId: "codex", controlId: "codex-native", action: "upgrade",
+    status, phase: status, cancelRequested: false, createdAt: started, updatedAt, resolvedVersion: null, installationId: null, error: null, logCursor: 0 });
+  await page.route("**/api/v1/state", async route => {
+    const response = await route.fetch(), body = await response.json() as { jobs: unknown[] };
+    await route.fulfill({ response, json: { ...body, ...(stale ? { harnessesScannedAt: new Date(Date.now() - 61_000).toISOString() } : {}),
+      jobs: task === "none" ? body.jobs : [task === "running" ? job("installing", started) : job("completed", ended), ...body.jobs] } });
+  });
+  const reads: number[] = [], scans: { readonly at: number; readonly body: unknown }[] = [];
+  page.on("request", request => {
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/v1/state") reads.push(Date.now());
+    if (path === "/api/v1/harnesses/rescan" && request.method() === "POST") scans.push({ at: Date.now(), body: request.postDataJSON() as unknown });
+  });
+  await page.goto(fixture.gateway.url); await expect(page.getByRole("button", { name: "新对话", exact: true })).toBeVisible();
+  await expect.poll(() => reads.length).toBe(1);
+  // Idle: nothing at all for twelve seconds, where the page used to read the state every five and scan with it.
+  await page.waitForTimeout(12_000);
+  assert.deepEqual([reads.length, scans.length], [1, 0], "an idle page asks nothing");
+  // Coming back with a fresh scan reads the state and scans nothing.
+  const focus = () => page.evaluate(() => { window.dispatchEvent(new Event("focus")); });
+  const shown = () => page.evaluate(() => { document.dispatchEvent(new Event("visibilitychange")); });
+  await focus(); await expect.poll(() => reads.length).toBe(2);
+  await shown(); await expect.poll(() => reads.length).toBe(3);
+  await page.waitForTimeout(500); assert.equal(scans.length, 0, "the last scan is not a minute old");
+  // With the last scan a minute old: one scan, however often the page comes back within the minute.
+  stale = true;
+  await focus(); await expect.poll(() => scans.length).toBe(1); assert.deepEqual(scans[0]!.body, {});
+  for (let index = 0; index < 4; index++) { await page.waitForTimeout(150); await focus(); await shown(); }
+  await expect.poll(() => reads.length).toBeGreaterThanOrEqual(6);
+  await page.waitForTimeout(1000); assert.equal(scans.length, 1, "at most one scan a minute on coming back");
+  // The button scans at once.
+  stale = false;
+  await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "我的 Agent", exact: true }).click();
+  await page.getByRole("button", { name: "重新检测", exact: true }).click(); await expect.poll(() => scans.length).toBe(2);
+  // A running task is read every 800 ms; once it has ended the page asks for one scan after its end, then reads no more.
+  started = new Date().toISOString(); task = "running";
+  const before = reads.length;
+  await focus();
+  await expect.poll(() => reads.length - before, { timeout: 15000 }).toBeGreaterThanOrEqual(5);
+  const gaps = reads.slice(before + 1).map((at, index, list) => at - (index === 0 ? reads[before]! : list[index - 1]!));
+  assert.ok(gaps.every(gap => gap >= 700 && gap <= 3000), "reads while the task runs: " + gaps.join(", ") + " ms apart");
+  assert.equal(scans.length, 2, "a running task asks for no scan");
+  ended = new Date().toISOString(); task = "ended";
+  await expect.poll(() => scans.length, { timeout: 10000 }).toBe(3);
+  assert.deepEqual(scans[2]!.body, { after: ended });
+  const settled = reads.length; await page.waitForTimeout(3000);
+  assert.equal(reads.length, settled, "nothing is read once the task has ended"); assert.equal(scans.length, 3);
+  assert.deepEqual(errors, []);
+});
+
+test("G054-FZ3 a verified program whose verified command asks once shows that command with its notes, and no resume command (ADR-039, ADR-050)", { timeout: 120000 }, async t => {
+  // The control-peer stands in for DeepSeek Harness, reporting the version HarnessHub verified (verified-versions.ts).
+  const fixture = await launchFixture(false, null, null, false, undefined, undefined, { dsh: "0.2.1-alpha.1" }); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click();
+  const option = page.getByRole("option", { name: "DeepSeek Harness", exact: true });
+  await expect(option).toContainText("v0.2.1-alpha.1"); await expect(option).not.toContainText("未经验证"); await option.click();
+  await composer.fill("hello"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
+  await expect(log.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
+  // Mutation check (run by hand, not kept): without NativeResume's once-only branch, only the identifier is shown.
+  const resume = page.getByRole("complementary", { name: "详情栏" }).getByLabel("在原程序中继续");
+  await expect(resume.locator(".native-resume-row code")).toHaveText(["session-fixture", "dsh headless --session-id session-fixture \"你的问题\""]);
+  await expect(resume.locator(".native-resume-row small")).toHaveText(["原生会话 ID", "只问一次（已用真实回合验证）· 在该对话的工作区目录中运行"]);
+  await expect(resume.locator(".native-resume-note")).toHaveText(["原程序首次在这个目录运行时可能先询问是否信任这个目录；接受会写入它自己的全局配置。", "在原程序中继续会使两边的回合交错；回到 HarnessHub 继续前，先在原程序中结束。"]);
+  await expect(resume.getByRole("button", { name: "复制只问一次的命令", exact: true })).toBeVisible();
+  await expect(resume.getByRole("button", { name: "复制恢复命令", exact: true })).toHaveCount(0);
+  await expect(resume).not.toContainText("恢复命令未在此版本验证");
+  await page.screenshot({ path: join(artifact, "native-resume-once.png"), animations: "disabled" });
+  assert.deepEqual(errors, []);
 });

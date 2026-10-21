@@ -10,7 +10,7 @@ import { ProviderError } from "../contracts/provider.js";
 import { ManagementError } from "../contracts/management.js";
 import { SessionError, parseNativeOptions, sessionId, type SelectionRequest, type SessionConfiguration, type SessionEvent, type SessionSnapshot } from "../contracts/session.js";
 import { MAX_CONTENT_BYTES, MAX_RUN_ATTACHMENTS } from "../contracts/content.js";
-import type { EventPage, HarnessReadinessView, HarnessView, InstallationLogPage, InstallationUpgradeCheckView, KeptProcessView, MaintenanceView, NativeSessionListView, SessionSummary, SessionView, UninstallCheckView, InstallCheckView, WebState } from "../contracts/web.js";
+import { conversationTitle, type EventPage, type HarnessReadinessView, type HarnessView, type InstallationLogPage, type InstallationUpgradeCheckView, type KeptProcessView, type MaintenanceView, type NativeSessionListView, type SessionSummary, type SessionView, type UninstallCheckView, type InstallCheckView, type WebState } from "../contracts/web.js";
 import { inventory, officialInstallation } from "../infrastructure/catalog/inventory-composition.js";
 import type { InstallationPolicy } from "../contexts/catalog/domain/catalog.js";
 import { harnessEntry, productCommand } from "./harness-entry.js";
@@ -234,11 +234,8 @@ function readinessViews(observed: readonly NativeReadiness[], snapshots: readonl
   return views;
 }
 function summary(snapshot: SessionSnapshot): SessionSummary {
-  const first = snapshot.messages.find(message => message.role === "user")?.text.replace(/\s+/gu, " ").trim();
   // A branch or a continued native session without its own input yet is named after where it came from.
-  const quoted = snapshot.origin?.history.find(message => message.role === "user")?.text.replace(/\s+/gu, " ").trim();
-  const inherited = snapshot.origin?.kind === "import" ? "接续 · " + (snapshot.origin.title ?? quoted ?? snapshot.origin.harnessId) : quoted ? "分支 · " + quoted : null;
-  return { id: snapshot.id, title: first ? first.slice(0, 80) : inherited ? inherited.slice(0, 80) : "新对话", status: snapshot.status, workspace: snapshot.configuration.workspace,
+  return { id: snapshot.id, title: conversationTitle(snapshot), status: snapshot.status, workspace: snapshot.configuration.workspace,
     selection: snapshot.selection, updatedSeq: snapshot.lastSeq, activeRunId: snapshot.activeRunId };
 }
 function view(snapshot: SessionSnapshot, permissions: SessionView["permissions"] = [], kept: KeptProcessView | null = null, lost: NonNullable<SessionView["retention"]>["lost"] | null = null,
