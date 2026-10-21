@@ -6578,7 +6578,7 @@
       ],
       "layer": "unit",
       "scenario": "在原程序中继续的命令只给验证过的产品与版本",
-      "expected": "验证过的产品在验证版本上给出交互命令与已验证的非交互命令；版本未验证或未知只给 ID 并注明；从未验证的产品只给 ID；Pi 只指向它的会话列表；OpenClaw 不给；含空格、引号、分号、$( 或以 - 开头等非普通标识符的引用既不显示也不进入命令；Codex 只问一次的形式只在工作区不是 Git 仓库时带 --skip-git-repo-check 并注明原因，交互形式从不带",
+      "expected": "验证过的产品在验证版本上给出交互命令与已验证的非交互命令，DeepSeek Harness 只给已验证的非交互命令（官网 0.2.0-rc.2 没有 tui profile，ADR-039 的 2026-10-21 补记）；版本未验证或未知只给 ID 并注明；从未验证的产品只给 ID；Pi 只指向它的会话列表；OpenClaw 不给；含空格、引号、分号、$( 或以 - 开头等非普通标识符的引用既不显示也不进入命令；Codex 只问一次的形式只在工作区不是 Git 仓库时带 --skip-git-repo-check 并注明原因，交互形式从不带",
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/unit/verified-versions.test.ts"
@@ -8324,6 +8324,42 @@
       "planned_file": "tests/protocol/acp.test.ts"
     },
     {
+      "id": "G032-NC23",
+      "task": "G032",
+      "requirements": [
+        "R11",
+        "R25"
+      ],
+      "invariants": [
+        "INV-04",
+        "INV-09"
+      ],
+      "layer": "protocol",
+      "scenario": "驱动从自己 Agent 的通知读出的登录状态成为目录的就绪状态（Claude 的 _auth/status_update）",
+      "expected": "通用 ACP 层给子类扩展通知钩子与就绪状态设定，不按 Harness 分支；Claude 报告具名身份（account、api_key、external、gateway）为已就绪，none、缺失、未知或畸形的报告为未说明，从不判为未登录、不拒绝会话；label、detail、account 不保存、不记录、不显示；其他 ACP Agent 的同名通知仍是一条只写方法名的未支持通知诊断，就绪状态不变",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/acp.test.ts"
+    },
+    {
+      "id": "G032-NC24",
+      "task": "G032",
+      "requirements": [
+        "R11",
+        "R25"
+      ],
+      "invariants": [
+        "INV-04",
+        "INV-09"
+      ],
+      "layer": "protocol",
+      "scenario": "OpenCode 1.18.x 的 /compact：ACP 命令目录不列出但原程序接受的压缩命令",
+      "expected": "OpenCode 版本满足 >=1.18.0 <1.19.0 且目录未列出 compact 时追加 /compact 并按输入原样转发；其他版本、读不出版本以及 OpenCode 自己已列出 compact 时不追加；开始语不变",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/acp.test.ts"
+    },
+    {
       "id": "G060-NC13",
       "task": "G060",
       "requirements": [
@@ -9911,7 +9947,7 @@
       "layer": "review",
       "planned_file": "docs/decisions/0046-harness-focus-hardening.md",
       "scenario": "六项加固的验收记录与 ADR-046 验证节逐项对账：版本来源、审计记录、流式合并、边界检查、控制层、冻结",
-      "expected": "每项都有对应层的测试或检查通过的记录；真实引擎通过与测试通过分别表述；非焦点四个的矩阵 ✅ 数与已验证版本未增长；全程未写用户真实配置",
+      "expected": "每项都有对应层的测试或检查通过的记录；真实引擎通过与测试通过分别表述；非焦点三个（Cursor、Gemini CLI、Pi）的矩阵 ✅ 数与已验证版本未增长；全程未写用户真实配置",
       "status": "planned",
       "evidence": null
     }

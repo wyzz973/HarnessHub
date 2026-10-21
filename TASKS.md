@@ -86,7 +86,7 @@
 | G062 | 接通Provider管理HTTP入口 | G009, G010, G016, C009 | G1 | planned |
 | G063 | 建立依赖与公共类型边界检查 | G001, C008 | G1 | in_progress |
 | G064 | 统一管理各 Harness 的能力 | G012, G054 | G1 | in_progress |
-| G065 | 六焦点工程加固（ADR-046） | 无 | G1 | in_progress |
+| G065 | 焦点 Harness 工程加固（ADR-046） | 无 | G1 | in_progress |
 
 ## V001 验证并锁定工具链与依赖许可
 
@@ -1219,7 +1219,7 @@
 - 明确拒绝，不空会话fallback
 - 不把结果称官方认证
 
-场景：G032-C01, G032-C02, G032-C03, G032-C04, G032-L01, G032-N01, G032-N02, G032-X03, G032-NC4, G032-NC5, G032-NC6, G032-NC7, G032-NC8, G032-NC9, G032-NC10, G032-NC11, G032-NC12, G032-NC13, G032-NC14, G032-NC15, G032-NC16, G032-NC17, G032-NC18, G032-NC19, G032-NC20, G032-NC21, G032-NC22。
+场景：G032-C01, G032-C02, G032-C03, G032-C04, G032-L01, G032-N01, G032-N02, G032-X03, G032-NC4, G032-NC5, G032-NC6, G032-NC7, G032-NC8, G032-NC9, G032-NC10, G032-NC11, G032-NC12, G032-NC13, G032-NC14, G032-NC15, G032-NC16, G032-NC17, G032-NC18, G032-NC19, G032-NC20, G032-NC21, G032-NC22, G032-NC23, G032-NC24。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -2067,9 +2067,9 @@
 
 禁止范围：不改项目级文件；不改模型、Provider 与登录配置；不运行会启动或连接 MCP 服务器的命令；OpenClaw 的 MCP 与插件装卸推迟到升级之后。
 
-## G065 六焦点工程加固（ADR-046）
+## G065 焦点 Harness 工程加固（ADR-046）
 
-范围：按 ADR-046 承接六个焦点 Harness 的第一批工程加固：版本单一来源与一致性检查（预发布语义、Hermes 从 venv dist-info 读版本、dsh 继续命令只保留 headless、读表区间覆盖 0.2.0-rc.2）、失败写入记录只存错误码与 ~ 路径且 history 逐条降级、流式输出按窗口合并提交（ADR-047）、G063 边界检查落地、ClaudeControl 读 _auth/status_update 与 OpenCodeControl 1.18.x 补 /compact、非焦点四个冻结；各项的源码与测试文件归其既有所有者，本任务只持有两份 ADR。
+范围：按 ADR-046 承接七个焦点 Harness（含用户同日补充的 OpenClaw）的第一批工程加固：版本单一来源与一致性检查（预发布语义、Hermes 从 venv dist-info 读版本、dsh 继续命令只保留 headless、读表区间覆盖 0.2.0-rc.2）、失败写入记录只存错误码与 ~ 路径且 history 逐条降级、流式输出按窗口合并提交（ADR-047）、G063 边界检查落地、ClaudeControl 读 _auth/status_update 与 OpenCodeControl 1.18.x 补 /compact、非焦点三个（Cursor、Gemini CLI、Pi）冻结；各项的源码与测试文件归其既有所有者，本任务只持有两份 ADR。
 
 依赖：无。需求：R04, R17, R19, R23, R26。
 
@@ -2087,4 +2087,4 @@
 
 场景：G065-A01。
 
-禁止范围：不写用户的真实 Harness 配置，不改全局环境；测试只用临时家目录、临时数据根与临时租约目录（ADR-041）；不改 VERIFIED_VERSIONS 的数字；不为 Cursor、Gemini CLI、OpenClaw、Pi 新增矩阵 ✅ 或更新已验证版本；不运行任何 Harness 做验收；Claude 2.1.306 与 dsh 0.2.0-rc.2 的真实重验收另立任务；不删除非焦点 Harness 的适配器、测试与历史证据；默认隐藏或删除由用户在 ADR-048 决定。
+禁止范围：不写用户的真实 Harness 配置，不改全局环境；测试只用临时家目录、临时数据根与临时租约目录（ADR-041）；不改 VERIFIED_VERSIONS 的数字；不为 Cursor、Gemini CLI、Pi 新增矩阵 ✅ 或更新已验证版本；不运行任何 Harness 做验收；Claude 2.1.306 与 dsh 0.2.0-rc.2 的真实重验收另立任务；不删除非焦点 Harness 的适配器、测试与历史证据；默认隐藏或删除由用户在 ADR-048 决定。

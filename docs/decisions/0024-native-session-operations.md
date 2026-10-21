@@ -21,7 +21,7 @@
 
 - Codex 会话可以选择更严格的审批与沙箱，在统一界面完成真实审批；原配置保持不变。
 - 产物通道承载原生导出文件；这些文件随 Run 引用保留，回收规则同 ADR-022。
-- 未做：会话分支与原生会话列表、子 Agent 会话与后台任务、OpenCode 压缩（ACP 未提供）、Codex 计划模式（后由 [ADR-034](0034-codex-plan-mode.md) 接出）。
+- 未做：会话分支与原生会话列表、子 Agent 会话与后台任务、OpenCode 压缩（ACP 未提供；2026-10-21 起 1.18.x 补入，见文末补充）、Codex 计划模式（后由 [ADR-034](0034-codex-plan-mode.md) 接出）。
 
 ## 否决方案
 
@@ -32,3 +32,12 @@
 ## 验收
 
 见[原生会话操作验收](../verification/native-session-actions-2026-10-11.md)。
+
+## 2026-10-21 补充：OpenCode 1.18.x 的 /compact
+
+[ADR-046](0046-harness-focus-hardening.md) 第 5 项。总指挥只读核对 OpenCode 1.18.35 的 ACP 模块：它接受不在命令目录里列出的 `compact`，转给 `session.summarize`。
+
+- 版本满足 `>=1.18.0 <1.19.0`、而且 OpenCode 自己没有列出 `compact` 时，`OpenCodeControl` 在命令目录里补入 `/compact`。输入原样转发，与其他原生命令一样。
+- 其他版本、读不出版本，以及 OpenCode 已经自己列出 `compact` 时，都不补。
+- 协议层由 G032-NC24 覆盖（`tests/protocol/acp.test.ts`）。真实回合、压缩期间的流式内容和回合如何结束，等真实重验收。
+- 能力矩阵中 OpenCode 的“上下文压缩”改为已接出、协议通过、真实未验证。

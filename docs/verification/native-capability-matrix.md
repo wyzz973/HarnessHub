@@ -30,7 +30,7 @@
 | 会话 | 原生会话恢复 | ✅ | ✅ | ✅ | ✅ | ✕ | ✕ | ✅ | ✅ | ✅ |
 | 会话 | 原生会话列表/接续 | ✅ | ✅ | ✅ | ○ | — | ✕ | — | ✅ | ✅ |
 | 会话 | 原生分支 | ✅ | ✅ | ✅ | — | — | — | ✅ | ✅ | — |
-| 会话 | 上下文压缩 | ✅ | ✅ | ○ | ✅ | — | ？ | ✅ | ✅ | ○ |
+| 会话 | 上下文压缩 | ✅ | ✅ | ◐ | ✅ | — | ？ | ✅ | ✅ | ○ |
 | 会话 | 回滚/回退 | ○ | — | ？ | — | ○ | — | ○ | — | — |
 | 并发与后台 | 子 Agent | ✅ | ✅ | ○ | ○ | ？ | ○ | — | ◑ | ◑ |
 | 并发与后台 | 后台任务 | ◐ | ✅ | ？ | ○ | ？ | ？ | — | ◐ | ◐ |
@@ -40,7 +40,7 @@
 |---|---|---|---|---|---|---|---|
 | Codex | 14 | 4 | 5 | 1 | 2 | 1 | 0 |
 | Claude Code | 17 | 3 | 3 | 0 | 2 | 2 | 0 |
-| OpenCode | 12 | 2 | 3 | 2 | 1 | 2 | 5 |
+| OpenCode | 12 | 3 | 3 | 1 | 1 | 2 | 5 |
 | OpenClaw | 5 | 5 | 5 | 5 | 0 | 7 | 0 |
 | Gemini CLI | 0 | 0 | 2 | 1 | 12 | 6 | 6 |
 | Cursor | 0 | 2 | 4 | 2 | 11 | 5 | 3 |
@@ -144,7 +144,7 @@
 | 原生会话恢复 | 具备 | session/resume（不回放）；跨 Hub 进程重启 | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；.tmp/cc-opencode-native-resume.json；.tmp/cc-native-resume-commands-2026-10-12.json | 在原程序中继续：`opencode -s <id>`（help 确认），以 `opencode run -s <id> "…"` 真实验证答出标记（ADR-039） |
 | 原生会话列表/接续 | 具备 | session/list（每页 100，根会话）、session/load 回放全部历史 | 已接出 | 通过 | 通过 | .tmp/cc-native-import-opencode.json；docs/verification/native-session-import-2026-10-11.md | 通用 ACP 实现；opencode run 在新工作区创建的会话被列出、接续并答出标记 |
 | 原生分支 | 具备 | session/fork | 已接出 | 通过 | 通过 | .tmp/cc-native-branch-codex-acp.json；docs/verification/native-branch-2026-10-11.md | session/fork 建立原生副本，复制历史的回放不归属；更早位置以公共历史分支 |
-| 上下文压缩 | 具备 | /compact 原生命令 | 未接出 | 未接出 | 未接出 | — | OpenCode 的 ACP 命令目录没有压缩命令（真实目录 104 项），压缩只能在原 TUI 中执行 |
+| 上下文压缩 | 具备 | /compact 原生命令；1.18.x 的 ACP 模块接受不列出的 compact（调用 session.summarize） | 已接出 | 通过 | 未接出 | — | OpenCode 的 ACP 命令目录不列出压缩命令；Hub 在 1.18.x 上补入 /compact 并原样转发（ADR-046 第 5 项，G032-NC24）；真实回合待重验收 |
 | 回滚/回退 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
 | 子 Agent | 具备 | 子会话（task 子 Agent）权限请求 | 未接出 | 未接出 | 未接出 | — | task 子 Agent 的子会话工具不经 ACP 转发；子会话的权限请求被原程序丢弃（原程序限制） |
 | 后台任务 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
@@ -345,7 +345,7 @@
 | Skills | 部分 | skill 插件；ACP 没有技能列表 | 未接出 | 未接出 | 未接出 | — | — |
 | MCP | 部分 | session/new 可挂载 stdio/HTTP MCP；ACP 不列出用户自己的 MCP（packages/acp/acp/README.md、src/mcp.ts） | 未接出 | 未接出 | 未接出 | — | — |
 | 插件/扩展 | 部分 | profile bundles 插件机制（dsh plugin）；ACP 没有列表 | 未接出 | 未接出 | 未接出 | — | — |
-| 原生会话恢复 | 具备 | session/resume 恢复持久会话，不回放旧更新（packages/acp/acp/src/index.ts） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-resume.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md；.tmp/cc-native-resume-commands-2026-10-12.json | 在原程序中继续：`dsh tui --resume <id>`（help 确认），以 `dsh headless --session-id <id> "…"` 真实验证答出标记（ADR-039） |
+| 原生会话恢复 | 具备 | session/resume 恢复持久会话，不回放旧更新（packages/acp/acp/src/index.ts） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-resume.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md；.tmp/cc-native-resume-commands-2026-10-12.json | 在原程序中继续：官网 0.2.0-rc.2 只给 `dsh headless --session-id <id> "…"`（rc.2 没有 tui profile，ADR-039 的 2026-10-21 补记）；`dsh tui --resume <id>`（help 确认）与以 headless 真实答出标记都是 0.2.1-alpha.1 源码版的历史证据（ADR-044） |
 | 原生会话列表/接续 | 具备 | session/list：从新到旧列出持久根会话（无标题、无时间），可按 cwd 过滤（packages/acp/acp/src/index.ts） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-import.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 不支持 session/load，接续时没有历史可引用（如实标出），接续后由原生会话回答 |
 | 原生分支 | 不提供 | 不支持 fork（packages/acp/acp/README.md） | 不适用 | 不适用 | 不适用 | — | — |
 | 上下文压缩 | 部分 | 自动压缩插件（compaction-basic、tool-result-pruner）；ACP 没有压缩命令或更新 | 未接出 | 未接出 | 未接出 | — | — |

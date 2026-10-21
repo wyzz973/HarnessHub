@@ -116,11 +116,11 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
   - 技能、MCP、指令、子 Agent、命令、Hooks、插件在一个“能力”页统一查看；只改用户级配置，每次写入先预览并经用户确认，只认领自己写入的条目。取代 ADR-026 的否决条。
   - 技能以 `~/.agents/skills` 为唯一实体，只给 Claude（逐个链接）和 Hermes（`external_dirs`）放置；按 Harness 停用写各家自己的配置。
   - MCP 由 HarnessHub 保存只含变量名的清单，按各家格式写入；OpenClaw 的 MCP 与插件装卸推迟到升级之后。分六步实施，第 1 步是只读统一视图。
-- [ADR-046：聚焦六个 Harness 的工程加固切片](0046-harness-focus-hardening.md)（accepted，2026-10-21，总指挥兼审批代理裁决）：
-  - 方向由用户决定：只支持 Claude Code、Codex、OpenCode、DeepSeek Harness、WorkBuddy、Hermes Agent 六个并做精。
-  - 切片 harness-focus 承接第一批六项加固：版本单一来源与一致性检查（预发布语义）、失败写入记录去路径化与 history 逐条降级、流式输出按窗口合并提交（ADR-047）、G063 边界检查落地、Claude 认证状态与 OpenCode `/compact` 接出、非焦点四个（Cursor、Gemini CLI、OpenClaw、Pi）即日冻结。
+- [ADR-046：聚焦七个 Harness 的工程加固切片](0046-harness-focus-hardening.md)（accepted，2026-10-21，总指挥兼审批代理裁决）：
+  - 方向由用户决定：只支持 Claude Code、Codex、OpenCode、DeepSeek Harness、WorkBuddy、Hermes Agent 并做精；同日补充 OpenClaw 保留并加入接入清单，共七个。
+  - 切片 harness-focus 承接第一批六项加固：版本单一来源与一致性检查（预发布语义）、失败写入记录去路径化与 history 逐条降级、流式输出按窗口合并提交（ADR-047）、G063 边界检查落地、Claude 认证状态与 OpenCode `/compact` 接出、非焦点三个（Cursor、Gemini CLI、Pi）即日冻结。
   - 处置 ADR-001～007（见上表）；`VERIFIED_VERSIONS` 的数字在真实重验收前不改。
-- ADR-047：流式输出按窗口合并提交（accepted；由并行任务撰写，文件 `0047-stream-output-coalescing.md`，索引先登记标题与状态，链接在集成时补）：每回合的事件数与提交成本降一个量级，先提交再发布不变。
-- [ADR-048：六个焦点 Harness 的范围、完成定义与 WorkBuddy 接入路线](0048-harness-scope-and-workbuddy.md)（proposed，等待用户决定）：
+- [ADR-047：流式输出按窗口合并提交](0047-stream-output-coalescing.md)（accepted，2026-10-21，总指挥兼审批代理裁决）：每回合的事件数与提交成本降一个量级，先提交再发布不变。
+- [ADR-048：七个焦点 Harness 的范围、完成定义与 WorkBuddy 接入路线](0048-harness-scope-and-workbuddy.md)（proposed，等待用户决定）：
   - 五层完成定义（设计采纳 / 代码完成 / 测试通过 / 真实引擎通过 / 只面向 macOS）与“做精”的判据。
-  - 用户待决项各给选项与推荐：非焦点四个冻结 / 冻结并默认隐藏（推荐）/ 删除；WorkBuddy 接入路线 npm / 应用内嵌 CLI 共享 `~/.workbuddy`（推荐）/ 并列；Harness id 与显示名；遥测、自动记忆、cron；运行时；两个永远为 false 的门禁标志与 G0～G5。
+  - 用户待决项各给选项与推荐：非焦点三个冻结 / 冻结并默认隐藏（推荐）/ 删除；WorkBuddy 接入路线 npm / 应用内嵌 CLI 共享 `~/.workbuddy`（推荐）/ 并列；Harness id 与显示名；遥测、自动记忆、cron；运行时；两个永远为 false 的门禁标志与 G0～G5。

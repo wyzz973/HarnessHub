@@ -1039,12 +1039,12 @@
         },
         "compaction": {
           "native": "yes",
-          "source": "/compact 原生命令",
-          "hub": "none",
-          "protocol": "none",
+          "source": "/compact 原生命令；1.18.x 的 ACP 模块接受不列出的 compact（调用 session.summarize）",
+          "hub": "done",
+          "protocol": "pass",
           "real": "none",
           "evidence": [],
-          "note": "OpenCode 的 ACP 命令目录没有压缩命令（真实目录 104 项），压缩只能在原 TUI 中执行"
+          "note": "OpenCode 的 ACP 命令目录不列出压缩命令；Hub 在 1.18.x 上补入 /compact 并原样转发（ADR-046 第 5 项，G032-NC24）；真实回合待重验收"
         },
         "rollback": {
           "native": "unknown",
@@ -2689,7 +2689,7 @@
             "docs/verification/hermes-dsh-onboarding-2026-10-11.md",
             ".tmp/cc-native-resume-commands-2026-10-12.json"
           ],
-          "note": "在原程序中继续：`dsh tui --resume <id>`（help 确认），以 `dsh headless --session-id <id> \"…\"` 真实验证答出标记（ADR-039）"
+          "note": "在原程序中继续：官网 0.2.0-rc.2 只给 `dsh headless --session-id <id> \"…\"`（rc.2 没有 tui profile，ADR-039 的 2026-10-21 补记）；`dsh tui --resume <id>`（help 确认）与以 headless 真实答出标记都是 0.2.1-alpha.1 源码版的历史证据（ADR-044）"
         },
         "session-list": {
           "native": "yes",

@@ -31,3 +31,16 @@
 
 - 不在后台预热或定期探测各 Harness：这会启动用户的程序及其 MCP 服务器。冷启动本身留给 ADR-030。
 - 不调用原生 `authenticate`，也不代为运行原程序的登录流程。
+
+## 2026-10-21 补充：Claude 用自己的通知报告登录状态
+
+依据 [ADR-046](0046-harness-focus-hardening.md) 第 5 项。claude-agent-acp 0.89.1 用扩展通知 `_auth/status_update` 推送它自己读到的登录状态。
+
+- **钩子。** 通用 ACP 层给子类一个扩展通知钩子，再加一个设定就绪状态的方法；它不按 Harness 分支。其他 ACP 代理发同名通知时，仍记一条只写方法名的“未支持的通知”诊断，就绪状态不变。
+- **映射。** `ClaudeControl` 只读通知里的 `kind`：
+  - account、api_key、external、gateway 记为已就绪（“已登录”）；
+  - none、缺失、未知或格式不对，都记为“未说明”，不记为“需要登录”，也不因此拒绝会话。
+- **为什么 none 不算未登录。** 用 `ANTHROPIC_AUTH_TOKEN` 或 `CLAUDE_CODE_OAUTH_TOKEN` 登录的 CLI 能正常工作，但适配器的 `mapAuthFields` 对它也报 none。这一点经只读核对 CLI 2.1.302、2.1.306 与适配器 0.89.1 的包内代码得出。真正没有登录的 CLI 在第一次提问时失败，适配器把它转成 ACP 的 auth_required，Hub 报 `NATIVE_AUTH_REQUIRED`。
+- **不保留的内容。** label、detail、account 一律不保存、不写日志、不显示。
+- **时序。** 首次推送来自适配器异步执行的登录检查；它晚于某次目录读取返回时，那一次仍记“未说明”。
+- **验证。** 协议层由 G032-NC23 覆盖（`tests/protocol/acp.test.ts`）。订阅登录与令牌登录在真实 Claude 上各显示什么，等真实重验收。

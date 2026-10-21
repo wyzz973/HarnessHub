@@ -345,7 +345,7 @@
 | G061-N02 | G061 | integration | Claude未设置配置目录与显式用户路径 | 保留未设置状态以读取原登录；显式用户目录正常沿用 | planned |
 | G011-N03 | G011 | unit | 原生回执/计划路径、全局安装位置与冻结npm版本元数据 | 缺少版本/配置证据不得完成，路径/包/其他程序bin被拒绝；原npm/uv位置被保留，安装与版本验证都保护配置 | planned |
 | G011-NC1 | G011 | unit | 判断本机版本是否为真实验证过的版本 | 产品版本与不同于它的适配器版本都在验证范围内才算已验证；semver 按范围比较，其他版本只按完全相同判断；版本未知或从未验证的 Harness 不下结论；表中版本与能力矩阵记录的安装版本一致，任一处单独改动都使测试失败 | planned |
-| G011-NC2 | G011 | unit | 在原程序中继续的命令只给验证过的产品与版本 | 验证过的产品在验证版本上给出交互命令与已验证的非交互命令；版本未验证或未知只给 ID 并注明；从未验证的产品只给 ID；Pi 只指向它的会话列表；OpenClaw 不给；含空格、引号、分号、$( 或以 - 开头等非普通标识符的引用既不显示也不进入命令；Codex 只问一次的形式只在工作区不是 Git 仓库时带 --skip-git-repo-check 并注明原因，交互形式从不带 | planned |
+| G011-NC2 | G011 | unit | 在原程序中继续的命令只给验证过的产品与版本 | 验证过的产品在验证版本上给出交互命令与已验证的非交互命令，DeepSeek Harness 只给已验证的非交互命令（官网 0.2.0-rc.2 没有 tui profile，ADR-039 的 2026-10-21 补记）；版本未验证或未知只给 ID 并注明；从未验证的产品只给 ID；Pi 只指向它的会话列表；OpenClaw 不给；含空格、引号、分号、$( 或以 - 开头等非普通标识符的引用既不显示也不进入命令；Codex 只问一次的形式只在工作区不是 Git 仓库时带 --skip-git-repo-check 并注明原因，交互形式从不带 | planned |
 | G060-N04 | G060 | platform | 原Homebrew创建并认证继承沙箱，模型配置与Homebrew仓库拒绝写入 | 真实SDK继承成立；配置与brew自身写入以明确EPERM拒绝且原内容不变，进程退出可等待 | planned |
 | G061-X01 | G061 | integration | 原生快切换不启动额外进程、目录缓存刷新/失效、命令与实际审批决定幂等 | 真实HTTP/SQLite/IPC保持；未知原生选项不派发、原生命令不注入文本包、取消目录读取后不派发、审批先提交再响应且重试不重发 | planned |
 | G008-X02 | G008 | integration | 公共历史v4到v5及无效原生设置迁移回滚 | 历史/消息/事件不变，所有行和版本原子升级或全部回滚 | planned |
@@ -445,6 +445,8 @@
 | G034-NC11 | G034 | protocol | Codex子Agent线程的工具嵌套在子Agent条目之下 | 子线程由thread/started、subAgentActivity或协作调用的receiverThreadIds识别；子线程工具以子Agent条目为父，最终回复作为条目输出，回合结束更新状态；孙线程嵌套在子线程下；无关线程不显示；子线程文字不进入回复 | planned |
 | G032-NC21 | G032 | protocol | OpenClaw按Gateway只读报告列出技能与插件 | 技能来自skills.status（可用性含资格、停用与白名单），插件来自tools.catalog的插件工具组；不列MCP；只请求只读方法 | planned |
 | G032-NC22 | G032 | protocol | Hermes 的 /export 运行它自己的会话导出 | Hermes 没有自己的 export 命令时提供 /export；只运行一次 sessions export - --session-id <id>，会话的 JSON 行作为产物登记；未知会话的提示句、超过 8 MiB、超过 5 秒都明确失败且不记录部分内容；非普通标识符不调用命令行；不向模型发送任何内容 | planned |
+| G032-NC23 | G032 | protocol | 驱动从自己 Agent 的通知读出的登录状态成为目录的就绪状态（Claude 的 _auth/status_update） | 通用 ACP 层给子类扩展通知钩子与就绪状态设定，不按 Harness 分支；Claude 报告具名身份（account、api_key、external、gateway）为已就绪，none、缺失、未知或畸形的报告为未说明，从不判为未登录、不拒绝会话；label、detail、account 不保存、不记录、不显示；其他 ACP Agent 的同名通知仍是一条只写方法名的未支持通知诊断，就绪状态不变 | planned |
+| G032-NC24 | G032 | protocol | OpenCode 1.18.x 的 /compact：ACP 命令目录不列出但原程序接受的压缩命令 | OpenCode 版本满足 >=1.18.0 <1.19.0 且目录未列出 compact 时追加 /compact 并按输入原样转发；其他版本、读不出版本以及 OpenCode 自己已列出 compact 时不追加；开始语不变 | planned |
 | G060-NC13 | G060 | e2e | 本机原安装应用所选原生设置并执行原生命令 | 回合后原生回报与所选设置一致，限制修改的模式下文件不变；原生命令作为独立回合执行并产生预期文件；原配置不变 | planned |
 | G054-FR1 | G054 | e2e | 侧栏按状态分组，跨对话收件箱 | 等你处理与进行中的对话排在最前；铃铛列出所有对话中等待的审批与提问，写明期限来源与剩余时间，点击打开对应对话；通知开关在收件箱中，默认关闭 | planned |
 | G054-FR2 | G054 | e2e | 过程折叠为一行摘要并可切换密度 | 简洁模式下每轮工具折叠为一行摘要，失败与未完成的数量写在摘要里；切到详细后全部展开，偏好在重新载入后保留 | planned |
@@ -542,4 +544,4 @@
 | G064-P4 | G064 | integration | 经正式入口启停 Claude Code 与 Codex 的插件 | Claude 停用只改一行，确认框写明生效时机与各级覆盖，再启用后 settings.json 逐字节回到原样、没有漂移；停用被启用插件依赖的插件、启用依赖已停用的插件都被拒绝并点名，提示 claude plugin enable 会连带启用；保留来源、账户同步、未安装的插件被拒绝，只读的 Harness 返回 CAPABILITY_UNSUPPORTED，非法 id 返回 400；管理设置文件与 .d 决定插件、MDM 描述文件存在时都拒绝；检查之后文件变了，确认返回 CAPABILITY_TARGET_CHANGED；被外部改回的进入漂移，可重新应用、可不再跟踪；插件卸载后 HarnessHub 写的 false 列为孤立设置，清除后写回原值；Codex 原地改一行、保留注释与子表，启用后逐字节回到原样，缺键的表插入一行、启用写明 true，外部改动进入漂移；回答里没有凭据与家目录 | planned |
 | G064-R6 | G064 | unit | 各家插件按自己的规则读取 | Claude 与 Codex 都有的 名@市场 插件合成一行，各自显示版本与位置；没有条目的按默认显示，并计入依赖；有条目但未安装的、inline 等来源不提供开关；账户同步插件按名字去重，位置只到 ~/.claude/plugins/synced，视图不含账户 ID；随 Codex 安装的标明归属，缺 enabled 的写明缺省值未核实；OpenCode 读 plugin/ 与 plugins/ 的 .ts、.js（含点文件、跟随链接）与 tuple 条目并去重，tui.json 的标为 TUI 插件；Hermes 的 disabled 优先、分类布局与 plugin.yml、记忆提供方由 provider 选择、模型提供方不受 enabled 约束、隐藏目录也算、缺 plugins.enabled 时都不启用；DeepSeek Harness 读各 profile 的依赖；每家写明有没有开关及只读的原因 | planned |
 | G054-CA9 | G054 | e2e | 插件页的开关说明与合成行的启停 | 插件页写明哪些 Harness 可以启停、其余只读的原因；Claude 与 Codex 都有的插件只占一行，展开后各自显示版本、状态与开关；确认框显示文件、一行差异、生效时机与覆盖提示，确认前不发送、只发送这次检查；被依赖拦下的检查不能确认；历史里有插件开关；无页面错误 | planned |
-| G065-A01 | G065 | review | 六项加固的验收记录与 ADR-046 验证节逐项对账：版本来源、审计记录、流式合并、边界检查、控制层、冻结 | 每项都有对应层的测试或检查通过的记录；真实引擎通过与测试通过分别表述；非焦点四个的矩阵 ✅ 数与已验证版本未增长；全程未写用户真实配置 | planned |
+| G065-A01 | G065 | review | 六项加固的验收记录与 ADR-046 验证节逐项对账：版本来源、审计记录、流式合并、边界检查、控制层、冻结 | 每项都有对应层的测试或检查通过的记录；真实引擎通过与测试通过分别表述；非焦点三个（Cursor、Gemini CLI、Pi）的矩阵 ✅ 数与已验证版本未增长；全程未写用户真实配置 | planned |

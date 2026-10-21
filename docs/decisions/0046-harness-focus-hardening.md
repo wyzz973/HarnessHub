@@ -1,6 +1,6 @@
-# ADR-046：聚焦六个 Harness 的工程加固切片
+# ADR-046：聚焦七个 Harness 的工程加固切片
 
-状态：accepted，2026-10-21。方向由用户 2026-10-21 的指令决定：只支持 Claude Code、Codex、OpenCode、DeepSeek Harness、WorkBuddy、Hermes Agent 六个并做精。切片划分、六项加固的边界与对 ADR-001～007 的处置由总指挥兼用户授权的审批代理（Fable 5.1）裁决，裁决见文末。范围收窄的用户待决项（非焦点四个的处置、WorkBuddy 接入路线等）另见 [ADR-048](0048-harness-scope-and-workbuddy.md)（proposed）；第一批加固不被它阻塞。
+状态：accepted，2026-10-21。方向由用户 2026-10-21 的指令决定：只支持 Claude Code、Codex、OpenCode、DeepSeek Harness、WorkBuddy、Hermes Agent 六个并做精；用户同日补充：OpenClaw 保留并加入接入清单，焦点 Harness 共七个。切片划分、六项加固的边界与对 ADR-001～007 的处置由总指挥兼用户授权的审批代理（Fable 5.1）裁决，裁决见文末。范围收窄的用户待决项（非焦点三个的处置、WorkBuddy 接入路线等）另见 [ADR-048](0048-harness-scope-and-workbuddy.md)（proposed）；第一批加固不被它阻塞。
 
 ## 背景
 
@@ -18,7 +18,7 @@
 - **每个文本块一次整份快照事务。** `src/contexts/session/application/runtime.ts:1121-1147` 对每个 text 或 thinking 块各提交一次，并产生一条 `run.output` 事件；`src/infrastructure/session/sqlite-store.ts:304-324` 的 `transact` 每次重读会话、整份 `JSON.stringify` 写回。合成测量：1 MB 会话每块 7.8 ms；每会话 16,384 条事件的上限（`src/contexts/session/domain/state.ts:18`）在长回复十几轮后就能逼近。
 - **G063 从未落地。** `plan/tasks.json` 的 G063（依赖与公共类型边界检查）仍是 planned，`tools/` 下没有 `check-boundaries.mjs`；`src/contracts/control.ts:1-2`、`src/contracts/management.ts:1` 反向导入 `contexts/catalog/domain`，没有工具拒绝它。
 - **两项控制层缺口。** claude-agent-acp 0.89.1 推送 `_auth/status_update`，`src/adapters/control/acp.ts:542` 把它记成“Unsupported ACP notification”诊断，Claude 的就绪状态因此恒为 unknown；OpenCode 1.18.35 的 ACP 模块含隐藏的 `compact` 命令（调用 `session.summarize`），`src/adapters/control/opencode.ts` 没有接它，矩阵里“只能在原 TUI 压缩”的注记已过期。
-- **非焦点的四个（Cursor、Gemini CLI、OpenClaw、Pi）。** 本机 OpenClaw 网关正在运行并接着消息渠道；ADR-027/028 的真实验证来自 OpenClaw；仓库唯一的 A→B→A 真实切换证据是 codex↔gemini；ADR-044 第 6 条承诺历史对话保留。删除它们不可逆。
+- **非焦点的 Harness。** 评估时是四个（Cursor、Gemini CLI、OpenClaw、Pi）。用户同日把 OpenClaw 加回接入清单：本机 OpenClaw 网关正在运行并接着消息渠道，ADR-027/028 的真实验证来自它，本机安装 2026.3.23-2（npm 全局，Homebrew 前缀）就是已验证版本。余下三个（Cursor、Gemini CLI、Pi）中，仓库唯一的 A→B→A 真实切换证据是 codex↔gemini；ADR-044 第 6 条承诺历史对话保留。删除它们不可逆。
 
 ## 决定
 
@@ -34,7 +34,7 @@
 3. **流式输出按窗口合并提交。** 独立为 ADR-047（`0047-stream-output-coalescing.md`，由并行任务撰写）：每回合的事件数与提交成本降一个量级；先提交再发布（INV-06）与断线不取消（INV-19）不变。
 4. **G063 落地。** `tools/check-boundaries.mjs` 加 `tools/boundary-rules.json`，纳入 `pnpm check`；含“组合应用或启动 Gateway 的测试必须用自己的临时租约目录”这一条静态规则（`docs/engineering/testing.md` 第 4 节此前只有人工审查）；每条规则有无效 fixture 证明会被拒绝。
 5. **控制层打磨。** `ClaudeControl` 读 `_auth/status_update`，把认证状态接到就绪状态；`OpenCodeControl` 在 1.18.x 补 `/compact`；`AcpControl` 给子类一个扩展通知钩子，通用层不按 Harness 分支。
-6. **非焦点的四个即日冻结。** Cursor、Gemini CLI、OpenClaw、Pi 不再新增矩阵 ✅、不更新已验证版本、不承接新能力；适配器、测试与历史真实证据保留。是否默认隐藏或删除由用户在 ADR-048 决定。
+6. **非焦点的三个即日冻结。** Cursor、Gemini CLI、Pi 不再新增矩阵 ✅、不更新已验证版本、不承接新能力；适配器、测试与历史真实证据保留。是否默认隐藏或删除由用户在 ADR-048 决定。OpenClaw 按用户同日的补充归入焦点，不冻结；它的 Gateway 与 Node 仍只按 ADR-043 经用户确认的升级流程重启，验收不重启它们。
 
 第一批不写用户的任何真实 Harness 配置，不运行任何 Harness 做验收。真实重验收（Claude 2.1.306、dsh 0.2.0-rc.2）是后续批次，需要用户同意后在 4317 进行。
 
@@ -43,7 +43,7 @@
 - **直接把 `VERIFIED_VERSIONS` 改成本机版本。** 否决：那是“已验证”表，没有真实回合就改等于伪造证据（AGENTS.md：不把 Agent 回复或 exit 0 当作达标证据）。代价是界面继续提示“未经验证”，直到重验收。
 - **把读表区间也改成精确版本。** 否决：读表描述的是文件格式随版本的变化，区间才是它的自然表达。保留两种表达，但统一来源与比较规则。
 - **先做描述模块重构（每个 Harness 一个描述文件），再修版本与审计。** 否决：重构牵动约 35 个文件和 6 个被多切片共有的大文件，与第一批互斥；版本、审计记录和流式提交是“每家都依赖”的修复，先做。
-- **删除非焦点四个。** 不在本记录决定：不可逆，且牵动真实证据和本机运行中的 OpenClaw 网关，见 ADR-048。
+- **删除非焦点三个。** 不在本记录决定：不可逆，且牵动真实证据（codex↔gemini 的 A→B→A 切换），见 ADR-048。
 - **流式合并只降事件数、不合并提交。** 否决：成本在整份快照写回，不在事件行；细节见 ADR-047。
 
 ## 影响
@@ -55,7 +55,7 @@
 - `docs/contracts/storage-events.md`、`docs/decisions/0013-live-chat-experience.md`：由 ADR-047 同次更新。
 - `docs/engineering/development.md`、`testing.md`、`readiness.md`：由第 4 项同次更新（边界检查进入 `pnpm check`；G063 从“在公共端口实现前接入”改为已落地）。
 - README.md 与 docs/README.md：存储版本（业务库 12、管理库 6、能力库 5）、目录数量（45 个产品/49 个控制入口）与 dsh、Claude 的版本句改为与代码一致。
-- `docs/verification/native-capability-matrix.md` 不在本批改动：矩阵的 ✅ 与已验证版本保持原状，直到重验收。
+- `docs/verification/native-capability-matrix.md`：矩阵的 ✅ 与已验证版本保持原状，直到重验收。集成时只改两格，与代码保持一致，见文末集成记录。
 
 ## 验证
 
@@ -68,7 +68,7 @@
 | 3 流式合并 | integration | `tests/integration/session-runtime.test.ts`、`tests/integration/web-session-stream.test.ts`、`tests/integration/parallel-work.test.ts`、`tests/integration/session-cli.test.ts` | 见 ADR-047 |
 | 4 边界检查 | integration 加工具自检 | `tests/integration/g063.test.ts`、`tools/fixtures/boundaries/` | 合法依赖通过；领域导入子进程、契约导入 yaml、web 导入 infrastructure、测试未用临时租约目录各被拒绝且非零退出；`pnpm check` 包含它 |
 | 5 控制层 | protocol | `tests/protocol/acp.test.ts`（对端 `tests/fixtures/control-peer.mjs`） | `_auth/status_update` 变成就绪状态而不是诊断；OpenCode 1.18.x 的命令目录含 `/compact`；其他 ACP Harness 的通知路径不变 |
-| 6 冻结 | 设计检查加人工评审 | `python3 tools/check_design.py`；评审 `plan/native-capabilities.json` 与 `verified-versions.ts` 的改动 | 四个非焦点 Harness 的矩阵 ✅ 数与已验证版本不增长 |
+| 6 冻结 | 设计检查加人工评审 | `python3 tools/check_design.py`；评审 `plan/native-capabilities.json` 与 `verified-versions.ts` 的改动 | 三个非焦点 Harness（Cursor、Gemini CLI、Pi）的矩阵 ✅ 数与已验证版本不增长 |
 
 真实引擎通过：本批无。Claude 2.1.306、dsh 0.2.0-rc.2 的真实重验收另立验收记录。
 
@@ -96,6 +96,30 @@
   3. 第 3 项另立 ADR-047 送审；合并窗口与上限写进契约，先提交再发布不变。
   4. 第 4 项的每条规则都要有无效 fixture；`pnpm check` 失败返回非零。
   5. 第 5 项不改 Claude、OpenCode 之外的控制路径；扩展钩子是适配层的事，Runtime 不按 Harness 分支。
-  6. 第 6 项即日生效；矩阵与已验证版本表不再为四个非焦点 Harness 更新。
+  6. 第 6 项即日生效；矩阵与已验证版本表不再为非焦点 Harness 更新（裁决时为四个；用户同日把 OpenClaw 加回焦点后为 Cursor、Gemini CLI、Pi 三个）。
 - 第一批对用户真实配置零写入，不运行任何 Harness；真实重验收等用户同意。
 - 对 ADR-001～007 的处置按上表记录；索引不再写“仍为 proposed”。
+
+## 集成记录（2026-10-21）
+
+六项分别在独立工作区实现，审批代理逐项审查后全部接受（第 1 项退回修改一轮），再按顺序并入集成分支，彼此文件不重叠。集成时补做以下各项，代码与文档保持一致：
+
+- **OpenClaw 归入焦点。** 用户在第一批实现期间补充“openclaw 也保留着吧，也加入接入清单”。本记录、ADR-048、索引、README、`plan/` 的 G065 与切片说明同步改为七个焦点、三个非焦点。OpenClaw 的已验证版本 2026.3.23-2 与矩阵不变。
+- **第 5 项的一处偏离（审批代理已接受）。** 原设想是 Claude 报告 none 时记为需要登录。实现记为“未说明”，原因见 [ADR-033 的 2026-10-21 补充](0033-native-catalog-cache-and-readiness.md)：令牌登录同样报 none，记为需要登录会挡住能用的 CLI。
+- **矩阵两格。**
+  - OpenCode“上下文压缩”改为已接出、协议通过、真实未验证。矩阵中显示为 ◐，✅ 数不变。
+  - DeepSeek Harness“原生会话恢复”的说明改为：官网 rc.2 只给 headless 命令，`dsh tui --resume` 属于 0.2.1-alpha.1 的历史。
+  - 已验证版本表不变。
+- **用例登记。**
+  - `plan/test-cases.json` 新增 G032-NC23（Claude 登录状态）与 G032-NC24（OpenCode `/compact`），并修订 G011-NC2：DeepSeek Harness 只给非交互命令。
+  - ADR-047 的七个用例以 INV 编号命名，没有另立场景 ID。
+  - 第 2 项沿用 G064-W3 场景 ID。
+- **相关决定的补充。**
+  - [ADR-024](0024-native-session-operations.md)：OpenCode 1.18.x 的 `/compact`。
+  - [ADR-033](0033-native-catalog-cache-and-readiness.md)：Claude 登录状态。
+  - README 的“现在可运行的检查”与 `docs/engineering/ai-workflow.md` 写明 `pnpm check:boundaries`。
+- **留给后续批次。**
+  - 详情栏在只有一次性命令时仍只显示原生会话 ID，见 ADR-039 的 2026-10-21 补充。
+  - `src/web/shown-paths.ts` 的家目录检测还不认全角标点边界。
+  - 版本区间判断在 `verified-versions.ts` 与 `capabilities/scan.ts` 各有一份。
+  - G063 的公共类型面检查（`check-contract-surface`）未落地。

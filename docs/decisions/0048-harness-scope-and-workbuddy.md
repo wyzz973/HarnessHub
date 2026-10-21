@@ -1,10 +1,10 @@
-# ADR-048：六个焦点 Harness 的范围、完成定义与 WorkBuddy 接入路线（提案）
+# ADR-048：七个焦点 Harness 的范围、完成定义与 WorkBuddy 接入路线（提案）
 
 状态：proposed，2026-10-21，等待用户决定。本记录只列事实、选项与推荐，不替用户选；每一项由用户选定后，审批代理补裁决，本记录转 accepted。切片 harness-focus 的第一批工程加固见 [ADR-046](0046-harness-focus-hardening.md)，不被本记录阻塞。
 
 ## 背景
 
-用户 2026-10-21 的指令：只支持 Claude Code、Codex、OpenCode、DeepSeek Harness、WorkBuddy、Hermes Agent 六个，“把这些适配好，做精”。
+用户 2026-10-21 的指令：只支持 Claude Code、Codex、OpenCode、DeepSeek Harness、WorkBuddy、Hermes Agent 六个，“把这些适配好，做精”。同日补充：OpenClaw 也保留，加入接入清单，焦点共七个。
 
 本机事实（2026-10-21 只读核对，没有运行任何 Harness）：
 
@@ -15,13 +15,14 @@
 | OpenCode | 1.18.35（Homebrew formula；Cellar 另有 1.1.21） | 1.18.35 | 深度接入；隐藏 `/compact` 未接 |
 | Hermes Agent | 0.12.0（官方脚本；网关在运行，从未触碰） | 0.12.0 | 审批是上游缺陷；`hermes update` 会拉 origin/main，上游 main 的 `hermes acp` 是网关投影 |
 | DeepSeek Harness（dsh） | 0.2.0-rc.2（npm 官网，2026-10-18 经 4317 安装） | 0.2.1-alpha.1（源码版，按 ADR-044 为历史） | 矩阵 9 格真实证据来自已作废的源码版 |
+| OpenClaw | 2026.3.23-2（npm 全局，Homebrew 前缀；Gateway 守护进程在运行，接着消息渠道） | 2026.3.23-2 | 深度接入（Gateway 模型目录、转录对账、原生配置同步）；矩阵 5 格 ✅；升级与重启按 ADR-043 由用户确认 |
 | WorkBuddy | `/Applications/WorkBuddy.app` 5.3.14，内嵌 CodeBuddy CLI 2.115.0（`package.json` 的 version 为 0.0.0）；npm 上 `@tencent-ai/codebuddy-code` 最新 2.163.0；`~/.codebuddy` 不存在 | 无 | 完全未接入 |
 
-非焦点四个（Cursor、Gemini CLI、OpenClaw、Pi）按 ADR-046 第 6 项已冻结：不再新增矩阵 ✅、不更新已验证版本、不承接新能力；适配器、测试与历史证据保留。
+非焦点三个（Cursor、Gemini CLI、Pi）按 ADR-046 第 6 项已冻结（OpenClaw 已按用户补充归入焦点）：不再新增矩阵 ✅、不更新已验证版本、不承接新能力；适配器、测试与历史证据保留。
 
 ## 范围与完成定义
 
-- **范围**：六个焦点 Harness 的会话、模型、连续性、管理（探测、升级、卸载）、能力（技能、MCP、指令、子 Agent、命令、Hooks、插件）。
+- **范围**：七个焦点 Harness 的会话、模型、连续性、管理（探测、升级、卸载）、能力（技能、MCP、指令、子 Agent、命令、Hooks、插件）。
 - **完成按五层分别表述**，不混写：
   1. 设计采纳：ADR accepted，切片登记在 `plan/slices.json`。
   2. 代码完成：正式入口可用，边界检查与设计检查通过。
@@ -33,14 +34,12 @@
 
 ## 用户待决项
 
-### 1. 非焦点四个（Cursor、Gemini CLI、OpenClaw、Pi）的处置
+### 1. 非焦点三个（Cursor、Gemini CLI、Pi）的处置
 
-- **A 冻结**：维持 ADR-046 第 6 项，界面照常显示。代价：选择器与“我的 Agent”里继续出现四个不再打磨的产品，用户会把它们当作同等支持。
+- **A 冻结**：维持 ADR-046 第 6 项，界面照常显示。代价：选择器与“我的 Agent”里继续出现三个不再打磨的产品，用户会把它们当作同等支持。
 - **B 冻结并默认隐藏**（推荐）：目录、适配器、测试与历史证据全部保留；“我的 Agent”、选择器与能力页默认不显示它们，设置里一个开关“显示非焦点 Harness”；停在它们上面的历史对话照常可以打开（ADR-044 第 6 条）。代价：一个开关与几处过滤；矩阵仍列出它们，标“冻结”。
-- **C 删除**（不可逆）：删除四个产品的目录条目、适配器、测试与品牌资产。代价：
-  - ADR-027（OpenClaw 转录对账）与 ADR-028（原生配置同步）的真实验证只来自 OpenClaw，删除后这两条决定没有真实证据；
+- **C 删除**（不可逆）：删除三个产品的目录条目、适配器、测试与品牌资产。代价：
   - 仓库唯一的 A→B→A 真实切换证据是 codex↔gemini（`docs/engineering/testing.md` 第 4 节要求至少两个 Harness 的 A→B→A）；
-  - 本机 OpenClaw 网关正在运行并接着微信、飞书，它的升级与重启（ADR-043 的真实验收来自它）由 HarnessHub 管理，删除后只能在终端维护；
   - 旧对话续聊：ADR-044 第 6 条承诺历史对话保留，删除适配器后只能看、不能续；
   - 还牵动 `tests/unit/verified-versions.test.ts` 把已验证表的键集合与矩阵 Harness 集合绑死的断言、`plan/native-capabilities.json` 的 Harness 列表（设计检查按它校验每格与证据路径）、注册表快照与品牌资产。
 
