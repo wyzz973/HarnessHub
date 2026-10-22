@@ -69,7 +69,7 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
 
 - [ADR-033：本机目录缓存、就绪状态与探测会话](0033-native-catalog-cache-and-readiness.md)（accepted）：目录按配置指纹复用最长 24 小时并跨重启保存；选择器显示上次读取得到的就绪状态与通常启动用时，不在后台启动 Harness；读取目录建出的原生会话默认不列出；ACP 缺省 authMethods 按空列表处理，Hermes 未配置提供方时不建会话、提示 `hermes model`。
 
-- [ADR-034：Codex 计划模式（实验接口按回合声明）](0034-codex-plan-mode.md)（accepted）：Codex 0.162.1 起提供“协作模式”（默认、计划）；只有明确选择协作模式的回合声明 experimentalApi；方案条目作为回复显示；打开线程时不再读取账号与技能。
+- [ADR-034：Codex 计划模式（实验接口按回合声明）](0034-codex-plan-mode.md)（accepted；2026-10-22 按 [ADR-053](0053-latest-version-baseline.md) 修订）：Codex 的“协作模式”（默认、计划）总是作为选项提供，打开线程时 `collaborationMode/list` 不可用即明确失败，不按版本号开关；只有明确选择协作模式的回合声明 experimentalApi；方案条目作为回复显示；打开线程时不再读取账号与技能；“按已验证区间门控”的计划撤销。
 
 - [ADR-035：跨对话的待处理提醒与审批期限](0035-attention-and-request-deadlines.md)（accepted）：审批与提问带服务端给出的最早期限并标明来源（原程序或回合）；侧栏标记等待中的对话并倒计时，到期即消失，决定只在对话内；每个页面一条长连接；回合期限到期的请求记为 expired；浏览器通知由用户开启，只含 Harness 名称与剩余时间。其中的回合期限部分已由 ADR-036 取代，改为等待预算，到期记为 `WAIT_EXPIRED` 取消。
 
@@ -80,16 +80,14 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
   - 修改了 lifecycle §3 和 INV-10。
 
 - [ADR-037：复制一轮的诊断信息](0037-run-diagnostics.md)（accepted）：执行详情中复制本轮的版本、阶段、结束原因、清理状态与 stderr 最后 4 KiB；服务端现场拼装并清洗（路径、环境变量值、密钥样式字符串、账户名），不保存；默认不含对话内容。
-- [ADR-038：未经验证的版本提示](0038-verified-version-hint.md)（accepted）：
-  - 每个 Harness 记录真实验证过的版本范围（经适配器接入的还记录适配器版本），由测试与能力矩阵保持一致。
-  - 本机版本不在范围内时，选择器与 Harnesses 列表提示“未经验证的版本”，不阻止使用。
-  - 版本未知或从未验证的 Harness 不下结论。
-  - Pi 与 DeepSeek Harness 两行的已验证版本来自非官网安装，按 [ADR-044](0044-macos-official-channels.md) 为历史证据（部分取代）；dsh 的继续命令与 Hermes 的版本读取由 ADR-046 第 1 项更新。
-- [ADR-039：在原程序中继续原生会话](0039-continue-in-the-original-program.md)（accepted）：
+- [ADR-038：未经验证的版本提示](0038-verified-version-hint.md)（superseded by [ADR-053](0053-latest-version-baseline.md)，2026-10-22）：
+  - 原决定：每个 Harness 记录真实验证过的版本范围，本机版本不在范围内时提示“未经验证的版本”，由测试与能力矩阵四处对账。
+  - 2026-10-22 起版本表、判定、显示与对账全部作废；文中的验证记录（2.1.296、2.1.306、0.2.0-rc.2 等）只作工程证据保留，代码不再读取。
+- [ADR-039：在原程序中继续原生会话](0039-continue-in-the-original-program.md)（accepted；2026-10-22 按 ADR-053 修订）：
   - 对话的执行配置显示原生会话 ID，并给出在原程序中继续的命令。
-  - 交互形式按已安装版本的帮助给出，恢复机制以非交互形式真实验证；版本在验证范围内才给出命令。
-  - Cursor 与 Gemini 未验证，只显示 ID；Pi 指向它自己的会话列表；OpenClaw 不显示。
-  - 不进入会话视图和导出，Hub 不执行这些命令。
+  - 命令按产品给出，与安装版本无关：交互形式按最新正式版的帮助核对，一次性形式在最新正式版上真实核对，核对时的版本只作证据写在表里。
+  - 没有续接命令的产品（Cursor、Gemini）只显示 ID；Pi 指向它自己的会话列表；OpenClaw 不显示；DeepSeek Harness 只给一次性命令并附凭据前提。
+  - 读取不触发发现与版本探测；不进入会话视图和导出，Hub 不执行这些命令。
 - [ADR-040：从登录 shell 补充搜索目录](0040-login-shell-search-directories.md)（accepted）：
   - 用户在 Harnesses 页触发时，才以 `$SHELL -l -c` 读取一次 PATH；shell 须列在 `/etc/shells`，限 3 秒、64 KiB，结束整个进程组。
   - 只加入 Gateway 尚未搜索的目录，用于发现与新对话，可逐项移除；不写入 Gateway 环境。
@@ -119,14 +117,18 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
 - [ADR-046：聚焦七个 Harness 的工程加固切片](0046-harness-focus-hardening.md)（accepted，2026-10-21，总指挥兼审批代理裁决）：
   - 方向由用户决定：只支持 Claude Code、Codex、OpenCode、DeepSeek Harness、WorkBuddy、Hermes Agent 并做精；同日补充 OpenClaw 保留并加入接入清单，共七个。
   - 切片 harness-focus 承接第一批六项加固：版本单一来源与一致性检查（预发布语义）、失败写入记录去路径化与 history 逐条降级、流式输出按窗口合并提交（ADR-047）、G063 边界检查落地、Claude 认证状态与 OpenCode `/compact` 接出、非焦点三个（Cursor、Gemini CLI、Pi）即日冻结。
-  - 处置 ADR-001～007（见上表）；`VERIFIED_VERSIONS` 的数字在真实重验收前不改。
+  - 处置 ADR-001～007（见上表）。第 1 项（版本单一来源与一致性检查）与第 5 项中“OpenCode 在 1.18.x 补 `/compact`”2026-10-22 起被 [ADR-053](0053-latest-version-baseline.md) 取代：版本表与对账删除，`/compact` 在目录未列出时对任何版本补入。
 - [ADR-047：流式输出按窗口合并提交](0047-stream-output-coalescing.md)（accepted，2026-10-21，总指挥兼审批代理裁决）：每回合的事件数与提交成本降一个量级，先提交再发布不变。
 - [ADR-048：七个焦点 Harness 的范围、完成定义与 WorkBuddy 接入路线](0048-harness-scope-and-workbuddy.md)（accepted，2026-10-21，用户回复“全部按推荐”）：
   - 五层完成定义（设计采纳 / 代码完成 / 测试通过 / 真实引擎通过 / 只面向 macOS）与“做精”的判据。
-  - 用户决定：非焦点三个冻结并默认隐藏；WorkBuddy 接应用内嵌 CLI、共用 `~/.workbuddy`，id `workbuddy`；Claude 按版本区间加冒烟；dsh 以 0.2.0-rc.2 为基线尽快重验；Hermes 先只读研究；业务库迁移前备份保留 2 份；审计保留 90 天、可导出、手工操作补记、凭据默认打码；页面在重新检测、任务完成与切回窗口（至少间隔 60 秒）时刷新，不再轮询。
+  - 用户决定：非焦点三个冻结并默认隐藏；WorkBuddy 接应用内嵌 CLI、共用 `~/.workbuddy`，id `workbuddy`；Claude 以最新正式版为基线，新版本发布后的回归只作开发侧动作（原“区间加冒烟”按 [ADR-053](0053-latest-version-baseline.md) 修订）；dsh 以 npm latest 为基线（原“精确基线 0.2.0-rc.2”，同上修订；0.2.0-rc.2 的重验保留为证据）；Hermes 基线是最新正式版，是否进入用户网关待用户（原“先只读研究、停在 0.12.0”）；业务库迁移前备份保留 2 份；审计保留 90 天、可导出、手工操作补记、凭据默认打码；页面在重新检测、任务完成与切回窗口（至少间隔 60 秒）时刷新，不再轮询。
   - 审批代理裁决（2026-10-22）：两个门禁标志删除，G0～G5 改写为五层完成定义的门禁；矩阵新增 ☑ 终态（原接口部分提供、Hub 已尽，须写明缺口）、Harness 分层（焦点/冻结，冻结的 ✅ 数不得超过 `complete_at_freeze`）、仓库内证据规则与 `historical` 标记；OpenClaw 的卸载以替身验证代替真实执行。
   - 待定：WorkBuddy 的遥测开关（用户）。
 - [ADR-049：业务库迁移前备份](0049-business-store-backup-before-migration.md)（accepted，2026-10-22，第二批 C4）：每次业务库版本提升前用 `VACUUM INTO` 在数据根的 backups 目录留备份，只保留最新 2 份；备份失败则迁移不发生（`STORAGE_BACKUP_FAILED`，user_version 不变、不接管 owner）。
 - [ADR-050：Harness 分层与按需刷新](0050-harness-tiers-and-on-demand-refresh.md)（accepted，2026-10-22，第二批 C3）：目录按 focus、frozen、catalog 分层（`HarnessView.tier`），冻结的三个默认不在选择器、欢迎页、“我的 Agent”与能力页里，设置开关可再显示，停在它们上面的对话照常打开；页面不再后台轮询，重新检测、安装任务完成与窗口重新获焦（至少间隔 60 秒）时刷新。
-- [ADR-051：Hermes 升级路线](0051-hermes-upgrade-route.md)（proposed，2026-10-22，第二批 C6）：对 v0.22.2 标签与当时 main 的只读研究（网关投影的启用条件、认证、审批期限、`/model` 回复、会话导出、迁移）后的升级路线草案；期间停在 0.12.0。
-- [ADR-052：OpenClaw 升级路线](0052-openclaw-upgrade-route.md)（proposed，2026-10-22，第二批 C6）：2026.10.x 升级就绪研究后的路线草案；2026-10-17 用户点击升级被目标版本的配置校验拦下，原安装 2026.3.23-2 保留。
+- [ADR-051：Hermes 最新版的接入方式](0051-hermes-upgrade-route.md)（proposed，2026-10-22，第二批 C6 的只读研究；同日按 ADR-053 重写）：最新版 v0.22.4 的 `hermes acp` 只是网关的查看器，没有进程内模式；钉住 v0.22.2（A1）、停在 0.12.0 作终态（B）与“≥ 0.22.3 拒绝建会话”（第 8 条）按用户原则撤销，只剩 A2——HarnessHub 的 Hermes 会话附着到用户正在运行的兼容网关——等用户决定；答复前 Hub 仍接入本机 0.12.0，不做版本提示。
+- [ADR-052：OpenClaw 升级路线](0052-openclaw-upgrade-route.md)（proposed，2026-10-22，第二批 C6 的只读研究；同日按 ADR-053 修订）：轨道定为 latest（点击时解析 npm latest，2026-10-22 为 2026.10.5），保留上游要求的 2026.9.5 中间跳；路线 A（HarnessHub 在预检与备份后调用 `openclaw update` 两跳升级）为推荐、等用户确认；2026-10-17 用户点击升级被目标版本的配置校验拦下，原安装 2026.3.23-2 保留，本批的 npm 直装升级改为说明“改走 openclaw update”。
+- [ADR-053：按各 Harness 的最新正式版适配，版本只作工程证据](0053-latest-version-baseline.md)（accepted，2026-10-22，用户原则“接入不限定版本，默认按最新版”）：
+  - 任何官网渠道的安装、任何版本（包括读不出版本的）都能接入；不再按版本号提示或劝阻；续接命令按产品对任何版本给出；读表每家一张、`checkedOn` 只作证据；功能按程序实际报告的能力判断，缺的能力在用到时明确失败并带原因；升级目标是渠道最新版；真实验收以验收当日的最新正式版为对象。
+  - 取代 ADR-038 全文，修订 ADR-031/034/035/036/039/043/044/045/046/048/050，重排 ADR-051/052 的选项；登记 Hermes 0.12 的 60 秒审批期限为唯一例外及其退出条件；撤销 ADR-034 第 37 行、ADR-051 第 8 条、ADR-052 T-OC-11、ADR-048 决定 3 页面冒烟入口等已登记的版本门槛计划。
+  - 三项产品取舍由审批代理裁决：Claude 会话关闭 promptSuggestions；`/remote-control` 在 HarnessHub 不支持；Hermes 0.12 期限作例外。
