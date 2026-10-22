@@ -358,3 +358,59 @@ test("G011-UP9 a protected configuration another program writes while an upgrade
   assert.equal(result.status, "completed", JSON.stringify(result.error)); assert.equal(result.native?.configurationPreserved, true);
   assert.ok(f.manager.logs(job.id, 0).some(entry => entry.text.startsWith("升级期间这些受保护的配置文件有了变化：~/.claude.json")));
 });
+
+/**
+ * Homebrew as native maintenance meets it: the Library files its sandbox check reads, and a brew that logs every command
+ * (a protected run's arguments are the ones its runner was given) into its temporary directory and answers for the name it
+ * is given. Its own opencode is OpenCode 2 (2.1.2), anomalyco/tap's is OpenCode 1 (1.19.3); an upgrade installs the one named.
+ */
+async function tappedHomebrew(root: string): Promise<string> {
+  const brew = join(root, "homebrew"), library = join(brew, "Library", "Homebrew");
+  await mkdir(join(library, "extend", "os", "mac"), { recursive: true }); await mkdir(join(brew, "bin"), { recursive: true });
+  await writeFile(join(library, "sandbox.rb"), "class Sandbox\n  def self.inherited_sandbox?\n  end\n  def run\n    command.sandbox_inheritance = inheritance\n  end\nend\n");
+  await writeFile(join(library, "system_command.rb"), "Sandbox::INHERITANCE_FD\n"); await writeFile(join(library, "extend", "os", "mac", "sandbox.rb"), "# macOS\n");
+  await writeFile(join(brew, "bin", "brew"), "#!" + process.execPath + "\nconst fs=require('node:fs'),path=require('node:path');const prefix=path.dirname(path.dirname(fs.realpathSync(process.argv[1])));"
+    + "let a=process.argv.slice(2);if(a[0]==='ruby')a=JSON.parse(fs.readFileSync(path.join(path.dirname(a[1]),'homebrew-command.json'),'utf8')).args;"
+    + "fs.appendFileSync(path.join(process.env.TMPDIR,'brew-calls.log'),a.join(' ')+'\\n');const target=n=>n==='anomalyco/tap/opencode'?'1.19.3':'2.1.2';"
+    + "if(a[0]==='info'){process.stdout.write(JSON.stringify({formulae:[{name:'opencode',full_name:a[3],versions:{stable:target(a[3])},revision:0}],casks:[]}));}"
+    + "else if(a[0]==='upgrade'){const v=target(a[2]),bin=path.join(prefix,'Cellar','opencode',v,'bin');fs.mkdirSync(bin,{recursive:true});fs.writeFileSync(path.join(bin,'opencode'),'#!/bin/sh\\necho '+v+'\\n',{mode:0o755});"
+    + "fs.rmSync(path.join(prefix,'bin','opencode'));fs.symlinkSync(path.join(bin,'opencode'),path.join(prefix,'bin','opencode'));}else process.exit(2);\n", { mode: 0o755 });
+  const keg = join(brew, "Cellar", "opencode", "1.18.35");
+  await mkdir(join(keg, "bin"), { recursive: true }); await writeFile(join(keg, "bin", "opencode"), "#!/bin/sh\necho 1.18.35\n", { mode: 0o755 });
+  await symlink(join(keg, "bin", "opencode"), join(brew, "bin", "opencode"));
+  return brew;
+}
+test("G011-UG9 native maintenance reads and upgrades a formula from another tap by its full name, and the tap its receipt names is part of the plan's identity", { skip: process.platform !== "darwin" && "Homebrew maintenance is macOS only (ADR-044)" }, async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "native-homebrew-tap-"))); t.after(() => rm(root, { recursive: true, force: true }));
+  const home = join(root, "home"); await mkdir(home);
+  const brew = await tappedHomebrew(root), keg = join(brew, "Cellar", "opencode", "1.18.35");
+  const receipt = (tap: string) => writeFile(join(keg, "INSTALL_RECEIPT.json"), JSON.stringify({ homebrew_version: "5.1.0", source: { tap, spec: "stable", versions: { stable: "1.18.35" } } }));
+  const environment = { home, values: { HOME: home, PATH: join(brew, "bin") + ":/usr/bin:/bin" } };
+  const metadata: ManagementMetadataPort = { resolve: async () => assert.fail("Homebrew's own records are read, never a package registry") };
+  const native = new NativeManagement(null, null, process.execPath, environment, metadata);
+  const opencode: ManagementRecipe = { harnessId: "opencode", controlId: "opencode", kind: "npm", packageName: "opencode-ai", referenceVersion: "latest", binName: "opencode", args: [], archiveUrl: null, archiveSha256: null, relativeExecutable: null, dependencies: [] };
+  const observation = { harnessId: "opencode", controlId: "opencode", command: { executable: join(brew, "bin", "opencode"), args: [], env: {} } };
+  let stages = 0;
+  /** A fresh stage per step, as management gives each one; `calls` reads what brew logged in it. */
+  const step = async () => { const stage = join(root, "stage-" + stages++); await mkdir(stage); return { stage, signal: new AbortController().signal, assertOwned() {}, log() {}, beginMutation() {} }; };
+  const calls = async (context: { stage: string }) => (await readFile(join(context.stage, "brew-calls.log"), "utf8")).trim().split("\n");
+  // Installed from Homebrew's own tap: the bare name, as before.
+  await receipt("homebrew/core");
+  const core = await native.describe(opencode, observation, "1.18.35", await step());
+  assert.deepEqual([core.channel, core.reference, core.reason, core.actualEntry], ["brew-formula", "opencode", null, join(keg, "bin", "opencode")]);
+  let context = await step();
+  assert.equal(await native.latest(core, opencode, context), "2.1.2"); assert.deepEqual(await calls(context), ["info --json=v2 --formula opencode"]);
+  // Installed from anomalyco/tap: another plan, and every Homebrew command names the tap's formula.
+  await receipt("anomalyco/tap");
+  const tapped = await native.describe(opencode, observation, "1.18.35", await step());
+  assert.notEqual(tapped.fingerprint, core.fingerprint, "a receipt naming another tap changes what was confirmed");
+  assert.equal(tapped.reference, "opencode", "the keg's own name stays the plan's reference");
+  context = await step();
+  assert.equal(await native.latest(tapped, opencode, context), "1.19.3"); assert.deepEqual(await calls(context), ["info --json=v2 --formula anomalyco/tap/opencode"]);
+  await native.prepare(tapped, opencode, "1.19.3", await step());
+  context = await step();
+  assert.deepEqual(await native.execute(tapped, opencode, "1.19.3", context), { version: "1.19.3", configurationPreserved: true });
+  assert.deepEqual(await calls(context), ["upgrade --formula anomalyco/tap/opencode"]);
+  assert.equal(await realpath(join(brew, "bin", "opencode")), join(brew, "Cellar", "opencode", "1.19.3", "bin", "opencode"));
+  assert.equal(existsSync(join(brew, "Cellar", "opencode", "2.1.2")), false, "Homebrew's own OpenCode 2 was never installed in its place");
+});

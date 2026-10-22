@@ -4,6 +4,8 @@ import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { gt, valid, satisfies } from "semver";
 import { ManagementError, type ManagementInstallContext, type ManagementRecipe, type NativeInstallPlan, type NativeManagementPort, type SystemInstallationObservation, type NativeInstallContext, type ManagementMetadataPort, type ProgramUsage, type ResolvedInstallSpec, type RuntimeRequirement, type UsedService } from "../../contracts/management.js";
+import { homebrewName } from "../../contexts/catalog/domain/channels.js";
+import { homebrewTap } from "../discovery/packages.js";
 import { captureNativeEnvironment, nativeBaseValues, nativeValues, type NativeEnvironment } from "../session/native-environment.js";
 import { OfficialManagementMetadata } from "./metadata.js";
 import { DefaultManagementInstaller, installedNpmEntry } from "./installer.js";
@@ -116,8 +118,13 @@ export class NativeManagement implements NativeManagementPort {
       if (recipe.harnessId === "cursor" && actual.includes("/cursor-agent/versions/"))
         return fingerprint({ ...base, channel: "native-cli", manager: entry, prefix: join(this.source.home, ".local", "share", "cursor-agent"), reference: "cursor-agent", entry, actualEntry: actual }, identity);
       const brew = /^(.*)\/(Cellar|Caskroom)\/([^/]+)\/[^/]+\//u.exec(actual);
-      if (brew) { const manager = join(brew[1]!, "bin", "brew"), sdk = await homebrewSandboxIdentity(manager); return fingerprint({ ...base, channel: brew[2] === "Cellar" ? "brew-formula" : "brew-cask", manager, prefix: brew[1]!, reference: brew[3]!, entry, actualEntry: actual,
-        reason: sdk === null ? "本机 Homebrew 没有受支持的配置保护接口，原安装接入可用，升级暂不可用。" : null }, identity + (sdk ?? "unsupported")); }
+      if (brew) {
+        const manager = join(brew[1]!, "bin", "brew"), sdk = await homebrewSandboxIdentity(manager), channel = brew[2] === "Cellar" ? "brew-formula" as const : "brew-cask" as const;
+        // The tap its receipt names belongs to the plan's identity: it decides which formula Homebrew queries and upgrades.
+        const tap = await homebrewTap(channel, brew[1] + "/" + brew[2] + "/" + brew[3], actual);
+        return fingerprint({ ...base, channel, manager, prefix: brew[1]!, reference: brew[3]!, entry, actualEntry: actual,
+          reason: sdk === null ? "本机 Homebrew 没有受支持的配置保护接口，原安装接入可用，升级暂不可用。" : null }, identity + (sdk ?? "unsupported") + "\0" + (tap ?? ""));
+      }
       let directory = dirname(actual);
       for (let depth = 0; depth < 10; depth++) {
         const packageFile = join(directory, "package.json");
@@ -155,12 +162,19 @@ export class NativeManagement implements NativeManagementPort {
     if (plan.channel === "brew-formula" || plan.channel === "brew-cask") {
       // Homebrew's local records in the user's cache, read in a sandbox that may write only the stage and reach no network;
       // the upgrade reads the same records, so the version checked is the version installed (ADR-044).
-      const raw: unknown = JSON.parse(await this.process(plan.manager, ["info", "--json=v2", plan.channel === "brew-cask" ? "--cask" : "--formula", plan.reference], context, "isolated", homebrewEnvironment(this.source, context.stage)));
+      const raw: unknown = JSON.parse(await this.process(plan.manager, ["info", "--json=v2", plan.channel === "brew-cask" ? "--cask" : "--formula", await this.formula(plan, plan.channel)], context, "isolated", homebrewEnvironment(this.source, context.stage)));
       const rows = object(raw)[plan.channel === "brew-cask" ? "casks" : "formulae"]; if (!Array.isArray(rows) || rows.length !== 1) throw new ManagementError("INVALID_METADATA", "Homebrew returned an ambiguous installation");
       const row = object(rows[0]); return parseVersion(plan.channel === "brew-cask" ? row.version : object(row.versions).stable);
     }
     const effective = plan.channel === "npm" ? { ...recipe, kind: "npm" as const, packageName: plan.reference, referenceVersion: "latest" } : recipe;
     return (await this.metadata.resolve(effective, context.signal)).version;
+  }
+  /**
+   * The name Homebrew's commands take for a planned formula or cask: `<tap>/<name>` when its keg's (or cask's) install
+   * receipt names another tap than Homebrew's own, so that Homebrew's same-named formula is never upgraded in its place.
+   */
+  private async formula(plan: NativeInstallPlan, channel: "brew-formula" | "brew-cask"): Promise<string> {
+    return homebrewName(plan.reference, await homebrewTap(channel, join(plan.prefix, channel === "brew-cask" ? "Caskroom" : "Cellar", plan.reference), plan.actualEntry));
   }
   /** The exact npm release for `version`, refusing one that would replace another program's executable. */
   private async npmRelease(plan: NativeInstallPlan, recipe: ManagementRecipe, version: string, context: ManagementInstallContext): Promise<ResolvedInstallSpec> {
@@ -221,8 +235,8 @@ export class NativeManagement implements NativeManagementPort {
         break;
       }
       case "brew-formula": case "brew-cask":
-        { const { directories, files } = protectedConfigurationPaths(this.source);
-          await runHomebrewProtected(plan.manager, ["upgrade", plan.channel === "brew-cask" ? "--cask" : "--formula", plan.reference], directories, files, homebrewEnvironment(this.source, context.stage), context, { cache: "user" }); break;
+        { const { directories, files } = protectedConfigurationPaths(this.source), formula = await this.formula(plan, plan.channel);
+          await runHomebrewProtected(plan.manager, ["upgrade", plan.channel === "brew-cask" ? "--cask" : "--formula", formula], directories, files, homebrewEnvironment(this.source, context.stage), context, { cache: "user" }); break;
         }
       case "uv":
         await this.process(plan.manager, ["tool", "install", "--no-progress", "--force", plan.reference + "==" + version], context, "configuration", { UV_TOOL_DIR: plan.prefix, UV_TOOL_BIN_DIR: dirname(plan.entry), UV_CACHE_DIR: join(context.stage, "cache"), UV_PYTHON_DOWNLOADS: "never" }); break;

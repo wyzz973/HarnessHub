@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { classifyProgram } from "../../src/contexts/catalog/domain/channels.js";
+import { classifyProgram, homebrewName, homebrewReceiptTap } from "../../src/contexts/catalog/domain/channels.js";
 import { adapterChannels, productChannels } from "../../src/adapters/catalog-channels.js";
 import { loadBuiltinCatalog } from "../../src/adapters/catalog.js";
 import { LocalInstallationClassifier } from "../../src/infrastructure/discovery/installation-channels.js";
@@ -97,4 +97,59 @@ test("G012-OC1 a script installation's version is read from its files: Hermes's 
   assert.equal((await read("claude", join(home, ".local", "bin", "claude")))?.version, "2.1.296");
   await put(join(home, ".opencode", "bin", "opencode"), "#!/bin/sh\nexit 3\n", 0o755);
   assert.deepEqual(await read("opencode", join(home, ".opencode", "bin", "opencode")), { channel: { kind: "script", name: ".opencode/bin", root: join(home, ".opencode", "bin"), prefix: null }, version: null });
+});
+
+test("G012-OC1 a Homebrew install receipt names another tap's formula or cask in full; Homebrew's own tap and anything malformed leave the bare name", () => {
+  const receipt = (tap: unknown) => ({ homebrew_version: "5.1.0", source: { path: "/opt/homebrew/Library/Taps/x/y.rb", tap, spec: "stable" } });
+  assert.equal(homebrewReceiptTap("brew-formula", receipt("anomalyco/tap")), "anomalyco/tap");
+  assert.equal(homebrewReceiptTap("brew-cask", receipt("farion1231/ccswitch")), "farion1231/ccswitch");
+  // Homebrew's own taps, in any case: the bare name stays.
+  for (const [kind, tap] of [["brew-formula", "homebrew/core"], ["brew-formula", "Homebrew/Core"], ["brew-cask", "homebrew/cask"]] as const) assert.equal(homebrewReceiptTap(kind, receipt(tap)), null, tap);
+  // A receipt without a well-formed tap is not used: nothing in it can reach a Homebrew command line.
+  for (const value of [null, [], "anomalyco/tap", {}, { source: null }, { source: [] }, { source: "anomalyco/tap" }, receipt(undefined), receipt(7), receipt(""), receipt("anomalyco"),
+    receipt("anomalyco/tap/opencode"), receipt("../tap"), receipt("-x/tap"), receipt("anomalyco/-tap"), receipt("anomalyco/ta p"), receipt("anomalyco/tap\n--force"), receipt("a".repeat(65) + "/tap")])
+    assert.equal(homebrewReceiptTap("brew-formula", value), null, JSON.stringify(value));
+  assert.equal(homebrewName("opencode", "anomalyco/tap"), "anomalyco/tap/opencode");
+  assert.equal(homebrewName("opencode", null), "opencode");
+});
+
+test("G012-OC1 discovery records the tap a keg's or cask's install receipt names, and only for Homebrew; a receipt it cannot use is ignored", async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "official-channels-brew-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const put = async (path: string, text: string, mode = 0o644) => { await mkdir(dirname(path), { recursive: true }); await writeFile(path, text, { mode }); };
+  const home = join(root, "home"), brew = join(root, "homebrew"), keg = join(brew, "Cellar", "opencode", "1.18.35"), program = join(keg, "bin", "opencode"), receipt = join(keg, "INSTALL_RECEIPT.json");
+  await put(program, "#!/bin/sh\nexit 3\n", 0o755);
+  const classifier = new LocalInstallationClassifier(home, join(home, ".local", "share", "uv", "tools"));
+  const read = (harness: string, path: string) => classifier.classify({ path, resolvedPath: path, source: "path", entries: [] }, productChannels(harness)!);
+  const bare = { kind: "brew-formula", name: "opencode", root: join(brew, "Cellar", "opencode"), prefix: brew };
+  const tapped = (tap: string) => JSON.stringify({ homebrew_version: "5.1.0", source: { path: brew + "/Library/Taps/anomalyco/homebrew-tap/opencode.rb", tap, spec: "stable", versions: { stable: "1.18.35" } } });
+  // As this computer's OpenCode keg records it: installed from anomalyco/tap, so Homebrew knows it as anomalyco/tap/opencode.
+  await put(receipt, tapped("anomalyco/tap"));
+  assert.deepEqual(await read("opencode", program), { channel: { ...bare, tap: "anomalyco/tap" }, version: "1.18.35" });
+  // Homebrew's own tap, no receipt, and receipts that cannot be used: no tap is recorded, and the installation still counts.
+  await put(receipt, tapped("homebrew/core"));
+  assert.deepEqual(await read("opencode", program), { channel: bare, version: "1.18.35" });
+  for (const bytes of ["{\"source\":", "ÿ", Buffer.from([0xff, 0xfe]), " ".repeat(64 * 1024 + 1) + "{}"]) {
+    await writeFile(receipt, bytes);
+    assert.deepEqual(await read("opencode", program), { channel: bare, version: "1.18.35" }, String(bytes).slice(0, 12));
+  }
+  await rm(receipt);
+  assert.deepEqual(await read("opencode", program), { channel: bare, version: "1.18.35" });
+  // A receipt that is a link is not followed, and one that is a directory is not read.
+  await put(join(root, "elsewhere.json"), tapped("anomalyco/tap")); await symlink(join(root, "elsewhere.json"), receipt);
+  assert.deepEqual(await read("opencode", program), { channel: bare, version: "1.18.35" });
+  await rm(receipt); await mkdir(receipt);
+  assert.deepEqual(await read("opencode", program), { channel: bare, version: "1.18.35" });
+  // A cask keeps its receipt in .metadata: another tap's is recorded, Homebrew's own cask tap is not.
+  const cask = join(brew, "Caskroom", "codex"), binary = join(cask, "0.162.1", "codex");
+  await put(binary, "#!/bin/sh\nexit 3\n", 0o755);
+  await put(join(cask, ".metadata", "INSTALL_RECEIPT.json"), JSON.stringify({ source: { tap: "openai/tap", version: "0.162.1" } }));
+  assert.deepEqual(await read("codex", binary), { channel: { kind: "brew-cask", name: "codex", root: cask, prefix: brew, tap: "openai/tap" }, version: "0.162.1" });
+  await put(join(cask, ".metadata", "INSTALL_RECEIPT.json"), JSON.stringify({ source: { tap: "homebrew/cask", version: "0.162.1" } }));
+  assert.deepEqual(await read("codex", binary), { channel: { kind: "brew-cask", name: "codex", root: cask, prefix: brew }, version: "0.162.1" });
+  // Other channels never carry a tap, whatever files lie beside them.
+  const npm = join(brew, "lib", "node_modules", "openclaw");
+  await put(join(npm, "package.json"), JSON.stringify({ name: "openclaw", version: "2026.3.23-2" })); await put(join(npm, "openclaw.mjs"), "#!/bin/sh\nexit 3\n", 0o755);
+  await put(join(npm, "INSTALL_RECEIPT.json"), tapped("anomalyco/tap"));
+  assert.deepEqual(await read("openclaw", join(npm, "openclaw.mjs")), { channel: { kind: "npm", name: "openclaw", root: npm, prefix: brew }, version: "2026.3.23-2" });
 });

@@ -82,6 +82,12 @@ export interface InstallationChannel {
   readonly kind: ChannelKind;
   /** The npm package, Homebrew formula or cask, uv package, or the script layout's root. */
   readonly name: string;
+  /**
+   * For a Homebrew formula or cask: the tap its install receipt names when that is not Homebrew's own (homebrew/core,
+   * homebrew/cask). Homebrew then knows it as `<tap>/<name>`; its bare name may find another tap's formula of that name
+   * (Homebrew's own `opencode` is OpenCode 2, anomalyco/tap's is OpenCode 1). Absent for every other installation.
+   */
+  readonly tap?: string;
   /** The directory the channel owns for this installation: the npm package, the keg, the script root or the uv tool. */
   readonly root: string;
   /** The npm global prefix or the Homebrew prefix the installation lives in; null for script and uv channels. */
@@ -92,6 +98,24 @@ export interface FoundProgram { readonly path: string; readonly resolvedPath: st
 
 function inside(path: string, root: string): boolean { return path === root || path.startsWith(root + "/"); }
 function join(home: string, relative: string): string { return (home.endsWith("/") ? home.slice(0, -1) : home) + "/" + relative; }
+
+/** Homebrew's own tap for each Homebrew channel: a formula or cask from it is named by its bare name. */
+const HOMEBREW_TAPS = { "brew-formula": "homebrew/core", "brew-cask": "homebrew/cask" } as const;
+/** A tap as Homebrew names it, `user/repository`: word characters and hyphens, never a leading hyphen. */
+const TAP = /^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}\/[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/u;
+/**
+ * The tap a parsed Homebrew install receipt (INSTALL_RECEIPT.json) names under `source.tap` for a formula or cask, when
+ * it is a well-formed tap other than Homebrew's own for that kind; null for Homebrew's own tap, a receipt without a tap,
+ * and anything malformed, so the bare name stays. Pure.
+ */
+export function homebrewReceiptTap(kind: "brew-formula" | "brew-cask", receipt: unknown): string | null {
+  const source = receipt !== null && typeof receipt === "object" && !Array.isArray(receipt) && "source" in receipt ? receipt.source : undefined;
+  const tap = source !== null && typeof source === "object" && !Array.isArray(source) && "tap" in source ? source.tap : undefined;
+  if (typeof tap !== "string" || !TAP.test(tap)) return null;
+  return tap.toLowerCase() === HOMEBREW_TAPS[kind] ? null : tap;
+}
+/** The name Homebrew's commands take for an installed formula or cask: `<tap>/<name>` for another tap's, its bare name otherwise. Pure. */
+export function homebrewName(name: string, tap: string | null): string { return tap === null ? name : tap + "/" + name; }
 
 /**
  * The official channel `program` belongs to, or null when it lies in none of `channels` (a source checkout, an `npm link`,

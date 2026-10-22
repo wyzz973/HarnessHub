@@ -2,9 +2,14 @@ import { constants } from "node:fs";
 import { access, open, readdir, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import type { InstallationEnumerator, InventoryDiagnostic, LocalPackageObservation, LocalPackageResolver, PackageIdentity } from "../../contexts/catalog/domain/catalog.js";
+import { homebrewReceiptTap } from "../../contexts/catalog/domain/channels.js";
 import { DiscoveryInputError } from "../../contexts/catalog/domain/discovery.js";
 
 const MAX_PACKAGE_BYTES = 64 * 1024;
+/** Install receipts and stamps another program wrote are read only this far; a larger one is not used. */
+const MAX_RECORD_BYTES = 64 * 1024;
+/** Errors that leave a file unreadable here rather than the read broken: such a record counts as absent. */
+const UNREADABLE = ["ENOENT", "ENOTDIR", "EACCES", "EPERM", "ELOOP"];
 const MAX_PACKAGE_ROOTS = 64;
 /** An executable's package.json is searched this many directories up from the resolved bin. */
 const MAX_PACKAGE_DEPTH = 6;
@@ -27,22 +32,58 @@ function errno(error: unknown): string | undefined {
   return record(error) && typeof error.code === "string" ? error.code : undefined;
 }
 
-/** A bounded package.json read without following a final link. */
-export async function packageJson(path: string): Promise<unknown> {
+/** A file a bounded read refuses: not an ordinary file, larger than its limit, or not UTF-8. The message names the file. */
+class UnusableFile extends Error {}
+
+/** A bounded JSON read without following a final link; `label` names the file in errors. Invalid JSON throws SyntaxError. */
+async function boundedJson(path: string, limit: number, label: string): Promise<unknown> {
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const information = await file.stat();
-    if (!information.isFile() || information.size > MAX_PACKAGE_BYTES) throw new Error("package.json must be an ordinary bounded file");
-    const bytes = Buffer.alloc(MAX_PACKAGE_BYTES + 1);
+    if (!information.isFile() || information.size > limit) throw new UnusableFile(label + " must be an ordinary bounded file");
+    const bytes = Buffer.alloc(limit + 1);
     let offset = 0;
     while (offset < bytes.length) {
       const result = await file.read(bytes, offset, bytes.length - offset, null);
       if (result.bytesRead === 0) break;
       offset += result.bytesRead;
     }
-    if (offset > MAX_PACKAGE_BYTES) throw new Error("package.json exceeds the limit");
-    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, offset))) as unknown;
+    if (offset > limit) throw new UnusableFile(label + " exceeds the limit");
+    let text: string;
+    try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, offset)); }
+    catch { throw new UnusableFile(label + " is not valid UTF-8"); }
+    return JSON.parse(text) as unknown;
   } finally { await file.close(); }
+}
+
+/** A bounded package.json read without following a final link. */
+export async function packageJson(path: string): Promise<unknown> { return boundedJson(path, MAX_PACKAGE_BYTES, "package.json"); }
+
+/**
+ * A small JSON record another program wrote, such as an install receipt or stamp, read bounded to 64 KiB without
+ * following a final link: its parsed value, or null when it is missing, unreadable, not an ordinary file, larger than
+ * 64 KiB, not UTF-8 or not JSON, so a caller treats it as absent. Other filesystem errors are thrown. Nothing is run.
+ */
+export async function recordedJson(path: string): Promise<{ readonly value: unknown } | null> {
+  try { return { value: await boundedJson(path, MAX_RECORD_BYTES, basename(path)) }; }
+  catch (error: unknown) {
+    if (error instanceof UnusableFile || error instanceof SyntaxError || UNREADABLE.includes(errno(error) ?? "")) return null;
+    throw error;
+  }
+}
+
+/**
+ * The tap an installed Homebrew formula or cask came from when it is not Homebrew's own, as its install receipt names it:
+ * a formula's in the keg version directory `resolvedPath` lies in (`<root>/<version>/INSTALL_RECEIPT.json`), a cask's in
+ * `<root>/.metadata/INSTALL_RECEIPT.json`. Null for Homebrew's own tap, a receipt without one, or a receipt that cannot be
+ * used (see `recordedJson`): Homebrew is then given the bare name. Other filesystem errors are thrown. Reads one bounded
+ * file and never runs Homebrew.
+ */
+export async function homebrewTap(kind: "brew-formula" | "brew-cask", root: string, resolvedPath: string): Promise<string | null> {
+  const version = inside(root, resolvedPath) ? relative(root, resolvedPath).split(sep, 1)[0] : undefined;
+  const receipt = kind === "brew-cask" ? join(root, ".metadata", "INSTALL_RECEIPT.json") : version === undefined ? null : join(root, version, "INSTALL_RECEIPT.json");
+  const recorded = receipt === null ? null : await recordedJson(receipt);
+  return recorded === null ? null : homebrewReceiptTap(kind, recorded.value);
 }
 
 /** The start of a regular file as text, or null when the path is not a regular file. */

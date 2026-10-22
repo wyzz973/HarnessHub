@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { classifyProgram, type InstallationChannel, type OfficialChannels, type ScriptLayout } from "../../contexts/catalog/domain/channels.js";
 import type { InstallationCandidate, InstallationClassifier } from "../../contexts/catalog/domain/catalog.js";
-import { packageJson, pythonDistribution } from "./packages.js";
+import { homebrewTap, packageJson, pythonDistribution } from "./packages.js";
 
 /** Errors that leave a file unreadable here rather than the read broken: the file counts as absent, its version unknown. */
 const UNREADABLE = ["ENOENT", "ENOTDIR", "EACCES", "EPERM", "ELOOP"];
@@ -26,7 +26,8 @@ const SCRIPT_DISTRIBUTIONS: Readonly<Record<string, string>> = { ".hermes/hermes
 /**
  * Classifies found programs into official channels (ADR-044) and reads the version each channel records: an npm, pnpm or
  * bun package's own package.json, a Homebrew keg's directory, a script layout's `versions/<version>` directory, or the
- * dist-info of the Python distribution a script layout keeps in its own `venv/`. It reads files only and never runs a program.
+ * dist-info of the Python distribution a script layout keeps in its own `venv/`. A Homebrew formula or cask from another
+ * tap than Homebrew's own also records that tap, read from its install receipt. It reads files only and never runs a program.
  */
 export class LocalInstallationClassifier implements InstallationClassifier {
   /** `uvToolDir` is uv's tool directory (`UV_TOOL_DIR`, by default under `~/.local/share/uv/tools`). */
@@ -39,8 +40,11 @@ export class LocalInstallationClassifier implements InstallationClassifier {
       const program = join(this.home, layout.root, layout.program);
       if (await isFile(program)) present.add(program);
     }
-    const channel = classifyProgram(candidate, channels, this.home, this.uvToolDir, path => present.has(path));
-    if (channel === null) return null;
+    const found = classifyProgram(candidate, channels, this.home, this.uvToolDir, path => present.has(path));
+    if (found === null) return null;
+    // Homebrew's commands must name a formula or cask from another tap in full; its bare name may find Homebrew's own.
+    const tap = found.kind === "brew-formula" || found.kind === "brew-cask" ? await homebrewTap(found.kind, found.root, candidate.resolvedPath) : null;
+    const channel: InstallationChannel = tap === null ? found : { ...found, tap };
     const layout = channel.kind === "script" ? channels.scripts.find(item => item.root === channel.name) : undefined;
     return { channel, version: await this.version(channel, candidate.resolvedPath, layout) };
   }

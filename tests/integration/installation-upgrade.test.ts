@@ -263,6 +263,70 @@ test("G011-UG9 a Homebrew installation is upgraded from the local records after 
   assert.equal(await realpath(join(brew, "bin/gemini")), join(brew, "Cellar/gemini-cli/0.46.0/bin/gemini"));
 });
 
+/**
+ * Homebrew with two formulae named opencode, as on 2026-10-22: its own (OpenCode 2, 2.1.2) and anomalyco/tap's (OpenCode 1,
+ * 1.19.3). Each command answers for the name it is given; the dry run and the upgrade (run outside its sandbox here) log
+ * their arguments, and the upgrade installs whichever formula it was asked for.
+ */
+const TAPPED_BREW = `#!/bin/bash
+set -e
+PREFIX="$(cd "$(dirname "$0")/.." && pwd -P)"
+target() { if [ "$1" = "anomalyco/tap/opencode" ]; then echo 1.19.3; else echo 2.1.2; fi; }
+case "$1" in
+  info) echo '{"formulae":[{"name":"opencode","full_name":"'"$4"'","versions":{"stable":"'"$(target "$4")"'"},"revision":0}],"casks":[]}' ;;
+  list) cd "$PREFIX/Cellar"; for name in *; do echo "$name $(ls "$name" | tr '\\n' ' ')"; done ;;
+  upgrade)
+    echo "$*" >> "$PREFIX/brew-args.log"
+    if [ "$2" = "--dry-run" ]; then printf '==> Would upgrade 1 requested outdated package\\n%s 1.18.35 -> %s (31.2MB)\\n==> 1 Deprecated or disabled package\\n%s (deprecated)\\n' "$4" "$(target "$4")" "$4"; exit 0; fi
+    V="$(target "$3")"; mkdir -p "$PREFIX/Cellar/opencode/$V/bin"
+    printf '#!/bin/sh\\necho %s\\n' "$V" > "$PREFIX/Cellar/opencode/$V/bin/opencode"; chmod +x "$PREFIX/Cellar/opencode/$V/bin/opencode"
+    ln -sfn "$PREFIX/Cellar/opencode/$V/bin/opencode" "$PREFIX/bin/opencode"
+    echo "==> Upgrading $3" ;;
+  *) exit 2 ;;
+esac
+`;
+
+test("G011-UG9 a formula from another tap is checked, planned and upgraded by its full name, so Homebrew's own formula of that name is never taken for it; Homebrew's own tap keeps the bare name", macOnly, async t => {
+  const closers: (() => Promise<void>)[] = [];
+  const root = await temporary(t, "upgrade-homebrew-tap-", closers), home = join(root, "home"), brew = join(root, "brew"), keg = join(brew, "Cellar/opencode/1.18.35");
+  await file(join(brew, "bin/brew"), TAPPED_BREW, 0o755);
+  await file(join(keg, "bin/opencode"), "#!/bin/sh\necho 1.18.35\n", 0o755); await link(join(keg, "bin/opencode"), join(brew, "bin/opencode"));
+  await mkdir(home); await mkdir(join(root, "data"));
+  const receipt = (tap: string) => file(join(keg, "INSTALL_RECEIPT.json"), JSON.stringify({ homebrew_version: "5.1.0", installed_on_request: true, source: { tap, spec: "stable", versions: { stable: "1.18.35" } } }));
+  const source = { home, values: { HOME: home, PATH: [join(brew, "bin"), "/usr/bin", "/bin"].join(":"), HOMEBREW_CACHE: join(root, "brew-cache") } };
+  const homebrew: typeof runHomebrewProtected = async (manager, args, _directories, _files, env, context) => runManagementProcess(manager, args, context.stage, env, context);
+  const manager = new LocalHarnessManagement(join(root, "data"), { installationMode: "private-fixture", assertOwner: () => {}, ownerGeneration: 1, recipes: [], nativeEnvironment: source,
+    removal: new LocalInstallationRemoval(source, { npm: null, uv: null }, quietHost), installationUpgrader: new LocalInstallationUpgrader(source, { npm: null }, { homebrew }),
+    nativeLocks: new NativeInstallationLocks(join(root, "locks")) });
+  closers.push(() => manager.shutdown());
+  const opencode: InstallationObservation = { harnessId: "opencode", controlId: "opencode", ref: "a".repeat(64), role: "product", channel: "brew-formula", name: "opencode", root: join(brew, "Cellar/opencode"), prefix: brew,
+    entry: join(brew, "bin/opencode"), resolvedPath: join(keg, "bin/opencode"), version: "1.18.35", active: true, label: "Homebrew" };
+  manager.setInstallations([opencode]);
+  const latest = async () => { await manager.checkUpdates(["opencode"]); return manager.installationUpgrade("opencode", opencode.ref)?.update?.latest; };
+  const logged = async () => (await readFile(join(brew, "brew-args.log"), "utf8")).trim().split("\n");
+  // A keg without a receipt, or one Homebrew's own tap installed, is named by its bare name, as before.
+  assert.equal(await latest(), "2.1.2");
+  await receipt("homebrew/core");
+  assert.equal(await latest(), "2.1.2");
+  const core = await manager.upgradeCheck("opencode", opencode.ref);
+  assert.deepEqual([core.runs, core.target, core.dependencies], ["brew upgrade --formula opencode", "2.1.2", []]);
+  // The keg anomalyco/tap installed: every Homebrew command names it in full, and its plan entry is the one upgraded.
+  await receipt("anomalyco/tap");
+  assert.equal(await latest(), "1.19.3", "the update check reads the tap's formula, not Homebrew's own OpenCode 2");
+  const check = await manager.upgradeCheck("opencode", opencode.ref);
+  assert.deepEqual([check.kind, check.current, check.target, check.runs, check.dependencies, check.blocked], ["version", "1.18.35", "1.19.3", "brew upgrade --formula anomalyco/tap/opencode", [], null]);
+  // Homebrew marks the formula deprecated under the full name it was given; the confirmation still says it is this installation.
+  assert.ok(check.notes.some(note => note.startsWith("Homebrew 把 opencode 标为已弃用或停用。")), check.notes.join(" | "));
+  const settle = async (id: string) => { const end = Date.now() + 30000; for (;;) { const job = manager.readJob(id); if (["completed", "failed", "unknown", "cancelled"].includes(job.status)) return job; if (Date.now() > end) throw new Error("did not settle"); await new Promise(done => setTimeout(done, 20)); } };
+  const done = await settle((await manager.submitInstallationUpgrade({ harnessId: "opencode", action: "upgrade", commandId: "brew-tap", installation: opencode.ref, expectedInstallationFingerprint: check.fingerprint })).id);
+  assert.equal(done.status, "completed", JSON.stringify(done.error)); assert.deepEqual([done.native?.beforeVersion, done.resolvedVersion], ["1.18.35", "1.19.3"]);
+  assert.equal(done.native?.installation?.command, "brew upgrade --formula anomalyco/tap/opencode");
+  assert.deepEqual(await logged(), ["upgrade --dry-run --formula opencode", "upgrade --dry-run --formula anomalyco/tap/opencode", "upgrade --dry-run --formula anomalyco/tap/opencode", "upgrade --formula anomalyco/tap/opencode"],
+    "the confirmation's dry run, the dry run read again before the upgrade, and the upgrade itself name the tap's formula");
+  assert.equal(await realpath(join(brew, "bin/opencode")), join(brew, "Cellar/opencode/1.19.3/bin/opencode"));
+  assert.equal(existsSync(join(brew, "Cellar/opencode/2.1.2")), false, "Homebrew's own OpenCode 2 was never installed in its place");
+});
+
 /** A removal port whose usage is what the test sets; nothing is removed by it. */
 function usageOnly() {
   const state = { identity: "one", localChanges: null as number | null,

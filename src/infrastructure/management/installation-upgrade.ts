@@ -5,8 +5,9 @@ import { basename, dirname, isAbsolute, join } from "node:path";
 import { satisfies, valid } from "semver";
 import { ManagementError, type InstallationObservation, type InstallationTarget, type InstallationUpgradeFacts, type InstallationUpgradePort, type InstallationUpdate, type ManagementInstallContext,
   type ManagementMetadataPort, type NativeInstallContext, type PreparedUpgrade, type PreparedUpgradeCheck, type RuntimeRequirement } from "../../contracts/management.js";
-import type { ScriptUpgrade } from "../../contexts/catalog/domain/channels.js";
+import { homebrewName, type ScriptUpgrade } from "../../contexts/catalog/domain/channels.js";
 import { officialInstallMethod, productChannels } from "../../adapters/catalog-channels.js";
+import { homebrewTap } from "../discovery/packages.js";
 import { nativeBaseValues, nativeValues, type NativeEnvironment } from "../session/native-environment.js";
 import { runManagementProcess } from "./process.js";
 import { homebrewCache, homebrewEnvironment, runHomebrewProtected } from "./homebrew.js";
@@ -86,6 +87,15 @@ export class LocalInstallationUpgrader implements InstallationUpgradePort {
     if (target.channel === "npm" || target.channel === "brew-formula" || target.channel === "brew-cask") return "version";
     return target.channel === "script" ? this.layout(target)?.kind ?? null : null;
   }
+  /**
+   * The name Homebrew's commands take for a Homebrew installation: `<tap>/<name>` when its install receipt names another
+   * tap than Homebrew's own, so that a same-named formula of Homebrew's own (OpenCode 2 for anomalyco/tap's OpenCode 1)
+   * is never queried or upgraded in its place; the bare name otherwise. Read from the receipt each time it is used.
+   */
+  private async formula(target: InstallationObservation): Promise<string> {
+    if (target.channel !== "brew-formula" && target.channel !== "brew-cask") throw new ManagementError("INVALID_DATA", "not a Homebrew installation");
+    return homebrewName(target.name, await homebrewTap(target.channel, target.root, target.resolvedPath));
+  }
   /** A read that must not change anything: Homebrew's own queries in a sandbox that may write only the stage and reach no network. */
   private async brewQuery(target: InstallationObservation, args: readonly string[], context: ManagementInstallContext): Promise<string> {
     if (process.platform !== "darwin" || !(await executable("/usr/bin/sandbox-exec"))) throw new ManagementError("CONFIGURATION_PROTECTION_UNAVAILABLE", "升级需要 macOS 的沙箱保护，这里不可用。");
@@ -107,21 +117,21 @@ export class LocalInstallationUpgrader implements InstallationUpgradePort {
     return createHash("sha256").update(list + "\0" + directories.join("\n")).digest("hex");
   }
   /**
-   * Homebrew's upgrade plan by its own dry run, in its inherited sandbox with the user's records (it checks that it could
-   * write its prefix even when it only prints). It may download manifests into its cache; anything it changes among the
-   * installed packages stops the upgrade.
+   * Homebrew's upgrade plan for `formula` (the installation's name as Homebrew's commands take it) by its own dry run, in
+   * its inherited sandbox with the user's records (it checks that it could write its prefix even when it only prints).
+   * It may download manifests into its cache; anything it changes among the installed packages stops the upgrade.
    */
-  private async homebrewPlan(target: InstallationObservation, context: ManagementInstallContext): Promise<ReturnType<typeof parseHomebrewPlan>> {
+  private async homebrewPlan(target: InstallationObservation, formula: string, context: ManagementInstallContext): Promise<ReturnType<typeof parseHomebrewPlan>> {
     const before = await this.homebrewState(target, context), { directories, files } = protectedConfigurationPaths(this.source);
     let output = "";
     const bounded: ManagementInstallContext = { stage: context.stage, signal: AbortSignal.any([context.signal, AbortSignal.timeout(DRY_RUN_MS)]), assertOwned: context.assertOwned,
       log: (stream, text) => { if (stream === "stdout" && output.length < 1024 * 1024) output += text + "\n"; } };
     try {
-      output += await (this.options.homebrew ?? runHomebrewProtected)(join(target.prefix!, "bin", "brew"), ["upgrade", "--dry-run", target.channel === "brew-cask" ? "--cask" : "--formula", target.name], directories, files,
+      output += await (this.options.homebrew ?? runHomebrewProtected)(join(target.prefix!, "bin", "brew"), ["upgrade", "--dry-run", target.channel === "brew-cask" ? "--cask" : "--formula", formula], directories, files,
         homebrewEnvironment(this.source, context.stage), bounded, { cache: "user" });
     } catch (error) {
       if (error instanceof ManagementError && error.code === "CANCELLED" && !context.signal.aborted) throw new ManagementError("HOMEBREW_DRY_RUN_TIMEOUT", "Homebrew 的升级预演 60 秒内没有完成，没有升级。");
-      if (error instanceof ManagementError && error.code === "PROCESS_FAILED") throw new ManagementError("HOMEBREW_DRY_RUN_FAILED", "Homebrew 的升级预演没有成功结束，没有升级。可以在终端运行 brew upgrade --dry-run " + target.name + " 查看原因。");
+      if (error instanceof ManagementError && error.code === "PROCESS_FAILED") throw new ManagementError("HOMEBREW_DRY_RUN_FAILED", "Homebrew 的升级预演没有成功结束，没有升级。可以在终端运行 brew upgrade --dry-run " + formula + " 查看原因。");
       throw error;
     } finally {
       // A dry run may write the prefix inside Homebrew's sandbox; one that changed an installed package is not trusted further.
@@ -149,7 +159,7 @@ export class LocalInstallationUpgrader implements InstallationUpgradePort {
     }
     if (target.channel === "brew-formula" || target.channel === "brew-cask") {
       const cask = target.channel === "brew-cask";
-      const raw: unknown = JSON.parse(await this.brewQuery(target, ["info", "--json=v2", cask ? "--cask" : "--formula", target.name], context));
+      const raw: unknown = JSON.parse(await this.brewQuery(target, ["info", "--json=v2", cask ? "--cask" : "--formula", await this.formula(target)], context));
       const rows = raw !== null && typeof raw === "object" ? (raw as Record<string, unknown>)[cask ? "casks" : "formulae"] : undefined;
       if (!Array.isArray(rows) || rows.length !== 1) throw new ManagementError("INVALID_METADATA", "Homebrew returned an ambiguous installation");
       return { version: homebrewVersion(rows[0], cask), source: "homebrew-local" };
@@ -192,10 +202,13 @@ export class LocalInstallationUpgrader implements InstallationUpgradePort {
     }
     if (target.channel === "brew-formula" || target.channel === "brew-cask") {
       if (target.prefix === null) throw new ManagementError("INVALID_DATA", "a Homebrew installation has no prefix");
-      const plan = await this.homebrewPlan(target, context), own = plan.packages.find(entry => entry.name === target.name && entry.action === "upgrade");
+      // Homebrew lists a package by the name it was given (another tap's formula in full), so the plan's own entry is that one.
+      const formula = await this.formula(target), plan = await this.homebrewPlan(target, formula, context), own = plan.packages.find(entry => entry.name === formula && entry.action === "upgrade");
       const flag = target.channel === "brew-cask" ? "--cask" : "--formula";
-      return { prepared: { ...base, kind: "version", command: "brew upgrade " + flag + " " + target.name, executable: join(target.prefix, "bin", "brew"), args: ["upgrade", flag, target.name],
-        writes: [target.prefix], version: own?.to ?? target.version, dependencies: plan.packages.filter(entry => entry !== own).map(homebrewPlanLine) }, deprecated: plan.deprecated, records: await this.homebrewRecords() };
+      return { prepared: { ...base, kind: "version", command: "brew upgrade " + flag + " " + formula, executable: join(target.prefix, "bin", "brew"), args: ["upgrade", flag, formula],
+        writes: [target.prefix], version: own?.to ?? target.version, dependencies: plan.packages.filter(entry => entry !== own).map(homebrewPlanLine) },
+        // The installation itself is reported under its own name, the one the caller knows it by.
+        deprecated: plan.deprecated.map(name => name === formula ? target.name : name), records: await this.homebrewRecords() };
     }
     const layout = this.layout(target), method = officialInstallMethod(target.harnessId);
     if (layout === null || method?.kind !== "script") throw new ManagementError("UNSUPPORTED_UPGRADE", "HarnessHub 不升级这种安装。");
@@ -230,9 +243,10 @@ export class LocalInstallationUpgrader implements InstallationUpgradePort {
       return { exitCode, facts: { shellChanges: [], configChanges: [], blocked: blockedWrites(output) } };
     }
     if (prepared.kind === "version") {
-      // The plan is read again right before the upgrade; Homebrew upgrades exactly what the user confirmed, or nothing.
-      const plan = await this.homebrewPlan(target, context), own = plan.packages.find(entry => entry.name === target.name && entry.action === "upgrade");
-      if ((own?.to ?? target.version) !== prepared.version || JSON.stringify(plan.packages.filter(entry => entry !== own).map(homebrewPlanLine)) !== JSON.stringify(prepared.dependencies))
+      // The plan is read again right before the upgrade; Homebrew upgrades exactly what the user confirmed, or nothing:
+      // the same formula (a receipt now naming another tap changes it), target version and packages upgraded along.
+      const formula = await this.formula(target), plan = await this.homebrewPlan(target, formula, context), own = plan.packages.find(entry => entry.name === formula && entry.action === "upgrade");
+      if (prepared.args.at(-1) !== formula || (own?.to ?? target.version) !== prepared.version || JSON.stringify(plan.packages.filter(entry => entry !== own).map(homebrewPlanLine)) !== JSON.stringify(prepared.dependencies))
         throw new ManagementError("HOMEBREW_PLAN_CHANGED", "Homebrew 的升级计划在确认之后变了（目标版本或一并升级的包不同），没有升级。请重新打开升级确认。");
       const { directories, files } = protectedConfigurationPaths(this.source);
       let exitCode = 0;
