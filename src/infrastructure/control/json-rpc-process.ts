@@ -5,16 +5,49 @@ import { performance } from "node:perf_hooks";
 import type { CleanupEvidence, ControlLaunch, ControlOptions } from "../../contracts/control.js";
 
 export class ControlError extends Error {
-  constructor(readonly code: string, message: string, readonly remoteFailure?: { readonly code: string; readonly message: string }) { super(message); this.name = "ControlError"; }
+  /** The JSON-RPC error code of a request the peer refused (REMOTE_ERROR); absent for any other failure. */
+  readonly remoteCode?: number;
+  /**
+   * What the peer said about a request it refused, in its error data (`error.data.details`, where the ACP SDK puts the cause
+   * of an internal error): at most 2 KiB, control characters removed; absent when the data carries no such text. It is the
+   * peer's private text and may name the user's paths or credentials: it never enters this error's message, a log or a
+   * classification's wording, and a driver quotes it only through a fixed vocabulary.
+   */
+  readonly remoteDetail?: string;
+  constructor(readonly code: string, message: string, readonly remoteFailure?: { readonly code: string; readonly message: string }, remote?: { readonly code: number; readonly detail?: string }) {
+    super(message); this.name = "ControlError";
+    if (remote !== undefined) { this.remoteCode = remote.code; if (remote.detail !== undefined) this.remoteDetail = remote.detail; }
+  }
 }
 /** How much of a program's latest stderr stays readable for its driver. */
 const RECENT_STDERR_BYTES = 32 * 1024;
+/** How much of a peer's own explanation of a refusal (JSON-RPC `error.data.details`) is kept. */
+const REMOTE_DETAIL_BYTES = 2048;
+/**
+ * A peer's own explanation of a refused request, as the ACP SDK carries it (`error.data.details`, a string): control
+ * characters removed, then cut to 2 KiB at a character boundary. Other data, and text that is only control characters,
+ * carry none.
+ */
+function remoteDetail(data: unknown): string | undefined {
+  const details = data !== null && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>).details : undefined;
+  if (typeof details !== "string") return undefined;
+  let kept = "", bytes = 0;
+  for (const char of details) {
+    const point = char.codePointAt(0)!;
+    if (point <= 0x1f || point === 0x7f) continue;
+    const size = Buffer.byteLength(char);
+    if (bytes + size > REMOTE_DETAIL_BYTES) break;
+    kept += char; bytes += size;
+  }
+  return kept || undefined;
+}
 /** ACP's `auth_required` error code (agent-client-protocol schema); other JSON-RPC peers use -32000 for other server errors. */
 const ACP_AUTH_REQUIRED = -32000;
 /**
- * Recognize actionable failures without publishing arbitrary provider text or credentials. The provider's own words decide
- * the class, in this order, because one message can mention several (an auth error that also says "limit"); `acpCode` is
- * the JSON-RPC error code of an ACP peer, whose -32000 means authentication is required.
+ * Recognize actionable failures without publishing arbitrary provider text or credentials. The provider's own words (an
+ * error's message, followed by the detail of its error data when it gives one) decide the class, in this order, because
+ * one message can mention several (an auth error that also says "limit"); `acpCode` is the JSON-RPC error code of an ACP
+ * peer, whose -32000 means authentication is required.
  */
 export function classifyRemoteFailure(message: string, acpCode?: number): { readonly code: string; readonly message: string } | undefined {
   if (/this client is no longer supported|unsupported client version/iu.test(message)) return { code: "NATIVE_CLIENT_UNSUPPORTED", message: "模型服务已停止支持这个本机客户端。原配置已保留，可以选择其他 Harness 继续。" };
@@ -199,7 +232,7 @@ export class JsonRpcProcess {
   private exitFailure(status: number | NodeJS.Signals | null): ControlError {
     // Classify known startup failures without forwarding arbitrary stderr or credentials.
     if (/config(?:uration)? is invalid/iu.test(this.diagnostics))
-      return new ControlError("NATIVE_CONFIGURATION_INVALID", "Harness rejected its local configuration; use a compatible installed version");
+      return new ControlError("NATIVE_CONFIGURATION_INVALID", "Harness rejected its local configuration; run its own doctor/migration");
     if (/unauthorized:\s*gateway token missing|gateway auth.*token.*missing/iu.test(this.diagnostics))
       return new ControlError("GATEWAY_AUTH_REQUIRED", "Harness Gateway authentication is required; configure its connection or choose another Harness");
     return new ControlError("PROCESS_EXITED", `process exited before connection close (${status})`);
@@ -274,7 +307,12 @@ export class JsonRpcProcess {
       if (!Number.isSafeInteger(remote.code) || typeof remote.message !== "string")
         throw new ControlError("INVALID_PROTOCOL", "RPC error payload is invalid");
       this.pending.delete(responseKey); clearTimeout(pending.timer);
-      pending.reject(new ControlError("REMOTE_ERROR", `Harness rejected the protocol request (${remote.code})`, classifyRemoteFailure(remote.message, this.launch.protocol === "acp-v1" ? remote.code as number : undefined)));
+      // The class may come from the detail too (an ACP agent's message is often only "Internal error"); neither text is kept
+      // in the error's message.
+      const code = remote.code as number, detail = remoteDetail(remote.data);
+      pending.reject(new ControlError("REMOTE_ERROR", `Harness rejected the protocol request (${code})`,
+        classifyRemoteFailure(detail === undefined ? remote.message : remote.message + " " + detail, this.launch.protocol === "acp-v1" ? code : undefined),
+        { code, ...(detail === undefined ? {} : { detail }) }));
     } else {
       this.pending.delete(responseKey); clearTimeout(pending.timer); pending.resolve(message.result);
     }

@@ -34,6 +34,38 @@ test("remote error is a rejection rather than a successful payload", async () =>
   const rpc = peer("remote-error");
   try { await assert.rejects(rpc.request("initialize", {}), error => error instanceof ControlError && error.code === "REMOTE_ERROR" && error.message.includes("-32001") && !error.message.includes("test remote error")); } finally { await closed(rpc); }
 });
+test("a refusal's own detail (error.data.details) is kept bounded and clean beside its JSON-RPC code, classifies it, and never enters the message", async () => {
+  const refused = async (data: unknown): Promise<ControlError> => {
+    const rpc = peer("remote-detail", data === undefined ? {} : { FIXTURE_ERROR_DATA: JSON.stringify(data) });
+    try {
+      let caught: unknown = null;
+      await assert.rejects(rpc.request("initialize", {}), error => { caught = error; return true; });
+      assert.ok(caught instanceof ControlError); return caught;
+    } finally { assert.equal((await rpc.close()).protocolFailure, null, "a refusal leaves the connection healthy"); }
+  };
+  // 24 bytes of text after the control characters go, then three-byte characters: the 2 KiB cut falls inside one of them.
+  const details = "not_found:\0\tsession\u0007 gone!\x7f " + "界".repeat(1000) + " private-detail-tail";
+  const long = await refused({ details });
+  assert.equal(long.code, "REMOTE_ERROR"); assert.equal(long.remoteCode, -32603);
+  let expected = "";
+  for (const char of details.replace(/[\0-\x1f\x7f]/gu, "")) { if (Buffer.byteLength(expected + char) > 2048) break; expected += char; }
+  assert.equal(long.remoteDetail, expected); assert.equal(Buffer.byteLength(long.remoteDetail ?? ""), 2046, "cut at a character boundary");
+  assert.ok(long.remoteDetail?.startsWith("not_found:session gone! 界"));
+  // Neither the detail nor the peer's message reaches the error's own text.
+  assert.equal(long.message, "Harness rejected the protocol request (-32603)"); assert.equal(String(long).includes("not_found"), false);
+  assert.equal(long.remoteFailure, undefined, "Internal error and a missing session name no class");
+  // The detail can name the class when the message does not, and still stays out of the class's wording.
+  const quota = await refused({ details: "admitted_turn_failed: Insufficient Balance (private-synthetic-key)" });
+  assert.equal(quota.remoteFailure?.code, "NATIVE_QUOTA_EXCEEDED"); assert.equal(JSON.stringify(quota.remoteFailure).includes("private-synthetic-key"), false);
+  // Data without details text keeps the code only.
+  for (const data of [undefined, { details: 42 }, { details: "\n\t" }, ["details"]]) {
+    const plain = await refused(data);
+    assert.equal(plain.remoteCode, -32603, JSON.stringify(data)); assert.equal(plain.remoteDetail, undefined, JSON.stringify(data));
+  }
+  // Any other failure has neither.
+  const local = new ControlError("REQUEST_TIMEOUT", "initialize exceeded its deadline");
+  assert.equal(local.remoteCode, undefined); assert.equal(local.remoteDetail, undefined);
+});
 test("stderr capture is bounded while protocol operation continues", async () => {
   const rpc = peer("stderr");
   try { await rpc.request("initialize", {}); await new Promise(resolve => setTimeout(resolve, 20)); assert.equal(Buffer.byteLength(rpc.diagnostics), 128); assert.equal(rpc.diagnosticsTruncated, true); }
