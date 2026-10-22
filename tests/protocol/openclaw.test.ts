@@ -37,7 +37,7 @@ async function newKey(sent: () => Promise<readonly Sent[]>): Promise<string | un
 const selectionRequired = (error: unknown) => error instanceof ControlError && error.code === "NATIVE_CONFIGURATION_INVALID" && error.message.includes("HarnessHub 不替你选");
 const catalog = { models: [{ provider: "deepseek", id: "x", name: "X" }, { provider: "file", id: "model", name: "File" }] };
 
-test("D3 (a) a new session runs as the Gateway's own default agent from agents.list, with that agent's primary model; a restored one keeps its key and asks nothing", async t => {
+test("OpenClaw runs a new session as the Gateway's own default agent (agents.list) with that agent's primary model; a restored one keeps its key and asks nothing (ADR-053)", async t => {
   const gateway: Gateway = async method => method === "agents.list" ? { defaultId: "ops", ownership: "explicit", selectionRequired: false, mainKey: "main", scope: "per-sender",
     agents: [{ id: "ops", model: { primary: "deepseek/x" }, workspace: "~/ws" }, { id: "main", model: { primary: "file/model" } }] } : method === "models.list" ? catalog : unexpected(method, {});
   // Without a configuration file, and with a keyed roster whose own marker names another agent: the Gateway's answer decides.
@@ -63,7 +63,7 @@ test("D3 (a) a new session runs as the Gateway's own default agent from agents.l
   }
 });
 
-test("D3 (b) a Gateway that does not provide agents.list leaves the decision to openclaw.json: keyed agents.entries by its ownership, the legacy agents.list array as before", async t => {
+test("OpenClaw leaves the default agent to openclaw.json when the Gateway does not provide agents.list: keyed agents.entries by their ownership, the legacy array as before (ADR-053)", async t => {
   const gateway = (roster: () => Promise<unknown>): Gateway => async method => method === "agents.list" ? roster() : method === "models.list" ? catalog : unexpected(method, {});
   const marked = "{ agents: { defaults: { model: 'file/default' }, entries: { main: {}, ops: { default: true, model: { primary: 'file/ops' } } } } }";
   // [configuration, how the Gateway fails, agent, configured model]
@@ -91,7 +91,7 @@ test("D3 (b) a Gateway that does not provide agents.list leaves the decision to 
   }
 });
 
-test("D3 (c) without a default agent a new session fails with NATIVE_CONFIGURATION_INVALID before anything is created, and main is never guessed", async t => {
+test("OpenClaw without a default agent fails a new session with NATIVE_CONFIGURATION_INVALID before anything is created, and never guesses main (ADR-053)", async t => {
   const answer = (roster: unknown): Gateway => async method => method === "agents.list" ? roster : unexpected(method, {});
   const listed = { ownership: "explicit", mainKey: "main", scope: "per-sender", agents: [{ id: "a" }, { id: "b" }] };
   // The Gateway says so: without a defaultId, or with the one 2026.10.5 still names then (only its first configured agent).
@@ -117,7 +117,7 @@ test("D3 (c) without a default agent a new session fails with NATIVE_CONFIGURATI
   assert.deepEqual(restored.calls, []);
 });
 
-test("D3 (d) a tool call the bridge streamed live is not emitted again from the transcript and keeps its live title; a transcript-only call is still added", async t => {
+test("OpenClaw does not emit a tool call the bridge streamed live again from the transcript and keeps its live title; a transcript-only call is still added (ADR-027, ADR-053)", async t => {
   const earlier = { role: "assistant", content: [{ type: "text", text: "earlier turn" }], __openclaw: { seq: 5 } };
   const turn = (failed: boolean) => [earlier, { role: "user", content: [{ type: "text", text: "go" }], __openclaw: { seq: 6 } },
     { role: "assistant", content: [{ type: "toolCall", id: "call-x", name: "exec", arguments: { command: "echo HH" } }, { type: "toolCall", id: "call-y", name: "read", arguments: { path: "/tmp/y" } }],
@@ -149,7 +149,7 @@ test("D3 (d) a tool call the bridge streamed live is not emitted again from the 
   }
 });
 
-test("D3 (e) settings are read back in the bridge's own values: unset fields report what the bridge announced, fast mode auto stays auto, and the trace level is reported", async t => {
+test("OpenClaw reads settings back in the bridge's own values: unset fields report what the bridge announced, fast mode auto stays auto, the trace level is reported (ADR-053)", async t => {
   // [the Gateway session row, chat.history's fast mode, the options reported]
   const announced = { thought_level: "adaptive", fast_mode: "off", verbose_level: "off", trace_level: "off", reasoning_level: "off", response_usage: "inherit", elevated_level: "off" };
   const cases: readonly (readonly [Readonly<Record<string, unknown>>, unknown, Readonly<Record<string, string>>])[] = [
@@ -170,7 +170,7 @@ test("D3 (e) settings are read back in the bridge's own values: unset fields rep
   }
 });
 
-test("D3 (f) a model the Gateway reports unavailable is not offered, is refused at open with its reason, and the next Turn's diagnostics name it once", async t => {
+test("OpenClaw leaves a model the Gateway reports unavailable out of the choice, refuses it at open with its reason, and names it once in the next Turn's diagnostics (ADR-053)", async t => {
   const until = Date.UTC(2026, 9, 22, 12, 0, 0);
   const models = { models: [{ provider: "deepseek", id: "x", name: "X" }, { provider: "openai", id: "gpt", name: "GPT", available: false, unavailableReason: "missing-auth" },
     { provider: "anthropic", id: "c", name: "C", available: false, unavailableReason: "cooldown", unavailableUntil: until }, { provider: "z", id: "ok", name: "OK", available: true }] };
@@ -200,7 +200,7 @@ test("D3 (f) a model the Gateway reports unavailable is not offered, is refused 
   assert.ok(!chosen.calls.includes("sessions.patch"), "the configured model needs no patch");
 });
 
-test("D3 (g) forking follows what the bridge declares: refused by the generic check without session/fork, the generic fork with it", async t => {
+test("OpenClaw forks as the bridge declares: refused by the generic check without session/fork, the generic fork with it (ADR-053)", async t => {
   assert.equal(Object.hasOwn(OpenClawControl.prototype, "fork"), false, "the driver adds no fork rule of its own");
   assert.equal(OpenClawControl.prototype.fork, AcpControl.prototype.fork);
   const undeclared = await bridge(t, null, unexpected, { FIXTURE_SESSION_CAPS: "latest" });
