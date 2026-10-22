@@ -3,7 +3,6 @@ import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { satisfies } from "semver";
 import { capabilityReadTables } from "../../src/adapters/capability-reads.js";
 import type { CapabilitiesView, CapabilityEntry } from "../../src/contracts/capabilities.js";
 import { frontmatter, parseConfig } from "../../src/infrastructure/capabilities/formats.js";
@@ -90,23 +89,29 @@ test("G064-R2 skills are seen by each Harness by its read table, and each Harnes
   assert.deepEqual(cells(entry(view, "skill", "kappa"), "openclaw").map(cell => cell.slice(0, 2)), [["external-dir", "active"]]);
   // A configuration that does not parse is listed and nothing is taken from it; the readable one still counts.
   assert.deepEqual(view.unreadable.map(item => [item.harnessId, item.file]), [["opencode", "~/.config/opencode/config.json"]]);
-  // Versions: inside the checked range or not; DeepSeek Harness's official prerelease is inside, an unknown version is not.
-  assert.deepEqual(view.harnesses.map(item => [item.harnessId, item.table]), [["claude", "verified"], ["codex", "verified"], ["cursor", "verified"], ["opencode", "verified"], ["gemini", "unverified"],
-    ["openclaw", "verified"], ["pi", "verified"], ["hermes", "unverified"], ["dsh", "verified"]]);
+  // Each installed Harness is listed with the version its channel records, and nothing judged from it (ADR-053).
+  assert.deepEqual(view.harnesses.map(item => [item.harnessId, item.version]), INSTALLED.map(item => [item.harnessId, item.version]));
+  assert.ok(view.harnesses.every(item => !("table" in item)), "no version mark");
 });
 
-test("G064-R2 DeepSeek Harness's read table covers the prerelease its official channel carries, prereleases compared as such", async t => {
+test("G064-R2 a version other than the one a read table was checked on reads by the same table: the same entries, and no version mark on the view (ADR-053)", async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "capability-readers-")));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const home = join(root, "home"); await mkdir(home);
+  const home = join(root, "home"), outside = join(root, "elsewhere");
+  await mkdir(home); await capabilityHome(home, outside);
   const environment = { home, values: { HOME: home } }, hermesHome = await resolveHermesHome(environment), openclawWorkspace = await resolveOpenClawWorkspace(environment);
-  const tables = capabilityReadTables(environment, { hermesHome, openclawWorkspace }), range = tables.find(table => table.harnessId === "dsh")!.verified;
-  assert.equal(satisfies("0.2.0-rc.2", range, { includePrerelease: true }), true, range);
-  const mark = async (version: string) => (await new CapabilityScan(environment, [home], hermesHome).view(tables, [{ harnessId: "dsh", name: "DeepSeek Harness", version }], "2026-10-21T00:00:00.000Z")).harnesses.map(item => item.table);
-  assert.deepEqual(await mark("0.2.0-rc.2"), ["verified"], "npm's latest, on which the rules were checked");
-  assert.deepEqual(await mark("0.2.1-alpha.1"), ["verified"], "the source build verified for real");
-  assert.deepEqual(await mark("0.2.0-rc.1"), ["unverified"], "the prerelease before it");
-  assert.deepEqual(await mark("0.3.0"), ["unverified"]);
+  const tables = capabilityReadTables(environment, { hermesHome, openclawWorkspace }), at = "2026-10-22T00:00:00.000Z";
+  // The version each table was checked on is evidence on the table, and the scan never reads it.
+  assert.deepEqual(tables.filter(table => table.harnessId === "gemini" || table.harnessId === "dsh").map(table => [table.harnessId, table.checkedOn]), [["gemini", "0.62.0"], ["dsh", "0.2.0-rc.2"]]);
+  const scanned = (versions: Readonly<Record<string, string>>) => new CapabilityScan(environment, [home], hermesHome)
+    .view(tables, INSTALLED.map(item => Object.hasOwn(versions, item.harnessId) ? { ...item, version: versions[item.harnessId]! } : item), at);
+  const checked = await scanned({ gemini: "0.62.0", dsh: "0.2.0-rc.2" }), other = await scanned({ gemini: "0.72.0", dsh: "0.3.0" });
+  // Mutation check (run by hand, not kept): a table chosen by version, or a mark computed from it, would differ between the two.
+  assert.deepEqual(other.entries, checked.entries, "the same entries, edges, statuses and warnings");
+  assert.deepEqual(other.unreadable, checked.unreadable);
+  assert.deepEqual(other.harnesses.map(item => [item.harnessId, item.version]), checked.harnesses.map(item => [item.harnessId, item.harnessId === "gemini" ? "0.72.0" : item.harnessId === "dsh" ? "0.3.0" : item.version]));
+  assert.deepEqual(other.harnesses.map(({ version: _version, ...facts }) => facts), checked.harnesses.map(({ version: _version, ...facts }) => facts), "every other fact of each Harness is the same");
+  for (const item of other.harnesses) assert.deepEqual(Object.keys(item).sort(), ["harnessId", "kinds", "name", "notes", "pluginReason", "pluginSwitch", "shared", "skillSwitch", "version"], item.harnessId + ": no field marks the version");
 });
 
 test("G064-R3 MCP servers are read as facts without values: transport, program, host, variable names and how they are given", async t => {

@@ -84,13 +84,11 @@ export interface CapabilityEntry {
   /** For a skill in the shared directory: the folder there, with ~, and its links HarnessHub placed (by its ledger), with ~. */
   readonly shared?: { readonly folder: string; readonly placed: readonly string[] };
 }
-/** What the view knows about one installed Harness. */
+/** What the view knows about one installed Harness; its version is a fact of the installation, read by its table whatever it is (ADR-053). */
 export interface HarnessCapabilityReads {
   readonly harnessId: string;
   readonly name: string;
   readonly version: string | null;
-  /** Whether the read table covers this version with evidence; `unverified` reads by the nearest table and says so. */
-  readonly table: "verified" | "unverified";
   /** Per kind: read from disk, not a thing this Harness has, or kept where it cannot be read (Cursor's user rules); `notes` say why. */
   readonly kinds: Readonly<Record<CapabilityKind, "read" | "unsupported" | "invisible">>;
   /**

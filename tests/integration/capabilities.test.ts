@@ -26,9 +26,10 @@ test("G064-R5 through the formal Gateway, the capability view of nine official i
   const response = await fetch(origin + "/api/v1/capabilities", { headers: { Cookie: cookie, Origin: origin } });
   assert.equal(response.status, 200);
   const view = await response.json() as CapabilitiesView;
-  // Every official installation is covered, by the version its channel records, and said to be checked or not.
-  assert.deepEqual(view.harnesses.map(item => [item.harnessId, item.version, item.table]), [["claude", "2.1.300", "verified"], ["codex", "0.162.1", "verified"], ["cursor", "2026.10.01-e373342", "verified"],
-    ["opencode", "1.18.35", "verified"], ["gemini", "0.72.0", "unverified"], ["openclaw", "2026.3.23-2", "verified"], ["pi", "0.85.1", "verified"], ["hermes", "0.12.0", "verified"], ["dsh", "0.2.0-rc.2", "verified"]]);
+  // Every official installation is covered, by the version its channel records, with nothing judged from it (ADR-053).
+  assert.deepEqual(view.harnesses.map(item => [item.harnessId, item.version]), [["claude", "2.1.300"], ["codex", "0.162.1"], ["cursor", "2026.10.01-e373342"],
+    ["opencode", "1.18.35"], ["gemini", "0.72.0"], ["openclaw", "2026.3.23-2"], ["pi", "0.85.1"], ["hermes", "0.12.0"], ["dsh", "0.2.0-rc.2"]]);
+  assert.ok(view.harnesses.every(item => !("table" in item)), "no version mark on the wire");
   // The entries, mechanisms, statuses and warnings of the user's files.
   const find = (kind: string, name: string) => view.entries.find(item => item.kind === kind && item.name === name)!;
   const alpha = find("skill", "alpha");

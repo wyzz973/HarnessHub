@@ -89,13 +89,14 @@ export type PluginSwitchSource =
   | { readonly kind: "read-only"; readonly reason: string };
 
 /**
- * What one Harness reads besides its model, for the versions `verified` names (ADR-045). Every rule carries its evidence;
- * a version outside the range is read with the same table and shown as unverified.
+ * What one Harness reads besides its model (ADR-045, ADR-053): one table per Harness, kept to its latest release. Every
+ * rule carries its evidence; `checkedOn` is the version the table was last checked against and is evidence only: another
+ * version, above or below it, is read with the same table, and what is not found is reported as not found.
  */
 export interface HarnessReadTable {
   readonly harnessId: string;
-  /** A semver range of the product versions these rules were checked against. */
-  readonly verified: string;
+  /** The product version these rules were last checked against; never compared at run time. */
+  readonly checkedOn: string;
   readonly evidence: readonly string[];
   readonly skills: { readonly roots: readonly SkillRootSpec[]; readonly duplicates: DuplicateRule; readonly requiresDescription: boolean;
     readonly nameMustMatchDirectory: boolean; readonly switch: SkillSwitchSource | null; readonly separate?: readonly SkillRootRole[]; readonly externalDirs?: ExternalSkillDirs };
@@ -150,7 +151,7 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
   const opencodeConfigs = [join(dirs.opencode, "config.json"), join(dirs.opencode, "opencode.json"), join(dirs.opencode, "opencode.jsonc")];
   return [
     {
-      harnessId: "claude", verified: ">=2.1.277 <2.2.0",
+      harnessId: "claude", checkedOn: "2.1.306",
       evidence: ["code.claude.com/docs/en/skills、mcp、memory、sub-agents、hooks、plugins/loading（2026-10-18，页面引用到 v2.1.296）",
         "本机 2.1.302 程序：skills/synced/<org>_<account>/ 下的技能以 syncedSkills 加载；skillOverrides 取值 on、name-only、user-invocable-only、off",
         "code.claude.com/docs/en/sub-agents（2026-10-19：~/.claude/agents 递归，身份只看 name，同名的用户子 Agent 顶替内置；运行中的会话不检测新建的目录）；本机 2.1.303 包的 agentType 字符串（general-purpose、statusline-setup、claude、Plan、Explore、comment-thread-analyst、teammate、agent、subagent、main、main-session）与 claude-code-guide",
@@ -175,7 +176,7 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
       notes: ["自定义命令已并入技能，同名时技能优先。"],
     },
     {
-      harnessId: "codex", verified: ">=0.158.0 <0.170.0",
+      harnessId: "codex", checkedOn: "0.162.1",
       evidence: ["learn.chatgpt.com/docs/build-skills（用户级 $HOME/.agents/skills；同名“both can appear”）", "openai/codex codex-rs/ext/skills/src/host_roots.rs（$CODEX_HOME/skills 已弃用但仍读取）", "config-reference（mcp_servers、[[skills.config]]）",
         "openai/codex rust-v0.162.1 codex-rs/codex-home/src/instructions/mod.rs（用户级依次读 AGENTS.override.md、AGENTS.md，trim 后第一个非空者生效，整文件读、没有字节上限；project_doc_max_bytes 只限项目文件，见 core/src/agents_md.rs）",
         "rust-v0.162.1 agent-roles/src/discovery.rs、loader.rs、agent_role_config.rs（agents/**/*.toml 递归，必填 name、description、developer_instructions，名字以 name 为准；config.toml 的 [agents.<名>] 也声明角色）与 core/src/agent/role.rs（内置 default、explorer、worker，awaiter 已注释；同名的用户角色优先）",
@@ -195,7 +196,7 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
       notes: ["0.118.0 起不再读取 ~/.codex/prompts，自定义命令改用技能。config.toml 的 [agents.<名>] 也能声明子 Agent。改 config.toml 后要重启 Codex。"],
     },
     {
-      harnessId: "cursor", verified: ">=2026.6.0 <2027.0.0",
+      harnessId: "cursor", checkedOn: "2026.10.01-e373342",
       evidence: ["cursor.com/docs/context/skills（四个用户级位置，含 Claude、Codex 的兼容目录）", "cursor.com/docs/context/subagents、reference/third-party-hooks（读 Claude 的子 Agent 与 Hooks）",
         "本机 cursor-agent 2026.10.01：index.js 的 computeAgentsDirs 只有工作区的 .cursor/agents、.claude/agents、.grok/agents，没有家目录；9577.index.js 的 loadCommandsFromDirectory 读 ~/.claude/commands（claude-user）与 ~/.cursor/commands（user）顶层的 .md"],
       skills: { roots: [{ role: "shared", path: dirs.shared, precedence: 2, containment: false, depth: 1 }, { role: "own", path: join(dirs.cursor, "skills"), precedence: 2, containment: false, depth: 1 },
@@ -211,7 +212,7 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
       notes: ["Cursor 没有按技能停用的开关。", "~/.cursor/mcp.json 与 Cursor 编辑器共用。", "本机 CLI 只读工作区里的子 Agent；文档所列的家目录位置在 CLI 程序里没有，编辑器是否读取未核实。"],
     },
     {
-      harnessId: "opencode", verified: ">=1.18.0 <1.19.0",
+      harnessId: "opencode", checkedOn: "1.18.35",
       evidence: ["anomalyco/opencode v1.18.35 packages/opencode/src/skill/index.ts（发现 .claude 与 .agents 的 skills/**/SKILL.md 与配置目录；并发加载，同名后写入者覆盖并警告）",
         "anomalyco/opencode v1.18.35 packages/opencode/src/session/instruction.ts（全局指令取第一个存在的文件：配置目录的 AGENTS.md，然后 ~/.claude/CLAUDE.md；空文件也算存在；每一步重新读）与 effect/runtime-flags.ts（OPENCODE_DISABLE_CLAUDE_CODE 或 OPENCODE_DISABLE_CLAUDE_CODE_PROMPT 关掉回退）",
         "v1.18.35 config/agent.ts（{agent,agents}/**/*.md 递归，名字是相对路径、以 / 连接；{mode,modes}/*.md 也定义 Agent）、config/command.ts（{command,commands}/**/*.md）、agent/agent.ts（内置 build、plan、general、explore、compaction、title、summary，同名文件逐字段覆盖）",
@@ -234,7 +235,7 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
       notes: [disableClaudeSkills ? "环境里设置了关闭 .claude 技能来源的变量，OpenCode 不读 ~/.claude/skills。" : "OpenCode 也读 ~/.claude/skills；可以在终端环境里设置 OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1 关掉这个来源。", "OpenCode 没有声明式的 Hooks，由插件实现。"],
     },
     {
-      harnessId: "gemini", verified: ">=0.60.0 <0.70.0",
+      harnessId: "gemini", checkedOn: "0.62.0",
       evidence: ["google-gemini/gemini-cli v0.62.0 docs/cli/skills.md 与 packages/core/src/skills（用户层 ~/.gemini/skills 与 ~/.agents/skills，同层 .agents 优先）", "docs/reference/configuration.md（mcpServers、skills.disabled、hooks）",
         "本机 0.62.0 bundle：loadAgentsFromDirectory 只读 ~/.gemini/agents 顶层、isFile 的 .md，跳过以 _ 开头的与符号链接；本地 Agent 的 schema 是 strict（name 为 slug、description 必填）；内置 codebase_investigator、cli_help、generalist、browser_agent 先注册，同名的用户 Agent 被忽略；acpCommandHandler 只有内置命令，--acp 不展开自定义命令"],
       skills: { roots: [{ role: "own", path: join(dirs.gemini, "skills"), precedence: 1, containment: false, depth: 1 }, { role: "shared", path: dirs.shared, precedence: 2, containment: false, depth: 1 }],
@@ -251,7 +252,7 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
         "Gemini 以 --acp 运行时不展开自定义命令，HarnessHub 的会话里用不了；终端里可以。"],
     },
     {
-      harnessId: "openclaw", verified: ">=2026.3.0 <2026.4.0",
+      harnessId: "openclaw", checkedOn: "2026.3.23-2",
       evidence: ["本机 openclaw@2026.3.23-2 dist/skills-M0AZJeXx.js（来源与合并顺序：skills.load.extraDirs 最低；filterLoadedSkillsInsideRoot 跳过越界的真实路径）", "包内 docs/tools/skills-config.md（skills.entries.<名>.enabled）"],
       skills: { roots: [{ role: "own", path: join(dirs.openclaw, "skills"), precedence: 3, containment: true, depth: 1 }, { role: "shared", path: dirs.shared, precedence: 4, containment: true, depth: 1 },
         { role: "workspace", path: join(workspace, ".agents", "skills"), precedence: 5, containment: true, depth: 1 }, { role: "workspace", path: join(workspace, "skills"), precedence: 6, containment: true, depth: 1 }],
@@ -266,7 +267,7 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
       notes: ["本机版改 MCP 或插件会让 Gateway 自动重启，HarnessHub 暂不写入（ADR-045 第 9 条）。", "另有随程序附带的内置技能，这里不列出。"],
     },
     {
-      harnessId: "pi", verified: ">=0.85.0 <0.99.0",
+      harnessId: "pi", checkedOn: "0.85.1",
       evidence: ["earendil-works/pi v0.85.1 docs/skills.md 与 settings.md（~/.pi/agent/skills、~/.agents/skills，先发现者胜出）"],
       skills: { roots: [{ role: "shared", path: dirs.shared, precedence: 1, containment: false, depth: 1 }, { role: "own", path: join(dirs.pi, "skills"), precedence: 2, containment: false, depth: 1 }],
         duplicates: "precedence", requiresDescription: true, nameMustMatchDirectory: false, switch: null },
@@ -278,7 +279,7 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
       notes: ["Pi 在官网安装存在并验证之前，不提供停用。"],
     },
     {
-      harnessId: "hermes", verified: ">=0.12.0 <0.13.0",
+      harnessId: "hermes", checkedOn: "0.12.0",
       evidence: ["本机 hermes-agent a0556b8（v0.12.0）agent/skill_utils.py（$HERMES_HOME/skills 递归，加 skills.external_dirs，本地优先）", "hermes_cli/skills_config.py（skills.disabled、platform_disabled）", "website/docs/reference/mcp-config-reference.md（mcp_servers）",
         "hermes_cli/plugins.py（$HERMES_HOME/plugins/<名> 或 <分类>/<名>，plugin.yaml 或 plugin.yml，键按路径取也认裸名；plugins.disabled 优先；plugins.enabled 缺失表示一个都不启用；exclusive 由 <分类>.provider 选择，model-provider 不受 plugins.enabled 约束；没写 kind 时按 __init__.py 前 8 KiB 归类；hermes plugins enable 经 save_config 整份重写 config.yaml）"],
       skills: { roots: [{ role: "own", path: join(hermes, "skills"), precedence: 2, containment: false, depth: 8, find: HERMES_FIND }], duplicates: "precedence", requiresDescription: false, nameMustMatchDirectory: false,
@@ -293,10 +294,9 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
       notes: ["Hermes 0.12 不读 ~/.agents/skills；长驻进程要 /reload-skills 或重启才看到新技能。"],
     },
     {
-      // The prerelease the official npm channel carries (0.2.0-rc.2) is the lower end: ADR-045 steps 3c and 4 checked these
-      // rules on it, and it is the verified version since 2026-10-22. Ranges are compared with prereleases included
-      // (ADR-038, 2026-10-21), so the earlier source build 0.2.1-alpha.1 is inside too.
-      harnessId: "dsh", verified: ">=0.2.0-rc.2 <0.3.0",
+      // Checked on the prerelease the official npm channel carries (0.2.0-rc.2): ADR-045 steps 3c and 4 checked these rules
+      // on it, and the real re-verification of 2026-10-22 ran on it. Every other version reads by this same table (ADR-053).
+      harnessId: "dsh", checkedOn: "0.2.0-rc.2",
       evidence: ["@deepseek-ai/dsh 0.2.0-rc.2 包内 dsh-skill-filesystem 的 README（Roots and priority：<dshHome>/skills 排在 <agentsHome>/skills 之前，dshHome 为 $DSH_HOME 或 ~/.dsh，agentsHome 为 $DSH_AGENTS_HOME 或 ~/.agents；name 与 description 必填）",
         "@deepseek-ai/dsh 0.2.0-rc.2 dsh-app-boot：依次应用各 bundle、profile 自己的 cordis.patch.yml、$DSH_HOME/cordis.patch.yml；补丁文件必须是顶层 YAML 数组（docs/user/guide/mcp-memory.md：MCP 客户端行 @deepseek-ai/dsh-mcp-client）；发运的 profile 模板只有 acp、web、headless、sdk、sdk-minimal（PROFILE_TEMPLATES）",
         "历史：deepseek-ai/deepseek-harness 5badb15 docs/subsystems/skills.md（$DSH_HOME/skills 优先于 ~/.agents/skills）",

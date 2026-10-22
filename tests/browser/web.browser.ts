@@ -1138,8 +1138,9 @@ test("a Harness of a version HarnessHub never ran shows that version alone in th
   const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url);
-  // The hint texts ADR-038 showed beside a version no record named; none of them appears anywhere any more.
-  const hints = ["未经验证", "验证过的版本", "相隔约", "目录参考"];
+  // The hint texts ADR-038 showed beside a version no record named ("未经验证", "验证过的版本", "相隔约 N 个月", the recipe's
+  // "目录参考" row), each caught by a substring; none of them appears anywhere any more.
+  const hints = ["经验证", "验证过的版本", "相隔", "目录参考"];
   const sayNothing = async (where: string) => { const text = await page.locator("body").innerText(); for (const hint of hints) assert.ok(!text.includes(hint), where + " says " + JSON.stringify(hint)); };
   // The fixture installs Gemini CLI 1.0.0, a version no record names. Gemini CLI is frozen, so it is shown first (ADR-050).
   await showFrozenHarnesses(page);
@@ -1550,7 +1551,7 @@ test("G054-UP1 an upgrade first says what it restarts, closes and leaves on the 
     "OpenClaw Node（ai.openclaw.node，进程 4736），升级后可运行 openclaw node restart", "openclaw（进程 8100）", "还会清除 2 条已结束的 HarnessHub 进程留下的使用记录。",
     "已安装的插件：openclaw-weixin。新版本可能不兼容它们。", "最好选一个能接受短暂中断的时间升级", "npm install --global openclaw@2026.3.23-2"]) await expect(dialog).toContainText(text);
   // Seven months apart, and a target no record names: the versions are stated, and nothing is inferred from them (ADR-053).
-  for (const text of ["相隔约", "还没有验证", "验证过的版本"]) await expect(dialog).not.toContainText(text);
+  for (const text of ["相隔", "还没有验证", "验证过的版本"]) await expect(dialog).not.toContainText(text);
   // A service left running only needs a newer Node.js before its own restart: said, without blocking.
   await expect(dialog.locator(".upgrade-runtime-warning")).toHaveText("OpenClaw Node（ai.openclaw.node）启动用的 Node.js 是 25.9.0（/opt/homebrew/opt/node@25/bin/node），2026.10.2 要求 >=24.16.0 <25 || >=26.1.0。升级后重启它之前，需要先升级这个 Node.js（brew upgrade node@25）。");
   await page.screenshot({ path: join(artifact, "upgrade-confirmation.png"), animations: "disabled" });
@@ -1863,10 +1864,10 @@ const HISTORY_EXTRA = { orphans: [] as unknown[], snapshots: { count: 0, bytes: 
 function capabilityView() {
   const all = { skill: "read", mcp: "read", instructions: "read", subagent: "read", command: "read", hook: "read", plugin: "read" };
   const view = { checkedAt: "2026-10-18T09:00:00.000Z", truncated: false,
-    harnesses: [{ harnessId: "claude", name: "Claude Code", version: "2.1.302", table: "verified", kinds: all, skillSwitch: "file", pluginSwitch: "file", pluginReason: null, shared: { reads: "links", links: 1, redundant: 0, placeable: "skill-link" }, notes: ["自定义命令已并入技能，同名时技能优先。"] },
-      { harnessId: "codex", name: "Codex", version: "0.162.1", table: "verified", kinds: all, skillSwitch: "file", pluginSwitch: "file", pluginReason: null, shared: { reads: "native", links: 0, redundant: 0, placeable: null }, notes: [] },
-      { harnessId: "cursor", name: "Cursor", version: "2026.10.01-e373342", table: "unverified", kinds: { ...all, instructions: "invisible", command: "unsupported", plugin: "invisible" }, skillSwitch: null, pluginSwitch: null, pluginReason: "Cursor 不在磁盘上记录插件。", shared: { reads: "native", links: 0, redundant: 0, placeable: null }, notes: ["Cursor 的用户规则保存在应用设置里，不在磁盘上。"] },
-      { harnessId: "hermes", name: "Hermes Agent", version: "0.12.0", table: "verified", kinds: { ...all, instructions: "unsupported", subagent: "unsupported", command: "unsupported" }, skillSwitch: "file", pluginSwitch: null,
+    harnesses: [{ harnessId: "claude", name: "Claude Code", version: "2.1.302", kinds: all, skillSwitch: "file", pluginSwitch: "file", pluginReason: null, shared: { reads: "links", links: 1, redundant: 0, placeable: "skill-link" }, notes: ["自定义命令已并入技能，同名时技能优先。"] },
+      { harnessId: "codex", name: "Codex", version: "0.162.1", kinds: all, skillSwitch: "file", pluginSwitch: "file", pluginReason: null, shared: { reads: "native", links: 0, redundant: 0, placeable: null }, notes: [] },
+      { harnessId: "cursor", name: "Cursor", version: "2026.10.01-e373342", kinds: { ...all, instructions: "invisible", command: "unsupported", plugin: "invisible" }, skillSwitch: null, pluginSwitch: null, pluginReason: "Cursor 不在磁盘上记录插件。", shared: { reads: "native", links: 0, redundant: 0, placeable: null }, notes: ["Cursor 的用户规则保存在应用设置里，不在磁盘上。"] },
+      { harnessId: "hermes", name: "Hermes Agent", version: "0.12.0", kinds: { ...all, instructions: "unsupported", subagent: "unsupported", command: "unsupported" }, skillSwitch: "file", pluginSwitch: null,
         pluginReason: "hermes plugins enable 会经 save_config 整份重写 config.yaml（丢掉注释、补上默认项），暂时只读。", shared: { reads: "links", links: 1, redundant: 0, placeable: "shared-dir" }, notes: ["Hermes 0.12 不读 ~/.agents/skills。"] }],
     entries: [
       { kind: "skill", key: "skill:alpha", name: "alpha", description: "Shared alpha skill", owner: "skills-cli", source: "https://github.com/owner/repo.git", location: "~/.agents/skills/alpha",
@@ -1926,7 +1927,15 @@ test("G054-CA1 the capability page opens from the sidebar and from a Harness's d
   // Seven kinds, each with its count; the skills matrix has one column per Harness, saying how each sees each skill.
   const tabs = page.getByRole("tablist", { name: "能力类别" });
   for (const [label, count] of [["技能", 2], ["MCP", 1], ["指令", 1], ["子 Agent", 1], ["命令", 0], ["Hooks", 1], ["插件", 1]] as const) await expect(tabs.getByRole("tab", { name: label + " " + count, exact: true })).toBeVisible();
-  await expect(matrix.locator("thead th")).toHaveText([/技能/u, /Claude Code.*v2\.1\.302/u, /Codex.*v0\.162\.1/u, /Cursor.*未核实/u, /Hermes Agent.*v0\.12\.0/u]);
+  // Each column names its Harness and the version its channel records, Cursor's dated one like the others; no column says anything about its version (ADR-053).
+  await expect(matrix.locator("thead th")).toHaveText([/技能/u, /Claude Code.*v2\.1\.302/u, /Codex.*v0\.162\.1/u, /Cursor.*v2026\.10\.01-e373342/u, /Hermes Agent.*v0\.12\.0/u]);
+  await expect(matrix.locator("thead")).not.toContainText("核实");
+  // The rules section says which version each Harness runs and points to its notes, and nothing about the version.
+  const rules = page.locator("details").filter({ hasText: "各 Harness 的读取规则与说明" });
+  await rules.locator("summary").click();
+  await expect(rules).toContainText("v2026.10.01-e373342 · 读取规则见说明"); await expect(rules).toContainText("Cursor 的用户规则保存在应用设置里，不在磁盘上。");
+  await expect(rules).not.toContainText("核实");
+  await rules.locator("summary").click();
   const alpha = matrix.locator("tbody tr").filter({ hasText: "alpha" }).first();
   await expect(alpha.locator("td").nth(0)).toHaveText("✓链接"); await expect(alpha.locator("td").nth(1)).toHaveText("✓共享目录✓自有目录"); await expect(alpha.locator("td").nth(2)).toHaveText("⧉重复");
   await expect(matrix.locator("tbody tr").filter({ hasText: "beta" }).first().locator("td").nth(0)).toHaveText("⊘已停用");
@@ -1984,7 +1993,7 @@ test("G054-CA2 turning a skill off shows the file and the exact change first, se
   const change = { id: "c-1", kind: "skill-switch", harnessId: "claude", subject: "alpha", file: "~/.claude/settings.json", status: "applied", diff, backupId, error: null, notes: ["Claude Code 会立即读到改动。"], at };
   // OpenClaw too: its switch is its own command, whose rewrite is summarized first.
   const view = capabilityView(), openclawKinds = { skill: "read", mcp: "read", instructions: "read", subagent: "unsupported", command: "unsupported", hook: "read", plugin: "read" };
-  view.harnesses.push({ harnessId: "openclaw", name: "OpenClaw", version: "2026.3.23-2", table: "verified", kinds: openclawKinds, skillSwitch: "command", pluginSwitch: null, pluginReason: "本机版改 plugins.* 会让 Gateway 自动重启（ADR-045 裁决第 9 条），只读。", shared: { reads: "native", links: 52, redundant: 52, placeable: null }, notes: [] } as unknown as typeof view.harnesses[number]);
+  view.harnesses.push({ harnessId: "openclaw", name: "OpenClaw", version: "2026.3.23-2", kinds: openclawKinds, skillSwitch: "command", pluginSwitch: null, pluginReason: "本机版改 plugins.* 会让 Gateway 自动重启（ADR-045 裁决第 9 条），只读。", shared: { reads: "native", links: 52, redundant: 52, placeable: null }, notes: [] } as unknown as typeof view.harnesses[number]);
   (view.entries[0]!.edges as unknown[]).push({ harnessId: "openclaw", mechanism: "native-shared", status: "active", via: "~/.agents/skills/alpha", reason: null });
   await page.route("**/api/v1/capabilities", route => route.fulfill({ json: view }));
   await page.route("**/api/v1/capabilities/history", route => route.fulfill({ json: history }));
@@ -2071,7 +2080,7 @@ test("G054-CA3 the shared skills directory says how each Harness reads it, makes
   const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   const view = capabilityView(), at = "2026-10-18T10:00:00.000Z", expiresAt = "2026-10-18T10:15:00.000Z";
-  view.harnesses.push({ harnessId: "openclaw", name: "OpenClaw", version: "2026.3.23-2", table: "verified", kinds: view.harnesses[0]!.kinds, skillSwitch: "command",
+  view.harnesses.push({ harnessId: "openclaw", name: "OpenClaw", version: "2026.3.23-2", kinds: view.harnesses[0]!.kinds, skillSwitch: "command",
     pluginSwitch: null, pluginReason: "本机版改 plugins.* 会让 Gateway 自动重启（ADR-045 裁决第 9 条），只读。", shared: { reads: "native", links: 2, redundant: 2, placeable: null }, notes: [] } as unknown as typeof view.harnesses[number]);
   (view.entries as unknown[]).push({ kind: "skill", key: "skill:gamma", name: "gamma", description: "Only in the shared directory", owner: "user", source: null, location: "~/.agents/skills/gamma",
     edges: [{ harnessId: "codex", mechanism: "native-shared", status: "active", via: "~/.agents/skills/gamma", reason: null }], warnings: [], facts: { kind: "skill", files: 1, bytes: 120 },

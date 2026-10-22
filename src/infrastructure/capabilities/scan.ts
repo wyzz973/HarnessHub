@@ -2,7 +2,6 @@ import type { Dirent } from "node:fs";
 import { lstat, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { lstat as lstatLink, readlink } from "node:fs/promises";
-import { coerce, satisfies, valid } from "semver";
 import { CAPABILITY_KINDS, MAX_CAPABILITY_ENTRIES, type CapabilitiesView, type CapabilityEdge, type CapabilityEntry, type CapabilityFacts, type CapabilityKind, type CapabilityMechanism, type CapabilityOwner,
   type CapabilityStatus, type CapabilityWarning, type HarnessCapabilityReads } from "../../contracts/capabilities.js";
 import type { ExternalSkillDirs, FileListSpec, HarnessReadTable, HookSource, InstructionSpec, McpSource, PluginSource, ReadEnvironment, SkillFind, SkillRootSpec, SkillSwitchSource } from "../../adapters/capability-reads.js";
@@ -110,7 +109,8 @@ export class CapabilityScan {
       await this.fileLists("command", table, harness.name, table.commands);
       await this.hooks(table, harness.name);
       await this.plugins(table, harness.name, notes);
-      harnesses.push({ harnessId: table.harnessId, name: harness.name, version: harness.version, table: covered(harness.version, table.verified) ? "verified" : "unverified", kinds: kindsOf(table),
+      // The version is a fact of the installation; the table reads every version alike (ADR-053).
+      harnesses.push({ harnessId: table.harnessId, name: harness.name, version: harness.version, kinds: kindsOf(table),
         skillSwitch: table.skills.switch === null ? null : table.skills.switch.kind === "openclaw-entries" ? "command" : "file",
         pluginSwitch: table.pluginSwitch === null || table.pluginSwitch.kind === "read-only" ? null : "file", pluginReason: table.pluginSwitch?.kind === "read-only" ? table.pluginSwitch.reason : null,
         shared, notes: [...notes, ...kindNotes(table)] });
@@ -796,13 +796,6 @@ async function skillSize(path: string): Promise<{ files: number; bytes: number }
   };
   await walk(path, 1);
   return { files, bytes };
-}
-function covered(version: string | null, range: string): boolean {
-  if (version === null) return false;
-  // Cursor's versions are dates with a commit (2026.10.01-e373342); semver refuses their leading zeros, so they are dropped.
-  const normalized = version.replace(/^v/u, "").replace(/(^|\.)0+(?=\d)/gu, "$1");
-  const parsed = valid(normalized) ?? coerce(normalized, { includePrerelease: true })?.version ?? null;
-  return parsed !== null && satisfies(parsed, range, { includePrerelease: true });
 }
 function kindsOf(table: HarnessReadTable): HarnessCapabilityReads["kinds"] {
   return { skill: "read", mcp: table.mcp.style === "unsupported" ? "unsupported" : "read",

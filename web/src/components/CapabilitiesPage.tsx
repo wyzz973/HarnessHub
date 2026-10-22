@@ -335,7 +335,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
             <th scope="col" className="sticky left-0 z-[1] min-w-[220px] bg-surface px-3 py-2 font-medium text-fg-2">{KIND_LABEL[kind]}</th>
             {columns.map(item => <th key={item.harnessId} scope="col" className="min-w-[104px] px-2 py-2 align-bottom font-medium">
               <span className="flex items-center gap-1.5"><BrandIcon brand={item.harnessId} name={item.name} size={16}/><span className="truncate">{item.name}</span></span>
-              <small className="block font-normal text-fg-3">{item.version ? "v" + item.version : "版本未知"}{item.table === "unverified" ? <span className="ml-1 text-amber" title="这个版本不在核实过的范围内，按最接近的规则读取">未核实</span> : null}</small></th>)}
+              <small className="block font-normal text-fg-3">{item.version ? "v" + item.version : "版本未知"}</small></th>)}
           </tr></thead>
           <tbody>{rows.map(entry => { const expanded = open === entry.key, warnings = warningCount(entry);
             return <Fragment key={entry.key}><tr className={cn("border-b border-line align-top", expanded && "bg-subtle")}>
@@ -352,7 +352,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
       </div>
       <details className="rounded-xl border border-line bg-surface px-4 py-3 text-[12.5px]"><summary className="cursor-pointer font-medium"><Eye size={13} className="mr-1.5 inline" aria-hidden="true"/>各 Harness 的读取规则与说明</summary>
         <ul className="m-0 mt-2 flex list-none flex-col gap-2 p-0">{shown.map(item => <li key={item.harnessId}><strong className="font-medium">{item.name}</strong>
-          <span className="ml-1.5 text-fg-3">{item.version ? "v" + item.version : "版本未知"} · {item.table === "verified" ? "规则已按这个版本核实" : "规则未按这个版本核实"}</span>
+          <span className="ml-1.5 text-fg-3">{item.version ? "v" + item.version : "版本未知"} · 读取规则见说明</span>
           <ul className="m-0 mt-0.5 list-disc pl-5 text-fg-2">{item.notes.map((note, index) => <li key={index}>{note}</li>)}</ul></li>)}</ul>
         <p className="m-0 mt-2 text-fg-3">读取时间 {new Date(view.checkedAt).toLocaleString()}。只显示名字与数量，不显示任何环境变量、请求头或参数的值。</p></details>
       {history ? <ChangeHistory api={api} history={history} onRestore={setRestoring} onChange={change}/> : null}

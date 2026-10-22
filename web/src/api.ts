@@ -203,7 +203,7 @@ function decodeCapabilityEdge(value: unknown): CapabilityEdge {
 export function decodeCapabilities(value: unknown): CapabilitiesView {
   const row = record(value), kindsOf = (item: unknown) => { const kinds = record(item); return Object.fromEntries(CAPABILITY_KINDS.map(kind => [kind, choice(kinds[kind], ["read", "unsupported", "invisible"])])) as CapabilitiesView["harnesses"][number]["kinds"]; };
   return { checkedAt: text(row.checkedAt), truncated: bool(row.truncated),
-    harnesses: list(row.harnesses, item => { const harness = record(item); return { harnessId: text(harness.harnessId), name: text(harness.name), version: nullableText(harness.version), table: choice(harness.table, ["verified", "unverified"]),
+    harnesses: list(row.harnesses, item => { const harness = record(item); return { harnessId: text(harness.harnessId), name: text(harness.name), version: nullableText(harness.version),
       kinds: kindsOf(harness.kinds), skillSwitch: harness.skillSwitch === null ? null : choice(harness.skillSwitch, ["file", "command"]),
       pluginSwitch: harness.pluginSwitch === null ? null : choice(harness.pluginSwitch, ["file"]), pluginReason: nullableText(harness.pluginReason), shared: decodeSharedReads(harness.shared), notes: list(harness.notes, text, 64) }; }, 64),
     entries: list(row.entries, item => { const entry = record(item); return { kind: choice(entry.kind, CAPABILITY_KINDS), key: text(entry.key), name: text(entry.name), description: nullableText(entry.description),
