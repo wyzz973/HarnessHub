@@ -242,3 +242,13 @@ test("G012-OC1 the catalog follows Hermes's and DeepSeek Harness's channels: the
       if (url.startsWith("https://github.com/") && url.includes("/blob/")) assert.match(url, /\/blob\/[0-9a-f]{40}\//u, id + ": " + url);
   }
 });
+
+test("G012-OC1 OpenClaw's npm command is the one its install page gives, allowing its own install scripts, and the notes say what npm does without that", () => {
+  const method = officialInstallMethod("openclaw");
+  assert.equal(method?.kind, "npm"); if (method?.kind !== "npm") return;
+  assert.deepEqual([method.package, method.bin, method.command], ["openclaw", "openclaw", "npm install -g openclaw@latest --allow-scripts=openclaw"]);
+  const scripts = method.notes.find(note => note.includes("--allow-scripts=openclaw"));
+  for (const text of ["preinstall 与 postinstall", "npm 11.16 起没有它时 npm 只警告、仍会运行", "npm 12 起默认不运行", "npm 11.15 及更早没有这个选项", "下一次启动时自己补跑", "package lifecycle is incomplete"])
+    assert.ok(scripts?.includes(text), text);
+  assert.ok(method.notes.some(note => note.includes("openclaw onboard --install-daemon")));
+});

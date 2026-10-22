@@ -11,7 +11,7 @@ import { homebrewTap } from "../discovery/packages.js";
 import { nativeBaseValues, nativeValues, type NativeEnvironment } from "../session/native-environment.js";
 import { runManagementProcess } from "./process.js";
 import { homebrewCache, homebrewEnvironment, runHomebrewProtected } from "./homebrew.js";
-import { isolatedSandboxProfile, protectedConfigurationPaths, writeOnlySandboxProfile } from "./native.js";
+import { isolatedSandboxProfile, protectedConfigurationPaths, refuseOpenClawNpmUpgrade, writeOnlySandboxProfile } from "./native.js";
 import { OfficialManagementMetadata } from "./metadata.js";
 import { blockedWrites, codexProfile, downloadScript, protectedProgramVersion, runConfined } from "./official-install.js";
 
@@ -67,10 +67,11 @@ function homebrewVersion(raw: unknown, cask: boolean): string {
 
 /**
  * Upgrades one official installation through its own channel on macOS (ADR-044): npm installs the exact newer release
- * with the prefix's own npm, writing only that prefix; Homebrew upgrades in its inherited sandbox from the user's local
- * records, after a dry run that must leave every installed package as it was; a script installation runs its product's
- * own updater or its official install script again, confined like an install. Versions are read without running a
- * program where the channel records one, and otherwise in a write-protected run with a private home and no network.
+ * with the prefix's own npm, writing only that prefix (not OpenClaw's, which waits for its own `openclaw update`,
+ * ADR-052); Homebrew upgrades in its inherited sandbox from the user's local records, after a dry run that must leave
+ * every installed package as it was; a script installation runs its product's own updater or its official install script
+ * again, confined like an install. Versions are read without running a program where the channel records one, and
+ * otherwise in a write-protected run with a private home and no network.
  */
 export class LocalInstallationUpgrader implements InstallationUpgradePort {
   constructor(private readonly source: NativeEnvironment, private readonly tools: { readonly npm: string | null },
@@ -177,6 +178,8 @@ export class LocalInstallationUpgrader implements InstallationUpgradePort {
     const base = { target, env: {}, shellProfile: null, configFiles: [], version: null, dependencies: [], script: null, runtime: null } as const;
     if (kind === null || kind === "terminal") throw new ManagementError("UNSUPPORTED_UPGRADE", "HarnessHub 不升级这种安装。");
     if (target.channel === "npm") {
+      // Installing OpenClaw's package directly skips the Doctor its own updater runs (ADR-052): refused before anything is resolved.
+      refuseOpenClawNpmUpgrade(target.harnessId);
       const prefix = target.prefix; if (prefix === null) throw new ManagementError("INVALID_DATA", "an npm installation has no prefix");
       const bin = basename(target.entry);
       const spec = await this.metadata.resolve({ harnessId: target.harnessId, controlId: target.controlId, kind: "npm", packageName: target.name, referenceVersion: "latest", binName: bin, args: [],

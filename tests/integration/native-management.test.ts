@@ -9,7 +9,7 @@ import { NativeInstallationLocks } from "../../src/infrastructure/management/nat
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
 import { ManagementError, type ManagementMetadataPort, type ManagementRecipe, type NativeProgramUsers } from "../../src/contracts/management.js";
 import { systemProgramHost, type ProgramHost } from "../../src/infrastructure/management/program-usage.js";
-import { isolatedSandboxProfile } from "../../src/infrastructure/management/native.js";
+import { compareReleases, isolatedSandboxProfile } from "../../src/infrastructure/management/native.js";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { randomUUID } from "node:crypto";
@@ -264,7 +264,7 @@ test("G011-UP5 a service that does not run again fails the upgrade with the inst
   f.locks.read(recipe.harnessId).release();
 });
 
-test("G011-UP6 the compatibility check's sandbox writes only its stage and reaches no network, even a gateway listening on this computer", { skip: process.platform !== "darwin" && "the isolation uses the macOS sandbox" }, async t => {
+test("G011-UP6 the isolated sandbox of a read-only query (Homebrew's local records) writes only its stage and reaches no network, even a gateway listening on this computer", { skip: process.platform !== "darwin" && "the isolation uses the macOS sandbox" }, async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "native-isolation-"))), stage = join(root, "stage"), config = join(root, "home", "openclaw.json");
   await mkdir(stage); await mkdir(dirname(config)); await writeFile(config, "{\"keep\":true}");
   let connections = 0; const server = createServer(socket => { connections++; socket.destroy(); });
@@ -413,4 +413,50 @@ test("G011-UG9 native maintenance reads and upgrades a formula from another tap 
   assert.deepEqual(await calls(context), ["upgrade --formula anomalyco/tap/opencode"]);
   assert.equal(await realpath(join(brew, "bin", "opencode")), join(brew, "Cellar", "opencode", "1.19.3", "bin", "opencode"));
   assert.equal(existsSync(join(brew, "Cellar", "opencode", "2.1.2")), false, "Homebrew's own OpenCode 2 was never installed in its place");
+});
+
+test("G011-UP1 releases are ordered by semver, with a calendar version's -N as a later revision of its base release, never a prerelease", () => {
+  // OpenClaw numbers a rebuilt release 2026.3.23-2: it is newer than 2026.3.23 and older than the next release.
+  for (const [older, newer] of [["2026.3.23", "2026.3.23-2"], ["2026.3.23-2", "2026.3.23-10"], ["2026.3.23-2", "2026.9.5"], ["2026.3.23-2", "2026.10.5"], ["2026.10.10-beta.3", "2026.10.10"],
+    ["2026.3.23-beta.1", "2026.3.23-2"], ["0.2.0-rc.2", "0.2.1-rc.2"], ["0.2.1-alpha.5", "0.2.1-rc.2"], ["1.18.35", "1.19.3"], ["2.1.306", "2.1.307"]] as const) {
+    assert.ok(compareReleases(older, newer)! < 0, older + " < " + newer); assert.ok(compareReleases(newer, older)! > 0, newer + " > " + older);
+  }
+  for (const version of ["2026.3.23-2", "2026.3.23", "0.2.1-rc.2"]) assert.equal(compareReleases(version, version), 0, version);
+  // Only a calendar version's numeric suffix is a revision; anything that is no version compares to nothing.
+  assert.ok(compareReleases("1.0.0", "1.0.0-1")! > 0, "a semver prerelease stays one");
+  for (const [a, b] of [["latest", "2026.3.23"], ["2026.03.23-2", "2026.3.23"], ["1.18.35_1", "1.18.35"], ["", "1.0.0"]] as const) assert.equal(compareReleases(a, b), null, a + " vs " + b);
+});
+
+test("G011-UP1 an upgrade is refused as no update only when the channel's version is not newer by that order, and OpenClaw's npm upgrade is refused for its own updater before anything is resolved", async t => {
+  const f = await fixture(t), context = { stage: f.root, signal: new AbortController().signal, assertOwned() {}, log() {} };
+  const plan = await f.native.describe(recipe, { harnessId: recipe.harnessId, controlId: recipe.controlId, command: { executable: f.entry, args: [], env: {} } }, "1.0.0", context);
+  // A calendar revision of the installed release is newer; the base release under its revision is not.
+  await f.native.prepare({ ...plan, beforeVersion: "2026.3.23" }, recipe, "2026.3.23-2", context);
+  for (const [before, target] of [["2026.3.23-2", "2026.3.23"], ["2026.3.23-2", "2026.3.23-2"], ["2026.9.5", "2026.3.23-2"]] as const)
+    await assert.rejects(f.native.prepare({ ...plan, beforeVersion: before }, recipe, target, context), (error: unknown) => error instanceof ManagementError && error.code === "NO_UPDATE", before + " -> " + target);
+  // OpenClaw: its npm upgrade waits for `openclaw update` (ADR-052); refused before its release is looked up, nothing installed.
+  const unresolved = new NativeManagement(null, null, process.execPath, f.environment, { resolve: async () => assert.fail("OpenClaw's release is never looked up") });
+  const openclaw = { ...plan, harnessId: "openclaw", controlId: "openclaw-native", beforeVersion: "2026.3.23" }, openclawRecipe = { ...recipe, harnessId: "openclaw", controlId: "openclaw-native" };
+  await assert.rejects(unresolved.prepare(openclaw, openclawRecipe, "2026.3.23-2", context), (error: unknown) =>
+    error instanceof ManagementError && error.code === "UNSUPPORTED_UPGRADE" && error.message === "OpenClaw 的升级由它自己的 openclaw update 完成（会运行 Doctor 迁移配置并重启 Gateway），HarnessHub 的 npm 直装路径不再用于 OpenClaw；路线见 ADR-052。");
+  await assert.rejects(unresolved.prepare({ ...openclaw, beforeVersion: "2026.3.23-2" }, openclawRecipe, "2026.3.23", context), (error: unknown) => error instanceof ManagementError && error.code === "NO_UPDATE", "already newer is said first");
+  assert.equal(await version(f), "1.0.0");
+});
+
+test("G011-UP1 through native maintenance, OpenClaw's npm upgrade fails with the reason before npm runs, instead of a configuration check of the target", { skip: process.platform !== "darwin" && "native upgrades need the macOS sandbox" }, async t => {
+  // This management service closes before the fixture's directory is removed.
+  let manager: LocalHarnessManagement | undefined;
+  const f = await fixture(t, false, async () => { await manager?.shutdown(); }), openclaw: ManagementRecipe = { ...recipe, harnessId: "openclaw", controlId: "openclaw-native" };
+  await mkdir(join(f.root, "data-openclaw"));
+  manager = new LocalHarnessManagement(join(f.root, "data-openclaw"), { installationMode: "native", native: f.native, assertOwner: () => {}, ownerGeneration: 1, recipes: [openclaw],
+    nativeEnvironment: f.environment, nativeLocks: new NativeInstallationLocks(join(f.root, "locks-openclaw")) });
+  manager.setSystemObservations([{ harnessId: "openclaw", controlId: "openclaw-native", command: { executable: f.entry, args: [], env: {} }, packageVersion: "1.0.0" }]);
+  await manager.refreshNativeCapabilities();
+  const capability = manager.views(["openclaw"])[0]!.native!;
+  assert.equal(capability.channel, "npm");
+  const job = await settled(manager, manager.submit({ harnessId: "openclaw", action: "upgrade", commandId: "openclaw-npm", expectedNativeFingerprint: capability.fingerprint }).id);
+  assert.equal(job.status, "failed"); assert.equal(job.error?.code, "UNSUPPORTED_UPGRADE"); assert.equal(job.native?.dispatched, false);
+  assert.match(job.error!.message, /openclaw update/u); assert.match(job.error!.message, /ADR-052/u);
+  assert.ok(!logs({ ...f, manager }, job.id).some(line => line.includes("校验")), "no configuration check of the target runs");
+  assert.equal(await version(f), "1.0.0", "npm never ran");
 });

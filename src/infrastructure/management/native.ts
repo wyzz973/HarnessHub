@@ -2,13 +2,13 @@ import { constants } from "node:fs";
 import { access, lstat, mkdir, open, readFile, readdir, realpath, rename, stat, symlink } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { gt, valid, satisfies } from "semver";
+import { compare, valid, satisfies } from "semver";
 import { ManagementError, type ManagementInstallContext, type ManagementRecipe, type NativeInstallPlan, type NativeManagementPort, type SystemInstallationObservation, type NativeInstallContext, type ManagementMetadataPort, type ProgramUsage, type ResolvedInstallSpec, type RuntimeRequirement, type UsedService } from "../../contracts/management.js";
 import { homebrewName } from "../../contexts/catalog/domain/channels.js";
 import { homebrewTap } from "../discovery/packages.js";
 import { captureNativeEnvironment, nativeBaseValues, nativeValues, type NativeEnvironment } from "../session/native-environment.js";
 import { OfficialManagementMetadata } from "./metadata.js";
-import { DefaultManagementInstaller, installedNpmEntry } from "./installer.js";
+import { DefaultManagementInstaller } from "./installer.js";
 import { runManagementProcess } from "./process.js";
 import { systemVersionFromOutput } from "./system-version.js";
 import { homebrewEnvironment, homebrewSandboxIdentity, runHomebrewProtected } from "./homebrew.js";
@@ -25,9 +25,9 @@ function parseVersion(value: unknown): string { const text = string(value, 128);
 const configDirectories = [".codex", ".claude", ".openclaw", ".gemini", ".pi", ".cursor", ".config", ".local/share/opencode"];
 const configFiles = [".claude.json", ".zshrc", ".zprofile", ".bashrc", ".bash_profile", ".profile", ".npmrc"];
 /**
- * The sandbox profile of a check that may write only its own directories: every other file write and every network
- * operation is denied, so a product's compatibility check can neither migrate the user's configuration nor reach a
- * running service (ADR-043).
+ * The sandbox profile of a read that may write only its own directories: every other file write and every network
+ * operation is denied, so a query such as Homebrew's look at its local records can neither change the user's files nor
+ * reach a running service or the network (ADR-043, ADR-044).
  */
 export function isolatedSandboxProfile(writable: readonly string[]): string {
   return "(version 1)(allow default)(deny file-write*)(allow file-write* " + writable.map(path => "(subpath " + JSON.stringify(path) + ")").join(" ") + " (literal \"/dev/null\"))(deny network*)";
@@ -38,22 +38,29 @@ export function runtimeRefusal(version: string, runtime: RuntimeRequirement): st
     + (runtime.found === null ? "版本读不出来" : "是 " + runtime.found) + "（" + runtime.path + "）。先升级 Node.js 再升级" + (runtime.upgradeCommand ? "（可以运行 " + runtime.upgradeCommand + "）" : "")
     + "；HarnessHub 不替你升级 Node.js。没有升级。";
 }
-/** The configuration paths a product's validation output names, never their values; bounded for a message. */
-function issuePaths(output: string): readonly string[] {
-  let value: unknown;
-  try { value = JSON.parse(output); } catch { return []; }
-  const paths = new Set<string>();
-  const visit = (node: unknown, depth: number): void => {
-    if (depth > 8 || paths.size >= 5 || node === null || typeof node !== "object") return;
-    if (Array.isArray(node)) { for (const item of node.slice(0, 64)) visit(item, depth + 1); return; }
-    for (const [key, item] of Object.entries(node).slice(0, 64)) {
-      if (key === "path" && (typeof item === "string" || Array.isArray(item))) {
-        const text = Array.isArray(item) ? item.filter(part => typeof part === "string" || typeof part === "number").join(".") : item;
-        if (/^[A-Za-z0-9._[\]-]{1,128}$/u.test(text)) paths.add(text);
-      } else visit(item, depth + 1);
-    }
+/** A calendar version's build revision, as OpenClaw numbers them (2026.3.23-2); semver alone reads the `-2` as a prerelease. */
+const CALENDAR_REVISION = /^(\d{4}\.\d{1,2}\.\d{1,2})-(\d+)$/u;
+/**
+ * The order of two release versions: negative when `a` is older than `b`, positive when newer, zero when the same; null
+ * when either is no version this compares. Semver's order, except that a calendar version's numeric `-N` is a later
+ * revision of its base release, not a prerelease of it: 2026.3.23 < 2026.3.23-2 < 2026.3.23-10 < 2026.9.5. Pure.
+ */
+export function compareReleases(a: string, b: string): number | null {
+  const parse = (version: string): { readonly base: string; readonly revision: number } | null => {
+    const revision = CALENDAR_REVISION.exec(version), base = valid(revision === null ? version : revision[1]!);
+    return base === null ? null : { base, revision: revision === null ? 0 : Number(revision[2]) };
   };
-  visit(value, 0); return [...paths];
+  const left = parse(a), right = parse(b);
+  return left === null || right === null ? null : compare(left.base, right.base) || Math.sign(left.revision - right.revision);
+}
+/**
+ * Refuses HarnessHub's own npm upgrade of OpenClaw, before anything is resolved or changed. A transition until its own
+ * `openclaw update` is wired in (ADR-052 as revised, the fourth batch): that updater runs OpenClaw's Doctor, which
+ * migrates the configuration the latest release requires before its Gateway starts, and restarts the Gateway; installing
+ * the package directly does neither. Throws UNSUPPORTED_UPGRADE for OpenClaw and returns for every other Harness.
+ */
+export function refuseOpenClawNpmUpgrade(harnessId: string): void {
+  if (harnessId === "openclaw") throw new ManagementError("UNSUPPORTED_UPGRADE", "OpenClaw 的升级由它自己的 openclaw update 完成（会运行 Doctor 迁移配置并重启 Gateway），HarnessHub 的 npm 直装路径不再用于 OpenClaw；路线见 ADR-052。");
 }
 const CHANNEL_REASONS = {
   project: "这个程序在源码目录或 HarnessHub 尚未支持的安装方式里，HarnessHub 不替你升级它；请用它自己的方式更新（例如在源码目录里更新，或运行它自带的更新命令）。",
@@ -194,30 +201,13 @@ export class NativeManagement implements NativeManagementPort {
     context.assertOwned();
     if (plan.reason !== null) throw new ManagementError("CONFIGURATION_PROTECTION_UNAVAILABLE", plan.reason);
     if (plan.channel === "unsupported") throw new ManagementError("UNSUPPORTED_NATIVE_MANAGEMENT", "this native update channel has not been reviewed");
-    if (plan.beforeVersion && valid(plan.beforeVersion) && valid(version) && !gt(version, plan.beforeVersion)) throw new ManagementError("NO_UPDATE", "the original installation is already at or above its channel version");
+    const order = plan.beforeVersion === null ? null : compareReleases(version, plan.beforeVersion);
+    if (order !== null && order <= 0) throw new ManagementError("NO_UPDATE", "the original installation is already at or above its channel version");
     if (plan.channel !== "npm") return;
+    refuseOpenClawNpmUpgrade(plan.harnessId);
     const spec = await this.npmRelease(plan, recipe, version, context);
     const runtime = spec.engines.node ? await this.runtimeAt((plan.actualEntry ? await this.interpreter(plan.actualEntry) : null) ?? this.node, spec.engines.node, null, true, context) : null;
     if (runtime && !runtime.satisfied) throw new ManagementError("RUNTIME_INCOMPATIBLE", runtimeRefusal(version, runtime));
-    if (plan.harnessId !== "openclaw") return;
-    // The candidate is the exact version the upgrade installs. Its validation runs isolated: it can write only the stage
-    // and reach no network, so it can neither migrate the user's configuration nor connect to the running gateway.
-    const candidate = join(context.stage, "compatibility-candidate"); await mkdir(candidate, { mode: 0o700 });
-    const quiet: ManagementInstallContext = { stage: context.stage, signal: context.signal, assertOwned: context.assertOwned, log: () => {} };
-    await this.process(plan.manager, ["install", "--prefix", candidate, "--no-save", "--no-audit", "--no-fund", "--ignore-scripts", plan.reference + "@" + version], quiet, "configuration");
-    const candidateEntry = installedNpmEntry(candidate, plan.reference, version, recipe.binName);
-    let output = "";
-    const bounded: ManagementInstallContext = { ...quiet, signal: AbortSignal.any([context.signal, AbortSignal.timeout(60000)]),
-      log: (stream, text) => { if (stream === "stdout" && Buffer.byteLength(output) < 65536) output += text + "\n"; } };
-    try { await this.process(this.node, [candidateEntry, "config", "validate", "--json"], bounded, "isolated", { OPENCLAW_CONFIG_PATH: nativeValues(this.source, null).OPENCLAW_CONFIG_PATH!, OPENCLAW_STATE_DIR: join(context.stage, "candidate-state") }); }
-    catch (error) {
-      if (error instanceof ManagementError && (error.code === "PROCESS_FAILED" || error.code === "CANCELLED" && !context.signal.aborted)) {
-        const paths = issuePaths(output);
-        throw new ManagementError("NATIVE_CONFIGURATION_INCOMPATIBLE", error.code === "CANCELLED" ? "目标版本在 60 秒内没有完成配置校验，原安装保留，没有升级。"
-          : "目标版本的配置校验没有通过" + (paths.length ? "（涉及 " + paths.join("、") + "）" : "") + "，原安装保留，没有升级。");
-      }
-      throw error;
-    }
   }
   async execute(plan: NativeInstallPlan, recipe: ManagementRecipe, version: string, context: NativeInstallContext): Promise<{ version: string; configurationPreserved: boolean }> {
     context.assertOwned();
@@ -229,6 +219,10 @@ export class NativeManagement implements NativeManagementPort {
     switch (plan.channel) {
       case "npm": {
         await this.npmRelease(plan, recipe, version, context);
+        // --ignore-scripts: no lifecycle script of the package runs in this install. A package that needs them completes
+        // them itself later: OpenClaw keeps .openclaw-lifecycle-pending in its package root and its launcher runs them at
+        // its next start, here the protected --version check below, which fails with "package lifecycle is incomplete"
+        // when they cannot run. OpenClaw's npm upgrade is refused in prepare meanwhile (refuseOpenClawNpmUpgrade).
         await this.process(plan.manager, ["install", "--global", "--prefix", plan.prefix, "--no-audit", "--no-fund", "--ignore-scripts", "--registry=https://registry.npmjs.org", plan.reference + "@" + version], context, "configuration");
         const manifest = await json(join(plan.prefix, "lib", "node_modules", plan.reference, "package.json"));
         if (manifest.name !== plan.reference || manifest.version !== version) throw new ManagementError("NATIVE_VERIFICATION_FAILED", "installed npm identity/version did not match its frozen target");

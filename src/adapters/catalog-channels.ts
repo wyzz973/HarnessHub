@@ -118,8 +118,12 @@ const installs: Readonly<Record<string, OfficialInstallMethod>> = {
   cursor: { kind: "script", command: "curl https://cursor.com/install -fsS | bash", url: "https://cursor.com/install", hosts: ["cursor.com"], interpreter: "bash", args: [], env: {},
     writes: [".local/bin", ".local/share/cursor-agent"], configFiles: [], shellProfile: null,
     installs: { command: "cursor-agent", path: ".local/bin/cursor-agent" }, notes: [SCRIPT_NOTE, "Cursor 的安装脚本自身不校验下载的完整性。"] },
-  openclaw: { kind: "npm", package: "openclaw", bin: "openclaw", command: "npm install -g openclaw@latest",
-    notes: ["OpenClaw 的官方脚本会安装 Homebrew 和 Node.js 并进入交互式引导，HarnessHub 不代为运行，改用官网同样列出的 npm 方式。", "装好后请在终端运行 openclaw onboard --install-daemon 完成配置；装好服务之前，OpenClaw 的网关不会运行。"] },
+  // The npm command as docs/install/index.md gives it at v2026.10.5 (read 2026-10-22); the launcher's own completion of
+  // skipped lifecycle scripts is in its openclaw.mjs at that tag.
+  openclaw: { kind: "npm", package: "openclaw", bin: "openclaw", command: "npm install -g openclaw@latest --allow-scripts=openclaw",
+    notes: ["OpenClaw 的官方脚本会安装 Homebrew 和 Node.js 并进入交互式引导，HarnessHub 不代为运行，改用官网同样列出的 npm 方式。",
+      "官网命令里的 --allow-scripts=openclaw 明确允许 OpenClaw 的 preinstall 与 postinstall：npm 11.16 起没有它时 npm 只警告、仍会运行这两个脚本，npm 12 起默认不运行；npm 11.15 及更早没有这个选项，要去掉它。没运行的安装脚本由 OpenClaw 在下一次启动时自己补跑，补跑失败会提示 package lifecycle is incomplete。",
+      "装好后请在终端运行 openclaw onboard --install-daemon 完成配置；装好服务之前，OpenClaw 的网关不会运行。"] },
   gemini: { kind: "npm", package: "@google/gemini-cli", bin: "gemini", command: "npm install -g @google/gemini-cli", notes: ["官方仓库写明：自 2026-06-18 起，免费用户与 Google One 用户改用 Antigravity CLI。"] },
   pi: { kind: "npm", package: "@earendil-works/pi-coding-agent", bin: "pi", command: "npm install -g @earendil-works/pi-coding-agent", notes: [] },
   dsh: { kind: "npm", package: "@deepseek-ai/dsh", bin: "dsh", command: "npm install -g @deepseek-ai/dsh", notes: ["DeepSeek Harness 会读取 ~/.dsh 下已有的配置和 acp profile（包括源码版留下的）；HarnessHub 还没有验证它们与官网版的兼容性。"] },

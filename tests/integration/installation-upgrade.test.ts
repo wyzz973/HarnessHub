@@ -425,3 +425,26 @@ test("G011-UG10 a conversation replying with the installation blocks its upgrade
   await assert.rejects(owned.upgradeCheck("openclaw", openclaw.ref), code("UNSUPPORTED_UPGRADE"));
   assert.equal(owned.installationUpgrade("openclaw", other.ref)?.kind, "version");
 });
+
+test("G011-UG10 an OpenClaw npm installation is offered for upgrade but its check says OpenClaw upgrades through its own openclaw update, before any release is looked up", macOnly, async t => {
+  const closers: (() => Promise<void>)[] = [];
+  const root = await temporary(t, "upgrade-openclaw-", closers), home = join(root, "home"); await mkdir(home); await mkdir(join(root, "data"));
+  const prefix = join(home, ".nvm/versions/node/v26.0.0"), packageRoot = join(prefix, "lib/node_modules/openclaw");
+  await file(join(packageRoot, "package.json"), JSON.stringify({ name: "openclaw", version: "2026.3.23-2", bin: { openclaw: "openclaw.mjs" } }));
+  await file(join(packageRoot, "openclaw.mjs"), "#!/bin/sh\necho 2026.3.23-2\n", 0o755); await link(join(packageRoot, "openclaw.mjs"), join(prefix, "bin/openclaw"));
+  const source = { home, values: { HOME: home, PATH: [join(prefix, "bin"), "/usr/bin", "/bin"].join(":") } };
+  const metadata: ManagementMetadataPort = { resolve: async () => assert.fail("OpenClaw's release is never looked up for an npm upgrade") };
+  const manager = new LocalHarnessManagement(join(root, "data"), { installationMode: "private-fixture", assertOwner: () => {}, ownerGeneration: 1, recipes: [], nativeEnvironment: source,
+    removal: new LocalInstallationRemoval(source, { npm: null, uv: null }, quietHost), installationUpgrader: new LocalInstallationUpgrader(source, { npm: null }, { metadata }),
+    nativeLocks: new NativeInstallationLocks(join(root, "locks")) });
+  closers.push(() => manager.shutdown());
+  const openclaw: InstallationObservation = { harnessId: "openclaw", controlId: "openclaw-native", ref: "b".repeat(64), role: "product", channel: "npm", name: "openclaw", root: packageRoot, prefix,
+    entry: join(prefix, "bin/openclaw"), resolvedPath: join(packageRoot, "openclaw.mjs"), version: "2026.3.23-2", active: true, label: "npm 全局（nvm v26.0.0）" };
+  manager.setInstallations([openclaw]);
+  // The page offers it, and the check explains instead of running anything (ADR-052, until its updater is wired in).
+  assert.equal(manager.installationUpgrade("openclaw", openclaw.ref)?.kind, "version");
+  await assert.rejects(manager.upgradeCheck("openclaw", openclaw.ref), (error: unknown) => error instanceof ManagementError && error.code === "UNSUPPORTED_UPGRADE"
+    && error.message.includes("openclaw update") && error.message.includes("ADR-052"));
+  assert.equal(JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8")).version, "2026.3.23-2");
+  assert.deepEqual(await readdir(join(root, "data", "management", "install-checks")).catch(() => []), [], "no prepared check is left behind");
+});
