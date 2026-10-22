@@ -164,6 +164,6 @@ WorkBuddy 的遥测开关与本原则无关，M4 开始前再问（ADR-048）。
 
 ## 验证
 
-- `src/`、`web/src/`、`tests/` 中不再出现 `VERIFIED_VERSIONS`、`versionVerification`、`HarnessVersionVerification`、`version-unverified`、“未经验证”“未核实”“相隔约”（grep 为 0）；设计检查、边界检查、工具自检、单元/集成/协议/浏览器测试全部通过，被删的门槛断言换成正向断言（任何版本都给命令、任何版本都不显示版本提示、能力页只显示版本号）。这些由 D1–D4 的测试与主代理的集成检查证明，本记录只登记要求。
+- `src/`、`web/src/`、`tests/` 中不再出现 `VERIFIED_VERSIONS`、`versionVerification`、`HarnessVersionVerification`、`version-unverified`、“未经验证”“相隔约”（grep 为 0），“未核实”也不再作为版本标记出现（执行结果未知、升级任务核对版本号、Cursor 读取规则说明里的“未核实”与版本门槛无关，保留）；设计检查、边界检查、工具自检、单元/集成/协议/浏览器测试全部通过，被删的门槛断言换成正向断言（任何版本都给命令、任何版本都不显示版本提示、能力页只显示版本号）。这些由 D1–D4 的测试与主代理的集成检查证明，本记录只登记要求。
 - 每家在最新正式版上的真实验收记录入库后，矩阵 `installation`、读表 `checkedOn`、ADR-039 表同一提交更新；不再有 `versionConsistency` 对账。真实验收以用户对“待用户决定”第 1 题的答复为前提，在它之前只有源码核对，不声称最新版真实通过。
 - 设计检查对计划与文档的要求：`python3 -I tools/check_design.py --write` 后再运行一次 exit 0；`pnpm check` exit 0；能力矩阵的 `installation` 文本不得再含“已验证区间”“VERIFIED_VERSIONS”“未经验证的版本”（`tools/check_design.py` 新增规则，`tools/test_check_design.py` 有拒绝样例并经临时关闭规则的变异核对）。

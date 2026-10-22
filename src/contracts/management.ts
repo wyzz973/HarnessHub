@@ -153,8 +153,9 @@ export interface NativeManagementPort {
   describe(recipe: ManagementRecipe, observation: SystemInstallationObservation | undefined, version: string | null, context: ManagementInstallContext): Promise<NativeInstallPlan>;
   latest(plan: NativeInstallPlan, recipe: ManagementRecipe, context: ManagementInstallContext): Promise<string>;
   /**
-   * Every check of this exact version that changes nothing: newer than the installed one, its release metadata, and the
-   * product's own compatibility check with the user's configuration. Fails with the reason the upgrade cannot run.
+   * Every check of this exact version that changes nothing: newer than the installed one, its release metadata and the
+   * runtime it requires; a product HarnessHub does not upgrade this way is refused before anything is resolved. Fails
+   * with the reason the upgrade cannot run.
    */
   prepare(plan: NativeInstallPlan, recipe: ManagementRecipe, version: string, context: ManagementInstallContext): Promise<void>;
   /** Installs the prepared version through the original channel and verifies it; services keep running (ADR-043). */

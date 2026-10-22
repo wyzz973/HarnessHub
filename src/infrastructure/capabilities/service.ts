@@ -57,7 +57,7 @@ const OPENCLAW_PROFILE = /^[a-z0-9][a-z0-9_-]{0,63}$/iu;
  * else ~/.openclaw/workspace. `~/` in a variable is the home; a workspace variable that is still relative names nothing
  * HarnessHub can place (OpenClaw resolves it against its own working directory), so the next rule applies.
  */
-function defaultOpenClawWorkspace(environment: ReadEnvironment, stateDir: string): string {
+export function defaultOpenClawWorkspace(environment: ReadEnvironment, stateDir: string): string {
   const value = (name: string): string | null => { const raw = environment.values[name]?.trim(); return raw ? raw.replace(/^~(?=$|\/)/u, environment.home) : null; };
   const explicit = value("OPENCLAW_WORKSPACE_DIR"), profile = value("OPENCLAW_PROFILE");
   if (explicit !== null && isAbsolute(explicit)) return resolve(explicit);

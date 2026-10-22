@@ -17,9 +17,8 @@ const OPENCLAW_MAINTENANCE: Pick<ManagementRecipe, "services" | "processNames" |
   processNames: ["openclaw-gateway", "openclaw-node"],
   pluginDirectory: ".openclaw/extensions",
   upgradeNotes: [
-    "升级前，HarnessHub 先把新版本装到临时目录，用你现在的配置做校验；校验隔离运行，不能写文件、不能联网。校验不通过就停下，什么都不改。",
+    "OpenClaw 要用它自己的 openclaw update 升级：它会运行 Doctor 迁移配置，并重启 Gateway（ADR-052）。HarnessHub 接上这条路线之前，点“升级”只给出这条说明，不会改动任何东西。",
     "重启时 Gateway 连接的消息渠道（例如微信、飞书）会断开片刻，最好选一个能接受短暂中断的时间升级。",
-    "HarnessHub 不运行 openclaw doctor，也不迁移你的配置。如果升级后 OpenClaw 提示需要迁移，在终端运行 openclaw doctor，然后运行 openclaw gateway restart。",
     "已安装的插件可能与新版本不兼容；升级后如果某个渠道没有恢复，先检查对应插件。",
   ],
 };

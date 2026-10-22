@@ -51,7 +51,7 @@ test("G060-NC14 each guard list follows the variables of the capability read tab
   assert.deepEqual(list("codex", moved).map(row => row[0]), ["/srv/codex/config.toml", "/srv/codex/AGENTS.md", "/srv/codex/AGENTS.override.md"]);
   assert.deepEqual(list("opencode", moved).map(row => row[0]), ["/srv/xdg/opencode/opencode.json", "/srv/xdg/opencode/opencode.jsonc", "/srv/xdg/opencode/AGENTS.md"]);
   assert.deepEqual(list("opencode", { home, values: { ...moved.values, OPENCODE_CONFIG_DIR: "/srv/opencode" } }).map(row => row[0]), ["/srv/opencode/opencode.json", "/srv/opencode/opencode.jsonc", "/srv/opencode/AGENTS.md"]);
-  assert.deepEqual(list("openclaw", moved).map(row => row[0]), ["/srv/openclaw.json", "~/.openclaw/workspace-work/AGENTS.md", "/srv/openclaw/skills"]);
+  assert.deepEqual(list("openclaw", moved).map(row => row[0]), ["/srv/openclaw.json", "/srv/openclaw/workspace/AGENTS.md", "/srv/openclaw/skills"]);
   assert.deepEqual(list("hermes", moved).map(row => row[0]), ["/srv/hermes/config.yaml", "/srv/hermes/SOUL.md", "/srv/hermes/skills", "~/.agents/skills"]);
   assert.deepEqual(list("dsh", moved).map(row => row[0]).slice(0, 2), ["/srv/dsh/settings.yaml", "/srv/dsh/settings.yaml.imported"]);
   assert.deepEqual([...list("pi", moved), ...list("gemini", moved)].map(row => row[0]), ["/srv/pi/settings.json", "/srv/pi/models.json", "/srv/gemini/.gemini/settings.json"]);

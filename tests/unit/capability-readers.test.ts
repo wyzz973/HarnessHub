@@ -192,7 +192,7 @@ test("G064-R2 Hermes is read from its active profile, and OpenClaw's workspace f
   await writeFile(join(root, ".hermes", "active_profile"), "missing\n");
   assert.equal(await resolveHermesHome({ home: root, values: {} }), join(root, ".hermes"));
   assert.equal(await resolveOpenClawWorkspace({ home: root, values: {} }), join(root, ".openclaw", "workspace"));
-  assert.equal(await resolveOpenClawWorkspace({ home: root, values: { OPENCLAW_PROFILE: "lab" } }), join(root, ".openclaw", "workspace-lab"));
+  assert.equal(await resolveOpenClawWorkspace({ home: root, values: { OPENCLAW_PROFILE: "lab" } }), join(root, ".openclaw-lab", "workspace"));
   await mkdir(join(root, ".openclaw")); await writeFile(join(root, ".openclaw", "openclaw.json"), "{ agents: { list: [{ id: 'a', default: true, workspace: '~/ws-a' }], defaults: { workspace: '~/ws' } } }");
   assert.equal(await resolveOpenClawWorkspace({ home: root, values: {} }), join(root, "ws-a"));
 });

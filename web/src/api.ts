@@ -822,7 +822,7 @@ export function errorMessage(error: unknown): string {
 export function failureMessage(failure: { readonly code: string; readonly message: string }): string {
   const labels: Readonly<Record<string, string>> = {
     GATEWAY_AUTH_REQUIRED: "这个 Harness 尚未配置 Gateway 认证。请补充连接配置，或选择另一个 Harness 继续。",
-    NATIVE_CONFIGURATION_INVALID: "这个 Harness 拒绝了本机配置。请运行它自带的修复或迁移命令（例如 doctor）后再试，或选择其他 Harness 继续。",
+    NATIVE_CONFIGURATION_INVALID: "这个 Harness 的本机配置无法使用（例如配置无效，或没有可用的默认代理）。请在原程序里修正，或运行它自带的修复命令（例如 doctor）后再试；也可以选择其他 Harness 继续。",
     PROCESS_EXITED: "Harness 提前退出了。历史已保留，可以重试或选择其他 Harness。",
     REMOTE_ERROR: "Harness 拒绝了这次请求。请检查连接配置，或选择其他 Harness。",
     NATIVE_AUTH_REQUIRED: "这个 Harness 尚未登录。请在本机完成登录后再试，也可以选择其他 Harness 继续。",

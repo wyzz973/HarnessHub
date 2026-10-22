@@ -12,7 +12,7 @@ import type { InstallationPolicy } from "../../src/contexts/catalog/domain/catal
 import type { HarnessManagementView, ResolvedManagedControl, SystemInstallationObservation } from "../../src/contracts/management.js";
 import type { SessionConfiguration } from "../../src/contracts/session.js";
 import type { HarnessEntrySource, InstallationView } from "../../src/contracts/web.js";
-import { resolveHermesHome, resolveOpenClawWorkspace } from "../../src/infrastructure/capabilities/service.js";
+import { defaultOpenClawWorkspace, resolveHermesHome, resolveOpenClawWorkspace } from "../../src/infrastructure/capabilities/service.js";
 import { inventory } from "../../src/infrastructure/catalog/inventory-composition.js";
 import { observedPackageVersion } from "../../src/infrastructure/management/system-version.js";
 import { captureNativeEnvironment, type NativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
@@ -38,7 +38,7 @@ export interface GuardSource { readonly home: string; readonly values: Readonly<
 /**
  * A source with the two locations the capability page resolves by reading a file: Hermes's home (HERMES_HOME, the sticky
  * profile, ~/.hermes) and OpenClaw's default agent workspace (from openclaw.json). Without them the lists use
- * `$HERMES_HOME` or ~/.hermes, and ~/.openclaw/workspace (`workspace-<profile>` under OPENCLAW_PROFILE).
+ * `$HERMES_HOME` or ~/.hermes, and OpenClaw's default workspace as the capability page falls back to it (`defaultOpenClawWorkspace`).
  */
 export interface GuardEnvironment extends GuardSource { readonly hermesHome?: string; readonly openclawWorkspace?: string }
 /**
@@ -168,8 +168,7 @@ export function guardedFiles(harnessId: string, env: GuardEnvironment): readonly
     case "codex": return [file(join(dirs.codex, "config.toml")), file(join(dirs.codex, "AGENTS.md")), file(join(dirs.codex, "AGENTS.override.md"))];
     case "opencode": return [file(join(dirs.opencode, "opencode.json")), file(join(dirs.opencode, "opencode.jsonc")), file(join(dirs.opencode, "AGENTS.md"))];
     case "openclaw": {
-      const profile = env.values.OPENCLAW_PROFILE?.trim();
-      const workspace = env.openclawWorkspace ?? join(home, ".openclaw", profile && profile.toLowerCase() !== "default" ? "workspace-" + profile : "workspace");
+      const workspace = env.openclawWorkspace ?? defaultOpenClawWorkspace(env, dirs.openclaw);
       return [file(dirs.openclawConfig), file(join(workspace, "AGENTS.md")), dir(join(dirs.openclaw, "skills"))];
     }
     case "hermes": {

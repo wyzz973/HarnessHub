@@ -2,7 +2,7 @@ import { constants } from "node:fs";
 import { access, lstat, mkdir, open, readFile, readdir, realpath, rename, stat, symlink } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { compare, valid, satisfies } from "semver";
+import { compare, prerelease, valid, satisfies } from "semver";
 import { ManagementError, type ManagementInstallContext, type ManagementRecipe, type NativeInstallPlan, type NativeManagementPort, type SystemInstallationObservation, type NativeInstallContext, type ManagementMetadataPort, type ProgramUsage, type ResolvedInstallSpec, type RuntimeRequirement, type UsedService } from "../../contracts/management.js";
 import { homebrewName } from "../../contexts/catalog/domain/channels.js";
 import { homebrewTap } from "../discovery/packages.js";
@@ -52,6 +52,10 @@ export function compareReleases(a: string, b: string): number | null {
   };
   const left = parse(a), right = parse(b);
   return left === null || right === null ? null : compare(left.base, right.base) || Math.sign(left.revision - right.revision);
+}
+/** Whether a version is a prerelease: semver's prerelease part, except a calendar version's build revision (2026.3.23-2). */
+export function isPrerelease(version: string): boolean {
+  return !CALENDAR_REVISION.test(version) && valid(version) !== null && prerelease(version) !== null;
 }
 /**
  * Refuses HarnessHub's own npm upgrade of OpenClaw, before anything is resolved or changed. A transition until its own

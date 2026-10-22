@@ -9,7 +9,7 @@ import { NativeInstallationLocks } from "../../src/infrastructure/management/nat
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
 import { ManagementError, type ManagementMetadataPort, type ManagementRecipe, type NativeProgramUsers } from "../../src/contracts/management.js";
 import { systemProgramHost, type ProgramHost } from "../../src/infrastructure/management/program-usage.js";
-import { compareReleases, isolatedSandboxProfile } from "../../src/infrastructure/management/native.js";
+import { compareReleases, isolatedSandboxProfile, isPrerelease } from "../../src/infrastructure/management/native.js";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { randomUUID } from "node:crypto";
@@ -425,6 +425,9 @@ test("G011-UP1 releases are ordered by semver, with a calendar version's -N as a
   // Only a calendar version's numeric suffix is a revision; anything that is no version compares to nothing.
   assert.ok(compareReleases("1.0.0", "1.0.0-1")! > 0, "a semver prerelease stays one");
   for (const [a, b] of [["latest", "2026.3.23"], ["2026.03.23-2", "2026.3.23"], ["1.18.35_1", "1.18.35"], ["", "1.0.0"]] as const) assert.equal(compareReleases(a, b), null, a + " vs " + b);
+  // The same reading says which target is a prerelease: a calendar revision is a release.
+  for (const version of ["2026.3.23-2", "2026.10.5", "1.19.3", "latest"]) assert.equal(isPrerelease(version), false, version);
+  for (const version of ["0.2.1-rc.2", "0.2.1-alpha.5", "2026.10.10-beta.3", "1.0.0-1"]) assert.equal(isPrerelease(version), true, version);
 });
 
 test("G011-UP1 an upgrade is refused as no update only when the channel's version is not newer by that order, and OpenClaw's npm upgrade is refused for its own updater before anything is resolved", async t => {

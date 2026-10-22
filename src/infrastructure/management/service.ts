@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { access, lstat, realpath, mkdtemp, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
-import { gt, prerelease, valid } from "semver";
+import { valid } from "semver";
 import { ManagementError, type HarnessManagementView, type InstallCapability, type InstallationJobView, type InstallationLog, type NativeManagementPort, type NativeInstallPlan, type ManagementInstallContext,
   type ManagementInstallerPort, type ManagementMetadataPort, type ManagementRecipe, type ResolvedManagedControl, type MaintenanceCheck, type NativeJobFacts, type NativeProgramUsers, type RuntimeRequirement, type ServiceRestartFact,
   type InstallationObservation, type InstallationRemovalPort, type InstallationTarget, type UninstallCheck, type UninstallFacts, type InstallCheck, type OfficialInstallPort, type PreparedInstall,
@@ -16,7 +16,7 @@ import { OfficialManagementMetadata } from "./metadata.js";
 import { boundedManagementFile, managementIdentity, managementStorage, sameManagementIdentity } from "./storage.js";
 import { managementInteger, managementObject, parseInstallationRecord, parseInstallationTarget, parseInstallRequest, parseManagementJob, parseManagementLog, parseManagementUpdate, parseNativePlan, parseUpgradeRequest, type InstallationRecord } from "../../contexts/management/domain/state.js";
 import { probeSystemVersion } from "./system-version.js";
-import { NativeManagement, runtimeRefusal } from "./native.js";
+import { compareReleases, isPrerelease, NativeManagement, runtimeRefusal } from "./native.js";
 import { NativeInstallationLocks } from "./native-lock.js";
 import { captureNativeEnvironment, type NativeEnvironment } from "../session/native-environment.js";
 import { officialInstallMethod, productChannels, productMaintenance } from "../../adapters/catalog-channels.js";
@@ -56,6 +56,14 @@ const INSTALL_CHECK_MS = 15 * 60 * 1000;
 /** A Homebrew upgrade may build or download for longer than other maintenance (ADR-044). */
 const HOMEBREW_UPGRADE_MS = 15 * 60 * 1000;
 const openRoots = new Set<string>();
+/**
+ * Whether `candidate` is a newer release than `installed`, calendar build revisions included (2026.3.23-2 is newer than
+ * 2026.3.23); versions that are not semver count as newer whenever they differ.
+ */
+function newerRelease(candidate: string, installed: string): boolean {
+  const order = compareReleases(candidate, installed);
+  return order === null ? candidate !== installed : order > 0;
+}
 function importedFile(path: string): string { return new TextDecoder("utf8", { fatal: true }).decode(boundedManagementFile(path, 4096)); }
 function relativeSlot(root: string, path: string): string { return relative(root, path).replaceAll("\\", "/"); }
 const terminal = (status: InstallationJobView["status"]): boolean => ["completed", "cancelled", "failed", "unknown"].includes(status);
@@ -634,7 +642,7 @@ export class LocalHarnessManagement {
     const prepared = check.prepared, current = await this.nativeInspection(context => upgrader.version(observation, context)) ?? observation.version; this.own();
     const fingerprint = createHash("sha256").update(JSON.stringify({ target: target.fingerprint, prepared })).digest("hex"), expires = Date.now() + INSTALL_CHECK_MS;
     this.preparedUpgrades.set(fingerprint, { harnessId: id, ref, prepared, directory, expires });
-    const newer = prepared.version === null || current === null || (valid(prepared.version) && valid(current) ? gt(prepared.version, current) : prepared.version !== current);
+    const newer = prepared.version === null || current === null || newerRelease(prepared.version, current);
     const shared = sharedRuntimes(prepared.dependencies), busy = conversations.filter(item => item.busy).length;
     const notes: string[] = [];
     if (observation.active) notes.push("这是 HarnessHub 当前使用的那份：升级后，HarnessHub 的对话下次发消息起使用新版本。");
@@ -651,7 +659,7 @@ export class LocalHarnessManagement {
       : usage.services.length ? "这份安装有后台服务 " + usage.services.map(item => item.label).join("、") + " 在运行。HarnessHub 只在“升级 Harness”里按产品的方式重启服务；请先在终端停止它们，或升级当前使用的那份。"
       : busy ? "有 " + busy + " 个 HarnessHub 对话正在使用这份安装（正在回复或等你处理），等它们结束或停止后再升级。"
       : records.live.length ? "另一个 HarnessHub 进程（进程 " + records.live.slice(0, 4).join("、") + "）正在使用这个程序，等它结束后再升级。" : null;
-    return { ...common, fingerprint, expiresAt: new Date(expires).toISOString(), kind: prepared.kind, current, target: prepared.version, prerelease: prepared.version !== null && (valid(prepared.version) ? prerelease(prepared.version) !== null : false),
+    return { ...common, fingerprint, expiresAt: new Date(expires).toISOString(), kind: prepared.kind, current, target: prepared.version, prerelease: prepared.version !== null && isPrerelease(prepared.version),
       runs: this.shown(prepared.command), writes: prepared.writes.map(path => this.shown(path)), script: prepared.script === null ? null : { source: prepared.script.source, sha256: prepared.script.sha256 },
       shellProfile: prepared.shellProfile === null ? null : this.shown(prepared.shellProfile), configFiles: prepared.configFiles.map(path => this.shown(path)),
       dependencies: prepared.dependencies, sharedRuntimes: shared, runtime: prepared.runtime === null ? null : { ...prepared.runtime, path: this.shown(prepared.runtime.path) },
@@ -1124,7 +1132,6 @@ export class LocalHarnessManagement {
       const version = await native.latest(plan, recipe, context); owned();
       note("目标版本 " + version + "，沿用原安装渠道。");
       await native.prepare(plan, recipe, version, context); owned();
-      if (plan.harnessId === "openclaw") note("目标版本用你现在的配置校验通过（校验在隔离环境中进行，不能写文件、不能联网）。");
       // Who uses the program is read right before anything changes; nothing has changed if any of these refuse.
       const busy = this.users?.list(job.harnessId).filter(item => item.busy).length ?? 0;
       if (busy) throw new ManagementError("HARNESS_BUSY", "有 " + busy + " 个 HarnessHub 对话正在使用这个程序（正在回复或等你处理），等它们结束或停止后再升级。");
@@ -1283,8 +1290,7 @@ export class LocalHarnessManagement {
       const nativeRecipe = this.recipe(harness), nativePlan = nativeRecipe ? this.nativePlans.get(harness + ":" + nativeRecipe.controlId) : undefined;
       let updateStatus = checked?.updateStatus ?? (recipe?.canInstall ? "unchecked" : "unsupported");
       if (checked?.latestVersion != null && checked.error === null && ["unchecked", "available", "current"].includes(updateStatus)) {
-        const newer = currentVersion !== null && (valid(checked.latestVersion) && valid(currentVersion)
-          ? gt(checked.latestVersion, currentVersion) : checked.latestVersion !== currentVersion);
+        const newer = currentVersion !== null && newerRelease(checked.latestVersion, currentVersion);
         updateStatus = currentVersion === null ? "unchecked" : newer ? "available" : "current";
       }
       const programVersion = system ? this.programVersion(harness, currentVersion) : currentVersion;
@@ -1294,7 +1300,7 @@ export class LocalHarnessManagement {
         checkedAt: checked?.checkedAt ?? null, activeJobId: typeof active === "string" ? active : null, defaultRevision: this.defaultRevision(harness), error: checked?.error ?? null,
         ...(nativePlan === undefined ? {} : { native: { channel: nativePlan.channel, location: nativePlan.entry, fingerprint: nativePlan.fingerprint,
           canInstall: nativePlan.channel !== "unsupported" && nativePlan.reason === null && !nativePlan.actualEntry,
-          canUpgrade: nativePlan.channel !== "unsupported" && nativePlan.reason === null && nativePlan.beforeVersion !== null && !!nativePlan.actualEntry && !(checked?.latestVersion && valid(checked.latestVersion) && valid(nativePlan.beforeVersion) && !gt(checked.latestVersion, nativePlan.beforeVersion)),
+          canUpgrade: nativePlan.channel !== "unsupported" && nativePlan.reason === null && nativePlan.beforeVersion !== null && !!nativePlan.actualEntry && !(checked?.latestVersion && !newerRelease(checked.latestVersion, nativePlan.beforeVersion)),
           reason: nativePlan.reason } }) };
     });
   }
@@ -1372,7 +1378,7 @@ export class LocalHarnessManagement {
             : await this.metadata.resolve(recipe, controller.signal); this.own();
           const installed = this.views([id])[0]!.installedVersion;
           if (spec.version === "vendor-latest") { this.storeUpdate(id, { latestVersion: null, updateStatus: "unchecked", checkedAt: this.now(), error: null }); continue; }
-          const available = installed !== null && (valid(spec.version) && valid(installed) ? gt(spec.version, installed) : spec.version !== installed);
+          const available = installed !== null && newerRelease(spec.version, installed);
           this.storeUpdate(id, { latestVersion: spec.version, updateStatus: available ? "available" : installed === null ? "unchecked" : "current", checkedAt: this.now(), error: null });
         } catch (error) { this.own(); this.storeUpdate(id, { latestVersion: null, updateStatus: "failed", checkedAt: this.now(), error: { code: error instanceof ManagementError ? error.code : "CHECK_FAILED", message: "latest version could not be checked" } }); }
         finally { clearTimeout(timer); this.checkControllers.delete(controller); }
