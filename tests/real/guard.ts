@@ -9,13 +9,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { harnessDirectories } from "../../src/adapters/capability-reads.js";
 import { application } from "../../src/cli/session-application.js";
 import type { InstallationPolicy } from "../../src/contexts/catalog/domain/catalog.js";
-import type { HarnessManagementView, HarnessVersionVerification, ResolvedManagedControl, SystemInstallationObservation } from "../../src/contracts/management.js";
+import type { HarnessManagementView, ResolvedManagedControl, SystemInstallationObservation } from "../../src/contracts/management.js";
 import type { SessionConfiguration } from "../../src/contracts/session.js";
 import type { HarnessEntrySource, InstallationView } from "../../src/contracts/web.js";
 import { resolveHermesHome, resolveOpenClawWorkspace } from "../../src/infrastructure/capabilities/service.js";
 import { inventory } from "../../src/infrastructure/catalog/inventory-composition.js";
 import { observedPackageVersion } from "../../src/infrastructure/management/system-version.js";
-import { versionVerification } from "../../src/infrastructure/management/verified-versions.js";
 import { captureNativeEnvironment, type NativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
 import { harnessEntry, productCommand } from "../../src/web/harness-entry.js";
 import { installationViews } from "../../src/web/harness-installations.js";
@@ -409,11 +408,12 @@ export interface EvidenceHarness {
   readonly controls: readonly { readonly id: string; readonly protocol: string; readonly entry: HarnessEntrySource }[];
   /** The version of the entry HarnessHub starts, as its channel records it (the adapter's, for an adapter entry). */
   readonly entryVersion: string | null;
-  /** The product's version: management's, or, when that needs a version probe (an adapter entry), the active product installation's record. */
+  /**
+   * The product's version: management's, or, when that needs a version probe (an adapter entry), the active product
+   * installation's record. Evidence of what the record ran on; nothing judges it (ADR-053).
+   */
   readonly programVersion: string | null;
   readonly programVersionFrom: "management" | "installation" | null;
-  /** ADR-038's judgement of these versions against VERIFIED_VERSIONS; null when no product version is known. */
-  readonly verification: HarnessVersionVerification | null;
 }
 export interface EvidenceHeader {
   readonly recordedAt: string;
@@ -494,12 +494,11 @@ export async function evidenceHeader(app: HeaderApplication, harnessIds: readonl
       .map(({ ref, channel, label, command, version, role, active }) => ({ ref, channel, label, command, version, role, active }));
     const recorded = installations.find(item => item.role === "product" && item.active)?.version ?? null;
     const programVersion = view.programVersion ?? recorded, programVersionFrom = view.programVersion !== null ? "management" : recorded !== null ? "installation" : null;
-    const verification = view.verification ?? (programVersion === null ? null : versionVerification(harness.id, programVersion, view.installedVersion));
     const controls = harness.controls.flatMap(control => {
       const entry = control.state === "candidate" ? harnessEntry(control, observed.managedBindings.has(control.id)) : null;
       return entry === null ? [] : [{ id: control.id, protocol: control.protocol, entry: entry.source }];
     });
-    return { harnessId: harness.id, source: view.source, installations, controls, entryVersion: view.installedVersion, programVersion, programVersionFrom, verification };
+    return { harnessId: harness.id, source: view.source, installations, controls, entryVersion: view.installedVersion, programVersion, programVersionFrom };
   });
   const result: EvidenceHeader = { ...header, harnesses };
   if (homePathsIn(result, homeForms(environment.home), 1 << 20).length) throw new GuardError("PRIVACY", "the header would name a path by its absolute home form");

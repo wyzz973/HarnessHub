@@ -62,8 +62,8 @@ export function harnessOptions(harnesses: readonly HarnessView[], readiness: rea
     return {
       value: row.id, label: row.name, icon: <BrandIcon brand={row.id} name={row.name} size={20}/>,
       group: available ? "本机可用" : "更多 Harness",
-      // A version HarnessHub has not run for real is said, never blocked (ADR-038).
-      description: [version ? `v${version}${row.management.verification?.state === "unverified" ? " · 未经验证的版本" : ""}` : row.controls.filter(item => item.available).map(item => protocolLabel(item.protocol)).join(" / "),
+      // The version is a fact of the installation; nothing is said about it (ADR-053).
+      description: [version ? `v${version}` : row.controls.filter(item => item.available).map(item => protocolLabel(item.protocol)).join(" / "),
         available && seen?.startupMs !== undefined ? "启动约 " + approximately(seen.startupMs) : ""].filter(Boolean).join(" · "),
       ...(status ? { status } : {}),
       disabled: !available, reason: row.installed ? "已发现程序，控制入口尚未就绪" : "尚未安装，可在“我的 Agent”中查看安装方式",

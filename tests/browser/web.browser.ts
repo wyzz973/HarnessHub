@@ -1131,32 +1131,43 @@ test("a Turn waiting for a slot says how many conversations run, has no deadline
   assert.deepEqual(errors, []);
 });
 
-test("a Harness version HarnessHub has not run for real is marked in the Harness list and the picker, and stays usable", { timeout: 120000 }, async t => {
+test("a Harness of a version HarnessHub never ran shows that version alone in the Harness list, its detail, the welcome and the picker, with nothing said about it (ADR-053)", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
   const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url);
-  // HarnessHub verified Gemini CLI 0.62.0; the fixture installs 1.0.0 of it. Gemini CLI is frozen, so it is shown first (ADR-050).
+  // The hint texts ADR-038 showed beside a version no record named; none of them appears anywhere any more.
+  const hints = ["未经验证", "验证过的版本", "相隔约", "目录参考"];
+  const sayNothing = async (where: string) => { const text = await page.locator("body").innerText(); for (const hint of hints) assert.ok(!text.includes(hint), where + " says " + JSON.stringify(hint)); };
+  // The fixture installs Gemini CLI 1.0.0, a version no record names. Gemini CLI is frozen, so it is shown first (ADR-050).
   await showFrozenHarnesses(page);
   await page.getByRole("button", { name: "我的 Agent", exact: true }).click();
   const row = page.locator(".harness-table-row").filter({ has: page.getByRole("button", { name: "查看 Gemini CLI 详情", exact: true }) });
   await row.getByRole("button", { name: "安装", exact: true }).click();
   const detail = page.getByRole("dialog");
   await expect(detail.getByText("安装完成", { exact: true })).toBeVisible({ timeout: 30000 });
-  await expect(detail.locator(".version-unverified-note")).toHaveText("未经验证的版本：HarnessHub 用真实程序验证过 0.62.0。这个版本仍可使用，部分能力可能不同。");
+  // The detail: the version as a fact, next to the latest one; the recipe's "目录参考" version is gone with the hint.
+  await expect(detail.getByText("当前版本", { exact: true }).locator("..")).toContainText("1.0.0");
+  await expect(detail.getByText("最新版本", { exact: true })).toBeVisible();
+  await sayNothing("the detail");
   await detail.getByRole("button", { name: "关闭 Harness 详情", exact: true }).click();
-  const hint = row.locator(".version-unverified");
-  await expect(hint).toHaveText("未经验证"); await expect(hint).toHaveAttribute("title", "HarnessHub 用真实程序验证过 0.62.0。这个版本仍可使用，部分能力可能不同。");
-  // A Harness HarnessHub never verified claims nothing either way.
-  await expect(page.locator(".harness-table-row").filter({ has: page.getByRole("button", { name: "查看 Autohand Code 详情", exact: true }) }).locator(".version-unverified")).toHaveCount(0);
-  await page.screenshot({ path: join(artifact, "version-unverified.png"), animations: "disabled" });
-  // The picker says so too, and the Harness can still be chosen.
+  // The list: the version alone, with no mark beside it, like the Harness nothing was ever recorded for.
+  await expect(row).toContainText("v1.0.0"); await expect(row.locator(".badge")).toHaveText(["冻结"]);
+  const autohand = page.locator(".harness-table-row").filter({ has: page.getByRole("button", { name: "查看 Autohand Code 详情", exact: true }) });
+  await expect(autohand.locator(".badge")).toHaveCount(0);
+  await sayNothing("the Harness list");
+  await page.screenshot({ path: join(artifact, "version-fact.png"), animations: "disabled" });
+  // The welcome card and the picker show the version the same way, and the Harness is chosen like any other.
   await page.getByRole("button", { name: "返回对话", exact: true }).click();
+  const card = page.getByRole("region", { name: "本机发现的 Harness" }).getByRole("button", { name: "选择 Gemini CLI", exact: true });
+  await expect(card).toContainText("v1.0.0"); await expect(card.locator(".badge")).toHaveCount(0);
+  await sayNothing("the welcome");
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click();
   const option = page.getByRole("option", { name: "Gemini CLI", exact: true });
-  await expect(option).toContainText("v1.0.0 · 未经验证的版本"); await expect(option).toBeEnabled();
+  await expect(option).toContainText("v1.0.0"); await expect(option).toBeEnabled();
+  await sayNothing("the picker");
   await option.click();
   await expect(page.getByRole("button", { name: "选择 Harness", exact: true })).toContainText("Gemini CLI");
   assert.deepEqual(errors, []);
@@ -1508,7 +1519,7 @@ test("G054-UP1 an upgrade first says what it restarts, closes and leaves on the 
     resident: [{ label: "ai.openclaw.node", name: "OpenClaw Node", pid: 4736, restartCommand: "openclaw node restart" }], processes: [{ pid: 8100, name: "openclaw" }],
     conversations: blocked ? [{ sessionId: "s-replying", title: "正在回复的对话", busy: true }] : [{ sessionId: "s-idle", title: "空闲的对话", busy: false }],
     otherUsers: blocked ? [{ pid: 51234 }] : [], staleRecords: 2, plugins: ["openclaw-weixin"], notes: ["重启时 Gateway 连接的消息渠道（例如微信、飞书）会断开片刻，最好选一个能接受短暂中断的时间升级。"],
-    rollback: "npm install --global openclaw@2026.3.23-2", target: { state: "unverified", program: "2026.3.23-2" },
+    rollback: "npm install --global openclaw@2026.3.23-2",
     runtimes: [
       { runtime: "Node.js", required: ">=24.16.0 <25 || >=26.1.0", found: blocked ? "25.9.0" : "26.11.1", path: blocked ? "/opt/homebrew/bin/node" : "/Users/me/.nvm/versions/node/v26.11.1/bin/node", satisfied: !blocked, service: null, restarted: true, upgradeCommand: blocked ? "brew upgrade node" : null },
       { runtime: "Node.js", required: ">=24.16.0 <25 || >=26.1.0", found: blocked ? "25.9.0" : "26.11.0", path: "/opt/homebrew/opt/node/bin/node", satisfied: !blocked, service: "ai.openclaw.gateway", restarted: true, upgradeCommand: "brew upgrade node" },
@@ -1534,10 +1545,12 @@ test("G054-UP1 an upgrade first says what it restarts, closes and leaves on the 
   blocked = false;
   await row.getByRole("button", { name: "升级", exact: true }).click();
   await expect(dialog.getByText("2026.3.23-2 → 2026.10.2")).toBeVisible();
-  for (const text of ["沿用原来的 npm 全局安装，把 OpenClaw 从 2026.3.23-2 升级到 2026.10.2。", "两个版本相隔约 7 个月，变化可能较多。", "HarnessHub 对 OpenClaw 的接入是在 2026.3.23-2 上验证的；2026.10.2 还没有验证",
+  for (const text of ["沿用原来的 npm 全局安装，把 OpenClaw 从 2026.3.23-2 升级到 2026.10.2。",
     "OpenClaw Gateway（ai.openclaw.gateway，进程 4039）会在新版本核实后立即重启：", "launchctl kickstart -k gui/501/ai.openclaw.gateway", "1 个对话保留的 OpenClaw 进程会先关闭，下次发消息时重新连接。",
     "OpenClaw Node（ai.openclaw.node，进程 4736），升级后可运行 openclaw node restart", "openclaw（进程 8100）", "还会清除 2 条已结束的 HarnessHub 进程留下的使用记录。",
     "已安装的插件：openclaw-weixin。新版本可能不兼容它们。", "最好选一个能接受短暂中断的时间升级", "npm install --global openclaw@2026.3.23-2"]) await expect(dialog).toContainText(text);
+  // Seven months apart, and a target no record names: the versions are stated, and nothing is inferred from them (ADR-053).
+  for (const text of ["相隔约", "还没有验证", "验证过的版本"]) await expect(dialog).not.toContainText(text);
   // A service left running only needs a newer Node.js before its own restart: said, without blocking.
   await expect(dialog.locator(".upgrade-runtime-warning")).toHaveText("OpenClaw Node（ai.openclaw.node）启动用的 Node.js 是 25.9.0（/opt/homebrew/opt/node@25/bin/node），2026.10.2 要求 >=24.16.0 <25 || >=26.1.0。升级后重启它之前，需要先升级这个 Node.js（brew upgrade node@25）。");
   await page.screenshot({ path: join(artifact, "upgrade-confirmation.png"), animations: "disabled" });
@@ -1726,7 +1739,7 @@ test("G054-IN1 installing a missing product the official way first says what run
     runs: "~/.nvm/versions/node/v26.11.1/bin/npm install --global --prefix ~/.nvm/versions/node/v26.11.1 @deepseek-ai/dsh@9.9.7", writes: ["~/.nvm/versions/node/v26.11.1"], shellProfile: null, configFiles: [],
     version: "9.9.7", prefix: { label: "nvm v26.11.1", path: "~/.nvm/versions/node/v26.11.1" },
     runtime: { runtime: "Node.js", required: ">=22", found: "26.11.1", path: "~/.nvm/versions/node/v26.11.1/bin/node", satisfied: true, service: null, restarted: true, upgradeCommand: null },
-    terminal: { command: "dsh", before: null, after: "this" }, target: null, notes: [note], blocked } }));
+    terminal: { command: "dsh", before: null, after: "this" }, notes: [note], blocked } }));
   let submitted: Record<string, unknown> | null = null;
   const job = { id: "management-88888888-8888-4888-8888-888888888888", harnessId: "dsh", controlId: "dsh", action: "install", status: "queued", phase: "queued", cancelRequested: false,
     createdAt: "2026-10-17T11:00:05.000Z", updatedAt: "2026-10-17T11:00:05.000Z", resolvedVersion: null, installationId: null, error: null, logCursor: 0,
@@ -1751,6 +1764,8 @@ test("G054-IN1 installing a missing product the official way first says what run
   await row.getByRole("button", { name: "安装", exact: true }).click();
   for (const text of ["npm install -g @deepseek-ai/dsh", "@deepseek-ai/dsh@9.9.7", "~/.nvm/versions/node/v26.11.1/bin/npm install --global --prefix ~/.nvm/versions/node/v26.11.1 @deepseek-ai/dsh@9.9.7",
     "nvm v26.11.1（~/.nvm/versions/node/v26.11.1）", "26.11.1 满足 >=22", note]) await expect(dialog).toContainText(text);
+  // 9.9.7 is a version no record names; the confirmation states it and says nothing about it (ADR-053).
+  for (const text of ["还不是", "验证过的版本"]) await expect(dialog).not.toContainText(text);
   await expect(dialog.locator(".install-terminal")).toHaveText("安装后，终端里的 dsh 就是这份新安装。");
   await page.screenshot({ path: join(artifact, "install-confirmation.png"), animations: "disabled" });
   await dialog.getByRole("button", { name: "安装", exact: true }).click(); await expect(dialog).toBeHidden();
@@ -1783,14 +1798,13 @@ test("G054-UG1 upgrading one installation first says the versions, what runs and
   await page.route(`**/api/v1/harnesses/claude/installations/${homebrewNode}/upgrade`, route => route.fulfill({ json: { harnessId: "claude", ref: homebrewNode, checkedAt, fingerprint, expiresAt: "2026-10-17T12:15:00.000Z",
     label, role: "product", channel: "npm", kind: "version", current: "2.1.296", target: "2.1.305", prerelease: false,
     runs: "/opt/homebrew/bin/npm install --global --prefix /opt/homebrew @anthropic-ai/claude-code@2.1.305", writes: ["/opt/homebrew"], script: null, shellProfile: null, configFiles: [], dependencies: [], sharedRuntimes: [], runtime: null,
-    active: false, conversations: [{ sessionId: "s-busy", title: "正在回复的对话", busy }], otherUsers: [], processes: [{ pid: 4242, name: "claude" }],
-    verification: { state: "unverified", program: "2.1.296", adapter: "0.89.1" }, terminal: null,
+    active: false, conversations: [{ sessionId: "s-busy", title: "正在回复的对话", busy }], otherUsers: [], processes: [{ pid: 4242, name: "claude" }], terminal: null,
     notes: ["这不是 HarnessHub 当前使用的那份（当前使用 npm 全局（nvm v26.11.1））；升级后“当前使用”不变。"],
     blocked: busy ? "有 1 个 HarnessHub 对话正在使用这份安装（正在回复或等你处理），等它们结束或停止后再升级。" : null } }));
   const explains = "它会把 ~/.hermes/hermes-agent 里的本地改动先 git stash，再 git pull 或 git reset 到最新、重装依赖、迁移 ~/.hermes/config.yaml，并重启网关（QQ 等消息渠道会断开片刻）。HarnessHub 不代为运行，请在终端运行。";
   await page.route(`**/api/v1/harnesses/hermes/installations/${checkout}/upgrade`, route => route.fulfill({ json: { harnessId: "hermes", ref: checkout, checkedAt, fingerprint: "a".repeat(64), expiresAt: checkedAt,
     label: "官方安装脚本", role: "product", channel: "script", kind: "terminal", current: "0.12.0", target: null, prerelease: false, runs: "hermes update --yes", writes: [], script: null, shellProfile: null, configFiles: [],
-    dependencies: [], sharedRuntimes: [], runtime: null, active: true, conversations: [], otherUsers: [], processes: [], verification: null,
+    dependencies: [], sharedRuntimes: [], runtime: null, active: true, conversations: [], otherUsers: [], processes: [],
     terminal: { command: "hermes update --yes", explains, localChanges: 2 }, notes: ["这份安装的目录里有 2 处没有提交的改动，hermes update --yes 会先把它们 git stash 起来。"],
     blocked: "HarnessHub 不代为运行这个产品的更新，请在终端运行 hermes update --yes。" } }));
   const job = { id: "management-99999999-9999-4999-8999-999999999999", harnessId: "claude", controlId: "claude-acp-npm", action: "upgrade", status: "completed", phase: "completed", cancelRequested: false,
@@ -1821,7 +1835,9 @@ test("G054-UG1 upgrading one installation first says the versions, what runs and
   busy = false;
   await detail.getByRole("button", { name: `升级到 v2.1.305：${label}里的 claude`, exact: true }).click();
   for (const text of ["2.1.296 → 2.1.305", "/opt/homebrew/bin/npm install --global --prefix /opt/homebrew @anthropic-ai/claude-code@2.1.305", "/opt/homebrew；其他位置都不能写。",
-    "这些程序正在运行这份安装，不会被关闭，重开后才用新版本：claude（进程 4242）。", "2.1.305 还不是 HarnessHub 用真实程序验证过的版本（验证过的是 2.1.296）", "升级后“当前使用”不变。"]) await expect(dialog).toContainText(text);
+    "这些程序正在运行这份安装，不会被关闭，重开后才用新版本：claude（进程 4242）。", "升级后“当前使用”不变。"]) await expect(dialog).toContainText(text);
+  // 2.1.305 is a version no record names: stated as the target, with nothing inferred from it (ADR-053).
+  for (const text of ["还不是", "验证过的版本"]) await expect(dialog).not.toContainText(text);
   await page.screenshot({ path: join(artifact, "installation-upgrade-confirmation.png"), animations: "disabled" });
   await dialog.getByRole("button", { name: "升级", exact: true }).click(); await expect(dialog).toBeHidden();
   await expect.poll(() => submitted).not.toBeNull();

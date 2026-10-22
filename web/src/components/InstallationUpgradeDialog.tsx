@@ -57,7 +57,7 @@ export function InstallationUpgradeDialog({ api, harness, installation, onClose,
             {busy.map(item => <button key={item.sessionId} type="button" className="mt-1 block max-w-full truncate border-none bg-transparent p-0 text-left text-[12.5px] text-accent-text underline" onClick={() => onOpenSession(item.sessionId)}>{item.title}</button>)}
           </Notice> : null}
           <dl className={`upgrade-facts m-0 ${fact}`}>
-            <Fact label="版本">{check.current ?? "版本未记录"} → {check.target ?? "由更新程序决定"}{check.prerelease ? <span className="ml-1.5 badge badge-amber">预发布版</span> : null}</Fact>
+            <Fact label="版本">{check.current ?? "版本未记录"} → {check.target ?? "由更新程序决定"}{check.prerelease ? <span className="ml-1.5 badge" title="渠道当前的 latest 就是预发布版">预发布版</span> : null}</Fact>
             <Fact label="实际运行"><code className="text-[12px]">{check.runs}</code></Fact>
             {check.script ? <Fact label="脚本来源"><span>{check.script.source}<br/><span className="text-fg-3">SHA-256 {check.script.sha256}</span></span></Fact> : null}
             <Fact label="可写位置">{check.writes.join("、")}{check.channel === "brew-formula" || check.channel === "brew-cask" ? "、Homebrew 的临时目录和缓存" : ""}；其他位置都不能写。</Fact>
@@ -70,7 +70,6 @@ export function InstallationUpgradeDialog({ api, harness, installation, onClose,
           {check.configFiles.length ? <p className="m-0 text-[12.5px] text-fg-2">更新程序会写 {check.configFiles.join("、")}；完成后只列出改动了哪些设置，不显示其他内容。</p> : null}
           {idle.length ? <p className="upgrade-idle m-0 text-[12.5px] text-fg-2">{idle.length} 个对话保留的 {name} 进程会先关闭，下次发消息时重新连接。</p> : null}
           {check.processes.length ? <Notice tone="amber">这些程序正在运行这份安装，不会被关闭，重开后才用新版本：{check.processes.map(item => `${item.name}（进程 ${item.pid}）`).join("、")}。</Notice> : null}
-          {check.verification?.state === "unverified" && check.role === "product" ? <p className="m-0 text-[12.5px] text-amber">{check.target} 还不是 HarnessHub 用真实程序验证过的版本（验证过的是 {check.verification.program}），仍可使用，部分能力可能不同。</p> : null}
           {check.notes.map(note => <p key={note} className="upgrade-note m-0 text-[12.5px] text-fg-2">{note}</p>)}
           <p className="m-0 text-[12px] text-fg-3">升级沿用这份安装自己的渠道，不改模型配置、登录和对话。确认 15 分钟内有效。</p>
         </>}

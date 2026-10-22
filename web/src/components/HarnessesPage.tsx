@@ -114,11 +114,6 @@ function sourceLabel(harness: HarnessView): string {
   if (harness.management.source !== "managed" && entry?.source === "custom-entry") return ENTRY_SOURCES["custom-entry"];
   return harness.management.source === "managed" ? "HarnessHub 管理" : harness.management.source === "system" ? "系统安装" : "尚未安装";
 }
-/** What HarnessHub verified, said beside a version it has not run for real (ADR-038); null otherwise. Never blocks. */
-function unverifiedHint(harness: HarnessView): string | null {
-  const verification = harness.management.verification;
-  return verification?.state === "unverified" ? `HarnessHub 用真实程序验证过 ${verification.program}${verification.adapter ? `（接入口 ${verification.adapter}）` : ""}。这个版本仍可使用，部分能力可能不同。` : null;
-}
 /** The product's own version; an adapter entry in front of it keeps its own version, shown apart. */
 function versionOf(harness: HarnessView): string | null { return harness.management.programVersion ?? harness.management.installedVersion; }
 function adapterVersion(harness: HarnessView): string | null {
@@ -200,7 +195,6 @@ export function HarnessesPage(props: HarnessProps) {
       const busy = Boolean(job && installationActive(job)) || props.submitting.includes(harness.id);
       const installable = canManage(harness);
       const needsAction = harness.management.native ? harness.management.native.canInstall || harness.management.native.channel === "native-cli" && harness.management.native.canUpgrade || harness.management.updateStatus === "available" : missing(harness) || harness.management.updateStatus === "available";
-      const hint = unverifiedHint(harness);
       return <article key={harness.id} className={cn("harness-table-row flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 md:grid md:grid-cols-[minmax(0,1fr)_230px_190px]", index > 0 && "border-t border-line", selectedId === harness.id && "bg-subtle")}>
         <button type="button" onClick={() => setSelectedId(harness.id)} aria-label={`查看 ${harness.name} 详情`} className="flex min-w-[200px] flex-1 items-center gap-3 border-none bg-transparent p-0 text-left md:min-w-0">
           <BrandIcon brand={harness.id} name={harness.name} size={30}/>
@@ -209,7 +203,7 @@ export function HarnessesPage(props: HarnessProps) {
             <small className={cn("text-[12px]", available ? "text-fg-3" : "text-fg-3")}>{job ? installationStatus(job) : available ? "控制入口已解析" : harness.installed ? "需要控制适配器" : "安装后即可尝试连接"}</small></span>
         </button>
         <div className="flex min-w-[170px] flex-col text-[12.5px]">
-          <span className="flex items-center gap-1.5 font-medium">{versionOf(harness) ? `v${versionOf(harness)}` : harness.installed ? "版本待检测" : "未安装"}{hint ? <span className="version-unverified badge badge-amber" title={hint}>未经验证</span> : null}</span>
+          <span className="flex items-center gap-1.5 font-medium">{versionOf(harness) ? `v${versionOf(harness)}` : harness.installed ? "版本待检测" : "未安装"}</span>
           <span className="text-fg-3">{sourceLabel(harness)}{adapterVersion(harness) ? ` · 接入口 v${adapterVersion(harness)}` : ""}{harness.management.updateStatus === "available" && harness.management.latestVersion ? <em className="ml-1 not-italic text-accent-text">v{harness.management.latestVersion} 可用</em> : null}</span>
         </div>
         <div className="flex flex-none items-center justify-end gap-1.5">
@@ -258,7 +252,6 @@ function HarnessDetail(props: HarnessProps & { harness: HarnessView; onClose: ()
   const unconfirmed = props.unconfirmed.find(item => item.harnessId === harness.id);
   const available = harness.controls.some(control => control.available);
   const busy = Boolean(job && installationActive(job)) || props.submitting.includes(harness.id);
-  const hint = unverifiedHint(harness);
   const inspect = async () => { if (!job || inspecting) return; setInspecting(true); setInspectionError(null); try { await props.api.inspectInstallation(job.id); props.onRescan(); } catch (error) { setInspectionError(errorMessage(error)); } finally { setInspecting(false); } };
   const fact = "grid grid-cols-[88px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-[13px]";
   return <>
@@ -272,7 +265,6 @@ function HarnessDetail(props: HarnessProps & { harness: HarnessView; onClose: ()
         <div className="grid grid-cols-2 gap-3"><div className="rounded-lg bg-subtle px-3 py-2.5"><span className="block text-[11.5px] text-fg-3">当前版本</span><strong className="text-[15px] font-semibold">{versionOf(harness) ?? (harness.installed ? "待检测" : "未安装")}</strong>{adapterVersion(harness) ? <small className="block text-[12px] text-fg-3">接入口 {adapterVersion(harness)}</small> : null}</div>
           <div className="rounded-lg bg-subtle px-3 py-2.5"><span className="block text-[11.5px] text-fg-3">最新版本</span><strong className="text-[15px] font-semibold">{harness.management.latestVersion ?? "尚未检查"}</strong></div></div>
         {harness.install?.note ? <p className="harness-install-note m-0 text-[12.5px] text-fg-2">{harness.install.note}</p> : null}
-        {hint ? <small className="version-unverified-note rounded-lg bg-amber-soft px-3 py-2 text-[12.5px] text-amber">未经验证的版本：{hint}</small> : null}
         {harness.management.source === "system" ? <p className="m-0 flex items-start gap-2 text-[12.5px] text-fg-2"><ShieldCheck size={14} className="mt-0.5 flex-none text-fg-3"/>这里管理终端使用的本机原安装，升级沿用它的原渠道。</p> : null}
       </DetailSection>
       {harness.installations.length > 0 ? <DetailSection title="本机找到的官网安装"><ul className="harness-installations m-0 flex list-none flex-col gap-1.5 p-0">{harness.installations.map((item, index) =>
@@ -311,7 +303,7 @@ function HarnessDetail(props: HarnessProps & { harness: HarnessView; onClose: ()
         {installationActive(job) ? <button type="button" className="btn btn-sm self-start" disabled={job.cancelRequested || props.cancelling.includes(job.id)} onClick={() => props.onCancelJob(job)}><Square size={12}/>取消安装任务</button> : null}
       </DetailSection> : null}
       {harness.management.native ? <DetailSection title="本机安装"><p className="m-0 text-[13px]">{channelLabel(harness.management.native.channel)}</p><code className="block rounded-md bg-subtle px-2.5 py-1.5 text-[12px] break-all">{harness.management.native.location}</code>{harness.management.native.reason ? <p className="m-0 text-[12.5px] text-amber">{harness.management.native.reason}</p> : null}</DetailSection> : null}
-      <DetailSection title="安装来源"><dl className={cn("m-0", fact)}><dt className="text-fg-3">来源</dt><dd className="m-0">{recipe?.sourceLabel ?? "暂无受支持的安装方式"}</dd>{recipe?.packageName ? <><dt className="text-fg-3">包名</dt><dd className="m-0"><code className="text-[12px]">{recipe.packageName}</code></dd></> : null}{recipe?.referenceVersion ? <><dt className="text-fg-3">目录参考</dt><dd className="m-0">{recipe.referenceVersion}</dd></> : null}
+      <DetailSection title="安装来源"><dl className={cn("m-0", fact)}><dt className="text-fg-3">来源</dt><dd className="m-0">{recipe?.sourceLabel ?? "暂无受支持的安装方式"}</dd>{recipe?.packageName ? <><dt className="text-fg-3">包名</dt><dd className="m-0"><code className="text-[12px]">{recipe.packageName}</code></dd></> : null}
         <dt className="text-fg-3">状态</dt><dd className="m-0">{harness.management.updateStatus === "current" ? "当前渠道无需升级" : harness.management.updateStatus === "available" ? "有新版本" : harness.management.updateStatus === "failed" ? "版本检查失败" : harness.management.updateStatus === "checking" ? "正在检查" : "未确认更新状态"}</dd></dl>
         {recipe?.reason ? <p className="m-0 text-[12.5px] text-fg-2">{recipe.reason}</p> : !recipe ? <p className="m-0 text-[12.5px] text-fg-2">这个目录项尚无当前环境可用的受管安装配方。</p> : null}{harness.management.error ? <Notice tone="red">{harness.management.error.message}</Notice> : null}</DetailSection>
       <DetailSection title="控制入口">{harness.controls.map(control => <div key={control.id} className="flex flex-col gap-1 rounded-lg border border-line px-3 py-2.5">

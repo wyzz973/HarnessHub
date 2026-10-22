@@ -16,7 +16,6 @@ import { OfficialManagementMetadata } from "./metadata.js";
 import { boundedManagementFile, managementIdentity, managementStorage, sameManagementIdentity } from "./storage.js";
 import { managementInteger, managementObject, parseInstallationRecord, parseInstallationTarget, parseInstallRequest, parseManagementJob, parseManagementLog, parseManagementUpdate, parseNativePlan, parseUpgradeRequest, type InstallationRecord } from "../../contexts/management/domain/state.js";
 import { probeSystemVersion } from "./system-version.js";
-import { adapterVersionVerification, versionVerification } from "./verified-versions.js";
 import { NativeManagement, runtimeRefusal } from "./native.js";
 import { NativeInstallationLocks } from "./native-lock.js";
 import { captureNativeEnvironment, type NativeEnvironment } from "../session/native-environment.js";
@@ -171,7 +170,7 @@ export class LocalHarnessManagement {
     else if (recipe.kind === "npm" && this.npm === null && this.options.installer === undefined) reason = "npm runtime was not found";
     else if (recipe.kind === "python" && this.uv === null && this.options.installer === undefined) reason = "uv runtime was not found";
     return { controlId: recipe.controlId, kind: recipe.kind, sourceLabel: recipe.kind === "binary" ? "ACP reviewed release archive" : recipe.kind === "npm" ? "npm registry" : "PyPI / private uv tool",
-      packageName: recipe.packageName, referenceVersion: recipe.referenceVersion, canInstall: reason === null, reason };
+      packageName: recipe.packageName, canInstall: reason === null, reason };
   }
   private systemFingerprint(observation: SystemInstallationObservation): string { return createHash("sha256").update(JSON.stringify(observation)).digest("hex"); }
   /** Read-only inventory observations do not launch programs and do not erase an unchanged version observation. */
@@ -372,15 +371,13 @@ export class LocalHarnessManagement {
     const installed = (this.installations.get(id) ?? []).filter(item => item.role === "product");
     const blocked = installed.length ? "这台电脑上已经有 " + installed.map(item => item.label).join("、") + " 的官网安装，HarnessHub 不再安装第二份。"
       : prepared.runtime !== null && !prepared.runtime.satisfied ? prepared.source + " 要求 Node.js " + prepared.runtime.required + "，安装用的 Node.js（" + this.shown(prepared.runtime.path) + "）是 " + (prepared.runtime.found ?? "读不出版本") + "。请先升级这个 Node.js；HarnessHub 不安装 Node.js。" : null;
-    const target = prepared.version === null ? null : versionVerification(id, prepared.version, null);
     const runs = prepared.method === "npm" ? this.shown([prepared.npm!, "install", "--global", "--prefix", prepared.prefix!, prepared.package + "@" + prepared.version].join(" "))
       : [...Object.entries(prepared.env).map(([key, value]) => key + "=" + value), prepared.interpreter!, "install." + prepared.interpreter, ...prepared.args].join(" ");
     return { harnessId: id, checkedAt: this.now(), fingerprint, expiresAt: new Date(expires).toISOString(), method: prepared.method, officialCommand: method.command,
       docs: method.kind === "npm" ? "https://www.npmjs.com/package/" + method.package : method.url, source: prepared.source, sha256: prepared.sha256, runs,
       writes: prepared.writes.map(path => this.shown(path)), shellProfile: prepared.shellProfile === null ? null : this.shown(prepared.shellProfile), configFiles: prepared.configFiles.map(path => this.shown(path)),
       version: prepared.version, prefix: prepared.prefix === null ? null : { label: prefixLabel(prepared.prefix, this.source.home), path: this.shown(prepared.prefix) },
-      runtime: prepared.runtime === null ? null : { ...prepared.runtime, path: this.shown(prepared.runtime.path) }, terminal: this.terminalAfter(prepared), target,
-      notes: [...method.notes, ...(prepared.method === "script" ? ["装好后，如果不是 HarnessHub 用真实程序验证过的版本，会提示“未经验证的版本”。"] : [])], blocked };
+      runtime: prepared.runtime === null ? null : { ...prepared.runtime, path: this.shown(prepared.runtime.path) }, terminal: this.terminalAfter(prepared), notes: method.notes, blocked };
   }
   /** Queues the official install the user confirmed (ADR-044); the prepared copy moves into the job's own directory. */
   submitOfficialInstall(input: unknown): InstallationJobView {
@@ -452,8 +449,6 @@ export class LocalHarnessManagement {
       if (found === null) throw new ManagementError("INSTALL_NOT_FOUND", "安装结束了，但没有在官网渠道里找到 " + request.command + "（" + this.shown(request.entry) + "）。没有重试。");
       if (found.version === null) throw new ManagementError("INSTALL_VERSION_UNKNOWN", "已经装好 " + request.command + "，但读不出它的版本。");
       official({ installed: true }, { actualVersion: found.version, configurationPreserved: true });
-      const verification = versionVerification(job.harnessId, found.version, null);
-      if (verification?.state === "unverified") note("这个版本还不是 HarnessHub 用真实程序验证过的版本（验证过的是 " + verification.program + "）。仍然可以使用，部分能力可能不同。");
       note("已核实：" + request.command + " " + found.version + " 装在官网渠道里。");
       this.phase(job.id, "completed", { resolvedVersion: found.version });
       this.systemVersions.delete(job.harnessId);
@@ -622,7 +617,7 @@ export class LocalHarnessManagement {
       if (layout?.kind !== "terminal") throw new ManagementError("UNSUPPORTED_UPGRADE", "HarnessHub 不升级这种安装。");
       const localChanges = await this.nativeInspection(context => removal.localChanges(observation, context)); this.own();
       return { ...common, fingerprint: target.fingerprint, expiresAt: checkedAt, kind, current: observation.version, target: null, prerelease: false, runs: layout.command, writes: [], script: null, shellProfile: null, configFiles: [],
-        dependencies: [], sharedRuntimes: [], runtime: null, conversations: [], otherUsers: [], processes: [], verification: null,
+        dependencies: [], sharedRuntimes: [], runtime: null, conversations: [], otherUsers: [], processes: [],
         terminal: { command: layout.command, explains: layout.explains, localChanges },
         notes: localChanges ? ["这份安装的目录里有 " + localChanges + " 处没有提交的改动，" + layout.command + " 会先把它们 git stash 起来。"] : [],
         blocked: "HarnessHub 不代为运行这个产品的更新，请在终端运行 " + layout.command + "。" };
@@ -641,12 +636,9 @@ export class LocalHarnessManagement {
     this.preparedUpgrades.set(fingerprint, { harnessId: id, ref, prepared, directory, expires });
     const newer = prepared.version === null || current === null || (valid(prepared.version) && valid(current) ? gt(prepared.version, current) : prepared.version !== current);
     const shared = sharedRuntimes(prepared.dependencies), busy = conversations.filter(item => item.busy).length;
-    const verification = prepared.version === null ? null : observation.role === "adapter" ? adapterVersionVerification(id, prepared.version) : versionVerification(id, prepared.version, null);
     const notes: string[] = [];
     if (observation.active) notes.push("这是 HarnessHub 当前使用的那份：升级后，HarnessHub 的对话下次发消息起使用新版本。");
     else notes.push("这不是 HarnessHub 当前使用的那份" + (others.find(item => item.active) ? "（当前使用 " + others.find(item => item.active)!.label + "）" : "") + "；升级后“当前使用”不变。");
-    if (observation.role === "adapter" && verification?.state === "unverified")
-      notes.push("HarnessHub 对这个产品的控制在适配器 " + verification.adapter + " 上验证过；新版本 " + prepared.version + " 未经验证（ADR-038），仍可使用，部分能力可能不同。");
     if (prepared.kind === "self-update") notes.push("由 " + prepared.command + " 自己决定装哪个版本；完成后显示升级前后的版本。");
     if (prepared.kind === "rerun") { const method = officialInstallMethod(id); notes.push("重新运行官方安装脚本" + (method?.kind === "script" ? "（官网命令 " + method.command + "）" : "") + "，装入它现在提供的版本；完成后显示升级前后的版本。"); }
     if (observation.channel === "brew-formula" || observation.channel === "brew-cask") {
@@ -663,7 +655,7 @@ export class LocalHarnessManagement {
       runs: this.shown(prepared.command), writes: prepared.writes.map(path => this.shown(path)), script: prepared.script === null ? null : { source: prepared.script.source, sha256: prepared.script.sha256 },
       shellProfile: prepared.shellProfile === null ? null : this.shown(prepared.shellProfile), configFiles: prepared.configFiles.map(path => this.shown(path)),
       dependencies: prepared.dependencies, sharedRuntimes: shared, runtime: prepared.runtime === null ? null : { ...prepared.runtime, path: this.shown(prepared.runtime.path) },
-      conversations, otherUsers: records.live.map(pid => ({ pid })), processes: [...usage.processes, ...usage.resident], verification, terminal: null, notes, blocked };
+      conversations, otherUsers: records.live.map(pid => ({ pid })), processes: [...usage.processes, ...usage.resident], terminal: null, notes, blocked };
   }
   /**
    * Queues the installation upgrade the user confirmed (ADR-044). Refused when the confirmation expired or was used, or
@@ -773,8 +765,6 @@ export class LocalHarnessManagement {
       if (after === null) throw new ManagementError("UPGRADE_VERSION_UNKNOWN", "升级结束了，但读不出这份安装现在的版本。");
       if (request.kind === "version" && after !== request.version) throw new ManagementError("UPGRADE_VERSION_MISMATCH", "升级结束了，但这份安装现在是 " + after + "，不是确认的 " + request.version + "。没有重试。");
       verified = true; this.upgradeFacts(job.id, {}, { configurationPreserved: true });
-      const verification = target.role === "adapter" ? adapterVersionVerification(job.harnessId, after) : versionVerification(job.harnessId, after, null);
-      if (verification?.state === "unverified") note("这个版本还不是 HarnessHub 用真实程序验证过的版本（验证过的是 " + (target.role === "adapter" ? "适配器 " + verification.adapter : verification.program) + "）。仍然可以使用，部分能力可能不同。");
       note(before === after ? "已是最新：" + target.label + " " + after + "。" : "已核实：" + target.label + " " + (before ?? "原版本") + " → " + after + "。");
       this.phase(job.id, "completed", { resolvedVersion: after });
       this.updates.delete(target.ref); this.systemVersions.delete(job.harnessId); this.programVersions.delete(job.harnessId); this.nativePlans.delete(job.harnessId + ":" + job.controlId);
@@ -816,7 +806,7 @@ export class LocalHarnessManagement {
       resident: [...usage.services.filter(service => service.declared?.restart !== true).map(service => ({ label: service.label, name: service.declared?.name ?? service.label, pid: service.pid,
         restartCommand: service.declared?.restartCommand ?? "launchctl kickstart -k " + service.target })), ...usage.resident.map(program => ({ label: null, name: program.name, pid: program.pid, restartCommand: null }))],
       processes: usage.processes, conversations: this.users?.list(id) ?? [], otherUsers: records.live.map(pid => ({ pid })), staleRecords: records.stale,
-      plugins, notes: recipe.upgradeNotes ?? [], rollback: rollbackCommand(plan), target: target === null ? null : versionVerification(id, target, null), runtimes };
+      plugins, notes: recipe.upgradeNotes ?? [], rollback: rollbackCommand(plan), runtimes };
   }
   listJobs(limit?: number): readonly InstallationJobView[] {
     this.own(); const count = boundedManagementLimit(limit, 1000);
@@ -1297,9 +1287,9 @@ export class LocalHarnessManagement {
           ? gt(checked.latestVersion, currentVersion) : checked.latestVersion !== currentVersion);
         updateStatus = currentVersion === null ? "unchecked" : newer ? "available" : "current";
       }
-      const programVersion = system ? this.programVersion(harness, currentVersion) : currentVersion, verification = versionVerification(harness, programVersion, currentVersion);
+      const programVersion = system ? this.programVersion(harness, currentVersion) : currentVersion;
       return { harnessId: harness, recipe, source: system ? "system" : installationId === null ? "missing" : "managed",
-        installedVersion: currentVersion, programVersion, installationId: system ? null : installationId, ...(verification === null ? {} : { verification }),
+        installedVersion: currentVersion, programVersion, installationId: system ? null : installationId,
         latestVersion: checked?.latestVersion ?? null, updateStatus,
         checkedAt: checked?.checkedAt ?? null, activeJobId: typeof active === "string" ? active : null, defaultRevision: this.defaultRevision(harness), error: checked?.error ?? null,
         ...(nativePlan === undefined ? {} : { native: { channel: nativePlan.channel, location: nativePlan.entry, fingerprint: nativePlan.fingerprint,

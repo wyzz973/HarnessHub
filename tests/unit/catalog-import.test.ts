@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import snapshot from "../../src/infrastructure/catalog/acp-registry.json" with { type: "json" };
 import { importRegistry } from "../../src/infrastructure/catalog/registry.js";
 import { harnessTier, loadBuiltinCatalog } from "../../src/adapters/catalog.js";
@@ -96,6 +98,20 @@ test("G011-NC3 the catalog's tiers: the seven focus Harnesses, the three frozen 
   assert.equal(ids.has("workbuddy"), false, "WorkBuddy is focus before its definition exists");
   const tiers = definitions.map(definition => harnessTier(definition.id));
   assert.deepEqual([tiers.filter(tier => tier === "focus").length, tiers.filter(tier => tier === "frozen").length, tiers.filter(tier => tier === "catalog").length], [6, 3, 36]);
+});
+
+test("G011-NC1 the capability matrix records the tier the catalog gives each Harness, and exactly Cursor, Gemini CLI and Pi are frozen (ADR-048, ADR-050)", () => {
+  // The matrix is read as unknown input: a Harness without an id or a tier fails here, not in the comparison below.
+  const value: unknown = JSON.parse(readFileSync(fileURLToPath(new URL("../../../plan/native-capabilities.json", import.meta.url)), "utf8"));
+  assert.ok(value !== null && typeof value === "object" && "harnesses" in value && Array.isArray(value.harnesses), "the matrix lists its Harnesses");
+  const matrix = value.harnesses.map((item: unknown) => {
+    assert.ok(item !== null && typeof item === "object" && "id" in item && typeof item.id === "string" && "tier" in item && typeof item.tier === "string", "each with an id and a tier");
+    return { id: item.id, tier: item.tier };
+  });
+  assert.ok(matrix.length >= 9, "the nine Harnesses the matrix covered on 2026-10-22, at least");
+  for (const harness of matrix) assert.equal(harness.tier, harnessTier(harness.id), `${harness.id}: the matrix and the catalog name one tier`);
+  assert.deepEqual(matrix.filter(harness => harness.tier === "frozen").map(harness => harness.id).sort(), ["cursor", "gemini", "pi"]);
+  assert.deepEqual(loadBuiltinCatalog("darwin-aarch64").filter(definition => harnessTier(definition.id) === "frozen").map(definition => definition.id).sort(), ["cursor", "gemini", "pi"], "the catalog freezes the same three");
 });
 
 test("malformed envelope, unknown fields, hash corruption and duplicate upstream IDs reject", () => {

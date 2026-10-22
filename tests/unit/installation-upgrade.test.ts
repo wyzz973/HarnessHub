@@ -9,7 +9,6 @@ import { homebrewEnvironment } from "../../src/infrastructure/management/homebre
 import { officialInstallMethod, productChannels } from "../../src/adapters/catalog-channels.js";
 import { parseManagementInput } from "../../src/contexts/management/domain/input.js";
 import { parseManagementJob, parseUpgradeRequest } from "../../src/contexts/management/domain/state.js";
-import { adapterVersionVerification } from "../../src/infrastructure/management/verified-versions.js";
 
 const code = (expected: string) => (error: unknown): boolean => error instanceof ManagementError && error.code === expected;
 // The shapes Homebrew 7.0.9 printed on 2026-10-17 for `brew upgrade --dry-run` (standard output; tap warnings go to standard error).
@@ -93,10 +92,6 @@ test("G011-UG3 every script layout says how it updates: the product's own update
   assert.equal(hermes?.kind, "terminal"); if (hermes?.kind === "terminal") { assert.equal(hermes.command, "hermes update --yes"); assert.match(hermes.explains, /git stash.*config\.yaml.*重启网关/su); }
   // A self-updating product updates inside what its official install may write.
   for (const id of ["claude", "cursor"]) assert.equal(officialInstallMethod(id)?.kind, "script", id);
-  // An adapter version is verified against the adapter HarnessHub ran, not the product.
-  assert.deepEqual(adapterVersionVerification("claude", "0.89.1"), { state: "verified", program: "2.1.296–2.1.306", adapter: "0.89.1" });
-  assert.equal(adapterVersionVerification("claude", "0.90.0")?.state, "unverified");
-  assert.equal(adapterVersionVerification("codex", "1.0.0"), null);
 });
 
 test("G011-UG4 an installation's version is the one its channel records, and a Homebrew run keeps the user's home, settings and local records", async t => {

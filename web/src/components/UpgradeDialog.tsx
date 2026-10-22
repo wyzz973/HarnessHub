@@ -8,12 +8,6 @@ import { Notice, Spinner } from "../ui/primitives.js";
 
 /** What the user agreed to in the confirmation: the services to restart, for this exact installation (ADR-043). */
 export interface UpgradeConsent { readonly restartServices: readonly string[]; readonly fingerprint: string }
-/** Whole months between two calendar versions (`YYYY.M.D…`); null when either is not one. */
-export function calendarGap(from: string | null, to: string | null): number | null {
-  const months = (value: string | null): number | null => { const match = value === null ? null : /^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:$|[.-])/u.exec(value); return match ? Number(match[1]) * 12 + Number(match[2]) - 1 : null; };
-  const start = months(from), end = months(to);
-  return start === null || end === null || end < start ? null : end - start;
-}
 function channelText(channel: string): string { return ({ npm: "npm 全局安装", "brew-formula": "Homebrew", "brew-cask": "Homebrew", uv: "uv 工具", archive: "本机程序目录", "native-cli": "程序官方更新器" } as Record<string, string>)[channel] ?? "原安装渠道"; }
 function Step({ title, children }: { readonly title: string; readonly children: ReactNode }) {
   return <li className="flex flex-col gap-1"><strong className="text-[13px] font-semibold">{title}</strong><div className="flex flex-col gap-1 text-[12.5px] text-fg-2">{children}</div></li>;
@@ -43,7 +37,6 @@ export function UpgradeDialog({ api, harness, onClose, onConfirm, onOpenSession 
   const unmet = check?.runtimes.filter(runtime => !runtime.satisfied) ?? [], runtimeBlocks = unmet.filter(runtime => runtime.restarted), runtimeWarnings = unmet.filter(runtime => !runtime.restarted);
   const serviceName = (label: string) => check?.restart.find(item => item.label === label)?.name ?? check?.resident.find(item => item.label === label)?.name ?? label;
   const blocked = busy.length > 0 || (check?.otherUsers.length ?? 0) > 0 || runtimeBlocks.length > 0;
-  const gap = calendarGap(check?.currentVersion ?? null, check?.targetVersion ?? null);
   const left = check ? [...check.resident, ...check.processes.map(item => ({ label: null, name: item.name, pid: item.pid, restartCommand: null }))] : [];
   return <Dialog open={harness !== null} onOpenChange={open => { if (!open) onClose(); }} title={`升级 ${name}`} description={`${current} → ${target}`} className="upgrade-dialog w-[min(560px,calc(100vw-32px))]">
     <div className="scroll-area flex max-h-[min(64dvh,560px)] flex-col gap-3 px-5 pt-3 pb-2">
@@ -60,8 +53,6 @@ export function UpgradeDialog({ api, harness, onClose, onConfirm, onOpenSession 
             <Step title="安装新版本">
               <span>沿用原来的 {channelText(check.channel)}，把 {name} 从 {current} 升级到 {target}。</span>
               <code className="block text-[12px] break-all text-fg-3">{check.location}</code>
-              {gap !== null && gap >= 2 ? <span className="text-amber">两个版本相隔约 {gap} 个月，变化可能较多。</span> : null}
-              {check.target?.state === "unverified" ? <span className="text-amber">HarnessHub 对 {name} 的接入是在 {check.target.program} 上验证的；{target} 还没有验证，部分能力可能需要适配。</span> : null}
             </Step>
             {check.restart.length ? <Step title="重启后台服务">
               {check.restart.map(service => <span key={service.label} className="flex flex-col gap-1"><span>{service.name}（{service.label}，进程 {service.pid}）会在新版本核实后立即重启：</span><Command>{service.command}</Command>

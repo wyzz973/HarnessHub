@@ -108,7 +108,6 @@ export interface InstallCapability {
   readonly kind: "npm" | "python" | "binary";
   readonly sourceLabel: string;
   readonly packageName: string | null;
-  readonly referenceVersion: string | null;
   readonly canInstall: boolean;
   readonly reason: string | null;
 }
@@ -127,15 +126,6 @@ export interface HarnessManagementView {
   readonly defaultRevision: number;
   readonly error: { readonly code: string; readonly message: string } | null;
   readonly native?: NativeManagementCapability;
-  /** Whether this is a version HarnessHub verified with the real program (ADR-038); absent when that is not known. A hint only. */
-  readonly verification?: HarnessVersionVerification;
-}
-/** The verified versions as text (one version, or a range) and whether the installed ones are among them. */
-export interface HarnessVersionVerification {
-  readonly state: "verified" | "unverified";
-  readonly program: string;
-  /** The adapter entry's verified version, for a Harness reached through an adapter. */
-  readonly adapter?: string;
 }
 export interface NativeManagementCapability {
   readonly channel: string;
@@ -267,8 +257,6 @@ export interface MaintenanceCheck {
   readonly notes: readonly string[];
   /** The command returning the original installation to its current version, when its channel has one. */
   readonly rollback: string | null;
-  /** Whether HarnessHub verified its interface with the target version (ADR-038), and on which versions; null when unknown. */
-  readonly target: HarnessVersionVerification | null;
   /** The target's runtime requirement against each runtime that will run it; a restarted one not met blocks the upgrade. Empty when none is declared or it could not be read. */
   readonly runtimes: readonly RuntimeRequirement[];
 }
@@ -377,8 +365,6 @@ export interface InstallCheck {
   readonly runtime: RuntimeRequirement | null;
   /** Which program the terminal's command runs afterwards (by this Gateway's PATH, which the login shell gives). */
   readonly terminal: { readonly command: string; readonly before: string | null; readonly after: "this" | "unchanged" | "not-on-path" };
-  /** Whether HarnessHub verified this version (ADR-038); null when the version is not known before installing. */
-  readonly target: HarnessVersionVerification | null;
   readonly notes: readonly string[];
   /** Why it cannot be installed now; null when it can. */
   readonly blocked: string | null;
@@ -461,8 +447,6 @@ export interface InstallationUpgradeCheck {
   readonly otherUsers: readonly { readonly pid: number }[];
   /** Other programs running it: not stopped; they keep the old version until restarted. */
   readonly processes: readonly ProgramEntry[];
-  /** Whether HarnessHub verified the target (ADR-038); null when unknown before upgrading. */
-  readonly verification: HarnessVersionVerification | null;
   /** The command to run in a terminal, what it does, and the uncommitted changes of the checkout it updates (null: not a checkout). */
   readonly terminal: { readonly command: string; readonly explains: string; readonly localChanges: number | null } | null;
   readonly notes: readonly string[];

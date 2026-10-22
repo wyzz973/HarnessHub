@@ -51,7 +51,6 @@ export function Welcome({ harnesses, readiness, firstUse, selected, workspace, o
           <BrandIcon brand={harness.id} name={harness.name} size={28}/>
           <span className="flex min-w-0 flex-1 flex-col"><strong className="trunc text-[13.5px] font-semibold">{harness.name}</strong>
             <span className="trunc text-[12px] text-fg-3">{[version ? "v" + version : null, SOURCE[harness.management.source] ?? null].filter(Boolean).join(" · ")}</span></span>
-          {harness.management.verification?.state === "unverified" ? <Badge tone="amber" title="这个版本 HarnessHub 没有用真实程序验证过，仍可使用">未经验证</Badge> : null}
           {status ? <Badge tone={status.tone === "success" ? "green" : status.tone === "warning" ? "amber" : "red"} dot {...(status.title ? { title: status.title } : {})}>{status.label}</Badge> : null}
         </button>;
       })}</div>

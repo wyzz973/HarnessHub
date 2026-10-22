@@ -8,7 +8,6 @@ import test, { type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import { application } from "../../src/cli/session-application.js";
 import { protectedConfigurationPaths } from "../../src/infrastructure/management/native.js";
-import { versionVerification } from "../../src/infrastructure/management/verified-versions.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { homePathsIn } from "../../src/web/shown-paths.js";
 import { GUARD_TARGETS, GuardError, compare, describeGuard, evidenceHeader, guardTargets, guardedFiles, guardedPath, isCredentialPath, main, parseSnapshot, recheck, snapshot, snapshotPaths,
@@ -275,19 +274,20 @@ test("G060-NC15 the evidence header names the commit, policy and each Harness's 
     assert.equal(header.commitNote === undefined, header.uncommittedChanges === false, "a note exactly when the commit does not describe the tree");
     assert.deepEqual([header.policy, header.platform], ["any", "macOS"]); assert.ok(!Number.isNaN(Date.parse(header.recordedAt)));
     const pathless = (id: string) => header.harnesses.find(item => item.harnessId === id)?.installations.map(({ ref, ...rest }) => (assert.match(ref, /^[0-9a-f]{64}$/u), rest));
-    const facts = (id: string) => { const item = header.harnesses.find(row => row.harnessId === id)!; return [item.source, item.controls, item.entryVersion, item.programVersion, item.programVersionFrom, item.verification]; };
+    // The versions are recorded as evidence and judged against nothing (ADR-053): no verification field exists.
+    const facts = (id: string) => { const item = header.harnesses.find(row => row.harnessId === id)!; assert.equal("verification" in item, false, id); return [item.source, item.controls, item.entryVersion, item.programVersion, item.programVersionFrom]; };
     assert.deepEqual(header.harnesses.map(item => item.harnessId), ["dsh", "claude", "hermes"]);
     // dsh: an npm installation whose package records the version; management reads it without running dsh.
     assert.deepEqual(pathless("dsh"), [{ channel: "npm", label: "npm 全局（nvm v26.11.1）", command: "dsh", version: "0.2.0-rc.2", role: "product", active: true }]);
-    assert.deepEqual(facts("dsh"), ["system", [{ id: "dsh-native", protocol: "acp-v1", entry: "path" }], "0.2.0-rc.2", "0.2.0-rc.2", "management", versionVerification("dsh", "0.2.0-rc.2", "0.2.0-rc.2")]);
+    assert.deepEqual(facts("dsh"), ["system", [{ id: "dsh-native", protocol: "acp-v1", entry: "path" }], "0.2.0-rc.2", "0.2.0-rc.2", "management"]);
     // Claude Code: the product and the adapter in front of it; the product's version only a probe would read, so it is the installation's record.
     assert.deepEqual(pathless("claude")?.sort((left, right) => left.role.localeCompare(right.role)), [
       { channel: "npm", label: "npm 全局（nvm v26.11.1）", command: "claude-agent-acp", version: "0.89.1", role: "adapter", active: true },
       { channel: "npm", label: "npm 全局（nvm v26.11.1）", command: "claude", version: "2.1.306", role: "product", active: true }]);
-    assert.deepEqual(facts("claude"), ["system", [{ id: "claude-acp-npm", protocol: "acp-v1", entry: "path" }], "0.89.1", "2.1.306", "installation", versionVerification("claude", "2.1.306", "0.89.1")]);
+    assert.deepEqual(facts("claude"), ["system", [{ id: "claude-acp-npm", protocol: "acp-v1", entry: "path" }], "0.89.1", "2.1.306", "installation"]);
     // Hermes through the discovery manifest only: no installation describes it, and the entry says it is a custom one.
     assert.deepEqual(pathless("hermes"), []);
-    assert.deepEqual(facts("hermes"), ["system", [{ id: "hermes-native", protocol: "acp-v1", entry: "custom-entry" }], null, null, null, null]);
+    assert.deepEqual(facts("hermes"), ["system", [{ id: "hermes-native", protocol: "acp-v1", entry: "custom-entry" }], null, null, null]);
     // Nothing leaves a path, and no program was started for any of it.
     assert.deepEqual(homePathsIn(header, [home, root]), []); assert.ok(!JSON.stringify(header).includes(root));
     await assert.rejects(stat(started), (error: unknown) => error instanceof Error && "code" in error && error.code === "ENOENT");

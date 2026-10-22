@@ -53,7 +53,6 @@ export function InstallDialog({ api, harness, onClose, onConfirm }: {
           {check.shellProfile ? <p className="install-shell m-0 text-[12.5px] text-amber">安装脚本可能会在 {check.shellProfile} 里加一行 PATH 设置；HarnessHub 只允许它改这一个文件，并在完成后列出改动。</p> : null}
           {check.configFiles.length ? <p className="install-config m-0 text-[12.5px] text-fg-2">官方安装会写 {check.configFiles.join("、")}；完成后只列出改动了哪些设置，不显示其他内容。</p> : null}
           <p className="install-terminal m-0 text-[12.5px] text-fg-2">{terminalLine(check)}</p>
-          {check.target?.state === "unverified" ? <p className="m-0 text-[12.5px] text-amber">{check.version} 还不是 HarnessHub 用真实程序验证过的版本（验证过的是 {check.target.program}），仍可使用，部分能力可能不同。</p> : null}
           {check.notes.map(note => <p key={note} className="install-note m-0 text-[12.5px] text-fg-2">{note}</p>)}
           <p className="m-0 text-[12px] text-fg-3">安装程序在沙箱里只能写上面列出的位置，但它仍能读取你的家目录并联网，这与在终端运行官网命令相同。确认 15 分钟内有效。</p>
         </>}

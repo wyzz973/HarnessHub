@@ -97,10 +97,8 @@ function decodeLoginShell(value: unknown): LoginShellView {
 }
 function decodeManagement(value: unknown): HarnessManagementView {
   const row = record(value), recipe = row.recipe === null ? null : record(row.recipe);
-  return { harnessId: text(row.harnessId), recipe: recipe === null ? null : { controlId: text(recipe.controlId), kind: choice(recipe.kind, ["npm", "python", "binary"]), sourceLabel: text(recipe.sourceLabel), packageName: nullableText(recipe.packageName), referenceVersion: nullableText(recipe.referenceVersion), canInstall: bool(recipe.canInstall), reason: nullableText(recipe.reason) },
+  return { harnessId: text(row.harnessId), recipe: recipe === null ? null : { controlId: text(recipe.controlId), kind: choice(recipe.kind, ["npm", "python", "binary"]), sourceLabel: text(recipe.sourceLabel), packageName: nullableText(recipe.packageName), canInstall: bool(recipe.canInstall), reason: nullableText(recipe.reason) },
     source: choice(row.source, ["managed", "system", "missing"]), installedVersion: nullableText(row.installedVersion), programVersion: nullableText(row.programVersion), latestVersion: nullableText(row.latestVersion), updateStatus: choice(row.updateStatus, ["unchecked", "checking", "available", "current", "failed", "unsupported"]), checkedAt: nullableText(row.checkedAt), activeJobId: nullableText(row.activeJobId), installationId: nullableText(row.installationId), defaultRevision: number(row.defaultRevision), error: publicError(row.error),
-    ...(row.verification === undefined ? {} : { verification: (() => { const verification = record(row.verification);
-      return { state: choice(verification.state, ["verified", "unverified"]), program: text(verification.program), ...(verification.adapter === undefined ? {} : { adapter: text(verification.adapter) }) }; })() }),
     ...(row.native === undefined ? {} : { native: (() => { const native = record(row.native); return { channel: text(native.channel), location: text(native.location), fingerprint: text(native.fingerprint), canInstall: bool(native.canInstall), canUpgrade: bool(native.canUpgrade), reason: nullableText(native.reason) }; })() }) };
 }
 export function decodeInstallationJob(value: unknown): InstallationJobView {
@@ -139,7 +137,6 @@ export function decodeUpgradeCheck(value: unknown): InstallationUpgradeCheckView
       satisfied: bool(runtime.satisfied), service: nullableText(runtime.service), restarted: bool(runtime.restarted), upgradeCommand: nullableText(runtime.upgradeCommand) },
     active: bool(row.active), conversations: list(row.conversations, item => { const conversation = record(item); return { sessionId: text(conversation.sessionId), title: text(conversation.title), busy: bool(conversation.busy) }; }, 256),
     otherUsers: list(row.otherUsers, item => ({ pid: number(record(item).pid) }), 256), processes: list(row.processes, entry, 128),
-    verification: row.verification === null ? null : (() => { const verification = record(row.verification); return { state: choice(verification.state, ["verified", "unverified"]), program: text(verification.program), ...(verification.adapter === undefined ? {} : { adapter: text(verification.adapter) }) }; })(),
     terminal: terminal === null ? null : { command: text(terminal.command), explains: text(terminal.explains), localChanges: terminal.localChanges === null ? null : number(terminal.localChanges) },
     notes: list(row.notes, text, 16), blocked: nullableText(row.blocked) };
 }
@@ -153,7 +150,6 @@ export function decodeInstallCheck(value: unknown): InstallCheckView {
     runtime: runtime === null ? null : { runtime: choice(runtime.runtime, ["Node.js"]), required: text(runtime.required), found: nullableText(runtime.found), path: text(runtime.path),
       satisfied: bool(runtime.satisfied), service: nullableText(runtime.service), restarted: bool(runtime.restarted), upgradeCommand: nullableText(runtime.upgradeCommand) },
     terminal: { command: text(terminal.command), before: nullableText(terminal.before), after: choice(terminal.after, ["this", "unchanged", "not-on-path"]) },
-    target: row.target === null ? null : (() => { const target = record(row.target); return { state: choice(target.state, ["verified", "unverified"]), program: text(target.program), ...(target.adapter === undefined ? {} : { adapter: text(target.adapter) }) }; })(),
     notes: list(row.notes, text, 16), blocked: nullableText(row.blocked) };
 }
 /** What uninstalling one installation would remove, stop and leave (ADR-044). */
@@ -182,7 +178,6 @@ export function decodeMaintenance(value: unknown): MaintenanceView {
     conversations: list(row.conversations, item => { const conversation = record(item); return { sessionId: text(conversation.sessionId), title: text(conversation.title), busy: bool(conversation.busy) }; }, 256),
     otherUsers: list(row.otherUsers, item => ({ pid: number(record(item).pid) }), 256), staleRecords: number(row.staleRecords),
     plugins: list(row.plugins, text, 32), notes: list(row.notes, text, 16), rollback: nullableText(row.rollback),
-    target: row.target === null ? null : (() => { const target = record(row.target); return { state: choice(target.state, ["verified", "unverified"]), program: text(target.program), ...(target.adapter === undefined ? {} : { adapter: text(target.adapter) }) }; })(),
     runtimes: list(row.runtimes, value => { const runtime = record(value); return { runtime: choice(runtime.runtime, ["Node.js"]), required: text(runtime.required), found: nullableText(runtime.found), path: text(runtime.path),
       satisfied: bool(runtime.satisfied), service: nullableText(runtime.service), restarted: bool(runtime.restarted), upgradeCommand: nullableText(runtime.upgradeCommand) }; }, 32) };
 }
@@ -827,7 +822,7 @@ export function errorMessage(error: unknown): string {
 export function failureMessage(failure: { readonly code: string; readonly message: string }): string {
   const labels: Readonly<Record<string, string>> = {
     GATEWAY_AUTH_REQUIRED: "这个 Harness 尚未配置 Gateway 认证。请补充连接配置，或选择另一个 Harness 继续。",
-    NATIVE_CONFIGURATION_INVALID: "本机配置与这个 Harness 的安装版本不兼容。请使用兼容的本机版本，或选择其他 Harness 继续。",
+    NATIVE_CONFIGURATION_INVALID: "这个 Harness 拒绝了本机配置。请运行它自带的修复或迁移命令（例如 doctor）后再试，或选择其他 Harness 继续。",
     PROCESS_EXITED: "Harness 提前退出了。历史已保留，可以重试或选择其他 Harness。",
     REMOTE_ERROR: "Harness 拒绝了这次请求。请检查连接配置，或选择其他 Harness。",
     NATIVE_AUTH_REQUIRED: "这个 Harness 尚未登录。请在本机完成登录后再试，也可以选择其他 Harness 继续。",
