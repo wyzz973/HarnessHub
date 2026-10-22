@@ -11,7 +11,7 @@
 
 ## 决定
 
-1. **选项（2026-10-22 修订）。** 模型目录对任何版本的 Codex（包括读不出版本的）都提供“协作模式”选项：默认、计划，当前值为默认。initialize 返回的 userAgent 里的版本（形如 `<客户端名>/0.162.1 (…)`）只进入 ProtocolObservation 作证据，不参与判断。原程序是否提供协作模式按能力判断：打开线程时 `collaborationMode/list` 被拒绝（-32601 或明确错误）即以 `NATIVE_OPTION_UNAVAILABLE` 失败，消息写“这个 Codex 不提供协作模式”并附原程序给出的原因，不以 REMOTE_ERROR 断开连接、不静默降级（ADR-053 决定 5）。原文“Codex 0.162.1 及以上……读不出版本或版本更低时不提供”作废。
+1. **选项（2026-10-22 修订）。** 模型目录对任何版本的 Codex（包括读不出版本的）都提供“协作模式”选项：默认、计划，当前值为默认。initialize 返回的 userAgent 里的版本（形如 `<客户端名>/0.162.1 (…)`）只进入 ProtocolObservation 作证据，不参与判断。原程序是否提供协作模式按能力判断：打开线程时 `collaborationMode/list` 被拒绝（-32601 或明确错误）即以 `NATIVE_OPTION_UNAVAILABLE` 失败：`open()` 像任何打开失败一样结束并关闭这条连接，改变的只是错误码与分类——不再报成笼统的 REMOTE_ERROR，消息写“这个 Codex 不提供协作模式”并附原程序给出的原因；不静默降级（ADR-053 决定 5）。原文“Codex 0.162.1 及以上……读不出版本或版本更低时不提供”作废。
 2. **按回合声明。** 回合所选的原生选项在建立连接时交给驱动（`ControlOptions.selectedOptions`）。只有明确选择了协作模式（计划或默认）的连接才声明 `experimentalApi`；选“跟随本机配置”时不声明，线程沿用自己保存的模式。审批代理原定“只在选择了计划模式的回合”声明；由于模式会保存在线程里，退出计划模式也必须显式发送 `default`，所以范围放宽为“明确选择了协作模式的回合”。目录读取从不声明。
 3. **设置的来源。** 计划模式的 `settings` 依次取：对话所选的模型和思考档位；用户为该模式配置的预设（`collaborationMode/list` 返回的预设，例如 `plan_mode_reasoning_effort`）；本机配置的模型及其思考档位。`developer_instructions` 为 null。
 4. **校验在发送前完成。** 选择了协作模式、但连接建立时没有声明实验接口，或 `collaborationMode/list` 不可用时，`open()` 在建立线程之前以 `NATIVE_OPTION_UNAVAILABLE` 拒绝。打开线程时只读取配置和模型列表来校验所选项，不再读取账号和技能（这两项会联网，真实环境中出现过 10 秒超时）。

@@ -6578,7 +6578,7 @@
       ],
       "layer": "unit",
       "scenario": "在原程序中继续的命令按产品给出，与安装版本无关（ADR-053 决定 3）",
-      "expected": "Claude Code、Codex、OpenCode、Hermes 对任何已安装版本（不传版本、传任意版本、传预发布版结果都相同）都给出交互命令与一次性命令；DeepSeek Harness 只给一次性命令（官网包没有 tui profile）并附凭据前提说明 onceNote（headless 只读终端环境的 DEEPSEEK_API_KEY、工作区 .env 或 ~/.dsh/.env）；Pi 只指向它的会话列表；OpenClaw 不给；没有续接命令的产品（Cursor、Gemini CLI）只给 ID 且 note 为 no-command，不再有 version-unverified；含空格、引号、分号、$( 或以 - 开头等非普通标识符的引用既不显示也不进入命令；Codex 只问一次的形式只在工作区不是 Git 仓库时带 --skip-git-repo-check 并注明原因，交互形式从不带；读取不触发发现与版本探测",
+      "expected": "Claude Code、Codex、OpenCode、Hermes 对任何已安装版本都给出交互命令与一次性命令（函数没有版本输入，对任何安装、含读不出版本的，都给出同样的命令）；DeepSeek Harness 只给一次性命令（官网包没有 tui profile）并附凭据前提说明 onceNote（headless 只读终端环境的 DEEPSEEK_API_KEY、工作区 .env 或 ~/.dsh/.env）；Pi 只指向它的会话列表；OpenClaw 不给；没有续接命令的产品（Cursor、Gemini CLI）只给 ID 且 note 为 no-command，不再有 version-unverified；含空格、引号、分号、$( 或以 - 开头等非普通标识符的引用既不显示也不进入命令；Codex 只问一次的形式只在工作区不是 Git 仓库时带 --skip-git-repo-check 并注明原因，交互形式从不带；读取不触发发现与版本探测",
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/unit/verified-versions.test.ts"
@@ -10221,7 +10221,7 @@
       ],
       "layer": "protocol",
       "scenario": "Codex 协作模式按能力判断，不按版本号（ADR-034 修订、ADR-053 决定 5）",
-      "expected": "模型目录对任何 userAgent 版本（含读不出版本的夹具）都提供 collaboration_mode 选项；只有明确选择了协作模式的连接声明 experimentalApi；夹具不实现 collaborationMode/list（-32601 或明确错误）时，open 带 mode=plan 以 NATIVE_OPTION_UNAVAILABLE 失败，消息含“这个 Codex 不提供协作模式”与原程序给出的原因，不以 REMOTE_ERROR 断开、不静默降级；旧 userAgent（plan-old）与无法识别版本的夹具在实现了该方法时计划模式可用；thread/start 与 thread/resume 回包带 collaborationMode、approvalPolicy、sandbox 时经 nativeConfig 回报，字段缺失时不写死缺省；thread/readState/changed 归为被动通知",
+      "expected": "模型目录对任何 userAgent 版本（含读不出版本的夹具）都提供 collaboration_mode 选项；只有明确选择了协作模式的连接声明 experimentalApi；夹具不实现 collaborationMode/list（-32601 或明确错误）时，open 带 mode=plan 以 NATIVE_OPTION_UNAVAILABLE 失败，消息含“这个 Codex 不提供协作模式”与原程序给出的原因，open 像任何打开失败一样结束并关闭连接、改变的只是错误码（不再是笼统的 REMOTE_ERROR）、不静默降级；旧 userAgent（plan-old）与无法识别版本的夹具在实现了该方法时计划模式可用；thread/start 与 thread/resume 回包带 collaborationMode、approvalPolicy、sandbox 时经 nativeConfig 回报，字段缺失时不写死缺省；thread/readState/changed 归为被动通知",
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/protocol/codex.test.ts"

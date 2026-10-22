@@ -62,7 +62,7 @@
 
 | 例外 | 依据 | 只增加信息的证明 | 退出条件 |
 |---|---|---|---|
-| Hermes 0.12.x 的 60 秒审批期限：`HermesControl` 按 `initialize` 报告的 0.12 身份把审批请求的期限记为 60 秒减去提前关闭的 2 秒（`src/adapters/control/hermes.ts` 的 `approvalDeadlineMs`），侧栏与审批卡据此显示“N 秒后自动拒绝”（ADR-035） | 0.12 的 ACP 适配层把期限硬编码为 60 秒且不读配置、不向客户端撤回请求（[ADR-031](0031-hermes-and-deepseek-harness.md)）；0.21.4 起期限可配置且桥不报告它，所以其他版本不作任何声明，只显示回合期限 | 只影响期限的显示与提前关闭的时刻，不影响选择、发送、审批选项或任何功能；`AcpControl` 的 `agentVersion` 读取因此保留，只供这条例外与 ProtocolObservation 的证据使用 | Hermes 网关视图接入（ADR-051 修订后的路线）落地、改为读取 `approvals.timeout` 或网关报告的等待时间时删除；在此之前不新增同类特例 |
+| Hermes 0.12.x 的 60 秒审批期限：`HermesControl` 按 `initialize` 报告的 0.12 身份把审批期限记为 60 秒（`src/adapters/control/hermes.ts` 的 `approvalDeadlineMs`），公共请求由通用层 `AcpControl` 提前 2 秒关闭（`src/adapters/control/acp.ts` 的 `APPROVAL_DEADLINE_MARGIN_MS`），侧栏与审批卡据此显示“N 秒后自动拒绝”（ADR-035） | 0.12 的 ACP 适配层把期限硬编码为 60 秒且不读配置、不向客户端撤回请求（[ADR-031](0031-hermes-and-deepseek-harness.md)）；0.21.4 起期限可配置且桥不报告它，所以其他版本不作任何声明，只显示回合期限 | 只影响期限的显示与提前关闭的时刻，不影响选择、发送、审批选项或任何功能；`AcpControl` 的 `agentVersion` 读取因此保留，只供这条例外与 ProtocolObservation 的证据使用 | Hermes 网关视图接入（ADR-051 修订后的路线）落地、改为读取 `approvals.timeout` 或网关报告的等待时间时删除；在此之前不新增同类特例 |
 
 同日删除的不是例外、而是功能差别的 0.12 特例：0.12 审批桥缺陷的提示（“Hermes 拒绝了这条命令，但没有向 HarnessHub 请求审批”，ADR-031 第 45 行）。它按版本号判断是否显示一段说明，与决定 2 冲突；拒绝文本本身仍按 ADR-031 的工具失败规则标为失败。
 
