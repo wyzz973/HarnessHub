@@ -1,4 +1,4 @@
-import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { ManagementError, type ManagementInstallContext } from "../../contracts/management.js";
@@ -46,12 +46,13 @@ export function homebrewEnvironment(source: NativeEnvironment, stage: string): R
  * Homebrew creates and authenticates its own single sandbox; original CLI/native process group cleanup remains awaited.
  * It may write the Homebrew prefix, its temporary directory and cache; `directories` and `files` stay unwritable. With
  * `cache: "user"` it keeps the cache `env` names (the user's, with its local records); otherwise the stage holds one.
- * Resolves with the command's standard output; a non-zero exit rejects with PROCESS_FAILED.
+ * Each run has its own directory in the stage, so a stage serves several runs (the dry run read again right before the
+ * upgrade, then the upgrade). Resolves with the command's standard output; a non-zero exit rejects with PROCESS_FAILED.
  */
 export async function runHomebrewProtected(manager: string, args: readonly string[], directories: readonly string[], files: readonly string[], env: Readonly<Record<string, string>>, context: ManagementInstallContext,
   options: { readonly cache?: "stage" | "user" } = {}): Promise<string> {
   context.assertOwned(); if (!(await homebrewSandboxIdentity(manager))) throw new ManagementError("CONFIGURATION_PROTECTION_UNAVAILABLE", "本机 Homebrew 没有受支持的沙箱继承接口。");
-  const root = join(context.stage, "homebrew-protected"); await mkdir(root, { mode: 0o700 });
+  const root = await mkdtemp(join(context.stage, "homebrew-protected-"));
   const script = join(root, "run.rb"); await writeFile(script, runner, { flag: "wx", mode: 0o600 });
   await writeFile(join(root, "homebrew-command.json"), JSON.stringify({ args, directories, files }), { flag: "wx", mode: 0o600 });
   for (const path of ["cache", "logs"]) await mkdir(join(root, path), { mode: 0o700 });

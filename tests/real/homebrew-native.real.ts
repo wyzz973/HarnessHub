@@ -15,7 +15,7 @@ import { guardTest, snapshot, standaloneHeader, type SuiteEvidence } from "./gua
  */
 const environment = captureNativeEnvironment(), evidencePath = process.env.HH_REAL_EVIDENCE, evidence: SuiteEvidence = { header: null, results: [] };
 
-// Each run starts Homebrew's own Ruby, about 18 seconds with Homebrew 7.0.9 on 2026-10-17; three runs share one budget.
+// Each run starts Homebrew's own Ruby, about 18 seconds with Homebrew 7.0.9 on 2026-10-17; four runs share one budget.
 test("original Homebrew authenticates one inherited sandbox and denies configuration writes", { timeout: 180000 }, async t => {
   assert.equal(process.platform, "darwin", "required native Homebrew protection acceptance needs its macOS host");
   const before = await snapshot([], environment);
@@ -30,6 +30,10 @@ test("original Homebrew authenticates one inherited sandbox and denies configura
   const read = join(root, "read"); await mkdir(read);
   await runHomebrewProtected(manager, ["ruby", "-e", "require 'sandbox'; raise 'not inherited' unless Sandbox.inherited_sandbox?; puts 'authentic inherited sandbox'"], [], [], env, context(read));
   assert.ok(logs.some(line => line.includes("authentic inherited sandbox")));
+  logs.length = 0;
+  // A second run in the same stage, as an upgrade runs Homebrew after reading its dry run again.
+  await runHomebrewProtected(manager, ["ruby", "-e", "puts 'second run in one stage'"], [], [], env, context(read));
+  assert.ok(logs.some(line => line.includes("second run in one stage")));
   logs.length = 0;
   const deny = join(root, "deny"); await mkdir(deny);
   await assert.rejects(runHomebrewProtected(manager, ["ruby", "-e", "File.write(ARGV.fetch(0), 'changed')", protectedFile], [], [protectedFile], env, context(deny)), failed);
