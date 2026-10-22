@@ -1,8 +1,9 @@
 import { readFile, realpath, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { capabilityReadTables, harnessDirectories, type ReadEnvironment } from "../../adapters/capability-reads.js";
+import { openClawRoster } from "../../adapters/control/openclaw.js";
 import type { CapabilitiesView } from "../../contracts/capabilities.js";
-import { at, parseConfig, record, text } from "./formats.js";
+import { parseConfig, text } from "./formats.js";
 import { CapabilityScan, type InstalledHarness } from "./scan.js";
 
 export type { InstalledHarness } from "./scan.js";
@@ -48,21 +49,44 @@ export async function resolveHermesHome(environment: ReadEnvironment): Promise<s
   const profile = join(root, "profiles", name);
   return (await stat(profile).catch(() => null))?.isDirectory() ? profile : root;
 }
+/** A profile name OpenClaw accepts (cli/profile-utils.ts); another one names no profile directory. */
+const OPENCLAW_PROFILE = /^[a-z0-9][a-z0-9_-]{0,63}$/iu;
 /**
- * The default agent's workspace as OpenClaw resolves it (dist/workspace-*.js `resolveDefaultAgentWorkspaceDir`): the
- * default agent's `workspace`, else `agents.defaults.workspace`, else `~/.openclaw/workspace` (`workspace-<profile>`
- * under OPENCLAW_PROFILE). A configuration that does not parse falls back to the default; the view lists it as unreadable.
+ * The workspace OpenClaw falls back to (agents/workspace-default-path.ts at v2026.10.5): OPENCLAW_WORKSPACE_DIR, else
+ * `<state dir>/workspace` under OPENCLAW_STATE_DIR, else `~/.openclaw-<profile>/workspace` for a named OPENCLAW_PROFILE,
+ * else ~/.openclaw/workspace. `~/` in a variable is the home; a workspace variable that is still relative names nothing
+ * HarnessHub can place (OpenClaw resolves it against its own working directory), so the next rule applies.
+ */
+function defaultOpenClawWorkspace(environment: ReadEnvironment, stateDir: string): string {
+  const value = (name: string): string | null => { const raw = environment.values[name]?.trim(); return raw ? raw.replace(/^~(?=$|\/)/u, environment.home) : null; };
+  const explicit = value("OPENCLAW_WORKSPACE_DIR"), profile = value("OPENCLAW_PROFILE");
+  if (explicit !== null && isAbsolute(explicit)) return resolve(explicit);
+  if (value("OPENCLAW_STATE_DIR") !== null) return join(stateDir, "workspace");
+  if (profile !== null && profile.toLowerCase() !== "default" && OPENCLAW_PROFILE.test(profile)) return join(environment.home, ".openclaw-" + profile, "workspace");
+  return join(environment.home, ".openclaw", "workspace");
+}
+/**
+ * The workspace of the agent HarnessHub's OpenClaw sessions run as, as OpenClaw resolves it (agents/agent-scope-config.ts
+ * `resolveAgentWorkspaceDir` at v2026.10.5; the roster rules are the driver's, openClawRoster): that agent's own
+ * `workspace`; else, for an owner that inherits it (a marked, sole or implicit agent, and the default agent of a legacy
+ * `agents.list`), `agents.defaults.workspace` or OpenClaw's default workspace; else `<agents.defaults.workspace>/<id>` or
+ * `<state dir>/workspace-<id>`, as for the system agent of an explicit fleet. A roster without an owner is shown with its
+ * first agent, the one OpenClaw's own agent list puts first; HarnessHub writes nothing there (the instructions refuse).
+ * A configuration that does not parse falls back to the default workspace; the view lists it as unreadable.
  */
 export async function resolveOpenClawWorkspace(environment: ReadEnvironment): Promise<string> {
-  const profile = environment.values.OPENCLAW_PROFILE?.trim();
-  const fallback = join(environment.home, ".openclaw", profile && profile.toLowerCase() !== "default" ? "workspace-" + profile : "workspace");
+  const dirs = harnessDirectories(environment), fallback = defaultOpenClawWorkspace(environment, dirs.openclaw);
   let source: string;
-  try { source = await readFile(harnessDirectories(environment).openclawConfig, "utf8"); } catch { return fallback; }
+  try { source = await readFile(dirs.openclawConfig, "utf8"); } catch { return fallback; }
   if (Buffer.byteLength(source) > 2 * 1024 * 1024) return fallback;
   const parsed = parseConfig(source, "json5");
   if (!parsed.ok) return fallback;
-  const agents = at(parsed.value, ["agents", "list"]), list = Array.isArray(agents) ? agents.map(record) : [];
-  const chosen = list.find(item => item.default === true) ?? list[0];
-  const workspace = text(chosen?.workspace) ?? text(at(parsed.value, ["agents", "defaults", "workspace"]));
-  return workspace === null ? fallback : workspace.replace(/^~(?=$|\/)/u, environment.home);
+  const roster = openClawRoster(parsed.value);
+  if ("problem" in roster) return fallback;
+  const home = (path: string) => path.replace(/^~(?=$|\/)/u, environment.home), named = (value: unknown) => text(value)?.trim() || null;
+  const agent = roster.owner ?? roster.agents[0], root = named(roster.defaults.workspace);
+  const own = named(agent?.entry.workspace);
+  if (own !== null) return home(own);
+  if (agent === undefined || (roster.owner !== null && roster.inherits)) return root === null ? fallback : home(root);
+  return root === null ? join(dirs.openclaw, "workspace-" + agent.id.toLowerCase()) : join(home(root), agent.id.toLowerCase());
 }

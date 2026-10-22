@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { lstatSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { harnessDirectories, type HarnessReadTable, type ReadEnvironment } from "../../adapters/capability-reads.js";
+import { openClawRoster } from "../../adapters/control/openclaw.js";
 import { CapabilityError, type CapabilityChangeCheck, type CapabilityChangeView, type InstructionCheckOption, type InstructionsView, type InstructionTargetState,
   type InstructionTargetView } from "../../contracts/capabilities.js";
 import { at, parseConfig, record } from "./formats.js";
@@ -106,12 +107,17 @@ export class InstructionInventory {
     const names = at(parsed.value, ["context", "fileName"]), list = typeof names === "string" ? [names] : Array.isArray(names) ? names.filter((name): name is string => typeof name === "string") : [];
     return { names: list.filter(name => name !== "" && !name.includes("/")) };
   }
-  /** OpenClaw's configuration as read for the instructions (JSON5, links followed): its channels' names, its per-file limit and whether it has several agents. */
-  private openclaw(): { readonly channels: readonly string[]; readonly maxChars: number; readonly agents: number } {
+  /**
+   * OpenClaw's configuration as read for the instructions (JSON5, links followed): its channels' names, its per-file limit,
+   * how many agents its roster names (keyed `agents.entries` or the legacy `agents.list`), and whether that roster has an
+   * agent sessions run as by default (openClawRoster; a configuration that cannot be read counts as no roster).
+   */
+  private openclaw(): { readonly channels: readonly string[]; readonly maxChars: number; readonly agents: number; readonly owned: boolean } {
     const read = plainText(harnessDirectories(this.host.environment).openclawConfig), parsed = read.state === "ok" ? parseConfig(read.text, "json5") : null;
-    const value = parsed?.ok ? parsed.value : null, raw = at(value, ["agents", "defaults", "bootstrapMaxChars"]), list = at(value, ["agents", "list"]);
+    const value = parsed?.ok ? parsed.value : null, raw = at(value, ["agents", "defaults", "bootstrapMaxChars"]), roster = value === null ? null : openClawRoster(value);
+    const known = roster === null || "problem" in roster ? null : roster;
     return { channels: Object.keys(record(at(value, ["channels"]))).filter(name => name !== "defaults"), maxChars: typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : OPENCLAW_MAX_CHARS,
-      agents: Array.isArray(list) ? list.length : 0 };
+      agents: known?.agents.length ?? 0, owned: known === null || known.owner !== null };
   }
   /** The file HarnessHub writes for a Harness: the one its read table says it reads now (Codex: a non-empty override first; OpenCode: always its own). */
   private locate(table: HarnessReadTable | undefined): Located {
@@ -241,7 +247,10 @@ export class InstructionInventory {
     const notes = ["只改 " + shown + " 里带 HarnessHub 标记的区块（或新建这个文件），不改任何模型、Provider 或登录配置；区块外的内容不动。", EFFECT[harnessId] ?? "", ...await this.host.runningNotes(harnessId)].filter(Boolean);
     let blocked: string | null = null, proceed: CapabilityChangeCheck["proceed"] = null;
     const ask = (reason: string, option: InstructionCheckOption, label: string) => { if (blocked === null && !options.has(option)) { blocked = reason; proceed = { option, label }; } };
+    const openclaw = harnessId === "openclaw" ? this.openclaw() : null;
     if (body === "") blocked = "共享指令和 " + harness.name + " 的追加文本都是空的，没有可写的内容。";
+    // Without a default agent there is no workspace of HarnessHub's sessions to write to; the file shown is only the first agent's.
+    else if (openclaw !== null && !openclaw.owned) blocked = "OpenClaw 没有默认代理（配置了多个代理却没有指定归属，或代理名册为空），HarnessHub 不替你选写入哪个代理的工作区。请在 OpenClaw 中设置 agents.defaults.systemAgent.agentId。";
     else if (state.state === "shadowed") blocked = state.reason + "；请先移除那里的区块。";
     else if (state.state === "unreadable") blocked = "无法修改 " + shown + "：" + state.reason + "。";
     else if (state.state === "synced") blocked = "无需修改：" + harness.name + " 的区块已是现在的指令。";
@@ -264,9 +273,7 @@ export class InstructionInventory {
     if (harnessId === "claude" && await this.opencodeFallsBackTo(located.file, installed)) notes.push("OpenCode 没有自己的指令文件，也会经回退读到这个文件。");
     if (state.state === "removed") notes.push("HarnessHub 写的区块曾被外部移除，会重新加上。");
     if (located.others.length && harnessId === "codex" && located.file.endsWith(".override.md")) notes.push("Codex 读非空的 AGENTS.override.md，所以写在这里；AGENTS.md 对它不起作用。");
-    let openclaw: ReturnType<InstructionInventory["openclaw"]> | null = null;
-    if (harnessId === "openclaw") {
-      openclaw = this.openclaw();
+    if (openclaw !== null) {
       notes.push((openclaw.channels.length ? "OpenClaw 配置的频道：" + openclaw.channels.join("、") + "。这些频道里的新会话或重置后的会话会按新指令回答" : "这台电脑的 OpenClaw 没有配置频道。新会话或重置后的会话会按新指令回答")
         + "；运行中的会话不变；HarnessHub 不重启网关。");
       if (openclaw.agents > 0) notes.push("OpenClaw 配置了 " + openclaw.agents + " 个 agent，这里只写默认 agent 的工作区；其他 agent 的工作区不支持。");

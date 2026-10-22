@@ -7,6 +7,7 @@ import test from "node:test";
 import type { CapabilityChangeCheck, CapabilityChangeView, CapabilityHistory, CapabilityRestoreCheck, InstructionsView } from "../../src/contracts/capabilities.js";
 import { application } from "../../src/cli/session-application.js";
 import { bodySha } from "../../src/infrastructure/capabilities/instruction-blocks.js";
+import { resolveOpenClawWorkspace } from "../../src/infrastructure/capabilities/service.js";
 import { CapabilityStore } from "../../src/infrastructure/capabilities/store.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { startWebServer } from "../../src/web/server.js";
@@ -234,6 +235,70 @@ test("G064-I2 OpenCode's fallback, Claude Code's file it falls back to, OpenClaw
     assert.ok(geminiRemove.backupId !== null);
   } finally { await chmod(join(home, ".cc-switch"), 0o700); }
   await f.clean();
+});
+
+test("G064-I2 OpenClaw's keyed agents.entries roster gives the default agent's workspace and the agent count as the legacy list does; a roster without an owner is not written to (ADR-053)", { timeout: 180000 }, async t => {
+  const f = await gateway(t), home = f.home, config = join(home, ".openclaw", "openclaw.json"), opsFile = join(home, "ops-ws", "AGENTS.md");
+  assert.equal((await f.save("Reply in Chinese.")).status, 200);
+  // The one marked agent without a workspace of its own takes agents.defaults.workspace, as the legacy default agent does.
+  await writeFile(config, "{ agents: { defaults: { workspace: '~/claw-ws' }, entries: { main: { default: true }, helper: {} } } }\n");
+  assert.equal(state(await f.view(), "openclaw")?.file, "~/claw-ws/AGENTS.md");
+  const marked = await f.check("sync", "openclaw");
+  assert.equal(marked.value.blocked, null, marked.value.blocked ?? "");
+  assert.ok(marked.value.notes.some(note => /配置了 2 个 agent，这里只写默认 agent 的工作区/u.test(note)), JSON.stringify(marked.value.notes));
+  // The system agent of an explicit fleet: its own workspace, else <agents.defaults.workspace>/<id>, as OpenClaw resolves it.
+  await writeFile(config, "{ agents: { ownership: 'explicit', defaults: { workspace: '~/claw-ws', systemAgent: { agentId: 'helper' } }, entries: { ops: { workspace: '~/ops-ws' }, helper: {} } } }\n");
+  assert.equal(state(await f.view(), "openclaw")?.file, "~/claw-ws/helper/AGENTS.md");
+  await mkdir(join(home, "ops-ws")); await writeFile(opsFile, "Ops rules\n");
+  await writeFile(config, "{ agents: { ownership: 'explicit', defaults: { workspace: '~/claw-ws', systemAgent: { agentId: 'ops' } }, entries: { ops: { workspace: '~/ops-ws' }, helper: {}, writer: {} } } }\n");
+  assert.equal(state(await f.view(), "openclaw")?.file, "~/ops-ws/AGENTS.md");
+  const fleet = await f.check("sync", "openclaw");
+  assert.ok(fleet.value.notes.some(note => /配置了 3 个 agent，这里只写默认 agent 的工作区/u.test(note)), JSON.stringify(fleet.value.notes));
+  await f.apply(fleet);
+  assert.equal(await readFile(opsFile, "utf8"), "Ops rules\n\n" + block("Reply in Chinese."));
+  // Without an owner, no agent's workspace is HarnessHub's to write: the check says why. HarnessHub's own block can still be taken back.
+  await writeFile(config, "{ agents: { ownership: 'explicit', defaults: { workspace: '~/claw-ws' }, entries: { ops: { workspace: '~/ops-ws' }, helper: {} } } }\n");
+  assert.equal(state(await f.view(), "openclaw")?.file, "~/ops-ws/AGENTS.md", "shown with its first agent, as OpenClaw lists it first");
+  assert.match((await f.check("sync", "openclaw")).value.blocked ?? "", /没有默认代理.*HarnessHub 不替你选写入哪个代理的工作区.*agents\.defaults\.systemAgent\.agentId/u);
+  await f.apply(await f.check("remove", "openclaw"));
+  assert.equal(await readFile(opsFile, "utf8"), "Ops rules\n");
+  await f.clean();
+});
+
+test("G064-I2 OpenClaw's workspace is resolved in OpenClaw's own order: the owner's workspace, agents.defaults.workspace, OPENCLAW_WORKSPACE_DIR, the state directory, a named profile (ADR-053)", async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "openclaw-workspace-"))); t.after(() => rm(root, { recursive: true, force: true }));
+  const resolved = (values: Readonly<Record<string, string>> = {}) => resolveOpenClawWorkspace({ home: root, values: { HOME: root, ...values } });
+  const config = (text: string) => writeFile(join(root, ".openclaw", "openclaw.json"), text);
+  // Without a configuration: OpenClaw's default workspace, which a named profile moves to ~/.openclaw-<profile>/workspace.
+  assert.equal(await resolved(), join(root, ".openclaw", "workspace"));
+  assert.equal(await resolved({ OPENCLAW_PROFILE: "lab" }), join(root, ".openclaw-lab", "workspace"));
+  assert.equal(await resolved({ OPENCLAW_PROFILE: "Default" }), join(root, ".openclaw", "workspace"));
+  assert.equal(await resolved({ OPENCLAW_PROFILE: "../escape" }), join(root, ".openclaw", "workspace"), "not a profile name");
+  assert.equal(await resolved({ OPENCLAW_STATE_DIR: join(root, "state"), OPENCLAW_PROFILE: "lab" }), join(root, "state", "workspace"));
+  assert.equal(await resolved({ OPENCLAW_WORKSPACE_DIR: "~/chosen/", OPENCLAW_STATE_DIR: join(root, "state"), OPENCLAW_PROFILE: "lab" }), join(root, "chosen"));
+  assert.equal(await resolved({ OPENCLAW_WORKSPACE_DIR: "relative/dir", OPENCLAW_PROFILE: "lab" }), join(root, ".openclaw-lab", "workspace"), "a relative directory names nothing HarnessHub can place");
+  // Keyed rosters: an inheriting owner takes agents.defaults.workspace before the variable; the system agent of an explicit fleet takes its own folder.
+  await mkdir(join(root, ".openclaw"));
+  await config("{ agents: { defaults: { workspace: '~/shared' }, entries: { main: { default: true }, helper: { workspace: '~/helper' } } } }");
+  assert.equal(await resolved({ OPENCLAW_WORKSPACE_DIR: join(root, "chosen") }), join(root, "shared"));
+  await config("{ agents: { entries: { main: { default: true }, helper: {} } } }");
+  assert.equal(await resolved({ OPENCLAW_WORKSPACE_DIR: join(root, "chosen") }), join(root, "chosen"));
+  assert.equal(await resolved({ OPENCLAW_PROFILE: "lab" }), join(root, ".openclaw-lab", "workspace"));
+  await config("{ agents: { entries: { solo: { workspace: '~/solo' } } } }");
+  assert.equal(await resolved(), join(root, "solo"));
+  await config("{ agents: { ownership: 'explicit', defaults: { workspace: '~/fleet', systemAgent: { agentId: 'Coord' } }, entries: { writer: {}, coord: {} } } }");
+  assert.equal(await resolved(), join(root, "fleet", "coord"));
+  await config("{ agents: { ownership: 'explicit', defaults: { systemAgent: { agentId: 'coord' } }, entries: { writer: {}, coord: {} } } }");
+  assert.equal(await resolved(), join(root, ".openclaw", "workspace-coord"));
+  await config("{ agents: { entries: { first: {}, second: {} } } }");
+  assert.equal(await resolved(), join(root, ".openclaw", "workspace-first"), "a roster without an owner is shown with its first agent");
+  // The legacy array, unchanged: the marked entry's workspace, else agents.defaults.workspace; a configuration that does not parse gives the default.
+  await config("{ agents: { list: [{ id: 'a' }, { id: 'b', default: true, workspace: '~/ws-b' }], defaults: { workspace: '~/ws' } } }");
+  assert.equal(await resolved(), join(root, "ws-b"));
+  await config("{ agents: { list: [{ id: 'a' }, { id: 'b' }], defaults: { workspace: '~/ws' } } }");
+  assert.equal(await resolved(), join(root, "ws"));
+  await config("{ agents: ");
+  assert.equal(await resolved({ OPENCLAW_PROFILE: "lab" }), join(root, ".openclaw-lab", "workspace"));
 });
 
 test("G064-I3 what HarnessHub wrote and someone then changed, removed or moved is shown, kept as the user's and put back only on request; a Harness not installed is not listed", { timeout: 180000 }, async t => {
