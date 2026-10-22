@@ -12,7 +12,7 @@
 | Adapter protocol | 真 Client/SDK、进程/流、协议双方边界 | 固定协议对端或假模型 | 协商、消息、取消、权限、错误/背压 |
 | Process/platform | 正式构建入口、真实进程树与文件系统 | 测试工具后代进程 | 启停、残留、租约与平台能力 |
 | End-to-end synthetic | 全部自有组件、真实 Store/HTTP/IPC/客户端 | 只有外部 Agent/模型 | 公共 Session 与执行/切换完整闭环 |
-| Real harness/provider | 固定真实二进制、真实模型、权限/文件任务 | 不替代被验收的组件 | 实际组合在指定版本/平台上的证据 |
+| Real harness/provider | 真实二进制（默认对象是该 Harness 官网渠道的最新正式版，[ADR-053](../decisions/0053-latest-version-baseline.md)）、真实模型、权限/文件任务 | 不替代被验收的组件 | 实际组合在记录写明的版本/平台上的证据；版本只作证据，不成为接入条件 |
 | Performance/security | 正式入口、负载和攻击场景 | 合成凭据与可控外部服务 | 资源上界和拒绝行为，不能替代业务正确性 |
 
 ## 2. 不仅测 happy path

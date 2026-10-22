@@ -38,7 +38,7 @@
 - G1 设计采纳：切片的 ADR 为 accepted 并登记在 `plan/slices.json`；源码在该切片的 `allowed_files` 内。
 - G2 测试通过：对应层（unit、integration、protocol、browser）的测试与 tools 自检（`pnpm check:tools`）通过；新增的检查规则有无效样例证明会拒绝错误。
 - G3 正式入口链路通过：经 Gateway/CLI 正式入口的集成通过；SQLite、IPC 与进程保持真实，只替代外部 Harness 与模型。
-- G4 真实引擎通过：在本机官网安装、`VERIFIED_VERSIONS` 所记的版本上真实通过，`docs/verification/` 有写明命令、版本、渠道与局限的记录。
+- G4 真实引擎通过：在本机官网安装的、验收当日各家最新正式版上经正式入口真实通过，`docs/verification/` 有写明命令、版本、渠道与局限的记录；版本只作证据，代码不读它（[ADR-053](../decisions/0053-latest-version-baseline.md)，2026-10-22；原为“`VERIFIED_VERSIONS` 所记的版本”）。
 - G5 平台：并入“只面向 macOS”（[ADR-044](../decisions/0044-macos-official-channels.md)），不再单列发行平台、容量与恢复门禁；性能与安全按各自任务的证据表述。
 
 没有测试代码或没有宿主时写 planned/未验证，不写 passed。各本机切片先完成必要设计和测试再实现；一项功能走到哪一层就如实报告到哪一层，不把低层的证据写成高层通过。

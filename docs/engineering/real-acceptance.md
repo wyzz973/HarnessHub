@@ -1,6 +1,8 @@
 # 真实验收操作手册
 
-状态：2026-10-22 起使用。这是给主代理照着执行的手册，覆盖真实 Harness 验收（[测试与验收策略](testing.md#1-分层证据)第 1 节中“Real harness/provider”这一层）的前提、配置守护、证据头与记录格式、费用上限、每个焦点 Harness 的完整套件与冒烟套件，以及重验后的“配方提交”。守护与证据头的实现在 [tests/real/guard.ts](../../tests/real/guard.ts)，单元测试在 [tests/unit/real-guard.test.ts](../../tests/unit/real-guard.test.ts)（场景 G060-NC14、G060-NC15）。实际运行的结果写在 `docs/verification/` 的验收记录里，本手册不替代记录。平台只有 macOS（[ADR-044](../decisions/0044-macos-official-channels.md)）。
+状态：2026-10-22 起使用。这是给主代理照着执行的手册，覆盖真实 Harness 验收（[测试与验收策略](testing.md#1-分层证据)第 1 节中“Real harness/provider”这一层）的前提、配置守护、证据头与记录格式、费用上限、每个焦点 Harness 的完整套件与开发侧回归，以及验收后的“配方提交”。守护与证据头的实现在 [tests/real/guard.ts](../../tests/real/guard.ts)，单元测试在 [tests/unit/real-guard.test.ts](../../tests/unit/real-guard.test.ts)（场景 G060-NC14、G060-NC15）。实际运行的结果写在 `docs/verification/` 的验收记录里，本手册不替代记录。平台只有 macOS（[ADR-044](../decisions/0044-macos-official-channels.md)）。
+
+基线（[ADR-053](../decisions/0053-latest-version-baseline.md)，2026-10-22）：真实验收以验收当日各家的最新正式版为对象——本机先按渠道升到它（由用户在 Hub 点击或明确同意），记录写明提交、渠道、版本、日期、费用与局限；版本只作证据，代码不读它，旧版本上的记录全部保留为历史证据。第 6 节各配方同日按这条基线改写（Claude 2.1.307 + 适配器 0.94.0、dsh 0.2.1-rc.2、Codex 0.163.0、OpenCode 1.19.3；Hermes 与 OpenClaw 等用户决定）；本机实际升到哪个版本以用户对 ADR-053“待用户决定”第 1 题的答复为准，没有升的那家在当前版本上验收并在记录里写明“不是最新正式版”。
 
 编写本手册的任务（第二批 C2）没有运行任何真实套件，也没有运行任何 Harness：套件改动只经过编译、边界检查与守护单元测试，第一次真实运行由主代理按本手册执行。
 
@@ -122,8 +124,7 @@ RUN node dist/tests/real/guard.js compare "$EVIDENCE/guard-before.json" "$EVIDEN
 | `harnesses[].installations` | 每份安装：`ref`（摘要，不是路径）、`channel`、`label`（例如“npm 全局（nvm v26.11.1）”）、`command`、`version`、`role`（product 或 adapter）、`active`（每种角色中 HarnessHub 会运行的那一份） |
 | `harnesses[].controls` | 能运行的控制入口及来源：`path`、`standard-directory`、`custom-entry`（发现清单）、`package-root`、`managed` |
 | `harnesses[].source`、`entryVersion` | `system`、`managed` 或 `missing`；入口自己的版本（Claude 是适配器 claude-agent-acp 的版本） |
-| `harnesses[].programVersion`、`programVersionFrom` | 产品版本。管理视图能直接给出时为 `management`；经适配器接入的产品（Claude）只有运行 `--version` 才能读到，证据头不运行它，改取当前使用的产品安装的渠道记录，写 `installation` |
-| `harnesses[].verification` | ADR-038 对这组版本的判定：`verified` 或 `unverified`，附已验证的版本 |
+| `harnesses[].programVersion`、`programVersionFrom` | 产品版本。管理视图能直接给出时为 `management`；经适配器接入的产品（Claude）只有运行 `--version` 才能读到，证据头不运行它，改取当前使用的产品安装的渠道记录，写 `installation`。版本只作证据（ADR-053）：原 `harnesses[].verification`（ADR-038 的已验证判定）2026-10-22 起删除 |
 
 dsh 的 ACP 自报版本恒为 0.0.1，所以版本一律以证据头的 `installations` 与 `programVersion` 为准，不看 `native-catalog` 证据里的 `agent.version`。
 
@@ -147,7 +148,7 @@ dsh 的 ACP 自报版本恒为 0.0.1，所以版本一律以证据头的 `instal
 - 安装策略：<official>；平台：macOS <系统版本>
 - 安装（照抄证据头 installations）：<command> <version>，<label>，<role>，<active>
 - 入口：<controls[].id>（<entry>）
-- 版本：产品 <programVersion>（来自 <programVersionFrom>）；入口 <entryVersion>；ADR-038 判定 <verification.state>（已验证 <program>/<adapter>）
+- 版本：产品 <programVersion>（来自 <programVersionFrom>）；入口 <entryVersion>；渠道当日最新正式版 <版本>（是否一致：<是/否及原因>）。版本只作证据（ADR-053）
 - 环境：env -i，登录 shell 的 PATH，HH_REAL_TMP=$HOME/.cache/harnesshub-acceptance，未设 HH_REAL_MANIFEST
 
 ## 守护
@@ -169,7 +170,7 @@ dsh 的 ACP 自报版本恒为 0.0.1，所以版本一律以证据头的 `instal
 - <受阻的格与原因；没有运行的套件与原因>
 
 ## 配方提交
-- <commit>：VERIFIED_VERSIONS、矩阵安装说明、目录包版本；versionConsistency 为空
+- <commit>：本记录；矩阵 installation（“真实验收版本 …”）与各格 real/note/evidence；读表 checkedOn；ADR-039 表的“核对时版本”
 ```
 
 ## 4. 费用上限
@@ -179,10 +180,10 @@ dsh 的 ACP 自报版本恒为 0.0.1，所以版本一律以证据头的 `instal
 | 任一 Harness | 每轮完整验收 ≤ ¥10（硬上限）；单回合 > 150k token 或 > 5 分钟即停 | [ADR-031](../decisions/0031-hermes-and-deepseek-harness.md) |
 | DeepSeek Harness | ≤ ¥3 | 审批（决定 4） |
 | Claude Code | ≤ 25 次提示，以 Haiku 为主，1 次压缩；周额度不足即停止并记录，不换账号 | 审批（决定 3） |
-| Hermes Agent | ≤ ¥3 | 审批 |
-| OpenClaw | ≤ ¥3 | 审批 |
+| Hermes Agent | ≤ ¥3（本轮不做：等用户决定是否进入网关，ADR-051） | 审批 |
+| OpenClaw | ≤ ¥3（当前版本的 T-OC-08 复验）；升级后的 T-OC-12 ≤ ¥5 | 审批 |
 | Codex | 用户点击升级之后复验 ≤ 20 次提示 | 审批 |
-| OpenCode | 可选的 `/compact` 核对 ≤ 5 次提示 | 审批 |
+| OpenCode | ≤ 10 次提示（`/compact` 与可选的 thought-level；2026-10-22 由 5 次放宽） | 审批 |
 
 “提示”按套件发出的消息计：原生命令（`/compact`、`/model …`）各算一次，回答原生提问不另算；`claude-mcp`、`openclaw-skill-switch` 与 Provider、切换、流、会话、安装套件不调用真实模型（本地确定性 Provider 或原程序自己的配置命令），不计费。
 
@@ -210,11 +211,11 @@ dsh 的 ACP 自报版本恒为 0.0.1，所以版本一律以证据头的 `instal
 | `provider-switch`、`codex-local-provider`、`codex-session`、`live-web-stream`、`managed-install`、`gemini-provider`、`harness-provider-switch` | `HH_REAL_EVIDENCE`（可选） | 0（本地确定性 Provider） | Provider、切换、流与私有安装（G060-P*、G060-M01、G060-S01） |
 | `homebrew-native` | `HH_REAL_EVIDENCE`（可选） | 0 | 原 Homebrew 的沙箱保护（G060-N04） |
 
-## 6. 各焦点 Harness 的完整套件与冒烟套件
+## 6. 各焦点 Harness 的完整套件与开发侧回归
 
-### 6.1 冒烟套件（决定 3）
+### 6.1 最新版发布后的开发侧回归（原“冒烟套件”）
 
-决定 3：检测到新版本后做一次约 10 次提示的冒烟，通过即扩展已验证区间。五项：
+[ADR-048](../decisions/0048-harness-scope-and-workbuddy.md) 决定 3 原定“检测到新版本后由用户在页面触发一次约 10 次提示的冒烟，通过即扩展已验证区间”。2026-10-22 按 [ADR-053](../decisions/0053-latest-version-baseline.md) 改为开发侧回归：某家发布新正式版后，主代理在本机升到它之后按下面五项跑一次，结果写进验收记录并更新矩阵 `installation`；它是工程动作，不进产品界面，也不改变任何“区间”（已经没有区间）。五项：
 
 1. **目录**：`native-catalog`。
 2. **原生恢复**：`native-resume`。
@@ -224,42 +225,43 @@ dsh 的 ACP 自报版本恒为 0.0.1，所以版本一律以证据头的 `instal
 
 | 项 | Claude Code | DeepSeek Harness | Codex | OpenCode | Hermes Agent | OpenClaw |
 |---|---|---|---|---|---|---|
-| 审批 | `HH_REAL_APPROVAL=1 HH_REAL_OPTIONS_CLAUDE='{"mode":"default"}'` | 不设 APPROVAL，看证据 `permissions`（见 6.3） | `HH_REAL_APPROVAL=1 HH_REAL_OPTIONS_CODEX='{"approval_policy":"on-request","sandbox":"read-only"}'` | `HH_REAL_APPROVAL=1`（套件在工作区写 opencode.json 要求编辑与命令询问） | 0.12.0 受阻于上游缺陷，跑 `native-activity` 记录 Hub 的提示 | 不适用（Hub 未接出 OpenClaw 审批）；`native-activity` 只用 `HH_REAL_READONLY=1` |
-| 续接命令 | `claude -p --resume <id> "…"` | `dsh headless --session-id <id> "…"` | `codex exec --skip-git-repo-check resume <id> "…"` | `opencode run -s <id> "…"` | `hermes chat --resume <id> -q "…"` | 不显示（会话在 OpenClaw Gateway 里，ADR-039） |
+| 审批 | `HH_REAL_APPROVAL=1 HH_REAL_OPTIONS_CLAUDE='{"mode":"default"}'` | 不设 APPROVAL，看证据 `permissions`（见 6.3） | `HH_REAL_APPROVAL=1 HH_REAL_OPTIONS_CODEX='{"approval_policy":"on-request","sandbox":"read-only"}'` | `HH_REAL_APPROVAL=1`（套件在工作区写 opencode.json 要求编辑与命令询问） | 0.12.0 受阻于上游缺陷，跑 `native-activity` 记录为受阻（0.12 的缺陷提示已按 ADR-053 删除，只看拒绝文本被标为失败） | 不适用（Hub 未接出 OpenClaw 审批）；`native-activity` 只用 `HH_REAL_READONLY=1` |
+| 续接命令 | `claude -p --resume <id> "…"` | `dsh headless --session-id <id> "…"`（凭据前提见 6.3） | `codex exec --skip-git-repo-check resume <id> "…"`（git 工作区不带该标志） | `opencode run -s <id> "…"` | `hermes chat --resume <id> -q "…"` | 不显示（会话在 OpenClaw Gateway 里，ADR-039） |
 | 能力核对 | `claude-mcp` | 暂无套件 | 暂无套件 | 暂无套件 | 暂无套件 | `openclaw-skill-switch` |
 | 提示 | 约 5 | 约 5 | 约 5 | 约 5 | 约 5 | 约 3 |
 
-### 6.2 Claude Code（配方：2.1.306 重验，扩区间到 [2.1.296, 2.1.306]）
+### 6.2 Claude Code（配方：最新正式版，2026-10-22 为 2.1.307 + 适配器 claude-agent-acp 0.94.0）
 
-前置：`which -a claude` 第一个是 nvm 的 2.1.306；`native-catalog` 证据头里产品 `claude` 2.1.306（`active`）、适配器 `claude-agent-acp` 的版本（先核实是 0.89.1，再决定适配器区间）。所有套件都加 `HH_REAL_HARNESSES=claude`；除另行说明外加 `HH_REAL_MODEL_CLAUDE=<haiku id>`，取自 `native-catalog` 证据的 `catalog.modelIds`（2.1.296 时是 `haiku`；不在目录里时 `native-resume` 会在发送前失败，不花提示）。
+前置：用户先把 nvm 下的 npm 全局 `@anthropic-ai/claude-code` 升到 npm latest（它会自更新；只读查看 `which -a claude` 与 nvm 目录，不运行 `--version`），并在 Hub 里点击逐份升级把 Homebrew Node 前缀下的 `@agentclientprotocol/claude-agent-acp` 升到 npm latest（0.89.1 → 0.94.0，`engines` 要求 Node ≥ 22；升级前先结束“保持原生进程”的 Claude 对话，它们在关闭前仍跑旧适配器）。`which -a claude` 第一个是 nvm 的那份；`native-catalog` 证据头里产品 `claude` 与适配器的版本照抄进记录，并写明是否为当日 npm latest。所有套件都加 `HH_REAL_HARNESSES=claude`；除另行说明外加 `HH_REAL_MODEL_CLAUDE=<haiku id>`，取自 `native-catalog` 证据的 `catalog.modelIds`（2.1.296 时是 `haiku`；不在目录里时 `native-resume` 会在发送前失败，不花提示）。此前的记录：2.1.296（[2026-10-11](../verification/claude-real-and-approval-detail-2026-10-11.md)）与 2.1.306 + 0.89.1（[2026-10-22 重验](../verification/claude-2.1.306-rebaseline-2026-10-22.md)），只作证据。
 
 | # | 套件 | 变量 | 提示 | 格 |
 |---|---|---|---|---|
-| 1 | `native-catalog` | 不设 MODEL | 0 | models、commands、modes-settings（目录） |
+| 1 | `native-catalog` | 不设 MODEL | 0 | models、commands、modes-settings（目录）。0.94.0 上核对：会话能力少 `subagents`、多 `systemPrompt`（Hub 不声明 subagents）；命令目录**不含** `/remote-control`（Hub 隐藏它，ADR-053 裁决 6）；认证 ready |
 | 2 | `native-resume` | — | 2 | resume、models |
 | 3 | `native-activity` | `HH_REAL_APPROVAL=1`、`HH_REAL_OPTIONS_CLAUDE='{"mode":"default"}'`（mode 的 id 与取值以目录证据为准） | 1 | tool-status、tool-detail、usage、approvals、modes-settings |
+| 3b | `native-activity`，一次回合中途停止（人工：在工具运行中点停止） | — | 1 | 工具以 failed 加原程序说明收尾、`cancelled` 响应、没有残留审批卡；记录是否出现 `$/cancel_request` 诊断 |
 | 4 | `native-commands` | — | 4（含 1 次压缩；`/export` 由 Hub 复制转录） | compaction、export、commands |
-| 5 | `native-config` | `HH_REAL_CONFIG_OPTION=model`、`HH_REAL_CONFIG_FROM=<haiku id>`、`HH_REAL_CONFIG_TO=<sonnet id>`、`HH_REAL_CONFIG_COMMAND="/model <sonnet id>"` | 4 | config-sync、models |
+| 5 | `native-config` | `HH_REAL_CONFIG_OPTION=model`、`HH_REAL_CONFIG_FROM=<haiku id>`、`HH_REAL_CONFIG_TO=<sonnet id>`、`HH_REAL_CONFIG_COMMAND="/model <sonnet id>"` | 4 | config-sync、models（2.1.307 的 setModel 等待 15 秒） |
 | 6 | `native-attachments` | — | 2 | input-file、input-image |
 | 7 | `native-import` | 不接受 MODEL：原程序自己用 `claude -p` 建会话，接续后的回合也用 Claude 的默认模型 | 2 | session-list |
-| 8 | `native-branch` | — | 4 | fork |
+| 8 | `native-branch` | — | 4 | fork。0.94.0 的 fork 会启动分支会话（多一次 CLI 启动）：记录 fork 耗时、`cleanup` 为 closed 且无协议失败、分支答对标记 |
 | 9 | `native-question` | — | 1 | questions |
 | 10 | `native-subagent` | — | 1 | subagents |
 | 11 | `native-extensions` | — | 1 | skills、plugins、mcp（列表） |
-| 12 | `claude-mcp` | — | 0 | mcp（写入往返，需在 2.1.306 上复验） |
+| 12 | `claude-mcp` | — | 0 | mcp（写入往返，在最新版上复验） |
 
-合计约 22 次提示。可选：`native-options` 加 `HH_REAL_OPTIONS_CLAUDE='{"effort":"low"}'`，所选模型的目录要有 effort（1 次，复验 thought-level）。
+合计约 23 次提示（上限 25）。每回合核对 `usage_update` 的用量与费用不再多出一次预测请求（Hub 的会话参数带 `promptSuggestions=false`，ADR-053 裁决 5）。可选：`native-options` 加 `HH_REAL_OPTIONS_CLAUDE='{"effort":"low"}'`，所选模型的目录要有 effort（1 次，复验 thought-level）。
 
-不跑：`native-thinking`（新模型默认 `thinking.display=omitted`，只发送没有文本的签名块，矩阵记为受阻）；`HH_REAL_PLAN`（会话里没有 TodoWrite 类计划工具，受阻）。不适用：音频输入、回滚（原接口不提供）。另记录 Claude 登录状态在页面上的显示（已登录或未说明，B6 的后续）。冒烟只跑 1、2、3、续接命令与 12。
+不跑：`native-thinking`（新模型默认 `thinking.display=omitted`，只发送没有文本的签名块，矩阵记为受阻）；`HH_REAL_PLAN`（会话里没有 TodoWrite 类计划工具，受阻）；`/remote-control`（Hub 不支持，也不在验收里运行——它会把会话连到 claude.ai）。不适用：音频输入、回滚（原接口不提供）。另记录 Claude 登录状态在页面上的显示（已登录或未说明，B6 的后续）。开发侧回归只跑 1、2、3、续接命令与 12。
 
-### 6.3 DeepSeek Harness（配方：0.2.0-rc.2 精确基线，≤ ¥3）
+### 6.3 DeepSeek Harness（配方：npm latest，2026-10-22 为 0.2.1-rc.2，≤ ¥3）
 
-前置：证据头里 dsh 为 npm 官网渠道 0.2.0-rc.2（`active`），`programVersion` 来自 management；入口 `dsh-native` 的来源是 `path` 或 `standard-directory`，不是 `custom-entry`。所有套件加 `HH_REAL_HARNESSES=dsh`。
+前置：用户在 Hub 点击 npm 升级把 nvm 前缀的全局 `@deepseek-ai/dsh` 升到 npm latest（0.2.0-rc.2 → 0.2.1-rc.2；先结束保留的 dsh 进程；dsh 没有服务或常驻进程；首次运行只在 profile 的 package.json 列有已退休的 bundle 时才回写它）。证据头里 dsh 为 npm 官网渠道的 latest（`active`），`programVersion` 来自 management；入口 `dsh-native` 的来源是 `path` 或 `standard-directory`，不是 `custom-entry`。所有套件加 `HH_REAL_HARNESSES=dsh`。此前的记录：0.2.0-rc.2（[2026-10-22 重验](../verification/dsh-rc2-reverification-2026-10-22.md)），只作证据。
 
 | # | 套件 | 变量 | 提示 | 格 |
 |---|---|---|---|---|
-| 1 | `native-catalog` | — | 0 | models、thought-level（目录）；证据的 `modelIds` 供第 7 步选模型 |
-| 2 | `native-resume` | 不设 MODEL，用 dsh 自己的默认模型 | 2 | resume、models、usage |
+| 1 | `native-catalog` | — | 0 | models、thought-level（目录）；证据的 `modelIds` 供第 7 步选模型；核对 initialize 能力与 model/reasoning_effort 目录 |
+| 2 | `native-resume` | 不设 MODEL，用 dsh 自己的默认模型 | 2 | resume、models、usage。另加一项：升级前在旧版本上建的会话，升级后 `session/resume`（会话日志格式仍是 4） |
 | 3 | `native-thinking` | 不设 OPTIONS（2026-10-11 的通过记录同样没有设置） | 1 | thinking |
 | 4 | `native-activity` | 不设 `HH_REAL_APPROVAL` | 1 | tool-status、tool-detail、usage；approvals 看证据的 `permissions` |
 | 5 | `native-attachments` | — | 1（dsh 没有声明图片，图片应在派发前被拒绝） | input-file、input-image |
@@ -267,36 +269,46 @@ dsh 的 ACP 自报版本恒为 0.0.1，所以版本一律以证据头的 `instal
 | 7 | `native-options` | `HH_REAL_OPTIONS_DSH='{"reasoning_effort":"low"}'`；可选 `HH_REAL_MODEL_DSH=<catalog.modelIds 里的 id>`，不要沿用 alpha 时期的 id 形状 | 1 | thought-level、models |
 | 8 | `native-branch` | — | 4 | fork（dsh 不能原生分支，回退到公共历史并检查隔离） |
 
-合计约 12 次提示。不适用：commands、config-sync（dsh 不提供原生命令）、questions、modes-settings。没有列入：`native-subagent`、`native-extensions`（子 Agent 与技能尚未接出）。
+合计约 12 次提示。不适用：commands、config-sync（dsh 不提供原生命令）、questions、modes-settings。没有列入：`native-subagent`、`native-extensions`（子 Agent 与技能尚未接出）。另观察并记录（不另算套件）：一次子 Agent 回合（prompt 要等子 Agent 结束才返回、子 Agent 触发的后续回答归入同一 Turn）与一次取消（取消后的回复及时返回、之后的自主更新不归属任何 Run、审批请求被取消）；`native-activity` 的 `editDiff` 判据在 dsh 上预计仍失败（0.2.1-rc.2 仍不发 diff，矩阵 tool-detail 记为原接口缺口），按预期结果记录，不算新缺陷。
 
-审批：dsh 0.2.0-rc.2 按 profile 分开保存设置，dsh-base 默认 workspace-write 加询问，2026-10-11“预设为 danger-full-access 受阻”的结论很可能已经失效。套件不为 dsh 写工作区审批文件（它没有这样的文件），dsh 也没有会话级审批选项，所以不设 `HH_REAL_APPROVAL`：设了会在发送前失败。`native-activity` 照常对 dsh 发出的每个审批“允许一次”并记在 `permissions` 里。矩阵的 approvals 格按观察更新说明；T-HB-06 未做时仍记为受阻，并写明观察到了什么。
+审批：dsh 按 profile 分开保存设置，dsh-base 默认 workspace-write 加询问，2026-10-11“预设为 danger-full-access 受阻”的结论很可能已经失效。套件不为 dsh 写工作区审批文件（它没有这样的文件），dsh 也没有会话级审批选项，所以不设 `HH_REAL_APPROVAL`：设了会在发送前失败。`native-activity` 照常对 dsh 发出的每个审批“允许一次”并记在 `permissions` 里。矩阵的 approvals 格按观察更新说明；T-HB-06 未做时仍记为受阻，并写明观察到了什么。
 
-冒烟：1、2、4，续接命令 `dsh headless --session-id <id> "…"`（dsh 没有交互形式），能力核对写“暂无套件”。
+续接命令（第 7 节）分两种情况记录：(a) 与 2026-10-22 重验相同的 `env -i` 干净环境——0.2.1-rc.2 的 `dsh headless` 不读界面里保存的密钥与账号登录，只用终端环境的 `DEEPSEEK_API_KEY`、工作区 `.env` 或 `~/.dsh/.env`，所以预计失败，只记录错误形状；(b) 满足凭据前提——例如用临时目录里的 `--patch` 覆盖层恢复 credentials、authorization、deepseek-account 三行，覆盖层放在用户文件之外、不改用户文件——答对标记。详情栏的命令旁有同样的前提说明（`onceNote`）。
 
-### 6.4 Codex（用户点击升级后复验，≤ 20 次提示）
+能力页：分别在 `~/.agents/AGENTS.md` 存在与不存在时核对 dsh 的指令行与 64 KiB 提示（0.2.1-rc.2 还读 `$DSH_AGENTS_HOME`（缺省 `~/.agents`）下的 AGENTS.md；读表尚未加这第二根，第四批修，核对结果记为已知差距）；在 acp profile 里有已停用的 bundle 时核对插件行的显示。
 
-`HH_REAL_HARNESSES=codex`。完整套件：`native-catalog`；`native-resume`；`native-activity` 加 `HH_REAL_APPROVAL=1 HH_REAL_OPTIONS_CODEX='{"approval_policy":"on-request","sandbox":"read-only"}'`（本机原配置 `approval_policy=never`，不覆盖就不会请求审批）；计划另跑一次 `native-activity` 加 `HH_REAL_PLAN=1`（矩阵受阻，按观察记录）；`native-attachments`；`native-commands`（`/compact`、`/export`）；`native-import`；`native-branch`；`native-subagent`；`native-extensions`；`native-options`（审批策略与沙箱的回报）。思考输出（每轮的 summary 未下发）与原生提问（requestUserInput）没有真实证据，`native-thinking`、`native-question` 作为可选项，结果如实记录。不调用模型的套件：`codex-local-provider`、`codex-session`、`provider-switch`、`live-web-stream`、`managed-install`（从 npm 下载私有版本）。冒烟见 6.1。
+开发侧回归：1、2、4，续接命令 `dsh headless --session-id <id> "…"`（dsh 没有交互形式，附凭据前提），能力核对写“暂无套件”。
 
-### 6.5 OpenCode
+### 6.4 Codex（配方：Homebrew cask 最新版，2026-10-22 为 0.163.0；用户点击升级后复验，≤ 20 次提示）
 
-`HH_REAL_HARNESSES=opencode`。完整套件：`native-catalog`；`native-resume`；`native-thinking`；`native-activity` 加 `HH_REAL_APPROVAL=1`；`native-attachments` 加 `HH_REAL_MODEL_OPENCODE=<有视觉能力的模型 id>`；`native-commands`（1.18.35 隐藏的 `/compact`，可选核对 ≤ 5 次提示）；`native-options` 分两次：`HH_REAL_OPTIONS_OPENCODE='{"mode":"plan"}' HH_REAL_EXPECT_UNCHANGED=1`，以及 `HH_REAL_COMMAND=/init HH_REAL_COMMAND_FILE=AGENTS.md`（默认模式，单独一次）；`native-import`；`native-branch`；`native-extensions`。不适用或未接出：questions（`OPENCODE_CLIENT=acp` 下提问工具不启用）、config-sync、subagents。冒烟见 6.1。
+前置：用户在 Hub 点击 Homebrew cask 升级（0.162.1 → 0.163.0）。升级前只读核对没有 `codex app-server daemon` 在运行（`ps` 看进程名，不读 `~/.codex`）：它会一直跑旧版本直到 `daemon restart`；Hub 保留的 app-server 进程在重启前也仍是旧二进制（ADR-030/043）。首次运行会给 `~/.codex` 的状态库加两条迁移（0060、0061），上游测试表明可回退；按“不复制数据”的规则不备份 `~/.codex`。
 
-### 6.6 Hermes Agent（停在 0.12.0，≤ ¥3）
+`HH_REAL_HARNESSES=codex`。完整套件：`native-catalog`；`native-resume`；`native-activity` 加 `HH_REAL_APPROVAL=1 HH_REAL_OPTIONS_CODEX='{"approval_policy":"on-request","sandbox":"read-only"}'`（本机原配置 `approval_policy=never`，不覆盖就不会请求审批）；计划另跑一次 `native-activity` 加 `HH_REAL_PLAN=1`（矩阵受阻，按观察记录）；`native-attachments`；`native-commands`（`/compact`、`/export`，看 `Thread.path` 的后缀）；`native-import`（`thread/list` cwd + sourceKinds、`thread/read`、`thread/turns/list`）；`native-branch`；`native-subagent`；`native-extensions`；`native-options`（审批策略与沙箱的回报）。最新版上另核对：计划模式按能力——选项在目录里、选择后 `open` 成功、`plan` 条目与切回默认（协作模式不再按版本号提供，ADR-034 修订）；Hub 重启后 `thread/resume` 带与不带权限覆盖各一次，核对 0.163.0 恢复了线程保存的沙箱，以及 Hub 从 `thread/resume` 回包的稳定字段显示的当前值；扩展面板里可信工作区 `.codex/config.toml` 的 MCP 预期不再列出（`mcpServerStatus/list` 不带 threadId 时只反映全局配置，记录事实）；在测试用 `CODEX_HOME` 里写 `[plugins._default] enabled=false`，核对 `plugin/installed` 与能力页；续接命令在 git 与非 git 工作区各一次（第 7 节）。思考输出（每轮的 summary 未下发）与原生提问（requestUserInput）没有真实证据，`native-thinking`、`native-question` 作为可选项，结果如实记录。不调用模型的套件：`codex-local-provider`、`codex-session`、`provider-switch`、`live-web-stream`、`managed-install`（从 npm 下载私有版本）。开发侧回归见 6.1。
 
-`HH_REAL_HARNESSES=hermes`。边界（[ADR-031](../decisions/0031-hermes-and-deepseek-harness.md)）：只用文件与终端类工具做无害任务，不触发浏览器、`process`、记忆、`skill_manage` 与网页搜索；`delegate_task` 只在子 Agent 验收中用一次；只运行 `hermes acp`，不碰 Hermes 网关。完整套件：`native-catalog`；`native-resume`；`native-thinking`；`native-activity`（审批是 0.12.0 的上游缺陷，Hub 会提示“没有向 HarnessHub 请求审批”，记录为受阻）；`native-attachments`（本机模型看不到图片，图片一项按受阻记录）；`native-commands`（`/compact`）；`native-config` 加 `HH_REAL_CONFIG_OPTION=model HH_REAL_CONFIG_FROM=<目录里的模型 id> HH_REAL_CONFIG_TO=<另一个模型 id> HH_REAL_CONFIG_COMMAND="/model <TO 的模型名>"`（2026-10-11 用的是 deepseek-v4-pro 与 deepseek-v4-flash）；`native-import`；`native-branch`；`native-subagent`。升级路线由 ADR-0051（第二批 C6）交给用户决定，在此之前不重验。冒烟见 6.1。
+### 6.5 OpenCode（配方：anomalyco/tap 最新版，2026-10-22 为 1.19.3；≤ 10 次提示）
 
-### 6.7 OpenClaw（停在 2026.3.23-2，≤ ¥3）
+前置：等 Homebrew 公式全名的修复（第三批 D4）部署到 4317 之后，先只读运行 `brew upgrade --dry-run --formula anomalyco/tap/opencode`，确认解析到 1.19.3 而不是 Homebrew Core 的 OpenCode 2（2.1.2，同一个 `opencode` 命令、不能并存），再由用户在 Hub 点击升级。OpenCode 1 没有服务或网关，1.18.35 → 1.19.3 没有数据库迁移，数据仍在 `~/.config/opencode` 与 `~/.local/share/opencode`。按哪条线做“最新版”以用户对 ADR-053 第 2 题的答复为准；本节按 OpenCode 1 写。
 
-`HH_REAL_HARNESSES=openclaw`，回合经用户自己的 OpenClaw Gateway 执行：不重启、不改它的配置。完整套件：`native-catalog`；`native-resume`；`native-activity` 加 `HH_REAL_READONLY=1`（必须）；`native-attachments`；`native-commands`（`/compact`；目录里没有导出命令）；`native-config` 加 `HH_REAL_CONFIG_OPTION=thought_level HH_REAL_CONFIG_FROM=low HH_REAL_CONFIG_TO=high HH_REAL_CONFIG_COMMAND="/think high"`；`native-extensions`；`native-thinking`（部分）；`openclaw-skill-switch`。不适用：fork、questions；未接出：session-list、subagents、approvals。升级前后的复验按 ADR-0052（第二批 C6）与 T-OC-08/12。冒烟见 6.1。
+`HH_REAL_HARNESSES=opencode`。完整套件：`native-catalog`（initialize 报告的版本照抄进记录）；`native-resume`；`native-thinking`；`native-activity` 加 `HH_REAL_APPROVAL=1`；`native-attachments` 加 `HH_REAL_MODEL_OPENCODE=<有视觉能力的模型 id>`；`native-commands`（`/compact` 由 Hub 在命令目录未列出时对任何版本补入，核对回合完成、压缩后仍记得先前事实，与 [1.18.35 的记录](../verification/opencode-compact-2026-10-22.md)一致）；`native-options` 分两次：`HH_REAL_OPTIONS_OPENCODE='{"mode":"plan"}' HH_REAL_EXPECT_UNCHANGED=1`，以及 `HH_REAL_COMMAND=/init HH_REAL_COMMAND_FILE=AGENTS.md`（默认模式，单独一次）；可选：用模型配置里的 `reasoning_options` 补做 thought-level；`native-import`；`native-branch`；`native-extensions`；能力页读取正常、配置守护前后一致。不适用或未接出：questions（`OPENCODE_CLIENT=acp` 下提问工具不启用）、config-sync、subagents。开发侧回归见 6.1。
+
+### 6.6 Hermes Agent（基线：最新正式版 v0.22.4；等用户决定是否进入网关，本轮不做）
+
+`HH_REAL_HARNESSES=hermes`。最新版的 `hermes acp` 只是网关的查看器，会附着到用户正在运行、同时服务 QQ 的网关；是否允许 HarnessHub 的会话进入它由用户决定（[ADR-051](../decisions/0051-hermes-upgrade-route.md) 修订版，ADR-053“待用户决定”第 3 题）。答复前：不升级 Hermes、不运行任何网关命令、本轮不做 Hermes 真实验收；本机 0.12.0 照常接入，不做版本提示。用户选 A2 后的验收分两步（隔离 `HERMES_HOME` 的私有网关，再对真实网关做一次只附着的受控运行），见 ADR-051“验证”。
+
+0.12.0 上曾用的完整套件，供届时参照（边界按 [ADR-031](../decisions/0031-hermes-and-deepseek-harness.md)：只用文件与终端类工具做无害任务，不触发浏览器、`process`、记忆、`skill_manage` 与网页搜索；`delegate_task` 只在子 Agent 验收中用一次）：`native-catalog`；`native-resume`；`native-thinking`；`native-activity`（审批在 0.12.0 是上游缺陷，记录为受阻；0.12 的缺陷提示已删除）；`native-attachments`（本机模型看不到图片，图片一项按受阻记录）；`native-commands`（`/compact`）；`native-config` 加 `HH_REAL_CONFIG_OPTION=model HH_REAL_CONFIG_FROM=<目录里的模型 id> HH_REAL_CONFIG_TO=<另一个模型 id> HH_REAL_CONFIG_COMMAND="/model <TO 的模型名>"`（2026-10-11 用的是 deepseek-v4-pro 与 deepseek-v4-flash）；`native-import`；`native-branch`；`native-subagent`。网关模型下还要加 ADR-051 列出的网关用例，协议替身也要换成网关投影。
+
+### 6.7 OpenClaw（目标 latest；升级待用户确认 ADR-052 路线 A；升级前在 2026.3.23-2 上重做 T-OC-08，≤ ¥3）
+
+`HH_REAL_HARNESSES=openclaw`，回合经用户自己的 OpenClaw Gateway 执行：不重启、不改它的配置。用户答复 ADR-053 第 4 题之前不升级；先在 2026.3.23-2 上用当前代码重做 T-OC-08（`HH_REAL_READONLY=1`），把矩阵 5 个 ✅ 的证据从已丢失的 `.tmp` 恢复为仓库内记录，同时核对第三批 D3 的按能力判断在旧桥上行为不变（旧桥不发实时工具事件，所以去重不触发；名册退回读配置文件）。完整套件：`native-catalog`；`native-resume`；`native-activity` 加 `HH_REAL_READONLY=1`（必须）；`native-attachments`；`native-commands`（`/compact`；目录里没有导出命令）；`native-config` 加 `HH_REAL_CONFIG_OPTION=thought_level HH_REAL_CONFIG_FROM=low HH_REAL_CONFIG_TO=high HH_REAL_CONFIG_COMMAND="/think high"`；`native-extensions`；`native-thinking`（部分；默认模型不输出思考，矩阵按裁决记为本机受阻）；`openclaw-skill-switch`。不适用：fork、questions；未接出：session-list、subagents、approvals。升级（两跳到 latest）由用户在 Hub 确认后进行，升级后按 [ADR-052](../decisions/0052-openclaw-upgrade-route.md) 修订版做 T-OC-12（≤ ¥5）。开发侧回归见 6.1。
 
 ### 6.8 WorkBuddy 与冻结的三个
 
 - **WorkBuddy** 尚未接入（[ADR-048](../decisions/0048-harness-scope-and-workbuddy.md) 决定 2：路线 B，M4 先只读研究与一次受控的 ACP 握手），没有套件，守护也没有它的清单：任何套件对 workbuddy 都会在运行前失败。接入时先补守护清单（`~/.workbuddy` 下的配置文件；device-id 等身份与凭据文件按 2.4 拒绝）。
-- **Cursor、Gemini CLI、Pi** 已冻结（决定 1）：不再重验，也不更新已验证版本。守护清单与套件保留，Provider 与切换套件仍然用到 Gemini。
+- **Cursor、Gemini CLI、Pi** 已冻结（决定 1）：不再重验（原“也不更新已验证版本”随 ADR-053 删除——已经没有版本表）。守护清单与套件保留，Provider 与切换套件仍然用到 Gemini。
 
 ## 7. 续接命令（人工）
 
-[ADR-039](../decisions/0039-continue-in-the-original-program.md) 的命令只在版本已验证时出现在详情栏里。重验期间版本还没扩展，详情栏只给原生会话 ID，命令按 6.1 表里的一次性形式手工拼。
+[ADR-039](../decisions/0039-continue-in-the-original-program.md) 的命令按产品对任何版本都出现在详情栏里（ADR-053 决定 3；原“只在版本已验证时出现……命令按 6.1 表里的一次性形式手工拼”不再成立）。核对就是把详情栏给出的一次性形式原样运行一次，答出标记；在哪个版本上核对过写进记录与 ADR-039 的表，不改任何代码。dsh 的命令旁有凭据前提说明，按 6.3 分两种情况记录。
 
 1. 启动一个私有实例（官网策略、临时数据、自己的租约目录），打开它打印的一次性链接，链接不外传：
 
@@ -311,16 +323,15 @@ dsh 的 ACP 自报版本恒为 0.0.1，所以版本一律以证据头的 `instal
 5. 记录退出码、标准输出的形状（只有答案一行、另有横幅或提示、JSON），以及是否答对标记；不贴回复全文。
 6. 按 Ctrl+C 停止实例（它等在途执行清理完），然后删除 `$WEB`。
 
-## 8. 重验后的“配方提交”
+## 8. 验收后的“配方提交”
 
-真实记录写好之后，按 B2 定下的做法把版本真相放在**一次提交**里，不分开改（[ADR-038](../decisions/0038-verified-version-hint.md)“维护”与“区间语义”两节）：
+真实记录写好之后，把证据放在**一次提交**里，不分开改（[ADR-053](../decisions/0053-latest-version-baseline.md) 决定 8；2026-10-22 起不再有 `VERIFIED_VERSIONS`、目录包版本约束与 `versionConsistency` 对账）。只改三样：
 
-1. [`VERIFIED_VERSIONS`](../../src/infrastructure/management/verified-versions.ts)：已验证区间扩到新版本，两端都要有真实记录，例如 Claude `program: ["2.1.296", "2.1.306"]`、适配器按证据头核实后的版本（0.89.1 时仍为 `["0.89.1", "0.89.1"]`）；dsh `program: ["0.2.0-rc.2", "0.2.0-rc.2"]` 并删除 `unofficial`。没有真实记录之前一个数字都不改。
-2. `plan/native-capabilities.json`：该 Harness 的 `installation` 文本按完整版本号写出新的上界（有适配器时也写出适配器版本），例如“DeepSeek Harness 0.2.0-rc.2（npm 官网 @deepseek-ai/dsh）”，删去“非官网、保留为历史”的说法；各格的 `real`、`note` 按记录更新，`evidence` 指向新的 `docs/verification/` 记录；受阻的格写明观察结果（例如 dsh 的 approvals）。
-3. 目录包：Harness 自己在 `src/adapters/catalog.ts` 里的包版本等于已验证上界（dsh 已是 0.2.0-rc.2；Claude 的入口来自 ACP 注册表，不受这条约束）。能力读表 `src/adapters/capability-reads.ts` 的 `verified` 区间要覆盖已验证区间的两端（Claude `>=2.1.277 <2.2.0`、dsh `>=0.2.0-rc.2 <0.3.0` 已覆盖）。
-4. 依赖旧数字的测试作为合法的行为变化一并改，并在提交说明里写原因。例如 `tests/unit/verified-versions.test.ts` 断言 Claude 2.1.300 为未验证（dsh 的这类断言已在 2026-10-22 的配方提交里随 0.2.0-rc.2 更新），改数字后这些断言要相应更新；其余因此失败的断言逐条核对后再改，不放宽。
-5. ADR-038 补记哪个版本由哪份记录验证；ADR-039 的表补上新版本的续接命令（只写经第 7 节真实核对过的形式）。
-6. 运行 `python3 -I tools/check_design.py --write` 重新生成矩阵视图；`versionConsistency` 必须为空，由 `tests/unit/verified-versions.test.ts` 核对；`pnpm check` 与 `pnpm test` 全部通过后才提交。
+1. **验收记录**：`docs/verification/<harness>-latest-<日期>.md`，按 3.3 的模板写，写明提交、渠道、版本（并写明是否为当日最新正式版）、日期、费用与局限。
+2. **能力矩阵** `plan/native-capabilities.json`：该 Harness 的 `installation` 文本写“真实验收版本 <完整版本号>”（有适配器时也写出适配器版本），旧版本的版本号保留在同一句里作为历史证据，例如“Claude Code 真实验收版本 2.1.307 + claude-agent-acp 0.94.0（2026-10-22 之前：2.1.296、2.1.306 + 0.89.1）”；各格的 `real`、`note` 按记录更新，`evidence` 指向新的 `docs/verification/` 记录；受阻的格写明观察结果（例如 dsh 的 approvals）。
+3. **读表** `src/adapters/capability-reads.ts` 的 `checkedOn`：改为这次按它核对读取规则的版本；位置或格式变了的，同一提交更新读取规则。
+
+另外：ADR-039 的表补上“核对时版本”（只写经第 7 节真实核对过的形式；命令文本本身变了才改 `RESUME_COMMANDS`，它暂留在 `src/infrastructure/management/verified-versions.ts`，这个文件只放续接命令表，直到 T-ARCH-03 迁入 Harness 描述模块）。不改任何测试里的版本门槛——已经没有这样的断言；因证据路径改变而失败的设计检查按实际路径修正，不放宽。然后运行 `python3 -I tools/check_design.py --write` 重新生成矩阵视图，`pnpm check` 与 `pnpm test` 全部通过后才提交；4317 的部署由用户择时。
 
 ## 9. 局限
 
