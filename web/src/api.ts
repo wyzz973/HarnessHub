@@ -535,7 +535,7 @@ export class GatewayApi {
       const row = record(value); if (row.resume === null) return null;
       const resume = record(row.resume), optional = (key: "nativeId" | "interactive" | "once" | "onceNote" | "list") => resume[key] === undefined ? {} : { [key]: text(resume[key]) };
       return { harnessId: text(resume.harnessId), ...optional("nativeId"), ...optional("interactive"), ...optional("once"), ...optional("onceNote"), ...optional("list"),
-        ...(resume.note === undefined ? {} : { note: choice(resume.note, ["version-unverified", "not-verified"]) }) };
+        ...(resume.note === undefined ? {} : { note: choice(resume.note, ["no-command"]) }) };
     }, signal);
   }
   /** Continues one listed native session as a new conversation; nothing is sent until the next message. */

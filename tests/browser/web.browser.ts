@@ -1162,7 +1162,7 @@ test("a Harness version HarnessHub has not run for real is marked in the Harness
   assert.deepEqual(errors, []);
 });
 
-test("the execution settings name the native session and, without a verified version, say no resume command is offered", { timeout: 120000 }, async t => {
+test("the execution settings name the native session and give the program's own continue commands, whatever version the fixture's Codex reports (ADR-039, ADR-053)", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
@@ -1174,11 +1174,17 @@ test("the execution settings name the native session and, without a verified ver
   await composer.fill("hello"); await composer.press("Enter");
   await expect(log.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
   const resume = page.getByRole("complementary", { name: "详情栏" }).getByLabel("在原程序中继续");
-  await expect(resume.locator(".native-resume-row code")).toHaveText(/^browser-native-\d+$/u);
-  // The fixture's Codex reports no version HarnessHub verified, so only the identifier is given.
-  await expect(resume).toContainText("恢复命令未在此版本验证。");
-  await expect(resume.getByRole("button", { name: "复制恢复命令", exact: true })).toHaveCount(0);
+  // The identifier, the interactive command and its copy button: the fixture's Codex reports no version HarnessHub ever ran, and none is needed.
+  await expect(resume.locator(".native-resume-row code")).toHaveText([/^browser-native-\d+$/u, /^codex resume browser-native-\d+$/u]);
+  await expect(resume.locator(".native-resume-row small")).toHaveText(["原生会话 ID", "在该对话的工作区目录中运行"]);
   await expect(resume.getByRole("button", { name: "复制原生会话 ID", exact: true })).toBeVisible();
+  await expect(resume.getByRole("button", { name: "复制恢复命令", exact: true })).toBeVisible();
+  // The one-question form unfolds with its flag, since the fixture's workspace is no Git repository.
+  await resume.getByRole("button", { name: "只问一次", exact: true }).click();
+  await expect(resume.locator(".native-resume-row code").nth(2)).toHaveText(/^codex exec --skip-git-repo-check resume browser-native-\d+ "你的问题"$/u);
+  await expect(resume.getByRole("button", { name: "复制只问一次的命令", exact: true })).toBeVisible();
+  await expect(resume.locator(".native-resume-note")).toHaveText(["工作区不是 git 仓库，Codex 需要这个标志", "原程序首次在这个目录运行时可能先询问是否信任这个目录；接受会写入它自己的全局配置。", "在原程序中继续会使两边的回合交错；回到 HarnessHub 继续前，先在原程序中结束。"]);
+  await expect(resume).not.toContainText("验证");
   await page.screenshot({ path: join(artifact, "native-resume.png"), animations: "disabled" });
   assert.deepEqual(errors, []);
 });
@@ -2687,9 +2693,9 @@ test("G054-FZ2 an idle page asks the Gateway nothing; coming back reads the stat
   assert.equal(refusals, 1); assert.deepEqual(errors, []);
 });
 
-test("G054-FZ3 a verified program whose verified command asks once shows that command with its notes, and no resume command (ADR-039, ADR-050)", { timeout: 120000 }, async t => {
-  // The control-peer stands in for DeepSeek Harness, reporting the version HarnessHub verified (verified-versions.ts).
-  const fixture = await launchFixture(false, null, null, false, undefined, undefined, { dsh: "0.2.0-rc.2" }); let browser: Browser | null = null;
+test("G054-FZ3 DeepSeek Harness of any version shows its one-question command with the credentials it depends on, and no interactive command (ADR-039, ADR-053)", { timeout: 120000 }, async t => {
+  // The control-peer stands in for DeepSeek Harness under a version HarnessHub never ran: the command does not depend on it.
+  const fixture = await launchFixture(false, null, null, false, undefined, undefined, { dsh: "0.3.1" }); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
   const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
@@ -2698,17 +2704,19 @@ test("G054-FZ3 a verified program whose verified command asks once shows that co
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click();
   const option = page.getByRole("option", { name: "DeepSeek Harness", exact: true });
-  await expect(option).toContainText("v0.2.0-rc.2"); await expect(option).not.toContainText("未经验证"); await option.click();
+  // The picker shows the version as a fact and nothing about it.
+  await expect(option).toContainText("v0.3.1"); await expect(option).not.toContainText("验证"); await option.click();
   await composer.fill("hello"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
   await expect(log.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
   // Mutation check (run by hand, not kept): without NativeResume's once-only branch, only the identifier is shown.
   const resume = page.getByRole("complementary", { name: "详情栏" }).getByLabel("在原程序中继续");
   await expect(resume.locator(".native-resume-row code")).toHaveText(["session-fixture", "dsh headless --session-id session-fixture \"你的问题\""]);
-  await expect(resume.locator(".native-resume-row small")).toHaveText(["原生会话 ID", "只问一次（已用真实回合验证）· 在该对话的工作区目录中运行"]);
-  await expect(resume.locator(".native-resume-note")).toHaveText(["原程序首次在这个目录运行时可能先询问是否信任这个目录；接受会写入它自己的全局配置。", "在原程序中继续会使两边的回合交错；回到 HarnessHub 继续前，先在原程序中结束。"]);
+  await expect(resume.locator(".native-resume-row small")).toHaveText(["原生会话 ID", "只问一次 · 在该对话的工作区目录中运行"]);
+  await expect(resume.locator(".native-resume-note")).toHaveText([/^dsh headless 不读 DeepSeek Harness 界面里保存的密钥和账号登录.*三行设为 disabled）$/u,
+    "原程序首次在这个目录运行时可能先询问是否信任这个目录；接受会写入它自己的全局配置。", "在原程序中继续会使两边的回合交错；回到 HarnessHub 继续前，先在原程序中结束。"]);
   await expect(resume.getByRole("button", { name: "复制只问一次的命令", exact: true })).toBeVisible();
   await expect(resume.getByRole("button", { name: "复制恢复命令", exact: true })).toHaveCount(0);
-  await expect(resume).not.toContainText("恢复命令未在此版本验证");
+  await expect(resume).not.toContainText("验证");
   await page.screenshot({ path: join(artifact, "native-resume-once.png"), animations: "disabled" });
   assert.deepEqual(errors, []);
 });

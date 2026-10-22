@@ -154,10 +154,11 @@ const QUESTION = "\"你的问题\"";
 export interface ResumeWorkspace { readonly git: boolean }
 type ResumeCommands = { readonly interactive?: (id: string) => string; readonly once: (id: string, workspace: ResumeWorkspace) => string; readonly onceNote?: (workspace: ResumeWorkspace) => string | null };
 /**
- * How each Harness's own program continues one of its sessions (ADR-039): the interactive command exactly as the installed
- * version's help gives it, for a program that has one, and the one-question command that a real Turn verified on the
- * version in VERIFIED_VERSIONS. Pi's session reference is a file path, so it is only pointed to; OpenClaw's sessions live
- * in the user's own OpenClaw Gateway, so nothing is shown. Changed together with VERIFIED_VERSIONS and the verification record.
+ * How each Harness's own program continues one of its sessions (ADR-039, ADR-053): the interactive command as the
+ * program's help gives it, for a program that has one, and the one-question command with its question placeholder. Both
+ * are given for whatever version is installed; only differences of the product itself remain. Pi's session reference is
+ * a file path, so it is only pointed to; OpenClaw's sessions live in the user's own OpenClaw Gateway, so nothing is
+ * shown. The versions each command was checked on are evidence (the file header), never an input.
  */
 const RESUME_COMMANDS: Readonly<Record<string, ResumeCommands | { readonly list: string } | { readonly hidden: true }>> = {
   claude: { interactive: id => `claude --resume ${id}`, once: id => `claude -p --resume ${id} ${QUESTION}` },
@@ -170,25 +171,29 @@ const RESUME_COMMANDS: Readonly<Record<string, ResumeCommands | { readonly list:
   // DeepSeek Harness has no interactive form to give: the profiles 0.2.0-rc.2 ships are acp, web, headless, sdk and
   // sdk-minimal (dsh-app-boot PROFILE_TEMPLATES), and `dsh tui --resume <session>`, an example in its help, starts a tui
   // profile only a user made; without one dsh stops with "profile "tui" does not exist". The headless form keeps --session-id.
-  dsh: { once: id => `dsh headless --session-id ${id} ${QUESTION}` },
+  // Its credentials are a prerequisite: 0.2.1-rc.2's dsh-headless profile disables the credentials, authorization and
+  // deepseek-account lines, so the key saved in the DeepSeek Harness interface and its account sign-in are not read.
+  dsh: { once: id => `dsh headless --session-id ${id} ${QUESTION}`, onceNote: () => DSH_HEADLESS_NOTE },
   pi: { list: "见 Pi 自己的会话列表" },
   openclaw: { hidden: true },
 };
+/** What the user must have in the terminal before dsh's one-question command works (fixed: it does not depend on the workspace). */
+const DSH_HEADLESS_NOTE = "dsh headless 不读 DeepSeek Harness 界面里保存的密钥和账号登录，只用终端环境的 DEEPSEEK_API_KEY、工作区 .env 或 ~/.dsh/.env；只在界面里保存过密钥的用户要先在终端 export（0.2.1-rc.2 的 dsh-headless 把 credentials、authorization、deepseek-account 三行设为 disabled）";
 /** Only a plain identifier is shown or put into a command; anything else the program reported stays private. */
 const PLAIN_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 /**
- * How the user can continue a conversation's native session in the Harness's own program (ADR-039), from its native
- * reference and whether the installed version was verified. Commands are given only for a verified version and a plain
- * identifier, the interactive one only for a program that has one; otherwise the identifier alone, with why. Null for a
- * hidden program and for a reference that is no plain identifier. Nothing here runs a program.
+ * How the user can continue a conversation's native session in the Harness's own program (ADR-039, ADR-053), from its
+ * native reference alone: the installed version plays no part. Both commands are given for a plain identifier of a
+ * product with commands, the interactive one only for a program that has one; a product without commands gets the
+ * identifier alone and `no-command`. Null for a hidden program and for a reference that is no plain identifier.
+ * Nothing here runs a program.
  */
-export function nativeResume(harnessId: string, reference: string, verification: HarnessVersionVerification | null, workspace: ResumeWorkspace): NativeResumeView | null {
+export function nativeResume(harnessId: string, reference: string, workspace: ResumeWorkspace): NativeResumeView | null {
   const commands = Object.hasOwn(RESUME_COMMANDS, harnessId) ? RESUME_COMMANDS[harnessId]! : null;
   if (commands !== null && "hidden" in commands) return null;
   if (commands !== null && "list" in commands) return { harnessId, list: commands.list };
   if (!PLAIN_ID.test(reference)) return null;
-  if (commands === null) return { harnessId, nativeId: reference, note: "not-verified" };
-  if (verification?.state !== "verified") return { harnessId, nativeId: reference, note: "version-unverified" };
+  if (commands === null) return { harnessId, nativeId: reference, note: "no-command" };
   const note = commands.onceNote?.(workspace) ?? null;
   return { harnessId, nativeId: reference, ...(commands.interactive === undefined ? {} : { interactive: commands.interactive(reference) }),
     once: commands.once(reference, workspace), ...(note === null ? {} : { onceNote: note }) };

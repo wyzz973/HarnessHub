@@ -144,23 +144,24 @@ export interface LoginShellView {
   readonly readAt: number | null;
 }
 /**
- * How to continue a conversation's native session in the Harness's own program (ADR-039). It is read on demand and is not
- * part of the conversation's view or its export; HarnessHub never runs these commands.
+ * How to continue a conversation's native session in the Harness's own program (ADR-039), given for whatever version of
+ * the program is installed (ADR-053). It is read on demand and is not part of the conversation's view or its export;
+ * HarnessHub never runs these commands.
  */
 export interface NativeResumeView {
   readonly harnessId: string;
   /** The native session's own identifier; absent for a program whose reference is private (Pi's session file). */
   readonly nativeId?: string;
-  /** The interactive command as the installed version's help gives it, run in the conversation's workspace. */
+  /** The interactive command as the program's help gives it, run in the conversation's workspace. */
   readonly interactive?: string;
-  /** The one-question command a real Turn verified, with a question placeholder. */
+  /** The program's own one-question continue command, with a question placeholder. */
   readonly once?: string;
-  /** Why the one-question command carries a flag it does not always need. */
+  /** What the one-question command depends on: a flag it does not always need (Codex), or the credentials it reads (DeepSeek Harness). */
   readonly onceNote?: string;
   /** Where the program lists its own sessions, for one whose reference is private. */
   readonly list?: string;
-  /** Why no command is given: the installed version is not one HarnessHub verified, or this program's resume never was. */
-  readonly note?: "version-unverified" | "not-verified";
+  /** Why no command is given: this program has no continue command HarnessHub can give. */
+  readonly note?: "no-command";
 }
 /** A native session reference as the chat shows it; never the private checkpoint. */
 export interface NativeStateView {

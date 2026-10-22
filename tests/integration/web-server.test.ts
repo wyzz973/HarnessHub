@@ -348,11 +348,17 @@ test("a conversation's native session is offered for continuing in its own progr
   assert.deepEqual((await call(f, `/api/v1/sessions/${id}/native-resume`)).data, { resume: null }, "nothing before a native session exists");
   assert.equal((await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "hello", commandId: "native-resume-send" })).status, 202);
   await waitFor(f, id, value => value.runs[0]?.status === "completed");
+  const scannedAt = async () => String(row((await call(f, "/api/v1/state")).data).harnessesScannedAt);
+  const before = await scannedAt();
   const resume = await call(f, `/api/v1/sessions/${id}/native-resume`);
   assert.equal(resume.status, 200);
-  // A Harness whose resume HarnessHub never verified: its own identifier, and why there is no command.
+  // A product with no continue command HarnessHub can give: its own identifier, and why there is no command.
   const nativeId = String(row(row(resume.data).resume).nativeId);
-  assert.deepEqual(resume.data, { resume: { harnessId: "web-b", nativeId, note: "not-verified" } }); assert.match(nativeId, /^[A-Za-z0-9][A-Za-z0-9_-]*$/u);
+  assert.deepEqual(resume.data, { resume: { harnessId: "web-b", nativeId, note: "no-command" } }); assert.match(nativeId, /^[A-Za-z0-9][A-Za-z0-9_-]*$/u);
+  // Reading the commands twice scans nothing: the commands do not depend on the installed version (ADR-053), so the last scan stands.
+  // Mutation check (run by hand, not kept): with the route scanning as before ADR-053, the scan time below changes.
+  assert.deepEqual((await call(f, `/api/v1/sessions/${id}/native-resume`)).data, resume.data);
+  assert.equal(await scannedAt(), before, "reading the continue commands does not start a scan");
   assert.equal(JSON.stringify((await call(f, "/api/v1/sessions/" + id)).data).includes(nativeId), false, "the view does not carry it");
   const exported = await fetch(f.origin + `/api/v1/sessions/${id}/export?format=json`, { headers: { Cookie: f.cookie } });
   assert.equal((await exported.text()).includes(nativeId), false, "the export does not carry it");
