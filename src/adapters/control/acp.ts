@@ -136,8 +136,12 @@ export class AcpControl implements HarnessControl {
   /** A sign-in state the agent reported on its own (setAuthentication); null until it reports one. */
   private reportedAuthentication: NativeModelCatalog["authentication"] | null = null;
   private interactivePermissions = false;
-  /** Pending native interactions; `reply` maps the user's choice for a form question, otherwise the option is selected. */
-  private readonly permissions = new Map<string, { options: readonly string[]; resolve: (value: unknown) => void; reply?: (option: string, input?: string) => unknown }>();
+  /**
+   * Pending native interactions by their public id: `request` is the agent's own request they answer (its JSON-RPC id),
+   * `reply` maps the user's choice for a form question (otherwise the option is selected), and `dispose` ends what the
+   * interaction holds (a deadline timer) when the agent withdraws its request and nothing is answered.
+   */
+  private readonly permissions = new Map<string, { readonly request: string; readonly options: readonly string[]; readonly resolve: (value: unknown) => void; readonly reply?: (option: string, input?: string) => unknown; readonly dispose?: () => void }>();
   private configuredDefault: string | null = null;
   private modelConfigId: string | null = null;
   private legacyModels = false;
@@ -332,7 +336,12 @@ export class AcpControl implements HarnessControl {
     finally { this.opening = false; this.replaying = false; this.collected = null; this.openingMetadata.length = 0; }
   }
   private forking = false;
-  /** ACP `session/fork` when the agent declares it; the copy's replay is ignored and the source is untouched. */
+  /**
+   * ACP `session/fork` when the agent declares it; the copy's replay is ignored and the source is untouched. The agent may
+   * start the copy as a session before it answers (claude-agent-acp 0.90.0 and later), so the request waits as long as
+   * opening a session does. Only -32601 says the agent cannot fork, so nothing was copied (NATIVE_FORK_UNAVAILABLE); any
+   * other refusal can come after the copy was written, and its failure leaves the copy's existence unknown.
+   */
   async fork(checkpoint: string, cwd: string): Promise<string> {
     this.assertInitialized();
     if (this.conversation !== null || this.opening || this.forking) throw new ControlError("INVALID_STATE", "a fork needs its own connection");
@@ -341,13 +350,16 @@ export class AcpControl implements HarnessControl {
     if (sessions.fork === undefined) throw new ControlError("NATIVE_FORK_UNAVAILABLE", "this agent does not declare session/fork");
     this.forking = true;
     try {
-      const response = object(await this.rpc.request("session/fork", { sessionId: nativeConversationId(checkpoint), cwd, mcpServers: [] }, Math.min(SESSION_SETUP_MS, this.options.runTimeoutMs)), "session/fork result");
+      const setup = Math.max(this.options.requestTimeoutMs, Math.min(SESSION_SETUP_MS, this.options.runTimeoutMs));
+      const response = object(await this.rpc.request("session/fork", { sessionId: nativeConversationId(checkpoint), cwd, mcpServers: [] }, setup), "session/fork result");
       const id = nativeConversationId(response.sessionId);
       if (id === checkpoint) throw new ControlError("IDENTITY_MISMATCH", "session/fork returned its source session");
       return id;
     } catch (error) {
-      // An agent that answers -32601 or refuses did not fork; anything else leaves the copy's existence unknown.
-      if (error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null) throw new ControlError("NATIVE_FORK_UNAVAILABLE", "the agent refused session/fork");
+      // claude-agent-acp 0.90.0 and later copy the transcript and then start the copy before answering, so a refusal other
+      // than -32601 can come after the copy exists. The Runtime's archiving of a fork refused with a class it treats as
+      // "nothing copied" (forkNative in runtime.ts) still assumes no copy; that assumption is left to the fourth batch.
+      if (error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null && error.remoteCode === -32601) throw new ControlError("NATIVE_FORK_UNAVAILABLE", "the agent has no session/fork");
       throw this.nativeFailure(error);
     }
   }
@@ -413,7 +425,8 @@ export class AcpControl implements HarnessControl {
   /**
    * Handles a notification outside session/update that this agent's driver understands, such as claude-agent-acp's
    * connection-level `_auth/status_update`. Returning true means the driver handled it, so the active Run records no
-   * "Unsupported ACP notification" diagnostic. The default handles nothing. If the parameters name a session, the
+   * "Unsupported ACP notification" diagnostic. The default handles nothing; `$/cancel_request` is handled for every agent
+   * before this hook and never reaches it. If the parameters name a session, the
    * notification reaches this hook only after that session is matched against the owned one. The hook runs on the
    * connection's reader, in stream order: it can run before initialize() resolves, during session setup, and during or
    * between Turns, so it must return without waiting. Throwing fails the connection, as a malformed message does, so a
@@ -562,6 +575,7 @@ export class AcpControl implements HarnessControl {
     if (method !== "session/update") {
       const params = raw === undefined ? {} : object(raw, "ACP notification params");
       if (params.sessionId !== undefined) this.scope(params);
+      if (method === "$/cancel_request") { this.withdraw(params.requestId); return; }
       if (!this.extensionNotification(method, params)) this.active?.event({ type: "diagnostic", message: `Unsupported ACP notification: ${method}` });
       return;
     }
@@ -651,6 +665,21 @@ export class AcpControl implements HarnessControl {
     active.event({ type: "diagnostic", message: `Unsupported ACP session update: ${kind}` });
   }
   /**
+   * The agent withdrew a request it still had open (`$/cancel_request {requestId}`; claude-agent-acp sends it when Claude
+   * Code takes back an approval or a question). The approval, or the form field being asked, closes as cancelled and the
+   * Turn says why; nothing is answered, since the agent no longer waits for it. A request that is no longer pending here
+   * (already answered, or never asked) closes nothing, and only the diagnostic records the withdrawal.
+   */
+  private withdraw(requestId: unknown): void {
+    const request = typeof requestId === "string" || (typeof requestId === "number" && Number.isSafeInteger(requestId)) ? String(requestId) : null;
+    const withdrawn = request === null ? [] : [...this.permissions].filter(([, pending]) => pending.request === request);
+    for (const [id, pending] of withdrawn) {
+      this.permissions.delete(id); pending.dispose?.();
+      this.active?.event({ type: "permission", id, decision: "cancelled" });
+    }
+    this.active?.event({ type: "diagnostic", message: withdrawn.length ? "原程序撤回了这项请求" : "原程序撤回了一项已不在等待中的请求" });
+  }
+  /**
    * A native form (Claude's AskUserQuestion, or an MCP server's form passed on by the agent), asked field by field like a
    * native question: a choice, a free-text answer (a select's "_custom" companion becomes its "提交回答"), yes/no, or several
    * picks. "跳过" declines the whole form and "取消" cancels it. A form with fields the chat cannot ask is declined, not guessed.
@@ -690,7 +719,7 @@ export class AcpControl implements HarnessControl {
       const detail = field.choices.filter(choice => choice.description).map(choice => choice.label + "：" + choice.description).join("\n").slice(0, 4096);
       type Answer = { readonly kind: "value"; readonly value: unknown; readonly typed: boolean } | { readonly kind: "skip" } | { readonly kind: "cancel" };
       const answer = await new Promise<unknown>(resolve => {
-        this.permissions.set(id, { options: options.map(option => option.id), resolve, reply: (option, input) => {
+        this.permissions.set(id, { request: String(request.id), options: options.map(option => option.id), resolve, reply: (option, input) => {
           if (option === "cancel" || option === "skip") return { kind: option };
           if (option === "submit") return { kind: "value", value: typeof input === "string" ? input : "", typed: true };
           return { kind: "value", value: field.choices[Number(option.slice(7))]?.value ?? null, typed: false };
@@ -734,7 +763,7 @@ export class AcpControl implements HarnessControl {
       return new Promise<unknown>(resolve => {
         let timer: ReturnType<typeof setTimeout> | undefined;
         const settle = (value: unknown): void => { clearTimeout(timer); resolve(value); };
-        this.permissions.set(id, { options: options.map(option => option.id), resolve: settle });
+        this.permissions.set(id, { request: id, options: options.map(option => option.id), resolve: settle, dispose: () => clearTimeout(timer) });
         active.event({ type: "permission_requested", id, title: typeof tool.title === "string" ? tool.title.slice(0,4096) : "Harness 请求执行工具", ...(detail ? { detail } : {}), options: options.map(({ id, name }) => ({ id, name })),
           ...requestExpiry(active.deadline, deadline === null ? null : Math.max(0, deadline - APPROVAL_DEADLINE_MARGIN_MS)) });
         // The agent refuses on its own at its deadline; the public request closes just before, so no late choice looks applied.

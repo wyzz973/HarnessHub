@@ -623,6 +623,37 @@ test("ACP forks a session only when the agent declares it, ignoring the copy's r
   try { await undeclared.initialize(); await assert.rejects(undeclared.fork("session-source", process.cwd()), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_FORK_UNAVAILABLE"); }
   finally { await undeclared.close(); }
 });
+test("ACP waits for a fork as long as for opening a session; only -32601 says the agent cannot fork, and any other refusal leaves the copy unknown", async () => {
+  // The copy answers after 1 s: past this Turn's deadline (0.5 s), within the request budget (3 s) that opening a session has.
+  const slow = control("forkable", { FIXTURE_FORK_DELAY_MS: "1000" }, { requestTimeoutMs: 3000, runTimeoutMs: 500 });
+  try { await slow.initialize(); assert.equal(await slow.fork("session-source", process.cwd()), "session-forked"); }
+  finally { await slow.close(); }
+  for (const [code, expected] of [["-32601", "NATIVE_FORK_UNAVAILABLE"], ["-32603", "REMOTE_ERROR"]] as const) {
+    const driver = control("forkable", { FIXTURE_FORK_ERROR: code });
+    try { await driver.initialize(); await assert.rejects(driver.fork("session-source", process.cwd()), (error: unknown) => error instanceof ControlError && error.code === expected, code); }
+    finally { await driver.close(); }
+  }
+});
+test("an approval or a question the agent withdraws ($/cancel_request) closes as cancelled without an answer, and the Turn says why", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-acp-withdrawn-")); t.after(() => rm(directory, { recursive: true, force: true }));
+  // An approval asked with a numeric request id, and the first field of a form (its public id is `<request>:<field>`).
+  for (const [scenario, asked, request, option] of [["permission-withdrawn", "41", 41, "allow"], ["elicitation-withdrawn", "elicit-1:0", "elicit-1", "answer-0"]] as const) {
+    const trace = join(directory, scenario), driver = control(scenario, { FIXTURE_TRACE: trace }), events: ControlEvent[] = [];
+    try {
+      const id = await ready(driver); driver.enablePermissions();
+      assert.deepEqual(await (await driver.startText(id, "hello", event => events.push(event))).result, { status: "completed", reason: "end_turn" }, scenario);
+      assert.deepEqual(events.flatMap(event => event.type === "permission_requested" ? [event.id] : []), [asked], scenario);
+      assert.deepEqual(events.filter(event => event.type === "permission"), [{ type: "permission", id: asked, decision: "cancelled" }], scenario);
+      // The withdrawn request, then one that nothing here waits for; neither is recorded as an unsupported notification.
+      assert.deepEqual(events.flatMap(event => event.type === "diagnostic" ? [event.message] : []), ["原程序撤回了这项请求", "原程序撤回了一项已不在等待中的请求"], scenario);
+      assert.deepEqual(texts(events), ["你好 fixture"], scenario);
+      await assert.rejects(driver.decidePermission(asked, option), (error: unknown) => error instanceof ControlError && error.code === "PERMISSION_UNAVAILABLE", scenario);
+    } finally { await driver.close(); }
+    // The agent no longer waits for the request, so nothing was sent back for it.
+    const sent = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { id?: unknown; method?: string });
+    assert.equal(sent.some(row => row.id === request && row.method === undefined), false, scenario);
+  }
+});
 
 test("OpenClaw reconciles each turn from its own transcript: tools, reasoning, usage and the real stop reason", async t => {
   const root = await mkdtemp(join(tmpdir(), "openclaw-transcript-")); t.after(() => rm(root, { recursive: true, force: true }));

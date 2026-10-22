@@ -98,6 +98,17 @@ function emitAtomicBatch(messages) {
   process.stdout.write(messages.map(message => JSON.stringify(protocol === "acp-v1" ? { jsonrpc: "2.0", ...message } : message) + "\n").join(""));
 }
 function notification(method, params) { emit({ method, params }); }
+/**
+ * claude-agent-acp's withdrawal of a request it still has open ($/cancel_request): 300 ms after asking, it withdraws that
+ * request and then one that nothing waits for, and ends the turn with its reply. An answer that came anyway is ignored.
+ */
+function withdrawLater(requestId) {
+  setTimeout(() => {
+    notification("$/cancel_request", { requestId });
+    notification("$/cancel_request", { requestId: "never-asked" });
+    setTimeout(() => { acpOutput(); finish(); }, 100);
+  }, 300);
+}
 function acpOutput(sessionId = "session-fixture") {
   if(scenario==="native-experience") {
     notification("session/update",{sessionId,update:{sessionUpdate:"agent_thought_chunk",content:{type:"text",text:"Observed fixture thinking"}}});
@@ -317,10 +328,17 @@ lines.on("line", line => {
     answer(message.id, { thread: { id: scenario === "fork-same" ? message.params.threadId : "thread-forked" } }); return;
   }
   if (message.method === "session/fork") {
+    // FIXTURE_FORK_ERROR refuses with that JSON-RPC error code; FIXTURE_FORK_DELAY_MS answers that much later, as an agent
+    // that starts the copy as a session before answering does.
+    if (process.env.FIXTURE_FORK_ERROR) { emit({ id: message.id, error: { code: Number(process.env.FIXTURE_FORK_ERROR), message: process.env.FIXTURE_FORK_ERROR === "-32601" ? "Method not found" : "Internal error" } }); return; }
     // ACP agents replay the copied history for the new session before answering.
-    notification("session/update", { sessionId: "session-forked", update: { sessionUpdate: "user_message_chunk", content: { type: "text", text: "copied question" } } });
-    notification("session/update", { sessionId: "session-forked", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "copied answer" } } });
-    answer(message.id, { sessionId: "session-forked" }); return;
+    const fork = () => {
+      notification("session/update", { sessionId: "session-forked", update: { sessionUpdate: "user_message_chunk", content: { type: "text", text: "copied question" } } });
+      notification("session/update", { sessionId: "session-forked", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "copied answer" } } });
+      answer(message.id, { sessionId: "session-forked" });
+    };
+    if (process.env.FIXTURE_FORK_DELAY_MS) setTimeout(fork, Number(process.env.FIXTURE_FORK_DELAY_MS)); else fork();
+    return;
   }
   if (message.method === "thread/compact/start") {
     // Codex runs compaction as its own turn: the receipt is empty and the turn identity arrives by notification.
@@ -495,6 +513,12 @@ lines.on("line", line => {
         { id: "native-text", header: "Native input", question: "输入原生问题答案", isSecret: true, options: null },
       ] } }); return;
     }
+    // Claude Code takes back an approval it still has open (a request with a numeric id here).
+    if (scenario === "permission-withdrawn") {
+      emit({ id: 41, method: "session/request_permission", params: { sessionId: message.params.sessionId, toolCall: { toolCallId: "tool-1", title: "Edit notes.txt", kind: "edit" },
+        options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }, { optionId: "reject", kind: "reject_once", name: "Reject" }] } });
+      withdrawLater(41); return;
+    }
     if (scenario === "permission" || scenario === "duplicate-permission") {
       pendingPermission = true;
       const permission = protocol === "acp-v1"
@@ -506,7 +530,8 @@ lines.on("line", line => {
       emit(permission); if (scenario === "duplicate-permission") emit(permission); return;
     }
     // Claude's AskUserQuestion form: a single select with its "Other" companion and a multi-select; or a form with a number field.
-    if (scenario === "elicitation" || scenario === "elicitation-number") {
+    // In "elicitation-withdrawn" Claude Code takes the question back while its first field is asked.
+    if (scenario === "elicitation" || scenario === "elicitation-number" || scenario === "elicitation-withdrawn") {
       const option = (label, description) => ({ const: label, title: label, ...(description ? { description } : {}) });
       const properties = scenario === "elicitation-number" ? { count: { type: "number", title: "How many?" } } : {
         question_0: { type: "string", title: "Color", description: "Which color?", oneOf: [option("Red", "warm"), option("Blue", "cool")] },
@@ -514,6 +539,7 @@ lines.on("line", line => {
         question_1: { type: "array", title: "Sizes", description: "Which sizes?", items: { anyOf: [option("S"), option("M")] } },
         question_1_custom: { type: "string", title: "Other", description: "Type your own answer" } };
       emit({ id: "elicit-1", method: "elicitation/create", params: { mode: "form", sessionId: message.params.sessionId, toolCallId: "ask-1", message: "Please answer the following questions.", requestedSchema: { type: "object", properties } } });
+      if (scenario === "elicitation-withdrawn") withdrawLater("elicit-1");
       return;
     }
     // A sub-agent call whose own tool runs flattened in the root session, stamped with the parent call (Claude's default).
@@ -551,6 +577,7 @@ lines.on("line", line => {
     }
     setTimeout(() => finish(true), 50); return;
   }
+  if (scenario.endsWith("-withdrawn") && (message.id === 41 || message.id === "elicit-1")) return;
   if (message.id === "hermes-permission") { notification("session/update", { sessionId: "session-fixture", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "permission " + JSON.stringify(message.result) } } }); finish(); return; }
   if (message.id === "hermes-permission-blocked") { hermesBlocked("session-fixture"); finish(); return; }
   if (message.id === "elicit-1") { notification("session/update", { sessionId: "session-fixture", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "form " + JSON.stringify(message.result) } } }); finish(); return; }
