@@ -4243,7 +4243,7 @@
         "不删除非焦点 Harness 的适配器、测试与历史证据；默认隐藏或删除由用户在 ADR-048 决定"
       ],
       "acceptance": [
-        "（第 1 项，2026-10-22 起被 ADR-053 取代）原要求“已验证版本、目录包版本与读表区间来自同一来源，三处不一致的无效样例被测试拒绝；0.2.0-rc.2 命中 dsh 读表；Hermes 的 dist-info 给出版本”已在第一批完成；现在版本表、对账与读表区间删除，任何版本都接入、不提示，由正向断言证明（G011-NC2、G054-NC12、G054-NC13）；Hermes 的版本改从 install-stamp.json 读（G012-OC5）；src/infrastructure/management/verified-versions.ts 保留路径、只放续接命令表 RESUME_COMMANDS，直到 T-ARCH-03 迁入 Harness 描述模块（ADR-053 裁决 3）",
+        "（第 1 项，2026-10-22 起被 ADR-053 取代）原要求“已验证版本、目录包版本与读表区间来自同一来源，三处不一致的无效样例被测试拒绝；0.2.0-rc.2 命中 dsh 读表；Hermes 的 dist-info 给出版本”已在第一批完成；现在版本表、对账与读表区间删除，任何版本都接入、不提示，由正向断言证明（G011-NC2、G054-NC12、G054-NC13）；Hermes 的版本改从 install-stamp.json 读、0.12 布局没有 stamp 时退回 dist-info（G012-OC5）；src/infrastructure/management/verified-versions.ts 保留路径、只放续接命令表 RESUME_COMMANDS，直到 T-ARCH-03 迁入 Harness 描述模块（ADR-053 裁决 3）",
         "含家目录绝对路径的失败写入之后 history 仍能逐条读取，坏记录单条标明；公开错误消息不含家目录",
         "每回合的事件数与提交成本按 ADR-047 下降，先提交再发布不变",
         "边界检查进入 pnpm check，每条规则有无效 fixture 且失败非零退出",

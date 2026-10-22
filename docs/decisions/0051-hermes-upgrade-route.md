@@ -28,7 +28,7 @@
 3. **审批选项说明。** 接受 `allow_session`（会话内放行）作为第三种审批选项；说明按 option id 识别，不按位置：`allow_always` 写入所有会话共用的允许列表（网关模型下包括 QQ 的会话）、`allow_session` 只在本 HarnessHub 会话内有效、不写 Hermes 配置、`deny_always` 等同拒绝一次、不保存任何东西。第三批 D2 承接。
 4. **编辑审批模式。** `session/set_mode` 的三个模式（default / accept_edits / dont_ask）作为 Hermes 的原生选项显示；todo 结果转成的 plan 更新按通用 ACP 计划处理。待网关视图接入时一并验证。
 5. **工具失败。** 结构化失败已由 Hermes 报 `failed`，文本启发式（`TOOL_FAILURE`）保留为后备。
-6. **发现方式。** 版本从 `<root>/install-stamp.json` 的 displayVersion（缺则 baseVersion）读取，没有 stamp 或值为 0.0.0 时为未知、不再用 dist-info；程序改为 `.hermes/bin/hermes`（0.12 布局的 `venv/bin/hermes` 作兼容候选）；启动器与卸载白名单加 `~/.local/bin/hermes-acp`、`~/.local/bin/hermes-agent`；常驻网关的进程名正则补 `hermes_cli.main --profile <名> gateway run` 与 `.hermes/bin/hermes … gateway run` 两种形态。仍然只读文件，不运行程序。第三批 D4 承接。
+6. **发现方式。** 版本从 `<root>/install-stamp.json` 的 displayVersion（缺则 baseVersion）读取；没有 stamp（或 stamp 里没有可用的版本值）时退回 venv 的 dist-info（0.12 布局）；dist-info 为 0.0.0（或两处都读不到）时为未知，版本未知的安装照样算官网安装；程序改为 `.hermes/bin/hermes`（0.12 布局的 `venv/bin/hermes` 作兼容候选）；启动器与卸载白名单加 `~/.local/bin/hermes-acp`、`~/.local/bin/hermes-agent`；常驻网关的进程名正则补 `hermes_cli.main --profile <名> gateway run` 与 `.hermes/bin/hermes … gateway run` 两种形态。仍然只读文件，不运行程序。第三批 D4 承接。
 7. **能力读表。** 原“`verified` 区间改为 `>=0.22.2 <0.22.3`”删除：读表只记 `checkedOn`（ADR-053 决定 4）；内容更新（MCP 接受 `url` 类条目、`~/.hermes/hooks/<名>/HOOK.yaml` 来源、项目级技能目录与 `skills.create_dir`、`plugin.json`、排除目录）放在第四批“读表按最新版核对”任务里按 v0.22.4 做。
 8. **错误原因（新增）。** JSON-RPC 错误的 `data.details` 有界透出到 `ControlError.remoteDetail`；`session/load`、`session/resume` 的 `not_found` → `NATIVE_SESSION_NOT_FOUND`；`Gateway starting/incompatible/inaccessible/draining/could not start` → 具名的“Hermes 网关不可用”错误并附 Hermes 给出的原因；`unknown_execution:` 前缀与“Gateway disconnected; turn outcome is unknown”本批只在诊断里透出原因与 `/discard <admission_id>` 提示，不映射为失败——`BackendResult` 没有未知，把未知记成失败违反运行契约，等 A2 的“未知结果”契约。第三批 D2 承接。
 
@@ -63,7 +63,7 @@ Hub 继续接入本机 0.12.0：不做任何版本提示，不升级 Hermes，�
 ## 验证（选定 A2 后）
 
 - 协议测试：替身要模拟网关投影（附着、断线后的 unknown、`/discard`、-32603 加 `data.details`），不沿用进程内的替身；`allow_session` 被接受、三个模式作为选项显示；例外删除后审批期限不再提前关闭。
-- 单元：预检 A–E 的只读判定各有正反样例；版本从 `install-stamp.json` 读取、0.0.0 视为未知（第三批 D4）；卸载白名单含 `hermes-acp`、`hermes-agent`。
+- 单元：预检 A–E 的只读判定各有正反样例；版本从 `install-stamp.json` 读取、没有 stamp 时退回 dist-info、dist-info 为 0.0.0 视为未知（第三批 D4，G012-OC5）；卸载白名单含 `hermes-acp`、`hermes-agent`。
 - 真实，第一步（隔离）：在 v0.22.4 上用临时 `HERMES_HOME`（`~/.hermes` 之外、不在 `profiles/` 下、不建 `gateway.lock` 符号链接；config 里不配消息平台，`approvals.mode` 为 manual；模型凭据经用户同意后单独提供），让 `hermes acp` 为这个 home 起私有的 idle-exit 网关，覆盖 16 格与网关用例：回合中 Stop（`prompt.cancel` → cancelled）、回合中杀查看器（回合继续，Hub 记 unknown）、杀掉私有网关（unknown_execution → `/discard`）、load/resume 不存在的 id、受守卫的 `/model` 确认、三种模式、fork、两种审批说明文字、clarify 表单、usage 增量、session/list、/export。结束后执行 `HERMES_HOME=<临时目录> hermes gateway stop` 并删除目录：私有网关在 Hub 进程组之外，必须显式停止。
 - 真实，第二步（受控附着）：在用户明确同意、QQ 空闲时对真实网关做一次只附着的运行，只在预检判定为 A 时进行；核对网关 pid 与启动时间不变、`gateway_state.json` 里 QQ 的平台状态不变、Hub 的会话行写进了用户的 `state.db`、关闭后会话在 FIFO 空闲时被结束。B–E 只用只读文件模拟判定，不去停或起用户的网关。
 - 证据按仓库内格式入库；矩阵 `installation` 改为“真实验收版本 v0.22.4”、读表 `checkedOn` 同一提交更新（ADR-053 决定 8；不再有 `VERIFIED_VERSIONS`）。

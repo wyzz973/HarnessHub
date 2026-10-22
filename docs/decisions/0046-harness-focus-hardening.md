@@ -30,7 +30,7 @@
    - dsh 的继续命令只保留 headless（`dsh headless --session-id <id> …`）；交互命令在有真实回合验证前不给。
    - dsh 的读表区间按 ADR-045 第 3c 步与第 4 步在 rc.2 上的真实往返记录改为覆盖 rc.2。
    - `VERIFIED_VERSIONS` 的数字在真实重验收前不改：Claude 仍为 2.1.296，dsh 仍为源码版的 0.2.1-alpha.1（按 ADR-044 为历史证据）。界面照 ADR-038 提示，不冒充验证。
-   - 2026-10-22 起本项被 [ADR-053](0053-latest-version-baseline.md) 取代：`VERIFIED_VERSIONS`、`versionConsistency` 与读表的 semver 区间删除，版本只作工程证据（矩阵 `installation`、验收记录、读表 `checkedOn`）；“界面照 ADR-038 提示”不再成立，任何版本都不提示；Hermes 的版本改从 `install-stamp.json` 读（第三批 D4）；dsh 的一次性命令对任何版本给出并附凭据前提。本项在第一批里做过的事（预发布语义、dist-info 版本、headless 命令、rc.2 读表）作为当时的加固保留记录。
+   - 2026-10-22 起本项被 [ADR-053](0053-latest-version-baseline.md) 取代：`VERIFIED_VERSIONS`、`versionConsistency` 与读表的 semver 区间删除，版本只作工程证据（矩阵 `installation`、验收记录、读表 `checkedOn`）；“界面照 ADR-038 提示”不再成立，任何版本都不提示；Hermes 的版本改从 `install-stamp.json` 读（0.12 布局没有 stamp 时仍退回 dist-info；第三批 D4）；dsh 的一次性命令对任何版本给出并附凭据前提。本项在第一批里做过的事（预发布语义、dist-info 版本、headless 命令、rc.2 读表）作为当时的加固保留记录。
 2. **失败的写入记录只存错误码与 `~` 形式的路径。** `/api/v1/capabilities/history` 逐条降级：一条坏记录只让那一条显示为无法读取，不让整页 500；公开错误消息把家目录替换为 `~`。
 3. **流式输出按窗口合并提交。** 独立为 ADR-047（`0047-stream-output-coalescing.md`，由并行任务撰写）：每回合的事件数与提交成本降一个量级；先提交再发布（INV-06）与断线不取消（INV-19）不变。
 4. **G063 落地。** `tools/check-boundaries.mjs` 加 `tools/boundary-rules.json`，纳入 `pnpm check`；含“组合应用或启动 Gateway 的测试必须用自己的临时租约目录”这一条静态规则（`docs/engineering/testing.md` 第 4 节此前只有人工审查）；每条规则有无效 fixture 证明会被拒绝。
