@@ -402,6 +402,8 @@ test("G011-UG10 a conversation replying with the installation blocks its upgrade
   const terminal = await manager.upgradeCheck("hermes", hermes.ref);
   assert.equal(terminal.kind, "terminal"); assert.equal(terminal.terminal?.command, "hermes update --yes"); assert.equal(terminal.terminal?.localChanges, 3);
   assert.match(terminal.terminal?.explains ?? "", /git stash/u); assert.ok(terminal.notes.some(note => note.includes("3 处没有提交的改动"))); assert.notEqual(terminal.blocked, null);
+  // What v0.22's updater does to the gateway and to the data an older release could not read again, and the backup to take first.
+  for (const text of ["暂停这份安装的所有网关", "以新代码重启网关", "~/.hermes/state.db 之后就不能退回旧版本", "/discard", "hermes backup"]) assert.ok(terminal.terminal?.explains.includes(text), text);
   await assert.rejects(manager.submitInstallationUpgrade({ harnessId: "hermes", action: "upgrade", commandId: "hermes", installation: hermes.ref, expectedInstallationFingerprint: terminal.fingerprint }), code("INSTALL_CHECK_EXPIRED"));
 
   // A product with services whose control runs from this installation is upgraded by ADR-043, which restarts them; another installation of it is not.

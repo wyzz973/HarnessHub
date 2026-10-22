@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { classifyProgram, homebrewName, homebrewReceiptTap } from "../../src/contexts/catalog/domain/channels.js";
-import { adapterChannels, productChannels, productMaintenance } from "../../src/adapters/catalog-channels.js";
-import { loadBuiltinCatalog } from "../../src/adapters/catalog.js";
+import { adapterChannels, officialInstallMethod, productChannels, productMaintenance } from "../../src/adapters/catalog-channels.js";
+import { loadBuiltinCatalog, officialInstallation } from "../../src/adapters/catalog.js";
 import { LocalInstallationClassifier } from "../../src/infrastructure/discovery/installation-channels.js";
 
 const HOME = "/Users/me", UV = HOME + "/.local/share/uv/tools";
@@ -63,7 +63,8 @@ test("G012-OC1 an adapter is official through the package its registry entry pub
   assert.ok(catalog.find(item => item.id === "codex")!.controls.find(control => control.id === "codex-native")!.executableNames.includes("codex"));
   // Every product HarnessHub runs today has its channels recorded with where they were read.
   for (const id of ["claude", "codex", "opencode", "openclaw", "gemini", "cursor", "pi", "hermes", "dsh"]) {
-    const recorded = productChannels(id); assert.ok(recorded, id); assert.match(recorded.source.url, /^https:\/\//u); assert.equal(recorded.source.checkedAt, "2026-10-17");
+    // Hermes's pages were read again for v0.22.4; the others as on 2026-10-17.
+    const recorded = productChannels(id); assert.ok(recorded, id); assert.match(recorded.source.url, /^https:\/\//u); assert.equal(recorded.source.checkedAt, id === "hermes" ? "2026-10-22" : "2026-10-17", id);
     assert.ok(recorded.npm.length + recorded.brewFormulae.length + recorded.brewCasks.length + recorded.scripts.length + recorded.uv.length > 0, id);
   }
 });
@@ -218,4 +219,26 @@ test("G012-OC1 Hermes's version is the one its checkout's install stamp names; w
   assert.equal(await read(launcher), null, "0.0.0 is the placeholder of a checkout that keeps its version elsewhere");
   // A 0.12 checkout that an update stamped: the stamp wins over its environment.
   await stamped({ baseVersion: "0.22.4" }); assert.equal(await read(launcher), "0.22.4");
+});
+
+test("G012-OC1 the catalog follows Hermes's and DeepSeek Harness's channels: their packages name the channel's latest, and every link is pinned to the commit of the release read", () => {
+  const catalog = loadBuiltinCatalog("darwin-aarch64"), native = (id: string) => catalog.find(item => item.id === id)!.controls.find(item => item.id === id + "-native")!;
+  const HERMES = "4d04303818b61bf3aa09278af48356315515965b", DSH = "687f282e8625c6b8d11ff58211a90524be2e4317";
+  // The catalog's parser accepts the channel's latest as a package version; the versions really verified are evidence elsewhere (ADR-053).
+  assert.deepEqual(native("hermes").package, { kind: "python", name: "hermes-agent", version: "latest", binNames: ["hermes"] });
+  assert.deepEqual(native("dsh").package, { kind: "npm", name: "@deepseek-ai/dsh", version: "latest", binNames: ["dsh"] });
+  // Hermes v0.22.4 (tag v0.22.4) has no acp_registry/agent.json; its ACP page stands in. DeepSeek Harness at the dsh-v0.2.1-rc.2 tag.
+  assert.deepEqual([native("hermes").source.revision, native("hermes").source.url], [HERMES, "https://github.com/NousResearch/hermes-agent/blob/" + HERMES + "/website/docs/user-guide/features/acp.md"]);
+  assert.deepEqual([native("dsh").source.revision, native("dsh").source.url], [DSH, "https://github.com/deepseek-ai/deepseek-harness/blob/" + DSH + "/packages/acp/acp/README.md"]);
+  assert.equal(productChannels("hermes")!.source.url, "https://github.com/NousResearch/hermes-agent/blob/" + HERMES + "/README.md");
+  assert.equal(productChannels("dsh")!.source.url, "https://github.com/deepseek-ai/deepseek-harness/blob/" + DSH + "/README.md");
+  // Hermes's install command is the one that README gives, shown for the terminal; DeepSeek Harness's is unchanged.
+  assert.deepEqual(officialInstallation("hermes"), { command: "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash", docs: "https://github.com/NousResearch/hermes-agent/blob/" + HERMES + "/README.md", checkedAt: "2026-10-22", note: null });
+  assert.deepEqual(officialInstallMethod("hermes"), { kind: "terminal", command: officialInstallation("hermes")!.command, reason: "Hermes 的安装脚本会克隆源码、准备 Python 环境并交互提问，HarnessHub 不代为运行；请在终端运行这条命令。" });
+  assert.deepEqual(officialInstallation("dsh"), { command: "npm install -g @deepseek-ai/dsh", docs: "https://github.com/deepseek-ai/deepseek-harness/blob/" + DSH + "/README.md", checkedAt: "2026-10-17", note: null });
+  // A link to a file in a repository names a full commit, never a branch that moves.
+  for (const id of ["claude", "codex", "opencode", "dsh", "hermes", "openclaw"]) {
+    for (const url of [productChannels(id)!.source.url, officialInstallation(id)!.docs, ...catalog.find(item => item.id === id)!.controls.map(control => control.source.url)])
+      if (url.startsWith("https://github.com/") && url.includes("/blob/")) assert.match(url, /\/blob\/[0-9a-f]{40}\//u, id + ": " + url);
+  }
 });

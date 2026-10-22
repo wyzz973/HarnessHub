@@ -41,10 +41,18 @@ const products: Readonly<Record<string, OfficialChannels>> = {
   // the other two launchers are its installer's, removed only while they start this checkout.
   hermes: { ...none, scripts: [{ root: ".hermes/hermes-agent", launchers: [".local/bin/hermes", ".local/bin/hermes-acp", ".local/bin/hermes-agent"], program: ".hermes/bin/hermes", formerPrograms: ["venv/bin/hermes"],
     removal: { links: [], launchers: [".local/bin/hermes", ".local/bin/hermes-acp", ".local/bin/hermes-agent"], files: [], directories: [".hermes/hermes-agent"], emptyDirectories: [], documented: true },
+    // What `hermes update` does, as v0.22.4's website/docs/getting-started/updating.md describes it; --yes accepts its
+    // config-migration and stash-restore prompts (hermes_cli/subcommands/update.py).
     upgrade: { kind: "terminal", command: "hermes update --yes",
-      explains: "它会把 ~/.hermes/hermes-agent 里的本地改动先 git stash，再 git pull 或 git reset 到最新、重装依赖、迁移 ~/.hermes/config.yaml，并重启网关（QQ 等消息渠道会断开片刻）。HarnessHub 不代为运行，请在终端运行。" } }],
-    source: { url: "https://github.com/NousResearch/hermes-agent/blob/a0556b861f2667a49ded048c9cfac88defff8c5f/README.md", checkedAt: CHECKED } },
-  dsh: { ...none, npm: ["@deepseek-ai/dsh"], source: { url: "https://github.com/deepseek-ai/deepseek-harness/blob/5badb15009ae1756c3afe0ae0cef1faafc290ccc/README.md", checkedAt: CHECKED } },
+      explains: "它会先暂停这份安装的所有网关（QQ 等消息渠道在更新期间离线，通常是拉取代码和准备依赖的那段时间），把 ~/.hermes/hermes-agent 里没有提交的改动 git stash 起来，"
+        + "更新到它跟踪的渠道（默认 stable）的最新版本并重新准备依赖，迁移 ~/.hermes/config.yaml（--yes 会接受迁移提示，并在更新后恢复你的改动），再以新代码重启网关。"
+        + "新版本的网关写过 ~/.hermes/state.db 之后就不能退回旧版本；更新时被打断的回合会标为未知、不会重放，需要在 hermes chat 里用 /discard 确认。"
+        + "想保留退路，请先运行 hermes backup 做完整备份。HarnessHub 不代为运行，请在终端运行。" } }],
+    // Read again on 2026-10-22 at v0.22.4 (4d04303): README.md and installation.md for the install, updating.md for the update and uninstall.
+    source: { url: "https://github.com/NousResearch/hermes-agent/blob/4d04303818b61bf3aa09278af48356315515965b/README.md", checkedAt: "2026-10-22" } },
+  // Linked to the dsh-v0.2.1-rc.2 tag's commit on 2026-10-22; that README runs the same npm package (`npx @deepseek-ai/dsh web`),
+  // and the channel stays as read on 2026-10-17.
+  dsh: { ...none, npm: ["@deepseek-ai/dsh"], source: { url: "https://github.com/deepseek-ai/deepseek-harness/blob/687f282e8625c6b8d11ff58211a90524be2e4317/README.md", checkedAt: CHECKED } },
 };
 /**
  * Services each product's installation registers and where it keeps its data (ADR-044). OpenClaw's uninstall page stops
@@ -115,7 +123,8 @@ const installs: Readonly<Record<string, OfficialInstallMethod>> = {
   gemini: { kind: "npm", package: "@google/gemini-cli", bin: "gemini", command: "npm install -g @google/gemini-cli", notes: ["官方仓库写明：自 2026-06-18 起，免费用户与 Google One 用户改用 Antigravity CLI。"] },
   pi: { kind: "npm", package: "@earendil-works/pi-coding-agent", bin: "pi", command: "npm install -g @earendil-works/pi-coding-agent", notes: [] },
   dsh: { kind: "npm", package: "@deepseek-ai/dsh", bin: "dsh", command: "npm install -g @deepseek-ai/dsh", notes: ["DeepSeek Harness 会读取 ~/.dsh 下已有的配置和 acp profile（包括源码版留下的）；HarnessHub 还没有验证它们与官网版的兼容性。"] },
-  hermes: { kind: "terminal", command: "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash",
+  // The command v0.22.4's README and installation page give (read 2026-10-22).
+  hermes: { kind: "terminal", command: "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash",
     reason: "Hermes 的安装脚本会克隆源码、准备 Python 环境并交互提问，HarnessHub 不代为运行；请在终端运行这条命令。" },
 };
 /** A product's official install method, or null when HarnessHub records none for it. */

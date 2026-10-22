@@ -36,28 +36,33 @@ const nativeDefinitions: readonly HarnessDefinition[] = [
   },
   {
     id: "hermes", name: "Hermes Agent", aliases: [], binaryNames: ["hermes"], configHints: [".hermes"],
-    // Its official installer keeps a Python environment behind ~/.local/bin/hermes; the version is read from that metadata.
+    // Its official installer keeps a checkout behind ~/.local/bin/hermes; discovery reads the version its install stamp
+    // names (installation-channels.ts), not this package. The package version follows the channel's latest: the versions
+    // really verified are evidence only, in docs/verification and the matrix's installation (ADR-053). The source is
+    // v0.22.4's ACP page (acp_registry/agent.json is gone there).
     controls: [{ id: "hermes-native", protocol: "acp-v1", executableNames: ["hermes"], args: ["acp"], env: {},
-      package: { kind: "python", name: "hermes-agent", version: "0.12.0", binNames: ["hermes"] }, distribution: null, requiredExecutables: [],
-      source: { repository: "NousResearch/hermes-agent", revision: "a0556b861f2667a49ded048c9cfac88defff8c5f", upstreamId: "hermes-agent", url: "https://github.com/NousResearch/hermes-agent/blob/a0556b861f2667a49ded048c9cfac88defff8c5f/acp_registry/agent.json" } }],
+      package: { kind: "python", name: "hermes-agent", version: "latest", binNames: ["hermes"] }, distribution: null, requiredExecutables: [],
+      source: { repository: "NousResearch/hermes-agent", revision: "4d04303818b61bf3aa09278af48356315515965b", upstreamId: "hermes-agent", url: "https://github.com/NousResearch/hermes-agent/blob/4d04303818b61bf3aa09278af48356315515965b/website/docs/user-guide/features/acp.md" } }],
   },
   {
     // The ACP profile is the automation surface of `dsh`; dsh initialises it from its bundled template on first use.
     id: "dsh", name: "DeepSeek Harness", aliases: [], binaryNames: ["dsh"], configHints: [".dsh"],
     // Found like other agent CLIs: `dsh` on PATH or in a standard directory (npm -g, the Desktop app's registered command,
     // the Python SDK). npx caches are not installations; a source checkout is an explicit entry in the discovery manifest.
-    // The package version is the official npm `latest`, installed through 4317 on 2026-10-18
-    // (docs/verification/management-actions-2026-10-18.md), and the verified version since its real re-verification on
-    // 2026-10-22 (docs/verification/dsh-rc2-reverification-2026-10-22.md); the earlier 0.2.1-alpha.1 record was a source build (ADR-038).
+    // The package version follows the official npm channel's latest: the versions really verified are evidence only, in
+    // docs/verification and the matrix's installation (ADR-053). The source is the dsh-v0.2.1-rc.2 tag's commit.
     controls: [{ id: "dsh-native", protocol: "acp-v1", executableNames: ["dsh"], args: ["--profile", "acp"], env: {},
-      package: { kind: "npm", name: "@deepseek-ai/dsh", version: "0.2.0-rc.2", binNames: ["dsh"] }, distribution: null, requiredExecutables: [],
-      source: { repository: "deepseek-ai/deepseek-harness", revision: "5badb15009ae1756c3afe0ae0cef1faafc290ccc", upstreamId: "dsh", url: "https://github.com/deepseek-ai/deepseek-harness/blob/5badb15009ae1756c3afe0ae0cef1faafc290ccc/packages/acp/acp/README.md" } }],
+      package: { kind: "npm", name: "@deepseek-ai/dsh", version: "latest", binNames: ["dsh"] }, distribution: null, requiredExecutables: [],
+      source: { repository: "deepseek-ai/deepseek-harness", revision: "687f282e8625c6b8d11ff58211a90524be2e4317", upstreamId: "dsh", url: "https://github.com/deepseek-ai/deepseek-harness/blob/687f282e8625c6b8d11ff58211a90524be2e4317/packages/acp/acp/README.md" } }],
   },
 ];
 
 /**
  * Each product's own documented installation on macOS (ADR-044), read from the official page the product's channels cite
  * (docs/research/official-install-channels-2026-10-17.md); shown when the product is missing. HarnessHub never runs it.
+ * Hermes's was read again on 2026-10-22 from its v0.22.4 README and installation page (commit 4d04303); DeepSeek
+ * Harness's link moved to the dsh-v0.2.1-rc.2 tag the same day, but that README gives only `npx @deepseek-ai/dsh web`,
+ * so its command stays as read on 2026-10-17.
  */
 const CHECKED = "2026-10-17";
 const officialInstallations: Readonly<Record<string, { readonly command: string; readonly docs: string; readonly checkedAt: string; readonly note: string | null }>> = {
@@ -69,9 +74,9 @@ const officialInstallations: Readonly<Record<string, { readonly command: string;
     note: "官方仓库写明：自 2026-06-18 起，免费用户与 Google One 用户改用 Antigravity CLI。" },
   cursor: { command: "curl https://cursor.com/install -fsS | bash", docs: "https://cursor.com/docs/cli/installation", checkedAt: CHECKED, note: null },
   pi: { command: "npm install -g @earendil-works/pi-coding-agent", docs: "https://www.npmjs.com/package/@earendil-works/pi-coding-agent", checkedAt: CHECKED, note: null },
-  hermes: { command: "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash",
-    docs: "https://github.com/NousResearch/hermes-agent/blob/a0556b861f2667a49ded048c9cfac88defff8c5f/README.md", checkedAt: CHECKED, note: null },
-  dsh: { command: "npm install -g @deepseek-ai/dsh", docs: "https://github.com/deepseek-ai/deepseek-harness/blob/5badb15009ae1756c3afe0ae0cef1faafc290ccc/README.md", checkedAt: CHECKED, note: null },
+  hermes: { command: "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash",
+    docs: "https://github.com/NousResearch/hermes-agent/blob/4d04303818b61bf3aa09278af48356315515965b/README.md", checkedAt: "2026-10-22", note: null },
+  dsh: { command: "npm install -g @deepseek-ai/dsh", docs: "https://github.com/deepseek-ai/deepseek-harness/blob/687f282e8625c6b8d11ff58211a90524be2e4317/README.md", checkedAt: CHECKED, note: null },
 };
 export function officialInstallation(harnessId: string): { readonly command: string; readonly docs: string; readonly checkedAt: string; readonly note: string | null } | null {
   return officialInstallations[harnessId] ?? null;
