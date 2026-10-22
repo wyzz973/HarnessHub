@@ -196,7 +196,9 @@ set -e
 PREFIX="$(cd "$(dirname "$0")/.." && pwd -P)"
 case "$1" in
   info) echo '{"formulae":[{"name":"gemini-cli","versions":{"stable":"0.46.0"},"revision":0}],"casks":[]}' ;;
-  list) cd "$PREFIX/Cellar"; for name in *; do echo "$name $(ls "$name" | tr '\\n' ' ')"; done ;;
+  list) cd "$PREFIX/Cellar"; for name in *; do echo "$name $(ls "$name" | tr '\\n' ' ')"; done
+    # Homebrew 5 refuses a cask from an untrusted tap and fails the whole listing; an upgrade must not depend on it.
+    echo "Error: Refusing to load cask other/tap/topit from untrusted tap other/tap." >&2; exit 1 ;;
   upgrade)
     if [ "$2" = "--dry-run" ]; then
       if [ -f "$PREFIX/tamper" ]; then mkdir -p "$PREFIX/Cellar/tampered/1.0"; fi
@@ -274,7 +276,9 @@ PREFIX="$(cd "$(dirname "$0")/.." && pwd -P)"
 target() { if [ "$1" = "anomalyco/tap/opencode" ]; then echo 1.19.3; else echo 2.1.2; fi; }
 case "$1" in
   info) echo '{"formulae":[{"name":"opencode","full_name":"'"$4"'","versions":{"stable":"'"$(target "$4")"'"},"revision":0}],"casks":[]}' ;;
-  list) cd "$PREFIX/Cellar"; for name in *; do echo "$name $(ls "$name" | tr '\\n' ' ')"; done ;;
+  list) cd "$PREFIX/Cellar"; for name in *; do echo "$name $(ls "$name" | tr '\\n' ' ')"; done
+    # Homebrew 5 refuses a cask from an untrusted tap and fails the whole listing; an upgrade must not depend on it.
+    echo "Error: Refusing to load cask other/tap/topit from untrusted tap other/tap." >&2; exit 1 ;;
   upgrade)
     echo "$*" >> "$PREFIX/brew-args.log"
     if [ "$2" = "--dry-run" ]; then printf '==> Would upgrade 1 requested outdated package\\n%s 1.18.35 -> %s (31.2MB)\\n==> 1 Deprecated or disabled package\\n%s (deprecated)\\n' "$4" "$(target "$4")" "$4"; exit 0; fi

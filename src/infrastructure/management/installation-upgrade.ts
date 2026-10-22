@@ -103,9 +103,13 @@ export class LocalInstallationUpgrader implements InstallationUpgradePort {
     return runManagementProcess("/usr/bin/sandbox-exec", ["-p", isolatedSandboxProfile([context.stage]), join(target.prefix!, "bin", "brew"), ...args], context.stage, homebrewEnvironment(this.source, context.stage),
       { ...context, log: () => {} }, MAX_OUTPUT);
   }
-  /** What Homebrew has installed, for comparing around its dry run: `brew list --versions` and every keg and cask directory's time. */
-  private async homebrewState(target: InstallationObservation, context: ManagementInstallContext): Promise<string> {
-    const list = await this.brewQuery(target, ["list", "--versions"], context), directories: string[] = [];
+  /**
+   * What Homebrew has installed, for comparing around its dry run: every keg and cask version directory with its time, read
+   * from the prefix. Not `brew list --versions`: it loads every installed cask, and one from a tap the user has not trusted
+   * makes it fail for all of them (Homebrew 5's tap trust), which would stop the upgrade of an unrelated Harness.
+   */
+  private async homebrewState(target: InstallationObservation): Promise<string> {
+    const directories: string[] = [];
     for (const kind of ["Cellar", "Caskroom"]) {
       let names: string[] = [];
       try { names = (await readdir(join(target.prefix!, kind))).sort(); } catch (error) { if (!missing(error)) throw error; }
@@ -115,7 +119,7 @@ export class LocalInstallationUpgrader implements InstallationUpgradePort {
         for (const version of versions) { try { directories.push(kind + "/" + name + "/" + version + ":" + (await stat(join(target.prefix!, kind, name, version))).mtimeMs); } catch (error) { if (!missing(error)) throw error; } }
       }
     }
-    return createHash("sha256").update(list + "\0" + directories.join("\n")).digest("hex");
+    return createHash("sha256").update(directories.join("\n")).digest("hex");
   }
   /**
    * Homebrew's upgrade plan for `formula` (the installation's name as Homebrew's commands take it) by its own dry run, in
@@ -123,7 +127,7 @@ export class LocalInstallationUpgrader implements InstallationUpgradePort {
    * It may download manifests into its cache; anything it changes among the installed packages stops the upgrade.
    */
   private async homebrewPlan(target: InstallationObservation, formula: string, context: ManagementInstallContext): Promise<ReturnType<typeof parseHomebrewPlan>> {
-    const before = await this.homebrewState(target, context), { directories, files } = protectedConfigurationPaths(this.source);
+    const before = await this.homebrewState(target), { directories, files } = protectedConfigurationPaths(this.source);
     let output = "";
     const bounded: ManagementInstallContext = { stage: context.stage, signal: AbortSignal.any([context.signal, AbortSignal.timeout(DRY_RUN_MS)]), assertOwned: context.assertOwned,
       log: (stream, text) => { if (stream === "stdout" && output.length < 1024 * 1024) output += text + "\n"; } };
@@ -136,7 +140,7 @@ export class LocalInstallationUpgrader implements InstallationUpgradePort {
       throw error;
     } finally {
       // A dry run may write the prefix inside Homebrew's sandbox; one that changed an installed package is not trusted further.
-      if (await this.homebrewState(target, context) !== before)
+      if (await this.homebrewState(target) !== before)
         throw new ManagementError("HOMEBREW_DRY_RUN_CHANGED", "Homebrew 的升级预演改动了已安装的包，已停止，没有升级。请在终端运行 brew list --versions 核对。");
     }
     return parseHomebrewPlan(output);
