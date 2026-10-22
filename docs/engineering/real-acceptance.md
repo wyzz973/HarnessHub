@@ -295,7 +295,7 @@ dsh 的 ACP 自报版本恒为 0.0.1，所以版本一律以证据头的 `instal
 
 `HH_REAL_HARNESSES=hermes`。最新版的 `hermes acp` 只是网关的查看器，会附着到用户正在运行、同时服务 QQ 的网关；是否允许 HarnessHub 的会话进入它由用户决定（[ADR-051](../decisions/0051-hermes-upgrade-route.md) 修订版，ADR-053“待用户决定”第 3 题）。答复前：不升级 Hermes、不运行任何网关命令、本轮不做 Hermes 真实验收；本机 0.12.0 照常接入，不做版本提示。用户选 A2 后的验收分两步（隔离 `HERMES_HOME` 的私有网关，再对真实网关做一次只附着的受控运行），见 ADR-051“验证”。
 
-0.12.0 上曾用的完整套件，供届时参照（边界按 [ADR-031](../decisions/0031-hermes-and-deepseek-harness.md)：只用文件与终端类工具做无害任务，不触发浏览器、`process`、记忆、`skill_manage` 与网页搜索；`delegate_task` 只在子 Agent 验收中用一次）：`native-catalog`；`native-resume`；`native-thinking`；`native-activity`（审批在 0.12.0 是上游缺陷，记录为受阻；0.12 的缺陷提示已删除）；`native-attachments`（本机模型看不到图片，图片一项按受阻记录）；`native-commands`（`/compact`）；`native-config` 加 `HH_REAL_CONFIG_OPTION=model HH_REAL_CONFIG_FROM=<目录里的模型 id> HH_REAL_CONFIG_TO=<另一个模型 id> HH_REAL_CONFIG_COMMAND="/model <TO 的模型名>"`（2026-10-11 用的是 deepseek-v4-pro 与 deepseek-v4-flash）；`native-import`；`native-branch`；`native-subagent`。网关模型下还要加 ADR-051 列出的网关用例，协议替身也要换成网关投影。
+0.12.0 上曾用的完整套件，供届时参照（边界按 [ADR-031](../decisions/0031-hermes-and-deepseek-harness.md)：只用文件与终端类工具做无害任务，不触发浏览器、`process`、记忆、`skill_manage` 与网页搜索；`delegate_task` 只在子 Agent 验收中用一次）：`native-catalog`；`native-resume`；`native-thinking`；`native-activity`（审批在 0.12.0 是上游缺陷，记录为受阻；0.12 的缺陷提示由第三批 D2 删除）；`native-attachments`（本机模型看不到图片，图片一项按受阻记录）；`native-commands`（`/compact`）；`native-config` 加 `HH_REAL_CONFIG_OPTION=model HH_REAL_CONFIG_FROM=<目录里的模型 id> HH_REAL_CONFIG_TO=<另一个模型 id> HH_REAL_CONFIG_COMMAND="/model <TO 的模型名>"`（2026-10-11 用的是 deepseek-v4-pro 与 deepseek-v4-flash）；`native-import`；`native-branch`；`native-subagent`。网关模型下还要加 ADR-051 列出的网关用例，协议替身也要换成网关投影。
 
 ### 6.7 OpenClaw（目标 latest；升级待用户确认 ADR-052 路线 A；升级前在 2026.3.23-2 上重做 T-OC-08，≤ ¥3）
 

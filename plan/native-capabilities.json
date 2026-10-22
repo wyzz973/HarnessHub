@@ -2354,7 +2354,7 @@
             ".tmp/cc-attention-2026-10-12.json",
             "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
           ],
-          "note": "本机 Hermes 0.12.0 的缺陷：tools/approval.py 调用审批回调时传入 allow_permanent，ACP 适配层回调不接受（TypeError），危险命令一律按拒绝处理，审批请求根本不会发出；需要用户升级 Hermes（本机落后上游 18332 个提交）。Hub 的 60 秒期限处理已有协议测试（ADR-053 登记的例外，只增加信息；0.12 的缺陷提示已删除）；2026-10-12 再次确认（rm -r 被拒绝，模型仍回复“已删除”），侧栏的原生期限倒计时只在 Hermes 0.12.0 夹具的浏览器测试中验证（ADR-035）"
+          "note": "本机 Hermes 0.12.0 的缺陷：tools/approval.py 调用审批回调时传入 allow_permanent，ACP 适配层回调不接受（TypeError），危险命令一律按拒绝处理，审批请求根本不会发出；需要用户升级 Hermes（本机落后上游 18332 个提交）。Hub 的 60 秒期限处理已有协议测试（ADR-053 登记的例外，只增加信息；0.12 的缺陷提示由第三批 D2 删除）；2026-10-12 再次确认（rm -r 被拒绝，模型仍回复“已删除”），侧栏的原生期限倒计时只在 Hermes 0.12.0 夹具的浏览器测试中验证（ADR-035）"
         },
         "questions": {
           "native": "no",

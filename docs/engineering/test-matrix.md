@@ -344,7 +344,7 @@
 | G032-N02 | G032 | protocol | 原生认证/额度失败与未知远端文本 | 投影明确失败类别而不泄露远端秘密 | planned |
 | G061-N02 | G061 | integration | Claude未设置配置目录与显式用户路径 | 保留未设置状态以读取原登录；显式用户目录正常沿用 | planned |
 | G011-N03 | G011 | unit | 原生回执/计划路径、全局安装位置与冻结npm版本元数据 | 缺少版本/配置证据不得完成，路径/包/其他程序bin被拒绝；原npm/uv位置被保留，安装与版本验证都保护配置 | planned |
-| G011-NC1 | G011 | unit | 能力矩阵的 Harness 分层与目录的分层一致（原“判断本机版本是否为真实验证过的版本”，版本部分 2026-10-22 随 ADR-053 删除） | 能力矩阵为每个 Harness 记的分层与目录的 harnessTier 一致，冻结的恰为 Cursor、Gemini CLI、Pi；任一处单独改动都使测试失败。不再有任何版本判断：已验证版本表、semver 区间比较与四处对账已删除，版本只作矩阵 installation 文本与验收记录里的证据 | planned |
+| G011-NC1 | G011 | unit | 能力矩阵的 Harness 分层与目录的分层一致（原“判断本机版本是否为真实验证过的版本”，版本部分 2026-10-22 随 ADR-053 删除） | 能力矩阵为每个 Harness 记的分层与目录的 harnessTier 一致，冻结的恰为 Cursor、Gemini CLI、Pi；任一处单独改动都使测试失败。不再有任何版本判断：已验证版本表、semver 区间比较与四处对账由第三批 D1 删除，版本只作矩阵 installation 文本与验收记录里的证据 | planned |
 | G011-NC2 | G011 | unit | 在原程序中继续的命令按产品给出，与安装版本无关（ADR-053 决定 3） | Claude Code、Codex、OpenCode、Hermes 对任何已安装版本都给出交互命令与一次性命令（函数没有版本输入，对任何安装、含读不出版本的，都给出同样的命令）；DeepSeek Harness 只给一次性命令（官网包没有 tui profile）并附凭据前提说明 onceNote（headless 只读终端环境的 DEEPSEEK_API_KEY、工作区 .env 或 ~/.dsh/.env）；Pi 只指向它的会话列表；OpenClaw 不给；没有续接命令的产品（Cursor、Gemini CLI）只给 ID 且 note 为 no-command，不再有 version-unverified；含空格、引号、分号、$( 或以 - 开头等非普通标识符的引用既不显示也不进入命令；Codex 只问一次的形式只在工作区不是 Git 仓库时带 --skip-git-repo-check 并注明原因，交互形式从不带；读取不触发发现与版本探测 | planned |
 | G060-N04 | G060 | platform | 原Homebrew创建并认证继承沙箱，模型配置与Homebrew仓库拒绝写入 | 真实SDK继承成立；配置与brew自身写入以明确EPERM拒绝且原内容不变，进程退出可等待 | planned |
 | G061-X01 | G061 | integration | 原生快切换不启动额外进程、目录缓存刷新/失效、命令与实际审批决定幂等 | 真实HTTP/SQLite/IPC保持；未知原生选项不派发、原生命令不注入文本包、取消目录读取后不派发、审批先提交再响应且重试不重发 | planned |

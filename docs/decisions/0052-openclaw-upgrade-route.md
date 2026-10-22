@@ -41,14 +41,14 @@
   5. 每跳显式传 `--timeout`，不短于 2026.9.5 更新器的默认 1800 秒（两个候选解包 225～390 MB，再加 Doctor）；每跳的管理任务另设 3600 秒外层期限，到期按 ADR-043 第 6 条判失败、不回滚不重试；数值在真机第一次运行后按实测复核。不代传 `--accept-capabilities`：候选版本要求接受的能力声明写进确认框，由用户自己看过再确认。
   6. 每跳之后：`openclaw node restart`（Node 服务不随 `openclaw update` 重启）与 ADR-043 第 5 条的恢复判定（Gateway 新进程、端口在监听）。
   7. 事后：重新探测版本、读 `openclaw gateway status --deep`（只读）、核对 `openclaw.json` 摘要变化并归入“重启后的服务自己写的”，核实 `openclaw plugins list --json` 里 deepseek 提供方与飞书渠道的状态（缺失则在完成页给出装回命令，HarnessHub 本轮不代装）；openclaw-weixin 保持 2.0.1，其兼容性由用户确认微信是否恢复。然后 T-OC-12 在 latest 上复验（≤ ¥5）。
-- **T-OC-11 的处置**：原“2026.10.x 适配按版本门控，旧版本行为不变”撤销（ADR-053“已撤销的计划”），改为按 ACP 桥实际报告的能力判断——实时工具流有则去重、审批中继有则接、思考流有则不再从转录补；名册、设置回读、模型可用性与 fork 同理。这部分不依赖升级完成，第三批 D3 已按能力落地（协议测试在 `tests/protocol/openclaw.test.ts`），升级后在真实网关上复验。
+- **T-OC-11 的处置**：原“2026.10.x 适配按版本门控，旧版本行为不变”撤销（ADR-053“已撤销的计划”），改为按 ACP 桥实际报告的能力判断——实时工具流有则去重、审批中继有则接、思考流有则不再从转录补；名册、设置回读、模型可用性与 fork 同理。这部分不依赖升级完成，由第三批 D3 按能力落地（协议测试在 `tests/protocol/openclaw.test.ts`，用能力场景而不是版本场景），升级后在真实网关上复验。
 - **前置**：ADR-043 的确认框改写；用户同意“HarnessHub 运行 `openclaw update`，它会跑 Doctor 迁移你的配置并重启 Gateway 两次”。
 - **点击**：2 次确认（两跳各一次；失败即停，不自动进入下一跳、不回滚、不重试），加完成页上插件命令的用户自行执行（若预检第 2 项核实为不会自动补装）。
 - **中断**：两次 Gateway 重启（各几十秒）；第二跳之后到装回 deepseek 与飞书插件之间，默认模型与飞书不可用；微信取决于 2.0.1 的兼容性（未核实）。
 - **复验**：T-OC-08（2026.3.23-2 上的驱动小修与真实复验）的 14 格有真实证据的能力加上 6 格原先“原接口不提供”的（思考流、工具流、审批中继等），约 25～35 个只读回合，deepseek-chat 每回合约 ¥0.01～0.05，合计 ¥1～2，上限 ¥5。
 - **要改的代码**（第四批，在第三批 D1、D4 合并之后，因为与 `service.ts`、`UpgradeDialog.tsx` 重叠）：
   - `src/adapters/management/recipes.ts` 的 `upgradeNotes`：“HarnessHub 不运行 openclaw doctor，也不迁移你的配置”改为“由 `openclaw update` 运行 Doctor 迁移”，并加两跳、插件装回、`openclaw backup`、`--accept-capabilities` 与 latest 轨道的说明；服务声明不变。
-  - `src/infrastructure/management/native.ts`：OpenClaw 的“临时目录 + `config validate`”预演已在第三批 D4 删除（过渡措施见文末）；改为 `openclaw update --dry-run --json` 的计划读取；`execute` 新增 `native-update` 一类，运行 `openclaw update …`、解析 `UpdateRunResult`；保留的 npm 直装路径对 OpenClaw 不再使用。
+  - `src/infrastructure/management/native.ts`：OpenClaw 的“临时目录 + `config validate`”预演由第三批 D4 删除（过渡措施见文末）；改为 `openclaw update --dry-run --json` 的计划读取；`execute` 新增 `native-update` 一类，运行 `openclaw update …`、解析 `UpdateRunResult`；保留的 npm 直装路径对 OpenClaw 不再使用。
   - ADR-043 的 kickstart 路径（`program-usage.ts`）：对 A 不执行 kickstart，只做恢复判定与 `openclaw node restart`；确认框里“将要执行的命令原文”改为 `openclaw update …` 的原文。第 6 条“失败不回滚不重试”保持。
   - 管理库：任务新增“两跳”的阶段记录（是否提升版本号、迁移前备份按用户决定 6 的规则，由管理库的所有者定）。
 - **代价**：一次不小的管理功能改动；HarnessHub 对升级过程的掌控变弱（Doctor 的迁移与插件同步由 OpenClaw 决定）；需要一次真机验证，而真机只有用户的那份安装。
@@ -66,9 +66,9 @@
 
 ### C：暂不升级（只作研究期间与用户答复前的现状，不再是“默认状态”）
 
-- **做法**：不升级；完成 M1b 里程碑的 T-OC-04（Gateway 运行状态、就绪提示与自更新状态，只读）、T-OC-06（Hub 的 /export 经 `sessions.get` 只读导出本会话转录）、T-OC-07（能力页读取 OpenClaw 的 Hooks 与插件条目）、T-OC-15（版本比较；`-N` 修订号的比较已由第三批 D4 落地，轨道已定 latest）、T-OC-16（目录缓存指纹纳入认证与模型文件的身份）；在 2026.3.23-2 上用当前代码重做 T-OC-08（≤ ¥3），把 5 个 ✅ 的证据从已丢失的 `.tmp` 恢复为仓库内记录。
+- **做法**：不升级；完成 M1b 里程碑的 T-OC-04（Gateway 运行状态、就绪提示与自更新状态，只读）、T-OC-06（Hub 的 /export 经 `sessions.get` 只读导出本会话转录）、T-OC-07（能力页读取 OpenClaw 的 Hooks 与插件条目）、T-OC-15（版本比较；`-N` 修订号的比较由第三批 D4 落地，轨道已定 latest）、T-OC-16（目录缓存指纹纳入认证与模型文件的身份）；在 2026.3.23-2 上用当前代码重做 T-OC-08（≤ ¥3），把 5 个 ✅ 的证据从已丢失的 `.tmp` 恢复为仓库内记录。
 - **前置**：无。**点击**：0。**中断**：无。
-- **代价**：ACP 桥没有思考流、实时工具流与审批中继（矩阵 6 格停在“原接口不提供”）；`mcp.*`/`plugins.*` 写入继续只读；安全与缺陷修复落后 7 个月；用户随时可能自己运行 `openclaw update` 跳到 latest——驱动已按能力判断（第三批 D3），不会静默改变行为，但真实复验仍要做。
+- **代价**：ACP 桥没有思考流、实时工具流与审批中继（矩阵 6 格停在“原接口不提供”）；`mcp.*`/`plugins.*` 写入继续只读；安全与缺陷修复落后 7 个月；用户随时可能自己运行 `openclaw update` 跳到 latest——驱动按能力判断（第三批 D3），不会静默改变行为，但真实复验仍要做。
 - 原第 59 行“`recipes.ts` 的说明改为‘当前版本不支持经 HarnessHub 升级到 2026.10.x，官方要求先经 2026.9.5’”的文案 2026-10-22 删除：它把上游的迁移步骤写成了版本门槛。现在的说明见文末过渡措施。
 
 ## 推荐
@@ -81,7 +81,7 @@
 
 ## 过渡措施（第三批 D4，审批代理裁决 11）
 
-在路线 A 落地之前，OpenClaw 的 npm 直装升级在准备阶段返回 `UNSUPPORTED_UPGRADE` 并说明：“OpenClaw 的升级由它自己的 `openclaw update` 完成（会运行 Doctor 迁移配置并重启 Gateway），HarnessHub 的 npm 直装路径不再用于 OpenClaw；路线见 ADR-052。”候选版本的 `config validate` 预演删除。用户现在点击升级会看到说明，而不是校验失败；第四批把 `native-update` 接上后放开。
+在路线 A 落地之前，OpenClaw 的 npm 直装升级在准备阶段返回 `UNSUPPORTED_UPGRADE` 并说明：“OpenClaw 的升级由它自己的 `openclaw update` 完成（会运行 Doctor 迁移配置并重启 Gateway），HarnessHub 的 npm 直装路径不再用于 OpenClaw；路线见 ADR-052。”候选版本的 `config validate` 预演删除。D4 部署后用户点击升级看到的是说明，而不是校验失败；第四批把 `native-update` 接上后放开。
 
 ## 不做
 
@@ -91,6 +91,6 @@
 
 ## 验证（选定后）
 
-- 集成：`openclaw update` 的替身输出 `UpdateRunResult`（成功、第一跳失败、第二跳失败、退出码 75 的交接）各一例；`--dry-run --json` 计划的解析；latest 的解析与 `--tag <精确版本>` 冻结，升级前目标变了即停止；2026.9.7 条件跳；每跳后的 `openclaw node restart` 与恢复判定；两跳任务的记录与“没有升级”的显示；无效样例：Doctor 拒绝退役键时任务停在第一跳，候选 `config validate` 已不在路径上。过渡期：OpenClaw 的 npm 直装升级在准备阶段返回 `UNSUPPORTED_UPGRADE` 并带说明（第三批 D4 的集成测试）。
+- 集成：`openclaw update` 的替身输出 `UpdateRunResult`（成功、第一跳失败、第二跳失败、退出码 75 的交接）各一例；`--dry-run --json` 计划的解析；latest 的解析与 `--tag <精确版本>` 冻结，升级前目标变了即停止；2026.9.7 条件跳；每跳后的 `openclaw node restart` 与恢复判定；两跳任务的记录与“没有升级”的显示；无效样例：Doctor 拒绝退役键时任务停在第一跳，候选 `config validate` 不在路径上。过渡期：OpenClaw 的 npm 直装升级在准备阶段返回 `UNSUPPORTED_UPGRADE` 并带说明（第三批 D4 的集成测试）。
 - 浏览器：确认框的两跳、插件装回、备份要求、`--accept-capabilities` 的说明、从 extended-stable 换到 latest 轨道的说明与红字说明。
 - 真机：只有用户点击；按 ADR-043 第 5 条核实两次重启的恢复与端口；升级后按审批代理的条件做 T-OC-12（只读回合、不停不重启 Gateway 与 Node、`openclaw.json` 前后摘要一致），证据入库后矩阵 `installation` 改为“真实验收版本 2026.10.x”（ADR-053 决定 8）。

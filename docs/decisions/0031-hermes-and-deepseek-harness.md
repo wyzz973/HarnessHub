@@ -42,7 +42,7 @@
 ## 工具失败与没有发出的审批（2026-10-12，审批代理决定）
 
 - Hermes 0.12 的 `build_tool_complete`（`acp_adapter/tools.py`）对每个结束的调用都报告 `completed`，失败只写在文本里：各格式化函数输出“<工具> failed: <错误>”，被拒绝的命令的错误是“BLOCKED: …”（`tools/approval.py`）。HermesControl 把文本符合这两种形式的调用标为失败，只对 Hermes 生效。
-- 本机 0.12.0 中 `approval.py` 以 `allow_permanent` 调用审批回调，而 `permissions.py` 的回调不接受这个参数，异常后一律按拒绝处理，审批请求从不发出（上游 0.14.0 起修复，v0.21.6 的回调已接受它）。2026-10-12 至 2026-10-22，一次回合中没有收到任何 `session/request_permission`、却出现了 Hermes 的拒绝文本（“BLOCKED: User denied”或“Command denied: ”）时，Hub 对 0.12.x 加过一条提示（Hermes 拒绝了这条命令，但没有向 HarnessHub 请求审批……）。**这条提示 2026-10-22 按 [ADR-053](0053-latest-version-baseline.md) 决定 2 删除**：它按版本号决定是否显示一段说明。拒绝文本仍按上一条标为失败；矩阵的 approvals 格仍记为受阻并写明 0.12 的这个缺陷，升级到最新版后真实复验。
+- 本机 0.12.0 中 `approval.py` 以 `allow_permanent` 调用审批回调，而 `permissions.py` 的回调不接受这个参数，异常后一律按拒绝处理，审批请求从不发出（上游 0.14.0 起修复，v0.21.6 的回调已接受它）。2026-10-12 至 2026-10-22，一次回合中没有收到任何 `session/request_permission`、却出现了 Hermes 的拒绝文本（“BLOCKED: User denied”或“Command denied: ”）时，Hub 对 0.12.x 加过一条提示（Hermes 拒绝了这条命令，但没有向 HarnessHub 请求审批……）。**这条提示 2026-10-22 按 [ADR-053](0053-latest-version-baseline.md) 决定 2 作废，由第三批 D2 删除**：它按版本号决定是否显示一段说明。拒绝文本仍按上一条标为失败；矩阵的 approvals 格仍记为受阻并写明 0.12 的这个缺陷，升级到最新版后真实复验。
 
 ## 影响
 

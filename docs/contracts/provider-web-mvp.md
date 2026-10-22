@@ -88,7 +88,7 @@ ADR-036（2026-10-12）追加：每个回合有执行预算（默认300秒，从
 
 ADR-037（2026-10-12）追加：`GET /api/v1/sessions/:id/runs/:runId/diagnostics?content=0|1`返回`{text, includesContent}`：本轮的诊断纯文本（不超过64 KiB），服务端在请求时拼装、不保存；首行说明是否含对话内容，默认不含，`content=1`时只加入该轮提示词与回复。来自原程序的文字先经Provider脱敏器，再隐去密钥样式字符串、环境变量值、路径与本机账户名。stderr只取本轮最后4 KiB，只在当前服务内存中保留最近64轮。参数无效400，回合不存在404。
 
-ADR-038（2026-10-12）追加的管理视图字段`verification: {state, program, adapter?}`（已验证判定）2026-10-22 起按 ADR-053 删除：管理视图照常给出每份安装的版本号与渠道最新版本，不再带任何按版本号推断的判定；页面解码器同一提交去掉这个字段。
+ADR-038（2026-10-12）追加的管理视图字段`verification: {state, program, adapter?}`（已验证判定）2026-10-22 起按 ADR-053 删除（第三批 D1）：管理视图照常给出每份安装的版本号与渠道最新版本，不再带任何按版本号推断的判定；页面解码器在同一提交去掉这个字段（ADR-053 裁决 2）。
 
 ADR-039（2026-10-12）追加：`GET /api/v1/sessions/:id/native-resume`返回当前选择的已就绪原生会话`{resume: {harnessId, nativeId?, interactive?, once?, onceNote?, list?, note?} | null}`：`nativeId`只在是普通标识符时给出；`interactive`与`once`按产品给出，与安装版本无关（ADR-053，2026-10-22；原“只给验证过的产品，并且已安装版本须在验证范围内”作废），DeepSeek Harness 只有`once`并带`onceNote`（凭据前提）；没有续接命令的产品（Cursor、Gemini CLI）只给`nativeId`，`note`为`no-command`（原`not-verified`改名，原`version-unverified`删除）；`list`用于会话标识是私有路径的程序。按需读取，读取不触发本机发现与版本探测，不进入会话视图和导出；需要登录，查询参数无效时返回400。
 
@@ -216,6 +216,6 @@ ADR-050（2026-10-22，Harness 分层与按需刷新，依据 ADR-048 用户决�
 - 原生恢复（ADR-039）：只有`once`、没有`interactive`时（DeepSeek Harness），详情栏显示“只问一次”的命令及其复制按钮、`onceNote`和两条提示，不显示“复制恢复命令”（原“已验证程序……‘只问一次（已用真实回合验证）’”2026-10-22 按 ADR-053 改写：任何版本都显示，页面不写验证字样）。
 
 ADR-053（2026-10-22，按各 Harness 的最新正式版适配，版本只作工程证据）对本契约的改动汇总：
-- 删除的字段：管理视图的`verification`（ADR-038）；安装检查与维护检查的`target`（ADR-038 的目标版本判定）；逐份升级检查的`verification`；能力视图每个 Harness 的`table`。页面的严格解码器同一提交去掉它们；服务端不再发送。
+- 删除的字段：管理视图的`verification`（ADR-038）；安装检查与维护检查的`target`（ADR-038 的目标版本判定）；逐份升级检查的`verification`；能力视图每个 Harness 的`table`。服务端字段与页面的严格解码器由第三批 D1 在同一提交删除（ADR-053 裁决 2），之后服务端不再发送。
 - `GET /api/v1/sessions/:id/native-resume`：`interactive`与`once`按产品给出，与安装版本无关；`note`只有`no-command`；dsh 带`onceNote`；读取不触发发现与版本探测。
 - 版本号、接入口版本、渠道最新版本与“有新版本/已是最新”照常返回；预发布版只作事实。任何视图都不再带“未经验证”“未核实”这类判定；原程序不提供的能力在用到时以具名错误码加原程序给出的原因失败（例如 Codex 的`NATIVE_OPTION_UNAVAILABLE`、OpenCode 的`NATIVE_COMMAND_IGNORED`、Claude 的`NATIVE_COMMAND_UNAVAILABLE`）。

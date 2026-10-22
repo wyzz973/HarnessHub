@@ -729,7 +729,7 @@
 - 发布新revision并保留历史
 - 提交前拒绝
 - 内存目录不先更新
-- src/infrastructure/management/verified-versions.ts 只放各产品的续接命令表 RESUME_COMMANDS（ADR-039、ADR-053；版本表 VERIFIED_VERSIONS 与对账 versionConsistency 已删除），文件路径保留到 T-ARCH-03 迁入 Harness 描述模块；续接命令对任何版本给出，版本只作证据
+- src/infrastructure/management/verified-versions.ts 只放各产品的续接命令表 RESUME_COMMANDS（ADR-039、ADR-053；版本表 VERIFIED_VERSIONS 与对账 versionConsistency 由第三批 D1 删除），文件路径保留到 T-ARCH-03 迁入 Harness 描述模块；续接命令对任何版本给出，版本只作证据
 
 场景：G011-C01, G011-C02, G011-C03, G011-M01, G011-M02, G011-M03, G011-M04, G011-L01, G011-N01, G011-N02, G011-N03, G011-NC1, G011-NC2, G011-UP1, G011-UP2, G011-UP3, G011-UP4, G011-UP5, G011-UP6, G011-UP7, G011-UP8, G011-UN1, G011-UN2, G011-UN3, G011-UN4, G011-UN5, G011-UN6, G011-UN7, G011-IN1, G011-IN2, G011-IN3, G011-IN4, G011-IN5, G011-IN6, G011-IN7, G011-IN8, G011-UP9, G011-UG1, G011-UG2, G011-UG3, G011-UG4, G011-UG5, G011-UG6, G011-UG7, G011-UG8, G011-UG9, G011-UG10, G011-NC3, G011-NC4, G011-UG11, G011-N04, G011-N05。
 

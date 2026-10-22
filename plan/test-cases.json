@@ -6562,7 +6562,7 @@
       ],
       "layer": "unit",
       "scenario": "能力矩阵的 Harness 分层与目录的分层一致（原“判断本机版本是否为真实验证过的版本”，版本部分 2026-10-22 随 ADR-053 删除）",
-      "expected": "能力矩阵为每个 Harness 记的分层与目录的 harnessTier 一致，冻结的恰为 Cursor、Gemini CLI、Pi；任一处单独改动都使测试失败。不再有任何版本判断：已验证版本表、semver 区间比较与四处对账已删除，版本只作矩阵 installation 文本与验收记录里的证据",
+      "expected": "能力矩阵为每个 Harness 记的分层与目录的 harnessTier 一致，冻结的恰为 Cursor、Gemini CLI、Pi；任一处单独改动都使测试失败。不再有任何版本判断：已验证版本表、semver 区间比较与四处对账由第三批 D1 删除，版本只作矩阵 installation 文本与验收记录里的证据",
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/unit/catalog-import.test.ts"

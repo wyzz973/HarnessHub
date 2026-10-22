@@ -1321,7 +1321,7 @@
         "发布新revision并保留历史",
         "提交前拒绝",
         "内存目录不先更新",
-        "src/infrastructure/management/verified-versions.ts 只放各产品的续接命令表 RESUME_COMMANDS（ADR-039、ADR-053；版本表 VERIFIED_VERSIONS 与对账 versionConsistency 已删除），文件路径保留到 T-ARCH-03 迁入 Harness 描述模块；续接命令对任何版本给出，版本只作证据"
+        "src/infrastructure/management/verified-versions.ts 只放各产品的续接命令表 RESUME_COMMANDS（ADR-039、ADR-053；版本表 VERIFIED_VERSIONS 与对账 versionConsistency 由第三批 D1 删除），文件路径保留到 T-ARCH-03 迁入 Harness 描述模块；续接命令对任何版本给出，版本只作证据"
       ],
       "test_cases": [
         "G011-C01",
