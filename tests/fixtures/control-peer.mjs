@@ -65,12 +65,14 @@ function openclawPresentation() { return { configOptions: [
     .map(([id, values]) => ({ id, name: id, type: "select", currentValue: "off", options: values.map(value => ({ value, name: value })) })),
 ], modes: openclawModes }; }
 /**
- * The identity the agent reports in initialize: claude-agent-acp 0.89.1 for claude-auth; OpenCode for opencode-compact,
- * with the version from FIXTURE_AGENT_VERSION (default 1.18.35; "absent" omits agentInfo); otherwise Hermes when
- * FIXTURE_AGENT_VERSION is set, and the plain fixture when it is not.
+ * The identity the agent reports in initialize: claude-agent-acp 0.89.1 for claude-auth (where its sign-in report was first
+ * read; the identity is only the fixture's) and 0.94.0 for claude; OpenCode for opencode-compact, with the version from
+ * FIXTURE_AGENT_VERSION (default 1.18.35; "absent" omits agentInfo); otherwise Hermes when FIXTURE_AGENT_VERSION is set,
+ * and the plain fixture when it is not.
  */
 function agentInfo() {
   if (scenario === "claude-auth") return { name: "@agentclientprotocol/claude-agent-acp", title: "Claude Agent", version: "0.89.1" };
+  if (scenario === "claude") return { name: "@agentclientprotocol/claude-agent-acp", title: "Claude Agent", version: "0.94.0" };
   if (scenario === "opencode-compact") return process.env.FIXTURE_AGENT_VERSION === "absent" ? undefined : { name: "OpenCode", version: process.env.FIXTURE_AGENT_VERSION ?? "1.18.35" };
   return process.env.FIXTURE_AGENT_VERSION ? { name: "hermes-agent", version: process.env.FIXTURE_AGENT_VERSION } : { name: "fixture", version: "1.0" };
 }
@@ -156,7 +158,8 @@ lines.on("line", line => {
     if (scenario === "remote-detail") { emit({ id: message.id, error: { code: -32603, message: "Internal error", data: JSON.parse(process.env.FIXTURE_ERROR_DATA ?? '{"reason":"serverShuttingDown"}') } }); return; }
     if (scenario === "stderr") process.stderr.write("diagnostic".repeat(100000));
     const result = protocol === "acp-v1"
-      ? { protocolVersion: scenario === "version" ? 2 : 1, agentCapabilities: { loadSession: ["native-resume", "resume-fails", "resume-wrong-identity", "load-trailing-replay", "native-config", "openclaw-settings", "session-list", "hermes"].includes(scenario), ...(scenario === "hermes" ? { sessionCapabilities: { resume: {}, list: {}, fork: {} }, promptCapabilities: { image: true } } : {}), ...(scenario === "session-list" ? { sessionCapabilities: { list: {} } } : {}), ...(scenario === "attachments" || scenario === "openclaw-settings" ? { promptCapabilities: { image: true, audio: true, embeddedContext: true } } : {}), ...(scenario === "forkable" ? { sessionCapabilities: { fork: {} } } : {}), ...(scenario === "claude-auth" ? { _meta: { claudeCode: { promptQueueing: true }, authStatus: {} } } : {}) }, ...(process.env.FIXTURE_AUTH === "none" ? {} : { authMethods: process.env.FIXTURE_AUTH === "terminal" ? [{ id: "hermes-setup", name: "Set up Hermes", type: "terminal", args: ["--setup"] }] : process.env.FIXTURE_AUTH === "invalid" ? { id: "fixture-login" } : [{ id: "fixture-login", name: "Fixture Login" }] }), agentInfo: agentInfo() }
+      ? { protocolVersion: scenario === "version" ? 2 : 1, agentCapabilities: { loadSession: ["native-resume", "resume-fails", "resume-wrong-identity", "load-trailing-replay", "native-config", "openclaw-settings", "session-list", "hermes", "claude"].includes(scenario), ...(scenario === "hermes" ? { sessionCapabilities: { resume: {}, list: {}, fork: {} }, promptCapabilities: { image: true } } : {}),
+        ...(scenario === "claude" ? { sessionCapabilities: { list: {}, fork: {}, resume: {}, close: {} }, promptCapabilities: { image: true, embeddedContext: true }, _meta: { claudeCode: { promptQueueing: true } } } : {}), ...(scenario === "session-list" ? { sessionCapabilities: { list: {} } } : {}), ...(scenario === "attachments" || scenario === "openclaw-settings" ? { promptCapabilities: { image: true, audio: true, embeddedContext: true } } : {}), ...(scenario === "forkable" ? { sessionCapabilities: { fork: {} } } : {}), ...(scenario === "claude-auth" ? { _meta: { claudeCode: { promptQueueing: true }, authStatus: {} } } : {}) }, ...(process.env.FIXTURE_AUTH === "none" ? {} : { authMethods: process.env.FIXTURE_AUTH === "terminal" ? [{ id: "hermes-setup", name: "Set up Hermes", type: "terminal", args: ["--setup"] }] : process.env.FIXTURE_AUTH === "invalid" ? { id: "fixture-login" } : [{ id: "fixture-login", name: "Fixture Login" }] }), agentInfo: agentInfo() }
       : { userAgent: scenario === "plan-mode" ? "codex_cli_rs/0.162.1 (fixture)" : scenario === "plan-old" ? "codex_cli_rs/0.161.0 (fixture)" : "fixture-codex/1.0", codexHome: process.cwd(), platformFamily: "unix", platformOs: process.platform };
     if (protocol === "codex-app-server") experimental = message.params?.capabilities?.experimentalApi === true;
     // claude-agent-acp pushes its sign-in report after the initialize response. FIXTURE_AUTH_AT=initialize sends the report
@@ -205,6 +208,15 @@ lines.on("line", line => {
     notification("session/update", { sessionId: "session-fixture", update: { sessionUpdate: "available_commands_update", availableCommands: [{ name: "compact", description: "Clear conversation history but keep a summary in context" }] } });
     return;
   }
+  // claude-agent-acp 0.94.0 answers session/new and then lists its commands, its own /remote-control among them (0.93.0 and
+  // later); it lists and continues the sessions of the workspace, and resumes one without replaying it.
+  if (scenario === "claude" && message.method === "session/new") {
+    answer(message.id, { sessionId: "session-fixture" });
+    notification("session/update", { sessionId: "session-fixture", update: { sessionUpdate: "available_commands_update", availableCommands: [{ name: "compact", description: "Clear conversation history but keep a summary in context" }, { name: "remote-control", description: "Connect this session to claude.ai" }] } });
+    return;
+  }
+  if (scenario === "claude" && message.method === "session/list") { answer(message.id, { sessions: [{ sessionId: "session-fixture", cwd: message.params.cwd, title: "Claude work", updatedAt: "2026-10-22T10:00:00Z" }] }); return; }
+  if (scenario === "claude" && message.method === "session/resume") { answer(message.id, {}); return; }
   // OpenCode 1.18 sends the session response and then its commands (setTimeout 0). `compact` is not among them, unless
   // FIXTURE_COMPACT_LISTED stands in for a version that lists it.
   if (scenario === "opencode-compact" && message.method === "session/new") {

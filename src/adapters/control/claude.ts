@@ -9,15 +9,25 @@ import { AcpControl } from "./acp.js";
 const EXPORT = { name: "export", description: "导出原生会话记录（Claude Code 转录 JSONL）" } as const;
 /** Project directories searched for a transcript, as claude-agent-acp itself searches them. */
 const MAX_PROJECT_DIRECTORIES = 4096;
-/** claude-agent-acp's connection-level report of the sign-in it uses (auth-status.js in 0.89.1). */
+/** claude-agent-acp's connection-level report of the sign-in it uses (auth-status.js, the same report in 0.89.1 and 0.94.0). */
 const AUTH_STATUS = "_auth/status_update";
 /**
  * The report kinds that name an identity the agent uses: a claude.ai subscription, an API key, an external cloud backend
  * or a model gateway.
  */
 const SIGNED_IN: ReadonlySet<string> = new Set(["account", "api_key", "external", "gateway"]);
+/** claude-agent-acp's per-session options in `_meta.claudeCode.options` (0.92.0 and later): prompt suggestions off. */
+const SESSION_META: Readonly<Record<string, unknown>> = { claudeCode: { options: { promptSuggestions: false } } };
+/** The adapter's own `/remote-control` (0.93.0 and later), which the Hub neither lists nor sends. */
+const REMOTE_CONTROL = "remote-control";
+const REMOTE_CONTROL_PROMPT = /^\/remote-control(\s|$)/u;
+const REMOTE_CONTROL_REFUSED: BackendResult = { status: "failed", reason: "command_unavailable", error: { code: "NATIVE_COMMAND_UNAVAILABLE",
+  message: "/remote-control 没有发给 Claude：HarnessHub 默认在每个回合结束时关闭 Claude 的适配器进程，Remote Control 会随之断开；保持原生进程时，从 claude.ai 发来的回合也不属于这段对话。" } };
 
 /**
+ * Claude Code over claude-agent-acp, with the latest adapter (0.94.0, with CLI 2.1.307) as the baseline; 0.89.1 (with CLI
+ * 2.1.302–2.1.306) is where the sign-in mapping below was first read.
+ *
  * Claude Code keeps each session's transcript in its configuration directory (`projects/<project>/<session>.jsonl`), where
  * claude-agent-acp itself looks it up; ACP has no export method. When the agent lists no `export` command of its own, the
  * Hub offers `/export`, which copies that transcript read-only as an output of the Run. Nothing is sent to the model.
@@ -26,16 +36,25 @@ const SIGNED_IN: ReadonlySet<string> = new Set(["account", "api_key", "external"
  * requests it. The agent pushes it after initialize, at each session creation and when each prompt starts, but only when it
  * has changed. The report becomes the catalog's readiness (ADR-033): a kind that names an identity is "ready", and any other
  * kind is "unknown". Only the kind is read: the label, detail and account name the user and are never kept, logged or shown.
- * "none" is unknown and not "missing", so no session is refused because of it. In 0.89.1, `fromCliStatus` maps
- * `claude auth status --json` through `mapAuthFields`. That output has `loggedIn: true` for a token login
- * (ANTHROPIC_AUTH_TOKEN, CLAUDE_CODE_OAUTH_TOKEN), but `apiKeySource` is set only for a key and `subscriptionType` only
- * for a claude.ai login (CLI 2.1.302 and 2.1.306). With neither field present, the mapping falls through to "none" for a
- * CLI that works. A CLI that is really signed out still fails its first prompt: claude-agent-acp turns the "Please run
+ * "none" is unknown and not "missing", so no session is refused because of it. In 0.94.0, as in 0.89.1, `fromCliStatus` maps
+ * `claude auth status --json` through `mapAuthFields`, with the same kinds. That output, whose structure CLI 2.1.307 keeps,
+ * has `loggedIn: true` for a token login (ANTHROPIC_AUTH_TOKEN, CLAUDE_CODE_OAUTH_TOKEN), but `apiKeySource` is set only for a
+ * key and `subscriptionType` only for a claude.ai login. With neither field present, the mapping falls through to "none" for
+ * a CLI that works. A CLI that is really signed out still fails its first prompt: claude-agent-acp turns the "Please run
  * /login" reply into ACP auth_required, which is reported as NATIVE_AUTH_REQUIRED.
+ *
+ * Every session request turns the adapter's prompt suggestions off (`_meta.claudeCode.options.promptSuggestions`): from
+ * 0.92.0 the adapter asks the model for a predicted next prompt after each turn and shows it only to JetBrains AIR, so each
+ * Hub turn would cost one more model request. The user's own promptSuggestionEnabled setting is untouched (ADR-053).
+ *
+ * The adapter's `/remote-control` is neither listed nor sent, and a prompt that runs it fails with NATIVE_COMMAND_UNAVAILABLE:
+ * the Hub closes the adapter process when a Turn ends, which disconnects Remote Control, and turns sent from claude.ai while
+ * a process is kept belong to no Run here (ADR-053).
  */
 export class ClaudeControl extends AcpControl {
   private hubExport = false;
   constructor(private readonly claudeLaunch: ControlLaunch, options: ControlOptions) { super(claudeLaunch, options); }
+  protected override get sessionMeta(): Readonly<Record<string, unknown>> { return SESSION_META; }
   protected override extensionNotification(method: string, params: Readonly<Record<string, unknown>>): boolean {
     if (method !== AUTH_STATUS) return false;
     const status = params.authStatus, kind = typeof status === "object" && status !== null && "kind" in status ? status.kind : undefined;
@@ -43,11 +62,12 @@ export class ClaudeControl extends AcpControl {
     return true;
   }
   override async models(): Promise<NativeModelCatalog> {
-    const catalog = await super.models();
-    this.hubExport = !(catalog.commands ?? []).some(command => command.name === EXPORT.name);
-    return this.hubExport ? { ...catalog, commands: [...(catalog.commands ?? []), EXPORT] } : catalog;
+    const catalog = await super.models(), commands = (catalog.commands ?? []).filter(command => command.name !== REMOTE_CONTROL);
+    this.hubExport = !commands.some(command => command.name === EXPORT.name);
+    return { ...catalog, commands: this.hubExport ? [...commands, EXPORT] : commands };
   }
   override async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
+    if (REMOTE_CONTROL_PROMPT.test(prompt)) return { result: Promise.resolve(REMOTE_CONTROL_REFUSED), requestStop: () => Promise.reject(new ControlError("INVALID_STATE", "a refused command has no native turn to stop")) };
     if (this.hubExport && !attachments.length && /^\/export\s*$/u.test(prompt)) {
       return { result: this.exportTranscript(id, onEvent), requestStop: () => Promise.reject(new ControlError("INVALID_STATE", "an export has no native turn to stop")) };
     }

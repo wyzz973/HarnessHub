@@ -350,8 +350,8 @@ export class AcpControl implements HarnessControl {
     if (sessions.fork === undefined) throw new ControlError("NATIVE_FORK_UNAVAILABLE", "this agent does not declare session/fork");
     this.forking = true;
     try {
-      const setup = Math.max(this.options.requestTimeoutMs, Math.min(SESSION_SETUP_MS, this.options.runTimeoutMs));
-      const response = object(await this.rpc.request("session/fork", { sessionId: nativeConversationId(checkpoint), cwd, mcpServers: [] }, setup), "session/fork result");
+      const setup = Math.max(this.options.requestTimeoutMs, Math.min(SESSION_SETUP_MS, this.options.runTimeoutMs)), meta = this.sessionMeta;
+      const response = object(await this.rpc.request("session/fork", { sessionId: nativeConversationId(checkpoint), cwd, mcpServers: [], ...(meta === null ? {} : { _meta: meta }) }, setup), "session/fork result");
       const id = nativeConversationId(response.sessionId);
       if (id === checkpoint) throw new ControlError("IDENTITY_MISMATCH", "session/fork returned its source session");
       return id;
@@ -385,7 +385,12 @@ export class AcpControl implements HarnessControl {
     }
     return { type: "resource_link", uri, name: file.name, mimeType: file.mediaType, size: file.bytes };
   }
-  protected async sessionParameters(cwd: string): Promise<Readonly<Record<string, unknown>>> { return { cwd, mcpServers: [] }; }
+  /**
+   * The `_meta` this agent's session requests carry (session/new, session/load, session/resume and session/fork), or null
+   * to send none. It holds only options the agent documents for its own sessions; read once per request.
+   */
+  protected get sessionMeta(): Readonly<Record<string, unknown>> | null { return null; }
+  protected async sessionParameters(cwd: string): Promise<Readonly<Record<string, unknown>>> { const meta = this.sessionMeta; return { cwd, mcpServers: [], ...(meta === null ? {} : { _meta: meta }) }; }
   /** Recovery uses session/load even when session/resume is declared, for an agent whose resume of an unknown identity starts a new session. */
   protected get restoreByLoad(): boolean { return false; }
   /** How long the agent itself waits for an approval before refusing it, or null when it waits for the user. */

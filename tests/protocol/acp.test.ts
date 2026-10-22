@@ -806,6 +806,44 @@ test("Claude /export copies the session's own Claude Code transcript as an outpu
     assert.equal(result.status, "failed"); assert.equal(result.error?.code, "NATIVE_EXPORT_UNAVAILABLE");
   } finally { await missing.close(); }
 });
+test("Claude's session requests turn its prompt suggestions off, and its /remote-control is neither listed nor sent (ADR-053)", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "claude-session-meta-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
+  const launch = { protocol: "acp-v1" as const, executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "claude"], env: { FIXTURE_TRACE: trace } };
+  const sent = async () => (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { method?: string; params?: { _meta?: unknown; prompt?: unknown } });
+  const created = new ClaudeControl(launch, options);
+  let checkpoint: string | null = null;
+  try {
+    assert.equal((await created.initialize()).agentVersion, "0.94.0");
+    const id = await created.open(process.cwd());
+    assert.deepEqual((await created.models()).commands?.map(command => command.name), ["compact", "export"], "the adapter's remote-control is not listed");
+    const events: ControlEvent[] = [];
+    for (const prompt of ["/remote-control", "/remote-control my-laptop", "/remote-control off"]) {
+      const run = await created.startText(id, prompt, event => events.push(event)), result = await run.result;
+      assert.equal(result.status, "failed", prompt); assert.equal(result.error?.code, "NATIVE_COMMAND_UNAVAILABLE", prompt);
+      assert.match(result.error?.message ?? "", /回合结束时关闭 Claude 的适配器进程，Remote Control 会随之断开/u, prompt);
+      await assert.rejects(run.requestStop(), (error: unknown) => error instanceof ControlError && error.code === "INVALID_STATE", prompt);
+    }
+    assert.deepEqual(events, [], "nothing ran");
+    // A prompt that only begins with the same letters is an ordinary prompt.
+    assert.equal((await (await created.startText(id, "/remote-controlled cars", () => {})).result).status, "completed");
+    checkpoint = await created.checkpoint();
+  } finally { await created.close(); }
+  assert.ok(checkpoint);
+  const resumed = new ClaudeControl(launch, options);
+  try { await resumed.initialize(); await resumed.open(process.cwd(), undefined, undefined, checkpoint); } finally { await resumed.close(); }
+  const reader = new ClaudeControl(launch, options);
+  try { await reader.initialize(); assert.equal((await reader.importSession("session-fixture", process.cwd())).title, "Claude work"); } finally { await reader.close(); }
+  const forker = new ClaudeControl(launch, options);
+  try { await forker.initialize(); assert.equal(await forker.fork("session-fixture", process.cwd()), "session-forked"); } finally { await forker.close(); }
+  const requests = await sent();
+  for (const method of ["session/new", "session/resume", "session/load", "session/fork"])
+    assert.deepEqual(requests.filter(row => row.method === method).map(row => row.params?._meta), [{ claudeCode: { options: { promptSuggestions: false } } }], method);
+  assert.deepEqual(requests.filter(row => row.method === "session/prompt").map(row => row.params?.prompt), [[{ type: "text", text: "/remote-controlled cars" }]], "only the ordinary prompt reached Claude");
+  // A driver of another agent sends no _meta and keeps the agent's commands as announced.
+  const plain = control("claude", { FIXTURE_TRACE: trace });
+  try { await ready(plain); assert.deepEqual((await plain.models()).commands?.map(command => command.name), ["compact", "remote-control"]); } finally { await plain.close(); }
+  assert.equal((await sent()).filter(row => row.method === "session/new").at(-1)?.params?._meta, undefined);
+});
 
 test("OpenClaw lists its workspace skills and plugin tool groups from the Gateway's own read-only reports", async t => {
   const root = await mkdtemp(join(tmpdir(), "openclaw-extensions-")); t.after(() => rm(root, { recursive: true, force: true }));
