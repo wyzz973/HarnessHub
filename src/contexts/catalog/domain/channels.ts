@@ -14,6 +14,11 @@ export interface ScriptLayout {
   readonly launchers: readonly string[];
   /** The program a launcher starts, relative to the root; null when the installer writes no launcher. */
   readonly program: string | null;
+  /**
+   * Programs an earlier layout of the same installer had its launchers start, relative to the root, still recognized
+   * behind a launcher (Hermes 0.12's `venv/bin/hermes` beside today's `.hermes/bin/hermes`); empty when there are none.
+   */
+  readonly formerPrograms: readonly string[];
   /** What removing the program deletes (ADR-044); null when HarnessHub does not uninstall this layout. */
   readonly removal: ScriptRemoval | null;
   /** How the product updates an installation of this layout (ADR-044); null when HarnessHub does not upgrade it. */
@@ -98,6 +103,8 @@ export interface FoundProgram { readonly path: string; readonly resolvedPath: st
 
 function inside(path: string, root: string): boolean { return path === root || path.startsWith(root + "/"); }
 function join(home: string, relative: string): string { return (home.endsWith("/") ? home.slice(0, -1) : home) + "/" + relative; }
+/** The programs a launcher of `layout` may start inside its root, today's first; empty when its installer writes no launcher. */
+export function launcherPrograms(layout: ScriptLayout): readonly string[] { return layout.program === null ? [] : [layout.program, ...layout.formerPrograms]; }
 
 /** Homebrew's own tap for each Homebrew channel: a formula or cask from it is named by its bare name. */
 const HOMEBREW_TAPS = { "brew-formula": "homebrew/core", "brew-cask": "homebrew/cask" } as const;
@@ -120,7 +127,7 @@ export function homebrewName(name: string, tap: string | null): string { return 
 /**
  * The official channel `program` belongs to, or null when it lies in none of `channels` (a source checkout, an `npm link`,
  * a copy elsewhere). Homebrew kegs are recognized before npm, since a formula may carry its own `lib/node_modules`.
- * `exists` tells whether a launcher's program is present inside its script root.
+ * `exists` tells whether a program a launcher may start (`launcherPrograms`) is present inside its script root.
  */
 export function classifyProgram(program: FoundProgram, channels: OfficialChannels, home: string, uvToolDir: string, exists: (path: string) => boolean): InstallationChannel | null {
   const path = program.resolvedPath;
@@ -143,7 +150,7 @@ export function classifyProgram(program: FoundProgram, channels: OfficialChannel
     const root = join(home, layout.root);
     if (inside(path, root)) return { kind: "script", name: layout.root, root, prefix: null };
     // A launcher outside the root (a small script such as ~/.local/bin/hermes) counts when its program is in the root.
-    if (layout.program !== null && layout.launchers.some(launcher => join(home, launcher) === program.path || join(home, launcher) === path) && exists(join(root, layout.program)))
+    if (layout.launchers.some(launcher => join(home, launcher) === program.path || join(home, launcher) === path) && launcherPrograms(layout).some(relative => exists(join(root, relative))))
       return { kind: "script", name: layout.root, root, prefix: null };
   }
   const uv = path.startsWith(uvToolDir + "/") ? path.slice(uvToolDir.length + 1).split("/", 1)[0] : undefined;

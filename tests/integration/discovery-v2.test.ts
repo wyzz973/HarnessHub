@@ -348,3 +348,21 @@ test("Python executable names or uvx alone never imply verified package identity
   const report = await resolver.resolve({ kind: "python", name: "python-agent", version: "1.0.0", binNames: ["python-agent"] });
   assert.equal(report.command, null); assert.ok(report.diagnostics.some((entry) => entry.code === "package_invalid" && entry.detail?.includes("identity/version")));
 });
+
+test("a Python distribution at the 0.0.0 placeholder names its package but no installed version, so none is reported", async (t) => {
+  const root = await fixture(t), bin = join(root, "bin"), venv = join(root, "home", ".tool", "venv"), site = join(venv, "lib", "python3.12", "site-packages");
+  const resolver = new LocalInstalledPackageResolver([], new LocalInstallationEnumerator([{ path: bin, source: "path" }]));
+  const python: PackageIdentity = { kind: "python", name: "hermes-agent", version: "latest", binNames: ["hermes"] };
+  await mkdir(join(venv, "bin"), { recursive: true }); await writeFile(join(venv, "pyvenv.cfg"), "version_info = 3.12.4\n");
+  await executable(join(venv, "bin", "python3")); await executable(join(venv, "bin", "hermes"), "#!" + join(venv, "bin", "python3") + "\nimport sys\n");
+  // Hermes's pyproject is always 0.0.0; the version it really is lives in its checkout's install stamp.
+  for (const version of ["0.0.0", "0.0.0+12.gabc1234"]) {
+    await rm(site, { recursive: true, force: true }); await mkdir(join(site, "hermes_agent-" + version + ".dist-info"), { recursive: true });
+    await writeFile(join(site, "hermes_agent-" + version + ".dist-info", "METADATA"), "Metadata-Version: 2.4\nName: hermes-agent\nVersion: " + version + "\n");
+    assert.deepEqual(await resolver.observe(python, join(venv, "bin", "hermes")), [], version);
+  }
+  // A real version in the same place is reported, against the catalog's reference.
+  await rm(site, { recursive: true }); await mkdir(join(site, "hermes_agent-0.12.0.dist-info"), { recursive: true });
+  await writeFile(join(site, "hermes_agent-0.12.0.dist-info", "METADATA"), "Metadata-Version: 2.4\nName: hermes-agent\nVersion: 0.12.0\n");
+  assert.ok((await resolver.observe(python, join(venv, "bin", "hermes"))).some(row => row.code === "package_version_observed" && row.detail?.startsWith("installed=0.12.0; catalog-reference=latest;")));
+});

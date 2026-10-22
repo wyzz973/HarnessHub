@@ -8,7 +8,8 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { ManagementError, type InstallationJobView, type InstallationObservation, type InstallationRemovalPort, type NativeProgramUsers } from "../../src/contracts/management.js";
 import { productChannels, productMaintenance } from "../../src/adapters/catalog-channels.js";
-import { executeScriptRemoval, planScriptRemoval } from "../../src/infrastructure/management/uninstall.js";
+import { executeScriptRemoval, LocalInstallationRemoval, planScriptRemoval } from "../../src/infrastructure/management/uninstall.js";
+import type { ProgramHost } from "../../src/infrastructure/management/program-usage.js";
 import { LocalHarnessManagement } from "../../src/infrastructure/management/service.js";
 import { NativeInstallationLocks } from "../../src/infrastructure/management/native-lock.js";
 import { managementStorage } from "../../src/infrastructure/management/storage.js";
@@ -67,6 +68,21 @@ test("G011-UN1 a script installation is removed exactly as its installer wrote i
   assert.deepEqual((await planScriptRemoval(removal("hermes"), home)).steps.map(step => [step.kind, step.path]), [["launcher", join(home, ".local/bin/hermes")], ["directory", join(home, ".hermes/hermes-agent")]]);
   await file(join(home, ".local/bin/hermes"), "#!/bin/bash\nexec \"/usr/local/bin/hermes\" \"$@\"\n", 0o755);
   assert.deepEqual((await planScriptRemoval(removal("hermes"), home)).skipped.map(item => item.path), [join(home, ".local/bin/hermes")]);
+  // Hermes v0.22: the launchers its installer writes exec the checkout's .hermes/bin (hermes_cli/_launchers.py at v0.22.4).
+  const checkout = join(home, ".hermes/hermes-agent/.hermes/bin");
+  await file(join(checkout, "hermes"), "#!/bin/sh\nexec /usr/bin/false -I -c 'import sys' \"$@\"\n", 0o755);
+  await file(join(home, ".local/bin/hermes"), "#!/bin/sh\nexec " + join(checkout, "hermes") + " \"$@\"\n", 0o755);
+  await file(join(home, ".local/bin/hermes-acp"), "#!/bin/sh\nexec " + join(checkout, "hermes-acp") + " \"$@\"\n", 0o755);
+  await file(join(home, ".local/bin/hermes-agent"), "#!/bin/sh\nexec " + join(checkout, "hermes") + " --run-module run_agent \"$@\"\n", 0o755);
+  const v22 = await planScriptRemoval(removal("hermes"), home);
+  assert.deepEqual(v22.steps.map(step => [step.kind, step.path]), [["launcher", join(home, ".local/bin/hermes")], ["launcher", join(home, ".local/bin/hermes-acp")], ["directory", join(home, ".hermes/hermes-agent")]]);
+  // The planner reads only an `exec <program> "$@"` line (uninstall.ts), so hermes-agent, which passes --run-module first, is kept and named.
+  assert.deepEqual(v22.skipped, [{ path: join(home, ".local/bin/hermes-agent"), reason: "不是启动这份安装的启动脚本，保留" }]);
+  // A launcher of that name that starts another program is the user's own and stays.
+  await file(join(home, ".local/bin/hermes-acp"), "#!/bin/sh\nexec /usr/local/bin/hermes-acp \"$@\"\n", 0o755);
+  assert.ok((await planScriptRemoval(removal("hermes"), home)).skipped.some(item => item.path === join(home, ".local/bin/hermes-acp")));
+  for (const name of ["hermes", "hermes-acp", "hermes-agent"]) await rm(join(home, ".local/bin", name));
+  await rm(join(home, ".hermes/hermes-agent"), { recursive: true });
 
   // OpenCode: its one file, and its bin directory only once empty.
   await file(join(home, ".opencode/bin/opencode"), "#!/bin/sh\n", 0o755); await file(join(home, ".opencode/bin/user-tool"), "mine");
@@ -288,6 +304,31 @@ test("G011-UN4 through the formal Gateway entry, an npm installation and a scrip
   const gone = await call<{ code: string }>("/installation-jobs", { harnessId: "claude", action: "uninstall", commandId: "uninstall-again", installation: remaining[0]!.ref, expectedInstallationFingerprint: script.value.fingerprint });
   assert.equal(gone.status, 404); assert.equal(gone.value.code, "INSTALLATION_NOT_FOUND");
   void readlink; void chmod;
+});
+
+test("G011-UN3 Hermes's gateway in each form v0.22 and 0.12 start it is a resident program the uninstall stops by Hermes's command; its ACP and chat processes are not", async t => {
+  const root = await temporary(t, "uninstall-hermes-resident-"), home = join(root, "home"), checkout = join(home, ".hermes/hermes-agent");
+  await file(join(checkout, ".hermes/bin/hermes"), "#!/bin/sh\nexit 3\n", 0o755);
+  await file(join(home, ".local/bin/hermes"), "#!/bin/sh\nexec " + join(checkout, ".hermes/bin/hermes") + " \"$@\"\n", 0o755);
+  const python = join(home, ".hermes/installs/3f1c/bin/python3"), script = "-I -c import sys";
+  // `ps -axw -o pid=,ppid=,command=` as these programs show in it: launchd's gateway behind hermes_cli.stderr_timestamp, an
+  // unsupervised one, one started in a terminal; then a HarnessHub-independent ACP viewer, a chat, and an unrelated grep.
+  const table = [
+    "  4100     1 " + python + " " + script + " --run-module hermes_cli.stderr_timestamp --error-log " + home + "/.hermes/logs/gateway.error.log -- " + checkout + "/.hermes/bin/hermes gateway run --external-supervisor",
+    "  4200     1 " + python + " -m hermes_cli.main --profile default gateway run --quiet --idle-exit",
+    "  4300   900 " + checkout + "/.hermes/bin/hermes --profile work gateway run",
+    "  4400   900 " + checkout + "/.hermes/bin/hermes acp",
+    "  4500   900 " + python + " -m hermes_cli.main --profile default chat --resume 20261022_101010_abcdef",
+    "  4600   900 /usr/bin/grep hermes gateway"].join("\n") + "\n";
+  const host: ProgramHost = { platform: "darwin", uid: 501, self: process.pid, processes: async () => table, jobs: async () => "", job: async () => null, print: async () => null,
+    kickstart: async () => assert.fail("nothing restarts"), listening: async () => "", openers: async () => "", sleep: async () => {}, now: () => Date.now() };
+  const source = { home, values: { HOME: home } };
+  const hermes: InstallationObservation = { harnessId: "hermes", controlId: "hermes-native", ref: "e".repeat(64), role: "product", channel: "script", name: ".hermes/hermes-agent", root: checkout, prefix: null,
+    entry: join(home, ".local/bin/hermes"), resolvedPath: join(home, ".local/bin/hermes"), version: "0.22.4", active: true, label: "官方安装脚本" };
+  const usage = await new LocalInstallationRemoval(source, { npm: null, uv: null }, host).usage(hermes, { stage: root, signal: new AbortController().signal, assertOwned: () => {}, log: () => {} });
+  assert.deepEqual(usage.resident.map(entry => [entry.pid, entry.stop]), [[4100, "hermes gateway stop"], [4200, "hermes gateway stop"], [4300, "hermes gateway stop"]]);
+  // The ACP viewer runs this checkout, so it is named as a program using it; the chat and the grep name nothing of it.
+  assert.deepEqual(usage.processes.map(entry => entry.pid), [4400]);
 });
 
 test("G011-UN5 the privacy guard finds an absolute home path in any string of a confirmation, and passes paths written with ~", () => {

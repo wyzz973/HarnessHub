@@ -107,8 +107,9 @@ function interpreter(text: string): string | null {
 
 /**
  * The virtual environment a Python console script runs in, read from its interpreter line. An installer's launcher
- * (Hermes's official installer writes one) is a short shell script whose only job is `exec "<console script>" "$@"`;
- * one such hop is followed. Nothing is executed.
+ * (Hermes 0.12's official installer wrote one) is a short shell script whose only job is `exec "<console script>" "$@"`;
+ * one such hop is followed. A launcher that execs an interpreter with a script of its own (Hermes v0.22's
+ * `.hermes/bin/hermes`) names no environment here. Nothing is executed.
  */
 async function pythonEnvironment(executable: string): Promise<string | null> {
   let current = executable;
@@ -128,6 +129,12 @@ async function pythonEnvironment(executable: string): Promise<string | null> {
   }
   return null;
 }
+
+/**
+ * Whether a recorded version is the 0.0.0 placeholder (with or without a local `+…` part) of a package that keeps its real
+ * version elsewhere: Hermes's pyproject is always 0.0.0, its version is in its checkout's install stamp. Never a version.
+ */
+export function placeholderVersion(version: string): boolean { return /^0\.0\.0(?:\+.*)?$/u.test(version); }
 
 /** PEP 503 name comparison; dist-info directories spell the normalised name with underscores. */
 function distribution(name: string): string { return name.toLowerCase().replace(/[-_.]+/gu, "-"); }
@@ -269,7 +276,9 @@ export class LocalInstalledPackageResolver implements LocalPackageResolver {
     try {
       const found = identity.kind === "npm" ? await npmPackage(executable, identity)
         : await (async () => { const environment = await pythonEnvironment(executable); return environment === null ? null : pythonDistribution(environment, identity.name); })();
-      return found === null ? [] : [{ code: "package_version_observed", path: found.manifest, detail: "installed=" + found.version + "; catalog-reference=" + identity.version + "; installed package metadata; protocol not probed" }];
+      // A Python distribution at the 0.0.0 placeholder names its package but not the installed version.
+      if (found === null || identity.kind === "python" && placeholderVersion(found.version)) return [];
+      return [{ code: "package_version_observed", path: found.manifest, detail: "installed=" + found.version + "; catalog-reference=" + identity.version + "; installed package metadata; protocol not probed" }];
     } catch (error: unknown) {
       if (errno(error) === "ENOENT" || errno(error) === "ENOTDIR" || errno(error) === "EACCES" || errno(error) === "EPERM") return [];
       return [{ code: "package_invalid", path: identity.name, detail: "installed package metadata could not be read" }];

@@ -32,8 +32,9 @@ async function fixture(t: test.TestContext) {
   return { root, environment, configuration, closers };
 }
 
-async function harnesses(f: Awaited<ReturnType<typeof fixture>>, installations: InstallationPolicy): Promise<readonly HarnessView[]> {
-  const gateway = await startWebServer({ root: join(f.root, "data-" + installations), configuration: f.configuration, port: 0,
+/** The Harness list of a Gateway started on its own data directory `data-<name>` (by default the policy's name). */
+async function harnesses(f: Awaited<ReturnType<typeof fixture>>, installations: InstallationPolicy, name: string = installations): Promise<readonly HarnessView[]> {
+  const gateway = await startWebServer({ root: join(f.root, "data-" + name), configuration: f.configuration, port: 0,
     application: (data, publish) => application(data, publish, { nativeEnvironment: f.environment, installations, management: { installationMode: "private-fixture" }, workspaceLockRoot: join(f.root, "locks") }) });
   f.closers.push(() => gateway.close());
   const url = new URL(gateway.url), origin = url.origin;
@@ -73,4 +74,23 @@ test("G012-OC3 a new conversation binds only an official installation; developme
   const list = await harnesses(f, "any"), pi = list.find(item => item.id === "pi")!;
   assert.deepEqual(pi.installations.map(item => [item.channel, item.active, item.label]), [[null, true, "开发入口（非官网安装）"], ["npm", false, "npm 全局（nvm v26.0.0）"]]);
   assert.equal(pi.unofficial, null);
+});
+
+test("G012-OC3 Hermes installed by its v0.22 installer is an official installation with the version its checkout's stamp names; a launcher without the checkout's program is not", { timeout: 30000 }, async t => {
+  const f = await fixture(t), home = f.environment.home, checkout = join(home, ".hermes", "hermes-agent"), launchers = join(home, ".local", "bin");
+  // As v0.22.4's installer leaves it (hermes_cli/_launchers.py): the checkout's launcher, its stamp, and ~/.local/bin/hermes exec'ing it.
+  await mkdir(join(checkout, ".hermes", "bin"), { recursive: true }); await mkdir(launchers, { recursive: true });
+  await writeFile(join(checkout, ".hermes", "bin", "hermes"), "#!/bin/sh\nexec /usr/bin/false -I -c 'import sys' \"$@\"\n", { mode: 0o755 });
+  await writeFile(join(checkout, "install-stamp.json"), JSON.stringify({ schemaVersion: 2, commit: "4d04303818b61bf3aa09278af48356315515965b", baseVersion: "0.22.4", displayVersion: "0.22.4", source: "git" }));
+  await writeFile(join(launchers, "hermes"), "#!/bin/sh\nexec " + join(checkout, ".hermes", "bin", "hermes") + " \"$@\"\n", { mode: 0o755 });
+  f.environment.values.PATH = launchers + ":" + f.environment.values.PATH;
+  const hermes = (await harnesses(f, "official", "hermes-v22")).find(item => item.id === "hermes")!;
+  assert.equal(hermes.installed, true);
+  assert.deepEqual(hermes.installations.map(item => [item.channel, item.label, item.command, item.version, item.active, item.canUninstall]), [["script", "官方安装脚本", "hermes", "0.22.4", true, true]]);
+  assert.equal(hermes.unofficial, null);
+  // Without the checkout's program the same launcher starts nothing of an official installation.
+  await rm(join(checkout, ".hermes"), { recursive: true });
+  const missing = (await harnesses(f, "official", "hermes-missing")).find(item => item.id === "hermes")!;
+  assert.equal(missing.installed, false); assert.deepEqual(missing.installations, []);
+  assert.deepEqual(missing.unofficial, { command: "hermes", onPath: true, pathDefault: true });
 });
