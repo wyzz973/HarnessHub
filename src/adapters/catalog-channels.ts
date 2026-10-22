@@ -46,7 +46,7 @@ const products: Readonly<Record<string, OfficialChannels>> = {
     upgrade: { kind: "terminal", command: "hermes update --yes",
       explains: "它会先暂停这份安装的所有网关（QQ 等消息渠道在更新期间离线，通常是拉取代码和准备依赖的那段时间），把 ~/.hermes/hermes-agent 里没有提交的改动 git stash 起来，"
         + "更新到它跟踪的渠道（默认 stable）的最新版本并重新准备依赖，迁移 ~/.hermes/config.yaml（--yes 会接受迁移提示，并在更新后恢复你的改动），再以新代码重启网关。"
-        + "新版本的网关写过 ~/.hermes/state.db 之后就不能退回旧版本；更新时被打断的回合会标为未知、不会重放，需要在 hermes chat 里用 /discard 确认。"
+        + "新网关会把 ~/.hermes/state.db 迁到新格式，写过之后就不能退回旧版本；更新时被打断的回合会标为未知、不会重放，需要在 hermes chat 里用 /discard 确认。"
         + "想保留退路，请先运行 hermes backup 做完整备份。HarnessHub 不代为运行，请在终端运行。" } }],
     // Read again on 2026-10-22 at v0.22.4 (4d04303): README.md and installation.md for the install, updating.md for the update and uninstall.
     source: { url: "https://github.com/NousResearch/hermes-agent/blob/4d04303818b61bf3aa09278af48356315515965b/README.md", checkedAt: "2026-10-22" } },
