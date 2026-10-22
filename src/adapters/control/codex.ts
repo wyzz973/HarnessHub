@@ -82,24 +82,39 @@ function inputText(value: unknown): string {
   return "";
 }
 /**
- * Codex's collaboration mode (plan mode) as a native option. The reviewed app-server (0.162.1) defines the two modes; the
+ * Codex's collaboration mode (plan mode) as a native option, offered for every Codex: whether a Codex has it is what its
+ * collaborationMode/list answers when a Run that chose a mode opens its thread, not the version it reports (ADR-053). The
  * protocol is experimental and enabled per connection at initialize, so only a connection opened with a chosen mode
- * declares it, and an older or unidentified Codex is not offered the option.
+ * declares it. The two modes were first used with app-server 0.162.1; that is evidence, not a condition.
  */
 const COLLABORATION_MODE = "collaboration_mode";
 const COLLABORATION_MODES: NativeOption["values"] = [{ value: "default", name: "默认" }, { value: "plan", name: "计划" }];
-const COLLABORATION_SINCE: readonly [number, number, number] = [0, 162, 1];
-/** The app-server version from its user agent (`<originator>/<x.y.z> (…)`); null when it is not stated that way. */
-function agentRelease(userAgent: string): readonly [number, number, number] | null {
-  const match = /^[^/\s]+\/(\d{1,6})\.(\d{1,6})\.(\d{1,6})(?=$|[\s(;+-])/u.exec(userAgent);
-  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
+/** The app-server version its user agent states (`<originator>/<x.y.z> (…)`), kept as evidence only; null when it is not stated that way. */
+function userAgentVersion(userAgent: string): string | null {
+  return /^[^/\s]+\/(\d{1,6}\.\d{1,6}\.\d{1,6})(?=$|[\s(;+-])/u.exec(userAgent)?.[1] ?? null;
 }
-function atLeast(version: readonly [number, number, number], minimum: readonly [number, number, number]): boolean {
-  for (let index = 0; index < 3; index++) if (version[index] !== minimum[index]) return version[index]! > minimum[index]!;
-  return true;
+/**
+ * A Codex that refused collaborationMode/list has no collaboration mode to offer; the reason is the one it gave, its
+ * JSON-RPC code (-32601: it has no such method), and the class of its own words when they name one.
+ */
+function collaborationUnavailable(error: ControlError): ControlError {
+  const reason = error.remoteCode === -32601 ? "它没有 collaborationMode/list 方法（-32601）" : "它拒绝了 collaborationMode/list" + (error.remoteCode === undefined ? "" : "（" + error.remoteCode + "）");
+  return new ControlError("NATIVE_OPTION_UNAVAILABLE", "这个 Codex 不提供协作模式：" + reason + "。" + (error.remoteFailure?.message ?? ""));
 }
 const THREAD_COMMANDS = [{ name: "compact", description: "压缩当前会话上下文（原生 thread/compact/start）" }, { name: "export", description: "导出原生会话记录（Codex rollout JSONL）" }] as const;
 const SANDBOX_TYPES: Readonly<Record<string, string>> = { readOnly: "read-only", workspaceWrite: "workspace-write", dangerFullAccess: "danger-full-access" };
+/**
+ * The settings a thread/start or thread/resume response reports, each only when present with a value an option knows: the
+ * approval policy and the sandbox type (the legacy sandbox field both responses keep), and the effective collaboration mode,
+ * which thread/resume reports as a stable field (absent from thread/start, and from a resume on an older server).
+ */
+function threadReport(response: Record<string, unknown>): { readonly settings: NativeOptions; readonly mode: string | null } {
+  const approval = response.approvalPolicy, part = (value: unknown, key: string) => value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>)[key] : undefined;
+  const sandbox = part(response.sandbox, "type"), mode = part(response.collaborationMode, "mode");
+  return { settings: { ...(typeof approval === "string" && Object.hasOwn(PERMISSION_SETTINGS.approval_policy.values, approval) ? { approval_policy: approval } : {}),
+    ...(typeof sandbox === "string" && Object.hasOwn(SANDBOX_TYPES, sandbox) ? { sandbox: SANDBOX_TYPES[sandbox]! } : {}) },
+    mode: typeof mode === "string" && COLLABORATION_MODES.some(row => row.value === mode) ? mode : null };
+}
 function permissionOptions(configured: Record<string, unknown>): NativeOption[] {
   return (Object.keys(PERMISSION_SETTINGS) as PermissionSetting[]).flatMap(id => {
     const setting = PERMISSION_SETTINGS[id], current = configured[setting.config];
@@ -133,9 +148,11 @@ function itemTool(item: Record<string, unknown>): { title: string; detail: Nativ
   }
 }
 function status(value: unknown, started: boolean): string { return value === "inProgress" ? "in_progress" : typeof value === "string" ? value : started ? "in_progress" : "completed"; }
+// thread/readState/changed (0.163.0) is an experimental notification, sent only to a connection that declared the API.
 const passiveNotifications = new Set(["thread/started", "thread/status/changed", "account/updated", "account/rateLimits/updated",
   "sessionConfigured", "turn/diff/updated", "item/reasoning/summaryTextDelta", "item/reasoning/summaryPartAdded", "item/reasoning/textDelta",
-  "item/fileChange/outputDelta", "item/plan/delta", "thread/settings/updated", "serverRequest/resolved", "thread/name/updated", "skills/changed", "hook/started", "hook/completed", "mcpServer/startupStatus/updated"]);
+  "item/fileChange/outputDelta", "item/plan/delta", "thread/settings/updated", "serverRequest/resolved", "thread/name/updated", "skills/changed", "hook/started", "hook/completed", "mcpServer/startupStatus/updated",
+  "thread/readState/changed"]);
 
 /** Typed native failure (codexErrorInfo) first; message text is only a fallback for older servers. */
 function turnFailure(error: Record<string, unknown>): { readonly code: string; readonly message: string } {
@@ -161,11 +178,16 @@ export class CodexControl implements HarnessControl {
   private openedModel: string | undefined;
   /** Declared at initialize when the connection is opened with a chosen collaboration mode. */
   private experimental = false;
-  private release: readonly [number, number, number] | null = null;
   /** The collaboration mode every turn of this connection sends, with the model and effort it runs; null leaves the thread's own. */
   private collaboration: { readonly mode: string; readonly model: string; readonly effort: string | null } | null = null;
   /** The collaboration mode a turn of this connection set and Codex accepted; the thread keeps it for later turns. */
   private confirmedMode: string | null = null;
+  /** The approval policy and sandbox the opened thread reported running with (thread/start or thread/resume). */
+  private threadSettings: NativeOptions = {};
+  /** The effective collaboration mode thread/resume reported for the opened thread; null when it reported none. */
+  private threadMode: string | null = null;
+  /** Whether the opened thread was resumed rather than started. */
+  private resumed = false;
   /** Enabled skills by name, as the last skills/list for this workspace reported them; `/skill:<name>` invokes one. */
   private skills = new Map<string, { readonly name: string; readonly path: string }>();
   /** Set once this connection forked a thread; it then opens nothing and attributes nothing. */
@@ -214,10 +236,9 @@ export class CodexControl implements HarnessControl {
         capabilities: { experimentalApi: this.experimental, requestAttestation: false },
       }), "Codex initialize result");
       const userAgent = string(response.userAgent, "Codex user agent", 4096);
-      this.release = agentRelease(userAgent);
       await this.rpc.notify("initialized", {});
       this.initialized = true;
-      return { protocol: "codex-app-server", protocolVersion: null, agentName: "codex", agentVersion: this.release === null ? null : this.release.join("."),
+      return { protocol: "codex-app-server", protocolVersion: null, agentName: "codex", agentVersion: userAgentVersion(userAgent),
         authenticationMethods: [], capabilities: { userAgent, experimentalApi: this.experimental } };
     } catch (error) { this.rpc.abort(errorFrom(error)); throw error; }
   }
@@ -263,16 +284,24 @@ export class CodexControl implements HarnessControl {
     }
     const defaultModel = configured.model == null ? null : string(configured.model, "configured model", 1024);
     if (defaultModel !== null && !seen.has(defaultModel)) models.unshift({ id: defaultModel, name: defaultModel });
-    const options = [...(this.release !== null && atLeast(this.release, COLLABORATION_SINCE) ? [{ id: COLLABORATION_MODE, name: "协作模式", category: "mode", currentValue: "default", values: COLLABORATION_MODES }] : []), ...permissionOptions(configured)];
+    const options = [{ id: COLLABORATION_MODE, name: "协作模式", category: "mode", currentValue: "default", values: COLLABORATION_MODES }, ...permissionOptions(configured)];
     return { models, defaultModel, options };
   }
   async checkpoint(): Promise<string | null> { return this.conversation; }
   /**
-   * Only the collaboration mode a turn of this connection set. Without a chosen mode the thread's mode cannot be read (it
-   * needs the experimental API), so nothing is reported and the thread's last confirmed mode stands.
+   * The thread's settings as Codex reported them: the approval policy and sandbox in its thread/start or thread/resume
+   * response, and its collaboration mode, which is the one a turn of this connection set and Codex accepted or, for a
+   * connection that follows the native configuration, the effective mode thread/resume reports. Only values an option knows
+   * are reported, never a default. A mode this connection chose but no turn confirmed is not reported: the thread did not
+   * change on its own, and the Runtime would carry its earlier mode into the next Turn. Each report replaces the earlier one,
+   * so a resumed thread whose mode is not known reports nothing and the mode reported earlier stands (ADR-034 §5); null as
+   * well when nothing is known.
    */
   async nativeConfig(): Promise<{ readonly model: string | null; readonly options: NativeOptions } | null> {
-    return this.confirmedMode === null ? null : { model: null, options: { [COLLABORATION_MODE]: this.confirmedMode } };
+    const mode = this.confirmedMode ?? (this.collaboration === null ? this.threadMode : null);
+    if (mode === null && this.resumed) return null;
+    const options = { ...this.threadSettings, ...(mode === null ? {} : { [COLLABORATION_MODE]: mode }) };
+    return Object.keys(options).length ? { model: null, options } : null;
   }
   async open(cwd: string, model?: string, native?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> {
     this.assertInitialized();
@@ -287,7 +316,7 @@ export class CodexControl implements HarnessControl {
         if (!selected) throw new ControlError("MODEL_UNAVAILABLE", "selected model is not in this Harness native catalog");
         for (const [id, value] of Object.entries(native ?? {})) {
           if (id === COLLABORATION_MODE) {
-            if (!catalog.options?.find(option => option.id === id)?.values.some(option => option.value === value)) throw new ControlError("NATIVE_OPTION_UNAVAILABLE", "this Codex does not offer the collaboration mode");
+            if (!catalog.options?.find(option => option.id === id)?.values.some(option => option.value === value)) throw new ControlError("NATIVE_OPTION_UNAVAILABLE", "Codex has no such collaboration mode");
             if (!this.experimental) throw new ControlError("NATIVE_OPTION_UNAVAILABLE", "the collaboration mode was not chosen when this connection was prepared");
             continue;
           }
@@ -303,8 +332,12 @@ export class CodexControl implements HarnessControl {
       const mode = native?.[COLLABORATION_MODE];
       if (mode !== undefined) {
         // The mode's settings replace the turn's model and effort, so they carry what the turn would otherwise run: the chosen
-        // values first, then the user's own preset for the mode (plan_mode_reasoning_effort), then the configured ones.
-        const presets = object(await this.rpc.request("collaborationMode/list", {}), "collaboration modes");
+        // values first, then the user's own preset for the mode (plan_mode_reasoning_effort), then the configured ones. A
+        // Codex that refuses the list (-32601 when it has none) has no collaboration mode, which is said before any thread opens.
+        let listed: unknown;
+        try { listed = await this.rpc.request("collaborationMode/list", {}); }
+        catch (error) { throw error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null ? collaborationUnavailable(error) : error; }
+        const presets = object(listed, "collaboration modes");
         if (!Array.isArray(presets.data) || presets.data.length > 64) throw new ControlError("INVALID_PROTOCOL", "invalid collaboration modes");
         const preset = presets.data.map(value => object(value, "collaboration mode")).find(row => row.mode === mode);
         const presetModel = typeof preset?.model === "string" && preset.model ? preset.model : undefined, presetEffort = typeof preset?.reasoning_effort === "string" ? preset.reasoning_effort : undefined;
@@ -326,6 +359,9 @@ export class CodexControl implements HarnessControl {
       if (checkpoint !== undefined && received !== checkpoint) throw new ControlError("IDENTITY_MISMATCH", "native restore returned a different thread");
       if (this.conversation && this.conversation !== received) throw new ControlError("IDENTITY_MISMATCH", "thread/start response does not match thread/started");
       this.conversation = received;
+      // What the thread says it runs with is kept for nativeConfig, value by value; nothing is assumed for what it leaves out.
+      const report = threadReport(response);
+      this.threadSettings = report.settings; this.threadMode = report.mode; this.resumed = checkpoint !== undefined;
       return received;
     } catch (error) { this.rpc.abort(errorFrom(error)); throw error; }
     finally { this.opening = false; }

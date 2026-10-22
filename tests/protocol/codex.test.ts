@@ -245,7 +245,7 @@ test("Codex thread permission settings come from the native configuration, apply
   try {
     await driver.initialize();
     const options = (await driver.models()).options ?? [];
-    assert.deepEqual(options.map(option => [option.id, option.currentValue, option.values.map(value => value.value)]), [
+    assert.deepEqual(options.map(option => [option.id, option.currentValue, option.values.map(value => value.value)]), [["collaboration_mode", "default", ["default", "plan"]],
       ["approval_policy", "never", ["untrusted", "on-request", "never"]], ["sandbox", "danger-full-access", ["read-only", "workspace-write", "danger-full-access"]]]);
     await driver.open(process.cwd(), undefined, { approval_policy: "on-request", sandbox: "read-only" });
     const start = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line)).find(row => row.method === "thread/start");
@@ -369,18 +369,29 @@ test("Codex plan mode is declared only by a connection opened with a chosen mode
   const directory = await mkdtemp(join(tmpdir(), "gateway-codex-plan-"));
   const sent = async (name: string) => (await readFile(join(directory, name), "utf8")).trim().split("\n").map(line => JSON.parse(line) as { method?: string; params?: Record<string, unknown> });
   const experimental = async (name: string) => ((await sent(name)).find(row => row.method === "initialize")!.params!.capabilities as Record<string, unknown>).experimentalApi;
+  // The settings the fixture's threads say they run with.
+  const runs = { approval_policy: "never", sandbox: "danger-full-access" };
   try {
-    // The reviewed app-server is offered the mode; a catalog read never declares the experimental API.
+    // The app-server's version is kept as evidence; a catalog read never declares the experimental API.
     const reader = control("plan-mode", { FIXTURE_TRACE: join(directory, "reader") });
     try {
       assert.equal((await reader.initialize()).agentVersion, "0.162.1");
       assert.deepEqual((await reader.models()).options?.find(option => option.id === "collaboration_mode")?.values.map(value => value.value), ["default", "plan"]);
     } finally { await reader.close(); }
     assert.equal(await experimental("reader"), false);
-    // An older or unidentified app-server is not offered it.
+    // An app-server that states an older version, or none, is offered the mode too, and plan mode works on it when it lists
+    // the modes: what it answers decides, not the version it states (ADR-053).
     for (const scenario of ["plan-old", "basic"]) {
-      const old = control(scenario);
-      try { await old.initialize(); assert.equal((await old.models()).options?.some(option => option.id === "collaboration_mode") ?? false, false, scenario); } finally { await old.close(); }
+      const trace = join(directory, scenario), offered = control(scenario);
+      try { assert.equal((await offered.initialize()).agentVersion, scenario === "plan-old" ? "0.161.0" : null); assert.deepEqual((await offered.models()).options?.find(option => option.id === "collaboration_mode")?.values.map(value => value.value), ["default", "plan"], scenario); }
+      finally { await offered.close(); }
+      const planning = control(scenario, { FIXTURE_TRACE: trace }, { selectedOptions: { collaboration_mode: "plan" } });
+      try {
+        await planning.initialize(); const id = await planning.open(process.cwd(), undefined, { collaboration_mode: "plan" });
+        assert.equal((await (await planning.startText(id, "plan it", () => {})).result).status, "completed", scenario);
+        assert.deepEqual(await planning.nativeConfig(), { model: null, options: { collaboration_mode: "plan", ...runs } }, scenario);
+      } finally { await planning.close(); }
+      assert.equal(((await sent(scenario)).find(row => row.method === "turn/start")!.params!.collaborationMode as { mode?: string }).mode, "plan", scenario);
     }
     // A Run that chose plan mode declares the API, sends the mode with its model and the plan preset's effort, and shows the plan.
     const planner = control("plan-mode", { FIXTURE_TRACE: join(directory, "planner") }, { selectedOptions: { collaboration_mode: "plan" } });
@@ -388,16 +399,17 @@ test("Codex plan mode is declared only by a connection opened with a chosen mode
       await planner.initialize(); const id = await planner.open(process.cwd(), undefined, { collaboration_mode: "plan" }), events: ControlEvent[] = [];
       assert.equal((await (await planner.startText(id, "plan it", event => events.push(event))).result).status, "completed");
       assert.deepEqual(events.filter(event => event.type === "text").map(event => event.type === "text" ? event.text : ""), ["1. 读代码\n2. 改实现"], "the completed plan, not its drafts");
+      // The experimental connection's thread/readState/changed is a known passive notification, not a diagnostic.
       assert.equal(events.some(event => event.type === "diagnostic"), false);
-      // The thread keeps the mode this turn set; that is what the connection reports as the native value.
-      assert.deepEqual(await planner.nativeConfig(), { model: null, options: { collaboration_mode: "plan" } });
+      // The thread keeps the mode this turn set; that is what the connection reports, with the settings the thread runs with.
+      assert.deepEqual(await planner.nativeConfig(), { model: null, options: { collaboration_mode: "plan", ...runs } });
     } finally { await planner.close(); }
-    // A turn that follows the native configuration cannot read the thread's mode, so it reports nothing and the last stands.
+    // A new thread that follows the native configuration reports the settings it runs with; thread/start states no mode.
     const follower = control("plan-mode");
     try {
       await follower.initialize(); const id = await follower.open(process.cwd());
       assert.equal((await (await follower.startText(id, "continue", () => {})).result).status, "completed");
-      assert.equal(await follower.nativeConfig(), null);
+      assert.deepEqual(await follower.nativeConfig(), { model: null, options: runs });
     } finally { await follower.close(); }
     const planned = await sent("planner");
     assert.equal(await experimental("planner"), true);
@@ -410,7 +422,7 @@ test("Codex plan mode is declared only by a connection opened with a chosen mode
       await back.initialize(); const id = await back.open(process.cwd(), undefined, { collaboration_mode: "default" }), events: ControlEvent[] = [];
       assert.equal((await (await back.startText(id, "do it", event => events.push(event))).result).status, "completed");
       assert.ok(events.some(event => event.type === "text" && event.text === "你好 fixture"));
-      assert.deepEqual(await back.nativeConfig(), { model: null, options: { collaboration_mode: "default" } });
+      assert.deepEqual(await back.nativeConfig(), { model: null, options: { collaboration_mode: "default", ...runs } });
     } finally { await back.close(); }
     assert.deepEqual((await sent("back")).find(row => row.method === "turn/start")!.params!.collaborationMode, { mode: "default", settings: { model: "native-model-a", reasoning_effort: null, developer_instructions: null } });
     // A connection that was not prepared for the mode refuses it before a thread is opened.
@@ -421,4 +433,55 @@ test("Codex plan mode is declared only by a connection opened with a chosen mode
       assert.equal((await sent("unprepared")).some(row => row.method === "thread/start" || row.method === "collaborationMode/list"), false);
     } finally { await unprepared.close(); }
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+test("a Codex without collaboration modes is still offered the option, and a Run that chooses one fails before any thread opens, saying why (ADR-053)", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-codex-collab-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
+  const reader = control("collab-missing");
+  try { await reader.initialize(); assert.deepEqual((await reader.models()).options?.map(option => option.id), ["collaboration_mode"], "the option is offered before anything is known"); }
+  finally { await reader.close(); }
+  const planning = control("collab-missing", { FIXTURE_TRACE: trace }, { selectedOptions: { collaboration_mode: "plan" } });
+  try {
+    await planning.initialize();
+    await assert.rejects(planning.open(process.cwd(), undefined, { collaboration_mode: "plan" }), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_OPTION_UNAVAILABLE"
+      && error.message === "这个 Codex 不提供协作模式：它没有 collaborationMode/list 方法（-32601）。");
+  } finally { assert.equal((await planning.close()).protocolFailure?.code, "NATIVE_OPTION_UNAVAILABLE"); }
+  const sent = (await readFile(trace, "utf8")).trim().split("\n").map(line => (JSON.parse(line) as { method?: string }).method);
+  assert.ok(sent.includes("collaborationMode/list")); assert.equal(sent.some(method => method === "thread/start" || method === "turn/start"), false);
+});
+test("Codex reports a thread's settings as the thread states them: thread/resume's collaboration mode when following the native configuration, only values an option knows", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-codex-report-")); t.after(() => rm(directory, { recursive: true, force: true }));
+  /** One turn on a thread that follows the native configuration (resumed when a checkpoint is given), then the report. */
+  const turn = async (driver: CodexControl, checkpoint?: string) => {
+    await driver.initialize(); const id = await driver.open(process.cwd(), undefined, undefined, checkpoint);
+    assert.equal((await (await driver.startText(id, "hello", () => {})).result).status, "completed"); return driver.nativeConfig();
+  };
+  const runs = { approval_policy: "never", sandbox: "danger-full-access" };
+  // A resumed thread that follows the native configuration reports the mode thread/resume states.
+  const resumed = control("basic", { FIXTURE_THREAD_MODE: "plan" });
+  try { assert.deepEqual(await turn(resumed, "thread-fixture"), { model: null, options: { ...runs, collaboration_mode: "plan" } }); } finally { await resumed.close(); }
+  // A mode the turn sets and Codex accepts is the thread's from then on, whatever the resume said before it.
+  const chosen = control("basic", { FIXTURE_THREAD_MODE: "plan" }, { selectedOptions: { collaboration_mode: "default" } });
+  try {
+    await chosen.initialize(); const id = await chosen.open(process.cwd(), undefined, { collaboration_mode: "default" }, "thread-fixture");
+    assert.equal((await (await chosen.startText(id, "hello", () => {})).result).status, "completed");
+    assert.deepEqual(await chosen.nativeConfig(), { model: null, options: { ...runs, collaboration_mode: "default" } });
+  } finally { await chosen.close(); }
+  // A mode this connection chose that no turn confirmed is not the thread's: on a new thread only the settings are reported.
+  const refused = control("prompt-rejected", {}, { selectedOptions: { collaboration_mode: "plan" } });
+  try {
+    await refused.initialize(); const id = await refused.open(process.cwd(), undefined, { collaboration_mode: "plan" });
+    assert.equal((await (await refused.startText(id, "hello", () => {})).result).status, "failed");
+    assert.deepEqual(await refused.nativeConfig(), { model: null, options: runs });
+  } finally { await refused.close(); }
+  // A resumed thread whose mode is not known reports nothing, so the mode reported earlier stands; so does one whose mode is
+  // not a mode Codex offers.
+  for (const env of [{}, { FIXTURE_THREAD_MODE: "review" }]) {
+    const unknown = control("basic", env);
+    try { assert.equal(await turn(unknown, "thread-fixture"), null, JSON.stringify(env)); } finally { await unknown.close(); }
+  }
+  // Values no option knows are left out, never replaced by a default.
+  const odd = control("basic", { FIXTURE_THREAD_MODE: "default", FIXTURE_THREAD_POLICY: "odd" });
+  try { assert.deepEqual(await turn(odd, "thread-fixture"), { model: null, options: { collaboration_mode: "default" } }); } finally { await odd.close(); }
+  const nothing = control("basic", { FIXTURE_THREAD_POLICY: "odd" });
+  try { assert.equal(await turn(nothing), null, "a new thread that states nothing an option knows"); } finally { await nothing.close(); }
 });

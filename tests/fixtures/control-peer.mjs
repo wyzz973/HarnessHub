@@ -196,6 +196,8 @@ lines.on("line", line => {
   if (message.method === "initialized") { initialized = true; return; }
   if (message.method === "config/read") { answer(message.id, { config: { model: "native-model-a", privateCredential: "synthetic-never-public", ...(["permissions-settings", "ignore-permissions"].includes(scenario) ? { approval_policy: "never", sandbox_mode: "danger-full-access" } : {}) } }); return; }
   if (message.method === "collaborationMode/list") {
+    // A Codex without collaboration modes, whatever version it states.
+    if (scenario === "collab-missing") { emit({ id: message.id, error: { code: -32601, message: "Method not found" } }); return; }
     if (!experimental) { emit({ id: message.id, error: { code: -32600, message: "collaborationMode/list requires experimentalApi capability" } }); return; }
     // The user's plan-mode effort (plan_mode_reasoning_effort) comes with the plan preset.
     answer(message.id, { data: [{ name: "Plan", mode: "plan", model: null, reasoning_effort: "high" }, { name: "Default", mode: "default", model: null, reasoning_effort: null }] }); return;
@@ -348,7 +350,12 @@ lines.on("line", line => {
     // A thread reports its own rollout file; the fixture writes one so export has native bytes to copy.
     const rollout = scenario === "rollout" ? join(tmpdir(), `codex-rollout-${process.pid}.jsonl`) : null;
     if (rollout) { writeFileSync(rollout, '{"type":"session_meta"}\n'); process.on("exit", () => rmSync(rollout, { force: true })); }
-    answer(message.id, { thread: { id, ...(rollout ? { path: rollout } : {}) }, approvalPolicy: scenario === "ignore-permissions" ? "never" : message.params.approvalPolicy ?? "never", sandbox: { type: scenario === "ignore-permissions" ? "dangerFullAccess" : sandboxType } }); return;
+    // FIXTURE_THREAD_MODE is the effective collaboration mode thread/resume reports (a stable field; thread/start has none);
+    // FIXTURE_THREAD_POLICY=odd reports an approval policy and a sandbox that no option of the Hub knows.
+    const odd = process.env.FIXTURE_THREAD_POLICY === "odd", mode = message.method === "thread/resume" ? process.env.FIXTURE_THREAD_MODE : undefined;
+    answer(message.id, { thread: { id, ...(rollout ? { path: rollout } : {}) }, approvalPolicy: odd ? { granular: { sandbox_approval: true } } : scenario === "ignore-permissions" ? "never" : message.params.approvalPolicy ?? "never",
+      sandbox: { type: odd ? "externalSandbox" : scenario === "ignore-permissions" ? "dangerFullAccess" : sandboxType },
+      ...(mode === undefined ? {} : { collaborationMode: { mode, settings: { model: "native-model-a", reasoning_effort: null, developer_instructions: null } } }) }); return;
   }
   if (message.method === "ping") { answer(message.id, { echoed: message.params }); return; }
   if (message.method === "thread/fork") {
@@ -469,7 +476,8 @@ lines.on("line", line => {
       notification("item/commandExecution/outputDelta", { ...base, itemId: "cmd-2", delta: "line1" });
       codexOutput(); finish(); return;
     }
-    // Plan mode answers with a proposed plan item; its deltas may differ from the completed item, which is authoritative.
+    // Plan mode answers with a proposed plan item; its deltas may differ from the completed item, which is authoritative. A
+    // connection that declared the experimental API also hears the thread's read state change before the turn completes.
     if (protocol === "codex-app-server" && scenario === "plan-mode") {
       const base = { threadId: "thread-fixture", turnId: `turn-${turn}` };
       if (message.params.collaborationMode?.mode === "plan") {
@@ -477,6 +485,7 @@ lines.on("line", line => {
         notification("item/plan/delta", { ...base, itemId: "plan-1", delta: "代码（草稿）" });
         notification("item/completed", { ...base, item: { type: "plan", id: "plan-1", text: "1. 读代码\n2. 改实现" } });
       } else codexOutput();
+      if (experimental) notification("thread/readState/changed", { threadId: "thread-fixture", readState: { lastReadTurnId: base.turnId } });
       finish(); return;
     }
     if (protocol === "codex-app-server" && scenario === "typed-failure") {
