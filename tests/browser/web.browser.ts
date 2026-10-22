@@ -1138,8 +1138,8 @@ test("a Harness of a version HarnessHub never ran shows that version alone in th
   const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url);
-  // The hint texts ADR-038 showed beside a version no record named ("未经验证", "验证过的版本", "相隔约 N 个月", the recipe's
-  // "目录参考" row), each caught by a substring; none of them appears anywhere any more.
+  // The texts ADR-038 showed beside a version no record named (the badge, the line naming the version run for real, the
+  // months-apart line, the recipe's reference-version row), each caught by a substring; none appears anywhere any more.
   const hints = ["经验证", "验证过的版本", "相隔", "目录参考"];
   const sayNothing = async (where: string) => { const text = await page.locator("body").innerText(); for (const hint of hints) assert.ok(!text.includes(hint), where + " says " + JSON.stringify(hint)); };
   // The fixture installs Gemini CLI 1.0.0, a version no record names. Gemini CLI is frozen, so it is shown first (ADR-050).
