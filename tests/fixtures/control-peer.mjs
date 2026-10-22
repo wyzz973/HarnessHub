@@ -236,7 +236,7 @@ lines.on("line", line => {
   }
   if (scenario === "claude" && message.method === "session/list") { answer(message.id, { sessions: [{ sessionId: "session-fixture", cwd: message.params.cwd, title: "Claude work", updatedAt: "2026-10-22T10:00:00Z" }] }); return; }
   if (scenario === "claude" && message.method === "session/resume") { answer(message.id, {}); return; }
-  // OpenCode 1.18 sends the session response and then its commands (setTimeout 0). `compact` is not among them, unless
+  // OpenCode 1.16–1.19 sends the session response and then its commands (setTimeout 0). `compact` is not among them, unless
   // FIXTURE_COMPACT_LISTED stands in for a version that lists it.
   if (scenario === "opencode-compact" && message.method === "session/new") {
     answer(message.id, { sessionId: "session-fixture" });
@@ -393,9 +393,13 @@ lines.on("line", line => {
     if (scenario === "exit-zero") { process.exit(0); }
     // claude-agent-acp re-reads its sign-in when each prompt starts and pushes any change mid-turn (FIXTURE_AUTH_TURN_KIND).
     if (scenario === "claude-auth" && process.env.FIXTURE_AUTH_TURN_KIND) notification("_auth/status_update", claudeAuthStatus(process.env.FIXTURE_AUTH_TURN_KIND));
-    // For a `/compact` it does not list, OpenCode 1.18 summarizes the session (session.summarize) and then ends the turn.
-    if (scenario === "opencode-compact" && message.params.prompt?.[0]?.text === "/compact") {
-      notification("session/update", { sessionId: message.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "compacted" } } });
+    // For a `/compact` it does not list, OpenCode summarizes the session (session.summarize) and hands the summary back as reply
+    // text (1.18.35). FIXTURE_COMPACT=activity reports the compaction as an activity only, as an agent that announces it does;
+    // FIXTURE_COMPACT=ignored drops any slash input starting with /compact and ends the turn with nothing.
+    if (scenario === "opencode-compact" && /^\/compact/u.test(message.params.prompt?.[0]?.text ?? "")) {
+      const sessionId = message.params.sessionId;
+      if (process.env.FIXTURE_COMPACT === "activity") for (const status of ["in_progress", "completed"]) notification("session/update", { sessionId, update: { sessionUpdate: "compaction_update", compactionId: "compact-1", status } });
+      else if (process.env.FIXTURE_COMPACT !== "ignored") notification("session/update", { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "compacted" } } });
       finish(); return;
     }
     // A native command changes a session setting and the agent announces it, as ACP agents do for their own changes.
