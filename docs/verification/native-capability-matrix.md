@@ -15,14 +15,14 @@
 | 配置与模型 | 模式与原生设置 | ◑ | ✅ | ✅ | ◐ | ✕ | ◐ | — | — | — |
 | 配置与模型 | 原生命令目录与执行 | — | ✅ | ✅ | ✅ | ✕ | ◐ | ◐ | ✅ | — |
 | 配置与模型 | 原生命令改配置后的同步 | ◑ | ✅ | ？ | ☑ | ？ | ✕ | ✕ | ✅ | — |
-| 执行可见性 | 思考输出 | ◐ | ✕ | ✅ | ◑ | ✕ | ✕ | ✅ | ✅ | ✅ |
+| 执行可见性 | 思考输出 | ◐ | ✕ | ✅ | ✕ | ✕ | ✕ | ✅ | ✅ | ✅ |
 | 执行可见性 | 工具状态 | ✅ | ✅ | ✅ | ◑ | ✕ | ✕ | ✅ | ✅ | ✅ |
 | 执行可见性 | 工具输入/输出/差异 | ✅ | ✅ | ✅ | ◑ | ✕ | ✕ | ✅ | ✅ | ☑ |
 | 执行可见性 | 计划 | ✕ | ✕ | — | — | — | ✕ | — | ○ | — |
 | 执行可见性 | 用量/上下文/费用 | ✅ | ✅ | ✅ | ☑ | ✕ | — | ✅ | ✅ | ☑ |
 | 交互 | 工具审批 | ✅ | ✅ | ✅ | ○ | ✕ | ✕ | ◐ | ✕ | ✕ |
 | 交互 | 原生提问与表单 | ◑ | ✅ | ？ | — | ？ | ◑ | ◐ | — | — |
-| 输入输出 | 图片输入 | ✅ | ✅ | ✅ | ◐ | ✕ | ✕ | ✅ | ✕ | ✕ |
+| 输入输出 | 图片输入 | ✅ | ✅ | ✅ | ✕ | ✕ | ✕ | ✅ | ✕ | ✕ |
 | 输入输出 | 音频输入 | ✕ | — | — | — | ✕ | — | — | — | — |
 | 输入输出 | 文件/文档输入 | ☑ | ☑ | ✅ | ☑ | ✕ | ✕ | ☑ | ☑ | ✅ |
 | 输入输出 | 非文本输出 | ◐ | ◐ | ◐ | — | — | ✕ | ○ | — | ◐ |
@@ -43,7 +43,7 @@
 | Codex | 14 | 1 | 3 | 5 | 1 | 2 | 1 | 0 |
 | Claude Code | 17 | 2 | 1 | 3 | 0 | 2 | 2 | 0 |
 | OpenCode | 13 | 0 | 2 | 3 | 1 | 1 | 2 | 5 |
-| OpenClaw | 5 | 3 | 2 | 6 | 5 | 0 | 6 | 0 |
+| OpenClaw | 5 | 3 | 1 | 5 | 5 | 2 | 6 | 0 |
 | Gemini CLI（冻结） | 0 | 0 | 0 | 2 | 1 | 12 | 6 | 6 |
 | Cursor（冻结） | 0 | 0 | 2 | 4 | 2 | 11 | 5 | 3 |
 | Pi（冻结、历史） | 11 | 1 | 4 | 1 | 2 | 1 | 7 | 0 |
@@ -52,13 +52,13 @@
 
 ## Codex
 
-原安装：Codex CLI 0.162.1（Homebrew cask，本机 ChatGPT 登录）；控制入口：codex-app-server；分层：焦点。
+原安装：Codex CLI 真实验收版本 0.162.1（Homebrew cask，本机 ChatGPT 登录；版本只作证据，渠道最新版 0.163.0 的验收待用户升级）；控制入口：codex-app-server；分层：焦点。
 
 | 能力 | 原接口 | 来源 | Hub | 协议 | 真实原安装 | 证据 | 说明 |
 |---|---|---|---|---|---|---|---|
 | 模型目录与选择 | 具备 | model/list、config/read、thread/start.model（0.162.1 schema） | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；.tmp/cc-native-catalog.json；docs/verification/native-models-2026-10-11.md | 默认 gpt-6.1-sol；目录 7 个模型 |
 | 思考档位 | 具备 | Model.supportedReasoningEfforts、turn/start.effort | 已接出 | 通过 | 通过 | .tmp/native-complete-real-combined.json；docs/verification/complete-native-capabilities-2026-10-11.md | low 档真实使用 |
-| 模式与原生设置 | 具备 | approvalPolicy/sandboxPolicy/serviceTier 逐轮参数；collaborationMode 计划模式需 experimentalApi（按连接声明） | 部分 | 通过 | 通过 | .tmp/cc-native-activity-codex-approval.json；docs/verification/native-session-actions-2026-10-11.md；.tmp/cc-codex-plan-2026-10-12.json；docs/decisions/0034-codex-plan-mode.md | 审批策略与沙箱作为本 Hub 线程设置接出（取自原配置、由线程回报核实、不写 config.toml）；协作模式（默认/计划）自 0.162.1 接出，只有明确选择协作模式的回合声明 experimentalApi，真实计划与切回默认通过；线程会保存模式，跟随本机配置的回合读不到它，Hub 记住最后确认的模式并提示仍为计划模式（审批代理附加条件，已实现并有协议、集成与浏览器测试）；serviceTier 未接出 |
+| 模式与原生设置 | 具备 | approvalPolicy/sandboxPolicy/serviceTier 逐轮参数；collaborationMode 计划模式需 experimentalApi（按连接声明） | 部分 | 通过 | 通过 | .tmp/cc-native-activity-codex-approval.json；docs/verification/native-session-actions-2026-10-11.md；.tmp/cc-codex-plan-2026-10-12.json；docs/decisions/0034-codex-plan-mode.md | 审批策略与沙箱作为本 Hub 线程设置接出（取自原配置、由线程回报核实、不写 config.toml）；协作模式（默认/计划）按能力接出：选项对任何版本提供，打开线程时 collaborationMode/list 不可用即 NATIVE_OPTION_UNAVAILABLE（ADR-034 的 2026-10-22 修订、ADR-053），只有明确选择协作模式的回合声明 experimentalApi；真实计划与切回默认在 0.162.1 上通过（证据）；线程会保存模式，跟随本机配置的回合读不到它，Hub 记住最后确认的模式并提示仍为计划模式（审批代理附加条件，已实现并有协议、集成与浏览器测试）；serviceTier 未接出 |
 | 原生命令目录与执行 | 不提供 | app-server 无斜杠命令；skills 以 UserInput.skill 调用（见 Skills） | 不适用 | 不适用 | 不适用 | — | — |
 | 原生命令改配置后的同步 | 部分 | model/rerouted 通知（服务端单轮改路由）；app-server 没有修改模型或设置的原生命令 | 部分 | 未接出 | 未接出 | — | 改路由以警告提示逐轮显示；它不是会话设置，不在下一回合沿用（ADR-028）；改路由提示尚无协议测试 |
 | 思考输出 | 具备 | item/reasoning/summaryTextDelta、textDelta | 已接出 | 通过 | 未接出 | .tmp/cc-native-thinking-codex.json；docs/verification/native-thinking-2026-10-11.md | 按用户配置（model_reasoning_effort=xhigh，未设置推理摘要）这一回合没有发送推理摘要；协议映射已测试 |
@@ -86,7 +86,7 @@
 
 ## Claude Code
 
-原安装：Claude Code 2.1.306 + claude-agent-acp 0.89.1（本机登录；已验证区间 2.1.296～2.1.306：2.1.296 见 2026-10-11 的记录，2.1.306 见 2026-10-22 的重验记录）；控制入口：acp-v1（claude-agent-acp）；分层：焦点。
+原安装：Claude Code 2.1.306 + claude-agent-acp 0.89.1（本机登录；真实验收版本 2.1.296、2.1.306（适配器 0.89.1）：2.1.296 见 2026-10-11 的记录，2.1.306 见 2026-10-22 的重验记录；版本只作证据（ADR-053），渠道最新版 2.1.307 + 0.94.0 的验收待用户升级）；控制入口：acp-v1（claude-agent-acp）；分层：焦点。
 
 | 能力 | 原接口 | 来源 | Hub | 协议 | 真实原安装 | 证据 | 说明 |
 |---|---|---|---|---|---|---|---|
@@ -120,7 +120,7 @@
 
 ## OpenCode
 
-原安装：OpenCode 1.18.35（Homebrew，本机原配置）；控制入口：acp-v1（opencode acp）；分层：焦点。
+原安装：OpenCode 真实验收版本 1.18.35（Homebrew anomalyco/tap，本机原配置；版本只作证据，OpenCode 1 线最新版 1.19.3 的验收待用户升级）；控制入口：acp-v1（opencode acp）；分层：焦点。
 
 | 能力 | 原接口 | 来源 | Hub | 协议 | 真实原安装 | 证据 | 说明 |
 |---|---|---|---|---|---|---|---|
@@ -146,7 +146,7 @@
 | 原生会话恢复 | 具备 | session/resume（不回放）；跨 Hub 进程重启 | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；.tmp/cc-opencode-native-resume.json；.tmp/cc-native-resume-commands-2026-10-12.json；docs/verification/native-capabilities-round2-2026-10-11.md | 在原程序中继续：`opencode -s <id>`（help 确认），以 `opencode run -s <id> "…"` 真实验证答出标记（ADR-039） |
 | 原生会话列表/接续 | 具备 | session/list（每页 100，根会话）、session/load 回放全部历史 | 已接出 | 通过 | 通过 | .tmp/cc-native-import-opencode.json；docs/verification/native-session-import-2026-10-11.md | 通用 ACP 实现；opencode run 在新工作区创建的会话被列出、接续并答出标记 |
 | 原生分支 | 具备 | session/fork | 已接出 | 通过 | 通过 | .tmp/cc-native-branch-codex-acp.json；docs/verification/native-branch-2026-10-11.md | session/fork 建立原生副本，复制历史的回放不归属；更早位置以公共历史分支 |
-| 上下文压缩 | 具备 | /compact 原生命令；1.18.x 的 ACP 模块接受不列出的 compact（调用 session.summarize） | 已接出 | 通过 | 通过 | docs/verification/opencode-compact-2026-10-22.md | OpenCode 的 ACP 命令目录不列出压缩命令；Hub 在 1.18.x 上补入 /compact 并原样转发（ADR-046 第 5 项，G032-NC24）；2026-10-22 真实回合：压缩完成并以回复文本交回，压缩后仍记得先前事实，没有压缩活动 |
+| 上下文压缩 | 具备 | /compact 原生命令；ACP 模块接受目录未列出的 compact（调用 session.summarize；1.0.0–1.19.3 与 2.x 的已发布版本都处理，1.16–1.19 对不认识的 / 文本静默丢弃） | 已接出 | 通过 | 通过 | docs/verification/opencode-compact-2026-10-22.md | OpenCode 的 ACP 命令目录不列出压缩命令；Hub 在目录未列出时对任何版本补入 /compact 并原样转发，回合没有任何回复、工具或活动时判为原程序没有执行（NATIVE_COMMAND_IGNORED；ADR-053、G032-NC24）；2026-10-22 真实回合：压缩完成并以回复文本交回，压缩后仍记得先前事实，没有压缩活动 |
 | 回滚/回退 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
 | 子 Agent | 具备 | 子会话（task 子 Agent）权限请求 | 未接出 | 未接出 | 未接出 | — | task 子 Agent 的子会话工具不经 ACP 转发；子会话的权限请求被原程序丢弃（原程序限制） |
 | 后台任务 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
@@ -154,7 +154,7 @@
 
 ## OpenClaw
 
-原安装：OpenClaw 2026.3.23-2（npm 全局，原 Gateway 守护进程）；控制入口：acp-v1（openclaw acp）+ gateway call；分层：焦点。
+原安装：OpenClaw 真实验收版本 2026.3.23-2（npm 全局，原 Gateway 守护进程；版本只作证据，渠道 latest 2026.10.5 的两跳升级待用户确认，ADR-052）；控制入口：acp-v1（openclaw acp）+ gateway call；分层：焦点。
 
 | 能力 | 原接口 | 来源 | Hub | 协议 | 真实原安装 | 证据 | 说明 |
 |---|---|---|---|---|---|---|---|
@@ -163,14 +163,14 @@
 | 模式与原生设置 | 具备 | fast_mode/verbose_level/reasoning_level/response_usage/elevated_level | 已接出 | 通过 | 部分通过 | .tmp/native-complete-real-combined.json；docs/verification/complete-native-capabilities-2026-10-11.md | 仅思考档位 low 真实使用；verbose/reasoning/usage/elevated 未真实使用；桥的模式选项与思考档位重复（C5 去重） |
 | 原生命令目录与执行 | 具备 | 固定 27 条命令（缺 /fast /exec /approve 等） | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-acp.json；docs/verification/native-session-actions-2026-10-11.md | 原生 /compact 真实执行；固定 27 条命令（缺 /fast /exec /approve 等）（2026-10-11 的验证早于 ADR-047 与 B6，.tmp 证据已不存在，待 M3 T-OC-08 在当前代码上重验） |
 | 原生命令改配置后的同步 | 部分 | /think、/fast、/verbose、/reasoning、/elevated、/model 等指令持久修改 Gateway 会话设置，但 ACP 桥不推送 config_option_update | 已接出 | 通过 | 通过 | .tmp/cc-native-config-openclaw.json；.tmp/cc-native-config-openclaw-fast.json；docs/verification/native-config-sync-2026-10-11.md | 原接口缺口：ACP 桥不推送 config_option_update，原生指令改过的会话设置不会主动通知 Hub；Hub 每回合后经原 CLI 读回会话行与 chat.history；/think high、/fast on 后下一回合沿用，同选择显式切换后恢复所选；恢复的会话按会话行模型检查图片 |
-| 思考输出 | 部分 | ACP 桥不实时转发思考，仅 load 回放 | 部分 | 通过 | 未接出 | .tmp/cc-native-thinking-openclaw-gpt.json | 桥未流式转发思考时，回合结束后从原生转录补记；deepseek-chat 无思考输出，推理模型 openai-codex/gpt-5.4 在本机请求失败，真实未验收 |
+| 思考输出 | 部分 | ACP 桥不实时转发思考，仅 load 回放 | 部分 | 通过 | 受阻 | .tmp/cc-native-thinking-openclaw-gpt.json | 桥未流式转发思考时，回合结束后从原生转录补记（latest 的桥有思考流时不再从转录补，按能力判断）；本机受阻：默认模型 deepseek-chat 不输出思考，推理模型 openai-codex/gpt-5.4 在本机请求失败——不是接口缺口；用户配置推理模型后复验（审批代理裁决，2026-10-22） |
 | 工具状态 | 部分 | 桥未声明 tool-events，工具事件很可能不会到达 | 部分 | 通过 | 通过 | .tmp/cc-native-activity-openclaw.json；docs/verification/openclaw-transcript-2026-10-11.md | ACP 桥不转发工具事件；回合结束后按本会话原生转录补记工具与结果（非实时） |
 | 工具输入/输出/差异 | 部分 | Gateway agent 事件含工具输入输出（需 tool-events 与 verbose=full） | 部分 | 通过 | 通过 | .tmp/cc-native-activity-openclaw.json；docs/verification/openclaw-transcript-2026-10-11.md | 工具参数与结果来自本会话原生转录，回合结束后补记；实时工具流需直连 Gateway |
 | 计划 | 不提供 | 桥从不发送 plan | 不适用 | 不适用 | 不适用 | — | — |
 | 用量/上下文/费用 | 部分 | usage_update 近似 {used,size}，无费用；sessions.list 含 token/估算费用 | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-openclaw.json；docs/verification/openclaw-transcript-2026-10-11.md | 原接口缺口：桥的 usage_update 只有近似的 {used,size}，没有费用；Hub 的本轮逐次调用用量与费用来自原生转录，上下文占用来自桥 |
 | 工具审批 | 部分 | exec.approval.* 只走 Gateway RPC/事件；经 ACP 会静默等待约 120 秒后拒绝 | 未接出 | 未接出 | 未接出 | — | — |
 | 原生提问与表单 | 不提供 | ACP 桥不发送提问 | 不适用 | 不适用 | 不适用 | — | — |
-| 图片输入 | 具备 | image block → chat.send attachment（≤5 MB） | 已接出 | 通过 | 部分通过 | .tmp/cc-native-attachments-opencode-openclaw.json；docs/verification/native-attachments-2026-10-11.md；.tmp/cc-native-attachments-openclaw-gpt.json | 按 models.list 的模型 input 与 5 MB 上限门控；默认 deepseek-chat 在派发前拒绝；识图模型 openai-codex/gpt-5.4 在本机 OpenClaw 中请求失败（原生转录记录错误，Hub 判为失败），识图未真实验收 |
+| 图片输入 | 具备 | image block → chat.send attachment（≤5 MB） | 已接出 | 通过 | 受阻 | .tmp/cc-native-attachments-opencode-openclaw.json；docs/verification/native-attachments-2026-10-11.md；.tmp/cc-native-attachments-openclaw-gpt.json | 按 models.list 的模型 input 与 5 MB 上限门控；默认 deepseek-chat 不看图，在派发前拒绝（已验证）；本机受阻：识图模型 openai-codex/gpt-5.4 在本机 OpenClaw 中请求失败（原生转录记录错误，Hub 判为失败）——不是接口缺口；用户配置多模态模型后复验（审批代理裁决，2026-10-22） |
 | 音频输入 | 不提供 | 音频块被丢弃 | 不适用 | 不适用 | 不适用 | — | — |
 | 文件/文档输入 | 部分 | 文本 resource 追加为文本；blob 丢弃；resource_link 成文本 | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-opencode-openclaw.json；docs/verification/native-attachments-2026-10-11.md | 原接口缺口：桥丢弃 blob，resource_link 只成文本，只有文本 resource 追加为文本；Hub 的文本资源由桥展开为文本，文件链接成为文本路径 |
 | 非文本输出 | 不提供 | 桥不转发图片/媒体；MEDIA: 行以原文出现 | 不适用 | 不适用 | 不适用 | — | — |
@@ -290,7 +290,7 @@
 
 ## Hermes Agent
 
-原安装：Hermes Agent 0.12.0（官方安装方式：~/.hermes/hermes-agent，启动器 ~/.local/bin/hermes；本机 DeepSeek deepseek-v4-pro）；控制入口：acp-v1（hermes acp）；分层：焦点。
+原安装：Hermes Agent 真实验收版本 0.12.0（版本只作证据，渠道最新版 v0.22.4 是否进入用户网关待用户决定，ADR-051；官方安装方式：~/.hermes/hermes-agent，启动器 ~/.local/bin/hermes；本机 DeepSeek deepseek-v4-pro）；控制入口：acp-v1（hermes acp）；分层：焦点。
 
 | 能力 | 原接口 | 来源 | Hub | 协议 | 真实原安装 | 证据 | 说明 |
 |---|---|---|---|---|---|---|---|
@@ -300,11 +300,11 @@
 | 原生命令目录与执行 | 具备 | available_commands_update：help、model、tools、context、reset、compact、steer、queue、version，由 Hermes 在本地处理（acp_adapter/server.py _handle_slash_command） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-catalog.json；.tmp/cc-hermes-commands.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
 | 原生命令改配置后的同步 | 具备 | /model <名称> 在本地切换会话模型，只回固定文本，不发 ACP 更新（acp_adapter/server.py _cmd_model） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-config.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | Hub 只在提示词本身是 /model 命令时读取它的回复，并把新模型记为会话当前模型 |
 | 思考输出 | 具备 | 提供方推理增量 → agent_thought_chunk（acp_adapter/events.py make_thinking_cb） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-thinking.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
-| 工具状态 | 具备 | tool_call / tool_call_update（acp_adapter/events.py、tools.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-activity.json；.tmp/cc-attention-2026-10-12.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | Hermes 0.12 的 build_tool_complete 对每个结束的调用都报 completed，失败只写在文本里（“<工具> failed: …”或“BLOCKED: …”）；Hub 据此标为失败（2026-10-12，审批代理决定）。真实回合中 rm -r 被拒绝时曾显示为“完成”；修正后真实回合显示为“失败”，并提示 Hermes 没有请求审批 |
+| 工具状态 | 具备 | tool_call / tool_call_update（acp_adapter/events.py、tools.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-activity.json；.tmp/cc-attention-2026-10-12.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | Hermes 0.12 的 build_tool_complete 对每个结束的调用都报 completed，失败只写在文本里（“<工具> failed: …”或“BLOCKED: …”）；Hub 据此标为失败（2026-10-12，审批代理决定）。真实回合中 rm -r 被拒绝时曾显示为“完成”；修正后真实回合显示为“失败”；当时同时显示的“Hermes 没有请求审批”提示 2026-10-22 按 ADR-053 删除（它按版本号决定是否显示） |
 | 工具输入/输出/差异 | 具备 | 标题、类型、位置、patch/write_file 差异、结果文本；常用工具不带 rawInput/rawOutput（acp_adapter/tools.py _POLISHED_TOOLS） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-activity.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 常用工具的输入只出现在标题和开始内容里 |
 | 计划 | 部分 | todo 工具只以展示文本出现在工具卡片，ACP 没有 plan 更新（acp_adapter/tools.py） | 未接出 | 未接出 | 未接出 | — | 未把 todo 文本解析为计划 |
 | 用量/上下文/费用 | 具备 | session/prompt 结果的 usage（输入、输出、思考、缓存）与 usage_update（上下文 size/used）（acp_adapter/server.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-activity.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
-| 工具审批 | 具备 | 危险命令经 session/request_permission 审批（允许一次、始终允许、拒绝），60 秒未答自动拒绝（acp_adapter/permissions.py） | 已接出 | 通过 | 受阻 | .tmp/cc-hermes-approval.json；.tmp/cc-attention-2026-10-12.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 本机 Hermes 0.12.0 的缺陷：tools/approval.py 调用审批回调时传入 allow_permanent，ACP 适配层回调不接受（TypeError），危险命令一律按拒绝处理，审批请求根本不会发出；需要用户升级 Hermes（本机落后上游 18332 个提交）。Hub 的 60 秒期限处理已有协议测试；2026-10-12 再次确认（rm -r 被拒绝，模型仍回复“已删除”），侧栏的原生期限倒计时只在 Hermes 0.12.0 夹具的浏览器测试中验证（ADR-035） |
+| 工具审批 | 具备 | 危险命令经 session/request_permission 审批（允许一次、始终允许、拒绝），60 秒未答自动拒绝（acp_adapter/permissions.py） | 已接出 | 通过 | 受阻 | .tmp/cc-hermes-approval.json；.tmp/cc-attention-2026-10-12.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 本机 Hermes 0.12.0 的缺陷：tools/approval.py 调用审批回调时传入 allow_permanent，ACP 适配层回调不接受（TypeError），危险命令一律按拒绝处理，审批请求根本不会发出；需要用户升级 Hermes（本机落后上游 18332 个提交）。Hub 的 60 秒期限处理已有协议测试（ADR-053 登记的例外，只增加信息；0.12 的缺陷提示已删除）；2026-10-12 再次确认（rm -r 被拒绝，模型仍回复“已删除”），侧栏的原生期限倒计时只在 Hermes 0.12.0 夹具的浏览器测试中验证（ADR-035） |
 | 原生提问与表单 | 不提供 | hermes-acp 工具集不含 clarify（toolsets.py） | 不适用 | 不适用 | 不适用 | — | — |
 | 图片输入 | 具备 | promptCapabilities.image；图片转为 OpenAI image_url 交给模型（acp_adapter/server.py） | 已接出 | 通过 | 受阻 | .tmp/cc-hermes-dsh-attachments.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | Hermes 公布并转发图片，但本机模型 deepseek-v4-pro 回复看不到图片 |
 | 音频输入 | 不提供 | 未公布 audio，音频块被丢弃（acp_adapter/server.py _content_blocks_to_openai_user_content） | 不适用 | 不适用 | 不适用 | — | — |
@@ -324,7 +324,7 @@
 
 ## DeepSeek Harness
 
-原安装：DeepSeek Harness 0.2.0-rc.2（npm 官网 @deepseek-ai/dsh，nvm 全局安装；2026-10-22 经官网渠道真实重验，此前源码版 0.2.1-alpha.1 的记录按 ADR-044 为历史）；控制入口：acp-v1（dsh --profile acp）；分层：焦点。
+原安装：DeepSeek Harness 真实验收版本 0.2.0-rc.2（npm 官网 @deepseek-ai/dsh，nvm 全局安装；版本只作证据，npm latest 0.2.1-rc.2 的验收待用户升级；2026-10-22 经官网渠道真实重验，此前源码版 0.2.1-alpha.1 的记录按 ADR-044 为历史）；控制入口：acp-v1（dsh --profile acp）；分层：焦点。
 
 | 能力 | 原接口 | 来源 | Hub | 协议 | 真实原安装 | 证据 | 说明 |
 |---|---|---|---|---|---|---|---|

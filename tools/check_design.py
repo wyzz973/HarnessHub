@@ -144,6 +144,9 @@ CAPABILITY_FIELDS = {"native", "source", "hub", "protocol", "real", "evidence", 
 # freeze; `historical` marks evidence from an installation that is not the official channel (ADR-044).
 HARNESS_TIERS = {"focus", "frozen"}
 HARNESS_FIELDS = {"id", "name", "installation", "control", "capabilities", "tier", "complete_at_freeze", "historical"}
+# ADR-053: versions in the matrix are engineering evidence only. The installation text may name the versions the real
+# acceptance ran on, but not describe a verified range, the deleted version table or an "unverified version" judgement.
+VERSION_GATE_WORDS = ("已验证区间", "VERIFIED_VERSIONS", "未经验证的版本")
 CAPABILITY_VIEW = "docs/verification/native-capability-matrix.md"
 
 
@@ -184,6 +187,9 @@ def check_capabilities(matrix: dict, root: Path | None = None) -> list[str]:
         for field in ["name", "installation", "control"]:
             if not isinstance(harness.get(field), str) or not harness[field].strip():
                 errors.append(hid + " capability record lacks " + field)
+        gate_words = [word for word in VERSION_GATE_WORDS if word in str(harness.get("installation", ""))]
+        if gate_words:
+            errors.append(hid + " installation must record versions as evidence only (ADR-053), not: " + ", ".join(gate_words))
         tier, freeze = harness.get("tier"), harness.get("complete_at_freeze")
         if tier not in HARNESS_TIERS:
             errors.append(hid + " needs a tier of focus or frozen")

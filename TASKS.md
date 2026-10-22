@@ -729,8 +729,9 @@
 - 发布新revision并保留历史
 - 提交前拒绝
 - 内存目录不先更新
+- src/infrastructure/management/verified-versions.ts 只放各产品的续接命令表 RESUME_COMMANDS（ADR-039、ADR-053；版本表 VERIFIED_VERSIONS 与对账 versionConsistency 已删除），文件路径保留到 T-ARCH-03 迁入 Harness 描述模块；续接命令对任何版本给出，版本只作证据
 
-场景：G011-C01, G011-C02, G011-C03, G011-M01, G011-M02, G011-M03, G011-M04, G011-L01, G011-N01, G011-N02, G011-N03, G011-NC1, G011-NC2, G011-UP1, G011-UP2, G011-UP3, G011-UP4, G011-UP5, G011-UP6, G011-UP7, G011-UP8, G011-UN1, G011-UN2, G011-UN3, G011-UN4, G011-UN5, G011-UN6, G011-UN7, G011-IN1, G011-IN2, G011-IN3, G011-IN4, G011-IN5, G011-IN6, G011-IN7, G011-IN8, G011-UP9, G011-UG1, G011-UG2, G011-UG3, G011-UG4, G011-UG5, G011-UG6, G011-UG7, G011-UG8, G011-UG9, G011-UG10, G011-NC3。
+场景：G011-C01, G011-C02, G011-C03, G011-M01, G011-M02, G011-M03, G011-M04, G011-L01, G011-N01, G011-N02, G011-N03, G011-NC1, G011-NC2, G011-UP1, G011-UP2, G011-UP3, G011-UP4, G011-UP5, G011-UP6, G011-UP7, G011-UP8, G011-UN1, G011-UN2, G011-UN3, G011-UN4, G011-UN5, G011-UN6, G011-UN7, G011-IN1, G011-IN2, G011-IN3, G011-IN4, G011-IN5, G011-IN6, G011-IN7, G011-IN8, G011-UP9, G011-UG1, G011-UG2, G011-UG3, G011-UG4, G011-UG5, G011-UG6, G011-UG7, G011-UG8, G011-UG9, G011-UG10, G011-NC3, G011-NC4, G011-UG11, G011-N04, G011-N05。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -771,7 +772,7 @@
 - 拒绝歧义和越界
 - 明确原因，不联网下载或调用模型
 
-场景：G012-C01, G012-C02, G012-C03, G012-NC1, G012-NC2, G012-OC1, G012-OC2, G012-OC3, G012-OC4。
+场景：G012-C01, G012-C02, G012-C03, G012-NC1, G012-NC2, G012-OC1, G012-OC2, G012-OC3, G012-OC4, G012-OC5, G012-OC6。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1183,7 +1184,7 @@
 - 明确协议错误且关闭有界
 - 相关请求结算，缓冲不无界
 
-场景：G031-C01, G031-C02, G031-C03, G031-R01, G031-NC1。
+场景：G031-C01, G031-C02, G031-C03, G031-R01, G031-NC1, G031-NC2。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1212,6 +1213,8 @@
 - src/adapters/control/claude.ts
 - src/adapters/control/hermes.ts
 - tests/fixtures/hermes-cli.mjs
+- tests/protocol/openclaw.test.ts
+- tests/fixtures/openclaw-bridge-peer.mjs
 
 验收：
 - 各事实关联正确Attempt与generation
@@ -1219,7 +1222,7 @@
 - 明确拒绝，不空会话fallback
 - 不把结果称官方认证
 
-场景：G032-C01, G032-C02, G032-C03, G032-C04, G032-L01, G032-N01, G032-N02, G032-X03, G032-NC4, G032-NC5, G032-NC6, G032-NC7, G032-NC8, G032-NC9, G032-NC10, G032-NC11, G032-NC12, G032-NC13, G032-NC14, G032-NC15, G032-NC16, G032-NC17, G032-NC18, G032-NC19, G032-NC20, G032-NC21, G032-NC22, G032-NC23, G032-NC24, G032-NC25, G032-NC26, G032-NC27。
+场景：G032-C01, G032-C02, G032-C03, G032-C04, G032-L01, G032-N01, G032-N02, G032-X03, G032-NC4, G032-NC5, G032-NC6, G032-NC7, G032-NC8, G032-NC9, G032-NC10, G032-NC11, G032-NC12, G032-NC13, G032-NC14, G032-NC15, G032-NC16, G032-NC17, G032-NC18, G032-NC19, G032-NC20, G032-NC21, G032-NC22, G032-NC23, G032-NC24, G032-NC25, G032-NC26, G032-NC27, G032-NC28, G032-NC29, G032-NC30, G032-OC1, G032-OC2, G032-OC3, G032-OC4。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1262,7 +1265,7 @@
 - 明确失败或能力不支持
 - 验证原生Adapter执行/中断/审批/绑定清理；完整正式入口验收由G060承担
 
-场景：G034-C01, G034-C02, G034-C03, G034-C04, G034-NC3, G034-NC4, G034-NC5, G034-NC6, G034-NC7, G034-NC8, G034-NC9, G034-NC10, G034-NC11。
+场景：G034-C01, G034-C02, G034-C03, G034-C04, G034-NC3, G034-NC4, G034-NC5, G034-NC6, G034-NC7, G034-NC8, G034-NC9, G034-NC10, G034-NC11, G034-NC12。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -2072,7 +2075,7 @@
 
 ## G065 焦点 Harness 工程加固（ADR-046）
 
-范围：按 ADR-046 承接七个焦点 Harness（含用户同日补充的 OpenClaw）的第一批工程加固：版本单一来源与一致性检查（预发布语义、Hermes 从 venv dist-info 读版本、dsh 继续命令只保留 headless、读表区间覆盖 0.2.0-rc.2）、失败写入记录只存错误码与 ~ 路径且 history 逐条降级、流式输出按窗口合并提交（ADR-047）、G063 边界检查落地、ClaudeControl 读 _auth/status_update 与 OpenCodeControl 1.18.x 补 /compact、非焦点三个（Cursor、Gemini CLI、Pi）冻结；各项的源码与测试文件归其既有所有者，本任务只持有两份 ADR。
+范围：按 ADR-046 承接七个焦点 Harness（含用户同日补充的 OpenClaw）的第一批工程加固：版本单一来源与一致性检查（预发布语义、Hermes 从 venv dist-info 读版本、dsh 继续命令只保留 headless、读表区间覆盖 0.2.0-rc.2）、失败写入记录只存错误码与 ~ 路径且 history 逐条降级、流式输出按窗口合并提交（ADR-047）、G063 边界检查落地、ClaudeControl 读 _auth/status_update 与 OpenCodeControl 1.18.x 补 /compact、非焦点三个（Cursor、Gemini CLI、Pi）冻结；各项的源码与测试文件归其既有所有者，本任务只持有两份 ADR。2026-10-22 起第 1 项（版本单一来源与一致性检查）与第 5 项里“1.18.x 补 /compact”被 ADR-053 取代：版本表、对账与读表区间删除，版本只作证据，/compact 在目录未列出时对任何版本补入。
 
 依赖：无。需求：R04, R17, R19, R23, R26。
 
@@ -2081,14 +2084,14 @@
 - docs/decisions/0048-harness-scope-and-workbuddy.md
 
 验收：
-- 已验证版本、目录包版本与读表区间来自同一来源，三处不一致的无效样例被测试拒绝；0.2.0-rc.2 命中 dsh 读表；Hermes 的 dist-info 给出版本
+- （第 1 项，2026-10-22 起被 ADR-053 取代）原要求“已验证版本、目录包版本与读表区间来自同一来源，三处不一致的无效样例被测试拒绝；0.2.0-rc.2 命中 dsh 读表；Hermes 的 dist-info 给出版本”已在第一批完成；现在版本表、对账与读表区间删除，任何版本都接入、不提示，由正向断言证明（G011-NC2、G054-NC12、G054-NC13）；Hermes 的版本改从 install-stamp.json 读（G012-OC5）
 - 含家目录绝对路径的失败写入之后 history 仍能逐条读取，坏记录单条标明；公开错误消息不含家目录
 - 每回合的事件数与提交成本按 ADR-047 下降，先提交再发布不变
 - 边界检查进入 pnpm check，每条规则有无效 fixture 且失败非零退出
-- Claude 的认证状态进入就绪状态而不是诊断；OpenCode 1.18.x 的命令目录含 /compact
+- Claude 的认证状态进入就绪状态而不是诊断；OpenCode 的命令目录在原程序未列出 compact 时对任何版本含 /compact（第 5 项里“1.18.x”的限定 2026-10-22 起被 ADR-053 取代，G032-NC24）
 - 全程未写用户真实配置，设计采纳、代码完成、测试通过与真实引擎通过分别表述
 - 第二批六项（C1 治理与证据规则、C2 真实验收守护与证据格式、C3 Harness 分层与按需刷新、C4 业务库迁移前备份、C5 OpenClaw 驱动、C6 Hermes 与 OpenClaw 升级就绪研究）的用例登记在所属任务下，状态 planned；完成后分别表述设计采纳、代码完成、测试通过与真实引擎通过
 
 场景：G065-A01。
 
-禁止范围：不写用户的真实 Harness 配置，不改全局环境；测试只用临时家目录、临时数据根与临时租约目录（ADR-041）；不改 VERIFIED_VERSIONS 的数字；不为 Cursor、Gemini CLI、Pi 新增矩阵 ✅ 或更新已验证版本；不运行任何 Harness 做验收；Claude 2.1.306 与 dsh 0.2.0-rc.2 的真实重验收另立任务；不删除非焦点 Harness 的适配器、测试与历史证据；默认隐藏或删除由用户在 ADR-048 决定。
+禁止范围：不写用户的真实 Harness 配置，不改全局环境；测试只用临时家目录、临时数据根与临时租约目录（ADR-041）；不为 Cursor、Gemini CLI、Pi 新增矩阵 ✅（原“不改 VERIFIED_VERSIONS 的数字、不更新已验证版本”2026-10-22 起随 ADR-053 删除：版本表已不存在，版本只作证据）；不运行任何 Harness 做验收；Claude 2.1.306 与 dsh 0.2.0-rc.2 的真实重验收另立任务；不删除非焦点 Harness 的适配器、测试与历史证据；默认隐藏或删除由用户在 ADR-048 决定。

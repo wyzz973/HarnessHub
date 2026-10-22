@@ -225,7 +225,7 @@ python3 -m unittest discover -s tools -p 'test_*.py' -v
 
 修改 plan 中的结构化来源后运行 python3 tools/check_design.py --write 更新人读清单，再运行默认检查。仅本机已抓取缓存可追加 --verify-cache 核对内容 SHA-256；缓存不入库，其他机器必须重新取得对应来源才能执行该项检查。版本化网页可能重新渲染，哈希变化需要重新审阅，不自动改来源锁。
 
-设计检查实际保证 ID/依赖、唯一路径所有权（含大小写/NFC）、获准切片源码范围（源码不在任何已接受切片的 allowed_files 内即拒绝；没有单独的门禁标志）、需求/测试关联、生成新鲜度、简单相对文件链接、来源元数据，以及能力矩阵的规则：每个 Harness 标 tier（焦点或冻结），冻结的 ✅ 数不得超过 complete_at_freeze，真实验收通过的格至少一项仓库内证据，原接口部分提供而真实通过的格（☑）必须写明原接口缺什么。它不证明任务语义天然原子、DDD 正确、外部 URL 永久有效、Markdown 全语法、运行时行为或平台能力。
+设计检查实际保证 ID/依赖、唯一路径所有权（含大小写/NFC）、获准切片源码范围（源码不在任何已接受切片的 allowed_files 内即拒绝；没有单独的门禁标志）、需求/测试关联、生成新鲜度、简单相对文件链接、来源元数据，以及能力矩阵的规则：每个 Harness 标 tier（焦点或冻结），冻结的 ✅ 数不得超过 complete_at_freeze，真实验收通过的格至少一项仓库内证据，原接口部分提供而真实通过的格（☑）必须写明原接口缺什么，installation 文本只把版本记作证据（不得含“已验证区间”“VERIFIED_VERSIONS”“未经验证的版本”，ADR-053）。它不证明任务语义天然原子、DDD 正确、外部 URL 永久有效、Markdown 全语法、运行时行为或平台能力。
 
 原CLI恢复与原Homebrew升级证据见[ADR-018](docs/decisions/0018-native-cli-recovery.md)与[恢复验收](docs/verification/native-cli-recovery-2026-10-11.md)。
 

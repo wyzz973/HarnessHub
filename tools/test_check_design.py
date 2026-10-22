@@ -298,6 +298,18 @@ class DesignChecks(unittest.TestCase):
     def test_rejects_unknown_harness_field(self):
         self.matrix_rejected(lambda m: m["harnesses"][0].update(colour="blue"), "unknown Harness fields: colour")
 
+    def test_rejects_verified_range_wording_in_installation(self):
+        self.matrix_rejected(lambda m: m["harnesses"][0].update(installation="Fixture 1.2（已验证区间 1.0～1.2）"),
+                             "evidence only (ADR-053), not: 已验证区间")
+
+    def test_rejects_version_table_and_unverified_wording_in_installation(self):
+        self.matrix_rejected(lambda m: m["harnesses"][0].update(installation="Fixture 1.2，VERIFIED_VERSIONS 上界；否则提示未经验证的版本"),
+                             "not: VERIFIED_VERSIONS, 未经验证的版本")
+
+    def test_accepts_versions_recorded_as_evidence(self):
+        value = self.matrix(); value["harnesses"][0].update(installation="Fixture 真实验收版本 1.2（渠道最新版 1.3 待验收）")
+        self.assertEqual(checker.check_capabilities(value), [])
+
     def test_rejects_completion_without_protocol_test(self):
         self.matrix_rejected(lambda m: m["harnesses"][0]["capabilities"]["models"].update(protocol="none"), "needs protocol verification")
 

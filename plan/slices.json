@@ -987,7 +987,7 @@
     {
       "id": "harness-focus",
       "status": "accepted",
-      "scope": "聚焦七个 Harness（Claude Code、Codex、OpenCode、DeepSeek Harness、WorkBuddy、Hermes Agent、OpenClaw）并做精（ADR-046）：第一批六项工程加固——版本单一来源与一致性检查（预发布语义、Hermes 版本、dsh 继续命令与读表区间）、失败写入记录只存错误码与 ~ 路径且 history 逐条降级、流式输出按窗口合并提交（ADR-047）、G063 边界检查落地、ClaudeControl 读 _auth/status_update 与 OpenCodeControl 补 /compact、非焦点三个（Cursor、Gemini CLI、Pi）冻结；不写用户真实配置，不运行 Harness 做验收",
+      "scope": "聚焦七个 Harness（Claude Code、Codex、OpenCode、DeepSeek Harness、WorkBuddy、Hermes Agent、OpenClaw）并做精（ADR-046）：第一批六项工程加固——版本单一来源与一致性检查（预发布语义、Hermes 版本、dsh 继续命令与读表区间）、失败写入记录只存错误码与 ~ 路径且 history 逐条降级、流式输出按窗口合并提交（ADR-047）、G063 边界检查落地、ClaudeControl 读 _auth/status_update 与 OpenCodeControl 补 /compact、非焦点三个（Cursor、Gemini CLI、Pi）冻结；不写用户真实配置，不运行 Harness 做验收。2026-10-22 起第 1 项与第 5 项的“1.18.x”限定被 ADR-053（按最新正式版适配，版本只作证据）取代：版本表、对账与读表区间删除，/compact 对任何版本补入",
       "task_ids": [
         "G063",
         "G065"

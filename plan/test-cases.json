@@ -6561,11 +6561,11 @@
         "INV-16"
       ],
       "layer": "unit",
-      "scenario": "判断本机版本是否为真实验证过的版本",
-      "expected": "产品版本与不同于它的适配器版本都在验证范围内才算已验证；semver 按范围比较，其他版本只按完全相同判断；版本未知或从未验证的 Harness 不下结论；表中版本与能力矩阵记录的安装版本一致；能力矩阵为每个 Harness 记的分层与目录的 harnessTier 一致，冻结的恰为 Cursor、Gemini CLI、Pi；任一处单独改动都使测试失败",
+      "scenario": "能力矩阵的 Harness 分层与目录的分层一致（原“判断本机版本是否为真实验证过的版本”，版本部分 2026-10-22 随 ADR-053 删除）",
+      "expected": "能力矩阵为每个 Harness 记的分层与目录的 harnessTier 一致，冻结的恰为 Cursor、Gemini CLI、Pi；任一处单独改动都使测试失败。不再有任何版本判断：已验证版本表、semver 区间比较与四处对账已删除，版本只作矩阵 installation 文本与验收记录里的证据",
       "status": "planned",
       "evidence": null,
-      "planned_file": "tests/unit/verified-versions.test.ts"
+      "planned_file": "tests/unit/catalog-import.test.ts"
     },
     {
       "id": "G011-NC2",
@@ -6577,8 +6577,8 @@
         "INV-16"
       ],
       "layer": "unit",
-      "scenario": "在原程序中继续的命令只给验证过的产品与版本",
-      "expected": "验证过的产品在验证版本上给出交互命令与已验证的非交互命令，DeepSeek Harness 只给已验证的非交互命令（官网 0.2.0-rc.2 没有 tui profile，ADR-039 的 2026-10-21 补记）；版本未验证或未知只给 ID 并注明；从未验证的产品只给 ID；Pi 只指向它的会话列表；OpenClaw 不给；含空格、引号、分号、$( 或以 - 开头等非普通标识符的引用既不显示也不进入命令；Codex 只问一次的形式只在工作区不是 Git 仓库时带 --skip-git-repo-check 并注明原因，交互形式从不带",
+      "scenario": "在原程序中继续的命令按产品给出，与安装版本无关（ADR-053 决定 3）",
+      "expected": "Claude Code、Codex、OpenCode、Hermes 对任何已安装版本（不传版本、传任意版本、传预发布版结果都相同）都给出交互命令与一次性命令；DeepSeek Harness 只给一次性命令（官网包没有 tui profile）并附凭据前提说明 onceNote（headless 只读终端环境的 DEEPSEEK_API_KEY、工作区 .env 或 ~/.dsh/.env）；Pi 只指向它的会话列表；OpenClaw 不给；没有续接命令的产品（Cursor、Gemini CLI）只给 ID 且 note 为 no-command，不再有 version-unverified；含空格、引号、分号、$( 或以 - 开头等非普通标识符的引用既不显示也不进入命令；Codex 只问一次的形式只在工作区不是 Git 仓库时带 --skip-git-repo-check 并注明原因，交互形式从不带；读取不触发发现与版本探测",
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/unit/verified-versions.test.ts"
@@ -8126,8 +8126,8 @@
         "INV-16"
       ],
       "layer": "e2e",
-      "scenario": "未经验证的版本在 Harness 列表与选择器中提示",
-      "expected": "安装不在验证范围内的版本后，列表显示“未经验证”并在悬停与详情中说明验证过的版本；选择器写“未经验证的版本”且仍可选择；从未验证的 Harness 不显示标记",
+      "scenario": "任意版本都不显示版本提示（原“未经验证的版本在 Harness 列表与选择器中提示”，2026-10-22 按 ADR-053 反转）",
+      "expected": "安装任意版本（读不出版本、预发布版、比真实验收记录更新或更旧的版本）后，Harness 列表、选择器、欢迎页与详情只显示版本号、接入口版本与渠道最新版本，页面任何位置都不出现“未经验证”“未核实”“相隔约”“还没有验证”这类按版本号推断的提示；预发布版只作中性事实写出，不用警示色；仍可选择与发送",
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/browser/web.browser.ts"
@@ -8143,7 +8143,7 @@
       ],
       "layer": "e2e",
       "scenario": "执行配置显示原生会话与在原程序中继续",
-      "expected": "打开执行配置后显示原生会话 ID 与复制按钮；版本未验证时说明恢复命令未在此版本验证，不给复制命令的按钮",
+      "expected": "打开执行配置后显示原生会话 ID 与复制按钮；任何版本（包括读不出版本的安装）都给出该产品的续接命令与复制按钮，不出现“未在此版本验证”或“已用真实回合验证”字样；只有没有续接命令的产品只显示 ID",
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/browser/web.browser.ts"
@@ -8353,8 +8353,8 @@
         "INV-09"
       ],
       "layer": "protocol",
-      "scenario": "OpenCode 1.18.x 的 /compact：ACP 命令目录不列出但原程序接受的压缩命令",
-      "expected": "OpenCode 版本满足 >=1.18.0 <1.19.0 且目录未列出 compact 时追加 /compact 并按输入原样转发；其他版本、读不出版本以及 OpenCode 自己已列出 compact 时不追加；开始语不变",
+      "scenario": "OpenCode 的 /compact：ACP 命令目录未列出时由 Hub 补入，不看版本（ADR-053 决定 5）",
+      "expected": "OpenCode 的命令目录未列出 compact 时，无论 initialize 报告什么版本（1.19.0、1.17.9、读不出版本、本地构建）都追加 /compact 并按输入原样转发，开始语不变；目录已列出 compact 时不重复补入（无效样例）；其他 ACP Harness 的目录不补入；/compact 回合以 end_turn 结束却没有任何回复、工具或活动事件时结果为 failed、error.code 为 NATIVE_COMMAND_IGNORED 并说明“OpenCode 没有执行 /compact”，不算成功；回合有回复文本时为 completed（1.18.35 的真实形状，docs/verification/opencode-compact-2026-10-22.md）",
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/protocol/acp.test.ts"
@@ -8664,7 +8664,7 @@
       "layer": "e2e",
       "planned_file": "tests/browser/web.browser.ts",
       "scenario": "升级确认框与没有升级的任务",
-      "expected": "点升级先检查再确认：列出会重启的服务和命令、仍用旧版的程序、会关闭的对话、插件、产品说明、版本跨度、未验证版本与退回命令；有对话正在回复、另一个 HarnessHub 进程、程序或被重启服务的 Node.js 不符时不能确认，不重启服务的 Node.js 不符只提示；提交的同意与指纹来自这次检查；改动前停下的任务显示没有升级与原版本，不显示核实版本与空日志，旧版本的拒绝按实际情况解释",
+      "expected": "点升级先检查再确认：列出会重启的服务和命令、仍用旧版的程序、会关闭的对话、插件、产品说明与退回命令（不再有版本跨度与未验证提示，ADR-053）；有对话正在回复、另一个 HarnessHub 进程、程序或被重启服务的 Node.js 不符时不能确认，不重启服务的 Node.js 不符只提示；提交的同意与指纹来自这次检查；改动前停下的任务显示没有升级与原版本，不显示核实版本与空日志，旧版本的拒绝按实际情况解释",
       "status": "planned",
       "evidence": null
     },
@@ -9087,7 +9087,7 @@
       "layer": "unit",
       "planned_file": "tests/unit/installation-upgrade.test.ts",
       "scenario": "每种脚本安装登记自己的更新方式",
-      "expected": "Claude Code 与 Cursor 用产品自己的更新命令；Codex 与 OpenCode 重新运行官方脚本；Hermes 只给终端命令并写明它会 stash、迁移配置、重启网关；适配器版本按适配器的验证范围判断",
+      "expected": "Claude Code 与 Cursor 用产品自己的更新命令；Codex 与 OpenCode 重新运行官方脚本；Hermes 只给终端命令并写明它会 stash、迁移配置、重启网关；适配器的升级只显示现版本与目标版本，不带任何验证判定（ADR-053）",
       "status": "planned",
       "evidence": null
     },
@@ -9216,7 +9216,7 @@
       "layer": "e2e",
       "planned_file": "tests/browser/web.browser.ts",
       "scenario": "逐份升级的按钮与确认框",
-      "expected": "每份安装显示上次检查的结果；正在回复的对话阻止升级并可打开该对话；否则显示前后版本、实际运行的命令、可写位置、仍在运行的程序、未验证提示和“当前使用”说明；提交的内容正好是确认的安装和指纹；完成摘要写出前后版本；Hermes 只显示终端命令、它会做的事和本地改动，没有确认按钮；无页面错误",
+      "expected": "每份安装显示上次检查的结果；正在回复的对话阻止升级并可打开该对话；否则显示前后版本、实际运行的命令、可写位置、仍在运行的程序和“当前使用”说明（不再有未验证提示，预发布版只作中性事实，ADR-053）；提交的内容正好是确认的安装和指纹；完成摘要写出前后版本；Hermes 只显示终端命令、它会做的事和本地改动，没有确认按钮；无页面错误",
       "status": "planned",
       "evidence": null
     },
@@ -9946,8 +9946,8 @@
       ],
       "layer": "review",
       "planned_file": "docs/decisions/0046-harness-focus-hardening.md",
-      "scenario": "六项加固的验收记录与 ADR-046 验证节逐项对账：版本来源、审计记录、流式合并、边界检查、控制层、冻结",
-      "expected": "每项都有对应层的测试或检查通过的记录；真实引擎通过与测试通过分别表述；非焦点三个（Cursor、Gemini CLI、Pi）的矩阵 ✅ 数与已验证版本未增长；全程未写用户真实配置",
+      "scenario": "六项加固的验收记录与 ADR-046 验证节逐项对账：版本来源（2026-10-22 起被 ADR-053 取代，只核对分层一致）、审计记录、流式合并、边界检查、控制层、冻结",
+      "expected": "每项都有对应层的测试或检查通过的记录；真实引擎通过与测试通过分别表述；非焦点三个（Cursor、Gemini CLI、Pi）的矩阵 ✅ 数未增长（complete_at_freeze；已验证版本表已随 ADR-053 删除，不再对账）；全程未写用户真实配置",
       "status": "planned",
       "evidence": null
     },
@@ -10047,8 +10047,8 @@
       ],
       "layer": "e2e",
       "planned_file": "tests/browser/web.browser.ts",
-      "scenario": "在原程序中继续：只有只问一次命令的已验证程序",
-      "expected": "详情栏显示只问一次的命令与两条提示，不显示交互命令；未验证版本或未验证产品只显示 ID",
+      "scenario": "在原程序中继续：只有一次性命令的产品（DeepSeek Harness，任意版本）",
+      "expected": "任意版本的 DeepSeek Harness 详情栏都显示只问一次的命令、凭据前提说明与两条提示，不显示交互命令；只有没有续接命令的产品只显示 ID",
       "status": "planned",
       "evidence": null
     },
@@ -10207,6 +10207,268 @@
       "expected": "转录只读到最后 200 条且最早一条的 seq 大于回合起点 +1 时发出诊断并如实标明可能缺失；未断档时没有诊断",
       "status": "planned",
       "evidence": null
+    },
+    {
+      "id": "G034-NC12",
+      "task": "G034",
+      "requirements": [
+        "R11",
+        "R25"
+      ],
+      "invariants": [
+        "INV-04",
+        "INV-09"
+      ],
+      "layer": "protocol",
+      "scenario": "Codex 协作模式按能力判断，不按版本号（ADR-034 修订、ADR-053 决定 5）",
+      "expected": "模型目录对任何 userAgent 版本（含读不出版本的夹具）都提供 collaboration_mode 选项；只有明确选择了协作模式的连接声明 experimentalApi；夹具不实现 collaborationMode/list（-32601 或明确错误）时，open 带 mode=plan 以 NATIVE_OPTION_UNAVAILABLE 失败，消息含“这个 Codex 不提供协作模式”与原程序给出的原因，不以 REMOTE_ERROR 断开、不静默降级；旧 userAgent（plan-old）与无法识别版本的夹具在实现了该方法时计划模式可用；thread/start 与 thread/resume 回包带 collaborationMode、approvalPolicy、sandbox 时经 nativeConfig 回报，字段缺失时不写死缺省；thread/readState/changed 归为被动通知",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/codex.test.ts"
+    },
+    {
+      "id": "G032-NC28",
+      "task": "G032",
+      "requirements": [
+        "R11",
+        "R12",
+        "R25"
+      ],
+      "invariants": [
+        "INV-04",
+        "INV-09"
+      ],
+      "layer": "protocol",
+      "scenario": "$/cancel_request 关闭原程序撤回的审批或提问（claude-agent-acp 0.94.0）",
+      "expected": "收到 $/cancel_request {requestId} 时关闭 id 等于 String(requestId) 的审批与 id 为 `${requestId}:<n>` 的提问，发出 decision 为 cancelled 的 permission 事件与“原程序撤回了这项请求”的诊断，不再记为未支持通知；没有匹配的请求时只记诊断，不影响回合；其他 ACP Harness 的同名通知走同一通用路径",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/acp.test.ts"
+    },
+    {
+      "id": "G032-NC29",
+      "task": "G032",
+      "requirements": [
+        "R11",
+        "R25"
+      ],
+      "invariants": [
+        "INV-09"
+      ],
+      "layer": "protocol",
+      "scenario": "Claude 会话参数关闭 promptSuggestions，/remote-control 隐藏并在用到时明确失败；fork 的超时与分类（ADR-053 裁决 5、6）",
+      "expected": "ClaudeControl 在 session/new、load、resume、fork 的参数带 _meta.claudeCode.options.promptSuggestions=false（夹具记录参数并断言），其他 ACP Harness 的会话参数不带 _meta；模型目录的命令不含 remote-control；用户发送 /remote-control 时不发给原程序，结果 failed、error.code 为 NATIVE_COMMAND_UNAVAILABLE，消息说明回合结束会关闭适配器进程、Remote Control 随之断开；session/fork 的超时与 open() 一致，fork 的 REMOTE_ERROR 只在 remoteCode 为 -32601 时判 NATIVE_FORK_UNAVAILABLE，其他 REMOTE_ERROR 作为原生失败抛出（副本存在与否未知）",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/acp.test.ts"
+    },
+    {
+      "id": "G032-NC30",
+      "task": "G032",
+      "requirements": [
+        "R11",
+        "R12",
+        "R25"
+      ],
+      "invariants": [
+        "INV-04",
+        "INV-09"
+      ],
+      "layer": "protocol",
+      "scenario": "Hermes 审批选项的说明按 option id，错误原因按 JSON-RPC data.details 分类；0.12 的缺陷提示不再出现（ADR-031 修订、ADR-053 例外登记）",
+      "expected": "夹具给出 allow_always、allow_session、deny_always 等五个选项时三条说明各出现一次：allow_always 写入所有会话共用的允许列表（含消息网关）、allow_session 只在本会话内有效不写配置、deny_always 等同拒绝不保存；按 id 识别，不按位置，没有这些 id 时退回按 kind 的说明；session/load 或 session/resume 的 REMOTE_ERROR 且 remoteDetail 以 not_found 开头 → NATIVE_SESSION_NOT_FOUND；remoteDetail 匹配 Gateway starting/incompatible/inaccessible/draining/could not start → NATIVE_GATEWAY_UNAVAILABLE 并附 Hermes 给出的原因（截断）；unknown_execution 不映射为失败，只在诊断里透出原因与 /discard 提示；一次回合没有审批请求却出现拒绝文本时不再显示 0.12 的缺陷提示，拒绝文本仍标为失败；initialize 报告 0.12.x 时审批期限仍为 60 秒减 2 秒（登记的例外），其他版本不给原程序期限",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/acp.test.ts"
+    },
+    {
+      "id": "G031-NC2",
+      "task": "G031",
+      "requirements": [
+        "R25",
+        "R26"
+      ],
+      "invariants": [
+        "INV-20"
+      ],
+      "layer": "protocol",
+      "scenario": "JSON-RPC 错误的 data.details 有界透出到 ControlError.remoteDetail",
+      "expected": "error.data.details 为字符串时截到 2 KiB、剔除控制字符后挂到 ControlError.remoteDetail，remoteCode 暴露 JSON-RPC 错误码；details 不进入 message 原文与日志；分类时能看到 details；details 缺失、非字符串或超长（无效样例）都不抛出，remoteDetail 为空或截断；进入用户可见消息的只有匹配固定前缀的分类结果，不回显任意文本",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/process.test.ts"
+    },
+    {
+      "id": "G032-OC1",
+      "task": "G032",
+      "requirements": [
+        "R11",
+        "R25"
+      ],
+      "invariants": [
+        "INV-09"
+      ],
+      "layer": "protocol",
+      "scenario": "OpenClaw 键控名册下的默认代理解析（夹具 tests/fixtures/openclaw-bridge-peer.mjs：最小 stdio ACP 代理，Gateway 方法全部走注入的假实现，不运行 openclaw）",
+      "expected": "注入的 gateway call 对 agents.list 返回 {defaultId:'ops', agents:[{id:'ops', model:{primary:'deepseek/x'}, workspace:'~/ws'}]} 时会话键为 agent:ops:harnesshub:*、默认模型 deepseek/x、工作区按 agents[].workspace；agents.list 抛错（方法不存在、Gateway 不可达）时静默退回读 openclaw.json：agents.entries 键控名册（default 归属）与旧 agents.list 数组两种形状都正确；selectionRequired 为 true 且没有 defaultId 时 open 以 NATIVE_CONFIGURATION_INVALID 明确失败，不猜 main（无效样例）；open 阶段不写 Gateway",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/openclaw.test.ts"
+    },
+    {
+      "id": "G032-OC2",
+      "task": "G032",
+      "requirements": [
+        "R11",
+        "R25"
+      ],
+      "invariants": [
+        "INV-04",
+        "INV-09"
+      ],
+      "layer": "protocol",
+      "scenario": "OpenClaw 实时工具流与转录对账按 tool id 去重（latest 的桥实时转发工具事件）",
+      "expected": "桥在回合中实时发出 tool_call/tool_call_update（id X）且转录对账也含 id X 时只有一行工具事件、标题以实时事件为准；转录里多出的 id Y 仍补发；实时流没有给出终态而转录里有 isError 时补一条同 id 的 status 更新；用量与真实停止原因仍从转录补；旧桥（不发实时工具事件）的行为不变；去掉去重即重复（变异核对）",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/openclaw.test.ts"
+    },
+    {
+      "id": "G032-OC3",
+      "task": "G032",
+      "requirements": [
+        "R11",
+        "R25"
+      ],
+      "invariants": [
+        "INV-09"
+      ],
+      "layer": "protocol",
+      "scenario": "OpenClaw 设置回读按桥公布的取值",
+      "expected": "sessions.list 行里 responseUsage 缺省时回报桥在 configOptions 里公布的 currentValue 而不是写死 off；fastMode 取 effectiveFastMode ?? fastMode，布尔映射 on/off、字符串 auto 原样；traceLevel 存在时回报 trace_level；只回报目录里存在的选项 id；旧桥的取值不变",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/openclaw.test.ts"
+    },
+    {
+      "id": "G032-OC4",
+      "task": "G032",
+      "requirements": [
+        "R11",
+        "R25"
+      ],
+      "invariants": [
+        "INV-09",
+        "INV-16"
+      ],
+      "layer": "protocol",
+      "scenario": "OpenClaw 模型可用性与 fork 按桥的声明判断，不按版本",
+      "expected": "models.list 行带 available:false 的模型不可选并带 unavailableReason 说明（没有可选字段时不列出并在诊断里说明数量与原因），open 选它时 MODEL_UNAVAILABLE；fork 不再被驱动硬拒绝：桥不声明 sessionCapabilities.fork 时由通用层报 NATIVE_FORK_UNAVAILABLE 并说明原因，声明时走通用 fork；不读任何版本号",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/openclaw.test.ts"
+    },
+    {
+      "id": "G012-OC5",
+      "task": "G012",
+      "requirements": [
+        "R03",
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "scenario": "Hermes 最新布局的发现：install-stamp 版本来源、.hermes/bin 程序与新启动器（ADR-051 第 6 条，ADR-053）",
+      "expected": "脚本渠道的 Hermes 程序为 .hermes/bin/hermes（0.12 布局的 venv/bin/hermes 作兼容候选）；版本来自 <root>/install-stamp.json 的 displayVersion（缺则 baseVersion），没有 stamp 时才读 venv 的 dist-info，dist-info 为 0.0.0 时版本为 null（无效样例）；版本未知时安装照样算官网安装；launchers 与卸载白名单含 ~/.local/bin/hermes、hermes-acp、hermes-agent；常驻网关正则匹配 'python -m hermes_cli.main --profile default gateway run' 与 '.hermes/bin/hermes … gateway run --external-supervisor' 两种形态，正反样例各有",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/unit/official-channels.test.ts"
+    },
+    {
+      "id": "G012-OC6",
+      "task": "G012",
+      "requirements": [
+        "R03",
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "scenario": "渠道登记按最新版：OpenClaw 的官网 npm 命令与 Hermes 的升级说明",
+      "expected": "OpenClaw 显示的官网安装命令为 npm install -g openclaw@latest --allow-scripts=openclaw，notes 说明 npm 11.16+ 对生命周期脚本的行为；Hermes 的 upgrade.explains 写明 v0.22.x 的行为（暂停网关、以新代码重启、config/state 迁移且 state.db 写过后不能回退、先 hermes backup、QQ 离线一段时间）；渠道来源链接指向最新版的标签提交；没有任何按版本号的条件",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/unit/official-channels.test.ts"
+    },
+    {
+      "id": "G011-NC4",
+      "task": "G011",
+      "requirements": [
+        "R03",
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "scenario": "目录条目的版本跟随渠道（ADR-053 决定 6）",
+      "expected": "hermes 与 dsh 的目录 package.version 为 'latest'（目录解析器接受非空字符串），注释写明真实验收版本只作证据；dsh 的来源链接指向 dsh-v0.2.1-rc.2 标签提交 687f282e…，hermes 的链接指向 v0.22.4 的 4d04303…；分层（G011-NC3）与既有断言不受影响；目录里没有任何条目把版本当作接入条件",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/unit/catalog-import.test.ts"
+    },
+    {
+      "id": "G011-UG11",
+      "task": "G011",
+      "requirements": [
+        "R03",
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "scenario": "Homebrew 安装用 <tap>/<formula> 全名检查更新、预演与升级",
+      "expected": "keg 的 INSTALL_RECEIPT.json 有 source.tap 且不是 homebrew/core 时，安装记录带 tap，brew info 与 brew upgrade --dry-run/升级都用 anomalyco/tap/opencode 这样的全名（假 brew 记录参数并断言）；receipt 缺失、坏 JSON、超过 64 KiB 或 tap 为 homebrew/core 时沿用裸名（无效样例）；裸名可能解析到 Core 同名公式的情况因此不再发生",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/installation-upgrade.test.ts"
+    },
+    {
+      "id": "G011-N04",
+      "task": "G011",
+      "requirements": [
+        "R03",
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "scenario": "YYYY.M.P-N 修订号的版本比较",
+      "expected": "2026.3.23-2 > 2026.3.23、2026.9.5 > 2026.3.23-2、2026.3.23-2 < 2026.3.23-3；带修订号的本机版本与渠道最新版比较时“已是最新”“可升级到 vX”的判断正确；普通 semver 的比较不变（无效样例：把修订号当预发布会把 2026.3.23-2 排在 2026.3.23 之前，测试拒绝）",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/native-management.test.ts"
+    },
+    {
+      "id": "G011-N05",
+      "task": "G011",
+      "requirements": [
+        "R03",
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "scenario": "OpenClaw 的 npm 直装升级在路线 A 落地前返回 UNSUPPORTED_UPGRADE（ADR-052 过渡措施，审批代理裁决 11）",
+      "expected": "OpenClaw 的维护升级在准备阶段以 409 UNSUPPORTED_UPGRADE 返回，说明升级由 openclaw update 完成（会运行 Doctor 迁移配置并重启 Gateway），路线见 ADR-052；候选版本的临时目录 config validate 预演不再运行（没有子进程、没有临时安装）；其他产品的 npm 维护升级不受影响；没有任何按版本号的判断",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/native-management.test.ts"
     }
   ]
 }

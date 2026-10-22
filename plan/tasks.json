@@ -1320,7 +1320,8 @@
       "acceptance": [
         "发布新revision并保留历史",
         "提交前拒绝",
-        "内存目录不先更新"
+        "内存目录不先更新",
+        "src/infrastructure/management/verified-versions.ts 只放各产品的续接命令表 RESUME_COMMANDS（ADR-039、ADR-053；版本表 VERIFIED_VERSIONS 与对账 versionConsistency 已删除），文件路径保留到 T-ARCH-03 迁入 Harness 描述模块；续接命令对任何版本给出，版本只作证据"
       ],
       "test_cases": [
         "G011-C01",
@@ -1370,7 +1371,11 @@
         "G011-UG8",
         "G011-UG9",
         "G011-UG10",
-        "G011-NC3"
+        "G011-NC3",
+        "G011-NC4",
+        "G011-UG11",
+        "G011-N04",
+        "G011-N05"
       ],
       "active_slice": "upgrade-with-running-programs"
     },
@@ -1437,7 +1442,9 @@
         "G012-OC1",
         "G012-OC2",
         "G012-OC3",
-        "G012-OC4"
+        "G012-OC4",
+        "G012-OC5",
+        "G012-OC6"
       ],
       "active_slice": "official-install-channels"
     },
@@ -2300,7 +2307,8 @@
         "G031-C02",
         "G031-C03",
         "G031-R01",
-        "G031-NC1"
+        "G031-NC1",
+        "G031-NC2"
       ],
       "active_slice": "native-installation-management"
     },
@@ -2335,7 +2343,9 @@
         "src/adapters/control/opencode.ts",
         "src/adapters/control/claude.ts",
         "src/adapters/control/hermes.ts",
-        "tests/fixtures/hermes-cli.mjs"
+        "tests/fixtures/hermes-cli.mjs",
+        "tests/protocol/openclaw.test.ts",
+        "tests/fixtures/openclaw-bridge-peer.mjs"
       ],
       "requirements": [
         "R11",
@@ -2391,7 +2401,14 @@
         "G032-NC24",
         "G032-NC25",
         "G032-NC26",
-        "G032-NC27"
+        "G032-NC27",
+        "G032-NC28",
+        "G032-NC29",
+        "G032-NC30",
+        "G032-OC1",
+        "G032-OC2",
+        "G032-OC3",
+        "G032-OC4"
       ],
       "active_slice": "native-installation-management"
     },
@@ -2495,7 +2512,8 @@
         "G034-NC8",
         "G034-NC9",
         "G034-NC10",
-        "G034-NC11"
+        "G034-NC11",
+        "G034-NC12"
       ],
       "active_slice": "native-installation-management"
     },
@@ -4217,19 +4235,19 @@
         "INV-17",
         "INV-20"
       ],
-      "scope": "按 ADR-046 承接七个焦点 Harness（含用户同日补充的 OpenClaw）的第一批工程加固：版本单一来源与一致性检查（预发布语义、Hermes 从 venv dist-info 读版本、dsh 继续命令只保留 headless、读表区间覆盖 0.2.0-rc.2）、失败写入记录只存错误码与 ~ 路径且 history 逐条降级、流式输出按窗口合并提交（ADR-047）、G063 边界检查落地、ClaudeControl 读 _auth/status_update 与 OpenCodeControl 1.18.x 补 /compact、非焦点三个（Cursor、Gemini CLI、Pi）冻结；各项的源码与测试文件归其既有所有者，本任务只持有两份 ADR",
+      "scope": "按 ADR-046 承接七个焦点 Harness（含用户同日补充的 OpenClaw）的第一批工程加固：版本单一来源与一致性检查（预发布语义、Hermes 从 venv dist-info 读版本、dsh 继续命令只保留 headless、读表区间覆盖 0.2.0-rc.2）、失败写入记录只存错误码与 ~ 路径且 history 逐条降级、流式输出按窗口合并提交（ADR-047）、G063 边界检查落地、ClaudeControl 读 _auth/status_update 与 OpenCodeControl 1.18.x 补 /compact、非焦点三个（Cursor、Gemini CLI、Pi）冻结；各项的源码与测试文件归其既有所有者，本任务只持有两份 ADR。2026-10-22 起第 1 项（版本单一来源与一致性检查）与第 5 项里“1.18.x 补 /compact”被 ADR-053 取代：版本表、对账与读表区间删除，版本只作证据，/compact 在目录未列出时对任何版本补入",
       "out_of_scope": [
         "不写用户的真实 Harness 配置，不改全局环境；测试只用临时家目录、临时数据根与临时租约目录（ADR-041）",
-        "不改 VERIFIED_VERSIONS 的数字；不为 Cursor、Gemini CLI、Pi 新增矩阵 ✅ 或更新已验证版本",
+        "不为 Cursor、Gemini CLI、Pi 新增矩阵 ✅（原“不改 VERIFIED_VERSIONS 的数字、不更新已验证版本”2026-10-22 起随 ADR-053 删除：版本表已不存在，版本只作证据）",
         "不运行任何 Harness 做验收；Claude 2.1.306 与 dsh 0.2.0-rc.2 的真实重验收另立任务",
         "不删除非焦点 Harness 的适配器、测试与历史证据；默认隐藏或删除由用户在 ADR-048 决定"
       ],
       "acceptance": [
-        "已验证版本、目录包版本与读表区间来自同一来源，三处不一致的无效样例被测试拒绝；0.2.0-rc.2 命中 dsh 读表；Hermes 的 dist-info 给出版本",
+        "（第 1 项，2026-10-22 起被 ADR-053 取代）原要求“已验证版本、目录包版本与读表区间来自同一来源，三处不一致的无效样例被测试拒绝；0.2.0-rc.2 命中 dsh 读表；Hermes 的 dist-info 给出版本”已在第一批完成；现在版本表、对账与读表区间删除，任何版本都接入、不提示，由正向断言证明（G011-NC2、G054-NC12、G054-NC13）；Hermes 的版本改从 install-stamp.json 读（G012-OC5）",
         "含家目录绝对路径的失败写入之后 history 仍能逐条读取，坏记录单条标明；公开错误消息不含家目录",
         "每回合的事件数与提交成本按 ADR-047 下降，先提交再发布不变",
         "边界检查进入 pnpm check，每条规则有无效 fixture 且失败非零退出",
-        "Claude 的认证状态进入就绪状态而不是诊断；OpenCode 1.18.x 的命令目录含 /compact",
+        "Claude 的认证状态进入就绪状态而不是诊断；OpenCode 的命令目录在原程序未列出 compact 时对任何版本含 /compact（第 5 项里“1.18.x”的限定 2026-10-22 起被 ADR-053 取代，G032-NC24）",
         "全程未写用户真实配置，设计采纳、代码完成、测试通过与真实引擎通过分别表述",
         "第二批六项（C1 治理与证据规则、C2 真实验收守护与证据格式、C3 Harness 分层与按需刷新、C4 业务库迁移前备份、C5 OpenClaw 驱动、C6 Hermes 与 OpenClaw 升级就绪研究）的用例登记在所属任务下，状态 planned；完成后分别表述设计采纳、代码完成、测试通过与真实引擎通过"
       ],
