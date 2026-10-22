@@ -10,8 +10,8 @@
 
 总指挥在 440ba52 上做了一轮只读评估：没有运行任何 Harness，没有读凭据，没有触碰 4317 上运行的服务。与本切片直接相关的事实如下，均按 file:line 复核过：
 
-- **已验证版本表与本机脱节。** `src/infrastructure/management/verified-versions.ts:13` 把 Claude Code 记为 `2.1.296`，本机是 2.1.306（nvm，当前使用）与 2.1.302（npm，Homebrew 前缀）；`:21` 把 dsh 记为 `0.2.1-alpha.1`，本机是 npm 官网的 0.2.0-rc.2（2026-10-18 经 4317 安装）。`src/adapters/catalog.ts:35` 的 dsh 包版本也还是 `0.2.1-alpha.1`。选择器因此把两个焦点 Harness 都标为“未经验证的版本”。
-- **dsh 的读表区间按 semver 不含 0.2.0-rc.2。** `src/adapters/capability-reads.ts:296` 写 `>=0.2.0 <0.3.0`，`src/infrastructure/capabilities/scan.ts:804-805` 以 `satisfies(…, { includePrerelease: true })` 判定；按 semver，预发布版本 `0.2.0-rc.2` 小于 `0.2.0`，所以能力页把本机 dsh 标为“未核实”。同一台机器上，选择器说“未经验证”，能力页说“未核实”，两套版本语义并存。
+- **已验证版本表与本机脱节。** `src/infrastructure/management/verified-versions.ts:13` 把 Claude Code 记为 `2.1.296`，本机是 2.1.306（nvm，当前使用）与 2.1.302（npm，Homebrew 前缀）；`:21` 把 dsh 记为 `0.2.1-alpha.1`，本机是 npm 官网的 0.2.0-rc.2（2026-10-18 经 4317 安装）。`src/adapters/catalog.ts:35` 的 dsh 包版本也还是 `0.2.1-alpha.1`。选择器因此把两个焦点 Harness 都标为“未经验证的版本”。（2026-10-22 按 [ADR-053](0053-latest-version-baseline.md) 删除：这张表与这条提示都不存在了，`verified-versions.ts` 只剩续接命令表，版本只作证据；见文末补记。）
+- **dsh 的读表区间按 semver 不含 0.2.0-rc.2。** `src/adapters/capability-reads.ts:296` 写 `>=0.2.0 <0.3.0`，`src/infrastructure/capabilities/scan.ts:804-805` 以 `satisfies(…, { includePrerelease: true })` 判定；按 semver，预发布版本 `0.2.0-rc.2` 小于 `0.2.0`，所以能力页把本机 dsh 标为“未核实”。同一台机器上，选择器说“未经验证”，能力页说“未核实”，两套版本语义并存。（2026-10-22 按 ADR-053 修订：读表不再有版本区间，只记 `checkedOn`；“未核实”与“未经验证”两种提示都已删除，两套语义不再存在；见文末补记。）
 - **dsh 的继续命令有一条不成立。** `verified-versions.ts:69` 给 dsh 的交互命令是 `dsh tui --resume`；总指挥只读核对本机安装的 `dsh-app-boot/lib/index.js`，rc.2 发运的 profile 只有 acp、web、headless、sdk、sdk-minimal，没有 tui，对不存在的 profile 直接抛错。
 - **Hermes 的版本读不到。** Hermes 是官方脚本渠道，`src/infrastructure/discovery/installation-channels.ts` 的 `script` 分支只认 `…/versions/<版本>` 的布局，Hermes 没有这种布局，所以版本恒为 null；而它的 venv 里有 `site-packages/hermes_agent-0.12.0.dist-info`，能给出版本。
 - **失败的写入记录带家目录绝对路径。** `src/infrastructure/capabilities/changes.ts:680`、`:959` 与 `skill-changes.ts:490` 把 Node 的 `failure.message` 原文持久化；`src/web/server.ts:393-394` 的 `privateJson` 一旦在应答里发现家目录形式的路径就回 500 `PRIVACY_GUARD`。只要出过一次这样的失败，“修改与备份”视图就永久 500。
@@ -129,4 +129,4 @@
 
 第 5 项的 OpenCode `/compact` 已在 1.18.35 上真实核对通过：压缩以回复文本交回，压缩后仍记得先前事实，见 [opencode-compact-2026-10-22.md](../verification/opencode-compact-2026-10-22.md)。第 1 项中 Claude 与 dsh 的“真实重验收前不改数字”同日按记录更新，见 ADR-038 的两条 2026-10-22 补充。
 
-同日稍后，用户的原则“接入不限定版本，默认按最新版”写成 [ADR-053](0053-latest-version-baseline.md)：第 1 项的版本表、对账与读表区间删除，第 5 项的 `/compact` 改为目录未列出时对任何版本补入；背景第 13–14 行描述的两套版本语义不再存在；否决方案里“直接改 `VERIFIED_VERSIONS`”的取舍、裁决第 1 条与“留给后续批次”里的两份区间判断都已就地注明。真实重验收的记录与 1.18.35 的 `/compact` 记录保留为证据。
+同日稍后，用户的原则“接入不限定版本，默认按最新版”写成 [ADR-053](0053-latest-version-baseline.md)：第 1 项的版本表、对账与读表区间删除，第 5 项的 `/compact` 改为目录未列出时对任何版本补入；背景第 13–14 行描述的版本表与两套版本语义不再存在（已就地注明）；否决方案里“直接改 `VERIFIED_VERSIONS`”的取舍、裁决第 1 条与“留给后续批次”里的两份区间判断都已就地注明。真实重验收的记录与 1.18.35 的 `/compact` 记录保留为证据。
