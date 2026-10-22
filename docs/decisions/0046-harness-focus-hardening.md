@@ -30,17 +30,18 @@
    - dsh 的继续命令只保留 headless（`dsh headless --session-id <id> …`）；交互命令在有真实回合验证前不给。
    - dsh 的读表区间按 ADR-045 第 3c 步与第 4 步在 rc.2 上的真实往返记录改为覆盖 rc.2。
    - `VERIFIED_VERSIONS` 的数字在真实重验收前不改：Claude 仍为 2.1.296，dsh 仍为源码版的 0.2.1-alpha.1（按 ADR-044 为历史证据）。界面照 ADR-038 提示，不冒充验证。
+   - 2026-10-22 起本项被 [ADR-053](0053-latest-version-baseline.md) 取代：`VERIFIED_VERSIONS`、`versionConsistency` 与读表的 semver 区间删除，版本只作工程证据（矩阵 `installation`、验收记录、读表 `checkedOn`）；“界面照 ADR-038 提示”不再成立，任何版本都不提示；Hermes 的版本改从 `install-stamp.json` 读（第三批 D4）；dsh 的一次性命令对任何版本给出并附凭据前提。本项在第一批里做过的事（预发布语义、dist-info 版本、headless 命令、rc.2 读表）作为当时的加固保留记录。
 2. **失败的写入记录只存错误码与 `~` 形式的路径。** `/api/v1/capabilities/history` 逐条降级：一条坏记录只让那一条显示为无法读取，不让整页 500；公开错误消息把家目录替换为 `~`。
 3. **流式输出按窗口合并提交。** 独立为 ADR-047（`0047-stream-output-coalescing.md`，由并行任务撰写）：每回合的事件数与提交成本降一个量级；先提交再发布（INV-06）与断线不取消（INV-19）不变。
 4. **G063 落地。** `tools/check-boundaries.mjs` 加 `tools/boundary-rules.json`，纳入 `pnpm check`；含“组合应用或启动 Gateway 的测试必须用自己的临时租约目录”这一条静态规则（`docs/engineering/testing.md` 第 4 节此前只有人工审查）；每条规则有无效 fixture 证明会被拒绝。
-5. **控制层打磨。** `ClaudeControl` 读 `_auth/status_update`，把认证状态接到就绪状态；`OpenCodeControl` 在 1.18.x 补 `/compact`；`AcpControl` 给子类一个扩展通知钩子，通用层不按 Harness 分支。
+5. **控制层打磨。** `ClaudeControl` 读 `_auth/status_update`，把认证状态接到就绪状态；`OpenCodeControl` 在 1.18.x 补 `/compact`；`AcpControl` 给子类一个扩展通知钩子，通用层不按 Harness 分支。（2026-10-22 按 [ADR-053](0053-latest-version-baseline.md) 修订：`/compact` 在 OpenCode 的命令目录未列出时对任何版本补入，不再限 1.18.x；回合以 end_turn 结束却没有任何回复、工具或活动时判为原程序没有执行并明确失败；1.18.35 上的真实通过只作证据。）
 6. **非焦点的三个即日冻结。** Cursor、Gemini CLI、Pi 不再新增矩阵 ✅、不更新已验证版本、不承接新能力；适配器、测试与历史真实证据保留。是否默认隐藏或删除由用户在 ADR-048 决定。OpenClaw 按用户同日的补充归入焦点，不冻结；它的 Gateway 与 Node 仍只按 ADR-043 经用户确认的升级流程重启，验收不重启它们。
 
 第一批不写用户的任何真实 Harness 配置，不运行任何 Harness 做验收。真实重验收（Claude 2.1.306、dsh 0.2.0-rc.2）是后续批次，需要用户同意后在 4317 进行。
 
 ## 否决方案与代价
 
-- **直接把 `VERIFIED_VERSIONS` 改成本机版本。** 否决：那是“已验证”表，没有真实回合就改等于伪造证据（AGENTS.md：不把 Agent 回复或 exit 0 当作达标证据）。代价是界面继续提示“未经验证”，直到重验收。
+- **直接把 `VERIFIED_VERSIONS` 改成本机版本。** 否决：那是“已验证”表，没有真实回合就改等于伪造证据（AGENTS.md：不把 Agent 回复或 exit 0 当作达标证据）。代价是界面继续提示“未经验证”，直到重验收。（2026-10-22：ADR-053 删除了这张表，这条取舍不再适用；版本只作证据，界面不再提示。）
 - **把读表区间也改成精确版本。** 否决：读表描述的是文件格式随版本的变化，区间才是它的自然表达。保留两种表达，但统一来源与比较规则。
 - **先做描述模块重构（每个 Harness 一个描述文件），再修版本与审计。** 否决：重构牵动约 35 个文件和 6 个被多切片共有的大文件，与第一批互斥；版本、审计记录和流式提交是“每家都依赖”的修复，先做。
 - **删除非焦点三个。** 不在本记录决定：不可逆，且牵动真实证据（codex↔gemini 的 A→B→A 切换），见 ADR-048。
@@ -68,7 +69,7 @@
 | 3 流式合并 | integration | `tests/integration/session-runtime.test.ts`、`tests/integration/web-session-stream.test.ts`、`tests/integration/parallel-work.test.ts`、`tests/integration/session-cli.test.ts` | 见 ADR-047 |
 | 4 边界检查 | integration 加工具自检 | `tests/integration/g063.test.ts`、`tools/fixtures/boundaries/` | 合法依赖通过；领域导入子进程、契约导入 yaml、web 导入 infrastructure、测试未用临时租约目录各被拒绝且非零退出；`pnpm check` 包含它 |
 | 5 控制层 | protocol | `tests/protocol/acp.test.ts`（对端 `tests/fixtures/control-peer.mjs`） | `_auth/status_update` 变成就绪状态而不是诊断；OpenCode 1.18.x 的命令目录含 `/compact`；其他 ACP Harness 的通知路径不变 |
-| 6 冻结 | 设计检查加人工评审 | `python3 tools/check_design.py`；评审 `plan/native-capabilities.json` 与 `verified-versions.ts` 的改动 | 三个非焦点 Harness（Cursor、Gemini CLI、Pi）的矩阵 ✅ 数与已验证版本不增长 |
+| 6 冻结 | 设计检查加人工评审 | `python3 tools/check_design.py`；评审 `plan/native-capabilities.json` 的改动 | 三个非焦点 Harness（Cursor、Gemini CLI、Pi）的矩阵 ✅ 数不增长（`complete_at_freeze`；原来还要看已验证版本表，它 2026-10-22 随 ADR-053 删除） |
 
 真实引擎通过：本批无。Claude 2.1.306、dsh 0.2.0-rc.2 的真实重验收另立验收记录。
 
@@ -91,7 +92,7 @@
 ## 审批代理的裁决（2026-10-21，总指挥兼审批代理 Fable 5.1）
 
 - 方向由用户决定；本记录只划分切片与边界。六项加固全部接受，附条件：
-  1. 第 1 项不改 `VERIFIED_VERSIONS` 的数字；一致性检查必须有“三处版本不一致”的无效样例。
+  1. 第 1 项不改 `VERIFIED_VERSIONS` 的数字；一致性检查必须有“三处版本不一致”的无效样例。（已按此完成；2026-10-22 起表与对账随 ADR-053 删除。）
   2. 第 2 项的 history 逐条降级不得吞掉错误：坏记录以明确状态显示，日志记录条目 ID。
   3. 第 3 项另立 ADR-047 送审；合并窗口与上限写进契约，先提交再发布不变。
   4. 第 4 项的每条规则都要有无效 fixture；`pnpm check` 失败返回非零。
@@ -121,9 +122,11 @@
 - **留给后续批次。**
   - 详情栏在只有一次性命令时仍只显示原生会话 ID，见 ADR-039 的 2026-10-21 补充。
   - `src/web/shown-paths.ts` 的家目录检测还不认全角标点边界。
-  - 版本区间判断在 `verified-versions.ts` 与 `capabilities/scan.ts` 各有一份。
+  - 版本区间判断在 `verified-versions.ts` 与 `capabilities/scan.ts` 各有一份。（2026-10-22：两份都随 ADR-053 删除。）
   - G063 的公共类型面检查（`check-contract-surface`）未落地。
 
 ## 2026-10-22 补记
 
-第 5 项的 OpenCode `/compact` 已在 1.18.35 上真实核对通过：压缩以回复文本交回，压缩后仍记得先前事实，见 [opencode-compact-2026-10-22.md](../verification/opencode-compact-2026-10-22.md)。第 2 项中 Claude 与 dsh 的“真实重验收前不改数字”同日按记录更新，见 ADR-038 的两条 2026-10-22 补充。
+第 5 项的 OpenCode `/compact` 已在 1.18.35 上真实核对通过：压缩以回复文本交回，压缩后仍记得先前事实，见 [opencode-compact-2026-10-22.md](../verification/opencode-compact-2026-10-22.md)。第 1 项中 Claude 与 dsh 的“真实重验收前不改数字”同日按记录更新，见 ADR-038 的两条 2026-10-22 补充。
+
+同日稍后，用户的原则“接入不限定版本，默认按最新版”写成 [ADR-053](0053-latest-version-baseline.md)：第 1 项的版本表、对账与读表区间删除，第 5 项的 `/compact` 改为目录未列出时对任何版本补入；背景第 13–14 行描述的两套版本语义不再存在；否决方案里“直接改 `VERIFIED_VERSIONS`”的取舍、裁决第 1 条与“留给后续批次”里的两份区间判断都已就地注明。真实重验收的记录与 1.18.35 的 `/compact` 记录保留为证据。

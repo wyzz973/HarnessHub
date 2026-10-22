@@ -23,8 +23,7 @@
      - 另一个仍在运行的 HarnessHub 进程持有的使用记录：阻止升级。
      - 写记录的进程已经结束（或 PID 已被复用：启动时间晚于记录）的旧记录：在维护锁内清除，逐条写日志。
 2. **确认框写清楚会发生什么。** 内容包括：
-   - 目标版本和原渠道；两个日历版本相隔两个月以上时说明跨度。
-   - 目标版本没有经过验证时，按 ADR-038 说明 HarnessHub 是在哪个版本上验证的。
+   - 目标版本和原渠道（预发布版作中性事实写出）。风险说明只来自产品自己给出的信息：更新器的 dry-run 计划（例如 `openclaw update --dry-run`）或 Doctor 结论。原来的两条——“两个日历版本相隔两个月以上时说明跨度”“目标版本没有经过验证时按 ADR-038 说明 HarnessHub 是在哪个版本上验证的”——2026-10-22 按 [ADR-053](0053-latest-version-baseline.md) 决定 2 删除：它们按版本号推断风险。
    - 会重启的服务，以及将要执行的命令原文（`launchctl kickstart -k gui/<uid>/<label>`）。
    - 会关闭的 HarnessHub 进程，以及仍用旧版本的程序。
    - 已安装插件的目录名，以及配方里的产品说明。OpenClaw 的说明有：重启时渠道会断开片刻，最好选能接受中断的时间；HarnessHub 不运行 `openclaw doctor`，需要迁移时由用户运行 `openclaw doctor` 再 `openclaw gateway restart`；插件可能不兼容。

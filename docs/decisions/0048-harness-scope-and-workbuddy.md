@@ -8,7 +8,7 @@
 
 本机事实（2026-10-21 只读核对，没有运行任何 Harness）：
 
-| Harness | 本机安装 | HarnessHub 已验证版本（ADR-038） | 现状 |
+| Harness | 本机安装 | 当时的真实验收版本（ADR-038 的表；2026-10-22 起按 ADR-053 只作证据） | 现状 |
 |---|---|---|---|
 | Claude Code | 2.1.306（nvm，当前使用）、2.1.302（npm，Homebrew 前缀）；适配器 claude-agent-acp 0.89.1 | 2.1.296 | 当前版本没有一格真实证据；Claude 每周自更新 |
 | Codex | 0.162.1（Homebrew cask） | 0.162.1 | 深度接入；上游已发 0.163.x |
@@ -18,7 +18,7 @@
 | OpenClaw | 2026.3.23-2（npm 全局，Homebrew 前缀；Gateway 守护进程在运行，接着消息渠道） | 2026.3.23-2 | 深度接入（Gateway 模型目录、转录对账、原生配置同步）；矩阵 5 格 ✅（2026-10-11 的验证早于 ADR-047 与 B6，`.tmp` 证据已不存在，待 M3 T-OC-08 重验）；升级与重启按 ADR-043 由用户确认——2026-10-17 用户点击升级被目标版本的配置校验拦下（[逐份升级验收](../verification/installation-upgrade-2026-10-17.md)“4317 部署”一节），升级路线待 ADR-0052（第二批 C6 的 proposed 草案） |
 | WorkBuddy | `/Applications/WorkBuddy.app` 5.3.14，内嵌 CodeBuddy CLI 2.115.0（`package.json` 的 version 为 0.0.0）；npm 上 `@tencent-ai/codebuddy-code` 最新 2.163.0；`~/.codebuddy` 不存在 | 无 | 完全未接入 |
 
-非焦点三个（Cursor、Gemini CLI、Pi）按 ADR-046 第 6 项已冻结（OpenClaw 已按用户补充归入焦点）：不再新增矩阵 ✅、不更新已验证版本、不承接新能力；适配器、测试与历史证据保留。
+非焦点三个（Cursor、Gemini CLI、Pi）按 ADR-046 第 6 项已冻结（OpenClaw 已按用户补充归入焦点）：不再新增矩阵 ✅、不再重验、不承接新能力（原“不更新已验证版本”，2026-10-22 按 ADR-053 改写）；适配器、测试与历史证据保留。
 
 ## 范围与完成定义
 
@@ -27,9 +27,9 @@
   1. 设计采纳：ADR accepted，切片登记在 `plan/slices.json`。
   2. 代码完成：正式入口可用，边界检查与设计检查通过。
   3. 测试通过：对应层（unit、integration、protocol、browser）的测试通过，且有无效样例。
-  4. 真实引擎通过：在本机官网安装的、`VERIFIED_VERSIONS` 所记的版本上，经 4317 的正式入口真实通过，验收记录写明命令、版本、渠道与局限。
+  4. 真实引擎通过：在各 Harness 的最新正式版（官网渠道，本机安装）上经 4317 的正式入口真实通过，验收记录写明命令、版本、渠道与局限，版本作为证据（2026-10-22 按 [ADR-053](0053-latest-version-baseline.md) 修订；原为“在本机官网安装的、`VERIFIED_VERSIONS` 所记的版本上”）。
   5. 平台：只有 macOS（ADR-044）；不再写“Windows/Linux 未验证”。
-- **“做精”的判据**（每个焦点 Harness）：矩阵的每一格要么是在当前已验证版本上的 ✅，要么是 ☑（原接口部分提供，Hub 已尽：native=partial、hub=done、protocol=pass、real=pass，且说明写明原接口缺什么；审批代理裁决 2，计为终态），要么是写明原因的 —、✕ 或 ○；已验证版本就是本机当前使用的那份官网安装的版本；能力页的每一步在它上面有真实往返记录；在原程序中继续的命令经真实回合验证；每个安装渠道的升级与卸载至少真实执行过一次——OpenClaw 的卸载例外：以替身验证与只读核对真实 launchd 状态代替真实执行（审批代理裁决 3，T-OC-13 选 A）。
+- **“做精”的判据**（每个焦点 Harness；2026-10-22 按 ADR-053 修订）：矩阵的每一格要么是在验收当日最新正式版上的 ✅（记录写明版本），要么是 ☑（原接口部分提供，Hub 已尽：native=partial、hub=done、protocol=pass、real=pass，且说明写明原接口缺什么；审批代理裁决 2，计为终态），要么是写明原因的 —、✕ 或 ○；真实验收以验收当日的最新正式版为对象，记录写明版本（原“已验证版本就是本机当前使用的那份官网安装的版本”）；能力页的每一步在它上面有真实往返记录；在原程序中继续的命令对任何版本都给出，在最新正式版上核对过（原“经真实回合验证”）；每个安装渠道的升级与卸载至少真实执行过一次——OpenClaw 的卸载例外：以替身验证与只读核对真实 launchd 状态代替真实执行（审批代理裁决 3，T-OC-13 选 A）。
 - **不算完成**：协议测试通过不算真实通过；指向已不存在的 `.tmp/` 文件的证据不算通过，真实验收为通过或部分通过的格必须至少有一项仓库内证据（设计检查规则，裁决 5）；非官网安装上的证据按 ADR-044 为历史（矩阵 `historical: true`，不计入 `native_capabilities_complete_official`，裁决 6）。
 
 ## 用户待决项
@@ -41,14 +41,14 @@
 - **C 删除**（不可逆）：删除三个产品的目录条目、适配器、测试与品牌资产。代价：
   - 仓库唯一的 A→B→A 真实切换证据是 codex↔gemini（`docs/engineering/testing.md` 第 4 节要求至少两个 Harness 的 A→B→A）；
   - 旧对话续聊：ADR-044 第 6 条承诺历史对话保留，删除适配器后只能看、不能续；
-  - 还牵动 `tests/unit/verified-versions.test.ts` 把已验证表的键集合与矩阵 Harness 集合绑死的断言、`plan/native-capabilities.json` 的 Harness 列表（设计检查按它校验每格与证据路径）、注册表快照与品牌资产。
+  - 还牵动 `plan/native-capabilities.json` 的 Harness 列表（设计检查按它校验每格与证据路径）、注册表快照与品牌资产（原来还有 `tests/unit/verified-versions.test.ts` 把已验证表的键集合与矩阵 Harness 集合绑死的断言，2026-10-22 随 ADR-053 删除）。
 
 ### 2. WorkBuddy 的接入路线
 
 事实：WorkBuddy 应用内嵌 CodeBuddy CLI；CLI 的家目录由环境变量 `CODEBUDDY_CONFIG_DIR` 决定，缺省 `~/.codebuddy`；应用自己把数据放在 `~/.workbuddy`，并以 `--serve` 侧车加 streamable-http 的方式运行 CLI。Hub 直接以 stdio 启动内嵌 CLI 而不设环境变量，会建出一份私有的 `~/.codebuddy`，用户要再登录一次，而且遥测、自动更新（会改 PATH）、自动记忆默认开启；Hub 的 stdio 会话不会出现在应用的会话列表里。ACP 注册表登记的是 `npx @tencent-ai/codebuddy-code@2.163.0 --acp`。
 
 - **A npm `@tencent-ai/codebuddy-code`**：走 ADR-044 现有的 npm 渠道，探测、升级、卸载都按现有流程。代价：登录与数据在 `~/.codebuddy`，与应用的 `~/.workbuddy` 是两份，用户要登录两次；版本与应用不同步（2.163.0 对 2.115.0）；两边的会话互不可见。
-- **B 应用内嵌 CLI 2.115.0，共享 `~/.workbuddy`**（推荐）：Hub 启动内嵌 CLI 时注入 `CODEBUDDY_CONFIG_DIR=~/.workbuddy`、`WORKBUDDY_CONFIG_DIR=~/.workbuddy`、`WORKBUDDY_DATA_FOLDER_NAME=.workbuddy`、`DISABLE_AUTOUPDATER=1`。这是 [ADR-021](0021-native-profile-and-deviation-tolerance.md)“只透传用户真实设置的配置位置变量”的例外，要写进 ADR-021 并有测试证明只对 WorkBuddy 注入；升级由应用负责，Hub 只显示版本；卸载不适用；[ADR-044](0044-macos-official-channels.md) 需补第五类只读渠道 `app-bundle`（程序在 `/Applications/WorkBuddy.app` 内），只探测、不维护。代价：应用更新后 CLI 版本随之变，需要 ADR-038 的已验证区间；应用不在时这个 Harness 不可用；注入的变量名要在真实启动中核实。
+- **B 应用内嵌 CLI 2.115.0，共享 `~/.workbuddy`**（推荐）：Hub 启动内嵌 CLI 时注入 `CODEBUDDY_CONFIG_DIR=~/.workbuddy`、`WORKBUDDY_CONFIG_DIR=~/.workbuddy`、`WORKBUDDY_DATA_FOLDER_NAME=.workbuddy`、`DISABLE_AUTOUPDATER=1`。这是 [ADR-021](0021-native-profile-and-deviation-tolerance.md)“只透传用户真实设置的配置位置变量”的例外，要写进 ADR-021 并有测试证明只对 WorkBuddy 注入；升级由应用负责，Hub 只显示版本；卸载不适用；[ADR-044](0044-macos-official-channels.md) 需补第五类只读渠道 `app-bundle`（程序在 `/Applications/WorkBuddy.app` 内），只探测、不维护。代价：应用更新后 CLI 版本随之变（按 ADR-053 任何版本都接入、版本只作证据，原“需要 ADR-038 的已验证区间”2026-10-22 删除）；应用不在时这个 Harness 不可用；注入的变量名要在真实启动中核实。
 - **C 并列**：A 与 B 同时作为同一产品的两份安装列出（ADR-044 的多份安装），用户选哪份是“当前使用”。代价：两份数据目录、两次登录与“哪份在用”的困惑同时存在，等于把 A 和 B 的代价都留下。
 
 ### 3. Harness id 与显示名
@@ -89,9 +89,9 @@ Claude 的版本策略（每周自更新对“只认一个版本号”）、dsh 
 |---|---|---|---|
 | 1 | 非焦点三个 | 冻结并默认隐藏：目录、适配器、测试与历史证据保留；“我的 Agent”、选择器与能力页默认不显示 Cursor、Gemini CLI、Pi，设置里可再显示；停在它们上面的历史对话照常可以打开（ADR-044 第 6 条） | 目录分层字段与过滤、设计检查规则、浏览器测试 |
 | 2 | WorkBuddy | 路线 B：接应用内嵌的 CodeBuddy CLI，与应用共用 `~/.workbuddy`；id `workbuddy`，显示名“WorkBuddy（CodeBuddy CLI）”；Hub 启动的进程里关闭自动更新、自动记忆与 cron；运行时用 PATH 上的 Node；遥测由用户另定 | M4：先只读研究与一次受控 ACP 握手，再写接入 ADR |
-| 3 | Claude 版本策略 | 区间加冒烟：已验证区间两端都要有真实记录；检测到新版本后由用户在页面触发一次约 10 次提示的冒烟（目录、原生恢复、审批、续接命令、一项能力生效核对），通过即扩区间；以本机 2.1.306 重验，区间 [2.1.296, 2.1.306]；页面显示各家的自更新状态，只显示，不写配置 | M3 真实重验收；冒烟入口与自更新状态是新功能 |
-| 4 | dsh 基线 | 以本机 0.2.0-rc.2 为精确基线，尽快重验（不超过 ¥3）；dsh 按 profile 分开保存设置这一点只在界面说明 | 真实验收的配置守护清单落地后执行 |
-| 5 | Hermes | 先只读研究 v0.22.2 标签与当时的 main（网关投影的启用条件、认证、审批期限、`/model` 回复、会话导出、迁移），出 ADR 草案后再定升级与否；期间停在 0.12.0 维护 | 只读研究记录与 ADR 草案 |
+| 3 | Claude 版本策略 | 原选定“区间加冒烟”：已验证区间两端都要有真实记录；检测到新版本后由用户在页面触发一次约 10 次提示的冒烟（目录、原生恢复、审批、续接命令、一项能力生效核对），通过即扩区间；以本机 2.1.306 重验，区间 [2.1.296, 2.1.306]。**2026-10-22 按 [ADR-053](0053-latest-version-baseline.md) 修订**：以最新正式版为基线；新版本发布后的回归只作开发侧动作，不进产品界面、不扩展任何区间；2.1.296 与 2.1.306 的重验记录保留为证据。“页面显示各家的自更新状态，只显示，不写配置”保留 | M3 真实验收以最新正式版为对象（待用户答复 ADR-053“待用户决定”第 1 题）；自更新状态显示是新功能 |
+| 4 | dsh 基线 | 原选定“以本机 0.2.0-rc.2 为精确基线，尽快重验（不超过 ¥3）”，已于 2026-10-22 重验通过。**同日按 ADR-053 修订**：以 npm latest 为基线（2026-10-22 为 0.2.1-rc.2），0.2.0-rc.2 的记录保留为证据；dsh 按 profile 分开保存设置这一点只在界面说明 | 下一轮真实验收在 npm latest 上进行 |
+| 5 | Hermes | 原选定“先只读研究 v0.22.2 标签与当时的 main（网关投影的启用条件、认证、审批期限、`/model` 回复、会话导出、迁移），出 ADR 草案后再定升级与否；期间停在 0.12.0 维护”，研究已完成。**2026-10-22 按 ADR-053 修订**：基线是最新正式版 v0.22.4；是否让 HarnessHub 的 Hermes 会话进入用户的网关由用户决定（[ADR-051](0051-hermes-upgrade-route.md) 修订版）；答复前本机 0.12.0 照常接入、不做版本提示 | ADR-051（proposed，待用户） |
 | 6 | 业务库迁移前备份 | 每次存储版本提升前用 `VACUUM INTO` 备份，保留最近 2 份，超出删最旧；备份失败则迁移不发生 | 业务库所有者助手；此前不批准持久格式升级 |
 | 7 | 审计 | 修改记录、备份、任务与日志保留 90 天，到期导出为 0600 文件后裁剪；可导出 JSON/Markdown；手工操作补记为 manual 类型，标“产品流程外”，不进漂移比对；原生模式下用户自己的凭据在页面与导出里默认打码 | 统一操作记录、保留与导出、补记格式 |
 | 8 | 刷新时机 | 手动“重新检测”、管理任务完成、登录 shell 目录变化时刷新，另加窗口重新获得焦点时刷新（至少间隔 60 秒）；不再后台轮询 | 去轮询化与原生检查缓存 |
@@ -102,7 +102,7 @@ Claude 的版本策略（每周自更新对“只认一个版本号”）、dsh 
 
 总指挥兼审批代理对第 6 项及由它牵出的证据规则裁决如下，第二批 C1 同日落地（`tools/check_design.py` 与 `tools/test_check_design.py`、`plan/*.json`、`docs/engineering/readiness.md`）：
 
-1. **门禁标志与 G0～G5**：两个标志选 **C 删除**——`plan/tasks.json` 的 `application_implementation_allowed` 与 `plan/slices.json` 的 `gateway_execution_implementation_allowed` 连同检查规则、摘要字段与无效样例一起删除；源码门禁只由各已接受切片的 `allowed_files` 决定（“源码不在已接受切片内即拒绝”照旧，没有任何已接受切片时 `src/`、`web/` 下的每个文件都被拒绝）。G0～G5 选 **B 改写**为五层完成定义的门禁：G0 资料可追溯（plan、docs、source-lock）；G1 设计采纳（切片 ADR accepted，源码在 `allowed_files` 内）；G2 测试通过且新增检查有无效样例（unit/integration/protocol/browser 与 tools 自检）；G3 正式入口链路通过（Gateway/CLI 集成，SQLite/IPC/进程保持真实）；G4 真实引擎通过（本机官网安装版本、`VERIFIED_VERSIONS`、`docs/verification` 记录）；G5 并入“只面向 macOS”，不再单列。`plan/tasks.json` 的 `gate` 字段（G0/G1）只区分设计交付与实现，字段值不改，readiness.md 写明这一点。
+1. **门禁标志与 G0～G5**：两个标志选 **C 删除**——`plan/tasks.json` 的 `application_implementation_allowed` 与 `plan/slices.json` 的 `gateway_execution_implementation_allowed` 连同检查规则、摘要字段与无效样例一起删除；源码门禁只由各已接受切片的 `allowed_files` 决定（“源码不在已接受切片内即拒绝”照旧，没有任何已接受切片时 `src/`、`web/` 下的每个文件都被拒绝）。G0～G5 选 **B 改写**为五层完成定义的门禁：G0 资料可追溯（plan、docs、source-lock）；G1 设计采纳（切片 ADR accepted，源码在 `allowed_files` 内）；G2 测试通过且新增检查有无效样例（unit/integration/protocol/browser 与 tools 自检）；G3 正式入口链路通过（Gateway/CLI 集成，SQLite/IPC/进程保持真实）；G4 真实引擎通过（本机官网安装的最新正式版、`docs/verification` 记录写明版本；原含 `VERIFIED_VERSIONS`，2026-10-22 随 ADR-053 删除）；G5 并入“只面向 macOS”，不再单列。`plan/tasks.json` 的 `gate` 字段（G0/G1）只区分设计交付与实现，字段值不改，readiness.md 写明这一点。
 2. **☑ 终态**：native=partial、hub=done、protocol=pass、real=pass 且 `note` 写明原接口缺什么的格记为 ☑（“原接口部分提供，Hub 已尽”），按本记录的判据计为终态；同类格没有说明是设计检查错误（不再渲染为 ◐）。摘要新增 `native_capabilities_exhausted`（☑ 数）。
 3. **OpenClaw 的卸载真实验收豁免**（T-OC-13 选 A）：真机卸载会注销用户的 Gateway、断开微信与飞书，而 ADR-044 的卸载测试已用替身覆盖停止与注销；“做精”判据写明 OpenClaw 的卸载以替身验证与只读核对真实 launchd 状态代替真实执行。
 4. **冻结规则**：矩阵的每个 Harness 带 `tier`（`focus`：claude、codex、opencode、dsh、hermes、openclaw，WorkBuddy 接入后加入；`frozen`：cursor、gemini、pi）；冻结 Harness 带 `complete_at_freeze`（冻结时的 ✅ 数：Cursor 0、Gemini CLI 0、Pi 11），设计检查拒绝冻结列 ✅ 数超过它，以及 focus 列带 `complete_at_freeze`、未知 tier、未知 Harness 级字段。
@@ -114,7 +114,7 @@ Claude 的版本策略（每周自更新对“只认一个版本号”）、dsh 
 ## 影响（用户选定后）
 
 - 第 1 项选 B：Web 层加一处过滤与一个设置开关，矩阵与文档标“冻结”；选 C：另立 ADR 列出删除清单与证据处置。
-- 第 2～5 项：目录加一条产品（`src/adapters/catalog.ts`、`catalog-channels.ts`）、`VERIFIED_VERSIONS` 加键、矩阵加一列（设计检查要求每个 Harness 覆盖全部能力项）、ADR-021 的例外表、ADR-044 的第五类渠道、`tests/unit/verified-versions.test.ts` 的键集合。接入前先做一轮只读研究记录（ACP 面、登录位置、`session/load` 能否加载应用会话、探测会话的计费语义），再写接入 ADR。
+- 第 2～5 项：目录加一条产品（`src/adapters/catalog.ts`、`catalog-channels.ts`）、矩阵加一列（设计检查要求每个 Harness 覆盖全部能力项）、ADR-021 的例外表、ADR-044 的第五类渠道（原“`VERIFIED_VERSIONS` 加键”与“`tests/unit/verified-versions.test.ts` 的键集合”2026-10-22 起不再需要，ADR-053）。接入前先做一轮只读研究记录（ACP 面、登录位置、`session/load` 能否加载应用会话、探测会话的计费语义），再写接入 ADR。
 - 第 6 项（已落地，2026-10-22）：`tools/check_design.py` 与 `tools/test_check_design.py`、`plan/*.json`、`docs/engineering/readiness.md`；tools 自检并入 `pnpm check`（`check:tools`）。
 
 ## 验证（用户选定后）
@@ -122,3 +122,13 @@ Claude 的版本策略（每周自更新对“只认一个版本号”）、dsh 
 - 非焦点隐藏：浏览器测试覆盖开关的两种状态与停在非焦点 Harness 上的历史对话；设计检查通过。
 - WorkBuddy：先只读研究，后接入 ADR；第一次真实回合、登录与会话列表的核对需要用户同意，在 4317 进行。
 - 门禁标志与 G0～G5：检查工具的无效样例随改动更新，`python3 -I -B -m unittest discover -s tools -p 'test_*.py'` 通过（2026-10-22：60 个样例通过；tier、complete_at_freeze、仓库内证据、☑ 说明、historical 与未知 Harness 字段各有拒绝样例，并经临时关闭规则的变异核对；`python3 -I tools/check_design.py` 在仓库数据上通过，`--write` 可重现）。
+
+## ADR-053（2026-10-22）对本记录的修订
+
+用户同日的原则“接入不限定版本，默认按最新版”（[ADR-053](0053-latest-version-baseline.md)）修订了本记录的下列内容，上文已就地改写并标注：
+
+- 完成定义第 4 层：“在本机官网安装的、`VERIFIED_VERSIONS` 所记的版本上真实通过”改为“在各 Harness 的最新正式版（官网渠道，本机安装）上经 4317 正式入口真实通过，记录写明版本作为证据”。
+- “做精”判据：“已验证版本就是本机当前使用的那份”改为“真实验收以验收当日的最新正式版为对象，记录写明版本”；“在原程序中继续的命令经真实回合验证”改为“命令对任何版本都给出，在最新正式版上核对过”。
+- 用户决定 3（Claude 区间加冒烟）：页面触发冒烟并扩区间的入口撤销（ADR-053“已撤销的计划”），新版本发布后的回归只作开发侧动作；自更新状态显示保留。决定 4（dsh 精确基线 0.2.0-rc.2）改为 npm latest，已完成的 rc.2 重验保留为证据。决定 5（Hermes 停在 0.12.0）改为基线最新正式版 v0.22.4、是否进入用户网关待用户（ADR-051 修订版）。
+- 冻结规则：“不更新已验证版本”改为“不再重验”。WorkBuddy 路线 B 的“需要 ADR-038 的已验证区间”、影响一节的“`VERIFIED_VERSIONS` 加键”与“`tests/unit/verified-versions.test.ts` 的键集合”删除；审批代理裁决第 1 条的 G4 同步。
+- 本机事实表的“HarnessHub 已验证版本（ADR-038）”一列保留为当时的证据，列名注明。

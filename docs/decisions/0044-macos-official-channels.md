@@ -119,7 +119,7 @@
 - 安装脚本的下载只允许跳到登记的域名，例如 `claude.ai` 跳到 `downloads.claude.ai`，`chatgpt.com` 跳到 `releases.openai.com`，`opencode.ai` 跳到 `raw.githubusercontent.com`。跳到其他域名就停下，请用户在终端运行官网命令。确认框显示最终地址和 SHA-256，并写明脚本自己还会下载程序本体、平台不校验那部分；Cursor 另注明它的脚本不校验下载的完整性。
 - 脚本拿到的是 Gateway 从登录 shell 得到的 PATH，与用户终端一致。沙箱拦下的写入要在任务里写明“尝试写入 X，已被阻止”。期限 10 分钟；失败不卸载、不重试，留下的文件可以在列表里卸载。
 - Claude Code 的官方安装会写 `~/.claude.json`：放开它，但只记录变化的键，已知的安装字段显示值，其他键只写“值已更改（未显示）”。Codex 的脚本按 `$SHELL` 选择 shell 启动文件（macOS 上 zsh 是 `~/.zprofile`，bash 是 `~/.bash_profile`），只放开那一个文件，并记录增删的行。OpenCode 用 `--no-modify-path` 时写明“终端里找不到 opencode 时，需要自己把 `~/.opencode/bin` 加入 PATH”。
-- 装好后按 ADR-038 判断，不是验证过的版本就提示。
+- 装好后只读出并显示版本。（原“按 ADR-038 判断，不是验证过的版本就提示”一句 2026-10-22 按 [ADR-053](0053-latest-version-baseline.md) 删除：任何版本都接入，不按版本号提示。）
 - npm 加 `--no-audit --no-fund` 并关闭更新提示；前缀取 Gateway PATH 上第一个 Node.js 的前缀，确认框显示它。
 - 不改用户的 Homebrew，暂不提供 Homebrew 安装：9 个产品的首选渠道都不是 Homebrew。测试用临时 npm 前缀和本地假脚本，含跳转、超限、摘要不一致、越界写入等无效样例。第一个请用户点击的真实安装是 DeepSeek Harness，第二个是 Pi。每个安装确认框都有固定一行，说明“安装后终端里的命令指向哪一份”。
 - 同一产品的安装、卸载、升级互斥。
@@ -144,7 +144,7 @@
 ## 审批代理对升级设计的裁决（2026-10-17，第五轮）
 
 - **各渠道。**
-  - npm：确认框显示“现版本 → 目标精确版本”，预发布版要标出。升级的是适配器（例如 claude-agent-acp）时写明 HarnessHub 对该产品的控制在哪个适配器版本上验证过，新版本按 ADR-038 提示未经验证。
+  - npm：确认框显示“现版本 → 目标精确版本”，预发布版作中性事实写出——渠道 latest 本身就是目标，不用警示色（2026-10-22 按 [ADR-053](0053-latest-version-baseline.md) 修订，原为“预发布版要标出”）。原“升级的是适配器（例如 claude-agent-acp）时写明 HarnessHub 对该产品的控制在哪个适配器版本上验证过，新版本按 ADR-038 提示未经验证”同日删除。
   - Homebrew：用本地记录，命令带 `HOMEBREW_NO_AUTO_UPDATE=1`、`HOMEBREW_NO_INSTALL_CLEANUP=1`、`HOMEBREW_NO_AUTOREMOVE=1`；先预演一次，把一并升级的包列进确认框；其中有 node 这类共享运行时时单独红字警告。
   - 会自更新的脚本安装（Claude Code、Cursor）只提供“立即更新”，执行前后各读一次版本，完成时显示“2.1.302 → 2.1.305”或“已是最新”。
   - Codex、OpenCode 的脚本安装重新运行官方脚本，前后版本同样记录。

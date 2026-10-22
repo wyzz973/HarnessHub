@@ -1,13 +1,17 @@
 # ADR-038：未经验证的版本提示
 
-状态：accepted，2026-10-12。依据用户授权的审批代理（Fable 5.1）为排序第 5 项 F 定下的条件：只提示、不阻止使用，使用已验证版本范围，与 Codex 0.162.1 起才有的计划模式门槛分开。对应[第一链路调研](../research/first-chain-products-2026-10-11.md)的差距 5。
+状态：superseded by [ADR-053](0053-latest-version-baseline.md)，2026-10-22（原 accepted，2026-10-12）。用户 2026-10-22 的原则是“接入不限定版本，默认按最新版”：下文“决定”第 1–6 条与“区间语义”一节全部作废——`VERIFIED_VERSIONS` 版本表、已验证判定、“未经验证的版本”提示、维护规则与四处对账都已删除，界面不再按版本号提示或劝阻，续接命令对任何版本给出，读表只记核对版本 `checkedOn`。**本文记录的验证版本（Claude 2.1.296、2.1.306，dsh 0.2.0-rc.2 等）只作工程证据保留，代码不再读取**；2026-10-17 补充与两段 2026-10-22 补充是这些证据的来源，连同它们指向的验收记录一起保留。
+
+原状态与依据：accepted，2026-10-12。依据用户授权的审批代理（Fable 5.1）为排序第 5 项 F 定下的条件：只提示、不阻止使用，使用已验证版本范围，与 Codex 0.162.1 起才有的计划模式门槛分开。对应[第一链路调研](../research/first-chain-products-2026-10-11.md)的差距 5。
 
 ## 背景
 
 - 能力矩阵记录了每个 Harness 做真实验证时的安装版本，但界面不显示。用户的版本与验证时不同，部分能力可能不同。例如上游 Hermes 0.21.6 与 0.12.0 在审批、模式和认证上差异很大，同一版本的不同构建也可能行为不同。
 - 参考产品：AionUi 与已验证版本比较，不一致时仍可使用，但给出提示；Multica 按最低版本表把过旧版本下线。HarnessHub 不替用户切换或升级程序，所以只提示。
 
-## 决定
+## 决定（2026-10-22 起作废，保留为历史）
+
+以下六条由 ADR-053 取代。`src/infrastructure/management/verified-versions.ts` 这个路径还在，但只放 ADR-039 的续接命令表 `RESUME_COMMANDS`，直到 T-ARCH-03 迁入 Harness 描述模块。
 
 1. **已验证版本。** `src/infrastructure/management/verified-versions.ts` 为每个 Harness 记录一个版本范围，两端都必须有真实验证记录。经适配器接入的 Harness（Claude Code 经 claude-agent-acp）同时记录适配器的版本范围。目前每个 Harness 只有一个版本，就是能力矩阵 `installation` 中的版本。单元测试核对这张表与矩阵一致：矩阵中每个 Harness 都在表中，表中的版本也都出现在矩阵的安装说明里，避免两处悄悄不一致（2026-10-21 起扩展为四处对账，见文末“区间语义”）。
 2. **判断。** 产品版本和不同于它的适配器版本都在范围内时，判定为已验证。范围两端和当前版本都是 semver 时按 semver 比较，否则只按完全相同判断，例如 Cursor 的“日期-提交”版本。产品版本未知、或这个 Harness 从未验证过时，不下结论，不给提示。
@@ -30,7 +34,9 @@
 
 Pi 0.85.1 与 DeepSeek Harness 0.2.1-alpha.1 的已验证版本来自非官网安装（开发目录、源码构建）。按 [ADR-044](0044-macos-official-channels.md)，它们不再作为验收对象；表中的这两项保留为历史证据，用官方渠道重新验收后再更新。
 
-## 区间语义（2026-10-21）
+## 区间语义（2026-10-21；2026-10-22 起作废）
+
+本节描述的两种区间、预发布语义与四处对账都已随 ADR-053 删除：读表不再有 `verified` 区间，只有 `checkedOn`；`versionConsistency` 及其测试不再存在。保留为历史，其中记录的事实（dsh 读表在 rc.2 上核实、Hermes 版本从 dist-info 读出）仍是证据。
 
 总指挥（Fable 5.1）为第一批任务 B2（版本真相）定下的修正。**本次没有改任何已验证数字。**
 
@@ -59,6 +65,8 @@ Pi 0.85.1 与 DeepSeek Harness 0.2.1-alpha.1 的已验证版本来自非官网�
 
 ## 2026-10-22 补充：DeepSeek Harness 0.2.0-rc.2 真实重验
 
+（证据保留。下文“本表的 dsh 改为 …”“Harness 列表对它提示‘未经验证的版本’”描述的是同日稍后被 ADR-053 删除的机制；真实验收版本 0.2.0-rc.2 本身仍是矩阵 `installation` 与验收记录里的证据。）
+
 按 [ADR-048](0048-harness-scope-and-workbuddy.md) 用户决定 4，在官网 npm 渠道的 0.2.0-rc.2 上重新真实验收，记录见 [dsh-rc2-reverification-2026-10-22.md](../verification/dsh-rc2-reverification-2026-10-22.md)。8 个套件中 7 个通过，native-activity 只差 `editDiff`（原接口不带差异，矩阵早已记为缺口）；`dsh headless --session-id <id> "…"` 真实核对通过；配置守护前后一致。
 
 - 本表的 dsh 改为 `["0.2.0-rc.2", "0.2.0-rc.2"]`，去掉 `unofficial`。源码版 0.2.1-alpha.1 不再是已验证版本，Harness 列表对它提示“未经验证的版本”。
@@ -67,6 +75,8 @@ Pi 0.85.1 与 DeepSeek Harness 0.2.1-alpha.1 的已验证版本来自非官网�
 - 目前只有 Pi（冻结）还标着 `unofficial`。
 
 ## 2026-10-22 补充：Claude Code 区间扩到 2.1.306
+
+（证据保留。“区间”与“按区间语义视为已验证”同日稍后随 ADR-053 作废；真实验收版本 2.1.296 与 2.1.306 及其记录是证据。）
 
 按 [ADR-048](0048-harness-scope-and-workbuddy.md) 用户决定 3，在本机当前使用的 2.1.306（nvm，前面是 claude-agent-acp 0.89.1）上真实重验。记录见 [claude-2.1.306-rebaseline-2026-10-22.md](../verification/claude-2.1.306-rebaseline-2026-10-22.md)：12 个套件全部通过，`claude -p --resume <id> "…"` 真实核对通过，共 23 次提示，配置守护前后一致。
 

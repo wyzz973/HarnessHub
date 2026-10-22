@@ -28,7 +28,7 @@
 - `permission.requested` 事件增加 `expiresAt`、`expiresBy`；`permission.closed` 可以带 `reason: "expired"`。会话视图的审批请求增加 `requestedAt`、`expiresAt`、`expiresBy`、`kind`。这些都不在快照中，业务格式不变。
 - `ControlEvent.permission_requested` 增加可选的 `expiresInMs`、`expiresBy`、`kind`。
 - 会话推送流在会话事实之外携带待处理帧。界面与服务同一构建发布，旧页面重新载入后即使用新的解析。
-- Hermes 的 60 秒只对 0.12.x 生效（按 initialize 报告的版本）。其他版本读不到它自己的 `approvals.timeout`，只显示回合期限。
+- Hermes 0.12.x 固定的 60 秒按 initialize 报告的身份给出，是 [ADR-053](0053-latest-version-baseline.md) 登记的例外（2026-10-22）：只增加信息，不影响任何功能；Hermes 网关视图接入、改读 `approvals.timeout` 或网关报告的等待时间时删除。其他版本读不到它自己的 `approvals.timeout`，只显示回合期限；不按版本号开关任何功能。
 
 ## 不做
 

@@ -13,7 +13,7 @@
 2. **Hermes 与 ACP v1 的差异在 `HermesControl` 中处理，不由通用层吸收**：
    - 恢复只用 `session/load`。Hermes 的 `session/resume` 遇到未知标识会静默新建会话，而响应里没有会话标识，客户端无法察觉，这违反“恢复失败不新建空会话”。
    - 文件改为在提示词中附上只读副本路径（与 Codex、Pi 相同），因为 Hermes 不会把 `resource_link` 和嵌入资源交给模型。
-   - 已审查的 0.12 版本中，Hermes 的审批在 ACP 模式下最多等待 60 秒，之后自行拒绝。公共请求提前 2 秒关闭并说明原因，避免出现“界面上批准了、Hermes 实际已拒绝”的情况。只对 0.12.x 生效：上游新版本把期限改为可配置（默认 300 秒），不能被 Hub 提前关闭。
+   - 已审查的 0.12 版本中，Hermes 的审批在 ACP 模式下最多等待 60 秒，之后自行拒绝。公共请求提前 2 秒关闭并说明原因，避免出现“界面上批准了、Hermes 实际已拒绝”的情况。这是 [ADR-053](0053-latest-version-baseline.md) 登记的唯一例外（2026-10-22）：按 initialize 报告的 0.12 身份给出事实说明与期限，只增加信息、不减少任何功能；上游 0.21.4 起期限可配置（默认 300 秒）且桥不报告它，所以其他版本不作声明、只显示回合期限；Hermes 网关视图接入、改读 `approvals.timeout` 或网关报告的等待时间时删除。
    - Hermes 的最后一段回复可能在 prompt 响应之后才到（Multica 也为此等待 250 毫秒）。回合在响应后再静默 250 毫秒（最长 2 秒）才结束，迟到的回复仍归这一回合。
    - 模型请求失败时，Hermes 仍以 end_turn 结束，回复为空（或只有它自己的 “Error: …”），失败只写在 stderr。回合完成却没有回答、并且本回合的日志带终态失败标记时，判为失败并按日志归类，不发布日志原文。
    - `/model <名称>` 不发 ACP 更新，只回固定文本。只有提示词本身是这条命令时，驱动才读取回复，把新模型记为当前模型（遵循 ADR-028：下一回合沿用，不改回所选）。
@@ -35,14 +35,14 @@
 
 ## 验收边界（审批代理决定）
 
-- Hermes：只用文件与终端类工具在隔离工作区做无害任务，不触发浏览器、`process`、记忆、`skill_manage` 与网页搜索；`delegate_task` 只在子 Agent 验收中用一次。工作区放在 `$HOME` 下的非系统路径（Hermes 拒绝写 `/private/etc`、`/private/var`）。审批中禁止选“始终允许”。只运行 `hermes acp`，不触碰用户的 Hermes 网关。
+- Hermes：只用文件与终端类工具在隔离工作区做无害任务，不触发浏览器、`process`、记忆、`skill_manage` 与网页搜索；`delegate_task` 只在子 Agent 验收中用一次。工作区放在 `$HOME` 下的非系统路径（Hermes 拒绝写 `/private/etc`、`/private/var`）。审批中禁止选“始终允许”。只运行 `hermes acp`，不触碰用户的 Hermes 网关。（2026-10-22 注：最新正式版 v0.22.4 的 `hermes acp` 只是网关的查看器，没有进程内模式，这条边界在最新版上不再成立；是否让 HarnessHub 的 Hermes 会话进入用户正在运行的网关，由用户决定，见 [ADR-051](0051-hermes-upgrade-route.md) 修订版；本机 0.12.0 仍按本节边界验收。）
 - dsh：沿用用户自己的权限预设，Hub 不改 `~/.dsh`；预设为 danger-full-access 时审批一行标为受阻。
 - 花费：每个 Harness 每轮完整验收不超过 ¥10，本阶段两者合计不超过 ¥50；单回合超过 150k token 或 5 分钟即停止并报告；不为了凑通过而重跑。
 
 ## 工具失败与没有发出的审批（2026-10-12，审批代理决定）
 
 - Hermes 0.12 的 `build_tool_complete`（`acp_adapter/tools.py`）对每个结束的调用都报告 `completed`，失败只写在文本里：各格式化函数输出“<工具> failed: <错误>”，被拒绝的命令的错误是“BLOCKED: …”（`tools/approval.py`）。HermesControl 把文本符合这两种形式的调用标为失败，只对 Hermes 生效。
-- 本机 0.12.0 中 `approval.py` 以 `allow_permanent` 调用审批回调，而 `permissions.py` 的回调不接受这个参数，异常后一律按拒绝处理，审批请求从不发出（上游 v0.21.6 的回调已接受它）。一次回合中没有收到任何 `session/request_permission`、却出现了 Hermes 的拒绝文本（“BLOCKED: User denied”或“Command denied: ”）时，只对 0.12.x 加一条提示：Hermes 拒绝了这条命令，但没有向 HarnessHub 请求审批，并说明这个缺陷；HarnessHub 没有修改 Hermes，回复内容可能与实际结果不符。每个回合最多一次，对话中相同的提示只显示一次。
+- 本机 0.12.0 中 `approval.py` 以 `allow_permanent` 调用审批回调，而 `permissions.py` 的回调不接受这个参数，异常后一律按拒绝处理，审批请求从不发出（上游 0.14.0 起修复，v0.21.6 的回调已接受它）。2026-10-12 至 2026-10-22，一次回合中没有收到任何 `session/request_permission`、却出现了 Hermes 的拒绝文本（“BLOCKED: User denied”或“Command denied: ”）时，Hub 对 0.12.x 加过一条提示（Hermes 拒绝了这条命令，但没有向 HarnessHub 请求审批……）。**这条提示 2026-10-22 按 [ADR-053](0053-latest-version-baseline.md) 决定 2 删除**：它按版本号决定是否显示一段说明。拒绝文本仍按上一条标为失败；矩阵的 approvals 格仍记为受阻并写明 0.12 的这个缺陷，升级到最新版后真实复验。
 
 ## 影响
 

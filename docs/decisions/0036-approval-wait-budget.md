@@ -8,7 +8,7 @@
 2. **实现与设计有两处不一致（现状）：**
    - 期限由驱动在发出 prompt 时才开始计时：ACP 的 `session/prompt` 请求超时，Codex 和 Pi 的计时器，都是 `runTimeoutMs` = 300 秒。排队和启动时间不计入，Runtime 也没有统一的预算。
    - Runtime 全局只有一个执行泵，同一时间只运行一个回合，没有做到多 Session 并行。
-3. **原程序自己的行为。** 在终端里，Claude Code、Codex 等会一直等人做决定；Hermes 0.12 等 60 秒（0.12 的 ACP 不读它配置中的 `approvals.timeout`）；Pi 的对话框按自带的 timeout。
+3. **原程序自己的行为。** 在终端里，Claude Code、Codex 等会一直等人做决定；Hermes 0.12 等 60 秒（0.12 的 ACP 不读它配置中的 `approvals.timeout`；[ADR-053](0053-latest-version-baseline.md) 登记的例外，退出条件见该记录）；Pi 的对话框按自带的 timeout。
 4. **问题。** 现在这 300 秒包含等待用户的时间。用户离开几分钟，回合就以 `RUN_TIMEOUT` 结束，结果未知，对话需要明确恢复。ADR-035 已经把这个期限显示出来，但没有改变它。这与“像在原程序里一样使用”有明显差距。
 
 ## 提案
