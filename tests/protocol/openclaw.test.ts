@@ -38,10 +38,13 @@ const selectionRequired = (error: unknown) => error instanceof ControlError && e
 const catalog = { models: [{ provider: "deepseek", id: "x", name: "X" }, { provider: "file", id: "model", name: "File" }] };
 
 test("OpenClaw runs a new session as the Gateway's own default agent (agents.list) with that agent's primary model; a restored one keeps its key and asks nothing (ADR-053)", async t => {
-  const gateway: Gateway = async method => method === "agents.list" ? { defaultId: "ops", ownership: "explicit", selectionRequired: false, mainKey: "main", scope: "per-sender",
-    agents: [{ id: "ops", model: { primary: "deepseek/x" }, workspace: "~/ws" }, { id: "main", model: { primary: "file/model" } }] } : method === "models.list" ? catalog : unexpected(method, {});
+  // The fields the driver reads, and the whole result as 2026.10.5 answers it (gateway/agent-list.ts and session-utils-store.ts).
+  const minimal = { defaultId: "ops", agents: [{ id: "ops", model: { primary: "deepseek/x" }, workspace: "~/ws" }] };
+  const full = { defaultId: "ops", ownership: "explicit", selectionRequired: false, mainKey: "main", scope: "per-sender",
+    agents: [{ id: "ops", kind: "agent", workspace: "/Users/someone/ws", workspaceGit: false, model: { primary: "deepseek/x", fallbacks: ["file/model"] }, thinkingDefault: "adaptive" }, { id: "main", model: { primary: "file/model" } }] };
   // Without a configuration file, and with a keyed roster whose own marker names another agent: the Gateway's answer decides.
-  for (const config of [null, "{ agents: { entries: { main: { default: true, model: 'file/model' }, ops: {} } } }"]) {
+  for (const [config, roster] of [[null, minimal], [null, full], ["{ agents: { entries: { main: { default: true, model: 'file/model' }, ops: {} } } }", full]] as const) {
+    const gateway: Gateway = async method => method === "agents.list" ? roster : method === "models.list" ? catalog : unexpected(method, {});
     const { driver, calls, sent } = await bridge(t, config, gateway, { FIXTURE_SESSION_CAPS: "latest" });
     let checkpoint: string | null;
     try {
