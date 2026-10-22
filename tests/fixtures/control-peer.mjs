@@ -33,6 +33,22 @@ if (process.env.FIXTURE_OUTSIDER) {
   // One line per program that started one, so a test can end every one of them.
   appendFileSync(process.env.FIXTURE_OUTSIDER, outsider.pid + "\n");
 }
+/**
+ * Refusals of Hermes's gateway viewer (v0.22.3 and later), which the ACP SDK sends as -32603 with the cause only in
+ * data.details: FIXTURE_LOAD_ERROR for session/load, FIXTURE_SESSION_ERROR for session/new, FIXTURE_PROMPT_ERROR for
+ * session/prompt. "gateway-private" stands in for a cause that carries a path and a credential-like value.
+ */
+const HERMES_REFUSALS = { "not_found": "not_found: session-fixture", "gateway-starting": "Gateway starting: deadline", "gateway-draining": "Gateway draining: update_paused",
+  "gateway-private": "Gateway could not start: /home/private-user/.hermes/gateway.sock: fetch failed (private-synthetic-key)",
+  "unknown-execution": "unknown_execution: do not resend accepted input; run /discard adm-7f3a to drop it" };
+function hermesRefusal(id, cause) { emit({ id, error: { code: -32603, message: "Internal error", data: { details: HERMES_REFUSALS[cause] ?? cause } } }); }
+/** Hermes's approval options: 0.12's three, or (FIXTURE_PERMISSION_OPTIONS=five) the gateway viewer's five (acp_adapter/permissions.py). */
+function hermesOptions() {
+  return process.env.FIXTURE_PERMISSION_OPTIONS === "five"
+    ? [{ optionId: "allow_once", kind: "allow_once", name: "Allow once" }, { optionId: "allow_session", kind: "allow_always", name: "Allow for session" }, { optionId: "allow_always", kind: "allow_always", name: "Allow always" },
+      { optionId: "deny", kind: "reject_once", name: "Deny" }, { optionId: "deny_always", kind: "reject_always", name: "Deny always" }]
+    : [{ optionId: "allow_once", kind: "allow_once", name: "Allow once" }, { optionId: "allow_always", kind: "allow_always", name: "Allow always" }, { optionId: "deny", kind: "reject_once", name: "Deny" }];
+}
 /** A Hermes terminal call that its approval gate refused, reported as Hermes 0.12 reports it: completed, with failure text. */
 function hermesBlocked(sessionId, id = "terminal-blocked") {
   notification("session/update", { sessionId, update: { sessionUpdate: "tool_call", toolCallId: id, title: "terminal: rm -r attention-check", kind: "execute", status: "pending", content: [{ type: "content", content: { type: "text", text: "$ rm -r attention-check" } }] } });
@@ -197,7 +213,10 @@ lines.on("line", line => {
     answer(message.id, { marketplaces: scenario === "skills" ? [{ name: "openai-curated", plugins: [{ name: "github", installed: true, enabled: true, localVersion: "1.2.0" }, { name: "not-here", installed: false, enabled: false }] }] : [], marketplaceLoadErrors: [] }); return;
   }
   if (message.method === "model/list") { answer(message.id, { data: ["native-model-a", "native-model-b"].map(model => ({ model, displayName: model, ...(scenario === "attachments" ? { inputModalities: model === "native-model-a" ? ["text", "image", "audio"] : ["text"] } : {}) })), nextCursor: null }); return; }
-  if (scenario === "hermes" && message.method === "session/new") { answer(message.id, { sessionId: "session-fixture", models: hermesModels() }); return; }
+  if (scenario === "hermes" && message.method === "session/new") {
+    if (process.env.FIXTURE_SESSION_ERROR) { hermesRefusal(message.id, process.env.FIXTURE_SESSION_ERROR); return; }
+    answer(message.id, { sessionId: "session-fixture", models: hermesModels() }); return;
+  }
   // An ACP agent that needs its own sign-in before it opens a session (ACP auth_required).
   if (scenario === "auth-session" && message.method === "session/new") { emit({ id: message.id, error: { code: -32000, message: "Authentication required" } }); return; }
   // claude-agent-acp sends the session response, then its sign-in report (FIXTURE_AUTH_KIND, unless the report already came
@@ -273,7 +292,8 @@ lines.on("line", line => {
     answer(message.id, { sessionId: "session-fixture", ...(scenario === "native-models" ? { configOptions: [{ id: "native-model", category: "model", type: "select", currentValue: selectedModel, options: [{ value: "native-model-a", name: "Native A" }, { value: "native-model-b", name: "Native B" }] }] } : {}),
     ...(["legacy-configured-model", "duplicate-models"].includes(scenario) ? { models: { currentModelId: "configured-model", availableModels: [{ modelId: "suggested-model", name: "Suggested" }, ...(scenario === "duplicate-models" ? [{ modelId: "suggested-model", name: "Duplicate" }] : [])] } } : {}) }); return; }
   if (scenario === "hermes" && message.method === "session/load") {
-    // Hermes: an identity it does not have answers null; a known one restores slowly and replays history after the response.
+    if (process.env.FIXTURE_LOAD_ERROR) { hermesRefusal(message.id, process.env.FIXTURE_LOAD_ERROR); return; }
+    // Hermes 0.12: an identity it does not have answers null; a known one restores slowly and replays history after the response.
     if (message.params.sessionId === "missing-session") { answer(message.id, null); return; }
     setTimeout(() => {
       answer(message.id, { models: hermesModels() });
@@ -490,6 +510,7 @@ lines.on("line", line => {
       return;
     }
     if (scenario === "hermes") {
+      if (process.env.FIXTURE_PROMPT_ERROR) { hermesRefusal(message.id, process.env.FIXTURE_PROMPT_ERROR); return; }
       // A dangerous command asks Hermes's approval bridge; otherwise the reply arrives after a pause, as a model turn does.
       // A model call that failed for good: Hermes logs why on stderr and still ends the turn, with nothing answered.
       if (JSON.stringify(message.params.prompt).includes("fail quietly")) { process.stderr.write("2026-10-11 12:00:00 [ERROR] run_agent: API call failed after 3 retries. Error code: 402 - Insufficient Balance | provider=deepseek model=deepseek-v4-pro\n"); setTimeout(() => finish(), 20); return; }
@@ -511,7 +532,7 @@ lines.on("line", line => {
       }
       if (JSON.stringify(message.params.prompt).includes("approve")) {
         emit({ id: "hermes-permission", method: "session/request_permission", params: { sessionId: message.params.sessionId, toolCall: { toolCallId: "perm-check", title: "rm -rf build", kind: "execute" },
-          options: [{ optionId: "allow_once", kind: "allow_once", name: "Allow once" }, { optionId: "allow_always", kind: "allow_always", name: "Allow always" }, { optionId: "deny", kind: "reject_once", name: "Deny" }] } });
+          options: hermesOptions() } });
         return;
       }
       setTimeout(() => { acpOutput(message.params.sessionId); finish(); }, 150); return;

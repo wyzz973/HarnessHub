@@ -10,7 +10,7 @@ const EXPORT_BYTES = 8 * 1024 * 1024, EXPORT_DEADLINE_MS = 5000;
 /** Without --session-id Hermes exports every session it holds, its messaging gateway's too: the identifier must be a plain one. */
 const PLAIN_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 
-/** Hermes's ACP approval bridge waits this long for the client and then denies the command itself (permissions.py). */
+/** Hermes 0.12's ACP approval bridge waits this long for the client and then denies the command itself (permissions.py). */
 const HERMES_APPROVAL_WAIT_MS = 60_000;
 /** Quiet time after Hermes's prompt response before its turn is settled. */
 const HERMES_TRAILING_QUIET_MS = 250;
@@ -24,34 +24,58 @@ const AGENT_ERROR = /Agent error in session/u;
  * error is "BLOCKED: …" (tools/approval.py).
  */
 const TOOL_FAILURE = /^(?:\S[^\n]{0,64} failed: |BLOCKED:)/u;
-/** A command Hermes refused: "BLOCKED: User denied…" (tools/approval.py) or "Command denied: …" (tools/terminal_tool.py). */
-const REFUSED = /BLOCKED: User denied|Command denied: /u;
 /** Hermes answers its own `/model <name>` locally with this text (server.py `_cmd_model`); no ACP update announces it. */
 const MODEL_SWITCHED = /^Model switched to: (\S+)[ \t]*\r?\nProvider: (\S+)[ \t]*$/mu;
+/**
+ * The causes Hermes's gateway viewer gives in its JSON-RPC error data (ACP SDK: -32603 "Internal error" with the cause in
+ * data.details; acp_adapter/gateway_server.py and hermes_cli/gateway_client.py in v0.22.4). Only these fixed words, and a
+ * gateway state's own reason when it is a plain snake_case word, are quoted to the user: the rest of the detail is
+ * Hermes's private text.
+ */
+const NOT_FOUND = /^not_found\b/u;
+const GATEWAY_UNAVAILABLE = /^Gateway (starting|incompatible|inaccessible|draining|could not start)(?::\s*([a-z]+(?:_[a-z]+)*)(?=$|[\s(),.;:]))?/u;
+/** A turn whose outcome the gateway lost: it may have run, must not be sent again, and blocks the session until discarded. */
+const UNKNOWN_OUTCOME = /^(?:unknown_execution\b|Gateway disconnected; turn outcome is unknown)/u;
+const DISCARD = /\/discard ([A-Za-z0-9][A-Za-z0-9_-]{0,127})(?![A-Za-z0-9_-])/u;
+/** What each of Hermes's own approval options changes beyond this request, by option id (acp_adapter/permissions.py). */
+const OPTION_NOTES: Readonly<Record<string, (name: string) => string>> = {
+  allow_always: name => `选“${name}”会写入 Hermes 自己的配置（command_allowlist），之后 Hermes 的所有会话（包括终端和消息网关）遇到同一类危险命令都不再询问。`,
+  allow_session: name => `选“${name}”只在这个 HarnessHub 会话内放行，不写 Hermes 的配置。`,
+  deny_always: name => `选“${name}”等同于拒绝一次，Hermes 不保存任何东西。`,
+};
 
 /**
- * Hermes Agent's ACP server (`hermes acp`, hermes-agent 0.12). Where it departs from ACP v1 the departure is handled
- * here instead of being absorbed by the generic layer:
- * - session/resume of an identity it does not have starts a new session silently, and the response carries no session
- *   identity that would reveal it; recovery therefore uses session/load, whose null result means the session is gone;
- * - session/load replays history after its response; the generic replay window already starts at the response;
- * - resource links and embedded resources never reach its model, so an attached file travels as a text pointer to the
+ * Hermes Agent's ACP server (`hermes acp`). The baseline is its latest release (ADR-053): from v0.22.3 the command is a viewer
+ * of the user's Hermes gateway, which runs the sessions, their tools and approvals; 0.12 ran them in the ACP process itself,
+ * and is kept as history where it still behaves differently. Where Hermes departs from ACP v1 the departure is handled here
+ * instead of being absorbed by the generic layer:
+ * - recovery uses session/load: 0.12's session/resume of an identity it does not have started a new session silently and
+ *   said nothing; session/load of an unknown identity is a missing session, which 0.12 answered with null and the gateway
+ *   viewer refuses with not_found in its error data;
+ * - it explains refusals only in its JSON-RPC error data: a gateway that is starting, incompatible, inaccessible, draining
+ *   or could not start fails as NATIVE_GATEWAY_UNAVAILABLE with Hermes's own words for it, and a prompt whose outcome the
+ *   gateway lost records Hermes's /discard instruction (its Run still fails as a refused request until the Runtime can
+ *   record an unknown outcome);
+ * - session/load replays history (0.12 after its response, the gateway viewer before it); the generic replay window opens
+ *   with the request and lasts until the replay has been quiet;
+ * - resource links and embedded resources never reached 0.12's model, so an attached file travels as a text pointer to the
  *   read-only copy, which its own file tools read;
- * - in the reviewed 0.12 bridge an approval left unanswered for 60 s is denied by Hermes, and the public request closes with it;
- *   its "always" option writes to Hermes's own configuration for all of its sessions, which the request says;
+ * - each approval request says what Hermes's own options change beyond it, by option id: allow_always writes
+ *   command_allowlist, which every Hermes session reads, its messaging gateway's included; allow_session lasts for this
+ *   session; deny_always stores nothing. 0.12's bridge also denied an approval left unanswered for 60 s, which the request
+ *   announces (ADR-053's registered exception; later versions make the wait configurable and do not report it);
+ * - every finished tool call is reported as completed, and a failed one says so only in its text, so such a call is failed;
  * - its last reply chunks can follow the prompt response, so the turn settles after a short quiet window;
  * - `/model <name>` switches the session's model without an update, so its own reply is the only report of the change;
- * - a failed model call still ends with end_turn and an empty reply (or only `Error: …`); its stderr log is the only report of
- *   the failure, so such a turn is reported as failed with the class its log names, never with the log text itself;
+ * - in 0.12 a failed model call still ended with end_turn and an empty reply (or only `Error: …`), its stderr log being the
+ *   only report of the failure, so such a turn is reported as failed with the class its log names, never with the log text
+ *   itself (the gateway logs elsewhere, where this reads nothing);
  * - it advertises its agent authentication method only when it resolves a provider with credentials (0.12 leaves the list
  *   out otherwise; later versions add a terminal setup method that says nothing about it), so without that method no
  *   session is opened and the missing setup is reported instead of a prompt that cannot reach a model.
- * Only the `hermes-acp` tool set is active in this mode (no messaging, cron or audio tools).
- */
-/**
- * Hermes's ACP bridge, with its 0.12 specifics. ACP has no export method: when Hermes lists no `export` command of its own,
- * the Hub offers `/export`, which runs Hermes's own `hermes sessions export - --session-id <id>` once (never its gateway)
- * and records the session's JSON line as an output of the Run. Nothing is sent to the model.
+ * ACP has no export method: when Hermes lists no `export` command of its own, the Hub offers `/export`, which runs Hermes's
+ * own `hermes sessions export - --session-id <id>` once (never its gateway) and records the session's JSON line as an output
+ * of the Run. Nothing is sent to the model.
  */
 export class HermesControl extends AcpControl {
   private hubExport = false;
@@ -59,25 +83,34 @@ export class HermesControl extends AcpControl {
   constructor(private readonly hermesLaunch: ControlLaunch, private readonly hermesOptions: ControlOptions) { super(hermesLaunch, hermesOptions); }
   protected override get restoreByLoad(): boolean { return true; }
   protected override get fileBlocks(): boolean { return false; }
-  // The fixed 60-second wait is the reviewed 0.12 bridge; later Hermes makes it configurable, so other versions are not cut short.
+  // ADR-053's registered exception: 0.12's bridge announces a fixed 60-second wait; later versions make it configurable and
+  // do not report it, so nothing is claimed for them. Removed when the Hermes gateway view lands.
   protected override get approvalDeadlineMs(): number | null { return /^0\.12\./u.test(this.agentVersion ?? "") ? HERMES_APPROVAL_WAIT_MS : null; }
   // A call whose text says it failed did fail, whatever status Hermes reported for it.
   protected override toolStatus(status: string, detail: NativeToolDetail | undefined): string { return status === "completed" && TOOL_FAILURE.test(detail?.output ?? "") ? "failed" : status; }
-  // In the reviewed 0.12 bridge approval.py calls the approval callback with allow_permanent, which permissions.py's callback
-  // does not take; the TypeError is answered with a denial, so no approval ever reaches the client. A refusal in a prompt that
-  // asked nothing is that defect, and the reply may claim otherwise.
-  protected override toolNotice(detail: NativeToolDetail | undefined, asked: boolean): { readonly title: string; readonly detail: string } | null {
-    if (asked || !/^0\.12\./u.test(this.agentVersion ?? "") || !REFUSED.test(detail?.output ?? "")) return null;
-    return { title: "Hermes 拒绝了这条命令，但没有请求审批",
-      detail: "Hermes 拒绝了这条命令，但没有向 HarnessHub 请求审批（Hermes 0.12.0 的 ACP 审批桥缺陷：approval.py 以 allow_permanent 调用回调，permissions.py 不接受）。HarnessHub 没有修改 Hermes；回复内容可能与实际结果不符。上游 v0.21.6 的这个回调已接受该参数。" };
-  }
   // Hermes can send its last reply chunks after the prompt response (Multica waits 250 ms for the same reason).
   protected override get trailingQuietMs(): number { return HERMES_TRAILING_QUIET_MS; }
-  // tools/approval.py: "always" adds the dangerous-command pattern to command_allowlist in Hermes's own config.yaml,
-  // which every Hermes session reads, its messaging gateway included.
+  // The option ids say what an option does (acp_adapter/permissions.py: allow_session is also of kind allow_always). An agent
+  // with none of these ids gets the note on its allow_always kind, as 0.12's "always" wrote command_allowlist (tools/approval.py).
   protected override permissionNote(options: readonly { readonly id: string; readonly kind: string; readonly name: string }[]): string {
+    const noted = options.filter(option => Object.hasOwn(OPTION_NOTES, option.id));
+    if (noted.length) return noted.map(option => OPTION_NOTES[option.id]!(option.name)).join("\n");
     const always = options.find(option => option.kind === "allow_always");
-    return always ? `选“${always.name}”会写入 Hermes 自己的配置（command_allowlist），之后 Hermes 的所有会话（包括终端和消息网关）遇到同一类危险命令都不再询问。` : "";
+    return always ? OPTION_NOTES.allow_always!(always.name) : "";
+  }
+  protected override refusal(method: string, error: ControlError, report?: (event: ControlEvent) => void): { readonly code: string; readonly message: string } | null {
+    const detail = error.remoteDetail ?? "";
+    if ((method === "session/load" || method === "session/resume") && NOT_FOUND.test(detail)) return { code: "NATIVE_SESSION_NOT_FOUND", message: "the Harness has no session with this identity" };
+    const gateway = GATEWAY_UNAVAILABLE.exec(detail);
+    // Hermes refuses these while connecting to its gateway, before the request is handed to it.
+    if (gateway) return { code: "NATIVE_GATEWAY_UNAVAILABLE", message: `Hermes 的网关当前不可用（Gateway ${gateway[1]}${gateway[2] === undefined ? "" : ": " + gateway[2]}），这次请求没有送达网关。可以在 Hermes 里查看网关状态（hermes gateway status）后再试。` };
+    // An unknown outcome is not a failure of the request, but BackendResult has no unknown yet: the Run keeps the generic
+    // refusal, and the Turn records what Hermes asks for before the session can go on.
+    if (report !== undefined && UNKNOWN_OUTCOME.test(detail)) {
+      const admission = DISCARD.exec(detail)?.[1];
+      report({ type: "diagnostic", message: `Hermes 说这条消息的执行结果未知：它可能已经执行，不要重发。要继续这个会话，先在 Hermes 里放弃它（${admission === undefined ? "/discard <admission_id>" : "/discard " + admission}，或 hermes sessions discard <会话 ID>）。` });
+    }
+    return null;
   }
   // acp_adapter/auth.py: the agent method's id is the configured provider, present only when its credentials resolve.
   protected override authentication(methods: readonly { readonly id: string; readonly type: string }[]): NativeModelCatalog["authentication"] { return methods.some(method => method.type === "agent") ? "ready" : "missing"; }

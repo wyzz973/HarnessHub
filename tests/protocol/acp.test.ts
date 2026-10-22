@@ -888,33 +888,88 @@ test("an ACP prompt that outlives the Turn's deadline fails with RUN_TIMEOUT whi
   } finally { await driver.close(); }
 });
 
-test("Hermes's completed calls that say they failed are failed, and a refusal it never asked about is explained once", async t => {
+test("Hermes's completed calls that say they failed are failed on any version, and no version adds a notice to them (ADR-053)", async t => {
   const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
   const notices = (events: readonly ControlEvent[]) => events.filter(event => event.type === "notice").map(event => event.type === "notice" ? event.title : "");
   const finalStatus = (events: readonly ControlEvent[], id: string) => events.filter(event => event.type === "tool" && event.id === id).map(event => event.type === "tool" ? event.status : "").at(-1);
-  const reviewed = new HermesControl(hermes(trace, "0.12.0"), { ...options, runTimeoutMs: 5000 });
+  for (const version of ["0.12.0", undefined]) {
+    const label = version ?? "1.0", driver = new HermesControl(hermes(trace, version), { ...options, runTimeoutMs: 5000 });
+    try {
+      await driver.initialize(); driver.enablePermissions(); const id = await driver.open(process.cwd()), events: ControlEvent[] = [];
+      assert.equal((await (await driver.startText(id, "blocked command", event => events.push(event))).result).status, "completed", label);
+      assert.equal(finalStatus(events, "terminal-blocked"), "failed", label); assert.equal(finalStatus(events, "terminal-blocked-2"), "failed", label);
+      assert.deepEqual(notices(events), [], label);
+      // A refusal after a request the user answered is failed the same way.
+      const asked: ControlEvent[] = [];
+      const run = await driver.startText(id, "ask then blocked", event => asked.push(event));
+      for (let i = 0; i < 50 && !asked.some(event => event.type === "permission_requested"); i++) await new Promise(resolve => setTimeout(resolve, 20));
+      const request = asked.find(event => event.type === "permission_requested"); assert.ok(request?.type === "permission_requested", label);
+      await driver.decidePermission(request.id, "deny"); assert.equal((await run.result).status, "completed", label);
+      assert.equal(finalStatus(asked, "terminal-blocked"), "failed", label); assert.deepEqual(notices(asked), [], label);
+    } finally { await driver.close(); }
+  }
+});
+test("Hermes says what each of its own approval options changes beyond the request, by option id", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
+  // The gateway viewer's five options: "Allow for session" is of kind allow_always too.
+  const driver = new HermesControl({ ...hermes(trace), env: { FIXTURE_TRACE: trace, FIXTURE_PERMISSION_OPTIONS: "five" } }, { ...options, runTimeoutMs: 5000 });
   try {
-    await reviewed.initialize(); reviewed.enablePermissions(); const id = await reviewed.open(process.cwd()), events: ControlEvent[] = [];
-    assert.equal((await (await reviewed.startText(id, "blocked command", event => events.push(event))).result).status, "completed");
-    assert.equal(finalStatus(events, "terminal-blocked"), "failed"); assert.equal(finalStatus(events, "terminal-blocked-2"), "failed");
-    assert.deepEqual(notices(events), ["Hermes 拒绝了这条命令，但没有请求审批"], "once per prompt");
-    const notice = events.find(event => event.type === "notice");
-    assert.ok(notice?.type === "notice" && notice.detail?.includes("allow_permanent") === true && notice.detail.includes("回复内容可能与实际结果不符"));
-    // After a request the user answered, a refusal is that answer: nothing to explain.
-    const asked: ControlEvent[] = [];
-    const run = await reviewed.startText(id, "ask then blocked", event => asked.push(event));
-    for (let i = 0; i < 50 && !asked.some(event => event.type === "permission_requested"); i++) await new Promise(resolve => setTimeout(resolve, 20));
-    const request = asked.find(event => event.type === "permission_requested"); assert.ok(request?.type === "permission_requested");
-    await reviewed.decidePermission(request.id, "deny"); assert.equal((await run.result).status, "completed");
-    assert.equal(finalStatus(asked, "terminal-blocked"), "failed"); assert.deepEqual(notices(asked), []);
-  } finally { await reviewed.close(); }
-  // Another Hermes version still has its failures marked, without the 0.12 explanation.
-  const other = new HermesControl(hermes(trace), { ...options, runTimeoutMs: 5000 });
+    await driver.initialize(); driver.enablePermissions(); const id = await driver.open(process.cwd()), events: ControlEvent[] = [];
+    const run = await driver.startText(id, "approve this", event => events.push(event));
+    for (let i = 0; i < 50 && !events.some(event => event.type === "permission_requested"); i++) await new Promise(resolve => setTimeout(resolve, 20));
+    const requested = events.find(event => event.type === "permission_requested"); assert.ok(requested?.type === "permission_requested");
+    assert.deepEqual(requested.options.map(option => option.id), ["allow_once", "allow_session", "allow_always", "deny", "deny_always"]);
+    const detail = requested.detail ?? "", times = (text: string) => detail.split(text).length - 1;
+    assert.equal(times("选“Allow always”会写入 Hermes 自己的配置（command_allowlist），之后 Hermes 的所有会话（包括终端和消息网关）遇到同一类危险命令都不再询问。"), 1);
+    assert.equal(times("选“Allow for session”只在这个 HarnessHub 会话内放行，不写 Hermes 的配置。"), 1);
+    assert.equal(times("选“Deny always”等同于拒绝一次，Hermes 不保存任何东西。"), 1);
+    assert.equal(times("command_allowlist"), 1, "only the option that writes it says so");
+    assert.equal(detail.includes("最多等待"), false, "no wait is claimed for a version that does not report one");
+    await driver.decidePermission(requested.id, "allow_session");
+    assert.equal((await run.result).status, "completed");
+    assert.ok(events.some(event => event.type === "text" && event.text.includes('"optionId":"allow_session"')));
+  } finally { await driver.close(); }
+});
+test("Hermes refusals that only its error data explains are named: a session it does not have is missing, an unavailable gateway says so in Hermes's own words, and a lost outcome records its /discard instruction", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
+  const refusing = (env: Record<string, string>) => new HermesControl({ ...hermes(trace), env: { FIXTURE_TRACE: trace, ...env } }, { ...options, runTimeoutMs: 5000 });
+  const code = (expected: string, check: (error: ControlError) => boolean = () => true) => (error: unknown) => error instanceof ControlError && error.code === expected && check(error);
+  // session/load refused with not_found, when restoring and when reading a session to continue it.
+  for (const read of [(driver: HermesControl) => driver.open(process.cwd(), undefined, undefined, "session-fixture"), (driver: HermesControl) => driver.importSession("session-fixture", process.cwd())]) {
+    const driver = refusing({ FIXTURE_LOAD_ERROR: "not_found" });
+    try { await driver.initialize(); await assert.rejects(read(driver), code("NATIVE_SESSION_NOT_FOUND")); }
+    finally { assert.equal((await driver.close()).protocolFailure?.code, "NATIVE_SESSION_NOT_FOUND"); }
+  }
+  // Another agent's driver reads nothing into the same refusal.
+  const ordinary = control("hermes", { FIXTURE_LOAD_ERROR: "not_found" });
+  try { await ordinary.initialize(); await assert.rejects(ordinary.importSession("session-fixture", process.cwd()), code("REMOTE_ERROR", error => error.remoteDetail === "not_found: session-fixture")); }
+  finally { await ordinary.close(); }
+  // A gateway that is still starting refuses the new session.
+  const starting = refusing({ FIXTURE_SESSION_ERROR: "gateway-starting" });
+  try { await starting.initialize(); await assert.rejects(starting.open(process.cwd()), code("NATIVE_GATEWAY_UNAVAILABLE", error => error.message.includes("（Gateway starting: deadline）"))); }
+  finally { await starting.close(); }
+  // A draining gateway refuses the prompt: the Turn fails with the gateway's state and reason, and the connection stays healthy.
+  for (const [cause, quoted] of [["gateway-draining", "（Gateway draining: update_paused）"], ["gateway-private", "（Gateway could not start）"]] as const) {
+    const driver = refusing({ FIXTURE_PROMPT_ERROR: cause });
+    try {
+      await driver.initialize(); const id = await driver.open(process.cwd()), events: ControlEvent[] = [];
+      const result = await (await driver.startText(id, "hello", event => events.push(event))).result;
+      assert.deepEqual([result.status, result.reason, result.error?.code], ["failed", "request_rejected", "NATIVE_GATEWAY_UNAVAILABLE"], cause);
+      assert.ok(result.error?.message.includes(quoted), cause);
+      // Only the fixed words and a plain reason are quoted: never a path or a credential-like value, even with a class in it.
+      assert.equal(/private-user|private-synthetic-key|fetch failed/u.test(JSON.stringify([result, events])), false, cause);
+      assert.equal((await driver.close()).protocolFailure, null, cause);
+    } finally { await driver.close(); }
+  }
+  // A prompt whose outcome the gateway lost keeps the generic refusal (there is no unknown result yet) and records Hermes's instruction.
+  const lost = refusing({ FIXTURE_PROMPT_ERROR: "unknown-execution" });
   try {
-    await other.initialize(); const id = await other.open(process.cwd()), events: ControlEvent[] = [];
-    await (await other.startText(id, "blocked command", event => events.push(event))).result;
-    assert.equal(finalStatus(events, "terminal-blocked"), "failed"); assert.deepEqual(notices(events), []);
-  } finally { await other.close(); }
+    await lost.initialize(); const id = await lost.open(process.cwd()), events: ControlEvent[] = [];
+    assert.deepEqual(await (await lost.startText(id, "hello", event => events.push(event))).result, { status: "failed", reason: "request_rejected" });
+    const said = events.flatMap(event => event.type === "diagnostic" ? [event.message] : []);
+    assert.equal(said.length, 1); assert.match(said[0] ?? "", /执行结果未知：它可能已经执行，不要重发/u); assert.match(said[0] ?? "", /\/discard adm-7f3a/u);
+    assert.equal(said[0]?.includes("do not resend accepted input"), false, "Hermes's own text is not copied");
+  } finally { await lost.close(); }
 });
 
 /** The reply text a Turn streamed, chunk by chunk. */

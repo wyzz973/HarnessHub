@@ -20,10 +20,6 @@ interface ActivePrompt {
   stop: Promise<StopRequestReceipt> | null;
   /** When this prompt's request times out (the Turn's deadline, ADR-035). */
   readonly deadline: number;
-  /** Whether the agent asked the user anything during this prompt (session/request_permission). */
-  asked: boolean;
-  /** Whether this prompt already carries the driver's notice about a tool result. */
-  noticed: boolean;
 }
 const metadataUpdates = new Set(["plan", "available_commands_update", "current_mode_update", "config_option_update", "session_info_update", "usage_update"]);
 /** Long agentic turns flatten subagent tools into the root session; budgets bound memory, not normal work. */
@@ -112,7 +108,7 @@ function outputOf(content: Record<string, unknown>): NativeOutput | null {
   return null;
 }
 function count(value: unknown): number | undefined { return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined; }
-/** A session/load result. An agent that answers an identity it does not have with null (Hermes) has no such session. */
+/** A session/load result. An agent that answers an identity it does not have with null (Hermes 0.12) has no such session. */
 function loaded(value: unknown): Record<string, unknown> {
   if (value === null) throw new ControlError("NATIVE_SESSION_NOT_FOUND", "the Harness has no session with this identity");
   return object(value, "native session load result");
@@ -327,7 +323,7 @@ export class AcpControl implements HarnessControl {
     this.collected = { messages: [], bytes: 0, dropped: 0 };
     try {
       const setup = Math.max(this.options.requestTimeoutMs, Math.min(SESSION_SETUP_MS, this.options.runTimeoutMs));
-      const response = loaded(await this.rpc.request("session/load", { ...await this.sessionParameters(cwd), sessionId: id }, setup));
+      const response = loaded(await this.sessionRequest("session/load", { ...await this.sessionParameters(cwd), sessionId: id }, setup));
       if (response.sessionId !== undefined && response.sessionId !== id) throw new ControlError("IDENTITY_MISMATCH", "native load changed the session identity");
       await this.replaySettled();
       const collected = this.collected;
@@ -351,7 +347,7 @@ export class AcpControl implements HarnessControl {
     this.forking = true;
     try {
       const setup = Math.max(this.options.requestTimeoutMs, Math.min(SESSION_SETUP_MS, this.options.runTimeoutMs)), meta = this.sessionMeta;
-      const response = object(await this.rpc.request("session/fork", { sessionId: nativeConversationId(checkpoint), cwd, mcpServers: [], ...(meta === null ? {} : { _meta: meta }) }, setup), "session/fork result");
+      const response = object(await this.sessionRequest("session/fork", { sessionId: nativeConversationId(checkpoint), cwd, mcpServers: [], ...(meta === null ? {} : { _meta: meta }) }, setup), "session/fork result");
       const id = nativeConversationId(response.sessionId);
       if (id === checkpoint) throw new ControlError("IDENTITY_MISMATCH", "session/fork returned its source session");
       return id;
@@ -397,8 +393,16 @@ export class AcpControl implements HarnessControl {
   protected get approvalDeadlineMs(): number | null { return null; }
   /** The status a tool update reports; an agent that reports failures as completed calls with failure text says so here. */
   protected toolStatus(status: string, _detail: NativeToolDetail | undefined): string { return status; }
-  /** A notice about a tool result, at most once per prompt; `asked` says whether the agent asked the user anything in it. */
-  protected toolNotice(_detail: NativeToolDetail | undefined, _asked: boolean): { readonly title: string; readonly detail: string } | null { return null; }
+  /**
+   * Names a request the agent refused (`method`; REMOTE_ERROR on a healthy connection) from what only its error data says
+   * (ControlError.remoteDetail): the failure to report in place of the generic one, or null to keep the generic handling,
+   * which is the class the agent's own words name, else the refusal itself. It applies to session setup (session/new,
+   * session/load, session/resume and the model, mode and setting requests of open()), to session/load when a session is
+   * read for continuing it, to session/fork, and to session/prompt, where `report` adds an event to the Turn (it is absent
+   * elsewhere) and the failure becomes the failed result's error. The detail is the agent's private text, which may name
+   * the user's paths or credentials, so a failure quotes it only through a fixed vocabulary. The default names nothing.
+   */
+  protected refusal(_method: string, _error: ControlError, _report?: (event: ControlEvent) => void): { readonly code: string; readonly message: string } | null { return null; }
   /** Whether the agent hands ACP file blocks to its model; when it drops them, files travel as text pointers it reads with its own tools. */
   protected get fileBlocks(): boolean { return true; }
   /** A position in the agent's stderr and what it logged since, for an agent that reports some failures only there. */
@@ -473,7 +477,7 @@ export class AcpControl implements HarnessControl {
         this.conversation = nativeConversationId(checkpoint); this.replaying = true; this.lastReplay = Date.now();
       }
       const setup = Math.max(this.options.requestTimeoutMs, Math.min(SESSION_SETUP_MS, this.options.runTimeoutMs));
-      const raw = await this.rpc.request(method, { ...await this.sessionParameters(cwd), ...(checkpoint === undefined ? {} : { sessionId: this.conversation }) }, setup);
+      const raw = await this.sessionRequest(method, { ...await this.sessionParameters(cwd), ...(checkpoint === undefined ? {} : { sessionId: this.conversation }) }, setup);
       const response = method === "session/load" ? loaded(raw) : object(raw, "native session setup result");
       if (checkpoint === undefined) this.conversation = nativeConversationId(response.sessionId);
       else if (response.sessionId !== undefined && response.sessionId !== this.conversation) throw new ControlError("IDENTITY_MISMATCH", "native restore changed the owned session identity");
@@ -487,11 +491,11 @@ export class AcpControl implements HarnessControl {
         if (!this.catalog.canSelect || !this.catalog.models.some(row => row.id === model)) throw new ControlError("MODEL_UNAVAILABLE", "selected model is unavailable in this Harness");
         if (model === this.catalog.defaultModel) { /* already the session's model */ }
         else if (this.modelConfigId !== null) {
-          const selected = object(await this.rpc.request("session/set_config_option", { sessionId: this.conversation, configId: this.modelConfigId, value: model }), "model selection result");
+          const selected = object(await this.sessionRequest("session/set_config_option", { sessionId: this.conversation, configId: this.modelConfigId, value: model }), "model selection result");
           this.readModels(selected);
           if (this.catalog.defaultModel !== model) throw new ControlError("MODEL_MISMATCH", "Harness did not apply the selected model");
         } else if (this.legacyModels) {
-          await this.rpc.request("session/set_model", { sessionId: this.conversation, modelId: model });
+          await this.sessionRequest("session/set_model", { sessionId: this.conversation, modelId: model });
           this.catalog = { ...this.catalog, defaultModel: model };
         }
       }
@@ -500,8 +504,8 @@ export class AcpControl implements HarnessControl {
         if (!setting || !setting.values.some(option => option.value === value)) throw new ControlError("NATIVE_OPTION_UNAVAILABLE", "native option unavailable for selected Harness");
         if (setting.currentValue === value) continue;
         // An agent need not echo its own mode change, so the applied mode is recorded as current.
-        if (key === "__mode") { await this.rpc.request("session/set_mode", { sessionId: this.conversation, modeId: value }); this.catalog = { ...this.catalog, options: this.catalog.options?.map(option => option.id === "__mode" ? { ...option, currentValue: value } : option) ?? [] }; }
-        else { const response = object(await this.rpc.request("session/set_config_option", { sessionId: this.conversation, configId: key, value }), "native setting result"); this.readModels(response); if (this.catalog.options?.find(option => option.id === key)?.currentValue !== value) throw new ControlError("NATIVE_OPTION_MISMATCH", "Harness did not apply its native setting"); }
+        if (key === "__mode") { await this.sessionRequest("session/set_mode", { sessionId: this.conversation, modeId: value }); this.catalog = { ...this.catalog, options: this.catalog.options?.map(option => option.id === "__mode" ? { ...option, currentValue: value } : option) ?? [] }; }
+        else { const response = object(await this.sessionRequest("session/set_config_option", { sessionId: this.conversation, configId: key, value }), "native setting result"); this.readModels(response); if (this.catalog.options?.find(option => option.id === key)?.currentValue !== value) throw new ControlError("NATIVE_OPTION_MISMATCH", "Harness did not apply its native setting"); }
       }
       return this.conversation;
     } catch (error) { const failure = this.nativeFailure(error); if (!(failure instanceof ControlError && ["MODEL_UNAVAILABLE","NATIVE_OPTION_UNAVAILABLE"].includes(failure.code))) this.rpc.abort(failure); throw failure; }
@@ -516,7 +520,7 @@ export class AcpControl implements HarnessControl {
     const blocks: Record<string, unknown>[] = [{ type: "text", text: prompt + fileMentions(pointers) }];
     for (const file of attachments) if (!pointers.includes(file)) blocks.push(await this.promptBlock(file));
     if (this.active !== null) throw new ControlError("INVALID_STATE", "a prompt is already active");
-    const active: ActivePrompt = { event: onEvent, lastUpdate: 0, tools: new Map(), compaction: new Map(), stopping: false, settled: false, stop: null, deadline: Date.now() + this.options.runTimeoutMs, asked: false, noticed: false };
+    const active: ActivePrompt = { event: onEvent, lastUpdate: 0, tools: new Map(), compaction: new Map(), stopping: false, settled: false, stop: null, deadline: Date.now() + this.options.runTimeoutMs };
     this.active = active;
     const result = this.rpc.request("session/prompt", { sessionId: id, prompt: blocks }, this.options.runTimeoutMs)
       .then(value => {
@@ -542,8 +546,10 @@ export class AcpControl implements HarnessControl {
         if (quiet > 0) for (const answered = Date.now(); Date.now() - Math.max(active.lastUpdate, answered) < quiet && Date.now() - answered < TRAILING_SETTLE_MS;) await new Promise(resolve => setTimeout(resolve, Math.min(quiet, 50)));
         return result;
       }).catch((error: unknown): BackendResult => {
-        if (error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null)
-          return { status: "failed", reason: "request_rejected", ...(error.remoteFailure ? { error: error.remoteFailure } : {}) };
+        if (error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null) {
+          const named = this.refusal("session/prompt", error, active.event);
+          return { status: "failed", reason: "request_rejected", ...(named !== null ? { error: named } : error.remoteFailure ? { error: error.remoteFailure } : {}) };
+        }
         // The prompt request's own timeout is the Turn's deadline, reported as every driver reports it.
         const failure = error instanceof ControlError && error.code === "REQUEST_TIMEOUT" ? new ControlError("RUN_TIMEOUT", "ACP prompt exceeded its deadline") : errorFrom(error);
         this.rpc.abort(failure); throw failure;
@@ -565,6 +571,14 @@ export class AcpControl implements HarnessControl {
   private cancelPermissions(): void { for (const pending of this.permissions.values()) pending.resolve(pending.reply ? pending.reply("cancel") : { outcome: { outcome: "cancelled" } }); this.permissions.clear(); }
   close(): Promise<CleanupEvidence> { this.cancelPermissions(); return this.rpc.close(); }
   private nativeFailure(error: unknown): Error { return error instanceof ControlError && error.remoteFailure ? new ControlError(error.remoteFailure.code, error.remoteFailure.message) : errorFrom(error); }
+  /** One session request whose refusal the driver may name (refusal()); any other outcome is the request's own. */
+  private async sessionRequest(method: string, params: unknown, timeoutMs?: number): Promise<unknown> {
+    try { return await this.rpc.request(method, params, timeoutMs); }
+    catch (error) {
+      const named = error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null ? this.refusal(method, error) : null;
+      throw named === null ? error : new ControlError(named.code, named.message);
+    }
+  }
   private settle(active: ActivePrompt): void { this.cancelPermissions(); active.settled = true; if (this.active === active) this.active = null; }
   private assertInitialized(): void {
     if (this.failure) throw this.failure;
@@ -652,8 +666,6 @@ export class AcpControl implements HarnessControl {
       const status = this.toolStatus(update.status == null ? (prior?.status ?? "pending") : string(update.status, "tool status", 64), detail);
       active.tools.set(toolId, { title, status });
       active.event({ type: "tool", id: toolId, title, status, ...(detail ? { detail } : {}) });
-      const notice = active.noticed ? null : this.toolNotice(detail, active.asked);
-      if (notice !== null) { active.noticed = true; active.event({ type: "notice", severity: "warning", title: notice.title, detail: notice.detail }); }
       return;
     }
     if (kind === "notice") {
@@ -747,7 +759,6 @@ export class AcpControl implements HarnessControl {
     }
     const params = object(request.params, "ACP permission params"); this.scope(params);
     const active = this.active;
-    if (active && !active.settled) active.asked = true;
     // No public Run owns an autonomous follow-up, so nobody can approve it: cancel instead of tearing down the connection.
     if (!active || active.settled) { this.unattributed++; return { outcome: { outcome: "cancelled" } }; }
     const tool = object(params.toolCall, "permission tool call");
