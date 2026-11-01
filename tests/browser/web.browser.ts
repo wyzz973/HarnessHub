@@ -2321,6 +2321,17 @@ test("G054-DL9 the application's shortcuts open what they name, ⌥⌘↓ goes t
   assert.deepEqual(prevented, [false, false, false, false, false, false]);
   await page.evaluate(() => { for (const key of ["k", "/", "ArrowDown"]) document.body.dispatchEvent(new KeyboardEvent("keydown", { key, metaKey: true, altKey: key === "ArrowDown", isComposing: true, bubbles: true, cancelable: true })); });
   await expect(page.getByRole("dialog")).toHaveCount(0);
+  // Nor do ⇧⌘O and ⌘B while composing: away from the conversation the page stays, and so does the sidebar. ⌘. is the
+  // conversation's stop key alone (ADR-054 §5): outside a conversation it does nothing, and never opens or closes the
+  // details panel, as the application's ⌘. once did.
+  const heading = page.getByRole("heading", { name: "设置", exact: true }), panel = () => page.evaluate(() => localStorage.getItem("harnesshub:preferences"));
+  await navigation.getByRole("button", { name: "设置", exact: true }).click(); await expect(heading).toBeVisible();
+  await page.evaluate(() => { for (const [key, shiftKey] of [["o", true], ["b", false]] as const) document.body.dispatchEvent(new KeyboardEvent("keydown", { key, metaKey: true, shiftKey, isComposing: true, bubbles: true, cancelable: true })); });
+  await expect(heading).toBeVisible(); await expect(navigation).toBeVisible();
+  const before = await panel(); await page.keyboard.press("ControlOrMeta+."); await expect(heading).toBeVisible(); assert.equal(await panel(), before);
+  // ⌘B hides the sidebar and brings it back.
+  await page.keyboard.press("ControlOrMeta+B"); await expect(navigation).toHaveCount(0);
+  await page.keyboard.press("ControlOrMeta+B"); await expect(navigation).toBeVisible();
   // ⌘/ lists every shortcut in the board's words, each key as its own cap, with what the browser keeps. Stopping a reply
   // also takes esc in the composer, so its row gives both.
   await page.keyboard.press("ControlOrMeta+/");
@@ -2338,6 +2349,8 @@ test("G054-DL9 the application's shortcuts open what they name, ⌥⌘↓ goes t
   await page.keyboard.press("ControlOrMeta+K");
   const search = page.getByRole("combobox", { name: "搜索对话、页面或操作", exact: true }); await expect(search).toBeFocused();
   await search.fill("下一件"); await expect(page.getByRole("option", { name: /^下一件等你处理/u })).toContainText("⌥⌘↓");
+  // The details panel's command carries its key, ⌘\, not the ⌘. it once had.
+  await search.fill("详情面板"); await expect(page.getByRole("option", { name: /详情面板/u })).toHaveText(/详情面板⌘\\$/u);
   await search.fill("Agent"); await expect(page.getByRole("option").first()).toHaveAccessibleName(/^Agent/u);
   await page.screenshot({ path: join(artifact, "dl9-palette-light-1440.png"), animations: "disabled" });
   await page.keyboard.press("ControlOrMeta+/"); await expect(sheet).toBeVisible(); await expect(page.locator(".palette-pop")).toHaveCount(0);
