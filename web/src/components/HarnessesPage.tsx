@@ -336,8 +336,8 @@ const TIERS: Readonly<Record<HarnessView["tier"], number>> = { focus: 0, catalog
 const byTierAndName = (a: HarnessView, b: HarnessView) => TIERS[a.tier] - TIERS[b.tier] || a.name.localeCompare(b.name, "zh-CN");
 /** Rows of "还可以安装" shown before "全部"; the Agents HarnessHub carries in full come first. */
 const CATALOG_ROWS = 6;
-/** The details' width beside the cards (Agent board), and the page width from which the cards keep room beside it. */
-const SHEET_WIDTH = 360, BESIDE_FROM = 900;
+/** The page width from which the details sit beside the cards; the sheet is 360 px (Agent board), the body's margin the same. */
+const BESIDE_FROM = 900;
 
 /**
  * The Agent page (ADR-054 §5): one card for each Agent on this Mac with its version and channel, its state, one sentence
@@ -401,7 +401,10 @@ export function HarnessesPage(props: HarnessProps) {
   const mine = listed.filter(onMachine).sort(byTierAndName);
   const catalog = listed.flatMap(harness => { if (onMachine(harness)) return []; const way = installWay(harness); return way ? [{ harness, way }] : []; })
     .sort((a, b) => byTierAndName(a.harness, b.harness));
-  /** The card's own action: install its missing adapter, or upgrade it when the Gateway reports a newer version. */
+  /**
+   * The card's own action: install its missing adapter, or upgrade it when the Gateway reports a newer version (Agent
+   * board). A product whose own updater picks the version has no known newer one; its update stays in the details.
+   */
   const cardAction = (harness: HarnessView, state: AgentState): { readonly label: string; readonly run: () => void } | null => {
     if (state.kind === "busy" || state.kind === "unconfirmed") return null;
     if (!available(harness) && canManage(harness) && actionFor(harness) === "install") return { label: "安装接入口", run: () => request(harness) };
@@ -411,8 +414,6 @@ export function HarnessesPage(props: HarnessProps) {
       const product = installationOf(harness, "product");
       if (product?.upgrade) return { label: upgradeLabel(product), run: () => upgradeInstallation(harness, product) };
     }
-    // A product whose own updater decides the version is upgraded without a known target.
-    if (harness.management.native?.channel === "native-cli" && harness.management.native.canUpgrade) return { label: "升级", run: () => request(harness) };
     return null;
   };
   const shownRow = (item: { readonly harness: HarnessView; readonly way: InstallWay }, index: number) => {
@@ -437,7 +438,7 @@ export function HarnessesPage(props: HarnessProps) {
       <Tip label="返回对话"><button type="button" className="icon-btn" aria-label="返回对话" onClick={props.onChat}><ArrowLeft size={16}/></button></Tip>
     </div>
     {/* While the details sit beside the cards, the body (and its scrollbar) ends where the sheet begins. */}
-    <div className="harness-management-body scroll-area min-h-0 flex-1" style={room ? { marginRight: SHEET_WIDTH } : undefined} onScroll={event => setScrolled(event.currentTarget.scrollTop > 0)}>
+    <div className={cn("harness-management-body scroll-area min-h-0 flex-1", room && "mr-[360px]")} onScroll={event => setScrolled(event.currentTarget.scrollTop > 0)}>
       <div className="mx-auto flex w-full max-w-[1040px] flex-col gap-7 px-4 pt-1 pb-16 sm:px-10">
         <div className="flex flex-col">
           <header className="flex flex-wrap items-end gap-x-4 gap-y-3">
@@ -503,7 +504,7 @@ export function HarnessesPage(props: HarnessProps) {
       ? <BaseDialog.Root open={selected !== null} modal={false} disablePointerDismissal onOpenChange={open => { if (!open) setSelectedId(null); }}
         onOpenChangeComplete={open => { if (!open) setRoom(false); }}>
         <BaseDialog.Portal>
-          <BaseDialog.Popup className="drawer-pop z-40 hairline-l [box-shadow:none]" style={{ width: SHEET_WIDTH }}>
+          <BaseDialog.Popup className="drawer-pop z-40 w-[360px] hairline-l [box-shadow:none]">
             <BaseDialog.Title className="sr-only">{detailTitle}</BaseDialog.Title>{details}
           </BaseDialog.Popup>
         </BaseDialog.Portal>
@@ -546,7 +547,10 @@ function AgentCard({ harness, state, action, selected, onOpen }: {
   const nameId = useId(), version = versionOf(harness), products = harness.installations.filter(item => item.role === "product").length;
   // A pointer anywhere on the card opens the details, except on its buttons or while text is being selected.
   const open = (event: MouseEvent<HTMLElement>) => { if ((event.target as Element).closest("button, a, input, select, textarea") || window.getSelection()?.toString()) return; onOpen(); };
-  return <article aria-labelledby={nameId} data-selected={selected ? "true" : "false"} className="agent-entry agent-card card card-interactive flex min-w-0 cursor-pointer flex-col gap-3 p-4 sm:p-[18px]" onClick={open}>
+  // When the details make the cards reflow beside them, the chosen card stays in view (at once, not scrolled smoothly).
+  const self = useRef<HTMLElement>(null);
+  useEffect(() => { if (selected) self.current?.scrollIntoView({ block: "nearest" }); }, [selected]);
+  return <article ref={self} aria-labelledby={nameId} data-selected={selected ? "true" : "false"} className="agent-entry agent-card card card-interactive flex min-w-0 cursor-pointer flex-col gap-3 p-4 sm:p-[18px]" onClick={open}>
     <div className="flex items-start gap-2.5 sm:gap-3">
       <BrandIcon brand={harness.id} name={harness.name} size={44}/>
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
