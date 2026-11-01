@@ -2520,6 +2520,27 @@ test("G054-DL1 the neutral tokens follow the system in both themes, text uses th
   assert.deepEqual(errors, []);
 });
 
+/**
+ * How a maintenance confirmation is spaced: as the capability dialogs, after the Capabilities board's write preview, the
+ * body's first block 18 px under the title block and 12 px between blocks, the buttons 14 px below the body and 18 px
+ * above the edge, with no rule between them (Base UI titles a dialog with an h2). `squeezed` counts the body's blocks
+ * that would be drawn shorter than without the body's height limit if they clipped their overflow, which lets a block of
+ * a flex column shrink below its content: a body taller than its limit must scroll instead. The probe's styles are put
+ * back before it returns.
+ */
+function confirmationGeometry(dialog: ReturnType<Page["getByRole"]>) {
+  return dialog.evaluate(element => {
+    const title = element.querySelector("h2")!.parentElement!, body = title.nextElementSibling as HTMLElement, footer = body.nextElementSibling!, style = getComputedStyle(footer);
+    const blocks = [...body.children] as HTMLElement[], heights = () => blocks.map(block => block.getBoundingClientRect().height);
+    for (const block of blocks) block.style.overflow = "hidden";
+    const limited = heights(); body.style.maxHeight = "none"; const natural = heights();
+    body.style.maxHeight = ""; for (const block of blocks) block.style.overflow = "";
+    return { first: Math.round(blocks[0]!.getBoundingClientRect().top - title.getBoundingClientRect().bottom + body.scrollTop), gap: getComputedStyle(body).rowGap,
+      footer: [style.borderTopWidth, style.paddingTop, style.paddingBottom], squeezed: limited.filter((height, index) => height + 0.5 < natural[index]!).length };
+  });
+}
+const CONFIRMATION_GEOMETRY = { first: 18, gap: "12px", footer: ["0px", "14px", "18px"], squeezed: 0 };
+
 test("G054-UP1 an upgrade first says what it restarts, closes and leaves on the old version and sends exactly that consent; one that changed nothing says so", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
@@ -2589,6 +2610,8 @@ test("G054-UP1 an upgrade first says what it restarts, closes and leaves on the 
   for (const text of ["相隔", "还没有验证", "验证过的版本"]) await expect(dialog).not.toContainText(text);
   // A service left running only needs a newer Node.js before its own restart: said, without blocking.
   await expect(dialog.locator(".upgrade-runtime-warning")).toHaveText("OpenClaw Node（ai.openclaw.node）启动用的 Node.js 是 25.9.0（/opt/homebrew/opt/node@25/bin/node），2026.10.2 要求 >=24.16.0 <25 || >=26.1.0。升级后重启它之前，需要先升级这个 Node.js（brew upgrade node@25）。");
+  // Spaced as every confirmation is, the capability dialogs' write preview first among them.
+  assert.deepEqual(await confirmationGeometry(dialog), CONFIRMATION_GEOMETRY);
   await page.screenshot({ path: join(artifact, "upgrade-confirmation.png"), animations: "disabled" });
   await dialog.getByRole("button", { name: "升级并重启 OpenClaw Gateway" }).click(); await expect(dialog).toBeHidden();
   await expect.poll(() => submitted).not.toBeNull();
@@ -2703,7 +2726,24 @@ test("G054-UP3 an upgrade through the product's documented sequence shows its ho
   await expect(confirm).toBeDisabled();
   await backup.check(); await expect(confirm).toBeEnabled();
   await backup.uncheck(); await expect(confirm).toBeDisabled(); await backup.check();
+  assert.deepEqual(await confirmationGeometry(dialog), CONFIRMATION_GEOMETRY);
   await page.screenshot({ path: join(artifact, "upgrade-sequence.png"), animations: "disabled" });
+  // The longest confirmation of these fixtures, at 390 and 320: it stays inside the window, its body scrolls rather than
+  // squeezing a block, nothing runs off to the side, and its last block scrolls into view whole.
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    assert.deepEqual(await dialog.evaluate(element => {
+      const box = element.getBoundingClientRect(), body = element.querySelector("h2")!.parentElement!.nextElementSibling!;
+      const fits = { inside: box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight, scrolls: body.scrollHeight > body.clientHeight, across: body.scrollWidth <= body.clientWidth };
+      body.scrollTop = body.scrollHeight;
+      const last = body.lastElementChild!.getBoundingClientRect(), frame = body.getBoundingClientRect();
+      return { ...fits, last: last.top >= frame.top - 1 && last.bottom <= frame.bottom + 1 };
+    }), { inside: true, scrolls: true, across: true, last: true }, `the confirmation at ${width}`);
+    assert.deepEqual(await confirmationGeometry(dialog), CONFIRMATION_GEOMETRY);
+    for (const scheme of ["light", "dark"] as const) { await page.emulateMedia({ colorScheme: scheme }); await page.screenshot({ path: join(artifact, `upgrade-sequence-${scheme}-${width}.png`), animations: "disabled" }); }
+    await page.emulateMedia({ colorScheme: "light" });
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
   await confirm.click(); await expect(dialog).toBeHidden();
   await expect.poll(() => submitted).not.toBeNull();
   assert.deepEqual(submitted!.restartServices, ["ai.openclaw.gateway"]); assert.equal(submitted!.backupConfirmed, true); assert.equal(submitted!.expectedNativeFingerprint, checked, "the consent is for the installation the confirmation described");
@@ -2825,6 +2865,7 @@ test("G054-UN1 uninstalling one installation first says what it stops, removes a
     "这些程序正在运行这份安装，不会被关闭；卸载后它们可能出错，建议先退出：openclaw（进程 8100）。"]) await expect(dialog).toContainText(text);
   await expect(dialog.locator(".uninstall-kept")).toHaveText("配置、登录和会话数据保留：~/.openclaw。");
   await expect(dialog.locator(".uninstall-after")).toHaveText("卸载后，OpenClaw 在 HarnessHub 里显示为未安装。");
+  assert.deepEqual(await confirmationGeometry(dialog), CONFIRMATION_GEOMETRY);
   await page.screenshot({ path: join(artifact, "uninstall-confirmation.png"), animations: "disabled" });
   // Opened from the details beside the cards, the confirmation sits over them: Escape closes it alone and sends nothing.
   await page.keyboard.press("Escape"); await expect(dialog).toBeHidden(); await expect(detail).toBeVisible(); assert.equal(submitted, null);
@@ -2890,6 +2931,7 @@ test("G054-IN1 installing a missing product the official way first says what run
   // 9.9.7 is a version no record names; the confirmation states it and says nothing about it (ADR-053).
   for (const text of ["还不是", "验证过的版本"]) await expect(dialog).not.toContainText(text);
   await expect(dialog.locator(".install-terminal")).toHaveText("安装后，终端里的 dsh 就是这份新安装。");
+  assert.deepEqual(await confirmationGeometry(dialog), CONFIRMATION_GEOMETRY);
   await page.screenshot({ path: join(artifact, "install-confirmation.png"), animations: "disabled" });
   await dialog.getByRole("button", { name: "安装", exact: true }).click(); await expect(dialog).toBeHidden();
   await expect.poll(() => submitted).not.toBeNull();
@@ -2962,6 +3004,7 @@ test("G054-UG1 upgrading one installation first says the versions, what runs and
     "这些程序正在运行这份安装，不会被关闭，重开后才用新版本：claude（进程 4242）。", "升级后“当前使用”不变。"]) await expect(dialog).toContainText(text);
   // 2.1.305 is a version no record names: stated as the target, with nothing inferred from it (ADR-053).
   for (const text of ["还不是", "验证过的版本"]) await expect(dialog).not.toContainText(text);
+  assert.deepEqual(await confirmationGeometry(dialog), CONFIRMATION_GEOMETRY);
   await page.screenshot({ path: join(artifact, "installation-upgrade-confirmation.png"), animations: "disabled" });
   await dialog.getByRole("button", { name: "升级", exact: true }).click(); await expect(dialog).toBeHidden();
   await expect.poll(() => submitted).not.toBeNull();
@@ -2977,6 +3020,7 @@ test("G054-UG1 upgrading one installation first says the versions, what runs and
   await expect(terminal.locator(".upgrade-terminal-command")).toHaveText("hermes update --yes");
   await expect(terminal).toContainText(explains); await expect(terminal).toContainText("2 处没有提交的改动");
   await expect(terminal.getByRole("button", { name: "升级", exact: true })).toHaveCount(0);
+  assert.deepEqual(await confirmationGeometry(terminal), CONFIRMATION_GEOMETRY);
   await terminal.getByRole("button", { name: "关闭", exact: true }).click(); await expect(terminal).toBeHidden();
   assert.deepEqual(errors, []);
 });
