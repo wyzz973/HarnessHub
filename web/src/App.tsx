@@ -967,7 +967,7 @@ export function App() {
     return [
       { id: "new", group: "操作", label: "新对话", icon: <SquarePen size={16}/>, shortcut: "⇧⌘O", run: newChat },
       { id: "inbox", group: "操作", label: "等你处理", ...(waiting ? { hint: waiting + " 项" } : {}), keywords: "收件箱 审批 提问", icon: <Inbox size={16}/>, run: openInbox },
-      { id: "next-waiting", group: "操作", label: "下一件等你处理", keywords: "审批 提问", icon: <ArrowDown size={16}/>, shortcut: "⌥⌘↓", run: nextWaiting },
+      { id: "next-waiting", group: "操作", label: "下一件“等你处理”", keywords: "下一件等你处理 审批 提问", icon: <ArrowDown size={16}/>, shortcut: "⌥⌘↓", run: nextWaiting },
       ...state.sessions.slice(0, 200).map(item => ({ id: "session:" + item.id, group: "对话", label: item.title || "新对话", hint: harnessName(item.selection.harnessId), keywords: item.workspace, icon: <BrandIcon brand={item.selection.harnessId} name={harnessName(item.selection.harnessId)} size={16}/>, run: () => selectSession(item.id) })),
       ...state.harnesses.filter(harness => !hidden.has(harness.id) && harness.controls.some(control => control.available)).map(harness => ({ id: "start:" + harness.id, group: "用 Agent 开始新对话", label: "用 " + harness.name + " 开始新对话", keywords: harness.id, icon: <BrandIcon brand={harness.id} name={harness.name} size={16}/>, run: () => chooseHarness(harness) })),
       // The Agent page was called "我的 Agent" before ADR-054; the old name still finds it.

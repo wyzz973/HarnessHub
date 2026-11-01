@@ -420,7 +420,7 @@ export function ChatPage(props: ChatProps) {
     {/* The header of the Conversation board: 54 px on a hairline, its parts 10 px apart (closer on a phone). */}
     <header className={cn("flex h-[54px] flex-none items-center gap-2 bg-app pr-3 pl-3 sm:gap-2.5", session ? "hairline-b sm:pl-6" : "sm:pl-4")}>
       {narrow ? <button type="button" className="icon-btn navigation-toggle" onClick={props.onMenu} aria-label="打开导航"><MenuIcon size={18}/></button>
-        : props.sidebarHidden ? <Tip label="展开侧栏"><button type="button" className="icon-btn" aria-label="展开侧栏" onClick={props.onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null}
+        : props.sidebarHidden ? <Tip label="展开侧栏 ⌘B"><button type="button" className="icon-btn" aria-label="展开侧栏" aria-keyshortcuts="Meta+B" onClick={props.onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null}
       <div className="flex min-w-0 flex-1 items-baseline gap-2.5">
         <h1 id="chat-title" className={cn("m-0 min-w-0 truncate text-ui font-semibold", !session && "sr-only")} title={title}>{title}{session && session.status !== "open" ? <span className="ml-2 text-caption font-medium text-fg-3">{session.status === "closed" ? "已结束" : "需要核实"}</span> : null}</h1>
         {session ? <span className="hidden min-w-0 flex-none truncate text-caption text-fg-3 sm:inline sm:max-w-[40%]" title={session.workspace}>{folderName(session.workspace)}</span> : null}
@@ -483,7 +483,8 @@ export function ChatPage(props: ChatProps) {
               }}/>
             : <div className="transcript mx-auto flex max-w-reading flex-col gap-7 pb-4" ref={transcript} role="log" aria-label="对话历史" aria-live="off">
               {session.origin ? <BranchOrigin origin={session.origin} session={session} harnesses={harnesses} onOpenSource={props.onOpenSession}/> : null}
-              {session.messages.length === 0 && !session.origin ? <EmptyState title="对话准备好了">发出第一条消息，开始这次协作。</EmptyState> : null}
+              {/* A first message sent from the home opens its conversation empty for a moment: it is not shown as ready meanwhile. */}
+              {session.messages.length === 0 && !session.origin && mutation !== "sending" ? <EmptyState title="对话准备好了">发出第一条消息，开始这次协作。</EmptyState> : null}
               {transcriptItems(session)}
               {orphanCards.length ? orphanCards : null}
             </div>}
@@ -585,7 +586,7 @@ function PlanBar({ session, active, harnessName }: { readonly session: SessionVi
       <span className="min-w-0 flex-1 truncate text-fg-3">{done} / {total} · {where}</span>
       <span className="relative h-1 w-[72px] flex-none overflow-hidden rounded-[2px] bg-hover max-sm:hidden" aria-hidden="true">
         <span className="absolute inset-0 origin-left rounded-[2px] bg-run transition-transform duration-200 ease-standard" style={{ transform: `scaleX(${total ? done / total : 0})` }}/></span>
-      <ChevronUp size={12} strokeWidth={2} className={cn("flex-none text-fg-3 transition-[rotate] duration-200 ease-expo keyboard:duration-0", open && "rotate-180")} aria-hidden="true"/>
+      <ChevronUp size={12} strokeWidth={2} className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-180")} aria-hidden="true"/>
     </button>
     <Collapsible open={open} id={id}>
       <div className="pt-2"><ul className="card m-0 grid max-h-[min(40vh,320px)] list-none grid-cols-1 gap-x-4 gap-y-2 overflow-y-auto px-4 py-3 text-ui-sm sm:grid-cols-2" aria-label={`${harnessName(owner.selection.harnessId)} 维护的计划`}>

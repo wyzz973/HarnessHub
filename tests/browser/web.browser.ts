@@ -2497,7 +2497,7 @@ test("G054-DL9 the application's shortcuts open what they name, ⌥⌘↓ goes t
   // ⌘K finds commands with their keys beside them; ⌘/ swaps it for the sheet.
   await page.keyboard.press("ControlOrMeta+K");
   const search = page.getByRole("combobox", { name: "搜索对话、页面或操作", exact: true }); await expect(search).toBeFocused();
-  await search.fill("下一件"); await expect(page.getByRole("option", { name: /^下一件等你处理/u })).toContainText("⌥⌘↓");
+  await search.fill("下一件"); await expect(page.getByRole("option", { name: /^下一件“等你处理”/u })).toContainText("⌥⌘↓");
   // The details panel's command carries its key, ⌘\, not the ⌘. it once had.
   await search.fill("详情面板"); await expect(page.getByRole("option", { name: /详情面板/u })).toHaveText(/详情面板⌘\\$/u);
   await search.fill("Agent"); await expect(page.getByRole("option").first()).toHaveAccessibleName(/^Agent/u);

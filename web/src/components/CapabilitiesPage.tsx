@@ -578,7 +578,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
   useEffect(() => setScrolled((frame?.scrollLeft ?? 0) > 0), [frame]);
   const wide = width === null || width >= WIDE_PAGE, narrowScreen = useMedia("(max-width: 759px)");
   const shellButton = narrowScreen ? <button type="button" className="icon-btn navigation-toggle" onClick={onMenu} aria-label="打开导航"><MenuIcon size={18}/></button>
-    : sidebarHidden ? <Tip label="展开侧栏"><button type="button" className="icon-btn" aria-label="展开侧栏" onClick={onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null;
+    : sidebarHidden ? <Tip label="展开侧栏 ⌘B"><button type="button" className="icon-btn" aria-label="展开侧栏" aria-keyshortcuts="Meta+B" onClick={onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null;
   const reload = <Tip label="重新读取"><button type="button" className="icon-btn" aria-label="重新读取" onClick={() => load()} disabled={loading}>{loading ? <Spinner size={15} label=""/> : <RefreshCw size={16}/>}</button></Tip>;
   const title = <h1 id="capabilities-title" className="m-0 min-w-0 flex-1 trunc text-[22px] leading-[30px] font-semibold tracking-[-0.02em]">能力</h1>;
   const ready = view !== null && view.harnesses.length > 0;
@@ -636,7 +636,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
           <thead><tr className="hairline-b">
             <th scope="col" className={cn("sticky left-0 z-[1] bg-surface pt-3.5 pr-3 pb-2.5 pl-4 align-bottom text-caption leading-5 font-normal text-fg-3", NAME_EDGE)}>{KIND_HEAD[kind]}</th>
             {columns.map((item, index) => <th key={item.harnessId} scope="col" className={cn("pt-3.5 pb-2.5 pl-0.5 align-bottom font-normal", index === columns.length - 1 ? "pr-4" : "pr-0.5")} title={item.name + " · " + (item.version ? "v" + item.version : "版本未知")}>
-              <span className="flex flex-col items-center gap-1.5"><BrandIcon brand={item.harnessId} name={item.name} size={26}/>
+              <span className="relative flex flex-col items-center gap-1.5"><BrandIcon brand={item.harnessId} name={item.name} size={26}/>
                 <span aria-hidden="true" className="max-w-[66px] trunc text-[11px] leading-5 text-fg-2">{shortName(item.name)}</span>
                 <span className="sr-only">{item.name} {item.version ? "v" + item.version : "版本未知"}</span></span></th>)}
           </tr></thead>
@@ -700,7 +700,9 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
     </nav> : null}
     <div className="flex min-w-0 flex-1 flex-col">
       {wide ? null : <header className="flex h-14 flex-none items-center gap-2 pr-3.5 pl-3 sm:pl-[18px]">{shellButton}{title}{reload}</header>}
-      {!wide && ready ? <div className="flex-none overflow-x-auto hairline-b px-4"><Tabs items={tabItems} value={kind} onChange={choose} label="能力类别" idPrefix="capability-tab" panelId="capability-tabpanel" className="h-11 [&>.tab]:h-11"/></div> : null}
+      {/* The narrow category row scrolls sideways when the kinds do not fit; its padding scrolls with it, so the last tab keeps
+          its 16 px from the edge, and 16 px between tabs let the six kinds fit a 390 px phone. */}
+      {!wide && ready ? <div className="flex-none overflow-x-auto hairline-b"><Tabs items={tabItems} value={kind} onChange={choose} label="能力类别" idPrefix="capability-tab" panelId="capability-tabpanel" className="h-11 w-max px-4 [&>.tab]:h-11 [&>.tab+.tab]:ml-4"/></div> : null}
       <div className="scroll-area min-h-0 flex-1">
         <div className={cn("flex w-full max-w-[1040px] flex-col gap-5", wide ? "px-9 pt-10 pb-[120px]" : "px-4 pt-5 pb-[120px]")}>
           {view === null ? <>
