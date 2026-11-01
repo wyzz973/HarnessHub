@@ -2104,9 +2104,11 @@ test("G054-CA1 the capability page opens from the sidebar and from a Harness's d
   await expect(page.getByRole("combobox", { name: "只看一个 Harness" }).locator("option")).toHaveText(["全部 Harness", "Claude Code", "Codex", "Hermes Agent"]);
   await showFrozenHarnesses(page);
   await navigation.getByRole("button", { name: "能力", exact: true }).click();
-  // Seven kinds, each with its count; the skills matrix has one column per Harness, saying how each sees each skill.
+  // The board's six kinds in its order, each with its count (ADR-054 §5); commands are listed only while an Agent has any.
+  // The skills matrix has one column per Harness, saying how each sees each skill.
   const tabs = page.getByRole("tablist", { name: "能力类别" });
-  for (const [label, count] of [["技能", 2], ["MCP", 1], ["指令", 1], ["子 Agent", 1], ["命令", 0], ["Hooks", 1], ["插件", 1]] as const) await expect(tabs.getByRole("tab", { name: label + " " + count, exact: true })).toBeVisible();
+  for (const [label, count] of [["技能", 2], ["MCP", 1], ["指令", 1], ["子 Agent", 1], ["插件", 1], ["Hooks", 1]] as const) await expect(tabs.getByRole("tab", { name: label + " " + count, exact: true })).toBeVisible();
+  await expect(tabs.getByRole("tab")).toHaveText([/^技能/u, /^MCP/u, /^指令/u, /^子 Agent/u, /^插件/u, /^Hooks/u]);
   // Each column names its Harness and the version its channel records, Cursor's dated one like the others; no column says anything about its version (ADR-053).
   await expect(matrix.locator("thead th")).toHaveText([/技能/u, /Claude Code.*v2\.1\.302/u, /Codex.*v0\.162\.1/u, /Cursor.*v2026\.10\.01-e373342/u, /Hermes Agent.*v0\.12\.0/u]);
   await expect(matrix.locator("thead")).not.toContainText("核实");
@@ -2116,14 +2118,17 @@ test("G054-CA1 the capability page opens from the sidebar and from a Harness's d
   await expect(rules).toContainText("v2026.10.01-e373342 · 读取规则见说明"); await expect(rules).toContainText("Cursor 的用户规则保存在应用设置里，不在磁盘上。");
   await expect(rules).not.toContainText("核实");
   await rules.locator("summary").click();
+  // A cell is in use (a check named with the way the Harness finds it), a state worth its own word, or one that can be turned on (ADR-054 §5).
   const alpha = matrix.locator("tbody tr").filter({ hasText: "alpha" }).first();
-  await expect(alpha.locator("td").nth(0)).toHaveText("✓链接"); await expect(alpha.locator("td").nth(1)).toHaveText("✓共享目录✓自有目录"); await expect(alpha.locator("td").nth(2)).toHaveText("⧉重复");
-  await expect(matrix.locator("tbody tr").filter({ hasText: "beta" }).first().locator("td").nth(0)).toHaveText("⊘已停用");
+  await expect(alpha.locator("td").nth(0).getByRole("img")).toHaveAccessibleName("已生效 · 链接"); await expect(alpha.locator("td").nth(1).getByRole("img")).toHaveAccessibleName("已生效 · 共享目录、自有目录");
+  await expect(alpha.locator("td").nth(2)).toHaveText("重复"); await expect(alpha.locator("td").nth(2).getByRole("img")).toHaveAccessibleName("重复 · 共享目录");
+  await expect(matrix.locator("tbody tr").filter({ hasText: "beta" }).first().locator("td").nth(0).getByRole("button")).toHaveAccessibleName("Claude Code：已停用 · 链接，可以启用");
   await expect(alpha).toContainText("vercel skills"); await expect(alpha).toContainText("1 条提示");
   // An entry expands to where each Harness finds it, why, and the warnings.
   await alpha.getByRole("button", { name: /alpha/u }).click();
   const detail = page.locator(".capability-detail");
   for (const text of ["~/.agents/skills/alpha", "https://github.com/owner/repo.git", "2 个文件 · 2.0 KB", "Cursor 没有说明同名技能怎样处理", "Codex 会同时列出 2 个名为 alpha 的技能"]) await expect(detail).toContainText(text);
+  await page.screenshot({ path: join(artifact, "capabilities-detail.png"), animations: "disabled" });
   // A file that could not be read is said, with the reason.
   await expect(page.getByText("有文件无法读取，其中的内容没有显示")).toBeVisible(); await expect(page.getByText("无法解析（TomlError）")).toBeVisible();
   // Filters: search, one Harness, and only entries with warnings or not in use.
@@ -2137,10 +2142,10 @@ test("G054-CA1 the capability page opens from the sidebar and from a Harness's d
   await tabs.getByRole("tab", { name: "Hooks 1", exact: true }).click();
   await matrix.locator("tbody tr").first().getByRole("button").click();
   await expect(page.locator(".capability-detail")).toContainText("Cursor 默认也会运行这个 Hook");
-  await tabs.getByRole("tab", { name: "命令 0", exact: true }).click();
-  await expect(page.getByText("这一类还没有条目")).toBeVisible();
+  // No Harness has a command, so the kind is not offered; an empty kind still says so (below, MCP with only Codex).
+  await expect(tabs.getByRole("tab", { name: /^命令/u })).toHaveCount(0);
   await tabs.getByRole("tab", { name: "MCP 1", exact: true }).click();
-  await expect(matrix.locator("tbody tr").first().locator("td").nth(0)).toHaveText("✓配置");
+  await expect(matrix.locator("tbody tr").first().locator("td").nth(0).getByRole("img")).toHaveAccessibleName("已生效 · 配置");
   await page.getByRole("combobox", { name: "只看一个 Harness" }).selectOption("codex");
   await expect(page.getByText("这一类还没有条目")).toBeVisible();
   await page.getByRole("combobox", { name: "只看一个 Harness" }).selectOption("");
@@ -2532,6 +2537,7 @@ test("G054-CA6 the MCP list shows each server per Harness, imports what the Harn
   const panel = page.locator(".mcp-inventory"), row = panel.locator("tbody tr").filter({ hasText: "fs" });
   await expect(row.locator("td")).toHaveText([/^—$/u, /未写入写入/u, /一致认领/u, /已写入移除/u]);
   await expect(row).toContainText("FS_TOKEN 未设置");
+  await page.screenshot({ path: join(artifact, "capabilities-mcp.png"), animations: "disabled", fullPage: true });
   // Writing goes through its check: the diff and the program it will run are shown, and only that check is sent.
   await row.locator("td").nth(1).getByRole("button", { name: "写入", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "写入 fs 到 Codex" });
@@ -2606,6 +2612,7 @@ test("G054-CA7 the instructions are edited and saved without touching any Harnes
   // Each Harness's file, state and when it reads a change; what a write will ask about; why Cursor and Hermes have none.
   await expect(gemini).toContainText("~/.gemini/GEMINI.md"); await expect(gemini).toContainText("未写入"); await expect(gemini).toContainText(caution);
   await expect(panel.locator("tbody tr[data-harness=hermes]")).toContainText("SOUL.md 是人格文件");
+  await page.screenshot({ path: join(artifact, "capabilities-instructions.png"), animations: "disabled", fullPage: true });
   // Editing marks the texts unsaved and holds back every write until they are saved; saving writes no Harness file.
   await panel.getByRole("textbox", { name: "共享指令" }).fill("回复使用中文。");
   await expect(panel).toContainText("有未保存的修改");
@@ -2671,6 +2678,7 @@ test("G054-CA8 the subagent list writes a subagent into each Harness only throug
   const panel = page.locator(".subagent-inventory"), row = panel.locator("tbody tr").filter({ hasText: "code-checker" });
   await expect(row.locator("td")).toHaveText([/已写入移除/u, /未写入写入/u]);
   await expect(panel).toContainText("Cursor：本机 cursor-agent 只读工作区里的子 Agent，不读家目录");
+  await page.screenshot({ path: join(artifact, "capabilities-subagents.png"), animations: "disabled", fullPage: true });
   // Writing goes through its check: the new file and what the subagent inherits are shown, and only that check is confirmed.
   await row.locator("td").nth(1).getByRole("button", { name: "写入", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "写入 code-checker 到 Codex" });
@@ -2768,7 +2776,210 @@ test("G054-CA9 the plugins tab says whose plugins can be switched and why the ot
   assert.equal(posted.length, 1); assert.deepEqual(errors, []);
 });
 
-test("G054-FZ1 the frozen Harnesses stay out of the picker, the welcome, the palette and my Agents until the settings show them, and a conversation on one still opens with its choice (ADR-050)", { timeout: 120000 }, async t => {
+test("G054-DL8 the capability page lists the board's kinds with counts, marks each cell in use, can be turned on or not read, collects picked cells in a bar that counts their files, and writes them only after a preview, with an undo", { timeout: 180000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  await mkdir(artifact, { recursive: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1440, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  // A check is good for 15 minutes from now; the page prepares again one that is about to run out before showing it.
+  const at = "2026-11-01T10:00:00.000Z", expiresAt = new Date(Date.now() + 15 * 60_000).toISOString(), settings = "~/.claude/settings.json";
+  // beta is off in Claude Code, gamma lives only in the shared directory, the plugin is off in Claude Code, and Claude Code has one command.
+  const view = capabilityView(), entries = view.entries as unknown as { key: string; edges: unknown[] }[];
+  entries.push({ kind: "skill", key: "skill:gamma", name: "gamma", description: "Only in the shared directory", owner: "harnesshub", source: "https://github.com/acme/skills", location: "~/.agents/skills/gamma",
+    edges: [{ harnessId: "codex", mechanism: "native-shared", status: "active", via: "~/.agents/skills/gamma", reason: null }], warnings: [], facts: { kind: "skill", files: 1, bytes: 120 },
+    shared: { folder: "~/.agents/skills/gamma", placed: [] } } as unknown as { key: string; edges: unknown[] }, { kind: "command", key: "command:~/.claude/commands/review.md", name: "/review", description: null, owner: "user", source: null,
+    location: "~/.claude/commands/review.md", edges: [{ harnessId: "claude", mechanism: "own-copy", status: "active", via: "~/.claude/commands/review.md", reason: null }], warnings: [], facts: { kind: "command", format: "markdown" } } as unknown as { key: string; edges: unknown[] });
+  entries.find(entry => entry.key === "plugin:tool@market")!.edges = [
+    { harnessId: "claude", mechanism: "config", status: "disabled", via: settings, reason: "settings.json 的 enabledPlugins 把它设为 false", facts: { kind: "plugin", version: "1.2.0", enabled: false, switchable: true } },
+    { harnessId: "codex", mechanism: "config", status: "active", via: "~/.codex/config.toml", reason: null, facts: { kind: "plugin", version: "1.1.0", enabled: true, switchable: true } }];
+  const betaDiff = "--- a/~/.claude/settings.json\n+++ b/~/.claude/settings.json\n@@ -2,4 +2,3 @@\n   \"skillOverrides\": {\n-    \"beta\": \"off\"\n   },\n   \"enabledPlugins\": {\n";
+  const pluginDiff = (around: string) => "--- a/~/.claude/settings.json\n+++ b/~/.claude/settings.json\n@@ -4,4 +4,4 @@\n" + around + "   \"enabledPlugins\": {\n-    \"tool@market\": false\n+    \"tool@market\": true\n   }\n";
+  const check = (fields: Record<string, unknown>) => ({ command: null, rewrite: null, links: [], current: "other", notes: [], blocked: null, expiresAt, ...fields });
+  const requests: string[] = [], posted: string[] = [], restores: string[] = [];
+  let pluginChecks = 0, history = { changes: [] as unknown[], backups: [] as unknown[], drift: [] as unknown[], ...HISTORY_EXTRA };
+  await page.route("**/api/v1/capabilities", route => route.fulfill({ json: view }));
+  await page.route("**/api/v1/capabilities/history", route => route.fulfill({ json: history }));
+  await page.route(/\/api\/v1\/capabilities\/(skill-switch|skill-link|plugin-switch)\?/u, route => {
+    const url = new URL(route.request().url()), path = url.pathname.replace("/api/v1/capabilities/", ""); requests.push(path + url.search);
+    if (path === "skill-switch") return route.fulfill({ json: check({ kind: "skill-switch", harnessId: "claude", name: "beta", enabled: true, file: settings, diff: betaDiff, fingerprint: "1".repeat(64), notes: ["Claude Code 会立即读到改动。"] }) });
+    if (path === "skill-link") return route.fulfill({ json: check({ kind: "skill-link", harnessId: "claude", name: "gamma", enabled: true, file: "~/.claude/skills", diff: null, current: "none", fingerprint: "2".repeat(64),
+      links: [{ path: "~/.claude/skills/gamma", target: "~/.agents/skills/gamma", action: "create" }] }) });
+    // Prepared again after beta's change wrote the same file: the lines around the change moved, the change itself did not.
+    pluginChecks++;
+    return route.fulfill({ json: check({ kind: "plugin-switch", harnessId: "claude", name: "tool@market", enabled: true, file: settings, fingerprint: (pluginChecks === 1 ? "3" : "4").repeat(64),
+      diff: pluginDiff(pluginChecks === 1 ? "   \"skillOverrides\": {\n    \"beta\": \"off\"\n   },\n" : "   \"skillOverrides\": {},\n"), notes: ["Claude Code 会立即读到改动。", "新开的 Claude Code 会话才读到这次插件改动。"] }) });
+  });
+  const results: Record<string, unknown> = {
+    ["1".repeat(64)]: { id: "21111111-1111-4111-8111-111111111111", kind: "skill-switch", harnessId: "claude", subject: "beta", file: settings, status: "applied", diff: betaDiff, backupId: "31111111-1111-4111-8111-111111111111", error: null, notes: ["Claude Code 会立即读到改动。"], at },
+    ["4".repeat(64)]: { id: "22222222-2222-4222-8222-222222222222", kind: "plugin-switch", harnessId: "claude", subject: "tool@market", file: settings, status: "applied", diff: null, backupId: "32222222-2222-4222-8222-222222222222", error: null, notes: ["新开的 Claude Code 会话才读到这次插件改动。"], at },
+    ["2".repeat(64)]: { id: "23333333-3333-4333-8333-333333333333", kind: "skill-link", harnessId: "claude", subject: "gamma", file: "~/.claude/skills", status: "applied", diff: null, backupId: null, error: null, notes: [],
+      links: [{ path: "~/.claude/skills/gamma", target: "~/.agents/skills/gamma", action: "create" }], at },
+    ["5".repeat(64)]: { id: "24444444-4444-4444-8444-444444444444", kind: "link-undo", harnessId: "claude", subject: "gamma", file: "~/.claude/skills", status: "applied", diff: null, backupId: null, error: null, notes: [],
+      links: [{ path: "~/.claude/skills/gamma", target: "~/.agents/skills/gamma", action: "remove" }], at } };
+  await page.route("**/api/v1/capabilities/changes", route => {
+    const body = route.request().postDataJSON() as { fingerprint: string }; posted.push(body.fingerprint);
+    // The plugin's first check was read before beta's change wrote the same file: the Gateway refuses it, as it does.
+    if (body.fingerprint === "3".repeat(64)) return route.fulfill({ status: 409, json: { code: "CAPABILITY_TARGET_CHANGED", message: "文件在确认之后被改动过，没有写入；请重新检查" } });
+    history = { ...history, changes: [results[body.fingerprint], ...history.changes] };
+    return route.fulfill({ json: results[body.fingerprint] });
+  });
+  await page.route(/\/api\/v1\/capabilities\/changes\/[^/]+\/undo$/u, route => {
+    requests.push(new URL(route.request().url()).pathname.replace("/api/v1/capabilities/", ""));
+    return route.fulfill({ json: check({ kind: "link-undo", harnessId: "claude", name: "gamma", enabled: false, file: "~/.claude/skills", diff: null, current: "harnesshub", fingerprint: "5".repeat(64),
+      links: [{ path: "~/.claude/skills/gamma", target: "~/.agents/skills/gamma", action: "remove" }], notes: ["撤销 1 个链接改动：删掉当初建的，放回当初删的。"] }) });
+  });
+  await page.route(/\/api\/v1\/capabilities\/backups\/[^/]+\/restore$/u, route => {
+    requests.push(new URL(route.request().url()).pathname.replace("/api/v1/capabilities/", ""));
+    return route.fulfill({ json: { backupId: "31111111-1111-4111-8111-111111111111", file: settings, changedSince: true, fingerprint: "6".repeat(64), expiresAt,
+      diff: "--- a/~/.claude/settings.json\n+++ b/~/.claude/settings.json\n@@ -2,6 +2,7 @@\n   \"skillOverrides\": {\n+    \"beta\": \"off\"\n   },\n   \"enabledPlugins\": {\n-    \"tool@market\": true\n+    \"tool@market\": false\n   }\n",
+      notes: ["这个文件在 HarnessHub 改动之后又被改过，恢复会连这些改动一起撤销。", "恢复前会先备份现在的文件。"] } });
+  });
+  await page.route("**/api/v1/capabilities/restores", route => {
+    restores.push((route.request().postDataJSON() as { fingerprint: string }).fingerprint);
+    return route.fulfill({ json: { id: "25555555-5555-4555-8555-555555555555", kind: "restore", harnessId: null, subject: "beta", file: settings, status: "applied", diff: null, backupId: "35555555-5555-4555-8555-555555555555", error: null, notes: ["已恢复到“beta”之前的样子。"], at } });
+  });
+  await page.goto(fixture.gateway.url); await expect(page.getByRole("button", { name: "新对话", exact: true })).toBeVisible();
+  await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "能力", exact: true }).click();
+
+  // The board's categories beside the content, each with its count, in its order; commands come last, listed because an Agent has one.
+  const tabs = page.getByRole("tablist", { name: "能力类别" });
+  await expect(tabs).toHaveAttribute("aria-orientation", "vertical");
+  for (const [label, count] of [["技能", 3], ["MCP", 1], ["指令", 1], ["子 Agent", 1], ["插件", 1], ["Hooks", 1], ["命令", 1]] as const) await expect(tabs.getByRole("tab", { name: label + " " + count, exact: true })).toBeVisible();
+  await expect(tabs.getByRole("tab")).toHaveText([/^技能/u, /^MCP/u, /^指令/u, /^子 Agent/u, /^插件/u, /^Hooks/u, /^命令/u]);
+  await expect(page.getByRole("heading", { name: "技能 3", exact: true })).toBeVisible();
+  await expect(page.getByText("点空着的格子就能启用；写入前会给你看每个文件改哪几行。")).toBeVisible();
+  // The list moves with the arrow keys, Home and End, choosing as it goes.
+  await tabs.getByRole("tab", { name: "技能 3", exact: true }).focus(); await page.keyboard.press("ArrowDown");
+  await expect(tabs.getByRole("tab", { name: "MCP 1", exact: true })).toBeFocused(); await expect(tabs.getByRole("tab", { name: "MCP 1", exact: true })).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("End"); await expect(tabs.getByRole("tab", { name: "命令 1", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("heading", { name: "命令 1", exact: true })).toBeVisible();
+  await page.keyboard.press("Home"); await expect(tabs.getByRole("tab", { name: "技能 3", exact: true })).toBeFocused();
+  // Each column is an Agent, by its mark and short name; its full name and version are read out and shown on hover.
+  const matrix = page.locator(".capability-matrix"), row = (name: string) => matrix.locator("tbody tr").filter({ hasText: name }).first();
+  await expect(matrix.locator("thead th")).toHaveText([/^技能 · 来源$/u, /Claude Code v2\.1\.302/u, /Codex v0\.162\.1/u, /Hermes Agent v0\.12\.0/u]);
+  await expect(matrix.locator("thead th").nth(1)).toHaveAttribute("title", "Claude Code · v2.1.302");
+  // Three states: in use, can be turned on, not read; and each entry's source.
+  await expect(row("alpha").locator("td").nth(0).getByRole("img")).toHaveAccessibleName("已生效 · 链接");
+  const beta = row("beta").locator("td").nth(0).getByRole("button"), gamma = row("gamma").locator("td").nth(0).getByRole("button");
+  await expect(beta).toHaveAccessibleName("Claude Code：已停用 · 链接，可以启用"); await expect(beta).toHaveAttribute("aria-pressed", "false");
+  await expect(gamma).toHaveAccessibleName("Claude Code：看不到，可以启用");
+  await expect(row("gamma").locator("td").nth(2).getByRole("img")).toHaveAccessibleName("不读共享目录；可以在下方“共享技能目录”里让它读取");
+  await expect(row("alpha")).toContainText("共享目录 · owner/repo · vercel skills 管理"); await expect(row("gamma")).toContainText("共享目录 · acme/skills");
+  await expect(page.locator(".capability-legend")).toHaveText(/已生效.*可以启用.*这个 Agent 不读它/u);
+
+  // Picked with the pointer: the ring turns blue in 120 ms and a plus pops from half its size with the overshoot curve in 300 ms (Motion board #34).
+  await beta.click();
+  await expect(beta).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => beta.evaluate(element => getComputedStyle(element).boxShadow)).toMatch(/rgb\(47, 95, 208\) 0px 0px 0px 1\.5px inset$/u);
+  assert.deepEqual(await beta.evaluate(element => { const style = getComputedStyle(element), plus = getComputedStyle(element.querySelector("svg")!);
+    return [style.transitionProperty, style.transitionDuration, plus.animationName, plus.animationDuration, plus.animationTimingFunction]; }),
+  ["scale, background-color, box-shadow", "0.3s, 0.12s, 0.12s", "hh-pop-in, hh-fade-in", "0.3s, 0.12s", "cubic-bezier(0.34, 1.3, 0.64, 1), cubic-bezier(0.2, 0, 0, 1)"]);
+  // The bar rises 16 px in 300 ms on the appear curve (Motion board #29) and counts the files once each change is prepared.
+  const bar = page.getByRole("region", { name: "已选的格子" });
+  await expect(bar).toContainText("已选 1 处 · 会改 1 个文件");
+  assert.deepEqual(await bar.evaluate(element => { const style = getComputedStyle(element); return [style.transitionProperty, style.transitionDuration, style.transitionTimingFunction]; }),
+    ["opacity, transform", "0.3s, 0.3s", "cubic-bezier(0.165, 0.84, 0.44, 1), cubic-bezier(0.165, 0.84, 0.44, 1)"]);
+  // From the keyboard: the focus ring is there at once, Space picks, and nothing animates (Motion board #37).
+  await page.keyboard.press("Tab"); await page.keyboard.press("Tab");
+  await expect(gamma).toBeFocused();
+  assert.deepEqual(await gamma.evaluate(element => { const style = getComputedStyle(element); return [element.matches(":focus-visible"), style.outlineStyle, style.outlineWidth, document.documentElement.dataset.input]; }), [true, "solid", "2px", "keyboard"]);
+  await page.keyboard.press("Space");
+  await expect(gamma).toHaveAttribute("aria-pressed", "true");
+  assert.equal(await gamma.evaluate(element => getComputedStyle(element.querySelector("svg")!).animationName), "none", "a cell picked from the keyboard does not pop");
+  await expect(bar).toContainText("已选 2 处 · 会改 2 个文件");
+  await tabs.getByRole("tab", { name: "插件 1", exact: true }).click();
+  const plugin = row("tool@market").locator("td").nth(0).getByRole("button");
+  await expect(plugin).toHaveAccessibleName("Claude Code：已停用 · 配置，可以启用");
+  await plugin.click();
+  // Three cells, two files: the skill and the plugin both switch in ~/.claude/settings.json, the placement is a link in ~/.claude/skills.
+  await expect(bar).toContainText("已选 3 处 · 会改 2 个文件");
+  assert.deepEqual(requests, ["skill-switch?harnessId=claude&name=beta&enabled=true", "skill-link?harnessId=claude&name=gamma&present=true", "plugin-switch?harnessId=claude&id=tool%40market&enabled=true"]);
+  assert.deepEqual(posted, [], "picking only prepares the checks");
+  await page.screenshot({ path: join(artifact, "dl8-capabilities-picked-light-1440.png"), animations: "disabled" });
+
+  // The preview names every file and shows its exact lines, or the link it makes; nothing is written before "写入".
+  await bar.getByRole("button", { name: "预览写入", exact: true }).click();
+  const write = page.getByRole("dialog", { name: "写入 2 个文件" }), files = write.locator(".capability-write-file");
+  await expect(write).toContainText("只改下面这些行；写完可以撤销。");
+  await expect(files).toHaveCount(2);
+  await expect(files.nth(0)).toContainText(settings); await expect(files.nth(0).locator(".capability-write-item")).toHaveCount(2);
+  await expect(files.nth(0).locator(".capability-diff .text-red")).toHaveText(["-    \"beta\": \"off\"", "-    \"tool@market\": false"]);
+  await expect(files.nth(0).locator(".capability-diff .text-green")).toHaveText(["+    \"tool@market\": true"]);
+  await expect(files.nth(0)).toContainText("现在的设置：不是 HarnessHub 写的"); await expect(files.nth(0)).toContainText("新开的 Claude Code 会话才读到这次插件改动。");
+  await expect(files.nth(1)).toContainText("~/.claude/skills"); await expect(files.nth(1).locator(".capability-links li")).toHaveText(["+ 新建~/.claude/skills/gamma → ~/.agents/skills/gamma"]);
+  await expect(bar).toBeHidden();
+  await page.screenshot({ path: join(artifact, "dl8-capabilities-preview-light-1440.png"), animations: "disabled" });
+  assert.deepEqual(posted, [], "the preview alone writes nothing");
+  await write.getByRole("button", { name: "写入", exact: true }).click(); await expect(write).toBeHidden();
+  // File by file, each change with its own confirmed check. The plugin's check went stale when beta's change wrote the same
+  // file; prepared again, it makes the very same change and is written with its new check.
+  assert.deepEqual(posted, ["1", "3", "4", "2"].map(digit => digit.repeat(64)));
+  assert.equal(pluginChecks, 2);
+  const written = page.getByRole("region", { name: "写入结果" }), result = page.locator(".capability-result");
+  await expect(written).toContainText("已写入 2 个文件");
+  // The bar that opened the preview is gone; the focus moves to the undo of what was written instead of falling to the page.
+  await expect(written.getByRole("button", { name: "撤销", exact: true })).toBeFocused();
+  for (const text of ["已写入 2 个文件", "Claude Code · 启用 beta", "Claude Code · 启用插件 tool@market", "Claude Code · 把 gamma 放到 Claude Code", "新开的 Claude Code 会话才读到这次插件改动。"]) await expect(result).toContainText(text);
+  await expect(plugin).toHaveAttribute("aria-pressed", "false");
+  await page.screenshot({ path: join(artifact, "dl8-capabilities-written-light-1440.png"), animations: "disabled" });
+
+  // Undo is shown first too: the settings go back to the backup from before the batch's first change to them, which also
+  // takes back the plugin's change; the link is undone through its own check.
+  await written.getByRole("button", { name: "撤销", exact: true }).click();
+  const undo = page.getByRole("dialog", { name: "撤销写入的 2 个文件" }), back = undo.locator(".capability-undo-file");
+  await expect(back).toHaveCount(2);
+  await expect(back.nth(0)).toContainText("这次改了 2 处");
+  await expect(back.nth(0).locator(".capability-diff .text-green")).toHaveText(["+    \"beta\": \"off\"", "+    \"tool@market\": false"]);
+  await expect(back.nth(1).locator(".capability-links li")).toHaveText(["− 删除~/.claude/skills/gamma → ~/.agents/skills/gamma"]);
+  await page.screenshot({ path: join(artifact, "dl8-capabilities-undo-light-1440.png"), animations: "disabled" });
+  assert.deepEqual(restores, []);
+  await undo.getByRole("button", { name: "撤销", exact: true }).click(); await expect(undo).toBeHidden();
+  assert.deepEqual(restores, ["6".repeat(64)]); assert.equal(posted.at(-1), "5".repeat(64));
+  assert.ok(requests.includes("backups/31111111-1111-4111-8111-111111111111/restore") && requests.includes("changes/23333333-3333-4333-8333-333333333333/undo"));
+  await expect(result).toContainText("已撤销这次写入，改回了 2 个文件"); await expect(written).toBeHidden();
+
+  // With reduced motion a pressed cell does not shrink, the ring and the plus change at once, and the bar only fades (ADR-054 §3).
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await tabs.getByRole("tab", { name: "技能 3", exact: true }).click();
+  const box = await beta.boundingBox(); assert.ok(box);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down();
+  assert.equal(await beta.evaluate(element => element.getBoundingClientRect().width), 28, "a pressed cell keeps its size");
+  await page.mouse.up();
+  await expect(beta).toHaveAttribute("aria-pressed", "true");
+  assert.deepEqual(await beta.evaluate(element => [getComputedStyle(element).transitionDuration.split(",").every(part => parseFloat(part) === 0), getComputedStyle(element.querySelector("svg")!).animationName]), [true, "none"]);
+  const fade = await bar.evaluate(element => { const style = getComputedStyle(element);
+    return { properties: style.transitionProperty, durations: style.transitionDuration.split(",").map(part => parseFloat(part) * (part.trim().endsWith("ms") ? 1 : 1000)), transform: style.transform }; });
+  assert.equal(fade.properties, "opacity"); assert.equal(fade.transform, "none"); assert.ok(fade.durations.every(value => value > 0 && value <= 150), "the bar only fades, within 150 ms: " + fade.durations.join(","));
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+
+  // Dark, and phone widths: the categories become a row of tabs, the matrix scrolls inside its frame, the bar stays on screen.
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect.poll(() => beta.evaluate(element => getComputedStyle(element).boxShadow)).toMatch(/rgb\(138, 176, 255\) 0px 0px 0px 1\.5px inset$/u);
+  await page.screenshot({ path: join(artifact, "dl8-capabilities-dark-1440.png"), animations: "disabled" });
+  await bar.getByRole("button", { name: "预览写入", exact: true }).click();
+  const darkPreview = page.getByRole("dialog", { name: "写入 1 个文件" });
+  await expect(darkPreview.locator(".capability-diff .text-red")).toHaveText(["-    \"beta\": \"off\""]);
+  await page.screenshot({ path: join(artifact, "dl8-capabilities-preview-dark-1440.png"), animations: "disabled" });
+  await darkPreview.getByRole("button", { name: "取消", exact: true }).click(); await expect(darkPreview).toBeHidden();
+  await expect(bar).toContainText("已选 1 处 · 会改 1 个文件");
+  assert.equal(posted.at(-1), "5".repeat(64), "cancelling the preview writes nothing");
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    for (const width of [390, 320]) {
+      await page.setViewportSize({ width, height: 844 });
+      await expect(page.getByRole("tablist", { name: "能力类别" })).not.toHaveAttribute("aria-orientation", "vertical");
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      const edges = await bar.boundingBox(); assert.ok(edges && edges.x >= 0 && edges.x + edges.width <= width, `the bar fits a ${width} px screen`);
+      await page.screenshot({ path: join(artifact, `dl8-capabilities-${scheme}-${width}.png`), animations: "disabled" });
+    }
+  }
+  // The one error the browser logs is the Gateway's refusal of the stale check, which the page answered by checking again.
+  assert.deepEqual(errors, ["Failed to load resource: the server responded with a status of 409 (Conflict)"]);
+});
+
+test("G054-FZ1the frozen Harnesses stay out of the picker, the welcome, the palette and my Agents until the settings show them, and a conversation on one still opens with its choice (ADR-050)", { timeout: 120000 }, async t => {
   // The control-peer stands in for Gemini CLI under its own catalog entry.
   const fixture = await launchFixture(false, null, null, false, undefined, undefined, { gemini: "0.62.0" }); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
