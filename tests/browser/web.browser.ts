@@ -1909,9 +1909,14 @@ test("G054-DL5 an approval waits in the composer's place: ⏎ allows once and es
   assert.deepEqual(await waiting.evaluate((turn, color) => [...turn.querySelectorAll("*")].filter(node => [...node.childNodes].some(child => child.nodeType === Node.TEXT_NODE && child.textContent!.trim() !== "")
     && getComputedStyle(node).color === color).map(node => node.textContent!.trim()), amber), ["等你批准，请求停在下方输入框的位置"], "the mark is the Turn's only amber line");
   await shoot("dl5-dock");
-  // The mark is a control: ⏎ on it, or a click, moves the focus to the approval.
+  // The mark is a control: ⏎ on it, or a click, moves the focus to the approval. Reached from the keyboard, the approval shows
+  // the product's focus ring at once (2 px, accent text, around its own corners); reached with the pointer it shows none.
+  const ring = () => dock.evaluate(element => { const style = getComputedStyle(element); return [style.outlineStyle, style.outlineWidth, style.outlineColor, style.outlineOffset, /outline|all/u.test(style.transitionProperty) && parseFloat(style.transitionDuration) > 0]; });
   await page.locator("#chat-title").click(); await marker.focus(); await page.keyboard.press("Enter"); await expect(dock).toBeFocused();
+  assert.deepEqual(await ring(), ["solid", "2px", "rgb(47, 95, 208)", "2px", false]);
+  await page.screenshot({ path: join(artifact, "dl5-dock-focus-light-1440.png"), animations: "disabled" });
   await page.locator("#chat-title").click(); await marker.click(); await expect(dock).toBeFocused();
+  assert.equal((await ring())[0], "none");
   // Pointing at the approval makes the keys its own at once.
   await dock.click({ position: { x: 60, y: 8 } }); await expect(dock).toBeFocused();
   await page.keyboard.press("Enter");
