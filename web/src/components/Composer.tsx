@@ -516,7 +516,7 @@ export function Composer(props: ComposerProps) {
         </form>
         {/* The panels the "+" menu and the Agent list open (ruling R2), placed against the control that holds their item. */}
         {sessionsOffered ? <NativeSessionsPanel key={"sessions:" + draft.harnessId + ":" + draft.controlId} side={popSide} load={props.onLoadNativeSessions!} disabled={disabled || props.mutation !== null}
-          onImport={props.onImportNative!} onOpen={props.onOpenSession!} open={shownPanel === "sessions"} onOpenChange={panelOpenChange("sessions")} anchor={plusButton} returnFocus={plusButton}/> : null}
+          onImport={props.onImportNative!} onOpen={props.onOpenContinued ?? props.onOpenSession!} open={shownPanel === "sessions"} onOpenChange={panelOpenChange("sessions")} anchor={plusButton} returnFocus={plusButton}/> : null}
         {extensionsOffered ? <NativeExtensionsPanel key={draft.harnessId + ":" + draft.controlId} side={popSide} load={props.onLoadExtensions!} onCommand={command => { props.onMessageDraft("/" + command + " "); inputRef.current?.focus(); }}
           open={shownPanel === "extensions"} onOpenChange={panelOpenChange("extensions")} anchor={chip} returnFocus={agentButton}/> : null}
         {draft.harnessId ? <AdvancedSettings {...props} popSide={popSide} controls={controls} selectedControl={selectedControl} outdated={outdated} disabled={disabled} nativeOptions={nativeOptions.filter(option => option !== thought && !(option === mode && modeInChip) && option !== permission)} optionPicker={optionPicker} nativeState={nativeState} describeNative={describeNative}

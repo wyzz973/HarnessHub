@@ -925,6 +925,9 @@ test("a native session of the workspace is continued from the composer, quoted a
   await panel.locator("li", { hasText: "Earlier work" }).getByRole("button", { name: "接续", exact: true }).click();
   const origin = page.getByRole("region", { name: "接续来源" });
   await expect(origin).toContainText("接续本机 Native Sessions 会话「Earlier work」", { timeout: 15000 }); await expect(origin).toContainText("4 条消息");
+  // The panel and the button pressed went away with the page that held them; the conversation that opens takes the focus
+  // where the user continues, its message box, instead of leaving it to the page.
+  await expect(composer).toBeFocused();
   await origin.getByText("查看本机会话的历史").click(); await expect(origin).toContainText("first question"); await expect(origin).toContainText("second answer");
   await expect(page.getByRole("button", { name: "接续 · Earlier work", exact: true })).toBeVisible();
   await composer.fill("what did I ask first?"); await composer.press("Enter");
@@ -945,6 +948,35 @@ test("a native session of the workspace is continued from the composer, quoted a
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "the continued conversation must not overflow a narrow screen");
   await page.screenshot({ path: join(artifact, "native-session-continued-390.png"), animations: "disabled" });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  // 打开对话 opens the conversation that already continues the session in place of this page, as 接续 does, and its
+  // message box takes the focus as well.
+  const newChat = page.getByRole("button", { name: "新对话", exact: true });
+  await newChat.click(); await expect(origin).toHaveCount(0);
+  await openNativeSessions(page);
+  await panel.locator("li", { hasText: "Earlier work" }).getByRole("button", { name: /打开对话/u }).click();
+  await expect(origin).toContainText("「Earlier work」", { timeout: 15000 }); await expect(composer).toBeFocused();
+  // Focus the user moves elsewhere while the next conversation is being created (here to the sidebar's search, which stays
+  // usable meanwhile) stays where they put it.
+  await newChat.click(); await openNativeSessions(page);
+  await panel.getByRole("button", { name: "加载更早的会话", exact: true }).click(); await expect(panel.getByText("未命名会话", { exact: true })).toBeVisible({ timeout: 15000 });
+  let create = () => {}; const creating = new Promise<void>(resolve => { create = resolve; });
+  await page.route("**/api/v1/sessions/import", async route => { await creating; await route.fallback(); });
+  await panel.locator("li", { hasText: "未命名会话" }).getByRole("button", { name: "接续", exact: true }).click();
+  const search = page.getByRole("button", { name: "搜索与命令", exact: true });
+  await search.focus(); await expect(search).toBeFocused(); create();
+  await expect(origin).toContainText("接续本机 Native Sessions 会话", { timeout: 15000 }); await expect(origin).not.toContainText("Earlier work");
+  await expect(search).toBeFocused();
+  await page.unroute("**/api/v1/sessions/import");
+  // Where the conversation that opens takes no message, its title takes the focus: here that conversation, once ended.
+  await page.getByRole("button", { name: "更多操作", exact: true }).click(); await page.getByRole("menuitem", { name: /^结束对话…/u }).click();
+  await page.getByRole("dialog", { name: "结束这次会话？" }).getByRole("button", { name: "结束会话", exact: true }).click();
+  const title = page.locator("#chat-title");
+  await expect(title).toContainText("已结束", { timeout: 15000 });
+  await newChat.click(); await openNativeSessions(page);
+  await panel.getByRole("button", { name: "加载更早的会话", exact: true }).click();
+  await panel.locator("li", { hasText: "未命名会话" }).getByRole("button", { name: /打开对话/u }).click();
+  await expect(title).toContainText("已结束", { timeout: 15000 }); await expect(composer).toBeDisabled(); await expect(title).toBeFocused();
   assert.deepEqual(errors, []);
 });
 

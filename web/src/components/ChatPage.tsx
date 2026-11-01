@@ -107,6 +107,15 @@ export interface ChatProps {
   /** `probes` includes the sessions that catalog reads opened, which are left out otherwise. */
   onLoadNativeSessions?: (cursor: string | undefined, signal: AbortSignal, probes?: boolean) => Promise<NativeSessionListView>;
   onImportNative?: (nativeId: string) => void;
+  /** Opens the conversation that already continues a native session, as continuing one does (`focusOnOpen`). */
+  onOpenContinued?: (id: string) => void;
+  /**
+   * Set while this conversation was opened from the composer's native sessions panel, whose page held the focus and went
+   * away with it. Once the conversation is shown, the focus goes on where the user continues: the message box, or the
+   * title when the conversation cannot take a message; focus the user moved elsewhere meanwhile stays. `onOpenFocused`
+   * then clears the request.
+   */
+  focusOnOpen?: boolean; onOpenFocused?: () => void;
   onAttach: (files: readonly File[]) => void;
   onRemoveAttachment: (local: string) => void;
   /** The message held until the current Turn ends, and its actions (ADR-042). */
@@ -233,6 +242,19 @@ export function ChatPage(props: ChatProps) {
     refocus.current = false;
     if (document.activeElement === null || document.activeElement === document.body) textarea.current?.focus({ preventScroll: true });
   }, [session?.id]);
+  // Opened from the composer's native sessions panel (continued, or the conversation that continues the session), the
+  // conversation replaced the page that held the focus. Once it is read, the focus goes on where the user continues: the
+  // message box, or the title while there is none to write in (R03). Focus the user moved meanwhile stays where it is.
+  const heading = useRef<HTMLHeadingElement>(null);
+  const { focusOnOpen, onOpenFocused } = props;
+  useLayoutEffect(() => {
+    if (!focusOnOpen || props.loading) return;
+    onOpenFocused?.();
+    const focused = document.activeElement;
+    if (focused !== null && focused !== document.body) return;
+    const field = textarea.current;
+    (field !== null && !field.disabled ? field : heading.current)?.focus({ preventScroll: true });
+  }, [focusOnOpen, props.loading]);
   // A first message sent from here: the conversation it goes to (one it creates, `id` null until it is shown) opens empty
   // until the message is in its view, also for a moment after the send was acknowledged. It is not shown as ready then.
   const [firstSend, setFirstSend] = useState<{ readonly id: string | null } | null>(null);
@@ -440,7 +462,7 @@ export function ChatPage(props: ChatProps) {
       {narrow ? <button type="button" className="icon-btn navigation-toggle" onClick={props.onMenu} aria-label="打开导航"><MenuIcon size={18}/></button>
         : props.sidebarHidden ? <Tip label="展开侧栏 ⌘B"><button type="button" className="icon-btn" aria-label="展开侧栏" aria-keyshortcuts="Meta+B" onClick={props.onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null}
       <div className="flex min-w-0 flex-1 items-baseline gap-2.5">
-        <h1 id="chat-title" className={cn("m-0 min-w-0 truncate text-ui font-semibold", !session && "sr-only")} title={title}>{title}{session && session.status !== "open" ? <span className="ml-2 text-caption font-medium text-fg-3">{session.status === "closed" ? "已结束" : "需要核实"}</span> : null}</h1>
+        <h1 ref={heading} id="chat-title" tabIndex={-1} className={cn("m-0 min-w-0 truncate text-ui font-semibold outline-none", !session && "sr-only")} title={title}>{title}{session && session.status !== "open" ? <span className="ml-2 text-caption font-medium text-fg-3">{session.status === "closed" ? "已结束" : "需要核实"}</span> : null}</h1>
         {session ? <span className="hidden min-w-0 flex-none truncate text-caption text-fg-3 sm:inline sm:max-w-[40%]" title={session.workspace}>{folderName(session.workspace)}</span> : null}
       </div>
       {session ? <>
