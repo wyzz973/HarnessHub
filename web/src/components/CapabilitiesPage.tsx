@@ -49,7 +49,11 @@ const WARNING_LABEL: Readonly<Record<CapabilityWarning["kind"], string>> = { dup
 const STATUS_TONE: Readonly<Record<CapabilityStatus, string>> = { active: "text-accent-text", disabled: "text-fg-3", shadowed: "text-fg-3", duplicate: "text-fg-2", rejected: "text-fg-3", "broken-link": "text-red", invalid: "text-red" };
 /** The page switches to its side-by-side layout (category list beside the content) from this width of its own. */
 const WIDE_PAGE = 880;
-const MATRIX_COLUMN = 70, MATRIX_NAME = 220, MATRIX_NAME_NARROW = 150;
+/**
+ * The matrix as the board draws it: 70 px per Agent, the names at least 220 px (150 on phones), rows inset 16 px from
+ * both sides of the card. The name cell's own padding (16 + 12) and the last column's 16 px inset are on top of those.
+ */
+const MATRIX_COLUMN = 70, MATRIX_NAME = 220, MATRIX_NAME_NARROW = 150, MATRIX_NAME_PADDING = 28, MATRIX_INSET = 16;
 
 function size(bytes: number): string { return bytes < 1024 ? bytes + " B" : bytes < 1024 * 1024 ? (bytes / 1024).toFixed(1) + " KB" : (bytes / 1024 / 1024).toFixed(1) + " MB"; }
 function factsText(facts: CapabilityFacts): string {
@@ -144,9 +148,17 @@ const DETAIL_BUTTON = "btn btn-outline btn-sm", DETAIL_GHOST = "btn btn-ghost bt
 /** A circle of the matrix (28 px), the legend's 18 px, both as the board draws them. */
 const CIRCLE = "inline-flex flex-none items-center justify-center rounded-full";
 /**
+ * The names column stays in place while the matrix scrolls sideways; once it has, a line marks the column's edge. It is
+ * the cell's own inset shadow, which moves with the sticky cell (a collapsed border would stay with the table) and is
+ * a whole pixel, so it shows at any pixel density.
+ */
+const NAME_EDGE = "group-data-[scrolled]/matrix:shadow-[inset_-1px_0_0_var(--border-strong)]";
+/**
  * One cell. A selectable one is a toggle: picked, its ring turns blue in 120 ms and a plus pops from half size with the
- * overshoot curve in 300 ms (Motion board #34); from the keyboard, and with reduced motion, both change at once. The rest
- * are images named by their state, so the table reads the same to a screen reader as it looks.
+ * overshoot curve in 300 ms while it fades in over 120 ms; unpicked, both go back the same way (Motion board #34). From
+ * the keyboard, and with reduced motion, both change at once. The plus is always there, transparent until picked, so it
+ * moves only when the choice changes: never again when the row is drawn anew or the motion setting changes. The rest are
+ * images named by their state, so the table reads the same to a screen reader as it looks.
  */
 function CellMark({ cell, picked, raised, onPick, describedBy }: { readonly cell: Cell; readonly picked: boolean;
   /** On an opened row's grey: fills that are grey themselves take the surface color. */ readonly raised: boolean; readonly onPick: (pick: Pick) => void; readonly describedBy: string }) {
@@ -155,7 +167,8 @@ function CellMark({ cell, picked, raised, onPick, describedBy }: { readonly cell
     case "open": return <button type="button" aria-pressed={picked} aria-label={cell.label} aria-describedby={describedBy} title={cell.label} onClick={() => onPick(cell.pick)}
       className={cn(CIRCLE, "capability-cell size-7 p-0 [transition:scale_300ms_var(--ease-overshoot),background-color_120ms_var(--ease-standard),box-shadow_120ms_var(--ease-standard)] active:scale-90 motion-reduce:active:scale-100 keyboard:[transition:none] keyboard:active:scale-100",
         picked ? "bg-surface text-accent-text shadow-[inset_0_0_0_1.5px_var(--accent-text)]" : "bg-transparent shadow-[inset_0_0_0_1px_var(--border-strong)] hover:bg-subtle")}>
-      {picked ? <Plus size={14} strokeWidth={2.4} aria-hidden="true" className="motion-pop-in keyboard:animate-none"/> : null}</button>;
+      <Plus size={14} strokeWidth={2.4} aria-hidden="true" className={cn("[transition:scale_300ms_var(--ease-overshoot),opacity_120ms_var(--ease-standard)] keyboard:[transition:none]",
+        picked ? "scale-100 opacity-100" : "scale-50 opacity-0")}/></button>;
     case "chip": return <span role="img" aria-label={cell.label} title={cell.label} className={cn("inline-flex h-5 items-center rounded-full px-2 text-[11px] leading-4 font-medium whitespace-nowrap", cell.failed ? "bg-red-soft text-red" : raised ? "bg-surface text-fg-2 shadow-hairline" : "bg-subtle text-fg-2")}>{cell.text}</span>;
     case "none": return <span role="img" aria-label={cell.label} title={cell.label} className="text-ui-sm text-fg-3">{cell.glyph}</span>;
   }
@@ -391,15 +404,15 @@ function MatrixRow({ entry, columns, expanded, onToggle, badges, source, picked,
   const header = useId(), shown = expanded;
   return <>
     <tr className={shown ? "bg-subtle" : "hairline-b"}>
-      <th scope="row" id={header} className={cn("sticky left-0 z-[1] h-14 py-1.5 pr-3 pl-4 text-left font-normal", shown ? "bg-subtle" : "bg-surface")}>
+      <th scope="row" id={header} className={cn("sticky left-0 z-[1] h-[68px] py-1.5 pr-3 pl-4 text-left font-normal", NAME_EDGE, shown ? "bg-subtle" : "bg-surface")}>
         <button type="button" className="group/name flex w-full min-w-0 flex-col items-start gap-px border-0 bg-transparent p-0 text-left" aria-expanded={expanded} onClick={onToggle}>
           <span className="flex max-w-full min-w-0 items-center gap-2"><span className="min-w-0 trunc font-mono text-code font-medium">{entry.name}</span>{badges(shown)}
             <ChevronRight size={14} aria-hidden="true" className={cn("motion-rotate flex-none text-fg-3", expanded ? "rotate-90" : "opacity-0 group-hover/name:opacity-100 group-focus-visible/name:opacity-100")}/></span>
-          <span className="max-w-full trunc text-caption text-fg-3">{source}</span>
+          <span className="max-w-full trunc text-caption leading-5 text-fg-3">{source}</span>
         </button>
       </th>
-      {columns.map(harness => { const cell = cellOf(entry, harness);
-        return <td key={harness.harnessId} className="h-14 p-0 text-center"><span className="flex items-center justify-center">
+      {columns.map((harness, index) => { const cell = cellOf(entry, harness);
+        return <td key={harness.harnessId} className={cn("h-[68px] p-0 text-center", index === columns.length - 1 && "pr-4")}><span className="flex items-center justify-center">
           <CellMark cell={cell} picked={cell.kind === "open" && picked.has(cell.pick.cell)} raised={shown} onPick={onPick} describedBy={header}/></span></td>; })}
     </tr>
     {shown ? <tr className="capability-detail-row hairline-b bg-subtle"><td colSpan={columns.length + 1} className="p-0">
@@ -431,7 +444,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
     done: "已在 " + request.harnessName + " 中" + (request.enabled ? "启用 " : "停用 ") + request.name, load: () => api.checkSkillSwitch(request.harnessId, request.name, request.enabled, request.via) });
   const switchPlugin = (request: PluginSwitch) => change({ title: "在 " + request.harnessName + " 中" + (request.enabled ? "启用插件 " : "停用插件 ") + request.id, verb: request.enabled ? "启用" : "停用", on: request.enabled,
     done: "已在 " + request.harnessName + " 中" + (request.enabled ? "启用 " : "停用 ") + request.id, load: () => api.checkPluginSwitch(request.harnessId, request.id, request.enabled) });
-  type Result = { readonly kind: "one"; readonly view: CapabilityChangeView; readonly title: string } | { readonly kind: "batch"; readonly written: readonly Written[] } | { readonly kind: "undo"; readonly views: readonly CapabilityChangeView[] };
+  type Result = { readonly kind: "one"; readonly view: CapabilityChangeView; readonly title: string } | { readonly kind: "batch"; readonly written: readonly Written[] } | { readonly kind: "undo"; readonly views: readonly CapabilityChangeView[]; readonly failure: string | null };
   const [result, setResult] = useState<Result | null>(null);
   const [adding, setAdding] = useState(false), [updates, setUpdates] = useState<SkillUpdateView | null>(null), [checkingUpdates, setCheckingUpdates] = useState(false), [updateProblem, setUpdateProblem] = useState<string | null>(null);
   const [reloads, setReloads] = useState(0), [notice, setNotice] = useState<{ readonly text: string; readonly failed: boolean } | null>(null);
@@ -498,11 +511,16 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
     });
   }, [view]);
   // When what had the focus goes away with the bar (清除, 写入, 撤销), the focus moves on instead of falling to the page.
-  const heading = useRef<HTMLHeadingElement>(null), undoButton = useRef<HTMLButtonElement>(null), rescue = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const heading = useRef<HTMLHeadingElement>(null), undoButton = useRef<HTMLButtonElement>(null), previewButton = useRef<HTMLButtonElement>(null), rescue = useRef<ReturnType<typeof setTimeout> | null>(null);
   const keepFocus = (target: () => HTMLElement | null) => {
     if (rescue.current) clearTimeout(rescue.current);
     // After the bar and the dialog have left (200 ms each); only if the focus was lost, so a pointer elsewhere keeps its place.
-    rescue.current = setTimeout(() => { rescue.current = null; const active = document.activeElement; if (active === null || active === document.body) (target() ?? heading.current)?.focus({ preventScroll: true }); }, 260);
+    // A target that cannot take the focus now (gone, or disabled while its check is prepared again) leaves it to the heading.
+    rescue.current = setTimeout(() => {
+      rescue.current = null; const active = document.activeElement;
+      if (active !== null && active !== document.body) return;
+      const wanted = target(); (wanted !== null && !wanted.matches(":disabled") ? wanted : heading.current)?.focus({ preventScroll: true });
+    }, 260);
   };
   useEffect(() => () => { if (rescue.current) clearTimeout(rescue.current); }, []);
   const togglePick = (pick: Pick) => { setBatch(null); setPicked(current => { const next = new Map(current); if (next.has(pick.cell)) next.delete(pick.cell); else next.set(pick.cell, pick); return next; }); };
@@ -524,12 +542,13 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
   };
   const wrote = (written: readonly Written[], complete: boolean) => {
     setPreviewing(false);
-    if (!written.length) return;
+    // Closed without writing: the bar is back, and so is the focus, on its 预览写入 (the one that opened the preview left with the bar).
+    if (!written.length) { keepFocus(() => previewButton.current); return; }
     const done = new Set(written.map(item => item.id));
     setPicked(current => complete ? new Map() : new Map([...current].filter(([, pick]) => !pick.plans.every(plan => done.has(planId(plan))))));
     setBatch(written); setResult({ kind: "batch", written }); reread(); keepFocus(() => undoButton.current);
   };
-  const undone = (views: readonly CapabilityChangeView[]) => { setUndoing(null); setBatch(null); setResult({ kind: "undo", views }); reread(); keepFocus(() => heading.current); };
+  const undone = (views: readonly CapabilityChangeView[], failure: string | null) => { setUndoing(null); setBatch(null); setResult({ kind: "undo", views, failure }); reread(); keepFocus(() => heading.current); };
   useEffect(() => setHarness(initialHarness), [initialHarness]);
 
   // The Harnesses this page lists (ADR-050): hidden ones stay out unless the page is on one of them. Entries only they
@@ -548,10 +567,14 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
   }, [listed, kind, harness, query, onlyWarnings]);
   const warningCount = (entry: CapabilityEntry) => entry.warnings.filter(warning => harness === null || warning.harnessId === null || warning.harnessId === harness).length;
   const choose = (next: CapabilityKind) => { setKind(next); setOpen(null); };
-  const states = useMemo(() => new Set(rows.flatMap(entry => columns.map(item => cellOf(entry, item).kind))), [rows, columns]);
+  // The marks the matrix shows now ("—" and "?" apart), so the key under it explains exactly those.
+  const states = useMemo(() => new Set(rows.flatMap(entry => columns.map(item => { const cell = cellOf(entry, item); return cell.kind === "none" ? cell.glyph : cell.kind; }))), [rows, columns]);
   const pickedCells = useMemo(() => new Set(picked.keys()), [picked]);
 
   const [root, setRoot] = useState<HTMLElement | null>(null), [frame, setFrame] = useState<HTMLDivElement | null>(null), width = useWidth(root), frameWidth = useWidth(frame);
+  // Whether the matrix is scrolled sideways (phones), so the names column shows its edge over the cells passing under it.
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => setScrolled((frame?.scrollLeft ?? 0) > 0), [frame]);
   const wide = width === null || width >= WIDE_PAGE, narrowScreen = useMedia("(max-width: 759px)");
   const shellButton = narrowScreen ? <button type="button" className="icon-btn navigation-toggle" onClick={onMenu} aria-label="打开导航"><MenuIcon size={18}/></button>
     : sidebarHidden ? <Tip label="展开侧栏"><button type="button" className="icon-btn" aria-label="展开侧栏" onClick={onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null;
@@ -571,14 +594,17 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
         action={<button type="button" className="btn btn-sm" onClick={() => setUndoing(result.written)}><RotateCcw size={13}/>撤销这次写入</button>}>
         <ul className="m-0 flex list-none flex-col gap-0.5 p-0">{result.written.map(item => <li key={item.id}>{item.harnessName} · {item.title}{item.view.status === "applied" ? "" : "：" + (item.view.error?.message ?? "没有完成")}</li>)}</ul>
         {notes.length ? <ul className="m-0 mt-1.5 flex list-none flex-col gap-0.5 p-0 text-fg-2">{notes.map(note => <li key={note}>{note}</li>)}</ul> : null}</Notice>; })()
-    : <Notice tone={result.views.every(item => item.status === "applied") ? "green" : "red"} className="capability-result" onDismiss={() => setResult(null)}
-      title={"已撤销这次写入，改回了 " + new Set(result.views.map(item => item.file)).size + " 个文件"}>{[...new Set(result.views.flatMap(item => item.error ? [item.error.message] : item.notes))].join(" ") || null}</Notice>;
+    : (() => { const back = new Set(result.views.filter(item => item.status === "applied").map(item => item.file)).size, complete = result.failure === null && result.views.every(item => item.status === "applied");
+      // A step that failed is said with its reason, and the title says the undo is not complete, never that the batch was undone.
+      return <Notice tone={complete ? "green" : "red"} className="capability-result" onDismiss={() => setResult(null)}
+        title={(complete ? "已撤销这次写入，改回了 " : "撤销没有全部完成，改回了 ") + back + " 个文件"}>
+        {[...new Set([...result.views.flatMap(item => item.error ? [item.error.message] : item.notes), ...(result.failure === null ? [] : [result.failure])])].join(" ") || null}</Notice>; })();
 
   const content = <>
     <div className="flex flex-wrap items-end gap-3">
       <div className="flex min-w-[min(260px,100%)] flex-1 flex-col gap-1">
         <h2 ref={heading} tabIndex={-1} className="m-0 text-section outline-none">{KIND_LABEL[kind]} <span className="font-normal text-fg-3">{counts[kind]}</span></h2>
-        <p className="m-0 text-ui-sm text-fg-2">{pickable ? PICK_HINT : KIND_HINT[kind]}</p>
+        <p className="m-0 text-ui-sm text-pretty text-fg-2">{pickable ? PICK_HINT : KIND_HINT[kind]}</p>
       </div>
       <label className={cn("flex h-[34px] items-center gap-2 rounded-control bg-surface px-2.5 text-fg-3 shadow-[inset_0_0_0_1px_var(--border-strong)] focus-within:shadow-[inset_0_0_0_1px_var(--accent),0_0_0_3px_var(--accent-soft)]", wide ? "w-[220px]" : "min-w-[160px] flex-1")}>
         <Search size={15} aria-hidden="true" className="flex-none"/>
@@ -602,14 +628,14 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
       <label className="flex items-center gap-2 text-fg-2"><input type="checkbox" className="size-3.5 accent-accent" checked={onlyWarnings} onChange={event => setOnlyWarnings(event.target.checked)}/>只看有提示或未生效的</label>
     </div>
     {rows.length ? <>
-      <div ref={setFrame} className="capability-matrix card overflow-x-auto">
-        <table className="w-full table-fixed border-collapse text-left" style={{ minWidth: (wide ? MATRIX_NAME : MATRIX_NAME_NARROW) + 32 + columns.length * MATRIX_COLUMN }}>
-          <colgroup><col/>{columns.map(item => <col key={item.harnessId} style={{ width: MATRIX_COLUMN }}/>)}</colgroup>
+      <div ref={setFrame} className="capability-matrix group/matrix card overflow-x-auto" data-scrolled={scrolled ? "" : undefined} onScroll={event => setScrolled(event.currentTarget.scrollLeft > 0)}>
+        <table className="w-full table-fixed border-collapse text-left" style={{ minWidth: (wide ? MATRIX_NAME : MATRIX_NAME_NARROW) + MATRIX_NAME_PADDING + columns.length * MATRIX_COLUMN + MATRIX_INSET }}>
+          <colgroup><col/>{columns.map((item, index) => <col key={item.harnessId} style={{ width: MATRIX_COLUMN + (index === columns.length - 1 ? MATRIX_INSET : 0) }}/>)}</colgroup>
           <thead><tr className="hairline-b">
-            <th scope="col" className="sticky left-0 z-[1] bg-surface pt-3.5 pr-3 pb-2.5 pl-4 align-bottom text-caption font-normal text-fg-3" style={{ minWidth: wide ? MATRIX_NAME : MATRIX_NAME_NARROW }}>{KIND_HEAD[kind]}</th>
-            {columns.map(item => <th key={item.harnessId} scope="col" className="px-0.5 pt-3.5 pb-2.5 align-bottom font-normal" title={item.name + " · " + (item.version ? "v" + item.version : "版本未知")}>
+            <th scope="col" className={cn("sticky left-0 z-[1] bg-surface pt-3.5 pr-3 pb-2.5 pl-4 align-bottom text-caption leading-5 font-normal text-fg-3", NAME_EDGE)}>{KIND_HEAD[kind]}</th>
+            {columns.map((item, index) => <th key={item.harnessId} scope="col" className={cn("pt-3.5 pb-2.5 pl-0.5 align-bottom font-normal", index === columns.length - 1 ? "pr-4" : "pr-0.5")} title={item.name + " · " + (item.version ? "v" + item.version : "版本未知")}>
               <span className="flex flex-col items-center gap-1.5"><BrandIcon brand={item.harnessId} name={item.name} size={26}/>
-                <span aria-hidden="true" className="max-w-[66px] trunc text-[11px] leading-4 text-fg-2">{shortName(item.name)}</span>
+                <span aria-hidden="true" className="max-w-[66px] trunc text-[11px] leading-5 text-fg-2">{shortName(item.name)}</span>
                 <span className="sr-only">{item.name} {item.version ? "v" + item.version : "版本未知"}</span></span></th>)}
           </tr></thead>
           <tbody className="[&>tr:last-child]:border-b-0">{rows.map(entry => { const warnings = warningCount(entry), update = updateOf(entry);
@@ -622,25 +648,27 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
             </MatrixRow>; })}</tbody>
         </table>
       </div>
-      <div className="capability-legend flex flex-wrap items-center gap-x-[18px] gap-y-2 text-caption text-fg-3">
-        <span className="flex items-center gap-1.5"><span className={cn(CIRCLE, "size-[18px] bg-accent-soft text-accent dark:text-accent-text")}><Check size={10} strokeWidth={3} aria-hidden="true"/></span>已生效</span>
+      {states.has("on") || states.has("open") || states.has("—") || states.has("?") ? <div className="capability-legend flex flex-wrap items-center gap-x-[18px] gap-y-2 text-caption text-fg-3">
+        {states.has("on") ? <span className="flex items-center gap-1.5"><span className={cn(CIRCLE, "size-[18px] bg-accent-soft text-accent dark:text-accent-text")}><Check size={10} strokeWidth={3} aria-hidden="true"/></span>已生效</span> : null}
         {pickable ? <span className="flex items-center gap-1.5"><span className={cn(CIRCLE, "size-[18px] shadow-[inset_0_0_0_1px_var(--border-strong)]")}/>可以启用</span> : null}
-        <span className="flex items-center gap-1.5"><span className="w-[18px] text-center" aria-hidden="true">—</span>这个 Agent 不读它</span>
-      </div>
+        {states.has("—") ? <span className="flex items-center gap-1.5"><span className="w-[18px] text-center" aria-hidden="true">—</span>这个 Agent 不读它</span> : null}
+        {states.has("?") ? <span className="flex items-center gap-1.5"><span className="w-[18px] text-center" aria-hidden="true">?</span>保存在磁盘之外，无法读取</span> : null}
+      </div> : null}
     </> : <EmptyState title={query || onlyWarnings ? "没有匹配的条目" : "这一类还没有条目"}>{columns.some(item => item.kinds[kind] !== "read") ? "部分 Harness 没有这类能力，或保存在磁盘之外。" : "各 Harness 的用户级配置里没有这一类。"}</EmptyState>}
-    {/* Placed against the page, but right after the matrix in the reading and Tab order, so the bar is the next stop after the cells. */}
-    <FloatingBar open={picked.size > 0 && !previewing} label="已选的格子" className="absolute inset-x-4 bottom-6 z-30 mx-auto w-fit text-ui-sm">
+    {/* Placed against the page, but right after the matrix in the reading and Tab order, so the bar is the next stop after the
+      * cells. Sized as on the Capabilities board: 52 px tall with 13 px words and the 34 px buttons; the result bar 46 px. */}
+    <FloatingBar open={picked.size > 0 && !previewing} label="已选的格子" className="absolute inset-x-4 bottom-6 z-30 mx-auto min-h-[52px] w-fit gap-2.5 pl-[18px] text-ui-sm">
       <span className="min-w-0 py-1.5 whitespace-normal" role="status"><span className="whitespace-nowrap">已选 <strong className="font-semibold">{picked.size}</strong> 处</span>{" · "}
         <span className="whitespace-nowrap">{waiting ? "正在核对要改的文件" : "会改 " + files.length + " 个文件"}</span>{!waiting && refused ? <>{" · "}<span className="whitespace-nowrap">{refused} 处不能写入</span></> : null}</span>
-      <span className="flex flex-none items-center gap-1">
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setPicked(new Map()); keepFocus(() => heading.current); }}>清除</button>
-        <button type="button" className="btn btn-primary btn-sm" disabled={waiting || files.length === 0} onClick={preview}>预览写入</button></span>
+      <span className="flex flex-none items-center gap-2.5">
+        <button type="button" className="btn btn-ghost" onClick={() => { setPicked(new Map()); keepFocus(() => heading.current); }}>清除</button>
+        <button ref={previewButton} type="button" className="btn btn-primary" disabled={waiting || files.length === 0} onClick={preview}>预览写入</button></span>
     </FloatingBar>
-    <FloatingBar open={batch !== null && picked.size === 0 && !previewing && undoing === null} label="写入结果" className="capability-written absolute inset-x-4 bottom-6 z-30 mx-auto w-fit text-ui-sm">
+    <FloatingBar open={batch !== null && picked.size === 0 && !previewing && undoing === null} label="写入结果" className="capability-written absolute inset-x-4 bottom-6 z-30 mx-auto min-h-[46px] w-fit gap-2.5 pl-3.5 text-ui-sm">
       <CircleCheck size={16} aria-hidden="true" className="flex-none text-accent-text"/>
       <span className="min-w-0 trunc">已写入 {batch ? new Set(batch.map(item => item.view.file)).size : 0} 个文件</span>
       <span className="flex flex-none items-center gap-0.5">
-        <button ref={undoButton} type="button" className="btn btn-ghost btn-sm text-accent-text hover:text-accent-text" onClick={() => setUndoing(batch)}>撤销</button>
+        <button ref={undoButton} type="button" className="btn btn-ghost h-8 px-2.5 text-accent-text hover:text-accent-text" onClick={() => setUndoing(batch)}>撤销</button>
         <button type="button" className="icon-btn icon-btn-sm" aria-label="关闭" onClick={() => { setBatch(null); keepFocus(() => heading.current); }}><X size={14}/></button></span>
     </FloatingBar>
     {kind === "skill" && view ? <SharedDirectory api={api} harnesses={columns} updates={updates} checking={checkingUpdates} updateProblem={updateProblem} onAdd={() => setAdding(true)} onCheckUpdates={checkUpdates} onChange={change}/> : null}
@@ -661,7 +689,8 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
 
   return <section ref={setRoot} className="capabilities-page relative flex h-full min-h-0 min-w-0 flex-1 bg-app" aria-labelledby="capabilities-title">
     {wide ? <nav aria-label="能力分类" className="flex w-[214px] flex-none flex-col overflow-y-auto hairline-r pt-10 pr-3 pb-6 pl-3.5">
-      <div className={cn("mb-4 flex min-w-0 items-center gap-1", shellButton ? "ml-0" : "ml-2.5")}>{shellButton}{title}{reload}</div>
+      {/* 16 px below the title and the list's own 2 px gap, as on the board */}
+      <div className={cn("mb-[18px] flex min-w-0 items-center gap-1", shellButton ? "ml-0" : "ml-2.5")}>{shellButton}{title}{reload}</div>
       {ready ? <KindNav kinds={kinds} value={kind} counts={counts} onChange={choose}/> : null}
       <span className="min-h-6 flex-1"/>
       <p className="m-0 px-2.5 text-caption text-fg-3">只配置一次，按每家的格式写进它们自己的用户级配置。</p>

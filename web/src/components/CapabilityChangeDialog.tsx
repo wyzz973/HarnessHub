@@ -24,9 +24,14 @@ const PLAN_ACTION: Readonly<Record<NonNullable<CapabilityChangeCheck["skills"]>[
 function bytes(value: number): string { return value < 1024 ? value + " B" : value < 1024 * 1024 ? (value / 1024).toFixed(1) + " KB" : (value / 1024 / 1024).toFixed(1) + " MB"; }
 /** The frame of a block of changed lines, links or one file's changes (Capabilities board): radius 12 inside a hairline. */
 const BLOCK = "overflow-hidden rounded-block bg-surface shadow-[inset_0_0_0_1px_var(--border)]";
-/** The body and the footer of every capability dialog, so that they read as one family. */
-export const DIALOG_BODY = "scroll-area flex max-h-[min(64dvh,560px)] flex-col gap-3 px-5 pt-3 pb-3 text-ui-sm";
-export const DIALOG_FOOT = "flex flex-wrap items-center justify-end gap-2 hairline-t px-5 py-3.5";
+/**
+ * The body and the footer of every capability dialog, so that they read as one family. Spaced as the board's write
+ * preview: 18 px from the title block to the first block, 12 px between blocks, the buttons 14 px below the body and
+ * 18 px above the edge, with no rule between them. A body taller than its limit scrolls; its blocks never shrink, since
+ * a block that clips its overflow would otherwise be squeezed and hide the very lines the user is asked to confirm.
+ */
+export const DIALOG_BODY = "scroll-area flex max-h-[min(64dvh,560px)] flex-col gap-3 px-5 pt-[18px] pb-3 text-ui-sm [&>*]:shrink-0";
+export const DIALOG_FOOT = "flex flex-wrap items-center justify-end gap-2 px-5 pt-3.5 pb-[18px]";
 /** A labelled field of a capability dialog's form; the control keeps its own accessible name. */
 export function Field({ label, children }: { readonly label: string; readonly children: ReactNode }) {
   return <label className="flex flex-col gap-1.5"><span className="text-caption font-medium text-fg-2">{label}</span>{children}</label>;
@@ -39,7 +44,7 @@ function SkillPlans({ check }: { readonly check: CapabilityChangeCheck }) {
     <span className="flex flex-wrap items-baseline gap-x-2"><strong className="font-medium">{PLAN_ACTION[plan.action]} {plan.name}</strong><code className="text-caption break-all text-fg-3">{plan.folder}</code></span>
     <span className="text-caption text-fg-2">{plan.files} 个文件 · {bytes(plan.bytes)}{plan.executables ? " · 含 " + plan.executables + " 个可执行文件" : ""}{plan.plugin ? " · 带插件清单" : ""}{plan.overwrites ? " · 覆盖本地改动 " + plan.overwrites + " 处" : ""}</span>
     {plan.changes.length ? <ul className="skill-file-changes diff m-0 flex max-h-[160px] list-none flex-col overflow-auto rounded-row bg-inset p-0 py-1">{plan.changes.map(change =>
-      <li key={change.path} className={cn("diff-line [&>.s]:w-6", change.action === "add" ? "is-add text-green" : change.action === "remove" ? "is-remove text-red" : "text-amber")}>
+      <li key={change.path} className={cn("diff-line [&>.s]:w-6", change.action === "add" ? "is-add text-green" : change.action === "remove" ? "is-remove text-red" : null)}>
         <span className="s" aria-hidden="true">{change.action === "add" ? "+ " : change.action === "remove" ? "− " : "~ "}</span>
         <span className="sr-only">{change.action === "add" ? "新增" : change.action === "remove" ? "删除" : "修改"}</span><code className="c text-fg">{change.path}</code></li>)}</ul> : null}
   </li>)}</ul>;
@@ -132,7 +137,7 @@ export function ChangeDialog({ api, request, onClose, onDone }: { readonly api: 
           {check.blocked ? <Notice tone="amber" className="switch-blocked" action={check.proceed ? <button type="button" className="btn btn-sm" onClick={() => setSaid({ request, options: [...options, check.proceed!.option] })}>{check.proceed.label}</button> : undefined}>{check.blocked}</Notice> : null}
           <dl className="m-0 grid grid-cols-[84px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
             <Fact label={pkg || check.links.length || check.kind === "skill-link" || check.kind === "link-cleanup" || check.kind === "link-undo" ? "目录" : "改动的文件"}><code className="text-caption break-all">{check.file}</code></Fact>
-            {check.command ? <Fact label="运行命令"><code className="text-caption break-all">{check.command}</code></Fact> : null}
+            {check.command ? <Fact label="运行命令"><code className="text-caption wrap-anywhere">{check.command}</code></Fact> : null}
             {check.source ? <Fact label="来源"><span className="break-all">{check.source.repository}{check.source.ref ? " · " + check.source.ref : ""} · <code className="text-caption">{check.source.commit.slice(0, 12)}</code></span></Fact> : null}
             {check.blocked === null ? <Fact label={pkg ? "来源记录" : "现在的设置"}>{(pkg ? SOURCE_OWNER : OWNER)[check.current]}</Fact> : null}
           </dl>
@@ -220,7 +225,7 @@ function sameChange(confirmed: CapabilityChangeCheck, fresh: CapabilityChangeChe
 }
 /** The head of one file's block: the Agent's mark and name, and the file (Capabilities board). */
 function FileHead({ harnessId, harnessName, file, children }: { readonly harnessId: string; readonly harnessName: string; readonly file: string | null; readonly children?: ReactNode }) {
-  return <div className="flex min-w-0 items-center gap-2 hairline-b px-3 py-2 text-caption">
+  return <div className="flex min-w-0 items-center gap-2 hairline-b px-3 py-[9px] text-caption">
     <BrandIcon brand={harnessId} name={harnessName} size={20}/><span className="flex-none font-semibold">{harnessName}</span>
     {file ? <code className="min-w-0 trunc text-fg-3" title={file}>{file}</code> : null}<span className="flex-1"/>{children}
   </div>;
@@ -321,7 +326,7 @@ export function WriteDialog({ api, open, items, onCheck, onClose }: {
                     {step?.state === "failed" ? <Notice tone="red">{step.message}</Notice> : null}
                     {step?.state === "written" && step.view.error ? <Notice tone="red">{step.view.error.message}</Notice> : null}
                     {ready.blocked ? <Notice tone="amber" className="switch-blocked">{ready.blocked}</Notice> : null}
-                    {ready.command ? <code className="text-caption break-all text-fg-2">{ready.command}</code> : null}
+                    {ready.command ? <code className="text-caption wrap-anywhere text-fg-2">{ready.command}</code> : null}
                     {ready.blocked === null ? <ChangeBody check={ready} bare/> : null}
                   </> : null}
               </div>;
@@ -365,9 +370,11 @@ function undoSteps(written: readonly Written[]): readonly UndoStep[] {
 /**
  * Undoes what one batch wrote (the Capabilities board's "撤销"), shown first like any change: each file's restore with
  * the lines it changes back, each change of links with the links it removes or puts back. Nothing is written before
- * "撤销"; each step is sent with its own confirmed check, and a failure stops the rest, reporting what was undone.
+ * "撤销"; each step is sent with its own confirmed check, and a failure stops the rest. When nothing was undone yet the
+ * dialog stays with the reason; otherwise `onDone` gets what was undone and, for a step that could not be sent, why.
  */
-export function UndoDialog({ api, written, onClose, onDone }: { readonly api: GatewayApi; readonly written: readonly Written[] | null; readonly onClose: () => void; readonly onDone: (views: readonly CapabilityChangeView[]) => void }) {
+export function UndoDialog({ api, written, onClose, onDone }: { readonly api: GatewayApi; readonly written: readonly Written[] | null; readonly onClose: () => void;
+  readonly onDone: (views: readonly CapabilityChangeView[], failure: string | null) => void }) {
   const [checks, setChecks] = useState<ReadonlyMap<string, UndoCheck>>(new Map()), [busy, setBusy] = useState(false), [failure, setFailure] = useState<string | null>(null), [attempt, setAttempt] = useState(0);
   const [steps, setSteps] = useState<readonly UndoStep[]>([]);
   const keys = useRef(new Map<string, string>());
@@ -389,10 +396,18 @@ export function UndoDialog({ api, written, onClose, onDone }: { readonly api: Ga
     const views: CapabilityChangeView[] = [];
     for (const check of ready) {
       const fingerprint = check.check.fingerprint, key = keys.current.get(fingerprint) ?? requestKey(); keys.current.set(fingerprint, key);
-      try { views.push(check.state === "restore" ? await api.restoreBackup(fingerprint, key) : await api.applyCapabilityChange(fingerprint, key)); }
-      catch (error) { setFailure(errorMessage(error)); setBusy(false); if (views.length) onDone(views); return; }
+      let view: CapabilityChangeView;
+      try { view = check.state === "restore" ? await api.restoreBackup(fingerprint, key) : await api.applyCapabilityChange(fingerprint, key); }
+      catch (error) {
+        setBusy(false);
+        if (views.length) onDone(views, errorMessage(error)); else setFailure(errorMessage(error));
+        return;
+      }
+      views.push(view);
+      // A step the Gateway could not complete stops the rest; its view carries the reason.
+      if (view.status !== "applied") break;
     }
-    setBusy(false); onDone(views);
+    setBusy(false); onDone(views, null);
   };
   const files = new Set(steps.filter(step => step.kind !== "none").map(step => step.file)).size;
   return <Dialog open={written !== null} onOpenChange={open => { if (!open && !busy) onClose(); }} title={"撤销写入的 " + files + " 个文件"} description="改回写入之前的样子；下面是会改回的内容。"
