@@ -1300,6 +1300,8 @@ test("Hermes starts no viewer unless the gateway preflight judges A: B–E refus
     finally { await driver.close(); }
   }
   assert.deepEqual((await readFile(cli, "utf8")).trim().split("\n").map(line => JSON.parse(line)), [["acp"], ["acp"]]);
+});
+
 test("G032-NC34 OpenCode 2: an announced compact is kept once and /compact passes through as typed; a models command without --verbose is tried once, quietly, and the agent-declared image capability stands", async t => {
   const root = await mkdtemp(join(tmpdir(), "gateway-opencode-v2-")), trace = join(root, "trace"), calls = join(root, "calls"); t.after(() => rm(root, { recursive: true, force: true }));
   // OpenCode 2 announces `compact` as its only built-in (packages/cli/src/acp/catalog.ts) and reports the compaction as an update.
