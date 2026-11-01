@@ -68,7 +68,9 @@ const CHECKED = "2026-10-17";
 const officialInstallations: Readonly<Record<string, { readonly command: string; readonly docs: string; readonly checkedAt: string; readonly note: string | null }>> = {
   claude: { command: "curl -fsSL https://claude.ai/install.sh | bash", docs: "https://code.claude.com/docs/en/setup", checkedAt: CHECKED, note: null },
   codex: { command: "curl -fsSL https://chatgpt.com/codex/install.sh | sh", docs: "https://github.com/openai/codex", checkedAt: CHECKED, note: null },
-  opencode: { command: "curl -fsSL https://opencode.ai/install | bash", docs: "https://opencode.ai/docs", checkedAt: CHECKED, note: null },
+  // OpenCode 2's command (https://opencode.ai/v2/docs/, read 2026-11-01); the V1 line installs with https://opencode.ai/install.
+  opencode: { command: "curl -fsSL https://opencode.ai/v2/install | bash", docs: "https://opencode.ai/v2/docs/", checkedAt: "2026-11-01",
+    note: "装的是 OpenCode 2。OpenCode 1 与 2 共用 opencode 命令、不能并存：按迁移指南先卸载 Homebrew 或 npm 装的 OpenCode 1，再安装。" },
   openclaw: { command: "curl -fsSL https://openclaw.ai/install.sh | bash", docs: "https://docs.openclaw.ai/install", checkedAt: CHECKED, note: null },
   gemini: { command: "npm install -g @google/gemini-cli", docs: "https://github.com/google-gemini/gemini-cli", checkedAt: CHECKED,
     note: "官方仓库写明：自 2026-06-18 起，免费用户与 Google One 用户改用 Antigravity CLI。" },

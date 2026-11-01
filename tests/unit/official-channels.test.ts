@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { classifyProgram, homebrewName, homebrewReceiptTap } from "../../src/contexts/catalog/domain/channels.js";
-import { adapterChannels, officialInstallMethod, productChannels, productMaintenance } from "../../src/adapters/catalog-channels.js";
+import { adapterChannels, officialInstallMethod, opencodeProductLine, productChannels, productMaintenance } from "../../src/adapters/catalog-channels.js";
 import { loadBuiltinCatalog, officialInstallation } from "../../src/adapters/catalog.js";
 import { LocalInstallationClassifier } from "../../src/infrastructure/discovery/installation-channels.js";
 
@@ -63,8 +63,9 @@ test("G012-OC1 an adapter is official through the package its registry entry pub
   assert.ok(catalog.find(item => item.id === "codex")!.controls.find(control => control.id === "codex-native")!.executableNames.includes("codex"));
   // Every product HarnessHub runs today has its channels recorded with where they were read.
   for (const id of ["claude", "codex", "opencode", "openclaw", "gemini", "cursor", "pi", "hermes", "dsh"]) {
-    // Hermes's pages were read again for v0.22.4; the others as on 2026-10-17.
-    const recorded = productChannels(id); assert.ok(recorded, id); assert.match(recorded.source.url, /^https:\/\//u); assert.equal(recorded.source.checkedAt, id === "hermes" ? "2026-10-22" : "2026-10-17", id);
+    // Hermes's pages were read again for v0.22.4, OpenCode's for OpenCode 2; the others as on 2026-10-17.
+    const recorded = productChannels(id); assert.ok(recorded, id); assert.match(recorded.source.url, /^https:\/\//u);
+    assert.equal(recorded.source.checkedAt, id === "hermes" ? "2026-10-22" : id === "opencode" ? "2026-11-01" : "2026-10-17", id);
     assert.ok(recorded.npm.length + recorded.brewFormulae.length + recorded.brewCasks.length + recorded.scripts.length + recorded.uv.length > 0, id);
   }
 });
@@ -251,4 +252,44 @@ test("G012-OC1 OpenClaw's npm command is the one its install page gives, allowin
   for (const text of ["preinstall 与 postinstall", "npm 11.16 起没有它时 npm 只警告、仍会运行", "npm 12 起默认不运行", "npm 11.15 及更早没有这个选项", "下一次启动时自己补跑", "package lifecycle is incomplete"])
     assert.ok(scripts?.includes(text), text);
   assert.ok(method.notes.some(note => note.includes("openclaw onboard --install-daemon")));
+});
+
+test("G012-OC7 OpenCode's channels cover both product lines: V2's npm package, formula and installer, V1's package and tap formula; the line is read from the channel record, never from a version", async t => {
+  // Both lines are official channels of one product (ADR-053, 2026-11-01), read from OpenCode 2's pages.
+  const recorded = productChannels("opencode")!;
+  assert.deepEqual([recorded.npm, recorded.brewFormulae, recorded.source], [["@opencode/cli", "opencode-ai"], ["opencode", "opencode-v2"], { url: "https://opencode.ai/v2/docs/", checkedAt: "2026-11-01" }]);
+  // Found programs: Homebrew's own and anomalyco/tap's `opencode` kegs share a name, `opencode-v2` has its own keg; npm's two packages; the script's program and its V2 shim.
+  assert.deepEqual(channel("opencode", "/opt/homebrew/bin/opencode", "/opt/homebrew/Cellar/opencode-v2/2.2.5/bin/opencode"), { kind: "brew-formula", name: "opencode-v2", root: "/opt/homebrew/Cellar/opencode-v2", prefix: "/opt/homebrew" });
+  assert.deepEqual(channel("opencode", "/opt/homebrew/bin/opencode", "/opt/homebrew/Cellar/opencode/2.2.5/bin/opencode"), { kind: "brew-formula", name: "opencode", root: "/opt/homebrew/Cellar/opencode", prefix: "/opt/homebrew" });
+  assert.deepEqual(channel("opencode", "/opt/homebrew/bin/opencode", "/opt/homebrew/lib/node_modules/@opencode/cli/bin/opencode"), { kind: "npm", name: "@opencode/cli", root: "/opt/homebrew/lib/node_modules/@opencode/cli", prefix: "/opt/homebrew" });
+  assert.equal(channel("opencode", "/opt/homebrew/bin/opencode2", "/opt/homebrew/lib/node_modules/@opencode/cli/bin/opencode2")?.name, "@opencode/cli", "the package's second bin is the same installation");
+  assert.equal(channel("opencode", HOME + "/.nvm/versions/node/v26.11.1/bin/opencode", HOME + "/.nvm/versions/node/v26.11.1/lib/node_modules/opencode-ai/bin/opencode")?.name, "opencode-ai");
+  assert.deepEqual(channel("opencode", HOME + "/.opencode/bin/opencode2"), { kind: "script", name: ".opencode/bin", root: HOME + "/.opencode/bin", prefix: null });
+  // Discovery reads the tap of the `opencode-v2` keg from its receipt, so Homebrew is given anomalyco/tap/opencode-v2 in full.
+  const root = await realpath(await mkdtemp(join(tmpdir(), "official-channels-opencode-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const put = async (path: string, text: string, mode = 0o644) => { await mkdir(dirname(path), { recursive: true }); await writeFile(path, text, { mode }); };
+  const home = join(root, "home"), brew = join(root, "homebrew"), keg = join(brew, "Cellar", "opencode-v2", "2.2.5"), program = join(keg, "bin", "opencode");
+  await put(program, "#!/bin/sh\nexit 3\n", 0o755);
+  await put(join(keg, "INSTALL_RECEIPT.json"), JSON.stringify({ homebrew_version: "5.1.0", source: { path: brew + "/Library/Taps/anomalyco/homebrew-tap/opencode-v2.rb", tap: "anomalyco/tap", spec: "stable", versions: { stable: "2.2.5" } } }));
+  const classifier = new LocalInstallationClassifier(home, join(home, ".local", "share", "uv", "tools"));
+  const read = await classifier.classify({ path: program, resolvedPath: program, source: "path", entries: [] }, recorded);
+  assert.deepEqual(read, { channel: { kind: "brew-formula", name: "opencode-v2", root: join(brew, "Cellar", "opencode-v2"), prefix: brew, tap: "anomalyco/tap" }, version: "2.2.5" });
+  assert.equal(homebrewName(read!.channel.name, read!.channel.tap ?? null), "anomalyco/tap/opencode-v2");
+  // The product line is a fact of the channel record: which package, which formula, which tap. No version is read.
+  const line = (kind: "npm" | "pnpm" | "bun" | "brew-formula" | "brew-cask" | "script" | "uv", name: string, tap?: string) => opencodeProductLine(tap === undefined ? { kind, name } : { kind, name, tap });
+  assert.deepEqual([line("npm", "@opencode/cli"), line("pnpm", "@opencode/cli"), line("bun", "@opencode/cli"), line("npm", "opencode-ai"), line("bun", "opencode-ai")], ["v2", "v2", "v2", "v1", "v1"]);
+  assert.deepEqual([line("brew-formula", "opencode-v2", "anomalyco/tap"), line("brew-formula", "opencode-v2"), line("brew-formula", "opencode"), line("brew-formula", "opencode", "anomalyco/tap"), line("brew-formula", "opencode", "Anomalyco/Tap")],
+    ["v2", "v2", "v2", "v1", "v1"], "Homebrew's own opencode is V2, anomalyco/tap's is V1");
+  // Records that do not tell the line: the script (both installers write the same program), a formula of another tap, a cask, another package.
+  assert.deepEqual([line("script", ".opencode/bin"), line("brew-formula", "opencode", "someone/tap"), line("brew-cask", "opencode"), line("npm", "opencode-fork"), line("uv", "opencode")], [null, null, null, null, null]);
+  // Installing by the official way installs OpenCode 2 with its installer's --no-modify-path; removing a script installation takes the shim with the program.
+  const method = officialInstallMethod("opencode");
+  assert.equal(method?.kind, "script"); if (method?.kind !== "script") return;
+  assert.deepEqual([method.url, method.command, method.args, method.interpreter, method.shellProfile, method.installs], ["https://opencode.ai/v2/install", "curl -fsSL https://opencode.ai/v2/install | bash -s -- --no-modify-path", ["--no-modify-path"], "bash", null, { command: "opencode", path: ".opencode/bin/opencode" }]);
+  assert.ok(method.hosts.includes("opencode.ai"));
+  assert.ok(method.notes.some(note => note.includes("opencode2") && note.includes("https://opencode.ai/v2/docs/migrate-v1/") && note.includes("不能并存")), method.notes.join(" | "));
+  assert.deepEqual(recorded.scripts[0]?.removal?.files, [".opencode/bin/opencode", ".opencode/bin/opencode2"]);
+  assert.deepEqual(officialInstallation("opencode"), { command: "curl -fsSL https://opencode.ai/v2/install | bash", docs: "https://opencode.ai/v2/docs/", checkedAt: "2026-11-01", note: officialInstallation("opencode")!.note });
+  assert.match(officialInstallation("opencode")!.note ?? "", /OpenCode 2.*不能并存/u);
 });

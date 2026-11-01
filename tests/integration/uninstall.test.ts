@@ -84,11 +84,15 @@ test("G011-UN1 a script installation is removed exactly as its installer wrote i
   for (const name of ["hermes", "hermes-acp", "hermes-agent"]) await rm(join(home, ".local/bin", name));
   await rm(join(home, ".hermes/hermes-agent"), { recursive: true });
 
-  // OpenCode: its one file, and its bin directory only once empty.
-  await file(join(home, ".opencode/bin/opencode"), "#!/bin/sh\n", 0o755); await file(join(home, ".opencode/bin/user-tool"), "mine");
+  // OpenCode: its program and the opencode2 shim OpenCode 2's installer writes beside it (absent for a V1 install: nothing to plan), and its bin directory only once empty.
+  await file(join(home, ".opencode/bin/opencode"), "#!/bin/sh\n", 0o755); await file(join(home, ".opencode/bin/opencode2"), "#!/bin/sh\nexec \"$(dirname \"$0\")/opencode\" \"$@\"\n", 0o755); await file(join(home, ".opencode/bin/user-tool"), "mine");
   const opencode = await planScriptRemoval(removal("opencode"), home), kept: string[] = [];
+  assert.deepEqual(opencode.steps.map(step => [step.kind, step.path]), [["file", join(home, ".opencode/bin/opencode")], ["file", join(home, ".opencode/bin/opencode2")], ["empty-directory", join(home, ".opencode/bin")]]);
   await executeScriptRemoval(removal("opencode"), home, opencode, text => kept.push(text), () => {});
-  assert.equal(existsSync(join(home, ".opencode/bin/opencode")), false); assert.ok(existsSync(join(home, ".opencode/bin/user-tool")));
+  assert.equal(existsSync(join(home, ".opencode/bin/opencode")), false); assert.equal(existsSync(join(home, ".opencode/bin/opencode2")), false); assert.ok(existsSync(join(home, ".opencode/bin/user-tool")));
+  await file(join(home, ".opencode/bin/opencode"), "#!/bin/sh\n", 0o755);
+  assert.deepEqual((await planScriptRemoval(removal("opencode"), home)).steps.map(step => step.kind), ["file", "empty-directory"], "a V1 script install has no shim to remove");
+  await rm(join(home, ".opencode/bin/opencode"));
   assert.ok(kept.some(text => text.startsWith("目录里还有别的文件，保留：")));
 
   // Refused before anything changes: a directory that is a link, and a parent that resolves elsewhere through a link.

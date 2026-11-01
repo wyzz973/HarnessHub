@@ -201,6 +201,21 @@
   - 然后把前者 14 项（9 个文件、5 个目录）的权限逐项设成后者的值，没有重新下载。
   - 记录见[管理操作验收](../verification/management-actions-2026-10-18.md)。
 
+## 2026-11-01 补充：OpenCode 2 的渠道与安装命令
+
+用户 2026-10-22 对 [ADR-053](0053-latest-version-baseline.md) 第 2 题答复“直接换到 OpenCode 2”。OpenCode 1 与 OpenCode 2 是共用 `opencode` 命令、共用 `~/.config/opencode` 与 `~/.local/share/opencode` 的两条产品线，不能并存（[迁移指南](https://opencode.ai/v2/docs/migrate-v1/)）；两条线的渠道都是官网渠道，同一个产品登记在 `src/adapters/catalog-channels.ts`，核对日期 2026-11-01：
+
+| 渠道 | OpenCode 2 | OpenCode 1 | 来源 |
+|---|---|---|---|
+| 官方脚本 | `curl -fsSL https://opencode.ai/v2/install \| bash`：写 `~/.opencode/bin/opencode` 和垫片 `~/.opencode/bin/opencode2`，有 `--no-modify-path`、`--version`、`--binary`；脚本由 opencode.ai 直接下发（2026-11-01 核对），从 registry.npmjs.org 下载程序本体 | `curl -fsSL https://opencode.ai/install \| bash`：只写 `~/.opencode/bin/opencode`，跳转到 raw.githubusercontent.com | [安装文档](https://opencode.ai/v2/docs/)、脚本原文 |
+| Homebrew | `brew install opencode`（homebrew/core，2.2.5）或 `brew install anomalyco/tap/opencode-v2`（formula `opencode-v2`，`conflicts_with "opencode"`，装到 `Cellar/opencode-v2/<v>/bin/opencode`） | `anomalyco/tap/opencode`（1.19.5） | [formulae.brew.sh](https://formulae.brew.sh/formula/opencode)、本机 tap 的 `opencode-v2.rb` |
+| npm | `npm install -g @opencode/cli`（postinstall 选原生二进制，另加 `opencode2` 命令） | `npm install -g opencode-ai` | npm 注册表 |
+
+- **判定与升级。** 发现把 `Cellar/opencode-v2/<v>/bin/opencode` 判为 formula `opencode-v2`，receipt 里的 tap 照旧记下，升级与卸载用全名 `anomalyco/tap/opencode-v2`；同名的 `opencode` keg 仍按 receipt 的 tap 区分 Core（V2）与 anomalyco/tap（V1）。安装的是哪条线由渠道记录给出（`opencodeProductLine`：包名、formula 名、tap），脚本安装看 `opencode2` 垫片在不在——从不看版本号（ADR-053 决定 1）。
+- **代为安装。** 官网安装命令改为 OpenCode 2 的脚本，仍带 `--no-modify-path`；确认框写明脚本会写 `opencode2` 垫片、会替换同一目录里的 OpenCode 1，Homebrew 或 npm 装的 OpenCode 1 要先卸载（迁移指南）；OpenCode 2 读 V1 配置而不改写，并一次性迁移 `~/.local/share/opencode/opencode.db`，能否退回未见文档说明。
+- **卸载。** 脚本渠道的白名单加入 `~/.opencode/bin/opencode2`；V1 安装没有这个文件时按“不在”跳过。数据目录照旧保留。
+- 第 1、2 步里“OpenCode 的 `~/.opencode/bin`”“OpenCode 删 `~/.opencode/bin/opencode`”的表述以本节为准；本机真实验证按[真实验收操作手册](../engineering/real-acceptance.md)第 6.5 节由主代理在换装后进行。
+
 ## 影响
 
 - 这台电脑上，Pi（开发目录）和 DeepSeek Harness（源码构建）会显示为未安装。Claude Code 会列出三份 npm 安装。

@@ -168,17 +168,19 @@ ln -sf "$HOME/.codex/packages/standalone/releases/1.0.0/bin/codex" "$HOME/.local
 printf '\\n# >>> Codex installer >>>\\nexport PATH="%s/.local/bin:$PATH"\\n# <<< Codex installer <<<\\n' "$HOME" >> "$HOME/.zprofile"
 echo "model = 'changed'" > "$HOME/.codex/config.toml" || true
 `;
+  // As OpenCode 2's installer behaves (https://opencode.ai/v2/install, read 2026-11-01): the program and the opencode2 shim beside it.
   const OPENCODE = `#!/bin/bash
 set -e
 [ "$1" = "--no-modify-path" ] || { echo "expected --no-modify-path" >&2; exit 4; }
 mkdir -p "$HOME/.opencode/bin"
-printf '#!/bin/sh\\necho "1.18.35"\\n' > "$HOME/.opencode/bin/opencode"; chmod +x "$HOME/.opencode/bin/opencode"
+printf '#!/bin/sh\\necho "2.2.5"\\n' > "$HOME/.opencode/bin/opencode"; chmod +x "$HOME/.opencode/bin/opencode"
+printf '#!/bin/sh\\nexec "$(dirname "$0")/opencode" "$@"\\n' > "$HOME/.opencode/bin/opencode2"; chmod +x "$HOME/.opencode/bin/opencode2"
 `;
   const routes: Record<string, () => Response> = {
     "https://chatgpt.com/codex/install.sh": () => new Response(null, { status: 302, headers: { location: "https://releases.openai.com/codex/install.sh" } }),
     "https://releases.openai.com/codex/install.sh": () => new Response(CODEX),
-    "https://opencode.ai/install": () => new Response(null, { status: 302, headers: { location: "https://raw.githubusercontent.com/anomalyco/opencode/refs/heads/v1/install" } }),
-    "https://raw.githubusercontent.com/anomalyco/opencode/refs/heads/v1/install": () => new Response(OPENCODE),
+    // OpenCode 2's installer is served by opencode.ai itself (the V1 address redirected to raw.githubusercontent.com).
+    "https://opencode.ai/v2/install": () => new Response(OPENCODE),
   };
   const fetcher = (async (input: URL | RequestInfo) => routes[String(input)]?.() ?? new Response("not found", { status: 404 })) as typeof fetch;
   const f = await gateway(t, async (_root, home) => {
@@ -197,6 +199,6 @@ printf '#!/bin/sh\\necho "1.18.35"\\n' > "$HOME/.opencode/bin/opencode"; chmod +
   assert.equal(opencode.value.shellProfile, null); assert.deepEqual(opencode.value.terminal, { command: "opencode", before: null, after: "not-on-path" });
   assert.ok(opencode.value.notes.some(note => note.includes("~/.opencode/bin")));
   const done = await f.until((await f.call<InstallationJobView>("/installation-jobs", { harnessId: "opencode", action: "install", commandId: "install-opencode", expectedInstallFingerprint: opencode.value.fingerprint })).value.id);
-  assert.equal(done.status, "completed", JSON.stringify(done.error)); assert.equal(done.resolvedVersion, "1.18.35"); assert.deepEqual(done.native?.official?.shellChanges, []);
+  assert.equal(done.status, "completed", JSON.stringify(done.error)); assert.equal(done.resolvedVersion, "2.2.5"); assert.deepEqual(done.native?.official?.shellChanges, []);
   assert.equal(await readFile(join(f.home, ".zprofile"), "utf8").then(text => text.includes(".opencode")), false);
 });

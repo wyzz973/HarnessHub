@@ -53,6 +53,16 @@
   - `https://cursor.com/install` 和 `https://openclaw.ai/install.sh` 不跳转。
 - **Claude Code 的 npm 安装**：官网写明用 npm 安装时，postinstall 会把原生程序链接到位，所以 HarnessHub 用 npm 安装时不能加 `--ignore-scripts`。
 
+## 2026-11-01 补记：OpenCode 2
+
+汇总表的 OpenCode 行是 OpenCode 1 线在 2026-10-17 的情况。2026-10-22 用户决定直接换到 OpenCode 2 之后，按 OpenCode 2 的文档（https://opencode.ai/v2/docs/ 、https://opencode.ai/v2/docs/migrate-v1/ ）与脚本原文（https://opencode.ai/v2/install ，2026-11-01 读）补记：
+
+- 两条线共用 `opencode` 命令与同一套配置、数据目录，不能并存；迁移指南要求先卸载包管理器装的 V1。
+- OpenCode 2 的渠道：脚本 `curl -fsSL https://opencode.ai/v2/install | bash`（写 `~/.opencode/bin/opencode` 与垫片 `opencode2`；选项 `--no-modify-path`、`--version`、`--binary`；由 opencode.ai 直接下发，程序本体来自 registry.npmjs.org）、Homebrew `opencode`（homebrew/core，2.2.5）或 `anomalyco/tap/opencode-v2`（`conflicts_with "opencode"`，装到 `Cellar/opencode-v2/<v>/bin/opencode`）、npm `@opencode/cli`（另加 `opencode2` 命令）。
+- OpenCode 1 的渠道不变：脚本 `https://opencode.ai/install`（跳到 raw.githubusercontent.com）、`anomalyco/tap/opencode`（1.19.5）、npm `opencode-ai`（1.19.5）。
+- 本机 2026-11-01：`Cellar/opencode/{1.1.21,1.18.35}` 都来自 anomalyco/tap（receipt），`brew info opencode` 被它遮住；tap 里已有 `opencode-v2.rb`（2.2.5）。
+- 渠道登记见 ADR-044 的“2026-11-01 补充”。
+
 ## 来源
 
 - Claude Code：https://code.claude.com/docs/en/setup （安装、更新、卸载各节）

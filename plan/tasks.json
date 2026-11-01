@@ -1453,7 +1453,8 @@
         "G012-OC3",
         "G012-OC4",
         "G012-OC5",
-        "G012-OC6"
+        "G012-OC6",
+        "G012-OC7"
       ],
       "active_slice": "official-install-channels"
     },

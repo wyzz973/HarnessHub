@@ -10403,6 +10403,23 @@
       "planned_file": "tests/unit/official-channels.test.ts"
     },
     {
+      "id": "G012-OC7",
+      "task": "G012",
+      "requirements": [
+        "R03",
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "scenario": "OpenCode 的渠道覆盖两条产品线，产品线只由渠道记录判定（ADR-053，2026-11-01 用户决定换到 OpenCode 2）",
+      "expected": "productChannels(opencode) 登记 npm @opencode/cli（V2）与 opencode-ai（V1）、Homebrew formula opencode（Core 是 V2、anomalyco/tap 是 V1）与 opencode-v2、脚本 ~/.opencode/bin，来源为 https://opencode.ai/v2/docs/、核对日期 2026-11-01；Cellar/opencode-v2/<v>/bin/opencode 判为 brew-formula、name opencode-v2，receipt 里的 anomalyco/tap 被记下，homebrewName 给出 anomalyco/tap/opencode-v2，版本取 keg 目录名；lib/node_modules/@opencode/cli 下的 opencode 与 opencode2 都判为同一份 npm 安装；~/.opencode/bin/opencode2 在脚本根内；opencodeProductLine 对 @opencode/cli、opencode-v2、无 tap 的 opencode 返回 v2，对 opencode-ai、anomalyco/tap 的 opencode（不分大小写）返回 v1，对脚本、其他 tap、cask、其他包返回 null，不读任何版本号；officialInstallMethod(opencode) 是 https://opencode.ai/v2/install 的脚本、带 --no-modify-path、hosts 含 opencode.ai、notes 写明 opencode2 垫片、不能并存与迁移指南链接；脚本渠道的 removal.files 含 opencode 与 opencode2；页面显示的官网命令为 curl -fsSL https://opencode.ai/v2/install | bash、核对日期 2026-11-01、附注说明 OpenCode 1 与 2 不能并存",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/unit/official-channels.test.ts"
+    },
+    {
       "id": "G011-NC4",
       "task": "G011",
       "requirements": [

@@ -1,7 +1,9 @@
 import type { ChannelRegistry, ControlRecipe } from "../contexts/catalog/domain/catalog.js";
-import type { OfficialChannels, OfficialInstallMethod, ProductMaintenance } from "../contexts/catalog/domain/channels.js";
+import type { InstallationChannel, OfficialChannels, OfficialInstallMethod, ProductMaintenance } from "../contexts/catalog/domain/channels.js";
 
 const CHECKED = "2026-10-17";
+/** OpenCode's pages were read again for OpenCode 2 (2.2.5) on this date; the V1 facts of 2026-10-17 stay as history in the comments. */
+const OPENCODE_CHECKED = "2026-11-01";
 const none = { npm: [], brewFormulae: [], brewCasks: [], scripts: [], uv: [] } as const;
 /**
  * Each product's official macOS installation channels (ADR-044), read from its own documentation on the date given; see
@@ -20,12 +22,20 @@ const products: Readonly<Record<string, OfficialChannels>> = {
       removal: { links: [".local/bin/codex", ".local/bin/codex-code-mode-host"], launchers: [], files: [], directories: [".codex/packages/standalone"], emptyDirectories: [], documented: false },
       upgrade: { kind: "rerun" } }],
     source: { url: "https://github.com/openai/codex", checkedAt: CHECKED } },
-  opencode: { ...none, npm: ["opencode-ai"], brewFormulae: ["opencode"],
-    // The installer writes only ~/.opencode/bin/opencode (and, without --no-modify-path, a PATH line HarnessHub never edits).
+  // OpenCode 1 and OpenCode 2 are two product lines sharing the `opencode` command and these directories; they are not
+  // installed side by side (https://opencode.ai/v2/docs/migrate-v1/, read 2026-11-01), and both lines' channels are
+  // official. npm: `@opencode/cli` (V2; its postinstall picks the native binary and also adds an `opencode2` bin) and
+  // `opencode-ai` (V1). Homebrew: Homebrew's own `opencode` is V2 (2.2.5, https://formulae.brew.sh/formula/opencode),
+  // anomalyco/tap's `opencode` is V1 (1.19.5) and its `opencode-v2` (`conflicts_with "opencode"`) installs
+  // Cellar/opencode-v2/<version>/bin/opencode; which tap a keg came from is read from its receipt (`opencodeProductLine`).
+  // Script: both lines' installers write ~/.opencode/bin/opencode and, without --no-modify-path, a PATH line HarnessHub
+  // never edits; V2's (https://opencode.ai/v2/install) also writes the `opencode2` shim beside it (install_legacy_shim),
+  // which is why the shim is in the removal list and tells the lines apart for a script installation.
+  opencode: { ...none, npm: ["@opencode/cli", "opencode-ai"], brewFormulae: ["opencode", "opencode-v2"],
     scripts: [{ root: ".opencode/bin", launchers: [], program: null, formerPrograms: [],
-      removal: { links: [], launchers: [], files: [".opencode/bin/opencode"], directories: [], emptyDirectories: [".opencode/bin"], documented: false },
+      removal: { links: [], launchers: [], files: [".opencode/bin/opencode", ".opencode/bin/opencode2"], directories: [], emptyDirectories: [".opencode/bin"], documented: false },
       upgrade: { kind: "rerun" } }],
-    source: { url: "https://opencode.ai/docs", checkedAt: CHECKED } },
+    source: { url: "https://opencode.ai/v2/docs/", checkedAt: OPENCODE_CHECKED } },
   openclaw: { ...none, npm: ["openclaw"], source: { url: "https://docs.openclaw.ai/install", checkedAt: CHECKED } },
   gemini: { ...none, npm: ["@google/gemini-cli"], brewFormulae: ["gemini-cli"], source: { url: "https://github.com/google-gemini/gemini-cli", checkedAt: CHECKED } },
   // Cursor's page gives no uninstall; the installer writes versions under ~/.local/share/cursor-agent and links agent and cursor-agent.
@@ -97,6 +107,28 @@ export function adapterChannels(harnessId: string, control: ControlRecipe): Offi
 }
 /** A product's services and data (ADR-044); a product without a record registers no service and its data is not named. */
 export function productMaintenance(harnessId: string): ProductMaintenance { return maintenance[harnessId] ?? { services: [], data: [], resident: [] }; }
+/**
+ * OpenCode's two product lines (ADR-053, 2026-11-01): OpenCode 1 and OpenCode 2 share the `opencode` command and the same
+ * configuration and data directories, and differ in their configuration dialect and some CLI commands. The line is a fact
+ * of the installation's channel, never of its version number.
+ */
+export type OpenCodeLine = "v1" | "v2";
+/**
+ * The product line an OpenCode installation's channel record names: npm `@opencode/cli` (V2) or `opencode-ai` (V1), the
+ * `opencode-v2` formula (V2), Homebrew's own `opencode` (no tap in the receipt; V2) or anomalyco/tap's `opencode` (V1).
+ * Null when the record does not tell: a script installation (both lines' installers write the same program; the `opencode2`
+ * shim beside it does tell, which the capability layer checks), a formula of another tap, a cask. Pure; reads no version.
+ */
+export function opencodeProductLine(channel: Pick<InstallationChannel, "kind" | "name" | "tap">): OpenCodeLine | null {
+  switch (channel.kind) {
+    case "npm": case "pnpm": case "bun": return channel.name === "@opencode/cli" ? "v2" : channel.name === "opencode-ai" ? "v1" : null;
+    case "brew-formula":
+      if (channel.name === "opencode-v2") return "v2";
+      if (channel.name !== "opencode") return null;
+      return channel.tap === undefined ? "v2" : channel.tap.toLowerCase() === "anomalyco/tap" ? "v1" : null;
+    case "brew-cask": case "script": case "uv": return null;
+  }
+}
 /** The registry of recorded channels the inventory classifies found programs with. */
 export const channelRegistry: ChannelRegistry = { product: productChannels, adapter: adapterChannels };
 const SCRIPT_NOTE = "脚本运行时还会下载程序本体，那部分由脚本自己处理，HarnessHub 不校验，与你在终端里运行相同。";
@@ -112,9 +144,16 @@ const installs: Readonly<Record<string, OfficialInstallMethod>> = {
   codex: { kind: "script", command: "curl -fsSL https://chatgpt.com/codex/install.sh | sh", url: "https://chatgpt.com/codex/install.sh", hosts: ["chatgpt.com", "releases.openai.com"],
     interpreter: "sh", args: [], env: { CODEX_NON_INTERACTIVE: "1" }, writes: [".local/bin", ".codex/packages"], configFiles: [], shellProfile: "codex",
     installs: { command: "codex", path: ".local/bin/codex" }, notes: [SCRIPT_NOTE, "以非交互方式运行（CODEX_NON_INTERACTIVE=1）：不会卸载其他渠道的 Codex，也不会在安装后立即启动。"] },
-  opencode: { kind: "script", command: "curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path", url: "https://opencode.ai/install", hosts: ["opencode.ai", "raw.githubusercontent.com"],
+  // OpenCode 2's installer (https://opencode.ai/v2/docs/; the script at https://opencode.ai/v2/install was read on 2026-11-01:
+  // served by opencode.ai itself, while the V1 address https://opencode.ai/install redirects to raw.githubusercontent.com,
+  // so both hosts stay allowed). Its options are --no-modify-path, --version and --binary; it asks opencode.ai for the
+  // latest version and fetches the program from registry.npmjs.org (the part HarnessHub does not check), writes
+  // ~/.opencode/bin/opencode and the opencode2 shim, and replaces a V1 program in that directory.
+  opencode: { kind: "script", command: "curl -fsSL https://opencode.ai/v2/install | bash -s -- --no-modify-path", url: "https://opencode.ai/v2/install", hosts: ["opencode.ai", "raw.githubusercontent.com"],
     interpreter: "bash", args: ["--no-modify-path"], env: {}, writes: [".opencode"], configFiles: [], shellProfile: null,
-    installs: { command: "opencode", path: ".opencode/bin/opencode" }, notes: [SCRIPT_NOTE, "带 --no-modify-path 运行，不改 shell 配置；如果终端里找不到 opencode，需要自己把 ~/.opencode/bin 加入 PATH。"] },
+    installs: { command: "opencode", path: ".opencode/bin/opencode" }, notes: [SCRIPT_NOTE, "带 --no-modify-path 运行，不改 shell 配置；如果终端里找不到 opencode，需要自己把 ~/.opencode/bin 加入 PATH。",
+      "装的是 OpenCode 2：脚本还会在 ~/.opencode/bin 写一个 opencode2 垫片，并替换同一目录里的 OpenCode 1。OpenCode 1 与 2 共用 opencode 命令、不能并存；按迁移指南（https://opencode.ai/v2/docs/migrate-v1/），Homebrew 或 npm 装的 OpenCode 1 要先卸载再装。"
+        + "OpenCode 2 读 OpenCode 1 的配置而不改写它，并一次性把 ~/.local/share/opencode 里的数据库迁到新表，能否退回未见文档说明。"] },
   cursor: { kind: "script", command: "curl https://cursor.com/install -fsS | bash", url: "https://cursor.com/install", hosts: ["cursor.com"], interpreter: "bash", args: [], env: {},
     writes: [".local/bin", ".local/share/cursor-agent"], configFiles: [], shellProfile: null,
     installs: { command: "cursor-agent", path: ".local/bin/cursor-agent" }, notes: [SCRIPT_NOTE, "Cursor 的安装脚本自身不校验下载的完整性。"] },

@@ -166,8 +166,8 @@ mkdir -p "$HOME/.opencode/bin"
 printf '#!/bin/sh\\necho "1.1.0"\\n' > "$HOME/.opencode/bin/opencode"; chmod +x "$HOME/.opencode/bin/opencode"
 `;
   const routes: Record<string, () => Response> = {
-    "https://opencode.ai/install": () => new Response(null, { status: 302, headers: { location: "https://raw.githubusercontent.com/anomalyco/opencode/refs/heads/v1/install" } }),
-    "https://raw.githubusercontent.com/anomalyco/opencode/refs/heads/v1/install": () => new Response(SCRIPT),
+    // OpenCode 2's installer is served by opencode.ai itself (read 2026-11-01; the V1 address redirected to raw.githubusercontent.com).
+    "https://opencode.ai/v2/install": () => new Response(SCRIPT),
   };
   const fetcher = (async (input: URL | RequestInfo) => routes[String(input)]?.() ?? new Response("not found", { status: 404 })) as typeof fetch;
   const f = await gateway(t, async (_root, home, environment) => {
@@ -185,8 +185,8 @@ printf '#!/bin/sh\\necho "1.1.0"\\n' > "$HOME/.opencode/bin/opencode"; chmod +x 
   assert.equal(tampered.status, "failed"); assert.equal(tampered.error?.code, "INSTALL_SOURCE_CHANGED"); assert.equal(tampered.native?.dispatched, false); assert.equal(existsSync(join(f.home, "tampered")), false);
   const { check, job } = await f.upgrade("opencode", installation!.ref, "rerun-opencode");
   assert.deepEqual([check.kind, check.current, check.target, check.runs, check.shellProfile], ["rerun", "1.0.0", null, "bash install.bash --no-modify-path", null]);
-  assert.deepEqual(check.script, { source: "https://raw.githubusercontent.com/anomalyco/opencode/refs/heads/v1/install", sha256: createHash("sha256").update(SCRIPT).digest("hex") });
-  assert.ok(check.notes.some(note => note.includes("官网命令 curl -fsSL https://opencode.ai/install | bash")));
+  assert.deepEqual(check.script, { source: "https://opencode.ai/v2/install", sha256: createHash("sha256").update(SCRIPT).digest("hex") });
+  assert.ok(check.notes.some(note => note.includes("官网命令 curl -fsSL https://opencode.ai/v2/install | bash")));
   assert.equal(job.status, "completed", JSON.stringify(job.error)); assert.deepEqual([job.native?.beforeVersion, job.resolvedVersion], ["1.0.0", "1.1.0"]); assert.deepEqual(job.native?.installation?.shellChanges, []);
 });
 
