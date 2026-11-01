@@ -126,11 +126,14 @@ export function useToast(): { readonly show: (options: ToastOptions) => string; 
     close: (id: string) => manager.close(id),
   }), [manager]);
 }
-/** Holds the page's toasts and renders them above everything else; wrap the application once. */
+/**
+ * Holds the page's toasts and renders them above everything else; wrap the application once. The toasts sit in a polite
+ * live region named "通知"; each toast is a non-modal dialog (Base UI), so tests should find dialogs by name.
+ */
 export function ToastProvider({ children }: { readonly children: ReactNode }) {
   return <BaseToast.Provider limit={3}>
     {children}
-    <BaseToast.Portal><BaseToast.Viewport className="toast-viewport"><ToastList/></BaseToast.Viewport></BaseToast.Portal>
+    <BaseToast.Portal><BaseToast.Viewport className="toast-viewport" aria-label="通知"><ToastList/></BaseToast.Viewport></BaseToast.Portal>
   </BaseToast.Provider>;
 }
 function ToastList() {
