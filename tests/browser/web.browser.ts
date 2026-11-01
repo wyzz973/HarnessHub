@@ -1018,14 +1018,14 @@ test("a waiting approval is marked in the sidebar with whose deadline it is, cou
   await expect(card.locator(".permission-deadline")).toHaveText(/^原程序期限 · \d+ 秒后自动拒绝$/u);
   await page.evaluate(() => { Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" }); });
   const notices = await page.evaluate(() => (window as unknown as { __notices: { title: string; body: string }[] }).__notices);
-  assert.equal(notices.length, 1); assert.equal(notices[0]!.title, "Hermes Agent 等待你处理");
-  assert.match(notices[0]!.body, /^等待审批（原程序期限，\d+ 秒后自动拒绝）$/u, "only the Harness and the wait, nothing of the conversation");
+  assert.equal(notices.length, 1); assert.equal(notices[0]!.title, "Hermes Agent 等你处理");
+  assert.match(notices[0]!.body, /^等你批准（原程序期限，\d+ 秒后自动拒绝）$/u, "only the Harness and the wait, nothing of the conversation");
   // Another conversation is open; the sidebar still says which one waits, for what, and for how long.
   await page.getByRole("button", { name: "新对话", exact: true }).click();
   const waiting = page.locator(".session-item.has-attention");
   await expect(waiting).toHaveCount(1); await expect(page.locator(".attention-count")).toHaveText("1");
   const line = waiting.locator(".attention-line");
-  await expect(line).toHaveText(/^等待审批 · 原程序期限 \d+ 秒后自动拒绝$/u);
+  await expect(line).toHaveText(/^等你批准 · 原程序期限 \d+ 秒后自动拒绝$/u);
   const seconds = async () => Number(/(\d+) 秒/u.exec((await line.textContent()) ?? "")?.[1]);
   const first = await seconds(); await page.waitForTimeout(2200); const later = await seconds();
   assert.ok(first <= 58 && later < first, `${first} then ${later}`);
@@ -1083,7 +1083,7 @@ test("a Turn waiting for another conversation's work in their workspace names it
   const card = page.getByRole("region", { name: "工具审批", exact: true });
   await expect(card).toContainText("rm -rf build", { timeout: 15000 });
   await expect(card.locator(".permission-deadline")).toHaveText("等待期限 · 剩余 30 分");
-  await expect(page.locator(".session-item.has-attention .attention-line")).toHaveText("等待审批 · 等待期限 剩余 30 分");
+  await expect(page.locator(".session-item.has-attention .attention-line")).toHaveText("等你批准 · 等待期限 剩余 30 分");
   // A second conversation in the same workspace queues behind it, and says which conversation and why, without paths.
   await page.getByRole("button", { name: "新对话", exact: true }).click();
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
@@ -1226,8 +1226,9 @@ test("a Harness of a version HarnessHub never ran shows that version alone in th
   await sayNothing("the Harness list");
   await page.screenshot({ path: join(artifact, "version-fact.png"), animations: "disabled" });
   // The welcome's list of Agents (opened from its summary, ADR-054 §5) and the picker show the version the same way, as
-  // the Agent page does (no "v" in front, Foundations board), and the Harness is chosen like any other.
-  await page.getByRole("button", { name: "返回对话", exact: true }).click();
+  // the Agent page does (no "v" in front, Foundations board), and the Harness is chosen like any other. The Agent page has
+  // no way back of its own (ADR-054 补充 D): the sidebar leads there.
+  await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "新对话", exact: true }).click();
   await page.locator(".agent-summary").click();
   const card = page.getByRole("region", { name: "本机发现的 Harness" }).getByRole("button", { name: "选择 Gemini CLI", exact: true });
   await expect(card).toContainText(/(?<!v)1\.0\.0 · /u); await expect(card).not.toContainText("v1.0.0"); await expect(card.locator(".badge")).toHaveCount(0);
@@ -1367,7 +1368,7 @@ test("G054-FR1 G054-FR8 a conversation that needs the user leads the sidebar and
   await expect(group.locator(".session-item").first()).toHaveAccessibleDescription(/等你处理/u); await expect(group.locator(".session-item")).toHaveCount(1);
   await page.getByRole("button", { name: /^等你处理（1 项）$/u }).click();
   const inbox = page.locator(".inbox-pop");
-  await expect(inbox).toContainText("approve this"); await expect(inbox).toContainText(/等待审批 · 等待期限 剩余 \d+ 分/u);
+  await expect(inbox).toContainText("approve this"); await expect(inbox).toContainText(/等你批准 · 等待期限 剩余 \d+ 分/u);
   await expect(inbox.getByRole("button", { name: "待处理时通知我", exact: true })).toHaveAttribute("aria-pressed", "false");
   await expect(inbox).toHaveCSS("opacity", "1"); await page.screenshot({ path: join(artifact, "inbox.png"), animations: "disabled" });
   await inbox.getByRole("button", { name: /approve this/u }).click();
@@ -2312,7 +2313,7 @@ test("G054-DL2 the sidebar groups conversations by project with a state dot each
   await row("新对话").click(); await pick("Shared Agent"); await send("approve this");
   await expect(navigation.locator(".attention-count")).toHaveText("1", { timeout: 15000 });
   await expect(row("approve this").locator(".status-dot")).toHaveAttribute("data-tone", "wait");
-  await expect(row("approve this")).toHaveAccessibleDescription(/^Shared Agent · 等你处理 等待审批 · 等待期限 剩余 \d+ 分$/u);
+  await expect(row("approve this")).toHaveAccessibleDescription(/^Shared Agent · 等你处理 等你批准 · 等待期限 剩余 \d+ 分$/u);
   await expect(page).toHaveTitle("(1) HarnessHub");
   // One running in another workspace forms a project of its own, with a breathing blue dot.
   const csrf = String((await (await context.request.get(origin + "/api/v1/auth/session")).json()).csrfToken);
@@ -2345,13 +2346,19 @@ test("G054-DL2 the sidebar groups conversations by project with a state dot each
   await row("workspace").click(); await expect(project("workspace").locator(".session-item")).toHaveCount(2);
   await page.mouse.move(900, 600); await page.screenshot({ path: join(artifact, "dl2-sidebar-light-1440.png"), animations: "disabled" });
   await page.emulateMedia({ colorScheme: "dark" }); await page.screenshot({ path: join(artifact, "dl2-sidebar-dark-1440.png"), animations: "disabled" }); await page.emulateMedia({ colorScheme: "light" });
-  // From another conversation, the inbox reads what the request asks; its one-time option is sent from there, and the marks leave.
+  // From another conversation, the inbox reads what the request asks; until that read is back the item says its state in
+  // the words every place uses (ADR-054 补充 G). Its one-time option is sent from there, and the marks leave.
+  const waitingId = ((await (await context.request.get(origin + "/api/v1/state")).json()) as { sessions: { id: string; title: string }[] }).sessions.find(item => item.title === "approve this")?.id;
+  assert.ok(waitingId); let release = () => {}; const read = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/api/v1/sessions/" + waitingId, async route => { await read; await route.fallback(); });
   await row("新对话").click();
   await row("等你处理（1 项）").click();
   const inbox = page.locator(".inbox-pop");
   // It opens on the most urgent item, so ⏎ opens that conversation and tab reaches its one-time option.
   await expect(inbox.getByRole("button", { name: /approve this/u })).toBeFocused();
-  await expect(inbox).toContainText("Shared Agent：rm -rf build"); await expect(inbox).toContainText(/approve this·等待审批 · 等待期限 剩余 \d+ 分/u);
+  await expect(inbox.locator("[id^='inbox-']")).toHaveText(["Shared Agent 等你批准"]);
+  release(); await page.unroute("**/api/v1/sessions/" + waitingId);
+  await expect(inbox).toContainText("Shared Agent：rm -rf build"); await expect(inbox).toContainText(/approve this·等你批准 · 等待期限 剩余 \d+ 分/u);
   await expect(inbox.getByRole("button", { name: "Allow always" })).toHaveCount(0); await expect(inbox.getByRole("button", { name: "Deny" })).toHaveCount(0);
   await expect(inbox).toHaveCSS("opacity", "1"); await page.screenshot({ path: join(artifact, "dl2-inbox-light-1440.png"), animations: "disabled" });
   await page.emulateMedia({ colorScheme: "dark" }); await page.screenshot({ path: join(artifact, "dl2-inbox-dark-1440.png"), animations: "disabled" }); await page.emulateMedia({ colorScheme: "light" });
@@ -2363,7 +2370,7 @@ test("G054-DL2 the sidebar groups conversations by project with a state dot each
   const phoneInbox = page.getByRole("dialog", { name: "等你处理" });
   await expect(phoneInbox.getByRole("button", { name: "Allow once", exact: true })).toBeVisible();
   assert.ok(((await phoneInbox.getByText("approve this", { exact: true }).boundingBox())?.width ?? 0) >= 60, "the conversation keeps its name in the narrow sheet");
-  await expect(phoneInbox).toContainText(/approve this·等待审批 · 等待期限 剩余 \d+ 分/u);
+  await expect(phoneInbox).toContainText(/approve this·等你批准 · 等待期限 剩余 \d+ 分/u);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "the inbox sheet fits 320");
   await expect(phoneInbox).toHaveCSS("opacity", "1"); await page.screenshot({ path: join(artifact, "dl2-inbox-sheet-items-light-320.png"), animations: "disabled" });
   await page.emulateMedia({ colorScheme: "dark" }); await page.screenshot({ path: join(artifact, "dl2-inbox-sheet-items-dark-320.png"), animations: "disabled" }); await page.emulateMedia({ colorScheme: "light" });
@@ -2447,6 +2454,33 @@ test("G054-DL9 the application's shortcuts open what they name, ⌥⌘↓ goes t
   assert.deepEqual(prevented, [false, false, false, false, false, false]);
   await page.evaluate(() => { for (const key of ["k", "/", "ArrowDown"]) document.body.dispatchEvent(new KeyboardEvent("keydown", { key, metaKey: true, altKey: key === "ArrowDown", isComposing: true, bubbles: true, cancelable: true })); });
   await expect(page.getByRole("dialog")).toHaveCount(0);
+  // Nor do ⇧⌘O and ⌘B while composing: away from the conversation the page stays, and so does the sidebar. ⌘. is the
+  // conversation's stop key alone (ADR-054 §5): outside a conversation it does nothing, and never opens or closes the
+  // details panel, as the application's ⌘. once did.
+  const heading = page.getByRole("heading", { name: "设置", exact: true }), panel = () => page.evaluate(() => localStorage.getItem("harnesshub:preferences"));
+  await navigation.getByRole("button", { name: "设置", exact: true }).click(); await expect(heading).toBeVisible();
+  await page.evaluate(() => { for (const [key, shiftKey] of [["o", true], ["b", false]] as const) document.body.dispatchEvent(new KeyboardEvent("keydown", { key, metaKey: true, shiftKey, isComposing: true, bubbles: true, cancelable: true })); });
+  await expect(heading).toBeVisible(); await expect(navigation).toBeVisible();
+  const before = await panel(); await page.keyboard.press("ControlOrMeta+."); await expect(heading).toBeVisible(); assert.equal(await panel(), before);
+  // ⌘B hides the sidebar and brings it back. A control of the page keeps focus; one in the sidebar leaves with it, and
+  // focus moves to the button that shows the sidebar again, then to the one that hides it: the keyboard keeps its place.
+  const frozen = page.getByRole("switch", { name: FROZEN_SWITCH }), expand = page.locator("#main-content").getByRole("button", { name: "展开侧栏", exact: true });
+  const collapse = navigation.getByRole("button", { name: "收起侧栏", exact: true });
+  await frozen.focus();
+  await page.keyboard.press("ControlOrMeta+B"); await expect(navigation).toHaveCount(0); await expect(frozen).toBeFocused();
+  await page.keyboard.press("ControlOrMeta+B"); await expect(navigation).toBeVisible(); await expect(frozen).toBeFocused();
+  await navigation.getByRole("button", { name: "设置", exact: true }).focus();
+  await page.keyboard.press("ControlOrMeta+B"); await expect(navigation).toHaveCount(0); await expect(expand).toBeFocused();
+  await page.keyboard.press("ControlOrMeta+B"); await expect(navigation).toBeVisible(); await expect(collapse).toBeFocused();
+  // The two buttons do the same from the keyboard.
+  await page.keyboard.press("Enter"); await expect(navigation).toHaveCount(0); await expect(expand).toBeFocused();
+  await page.keyboard.press("Enter"); await expect(navigation).toBeVisible(); await expect(collapse).toBeFocused();
+  // So does the palette's command: the palette gives focus back to the button it was opened from, which then leaves.
+  const command = page.getByRole("combobox", { name: "搜索对话、页面或操作", exact: true });
+  await page.keyboard.press("ControlOrMeta+K"); await command.fill("收起侧栏"); await command.press("Enter");
+  await expect(navigation).toHaveCount(0); await expect(expand).toBeFocused();
+  await page.keyboard.press("ControlOrMeta+K"); await command.fill("展开侧栏"); await command.press("Enter");
+  await expect(navigation).toBeVisible(); await expect(collapse).toBeFocused();
   // ⌘/ lists every shortcut in the board's words, each key as its own cap, with what the browser keeps. Stopping a reply
   // also takes esc in the composer, so its row gives both.
   await page.keyboard.press("ControlOrMeta+/");
@@ -2464,6 +2498,8 @@ test("G054-DL9 the application's shortcuts open what they name, ⌥⌘↓ goes t
   await page.keyboard.press("ControlOrMeta+K");
   const search = page.getByRole("combobox", { name: "搜索对话、页面或操作", exact: true }); await expect(search).toBeFocused();
   await search.fill("下一件"); await expect(page.getByRole("option", { name: /^下一件等你处理/u })).toContainText("⌥⌘↓");
+  // The details panel's command carries its key, ⌘\, not the ⌘. it once had.
+  await search.fill("详情面板"); await expect(page.getByRole("option", { name: /详情面板/u })).toHaveText(/详情面板⌘\\$/u);
   await search.fill("Agent"); await expect(page.getByRole("option").first()).toHaveAccessibleName(/^Agent/u);
   await page.screenshot({ path: join(artifact, "dl9-palette-light-1440.png"), animations: "disabled" });
   await page.keyboard.press("ControlOrMeta+/"); await expect(sheet).toBeVisible(); await expect(page.locator(".palette-pop")).toHaveCount(0);
@@ -2646,6 +2682,27 @@ test("G054-DL1 the neutral tokens follow the system in both themes, text uses th
   assert.deepEqual(errors, []);
 });
 
+/**
+ * How a maintenance confirmation is spaced: as the capability dialogs, after the Capabilities board's write preview, the
+ * body's first block 18 px under the title block and 12 px between blocks, the buttons 14 px below the body and 18 px
+ * above the edge, with no rule between them (Base UI titles a dialog with an h2). `squeezed` counts the body's blocks
+ * that would be drawn shorter than without the body's height limit if they clipped their overflow, which lets a block of
+ * a flex column shrink below its content: a body taller than its limit must scroll instead. The probe's styles are put
+ * back before it returns.
+ */
+function confirmationGeometry(dialog: ReturnType<Page["getByRole"]>) {
+  return dialog.evaluate(element => {
+    const title = element.querySelector("h2")!.parentElement!, body = title.nextElementSibling as HTMLElement, footer = body.nextElementSibling!, style = getComputedStyle(footer);
+    const blocks = [...body.children] as HTMLElement[], heights = () => blocks.map(block => block.getBoundingClientRect().height);
+    for (const block of blocks) block.style.overflow = "hidden";
+    const limited = heights(); body.style.maxHeight = "none"; const natural = heights();
+    body.style.maxHeight = ""; for (const block of blocks) block.style.overflow = "";
+    return { first: Math.round(blocks[0]!.getBoundingClientRect().top - title.getBoundingClientRect().bottom + body.scrollTop), gap: getComputedStyle(body).rowGap,
+      footer: [style.borderTopWidth, style.paddingTop, style.paddingBottom], squeezed: limited.filter((height, index) => height + 0.5 < natural[index]!).length };
+  });
+}
+const CONFIRMATION_GEOMETRY = { first: 18, gap: "12px", footer: ["0px", "14px", "18px"], squeezed: 0 };
+
 test("G054-UP1 an upgrade first says what it restarts, closes and leaves on the old version and sends exactly that consent; one that changed nothing says so", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
@@ -2715,6 +2772,8 @@ test("G054-UP1 an upgrade first says what it restarts, closes and leaves on the 
   for (const text of ["相隔", "还没有验证", "验证过的版本"]) await expect(dialog).not.toContainText(text);
   // A service left running only needs a newer Node.js before its own restart: said, without blocking.
   await expect(dialog.locator(".upgrade-runtime-warning")).toHaveText("OpenClaw Node（ai.openclaw.node）启动用的 Node.js 是 25.9.0（/opt/homebrew/opt/node@25/bin/node），2026.10.2 要求 >=24.16.0 <25 || >=26.1.0。升级后重启它之前，需要先升级这个 Node.js（brew upgrade node@25）。");
+  // Spaced as every confirmation is, the capability dialogs' write preview first among them.
+  assert.deepEqual(await confirmationGeometry(dialog), CONFIRMATION_GEOMETRY);
   await page.screenshot({ path: join(artifact, "upgrade-confirmation.png"), animations: "disabled" });
   await dialog.getByRole("button", { name: "升级并重启 OpenClaw Gateway" }).click(); await expect(dialog).toBeHidden();
   await expect.poll(() => submitted).not.toBeNull();
@@ -2830,7 +2889,24 @@ test("G054-UP3 an upgrade through the product's documented sequence shows its ho
   await expect(confirm).toBeDisabled();
   await backup.check(); await expect(confirm).toBeEnabled();
   await backup.uncheck(); await expect(confirm).toBeDisabled(); await backup.check();
+  assert.deepEqual(await confirmationGeometry(dialog), CONFIRMATION_GEOMETRY);
   await page.screenshot({ path: join(artifact, "upgrade-sequence.png"), animations: "disabled" });
+  // The longest confirmation of these fixtures, at 390 and 320: it stays inside the window, its body scrolls rather than
+  // squeezing a block, nothing runs off to the side, and its last block scrolls into view whole.
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    assert.deepEqual(await dialog.evaluate(element => {
+      const box = element.getBoundingClientRect(), body = element.querySelector("h2")!.parentElement!.nextElementSibling!;
+      const fits = { inside: box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight, scrolls: body.scrollHeight > body.clientHeight, across: body.scrollWidth <= body.clientWidth };
+      body.scrollTop = body.scrollHeight;
+      const last = body.lastElementChild!.getBoundingClientRect(), frame = body.getBoundingClientRect();
+      return { ...fits, last: last.top >= frame.top - 1 && last.bottom <= frame.bottom + 1 };
+    }), { inside: true, scrolls: true, across: true, last: true }, `the confirmation at ${width}`);
+    assert.deepEqual(await confirmationGeometry(dialog), CONFIRMATION_GEOMETRY);
+    for (const scheme of ["light", "dark"] as const) { await page.emulateMedia({ colorScheme: scheme }); await page.screenshot({ path: join(artifact, `upgrade-sequence-${scheme}-${width}.png`), animations: "disabled" }); }
+    await page.emulateMedia({ colorScheme: "light" });
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
   await confirm.click(); await expect(dialog).toBeHidden();
   await expect.poll(() => submitted).not.toBeNull();
   assert.deepEqual(submitted!.restartServices, ["ai.openclaw.gateway"]); assert.equal(submitted!.backupConfirmed, true); assert.equal(submitted!.expectedNativeFingerprint, checked, "the consent is for the installation the confirmation described");
@@ -2902,7 +2978,8 @@ test("G054-UN1 uninstalling one installation first says what it stops, removes a
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
-  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  // Wide enough for the details to sit beside the cards with the sidebar shown (ADR-054 补充 C), which the confirmation then covers.
+  const context = await isolatedContext(browser, { viewport: { width: 1440, height: 900 } }), page = await context.newPage(), errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   const ref = "e".repeat(64), fingerprint = "f".repeat(64), label = "npm 全局（Homebrew 的 Node.js）";
   const shaped = (harness: { id: string; installations: unknown[]; unofficial: unknown }) => harness.id !== "openclaw" ? harness : { ...harness, installed: true, unofficial: null,
@@ -2951,6 +3028,7 @@ test("G054-UN1 uninstalling one installation first says what it stops, removes a
     "这些程序正在运行这份安装，不会被关闭；卸载后它们可能出错，建议先退出：openclaw（进程 8100）。"]) await expect(dialog).toContainText(text);
   await expect(dialog.locator(".uninstall-kept")).toHaveText("配置、登录和会话数据保留：~/.openclaw。");
   await expect(dialog.locator(".uninstall-after")).toHaveText("卸载后，OpenClaw 在 HarnessHub 里显示为未安装。");
+  assert.deepEqual(await confirmationGeometry(dialog), CONFIRMATION_GEOMETRY);
   await page.screenshot({ path: join(artifact, "uninstall-confirmation.png"), animations: "disabled" });
   // Opened from the details beside the cards, the confirmation sits over them: Escape closes it alone and sends nothing.
   await page.keyboard.press("Escape"); await expect(dialog).toBeHidden(); await expect(detail).toBeVisible(); assert.equal(submitted, null);
@@ -3016,6 +3094,7 @@ test("G054-IN1 installing a missing product the official way first says what run
   // 9.9.7 is a version no record names; the confirmation states it and says nothing about it (ADR-053).
   for (const text of ["还不是", "验证过的版本"]) await expect(dialog).not.toContainText(text);
   await expect(dialog.locator(".install-terminal")).toHaveText("安装后，终端里的 dsh 就是这份新安装。");
+  assert.deepEqual(await confirmationGeometry(dialog), CONFIRMATION_GEOMETRY);
   await page.screenshot({ path: join(artifact, "install-confirmation.png"), animations: "disabled" });
   await dialog.getByRole("button", { name: "安装", exact: true }).click(); await expect(dialog).toBeHidden();
   await expect.poll(() => submitted).not.toBeNull();
@@ -3088,6 +3167,7 @@ test("G054-UG1 upgrading one installation first says the versions, what runs and
     "这些程序正在运行这份安装，不会被关闭，重开后才用新版本：claude（进程 4242）。", "升级后“当前使用”不变。"]) await expect(dialog).toContainText(text);
   // 2.1.305 is a version no record names: stated as the target, with nothing inferred from it (ADR-053).
   for (const text of ["还不是", "验证过的版本"]) await expect(dialog).not.toContainText(text);
+  assert.deepEqual(await confirmationGeometry(dialog), CONFIRMATION_GEOMETRY);
   await page.screenshot({ path: join(artifact, "installation-upgrade-confirmation.png"), animations: "disabled" });
   await dialog.getByRole("button", { name: "升级", exact: true }).click(); await expect(dialog).toBeHidden();
   await expect.poll(() => submitted).not.toBeNull();
@@ -3103,6 +3183,7 @@ test("G054-UG1 upgrading one installation first says the versions, what runs and
   await expect(terminal.locator(".upgrade-terminal-command")).toHaveText("hermes update --yes");
   await expect(terminal).toContainText(explains); await expect(terminal).toContainText("2 处没有提交的改动");
   await expect(terminal.getByRole("button", { name: "升级", exact: true })).toHaveCount(0);
+  assert.deepEqual(await confirmationGeometry(terminal), CONFIRMATION_GEOMETRY);
   await terminal.getByRole("button", { name: "关闭", exact: true }).click(); await expect(terminal).toBeHidden();
   assert.deepEqual(errors, []);
 });
@@ -3136,10 +3217,15 @@ test("G054-DL8 the Agent page gives each Agent a card with its version and chann
     native: { channel: "npm", location: "/opt/homebrew/bin/openclaw", beforeVersion: "2026.10.2", actualVersion: "2026.10.9", dispatched: true, configurationPreserved: true, restartServices: ["ai.openclaw.gateway"], backupConfirmed: true,
       hops: [{ version: "2026.9.5", installed: true, doctor: "ok" }, { version: "2026.10.9", installed: true, doctor: "ok" }],
       services: [{ label: "ai.openclaw.gateway", outcome: "not_recovered", pid: null, ready: null }], configurationMigrated: ["~/.openclaw/openclaw.json"] } };
+  // Claude Code's latest catalog read asked it to sign in, once the test says so; until then the Gateway's own reads stand.
+  let claudeControl = "", signedOut = false;
+  const readiness = (rows: unknown[]) => signedOut ? [...rows, { harnessId: "claude", controlId: claudeControl, state: "signed_out", checkedAt: Date.now() - 3 * 60_000 }] : rows;
   for (const path of ["**/api/v1/state", "**/api/v1/harnesses", "**/api/v1/harnesses/rescan", "**/api/v1/harnesses/check-updates"]) await page.route(path, async route => {
     const response = await route.fetch(), body = await response.json();
-    await route.fulfill({ response, json: Array.isArray(body) ? body.map(shaped) : { ...body, harnesses: body.harnesses.map(shaped), jobs: [job] } });
+    claudeControl = ((Array.isArray(body) ? body : body.harnesses) as { id: string; controls: { id: string }[] }[]).find(harness => harness.id === "claude")?.controls[0]?.id ?? claudeControl;
+    await route.fulfill({ response, json: Array.isArray(body) ? body.map(shaped) : { ...body, harnesses: body.harnesses.map(shaped), jobs: [job], readiness: readiness(body.readiness) } });
   });
+  await page.route("**/api/v1/harnesses/readiness", async route => { const response = await route.fetch(), body = await response.json(); await route.fulfill({ response, json: { ...body, readiness: readiness(body.readiness) } }); });
   await page.route("**/api/v1/installation-jobs?limit=50", route => route.fulfill({ json: [job] }));
   let submitted = 0;
   await page.route("**/api/v1/installation-jobs", async route => { if (route.request().method() !== "POST") return route.fallback(); submitted++; await route.abort(); });
@@ -3158,8 +3244,22 @@ test("G054-DL8 the Agent page gives each Agent a card with its version and chann
   assert.ok(titleBox && leadBox && checkBox && headerBox);
   assert.ok(Math.abs(checkBox.x + checkBox.width - (headerBox.x + headerBox.width)) <= 1 && checkBox.y >= titleBox.y && checkBox.y + checkBox.height <= leadBox.y + leadBox.height + 1, "检查更新 sits at the right end of the title block");
   assert.deepEqual(await title.evaluate(element => { const style = getComputedStyle(element); return [style.fontSize, style.lineHeight, style.fontWeight]; }), ["28px", "36px", "600"]);
-  // Above it, a quiet bar holds the way back to the conversation, as on the other pages beside it.
-  await expect(main.getByRole("button", { name: "返回对话", exact: true })).toBeVisible();
+  // The board has no way back of its own (ADR-054 补充 D): the sidebar is it. With the sidebar shown on a wide screen no
+  // bar sits above the page, and the title starts 44 px below the top, as on the board; hiding the sidebar brings a bar
+  // holding the button that shows it again, and nothing else.
+  await expect(main.getByRole("button", { name: "返回对话", exact: true })).toHaveCount(0);
+  assert.equal(titleBox.y, 44, "the title starts at the board's top spacing");
+  await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "收起侧栏", exact: true }).click();
+  const expand = main.getByRole("button", { name: "展开侧栏", exact: true });
+  await expect(expand).toBeVisible(); await expect(main.getByRole("button", { name: "返回对话", exact: true })).toHaveCount(0);
+  assert.equal((await title.boundingBox())?.y, 56, "the title sits under the bar that shows the sidebar again");
+  await expand.click(); await expect(page.getByRole("complementary", { name: "主导航" })).toBeVisible(); await expect(expand).toHaveCount(0);
+  assert.equal((await title.boundingBox())?.y, 44);
+  // From the keyboard the same round trip keeps its place: the button that hides the sidebar leaves with it and hands
+  // focus to the bar's button that shows it again, which leaves in turn and hands it back.
+  const collapse = page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "收起侧栏", exact: true });
+  await collapse.focus(); await page.keyboard.press("Enter"); await expect(expand).toBeFocused();
+  await page.keyboard.press("Enter"); await expect(collapse).toBeFocused(); assert.equal((await title.boundingBox())?.y, 44);
 
   // A02: one card per Agent: its mark, name, version · channel, state, one sentence of facts, and its actions; no count without a fact.
   const mine = main.getByRole("region", { name: "这台 Mac 上的 Agent" }), cards = mine.getByRole("article"), card = (name: string) => mine.getByRole("article", { name, exact: true });
@@ -3302,6 +3402,9 @@ test("G054-DL8 the Agent page gives each Agent a card with its version and chann
     assert.equal(await main.locator("section.management-page").evaluate(element => getComputedStyle(element).backgroundColor), scheme === "dark" ? "rgb(24, 25, 28)" : "rgb(255, 255, 255)");
     for (const width of [1440, 390, 320]) {
       await page.setViewportSize({ width, height: width === 1440 ? 1000 : 844 });
+      // A bar only on a narrow screen, holding the navigation; never a way back (ADR-054 补充 D).
+      await expect(main.getByRole("button", { name: "打开导航", exact: true })).toHaveCount(width === 1440 ? 0 : 1);
+      await expect(main.getByRole("button", { name: "返回对话", exact: true })).toHaveCount(0);
       // The page at rest: the details gone and no focus ring left by the keyboard.
       await expect.poll(() => body.evaluate(element => getComputedStyle(element).marginRight)).toBe("0px");
       await page.evaluate(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
@@ -3326,6 +3429,70 @@ test("G054-DL8 the Agent page gives each Agent a card with its version and chann
     }
     await page.setViewportSize({ width: 1440, height: 1000 });
   }
+
+  // ADR-054 补充 C: the details sit beside the cards only while the cards keep two columns at least as wide as the three
+  // the page draws without them (311 px), judged by the page's own width, so the sidebar counts: with it shown (264 px)
+  // from a 1352 px window, with it hidden from 1088. There the sheet clips no card text the page shows whole without it;
+  // one pixel narrower the details open over the page, behind a scrim, and the cards keep their place.
+  // Found by their class: a modal drawer hides the page from the accessibility tree, where roles are looked up.
+  const shown = main.locator(".agent-card"), clipped = () => shown.evaluateAll(elements => elements.flatMap(element => [...element.querySelectorAll("*")].filter(child => {
+    const style = getComputedStyle(child);
+    return (style.overflow === "hidden" || style.webkitLineClamp !== "none") && (child.scrollWidth > child.clientWidth + 1 || child.scrollHeight > child.clientHeight + 1);
+  }).map(child => element.querySelector("h3")?.textContent + " " + child.className)));
+  // The sidebar comes back from the phone widths above once the page has seen the window widen.
+  const navigation = page.getByRole("complementary", { name: "主导航" }); await expect(navigation).toBeVisible();
+  for (const [sidebar, threshold] of [[true, 1352], [false, 1088]] as const) {
+    if (!sidebar) { await navigation.getByRole("button", { name: "收起侧栏", exact: true }).click(); await expect(navigation).toHaveCount(0); }
+    for (const width of [threshold, threshold - 1]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect.poll(() => main.locator("section.management-page").evaluate(element => element.clientWidth)).toBe(width - (sidebar ? 264 : 0));
+      const whole = await clipped(), placed = await shown.evaluateAll(elements => elements.map(element => element.getBoundingClientRect().toJSON()));
+      await card("OpenClaw").getByRole("button", { name: "查看 OpenClaw 详情", exact: true }).click(); await expect(drawer).toBeVisible(); await settled(drawer);
+      const beside = width === threshold, left = await drawer.evaluate(element => element.getBoundingClientRect().left);
+      await expect(page.locator(".backdrop")).toHaveCount(beside ? 0 : 1);
+      const boxes = await shown.evaluateAll(elements => elements.map(element => element.getBoundingClientRect().toJSON() as DOMRect));
+      if (beside) {
+        assert.equal(left, width - 360, `the sheet sits at the right edge at ${width}`);
+        assert.equal(boxes.filter(box => Math.round(box.top) === Math.round(boxes[0]!.top)).length, 2, `two columns beside the details at ${width}`);
+        for (const box of boxes) assert.ok(box.width >= 310 && box.right <= left, `a card squeezed or under the details at ${width}: ${JSON.stringify(box)}`);
+        assert.deepEqual(await clipped(), whole, `the sheet makes a card clip its text at ${width}`);
+      } else assert.deepEqual(boxes, placed, `the cards move under the drawer at ${width}`);
+      for (const scheme of ["light", "dark"] as const) {
+        await page.emulateMedia({ colorScheme: scheme });
+        await page.screenshot({ path: join(artifact, `agents-details-${beside ? "beside" : "over"}-${sidebar ? "sidebar" : "full"}-${width}-${scheme}.png`), animations: "disabled" });
+      }
+      await page.emulateMedia({ colorScheme: "light" });
+      await page.keyboard.press("Escape"); await expect(drawer).toBeHidden();
+    }
+  }
+  await main.getByRole("button", { name: "展开侧栏", exact: true }).click(); await expect(navigation).toBeVisible();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+
+  // The page says what the Gateway knows of each Agent's sign-in and conversations, as the composer's picker does. A
+  // conversation with Codex reads its models and opens a native session: Codex's details then say when that read was and
+  // that it was signed in, and offer the command that continues the conversation in Codex itself. A read that asked
+  // Claude Code to sign in is its card's state.
+  await navigation.getByRole("button", { name: "新对话", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true });
+  await composer.fill("hello"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
+  await expect(page.getByRole("log", { name: "对话历史" }).locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
+  signedOut = true;
+  await navigation.getByRole("button", { name: /^Agent\b/u }).click();
+  // Coming back into view reads the state again (ADR-050), which now carries Claude Code's read.
+  await page.evaluate(() => { window.dispatchEvent(new Event("focus")); });
+  await expect(card("Claude Code").locator(".status-pill")).toHaveText("需要登录");
+  await expect(card("Claude Code").locator(".agent-summary")).toHaveText("需要先在 Claude Code 里登录或完成设置，才能用它对话。");
+  await expect(card("Claude Code").locator(".status-pill")).toHaveAttribute("title", "3 分钟前检查时，它需要先在本机完成登录或配置");
+  await expect(card("Codex").locator(".agent-summary")).toHaveText("已登录，可以对话。模型和登录沿用它自己的配置。");
+  await card("Codex").getByRole("button", { name: "查看 Codex 详情", exact: true }).click();
+  const facts = page.getByRole("dialog", { name: "Codex 详情" });
+  await expect(facts.getByRole("region", { name: "模型与登录" })).toHaveText(/^模型与登录(刚刚|1 分钟前)读取过它的模型列表，已登录。模型和登录沿用 Codex 自己的配置，HarnessHub 不复制也不修改。$/u);
+  const resume = facts.getByRole("region", { name: "在原程序里继续对话" });
+  await expect(resume).toContainText("最近的对话「hello」，在它的工作区目录中运行：");
+  await expect(resume.locator("code")).toHaveText(/^codex resume browser-native-\d+$/u); await expect(resume.getByRole("button", { name: "复制恢复命令", exact: true })).toBeVisible();
+  await settled(facts); await page.screenshot({ path: join(artifact, "agents-drawer-facts-1440.png"), animations: "disabled" });
+  await page.keyboard.press("Escape"); await expect(facts).toBeHidden();
   assert.equal(submitted, 0);
   assert.deepEqual(errors, []);
 });
@@ -4484,8 +4651,8 @@ test("G054-FZ1 the frozen Harnesses stay out of the picker, the welcome, the pal
   for (const name of frozen) await expect(row(name).locator(".harness-frozen")).toHaveText("冻结");
   await expect(row("Codex").locator(".harness-frozen")).toHaveCount(0); await expect(note).toHaveCount(0);
   await page.screenshot({ path: join(artifact, "frozen-shown.png"), animations: "disabled" });
-  // A conversation on Gemini CLI.
-  await page.getByRole("button", { name: "返回对话", exact: true }).click();
+  // A conversation on Gemini CLI, begun from the sidebar: the Agent page has no way back of its own (ADR-054 补充 D).
+  await navigation.getByRole("button", { name: "新对话", exact: true }).click();
   await picker.click(); await page.getByRole("option", { name: "Gemini CLI", exact: true }).click();
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
   await composer.fill("frozen work"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");

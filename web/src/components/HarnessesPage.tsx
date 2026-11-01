@@ -1,5 +1,5 @@
 import { Dialog as BaseDialog } from "@base-ui/react/dialog";
-import { ArrowLeft, ArrowRight, Check, ChevronRight, CircleAlert, CircleArrowUp, CircleCheck, CircleDashed, Clock3, Copy, Info, Menu as MenuIcon, Package, PanelLeft, RefreshCw, ScanSearch, Search, Square, Terminal, X } from "lucide-react";
+import { ArrowRight, Check, ChevronRight, CircleAlert, CircleArrowUp, CircleCheck, CircleDashed, Clock3, Copy, Info, Package, RefreshCw, ScanSearch, Search, Square, Terminal, X } from "lucide-react";
 import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { MouseEvent, ReactNode } from "react";
 import type { HarnessEntrySource, HarnessReadinessView, HarnessView, InstallationView, NativeResumeView, SessionSummary } from "../../../src/contracts/web.js";
@@ -7,12 +7,12 @@ import type { InstallationJobView, InstallationLog } from "../../../src/contract
 import { errorMessage, failureMessage, GatewayApi, protocolLabel } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { ago } from "../lib/format.js";
-import { useMedia } from "../lib/prefs.js";
 import { Collapsible, DrawnCheck, SwapText } from "../ui/motion.js";
 import { Dialog } from "../ui/overlay.js";
 import { Badge, Notice, Spinner, StatusPill, Tip } from "../ui/primitives.js";
 import { BrandIcon } from "./BrandIcon.js";
 import { readinessStatus } from "./Composer.js";
+import { PageShell } from "./PageShell.js";
 import { UpgradeDialog, type UpgradeConsent } from "./UpgradeDialog.js";
 import { UninstallDialog, type UninstallConsent } from "./UninstallDialog.js";
 import { InstallDialog } from "./InstallDialog.js";
@@ -133,9 +133,8 @@ interface HarnessProps {
   onConfirm: (id: string) => void; onCancelJob: (job: InstallationJobView) => void; onDismissError: () => void; onMenu: () => void; onChoose: (harness: HarnessView) => void;
   /** Opens the capability page for one Harness (ADR-045). */
   onCapabilities: (harnessId: string) => void;
+  /** Whether the user hid the sidebar on a wide screen, and how it comes back; the sidebar is the way back (ADR-054 补充 D). */
   sidebarHidden: boolean; onExpandSidebar: () => void;
-  /** The way back to the conversation, in the page's quiet top bar. */
-  onChat: () => void;
 }
 function missing(harness: HarnessView): boolean { return harness.management.source === "missing" || !harness.controls.some(control => control.available); }
 function available(harness: HarnessView): boolean { return harness.controls.some(control => control.available); }
@@ -336,23 +335,26 @@ const TIERS: Readonly<Record<HarnessView["tier"], number>> = { focus: 0, catalog
 const byTierAndName = (a: HarnessView, b: HarnessView) => TIERS[a.tier] - TIERS[b.tier] || a.name.localeCompare(b.name, "zh-CN");
 /** Rows of "还可以安装" shown before "全部"; the Agents HarnessHub carries in full come first. */
 const CATALOG_ROWS = 6;
-/** The page width from which the details sit beside the cards; the sheet is 360 px (Agent board), the body's margin the same. */
-const BESIDE_FROM = 900;
+/**
+ * The page width from which the details sit beside the cards (ADR-054 补充 C), measured on the page itself, so the
+ * sidebar counts: the cards must keep two columns, each at least as wide as the three the page draws without the details
+ * ((960 − 2 × 14) / 3, so 311 px), so the sheet never squeezes a name, a version or a button into clipping. Two such
+ * columns and their 14 px gap, the page's 2 × 40 px padding, the room a scrollbar may keep (12 px) and the 360 px sheet
+ * make 1088 px. On a narrower page the details open over it as a drawer instead.
+ */
+const BESIDE_FROM = 360 + 12 + 2 * 40 + 2 * 311 + 14;
 
 /**
  * The Agent page (ADR-054 §5): one card for each Agent on this Mac with its version and channel, its state, one sentence
- * of facts and its actions; details in a drawer, which sits beside the cards when the page is wide enough (900 px) and
- * opens over the page otherwise; and below, what can still be installed the official way. Maintenance runs through each
+ * of facts and its actions; details in a sheet beside the cards when the page has room for both (BESIDE_FROM), over the
+ * page as a drawer otherwise; and below, what can still be installed the official way. Maintenance runs through each
  * product's own channel after a confirmation (ADR-043, ADR-044); nothing here estimates a fact.
  */
 export function HarnessesPage(props: HarnessProps) {
   const { harnesses, jobs } = props;
-  const narrow = useMedia("(max-width: 759px)");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showTasks, setShowTasks] = useState(false);
   const [allCatalog, setAllCatalog] = useState(false);
-  // The top bar draws its hairline only once the page has scrolled under it.
-  const [scrolled, setScrolled] = useState(false);
   const [confirming, setConfirming] = useState<{ readonly harness: HarnessView; readonly fromDetail: boolean } | null>(null);
   // Uninstalling also shows what it removes, stops and keeps first, in a confirmation like an upgrade's.
   const [removing, setRemoving] = useState<{ readonly harness: HarnessView; readonly installation: InstallationView } | null>(null);
@@ -429,75 +431,62 @@ export function HarnessesPage(props: HarnessProps) {
   const details = drawn ? <AgentDetail {...props} key={drawn.id} harness={drawn} state={agentState(drawn, facts)} onClose={() => setSelectedId(null)} onRequest={harness => request(harness, true)} onInstallRequest={harness => installOfficial(harness, true)}
     onUninstallRequest={(harness, installation) => { makeWay(); setRemoving({ harness, installation }); }}
     onUpgradeRequest={(harness, installation) => upgradeInstallation(harness, installation, true)}/> : null;
-  // The frame of the pages beside the conversation (Agent board): a quiet bar with the navigation and the way back, then
-  // one scrolling body whose head is the title, what the page is, and its actions on the description's last line.
-  return <section ref={frame} className="management-page flex h-full min-h-0 min-w-0 flex-1 flex-col bg-app" aria-labelledby="harnesses-title">
-    <div className={cn("flex h-[52px] flex-none items-center gap-1 border-b-[0.5px] px-3 transition-[border-color] duration-120", scrolled ? "border-line" : "border-transparent")}>
-      {narrow ? <button type="button" className="icon-btn navigation-toggle" onClick={props.onMenu} aria-label="打开导航"><MenuIcon size={18}/></button>
-        : props.sidebarHidden ? <Tip label="展开侧栏"><button type="button" className="icon-btn" aria-label="展开侧栏" onClick={props.onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null}
-      <Tip label="返回对话"><button type="button" className="icon-btn" aria-label="返回对话" onClick={props.onChat}><ArrowLeft size={16}/></button></Tip>
-    </div>
-    {/* While the details sit beside the cards, the body (and its scrollbar) ends where the sheet begins. */}
-    <div className={cn("harness-management-body scroll-area min-h-0 flex-1", room && "mr-[360px]")} onScroll={event => setScrolled(event.currentTarget.scrollTop > 0)}>
-      <div className="mx-auto flex w-full max-w-[1040px] flex-col gap-7 px-4 pt-1 pb-16 sm:px-10">
-        <div className="flex flex-col">
-          <header className="flex flex-wrap items-end gap-x-4 gap-y-3">
-            <div className="flex min-w-[min(240px,100%)] flex-1 flex-col gap-1.5">
-              <h1 id="harnesses-title" className="m-0 text-title break-words">Agent</h1>
-              <p className="m-0 max-w-[720px] text-ui leading-[22px] text-fg-2">{mine.length ? `这台 Mac 上的 ${mine.length} 个 Agent。用它们原来的安装和登录；升级、卸载都按官网的方式来。`
-                : "这台 Mac 上还没有找到 Agent。装好以后，HarnessHub 用它们原来的安装和登录；安装、升级、卸载都按官网的方式来。"}</p>
-            </div>
-            <div className="flex max-w-full flex-none flex-wrap items-center gap-2">
-              {jobs.length ? <button type="button" className={cn("btn btn-ghost", active.length > 0 && "text-accent-text")} onClick={() => setShowTasks(value => !value)} aria-expanded={showTasks} aria-controls="installation-tasks">
-                {active.length ? <Spinner size={14} tone="run" label=""/> : <Clock3 size={15}/>}安装任务<span className={active.length ? "" : "text-fg-3"}>{active.length || jobs.length}</span></button> : null}
-              <Tip label="重新检测本机的 Agent"><button type="button" className="icon-btn" aria-label="重新检测" onClick={props.onRescan} disabled={props.scanning}>{props.scanning ? <Spinner size={15} label=""/> : <ScanSearch size={16}/>}</button></Tip>
-              <button type="button" className="btn" onClick={() => props.onCheckUpdates()} disabled={props.checking}>{props.checking ? <Spinner size={14} label=""/> : <RefreshCw size={15} className="text-fg-2"/>}{props.checking ? "正在检查更新" : "检查更新"}</button>
-            </div>
-          </header>
-          {props.installationPolicy === "any" || pageError || props.connectionError || props.unconfirmed.length ? <div className="mt-5 flex flex-col gap-2">
-            {/* Amber is kept for what waits for the user (ADR-054 §1): the Gateway's mode and a lost connection are said plainly. */}
-            {props.installationPolicy === "any" ? <Notice className="development-entries">开发模式：接受非官网安装。服务以 --allow-unofficial 启动，列表里的开发入口不是正式安装。</Notice> : null}
-            {pageError ? <Notice tone="red" onDismiss={props.onDismissError}>{pageError}</Notice> : null}
-            {props.connectionError ? <Notice className="connection-notice">{props.connectionError} · 安装状态暂时显示最后一次观察，正在重新连接，不会重跑任务。</Notice> : null}
-            {props.unconfirmed.map(intent => <Notice key={intent.harnessId} tone="amber" title={`${harnesses.find(h => h.id === intent.harnessId)?.name ?? intent.harnessId} 的请求尚未确认`}
-              action={<button type="button" className="btn btn-sm" onClick={() => props.onConfirm(intent.harnessId)} disabled={props.submitting.includes(intent.harnessId)}>确认上次请求</button>}>{intent.message}</Notice>)}
-          </div> : null}
-          {jobs.length ? <Collapsible open={showTasks} id="installation-tasks">
-            <section aria-label="安装任务" className="card mt-5 p-1.5">
-              <p className="m-0 px-2.5 pt-1.5 pb-1 text-caption text-fg-3">任务在本机服务里独立运行，关闭详情后仍可在这里查看。</p>
-              <ul className="m-0 flex list-none flex-col p-0">{jobs.map(job => <li key={job.id}>
-                <button type="button" onClick={() => setSelectedId(job.harnessId)} className="row flex w-full items-center gap-2.5 border-none bg-transparent px-2.5 py-2 text-left">
-                  <BrandIcon brand={job.harnessId} name={harnesses.find(h => h.id === job.harnessId)?.name ?? job.harnessId} size={24}/>
-                  <span className="min-w-0 flex-1"><span className="trunc block text-ui-sm font-medium">{harnesses.find(h => h.id === job.harnessId)?.name ?? job.harnessId}</span><span className="block text-caption text-fg-3">{verbOf(job)} · {job.resolvedVersion ?? "版本待解析"} · {when(job.createdAt)}</span></span>
-                  <StatusPill tone={jobTone(job)} live={installationActive(job)}>{installationStatus(job)}</StatusPill>
-                  <ChevronRight size={15} className="text-fg-3"/></button></li>)}</ul>
-            </section>
-          </Collapsible> : null}
-        </div>
-        {mine.length ? <section aria-labelledby="agents-mine-title">
-          <h2 id="agents-mine-title" className="sr-only">这台 Mac 上的 Agent</h2>
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(min(300px,100%),1fr))] gap-3.5">
-            {mine.map(harness => { const state = agentState(harness, facts); return <AgentCard key={harness.id} harness={harness} state={state} action={cardAction(harness, state)} selected={selectedId === harness.id} onOpen={() => setSelectedId(harness.id)}/>; })}
-          </div>
-        </section> : null}
-        {catalog.length ? <section aria-labelledby="agents-catalog-title" className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
-            <h2 id="agents-catalog-title" className="m-0 text-panel">还可以安装</h2>
-            <span className="text-ui-sm text-fg-3">{catalog.length} 个，按官网的方式安装</span>
-            <span className="flex-1"/>
-            {catalog.length > CATALOG_ROWS ? <button type="button" className="link-btn text-ui-sm" aria-expanded={allCatalog} aria-controls="agents-catalog-more" aria-label={allCatalog ? "收起" : `显示全部 ${catalog.length} 个`} onClick={() => setAllCatalog(value => !value)}>{allCatalog ? "收起" : "全部"}</button> : null}
-          </div>
-          <div className="card overflow-hidden">
-            {catalog.slice(0, CATALOG_ROWS).map(shownRow)}
-            {catalog.length > CATALOG_ROWS ? <Collapsible open={allCatalog} id="agents-catalog-more">{catalog.slice(CATALOG_ROWS).map((item, index) => shownRow(item, index + CATALOG_ROWS))}</Collapsible> : null}
-          </div>
-        </section> : null}
-        <div className="-mt-2 flex flex-col gap-1.5 text-ui-sm text-fg-3">
-          {hiddenCount > 0 ? <p className="hidden-frozen m-0">已隐藏 {hiddenCount} 个冻结的 Harness，<button type="button" className="link-btn" onClick={props.onSettings}>可在设置里显示</button></p> : null}
-          <p className="m-0">没找到装在别处的 Agent？在<button type="button" className="link-btn" onClick={props.onSettings}>设置</button>的“发现”里添加它所在的目录，再重新检测。</p>
-        </div>
+  // The frame of the pages beside the conversation (Agent board), without a way back of its own: the sidebar is it (ADR-054
+  // 补充 D). While the details sit beside the cards, the body (and its scrollbar) ends where the sheet begins.
+  return <><PageShell ref={frame} title="Agent" titleId="harnesses-title" wide bodyClassName={cn("harness-management-body", room && "mr-[360px]")}
+    onMenu={props.onMenu} sidebarHidden={props.sidebarHidden} onExpandSidebar={props.onExpandSidebar}
+    description={mine.length ? `这台 Mac 上的 ${mine.length} 个 Agent。用它们原来的安装和登录；升级、卸载都按官网的方式来。`
+      : "这台 Mac 上还没有找到 Agent。装好以后，HarnessHub 用它们原来的安装和登录；安装、升级、卸载都按官网的方式来。"}
+    actions={<>
+      {jobs.length ? <button type="button" className={cn("btn btn-ghost", active.length > 0 && "text-accent-text")} onClick={() => setShowTasks(value => !value)} aria-expanded={showTasks} aria-controls="installation-tasks">
+        {active.length ? <Spinner size={14} tone="run" label=""/> : <Clock3 size={15}/>}安装任务<span className={active.length ? "" : "text-fg-3"}>{active.length || jobs.length}</span></button> : null}
+      <Tip label="重新检测本机的 Agent"><button type="button" className="icon-btn" aria-label="重新检测" onClick={props.onRescan} disabled={props.scanning}>{props.scanning ? <Spinner size={15} label=""/> : <ScanSearch size={16}/>}</button></Tip>
+      <button type="button" className="btn" onClick={() => props.onCheckUpdates()} disabled={props.checking}>{props.checking ? <Spinner size={14} label=""/> : <RefreshCw size={15} className="text-fg-2"/>}{props.checking ? "正在检查更新" : "检查更新"}</button>
+    </>}
+    belowHeader={<>
+      {props.installationPolicy === "any" || pageError || props.connectionError || props.unconfirmed.length ? <div className="mt-5 flex flex-col gap-2">
+        {/* Amber is kept for what waits for the user (ADR-054 §1): the Gateway's mode and a lost connection are said plainly. */}
+        {props.installationPolicy === "any" ? <Notice className="development-entries">开发模式：接受非官网安装。服务以 --allow-unofficial 启动，列表里的开发入口不是正式安装。</Notice> : null}
+        {pageError ? <Notice tone="red" onDismiss={props.onDismissError}>{pageError}</Notice> : null}
+        {props.connectionError ? <Notice className="connection-notice">{props.connectionError} · 安装状态暂时显示最后一次观察，正在重新连接，不会重跑任务。</Notice> : null}
+        {props.unconfirmed.map(intent => <Notice key={intent.harnessId} tone="amber" title={`${harnesses.find(h => h.id === intent.harnessId)?.name ?? intent.harnessId} 的请求尚未确认`}
+          action={<button type="button" className="btn btn-sm" onClick={() => props.onConfirm(intent.harnessId)} disabled={props.submitting.includes(intent.harnessId)}>确认上次请求</button>}>{intent.message}</Notice>)}
+      </div> : null}
+      {jobs.length ? <Collapsible open={showTasks} id="installation-tasks">
+        <section aria-label="安装任务" className="card mt-5 p-1.5">
+          <p className="m-0 px-2.5 pt-1.5 pb-1 text-caption text-fg-3">任务在本机服务里独立运行，关闭详情后仍可在这里查看。</p>
+          <ul className="m-0 flex list-none flex-col p-0">{jobs.map(job => <li key={job.id}>
+            <button type="button" onClick={() => setSelectedId(job.harnessId)} className="row flex w-full items-center gap-2.5 border-none bg-transparent px-2.5 py-2 text-left">
+              <BrandIcon brand={job.harnessId} name={harnesses.find(h => h.id === job.harnessId)?.name ?? job.harnessId} size={24}/>
+              <span className="min-w-0 flex-1"><span className="trunc block text-ui-sm font-medium">{harnesses.find(h => h.id === job.harnessId)?.name ?? job.harnessId}</span><span className="block text-caption text-fg-3">{verbOf(job)} · {job.resolvedVersion ?? "版本待解析"} · {when(job.createdAt)}</span></span>
+              <StatusPill tone={jobTone(job)} live={installationActive(job)}>{installationStatus(job)}</StatusPill>
+              <ChevronRight size={15} className="text-fg-3"/></button></li>)}</ul>
+        </section>
+      </Collapsible> : null}
+    </>}>
+    {mine.length ? <section aria-labelledby="agents-mine-title">
+      <h2 id="agents-mine-title" className="sr-only">这台 Mac 上的 Agent</h2>
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(min(300px,100%),1fr))] gap-3.5">
+        {mine.map(harness => { const state = agentState(harness, facts); return <AgentCard key={harness.id} harness={harness} state={state} action={cardAction(harness, state)} selected={selectedId === harness.id} onOpen={() => setSelectedId(harness.id)}/>; })}
       </div>
+    </section> : null}
+    {catalog.length ? <section aria-labelledby="agents-catalog-title" className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+        <h2 id="agents-catalog-title" className="m-0 text-panel">还可以安装</h2>
+        <span className="text-ui-sm text-fg-3">{catalog.length} 个，按官网的方式安装</span>
+        <span className="flex-1"/>
+        {catalog.length > CATALOG_ROWS ? <button type="button" className="link-btn text-ui-sm" aria-expanded={allCatalog} aria-controls="agents-catalog-more" aria-label={allCatalog ? "收起" : `显示全部 ${catalog.length} 个`} onClick={() => setAllCatalog(value => !value)}>{allCatalog ? "收起" : "全部"}</button> : null}
+      </div>
+      <div className="card overflow-hidden">
+        {catalog.slice(0, CATALOG_ROWS).map(shownRow)}
+        {catalog.length > CATALOG_ROWS ? <Collapsible open={allCatalog} id="agents-catalog-more">{catalog.slice(CATALOG_ROWS).map((item, index) => shownRow(item, index + CATALOG_ROWS))}</Collapsible> : null}
+      </div>
+    </section> : null}
+    <div className="-mt-2 flex flex-col gap-1.5 text-ui-sm text-fg-3">
+      {hiddenCount > 0 ? <p className="hidden-frozen m-0">已隐藏 {hiddenCount} 个冻结的 Harness，<button type="button" className="link-btn" onClick={props.onSettings}>可在设置里显示</button></p> : null}
+      <p className="m-0">没找到装在别处的 Agent？在<button type="button" className="link-btn" onClick={props.onSettings}>设置</button>的“发现”里添加它所在的目录，再重新检测。</p>
     </div>
+    </PageShell>
     {beside
       // Beside the cards (Agent board): a sheet that leaves the page usable, without a scrim, under every floating layer;
       // it takes focus when it opens, closes with Escape or its button, and gives focus back to what opened it.
@@ -523,7 +512,7 @@ export function HarnessesPage(props: HarnessProps) {
       onClose={() => { const from = removing?.harness.id ?? null; setRemoving(null); if (from) setSelectedId(from); }}
       onConfirm={(harness, installation, consent) => { setRemoving(null); setSelectedId(harness.id); props.onUninstall(harness, installation, consent); }}
       onOpenSession={id => { setRemoving(null); setSelectedId(null); props.onOpenSession(id); }}/>
-  </section>;
+  </>;
 }
 
 /** The icon of a state, the same in the details' state box as in the task timeline. */

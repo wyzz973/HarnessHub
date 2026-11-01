@@ -10,17 +10,23 @@ import { Notice, Spinner } from "../ui/primitives.js";
 /*
  * The parts every maintenance confirmation shares (ADR-043, ADR-044): a body that scrolls between the title and the
  * buttons, the facts of the check in a hairline box, the steps on a quiet rail like the Agent board's task timeline,
- * commands in the recessed code color, and the buttons below a hairline. The dialog itself grows from .98 over a fading
- * scrim in 200 ms (Motion board #28), appears at once from the keyboard, and only fades when motion is reduced.
+ * commands in the recessed code color, and the buttons below it. They are spaced as the capability dialogs are, after
+ * the Capabilities board's write preview, so every confirmation reads as one family. The dialog itself grows from .98
+ * over a fading scrim in 200 ms (Motion board #28), appears at once from the keyboard, and only fades when motion is
+ * reduced.
  */
 
-/** The scrolling middle of a confirmation: what the check found. */
+/**
+ * The scrolling middle of a confirmation: what the check found, 18 px under the title block, 12 px between blocks. A body
+ * taller than its limit scrolls; its blocks never shrink, so one that clips its overflow is never squeezed into hiding
+ * what the user is asked to confirm.
+ */
 export function ConfirmBody({ children }: { readonly children: ReactNode }) {
-  return <div className="scroll-area flex max-h-[min(64dvh,560px)] flex-col gap-4 px-5 pt-4 pb-5">{children}</div>;
+  return <div className="scroll-area flex max-h-[min(64dvh,560px)] flex-col gap-3 px-5 pt-[18px] pb-3 [&>*]:shrink-0">{children}</div>;
 }
-/** The buttons of a confirmation, below a hairline: the way out first, the action last. */
+/** The buttons of a confirmation, 14 px below the body and 18 px above the edge, with no rule: the way out first, the action last. */
 export function ConfirmFooter({ children }: { readonly children: ReactNode }) {
-  return <div className="flex flex-wrap justify-end gap-2 hairline-t px-5 py-3.5">{children}</div>;
+  return <div className="flex flex-wrap items-center justify-end gap-2 px-5 pt-3.5 pb-[18px]">{children}</div>;
 }
 /** What a confirmation says while its check runs. */
 export function Checking({ children }: { readonly children: ReactNode }) {

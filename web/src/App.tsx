@@ -1,6 +1,6 @@
 import { ArrowDown, Blocks, Bot, Inbox, Keyboard, ListCollapse, Monitor, Moon, PanelLeft, PanelRight, RefreshCw, Settings, SlidersHorizontal, SquarePen, Sun } from "lucide-react";
 import { Dialog as BaseDialog } from "@base-ui/react/dialog";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import type { AttentionItem, PublicRun, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
 import type { ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
@@ -575,6 +575,17 @@ export function App() {
   // so a drawer left open on a narrow window never shows again by itself the next time the window becomes narrow.
   const [layoutNarrow, setLayoutNarrow] = useState(narrow);
   if (layoutNarrow !== narrow) { setLayoutNarrow(narrow); setSidebarOpen(false); setInboxOpen(false); afterLayer.current = null; }
+  // Hiding or showing the sidebar on a wide screen takes away the button that did it (the sidebar's 收起侧栏, a page's
+  // 展开侧栏), or, with ⌘B, the sidebar's control that had focus. Focus then moves to the button that undoes it, or to the
+  // main region where a page has none, so the keyboard keeps its place instead of starting again from the top.
+  const sidebarFocus = useRef<Element | null>(null);
+  const showSidebar = (shown: boolean) => { if (shown === preferences.sidebar) return; sidebarFocus.current = document.activeElement; setPreference("sidebar", shown); };
+  useLayoutEffect(() => {
+    const from = sidebarFocus.current; sidebarFocus.current = null;
+    if (from === null || from === document.body || from.isConnected) return;
+    (document.querySelector<HTMLElement>(preferences.sidebar ? "aside[aria-label='主导航'] button[aria-label='收起侧栏']" : "#main-content button[aria-label='展开侧栏']")
+      ?? document.getElementById("main-content"))?.focus();
+  }, [preferences.sidebar]);
   // The application's shortcuts (ADR-054 §5): ⇧⌘O, ⌘K, ⌘/, ⌥⌘↓ and ⌘B. The composer, approval dock and details panel
   // handle ⌘J, ⌘., ⌘\, ⏎, esc and ↑ themselves. An input method's composition never triggers one, and ⌘N, ⌘T and ⌘W
   // stay the browser's.
@@ -586,7 +597,7 @@ export function App() {
       if (!event.shiftKey && !event.altKey && key === "k") { event.preventDefault(); if (!narrow) setInboxOpen(false); if (palette) setPalette(false); else openLayer(() => setPalette(true)); return; }
       if (!event.altKey && event.key === "/") { event.preventDefault(); if (!narrow) setInboxOpen(false); if (shortcuts) setShortcuts(false); else openLayer(() => setShortcuts(true)); return; }
       if (event.altKey && !event.shiftKey && event.key === "ArrowDown") { event.preventDefault(); nextWaiting(); return; }
-      if (!event.shiftKey && !event.altKey && key === "b" && !(event.target instanceof Element && event.target.closest(SHORTCUT_TARGETS))) { event.preventDefault(); if (narrow) setSidebarOpen(value => !value); else setPreference("sidebar", !preferences.sidebar); return; }
+      if (!event.shiftKey && !event.altKey && key === "b" && !(event.target instanceof Element && event.target.closest(SHORTCUT_TARGETS))) { event.preventDefault(); if (narrow) setSidebarOpen(value => !value); else showSidebar(!preferences.sidebar); return; }
     };
     window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
   });
@@ -965,7 +976,7 @@ export function App() {
       { id: "settings", group: "前往", label: "设置", keywords: "主题 通知 发现 快捷键", icon: <Settings size={16}/>, run: go("settings") },
       ...(state.providerManagement !== false ? [{ id: "providers", group: "前往", label: "模型与账号", keywords: "Provider 模型连接", icon: <SlidersHorizontal size={16}/>, run: go("providers") }] : []),
       { id: "panel", group: "显示", label: preferences.panel ? "收起详情面板" : "打开详情面板", icon: <PanelRight size={16}/>, shortcut: "⌘\\", run: () => setPreference("panel", !preferences.panel) },
-      { id: "sidebar", group: "显示", label: preferences.sidebar ? "收起侧栏" : "展开侧栏", icon: <PanelLeft size={16}/>, shortcut: "⌘B", run: () => setPreference("sidebar", !preferences.sidebar) },
+      { id: "sidebar", group: "显示", label: preferences.sidebar ? "收起侧栏" : "展开侧栏", icon: <PanelLeft size={16}/>, shortcut: "⌘B", run: () => showSidebar(!preferences.sidebar) },
       { id: "density", group: "显示", label: preferences.density === "compact" ? "过程显示：详细" : "过程显示：简洁", icon: <ListCollapse size={16}/>, run: () => setPreference("density", preferences.density === "compact" ? "detailed" : "compact") },
       { id: "theme-system", group: "显示", label: "主题：跟随系统", icon: <Monitor size={16}/>, run: theme("system") },
       { id: "theme-light", group: "显示", label: "主题：浅色", icon: <Sun size={16}/>, run: theme("light") },
@@ -987,8 +998,8 @@ export function App() {
   const sidebar = <Sidebar providerManagement={state.providerManagement !== false} page={shown} sessions={state.sessions} harnesses={state.harnesses} currentId={sessionId}
     interactionBusy={mutation !== null} activeJobs={state.jobs.filter(installationActive).length} updates={state.harnesses.filter(harness => !hidden.has(harness.id) && hasUpdate(harness)).length}
     failed={failed} connected={connectionError === null && managementConnectionError === null && !attentionDown} inbox={inbox} inboxOpen={inboxOpen && !narrow} onInboxOpenChange={setInboxOpen}
-    onCollapse={() => setPreference("sidebar", false)} {...(narrow ? { onClose: () => setSidebarOpen(false), onInbox: openInbox } : {})} onPage={next => { setSidebarOpen(false); if (next === "capabilities") setCapabilityHarness(null); navigate(next); }} onNew={newChat} onSession={chooseAndClose} onPalette={() => openLayer(() => setPalette(true))}/>;
-  const shell = { onMenu: () => setSidebarOpen(value => !value), sidebarHidden: !preferences.sidebar, onExpandSidebar: () => setPreference("sidebar", true), onChat: () => navigate("chat") };
+    onCollapse={() => showSidebar(false)} {...(narrow ? { onClose: () => setSidebarOpen(false), onInbox: openInbox } : {})} onPage={next => { setSidebarOpen(false); if (next === "capabilities") setCapabilityHarness(null); navigate(next); }} onNew={newChat} onSession={chooseAndClose} onPalette={() => openLayer(() => setPalette(true))}/>;
+  const shell = { onMenu: () => setSidebarOpen(value => !value), sidebarHidden: !preferences.sidebar, onExpandSidebar: () => showSidebar(true), onChat: () => navigate("chat") };
   return <TipProvider delay={500}><div className="app-shell flex h-dvh overflow-hidden bg-app text-fg" data-page={shown}>
     <WaitingTitle items={attentionItems}/>
     <a className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[80] focus:rounded-control focus:bg-surface focus:px-3 focus:py-2 focus:text-ui-sm focus:shadow-pop" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>跳到主要内容</a>
@@ -1015,7 +1026,8 @@ export function App() {
         : shown === "providers" ? <ProvidersPage providers={state.providers} editor={editor} saving={mutation === "saving"} probes={probes} error={error} onEdit={provider => { setEditor(provider); setError(null); }} onBack={() => leave(() => { setEditor(null); setEditorDirty(false); setError(null); })} onSave={saveProvider} onProbe={provider => void probeProvider(provider)} onDirty={dirtyChanged} onDismissError={() => setError(null)} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
         : shown === "capabilities" ? <CapabilitiesPage api={api} initialHarness={capabilityHarness} hidden={hidden} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
         : shown === "settings" ? <SettingsPage api={api} preferences={preferences} onPreference={setPreference} onRescan={() => void rescan()} scanning={mutation === "scanning"} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
-        : <HarnessesPage api={api} harnesses={state.harnesses} hidden={hidden} onSettings={() => navigate("settings")} installationPolicy={state.installationPolicy} onUninstall={uninstall} onInstallOfficial={installOfficial} onUpgradeInstallation={upgradeInstallation} jobs={state.jobs} scanning={mutation === "scanning"} checking={checkingUpdates} submitting={submittingInstallations} cancelling={cancellingInstallations} unconfirmed={unconfirmedInstallations} error={error} connectionError={managementConnectionError} onRescan={() => void rescan()} onCheckUpdates={ids => void checkUpdates(ids)} onInstall={install} onOpenSession={selectSession} onConfirm={confirmInstallation} onCancelJob={job => void cancelInstallation(job)} onDismissError={() => setError(null)} onChoose={chooseHarness} onCapabilities={id => { setCapabilityHarness(id); navigate("capabilities"); }} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>}
+        : <HarnessesPage api={api} harnesses={state.harnesses} hidden={hidden} onSettings={() => navigate("settings")} installationPolicy={state.installationPolicy} onUninstall={uninstall} onInstallOfficial={installOfficial} onUpgradeInstallation={upgradeInstallation} jobs={state.jobs} scanning={mutation === "scanning"} checking={checkingUpdates} submitting={submittingInstallations} cancelling={cancellingInstallations} unconfirmed={unconfirmedInstallations} error={error} connectionError={managementConnectionError} onRescan={() => void rescan()} onCheckUpdates={ids => void checkUpdates(ids)} onInstall={install} onOpenSession={selectSession} onConfirm={confirmInstallation} onCancelJob={job => void cancelInstallation(job)} onDismissError={() => setError(null)} onChoose={chooseHarness} onCapabilities={id => { setCapabilityHarness(id); navigate("capabilities"); }}
+          readiness={state.readiness} sessions={state.sessions} onMenu={shell.onMenu} onExpandSidebar={shell.onExpandSidebar} sidebarHidden={!narrow && !preferences.sidebar}/>}
     </main>
     {leaveAction ? <div className="motion-enter fixed right-4 bottom-4 left-4 z-[70] mx-auto max-w-[560px] rounded-block bg-surface shadow-pop"><Notice tone="amber" title="有尚未保存的修改" action={<><button type="button" className="btn btn-sm" onClick={() => setLeaveAction(null)}>继续编辑</button><button type="button" className="btn btn-sm btn-primary" onClick={() => { const action = leaveAction; setLeaveAction(null); setEditorDirty(false); action(); }}>放弃修改，离开</button></>} onDismiss={() => setLeaveAction(null)}>离开会丢弃编辑草稿。已受理的请求可在列表中查看。</Notice></div> : null}
     {narrow ? <Layer open={inboxOpen} onOpenChange={setInboxOpen} onClosed={layerClosed} title="等你处理" className="sheet-pop inbox-pop" initialFocus={firstWaiting}><InboxList {...inbox} focusRef={firstWaiting} onClose={() => setInboxOpen(false)}/></Layer> : null}

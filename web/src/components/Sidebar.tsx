@@ -316,7 +316,7 @@ export function InboxList({ items, sessions, harnesses, current, onLoad, onDecid
           <StatusDot tone="wait" className="mt-[7px]"/>
           {/* Where the column is narrow (a phone's sheet), the conversation and the deadline take a line each. */}
           <span className="@container flex min-w-0 flex-1 flex-col gap-px">
-            <span className="trunc text-ui-sm font-medium" id={lineId}>{harness}{ask ? <span className="font-normal">：{ask.title}</span> : item.kind === "question" ? " 在等你回答" : " 在等你审批"}</span>
+            <span className="trunc text-ui-sm font-medium" id={lineId}>{harness}{ask ? <span className="font-normal">：{ask.title}</span> : " " + attentionKind(item)}</span>
             <span className="flex min-w-0 items-baseline gap-1 text-caption text-fg-3 @max-[280px]:flex-col @max-[280px]:items-start @max-[280px]:gap-0">
               <span className="min-w-0 max-w-full trunc">{session?.title || "另一个对话"}</span><span className="flex-none @max-[280px]:hidden">·</span>
               <span className="max-w-full flex-none" title={left.hint}>{attentionKind(item)} · {when}</span></span>
