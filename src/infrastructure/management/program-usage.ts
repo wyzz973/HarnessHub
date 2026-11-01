@@ -215,6 +215,17 @@ export async function restartProgramService(service: UsedService, host: ProgramH
   const runs = current.runs;
   try { await host.kickstart(service.target, context); }
   catch (error) { if (error instanceof ManagementError && error.code === "PROCESS_FAILED") throw new ManagementError("SERVICE_RESTART_FAILED", "the service manager refused to restart " + service.label); throw error; }
+  return awaitServiceRecovery(service, host, context, runs, timing);
+}
+/**
+ * Waits until a service runs again after something restarted it (ADR-043 决定 5): `state = running` under a process other
+ * than `service.pid` that stays the same for `stableMs`, launched at most once since `runs` (the job's run count read
+ * before the restart; null when unknown), within `deadlineMs`. With a known port it is ready once it listened on it at
+ * some point in that window; one that runs but never listened resolves with `ready: false`. Rejects with
+ * SERVICE_NOT_RECOVERED when it does not run again. Restarts nothing itself: the product's own start command or
+ * `launchctl kickstart` has run before this is called.
+ */
+export async function awaitServiceRecovery(service: UsedService, host: ProgramHost, context: ManagementInstallContext, runs: number | null, timing: RestartTiming = RESTART_TIMING): Promise<{ readonly pid: number; readonly ready: boolean | null }> {
   const start = host.now();
   let stable = null as { readonly pid: number; readonly since: number } | null, listened = false;
   while (host.now() - start < timing.deadlineMs) {
