@@ -1829,6 +1829,8 @@ test("G054-OC1 a Harness lists each official installation with the one in use, a
   // A development Gateway says it accepts unofficial entries; this fixture is one.
   await expect(page.locator(".development-entries")).toHaveText("开发模式：接受非官网安装。服务以 --allow-unofficial 启动，列表里的开发入口不是正式安装。");
   await expect(codex.locator(".harness-unofficial")).toHaveText("在 PATH 中发现一个非官网安装（开发目录、npm link 或其他），命令名 codex；平台不使用也不维护它。终端里 codex 运行的是这份非官网安装；HarnessHub 使用的是标为“当前使用”的官网安装。");
+  // Pictured once the details have slid in.
+  await expect.poll(() => codex.evaluate(element => getComputedStyle(element).opacity === "1" && getComputedStyle(element).transform === "none")).toBe(true);
   await page.screenshot({ path: join(artifact, "harness-installations.png"), animations: "disabled" });
   await codex.getByRole("button", { name: "关闭 Harness 详情" }).click();
   await page.getByRole("button", { name: "查看 DeepSeek Harness 详情", exact: true }).click();
@@ -1904,6 +1906,10 @@ test("G054-UN1 uninstalling one installation first says what it stops, removes a
   assert.match(String(commandId), /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u);
   assert.deepEqual(consent, { harnessId: "openclaw", action: "uninstall", installation: ref, expectedInstallationFingerprint: fingerprint, stopServices: ["ai.openclaw.gateway"] }, "the consent is exactly what the confirmation showed");
   await expect(page.getByRole("dialog", { name: "OpenClaw 详情" }).locator(".installation-state")).toContainText("等待卸载");
+  // While the task runs, its section is the state: the card's pill says it too, and nothing waits for the user.
+  await expect(page.locator(".agent-entry").filter({ has: page.getByRole("button", { name: "查看 OpenClaw 详情", exact: true }) }).locator(".status-pill")).toHaveText("等待卸载");
+  await expect(page.getByRole("dialog", { name: "OpenClaw 详情" }).locator(".agent-health")).toHaveCount(0);
+  await page.screenshot({ path: join(artifact, "agents-task-running.png"), animations: "disabled" });
   assert.deepEqual(errors, []);
 });
 
@@ -2107,26 +2113,38 @@ test("G054-DL8 the Agent page gives each Agent a card with its version and chann
   await expect(cards.locator(".agent-meta")).toHaveText(["2.1.316 · npm（nvm）", "0.166.0 · Homebrew Cask", "2026.10.9 · npm（Homebrew Node）"]);
   await expect(cards.locator(".status-pill")).toHaveText(["就绪", "有更新", "需要处理"]);
   assert.deepEqual(await cards.locator(".status-pill").evaluateAll(pills => pills.map(pill => pill.getAttribute("data-tone"))), ["accent", "accent", "amber"]);
-  await expect(cards.locator(".agent-summary")).toHaveText(["可以对话。模型和登录沿用它自己的配置。", "可以升级到 0.167.0，沿用它原来的安装方式。", "上次升级：已升级，服务未就绪。" + cause]);
+  // The sentence is about the Agent itself, as on the board; Codex's newer version is said once, by its pill and its button.
+  await expect(cards.locator(".agent-summary")).toHaveText(["可以对话。模型和登录沿用它自己的配置。", "可以对话。模型和登录沿用它自己的配置。", "上次升级：已升级，服务未就绪。" + cause]);
   await expect(card("Codex").getByRole("button")).toHaveText(["升级到 0.167.0", "详情"]);
+  await expect(card("Codex").getByText(/0\.167\.0/u)).toHaveCount(1);
   await expect(card("Claude Code").getByRole("button")).toHaveText(["详情"]); await expect(card("OpenClaw").getByRole("button")).toHaveText(["详情"]);
   await expect(cards.filter({ hasText: /\d+ 个模型|技能 \d+|MCP \d+|插件 \d+|¥|上下文/u })).toHaveCount(0);
 
-  // A03: the details open in a drawer beside the cards, with the card marked: the state in the Gateway's words once, the
+  // A03: the details open in a sheet beside the cards, with the card marked: the state in the Gateway's words once, the
   // last task step by step, models and sign-in, maintenance per official installation, capabilities, and folded technical facts.
   await card("OpenClaw").getByRole("button", { name: "查看 OpenClaw 详情", exact: true }).click();
   const drawer = page.getByRole("dialog", { name: "OpenClaw 详情" });
-  // The modal drawer hides the page from assistive technology, so the marked card is found by its class.
   const marked = main.locator(".agent-card").filter({ has: page.locator("h3", { hasText: /^OpenClaw$/u }) });
   await expect(drawer).toBeVisible(); await expect(marked).toHaveAttribute("data-selected", "true");
   await expect(drawer.locator(".agent-meta")).toHaveText("2026.10.9 · npm 全局（Homebrew 的 Node.js）");
   await expect(drawer.locator(".agent-health")).toHaveText("需要处理" + cause);
-  await expect.poll(() => drawer.evaluate(element => { const style = getComputedStyle(element); return style.opacity === "1" && style.transform === "none"; })).toBe(true);
+  const settled = (locator: ReturnType<Page["locator"]>) => expect.poll(() => locator.evaluate(element => { const style = getComputedStyle(element); return style.opacity === "1" && style.transform === "none"; })).toBe(true);
+  await settled(drawer);
+  // Beside the cards, as on the board: 360 px with a hairline and no scrim; the cards make way and stay usable.
+  const beside = await drawer.evaluate(element => { const box = element.getBoundingClientRect(), style = getComputedStyle(element);
+    // A 0.5 px hairline computes as 1 px on a 1x screen.
+    return { width: box.width, right: innerWidth - box.right, shadow: style.boxShadow, hairline: style.borderLeftStyle === "solid" && parseFloat(style.borderLeftWidth) <= 1, modal: element.getAttribute("aria-modal"), scrim: document.querySelector(".backdrop") !== null }; });
+  assert.deepEqual(beside, { width: 360, right: 0, shadow: "none", hairline: true, modal: null, scrim: false });
+  const sheetLeft = await drawer.evaluate(element => element.getBoundingClientRect().left);
+  for (const right of await cards.evaluateAll(elements => elements.map(element => element.getBoundingClientRect().right))) assert.ok(right <= sheetLeft, "the cards make way for the details");
   await page.screenshot({ path: join(artifact, "agents-drawer-light-1440.png"), animations: "disabled" });
   await expect(drawer.getByText(cause, { exact: true })).toHaveCount(1);
   await expect(drawer.getByRole("heading", { name: /^这次升级 · (今天|昨天) \d\d:\d\d$/u })).toBeVisible();
   await expect(drawer.locator(".upgrade-steps > li")).toHaveText([/^备份/u, "第 1 跳2026.9.5：已装入，Doctor 通过", "第 2 跳2026.10.9：已装入，Doctor 通过", "后台服务ai.openclaw.gateway：重启后没有重新运行"]);
   await expect(drawer.locator(".installation-state")).toContainText("新版本 2026.10.9 已安装，~/.openclaw/openclaw.json 由 Doctor 迁移。");
+  // The state box above already says what this task left, so the task's own status is a plain line in the same amber, not a second box.
+  const stateColor = await drawer.locator(".agent-health > span").first().evaluate(element => getComputedStyle(element).color);
+  assert.deepEqual(await drawer.locator(".installation-state").evaluate(element => [getComputedStyle(element).backgroundColor, getComputedStyle(element.firstElementChild!).color]), ["rgba(0, 0, 0, 0)", stateColor]);
   for (const heading of ["模型与登录", "维护 · 按官网的安装方式", "能力"]) await expect(drawer.getByRole("heading", { name: heading, exact: true })).toBeVisible();
   await expect(drawer.locator(".harness-installations li")).toHaveText(["npm 全局（Homebrew 的 Node.js）当前使用2026.10.9 · 已是最新卸载…"]);
   await expect(drawer.getByRole("button", { name: "查看 OpenClaw 的能力", exact: true })).toBeVisible();
@@ -2136,6 +2154,17 @@ test("G054-DL8 the Agent page gives each Agent a card with its version and chann
   await page.screenshot({ path: join(artifact, "agents-drawer-technical-1440.png"), animations: "disabled" });
   await page.keyboard.press("Escape"); await expect(drawer).toBeHidden();
   await expect(card("OpenClaw").getByRole("button", { name: "查看 OpenClaw 详情", exact: true })).toBeFocused(); await expect(marked).toHaveAttribute("data-selected", "false");
+  // The page stays usable beside the details: another card opens its details in the same place, and is marked instead.
+  await card("OpenClaw").getByRole("button", { name: "查看 OpenClaw 详情", exact: true }).click(); await expect(drawer).toBeVisible();
+  await card("Codex").locator(".agent-summary").click();
+  const switched = page.getByRole("dialog", { name: "Codex 详情" });
+  await expect(switched).toBeVisible(); await expect(page.getByRole("dialog")).toHaveCount(1);
+  await expect(main.locator(".agent-card[data-selected='true'] h3")).toHaveText(["Codex"]);
+  await switched.getByRole("button", { name: "关闭 Harness 详情", exact: true }).click(); await expect(switched).toBeHidden();
+  await expect(main.locator(".agent-card[data-selected='true']")).toHaveCount(0);
+  // Once the details have gone, the cards take the width back.
+  const body = main.locator(".harness-management-body");
+  await expect.poll(() => body.evaluate(element => getComputedStyle(element).marginRight)).toBe("0px");
 
   // The tasks stay one click away: the list opens in place and leads to each task's details.
   const tasks = main.getByRole("button", { name: /^安装任务/u });
@@ -2190,7 +2219,8 @@ test("G054-DL8 the Agent page gives each Agent a card with its version and chann
   await page.keyboard.press("Escape"); await expect(page.getByRole("dialog", { name: "Claude Code 详情" })).toBeHidden();
   await page.emulateMedia({ reducedMotion: "no-preference" });
 
-  // R03: from the keyboard, Tab reaches 详情 with its ring at once, Enter opens the drawer without animation, Escape returns.
+  // R03: from the keyboard, Tab reaches 详情 with its ring at once, Enter opens the drawer without animation and moves focus
+  // into it; Shift+Tab leads back to the page with the details still open beside it, and Escape closes them.
   await card("Codex").getByRole("button", { name: "升级到 0.167.0", exact: true }).focus(); await page.keyboard.press("Tab");
   const details = card("Codex").getByRole("button", { name: "查看 Codex 详情", exact: true });
   await expect(details).toBeFocused();
@@ -2199,7 +2229,12 @@ test("G054-DL8 the Agent page gives each Agent a card with its version and chann
   const codex = page.getByRole("dialog", { name: "Codex 详情" });
   await expect(codex).toBeVisible();
   const instant = await motion(); assert.ok(instant.drawer && instant.drawer.durations.every(value => value === 0), "a drawer opened from the keyboard is not animated: " + JSON.stringify(instant.drawer));
-  await page.keyboard.press("Escape"); await expect(codex).toBeHidden(); await expect(details).toBeFocused();
+  const close = codex.getByRole("button", { name: "关闭 Harness 详情", exact: true });
+  await expect(close).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect.poll(() => page.evaluate(() => document.activeElement !== null && document.activeElement !== document.body && document.querySelector("#main-content")?.contains(document.activeElement) === true)).toBe(true);
+  await expect(codex).toBeVisible();
+  await close.focus(); await page.keyboard.press("Escape"); await expect(codex).toBeHidden(); await expect(details).toBeFocused();
 
   // R01, R02: no horizontal scroll at 1440, 390 and 320, light and dark, for the page, the drawer and a confirmation.
   for (const scheme of ["light", "dark"] as const) {
@@ -2207,15 +2242,21 @@ test("G054-DL8 the Agent page gives each Agent a card with its version and chann
     assert.equal(await main.locator("section.management-page").evaluate(element => getComputedStyle(element).backgroundColor), scheme === "dark" ? "rgb(24, 25, 28)" : "rgb(255, 255, 255)");
     for (const width of [1440, 390, 320]) {
       await page.setViewportSize({ width, height: width === 1440 ? 1000 : 844 });
+      // The page at rest: the details gone and no focus ring left by the keyboard.
+      await expect.poll(() => body.evaluate(element => getComputedStyle(element).marginRight)).toBe("0px");
+      await page.evaluate(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
       await page.screenshot({ path: join(artifact, `agents-${scheme}-${width}.png`), animations: "disabled" });
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `the Agent page overflows at ${width} in ${scheme}`);
       for (const right of await cards.evaluateAll(elements => elements.map(element => element.getBoundingClientRect().right))) assert.ok(right <= width, `a card overflows at ${width} in ${scheme}`);
-      if (width === 1440) continue;
-      // Measured once the drawer has slid in: it starts 24 px to the right.
+      // Measured once the drawer has slid in: it starts 24 px to the right. At 1440 it sits beside the cards; narrower, over the page.
       await card("OpenClaw").getByRole("button", { name: "查看 OpenClaw 详情", exact: true }).click(); await expect(drawer).toBeVisible();
-      await expect.poll(() => drawer.evaluate(element => { const style = getComputedStyle(element); return style.opacity === "1" && style.transform === "none"; })).toBe(true);
+      await settled(drawer);
       await page.screenshot({ path: join(artifact, `agents-drawer-${scheme}-${width}.png`), animations: "disabled" });
       assert.ok(await drawer.evaluate(element => element.scrollWidth <= element.clientWidth && element.getBoundingClientRect().right <= innerWidth), `the drawer overflows at ${width} in ${scheme}`);
+      if (width === 1440) {
+        const left = await drawer.evaluate(element => element.getBoundingClientRect().left);
+        for (const right of await cards.evaluateAll(elements => elements.map(element => element.getBoundingClientRect().right))) assert.ok(right <= left, `a card is under the details at ${width} in ${scheme}`);
+      } else assert.equal(await drawer.evaluate(element => element.getBoundingClientRect().width), width, `the drawer takes the whole width at ${width}`);
       await page.keyboard.press("Escape"); await expect(drawer).toBeHidden();
       await card("Codex").getByRole("button", { name: "升级到 0.167.0", exact: true }).click(); await expect(dialog.getByText("0.166.0 → 0.167.0", { exact: true })).toBeVisible();
       await expect.poll(() => dialog.evaluate(element => { const style = getComputedStyle(element); return style.opacity === "1" && style.transform === "none"; })).toBe(true);

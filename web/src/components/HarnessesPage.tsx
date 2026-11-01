@@ -1,5 +1,6 @@
+import { Dialog as BaseDialog } from "@base-ui/react/dialog";
 import { ArrowLeft, ArrowRight, Check, ChevronRight, CircleAlert, CircleArrowUp, CircleCheck, CircleDashed, Clock3, Copy, Info, Menu as MenuIcon, Package, PanelLeft, RefreshCw, ScanSearch, Search, Square, Terminal, X } from "lucide-react";
-import { Fragment, useEffect, useId, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { MouseEvent, ReactNode } from "react";
 import type { HarnessEntrySource, HarnessReadinessView, HarnessView, InstallationView, NativeResumeView, SessionSummary } from "../../../src/contracts/web.js";
 import type { InstallationJobView, InstallationLog } from "../../../src/contracts/management.js";
@@ -44,6 +45,17 @@ export function installationStatus(job: InstallationJobView): string {
 }
 /** Whether a finished task changed nothing: a native one stopped before its channel ran. */
 function unchanged(job: InstallationJobView): boolean { return job.status !== "completed" && !installationActive(job) && job.native !== undefined && !job.native.dispatched; }
+/** Whether a task that did not finish cleanly left its new version installed, so what remains is for the user to handle. */
+function installedAnyway(job: InstallationJobView): boolean { return job.status === "failed" && job.action !== "uninstall" && Boolean(job.native?.actualVersion); }
+/**
+ * A task's color, the same in the task list, the details and the Agent's card: blue while it runs, amber when it waits for
+ * the user (a result to verify, nothing changed, a new version that is not fully up), red only when it failed (ADR-054 §1).
+ */
+function jobTone(job: InstallationJobView): Tone {
+  if (installationActive(job)) return "accent";
+  if (job.status === "unknown" || unchanged(job) || installedAnyway(job)) return "amber";
+  return job.status === "failed" ? "red" : "neutral";
+}
 /** The refusal earlier versions recorded when any program of the installation ran; it told users to end a task that did not exist. */
 const LEGACY_BUSY = ["本机程序仍有活动进程，请结束对应任务后再升级；其他对话可以继续。", "native program has active or unconfirmed users", "native installation has active users"];
 function jobError(job: InstallationJobView): string | null {
@@ -262,7 +274,7 @@ function agentState(harness: HarnessView, facts: StateFacts): AgentState {
   // The latest task, when it left something for the user: a result to verify, or a new version that is not fully up.
   const latest = facts.jobs.find(item => item.harnessId === harness.id);
   if (latest?.status === "unknown") return { kind: "attention", tone: "amber", live: false, pill: "结果待核实", title: "上次" + verbOf(latest) + "的结果待核实", summary: jobSummary(latest, name), jobId: latest.id };
-  if (latest?.status === "failed" && latest.action !== "uninstall" && latest.native?.actualVersion) {
+  if (latest && installedAnyway(latest)) {
     // In the Agent's own words when the Gateway kept them (Interaction board: failures say what the program said).
     const status = installationStatus(latest), cause = jobError(latest) ?? jobSummary(latest, name);
     return { kind: "attention", tone: "amber", live: false, pill: "需要处理", title: "需要处理", summary: "上次" + verbOf(latest) + "：" + status + "。" + cause, detail: cause, jobId: latest.id };
@@ -278,13 +290,14 @@ function agentState(harness: HarnessView, facts: StateFacts): AgentState {
     return { kind: "readfail", tone: "red", live: false, pill: read.label, title: "读取模型列表失败", summary: "上次读取它的模型列表失败：" + failure, detail: failure, hint: read.title };
   }
   const signedIn = seen?.state === "ready" && seen.signedIn === true, known = readyFacts(harness), hint = read?.title;
+  // The card's sentence is about the Agent itself, as on the board; a newer version is said by the pill and the upgrade button.
+  const usable = (signedIn ? "已登录，可以对话。" : "可以对话。") + known;
   if (harness.management.updateStatus === "available") {
     const latestVersion = harness.management.latestVersion, current = versionOf(harness);
-    return { kind: "update", tone: "accent", live: false, pill: "有更新", title: latestVersion ? "有新版本 " + latestVersion : "有新版本",
-      summary: (latestVersion ? "可以升级到 " + latestVersion + "，" : "有新版本，") + "沿用它原来的安装方式。" + (signedIn ? "已登录。" : ""),
+    return { kind: "update", tone: "accent", live: false, pill: "有更新", title: latestVersion ? "有新版本 " + latestVersion : "有新版本", summary: usable,
       detail: (current ? "当前 " + current + "。" : "") + "升级沿用它原来的安装方式，在下面的“维护”里进行。" + (signedIn ? "已登录。" : ""), ...(hint ? { hint } : {}) };
   }
-  return { kind: "ready", tone: "accent", live: false, pill: "就绪", title: "可以对话", summary: (signedIn ? "已登录，可以对话。" : "可以对话。") + known, detail: (signedIn ? "已登录。" : "") + known, ...(hint ? { hint } : {}) };
+  return { kind: "ready", tone: "accent", live: false, pill: "就绪", title: "可以对话", summary: usable, detail: (signedIn ? "已登录。" : "") + known, ...(hint ? { hint } : {}) };
 }
 /** What else is known of a ready Agent: frozen, the adapter in front of it, or who installed it. */
 function readyFacts(harness: HarnessView): string {
@@ -323,11 +336,14 @@ const TIERS: Readonly<Record<HarnessView["tier"], number>> = { focus: 0, catalog
 const byTierAndName = (a: HarnessView, b: HarnessView) => TIERS[a.tier] - TIERS[b.tier] || a.name.localeCompare(b.name, "zh-CN");
 /** Rows of "还可以安装" shown before "全部"; the Agents HarnessHub carries in full come first. */
 const CATALOG_ROWS = 6;
+/** The details' width beside the cards (Agent board), and the page width from which the cards keep room beside it. */
+const SHEET_WIDTH = 360, BESIDE_FROM = 900;
 
 /**
  * The Agent page (ADR-054 §5): one card for each Agent on this Mac with its version and channel, its state, one sentence
- * of facts and its actions; details in a drawer; and below, what can still be installed the official way. Maintenance
- * runs through each product's own channel after a confirmation (ADR-043, ADR-044); nothing here estimates a fact.
+ * of facts and its actions; details in a drawer, which sits beside the cards when the page is wide enough (900 px) and
+ * opens over the page otherwise; and below, what can still be installed the official way. Maintenance runs through each
+ * product's own channel after a confirmation (ADR-043, ADR-044); nothing here estimates a fact.
  */
 export function HarnessesPage(props: HarnessProps) {
   const { harnesses, jobs } = props;
@@ -338,27 +354,44 @@ export function HarnessesPage(props: HarnessProps) {
   // The top bar draws its hairline only once the page has scrolled under it.
   const [scrolled, setScrolled] = useState(false);
   const [confirming, setConfirming] = useState<{ readonly harness: HarnessView; readonly fromDetail: boolean } | null>(null);
-  // Uninstalling also shows what it removes, stops and keeps first; the confirmation takes the details' place like an upgrade's.
+  // Uninstalling also shows what it removes, stops and keeps first, in a confirmation like an upgrade's.
   const [removing, setRemoving] = useState<{ readonly harness: HarnessView; readonly installation: InstallationView } | null>(null);
-  // An official install shows what it runs and changes first, in the details' place like the other confirmations.
+  // An official install shows what it runs and changes first, in a confirmation like the others.
   const [installing, setInstalling] = useState<{ readonly harness: HarnessView; readonly fromDetail: boolean } | null>(null);
-  // Upgrading one installation shows what it runs and changes first, in the details' place like the other confirmations.
+  // Upgrading one installation shows what it runs and changes first, in a confirmation like the others.
   const [upgrading, setUpgrading] = useState<{ readonly harness: HarnessView; readonly installation: InstallationView; readonly fromDetail: boolean } | null>(null);
-  const installOfficial = (harness: HarnessView, fromDetail = false) => { setSelectedId(null); setInstalling({ harness, fromDetail }); };
+  // The details sit beside the cards when the page has room for both (Agent board): the cards make way for the sheet and
+  // stay usable, so another card opens in its place. On a narrower page the details open over it as a drawer.
+  const frame = useRef<HTMLElement>(null);
+  const [frameWidth, setFrameWidth] = useState(0);
+  useLayoutEffect(() => {
+    const node = frame.current; if (!node) return;
+    const measure = () => setFrameWidth(node.clientWidth);
+    measure(); const observer = new ResizeObserver(measure); observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  const beside = frameWidth >= BESIDE_FROM;
+  // Beside the cards, a confirmation opens over the details and they stay; over the page, it takes their place until it closes.
+  const makeWay = () => { if (!beside) setSelectedId(null); };
+  const installOfficial = (harness: HarnessView, fromDetail = false) => { makeWay(); setInstalling({ harness, fromDetail }); };
   // The drawer keeps showing the Agent it was opened for while it slides away, instead of emptying first.
   const [shownId, setShownId] = useState<string | null>(null);
   if (selectedId !== null && selectedId !== shownId) setShownId(selectedId);
   const selected = harnesses.find(harness => harness.id === selectedId) ?? null, drawn = harnesses.find(harness => harness.id === (selectedId ?? shownId)) ?? null;
+  // The cards make room for the sheet as it opens and take the width back once it has gone (after its exit transition).
+  const [room, setRoom] = useState(false);
+  if (beside && selected !== null && !room) setRoom(true);
+  else if (!beside && room) setRoom(false);
   // Upgrading an installed program first shows what it touches and asks for consent (ADR-043); installing does not. The
-  // confirmation takes the details' place while it is open, and the details come back with the task once it is sent.
+  // details come back with the task once it is sent.
   const request = (harness: HarnessView, fromDetail = false) => {
     const action = actionFor(harness);
-    if (action === "upgrade" && harness.management.native) { setSelectedId(null); setConfirming({ harness, fromDetail }); return; }
+    if (action === "upgrade" && harness.management.native) { makeWay(); setConfirming({ harness, fromDetail }); return; }
     setSelectedId(harness.id); props.onInstall(harness, action);
   };
   const upgradeInstallation = (harness: HarnessView, installation: InstallationView, fromDetail = false) => {
     if (installation.upgrade === "maintenance") { request(harness, fromDetail); return; }
-    setSelectedId(null); setUpgrading({ harness, installation, fromDetail });
+    makeWay(); setUpgrading({ harness, installation, fromDetail });
   };
   const closeConfirmation = () => { const from = confirming?.fromDetail ? confirming.harness.id : null; setConfirming(null); if (from) setSelectedId(from); };
   const facts: StateFacts = { jobs, unconfirmed: props.unconfirmed, submitting: props.submitting, readiness: props.readiness };
@@ -389,15 +422,20 @@ export function HarnessesPage(props: HarnessProps) {
     return <CatalogRow key={harness.id} harness={harness} way={item.way} first={index === 0} busy={busy} status={job ? installationStatus(job) : busy ? "提交中" : null} failure={failure}
       onOpen={() => setSelectedId(harness.id)} onInstall={() => item.way.runs === "official" ? installOfficial(harness) : request(harness)}/>;
   };
+  const detailTitle = drawn ? `${drawn.name} 详情` : "Agent 详情";
+  const details = drawn ? <AgentDetail {...props} key={drawn.id} harness={drawn} state={agentState(drawn, facts)} onClose={() => setSelectedId(null)} onRequest={harness => request(harness, true)} onInstallRequest={harness => installOfficial(harness, true)}
+    onUninstallRequest={(harness, installation) => { makeWay(); setRemoving({ harness, installation }); }}
+    onUpgradeRequest={(harness, installation) => upgradeInstallation(harness, installation, true)}/> : null;
   // The frame of the pages beside the conversation (Agent board): a quiet bar with the navigation and the way back, then
   // one scrolling body whose head is the title, what the page is, and its actions on the description's last line.
-  return <section className="management-page flex h-full min-h-0 min-w-0 flex-1 flex-col bg-app" aria-labelledby="harnesses-title">
+  return <section ref={frame} className="management-page flex h-full min-h-0 min-w-0 flex-1 flex-col bg-app" aria-labelledby="harnesses-title">
     <div className={cn("flex h-[52px] flex-none items-center gap-1 border-b-[0.5px] px-3 transition-[border-color] duration-120", scrolled ? "border-line" : "border-transparent")}>
       {narrow ? <button type="button" className="icon-btn navigation-toggle" onClick={props.onMenu} aria-label="打开导航"><MenuIcon size={18}/></button>
         : props.sidebarHidden ? <Tip label="展开侧栏"><button type="button" className="icon-btn" aria-label="展开侧栏" onClick={props.onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null}
       <Tip label="返回对话"><button type="button" className="icon-btn" aria-label="返回对话" onClick={props.onChat}><ArrowLeft size={16}/></button></Tip>
     </div>
-    <div className="harness-management-body scroll-area min-h-0 flex-1" onScroll={event => setScrolled(event.currentTarget.scrollTop > 0)}>
+    {/* While the details sit beside the cards, the body (and its scrollbar) ends where the sheet begins. */}
+    <div className="harness-management-body scroll-area min-h-0 flex-1" style={room ? { marginRight: SHEET_WIDTH } : undefined} onScroll={event => setScrolled(event.currentTarget.scrollTop > 0)}>
       <div className="mx-auto flex w-full max-w-[1040px] flex-col gap-7 px-4 pt-1 pb-16 sm:px-10">
         <div className="flex flex-col">
           <header className="flex flex-wrap items-end gap-x-4 gap-y-3">
@@ -414,9 +452,10 @@ export function HarnessesPage(props: HarnessProps) {
             </div>
           </header>
           {props.installationPolicy === "any" || props.error || props.connectionError || props.unconfirmed.length ? <div className="mt-5 flex flex-col gap-2">
-            {props.installationPolicy === "any" ? <Notice tone="amber" className="development-entries">开发模式：接受非官网安装。服务以 --allow-unofficial 启动，列表里的开发入口不是正式安装。</Notice> : null}
+            {/* Amber is kept for what waits for the user (ADR-054 §1): the Gateway's mode and a lost connection are said plainly. */}
+            {props.installationPolicy === "any" ? <Notice className="development-entries">开发模式：接受非官网安装。服务以 --allow-unofficial 启动，列表里的开发入口不是正式安装。</Notice> : null}
             {props.error ? <Notice tone="red" onDismiss={props.onDismissError}>{props.error}</Notice> : null}
-            {props.connectionError ? <Notice tone="amber" className="connection-notice">{props.connectionError} · 安装状态暂时显示最后一次观察，正在重新连接，不会重跑任务。</Notice> : null}
+            {props.connectionError ? <Notice className="connection-notice">{props.connectionError} · 安装状态暂时显示最后一次观察，正在重新连接，不会重跑任务。</Notice> : null}
             {props.unconfirmed.map(intent => <Notice key={intent.harnessId} tone="amber" title={`${harnesses.find(h => h.id === intent.harnessId)?.name ?? intent.harnessId} 的请求尚未确认`}
               action={<button type="button" className="btn btn-sm" onClick={() => props.onConfirm(intent.harnessId)} disabled={props.submitting.includes(intent.harnessId)}>确认上次请求</button>}>{intent.message}</Notice>)}
           </div> : null}
@@ -427,7 +466,7 @@ export function HarnessesPage(props: HarnessProps) {
                 <button type="button" onClick={() => setSelectedId(job.harnessId)} className="row flex w-full items-center gap-2.5 border-none bg-transparent px-2.5 py-2 text-left">
                   <BrandIcon brand={job.harnessId} name={harnesses.find(h => h.id === job.harnessId)?.name ?? job.harnessId} size={24}/>
                   <span className="min-w-0 flex-1"><span className="trunc block text-ui-sm font-medium">{harnesses.find(h => h.id === job.harnessId)?.name ?? job.harnessId}</span><span className="block text-caption text-fg-3">{verbOf(job)} · {job.resolvedVersion ?? "版本待解析"} · {when(job.createdAt)}</span></span>
-                  <StatusPill tone={installationActive(job) ? "accent" : job.status === "failed" ? "red" : job.status === "unknown" || unchanged(job) ? "amber" : "neutral"} live={installationActive(job)}>{installationStatus(job)}</StatusPill>
+                  <StatusPill tone={jobTone(job)} live={installationActive(job)}>{installationStatus(job)}</StatusPill>
                   <ChevronRight size={15} className="text-fg-3"/></button></li>)}</ul>
             </section>
           </Collapsible> : null}
@@ -456,11 +495,18 @@ export function HarnessesPage(props: HarnessProps) {
         </div>
       </div>
     </div>
-    <Dialog open={selected !== null} onOpenChange={open => { if (!open) setSelectedId(null); }} title={drawn ? `${drawn.name} 详情` : "Agent 详情"} kind="drawer">
-      {drawn ? <AgentDetail {...props} key={drawn.id} harness={drawn} state={agentState(drawn, facts)} onClose={() => setSelectedId(null)} onRequest={harness => request(harness, true)} onInstallRequest={harness => installOfficial(harness, true)}
-        onUninstallRequest={(harness, installation) => { setSelectedId(null); setRemoving({ harness, installation }); }}
-        onUpgradeRequest={(harness, installation) => upgradeInstallation(harness, installation, true)}/> : null}
-    </Dialog>
+    {beside
+      // Beside the cards (Agent board): a sheet that leaves the page usable, without a scrim, under every floating layer;
+      // it takes focus when it opens, closes with Escape or its button, and gives focus back to what opened it.
+      ? <BaseDialog.Root open={selected !== null} modal={false} disablePointerDismissal onOpenChange={open => { if (!open) setSelectedId(null); }}
+        onOpenChangeComplete={open => { if (!open) setRoom(false); }}>
+        <BaseDialog.Portal>
+          <BaseDialog.Popup className="drawer-pop z-40 hairline-l [box-shadow:none]" style={{ width: SHEET_WIDTH }}>
+            <BaseDialog.Title className="sr-only">{detailTitle}</BaseDialog.Title>{details}
+          </BaseDialog.Popup>
+        </BaseDialog.Portal>
+      </BaseDialog.Root>
+      : <Dialog open={selected !== null} onOpenChange={open => { if (!open) setSelectedId(null); }} title={detailTitle} kind="drawer">{details}</Dialog>}
     <UpgradeDialog api={props.api} harness={confirming?.harness ?? null} onClose={closeConfirmation} onConfirm={(harness, consent) => { setConfirming(null); setSelectedId(harness.id); props.onInstall(harness, "upgrade", consent); }}
       onOpenSession={id => { setConfirming(null); setSelectedId(null); props.onOpenSession(id); }}/>
     <InstallDialog api={props.api} harness={installing?.harness ?? null}
@@ -550,8 +596,9 @@ function CommandBox({ command, label }: { readonly command: string; readonly lab
       onClick={() => { void navigator.clipboard.writeText(command).then(() => setState("copied"), () => setState("failed")); }}>{state === "copied" ? <Check size={14}/> : <Copy size={14}/>}</button>
   </div>;
 }
+/** A section's title in the details; beside an action (a task picker) it stays on one line and the action gives way. */
 function SectionTitle({ id, children, action }: { readonly id: string; readonly children: ReactNode; readonly action?: ReactNode }) {
-  return <div className="flex min-h-[26px] items-center gap-2"><h3 id={id} className="m-0 flex-1 text-ui-sm font-semibold text-fg-2">{children}</h3>{action}</div>;
+  return <div className="flex min-h-[26px] items-center gap-2"><h3 id={id} className={cn("m-0 flex-1 text-ui-sm font-semibold text-fg-2", action !== undefined && "whitespace-nowrap")}>{children}</h3>{action}</div>;
 }
 /** One step of a task as a timeline row (Agent board, "这次升级"): done, failed, waiting for you, or not reached. */
 interface Step { readonly key: string; readonly mark: "done" | "fail" | "wait" | "skip"; readonly title: string; readonly note: ReactNode }
@@ -607,7 +654,7 @@ function AgentDetail(props: HarnessProps & { harness: HarnessView; state: AgentS
       {harness.unofficial ? <Notice className="harness-unofficial">在{harness.unofficial.onPath ? " PATH " : "标准目录"}中发现一个非官网安装（开发目录、npm link 或其他），命令名 {harness.unofficial.command}；平台不使用也不维护它。{harness.unofficial.pathDefault ? harness.installations.some(item => item.role === "product") ? `终端里 ${harness.unofficial.command} 运行的是这份非官网安装；HarnessHub 使用的是标为“当前使用”的官网安装。` : "终端里能用的就是它。" : ""}</Notice> : null}
       {!here ? <InstallSection {...props} busy={busy} titleId={ids + "install"}/> : null}
       {job ? <JobSection {...props} job={job} related={related} titleId={ids + "job"} onSelectJob={setSelectedJobId} said={state.jobId === job.id ? state.detail ?? null : null}
-        running={state.kind === "busy" ? state.summary : null}/> : null}
+        stated={health && state.jobId === job.id} running={state.kind === "busy" ? state.summary : null}/> : null}
       {here ? <section aria-labelledby={ids + "models"} className="flex flex-col gap-2.5">
         <SectionTitle id={ids + "models"}>模型与登录</SectionTitle>
         <p className="m-0 text-ui-sm text-fg-2">{props.readiness === undefined ? "" : seen?.checkedAt != null ? seen.state === "ready" ? `${ago(seen.checkedAt)}读取过它的模型列表${seen.signedIn === true ? "，已登录" : ""}。`
@@ -684,13 +731,15 @@ function InstallSection(props: HarnessProps & { harness: HarnessView; busy: bool
 function JobSection(props: HarnessProps & { harness: HarnessView; job: InstallationJobView; related: readonly InstallationJobView[]; titleId: string; onSelectJob: (id: string) => void;
   /** What the state box above already says of this task, not repeated here. */
   said: string | null;
+  /** Whether the state box above is this task's outcome: the task's own status is then a plain line, not a second box. */
+  stated: boolean;
   /** What a running task means meanwhile, said under its status. */
   running: string | null }) {
   const { harness, job, related } = props, native = job.native;
   const [inspecting, setInspecting] = useState(false), [inspectionError, setInspectionError] = useState<string | null>(null);
   const inspect = async () => { if (inspecting) return; setInspecting(true); setInspectionError(null); try { await props.api.inspectInstallation(job.id); props.onRescan(); } catch (error) { setInspectionError(errorMessage(error)); } finally { setInspecting(false); } };
   const latest = related[0]?.id === job.id;
-  const tone: Tone = installationActive(job) ? "accent" : unchanged(job) || job.status === "unknown" ? "amber" : job.status === "failed" ? "red" : "neutral";
+  const tone = jobTone(job);
   // The steps the Gateway recorded for a native upgrade: the confirmed backup and each hop of a sequence (ADR-052), then each service.
   const steps: Step[] = [
     ...(native?.backupConfirmed ? [{ key: "backup", mark: "done" as const, title: "备份", note: "升级前你确认已经用它自己的命令备份并核对过" }] : []),
@@ -707,16 +756,17 @@ function JobSection(props: HarnessProps & { harness: HarnessView; job: Installat
   else if (shown.active !== installationActive(job)) setShown({ ...shown, active: installationActive(job), finished: shown.active && job.status === "completed" });
   const arrived = (key: string) => shown.id === job.id && !shown.keys.has(key);
   return <section aria-labelledby={props.titleId} className="flex flex-col gap-3">
-    <SectionTitle id={props.titleId} action={related.length > 1 ? <select className="field h-7 w-auto max-w-[180px] rounded-row py-0 pr-7 text-caption" aria-label="选择安装任务" value={job.id} onChange={event => props.onSelectJob(event.target.value)}>
+    <SectionTitle id={props.titleId} action={related.length > 1 ? <select className="field h-7 w-auto min-w-0 max-w-[180px] rounded-row py-0 pr-7 text-caption" aria-label="选择安装任务" value={job.id} onChange={event => props.onSelectJob(event.target.value)}>
       {related.map(item => <option value={item.id} key={item.id}>{verbOf(item)} · {item.resolvedVersion ?? item.id.slice(-8)} · {installationStatus(item)}</option>)}</select> : undefined}>
       {latest ? "这次" : ""}{verbOf(job)}{when(job.createdAt) ? " · " + when(job.createdAt) : ""}</SectionTitle>
-    <div className={cn("installation-state flex items-start gap-2.5 rounded-block px-3.5 py-3", TONE_FILL[tone])} role="status">
-      <span className={cn("mt-0.5 flex flex-none", tone === "neutral" ? "text-accent-text" : TONE_TEXT[tone])}>
+    {/* Its icon sits in the timeline's 18 px column when it is a plain line above the steps. */}
+    <div className={cn("installation-state flex items-start", props.stated ? "gap-3" : cn("gap-2.5 rounded-block px-3.5 py-3", TONE_FILL[tone]))} role="status">
+      <span className={cn("mt-0.5 flex flex-none", props.stated && "w-[18px] justify-center", tone === "neutral" ? "text-accent-text" : TONE_TEXT[tone])}>
         {installationActive(job) ? <Spinner size={16} tone="run" label=""/> : job.status === "completed" ? <DrawnCheck size={16} circle animate={shown.finished}/> : job.status === "cancelled" ? <Square size={14} className="text-fg-3" aria-hidden="true"/> : <CircleAlert size={16} aria-hidden="true"/>}</span>
       <div className="min-w-0"><strong className="block text-ui-sm font-semibold"><SwapText text={installationStatus(job)} shimmer={installationActive(job)}/></strong>
         <span className="block text-caption text-fg-2">{installationActive(job) ? props.running ?? jobSummary(job, harness.name) : jobSummary(job, harness.name)}</span></div>
     </div>
-    {jobError(job) && jobError(job) !== props.said ? <Notice tone={unchanged(job) ? "amber" : "red"}>{jobError(job)}</Notice> : null}
+    {jobError(job) && jobError(job) !== props.said ? <Notice tone={tone === "amber" ? "amber" : "red"}>{jobError(job)}</Notice> : null}
     {steps.length ? <Timeline steps={steps} arrived={arrived}/> : null}
     {native ? <dl className={cn("m-0", fact)}><Fact label="本机渠道">{channelLabel(native.channel)}</Fact><Fact label="操作前版本">{native.beforeVersion ?? "未安装"}</Fact>
       {native.dispatched ? <><Fact label="已核实版本">{native.actualVersion ?? "尚未核实"}</Fact><Fact label="原配置">{native.configurationPreserved === true ? native.configurationChangedByService ? "安装时没有改动；重启后服务自己改写了它" : native.configurationMigrated?.length ? "HarnessHub 没有写入；" + native.configurationMigrated.join("、") + " 由产品的 Doctor 迁移，原件在它的 .bak 备份里" : "保留，已核实" : "尚未确认"}</Fact></> : null}
