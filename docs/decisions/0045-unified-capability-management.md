@@ -915,3 +915,20 @@
   - 启用后两个文件都与写前逐字节一致，台账与漂移为空。
   - 往返期间新会话是否真的少了这个插件，没有验证。
 - **下一步**：6b（装卸，官方命令）另行设计送审，第一次真实写入留给用户。
+
+## 2026-11-01 补充：OpenCode 2 的两种配置写法
+
+用户 2026-10-22 决定直接换到 OpenCode 2（[ADR-053](0053-latest-version-baseline.md)“2026-11-01 用户决定”）。OpenCode 1 与 2 共用 `~/.config/opencode`，OpenCode 2 读 V1 写法的文件时在内存里归一化、不改写文件（[迁移指南](https://opencode.ai/v2/docs/migrate-v1/)），所以一个文件有自己的写法。本记录里按 1.18.35 写的 OpenCode 行（第 2 步读表、MCP 写法表、第 3 步“最后一个存在的配置文件里的 `mcp.<名>`”、第 4 步指令表、第 5 步子 Agent 表、第 6 步插件表）仍是 V1 线的事实；对 V2 线与两种写法的处理如下，代码在 `src/adapters/capability-reads.ts`（`OpenCodeDialectSpec`、`opencodeMcpServers`、`opencodeFileDialect`、`opencodeWriteDialect`）：
+
+| 项 | OpenCode 1 写法 | OpenCode 2 写法 | 读取 | 写入 |
+|---|---|---|---|---|
+| MCP | `mcp.<名>`，停用 `enabled: false` | `mcp.servers.<名>`，停用 `disabled: true`，`timeout` 拆成 `catalog/execution`（[mcp-servers](https://opencode.ai/v2/docs/mcp-servers/)） | 两种都读；`mcp.servers` 是容器（除非它自己像一个 V1 服务器），`mcp.timeout` 不是服务器 | 文件已有服务器时按它的写法（样式 `opencode` 或 `opencode-v2`，同一渲染、只是位置不同）；没有时按下面的顺序决定 |
+| 插件 | `plugin`：字符串或 `[path, options]`；`tui.json` 的 `plugin` | `plugins`：字符串或 `{package, options}`；`cli.json` 的 `plugins`（首次启动从 `tui.json` 迁来）（[plugins](https://opencode.ai/v2/docs/plugins/)） | 两个键、两种条目都读，`plugin/` 与 `plugins/` 目录照旧 | 没有写入（6b 未做） |
+| 技能开关 | `permission.skill`：字符串或模式→动作 | `permissions` 数组的 `{action: "skill", resource, effect}`，最后匹配者胜（[permissions](https://opencode.ai/v2/docs/permissions/)） | 两种都读，同一文件里 V1 规则在 V2 规则之前 | V1：`permission.skill.<名>` 移到末尾；V2：追加 `{action: skill, resource: <名>, effect: deny}`，启用时删掉自己的规则或恢复替换掉的 effect，仍被拒绝时追加 allow；台账键 `permission.skill/<名>` 或 `permissions.skill/<名>`；同时有两种写法的文件拒绝 |
+| 指令 | `~/.config/opencode/AGENTS.md`，不存在时回退读 `~/.claude/CLAUDE.md` | 只读 `~/.config/opencode/AGENTS.md`（[instructions](https://opencode.ai/v2/docs/instructions/)） | 读表只在 V1 线给 compat 候选；V2 与未知线不给，notes 说明 | 第 4 步的 `create-own` 流程只对 V1 线出现 |
+| 子 Agent、命令 | `{agent,agents}/**`、`{mode,modes}/*`、`{command,commands}/**` | `agents/`、`commands/`；旧目录仍被发现，mode 文件要写 `mode: primary`（[agents](https://opencode.ai/v2/docs/agents/)） | 读表不变 | 第 5 步写 `agents/<名>.md`，两条线都读 |
+
+- **新条目的写法**（文件还没有这一族的键时）依次按：安装的产品线（渠道记录；见 ADR-053 该节第 1 条）→ 文件其他键的写法 → `cli.json` 存在按 V2、只有 `tui.json` 按 V1 → 默认 V2。确认框写明依据（“写法：…”）；文件混用两种写法时不写并说明。
+- **视图**对每个存在的配置文件写明它用的是哪种写法，并写明本机装的是哪条线及其依据；混用的文件提示先统一。
+- **逐字节往返**：JSON 的新增键与删除改为只动那一项的文本（原来经 jsonc-parser 的 `modify` 会把相邻一行重排、把单行对象展开成多行），两种写法的加/删往返都回到原字节；MCP 守卫把只剩空 `servers` 的 `mcp` 视同不存在。
+- 测试：G064-R7、G064-W12、G064-M7（单元），G064-W13、G064-M8（经正式 Gateway）。真实往返按[手册第 6.5 节](../engineering/real-acceptance.md)在换装后进行。

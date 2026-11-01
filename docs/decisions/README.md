@@ -107,11 +107,11 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
   - HarnessHub 自己的空闲进程先关闭；正在回复的对话、其他 HarnessHub 进程、不满足的 Node.js 要求阻止升级；写记录的进程已结束的旧记录在维护锁内清除。
   - 管理库 v3（只改版本号，附经过测试的降级 SQL）；业务库仍是 v12。
   - 2026-11-01 补充：声明了官方升级顺序的产品（OpenClaw 的 npm 安装）由它自己的命令停止与启动，HarnessHub 运行它的 Doctor，配置迁移记为 `configurationMigrated`（[ADR-052](0052-openclaw-upgrade-route.md) 实现裁决）。
-- [ADR-044：只面向 macOS，按官网安装渠道探测和维护 Harness](0044-macos-official-channels.md)（accepted）：
+- [ADR-044：只面向 macOS，按官网安装渠道探测和维护 Harness](0044-macos-official-channels.md)（accepted；2026-11-01 补充 OpenCode 2 的渠道与安装命令）：
   - 程序落在产品官网写明的渠道里才算已安装；同一产品的多份安装全部列出并标出当前使用的一份；正式入口默认只认官网。
   - 每份官网安装可按其渠道单独卸载（只删程序）、单独升级；没装的产品可以按官网方式代为安装。每次都先确认，写入在沙箱里受限。
   - 管理库升到 v6，附逐级降级 SQL。
-- [ADR-045：统一管理各 Harness 的能力](0045-unified-capability-management.md)（accepted）：
+- [ADR-045：统一管理各 Harness 的能力](0045-unified-capability-management.md)（accepted；2026-11-01 补充 OpenCode 2 的两种配置写法）：
   - 技能、MCP、指令、子 Agent、命令、Hooks、插件在一个“能力”页统一查看；只改用户级配置，每次写入先预览并经用户确认，只认领自己写入的条目。取代 ADR-026 的否决条。
   - 技能以 `~/.agents/skills` 为唯一实体，只给 Claude（逐个链接）和 Hermes（`external_dirs`）放置；按 Harness 停用写各家自己的配置。
   - MCP 由 HarnessHub 保存只含变量名的清单，按各家格式写入；OpenClaw 的 MCP 与插件装卸推迟到升级之后。分六步实施，第 1 步是只读统一视图。
@@ -133,3 +133,4 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
   - 任何官网渠道的安装、任何版本（包括读不出版本的）都能接入；不再按版本号提示或劝阻；续接命令按产品对任何版本给出；读表每家一张、`checkedOn` 只作证据；功能按程序实际报告的能力判断，缺的能力在用到时明确失败并带原因；升级目标是渠道最新版；真实验收以验收当日的最新正式版为对象。
   - 取代 ADR-038 全文，修订 ADR-031/034/035/036/039/043/044/045/046/048/050，重排 ADR-051/052 的选项；登记 Hermes 0.12 的 60 秒审批期限为唯一例外及其退出条件；撤销 ADR-034 第 37 行、ADR-051 第 8 条、ADR-052 T-OC-11、ADR-048 决定 3 页面冒烟入口等已登记的版本门槛计划。
   - 三项产品取舍由审批代理裁决：Claude 会话关闭 promptSuggestions；`/remote-control` 在 HarnessHub 不支持；Hermes 0.12 期限作例外。
+  - 2026-11-01 补记用户对第 2 题的答复“直接换到 OpenCode 2”：OpenCode 1 与 2 是共用命令与目录的两条产品线，哪条装着由渠道记录判定（包名、formula、tap、脚本的 opencode2 垫片），不是版本门槛；两条线的渠道都登记（ADR-044 补充），读表读两种配置写法、写入写文件已有的写法（ADR-045 补充），续接命令附产品线说明（ADR-039 补充），真实验收手册 6.5 节按 V2 重写。

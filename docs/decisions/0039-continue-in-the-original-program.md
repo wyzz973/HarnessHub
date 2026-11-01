@@ -25,7 +25,7 @@
    |---|---|---|---|---|
    | Claude Code 2.1.296、2.1.306（claude-agent-acp 0.89.1） | `claude --resume <id>` | `claude -p --resume <id> "…"`（2.1.296 与 2.1.306 上各真实核对一次） | 2.1.307 仍有 `-r/--resume` 与 `-p/--print`（darwin-arm64 二进制里的选项表） | 给出 |
    | Codex 0.162.1 | `codex resume <id>` | `codex exec --skip-git-repo-check resume <id> "…"` | 0.163.0 的 `exec/src/cli.rs` 与 `cli/src/main.rs` 不变；两条命令会恢复线程保存的权限 | 给出；`--skip-git-repo-check` 绕过 Codex 的 Git 仓库检查，只在工作区不是 Git 仓库时加入，并注明原因，是仓库时为 `codex exec resume <id> "…"`。`codex resume` 的帮助中没有这个标志，交互形式不加 |
-   | OpenCode 1.18.35 | `opencode -s <id>` | `opencode run -s <id> "…"` | 1.19.3 的 `-s` 不变（`cli/cmd/run.ts`、`cli/cmd/tui.ts`）；OpenCode 2 的 `-s` 遇到不存在的 ID 会新建会话，接入 V2 前要先核对 | 给出 |
+   | OpenCode 1.18.35 | `opencode -s <id>` | `opencode run -s <id> "…"` | 1.19.3 的 `-s` 不变（`cli/cmd/run.ts`、`cli/cmd/tui.ts`）；OpenCode 2（2.2.5，2026-11-01 只读核对 `packages/cli/src/commands/commands.ts`、`handlers/default.ts`、`session-target.ts`）两种形式不变，但 `-s` 遇到它没有的 ID 会以该 ID 新建会话而不是报错，`--fork` 对未知 ID 报 Session not found；导出改为 `opencode session export [id] [--sanitize]` | 给出；两种形式旁附说明“OpenCode 2 对它没有的会话 ID 会新建会话而不是报错（OpenCode 1 会报错）”（`onceNote`），不读版本号 |
    | Hermes 0.12.0 | `hermes --resume <id>`（Hermes 自己在回合结束时也打印这条命令） | `hermes chat --resume <id> -q "…"` | v0.22.4 的 `hermes_cli/_parser.py` 仍有 `--resume` 与 `chat --resume -q` | 给出 |
    | DeepSeek Harness 0.2.0-rc.2（2026-10-22 真实核对；此前为源码版 0.2.1-alpha.1） | 不给（2026-10-21）：原为 `dsh tui --resume <id>`，官网 npm 包没有 tui profile，见文末补充 | `dsh headless --session-id <id> "…"`（2026-10-22 在 0.2.0-rc.2 上真实核对） | 0.2.1-rc.2 的 `--session-id` 不变、仍没有 tui profile；但 headless 不再读界面里保存的密钥与账号登录（dsh-headless 把 credentials、authorization、deepseek-account 三行设为 disabled），命令旁加前提说明：只用终端环境的 `DEEPSEEK_API_KEY`、工作区 `.env` 或 `~/.dsh/.env`，只在界面里保存过密钥的用户要先在终端 export | 只给一次性命令，附前提说明 |
    | Cursor Agent 2026.10.01-e373342 | `--resume [chatId]` 存在 | `-p --resume` 停在工作区信任，要求 `--trust` | 冻结，未核对 | 只显示 ID（`no-command`）：为不写用户配置，没有加 `--trust`；它的 ACP 会话存放在 `~/.cursor/acp-sessions` 下，能否被 `--resume` 找到也未验证 |
@@ -69,3 +69,7 @@
 ## 2026-10-22 补充：Claude Code 2.1.306 上的一次性命令
 
 用与 DeepSeek Harness 相同的做法，在 2.1.306 上真实核对了 `claude -p --resume <id> "…"`：退出码 0，标准输出只有答案一行，答对标记。记录见 [claude-2.1.306-rebaseline-2026-10-22.md](../verification/claude-2.1.306-rebaseline-2026-10-22.md)。交互形式没有真实运行：它会询问是否信任目录，接受后会写入全局配置。交互形式仍以帮助确认为准。已验证版本扩到 2.1.296～2.1.306（ADR-038 同日补充），本机详情栏随之给出两种命令。
+
+## 2026-11-01 补充：OpenCode 2
+
+用户 2026-10-22 决定直接换到 OpenCode 2（[ADR-053](0053-latest-version-baseline.md) 第 2 题）。按 v2.2.5 源码只读核对（未运行程序）：`opencode -s <id>` 与 `opencode run -s <id> "…"` 两种形式都保留，命令文本不改；差别是产品线的事实——OpenCode 2 对它没有的 ID 会以该 ID 新建会话而不是报错，所以 ID 抄错时不会有失败提示。做法：`RESUME_COMMANDS` 给 OpenCode 加固定的 `onceNote`（与工作区无关）说明这一点，详情栏在两种形式旁显示；不按版本或产品线切换命令文本（ADR-053 决定 3）。V2 的导出命令是 `opencode session export [id] [--sanitize]`、列表是 `opencode session list`；HarnessHub 没有展示过 `opencode export`，无需改。V2 上的一次性形式真实核对按[手册第 7 节](../engineering/real-acceptance.md#7-续接命令人工)在换装后进行，表中“核对时版本”随后补 2.2.5。

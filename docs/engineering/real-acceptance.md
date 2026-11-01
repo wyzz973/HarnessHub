@@ -285,11 +285,25 @@ dsh 的 ACP 自报版本恒为 0.0.1，所以版本一律以证据头的 `instal
 
 `HH_REAL_HARNESSES=codex`。完整套件：`native-catalog`；`native-resume`；`native-activity` 加 `HH_REAL_APPROVAL=1 HH_REAL_OPTIONS_CODEX='{"approval_policy":"on-request","sandbox":"read-only"}'`（本机原配置 `approval_policy=never`，不覆盖就不会请求审批）；计划另跑一次 `native-activity` 加 `HH_REAL_PLAN=1`（矩阵受阻，按观察记录）；`native-attachments`；`native-commands`（`/compact`、`/export`，看 `Thread.path` 的后缀）；`native-import`（`thread/list` cwd + sourceKinds、`thread/read`、`thread/turns/list`）；`native-branch`；`native-subagent`；`native-extensions`；`native-options`（审批策略与沙箱的回报）。最新版上另核对：计划模式按能力——选项在目录里、选择后 `open` 成功、`plan` 条目与切回默认（协作模式不再按版本号提供，ADR-034 修订）；Hub 重启后 `thread/resume` 带与不带权限覆盖各一次，核对 0.163.0 恢复了线程保存的沙箱，以及 Hub 从 `thread/resume` 回包的稳定字段显示的当前值；扩展面板里可信工作区 `.codex/config.toml` 的 MCP 预期不再列出（`mcpServerStatus/list` 不带 threadId 时只反映全局配置，记录事实）；在测试用 `CODEX_HOME` 里写 `[plugins._default] enabled=false`，核对 `plugin/installed` 与能力页；续接命令在 git 与非 git 工作区各一次（第 7 节）。思考输出（每轮的 summary 未下发）与原生提问（requestUserInput）没有真实证据，`native-thinking`、`native-question` 作为可选项，结果如实记录。不调用模型的套件：`codex-local-provider`、`codex-session`、`provider-switch`、`live-web-stream`、`managed-install`（从 npm 下载私有版本）。开发侧回归见 6.1。
 
-### 6.5 OpenCode（配方：anomalyco/tap 最新版，2026-10-22 为 1.19.3；≤ 10 次提示）
+### 6.5 OpenCode（配方：OpenCode 2，2026-11-01 为 2.2.5；≤ 10 次提示）
 
-前置：等 Homebrew 公式全名的修复（第三批 D4）部署到 4317 之后，先只读运行 `brew upgrade --dry-run --formula anomalyco/tap/opencode`，确认解析到 1.19.3 而不是 Homebrew Core 的 OpenCode 2（2.1.2，同一个 `opencode` 命令、不能并存），再由用户在 Hub 点击升级。OpenCode 1 没有服务或网关，1.18.35 → 1.19.3 没有数据库迁移，数据仍在 `~/.config/opencode` 与 `~/.local/share/opencode`。按哪条线做“最新版”以用户对 ADR-053 第 2 题的答复为准；本节按 OpenCode 1 写。
+用户 2026-10-22 答复 ADR-053 第 2 题：直接换到 OpenCode 2（[ADR-053 的 2026-11-01 用户决定](../decisions/0053-latest-version-baseline.md#2026-11-01-用户决定opencode-直接换到-opencode-2)）。本节按 OpenCode 2 写；1.19.3 的旧配方作废。
 
-`HH_REAL_HARNESSES=opencode`。完整套件：`native-catalog`（initialize 报告的版本照抄进记录）；`native-resume`；`native-thinking`；`native-activity` 加 `HH_REAL_APPROVAL=1`；`native-attachments` 加 `HH_REAL_MODEL_OPENCODE=<有视觉能力的模型 id>`；`native-commands`（`/compact` 由 Hub 在命令目录未列出时对任何版本补入，核对回合完成、压缩后仍记得先前事实，与 [1.18.35 的记录](../verification/opencode-compact-2026-10-22.md)一致）；`native-options` 分两次：`HH_REAL_OPTIONS_OPENCODE='{"mode":"plan"}' HH_REAL_EXPECT_UNCHANGED=1`，以及 `HH_REAL_COMMAND=/init HH_REAL_COMMAND_FILE=AGENTS.md`（默认模式，单独一次）；可选：用模型配置里的 `reasoning_options` 补做 thought-level；`native-import`；`native-branch`；`native-extensions`；能力页读取正常、配置守护前后一致。不适用或未接出：questions（`OPENCODE_CLIENT=acp` 下提问工具不启用）、config-sync、subagents。开发侧回归见 6.1。
+前置（主代理在用户已同意替换本机 V1 的前提下，在终端执行；HarnessHub 不代为运行）：
+
+1. 保留退路：复制一份 `~/.local/share/opencode`（含 `opencode.db`、`auth.json`）与 `~/.config/opencode` 到验收期间的私有目录，验收结束后删除（不留测试数据）。OpenCode 2 首次启动会把 V1 的 session/message/part 行一次性复制进新表、把 `auth.json` 导入 `credential` 表，能否退回未见文档说明。
+2. `brew update`；`brew uninstall --force anomalyco/tap/opencode`（两条线不能并存，迁移指南要求先卸载包管理器装的 V1；本机 Cellar 里有 1.1.21 与 1.18.35 两个 keg，`--force` 一起删）。
+3. `brew install opencode`（homebrew/core，2.2.5）或 `brew install anomalyco/tap/opencode-v2`（`conflicts_with "opencode"`，装到 `Cellar/opencode-v2/<v>/bin/opencode`）。两者 Hub 都认：前者 receipt 没有 tap、判为 V2，后者 formula 名 `opencode-v2`。
+4. 回到 Hub 刷新：Harness 页应显示一份 Homebrew 安装、版本 2.2.5；能力页 OpenCode 的 notes 应写明“本机装的是 OpenCode 2（…）”，`~/.config/opencode/opencode.jsonc` 的写法按文件实际内容标注（本机文件若仍是 V1 写法，标“OpenCode 1 的写法；OpenCode 2 也能读它”）。
+5. 升级入口：`brew upgrade --dry-run --formula opencode`（或 `anomalyco/tap/opencode-v2`）应解析到 2.2.5 自身“已是最新”。
+
+`HH_REAL_HARNESSES=opencode`。完整套件：`native-catalog`（initialize 报告的版本照抄进记录；`available_commands_update` 应含 V2 自己的 `compact`，目录里只有一条 compact）；`native-resume`（V2 的 `session/load` 要求 cwd 是会话自己的目录，Hub 用对话的工作区，照常）；`native-thinking`；`native-activity` 加 `HH_REAL_APPROVAL=1`；`native-attachments` 加 `HH_REAL_MODEL_OPENCODE=<有视觉能力的模型 id>`（从 `opencode models` 列出的 `provider/id` 里选；V2 没有 `models --verbose`，Hub 对每个控制只试一次、安静地退回代理声明，所以识图与否以这次真实回合为准）；`native-commands`（`/compact` 是 V2 内置命令，由原程序宣告、Hub 不补入；核对回合完成、压缩后仍记得先前事实，并记下回合形状——V2 以 `compaction_update` 回报还是以回复文本交回；与 [1.18.35 的记录](../verification/opencode-compact-2026-10-22.md)对照）；`native-options` 分两次：`HH_REAL_OPTIONS_OPENCODE='{"mode":"plan"}' HH_REAL_EXPECT_UNCHANGED=1`，以及 `HH_REAL_COMMAND=/init HH_REAL_COMMAND_FILE=AGENTS.md`（默认模式，单独一次）；可选：thought-level；`native-import`（`session/list` 与 `session/load`）；`native-branch`（`session/fork`，V2 声明 fork）；`native-extensions`；能力页读取正常、配置守护前后一致（守护清单里的 `~/.config/opencode/*` 不该被 V2 改写：它读 V1 写法时不改写文件；`~/.local/share/opencode/opencode.db` 会被迁移，属于数据不属于配置守护）。不适用或未接出：questions（`OPENCODE_CLIENT=acp` 下提问工具不启用）、config-sync、subagents。
+
+能力写入的真实往返（人工项，6.1 第 5 项）：在能力页对 OpenCode 做一次技能停用与启用、一次 MCP 写入与移除，核对确认框的“写法：…”与文件实际写法一致、往返后文件逐字节回到原样。
+
+续接命令（第 7 节）：`opencode run -s <id> "…"` 在 V2 上真实核对一次；注意 V2 对它没有的 ID 会新建会话而不是报错，核对时以“答出标记”为准，不以退出码为准。
+
+配方提交（第 8 节）：记录 `docs/verification/opencode-latest-2026-11-xx.md`；矩阵 `installation` 写“真实验收版本 2.2.5（OpenCode 2；2026-10-22 之前：OpenCode 1 的 1.18.35）”；读表 `checkedOn` 已是 2.2.5，位置或格式与记录不符时同一提交改读表；ADR-039 的表补“核对时版本 2.2.5”。开发侧回归见 6.1。
 
 ### 6.6 Hermes Agent（基线：最新正式版，2026-11-01 为 v0.22.5；用户 2026-10-22 已允许进入网关，分两步验收）
 
