@@ -17,16 +17,35 @@ export interface PickerOption {
   /** A short state shown beside the label, such as whether a Harness is ready. */
   readonly status?: { readonly tone: "success" | "warning" | "danger"; readonly label: string; readonly title?: string };
 }
-const TONES = { success: "badge-green", warning: "badge-amber", danger: "badge-red" } as const;
+/** Ready reads as the accent, waiting for the user as amber and a failed read as red (ADR-054 §1: no green for success). */
+const TONES = { success: "badge-accent", warning: "badge-amber", danger: "badge-red" } as const;
 /**
- * Searchable, keyboard-operated selection. Disabled choices stay visible with their actual reason. The trigger keeps the
- * accessible name `label`; it shows the selected choice, after `prefix` when given. Input-method composition never selects.
+ * Searchable, keyboard-operated selection (design language 2.0): the list grows from its trigger on the floating surface,
+ * the active row is tinted and the chosen one carries a blue check. Disabled choices stay visible with their actual reason,
+ * in amber. The trigger keeps the accessible name `label`; by default it shows the selected choice, after `prefix` when
+ * given, and `trigger` replaces that content (the composer's merged picker draws its segments this way). Input-method
+ * composition never selects. `open` and `onOpenChange` make it controlled, so a shortcut (⌘J) can open it; focus goes to
+ * the search field and returns to the trigger when the list closes.
  */
-export function SearchPicker({ label, value, placeholder, options, onChange, disabled = false, footer, prefix, className, wide = false, side = "top" }: {
+export function SearchPicker({ label, value, placeholder, options, onChange, disabled = false, footer, prefix, className, wide = false, side = "top", align = "start",
+  open: controlledOpen, onOpenChange, title, trigger, chevron = true, size = "md", empty }: {
   label: string; value: string; placeholder: string; options: readonly PickerOption[];
   onChange: (value: string) => void; disabled?: boolean; footer?: ReactNode; prefix?: string; className?: string; wide?: boolean; side?: "top" | "bottom";
+  align?: "start" | "end";
+  /** Controlled open state; leave both undefined to let the picker own it. */
+  open?: boolean; onOpenChange?: (open: boolean) => void;
+  /** A caption above the search field, such as "由谁来做 · ⌘J". */
+  title?: ReactNode;
+  /** The trigger's content in place of the default icon and label; the trigger keeps `label` as its accessible name. */
+  trigger?: (selected: PickerOption | undefined) => ReactNode;
+  chevron?: boolean;
+  /** "lg" rows carry 14 px names beside larger icons (the Agent list); "md" rows are 13 px. */
+  size?: "md" | "lg";
+  /** What the list says when it has no choices at all (rather than none matching the search). */
+  empty?: ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const open = controlledOpen ?? ownOpen;
   const [query, setQuery] = useState("");
   const [activeValue, setActiveValue] = useState<string | null>(null);
   const search = useRef<HTMLInputElement>(null);
@@ -38,21 +57,41 @@ export function SearchPicker({ label, value, placeholder, options, onChange, dis
   const active = enabled.find(option => option.value === activeValue) ?? enabled[0];
   const activeId = active ? `${listId}-${options.indexOf(active)}` : undefined;
   useEffect(() => { if (open && activeId) document.getElementById(activeId)?.scrollIntoView({ block: "nearest" }); }, [open, activeId]);
+  // Opening, from the trigger or from a shortcut, starts with an empty search and the current choice active.
+  const [wasOpen, setWasOpen] = useState(open);
+  // Opened from elsewhere (a shortcut), it gives the focus back to where it was when it closes, not to its trigger.
+  const triggerRef = useRef<HTMLButtonElement>(null), popup = useRef<HTMLDivElement>(null), returnTo = useRef<Element | null>(null);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) { setQuery(""); setActiveValue(value); const focused = document.activeElement; returnTo.current = focused !== triggerRef.current && focused !== document.body ? focused : null; }
+  }
+  const setOpen = (next: boolean) => { if (controlledOpen === undefined) setOwnOpen(next); onOpenChange?.(next); };
   const choose = (option: PickerOption) => { if (option.disabled) return; onChange(option.value); setOpen(false); };
   const name = label.replace(/^选择/u, "");
-  return <BasePopover.Root open={open} onOpenChange={next => { setOpen(next); if (next) { setQuery(""); setActiveValue(value); } }}>
-    <BasePopover.Trigger render={<button type="button" aria-label={label} disabled={disabled} title={selected?.label ?? placeholder}
-      className={cn("selection-trigger inline-flex h-[30px] max-w-[220px] min-w-0 items-center gap-1.5 rounded-lg border-none bg-transparent px-2 text-[13px] text-fg-2 hover:bg-hover hover:text-fg disabled:opacity-50 data-[popup-open]:bg-hover data-[popup-open]:text-fg", selected?.icon && "font-medium text-fg", className)}/>}>
-      {selected?.icon ? <span className="flex flex-none items-center">{selected.icon}</span> : null}
-      <span className="min-w-0 truncate">{prefix ? <span className="text-fg-3">{prefix} </span> : null}{selected?.short ?? selected?.label ?? placeholder}</span>
-      <ChevronDown size={12} className="flex-none text-fg-3" aria-hidden="true"/>
+  const large = size === "lg";
+  return <BasePopover.Root open={open} onOpenChange={next => setOpen(next)}>
+    <BasePopover.Trigger render={<button ref={triggerRef} type="button" aria-label={label} disabled={disabled} title={selected?.label ?? placeholder}
+      className={cn("selection-trigger inline-flex h-[30px] max-w-[220px] min-w-0 items-center gap-1.5 rounded-row border-none bg-transparent px-2 text-ui-sm text-fg-2 transition-[color,background-color] duration-120 ease-standard hover:bg-subtle hover:text-fg disabled:opacity-45 data-[popup-open]:bg-subtle data-[popup-open]:text-fg",
+        selected?.icon && !trigger && "font-medium text-fg", className)}/>}>
+      {trigger ? trigger(selected) : <>
+        {selected?.icon ? <span className="flex flex-none items-center">{selected.icon}</span> : null}
+        <span className="min-w-0 truncate">{prefix ? <span className="text-fg-3">{prefix} </span> : null}{selected?.short ?? selected?.label ?? placeholder}</span>
+      </>}
+      {chevron ? <ChevronDown size={12} strokeWidth={2} className="flex-none text-fg-3" aria-hidden="true"/> : null}
     </BasePopover.Trigger>
     <BasePopover.Portal>
-      <BasePopover.Positioner side={side} align="start" sideOffset={8} collisionPadding={12} positionMethod="fixed" className="hh-positioner z-[55]">
-        <BasePopover.Popup aria-label={label} initialFocus={search} className={cn("picker-popover surface-pop flex max-h-[min(460px,var(--available-height))] flex-col overflow-hidden", wide ? "w-[400px]" : "w-[320px]", "max-w-[calc(100vw-24px)]")}>
-          <div className="flex items-center gap-2 border-b border-line px-3 py-2">
+      <BasePopover.Positioner side={side} align={align} sideOffset={8} collisionPadding={12} positionMethod="fixed" className="hh-positioner z-[55]">
+        <BasePopover.Popup aria-label={label} initialFocus={search} ref={popup} finalFocus={() => {
+          // Focus the user already moved elsewhere (into the message, say) stays there.
+          const focused = document.activeElement;
+          if (focused !== null && focused !== document.body && !popup.current?.contains(focused)) return false;
+          return returnTo.current instanceof HTMLElement && returnTo.current.isConnected ? returnTo.current : true;
+        }} className={cn("picker-popover surface-pop flex max-h-[min(460px,var(--available-height))] flex-col overflow-hidden",
+          wide ? "w-[360px]" : "w-[320px]", "max-w-[calc(100vw-24px)]")}>
+          {title ? <div className="px-3.5 pt-2.5 text-caption text-fg-3">{title}</div> : null}
+          <div className="flex items-center gap-2 px-3.5 py-1.5 hairline-b">
             <Search size={15} className="flex-none text-fg-3" aria-hidden="true"/>
-            <input ref={search} className="h-7 min-w-0 flex-1 border-none bg-transparent text-[13.5px] outline-none placeholder:text-fg-3" placeholder={`搜索${name}`} aria-label={`搜索${name}`} role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls={listId} aria-activedescendant={activeId} value={query}
+            <input ref={search} className="h-8 min-w-0 flex-1 border-none bg-transparent text-ui-sm outline-none placeholder:text-placeholder" placeholder={`搜索${name}`} aria-label={`搜索${name}`} role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls={listId} aria-activedescendant={activeId} value={query}
               onChange={event => { setQuery(event.target.value); setActiveValue(null); }} onKeyDown={event => {
                 if (event.nativeEvent.isComposing || event.keyCode === 229) return;
                 if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -63,27 +102,28 @@ export function SearchPicker({ label, value, placeholder, options, onChange, dis
                 } else if (event.key === "Enter") { event.preventDefault(); if (active) choose(active); }
               }}/>
           </div>
-          <div className="scroll-area min-h-0 flex-1 p-1" id={listId} role="listbox" aria-label={label}>
+          <div className="scroll-area min-h-0 flex-1 p-[5px]" id={listId} role="listbox" aria-label={label}>
             {filtered.length ? filtered.map((option, index) => {
               const id = `${listId}-${options.indexOf(option)}`, describe = option.disabled && option.reason ? option.reason : option.description;
               return <div key={option.value}>
-                {option.group && (index === 0 || filtered[index - 1]?.group !== option.group) ? <div className="px-2.5 pt-2.5 pb-1 text-[11.5px] font-medium text-fg-3">{option.group}</div> : null}
+                {option.group && (index === 0 || filtered[index - 1]?.group !== option.group) ? <div className="px-2.5 pt-2 pb-1 text-caption font-medium text-fg-3">{option.group}</div> : null}
                 <button type="button" id={id} role="option" aria-label={option.label} aria-describedby={[option.status ? `${id}-status` : "", describe ? `${id}-description` : ""].filter(Boolean).join(" ") || undefined}
                   aria-selected={value === option.value} disabled={option.disabled} aria-disabled={option.disabled ?? false}
                   onPointerMove={() => { if (!option.disabled) setActiveValue(option.value); }} onClick={() => choose(option)}
-                  className={cn("picker-option flex w-full items-center gap-2.5 rounded-lg border-none bg-transparent px-2.5 py-2 text-left disabled:cursor-not-allowed disabled:opacity-55", active?.value === option.value && "is-active bg-hover")}>
+                  className={cn("picker-option flex w-full items-center gap-2.5 rounded-[9px] border-none bg-transparent px-2.5 text-left outline-offset-[-2px] transition-[color,background-color] duration-120 ease-standard disabled:cursor-not-allowed disabled:opacity-55",
+                    large ? "py-2" : "py-[7px]", active?.value === option.value && "is-active bg-subtle")}>
                   {option.icon ? <span className="flex flex-none items-center">{option.icon}</span> : null}
                   <span className="flex min-w-0 flex-1 flex-col">
-                    <span className="flex min-w-0 items-center gap-2"><strong className="truncate text-[13px] font-medium">{option.label}</strong>
+                    <span className="flex min-w-0 items-center gap-2"><strong className={cn("truncate font-medium", large ? "text-ui" : "text-ui-sm")}>{option.label}</strong>
                       {option.status ? <span id={`${id}-status`} className={cn("badge flex-none", TONES[option.status.tone])} title={option.status.title}><span className="dot" aria-hidden="true"/>{option.status.label}</span> : null}</span>
-                    {describe ? <small id={`${id}-description`} className={cn("truncate text-[12px]", option.disabled ? "text-amber" : "text-fg-3")}>{describe}</small> : null}
+                    {describe ? <small id={`${id}-description`} className={cn("truncate text-caption", option.disabled ? "text-amber" : "text-fg-3")}>{describe}</small> : null}
                   </span>
-                  {value === option.value ? <Check size={15} className="flex-none text-accent" aria-hidden="true"/> : null}
+                  <Check size={15} strokeWidth={2.2} className={cn("flex-none text-accent-text", value !== option.value && "invisible")} aria-hidden="true"/>
                 </button>
               </div>;
-            }) : <p className="m-0 px-3 py-6 text-center text-[13px] text-fg-3">没有匹配的选项</p>}
+            }) : <p className="m-0 px-3 py-6 text-center text-ui-sm text-fg-3">{options.length === 0 && empty !== undefined ? empty : "没有匹配的选项"}</p>}
           </div>
-          <div className="flex items-center justify-between gap-2 border-t border-line px-3 py-2 text-[11.5px] text-fg-3">{footer ?? <span>↑ ↓ 切换 · Enter 选择 · Esc 关闭</span>}</div>
+          <div className="flex items-center justify-between gap-2 px-3.5 py-2 text-caption text-fg-3 hairline-t">{footer ?? <span>↑ ↓ 选择 · Enter 确认 · Esc 关闭</span>}</div>
         </BasePopover.Popup>
       </BasePopover.Positioner>
     </BasePopover.Portal>
