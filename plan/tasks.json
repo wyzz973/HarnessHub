@@ -3555,9 +3555,19 @@
         "G054-CA9",
         "G054-FZ1",
         "G054-FZ2",
-        "G054-FZ3"
+        "G054-FZ3",
+        "G054-DL1",
+        "G054-DL2",
+        "G054-DL3",
+        "G054-DL4",
+        "G054-DL5",
+        "G054-DL6",
+        "G054-DL7",
+        "G054-DL8",
+        "G054-DL9",
+        "G054-DL10"
       ],
-      "active_slice": "upgrade-with-running-programs"
+      "active_slice": "design-language-2"
     },
     {
       "id": "G055",
