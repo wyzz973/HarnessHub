@@ -1978,6 +1978,11 @@ test("G054-DL5 an approval waits in the composer's place: ⏎ allows once and es
   const question = log.getByRole("region", { name: "Harness 交互", exact: true });
   await expect(question).toContainText("选择原生计划", { timeout: 15000 });
   await expect(composer).toBeVisible(); await expect(box.getByRole("region", { name: "工具审批", exact: true })).toHaveCount(0);
+  // The same state says the same words everywhere (decision G): the card, the header and the Turn's line say 等你回答; no
+  // marker points below, since nothing waits in the composer's place.
+  await expect(question).toContainText("Codex Question 等你回答"); await expect(page.locator(".chat-page > header .status-pill")).toHaveText("Codex Question 等你回答");
+  await expect(log.locator(".assistant-message").last().locator(".process-summary .response-status")).toHaveText("等你回答");
+  await expect(log.locator(".docked-approval")).toHaveCount(0);
   await question.getByRole("button", { name: "取消", exact: true }).click();
   await expect(log.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
   assert.deepEqual(errors, []);
