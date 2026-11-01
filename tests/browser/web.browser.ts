@@ -46,6 +46,9 @@ async function launchFixture(providerManagement = true, nativeAcp: { readonly na
   const hermesShim = join(root, "hermes-fixture.mjs");
   if (hermes) await writeFile(hermesShim, "#!" + process.execPath + "\nprocess.argv.splice(2, Infinity, \"acp-v1\", \"hermes\");\nprocess.env.FIXTURE_AGENT_VERSION = \"0.12.0\";\nawait import("
     + JSON.stringify(controlPeer) + ");\n", { mode: 0o700 });
+  // The 0.12 checkout the shim stands for: acp_adapter/server.py without gateway_server.py, so the gateway preflight (ADR-051
+  // A2) sees an in-process agent and starts it instead of judging the fixture home against a gateway it never has.
+  if (hermes) { await mkdir(join(root, ".hermes", "hermes-agent", "acp_adapter"), { recursive: true }); await writeFile(join(root, ".hermes", "hermes-agent", "acp_adapter", "server.py"), "# fixture: Hermes 0.12 runs its ACP sessions in-process\n"); }
   const geminiShim = join(root, "gemini-fixture.mjs"), dshShim = join(root, "dsh-fixture.mjs"), nodeOnly = join(root, "node-bin");
   if (shims.gemini !== undefined) await writeFile(geminiShim, catalogShim(shims.gemini, "basic"), { mode: 0o700 });
   // DeepSeek Harness keeps its sessions for loading again, as the "native-resume" scenario does.
