@@ -307,10 +307,12 @@ test("real browser validates Provider management, public chat switching, cancell
   await page.getByRole("button", { name: "重新检测", exact: true }).click();
   await expect(page.getByRole("button", { name: "重新检测", exact: true })).toBeEnabled();
   await expect(page.getByRole("button", { name: "查看 Codex 详情", exact: true })).toBeVisible();
-  const brandImages = page.locator(".harness-table-row img.brand-icon");
-  await expect(brandImages).toHaveCount(await page.locator(".harness-table-row").count());
+  // Every Agent card and every row of "还可以安装" carries its mark; the list shows its first rows until "全部".
+  await page.getByRole("button", { name: /^显示全部/u }).click();
+  const brandImages = page.locator(".agent-entry img.brand-icon");
+  await expect(brandImages).toHaveCount(await page.locator(".agent-entry").count());
   await expect.poll(() => brandImages.evaluateAll(images => images.every(image => image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0))).toBe(true);
-  const target = page.locator(".harness-table-row").filter({ has: page.getByRole("button", { name: "查看 Autohand Code 详情", exact: true }) });
+  const target = page.locator(".agent-entry").filter({ has: page.getByRole("button", { name: "查看 Autohand Code 详情", exact: true }) });
   await target.getByRole("button", { name: "安装", exact: true }).click();
   const detail = page.getByRole("dialog");
   await expect(detail.getByText("安装完成", { exact: true })).toBeVisible();
@@ -319,8 +321,8 @@ test("real browser validates Provider management, public chat switching, cancell
   await page.screenshot({ path: join(artifact, "install-detail.png"), fullPage: true, animations: "disabled" });
   fixture.setVersion("2.0.0");
   await detail.getByRole("button", { name: "检查 Autohand Code 更新", exact: true }).click();
-  await expect(detail.getByText("有新版本", { exact: true })).toBeVisible();
-  await detail.getByRole("button", { name: "升级 Harness", exact: true }).click();
+  await expect(detail.getByText("可以升级到 2.0.0", { exact: true })).toBeVisible();
+  await detail.getByRole("button", { name: "升级到 2.0.0", exact: true }).click();
   await expect.poll(async () => {
     const jobs: unknown = await (await context.request.get(origin + "/api/v1/installation-jobs")).json();
     assert.ok(Array.isArray(jobs));
@@ -329,12 +331,14 @@ test("real browser validates Provider management, public chat switching, cancell
   await expect(detail.getByText("2.0.0", { exact: true }).first()).toBeVisible();
   // A completed upgrade is said as one (ADR-043); the first task above was an installation.
   await expect(detail.getByRole("status").filter({ hasText: "升级完成" })).toBeVisible();
-  await expect(detail.getByText("当前渠道无需升级", { exact: true })).toBeVisible();
+  await expect(detail.getByText("已是最新 2.0.0", { exact: true })).toBeVisible();
   await expect(detail.getByRole("button", { name: "已是最新", exact: true })).toBeDisabled();
+  // Installed and current, it can start a conversation from its details; its card says it is ready and offers no upgrade.
+  await expect(detail.getByRole("button", { name: "开始对话", exact: true })).toBeVisible();
   await page.screenshot({ path: join(artifact, "upgrade-detail.png"), fullPage: true, animations: "disabled" });
   await detail.getByRole("button", { name: "关闭 Harness 详情", exact: true }).click();
-  await expect(target.getByRole("button", { name: "开始对话", exact: true })).toBeVisible();
-  await expect(target.getByRole("button", { name: "升级", exact: true })).toHaveCount(0);
+  await expect(target.locator(".status-pill")).toHaveText("就绪");
+  await expect(target.getByRole("button", { name: /^升级/u })).toHaveCount(0);
   await page.locator(".harness-management-body").evaluate(element => { element.scrollTop = 0; });
   await page.screenshot({ path: join(artifact, "harnesses-desktop.png"), fullPage: true, animations: "disabled" });
   for (const width of [390, 320]) {
@@ -1149,7 +1153,9 @@ test("a Harness of a version HarnessHub never ran shows that version alone in th
   // The fixture installs Gemini CLI 1.0.0, a version no record names. Gemini CLI is frozen, so it is shown first (ADR-050).
   await showFrozenHarnesses(page);
   await page.getByRole("button", { name: "我的 Agent", exact: true }).click();
-  const row = page.locator(".harness-table-row").filter({ has: page.getByRole("button", { name: "查看 Gemini CLI 详情", exact: true }) });
+  // Frozen entries come last in "还可以安装", after its first rows.
+  await page.getByRole("button", { name: /^显示全部/u }).click();
+  const row = page.locator(".agent-entry").filter({ has: page.getByRole("button", { name: "查看 Gemini CLI 详情", exact: true }) });
   await row.getByRole("button", { name: "安装", exact: true }).click();
   const detail = page.getByRole("dialog");
   await expect(detail.getByText("安装完成", { exact: true })).toBeVisible({ timeout: 30000 });
@@ -1158,14 +1164,15 @@ test("a Harness of a version HarnessHub never ran shows that version alone in th
   await expect(detail.getByText("最新版本", { exact: true })).toBeVisible();
   await sayNothing("the detail");
   await detail.getByRole("button", { name: "关闭 Harness 详情", exact: true }).click();
-  // The list: the version alone, with no mark beside it, like the Harness nothing was ever recorded for.
-  await expect(row).toContainText("v1.0.0"); await expect(row.locator(".badge")).toHaveText(["冻结"]);
-  const autohand = page.locator(".harness-table-row").filter({ has: page.getByRole("button", { name: "查看 Autohand Code 详情", exact: true }) });
+  // The card: the version alone before its channel, with no mark beside it, like the Harness nothing was ever recorded for.
+  await expect(row.locator(".agent-meta")).toHaveText(/^1\.0\.0 · /u); await expect(row.locator(".badge")).toHaveText(["冻结"]);
+  const autohand = page.locator(".agent-entry").filter({ has: page.getByRole("button", { name: "查看 Autohand Code 详情", exact: true }) });
   await expect(autohand.locator(".badge")).toHaveCount(0);
   await sayNothing("the Harness list");
   await page.screenshot({ path: join(artifact, "version-fact.png"), animations: "disabled" });
-  // The welcome card and the picker show the version the same way, and the Harness is chosen like any other.
-  await page.getByRole("button", { name: "返回对话", exact: true }).click();
+  // The welcome card and the picker show the version the same way, and the Harness is chosen like any other. The Agent
+  // page has no way back of its own (ADR-054 §5): a new conversation is one click away in the sidebar.
+  await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "新对话", exact: true }).click();
   const card = page.getByRole("region", { name: "本机发现的 Harness" }).getByRole("button", { name: "选择 Gemini CLI", exact: true });
   await expect(card).toContainText("v1.0.0"); await expect(card.locator(".badge")).toHaveCount(0);
   await sayNothing("the welcome");
@@ -1433,7 +1440,7 @@ test("G054-FR5 the command palette searches conversations and actions, and the s
   await search.press("Enter");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("PALETTE_TARGET 第一段对话");
   await page.keyboard.press("ControlOrMeta+K"); await search.fill("我的 Agent"); await search.press("Enter");
-  await expect(page.getByRole("heading", { name: "我的 Agent", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Agent", exact: true, level: 1 })).toBeVisible();
   await page.keyboard.press("ControlOrMeta+/");
   await expect(page.getByRole("dialog", { name: "快捷键" })).toContainText("搜索与命令"); await page.keyboard.press("Escape");
   await page.screenshot({ path: join(artifact, "palette.png"), animations: "disabled" });
@@ -1632,9 +1639,9 @@ test("G054-UP1 an upgrade first says what it restarts, closes and leaves on the 
   await page.goto(fixture.gateway.url);
   // The sidebar counts the available update next to the page's name.
   await page.getByRole("button", { name: "我的 Agent 1 个可升级", exact: true }).click();
-  const row = page.locator(".harness-table-row").filter({ has: page.getByRole("button", { name: "查看 OpenClaw 详情", exact: true }) });
+  const row = page.locator(".agent-entry").filter({ has: page.getByRole("button", { name: "查看 OpenClaw 详情", exact: true }) });
   // Something in a Turn, or another HarnessHub process, blocks: said before anything runs, and the upgrade cannot be confirmed.
-  await row.getByRole("button", { name: "升级", exact: true }).click();
+  await row.getByRole("button", { name: "升级到 2026.10.2", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "升级 OpenClaw" });
   await expect(dialog.getByText("现在不能升级")).toBeVisible();
   await expect(dialog).toContainText("有 1 个对话正在使用 OpenClaw（正在回复或等你处理）"); await expect(dialog.getByRole("button", { name: "正在回复的对话" })).toBeVisible();
@@ -1648,7 +1655,7 @@ test("G054-UP1 an upgrade first says what it restarts, closes and leaves on the 
   assert.equal(submitted, null, "nothing is sent while the upgrade is blocked");
   // Otherwise it says everything it touches, before anything runs.
   blocked = false;
-  await row.getByRole("button", { name: "升级", exact: true }).click();
+  await row.getByRole("button", { name: "升级到 2026.10.2", exact: true }).click();
   await expect(dialog.getByText("2026.3.23-2 → 2026.10.2")).toBeVisible();
   for (const text of ["沿用原来的 npm 全局安装，把 OpenClaw 从 2026.3.23-2 升级到 2026.10.2。",
     "OpenClaw Gateway（ai.openclaw.gateway，进程 4039）会在新版本核实后立即重启：", "launchctl kickstart -k gui/501/ai.openclaw.gateway", "1 个对话保留的 OpenClaw 进程会先关闭，下次发消息时重新连接。",
@@ -1753,8 +1760,8 @@ test("G054-UP3 an upgrade through the product's documented sequence shows its ho
       rollback: "退回旧版本只能从升级前的备份恢复：openclaw backup restore <备份文件> --target <新目录>（不在原目录上恢复）。旧版本打不开新版本迁移过的数据库，所以用 npm 装回旧版本不能恢复。" } } }));
   await page.goto(fixture.gateway.url);
   await page.getByRole("button", { name: "我的 Agent 1 个可升级", exact: true }).click();
-  const row = page.locator(".harness-table-row").filter({ has: page.getByRole("button", { name: "查看 OpenClaw 详情", exact: true }) });
-  await row.getByRole("button", { name: "升级", exact: true }).click();
+  const row = page.locator(".agent-entry").filter({ has: page.getByRole("button", { name: "查看 OpenClaw 详情", exact: true }) });
+  await row.getByRole("button", { name: "升级到 2026.10.9", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "升级 OpenClaw" });
   await expect(dialog.getByText("2026.3.23-2 → 2026.10.9")).toBeVisible();
   // The hops and the exact lines, in upstream's order; the gateway offline in between; the node service restarted by the product; the Doctor's rewrite and its backups.
@@ -1815,7 +1822,7 @@ test("G054-OC1 a Harness lists each official installation with the one in use, a
   await page.getByRole("button", { name: "查看 Codex 详情", exact: true }).click();
   const codex = page.getByRole("dialog", { name: "Codex 详情" });
   await expect(codex.locator(".harness-installations li")).toHaveText([
-    "npm 全局（nvm v26.11.1）当前使用卸载v0.162.1", "npm 全局（Homebrew 的 Node.js）卸载v0.160.0", "pnpm 全局v0.150.0 · 当前版本不维护这种安装方式", "npm 全局（Homebrew 的 Node.js）接入口 codex-acp当前使用卸载v0.9.0"]);
+    "npm 全局（nvm v26.11.1）当前使用0.162.1卸载…", "npm 全局（Homebrew 的 Node.js）0.160.0卸载…", "pnpm 全局0.150.0 · HarnessHub 不维护这种安装方式", "npm 全局（Homebrew 的 Node.js）接入口 codex-acp当前使用0.9.0卸载…"]);
   // Each maintained installation can be uninstalled on its own; a pnpm installation is listed only.
   await expect(codex.getByRole("button", { name: /^卸载/u })).toHaveCount(3);
   await expect(codex).toContainText("“当前使用”按 HarnessHub 服务进程的 PATH 顺序确定；终端常被 nvm 等改动 PATH，用的可能是另一份。");
@@ -1831,7 +1838,8 @@ test("G054-OC1 a Harness lists each official installation with the one in use, a
   await expect(dsh.locator(".harness-installations")).toHaveCount(0);
   await expect(dsh).toContainText("npm install -g @deepseek-ai/dsh"); await expect(dsh).toContainText("命令于 2026-10-17 对照官方说明核对。");
   await dsh.getByRole("button", { name: "关闭 Harness 详情" }).click();
-  // The official page's own note travels with the product, installed or not.
+  // The official page's own note travels with the product, installed or not. Frozen entries come last in "还可以安装".
+  await page.getByRole("button", { name: /^显示全部/u }).click();
   await page.getByRole("button", { name: "查看 Gemini CLI 详情", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Gemini CLI 详情" }).locator(".harness-install-note")).toHaveText("官方仓库写明：自 2026-06-18 起，免费用户与 Google One 用户改用 Antigravity CLI。");
   assert.deepEqual(errors, []);
@@ -1934,7 +1942,7 @@ test("G054-IN1 installing a missing product the official way first says what run
   await page.route(`**/api/v1/installation-jobs/${job.id}/logs**`, route => route.fulfill({ json: { entries: [], nextSeq: 0, hasMore: false } }));
   await page.goto(fixture.gateway.url);
   await page.getByRole("button", { name: "我的 Agent", exact: true }).click();
-  const row = page.locator(".harness-table-row").filter({ has: page.getByRole("button", { name: "查看 DeepSeek Harness 详情", exact: true }) });
+  const row = page.locator(".agent-entry").filter({ has: page.getByRole("button", { name: "查看 DeepSeek Harness 详情", exact: true }) });
   await row.getByRole("button", { name: "安装", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "安装 DeepSeek Harness" });
   await expect(dialog.locator(".install-blocked")).toContainText("要求 Node.js >=26");
@@ -2003,9 +2011,9 @@ test("G054-UG1 upgrading one installation first says the versions, what runs and
   await page.getByRole("button", { name: "查看 Claude Code 详情", exact: true }).click();
   const detail = page.getByRole("dialog", { name: "Claude Code 详情" });
   // Each installation says what the last update check found; the one behind offers its exact newer version.
-  await expect(detail.locator(".harness-installations li").nth(0)).toContainText("v2.1.302 · 已是最新");
-  await expect(detail.locator(".harness-installations li").nth(1)).toContainText("v2.1.296 · 可升级到 v2.1.305");
-  await detail.getByRole("button", { name: `升级到 v2.1.305：${label}里的 claude`, exact: true }).click();
+  await expect(detail.locator(".harness-installations li").nth(0)).toContainText("2.1.302 · 已是最新");
+  await expect(detail.locator(".harness-installations li").nth(1)).toContainText("2.1.296 · 可升级到 2.1.305");
+  await detail.getByRole("button", { name: `升级到 2.1.305：${label}里的 claude`, exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "升级 Claude Code" });
   // A conversation replying with it blocks the upgrade, and the conversation can be opened from there.
   await expect(dialog.locator(".upgrade-blocked")).toContainText("有 1 个 HarnessHub 对话正在使用这份安装");
@@ -2014,7 +2022,7 @@ test("G054-UG1 upgrading one installation first says the versions, what runs and
   await dialog.getByRole("button", { name: "取消", exact: true }).click(); await expect(dialog).toBeHidden();
   assert.equal(submitted, null, "nothing is sent while the upgrade is blocked");
   busy = false;
-  await detail.getByRole("button", { name: `升级到 v2.1.305：${label}里的 claude`, exact: true }).click();
+  await detail.getByRole("button", { name: `升级到 2.1.305：${label}里的 claude`, exact: true }).click();
   for (const text of ["2.1.296 → 2.1.305", "/opt/homebrew/bin/npm install --global --prefix /opt/homebrew @anthropic-ai/claude-code@2.1.305", "/opt/homebrew；其他位置都不能写。",
     "这些程序正在运行这份安装，不会被关闭，重开后才用新版本：claude（进程 4242）。", "升级后“当前使用”不变。"]) await expect(dialog).toContainText(text);
   // 2.1.305 is a version no record names: stated as the target, with nothing inferred from it (ADR-053).
@@ -2035,6 +2043,177 @@ test("G054-UG1 upgrading one installation first says the versions, what runs and
   await expect(terminal).toContainText(explains); await expect(terminal).toContainText("2 处没有提交的改动");
   await expect(terminal.getByRole("button", { name: "升级", exact: true })).toHaveCount(0);
   await terminal.getByRole("button", { name: "关闭", exact: true }).click(); await expect(terminal).toBeHidden();
+  assert.deepEqual(errors, []);
+});
+
+test("G054-DL8 the Agent page gives each Agent a card with its version and channel, state, one sentence of facts and its actions, opens the details in a drawer, lists what can still be installed the official way, and fits 1440, 390 and 320 in both themes", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1440, height: 1000 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  // Three Agents on this Mac and every other catalog entry missing: Claude Code through npm under nvm and current; Codex from
+  // Homebrew Cask with an update the Gateway reported; OpenClaw after a sequenced upgrade whose gateway did not come back.
+  const checkedAt = new Date(Date.now() - 5 * 60_000).toISOString();
+  type Shaped = { id: string; installations: unknown[]; controls: { available: boolean }[]; management: Record<string, unknown> };
+  const shaped = (harness: Shaped) => {
+    const { native: _unused, ...management } = harness.management;
+    const here = (version: string, extra: Record<string, unknown>, installation: Record<string, unknown>) => ({ ...harness, installed: true, unofficial: null,
+      controls: harness.controls.map((control, index) => ({ ...control, available: index === 0, reason: null })),
+      management: { ...management, source: "system", installedVersion: version, programVersion: version, checkedAt, ...extra },
+      installations: [{ ref: harness.id.padEnd(64, "0"), command: harness.id, version, role: "product", active: true, maintained: true, canUninstall: true, ...installation }] });
+    if (harness.id === "claude") return here("2.1.316", { updateStatus: "current", latestVersion: "2.1.316" }, { channel: "npm", label: "npm 全局（nvm v26.13.0）", upgrade: "version", latest: { version: "2.1.316", source: "npm", checkedAt, error: null } });
+    if (harness.id === "codex") return here("0.166.0", { updateStatus: "available", latestVersion: "0.167.0", native: { channel: "brew-cask", location: "/opt/homebrew/bin/codex", fingerprint: "c".repeat(64), canInstall: false, canUpgrade: true, reason: null } },
+      { channel: "brew-cask", label: "Homebrew Cask", upgrade: "maintenance", latest: null });
+    if (harness.id === "openclaw") return here("2026.10.9", { updateStatus: "current", latestVersion: "2026.10.9" }, { channel: "npm", label: "npm 全局（Homebrew 的 Node.js）", upgrade: "version", latest: { version: "2026.10.9", source: "npm", checkedAt, error: null } });
+    return { ...harness, installed: false, installations: [], unofficial: null, controls: harness.controls.map(control => ({ ...control, available: false })), management: { ...management, source: "missing" } };
+  };
+  const cause = "OpenClaw Gateway 重新启动后 45 秒内没有在端口上监听；新版本已经装好，没有回滚。";
+  const job = { id: "management-dddddddd-dddd-4ddd-8ddd-dddddddddddd", harnessId: "openclaw", controlId: "openclaw-native", action: "upgrade", status: "failed", phase: "failed", cancelRequested: false,
+    createdAt: new Date(Date.now() - 60 * 60_000).toISOString(), updatedAt: new Date(Date.now() - 50 * 60_000).toISOString(), resolvedVersion: "2026.10.9", installationId: null, logCursor: 0,
+    error: { code: "SERVICE_NOT_READY", message: cause },
+    native: { channel: "npm", location: "/opt/homebrew/bin/openclaw", beforeVersion: "2026.10.2", actualVersion: "2026.10.9", dispatched: true, configurationPreserved: true, restartServices: ["ai.openclaw.gateway"], backupConfirmed: true,
+      hops: [{ version: "2026.9.5", installed: true, doctor: "ok" }, { version: "2026.10.9", installed: true, doctor: "ok" }],
+      services: [{ label: "ai.openclaw.gateway", outcome: "not_recovered", pid: null, ready: null }], configurationMigrated: ["~/.openclaw/openclaw.json"] } };
+  for (const path of ["**/api/v1/state", "**/api/v1/harnesses", "**/api/v1/harnesses/rescan", "**/api/v1/harnesses/check-updates"]) await page.route(path, async route => {
+    const response = await route.fetch(), body = await response.json();
+    await route.fulfill({ response, json: Array.isArray(body) ? body.map(shaped) : { ...body, harnesses: body.harnesses.map(shaped), jobs: [job] } });
+  });
+  await page.route("**/api/v1/installation-jobs?limit=50", route => route.fulfill({ json: [job] }));
+  let submitted = 0;
+  await page.route("**/api/v1/installation-jobs", async route => { if (route.request().method() !== "POST") return route.fallback(); submitted++; await route.abort(); });
+  await page.route("**/api/v1/harnesses/codex/maintenance", route => route.fulfill({ json: { harnessId: "codex", checkedAt, fingerprint: "e".repeat(64), channel: "brew-cask", location: "/opt/homebrew/bin/codex",
+    currentVersion: "0.166.0", targetVersion: "0.167.0", servicesKnown: true, restart: [], resident: [], processes: [], conversations: [], otherUsers: [], staleRecords: 0, plugins: [], notes: [], rollback: null, runtimes: [] } }));
+  await page.goto(fixture.gateway.url);
+  // The sidebar's entry is "我的 Agent" before ADR-054's sidebar and "Agent" after it.
+  await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: /^(我的 )?Agent\b/u }).click();
+  const main = page.locator("#main-content");
+
+  // A01: the page's title and what it is, with 检查更新 at the top right of the title block.
+  const title = main.getByRole("heading", { level: 1, name: "Agent", exact: true }), lead = main.locator("#harnesses-title + p"), check = main.getByRole("button", { name: "检查更新", exact: true });
+  await expect(title).toBeVisible();
+  await expect(lead).toHaveText("这台 Mac 上的 3 个 Agent。用它们原来的安装和登录；升级、卸载都按官网的方式来。");
+  const [titleBox, leadBox, checkBox, headerBox] = await Promise.all([title.boundingBox(), lead.boundingBox(), check.boundingBox(), main.locator("header").first().boundingBox()]);
+  assert.ok(titleBox && leadBox && checkBox && headerBox);
+  assert.ok(Math.abs(checkBox.x + checkBox.width - (headerBox.x + headerBox.width)) <= 1 && checkBox.y >= titleBox.y && checkBox.y + checkBox.height <= leadBox.y + leadBox.height + 1, "检查更新 sits at the right end of the title block");
+  assert.deepEqual(await title.evaluate(element => { const style = getComputedStyle(element); return [style.fontSize, style.lineHeight, style.fontWeight]; }), ["28px", "36px", "600"]);
+
+  // A02: one card per Agent: its mark, name, version · channel, state, one sentence of facts, and its actions; no count without a fact.
+  const mine = main.getByRole("region", { name: "这台 Mac 上的 Agent" }), cards = mine.getByRole("article"), card = (name: string) => mine.getByRole("article", { name, exact: true });
+  await expect(cards).toHaveCount(3);
+  await expect(cards.locator("h3")).toHaveText(["Claude Code", "Codex", "OpenClaw"]);
+  await expect.poll(() => cards.locator("img.brand-icon").evaluateAll(images => images.length === 3 && images.every(image => image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0))).toBe(true);
+  await expect(cards.locator(".agent-meta")).toHaveText(["2.1.316 · npm（nvm）", "0.166.0 · Homebrew Cask", "2026.10.9 · npm（Homebrew Node）"]);
+  await expect(cards.locator(".status-pill")).toHaveText(["就绪", "有更新", "需要处理"]);
+  assert.deepEqual(await cards.locator(".status-pill").evaluateAll(pills => pills.map(pill => pill.getAttribute("data-tone"))), ["accent", "accent", "amber"]);
+  await expect(cards.locator(".agent-summary")).toHaveText(["可以对话。模型和登录沿用它自己的配置。", "可以升级到 0.167.0，沿用它原来的安装方式。", "上次升级：已升级，服务未就绪。" + cause]);
+  await expect(card("Codex").getByRole("button")).toHaveText(["升级到 0.167.0", "详情"]);
+  await expect(card("Claude Code").getByRole("button")).toHaveText(["详情"]); await expect(card("OpenClaw").getByRole("button")).toHaveText(["详情"]);
+  await expect(cards.filter({ hasText: /\d+ 个模型|技能 \d+|MCP \d+|插件 \d+|¥|上下文/u })).toHaveCount(0);
+
+  // A03: the details open in a drawer beside the cards, with the card marked: the state in the Gateway's words once, the
+  // last task step by step, models and sign-in, maintenance per official installation, capabilities, and folded technical facts.
+  await card("OpenClaw").getByRole("button", { name: "查看 OpenClaw 详情", exact: true }).click();
+  const drawer = page.getByRole("dialog", { name: "OpenClaw 详情" });
+  // The modal drawer hides the page from assistive technology, so the marked card is found by its class.
+  const marked = main.locator(".agent-card").filter({ has: page.locator("h3", { hasText: /^OpenClaw$/u }) });
+  await expect(drawer).toBeVisible(); await expect(marked).toHaveAttribute("data-selected", "true");
+  await expect(drawer.locator(".agent-meta")).toHaveText("2026.10.9 · npm 全局（Homebrew 的 Node.js）");
+  await expect(drawer.locator(".agent-health")).toHaveText("需要处理" + cause);
+  await expect(drawer.getByText(cause, { exact: true })).toHaveCount(1);
+  await expect(drawer.getByRole("heading", { name: /^这次升级 · (今天|昨天) \d\d:\d\d$/u })).toBeVisible();
+  await expect(drawer.locator(".upgrade-steps > li")).toHaveText([/^备份/u, "第 1 跳2026.9.5：已装入，Doctor 通过", "第 2 跳2026.10.9：已装入，Doctor 通过", "后台服务ai.openclaw.gateway：重启后没有重新运行"]);
+  await expect(drawer.locator(".installation-state")).toContainText("新版本 2026.10.9 已安装，~/.openclaw/openclaw.json 由 Doctor 迁移。");
+  for (const heading of ["模型与登录", "维护 · 按官网的安装方式", "能力"]) await expect(drawer.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+  await expect(drawer.locator(".harness-installations li")).toHaveText(["npm 全局（Homebrew 的 Node.js）当前使用2026.10.9 · 已是最新卸载…"]);
+  await expect(drawer.getByRole("button", { name: "查看 OpenClaw 的能力", exact: true })).toBeVisible();
+  const technical = drawer.getByRole("button", { name: "技术细节", exact: true });
+  await expect(technical).toHaveAttribute("aria-expanded", "false"); await expect(drawer.getByText("控制入口", { exact: true })).toHaveCount(0);
+  await technical.click(); await expect(technical).toHaveAttribute("aria-expanded", "true"); await expect(drawer.getByText("控制入口", { exact: true })).toBeVisible();
+  await expect.poll(() => drawer.evaluate(element => { const style = getComputedStyle(element); return style.opacity === "1" && style.transform === "none"; })).toBe(true);
+  await page.screenshot({ path: join(artifact, "agents-drawer-light-1440.png"), animations: "disabled" });
+  await page.keyboard.press("Escape"); await expect(drawer).toBeHidden();
+  await expect(card("OpenClaw").getByRole("button", { name: "查看 OpenClaw 详情", exact: true })).toBeFocused(); await expect(marked).toHaveAttribute("data-selected", "false");
+
+  // A04: what can still be installed the official way: the first rows, then all of them; each row says how and offers it.
+  const catalog = main.getByRole("region", { name: "还可以安装" }), rows = catalog.locator(".agent-row");
+  const total = Number(/(\d+) 个，按官网的方式安装/u.exec(await catalog.innerText())?.[1]);
+  assert.ok(total > 6, "the fixture's catalog has more than the first rows");
+  await expect(rows).toHaveCount(6);
+  await catalog.getByRole("button", { name: `显示全部 ${total} 个`, exact: true }).click();
+  await expect(rows).toHaveCount(total); await expect(catalog.getByRole("button", { name: "收起", exact: true })).toHaveAttribute("aria-expanded", "true");
+  for (const row of await rows.all()) {
+    await expect(row.getByRole("button", { name: /^查看 .+ 详情$/u })).toHaveCount(1);
+    await expect(row.getByRole("button", { name: /^(安装|安装方式)$/u })).toHaveCount(1);
+  }
+  await catalog.getByRole("button", { name: "收起", exact: true }).click(); await expect(rows).toHaveCount(6);
+
+  // A05 and Motion #28: the confirmation of the card's upgrade grows from .98 over a fading scrim in 200 ms on the appear
+  // curve; it changes nothing until confirmed.
+  const motion = () => page.evaluate(() => {
+    const read = (selector: string) => { const element = document.querySelector(selector); if (!element) return null; const style = getComputedStyle(element);
+      return { property: style.transitionProperty, durations: style.transitionDuration.split(",").map(part => parseFloat(part) * (part.trim().endsWith("ms") ? 1 : 1000)), easing: style.transitionTimingFunction }; };
+    return { pop: read(".dialog-pop"), scrim: read(".backdrop"), drawer: read(".drawer-pop") };
+  });
+  const appear = "cubic-bezier(0.165, 0.84, 0.44, 1)";
+  await card("Codex").getByRole("button", { name: "升级到 0.167.0", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "升级 Codex" });
+  await expect(dialog.getByText("0.166.0 → 0.167.0", { exact: true })).toBeVisible(); await expect(dialog.getByRole("button", { name: "升级", exact: true })).toBeEnabled();
+  const grown = await motion();
+  assert.deepEqual(grown.pop, { property: "opacity, transform", durations: [200, 200], easing: appear + ", " + appear });
+  assert.deepEqual(grown.scrim, { property: "opacity", durations: [200], easing: appear });
+  await dialog.getByRole("button", { name: "取消", exact: true }).click(); await expect(dialog).toBeHidden();
+  assert.equal(submitted, 0, "nothing is sent until the upgrade is confirmed");
+
+  // R04: with reduced motion the confirmation and the drawer only fade, within 150 ms.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await card("Codex").getByRole("button", { name: "升级到 0.167.0", exact: true }).click(); await expect(dialog).toBeVisible();
+  const faded = await motion();
+  assert.ok(faded.pop && faded.pop.property === "opacity" && faded.pop.durations.every(value => value <= 150), "the reduced dialog only fades: " + JSON.stringify(faded.pop));
+  assert.ok(faded.scrim && faded.scrim.property === "opacity" && faded.scrim.durations.every(value => value <= 150), "the reduced scrim only fades: " + JSON.stringify(faded.scrim));
+  await dialog.getByRole("button", { name: "取消", exact: true }).click(); await expect(dialog).toBeHidden();
+  await card("Claude Code").getByRole("button", { name: "查看 Claude Code 详情", exact: true }).click(); await expect(page.getByRole("dialog", { name: "Claude Code 详情" })).toBeVisible();
+  const still = await motion();
+  assert.ok(still.drawer && still.drawer.property === "opacity" && still.drawer.durations.every(value => value <= 150), "the reduced drawer only fades: " + JSON.stringify(still.drawer));
+  await page.keyboard.press("Escape"); await expect(page.getByRole("dialog", { name: "Claude Code 详情" })).toBeHidden();
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+
+  // R03: from the keyboard, Tab reaches 详情 with its ring at once, Enter opens the drawer without animation, Escape returns.
+  await card("Codex").getByRole("button", { name: "升级到 0.167.0", exact: true }).focus(); await page.keyboard.press("Tab");
+  const details = card("Codex").getByRole("button", { name: "查看 Codex 详情", exact: true });
+  await expect(details).toBeFocused();
+  assert.deepEqual(await details.evaluate(element => { const style = getComputedStyle(element); return [element.matches(":focus-visible"), style.outlineStyle, style.outlineWidth]; }), [true, "solid", "2px"]);
+  await page.keyboard.press("Enter");
+  const codex = page.getByRole("dialog", { name: "Codex 详情" });
+  await expect(codex).toBeVisible();
+  const instant = await motion(); assert.ok(instant.drawer && instant.drawer.durations.every(value => value === 0), "a drawer opened from the keyboard is not animated: " + JSON.stringify(instant.drawer));
+  await page.keyboard.press("Escape"); await expect(codex).toBeHidden(); await expect(details).toBeFocused();
+
+  // R01, R02: no horizontal scroll at 1440, 390 and 320, light and dark, for the page, the drawer and a confirmation.
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    assert.equal(await main.locator("section.management-page").evaluate(element => getComputedStyle(element).backgroundColor), scheme === "dark" ? "rgb(24, 25, 28)" : "rgb(255, 255, 255)");
+    for (const width of [1440, 390, 320]) {
+      await page.setViewportSize({ width, height: width === 1440 ? 1000 : 844 });
+      await page.screenshot({ path: join(artifact, `agents-${scheme}-${width}.png`), animations: "disabled" });
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `the Agent page overflows at ${width} in ${scheme}`);
+      for (const right of await cards.evaluateAll(elements => elements.map(element => element.getBoundingClientRect().right))) assert.ok(right <= width, `a card overflows at ${width} in ${scheme}`);
+      if (width === 1440) continue;
+      // Measured once the drawer has slid in: it starts 24 px to the right.
+      await card("OpenClaw").getByRole("button", { name: "查看 OpenClaw 详情", exact: true }).click(); await expect(drawer).toBeVisible();
+      await expect.poll(() => drawer.evaluate(element => { const style = getComputedStyle(element); return style.opacity === "1" && style.transform === "none"; })).toBe(true);
+      await page.screenshot({ path: join(artifact, `agents-drawer-${scheme}-${width}.png`), animations: "disabled" });
+      assert.ok(await drawer.evaluate(element => element.scrollWidth <= element.clientWidth && element.getBoundingClientRect().right <= innerWidth), `the drawer overflows at ${width} in ${scheme}`);
+      await page.keyboard.press("Escape"); await expect(drawer).toBeHidden();
+      await card("Codex").getByRole("button", { name: "升级到 0.167.0", exact: true }).click(); await expect(dialog.getByText("0.166.0 → 0.167.0", { exact: true })).toBeVisible();
+      await expect.poll(() => dialog.evaluate(element => { const style = getComputedStyle(element); return style.opacity === "1" && style.transform === "none"; })).toBe(true);
+      await page.screenshot({ path: join(artifact, `agents-dialog-${scheme}-${width}.png`), animations: "disabled" });
+      assert.ok(await dialog.evaluate(element => element.getBoundingClientRect().left >= 0 && element.getBoundingClientRect().right <= innerWidth), `the confirmation overflows at ${width} in ${scheme}`);
+      await dialog.getByRole("button", { name: "取消", exact: true }).click(); await expect(dialog).toBeHidden();
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  }
+  assert.equal(submitted, 0);
   assert.deepEqual(errors, []);
 });
 
@@ -2778,7 +2957,7 @@ test("G054-FZ1 the frozen Harnesses stay out of the picker, the welcome, the pal
   await page.goto(fixture.gateway.url); await expect(page.getByRole("button", { name: "新对话", exact: true })).toBeVisible();
   const frozen = ["Gemini CLI", "Cursor", "Pi"], picker = page.getByRole("button", { name: "选择 Harness", exact: true });
   const welcome = page.getByRole("region", { name: "本机发现的 Harness" }), navigation = page.getByRole("complementary", { name: "主导航" });
-  const row = (name: string) => page.locator(".harness-table-row").filter({ has: page.getByRole("button", { name: `查看 ${name} 详情`, exact: true }) });
+  const row = (name: string) => page.locator(".agent-entry").filter({ has: page.getByRole("button", { name: `查看 ${name} 详情`, exact: true }) });
   // By default none of them is offered for new work, though Gemini CLI is installed and ready.
   await expect(welcome.getByRole("button", { name: "选择 Codex", exact: true })).toBeVisible();
   await expect(welcome.getByRole("button", { name: "选择 Gemini CLI", exact: true })).toHaveCount(0);
@@ -2799,13 +2978,14 @@ test("G054-FZ1 the frozen Harnesses stay out of the picker, the welcome, the pal
   const toggle = page.getByRole("switch", { name: FROZEN_SWITCH });
   await expect(page.locator(".frozen-setting")).toContainText("冻结：保留适配与历史对话，不再打磨；停在它们上面的对话照常打开。");
   await expect(toggle).not.toBeChecked(); await toggle.click(); await expect(toggle).toBeChecked();
-  // Shown: each is listed with its mark, and only they carry it.
+  // Shown: each is listed with its mark, and only they carry it; the ones not installed come last in "还可以安装".
   await navigation.getByRole("button", { name: "我的 Agent", exact: true }).click();
+  await page.getByRole("button", { name: /^显示全部/u }).click();
   for (const name of frozen) await expect(row(name).locator(".harness-frozen")).toHaveText("冻结");
   await expect(row("Codex").locator(".harness-frozen")).toHaveCount(0); await expect(note).toHaveCount(0);
   await page.screenshot({ path: join(artifact, "frozen-shown.png"), animations: "disabled" });
-  // A conversation on Gemini CLI.
-  await page.getByRole("button", { name: "返回对话", exact: true }).click();
+  // A conversation on Gemini CLI, started from the sidebar: the Agent page has no way back of its own (ADR-054 §5).
+  await navigation.getByRole("button", { name: "新对话", exact: true }).click();
   await picker.click(); await page.getByRole("option", { name: "Gemini CLI", exact: true }).click();
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
   await composer.fill("frozen work"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
