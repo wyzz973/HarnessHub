@@ -1,6 +1,6 @@
 import { Bell, BellOff, Blocks, Bot, CircleHelp, Folder, FolderOpen, Inbox as InboxIcon, PanelLeft, Search, Settings, SlidersHorizontal, SquarePen, X } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { ReactNode, RefObject } from "react";
 import type { AttentionItem, PermissionRequest } from "../../../src/contracts/session.js";
 import type { HarnessView, SessionSummary, SessionView } from "../../../src/contracts/web.js";
 import { errorMessage } from "../api.js";
@@ -150,7 +150,7 @@ export function Sidebar(props: SidebarProps) {
   }, [sessions]);
   useEffect(() => () => { for (const timer of timers.current) clearTimeout(timer); }, []);
 
-  const count = waiting.length;
+  const count = waiting.length, firstWaiting = useRef<HTMLButtonElement>(null);
   const icon = (glyph: ReactNode) => <span className="flex w-4 flex-none justify-center text-fg-2" aria-hidden="true">{glyph}</span>;
   const nav = (target: Page, label: string, glyph: ReactNode, extra?: ReactNode) => <button type="button" disabled={interactionBusy} aria-current={page === target ? "page" : undefined} onClick={() => props.onPage(target)}
     className="nav-row w-full flex-none disabled:opacity-60">{icon(glyph)}<span className="min-w-0 flex-1 trunc">{label}</span>{extra}</button>;
@@ -169,8 +169,8 @@ export function Sidebar(props: SidebarProps) {
       <SquarePen size={15} aria-hidden="true"/>新对话</button></Tip>
     <button type="button" className="nav-row w-full flex-none" onClick={props.onPalette} aria-label="搜索与命令" aria-keyshortcuts="Meta+K">
       {icon(<Search size={16}/>)}<span className="flex-1">搜索</span><span className="text-caption text-fg-3" aria-hidden="true">⌘K</span></button>
-    {props.onInbox ? inboxRow : <Popover label="等你处理" open={props.inboxOpen} onOpenChange={props.onInboxOpenChange} side="right" align="start" sideOffset={20}
-      className="inbox-pop flex w-[400px] max-w-[calc(100vw-24px)] flex-col" trigger={inboxRow}><InboxList {...props.inbox}/></Popover>}
+    {props.onInbox ? inboxRow : <Popover label="等你处理" open={props.inboxOpen} onOpenChange={props.onInboxOpenChange} side="right" align="start" sideOffset={20} initialFocus={firstWaiting}
+      className="inbox-pop flex w-[400px] max-w-[calc(100vw-24px)] flex-col" trigger={inboxRow}><InboxList {...props.inbox} focusRef={firstWaiting}/></Popover>}
     {nav("harnesses", "Agent", <Bot size={16}/>, props.activeJobs ? <Spinner size={13} tone="run" label={`${props.activeJobs} 个安装任务进行中`}/>
       : props.updates ? <Badge tone="accent" className="h-[18px]">{props.updates} 个更新</Badge> : null)}
     {nav("capabilities", "能力", <Blocks size={16}/>)}
@@ -252,9 +252,10 @@ export function byUrgency(a: AttentionItem, b: AttentionItem): number {
  * The inbox of everything waiting for you (Interaction board, X03): every conversation's approvals and questions, most
  * urgent first, each with the Agent, what it asks once its conversation has been read, the conversation and whose
  * deadline runs. Only an option that answers this one request can be sent from here; anything that lasts, and every
- * question, is decided in the conversation. The notification switch sits in its head.
+ * question, is decided in the conversation. The notification switch sits in its head. `focusRef` receives the first
+ * waiting item, for the layer that shows the list to focus when it opens.
  */
-export function InboxList({ items, sessions, harnesses, current, onLoad, onDecide, onOpen }: InboxSource) {
+export function InboxList({ items, sessions, harnesses, current, onLoad, onDecide, onOpen, focusRef }: InboxSource & { readonly focusRef?: RefObject<HTMLButtonElement | null> }) {
   const now = useNow(items.some(item => item.expiresAt !== undefined));
   const sorted = [...liveItems(items, now)].sort(byUrgency);
   // Other conversations' requests, read once each while the inbox is shown; a failed read leaves the row to open its conversation.
@@ -286,12 +287,12 @@ export function InboxList({ items, sessions, harnesses, current, onLoad, onDecid
   return <>
     <div className="flex flex-none items-center gap-2 hairline-b py-2 pr-2 pl-3.5">
       <h3 className="m-0 flex-1 text-ui-sm font-semibold">等你处理{sorted.length ? <span className="ml-1.5 font-normal text-fg-3">{sorted.length}</span> : null}</h3><NotifyToggle/></div>
-    {sorted.length ? <ul className="m-0 flex min-h-0 list-none flex-col gap-0.5 overflow-y-auto p-1.5">{sorted.map(item => {
+    {sorted.length ? <ul className="m-0 flex min-h-0 list-none flex-col gap-0.5 overflow-y-auto p-1.5">{sorted.map((item, index) => {
       const left = remaining(item, now), session = sessions.find(row => row.id === item.sessionId), harness = harnesses.find(row => row.id === item.harnessId)?.name ?? item.harnessId;
       const ask = request(item), option = directOption(ask), state = sending[item.permissionId], lineId = "inbox-" + item.permissionId;
       const loading = ask === undefined && item.sessionId !== current?.id && !read.has(item.sessionId);
       return <li key={item.permissionId} className="row flex items-center gap-2 pr-2">
-        <button type="button" className="flex min-w-0 flex-1 items-start gap-2.5 rounded-row border-none bg-transparent py-2 pl-2.5 text-left text-fg" onClick={() => onOpen(item.sessionId)}>
+        <button type="button" ref={index === 0 ? focusRef : undefined} className="flex min-w-0 flex-1 items-start gap-2.5 rounded-row border-none bg-transparent py-2 pl-2.5 text-left text-fg" onClick={() => onOpen(item.sessionId)}>
           <StatusDot tone="wait" className="mt-[7px]"/>
           <span className="flex min-w-0 flex-1 flex-col gap-px">
             <span className="trunc text-ui-sm font-medium" id={lineId}>{harness}{ask ? <span className="font-normal">：{ask.title}</span> : item.kind === "question" ? " 在等你回答" : " 在等你审批"}</span>

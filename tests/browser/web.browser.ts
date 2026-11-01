@@ -1540,6 +1540,8 @@ test("G054-DL2 the sidebar groups conversations by project with a state dot each
   await row("新对话").click();
   await row("等你处理（1 项）").click();
   const inbox = page.locator(".inbox-pop");
+  // It opens on the most urgent item, so ⏎ opens that conversation and tab reaches its one-time option.
+  await expect(inbox.getByRole("button", { name: /approve this/u })).toBeFocused();
   await expect(inbox).toContainText("Shared Agent：rm -rf build"); await expect(inbox).toContainText(/approve this·等待审批 · 等待期限 剩余 \d+ 分/u);
   await expect(inbox.getByRole("button", { name: "Allow always" })).toHaveCount(0); await expect(inbox.getByRole("button", { name: "Deny" })).toHaveCount(0);
   await expect(inbox).toHaveCSS("opacity", "1"); await page.screenshot({ path: join(artifact, "dl2-inbox-light-1440.png"), animations: "disabled" });

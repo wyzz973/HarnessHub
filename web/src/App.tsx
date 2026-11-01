@@ -1,7 +1,7 @@
 import { ArrowDown, Blocks, Bot, Inbox, Keyboard, ListCollapse, Monitor, Moon, PanelLeft, PanelRight, RefreshCw, Settings, SlidersHorizontal, SquarePen, Sun } from "lucide-react";
 import { Dialog as BaseDialog } from "@base-ui/react/dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { ReactNode, RefObject } from "react";
 import type { AttentionItem, PublicRun, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
 import type { ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
 import { parseProviderTarget } from "../../src/contracts/provider.js";
@@ -172,13 +172,14 @@ function hasUpdate(harness: HarnessView): boolean {
  * A modal layer of the shell drawn with the overlay classes of styles.css (the narrow drawer, the inbox sheet), as
  * ui/overlay.tsx's Dialog draws them, which also says when its close has completed so the next layer can open after it.
  */
-function Layer({ open, onOpenChange, onClosed, title, className, children }: {
-  readonly open: boolean; readonly onOpenChange: (open: boolean) => void; readonly onClosed: () => void; readonly title: string; readonly className: string; readonly children: ReactNode;
+function Layer({ open, onOpenChange, onClosed, title, className, initialFocus, children }: {
+  readonly open: boolean; readonly onOpenChange: (open: boolean) => void; readonly onClosed: () => void; readonly title: string; readonly className: string;
+  readonly initialFocus?: RefObject<HTMLElement | null>; readonly children: ReactNode;
 }) {
   return <BaseDialog.Root open={open} onOpenChange={next => onOpenChange(next)} onOpenChangeComplete={opened => { if (!opened) onClosed(); }}>
     <BaseDialog.Portal>
       <BaseDialog.Backdrop className="backdrop z-[60]"/>
-      <BaseDialog.Popup className={cn(className, "z-[61]")}><BaseDialog.Title className="sr-only">{title}</BaseDialog.Title>{children}</BaseDialog.Popup>
+      <BaseDialog.Popup className={cn(className, "z-[61]")} {...(initialFocus ? { initialFocus } : {})}><BaseDialog.Title className="sr-only">{title}</BaseDialog.Title>{children}</BaseDialog.Popup>
     </BaseDialog.Portal>
   </BaseDialog.Root>;
 }
@@ -228,6 +229,8 @@ export function App() {
   // How the latest Turn of each conversation this page has shown ended; the summaries carry no outcome (ADR-054 S03).
   const [outcomes, setOutcomes] = useState<ReadonlyMap<string, RunStatus>>(() => new Map());
   const toast = useToast();
+  // The inbox sheet focuses its first waiting item when it opens.
+  const firstWaiting = useRef<HTMLButtonElement>(null);
   // The message written while a reply runs, held by this tab until that Turn ends (ADR-042).
   const [queued, setQueued] = useState<QueuedMessage | null>(null);
   const [queueNotice, setQueueNotice] = useState<string | null>(null);
@@ -999,7 +1002,7 @@ export function App() {
         : <HarnessesPage api={api} harnesses={state.harnesses} hidden={hidden} onSettings={() => navigate("settings")} installationPolicy={state.installationPolicy} onUninstall={uninstall} onInstallOfficial={installOfficial} onUpgradeInstallation={upgradeInstallation} jobs={state.jobs} scanning={mutation === "scanning"} checking={checkingUpdates} submitting={submittingInstallations} cancelling={cancellingInstallations} unconfirmed={unconfirmedInstallations} error={error} connectionError={managementConnectionError} onRescan={() => void rescan()} onCheckUpdates={ids => void checkUpdates(ids)} onInstall={install} onOpenSession={selectSession} onConfirm={confirmInstallation} onCancelJob={job => void cancelInstallation(job)} onDismissError={() => setError(null)} onChoose={chooseHarness} onCapabilities={id => { setCapabilityHarness(id); navigate("capabilities"); }} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>}
     </main>
     {leaveAction ? <div className="motion-enter fixed right-4 bottom-4 left-4 z-[70] mx-auto max-w-[560px] rounded-block bg-surface shadow-pop"><Notice tone="amber" title="有尚未保存的修改" action={<><button type="button" className="btn btn-sm" onClick={() => setLeaveAction(null)}>继续编辑</button><button type="button" className="btn btn-sm btn-primary" onClick={() => { const action = leaveAction; setLeaveAction(null); setEditorDirty(false); action(); }}>放弃修改，离开</button></>} onDismiss={() => setLeaveAction(null)}>离开会丢弃编辑草稿。已受理的请求可在列表中查看。</Notice></div> : null}
-    {narrow ? <Layer open={inboxOpen} onOpenChange={setInboxOpen} onClosed={layerClosed} title="等你处理" className="sheet-pop inbox-pop"><InboxList {...inbox}/></Layer> : null}
+    {narrow ? <Layer open={inboxOpen} onOpenChange={setInboxOpen} onClosed={layerClosed} title="等你处理" className="sheet-pop inbox-pop" initialFocus={firstWaiting}><InboxList {...inbox} focusRef={firstWaiting}/></Layer> : null}
     <CommandPalette open={palette} onOpenChange={setPalette} commands={commands} onClosed={layerClosed}/>
     <ShortcutsDialog open={shortcuts} onOpenChange={setShortcuts} onClosed={layerClosed}/>
   </div></TipProvider>;
