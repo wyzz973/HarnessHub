@@ -706,7 +706,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
           {view === null ? <>
             {problem ? <Notice tone="red" action={<button type="button" className="btn btn-sm" onClick={() => load()}>重试</button>}>{problem}</Notice> : null}
             {loading ? <p className="m-0 flex items-center gap-2 text-ui-sm text-fg-2" role="status"><Spinner size={14} label=""/>正在读取各 Agent 的配置</p> : null}
-          </> : !ready ? <EmptyState title="没有找到官网安装的 Agent">在“Agent”页安装或重新检测后，这里会列出它们读取的能力。</EmptyState>
+          </> : !ready ? <EmptyState title="没有找到官网安装的 Agent">在 Agent 页安装或重新检测后，这里会列出它们读取的能力。</EmptyState>
             : <div role="tabpanel" id="capability-tabpanel" aria-labelledby={"capability-tab-" + kind} className="flex flex-col gap-5">{content}</div>}
         </div>
       </div>
