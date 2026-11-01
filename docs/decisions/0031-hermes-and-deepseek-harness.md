@@ -35,7 +35,7 @@
 
 ## 验收边界（审批代理决定）
 
-- Hermes：只用文件与终端类工具在隔离工作区做无害任务，不触发浏览器、`process`、记忆、`skill_manage` 与网页搜索；`delegate_task` 只在子 Agent 验收中用一次。工作区放在 `$HOME` 下的非系统路径（Hermes 拒绝写 `/private/etc`、`/private/var`）。审批中禁止选“始终允许”。只运行 `hermes acp`，不触碰用户的 Hermes 网关。（2026-10-22 注：最新正式版 v0.22.4 的 `hermes acp` 只是网关的查看器，没有进程内模式，这条边界在最新版上不再成立；是否让 HarnessHub 的 Hermes 会话进入用户正在运行的网关，由用户决定，见 [ADR-051](0051-hermes-upgrade-route.md) 修订版；本机 0.12.0 仍按本节边界验收。）
+- Hermes：只用文件与终端类工具在隔离工作区做无害任务，不触发浏览器、`process`、记忆、`skill_manage` 与网页搜索；`delegate_task` 只在子 Agent 验收中用一次。工作区放在 `$HOME` 下的非系统路径（Hermes 拒绝写 `/private/etc`、`/private/var`）。审批中禁止选“始终允许”。只附着：不启动、不停止、不替换用户的 Hermes 网关（2026-10-22 用户答复允许 HarnessHub 的 Hermes 会话进入正在运行的网关，[ADR-051](0051-hermes-upgrade-route.md) accepted；建会话前的只读预检只在判定 A——兼容网关已在运行——时启动 `hermes acp`，B–E 以 `NATIVE_GATEWAY_UNAVAILABLE` 拒绝并给出 Hermes 自己的命令，预检 2026-11-01 落地，见 ADR-051“实现”）。原文“只运行 `hermes acp`，不触碰用户的 Hermes 网关”描述的是 0.12 的进程内模式，作为历史保留：没有网关查看器的检出仍在自己进程里运行会话，不受预检约束；0.12.0 上的验收记录按它理解。
 - dsh：沿用用户自己的权限预设，Hub 不改 `~/.dsh`；预设为 danger-full-access 时审批一行标为受阻。
 - 花费：每个 Harness 每轮完整验收不超过 ¥10，本阶段两者合计不超过 ¥50；单回合超过 150k token 或 5 分钟即停止并报告；不为了凑通过而重跑。
 

@@ -1,6 +1,6 @@
 # ADR-051：Hermes 最新版的接入方式
 
-状态：proposed，2026-10-22（第二批 C6 的只读研究草案，原题“Hermes 的升级路线”；同日按 [ADR-053](0053-latest-version-baseline.md) 重写——按用户“接入不限定版本，默认按最新版”的原则重排选项，只剩一个待用户决定的选项 A2；用户答复后由主代理改 accepted。没有代码改动）。事实见 [Hermes v0.22.2 与 main 的升级就绪](../research/hermes-upgrade-readiness-2026-10-22.md)与 ADR-053“研究结论摘要”里关于 v0.22.4 的部分。依据 [ADR-031](0031-hermes-and-deepseek-harness.md)、[ADR-044](0044-macos-official-channels.md)、[ADR-048](0048-harness-scope-and-workbuddy.md) 决定 5（已按 ADR-053 修订为“基线是最新正式版”）与 ADR-053。
+状态：accepted。用户 2026-10-22 答复：允许 HarnessHub 的 Hermes 会话进入正在运行的网关；Hermes 由用户交 HarnessHub 支配（[ADR-053](0053-latest-version-baseline.md)“待用户决定”第 3 题）。A2 的建会话前只读预检 2026-11-01 落地，见文末“实现”；真实两步验收待运行。此前：proposed，2026-10-22（第二批 C6 的只读研究草案，原题“Hermes 的升级路线”；同日按 ADR-053 重写——按用户“接入不限定版本，默认按最新版”的原则重排选项，只剩一个待用户决定的选项 A2；当时没有代码改动）。事实见 [Hermes v0.22.2 与 main 的升级就绪](../research/hermes-upgrade-readiness-2026-10-22.md)与 ADR-053“研究结论摘要”里关于 v0.22.4 的部分。依据 [ADR-031](0031-hermes-and-deepseek-harness.md)、[ADR-044](0044-macos-official-channels.md)、[ADR-048](0048-harness-scope-and-workbuddy.md) 决定 5（已按 ADR-053 修订为“基线是最新正式版”）与 ADR-053。
 
 ## 背景
 
@@ -67,3 +67,48 @@ Hub 继续接入本机 0.12.0：不做任何版本提示，不升级 Hermes，�
 - 真实，第一步（隔离）：在 v0.22.4 上用临时 `HERMES_HOME`（`~/.hermes` 之外、不在 `profiles/` 下、不建 `gateway.lock` 符号链接；config 里不配消息平台，`approvals.mode` 为 manual；模型凭据经用户同意后单独提供），让 `hermes acp` 为这个 home 起私有的 idle-exit 网关，覆盖 16 格与网关用例：回合中 Stop（`prompt.cancel` → cancelled）、回合中杀查看器（回合继续，Hub 记 unknown）、杀掉私有网关（unknown_execution → `/discard`）、load/resume 不存在的 id、受守卫的 `/model` 确认、三种模式、fork、两种审批说明文字、clarify 表单、usage 增量、session/list、/export。结束后执行 `HERMES_HOME=<临时目录> hermes gateway stop` 并删除目录：私有网关在 Hub 进程组之外，必须显式停止。
 - 真实，第二步（受控附着）：在用户明确同意、QQ 空闲时对真实网关做一次只附着的运行，只在预检判定为 A 时进行；核对网关 pid 与启动时间不变、`gateway_state.json` 里 QQ 的平台状态不变、Hub 的会话行写进了用户的 `state.db`、关闭后会话在 FIFO 空闲时被结束。B–E 只用只读文件模拟判定，不去停或起用户的网关。
 - 证据按仓库内格式入库；矩阵 `installation` 改为“真实验收版本 v0.22.4”、读表 `checkedOn` 同一提交更新（ADR-053 决定 8；不再有 `VERIFIED_VERSIONS`）。
+
+## 实现（2026-11-01，分支 fb5/hermes，基于 24e86e4）
+
+依据本机检出 `~/.hermes/hermes-agent`（v0.22.4+70.g4e58c72，commit 4e58c721c8cf…，stable 轨道）的源码核对；下面的行号都是这个检出的。只读了源码与状态文件，没有运行任何启动、停止或重启网关的命令。
+
+### 落地内容
+
+- `src/adapters/control/hermes-gateway.ts`：纯判定 `judgeGateway(facts)`（A–E 与 in-process）、只读事实读取 `readGatewayFacts`、`resolveHermesHome`（与 `src/infrastructure/capabilities/service.ts` 同一规则）、`launchdLabel`、`parseLaunchctlPrint`/`parsePsRow`、真实宿主查询 `hostQueries`（`/bin/launchctl print`、`/bin/ps -o lstart=,command=`，各 5 秒，可注入）与 `gatewayRefusalMessage`。
+- `src/adapters/control/acp.ts`：新扩展点 `beforeConnect()`，在 `initializeOnce()` 发第一条请求之前运行——进程在第一条请求时才 spawn（`JsonRpcProcess.start()`），所以抛出时没有任何进程；抛出的 ControlError 走 initialize 失败的同一路径，之后 `open()`、目录读取与再次 `initialize()` 以同一错误拒绝，`close()` 返回 `exitCode/signal` 为 null 的清理证据。
+- `src/adapters/control/hermes.ts`：构造函数第三个参数 `preflight`（默认真实读取；测试注入判定）；`beforeConnect()` 用 `{ ...options.env, ...launch.env }` 与 `launch.executable` 调预检，非 A 抛 `NATIVE_GATEWAY_UNAVAILABLE`，消息含判定字母、解释、Hermes 命令与竞态说明。目录探测（`binding-factory.ts` 的 `probe()` → `initialize()` → `open()`）与会话的 `open()` 都经过它。
+- `web/src/api.ts`：`NATIVE_GATEWAY_UNAVAILABLE` 的产品文案（页面只拿到错误码，见“消息到达哪里”）。
+- 测试：`tests/unit/hermes-gateway.test.ts`（G032-NC31、NC32），`tests/protocol/acp.test.ts` 新增用例（G032-NC33），既有 Hermes 用例注入判定 A。
+- 计划：G032 新增 owns 与三条用例；`hermes-gateway.ts` 登记在 `complete-native-capabilities` 切片——`tools/check_design.py` 要求切片 allowed_files 里的文件由该切片的任务拥有，而 harness-focus 的任务（G063、G065）只拥有工具与 ADR，所以没有按原计划登记到 harness-focus。
+
+### 预检比较的事实与 Hermes 的对应逻辑
+
+`hermes acp` 的进程是查看器（`acp_adapter/entry.py:201-210`）；它在第一次需要网关的请求时才连接（`acp_adapter/gateway_server.py:152-176` `_client()` → `connect_gateway()`，连接后只核对 `runtime.describe` 的 `profile_id` 等于自己的 home）。`connect_gateway`（`hermes_cli/gateway_client.py:262-299`）调用 `ensure_gateway_runtime(home, idle_exit=True)`（`hermes_cli/gateway_runtime.py:390-495`），结果不可附着时抛 `Gateway <state>: <reason>`（即第三批 D2 已映射为 `NATIVE_GATEWAY_UNAVAILABLE` 的文字）。`ensure_gateway_runtime` 的分支与预检的对应：
+
+| Hermes 的行为 | 源码 | 预检读取的事实 | 判定 |
+|---|---|---|---|
+| 更新占有安装（`.hermes-update-in-progress` 标记）→ `draining/update_paused`，不启动不替换 | gateway_runtime.py:325-363；hermes_cli/update_lock.py:58 | home 或检出下存在该标记 | C |
+| 经 `gateway.sock` 的 `identify` 得到 `ready`、`runtime_protocol == 1`、`served_profiles` 含本 home、capabilities 含 session-authority-v1 → 附着 | gateway_runtime.py:98-152、441-442；gateway_runtime_discovery.py:143-200 | `gateway_state.json` 的 `gateway_state == "running"`，其 pid 经 `ps` 存活、启动时间与 `start_time`（macOS 为进程出生时间 ×100，gateway/status.py:472-503）相差 ≤ 5 秒、命令行是网关（`gateway run/restart`、`gateway/run.py`、`-m gateway.run`；排除 osascript 包装，status.py:592-663）、记录的 `hermes_home` 不是别的 profile，且 `gateway.sock`（或 `gateway.sock.path` 指向的 `control.sock`）存在 | A（代码一致时） |
+| 网关的 `runtime_protocol` 比查看器旧 → `incompatible/runtime_protocol` → 像 `hermes gateway stop` 一样停掉它一次并启动新的（`draining/replaced`） | gateway_runtime.py:366-387、394-398 | 文件里读不到 runtime_protocol：用 `gateway_state.json` 的 `code_sha`（网关启动时的提交，status.py:799-813）与检出 `install-stamp.json` 的 `commit`（`hermes update` 完成时写入，hermes_cli/source_stamp.py:15-47）比较，不同或任一侧未知 | B |
+| `starting`/`draining`/`conflict` → 等待，到 60 秒报告 `starting/deadline`；控制套接字超时同样 | gateway_runtime.py:20、117-121、435-440、488-489 | `gateway_state` 不是 running/stopped/startup_failed 且进程在；running 但没有套接字；`gateway.lock`/`gateway.pid` 的进程在而没有 running 状态（`missing_owner_state` 的 starting，gateway_runtime_discovery.py:233-244）；launchd 任务 `state = running` 而网关未发布 | C |
+| `absent` 且已有服务 → `launchctl kickstart gui/<uid>/<label>`（已加载）或 `launchctl bootstrap`（plist 在 `~/Library/LaunchAgents` 但未加载） | gateway_runtime_service.py:186-218、276-296；标签规则 37-58 | `launchctl print gui/<uid>/<label>` 退出 0（已加载）或 113（未加载）与 plist 是否存在；无法查询也归此 | D |
+| `absent` 且没有服务 → `spawn_unmanaged_gateway(idle_exit=True)` | gateway_runtime.py:461-483 | 以上都没有 | E |
+| 检出没有 `acp_adapter/gateway_server.py`（v0.22.2 及以前）：`hermes acp` 在自己进程里运行 | 本检出该文件存在；背景一节 | 文件不存在 | in-process：不判定网关、照常启动（ADR-053 决定 1，任何版本都能建会话） |
+
+校正背景一节的简化说法“旧版网关会被它停掉换新”：查看器只替换运行协议不同的旧网关；同协议、旧代码的网关它会直接附着（陈旧代码由 `hermes_cli/gateway_runtime_cli.py:28-32` 的 `client_code_sha` 对比在 CLI 侧提示“must restart it rather than re-attach”），所以 B 的说明写明两种可能，HarnessHub 对两者都不动手。pid 存活与启动时间的核对沿用 Hermes 自己的身份链（gateway_runtime.py:243-271；status.py:756-770、883-896）。home 解析：`HERMES_HOME`，否则 `~/.hermes/active_profile` 指向的存在的 profile 目录，否则 `~/.hermes`（hermes_constants.py:188-195；hermes_cli/main.py `_apply_profile_override`），比较时都取 realpath（Hermes 的 `_canonical_hermes_home`、`service_suffix` 也是）。检出：可执行文件在 `<检出>/.hermes/bin/hermes(-acp)` 时取它，否则官方安装布局 `~/.hermes/hermes-agent`。
+
+只读边界：只读 home 下的 `gateway.sock`、`gateway.sock.path`、`gateway_state.json`、`gateway.pid`、`gateway.lock`、`.hermes-update-in-progress`、`active_profile`，检出下的 `install-stamp.json`、`acp_adapter/gateway_server.py`、`.hermes-update-in-progress`，以及 plist 是否存在；不做 flock，不连套接字，不读 `.env`、`auth.json`、`config.yaml`、`state.db`（单元测试以读取轨迹和 mode 000 的凭据文件证明）。
+
+### 消息到达哪里
+
+- `ControlError.message`（判定字母、解释、命令、竞态说明）完整到达：协议层、`src/cli/control.ts`、`CleanupEvidence.protocolFailure.message`（≤ 512 字符）。
+- 页面只拿到错误码：目录读取经 `src/web/server.ts` 变成 `HttpError(502, code, 固定文案)`；Run 经 `runtime.ts` 的 `fault()` 只保留 code（ControlError 的 message 换成固定句）；有 Provider 注入时 `RedactedHarnessControl.safe()` 也只保留 code。所以 `web/src/api.ts` 的 `failureMessage` 新增 `NATIVE_GATEWAY_UNAVAILABLE` 的通用文案（不区分 B–E，写明不代为启停、给出 `hermes gateway status/start/restart`）。把判定字母与解释带到页面留给后续。
+
+### 未做（如实列出）
+
+- “未知结果”契约（`BackendResult` 的 unknown 贯通 runtime、存储与页面；回合中关闭查看器先 `session/cancel`、杀进程后 Run 记 unknown、`cleanup.closed` 不再作为 Hermes 原生工作已停止的证据），与 OpenClaw 断线共用：未做。`unknown_execution` 仍按第三批 D2 只在诊断里透出 `/discard`。
+- 0.12 的 60 秒审批例外（ADR-053 例外登记）原样保留；其退出条件——改读 `approvals.timeout` 或网关报告的等待时间——不在本次范围。
+- 预检是文件层近似：读不到 `identify` 的 `runtime_protocol`、`served_profiles`、`capabilities`，用 code_sha/commit 与状态文件代替；检查与 `session/new` 之间的竞态只写明不解决。
+- `HERMES_TUI_GATEWAY_URL`（gateway_client.py:272-282，远程网关）未处理：预检仍按本地 home 判断，可能误拒，不会误启动。多路复用的 served secondary（gateway_runtime.py:209-237）与 `parked_profiles`、systemd/s6/Windows 分支未实现（只做 macOS，ADR-044）。
+- 真实运行：“验证”一节的第一步（隔离 `HERMES_HOME` 的私有网关）与第二步（对真实网关只附着一次）都没有运行；默认的真实宿主查询 `hostQueries` 没有在真实网关上验证，只验证了解析函数。审批卡“Allow always 写入共用允许列表”的说明已由第三批 D2 落地（`OPTION_NOTES`）。
+- `hermes-acp` 入口能否避开 `hermes_cli.main` 的启动收尾、`fileBlocks` 恢复、usage 增量换算、安装指纹变化时释放保留进程：未做。

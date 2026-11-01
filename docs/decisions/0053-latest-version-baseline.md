@@ -110,7 +110,7 @@
 
 1. 是否把本机 Claude Code（2.1.306 → 2.1.307，适配器 0.89.1 → 0.94.0）、Codex（0.162.1 → 0.163.0）、OpenCode（1.18.35 → 1.19.3，等公式全名修复部署后）、dsh（0.2.0-rc.2 → 0.2.1-rc.2）升到渠道最新版用于真实验收（都经 Hub 的升级入口或用户确认后执行；推荐都升）。答复前：Hub 的功能照常对当前版本可用，不做任何版本提示。
 2. OpenCode 的“最新版”按 OpenCode 1 的 1.19.3（与本机、npm opencode-ai、ACP 注册表一致，推荐）还是直接换到 OpenCode 2（2.1.2，需用户同意替换本机 V1，Hub 要新加渠道识别与 V1/V2 读表）。答复前：本批按 1.19.3 写配方，不加 V2 渠道。
-3. Hermes 最新版 v0.22.4 的 `hermes acp` 会附着到用户正在运行、同时服务 QQ 的网关：是否允许 HarnessHub 的 Hermes 会话进入它（[ADR-051](0051-hermes-upgrade-route.md) 修订版只剩这一个待决项）。答复前：Hub 仍接入本机 0.12.0，不做版本提示，不运行任何网关命令，本轮不做 Hermes 真实验收。
+3. Hermes 最新版 v0.22.4 的 `hermes acp` 会附着到用户正在运行、同时服务 QQ 的网关：是否允许 HarnessHub 的 Hermes 会话进入它（[ADR-051](0051-hermes-upgrade-route.md) 修订版只剩这一个待决项）。答复前：Hub 仍接入本机 0.12.0，不做版本提示，不运行任何网关命令，本轮不做 Hermes 真实验收。**用户 2026-10-22 答复：允许**——HarnessHub 的 Hermes 会话可以进入正在运行的网关，Hermes 由用户交 HarnessHub 支配；ADR-051 随之 accepted，A2 的建会话前只读预检 2026-11-01 落地（ADR-051“实现”），真实验收按 ADR-051“验证”分两步进行。
 4. OpenClaw 升到 latest 的方式：由 HarnessHub 两跳升级（路线 A，推荐）、用户在终端自己按官方命令升级（B）或暂不升级（C）（[ADR-052](0052-openclaw-upgrade-route.md) 修订版）。答复前：OpenClaw 的 npm 直装升级显示说明（裁决 11），在 2026.3.23-2 上用当前代码重做 T-OC-08 复验。
 
 WorkBuddy 的遥测开关与本原则无关，M4 开始前再问（ADR-048）。
@@ -131,7 +131,7 @@ WorkBuddy 的遥测开关与本原则无关，M4 开始前再问（ADR-048）。
 | [ADR-046](0046-harness-focus-hardening.md) | 第 1 项（版本单一来源与一致性检查、数字不改、界面照 ADR-038 提示）与第 5 项（OpenCode 在 1.18.x 补 `/compact`）注明已被本记录取代；第 13–14、43、71、94、124 行同步 | accepted，已修订 |
 | [ADR-048](0048-harness-scope-and-workbuddy.md) | 完成定义第 4 层与“做精”判据改为最新正式版；用户决定 3（区间加冒烟）、4（dsh 精确基线）、5（Hermes 停在 0.12.0）按本记录修订；第 21、51、105、117 行同步；新增“ADR-053 对本记录的修订”一节 | accepted，已修订 |
 | [ADR-050](0050-harness-tiers-and-on-demand-refresh.md) | 第 30 行“原生恢复命令按请求扫描”改为不扫描；决定 4 的文案去掉“已用真实回合验证” | accepted，已修订 |
-| [ADR-051](0051-hermes-upgrade-route.md) | 重写为“Hermes 最新版的接入方式”：删除 A1、B 作为终态与第 8 条；第 1、2 条改引本记录例外；第 6 条由第三批 D4 承接；第 7 条区间删除；唯一待决项是 A2（网关查看器附着） | proposed（等第 3 题） |
+| [ADR-051](0051-hermes-upgrade-route.md) | 重写为“Hermes 最新版的接入方式”：删除 A1、B 作为终态与第 8 条；第 1、2 条改引本记录例外；第 6 条由第三批 D4 承接；第 7 条区间删除；唯一待决项是 A2（网关查看器附着） | accepted（第 3 题 2026-10-22 答复“允许”；A2 的建会话前只读预检 2026-11-01 落地，见 ADR-051“实现”） |
 | [ADR-052](0052-openclaw-upgrade-route.md) | 轨道改为 latest；路线 A 保留为推荐并等用户确认，流程细节按研究改写；路线 C 只作研究期间的现状；T-OC-11 改为按能力；第 59、76 行文案改写；本批的过渡措施（裁决 11）登记 | proposed（等第 4 题） |
 | [索引](README.md) | ADR-038 标 superseded；ADR-034、039、046、048、051、052 的摘要同步；新增本记录 | — |
 
