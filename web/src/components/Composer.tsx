@@ -206,12 +206,14 @@ export function Composer(props: ComposerProps) {
   const dockShown = approval ?? (dockPresence === "closing" && !closingAtOnce ? shownApproval.current : null);
   // Who should hold the focus when a request takes the dock: it takes it from the composer (and for a moment treats keys
   // as meant for the message being typed), or keeps it when the previous request had it. Read before `inert` moves it.
-  // The panels that "+" and the Agent list open belong to the composer too, though drawn in a layer of their own (ruling R2):
-  // the dock closes them and takes the focus they held, which would otherwise be lost.
-  const form = useRef<HTMLFormElement>(null), dockFocus = useRef<{ readonly id: string | null; readonly mode: "guarded" | "plain" | null }>({ id: null, mode: null });
+  // The layers the composer opens belong to it too, though each is drawn in a layer of its own: the "+" menu, the lists of
+  // the merged picker and the approval rule, and the panels (ruling R2). The dock closes them and takes the focus they held,
+  // which would otherwise be lost. Focus events follow the React tree through those portals, so the box hears of them all.
+  const dockFocus = useRef<{ readonly id: string | null; readonly mode: "guarded" | "plain" | null }>({ id: null, mode: null });
+  const focusedHere = useRef<EventTarget | null>(null);
   if ((approval?.request.id ?? null) !== dockFocus.current.id) {
     const focused = document.activeElement, previous = dockFocus.current.id;
-    const inComposer = form.current?.contains(focused) === true || focused?.closest(".composer-settings-panel, .native-extensions, .native-sessions") != null;
+    const inComposer = focused !== null && focused !== document.body && focused === focusedHere.current;
     dockFocus.current = { id: approval?.request.id ?? null, mode: approval === null ? null
       : previous === null ? inComposer ? "guarded" : null
       : dockLayer.current?.contains(focused) || focused === document.body ? "plain" : null };
@@ -355,6 +357,13 @@ export function Composer(props: ComposerProps) {
   // Hidden for an approval or for another Agent, a panel is closed: it does not come back by itself, taking the focus, once
   // the approval is decided or the Agent chosen again.
   useEffect(() => { if (panel !== null && shownPanel === null) setPanel(null); }, [panel, shownPanel]);
+  // The composer's other layers, the "+" menu and the lists of the merged picker and of the approval rule, close the same
+  // way when an approval takes the composer's place, and stay closed once it is decided: the dock has taken their focus.
+  // The page owns whether the Agent list is open (⌘J opens it), so it is asked to close it.
+  const [list, setList] = useState<"add" | "permission" | "provider" | "model" | "thought" | "mode" | null>(null);
+  const listOpen = (id: NonNullable<typeof list>) => ({ open: list === id && !docked, onOpenChange: (open: boolean) => setList(current => open ? id : current === id ? null : current) });
+  const { agentPickerOpen, onAgentPickerOpen } = props;
+  useEffect(() => { if (!docked) return; setList(null); if (agentPickerOpen) onAgentPickerOpen(false); }, [docked, agentPickerOpen, onAgentPickerOpen]);
   const openPanel = (kind: NonNullable<typeof panel>["kind"]) => setPanel({ kind, harnessId: draft.harnessId });
   const panelOpenChange = (kind: NonNullable<typeof panel>["kind"]) => (open: boolean) => setPanel(open ? { kind, harnessId: draft.harnessId } : null);
   const fromAgentList = (kind: NonNullable<typeof panel>["kind"]) => { props.onAgentPickerOpen(false); openPanel(kind); };
@@ -408,8 +417,8 @@ export function Composer(props: ComposerProps) {
       </div> : null}
       <div ref={box} className={cn("composer-box relative rounded-composer bg-surface transition-[box-shadow] duration-200 ease-standard",
         docked ? "shadow-[0_0_0_1.5px_var(--amber-dot),0_0_0_5px_var(--amber-soft),var(--sh-composer)]"
-          : dragging ? "shadow-focus" : "shadow-composer has-[.composer:focus-within]:shadow-focus")}>
-        <form ref={form} className={cn("composer flex flex-col rounded-composer pt-4 pr-2.5 pb-2.5 pl-5 ease-standard", session ? "gap-2.5" : "gap-3",
+          : dragging ? "shadow-focus" : "shadow-composer has-[.composer:focus-within]:shadow-focus")} onFocus={event => { focusedHere.current = event.target; }}>
+        <form className={cn("composer flex flex-col rounded-composer pt-4 pr-2.5 pb-2.5 pl-5 ease-standard", session ? "gap-2.5" : "gap-3",
           docked ? "invisible pointer-events-none absolute inset-x-0 bottom-0 -translate-y-1 opacity-0 transition-[opacity,translate,visibility] duration-100"
             : closingAtOnce ? "visible translate-y-0 opacity-100" : "visible translate-y-0 opacity-100 transition-[opacity,translate] delay-100 duration-100", dragging && "is-dropping")}
           aria-label={session ? "继续对话" : "新对话"} aria-hidden={docked || undefined} inert={docked}
@@ -453,13 +462,13 @@ export function Composer(props: ComposerProps) {
           <input ref={picker} type="file" multiple hidden tabIndex={-1} aria-hidden="true" onChange={event => { attach(event.target.files); event.target.value = ""; }}/>
           <div className="flex flex-wrap items-center gap-x-1 gap-y-2">
             <div className="-ml-2 flex flex-none items-center gap-0.5" role="group" aria-label="附件与权限">
-              <Menu side={popSide} align="start" trigger={<button ref={plusButton} type="button" className="press mr-0.5 flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg disabled:opacity-45"
+              <Menu side={popSide} align="start" {...listOpen("add")} trigger={<button ref={plusButton} type="button" className="press mr-0.5 flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg disabled:opacity-45"
                 aria-label="添加文件或上下文" disabled={readonly}><Plus size={16} strokeWidth={1.9}/></button>} items={[
                 { label: "添加文件或图片…", icon: <Paperclip size={15}/>, hint: "@", disabled: !canAttach, onSelect: () => picker.current?.click() },
                 ...(commands.length ? [{ label: "原生命令", icon: <SquareSlash size={15}/>, hint: "/", disabled: disabled, onSelect: () => { setSlashClosedAt(null); props.onMessageDraft("/"); setTimeout(() => inputRef.current?.focus(), 0); } }] : []),
                 ...(sessionsOffered ? [{ label: "继续原程序的会话…", icon: <History size={15}/>, disabled: disabled || props.mutation !== null, onSelect: () => openPanel("sessions") }] : []),
               ]} footer={props.attachments.length >= 8 ? "每条消息最多 8 个附件" : undefined}/>
-              {permission ? <SearchPicker side={popSide} label={OPTION_NAMES[permission.id] ?? permission.name} value={draft.nativeOptions[permission.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(permission, true)}
+              {permission ? <SearchPicker side={popSide} {...listOpen("permission")} label={OPTION_NAMES[permission.id] ?? permission.name} value={draft.nativeOptions[permission.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(permission, true)}
                 disabled={disabled || props.nativeModelsLoading} onChange={value => changeOption(permission.id, value)} chevron className="gap-[5px] text-fg-2"
                 trigger={selected => <><ShieldCheck size={15} className="flex-none" aria-hidden="true"/><span className="hidden max-w-[140px] truncate sm:inline">{selected?.short ?? selected?.label ?? valueName(permission, permission.currentValue)}</span></>}/> : null}
             </div>
@@ -467,7 +476,7 @@ export function Composer(props: ComposerProps) {
               <div ref={chip} className="agent-chip flex h-[34px] max-w-full min-w-0 items-center overflow-hidden rounded-[12px] p-0.5 transition-[color,background-color] duration-120 ease-standard hover:bg-subtle has-[[data-popup-open]]:bg-subtle"
                 role="group" aria-label="由谁来做：Agent、模型与思考强度">
                 <SearchPicker side={popSide} label="选择 Agent" value={draft.harnessId} placeholder="选择 Agent" options={harnessChoices} disabled={disabled} wide size="lg" align="end" chevron={last === "agent"}
-                  title={<span className="flex items-center gap-1">由谁来做 · <Kbd>⌘</Kbd><Kbd>J</Kbd></span>} open={props.agentPickerOpen} onOpenChange={props.onAgentPickerOpen} className={cn(SEGMENT, "flex-none gap-[7px] pl-1")}
+                  title={<span className="flex items-center gap-1">由谁来做 · <Kbd>⌘</Kbd><Kbd>J</Kbd></span>} open={agentPickerOpen && !docked} onOpenChange={onAgentPickerOpen} className={cn(SEGMENT, "flex-none gap-[7px] pl-1")}
                   footer={agentFooter} triggerRef={agentButton} describedBy={outdated ? outdatedId : undefined}
                   empty={<>这台电脑上还没有找到可用的 Agent。<button type="button" className="link-btn" onClick={props.onHarnesses}>查看安装方式</button></>}
                   trigger={selected => selected && harness ? <>
@@ -476,20 +485,20 @@ export function Composer(props: ComposerProps) {
                       {outdated ? <span className="outdated-dot absolute -top-0.5 -right-0.5 size-2 rounded-full bg-amber-dot shadow-[0_0_0_1.5px_var(--bg-surface)]" aria-hidden="true"/> : null}</span>
                     <span className="max-w-[150px] truncate font-medium text-fg max-sm:max-w-[80px]">{selected.label}</span></>
                     : <span className="text-fg-2">选择 Agent</span>} onChange={pickAgent}/>
-                {showProvider ? <SearchPicker side={popSide} label="选择 Provider" value={draft.providerId} placeholder="选择 Provider" options={providerOptions} disabled={disabled} align="end" chevron={last === "provider"} className={cn(SEGMENT, "gap-1.5")}
+                {showProvider ? <SearchPicker side={popSide} {...listOpen("provider")} label="选择 Provider" value={draft.providerId} placeholder="选择 Provider" options={providerOptions} disabled={disabled} align="end" chevron={last === "provider"} className={cn(SEGMENT, "gap-1.5")}
                   trigger={selected => <>{selected?.icon ? <span className="flex flex-none items-center">{selected.icon}</span> : null}<span className="max-w-[140px] truncate text-fg-2">{selected?.short ?? selected?.label ?? "选择 Provider"}</span></>}
                   onChange={value => { const next = providers.find(row => row.id === value); props.onDraft({ ...draft, providerId: next?.id ?? "", providerRevision: next?.revision ?? null, model: next?.defaultModel ?? "", nativeOptions: {} }); }}
                   footer={<button type="button" className="link-btn text-caption" onClick={props.onProviders}>管理模型连接</button>}/> : null}
-                {draft.harnessId ? <SearchPicker side={popSide} label="选择模型" value={draft.model} placeholder="选择模型" options={modelOptions} disabled={disabled || !provider && !props.nativeModels?.canSelect} align="end" chevron={last === "model"} className={SEGMENT}
+                {draft.harnessId ? <SearchPicker side={popSide} {...listOpen("model")} label="选择模型" value={draft.model} placeholder="选择模型" options={modelOptions} disabled={disabled || !provider && !props.nativeModels?.canSelect} align="end" chevron={last === "model"} className={SEGMENT}
                   trigger={selected => <span className="max-w-[160px] truncate text-fg-3">{selected?.short ?? selected?.label ?? "选择模型"}</span>}
                   onChange={value => {
                     if (value === draft.model) return;
                     const independent = Object.fromEntries(Object.entries(draft.nativeOptions).filter(([id]) => nativeOptions.some(option => option.id === id && option.category !== "thought_level")));
                     props.onDraft({ ...draft, model: value, nativeOptions: independent });
                   }} footer={!provider ? <><span>{props.nativeModelsLoading ? "正在读取本机模型…" : "列表来自本机安装"}</span><button type="button" className="link-btn text-caption" onClick={props.onRefreshModels}>刷新本机模型</button></> : undefined}/> : null}
-                {thought ? <SearchPicker side={popSide} label="思考强度" value={draft.nativeOptions[thought.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(thought, true)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "thought"}
+                {thought ? <SearchPicker side={popSide} {...listOpen("thought")} label="思考强度" value={draft.nativeOptions[thought.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(thought, true)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "thought"}
                   className={cn(SEGMENT, "flex-none")} trigger={() => <Pill>思考 {thinkingShown}</Pill>} onChange={value => changeOption(thought.id, value)}/> : null}
-                {mode && modeInChip ? <SearchPicker side={popSide} label={OPTION_NAMES[mode.id] ?? mode.name} value={draft.nativeOptions[mode.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(mode, true)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "mode"}
+                {mode && modeInChip ? <SearchPicker side={popSide} {...listOpen("mode")} label={OPTION_NAMES[mode.id] ?? mode.name} value={draft.nativeOptions[mode.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(mode, true)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "mode"}
                   className={cn(SEGMENT, "flex-none")} trigger={() => <Pill>{modeShown}</Pill>} onChange={value => changeOption(mode.id, value)}/> : null}
               </div>
               {canQueue ? <Tip label="本轮结束后发送（Enter）"><button type="button" className="press flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg"

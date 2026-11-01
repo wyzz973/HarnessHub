@@ -115,6 +115,28 @@ async function openNativeSessions(page: Page): Promise<void> {
   await page.getByRole("menuitem", { name: "继续原程序的会话…", exact: true }).click();
   await expect(page.locator(".native-sessions")).toHaveCSS("opacity", "1");
 }
+/**
+ * Holds the event stream's bytes while asked to (fault injection on the delivery of real SSE bytes: the server, its store
+ * and every command are untouched), so that a request such as an approval arrives at a moment the test chooses. Install it
+ * on the context before the page opens; the returned function holds (true) or releases (false) the page's stream.
+ */
+async function holdFactDelivery(context: Awaited<ReturnType<typeof isolatedContext>>): Promise<(page: Page, held: boolean) => Promise<void>> {
+  await context.addInitScript(() => {
+    const original = window.fetch.bind(window); let held = false;
+    const waiters: Array<() => void> = [];
+    Reflect.set(window, "__holdFactDelivery", (next: boolean) => { held = next; if (!held) for (const release of waiters.splice(0)) release(); });
+    window.fetch = async (input, init) => {
+      const response = await original(input, init);
+      const url = typeof input === "string" ? input : input instanceof Request ? input.url : String(input);
+      if (!url.includes("/events/stream") || !response.ok || response.body === null) return response;
+      const body = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({ async transform(chunk, sink) {
+        if (held) await new Promise<void>(resolve => waiters.push(resolve)); sink.enqueue(chunk);
+      } }));
+      return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+    };
+  });
+  return (page, held) => page.evaluate(value => { const set = Reflect.get(window, "__holdFactDelivery"); if (typeof set !== "function") throw new Error("missing fact delivery fixture"); set(value); }, held);
+}
 
 test("real browser validates Provider management, public chat switching, cancellation and responsive layouts", { timeout: 120000 }, async t => {
   const fixture = await launchFixture();
@@ -2343,23 +2365,10 @@ test("G054-DL5 an approval that takes the composer's place closes a panel the co
   browser = await chromium.launch({ headless: true });
   const context = await isolatedContext(browser, { viewport: { width: 1440, height: 960 } });
   // Holds the event stream's bytes while asked to, so that the approval arrives while the panel is open and holds the focus.
-  await context.addInitScript(() => {
-    const original = window.fetch.bind(window); let held = false;
-    const waiters: Array<() => void> = [];
-    Reflect.set(window, "__holdFactDelivery", (next: boolean) => { held = next; if (!held) for (const release of waiters.splice(0)) release(); });
-    window.fetch = async (input, init) => {
-      const response = await original(input, init);
-      const url = typeof input === "string" ? input : input instanceof Request ? input.url : String(input);
-      if (!url.includes("/events/stream") || !response.ok || response.body === null) return response;
-      const body = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({ async transform(chunk, sink) {
-        if (held) await new Promise<void>(resolve => waiters.push(resolve)); sink.enqueue(chunk);
-      } }));
-      return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
-    };
-  });
+  const delivery = await holdFactDelivery(context);
   const page = await context.newPage(), errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
-  const hold = (next: boolean) => page.evaluate(value => { const set = Reflect.get(window, "__holdFactDelivery"); if (typeof set !== "function") throw new Error("missing fact delivery fixture"); set(value); }, next);
+  const hold = (next: boolean) => delivery(page, next);
   t.after(async () => { if (!page.isClosed()) await hold(false); });
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), panel = page.locator(".composer-settings-panel");
@@ -2391,6 +2400,62 @@ test("G054-DL5 an approval that takes the composer's place closes a panel the co
   await dock.getByRole("button", { name: "Allow once", exact: true }).click();
   await expect(dock).toHaveCount(0, { timeout: 15000 }); await page.waitForTimeout(500);
   await expect(panel).toHaveCount(0); await expect(composer).toBeFocused();
+  assert.deepEqual(errors, []);
+});
+
+test("G054-DL5 an approval that takes the composer's place also closes the Agent list, the model and thinking lists and the \"+\" menu, takes the focus they held, and none of them comes back once it is decided (ruling R2)", { timeout: 150000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1440, height: 960 } });
+  // Holds the event stream's bytes while asked to, so that the approval arrives while a list or the menu is open.
+  const delivery = await holdFactDelivery(context);
+  const page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  const hold = (next: boolean) => delivery(page, next);
+  t.after(async () => { if (!page.isClosed()) await hold(false); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), chip = page.locator(".agent-chip"), add = page.getByRole("button", { name: "添加文件或上下文", exact: true });
+  const dock = page.locator(".composer-box").getByRole("region", { name: "工具审批", exact: true }), layers = page.locator(".picker-popover, [role=menu]");
+  const pick = async (label: string, value: string) => { await chip.getByRole("button", { name: label, exact: true }).click(); await page.getByRole("option", { name: value, exact: true }).click(); };
+  // Codex with Native B shows the whole merged picker: the Agent, the model and the thinking level.
+  await pick("选择 Agent", "Codex"); await expect(chip.getByRole("button", { name: "选择模型", exact: true })).toBeEnabled();
+  await pick("选择模型", "Native B"); await expect(chip.getByRole("button", { name: "思考强度", exact: true })).toBeEnabled();
+  await composer.fill("hello"); await composer.press("Enter");
+  await expect(page.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
+  // Each layer the composer opens, opened as a user does, with the focus in it.
+  const openers: readonly (readonly [string, () => Promise<void>])[] = [
+    ["the Agent list (⌘J)", async () => { await page.keyboard.press("ControlOrMeta+J"); await expect(page.getByRole("combobox", { name: "搜索 Agent", exact: true })).toBeFocused(); }],
+    ["the model list", async () => { await chip.getByRole("button", { name: "选择模型", exact: true }).click(); await expect(page.getByRole("combobox", { name: "搜索模型", exact: true })).toBeFocused(); }],
+    ["the thinking list", async () => { await chip.getByRole("button", { name: "思考强度", exact: true }).click(); await expect(page.getByRole("combobox", { name: "搜索思考强度", exact: true })).toBeFocused(); }],
+    ["the + menu from the keyboard", async () => { await add.focus(); await page.keyboard.press("Enter"); await expect(page.getByRole("menuitem").first()).toBeFocused(); }],
+    ["the + menu from the pointer", async () => { await add.click(); await expect.poll(() => page.getByRole("menu").evaluate(menu => menu.contains(document.activeElement))).toBe(true); }],
+  ];
+  for (const [index, [name, open]] of openers.entries()) {
+    // The next message asks before it reads the workspace; its request waits in the held stream while the layer opens.
+    await hold(true);
+    await composer.fill("APPROVAL：" + name); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
+    await expect(composer).toHaveValue("");
+    await open(); await expect(layers).toHaveCount(1);
+    await hold(false);
+    await expect(dock).toContainText("读取验收工作区", { timeout: 15000 });
+    // The approval closes the layer and takes the focus it held, as it takes the focus from the message box.
+    await expect(layers, name).toHaveCount(0); await expect(dock, name).toBeFocused();
+    if (index === 0) {
+      // Past the moment it ignores keys still meant for the message, esc refuses there: the focus goes back to the message
+      // box, never to the page.
+      await page.waitForTimeout(600); await page.keyboard.press("Escape");
+    } else await dock.getByRole("button", { name: "允许一次", exact: true }).click();
+    await expect(dock).toHaveCount(0, { timeout: 15000 }); await expect(composer, name).toBeFocused();
+    await expect(page.locator("[data-run-status=completed]")).toHaveCount(index + 2, { timeout: 15000 });
+    // Decided, nothing the composer had open comes back by itself.
+    await page.waitForTimeout(500);
+    await expect(layers, name).toHaveCount(0); await expect(composer, name).toBeFocused();
+  }
+  await expect(page.getByRole("log", { name: "对话历史" })).toContainText("原生审批已收到：decline");
+  // The Agent list the approval closed opens again from ⌘J.
+  await page.keyboard.press("ControlOrMeta+J"); await expect(page.getByRole("combobox", { name: "搜索 Agent", exact: true })).toBeFocused();
+  await page.keyboard.press("Escape"); await expect(layers).toHaveCount(0); await expect(composer).toBeFocused();
   assert.deepEqual(errors, []);
 });
 
