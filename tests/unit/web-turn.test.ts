@@ -253,6 +253,25 @@ test("G054-DL7 streamed text is released as a growing prefix at the backlog's pa
   for (let tick = 0; tick < 20 && emoji.shown < emoji.text.length; tick++) { emoji = reveal(emoji, { type: "tick" }); assert.doesNotMatch(emoji.text.slice(0, emoji.shown), /[\uD800-\uDBFF]$/u); }
 });
 
+test("G054-DL7 a release never stops inside a fence marker that opens a line, so a closing fence never shows as one more line of code (ruling L)", () => {
+  // Each release of a text that arrives at rest after `shown`, at the pace a short arrival gets: one character a tick.
+  const releases = (shown: string, more: string) => {
+    let state: Reveal = { text: shown, shown: shown.length, rate: 0, chunks: [], at: 0 };
+    state = reveal(state, { type: "arrive", text: shown + more, at: 1000, animate: true });
+    const seen: string[] = [];
+    for (let tick = 0; tick < 40 && state.shown < state.text.length; tick++) { state = reveal(state, { type: "tick" }); seen.push(state.text.slice(shown.length, state.shown)); }
+    return seen;
+  };
+  // A code block closed as the reply ends: its fence goes whole, never "`" or "``" shown as a line of the code.
+  assert.deepEqual(releases("最后运行：\n\n```sh\npnpm test", "\n```"), ["\n", "\n```"]);
+  assert.deepEqual(releases("```\nx", "\n   ~~~~\n完"), ["\n", "\n ", "\n  ", "\n   ", "\n   ~~~~", "\n   ~~~~\n", "\n   ~~~~\n完"]);
+  // An opening fence goes whole as well, its language after it at the pace.
+  assert.deepEqual(releases("看：", "\n```ts"), ["\n", "\n```", "\n```t", "\n```ts"]);
+  // Backticks inside a line, or after four spaces (an indented code line), are text like any other.
+  assert.deepEqual(releases("用", " ``a``"), [" ", " `", " ``", " ``a", " ``a`", " ``a``"]);
+  assert.deepEqual(releases("x\n", "    ``"), [" ", "  ", "   ", "    ", "    `", "    ``"]);
+});
+
 test("G054-DL7 the fading pieces wrap the released text where it is, leave code blocks whole and keep every character in order", () => {
   const text = (value: string, from: number): HastNode => ({ type: "text", value, position: { start: { offset: from }, end: { offset: from + value.length } } });
   const tree: HastNode = { type: "root", children: [

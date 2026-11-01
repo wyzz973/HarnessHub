@@ -432,6 +432,21 @@ export function rehypeReveal(options: { readonly chunks: readonly Chunk[] }) {
  */
 export interface Reveal { readonly text: string; readonly shown: number; readonly rate: number; readonly chunks: readonly Chunk[]; readonly at: number }
 export type RevealAction = { readonly type: "arrive"; readonly text: string; readonly at: number; readonly animate: boolean } | { readonly type: "tick" } | { readonly type: "flush" } | { readonly type: "settle" };
+/**
+ * Where a release ending at `to` may stop: never inside a run of fence characters (` or ~) that opens a line after at most
+ * three spaces. Half a closing fence ("``") would show as one more line of code until the rest came, so the block would grow
+ * by a line and shrink again just as the reply ends (ruling L: its end must not jump); the whole run goes at once instead.
+ */
+function fenceStop(text: string, to: number): number {
+  const mark = text[to - 1];
+  if ((mark !== "`" && mark !== "~") || text[to] !== mark) return to;
+  let start = to - 1;
+  while (start > 0 && text[start - 1] === mark) start--;
+  if (!/^ {0,3}$/u.test(text.slice(text.lastIndexOf("\n", start - 1) + 1, start))) return to;
+  let end = to;
+  while (end < text.length && text[end] === mark) end++;
+  return end;
+}
 export function reveal(state: Reveal, action: RevealAction): Reveal {
   switch (action.type) {
     case "arrive": {
@@ -446,9 +461,10 @@ export function reveal(state: Reveal, action: RevealAction): Reveal {
       if (backlog <= 0) return state;
       const rate = state.rate * .9 + backlog * .1;
       let to = state.shown + Math.max(1, Math.min(backlog, Math.ceil(rate / 20)));
-      // Never between the two halves of a character outside the basic plane.
+      // Never between the two halves of a character outside the basic plane, nor inside a fence marker.
       const unit = state.text.charCodeAt(to - 1);
       if (to < state.text.length && unit >= 0xD800 && unit <= 0xDBFF) to++;
+      to = fenceStop(state.text, to);
       return { ...state, rate, shown: to, chunks: [...state.chunks, { from: state.shown, to }] };
     }
     case "flush": return state.shown < state.text.length || state.chunks.length ? { ...state, shown: state.text.length, chunks: [] } : state;
