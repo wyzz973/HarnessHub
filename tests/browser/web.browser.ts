@@ -1900,6 +1900,9 @@ test("G054-UN1 uninstalling one installation first says what it stops, removes a
   await expect(dialog.locator(".uninstall-kept")).toHaveText("配置、登录和会话数据保留：~/.openclaw。");
   await expect(dialog.locator(".uninstall-after")).toHaveText("卸载后，OpenClaw 在 HarnessHub 里显示为未安装。");
   await page.screenshot({ path: join(artifact, "uninstall-confirmation.png"), animations: "disabled" });
+  // Opened from the details beside the cards, the confirmation sits over them: Escape closes it alone and sends nothing.
+  await page.keyboard.press("Escape"); await expect(dialog).toBeHidden(); await expect(detail).toBeVisible(); assert.equal(submitted, null);
+  await detail.getByRole("button", { name: `卸载${label}里的 openclaw`, exact: true }).click(); await expect(dialog.locator(".uninstall-after")).toBeVisible();
   await dialog.getByRole("button", { name: "停止服务并卸载" }).click(); await expect(dialog).toBeHidden();
   await expect.poll(() => submitted).not.toBeNull();
   const { commandId, ...consent } = submitted!;
@@ -2160,6 +2163,10 @@ test("G054-DL8 the Agent page gives each Agent a card with its version and chann
   const switched = page.getByRole("dialog", { name: "Codex 详情" });
   await expect(switched).toBeVisible(); await expect(page.getByRole("dialog")).toHaveCount(1);
   await expect(main.locator(".agent-card[data-selected='true'] h3")).toHaveText(["Codex"]);
+  // An Agent with a newer version: the state says it once, and the upgrade is in its maintenance.
+  await expect(switched.locator(".agent-health")).toHaveText("有新版本 0.167.0当前 0.166.0。升级沿用它原来的安装方式，在下面的“维护”里进行。开始对话");
+  await expect(switched.getByRole("button", { name: "升级到 0.167.0", exact: true })).toBeVisible();
+  await settled(switched); await page.screenshot({ path: join(artifact, "agents-drawer-update-1440.png"), animations: "disabled" });
   await switched.getByRole("button", { name: "关闭 Harness 详情", exact: true }).click(); await expect(switched).toBeHidden();
   await expect(main.locator(".agent-card[data-selected='true']")).toHaveCount(0);
   // Once the details have gone, the cards take the width back.

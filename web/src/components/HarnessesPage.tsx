@@ -422,6 +422,8 @@ export function HarnessesPage(props: HarnessProps) {
     return <CatalogRow key={harness.id} harness={harness} way={item.way} first={index === 0} busy={busy} status={job ? installationStatus(job) : busy ? "提交中" : null} failure={failure}
       onOpen={() => setSelectedId(harness.id)} onInstall={() => item.way.runs === "official" ? installOfficial(harness) : request(harness)}/>;
   };
+  // An error is said once: in the details while they sit beside the cards (where the action was taken), else on the page.
+  const pageError = beside && selected !== null ? null : props.error;
   const detailTitle = drawn ? `${drawn.name} 详情` : "Agent 详情";
   const details = drawn ? <AgentDetail {...props} key={drawn.id} harness={drawn} state={agentState(drawn, facts)} onClose={() => setSelectedId(null)} onRequest={harness => request(harness, true)} onInstallRequest={harness => installOfficial(harness, true)}
     onUninstallRequest={(harness, installation) => { makeWay(); setRemoving({ harness, installation }); }}
@@ -451,10 +453,10 @@ export function HarnessesPage(props: HarnessProps) {
               <button type="button" className="btn" onClick={() => props.onCheckUpdates()} disabled={props.checking}>{props.checking ? <Spinner size={14} label=""/> : <RefreshCw size={15} className="text-fg-2"/>}{props.checking ? "正在检查更新" : "检查更新"}</button>
             </div>
           </header>
-          {props.installationPolicy === "any" || props.error || props.connectionError || props.unconfirmed.length ? <div className="mt-5 flex flex-col gap-2">
+          {props.installationPolicy === "any" || pageError || props.connectionError || props.unconfirmed.length ? <div className="mt-5 flex flex-col gap-2">
             {/* Amber is kept for what waits for the user (ADR-054 §1): the Gateway's mode and a lost connection are said plainly. */}
             {props.installationPolicy === "any" ? <Notice className="development-entries">开发模式：接受非官网安装。服务以 --allow-unofficial 启动，列表里的开发入口不是正式安装。</Notice> : null}
-            {props.error ? <Notice tone="red" onDismiss={props.onDismissError}>{props.error}</Notice> : null}
+            {pageError ? <Notice tone="red" onDismiss={props.onDismissError}>{pageError}</Notice> : null}
             {props.connectionError ? <Notice className="connection-notice">{props.connectionError} · 安装状态暂时显示最后一次观察，正在重新连接，不会重跑任务。</Notice> : null}
             {props.unconfirmed.map(intent => <Notice key={intent.harnessId} tone="amber" title={`${harnesses.find(h => h.id === intent.harnessId)?.name ?? intent.harnessId} 的请求尚未确认`}
               action={<button type="button" className="btn btn-sm" onClick={() => props.onConfirm(intent.harnessId)} disabled={props.submitting.includes(intent.harnessId)}>确认上次请求</button>}>{intent.message}</Notice>)}
