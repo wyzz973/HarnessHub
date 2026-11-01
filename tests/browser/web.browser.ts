@@ -3004,10 +3004,15 @@ test("G054-DL8 the Agent page gives each Agent a card with its version and chann
     native: { channel: "npm", location: "/opt/homebrew/bin/openclaw", beforeVersion: "2026.10.2", actualVersion: "2026.10.9", dispatched: true, configurationPreserved: true, restartServices: ["ai.openclaw.gateway"], backupConfirmed: true,
       hops: [{ version: "2026.9.5", installed: true, doctor: "ok" }, { version: "2026.10.9", installed: true, doctor: "ok" }],
       services: [{ label: "ai.openclaw.gateway", outcome: "not_recovered", pid: null, ready: null }], configurationMigrated: ["~/.openclaw/openclaw.json"] } };
+  // Claude Code's latest catalog read asked it to sign in, once the test says so; until then the Gateway's own reads stand.
+  let claudeControl = "", signedOut = false;
+  const readiness = (rows: unknown[]) => signedOut ? [...rows, { harnessId: "claude", controlId: claudeControl, state: "signed_out", checkedAt: Date.now() - 3 * 60_000 }] : rows;
   for (const path of ["**/api/v1/state", "**/api/v1/harnesses", "**/api/v1/harnesses/rescan", "**/api/v1/harnesses/check-updates"]) await page.route(path, async route => {
     const response = await route.fetch(), body = await response.json();
-    await route.fulfill({ response, json: Array.isArray(body) ? body.map(shaped) : { ...body, harnesses: body.harnesses.map(shaped), jobs: [job] } });
+    claudeControl = ((Array.isArray(body) ? body : body.harnesses) as { id: string; controls: { id: string }[] }[]).find(harness => harness.id === "claude")?.controls[0]?.id ?? claudeControl;
+    await route.fulfill({ response, json: Array.isArray(body) ? body.map(shaped) : { ...body, harnesses: body.harnesses.map(shaped), jobs: [job], readiness: readiness(body.readiness) } });
   });
+  await page.route("**/api/v1/harnesses/readiness", async route => { const response = await route.fetch(), body = await response.json(); await route.fulfill({ response, json: { ...body, readiness: readiness(body.readiness) } }); });
   await page.route("**/api/v1/installation-jobs?limit=50", route => route.fulfill({ json: [job] }));
   let submitted = 0;
   await page.route("**/api/v1/installation-jobs", async route => { if (route.request().method() !== "POST") return route.fallback(); submitted++; await route.abort(); });
@@ -3244,6 +3249,32 @@ test("G054-DL8 the Agent page gives each Agent a card with its version and chann
   }
   await main.getByRole("button", { name: "展开侧栏", exact: true }).click(); await expect(navigation).toBeVisible();
   await page.setViewportSize({ width: 1440, height: 1000 });
+
+  // The page says what the Gateway knows of each Agent's sign-in and conversations, as the composer's picker does. A
+  // conversation with Codex reads its models and opens a native session: Codex's details then say when that read was and
+  // that it was signed in, and offer the command that continues the conversation in Codex itself. A read that asked
+  // Claude Code to sign in is its card's state.
+  await navigation.getByRole("button", { name: "新对话", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true });
+  await composer.fill("hello"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
+  await expect(page.getByRole("log", { name: "对话历史" }).locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
+  signedOut = true;
+  await navigation.getByRole("button", { name: /^Agent\b/u }).click();
+  // Coming back into view reads the state again (ADR-050), which now carries Claude Code's read.
+  await page.evaluate(() => { window.dispatchEvent(new Event("focus")); });
+  await expect(card("Claude Code").locator(".status-pill")).toHaveText("需要登录");
+  await expect(card("Claude Code").locator(".agent-summary")).toHaveText("需要先在 Claude Code 里登录或完成设置，才能用它对话。");
+  await expect(card("Claude Code").locator(".status-pill")).toHaveAttribute("title", "3 分钟前检查时，它需要先在本机完成登录或配置");
+  await expect(card("Codex").locator(".agent-summary")).toHaveText("已登录，可以对话。模型和登录沿用它自己的配置。");
+  await card("Codex").getByRole("button", { name: "查看 Codex 详情", exact: true }).click();
+  const facts = page.getByRole("dialog", { name: "Codex 详情" });
+  await expect(facts.getByRole("region", { name: "模型与登录" })).toHaveText(/^模型与登录(刚刚|1 分钟前)读取过它的模型列表，已登录。模型和登录沿用 Codex 自己的配置，HarnessHub 不复制也不修改。$/u);
+  const resume = facts.getByRole("region", { name: "在原程序里继续对话" });
+  await expect(resume).toContainText("最近的对话「hello」，在它的工作区目录中运行：");
+  await expect(resume.locator("code")).toHaveText(/^codex resume browser-native-\d+$/u); await expect(resume.getByRole("button", { name: "复制恢复命令", exact: true })).toBeVisible();
+  await settled(facts); await page.screenshot({ path: join(artifact, "agents-drawer-facts-1440.png"), animations: "disabled" });
+  await page.keyboard.press("Escape"); await expect(facts).toBeHidden();
   assert.equal(submitted, 0);
   assert.deepEqual(errors, []);
 });
