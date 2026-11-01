@@ -2084,6 +2084,11 @@ async function captureDialog(page: Page, dialog: ReturnType<Page["getByRole"]>, 
   for (const scheme of ["light", "dark"] as const) { await page.emulateMedia({ colorScheme: scheme }); await page.screenshot({ path: join(artifact, name + "-" + scheme + ".png"), animations: "disabled" }); }
   await page.emulateMedia({ colorScheme: "light" });
 }
+/** The whole page in the dark theme, beside a light capture the test takes, then back in the light theme the tests start in. */
+async function captureDark(page: Page, name: string): Promise<void> {
+  await page.emulateMedia({ colorScheme: "dark" }); await page.screenshot({ path: join(artifact, name + "-dark.png"), animations: "disabled", fullPage: true });
+  await page.emulateMedia({ colorScheme: "light" });
+}
 
 test("G054-CA1 the capability page opens from the sidebar and from a Harness's details, shows every kind as an entry × Harness matrix, and expands an entry's warnings", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;
@@ -2134,7 +2139,7 @@ test("G054-CA1 the capability page opens from the sidebar and from a Harness's d
   await alpha.getByRole("button", { name: /alpha/u }).click();
   const detail = page.locator(".capability-detail");
   for (const text of ["~/.agents/skills/alpha", "https://github.com/owner/repo.git", "2 个文件 · 2.0 KB", "Cursor 没有说明同名技能怎样处理", "Codex 会同时列出 2 个名为 alpha 的技能"]) await expect(detail).toContainText(text);
-  await page.screenshot({ path: join(artifact, "capabilities-detail.png"), animations: "disabled" });
+  await page.screenshot({ path: join(artifact, "capabilities-detail.png"), animations: "disabled" }); await captureDark(page, "capabilities-detail");
   // A file that could not be read is said, with the reason.
   await expect(page.getByText("有文件无法读取，其中的内容没有显示")).toBeVisible(); await expect(page.getByText("无法解析（TomlError）")).toBeVisible();
   // Filters: search, one Harness, and only entries with warnings or not in use.
@@ -2354,7 +2359,7 @@ test("G054-CA3 the shared skills directory says how each Harness reads it, makes
   assert.deepEqual(requests, ["shared-dir?harnessId=hermes&present=true", "link-cleanup?harnessId=openclaw", "changes/12222222-2222-4222-8222-222222222222/undo",
     "skill-link?harnessId=claude&name=gamma&present=true", "skill-link?harnessId=claude&name=delta&present=false"]);
   assert.deepEqual(posted.map(item => item.fingerprint), ["1", "2", "3", "4", "5"].map(digit => digit.repeat(64)), "each confirmation sends exactly its own check");
-  await page.screenshot({ path: join(artifact, "capabilities-shared-directory.png"), animations: "disabled" });
+  await page.screenshot({ path: join(artifact, "capabilities-shared-directory.png"), animations: "disabled" }); await captureDark(page, "capabilities-shared-directory");
   assert.deepEqual(errors, []);
 });
 
@@ -2550,7 +2555,7 @@ test("G054-CA6 the MCP list shows each server per Harness, imports what the Harn
   const panel = page.locator(".mcp-inventory"), row = panel.locator("tbody tr").filter({ hasText: "fs" });
   await expect(row.locator("td")).toHaveText([/^—$/u, /未写入写入/u, /一致认领/u, /已写入移除/u]);
   await expect(row).toContainText("FS_TOKEN 未设置");
-  await page.screenshot({ path: join(artifact, "capabilities-mcp.png"), animations: "disabled", fullPage: true });
+  await page.screenshot({ path: join(artifact, "capabilities-mcp.png"), animations: "disabled", fullPage: true }); await captureDark(page, "capabilities-mcp");
   // Writing goes through its check: the diff and the program it will run are shown, and only that check is sent.
   await row.locator("td").nth(1).getByRole("button", { name: "写入", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "写入 fs 到 Codex" });
@@ -2627,7 +2632,7 @@ test("G054-CA7 the instructions are edited and saved without touching any Harnes
   // Each Harness's file, state and when it reads a change; what a write will ask about; why Cursor and Hermes have none.
   await expect(gemini).toContainText("~/.gemini/GEMINI.md"); await expect(gemini).toContainText("未写入"); await expect(gemini).toContainText(caution);
   await expect(panel.locator("tbody tr[data-harness=hermes]")).toContainText("SOUL.md 是人格文件");
-  await page.screenshot({ path: join(artifact, "capabilities-instructions.png"), animations: "disabled", fullPage: true });
+  await page.screenshot({ path: join(artifact, "capabilities-instructions.png"), animations: "disabled", fullPage: true }); await captureDark(page, "capabilities-instructions");
   // Editing marks the texts unsaved and holds back every write until they are saved; saving writes no Harness file.
   await panel.getByRole("textbox", { name: "共享指令" }).fill("回复使用中文。");
   await expect(panel).toContainText("有未保存的修改");
@@ -2694,7 +2699,7 @@ test("G054-CA8 the subagent list writes a subagent into each Harness only throug
   const panel = page.locator(".subagent-inventory"), row = panel.locator("tbody tr").filter({ hasText: "code-checker" });
   await expect(row.locator("td")).toHaveText([/已写入移除/u, /未写入写入/u]);
   await expect(panel).toContainText("Cursor：本机 cursor-agent 只读工作区里的子 Agent，不读家目录");
-  await page.screenshot({ path: join(artifact, "capabilities-subagents.png"), animations: "disabled", fullPage: true });
+  await page.screenshot({ path: join(artifact, "capabilities-subagents.png"), animations: "disabled", fullPage: true }); await captureDark(page, "capabilities-subagents");
   // Writing goes through its check: the new file and what the subagent inherits are shown, and only that check is confirmed.
   await row.locator("td").nth(1).getByRole("button", { name: "写入", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "写入 code-checker 到 Codex" });
@@ -2768,6 +2773,7 @@ test("G054-CA9 the plugins tab says whose plugins can be switched and why the ot
   await expect(detail).toContainText("v1.2.0 · 已启用"); await expect(detail).toContainText("v1.1.0 · 已停用"); await expect(detail).toContainText("Codex 停用了它");
   const switches = page.locator(".plugin-switches");
   await expect(switches.getByRole("button")).toHaveText(["在 Claude Code 中停用", "在 Codex 中启用"]);
+  await page.screenshot({ path: join(artifact, "capabilities-plugins.png"), animations: "disabled", fullPage: true }); await captureDark(page, "capabilities-plugins");
   await switches.getByRole("button", { name: "在 Claude Code 中停用", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "在 Claude Code 中停用插件 tool@market" });
   for (const text of ["~/.claude/settings.json", "/reload-plugins", "关不掉项目启用的插件", "写入前先备份原文件"]) await expect(dialog).toContainText(text);
