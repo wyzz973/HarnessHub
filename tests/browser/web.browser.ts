@@ -2322,6 +2322,63 @@ test("G054-DL5 while an approval waits, the Turn names the step it asks for in t
   assert.deepEqual(errors, []);
 });
 
+test("G054-DL5 an approval that takes the composer's place closes a panel the composer opened and takes the focus it held, and the panel does not come back once the approval is decided (ruling R2)", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false, { name: "Shared Agent", scenario: "hermes" }); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1440, height: 960 } });
+  // Holds the event stream's bytes while asked to, so that the approval arrives while the panel is open and holds the focus.
+  await context.addInitScript(() => {
+    const original = window.fetch.bind(window); let held = false;
+    const waiters: Array<() => void> = [];
+    Reflect.set(window, "__holdFactDelivery", (next: boolean) => { held = next; if (!held) for (const release of waiters.splice(0)) release(); });
+    window.fetch = async (input, init) => {
+      const response = await original(input, init);
+      const url = typeof input === "string" ? input : input instanceof Request ? input.url : String(input);
+      if (!url.includes("/events/stream") || !response.ok || response.body === null) return response;
+      const body = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({ async transform(chunk, sink) {
+        if (held) await new Promise<void>(resolve => waiters.push(resolve)); sink.enqueue(chunk);
+      } }));
+      return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+    };
+  });
+  const page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  const hold = (next: boolean) => page.evaluate(value => { const set = Reflect.get(window, "__holdFactDelivery"); if (typeof set !== "function") throw new Error("missing fact delivery fixture"); set(value); }, next);
+  t.after(async () => { if (!page.isClosed()) await hold(false); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), panel = page.locator(".composer-settings-panel");
+  const dock = page.locator(".composer-box").getByRole("region", { name: "工具审批", exact: true });
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
+  await composer.fill("hello"); await composer.press("Enter");
+  await expect(page.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
+  // The next message asks before it runs a command; its request waits in the held stream while the settings are opened.
+  await hold(true);
+  await composer.fill("approve this"); await composer.press("Enter"); await expect(composer).toHaveValue("");
+  await openAdvanced(page);
+  await expect.poll(() => panel.evaluate(element => element.contains(document.activeElement))).toBe(true);
+  await hold(false);
+  await expect(dock).toContainText("rm -rf build", { timeout: 15000 });
+  // The approval closes the panel and takes the focus the panel held, as it takes the focus from the message box.
+  await expect(panel).toHaveCount(0); await expect(dock).toBeFocused();
+  await dock.getByRole("button", { name: "Allow once", exact: true }).click();
+  await expect(dock).toHaveCount(0, { timeout: 15000 }); await expect(composer).toBeFocused();
+  // Decided, the composer is back with the focus, and the panel stays closed: it does not open again by itself.
+  await page.waitForTimeout(500);
+  await expect(panel).toHaveCount(0); await expect(composer).toBeFocused();
+  await expect(page.locator("[data-run-status=completed]")).toHaveCount(2, { timeout: 15000 });
+  // The same when the message box has the focus and the panel stays open beside it (as after a skill is chosen in the
+  // extensions): the approval takes the focus from the message box, and once decided the panel stays closed.
+  await openAdvanced(page);
+  await composer.fill("approve this"); await expect(panel).toHaveCount(1); await composer.press("Enter");
+  await expect(dock).toContainText("rm -rf build", { timeout: 15000 });
+  await expect(panel).toHaveCount(0); await expect(dock).toBeFocused();
+  await dock.getByRole("button", { name: "Allow once", exact: true }).click();
+  await expect(dock).toHaveCount(0, { timeout: 15000 }); await page.waitForTimeout(500);
+  await expect(panel).toHaveCount(0); await expect(composer).toBeFocused();
+  assert.deepEqual(errors, []);
+});
+
 test("G054-DL6 the plan bar above the composer says how far the plan is and opens every step, and the line under it shows the round, steps and time with only the usage the Gateway reported", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });

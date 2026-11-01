@@ -206,11 +206,14 @@ export function Composer(props: ComposerProps) {
   const dockShown = approval ?? (dockPresence === "closing" && !closingAtOnce ? shownApproval.current : null);
   // Who should hold the focus when a request takes the dock: it takes it from the composer (and for a moment treats keys
   // as meant for the message being typed), or keeps it when the previous request had it. Read before `inert` moves it.
+  // The panels that "+" and the Agent list open belong to the composer too, though drawn in a layer of their own (ruling R2):
+  // the dock closes them and takes the focus they held, which would otherwise be lost.
   const form = useRef<HTMLFormElement>(null), dockFocus = useRef<{ readonly id: string | null; readonly mode: "guarded" | "plain" | null }>({ id: null, mode: null });
   if ((approval?.request.id ?? null) !== dockFocus.current.id) {
     const focused = document.activeElement, previous = dockFocus.current.id;
+    const inComposer = form.current?.contains(focused) === true || focused?.closest(".composer-settings-panel, .native-extensions, .native-sessions") != null;
     dockFocus.current = { id: approval?.request.id ?? null, mode: approval === null ? null
-      : previous === null ? form.current?.contains(focused) ? "guarded" : null
+      : previous === null ? inComposer ? "guarded" : null
       : dockLayer.current?.contains(focused) || focused === document.body ? "plain" : null };
   }
 
@@ -349,6 +352,9 @@ export function Composer(props: ComposerProps) {
   const plusButton = useRef<HTMLButtonElement>(null), agentButton = useRef<HTMLButtonElement>(null), chip = useRef<HTMLDivElement>(null), outdatedId = useId();
   const [panel, setPanel] = useState<{ readonly kind: "sessions" | "extensions" | "advanced"; readonly harnessId: string } | null>(null);
   const shownPanel = panel !== null && panel.harnessId === draft.harnessId && !docked ? panel.kind : null;
+  // Hidden for an approval or for another Agent, a panel is closed: it does not come back by itself, taking the focus, once
+  // the approval is decided or the Agent chosen again.
+  useEffect(() => { if (panel !== null && shownPanel === null) setPanel(null); }, [panel, shownPanel]);
   const openPanel = (kind: NonNullable<typeof panel>["kind"]) => setPanel({ kind, harnessId: draft.harnessId });
   const panelOpenChange = (kind: NonNullable<typeof panel>["kind"]) => (open: boolean) => setPanel(open ? { kind, harnessId: draft.harnessId } : null);
   const fromAgentList = (kind: NonNullable<typeof panel>["kind"]) => { props.onAgentPickerOpen(false); openPanel(kind); };
