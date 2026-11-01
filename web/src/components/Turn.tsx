@@ -160,7 +160,7 @@ function TurnProcess({ run, status, text, phase, detailed, now, harness, startup
   const layers = <span className="grid min-w-0 [&>*]:col-start-1 [&>*]:row-start-1">
     {ended ? <>{phase === "handoff" && last.current ? liveLayer(last.current, true) : null}{doneLayer}</> : live ? liveLayer(live, false) : null}
   </span>;
-  const chevron = expandable ? <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("mt-1 flex-none self-start text-fg-3 transition-[rotate] duration-200 ease-expo keyboard:transition-none", open && "rotate-90")}/> : null;
+  const chevron = expandable ? <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("mt-1 flex-none self-start text-fg-3 motion-rotate", open && "rotate-90")}/> : null;
   // The line is one element for the whole Turn, a button for its steps once there are any: when the first step arrives the
   // words change in place (#07) and the arc keeps turning, instead of the line being drawn anew.
   const toggle = () => setChoice(!open);
@@ -169,14 +169,14 @@ function TurnProcess({ run, status, text, phase, detailed, now, harness, startup
   // A Turn just started shows its status 0.25 s after the message (Motion board #01).
   return <div ref={box} className={cn("turn-process flex min-w-0 flex-col", entering && "motion-fade-in")} style={entering ? motionStyle({ delay: 250 }) : undefined}>
     <div className={cn("process-summary -ml-2 flex min-h-7 max-w-full min-w-0 items-start gap-[7px] self-start rounded-row px-2 py-1 text-ui-sm text-fg-3", expandable && "row cursor-pointer select-none")} {...control}>{layers}{chevron}</div>
-    {expandable ? <Collapsible open={open} id={steps} className="grid-cols-[minmax(0,1fr)]">
+    {expandable ? <Collapsible open={open} id={steps}>
       <div className="mt-1 mb-1.5 ml-[7px] flex min-w-0 flex-col gap-px border-l border-line-strong pl-[9px]">
         {thinking ? <div className="flex min-w-0 flex-col">
           <button type="button" aria-expanded={thoughts ?? detailed} onClick={() => setThoughts(!(thoughts ?? detailed))} className="row group/step flex min-h-[30px] w-full items-center gap-[9px] border-none bg-transparent px-1.5 py-[5px] text-left text-ui-sm leading-[18px] text-fg-2">
             <span className="flex size-[15px] flex-none items-center justify-center text-fg-3"><Brain size={15} aria-hidden="true"/></span><span className="flex-1">思考过程</span>
-            <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("flex-none text-fg-3 transition-[rotate] duration-200 ease-expo keyboard:transition-none", (thoughts ?? detailed) && "rotate-90")}/>
+            <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("flex-none text-fg-3 motion-rotate", (thoughts ?? detailed) && "rotate-90")}/>
           </button>
-          <Collapsible open={thoughts ?? detailed} className="grid-cols-[minmax(0,1fr)]"><div className="native-thinking mt-0.5 mb-2 ml-[30px] border-l border-line-strong pl-3 text-ui-sm text-fg-2"><StreamingMarkdown text={thinking} isStreaming={!terminal}/></div></Collapsible>
+          <Collapsible open={thoughts ?? detailed}><div className="native-thinking mt-0.5 mb-2 ml-[30px] border-l border-line-strong pl-3 text-ui-sm text-fg-2"><StreamingMarkdown text={thinking} isStreaming={!terminal}/></div></Collapsible>
         </div> : null}
         {activities.length ? <ActivityList activities={activities}/> : null}
         {tools.length ? <ToolList tools={tools} active={!terminal} loadDetail={loadDetail} seen={seen}/> : null}

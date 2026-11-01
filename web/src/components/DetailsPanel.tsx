@@ -229,9 +229,9 @@ function RunProcess({ run, index, open, onToggle, loadToolDetail, name, describe
       <span className="min-w-0 flex-1 break-words"><span className="text-fg">{name(run.selection.harnessId)}</span>{[...(summary ? summary.split(" · ") : []), ...(time ? [time] : [])].map((part, index) => <Fragment key={index}> · <span className="whitespace-nowrap">{part}</span></Fragment>)}</span>
       {active ? <StatusDot tone="run" label="进行中"/> : null}
       <span className="flex-none text-caption text-fg-3">第 {index + 1} 轮</span>
-      <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("flex-none text-fg-3 transition-[rotate] duration-200 ease-expo keyboard:transition-none", open && "rotate-90")}/>
+      <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")}/>
     </button>
-    <Collapsible open={open} id={panel} className="grid-cols-[minmax(0,1fr)]">
+    <Collapsible open={open} id={panel}>
       <div className="mb-2 ml-[15px] flex min-w-0 flex-col gap-3 border-l border-line-strong py-1 pl-3.5">
         {model ? <p className="m-0 text-caption text-fg-3">{model}</p> : null}
         <ol className="m-0 flex list-none flex-col gap-1.5 p-0" aria-label="时间线">{steps.filter(([, time]) => time !== undefined).map(([label, time]) => <li key={label} className="grid grid-cols-[64px_minmax(0,1fr)] items-baseline gap-2.5 text-ui-sm"><span className="mono text-[11.5px] text-fg-3">{at(time)}</span><span>{label}</span></li>)}</ol>

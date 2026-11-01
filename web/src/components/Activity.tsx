@@ -158,7 +158,7 @@ const StepItem = memo(function StepItem({ step, active, loadDetail, children, fr
     {expandable ? <button type="button" className={cn(row, "row border-none bg-transparent text-fg")} aria-expanded={open} aria-controls={panel} onClick={() => setOpen(value => !value)}
       title={step.kind === "reads" ? "查看每一次读取" : "查看工具输入与输出"}>{content}</button>
       : <div className={row}>{content}</div>}
-    {expandable ? <Collapsible open={open} id={panel} className="grid-cols-[minmax(0,1fr)]">
+    {expandable ? <Collapsible open={open} id={panel}>
       {step.kind === "reads" ? <ol className="m-0 mb-1 ml-[30px] flex list-none flex-col gap-px p-0" aria-label={"读取的文件：" + step.tools.length + " 个"}>
         {step.tools.map(tool => <StepItem key={tool.id} step={{ kind: "tool", key: tool.id, tool }} active={active} loadDetail={loadDetail} children={children} fresh={false} reduced={reduced} seen={seen}/>)}</ol>
         : <ToolDetail tool={first} load={loadDetail}/>}
