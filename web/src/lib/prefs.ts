@@ -3,7 +3,8 @@ import type { HarnessView } from "../../../src/contracts/web.js";
 
 /**
  * Per-browser display preferences (ADR-042). They are conveniences only: storage can be unavailable, in which case each
- * page starts from the defaults. Nothing here changes a conversation, a Harness or the Gateway.
+ * page starts from the defaults. Nothing here changes a conversation, a Harness or the Gateway. A stored key that is no
+ * longer a preference (the sidebar's `groupBy`, gone since it groups by project only, ADR-054 §5) is left unread.
  */
 export interface Preferences {
   /** "system" follows the operating system's appearance. */
@@ -13,11 +14,10 @@ export interface Preferences {
   /** Whether the details panel stands beside a conversation on wide screens: closed until the user opens it (ADR-054 decision E). */
   readonly panel: boolean;
   readonly sidebar: boolean;
-  readonly groupBy: "status" | "harness" | "workspace";
   /** Whether the frozen Harnesses (Cursor, Gemini CLI, Pi) are listed for new work as well (ADR-050); off by default. */
   readonly showFrozen: boolean;
 }
-export const DEFAULT_PREFERENCES: Preferences = { theme: "system", density: "compact", panel: false, sidebar: true, groupBy: "status", showFrozen: false };
+export const DEFAULT_PREFERENCES: Preferences = { theme: "system", density: "compact", panel: false, sidebar: true, showFrozen: false };
 const KEY = "harnesshub:preferences";
 /**
  * The stored shape's version. Every write stores the whole set, so before version 2 each one also stored the details panel's
@@ -26,7 +26,7 @@ const KEY = "harnesshub:preferences";
  */
 const VERSION = 2;
 const CHOICES: { readonly [K in keyof Preferences]: readonly Preferences[K][] } = {
-  theme: ["system", "light", "dark"], density: ["compact", "detailed"], panel: [true, false], sidebar: [true, false], groupBy: ["status", "harness", "workspace"], showFrozen: [false, true],
+  theme: ["system", "light", "dark"], density: ["compact", "detailed"], panel: [true, false], sidebar: [true, false], showFrozen: [false, true],
 };
 /**
  * The Harnesses that the lists offering one for new work leave out (ADR-050, ADR-048 decision 1): the frozen ones, unless

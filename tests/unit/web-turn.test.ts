@@ -21,11 +21,20 @@ test("G054-FR2 the details panel starts closed: a panel stored before the closed
   // Nothing stored: closed.
   assert.equal(readStored(undefined).panel, false);
   // Stored before version 2, when every write carried the old default (open) with the rest: the rest is read, the panel is not.
-  assert.deepEqual(readStored({ theme: "dark", density: "detailed", panel: true, sidebar: false, groupBy: "harness", showFrozen: true }),
-    { theme: "dark", density: "detailed", panel: false, sidebar: false, groupBy: "harness", showFrozen: true });
+  assert.deepEqual(readStored({ theme: "dark", density: "detailed", panel: true, sidebar: false, showFrozen: true }),
+    { theme: "dark", density: "detailed", panel: false, sidebar: false, showFrozen: true });
   // Opened or closed since: the user's own choice, kept either way.
   assert.equal(readStored({ theme: "system", density: "compact", panel: true, sidebar: true, showFrozen: false, version: 2 }).panel, true);
   assert.equal(readStored({ theme: "system", density: "compact", panel: false, sidebar: true, showFrozen: false, version: 2 }).panel, false);
+});
+
+test("G054-FR1 preferences stored with the sidebar's old grouping still read, without it, keeping every other choice", () => {
+  // The sidebar groups by project only (ADR-054 §5); a browser may still hold the shape every write stored before.
+  for (const groupBy of ["status", "harness", "workspace", "something else"]) {
+    const read = readStored({ theme: "light", density: "detailed", panel: false, sidebar: false, groupBy, showFrozen: true, version: 2 });
+    assert.deepEqual(read, { theme: "light", density: "detailed", panel: false, sidebar: false, showFrozen: true });
+    assert.equal(Object.hasOwn(read, "groupBy"), false);
+  }
 });
 
 test("G054-FR3 the details button, its tab and its scopes count the edits with stored detail, known without reading any", () => {
