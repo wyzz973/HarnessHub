@@ -55,7 +55,7 @@ export function remaining(item: { readonly expiresAt?: number; readonly expiresB
   return { text: seconds <= 60 ? `剩余 ${seconds} 秒` : `剩余 ${Math.ceil(seconds / 60)} 分`, source: "等待期限", hint: "HarnessHub 为等待你的决定设的期限，到时本回合取消，原程序不会收到决定。" };
 }
 /** What a waiting item asks for. */
-export function attentionKind(item: AttentionItem): string { return item.kind === "question" ? "等待回答提问" : "等待审批"; }
+export function attentionKind(item: AttentionItem): string { return item.kind === "question" ? "等你回答" : "等你批准"; }
 /** The item of a conversation that expires first (one without a deadline comes last). */
 export function mostUrgent(items: readonly AttentionItem[]): AttentionItem | null {
   return [...items].sort((a, b) => (a.expiresAt ?? Number.MAX_SAFE_INTEGER) - (b.expiresAt ?? Number.MAX_SAFE_INTEGER) || a.requestedAt - b.requestedAt)[0] ?? null;
@@ -76,7 +76,7 @@ export function notifyWaiting(item: AttentionItem, harnessName: string, now: num
   if (!notificationsSupported() || !notificationsChosen() || Notification.permission !== "granted" || document.visibilityState !== "hidden") return;
   const left = remaining(item, now);
   try {
-    const notice = new Notification(`${harnessName} 等待你处理`, { body: attentionKind(item) + (left.source === null ? "" : `（${left.source}，${left.text}）`), tag: item.permissionId });
+    const notice = new Notification(`${harnessName} 等你处理`, { body: attentionKind(item) + (left.source === null ? "" : `（${left.source}，${left.text}）`), tag: item.permissionId });
     notice.onclick = () => { window.focus(); open(item.sessionId); notice.close(); };
   } catch { /* a browser that refuses to construct one stays silent */ }
 }

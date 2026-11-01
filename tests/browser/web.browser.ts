@@ -1012,14 +1012,14 @@ test("a waiting approval is marked in the sidebar with whose deadline it is, cou
   await expect(card.locator(".permission-deadline")).toHaveText(/^原程序期限 · \d+ 秒后自动拒绝$/u);
   await page.evaluate(() => { Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" }); });
   const notices = await page.evaluate(() => (window as unknown as { __notices: { title: string; body: string }[] }).__notices);
-  assert.equal(notices.length, 1); assert.equal(notices[0]!.title, "Hermes Agent 等待你处理");
-  assert.match(notices[0]!.body, /^等待审批（原程序期限，\d+ 秒后自动拒绝）$/u, "only the Harness and the wait, nothing of the conversation");
+  assert.equal(notices.length, 1); assert.equal(notices[0]!.title, "Hermes Agent 等你处理");
+  assert.match(notices[0]!.body, /^等你批准（原程序期限，\d+ 秒后自动拒绝）$/u, "only the Harness and the wait, nothing of the conversation");
   // Another conversation is open; the sidebar still says which one waits, for what, and for how long.
   await page.getByRole("button", { name: "新对话", exact: true }).click();
   const waiting = page.locator(".session-item.has-attention");
   await expect(waiting).toHaveCount(1); await expect(page.locator(".attention-count")).toHaveText("1");
   const line = waiting.locator(".attention-line");
-  await expect(line).toHaveText(/^等待审批 · 原程序期限 \d+ 秒后自动拒绝$/u);
+  await expect(line).toHaveText(/^等你批准 · 原程序期限 \d+ 秒后自动拒绝$/u);
   const seconds = async () => Number(/(\d+) 秒/u.exec((await line.textContent()) ?? "")?.[1]);
   const first = await seconds(); await page.waitForTimeout(2200); const later = await seconds();
   assert.ok(first <= 58 && later < first, `${first} then ${later}`);
@@ -1077,7 +1077,7 @@ test("a Turn waiting for another conversation's work in their workspace names it
   const card = page.getByRole("region", { name: "工具审批", exact: true });
   await expect(card).toContainText("rm -rf build", { timeout: 15000 });
   await expect(card.locator(".permission-deadline")).toHaveText("等待期限 · 剩余 30 分");
-  await expect(page.locator(".session-item.has-attention .attention-line")).toHaveText("等待审批 · 等待期限 剩余 30 分");
+  await expect(page.locator(".session-item.has-attention .attention-line")).toHaveText("等你批准 · 等待期限 剩余 30 分");
   // A second conversation in the same workspace queues behind it, and says which conversation and why, without paths.
   await page.getByRole("button", { name: "新对话", exact: true }).click();
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
@@ -1329,7 +1329,7 @@ test("G054-FR1 G054-FR8 a conversation that needs the user leads the sidebar and
   await expect(group.locator(".session-item").first()).toHaveAccessibleDescription(/等你处理/u); await expect(group.locator(".session-item")).toHaveCount(1);
   await page.getByRole("button", { name: /^等你处理（1 项）$/u }).click();
   const inbox = page.locator(".inbox-pop");
-  await expect(inbox).toContainText("approve this"); await expect(inbox).toContainText(/等待审批 · 等待期限 剩余 \d+ 分/u);
+  await expect(inbox).toContainText("approve this"); await expect(inbox).toContainText(/等你批准 · 等待期限 剩余 \d+ 分/u);
   await expect(inbox.getByRole("button", { name: "待处理时通知我", exact: true })).toHaveAttribute("aria-pressed", "false");
   await expect(inbox).toHaveCSS("opacity", "1"); await page.screenshot({ path: join(artifact, "inbox.png"), animations: "disabled" });
   await inbox.getByRole("button", { name: /approve this/u }).click();
@@ -2180,7 +2180,7 @@ test("G054-DL2 the sidebar groups conversations by project with a state dot each
   await row("新对话").click(); await pick("Shared Agent"); await send("approve this");
   await expect(navigation.locator(".attention-count")).toHaveText("1", { timeout: 15000 });
   await expect(row("approve this").locator(".status-dot")).toHaveAttribute("data-tone", "wait");
-  await expect(row("approve this")).toHaveAccessibleDescription(/^Shared Agent · 等你处理 等待审批 · 等待期限 剩余 \d+ 分$/u);
+  await expect(row("approve this")).toHaveAccessibleDescription(/^Shared Agent · 等你处理 等你批准 · 等待期限 剩余 \d+ 分$/u);
   await expect(page).toHaveTitle("(1) HarnessHub");
   // One running in another workspace forms a project of its own, with a breathing blue dot.
   const csrf = String((await (await context.request.get(origin + "/api/v1/auth/session")).json()).csrfToken);
@@ -2213,13 +2213,19 @@ test("G054-DL2 the sidebar groups conversations by project with a state dot each
   await row("workspace").click(); await expect(project("workspace").locator(".session-item")).toHaveCount(2);
   await page.mouse.move(900, 600); await page.screenshot({ path: join(artifact, "dl2-sidebar-light-1440.png"), animations: "disabled" });
   await page.emulateMedia({ colorScheme: "dark" }); await page.screenshot({ path: join(artifact, "dl2-sidebar-dark-1440.png"), animations: "disabled" }); await page.emulateMedia({ colorScheme: "light" });
-  // From another conversation, the inbox reads what the request asks; its one-time option is sent from there, and the marks leave.
+  // From another conversation, the inbox reads what the request asks; until that read is back the item says its state in
+  // the words every place uses (ADR-054 补充 G). Its one-time option is sent from there, and the marks leave.
+  const waitingId = ((await (await context.request.get(origin + "/api/v1/state")).json()) as { sessions: { id: string; title: string }[] }).sessions.find(item => item.title === "approve this")?.id;
+  assert.ok(waitingId); let release = () => {}; const read = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/api/v1/sessions/" + waitingId, async route => { await read; await route.fallback(); });
   await row("新对话").click();
   await row("等你处理（1 项）").click();
   const inbox = page.locator(".inbox-pop");
   // It opens on the most urgent item, so ⏎ opens that conversation and tab reaches its one-time option.
   await expect(inbox.getByRole("button", { name: /approve this/u })).toBeFocused();
-  await expect(inbox).toContainText("Shared Agent：rm -rf build"); await expect(inbox).toContainText(/approve this·等待审批 · 等待期限 剩余 \d+ 分/u);
+  await expect(inbox.locator("[id^='inbox-']")).toHaveText(["Shared Agent 等你批准"]);
+  release(); await page.unroute("**/api/v1/sessions/" + waitingId);
+  await expect(inbox).toContainText("Shared Agent：rm -rf build"); await expect(inbox).toContainText(/approve this·等你批准 · 等待期限 剩余 \d+ 分/u);
   await expect(inbox.getByRole("button", { name: "Allow always" })).toHaveCount(0); await expect(inbox.getByRole("button", { name: "Deny" })).toHaveCount(0);
   await expect(inbox).toHaveCSS("opacity", "1"); await page.screenshot({ path: join(artifact, "dl2-inbox-light-1440.png"), animations: "disabled" });
   await page.emulateMedia({ colorScheme: "dark" }); await page.screenshot({ path: join(artifact, "dl2-inbox-dark-1440.png"), animations: "disabled" }); await page.emulateMedia({ colorScheme: "light" });
@@ -2231,7 +2237,7 @@ test("G054-DL2 the sidebar groups conversations by project with a state dot each
   const phoneInbox = page.getByRole("dialog", { name: "等你处理" });
   await expect(phoneInbox.getByRole("button", { name: "Allow once", exact: true })).toBeVisible();
   assert.ok(((await phoneInbox.getByText("approve this", { exact: true }).boundingBox())?.width ?? 0) >= 60, "the conversation keeps its name in the narrow sheet");
-  await expect(phoneInbox).toContainText(/approve this·等待审批 · 等待期限 剩余 \d+ 分/u);
+  await expect(phoneInbox).toContainText(/approve this·等你批准 · 等待期限 剩余 \d+ 分/u);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "the inbox sheet fits 320");
   await expect(phoneInbox).toHaveCSS("opacity", "1"); await page.screenshot({ path: join(artifact, "dl2-inbox-sheet-items-light-320.png"), animations: "disabled" });
   await page.emulateMedia({ colorScheme: "dark" }); await page.screenshot({ path: join(artifact, "dl2-inbox-sheet-items-dark-320.png"), animations: "disabled" }); await page.emulateMedia({ colorScheme: "light" });
