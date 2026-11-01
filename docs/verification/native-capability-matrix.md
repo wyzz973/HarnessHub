@@ -12,15 +12,15 @@
 |---|---|---|---|---|---|---|---|---|---|---|
 | 配置与模型 | 模型目录与选择 | ✅ | ✅ | ◐ | ✅ | ✕ | ◑ | ✅ | ✅ | ✅ |
 | 配置与模型 | 思考档位 | ✅ | ✅ | ✕ | ✅ | — | ○ | ✅ | — | ✅ |
-| 配置与模型 | 模式与原生设置 | ◑ | ✅ | ✅ | ◐ | ✕ | ◐ | — | — | — |
+| 配置与模型 | 模式与原生设置 | ◑ | ✅ | ✅ | ◐ | ✕ | ◐ | — | ◑ | — |
 | 配置与模型 | 原生命令目录与执行 | — | ✅ | ✅ | ✅ | ✕ | ◐ | ◐ | ✅ | — |
-| 配置与模型 | 原生命令改配置后的同步 | ◑ | ✅ | ？ | ☑ | ？ | ✕ | ✕ | ✅ | — |
+| 配置与模型 | 原生命令改配置后的同步 | ◑ | ✅ | ？ | ☑ | ？ | ✕ | ✕ | ✕ | — |
 | 执行可见性 | 思考输出 | ◐ | ✕ | ✅ | ✕ | ✕ | ✕ | ✅ | ✅ | ✅ |
 | 执行可见性 | 工具状态 | ✅ | ✅ | ✅ | ◑ | ✕ | ✕ | ✅ | ✅ | ✅ |
-| 执行可见性 | 工具输入/输出/差异 | ✅ | ✅ | ✅ | ◑ | ✕ | ✕ | ✅ | ✅ | ☑ |
+| 执行可见性 | 工具输入/输出/差异 | ✅ | ✅ | ✅ | ◑ | ✕ | ✕ | ✅ | ◐ | ☑ |
 | 执行可见性 | 计划 | ✕ | ✕ | — | — | — | ✕ | — | ○ | — |
 | 执行可见性 | 用量/上下文/费用 | ✅ | ✅ | ✅ | ☑ | ✕ | — | ✅ | ✅ | ☑ |
-| 交互 | 工具审批 | ✅ | ✅ | ✅ | ○ | ✕ | ✕ | ◐ | ✕ | ✕ |
+| 交互 | 工具审批 | ✅ | ✅ | ✅ | ○ | ✕ | ✕ | ◐ | ✅ | ✕ |
 | 交互 | 原生提问与表单 | ◑ | ✅ | ？ | — | ？ | ◑ | ◐ | — | — |
 | 输入输出 | 图片输入 | ✅ | ✅ | ✅ | ✕ | ✕ | ✕ | ✅ | ✕ | ✕ |
 | 输入输出 | 音频输入 | ✕ | — | — | — | ✕ | — | — | — | — |
@@ -30,9 +30,9 @@
 | 扩展 | MCP | ◑ | ◑ | ◑ | ○ | ◑ | ◑ | — | ○ | ○ |
 | 扩展 | 插件/扩展 | ◑ | ◑ | ◑ | ◑ | ◑ | ？ | ◑ | ○ | ○ |
 | 会话 | 原生会话恢复 | ✅ | ✅ | ✅ | ✅ | ✕ | ✕ | ✅ | ✅ | ✅ |
-| 会话 | 原生会话列表/接续 | ✅ | ✅ | ✅ | ○ | — | ✕ | — | ✅ | ✅ |
+| 会话 | 原生会话列表/接续 | ✅ | ✅ | ✅ | ○ | — | ✕ | — | ✕ | ✅ |
 | 会话 | 原生分支 | ✅ | ✅ | ✅ | — | — | — | ✅ | ✅ | — |
-| 会话 | 上下文压缩 | ✅ | ✅ | ✅ | ✅ | — | ？ | ✅ | ✅ | ○ |
+| 会话 | 上下文压缩 | ✅ | ✅ | ✅ | ✅ | — | ？ | ✅ | ◐ | ○ |
 | 会话 | 回滚/回退 | ○ | — | ？ | — | ○ | — | ○ | — | — |
 | 并发与后台 | 子 Agent | ✅ | ✅ | ○ | ◑ | ？ | ○ | — | ◑ | ◑ |
 | 并发与后台 | 后台任务 | ◐ | ✅ | ？ | ○ | ？ | ？ | — | ◐ | ◐ |
@@ -47,7 +47,7 @@
 | Gemini CLI（冻结） | 0 | 0 | 0 | 2 | 1 | 12 | 6 | 6 |
 | Cursor（冻结） | 0 | 0 | 2 | 4 | 2 | 11 | 5 | 3 |
 | Pi（冻结、历史） | 11 | 1 | 4 | 1 | 2 | 1 | 7 | 0 |
-| Hermes Agent | 12 | 1 | 1 | 1 | 4 | 2 | 6 | 0 |
+| Hermes Agent | 9 | 1 | 3 | 2 | 4 | 3 | 5 | 0 |
 | DeepSeek Harness | 7 | 2 | 2 | 1 | 5 | 2 | 8 | 0 |
 
 ## Codex
@@ -290,37 +290,37 @@
 
 ## Hermes Agent
 
-原安装：Hermes Agent 真实验收版本 0.12.0（版本只作证据，渠道最新版 v0.22.4 是否进入用户网关待用户决定，ADR-051；官方安装方式：~/.hermes/hermes-agent，启动器 ~/.local/bin/hermes；本机 DeepSeek deepseek-v4-pro）；控制入口：acp-v1（hermes acp）；分层：焦点。
+原安装：Hermes Agent 真实验收版本 v0.22.5（网关查看器模式：hermes acp 附着到用户正在运行的 launchd 网关，建会话前经只读预检 A，ADR-051 A2；2026-11-01 之前：0.12.0 进程内模式的记录；官方安装方式：~/.hermes/hermes-agent，启动器 ~/.local/bin/hermes；本机默认模型 deepseek:deepseek-v4-pro；版本只作证据（ADR-053））；控制入口：acp-v1（hermes acp）；分层：焦点。
 
 | 能力 | 原接口 | 来源 | Hub | 协议 | 真实原安装 | 证据 | 说明 |
 |---|---|---|---|---|---|---|---|
-| 模型目录与选择 | 具备 | session/new·session/load 返回 models（提供方精选目录，标识为 <提供方>:<模型>），session/set_model 切换（acp_adapter/server.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-catalog.json；.tmp/cc-hermes-config.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
+| 模型目录与选择 | 具备 | session/new·session/load 返回 models（提供方精选目录，标识为 <提供方>:<模型>），session/set_model 切换（acp_adapter/server.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-catalog.json；.tmp/cc-hermes-config.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md；docs/verification/hermes-latest-2026-11-01.md | — |
 | 思考档位 | 不提供 | ACP 不公布推理档位：没有 configOptions，set_config_option 只保存不生效（acp_adapter/server.py） | 不适用 | 不适用 | 不适用 | — | — |
-| 模式与原生设置 | 不提供 | 不公布 modes；set_session_mode 只记录不生效（acp_adapter/server.py） | 不适用 | 不适用 | 不适用 | — | — |
+| 模式与原生设置 | 具备 | session/set_mode：v0.22.5 的网关查看器提供 default / accept_edits / dont_ask 三个模式（目录选项 __mode） | 部分 | 未接出 | 通过 | docs/verification/hermes-latest-2026-11-01.md | 2026-11-01（v0.22.5）：请求 accept_edits 并回报 accept_edits（native-options）；经通用 ACP 选项接出，协议测试尚未覆盖 Hermes 的 set_mode，所以 Hub 侧记为部分 |
 | 原生命令目录与执行 | 具备 | available_commands_update：help、model、tools、context、reset、compact、steer、queue、version，由 Hermes 在本地处理（acp_adapter/server.py _handle_slash_command） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-catalog.json；.tmp/cc-hermes-commands.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
-| 原生命令改配置后的同步 | 具备 | /model <名称> 在本地切换会话模型，只回固定文本，不发 ACP 更新（acp_adapter/server.py _cmd_model） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-config.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | Hub 只在提示词本身是 /model 命令时读取它的回复，并把新模型记为会话当前模型 |
-| 思考输出 | 具备 | 提供方推理增量 → agent_thought_chunk（acp_adapter/events.py make_thinking_cb） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-thinking.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
-| 工具状态 | 具备 | tool_call / tool_call_update（acp_adapter/events.py、tools.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-activity.json；.tmp/cc-attention-2026-10-12.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | Hermes 0.12 的 build_tool_complete 对每个结束的调用都报 completed，失败只写在文本里（“<工具> failed: …”或“BLOCKED: …”）；Hub 据此标为失败（2026-10-12，审批代理决定）。真实回合中 rm -r 被拒绝时曾显示为“完成”；修正后真实回合显示为“失败”；当时同时显示的“Hermes 没有请求审批”提示 2026-10-22 按 ADR-053 删除（它按版本号决定是否显示） |
-| 工具输入/输出/差异 | 具备 | 标题、类型、位置、patch/write_file 差异、结果文本；常用工具不带 rawInput/rawOutput（acp_adapter/tools.py _POLISHED_TOOLS） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-activity.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 常用工具的输入只出现在标题和开始内容里 |
+| 原生命令改配置后的同步 | 具备 | /model <名称> 在本地切换会话模型，只回固定文本，不发 ACP 更新（acp_adapter/server.py _cmd_model） | 已接出 | 通过 | 失败 | .tmp/cc-hermes-config.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md；docs/verification/hermes-latest-2026-11-01.md | Hub 只在提示词本身是 /model 命令时读取它的回复，并把新模型记为会话当前模型；2026-11-01（v0.22.5 网关查看器）：/model deepseek-v4-flash 的命令回合以 failed 结束、没有错误对象，之后仍回报 v4-pro——网关模式下 /model 受守卫需确认，Hub 尚未接确认流程 |
+| 思考输出 | 具备 | 提供方推理增量 → agent_thought_chunk（acp_adapter/events.py make_thinking_cb） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-thinking.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md；docs/verification/hermes-latest-2026-11-01.md | — |
+| 工具状态 | 具备 | tool_call / tool_call_update（acp_adapter/events.py、tools.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-activity.json；.tmp/cc-attention-2026-10-12.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md；docs/verification/hermes-latest-2026-11-01.md | Hermes 0.12 的 build_tool_complete 对每个结束的调用都报 completed，失败只写在文本里（“<工具> failed: …”或“BLOCKED: …”）；Hub 据此标为失败（2026-10-12，审批代理决定）。真实回合中 rm -r 被拒绝时曾显示为“完成”；修正后真实回合显示为“失败”；当时同时显示的“Hermes 没有请求审批”提示 2026-10-22 按 ADR-053 删除（它按版本号决定是否显示） |
+| 工具输入/输出/差异 | 具备 | 标题、类型、位置、patch/write_file 差异、结果文本；常用工具不带 rawInput/rawOutput（acp_adapter/tools.py _POLISHED_TOOLS） | 已接出 | 通过 | 部分通过 | .tmp/cc-hermes-activity.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md；docs/verification/hermes-latest-2026-11-01.md | 常用工具的输入只出现在标题和开始内容里；2026-11-01（v0.22.5）：patch 工具不发 diff，editDiff 判据未通过（原接口缺口）；其余工具详情可读 |
 | 计划 | 部分 | todo 工具只以展示文本出现在工具卡片，ACP 没有 plan 更新（acp_adapter/tools.py） | 未接出 | 未接出 | 未接出 | — | 未把 todo 文本解析为计划 |
-| 用量/上下文/费用 | 具备 | session/prompt 结果的 usage（输入、输出、思考、缓存）与 usage_update（上下文 size/used）（acp_adapter/server.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-activity.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
-| 工具审批 | 具备 | 危险命令经 session/request_permission 审批（允许一次、始终允许、拒绝），60 秒未答自动拒绝（acp_adapter/permissions.py） | 已接出 | 通过 | 受阻 | .tmp/cc-hermes-approval.json；.tmp/cc-attention-2026-10-12.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 本机 Hermes 0.12.0 的缺陷：tools/approval.py 调用审批回调时传入 allow_permanent，ACP 适配层回调不接受（TypeError），危险命令一律按拒绝处理，审批请求根本不会发出；需要用户升级 Hermes（本机落后上游 18332 个提交）。Hub 的 60 秒期限处理已有协议测试（ADR-053 登记的例外，只增加信息；0.12 的缺陷提示由第三批 D2 删除）；2026-10-12 再次确认（rm -r 被拒绝，模型仍回复“已删除”），侧栏的原生期限倒计时只在 Hermes 0.12.0 夹具的浏览器测试中验证（ADR-035） |
+| 用量/上下文/费用 | 具备 | session/prompt 结果的 usage（输入、输出、思考、缓存）与 usage_update（上下文 size/used）（acp_adapter/server.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-activity.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md；docs/verification/hermes-latest-2026-11-01.md | — |
+| 工具审批 | 具备 | 危险命令经 session/request_permission 审批（允许一次、始终允许、拒绝），60 秒未答自动拒绝（acp_adapter/permissions.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-approval.json；.tmp/cc-attention-2026-10-12.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md；docs/verification/hermes-latest-2026-11-01.md | 本机 Hermes 0.12.0 的缺陷：tools/approval.py 调用审批回调时传入 allow_permanent，ACP 适配层回调不接受（TypeError），危险命令一律按拒绝处理，审批请求根本不会发出；需要用户升级 Hermes（本机落后上游 18332 个提交）。Hub 的 60 秒期限处理已有协议测试（ADR-053 登记的例外，只增加信息；0.12 的缺陷提示由第三批 D2 删除）；2026-10-12 再次确认（rm -r 被拒绝，模型仍回复“已删除”），侧栏的原生期限倒计时只在 Hermes 0.12.0 夹具的浏览器测试中验证（ADR-035）；2026-11-01（v0.22.5 网关查看器）：编辑前真实请求审批（选项 allow_once / deny），允许一次后编辑完成；0.12 的缺陷随升级消失 |
 | 原生提问与表单 | 不提供 | hermes-acp 工具集不含 clarify（toolsets.py） | 不适用 | 不适用 | 不适用 | — | — |
-| 图片输入 | 具备 | promptCapabilities.image；图片转为 OpenAI image_url 交给模型（acp_adapter/server.py） | 已接出 | 通过 | 受阻 | .tmp/cc-hermes-dsh-attachments.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | Hermes 公布并转发图片，但本机模型 deepseek-v4-pro 回复看不到图片 |
+| 图片输入 | 具备 | promptCapabilities.image；图片转为 OpenAI image_url 交给模型（acp_adapter/server.py） | 已接出 | 通过 | 受阻 | .tmp/cc-hermes-dsh-attachments.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md；docs/verification/hermes-latest-2026-11-01.md | Hermes 公布并转发图片，但本机模型 deepseek-v4-pro 回复看不到图片；2026-11-01（v0.22.5）：默认模型 deepseek-v4-pro 仍回复“看不到这张图片”，按本机模型受阻 |
 | 音频输入 | 不提供 | 未公布 audio，音频块被丢弃（acp_adapter/server.py _content_blocks_to_openai_user_content） | 不适用 | 不适用 | 不适用 | — | — |
-| 文件/文档输入 | 部分 | resource_link 与嵌入资源不会交给模型（acp_adapter/server.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-attachments.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 原接口缺口：resource_link 与嵌入资源都不会交给模型（acp_adapter/server.py）；Hub 改为在提示词中附上只读副本路径，由 Hermes 用自己的文件工具读取 |
+| 文件/文档输入 | 部分 | resource_link 与嵌入资源不会交给模型（acp_adapter/server.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-attachments.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md；docs/verification/hermes-latest-2026-11-01.md | 原接口缺口：resource_link 与嵌入资源都不会交给模型（acp_adapter/server.py）；Hub 改为在提示词中附上只读副本路径，由 Hermes 用自己的文件工具读取 |
 | 非文本输出 | 不提供 | agent_message_chunk 只发文本（acp_adapter/events.py）；hermes-acp 工具集不含图像生成 | 不适用 | 不适用 | 不适用 | — | — |
 | Skills | 部分 | skills_list、skill_view、skill_manage 工具与 ~/.hermes/skills；ACP 没有技能列表（toolsets.py） | 未接出 | 未接出 | 未接出 | — | — |
 | MCP | 部分 | config.yaml 的 mcp_servers 在启动时注册，会话也可附加 MCP 服务器；ACP 没有列表（acp_adapter/entry.py、server.py） | 未接出 | 未接出 | 未接出 | — | — |
 | 插件/扩展 | 部分 | plugins/ 插件机制；ACP 没有对应接口 | 未接出 | 未接出 | 未接出 | — | — |
-| 原生会话恢复 | 具备 | session/load 从 ~/.hermes/state.db 恢复（未知标识返回 null）；session/resume 对未知标识会静默新建（acp_adapter/session.py、server.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-resume.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md；.tmp/cc-native-resume-commands-2026-10-12.json | Hub 只用 session/load；历史回放在响应之后，等待窗口从响应开始计算；在原程序中继续：`hermes --resume <id>`（help 确认，回合结束时 Hermes 自己也打印），以 `hermes chat --resume <id> -q "…"` 真实验证答出标记（ADR-039） |
-| 原生会话列表/接续 | 具备 | session/list（按 cwd 过滤、游标分页，只列有消息的 ACP 会话）与 session/load 回放（acp_adapter/server.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-import.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 只列出经 ACP 创建的会话（编辑器等），CLI、TUI 与消息网关中的会话不在其中 |
-| 原生分支 | 具备 | session/fork（acp_adapter/session.py fork_session） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-branch.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
-| 上下文压缩 | 具备 | /compact 命令（acp_adapter/server.py _cmd_compact） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-commands.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
+| 原生会话恢复 | 具备 | session/load 从 ~/.hermes/state.db 恢复（未知标识返回 null）；session/resume 对未知标识会静默新建（acp_adapter/session.py、server.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-resume.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md；.tmp/cc-native-resume-commands-2026-10-12.json；docs/verification/hermes-latest-2026-11-01.md | Hub 只用 session/load；历史回放在响应之后，等待窗口从响应开始计算；在原程序中继续：`hermes --resume <id>`（help 确认，回合结束时 Hermes 自己也打印），以 `hermes chat --resume <id> -q "…"` 真实验证答出标记（ADR-039） |
+| 原生会话列表/接续 | 具备 | session/list（按 cwd 过滤、游标分页，只列有消息的 ACP 会话）与 session/load 回放（acp_adapter/server.py） | 已接出 | 通过 | 失败 | .tmp/cc-hermes-dsh-import.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md；docs/verification/hermes-latest-2026-11-01.md | 只列出经 ACP 创建的会话（编辑器等），CLI、TUI 与消息网关中的会话不在其中；2026-11-01（v0.22.5 网关查看器）：hermes acp 建出会话后 session/list 对工作区返回 0 个，接续套件在列表步骤失败；列表规则待查 |
+| 原生分支 | 具备 | session/fork（acp_adapter/session.py fork_session） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-branch.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md；docs/verification/hermes-latest-2026-11-01.md | — |
+| 上下文压缩 | 具备 | /compact 命令（acp_adapter/server.py _cmd_compact） | 已接出 | 通过 | 未接出 | .tmp/cc-hermes-commands.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md；docs/verification/hermes-latest-2026-11-01.md | 2026-11-01（v0.22.5）：ACP 命令目录没有 compact，Hub 不为 Hermes 补入，本轮未验证 |
 | 回滚/回退 | 不提供 | 只有 /reset 清空整段历史，没有回退到某一轮 | 不适用 | 不适用 | 不适用 | — | — |
-| 子 Agent | 部分 | delegate_task 在进程内运行子 Agent；子 Agent 的活动不经 ACP 发出（acp_adapter/tools.py） | 部分 | 未接出 | 部分通过 | .tmp/cc-hermes-subagent.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | delegate_task 只显示为一个 execute 工具（无工具名，标题为“delegate: …”）；子 Agent 自己的工具不经 ACP 发出，无法挂到调用下 |
+| 子 Agent | 部分 | delegate_task 在进程内运行子 Agent；子 Agent 的活动不经 ACP 发出（acp_adapter/tools.py） | 部分 | 未接出 | 未接出 | .tmp/cc-hermes-subagent.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md；docs/verification/hermes-latest-2026-11-01.md | delegate_task 只显示为一个 execute 工具（无工具名，标题为“delegate: …”）；子 Agent 自己的工具不经 ACP 发出，无法挂到调用下；2026-11-01（v0.22.5）：回合里模型没有调用 delegate_task，子 Agent 未复现（不是接口缺口） |
 | 后台任务 | 具备 | process 工具管理后台进程；随每回合结束的 ACP 进程一起结束（toolsets.py） | 已接出 | 通过 | 未接出 | docs/decisions/0030-retained-native-processes.md；docs/verification/first-chain-polish-2026-10-11.md | 同一保留机制：开启后回合之间保留 ACP 进程，后台工作随进程继续（ACP 测试替身经正式运行时验证）；真实后台任务未验证 |
-| 导出与产物 | 具备 | hermes sessions export - --session-id <id> 输出 JSONL（hermes_cli/main.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-export-2026-10-12.json；docs/verification/first-chain-polish-2026-10-11.md | Hermes 没有列出自己的 export 命令时，Hub 提供 /export：只在用户执行时运行一次 hermes sessions export - --session-id <id>（5 秒、8 MiB 上限，只接受普通标识符；未知会话的提示句与超限、超时都明确失败，不记录部分内容），会话的 JSON 行作为产物登记；sessions 子命令不触发插件发现与更新检查，真实运行时进程中只有这一条子命令，用户的 gateway 不受影响 |
+| 导出与产物 | 具备 | hermes sessions export - --session-id <id> 输出 JSONL（hermes_cli/main.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-export-2026-10-12.json；docs/verification/first-chain-polish-2026-10-11.md；docs/verification/hermes-latest-2026-11-01.md | Hermes 没有列出自己的 export 命令时，Hub 提供 /export：只在用户执行时运行一次 hermes sessions export - --session-id <id>（5 秒、8 MiB 上限，只接受普通标识符；未知会话的提示句与超限、超时都明确失败，不记录部分内容），会话的 JSON 行作为产物登记；sessions 子命令不触发插件发现与更新检查，真实运行时进程中只有这一条子命令，用户的 gateway 不受影响 |
 
 ## DeepSeek Harness
 

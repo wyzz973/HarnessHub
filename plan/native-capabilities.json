@@ -2273,7 +2273,7 @@
     {
       "id": "hermes",
       "name": "Hermes Agent",
-      "installation": "Hermes Agent 真实验收版本 0.12.0（版本只作证据，渠道最新版 v0.22.4 是否进入用户网关待用户决定，ADR-051；官方安装方式：~/.hermes/hermes-agent，启动器 ~/.local/bin/hermes；本机 DeepSeek deepseek-v4-pro）",
+      "installation": "Hermes Agent 真实验收版本 v0.22.5（网关查看器模式：hermes acp 附着到用户正在运行的 launchd 网关，建会话前经只读预检 A，ADR-051 A2；2026-11-01 之前：0.12.0 进程内模式的记录；官方安装方式：~/.hermes/hermes-agent，启动器 ~/.local/bin/hermes；本机默认模型 deepseek:deepseek-v4-pro；版本只作证据（ADR-053））",
       "control": "acp-v1（hermes acp）",
       "tier": "focus",
       "capabilities": {
@@ -2286,7 +2286,8 @@
           "evidence": [
             ".tmp/cc-hermes-dsh-catalog.json",
             ".tmp/cc-hermes-config.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md",
+            "docs/verification/hermes-latest-2026-11-01.md"
           ]
         },
         "thought-level": {
@@ -2298,12 +2299,15 @@
           "evidence": []
         },
         "modes-settings": {
-          "native": "no",
-          "source": "不公布 modes；set_session_mode 只记录不生效（acp_adapter/server.py）",
-          "hub": "n/a",
-          "protocol": "n/a",
-          "real": "n/a",
-          "evidence": []
+          "native": "yes",
+          "source": "session/set_mode：v0.22.5 的网关查看器提供 default / accept_edits / dont_ask 三个模式（目录选项 __mode）",
+          "hub": "partial",
+          "protocol": "none",
+          "real": "pass",
+          "evidence": [
+            "docs/verification/hermes-latest-2026-11-01.md"
+          ],
+          "note": "2026-11-01（v0.22.5）：请求 accept_edits 并回报 accept_edits（native-options）；经通用 ACP 选项接出，协议测试尚未覆盖 Hermes 的 set_mode，所以 Hub 侧记为部分"
         },
         "commands": {
           "native": "yes",
@@ -2322,12 +2326,13 @@
           "source": "/model <名称> 在本地切换会话模型，只回固定文本，不发 ACP 更新（acp_adapter/server.py _cmd_model）",
           "hub": "done",
           "protocol": "pass",
-          "real": "pass",
+          "real": "fail",
           "evidence": [
             ".tmp/cc-hermes-config.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md",
+            "docs/verification/hermes-latest-2026-11-01.md"
           ],
-          "note": "Hub 只在提示词本身是 /model 命令时读取它的回复，并把新模型记为会话当前模型"
+          "note": "Hub 只在提示词本身是 /model 命令时读取它的回复，并把新模型记为会话当前模型；2026-11-01（v0.22.5 网关查看器）：/model deepseek-v4-flash 的命令回合以 failed 结束、没有错误对象，之后仍回报 v4-pro——网关模式下 /model 受守卫需确认，Hub 尚未接确认流程"
         },
         "thinking": {
           "native": "yes",
@@ -2337,7 +2342,8 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-hermes-dsh-thinking.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md",
+            "docs/verification/hermes-latest-2026-11-01.md"
           ]
         },
         "tool-status": {
@@ -2349,7 +2355,8 @@
           "evidence": [
             ".tmp/cc-hermes-activity.json",
             ".tmp/cc-attention-2026-10-12.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md",
+            "docs/verification/hermes-latest-2026-11-01.md"
           ],
           "note": "Hermes 0.12 的 build_tool_complete 对每个结束的调用都报 completed，失败只写在文本里（“<工具> failed: …”或“BLOCKED: …”）；Hub 据此标为失败（2026-10-12，审批代理决定）。真实回合中 rm -r 被拒绝时曾显示为“完成”；修正后真实回合显示为“失败”；当时同时显示的“Hermes 没有请求审批”提示 2026-10-22 按 ADR-053 删除（它按版本号决定是否显示）"
         },
@@ -2358,12 +2365,13 @@
           "source": "标题、类型、位置、patch/write_file 差异、结果文本；常用工具不带 rawInput/rawOutput（acp_adapter/tools.py _POLISHED_TOOLS）",
           "hub": "done",
           "protocol": "pass",
-          "real": "pass",
+          "real": "partial",
           "evidence": [
             ".tmp/cc-hermes-activity.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md",
+            "docs/verification/hermes-latest-2026-11-01.md"
           ],
-          "note": "常用工具的输入只出现在标题和开始内容里"
+          "note": "常用工具的输入只出现在标题和开始内容里；2026-11-01（v0.22.5）：patch 工具不发 diff，editDiff 判据未通过（原接口缺口）；其余工具详情可读"
         },
         "plan": {
           "native": "partial",
@@ -2382,7 +2390,8 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-hermes-activity.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md",
+            "docs/verification/hermes-latest-2026-11-01.md"
           ]
         },
         "approvals": {
@@ -2390,13 +2399,14 @@
           "source": "危险命令经 session/request_permission 审批（允许一次、始终允许、拒绝），60 秒未答自动拒绝（acp_adapter/permissions.py）",
           "hub": "done",
           "protocol": "pass",
-          "real": "blocked",
+          "real": "pass",
           "evidence": [
             ".tmp/cc-hermes-approval.json",
             ".tmp/cc-attention-2026-10-12.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md",
+            "docs/verification/hermes-latest-2026-11-01.md"
           ],
-          "note": "本机 Hermes 0.12.0 的缺陷：tools/approval.py 调用审批回调时传入 allow_permanent，ACP 适配层回调不接受（TypeError），危险命令一律按拒绝处理，审批请求根本不会发出；需要用户升级 Hermes（本机落后上游 18332 个提交）。Hub 的 60 秒期限处理已有协议测试（ADR-053 登记的例外，只增加信息；0.12 的缺陷提示由第三批 D2 删除）；2026-10-12 再次确认（rm -r 被拒绝，模型仍回复“已删除”），侧栏的原生期限倒计时只在 Hermes 0.12.0 夹具的浏览器测试中验证（ADR-035）"
+          "note": "本机 Hermes 0.12.0 的缺陷：tools/approval.py 调用审批回调时传入 allow_permanent，ACP 适配层回调不接受（TypeError），危险命令一律按拒绝处理，审批请求根本不会发出；需要用户升级 Hermes（本机落后上游 18332 个提交）。Hub 的 60 秒期限处理已有协议测试（ADR-053 登记的例外，只增加信息；0.12 的缺陷提示由第三批 D2 删除）；2026-10-12 再次确认（rm -r 被拒绝，模型仍回复“已删除”），侧栏的原生期限倒计时只在 Hermes 0.12.0 夹具的浏览器测试中验证（ADR-035）；2026-11-01（v0.22.5 网关查看器）：编辑前真实请求审批（选项 allow_once / deny），允许一次后编辑完成；0.12 的缺陷随升级消失"
         },
         "questions": {
           "native": "no",
@@ -2414,9 +2424,10 @@
           "real": "blocked",
           "evidence": [
             ".tmp/cc-hermes-dsh-attachments.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md",
+            "docs/verification/hermes-latest-2026-11-01.md"
           ],
-          "note": "Hermes 公布并转发图片，但本机模型 deepseek-v4-pro 回复看不到图片"
+          "note": "Hermes 公布并转发图片，但本机模型 deepseek-v4-pro 回复看不到图片；2026-11-01（v0.22.5）：默认模型 deepseek-v4-pro 仍回复“看不到这张图片”，按本机模型受阻"
         },
         "input-audio": {
           "native": "no",
@@ -2434,7 +2445,8 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-hermes-dsh-attachments.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md",
+            "docs/verification/hermes-latest-2026-11-01.md"
           ],
           "note": "原接口缺口：resource_link 与嵌入资源都不会交给模型（acp_adapter/server.py）；Hub 改为在提示词中附上只读副本路径，由 Hermes 用自己的文件工具读取"
         },
@@ -2479,7 +2491,8 @@
           "evidence": [
             ".tmp/cc-hermes-dsh-resume.json",
             "docs/verification/hermes-dsh-onboarding-2026-10-11.md",
-            ".tmp/cc-native-resume-commands-2026-10-12.json"
+            ".tmp/cc-native-resume-commands-2026-10-12.json",
+            "docs/verification/hermes-latest-2026-11-01.md"
           ],
           "note": "Hub 只用 session/load；历史回放在响应之后，等待窗口从响应开始计算；在原程序中继续：`hermes --resume <id>`（help 确认，回合结束时 Hermes 自己也打印），以 `hermes chat --resume <id> -q \"…\"` 真实验证答出标记（ADR-039）"
         },
@@ -2488,12 +2501,13 @@
           "source": "session/list（按 cwd 过滤、游标分页，只列有消息的 ACP 会话）与 session/load 回放（acp_adapter/server.py）",
           "hub": "done",
           "protocol": "pass",
-          "real": "pass",
+          "real": "fail",
           "evidence": [
             ".tmp/cc-hermes-dsh-import.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md",
+            "docs/verification/hermes-latest-2026-11-01.md"
           ],
-          "note": "只列出经 ACP 创建的会话（编辑器等），CLI、TUI 与消息网关中的会话不在其中"
+          "note": "只列出经 ACP 创建的会话（编辑器等），CLI、TUI 与消息网关中的会话不在其中；2026-11-01（v0.22.5 网关查看器）：hermes acp 建出会话后 session/list 对工作区返回 0 个，接续套件在列表步骤失败；列表规则待查"
         },
         "fork": {
           "native": "yes",
@@ -2503,7 +2517,8 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-hermes-dsh-branch.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md",
+            "docs/verification/hermes-latest-2026-11-01.md"
           ]
         },
         "compaction": {
@@ -2511,11 +2526,13 @@
           "source": "/compact 命令（acp_adapter/server.py _cmd_compact）",
           "hub": "done",
           "protocol": "pass",
-          "real": "pass",
+          "real": "none",
           "evidence": [
             ".tmp/cc-hermes-commands.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
-          ]
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md",
+            "docs/verification/hermes-latest-2026-11-01.md"
+          ],
+          "note": "2026-11-01（v0.22.5）：ACP 命令目录没有 compact，Hub 不为 Hermes 补入，本轮未验证"
         },
         "rollback": {
           "native": "no",
@@ -2530,12 +2547,13 @@
           "source": "delegate_task 在进程内运行子 Agent；子 Agent 的活动不经 ACP 发出（acp_adapter/tools.py）",
           "hub": "partial",
           "protocol": "none",
-          "real": "partial",
+          "real": "none",
           "evidence": [
             ".tmp/cc-hermes-subagent.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md",
+            "docs/verification/hermes-latest-2026-11-01.md"
           ],
-          "note": "delegate_task 只显示为一个 execute 工具（无工具名，标题为“delegate: …”）；子 Agent 自己的工具不经 ACP 发出，无法挂到调用下"
+          "note": "delegate_task 只显示为一个 execute 工具（无工具名，标题为“delegate: …”）；子 Agent 自己的工具不经 ACP 发出，无法挂到调用下；2026-11-01（v0.22.5）：回合里模型没有调用 delegate_task，子 Agent 未复现（不是接口缺口）"
         },
         "background": {
           "native": "yes",
@@ -2557,7 +2575,8 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-hermes-export-2026-10-12.json",
-            "docs/verification/first-chain-polish-2026-10-11.md"
+            "docs/verification/first-chain-polish-2026-10-11.md",
+            "docs/verification/hermes-latest-2026-11-01.md"
           ],
           "note": "Hermes 没有列出自己的 export 命令时，Hub 提供 /export：只在用户执行时运行一次 hermes sessions export - --session-id <id>（5 秒、8 MiB 上限，只接受普通标识符；未知会话的提示句与超限、超时都明确失败，不记录部分内容），会话的 JSON 行作为产物登记；sessions 子命令不触发插件发现与更新检查，真实运行时进程中只有这一条子命令，用户的 gateway 不受影响"
         }

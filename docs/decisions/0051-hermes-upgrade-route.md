@@ -112,3 +112,9 @@ Hub 继续接入本机 0.12.0：不做任何版本提示，不升级 Hermes，�
 - `HERMES_TUI_GATEWAY_URL`（gateway_client.py:272-282，远程网关）未处理：预检仍按本地 home 判断，可能误拒，不会误启动。多路复用的 served secondary（gateway_runtime.py:209-237）与 `parked_profiles`、systemd/s6/Windows 分支未实现（只做 macOS，ADR-044）。
 - 真实运行：“验证”一节的第一步（隔离 `HERMES_HOME` 的私有网关）与第二步（对真实网关只附着一次）都没有运行；默认的真实宿主查询 `hostQueries` 没有在真实网关上验证，只验证了解析函数。审批卡“Allow always 写入共用允许列表”的说明已由第三批 D2 落地（`OPTION_NOTES`）。
 - `hermes-acp` 入口能否避开 `hermes_cli.main` 的启动收尾、`fileBlocks` 恢复、usage 增量换算、安装指纹变化时释放保留进程：未做。
+
+### 真实运行（2026-11-01，主代理）
+
+- 本机先 `hermes backup`，再在终端 `hermes update --yes`：v0.22.4+70.g4e58c72 → v0.22.5（bf0203a794a0），更新器自己暂停并重启了 launchd 网关。
+- 预检在真实主机上的第一次运行把真实网关判成 C：launchd 以 `python3 -I -c <引导脚本>` 形式启动网关，`ps` 只看到被截断的引导源码，而记录里的 kind 是 `hermes-gateway`。修复 `ed8bdd4`：内联引导进程按记录的 argv 判定、kind 常量改为 Hermes 的 `_GATEWAY_KIND`（gateway/status.py:40、555-563；gateway/status_inline_source.py:67-162）。修复后判 A，目录读取通过。空的临时 `HERMES_HOME` 判 E 并在启动 `hermes acp` 之前拒绝。
+- “验证”一节的第一步只做到预检 E 的拒绝（私有网关需要单独的模型凭据，不复制用户凭据）；第二步对真实网关只附着运行了 11 个套件，结果与未通过项见[验收记录](../verification/hermes-latest-2026-11-01.md)：审批在网关查看器下真实发出并被遵守；`session/list` 为空、`/model` 受守卫（Hub 尚未接确认流程）、子 Agent 未复现，列为待办。

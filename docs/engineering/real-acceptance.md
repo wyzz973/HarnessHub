@@ -291,7 +291,7 @@ dsh 的 ACP 自报版本恒为 0.0.1，所以版本一律以证据头的 `instal
 
 `HH_REAL_HARNESSES=opencode`。完整套件：`native-catalog`（initialize 报告的版本照抄进记录）；`native-resume`；`native-thinking`；`native-activity` 加 `HH_REAL_APPROVAL=1`；`native-attachments` 加 `HH_REAL_MODEL_OPENCODE=<有视觉能力的模型 id>`；`native-commands`（`/compact` 由 Hub 在命令目录未列出时对任何版本补入，核对回合完成、压缩后仍记得先前事实，与 [1.18.35 的记录](../verification/opencode-compact-2026-10-22.md)一致）；`native-options` 分两次：`HH_REAL_OPTIONS_OPENCODE='{"mode":"plan"}' HH_REAL_EXPECT_UNCHANGED=1`，以及 `HH_REAL_COMMAND=/init HH_REAL_COMMAND_FILE=AGENTS.md`（默认模式，单独一次）；可选：用模型配置里的 `reasoning_options` 补做 thought-level；`native-import`；`native-branch`；`native-extensions`；能力页读取正常、配置守护前后一致。不适用或未接出：questions（`OPENCODE_CLIENT=acp` 下提问工具不启用）、config-sync、subagents。开发侧回归见 6.1。
 
-### 6.6 Hermes Agent（基线：最新正式版 v0.22.4；用户 2026-10-22 已允许进入网关，分两步验收）
+### 6.6 Hermes Agent（基线：最新正式版，2026-11-01 为 v0.22.5；用户 2026-10-22 已允许进入网关，分两步验收）
 
 `HH_REAL_HARNESSES=hermes`。最新版的 `hermes acp` 是网关的查看器：HarnessHub 的会话附着到用户正在运行、同时服务 QQ 的网关（[ADR-051](../decisions/0051-hermes-upgrade-route.md) accepted，A2）。建会话前的只读预检（`src/adapters/control/hermes-gateway.ts`）只在判定 A——兼容网关已在运行、代码与安装一致——时启动 `hermes acp`；B–E 以 `NATIVE_GATEWAY_UNAVAILABLE` 拒绝并给出 `hermes gateway status/start/restart`，HarnessHub 从不启动、停止或替换网关。边界沿用 [ADR-031](../decisions/0031-hermes-and-deepseek-harness.md)：只用文件与终端类工具做无害任务，不触发浏览器、`process`、记忆、`skill_manage` 与网页搜索；`delegate_task` 只在子 Agent 验收中用一次；审批中禁止选“始终允许”（它写入所有会话共用的允许列表，QQ 的会话也受影响）。按 ADR-051“验证”分两步：
 
@@ -299,7 +299,7 @@ dsh 的 ACP 自报版本恒为 0.0.1，所以版本一律以证据头的 `instal
 
 **第二步（受控附着）。** 经用户明确同意、QQ 空闲时对真实网关做一次：先 `hermes gateway status` 看到“supervised by launchd”，核对 `~/.hermes/gateway_state.json` 的 `code_sha` 等于 `~/.hermes/hermes-agent/install-stamp.json` 的 `commit`（否则预检判 B，由用户决定是否 `hermes gateway restart`）；只在预检判 A 时进行，跑 `native-catalog` 与 `native-resume` 各一次即可。核对网关 pid 与启动时间不变（`ps -o lstart= -p <pid>`）、`gateway_state.json` 里 QQ 的平台状态不变、Hub 的会话行写进了用户的 `state.db`、关闭后会话在 FIFO 空闲时被结束。B–E 只用只读文件模拟判定（`tests/unit/hermes-gateway.test.ts` 已覆盖），不去停或起用户的网关。
 
-两步都还没有运行（2026-11-01）。证据按仓库内格式入库；矩阵 `installation` 改为“真实验收版本 v0.22.4”、读表 `checkedOn` 同一提交更新（ADR-053 决定 8）。
+2026-11-01 的运行（[记录](../verification/hermes-latest-2026-11-01.md)）：本机先 `hermes backup`、`hermes update --yes` 到 v0.22.5。第一步只做了预检 E 的拒绝（空的临时 `HERMES_HOME`，`hermes acp` 没有启动）；私有网关上的 16 格没有做——隔离 home 需要单独提供模型凭据，不复制用户凭据。第二步在 QQ 已连接、`active_work` 为空时对真实网关只附着运行了 11 个套件（约 19 次提示）：预检第一版把 launchd 以内联引导（`python3 -I -c …`）启动的网关误判为 C，修复后判 A；审批在网关查看器下真实发出并被遵守，恢复、思考、分支、模式选项、`/export` 通过，`session/list` 为空、`/model` 受守卫、`editDiff`、图片与子 Agent 未通过或未复现。矩阵 `installation` 已改为“真实验收版本 v0.22.5”；读表 `checkedOn` 没有改（读取规则没有在 v0.22.5 上重新核对）。
 
 ### 6.7 OpenClaw（目标 latest；升级待用户确认 ADR-052 路线 A；升级前在 2026.3.23-2 上重做 T-OC-08，≤ ¥3）
 
