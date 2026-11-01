@@ -1,13 +1,13 @@
 import { ArrowRight, Check, ChevronRight, CircleAlert, CircleArrowUp, CircleCheck, CircleDashed, Clock3, Copy, Info, Menu as MenuIcon, Package, PanelLeft, RefreshCw, ScanSearch, Search, Square, Terminal, X } from "lucide-react";
 import { Fragment, useEffect, useId, useRef, useState } from "react";
 import type { MouseEvent, ReactNode } from "react";
-import type { HarnessEntrySource, HarnessReadinessView, HarnessView, InstallationView } from "../../../src/contracts/web.js";
+import type { HarnessEntrySource, HarnessReadinessView, HarnessView, InstallationView, NativeResumeView, SessionSummary } from "../../../src/contracts/web.js";
 import type { InstallationJobView, InstallationLog } from "../../../src/contracts/management.js";
 import { errorMessage, failureMessage, GatewayApi, protocolLabel } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { ago } from "../lib/format.js";
 import { useMedia } from "../lib/prefs.js";
-import { Collapsible } from "../ui/motion.js";
+import { Collapsible, DrawnCheck, SwapText } from "../ui/motion.js";
 import { Dialog } from "../ui/overlay.js";
 import { Badge, Notice, Spinner, StatusPill, Tip } from "../ui/primitives.js";
 import { BrandIcon } from "./BrandIcon.js";
@@ -50,7 +50,7 @@ function jobError(job: InstallationJobView): string | null {
   if (!job.error || job.status === "cancelled") return null;
   if (job.error.code === "HARNESS_BUSY" && LEGACY_BUSY.includes(job.error.message))
     return "开始前发现这个程序正在运行（例如它的后台服务），按当时的规则没有升级。现在再点升级，会先列出需要重启或关闭的程序，由你确认后再升级。";
-  return /[一-鿿]/u.test(job.error.message) ? job.error.message : failureMessage(job.error);
+  return /[\u4e00-\u9fff]/u.test(job.error.message) ? job.error.message : failureMessage(job.error);
 }
 function jobSummary(job: InstallationJobView, name: string): string {
   const verb = verbOf(job), native = job.native;
@@ -104,6 +104,11 @@ interface HarnessProps {
    * signed in or its read failed. Without it the page says only what the scan found.
    */
   readiness?: readonly HarnessReadinessView[] | undefined;
+  /**
+   * The conversations of the Gateway state: the details offer to continue an Agent's latest one in its own program, as
+   * that conversation's details do (ADR-039). Without them the details leave this out.
+   */
+  sessions?: readonly SessionSummary[] | undefined;
   onRescan: () => void; onCheckUpdates: (ids?: readonly string[]) => void; onInstall: (harness: HarnessView, action: "install" | "upgrade", consent?: UpgradeConsent) => void;
   /** Uninstalls one installation the user confirmed (ADR-044). */
   onUninstall: (harness: HarnessView, installation: InstallationView, consent: UninstallConsent) => void;
@@ -117,8 +122,6 @@ interface HarnessProps {
   /** Opens the capability page for one Harness (ADR-045). */
   onCapabilities: (harnessId: string) => void;
   sidebarHidden: boolean; onExpandSidebar: () => void;
-  /** Kept for the callers' shared shell props; the page itself has no way back, the sidebar is the way (ADR-054 §5). */
-  onChat: () => void;
 }
 function missing(harness: HarnessView): boolean { return harness.management.source === "missing" || !harness.controls.some(control => control.available); }
 function available(harness: HarnessView): boolean { return harness.controls.some(control => control.available); }
@@ -185,7 +188,7 @@ function placeOf(harness: HarnessView, long: boolean): string {
 /** A control's reason in the user's words; the Gateway's own diagnostics stay in the technical details. */
 function controlReason(reason: string | null): string {
   if (reason === null) return "缺少对话需要的接入口";
-  if (/[一-鿿]/u.test(reason)) return reason.replace(/[。.]$/u, "");
+  if (/[\u4e00-\u9fff]/u.test(reason)) return reason.replace(/[。.]$/u, "");
   const absent = /^Missing: (.+)$/u.exec(reason)?.[1];
   if (absent) return "缺少它需要的程序 " + absent;
   return reason === "Control Driver is not implemented" ? "HarnessHub 还不支持它的接入方式" : "缺少对话需要的接入口";
@@ -494,7 +497,7 @@ function AgentCard({ harness, state, action, selected, onOpen }: {
         <div className="flex min-w-0 items-center gap-1.5">
           <h3 id={nameId} className="trunc m-0 text-[15px] leading-[22px] font-semibold">{harness.name}</h3>
           {harness.tier === "frozen" ? <Badge tone="neutral" className="harness-frozen flex-none" title="冻结：保留适配与历史对话，不再打磨">冻结</Badge> : null}
-          <StatusPill tone={state.tone} live={state.live} className="-my-px ml-auto flex-none" {...(state.hint ? { title: state.hint } : {})}>{state.pill}</StatusPill>
+          <StatusPill tone={state.tone} live={state.live} className="-my-px ml-auto flex-none" {...(state.hint ? { title: state.hint } : {})}><SwapText text={state.pill}/></StatusPill>
         </div>
         <span className="agent-meta trunc text-caption leading-4 text-fg-3" title={`${version ?? "版本未知"} · ${placeOf(harness, true)}`}>{version ?? "版本未知"} · {placeOf(harness, false)}</span>
       </div>
@@ -543,11 +546,11 @@ function SectionTitle({ id, children, action }: { readonly id: string; readonly 
 }
 /** One step of a task as a timeline row (Agent board, "这次升级"): done, failed, waiting for you, or not reached. */
 interface Step { readonly key: string; readonly mark: "done" | "fail" | "wait" | "skip"; readonly title: string; readonly note: ReactNode }
-function Timeline({ steps }: { readonly steps: readonly Step[] }) {
-  return <ol className="upgrade-steps m-0 flex list-none flex-col p-0">{steps.map((step, index) => <li key={step.key} className="flex gap-3">
+function Timeline({ steps, arrived }: { readonly steps: readonly Step[]; readonly arrived: (key: string) => boolean }) {
+  return <ol className="upgrade-steps m-0 flex list-none flex-col p-0">{steps.map((step, index) => <li key={step.key} className={cn("flex gap-3", arrived(step.key) && "motion-row-in")}>
     {/* The words of each step say how it went; the mark repeats it for the eye. */}
     <div className="flex w-[18px] flex-none flex-col items-center" aria-hidden="true">
-      {step.mark === "done" ? <CircleCheck size={18} className="flex-none text-fg-3"/> : step.mark === "skip" ? <CircleDashed size={18} className="flex-none text-fg-3"/>
+      {step.mark === "done" ? <DrawnCheck size={18} circle animate={arrived(step.key)} className="text-fg-3"/> : step.mark === "skip" ? <CircleDashed size={18} className="flex-none text-fg-3"/>
         : <CircleAlert size={18} className={cn("flex-none", step.mark === "fail" ? "text-red-dot" : "text-amber-dot")}/>}
       {index < steps.length - 1 ? <span className="my-[3px] w-[1.5px] flex-1 rounded-[1px] bg-line-strong" aria-hidden="true"/> : null}
     </div>
@@ -585,7 +588,7 @@ function AgentDetail(props: HarnessProps & { harness: HarnessView; state: AgentS
     <div className="scroll-area flex min-h-0 flex-1 flex-col gap-5 px-5 pb-6">
       {props.error ? <Notice tone="red" onDismiss={props.onDismissError}>{props.error}</Notice> : null}
       {health ? <div className={cn("agent-health flex flex-col gap-1.5 rounded-block px-4 py-3.5", TONE_FILL[state.tone])}>
-        <span className={cn("flex items-center gap-2 text-ui font-semibold", TONE_TEXT[state.tone])}><StateIcon state={state}/>{state.title}</span>
+        <span className={cn("flex items-center gap-2 text-ui font-semibold", TONE_TEXT[state.tone])}><StateIcon state={state}/><SwapText text={state.title}/></span>
         <span className="text-ui-sm text-fg-2" {...(state.hint ? { title: state.hint } : {})}>{state.detail ?? state.summary}</span>
         {unconfirmed ? <div className="mt-1.5 flex flex-wrap gap-2"><button type="button" className="btn btn-sm btn-primary" disabled={props.submitting.includes(harness.id)} onClick={() => props.onConfirm(harness.id)}>确认上次请求</button></div>
           : available(harness) && !busy && (state.kind === "ready" || state.kind === "update" || state.kind === "signin" || state.kind === "readfail")
@@ -602,6 +605,9 @@ function AgentDetail(props: HarnessProps & { harness: HarnessView; state: AgentS
           : seen.state === "signed_out" ? `${ago(seen.checkedAt)}读取时，它需要先登录或完成设置。`
           : seen.state === "failed" ? `${ago(seen.checkedAt)}读取它的模型列表失败。` : "" : "还没有读取过它的模型列表；在对话里选它时会读取。"}模型和登录沿用 {name} 自己的配置，HarnessHub 不复制也不修改。</p>
       </section> : null}
+      {here && props.sessions !== undefined ? <ContinueSection api={props.api} name={name} titleId={ids + "continue"}
+        session={props.sessions.reduce<SessionSummary | null>((latest, item) => item.selection.harnessId === harness.id && (latest === null || item.updatedSeq > latest.updatedSeq) ? item : latest, null)}
+        onOpen={id => { props.onClose(); props.onOpenSession(id); }}/> : null}
       {here ? <MaintenanceSection {...props} busy={busy} titleId={ids + "maintenance"}/> : null}
       {harness.installations.some(item => item.role === "product") ? <section aria-labelledby={ids + "capabilities"} className="flex flex-col gap-2.5">
         <SectionTitle id={ids + "capabilities"}>能力</SectionTitle>
@@ -615,6 +621,33 @@ function AgentDetail(props: HarnessProps & { harness: HarnessView; state: AgentS
       </section>
     </div>
   </>;
+}
+
+/**
+ * How to continue the Agent's latest conversation in its own program (ADR-039), read once when shown: the command the
+ * program's help gives, or its one-question command with what that depends on. HarnessHub only offers it for copying.
+ */
+function ContinueSection({ api, name, session, titleId, onOpen }: { readonly api: GatewayApi; readonly name: string; readonly session: SessionSummary | null; readonly titleId: string; readonly onOpen: (id: string) => void }) {
+  const [view, setView] = useState<NativeResumeView | null | "failed" | undefined>(undefined);
+  const id = session?.id ?? null;
+  useEffect(() => {
+    if (id === null) return;
+    const controller = new AbortController(); setView(undefined);
+    api.nativeResume(id, AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]))
+      .then(value => { if (!controller.signal.aborted) setView(value); }, () => { if (!controller.signal.aborted) setView("failed"); });
+    return () => controller.abort();
+  }, [api, id]);
+  const read = view === undefined || view === "failed" ? null : view, command = read?.interactive ?? read?.once ?? null;
+  return <section aria-labelledby={titleId} className="flex flex-col gap-2.5">
+    <SectionTitle id={titleId}>在原程序里继续对话</SectionTitle>
+    {session === null ? <p className="m-0 text-ui-sm text-fg-2">还没有用 {name} 的对话。</p> : <>
+      <p className="m-0 text-ui-sm text-fg-2">最近的对话<button type="button" className="link-btn font-normal" onClick={() => onOpen(session.id)}>「{session.title}」</button>
+        {view === "failed" ? "：暂时读不到续接命令，可以在这个对话的详情栏里再看。" : view === null ? "还没有可以在原程序里继续的原生会话。"
+          : read?.interactive ? "，在它的工作区目录中运行：" : read?.once ? "，在它的工作区目录中只问一次：" : read?.list ? "：" + read.list : read?.note === "no-command" ? "：这个程序没有可给出的续接命令。" : ""}</p>
+      {command ? <CommandBox command={command} label="复制恢复命令"/> : null}
+      {read && !read.interactive && read.once && read.onceNote ? <p className="m-0 text-caption text-fg-3">{read.onceNote}</p> : null}
+    </>}
+  </section>;
 }
 
 /** How a product that is not here is installed: by HarnessHub the official way, or by the user in a terminal (ADR-044). */
@@ -658,18 +691,24 @@ function JobSection(props: HarnessProps & { harness: HarnessView; job: Installat
       note: service.label + "：" + serviceOutcome(service) })),
   ];
   const fact = "grid grid-cols-[84px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-ui-sm";
+  // What was on screen when the task was first shown: steps added later arrive with motion, and a task that finishes
+  // while shown draws its check (Motion #05, #06); nothing animates when the details open.
+  const [shown, setShown] = useState(() => ({ id: job.id, keys: new Set(steps.map(step => step.key)) as ReadonlySet<string>, active: installationActive(job), finished: false }));
+  if (shown.id !== job.id) setShown({ id: job.id, keys: new Set(steps.map(step => step.key)), active: installationActive(job), finished: false });
+  else if (shown.active !== installationActive(job)) setShown({ ...shown, active: installationActive(job), finished: shown.active && job.status === "completed" });
+  const arrived = (key: string) => shown.id === job.id && !shown.keys.has(key);
   return <section aria-labelledby={props.titleId} className="flex flex-col gap-3">
     <SectionTitle id={props.titleId} action={related.length > 1 ? <select className="field h-7 w-auto max-w-[180px] rounded-row py-0 pr-7 text-caption" aria-label="选择安装任务" value={job.id} onChange={event => props.onSelectJob(event.target.value)}>
       {related.map(item => <option value={item.id} key={item.id}>{verbOf(item)} · {item.resolvedVersion ?? item.id.slice(-8)} · {installationStatus(item)}</option>)}</select> : undefined}>
       {latest ? "这次" : ""}{verbOf(job)}{when(job.createdAt) ? " · " + when(job.createdAt) : ""}</SectionTitle>
     <div className={cn("installation-state flex items-start gap-2.5 rounded-block px-3.5 py-3", TONE_FILL[tone])} role="status">
       <span className={cn("mt-0.5 flex flex-none", tone === "neutral" ? "text-accent-text" : TONE_TEXT[tone])}>
-        {installationActive(job) ? <Spinner size={16} tone="run" label=""/> : job.status === "completed" ? <CircleCheck size={16} aria-hidden="true"/> : job.status === "cancelled" ? <Square size={14} className="text-fg-3" aria-hidden="true"/> : <CircleAlert size={16} aria-hidden="true"/>}</span>
-      <div className="min-w-0"><strong className="block text-ui-sm font-semibold">{installationStatus(job)}</strong>
+        {installationActive(job) ? <Spinner size={16} tone="run" label=""/> : job.status === "completed" ? <DrawnCheck size={16} circle animate={shown.finished}/> : job.status === "cancelled" ? <Square size={14} className="text-fg-3" aria-hidden="true"/> : <CircleAlert size={16} aria-hidden="true"/>}</span>
+      <div className="min-w-0"><strong className="block text-ui-sm font-semibold"><SwapText text={installationStatus(job)} shimmer={installationActive(job)}/></strong>
         <span className="block text-caption text-fg-2">{installationActive(job) ? props.running ?? jobSummary(job, harness.name) : jobSummary(job, harness.name)}</span></div>
     </div>
     {jobError(job) && jobError(job) !== props.said ? <Notice tone={unchanged(job) ? "amber" : "red"}>{jobError(job)}</Notice> : null}
-    {steps.length ? <Timeline steps={steps}/> : null}
+    {steps.length ? <Timeline steps={steps} arrived={arrived}/> : null}
     {native ? <dl className={cn("m-0", fact)}><Fact label="本机渠道">{channelLabel(native.channel)}</Fact><Fact label="操作前版本">{native.beforeVersion ?? "未安装"}</Fact>
       {native.dispatched ? <><Fact label="已核实版本">{native.actualVersion ?? "尚未核实"}</Fact><Fact label="原配置">{native.configurationPreserved === true ? native.configurationChangedByService ? "安装时没有改动；重启后服务自己改写了它" : native.configurationMigrated?.length ? "HarnessHub 没有写入；" + native.configurationMigrated.join("、") + " 由产品的 Doctor 迁移，原件在它的 .bak 备份里" : "保留，已核实" : "尚未确认"}</Fact></> : null}
       {native.closedConversations ? <Fact label="空闲进程">关闭了 {native.closedConversations} 个，下次发消息时重新连接</Fact> : null}
@@ -716,7 +755,7 @@ function MaintenanceSection(props: HarnessProps & { harness: HarnessView; busy: 
     <div className="hairline overflow-hidden rounded-block">
       <dl className="m-0 grid grid-cols-2 gap-3 px-3 py-2.5">
         <div className="min-w-0"><dt className="text-caption text-fg-3">当前版本</dt><dd className="m-0 truncate text-ui font-semibold">{version ?? (harness.installed ? "版本未知" : "未安装")}</dd>{adapter ? <dd className="m-0 text-caption text-fg-3">接入口 {adapter}</dd> : null}</div>
-        <div className="min-w-0"><dt className="text-caption text-fg-3">最新版本</dt><dd className="m-0 truncate text-ui font-semibold">{management.latestVersion ?? "还没有检查"}</dd>{management.checkedAt ? <dd className="m-0 text-caption text-fg-3">{ago(Date.parse(management.checkedAt))}检查</dd> : null}</div>
+        <div className="min-w-0"><dt className="text-caption text-fg-3">最新版本</dt><dd className="m-0 truncate text-ui font-semibold">{management.latestVersion ?? (management.updateStatus === "failed" ? "没有查到" : management.updateStatus === "checking" ? "正在检查…" : management.updateStatus === "unsupported" ? "不检查" : "还没有检查")}</dd>{management.checkedAt ? <dd className="m-0 text-caption text-fg-3">{ago(Date.parse(management.checkedAt))}检查</dd> : null}</div>
       </dl>
       {harness.installations.length ? <ul className="harness-installations m-0 flex list-none flex-col p-0">{harness.installations.map((item, index) => {
         const newer = item.latest !== null && item.latest.error === null && item.latest.version !== null && item.latest.version !== item.version;
