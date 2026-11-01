@@ -2365,7 +2365,7 @@ test("G054-DL9 the application's shortcuts open what they name, ⌥⌘↓ goes t
   assert.deepEqual(errors, []);
 });
 
-test("G054-FR6 the chosen theme applies before the first paint and survives reload, dark pages fit narrow screens with open collapsibles, and reduced motion and the keyboard stop transitions", { timeout: 120000 }, async t => {
+test("G054-FR6 the chosen theme applies before the first paint and survives reload, dark pages fit narrow screens with open collapsibles and uncut status words, and reduced motion and the keyboard stop transitions", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
@@ -2397,6 +2397,18 @@ test("G054-FR6 the chosen theme applies before the first paint and survives relo
   for (const target of ["chat", "harnesses", "settings"] as const) {
     if (target === "harnesses") await page.getByRole("button", { name: "Agent", exact: true }).click();
     if (target === "settings") await page.getByRole("button", { name: "设置", exact: true }).click();
+    if (target === "harnesses") {
+      // #07: a state's box is held at its words' width rounded up, never cut by a fraction of a pixel. The shown words are
+      // made a little wider, to a width ending in a small fraction that rounding to the nearest pixel would cut; words that
+      // change while this runs are new words, made wider the same way.
+      await expect.poll(() => page.evaluate(() => {
+        const layer = document.querySelector<HTMLElement>(".agent-card .swap-text > .swap-text-layer:not(.swap-text-out)")!, box = layer.parentElement!;
+        if (layer.dataset.fraction === undefined) { layer.style.width = (Math.floor(parseFloat(getComputedStyle(layer).width)) + 1.05).toFixed(2) + "px"; layer.dataset.fraction = ""; }
+        const words = parseFloat(getComputedStyle(layer).width);
+        return box.style.width === Math.ceil(words) + "px" ? "held at the words rounded up" : box.style.width + " for words of " + words + "px";
+      })).toBe("held at the words rounded up");
+      await page.evaluate(() => { for (const layer of document.querySelectorAll<HTMLElement>(".swap-text-layer[data-fraction]")) { layer.style.width = ""; delete layer.dataset.fraction; } });
+    }
     for (const width of [390, 320]) {
       await page.setViewportSize({ width, height: 844 });
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${target} overflows at ${width} in the dark theme`);
