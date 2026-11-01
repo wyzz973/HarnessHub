@@ -1133,24 +1133,49 @@ test("a Turn that waits for its workspace past its wait budget is not sent, and 
   assert.deepEqual(errors, []);
 });
 
-test("a Turn the Runtime cancelled when its wait budget ran out keeps the contract's words in the Turn and the details, and the header says 已取消, never 已停止 (ADR-036, ADR-054 decision H)", { timeout: 120000 }, async t => {
+test("a Turn the Runtime cancelled when its wait budget ran out keeps the contract's words in the Turn and the details, the header says 已取消, never 已停止, and out of sight it is announced like a failure while the user's own stop is not (ADR-036, ADR-054 decision H, ruling K)", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false, { name: "Shared Agent", scenario: "hermes" }, null, false, { executionBudgetMs: 60_000, waitBudgetMs: 2000 }); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
   // At this width the details open over the conversation, from the Turn's own button.
-  const context = await isolatedContext(browser, { viewport: { width: 943, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  const context = await isolatedContext(browser, { viewport: { width: 943, height: 900 } });
+  // System notifications are recorded instead of shown, by a browser that allows them once asked (X04); the page's
+  // visibility is the test's to say.
+  await context.addInitScript(() => {
+    const shown: { title: string; body: string; silent: boolean }[] = [], state = { permission: "default", hidden: false };
+    Object.defineProperty(window, "__notices", { value: shown }); Object.defineProperty(window, "__hide", { value: (hidden: boolean) => { state.hidden = hidden; document.dispatchEvent(new Event("visibilitychange")); } });
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state.hidden ? "hidden" : "visible" });
+    class Recorded { static get permission() { return state.permission; } static async requestPermission() { state.permission = "granted"; return "granted"; }
+      onclick: (() => void) | null = null; constructor(title: string, options: { body?: string; silent?: boolean } = {}) { shown.push({ title, body: options.body ?? "", silent: options.silent ?? false }); } close() {} }
+    Object.defineProperty(window, "Notification", { configurable: true, value: Recorded });
+  });
+  const page = await context.newPage(), errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  const hide = (hidden: boolean) => page.evaluate(value => (window as unknown as { __hide: (hidden: boolean) => void }).__hide(value), hidden);
+  const notices = () => page.evaluate(() => (window as unknown as { __notices: { title: string; body: string; silent: boolean }[] }).__notices);
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" }), origin = new URL(fixture.gateway.url).origin;
   const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  const ask = async () => {
+    await composer.fill("approve this"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
+    await expect(page.getByRole("region", { name: "工具审批", exact: true })).toContainText("rm -rf build", { timeout: 15000 });
+  };
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
-  await composer.fill("approve this"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
-  await expect(page.getByRole("region", { name: "工具审批", exact: true })).toContainText("rm -rf build", { timeout: 15000 });
-  // Nobody decides: HarnessHub's wait budget runs out and the Runtime stops the Turn, which the program settles as cancelled.
+  await ask();
+  // Nobody decides, and the page is out of sight: HarnessHub's wait budget runs out and the Runtime stops the Turn, which the
+  // program settles as cancelled.
+  await hide(true);
   const turn = log.locator(".assistant-message").last();
   await expect(turn).toHaveAttribute("data-run-status", "cancelled", { timeout: 15000 });
   const run = (await current()).runs.at(-1);
   assert.deepEqual([run.status, run.error?.code, run.cancelRequested], ["cancelled", "WAIT_EXPIRED", false]);
+  // Notifications were never chosen, so nothing is shown; back in sight, the offer says the Turn was cancelled, never done.
+  assert.deepEqual(await notices(), []);
+  await hide(false);
+  const offer = page.getByRole("dialog", { name: "这一轮在后台被取消了" });
+  await expect(offer).toContainText("要在做完或需要你时用系统通知告诉你吗？");
+  await offer.getByRole("button", { name: "开启通知", exact: true }).click(); await expect(offer).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => Notification.permission)).toBe("granted");
   // The Turn keeps the contract's own words; the header's word is 已取消; nothing calls it the user's stop.
   await expect(turn.locator(".process-summary")).toContainText("已取消（等待你的决定超时）"); await expect(turn.locator(".process-summary")).not.toContainText("已停止");
   await expect(page.locator(".chat-page > header .status-pill")).toHaveText("Shared Agent 已取消");
@@ -1158,6 +1183,23 @@ test("a Turn the Runtime cancelled when its wait budget ran out keeps the contra
   const facts = page.getByRole("complementary", { name: "详情栏" }).locator(".execution-details");
   await expect(facts.locator("dt", { hasText: "执行状态" }).locator("xpath=following-sibling::dd[1]")).toHaveText("已取消（等待你的决定超时）");
   await page.screenshot({ path: join(artifact, "runtime-cancelled.png"), animations: "disabled" });
+  await page.keyboard.press("Escape"); await expect(page.getByRole("complementary", { name: "详情栏" })).toHaveCount(0);
+  // Notifications on: a Turn the Runtime cancels out of sight is announced as a failure is, silently, titled with the Agent
+  // and the contract's words unchanged, with nothing of the conversation.
+  await ask(); await hide(true);
+  await expect(log.locator(".assistant-message").last()).toHaveAttribute("data-run-status", "cancelled", { timeout: 15000 });
+  await expect.poll(async () => (await notices()).length, { timeout: 15000 }).toBe(1);
+  const [cancelled] = await notices();
+  assert.equal(cancelled!.title, "Shared Agent 已取消（等待你的决定超时）"); assert.equal(cancelled!.silent, true); assert.match(cancelled!.body, /^用时 \d+ 秒$/u);
+  await hide(false);
+  // The user's own stop, out of sight as well, is not announced.
+  await ask(); await hide(true); await page.keyboard.press("ControlOrMeta+Period");
+  const last = log.locator(".assistant-message").last();
+  await expect(last).toHaveAttribute("data-run-status", "cancelled", { timeout: 15000 }); await expect(last.locator(".process-summary")).toContainText("已停止");
+  const stopped = (await current()).runs.at(-1);
+  assert.equal(stopped.cancelRequested, true); assert.ok(!["RUN_TIMEOUT", "WAIT_EXPIRED", "OWNER_ENDED"].includes(stopped.error?.code), "the user stopped it: " + stopped.error?.code);
+  assert.equal((await notices()).length, 1, "the user's own stop is not announced");
+  await hide(false);
   assert.deepEqual(errors, []);
 });
 

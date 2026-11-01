@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
-import type { PublicRun, RunStatus } from "../../../src/contracts/session.js";
+import { cancelledLabel, type PublicRun, type RunStatus } from "../../../src/contracts/session.js";
 import { chooseNotifications, notificationsChosen, notificationsSupported } from "../attention.js";
 import { elapsed } from "./format.js";
-import { toolSummary } from "./turn.js";
+import { stoppedByUser, toolSummary } from "./turn.js";
 
 /*
  * System notifications beyond the waiting requests that attention.ts announces (ADR-035, ADR-054 X04). Needing the user
- * rings (attention.ts leaves the system sound on); a Turn that finished or failed only shows, silently. Nothing here
- * carries conversation content: the Agent's name, the outcome, step counts and time. The page asks for permission only
- * when the user turns it on, or after the first reply that finished in the background (see `notificationAsked`).
+ * rings (attention.ts leaves the system sound on); a Turn that finished, failed or that the Runtime cancelled only shows,
+ * silently. Nothing here carries conversation content: the Agent's name, the outcome, step counts and time. The page asks
+ * for permission only when the user turns it on, or after the first reply that ended in the background (see
+ * `notificationAsked`).
  */
 
 /** Every switch that shows the choice (the inbox's, the settings'), told when this page changes it. */
@@ -64,21 +65,35 @@ export function notificationsOfferable(): boolean {
   return notificationsSupported() && !notificationsChosen() && Notification.permission !== "denied" && !notificationAsked();
 }
 
-/** How a Turn ended, as the notification's title says it after the Agent's name. */
-function outcome(status: PublicRun["status"]): string | null {
-  return status === "completed" ? "做完了" : status === "failed" ? "这一轮失败了" : status === "unknown" ? "这一轮结果未知" : null;
+/**
+ * How a Turn ended, as the notification's title says it after the Agent's name. One the Runtime cancelled (its execution
+ * budget used up, its wait deadline passed, the service restarted) says the contract's own words, "已取消（执行预算用尽）"
+ * (ADR-054 ruling K); one the user stopped is not announced at all.
+ */
+function outcome(run: Pick<PublicRun, "status" | "error" | "cancelRequested">): string | null {
+  switch (run.status) {
+    case "completed": return "做完了";
+    case "failed": return "这一轮失败了";
+    case "unknown": return "这一轮结果未知";
+    case "cancelled": return stoppedByUser(run) ? null : cancelledLabel(run);
+    default: return null;
+  }
 }
-/** How a Turn that ended out of sight ended, as the offer of notifications says it when the page is back: a failure is never "done". */
+/**
+ * How a Turn that ended out of sight ended, as the offer of notifications says it when the page is back: a failure or a
+ * cancellation is never "done". A Turn the user stopped is never offered for.
+ */
 export function backgroundOutcome(status: RunStatus): string {
-  return status === "failed" ? "这一轮在后台失败了" : status === "unknown" ? "这一轮在后台结束，结果未知" : "回复在后台做完了";
+  return status === "failed" ? "这一轮在后台失败了" : status === "unknown" ? "这一轮在后台结束，结果未知" : status === "cancelled" ? "这一轮在后台被取消了" : "回复在后台做完了";
 }
 /**
  * Notifies that the open conversation's Turn ended while the page was hidden, when the user chose notifications here and
- * the browser allows them: completed and failed are silent, an unknown result needs the user and keeps the sound. A Turn
- * the user stopped is not announced. Clicking it brings the page forward and runs `open`. Unsupported or refused: silent.
+ * the browser allows them: completed, failed and cancelled by the Runtime are silent, an unknown result needs the user and
+ * keeps the sound. A Turn the user stopped is not announced. Clicking it brings the page forward and runs `open`.
+ * Unsupported or refused: silent.
  */
 export function notifyTurnEnded(run: PublicRun, agent: string, open: () => void): void {
-  const said = outcome(run.status);
+  const said = outcome(run);
   if (said === null || !notificationsSupported() || !notificationsChosen() || Notification.permission !== "granted" || document.visibilityState !== "hidden") return;
   const steps = toolSummary(run.tools ?? [], false).text, ended = run.timing?.endedAt;
   const body = [steps, ended === undefined ? "" : "用时 " + elapsed(ended - run.timing!.acceptedAt)].filter(Boolean).join(" · ");

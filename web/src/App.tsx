@@ -29,7 +29,7 @@ import { BrandIcon } from "./components/BrandIcon.js";
 import { attachmentKind, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, MAX_MESSAGE_ATTACHMENT_BYTES, type AttachmentDraft } from "./components/Attachments.js";
 import { parseContentRef, type ContentRef } from "../../src/contracts/content.js";
 import { hiddenHarnesses, useMedia, useNow, usePreferences } from "./lib/prefs.js";
-import { finished } from "./lib/turn.js";
+import { finished, stoppedByUser } from "./lib/turn.js";
 import { cn } from "./lib/cn.js";
 import { backgroundOutcome, enableNotifications, markNotificationAsked, notificationsOfferable, notifyTurnEnded } from "./lib/notify.js";
 import { useToast } from "./ui/overlay.js";
@@ -911,13 +911,13 @@ export function App() {
   };
   const dirtyChanged = useCallback((dirty: boolean) => setEditorDirty(dirty), []);
   const harnessName = (id: string) => state?.harnesses.find(harness => harness.id === id)?.name ?? id;
-  // The open conversation's latest Turn, once it ends after the page went out of sight, is announced (ADR-054 X04): done
-  // or failed silently, an unknown result with the sound; one the user stopped is not. Each Turn once. Without
-  // notifications chosen, the first such Turn leads to one offer when the page is back.
+  // The open conversation's latest Turn, once it ends after the page went out of sight, is announced (ADR-054 X04): done,
+  // failed or cancelled by the Runtime silently (ruling K), an unknown result with the sound; one the user stopped is not.
+  // Each Turn once. Without notifications chosen, the first such Turn leads to one offer when the page is back.
   const hiddenSince = useRef<number | null>(document.visibilityState === "hidden" ? Date.now() : null), announced = useRef(new Set<string>()), offerNotifications = useRef<RunStatus | null>(null);
   watchTurn.current = (view: SessionView) => {
     const run: PublicRun | undefined = view.runs.at(-1), ended = run?.timing?.endedAt, since = hiddenSince.current;
-    if (!run || since === null || document.visibilityState !== "hidden" || !finished(run.status) || run.status === "cancelled" || ended === undefined || ended < since || announced.current.has(run.id)) return;
+    if (!run || since === null || document.visibilityState !== "hidden" || !finished(run.status) || run.status === "cancelled" && stoppedByUser(run) || ended === undefined || ended < since || announced.current.has(run.id)) return;
     announced.current.add(run.id);
     notifyTurnEnded(run, harnessName(run.selection.harnessId), () => openFromNotice.current(view.id));
     if (notificationsOfferable()) offerNotifications.current = run.status;
