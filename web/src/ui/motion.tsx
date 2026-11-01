@@ -129,7 +129,10 @@ export function Collapsible({ open, children, id, keepMounted = false, className
 
 /**
  * A bar that rises from the bottom while there is something to act on (Motion board #29), such as "已选 3 处 · 预览写入":
- * up 16 px in 300 ms, down in 200 ms, then unmounted. The caller places it (fixed or absolute) with `className`.
+ * up 16 px in 300 ms, down in 200 ms, then unmounted. It centres itself in its containing block at its content's width,
+ * keeping 16 px from either side, so its words wrap only when that room runs out. The caller gives the position and the
+ * bottom offset with `className`, for example "absolute bottom-6" or "fixed bottom-6"; a translate or left: 50% would
+ * halve the room its width is worked out in.
  */
 export function FloatingBar({ open, label, children, className }: { readonly open: boolean; readonly label: string; readonly children: ReactNode; readonly className?: string }) {
   const presence = usePresence(open, 300, 200);

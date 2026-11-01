@@ -4075,6 +4075,12 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
   // The bar rises 16 px in 300 ms on the appear curve (Motion board #29) and counts the files once each change is prepared.
   const bar = page.getByRole("region", { name: "已选的格子" });
   await expect(bar).toContainText("已选 1 处 · 会改 1 个文件");
+  // It centres itself in the page at its content's width (the page only says where its bottom is), so its words wrap only
+  // when the room between its 16 px insets runs out, and then by whole phrases: at most two lines.
+  const placed = (region: typeof bar) => region.evaluate(element => {
+    const box = element.getBoundingClientRect(), page = element.closest(".capabilities-page")!.getBoundingClientRect(), words = element.querySelector("[role='status'], .trunc")!;
+    return { offset: Math.round(Math.abs((box.left - page.left) - (page.right - box.right))), lines: Math.round((words.getBoundingClientRect().height - parseFloat(getComputedStyle(words).paddingTop) * 2) / 20) };
+  });
   assert.deepEqual(await bar.evaluate(element => { const style = getComputedStyle(element); return [style.transitionProperty, style.transitionDuration, style.transitionTimingFunction]; }),
     ["opacity, transform", "0.3s, 0.3s", "cubic-bezier(0.165, 0.84, 0.44, 1), cubic-bezier(0.165, 0.84, 0.44, 1)"]);
   // From the keyboard: the focus ring is there at once, Space picks, and nothing animates (Motion board #37).
@@ -4093,6 +4099,7 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
   await expect(bar).toContainText("已选 3 处 · 会改 2 个文件");
   assert.deepEqual(requests, ["skill-switch?harnessId=claude&name=beta&enabled=true", "skill-link?harnessId=claude&name=gamma&present=true", "plugin-switch?harnessId=claude&id=tool%40market&enabled=true"]);
   assert.deepEqual(posted, [], "picking only prepares the checks");
+  assert.deepEqual(await placed(bar), { offset: 0, lines: 1 });
   await page.screenshot({ path: join(artifact, "dl8-capabilities-picked-light-1440.png"), animations: "disabled" });
 
   // The preview names every file and shows its exact lines, or the link it makes; nothing is written before "写入".
@@ -4119,6 +4126,7 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
   assert.equal(pluginChecks, 2);
   const written = page.getByRole("region", { name: "写入结果" }), result = page.locator(".capability-result");
   await expect(written).toContainText("已写入 2 个文件");
+  assert.deepEqual(await placed(written), { offset: 0, lines: 1 });
   // The bar that opened the preview is gone; the focus moves to the undo of what was written instead of falling to the page.
   await expect(written.getByRole("button", { name: "撤销", exact: true })).toBeFocused();
   for (const text of ["已写入 2 个文件", "Claude Code · 启用 beta", "Claude Code · 启用插件 tool@market", "Claude Code · 把 gamma 放到 Claude Code", "新开的 Claude Code 会话才读到这次插件改动。"]) await expect(result).toContainText(text);
@@ -4194,6 +4202,7 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
       await expect(page.getByRole("tablist", { name: "能力类别" })).not.toHaveAttribute("aria-orientation", "vertical");
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       const edges = await bar.boundingBox(); assert.ok(edges && edges.x >= 0 && edges.x + edges.width <= width, `the bar fits a ${width} px screen`);
+      const where = await placed(bar); assert.ok(where.offset === 0 && where.lines <= 2, `the bar is centred with its words on at most two lines at ${width} px: ` + JSON.stringify(where));
       await page.screenshot({ path: join(artifact, `dl8-capabilities-${scheme}-${width}.png`), animations: "disabled" });
     }
   }

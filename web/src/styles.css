@@ -352,8 +352,12 @@
   .collapsible[data-state="open"] > .collapsible-inner { overflow: visible; }
   .collapsible[data-open="false"] > .collapsible-inner { visibility: hidden; transition: visibility 0s linear var(--dur-base); }
 
-  /* #29 Floating bar: rises 16 px in 300 ms, falls in 200 ms */
+  /*
+   * #29 Floating bar: rises 16 px in 300 ms, falls in 200 ms. It centres itself between 16 px insets at its content's width,
+   * which wraps only when the room between the insets runs out; the caller makes it absolute or fixed and sets its bottom.
+   */
   .floating-bar {
+    inset-inline: 16px; width: fit-content; margin-inline: auto;
     display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 0 8px 0 16px; border-radius: var(--radius-card); background: var(--bg-surface);
     box-shadow: var(--sh-pop); color: var(--text); font-size: 12px; line-height: 18px; white-space: nowrap;
     transition: opacity var(--dur-slow) var(--ease-out), transform var(--dur-slow) var(--ease-out);
