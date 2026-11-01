@@ -173,19 +173,30 @@ export function Composer(props: ComposerProps) {
     const node = box.current, from = settledHeight.current;
     if (firstDock.current) { firstDock.current = false; return; }
     if (!node || from === null) return;
-    const to = node.offsetHeight, skip = reduced || instant.current;
-    closedAtOnce.current = !docked && instant.current; instant.current = false;
+    // Reading the height applies the new classes: the amber ring's own 200 ms transition starts here.
+    const to = node.offsetHeight, keyboard = instant.current, skip = reduced || keyboard;
+    closedAtOnce.current = !docked && keyboard; instant.current = false;
     // Focus that was in the dock (or fell to the page when it closed) goes back to the message.
     if (!docked) { const focused = document.activeElement; if (focused === null || focused === document.body || dockLayer.current?.contains(focused)) inputRef.current?.focus({ preventScroll: true }); }
-    if (skip || Math.abs(from - to) < 1) { settledHeight.current = to; return; }
+    if (skip || Math.abs(from - to) < 1) {
+      settledHeight.current = to;
+      if (!keyboard) return;
+      // A decision from the keyboard finishes at once (#37): the ring leaves with the dock instead of fading out.
+      node.style.transition = "none"; void node.offsetHeight;
+      const frame = requestAnimationFrame(() => { node.style.transition = ""; });
+      return () => { cancelAnimationFrame(frame); node.style.transition = ""; };
+    }
     morphing.current = true;
     const duration = docked ? 300 : 200;
     node.style.height = from + "px"; node.style.overflow = "hidden";
     void node.offsetHeight;
-    node.style.transition = `height ${duration}ms var(--ease-out)`; node.style.height = to + "px";
-    const done = () => { node.style.height = ""; node.style.overflow = ""; node.style.transition = ""; morphing.current = false; settledHeight.current = node.offsetHeight; };
-    const timer = setTimeout(done, duration + 40);
-    return () => { clearTimeout(timer); done(); };
+    // The height moves on its own clock; naming box-shadow too keeps the ring's 200 ms fade running instead of cancelling it.
+    node.style.transition = `height ${duration}ms var(--ease-out), box-shadow 200ms var(--ease-standard)`; node.style.height = to + "px";
+    const finish = () => { node.style.height = ""; node.style.overflow = ""; node.style.transition = ""; morphing.current = false; };
+    const timer = setTimeout(() => { finish(); settledHeight.current = node.offsetHeight; }, duration + 40);
+    // The next change starts from where this one stands. A finished morph already recorded its height; this runs after
+    // the new layout is in place, so its own height is not the starting point. One cut short starts from its current height.
+    return () => { clearTimeout(timer); if (morphing.current) { settledHeight.current = node.getBoundingClientRect().height; finish(); } };
   }, [docked]);
   const dockPresence = usePresence(docked, 300, 200);
   const shownApproval = useRef<DockedApproval | null>(null);

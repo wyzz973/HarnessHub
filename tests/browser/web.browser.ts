@@ -1585,16 +1585,37 @@ test("G054-DL5 an approval waits in the composer's place: ⏎ allows once and es
   assert.equal(await results.first().evaluate(element => getComputedStyle(element).animationName), "hh-fade-in");
   await expect(log.getByRole("button", { name: "等你批准，请求停在下方输入框的位置", exact: true })).toHaveCount(0);
   await expect.poll(() => box.evaluate(element => getComputedStyle(element).boxShadow)).not.toContain("rgb(245, 158, 11)");
+  // M20: the same box turns into the approval, its height in 300 ms while the amber ring fades in over its own 200 ms, and
+  // back in 200 ms; a decision from the keyboard puts the composer back at once (#37). The box's own transitions are logged
+  // from here, once the ring of the first decision has gone.
+  await page.waitForTimeout(300);
+  await box.evaluate(element => {
+    const entries: string[] = []; (window as unknown as { __box: string[] }).__box = entries;
+    for (const type of ["transitionrun", "transitionend", "transitioncancel"]) element.addEventListener(type, event => {
+      const name = (event as TransitionEvent).propertyName;
+      if (event.target === element && (name === "height" || name === "box-shadow")) entries.push(type.slice(10) + ":" + name + (type === "transitionrun" && name === "height" ? ":" + getComputedStyle(element).transitionDuration.split(",")[0]!.trim() : ""));
+    });
+  });
+  const boxLog = () => page.evaluate(() => [...(window as unknown as { __box: string[] }).__box]);
   // esc refuses (a key right after the approval took the focus is still taken as meant for the message being typed).
-  await ask(); await expect(dock).toBeFocused(); await page.waitForTimeout(600);
+  await ask(); await expect(dock).toBeFocused();
+  await expect.poll(boxLog).toEqual(expect.arrayContaining(["run:height:0.3s", "end:height", "end:box-shadow"]));
+  assert.ok(!(await boxLog()).includes("cancel:box-shadow"), "the morph does not cut the ring's fade short");
+  await page.waitForTimeout(600);
+  const docked = (await boxLog()).length;
   await page.keyboard.press("Escape");
   await expect(log).toContainText('"optionId":"deny"', { timeout: 15000 });
   await expect(results).toHaveText(["你允许了一次：rm -rf build", "你拒绝了：rm -rf build"]);
-  // A lasting option answers to no key and only to a click.
+  await expect(composer).toBeVisible(); await page.waitForTimeout(300);
+  const back = (await boxLog()).slice(docked);
+  assert.ok(!back.some(entry => entry.startsWith("run:height") || entry === "end:box-shadow"), `from the keyboard the composer comes back at once (${back.join(", ")})`);
+  // A lasting option answers to no key and only to a click; the pointer's decision morphs back in 200 ms.
   await ask(); await page.waitForTimeout(600); await page.keyboard.press("3"); await expect(dock).toBeVisible();
+  const clicked = (await boxLog()).length;
   await dock.getByRole("button", { name: "Allow always", exact: true }).click();
   await expect(log).toContainText('"optionId":"allow_always"', { timeout: 15000 });
   await expect(results.last()).toHaveText("你选择了“Allow always”：rm -rf build");
+  await expect.poll(async () => (await boxLog()).slice(clicked)).toEqual(expect.arrayContaining(["run:height:0.2s", "end:height", "end:box-shadow"]));
   await shoot("dl5-decided");
   // A question stays in its Turn, and the composer stays where it is.
   await page.getByRole("button", { name: "新对话", exact: true }).click();
