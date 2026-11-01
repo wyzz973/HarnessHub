@@ -1,4 +1,4 @@
-import { ArrowDown, Check, ChevronUp, Circle, CircleDashed, FileDown, GitBranch, ListChecks, Menu as MenuIcon, MoreHorizontal, PanelLeft, PanelRight, TerminalSquare, X } from "lucide-react";
+import { ArrowDown, Check, ChevronUp, Circle, CircleDashed, FileDown, GitBranch, ListChecks, ListTree, Menu as MenuIcon, MoreHorizontal, PanelLeft, PanelRight, TerminalSquare, X } from "lucide-react";
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import type { ContentRef } from "../../../src/contracts/content.js";
@@ -445,9 +445,8 @@ export function ChatPage(props: ChatProps) {
       </div>
       {session ? <>
         <HeaderState session={session} active={active} harnessName={harnessName}/>
-        <div className="hidden lg:flex"><div className="segmented" role="group" aria-label="过程显示">
-          <button type="button" aria-pressed={!detailed} onClick={() => props.onPreference("density", "compact")}>简洁</button>
-          <button type="button" aria-pressed={detailed} onClick={() => props.onPreference("density", "detailed")}>详细</button></div></div>
+        {/* The Conversation board's header ends with the details button and "…": showing every step and ending the conversation
+            are items of that menu (rulings R1, R3), so they are there at every width. */}
         <div className="flex items-center gap-0.5 sm:gap-2.5">
           <Tip label={<>{panelOpen ? "收起详情" : "打开详情"}（⌘\）</>}><button type="button" className="icon-btn relative" aria-label="详情栏" aria-pressed={panelOpen} aria-describedby={changes ? "details-changes" : undefined} onClick={() => setPanel(!panelOpen)}>
             <PanelRight size={16}/>{!panelOpen && changes ? <ChangeBadge count={changes} news={changesArrived}/> : null}
@@ -456,14 +455,17 @@ export function ChatPage(props: ChatProps) {
           <Menu align="end" trigger={<button type="button" className="icon-btn" aria-label="更多操作" title="更多操作"><MoreHorizontal size={16}/></button>} items={[
             { label: "从最新回复分支", icon: <GitBranch size={14}/>, disabled: !canBranch || !props.onBranch || !session.runs.some(run => ["completed", "failed", "cancelled"].includes(run.status)), onSelect: () => { const last = [...session.runs].reverse().find(run => ["completed", "failed", "cancelled"].includes(run.status)); if (last) props.onBranch?.(last.id); } },
             { label: "在原程序中继续的方式", icon: <TerminalSquare size={14}/>, onSelect: showResume },
+            { separator: true },
             { label: panelOpen ? "收起详情" : "打开详情", icon: <PanelRight size={14}/>, hint: "⌘\\", onSelect: () => setPanel(!panelOpen) },
+            // Checked is the detailed density: every Turn's steps open. This browser keeps it, as the setting does (ruling R1).
+            { label: "显示每一步", icon: <ListTree size={14}/>, checked: detailed, onSelect: () => props.onPreference("density", detailed ? "compact" : "detailed") },
             { separator: true },
             { label: "导出 Markdown", icon: <FileDown size={14}/>, href: exportBase + "markdown", download: true },
             { label: "导出 JSON", icon: <FileDown size={14}/>, href: exportBase + "json", download: true },
             { separator: true },
-            { label: "结束对话…", icon: <X size={14}/>, danger: true, disabled: session.status === "closed" || mutation !== null, onSelect: () => setConfirmClose(true) },
+            // The one way to end the conversation (ruling R3); the confirmation below is unchanged.
+            { label: "结束对话…", icon: <X size={14}/>, description: "结束会话，保留历史", danger: true, disabled: session.status === "closed" || mutation !== null, onSelect: () => setConfirmClose(true) },
           ]} footer="导出公开对话与执行摘要；原生内部状态不包含在内。"/>
-          {session.status !== "closed" ? <Tip label="结束会话，保留历史"><button type="button" className="icon-btn close-chat" aria-label="关闭这个对话" disabled={mutation !== null} onClick={() => setConfirmClose(true)}><X size={16}/></button></Tip> : null}
         </div>
       </> : null}
     </header>

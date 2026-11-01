@@ -485,13 +485,18 @@ test("live chat renders committed partial Markdown before completion, respects r
     const style = getComputedStyle(element); return [style.animationDuration, style.transitionDuration].flatMap(value => value.split(",").map(part => parseFloat(part) * (part.trim().endsWith("ms") ? 1 : 1000)));
   }); assert.ok(motion.every(value => value <= 1));
   await page.screenshot({ path: join(artifact, "chat-cancelled-943.png"), fullPage: true, animations: "disabled" });
-  await page.getByRole("button", { name: "关闭这个对话", exact: true }).click();
+  // The conversation ends from the "…" menu's 结束对话… alone (ruling R3): the header has no × of its own.
+  await expect(page.getByRole("button", { name: "关闭这个对话" })).toHaveCount(0);
+  const more = page.getByRole("button", { name: "更多操作", exact: true }), end = page.getByRole("menuitem", { name: "结束对话…", exact: true });
+  await more.click(); await expect(end).toHaveAccessibleDescription("结束会话，保留历史"); await end.click();
   await expect(page.getByRole("dialog", { name: "结束这次会话？", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "继续对话", exact: true }).click();
   assert.equal((await current()).snapshot.status, "open");
-  await page.getByRole("button", { name: "关闭这个对话", exact: true }).click();
+  await more.click(); await end.click();
   await page.getByRole("button", { name: "结束会话", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "发送消息", exact: true })).toBeDisabled();
+  // Once ended, the item stays in the menu, disabled.
+  await more.click(); await expect(end).toBeDisabled(); await page.keyboard.press("Escape");
   await expect(page.getByRole("status").filter({ hasText: "对话已关闭，可查看历史" })).toBeVisible();
   await expect(page.getByText("可以继续对话", { exact: true })).toHaveCount(0);
   assert.equal((await current()).snapshot.status, "closed");
@@ -1469,12 +1474,17 @@ test("G054-FR2 G054-FR3 the process folds into one line, the density choice stay
   const summary = log.locator(".process-summary");
   await expect(summary).toHaveText(/^改了 1 处，运行 1 条命令 · [0-9.]+ 秒$/u); await expect(summary).toHaveAttribute("aria-expanded", "false");
   await expect(log.getByRole("list", { name: "工具活动" })).toHaveCount(0);
-  await page.getByRole("button", { name: "详细", exact: true }).click();
+  // The density is the "…" menu's checkable 显示每一步, checked for every step (ruling R1); the header has no 简洁 or 详细.
+  const header = page.locator(".chat-page > header"), more = header.getByRole("button", { name: "更多操作", exact: true });
+  const everyStep = page.getByRole("menuitemcheckbox", { name: "显示每一步", exact: true });
+  await expect(header.getByRole("button", { name: /^(简洁|详细)$/u })).toHaveCount(0);
+  await more.click(); await expect(everyStep).toHaveAttribute("aria-checked", "false"); await everyStep.click();
+  await expect(everyStep).toHaveCount(0);
   await expect(log.getByRole("list", { name: "工具活动" })).toBeVisible();
   await page.reload();
-  await expect(page.getByRole("button", { name: "详细", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await more.click(); await expect(everyStep).toHaveAttribute("aria-checked", "true");
   await expect(log.getByRole("list", { name: "工具活动" })).toBeVisible();
-  await page.getByRole("button", { name: "简洁", exact: true }).click();
+  await everyStep.click();
   await expect(log.getByRole("list", { name: "工具活动" })).toHaveCount(0);
   // D04 (ADR-054 decision E): wide enough for the panel beside the conversation, it still stays closed, changes or not; its
   // button carries the number of changes, said in full to a screen reader. A page drawn again in the compact density reads
@@ -1515,6 +1525,8 @@ test("G054-FR2 G054-FR3 the process folds into one line, the density choice stay
   await expect(page.getByRole("dialog")).toContainText("本轮用量");
   await page.getByRole("button", { name: "关闭详情栏", exact: true }).click(); await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
+  // On a phone the menu offers 显示每一步 as well (ruling R1: at every width).
+  await more.click(); await expect(everyStep).toBeVisible(); await expect(everyStep).toHaveAttribute("aria-checked", "false"); await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "详情栏", exact: true }).click(); await expect(page.getByRole("dialog")).toBeVisible();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "the details sheet must not overflow a narrow screen");
   await page.screenshot({ path: join(artifact, "details-sheet-390.png"), animations: "disabled" });

@@ -2,8 +2,8 @@ import { Dialog as BaseDialog } from "@base-ui/react/dialog";
 import { Menu as BaseMenu } from "@base-ui/react/menu";
 import { Popover as BasePopover } from "@base-ui/react/popover";
 import { Toast as BaseToast } from "@base-ui/react/toast";
-import { X } from "lucide-react";
-import { useMemo, type ReactElement, type ReactNode, type RefObject } from "react";
+import { Check, X } from "lucide-react";
+import { useId, useMemo, type ReactElement, type ReactNode, type RefObject } from "react";
 import { cn } from "../lib/cn.js";
 
 type Side = "top" | "bottom" | "left" | "right";
@@ -48,11 +48,18 @@ export interface MenuEntry {
   readonly label: ReactNode;
   readonly icon?: ReactNode;
   readonly hint?: ReactNode;
+  /** A second line under the label, in the caption style; it is also the item's accessible description. */
+  readonly description?: ReactNode;
   readonly onSelect?: () => void;
   readonly href?: string;
   readonly download?: boolean;
   readonly disabled?: boolean;
   readonly danger?: boolean;
+  /**
+   * Makes the entry a checkable one (role menuitemcheckbox, aria-checked) that shows its state with the blue check on the
+   * right, as the pickers mark their choice. Choosing it calls `onSelect` and closes the menu like any other item.
+   */
+  readonly checked?: boolean;
   readonly separator?: false;
 }
 /** A menu of actions; links download or navigate natively, items run their handler and close the menu. */
@@ -60,6 +67,7 @@ export function Menu({ trigger, items, side = "bottom", align = "end", footer, c
   readonly trigger: ReactElement; readonly items: readonly (MenuEntry | { readonly separator: true } | { readonly heading: string })[];
   readonly side?: Side; readonly align?: Align; readonly footer?: ReactNode; readonly className?: string;
 }) {
+  const id = useId();
   return <BaseMenu.Root>
     <BaseMenu.Trigger render={trigger}/>
     <BaseMenu.Portal>
@@ -67,10 +75,19 @@ export function Menu({ trigger, items, side = "bottom", align = "end", footer, c
         <BaseMenu.Popup className={cn("surface-pop min-w-[220px] p-[5px]", className)}>
           {items.map((item, index) => "separator" in item && item.separator ? <div key={index} className="menu-sep" role="separator"/>
             : "heading" in item ? <div key={index} className="menu-label">{item.heading}</div>
-            : (() => { const entry = item as MenuEntry; const body = <>{entry.icon ? <span className="flex w-4 flex-none justify-center text-fg-3" aria-hidden="true">{entry.icon}</span> : null}<span className="flex-1">{entry.label}</span>{entry.hint ? <span className="text-caption text-fg-3">{entry.hint}</span> : null}</>;
+            : (() => {
+              const entry = item as MenuEntry, described = entry.description === undefined ? undefined : `${id}-${index}-description`;
+              const body = <>{entry.icon ? <span className={cn("flex w-4 flex-none justify-center text-fg-3", described && "self-start pt-0.5")} aria-hidden="true">{entry.icon}</span> : null}
+                {/* Hidden from the item's name, the description is read as its description (aria-describedby). */}
+                {described ? <span className="flex min-w-0 flex-1 flex-col"><span>{entry.label}</span><span id={described} className="text-caption text-fg-3" aria-hidden="true">{entry.description}</span></span> : <span className="flex-1">{entry.label}</span>}
+                {entry.hint ? <span className="text-caption text-fg-3">{entry.hint}</span> : null}
+                {entry.checked !== undefined ? <Check size={15} strokeWidth={2.2} className={cn("flex-none text-accent-text", !entry.checked && "invisible")} aria-hidden="true"/> : null}</>;
+              const look = cn("menu-item", entry.danger && "menu-item-danger");
               return entry.href !== undefined
-                ? <BaseMenu.LinkItem key={index} className={cn("menu-item", entry.danger && "menu-item-danger")} href={entry.href} {...(entry.download ? { download: "" } : {})}>{body}</BaseMenu.LinkItem>
-                : <BaseMenu.Item key={index} className={cn("menu-item", entry.danger && "menu-item-danger")} disabled={entry.disabled ?? false} onClick={() => entry.onSelect?.()}>{body}</BaseMenu.Item>; })())}
+                ? <BaseMenu.LinkItem key={index} className={look} href={entry.href} {...(entry.download ? { download: "" } : {})}>{body}</BaseMenu.LinkItem>
+                : entry.checked !== undefined
+                  ? <BaseMenu.CheckboxItem key={index} className={look} checked={entry.checked} closeOnClick disabled={entry.disabled ?? false} aria-describedby={described} onCheckedChange={() => entry.onSelect?.()}>{body}</BaseMenu.CheckboxItem>
+                  : <BaseMenu.Item key={index} className={look} disabled={entry.disabled ?? false} aria-describedby={described} onClick={() => entry.onSelect?.()}>{body}</BaseMenu.Item>; })())}
           {footer ? <div className="mt-1 hairline-t px-2 pt-2 pb-1.5 text-caption text-fg-3">{footer}</div> : null}
         </BaseMenu.Popup>
       </BaseMenu.Positioner>

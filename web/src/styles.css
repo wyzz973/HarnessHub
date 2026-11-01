@@ -485,7 +485,9 @@
   }
   .menu-item[data-highlighted], .menu-item:hover { background: var(--bg-subtle); color: var(--text); text-decoration: none; }
   .menu-item[data-disabled] { opacity: .45; }
-  .menu-item-danger, .menu-item-danger[data-highlighted] { color: var(--red); }
+  .menu-item-danger { color: var(--red); }
+  /* Pointed at, its words sit on the hover tint: the higher-contrast red of small text on a tint (ruling M) */
+  .menu-item-danger[data-highlighted], .menu-item-danger:hover { color: var(--red-on-tint); }
   .menu-sep { height: .5px; margin: 4px 6px; background: var(--border-strong); }
   .menu-label { padding: 6px 8px 2px; font-size: 12px; line-height: 18px; font-weight: 500; color: var(--text-3); }
   /* #28 Dialogs: the veil fades, the panel grows from .98; 200 ms. The panel's edge is its floating shadow and hairline */
