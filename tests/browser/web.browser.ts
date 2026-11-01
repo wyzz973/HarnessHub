@@ -2329,9 +2329,19 @@ test("G054-DL9 the application's shortcuts open what they name, ⌥⌘↓ goes t
   await page.evaluate(() => { for (const [key, shiftKey] of [["o", true], ["b", false]] as const) document.body.dispatchEvent(new KeyboardEvent("keydown", { key, metaKey: true, shiftKey, isComposing: true, bubbles: true, cancelable: true })); });
   await expect(heading).toBeVisible(); await expect(navigation).toBeVisible();
   const before = await panel(); await page.keyboard.press("ControlOrMeta+."); await expect(heading).toBeVisible(); assert.equal(await panel(), before);
-  // ⌘B hides the sidebar and brings it back.
-  await page.keyboard.press("ControlOrMeta+B"); await expect(navigation).toHaveCount(0);
-  await page.keyboard.press("ControlOrMeta+B"); await expect(navigation).toBeVisible();
+  // ⌘B hides the sidebar and brings it back. A control of the page keeps focus; one in the sidebar leaves with it, and
+  // focus moves to the button that shows the sidebar again, then to the one that hides it: the keyboard keeps its place.
+  const frozen = page.getByRole("switch", { name: FROZEN_SWITCH }), expand = page.locator("#main-content").getByRole("button", { name: "展开侧栏", exact: true });
+  const collapse = navigation.getByRole("button", { name: "收起侧栏", exact: true });
+  await frozen.focus();
+  await page.keyboard.press("ControlOrMeta+B"); await expect(navigation).toHaveCount(0); await expect(frozen).toBeFocused();
+  await page.keyboard.press("ControlOrMeta+B"); await expect(navigation).toBeVisible(); await expect(frozen).toBeFocused();
+  await navigation.getByRole("button", { name: "设置", exact: true }).focus();
+  await page.keyboard.press("ControlOrMeta+B"); await expect(navigation).toHaveCount(0); await expect(expand).toBeFocused();
+  await page.keyboard.press("ControlOrMeta+B"); await expect(navigation).toBeVisible(); await expect(collapse).toBeFocused();
+  // The two buttons do the same from the keyboard.
+  await page.keyboard.press("Enter"); await expect(navigation).toHaveCount(0); await expect(expand).toBeFocused();
+  await page.keyboard.press("Enter"); await expect(navigation).toBeVisible(); await expect(collapse).toBeFocused();
   // ⌘/ lists every shortcut in the board's words, each key as its own cap, with what the browser keeps. Stopping a reply
   // also takes esc in the composer, so its row gives both.
   await page.keyboard.press("ControlOrMeta+/");
@@ -3105,6 +3115,11 @@ test("G054-DL8 the Agent page gives each Agent a card with its version and chann
   assert.equal((await title.boundingBox())?.y, 56, "the title sits under the bar that shows the sidebar again");
   await expand.click(); await expect(page.getByRole("complementary", { name: "主导航" })).toBeVisible(); await expect(expand).toHaveCount(0);
   assert.equal((await title.boundingBox())?.y, 44);
+  // From the keyboard the same round trip keeps its place: the button that hides the sidebar leaves with it and hands
+  // focus to the bar's button that shows it again, which leaves in turn and hands it back.
+  const collapse = page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "收起侧栏", exact: true });
+  await collapse.focus(); await page.keyboard.press("Enter"); await expect(expand).toBeFocused();
+  await page.keyboard.press("Enter"); await expect(collapse).toBeFocused(); assert.equal((await title.boundingBox())?.y, 44);
 
   // A02: one card per Agent: its mark, name, version · channel, state, one sentence of facts, and its actions; no count without a fact.
   const mine = main.getByRole("region", { name: "这台 Mac 上的 Agent" }), cards = mine.getByRole("article"), card = (name: string) => mine.getByRole("article", { name, exact: true });

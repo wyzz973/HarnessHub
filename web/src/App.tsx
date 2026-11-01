@@ -1,6 +1,6 @@
 import { ArrowDown, Blocks, Bot, Inbox, Keyboard, ListCollapse, Monitor, Moon, PanelLeft, PanelRight, RefreshCw, Settings, SlidersHorizontal, SquarePen, Sun } from "lucide-react";
 import { Dialog as BaseDialog } from "@base-ui/react/dialog";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import type { AttentionItem, PublicRun, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
 import type { ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
@@ -575,6 +575,17 @@ export function App() {
   // so a drawer left open on a narrow window never shows again by itself the next time the window becomes narrow.
   const [layoutNarrow, setLayoutNarrow] = useState(narrow);
   if (layoutNarrow !== narrow) { setLayoutNarrow(narrow); setSidebarOpen(false); setInboxOpen(false); afterLayer.current = null; }
+  // Hiding or showing the sidebar on a wide screen takes away the button that did it (the sidebar's 收起侧栏, a page's
+  // 展开侧栏), or, with ⌘B, the sidebar's control that had focus. Focus then moves to the button that undoes it, or to the
+  // main region where a page has none, so the keyboard keeps its place instead of starting again from the top.
+  const sidebarFocus = useRef<Element | null>(null);
+  const showSidebar = (shown: boolean) => { if (shown === preferences.sidebar) return; sidebarFocus.current = document.activeElement; setPreference("sidebar", shown); };
+  useLayoutEffect(() => {
+    const from = sidebarFocus.current; sidebarFocus.current = null;
+    if (from === null || from === document.body || from.isConnected) return;
+    (document.querySelector<HTMLElement>(preferences.sidebar ? "aside[aria-label='主导航'] button[aria-label='收起侧栏']" : "#main-content button[aria-label='展开侧栏']")
+      ?? document.getElementById("main-content"))?.focus();
+  }, [preferences.sidebar]);
   // The application's shortcuts (ADR-054 §5): ⇧⌘O, ⌘K, ⌘/, ⌥⌘↓ and ⌘B. The composer, approval dock and details panel
   // handle ⌘J, ⌘., ⌘\, ⏎, esc and ↑ themselves. An input method's composition never triggers one, and ⌘N, ⌘T and ⌘W
   // stay the browser's.
@@ -586,7 +597,7 @@ export function App() {
       if (!event.shiftKey && !event.altKey && key === "k") { event.preventDefault(); if (!narrow) setInboxOpen(false); if (palette) setPalette(false); else openLayer(() => setPalette(true)); return; }
       if (!event.altKey && event.key === "/") { event.preventDefault(); if (!narrow) setInboxOpen(false); if (shortcuts) setShortcuts(false); else openLayer(() => setShortcuts(true)); return; }
       if (event.altKey && !event.shiftKey && event.key === "ArrowDown") { event.preventDefault(); nextWaiting(); return; }
-      if (!event.shiftKey && !event.altKey && key === "b" && !(event.target instanceof Element && event.target.closest(SHORTCUT_TARGETS))) { event.preventDefault(); if (narrow) setSidebarOpen(value => !value); else setPreference("sidebar", !preferences.sidebar); return; }
+      if (!event.shiftKey && !event.altKey && key === "b" && !(event.target instanceof Element && event.target.closest(SHORTCUT_TARGETS))) { event.preventDefault(); if (narrow) setSidebarOpen(value => !value); else showSidebar(!preferences.sidebar); return; }
     };
     window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
   });
@@ -987,8 +998,8 @@ export function App() {
   const sidebar = <Sidebar providerManagement={state.providerManagement !== false} page={shown} sessions={state.sessions} harnesses={state.harnesses} currentId={sessionId}
     interactionBusy={mutation !== null} activeJobs={state.jobs.filter(installationActive).length} updates={state.harnesses.filter(harness => !hidden.has(harness.id) && hasUpdate(harness)).length}
     failed={failed} connected={connectionError === null && managementConnectionError === null && !attentionDown} inbox={inbox} inboxOpen={inboxOpen && !narrow} onInboxOpenChange={setInboxOpen}
-    onCollapse={() => setPreference("sidebar", false)} {...(narrow ? { onClose: () => setSidebarOpen(false), onInbox: openInbox } : {})} onPage={next => { setSidebarOpen(false); if (next === "capabilities") setCapabilityHarness(null); navigate(next); }} onNew={newChat} onSession={chooseAndClose} onPalette={() => openLayer(() => setPalette(true))}/>;
-  const shell = { onMenu: () => setSidebarOpen(value => !value), sidebarHidden: !preferences.sidebar, onExpandSidebar: () => setPreference("sidebar", true), onChat: () => navigate("chat") };
+    onCollapse={() => showSidebar(false)} {...(narrow ? { onClose: () => setSidebarOpen(false), onInbox: openInbox } : {})} onPage={next => { setSidebarOpen(false); if (next === "capabilities") setCapabilityHarness(null); navigate(next); }} onNew={newChat} onSession={chooseAndClose} onPalette={() => openLayer(() => setPalette(true))}/>;
+  const shell = { onMenu: () => setSidebarOpen(value => !value), sidebarHidden: !preferences.sidebar, onExpandSidebar: () => showSidebar(true), onChat: () => navigate("chat") };
   return <TipProvider delay={500}><div className="app-shell flex h-dvh overflow-hidden bg-app text-fg" data-page={shown}>
     <WaitingTitle items={attentionItems}/>
     <a className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[80] focus:rounded-control focus:bg-surface focus:px-3 focus:py-2 focus:text-ui-sm focus:shadow-pop" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>跳到主要内容</a>
