@@ -52,7 +52,8 @@
   /* Green appears only on the added lines of a diff */
   --green: #15803D; --green-dot: #22C55E; --green-soft: rgba(34, 197, 94, .12);
   --add-bg: rgba(34, 197, 94, .12); --add-text: #15803D; --del-bg: rgba(239, 68, 68, .10); --del-text: #DC2626;
-  --scrim: rgba(15, 17, 21, .28);
+  /* Behind dialogs, drawers and sheets: a veil of the sidebar's color, light or dark with it (Capabilities board) */
+  --scrim: color-mix(in srgb, var(--bg-sidebar) 60%, transparent);
   --selection: rgba(58, 106, 224, .18);
   --scrollbar: rgba(0, 0, 0, .18);
   --shimmer-peak: #0F1115;
@@ -89,7 +90,6 @@
     --red: #F87171; --red-dot: #F05252; --red-soft: rgba(240, 82, 82, .14); --red-line: rgba(240, 82, 82, .38);
     --green: #4ADE80; --green-dot: #22C55E; --green-soft: rgba(34, 197, 94, .16);
     --add-bg: rgba(34, 197, 94, .16); --add-text: #4ADE80; --del-bg: rgba(240, 82, 82, .16); --del-text: #F87171;
-    --scrim: rgba(0, 0, 0, .5);
     --selection: rgba(110, 150, 255, .30);
     --scrollbar: rgba(255, 255, 255, .18);
     --shimmer-peak: #FFFFFF;
@@ -452,7 +452,7 @@
   .menu-item-danger, .menu-item-danger[data-highlighted] { color: var(--red); }
   .menu-sep { height: .5px; margin: 4px 6px; background: var(--border-strong); }
   .menu-label { padding: 6px 8px 2px; font-size: 12px; line-height: 18px; font-weight: 500; color: var(--text-3); }
-  /* #28 Dialogs: the scrim fades, the panel grows from .98; 200 ms */
+  /* #28 Dialogs: the veil fades, the panel grows from .98; 200 ms. The panel's edge is its floating shadow and hairline */
   .backdrop { position: fixed; inset: 0; background: var(--scrim); transition: opacity var(--dur-base) var(--ease-out); }
   .backdrop[data-starting-style], .backdrop[data-ending-style] { opacity: 0; }
   .dialog-pop {

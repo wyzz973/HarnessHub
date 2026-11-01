@@ -2469,16 +2469,17 @@ test("G054-DL1 the neutral tokens follow the system in both themes, text uses th
   assert.deepEqual(scale.radii, ["6px", "8px", "10px", "12px", "14px", "28px"]);
 
   // §1: tokens read through the same variables the components use, light by default and dark when the system is dark.
+  // Dialogs, drawers and sheets sit on a veil of the sidebar's color at 60 % (the Capabilities board's write preview).
   const tokens = () => page.evaluate(() => {
-    const probe = document.createElement("i"), well = document.createElement("span"), app = document.createElement("span"), mono = document.createElement("img");
-    well.className = "brand-tile"; well.dataset.kind = "mark"; app.className = "brand-tile"; app.dataset.kind = "app"; mono.className = "brand-mono";
-    document.body.append(probe, well, app, mono);
+    const probe = document.createElement("i"), well = document.createElement("span"), app = document.createElement("span"), mono = document.createElement("img"), veil = document.createElement("div");
+    well.className = "brand-tile"; well.dataset.kind = "mark"; app.className = "brand-tile"; app.dataset.kind = "app"; mono.className = "brand-mono"; veil.className = "backdrop";
+    document.body.append(probe, well, app, mono, veil);
     const color = (name: string) => { probe.style.color = `var(${name})`; return getComputedStyle(probe).color; };
     const names = ["--bg-sidebar", "--bg-app", "--bg-surface", "--bg-subtle", "--bg-hover", "--bg-selected", "--text", "--text-2", "--text-3", "--accent", "--accent-text", "--on-accent", "--amber-dot", "--amber", "--red-dot", "--red", "--add-text"];
     probe.style.boxShadow = "var(--sh-composer)";
     const result = { ...Object.fromEntries(names.map(name => [name, color(name)])), page: getComputedStyle(document.body).backgroundColor, composer: getComputedStyle(probe).boxShadow,
-      well: getComputedStyle(well).backgroundColor, app: getComputedStyle(app).backgroundColor, mono: getComputedStyle(mono).filter, theme: document.documentElement.getAttribute("data-theme") };
-    probe.remove(); well.remove(); app.remove(); mono.remove(); return result;
+      well: getComputedStyle(well).backgroundColor, app: getComputedStyle(app).backgroundColor, mono: getComputedStyle(mono).filter, veil: getComputedStyle(veil).backgroundColor, theme: document.documentElement.getAttribute("data-theme") };
+    probe.remove(); well.remove(); app.remove(); mono.remove(); veil.remove(); return result;
   });
   assert.deepEqual(await tokens(), {
     "--bg-sidebar": "rgb(249, 250, 251)", "--bg-app": "rgb(255, 255, 255)", "--bg-surface": "rgb(255, 255, 255)", "--bg-subtle": "rgb(244, 245, 247)", "--bg-hover": "rgb(235, 237, 240)",
@@ -2486,7 +2487,7 @@ test("G054-DL1 the neutral tokens follow the system in both themes, text uses th
     "--accent-text": "rgb(47, 95, 208)", "--on-accent": "rgb(255, 255, 255)", "--amber-dot": "rgb(245, 158, 11)", "--amber": "rgb(180, 83, 9)", "--red-dot": "rgb(239, 68, 68)",
     "--red": "rgb(220, 38, 38)", "--add-text": "rgb(21, 128, 61)", page: "rgb(255, 255, 255)",
     composer: "rgba(0, 0, 0, 0.1) 0px 0px 0px 0.5px, rgba(0, 0, 0, 0.03) 0px 4px 16px 0px, rgba(0, 0, 0, 0.03) 0px 0px 24px 0px",
-    well: "rgb(255, 255, 255)", app: "rgba(0, 0, 0, 0)", mono: "none", theme: null });
+    well: "rgb(255, 255, 255)", app: "rgba(0, 0, 0, 0)", mono: "none", veil: "color(srgb 0.976471 0.980392 0.984314 / 0.6)", theme: null });
   // §4: every Agent mark on the page sits in a tile of at least 16 px.
   for (const tile of await page.locator(".brand-tile").all()) { const box = await tile.boundingBox(); assert.ok(box === null || (box.width >= 16 && box.height >= 16), "an Agent mark is at least 16 px"); }
   await page.screenshot({ path: join(artifact, "dl1-light-1440.png"), animations: "disabled" });
@@ -2497,7 +2498,7 @@ test("G054-DL1 the neutral tokens follow the system in both themes, text uses th
     "--accent-text": "rgb(138, 176, 255)", "--on-accent": "rgb(255, 255, 255)", "--amber-dot": "rgb(245, 158, 11)", "--amber": "rgb(251, 191, 36)", "--red-dot": "rgb(240, 82, 82)",
     "--red": "rgb(248, 113, 113)", "--add-text": "rgb(74, 222, 128)", page: "rgb(24, 25, 28)",
     composer: "rgba(255, 255, 255, 0.12) 0px 0px 0px 0.5px, rgba(0, 0, 0, 0.35) 0px 8px 24px 0px",
-    well: "rgb(42, 43, 47)", app: "rgba(0, 0, 0, 0)", mono: "invert(1)", theme: null });
+    well: "rgb(42, 43, 47)", app: "rgba(0, 0, 0, 0)", mono: "invert(1)", veil: "color(srgb 0.0666667 0.0705882 0.0784314 / 0.6)", theme: null });
   await page.screenshot({ path: join(artifact, "dl1-dark-1440.png"), animations: "disabled" });
 
   // §4: the favicon and the sidebar mark are "one point fanning out": a blue tile, one dot, three lines, on the 32 grid.
@@ -4105,6 +4106,8 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
   await expect(files.nth(0)).toContainText("现在的设置：不是 HarnessHub 写的"); await expect(files.nth(0)).toContainText("新开的 Claude Code 会话才读到这次插件改动。");
   await expect(files.nth(1)).toContainText("~/.claude/skills"); await expect(files.nth(1).locator(".capability-links li")).toHaveText(["+ 新建~/.claude/skills/gamma → ~/.agents/skills/gamma"]);
   await expect(bar).toBeHidden(); await expect(write).toHaveCSS("opacity", "1");
+  // The page behind is veiled in the sidebar's color, as on the Capabilities board, not darkened.
+  assert.equal(await page.locator(".backdrop").evaluate(element => getComputedStyle(element).backgroundColor), "color(srgb 0.976471 0.980392 0.984314 / 0.6)");
   // A preview taller than the dialog scrolls; no file's block is squeezed to hide some of its lines.
   assert.deepEqual(await files.evaluateAll(nodes => nodes.map(node => node.scrollHeight - node.clientHeight)), [0, 0]);
   await page.screenshot({ path: join(artifact, "dl8-capabilities-preview-light-1440.png"), animations: "disabled" });
@@ -4176,6 +4179,7 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
   await bar.getByRole("button", { name: "预览写入", exact: true }).click();
   const darkPreview = page.getByRole("dialog", { name: "写入 1 个文件" });
   await expect(darkPreview.locator(".capability-diff .text-red")).toHaveText(["-    \"beta\": \"off\""]); await expect(darkPreview).toHaveCSS("opacity", "1");
+  assert.equal(await page.locator(".backdrop").evaluate(element => getComputedStyle(element).backgroundColor), "color(srgb 0.0666667 0.0705882 0.0784314 / 0.6)");
   await page.screenshot({ path: join(artifact, "dl8-capabilities-preview-dark-1440.png"), animations: "disabled" });
   const sent = posted.length;
   await darkPreview.getByRole("button", { name: "取消", exact: true }).click(); await expect(darkPreview).toBeHidden();

@@ -11,7 +11,8 @@ type Align = "start" | "center" | "end";
 
 /*
  * Floating layers of design language 2.0: popovers and menus grow from their trigger (.98 → 1, 120 ms, back in 100 ms),
- * dialogs from the middle over a fading scrim (200 ms), drawers slide in from their edge, toasts rise from the bottom.
+ * dialogs from the middle over a fading veil of the sidebar's color (200 ms), drawers slide in from their edge over the
+ * same veil, toasts rise from the bottom.
  * All of them sit on the surface color with the floating shadow (radius 14), open and close at once from the keyboard,
  * and only fade when the system asks to reduce motion. Layers stack: popovers and menus 50, option lists 55, dialogs 60–61, tips 70, toasts 80.
  */
@@ -78,9 +79,10 @@ export function Menu({ trigger, items, side = "bottom", align = "end", footer, c
 }
 
 /**
- * A modal dialog with a title; closing returns focus to whatever opened it. "center" grows from the middle and shows the
- * title and description (panel title 17/24); "drawer" slides in from the right, "left" is the narrow-screen navigation
- * drawer and "sheet" rises from the bottom; those three keep the title for assistive technology only.
+ * A modal dialog with a title; closing returns focus to whatever opened it. The page behind it is veiled in the sidebar's
+ * color. "center" grows from the middle and shows the title and description (panel title 17/24); "drawer" slides in from
+ * the right, "left" is the narrow-screen navigation drawer and "sheet" rises from the bottom; those three keep the title
+ * for assistive technology only.
  */
 export function Dialog({ open, onOpenChange, title, description, children, className, kind = "center", initialFocus }: {
   readonly open: boolean; readonly onOpenChange: (open: boolean) => void; readonly title: ReactNode; readonly description?: ReactNode; readonly children: ReactNode;
