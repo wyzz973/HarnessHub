@@ -2185,6 +2185,8 @@ test("G054-DL9 ⌘J opens the Agent list, ⌘. stops the reply, ⌘\\ opens and 
   });
   assert.deepEqual(await handoverMotion(), { pill: "hh-fade-in / 0.2s / 0s", arrow: "hh-draw / 0.16s / 0.14s", mark: "hh-pop-in, hh-fade-in / 0.3s, 0.12s / 0.22s / 0.6",
     lines: ["hh-line-grow / 0.3s / 0.12s", "hh-line-grow / 0.3s / 0.12s"] });
+  for (const scheme of ["light", "dark"] as const) { await page.emulateMedia({ colorScheme: scheme }); await page.screenshot({ path: join(artifact, `dl9-handover-pill-${scheme}.png`), animations: "disabled" }); }
+  await page.emulateMedia({ colorScheme: "light" });
   // Found in the history the page opens with, it stays still.
   await page.reload(); await expect(handover).toBeVisible();
   assert.deepEqual(await handoverMotion(), { pill: "none / 0s / 0s", arrow: "none / 0s / 0s", mark: "none / 0s / 0s / ", lines: ["none / 0s / 0s", "none / 0s / 0s"] });
