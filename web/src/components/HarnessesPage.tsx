@@ -243,10 +243,10 @@ function agentState(harness: HarnessView, facts: StateFacts): AgentState {
   if (job || facts.submitting.includes(harness.id)) {
     if (!job) return { kind: "busy", tone: "accent", live: true, pill: "提交中", title: "正在提交请求", summary: "请求已发出，等本机服务接收。" };
     const status = installationStatus(job);
-    const summary = job.cancelRequested ? "正在取消，清理完成后结束。"
-      : job.action === "install" ? `正在安装 ${name}${job.resolvedVersion ? " " + job.resolvedVersion : ""}。任务在本机服务里运行，离开这个页面也不受影响。`
-      : `${job.action === "upgrade" ? "正在升级" + (job.resolvedVersion ? "到 " + job.resolvedVersion : "") : "正在卸载"}。完成前不会用 ${name} 开始新的任务。`;
-    return { kind: "busy", tone: "accent", live: true, pill: status, title: status, summary };
+    // The pill says where the task is; the sentence says its target and what it means meanwhile.
+    const target = job.cancelRequested || !job.resolvedVersion ? "" : (job.action === "install" ? "安装 " : job.action === "upgrade" ? "升级到 " : "卸载 ") + job.resolvedVersion + "。";
+    const why = job.cancelRequested ? "清理完成后结束。" : job.action === "install" ? "任务在本机服务里运行，离开这个页面也不受影响。" : `完成前不会用 ${name} 开始新的任务。`;
+    return { kind: "busy", tone: "accent", live: true, pill: status, title: status, summary: target + why };
   }
   const intent = facts.unconfirmed.find(item => item.harnessId === harness.id);
   if (intent) {
@@ -264,11 +264,14 @@ function agentState(harness: HarnessView, facts: StateFacts): AgentState {
   }
   if (!available(harness)) {
     const reason = controlReason(harness.controls.find(control => !control.available)?.reason ?? null);
-    return { kind: "blocked", tone: "amber", live: false, pill: "需要处理", title: "还不能对话", summary: `已找到 ${name}，但还不能对话：${reason}。` };
+    return { kind: "blocked", tone: "amber", live: false, pill: "需要处理", title: "还不能对话", summary: `已找到 ${name}，但还不能对话：${reason}。`, detail: reason + "。" };
   }
   const seen = readinessOf(harness, facts.readiness), read = seen ? readinessStatus(harness, seen) : undefined;
   if (seen?.state === "signed_out" && read) return { kind: "signin", tone: "amber", live: false, pill: read.label, title: read.label, summary: `需要先在 ${name} 里登录或完成设置，才能用它对话。`, hint: read.title };
-  if (seen?.state === "failed" && read) return { kind: "readfail", tone: "red", live: false, pill: read.label, title: "读取模型列表失败", summary: "上次读取它的模型列表失败：" + failureMessage({ code: seen.failureCode ?? "", message: "原因未知，在对话里重新读取模型列表可以重试。" }), hint: read.title };
+  if (seen?.state === "failed" && read) {
+    const failure = failureMessage({ code: seen.failureCode ?? "", message: "原因未知，在对话里重新读取模型列表可以重试。" });
+    return { kind: "readfail", tone: "red", live: false, pill: read.label, title: "读取模型列表失败", summary: "上次读取它的模型列表失败：" + failure, detail: failure, hint: read.title };
+  }
   const signedIn = seen?.state === "ready" && seen.signedIn === true, known = readyFacts(harness), hint = read?.title;
   if (harness.management.updateStatus === "available") {
     const latestVersion = harness.management.latestVersion, current = versionOf(harness);
@@ -568,7 +571,8 @@ function AgentDetail(props: HarnessProps & { harness: HarnessView; state: AgentS
   const unconfirmed = props.unconfirmed.find(item => item.harnessId === harness.id);
   const busy = Boolean(job && installationActive(job)) || props.submitting.includes(harness.id);
   const here = onMachine(harness), version = versionOf(harness), seen = readinessOf(harness, props.readiness), ids = useId();
-  const health = state.kind !== "missing";
+  // A running task is the state: its own section says it, so the state box is left out rather than said twice.
+  const health = state.kind !== "missing" && !(state.kind === "busy" && job !== null && installationActive(job));
   return <>
     <header className="flex items-center gap-3.5 pt-5 pr-4 pb-4 pl-5">
       <BrandIcon brand={harness.id} name={name} size={52}/>
@@ -590,7 +594,8 @@ function AgentDetail(props: HarnessProps & { harness: HarnessView; state: AgentS
       {harness.install?.note ? <p className="harness-install-note m-0 text-ui-sm text-fg-2">{harness.install.note}</p> : null}
       {harness.unofficial ? <Notice className="harness-unofficial">在{harness.unofficial.onPath ? " PATH " : "标准目录"}中发现一个非官网安装（开发目录、npm link 或其他），命令名 {harness.unofficial.command}；平台不使用也不维护它。{harness.unofficial.pathDefault ? harness.installations.some(item => item.role === "product") ? `终端里 ${harness.unofficial.command} 运行的是这份非官网安装；HarnessHub 使用的是标为“当前使用”的官网安装。` : "终端里能用的就是它。" : ""}</Notice> : null}
       {!here ? <InstallSection {...props} busy={busy} titleId={ids + "install"}/> : null}
-      {job ? <JobSection {...props} job={job} related={related} titleId={ids + "job"} onSelectJob={setSelectedJobId} said={state.jobId === job.id ? state.detail ?? null : null}/> : null}
+      {job ? <JobSection {...props} job={job} related={related} titleId={ids + "job"} onSelectJob={setSelectedJobId} said={state.jobId === job.id ? state.detail ?? null : null}
+        running={state.kind === "busy" ? state.summary : null}/> : null}
       {here ? <section aria-labelledby={ids + "models"} className="flex flex-col gap-2.5">
         <SectionTitle id={ids + "models"}>模型与登录</SectionTitle>
         <p className="m-0 text-ui-sm text-fg-2">{props.readiness === undefined ? "" : seen?.checkedAt != null ? seen.state === "ready" ? `${ago(seen.checkedAt)}读取过它的模型列表${seen.signedIn === true ? "，已登录" : ""}。`
@@ -636,7 +641,9 @@ function InstallSection(props: HarnessProps & { harness: HarnessView; busy: bool
 /** The task shown in the details: its result first, then each step the Gateway recorded, the other facts, its log and its controls. */
 function JobSection(props: HarnessProps & { harness: HarnessView; job: InstallationJobView; related: readonly InstallationJobView[]; titleId: string; onSelectJob: (id: string) => void;
   /** What the state box above already says of this task, not repeated here. */
-  said: string | null }) {
+  said: string | null;
+  /** What a running task means meanwhile, said under its status. */
+  running: string | null }) {
   const { harness, job, related } = props, native = job.native;
   const [inspecting, setInspecting] = useState(false), [inspectionError, setInspectionError] = useState<string | null>(null);
   const inspect = async () => { if (inspecting) return; setInspecting(true); setInspectionError(null); try { await props.api.inspectInstallation(job.id); props.onRescan(); } catch (error) { setInspectionError(errorMessage(error)); } finally { setInspecting(false); } };
@@ -658,7 +665,8 @@ function JobSection(props: HarnessProps & { harness: HarnessView; job: Installat
     <div className={cn("installation-state flex items-start gap-2.5 rounded-block px-3.5 py-3", TONE_FILL[tone])} role="status">
       <span className={cn("mt-0.5 flex flex-none", tone === "neutral" ? "text-accent-text" : TONE_TEXT[tone])}>
         {installationActive(job) ? <Spinner size={16} tone="run" label=""/> : job.status === "completed" ? <CircleCheck size={16} aria-hidden="true"/> : job.status === "cancelled" ? <Square size={14} className="text-fg-3" aria-hidden="true"/> : <CircleAlert size={16} aria-hidden="true"/>}</span>
-      <div className="min-w-0"><strong className="block text-ui-sm font-semibold">{installationStatus(job)}</strong><span className="block text-caption text-fg-2">{jobSummary(job, harness.name)}</span></div>
+      <div className="min-w-0"><strong className="block text-ui-sm font-semibold">{installationStatus(job)}</strong>
+        <span className="block text-caption text-fg-2">{installationActive(job) ? props.running ?? jobSummary(job, harness.name) : jobSummary(job, harness.name)}</span></div>
     </div>
     {jobError(job) && jobError(job) !== props.said ? <Notice tone={unchanged(job) ? "amber" : "red"}>{jobError(job)}</Notice> : null}
     {steps.length ? <Timeline steps={steps}/> : null}
@@ -713,7 +721,7 @@ function MaintenanceSection(props: HarnessProps & { harness: HarnessView; busy: 
       {harness.installations.length ? <ul className="harness-installations m-0 flex list-none flex-col p-0">{harness.installations.map((item, index) => {
         const newer = item.latest !== null && item.latest.error === null && item.latest.version !== null && item.latest.version !== item.version;
         // A version upgrade whose channel already reported this version as the latest has nothing to do.
-        const offer = item.upgrade !== null && !(item.upgrade === "version" && item.latest !== null && item.latest.error === null && item.latest.version === item.version);
+        const offer = item.upgrade !== null && !(item.upgrade === "version" && item.latest !== null && item.latest.error === null && item.latest.version === item.version) && !(item.upgrade === "maintenance" && manage);
         return <li key={index} className="flex items-start gap-3 hairline-t px-3 py-[11px]">
           <Package size={16} className="mt-0.5 flex-none text-fg-3" aria-hidden="true"/>
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">

@@ -2120,6 +2120,8 @@ test("G054-DL8 the Agent page gives each Agent a card with its version and chann
   await expect(drawer).toBeVisible(); await expect(marked).toHaveAttribute("data-selected", "true");
   await expect(drawer.locator(".agent-meta")).toHaveText("2026.10.9 · npm 全局（Homebrew 的 Node.js）");
   await expect(drawer.locator(".agent-health")).toHaveText("需要处理" + cause);
+  await expect.poll(() => drawer.evaluate(element => { const style = getComputedStyle(element); return style.opacity === "1" && style.transform === "none"; })).toBe(true);
+  await page.screenshot({ path: join(artifact, "agents-drawer-light-1440.png"), animations: "disabled" });
   await expect(drawer.getByText(cause, { exact: true })).toHaveCount(1);
   await expect(drawer.getByRole("heading", { name: /^这次升级 · (今天|昨天) \d\d:\d\d$/u })).toBeVisible();
   await expect(drawer.locator(".upgrade-steps > li")).toHaveText([/^备份/u, "第 1 跳2026.9.5：已装入，Doctor 通过", "第 2 跳2026.10.9：已装入，Doctor 通过", "后台服务ai.openclaw.gateway：重启后没有重新运行"]);
@@ -2130,10 +2132,17 @@ test("G054-DL8 the Agent page gives each Agent a card with its version and chann
   const technical = drawer.getByRole("button", { name: "技术细节", exact: true });
   await expect(technical).toHaveAttribute("aria-expanded", "false"); await expect(drawer.getByText("控制入口", { exact: true })).toHaveCount(0);
   await technical.click(); await expect(technical).toHaveAttribute("aria-expanded", "true"); await expect(drawer.getByText("控制入口", { exact: true })).toBeVisible();
-  await expect.poll(() => drawer.evaluate(element => { const style = getComputedStyle(element); return style.opacity === "1" && style.transform === "none"; })).toBe(true);
-  await page.screenshot({ path: join(artifact, "agents-drawer-light-1440.png"), animations: "disabled" });
+  await page.screenshot({ path: join(artifact, "agents-drawer-technical-1440.png"), animations: "disabled" });
   await page.keyboard.press("Escape"); await expect(drawer).toBeHidden();
   await expect(card("OpenClaw").getByRole("button", { name: "查看 OpenClaw 详情", exact: true })).toBeFocused(); await expect(marked).toHaveAttribute("data-selected", "false");
+
+  // The tasks stay one click away: the list opens in place and leads to each task's details.
+  const tasks = main.getByRole("button", { name: /^安装任务/u });
+  await expect(tasks).toHaveAttribute("aria-expanded", "false"); await tasks.click(); await expect(tasks).toHaveAttribute("aria-expanded", "true");
+  const taskList = main.getByRole("region", { name: "安装任务" });
+  await expect(taskList.getByRole("listitem")).toHaveCount(1); await expect(taskList.locator(".status-pill")).toHaveText("已升级，服务未就绪");
+  await page.screenshot({ path: join(artifact, "agents-tasks-light-1440.png"), animations: "disabled" });
+  await tasks.click(); await expect(tasks).toHaveAttribute("aria-expanded", "false"); await expect(taskList).toHaveCount(0);
 
   // A04: what can still be installed the official way: the first rows, then all of them; each row says how and offers it.
   const catalog = main.getByRole("region", { name: "还可以安装" }), rows = catalog.locator(".agent-row");
@@ -2162,6 +2171,8 @@ test("G054-DL8 the Agent page gives each Agent a card with its version and chann
   const grown = await motion();
   assert.deepEqual(grown.pop, { property: "opacity, transform", durations: [200, 200], easing: appear + ", " + appear });
   assert.deepEqual(grown.scrim, { property: "opacity", durations: [200], easing: appear });
+  await expect.poll(() => dialog.evaluate(element => { const style = getComputedStyle(element); return style.opacity === "1" && style.transform === "none"; })).toBe(true);
+  await page.screenshot({ path: join(artifact, "agents-dialog-light-1440.png"), animations: "disabled" });
   await dialog.getByRole("button", { name: "取消", exact: true }).click(); await expect(dialog).toBeHidden();
   assert.equal(submitted, 0, "nothing is sent until the upgrade is confirmed");
 
