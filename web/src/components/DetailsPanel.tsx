@@ -185,7 +185,7 @@ function Changes({ changes, counts, selected, workspace, name, sessionId }: { re
         className={cn("row flex h-8 w-full min-w-0 items-center gap-2 border-none px-2.5 text-left font-mono text-caption text-fg", current?.path === file.path ? "bg-subtle" : "bg-transparent")}>
         <File size={15} className="flex-none text-fg-3" aria-hidden="true"/>
         <span className="min-w-0 flex-1 trunc"><span className="text-fg-3">{shown.slice(0, cut)}</span>{shown.slice(cut)}</span>
-        {file.add ? <span className="flex-none text-[11px] text-add">+{file.add}</span> : null}{file.del ? <span className="flex-none text-[11px] text-del">−{file.del}</span> : null}
+        {file.add ? <span className="flex-none text-[11px] text-add-on-tint">+{file.add}</span> : null}{file.del ? <span className="flex-none text-[11px] text-del-on-tint">−{file.del}</span> : null}
       </button></li>;
     })}</ul> : null}
     {changes.loading ? <p className="m-0 flex items-center gap-1.5 px-4 pb-3 text-caption text-fg-3"><Spinner size={12} label=""/>正在读取改动…</p> : null}
@@ -300,7 +300,7 @@ function RunFacts(props: PanelProps & { readonly run: PublicRun; readonly runs: 
       {run.error ? <Fact label="错误代码"><code className="text-code">{run.error.code}</code></Fact> : null}
     </dl>
     <Phases run={run}/>
-    {status === "unknown" ? <p className="m-0 rounded-block bg-amber-soft px-3 py-2.5 text-ui-sm text-amber">请先核实执行结果。这个请求不会自动重新执行。</p> : status === "completed" ? <p className="m-0 text-caption text-fg-3">本轮执行已结束，结果仍需由你确认。</p> : null}
+    {status === "unknown" ? <p className="m-0 rounded-block bg-amber-soft px-3 py-2.5 text-ui-sm text-amber-on-tint">请先核实执行结果。这个请求不会自动重新执行。</p> : status === "completed" ? <p className="m-0 text-caption text-fg-3">本轮执行已结束，结果仍需由你确认。</p> : null}
     {props.loadDiagnostics && terminal ? <RunDiagnostics key={run.id} runId={run.id} load={props.loadDiagnostics}/> : null}
     {nativeState && run.id === props.runs.at(-1)?.id ? <section className="flex flex-col gap-2.5 hairline-t pt-3.5" aria-label="原生会话">
       <span className="text-caption font-medium text-fg-2">原生会话 · {nativeState.status === "ready" ? "继续已有会话" : nativeState.status === "forking" ? "正在建立分支副本" : "状态待确认"}</span>

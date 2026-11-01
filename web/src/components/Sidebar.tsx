@@ -233,7 +233,7 @@ function SessionRow({ row, now, harness, current, disabled, onOpen }: { readonly
     <span className="flex h-5 min-w-0 items-center gap-2">
       <span className={cn("session-title min-w-0 flex-1 trunc", state === "closed" && "text-fg-2")}>{title}</span>{indicator}
     </span>
-    {urgent && left ? <span id={lineId} className="attention-line line-clamp-2 text-caption text-amber" title={left.hint}>{attentionKind(urgent)}{items.length > 1 ? `（${items.length} 项）` : ""}{left.source ? " · " + left.source : ""} <span className="whitespace-nowrap">{left.text}</span></span> : null}
+    {urgent && left ? <span id={lineId} className="attention-line line-clamp-2 text-caption text-amber-on-tint" title={left.hint}>{attentionKind(urgent)}{items.length > 1 ? `（${items.length} 项）` : ""}{left.source ? " · " + left.source : ""} <span className="whitespace-nowrap">{left.text}</span></span> : null}
     <span id={metaId} className="sr-only">{harness}{STATE_WORDS[state] ? " · " + STATE_WORDS[state] : ""}</span>
   </button>;
 }

@@ -150,7 +150,7 @@ const StepItem = memo(function StepItem({ step, active, loadDetail, children, fr
     : failed ? <span className="text-red">{TOOL_STATUS[tools.find(toolFailed)!.status] ?? "失败"}</span>
     : wants ? null : pending && !label.verb ? <span className="text-accent-text">进行中</span>
     : !pending && !done && step.kind === "tool" && first.status !== "completed" ? <span>{TOOL_STATUS[first.status] ?? first.status}</span> : null;
-  const facts = diff && (diff.add || diff.del) ? <span className="mono flex gap-1.5 text-[11px]">{diff.add ? <span className="text-add">+{diff.add}</span> : null}{diff.del ? <span className="text-del">−{diff.del}</span> : null}</span> : null;
+  const facts = diff && (diff.add || diff.del) ? <span className="mono flex gap-1.5 text-[11px]">{diff.add ? <span className="text-add-on-tint">+{diff.add}</span> : null}{diff.del ? <span className="text-del-on-tint">−{diff.del}</span> : null}</span> : null;
   const right = facts || note || status ? <span className={cn("flex flex-none items-center gap-2 whitespace-nowrap text-caption text-fg-3", check && "motion-fade-in")}>{facts}{note}{status}</span> : null;
   const content = <>
     <span className="flex size-[15px] flex-none items-center justify-center">{icon}</span>
@@ -221,7 +221,7 @@ export function NoticeList({ notices }: { notices: readonly PublicNotice[] }) {
   return <div className="flex flex-col gap-1.5">{notices.map((notice, index) => <div key={index} role={notice.severity === "error" ? "alert" : "status"}
     className={cn("native-notice flex items-start gap-2.5 rounded-block px-3 py-2.5 text-ui-sm", notice.severity === "error" ? "bg-red-soft" : "bg-surface shadow-hairline")}>
     {notice.severity === "info" ? <Info size={16} className="mt-0.5 flex-none text-fg-3" aria-hidden="true"/> : <TriangleAlert size={16} className={cn("mt-0.5 flex-none", notice.severity === "error" ? "text-red" : "text-fg-2")} aria-hidden="true"/>}
-    <div className="min-w-0"><strong className={cn("font-semibold", notice.severity === "error" && "text-red")}>{notice.title}</strong>{notice.detail ? <p className="m-0 mt-0.5 break-words text-fg-2">{notice.detail}</p> : null}</div>
+    <div className="min-w-0"><strong className={cn("font-semibold", notice.severity === "error" && "text-red-on-tint")}>{notice.title}</strong>{notice.detail ? <p className="m-0 mt-0.5 break-words text-fg-2">{notice.detail}</p> : null}</div>
   </div>)}</div>;
 }
 export const ACTIVITY_KIND: Readonly<Record<PublicActivity["kind"], string>> = { subagent: "子 Agent", task: "后台任务", compaction: "上下文压缩", retry: "自动重试", review: "代码审查" };

@@ -169,7 +169,7 @@ function CellMark({ cell, picked, raised, onPick, describedBy }: { readonly cell
         picked ? "bg-surface text-accent-text shadow-[inset_0_0_0_1.5px_var(--accent-text)]" : "bg-transparent shadow-[inset_0_0_0_1px_var(--border-strong)] hover:bg-subtle")}>
       <Plus size={14} strokeWidth={2.4} aria-hidden="true" className={cn("[transition:scale_300ms_var(--ease-overshoot),opacity_120ms_var(--ease-standard)] keyboard:[transition:none]",
         picked ? "scale-100 opacity-100" : "scale-50 opacity-0")}/></button>;
-    case "chip": return <span role="img" aria-label={cell.label} title={cell.label} className={cn("inline-flex h-5 items-center rounded-full px-2 text-[11px] leading-4 font-medium whitespace-nowrap", cell.failed ? "bg-red-soft text-red" : raised ? "bg-surface text-fg-2 shadow-hairline" : "bg-subtle text-fg-2")}>{cell.text}</span>;
+    case "chip": return <span role="img" aria-label={cell.label} title={cell.label} className={cn("inline-flex h-5 items-center rounded-full px-2 text-[11px] leading-4 font-medium whitespace-nowrap", cell.failed ? "bg-red-soft text-red-on-tint" : raised ? "bg-surface text-fg-2 shadow-hairline" : "bg-subtle text-fg-2")}>{cell.text}</span>;
     case "none": return <span role="img" aria-label={cell.label} title={cell.label} className="text-ui-sm text-fg-3">{cell.glyph}</span>;
   }
 }

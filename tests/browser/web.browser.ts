@@ -5124,10 +5124,10 @@ async function dl10Fits(page: Page, label: string, anchors: readonly Dl10Locator
 }
 /**
  * Asserts the page reads in its theme (ADR-054 R02): its own background is the theme's (light or dark), and every visible text is
- * read against what is painted behind it, its own and its ancestors' backgrounds laid over each other. Grey text on a grey ground
- * (the neutral text tokens on the neutral surfaces, ADR-054 F08) needs WCAG AA, 4.5:1, or 3:1 from 24 px; text in a status colour
- * or on a tint (amber, red, the diff's lines, blue) needs at least 3:1. Text an ancestor fades (a disabled control) or that sits on
- * an image is left to the shots.
+ * read against what is painted behind it, its own and its ancestors' backgrounds laid over each other. Text smaller than 24 px
+ * needs WCAG AA, 4.5:1, whatever its colour and whatever tint it sits on (ruling M): grey on grey, a status colour, the diff's
+ * lines; only text of 24 px and up may use 3:1. Text an ancestor fades (a disabled control) or that sits on an image is left to
+ * the shots.
  */
 async function dl10Readable(page: Page, label: string, scheme: "light" | "dark"): Promise<void> {
   const { ground, faint } = await page.evaluate(() => {
@@ -5151,8 +5151,6 @@ async function dl10Readable(page: Page, label: string, scheme: "light" | "dark")
       }
       return layers.reverse().reduce<number[]>((ground, layer) => over(layer, ground), [255, 255, 255]);
     };
-    // How far a color is from grey: the spread of its channels (the text tokens spread 15 at most, the surfaces 5, a tint 17 or more).
-    const spread = (color: readonly number[]) => Math.max(color[0]!, color[1]!, color[2]!) - Math.min(color[0]!, color[1]!, color[2]!);
     const width = document.documentElement.clientWidth, height = document.documentElement.clientHeight, faint: string[] = [];
     for (const element of document.querySelectorAll("body *")) {
       if (![...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && (node.textContent ?? "").trim())) continue;
@@ -5161,7 +5159,7 @@ async function dl10Readable(page: Page, label: string, scheme: "light" | "dark")
       const ground = behind(element);
       if (!ground) continue;
       const shown = over(ink, ground), [light = 0, dark = 0] = [luminance(shown), luminance(ground)].sort((a, b) => b - a), ratio = (light + .05) / (dark + .05);
-      const floor = spread(shown) <= 24 && spread(ground) <= 12 && parseFloat(style.fontSize) < 24 ? 4.5 : 3;
+      const floor = parseFloat(style.fontSize) < 24 ? 4.5 : 3;
       if (ratio < floor) faint.push(`${ratio.toFixed(2)}:1 (under ${floor}:1) ${style.color} on rgb(${ground.map(Math.round).join(", ")}) ${element.tagName.toLowerCase()}.${(element.getAttribute("class") ?? "").trim().split(/\s+/u).slice(0, 4).join(".")} “${(element.textContent ?? "").trim().slice(0, 40)}”`);
     }
     return { ground: luminance(behind(document.body) ?? [255, 255, 255]), faint };

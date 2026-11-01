@@ -46,7 +46,7 @@ export function ComposerAttachments({ items, inputs, disabled, onRemove }: { ite
       {item.status === "uploading" ? <Spinner size={13} label="正在上传"/> : problem ? <TriangleAlert size={13} className={failed ? "text-red" : "text-amber"} aria-hidden="true"/> : <span className="flex text-fg-3"><KindIcon kind={item.kind}/></span>}
       {item.status === "ready" && item.kind === "image" && item.ref ? <img src={contentUrl(item.ref)} alt="" className="h-5 w-5 flex-none rounded-[4px] object-cover"/> : null}
       <span className="min-w-0 truncate">{item.name}</span>
-      <small className={cn("flex-none text-caption", problem ? failed ? "text-red" : "text-amber" : "text-fg-3")}>{problem ?? (item.status === "uploading" ? "上传中" : bytes(item.bytes))}</small>
+      <small className={cn("flex-none text-caption", problem ? failed ? "text-red-on-tint" : "text-amber-on-tint" : "text-fg-3")}>{problem ?? (item.status === "uploading" ? "上传中" : bytes(item.bytes))}</small>
       <button type="button" className="icon-btn icon-btn-sm h-6 w-6 rounded-tag" aria-label={`移除附件 ${item.name}`} disabled={disabled} onClick={() => onRemove(item.local)}><X size={12}/></button>
     </li>;
   })}</ul>;

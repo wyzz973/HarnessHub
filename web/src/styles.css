@@ -52,6 +52,12 @@
   /* Green appears only on the added lines of a diff */
   --green: #15803D; --green-dot: #22C55E; --green-soft: rgba(34, 197, 94, .12);
   --add-bg: rgba(34, 197, 94, .12); --add-text: #15803D; --del-bg: rgba(239, 68, 68, .10); --del-text: #DC2626;
+  /*
+   * Small text that sits on a tint (a soft pill, a diff's tinted line, a row tinted when hovered or chosen) takes a
+   * higher-contrast shade of its hue, darker here and lighter in the dark, so it reads at 4.5:1 (ruling M). Dots, rings and
+   * marks keep the colours above.
+   */
+  --amber-on-tint: #A14A07; --red-on-tint: #B91C1C; --add-on-tint: #166534; --del-on-tint: #B91C1C; --text-3-on-tint: #5A5F69;
   /* Behind dialogs, drawers and sheets: a veil of the sidebar's color, light or dark with it (Capabilities board) */
   --scrim: color-mix(in srgb, var(--bg-sidebar) 60%, transparent);
   --selection: rgba(58, 106, 224, .18);
@@ -90,6 +96,7 @@
     --red: #F87171; --red-dot: #F05252; --red-soft: rgba(240, 82, 82, .14); --red-line: rgba(240, 82, 82, .38);
     --green: #4ADE80; --green-dot: #22C55E; --green-soft: rgba(34, 197, 94, .16);
     --add-bg: rgba(34, 197, 94, .16); --add-text: #4ADE80; --del-bg: rgba(240, 82, 82, .16); --del-text: #F87171;
+    --amber-on-tint: #FCD34D; --red-on-tint: #FCA5A5; --add-on-tint: #86EFAC; --del-on-tint: #FCA5A5; --text-3-on-tint: #A9AEB5;
     --selection: rgba(110, 150, 255, .30);
     --scrollbar: rgba(255, 255, 255, .18);
     --shimmer-peak: #FFFFFF;
@@ -146,6 +153,11 @@
   --color-add: var(--add-text);
   --color-del-bg: var(--del-bg);
   --color-del: var(--del-text);
+  --color-amber-on-tint: var(--amber-on-tint);
+  --color-red-on-tint: var(--red-on-tint);
+  --color-add-on-tint: var(--add-on-tint);
+  --color-del-on-tint: var(--del-on-tint);
+  --color-fg-3-on-tint: var(--text-3-on-tint);
   --shadow-*: initial;
   --shadow-hairline: var(--sh-hairline);
   --shadow-card: var(--sh-card);
@@ -433,16 +445,16 @@
   /* Badges (pills) and status pills */
   .badge { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 7px; border-radius: 999px; background: var(--bg-subtle); color: var(--text-2); font-size: 11px; line-height: 16px; font-weight: 500; white-space: nowrap; }
   .badge-accent, .badge-green { background: var(--accent-soft); color: var(--accent-text); }
-  .badge-amber { background: var(--amber-soft); color: var(--amber); }
-  .badge-red { background: var(--red-soft); color: var(--red); }
+  .badge-amber { background: var(--amber-soft); color: var(--amber-on-tint); }
+  .badge-red { background: var(--red-soft); color: var(--red-on-tint); }
   .badge-count { justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; font-weight: 600; }
   .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: currentColor; }
   .status-pill { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border-radius: 999px; background: var(--bg-subtle); color: var(--text-3); font-size: 12px; line-height: 18px; font-weight: 500; white-space: nowrap; }
   .status-pill > .status-dot { width: 6px; height: 6px; }
   .status-pill-lg { height: 26px; padding: 0 10px 0 9px; }
   .status-pill[data-tone="accent"] { background: var(--accent-soft); color: var(--accent-text); }
-  .status-pill[data-tone="amber"] { background: var(--amber-soft); color: var(--amber); }
-  .status-pill[data-tone="red"] { background: var(--red-soft); color: var(--red); }
+  .status-pill[data-tone="amber"] { background: var(--amber-soft); color: var(--amber-on-tint); }
+  .status-pill[data-tone="red"] { background: var(--red-soft); color: var(--red-on-tint); }
 
   /* Cards (radius 14) and rows */
   .card { border-radius: var(--radius-card); background: var(--bg-surface); box-shadow: var(--sh-card); }
@@ -613,16 +625,17 @@
   .shiki, .shiki span { color: var(--shiki-light); }
   .shiki, .shiki span { @variant dark { color: var(--shiki-dark); } }
 
-  /* Unified diff: tinted rows; green only marks the added lines */
+  /* Unified diff: tinted rows; green only marks the added lines. The signs and numbers on a tinted line take its on-tint shade */
   .diff { font-family: var(--font-mono); font-size: 12px; line-height: 20px; overflow-x: auto; }
   .diff-line { display: flex; min-width: max-content; }
   .diff-line > .n { width: 40px; flex: none; padding-right: 8px; text-align: right; color: var(--text-3); user-select: none; }
   .diff-line > .s { width: 16px; flex: none; text-align: center; color: var(--text-3); user-select: none; }
   .diff-line > .c { white-space: pre; padding-right: 12px; }
   .diff-line.is-add { background: var(--add-bg); }
-  .diff-line.is-add > .s { color: var(--add-text); }
+  .diff-line.is-add > .s { color: var(--add-on-tint); }
   .diff-line.is-remove { background: var(--del-bg); }
-  .diff-line.is-remove > .s { color: var(--del-text); }
+  .diff-line.is-remove > .s { color: var(--del-on-tint); }
+  .diff-line:is(.is-add, .is-remove) > .n { color: var(--text-3-on-tint); }
   .diff-line.is-hunk { color: var(--text-3); background: var(--bg-subtle); }
   .diff-line.is-file { color: var(--text-2); font-weight: 500; }
 

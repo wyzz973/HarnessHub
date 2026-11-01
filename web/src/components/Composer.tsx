@@ -498,7 +498,7 @@ function ComposerNotice({ id, title, children, action }: { readonly id?: string;
   return <div className="composer-notice motion-fade-in flex items-start gap-2.5 rounded-block bg-amber-soft px-3 py-2.5 text-ui-sm text-fg">
     <TriangleAlert size={16} className="mt-0.5 flex-none text-amber" aria-hidden="true"/>
     <div className="min-w-0 flex-1">
-      <div id={id} role="status">{title ? <strong className="block font-semibold text-amber">{title}</strong> : null}<div className={title ? "mt-0.5 text-fg-2" : undefined}>{children}</div></div>
+      <div id={id} role="status">{title ? <strong className="block font-semibold text-amber-on-tint">{title}</strong> : null}<div className={title ? "mt-0.5 text-fg-2" : undefined}>{children}</div></div>
       {action ? <div className="mt-2 flex flex-wrap items-center gap-1.5">{action}</div> : null}</div>
   </div>;
 }

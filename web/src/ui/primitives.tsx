@@ -79,10 +79,12 @@ export function Notice({ tone = "neutral", title, children, action, onDismiss, c
   const Icon = tone === "red" ? AlertCircle : tone === "amber" ? TriangleAlert : tone === "green" ? CircleCheck : Info;
   const colors = { neutral: "bg-surface shadow-hairline", amber: "bg-amber-soft", red: "bg-red-soft", accent: "bg-accent-soft", green: "bg-accent-soft" }[tone];
   const accent = { neutral: "text-fg-3", amber: "text-amber", red: "text-red", accent: "text-accent-text", green: "text-accent-text" }[tone];
+  // The title is text on the tint: the tone's higher-contrast shade (ruling M); the icon is a mark and keeps the tone's colour.
+  const ink = { neutral: "text-fg", amber: "text-amber-on-tint", red: "text-red-on-tint", accent: "text-accent-text", green: "text-accent-text" }[tone];
   return <div role={tone === "red" ? "alert" : "status"} className={cn("motion-fade-in flex items-start gap-2.5 rounded-block px-3 py-2.5 text-ui-sm", colors, className)}>
     <Icon size={16} className={cn("mt-0.5 flex-none", accent)} aria-hidden="true"/>
     <div className="min-w-0 flex-1">
-      {title ? <strong className={cn("block font-semibold", tone === "neutral" ? "text-fg" : accent)}>{title}</strong> : null}{children ? <div className={cn(title ? "mt-0.5 text-fg-2" : "text-fg")}>{children}</div> : null}
+      {title ? <strong className={cn("block font-semibold", ink)}>{title}</strong> : null}{children ? <div className={cn(title ? "mt-0.5 text-fg-2" : "text-fg")}>{children}</div> : null}
       {action ? <div className="mt-2 flex flex-wrap items-center gap-1.5">{action}</div> : null}
     </div>
     {onDismiss ? <button type="button" className="icon-btn icon-btn-sm -mt-0.5 -mr-1" aria-label="关闭提示" onClick={onDismiss}><X size={14}/></button> : null}
