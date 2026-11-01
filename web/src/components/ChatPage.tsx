@@ -10,7 +10,7 @@ import { failureMessage, runStatusLabel } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { clock, compact, duration, elapsed, folderName, shortTitle } from "../lib/format.js";
 import { useMedia, useNow, type Preferences } from "../lib/prefs.js";
-import { editTools, finished, toolTree, TOOL_PENDING } from "../lib/turn.js";
+import { cancelledWords, changeCount, finished, toolTree, TOOL_PENDING, type QueueNotice } from "../lib/turn.js";
 import { Collapsible, motionStyle, usePresence } from "../ui/motion.js";
 import { Dialog, Menu } from "../ui/overlay.js";
 import { EmptyState, Notice, Spinner, StatusPill, Tip } from "../ui/primitives.js";
@@ -20,7 +20,7 @@ import type { AttachmentDraft } from "./Attachments.js";
 import { BranchOrigin } from "./BranchOrigin.js";
 import { Composer, OPTION_NAMES, THINKING_NAMES, type DockedApproval } from "./Composer.js";
 import { DetailsPanel, type PanelTab } from "./DetailsPanel.js";
-import { AssistantTurn, SwitchDivider, UserMessage, type QueueNotice } from "./Turn.js";
+import { AssistantTurn, SwitchDivider, UserMessage } from "./Turn.js";
 import { Welcome } from "./Welcome.js";
 
 export interface SelectionDraft { harnessId: string; controlId: string; providerId: string; providerRevision: number | null; model: string; nativeOptions: Readonly<Record<string, string>> }
@@ -35,7 +35,7 @@ export function selectionRequest(draft: SelectionDraft): SelectionRequest {
 export function selectionProblem(draft: SelectionDraft, harnesses: readonly HarnessView[], providers: readonly ProviderView[]): string | null {
   const harness = harnesses.find(row => row.id === draft.harnessId);
   if (!harness) return "先选择一个 Harness，开始协作。";
-  if (!harness.controls.some(row => row.id === draft.controlId && row.available)) return "这个控制入口目前不可用，请在“我的 Agent”中检查。";
+  if (!harness.controls.some(row => row.id === draft.controlId && row.available)) return "这个控制入口目前不可用，请在 Agent 页中检查。";
   if (!draft.providerId) return null;
   const provider = providers.find(row => row.id === draft.providerId);
   if (!provider || !provider.enabled) return "这个 Provider 已停用或不可用，请重新选择。";
@@ -121,6 +121,8 @@ export interface ChatProps {
   contextUsage?: number | null; onShowResume?: (() => void) | undefined; onSendDraft?: (text: string) => Promise<void>;
 }
 
+/** A hand-over drawn in the transcript: the effective change and the selection that answered before it. */
+interface Divider { readonly change: NonNullable<SessionView["switches"]>[number]; readonly from: HarnessSelection }
 /** The latest values the page's shortcuts act on, read when a key is pressed rather than bound into the listener. */
 interface ShortcutState { readonly stop: (() => void) | null; readonly togglePanel: (() => void) | null; readonly openPicker: (() => void) | null }
 /** A local decision on an approval, kept until the page leaves the conversation, to write its result back into the Turn. */
@@ -157,7 +159,6 @@ export function ChatPage(props: ChatProps) {
   const branchedTitle = session?.origin?.history.find(message => message.role === "user")?.text;
   const title = session?.messages.find(message => message.role === "user")?.text ?? (branchedTitle ? "分支 · " + branchedTitle : props.sessionRequested || props.sessionError ? "打开对话" : "新对话");
   const runs = useMemo(() => new Map(session?.runs.map(run => [run.id, run])), [session?.runs]);
-  const assistantRuns = useMemo(() => new Set(session?.messages.filter(message => message.role === "assistant").map(message => message.runId)), [session?.messages]);
   const harnessName = (id: string) => harnesses.find(row => row.id === id)?.name ?? id;
   // How long the same Harness took to start in the latest earlier Run of this conversation, shown while a Run starts;
   // without one, its usual startup over its latest Runs anywhere.
@@ -171,18 +172,20 @@ export function ChatPage(props: ChatProps) {
     }
     return hints;
   }, [session?.runs, props.readiness]);
-  // Names a Turn's model and thinking level with the catalog's own names when the composer has that Harness's catalog loaded.
-  const describe = useCallback((run: PublicRun): string => {
-    const catalog = run.selection.harnessId === draft.harnessId && !run.selection.provider ? props.nativeModels : null;
-    const model = run.selection.provider?.model ?? (run.selection.nativeModel ? catalog?.models.find(row => row.id === run.selection.nativeModel)?.name ?? run.selection.nativeModel : null);
-    const known = [...(catalog?.options ?? []), ...(catalog?.models.find(row => row.id === (run.selection.nativeModel ?? catalog.defaultModel))?.options ?? [])];
-    const options = Object.entries(run.selection.nativeOptions ?? {}).map(([id, value]) => {
+  // Names a selection's model and thinking level with the catalog's own names when the composer has that Harness's catalog
+  // loaded: a Turn's identity line ("Native B · 思考 高"), and the same words on the pill of a hand-over to it.
+  const describeSelection = useCallback((selection: HarnessSelection): string => {
+    const catalog = selection.harnessId === draft.harnessId && !selection.provider ? props.nativeModels : null;
+    const model = selection.provider?.model ?? (selection.nativeModel ? catalog?.models.find(row => row.id === selection.nativeModel)?.name ?? selection.nativeModel : null);
+    const known = [...(catalog?.options ?? []), ...(catalog?.models.find(row => row.id === (selection.nativeModel ?? catalog.defaultModel))?.options ?? [])];
+    const options = Object.entries(selection.nativeOptions ?? {}).map(([id, value]) => {
       const option = known.find(row => row.id === id), name = option?.values.find(row => row.value === value)?.name ?? value;
       if (option?.category === "thought_level" || id === "thought_level" || /thought|effort|reasoning/u.test(id)) return "思考 " + (THINKING_NAMES[value] ?? name);
       return (option?.category === "mode" ? "模式" : OPTION_NAMES[id] ?? option?.name ?? id) + " " + name;
     });
     return [model, ...options].filter(Boolean).join(" · ");
   }, [draft.harnessId, props.nativeModels]);
+  const describe = useCallback((run: PublicRun): string => describeSelection(run.selection), [describeSelection]);
   // The queued Turn names the conversation whose work holds the workspace (ADR-036); whether that one waits for the user
   // follows the pushed list of waiting requests, and the view's own answer until the first list arrives.
   const [cancellingQueue, setCancellingQueue] = useState<string | null>(null);
@@ -240,10 +243,20 @@ export function ChatPage(props: ChatProps) {
   // The latest message was refused because another conversation's kept process holds this workspace (ADR-030, option C).
   const refused = session?.runs.at(-1)?.status === "failed" && session.runs.at(-1)?.error?.code === "WORKSPACE_KEPT" ? session.runs.at(-1)! : null;
   const [freeing, setFreeing] = useState(false);
-  // Panel: beside the conversation on wide screens (open by preference), otherwise a drawer or a bottom sheet on demand.
+  // Panel: beside the conversation on wide screens, otherwise a drawer or a bottom sheet, always on demand. It stays closed
+  // until opened, changes or not (decision E: the button carries the number); on wide screens an opening or closing is
+  // remembered by this browser.
   const inline = wide && session !== null;
   const panelOpen = session !== null && (inline ? preferences.panel : overlay);
-  const panelTab: PanelTab = tab ?? (session?.runs.some(run => run.tools?.some(tool => ["edit", "delete", "move"].includes(tool.kind ?? "") && tool.detail)) ? "changes" : session?.runs.some(run => run.plan?.entries.length) ? "plan" : "run");
+  // How many changes the conversation made, from the tools' summaries: the button, its 改动 tab and the tab's scopes say this
+  // one number, and nothing is read while the panel is closed.
+  const changes = useMemo(() => changeCount(session?.runs ?? []), [session?.runs]);
+  // The number comes in as news only (ADR-054 §3): when changes arrive while the conversation is shown. Drawn with the
+  // conversation, or back on the button because the panel closed (from the keyboard as well, #37), it is simply there.
+  const shownChanges = useRef<{ id: string | null; count: number }>({ id: null, count: 0 });
+  const changesArrived = session !== null && shownChanges.current.id === session.id && changes > shownChanges.current.count;
+  useLayoutEffect(() => { shownChanges.current = { id: session?.id ?? null, count: changes }; });
+  const panelTab: PanelTab = tab ?? (changes ? "changes" : session?.runs.some(run => run.plan?.entries.length) ? "plan" : "run");
   // Opened from the keyboard (⌘\), the panel's content does not slide in (#37). Decided once per opening: an animation
   // that followed the live input mode would start over whenever the next input came from the pointer.
   const [panelFromKeyboard, setPanelFromKeyboard] = useState(false);
@@ -254,25 +267,29 @@ export function ChatPage(props: ChatProps) {
   };
   const showResume = () => { setPanelRun(session?.runs.at(-1)?.id ?? null); setTab("run"); setPanel(true); };
   const detailed = preferences.density === "detailed";
-  const changes = useMemo(() => session?.runs.reduce((count, run) => count + editTools(run).length, 0) ?? 0, [session?.runs]);
-  // Effective changes of Harness or model, placed after the history they carried (ADR-042).
+  // Effective changes of Harness or model, placed after the history they carried (ADR-042), each with `from`, the selection
+  // before it, which the pill draws with an arrow to the new one (C08). Changes with no message between them are one
+  // hand-over, from the first one's `from` to the last one's target; none is left when they come back to where they began.
   const dividers = useMemo(() => {
-    const result = new Map<number, NonNullable<SessionView["switches"]>[number]>();
+    const result = new Map<number, Divider>();
+    const differs = (a: HarnessSelection, b: HarnessSelection) => a.harnessId !== b.harnessId || a.nativeModel !== b.nativeModel || a.provider?.model !== b.provider?.model;
     let previous: HarnessSelection | null = session?.runs[0]?.selection ?? null;
     for (const change of session?.switches ?? []) {
       if (change.status !== "effective" || change.target === null) continue;
-      if (previous !== null && (previous.harnessId !== change.target.harnessId || previous.nativeModel !== change.target.nativeModel || previous.provider?.model !== change.target.provider?.model) && session!.messages.some(message => message.seq <= change.throughSeq)) result.set(change.throughSeq, change);
+      const from = result.get(change.throughSeq)?.from ?? previous;
+      if (from !== null && differs(from, change.target) && session!.messages.some(message => message.seq <= change.throughSeq)) result.set(change.throughSeq, { change, from });
+      else result.delete(change.throughSeq);
       previous = change.target;
     }
     return result;
   }, [session?.switches, session?.runs, session?.messages]);
   const dividerAfter = useMemo(() => {
-    const result = new Map<string, NonNullable<SessionView["switches"]>[number]>(), messages = session?.messages ?? [];
-    for (const [through, change] of dividers) { const last = messages.filter(message => message.seq <= through).at(-1); if (last) result.set(last.id, change); }
+    const result = new Map<string, Divider>(), messages = session?.messages ?? [];
+    for (const [through, divider] of dividers) { const last = messages.filter(message => message.seq <= through).at(-1); if (last) result.set(last.id, divider); }
     return result;
   }, [dividers, session?.messages]);
   const lastDivider = [...dividers.values()].at(-1);
-  const revertTo = lastDivider ? [...(session?.runs ?? [])].reverse().find(run => run.selection.harnessId !== lastDivider.target?.harnessId || run.selection.nativeModel !== lastDivider.target?.nativeModel)?.selection : undefined;
+  const revertTo = lastDivider ? [...(session?.runs ?? [])].reverse().find(run => run.selection.harnessId !== lastDivider.change.target?.harnessId || run.selection.nativeModel !== lastDivider.change.target?.nativeModel)?.selection : undefined;
 
   // Approvals wait in the composer's place, oldest first (ADR-054 §5); questions and forms stay in their Turn.
   const requestHarness = (request: PermissionRequestView) => harnessName(runs.get(request.runId as never)?.selection.harnessId ?? session?.selection.harnessId ?? "");
@@ -315,6 +332,34 @@ export function ChatPage(props: ChatProps) {
   };
   const orphanCards = (session?.permissions ?? []).filter(request => !runs.has(request.runId as never) && !dockedRequest(request))
     .map(request => <PermissionCard key={request.id} request={request} harness={requestHarness(request)} busy={mutation !== null} onDecision={(option, input) => decide(request, option, input)}/>);
+  /**
+   * The transcript, one flat list of keyed parts: each message of yours, then its Turn, drawn once and keyed by its Run. The
+   * Runtime creates the reply's message when its first text is committed; that message joins the Turn already drawn instead
+   * of having it drawn anew in another place, so the Turn never remounts as its reply starts: its status, timer and arc carry
+   * on. A reply without a message of yours in this history stands where it is; a hand-over follows the last message before it.
+   */
+  const transcriptItems = (current: SessionView): ReactNode[] => {
+    const replies = new Map(current.messages.filter(message => message.role === "assistant").map(message => [message.runId, message] as const));
+    const drawn = new Set<string>(), items: ReactNode[] = [];
+    const turn = (runId: PublicRun["id"]) => {
+      const run = runs.get(runId), open = (current.permissions ?? []).filter(request => request.runId === runId && !request.decided);
+      return <AssistantTurn key={"turn:" + runId} message={replies.get(runId)} run={run} harnesses={harnesses} providers={providers} describe={describe} detailed={detailed}
+        onRetry={canRetry ? (text, sent) => { void send(text, sent ?? []).catch(() => {}); } : undefined} loadToolDetail={props.onToolDetail} onBranch={canBranch ? props.onBranch : undefined}
+        onDetails={openDetails} detailsOpen={panelOpen && panelTab === "run" && (panelRun ?? current.runs.at(-1)?.id) === runId} startupHint={startupHints.get(runId)}
+        queue={queue?.runId === runId ? queueNotice : undefined} busyHolder={busyHolder(runId)}
+        waiting={run && open.length ? open.some(request => dockedRequest(request)) ? "approval" : "question" : undefined}>{run ? turnRequests(runId) : null}</AssistantTurn>;
+    };
+    for (const message of current.messages) {
+      const run = runs.get(message.runId);
+      if (message.role === "user") items.push(known.current.messages.has(message.id) ? <UserMessage key={message.id} message={message} run={run} onEdit={fillDraft}/>
+        : <div key={message.id} className="motion-message-in"><UserMessage message={message} run={run} onEdit={fillDraft}/></div>);
+      if (!drawn.has(message.runId) && (run !== undefined || message.role === "assistant")) { drawn.add(message.runId); items.push(turn(message.runId)); }
+      const divider = dividerAfter.get(message.id);
+      if (divider) items.push(<SwitchDivider key={"switch:" + divider.change.id} change={divider.change} from={divider.from} detail={divider.change.target ? describeSelection(divider.change.target) : undefined} harnesses={harnesses}
+        {...(divider === lastDivider && revertTo && current.status === "open" ? { onRevert: () => props.onDraft(selectionDraft(revertTo)), revertDisabled: mutation !== null || pending || active !== null } : {})}/>);
+    }
+    return items;
+  };
 
   // ↑ in an empty composer: the held message comes back first, otherwise the last message sent becomes the draft.
   const editLast = session ? () => {
@@ -322,7 +367,9 @@ export function ChatPage(props: ChatProps) {
     const last = [...session.messages].reverse().find(message => message.role === "user");
     if (last) fillDraft(last.text);
   } : undefined;
-  // Messages that arrive after the conversation opened rise into place (Motion board #15); the history does not.
+  // Messages that arrive after the conversation opened rise into place (Motion board #15); the history does not. This is the
+  // one rule for the rise (the bubble has none of its own). It covers the first message sent from the home: the conversation
+  // it creates opens with an empty history (App accepts the created conversation before sending), and the message arrives after.
   const known = useRef<{ id: string | null; messages: ReadonlySet<string> }>({ id: null, messages: new Set() });
   if (session && known.current.id !== session.id) known.current = { id: session.id, messages: new Set(session.messages.map(message => message.id)) };
 
@@ -385,7 +432,7 @@ export function ChatPage(props: ChatProps) {
           <button type="button" aria-pressed={detailed} onClick={() => props.onPreference("density", "detailed")}>详细</button></div></div>
         <div className="flex items-center gap-0.5 sm:gap-2.5">
           <Tip label={<>{panelOpen ? "收起详情" : "打开详情"}（⌘\）</>}><button type="button" className="icon-btn relative" aria-label="详情栏" aria-pressed={panelOpen} aria-describedby={changes ? "details-changes" : undefined} onClick={() => setPanel(!panelOpen)}>
-            <PanelRight size={16}/>{!panelOpen && changes ? <span className="motion-pop-in absolute top-px right-0 min-w-[15px] rounded-full bg-accent px-1 text-center text-[10px] leading-[15px] font-semibold text-on-accent" style={motionStyle({ scaleFrom: .6 })} aria-hidden="true">{changes}</span> : null}
+            <PanelRight size={16}/>{!panelOpen && changes ? <ChangeBadge count={changes} news={changesArrived}/> : null}
           </button></Tip>
           {changes ? <span id="details-changes" className="sr-only">本对话改动 {changes} 处</span> : null}
           <Menu align="end" trigger={<button type="button" className="icon-btn" aria-label="更多操作" title="更多操作"><MoreHorizontal size={16}/></button>} items={[
@@ -437,20 +484,7 @@ export function ChatPage(props: ChatProps) {
             : <div className="transcript mx-auto flex max-w-reading flex-col gap-7 pb-4" ref={transcript} role="log" aria-label="对话历史" aria-live="off">
               {session.origin ? <BranchOrigin origin={session.origin} session={session} harnesses={harnesses} onOpenSource={props.onOpenSession}/> : null}
               {session.messages.length === 0 && !session.origin ? <EmptyState title="对话准备好了">发出第一条消息，开始这次协作。</EmptyState> : null}
-              {session.messages.map(message => {
-                const run = runs.get(message.runId), divider = dividerAfter.get(message.id);
-                const turn = (msg: typeof message | undefined) => <AssistantTurn message={msg} run={run} harnesses={harnesses} providers={providers} describe={describe} detailed={detailed}
-                  onRetry={canRetry ? (text, sent) => { void send(text, sent ?? []).catch(() => {}); } : undefined} loadToolDetail={props.onToolDetail} onBranch={canBranch ? props.onBranch : undefined}
-                  onDetails={openDetails} detailsOpen={panelOpen && panelTab === "run" && (panelRun ?? session.runs.at(-1)?.id) === run?.id} startupHint={startupHints.get(message.runId)}
-                  queue={queue?.runId === message.runId ? queueNotice : undefined} busyHolder={busyHolder(message.runId)}
-                  waiting={run ? (() => { const open = (session.permissions ?? []).filter(request => request.runId === run.id && !request.decided); return open.length ? open.some(request => dockedRequest(request)) ? "approval" as const : "question" as const : undefined; })() : undefined}>{run ? turnRequests(run.id) : null}</AssistantTurn>;
-                const fresh = message.role === "user" && !known.current.messages.has(message.id);
-                return <Fragment key={message.id}>
-                  {message.role === "user" ? fresh ? <div className="motion-message-in"><UserMessage message={message} run={run} onEdit={fillDraft}/></div> : <UserMessage message={message} run={run} onEdit={fillDraft}/> : turn(message)}
-                  {message.role === "user" && !assistantRuns.has(message.runId) && run ? turn(undefined) : null}
-                  {divider ? <SwitchDivider change={divider} harnesses={harnesses} {...(divider === lastDivider && revertTo && session.status === "open" ? { onRevert: () => props.onDraft(selectionDraft(revertTo)), revertDisabled: mutation !== null || pending || active !== null } : {})}/> : null}
-                </Fragment>;
-              })}
+              {transcriptItems(session)}
               {orphanCards.length ? orphanCards : null}
             </div>}
         </div>
@@ -479,9 +513,20 @@ export function ChatPage(props: ChatProps) {
 }
 
 /**
+ * The number of changes on the details button while the panel is closed (Conversation board: top right, 15 px, accent).
+ * Decided once, when it appears: as news it pops in from .6; otherwise it is simply there.
+ */
+function ChangeBadge({ count, news }: { readonly count: number; readonly news: boolean }) {
+  const [entering] = useState(news);
+  return <span className={cn("absolute top-px right-0 min-w-[15px] rounded-full bg-accent px-1 text-center text-[10px] leading-[15px] font-semibold text-on-accent", entering && "motion-pop-in")}
+    style={entering ? motionStyle({ scaleFrom: .6 }) : undefined} aria-hidden="true">{count}</span>;
+}
+
+/**
  * The conversation's state in the header (Conversation and Interaction boards): who works and what it does now, in the
  * words the sidebar and the Turn use. Running work is blue with a breathing dot and a clock; waiting for the user is
- * amber; a failure is red; a Turn that ended quietly is grey.
+ * amber; a failure is red; a Turn that ended quietly is grey: "已停止" when the user stopped it, "已取消" when the Runtime
+ * cancelled it (ADR-036, decision H).
  */
 function HeaderState({ session, active, harnessName }: { readonly session: SessionView; readonly active: PublicRun | null; readonly harnessName: (id: string) => string }) {
   const now = useNow(active !== null);
@@ -508,7 +553,7 @@ function HeaderState({ session, active, harnessName }: { readonly session: Sessi
     switch (latest.status) {
       case "completed": return { text: "已完成", tone: "neutral" };
       case "failed": return { text: "失败", tone: "red" };
-      case "cancelled": return { text: "已停止", tone: "neutral" };
+      case "cancelled": return { text: cancelledWords(latest, true), tone: "neutral" };
       case "unknown": return { text: "结果未知", tone: "amber" };
       default: return { text: "", tone: "neutral" };
     }

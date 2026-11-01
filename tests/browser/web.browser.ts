@@ -286,7 +286,9 @@ test("real browser validates Provider management, public chat switching, cancell
   await page.getByRole("button", { name: "发送消息", exact: true }).click();
   await expect(page.getByRole("button", { name: "停止当前回复", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "停止当前回复", exact: true }).click();
-  await expect(page.getByRole("log")).toContainText("已取消（用户停止）");
+  // A Turn the user stopped says so in the Interaction board's words (ADR-054 decision H).
+  await expect(page.getByRole("log").locator("[data-run-status=cancelled]")).toContainText("已停止");
+  await expect(page.getByRole("log").locator("[data-run-status=cancelled]")).not.toContainText("已取消");
   current = await snapshot(); assert.equal(current.runs.at(-1)?.status, "cancelled");
   await page.getByRole("button", { name: "模型与账号", exact: true }).click();
   await page.getByRole("button", { name: "编辑 工作模型 B", exact: true }).click();
@@ -469,7 +471,9 @@ test("live chat renders committed partial Markdown before completion, respects r
   const partial = await current(); assert.equal(partial.runs.length, 2); assert.equal(partial.runs[1]!.status, "running");
   assert.ok(String(partial.messages.at(-1)?.text).includes("第一段已经到达。"));
   await page.getByRole("button", { name: "停止当前回复", exact: true }).click();
-  await expect(page.locator(".assistant-message").last()).toContainText("已取消（用户停止）");
+  // The user stopped it: the Turn and the header say 已停止 (ADR-054 decision H).
+  await expect(page.locator(".assistant-message").last()).toContainText("已停止");
+  await expect(page.locator(".chat-page > header .status-pill")).toHaveText("Codex 已停止");
   const stopped = await current(); assert.equal(stopped.runs.length, 2); assert.equal(stopped.runs[1]!.status, "cancelled");
   assert.ok(String(stopped.messages.at(-1)?.text).includes("第一段已经到达。"));
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -642,8 +646,10 @@ test("unified chat shows native plan, notices, tool details with diffs and turn 
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
   await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter");
   await expect(log).toContainText("原生活动已完成。");
-  // ADR-054: the plan stands above the composer and in the details, not inside the Turn; the panel is open at this width.
+  // ADR-054: the plan stands above the composer and in the details, not inside the Turn. The panel is closed until opened
+  // (decision E); at this width the header's button opens it beside the conversation.
   const panel = page.getByRole("complementary", { name: "详情栏" });
+  await page.getByRole("button", { name: "详情栏", exact: true }).click();
   await panel.getByRole("tab", { name: /计划/u }).click();
   await expect(panel.getByText("Codex 维护的计划 · 1 / 2 完成")).toBeVisible(); await expect(panel.getByText("修改文件")).toBeVisible();
   await expect(log.getByText("计划 · 1/2 完成")).toHaveCount(0);
@@ -1083,7 +1089,8 @@ test("a Turn waiting for another conversation's work in their workspace names it
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
   await send("queued work");
   const status = log.locator(".response-status");
-  await expect(status).toHaveText("排队中：等待对话「approve this」释放工作区（它正在等待你的审批）", { timeout: 15000 });
+  // What the holder waits for is said as every other place says it (ADR-054 decision G).
+  await expect(status).toHaveText("排队中：等待对话「approve this」释放工作区（它在等你批准）", { timeout: 15000 });
   await expect(log.locator(".queued-turn small")).toHaveText("最多再等 30 分钟，到时这条消息不会发出。");
   assert.equal((await log.textContent())?.includes(fixture.root), false, "no private path reaches the page");
   await page.screenshot({ path: join(artifact, "queued-turn.png"), animations: "disabled" });
@@ -1126,6 +1133,34 @@ test("a Turn that waits for its workspace past its wait budget is not sent, and 
   assert.deepEqual(errors, []);
 });
 
+test("a Turn the Runtime cancelled when its wait budget ran out keeps the contract's words in the Turn and the details, and the header says 已取消, never 已停止 (ADR-036, ADR-054 decision H)", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false, { name: "Shared Agent", scenario: "hermes" }, null, false, { executionBudgetMs: 60_000, waitBudgetMs: 2000 }); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  // At this width the details open over the conversation, from the Turn's own button.
+  const context = await isolatedContext(browser, { viewport: { width: 943, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" }), origin = new URL(fixture.gateway.url).origin;
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
+  await composer.fill("approve this"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
+  await expect(page.getByRole("region", { name: "工具审批", exact: true })).toContainText("rm -rf build", { timeout: 15000 });
+  // Nobody decides: HarnessHub's wait budget runs out and the Runtime stops the Turn, which the program settles as cancelled.
+  const turn = log.locator(".assistant-message").last();
+  await expect(turn).toHaveAttribute("data-run-status", "cancelled", { timeout: 15000 });
+  const run = (await current()).runs.at(-1);
+  assert.deepEqual([run.status, run.error?.code, run.cancelRequested], ["cancelled", "WAIT_EXPIRED", false]);
+  // The Turn keeps the contract's own words; the header's word is 已取消; nothing calls it the user's stop.
+  await expect(turn.locator(".process-summary")).toContainText("已取消（等待你的决定超时）"); await expect(turn.locator(".process-summary")).not.toContainText("已停止");
+  await expect(page.locator(".chat-page > header .status-pill")).toHaveText("Shared Agent 已取消");
+  await turn.hover(); await turn.getByRole("button", { name: "执行详情", exact: true }).click();
+  const facts = page.getByRole("complementary", { name: "详情栏" }).locator(".execution-details");
+  await expect(facts.locator("dt", { hasText: "执行状态" }).locator("xpath=following-sibling::dd[1]")).toHaveText("已取消（等待你的决定超时）");
+  await page.screenshot({ path: join(artifact, "runtime-cancelled.png"), animations: "disabled" });
+  assert.deepEqual(errors, []);
+});
+
 test("a Turn waiting for a slot says how many conversations run, has no deadline of its own, and can be cancelled", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false, { name: "Busy Agent", scenario: "hermes" }); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
@@ -1154,7 +1189,8 @@ test("a Turn waiting for a slot says how many conversations run, has no deadline
   await expect(log.getByRole("button", { name: "打开那个对话", exact: true })).toHaveCount(0);
   await page.screenshot({ path: join(artifact, "slot-wait.png"), animations: "disabled" });
   await log.getByRole("button", { name: "取消排队", exact: true }).click();
-  await expect(log.locator("[data-run-status=cancelled]")).toContainText("已取消（用户停止）");
+  // The user cancelled it before it started: a stop of the user's, said 已停止 (ADR-054 decision H).
+  await expect(log.locator("[data-run-status=cancelled]")).toContainText("已停止");
   assert.deepEqual(errors, []);
 });
 
@@ -1189,17 +1225,17 @@ test("a Harness of a version HarnessHub never ran shows that version alone in th
   await expect(autohand.locator(".badge")).toHaveCount(0);
   await sayNothing("the Harness list");
   await page.screenshot({ path: join(artifact, "version-fact.png"), animations: "disabled" });
-  // The welcome's list of Agents (opened from its summary, ADR-054 §5) and the picker show the version the same way, and
-  // the Harness is chosen like any other.
+  // The welcome's list of Agents (opened from its summary, ADR-054 §5) and the picker show the version the same way, as
+  // the Agent page does (no "v" in front, Foundations board), and the Harness is chosen like any other.
   await page.getByRole("button", { name: "返回对话", exact: true }).click();
   await page.locator(".agent-summary").click();
   const card = page.getByRole("region", { name: "本机发现的 Harness" }).getByRole("button", { name: "选择 Gemini CLI", exact: true });
-  await expect(card).toContainText("v1.0.0"); await expect(card.locator(".badge")).toHaveCount(0);
+  await expect(card).toContainText(/(?<!v)1\.0\.0 · /u); await expect(card).not.toContainText("v1.0.0"); await expect(card.locator(".badge")).toHaveCount(0);
   await sayNothing("the welcome");
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click();
   const option = page.getByRole("option", { name: "Gemini CLI", exact: true });
-  await expect(option).toContainText("v1.0.0"); await expect(option).toBeEnabled();
+  await expect(option).toContainText("1.0.0"); await expect(option).not.toContainText("v1.0.0"); await expect(option).toBeEnabled();
   await sayNothing("the picker");
   await option.click();
   await expect(page.getByRole("button", { name: "选择 Harness", exact: true })).toContainText("Gemini CLI");
@@ -1217,6 +1253,8 @@ test("the execution settings name the native session and give the program's own 
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
   await composer.fill("hello"); await composer.press("Enter");
   await expect(log.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
+  // The panel is closed until opened (ADR-054 decision E); without changes or a plan it opens on the Turn's execution facts.
+  await page.getByRole("button", { name: "详情栏", exact: true }).click();
   const resume = page.getByRole("complementary", { name: "详情栏" }).getByLabel("在原程序中继续");
   // The identifier, the interactive command and its copy button: the fixture's Codex reports no version HarnessHub ever ran, and none is needed.
   await expect(resume.locator(".native-resume-row code")).toHaveText([/^browser-native-\d+$/u, /^codex resume browser-native-\d+$/u]);
@@ -1358,6 +1396,14 @@ test("G054-FR2 G054-FR3 the process folds into one line, the density choice stay
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
   await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter");
   await expect(log).toContainText("原生活动已完成。");
+  // D04: the panel stays closed and its button carries the number. The number pops in as news, when changes come while the
+  // conversation is shown; brought back by closing the panel, here from the keyboard (#37), it is simply there.
+  const button = page.getByRole("button", { name: "详情栏", exact: true });
+  const pop = () => button.evaluate(element => [...element.querySelectorAll(":scope > span")].map(span => getComputedStyle(span).animationName).join());
+  await expect(button).toHaveText("1"); assert.match(await pop(), /hh-pop-in/u, "a change made in view pops the number in");
+  await page.keyboard.press("ControlOrMeta+\\"); await expect(button).toHaveAttribute("aria-pressed", "true"); await expect(button).toHaveText("");
+  await page.keyboard.press("ControlOrMeta+\\"); await expect(button).toHaveAttribute("aria-pressed", "false");
+  await expect(button).toHaveText("1"); assert.equal(await pop(), "none", "closing the panel brings the number back without motion");
   const summary = log.locator(".process-summary");
   await expect(summary).toHaveText(/^改了 1 处，运行 1 条命令 · [0-9.]+ 秒$/u); await expect(summary).toHaveAttribute("aria-expanded", "false");
   await expect(log.getByRole("list", { name: "工具活动" })).toHaveCount(0);
@@ -1368,10 +1414,31 @@ test("G054-FR2 G054-FR3 the process folds into one line, the density choice stay
   await expect(log.getByRole("list", { name: "工具活动" })).toBeVisible();
   await page.getByRole("button", { name: "简洁", exact: true }).click();
   await expect(log.getByRole("list", { name: "工具活动" })).toHaveCount(0);
-  // Wide enough for the panel beside the conversation: it opens on the conversation's changes, read-only.
+  // D04 (ADR-054 decision E): wide enough for the panel beside the conversation, it still stays closed, changes or not; its
+  // button carries the number of changes, said in full to a screen reader. A page drawn again in the compact density reads
+  // no tool detail while the panel is closed.
   const panel = page.getByRole("complementary", { name: "详情栏" });
-  await expect(panel.getByRole("tab", { name: /改动/u })).toHaveAttribute("aria-selected", "true");
-  await expect(panel.getByRole("radio", { name: "整个对话 1", exact: true })).toHaveAttribute("aria-checked", "true"); await expect(panel).toContainText("README.md");
+  const origin = new URL(fixture.gateway.url).origin, id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session");
+  const details = ((await (await context.request.get(origin + "/api/v1/sessions/" + id)).json()).runs as { tools?: { detail?: { id: string } }[] }[]).flatMap(run => (run.tools ?? []).flatMap(tool => tool.detail ? [tool.detail.id] : []));
+  assert.ok(details.length > 0, "the fixture's tools carry stored detail");
+  const reads: string[] = [];
+  page.on("request", request => { if (details.some(content => request.url().includes("/api/v1/content/" + encodeURIComponent(content)))) reads.push(request.url()); });
+  await page.reload(); await expect(log).toContainText("原生活动已完成。");
+  await expect(panel).toHaveCount(0); await expect(button).toHaveAttribute("aria-pressed", "false");
+  await expect(button).toHaveText("1"); await expect(button).toHaveAccessibleDescription("本对话改动 1 处");
+  assert.equal(await pop(), "none", "drawn with the conversation, the number is simply there");
+  await page.waitForTimeout(500); assert.deepEqual(reads, [], "no tool detail is read while the panel is closed");
+  // Opened, it shows the conversation's changes, read-only. The 改动 tab and its scope say the button's number at once, from
+  // the same facts, before any diff is read; the file comes with the read.
+  let release!: () => void; const held = new Promise<void>(done => { release = done; });
+  await page.route("**/api/v1/content/**", async route => { await held; await route.continue(); });
+  await button.click();
+  await expect(panel.getByRole("tab", { name: /改动/u })).toHaveText("改动1"); await expect(panel.getByRole("tab", { name: /改动/u })).toHaveAttribute("aria-selected", "true");
+  await expect(panel.getByRole("radio", { name: "整个对话 1", exact: true })).toHaveAttribute("aria-checked", "true"); await expect(panel).not.toContainText("README.md");
+  release();
+  await expect(panel).toContainText("README.md"); assert.ok(reads.length > 0, "opened, the panel reads the diffs");
+  // Opening it was the user's choice, which this browser keeps.
+  await page.reload(); await expect(panel).toBeVisible(); await expect(button).toHaveAttribute("aria-pressed", "true");
   await expect(panel.locator(".native-diff .is-add")).toContainText("新内容"); await expect(panel.locator(".native-diff .is-remove")).toContainText("旧内容");
   await expect(panel.getByRole("button", { name: /撤销|还原|revert/iu })).toHaveCount(0);
   await panel.getByRole("tab", { name: /过程/u }).click();
@@ -1435,8 +1502,10 @@ test("G054-DL4 each reply names its Agent, model and thinking level, a hand-over
   const raw = command.locator(".native-tool-detail");
   await expect(raw.locator("pre").first()).toHaveText("ls -la"); await expect(raw).toContainText("输出"); await expect(raw).toContainText("README.md");
   await page.screenshot({ path: join(artifact, "dl4-turn-light-1440.png"), animations: "disabled" });
-  // D02: the details tabs are 改动 (with the number of files), 计划, 过程, 后台 and 执行; the underline sits under the chosen tab.
+  // D02: the details tabs are 改动 (with the number of changes, the button's), 计划, 过程, 后台 and 执行; the underline sits under
+  // the chosen tab. The panel is closed until opened (decision E).
   const panel = page.getByRole("complementary", { name: "详情栏" });
+  await page.getByRole("button", { name: "详情栏", exact: true }).click();
   await expect(panel.getByRole("tab")).toHaveText(["改动1", "计划", "过程", "后台", "执行"]);
   for (const [name, file] of [["计划", "plan"], ["过程", "process"], ["后台", "background"], ["改动", "changes"]] as const) {
     const tab = panel.getByRole("tab", { name: new RegExp("^" + name, "u") });
@@ -1452,9 +1521,11 @@ test("G054-DL4 each reply names its Agent, model and thinking level, a hand-over
   // C08: switching the model takes effect between Turns and marks the place: a hairline with the pill in the middle.
   await pick("选择模型", "Native A");
   await expect.poll(async () => { const value = await current(); return value.pendingSwitchId === null && value.selection.nativeModel === "native-a"; }).toBe(true);
-  // The same Agent with another model says "改用" once the page names the Agent before the change; until then it says who took over.
-  const handover = log.getByRole("separator", { name: /^从这里起(?:由 Codex 接手 · |改用 )/u });
-  await expect(handover).toBeVisible(); await expect(handover).toContainText(/从这里起(?:由 Codex 接手 · |改用 )(?:native-a|Native A)/u);
+  // The same Agent with another model says "改用" and the new choice in the words of a Turn's identity line (the model alone:
+  // the change keeps no thinking level of its own); the pill shows the Agent's mark, without the arrow of a hand-over.
+  const handover = log.getByRole("separator", { name: "从这里起改用 Native A", exact: true });
+  await expect(handover).toBeVisible(); await expect(handover).toHaveText("从这里起改用 Native A");
+  await expect(handover.locator(".brand-tile")).toHaveCount(1); await expect(handover.locator("path[pathLength]")).toHaveCount(0);
   const pill = await handover.evaluate(element => { const pill = element.querySelector(":scope > span:nth-child(2)") as HTMLElement, line = element.firstElementChild as HTMLElement;
     return { radius: getComputedStyle(pill).borderRadius, height: pill.getBoundingClientRect().height, line: line.getBoundingClientRect().height, shadow: getComputedStyle(pill).boxShadow }; });
   assert.ok(pill.radius.startsWith("3.35544e+07") || parseFloat(pill.radius) >= 15, "the pill is round: " + pill.radius);
@@ -1518,9 +1589,24 @@ test("G054-DL7 a running Turn shows the arc, the swept words and a timer every s
     return { samples, token };
   }, settle);
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  // The Turn is drawn once: its process line is held from the moment it appears, before the reply has any text.
+  await page.evaluate(() => {
+    const probe: { line: Element | null; textless: boolean } = { line: null, textless: false };
+    (window as unknown as { __turnLine: typeof probe }).__turnLine = probe;
+    const observer = new MutationObserver(() => {
+      const line = document.querySelector("[role=log] .assistant-message .turn-process");
+      if (line === null) return;
+      probe.line = line; probe.textless = line.closest(".assistant-message")!.querySelector(".markdown") === null; observer.disconnect();
+    });
+    observer.observe(document.body, { subtree: true, childList: true });
+  });
   await composer.fill("STREAM_RENDER：动效验收"); await composer.press("Enter");
   const turn = log.locator(".assistant-message").last(), row = turn.locator(".process-summary"), reply = turn.locator(".markdown.text-reading");
   await expect(turn).toContainText("第一段已经到达。");
+  // When the reply's first text came (the Runtime creates its message then), the same line is still in the page: not drawn anew.
+  assert.deepEqual(await page.evaluate(() => { const probe = (window as unknown as { __turnLine: { line: Element | null; textless: boolean } }).__turnLine;
+    return [probe.textless, probe.line?.isConnected ?? null, probe.line === [...document.querySelectorAll("[role=log] .assistant-message .turn-process")].at(-1)]; }),
+    [true, true, true], "the Turn keeps its element as its reply starts");
   // #10: the first piece arrived as more than 120 characters at once, so it is shown at once, without fading pieces.
   await expect.poll(() => reply.evaluate(element => element.dataset.shown === element.dataset.committed)).toBe(true);
   await expect(reply.locator(".motion-token")).toHaveCount(0);
@@ -1765,6 +1851,8 @@ test("G054-DL3 the home greets, says who is ready from the readiness facts and w
   await summary.click();
   const list = page.getByRole("region", { name: "本机发现的 Harness" });
   await expect(list.getByRole("button", { name: "选择 OpenClaw", exact: true })).toContainText("需要登录");
+  // What is not installed is found on the Agent page, called by that page's name.
+  await expect(list).toContainText(/另有 \d+ 个 Agent 在目录中但未安装，可以在 Agent 页查看官方安装方式。/u); await expect(list).not.toContainText("我的 Agent");
   await list.getByRole("button", { name: "选择 Codex", exact: true }).click();
   await expect(chip).toContainText("Codex"); await expect(composer).toBeFocused();
   await shoot("dl3-home");
@@ -1820,7 +1908,24 @@ test("G054-DL5 an approval waits in the composer's place: ⏎ allows once and es
   // P04: the amber ring, and the Turn keeps a mark that points to it.
   await expect.poll(() => box.evaluate(element => getComputedStyle(element).boxShadow)).toContain("rgb(245, 158, 11) 0px 0px 0px 1.5px");
   await expect(log.getByRole("button", { name: "等你批准，请求停在下方输入框的位置", exact: true })).toBeVisible();
+  // Decision F: the Turn says the wait once. No step is in progress here, so its process line says 等你批准 in the process's
+  // grey with the timer and without the arc; the one amber line is the mark under it.
+  const waiting = log.locator(".assistant-message").last(), line = waiting.locator(".process-summary"), marker = waiting.locator(".docked-approval");
+  await expect(line.locator(".response-status")).toHaveText("等你批准"); await expect(line).toContainText(/· 已用 \d+ 秒/u);
+  await expect(line.locator(".spinner")).toHaveCount(0); await expect(line.locator(".shimmer-text")).toHaveCount(0);
+  await expect(marker).toHaveCount(1); await expect(marker).toHaveText("等你批准，请求停在下方输入框的位置");
+  const amber = await marker.evaluate(element => getComputedStyle(element).color);
+  assert.deepEqual(await waiting.evaluate((turn, color) => [...turn.querySelectorAll("*")].filter(node => [...node.childNodes].some(child => child.nodeType === Node.TEXT_NODE && child.textContent!.trim() !== "")
+    && getComputedStyle(node).color === color).map(node => node.textContent!.trim()), amber), ["等你批准，请求停在下方输入框的位置"], "the mark is the Turn's only amber line");
   await shoot("dl5-dock");
+  // The mark is a control: ⏎ on it, or a click, moves the focus to the approval. Reached from the keyboard, the approval shows
+  // the product's focus ring at once (2 px, accent text, around its own corners); reached with the pointer it shows none.
+  const ring = () => dock.evaluate(element => { const style = getComputedStyle(element); return [style.outlineStyle, style.outlineWidth, style.outlineColor, style.outlineOffset, /outline|all/u.test(style.transitionProperty) && parseFloat(style.transitionDuration) > 0]; });
+  await page.locator("#chat-title").click(); await marker.focus(); await page.keyboard.press("Enter"); await expect(dock).toBeFocused();
+  assert.deepEqual(await ring(), ["solid", "2px", "rgb(47, 95, 208)", "2px", false]);
+  await page.screenshot({ path: join(artifact, "dl5-dock-focus-light-1440.png"), animations: "disabled" });
+  await page.locator("#chat-title").click(); await marker.click(); await expect(dock).toBeFocused();
+  assert.equal((await ring())[0], "none");
   // Pointing at the approval makes the keys its own at once.
   await dock.click({ position: { x: 60, y: 8 } }); await expect(dock).toBeFocused();
   await page.keyboard.press("Enter");
@@ -1882,6 +1987,11 @@ test("G054-DL5 an approval waits in the composer's place: ⏎ allows once and es
   const question = log.getByRole("region", { name: "Harness 交互", exact: true });
   await expect(question).toContainText("选择原生计划", { timeout: 15000 });
   await expect(composer).toBeVisible(); await expect(box.getByRole("region", { name: "工具审批", exact: true })).toHaveCount(0);
+  // The same state says the same words everywhere (decision G): the card, the header and the Turn's line say 等你回答; no
+  // marker points below, since nothing waits in the composer's place.
+  await expect(question).toContainText("Codex Question 等你回答"); await expect(page.locator(".chat-page > header .status-pill")).toHaveText("Codex Question 等你回答");
+  await expect(log.locator(".assistant-message").last().locator(".process-summary .response-status")).toHaveText("等你回答");
+  await expect(log.locator(".docked-approval")).toHaveCount(0);
   await question.getByRole("button", { name: "取消", exact: true }).click();
   await expect(log.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
   assert.deepEqual(errors, []);
@@ -1924,6 +2034,8 @@ test("G054-DL6 the plan bar above the composer says how far the plan is and open
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
   await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter");
   await expect(log).toContainText("原生活动已完成。");
+  // #15: the first message, sent from the home, rises into the conversation it opened, once: one rise in the log, around it.
+  await expect(log.locator(".motion-message-in")).toHaveCount(1); await expect(log.locator(".motion-message-in .user-message")).toHaveText(/NATIVE_ACTIVITY/u);
   // P01: the plan with a step left stays above the composer; it opens every step and its arrow turns.
   const bar = page.locator(".plan-bar"), toggle = bar.getByRole("button").first();
   await expect(toggle).toContainText("计划"); await expect(toggle).toContainText("1 / 2 · 正在：修改文件"); await expect(toggle).toHaveAttribute("aria-expanded", "false");
@@ -1948,8 +2060,9 @@ test("G054-DL6 the plan bar above the composer says how far the plan is and open
   await composer.fill("STREAM_RENDER：计时"); await composer.press("Enter");
   await expect.poll(async () => (await current()).runs.at(-1).status, { timeout: 15000 }).toBe("running");
   await expect(line).toContainText("第 2 轮"); await expect(line).toContainText(/已用 \d+ 秒/u); await expect(line).not.toContainText("输入");
-  // #15: a message sent here rises into place; #16: the send key's glyph has turned into the stop square.
-  await expect(log.locator(".motion-message-in .user-message").last()).toContainText("STREAM_RENDER：计时");
+  // #15: a message sent here rises into place, once (one rise per message sent in view); #16: the send key's glyph has turned
+  // into the stop square.
+  await expect(log.locator(".motion-message-in .user-message").last()).toContainText("STREAM_RENDER：计时"); await expect(log.locator(".motion-message-in")).toHaveCount(2);
   assert.match(await log.locator(".motion-message-in").last().evaluate(element => getComputedStyle(element).animationName), /hh-message-rise/u);
   await expect(page.getByRole("button", { name: "停止当前回复", exact: true }).locator(".send-stop")).toHaveAttribute("data-state", "stop");
   await expect.poll(motion).toContain("hh-send-to-stop:0.48s");
@@ -2036,9 +2149,11 @@ test("G054-DL9 ⌘J opens the Agent list, ⌘. stops the reply, ⌘\\ opens and 
   await page.screenshot({ path: join(artifact, "dl9-panel.png"), animations: "disabled" });
   await page.keyboard.press("ControlOrMeta+\\"); await expect(panel).toHaveCount(0); await expect.poll(width).toBe(full);
   assert.deepEqual(await panelLog(), [], "from the keyboard the panel opens and closes at once");
+  // Once fully closed (it leaves the page), the button opens it anew.
+  await expect(page.locator(".details-aside")).toHaveCount(0);
   const button = page.getByRole("button", { name: "详情栏", exact: true });
   await button.click(); await expect(panel).toBeVisible(); await expect(button).toHaveAttribute("aria-pressed", "true");
-  // With the pointer it widens in 300 ms and its content slides in 60 ms later.
+  // With the pointer it widens in 300 ms and its content slides in 60 ms later, once (the panel adds no slide of its own).
   await expect.poll(panelLog).toEqual(["width:0.3s", "slide:0.06s"]);
   // Its content slid in once: a key and then the pointer again (the input mode changing) do not make it start over.
   await page.waitForTimeout(400); await page.keyboard.press("Shift");
@@ -2067,6 +2182,23 @@ test("G054-DL9 ⌘J opens the Agent list, ⌘. stops the reply, ⌘\\ opens and 
   await expect.poll(async () => { const value = await current(); return value.activeRunId === null && value.pendingSwitchId === null && value.selection.harnessId; }, { timeout: 15000 }).toBe("native-acp");
   const handed = await current(); assert.equal(handed.runs.at(-1).status, "completed"); assert.equal(handed.runs.at(-1).selection.harnessId, "codex");
   await expect(strip).toHaveCount(0); await expect(trigger).toContainText("Shared Agent");
+  // C08: where it took over, a pill with the mark of the Agent before, an arrow and the new Agent's mark (Conversation board).
+  const handover = page.getByRole("log", { name: "对话历史" }).getByRole("separator", { name: "从这里起由 Shared Agent 接手", exact: true });
+  await expect(handover).toBeVisible();
+  await expect(handover.locator(".brand-tile")).toHaveCount(2); await expect(handover.locator(".brand-tile").first()).toHaveAttribute("data-brand", "codex");
+  // #19: made in view, it comes in: the pill fades in, the arrow draws in 160 ms, the new mark pops from .6, the lines grow.
+  const handoverMotion = () => handover.evaluate(element => {
+    const pill = element.children[1]!, arrow = pill.querySelector("path[pathLength]")!, mark = pill.children[2]!;
+    const motion = (node: Element) => { const style = getComputedStyle(node); return [style.animationName, style.animationDuration, style.animationDelay].join(" / "); };
+    return { pill: motion(pill), arrow: motion(arrow), mark: motion(mark) + " / " + getComputedStyle(mark).getPropertyValue("--motion-scale-from").trim(), lines: [motion(element.firstElementChild!), motion(element.lastElementChild!)] };
+  });
+  assert.deepEqual(await handoverMotion(), { pill: "hh-fade-in / 0.2s / 0s", arrow: "hh-draw / 0.16s / 0.14s", mark: "hh-pop-in, hh-fade-in / 0.3s, 0.12s / 0.22s / 0.6",
+    lines: ["hh-line-grow / 0.3s / 0.12s", "hh-line-grow / 0.3s / 0.12s"] });
+  for (const scheme of ["light", "dark"] as const) { await page.emulateMedia({ colorScheme: scheme }); await page.screenshot({ path: join(artifact, `dl9-handover-pill-${scheme}.png`), animations: "disabled" }); }
+  await page.emulateMedia({ colorScheme: "light" });
+  // Found in the history the page opens with, it stays still.
+  await page.reload(); await expect(handover).toBeVisible();
+  assert.deepEqual(await handoverMotion(), { pill: "none / 0s / 0s", arrow: "none / 0s / 0s", mark: "none / 0s / 0s / ", lines: ["none / 0s / 0s", "none / 0s / 0s"] });
   // A new conversation opened from the keyboard (⇧⌘O) is simply there (#37); opened with the pointer, the greeting rises in.
   const greeting = page.getByRole("heading", { name: "今天想让哪个 Agent 做什么？", exact: true });
   await page.keyboard.press("ControlOrMeta+Shift+O"); await expect(greeting).toBeVisible();
@@ -2627,7 +2759,8 @@ test("G054-UP2 a conversation whose kept process an upgrade closed says so until
   assert.equal(closed.retention.process, null); assert.equal(closed.retention.upgraded.harnessId, "native-acp");
   const events = await (await context.request.get(origin + "/api/v1/sessions/" + closed.id + "/events?afterSeq=0&limit=100")).json();
   assert.deepEqual(events.events.filter((event: { type: string }) => event.type === "native.process_closed").map((event: { data: { reason: string; cleanup: { closed: boolean } } }) => [event.data.reason, event.data.cleanup.closed]), [["harness_upgrade", true]]);
-  // The details panel is open by default at this width.
+  // The details panel is closed until opened (ADR-054 decision E); at this width its button opens it beside the conversation.
+  await page.getByRole("button", { name: "详情栏", exact: true }).click();
   await page.getByRole("complementary", { name: "详情栏" }).getByRole("tab", { name: /后台/u }).click();
   await expect(page.locator(".kept-upgraded")).toHaveText("升级 Kept Agent 前，HarnessHub 关闭了这个对话保留的后台进程。下一条消息会用新版本重新启动原程序。");
   await page.screenshot({ path: join(artifact, "upgrade-kept-closed.png"), animations: "disabled" });
@@ -4457,10 +4590,12 @@ test("G054-FZ3 DeepSeek Harness of any version shows its one-question command wi
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click();
   const option = page.getByRole("option", { name: "DeepSeek Harness", exact: true });
-  // The picker shows the version as a fact and nothing about it.
-  await expect(option).toContainText("v0.3.1"); await expect(option).not.toContainText("验证"); await option.click();
+  // The picker shows the version as a fact, as the Agent page does (no "v"), and nothing about it.
+  await expect(option).toContainText("0.3.1"); await expect(option).not.toContainText("v0.3.1"); await expect(option).not.toContainText("验证"); await option.click();
   await composer.fill("hello"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
   await expect(log.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
+  // The details panel is closed until opened (ADR-054 decision E); it opens on the Turn's execution facts.
+  await page.getByRole("button", { name: "详情栏", exact: true }).click();
   // Mutation check (run by hand, not kept): without NativeResume's once-only branch, only the identifier is shown.
   const resume = page.getByRole("complementary", { name: "详情栏" }).getByLabel("在原程序中继续");
   await expect(resume.locator(".native-resume-row code")).toHaveText(["session-fixture", "dsh headless --session-id session-fixture \"你的问题\""]);

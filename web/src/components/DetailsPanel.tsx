@@ -1,14 +1,14 @@
 import { ChevronRight, Clock, File, FileText, ListChecks, X } from "lucide-react";
-import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { cancelledLabel, type PublicRun } from "../../../src/contracts/session.js";
+import type { PublicRun } from "../../../src/contracts/session.js";
 import type { HarnessView, NativeResumeView, SessionView } from "../../../src/contracts/web.js";
 import type { ProviderView } from "../../../src/contracts/provider.js";
 import { errorMessage } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { duration, elapsed, folderName, homePath, workspacePath } from "../lib/format.js";
 import { useNow } from "../lib/prefs.js";
-import { editTools, finished, knownToolDetail, noteMount, parseUnifiedDiff, readToolDetail, RUN_STATE, runDuration, spentText, toolSummary, type DiffFile } from "../lib/turn.js";
+import { cancelledWords, changeCount, editTools, finished, knownToolDetail, parseUnifiedDiff, readToolDetail, RUN_STATE, runDuration, spentText, toolSummary, type DiffFile } from "../lib/turn.js";
 import { Collapsible } from "../ui/motion.js";
 import { EmptyState, Fact, Segmented, Spinner, StatusDot, Tabs } from "../ui/primitives.js";
 import { ACTIVITY_KIND, ACTIVITY_STATUS, DiffLines, PlanView, ToolList, usageFacts, type ToolDetailLoader } from "./Activity.js";
@@ -39,8 +39,9 @@ export interface ConversationChanges {
 }
 /**
  * The files the conversation changed, from the diffs its edit steps reported (ADR-042: read-only, nothing here undoes a
- * change). The latest 40 edit details are read once per page and shared with the steps that show them; a detail that
- * could not be read is reported once and not asked for again by this view. The header's change count can use the same hook.
+ * change). The latest 40 edit details are read once per page, only while the panel is shown, and shared with the steps that
+ * show them; a detail that could not be read is reported once and not asked for again by this view. The numbers the button,
+ * the tab and the scopes show are changeCount()'s, which needs no read.
  */
 export function useConversationChanges(runs: readonly PublicRun[], load: ToolDetailLoader | undefined): ConversationChanges {
   const edits = useMemo(() => runs.flatMap(run => editTools(run).map(tool => ({ run, tool }))).slice(-40), [runs]);
@@ -113,8 +114,9 @@ interface PanelProps {
 /**
  * The conversation's details beside it (ADR-054 §5): its changed files (this Turn or the whole conversation), the plan,
  * every Turn's steps, background work and one Turn's execution facts. The tabs' underline slides to the chosen tab (Motion
- * board #24). Opened while the conversation is shown, its content comes in 60 ms after the panel, from 24 px (#23); it does
- * not when drawn with the page, inside a drawer, which moves by itself, or when opened from the keyboard (#37).
+ * board #24). How the panel comes in is its container's: beside the conversation, ChatPage slides the content in 60 ms after
+ * the panel (#23, not when opened from the keyboard, #37); a drawer or a sheet moves by itself. The panel adds no motion of
+ * its own, so its content never slides twice.
  */
 export function DetailsPanel(props: PanelProps) {
   const { session, tab } = props;
@@ -126,22 +128,20 @@ export function DetailsPanel(props: PanelProps) {
   const background = runs.flatMap(run => (run.activities ?? []).filter(activity => activity.kind === "task" || activity.kind === "subagent").map(activity => ({ run, activity })));
   const running = background.filter(item => item.activity.status === "running").length + (kept ? 1 : 0);
   const name = (id: string | undefined) => props.harnesses.find(row => row.id === id)?.name ?? id ?? "Harness";
-  const root = useRef<HTMLDivElement>(null);
-  const [entering, setEntering] = useState(false);
-  // Opened from the keyboard (⌘\), the panel is there at once (Motion board #37).
-  useLayoutEffect(() => { if (noteMount(true) && !root.current?.closest(".drawer-pop, .sheet-pop") && document.documentElement.dataset.input !== "keyboard") setEntering(true); }, []);
+  // The header button's number, from the same summaries: shown at once, never waiting for a diff to be read.
+  const total = changeCount(runs);
   const tabs = [
-    { id: "changes" as const, label: "改动", count: !changes.loading && changes.files.length ? changes.files.length : null },
+    { id: "changes" as const, label: "改动", count: total || null },
     { id: "plan" as const, label: "计划" }, { id: "process" as const, label: "过程" },
     { id: "background" as const, label: "后台", count: running || null }, { id: "run" as const, label: "执行" },
   ];
-  return <div ref={root} className={cn("details-panel flex h-full min-h-0 w-full min-w-0 flex-col bg-app", entering && "motion-panel-in")}>
+  return <div className="details-panel flex h-full min-h-0 w-full min-w-0 flex-col bg-app">
     <div className="flex h-[54px] flex-none items-stretch gap-2 pr-3 pl-[18px] hairline-b">
       <Tabs className="h-full min-w-0 flex-1 [&>.tab]:h-full" items={tabs} value={tab} onChange={props.onTab} label="详情分类" idPrefix="details-tab" panelId="details-tabpanel"/>
       {props.onClose ? <button type="button" className="icon-btn size-7 self-center text-fg-3" aria-label="关闭详情栏" title="关闭详情栏" onClick={props.onClose}><X size={14} strokeWidth={2}/></button> : null}
     </div>
     <div className="scroll-area min-h-0 flex-1" role="tabpanel" id="details-tabpanel" aria-labelledby={`details-tab-${tab}`}>
-      {tab === "changes" ? <Changes changes={changes} selected={selected} workspace={session.workspace} name={name} sessionId={session.id}/>
+      {tab === "changes" ? <Changes changes={changes} counts={{ turn: selected ? changeCount([selected]) : 0, all: total }} selected={selected} workspace={session.workspace} name={name} sessionId={session.id}/>
         : tab === "process" ? selected ? <Process run={selected} runs={runs} onRun={props.onRun} describe={props.describe} loadToolDetail={props.loadToolDetail} name={name}/> : <Empty>这个对话还没有执行记录。</Empty>
         : tab === "plan" ? plan ? <div className="px-4 pt-3 pb-4"><PlanView plan={plan} owner={name(planRun?.selection.harnessId)}/></div> : <EmptyState icon={<ListChecks size={22}/>} title="还没有计划">Agent 报告计划后会显示在这里。</EmptyState>
         : tab === "background" ? <Background session={session} kept={kept} items={background} busy={props.busy} onEndProcess={props.onEndProcess} name={name}/>
@@ -161,8 +161,9 @@ function RunPicker({ runs, run, onRun }: { readonly runs: readonly PublicRun[]; 
 /**
  * Each changed file with its diff as the program reported it (Conversation board): this Turn's files or the whole
  * conversation's, a list with lines added and removed, and the chosen file's diff, read-only, naming the Agent that made it.
+ * The scopes carry the changes each holds, counted as the tab and the header's button count them.
  */
-function Changes({ changes, selected, workspace, name, sessionId }: { readonly changes: ConversationChanges; readonly selected: PublicRun | null; readonly workspace: string; readonly name: (id: string) => string; readonly sessionId: string }) {
+function Changes({ changes, counts, selected, workspace, name, sessionId }: { readonly changes: ConversationChanges; readonly counts: { readonly turn: number; readonly all: number }; readonly selected: PublicRun | null; readonly workspace: string; readonly name: (id: string) => string; readonly sessionId: string }) {
   const [scope, setScope] = useState<"turn" | "all">("all");
   const [chosen, setChosen] = useState<string | null>(null);
   useEffect(() => { setChosen(null); setScope("all"); }, [sessionId]);
@@ -170,11 +171,10 @@ function Changes({ changes, selected, workspace, name, sessionId }: { readonly c
   const turn = selected ? changes.files.filter(file => file.runIds.has(selected.id)) : [];
   const files = scope === "turn" ? turn : changes.files;
   const current = files.find(file => file.path === chosen) ?? files[0];
-  const count = (value: number) => changes.loading ? "" : " " + value;
   return <div className="flex flex-col">
     {/* Conversation board: the scope sits right under the tabs, the files 10 px below it */}
     <div className="flex items-center gap-2 px-3.5 pt-1 pb-2.5">
-      <Segmented label="改动范围" value={scope} onChange={setScope} options={[{ value: "turn", label: "本轮" + count(turn.length) }, { value: "all", label: "整个对话" + count(changes.files.length) }]}/>
+      <Segmented label="改动范围" value={scope} onChange={setScope} options={[{ value: "turn", label: "本轮 " + counts.turn }, { value: "all", label: "整个对话 " + counts.all }]}/>
     </div>
     {files.length ? <ul className="m-0 flex list-none flex-col gap-px px-2.5 pb-2" aria-label="改动的文件">{files.map(file => {
       const shown = workspacePath(file.path, workspace), cut = shown.lastIndexOf("/") + 1;
@@ -220,7 +220,7 @@ function RunProcess({ run, index, open, onToggle, loadToolDetail, name, describe
   const active = !finished(run.status), panel = useId(), at = (time: number | undefined) => time === undefined ? null : new Date(time).toLocaleTimeString("zh-CN", { hour12: false });
   const summary = run.tools?.length ? toolSummary(run.tools, active).compact : "", total = runDuration(run);
   const time = total !== null ? spentText(total) : active && run.timing ? "已用 " + elapsed(now - run.timing.acceptedAt) : "";
-  const steps: [string, number | undefined][] = [["收到消息", run.timing?.acceptedAt], ["开始启动原程序", run.timing?.preparingAt], ["原生会话就绪", run.timing?.readyAt], ["发给原程序", run.timing?.dispatchedAt], ["首个输出", run.timing?.firstOutputAt], [run.status === "cancelled" ? cancelledLabel(run) : RUN_STATE[run.status], run.timing?.endedAt]];
+  const steps: [string, number | undefined][] = [["收到消息", run.timing?.acceptedAt], ["开始启动原程序", run.timing?.preparingAt], ["原生会话就绪", run.timing?.readyAt], ["发给原程序", run.timing?.dispatchedAt], ["首个输出", run.timing?.firstOutputAt], [run.status === "cancelled" ? cancelledWords(run) : RUN_STATE[run.status], run.timing?.endedAt]];
   const model = describe(run);
   return <li className="flex min-w-0 flex-col">
     <button type="button" className="row flex min-h-9 w-full min-w-0 items-center gap-2 border-none bg-transparent px-1.5 py-1.5 text-left text-ui-sm text-fg-2" aria-expanded={open} aria-controls={panel} onClick={onToggle}>
@@ -289,7 +289,7 @@ function RunFacts(props: PanelProps & { readonly run: PublicRun; readonly runs: 
       {options.length ? <Fact label="原生选项">{options.map(([id, value]) => `${id} ${value}`).join("、")}</Fact> : null}
       <Fact label="控制入口"><code className="text-code">{run.selection.controlId}</code></Fact>
       <Fact label="工作区"><span className="mono text-code" title={session.workspace}>{homePath(session.workspace) || folderName(session.workspace)}</span></Fact>
-      <Fact label="执行状态">{status === "cancelled" ? cancelledLabel(run) : RUN_STATE[status]}</Fact>
+      <Fact label="执行状态">{status === "cancelled" ? cancelledWords(run) : RUN_STATE[status]}</Fact>
       <Fact label="执行标识"><code className="text-code break-all">{run.id}</code></Fact>
       {run.timing?.readyAt !== undefined && run.timing.preparingAt !== undefined ? <Fact label="启动原程序">{duration(run.timing.readyAt - run.timing.preparingAt)}{run.reused ? "（复用保留的进程）" : ""}</Fact> : null}
       {run.timing?.firstOutputAt !== undefined && run.timing.dispatchedAt !== undefined ? <Fact label="发送后首个输出">{duration(run.timing.firstOutputAt - run.timing.dispatchedAt)}</Fact> : null}

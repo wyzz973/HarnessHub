@@ -151,9 +151,10 @@ export function ApprovalDock({ request, harness, busy, onDecision, onStop, stopD
       {option === primary ? <Kbd variant="hint">⏎</Kbd> : option === refuse ? <Kbd variant="hint">esc</Kbd> : null}
     </button>;
   };
-  // Pointing at the dock is a choice to act on it: the keys are meant for it from then on.
+  // Pointing at the dock is a choice to act on it: the keys are meant for it from then on. Focused from the keyboard it shows
+  // the product's focus ring (2 px, accent text, at once), which follows its 28 px corners; from the pointer it shows none.
   return <section ref={section} id="approval-dock" tabIndex={-1} onKeyDown={onKeyDown} onPointerDown={() => { guard.current = 0; }} aria-label="工具审批" aria-describedby="approval-dock-title"
-    className="approval-dock flex flex-col gap-3 rounded-composer pt-4 pr-4 pb-3 pl-[18px] outline-none">
+    className="approval-dock flex flex-col gap-3 rounded-composer pt-4 pr-4 pb-3 pl-[18px]">
     <div className="flex items-start gap-3">
       <span className="flex h-[34px] w-[34px] flex-none items-center justify-center rounded-[11px] bg-amber-soft text-amber" aria-hidden="true"><ShieldAlert size={18}/></span>
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -206,7 +207,11 @@ export function DecisionLine({ decision }: { readonly decision: Decision }) {
     <Icon size={15} className="flex-none" aria-hidden="true"/><span className="min-w-0 truncate" title={decision.title}>{text}<span className="mono text-[12.5px]">{decision.title}</span></span>
   </p>;
 }
-/** The mark a Turn keeps while its approval waits in the composer's place; pressing it moves focus there. */
+/**
+ * The mark a Turn keeps while its approval waits in the composer's place (Conversation board, decision F): the Turn's one
+ * amber line, drawn once for the Turn's waiting approvals; the process line above it keeps its grey. A button, so a click
+ * or ⏎ moves the focus to the approval.
+ */
 export function DockedMarker() {
   return <button type="button" className="docked-approval flex items-center gap-2 self-start rounded-row border-none bg-transparent px-0 text-ui-sm text-amber"
     onClick={() => document.getElementById("approval-dock")?.focus()}>

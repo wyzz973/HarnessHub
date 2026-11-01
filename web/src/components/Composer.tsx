@@ -85,10 +85,10 @@ export function harnessOptions(harnesses: readonly HarnessView[], readiness: rea
       value: row.id, label: row.name, icon: <BrandIcon brand={row.id} name={row.name} size={26}/>,
       group: available ? "本机可用" : "暂不可用",
       // The version is a fact of the installation; nothing is said about it (ADR-053).
-      description: [version ? `v${version}` : row.controls.filter(item => item.available).map(item => protocolLabel(item.protocol)).join(" / "),
+      description: [version ? version : row.controls.filter(item => item.available).map(item => protocolLabel(item.protocol)).join(" / "),
         available && seen?.startupMs !== undefined ? "启动约 " + approximately(seen.startupMs) : ""].filter(Boolean).join(" · "),
       ...(status ? { status } : {}),
-      disabled: !available, reason: row.installed ? "已发现程序，控制入口尚未就绪" : "尚未安装，可在“我的 Agent”中查看安装方式",
+      disabled: !available, reason: row.installed ? "已发现程序，控制入口尚未就绪" : "尚未安装，可在 Agent 页查看安装方式",
     };
   }).sort((a, b) => Number(Boolean(a.disabled)) - Number(Boolean(b.disabled)));
 }
@@ -223,7 +223,7 @@ export function Composer(props: ComposerProps) {
     finally { sending.current = false; }
   };
   // The picker offers what the user can start with (ADR-050): the Agents on this computer, as the boards list them; what
-  // is not installed is found in "我的 Agent". The current choice is never among the hidden or left-out ones.
+  // is not installed is found on the Agent page. The current choice is never among the hidden or left-out ones.
   const harnessChoices = harnessOptions(harnesses.filter(row => row.id === draft.harnessId || !props.hiddenHarnesses.has(row.id) && (row.installed || row.controls.some(control => control.available))), props.readiness, draft);
   const providerOptions: PickerOption[] = [{ value: "", label: "Harness 原生连接", short: "原生连接", description: "由 Harness 提供模型连接，需要完成相应认证", icon: <LogoMark size={18}/> }, ...providers.map(row => {
     const supported = !harness || harness.providerProtocols.includes(row.protocol);
