@@ -2192,6 +2192,21 @@ test("G054-DL5 while an approval waits, the Turn names the step it asks for in t
   await expect(turn).toHaveAttribute("data-run-status", "completed", { timeout: 15000 });
   await expect(listed).toHaveText("运行 rm -rf build");
   await expect(line).toContainText("读了 1 个文件，运行 1 条命令");
+  // A Turn that fails after its step was refused says so in red, and its line is a row that tints when pointed at: its words
+  // read at 4.5:1 on that tint in both themes, as all small text must (ruling M).
+  await composer.fill("STEP_APPROVAL_FAILS 再清理一次"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
+  await expect(dock).toContainText("rm -rf build", { timeout: 15000 });
+  await dock.getByRole("button", { name: "Deny", exact: true }).click();
+  const refused = log.locator(".assistant-message").last(), refusedLine = refused.locator(".process-summary");
+  await expect(refused).toHaveAttribute("data-run-status", "failed", { timeout: 15000 });
+  await expect(refusedLine).toHaveText(/^失败 · 读了 1 个文件，运行 1 条命令，1 项失败 · 用时 [0-9.]+ 秒$/u); await expect(refusedLine).toHaveAttribute("role", "button");
+  await refusedLine.hover();
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme }); await page.waitForTimeout(300);
+    assert.notEqual(await refusedLine.evaluate(element => getComputedStyle(element).backgroundColor), "rgba(0, 0, 0, 0)", "the line is tinted while pointed at");
+    await dl10Readable(page, `a failed Turn's line pointed at in ${scheme}`, scheme);
+  }
+  await page.emulateMedia({ colorScheme: "light" });
   assert.deepEqual(errors, []);
 });
 

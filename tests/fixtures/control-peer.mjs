@@ -58,6 +58,8 @@ const lines = createInterface({ input: process.stdin });
 let promptId = null, turn = 0, initialized = false, pendingPermission = false;
 // The workspace of the session Hermes opened last (session/new names it), where STEP_APPROVAL waits for its go-ahead.
 let sessionCwd = null;
+// STEP_APPROVAL_FAILS: once its step is refused, the Turn fails (Hermes answers the prompt with an error) instead of ending.
+let stepFails = false;
 let resumedThread = false;
 // Codex app-server gates experimental methods and fields per connection on initialize.capabilities.experimentalApi.
 let experimental = false;
@@ -545,6 +547,7 @@ lines.on("line", line => {
       // allowed. Allowed, it holds in progress until the test writes "step-continue" into the workspace, so its running is seen.
       if (JSON.stringify(message.params.prompt).includes("STEP_APPROVAL")) {
         const sessionId = message.params.sessionId, update = value => notification("session/update", { sessionId, update: value });
+        stepFails = JSON.stringify(message.params.prompt).includes("STEP_APPROVAL_FAILS");
         update({ sessionUpdate: "tool_call", toolCallId: "step-read", title: "Read " + join(sessionCwd ?? process.cwd(), "src", "app.ts"), kind: "read", status: "completed" });
         update({ sessionUpdate: "tool_call", toolCallId: "step-ask", title: "terminal: rm -rf build", kind: "execute", status: "pending" });
         emit({ id: "hermes-permission-step", method: "session/request_permission", params: { sessionId, toolCall: { toolCallId: "step-ask", title: "rm -rf build", kind: "execute" }, options: hermesOptions() } });
@@ -640,7 +643,11 @@ lines.on("line", line => {
   if (message.id === "hermes-permission-blocked") { hermesBlocked("session-fixture"); finish(); return; }
   if (message.id === "hermes-permission-step") {
     const update = value => notification("session/update", { sessionId: "session-fixture", update: value });
-    if (message.result?.outcome?.optionId !== "allow_once") { update({ sessionUpdate: "tool_call_update", toolCallId: "step-ask", status: "failed" }); finish(); return; }
+    if (message.result?.outcome?.optionId !== "allow_once") {
+      update({ sessionUpdate: "tool_call_update", toolCallId: "step-ask", status: "failed" });
+      if (stepFails) hermesRefusal(promptId, "the refused step was needed"); else finish();
+      return;
+    }
     update({ sessionUpdate: "tool_call_update", toolCallId: "step-ask", status: "in_progress" });
     const go = join(sessionCwd ?? process.cwd(), "step-continue"), hold = setInterval(() => {
       if (!existsSync(go)) return;

@@ -162,7 +162,8 @@ function TurnProcess({ run, status, text, phase, detailed, now, harness, startup
   const words = end ? phase === "settled" ? end.settled : end.arriving : "";
   const doneLayer = end ? <span key="done" className={cn("flex min-w-0 items-start gap-[7px]", (phase === "handoff" || phase === "done") && "motion-arrive")}>
     <span className="mt-[2.5px] flex size-[15px] flex-none items-center justify-center">{end.icon}</span>
-    <span className={cn("flex min-w-0", !text && "response-status", end.tone === "fail" ? "text-red" : "")} style={budget(null)}><SwapText text={words} className={wrap}/></span>
+    {/* A failed Turn's words are text on the line's tint when it is pointed at: the higher-contrast red (ruling M). */}
+    <span className={cn("flex min-w-0", !text && "response-status", end.tone === "fail" ? "text-red-on-tint" : "")} style={budget(null)}><SwapText text={words} className={wrap}/></span>
   </span> : null;
   const layers = <span className="grid min-w-0 [&>*]:col-start-1 [&>*]:row-start-1">
     {ended ? <>{phase === "handoff" && last.current ? liveLayer(last.current, true) : null}{doneLayer}</> : live ? liveLayer(live, false) : null}
