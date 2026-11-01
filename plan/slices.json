@@ -1081,7 +1081,11 @@
         "tests/browser/web.browser.ts",
         "tests/unit/web-turn.test.ts",
         "src/web/server.ts",
-        "tests/integration/web-server.test.ts"
+        "tests/integration/web-server.test.ts",
+        "web/src/ui/motion.tsx",
+        "web/src/assets/dsh-app.png",
+        "web/src/assets/workbuddy-app.png",
+        "web/src/lib/notify.ts"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/design-language-2-2026-11-01.md"

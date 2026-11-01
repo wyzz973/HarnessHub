@@ -8388,8 +8388,8 @@
         "INV-25"
       ],
       "layer": "e2e",
-      "scenario": "侧栏按状态分组，跨对话收件箱",
-      "expected": "等你处理与进行中的对话排在最前；铃铛列出所有对话中等待的审批与提问，写明期限来源与剩余时间，点击打开对应对话；通知开关在收件箱中，默认关闭",
+      "scenario": "侧栏按项目归组，跨对话收件箱",
+      "expected": "同一项目里等你处理的对话排在最前；侧栏的“等你处理”列出所有对话中等待的审批与提问，写明期限来源与剩余时间，点击打开对应对话；通知开关在收件箱中，默认关闭",
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/browser/web.browser.ts"
@@ -8469,7 +8469,7 @@
       ],
       "layer": "e2e",
       "scenario": "明暗主题与减少动效",
-      "expected": "设置中可选跟随系统、浅色、深色；深色下主要页面在 390 与 320 像素宽度没有横向滚动；减少动效时动画与过渡不超过 1 毫秒",
+      "expected": "设置中可选跟随系统、浅色、深色；深色下主要页面在 390 与 320 像素宽度没有横向滚动；减少动态效果时只保留不超过 150 毫秒的淡入淡出，没有位移、缩放与循环动画；从键盘打开的弹出层立即出现（ADR-054 第 3 节）",
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/browser/web.browser.ts"
@@ -8500,8 +8500,8 @@
         "INV-25"
       ],
       "layer": "e2e",
-      "scenario": "审批卡片的数字键",
-      "expected": "卡片获得焦点时 1–9 选择对应的一次性选项；会长期生效的选项不绑定数字键；焦点在卡片内输入框时数字键照常输入",
+      "scenario": "审批与提问的数字键",
+      "expected": "审批停在输入框的位置并获得焦点、或提问卡片获得焦点时，1–9 选择对应的一次性选项；会长期生效的选项不绑定数字键；焦点在输入框时数字键照常输入",
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/browser/web.browser.ts"
@@ -9329,7 +9329,7 @@
       "layer": "e2e",
       "planned_file": "tests/browser/web.browser.ts",
       "scenario": "能力页面",
-      "expected": "侧栏的“能力”打开页面；七个页签各显示条目与每个 Harness 的状态，提示可展开；空状态如实说明；无页面错误",
+      "expected": "侧栏的“能力”打开页面；技能、MCP、指令、子 Agent、插件、Hooks 六类页签带数量，有 Agent 提供命令时最后加“命令”；各页签显示条目与每个 Harness 的状态，提示可展开；空状态如实说明；无页面错误",
       "status": "planned",
       "evidence": null
     },

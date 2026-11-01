@@ -1755,6 +1755,10 @@
 - web/src/components/UninstallDialog.tsx
 - web/src/components/InstallDialog.tsx
 - web/src/components/InstallationUpgradeDialog.tsx
+- web/src/ui/motion.tsx
+- web/src/assets/dsh-app.png
+- web/src/assets/workbuddy-app.png
+- web/src/lib/notify.ts
 
 验收：
 - 公共Session身份与历史保留
