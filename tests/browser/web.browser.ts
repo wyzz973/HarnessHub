@@ -818,6 +818,14 @@ test("the native extensions panel lists skills, MCP servers and plugins and invo
   // picker, the control that held the item (ruling R2). Opened again, it shows what it read without reading again.
   await expect.poll(() => panel.evaluate(element => element.contains(document.activeElement))).toBe(true);
   await page.keyboard.press("Escape"); await expect(panel).toHaveCount(0); await expect(agentPart).toBeFocused();
+  // From the keyboard as well: ⌘J opens the Agent list, Tab walks on to its footer, ⏎ on 查看技能与扩展… opens the panel with
+  // the focus inside it, and esc gives the focus back to the Agent part.
+  const footerItem = page.getByRole("button", { name: "查看技能与扩展…", exact: true });
+  await page.keyboard.press("ControlOrMeta+J"); await expect(page.getByRole("combobox", { name: "搜索 Agent", exact: true })).toBeFocused();
+  for (let step = 0; step < 12 && !(await page.evaluate(() => document.activeElement?.textContent === "查看技能与扩展…")); step++) await page.keyboard.press("Tab");
+  await expect(footerItem).toBeFocused(); await page.keyboard.press("Enter");
+  await expect.poll(() => panel.evaluate(element => element.contains(document.activeElement))).toBe(true);
+  await page.keyboard.press("Escape"); await expect(panel).toHaveCount(0); await expect(agentPart).toBeFocused();
   await openExtensions(page);
   await expect(panel).toContainText("浏览器验收技能"); assert.equal(reads.length, 1, "the extensions are read once");
   await panel.getByText("MCP 服务器").click(); await expect(panel).toContainText("browser-docs"); await expect(panel).toContainText("已连接"); await expect(panel).toContainText("1 个工具");
@@ -905,6 +913,13 @@ test("a native session of the workspace is continued from the composer, quoted a
   await expect.poll(() => panel.evaluate(element => element.contains(document.activeElement))).toBe(true);
   await page.keyboard.press("Escape"); await expect(panel).toHaveCount(0);
   await expect(page.getByRole("button", { name: "添加文件或上下文", exact: true })).toBeFocused();
+  // From the keyboard as well: ⏎ on "+" opens its menu at its first item, End goes to 继续原程序的会话… (its last), ⏎ opens
+  // the panel with the focus inside it, and esc gives the focus back to "+".
+  const add = page.getByRole("button", { name: "添加文件或上下文", exact: true }), resume = page.getByRole("menuitem", { name: "继续原程序的会话…", exact: true });
+  await page.keyboard.press("Enter"); await expect(page.getByRole("menuitem").first()).toBeFocused();
+  await page.keyboard.press("End"); await expect(resume).toBeFocused(); await page.keyboard.press("Enter");
+  await expect.poll(() => panel.evaluate(element => element.contains(document.activeElement))).toBe(true);
+  await page.keyboard.press("Escape"); await expect(panel).toHaveCount(0); await expect(add).toBeFocused();
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "the continued conversation must not overflow a narrow screen");
   await page.screenshot({ path: join(artifact, "native-session-continued-390.png"), animations: "disabled" });
