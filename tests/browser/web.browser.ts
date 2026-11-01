@@ -631,20 +631,27 @@ test("unified chat shows native plan, notices, tool details with diffs and turn 
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
   await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter");
   await expect(log).toContainText("原生活动已完成。");
-  await expect(log.getByText("计划 · 1/2 完成")).toBeVisible(); await expect(log.getByText("修改文件")).toBeVisible();
+  // ADR-054: the plan stands above the composer and in the details, not inside the Turn; the panel is open at this width.
+  const panel = page.getByRole("complementary", { name: "详情栏" });
+  await panel.getByRole("tab", { name: /计划/u }).click();
+  await expect(panel.getByText("Codex 维护的计划 · 1 / 2 完成")).toBeVisible(); await expect(panel.getByText("修改文件")).toBeVisible();
+  await expect(log.getByText("计划 · 1/2 完成")).toHaveCount(0);
   await expect(log.getByText("浏览器验收提示")).toBeVisible();
-  await expect(log.getByText(/输入 1\.2k · 输出 300 · 上下文 15%/u)).toBeVisible();
-  // The Run's own phases give the first-output and total time next to its usage.
-  await expect(log.locator(".run-timing").first()).toHaveText(/^首字 [0-9.]+ 秒 · 用时 [0-9.]+ 秒$/u);
-  // The process is folded into one line by default; opening it lists each tool.
-  await expect(log.locator(".process-summary")).toContainText("执行 1 条命令"); await log.locator(".process-summary").first().click();
+  // The usage under the reply is the board's: input, output and cost; the context share is in the details (below).
+  await expect(log.locator(".native-usage")).toHaveText("输入 1.2k · 输出 300");
+  // The Run's own phases give the first-output time next to its usage, and the total time ends the process line.
+  await expect(log.locator(".run-timing").first()).toHaveText(/^首字 [0-9.]+ 秒$/u);
+  // The process is folded into one line once the Turn ended; opening it lists each tool.
+  const summary = log.locator(".process-summary");
+  await expect(summary).toHaveAttribute("aria-expanded", "false"); await expect(summary).toContainText("运行 1 条命令"); await expect(summary).toHaveText(/ · [0-9.]+ 秒$/u);
+  await summary.first().click();
   const command = log.getByRole("button", { name: /ls -la/u });
   await expect(command).toBeEnabled(); await command.click();
   await expect(log.getByText("README.md").first()).toBeVisible(); await expect(log.locator(".native-tool-detail pre").first()).toContainText("ls -la");
   await log.getByRole("button", { name: /修改 README\.md/u }).click();
   await expect(log.locator(".native-diff .is-add")).toContainText("+新内容"); await expect(log.locator(".native-diff .is-remove")).toContainText("-旧内容");
   await page.locator(".assistant-message").last().hover(); await page.getByRole("button", { name: "执行详情", exact: true }).last().click();
-  await expect(page.getByText("本轮用量")).toBeVisible();
+  await expect(page.getByText("本轮用量")).toBeVisible(); await expect(panel).toContainText("1,500 / 10,000 tokens（15%）");
   await page.screenshot({ path: join(artifact, "native-activity.png"), fullPage: true, animations: "disabled" });
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "native activity must not overflow a narrow screen");
@@ -838,6 +845,8 @@ test("tools a sub-agent ran are shown under the sub-agent call", { timeout: 1200
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Native Agents", exact: true }).click();
   await composer.fill("让子代理运行 echo"); await composer.press("Enter");
   await expect(log.locator(".assistant-message").last()).toContainText("你好 fixture", { timeout: 15000 });
+  // The steps stay open while the Turn runs and fold 1.1 s after it ended (ADR-054 §3); opened again, they list the tools.
+  await expect(log.locator(".process-summary").last()).toHaveAttribute("aria-expanded", "false");
   await log.locator(".process-summary").last().click();
   const tools = log.getByRole("list", { name: "工具活动" }).last();
   await expect(tools.locator(":scope > li")).toHaveCount(1);
@@ -1331,7 +1340,7 @@ test("G054-FR2 G054-FR3 the process folds into one line, the density choice stay
   await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter");
   await expect(log).toContainText("原生活动已完成。");
   const summary = log.locator(".process-summary");
-  await expect(summary).toHaveText("执行 1 条命令，改动 1 个文件"); await expect(summary).toHaveAttribute("aria-expanded", "false");
+  await expect(summary).toHaveText(/^改了 1 处，运行 1 条命令 · [0-9.]+ 秒$/u); await expect(summary).toHaveAttribute("aria-expanded", "false");
   await expect(log.getByRole("list", { name: "工具活动" })).toHaveCount(0);
   await page.getByRole("button", { name: "详细", exact: true }).click();
   await expect(log.getByRole("list", { name: "工具活动" })).toBeVisible();
@@ -1343,12 +1352,12 @@ test("G054-FR2 G054-FR3 the process folds into one line, the density choice stay
   // Wide enough for the panel beside the conversation: it opens on the conversation's changes, read-only.
   const panel = page.getByRole("complementary", { name: "详情栏" });
   await expect(panel.getByRole("tab", { name: /改动/u })).toHaveAttribute("aria-selected", "true");
-  await expect(panel).toContainText("本对话改动 1 个文件"); await expect(panel).toContainText("README.md");
+  await expect(panel.getByRole("radio", { name: "整个对话 1", exact: true })).toHaveAttribute("aria-checked", "true"); await expect(panel).toContainText("README.md");
   await expect(panel.locator(".native-diff .is-add")).toContainText("新内容"); await expect(panel.locator(".native-diff .is-remove")).toContainText("旧内容");
   await expect(panel.getByRole("button", { name: /撤销|还原|revert/iu })).toHaveCount(0);
   await panel.getByRole("tab", { name: /过程/u }).click();
   await expect(panel).toContainText("收到消息"); await expect(panel.getByRole("list", { name: "工具活动" })).toContainText("ls -la");
-  await panel.getByRole("tab", { name: /计划/u }).click(); await expect(panel).toContainText("计划 · 1/2 完成");
+  await panel.getByRole("tab", { name: /计划/u }).click(); await expect(panel).toContainText("Codex 维护的计划 · 1 / 2 完成");
   await panel.getByRole("tab", { name: /执行/u }).click(); await expect(panel).toContainText("本轮用量"); await expect(panel.getByRole("button", { name: "复制诊断信息", exact: true })).toBeVisible();
   await page.screenshot({ path: join(artifact, "details-panel.png"), animations: "disabled" });
   await page.getByRole("button", { name: "详情栏", exact: true }).click(); await expect(panel).toHaveCount(0);
@@ -1361,6 +1370,231 @@ test("G054-FR2 G054-FR3 the process folds into one line, the density choice stay
   await page.getByRole("button", { name: "详情栏", exact: true }).click(); await expect(page.getByRole("dialog")).toBeVisible();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "the details sheet must not overflow a narrow screen");
   await page.screenshot({ path: join(artifact, "details-sheet-390.png"), animations: "disabled" });
+  assert.deepEqual(errors, []);
+});
+
+test("G054-DL4 each reply names its Agent, model and thinking level, a hand-over is a hairline with a pill, and the process opens from one line to steps to raw output", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1440, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" }), origin = new URL(fixture.gateway.url).origin;
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  const pick = async (label: string, value: string) => { await page.getByRole("button", { name: label, exact: true }).click(); await page.getByRole("option", { name: value, exact: true }).click(); };
+  await pick("选择 Harness", "Codex"); await expect(page.getByRole("button", { name: "选择模型", exact: true })).toBeEnabled();
+  await pick("选择模型", "Native B"); await expect(page.getByRole("button", { name: "思考强度", exact: true })).toBeEnabled(); await pick("思考强度", "高");
+  await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter");
+  await expect(log).toContainText("原生活动已完成。");
+  const first = log.locator(".assistant-message").first();
+  // C03: every reply starts with who answered (the Agent's own mark, 24 px), its name, the model and the thinking level.
+  await expect(first).toHaveAttribute("aria-label", "Codex 的回复");
+  const mark = await first.locator(".brand-tile").first().boundingBox(); assert.ok(mark && Math.round(mark.width) === 24 && Math.round(mark.height) === 24, "the Agent mark is 24 px");
+  await expect(first.getByText("Native B · 思考 高", { exact: true })).toBeVisible();
+  // C04: the process is one line once the Turn ended, counting each kind of step and the total time; failures would be counted in it.
+  const summary = first.locator(".process-summary");
+  await expect(summary).toHaveAttribute("aria-expanded", "false"); await expect(summary).toHaveText(/^改了 1 处，运行 1 条命令 · [0-9.]+ 秒$/u);
+  await expect(first.getByRole("list", { name: "工具活动" })).toHaveCount(0);
+  // It is one line where it fits, the chevron right after the words: the words never wrap at the width of those they replaced.
+  assert.deepEqual(await summary.evaluate(element => { const words = element.querySelector(".swap-text")!.getBoundingClientRect(), chevron = element.querySelector(":scope > svg")!.getBoundingClientRect();
+    return [element.getBoundingClientRect().height <= 28, chevron.left - words.right <= 8]; }), [true, true], "the folded line is one line with its chevron after the words");
+  // The line is the steps' button from the keyboard too: Enter and Space open and close them.
+  await expect(summary).toHaveAttribute("role", "button");
+  await summary.focus(); await page.keyboard.press("Enter"); await expect(summary).toHaveAttribute("aria-expanded", "true");
+  await page.keyboard.press(" "); await expect(summary).toHaveAttribute("aria-expanded", "false");
+  // C05: opened, each step says its verb and what it acted on; the edit counts its lines, the command gives its exit code.
+  await summary.click(); await expect(summary).toHaveAttribute("aria-expanded", "true");
+  const steps = first.getByRole("list", { name: "工具活动" });
+  await expect(steps.locator(":scope > li")).toHaveCount(2);
+  const command = steps.locator(":scope > li").filter({ hasText: "ls -la" }), edit = steps.locator(":scope > li").filter({ hasText: "README.md" });
+  await expect(command).toContainText("运行"); await expect(command).toContainText("退出码 0");
+  await expect(edit).toContainText("修改"); await expect(edit).toContainText("+1"); await expect(edit).toContainText("−1");
+  // Consecutive reads are grouped into one step (no fixture reads twice in a row; tests/unit/web-turn.test.ts proves the grouping).
+  // The third layer: a step opens to the raw input and output the program reported.
+  await command.getByRole("button", { name: /ls -la/u }).click();
+  const raw = command.locator(".native-tool-detail");
+  await expect(raw.locator("pre").first()).toHaveText("ls -la"); await expect(raw).toContainText("输出"); await expect(raw).toContainText("README.md");
+  await page.screenshot({ path: join(artifact, "dl4-turn-light-1440.png"), animations: "disabled" });
+  // D02: the details tabs are 改动 (with the number of files), 计划, 过程, 后台 and 执行; the underline sits under the chosen tab.
+  const panel = page.getByRole("complementary", { name: "详情栏" });
+  await expect(panel.getByRole("tab")).toHaveText(["改动1", "计划", "过程", "后台", "执行"]);
+  for (const [name, file] of [["计划", "plan"], ["过程", "process"], ["后台", "background"], ["改动", "changes"]] as const) {
+    const tab = panel.getByRole("tab", { name: new RegExp("^" + name, "u") });
+    await tab.click(); await expect(tab).toHaveAttribute("aria-selected", "true");
+    await expect.poll(() => panel.locator(".tabs-indicator").evaluate(indicator => { const chosen = indicator.parentElement!.querySelector<HTMLElement>("[aria-selected=true]")!;
+      return Math.abs(indicator.getBoundingClientRect().left - chosen.getBoundingClientRect().left) < 1 && Math.abs(indicator.getBoundingClientRect().width - chosen.getBoundingClientRect().width) < 1; })).toBe(true);
+    await page.screenshot({ path: join(artifact, `dl4-panel-${file}-light-1440.png`), animations: "disabled" });
+  }
+  // D03: the changes of this Turn or of the whole conversation, each file with its lines, the diff read-only and from its Agent.
+  await expect(panel.getByRole("radio", { name: "整个对话 1", exact: true })).toHaveAttribute("aria-checked", "true");
+  await expect(panel.getByRole("button", { name: /README\.md/u })).toHaveAttribute("aria-pressed", "true");
+  await expect(panel.getByRole("region", { name: /^差异：/u })).toContainText("只读 · 来自 Codex");
+  // C08: switching the model takes effect between Turns and marks the place: a hairline with the pill in the middle.
+  await pick("选择模型", "Native A");
+  await expect.poll(async () => { const value = await current(); return value.pendingSwitchId === null && value.selection.nativeModel === "native-a"; }).toBe(true);
+  // The same Agent with another model says "改用" once the page names the Agent before the change; until then it says who took over.
+  const handover = log.getByRole("separator", { name: /^从这里起(?:由 Codex 接手 · |改用 )/u });
+  await expect(handover).toBeVisible(); await expect(handover).toContainText(/从这里起(?:由 Codex 接手 · |改用 )(?:native-a|Native A)/u);
+  const pill = await handover.evaluate(element => { const pill = element.querySelector(":scope > span:nth-child(2)") as HTMLElement, line = element.firstElementChild as HTMLElement;
+    return { radius: getComputedStyle(pill).borderRadius, height: pill.getBoundingClientRect().height, line: line.getBoundingClientRect().height, shadow: getComputedStyle(pill).boxShadow }; });
+  assert.ok(pill.radius.startsWith("3.35544e+07") || parseFloat(pill.radius) >= 15, "the pill is round: " + pill.radius);
+  assert.equal(Math.round(pill.height), 30); assert.ok(pill.line <= 1, "the line is a hairline: " + pill.line); assert.match(pill.shadow, /0px 0px 0px 0\.5px/u);
+  await composer.fill("第二轮"); await composer.press("Enter");
+  await expect(log.locator(".assistant-message")).toHaveCount(2);
+  await expect(log.locator(".assistant-message").last()).toContainText("已由", { timeout: 15000 });
+  await expect(log.locator(".assistant-message").last().getByText(/^Native A/u)).toBeVisible();
+  // The conversation keeps its identity across the hand-over: one conversation, both Turns in it.
+  const after = await current(); assert.equal(after.runs.length, 2); assert.equal(after.runs[0].selection.nativeModel, "native-b"); assert.equal(after.runs[1].selection.nativeModel, "native-a");
+  assert.equal((await (await context.request.get(origin + "/api/v1/sessions")).json()).length, 1);
+  await expect(log.locator(".assistant-message").last()).toHaveAttribute("data-run-status", "completed");
+  // The latest Turn changed nothing: "本轮" says so, "整个对话" still lists the file; 过程 lists both Turns, oldest first.
+  await panel.getByRole("radio", { name: "本轮 0", exact: true }).click(); await expect(panel).toContainText("这一轮没有改动文件。");
+  await panel.getByRole("radio", { name: "整个对话 1", exact: true }).click(); await expect(panel.getByRole("button", { name: /README\.md/u })).toBeVisible();
+  await panel.getByRole("tab", { name: /^过程/u }).click();
+  await expect(panel).toContainText("这个对话的全部步骤，按时间排列");
+  await expect(panel.getByRole("button", { name: /第 1 轮/u })).toContainText("修改 1 · 运行 1"); await expect(panel.getByRole("button", { name: /第 2 轮/u })).toHaveAttribute("aria-expanded", "true");
+  await page.screenshot({ path: join(artifact, "dl4-handover-light-1440.png"), animations: "disabled" });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.screenshot({ path: join(artifact, "dl4-handover-dark-1440.png"), animations: "disabled" });
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "the Turns fit " + width + " px");
+    await page.screenshot({ path: join(artifact, `dl4-dark-${width}.png`), animations: "disabled" });
+  }
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.screenshot({ path: join(artifact, "dl4-light-320.png"), animations: "disabled" });
+  assert.deepEqual(errors, []);
+});
+
+test("G054-DL7 a running Turn shows the arc, the swept words and a timer every second, streamed text comes in at a steady pace, and the end hands over to 已完成; reduced motion keeps only short fades", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1440, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" }), origin = new URL(fixture.gateway.url).origin;
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  async function step(stage: string) {
+    const pending = join(fixture.root, "workspace", "next-stream-control.json"), target = join(fixture.root, "workspace", "stream-control.json");
+    await writeFile(pending, JSON.stringify({ stage })); await rename(pending, target);
+  }
+  // Records, in the page, how much of the last reply is shown while it streams: the shown and committed lengths and the fading
+  // pieces, from now until `settle` ms after more text was committed (at most 8 s, so a slow machine still sees it arrive).
+  const record = (settle: number) => page.evaluate(async after => {
+    const samples: [number, number, number][] = [];
+    let end = performance.now() + 8000, first: number | null = null, token: string[] | null = null;
+    while (performance.now() < end) {
+      const reply = [...document.querySelectorAll(".assistant-message")].at(-1)?.querySelector<HTMLElement>(".markdown.text-reading");
+      if (reply) {
+        const pieces = reply.querySelectorAll(".motion-token");
+        samples.push([Number(reply.dataset.shown), Number(reply.dataset.committed), pieces.length]);
+        if (pieces.length && token === null) { const style = getComputedStyle(pieces[0]!); token = [style.animationName, style.animationDuration, style.animationTimingFunction]; }
+        first ??= samples[0]![1];
+        if (samples.at(-1)![1] > first && end > performance.now() + after) end = performance.now() + after;
+      }
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    return { samples, token };
+  }, settle);
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  await composer.fill("STREAM_RENDER：动效验收"); await composer.press("Enter");
+  const turn = log.locator(".assistant-message").last(), row = turn.locator(".process-summary"), reply = turn.locator(".markdown.text-reading");
+  await expect(turn).toContainText("第一段已经到达。");
+  // #10: the first piece arrived as more than 120 characters at once, so it is shown at once, without fading pieces.
+  await expect.poll(() => reply.evaluate(element => element.dataset.shown === element.dataset.committed)).toBe(true);
+  await expect(reply.locator(".motion-token")).toHaveCount(0);
+  // #01 #02: the arc turns once every 0.8 s and a soft band sweeps the words every 4 s after waiting 0.6 s.
+  await expect(row.locator(".shimmer-text")).toHaveText("正在回复");
+  assert.equal(await row.locator(".spinner").evaluate(element => getComputedStyle(element).animationDuration), "0.8s");
+  assert.deepEqual(await row.locator(".shimmer-text").evaluate(element => { const style = getComputedStyle(element); return [style.animationName, style.animationDuration, style.animationDelay]; }), ["hh-shimmer", "4s", "0.6s"]);
+  // #07: the words slide their width, so the timer after them glides instead of jumping.
+  assert.deepEqual(await row.locator(".swap-text").evaluate(element => [getComputedStyle(element).transitionProperty, getComputedStyle(element).transitionDuration]), ["width", "0.18s"]);
+  // #03: the timer counts every second in tabular figures.
+  const timer = row.getByText(/^· 已用 \d+ 秒$/u), before = await timer.textContent();
+  await expect(timer).not.toHaveText(before ?? "", { timeout: 3000 });
+  assert.equal(await timer.evaluate(element => getComputedStyle(element).fontVariantNumeric), "tabular-nums");
+  await row.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(artifact, "dl7-running-light-1440.png"), animations: "disabled" });
+  // #08 #09: about 70 committed characters come in over the next second as a growing prefix, each piece fading in over 700 ms.
+  const sampling = record(1800);
+  await step("second");
+  const { samples, token } = await sampling, grown = samples.filter(([, committed]) => committed > samples[0]![1]);
+  assert.ok(grown.length > 0, "the second piece arrived while recording");
+  assert.ok(samples.every(([shown, committed], index) => shown <= committed && (index === 0 || shown >= samples[index - 1]![0])), "what is shown only grows and never passes what was committed");
+  assert.ok(grown.some(([shown, committed]) => shown < committed), "the new text is released over time, not at once");
+  assert.ok(grown.some(([, , pieces]) => pieces > 1), "released pieces fade in one by one");
+  assert.deepEqual(grown.at(-1)!.slice(0, 2), [grown.at(-1)![1], grown.at(-1)![1]], "it caught up with the committed text");
+  assert.deepEqual(token, ["hh-fade-in", "0.7s", "cubic-bezier(0.37, 0.55, 0.86, 0.88)"], "each piece fades in over 700 ms on the token curve");
+  // #11: the 7 px dot at the end of the text breathes while it is written.
+  await expect(reply).toHaveClass(/caret-host/u);
+  assert.deepEqual(await reply.evaluate(element => { const style = getComputedStyle(element.querySelector(":scope > p:last-of-type")!, "::after"); return [style.width, style.animationName, style.animationDuration]; }), ["7px", "hh-end-dot", "1.25s"]);
+  // #12: at the end the arc and the words leave first, and "已完成" arrives 0.21 s later in the same place.
+  const handover = page.evaluate(() => new Promise<{ depart: boolean; together: boolean; delay: string | null; words: string[] }>(resolve => {
+    const target = [...document.querySelectorAll(".assistant-message")].at(-1)!.querySelector(".process-summary")!;
+    const seen = { depart: false, together: false, delay: null as string | null, words: [] as string[] };
+    const look = () => {
+      const depart = target.querySelector(".motion-depart"), arrive = target.querySelector(".motion-arrive");
+      if (depart) seen.depart = true;
+      if (depart && arrive) seen.together = true;
+      if (arrive && seen.delay === null) seen.delay = getComputedStyle(arrive).animationDelay;
+      const text = (target.textContent ?? "").trim(); if (text && seen.words.at(-1) !== text) seen.words.push(text);
+    };
+    const observer = new MutationObserver(look); observer.observe(target, { subtree: true, childList: true, characterData: true, attributes: true });
+    setTimeout(() => { observer.disconnect(); look(); resolve(seen); }, 3000);
+  }));
+  await step("finish");
+  const seen = await handover;
+  assert.ok(seen.depart && seen.together, "the running layer leaves while the finished one arrives in its place: " + JSON.stringify(seen));
+  assert.equal(seen.delay, "0.21s");
+  assert.match(seen.words.at(-1)!, /^已完成 · 用时 [0-9.]+ 秒$/u);
+  // The timer stops when the Run ends: while the last words are shown and the line hands over, it never passes the total.
+  const total = Number(/用时 ([0-9.]+) 秒$/u.exec(seen.words.at(-1)!)![1]);
+  assert.ok(seen.words.every(words => { const shown = /已用 (\d+) 秒/u.exec(words); return !shown || Number(shown[1]) <= total; }), "the timer never passes the total: " + JSON.stringify(seen.words));
+  await expect(turn).toHaveAttribute("data-run-status", "completed");
+  await expect(row.locator(".spinner")).toHaveCount(0); await expect(row.locator(".motion-depart")).toHaveCount(0);
+  // The finished line is one line where it fits (its words keep their own width, not one rounded down from the box).
+  await expect.poll(() => row.evaluate(element => element.getBoundingClientRect().height)).toBeLessThanOrEqual(28);
+  // The dot fades out once the text is written, and the fading pieces give way to plain text: the text itself never changed.
+  await expect(reply).not.toHaveClass(/caret-host/u); await expect(reply.locator(".motion-token")).toHaveCount(0);
+  const shownText = (await reply.textContent()) ?? "";
+  assert.ok(shownText.indexOf("第一段已经到达。") < shownText.indexOf("第二段正在生成。") && shownText.indexOf("第二段正在生成。") < shownText.indexOf("第三段完成。"), "the committed order is kept");
+  assert.equal(await reply.evaluate(element => element.dataset.shown === element.dataset.committed), true);
+  const message = (await current()).messages.at(-1); assert.equal(Number(await reply.getAttribute("data-committed")), message.text.length, "every committed character is shown");
+  await row.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(artifact, "dl7-done-light-1440.png"), animations: "disabled" });
+  // #38: with reduced motion the arc is a still dot, the words do not sweep, and replies show as they arrive.
+  await page.emulateMedia({ reducedMotion: "reduce", colorScheme: "dark" });
+  await composer.fill("STREAM_RENDER：减少动态效果"); await composer.press("Enter");
+  await expect(log.locator(".assistant-message")).toHaveCount(2);
+  const still = log.locator(".assistant-message").nth(1);
+  await expect(still).toHaveAttribute("data-run-status", "running"); await expect(still).toContainText("第一段已经到达。");
+  assert.deepEqual(await still.locator(".process-summary").evaluate(target => {
+    const spinner = target.querySelector(".spinner")!, words = target.querySelector(".shimmer-text")!;
+    return [getComputedStyle(spinner).animationName, getComputedStyle(spinner.querySelector(".spinner-arc")!).display, getComputedStyle(words).animationName, getComputedStyle(words).backgroundImage];
+  }), ["none", "none", "none", "none"]);
+  const instant = record(600);
+  await step("second");
+  const recorded = (await instant).samples, quiet = recorded.filter(([, committed]) => committed > recorded[0]![1]);
+  assert.ok(quiet.length > 0 && quiet.every(([shown, committed, pieces]) => shown === committed && pieces === 0), "with reduced motion the text shows as it arrives, without fading pieces: " + JSON.stringify(recorded));
+  // Nothing moves, scales, blurs or loops: what animates is a fade of 150 ms or less, once.
+  const moving = await still.evaluate(element => [element, ...element.querySelectorAll("*")].flatMap(node => {
+    const style = getComputedStyle(node), seconds = (value: string) => value.split(",").map(part => parseFloat(part) * (part.trim().endsWith("ms") ? .001 : 1));
+    const animated = style.animationName !== "none" && seconds(style.animationDuration).some(value => value > .15 || style.animationIterationCount === "infinite");
+    const moved = seconds(style.transitionDuration).some(value => value > .15) || seconds(style.transitionDuration).some(value => value > 0) && /transform|translate|scale|rotate|filter|width/u.test(style.transitionProperty);
+    return animated || moved ? [node.className + " " + style.animationName + " " + style.transitionProperty] : [];
+  }));
+  assert.deepEqual(moving, []);
+  await still.locator(".process-summary").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(artifact, "dl7-reduced-dark-1440.png"), animations: "disabled" });
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "a running Turn fits " + width + " px");
+    await still.locator(".process-summary").scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(artifact, `dl7-running-dark-${width}.png`), animations: "disabled" });
+  }
+  await step("finish"); await expect(still).toHaveAttribute("data-run-status", "completed");
   assert.deepEqual(errors, []);
 });
 

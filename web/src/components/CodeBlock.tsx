@@ -34,25 +34,30 @@ async function highlight(code: string, language: string): Promise<string | null>
 }
 
 /**
- * A fenced code block: plain text first, highlighted once the reply stops streaming. Shiki escapes the code itself, so the
- * markup it returns contains no content from the reply outside text nodes.
+ * A fenced code block (radius 12 on the inset background): plain text first, highlighted once the reply stops streaming,
+ * when an unknown language simply stays plain. Shiki escapes the code itself, so the markup it returns contains no content
+ * from the reply outside text nodes. Copying says when the clipboard refused, instead of failing silently.
  */
 export const CodeBlock = memo(function CodeBlock({ code, language, streaming }: { readonly code: string; readonly language: string | undefined; readonly streaming: boolean }) {
   const [html, setHtml] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copy, setCopy] = useState<"idle" | "copied" | "failed">("idle");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     setHtml(null);
     if (streaming || !language || code.length > 200_000) return;
     let current = true;
+    // A grammar that cannot load leaves the block plain: highlighting is decoration, the code is already shown.
     void highlight(code, language.toLowerCase()).then(value => { if (current) setHtml(value); }, () => {});
     return () => { current = false; };
   }, [code, language, streaming]);
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
-  const copy = () => { void navigator.clipboard.writeText(code).then(() => { setCopied(true); if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(() => setCopied(false), 1600); }, () => {}); };
+  const settle = (state: "copied" | "failed") => { setCopy(state); if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(() => setCopy("idle"), 1600); };
+  const write = () => { void navigator.clipboard.writeText(code).then(() => settle("copied"), () => settle("failed")); };
+  const label = copy === "copied" ? "已复制代码" : copy === "failed" ? "无法使用剪贴板，可选中代码后复制" : "复制代码";
   return <div className="code-block">
-    <div className="code-block-head"><span className="mono">{language ?? "text"}</span>
-      <button type="button" className="icon-btn icon-btn-sm" aria-label={copied ? "已复制代码" : "复制代码"} onClick={copy}>{copied ? <Check size={13}/> : <Copy size={13}/>}</button></div>
+    <div className="code-block-head"><span className="mono lowercase">{language ?? "text"}</span>
+      <span className="flex items-center gap-1.5">{copy === "failed" ? <span className="text-caption text-red" role="status">无法复制</span> : null}
+        <button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label={label} title={label} onClick={write}>{copy === "copied" ? <Check size={14}/> : <Copy size={14}/>}</button></span></div>
     {html ? <div dangerouslySetInnerHTML={{ __html: html }}/> : <pre><code>{code}</code></pre>}
   </div>;
 });
