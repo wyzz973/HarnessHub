@@ -2169,6 +2169,13 @@ test("G054-DL5 while an approval waits, the Turn names the step it asks for in t
   await details.getByRole("tab", { name: "过程", exact: true }).click();
   const listed = details.getByRole("list", { name: "工具活动", exact: true }).locator(".native-tool").filter({ hasText: "rm -rf build" });
   await expect(listed).toHaveText("想运行 rm -rf build"); await expect(listed.locator(".spinner")).toHaveCount(0);
+  // Nothing of the Turn runs in the details either: its row carries the amber dot of waiting, named 等你批准 as the header
+  // and the sidebar name it, and its facts say 等你批准 rather than that it is executing.
+  const turnRow = details.locator("ol > li > button").filter({ hasText: "第 1 轮" });
+  await expect(turnRow.locator(".status-dot")).toHaveAttribute("data-tone", "wait"); await expect(turnRow.getByRole("img", { name: "等你批准", exact: true })).toHaveCount(1);
+  await details.getByRole("tab", { name: "执行", exact: true }).click();
+  await expect(details.locator(".execution-details dt", { hasText: "执行状态" }).locator("xpath=following-sibling::dd[1]")).toHaveText("等你批准");
+  await details.getByRole("tab", { name: "过程", exact: true }).click();
   await page.waitForTimeout(400);
   await page.screenshot({ path: join(artifact, "dl5-asking-step-light-1440.png"), animations: "disabled" });
   await page.emulateMedia({ colorScheme: "dark" }); await page.screenshot({ path: join(artifact, "dl5-asking-step-dark-1440.png"), animations: "disabled" }); await page.emulateMedia({ colorScheme: "light" });
@@ -2179,6 +2186,7 @@ test("G054-DL5 while an approval waits, the Turn names the step it asks for in t
   await expect(asked).toHaveText("正在运行 rm -rf build"); await expect(asked.locator(".spinner")).toHaveCount(1);
   await expect(listed).toHaveText("正在运行 rm -rf build"); await expect(listed.locator(".spinner")).toHaveCount(1);
   await expect(announced).not.toHaveText("等你批准");
+  await expect(turnRow.locator(".status-dot")).toHaveAttribute("data-tone", "run");
   // Done, it reads as a step that ran, and the folded line counts it.
   await writeFile(join(fixture.root, "workspace", "step-continue"), "go");
   await expect(turn).toHaveAttribute("data-run-status", "completed", { timeout: 15000 });

@@ -132,7 +132,7 @@ export function DetailsPanel(props: PanelProps) {
   // The header button's number, from the same summaries: shown at once, never waiting for a diff to be read.
   const total = changeCount(runs);
   // The step a Run's waiting approval asks for says what it wants to do here as in its Turn (ruling J).
-  const asking = (run: PublicRun) => !finished(run.status) && (session.permissions ?? []).some(request => request.runId === run.id && !request.decided && dockedRequest(request)) ? askingStep(run.tools ?? [])?.id : undefined;
+  const asking = (run: PublicRun) => waitingWords(session, run) === "等你批准" ? askingStep(run.tools ?? [])?.id : undefined;
   const tabs = [
     { id: "changes" as const, label: "改动", count: total || null },
     { id: "plan" as const, label: "计划" }, { id: "process" as const, label: "过程" },
@@ -145,7 +145,7 @@ export function DetailsPanel(props: PanelProps) {
     </div>
     <div className="scroll-area min-h-0 flex-1" role="tabpanel" id="details-tabpanel" aria-labelledby={`details-tab-${tab}`}>
       {tab === "changes" ? <Changes changes={changes} counts={{ turn: selected ? changeCount([selected]) : 0, all: total }} selected={selected} workspace={session.workspace} name={name} sessionId={session.id}/>
-        : tab === "process" ? selected ? <Process run={selected} runs={runs} onRun={props.onRun} describe={props.describe} loadToolDetail={props.loadToolDetail} name={name} asking={asking}/> : <Empty>这个对话还没有执行记录。</Empty>
+        : tab === "process" ? selected ? <Process run={selected} runs={runs} onRun={props.onRun} describe={props.describe} loadToolDetail={props.loadToolDetail} name={name} asking={asking} waiting={run => waitingWords(session, run)}/> : <Empty>这个对话还没有执行记录。</Empty>
         : tab === "plan" ? plan ? <div className="px-4 pt-3 pb-4"><PlanView plan={plan} owner={name(planRun?.selection.harnessId)}/></div> : <EmptyState icon={<ListChecks size={22}/>} title="还没有计划">Agent 报告计划后会显示在这里。</EmptyState>
         : tab === "background" ? <Background session={session} kept={kept} items={background} busy={props.busy} onEndProcess={props.onEndProcess} name={name}/>
         : selected ? <RunFacts {...props} run={selected} runs={runs}/> : <Empty>发出第一条消息后，这里会显示执行者、阶段耗时与用量。</Empty>}
@@ -153,6 +153,16 @@ export function DetailsPanel(props: PanelProps) {
   </div>;
 }
 function Empty({ children }: { readonly children: ReactNode }) { return <p className="m-0 px-4 py-10 text-center text-ui-sm text-fg-3">{children}</p>; }
+/**
+ * What a Run in progress waits for from the user, in the words the header, the sidebar and the Turn use for it (decision G):
+ * 等你批准 while an approval waits in the composer's place, 等你回答 while only another request does. Null when nothing
+ * waits or the Run has ended.
+ */
+function waitingWords(session: SessionView, run: PublicRun): "等你批准" | "等你回答" | null {
+  if (finished(run.status)) return null;
+  const open = (session.permissions ?? []).filter(request => request.runId === run.id && !request.decided);
+  return open.length === 0 ? null : open.some(dockedRequest) ? "等你批准" : "等你回答";
+}
 function RunPicker({ runs, run, onRun }: { readonly runs: readonly PublicRun[]; readonly run: PublicRun; readonly onRun: (id: string) => void }) {
   if (runs.length < 2) return null;
   return <label className="flex items-center gap-2 text-caption text-fg-2"><span className="flex-none">回合</span>
@@ -218,8 +228,12 @@ function Phases({ run }: { readonly run: PublicRun }) {
       <span className="mono text-right text-caption text-fg-2">{duration(span)}</span></div>; })}
   </section>;
 }
-/** One Turn in the list of every Turn's steps: who ran it and what it did, opened to its timeline and tools. */
-function RunProcess({ run, index, open, onToggle, loadToolDetail, name, describe, now, asking }: { readonly run: PublicRun; readonly index: number; readonly open: boolean; readonly onToggle: () => void; readonly loadToolDetail: ToolDetailLoader | undefined; readonly name: (id: string) => string; readonly describe: (run: PublicRun) => string; readonly now: number; readonly asking: string | undefined }) {
+/**
+ * One Turn in the list of every Turn's steps: who ran it and what it did, opened to its timeline and tools. A Turn in
+ * progress carries the blue dot of work going on; while it waits for the user (`waiting`) nothing of it runs, and its dot is
+ * the amber one of waiting, named as the header names it.
+ */
+function RunProcess({ run, index, open, onToggle, loadToolDetail, name, describe, now, asking, waiting }: { readonly run: PublicRun; readonly index: number; readonly open: boolean; readonly onToggle: () => void; readonly loadToolDetail: ToolDetailLoader | undefined; readonly name: (id: string) => string; readonly describe: (run: PublicRun) => string; readonly now: number; readonly asking: string | undefined; readonly waiting: string | null }) {
   const active = !finished(run.status), panel = useId(), at = (time: number | undefined) => time === undefined ? null : new Date(time).toLocaleTimeString("zh-CN", { hour12: false });
   const summary = run.tools?.length ? toolSummary(run.tools, active).compact : "", total = runDuration(run);
   const time = total !== null ? spentText(total) : active && run.timing ? "已用 " + elapsed(now - run.timing.acceptedAt) : "";
@@ -230,7 +244,7 @@ function RunProcess({ run, index, open, onToggle, loadToolDetail, name, describe
       <BrandIcon brand={run.selection.harnessId} name={name(run.selection.harnessId)} size={18}/>
       {/* What the Turn did and its time stay whole: in the narrow panel the line wraps between its parts, never in a number */}
       <span className="min-w-0 flex-1 break-words"><span className="text-fg">{name(run.selection.harnessId)}</span>{[...(summary ? summary.split(" · ") : []), ...(time ? [time] : [])].map((part, index) => <Fragment key={index}> · <span className="whitespace-nowrap">{part}</span></Fragment>)}</span>
-      {active ? <StatusDot tone="run" label="进行中"/> : null}
+      {active ? waiting ? <StatusDot tone="wait" label={waiting}/> : <StatusDot tone="run" label="进行中"/> : null}
       <span className="flex-none text-caption text-fg-3">第 {index + 1} 轮</span>
       <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")}/>
     </button>
@@ -245,13 +259,13 @@ function RunProcess({ run, index, open, onToggle, loadToolDetail, name, describe
   </li>;
 }
 /** Every Turn's steps, oldest first, the chosen one open (Conversation board: "两个 Agent 的全部步骤，按时间排列"). */
-function Process({ run, runs, onRun, describe, loadToolDetail, name, asking }: { readonly run: PublicRun; readonly runs: readonly PublicRun[]; readonly onRun: (id: string) => void; readonly describe: (run: PublicRun) => string; readonly loadToolDetail: ToolDetailLoader | undefined; readonly name: (id: string) => string; readonly asking: (run: PublicRun) => string | undefined }) {
+function Process({ run, runs, onRun, describe, loadToolDetail, name, asking, waiting }: { readonly run: PublicRun; readonly runs: readonly PublicRun[]; readonly onRun: (id: string) => void; readonly describe: (run: PublicRun) => string; readonly loadToolDetail: ToolDetailLoader | undefined; readonly name: (id: string) => string; readonly asking: (run: PublicRun) => string | undefined; readonly waiting: (run: PublicRun) => string | null }) {
   const [closed, setClosed] = useState<string | null>(null);
   const now = useNow(runs.some(item => !finished(item.status)));
   const agents = new Set(runs.map(item => item.selection.harnessId)).size;
   return <div className="flex flex-col gap-1 px-2.5 pt-3 pb-4">
     <p className="m-0 px-1.5 pb-1 text-caption text-fg-3">{agents > 1 ? (agents === 2 ? "两个" : agents + " 个") + " Agent 的全部步骤，按时间排列" : "这个对话的全部步骤，按时间排列"}</p>
-    <ol className="m-0 flex list-none flex-col gap-px p-0">{runs.map((item, index) => <RunProcess key={item.id} run={item} index={index} open={item.id === run.id && closed !== item.id} now={now} name={name} describe={describe} loadToolDetail={loadToolDetail} asking={asking(item)}
+    <ol className="m-0 flex list-none flex-col gap-px p-0">{runs.map((item, index) => <RunProcess key={item.id} run={item} index={index} open={item.id === run.id && closed !== item.id} now={now} name={name} describe={describe} loadToolDetail={loadToolDetail} asking={asking(item)} waiting={waiting(item)}
       onToggle={() => { if (item.id === run.id) setClosed(closed === item.id ? null : item.id); else { setClosed(null); onRun(item.id); } }}/>)}</ol>
   </div>;
 }
@@ -292,7 +306,7 @@ function RunFacts(props: PanelProps & { readonly run: PublicRun; readonly runs: 
       {options.length ? <Fact label="原生选项">{options.map(([id, value]) => `${id} ${value}`).join("、")}</Fact> : null}
       <Fact label="控制入口"><code className="text-code">{run.selection.controlId}</code></Fact>
       <Fact label="工作区"><span className="mono text-code" title={session.workspace}>{homePath(session.workspace) || folderName(session.workspace)}</span></Fact>
-      <Fact label="执行状态">{status === "cancelled" ? cancelledWords(run) : RUN_STATE[status]}</Fact>
+      <Fact label="执行状态">{status === "cancelled" ? cancelledWords(run) : waitingWords(session, run) ?? RUN_STATE[status]}</Fact>
       <Fact label="执行标识"><code className="text-code break-all">{run.id}</code></Fact>
       {run.timing?.readyAt !== undefined && run.timing.preparingAt !== undefined ? <Fact label="启动原程序">{duration(run.timing.readyAt - run.timing.preparingAt)}{run.reused ? "（复用保留的进程）" : ""}</Fact> : null}
       {run.timing?.firstOutputAt !== undefined && run.timing.dispatchedAt !== undefined ? <Fact label="发送后首个输出">{duration(run.timing.firstOutputAt - run.timing.dispatchedAt)}</Fact> : null}
