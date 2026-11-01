@@ -1170,9 +1170,8 @@ test("a Harness of a version HarnessHub never ran shows that version alone in th
   await expect(autohand.locator(".badge")).toHaveCount(0);
   await sayNothing("the Harness list");
   await page.screenshot({ path: join(artifact, "version-fact.png"), animations: "disabled" });
-  // The welcome card and the picker show the version the same way, and the Harness is chosen like any other. The Agent
-  // page has no way back of its own (ADR-054 §5): a new conversation is one click away in the sidebar.
-  await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "新对话", exact: true }).click();
+  // The welcome card and the picker show the version the same way, and the Harness is chosen like any other.
+  await page.getByRole("button", { name: "返回对话", exact: true }).click();
   const card = page.getByRole("region", { name: "本机发现的 Harness" }).getByRole("button", { name: "选择 Gemini CLI", exact: true });
   await expect(card).toContainText("v1.0.0"); await expect(card.locator(".badge")).toHaveCount(0);
   await sayNothing("the welcome");
@@ -2097,6 +2096,8 @@ test("G054-DL8 the Agent page gives each Agent a card with its version and chann
   assert.ok(titleBox && leadBox && checkBox && headerBox);
   assert.ok(Math.abs(checkBox.x + checkBox.width - (headerBox.x + headerBox.width)) <= 1 && checkBox.y >= titleBox.y && checkBox.y + checkBox.height <= leadBox.y + leadBox.height + 1, "检查更新 sits at the right end of the title block");
   assert.deepEqual(await title.evaluate(element => { const style = getComputedStyle(element); return [style.fontSize, style.lineHeight, style.fontWeight]; }), ["28px", "36px", "600"]);
+  // Above it, a quiet bar holds the way back to the conversation, as on the other pages beside it.
+  await expect(main.getByRole("button", { name: "返回对话", exact: true })).toBeVisible();
 
   // A02: one card per Agent: its mark, name, version · channel, state, one sentence of facts, and its actions; no count without a fact.
   const mine = main.getByRole("region", { name: "这台 Mac 上的 Agent" }), cards = mine.getByRole("article"), card = (name: string) => mine.getByRole("article", { name, exact: true });
@@ -2995,8 +2996,8 @@ test("G054-FZ1 the frozen Harnesses stay out of the picker, the welcome, the pal
   for (const name of frozen) await expect(row(name).locator(".harness-frozen")).toHaveText("冻结");
   await expect(row("Codex").locator(".harness-frozen")).toHaveCount(0); await expect(note).toHaveCount(0);
   await page.screenshot({ path: join(artifact, "frozen-shown.png"), animations: "disabled" });
-  // A conversation on Gemini CLI, started from the sidebar: the Agent page has no way back of its own (ADR-054 §5).
-  await navigation.getByRole("button", { name: "新对话", exact: true }).click();
+  // A conversation on Gemini CLI.
+  await page.getByRole("button", { name: "返回对话", exact: true }).click();
   await picker.click(); await page.getByRole("option", { name: "Gemini CLI", exact: true }).click();
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
   await composer.fill("frozen work"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");

@@ -1,4 +1,4 @@
-import { ArrowRight, Check, ChevronRight, CircleAlert, CircleArrowUp, CircleCheck, CircleDashed, Clock3, Copy, Info, Menu as MenuIcon, Package, PanelLeft, RefreshCw, ScanSearch, Search, Square, Terminal, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, ChevronRight, CircleAlert, CircleArrowUp, CircleCheck, CircleDashed, Clock3, Copy, Info, Menu as MenuIcon, Package, PanelLeft, RefreshCw, ScanSearch, Search, Square, Terminal, X } from "lucide-react";
 import { Fragment, useEffect, useId, useRef, useState } from "react";
 import type { MouseEvent, ReactNode } from "react";
 import type { HarnessEntrySource, HarnessReadinessView, HarnessView, InstallationView, NativeResumeView, SessionSummary } from "../../../src/contracts/web.js";
@@ -122,6 +122,8 @@ interface HarnessProps {
   /** Opens the capability page for one Harness (ADR-045). */
   onCapabilities: (harnessId: string) => void;
   sidebarHidden: boolean; onExpandSidebar: () => void;
+  /** The way back to the conversation, in the page's quiet top bar. */
+  onChat: () => void;
 }
 function missing(harness: HarnessView): boolean { return harness.management.source === "missing" || !harness.controls.some(control => control.available); }
 function available(harness: HarnessView): boolean { return harness.controls.some(control => control.available); }
@@ -333,6 +335,8 @@ export function HarnessesPage(props: HarnessProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showTasks, setShowTasks] = useState(false);
   const [allCatalog, setAllCatalog] = useState(false);
+  // The top bar draws its hairline only once the page has scrolled under it.
+  const [scrolled, setScrolled] = useState(false);
   const [confirming, setConfirming] = useState<{ readonly harness: HarnessView; readonly fromDetail: boolean } | null>(null);
   // Uninstalling also shows what it removes, stops and keeps first; the confirmation takes the details' place like an upgrade's.
   const [removing, setRemoving] = useState<{ readonly harness: HarnessView; readonly installation: InstallationView } | null>(null);
@@ -378,8 +382,6 @@ export function HarnessesPage(props: HarnessProps) {
     if (harness.management.native?.channel === "native-cli" && harness.management.native.canUpgrade) return { label: "升级", run: () => request(harness) };
     return null;
   };
-  const topBar = narrow ? <button type="button" className="icon-btn navigation-toggle" onClick={props.onMenu} aria-label="打开导航"><MenuIcon size={18}/></button>
-    : props.sidebarHidden ? <Tip label="展开侧栏"><button type="button" className="icon-btn" aria-label="展开侧栏" onClick={props.onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null;
   const shownRow = (item: { readonly harness: HarnessView; readonly way: InstallWay }, index: number) => {
     const harness = item.harness, job = activeJob(harness, jobs), busy = job !== null || props.submitting.includes(harness.id);
     // A last install that failed is said on the row until another task replaces it; the details have the rest.
@@ -387,17 +389,24 @@ export function HarnessesPage(props: HarnessProps) {
     return <CatalogRow key={harness.id} harness={harness} way={item.way} first={index === 0} busy={busy} status={job ? installationStatus(job) : busy ? "提交中" : null} failure={failure}
       onOpen={() => setSelectedId(harness.id)} onInstall={() => item.way.runs === "official" ? installOfficial(harness) : request(harness)}/>;
   };
+  // The frame of the pages beside the conversation (Agent board): a quiet bar with the navigation and the way back, then
+  // one scrolling body whose head is the title, what the page is, and its actions on the description's last line.
   return <section className="management-page flex h-full min-h-0 min-w-0 flex-1 flex-col bg-app" aria-labelledby="harnesses-title">
-    {topBar ? <div className="flex h-[54px] flex-none items-center gap-2 px-3 sm:px-[18px]">{topBar}</div> : null}
-    <div className="harness-management-body scroll-area min-h-0 flex-1">
-      <div className={cn("mx-auto flex w-full max-w-[1040px] flex-col gap-7 px-4 pb-12 sm:px-10", topBar ? "pt-2" : "pt-11")}>
+    <div className={cn("flex h-[52px] flex-none items-center gap-1 border-b-[0.5px] px-3 transition-[border-color] duration-120", scrolled ? "border-line" : "border-transparent")}>
+      {narrow ? <button type="button" className="icon-btn navigation-toggle" onClick={props.onMenu} aria-label="打开导航"><MenuIcon size={18}/></button>
+        : props.sidebarHidden ? <Tip label="展开侧栏"><button type="button" className="icon-btn" aria-label="展开侧栏" onClick={props.onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null}
+      <Tip label="返回对话"><button type="button" className="icon-btn" aria-label="返回对话" onClick={props.onChat}><ArrowLeft size={16}/></button></Tip>
+    </div>
+    <div className="harness-management-body scroll-area min-h-0 flex-1" onScroll={event => setScrolled(event.currentTarget.scrollTop > 0)}>
+      <div className="mx-auto flex w-full max-w-[1040px] flex-col gap-7 px-4 pt-1 pb-16 sm:px-10">
         <div className="flex flex-col">
           <header className="flex flex-wrap items-end gap-x-4 gap-y-3">
-            <div className="flex min-w-[240px] flex-1 flex-col gap-1.5">
-              <h1 id="harnesses-title" className="m-0 text-title">Agent</h1>
-              <p className="m-0 text-ui leading-[22px] text-fg-2">{mine.length ? `这台 Mac 上的 ${mine.length} 个 Agent。` : "这台 Mac 上还没有找到 Agent。"}用它们原来的安装和登录；升级、卸载都按官网的方式来。</p>
+            <div className="flex min-w-[min(240px,100%)] flex-1 flex-col gap-1.5">
+              <h1 id="harnesses-title" className="m-0 text-title break-words">Agent</h1>
+              <p className="m-0 max-w-[720px] text-ui leading-[22px] text-fg-2">{mine.length ? `这台 Mac 上的 ${mine.length} 个 Agent。用它们原来的安装和登录；升级、卸载都按官网的方式来。`
+                : "这台 Mac 上还没有找到 Agent。装好以后，HarnessHub 用它们原来的安装和登录；安装、升级、卸载都按官网的方式来。"}</p>
             </div>
-            <div className="flex flex-none flex-wrap items-center gap-2">
+            <div className="flex max-w-full flex-none flex-wrap items-center gap-2">
               {jobs.length ? <button type="button" className={cn("btn btn-ghost", active.length > 0 && "text-accent-text")} onClick={() => setShowTasks(value => !value)} aria-expanded={showTasks} aria-controls="installation-tasks">
                 {active.length ? <Spinner size={14} tone="run" label=""/> : <Clock3 size={15}/>}安装任务<span className={active.length ? "" : "text-fg-3"}>{active.length || jobs.length}</span></button> : null}
               <Tip label="重新检测本机的 Agent"><button type="button" className="icon-btn" aria-label="重新检测" onClick={props.onRescan} disabled={props.scanning}>{props.scanning ? <Spinner size={15} label=""/> : <ScanSearch size={16}/>}</button></Tip>
