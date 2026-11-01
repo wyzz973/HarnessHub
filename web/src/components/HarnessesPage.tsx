@@ -335,13 +335,19 @@ const TIERS: Readonly<Record<HarnessView["tier"], number>> = { focus: 0, catalog
 const byTierAndName = (a: HarnessView, b: HarnessView) => TIERS[a.tier] - TIERS[b.tier] || a.name.localeCompare(b.name, "zh-CN");
 /** Rows of "还可以安装" shown before "全部"; the Agents HarnessHub carries in full come first. */
 const CATALOG_ROWS = 6;
-/** The page width from which the details sit beside the cards; the sheet is 360 px (Agent board), the body's margin the same. */
-const BESIDE_FROM = 900;
+/**
+ * The page width from which the details sit beside the cards (ADR-054 补充 C), measured on the page itself, so the
+ * sidebar counts: the cards must keep two columns, each at least as wide as the three the page draws without the details
+ * ((960 − 2 × 14) / 3, so 311 px), so the sheet never squeezes a name, a version or a button into clipping. Two such
+ * columns and their 14 px gap, the page's 2 × 40 px padding, the room a scrollbar may keep (12 px) and the 360 px sheet
+ * make 1088 px. On a narrower page the details open over it as a drawer instead.
+ */
+const BESIDE_FROM = 360 + 12 + 2 * 40 + 2 * 311 + 14;
 
 /**
  * The Agent page (ADR-054 §5): one card for each Agent on this Mac with its version and channel, its state, one sentence
- * of facts and its actions; details in a drawer, which sits beside the cards when the page is wide enough (900 px) and
- * opens over the page otherwise; and below, what can still be installed the official way. Maintenance runs through each
+ * of facts and its actions; details in a sheet beside the cards when the page has room for both (BESIDE_FROM), over the
+ * page as a drawer otherwise; and below, what can still be installed the official way. Maintenance runs through each
  * product's own channel after a confirmation (ADR-043, ADR-044); nothing here estimates a fact.
  */
 export function HarnessesPage(props: HarnessProps) {

@@ -2769,7 +2769,8 @@ test("G054-UN1 uninstalling one installation first says what it stops, removes a
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
-  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  // Wide enough for the details to sit beside the cards with the sidebar shown (ADR-054 补充 C), which the confirmation then covers.
+  const context = await isolatedContext(browser, { viewport: { width: 1440, height: 900 } }), page = await context.newPage(), errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   const ref = "e".repeat(64), fingerprint = "f".repeat(64), label = "npm 全局（Homebrew 的 Node.js）";
   const shaped = (harness: { id: string; installations: unknown[]; unofficial: unknown }) => harness.id !== "openclaw" ? harness : { ...harness, installed: true, unofficial: null,
@@ -3205,6 +3206,44 @@ test("G054-DL8 the Agent page gives each Agent a card with its version and chann
     }
     await page.setViewportSize({ width: 1440, height: 1000 });
   }
+
+  // ADR-054 补充 C: the details sit beside the cards only while the cards keep two columns at least as wide as the three
+  // the page draws without them (311 px), judged by the page's own width, so the sidebar counts: with it shown (264 px)
+  // from a 1352 px window, with it hidden from 1088. There the sheet clips no card text the page shows whole without it;
+  // one pixel narrower the details open over the page, behind a scrim, and the cards keep their place.
+  // Found by their class: a modal drawer hides the page from the accessibility tree, where roles are looked up.
+  const shown = main.locator(".agent-card"), clipped = () => shown.evaluateAll(elements => elements.flatMap(element => [...element.querySelectorAll("*")].filter(child => {
+    const style = getComputedStyle(child);
+    return (style.overflow === "hidden" || style.webkitLineClamp !== "none") && (child.scrollWidth > child.clientWidth + 1 || child.scrollHeight > child.clientHeight + 1);
+  }).map(child => element.querySelector("h3")?.textContent + " " + child.className)));
+  // The sidebar comes back from the phone widths above once the page has seen the window widen.
+  const navigation = page.getByRole("complementary", { name: "主导航" }); await expect(navigation).toBeVisible();
+  for (const [sidebar, threshold] of [[true, 1352], [false, 1088]] as const) {
+    if (!sidebar) { await navigation.getByRole("button", { name: "收起侧栏", exact: true }).click(); await expect(navigation).toHaveCount(0); }
+    for (const width of [threshold, threshold - 1]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect.poll(() => main.locator("section.management-page").evaluate(element => element.clientWidth)).toBe(width - (sidebar ? 264 : 0));
+      const whole = await clipped(), placed = await shown.evaluateAll(elements => elements.map(element => element.getBoundingClientRect().toJSON()));
+      await card("OpenClaw").getByRole("button", { name: "查看 OpenClaw 详情", exact: true }).click(); await expect(drawer).toBeVisible(); await settled(drawer);
+      const beside = width === threshold, left = await drawer.evaluate(element => element.getBoundingClientRect().left);
+      await expect(page.locator(".backdrop")).toHaveCount(beside ? 0 : 1);
+      const boxes = await shown.evaluateAll(elements => elements.map(element => element.getBoundingClientRect().toJSON() as DOMRect));
+      if (beside) {
+        assert.equal(left, width - 360, `the sheet sits at the right edge at ${width}`);
+        assert.equal(boxes.filter(box => Math.round(box.top) === Math.round(boxes[0]!.top)).length, 2, `two columns beside the details at ${width}`);
+        for (const box of boxes) assert.ok(box.width >= 310 && box.right <= left, `a card squeezed or under the details at ${width}: ${JSON.stringify(box)}`);
+        assert.deepEqual(await clipped(), whole, `the sheet makes a card clip its text at ${width}`);
+      } else assert.deepEqual(boxes, placed, `the cards move under the drawer at ${width}`);
+      for (const scheme of ["light", "dark"] as const) {
+        await page.emulateMedia({ colorScheme: scheme });
+        await page.screenshot({ path: join(artifact, `agents-details-${beside ? "beside" : "over"}-${sidebar ? "sidebar" : "full"}-${width}-${scheme}.png`), animations: "disabled" });
+      }
+      await page.emulateMedia({ colorScheme: "light" });
+      await page.keyboard.press("Escape"); await expect(drawer).toBeHidden();
+    }
+  }
+  await main.getByRole("button", { name: "展开侧栏", exact: true }).click(); await expect(navigation).toBeVisible();
+  await page.setViewportSize({ width: 1440, height: 1000 });
   assert.equal(submitted, 0);
   assert.deepEqual(errors, []);
 });
