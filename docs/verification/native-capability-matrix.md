@@ -154,7 +154,7 @@
 
 ## OpenClaw
 
-原安装：OpenClaw 真实验收版本 2026.3.23-2（npm 全局，原 Gateway 守护进程；版本只作证据，渠道 latest 2026.10.5 的两跳升级待用户确认，ADR-052）；控制入口：acp-v1（openclaw acp）+ gateway call；分层：焦点。
+原安装：OpenClaw 真实验收版本 2026.3.23-2 的记录（原 npm 全局安装，经用户自己的 Gateway；版本只作证据）。2026-11-01 本机经 HarnessHub 的两跳升级（2026.9.5 → 2026.10.9，ADR-052）装到 2026.10.9、两次 Doctor 通过，但升级后的 Gateway 不就绪，T-OC-12 未做，2026.10.9 上没有真实验收（docs/verification/openclaw-upgrade-2026-11-01.md）；控制入口：acp-v1（openclaw acp）+ gateway call；分层：焦点。
 
 | 能力 | 原接口 | 来源 | Hub | 协议 | 真实原安装 | 证据 | 说明 |
 |---|---|---|---|---|---|---|---|
