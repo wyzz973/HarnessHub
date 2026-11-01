@@ -2365,7 +2365,7 @@ test("G054-DL9 the application's shortcuts open what they name, ⌥⌘↓ goes t
   assert.deepEqual(errors, []);
 });
 
-test("G054-FR6 the chosen theme applies before the first paint and survives reload, dark pages fit narrow screens with open collapsibles and uncut status words, and reduced motion and the keyboard stop transitions", { timeout: 120000 }, async t => {
+test("G054-FR6 the chosen theme applies before the first paint and survives reload, dark pages fit narrow screens with open collapsibles and uncut status words, the end dot follows a reply's last block, and reduced motion and the keyboard stop transitions", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
@@ -2428,24 +2428,40 @@ test("G054-FR6 the chosen theme applies before the first paint and survives relo
   }), { page: true, row: true });
   await page.setViewportSize({ width: 1280, height: 900 });
 
-  // ADR-054 §3 for the classes that carry motion: the longest transition of each, in ms. A chevron turns on the `rotate`
-  // property that rotate-90 sets: the moment the angle changes, it still shows the old one.
+  // #11: the end dot follows a reply's last block as react-markdown renders it: at the end of the last line of a heading,
+  // a quote's last paragraph or a list item, and on its own line after a code block or a table, also inside a list item.
+  assert.deepEqual(await page.evaluate(() => Object.fromEntries(Object.entries({
+    heading: "<p>第一段。</p>\n<h2>流式标题</h2>", quote: "<blockquote>\n<p>引用的第一段</p>\n<p>引用的最后一段</p>\n</blockquote>",
+    list: "<ul>\n<li>读取工作区</li>\n<li>修改文件</li>\n</ul>", loose: "<ul>\n<li>\n<p>读取工作区</p>\n</li>\n<li>\n<p>修改文件</p>\n</li>\n</ul>",
+    nested: "<ul>\n<li>读取工作区\n<ul>\n<li>子步骤</li>\n</ul>\n</li>\n</ul>",
+    code: "<h2>流式标题</h2>\n<div class='code-block'><div class='code-block-head'><span>typescript</span></div><pre><code>const answer = \"par</code></pre></div>",
+    table: "<p>表格：</p>\n<div class='table-scroll'><table><thead><tr><th>项目</th><th>状态</th></tr></thead><tbody><tr><td>SSE</td><td>进行中</td></tr></tbody></table></div>",
+    listCode: "<ul>\n<li>\n<p>运行：</p>\n<div class='code-block'><pre><code>pnpm test</code></pre></div>\n</li>\n</ul>",
+  }).map(([name, html]) => {
+    const reply = document.createElement("div"); reply.className = "markdown text-reading caret-host"; reply.innerHTML = html; document.body.append(reply);
+    const marked = [reply, ...reply.querySelectorAll("*")].filter(node => getComputedStyle(node, "::after").content !== "none"), height = reply.getBoundingClientRect().height;
+    reply.classList.remove("caret-host"); const own = reply.getBoundingClientRect().height; reply.remove();
+    return [name, marked.map(node => (node === reply ? "reply" : node.tagName.toLowerCase()) + (height > own ? " on its own line" : ""))];
+  }))), { heading: ["h2"], quote: ["p"], list: ["li"], loose: ["p"], nested: ["li"], code: ["reply on its own line"], table: ["reply on its own line"], listCode: ["li on its own line"] });
+
+  // ADR-054 §3 for the classes that carry motion: the longest transition of each, in ms, and the end dot's loop. A chevron
+  // turns on the `rotate` property that rotate-90 sets: the moment the angle changes, it still shows the old one.
   const motions = () => page.evaluate(() => {
     const holder = document.createElement("div"), longest = (node: Element) => Math.max(...getComputedStyle(node).transitionDuration.split(",").map(part => parseFloat(part) * (part.trim().endsWith("ms") ? 1 : 1000)));
-    holder.innerHTML = "<div class='motion-rotate'></div><div class='collapsible' data-open='true'></div><div class='backdrop'></div><div class='floating-bar'></div>";
+    holder.innerHTML = "<div class='motion-rotate'></div><div class='collapsible' data-open='true'></div><div class='backdrop'></div><div class='floating-bar'></div><div class='markdown caret-host'><p>正在写</p></div>";
     document.body.append(holder);
-    const [chevron, collapsible, veil, bar] = [...holder.children], from = getComputedStyle(chevron!).rotate; chevron!.classList.add("rotate-90");
-    const result = {
+    const [chevron, collapsible, veil, bar, reply] = [...holder.children], from = getComputedStyle(chevron!).rotate; chevron!.classList.add("rotate-90");
+    const dot = getComputedStyle(reply!.querySelector("p")!, "::after"), result = {
       chevron: [getComputedStyle(chevron!).transitionProperty, longest(chevron!), from, getComputedStyle(chevron!).rotate], collapsible: longest(collapsible!),
-      veil: [getComputedStyle(veil!).transitionProperty, longest(veil!)], bar: [getComputedStyle(bar!).transitionProperty, longest(bar!)] };
+      veil: [getComputedStyle(veil!).transitionProperty, longest(veil!)], bar: [getComputedStyle(bar!).transitionProperty, longest(bar!)], dot: [dot.animationName, dot.animationIterationCount] };
     holder.remove(); return result;
   });
   const pointer = await motions();
   assert.notEqual(pointer.chevron[3], "90deg", "a chevron turns instead of jumping");
-  assert.deepEqual({ ...pointer, chevron: pointer.chevron.slice(0, 3) }, { chevron: ["rotate", 200, "none"], collapsible: 200, veil: ["opacity", 200], bar: ["opacity, transform", 300] });
-  // #37: from the keyboard the same changes are instant.
+  assert.deepEqual({ ...pointer, chevron: pointer.chevron.slice(0, 3) }, { chevron: ["rotate", 200, "none"], collapsible: 200, veil: ["opacity", 200], bar: ["opacity, transform", 300], dot: ["hh-end-dot", "infinite"] });
+  // #37: from the keyboard the same changes are instant; the dot keeps breathing, as nothing the keyboard did started it.
   await page.keyboard.press("Shift");
-  assert.deepEqual(await motions(), { chevron: ["rotate", 0, "none", "90deg"], collapsible: 0, veil: ["opacity", 0], bar: ["opacity, transform", 0] });
+  assert.deepEqual(await motions(), { chevron: ["rotate", 0, "none", "90deg"], collapsible: 0, veil: ["opacity", 0], bar: ["opacity, transform", 0], dot: ["hh-end-dot", "infinite"] });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.keyboard.press("ControlOrMeta+K");
   // With reduced motion only fades of 150 ms or less remain (ADR-054 §3); the palette, opened from the keyboard, appears at once.
@@ -2462,8 +2478,8 @@ test("G054-FR6 the chosen theme applies before the first paint and survives relo
   });
   assert.deepEqual([popover.input, popover.properties, popover.transform, popover.animation], ["pointer", "opacity", "none", "none"]);
   assert.ok(popover.durations.every(value => value <= 150) && popover.durations.some(value => value > 0), "a popover only fades, within 150 ms: " + popover.durations.join(","));
-  // #38 with the pointer: the chevron and the collapsible change at once, the veil and the bar only fade.
-  assert.deepEqual(await motions(), { chevron: ["rotate", 0, "none", "90deg"], collapsible: 0, veil: ["opacity", 120], bar: ["opacity", 120] });
+  // #38 with the pointer: the chevron and the collapsible change at once, the veil and the bar only fade, the end dot is still.
+  assert.deepEqual(await motions(), { chevron: ["rotate", 0, "none", "90deg"], collapsible: 0, veil: ["opacity", 120], bar: ["opacity", 120], dot: ["none", "1"] });
   await page.getByRole("radio", { name: /跟随系统/u }).click();
   await expect(page.locator("html")).not.toHaveAttribute("data-theme", /.+/u);
   // No request went to Google Fonts while the pages above were shown.

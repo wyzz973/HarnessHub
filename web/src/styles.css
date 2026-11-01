@@ -288,14 +288,23 @@
   .swap-text-in { animation: hh-swap-in 180ms var(--ease-standard) both; }
   /* #09 Streamed text: each released piece fades in over 700 ms, without blur or movement */
   .motion-token { animation: hh-fade-in 700ms var(--ease-token) both; }
-  /* #11 End dot: 7 px, breathes to 1.25 every 1.25 s, fades out in 200 ms when the reply is done */
-  .end-dot { display: inline-block; width: 7px; height: 7px; margin-left: 4px; border-radius: 50%; background: var(--text); vertical-align: 1px; animation: hh-end-dot 1.25s ease-in-out infinite; transition: opacity var(--dur-base) var(--ease-standard); }
-  .end-dot[data-done] { opacity: 0; animation-play-state: paused; }
-  .caret-host > p:last-child::after, .caret-host > :last-child > li:last-child::after {
-    content: ""; display: inline-block; width: 7px; height: 7px; margin-left: 4px; border-radius: 50%; background: var(--text); vertical-align: 1px;
-    animation: hh-end-dot 1.25s ease-in-out infinite; transition: opacity var(--dur-base) var(--ease-standard);
+  /*
+   * #11 End dot: 7 px, breathes to 1.25 every 1.25 s, fades out in 200 ms when the reply is done (data-done on the dot or on
+   * the reply). A reply being written (.caret-host) draws it after its last block, down through the last list item or
+   * quote: at the end of the last line of a paragraph, heading or list item, and at the start of the line after a code
+   * block, a table or any other block without running text. The host holds its state, so each place is named once.
+   */
+  :is(.end-dot, .caret-host) { --end-dot-opacity: 1; --end-dot-play: running; --end-dot-animation: hh-end-dot 1.25s ease-in-out infinite; }
+  :is(.end-dot, .caret-host)[data-done] { --end-dot-opacity: 0; --end-dot-play: paused; }
+  .end-dot,
+  .caret-host :is(p, h1, h2, h3, h4, h5, h6):last-child:not(.caret-host :is(:not(:last-child), :not(ul, ol, li, blockquote)) *)::after,
+  .caret-host :is(li, blockquote):last-child:not(.caret-host :is(:not(:last-child), :not(ul, ol, li, blockquote)) *):not(:has(> :is(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote):last-child))::after,
+  .caret-host:has(> :last-child:not(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote))::after {
+    content: ""; display: inline-block; width: 7px; height: 7px; margin-left: var(--end-dot-gap, 4px); border-radius: 50%; background: var(--text); vertical-align: 1px;
+    opacity: var(--end-dot-opacity); animation: var(--end-dot-animation); animation-play-state: var(--end-dot-play); transition: opacity var(--dur-base) var(--ease-standard);
   }
-  .caret-host[data-done] > p:last-child::after, .caret-host[data-done] > :last-child > li:last-child::after { opacity: 0; animation-play-state: paused; }
+  /* After a block it starts its own line, at the block's edge */
+  .caret-host:has(> :last-child:not(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote))::after, .caret-host :is(li, blockquote):has(> :last-child:is(div, pre, table, hr))::after { --end-dot-gap: 0px; }
   /* #06 A check drawn in one stroke (path with pathLength="1"); #19 draws its arrow in 160 ms through --motion-duration */
   .motion-draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: hh-draw var(--motion-duration, 240ms) var(--ease-standard) calc(40ms + var(--motion-delay, 0ms)) forwards; }
   /* #05 A tool step arrives: settles 5 px and .96 in the first 30 %, then the 4 px blur clears */
@@ -629,7 +638,8 @@
     .spinner-arc { display: none; }
     .spinner-still { display: inline; }
     .shimmer-text, .shimmer { animation: none !important; background: none; color: var(--shimmer-base); }
-    .end-dot, .caret-host > p:last-child::after, .caret-host > :last-child > li:last-child::after, .status-dot[data-live], .motion-breathe, .pulse { animation: none !important; }
+    .status-dot[data-live], .motion-breathe, .pulse { animation: none !important; }
+    :is(.end-dot, .caret-host) { --end-dot-animation: none; }
     /* Streamed text is shown as it arrives; checks and glyph swaps appear drawn; status words are replaced */
     .motion-token { animation: none !important; }
     .motion-draw { stroke-dashoffset: 0; animation: none !important; }
