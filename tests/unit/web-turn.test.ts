@@ -2,12 +2,40 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { PublicRun, PublicTool } from "../../src/contracts/session.js";
 import { workspacePath } from "../../web/src/lib/format.js";
-import { activityLabel, cancelledWords, diffTotals, groupSteps, liveStatus, noteMount, parseUnifiedDiff, readsLabel, rememberShown, reveal, shownSteps, spentText, stepLabel, stoppedByUser, toolSummary, toolTree, wrapChunks, type HastNode, type QueueNotice, type Reveal } from "../../web/src/lib/turn.js";
+import { readPreferences } from "../../web/src/lib/prefs.js";
+import { activityLabel, cancelledWords, changeCount, diffTotals, groupSteps, liveStatus, noteMount, parseUnifiedDiff, readsLabel, rememberShown, reveal, shownSteps, spentText, stepLabel, stoppedByUser, toolSummary, toolTree, wrapChunks, type HastNode, type QueueNotice, type Reveal } from "../../web/src/lib/turn.js";
 
 /** A running Run with the facts the status line reads; the rest of a Run does not matter to it. */
 function runningRun(tools: readonly PublicTool[] = [], extra: Partial<PublicRun> = {}): PublicRun {
   return { id: "run-live", status: "running", cancelRequested: false, error: null, tools, timing: { acceptedAt: 0, dispatchedAt: 10, firstOutputAt: 20 }, ...extra } as PublicRun;
 }
+/** Reads the preferences while this browser's storage holds `stored` (nothing when undefined) under their key. */
+function readStored(stored: unknown): ReturnType<typeof readPreferences> {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { getItem: (key: string) => key === "harnesshub:preferences" && stored !== undefined ? JSON.stringify(stored) : null } });
+  try { return readPreferences(); }
+  finally { if (original) Object.defineProperty(globalThis, "localStorage", original); else Reflect.deleteProperty(globalThis, "localStorage"); }
+}
+
+test("G054-FR2 the details panel starts closed: a panel stored before the closed default is not read, one chosen since is kept", () => {
+  // Nothing stored: closed.
+  assert.equal(readStored(undefined).panel, false);
+  // Stored before version 2, when every write carried the old default (open) with the rest: the rest is read, the panel is not.
+  assert.deepEqual(readStored({ theme: "dark", density: "detailed", panel: true, sidebar: false, groupBy: "harness", showFrozen: true }),
+    { theme: "dark", density: "detailed", panel: false, sidebar: false, groupBy: "harness", showFrozen: true });
+  // Opened or closed since: the user's own choice, kept either way.
+  assert.equal(readStored({ theme: "system", density: "compact", panel: true, sidebar: true, showFrozen: false, version: 2 }).panel, true);
+  assert.equal(readStored({ theme: "system", density: "compact", panel: false, sidebar: true, showFrozen: false, version: 2 }).panel, false);
+});
+
+test("G054-FR3 the details button, its tab and its scopes count the edits with stored detail, known without reading any", () => {
+  // Only whether a tool carries stored detail matters here, not what the reference holds.
+  const tool = (id: string, kind: string, detail: boolean): PublicTool => ({ id, title: id, kind, status: "completed", ...(detail ? { detail: { id: "content-" + id } } : {}) }) as unknown as PublicTool;
+  // Two edits of one file and a deletion count three places; an edit without detail and the other kinds count none.
+  const first = { tools: [tool("e1", "edit", true), tool("e2", "edit", true), tool("r", "read", true), tool("x", "execute", true)] };
+  const second = { tools: [tool("d", "delete", true), tool("e3", "edit", false), tool("m", "move", false)] };
+  assert.deepEqual([changeCount([first, second]), changeCount([first]), changeCount([second]), changeCount([]), changeCount([{}])], [3, 2, 1, 0, 0]);
+});
 
 test("G054-DL5 a Turn waiting for you keeps naming the step in progress with its arc; without one it says 等你批准 or 等你回答 in grey, and never the marker's words", () => {
   const step: PublicTool = { id: "diff", title: "git diff --stat", kind: "execute", status: "in_progress" };

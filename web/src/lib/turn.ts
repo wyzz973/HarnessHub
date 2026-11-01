@@ -274,6 +274,12 @@ export function diffTotals(files: readonly DiffFile[]): { readonly add: number; 
 export function editTools(run: Pick<PublicRun, "tools">): readonly Tool[] {
   return (run.tools ?? []).filter(tool => (tool.kind === "edit" || tool.kind === "delete" || tool.kind === "move") && tool.detail !== undefined);
 }
+/**
+ * How many changes some Turns made: their edits with stored detail, counted as places ("处") as the process line counts
+ * edits. Known from the tools' summaries without reading any detail, so the details button, its tab and its scopes say the
+ * same number, and nothing is read while the panel is closed (ADR-054 decision E).
+ */
+export function changeCount(runs: readonly Pick<PublicRun, "tools">[]): number { return runs.reduce((count, run) => count + editTools(run).length, 0); }
 /** How long a finished Run took, from the input being accepted to its final status; null without both facts. */
 export function runDuration(run: Pick<PublicRun, "timing">): number | null {
   const timing = run.timing;

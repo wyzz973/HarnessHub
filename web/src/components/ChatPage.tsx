@@ -10,7 +10,7 @@ import { failureMessage, runStatusLabel } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { clock, compact, duration, elapsed, folderName, shortTitle } from "../lib/format.js";
 import { useMedia, useNow, type Preferences } from "../lib/prefs.js";
-import { cancelledWords, editTools, finished, toolTree, TOOL_PENDING, type QueueNotice } from "../lib/turn.js";
+import { cancelledWords, changeCount, finished, toolTree, TOOL_PENDING, type QueueNotice } from "../lib/turn.js";
 import { Collapsible, motionStyle, usePresence } from "../ui/motion.js";
 import { Dialog, Menu } from "../ui/overlay.js";
 import { EmptyState, Notice, Spinner, StatusPill, Tip } from "../ui/primitives.js";
@@ -243,10 +243,15 @@ export function ChatPage(props: ChatProps) {
   // The latest message was refused because another conversation's kept process holds this workspace (ADR-030, option C).
   const refused = session?.runs.at(-1)?.status === "failed" && session.runs.at(-1)?.error?.code === "WORKSPACE_KEPT" ? session.runs.at(-1)! : null;
   const [freeing, setFreeing] = useState(false);
-  // Panel: beside the conversation on wide screens (open by preference), otherwise a drawer or a bottom sheet on demand.
+  // Panel: beside the conversation on wide screens, otherwise a drawer or a bottom sheet, always on demand. It stays closed
+  // until opened, changes or not (decision E: the button carries the number); on wide screens an opening or closing is
+  // remembered by this browser.
   const inline = wide && session !== null;
   const panelOpen = session !== null && (inline ? preferences.panel : overlay);
-  const panelTab: PanelTab = tab ?? (session?.runs.some(run => run.tools?.some(tool => ["edit", "delete", "move"].includes(tool.kind ?? "") && tool.detail)) ? "changes" : session?.runs.some(run => run.plan?.entries.length) ? "plan" : "run");
+  // How many changes the conversation made, from the tools' summaries: the button, its 改动 tab and the tab's scopes say this
+  // one number, and nothing is read while the panel is closed.
+  const changes = useMemo(() => changeCount(session?.runs ?? []), [session?.runs]);
+  const panelTab: PanelTab = tab ?? (changes ? "changes" : session?.runs.some(run => run.plan?.entries.length) ? "plan" : "run");
   // Opened from the keyboard (⌘\), the panel's content does not slide in (#37). Decided once per opening: an animation
   // that followed the live input mode would start over whenever the next input came from the pointer.
   const [panelFromKeyboard, setPanelFromKeyboard] = useState(false);
@@ -257,7 +262,6 @@ export function ChatPage(props: ChatProps) {
   };
   const showResume = () => { setPanelRun(session?.runs.at(-1)?.id ?? null); setTab("run"); setPanel(true); };
   const detailed = preferences.density === "detailed";
-  const changes = useMemo(() => session?.runs.reduce((count, run) => count + editTools(run).length, 0) ?? 0, [session?.runs]);
   // Effective changes of Harness or model, placed after the history they carried (ADR-042), each with `from`, the selection
   // before it, which the pill draws with an arrow to the new one (C08). Changes with no message between them are one
   // hand-over, from the first one's `from` to the last one's target; none is left when they come back to where they began.

@@ -646,8 +646,10 @@ test("unified chat shows native plan, notices, tool details with diffs and turn 
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
   await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter");
   await expect(log).toContainText("原生活动已完成。");
-  // ADR-054: the plan stands above the composer and in the details, not inside the Turn; the panel is open at this width.
+  // ADR-054: the plan stands above the composer and in the details, not inside the Turn. The panel is closed until opened
+  // (decision E); at this width the header's button opens it beside the conversation.
   const panel = page.getByRole("complementary", { name: "详情栏" });
+  await page.getByRole("button", { name: "详情栏", exact: true }).click();
   await panel.getByRole("tab", { name: /计划/u }).click();
   await expect(panel.getByText("Codex 维护的计划 · 1 / 2 完成")).toBeVisible(); await expect(panel.getByText("修改文件")).toBeVisible();
   await expect(log.getByText("计划 · 1/2 完成")).toHaveCount(0);
@@ -1251,6 +1253,8 @@ test("the execution settings name the native session and give the program's own 
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
   await composer.fill("hello"); await composer.press("Enter");
   await expect(log.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
+  // The panel is closed until opened (ADR-054 decision E); without changes or a plan it opens on the Turn's execution facts.
+  await page.getByRole("button", { name: "详情栏", exact: true }).click();
   const resume = page.getByRole("complementary", { name: "详情栏" }).getByLabel("在原程序中继续");
   // The identifier, the interactive command and its copy button: the fixture's Codex reports no version HarnessHub ever ran, and none is needed.
   await expect(resume.locator(".native-resume-row code")).toHaveText([/^browser-native-\d+$/u, /^codex resume browser-native-\d+$/u]);
@@ -1402,10 +1406,30 @@ test("G054-FR2 G054-FR3 the process folds into one line, the density choice stay
   await expect(log.getByRole("list", { name: "工具活动" })).toBeVisible();
   await page.getByRole("button", { name: "简洁", exact: true }).click();
   await expect(log.getByRole("list", { name: "工具活动" })).toHaveCount(0);
-  // Wide enough for the panel beside the conversation: it opens on the conversation's changes, read-only.
-  const panel = page.getByRole("complementary", { name: "详情栏" });
-  await expect(panel.getByRole("tab", { name: /改动/u })).toHaveAttribute("aria-selected", "true");
-  await expect(panel.getByRole("radio", { name: "整个对话 1", exact: true })).toHaveAttribute("aria-checked", "true"); await expect(panel).toContainText("README.md");
+  // D04 (ADR-054 decision E): wide enough for the panel beside the conversation, it still stays closed, changes or not; its
+  // button carries the number of changes, said in full to a screen reader. A page drawn again in the compact density reads
+  // no tool detail while the panel is closed.
+  const panel = page.getByRole("complementary", { name: "详情栏" }), button = page.getByRole("button", { name: "详情栏", exact: true });
+  const origin = new URL(fixture.gateway.url).origin, id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session");
+  const details = ((await (await context.request.get(origin + "/api/v1/sessions/" + id)).json()).runs as { tools?: { detail?: { id: string } }[] }[]).flatMap(run => (run.tools ?? []).flatMap(tool => tool.detail ? [tool.detail.id] : []));
+  assert.ok(details.length > 0, "the fixture's tools carry stored detail");
+  const reads: string[] = [];
+  page.on("request", request => { if (details.some(content => request.url().includes("/api/v1/content/" + encodeURIComponent(content)))) reads.push(request.url()); });
+  await page.reload(); await expect(log).toContainText("原生活动已完成。");
+  await expect(panel).toHaveCount(0); await expect(button).toHaveAttribute("aria-pressed", "false");
+  await expect(button).toHaveText("1"); await expect(button).toHaveAccessibleDescription("本对话改动 1 处");
+  await page.waitForTimeout(500); assert.deepEqual(reads, [], "no tool detail is read while the panel is closed");
+  // Opened, it shows the conversation's changes, read-only. The 改动 tab and its scope say the button's number at once, from
+  // the same facts, before any diff is read; the file comes with the read.
+  let release!: () => void; const held = new Promise<void>(done => { release = done; });
+  await page.route("**/api/v1/content/**", async route => { await held; await route.continue(); });
+  await button.click();
+  await expect(panel.getByRole("tab", { name: /改动/u })).toHaveText("改动1"); await expect(panel.getByRole("tab", { name: /改动/u })).toHaveAttribute("aria-selected", "true");
+  await expect(panel.getByRole("radio", { name: "整个对话 1", exact: true })).toHaveAttribute("aria-checked", "true"); await expect(panel).not.toContainText("README.md");
+  release();
+  await expect(panel).toContainText("README.md"); assert.ok(reads.length > 0, "opened, the panel reads the diffs");
+  // Opening it was the user's choice, which this browser keeps.
+  await page.reload(); await expect(panel).toBeVisible(); await expect(button).toHaveAttribute("aria-pressed", "true");
   await expect(panel.locator(".native-diff .is-add")).toContainText("新内容"); await expect(panel.locator(".native-diff .is-remove")).toContainText("旧内容");
   await expect(panel.getByRole("button", { name: /撤销|还原|revert/iu })).toHaveCount(0);
   await panel.getByRole("tab", { name: /过程/u }).click();
@@ -1469,8 +1493,10 @@ test("G054-DL4 each reply names its Agent, model and thinking level, a hand-over
   const raw = command.locator(".native-tool-detail");
   await expect(raw.locator("pre").first()).toHaveText("ls -la"); await expect(raw).toContainText("输出"); await expect(raw).toContainText("README.md");
   await page.screenshot({ path: join(artifact, "dl4-turn-light-1440.png"), animations: "disabled" });
-  // D02: the details tabs are 改动 (with the number of files), 计划, 过程, 后台 and 执行; the underline sits under the chosen tab.
+  // D02: the details tabs are 改动 (with the number of changes, the button's), 计划, 过程, 后台 and 执行; the underline sits under
+  // the chosen tab. The panel is closed until opened (decision E).
   const panel = page.getByRole("complementary", { name: "详情栏" });
+  await page.getByRole("button", { name: "详情栏", exact: true }).click();
   await expect(panel.getByRole("tab")).toHaveText(["改动1", "计划", "过程", "后台", "执行"]);
   for (const [name, file] of [["计划", "plan"], ["过程", "process"], ["后台", "background"], ["改动", "changes"]] as const) {
     const tab = panel.getByRole("tab", { name: new RegExp("^" + name, "u") });
@@ -2102,9 +2128,11 @@ test("G054-DL9 ⌘J opens the Agent list, ⌘. stops the reply, ⌘\\ opens and 
   await page.screenshot({ path: join(artifact, "dl9-panel.png"), animations: "disabled" });
   await page.keyboard.press("ControlOrMeta+\\"); await expect(panel).toHaveCount(0); await expect.poll(width).toBe(full);
   assert.deepEqual(await panelLog(), [], "from the keyboard the panel opens and closes at once");
+  // Once fully closed (it leaves the page), the button opens it anew.
+  await expect(page.locator(".details-aside")).toHaveCount(0);
   const button = page.getByRole("button", { name: "详情栏", exact: true });
   await button.click(); await expect(panel).toBeVisible(); await expect(button).toHaveAttribute("aria-pressed", "true");
-  // With the pointer it widens in 300 ms and its content slides in 60 ms later.
+  // With the pointer it widens in 300 ms and its content slides in 60 ms later, once (the panel adds no slide of its own).
   await expect.poll(panelLog).toEqual(["width:0.3s", "slide:0.06s"]);
   // Its content slid in once: a key and then the pointer again (the input mode changing) do not make it start over.
   await page.waitForTimeout(400); await page.keyboard.press("Shift");
@@ -2708,7 +2736,8 @@ test("G054-UP2 a conversation whose kept process an upgrade closed says so until
   assert.equal(closed.retention.process, null); assert.equal(closed.retention.upgraded.harnessId, "native-acp");
   const events = await (await context.request.get(origin + "/api/v1/sessions/" + closed.id + "/events?afterSeq=0&limit=100")).json();
   assert.deepEqual(events.events.filter((event: { type: string }) => event.type === "native.process_closed").map((event: { data: { reason: string; cleanup: { closed: boolean } } }) => [event.data.reason, event.data.cleanup.closed]), [["harness_upgrade", true]]);
-  // The details panel is open by default at this width.
+  // The details panel is closed until opened (ADR-054 decision E); at this width its button opens it beside the conversation.
+  await page.getByRole("button", { name: "详情栏", exact: true }).click();
   await page.getByRole("complementary", { name: "详情栏" }).getByRole("tab", { name: /后台/u }).click();
   await expect(page.locator(".kept-upgraded")).toHaveText("升级 Kept Agent 前，HarnessHub 关闭了这个对话保留的后台进程。下一条消息会用新版本重新启动原程序。");
   await page.screenshot({ path: join(artifact, "upgrade-kept-closed.png"), animations: "disabled" });
@@ -4542,6 +4571,8 @@ test("G054-FZ3 DeepSeek Harness of any version shows its one-question command wi
   await expect(option).toContainText("v0.3.1"); await expect(option).not.toContainText("验证"); await option.click();
   await composer.fill("hello"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
   await expect(log.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
+  // The details panel is closed until opened (ADR-054 decision E); it opens on the Turn's execution facts.
+  await page.getByRole("button", { name: "详情栏", exact: true }).click();
   // Mutation check (run by hand, not kept): without NativeResume's once-only branch, only the identifier is shown.
   const resume = page.getByRole("complementary", { name: "详情栏" }).getByLabel("在原程序中继续");
   await expect(resume.locator(".native-resume-row code")).toHaveText(["session-fixture", "dsh headless --session-id session-fixture \"你的问题\""]);

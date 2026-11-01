@@ -10,14 +10,21 @@ export interface Preferences {
   readonly theme: "system" | "light" | "dark";
   /** How much of each Turn's process shows by default: one summary line, or every step. */
   readonly density: "compact" | "detailed";
+  /** Whether the details panel stands beside a conversation on wide screens: closed until the user opens it (ADR-054 decision E). */
   readonly panel: boolean;
   readonly sidebar: boolean;
   readonly groupBy: "status" | "harness" | "workspace";
   /** Whether the frozen Harnesses (Cursor, Gemini CLI, Pi) are listed for new work as well (ADR-050); off by default. */
   readonly showFrozen: boolean;
 }
-export const DEFAULT_PREFERENCES: Preferences = { theme: "system", density: "compact", panel: true, sidebar: true, groupBy: "status", showFrozen: false };
+export const DEFAULT_PREFERENCES: Preferences = { theme: "system", density: "compact", panel: false, sidebar: true, groupBy: "status", showFrozen: false };
 const KEY = "harnesshub:preferences";
+/**
+ * The stored shape's version. Every write stores the whole set, so before version 2 each one also stored the details panel's
+ * old default, open: a stored `panel` from then is not a choice, is not read, and the panel starts closed (decision E). From
+ * version 2 on, an opening or a closing is the user's own and is kept.
+ */
+const VERSION = 2;
 const CHOICES: { readonly [K in keyof Preferences]: readonly Preferences[K][] } = {
   theme: ["system", "light", "dark"], density: ["compact", "detailed"], panel: [true, false], sidebar: [true, false], groupBy: ["status", "harness", "workspace"], showFrozen: [false, true],
 };
@@ -37,11 +44,14 @@ export function readPreferences(): Preferences {
     const value: unknown = JSON.parse(raw);
     if (value === null || typeof value !== "object" || Array.isArray(value)) return DEFAULT_PREFERENCES;
     const row = value as Record<string, unknown>, result: Record<string, unknown> = { ...DEFAULT_PREFERENCES };
-    for (const key of Object.keys(CHOICES) as (keyof Preferences)[]) if ((CHOICES[key] as readonly unknown[]).includes(row[key])) result[key] = row[key];
+    for (const key of Object.keys(CHOICES) as (keyof Preferences)[]) {
+      if (key === "panel" && row.version !== VERSION) continue;
+      if ((CHOICES[key] as readonly unknown[]).includes(row[key])) result[key] = row[key];
+    }
     return result as unknown as Preferences;
   } catch { return DEFAULT_PREFERENCES; }
 }
-function writePreferences(value: Preferences): void { try { localStorage.setItem(KEY, JSON.stringify(value)); } catch { /* lasts for this page only */ } }
+function writePreferences(value: Preferences): void { try { localStorage.setItem(KEY, JSON.stringify({ ...value, version: VERSION })); } catch { /* lasts for this page only */ } }
 /** Applies the theme to the root element; "system" removes the attribute so the stylesheet follows the media query. */
 export function applyTheme(theme: Preferences["theme"]): void {
   const root = document.documentElement;
