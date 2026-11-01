@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { PublicTool } from "../../src/contracts/session.js";
 import { workspacePath } from "../../web/src/lib/format.js";
-import { diffTotals, groupSteps, noteMount, parseUnifiedDiff, readsLabel, reveal, stepLabel, toolSummary, toolTree, wrapChunks, type HastNode, type Reveal } from "../../web/src/lib/turn.js";
+import { diffTotals, groupSteps, noteMount, parseUnifiedDiff, readsLabel, rememberShown, reveal, shownSteps, spentText, stepLabel, toolSummary, toolTree, wrapChunks, type HastNode, type Reveal } from "../../web/src/lib/turn.js";
 
 test("G054-FR7 a unified diff splits into files with numbered lines and counts, and text without headers keeps the given name", () => {
   const files = parseUnifiedDiff([
@@ -148,4 +148,27 @@ test("G054-DL7 motion is only for news: mounts drawn with a page stay still, a m
   assert.equal(noteMount(false, 20_005), true);
   // A hand-over made while the conversation is open comes in on its own.
   assert.equal(noteMount(true, 30_000), true);
+});
+
+test("G054-DL7 a finished Turn's time reads like the timer that counted it, so the timer hands over without a jump", () => {
+  // Under ten seconds one decimal, cut rather than rounded up; from then on the timer's whole seconds (Motion board #03).
+  assert.equal(spentText(3_640), "3.6 秒");
+  assert.equal(spentText(9_990), "9.9 秒", "never 10.0 while the timer still said 9");
+  assert.equal(spentText(18_900), "18 秒", "the timer showed 18 when the Turn ended at 18.9 s");
+  assert.equal(spentText(65_400), "1 分 05 秒", "past a minute, two-digit seconds");
+  assert.equal(spentText(3_725_000), "1 小时 02 分");
+});
+
+test("G054-DL7 a Turn drawn again keeps the record of the steps its reader saw, so nothing comes in twice", () => {
+  // A Turn not shown yet has no record; once shown, the same record comes back for its Run, also after it was drawn again.
+  assert.equal(shownSteps("run-shown-1"), undefined);
+  const record = new Set(["read-1"]);
+  rememberShown("run-shown-1", record);
+  record.add("edit-2");
+  assert.equal(shownSteps("run-shown-1"), record);
+  assert.deepEqual([...shownSteps("run-shown-1")!], ["read-1", "edit-2"]);
+  // At most 500 Turns are remembered: the oldest is forgotten first, and is then drawn as history.
+  for (let index = 0; index < 500; index++) rememberShown("run-many-" + index, new Set());
+  assert.equal(shownSteps("run-shown-1"), undefined);
+  assert.notEqual(shownSteps("run-many-499"), undefined);
 });

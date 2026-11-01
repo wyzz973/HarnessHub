@@ -1,5 +1,5 @@
-import { ChevronRight, Clock, FileText, ListChecks, X } from "lucide-react";
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ChevronRight, Clock, File, FileText, ListChecks, X } from "lucide-react";
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { cancelledLabel, type PublicRun } from "../../../src/contracts/session.js";
 import type { HarnessView, NativeResumeView, SessionView } from "../../../src/contracts/web.js";
@@ -8,7 +8,7 @@ import { errorMessage } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { duration, elapsed, folderName, homePath, workspacePath } from "../lib/format.js";
 import { useNow } from "../lib/prefs.js";
-import { editTools, finished, knownToolDetail, noteMount, parseUnifiedDiff, readToolDetail, RUN_STATE, runDuration, toolSummary, type DiffFile } from "../lib/turn.js";
+import { editTools, finished, knownToolDetail, noteMount, parseUnifiedDiff, readToolDetail, RUN_STATE, runDuration, spentText, toolSummary, type DiffFile } from "../lib/turn.js";
 import { Collapsible } from "../ui/motion.js";
 import { EmptyState, Fact, Segmented, Spinner, StatusDot, Tabs } from "../ui/primitives.js";
 import { ACTIVITY_KIND, ACTIVITY_STATUS, DiffLines, PlanView, ToolList, usageFacts, type ToolDetailLoader } from "./Activity.js";
@@ -114,7 +114,7 @@ interface PanelProps {
  * The conversation's details beside it (ADR-054 §5): its changed files (this Turn or the whole conversation), the plan,
  * every Turn's steps, background work and one Turn's execution facts. The tabs' underline slides to the chosen tab (Motion
  * board #24). Opened while the conversation is shown, its content comes in 60 ms after the panel, from 24 px (#23); it does
- * not when drawn with the page or inside a drawer, which moves by itself.
+ * not when drawn with the page, inside a drawer, which moves by itself, or when opened from the keyboard (#37).
  */
 export function DetailsPanel(props: PanelProps) {
   const { session, tab } = props;
@@ -128,7 +128,8 @@ export function DetailsPanel(props: PanelProps) {
   const name = (id: string | undefined) => props.harnesses.find(row => row.id === id)?.name ?? id ?? "Harness";
   const root = useRef<HTMLDivElement>(null);
   const [entering, setEntering] = useState(false);
-  useLayoutEffect(() => { if (noteMount(true) && !root.current?.closest(".drawer-pop, .sheet-pop")) setEntering(true); }, []);
+  // Opened from the keyboard (⌘\), the panel is there at once (Motion board #37).
+  useLayoutEffect(() => { if (noteMount(true) && !root.current?.closest(".drawer-pop, .sheet-pop") && document.documentElement.dataset.input !== "keyboard") setEntering(true); }, []);
   const tabs = [
     { id: "changes" as const, label: "改动", count: !changes.loading && changes.files.length ? changes.files.length : null },
     { id: "plan" as const, label: "计划" }, { id: "process" as const, label: "过程" },
@@ -171,14 +172,15 @@ function Changes({ changes, selected, workspace, name, sessionId }: { readonly c
   const current = files.find(file => file.path === chosen) ?? files[0];
   const count = (value: number) => changes.loading ? "" : " " + value;
   return <div className="flex flex-col">
-    <div className="flex items-center gap-2 px-3.5 pt-2.5 pb-2.5">
+    {/* Conversation board: the scope sits right under the tabs, the files 10 px below it */}
+    <div className="flex items-center gap-2 px-3.5 pt-1 pb-2.5">
       <Segmented label="改动范围" value={scope} onChange={setScope} options={[{ value: "turn", label: "本轮" + count(turn.length) }, { value: "all", label: "整个对话" + count(changes.files.length) }]}/>
     </div>
     {files.length ? <ul className="m-0 flex list-none flex-col gap-px px-2.5 pb-2" aria-label="改动的文件">{files.map(file => {
       const shown = workspacePath(file.path, workspace), cut = shown.lastIndexOf("/") + 1;
       return <li key={file.path}><button type="button" onClick={() => setChosen(file.path)} aria-pressed={current?.path === file.path} title={file.path}
         className={cn("row flex h-8 w-full min-w-0 items-center gap-2 border-none px-2.5 text-left font-mono text-caption text-fg", current?.path === file.path ? "bg-subtle" : "bg-transparent")}>
-        <FileText size={15} className="flex-none text-fg-3" aria-hidden="true"/>
+        <File size={15} className="flex-none text-fg-3" aria-hidden="true"/>
         <span className="min-w-0 flex-1 trunc"><span className="text-fg-3">{shown.slice(0, cut)}</span>{shown.slice(cut)}</span>
         {file.add ? <span className="flex-none text-[11px] text-add">+{file.add}</span> : null}{file.del ? <span className="flex-none text-[11px] text-del">−{file.del}</span> : null}
       </button></li>;
@@ -217,13 +219,14 @@ function Phases({ run }: { readonly run: PublicRun }) {
 function RunProcess({ run, index, open, onToggle, loadToolDetail, name, describe, now }: { readonly run: PublicRun; readonly index: number; readonly open: boolean; readonly onToggle: () => void; readonly loadToolDetail: ToolDetailLoader | undefined; readonly name: (id: string) => string; readonly describe: (run: PublicRun) => string; readonly now: number }) {
   const active = !finished(run.status), panel = useId(), at = (time: number | undefined) => time === undefined ? null : new Date(time).toLocaleTimeString("zh-CN", { hour12: false });
   const summary = run.tools?.length ? toolSummary(run.tools, active).compact : "", total = runDuration(run);
-  const time = total !== null ? duration(total) : active && run.timing ? "已用 " + elapsed(now - run.timing.acceptedAt) : "";
+  const time = total !== null ? spentText(total) : active && run.timing ? "已用 " + elapsed(now - run.timing.acceptedAt) : "";
   const steps: [string, number | undefined][] = [["收到消息", run.timing?.acceptedAt], ["开始启动原程序", run.timing?.preparingAt], ["原生会话就绪", run.timing?.readyAt], ["发给原程序", run.timing?.dispatchedAt], ["首个输出", run.timing?.firstOutputAt], [run.status === "cancelled" ? cancelledLabel(run) : RUN_STATE[run.status], run.timing?.endedAt]];
   const model = describe(run);
   return <li className="flex min-w-0 flex-col">
     <button type="button" className="row flex min-h-9 w-full min-w-0 items-center gap-2 border-none bg-transparent px-1.5 py-1.5 text-left text-ui-sm text-fg-2" aria-expanded={open} aria-controls={panel} onClick={onToggle}>
       <BrandIcon brand={run.selection.harnessId} name={name(run.selection.harnessId)} size={18}/>
-      <span className="min-w-0 flex-1 trunc"><span className="text-fg">{name(run.selection.harnessId)}</span>{[summary, time].filter(Boolean).map(part => " · " + part).join("")}</span>
+      {/* What the Turn did and its time stay whole: in the narrow panel the line wraps between its parts, never in a number */}
+      <span className="min-w-0 flex-1 break-words"><span className="text-fg">{name(run.selection.harnessId)}</span>{[...(summary ? summary.split(" · ") : []), ...(time ? [time] : [])].map((part, index) => <Fragment key={index}> · <span className="whitespace-nowrap">{part}</span></Fragment>)}</span>
       {active ? <StatusDot tone="run" label="进行中"/> : null}
       <span className="flex-none text-caption text-fg-3">第 {index + 1} 轮</span>
       <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("flex-none text-fg-3 transition-[rotate] duration-200 ease-expo keyboard:transition-none", open && "rotate-90")}/>

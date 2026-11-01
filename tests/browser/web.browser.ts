@@ -1393,6 +1393,13 @@ test("G054-DL4 each reply names its Agent, model and thinking level, a hand-over
   const summary = first.locator(".process-summary");
   await expect(summary).toHaveAttribute("aria-expanded", "false"); await expect(summary).toHaveText(/^改了 1 处，运行 1 条命令 · [0-9.]+ 秒$/u);
   await expect(first.getByRole("list", { name: "工具活动" })).toHaveCount(0);
+  // It is one line where it fits, the chevron right after the words: the words never wrap at the width of those they replaced.
+  assert.deepEqual(await summary.evaluate(element => { const words = element.querySelector(".swap-text")!.getBoundingClientRect(), chevron = element.querySelector(":scope > svg")!.getBoundingClientRect();
+    return [element.getBoundingClientRect().height <= 28, chevron.left - words.right <= 8]; }), [true, true], "the folded line is one line with its chevron after the words");
+  // The line is the steps' button from the keyboard too: Enter and Space open and close them.
+  await expect(summary).toHaveAttribute("role", "button");
+  await summary.focus(); await page.keyboard.press("Enter"); await expect(summary).toHaveAttribute("aria-expanded", "true");
+  await page.keyboard.press(" "); await expect(summary).toHaveAttribute("aria-expanded", "false");
   // C05: opened, each step says its verb and what it acted on; the edit counts its lines, the command gives its exit code.
   await summary.click(); await expect(summary).toHaveAttribute("aria-expanded", "true");
   const steps = first.getByRole("list", { name: "工具活动" });
@@ -1539,8 +1546,13 @@ test("G054-DL7 a running Turn shows the arc, the swept words and a timer every s
   assert.ok(seen.depart && seen.together, "the running layer leaves while the finished one arrives in its place: " + JSON.stringify(seen));
   assert.equal(seen.delay, "0.21s");
   assert.match(seen.words.at(-1)!, /^已完成 · 用时 [0-9.]+ 秒$/u);
+  // The timer stops when the Run ends: while the last words are shown and the line hands over, it never passes the total.
+  const total = Number(/用时 ([0-9.]+) 秒$/u.exec(seen.words.at(-1)!)![1]);
+  assert.ok(seen.words.every(words => { const shown = /已用 (\d+) 秒/u.exec(words); return !shown || Number(shown[1]) <= total; }), "the timer never passes the total: " + JSON.stringify(seen.words));
   await expect(turn).toHaveAttribute("data-run-status", "completed");
   await expect(row.locator(".spinner")).toHaveCount(0); await expect(row.locator(".motion-depart")).toHaveCount(0);
+  // The finished line is one line where it fits (its words keep their own width, not one rounded down from the box).
+  await expect.poll(() => row.evaluate(element => element.getBoundingClientRect().height)).toBeLessThanOrEqual(28);
   // The dot fades out once the text is written, and the fading pieces give way to plain text: the text itself never changed.
   await expect(reply).not.toHaveClass(/caret-host/u); await expect(reply.locator(".motion-token")).toHaveCount(0);
   const shownText = (await reply.textContent()) ?? "";

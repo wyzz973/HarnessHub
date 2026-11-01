@@ -2,6 +2,7 @@ import type { ContentRef } from "../../../src/contracts/content.js";
 import type { PublicRun, PublicTool, RunStatus } from "../../../src/contracts/session.js";
 import type { ToolDetailView } from "../api.js";
 import { toolParents } from "../tool-tree.js";
+import { elapsed } from "./format.js";
 
 export type Tool = PublicTool;
 export const TOOL_PENDING = new Set(["pending", "in_progress", "inProgress", "running"]);
@@ -185,6 +186,14 @@ export function runDuration(run: Pick<PublicRun, "timing">): number | null {
   const timing = run.timing;
   return timing?.endedAt === undefined ? null : timing.endedAt - timing.acceptedAt;
 }
+/**
+ * The time a finished Turn took, in the words of the timer that counted it while it ran (Motion board #03): one decimal
+ * under ten seconds ("3.6 秒"), then whole seconds as the timer last showed them ("42 秒", "1 分 05 秒"). Both are cut,
+ * never rounded up, so the total never reads more than the timer could have shown.
+ */
+export function spentText(milliseconds: number): string {
+  return milliseconds < 10_000 ? (Math.floor(Math.max(0, milliseconds) / 100) / 10).toFixed(1) + " 秒" : elapsed(milliseconds);
+}
 
 /**
  * Stored tool details, read once per page (stored content is never rewritten under its id): the steps, the changes panel
@@ -217,6 +226,22 @@ export function noteMount(fresh: boolean, now = performance.now()): boolean {
   const live = now - lastMount.at < 50 ? lastMount.live : fresh;
   lastMount = { at: now, live };
   return live;
+}
+
+/*
+ * What the reader has already been shown of each Turn on this page, kept when the page draws a Turn again in another
+ * place (the conversation moves a Turn once its reply begins): a Turn shown before is not news, and the record of the
+ * steps it showed carries over, so nothing comes in twice. At most 500 Turns are remembered; a forgotten one is drawn
+ * as history. Read during render, recorded from a layout effect.
+ */
+const shownTurns = new Map<string, Set<string>>();
+/** The record of the steps a Turn showed, or undefined when this Run's Turn has not been shown on this page. */
+export function shownSteps(runId: string): Set<string> | undefined { return shownTurns.get(runId); }
+/** Records that a Run's Turn is shown, with the record its steps keep. */
+export function rememberShown(runId: string, steps: Set<string>): void {
+  if (shownTurns.get(runId) === steps) return;
+  shownTurns.delete(runId); shownTurns.set(runId, steps);
+  if (shownTurns.size > 500) { const oldest = shownTurns.keys().next().value; if (oldest !== undefined) shownTurns.delete(oldest); }
 }
 
 /** Committed characters released together, [from, to) in the text; they fade in as one piece (Motion board #09). */

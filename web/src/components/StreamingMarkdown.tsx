@@ -30,11 +30,11 @@ const MarkdownRenderer = lazy(async () => {
 /**
  * Renders committed reply text as Markdown. While a Run streams, new text is released at a steady pace and each piece fades
  * in; incomplete syntax is repaired for display only. `caret` adds the 7 px dot at the end of the text while it is being
- * written, faded out in 200 ms once it is done (Motion board #11), and `onWriting` hears whether it is still being written.
- * With reduced motion, text is shown as it arrives.
+ * written, faded out in 200 ms once it is done (Motion board #11), and `onShown` hears each committed length once it is
+ * shown in full, after the commit that shows it. With reduced motion, text is shown as it arrives.
  * `data-shown` and `data-committed` count the characters displayed and committed.
  */
-export const StreamingMarkdown = memo(function StreamingMarkdown({ text, isStreaming, className, caret = false, onWriting }: { text: string; isStreaming: boolean; className?: string; caret?: boolean; onWriting?: (writing: boolean) => void }) {
+export const StreamingMarkdown = memo(function StreamingMarkdown({ text, isStreaming, className, caret = false, onShown }: { text: string; isStreaming: boolean; className?: string; caret?: boolean; onShown?: (length: number) => void }) {
   const reduced = useReducedMotion();
   const [state, dispatch] = useReducer(reveal, text, (initial): Reveal => ({ text: initial, shown: initial.length, rate: 0, chunks: [], at: performance.now() }));
   // A new commit is taken in before paint, so a replaced text is never shown cut at the old length.
@@ -56,8 +56,8 @@ export const StreamingMarkdown = memo(function StreamingMarkdown({ text, isStrea
     const timer = setTimeout(() => dispatch({ type: "settle" }), 800);
     return () => clearTimeout(timer);
   }, [settled]);
-  const writing = caret && (isStreaming || shown < text.length);
-  useEffect(() => { onWriting?.(writing); }, [writing, onWriting]);
+  const behind = shown < text.length, writing = caret && (isStreaming || behind);
+  useEffect(() => { if (!behind) onShown?.(text.length); }, [behind, text.length, onShown]);
   const [fading, setFading] = useState(false);
   const [wasWriting, setWasWriting] = useState(writing);
   if (wasWriting !== writing) { setWasWriting(writing); setFading(!writing); }

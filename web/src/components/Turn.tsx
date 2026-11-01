@@ -1,6 +1,6 @@
 import { Brain, Check, ChevronRight, CircleAlert, CircleDashed, CircleHelp, CircleStop, Copy, GitBranch, Info, PencilLine, RotateCcw } from "lucide-react";
 import { Children, memo, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties, HTMLAttributes, KeyboardEvent, ReactNode } from "react";
 import type { HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus } from "../../../src/contracts/session.js";
 import { cancelledLabel } from "../../../src/contracts/session.js";
 import type { HarnessView } from "../../../src/contracts/web.js";
@@ -9,10 +9,10 @@ import { failureMessage } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { duration, elapsed } from "../lib/format.js";
 import { useNow } from "../lib/prefs.js";
-import { finished, groupSteps, noteMount, readsLabel, runDuration, stepLabel, toolSummary, toolTree, type Tool } from "../lib/turn.js";
+import { finished, groupSteps, noteMount, readsLabel, rememberShown, runDuration, shownSteps, spentText, stepLabel, toolSummary, toolTree, type Tool } from "../lib/turn.js";
 import { Collapsible, DrawnCheck, motionStyle, SwapText } from "../ui/motion.js";
 import { Spinner, StatusDot, Tip } from "../ui/primitives.js";
-import { ActivityList, NoticeList, OutputList, ToolList, usageParts, type ToolDetailLoader } from "./Activity.js";
+import { ActivityList, NoticeList, OutputList, ToolList, usageParts, type SeenSteps, type ToolDetailLoader } from "./Activity.js";
 import { MessageAttachments } from "./Attachments.js";
 import { BrandIcon } from "./BrandIcon.js";
 import { StreamingMarkdown } from "./StreamingMarkdown.js";
@@ -88,7 +88,7 @@ export function activityLabel(run: PublicRun | undefined, status: RunStatus, har
 /** First-output and total time of a finished Run, measured from when its input was accepted. */
 export function timingText(run: PublicRun): string | null {
   const timing = run.timing; if (!timing || timing.endedAt === undefined) return null;
-  return [...(timing.firstOutputAt === undefined ? [] : ["首字 " + duration(timing.firstOutputAt - timing.acceptedAt)]), "用时 " + duration(timing.endedAt - timing.acceptedAt)].join(" · ");
+  return [...(timing.firstOutputAt === undefined ? [] : ["首字 " + duration(timing.firstOutputAt - timing.acceptedAt)]), "用时 " + spentText(timing.endedAt - timing.acceptedAt)].join(" · ");
 }
 /** How soon the first output came; the total time is part of the process line above the reply. */
 function firstOutputText(run: PublicRun): string | null {
@@ -136,7 +136,7 @@ function LiveIcon({ tone, className }: { readonly tone: LiveStatus["tone"]; read
 interface Outcome { readonly icon: ReactNode; readonly arriving: string; readonly settled: string; readonly tone: "done" | "fail" | "quiet" }
 /** How a finished Turn reads: the drawn check, then its tools, failures and unfinished steps, and how long it took. */
 function outcome(run: PublicRun | undefined, status: RunStatus, text: string, drawing: boolean): Outcome {
-  const tools = run?.tools ?? [], summary = tools.length ? toolSummary(tools, false).text : "", total = run ? runDuration(run) : null, time = total === null ? "" : duration(total);
+  const tools = run?.tools ?? [], summary = tools.length ? toolSummary(tools, false).text : "", total = run ? runDuration(run) : null, time = total === null ? "" : spentText(total);
   const join = (...parts: string[]) => parts.filter(Boolean).join(" · ");
   switch (status) {
     case "failed": { const words = join("回复未能完成", summary, time); return { icon: <CircleAlert size={15} strokeWidth={1.9} className="text-red" aria-hidden="true"/>, arriving: words, settled: words, tone: "fail" }; }
@@ -157,26 +157,37 @@ interface ProcessProps {
   readonly docked: boolean;
   /** The Turn ended and its reply is fully shown: the line hands over only then, after the text it ends. */
   readonly ended: boolean;
+  /** Committed reply text is still waiting to be shown at the display pace. */
+  readonly behind: boolean;
 }
 /**
  * The process of a Turn in three layers (ADR-054 §5): one line that says what is happening or, once it ended, what was done;
  * the steps beneath it (open while the Turn runs, and always in the detailed density); and each step's raw input and
  * output. Failures and unfinished steps are always counted in the line, so folding never hides them.
  */
-function TurnProcess({ run, status, text, phase, detailed, now, harness, startupHint, queue, waiting, loadDetail, entering, docked, ended }: ProcessProps) {
+function TurnProcess({ run, status, text, phase, detailed, now, harness, startupHint, queue, waiting, loadDetail, entering, docked, ended, behind }: ProcessProps) {
   const terminal = finished(status), steps = useId();
   const tools = run?.tools ?? [], activities = run?.activities ?? [], thinking = run?.thinking ?? "";
   const expandable = tools.length > 0 || activities.length > 0 || thinking.length > 0;
   const [choice, setChoice] = useState<boolean | null>(null);
   const open = expandable && (choice ?? (detailed || phase !== "settled"));
   const [thoughts, setThoughts] = useState<boolean | null>(null);
-  // A Turn that ended while its last words are still being shown keeps saying it is replying until they are.
-  const live = ended ? null : terminal ? { text: "正在回复", tone: "run" as const, timer: true, wrap: false, thinking: false } : liveStatus(run, status, harness, now, startupHint, queue, waiting, text, docked);
-  // The words and symbol the status had last, kept for the 200 ms in which they leave (Motion board #12).
-  const last = useRef<LiveStatus | null>(live);
+  // The record of the steps the reader saw, kept for this Run on the page: steps found here are history, the first step of
+  // a Turn seen running comes in, and a Turn drawn again in another place shows nothing twice (Motion board #05).
+  const [seen] = useState<SeenSteps>(() => (run ? shownSteps(run.id) : undefined) ?? new Set(tools.map(tool => tool.id)));
+  const runId = run?.id;
+  useLayoutEffect(() => { if (runId !== undefined) rememberShown(runId, seen); }, [runId, seen]);
+  // The words and symbol the status had last, kept while the Run has ended but its last words are still on their way, and
+  // for the 200 ms in which they leave (#12). While it settles with words on their way, the reply is what the line names:
+  // it goes on from "正在回复" to "已完成" without passing through "正在结束执行" and back.
+  const last = useRef<LiveStatus | null>(null);
+  const replying: LiveStatus = { text: "正在回复", tone: "run", timer: true, wrap: false, thinking: false };
+  const live = ended ? null : terminal ? last.current ?? replying : status === "settling" && behind && !run?.cancelRequested ? replying
+    : liveStatus(run, status, harness, now, startupHint, queue, waiting, text, docked);
   if (live) last.current = live;
   const end = ended ? outcome(run, status, text, phase === "handoff" || phase === "done") : null;
-  const since = run?.timing ? elapsed(now - run.timing.acceptedAt) : null;
+  // The timer stops when the Run ends, also while its last words are still being shown, so it never passes the total.
+  const since = run?.timing ? elapsed((terminal ? run.timing.endedAt ?? now : now) - run.timing.acceptedAt) : null;
   // The words slide to their own width (SwapText); a label longer than the column ends in "…" at the room left beside the
   // symbol, the timer and the chevron, measured from the column so that the sliding width never limits itself.
   const box = useRef<HTMLDivElement>(null);
@@ -191,15 +202,19 @@ function TurnProcess({ run, status, text, phase, detailed, now, harness, startup
   }, []);
   const budget = (timer: string | null) => room === null ? undefined : { "--label-max": Math.max(48, room - 16 - 22 - (timer === null ? 0 : textWidth(timer) + 7) - (expandable ? 19 : 0) - 2) + "px" } as CSSProperties;
   const fit = "max-w-full min-w-0 overflow-hidden [&>.swap-text-layer]:max-w-(--label-max) [&>.swap-text-layer]:overflow-hidden [&>.swap-text-layer]:text-ellipsis [&>.swap-text-layer]:align-bottom";
-  // What a finished Turn did wraps instead: its failures and unfinished steps must stay readable at any width (C04).
-  const wrap = "max-w-full min-w-0 overflow-hidden whitespace-normal [&>.swap-text-layer]:max-w-(--label-max) [&>.swap-text-layer]:whitespace-normal [&>.swap-text-layer]:align-top";
+  // What a finished Turn did wraps instead: its failures and unfinished steps must stay readable at any width (C04). The
+  // words keep their own width (at most the room left), never the measured one of the sliding box: that is rounded to
+  // whole pixels and still holds the previous words' width, and wrapping to it would break a line that fits.
+  const wrap = "max-w-full min-w-0 overflow-hidden whitespace-normal [&>.swap-text-layer]:w-max [&>.swap-text-layer]:max-w-(--label-max) [&>.swap-text-layer]:whitespace-normal [&>.swap-text-layer]:align-top";
   const liveLayer = (state: LiveStatus, leaving: boolean) => {
     const timer = state.timer && since !== null ? "· 已用 " + since : null;
-    return <span key="live" className={cn("flex min-w-0 items-center gap-[7px]", state.wrap && "items-start", leaving && "motion-depart")} aria-hidden={leaving || undefined}>
-      <LiveIcon tone={state.tone} className={state.wrap ? "mt-[2.5px]" : undefined}/>
+    // What the Turn waits for is never cut short: at a narrow width its words wrap (Conversation board: regular weight).
+    const wraps = state.wrap || state.tone === "wait";
+    return <span key="live" className={cn("flex min-w-0 gap-[7px]", wraps ? "items-start" : "items-center", leaving && "motion-depart")} aria-hidden={leaving || undefined}>
+      <LiveIcon tone={state.tone} className={wraps ? "mt-[2.5px]" : undefined}/>
       {state.wrap ? <span className={cn("min-w-0 whitespace-normal", !leaving && "response-status")} role={leaving ? undefined : "status"}>{state.text}</span>
-        : <span className={cn("flex min-w-0", !leaving && "response-status", state.tone === "wait" && "font-medium text-amber", state.thinking && "motion-breathe")} role={leaving ? undefined : "status"} style={budget(timer)}>
-          <SwapText text={state.text} shimmer={state.tone === "run"} className={fit}/></span>}
+        : <span className={cn("flex min-w-0", !leaving && "response-status", state.tone === "wait" && "text-amber", state.thinking && "motion-breathe")} role={leaving ? undefined : "status"} style={budget(timer)}>
+          <SwapText text={state.text} shimmer={state.tone === "run"} className={wraps ? wrap : fit}/></span>}
       {timer ? <span className="flex-none whitespace-nowrap">{timer}</span> : null}
     </span>;
   };
@@ -212,12 +227,14 @@ function TurnProcess({ run, status, text, phase, detailed, now, harness, startup
     {ended ? <>{phase === "handoff" && last.current ? liveLayer(last.current, true) : null}{doneLayer}</> : live ? liveLayer(live, false) : null}
   </span>;
   const chevron = expandable ? <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("mt-1 flex-none self-start text-fg-3 transition-[rotate] duration-200 ease-expo keyboard:transition-none", open && "rotate-90")}/> : null;
-  const rowClass = "process-summary flex min-h-7 max-w-full min-w-0 items-start gap-[7px] self-start rounded-row py-1 text-ui-sm text-fg-3";
-  // A Turn just started shows its status 0.25 s after the message (Motion board #01); the container stays the same element
-  // when the line becomes a button for the first step, so the entrance never plays twice.
+  // The line is one element for the whole Turn, a button for its steps once there are any: when the first step arrives the
+  // words change in place (#07) and the arc keeps turning, instead of the line being drawn anew.
+  const toggle = () => setChoice(!open);
+  const control: HTMLAttributes<HTMLDivElement> = expandable ? { role: "button", tabIndex: 0, "aria-expanded": open, "aria-controls": steps, onClick: toggle,
+    onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => { if ((event.key === "Enter" || event.key === " ") && event.target === event.currentTarget) { event.preventDefault(); if (!event.repeat) toggle(); } } } : {};
+  // A Turn just started shows its status 0.25 s after the message (Motion board #01).
   return <div ref={box} className={cn("turn-process flex min-w-0 flex-col", entering && "motion-fade-in")} style={entering ? motionStyle({ delay: 250 }) : undefined}>
-    {expandable ? <button type="button" className={cn(rowClass, "row -ml-2 border-none bg-transparent px-2 text-left")} aria-expanded={open} aria-controls={steps} onClick={() => setChoice(!open)}>{layers}{chevron}</button>
-      : <div className={cn(rowClass, "-ml-2 px-2")}>{layers}</div>}
+    <div className={cn("process-summary -ml-2 flex min-h-7 max-w-full min-w-0 items-start gap-[7px] self-start rounded-row px-2 py-1 text-ui-sm text-fg-3", expandable && "row cursor-pointer select-none")} {...control}>{layers}{chevron}</div>
     {expandable ? <Collapsible open={open} id={steps} className="grid-cols-[minmax(0,1fr)]">
       <div className="mt-1 mb-1.5 ml-[7px] flex min-w-0 flex-col gap-px border-l border-line-strong pl-[9px]">
         {thinking ? <div className="flex min-w-0 flex-col">
@@ -228,7 +245,7 @@ function TurnProcess({ run, status, text, phase, detailed, now, harness, startup
           <Collapsible open={thoughts ?? detailed} className="grid-cols-[minmax(0,1fr)]"><div className="native-thinking mt-0.5 mb-2 ml-[30px] border-l border-line-strong pl-3 text-ui-sm text-fg-2"><StreamingMarkdown text={thinking} isStreaming={!terminal}/></div></Collapsible>
         </div> : null}
         {activities.length ? <ActivityList activities={activities}/> : null}
-        {tools.length ? <ToolList tools={tools} active={!terminal} loadDetail={loadDetail}/> : null}
+        {tools.length ? <ToolList tools={tools} active={!terminal} loadDetail={loadDetail} seen={seen}/> : null}
       </div>
     </Collapsible> : null}
   </div>;
@@ -245,7 +262,7 @@ export const UserMessage = memo(function UserMessage({ message, run, onEdit }: {
   return <article className="message user-message group flex flex-col items-end gap-1.5">
     {run?.attachments?.length ? <MessageAttachments attachments={run.attachments}/> : null}
     <div className="flex w-full min-w-0 items-end justify-end gap-1">
-      <div className="flex h-7 flex-none items-center opacity-100 transition-opacity duration-150 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+      <div className="flex h-7 flex-none items-center transition-opacity duration-150 [@media(hover:hover)]:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
         <ActionButton label="放回输入框" onClick={() => onEdit(message.text)}><PencilLine size={14}/></ActionButton>
       </div>
       <div className={cn("max-w-[82%] min-w-0 rounded-[18px] bg-subtle px-[15px] py-2.5 text-reading leading-6 whitespace-pre-wrap break-words text-fg", entering && "motion-message-in")}><span className="sr-only">你：</span>{message.text}</div>
@@ -299,13 +316,18 @@ export const AssistantTurn = memo(function AssistantTurn({ message, run, harness
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; if (timer.current) clearTimeout(timer.current); }; }, []);
   const status = run?.status ?? message?.status ?? "unknown";
   const terminal = finished(status);
-  // Whether the reply is still being shown (its last words come in at the display pace after the Run ended, ADR-054 §3).
-  const [writing, setWriting] = useState(false);
-  const ended = terminal && !writing;
+  const text = message?.text ?? "";
+  // How much of the reply was shown in full when last told (its last words come in at the display pace, ADR-054 §3):
+  // committed text beyond it is still on its way, and the Turn has ended for the reader only once all of it is shown.
+  // Known in the same render as each commit, so a Run ending with new words never hands over before showing them.
+  const [shownLength, setShownLength] = useState(text.length);
+  const behind = text.length > shownLength;
+  const ended = terminal && !behind;
   const now = useNow(!ended);
   const phase = usePhase(ended);
-  const entering = useEntrance(!terminal && acceptedRecently(run));
-  const text = message?.text ?? "";
+  // Only a Turn's first showing on the page can be news: the conversation draws a Turn again once its reply begins.
+  const [firstShowing] = useState(() => run === undefined || shownSteps(run.id) === undefined);
+  const entering = useEntrance(firstShowing && !terminal && acceptedRecently(run));
   const harnessName = harnesses.find(row => row.id === run?.selection.harnessId)?.name ?? run?.selection.harnessId ?? "Harness";
   const detail = run ? describe(run) : "";
   const write = async () => {
@@ -328,17 +350,19 @@ export const AssistantTurn = memo(function AssistantTurn({ message, run, harness
       <span className="flex-none text-ui-sm font-semibold text-fg">{harnessName}</span>
       {detail ? <span className="min-w-0 trunc text-caption text-fg-3">{detail}</span> : null}
     </div>
-    <TurnProcess run={run} status={status} text={text} phase={phase} detailed={detailed} now={now} harness={harnessName} startupHint={startupHint} queue={queue} waiting={waiting} loadDetail={loadToolDetail} entering={entering} docked={Children.toArray(children).length === 0} ended={ended}/>
+    <TurnProcess run={run} status={status} text={text} phase={phase} detailed={detailed} now={now} harness={harnessName} startupHint={startupHint} queue={queue} waiting={waiting} loadDetail={loadToolDetail} entering={entering} docked={Children.toArray(children).length === 0} ended={ended} behind={behind}/>
     {queue !== undefined && status === "queued" && !run?.cancelRequested ? <QueuedTurn queue={queue} now={now}/> : null}
     {run?.notices?.length ? <NoticeList notices={run.notices}/> : null}
-    {text ? <StreamingMarkdown text={text} isStreaming={!terminal && !run?.cancelRequested} caret className="text-reading" onWriting={setWriting}/> : null}
-    {run?.error && error ? <div className={cn("run-error flex items-start gap-2.5 rounded-block px-3 py-2.5 text-ui-sm text-fg", status === "failed" ? "bg-red-soft" : "bg-surface shadow-hairline")} role="status">
-      {status === "failed" ? <CircleAlert size={16} className="mt-0.5 flex-none text-red" aria-hidden="true"/> : <CircleHelp size={16} className="mt-0.5 flex-none text-fg-2" aria-hidden="true"/>}
+    {text ? <StreamingMarkdown text={text} isStreaming={!terminal && !run?.cancelRequested} caret className="text-reading" onShown={setShownLength}/> : null}
+    {/* Interaction board: the reason sits on a quiet card; only the failure's own symbol is red. */}
+    {run?.error && error ? <div className="run-error flex items-start gap-2 rounded-block bg-surface px-3 py-2.5 text-ui-sm text-fg shadow-hairline" role="status">
+      {status === "failed" ? <CircleAlert size={17} strokeWidth={1.9} className="mt-px flex-none text-red" aria-hidden="true"/> : <CircleHelp size={17} strokeWidth={1.9} className="mt-px flex-none text-fg-3" aria-hidden="true"/>}
       <span className="min-w-0 break-words">{failureMessage(run.error)}{busyHolder && run.error.code === "WORKSPACE_BUSY" ? <>占用它的是对话「{busyHolder.title}」。<button type="button" className="link-btn" onClick={busyHolder.onOpen}>打开那个对话</button></> : null}</span>
     </div> : null}
     {run?.outputs?.length ? <OutputList outputs={run.outputs}/> : null}
     {children}
-    <div className={cn("turn-meta -mt-1 -ml-1.5 flex min-h-7 flex-wrap items-center gap-x-0.5 gap-y-1 text-caption text-fg-3 transition-opacity duration-150", quiet && "sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100")}>
+    {/* Out of the way until pointed at, where there is a pointer to point with; on touch screens it stays in sight. */}
+    <div className={cn("turn-meta -mt-1 -ml-1.5 flex min-h-7 flex-wrap items-center gap-x-0.5 gap-y-1 text-caption text-fg-3 transition-opacity duration-150", quiet && "[@media(hover:hover)]:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100")}>
       <div className="message-actions flex items-center gap-0.5">
         {text ? <ActionButton label={copy === "copied" ? "已复制回复" : "复制回复"} onClick={() => void write()}>{copy === "copied" ? <Check size={14}/> : <Copy size={14}/>}</ActionButton> : null}
         {run && onBranch && (status === "completed" || status === "failed" || status === "cancelled") ? <ActionButton label="从这里分支" onClick={() => onBranch(run.id)}><GitBranch size={14}/></ActionButton> : null}
@@ -366,6 +390,8 @@ export function SwitchDivider({ change, harnesses, onRevert, revertDisabled, fro
   const label = same ? "从这里起改用 " + model : "从这里起由 " + name(target.harnessId) + " 接手" + (model ? " · " + model : "");
   const line = (side: "left" | "right") => <span className={cn("h-[.5px] min-w-3 flex-1 bg-line-strong", side === "left" ? "origin-right" : "origin-left", entering && "motion-line-grow")} style={entering ? motionStyle({ delay: 120 }) : undefined}/>;
   return <div className="switch-divider flex min-w-0 items-center gap-2">
+    {/* "改回" on the right is matched on the left, so the pill stays in the middle of the column where there is room */}
+    {onRevert ? <span aria-hidden="true" className="invisible flex-none text-caption font-medium max-sm:hidden">改回</span> : null}
     <div role="separator" aria-label={label} className="flex min-w-0 flex-1 items-center gap-3 text-caption text-fg-3">
       {line("left")}
       <span className={cn("flex h-[30px] min-w-0 items-center gap-[7px] rounded-full bg-surface pr-3 pl-[7px] whitespace-nowrap shadow-hairline", entering && "motion-fade-in")}>

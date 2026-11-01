@@ -105,13 +105,19 @@ function useJustDone(pending: boolean, done: boolean, reduced: boolean): { reado
   return { check, after };
 }
 
-interface StepProps { readonly step: Step; readonly active: boolean; readonly loadDetail: ToolDetailLoader | undefined; readonly children: ReadonlyMap<string, readonly Tool[]>; readonly fresh: boolean; readonly reduced: boolean }
+/**
+ * The steps a reader has already seen, owned by the view that shows a Turn: a list adds every step it shows, and only steps
+ * not in it come in (Motion board #05). A list without one counts what it shows first as history.
+ */
+export type SeenSteps = Set<string>;
+
+interface StepProps { readonly step: Step; readonly active: boolean; readonly loadDetail: ToolDetailLoader | undefined; readonly children: ReadonlyMap<string, readonly Tool[]>; readonly fresh: boolean; readonly reduced: boolean; readonly seen: SeenSteps | undefined }
 /**
  * One step of the process (Conversation board): the icon of its kind (a spinner while it runs), the verb in its tense, what
  * it acted on, and what came of it: lines added and removed by an edit, the exit code of a command, a failure in red. A
  * step with stored detail opens its raw input and output; consecutive reads open the reads they group.
  */
-const StepItem = memo(function StepItem({ step, active, loadDetail, children, fresh, reduced }: StepProps) {
+const StepItem = memo(function StepItem({ step, active, loadDetail, children, fresh, reduced, seen }: StepProps) {
   const [open, setOpen] = useState(false);
   const [entering] = useState(fresh);
   const panel = useId();
@@ -154,31 +160,32 @@ const StepItem = memo(function StepItem({ step, active, loadDetail, children, fr
       : <div className={row}>{content}</div>}
     {expandable ? <Collapsible open={open} id={panel} className="grid-cols-[minmax(0,1fr)]">
       {step.kind === "reads" ? <ol className="m-0 mb-1 ml-[30px] flex list-none flex-col gap-px p-0" aria-label={"读取的文件：" + step.tools.length + " 个"}>
-        {step.tools.map(tool => <StepItem key={tool.id} step={{ kind: "tool", key: tool.id, tool }} active={active} loadDetail={loadDetail} children={children} fresh={false} reduced={reduced}/>)}</ol>
+        {step.tools.map(tool => <StepItem key={tool.id} step={{ kind: "tool", key: tool.id, tool }} active={active} loadDetail={loadDetail} children={children} fresh={false} reduced={reduced} seen={seen}/>)}</ol>
         : <ToolDetail tool={first} load={loadDetail}/>}
     </Collapsible> : null}
-    {nested.length ? <StepList tools={nested} all={children} active={active} loadDetail={loadDetail} label={"子 Agent 的工具：" + first.title} className="mb-1 ml-[13px] border-l border-line-strong pl-2"/> : null}
+    {nested.length ? <StepList tools={nested} all={children} active={active} loadDetail={loadDetail} seen={seen} label={"子 Agent 的工具：" + first.title} className="mb-1 ml-[13px] border-l border-line-strong pl-2"/> : null}
   </li>;
 });
 
-function StepList({ tools, all, active, loadDetail, label, className }: { readonly tools: readonly Tool[]; readonly all: ReadonlyMap<string, readonly Tool[]>; readonly active: boolean; readonly loadDetail: ToolDetailLoader | undefined; readonly label: string; readonly className?: string }) {
+function StepList({ tools, all, active, loadDetail, seen: known, label, className }: { readonly tools: readonly Tool[]; readonly all: ReadonlyMap<string, readonly Tool[]>; readonly active: boolean; readonly loadDetail: ToolDetailLoader | undefined; readonly seen: SeenSteps | undefined; readonly label: string; readonly className?: string }) {
   const reduced = useReducedMotion();
-  // Steps present when the list is first shown are history; those that appear while it is shown come in (Motion board #05).
-  const seen = useRef<Set<string> | null>(null);
-  seen.current ??= new Set(tools.map(tool => tool.id));
+  // Steps the reader has seen are history; the others come in (Motion board #05). Without a record from the Turn, the steps
+  // present when this list is first shown are history.
+  const seen = useRef<SeenSteps | null>(null);
+  seen.current ??= known ?? new Set(tools.map(tool => tool.id));
   useLayoutEffect(() => { for (const tool of tools) seen.current!.add(tool.id); }, [tools]);
   const steps = useMemo(() => groupSteps(tools, all), [tools, all]);
   return <ul className={cn("native-tools m-0 flex list-none flex-col gap-px p-0", className)} aria-label={label}>
-    {steps.map(step => <StepItem key={step.key} step={step} active={active} loadDetail={loadDetail} children={all} fresh={!seen.current!.has(step.key)} reduced={reduced}/>)}
+    {steps.map(step => <StepItem key={step.key} step={step} active={active} loadDetail={loadDetail} children={all} fresh={!seen.current!.has(step.key)} reduced={reduced} seen={known}/>)}
   </ul>;
 }
 /**
  * A Turn's tools as steps, in call order (ADR-054 §5): consecutive reads are one group, and a tool whose parent call is
- * listed is shown under it, as the sub-agent work of that call.
+ * listed is shown under it, as the sub-agent work of that call. `seen` is the Turn's record of the steps its reader saw.
  */
-export function ToolList({ tools, active, loadDetail }: { tools: readonly Tool[]; active: boolean; loadDetail: ToolDetailLoader | undefined }) {
+export function ToolList({ tools, active, loadDetail, seen }: { tools: readonly Tool[]; active: boolean; loadDetail: ToolDetailLoader | undefined; seen?: SeenSteps | undefined }) {
   const { roots, children } = useMemo(() => toolTree(tools), [tools]);
-  return <StepList tools={roots} all={children} active={active} loadDetail={loadDetail} label="工具活动"/>;
+  return <StepList tools={roots} all={children} active={active} loadDetail={loadDetail} seen={seen} label="工具活动"/>;
 }
 
 /**
