@@ -1,25 +1,25 @@
-import { ArrowDown, Download, FolderOpen, GitBranch, Menu as MenuIcon, MoreHorizontal, PanelLeft, PanelRight, TerminalSquare, X } from "lucide-react";
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { Dispatch, SetStateAction } from "react";
+import { ArrowDown, Check, ChevronUp, Circle, CircleDashed, FileDown, GitBranch, ListChecks, Menu as MenuIcon, MoreHorizontal, PanelLeft, PanelRight, TerminalSquare, X } from "lucide-react";
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { Dispatch, ReactNode, SetStateAction } from "react";
 import type { ContentRef } from "../../../src/contracts/content.js";
 import type { NativeExtensions, NativeModelCatalog } from "../../../src/contracts/control.js";
 import type { ProviderView } from "../../../src/contracts/provider.js";
-import type { AttentionItem, HarnessSelection, PublicRun, SelectionRequest } from "../../../src/contracts/session.js";
+import type { AttentionItem, HarnessSelection, PublicPlan, PublicRun, SelectionRequest } from "../../../src/contracts/session.js";
 import type { HarnessReadinessView, HarnessView, NativeResumeView, NativeSessionListView, SessionView } from "../../../src/contracts/web.js";
 import { failureMessage, runStatusLabel } from "../api.js";
 import { cn } from "../lib/cn.js";
-import { folderName, homePath, shortTitle } from "../lib/format.js";
-import { useMedia, type Preferences } from "../lib/prefs.js";
-import { Dialog, Menu, Popover, PopHead } from "../ui/overlay.js";
-import { EmptyState, Notice, Spinner, Tip } from "../ui/primitives.js";
+import { clock, compact, elapsed, folderName, shortTitle } from "../lib/format.js";
+import { useMedia, useNow, type Preferences } from "../lib/prefs.js";
+import { editTools, finished, toolTree, TOOL_PENDING } from "../lib/turn.js";
+import { Collapsible, motionStyle, usePresence } from "../ui/motion.js";
+import { Dialog, Menu } from "../ui/overlay.js";
+import { EmptyState, Notice, Spinner, StatusPill, Tip } from "../ui/primitives.js";
 import type { ToolDetailLoader } from "./Activity.js";
-import { PermissionCard } from "./Approval.js";
+import { DecisionLine, DockedMarker, dockedRequest, PermissionCard, type Decision, type PermissionRequestView } from "./Approval.js";
 import type { AttachmentDraft } from "./Attachments.js";
 import { BranchOrigin } from "./BranchOrigin.js";
-import { BrandIcon } from "./BrandIcon.js";
-import { Composer, OPTION_NAMES, THINKING_NAMES } from "./Composer.js";
+import { Composer, OPTION_NAMES, THINKING_NAMES, type DockedApproval } from "./Composer.js";
 import { DetailsPanel, type PanelTab } from "./DetailsPanel.js";
-import { NativeResume } from "./NativeResume.js";
 import { AssistantTurn, SwitchDivider, UserMessage, type QueueNotice } from "./Turn.js";
 import { Welcome } from "./Welcome.js";
 
@@ -121,6 +121,11 @@ export interface ChatProps {
   contextUsage?: number | null; onShowResume?: (() => void) | undefined; onSendDraft?: (text: string) => Promise<void>;
 }
 
+/** The latest values the page's shortcuts act on, read when a key is pressed rather than bound into the listener. */
+interface ShortcutState { readonly stop: (() => void) | null; readonly togglePanel: (() => void) | null; readonly openPicker: (() => void) | null }
+/** A local decision on an approval, kept until the page leaves the conversation, to write its result back into the Turn. */
+type DecisionRecord = Decision & { readonly runId: string };
+
 export function ChatPage(props: ChatProps) {
   const { session, draft, harnesses, providers, mutation, error, preferences } = props;
   const [followBottom, setFollowBottom] = useState(true);
@@ -129,6 +134,8 @@ export function ChatPage(props: ChatProps) {
   const [tab, setTab] = useState<PanelTab | null>(null);
   const [panelRun, setPanelRun] = useState<string | null>(null);
   const [overlay, setOverlay] = useState(false);
+  const [agentPicker, setAgentPicker] = useState(false);
+  const [decisions, setDecisions] = useState<ReadonlyMap<string, DecisionRecord>>(() => new Map());
   const wide = useMedia("(min-width: 1200px)"), narrow = useMedia("(max-width: 759px)");
   const following = useRef(true);
   const mounted = useRef(true);
@@ -203,7 +210,7 @@ export function ChatPage(props: ChatProps) {
   }, []);
   const resumeFollowing = useCallback(() => { following.current = true; setFollowBottom(true); scrollToLatest(); }, [scrollToLatest]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  useLayoutEffect(() => { following.current = true; setFollowBottom(true); if (session) scrollToLatest(); else scroll.current?.scrollTo({ top: 0 }); setTab(null); setPanelRun(null); setOverlay(false); }, [session?.id, scrollToLatest]);
+  useLayoutEffect(() => { following.current = true; setFollowBottom(true); if (session) scrollToLatest(); else scroll.current?.scrollTo({ top: 0 }); setTab(null); setPanelRun(null); setOverlay(false); setDecisions(new Map()); }, [session?.id, scrollToLatest]);
   useLayoutEffect(() => { if (following.current && session) scrollToLatest(); }, [session?.version, followBottom, scrollToLatest, props.queued]);
   useEffect(() => {
     const element = scroll.current, content = transcript.current;
@@ -217,8 +224,16 @@ export function ChatPage(props: ChatProps) {
     return () => observer.disconnect();
   }, [session?.id, props.loading, scrollToLatest]);
   const fillDraft = useCallback((text: string) => { props.onMessageDraft(text); textarea.current?.focus(); }, [props.onMessageDraft]);
+  const refocus = useRef(false);
+  useLayoutEffect(() => {
+    if (!session || !refocus.current) return;
+    refocus.current = false;
+    if (document.activeElement === null || document.activeElement === document.body) textarea.current?.focus({ preventScroll: true });
+  }, [session?.id]);
   // A retry resends the original input with the attachments it was sent with; a new message takes the composer's.
   const send = async (text: string, retryAttachments?: readonly ContentRef[]) => {
+    // The first message moves the composer from the welcome to the foot of the new conversation; the focus goes with it.
+    if (session === null && document.activeElement === textarea.current) refocus.current = true;
     await props.onSend(text, retryAttachments);
     if (mounted.current) { props.onMessageDraft(value => value === text ? "" : value); resumeFollowing(); }
   };
@@ -235,9 +250,8 @@ export function ChatPage(props: ChatProps) {
     setPanelRun(runId); setTab("run"); setPanel(true);
   };
   const showResume = () => { setPanelRun(session?.runs.at(-1)?.id ?? null); setTab("run"); setPanel(true); };
-  const latestUsage = [...(session?.runs ?? [])].reverse().find(run => run.usage?.context?.size)?.usage?.context;
-  const contextUsage = latestUsage?.size ? Math.round(latestUsage.used / latestUsage.size * 100) : null;
   const detailed = preferences.density === "detailed";
+  const changes = useMemo(() => session?.runs.reduce((count, run) => count + editTools(run).length, 0) ?? 0, [session?.runs]);
   // Effective changes of Harness or model, placed after the history they carried (ADR-042).
   const dividers = useMemo(() => {
     const result = new Map<number, NonNullable<SessionView["switches"]>[number]>();
@@ -256,65 +270,136 @@ export function ChatPage(props: ChatProps) {
   }, [dividers, session?.messages]);
   const lastDivider = [...dividers.values()].at(-1);
   const revertTo = lastDivider ? [...(session?.runs ?? [])].reverse().find(run => run.selection.harnessId !== lastDivider.target?.harnessId || run.selection.nativeModel !== lastDivider.target?.nativeModel)?.selection : undefined;
-  const orphanPermissions = session?.permissions?.filter(request => !runs.has(request.runId as never)) ?? [];
-  const permissionsFor = (runId: string) => session?.permissions?.filter(request => request.runId === runId) ?? [];
-  const permissionCards = (requests: NonNullable<SessionView["permissions"]>) => requests.map(request => <PermissionCard key={request.id} request={request} harness={harnessName(session?.runs.find(run => run.id === request.runId)?.selection.harnessId ?? session?.selection.harnessId ?? "")} busy={mutation !== null} onDecision={(option, input) => props.onPermission?.(request.id, option, input)}/>);
-  const composer = <Composer {...props} onSendDraft={text => send(text)} active={active} dirty={dirty} pending={pending} problem={problem} blocked={blocked} inputRef={textarea} contextUsage={contextUsage} onShowResume={session ? showResume : undefined}/>;
+
+  // Approvals wait in the composer's place, oldest first (ADR-054 §5); questions and forms stay in their Turn.
+  const requestHarness = (request: PermissionRequestView) => harnessName(runs.get(request.runId as never)?.selection.harnessId ?? session?.selection.harnessId ?? "");
+  const waitingApprovals = useMemo(() => (session?.permissions ?? []).filter(request => !request.decided && dockedRequest(request)).sort((a, b) => a.requestedAt - b.requestedAt), [session?.permissions]);
+  const docked = session !== null && session.status !== "closed" ? waitingApprovals[0] ?? null : null;
+  const decide = (request: PermissionRequestView, option: string, input?: string) => {
+    if (dockedRequest(request)) setDecisions(map => new Map(map).set(request.id, { title: request.title, option: request.options.find(row => row.id === option) ?? null, harness: requestHarness(request), runId: request.runId }));
+    props.onPermission?.(request.id, option, input);
+  };
+  // The rule that asked, by the program's own name, when its configuration reports one (Codex's approval policy).
+  const policy = (() => {
+    if (!docked || !session) return undefined;
+    const run = runs.get(docked.runId as never), harnessId = run?.selection.harnessId ?? session.selection.harnessId;
+    if (harnessId !== draft.harnessId || run?.selection.provider) return undefined;
+    const option = props.nativeModels?.options?.find(row => row.category === "permission");
+    if (!option) return undefined;
+    const value = session.nativeStates?.find(state => state.harnessId === harnessId)?.observed?.options[option.id] ?? run?.selection.nativeOptions?.[option.id] ?? option.currentValue;
+    return option.values.find(row => row.value === value)?.name;
+  })();
+  const approval: DockedApproval | null = docked ? { request: docked, harness: requestHarness(docked), waiting: waitingApprovals.length, policy, onDecision: option => decide(docked, option) } : null;
+  // What a Turn shows of its requests: the result of each approval decided here or elsewhere, a mark while one waits in
+  // the composer's place, and its questions in full.
+  const turnRequests = (runId: string): ReactNode => {
+    const requests = session?.permissions?.filter(request => request.runId === runId) ?? [];
+    const lines = [...decisions.entries()].filter(([id, record]) => record.runId === runId && requests.find(request => request.id === id)?.decided !== false)
+      .map(([id, record]) => <DecisionLine key={"decision:" + id} decision={record}/>);
+    const elsewhere = requests.filter(request => request.decided && dockedRequest(request) && !decisions.has(request.id))
+      .map(request => <DecisionLine key={"decision:" + request.id} decision={{ title: request.title, option: null, harness: requestHarness(request) }}/>);
+    const waiting = requests.some(request => !request.decided && dockedRequest(request)) && session?.status !== "closed";
+    const cards = requests.filter(request => !dockedRequest(request)).map(request => <PermissionCard key={request.id} request={request} harness={requestHarness(request)} busy={mutation !== null} onDecision={(option, input) => decide(request, option, input)}/>);
+    return lines.length || elsewhere.length || waiting || cards.length ? <>{lines}{elsewhere}{waiting ? <DockedMarker/> : null}{cards}</> : null;
+  };
+  const orphanCards = (session?.permissions ?? []).filter(request => !runs.has(request.runId as never) && !dockedRequest(request))
+    .map(request => <PermissionCard key={request.id} request={request} harness={requestHarness(request)} busy={mutation !== null} onDecision={(option, input) => decide(request, option, input)}/>);
+
+  // ↑ in an empty composer: the held message comes back first, otherwise the last message sent becomes the draft.
+  const editLast = session ? () => {
+    if (props.queued && props.onEditQueued) { props.onEditQueued(); return; }
+    const last = [...session.messages].reverse().find(message => message.role === "user");
+    if (last) fillDraft(last.text);
+  } : undefined;
+  // Messages that arrive after the conversation opened rise into place (Motion board #15); the history does not.
+  const known = useRef<{ id: string | null; messages: ReadonlySet<string> }>({ id: null, messages: new Set() });
+  if (session && known.current.id !== session.id) known.current = { id: session.id, messages: new Set(session.messages.map(message => message.id)) };
+
+  // ⌘J opens the Agent list, ⌘. stops the reply, ⌘\ opens or closes the details (ADR-054 §5). The page's own listener runs
+  // first and keeps these keys, so none of them reaches another binding while the conversation is shown.
+  const shortcuts = useRef<ShortcutState>({ stop: null, togglePanel: null, openPicker: null });
+  shortcuts.current = {
+    stop: active && !active.cancelRequested && mutation === null ? props.onCancel : null,
+    togglePanel: session ? () => setPanel(!panelOpen) : null,
+    openPicker: docked === null && !props.loading && props.sessionError === null && session?.status !== "closed" && (mutation === null || mutation === "switching") ? () => setAgentPicker(true) : null,
+  };
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.isComposing || event.keyCode === 229 || event.altKey || event.shiftKey || !(event.metaKey || event.ctrlKey)) return;
+      const key = event.code === "Period" || event.key === "." ? "stop" : event.code === "Backslash" || event.key === "\\" ? "panel" : event.code === "KeyJ" || event.key.toLowerCase() === "j" ? "picker" : null;
+      if (key === null) return;
+      // A dialog (a confirmation, the palette) keeps its own keys; toasts are dialogs that never take them.
+      if (event.target instanceof Element && event.target.closest("[role='dialog']:not(.toast)")) return;
+      event.preventDefault(); event.stopPropagation();
+      const current = shortcuts.current;
+      if (key === "stop") current.stop?.(); else if (key === "panel") current.togglePanel?.(); else current.openPicker?.();
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, []);
+
+  const composer = <Composer {...props} onSendDraft={text => send(text)} active={active} dirty={dirty} pending={pending} problem={problem} blocked={blocked} inputRef={textarea}
+    onShowResume={session ? showResume : undefined} approval={approval} agentPickerOpen={agentPicker} onAgentPickerOpen={setAgentPicker} onEditLast={editLast}
+    above={session ? <>
+      {props.queued ? <div className="queued-message motion-fade-in flex items-center gap-2.5 rounded-block bg-subtle py-1.5 pr-1.5 pl-3 text-ui-sm" role="status">
+        <CircleDashed size={15} className="flex-none text-fg-3" aria-hidden="true"/>
+        <span className="flex-none text-caption text-fg-3">将在本轮结束后发送</span><span className="min-w-0 flex-1 truncate" title={props.queued.text}>{props.queued.text}</span>
+        {props.queued.attachments.length ? <span className="flex-none text-caption text-fg-3">附件 {props.queued.attachments.length}</span> : null}
+        <button type="button" className="btn btn-ghost btn-sm" onClick={props.onEditQueued}>编辑</button><button type="button" className="btn btn-ghost btn-sm" onClick={props.onWithdrawQueued}>撤回</button>
+      </div> : null}
+      <PlanBar session={session} active={active} harnessName={harnessName}/>
+    </> : null}
+    below={session ? <StatusLine session={session} active={active}/> : null}/>;
   const status = props.loading ? "正在读取对话" : props.sessionError ? "对话读取失败" : session?.status === "blocked" ? "执行暂时暂停，可以编辑草稿和检查恢复连接" : session?.status === "closed" ? "对话已关闭，可查看历史" : active ? active.cancelRequested ? "正在停止回复" : runStatusLabel(active.status) : pending ? "等待选择切换生效" : session ? "可以继续对话" : "选择执行者后开始新对话";
-  const workspace = session?.workspace ?? props.workspace;
   const panel = session ? <DetailsPanel session={session} harnesses={harnesses} providers={providers} tab={panelTab} onTab={setTab} runId={panelRun} onRun={setPanelRun} describe={describe}
-    loadToolDetail={props.onToolDetail} loadDiagnostics={props.onDiagnostics} loadNativeResume={props.onLoadNativeResume} onEndProcess={props.onEndProcess} busy={mutation !== null} {...(inline ? {} : { onClose: () => setOverlay(false) })}/> : null;
+    loadToolDetail={props.onToolDetail} loadDiagnostics={props.onDiagnostics} loadNativeResume={props.onLoadNativeResume} onEndProcess={props.onEndProcess} busy={mutation !== null} onClose={() => setPanel(false)}/> : null;
+  // #23: the panel opens by widening (300 ms) and pushes the conversation aside; its content follows 60 ms later from 24 px to
+  // the right; it closes in 200 ms. From the keyboard (⌘\) it opens and closes at once.
+  const asidePresence = usePresence(inline && panelOpen, 300, 200);
+  const exportBase = session ? `/api/v1/sessions/${encodeURIComponent(session.id)}/export?format=` : "";
 
   return <section className="chat-page flex h-full min-h-0 min-w-0 flex-1 flex-col" aria-labelledby="chat-title">
-    <header className="flex h-14 flex-none items-center gap-2 border-b border-line bg-app pr-2.5 pl-3 sm:gap-3 sm:pr-3.5 sm:pl-[18px]">
+    <header className={cn("flex h-[54px] flex-none items-center gap-2 bg-app pr-3 pl-3", session ? "hairline-b sm:pl-6" : "sm:pl-4")}>
       {narrow ? <button type="button" className="icon-btn navigation-toggle" onClick={props.onMenu} aria-label="打开导航"><MenuIcon size={18}/></button>
         : props.sidebarHidden ? <Tip label="展开侧栏"><button type="button" className="icon-btn" aria-label="展开侧栏" onClick={props.onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null}
-      <div className="flex min-w-0 flex-1 flex-col">
-        <h1 id="chat-title" className="m-0 truncate text-[15px] font-semibold tracking-[-0.005em]" title={title}>{title}{session && session.status !== "open" ? <span className="ml-2 align-middle text-[11.5px] font-medium text-fg-3">{session.status === "closed" ? "已结束" : "需要核实"}</span> : null}</h1>
-        {session ? <div className="flex min-w-0 items-center gap-2 text-[12px] text-fg-2">
-          <span className="flex flex-none items-center gap-1.5"><BrandIcon brand={session.selection.harnessId} name={harnessName(session.selection.harnessId)} size={14}/>{harnessName(session.selection.harnessId)}</span>
-          <span className="text-fg-3">·</span><span className="flex min-w-0 items-center gap-1" title={session.workspace}><FolderOpen size={12} className="flex-none" aria-hidden="true"/><span className="mono truncate text-[11.5px]">{homePath(session.workspace) || folderName(session.workspace)}</span></span>
-        </div> : null}
+      <div className="flex min-w-0 flex-1 items-baseline gap-2.5">
+        <h1 id="chat-title" className={cn("m-0 min-w-0 truncate text-ui font-semibold", !session && "sr-only")} title={title}>{title}{session && session.status !== "open" ? <span className="ml-2 text-caption font-medium text-fg-3">{session.status === "closed" ? "已结束" : "需要核实"}</span> : null}</h1>
+        {session ? <span className="hidden min-w-0 flex-none truncate text-caption text-fg-3 sm:inline sm:max-w-[40%]" title={session.workspace}>{folderName(session.workspace)}</span> : null}
       </div>
       {session ? <>
-        <div className="hidden sm:flex"><div className="segmented" role="group" aria-label="过程显示">
+        <HeaderState session={session} active={active} harnessName={harnessName}/>
+        <div className="hidden lg:flex"><div className="segmented" role="group" aria-label="过程显示">
           <button type="button" aria-pressed={!detailed} onClick={() => props.onPreference("density", "compact")}>简洁</button>
           <button type="button" aria-pressed={detailed} onClick={() => props.onPreference("density", "detailed")}>详细</button></div></div>
         <div className="flex items-center gap-0.5">
-          {session.nativeStates?.some(state => state.harnessId === session.selection.harnessId && state.status === "ready") && props.onLoadNativeResume ? <Popover label="在原程序中继续这段对话" align="end" className="w-[380px] max-w-[calc(100vw-24px)]"
-            trigger={<button type="button" className="icon-btn hidden sm:inline-flex" aria-label="继续到原程序" title="在原程序中继续"><TerminalSquare size={16}/></button>}>
-            <PopHead title="在原程序中继续" closeLabel="关闭"/><div className="p-3.5"><NativeResume key={session.id} load={props.onLoadNativeResume}/></div></Popover> : null}
-          <Popover label="导出对话" align="end" className="w-[260px]" trigger={<button type="button" className="icon-btn export-chat" aria-label="导出对话" title="导出对话"><Download size={16}/></button>}>
-            <div className="flex flex-col p-1.5">
-              <a className="menu-item" href={`/api/v1/sessions/${encodeURIComponent(session.id)}/export?format=markdown`} download>导出 Markdown</a>
-              <a className="menu-item" href={`/api/v1/sessions/${encodeURIComponent(session.id)}/export?format=json`} download>导出 JSON</a>
-              <small className="px-2.5 pt-1.5 pb-1 text-[11.5px] text-fg-3">公开对话与执行摘要；原生内部状态不包含在内。</small>
-            </div>
-          </Popover>
+          <Tip label={<>{panelOpen ? "收起详情" : "打开详情"}（⌘\）</>}><button type="button" className="icon-btn relative" aria-label="详情栏" aria-pressed={panelOpen} aria-describedby={changes ? "details-changes" : undefined} onClick={() => setPanel(!panelOpen)}>
+            <PanelRight size={16}/>{!panelOpen && changes ? <span className="motion-pop-in absolute top-px right-0 min-w-[15px] rounded-full bg-accent px-1 text-center text-[10px] leading-[15px] font-semibold text-on-accent" style={motionStyle({ scaleFrom: .6 })} aria-hidden="true">{changes}</span> : null}
+          </button></Tip>
+          {changes ? <span id="details-changes" className="sr-only">本对话改动 {changes} 处</span> : null}
           <Menu align="end" trigger={<button type="button" className="icon-btn" aria-label="更多操作" title="更多操作"><MoreHorizontal size={16}/></button>} items={[
             { label: "从最新回复分支", icon: <GitBranch size={14}/>, disabled: !canBranch || !props.onBranch || !session.runs.some(run => ["completed", "failed", "cancelled"].includes(run.status)), onSelect: () => { const last = [...session.runs].reverse().find(run => ["completed", "failed", "cancelled"].includes(run.status)); if (last) props.onBranch?.(last.id); } },
             { label: "在原程序中继续的方式", icon: <TerminalSquare size={14}/>, onSelect: showResume },
-            { label: panelOpen ? "隐藏详情栏" : "显示详情栏", icon: <PanelRight size={14}/>, onSelect: () => setPanel(!panelOpen) },
+            { label: panelOpen ? "收起详情" : "打开详情", icon: <PanelRight size={14}/>, hint: "⌘\\", onSelect: () => setPanel(!panelOpen) },
+            { separator: true },
+            { label: "导出 Markdown", icon: <FileDown size={14}/>, href: exportBase + "markdown", download: true },
+            { label: "导出 JSON", icon: <FileDown size={14}/>, href: exportBase + "json", download: true },
             { separator: true },
             { label: "结束对话…", icon: <X size={14}/>, danger: true, disabled: session.status === "closed" || mutation !== null, onSelect: () => setConfirmClose(true) },
-          ]}/>
+          ]} footer="导出公开对话与执行摘要；原生内部状态不包含在内。"/>
           {session.status !== "closed" ? <Tip label="结束会话，保留历史"><button type="button" className="icon-btn close-chat" aria-label="关闭这个对话" disabled={mutation !== null} onClick={() => setConfirmClose(true)}><X size={17}/></button></Tip> : null}
-          <span className="mx-1.5 hidden h-5 w-px bg-line sm:block" aria-hidden="true"/>
-          <Tip label={panelOpen ? "隐藏详情栏" : "显示详情栏"}><button type="button" className="icon-btn" aria-label="详情栏" aria-pressed={panelOpen} onClick={() => setPanel(!panelOpen)}><PanelRight size={16}/></button></Tip>
         </div>
       </> : null}
     </header>
     <div className="flex flex-col gap-2 empty:hidden">
-      {error ? <div className="chat-error px-4 pt-3 sm:px-7"><Notice tone="red" onDismiss={props.onDismissError} className="mx-auto max-w-[760px]">{error}</Notice></div> : null}
-      {props.connectionError ? <div className="px-4 pt-3 sm:px-7"><Notice tone="amber" className="connection-notice mx-auto max-w-[760px]" action={props.onRetryConnection ? <button type="button" className="btn btn-sm" onClick={props.onRetryConnection}>重新连接</button> : undefined}>{props.connectionError}</Notice></div> : null}
-      {session?.status === "blocked" ? <div className="px-4 pt-3 sm:px-7"><Notice tone="amber" className="blocked-notice mx-auto max-w-[760px]" title="执行已暂停，对话历史和草稿仍保留。">{session.runs.some(run => run.status === "unknown") ? "上一轮结果未知，不会自动重跑。资源确认停止后，可以明确继续新的任务。" : "可以重新选择 Harness，并检查连接后尝试恢复。所有权或存储故障需要先处理本机服务。"}</Notice></div> : null}
-      {failedSwitch && session?.status === "open" ? <div className="px-4 pt-3 sm:px-7"><Notice tone="red" className="selection-failure mx-auto max-w-[760px]" title={`未能切换到 ${harnessName(failedSwitch.requested.harnessId)}`}
+      {error ? <div className="chat-error px-4 pt-3 sm:px-8"><Notice tone="red" onDismiss={props.onDismissError} className="mx-auto max-w-reading">{error}</Notice></div> : null}
+      {props.connectionError ? <div className="px-4 pt-3 sm:px-8"><Notice tone="amber" className="connection-notice mx-auto max-w-reading" action={props.onRetryConnection ? <button type="button" className="btn btn-sm" onClick={props.onRetryConnection}>重新连接</button> : undefined}>{props.connectionError}</Notice></div> : null}
+      {failedSwitch && session?.status === "open" ? <div className="px-4 pt-3 sm:px-8"><Notice tone="red" className="selection-failure mx-auto max-w-reading" title={`未能切换到 ${harnessName(failedSwitch.requested.harnessId)}`}
         action={<button className="btn btn-sm" type="button" disabled={mutation !== null || pending} onClick={() => { props.onDraft(selectionDraft(session.selection)); setDismissedSwitch(failedSwitch.id); }}>继续使用当前选择</button>}>
         {failedSwitch.error ? failureMessage(failedSwitch.error) : "目标连接没有通过验证。"} 当前选择仍是 {harnessName(session.selection.harnessId)}。</Notice></div> : null}
     </div>
     <div className="flex min-h-0 flex-1">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className={cn("chat-scroll scroll-area min-h-0 flex-1 px-4 sm:px-7", session === null ? "welcome-scroll pt-0" : "pt-7 pb-2")} ref={scroll} onScroll={() => {
+        <div className={cn("chat-scroll scroll-area min-h-0 flex-1 px-4 sm:px-8", session === null ? "welcome-scroll" : "pt-[30px] pb-5")} ref={scroll} onScroll={() => {
           const element = scroll.current;
           if (!element || viewport.current.width !== element.clientWidth || viewport.current.height !== element.clientHeight) return;
           // Content that got shorter (a Markdown block replacing its plain-text placeholder) pulls the position up by
@@ -327,7 +412,7 @@ export function ChatPage(props: ChatProps) {
           previousScrollTop.current = element.scrollTop;
         }}>
           {props.sessionError ? <EmptyState title="无法打开这个对话" action={<button className="btn" onClick={props.onNew}>新建对话</button>}>{props.sessionError}</EmptyState>
-            : props.loading ? <div className="flex items-center justify-center gap-2 py-24 text-[13px] text-fg-2"><Spinner/><span>正在读取对话</span></div>
+            : props.loading ? <div className="flex items-center justify-center gap-2 py-24 text-ui-sm text-fg-2"><Spinner/><span>正在读取对话</span></div>
             : session === null ? <Welcome harnesses={harnesses.filter(harness => !props.hiddenHarnesses.has(harness.id))} readiness={props.readiness ?? []} firstUse={props.conversations === 0} selected={draft.harnessId} workspace={props.workspace} onWorkspace={props.onWorkspace}
               onSuggest={fillDraft} onHarnesses={props.onHarnesses} onSettings={props.onSettings} onRescan={props.onRescan} scanning={props.scanning} composer={composer}
               onChoose={harness => {
@@ -337,7 +422,7 @@ export function ChatPage(props: ChatProps) {
                   model: draft.providerId ? draft.model : entry?.nativeModel ?? "", nativeOptions: draft.providerId ? {} : entry?.nativeOptions ?? {} });
                 textarea.current?.focus();
               }}/>
-            : <div className="transcript mx-auto flex max-w-[760px] flex-col gap-[22px] pb-4" ref={transcript} role="log" aria-label="对话历史" aria-live="off">
+            : <div className="transcript mx-auto flex max-w-reading flex-col gap-7 pb-4" ref={transcript} role="log" aria-label="对话历史" aria-live="off">
               {session.origin ? <BranchOrigin origin={session.origin} session={session} harnesses={harnesses} onOpenSource={props.onOpenSession}/> : null}
               {session.messages.length === 0 && !session.origin ? <EmptyState title="对话准备好了">发出第一条消息，开始这次协作。</EmptyState> : null}
               {session.messages.map(message => {
@@ -346,37 +431,143 @@ export function ChatPage(props: ChatProps) {
                   onRetry={canRetry ? (text, sent) => { void send(text, sent ?? []).catch(() => {}); } : undefined} loadToolDetail={props.onToolDetail} onBranch={canBranch ? props.onBranch : undefined}
                   onDetails={openDetails} detailsOpen={panelOpen && panelTab === "run" && (panelRun ?? session.runs.at(-1)?.id) === run?.id} startupHint={startupHints.get(message.runId)}
                   queue={queue?.runId === message.runId ? queueNotice : undefined} busyHolder={busyHolder(message.runId)}
-                  waiting={run ? (() => { const open = permissionsFor(run.id).filter(request => !request.decided); return open.length ? open.some(request => request.kind !== "question" && request.input === undefined) ? "approval" as const : "question" as const : undefined; })() : undefined}>{run ? permissionCards(permissionsFor(run.id)) : null}</AssistantTurn>;
+                  waiting={run ? (() => { const open = (session.permissions ?? []).filter(request => request.runId === run.id && !request.decided); return open.length ? open.some(request => dockedRequest(request)) ? "approval" as const : "question" as const : undefined; })() : undefined}>{run ? turnRequests(run.id) : null}</AssistantTurn>;
+                const fresh = message.role === "user" && !known.current.messages.has(message.id);
                 return <Fragment key={message.id}>
-                  {message.role === "user" ? <UserMessage message={message} run={run} onEdit={fillDraft}/> : turn(message)}
+                  {message.role === "user" ? fresh ? <div className="motion-message-in"><UserMessage message={message} run={run} onEdit={fillDraft}/></div> : <UserMessage message={message} run={run} onEdit={fillDraft}/> : turn(message)}
                   {message.role === "user" && !assistantRuns.has(message.runId) && run ? turn(undefined) : null}
                   {divider ? <SwitchDivider change={divider} harnesses={harnesses} {...(divider === lastDivider && revertTo && session.status === "open" ? { onRevert: () => props.onDraft(selectionDraft(revertTo)), revertDisabled: mutation !== null || pending || active !== null } : {})}/> : null}
                 </Fragment>;
               })}
-              {orphanPermissions.length ? permissionCards(orphanPermissions) : null}
+              {orphanCards.length ? orphanCards : null}
             </div>}
         </div>
-        {session !== null && !props.loading ? <footer className="relative flex-none px-4 pt-1.5 pb-4 sm:px-7 sm:pb-[18px]"><div className="mx-auto flex max-w-[760px] flex-col gap-2">
-          {!followBottom ? <button type="button" className="follow-stream absolute -top-11 left-1/2 flex h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border border-line-strong bg-surface px-3 text-[12.5px] shadow-md hover:bg-hover" onClick={resumeFollowing} aria-label="回到最新回复"><ArrowDown size={13} aria-hidden="true"/><span>回到最新回复</span></button> : null}
+        {session !== null && !props.loading ? <footer className="relative flex-none px-4 pt-1.5 pb-4 sm:px-8 sm:pb-3.5"><div className="mx-auto flex max-w-reading flex-col gap-2">
+          {!followBottom ? <button type="button" className="follow-stream motion-enter press absolute -top-11 left-1/2 z-10 flex h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border-none bg-surface pr-3 pl-3.5 text-caption font-medium text-fg-2 shadow-pop transition-colors duration-120 ease-standard hover:text-fg"
+            style={motionStyle({ shift: 6 })} onClick={resumeFollowing} aria-label="回到最新回复"><span>回到最新</span><ArrowDown size={13} aria-hidden="true"/></button> : null}
           {props.queueNotice ? <Notice tone="amber" onDismiss={props.onDismissQueueNotice}>{props.queueNotice}</Notice> : null}
           {refused && props.onFreeWorkspace ? <Notice tone="amber" className="kept-conflict" title="工作区正被另一个对话占用" action={<button type="button" className="btn btn-sm" disabled={freeing || mutation !== null} onClick={() => { setFreeing(true); void props.onFreeWorkspace!(refused).finally(() => setFreeing(false)); }}>{freeing ? "正在结束…" : "结束那个对话的后台进程并重试"}</button>}>那个对话保留着原生进程，它的后台任务可能还在运行。可以结束它的后台进程后重试这条消息，也可以稍后再试。</Notice> : null}
-          {props.queued ? <div className="queued-message enter flex items-center gap-2.5 rounded-[10px] border border-dashed border-line-strong bg-app py-[7px] pr-2 pl-3 text-[13px]" role="status">
-            <span className="flex-none text-[11.5px] text-fg-3">将在本轮结束后发送</span><span className="min-w-0 flex-1 truncate" title={props.queued.text}>{props.queued.text}</span>
-            {props.queued.attachments.length ? <span className="flex-none text-[11.5px] text-fg-3">附件 {props.queued.attachments.length}</span> : null}
-            <button type="button" className="btn btn-ghost btn-sm" onClick={props.onEditQueued}>编辑</button><button type="button" className="btn btn-ghost btn-sm" onClick={props.onWithdrawQueued}>撤回</button>
-          </div> : null}
           {composer}
         </div></footer> : null}
       </div>
-      {inline && panelOpen ? <aside className="hidden w-[400px] flex-none border-l border-line bg-surface min-[1200px]:flex min-[1440px]:w-[420px]" aria-label="详情栏">{panel}</aside> : null}
+      {inline && asidePresence !== "closed" ? <aside className={cn("details-aside flex-none overflow-hidden bg-app hairline-l transition-[width] ease-panel keyboard:duration-0",
+        panelOpen ? "w-[400px] duration-300 starting:w-0 min-[1440px]:w-[420px]" : "w-0 duration-200")} aria-label="详情栏" aria-hidden={!panelOpen || undefined} inert={!panelOpen}>
+        <div className="motion-panel-in flex h-full w-[400px] keyboard:animate-none min-[1440px]:w-[420px]">{panel}</div>
+      </aside> : null}
     </div>
     {!inline && session ? <Dialog open={overlay} onOpenChange={setOverlay} title="详情栏" kind={narrow ? "sheet" : "drawer"} className={narrow ? "h-[80dvh]" : ""}><aside className="flex min-h-0 flex-1 flex-col" aria-label="详情栏">{panel}</aside></Dialog> : null}
     <div className="sr-only" role="status" aria-live="polite">{status}</div>
     <Dialog open={confirmClose} onOpenChange={setConfirmClose} title="结束这次会话？" description="历史会保留。这次会话将不再接收新消息；之后可以新建对话。">
       <div className="flex flex-col gap-4 px-5 pt-2 pb-5">
-        {active || pending ? <p className="m-0 text-[13px] text-fg-2">当前执行或待生效的选择会停止，已经产生的内容与文件会保留。</p> : null}
+        {active || pending ? <p className="m-0 text-ui-sm text-fg-2">当前执行或待生效的选择会停止，已经产生的内容与文件会保留。</p> : null}
         <div className="flex justify-end gap-2"><button type="button" className="btn" onClick={() => setConfirmClose(false)} autoFocus>继续对话</button><button type="button" className="btn btn-primary" onClick={() => { setConfirmClose(false); props.onClose(); }}>结束会话</button></div>
       </div>
     </Dialog>
   </section>;
+}
+
+/**
+ * The conversation's state in the header (Conversation and Interaction boards): who works and what it does now, in the
+ * words the sidebar and the Turn use. Running work is blue with a breathing dot and a clock; waiting for the user is
+ * amber; a failure is red; a Turn that ended quietly is grey.
+ */
+function HeaderState({ session, active, harnessName }: { readonly session: SessionView; readonly active: PublicRun | null; readonly harnessName: (id: string) => string }) {
+  const now = useNow(active !== null);
+  const latest = active ?? session.runs.at(-1) ?? null;
+  const name = harnessName((latest ?? session).selection.harnessId);
+  const since = active?.timing ? clock(now - active.timing.acceptedAt) : null;
+  const state: { readonly text: string; readonly tone: "neutral" | "accent" | "amber" | "red"; readonly live?: boolean } = (() => {
+    if (active) {
+      const open = session.permissions?.filter(request => request.runId === active.id && !request.decided) ?? [];
+      if (active.cancelRequested) return { text: "正在停止", tone: "neutral" };
+      if (open.length) return { text: open.some(dockedRequest) ? "等你批准" : "等你回答", tone: "amber" };
+      const clockText = since ? " · " + since : "";
+      switch (active.status) {
+        case "queued": return { text: "排队中", tone: "neutral" };
+        case "preparing": return { text: "正在启动" + clockText, tone: "accent", live: true };
+        case "settling": return { text: "正在结束", tone: "accent", live: true };
+        default: {
+          const tool = active.tools?.some(row => TOOL_PENDING.has(row.status)), replying = session.messages.some(message => message.runId === active.id && message.role === "assistant" && message.text);
+          return { text: (tool ? "正在执行" : replying ? "正在回复" : "正在思考") + clockText, tone: "accent", live: true };
+        }
+      }
+    }
+    if (!latest) return { text: "", tone: "neutral" };
+    switch (latest.status) {
+      case "completed": return { text: "已完成", tone: "neutral" };
+      case "failed": return { text: "失败", tone: "red" };
+      case "cancelled": return { text: "已停止", tone: "neutral" };
+      case "unknown": return { text: "结果未知", tone: "amber" };
+      default: return { text: "", tone: "neutral" };
+    }
+  })();
+  return <StatusPill tone={state.tone} live={state.live ?? false} size="lg" className="hidden max-w-[260px] min-w-0 sm:inline-flex" title={state.text ? `${name} ${state.text}` : name}>
+    <span className="min-w-0 truncate">{name}{state.text ? " " + state.text : ""}</span>
+  </StatusPill>;
+}
+
+/**
+ * The plan bar above the composer (P01, Motion board #22): how far the plan is and what it works on now; pressing it opens
+ * every step, the arrow turning 180°. Shown while a Turn with a plan runs, and while the latest plan has steps left.
+ */
+function PlanBar({ session, active, harnessName }: { readonly session: SessionView; readonly active: PublicRun | null; readonly harnessName: (id: string) => string }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  const owner = active?.plan?.entries.length ? active : [...session.runs].reverse().find(run => run.plan?.entries.length) ?? null;
+  const plan: PublicPlan | undefined = owner?.plan;
+  if (!owner || !plan || !plan.entries.length || active === null && plan.entries.every(entry => entry.status === "completed")) return null;
+  const done = plan.entries.filter(entry => entry.status === "completed").length, total = plan.entries.length;
+  const current = plan.entries.find(entry => entry.status === "in_progress") ?? plan.entries.find(entry => entry.status === "pending");
+  const where = current ? `${current.status === "in_progress" ? "正在" : "下一步"}：${current.content}` : "已完成";
+  return <div className="plan-bar flex flex-col gap-2">
+    <button type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen(value => !value)}
+      className="card card-interactive flex h-10 w-full items-center gap-[9px] border-none px-3.5 text-left text-ui-sm outline-offset-2">
+      <ListChecks size={15} className="flex-none text-fg-2" aria-hidden="true"/>
+      <span className="flex-none font-medium">计划</span>
+      <span className="min-w-0 flex-1 truncate text-fg-3">{done} / {total} · {where}</span>
+      <span className="relative h-1 w-[72px] flex-none overflow-hidden rounded-[2px] bg-hover max-sm:hidden" aria-hidden="true">
+        <span className="absolute inset-0 origin-left rounded-[2px] bg-run transition-transform duration-200 ease-standard" style={{ transform: `scaleX(${total ? done / total : 0})` }}/></span>
+      <ChevronUp size={12} strokeWidth={2} className={cn("motion-rotate flex-none text-fg-3", open && "rotate-180")} aria-hidden="true"/>
+    </button>
+    <Collapsible open={open} id={id}>
+      <ul className="card m-0 grid max-h-[min(40vh,320px)] list-none grid-cols-1 gap-x-4 gap-y-2 overflow-y-auto px-4 py-3 text-ui-sm sm:grid-cols-2" aria-label={`${harnessName(owner.selection.harnessId)} 维护的计划`}>
+        {plan.entries.map((entry, index) => <li key={index} className="flex min-w-0 items-start gap-2">
+          {entry.status === "completed" ? <Check size={15} strokeWidth={1.9} className="mt-0.5 flex-none text-fg-3" aria-label="已完成" role="img"/>
+            : <Circle size={15} strokeWidth={1.9} className={cn("mt-0.5 flex-none", entry.status === "in_progress" ? "text-run" : "text-fg-3")} aria-label={entry.status === "in_progress" ? "进行中" : "待办"} role="img"/>}
+          <span className={cn("min-w-0 break-words", entry.status === "completed" ? "text-fg-3 line-through decoration-line-strong" : entry.status === "in_progress" ? "font-medium text-fg" : "text-fg-2")}>{entry.content}</span>
+        </li>)}
+      </ul>
+    </Collapsible>
+  </div>;
+}
+
+/** An amount in its own currency, as the program reported it. */
+function money(cost: { readonly amount: number; readonly currency: string }): string {
+  try { return new Intl.NumberFormat("zh-CN", { style: "currency", currency: cost.currency, maximumFractionDigits: 2 }).format(cost.amount); }
+  catch { return cost.amount.toFixed(2) + " " + cost.currency; }
+}
+/**
+ * The line under the composer (P05): the round, its steps and its time, and only the usage the Gateway reported for it —
+ * input tokens, the context share when the program gave its size, the cost in its own currency and scope. Nothing is
+ * estimated; a fact the program did not report is left out.
+ */
+function StatusLine({ session, active }: { readonly session: SessionView; readonly active: PublicRun | null }) {
+  const run = active ?? session.runs.at(-1) ?? null;
+  const running = run !== null && !finished(run.status);
+  const now = useNow(running);
+  if (!run) return null;
+  const round = session.runs.indexOf(run) + 1, steps = toolTree(run.tools ?? []).roots.length, timing = run.timing;
+  const spent = timing ? (running ? now : timing.endedAt ?? null) : null;
+  const usage = run.usage, context = usage?.context;
+  const share = context?.size ? Math.min(100, Math.round(context.used / context.size * 100)) : null;
+  const parts: ReactNode[] = [`第 ${round} 轮`, ...(steps ? [`${steps} 步`] : []), ...(timing && spent !== null ? [(running ? "已用 " : "用时 ") + elapsed(spent - timing.acceptedAt)] : [])];
+  if (usage?.turn?.input !== undefined) parts.push(`输入 ${compact(usage.turn.input)}`);
+  if (context && share !== null) parts.push(<span key="context" className="inline-flex items-center gap-[5px]" title={`上下文已用 ${share}%（由原程序报告）`}>
+    <svg width="13" height="13" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" fill="none" stroke="var(--bg-hover)" strokeWidth="3"/>
+      <circle cx="10" cy="10" r="7.5" fill="none" stroke={share >= 85 ? "var(--amber-dot)" : "var(--text-3)"} strokeWidth="3" strokeDasharray={`${(share / 100 * 47.1).toFixed(1)} 47.1`} strokeLinecap="round" transform="rotate(-90 10 10)"/></svg>上下文 {share}%</span>);
+  else if (context) parts.push(`上下文 ${compact(context.used)}`);
+  if (usage?.cost) parts.push(`${usage.cost.scope === "session" ? "会话累计" : "本轮"} ${money(usage.cost)}`);
+  return <p className="composer-status m-0 flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 px-1 text-caption text-fg-3" aria-label="本轮状态">
+    {parts.map((part, index) => <Fragment key={index}>{index ? <span aria-hidden="true">·</span> : null}{typeof part === "string" ? <span>{part}</span> : part}</Fragment>)}
+  </p>;
 }

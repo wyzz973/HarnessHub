@@ -682,9 +682,10 @@ test("unified chat attaches files, refuses inputs the model does not take, keeps
   await expect(sent.getByRole("link", { name: /notes\.txt/u })).toHaveAttribute("download", "notes.txt");
   assert.equal(await sent.locator(".message-attachment-image img").evaluate(image => (image as HTMLImageElement).naturalWidth), 1, "the sent image is served from the content store");
   await page.screenshot({ path: join(artifact, "attachments-sent.png"), fullPage: true, animations: "disabled" });
-  // The conversation exports with its attachments listed by name.
-  await page.getByRole("button", { name: "导出对话", exact: true }).click();
-  const exportLink = page.getByRole("link", { name: "导出 Markdown", exact: true });
+  // The conversation exports with its attachments listed by name; export sits in the header's "更多操作" menu (ADR-054 §5),
+  // as a download link of that menu.
+  await page.getByRole("button", { name: "更多操作", exact: true }).click();
+  const exportLink = page.getByRole("menuitem", { name: "导出 Markdown", exact: true });
   await expect(exportLink).toHaveAttribute("download", "");
   const exported = await page.evaluate(async href => (await fetch(href, { credentials: "same-origin" })).text(), await exportLink.getAttribute("href") ?? "");
   assert.ok(exported.includes("ATTACHMENTS 看看这些") && exported.includes("- shot.png（image/png") && exported.includes("收到附件：图片 1，文件 1，均可读。"));
@@ -950,8 +951,9 @@ test("a new conversation starts a Harness with the model and thinking level last
   await page.getByRole("button", { name: "新对话", exact: true }).click();
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Native Settings", exact: true }).click();
   await check();
-  // Through the welcome strip of another new conversation.
+  // Through the welcome's list of ready Agents (opened from its summary, ADR-054 §5) in another new conversation.
   await page.getByRole("button", { name: "新对话", exact: true }).click();
+  await page.locator(".agent-summary").click();
   await page.getByRole("button", { name: "选择 Native Settings", exact: true }).click();
   await check();
   assert.deepEqual(errors, []);
@@ -1164,11 +1166,14 @@ test("a Harness of a version HarnessHub never ran shows that version alone in th
   await expect(autohand.locator(".badge")).toHaveCount(0);
   await sayNothing("the Harness list");
   await page.screenshot({ path: join(artifact, "version-fact.png"), animations: "disabled" });
-  // The welcome card and the picker show the version the same way, and the Harness is chosen like any other.
+  // The welcome's list of Agents (opened from its summary, ADR-054 §5) and the picker show the version the same way, and
+  // the Harness is chosen like any other.
   await page.getByRole("button", { name: "返回对话", exact: true }).click();
+  await page.locator(".agent-summary").click();
   const card = page.getByRole("region", { name: "本机发现的 Harness" }).getByRole("button", { name: "选择 Gemini CLI", exact: true });
   await expect(card).toContainText("v1.0.0"); await expect(card.locator(".badge")).toHaveCount(0);
   await sayNothing("the welcome");
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click();
   const option = page.getByRole("option", { name: "Gemini CLI", exact: true });
   await expect(option).toContainText("v1.0.0"); await expect(option).toBeEnabled();
@@ -1305,13 +1310,14 @@ test("G054-FR1 G054-FR8 a conversation that needs the user leads the sidebar and
   await page.screenshot({ path: join(artifact, "inbox.png"), animations: "disabled" });
   await inbox.getByRole("button", { name: /approve this/u }).click();
   await expect(card).toBeVisible();
-  // Number keys typed into the composer stay text; on the focused card they decide.
-  await composer.fill(""); await composer.press("1"); await expect(composer).toHaveValue("1"); await expect(card.getByRole("button", { name: "Deny", exact: true })).toBeEnabled();
-  await composer.fill("");
+  // The approval waits in the composer's place (ADR-054 §5), so no text field takes the keys meanwhile: a number pressed
+  // anywhere but on the approval decides nothing; on the focused approval it decides, and the composer comes back.
+  await expect(composer).toBeHidden();
+  await page.locator("#chat-title").click(); await page.keyboard.press("1"); await expect(card.getByRole("button", { name: "Deny", exact: true })).toBeEnabled();
   await card.locator("strong").first().click(); await expect(card).toBeFocused();
   await page.keyboard.press("2");
   await expect(log).toContainText('"optionId":"deny"', { timeout: 15000 });
-  await expect(card).toHaveCount(0);
+  await expect(card).toHaveCount(0); await expect(composer).toBeVisible();
   await expect(page.locator(".session-group").first()).not.toContainText("等你处理");
   assert.deepEqual(errors, []);
 });
@@ -1409,6 +1415,272 @@ test("G054-FR4 a message written while a reply runs is sent once after a complet
   await step("finish"); await settled(6, "completed");
   await expect(composer).toHaveValue("换模型后放回"); await expect(notice("所选 Harness 或模型已改变，暂存的消息已放回输入框，没有发出。")).toBeVisible();
   await page.waitForTimeout(1000); assert.equal((await current()).runs.length, 6);
+  assert.deepEqual(errors, []);
+});
+
+test("G054-DL3 the home greets, says who is ready from the readiness facts and who needs the user, shows the workspace without a branch, and the merged picker opens each choice on its own", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  await mkdir(artifact, { recursive: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1440, height: 960 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  const shoot = async (name: string) => {
+    // Shots show the settled page: the longest transition of these screens (the approval's 300 ms) has ended.
+    await page.waitForTimeout(400);
+    for (const scheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      for (const width of [1440, 390, 320]) {
+        await page.setViewportSize({ width, height: width === 1440 ? 960 : 844 });
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${name} overflows at ${width} in ${scheme}`);
+        await page.screenshot({ path: join(artifact, `${name}-${scheme}-${width}.png`), animations: "disabled" });
+      }
+    }
+    await page.emulateMedia({ colorScheme: "light" }); await page.setViewportSize({ width: 1440, height: 960 });
+  };
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), welcome = page.locator(".welcome"), box = page.locator(".composer-box"), chip = page.locator(".agent-chip");
+  // H01: the greeting, 32/42 · 500 on a wide screen.
+  const greeting = page.getByRole("heading", { name: "今天想让哪个 Agent 做什么？", exact: true });
+  await expect(greeting).toBeVisible();
+  assert.deepEqual(await greeting.evaluate(element => { const style = getComputedStyle(element); return [style.fontSize, style.lineHeight, style.fontWeight]; }), ["32px", "42px", "500"]);
+  // H06: the first time, three steps with nothing to fill in: what was found, where it works, a first question.
+  const steps = page.getByRole("list", { name: "开始使用" }).getByRole("listitem");
+  await expect(steps).toHaveCount(3);
+  await expect(steps.nth(0)).toContainText(/找到了 \d+ 个 Agent/u); await expect(steps.nth(1)).toContainText("选一个项目文件夹"); await expect(steps.nth(1)).toContainText("/workspace");
+  await expect(steps.nth(2)).toContainText("讲讲这个项目的结构");
+  await shoot("dl3-first");
+  await steps.nth(2).getByRole("button", { name: "讲讲这个项目的结构", exact: true }).click();
+  await expect(composer).toHaveValue("讲讲这个项目的结构"); await expect(composer).toBeFocused(); await composer.fill("");
+  // H04: radius 28 and the three-layer shadow, blue while focused.
+  // The box's shadow as drawn: Tailwind's empty ring and inset layers (transparent, zero) are left out.
+  const shadow = () => box.evaluate(element => getComputedStyle(element).boxShadow.split(/,(?![^(]*\))/u).map(part => part.trim()).filter(part => part !== "rgba(0, 0, 0, 0) 0px 0px 0px 0px").join(", "));
+  assert.equal(await box.evaluate(element => getComputedStyle(element).borderTopLeftRadius), "28px");
+  await expect.poll(shadow).toBe("rgba(58, 106, 224, 0.6) 0px 0px 0px 0.5px, rgba(58, 106, 224, 0.12) 0px 0px 0px 3px, rgba(0, 0, 0, 0.04) 0px 4px 16px 0px");
+  await composer.evaluate(element => (element as HTMLTextAreaElement).blur());
+  await expect.poll(shadow).toBe("rgba(0, 0, 0, 0.1) 0px 0px 0px 0.5px, rgba(0, 0, 0, 0.03) 0px 4px 16px 0px, rgba(0, 0, 0, 0.03) 0px 0px 24px 0px");
+  // H05: attachments at the bottom left; the merged picker and the send key at the bottom right, in that order.
+  const add = page.getByRole("button", { name: "添加文件或上下文", exact: true }), sendKey = page.getByRole("button", { name: "发送消息", exact: true });
+  const [frame, plus, picker, send] = await Promise.all([box.boundingBox(), add.boundingBox(), chip.boundingBox(), sendKey.boundingBox()]);
+  assert.ok(frame && plus && picker && send);
+  assert.ok(plus.x - frame.x < 24 && frame.x + frame.width - (send.x + send.width) < 20 && picker.x > plus.x + plus.width && picker.x + picker.width <= send.x, "add | … | picker · send");
+  assert.ok(frame.y + frame.height - (send.y + send.height) < 16 && frame.y + frame.height - (plus.y + plus.height) < 20, "both at the bottom of the box");
+  await expect(chip).toContainText("选择 Harness");
+  // Each part of the merged picker opens its own list: the Agent (its list says ⌘J), the model, the thinking level.
+  await chip.getByRole("button", { name: "选择 Harness", exact: true }).click();
+  await expect(page.locator(".picker-popover")).toContainText("由谁来做");
+  await page.getByRole("option", { name: "Codex", exact: true }).click();
+  await expect(chip.locator(".brand-tile[data-brand='codex']")).toBeVisible(); await expect(chip).toContainText("Codex");
+  await expect(composer).toHaveAttribute("placeholder", /^让 Codex 做什么？/u);
+  await chip.getByRole("button", { name: "选择模型", exact: true }).click(); await page.getByRole("option", { name: "Native B", exact: true }).click();
+  await expect(chip.getByRole("button", { name: "选择模型", exact: true })).toHaveText("Native B");
+  const thinking = chip.getByRole("button", { name: "思考强度", exact: true });
+  await thinking.click(); await page.getByRole("option", { name: "高", exact: true }).click(); await expect(thinking).toHaveText("思考 高");
+  await shoot("dl3-picker");
+  // After a first conversation, a new one shows the summary: who is ready, the workspace by its folder, and no branch.
+  await composer.fill("hello"); await composer.press("Enter");
+  await expect(page.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
+  await page.getByRole("button", { name: "新对话", exact: true }).click();
+  const summary = page.locator(".agent-summary");
+  await expect(summary).toHaveText(/^\d+ 个 Agent 就绪$/u);
+  await expect(welcome.getByRole("button", { name: "workspace", exact: true })).toBeVisible();
+  assert.doesNotMatch(await welcome.innerText(), /分支|branch|git/iu, "the Gateway gives no branch, so none is shown");
+  // H02: an Agent whose latest read asked for a sign-in moves from ready to needing the user (OpenClaw's fixture is signed out).
+  const ready = Number(/^(\d+)/u.exec(await summary.innerText())?.[1]);
+  await chip.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "OpenClaw", exact: true }).click();
+  await expect(page.getByText(/本机认证尚未就绪/u)).toBeVisible();
+  // (Other Agents this computer has, found but not ready to run, are named there as well.)
+  await expect(welcome.getByRole("button", { name: /(?:OpenClaw|\d+ 个 Agent) 需要处理$/u })).toBeVisible();
+  await expect(summary).toHaveText(`${ready - 1} 个 Agent 就绪`);
+  // The summary lists the available Agents with their versions and states, and chooses one.
+  await summary.click();
+  const list = page.getByRole("region", { name: "本机发现的 Harness" });
+  await expect(list.getByRole("button", { name: "选择 OpenClaw", exact: true })).toContainText("需要登录");
+  await list.getByRole("button", { name: "选择 Codex", exact: true }).click();
+  await expect(chip).toContainText("Codex"); await expect(composer).toBeFocused();
+  await shoot("dl3-home");
+  assert.deepEqual(errors, []);
+});
+
+test("G054-DL5 an approval waits in the composer's place: ⏎ allows once and esc refuses there, lasting options are click-only, the decision is written back into the Turn, and a question stays in its Turn", { timeout: 150000 }, async t => {
+  const fixture = await launchFixture(false, { name: "Shared Agent", scenario: "hermes" }, { name: "Codex Question", scenario: "native-question" }); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  await mkdir(artifact, { recursive: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1440, height: 960 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  const shoot = async (name: string) => {
+    // Shots show the settled page: the longest transition of these screens (the approval's 300 ms) has ended.
+    await page.waitForTimeout(400);
+    for (const scheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      for (const width of [1440, 390, 320]) {
+        await page.setViewportSize({ width, height: width === 1440 ? 960 : 844 });
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${name} overflows at ${width} in ${scheme}`);
+        await page.screenshot({ path: join(artifact, `${name}-${scheme}-${width}.png`), animations: "disabled" });
+      }
+    }
+    await page.emulateMedia({ colorScheme: "light" }); await page.setViewportSize({ width: 1440, height: 960 });
+  };
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" }), box = page.locator(".composer-box");
+  const dock = box.getByRole("region", { name: "工具审批", exact: true }), results = log.locator(".approval-result");
+  const ask = async () => { await composer.fill("approve this"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter"); await expect(dock).toContainText("rm -rf build", { timeout: 15000 }); };
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
+  await ask();
+  // P02: in the composer's place and with the composer's focus: who asks and whose deadline, the command, what a lasting choice means.
+  await expect(composer).toBeHidden(); await expect(dock).toBeFocused();
+  await expect(dock).toContainText("Shared Agent 在等你审批"); await expect(dock.locator(".permission-deadline")).toHaveText("等待期限 · 剩余 30 分");
+  await expect(dock).toContainText("选“Allow always”后"); await expect(dock).toContainText("只能点选");
+  // P03: ⏎ allows once and esc refuses; number keys choose one-time options; the lasting option has no key.
+  await expect(dock.getByRole("button", { name: "Allow once", exact: true })).toHaveAttribute("aria-keyshortcuts", "1 Enter");
+  await expect(dock.getByRole("button", { name: "Deny", exact: true })).toHaveAttribute("aria-keyshortcuts", "2 Escape");
+  await expect(dock.getByRole("button", { name: "Allow always", exact: true })).not.toHaveAttribute("aria-keyshortcuts");
+  // P04: the amber ring, and the Turn keeps a mark that points to it.
+  await expect.poll(() => box.evaluate(element => getComputedStyle(element).boxShadow)).toContain("rgb(245, 158, 11) 0px 0px 0px 1.5px");
+  await expect(log.getByRole("button", { name: "等你批准，请求停在下方输入框的位置", exact: true })).toBeVisible();
+  await shoot("dl5-dock");
+  // Pointing at the approval makes the keys its own at once.
+  await dock.click({ position: { x: 60, y: 8 } }); await expect(dock).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(log).toContainText('"optionId":"allow_once"', { timeout: 15000 });
+  await expect(dock).toHaveCount(0); await expect(composer).toBeVisible(); await expect(composer).toBeFocused();
+  await expect(results).toHaveText(["你允许了一次：rm -rf build"]);
+  await expect(log.getByRole("button", { name: "等你批准，请求停在下方输入框的位置", exact: true })).toHaveCount(0);
+  await expect.poll(() => box.evaluate(element => getComputedStyle(element).boxShadow)).not.toContain("rgb(245, 158, 11)");
+  // esc refuses (a key right after the approval took the focus is still taken as meant for the message being typed).
+  await ask(); await expect(dock).toBeFocused(); await page.waitForTimeout(600);
+  await page.keyboard.press("Escape");
+  await expect(log).toContainText('"optionId":"deny"', { timeout: 15000 });
+  await expect(results).toHaveText(["你允许了一次：rm -rf build", "你拒绝了：rm -rf build"]);
+  // A lasting option answers to no key and only to a click.
+  await ask(); await page.waitForTimeout(600); await page.keyboard.press("3"); await expect(dock).toBeVisible();
+  await dock.getByRole("button", { name: "Allow always", exact: true }).click();
+  await expect(log).toContainText('"optionId":"allow_always"', { timeout: 15000 });
+  await expect(results.last()).toHaveText("你选择了“Allow always”：rm -rf build");
+  await shoot("dl5-decided");
+  // A question stays in its Turn, and the composer stays where it is.
+  await page.getByRole("button", { name: "新对话", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex Question", exact: true }).click();
+  await composer.fill("ask me"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
+  const question = log.getByRole("region", { name: "Harness 交互", exact: true });
+  await expect(question).toContainText("选择原生计划", { timeout: 15000 });
+  await expect(composer).toBeVisible(); await expect(box.getByRole("region", { name: "工具审批", exact: true })).toHaveCount(0);
+  await question.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(log.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
+  assert.deepEqual(errors, []);
+});
+
+test("G054-DL6 the plan bar above the composer says how far the plan is and opens every step, and the line under it shows the round, steps and time with only the usage the Gateway reported", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  await mkdir(artifact, { recursive: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1440, height: 960 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  const shoot = async (name: string) => {
+    // Shots show the settled page: the longest transition of these screens (the approval's 300 ms) has ended.
+    await page.waitForTimeout(400);
+    for (const scheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      for (const width of [1440, 390, 320]) {
+        await page.setViewportSize({ width, height: width === 1440 ? 960 : 844 });
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${name} overflows at ${width} in ${scheme}`);
+        await page.screenshot({ path: join(artifact, `${name}-${scheme}-${width}.png`), animations: "disabled" });
+      }
+    }
+    await page.emulateMedia({ colorScheme: "light" }); await page.setViewportSize({ width: 1440, height: 960 });
+  };
+  await page.goto(fixture.gateway.url);
+  const origin = new URL(fixture.gateway.url).origin, composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  const step = async (stage: string) => { const pending = join(fixture.root, "workspace", "next-stream-control.json"); await writeFile(pending, JSON.stringify({ stage })); await rename(pending, join(fixture.root, "workspace", "stream-control.json")); };
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter");
+  await expect(log).toContainText("原生活动已完成。");
+  // P01: the plan with a step left stays above the composer; it opens every step and its arrow turns.
+  const bar = page.locator(".plan-bar"), toggle = bar.getByRole("button").first();
+  await expect(toggle).toContainText("计划"); await expect(toggle).toContainText("1 / 2 · 正在：修改文件"); await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  const below = await page.locator(".composer-box").boundingBox(), above = await toggle.boundingBox();
+  assert.ok(below && above && above.y + above.height <= below.y, "the plan bar sits above the composer");
+  await shoot("dl6-plan");
+  await toggle.click(); await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(bar.getByRole("list", { name: "Codex 维护的计划" }).getByRole("listitem")).toHaveText(["读取工作区", "修改文件"]);
+  await expect(toggle.locator("svg").last()).toHaveClass(/rotate-180/u);
+  await shoot("dl6-plan-open");
+  await toggle.click(); await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  // P05: the round, its steps and its time, then exactly the usage the run reported: no cost, since the fixture reports none.
+  const run = (await current()).runs[0], line = page.locator(".composer-status");
+  await expect(line).toContainText("第 1 轮"); await expect(line).toContainText("2 步"); await expect(line).toContainText(/用时 [\d.]+ 秒/u);
+  assert.equal(run.usage.turn.input, 1200); await expect(line).toContainText("输入 1.2k");
+  if (run.usage.context?.size) await expect(line).toContainText(`上下文 ${Math.round(run.usage.context.used / run.usage.context.size * 100)}%`);
+  assert.equal(run.usage.cost, undefined); await expect(line).not.toContainText("¥"); await expect(line).not.toContainText("会话累计"); await expect(line).not.toContainText("本轮 ");
+  // While a reply runs, the time counts up; a run that reported no usage shows none.
+  await composer.fill("STREAM_RENDER：计时"); await composer.press("Enter");
+  await expect.poll(async () => (await current()).runs.at(-1).status, { timeout: 15000 }).toBe("running");
+  await expect(line).toContainText("第 2 轮"); await expect(line).toContainText(/已用 \d+ 秒/u); await expect(line).not.toContainText("输入");
+  await step("finish");
+  await expect.poll(async () => (await current()).runs.at(-1).status, { timeout: 15000 }).toBe("completed");
+  await expect(line).toContainText(/用时 [\d.]+ 秒/u);
+  assert.deepEqual(errors, []);
+});
+
+test("G054-DL9 ⌘J opens the Agent list, ⌘. stops the reply, ⌘\\ opens and closes the details pushing the conversation, ↑ edits the last message, / lists the native commands and @ adds a file; composition triggers none of them", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  await mkdir(artifact, { recursive: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const origin = new URL(fixture.gateway.url).origin, composer = page.getByRole("textbox", { name: "发送消息", exact: true });
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  const search = page.getByRole("combobox", { name: "搜索 Harness", exact: true }), trigger = page.getByRole("button", { name: "选择 Harness", exact: true });
+  // ⌘J: the Agent list with its search; composition never opens it.
+  await composer.focus(); await composer.dispatchEvent("keydown", { key: "j", code: "KeyJ", metaKey: true, ctrlKey: true, isComposing: true, bubbles: true });
+  await expect(search).toHaveCount(0);
+  await page.keyboard.press("ControlOrMeta+J");
+  await expect(search).toBeFocused(); await expect(page.locator(".picker-popover")).toContainText("由谁来做");
+  await search.fill("Codex"); await search.press("Enter");
+  // Opened from the keyboard while writing, the list gives the focus back to the message.
+  await expect(trigger).toContainText("Codex"); await expect(composer).toBeFocused();
+  // / lists the native commands; ↑ ↓ and ⏎ fill one in; esc closes the list and keeps the text.
+  await composer.fill("/");
+  const commands = page.getByRole("listbox", { name: "原生命令", exact: true });
+  await expect(commands.getByRole("option")).toContainText(["/compact", "/export"]);
+  await page.screenshot({ path: join(artifact, "dl9-commands.png"), animations: "disabled" });
+  await composer.press("ArrowDown"); await composer.press("Enter"); await expect(composer).toHaveValue("/export ");
+  await composer.fill("/ex"); await expect(commands.getByRole("option")).toHaveText([/^\/export/u]); await composer.press("Escape");
+  await expect(commands).toHaveCount(0); await expect(composer).toHaveValue("/ex");
+  // @ at the start of a word offers a file, which then goes with the message; inside a word it is text.
+  const files = page.getByRole("listbox", { name: "引用文件", exact: true });
+  await composer.fill("看看"); await composer.press("@"); await expect(files).toHaveCount(0); await expect(composer).toHaveValue("看看@");
+  await composer.fill("看看 "); await composer.press("@"); await expect(files.getByRole("option")).toHaveText(/从这台电脑选择文件/u);
+  const chooser = page.waitForEvent("filechooser"); await composer.press("Enter");
+  await (await chooser).setFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("hello") });
+  await expect(composer).toHaveValue("看看 "); await expect(page.getByRole("list", { name: "待发送的附件" }).locator(".attachment-chip")).toHaveCount(1);
+  await page.getByRole("button", { name: "移除附件 notes.txt", exact: true }).click();
+  // ⌘. stops the reply, and only that: the details panel, which ⌘. used to toggle, stays as it was.
+  await composer.fill("STREAM_RENDER：⌘. 停止"); await composer.press("Enter");
+  await expect(page.getByRole("button", { name: "停止当前回复", exact: true })).toBeEnabled({ timeout: 15000 });
+  const panel = page.getByRole("complementary", { name: "详情栏" }), open = await panel.count();
+  await page.keyboard.press("ControlOrMeta+.");
+  await expect.poll(async () => (await current()).runs.at(-1).status, { timeout: 15000 }).toBe("cancelled");
+  assert.equal(await panel.count(), open);
+  // ↑ in the empty composer brings the last message back to edit; nothing is sent.
+  await composer.fill(""); await composer.press("ArrowUp"); await expect(composer).toHaveValue("STREAM_RENDER：⌘. 停止");
+  assert.equal((await current()).runs.length, 1);
+  // ⌘\ opens and closes the details, pushing the conversation aside instead of covering it; the header button does the same.
+  const width = () => page.locator(".chat-scroll").evaluate(element => Math.round(element.getBoundingClientRect().width));
+  if (open) { await page.keyboard.press("ControlOrMeta+\\"); await expect(panel).toHaveCount(0); }
+  const full = await width();
+  await page.keyboard.press("ControlOrMeta+\\"); await expect(panel).toBeVisible();
+  await expect.poll(width).toBeLessThanOrEqual(full - 380);
+  await page.screenshot({ path: join(artifact, "dl9-panel.png"), animations: "disabled" });
+  await page.keyboard.press("ControlOrMeta+\\"); await expect(panel).toHaveCount(0); await expect.poll(width).toBe(full);
+  const button = page.getByRole("button", { name: "详情栏", exact: true });
+  await button.click(); await expect(panel).toBeVisible(); await expect(button).toHaveAttribute("aria-pressed", "true");
+  await button.click(); await expect(panel).toHaveCount(0); await expect(button).toHaveAttribute("aria-pressed", "false");
   assert.deepEqual(errors, []);
 });
 
@@ -2779,9 +3051,14 @@ test("G054-FZ1 the frozen Harnesses stay out of the picker, the welcome, the pal
   const frozen = ["Gemini CLI", "Cursor", "Pi"], picker = page.getByRole("button", { name: "选择 Harness", exact: true });
   const welcome = page.getByRole("region", { name: "本机发现的 Harness" }), navigation = page.getByRole("complementary", { name: "主导航" });
   const row = (name: string) => page.locator(".harness-table-row").filter({ has: page.getByRole("button", { name: `查看 ${name} 详情`, exact: true }) });
-  // By default none of them is offered for new work, though Gemini CLI is installed and ready.
+  // By default none of them is offered for new work, though Gemini CLI is installed and ready: not in the welcome's list of
+  // Agents (opened from its summary, ADR-054 §5), nor in its icons, nor in the picker.
+  await expect(page.locator(".agent-summary .brand-tile[data-brand='codex']")).toHaveCount(1);
+  for (const name of ["gemini", "cursor", "pi"]) await expect(page.locator(`.agent-summary .brand-tile[data-brand='${name}']`)).toHaveCount(0);
+  await page.locator(".agent-summary").click();
   await expect(welcome.getByRole("button", { name: "选择 Codex", exact: true })).toBeVisible();
   await expect(welcome.getByRole("button", { name: "选择 Gemini CLI", exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
   await picker.click(); await expect(page.getByRole("option", { name: "Codex", exact: true })).toBeVisible();
   for (const name of frozen) await expect(page.getByRole("option", { name, exact: true })).toHaveCount(0);
   await page.keyboard.press("Escape");
@@ -2823,7 +3100,8 @@ test("G054-FZ1 the frozen Harnesses stay out of the picker, the welcome, the pal
   await navigation.getByRole("button", { name: "新对话", exact: true }).click();
   await expect(picker).toContainText("选择 Harness");
   await picker.click(); await expect(page.getByRole("option", { name: "Gemini CLI", exact: true })).toHaveCount(0); await page.keyboard.press("Escape");
-  await expect(welcome.getByRole("button", { name: "选择 Gemini CLI", exact: true })).toHaveCount(0);
+  await page.locator(".agent-summary").click(); await expect(welcome.getByRole("button", { name: "选择 Codex", exact: true })).toBeVisible();
+  await expect(welcome.getByRole("button", { name: "选择 Gemini CLI", exact: true })).toHaveCount(0); await page.keyboard.press("Escape");
   assert.deepEqual(errors, []);
 });
 

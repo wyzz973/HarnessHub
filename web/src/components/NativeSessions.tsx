@@ -31,23 +31,23 @@ export function NativeSessionsPanel({ load, onImport, onOpen, disabled }: {
     error => setState(current => ({ loading: false, value: cursor === undefined ? undefined : current.value, error: errorMessage(error) })));
   };
   const sessions = state.value?.sessions, hidden = state.value?.hiddenProbes ?? 0;
-  return <Popover label="本机会话" side="top" align="end" className="native-sessions w-[360px] max-w-[calc(100vw-24px)]"
+  return <Popover label="本机会话" side="top" align="start" className="native-sessions w-[360px] max-w-[calc(100vw-24px)]"
     onOpenChange={open => { if (open && state.value === undefined && !state.loading) read(); }}
-    trigger={<button type="button" className="icon-btn" aria-label="本机会话" title="继续这个 Harness 在本工作区的会话" disabled={disabled}><History size={16}/></button>}>
+    trigger={<button type="button" className="icon-btn text-fg-3" aria-label="本机会话" title="继续这个 Harness 在本工作区的会话" disabled={disabled}><History size={16}/></button>}>
     <PopHead title="本机会话" closeLabel="收起本机会话"><button type="button" className="icon-btn icon-btn-sm" aria-label="重新读取本机会话" onClick={() => read()} disabled={state.loading}><RefreshCw size={13}/></button></PopHead>
-    <div className="flex flex-col gap-2 p-2">
-      {state.error ? <p className="m-0 px-1.5 text-[12.5px] text-red">{state.error}</p> : null}
-      {state.value !== undefined && sessions === null ? <p className="m-0 px-1.5 text-[12.5px] text-fg-2">这个 Harness 的接口不能列出或继续它自己的会话。</p> : null}
-      {sessions ? sessions.length ? <ul className="m-0 flex list-none flex-col p-0">{sessions.map(row => <li key={row.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-hover">
-        <div className="min-w-0 flex-1"><strong className="block truncate text-[13px] font-medium">{row.title ?? "未命名会话"}</strong><small className="text-[11.5px] text-fg-3">{[when(row.updatedAt), row.source ? SOURCES[row.source] ?? row.source : ""].filter(Boolean).join(" · ")}</small></div>
+    <div className="flex flex-col gap-1 p-[5px]">
+      {state.error ? <p className="m-0 px-2 py-1.5 text-ui-sm text-red" role="alert">{state.error}</p> : null}
+      {state.value !== undefined && sessions === null ? <p className="m-0 px-2 py-1.5 text-ui-sm text-fg-2">这个 Harness 的接口不能列出或继续它自己的会话。</p> : null}
+      {sessions ? sessions.length ? <ul className="m-0 flex list-none flex-col p-0">{sessions.map(row => <li key={row.id} className="row flex items-center gap-2 rounded-[9px] px-2 py-1.5">
+        <div className="min-w-0 flex-1"><strong className="block truncate text-ui-sm font-medium">{row.title ?? "未命名会话"}</strong><small className="text-caption text-fg-3">{[when(row.updatedAt), row.source ? SOURCES[row.source] ?? row.source : ""].filter(Boolean).join(" · ")}</small></div>
         {row.conversationId
           ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => onOpen(row.conversationId!)}>打开对话 <ArrowUpRight size={12} aria-hidden="true"/></button>
           : <button type="button" className="btn btn-sm" disabled={disabled} onClick={() => onImport(row.id)}>接续</button>}
-      </li>)}</ul> : <p className="m-0 px-1.5 text-[12.5px] text-fg-3">这个工作区还没有本机会话。</p> : null}
-      {state.loading ? <p className="m-0 flex items-center gap-1.5 px-1.5 text-[12.5px] text-fg-3"><Spinner size={12}/> 正在从本机安装读取…</p> : null}
+      </li>)}</ul> : <p className="m-0 px-2 py-1.5 text-ui-sm text-fg-3">这个工作区还没有本机会话。</p> : null}
+      {state.loading ? <p className="m-0 flex items-center gap-2 px-2 py-1.5 text-ui-sm text-fg-3"><Spinner size={13} label=""/>正在从本机安装读取…</p> : null}
       {state.value?.nextCursor && !state.loading ? <button type="button" className="btn btn-ghost btn-sm self-start" onClick={() => read(state.value!.nextCursor!)}>加载更早的会话</button> : null}
-      {hidden > 0 && !state.loading ? <p className="m-0 px-1.5 text-[12px] text-fg-3">已隐藏 {hidden} 个 HarnessHub 读取模型列表时建立的空会话。<button type="button" className="link-btn" onClick={() => { setProbes(true); read(undefined, true); }}>显示</button></p> : null}
-      <p className="m-0 border-t border-line px-1.5 pt-2 text-[12px] text-fg-3">接续后，新消息直接发给这个本机会话，它记得自己的全部历史；对话里引用最近的消息。请不要同时在原程序中继续它。</p>
+      {hidden > 0 && !state.loading ? <p className="m-0 px-2 text-caption text-fg-3">已隐藏 {hidden} 个 HarnessHub 读取模型列表时建立的空会话。<button type="button" className="link-btn" onClick={() => { setProbes(true); read(undefined, true); }}>显示</button></p> : null}
+      <p className="m-0 mt-1 px-2 pt-2 pb-1 text-caption text-fg-3 hairline-t">接续后，新消息直接发给这个本机会话，它记得自己的全部历史；对话里引用最近的消息。请不要同时在原程序中继续它。</p>
     </div>
   </Popover>;
 }
