@@ -13,12 +13,12 @@ function nativeNote(session: SessionView, origin: SessionOrigin): string {
   const state = session.nativeStates?.find(item => item.harnessId === session.selection.harnessId && item.controlId === session.selection.controlId);
   if (origin.kind === "import") {
     if (state?.status === "ready") return "新消息直接发给这个本机会话，它记得自己的全部历史；请不要同时在原程序中继续它。";
-    if (state?.status === "unconfirmed") return "本机会话的状态尚未确认；可在高级配置中重新建立原生会话。";
+    if (state?.status === "unconfirmed") return "本机会话的状态尚未确认；可在 Agent 选择器（⌘J）底部的“高级配置…”中重新建立原生会话。";
     return "这个对话不再使用原来的本机会话：下一条消息会带上下面引用的历史。";
   }
   if (state?.status === "forking") return "正在为分支建立原生会话副本，完成后再处理新消息。";
   if (state?.status === "ready") return "原生会话已分支：新消息在原生副本中继续，原对话不受影响。";
-  if (state?.status === "unconfirmed") return "原生分支结果尚未确认；可在高级配置中重新建立原生会话。";
+  if (state?.status === "unconfirmed") return "原生分支结果尚未确认；可在 Agent 选择器（⌘J）底部的“高级配置…”中重新建立原生会话。";
   return "这个分支以公共历史继续：下一条消息会带上下面的对话。";
 }
 
