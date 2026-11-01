@@ -2,8 +2,8 @@ import type { NativeResumeView } from "../../contracts/web.js";
 
 // This file holds only each product's continue-command table (ADR-039, ADR-053). The version a command was checked on
 // is evidence, never an input: on 2026-10-22, Claude Code 2.1.306 for real and 2.1.307 by source; Codex 0.162.1 for real
-// and 0.163.0 by source; OpenCode 1.18.35 for real and 1.19.3 by source; Hermes Agent 0.12.0 for real and v0.22.4 by
-// source; DeepSeek Harness 0.2.0-rc.2 for real and 0.2.1-rc.2 by source. The verified-version table that named the file
+// and 0.163.0 by source; OpenCode 1.18.35 for real and 1.19.3 by source, and on 2026-11-01 OpenCode 2 (2.2.5) by source;
+// Hermes Agent 0.12.0 for real and v0.22.4 by source; DeepSeek Harness 0.2.0-rc.2 for real and 0.2.1-rc.2 by source. The verified-version table that named the file
 // went with ADR-053: versions stay as evidence in the capability matrix, docs/verification and the read tables' `checkedOn`.
 // The path stays until M2 T-ARCH-03 moves this table into the Harness description module, so that plan/slices.json's
 // allowed_files and the link in docs/engineering/real-acceptance.md change once, not twice.
@@ -26,7 +26,10 @@ const RESUME_COMMANDS: Readonly<Record<string, ResumeCommands | { readonly list:
   // given only where it is needed. `codex resume` has no such flag (its help lists none): it asks about the folder itself.
   codex: { interactive: id => `codex resume ${id}`, once: (id, workspace) => workspace.git ? `codex exec resume ${id} ${QUESTION}` : `codex exec --skip-git-repo-check resume ${id} ${QUESTION}`,
     onceNote: workspace => workspace.git ? null : "工作区不是 git 仓库，Codex 需要这个标志" },
-  opencode: { interactive: id => `opencode -s ${id}`, once: id => `opencode run -s ${id} ${QUESTION}` },
+  // OpenCode 1 and 2 share both forms (packages/cli/src/commands/commands.ts, session-target.ts at v2.2.5). A product-line
+  // fact goes beside them: an id OpenCode 2 does not have makes it create a new session with that id, where OpenCode 1
+  // stopped with an error, so a wrong id is not told by a failure (ADR-039, 2026-11-01).
+  opencode: { interactive: id => `opencode -s ${id}`, once: id => `opencode run -s ${id} ${QUESTION}`, onceNote: () => OPENCODE_SESSION_NOTE },
   hermes: { interactive: id => `hermes --resume ${id}`, once: id => `hermes chat --resume ${id} -q ${QUESTION}` },
   // DeepSeek Harness has no interactive form to give: the profiles 0.2.0-rc.2 ships are acp, web, headless, sdk and
   // sdk-minimal (dsh-app-boot PROFILE_TEMPLATES), and `dsh tui --resume <session>`, an example in its help, starts a tui
@@ -37,6 +40,8 @@ const RESUME_COMMANDS: Readonly<Record<string, ResumeCommands | { readonly list:
   pi: { list: "见 Pi 自己的会话列表" },
   openclaw: { hidden: true },
 };
+/** OpenCode 2's handling of an id it does not have, said beside both forms (fixed: it does not depend on the workspace). */
+const OPENCODE_SESSION_NOTE = "OpenCode 2 对它没有的会话 ID 会以这个 ID 新建一个会话而不是报错（OpenCode 1 会报错）：ID 抄错时不会有失败提示，请核对回复是否接上了这段对话";
 /** What the user must have in the terminal before dsh's one-question command works (fixed: it does not depend on the workspace). */
 const DSH_HEADLESS_NOTE = "dsh headless 不读 DeepSeek Harness 界面里保存的密钥和账号登录，只用终端环境的 DEEPSEEK_API_KEY、工作区 .env 或 ~/.dsh/.env；只在界面里保存过密钥的用户要先在终端 export（0.2.1-rc.2 的 dsh-headless 把 credentials、authorization、deepseek-account 三行设为 disabled）";
 /** Only a plain identifier is shown or put into a command; anything else the program reported stays private. */

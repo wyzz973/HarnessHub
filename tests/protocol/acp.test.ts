@@ -1300,4 +1300,40 @@ test("Hermes starts no viewer unless the gateway preflight judges A: B–E refus
     finally { await driver.close(); }
   }
   assert.deepEqual((await readFile(cli, "utf8")).trim().split("\n").map(line => JSON.parse(line)), [["acp"], ["acp"]]);
+test("G032-NC34 OpenCode 2: an announced compact is kept once and /compact passes through as typed; a models command without --verbose is tried once, quietly, and the agent-declared image capability stands", async t => {
+  const root = await mkdtemp(join(tmpdir(), "gateway-opencode-v2-")), trace = join(root, "trace"), calls = join(root, "calls"); t.after(() => rm(root, { recursive: true, force: true }));
+  // OpenCode 2 announces `compact` as its only built-in (packages/cli/src/acp/catalog.ts) and reports the compaction as an update.
+  const announced = new OpenCodeControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "opencode-compact"], env: { FIXTURE_TRACE: trace, FIXTURE_AGENT_VERSION: "2.2.5", FIXTURE_COMPACT_LISTED: "1", FIXTURE_COMPACT: "activity" } }, options);
+  try {
+    assert.equal((await announced.initialize()).agentVersion, "2.2.5");
+    const id = await announced.open(process.cwd()), commands = (await announced.models()).commands ?? [];
+    assert.deepEqual(commands.map(command => command.name), ["init", "review", "compact"], "OpenCode's own compact once, nothing filled in");
+    assert.deepEqual(commands.filter(command => command.name === "compact"), [{ name: "compact", description: "OpenCode's own compact" }]);
+    const events: ControlEvent[] = [];
+    assert.deepEqual(await (await announced.startText(id, "/compact", event => events.push(event))).result, { status: "completed", reason: "end_turn" });
+    assert.deepEqual(events.map(event => event.type), ["activity", "activity"], "a compaction reported as an update is a compaction");
+    const prompts = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { method?: string; params?: { prompt?: unknown } }).filter(row => row.method === "session/prompt");
+    assert.deepEqual(prompts.map(row => row.params?.prompt), [[{ type: "text", text: "/compact" }]], "sent as typed");
+  } finally { await announced.close(); }
+  // OpenCode 2's `models` has no --verbose: the shim refuses it like a CLI does (and counts the attempts); the ACP side is the attachments fixture.
+  const shim = join(root, "opencode2-fixture.mjs");
+  await writeFile(shim, `#!${process.execPath}\nimport { appendFileSync } from "node:fs";\nif (process.argv[2] === "models") { appendFileSync(${JSON.stringify(calls)}, process.argv.slice(2).join(" ") + "\\n"); process.stderr.write("Unknown argument: verbose\\n"); process.exit(1); }\n`
+    + `process.argv.splice(2, process.argv.length, "acp-v1", "attachments"); await import(${JSON.stringify(pathToFileURL(resolve("tests/fixtures/control-peer.mjs")).href)});\n`, { mode: 0o700 });
+  const image = attachment(root, "shot.png", "image/png", "image", Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  const refused = new OpenCodeControl({ protocol: "acp-v1", executable: shim, args: ["acp"], env: {} }, { ...options, requestTimeoutMs: 10000 });
+  try {
+    await ready(refused);
+    const first = await refused.models(), second = await refused.models();
+    assert.ok(first.models.length > 0 && first.models.every(row => row.inputs === undefined), "no per-model refinement: the agent's declaration is the only word");
+    assert.deepEqual(second.models, first.models);
+    await refused.checkAttachments([image]);
+    assert.equal((await readFile(calls, "utf8")).trim(), "models --verbose", "tried once for the whole control, never again");
+  } finally { await refused.close(); }
+  // A listing of bare provider/id lines (OpenCode 2's `models` output) declares nothing and refines nothing.
+  const bare = join(root, "opencode2-bare.mjs");
+  await writeFile(bare, `#!${process.execPath}\nif (process.argv[2] === "models") { process.stdout.write("native/model-a\\nnative/model-b\\n"); process.exit(0); }\n`
+    + `process.argv.splice(2, process.argv.length, "acp-v1", "attachments"); await import(${JSON.stringify(pathToFileURL(resolve("tests/fixtures/control-peer.mjs")).href)});\n`, { mode: 0o700 });
+  const listing = new OpenCodeControl({ protocol: "acp-v1", executable: bare, args: ["acp"], env: {} }, { ...options, requestTimeoutMs: 10000 });
+  try { await ready(listing); assert.ok((await listing.models()).models.every(row => row.inputs === undefined)); await listing.checkAttachments([image]); }
+  finally { await listing.close(); }
 });

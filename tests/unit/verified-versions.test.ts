@@ -18,6 +18,10 @@ test("continuing in the original program gives each product's commands for a pla
     once: "codex exec --skip-git-repo-check resume " + thread + question, onceNote: "工作区不是 git 仓库，Codex 需要这个标志" });
   both("codex", thread, repository, "codex resume " + thread, "codex exec resume " + thread + question);
   both("opencode", "ses_ed322dcf7ffe892PKrBGRgoBKW", outside, "opencode -s ses_ed322dcf7ffe892PKrBGRgoBKW", "opencode run -s ses_ed322dcf7ffe892PKrBGRgoBKW" + question);
+  // OpenCode's forms are the same on both lines; a product-line fact stands beside them: OpenCode 2 creates a session for an id it does not have, OpenCode 1 failed (no version is read).
+  const opencode = nativeResume("opencode", "ses_ed322dcf7ffe892PKrBGRgoBKW", outside);
+  assert.match(opencode?.onceNote ?? "", /^OpenCode 2 对它没有的会话 ID 会以这个 ID 新建一个会话而不是报错（OpenCode 1 会报错）/u);
+  assert.equal(nativeResume("opencode", "ses_ed322dcf7ffe892PKrBGRgoBKW", repository)?.onceNote, opencode?.onceNote, "fixed: the workspace changes nothing for OpenCode");
   both("hermes", id, outside, "hermes --resume " + id, "hermes chat --resume " + id + " -q" + question);
   // DeepSeek Harness ships no interactive profile to resume in (no tui): only its one-question form, with the credentials it depends on.
   const dsh = nativeResume("dsh", id, outside); assert.ok(dsh);

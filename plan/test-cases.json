@@ -6578,7 +6578,7 @@
       ],
       "layer": "unit",
       "scenario": "在原程序中继续的命令按产品给出，与安装版本无关（ADR-053 决定 3）",
-      "expected": "Claude Code、Codex、OpenCode、Hermes 对任何已安装版本都给出交互命令与一次性命令（函数没有版本输入，对任何安装、含读不出版本的，都给出同样的命令）；DeepSeek Harness 只给一次性命令（官网包没有 tui profile）并附凭据前提说明 onceNote（headless 只读终端环境的 DEEPSEEK_API_KEY、工作区 .env 或 ~/.dsh/.env）；Pi 只指向它的会话列表；OpenClaw 不给；没有续接命令的产品（Cursor、Gemini CLI）只给 ID 且 note 为 no-command，不再有 version-unverified；含空格、引号、分号、$( 或以 - 开头等非普通标识符的引用既不显示也不进入命令；Codex 只问一次的形式只在工作区不是 Git 仓库时带 --skip-git-repo-check 并注明原因，交互形式从不带；读取不触发发现与版本探测",
+      "expected": "Claude Code、Codex、OpenCode、Hermes 对任何已安装版本都给出交互命令与一次性命令（函数没有版本输入，对任何安装、含读不出版本的，都给出同样的命令）；DeepSeek Harness 只给一次性命令（官网包没有 tui profile）并附凭据前提说明 onceNote（headless 只读终端环境的 DEEPSEEK_API_KEY、工作区 .env 或 ~/.dsh/.env）；OpenCode 的两种形式旁附产品线说明 onceNote（OpenCode 2 对它没有的会话 ID 会新建会话而不是报错，OpenCode 1 会报错；不读版本号）；Pi 只指向它的会话列表；OpenClaw 不给；没有续接命令的产品（Cursor、Gemini CLI）只给 ID 且 note 为 no-command，不再有 version-unverified；含空格、引号、分号、$( 或以 - 开头等非普通标识符的引用既不显示也不进入命令；Codex 只问一次的形式只在工作区不是 Git 仓库时带 --skip-git-repo-check 并注明原因，交互形式从不带；读取不触发发现与版本探测",
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/unit/verified-versions.test.ts"
@@ -10360,6 +10360,24 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/protocol/acp.test.ts"
+    },
+    {
+      "id": "G032-NC34",
+      "task": "G032",
+      "requirements": [
+        "R11",
+        "R25"
+      ],
+      "invariants": [
+        "INV-04",
+        "INV-09"
+      ],
+      "layer": "protocol",
+      "planned_file": "tests/protocol/acp.test.ts",
+      "scenario": "OpenCode 2：已宣告的 compact 不重复补入并原样转发；没有 models --verbose 时只试一次、安静地退回代理级声明（ADR-053，2026-11-01）",
+      "expected": "initialize 报告 2.2.5 且目录宣告 compact 时，命令目录只有 OpenCode 自己的那条 compact（不补入第二条）；/compact 原样作为 text 块发送，以 compaction_update 回报的回合为 completed；原 CLI 对 models --verbose 以非零退出拒绝时，模型行没有 inputs 细化、两次读目录结果相同、图片附件按代理声明放行，整个控制只尝试一次（夹具记录到的调用恰为一行 models --verbose）；只打印 provider/id 行的 models 输出同样不细化；不读任何版本号",
+      "status": "planned",
+      "evidence": null
     },
     {
       "id": "G031-NC2",
