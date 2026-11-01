@@ -1225,17 +1225,17 @@ test("a Harness of a version HarnessHub never ran shows that version alone in th
   await expect(autohand.locator(".badge")).toHaveCount(0);
   await sayNothing("the Harness list");
   await page.screenshot({ path: join(artifact, "version-fact.png"), animations: "disabled" });
-  // The welcome's list of Agents (opened from its summary, ADR-054 §5) and the picker show the version the same way, and
-  // the Harness is chosen like any other.
+  // The welcome's list of Agents (opened from its summary, ADR-054 §5) and the picker show the version the same way, as
+  // the Agent page does (no "v" in front, Foundations board), and the Harness is chosen like any other.
   await page.getByRole("button", { name: "返回对话", exact: true }).click();
   await page.locator(".agent-summary").click();
   const card = page.getByRole("region", { name: "本机发现的 Harness" }).getByRole("button", { name: "选择 Gemini CLI", exact: true });
-  await expect(card).toContainText("v1.0.0"); await expect(card.locator(".badge")).toHaveCount(0);
+  await expect(card).toContainText(/(?<!v)1\.0\.0 · /u); await expect(card).not.toContainText("v1.0.0"); await expect(card.locator(".badge")).toHaveCount(0);
   await sayNothing("the welcome");
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click();
   const option = page.getByRole("option", { name: "Gemini CLI", exact: true });
-  await expect(option).toContainText("v1.0.0"); await expect(option).toBeEnabled();
+  await expect(option).toContainText("1.0.0"); await expect(option).not.toContainText("v1.0.0"); await expect(option).toBeEnabled();
   await sayNothing("the picker");
   await option.click();
   await expect(page.getByRole("button", { name: "选择 Harness", exact: true })).toContainText("Gemini CLI");
@@ -1842,6 +1842,8 @@ test("G054-DL3 the home greets, says who is ready from the readiness facts and w
   await summary.click();
   const list = page.getByRole("region", { name: "本机发现的 Harness" });
   await expect(list.getByRole("button", { name: "选择 OpenClaw", exact: true })).toContainText("需要登录");
+  // What is not installed is found on the Agent page, called by that page's name.
+  await expect(list).toContainText(/另有 \d+ 个 Agent 在目录中但未安装，可以在 Agent 页查看官方安装方式。/u); await expect(list).not.toContainText("我的 Agent");
   await list.getByRole("button", { name: "选择 Codex", exact: true }).click();
   await expect(chip).toContainText("Codex"); await expect(composer).toBeFocused();
   await shoot("dl3-home");
@@ -4567,8 +4569,8 @@ test("G054-FZ3 DeepSeek Harness of any version shows its one-question command wi
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click();
   const option = page.getByRole("option", { name: "DeepSeek Harness", exact: true });
-  // The picker shows the version as a fact and nothing about it.
-  await expect(option).toContainText("v0.3.1"); await expect(option).not.toContainText("验证"); await option.click();
+  // The picker shows the version as a fact, as the Agent page does (no "v"), and nothing about it.
+  await expect(option).toContainText("0.3.1"); await expect(option).not.toContainText("v0.3.1"); await expect(option).not.toContainText("验证"); await option.click();
   await composer.fill("hello"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
   await expect(log.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
   // The details panel is closed until opened (ADR-054 decision E); it opens on the Turn's execution facts.

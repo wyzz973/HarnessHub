@@ -134,7 +134,7 @@ function AgentList({ trigger, open, onOpenChange, harnesses, status, selected, f
                 className="row flex w-full items-center gap-3 rounded-[9px] border-none bg-transparent px-2.5 py-2 text-left">
                 <BrandIcon brand={harness.id} name={harness.name} size={28}/>
                 <span className="flex min-w-0 flex-1 flex-col"><strong className="trunc text-ui font-medium">{harness.name}</strong>
-                  <span className="trunc text-caption text-fg-3">{[version ? "v" + version : null, SOURCE[harness.management.source] ?? null].filter(Boolean).join(" · ")}</span></span>
+                  <span className="trunc text-caption text-fg-3">{[version ?? null, SOURCE[harness.management.source] ?? null].filter(Boolean).join(" · ")}</span></span>
                 {state ? <Badge tone={TONE[state.tone]} dot {...(state.title ? { title: state.title } : {})}>{state.label}</Badge> : null}
                 <Check size={15} strokeWidth={2.2} className={cn("flex-none text-accent-text", selected !== harness.id && "invisible")} aria-hidden="true"/>
               </button>;
@@ -144,7 +144,7 @@ function AgentList({ trigger, open, onOpenChange, harnesses, status, selected, f
               <button type="button" className="btn btn-sm" onClick={() => { onOpenChange(false); onSettings(); }}>从登录 shell 补充目录</button>
               <button type="button" className="btn btn-sm" onClick={onRescan} disabled={scanning}><RefreshCw size={12} className={cn(scanning && "spin")} aria-hidden="true"/>重新检测</button>
             </div> : null}
-            {missing > 0 ? <p className="m-0 px-3.5 py-2.5 text-caption text-fg-3 hairline-t">另有 {missing} 个 Agent 在目录中但未安装，可以在“我的 Agent”里查看官方安装方式。HarnessHub 不会替你运行安装命令。</p> : null}
+            {missing > 0 ? <p className="m-0 px-3.5 py-2.5 text-caption text-fg-3 hairline-t">另有 {missing} 个 Agent 在目录中但未安装，可以在 Agent 页查看官方安装方式。HarnessHub 不会替你运行安装命令。</p> : null}
           </section>
         </BasePopover.Popup>
       </BasePopover.Positioner>

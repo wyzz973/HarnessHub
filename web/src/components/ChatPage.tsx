@@ -35,7 +35,7 @@ export function selectionRequest(draft: SelectionDraft): SelectionRequest {
 export function selectionProblem(draft: SelectionDraft, harnesses: readonly HarnessView[], providers: readonly ProviderView[]): string | null {
   const harness = harnesses.find(row => row.id === draft.harnessId);
   if (!harness) return "先选择一个 Harness，开始协作。";
-  if (!harness.controls.some(row => row.id === draft.controlId && row.available)) return "这个控制入口目前不可用，请在“我的 Agent”中检查。";
+  if (!harness.controls.some(row => row.id === draft.controlId && row.available)) return "这个控制入口目前不可用，请在 Agent 页中检查。";
   if (!draft.providerId) return null;
   const provider = providers.find(row => row.id === draft.providerId);
   if (!provider || !provider.enabled) return "这个 Provider 已停用或不可用，请重新选择。";
