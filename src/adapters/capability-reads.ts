@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import type { DuplicateRule, SkillRootRole } from "../contexts/capabilities/domain/visibility.js";
+import type { OpenCodeLine } from "./catalog-channels.js";
 
 /**
  * The home directory and environment a Harness resolves its paths from; nothing here reads the process environment.
@@ -27,7 +28,7 @@ export interface SkillRootSpec {
 export interface SkillFind { readonly mode: "files"; readonly hidden: boolean; readonly skip: readonly string[] }
 /** Hermes 0.12 `agent/skill_utils.py` `iter_skill_index_files`: every SKILL.md, links followed, only these folders skipped. */
 const HERMES_FIND: SkillFind = { mode: "files", hidden: true, skip: [".git", ".github", ".hub", ".archive"] };
-/** OpenCode 1.18.35 `skill/index.ts`: its glob for SKILL.md at any depth, which does not match hidden folders. */
+/** OpenCode's glob for SKILL.md at any depth, which does not match hidden folders (1.18.35 `skill/index.ts`; https://opencode.ai/v2/docs/skills/ keeps the same roots). */
 const OPENCODE_FIND: SkillFind = { mode: "files", hidden: false, skip: [] };
 /** A list of skill directories a Harness's configuration adds, read from `path` in `file`, with ~ expanded. */
 /** `relativeTo`: where a relative entry is resolved (Hermes: its home); without it, relative entries are not read. */
@@ -72,7 +73,8 @@ export type PluginSource =
   | { readonly kind: "claude"; readonly installed: string; readonly settings: string; readonly marketplaces: string; readonly synced: string; readonly managed: ClaudeManagedSettings }
   | { readonly kind: "codex"; readonly config: string; readonly cache: string }
   | { readonly kind: "gemini"; readonly extensions: string; readonly enablement: string }
-  | { readonly kind: "opencode"; readonly files: readonly string[]; readonly dirs: readonly string[]; readonly tui: string }
+  /** `tui`: OpenCode 1's terminal-client file (`plugin`), `cli`: OpenCode 2's (`plugins`; the first V2 start migrates tui.json into it). */
+  | { readonly kind: "opencode"; readonly files: readonly string[]; readonly dirs: readonly string[]; readonly tui: string; readonly cli: string }
   | { readonly kind: "hermes"; readonly dir: string; readonly config: string }
   | { readonly kind: "dsh"; readonly profiles: string }
   | { readonly kind: "openclaw"; readonly dir: string }
@@ -113,6 +115,73 @@ export interface HarnessReadTable {
   /** Null for a Harness without plugins. */
   readonly pluginSwitch: PluginSwitchSource | null;
   readonly notes: readonly string[];
+  /** OpenCode only: which configuration dialect its writers use for a file that has no key of the family yet (see `OpenCodeDialectSpec`). */
+  readonly dialect?: OpenCodeDialectSpec;
+}
+
+/**
+ * OpenCode's two configuration dialects (ADR-053, 2026-11-01): OpenCode 1 keeps servers under `mcp.<name>` with `enabled`,
+ * plugins in `plugin` (a string or `[path, options]`) and permissions in the `permission` object; OpenCode 2 keeps them
+ * under `mcp.servers.<name>` with `disabled`, in `plugins` (a string or `{package, options}`) and in the `permissions`
+ * array of `{action, resource, effect}` (https://opencode.ai/v2/docs/migrate-v1/). OpenCode 2 reads a V1 file as it is,
+ * normalised in memory and never rewritten, so a file keeps its dialect: readers read both, and a writer writes the
+ * dialect the file already uses. For a file without the family's key the writer takes the dialect of the installed
+ * product line (`line`, from the installation's channel record, `basis` saying which), then the file's other keys, then
+ * whether `cli` (OpenCode 2's terminal-client file) or `tui` (OpenCode 1's) exists, and otherwise OpenCode 2. Never a
+ * version number.
+ */
+export interface OpenCodeDialectSpec { readonly line: OpenCodeLine | null; readonly basis: string | null; readonly cli: string; readonly tui: string }
+export type OpenCodeKeyFamily = "mcp" | "plugins" | "permissions";
+/** The key each family uses in each dialect, as the migration guide names them. */
+export const OPENCODE_KEYS: Readonly<Record<OpenCodeKeyFamily, Readonly<Record<OpenCodeLine, string>>>> = { mcp: { v1: "mcp.<名>", v2: "mcp.servers.<名>" }, plugins: { v1: "plugin", v2: "plugins" }, permissions: { v1: "permission", v2: "permissions" } };
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> { return value !== null && typeof value === "object" && !Array.isArray(value); }
+function has(value: unknown, key: string): boolean { return isRecord(value) && Object.hasOwn(value, key); }
+/** One MCP server as OpenCode writes it in either dialect: a transport name, a command list or an address. */
+function looksLikeServer(value: unknown): boolean { return isRecord(value) && (value.type === "local" || value.type === "remote" || Array.isArray(value.command) || typeof value.url === "string"); }
+/**
+ * The MCP servers of a parsed OpenCode configuration and the dialect they are written in: `mcp.servers.<name>` (V2) when
+ * `mcp.servers` is a map that is not itself one V1 server named "servers", else `mcp.<name>` (V1), taking only entries that
+ * look like a server (V2 keeps its `timeout` defaults under `mcp` too). Null when the file has no `mcp` map. Pure.
+ */
+export function opencodeMcpServers(value: unknown): { readonly dialect: OpenCodeLine; readonly servers: Readonly<Record<string, Readonly<Record<string, unknown>>>> } | null {
+  const mcp = isRecord(value) ? value.mcp : undefined;
+  if (!isRecord(mcp)) return null;
+  const servers = mcp.servers, v2 = isRecord(servers) && !looksLikeServer(servers);
+  const entries = Object.entries(v2 ? servers : mcp).filter((entry): entry is [string, Readonly<Record<string, unknown>>] => looksLikeServer(entry[1]));
+  return { dialect: v2 ? "v2" : "v1", servers: Object.fromEntries(entries) };
+}
+/**
+ * The dialect a parsed OpenCode configuration file is written in, by the keys of one family or, without one, of every
+ * family: "mixed" when it has both dialects' keys (OpenCode 2 warns about such a file; HarnessHub does not write it),
+ * null when it has no key of the family. Pure.
+ */
+export function opencodeFileDialect(value: unknown, family?: OpenCodeKeyFamily): OpenCodeLine | "mixed" | null {
+  const one = (which: OpenCodeKeyFamily): OpenCodeLine | "mixed" | null => {
+    if (which === "mcp") return opencodeMcpServers(value)?.dialect ?? null;
+    const v1 = has(value, OPENCODE_KEYS[which].v1), v2 = has(value, OPENCODE_KEYS[which].v2);
+    return v1 && v2 ? "mixed" : v2 ? "v2" : v1 ? "v1" : null;
+  };
+  if (family !== undefined) return one(family);
+  const found = new Set((["mcp", "plugins", "permissions"] as const).map(one).filter((item): item is OpenCodeLine | "mixed" => item !== null));
+  return found.has("mixed") || found.size > 1 ? "mixed" : [...found][0] ?? null;
+}
+/**
+ * The dialect a writer uses for the family in a parsed file (see `OpenCodeDialectSpec`), with the fact that decided it;
+ * "mixed" when the file already holds both dialects of the family or of another family, so the writer refuses. Pure;
+ * `hints` tells whether the terminal-client files exist.
+ */
+export function opencodeWriteDialect(value: unknown, family: OpenCodeKeyFamily, spec: Pick<OpenCodeDialectSpec, "line" | "basis">, hints: { readonly cli: boolean; readonly tui: boolean }): { readonly dialect: OpenCodeLine | "mixed"; readonly basis: string } {
+  const name = (line: OpenCodeLine) => "OpenCode " + (line === "v2" ? "2" : "1") + " 的写法（" + OPENCODE_KEYS[family][line] + "）";
+  const own = opencodeFileDialect(value, family);
+  if (own === "mixed") return { dialect: "mixed", basis: "文件里同时有 " + OPENCODE_KEYS[family].v1 + " 与 " + OPENCODE_KEYS[family].v2 + "，两种写法混用，不知道 OpenCode 以哪条为准" };
+  if (own !== null) return { dialect: own, basis: "文件里已有 " + name(own) };
+  if (spec.line !== null) return { dialect: spec.line, basis: "文件里还没有这一项，按安装的产品线写 " + name(spec.line) + (spec.basis === null ? "" : "：" + spec.basis) };
+  const others = opencodeFileDialect(value);
+  if (others === "mixed") return { dialect: "mixed", basis: "文件里的其他设置混用了 OpenCode 1 与 OpenCode 2 的写法，不知道 OpenCode 以哪条为准" };
+  if (others !== null) return { dialect: others, basis: "没有识别出安装的产品线；文件里的其他设置用的是 " + name(others) };
+  if (hints.cli) return { dialect: "v2", basis: "没有识别出安装的产品线；配置目录里有 OpenCode 2 的 cli.json，按 " + name("v2") };
+  if (hints.tui) return { dialect: "v1", basis: "没有识别出安装的产品线；配置目录里只有 OpenCode 1 的 tui.json，按 " + name("v1") };
+  return { dialect: "v2", basis: "没有识别出安装的产品线，也没有线索，按 " + name("v2") };
 }
 
 function tilde(environment: ReadEnvironment, path: string): string { return path.startsWith("~/") ? join(environment.home, path.slice(2)) : path; }
@@ -142,13 +211,15 @@ export function harnessDirectories(environment: ReadEnvironment) {
  * docs/research/native-extension-configs-2026-10-18.md and ADR-045). `hermesHome` and `openclawWorkspace` are resolved
  * by the caller: Hermes from HERMES_HOME or its active profile, OpenClaw from its own configuration.
  */
-export function capabilityReadTables(environment: ReadEnvironment, resolved: { readonly hermesHome: string; readonly openclawWorkspace: string }): readonly HarnessReadTable[] {
+export function capabilityReadTables(environment: ReadEnvironment, resolved: { readonly hermesHome: string; readonly openclawWorkspace: string; readonly opencode?: Pick<OpenCodeDialectSpec, "line" | "basis"> }): readonly HarnessReadTable[] {
   // OpenCode reads its flags as booleans (runtime-flags.ts `Config.boolean`): true, yes, on or 1.
   const flag = (name: string) => /^(?:true|yes|on|1)$/iu.test(environment.values[name] ?? "");
   const dirs = harnessDirectories(environment), disableClaudeSkills = flag("OPENCODE_DISABLE_CLAUDE_CODE_SKILLS") || flag("OPENCODE_DISABLE_CLAUDE_CODE");
   const disableClaudePrompt = flag("OPENCODE_DISABLE_CLAUDE_CODE_PROMPT") || flag("OPENCODE_DISABLE_CLAUDE_CODE");
   const hermes = resolved.hermesHome, workspace = resolved.openclawWorkspace;
   const opencodeConfigs = [join(dirs.opencode, "config.json"), join(dirs.opencode, "opencode.json"), join(dirs.opencode, "opencode.jsonc")];
+  // Which OpenCode line is installed is a fact of its channel record, resolved by the caller (resolveOpenCodeLine); unknown counts as OpenCode 2.
+  const opencodeLine = resolved.opencode ?? { line: null, basis: null }, opencodeV1 = opencodeLine.line === "v1";
   return [
     {
       harnessId: "claude", checkedOn: "2.1.306",
@@ -212,27 +283,37 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
       notes: ["Cursor 没有按技能停用的开关。", "~/.cursor/mcp.json 与 Cursor 编辑器共用。", "本机 CLI 只读工作区里的子 Agent；文档所列的家目录位置在 CLI 程序里没有，编辑器是否读取未核实。"],
     },
     {
-      harnessId: "opencode", checkedOn: "1.18.35",
-      evidence: ["anomalyco/opencode v1.18.35 packages/opencode/src/skill/index.ts（发现 .claude 与 .agents 的 skills/**/SKILL.md 与配置目录；并发加载，同名后写入者覆盖并警告）",
-        "anomalyco/opencode v1.18.35 packages/opencode/src/session/instruction.ts（全局指令取第一个存在的文件：配置目录的 AGENTS.md，然后 ~/.claude/CLAUDE.md；空文件也算存在；每一步重新读）与 effect/runtime-flags.ts（OPENCODE_DISABLE_CLAUDE_CODE 或 OPENCODE_DISABLE_CLAUDE_CODE_PROMPT 关掉回退）",
-        "v1.18.35 config/agent.ts（{agent,agents}/**/*.md 递归，名字是相对路径、以 / 连接；{mode,modes}/*.md 也定义 Agent）、config/command.ts（{command,commands}/**/*.md）、agent/agent.ts（内置 build、plan、general、explore、compaction、title、summary，同名文件逐字段覆盖）",
-        "v1.18.35 command/index.ts（内置命令 init、review；技能在名字未被占用时补成命令）与 session/prompt.ts（命令与技能模板里的 !`cmd` 不经权限检查就执行）",
-        "v1.18.35 config/plugin.ts（ConfigPlugin.load 用 Glob.scan(\"{plugin,plugins}/*.{ts,js}\", { dot: true, symlink: true })）与 core/v1/config/plugin.ts（plugin 条目是 string 或 [string, 选项]）；tui.json 的 plugin 是 TUI 插件，只在终端界面里加载"],
+      // Checked against OpenCode 2 (2.2.5); the 1.18.35 and 1.19.5 facts stay below as history. OpenCode 1 and 2 share these
+      // directories and HarnessHub reads both dialects of every file, so one table serves both lines (ADR-053, 2026-11-01).
+      harnessId: "opencode", checkedOn: "2.2.5",
+      evidence: ["opencode.ai/v2/docs/skills（2026-11-01：~/.config/opencode/skills，兼容 ~/.claude/skills 与 ~/.agents/skills；SKILL.md 任意深度）与 v1.18.35 packages/opencode/src/skill/index.ts（历史：同样的根、并发加载，同名后写入者覆盖并警告）",
+        "opencode.ai/v2/docs/instructions（2026-11-01：全局指令只读配置目录的 AGENTS.md，OpenCode 2 不读 ~/.claude/CLAUDE.md）；历史：v1.18.35 session/instruction.ts 取第一个存在的文件——配置目录的 AGENTS.md，然后 ~/.claude/CLAUDE.md，空文件也算存在，每一步重新读；effect/runtime-flags.ts 的 OPENCODE_DISABLE_CLAUDE_CODE 或 OPENCODE_DISABLE_CLAUDE_CODE_PROMPT 关掉回退",
+        "opencode.ai/v2/docs/agents 与 migrate-v1（2026-11-01：agents/ 递归，旧的 agent/、mode/、modes/ 仍被发现，mode 文件要写 mode: primary；内置 build、plan、general、explore、compaction、title、summary）；历史：v1.18.35 config/agent.ts（{agent,agents}/**/*.md，名字是相对路径、以 / 连接；{mode,modes}/*.md 也定义 Agent）",
+        "opencode.ai/v2/docs/migrate-v1（2026-11-01：commands/，旧 command/ 仍读；command → commands、subtask → subagent）；历史：v1.18.35 config/command.ts（{command,commands}/**/*.md）、command/index.ts（内置命令 init、review；技能在名字未被占用时补成命令）与 session/prompt.ts（命令与技能模板里的 !`cmd` 不经权限检查就执行）",
+        "opencode.ai/v2/docs/mcp-servers 与 migrate-v1（2026-11-01：mcp.servers.<名>，type local 的 command 数组或 type remote 的 url，{env:NAME} 引用，停用写 disabled: true，timeout 拆成 catalog/execution；OpenCode 2 把 V1 的 mcp.<名>、enabled 在内存里归一化、不改写文件，不认识的旧字段只警告）；历史：v1.18.35 的 mcp.<名> 与 enabled",
+        "opencode.ai/v2/docs/plugins 与 build/plugins/migrate-v1（2026-11-01：plugins 数组，条目是字符串或 {package, options}；目录 ~/.config/opencode/plugins/，旧 plugin/ 仍被发现；cli.json 的 plugins 是终端界面插件，首次启动时从 tui.json 迁来；V1 插件实现在 V2 里不运行）；历史：v1.18.35 config/plugin.ts（Glob.scan(\"{plugin,plugins}/*.{ts,js}\", { dot: true, symlink: true })）与 core/v1/config/plugin.ts（plugin 条目是 string 或 [string, 选项]；tui.json 的 plugin 是 TUI 插件）",
+        "opencode.ai/v2/docs/permissions（2026-11-01：permissions 是 {action, resource, effect} 的数组，action 含 skill，最后匹配的规则生效，effect 为 allow、deny、ask）；历史：v1.18.35 的 permission.skill 对象或字符串，同样最后匹配者胜",
+        "本机安装是哪条线由渠道记录判定（src/adapters/catalog-channels.ts 的 opencodeProductLine、脚本安装看 opencode2 垫片），不读版本号；两种写法的读取与写入规则见 OpenCodeDialectSpec"],
       skills: { roots: [...(disableClaudeSkills ? [] : [{ role: "compat" as const, path: join(dirs.claude, "skills"), precedence: 1, containment: false, depth: 8, find: OPENCODE_FIND }]),
         { role: "shared", path: dirs.shared, precedence: 1, containment: false, depth: 8, find: OPENCODE_FIND }, { role: "own", path: join(dirs.opencode, "skills"), precedence: 1, containment: false, depth: 8, find: OPENCODE_FIND },
         { role: "own", path: join(dirs.opencode, "skill"), precedence: 1, containment: false, depth: 8, find: OPENCODE_FIND }],
         duplicates: "last-wins-unordered", requiresDescription: true, nameMustMatchDirectory: false, switch: { kind: "opencode-permission", files: opencodeConfigs } },
       mcp: { style: "opencode", files: opencodeConfigs },
-      instructions: { kind: "files", candidates: [{ path: join(dirs.opencode, "AGENTS.md"), role: "own" }, ...(disableClaudePrompt ? [] : [{ path: join(environment.home, ".claude", "CLAUDE.md"), role: "compat" as const }])], rule: "first-existing" },
+      // Only OpenCode 1 falls back to Claude Code's file (and not when its flags turn the fallback off); OpenCode 2 reads its own file alone.
+      instructions: { kind: "files", candidates: [{ path: join(dirs.opencode, "AGENTS.md"), role: "own" }, ...(opencodeV1 && !disableClaudePrompt ? [{ path: join(environment.home, ".claude", "CLAUDE.md"), role: "compat" as const }] : [])], rule: "first-existing" },
       subagents: [{ dir: join(dirs.opencode, "agents"), format: "markdown", role: "own", recursive: true, separator: "/" }, { dir: join(dirs.opencode, "agent"), format: "markdown", role: "own", recursive: true, separator: "/" },
         { dir: join(dirs.opencode, "modes"), format: "markdown", role: "own", recursive: false, separator: "/" }, { dir: join(dirs.opencode, "mode"), format: "markdown", role: "own", recursive: false, separator: "/" }],
       reservedSubagents: ["build", "plan", "general", "explore", "compaction", "title", "summary"],
       builtinCommands: ["init", "review"],
       commands: [{ dir: join(dirs.opencode, "commands"), format: "markdown", role: "own", recursive: true, separator: "/" }, { dir: join(dirs.opencode, "command"), format: "markdown", role: "own", recursive: true, separator: "/" }],
       hooks: null,
-      plugins: { kind: "opencode", files: opencodeConfigs, dirs: [join(dirs.opencode, "plugin"), join(dirs.opencode, "plugins")], tui: join(dirs.opencode, "tui.json") },
+      plugins: { kind: "opencode", files: opencodeConfigs, dirs: [join(dirs.opencode, "plugin"), join(dirs.opencode, "plugins")], tui: join(dirs.opencode, "tui.json"), cli: join(dirs.opencode, "cli.json") },
       pluginSwitch: { kind: "read-only", reason: "OpenCode 没有插件开关：写在配置或放进插件目录就加载。" },
-      notes: [disableClaudeSkills ? "环境里设置了关闭 .claude 技能来源的变量，OpenCode 不读 ~/.claude/skills。" : "OpenCode 也读 ~/.claude/skills；可以在终端环境里设置 OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1 关掉这个来源。", "OpenCode 没有声明式的 Hooks，由插件实现。"],
+      dialect: { ...opencodeLine, cli: join(dirs.opencode, "cli.json"), tui: join(dirs.opencode, "tui.json") },
+      notes: [disableClaudeSkills ? "环境里设置了关闭 .claude 技能来源的变量，OpenCode 不读 ~/.claude/skills。" : "OpenCode 也读 ~/.claude/skills；可以在终端环境里设置 OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1 关掉这个来源。", "OpenCode 没有声明式的 Hooks，由插件实现。",
+        opencodeLine.line === "v1" ? "本机装的是 OpenCode 1（" + (opencodeLine.basis ?? "按渠道记录") + "）：没有自己的 AGENTS.md 时回退读 ~/.claude/CLAUDE.md；它的配置用 mcp.<名>、plugin、permission 的写法。"
+          : opencodeLine.line === "v2" ? "本机装的是 OpenCode 2（" + (opencodeLine.basis ?? "按渠道记录") + "）：不读 ~/.claude/CLAUDE.md，只读配置目录的 AGENTS.md；它读旧写法的配置文件而不改写，HarnessHub 按文件已有的写法读写。"
+          : "没有识别出安装的是 OpenCode 1 还是 2，按 OpenCode 2 处理：不读 ~/.claude/CLAUDE.md；配置文件按它已有的写法读写，没有写法时按 OpenCode 2。"],
     },
     {
       harnessId: "gemini", checkedOn: "0.62.0",

@@ -18,7 +18,7 @@ import { at, record, text } from "./formats.js";
 import { maskSecrets } from "./masking.js";
 import { readTarget, removeTarget, replaceTarget, type TargetRead } from "./files.js";
 import { CapabilityScan, type InstalledHarness } from "./scan.js";
-import { resolveHermesHome, resolveOpenClawWorkspace } from "./service.js";
+import { resolveHermesHome, resolveOpenClawWorkspace, resolveOpenCodeLine } from "./service.js";
 import { CapabilityStore, sha256, WRITTEN_DELETED, type LedgerEntry, type StoredBackup } from "./store.js";
 import type { GithubFetch } from "./github.js";
 import { SkillChanges, type PreparedPackage } from "./skill-changes.js";
@@ -149,11 +149,11 @@ export class CapabilityChanges {
       serial: (key, work) => this.serial(key, work), tables: () => this.tables(), hermesReadsShared: () => this.hermesReadsShared(),
       offer: (check, prepared) => { const fingerprint = randomBytes(32).toString("hex"), expires = this.now().getTime() + CAPABILITY_CHECK_MS, full: CapabilityChangeCheck = { ...check, fingerprint, expiresAt: new Date(expires).toISOString() };
         this.prepared.set(fingerprint, prepared(expires, full)); return full; } });
-    this.mcp = new McpInventory({ environment: options.environment, store: this.store, now: () => this.now(), shown: path => this.shown(path), owned: () => this.owned(), tables: () => this.tables(),
+    this.mcp = new McpInventory({ environment: options.environment, store: this.store, now: () => this.now(), shown: path => this.shown(path), owned: () => this.owned(), tables: installed => this.tables(installed),
       runningNotes: harnessId => this.runningNotes(harnessId, "mcp"),
       offerEdit: (change, harnessId, subject, enabled, file, read, plan, blocked, notes) => this.offerEdit(change, harnessId, subject, enabled, file, read, plan, blocked, notes, null) });
     this.instructions = new InstructionInventory({ environment: options.environment, store: this.store, homes: options.homes, now: () => this.now(), shown: path => this.shown(path), owned: () => this.owned(),
-      tables: () => this.tables(), runningNotes: harnessId => this.runningNotes(harnessId, "instructions"), ccSwitchRunning: () => this.ccSwitchRunning(),
+      tables: installed => this.tables(installed), runningNotes: harnessId => this.runningNotes(harnessId, "instructions"), ccSwitchRunning: () => this.ccSwitchRunning(),
       offerEdit: (change, harnessId, subject, enabled, file, read, plan, blocked, notes) => this.offerEdit(change, harnessId, subject, enabled, file, read, plan, blocked, notes, null) });
     this.subagents = new SubagentInventory({ environment: options.environment, store: this.store, homes: options.homes, now: () => this.now(), shown: path => this.shown(path), owned: () => this.owned(),
       tables: () => this.tables(), runningNotes: harnessId => this.runningNotes(harnessId, "subagents"),
@@ -185,9 +185,10 @@ export class CapabilityChanges {
     for (const [fingerprint, prepared] of this.prepared) if (prepared.expires < now) this.prepared.delete(fingerprint);
     for (const fingerprint of [...this.prepared.keys()].slice(0, Math.max(0, this.prepared.size - 255))) this.prepared.delete(fingerprint);
   }
-  private async tables(): Promise<{ hermesHome: string; tables: readonly HarnessReadTable[] }> {
+  /** The read tables for these installations; without them OpenCode's line is unknown (its table then reads as OpenCode 2, see OpenCodeDialectSpec). */
+  private async tables(installed: readonly InstalledHarness[] = []): Promise<{ hermesHome: string; tables: readonly HarnessReadTable[] }> {
     const environment = this.options.environment, hermesHome = await resolveHermesHome(environment);
-    return { hermesHome, tables: capabilityReadTables(environment, { hermesHome, openclawWorkspace: await resolveOpenClawWorkspace(environment) }) };
+    return { hermesHome, tables: capabilityReadTables(environment, { hermesHome, openclawWorkspace: await resolveOpenClawWorkspace(environment), opencode: await resolveOpenCodeLine(environment, installed) }) };
   }
   private installed(installed: readonly InstalledHarness[], harnessId: string): InstalledHarness {
     const harness = installed.find(item => item.harnessId === harnessId);
@@ -289,7 +290,7 @@ export class CapabilityChanges {
   }
   private async prepareSwitch(input: { readonly harnessId: string; readonly name: string; readonly enabled: boolean; readonly via: string | null; readonly orphan?: LedgerEntry }, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> {
     if (!NAME.test(input.name)) throw new CapabilityError("INVALID_INPUT", "invalid skill name");
-    const harness = this.installed(installed, input.harnessId), environment = this.options.environment, { hermesHome, tables } = await this.tables();
+    const harness = this.installed(installed, input.harnessId), environment = this.options.environment, { hermesHome, tables } = await this.tables(installed);
     const table = tables.find(item => item.harnessId === input.harnessId);
     if (!table || table.skills.switch === null) throw new CapabilityError("CAPABILITY_UNSUPPORTED", harness.name + " 没有按技能停用的开关，它的技能始终可见");
     // The skill must be one this Harness sees, and Codex's copy one of the places it reads it from; clearing an orphaned

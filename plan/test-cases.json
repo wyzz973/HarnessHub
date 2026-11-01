@@ -9917,6 +9917,22 @@
       "evidence": null
     },
     {
+      "id": "G064-R7",
+      "task": "G064",
+      "requirements": [
+        "R27"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "scenario": "OpenCode 的两种配置写法都读取，每个文件说明用的是哪种，安装的产品线决定指令回退与新条目的写法（ADR-053，2026-11-01）",
+      "expected": "读表 checkedOn 为 2.2.5；opencodeMcpServers 把 mcp.servers.<名>（V2）与 mcp.<名>（V1）分开读、不把 servers 容器或 timeout 默认值当服务器、名为 servers 的 V1 服务器仍是一个服务器；opencodeFileDialect 按 mcp/plugins/permissions 三族判出 v1、v2、mixed 或 null；opencodeWriteDialect 依次按文件该族已有的写法、安装的产品线、文件其他键、cli.json/tui.json 存在、默认 OpenCode 2 决定，混用时返回 mixed，basis 写明依据，不读版本号；resolveOpenCodeLine 按渠道记录判 @opencode/cli、Core 的 opencode、opencode-v2 为 v2，opencode-ai、anomalyco/tap 的 opencode 为 v1，脚本安装看 opencode2 垫片，没有记录或其他 tap 为 null；读表只在 v1 线给 ~/.claude/CLAUDE.md 的 compat 候选，v2 与未知都只读自己的 AGENTS.md 并在 notes 说明；同一家目录里 V1 文件（enabled: false、plugin 的 tuple）与 V2 文件（disabled: true、plugins 的 {package}、permissions 数组的 skill 规则、cli.json 的 plugins）都读到，MCP 的 enabled 事实分别正确，beta 的停用原因写明 permissions 的 skill 规则与 resource，~/.claude/CLAUDE.md 没有 opencode 的边，notes 写明本机装的是 OpenCode 2 与每个文件的写法",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/unit/capability-readers.test.ts"
+    },
+    {
       "id": "G054-CA9",
       "task": "G054",
       "requirements": [

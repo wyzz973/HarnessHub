@@ -23,7 +23,8 @@ export interface InstructionHost {
   now(): Date;
   shown(path: string): string;
   owned(): void;
-  tables(): Promise<{ readonly tables: readonly HarnessReadTable[] }>;
+  /** The read tables; with the installed Harnesses given, OpenCode's table knows which line is installed (its fallback to Claude Code's file is OpenCode 1's). */
+  tables(installed?: readonly InstalledHarness[]): Promise<{ readonly tables: readonly HarnessReadTable[] }>;
   /** Running sessions of the Harness, as notes. */
   runningNotes(harnessId: string): Promise<readonly string[]>;
   /** Whether cc-switch is running now; null when the running programs could not be read. */
@@ -188,13 +189,13 @@ export class InstructionInventory {
   /** OpenCode reading Claude Code's file in its fallback (installed, no file of its own, the fallback not turned off): what that means for a change of Claude's file. */
   private async opencodeFallsBackTo(file: string, installed: readonly InstalledHarness[]): Promise<boolean> {
     if (!installed.some(harness => harness.harnessId === "opencode")) return false;
-    const located = this.locate((await this.host.tables()).tables.find(table => table.harnessId === "opencode"));
+    const located = this.locate((await this.host.tables(installed)).tables.find(table => table.harnessId === "opencode"));
     return !("reason" in located) && located.fallback === file && !exists(located.file);
   }
 
   /** The texts and every installed Harness's state. */
   async view(installed: readonly InstalledHarness[]): Promise<InstructionsView> {
-    const { tables } = await this.host.tables(), texts = this.texts();
+    const { tables } = await this.host.tables(installed), texts = this.texts();
     return { shared: texts.shared, additions: [...texts.additions].map(([harnessId, item]) => ({ harnessId, ...item })),
       targets: installed.map(harness => this.target(harness, this.locate(tables.find(table => table.harnessId === harness.harnessId)))), limitBytes: INSTRUCTION_TEXT_BYTES };
   }
@@ -228,7 +229,7 @@ export class InstructionInventory {
   private async prepare(harnessId: string, installed: readonly InstalledHarness[]): Promise<{ readonly harness: InstalledHarness; readonly located: Located }> {
     const harness = installed.find(item => item.harnessId === harnessId);
     if (harness === undefined) throw new CapabilityError("CAPABILITY_NOT_FOUND", "这个 Harness 没有官网安装");
-    const { tables } = await this.host.tables();
+    const { tables } = await this.host.tables(installed);
     return { harness, located: this.locate(tables.find(table => table.harnessId === harnessId)) };
   }
 

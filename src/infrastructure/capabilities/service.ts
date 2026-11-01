@@ -1,12 +1,13 @@
 import { readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
-import { capabilityReadTables, harnessDirectories, type ReadEnvironment } from "../../adapters/capability-reads.js";
+import { capabilityReadTables, harnessDirectories, type OpenCodeDialectSpec, type ReadEnvironment } from "../../adapters/capability-reads.js";
+import { opencodeProductLine } from "../../adapters/catalog-channels.js";
 import { openClawRoster } from "../../adapters/control/openclaw.js";
 import type { CapabilitiesView } from "../../contracts/capabilities.js";
 import { parseConfig, text } from "./formats.js";
 import { CapabilityScan, type InstalledHarness } from "./scan.js";
 
-export type { InstalledHarness } from "./scan.js";
+export type { InstalledChannel, InstalledHarness } from "./scan.js";
 
 /**
  * The read-only capability view of ADR-045 step 1: what every installed Harness reads besides its model, from the user's
@@ -30,9 +31,28 @@ export class CapabilityService {
   }
   private async scan(installed: readonly InstalledHarness[], placed: ReadonlySet<string>, ours: ReadonlyMap<string, string>): Promise<CapabilitiesView> {
     const home = this.environment.home, homes = [home, await realpath(home).catch(() => home)];
-    const hermesHome = await resolveHermesHome(this.environment), openclawWorkspace = await resolveOpenClawWorkspace(this.environment);
-    return new CapabilityScan(this.environment, homes, hermesHome, placed, ours).view(capabilityReadTables(this.environment, { hermesHome, openclawWorkspace }), installed, this.now().toISOString());
+    const hermesHome = await resolveHermesHome(this.environment), openclawWorkspace = await resolveOpenClawWorkspace(this.environment), opencode = await resolveOpenCodeLine(this.environment, installed);
+    return new CapabilityScan(this.environment, homes, hermesHome, placed, ours).view(capabilityReadTables(this.environment, { hermesHome, openclawWorkspace, opencode }), installed, this.now().toISOString());
   }
+}
+
+/**
+ * Which OpenCode product line is installed, from the installed OpenCode's channel record (ADR-053, 2026-11-01): the
+ * package, formula or tap decides (`opencodeProductLine`); for a script installation the `opencode2` shim beside the
+ * program decides, since OpenCode 2's installer always writes it and OpenCode 1's never does (install_legacy_shim in
+ * https://opencode.ai/v2/install, read 2026-11-01). Null when no OpenCode installation or channel record is known or the
+ * record does not tell (a formula of another tap); never a version number. `basis` says what decided, for the view.
+ */
+export async function resolveOpenCodeLine(environment: ReadEnvironment, installed: readonly InstalledHarness[]): Promise<Pick<OpenCodeDialectSpec, "line" | "basis">> {
+  const channel = installed.find(item => item.harnessId === "opencode")?.channel;
+  if (channel === undefined) return { line: null, basis: null };
+  const line = opencodeProductLine(channel);
+  const named = channel.kind === "npm" || channel.kind === "pnpm" || channel.kind === "bun" ? channel.kind + " 包 " + channel.name : channel.kind === "brew-formula" ? "Homebrew formula " + (channel.tap === undefined ? channel.name + "（Homebrew 自己的 tap）" : channel.tap + "/" + channel.name) : channel.kind + " " + channel.name;
+  if (line !== null) return { line, basis: named };
+  if (channel.kind !== "script") return { line: null, basis: null };
+  const shim = join(environment.home, channel.name, "opencode2");
+  const present = await stat(shim).then(info => info.isFile(), () => false);
+  return present ? { line: "v2", basis: "官方脚本安装，旁边有 OpenCode 2 的安装脚本写的 opencode2 垫片" } : { line: "v1", basis: "官方脚本安装，没有 OpenCode 2 的安装脚本总会写的 opencode2 垫片" };
 }
 
 /**

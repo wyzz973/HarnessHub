@@ -14,7 +14,7 @@ import { conversationTitle, type EventPage, type HarnessReadinessView, type Harn
 import { inventory, officialInstallation } from "../infrastructure/catalog/inventory-composition.js";
 import type { InstallationPolicy } from "../contexts/catalog/domain/catalog.js";
 import { harnessEntry, productCommand } from "./harness-entry.js";
-import { installationObservations, installationViews, unofficialView } from "./harness-installations.js";
+import { installationObservations, installationRef, installationViews, unofficialView } from "./harness-installations.js";
 import { homePathsIn } from "./shown-paths.js";
 import { officialInstallMethod } from "../adapters/catalog-channels.js";
 import { harnessTier } from "../adapters/catalog.js";
@@ -31,7 +31,7 @@ import { conversationMarkdown } from "./conversation-export.js";
 import { runDiagnostics, scrubDiagnostics } from "./run-diagnostics.js";
 import { nativeResume } from "../infrastructure/management/verified-versions.js";
 import { LoginShellStore, readLoginShellPath, type LoginShellDirectories } from "../infrastructure/discovery/login-shell.js";
-import { CapabilityService } from "../infrastructure/capabilities/service.js";
+import { CapabilityService, type InstalledChannel, type InstalledHarness } from "../infrastructure/capabilities/service.js";
 import { CapabilityChanges, homeText } from "../infrastructure/capabilities/changes.js";
 import { CapabilityError, INSTRUCTION_CHECK_OPTIONS, type InstructionCheckOption, type McpDefinitionView } from "../contracts/capabilities.js";
 import type { GithubFetch } from "../infrastructure/capabilities/github.js";
@@ -407,9 +407,12 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
    * The installed Harnesses a capability read or change covers: each one's official installation the Gateway uses, as a
    * scan at this request finds them (these reads and checks are the user's own requests; ADR-050 leaves them as they were).
    */
-  const installedHarnesses = async () => (await rescan()).flatMap(harness => {
+  const installedHarnesses = async (): Promise<readonly InstalledHarness[]> => (await rescan()).flatMap(harness => {
     const products = harness.installations.filter(item => item.role === "product"), chosen = products.find(item => item.active) ?? products[0];
-    return chosen ? [{ harnessId: harness.id, name: harness.name, version: chosen.version }] : [];
+    if (!chosen) return [];
+    // The channel record tells OpenCode 1 from OpenCode 2 (package, formula, tap); the view itself carries no such record.
+    const channel = installationChannels.get(chosen.ref);
+    return [{ harnessId: harness.id, name: harness.name, version: chosen.version, ...(channel === undefined ? {} : { channel }) }];
   });
   /** Answers with a capability value only when it names no path by its absolute home form (ADR-044's privacy guard). */
   const privateJson = (response: ServerResponse, value: unknown) => {
@@ -424,6 +427,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   // never scans. A scan runs at startup, on the user's request, after the login shell's directories change, before a
   // management task is checked or accepted, after an update check, and once a task's end has been read.
   let harnesses: readonly HarnessView[] = [];
+  /** Each official installation's channel record by its reference, from the same scan as `harnesses` (ADR-044; no path). */
+  let installationChannels: ReadonlyMap<string, InstalledChannel> = new Map();
   let scannedAt = "";
   let scan: { readonly startedAt: string; readonly done: Promise<readonly HarnessView[]> } | null = null;
   /**
@@ -484,7 +489,11 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         unofficial: unofficialView(item.installation, observed.definitions.find(definition => definition.id === item.id)?.binaryNames[0]) };
       });
       // A scan that began earlier never replaces one that began later, whichever ends first.
-      if (scannedAt === "" || Date.parse(startedAt) >= Date.parse(scannedAt)) { harnesses = views; scannedAt = startedAt; }
+      if (scannedAt === "" || Date.parse(startedAt) >= Date.parse(scannedAt)) {
+        harnesses = views; scannedAt = startedAt;
+        installationChannels = new Map(observed.report.harnesses.flatMap(item => item.installation.candidates.flatMap(candidate => candidate.channel === null ? []
+          : [[installationRef(candidate), { kind: candidate.channel.kind, name: candidate.channel.name, ...(candidate.channel.tap === undefined ? {} : { tap: candidate.channel.tap }) }] as const])));
+      }
       return views;
     });
     const running = { startedAt, done: pending };

@@ -3,25 +3,28 @@ import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { capabilityReadTables } from "../../src/adapters/capability-reads.js";
+import { capabilityReadTables, opencodeFileDialect, opencodeMcpServers, opencodeWriteDialect } from "../../src/adapters/capability-reads.js";
 import type { CapabilitiesView, CapabilityEntry } from "../../src/contracts/capabilities.js";
 import { frontmatter, parseConfig } from "../../src/infrastructure/capabilities/formats.js";
 import { CapabilityScan } from "../../src/infrastructure/capabilities/scan.js";
-import { resolveHermesHome, resolveOpenClawWorkspace } from "../../src/infrastructure/capabilities/service.js";
+import { resolveHermesHome, resolveOpenClawWorkspace, resolveOpenCodeLine, type InstalledHarness } from "../../src/infrastructure/capabilities/service.js";
 import { homePathsIn } from "../../src/web/shown-paths.js";
 import { capabilityHome, SECRETS, SYNCED_BUCKET } from "../fixtures/capability-home.js";
 
-const INSTALLED = [["claude", "Claude Code", "2.1.300"], ["codex", "Codex", "0.162.1"], ["cursor", "Cursor", "2026.10.01-e373342"], ["opencode", "OpenCode", "1.18.35"], ["gemini", "Gemini CLI", "0.72.0"],
-  ["openclaw", "OpenClaw", "2026.3.23-2"], ["pi", "Pi", "0.85.1"], ["hermes", "Hermes Agent", null], ["dsh", "DeepSeek Harness", "0.2.0-rc.2"]].map(([harnessId, name, version]) => ({ harnessId: harnessId!, name: name!, version: version ?? null }));
+// The fixture home's OpenCode files are OpenCode 1's (npm opencode-ai); its line is a fact of the channel record, never of the version.
+const INSTALLED: readonly InstalledHarness[] = [["claude", "Claude Code", "2.1.300"], ["codex", "Codex", "0.162.1"], ["cursor", "Cursor", "2026.10.01-e373342"], ["opencode", "OpenCode", "1.18.35"], ["gemini", "Gemini CLI", "0.72.0"],
+  ["openclaw", "OpenClaw", "2026.3.23-2"], ["pi", "Pi", "0.85.1"], ["hermes", "Hermes Agent", null], ["dsh", "DeepSeek Harness", "0.2.0-rc.2"]]
+  .map(([harnessId, name, version]) => ({ harnessId: harnessId!, name: name!, version: version ?? null, ...(harnessId === "opencode" ? { channel: { kind: "npm" as const, name: "opencode-ai" } } : {}) }));
 
 /** The view of the fixture home, read the way the Gateway reads it; the home's real path and its link form are both home. */
-async function scanned(t: test.TestContext, values: Readonly<Record<string, string>> = {}): Promise<{ view: CapabilitiesView; home: string; outside: string }> {
+async function scanned(t: test.TestContext, values: Readonly<Record<string, string>> = {}, installed: readonly InstalledHarness[] = INSTALLED, prepare: (home: string) => Promise<void> = async () => {}): Promise<{ view: CapabilitiesView; home: string; outside: string }> {
   const root = await realpath(await mkdtemp(join(tmpdir(), "capability-readers-")));
   t.after(() => rm(root, { recursive: true, force: true }));
   const home = join(root, "home"), outside = join(root, "elsewhere");
-  await mkdir(home); await capabilityHome(home, outside);
+  await mkdir(home); await capabilityHome(home, outside); await prepare(home);
   const environment = { home, values: { HOME: home, ...values } }, hermesHome = await resolveHermesHome(environment), openclawWorkspace = await resolveOpenClawWorkspace(environment);
-  const view = await new CapabilityScan(environment, [home], hermesHome).view(capabilityReadTables(environment, { hermesHome, openclawWorkspace }), INSTALLED, "2026-10-18T00:00:00.000Z");
+  const opencode = await resolveOpenCodeLine(environment, installed);
+  const view = await new CapabilityScan(environment, [home], hermesHome).view(capabilityReadTables(environment, { hermesHome, openclawWorkspace, opencode }), installed, "2026-10-18T00:00:00.000Z");
   return { view, home, outside };
 }
 const entry = (view: CapabilitiesView, kind: CapabilityEntry["kind"], name: string): CapabilityEntry => {
@@ -102,7 +105,7 @@ test("G064-R2 a version other than the one a read table was checked on reads by 
   const environment = { home, values: { HOME: home } }, hermesHome = await resolveHermesHome(environment), openclawWorkspace = await resolveOpenClawWorkspace(environment);
   const tables = capabilityReadTables(environment, { hermesHome, openclawWorkspace }), at = "2026-10-22T00:00:00.000Z";
   // The version each table was checked on is evidence on the table, and the scan never reads it.
-  assert.deepEqual(tables.filter(table => table.harnessId === "gemini" || table.harnessId === "dsh").map(table => [table.harnessId, table.checkedOn]), [["gemini", "0.62.0"], ["dsh", "0.2.0-rc.2"]]);
+  assert.deepEqual(tables.filter(table => ["gemini", "dsh", "opencode"].includes(table.harnessId)).map(table => [table.harnessId, table.checkedOn]), [["opencode", "2.2.5"], ["gemini", "0.62.0"], ["dsh", "0.2.0-rc.2"]]);
   const scanned = (versions: Readonly<Record<string, string>>) => new CapabilityScan(environment, [home], hermesHome)
     .view(tables, INSTALLED.map(item => Object.hasOwn(versions, item.harnessId) ? { ...item, version: versions[item.harnessId]! } : item), at);
   const checked = await scanned({ gemini: "0.62.0", dsh: "0.2.0-rc.2" }), other = await scanned({ gemini: "0.72.0", dsh: "0.3.0" });
@@ -180,6 +183,73 @@ test("G064-R4 instructions, subagents, commands, hooks and plugins are read with
   assert.deepEqual(plugins.sort(), [["ext-a", "openclaw", "disabled", "1.0.0"], ["ext-one", "gemini", "active", "0.3.0"], ["off@market", "claude", "disabled", "0.1.0"], ["opencode-foo@1.0.0", "opencode", "active", null],
     ["plug-one", "hermes", "active", "0.1.0"], ["sample@openai", "codex", "disabled", null], ["tool@market", "claude", "active", "1.2.0"]]);
   assert.ok(reads.claude?.notes.some(note => note.includes("1 个插件只装在项目里")));
+});
+
+test("G064-R7 OpenCode's two configuration dialects are both read, each file says which it uses, and the installed line decides the instructions fallback and a new entry's dialect (ADR-053, 2026-11-01)", async t => {
+  // Pure helpers first: a V1 file, a V2 file, a V1 server that happens to be named "servers", V2's timeout defaults, and a mixed file.
+  const v1 = { mcp: { one: { type: "local", command: ["x"] } }, plugin: ["p"], permission: { skill: { "*": "allow" } } };
+  const v2 = { mcp: { servers: { one: { type: "remote", url: "https://mcp.example.com/mcp", disabled: true } }, timeout: { catalog: 30000 } }, plugins: ["p"], permissions: [{ action: "skill", resource: "*", effect: "allow" }] };
+  assert.deepEqual(opencodeMcpServers(v1), { dialect: "v1", servers: { one: { type: "local", command: ["x"] } } });
+  assert.deepEqual(opencodeMcpServers(v2), { dialect: "v2", servers: { one: { type: "remote", url: "https://mcp.example.com/mcp", disabled: true } } }, "V2's timeout defaults under mcp are not servers");
+  assert.deepEqual(opencodeMcpServers({ mcp: { servers: { type: "local", command: ["srv"] } } }), { dialect: "v1", servers: { servers: { type: "local", command: ["srv"] } } }, "a V1 server named servers is one server");
+  assert.deepEqual([opencodeMcpServers({}), opencodeMcpServers({ mcp: [] }), opencodeMcpServers({ mcp: { timeout: { catalog: 1 } } })], [null, null, { dialect: "v1", servers: {} }]);
+  assert.deepEqual([opencodeFileDialect(v1), opencodeFileDialect(v2), opencodeFileDialect({}), opencodeFileDialect({ model: "m" })], ["v1", "v2", null, null]);
+  assert.deepEqual([opencodeFileDialect(v1, "mcp"), opencodeFileDialect(v2, "plugins"), opencodeFileDialect(v2, "permissions"), opencodeFileDialect({ plugins: [] }, "permissions")], ["v1", "v2", "v2", null]);
+  assert.deepEqual([opencodeFileDialect({ ...v1, plugins: [] }), opencodeFileDialect({ permission: {}, permissions: [] }, "permissions"), opencodeFileDialect({ plugin: [], permissions: [] })], ["mixed", "mixed", "mixed"]);
+  // A writer's dialect: the file's own key of the family, else the installed line, else the file's other keys, else cli.json or tui.json, else OpenCode 2. Never a version.
+  const none = { cli: false, tui: false }, decided = (value: unknown, line: "v1" | "v2" | null, hints = none) => opencodeWriteDialect(value, "mcp", { line, basis: line === null ? null : "按渠道" }, hints).dialect;
+  assert.deepEqual([decided(v1, "v2"), decided(v2, "v1"), decided({}, "v2"), decided({}, "v1"), decided({ plugins: [] }, null), decided({ permission: {} }, null)], ["v1", "v2", "v2", "v1", "v2", "v1"]);
+  assert.deepEqual([decided({}, null, { cli: true, tui: true }), decided({}, null, { cli: false, tui: true }), decided({}, null), decided({ plugin: [], permissions: [] }, "v1"), decided({ plugin: [], permissions: [] }, null), decided({ mcp: { servers: {}, one: { type: "local", command: ["x"] } } }, "v1")],
+    ["v2", "v1", "v2", "v1", "mixed", "v2"], "the installed line outranks the file's other keys; without a line, mixed other keys refuse");
+  assert.match(opencodeWriteDialect({}, "permissions", { line: "v1", basis: "npm 包 opencode-ai" }, none).basis, /按安装的产品线写 OpenCode 1 的写法（permission）：npm 包 opencode-ai/u);
+  assert.match(opencodeWriteDialect({}, "mcp", { line: null, basis: null }, none).basis, /没有线索，按 OpenCode 2 的写法（mcp\.servers\.<名>）/u);
+  // The installed line comes from the channel record; a script installation from the shim OpenCode 2's installer writes.
+  const root = await realpath(await mkdtemp(join(tmpdir(), "capability-opencode-line-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const environment = { home: root, values: { HOME: root } }, line = (channel?: InstalledHarness["channel"]) => resolveOpenCodeLine(environment, [{ harnessId: "opencode", name: "OpenCode", version: null, ...(channel ? { channel } : {}) }]);
+  assert.deepEqual(await line({ kind: "npm", name: "@opencode/cli" }), { line: "v2", basis: "npm 包 @opencode/cli" });
+  assert.deepEqual(await line({ kind: "brew-formula", name: "opencode", tap: "anomalyco/tap" }), { line: "v1", basis: "Homebrew formula anomalyco/tap/opencode" });
+  assert.deepEqual(await line({ kind: "brew-formula", name: "opencode" }), { line: "v2", basis: "Homebrew formula opencode（Homebrew 自己的 tap）" });
+  assert.deepEqual([await line(), await line({ kind: "brew-formula", name: "opencode", tap: "someone/tap" }), await resolveOpenCodeLine(environment, [])], [{ line: null, basis: null }, { line: null, basis: null }, { line: null, basis: null }]);
+  assert.equal((await line({ kind: "script", name: ".opencode/bin" })).line, "v1", "no shim: OpenCode 1's installer");
+  await mkdir(join(root, ".opencode", "bin"), { recursive: true }); await writeFile(join(root, ".opencode", "bin", "opencode2"), "#!/bin/sh\nexec \"$(dirname \"$0\")/opencode\" \"$@\"\n");
+  assert.equal((await line({ kind: "script", name: ".opencode/bin" })).line, "v2", "the shim: OpenCode 2's installer");
+  // The table: OpenCode 1 falls back to Claude Code's file; OpenCode 2 and an unknown line read only OpenCode's own file.
+  const tables = (opencode: { line: "v1" | "v2" | null; basis: string | null } | undefined) => capabilityReadTables(environment, { hermesHome: join(root, ".hermes"), openclawWorkspace: join(root, "ws"), ...(opencode ? { opencode } : {}) }).find(table => table.harnessId === "opencode")!;
+  const candidates = (table: ReturnType<typeof tables>) => table.instructions.kind === "files" ? table.instructions.candidates.map(candidate => [candidate.role, candidate.path.endsWith("/.claude/CLAUDE.md")]) : null;
+  assert.deepEqual(candidates(tables({ line: "v1", basis: "x" })), [["own", false], ["compat", true]]);
+  assert.deepEqual([candidates(tables({ line: "v2", basis: "x" })), candidates(tables({ line: null, basis: null })), candidates(tables(undefined))], [[["own", false]], [["own", false]], [["own", false]]]);
+  assert.ok(tables({ line: "v2", basis: "npm 包 @opencode/cli" }).notes.some(note => note.includes("本机装的是 OpenCode 2（npm 包 @opencode/cli）") && note.includes("不读 ~/.claude/CLAUDE.md")));
+  assert.ok(tables(undefined).notes.some(note => note.startsWith("没有识别出安装的是 OpenCode 1 还是 2，按 OpenCode 2 处理")));
+  // A home with a V2 file beside a V1 file, read by an OpenCode 2 installation (Homebrew's own formula): both dialects are read, each file says its own.
+  const installed = INSTALLED.map(item => item.harnessId === "opencode" ? { ...item, version: "2.2.5", channel: { kind: "brew-formula" as const, name: "opencode" } } : item);
+  const { view } = await scanned(t, {}, installed, async home => {
+    const opencode = join(home, ".config", "opencode");
+    await writeFile(join(opencode, "config.json"), "{\n  \"mcp\": { \"local-one\": { \"type\": \"local\", \"command\": [\"bunx\", \"some-mcp\"], \"enabled\": false } },\n  \"plugin\": [[\"tuple-plugin@2.0.0\", { \"level\": 1 }]]\n}\n");
+    await writeFile(join(opencode, "opencode.jsonc"), "{\n  // OpenCode 2's dialect\n  \"mcp\": { \"servers\": { \"two\": { \"type\": \"remote\", \"url\": \"https://two.example.com/mcp\", \"headers\": { \"Authorization\": \"Bearer {env:TWO_TOKEN}\" }, \"disabled\": true },\n"
+      + "    \"local-two\": { \"type\": \"local\", \"command\": [\"npx\", \"-y\", \"two-mcp\"], \"environment\": { \"TOKEN\": \"{env:OC_TOKEN}\" } } }, \"timeout\": { \"catalog\": 30000 } },\n"
+      + "  \"plugins\": [\"opencode-foo@1.0.0\", { \"package\": \"@acme/opencode-plugin\", \"options\": { \"strict\": true } }],\n"
+      + "  \"permissions\": [{ \"action\": \"skill\", \"resource\": \"*\", \"effect\": \"allow\" }, { \"action\": \"skill\", \"resource\": \"be*\", \"effect\": \"deny\" }, { \"action\": \"shell\", \"resource\": \"*\", \"effect\": \"ask\" }],\n}\n");
+    await writeFile(join(opencode, "cli.json"), JSON.stringify({ plugins: ["cli-thing"] }));
+  });
+  const facts = (name: string) => entry(view, "mcp", name).edges.find(edge => edge.harnessId === "opencode")?.facts;
+  assert.deepEqual(facts("two"), { kind: "mcp", transport: "http", program: null, host: "two.example.com", variables: [], headers: ["Authorization"], references: 1, literal: 0, enabled: false }, "V2's disabled: true");
+  const localTwo = facts("local-two");
+  assert.deepEqual(localTwo?.kind === "mcp" ? [localTwo.transport, localTwo.program] : null, ["stdio", "npx two-mcp"]);
+  const localOne = facts("local-one");
+  assert.equal(localOne?.kind === "mcp" ? localOne.enabled : null, false, "V1's enabled: false in the other file");
+  assert.equal(view.entries.some(item => item.kind === "mcp" && (item.name === "servers" || item.name === "timeout")), false, "neither the container nor the timeout defaults are servers");
+  const plugins = view.entries.filter(item => item.kind === "plugin" && item.edges.some(edge => edge.harnessId === "opencode")).map(item => [item.name, item.edges[0]?.reason === null]).sort();
+  assert.deepEqual(plugins, [["@acme/opencode-plugin", true], ["cli-thing", false], ["opencode-foo@1.0.0", true], ["tuple-plugin@2.0.0", true]], "both list spellings, object entries, and cli.json's terminal plugins");
+  const beta = entry(view, "skill", "beta").edges.filter(edge => edge.harnessId === "opencode" && edge.status === "disabled");
+  assert.ok(beta.length > 0 && beta.every(edge => edge.reason?.includes("permissions 里 action 为 skill 的规则拒绝它（resource be*）")), JSON.stringify(beta));
+  // OpenCode 2 does not read Claude Code's file: no edge for it, and the notes say which line is installed and which dialect each file uses.
+  assert.deepEqual(entry(view, "instructions", "~/.claude/CLAUDE.md").edges.map(edge => edge.harnessId), ["claude"]);
+  const notes = view.harnesses.find(item => item.harnessId === "opencode")!.notes;
+  assert.ok(notes.some(note => note.includes("本机装的是 OpenCode 2（Homebrew formula opencode（Homebrew 自己的 tap））")), notes.join(" | "));
+  assert.ok(notes.some(note => note === "~/.config/opencode/config.json 用的是 OpenCode 1 的写法（mcp.<名>、plugin、permission）；OpenCode 2 也能读它。"), notes.join(" | "));
+  assert.ok(notes.some(note => note === "~/.config/opencode/opencode.jsonc 用的是 OpenCode 2 的写法（mcp.servers、plugins、permissions）。"), notes.join(" | "));
+  assert.equal(view.harnesses.find(item => item.harnessId === "opencode")?.version, "2.2.5");
 });
 
 test("G064-R2 Hermes is read from its active profile, and OpenClaw's workspace from its own configuration", async t => {

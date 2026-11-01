@@ -18,7 +18,8 @@ export interface McpHost {
   now(): Date;
   shown(path: string): string;
   owned(): void;
-  tables(): Promise<{ readonly tables: readonly HarnessReadTable[] }>;
+  /** The read tables; with the installed Harnesses given, OpenCode's table knows which line is installed (the dialect its writer uses for a new entry). */
+  tables(installed?: readonly InstalledHarness[]): Promise<{ readonly tables: readonly HarnessReadTable[] }>;
   /** Running sessions that may overwrite the file (Gemini CLI), as notes. */
   runningNotes(harnessId: string): Promise<readonly string[]>;
   /** Offers an edit through the usual check and confirmation (backup, atomic write, read back, ledger). */
@@ -111,7 +112,7 @@ export class McpInventory {
 
   /** The list with every server's state per installed Harness, and the servers the Harnesses have that could be listed. */
   async inventory(installed: readonly InstalledHarness[]): Promise<McpInventoryView> {
-    const { tables } = await this.host.tables(), located = new Map<string, Awaited<ReturnType<McpInventory["targetFile"]>>>();
+    const { tables } = await this.host.tables(installed), located = new Map<string, Awaited<ReturnType<McpInventory["targetFile"]>>>();
     for (const harness of installed) located.set(harness.harnessId, await this.targetFile(tables.find(table => table.harnessId === harness.harnessId), harness.harnessId));
     const list = this.list(), values = this.host.environment.values;
     const servers: McpServerView[] = list.map(item => ({ name: item.name, definition: this.view(item.definition), command: commandLine(item.definition) === null ? null : this.shownText(commandLine(item.definition)!),
@@ -184,7 +185,7 @@ export class McpInventory {
    * identical, records that entry as HarnessHub's; no Harness file changes. Returns the claims made as change records.
    */
   async importCandidate(id: string, claim: readonly string[], installed: readonly InstalledHarness[]): Promise<readonly CapabilityChangeView[]> {
-    const { tables } = await this.host.tables(), raw = new Map<string, McpDefinition>();
+    const { tables } = await this.host.tables(installed), raw = new Map<string, McpDefinition>();
     const candidate = (await this.candidates(installed, tables, this.list(), raw)).find(item => item.id === id);
     if (candidate === undefined) throw new CapabilityError("CAPABILITY_NOT_FOUND", "没有这个可导入的服务器（配置可能刚改过），请重新读取");
     if (candidate.definition === null) throw new CapabilityError("CAPABILITY_TARGET_REFUSED", candidate.name + " 不能收进清单：" + candidate.problem);
@@ -197,7 +198,7 @@ export class McpInventory {
   async claim(name: string, harnessIds: readonly string[], installed: readonly InstalledHarness[]): Promise<readonly CapabilityChangeView[]> {
     const item = this.list().find(entry => entry.name === name);
     if (item === undefined) throw new CapabilityError("CAPABILITY_NOT_FOUND", "清单里没有 " + name);
-    const { tables } = await this.host.tables(), made: CapabilityChangeView[] = [];
+    const { tables } = await this.host.tables(installed), made: CapabilityChangeView[] = [];
     for (const harnessId of harnessIds) {
       const located = await this.targetFile(tables.find(table => table.harnessId === harnessId), harnessId);
       if (!installed.some(harness => harness.harnessId === harnessId) || "reason" in located) throw new CapabilityError("CAPABILITY_UNSUPPORTED", harnessId + "：" + ("reason" in located ? located.reason : "没有安装"));
@@ -256,7 +257,7 @@ export class McpInventory {
     const item = this.list().find(entry => entry.name === name);
     if (item === undefined) throw new CapabilityError("CAPABILITY_NOT_FOUND", "清单里没有 " + name);
     if (!installed.some(harness => harness.harnessId === harnessId)) throw new CapabilityError("CAPABILITY_NOT_FOUND", "这个 Harness 没有官网安装");
-    const { tables } = await this.host.tables(), located = await this.targetFile(tables.find(table => table.harnessId === harnessId), harnessId);
+    const { tables } = await this.host.tables(installed), located = await this.targetFile(tables.find(table => table.harnessId === harnessId), harnessId);
     if ("reason" in located) throw new CapabilityError("CAPABILITY_UNSUPPORTED", located.reason);
     const read = readTarget(located.file);
     let value: unknown = {};
