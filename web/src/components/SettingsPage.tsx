@@ -54,7 +54,7 @@ export function SettingsPage({ api, preferences, onPreference, onRescan, scannin
 }) {
   const notify = useNotificationChoice();
   return <PageShell title="设置" titleId="settings-title" onMenu={onMenu} sidebarHidden={sidebarHidden} onExpandSidebar={onExpandSidebar} onBack={onChat}
-    description="外观、通知和快捷键只影响这个浏览器；发现的目录由本机服务保存。">
+    description="外观和通知只影响这个浏览器；发现用的目录由本机服务保存。">
     <Section title="外观">
       <Card className={ROWS}>
         <Row title="主题" control={<Segmented size="md" label="主题" value={preferences.theme} onChange={value => onPreference("theme", value)}
@@ -71,7 +71,7 @@ export function SettingsPage({ api, preferences, onPreference, onRescan, scannin
     <Section title="通知">
       <Card className={ROWS}>
         <Row title="系统通知" control={<Switch checked={notify.on} onChange={() => void notify.toggle()} disabled={!notify.supported || notify.blocked} label="系统通知"/>}>
-          页面在后台时：需要你时通知并响一声，做完或失败只通知、不响；在前台时只更新侧栏和标签页标题。通知只写 Agent 的名称和状态，不含对话内容。
+          页面在后台时：有审批或提问等你时通知并响一声；正在看的对话做完或失败时只通知、不响。在前台时只更新侧栏和标签页标题。通知只写 Agent 的名称、状态、步数和用时，不含对话内容。
           {!notify.supported ? <span className="mt-1 block text-fg-3">这个浏览器不支持通知。</span> : notify.blocked ? <span className="mt-1 block text-fg-3">浏览器已阻止本页的通知，可在浏览器的网站设置中允许。</span> : null}</Row>
       </Card>
     </Section>
@@ -92,7 +92,7 @@ export function SettingsPage({ api, preferences, onPreference, onRescan, scannin
       <Card className={ROWS}>
         <div className="flex flex-col gap-2 px-4 py-3.5 text-ui-sm text-fg-2">
           <p className="m-0">对话、执行记录和附件保存在本机网关的数据目录里。各 Agent 自己的会话、配置和登录状态留在它们原来的位置，HarnessHub 不复制、不修改。</p>
-          <p className="m-0">这个浏览器只保存未发送的草稿（关闭标签页后清除）和显示偏好，不保存密钥。</p>
+          <p className="m-0">这个浏览器只保存未发送的草稿（关闭标签页后清除）、显示偏好、通知开关，以及每个 Agent 上次用的入口、模型和思考档位，不保存密钥。</p>
         </div>
         <Row title="显示偏好" control={<button type="button" className="btn btn-sm" onClick={() => (Object.keys(DEFAULT_PREFERENCES) as (keyof Preferences)[]).forEach(key => onPreference(key, DEFAULT_PREFERENCES[key] as never))}>恢复默认</button>}>
           主题、过程显示、侧栏、详情面板和冻结 Harness 的显示回到默认。</Row>

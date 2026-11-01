@@ -1461,7 +1461,9 @@ test("G054-DL2 the sidebar groups conversations by project with a state dot each
     Object.defineProperty(window, "Notification", { configurable: true, value: Recorded });
   });
   const page = await context.newPage(), errors: string[] = [];
-  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  let refusedStreams = 0;
+  page.on("pageerror", error => errors.push(error.message));
+  page.on("console", entry => { if (entry.type() !== "error") return; if (entry.location().url.endsWith("/api/v1/attention/stream") && entry.text().includes("503")) refusedStreams++; else errors.push(entry.text()); });
   const hide = (hidden: boolean) => page.evaluate(value => (window as unknown as { __hide: (hidden: boolean) => void }).__hide(value), hidden);
   const notices = () => page.evaluate(() => (window as unknown as { __notices: { title: string; body: string; silent: boolean }[] }).__notices);
   // The Gateway reports an update for Codex once the test says so (G054-UP1's way of changing the state it returns).
@@ -1470,9 +1472,18 @@ test("G054-DL2 the sidebar groups conversations by project with a state dot each
     const response = await route.fetch(), body = await response.json() as { harnesses: { id: string; management: Record<string, unknown> }[] };
     await route.fulfill({ response, json: { ...body, harnesses: body.harnesses.map(harness => update && harness.id === "codex" ? { ...harness, management: { ...harness.management, latestVersion: "9.9.9", updateStatus: "available" } } : harness) } });
   });
+  // The page starts while its connection for waiting requests is refused, as when the local service restarts.
+  await page.route("**/api/v1/attention/stream", route => route.fulfill({ status: 503, json: { code: "STREAM_CLOSED", message: "refused by the test" } }));
   await page.goto(fixture.gateway.url);
   const navigation = page.getByRole("complementary", { name: "主导航" }), row = (title: string) => navigation.getByRole("button", { name: title, exact: true });
   await expect(row("新对话")).toBeVisible();
+  // While it is down the settings row says so, and the page keeps trying; once it is back the row says connected again.
+  await expect(navigation.locator(".service-status")).toHaveAttribute("title", "与本机服务的连接中断 · " + address.hostname + ":" + address.port);
+  await expect(navigation.getByRole("status")).toHaveText("与本机服务的连接中断");
+  await page.unroute("**/api/v1/attention/stream");
+  await expect(navigation.locator(".service-status")).toHaveAttribute("title", "本机服务已连接 · " + address.hostname + ":" + address.port, { timeout: 15000 });
+  await expect(navigation.getByRole("status")).toHaveText("");
+  assert.ok(refusedStreams >= 1, "the refused connection was tried");
   // From the top as on the board: the mark, a new conversation, search, the inbox, Agent, capabilities; the projects; the settings.
   const order = ["HarnessHub 首页", "新对话", "搜索与命令", "等你处理", "Agent", "能力", "设置"];
   const tops = await Promise.all(order.map(async name => (await row(name).boundingBox())?.y ?? -1));
@@ -1493,13 +1504,14 @@ test("G054-DL2 the sidebar groups conversations by project with a state dot each
       for (const item of [node, ...node.querySelectorAll(".motion-list-insert")]) if (item.classList.contains("motion-list-insert")) item.setAttribute("data-arrived-opening", ""); }).observe(document.body, { childList: true, subtree: true });
   });
   // A Turn that failed marks its conversation red, and the mark stays once another conversation is open. It ended while
-  // the page was out of sight and notifications were never chosen: nothing is shown, and coming back offers them once.
+  // the page was out of sight and notifications were never chosen: nothing is shown, and coming back offers them once,
+  // saying how that Turn ended.
   await pick("Codex"); await hide(true); await send("FAIL_ONCE 第一段");
   await expect(row("FAIL_ONCE 第一段").locator(".status-dot")).toHaveAttribute("data-tone", "fail", { timeout: 15000 });
   await expect(navigation.locator("[data-arrived-opening]").filter({ has: page.getByRole("button", { name: "FAIL_ONCE 第一段", exact: true }) })).toHaveCount(1);
   assert.deepEqual(await notices(), []);
   await hide(false);
-  const offer = page.getByRole("dialog", { name: "回复在后台做完了" });
+  const offer = page.getByRole("dialog", { name: "这一轮在后台失败了" });
   await expect(offer).toContainText("要在做完或需要你时用系统通知告诉你吗？");
   await offer.getByRole("button", { name: "开启通知", exact: true }).click(); await expect(offer).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => Notification.permission)).toBe("granted");
@@ -1527,6 +1539,9 @@ test("G054-DL2 the sidebar groups conversations by project with a state dot each
   await expect(project("workspace").locator(".session-item").first()).toHaveAccessibleName("approve this");
   await expect(project("workspace").locator(".session-item").nth(1)).toHaveAccessibleName("FAIL_ONCE 第一段");
   await expect(project("second-project").locator(".session-item")).toHaveCount(1);
+  // Spaced as every row of the sidebar is, the projects start 2 px under their heading (Sidebar board).
+  const heading = await navigation.getByRole("heading", { name: "项目", exact: true }).boundingBox(), firstProject = await projects.first().getByRole("button").first().boundingBox();
+  assert.equal(Math.round(firstProject!.y - heading!.y - heading!.height), 2);
   await row("second-project").hover(); await expect(page.locator(".tooltip-pop")).toHaveText(other); await page.mouse.move(900, 600);
   // A project closes and opens; closed, it still shows its most pressing state and how many conversations it holds.
   await expect(row("workspace")).toHaveAttribute("aria-expanded", "true");
@@ -1547,6 +1562,22 @@ test("G054-DL2 the sidebar groups conversations by project with a state dot each
   await expect(inbox.getByRole("button", { name: "Allow always" })).toHaveCount(0); await expect(inbox.getByRole("button", { name: "Deny" })).toHaveCount(0);
   await expect(inbox).toHaveCSS("opacity", "1"); await page.screenshot({ path: join(artifact, "dl2-inbox-light-1440.png"), animations: "disabled" });
   await page.emulateMedia({ colorScheme: "dark" }); await page.screenshot({ path: join(artifact, "dl2-inbox-dark-1440.png"), animations: "disabled" }); await page.emulateMedia({ colorScheme: "light" });
+  // On a phone it is a sheet with its own way out; the conversation and the deadline take a line each there, so neither
+  // is squeezed away. A window that becomes narrow closes the popover rather than turning it into the sheet.
+  await page.setViewportSize({ width: 320, height: 844 }); await expect(inbox).toHaveCount(0);
+  await page.getByRole("button", { name: "打开导航", exact: true }).click();
+  await page.getByRole("dialog", { name: "主导航" }).getByRole("button", { name: "等你处理（1 项）", exact: true }).click();
+  const phoneInbox = page.getByRole("dialog", { name: "等你处理" });
+  await expect(phoneInbox.getByRole("button", { name: "Allow once", exact: true })).toBeVisible();
+  assert.ok(((await phoneInbox.getByText("approve this", { exact: true }).boundingBox())?.width ?? 0) >= 60, "the conversation keeps its name in the narrow sheet");
+  await expect(phoneInbox).toContainText(/approve this·等待审批 · 等待期限 剩余 \d+ 分/u);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "the inbox sheet fits 320");
+  await expect(phoneInbox).toHaveCSS("opacity", "1"); await page.screenshot({ path: join(artifact, "dl2-inbox-sheet-items-light-320.png"), animations: "disabled" });
+  await page.emulateMedia({ colorScheme: "dark" }); await page.screenshot({ path: join(artifact, "dl2-inbox-sheet-items-dark-320.png"), animations: "disabled" }); await page.emulateMedia({ colorScheme: "light" });
+  await phoneInbox.getByRole("button", { name: "关闭等你处理", exact: true }).click();
+  await expect(phoneInbox).toHaveCount(0); await expect(page.getByRole("button", { name: "打开导航", exact: true })).toBeFocused();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await row("等你处理（1 项）").click(); await expect(inbox.getByRole("button", { name: /approve this/u })).toBeFocused();
   await inbox.getByRole("button", { name: "Allow once", exact: true }).click();
   await expect(navigation.locator(".attention-count")).toHaveCount(0, { timeout: 15000 });
   await expect(inbox).toContainText("没有等你处理的审批或提问。"); await page.keyboard.press("Escape");
@@ -1582,6 +1613,11 @@ test("G054-DL2 the sidebar groups conversations by project with a state dot each
     await page.emulateMedia({ colorScheme: "dark" }); await page.screenshot({ path: join(artifact, `dl2-drawer-dark-${width}.png`), animations: "disabled" }); await page.emulateMedia({ colorScheme: "light" });
     await page.keyboard.press("Escape"); await expect(drawer).toHaveCount(0); await expect(menu).toBeFocused();
   }
+  // A drawer left open while the window was wide in between does not open again by itself.
+  await page.getByRole("button", { name: "打开导航", exact: true }).click(); await expect(page.getByRole("dialog", { name: "主导航" })).toBeVisible();
+  await page.setViewportSize({ width: 1440, height: 900 }); await expect(page.getByRole("dialog", { name: "主导航" })).toHaveCount(0); await expect(navigation).toBeVisible();
+  await page.setViewportSize({ width: 320, height: 844 }); await expect(page.getByRole("button", { name: "打开导航", exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "主导航" })).toHaveCount(0);
   // There, the inbox entry closes the drawer and opens the inbox as a sheet of its own, which takes the keyboard.
   await page.getByRole("button", { name: "打开导航", exact: true }).click();
   await page.getByRole("dialog", { name: "主导航" }).getByRole("button", { name: "等你处理", exact: true }).click();
@@ -1612,13 +1648,14 @@ test("G054-DL9 the application's shortcuts open what they name, ⌥⌘↓ goes t
   assert.deepEqual(prevented, [false, false, false, false, false, false]);
   await page.evaluate(() => { for (const key of ["k", "/", "ArrowDown"]) document.body.dispatchEvent(new KeyboardEvent("keydown", { key, metaKey: true, altKey: key === "ArrowDown", isComposing: true, bubbles: true, cancelable: true })); });
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  // ⌘/ lists every shortcut in the board's words, each key as its own cap, with what the browser keeps.
+  // ⌘/ lists every shortcut in the board's words, each key as its own cap, with what the browser keeps. Stopping a reply
+  // also takes esc in the composer, so its row gives both.
   await page.keyboard.press("ControlOrMeta+/");
   const sheet = page.getByRole("dialog", { name: "快捷键" });
-  for (const [label, keys] of [["新对话", "⇧⌘O"], ["搜索与命令", "⌘K"], ["换 Agent", "⌘J"], ["停止当前回复", "⌘."], ["打开或收起详情面板", "⌘\\"], ["下一件“等你处理”", "⌥⌘↓"], ["允许一次", "⏎"],
-    ["拒绝这次请求", "esc"], ["编辑上一条（输入框为空时）", "↑"], ["原生命令 · 引用文件", "/@"], ["全部快捷键", "⌘/"], ["关闭弹出层", "esc"]] as const) {
+  for (const [label, keys, caps = [...keys.matchAll(/[A-Za-z]{2,}|\S/gu)].length] of [["新对话", "⇧⌘O"], ["搜索与命令", "⌘K"], ["换 Agent", "⌘J"], ["停止当前回复", "⌘.或esc", 3], ["打开或收起详情面板", "⌘\\"],
+    ["下一件“等你处理”", "⌥⌘↓"], ["允许一次", "⏎"], ["拒绝这次请求", "esc"], ["编辑上一条（输入框为空时）", "↑"], ["原生命令 · 引用文件", "/@"], ["全部快捷键", "⌘/"], ["关闭弹出层", "esc"]] as readonly (readonly [string, string, number?])[]) {
     const line = sheet.locator("dl > div").filter({ has: page.getByText(label, { exact: true }) });
-    await expect(line).toHaveText(label + keys); await expect(line.locator("kbd")).toHaveCount([...keys.matchAll(/[A-Za-z]{2,}|\S/gu)].length);
+    await expect(line).toHaveText(label + keys); await expect(line.locator("kbd")).toHaveCount(caps);
   }
   await expect(sheet).toContainText("浏览器保留 ⌘N、⌘T、⌘W，所以不占用它们。“这个对话都允许”不绑快捷键，只能点选。");
   await page.screenshot({ path: join(artifact, "dl9-shortcuts-light-1440.png"), animations: "disabled" });

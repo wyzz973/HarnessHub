@@ -31,7 +31,7 @@ import { parseContentRef, type ContentRef } from "../../src/contracts/content.js
 import { hiddenHarnesses, useMedia, useNow, usePreferences } from "./lib/prefs.js";
 import { finished } from "./lib/turn.js";
 import { cn } from "./lib/cn.js";
-import { enableNotifications, markNotificationAsked, notificationsOfferable, notifyTurnEnded } from "./lib/notify.js";
+import { backgroundOutcome, enableNotifications, markNotificationAsked, notificationsOfferable, notifyTurnEnded } from "./lib/notify.js";
 import { useToast } from "./ui/overlay.js";
 import { LogoMark, Notice, Spinner, TipProvider } from "./ui/primitives.js";
 
@@ -465,7 +465,9 @@ export function App() {
     return () => { stopped = true; controller.abort(); window.removeEventListener("focus", returned); document.removeEventListener("visibilitychange", visible); };
   }, [state !== null, readState, scanIfStale, scanSettled]);
   // Without a conversation open, the page subscribes to waiting requests alone; with one open, that conversation's stream
-  // carries them, so a page holds one long-lived connection either way.
+  // carries them, so a page holds one long-lived connection either way. While this one is down, the sidebar's service
+  // status says so; every connection starts with a frame, which says it is up again.
+  const [attentionDown, setAttentionDown] = useState(false);
   useEffect(() => {
     if (!state || sessionId !== null) return;
     let stopped = false, failures = 0;
@@ -478,17 +480,19 @@ export function App() {
     void (async () => {
       while (!stopped) {
         try {
-          await api.streamAttention(controller.signal, frame => { if (!stopped) { failures = 0; acceptAttention(frame); } });
+          await api.streamAttention(controller.signal, frame => { if (!stopped) { failures = 0; setAttentionDown(false); acceptAttention(frame); } });
           if (!stopped) await wait(250);
         } catch (failure: unknown) {
           if (stopped) return;
+          setAttentionDown(true);
           // The reminder is secondary: it retries quietly and gives up only when the login is gone.
           if (failure instanceof ApiError && ["AUTH_REQUIRED", "HOST_REJECTED", "ORIGIN_REJECTED"].includes(failure.code)) return;
           failures += 1; await wait(Math.min(15000, 500 * 2 ** Math.min(failures, 5)));
         }
       }
     })();
-    return () => { stopped = true; controller.abort(); };
+    // A conversation's own stream takes over, and reports its own state.
+    return () => { stopped = true; controller.abort(); setAttentionDown(false); };
   }, [api, state !== null, sessionId === null, acceptAttention]);
   const leave = (action: () => void) => {
     if (operation.current) return;
@@ -566,6 +570,10 @@ export function App() {
     if (!(palette || shortcuts || narrow && (sidebarOpen || inboxOpen))) { open(); return; }
     afterLayer.current = open; setPalette(false); setShortcuts(false); setSidebarOpen(false); if (narrow) setInboxOpen(false);
   };
+  // The drawer and the inbox take another form across the narrow breakpoint; crossing it closes them in the same render,
+  // so a drawer left open on a narrow window never shows again by itself the next time the window becomes narrow.
+  const [layoutNarrow, setLayoutNarrow] = useState(narrow);
+  if (layoutNarrow !== narrow) { setLayoutNarrow(narrow); setSidebarOpen(false); setInboxOpen(false); afterLayer.current = null; }
   // The application's shortcuts (ADR-054 §5): ⇧⌘O, ⌘K, ⌘/, ⌥⌘↓ and ⌘B. The composer, approval dock and details panel
   // handle ⌘J, ⌘., ⌘\, ⏎, esc and ↑ themselves. An input method's composition never triggers one, and ⌘N, ⌘T and ⌘W
   // stay the browser's.
@@ -894,21 +902,23 @@ export function App() {
   // The open conversation's latest Turn, once it ends after the page went out of sight, is announced (ADR-054 X04): done
   // or failed silently, an unknown result with the sound; one the user stopped is not. Each Turn once. Without
   // notifications chosen, the first such Turn leads to one offer when the page is back.
-  const hiddenSince = useRef<number | null>(document.visibilityState === "hidden" ? Date.now() : null), announced = useRef(new Set<string>()), offerNotifications = useRef(false);
+  const hiddenSince = useRef<number | null>(document.visibilityState === "hidden" ? Date.now() : null), announced = useRef(new Set<string>()), offerNotifications = useRef<RunStatus | null>(null);
   watchTurn.current = (view: SessionView) => {
     const run: PublicRun | undefined = view.runs.at(-1), ended = run?.timing?.endedAt, since = hiddenSince.current;
     if (!run || since === null || document.visibilityState !== "hidden" || !finished(run.status) || run.status === "cancelled" || ended === undefined || ended < since || announced.current.has(run.id)) return;
     announced.current.add(run.id);
     notifyTurnEnded(run, harnessName(run.selection.harnessId), () => openFromNotice.current(view.id));
-    if (notificationsOfferable()) offerNotifications.current = true;
+    if (notificationsOfferable()) offerNotifications.current = run.status;
   };
   useEffect(() => {
     const back = () => {
       if (document.visibilityState === "hidden") { hiddenSince.current ??= Date.now(); return; }
       hiddenSince.current = null;
-      if (!offerNotifications.current) return;
-      offerNotifications.current = false; markNotificationAsked();
-      const id = toast.show({ title: "回复在后台做完了", description: "要在做完或需要你时用系统通知告诉你吗？", action: { label: "开启通知", onClick: () => { toast.close(id); void enableNotifications(); } }, timeout: 8000 });
+      const outcome = offerNotifications.current;
+      if (outcome === null) return;
+      offerNotifications.current = null; markNotificationAsked();
+      // The offer says how that Turn ended, so a failed one is never called done.
+      const id = toast.show({ title: backgroundOutcome(outcome), description: "要在做完或需要你时用系统通知告诉你吗？", action: { label: "开启通知", onClick: () => { toast.close(id); void enableNotifications(); } }, timeout: 8000 });
     };
     document.addEventListener("visibilitychange", back); window.addEventListener("focus", back);
     return () => { document.removeEventListener("visibilitychange", back); window.removeEventListener("focus", back); };
@@ -970,7 +980,7 @@ export function App() {
     onOpen: id => { setInboxOpen(false); setSidebarOpen(false); selectSession(id); } };
   const sidebar = <Sidebar providerManagement={state.providerManagement !== false} page={shown} sessions={state.sessions} harnesses={state.harnesses} currentId={sessionId}
     interactionBusy={mutation !== null} activeJobs={state.jobs.filter(installationActive).length} updates={state.harnesses.filter(harness => !hidden.has(harness.id) && hasUpdate(harness)).length}
-    failed={failed} connected={connectionError === null && managementConnectionError === null} inbox={inbox} inboxOpen={inboxOpen && !narrow} onInboxOpenChange={setInboxOpen}
+    failed={failed} connected={connectionError === null && managementConnectionError === null && !attentionDown} inbox={inbox} inboxOpen={inboxOpen && !narrow} onInboxOpenChange={setInboxOpen}
     onCollapse={() => setPreference("sidebar", false)} {...(narrow ? { onClose: () => setSidebarOpen(false), onInbox: openInbox } : {})} onPage={next => { setSidebarOpen(false); if (next === "capabilities") setCapabilityHarness(null); navigate(next); }} onNew={newChat} onSession={chooseAndClose} onPalette={() => openLayer(() => setPalette(true))}/>;
   const shell = { onMenu: () => setSidebarOpen(value => !value), sidebarHidden: !preferences.sidebar, onExpandSidebar: () => setPreference("sidebar", true), onChat: () => navigate("chat") };
   return <TipProvider delay={500}><div className="app-shell flex h-dvh overflow-hidden bg-app text-fg" data-page={shown}>
@@ -1002,7 +1012,7 @@ export function App() {
         : <HarnessesPage api={api} harnesses={state.harnesses} hidden={hidden} onSettings={() => navigate("settings")} installationPolicy={state.installationPolicy} onUninstall={uninstall} onInstallOfficial={installOfficial} onUpgradeInstallation={upgradeInstallation} jobs={state.jobs} scanning={mutation === "scanning"} checking={checkingUpdates} submitting={submittingInstallations} cancelling={cancellingInstallations} unconfirmed={unconfirmedInstallations} error={error} connectionError={managementConnectionError} onRescan={() => void rescan()} onCheckUpdates={ids => void checkUpdates(ids)} onInstall={install} onOpenSession={selectSession} onConfirm={confirmInstallation} onCancelJob={job => void cancelInstallation(job)} onDismissError={() => setError(null)} onChoose={chooseHarness} onCapabilities={id => { setCapabilityHarness(id); navigate("capabilities"); }} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>}
     </main>
     {leaveAction ? <div className="motion-enter fixed right-4 bottom-4 left-4 z-[70] mx-auto max-w-[560px] rounded-block bg-surface shadow-pop"><Notice tone="amber" title="有尚未保存的修改" action={<><button type="button" className="btn btn-sm" onClick={() => setLeaveAction(null)}>继续编辑</button><button type="button" className="btn btn-sm btn-primary" onClick={() => { const action = leaveAction; setLeaveAction(null); setEditorDirty(false); action(); }}>放弃修改，离开</button></>} onDismiss={() => setLeaveAction(null)}>离开会丢弃编辑草稿。已受理的请求可在列表中查看。</Notice></div> : null}
-    {narrow ? <Layer open={inboxOpen} onOpenChange={setInboxOpen} onClosed={layerClosed} title="等你处理" className="sheet-pop inbox-pop" initialFocus={firstWaiting}><InboxList {...inbox} focusRef={firstWaiting}/></Layer> : null}
+    {narrow ? <Layer open={inboxOpen} onOpenChange={setInboxOpen} onClosed={layerClosed} title="等你处理" className="sheet-pop inbox-pop" initialFocus={firstWaiting}><InboxList {...inbox} focusRef={firstWaiting} onClose={() => setInboxOpen(false)}/></Layer> : null}
     <CommandPalette open={palette} onOpenChange={setPalette} commands={commands} onClosed={layerClosed}/>
     <ShortcutsDialog open={shortcuts} onOpenChange={setShortcuts} onClosed={layerClosed}/>
   </div></TipProvider>;

@@ -6,7 +6,7 @@ import type { HarnessView, SessionSummary, SessionView } from "../../../src/cont
 import { errorMessage } from "../api.js";
 import { attentionKind, liveItems, mostUrgent, remaining } from "../attention.js";
 import { cn } from "../lib/cn.js";
-import { folderName, homePath } from "../lib/format.js";
+import { ago, folderName, homePath } from "../lib/format.js";
 import { useNotificationChoice } from "../lib/notify.js";
 import { useNow } from "../lib/prefs.js";
 import { Collapsible } from "../ui/motion.js";
@@ -23,7 +23,7 @@ export type Page = "chat" | "providers" | "harnesses" | "capabilities" | "settin
  */
 export function NotifyToggle({ withLabel = false }: { readonly withLabel?: boolean }) {
   const { supported, on, blocked, toggle } = useNotificationChoice();
-  const title = !supported ? "此浏览器不支持通知" : blocked ? "浏览器已阻止本页的通知，可在浏览器的网站设置中允许" : on ? "已开启：页面在后台时，需要你或做完时用系统通知告诉你" : "页面在后台时，需要你或做完时用系统通知告诉你";
+  const title = !supported ? "此浏览器不支持通知" : blocked ? "浏览器已阻止本页的通知，可在浏览器的网站设置中允许" : (on ? "已开启：" : "") + "页面在后台时，有事等你或正在看的对话做完时，用系统通知告诉你";
   return <button type="button" className={cn(withLabel ? "btn btn-sm" : "icon-btn icon-btn-sm", "notify-toggle", on && "text-accent-text")} aria-pressed={on} aria-label="待处理时通知我" title={title} disabled={!supported} onClick={() => void toggle()}>
     {on ? <Bell size={14} aria-hidden="true"/> : <BellOff size={14} aria-hidden="true"/>}{withLabel ? <span>{on ? "已开启通知" : "开启通知"}</span> : null}</button>;
 }
@@ -50,7 +50,7 @@ interface SidebarProps {
   readonly activeJobs: number; readonly updates: number;
   /** Conversations whose latest Turn this page saw fail; the summaries carry no outcome of their own. */
   readonly failed: ReadonlySet<string>;
-  /** Whether the page's connections to the local service are up; false while one is being restored. */
+  /** Whether the page's connections to the local service are up; false while one of them is down. */
   readonly connected: boolean;
   readonly inbox: InboxSource;
   readonly inboxOpen: boolean; readonly onInboxOpenChange: (open: boolean) => void;
@@ -157,7 +157,8 @@ export function Sidebar(props: SidebarProps) {
   const inboxRow = <button type="button" className="nav-row w-full flex-none data-[popup-open]:bg-selected" aria-label={count ? `等你处理（${count} 项）` : "等你处理"} {...(props.onInbox ? { onClick: props.onInbox } : {})}>
     {icon(<InboxIcon size={16}/>)}<span className="min-w-0 flex-1 trunc">等你处理</span>{count ? <Badge tone="amber" count className="attention-count">{count}</Badge> : null}</button>;
   const port = window.location.port || (window.location.protocol === "https:" ? "443" : "80");
-  const service = (props.connected ? "本机服务已连接 · " : "正在重新连接本机服务 · ") + window.location.hostname + ":" + port;
+  // Connected, or not: the page retries on its own most of the time, but not after its login is gone, so it claims no more.
+  const service = (props.connected ? "本机服务已连接 · " : "与本机服务的连接中断 · ") + window.location.hostname + ":" + port;
   return <aside className="sidebar flex h-full w-full flex-col gap-0.5 bg-sidebar p-3" aria-label="主导航">
     <div className="flex h-10 flex-none items-center gap-2 pr-0.5 pl-1.5">
       <button type="button" className="flex min-w-0 flex-1 items-center gap-[9px] self-stretch rounded-row border-none bg-transparent p-0 text-left text-fg disabled:opacity-60" aria-label="HarnessHub 首页" onClick={props.onNew} disabled={interactionBusy}>
@@ -170,12 +171,12 @@ export function Sidebar(props: SidebarProps) {
     <button type="button" className="nav-row w-full flex-none" onClick={props.onPalette} aria-label="搜索与命令" aria-keyshortcuts="Meta+K">
       {icon(<Search size={16}/>)}<span className="flex-1">搜索</span><span className="text-caption text-fg-3" aria-hidden="true">⌘K</span></button>
     {props.onInbox ? inboxRow : <Popover label="等你处理" open={props.inboxOpen} onOpenChange={props.onInboxOpenChange} side="right" align="start" sideOffset={20} initialFocus={firstWaiting}
-      className="inbox-pop flex w-[400px] max-w-[calc(100vw-24px)] flex-col" trigger={inboxRow}><InboxList {...props.inbox} focusRef={firstWaiting}/></Popover>}
+      className="inbox-pop flex w-[440px] max-w-[calc(100vw-24px)] flex-col" trigger={inboxRow}><InboxList {...props.inbox} focusRef={firstWaiting}/></Popover>}
     {nav("harnesses", "Agent", <Bot size={16}/>, props.activeJobs ? <Spinner size={13} tone="run" label={`${props.activeJobs} 个安装任务进行中`}/>
       : props.updates ? <Badge tone="accent" className="h-[18px]">{props.updates} 个更新</Badge> : null)}
     {nav("capabilities", "能力", <Blocks size={16}/>)}
     {props.providerManagement ? nav("providers", "模型与账号", <SlidersHorizontal size={16}/>) : null}
-    <div className="session-section mt-3.5 flex min-h-0 flex-1 flex-col">
+    <div className="session-section mt-3.5 flex min-h-0 flex-1 flex-col gap-0.5">
       <h2 className="m-0 flex h-[30px] flex-none items-center pr-1 pl-2.5 text-ui-sm font-normal text-fg-3">项目</h2>
       <nav className="-mx-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain px-1 pb-2" aria-label="对话列表">
         {sessions.length === 0 ? <p className="m-0 px-2.5 py-2 text-ui-sm text-fg-3">对话会按项目（工作区）归在这里。</p>
@@ -187,7 +188,7 @@ export function Sidebar(props: SidebarProps) {
       <button type="button" className="nav-row w-full disabled:opacity-60" disabled={interactionBusy} aria-current={page === "settings" ? "page" : undefined} aria-label="设置" onClick={() => props.onPage("settings")}>
         {icon(<Settings size={16}/>)}<span className="flex-1">设置</span>
         <span className="service-status flex items-center gap-1.5 text-[11px] leading-4 text-fg-3" title={service} aria-hidden="true"><StatusDot tone={props.connected ? "run" : "idle"} live={false} size={6}/>{port}</span></button>
-      <span className="sr-only" role="status">{props.connected ? "" : "正在重新连接本机服务"}</span>
+      <span className="sr-only" role="status">{props.connected ? "" : "与本机服务的连接中断"}</span>
     </div>
   </aside>;
 }
@@ -248,56 +249,77 @@ export function byUrgency(a: AttentionItem, b: AttentionItem): number {
   return (a.expiresAt ?? Number.MAX_SAFE_INTEGER) - (b.expiresAt ?? Number.MAX_SAFE_INTEGER) || a.requestedAt - b.requestedAt;
 }
 
+/** What the inbox knows of another conversation's waiting requests: the last read of its view, and whether one is under way. */
+interface ConversationRead { readonly requests: readonly PermissionRequest[] | null; readonly loading: boolean }
+
 /**
  * The inbox of everything waiting for you (Interaction board, X03): every conversation's approvals and questions, most
  * urgent first, each with the Agent, what it asks once its conversation has been read, the conversation and whose
- * deadline runs. Only an option that answers this one request can be sent from here; anything that lasts, and every
- * question, is decided in the conversation. The notification switch sits in its head. `focusRef` receives the first
- * waiting item, for the layer that shows the list to focus when it opens.
+ * deadline runs (or, without one, how long it has waited). Only an option that answers this one request can be sent from
+ * here; anything that lasts, and every question, is decided in the conversation. The notification switch sits in its
+ * head, beside `onClose` when the layer showing the list has no other way out on a touch screen. `focusRef` receives the
+ * first waiting item, for that layer to focus when it opens.
  */
-export function InboxList({ items, sessions, harnesses, current, onLoad, onDecide, onOpen, focusRef }: InboxSource & { readonly focusRef?: RefObject<HTMLButtonElement | null> }) {
-  const now = useNow(items.some(item => item.expiresAt !== undefined));
+export function InboxList({ items, sessions, harnesses, current, onLoad, onDecide, onOpen, focusRef, onClose }: InboxSource & {
+  readonly focusRef?: RefObject<HTMLButtonElement | null>; readonly onClose?: () => void;
+}) {
+  // The list exists only while it is shown; its clock runs then, for deadlines and for how long each request has waited.
+  const now = useNow(items.length > 0);
   const sorted = [...liveItems(items, now)].sort(byUrgency);
-  // Other conversations' requests, read once each while the inbox is shown; a failed read leaves the row to open its conversation.
-  const [read, setRead] = useState<ReadonlyMap<string, readonly PermissionRequest[] | "failed">>(() => new Map());
-  const asked = useRef(new Set<string>());
-  const wanted = [...new Set(sorted.map(item => item.sessionId))].filter(id => id !== current?.id).sort().join("|");
+  // Other conversations' requests, read while the inbox is shown: once for the requests each one has waiting, and again
+  // when a request it was not read for arrives. A read is cancelled only when its conversation leaves the list, or the
+  // list closes; a failed one leaves its rows to open their conversation.
+  const [read, setRead] = useState<ReadonlyMap<string, ConversationRead>>(() => new Map());
+  const reads = useRef(new Map<string, { readonly asked: ReadonlySet<string>; readonly controller: AbortController }>());
+  const wanted = new Map<string, string[]>();
+  for (const item of sorted) if (item.sessionId !== current?.id) wanted.set(item.sessionId, [...(wanted.get(item.sessionId) ?? []), item.permissionId]);
+  const wantedKey = JSON.stringify([...wanted].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
   useEffect(() => {
-    const controller = new AbortController();
-    for (const id of wanted ? wanted.split("|") : []) {
-      if (asked.current.has(id)) continue;
-      asked.current.add(id);
-      onLoad(id, controller.signal).then(view => setRead(map => new Map(map).set(id, view.permissions ?? [])), () => {
-        asked.current.delete(id);
-        if (!controller.signal.aborted) setRead(map => new Map(map).set(id, "failed"));
+    for (const [id, entry] of reads.current) if (!wanted.has(id)) { entry.controller.abort(); reads.current.delete(id); }
+    for (const [id, permissions] of wanted) {
+      const known = reads.current.get(id);
+      if (known && permissions.every(permission => known.asked.has(permission))) continue;
+      known?.controller.abort();
+      const entry = { asked: new Set(permissions), controller: new AbortController() };
+      reads.current.set(id, entry);
+      setRead(map => new Map(map).set(id, { requests: map.get(id)?.requests ?? null, loading: true }));
+      onLoad(id, entry.controller.signal).then(view => {
+        if (!entry.controller.signal.aborted) setRead(map => new Map(map).set(id, { requests: view.permissions ?? [], loading: false }));
+      }, () => {
+        if (entry.controller.signal.aborted) return;
+        if (reads.current.get(id) === entry) reads.current.delete(id);
+        setRead(map => new Map(map).set(id, { requests: map.get(id)?.requests ?? null, loading: false }));
       });
     }
-    return () => controller.abort();
-  }, [wanted]);
+  }, [wantedKey]);
+  useEffect(() => () => { for (const entry of reads.current.values()) entry.controller.abort(); reads.current.clear(); }, []);
   const [sending, setSending] = useState<Readonly<Record<string, "sending" | "sent" | { readonly error: string }>>>({});
-  const request = (item: AttentionItem): PermissionRequest | undefined => {
-    const list = item.sessionId === current?.id ? current.permissions ?? [] : read.get(item.sessionId);
-    return Array.isArray(list) ? list.find(row => row.id === item.permissionId) : undefined;
-  };
+  const request = (item: AttentionItem): PermissionRequest | undefined =>
+    (item.sessionId === current?.id ? current.permissions ?? [] : read.get(item.sessionId)?.requests ?? []).find(row => row.id === item.permissionId);
   const decide = (item: AttentionItem, option: { readonly id: string }) => {
     setSending(state => ({ ...state, [item.permissionId]: "sending" }));
     onDecide(item, option.id).then(() => setSending(state => ({ ...state, [item.permissionId]: "sent" })),
       (failure: unknown) => setSending(state => ({ ...state, [item.permissionId]: { error: errorMessage(failure) } })));
   };
   return <>
-    <div className="flex flex-none items-center gap-2 hairline-b py-2 pr-2 pl-3.5">
-      <h3 className="m-0 flex-1 text-ui-sm font-semibold">等你处理{sorted.length ? <span className="ml-1.5 font-normal text-fg-3">{sorted.length}</span> : null}</h3><NotifyToggle/></div>
+    <div className="flex flex-none items-center gap-1 hairline-b py-2 pr-2 pl-3.5">
+      <h3 className="m-0 flex-1 text-ui-sm font-semibold">等你处理{sorted.length ? <span className="ml-1.5 font-normal text-fg-3">{sorted.length}</span> : null}</h3><NotifyToggle/>
+      {onClose ? <button type="button" className="icon-btn icon-btn-sm" aria-label="关闭等你处理" onClick={onClose}><X size={14}/></button> : null}</div>
     {sorted.length ? <ul className="m-0 flex min-h-0 list-none flex-col gap-0.5 overflow-y-auto p-1.5">{sorted.map((item, index) => {
       const left = remaining(item, now), session = sessions.find(row => row.id === item.sessionId), harness = harnesses.find(row => row.id === item.harnessId)?.name ?? item.harnessId;
       const ask = request(item), option = directOption(ask), state = sending[item.permissionId], lineId = "inbox-" + item.permissionId;
-      const loading = ask === undefined && item.sessionId !== current?.id && !read.has(item.sessionId);
+      const loading = ask === undefined && item.sessionId !== current?.id && (read.get(item.sessionId)?.loading ?? true);
+      // Whose deadline runs and what is left of it; a request without one says how long it has waited (the board's "2 分钟前").
+      const when = item.expiresAt === undefined ? ago(item.requestedAt, now) : (left.source ? left.source + " " : "") + left.text;
       return <li key={item.permissionId} className="row flex items-center gap-2 pr-2">
         <button type="button" ref={index === 0 ? focusRef : undefined} className="flex min-w-0 flex-1 items-start gap-2.5 rounded-row border-none bg-transparent py-2 pl-2.5 text-left text-fg" onClick={() => onOpen(item.sessionId)}>
           <StatusDot tone="wait" className="mt-[7px]"/>
-          <span className="flex min-w-0 flex-1 flex-col gap-px">
+          {/* Where the column is narrow (a phone's sheet), the conversation and the deadline take a line each. */}
+          <span className="@container flex min-w-0 flex-1 flex-col gap-px">
             <span className="trunc text-ui-sm font-medium" id={lineId}>{harness}{ask ? <span className="font-normal">：{ask.title}</span> : item.kind === "question" ? " 在等你回答" : " 在等你审批"}</span>
-            <span className="flex min-w-0 items-baseline gap-1 text-caption text-fg-3"><span className="min-w-0 trunc">{session?.title || "另一个对话"}</span><span className="flex-none">·</span>
-              <span className="flex-none text-amber" title={left.hint}>{attentionKind(item)}{left.source ? " · " + left.source : ""} {left.text}</span></span>
+            <span className="flex min-w-0 items-baseline gap-1 text-caption text-fg-3 @max-[280px]:flex-col @max-[280px]:items-start @max-[280px]:gap-0">
+              <span className="min-w-0 max-w-full trunc">{session?.title || "另一个对话"}</span><span className="flex-none @max-[280px]:hidden">·</span>
+              <span className="max-w-full flex-none" title={left.hint}>{attentionKind(item)} · {when}</span></span>
             {typeof state === "object" ? <span className="text-caption text-red" role="alert">没有送达：{state.error}</span> : null}
           </span>
           {option === null && state !== "sent" ? loading ? <Spinner size={13} label="正在读取请求" className="mt-1"/> : <span className="mt-px flex-none rounded-row bg-subtle px-2 text-caption leading-6 text-fg">打开</span> : null}

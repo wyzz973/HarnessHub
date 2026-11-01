@@ -90,7 +90,8 @@ export function CommandPalette({ open, onOpenChange, commands, onClosed }: { rea
   </BaseDialog.Root>;
 }
 
-interface ShortcutRow { readonly label: string; readonly keys: readonly string[]; readonly range?: boolean }
+/** One action and its keys; `range` reads "1 – 9", `or` is another way to do the same, such as esc in the composer. */
+interface ShortcutRow { readonly label: string; readonly keys: readonly string[]; readonly range?: boolean; readonly or?: readonly string[] }
 /**
  * Every shortcut of the page (Interaction board, "键盘优先"; ADR-054 §5), in the board's words. The application handles
  * the first group; the conversation's composer, approval dock and details panel handle the others. The browser keeps
@@ -102,7 +103,7 @@ export const SHORTCUT_GROUPS: readonly { readonly title: string; readonly rows: 
     { label: "收起或展开侧栏", keys: ["⌘", "B"] }, { label: "全部快捷键", keys: ["⌘", "/"] }, { label: "关闭弹出层", keys: ["esc"] },
   ] },
   { title: "对话", rows: [
-    { label: "发送；回复进行中时先暂存下一条", keys: ["⏎"] }, { label: "换行", keys: ["⇧", "⏎"] }, { label: "换 Agent", keys: ["⌘", "J"] }, { label: "停止当前回复", keys: ["⌘", "."] },
+    { label: "发送；回复进行中时先暂存下一条", keys: ["⏎"] }, { label: "换行", keys: ["⇧", "⏎"] }, { label: "换 Agent", keys: ["⌘", "J"] }, { label: "停止当前回复", keys: ["⌘", "."], or: ["esc"] },
     { label: "打开或收起详情面板", keys: ["⌘", "\\"] }, { label: "编辑上一条（输入框为空时）", keys: ["↑"] }, { label: "原生命令 · 引用文件", keys: ["/", "@"] },
   ] },
   { title: "审批停在输入框时", rows: [
@@ -116,7 +117,8 @@ export function ShortcutList({ className }: { readonly className?: string }) {
     <h3 id={`${id}-${index}`} className="m-0 px-1 pb-1 text-caption font-medium text-fg-3">{group.title}</h3>
     <dl className="m-0 flex flex-col">{group.rows.map(row => <div key={row.label} className="flex min-h-9 items-center gap-3 hairline-b px-1 last:border-b-0">
       <dt className="min-w-0 flex-1 text-ui-sm text-fg">{row.label}</dt>
-      <dd className="m-0 flex flex-none items-center gap-[3px]">{row.range ? <><Kbd>{row.keys[0]}</Kbd><span className="px-0.5 text-caption text-fg-3">–</span><Kbd>{row.keys[1]}</Kbd></> : row.keys.map((key, index) => <Kbd key={index}>{key}</Kbd>)}</dd>
+      <dd className="m-0 flex flex-none items-center gap-[3px]">{row.range ? <><Kbd>{row.keys[0]}</Kbd><span className="px-0.5 text-caption text-fg-3">–</span><Kbd>{row.keys[1]}</Kbd></> : row.keys.map((key, index) => <Kbd key={index}>{key}</Kbd>)}
+        {row.or ? <><span className="px-1 text-caption text-fg-3">或</span>{row.or.map((key, index) => <Kbd key={"or-" + index}>{key}</Kbd>)}</> : null}</dd>
     </div>)}</dl>
   </div>)}</div>;
 }

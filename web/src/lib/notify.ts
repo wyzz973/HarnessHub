@@ -1,5 +1,5 @@
-import { useCallback, useState } from "react";
-import type { PublicRun } from "../../../src/contracts/session.js";
+import { useCallback, useEffect, useState } from "react";
+import type { PublicRun, RunStatus } from "../../../src/contracts/session.js";
 import { chooseNotifications, notificationsChosen, notificationsSupported } from "../attention.js";
 import { elapsed } from "./format.js";
 import { toolSummary } from "./turn.js";
@@ -11,26 +11,47 @@ import { toolSummary } from "./turn.js";
  * when the user turns it on, or after the first reply that finished in the background (see `notificationAsked`).
  */
 
-/** The user's choice of system notifications in this browser and what the browser allows; turning it on asks the browser once. */
-export function useNotificationChoice(): { readonly supported: boolean; readonly on: boolean; readonly blocked: boolean; readonly toggle: () => Promise<void> } {
+/** Every switch that shows the choice (the inbox's, the settings'), told when this page changes it. */
+const listeners = new Set<() => void>();
+function choiceChanged(): void { for (const listener of [...listeners]) listener(); }
+function readChoice(): { readonly on: boolean; readonly blocked: boolean } {
   const supported = notificationsSupported();
-  const [on, setOn] = useState(() => supported && notificationsChosen() && Notification.permission === "granted");
-  const [blocked, setBlocked] = useState(() => supported && Notification.permission === "denied");
-  const toggle = useCallback(async () => {
-    if (!supported) return;
-    if (on) { chooseNotifications(false); setOn(false); return; }
-    const granted = await enableNotifications();
-    setOn(granted); setBlocked(!granted && Notification.permission === "denied");
-  }, [on, supported]);
-  return { supported, on, blocked, toggle };
+  return { on: supported && notificationsChosen() && Notification.permission === "granted", blocked: supported && Notification.permission === "denied" };
 }
 
-/** Asks the browser (it prompts only while undecided) and records the choice; true when notifications are now on. */
+/**
+ * The user's choice of system notifications in this browser and what the browser allows; turning it on asks the browser
+ * once. Every switch on the page shows the same choice: one made in another switch, in the offer after a reply or in
+ * another tab shows in all of them, and one made in the browser's own settings shows once the page is back in view.
+ */
+export function useNotificationChoice(): { readonly supported: boolean; readonly on: boolean; readonly blocked: boolean; readonly toggle: () => Promise<void> } {
+  const supported = notificationsSupported();
+  const [choice, setChoice] = useState(readChoice);
+  useEffect(() => {
+    const update = () => setChoice(current => { const next = readChoice(); return next.on === current.on && next.blocked === current.blocked ? current : next; });
+    const visible = () => { if (document.visibilityState === "visible") update(); };
+    listeners.add(update); window.addEventListener("storage", update); document.addEventListener("visibilitychange", visible);
+    update();
+    return () => { listeners.delete(update); window.removeEventListener("storage", update); document.removeEventListener("visibilitychange", visible); };
+  }, []);
+  const toggle = useCallback(async () => {
+    if (!supported) return;
+    if (choice.on) { chooseNotifications(false); choiceChanged(); return; }
+    await enableNotifications();
+  }, [choice.on, supported]);
+  return { supported, on: choice.on, blocked: choice.blocked, toggle };
+}
+
+/**
+ * Asks the browser (it prompts only while undecided) and records the choice; true when notifications are now on. Every
+ * switch showing the choice follows.
+ */
 export async function enableNotifications(): Promise<boolean> {
   if (!notificationsSupported()) return false;
   let permission = Notification.permission;
   if (permission === "default") { try { permission = await Notification.requestPermission(); } catch { permission = "denied"; } }
   chooseNotifications(permission === "granted");
+  choiceChanged();
   return permission === "granted";
 }
 
@@ -46,6 +67,10 @@ export function notificationsOfferable(): boolean {
 /** How a Turn ended, as the notification's title says it after the Agent's name. */
 function outcome(status: PublicRun["status"]): string | null {
   return status === "completed" ? "做完了" : status === "failed" ? "这一轮失败了" : status === "unknown" ? "这一轮结果未知" : null;
+}
+/** How a Turn that ended out of sight ended, as the offer of notifications says it when the page is back: a failure is never "done". */
+export function backgroundOutcome(status: RunStatus): string {
+  return status === "failed" ? "这一轮在后台失败了" : status === "unknown" ? "这一轮在后台结束，结果未知" : "回复在后台做完了";
 }
 /**
  * Notifies that the open conversation's Turn ended while the page was hidden, when the user chose notifications here and
