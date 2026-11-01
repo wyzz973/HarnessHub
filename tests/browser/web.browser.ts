@@ -3965,7 +3965,7 @@ test("G054-CA1 the capability page opens from the sidebar and from a Harness's d
   // The board's six kinds in its order, each with its count (ADR-054 §5); commands are listed only while an Agent has any.
   // The skills matrix has one column per Harness, saying how each sees each skill.
   const tabs = page.getByRole("tablist", { name: "能力类别" });
-  for (const [label, count] of [["技能", 2], ["MCP", 1], ["指令", 1], ["子 Agent", 1], ["插件", 1], ["Hooks", 1]] as const) await expect(tabs.getByRole("tab", { name: label + " " + count, exact: true })).toBeVisible();
+  for (const [label, count] of [["技能", 2], ["MCP 服务器", 1], ["指令", 1], ["子 Agent", 1], ["插件", 1], ["Hooks", 1]] as const) await expect(tabs.getByRole("tab", { name: label + " " + count, exact: true })).toBeVisible();
   await expect(tabs.getByRole("tab")).toHaveText([/^技能/u, /^MCP/u, /^指令/u, /^子 Agent/u, /^插件/u, /^Hooks/u]);
   // Each column names its Harness and the version its channel records, Cursor's dated one like the others; no column says anything about its version (ADR-053).
   await expect(matrix.locator("thead th")).toHaveText([/技能/u, /Claude Code.*(?<!v)2\.1\.302/u, /Codex.*(?<!v)0\.162\.1/u, /Cursor.*(?<!v)2026\.10\.01-e373342/u, /Hermes Agent.*(?<!v)0\.12\.0/u]);
@@ -4004,7 +4004,7 @@ test("G054-CA1 the capability page opens from the sidebar and from a Harness's d
   await expect(page.locator(".capability-detail")).toContainText("Cursor 默认也会运行这个 Hook");
   // No Harness has a command, so the kind is not offered; an empty kind still says so (below, MCP with only Codex).
   await expect(tabs.getByRole("tab", { name: /^命令/u })).toHaveCount(0);
-  await tabs.getByRole("tab", { name: "MCP 1", exact: true }).click();
+  await tabs.getByRole("tab", { name: "MCP 服务器 1", exact: true }).click();
   await expect(matrix.locator("tbody tr").first().locator("td").nth(0).getByRole("img")).toHaveAccessibleName("已生效 · 配置");
   await page.getByRole("combobox", { name: "只看一个 Agent" }).selectOption("codex");
   await expect(page.getByText("这一类还没有条目")).toBeVisible();
@@ -4327,7 +4327,7 @@ test("G054-CA5 skills are added from a GitHub repository after reading it, updat
   await page.getByRole("button", { name: "检查更新", exact: true }).click();
   await expect(page.locator(".skill-update-summary")).toContainText("1 个技能有新版本");
   const alphaRow = page.locator(".capability-matrix tbody tr").filter({ hasText: "alpha" }).first();
-  await expect(alphaRow.locator(".badge")).toContainText(["有新版本"]);
+  await expect(alphaRow.locator(".badge")).toContainText(["可更新"]);
   await alphaRow.getByRole("button", { name: /alpha/u }).click();
   const detail = page.locator(".capability-detail");
   await expect(detail.getByRole("button", { name: "覆盖本地改动并更新" })).toHaveCount(0);
@@ -4720,13 +4720,15 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
   // The board's categories beside the content, each with its count, in its order; commands come last, listed because an Agent has one.
   const tabs = page.getByRole("tablist", { name: "能力类别" });
   await expect(tabs).toHaveAttribute("aria-orientation", "vertical");
-  for (const [label, count] of [["技能", 3], ["MCP", 1], ["指令", 1], ["子 Agent", 1], ["插件", 1], ["Hooks", 1], ["命令", 1]] as const) await expect(tabs.getByRole("tab", { name: label + " " + count, exact: true })).toBeVisible();
+  for (const [label, count] of [["技能", 3], ["MCP 服务器", 1], ["指令", 1], ["子 Agent", 1], ["插件", 1], ["Hooks", 1], ["命令", 1]] as const) await expect(tabs.getByRole("tab", { name: label + " " + count, exact: true })).toBeVisible();
   await expect(tabs.getByRole("tab")).toHaveText([/^技能/u, /^MCP/u, /^指令/u, /^子 Agent/u, /^插件/u, /^Hooks/u, /^命令/u]);
   await expect(page.getByRole("heading", { name: "技能 3", exact: true })).toBeVisible();
   await expect(page.getByText("点空着的格子就能启用；写入前会给你看每个文件改哪几行。")).toBeVisible();
   // The list moves with the arrow keys, Home and End, choosing as it goes.
   await tabs.getByRole("tab", { name: "技能 3", exact: true }).focus(); await page.keyboard.press("ArrowDown");
-  await expect(tabs.getByRole("tab", { name: "MCP 1", exact: true })).toBeFocused(); await expect(tabs.getByRole("tab", { name: "MCP 1", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(tabs.getByRole("tab", { name: "MCP 服务器 1", exact: true })).toBeFocused(); await expect(tabs.getByRole("tab", { name: "MCP 服务器 1", exact: true })).toHaveAttribute("aria-selected", "true");
+  // The category is named as the board names it in its heading and its search too (MCP 服务器, not MCP).
+  await expect(page.getByRole("heading", { name: "MCP 服务器 1", exact: true })).toBeVisible(); await expect(page.getByRole("textbox", { name: "搜索能力" })).toHaveAttribute("placeholder", "搜索 MCP 服务器");
   await page.keyboard.press("End"); await expect(tabs.getByRole("tab", { name: "命令 1", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("heading", { name: "命令 1", exact: true })).toBeVisible();
   await page.keyboard.press("Home"); await expect(tabs.getByRole("tab", { name: "技能 3", exact: true })).toBeFocused();

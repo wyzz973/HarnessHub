@@ -16,7 +16,8 @@ import { SubagentsPanel } from "./SubagentsPanel.js";
 import { SkillTextDialog } from "./SkillTextDialog.js";
 import { SkillAddDialog } from "./SkillAddDialog.js";
 
-export const KIND_LABEL: Readonly<Record<CapabilityKind, string>> = { skill: "技能", mcp: "MCP", instructions: "指令", subagent: "子 Agent", command: "命令", hook: "Hooks", plugin: "插件" };
+/** The categories by the Capabilities board's names, wherever a category is named: its list, its tabs, its heading. */
+export const KIND_LABEL: Readonly<Record<CapabilityKind, string>> = { skill: "技能", mcp: "MCP 服务器", instructions: "指令", subagent: "子 Agent", command: "命令", hook: "Hooks", plugin: "插件" };
 /**
  * The categories in the order of the Capabilities board (ADR-054 §5). Commands, which the board leaves out because the
  * Agents now fold them into skills, are listed last and only while some Agent still has any: a fact is never hidden.
@@ -644,7 +645,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
             return <MatrixRow key={entry.key} entry={entry} columns={columns} expanded={open === entry.key} onToggle={() => setOpen(current => current === entry.key ? null : entry.key)}
               source={sourceLine(entry, view?.harnesses ?? [])} picked={pickedCells} onPick={togglePick} frame={frameWidth}
               badges={opened => { const literal = entry.warnings.some(warning => warning.kind === "literal");
-                return <>{update?.state === "available" ? <Badge tone="accent" className="flex-none">有新版本</Badge> : null}
+                return <>{update?.state === "available" ? <Badge tone="accent" className="flex-none">可更新</Badge> : null}
                   {warnings ? <Badge tone={literal ? "amber" : "neutral"} className={cn("flex-none", opened && !literal && "bg-surface shadow-hairline")}>{warnings} 条提示</Badge> : null}</>; }}>
               <EntryDetail api={api} entry={entry} harnesses={view?.harnesses ?? []} update={update} onSwitch={switchSkill} onPlugin={switchPlugin} onChange={change} onEdit={editSkill}/>
             </MatrixRow>; })}</tbody>
@@ -700,8 +701,8 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
     </nav> : null}
     <div className="flex min-w-0 flex-1 flex-col">
       {wide ? null : <header className="flex h-14 flex-none items-center gap-2 pr-3.5 pl-3 sm:pl-[18px]">{shellButton}{title}{reload}</header>}
-      {/* The narrow category row scrolls sideways when the kinds do not fit; its padding scrolls with it, so the last tab keeps
-          its 16 px from the edge, and 16 px between tabs let the six kinds fit a 390 px phone. */}
+      {/* The narrow category row scrolls sideways when the kinds do not fit (on a 390 px phone the last one comes in by
+          scrolling); its padding scrolls with it, so the last tab keeps its 16 px from the edge, 16 px from the one before. */}
       {!wide && ready ? <div className="flex-none overflow-x-auto hairline-b"><Tabs items={tabItems} value={kind} onChange={choose} label="能力类别" idPrefix="capability-tab" panelId="capability-tabpanel" className="h-11 w-max px-4 [&>.tab]:h-11 [&>.tab+.tab]:ml-4"/></div> : null}
       <div className="scroll-area min-h-0 flex-1">
         <div className={cn("flex w-full max-w-[1040px] flex-col gap-5", wide ? "px-9 pt-10 pb-[120px]" : "px-4 pt-5 pb-[120px]")}>
