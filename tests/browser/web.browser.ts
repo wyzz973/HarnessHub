@@ -287,10 +287,14 @@ test("real browser validates Provider management, public chat switching, cancell
   await responsive("chat");
   await page.getByRole("button", { name: "模型连接", exact: true }).click();
   await page.getByRole("button", { name: "编辑 工作模型 B", exact: true }).click();
+  // A connection's configuration version is said in words, without a "v" the page would add (ruling P).
+  await expect(page.getByText("配置版本 1", { exact: true })).toBeVisible();
   await expect(page.getByLabel(/API Key/u)).toHaveValue("");
   await page.getByLabel("模型 ID 列表", { exact: true }).fill("model-b\nmodel-b2");
   await page.getByRole("button", { name: "保存修改", exact: true }).click();
   await expect(page.getByRole("heading", { name: "工作模型 B", exact: true })).toBeVisible();
+  const edited = page.getByRole("article", { name: "工作模型 B", exact: true });
+  await expect(edited.getByText("配置版本 2", { exact: true })).toBeVisible(); await expect(edited).not.toContainText("v2");
   await page.getByRole("button", { name: "返回对话", exact: true }).click();
   // The newer version of the connection in use waits in the advanced settings: its amber dot is on the Agent part of the
   // merged picker, and on 高级配置… in the Agent list's footer (ruling R2), each described in words.
@@ -301,9 +305,9 @@ test("real browser validates Provider management, public chat switching, cancell
   await expect(advanced).toHaveAccessibleDescription(newer); await expect(page.locator(".picker-popover")).toHaveCSS("opacity", "1");
   await page.screenshot({ path: join(artifact, "outdated-connection.png"), animations: "disabled" });
   await advanced.click();
-  await expect(page.getByRole("button", { name: "使用最新 v2", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "使用最新版本 2", exact: true })).toBeVisible();
   current = await snapshot(); assert.equal(current.selection.provider.revision, 1);
-  await page.getByRole("button", { name: "使用最新 v2", exact: true }).click();
+  await page.getByRole("button", { name: "使用最新版本 2", exact: true }).click();
   await page.getByRole("button", { name: "收起高级配置", exact: true }).click();
   await expect(agentPart.locator(".outdated-dot")).toHaveCount(0); await expect(agentPart).not.toHaveAccessibleDescription(newer);
   await pick("选择模型", "model-b2");
@@ -496,6 +500,8 @@ test("live chat renders committed partial Markdown before completion, respects r
   // At this width the details panel opens as a drawer over the conversation, with the Turn's execution facts.
   await log.getByRole("button", { name: "执行详情", exact: true }).last().click();
   await expect(page.getByRole("complementary", { name: "详情栏" }).getByText("流式验收模型", { exact: true })).toBeVisible();
+  // The connection's configuration version is a number under its name, without a "v" the page would add (ruling P).
+  await expect(page.getByRole("complementary", { name: "详情栏" }).locator(".execution-details dt", { hasText: "配置版本" }).locator("xpath=following-sibling::dd[1]")).toHaveText("1");
   await page.getByRole("button", { name: "关闭详情栏", exact: true }).click();
   await expect(page.getByRole("complementary", { name: "详情栏" })).toHaveCount(0);
   await page.screenshot({ path: join(artifact, "chat-completed-943.png"), fullPage: true, animations: "disabled" });
