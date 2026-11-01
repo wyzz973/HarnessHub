@@ -1237,6 +1237,15 @@ test("a Turn waiting for a slot says how many conversations run, has no deadline
   await expect(log.locator(".response-status")).toHaveText("排队中：4 个对话正在执行，其中一个结束后自动开始", { timeout: 15000 });
   // The header and the page's announcement name the state as the Turn does (ruling N).
   await expect(page.locator(".chat-page > header .status-pill")).toHaveText("Busy Agent 排队中"); await expect(page.locator(".chat-page > .sr-only[role=status]")).toHaveText("排队中");
+  // So do the details: a Turn not started has no dot of work going on, and its facts say 排队中.
+  await page.keyboard.press("ControlOrMeta+Backslash");
+  const details = page.getByRole("complementary", { name: "详情栏" });
+  await details.getByRole("tab", { name: "过程", exact: true }).click();
+  const queuedRow = details.locator("ol > li > button").filter({ hasText: "第 1 轮" });
+  await expect(queuedRow.locator(".status-dot")).toHaveAttribute("data-tone", "idle"); await expect(queuedRow.getByRole("img", { name: "排队中", exact: true })).toHaveCount(1);
+  await details.getByRole("tab", { name: "执行", exact: true }).click();
+  await expect(details.locator(".execution-details dt", { hasText: "执行状态" }).locator("xpath=following-sibling::dd[1]")).toHaveText("排队中");
+  await page.keyboard.press("ControlOrMeta+Backslash"); await expect(details).toHaveCount(0);
   await expect(log.locator(".queued-turn small")).toHaveText("没有单独的等待期限，按发送先后轮到。");
   await expect(log.getByRole("button", { name: "打开那个对话", exact: true })).toHaveCount(0);
   await page.screenshot({ path: join(artifact, "slot-wait.png"), animations: "disabled" });

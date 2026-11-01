@@ -231,7 +231,8 @@ function Phases({ run }: { readonly run: PublicRun }) {
 /**
  * One Turn in the list of every Turn's steps: who ran it and what it did, opened to its timeline and tools. A Turn in
  * progress carries the blue dot of work going on; while it waits for the user (`waiting`) nothing of it runs, and its dot is
- * the amber one of waiting, named as the header names it.
+ * the amber one of waiting, named as the header names it. A Turn waiting in the queue has not started: a still grey dot,
+ * 排队中 (ruling N).
  */
 function RunProcess({ run, index, open, onToggle, loadToolDetail, name, describe, now, asking, waiting }: { readonly run: PublicRun; readonly index: number; readonly open: boolean; readonly onToggle: () => void; readonly loadToolDetail: ToolDetailLoader | undefined; readonly name: (id: string) => string; readonly describe: (run: PublicRun) => string; readonly now: number; readonly asking: string | undefined; readonly waiting: string | null }) {
   const active = !finished(run.status), panel = useId(), at = (time: number | undefined) => time === undefined ? null : new Date(time).toLocaleTimeString("zh-CN", { hour12: false });
@@ -244,7 +245,7 @@ function RunProcess({ run, index, open, onToggle, loadToolDetail, name, describe
       <BrandIcon brand={run.selection.harnessId} name={name(run.selection.harnessId)} size={18}/>
       {/* What the Turn did and its time stay whole: in the narrow panel the line wraps between its parts, never in a number */}
       <span className="min-w-0 flex-1 break-words"><span className="text-fg">{name(run.selection.harnessId)}</span>{[...(summary ? summary.split(" · ") : []), ...(time ? [time] : [])].map((part, index) => <Fragment key={index}> · <span className="whitespace-nowrap">{part}</span></Fragment>)}</span>
-      {active ? waiting ? <StatusDot tone="wait" label={waiting}/> : <StatusDot tone="run" label="进行中"/> : null}
+      {active ? waiting ? <StatusDot tone="wait" label={waiting}/> : run.status === "queued" ? <StatusDot tone="idle" label={RUN_STATE.queued}/> : <StatusDot tone="run" label="进行中"/> : null}
       <span className="flex-none text-caption text-fg-3">第 {index + 1} 轮</span>
       <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")}/>
     </button>
