@@ -1424,7 +1424,8 @@ test("G054-FR4 a message written while a reply runs is sent once after a complet
 });
 
 test("G054-DL3 the home greets, says who is ready from the readiness facts and who needs the user, shows the workspace without a branch, and the merged picker opens each choice on its own", { timeout: 120000 }, async t => {
-  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  // "Codex Policy" is a Codex whose configuration sets an approval policy, which the composer shows at its bottom left.
+  const fixture = await launchFixture(false, null, { name: "Codex Policy", scenario: "permissions-settings" }); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
   await mkdir(artifact, { recursive: true });
@@ -1499,21 +1500,22 @@ test("G054-DL3 the home greets, says who is ready from the readiness facts and w
   await composer.fill("hello"); await composer.press("Enter");
   await expect(page.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
   await page.getByRole("button", { name: "新对话", exact: true }).click();
-  const summary = page.locator(".agent-summary");
-  await expect(summary).toHaveText(/^\d+ 个 Agent 就绪$/u);
+  // The summary's words, apart from its icons (an Agent without a reviewed mark shows its initials in its tile).
+  const summary = page.locator(".agent-summary"), words = summary.locator(":scope > span").last();
+  await expect(words).toHaveText(/^\d+ 个 Agent 就绪$/u); await expect(summary).toHaveAccessibleName(/^\d+ 个 Agent 就绪$/u);
   await expect(welcome.getByRole("button", { name: "workspace", exact: true })).toBeVisible();
   assert.doesNotMatch(await welcome.innerText(), /分支|branch|git/iu, "the Gateway gives no branch, so none is shown");
   // H02: an Agent whose latest read asked for a sign-in moves from ready to needing the user (OpenClaw's fixture is signed out).
-  const ready = Number(/^(\d+)/u.exec(await summary.innerText())?.[1]);
+  const ready = Number(/^(\d+)/u.exec(await words.innerText())?.[1]);
   await chip.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "OpenClaw", exact: true }).click();
   await expect(page.getByText(/本机认证尚未就绪/u)).toBeVisible();
   // (Other Agents this computer has, found but not ready to run, are named there as well.)
   const needs = welcome.getByRole("button", { name: /(?:OpenClaw|\d+ 个 Agent) 需要处理$/u });
   await expect(needs).toBeVisible();
-  await expect(summary).toHaveText(`${ready - 1} 个 Agent 就绪`);
+  await expect(words).toHaveText(`${ready - 1} 个 Agent 就绪`);
   // The dot between who is ready and who needs the user sits as far from the words on either side.
-  const [words, dot, link] = await Promise.all([summary.locator("span").last().boundingBox(), welcome.locator("span[aria-hidden='true']", { hasText: "·" }).boundingBox(), needs.boundingBox()]);
-  assert.ok(words && dot && link && Math.abs((dot.x - words.x - words.width) - (link.x - dot.x - dot.width)) <= 1, "the dot is centred between the two");
+  const [said, dot, link] = await Promise.all([words.boundingBox(), welcome.locator("span[aria-hidden='true']", { hasText: "·" }).boundingBox(), needs.boundingBox()]);
+  assert.ok(said && dot && link && Math.abs((dot.x - said.x - said.width) - (link.x - dot.x - dot.width)) <= 1, "the dot is centred between the two");
   // The summary lists the available Agents with their versions and states, and chooses one.
   await summary.click();
   const list = page.getByRole("region", { name: "本机发现的 Harness" });
@@ -1521,6 +1523,16 @@ test("G054-DL3 the home greets, says who is ready from the readiness facts and w
   await list.getByRole("button", { name: "选择 Codex", exact: true }).click();
   await expect(chip).toContainText("Codex"); await expect(composer).toBeFocused();
   await shoot("dl3-home");
+  // H05: the program's own approval rule sits at the bottom left after the attachments, before the merged picker.
+  await chip.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex Policy", exact: true }).click();
+  const rule = page.getByRole("button", { name: "审批策略", exact: true });
+  await expect(rule).toHaveText("从不请求审批");
+  const [ruleBox, addBox, chipBox] = await Promise.all([rule.boundingBox(), add.boundingBox(), chip.boundingBox()]);
+  assert.ok(ruleBox && addBox && chipBox && ruleBox.x > addBox.x + addBox.width && ruleBox.x + ruleBox.width < chipBox.x && Math.abs(ruleBox.y + ruleBox.height / 2 - (addBox.y + addBox.height / 2)) <= 2,
+    "the rule follows the add button on its line, before the picker");
+  await rule.click(); await expect(page.getByRole("option", { name: "按需请求审批", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape"); await expect(rule).toBeFocused();
+  await shoot("dl3-permission");
   assert.deepEqual(errors, []);
 });
 
