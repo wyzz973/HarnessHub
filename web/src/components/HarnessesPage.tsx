@@ -33,6 +33,8 @@ export function installationStatus(job: InstallationJobView): string {
     case "failed":
       if (job.native && !job.native.dispatched) return "没有" + verb;
       if (job.native?.installation) return verb + "失败";
+      // A sequenced upgrade (ADR-052) that stopped at a hop's Doctor installed that hop's release without migrating for it.
+      if (job.error?.code === "DOCTOR_FAILED" && job.native?.actualVersion) return "已安装，Doctor 未通过";
       if (job.native?.actualVersion) return "已" + verb + (job.error?.code === "SERVICE_NOT_READY" ? "，服务未就绪" : "，服务未恢复");
       return verb + "失败";
   }
@@ -70,12 +72,14 @@ function jobSummary(job: InstallationJobView, name: string): string {
     if (job.status === "unknown") return "结果尚未确认" + (facts.stoppedServices.length ? "（已停止并注销 " + facts.stoppedServices.join("、") + "）" : "") + "。";
     return installationStatus(job);
   }
+  // A sequenced upgrade's Doctor migrates the product's configuration (ADR-052): said instead of "原配置保留", which is then not the whole truth.
+  const migrated = native?.configurationMigrated?.length ? "，" + native.configurationMigrated.join("、") + " 由 Doctor 迁移。" : null;
   if (job.status === "completed") {
     const restarted = native?.services?.filter(service => service.outcome === "restarted").map(service => service.label) ?? [];
-    return (job.resolvedVersion ? "已" + verb + "到 " + job.resolvedVersion : verb + "完成") + (restarted.length ? "，已重启 " + restarted.join("、") : "") + (native ? "，原配置保留。" : "，入口验证已完成。");
+    return (job.resolvedVersion ? "已" + verb + "到 " + job.resolvedVersion : verb + "完成") + (restarted.length ? "，已重启 " + restarted.join("、") : "") + (native ? migrated ?? "，原配置保留。" : "，入口验证已完成。");
   }
   if (unchanged(job)) return name + " 没有任何改动，仍是 " + (native?.beforeVersion ?? "原版本") + "。" + (native?.closedConversations ? "升级前关闭了 " + native.closedConversations + " 个对话保留的进程，它们下次发消息时会重新连接。" : "");
-  if (job.status === "failed" && native?.actualVersion) return "新版本 " + native.actualVersion + " 已安装，原配置保留。";
+  if (job.status === "failed" && native?.actualVersion) return "新版本 " + native.actualVersion + " 已安装" + (native.hops?.some(hop => hop.doctor === "failed") ? "，它的 Doctor 没有通过，Gateway 没有启动。" : migrated ?? "，原配置保留。");
   if (job.status === "unknown") return "结果或清理状态尚未确认。";
   return installationStatus(job);
 }
@@ -283,7 +287,8 @@ function HarnessDetail(props: HarnessProps & { harness: HarnessView; onClose: ()
           <div className="min-w-0"><strong className="block text-[13px] font-semibold">{installationStatus(job)}</strong><small className="text-[12px] text-fg-2">{jobSummary(job, harness.name)}</small></div></div>
         {jobError(job) ? <Notice tone={unchanged(job) ? "amber" : "red"}>{jobError(job)}</Notice> : null}
         {job.native ? <dl className={cn("m-0", fact)}><dt className="text-fg-3">本机渠道</dt><dd className="m-0">{channelLabel(job.native.channel)}</dd><dt className="text-fg-3">操作前版本</dt><dd className="m-0">{job.native.beforeVersion ?? "未安装"}</dd>
-          {job.native.dispatched ? <><dt className="text-fg-3">已核实版本</dt><dd className="m-0">{job.native.actualVersion ?? "尚未核实"}</dd><dt className="text-fg-3">原配置</dt><dd className="m-0">{job.native.configurationPreserved === true ? job.native.configurationChangedByService ? "安装时没有改动；重启后服务自己改写了它" : "保留，已核实" : "尚未确认"}</dd></> : null}
+          {job.native.dispatched ? <><dt className="text-fg-3">已核实版本</dt><dd className="m-0">{job.native.actualVersion ?? "尚未核实"}</dd><dt className="text-fg-3">原配置</dt><dd className="m-0">{job.native.configurationPreserved === true ? job.native.configurationChangedByService ? "安装时没有改动；重启后服务自己改写了它" : job.native.configurationMigrated?.length ? "HarnessHub 没有写入；" + job.native.configurationMigrated.join("、") + " 由产品的 Doctor 迁移，原件在它的 .bak 备份里" : "保留，已核实" : "尚未确认"}</dd></> : null}
+          {job.native.hops?.map((hop, index) => <Fragment key={hop.version}><dt className="text-fg-3">第 {index + 1} 跳</dt><dd className="upgrade-hop m-0 break-all">{hop.version}：{hop.installed ? "已装入" : "没有装入"}{hop.doctor === "ok" ? "，Doctor 通过" : hop.doctor === "failed" ? "，Doctor 未通过" : hop.installed ? "，Doctor 未运行" : ""}</dd></Fragment>)}
           {job.native.services?.map(service => <Fragment key={service.label}><dt className="text-fg-3">后台服务</dt><dd className="m-0 break-all">{service.label}：{serviceOutcome(service)}</dd></Fragment>)}
           {job.native.closedConversations ? <><dt className="text-fg-3">空闲进程</dt><dd className="m-0">关闭了 {job.native.closedConversations} 个，下次发消息时重新连接</dd></> : null}
           {job.native.clearedRecords ? <><dt className="text-fg-3">旧记录</dt><dd className="m-0">清除了 {job.native.clearedRecords} 条</dd></> : null}

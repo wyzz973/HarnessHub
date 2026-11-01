@@ -762,9 +762,11 @@ export function App() {
     if (previous && previous.action !== action) { setError("上一次安装请求的接收结果还未确认。请先确认原请求，再发起其他操作。"); return; }
     const controlId = harness.management.recipe?.controlId;
     if (!controlId) { setError("这个 Harness 暂无受管安装配方。"); return; }
-    // An upgrade carries what the user agreed to in its confirmation, for the installation that confirmation described (ADR-043).
+    // An upgrade carries what the user agreed to in its confirmation, for the installation that confirmation described (ADR-043),
+    // and for a product upgraded through its documented sequence that its backup was made (ADR-052).
     const input = previous ?? { harnessId: harness.id, controlId, action, commandId: requestKey(), expectedDefaultRevision: harness.management.defaultRevision,
-      ...(harness.management.native ? { expectedNativeFingerprint: consent?.fingerprint ?? harness.management.native.fingerprint } : {}), ...(consent ? { restartServices: consent.restartServices } : {}) };
+      ...(harness.management.native ? { expectedNativeFingerprint: consent?.fingerprint ?? harness.management.native.fingerprint } : {}), ...(consent ? { restartServices: consent.restartServices } : {}),
+      ...(consent?.backupConfirmed ? { backupConfirmed: true as const } : {}) };
     installationWrites.current.set(harness.id, input); void submitInstallation(input);
   };
   // An uninstall carries the confirmed check's fingerprint and the services the user agreed to stop (ADR-044).

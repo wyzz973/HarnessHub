@@ -1608,6 +1608,82 @@ test("G054-UP2 a conversation whose kept process an upgrade closed says so until
   assert.deepEqual(errors, []);
 });
 
+test("G054-UP3 an upgrade through the product's documented sequence shows its hops, the exact commands, the gateway offline in between and the Doctor's rewrite, cannot be sent until the backup is confirmed, sends that consent, and the task shows each hop (ADR-052)", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  // The fixture's OpenClaw shown as the user's npm installation (2026.3.23-2, before July 2026) with the latest release available.
+  const viewed = "c".repeat(64), checked = "d".repeat(64), entry = "/opt/homebrew/bin/openclaw";
+  const native = (harness: { id: string; management: Record<string, unknown> }) => harness.id !== "openclaw" ? harness : { ...harness, installed: true,
+    management: { ...harness.management, source: "system", installedVersion: "2026.3.23-2", programVersion: "2026.3.23-2", latestVersion: "2026.10.9", updateStatus: "available",
+      recipe: { controlId: "openclaw-native", kind: "npm", sourceLabel: "npm registry", packageName: "openclaw", referenceVersion: "latest", canInstall: true, reason: null },
+      native: { channel: "npm", location: entry, fingerprint: viewed, canInstall: false, canUpgrade: true, reason: null } } };
+  const done = { id: "management-33333333-3333-4333-8333-333333333333", harnessId: "openclaw", controlId: "openclaw-native", action: "upgrade", status: "completed", phase: "completed", cancelRequested: false,
+    createdAt: "2026-11-01T10:00:00.000Z", updatedAt: "2026-11-01T10:20:00.000Z", resolvedVersion: "2026.10.9", installationId: null, error: null, logCursor: 0,
+    native: { channel: "npm", location: entry, beforeVersion: "2026.3.23-2", actualVersion: "2026.10.9", dispatched: true, configurationPreserved: true, restartServices: ["ai.openclaw.gateway"], backupConfirmed: true,
+      hops: [{ version: "2026.9.5", installed: true, doctor: "ok" }, { version: "2026.10.9", installed: true, doctor: "ok" }],
+      services: [{ label: "ai.openclaw.gateway", outcome: "restarted", pid: 50001, ready: true }, { label: "ai.openclaw.node", outcome: "restarted", pid: 50002, ready: null }], configurationMigrated: ["~/.openclaw/openclaw.json"] } };
+  const install = (version: string) => "/opt/homebrew/bin/npm install --global --prefix /opt/homebrew --no-audit --no-fund --allow-scripts=openclaw --registry=https://registry.npmjs.org openclaw@" + version;
+  const commands = [entry + " gateway stop", install("2026.9.5"), entry + " doctor --fix --yes", install("2026.10.9"), entry + " doctor --fix --yes", entry + " gateway start", entry + " gateway status --deep", entry + " node restart"];
+  let jobs: unknown[] = [], submitted: Record<string, unknown> | null = null;
+  for (const path of ["**/api/v1/state", "**/api/v1/harnesses", "**/api/v1/harnesses/rescan", "**/api/v1/harnesses/check-updates"]) await page.route(path, async route => {
+    const response = await route.fetch(), body = await response.json();
+    await route.fulfill({ response, json: Array.isArray(body) ? body.map(native) : { ...body, harnesses: body.harnesses.map(native), jobs } });
+  });
+  await page.route("**/api/v1/installation-jobs?limit=50", route => route.fulfill({ json: jobs }));
+  await page.route("**/api/v1/installation-jobs", async route => {
+    if (route.request().method() !== "POST") return route.fallback();
+    submitted = route.request().postDataJSON(); jobs = [done]; await route.fulfill({ status: 202, json: done });
+  });
+  await page.route("**/api/v1/harnesses/openclaw/maintenance", route => route.fulfill({ json: { harnessId: "openclaw", checkedAt: "2026-11-01T10:00:00.000Z", fingerprint: checked, channel: "npm", location: entry,
+    currentVersion: "2026.3.23-2", targetVersion: "2026.10.9", servicesKnown: true,
+    restart: [{ label: "ai.openclaw.gateway", name: "OpenClaw Gateway", pid: 4039, command: entry + " gateway start", portKnown: true }], resident: [], processes: [{ pid: 8100, name: "openclaw" }],
+    conversations: [], otherUsers: [], staleRecords: 0, plugins: ["openclaw-weixin"],
+    notes: ["升级期间 Gateway 停止，微信、飞书等渠道离线，直到最后一跳的 Doctor 通过并重新启动；HarnessHub 不再用 launchctl kickstart 重启它。最好选一个能接受中断的时间升级。"], rollback: null, runtimes: [],
+    sequence: { hops: [{ version: "2026.9.5", bridge: true, runtimes: [] }, { version: "2026.10.9", bridge: false, runtimes: [] }], commands,
+      gateway: { label: "ai.openclaw.gateway", name: "OpenClaw Gateway", pid: 4039 }, restarts: [{ label: "ai.openclaw.node", name: "OpenClaw Node", pid: 4736, command: entry + " node restart" }],
+      backupCommand: "openclaw backup create --output <目录> --verify",
+      doctor: { command: entry + " doctor --fix --yes", rewrites: ["~/.openclaw/openclaw.json"], backups: "Doctor 每次改写配置都先把原件轮换保存为 ~/.openclaw/openclaw.json.bak（更早的是 .bak.1 到 .bak.4）。" },
+      rollback: "退回旧版本只能从升级前的备份恢复：openclaw backup restore <备份文件> --target <新目录>（不在原目录上恢复）。旧版本打不开新版本迁移过的数据库，所以用 npm 装回旧版本不能恢复。" } } }));
+  await page.goto(fixture.gateway.url);
+  await page.getByRole("button", { name: "我的 Agent 1 个可升级", exact: true }).click();
+  const row = page.locator(".harness-table-row").filter({ has: page.getByRole("button", { name: "查看 OpenClaw 详情", exact: true }) });
+  await row.getByRole("button", { name: "升级", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "升级 OpenClaw" });
+  await expect(dialog.getByText("2026.3.23-2 → 2026.10.9")).toBeVisible();
+  // The hops and the exact lines, in upstream's order; the gateway offline in between; the node service restarted by the product; the Doctor's rewrite and its backups.
+  await expect(dialog).toContainText("按 OpenClaw 官方文档的步骤升级（2 跳）");
+  await expect(dialog).toContainText("依次装入 2026.9.5（上游要求先经过的中间版本）、2026.10.9，每一跳装好后运行 OpenClaw 自己的 Doctor 迁移配置");
+  await expect(dialog.locator(".upgrade-sequence li")).toHaveText(commands);
+  await expect(dialog.locator(".upgrade-offline")).toHaveText("OpenClaw Gateway（ai.openclaw.gateway，进程 4039）在第一跳之前由 OpenClaw 自己的命令停止，最后一跳的 Doctor 通过后再由它的命令启动，并核实它重新运行、在端口上监听；期间它连接的渠道（例如微信、飞书）离线。HarnessHub 不用 launchctl kickstart 重启它。");
+  await expect(dialog).toContainText("OpenClaw Node（ai.openclaw.node，进程 4736）由 OpenClaw 自己的命令重启：");
+  await expect(dialog.locator(".upgrade-doctor")).toContainText("每一跳的 /opt/homebrew/bin/openclaw doctor --fix --yes 会改写 ~/.openclaw/openclaw.json。Doctor 每次改写配置都先把原件轮换保存为 ~/.openclaw/openclaw.json.bak（更早的是 .bak.1 到 .bak.4）。");
+  await expect(dialog).toContainText("openclaw（进程 8100）"); await expect(dialog).toContainText("已安装的插件：openclaw-weixin");
+  // No npm rollback is offered: the previous version is only returned to from the backup, which the user must confirm before the upgrade can be sent.
+  await expect(dialog).not.toContainText("要退回 2026.3.23-2，先运行"); await expect(dialog).toContainText("退回旧版本只能从升级前的备份恢复");
+  await expect(dialog).not.toContainText("launchctl kickstart -k gui/");
+  const confirm = dialog.getByRole("button", { name: "升级并重启 OpenClaw Gateway" }), backup = dialog.getByRole("checkbox", { name: /我已运行 openclaw backup create --output <目录> --verify 并核对了备份/u });
+  await expect(confirm).toBeDisabled();
+  await backup.check(); await expect(confirm).toBeEnabled();
+  await backup.uncheck(); await expect(confirm).toBeDisabled(); await backup.check();
+  await page.screenshot({ path: join(artifact, "upgrade-sequence.png"), animations: "disabled" });
+  await confirm.click(); await expect(dialog).toBeHidden();
+  await expect.poll(() => submitted).not.toBeNull();
+  assert.deepEqual(submitted!.restartServices, ["ai.openclaw.gateway"]); assert.equal(submitted!.backupConfirmed, true); assert.equal(submitted!.expectedNativeFingerprint, checked, "the consent is for the installation the confirmation described");
+  // The task shows each hop, the services the sequence started, and the configuration the Doctor migrated: HarnessHub wrote nothing.
+  const detail = page.getByRole("dialog", { name: "OpenClaw 详情" });
+  await expect(detail.locator(".installation-state")).toContainText("升级完成");
+  await expect(detail.locator(".installation-state")).toContainText("已升级到 2026.10.9，已重启 ai.openclaw.gateway、ai.openclaw.node，~/.openclaw/openclaw.json 由 Doctor 迁移。");
+  await expect(detail.locator(".upgrade-hop")).toHaveText(["2026.9.5：已装入，Doctor 通过", "2026.10.9：已装入，Doctor 通过"]);
+  await expect(detail).toContainText("HarnessHub 没有写入；~/.openclaw/openclaw.json 由产品的 Doctor 迁移，原件在它的 .bak 备份里");
+  await expect(detail).toContainText("ai.openclaw.gateway：已重启（进程 50001），正在监听"); await expect(detail).toContainText("ai.openclaw.node：已重启（进程 50002），可用性未验证");
+  // The page scans once the task ended; that request must not be mid-flight through a route when the browser closes.
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+  assert.deepEqual(errors, []);
+});
+
 test("G054-OC1 a Harness lists each official installation with the one in use, and a non-official one only as a note beside the official way to install (ADR-044)", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
