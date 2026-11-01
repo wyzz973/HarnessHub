@@ -349,7 +349,9 @@ export function ChatPage(props: ChatProps) {
     const last = [...session.messages].reverse().find(message => message.role === "user");
     if (last) fillDraft(last.text);
   } : undefined;
-  // Messages that arrive after the conversation opened rise into place (Motion board #15); the history does not.
+  // Messages that arrive after the conversation opened rise into place (Motion board #15); the history does not. This is the
+  // one rule for the rise (the bubble has none of its own). It covers the first message sent from the home: the conversation
+  // it creates opens with an empty history (App accepts the created conversation before sending), and the message arrives after.
   const known = useRef<{ id: string | null; messages: ReadonlySet<string> }>({ id: null, messages: new Set() });
   if (session && known.current.id !== session.id) known.current = { id: session.id, messages: new Set(session.messages.map(message => message.id)) };
 

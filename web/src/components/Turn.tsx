@@ -29,7 +29,8 @@ function firstOutputText(run: PublicRun): string | null {
 
 /**
  * Whether this element is news (ADR-054 §3: motion only says what happened). Decided once, before the first paint: things
- * drawn with the rest of a page stay still; a message just sent, a Turn just started, a hand-over just made come in.
+ * drawn with the rest of a page stay still; a Turn just started and a hand-over just made come in. (A message of yours
+ * rises by the conversation's own rule, ChatPage's, which knows what arrived after it opened.)
  */
 function useEntrance(fresh: boolean): boolean {
   const [entering, setEntering] = useState(false);
@@ -190,15 +191,15 @@ function ActionButton({ label, onClick, children, pressed }: { readonly label: s
 
 /** Your message: a light grey bubble on the right of the reading column (Conversation board), with the way to edit it again. */
 export const UserMessage = memo(function UserMessage({ message, run, onEdit }: { readonly message: PublicMessage; readonly run: PublicRun | undefined; readonly onEdit: (text: string) => void }) {
-  // A message just sent springs up 10 px as it fades in (Motion board #15); one drawn with the page does not.
-  const entering = useEntrance(acceptedRecently(run));
+  // Whether it rises into place (Motion board #15) is the conversation's call: ChatPage wraps a message that arrived after
+  // the conversation opened, so a message never rises twice and history never moves.
   return <article className="message user-message group flex flex-col items-end gap-1.5">
     {run?.attachments?.length ? <MessageAttachments attachments={run.attachments}/> : null}
     <div className="flex w-full min-w-0 items-end justify-end gap-1">
       <div className="flex h-7 flex-none items-center transition-opacity duration-150 [@media(hover:hover)]:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
         <ActionButton label="放回输入框" onClick={() => onEdit(message.text)}><PencilLine size={14}/></ActionButton>
       </div>
-      <div className={cn("max-w-[82%] min-w-0 rounded-[18px] bg-subtle px-[15px] py-2.5 text-reading leading-6 whitespace-pre-wrap break-words text-fg", entering && "motion-message-in")}><span className="sr-only">你：</span>{message.text}</div>
+      <div className="max-w-[82%] min-w-0 rounded-[18px] bg-subtle px-[15px] py-2.5 text-reading leading-6 whitespace-pre-wrap break-words text-fg"><span className="sr-only">你：</span>{message.text}</div>
     </div>
   </article>;
 });

@@ -1985,6 +1985,8 @@ test("G054-DL6 the plan bar above the composer says how far the plan is and open
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
   await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter");
   await expect(log).toContainText("原生活动已完成。");
+  // #15: the first message, sent from the home, rises into the conversation it opened, once: one rise in the log, around it.
+  await expect(log.locator(".motion-message-in")).toHaveCount(1); await expect(log.locator(".motion-message-in .user-message")).toHaveText(/NATIVE_ACTIVITY/u);
   // P01: the plan with a step left stays above the composer; it opens every step and its arrow turns.
   const bar = page.locator(".plan-bar"), toggle = bar.getByRole("button").first();
   await expect(toggle).toContainText("计划"); await expect(toggle).toContainText("1 / 2 · 正在：修改文件"); await expect(toggle).toHaveAttribute("aria-expanded", "false");
@@ -2009,8 +2011,9 @@ test("G054-DL6 the plan bar above the composer says how far the plan is and open
   await composer.fill("STREAM_RENDER：计时"); await composer.press("Enter");
   await expect.poll(async () => (await current()).runs.at(-1).status, { timeout: 15000 }).toBe("running");
   await expect(line).toContainText("第 2 轮"); await expect(line).toContainText(/已用 \d+ 秒/u); await expect(line).not.toContainText("输入");
-  // #15: a message sent here rises into place; #16: the send key's glyph has turned into the stop square.
-  await expect(log.locator(".motion-message-in .user-message").last()).toContainText("STREAM_RENDER：计时");
+  // #15: a message sent here rises into place, once (one rise per message sent in view); #16: the send key's glyph has turned
+  // into the stop square.
+  await expect(log.locator(".motion-message-in .user-message").last()).toContainText("STREAM_RENDER：计时"); await expect(log.locator(".motion-message-in")).toHaveCount(2);
   assert.match(await log.locator(".motion-message-in").last().evaluate(element => getComputedStyle(element).animationName), /hh-message-rise/u);
   await expect(page.getByRole("button", { name: "停止当前回复", exact: true }).locator(".send-stop")).toHaveAttribute("data-state", "stop");
   await expect.poll(motion).toContain("hh-send-to-stop:0.48s");
