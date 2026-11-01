@@ -659,14 +659,14 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
     </> : <EmptyState title={query || onlyWarnings ? "没有匹配的条目" : "这一类还没有条目"}>{columns.some(item => item.kinds[kind] !== "read") ? "部分 Harness 没有这类能力，或保存在磁盘之外。" : "各 Harness 的用户级配置里没有这一类。"}</EmptyState>}
     {/* Placed against the page, but right after the matrix in the reading and Tab order, so the bar is the next stop after the
       * cells. Sized as on the Capabilities board: 52 px tall with 13 px words and the 34 px buttons; the result bar 46 px. */}
-    <FloatingBar open={picked.size > 0 && !previewing} label="已选的格子" className="absolute inset-x-4 bottom-6 z-30 mx-auto min-h-[52px] w-fit gap-2.5 pl-[18px] text-ui-sm">
+    <FloatingBar open={picked.size > 0 && !previewing} label="已选的格子" className="absolute bottom-6 z-30 min-h-[52px] gap-2.5 pl-[18px] text-ui-sm">
       <span className="min-w-0 py-1.5 whitespace-normal" role="status"><span className="whitespace-nowrap">已选 <strong className="font-semibold">{picked.size}</strong> 处</span>{" · "}
         <span className="whitespace-nowrap">{waiting ? "正在核对要改的文件" : "会改 " + files.length + " 个文件"}</span>{!waiting && refused ? <>{" · "}<span className="whitespace-nowrap">{refused} 处不能写入</span></> : null}</span>
       <span className="flex flex-none items-center gap-2.5">
         <button type="button" className="btn btn-ghost" onClick={() => { setPicked(new Map()); keepFocus(() => heading.current); }}>清除</button>
         <button ref={previewButton} type="button" className="btn btn-primary" disabled={waiting || files.length === 0} onClick={preview}>预览写入</button></span>
     </FloatingBar>
-    <FloatingBar open={batch !== null && picked.size === 0 && !previewing && undoing === null} label="写入结果" className="capability-written absolute inset-x-4 bottom-6 z-30 mx-auto min-h-[46px] w-fit gap-2.5 pl-3.5 text-ui-sm">
+    <FloatingBar open={batch !== null && picked.size === 0 && !previewing && undoing === null} label="写入结果" className="capability-written absolute bottom-6 z-30 min-h-[46px] gap-2.5 pl-3.5 text-ui-sm">
       {/* What the Gateway did, file by file: a change it reports as not done is never counted as written. */}
       {failedWrites ? <AlertCircle size={16} aria-hidden="true" className="flex-none text-red"/> : <CircleCheck size={16} aria-hidden="true" className="flex-none text-accent-text"/>}
       <span className="min-w-0 trunc">{failedWrites ? failedWrites + " 处没有写入完成" + (writtenFiles ? "，已写入 " + writtenFiles + " 个文件" : "") : "已写入 " + writtenFiles + " 个文件"}</span>
@@ -706,7 +706,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
           {view === null ? <>
             {problem ? <Notice tone="red" action={<button type="button" className="btn btn-sm" onClick={() => load()}>重试</button>}>{problem}</Notice> : null}
             {loading ? <p className="m-0 flex items-center gap-2 text-ui-sm text-fg-2" role="status"><Spinner size={14} label=""/>正在读取各 Agent 的配置</p> : null}
-          </> : !ready ? <EmptyState title="没有找到官网安装的 Agent">在“Agent”页安装或重新检测后，这里会列出它们读取的能力。</EmptyState>
+          </> : !ready ? <EmptyState title="没有找到官网安装的 Agent">在 Agent 页安装或重新检测后，这里会列出它们读取的能力。</EmptyState>
             : <div role="tabpanel" id="capability-tabpanel" aria-labelledby={"capability-tab-" + kind} className="flex flex-col gap-5">{content}</div>}
         </div>
       </div>

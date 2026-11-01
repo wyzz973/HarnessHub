@@ -2533,14 +2533,23 @@ test("G054-DL9 the application's shortcuts open what they name, ⌥⌘↓ goes t
   assert.deepEqual(errors, []);
 });
 
-test("G054-FR6 the chosen theme applies before the first paint and survives reload, dark pages fit narrow screens, and reduced motion stops transitions", { timeout: 120000 }, async t => {
+test("G054-FR6 the chosen theme and its theme color apply before the first paint and survive reload, dark pages fit narrow screens with open collapsibles and uncut status words, the end dot follows a reply's last block, and reduced motion and the keyboard stop transitions", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
   const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [], fonts: string[] = [];
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   page.on("request", request => { if (/^https:\/\/fonts\.(?:googleapis|gstatic)\.com\//u.test(request.url())) fonts.push(request.url()); });
+  // The browser's theme color (its window or tab bar) is the first theme-color whose media matches; it is also read once
+  // the page's scripts have run, before the application has drawn anything.
+  await page.addInitScript(() => document.addEventListener("DOMContentLoaded", () => {
+    (window as unknown as { __loadedThemeColor: string | null }).__loadedThemeColor = [...document.querySelectorAll<HTMLMetaElement>("meta[name='theme-color']")].find(meta => !meta.media || matchMedia(meta.media).matches)?.content ?? null;
+  }, { once: true }));
+  const themeColor = () => page.evaluate(() => [...document.querySelectorAll<HTMLMetaElement>("meta[name='theme-color']")].find(meta => !meta.media || matchMedia(meta.media).matches)?.content ?? null);
+  const loadedThemeColor = () => page.evaluate(() => (window as unknown as { __loadedThemeColor: string | null }).__loadedThemeColor);
   await page.goto(fixture.gateway.url);
+  // Without a choice the theme color is the light main area of a light system.
+  assert.deepEqual([await loadedThemeColor(), await themeColor()], ["#FFFFFF", "#FFFFFF"]);
   // Nothing comes from elsewhere (ADR-054 §2): the policy allows only this Gateway, and the text uses the system fonts.
   const policy = (await context.request.get(new URL(fixture.gateway.url).origin + "/")).headers()["content-security-policy"] ?? "";
   assert.equal(policy, "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'");
@@ -2554,9 +2563,12 @@ test("G054-FR6 the chosen theme applies before the first paint and survives relo
   await page.getByRole("radio", { name: /深色/u }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   const background = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
-  // The dark main area of ADR-054 §1 (#18191C).
+  // The dark main area of ADR-054 §1 (#18191C), and the theme color with it although the system is light.
   assert.equal(await background(), "rgb(24, 25, 28)");
+  await expect.poll(themeColor).toBe("#18191C");
   await page.reload(); await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  // After a reload the chosen theme color is in place as soon as the scripts have run, together with the theme.
+  assert.deepEqual([await loadedThemeColor(), await themeColor()], ["#18191C", "#18191C"]);
   await expect(page.getByRole("heading", { name: "设置", exact: true })).toBeVisible();
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true });
   await page.getByRole("button", { name: "返回对话", exact: true }).click();
@@ -2565,6 +2577,18 @@ test("G054-FR6 the chosen theme applies before the first paint and survives relo
   for (const target of ["chat", "harnesses", "settings"] as const) {
     if (target === "harnesses") await page.getByRole("button", { name: "Agent", exact: true }).click();
     if (target === "settings") await page.getByRole("button", { name: "设置", exact: true }).click();
+    if (target === "harnesses") {
+      // #07: a state's box is held at its words' width rounded up, never cut by a fraction of a pixel. The shown words are
+      // made a little wider, to a width ending in a small fraction that rounding to the nearest pixel would cut; words that
+      // change while this runs are new words, made wider the same way.
+      await expect.poll(() => page.evaluate(() => {
+        const layer = document.querySelector<HTMLElement>(".agent-card .swap-text > .swap-text-layer:not(.swap-text-out)")!, box = layer.parentElement!;
+        if (layer.dataset.fraction === undefined) { layer.style.width = (Math.floor(parseFloat(getComputedStyle(layer).width)) + 1.05).toFixed(2) + "px"; layer.dataset.fraction = ""; }
+        const words = parseFloat(getComputedStyle(layer).width);
+        return box.style.width === Math.ceil(words) + "px" ? "held at the words rounded up" : box.style.width + " for words of " + words + "px";
+      })).toBe("held at the words rounded up");
+      await page.evaluate(() => { for (const layer of document.querySelectorAll<HTMLElement>(".swap-text-layer[data-fraction]")) { layer.style.width = ""; delete layer.dataset.fraction; } });
+    }
     for (const width of [390, 320]) {
       await page.setViewportSize({ width, height: 844 });
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${target} overflows at ${width} in the dark theme`);
@@ -2572,6 +2596,64 @@ test("G054-FR6 the chosen theme applies before the first paint and survives relo
     }
     await page.setViewportSize({ width: 1280, height: 900 });
   }
+  // An open collapsible keeps to the width it is given: a long unbroken row inside is cut short instead of widening the page.
+  await page.setViewportSize({ width: 320, height: 844 });
+  assert.deepEqual(await page.evaluate(() => {
+    const frame = document.createElement("div");
+    frame.innerHTML = "<div class='collapsible' data-open='true' data-state='open'><div class='collapsible-inner'><div style='overflow: hidden; white-space: nowrap; text-overflow: ellipsis'>"
+      + "一行很长而且没有断开的步骤说明".repeat(30) + "</div></div></div>";
+    document.body.append(frame);
+    const row = frame.querySelector(".collapsible-inner > div")!, result = { page: document.documentElement.scrollWidth <= innerWidth, row: row.getBoundingClientRect().width <= frame.clientWidth };
+    frame.remove(); return result;
+  }), { page: true, row: true });
+  await page.setViewportSize({ width: 1280, height: 900 });
+
+  // #11: the end dot follows a reply's last block as react-markdown renders it: at the end of the last line of a heading,
+  // a quote's last paragraph or a list item, and on its own line after a code block or a table, also inside a list item or
+  // a quote. That line starts right under the block, a table's as a code block's. Once done, the reply ends at its last
+  // line, as the Conversation board's list does, and a quote at its own. Each reply sits in a column as in a Turn, which
+  // keeps its children's margins inside it.
+  assert.deepEqual(await page.evaluate(() => Object.fromEntries(Object.entries({
+    heading: "<p>第一段。</p>\n<h2>流式标题</h2>", quote: "<blockquote>\n<p>引用的第一段</p>\n<p>引用的最后一段</p>\n</blockquote>",
+    list: "<ul>\n<li>读取工作区</li>\n<li>修改文件</li>\n</ul>", loose: "<ul>\n<li>\n<p>读取工作区</p>\n</li>\n<li>\n<p>修改文件</p>\n</li>\n</ul>",
+    nested: "<ul>\n<li>读取工作区\n<ul>\n<li>子步骤</li>\n</ul>\n</li>\n</ul>",
+    code: "<h2>流式标题</h2>\n<div class='code-block'><div class='code-block-head'><span>typescript</span></div><pre><code>const answer = \"par</code></pre></div>",
+    table: "<p>表格：</p>\n<div class='table-scroll'><table><thead><tr><th>项目</th><th>状态</th></tr></thead><tbody><tr><td>SSE</td><td>进行中</td></tr></tbody></table></div>",
+    listCode: "<ul>\n<li>\n<p>运行：</p>\n<div class='code-block'><pre><code>pnpm test</code></pre></div>\n</li>\n</ul>",
+    quoteCode: "<blockquote>\n<p>引用：</p>\n<div class='code-block'><pre><code>pnpm test</code></pre></div>\n</blockquote>",
+    quoteThen: "<blockquote>\n<p>引用的一段</p>\n</blockquote>\n<p>之后的一段。</p>",
+  }).map(([name, html]) => {
+    const turn = document.createElement("article"), reply = document.createElement("div"); turn.className = "flex flex-col";
+    reply.className = "markdown text-reading caret-host"; reply.innerHTML = html; turn.append(reply); document.body.append(turn);
+    // From the end of a block's content to the end of its last child.
+    const under = (node: Element) => { const style = getComputedStyle(node); return Math.round(node.getBoundingClientRect().bottom - parseFloat(style.paddingBottom) - parseFloat(style.borderBottomWidth) - node.lastElementChild!.getBoundingClientRect().bottom); };
+    const marked = [reply, ...reply.querySelectorAll("*")].filter(node => getComputedStyle(node, "::after").content !== "none"), height = reply.getBoundingClientRect().height;
+    const places = marked.map(node => node === reply ? "reply" : node.tagName.toLowerCase()), lines = marked.map(node => node.lastElementChild ? under(node) : null);
+    reply.classList.remove("caret-host"); const own = reply.getBoundingClientRect().height, ends = [under(reply), ...[...reply.querySelectorAll("blockquote")].map(under)]; turn.remove();
+    return [name, [...places.map((place, index) => place + (height > own ? ` on its own line ${lines[index]} px under the block` : "")), "ends " + ends.join(" / ") + " px under its last block"]];
+  }))), { heading: ["h2", "ends 0 px under its last block"], quote: ["p", "ends 0 / 0 px under its last block"], list: ["li", "ends 0 px under its last block"],
+    loose: ["p", "ends 0 px under its last block"], nested: ["li", "ends 0 px under its last block"], code: ["reply on its own line 26 px under the block", "ends 0 px under its last block"],
+    table: ["reply on its own line 26 px under the block", "ends 0 px under its last block"], listCode: ["li on its own line 26 px under the block", "ends 0 px under its last block"],
+    quoteCode: ["blockquote on its own line 26 px under the block", "ends 0 / 0 px under its last block"], quoteThen: ["p", "ends 0 / 0 px under its last block"] });
+
+  // ADR-054 §3 for the classes that carry motion: the longest transition of each, in ms, and the end dot's loop. A chevron
+  // turns on the `rotate` property that rotate-90 sets: the moment the angle changes, it still shows the old one.
+  const motions = () => page.evaluate(() => {
+    const holder = document.createElement("div"), longest = (node: Element) => Math.max(...getComputedStyle(node).transitionDuration.split(",").map(part => parseFloat(part) * (part.trim().endsWith("ms") ? 1 : 1000)));
+    holder.innerHTML = "<div class='motion-rotate'></div><div class='collapsible' data-open='true'></div><div class='backdrop'></div><div class='floating-bar'></div><div class='markdown caret-host'><p>正在写</p></div>";
+    document.body.append(holder);
+    const [chevron, collapsible, veil, bar, reply] = [...holder.children], from = getComputedStyle(chevron!).rotate; chevron!.classList.add("rotate-90");
+    const dot = getComputedStyle(reply!.querySelector("p")!, "::after"), result = {
+      chevron: [getComputedStyle(chevron!).transitionProperty, longest(chevron!), from, getComputedStyle(chevron!).rotate], collapsible: longest(collapsible!),
+      veil: [getComputedStyle(veil!).transitionProperty, longest(veil!)], bar: [getComputedStyle(bar!).transitionProperty, longest(bar!)], dot: [dot.animationName, dot.animationIterationCount] };
+    holder.remove(); return result;
+  });
+  const pointer = await motions();
+  assert.notEqual(pointer.chevron[3], "90deg", "a chevron turns instead of jumping");
+  assert.deepEqual({ ...pointer, chevron: pointer.chevron.slice(0, 3) }, { chevron: ["rotate", 200, "none"], collapsible: 200, veil: ["opacity", 200], bar: ["opacity, transform", 300], dot: ["hh-end-dot", "infinite"] });
+  // #37: from the keyboard the same changes are instant; the dot keeps breathing, as nothing the keyboard did started it.
+  await page.keyboard.press("Shift");
+  assert.deepEqual(await motions(), { chevron: ["rotate", 0, "none", "90deg"], collapsible: 0, veil: ["opacity", 0], bar: ["opacity, transform", 0], dot: ["hh-end-dot", "infinite"] });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.keyboard.press("ControlOrMeta+K");
   // With reduced motion only fades of 150 ms or less remain (ADR-054 §3); the palette, opened from the keyboard, appears at once.
@@ -2588,8 +2670,15 @@ test("G054-FR6 the chosen theme applies before the first paint and survives relo
   });
   assert.deepEqual([popover.input, popover.properties, popover.transform, popover.animation], ["pointer", "opacity", "none", "none"]);
   assert.ok(popover.durations.every(value => value <= 150) && popover.durations.some(value => value > 0), "a popover only fades, within 150 ms: " + popover.durations.join(","));
+  // #38 with the pointer: the chevron and the collapsible change at once, the veil and the bar only fade, the end dot is still.
+  assert.deepEqual(await motions(), { chevron: ["rotate", 0, "none", "90deg"], collapsible: 0, veil: ["opacity", 120], bar: ["opacity", 120], dot: ["none", "1"] });
   await page.getByRole("radio", { name: /跟随系统/u }).click();
   await expect(page.locator("html")).not.toHaveAttribute("data-theme", /.+/u);
+  // Following the system again, the theme color follows its changes; a manual light choice keeps light under a dark system.
+  await expect.poll(themeColor).toBe("#FFFFFF");
+  await page.emulateMedia({ colorScheme: "dark" }); await expect.poll(themeColor).toBe("#18191C");
+  await page.getByRole("radio", { name: /浅色/u }).click(); await expect.poll(themeColor).toBe("#FFFFFF");
+  await page.getByRole("radio", { name: /跟随系统/u }).click(); await expect.poll(themeColor).toBe("#18191C");
   // No request went to Google Fonts while the pages above were shown.
   assert.deepEqual(fonts, []);
   assert.deepEqual(errors, []);
@@ -2637,16 +2726,17 @@ test("G054-DL1 the neutral tokens follow the system in both themes, text uses th
   assert.deepEqual(scale.radii, ["6px", "8px", "10px", "12px", "14px", "28px"]);
 
   // §1: tokens read through the same variables the components use, light by default and dark when the system is dark.
+  // Dialogs, drawers and sheets sit on a veil of the sidebar's color at 60 % (the Capabilities board's write preview).
   const tokens = () => page.evaluate(() => {
-    const probe = document.createElement("i"), well = document.createElement("span"), app = document.createElement("span"), mono = document.createElement("img");
-    well.className = "brand-tile"; well.dataset.kind = "mark"; app.className = "brand-tile"; app.dataset.kind = "app"; mono.className = "brand-mono";
-    document.body.append(probe, well, app, mono);
+    const probe = document.createElement("i"), well = document.createElement("span"), app = document.createElement("span"), mono = document.createElement("img"), veil = document.createElement("div");
+    well.className = "brand-tile"; well.dataset.kind = "mark"; app.className = "brand-tile"; app.dataset.kind = "app"; mono.className = "brand-mono"; veil.className = "backdrop";
+    document.body.append(probe, well, app, mono, veil);
     const color = (name: string) => { probe.style.color = `var(${name})`; return getComputedStyle(probe).color; };
     const names = ["--bg-sidebar", "--bg-app", "--bg-surface", "--bg-subtle", "--bg-hover", "--bg-selected", "--text", "--text-2", "--text-3", "--accent", "--accent-text", "--on-accent", "--amber-dot", "--amber", "--red-dot", "--red", "--add-text"];
     probe.style.boxShadow = "var(--sh-composer)";
     const result = { ...Object.fromEntries(names.map(name => [name, color(name)])), page: getComputedStyle(document.body).backgroundColor, composer: getComputedStyle(probe).boxShadow,
-      well: getComputedStyle(well).backgroundColor, app: getComputedStyle(app).backgroundColor, mono: getComputedStyle(mono).filter, theme: document.documentElement.getAttribute("data-theme") };
-    probe.remove(); well.remove(); app.remove(); mono.remove(); return result;
+      well: getComputedStyle(well).backgroundColor, app: getComputedStyle(app).backgroundColor, mono: getComputedStyle(mono).filter, veil: getComputedStyle(veil).backgroundColor, theme: document.documentElement.getAttribute("data-theme") };
+    probe.remove(); well.remove(); app.remove(); mono.remove(); veil.remove(); return result;
   });
   assert.deepEqual(await tokens(), {
     "--bg-sidebar": "rgb(249, 250, 251)", "--bg-app": "rgb(255, 255, 255)", "--bg-surface": "rgb(255, 255, 255)", "--bg-subtle": "rgb(244, 245, 247)", "--bg-hover": "rgb(235, 237, 240)",
@@ -2654,7 +2744,7 @@ test("G054-DL1 the neutral tokens follow the system in both themes, text uses th
     "--accent-text": "rgb(47, 95, 208)", "--on-accent": "rgb(255, 255, 255)", "--amber-dot": "rgb(245, 158, 11)", "--amber": "rgb(180, 83, 9)", "--red-dot": "rgb(239, 68, 68)",
     "--red": "rgb(220, 38, 38)", "--add-text": "rgb(21, 128, 61)", page: "rgb(255, 255, 255)",
     composer: "rgba(0, 0, 0, 0.1) 0px 0px 0px 0.5px, rgba(0, 0, 0, 0.03) 0px 4px 16px 0px, rgba(0, 0, 0, 0.03) 0px 0px 24px 0px",
-    well: "rgb(255, 255, 255)", app: "rgba(0, 0, 0, 0)", mono: "none", theme: null });
+    well: "rgb(255, 255, 255)", app: "rgba(0, 0, 0, 0)", mono: "none", veil: "color(srgb 0.976471 0.980392 0.984314 / 0.6)", theme: null });
   // §4: every Agent mark on the page sits in a tile of at least 16 px.
   for (const tile of await page.locator(".brand-tile").all()) { const box = await tile.boundingBox(); assert.ok(box === null || (box.width >= 16 && box.height >= 16), "an Agent mark is at least 16 px"); }
   await page.screenshot({ path: join(artifact, "dl1-light-1440.png"), animations: "disabled" });
@@ -2665,7 +2755,7 @@ test("G054-DL1 the neutral tokens follow the system in both themes, text uses th
     "--accent-text": "rgb(138, 176, 255)", "--on-accent": "rgb(255, 255, 255)", "--amber-dot": "rgb(245, 158, 11)", "--amber": "rgb(251, 191, 36)", "--red-dot": "rgb(240, 82, 82)",
     "--red": "rgb(248, 113, 113)", "--add-text": "rgb(74, 222, 128)", page: "rgb(24, 25, 28)",
     composer: "rgba(255, 255, 255, 0.12) 0px 0px 0px 0.5px, rgba(0, 0, 0, 0.35) 0px 8px 24px 0px",
-    well: "rgb(42, 43, 47)", app: "rgba(0, 0, 0, 0)", mono: "invert(1)", theme: null });
+    well: "rgb(42, 43, 47)", app: "rgba(0, 0, 0, 0)", mono: "invert(1)", veil: "color(srgb 0.0666667 0.0705882 0.0784314 / 0.6)", theme: null });
   await page.screenshot({ path: join(artifact, "dl1-dark-1440.png"), animations: "disabled" });
 
   // §4: the favicon and the sidebar mark are "one point fanning out": a blue tile, one dot, three lines, on the 32 grid.
@@ -4374,6 +4464,12 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
   // The bar rises 16 px in 300 ms on the appear curve (Motion board #29) and counts the files once each change is prepared.
   const bar = page.getByRole("region", { name: "已选的格子" });
   await expect(bar).toContainText("已选 1 处 · 会改 1 个文件");
+  // It centres itself in the page at its content's width (the page only says where its bottom is), so its words wrap only
+  // when the room between its 16 px insets runs out, and then by whole phrases: at most two lines.
+  const placed = (region: typeof bar) => region.evaluate(element => {
+    const box = element.getBoundingClientRect(), page = element.closest(".capabilities-page")!.getBoundingClientRect(), words = element.querySelector("[role='status'], .trunc")!;
+    return { offset: Math.round(Math.abs((box.left - page.left) - (page.right - box.right))), lines: Math.round((words.getBoundingClientRect().height - parseFloat(getComputedStyle(words).paddingTop) * 2) / 20) };
+  });
   assert.deepEqual(await bar.evaluate(element => { const style = getComputedStyle(element); return [style.transitionProperty, style.transitionDuration, style.transitionTimingFunction]; }),
     ["opacity, transform", "0.3s, 0.3s", "cubic-bezier(0.165, 0.84, 0.44, 1), cubic-bezier(0.165, 0.84, 0.44, 1)"]);
   // From the keyboard: the focus ring is there at once, Space picks, and nothing animates (Motion board #37).
@@ -4392,6 +4488,7 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
   await expect(bar).toContainText("已选 3 处 · 会改 2 个文件");
   assert.deepEqual(requests, ["skill-switch?harnessId=claude&name=beta&enabled=true", "skill-link?harnessId=claude&name=gamma&present=true", "plugin-switch?harnessId=claude&id=tool%40market&enabled=true"]);
   assert.deepEqual(posted, [], "picking only prepares the checks");
+  assert.deepEqual(await placed(bar), { offset: 0, lines: 1 });
   await page.screenshot({ path: join(artifact, "dl8-capabilities-picked-light-1440.png"), animations: "disabled" });
 
   // The preview names every file and shows its exact lines, or the link it makes; nothing is written before "写入".
@@ -4405,6 +4502,8 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
   await expect(files.nth(0)).toContainText("现在的设置：不是 HarnessHub 写的"); await expect(files.nth(0)).toContainText("新开的 Claude Code 会话才读到这次插件改动。");
   await expect(files.nth(1)).toContainText("~/.claude/skills"); await expect(files.nth(1).locator(".capability-links li")).toHaveText(["+ 新建~/.claude/skills/gamma → ~/.agents/skills/gamma"]);
   await expect(bar).toBeHidden(); await expect(write).toHaveCSS("opacity", "1");
+  // The page behind is veiled in the sidebar's color, as on the Capabilities board, not darkened.
+  assert.equal(await page.locator(".backdrop").evaluate(element => getComputedStyle(element).backgroundColor), "color(srgb 0.976471 0.980392 0.984314 / 0.6)");
   // A preview taller than the dialog scrolls; no file's block is squeezed to hide some of its lines.
   assert.deepEqual(await files.evaluateAll(nodes => nodes.map(node => node.scrollHeight - node.clientHeight)), [0, 0]);
   await page.screenshot({ path: join(artifact, "dl8-capabilities-preview-light-1440.png"), animations: "disabled" });
@@ -4416,6 +4515,7 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
   assert.equal(pluginChecks, 2);
   const written = page.getByRole("region", { name: "写入结果" }), result = page.locator(".capability-result");
   await expect(written).toContainText("已写入 2 个文件");
+  assert.deepEqual(await placed(written), { offset: 0, lines: 1 });
   // The bar that opened the preview is gone; the focus moves to the undo of what was written instead of falling to the page.
   await expect(written.getByRole("button", { name: "撤销", exact: true })).toBeFocused();
   for (const text of ["已写入 2 个文件", "Claude Code · 启用 beta", "Claude Code · 启用插件 tool@market", "Claude Code · 把 gamma 放到 Claude Code", "新开的 Claude Code 会话才读到这次插件改动。"]) await expect(result).toContainText(text);
@@ -4476,6 +4576,7 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
   await bar.getByRole("button", { name: "预览写入", exact: true }).click();
   const darkPreview = page.getByRole("dialog", { name: "写入 1 个文件" });
   await expect(darkPreview.locator(".capability-diff .text-red")).toHaveText(["-    \"beta\": \"off\""]); await expect(darkPreview).toHaveCSS("opacity", "1");
+  assert.equal(await page.locator(".backdrop").evaluate(element => getComputedStyle(element).backgroundColor), "color(srgb 0.0666667 0.0705882 0.0784314 / 0.6)");
   await page.screenshot({ path: join(artifact, "dl8-capabilities-preview-dark-1440.png"), animations: "disabled" });
   const sent = posted.length;
   await darkPreview.getByRole("button", { name: "取消", exact: true }).click(); await expect(darkPreview).toBeHidden();
@@ -4490,6 +4591,7 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
       await expect(page.getByRole("tablist", { name: "能力类别" })).not.toHaveAttribute("aria-orientation", "vertical");
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       const edges = await bar.boundingBox(); assert.ok(edges && edges.x >= 0 && edges.x + edges.width <= width, `the bar fits a ${width} px screen`);
+      const where = await placed(bar); assert.ok(where.offset === 0 && where.lines <= 2, `the bar is centred with its words on at most two lines at ${width} px: ` + JSON.stringify(where));
       await page.screenshot({ path: join(artifact, `dl8-capabilities-${scheme}-${width}.png`), animations: "disabled" });
     }
   }

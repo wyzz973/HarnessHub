@@ -4,8 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
-    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#FFFFFF" />
-    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#18191C" />
+    <!-- Each system scheme's main-area color; a manual choice in the settings puts its own in both (main.tsx). -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#FFFFFF" data-theme-color="light" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#18191C" data-theme-color="dark" />
     <title>HarnessHub</title>
     <!-- The page loads nothing from elsewhere (ADR-054 §2): system fonts, a bundled Geist Mono and this inline icon. -->
     <!-- "One point fanning out" on the 32 grid (ADR-054 §4): its three lines stay apart at 16 px. -->

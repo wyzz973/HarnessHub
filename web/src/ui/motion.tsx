@@ -69,6 +69,7 @@ export function ShimmerText({ children, active = true, className }: { readonly c
 /**
  * A status line whose words change in place (Motion board #07): the old words rise 3 px and fade while the new ones come
  * up from 3 px below, in 180 ms, and the width slides so whatever follows (a timer) moves smoothly instead of jumping.
+ * The box is held at the new words' width rounded up to a whole pixel, so it never cuts them by a fraction of one.
  * `shimmer` adds the in-progress sweep, restarted with each change. With reduced motion the words are simply replaced.
  * The leaving words are hidden from assistive technology and removed when they have left.
  */
@@ -80,8 +81,12 @@ export function SwapText({ text, shimmer = false, className }: { readonly text: 
   useLayoutEffect(() => {
     const node = layer.current;
     if (!node) return;
-    setWidth(node.offsetWidth);
-    const observer = new ResizeObserver(() => setWidth(node.offsetWidth)); observer.observe(node);
+    // The layer's laid-out width with its fraction: offsetWidth is snapped to whole pixels and can round it down, and the box
+    // on screen (getBoundingClientRect) shrinks under a scaling ancestor such as a popup growing from .98 or a pressed
+    // button. Not laid out (inside display: none), it is left alone; the observer measures it once it has a box.
+    const measure = () => { const used = parseFloat(getComputedStyle(node).width); if (Number.isFinite(used)) setWidth(Math.ceil(used)); };
+    measure();
+    const observer = new ResizeObserver(measure); observer.observe(node);
     return () => observer.disconnect();
   }, [shown.turn]);
   useEffect(() => {
@@ -129,7 +134,10 @@ export function Collapsible({ open, children, id, keepMounted = false, className
 
 /**
  * A bar that rises from the bottom while there is something to act on (Motion board #29), such as "已选 3 处 · 预览写入":
- * up 16 px in 300 ms, down in 200 ms, then unmounted. The caller places it (fixed or absolute) with `className`.
+ * up 16 px in 300 ms, down in 200 ms, then unmounted. It centres itself in its containing block at its content's width,
+ * keeping 16 px from either side, so its words wrap only when that room runs out. The caller gives the position and the
+ * bottom offset with `className`, for example "absolute bottom-6" or "fixed bottom-6"; a translate or left: 50% would
+ * halve the room its width is worked out in.
  */
 export function FloatingBar({ open, label, children, className }: { readonly open: boolean; readonly label: string; readonly children: ReactNode; readonly className?: string }) {
   const presence = usePresence(open, 300, 200);
