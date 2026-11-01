@@ -2145,6 +2145,8 @@ test("G054-CA1 the capability page opens from the sidebar and from a Harness's d
   await tabs.getByRole("tab", { name: "指令 1", exact: true }).click();
   const instructions = matrix.locator("tbody tr").first();
   await expect(instructions.locator("td").nth(2)).toHaveText("?"); await expect(instructions.locator("td").nth(3)).toHaveText("—");
+  // The key under the matrix explains the marks shown, "?" included, and only those.
+  await expect(page.locator(".capability-legend")).toHaveText(/^已生效—这个 Agent 不读它\?保存在磁盘之外，无法读取$/u);
   await tabs.getByRole("tab", { name: "Hooks 1", exact: true }).click();
   await matrix.locator("tbody tr").first().getByRole("button").click();
   await expect(page.locator(".capability-detail")).toContainText("Cursor 默认也会运行这个 Hook");
@@ -2887,6 +2889,7 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
   await expect(row("gamma").locator("td").nth(2).getByRole("img")).toHaveAccessibleName("不读共享目录；可以在下方“共享技能目录”里让它读取");
   await expect(row("alpha")).toContainText("共享目录 · owner/repo · vercel skills 管理"); await expect(row("gamma")).toContainText("共享目录 · acme/skills");
   await expect(page.locator(".capability-legend")).toHaveText(/已生效.*可以启用.*这个 Agent 不读它/u);
+  await page.screenshot({ path: join(artifact, "dl8-capabilities-light-1440.png"), animations: "disabled" });
 
   // Picked with the pointer: the ring turns blue in 120 ms and a plus pops from half its size with the overshoot curve in
   // 300 ms while it fades in over 120 ms (Motion board #34); unpicked, it goes back the same way.
@@ -3089,6 +3092,56 @@ test("G054-DL8 an undo of a written batch that stops part way says what it put b
   assert.deepEqual(restores, ["6".repeat(64)]);
   assert.deepEqual(posted, ["1".repeat(64), "2".repeat(64), "5".repeat(64)]);
   assert.deepEqual(errors, ["Failed to load resource: the server responded with a status of 409 (Conflict)"]);
+});
+
+test("G054-DL8 a change of a batch that the Gateway reports as not done is said with its reason, is not counted as written, and stays picked to try again", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  const at = "2026-11-01T10:00:00.000Z", expiresAt = new Date(Date.now() + 15 * 60_000).toISOString(), settings = "~/.claude/settings.json";
+  const view = capabilityView(), entries = view.entries as unknown as { key: string; edges: unknown[] }[];
+  entries.push({ kind: "skill", key: "skill:gamma", name: "gamma", description: null, owner: "harnesshub", source: null, location: "~/.agents/skills/gamma",
+    edges: [{ harnessId: "codex", mechanism: "native-shared", status: "active", via: "~/.agents/skills/gamma", reason: null }], warnings: [], facts: { kind: "skill", files: 1, bytes: 120 },
+    shared: { folder: "~/.agents/skills/gamma", placed: [] } } as unknown as { key: string; edges: unknown[] });
+  const check = (fields: Record<string, unknown>) => ({ command: null, rewrite: null, links: [], current: "other", notes: [], blocked: null, expiresAt, ...fields });
+  const link = { path: "~/.claude/skills/gamma", target: "~/.agents/skills/gamma" }, posted: string[] = [];
+  await page.route("**/api/v1/capabilities", route => route.fulfill({ json: view }));
+  await page.route("**/api/v1/capabilities/history", route => route.fulfill({ json: { changes: [], backups: [], drift: [], ...HISTORY_EXTRA } }));
+  await page.route(/\/api\/v1\/capabilities\/(skill-switch|skill-link)\?/u, route => route.fulfill({ json: new URL(route.request().url()).pathname.endsWith("skill-switch")
+    ? check({ kind: "skill-switch", harnessId: "claude", name: "beta", enabled: true, file: settings, fingerprint: "1".repeat(64), diff: "--- a/x\n+++ b/x\n@@ -1,3 +1,2 @@\n   \"skillOverrides\": {\n-    \"beta\": \"off\"\n   }\n" })
+    : check({ kind: "skill-link", harnessId: "claude", name: "gamma", enabled: true, file: "~/.claude/skills", diff: null, current: "none", fingerprint: "2".repeat(64), links: [{ ...link, action: "create" }] }) }));
+  // beta is written; the Gateway reports the link as not done, with why.
+  await page.route("**/api/v1/capabilities/changes", route => {
+    const fingerprint = (route.request().postDataJSON() as { fingerprint: string }).fingerprint; posted.push(fingerprint);
+    return route.fulfill({ json: fingerprint === "1".repeat(64)
+      ? { id: "21111111-1111-4111-8111-111111111111", kind: "skill-switch", harnessId: "claude", subject: "beta", file: settings, status: "applied", diff: null, backupId: "31111111-1111-4111-8111-111111111111", error: null, notes: [], at }
+      : { id: "23333333-3333-4333-8333-333333333333", kind: "skill-link", harnessId: "claude", subject: "gamma", file: "~/.claude/skills", status: "failed", diff: null, backupId: null,
+        error: { code: "CAPABILITY_LINK_FAILED", message: "~/.claude/skills/gamma 已经存在，没有建链接" }, notes: [], links: [], at } });
+  });
+  await page.goto(fixture.gateway.url); await expect(page.getByRole("button", { name: "新对话", exact: true })).toBeVisible();
+  await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "能力", exact: true }).click();
+  const matrix = page.locator(".capability-matrix"), claude = (name: string) => matrix.locator("tbody tr").filter({ hasText: name }).first().locator("td").nth(0).getByRole("button");
+  await claude("beta").click(); await claude("gamma").click();
+  const bar = page.getByRole("region", { name: "已选的格子" });
+  await bar.getByRole("button", { name: "预览写入", exact: true }).click();
+  const write = page.getByRole("dialog", { name: "写入 2 个文件" });
+  await write.getByRole("button", { name: "写入", exact: true }).click();
+  // The dialog stays with the reason; nothing after the failed change is sent.
+  const gamma = write.locator(".capability-write-item").filter({ hasText: "把 gamma 放到 Claude Code" });
+  await expect(gamma).toContainText("没有完成"); await expect(gamma).toContainText("~/.claude/skills/gamma 已经存在，没有建链接");
+  await expect(write.locator(".capability-write-item").filter({ hasText: "启用 beta" })).toContainText("已写入");
+  await expect(write.getByRole("button", { name: /写入/u })).toHaveCount(0);
+  await write.getByRole("button", { name: "关闭", exact: true }).click(); await expect(write).toBeHidden();
+  // The result counts what was written and says what was not; the link stays picked, so the bar is back to try it again.
+  const result = page.locator(".capability-result");
+  await expect(result).toContainText("1 处没有写入完成"); await expect(result).toContainText("Claude Code · 把 gamma 放到 Claude Code：~/.claude/skills/gamma 已经存在，没有建链接");
+  await expect(result.getByRole("button", { name: "撤销这次写入" })).toBeVisible();
+  await expect(bar).toContainText("已选 1 处 · 会改 1 个文件"); await expect(claude("gamma")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("region", { name: "写入结果" })).toHaveCount(0);
+  assert.deepEqual(posted, ["1".repeat(64), "2".repeat(64)]);
+  assert.deepEqual(errors, []);
 });
 
 test("G054-FZ1 the frozen Harnesses stay out of the picker, the welcome, the palette and my Agents until the settings show them, and a conversation on one still opens with its choice (ADR-050)", { timeout: 120000 }, async t => {

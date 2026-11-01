@@ -1,4 +1,4 @@
-import { BookOpen, Check, ChevronDown, ChevronRight, CircleCheck, Download, Eye, History, Menu as MenuIcon, PanelLeft, Pencil, Plug, Plus, Puzzle, RefreshCw, RotateCcw, ScrollText, Search, SquareSlash, Trash2, Users, Webhook, X,
+import { AlertCircle, BookOpen, Check, ChevronDown, ChevronRight, CircleCheck, Download, Eye, History, Menu as MenuIcon, PanelLeft, Pencil, Plug, Plus, Puzzle, RefreshCw, RotateCcw, ScrollText, Search, SquareSlash, Trash2, Users, Webhook, X,
   type LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { LOCAL_SKILL_SOURCE, type SkillTextView, type CapabilitiesView, type CapabilityChangeView, type CapabilityDrift, type CapabilityDriftState, type CapabilityEdge, type CapabilityEntry, type CapabilityFacts, type CapabilityHistory,
@@ -544,9 +544,10 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
     setPreviewing(false);
     // Closed without writing: the bar is back, and so is the focus, on its 预览写入 (the one that opened the preview left with the bar).
     if (!written.length) { keepFocus(() => previewButton.current); return; }
-    const done = new Set(written.map(item => item.id));
+    // Only what the Gateway wrote leaves the selection; a change it could not complete stays picked, ready to try again.
+    const done = new Set(written.filter(item => item.view.status === "applied").map(item => item.id));
     setPicked(current => complete ? new Map() : new Map([...current].filter(([, pick]) => !pick.plans.every(plan => done.has(planId(plan))))));
-    setBatch(written); setResult({ kind: "batch", written }); reread(); keepFocus(() => undoButton.current);
+    setBatch(written); setResult({ kind: "batch", written }); reread(); keepFocus(() => undoButton.current ?? previewButton.current);
   };
   const undone = (views: readonly CapabilityChangeView[], failure: string | null) => { setUndoing(null); setBatch(null); setResult({ kind: "undo", views, failure }); reread(); keepFocus(() => heading.current); };
   useEffect(() => setHarness(initialHarness), [initialHarness]);
@@ -583,6 +584,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
   const ready = view !== null && view.harnesses.length > 0;
   const tabItems = kinds.map(item => ({ id: item, label: KIND_LABEL[item], count: counts[item] }));
   const pickable = states.has("open");
+  const writtenFiles = batch === null ? 0 : new Set(batch.filter(item => item.view.status === "applied").map(item => item.view.file)).size, failedWrites = batch?.filter(item => item.view.status !== "applied").length ?? 0;
 
   const resultNotice = result === null ? null : result.kind === "one" ? <Notice tone={result.view.status === "applied" ? "green" : "red"} className="capability-result" onDismiss={() => setResult(null)}
       title={result.view.status === "applied" ? result.title : result.title + "没有完成"}
@@ -591,7 +593,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
     : result.kind === "batch" ? (() => { const failed = result.written.filter(item => item.view.status !== "applied"), notes = [...new Set(result.written.flatMap(item => item.view.notes))];
       return <Notice tone={failed.length ? "red" : "green"} className="capability-result" onDismiss={() => setResult(null)}
         title={failed.length ? failed.length + " 处没有写入完成" : "已写入 " + new Set(result.written.map(item => item.view.file)).size + " 个文件"}
-        action={<button type="button" className="btn btn-sm" onClick={() => setUndoing(result.written)}><RotateCcw size={13}/>撤销这次写入</button>}>
+        action={result.written.some(item => item.view.status === "applied") ? <button type="button" className="btn btn-sm" onClick={() => setUndoing(result.written)}><RotateCcw size={13}/>撤销这次写入</button> : null}>
         <ul className="m-0 flex list-none flex-col gap-0.5 p-0">{result.written.map(item => <li key={item.id}>{item.harnessName} · {item.title}{item.view.status === "applied" ? "" : "：" + (item.view.error?.message ?? "没有完成")}</li>)}</ul>
         {notes.length ? <ul className="m-0 mt-1.5 flex list-none flex-col gap-0.5 p-0 text-fg-2">{notes.map(note => <li key={note}>{note}</li>)}</ul> : null}</Notice>; })()
     : (() => { const back = new Set(result.views.filter(item => item.status === "applied").map(item => item.file)).size, complete = result.failure === null && result.views.every(item => item.status === "applied");
@@ -665,10 +667,11 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
         <button ref={previewButton} type="button" className="btn btn-primary" disabled={waiting || files.length === 0} onClick={preview}>预览写入</button></span>
     </FloatingBar>
     <FloatingBar open={batch !== null && picked.size === 0 && !previewing && undoing === null} label="写入结果" className="capability-written absolute inset-x-4 bottom-6 z-30 mx-auto min-h-[46px] w-fit gap-2.5 pl-3.5 text-ui-sm">
-      <CircleCheck size={16} aria-hidden="true" className="flex-none text-accent-text"/>
-      <span className="min-w-0 trunc">已写入 {batch ? new Set(batch.map(item => item.view.file)).size : 0} 个文件</span>
+      {/* What the Gateway did, file by file: a change it reports as not done is never counted as written. */}
+      {failedWrites ? <AlertCircle size={16} aria-hidden="true" className="flex-none text-red"/> : <CircleCheck size={16} aria-hidden="true" className="flex-none text-accent-text"/>}
+      <span className="min-w-0 trunc">{failedWrites ? failedWrites + " 处没有写入完成" + (writtenFiles ? "，已写入 " + writtenFiles + " 个文件" : "") : "已写入 " + writtenFiles + " 个文件"}</span>
       <span className="flex flex-none items-center gap-0.5">
-        <button ref={undoButton} type="button" className="btn btn-ghost h-8 px-2.5 text-accent-text hover:text-accent-text" onClick={() => setUndoing(batch)}>撤销</button>
+        {writtenFiles ? <button ref={undoButton} type="button" className="btn btn-ghost h-8 px-2.5 text-accent-text hover:text-accent-text" onClick={() => setUndoing(batch)}>撤销</button> : null}
         <button type="button" className="icon-btn icon-btn-sm" aria-label="关闭" onClick={() => { setBatch(null); keepFocus(() => heading.current); }}><X size={14}/></button></span>
     </FloatingBar>
     {kind === "skill" && view ? <SharedDirectory api={api} harnesses={columns} updates={updates} checking={checkingUpdates} updateProblem={updateProblem} onAdd={() => setAdding(true)} onCheckUpdates={checkUpdates} onChange={change}/> : null}

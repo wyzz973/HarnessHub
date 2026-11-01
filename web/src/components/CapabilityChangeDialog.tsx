@@ -261,7 +261,8 @@ export function WriteDialog({ api, open, items, onCheck, onClose }: {
     if (group) group.push(item); else { const fresh = [item]; byKey.set(key, fresh); groups.push(fresh); }
   }
   const pending = groups.flat().filter(item => item.check.state === "ready" && item.check.check.blocked === null && progress.get(item.id)?.state !== "written");
-  const loading = items.some(item => item.check.state === "loading"), files = filesOf(items.filter(item => progress.get(item.id)?.state !== "written"));
+  // The title names the batch's files and keeps that name while it is written (the progress is said item by item).
+  const loading = items.some(item => item.check.state === "loading"), files = filesOf(items);
   const wroteAny = [...progress.values()].some(value => value.state === "written");
   const apply = (check: CapabilityChangeCheck) => {
     const key = keys.current.get(check.fingerprint) ?? requestKey(); keys.current.set(check.fingerprint, key);
@@ -339,8 +340,9 @@ export function WriteDialog({ api, open, items, onCheck, onClose }: {
     </div>
     <div className={DIALOG_FOOT}>
       <button type="button" className="btn" disabled={busy} onClick={() => onClose(written(progress), false)}>{wroteAny ? "关闭" : "取消"}</button>
-      <button type="button" className="btn btn-primary" disabled={busy || loading || pending.length === 0} onClick={() => void write()}>
-        {busy ? <Spinner size={13} label=""/> : null}{busy ? "正在写入" : progress.size ? "继续写入" : "写入"}</button>
+      {/* Once writing stopped with nothing left that can be written, only 关闭 remains; a disabled 继续写入 would promise more. */}
+      {!busy && progress.size && pending.length === 0 ? null : <button type="button" className="btn btn-primary" disabled={busy || loading || pending.length === 0} onClick={() => void write()}>
+        {busy ? <Spinner size={13} label=""/> : null}{busy ? "正在写入" : progress.size ? "继续写入" : "写入"}</button>}
     </div>
   </Dialog>;
 }
