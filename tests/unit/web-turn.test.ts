@@ -75,6 +75,17 @@ test("G054-DL5 while an approval waits the Turn names the step it asks for in th
     "排队中：等待对话「approve this」释放工作区（它在等你批准）", "排队中：等待对话「approve this」释放工作区（它在等你回答）", "排队中：等待对话「approve this」释放工作区（它正在运行）"]);
 });
 
+test("G054-DL5 a queued Turn reads 排队中 and a failed one 失败, the words every place uses for those states (ruling N)", () => {
+  // Queued: the word alone, or the word first with the reason after it; the dashed symbol, no timer.
+  const queuedRun = runningRun([], { status: "queued" });
+  assert.deepEqual(liveStatus(queuedRun, "queued", "Codex", 0), { text: "排队中", tone: "queue", timer: false, wrap: true, thinking: false });
+  assert.equal(liveStatus(queuedRun, "queued", "Codex", 0, undefined, { kind: "slot", running: 4, cancelling: false }).text, "排队中：4 个对话正在执行，其中一个结束后自动开始");
+  assert.equal(liveStatus(runningRun([], { status: "queued", awaitingSwitchId: "switch-1" } as Partial<PublicRun>), "queued", "Codex", 0).text, "排队中：等待选择切换生效");
+  // Failed: the state's word; the Agent's own words belong to the error card. The other finished states keep theirs.
+  assert.deepEqual(["failed", "completed", "unknown"].map(status => activityLabel({ ...runningRun(), status } as PublicRun, status as PublicRun["status"], "Codex", 0)),
+    ["失败", "已完成", "结果未知：可能已经执行，不会自动重发"]);
+});
+
 test("G054-DL5 the step an approval asks for is the latest open step of the Turn's own, said with the verb of its kind, and a step without one is never guessed at (ruling J)", () => {
   const tool = (id: string, kind: string | undefined, title: string, status: string, parentId?: string): PublicTool => ({ id, title, status, ...(kind ? { kind } : {}), ...(parentId ? { parentId } : {}) });
   const wanted = (tools: readonly PublicTool[]) => liveStatus(runningRun(tools), "running", "Claude Code", 42_000, undefined, undefined, "approval");

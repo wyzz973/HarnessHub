@@ -601,6 +601,8 @@ test("native settings switch without Apply and approvals survive refresh or canc
   await composer.press("Enter"); await expect.poll(async () => (await current()).runs[1]?.status).toBe("completed");
   const latest = await current(); assert.equal(latest.id, first.id); assert.equal(latest.runs[1].selection.nativeModel, "native-b");
   await composer.fill("FAIL_ONCE：检查重试按钮布局"); await expect(page.getByRole("button",{name:"发送消息",exact:true})).toBeEnabled(); await composer.press("Enter"); await expect.poll(async () => (await current()).runs[2]?.status).toBe("failed");
+  // A failed Turn's line says the state's word first, as the sidebar and the header do (ruling N).
+  await expect(page.locator(".assistant-message").last().locator(".process-summary")).toHaveText(/^失败 · 用时 [0-9.]+ 秒$/u);
   await page.locator(".assistant-message").last().hover();
   for (const width of [943, 390, 320]) {
     await page.setViewportSize({ width, height: 844 });
@@ -1226,7 +1228,7 @@ test("a Turn waiting for a slot says how many conversations run, has no deadline
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Busy Agent", exact: true }).click();
   await composer.fill("queued work"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
-  await expect(log.locator(".response-status")).toHaveText("等待开始：4 个对话正在执行，其中一个结束后自动开始", { timeout: 15000 });
+  await expect(log.locator(".response-status")).toHaveText("排队中：4 个对话正在执行，其中一个结束后自动开始", { timeout: 15000 });
   await expect(log.locator(".queued-turn small")).toHaveText("没有单独的等待期限，按发送先后轮到。");
   await expect(log.getByRole("button", { name: "打开那个对话", exact: true })).toHaveCount(0);
   await page.screenshot({ path: join(artifact, "slot-wait.png"), animations: "disabled" });

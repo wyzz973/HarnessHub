@@ -70,12 +70,16 @@ function LiveIcon({ tone, className }: { readonly tone: LiveStatus["tone"]; read
   </span>;
 }
 interface Outcome { readonly icon: ReactNode; readonly arriving: string; readonly settled: string; readonly tone: "done" | "fail" | "quiet" }
-/** How a finished Turn reads: the drawn check, then its tools, failures and unfinished steps, and how long it took. */
+/**
+ * How a finished Turn reads: the drawn check, then its tools, failures and unfinished steps, and how long it took. A failed
+ * one says the state's word first, as every place does (ruling N): "失败 · 读了 2 个文件，1 项失败 · 用时 3.6 秒"; the
+ * Agent's own words are on the error card below.
+ */
 function outcome(run: PublicRun | undefined, status: RunStatus, text: string, drawing: boolean): Outcome {
   const tools = run?.tools ?? [], summary = tools.length ? toolSummary(tools, false).text : "", total = run ? runDuration(run) : null, time = total === null ? "" : spentText(total);
   const join = (...parts: string[]) => parts.filter(Boolean).join(" · ");
   switch (status) {
-    case "failed": { const words = join("回复未能完成", summary, time); return { icon: <CircleAlert size={15} strokeWidth={1.9} className="text-red" aria-hidden="true"/>, arriving: words, settled: words, tone: "fail" }; }
+    case "failed": { const words = join("失败", summary, time ? "用时 " + time : ""); return { icon: <CircleAlert size={15} strokeWidth={1.9} className="text-red" aria-hidden="true"/>, arriving: words, settled: words, tone: "fail" }; }
     case "cancelled": { const words = join(run ? cancelledWords(run) : "已取消", summary, time); return { icon: <CircleStop size={15} strokeWidth={1.9} className="text-fg-3" aria-hidden="true"/>, arriving: words, settled: words, tone: "quiet" }; }
     case "unknown": { const words = join("结果未知：可能已经执行，不会自动重发", summary, time); return { icon: <CircleHelp size={15} strokeWidth={1.9} className="text-fg-3" aria-hidden="true"/>, arriving: words, settled: words, tone: "quiet" }; }
     default: {

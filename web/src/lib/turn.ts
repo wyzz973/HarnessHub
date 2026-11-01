@@ -223,13 +223,14 @@ export function liveStatus(run: PublicRun | undefined, status: RunStatus, harnes
     const tools = run?.tools ?? [], step = [...tools].reverse().find(tool => IN_PROGRESS.has(tool.status));
     return step ? { ...plain, text: runningText(tools, step) } : { ...plain, tone: "wait", text: "等你回答" };
   }
+  // A Turn not started yet reads "排队中" wherever it is named (ruling N); a longer explanation keeps its reason after it.
   const queued = { tone: "queue" as const, timer: false, wrap: true, thinking: false };
-  if (run?.awaitingSwitchId && status === "queued") return { ...queued, text: "等待选择切换生效" };
+  if (run?.awaitingSwitchId && status === "queued") return { ...queued, text: "排队中：等待选择切换生效" };
   // What the conversation holding the workspace waits for, in the words every other place uses (decision G).
   if (queue?.kind === "workspace" && status === "queued") return { ...queued, text: `排队中：等待对话「${queue.holderTitle}」释放工作区（${queue.holderWaits === "approval" ? "它在等你批准" : queue.holderWaits === "question" ? "它在等你回答" : "它正在运行"}）` };
-  if (queue?.kind === "slot" && status === "queued") return { ...queued, text: `等待开始：${queue.running} 个对话正在执行，其中一个结束后自动开始` };
+  if (queue?.kind === "slot" && status === "queued") return { ...queued, text: `排队中：${queue.running} 个对话正在执行，其中一个结束后自动开始` };
   switch (status) {
-    case "queued": return { ...queued, text: "等待开始" };
+    case "queued": return { ...queued, text: "排队中" };
     case "preparing": return { ...plain, text: "正在启动 " + harness + (startupHint !== undefined && startupHint.seconds >= 2 ? (startupHint.usual ? "（通常约 " : "（上次约 ") + Math.round(startupHint.seconds) + " 秒）" : "") };
     case "settling": return { ...plain, text: "正在结束执行" };
     case "running": {
@@ -243,12 +244,15 @@ export function liveStatus(run: PublicRun | undefined, status: RunStatus, harnes
     default: return { ...plain, timer: false, text: activityLabel(run, status, harness, now) };
   }
 }
-/** What the Turn is doing, or how it ended, in words (the Interaction board's eight states). */
+/**
+ * What the Turn is doing, or how it ended, in words (the Interaction board's eight states), as every place names the state
+ * (ruling N): "已完成", "失败", "排队中". The Agent's own words for a failure stay on the Turn's error card.
+ */
 export function activityLabel(run: PublicRun | undefined, status: RunStatus, harness: string, now: number, startupHint?: { readonly seconds: number; readonly usual: boolean }, queue?: QueueNotice, waiting?: "approval" | "question"): string {
   switch (status) {
     case "completed": return "已完成";
     case "cancelled": return run ? cancelledWords(run) : "已取消";
-    case "failed": return "回复未能完成";
+    case "failed": return "失败";
     case "unknown": return "结果未知：可能已经执行，不会自动重发";
     default: return liveStatus(run, status, harness, now, startupHint, queue, waiting).text;
   }
