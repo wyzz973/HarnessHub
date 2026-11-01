@@ -568,7 +568,12 @@
   /* Reading text (Markdown): size comes from the container, 15/26 for replies */
   .markdown { overflow-wrap: anywhere; }
   .markdown > :first-child { margin-top: 0; }
-  .markdown > :last-child { margin-bottom: 0; }
+  /*
+   * The text ends at its last line: neither its last block nor the last block inside that one (a list's last item, the
+   * code block or table ending it) keeps a bottom margin. A list then ends flush, as on the Conversation board, and the end
+   * dot's line (#11) starts right under a code block or a table wherever it ends the reply.
+   */
+  .markdown :last-child:not(.markdown :not(:last-child) *) { margin-bottom: 0; }
   .markdown p { margin: 0 0 .7em; }
   .markdown h1, .markdown h2, .markdown h3, .markdown h4 { margin: 1.1em 0 .45em; line-height: 1.35; font-weight: 600; }
   .markdown h1 { font-size: 1.3em; } .markdown h2 { font-size: 1.18em; } .markdown h3 { font-size: 1.06em; } .markdown h4 { font-size: 1em; }
@@ -580,6 +585,8 @@
   .markdown li::marker { color: var(--text-2); }
   .markdown li > p { margin: 0; }
   .markdown blockquote { margin: 0 0 .7em; padding: 2px 0 2px 12px; border-left: 2px solid var(--border-strong); color: var(--text-2); }
+  /* A quote's line stops 2 px under its last line wherever the quote is, instead of running on by its last block's margin */
+  .markdown blockquote > :last-child { margin-bottom: 0; }
   .markdown hr { border: none; border-top: .5px solid var(--border-strong); margin: 1em 0; }
   .markdown :not(pre) > code { padding: 1px 5px; border-radius: var(--radius-tag); background: var(--bg-inset); font-size: .86em; }
   .markdown a { word-break: break-all; }

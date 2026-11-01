@@ -2441,7 +2441,10 @@ test("G054-FR6 the chosen theme and its theme color apply before the first paint
   await page.setViewportSize({ width: 1280, height: 900 });
 
   // #11: the end dot follows a reply's last block as react-markdown renders it: at the end of the last line of a heading,
-  // a quote's last paragraph or a list item, and on its own line after a code block or a table, also inside a list item.
+  // a quote's last paragraph or a list item, and on its own line after a code block or a table, also inside a list item or
+  // a quote. That line starts right under the block, a table's as a code block's. Once done, the reply ends at its last
+  // line, as the Conversation board's list does, and a quote at its own. Each reply sits in a column as in a Turn, which
+  // keeps its children's margins inside it.
   assert.deepEqual(await page.evaluate(() => Object.fromEntries(Object.entries({
     heading: "<p>第一段。</p>\n<h2>流式标题</h2>", quote: "<blockquote>\n<p>引用的第一段</p>\n<p>引用的最后一段</p>\n</blockquote>",
     list: "<ul>\n<li>读取工作区</li>\n<li>修改文件</li>\n</ul>", loose: "<ul>\n<li>\n<p>读取工作区</p>\n</li>\n<li>\n<p>修改文件</p>\n</li>\n</ul>",
@@ -2449,12 +2452,21 @@ test("G054-FR6 the chosen theme and its theme color apply before the first paint
     code: "<h2>流式标题</h2>\n<div class='code-block'><div class='code-block-head'><span>typescript</span></div><pre><code>const answer = \"par</code></pre></div>",
     table: "<p>表格：</p>\n<div class='table-scroll'><table><thead><tr><th>项目</th><th>状态</th></tr></thead><tbody><tr><td>SSE</td><td>进行中</td></tr></tbody></table></div>",
     listCode: "<ul>\n<li>\n<p>运行：</p>\n<div class='code-block'><pre><code>pnpm test</code></pre></div>\n</li>\n</ul>",
+    quoteCode: "<blockquote>\n<p>引用：</p>\n<div class='code-block'><pre><code>pnpm test</code></pre></div>\n</blockquote>",
+    quoteThen: "<blockquote>\n<p>引用的一段</p>\n</blockquote>\n<p>之后的一段。</p>",
   }).map(([name, html]) => {
-    const reply = document.createElement("div"); reply.className = "markdown text-reading caret-host"; reply.innerHTML = html; document.body.append(reply);
+    const turn = document.createElement("article"), reply = document.createElement("div"); turn.className = "flex flex-col";
+    reply.className = "markdown text-reading caret-host"; reply.innerHTML = html; turn.append(reply); document.body.append(turn);
+    // From the end of a block's content to the end of its last child.
+    const under = (node: Element) => { const style = getComputedStyle(node); return Math.round(node.getBoundingClientRect().bottom - parseFloat(style.paddingBottom) - parseFloat(style.borderBottomWidth) - node.lastElementChild!.getBoundingClientRect().bottom); };
     const marked = [reply, ...reply.querySelectorAll("*")].filter(node => getComputedStyle(node, "::after").content !== "none"), height = reply.getBoundingClientRect().height;
-    reply.classList.remove("caret-host"); const own = reply.getBoundingClientRect().height; reply.remove();
-    return [name, marked.map(node => (node === reply ? "reply" : node.tagName.toLowerCase()) + (height > own ? " on its own line" : ""))];
-  }))), { heading: ["h2"], quote: ["p"], list: ["li"], loose: ["p"], nested: ["li"], code: ["reply on its own line"], table: ["reply on its own line"], listCode: ["li on its own line"] });
+    const places = marked.map(node => node === reply ? "reply" : node.tagName.toLowerCase()), lines = marked.map(node => node.lastElementChild ? under(node) : null);
+    reply.classList.remove("caret-host"); const own = reply.getBoundingClientRect().height, ends = [under(reply), ...[...reply.querySelectorAll("blockquote")].map(under)]; turn.remove();
+    return [name, [...places.map((place, index) => place + (height > own ? ` on its own line ${lines[index]} px under the block` : "")), "ends " + ends.join(" / ") + " px under its last block"]];
+  }))), { heading: ["h2", "ends 0 px under its last block"], quote: ["p", "ends 0 / 0 px under its last block"], list: ["li", "ends 0 px under its last block"],
+    loose: ["p", "ends 0 px under its last block"], nested: ["li", "ends 0 px under its last block"], code: ["reply on its own line 26 px under the block", "ends 0 px under its last block"],
+    table: ["reply on its own line 26 px under the block", "ends 0 px under its last block"], listCode: ["li on its own line 26 px under the block", "ends 0 px under its last block"],
+    quoteCode: ["blockquote on its own line 26 px under the block", "ends 0 / 0 px under its last block"], quoteThen: ["p", "ends 0 / 0 px under its last block"] });
 
   // ADR-054 §3 for the classes that carry motion: the longest transition of each, in ms, and the end dot's loop. A chevron
   // turns on the `rotate` property that rotate-90 sets: the moment the angle changes, it still shows the old one.
