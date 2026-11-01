@@ -345,8 +345,11 @@
   .pulse { animation: hh-breathe 1.8s ease-in-out infinite; }
   .shimmer { --shimmer-base: var(--text-3); background: linear-gradient(90deg, var(--shimmer-base) 0%, var(--shimmer-base) 41.7%, var(--shimmer-peak) 48.3%, var(--shimmer-peak) 51.7%, var(--shimmer-base) 58.3%, var(--shimmer-base) 100%); background-size: 300% 100%; background-position: 100% 0; -webkit-background-clip: text; background-clip: text; color: transparent; animation: hh-shimmer 4s linear .6s infinite; }
 
-  /* #13 / #18 / #22 Collapsible: rows 0fr → 1fr with opacity, 200 ms, both ways */
-  .collapsible { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows var(--dur-base) var(--ease-expo), opacity var(--dur-base) var(--ease-expo); }
+  /*
+   * #13 / #18 / #22 Collapsible: rows 0fr → 1fr with opacity, 200 ms, both ways. Its one column is the width it is given:
+   * open content is not clipped, and an auto column would grow to a wide row inside (nowrap or truncated) and widen the page.
+   */
+  .collapsible { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows var(--dur-base) var(--ease-expo), opacity var(--dur-base) var(--ease-expo); }
   .collapsible[data-open="true"] { grid-template-rows: 1fr; opacity: 1; }
   .collapsible-inner { min-height: 0; overflow: hidden; }
   .collapsible[data-state="open"] > .collapsible-inner { overflow: visible; }

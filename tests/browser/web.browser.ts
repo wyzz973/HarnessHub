@@ -2365,7 +2365,7 @@ test("G054-DL9 the application's shortcuts open what they name, ⌥⌘↓ goes t
   assert.deepEqual(errors, []);
 });
 
-test("G054-FR6 the chosen theme applies before the first paint and survives reload, dark pages fit narrow screens, and reduced motion and the keyboard stop transitions", { timeout: 120000 }, async t => {
+test("G054-FR6 the chosen theme applies before the first paint and survives reload, dark pages fit narrow screens with open collapsibles, and reduced motion and the keyboard stop transitions", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
@@ -2404,6 +2404,18 @@ test("G054-FR6 the chosen theme applies before the first paint and survives relo
     }
     await page.setViewportSize({ width: 1280, height: 900 });
   }
+  // An open collapsible keeps to the width it is given: a long unbroken row inside is cut short instead of widening the page.
+  await page.setViewportSize({ width: 320, height: 844 });
+  assert.deepEqual(await page.evaluate(() => {
+    const frame = document.createElement("div");
+    frame.innerHTML = "<div class='collapsible' data-open='true' data-state='open'><div class='collapsible-inner'><div style='overflow: hidden; white-space: nowrap; text-overflow: ellipsis'>"
+      + "一行很长而且没有断开的步骤说明".repeat(30) + "</div></div></div>";
+    document.body.append(frame);
+    const row = frame.querySelector(".collapsible-inner > div")!, result = { page: document.documentElement.scrollWidth <= innerWidth, row: row.getBoundingClientRect().width <= frame.clientWidth };
+    frame.remove(); return result;
+  }), { page: true, row: true });
+  await page.setViewportSize({ width: 1280, height: 900 });
+
   // ADR-054 §3 for the classes that carry motion: the longest transition of each, in ms. A chevron turns on the `rotate`
   // property that rotate-90 sets: the moment the angle changes, it still shows the old one.
   const motions = () => page.evaluate(() => {
