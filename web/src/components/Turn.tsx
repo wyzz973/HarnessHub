@@ -177,12 +177,13 @@ function TurnProcess({ run, status, text, phase, detailed, now, harness, startup
   const [seen] = useState<SeenSteps>(() => (run ? shownSteps(run.id) : undefined) ?? new Set(tools.map(tool => tool.id)));
   const runId = run?.id;
   useLayoutEffect(() => { if (runId !== undefined) rememberShown(runId, seen); }, [runId, seen]);
-  // The words and symbol the status had last, kept while the Run has ended but its last words are still on their way, and
-  // for the 200 ms in which they leave (#12). While it settles with words on their way, the reply is what the line names:
-  // it goes on from "正在回复" to "已完成" without passing through "正在结束执行" and back.
+  // The words and symbol the status had last, kept for the 200 ms in which they leave (#12), and while the Run has ended but
+  // its last words are still on their way (words of work in progress only; anything else gives way to "正在回复"). While
+  // it settles with words on their way, the reply is what the line names: it goes on from "正在回复" to "已完成" without
+  // passing through "正在结束执行" and back.
   const last = useRef<LiveStatus | null>(null);
   const replying: LiveStatus = { text: "正在回复", tone: "run", timer: true, wrap: false, thinking: false };
-  const live = ended ? null : terminal ? last.current ?? replying : status === "settling" && behind && !run?.cancelRequested ? replying
+  const live = ended ? null : terminal ? last.current?.tone === "run" ? last.current : replying : status === "settling" && behind && !run?.cancelRequested ? replying
     : liveStatus(run, status, harness, now, startupHint, queue, waiting, text, docked);
   if (live) last.current = live;
   const end = ended ? outcome(run, status, text, phase === "handoff" || phase === "done") : null;
