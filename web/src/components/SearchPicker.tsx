@@ -28,7 +28,7 @@ const TONES = { success: "badge-accent", warning: "badge-amber", danger: "badge-
  * the search field and returns to the trigger when the list closes.
  */
 export function SearchPicker({ label, value, placeholder, options, onChange, disabled = false, footer, prefix, className, wide = false, side = "top", align = "start",
-  open: controlledOpen, onOpenChange, title, trigger, chevron = true, size = "md" }: {
+  open: controlledOpen, onOpenChange, title, trigger, chevron = true, size = "md", empty }: {
   label: string; value: string; placeholder: string; options: readonly PickerOption[];
   onChange: (value: string) => void; disabled?: boolean; footer?: ReactNode; prefix?: string; className?: string; wide?: boolean; side?: "top" | "bottom";
   align?: "start" | "end";
@@ -41,6 +41,8 @@ export function SearchPicker({ label, value, placeholder, options, onChange, dis
   chevron?: boolean;
   /** "lg" rows carry 14 px names beside larger icons (the Agent list); "md" rows are 13 px. */
   size?: "md" | "lg";
+  /** What the list says when it has no choices at all (rather than none matching the search). */
+  empty?: ReactNode;
 }) {
   const [ownOpen, setOwnOpen] = useState(false);
   const open = controlledOpen ?? ownOpen;
@@ -119,7 +121,7 @@ export function SearchPicker({ label, value, placeholder, options, onChange, dis
                   <Check size={15} strokeWidth={2.2} className={cn("flex-none text-accent-text", value !== option.value && "invisible")} aria-hidden="true"/>
                 </button>
               </div>;
-            }) : <p className="m-0 px-3 py-6 text-center text-ui-sm text-fg-3">没有匹配的选项</p>}
+            }) : <p className="m-0 px-3 py-6 text-center text-ui-sm text-fg-3">{options.length === 0 && empty !== undefined ? empty : "没有匹配的选项"}</p>}
           </div>
           <div className="flex items-center justify-between gap-2 px-3.5 py-2 text-caption text-fg-3 hairline-t">{footer ?? <span>↑ ↓ 选择 · Enter 确认 · Esc 关闭</span>}</div>
         </BasePopover.Popup>

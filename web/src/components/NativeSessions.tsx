@@ -17,9 +17,11 @@ function when(value: number | null): string {
  * creates a new conversation that quotes its recent history and sends the next message to that native session; a
  * session a conversation already continues opens that conversation instead.
  */
-export function NativeSessionsPanel({ load, onImport, onOpen, disabled }: {
+export function NativeSessionsPanel({ load, onImport, onOpen, disabled, side = "top" }: {
   load: (cursor: string | undefined, signal: AbortSignal, probes?: boolean) => Promise<NativeSessionListView>;
   onImport: (nativeId: string) => void; onOpen: (conversationId: string) => void; disabled: boolean;
+  /** Where the list opens from its button: above it (the default, at the foot of a conversation) or below it. */
+  side?: "top" | "bottom";
 }) {
   const [state, setState] = useState<{ loading: boolean; value: NativeSessionListView | undefined; error: string | null }>({ loading: false, value: undefined, error: null });
   // Sessions that the Hub's own model-list reads opened are empty; they stay out of the list unless asked for.
@@ -31,7 +33,7 @@ export function NativeSessionsPanel({ load, onImport, onOpen, disabled }: {
     error => setState(current => ({ loading: false, value: cursor === undefined ? undefined : current.value, error: errorMessage(error) })));
   };
   const sessions = state.value?.sessions, hidden = state.value?.hiddenProbes ?? 0;
-  return <Popover label="本机会话" side="top" align="start" className="native-sessions w-[360px] max-w-[calc(100vw-24px)]"
+  return <Popover label="本机会话" side={side} align="start" className="native-sessions w-[360px] max-w-[calc(100vw-24px)]"
     onOpenChange={open => { if (open && state.value === undefined && !state.loading) read(); }}
     trigger={<button type="button" className="icon-btn text-fg-3" aria-label="本机会话" title="继续这个 Harness 在本工作区的会话" disabled={disabled}><History size={16}/></button>}>
     <PopHead title="本机会话" closeLabel="收起本机会话"><button type="button" className="icon-btn icon-btn-sm" aria-label="重新读取本机会话" onClick={() => read()} disabled={state.loading}><RefreshCw size={13}/></button></PopHead>

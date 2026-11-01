@@ -83,7 +83,7 @@ export function harnessOptions(harnesses: readonly HarnessView[], readiness: rea
     const status = available ? readinessStatus(row, seen) : undefined;
     return {
       value: row.id, label: row.name, icon: <BrandIcon brand={row.id} name={row.name} size={26}/>,
-      group: available ? "本机可用" : "更多 Harness",
+      group: available ? "本机可用" : "暂不可用",
       // The version is a fact of the installation; nothing is said about it (ADR-053).
       description: [version ? `v${version}` : row.controls.filter(item => item.available).map(item => protocolLabel(item.protocol)).join(" / "),
         available && seen?.startupMs !== undefined ? "启动约 " + approximately(seen.startupMs) : ""].filter(Boolean).join(" · "),
@@ -93,8 +93,12 @@ export function harnessOptions(harnesses: readonly HarnessView[], readiness: rea
   }).sort((a, b) => Number(Boolean(a.disabled)) - Number(Boolean(b.disabled)));
 }
 
-/** One clickable part of the merged picker: the hovered part takes the hover fill inside the chip's lighter one. */
-const SEGMENT = "h-[30px] max-w-none rounded-row px-1.5 outline-offset-[-2px] hover:bg-hover data-[popup-open]:bg-hover";
+/**
+ * One clickable part of the merged picker: the hovered part takes the hover fill inside the chip's lighter one. Parts sit
+ * 8 px apart as the board's 7 px gaps. When the row is short of room the connection and the model give way (an ellipsis);
+ * the Agent keeps its name (shortened only on a phone) and the pill and the chevron stay whole.
+ */
+const SEGMENT = "h-[30px] max-w-none rounded-row px-1 outline-offset-[-2px] hover:bg-hover data-[popup-open]:bg-hover";
 /** The small blue pill of a native option inside the merged picker (the thinking level, or the mode). */
 function Pill({ children }: { readonly children: ReactNode }) {
   return <span className="inline-flex h-5 items-center rounded-full bg-accent-soft px-[7px] text-[11px] leading-4 font-medium whitespace-nowrap text-accent-text">{children}</span>;
@@ -187,7 +191,8 @@ export function Composer(props: ComposerProps) {
   const shownApproval = useRef<DockedApproval | null>(null);
   if (approval) shownApproval.current = approval;
   // A decision from the keyboard closes the dock at once (Motion board #37): no leaving layer is drawn.
-  const dockShown = approval ?? (dockPresence === "closing" && !instant.current && !closedAtOnce.current ? shownApproval.current : null);
+  const closingAtOnce = !docked && (instant.current || closedAtOnce.current);
+  const dockShown = approval ?? (dockPresence === "closing" && !closingAtOnce ? shownApproval.current : null);
   // Who should hold the focus when a request takes the dock: it takes it from the composer (and for a moment treats keys
   // as meant for the message being typed), or keeps it when the previous request had it. Read before `inert` moves it.
   const form = useRef<HTMLFormElement>(null), dockFocus = useRef<{ readonly id: string | null; readonly mode: "guarded" | "plain" | null }>({ id: null, mode: null });
@@ -206,8 +211,9 @@ export function Composer(props: ComposerProps) {
     catch { /* The parent owns the request and its error; an unconfirmed send retains the draft. */ }
     finally { sending.current = false; }
   };
-  // The picker offers what the user can start with (ADR-050); the current choice is never among the hidden ones.
-  const harnessChoices = harnessOptions(harnesses.filter(row => !props.hiddenHarnesses.has(row.id)), props.readiness, draft);
+  // The picker offers what the user can start with (ADR-050): the Agents on this computer, as the boards list them; what
+  // is not installed is found in "我的 Agent". The current choice is never among the hidden or left-out ones.
+  const harnessChoices = harnessOptions(harnesses.filter(row => row.id === draft.harnessId || !props.hiddenHarnesses.has(row.id) && (row.installed || row.controls.some(control => control.available))), props.readiness, draft);
   const providerOptions: PickerOption[] = [{ value: "", label: "Harness 原生连接", short: "原生连接", description: "由 Harness 提供模型连接，需要完成相应认证", icon: <LogoMark size={18}/> }, ...providers.map(row => {
     const supported = !harness || harness.providerProtocols.includes(row.protocol);
     const missingKey = row.protocol === "gemini" && !row.hasCredential;
@@ -248,15 +254,18 @@ export function Composer(props: ComposerProps) {
   const carried = !dirty && !pending && !blocked && nativeState?.carried ? describeNative(nativeState.carried.model, nativeState.carried.options) : "";
   const onboarding = session === null && draft.harnessId === "";
   const authMissing = !draft.providerId && props.nativeModels?.authentication === "missing";
+  // What happened leads in amber, then what to do (Interaction board, "Agent 暂时不可用"); the message stays in the box.
+  const authTitle = `${harness?.name ?? "所选 Harness"} 的本机认证尚未就绪`;
+  const authText = !authMissing ? null : SETUP_COMMANDS[draft.harnessId]
+    ? `它还没有可用的模型提供方。请在终端运行 ${SETUP_COMMANDS[draft.harnessId]} 完成配置，然后刷新本机模型；也可以换一个 Agent。`
+    : "请在它自己的程序中完成登录或 Gateway 连接配置，然后刷新本机模型；也可以换一个 Agent。";
   const noteDanger = bytes > 64 * 1024 || problem !== null && !onboarding;
   const note = bytes > 64 * 1024 ? "单条消息不能超过 64 KiB，请缩短内容。"
     : active?.cancelRequested ? "停止已受理，正在等待执行结束和资源清理。"
     : blocked && !readonly ? resourcesUnconfirmed ? "资源停止还未确认。你可以编辑草稿、查看历史；核实后再恢复执行。" : "选择可用的 Harness 后，检查连接并继续这次对话。"
     : pending ? active ? "当前回复结束后应用新选择，草稿已保留。" : "正在保存下一条消息的选择。"
     : dirty ? problem ?? (selectionFailed ? "所选连接未生效，可以重试切换或选择其他 Harness。" : "正在切换所选 Harness 或模型，草稿已保留。")
-    : authMissing ? SETUP_COMMANDS[draft.harnessId]
-      ? `${harness?.name ?? "所选 Harness"} 的本机认证尚未就绪：它还没有可用的模型提供方。请在终端运行 ${SETUP_COMMANDS[draft.harnessId]} 完成配置，然后刷新本机模型；也可以切换其他 Harness。`
-      : "所选 Harness 的本机认证尚未就绪。请在它自己的程序中完成登录或 Gateway 连接配置，然后刷新本机模型；也可以切换其他 Harness。"
+    : authText !== null ? authText
     : uploading ? "附件上传中，完成后即可发送。"
     : attachmentBlocked ? "有附件无法随这条消息发送，请移除标记的附件或切换到支持它的 Harness 或模型。"
     : props.attachments.length && !props.messageDraft.trim() ? "请写一句说明，再和附件一起发送。"
@@ -278,6 +287,8 @@ export function Composer(props: ComposerProps) {
   // The pending or failed switch speaks for itself in its own strip, and the blocked conversation in its notice; before any
   // Agent is chosen, the merged picker's "选择 Harness" already says what is missing.
   const noteShown = note !== null && !(pending || dirty && !blocked) && !(blocked && !readonly) && !(onboarding && note === problem) && !docked;
+  // The ways out belong to the note shown: sign-in notes offer a refresh, selection problems their reason; both another Agent.
+  const noteIsAuth = authText !== null && note === authText, noteIsProblem = problem !== null && note === problem;
   // While a switch is saved or waits for the reply to end, its strip is what the message is described by.
   const stripNotice = (pending || dirty && !blocked) && !blocked && !(selectionFailed && !pending) && problem === null;
 
@@ -298,7 +309,10 @@ export function Composer(props: ComposerProps) {
     setMention(null); picker.current?.click();
   };
 
-  const takeOver = harness ? session && session.selection.harnessId !== draft.harnessId ? `由 ${harness.name} 接手` : "改用新的模型与设置" : "改用新的选择";
+  // A switch the Gateway holds until the reply ends is named by what it switches to, even if the picker has moved on since.
+  const pendingTarget = pending ? session?.switches.find(change => change.id === session.pendingSwitchId)?.requested : undefined;
+  const nextHarness = harnesses.find(row => row.id === (pendingTarget?.harnessId ?? draft.harnessId));
+  const takeOver = nextHarness ? session && session.selection.harnessId !== nextHarness.id ? `由 ${nextHarness.name} 接手` : "改用新的模型与设置" : "改用新的选择";
   const placeholder = readonly ? "对话已关闭，历史仍可查看" : blocked ? "先写下想继续的内容，恢复后发送…" : active ? "回复进行中，可以先写下一条…" : session ? "继续这段对话…"
     : harness ? `让 ${harness.name} 做什么？${commands.length ? "用 / 调原生命令，" : ""}@ 引用文件` : "说说你想完成的事…";
   const thinkingShown = thought ? valueName(thought, draft.nativeOptions[thought.id] ?? thought.currentValue) : null;
@@ -306,6 +320,9 @@ export function Composer(props: ComposerProps) {
   const showProvider = props.providerManagement !== false || draft.providerId !== "";
   const segments = ["agent", ...(showProvider ? ["provider"] : []), ...(draft.harnessId ? ["model"] : []), ...(thought ? ["thought"] : []), ...(modeInChip ? ["mode"] : [])];
   const last = segments.at(-1);
+  // On the home the box sits mid-page and its lists open below it (Main board), turning up when they do not fit there;
+  // at the foot of a conversation they open above.
+  const popSide: "top" | "bottom" = session ? "top" : "bottom";
   const pickAgent = (value: string) => {
     if (value === draft.harnessId) return;
     const next = harnesses.find(row => row.id === value), previous = [...(session?.switches ?? [])].reverse().find(change => change.status === "effective" && change.target?.harnessId === value)?.target ?? [...(session?.runs ?? [])].reverse().find(run => run.selection.harnessId === value)?.selection ?? props.rememberedChoice?.(value) ?? undefined;
@@ -322,12 +339,12 @@ export function Composer(props: ComposerProps) {
         : <span className="inline-flex h-[30px] items-center gap-2 px-1 text-caption text-fg-2"><Spinner size={13} label=""/><span id={stripNotice ? "composer-notice" : undefined}>正在保存选择</span></span>}
     </div> : null}
     {carried && !readonly && !docked ? <div className="composer-change native-carried motion-fade-in flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-caption text-fg-2" role="status"><span>原生命令已改为 {carried}；下一回合沿用，不改回所选。</span><button type="button" className="link-btn" onClick={props.onApply} disabled={disabled || props.mutation !== null}>改用所选设置</button></div> : null}
-    {blocked && !readonly ? <ComposerNotice title="执行已暂停，对话历史和草稿仍保留。" action={<button type="button" className="btn btn-sm" onClick={props.onApply} disabled={disabled || pending || props.mutation !== null || problem !== null || resourcesUnconfirmed}><RefreshCw size={12}/>{unknown.length ? "确认保留未知结果并继续" : "检查连接并恢复对话"}</button>}>
-      <p id="composer-notice" className="m-0" role="status">{unknown.length ? "上一轮结果未知，不会自动重发。" : ""}{note}</p></ComposerNotice> : null}
-    {noteShown ? noteDanger || authMissing ? <ComposerNotice action={authMissing || problem !== null ? <>
-        {authMissing ? <button type="button" className="btn btn-sm" onClick={props.onRefreshModels}>刷新本机模型</button> : <button type="button" className="btn btn-sm" onClick={props.onHarnesses}>查看原因</button>}
-        <button type="button" className="btn btn-sm" disabled={disabled} onClick={() => props.onAgentPickerOpen(true)}>换一个 Agent</button></> : undefined}>
-        <p id="composer-notice" className="composer-note m-0" role="status">{note}</p></ComposerNotice>
+    {blocked && !readonly ? <ComposerNotice id="composer-notice" title="执行已暂停，对话历史和草稿仍保留。" action={<button type="button" className="btn btn-sm" onClick={props.onApply} disabled={disabled || pending || props.mutation !== null || problem !== null || resourcesUnconfirmed}><RefreshCw size={12}/>{unknown.length ? "确认保留未知结果并继续" : "检查连接并恢复对话"}</button>}>
+      {unknown.length ? "上一轮结果未知，不会自动重发。" : ""}{note}</ComposerNotice> : null}
+    {noteShown ? noteDanger || noteIsAuth ? <ComposerNotice id="composer-notice" title={noteIsAuth ? authTitle : undefined} action={noteIsAuth || noteIsProblem ? <>
+        {noteIsAuth ? <button type="button" className="btn btn-sm" onClick={props.onRefreshModels}>刷新本机模型</button>
+          : <button type="button" className="btn btn-sm" onClick={draft.providerId ? props.onProviders : props.onHarnesses}>查看原因</button>}
+        <button type="button" className="btn btn-sm" disabled={disabled} onClick={() => props.onAgentPickerOpen(true)}>换一个 Agent</button></> : undefined}>{note}</ComposerNotice>
       : <p id="composer-notice" className="composer-note motion-fade-in m-0 px-1 text-caption text-fg-2">{note}</p> : null}
     {!draft.providerId && props.nativeModelsError && !selectionFailed && !docked ? <p className="composer-note m-0 px-1 text-caption text-fg-2" role="status">{props.nativeModelsError} <button type="button" className="link-btn" onClick={props.onRefreshModels}>刷新模型</button></p> : null}
     {props.above}
@@ -356,7 +373,7 @@ export function Composer(props: ComposerProps) {
           : dragging ? "shadow-focus" : "shadow-composer has-[.composer:focus-within]:shadow-focus")}>
         <form ref={form} className={cn("composer flex flex-col rounded-composer pt-4 pr-2.5 pb-2.5 pl-5 ease-standard", session ? "gap-2.5" : "gap-3",
           docked ? "invisible pointer-events-none absolute inset-x-0 bottom-0 -translate-y-1 opacity-0 transition-[opacity,translate,visibility] duration-100"
-            : "visible translate-y-0 opacity-100 transition-[opacity,translate] delay-100 duration-100", dragging && "is-dropping")}
+            : closingAtOnce ? "visible translate-y-0 opacity-100" : "visible translate-y-0 opacity-100 transition-[opacity,translate] delay-100 duration-100", dragging && "is-dropping")}
           aria-label={session ? "继续对话" : "新对话"} aria-hidden={docked || undefined} inert={docked}
           onSubmit={event => { event.preventDefault(); void send(); }}
           onDragOver={event => { if (!readonly && event.dataTransfer.types.includes("Files")) { event.preventDefault(); setDragging(true); } }}
@@ -398,42 +415,43 @@ export function Composer(props: ComposerProps) {
           <input ref={picker} type="file" multiple hidden tabIndex={-1} aria-hidden="true" onChange={event => { attach(event.target.files); event.target.value = ""; }}/>
           <div className="flex flex-wrap items-center gap-x-1 gap-y-2">
             <div className="-ml-2 flex flex-none items-center gap-0.5" role="group" aria-label="附件、权限与原生会话">
-              <Menu side="top" align="start" trigger={<button type="button" className="press mr-0.5 flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg disabled:opacity-45"
+              <Menu side={popSide} align="start" trigger={<button type="button" className="press mr-0.5 flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg disabled:opacity-45"
                 aria-label="添加文件或上下文" disabled={readonly}><Plus size={16} strokeWidth={1.9}/></button>} items={[
                 { label: "添加文件或图片…", icon: <Paperclip size={15}/>, hint: "@", disabled: !canAttach, onSelect: () => picker.current?.click() },
                 ...(commands.length ? [{ label: "原生命令", icon: <SquareSlash size={15}/>, hint: "/", disabled: disabled, onSelect: () => { setSlashClosedAt(null); props.onMessageDraft("/"); setTimeout(() => inputRef.current?.focus(), 0); } }] : []),
               ]} footer={props.attachments.length >= 8 ? "每条消息最多 8 个附件" : undefined}/>
-              {permission ? <SearchPicker label={OPTION_NAMES[permission.id] ?? permission.name} value={draft.nativeOptions[permission.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(permission, true)}
+              {permission ? <SearchPicker side={popSide} label={OPTION_NAMES[permission.id] ?? permission.name} value={draft.nativeOptions[permission.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(permission, true)}
                 disabled={disabled || props.nativeModelsLoading} onChange={value => changeOption(permission.id, value)} chevron className="gap-[5px] text-fg-2"
                 trigger={selected => <><ShieldCheck size={15} className="flex-none" aria-hidden="true"/><span className="hidden max-w-[140px] truncate sm:inline">{selected?.short ?? selected?.label ?? valueName(permission, permission.currentValue)}</span></>}/> : null}
-              {!draft.providerId && draft.harnessId && props.onLoadNativeSessions && props.onImportNative && props.onOpenSession ? <NativeSessionsPanel key={"sessions:" + draft.harnessId + ":" + draft.controlId} load={props.onLoadNativeSessions}
+              {!draft.providerId && draft.harnessId && props.onLoadNativeSessions && props.onImportNative && props.onOpenSession ? <NativeSessionsPanel key={"sessions:" + draft.harnessId + ":" + draft.controlId} side={popSide} load={props.onLoadNativeSessions}
                 disabled={disabled || props.mutation !== null} onImport={props.onImportNative} onOpen={props.onOpenSession}/> : null}
-              {!draft.providerId && draft.harnessId && props.onLoadExtensions ? <NativeExtensionsPanel key={draft.harnessId + ":" + draft.controlId} load={props.onLoadExtensions} disabled={disabled} onCommand={command => { props.onMessageDraft("/" + command + " "); inputRef.current?.focus(); }}/> : null}
-              {draft.harnessId ? <AdvancedSettings {...props} controls={controls} selectedControl={selectedControl} outdated={outdated} disabled={disabled} nativeOptions={nativeOptions.filter(option => option !== thought && !(option === mode && modeInChip) && option !== permission)} optionPicker={optionPicker} nativeState={nativeState} describeNative={describeNative}/> : null}
+              {!draft.providerId && draft.harnessId && props.onLoadExtensions ? <NativeExtensionsPanel key={draft.harnessId + ":" + draft.controlId} side={popSide} load={props.onLoadExtensions} disabled={disabled} onCommand={command => { props.onMessageDraft("/" + command + " "); inputRef.current?.focus(); }}/> : null}
+              {draft.harnessId ? <AdvancedSettings {...props} popSide={popSide} controls={controls} selectedControl={selectedControl} outdated={outdated} disabled={disabled} nativeOptions={nativeOptions.filter(option => option !== thought && !(option === mode && modeInChip) && option !== permission)} optionPicker={optionPicker} nativeState={nativeState} describeNative={describeNative}/> : null}
             </div>
             <div className="ml-auto flex max-w-full min-w-0 items-center gap-1">
-              <div className="agent-chip flex h-[34px] max-w-full min-w-0 items-center overflow-x-auto rounded-[12px] p-0.5 transition-[color,background-color] duration-120 ease-standard [scrollbar-width:none] hover:bg-subtle has-[[data-popup-open]]:bg-subtle [&::-webkit-scrollbar]:hidden [&>*]:flex-none"
+              <div className="agent-chip flex h-[34px] max-w-full min-w-0 items-center overflow-hidden rounded-[12px] p-0.5 transition-[color,background-color] duration-120 ease-standard hover:bg-subtle has-[[data-popup-open]]:bg-subtle"
                 role="group" aria-label="由谁来做：Agent、模型与思考强度">
-                <SearchPicker label="选择 Harness" value={draft.harnessId} placeholder="选择 Harness" options={harnessChoices} disabled={disabled} wide size="lg" align="end" chevron={last === "agent"}
-                  title={<span className="flex items-center gap-1">由谁来做 · <Kbd>⌘</Kbd><Kbd>J</Kbd></span>} open={props.agentPickerOpen} onOpenChange={props.onAgentPickerOpen} className={cn(SEGMENT, "gap-[7px] pl-1")}
+                <SearchPicker side={popSide} label="选择 Harness" value={draft.harnessId} placeholder="选择 Harness" options={harnessChoices} disabled={disabled} wide size="lg" align="end" chevron={last === "agent"}
+                  title={<span className="flex items-center gap-1">由谁来做 · <Kbd>⌘</Kbd><Kbd>J</Kbd></span>} open={props.agentPickerOpen} onOpenChange={props.onAgentPickerOpen} className={cn(SEGMENT, "flex-none gap-[7px] pl-1")}
                   footer={<span>↑ ↓ 选择 · Enter 确认 · 模型和思考强度在旁边的按钮里换</span>}
-                  trigger={selected => selected && harness ? <><BrandIcon brand={harness.id} name={harness.name} size={22}/><span className="max-w-[150px] truncate font-medium text-fg">{selected.label}</span></>
+                  empty={<>这台电脑上还没有找到可用的 Agent。<button type="button" className="link-btn" onClick={props.onHarnesses}>查看安装方式</button></>}
+                  trigger={selected => selected && harness ? <><BrandIcon brand={harness.id} name={harness.name} size={22}/><span className="max-w-[150px] truncate font-medium text-fg max-sm:max-w-[80px]">{selected.label}</span></>
                     : <span className="text-fg-2">选择 Harness</span>} onChange={pickAgent}/>
-                {showProvider ? <SearchPicker label="选择 Provider" value={draft.providerId} placeholder="选择 Provider" options={providerOptions} disabled={disabled} align="end" chevron={last === "provider"} className={cn(SEGMENT, "gap-1.5")}
+                {showProvider ? <SearchPicker side={popSide} label="选择 Provider" value={draft.providerId} placeholder="选择 Provider" options={providerOptions} disabled={disabled} align="end" chevron={last === "provider"} className={cn(SEGMENT, "gap-1.5")}
                   trigger={selected => <>{selected?.icon ? <span className="flex flex-none items-center">{selected.icon}</span> : null}<span className="max-w-[140px] truncate text-fg-2">{selected?.short ?? selected?.label ?? "选择 Provider"}</span></>}
                   onChange={value => { const next = providers.find(row => row.id === value); props.onDraft({ ...draft, providerId: next?.id ?? "", providerRevision: next?.revision ?? null, model: next?.defaultModel ?? "", nativeOptions: {} }); }}
                   footer={<button type="button" className="link-btn text-caption" onClick={props.onProviders}>管理模型连接</button>}/> : null}
-                {draft.harnessId ? <SearchPicker label="选择模型" value={draft.model} placeholder="选择模型" options={modelOptions} disabled={disabled || !provider && !props.nativeModels?.canSelect} align="end" chevron={last === "model"} className={SEGMENT}
+                {draft.harnessId ? <SearchPicker side={popSide} label="选择模型" value={draft.model} placeholder="选择模型" options={modelOptions} disabled={disabled || !provider && !props.nativeModels?.canSelect} align="end" chevron={last === "model"} className={SEGMENT}
                   trigger={selected => <span className="max-w-[160px] truncate text-fg-3">{selected?.short ?? selected?.label ?? "选择模型"}</span>}
                   onChange={value => {
                     if (value === draft.model) return;
                     const independent = Object.fromEntries(Object.entries(draft.nativeOptions).filter(([id]) => nativeOptions.some(option => option.id === id && option.category !== "thought_level")));
                     props.onDraft({ ...draft, model: value, nativeOptions: independent });
                   }} footer={!provider ? <><span>{props.nativeModelsLoading ? "正在读取本机模型…" : "列表来自本机安装"}</span><button type="button" className="link-btn text-caption" onClick={props.onRefreshModels}>刷新本机模型</button></> : undefined}/> : null}
-                {thought ? <SearchPicker label="思考强度" value={draft.nativeOptions[thought.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(thought, true)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "thought"}
-                  className={cn(SEGMENT, "px-1")} trigger={() => <Pill>思考 {thinkingShown}</Pill>} onChange={value => changeOption(thought.id, value)}/> : null}
-                {mode && modeInChip ? <SearchPicker label={OPTION_NAMES[mode.id] ?? mode.name} value={draft.nativeOptions[mode.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(mode, true)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "mode"}
-                  className={cn(SEGMENT, "px-1")} trigger={() => <Pill>{modeShown}</Pill>} onChange={value => changeOption(mode.id, value)}/> : null}
+                {thought ? <SearchPicker side={popSide} label="思考强度" value={draft.nativeOptions[thought.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(thought, true)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "thought"}
+                  className={cn(SEGMENT, "flex-none")} trigger={() => <Pill>思考 {thinkingShown}</Pill>} onChange={value => changeOption(thought.id, value)}/> : null}
+                {mode && modeInChip ? <SearchPicker side={popSide} label={OPTION_NAMES[mode.id] ?? mode.name} value={draft.nativeOptions[mode.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(mode, true)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "mode"}
+                  className={cn(SEGMENT, "flex-none")} trigger={() => <Pill>{modeShown}</Pill>} onChange={value => changeOption(mode.id, value)}/> : null}
               </div>
               {canQueue ? <Tip label="本轮结束后发送（Enter）"><button type="button" className="press flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg"
                 aria-label="本轮结束后发送" onClick={() => props.onQueue?.()}><ListPlus size={16}/></button></Tip> : null}
@@ -452,7 +470,7 @@ export function Composer(props: ComposerProps) {
           style={docked ? motionStyle({ delay: 80, shift: 4 }) : undefined} aria-hidden={!docked || undefined} inert={!docked}>
           <ApprovalDock key={dockShown.request.id} request={dockShown.request} harness={dockShown.harness} waiting={dockShown.waiting} policy={dockShown.policy} busy={props.mutation !== null}
             focus={approval !== null && dockFocus.current.id === approval.request.id ? dockFocus.current.mode : null}
-            onDecision={(option, keyboard) => { if (keyboard) instant.current = true; dockShown.onDecision(option, keyboard); }}
+            onDecision={(option, keyboard) => { instant.current = keyboard; dockShown.onDecision(option, keyboard); }}
             {...(active ? { onStop: props.onCancel, stopDisabled: active.cancelRequested || props.mutation !== null } : {})}/>
         </div> : null}
       </div>
@@ -460,11 +478,16 @@ export function Composer(props: ComposerProps) {
     {props.below}
   </div>;
 }
-/** A notice above the composer (Interaction board, "Agent 暂时不可用"): amber because it waits for the user, with at most two ways forward. */
-function ComposerNotice({ title, children, action }: { readonly title?: ReactNode; readonly children: ReactNode; readonly action?: ReactNode }) {
+/**
+ * A notice above the composer (Interaction board, "Agent 暂时不可用"): amber because it waits for the user; what happened
+ * first, in amber, then why, then at most two ways forward. The words (title and text, not the buttons) are one status
+ * region under `id`, which the message box names as its description.
+ */
+function ComposerNotice({ id, title, children, action }: { readonly id?: string; readonly title?: ReactNode; readonly children: ReactNode; readonly action?: ReactNode }) {
   return <div className="composer-notice motion-fade-in flex items-start gap-2.5 rounded-block bg-amber-soft px-3 py-2.5 text-ui-sm text-fg">
     <TriangleAlert size={16} className="mt-0.5 flex-none text-amber" aria-hidden="true"/>
-    <div className="min-w-0 flex-1">{title ? <strong className="block font-semibold text-amber">{title}</strong> : null}<div className={title ? "mt-0.5 text-fg-2" : undefined}>{children}</div>
+    <div className="min-w-0 flex-1">
+      <div id={id} role="status">{title ? <strong className="block font-semibold text-amber">{title}</strong> : null}<div className={title ? "mt-0.5 text-fg-2" : undefined}>{children}</div></div>
       {action ? <div className="mt-2 flex flex-wrap items-center gap-1.5">{action}</div> : null}</div>
   </div>;
 }
@@ -475,12 +498,14 @@ function AdvancedSettings(props: ComposerProps & {
   readonly controls: readonly HarnessView["controls"][number][]; readonly selectedControl: HarnessView["controls"][number] | undefined; readonly outdated: boolean; readonly disabled: boolean;
   readonly nativeOptions: readonly NativeOption[]; readonly optionPicker: (option: NativeOption, label: string) => ReactNode;
   readonly nativeState: NonNullable<NonNullable<ComposerProps["session"]>["nativeStates"]>[number] | undefined; readonly describeNative: (model: string | undefined, options: Readonly<Record<string, string>> | undefined) => string;
+  /** Where its panel opens: below the box on the home, above it in a conversation. */
+  readonly popSide: "top" | "bottom";
 }) {
   const { draft, providers, session, controls, selectedControl, outdated, disabled, nativeState } = props;
   const provider = providers.find(row => row.id === draft.providerId);
   const row = "execution-setting flex flex-col gap-1.5 px-3.5 py-3 hairline-b last:border-b-0";
   const heading = "text-caption font-medium text-fg-3";
-  return <Popover label="执行配置" side="top" align="start" className="composer-settings-panel w-[380px] max-w-[calc(100vw-24px)]"
+  return <Popover label="执行配置" side={props.popSide} align="start" className="composer-settings-panel w-[380px] max-w-[calc(100vw-24px)]"
     trigger={<button type="button" className="icon-btn relative text-fg-3" aria-label="高级配置" title="控制入口、原生选项与后台进程" disabled={disabled}><SlidersHorizontal size={16}/>{outdated ? <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-amber-dot"/> : null}</button>}>
     <PopHead title="执行配置" closeLabel="收起高级配置"/>
     {props.nativeOptions.map(option => <div className={cn(row, "native-setting")} key={option.id}><span className={heading}>{OPTION_NAMES[option.id] ?? option.name}</span><div className="-ml-2">{props.optionPicker(option, OPTION_NAMES[option.id] ?? option.name)}</div></div>)}

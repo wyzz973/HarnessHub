@@ -370,7 +370,8 @@ export function ChatPage(props: ChatProps) {
   const exportBase = session ? `/api/v1/sessions/${encodeURIComponent(session.id)}/export?format=` : "";
 
   return <section className="chat-page flex h-full min-h-0 min-w-0 flex-1 flex-col" aria-labelledby="chat-title">
-    <header className={cn("flex h-[54px] flex-none items-center gap-2 bg-app pr-3 pl-3", session ? "hairline-b sm:pl-6" : "sm:pl-4")}>
+    {/* The header of the Conversation board: 54 px on a hairline, its parts 10 px apart (closer on a phone). */}
+    <header className={cn("flex h-[54px] flex-none items-center gap-2 bg-app pr-3 pl-3 sm:gap-2.5", session ? "hairline-b sm:pl-6" : "sm:pl-4")}>
       {narrow ? <button type="button" className="icon-btn navigation-toggle" onClick={props.onMenu} aria-label="打开导航"><MenuIcon size={18}/></button>
         : props.sidebarHidden ? <Tip label="展开侧栏"><button type="button" className="icon-btn" aria-label="展开侧栏" onClick={props.onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null}
       <div className="flex min-w-0 flex-1 items-baseline gap-2.5">
@@ -382,7 +383,7 @@ export function ChatPage(props: ChatProps) {
         <div className="hidden lg:flex"><div className="segmented" role="group" aria-label="过程显示">
           <button type="button" aria-pressed={!detailed} onClick={() => props.onPreference("density", "compact")}>简洁</button>
           <button type="button" aria-pressed={detailed} onClick={() => props.onPreference("density", "detailed")}>详细</button></div></div>
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-0.5 sm:gap-2.5">
           <Tip label={<>{panelOpen ? "收起详情" : "打开详情"}（⌘\）</>}><button type="button" className="icon-btn relative" aria-label="详情栏" aria-pressed={panelOpen} aria-describedby={changes ? "details-changes" : undefined} onClick={() => setPanel(!panelOpen)}>
             <PanelRight size={16}/>{!panelOpen && changes ? <span className="motion-pop-in absolute top-px right-0 min-w-[15px] rounded-full bg-accent px-1 text-center text-[10px] leading-[15px] font-semibold text-on-accent" style={motionStyle({ scaleFrom: .6 })} aria-hidden="true">{changes}</span> : null}
           </button></Tip>
@@ -397,7 +398,7 @@ export function ChatPage(props: ChatProps) {
             { separator: true },
             { label: "结束对话…", icon: <X size={14}/>, danger: true, disabled: session.status === "closed" || mutation !== null, onSelect: () => setConfirmClose(true) },
           ]} footer="导出公开对话与执行摘要；原生内部状态不包含在内。"/>
-          {session.status !== "closed" ? <Tip label="结束会话，保留历史"><button type="button" className="icon-btn close-chat" aria-label="关闭这个对话" disabled={mutation !== null} onClick={() => setConfirmClose(true)}><X size={17}/></button></Tip> : null}
+          {session.status !== "closed" ? <Tip label="结束会话，保留历史"><button type="button" className="icon-btn close-chat" aria-label="关闭这个对话" disabled={mutation !== null} onClick={() => setConfirmClose(true)}><X size={16}/></button></Tip> : null}
         </div>
       </> : null}
     </header>
@@ -530,7 +531,8 @@ function PlanBar({ session, active, harnessName }: { readonly session: SessionVi
   const done = plan.entries.filter(entry => entry.status === "completed").length, total = plan.entries.length;
   const current = plan.entries.find(entry => entry.status === "in_progress") ?? plan.entries.find(entry => entry.status === "pending");
   const where = current ? `${current.status === "in_progress" ? "正在" : "下一步"}：${current.content}` : "已完成";
-  return <div className="plan-bar flex flex-col gap-2">
+  // The 8 px between the bar and its steps belongs to the steps, so a closed plan leaves no gap above the composer.
+  return <div className="plan-bar flex flex-col">
     <button type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen(value => !value)}
       className="card card-interactive flex h-10 w-full items-center gap-[9px] border-none px-3.5 text-left text-ui-sm outline-offset-2">
       <ListChecks size={15} className="flex-none text-fg-2" aria-hidden="true"/>
@@ -538,16 +540,16 @@ function PlanBar({ session, active, harnessName }: { readonly session: SessionVi
       <span className="min-w-0 flex-1 truncate text-fg-3">{done} / {total} · {where}</span>
       <span className="relative h-1 w-[72px] flex-none overflow-hidden rounded-[2px] bg-hover max-sm:hidden" aria-hidden="true">
         <span className="absolute inset-0 origin-left rounded-[2px] bg-run transition-transform duration-200 ease-standard" style={{ transform: `scaleX(${total ? done / total : 0})` }}/></span>
-      <ChevronUp size={12} strokeWidth={2} className={cn("motion-rotate flex-none text-fg-3", open && "rotate-180")} aria-hidden="true"/>
+      <ChevronUp size={12} strokeWidth={2} className={cn("motion-rotate flex-none text-fg-3 keyboard:duration-0", open && "rotate-180")} aria-hidden="true"/>
     </button>
     <Collapsible open={open} id={id}>
-      <ul className="card m-0 grid max-h-[min(40vh,320px)] list-none grid-cols-1 gap-x-4 gap-y-2 overflow-y-auto px-4 py-3 text-ui-sm sm:grid-cols-2" aria-label={`${harnessName(owner.selection.harnessId)} 维护的计划`}>
+      <div className="pt-2"><ul className="card m-0 grid max-h-[min(40vh,320px)] list-none grid-cols-1 gap-x-4 gap-y-2 overflow-y-auto px-4 py-3 text-ui-sm sm:grid-cols-2" aria-label={`${harnessName(owner.selection.harnessId)} 维护的计划`}>
         {plan.entries.map((entry, index) => <li key={index} className="flex min-w-0 items-start gap-2">
           {entry.status === "completed" ? <Check size={15} strokeWidth={1.9} className="mt-0.5 flex-none text-fg-3" aria-label="已完成" role="img"/>
             : <Circle size={15} strokeWidth={1.9} className={cn("mt-0.5 flex-none", entry.status === "in_progress" ? "text-run" : "text-fg-3")} aria-label={entry.status === "in_progress" ? "进行中" : "待办"} role="img"/>}
           <span className={cn("min-w-0 break-words", entry.status === "completed" ? "text-fg-3 line-through decoration-line-strong" : entry.status === "in_progress" ? "font-medium text-fg" : "text-fg-2")}>{entry.content}</span>
         </li>)}
-      </ul>
+      </ul></div>
     </Collapsible>
   </div>;
 }

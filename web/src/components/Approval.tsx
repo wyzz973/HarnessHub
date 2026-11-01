@@ -64,7 +64,7 @@ export function PermissionCard({ request, harness, busy, onDecision }: { readonl
     className={cn("native-permission motion-enter flex flex-col gap-2.5 rounded-card bg-surface p-3.5 outline-offset-2", request.decided ? "shadow-hairline" : "shadow-[0_0_0_1px_var(--amber-line)]")}>
     <div className="flex items-center gap-2 text-ui-sm">
       <span className={cn("flex h-5 w-5 flex-none items-center justify-center rounded-tag", request.decided ? "bg-subtle text-fg-3" : "bg-amber-soft text-amber")} aria-hidden="true">{question ? <CircleHelp size={13}/> : <ShieldAlert size={13}/>}</span>
-      <span className={cn("font-medium", request.decided ? "text-fg-2" : "text-amber")}>{request.decided ? "已决定" : question ? `${harness} 在等你回答` : `${harness} 在等你审批`}</span>
+      <span className={cn("font-medium", request.decided ? "text-fg-2" : "text-amber")}>{request.decided ? "已决定" : question ? `${harness} 等你回答` : `${harness} 等你批准`}</span>
       <span className="flex-1"/>
       {left ? <><span className={cn("permission-deadline text-caption", urgent ? "font-medium text-amber" : "text-fg-3")} title={left.hint}>{left.source ? `${left.source} · ` : ""}{left.text}</span>
         <span className="sr-only" aria-live="polite">{left.source ? `${left.source} · ` : ""}{spokenLeft(seconds ?? 0, left.text)}</span></> : null}
@@ -141,9 +141,11 @@ export function ApprovalDock({ request, harness, busy, onDecision, onStop, stopD
   const urgent = seconds !== null && seconds <= 60;
   const button = (option: Option, tone: "primary" | "ghost" | "plain") => {
     const key = keyed.indexOf(option);
+    // One-time options carry their number (shown to keyboard users, G054-FR8); ⏎ and esc are shown as the board shows them.
+    // On a phone the decisions fill the lines they wrap onto, so the primary is never left alone at one end.
     return <button key={option.id} type="button" aria-label={option.name} disabled={disabled} onClick={() => decide(option, false)}
       aria-keyshortcuts={[key >= 0 ? String(key + 1) : "", option === primary ? "Enter" : "", option === refuse ? "Escape" : ""].filter(Boolean).join(" ") || undefined}
-      className={cn("btn press", tone === "primary" ? "btn-primary px-3.5" : tone === "ghost" ? "btn-ghost" : "")}>
+      className={cn("btn press max-sm:grow", tone === "primary" ? "btn-primary px-3.5" : tone === "ghost" ? "btn-ghost" : "")}>
       {key >= 0 ? <span aria-hidden="true" className="kbd-hint hidden font-mono keyboard:inline">{key + 1}</span> : null}
       <span>{option.name}</span>
       {option === primary ? <Kbd variant="hint">⏎</Kbd> : option === refuse ? <Kbd variant="hint">esc</Kbd> : null}
@@ -155,7 +157,8 @@ export function ApprovalDock({ request, harness, busy, onDecision, onStop, stopD
     <div className="flex items-start gap-3">
       <span className="flex h-[34px] w-[34px] flex-none items-center justify-center rounded-[11px] bg-amber-soft text-amber" aria-hidden="true"><ShieldAlert size={18}/></span>
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <strong id="approval-dock-title" className="text-ui font-semibold">{harness} 在等你审批</strong>
+        {/* The state in the words the header and the Turn use (Interaction board: 等你批准). */}
+        <strong id="approval-dock-title" className="text-ui font-semibold">{harness} 等你批准</strong>
         <span className="text-caption text-fg-3">
           {policy ? <>来自 {harness} 的“{policy}”策略 · </> : null}
           {left ? <span className={cn("permission-deadline", urgent && "font-medium text-amber")} title={left.hint}>{left.source ? `${left.source} · ` : ""}{left.text}</span> : `${harness} 会一直等你决定`}

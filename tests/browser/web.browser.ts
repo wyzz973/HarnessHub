@@ -1472,6 +1472,9 @@ test("G054-DL3 the home greets, says who is ready from the readiness facts and w
   // Each part of the merged picker opens its own list: the Agent (its list says ⌘J), the model, the thinking level.
   await chip.getByRole("button", { name: "选择 Harness", exact: true }).click();
   await expect(page.locator(".picker-popover")).toContainText("由谁来做");
+  await page.waitForTimeout(200);
+  for (const scheme of ["light", "dark"] as const) { await page.emulateMedia({ colorScheme: scheme }); await page.screenshot({ path: join(artifact, `dl3-agents-${scheme}-1440.png`), animations: "disabled" }); }
+  await page.emulateMedia({ colorScheme: "light" });
   await page.getByRole("option", { name: "Codex", exact: true }).click();
   await expect(chip.locator(".brand-tile[data-brand='codex']")).toBeVisible(); await expect(chip).toContainText("Codex");
   await expect(composer).toHaveAttribute("placeholder", /^让 Codex 做什么？/u);
@@ -1480,6 +1483,16 @@ test("G054-DL3 the home greets, says who is ready from the readiness facts and w
   const thinking = chip.getByRole("button", { name: "思考强度", exact: true });
   await thinking.click(); await page.getByRole("option", { name: "高", exact: true }).click(); await expect(thinking).toHaveText("思考 高");
   await shoot("dl3-picker");
+  // At phone widths the model gives way (an ellipsis) before the Agent's name and the pill: nothing of the merged picker is
+  // cut off or scrolls.
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    assert.ok(await chip.evaluate(element => element.scrollWidth <= element.clientWidth), `the merged picker fits at ${width}`);
+    assert.ok(await chip.getByRole("button", { name: "选择 Harness", exact: true }).locator("span.truncate").evaluate(element => element.scrollWidth <= element.clientWidth), `the Agent keeps its name at ${width}`);
+    const [whole, pill, chevron] = await Promise.all([chip.boundingBox(), thinking.boundingBox(), chip.locator("svg.lucide-chevron-down").boundingBox()]);
+    assert.ok(whole && pill && chevron && pill.x >= whole.x && chevron.x + chevron.width <= whole.x + whole.width, `its pill and chevron show whole at ${width}`);
+  }
+  await page.setViewportSize({ width: 1440, height: 960 });
   // After a first conversation, a new one shows the summary: who is ready, the workspace by its folder, and no branch.
   await composer.fill("hello"); await composer.press("Enter");
   await expect(page.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
@@ -1493,8 +1506,12 @@ test("G054-DL3 the home greets, says who is ready from the readiness facts and w
   await chip.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "OpenClaw", exact: true }).click();
   await expect(page.getByText(/本机认证尚未就绪/u)).toBeVisible();
   // (Other Agents this computer has, found but not ready to run, are named there as well.)
-  await expect(welcome.getByRole("button", { name: /(?:OpenClaw|\d+ 个 Agent) 需要处理$/u })).toBeVisible();
+  const needs = welcome.getByRole("button", { name: /(?:OpenClaw|\d+ 个 Agent) 需要处理$/u });
+  await expect(needs).toBeVisible();
   await expect(summary).toHaveText(`${ready - 1} 个 Agent 就绪`);
+  // The dot between who is ready and who needs the user sits as far from the words on either side.
+  const [words, dot, link] = await Promise.all([summary.locator("span").last().boundingBox(), welcome.locator("span[aria-hidden='true']", { hasText: "·" }).boundingBox(), needs.boundingBox()]);
+  assert.ok(words && dot && link && Math.abs((dot.x - words.x - words.width) - (link.x - dot.x - dot.width)) <= 1, "the dot is centred between the two");
   // The summary lists the available Agents with their versions and states, and chooses one.
   await summary.click();
   const list = page.getByRole("region", { name: "本机发现的 Harness" });
@@ -1533,7 +1550,9 @@ test("G054-DL5 an approval waits in the composer's place: ⏎ allows once and es
   await ask();
   // P02: in the composer's place and with the composer's focus: who asks and whose deadline, the command, what a lasting choice means.
   await expect(composer).toBeHidden(); await expect(dock).toBeFocused();
-  await expect(dock).toContainText("Shared Agent 在等你审批"); await expect(dock.locator(".permission-deadline")).toHaveText("等待期限 · 剩余 30 分");
+  // It names the state in the header's words (Interaction board: 等你批准).
+  await expect(dock.locator("#approval-dock-title")).toHaveText("Shared Agent 等你批准"); await expect(page.locator(".chat-page > header .status-pill")).toHaveText("Shared Agent 等你批准");
+  await expect(dock.locator(".permission-deadline")).toHaveText("等待期限 · 剩余 30 分");
   await expect(dock).toContainText("选“Allow always”后"); await expect(dock).toContainText("只能点选");
   // P03: ⏎ allows once and esc refuses; number keys choose one-time options; the lasting option has no key.
   await expect(dock.getByRole("button", { name: "Allow once", exact: true })).toHaveAttribute("aria-keyshortcuts", "1 Enter");
@@ -1607,6 +1626,7 @@ test("G054-DL6 the plan bar above the composer says how far the plan is and open
   await expect(toggle).toContainText("计划"); await expect(toggle).toContainText("1 / 2 · 正在：修改文件"); await expect(toggle).toHaveAttribute("aria-expanded", "false");
   const below = await page.locator(".composer-box").boundingBox(), above = await toggle.boundingBox();
   assert.ok(below && above && above.y + above.height <= below.y, "the plan bar sits above the composer");
+  assert.ok(Math.abs(below.y - above.y - above.height - 8) <= 1, `closed, it keeps the composer's 8 px gap and no more (${below.y - above.y - above.height})`);
   await shoot("dl6-plan");
   await toggle.click(); await expect(toggle).toHaveAttribute("aria-expanded", "true");
   await expect(bar.getByRole("list", { name: "Codex 维护的计划" }).getByRole("listitem")).toHaveText(["读取工作区", "修改文件"]);
@@ -1627,6 +1647,11 @@ test("G054-DL6 the plan bar above the composer says how far the plan is and open
   await expect(log.locator(".motion-message-in .user-message").last()).toContainText("STREAM_RENDER：计时");
   assert.match(await log.locator(".motion-message-in").last().evaluate(element => getComputedStyle(element).animationName), /hh-message-rise/u);
   await expect(page.getByRole("button", { name: "停止当前回复", exact: true }).locator(".send-stop")).toHaveAttribute("data-state", "stop");
+  // P06: meanwhile the next message is written and held above the plan bar; withdrawn, it is never sent.
+  await composer.fill("下一条：先暂存"); await composer.press("Enter");
+  const held = page.locator(".queued-message"); await expect(held).toContainText("将在本轮结束后发送"); await expect(composer).toHaveValue("");
+  await shoot("dl6-running");
+  await held.getByRole("button", { name: "撤回", exact: true }).click(); await expect(held).toHaveCount(0);
   await step("finish");
   await expect.poll(async () => (await current()).runs.at(-1).status, { timeout: 15000 }).toBe("completed");
   await expect(line).toContainText(/用时 [\d.]+ 秒/u);
@@ -1636,8 +1661,8 @@ test("G054-DL6 the plan bar above the composer says how far the plan is and open
   assert.deepEqual(errors, []);
 });
 
-test("G054-DL9 ⌘J opens the Agent list, ⌘. stops the reply, ⌘\\ opens and closes the details pushing the conversation, ↑ edits the last message, / lists the native commands and @ adds a file; composition triggers none of them", { timeout: 120000 }, async t => {
-  const fixture = await launchFixture(false); let browser: Browser | null = null;
+test("G054-DL9 ⌘J opens the Agent list, ⌘. stops the reply, ⌘\\ opens and closes the details pushing the conversation, ↑ edits the last message, / lists the native commands and @ adds a file; composition triggers none of them; an Agent chosen mid-reply takes over after the Turn", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false, { name: "Shared Agent", scenario: "hermes" }); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
   await mkdir(artifact, { recursive: true });
@@ -1706,6 +1731,22 @@ test("G054-DL9 ⌘J opens the Agent list, ⌘. stops the reply, ⌘\\ opens and 
   await button.click(); await expect(panel).toBeVisible();
   assert.deepEqual(await page.locator(".details-aside").evaluate(element => [getComputedStyle(element).transitionDuration, getComputedStyle(element.firstElementChild!).animationName]), ["0s", "none"]);
   await button.click(); await expect(panel).toHaveCount(0); await page.emulateMedia({ reducedMotion: "no-preference" });
+  // X05: ⌘J while a reply runs chooses who takes over; the Turn goes on with Codex and the choice applies once it ends.
+  const step = async (stage: string) => { const pending = join(fixture.root, "workspace", "next-stream-control.json"); await writeFile(pending, JSON.stringify({ stage })); await rename(pending, join(fixture.root, "workspace", "stream-control.json")); };
+  await composer.fill("STREAM_RENDER：换 Agent"); await composer.press("Enter");
+  await expect.poll(async () => (await current()).runs.at(-1).status, { timeout: 15000 }).toBe("running");
+  await page.keyboard.press("ControlOrMeta+J"); await search.fill("Shared Agent"); await search.press("Enter");
+  const strip = page.locator(".composer-change");
+  await expect(strip).toHaveText("本轮结束后由 Shared Agent 接手"); await expect(composer).toBeFocused();
+  await expect.poll(async () => (await current()).pendingSwitchId).not.toBeNull();
+  const handing = await current(); assert.equal(handing.runs.at(-1).status, "running"); assert.equal(handing.runs.at(-1).selection.harnessId, "codex");
+  await page.waitForTimeout(250);
+  for (const scheme of ["light", "dark"] as const) { await page.emulateMedia({ colorScheme: scheme }); await page.screenshot({ path: join(artifact, `dl9-handover-${scheme}.png`), animations: "disabled" }); }
+  await page.emulateMedia({ colorScheme: "light" });
+  await step("finish");
+  await expect.poll(async () => { const value = await current(); return value.activeRunId === null && value.pendingSwitchId === null && value.selection.harnessId; }, { timeout: 15000 }).toBe("native-acp");
+  const handed = await current(); assert.equal(handed.runs.at(-1).status, "completed"); assert.equal(handed.runs.at(-1).selection.harnessId, "codex");
+  await expect(strip).toHaveCount(0); await expect(trigger).toContainText("Shared Agent");
   assert.deepEqual(errors, []);
 });
 

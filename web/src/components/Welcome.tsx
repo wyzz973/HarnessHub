@@ -37,27 +37,31 @@ export function Welcome({ harnesses, readiness, firstUse, selected, workspace, o
   const found = [...ready, ...attention];
   const missing = harnesses.filter(harness => !harness.installed && !available.includes(harness)).length;
   const [listOpen, setListOpen] = useState(false);
+  // Opened from the keyboard (⇧⌘O), the page is simply there (Motion board #37); decided once, so a later pointer event
+  // does not start the entrance over.
+  const [enter] = useState(() => document.documentElement.dataset.input === "keyboard" ? undefined : "motion-enter");
   const list = (trigger: ReactElement) => <AgentList trigger={trigger} open={listOpen} onOpenChange={setListOpen} harnesses={available} status={status} selected={selected} firstUse={firstUse}
     missing={missing} onChoose={onChoose} onHarnesses={onHarnesses} onSettings={onSettings} onRescan={onRescan} scanning={scanning}/>;
   const attentionText = attention.length === 1 ? `${attention[0]!.name} 需要处理` : attention.length === 2 ? `${attention[0]!.name}、${attention[1]!.name} 需要处理` : `${attention.length} 个 Agent 需要处理`;
   return <div className="welcome mx-auto flex min-h-full w-full max-w-[760px] flex-col justify-center pt-8 pb-[min(150px,16vh)]">
-    <h2 className="motion-enter m-0 text-center text-[24px] leading-8 font-medium tracking-[-0.02em] text-balance sm:text-greeting sm:leading-[42px]">今天想让哪个 Agent 做什么？</h2>
+    <h2 className={cn(enter, "m-0 text-center text-[24px] leading-8 font-medium tracking-[-0.02em] text-balance sm:text-greeting sm:leading-[42px]")}>今天想让哪个 Agent 做什么？</h2>
     {firstUse ? <ol className="m-0 mt-6 mb-6 grid list-none grid-cols-1 gap-3 p-0 sm:grid-cols-3" aria-label="开始使用">
-      <Step index={1} title={found.length ? `找到了 ${found.length} 个 Agent` : "还没有找到 Agent"} text={found.length ? "用你已经装好的，登录和模型都沿用原来的。" : "装好之后点“重新检测”，或从登录 shell 补充目录。"}>
+      <Step index={1} enter={enter} title={found.length ? `找到了 ${found.length} 个 Agent` : "还没有找到 Agent"} text={found.length ? "用你已经装好的，登录和模型都沿用原来的。" : "装好之后点“重新检测”，或从登录 shell 补充目录。"}>
         {found.length ? list(<button type="button" className="agent-summary row -mx-1 flex min-h-[30px] flex-wrap items-center gap-1.5 self-start border-none bg-transparent px-1 py-1" aria-label={`查看找到的 ${found.length} 个 Agent`}>
           {found.slice(0, 8).map(harness => <BrandIcon key={harness.id} brand={harness.id} name={harness.name} size={22} className={cn(!ready.includes(harness) && "opacity-45")}/>)}
           {found.length > 8 ? <span className="text-caption text-fg-3">+{found.length - 8}</span> : null}</button>)
           : <button type="button" className="btn btn-sm self-start" onClick={onRescan} disabled={scanning}><RefreshCw size={12} className={cn(scanning && "spin")} aria-hidden="true"/>重新检测</button>}
       </Step>
-      <Step index={2} title="选一个项目文件夹" text="Agent 在这里读写文件。以后每个对话都可以换。">
+      <Step index={2} enter={enter} title="选一个项目文件夹" text="Agent 在这里读写文件。以后每个对话都可以换。">
         <WorkspaceEditor workspace={workspace} onWorkspace={onWorkspace} trigger={<button type="button" className="h-[30px] w-full min-w-0 truncate rounded-row border-none bg-surface px-2.5 text-left text-caption text-fg-2 shadow-hairline transition-[color,background-color] duration-120 ease-standard hover:text-fg" title={workspace}>{homePath(workspace) || "填写工作目录"}</button>}/>
       </Step>
-      <Step index={3} title="开始第一段对话" text="给一个现成的问题，回车就能看到效果。">
+      <Step index={3} enter={enter} title="开始第一段对话" text="给一个现成的问题，回车就能看到效果。">
         <button type="button" className="press h-[30px] self-start rounded-full border-none bg-transparent px-3 text-caption text-fg-2 shadow-[inset_0_0_0_1px_var(--border-strong)] transition-[color,background-color,transform] duration-120 ease-standard hover:bg-subtle hover:text-fg" onClick={() => onSuggest("讲讲这个项目的结构")}>讲讲这个项目的结构</button>
       </Step>
     </ol> : <>
-      <div className="motion-enter mt-3 mb-7 flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1 text-ui-sm text-fg-3" style={motionStyle({ delay: 40 })}>
-        {available.length ? list(<button type="button" className="agent-summary row flex h-7 items-center gap-2.5 border-none bg-transparent px-1.5 text-ui-sm text-fg-3 hover:text-fg-2" title="查看本机的 Agent">
+      <div className={cn(enter, "mt-3 mb-7 flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1 text-ui-sm text-fg-3")} style={enter ? motionStyle({ delay: 40 }) : undefined}>
+        {/* The summary's own padding is taken back from the row's gaps, so the dot sits 10 px from the words on both sides. */}
+        {available.length ? list(<button type="button" className="agent-summary row -mx-1.5 flex h-7 items-center gap-2.5 border-none bg-transparent px-1.5 text-ui-sm text-fg-3 hover:text-fg-2" title="查看本机的 Agent">
           <span className="flex items-center" aria-hidden="true">{found.slice(0, 6).map((harness, index) => <BrandIcon key={harness.id} brand={harness.id} name={harness.name} size={22} className={cn("outline-2 outline-app", index > 0 && "-ml-1.5")}/>)}</span>
           <span>{ready.length} 个 Agent 就绪</span></button>)
           : <span>这台电脑上还没有找到可用的 Agent</span>}
@@ -74,8 +78,8 @@ export function Welcome({ harnesses, readiness, firstUse, selected, workspace, o
 }
 
 /** One of the three first steps (Interaction board): its number, what it does, and the one thing to press. */
-function Step({ index, title, text, children }: { readonly index: number; readonly title: string; readonly text: string; readonly children: ReactNode }) {
-  return <li className="motion-enter flex min-w-0 flex-col gap-2.5 rounded-card bg-subtle p-4" style={motionStyle({ delay: index * 40 })}>
+function Step({ index, enter, title, text, children }: { readonly index: number; readonly enter: string | undefined; readonly title: string; readonly text: string; readonly children: ReactNode }) {
+  return <li className={cn(enter, "flex min-w-0 flex-col gap-2.5 rounded-card bg-subtle p-4")} style={enter ? motionStyle({ delay: index * 40 }) : undefined}>
     <span className="text-[11px] leading-4 font-semibold text-accent-text">{index} / 3</span>
     <span className="text-[15px] leading-[22px] font-semibold">{title}</span>
     <span className="text-caption text-fg-2">{text}</span>

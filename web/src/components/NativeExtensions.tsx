@@ -17,7 +17,7 @@ function Section({ title, count, defaultOpen = false, children }: { readonly tit
   const id = useId();
   return <div>
     <button type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen(value => !value)} className="row flex h-8 w-full items-center gap-1.5 border-none bg-transparent px-2 text-left text-ui-sm font-medium">
-      <ChevronRight size={12} strokeWidth={2} className={cn("motion-rotate flex-none text-fg-3", open && "rotate-90")} aria-hidden="true"/>{title}<span className="font-normal text-fg-3">{count}</span></button>
+      <ChevronRight size={12} strokeWidth={2} className={cn("motion-rotate flex-none text-fg-3 keyboard:duration-0", open && "rotate-90")} aria-hidden="true"/>{title}<span className="font-normal text-fg-3">{count}</span></button>
     <Collapsible open={open} id={id}><div className="px-2 pt-0.5 pb-2">{children}</div></Collapsible>
   </div>;
 }
@@ -25,7 +25,11 @@ function Section({ title, count, defaultOpen = false, children }: { readonly tit
  * Read-only view of what the selected Harness has loaded: skills, MCP servers and plugins, read on demand from the original
  * installation. Choosing an invocable skill fills its command into the composer; nothing here changes the Harness.
  */
-export function NativeExtensionsPanel({ load, onCommand, disabled }: { load: (signal: AbortSignal) => Promise<NativeExtensions | null>; onCommand: (command: string) => void; disabled: boolean }) {
+export function NativeExtensionsPanel({ load, onCommand, disabled, side = "top" }: {
+  load: (signal: AbortSignal) => Promise<NativeExtensions | null>; onCommand: (command: string) => void; disabled: boolean;
+  /** Where the panel opens from its button: above it (the default, at the foot of a conversation) or below it. */
+  side?: "top" | "bottom";
+}) {
   const [state, setState] = useState<{ loading: boolean; value: NativeExtensions | null | undefined; error: string | null }>({ loading: false, value: undefined, error: null });
   const read = () => {
     setState({ loading: true, value: undefined, error: null });
@@ -33,7 +37,7 @@ export function NativeExtensionsPanel({ load, onCommand, disabled }: { load: (si
   };
   const value = state.value;
   const row = "flex flex-wrap items-baseline gap-x-2 gap-y-0.5 py-1 text-ui-sm";
-  return <Popover label="原生扩展" side="top" align="start" className="native-extensions w-[380px] max-w-[calc(100vw-24px)]"
+  return <Popover label="原生扩展" side={side} align="start" className="native-extensions w-[380px] max-w-[calc(100vw-24px)]"
     onOpenChange={open => { if (open && state.value === undefined && !state.loading) read(); }}
     trigger={<button type="button" className="icon-btn text-fg-3" aria-label="原生扩展" title="技能、MCP 与插件" disabled={disabled}><Puzzle size={16}/></button>}>
     <PopHead title="原生扩展" closeLabel="收起原生扩展"><button type="button" className="icon-btn icon-btn-sm" aria-label="重新读取原生扩展" onClick={read} disabled={state.loading}><RefreshCw size={13}/></button></PopHead>
