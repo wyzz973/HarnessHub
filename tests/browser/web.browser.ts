@@ -1579,6 +1579,15 @@ test("G054-DL2 the sidebar groups conversations by project with a state dot each
     await page.emulateMedia({ colorScheme: "dark" }); await page.screenshot({ path: join(artifact, `dl2-drawer-dark-${width}.png`), animations: "disabled" }); await page.emulateMedia({ colorScheme: "light" });
     await page.keyboard.press("Escape"); await expect(drawer).toHaveCount(0); await expect(menu).toBeFocused();
   }
+  // There, the inbox entry closes the drawer and opens the inbox as a sheet of its own, which takes the keyboard.
+  await page.getByRole("button", { name: "打开导航", exact: true }).click();
+  await page.getByRole("dialog", { name: "主导航" }).getByRole("button", { name: "等你处理", exact: true }).click();
+  const sheet = page.getByRole("dialog", { name: "等你处理" });
+  await expect(sheet).toContainText("没有等你处理的审批或提问。"); await expect(page.getByRole("dialog", { name: "主导航" })).toHaveCount(0);
+  await expect.poll(() => sheet.evaluate(element => element.contains(document.activeElement))).toBe(true);
+  await expect(sheet).toHaveCSS("opacity", "1"); await expect.poll(async () => (await sheet.boundingBox())?.y).toBeGreaterThan(400);
+  await page.screenshot({ path: join(artifact, "dl2-inbox-sheet-light-320.png"), animations: "disabled" });
+  await page.keyboard.press("Escape"); await expect(sheet).toHaveCount(0);
   assert.equal((await write("/api/v1/sessions/" + running + "/cancel", { commandId: "dl2-cancel-running" })).status(), 202);
   assert.deepEqual(errors, []);
 });

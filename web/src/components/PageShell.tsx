@@ -26,7 +26,7 @@ export function PageShell({ title, titleId, description, actions, children, onMe
     <div className={cn("management-body scroll-area min-h-0 flex-1", bodyClassName)} onScroll={event => setScrolled(event.currentTarget.scrollTop > 0)}>
       <div className={cn("mx-auto flex w-full flex-col gap-7 px-4 pt-1 pb-16 sm:px-10", wide ? "max-w-[1040px]" : "max-w-[760px]")}>
         <header className="flex flex-wrap items-end gap-x-4 gap-y-3">
-          <div className="flex min-w-[min(240px,100%)] flex-1 flex-col gap-1.5">
+          <div className="flex min-w-[min(320px,100%)] flex-1 flex-col gap-1.5">
             <h1 id={titleId} className="m-0 text-title break-words">{title}</h1>
             {description ? <p className="m-0 max-w-[720px] text-ui leading-[22px] text-fg-2">{description}</p> : null}
           </div>
