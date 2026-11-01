@@ -1,5 +1,5 @@
 import { createInterface } from "node:readline";
-import { appendFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, rmSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -56,6 +56,10 @@ function hermesBlocked(sessionId, id = "terminal-blocked") {
 }
 const lines = createInterface({ input: process.stdin });
 let promptId = null, turn = 0, initialized = false, pendingPermission = false;
+// The workspace of the session Hermes opened last (session/new names it), where STEP_APPROVAL waits for its go-ahead.
+let sessionCwd = null;
+// STEP_APPROVAL_FAILS: once its step is refused, the Turn fails (Hermes answers the prompt with an error) instead of ending.
+let stepFails = false;
 let resumedThread = false;
 // Codex app-server gates experimental methods and fields per connection on initialize.capabilities.experimentalApi.
 let experimental = false;
@@ -217,6 +221,7 @@ lines.on("line", line => {
   if (message.method === "model/list") { answer(message.id, { data: ["native-model-a", "native-model-b"].map(model => ({ model, displayName: model, ...(scenario === "attachments" ? { inputModalities: model === "native-model-a" ? ["text", "image", "audio"] : ["text"] } : {}) })), nextCursor: null }); return; }
   if (scenario === "hermes" && message.method === "session/new") {
     if (process.env.FIXTURE_SESSION_ERROR) { hermesRefusal(message.id, process.env.FIXTURE_SESSION_ERROR); return; }
+    if (typeof message.params?.cwd === "string") sessionCwd = message.params.cwd;
     answer(message.id, { sessionId: "session-fixture", models: hermesModels() }); return;
   }
   // An ACP agent that needs its own sign-in before it opens a session (ACP auth_required).
@@ -538,6 +543,16 @@ lines.on("line", line => {
         hermesBlocked(message.params.sessionId); hermesBlocked(message.params.sessionId, "terminal-blocked-2");
         notification("session/update", { sessionId: message.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "已删除" } } }); finish(); return;
       }
+      // A step that asks before it runs, as ACP agents report it: the call is pending while its approval waits and runs once
+      // allowed. Allowed, it holds in progress until the test writes "step-continue" into the workspace, so its running is seen.
+      if (JSON.stringify(message.params.prompt).includes("STEP_APPROVAL")) {
+        const sessionId = message.params.sessionId, update = value => notification("session/update", { sessionId, update: value });
+        stepFails = JSON.stringify(message.params.prompt).includes("STEP_APPROVAL_FAILS");
+        update({ sessionUpdate: "tool_call", toolCallId: "step-read", title: "Read " + join(sessionCwd ?? process.cwd(), "src", "app.ts"), kind: "read", status: "completed" });
+        update({ sessionUpdate: "tool_call", toolCallId: "step-ask", title: "terminal: rm -rf build", kind: "execute", status: "pending" });
+        emit({ id: "hermes-permission-step", method: "session/request_permission", params: { sessionId, toolCall: { toolCallId: "step-ask", title: "rm -rf build", kind: "execute" }, options: hermesOptions() } });
+        return;
+      }
       if (JSON.stringify(message.params.prompt).includes("ask then blocked")) {
         emit({ id: "hermes-permission-blocked", method: "session/request_permission", params: { sessionId: message.params.sessionId, toolCall: { toolCallId: "perm-check", title: "rm -r build", kind: "execute" },
           options: [{ optionId: "allow_once", kind: "allow_once", name: "Allow once" }, { optionId: "deny", kind: "reject_once", name: "Deny" }] } });
@@ -626,6 +641,23 @@ lines.on("line", line => {
   if (scenario.endsWith("-withdrawn") && (message.id === 41 || message.id === "elicit-1")) return;
   if (message.id === "hermes-permission") { notification("session/update", { sessionId: "session-fixture", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "permission " + JSON.stringify(message.result) } } }); finish(); return; }
   if (message.id === "hermes-permission-blocked") { hermesBlocked("session-fixture"); finish(); return; }
+  if (message.id === "hermes-permission-step") {
+    const update = value => notification("session/update", { sessionId: "session-fixture", update: value });
+    if (message.result?.outcome?.optionId !== "allow_once") {
+      update({ sessionUpdate: "tool_call_update", toolCallId: "step-ask", status: "failed" });
+      if (stepFails) hermesRefusal(promptId, "the refused step was needed"); else finish();
+      return;
+    }
+    update({ sessionUpdate: "tool_call_update", toolCallId: "step-ask", status: "in_progress" });
+    const go = join(sessionCwd ?? process.cwd(), "step-continue"), hold = setInterval(() => {
+      if (!existsSync(go)) return;
+      clearInterval(hold); rmSync(go, { force: true });
+      update({ sessionUpdate: "tool_call_update", toolCallId: "step-ask", status: "completed", content: [{ type: "content", content: { type: "text", text: "removed build" } }] });
+      notification("session/update", { sessionId: "session-fixture", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "构建目录已清理。" } } });
+      finish();
+    }, 50);
+    return;
+  }
   if (message.id === "elicit-1") { notification("session/update", { sessionId: "session-fixture", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "form " + JSON.stringify(message.result) } } }); finish(); return; }
   if (message.id === "late-permission" || message.id === "child-approval" || message.id === "unrelated-approval") return;
   if (message.id === "permission-1" || message.id === "unsupported" || message.id === "native-question") {

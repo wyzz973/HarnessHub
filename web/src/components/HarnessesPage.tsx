@@ -525,6 +525,8 @@ function StateIcon({ state, size = 16 }: { readonly state: AgentState; readonly 
 }
 const TONE_TEXT: Readonly<Record<Tone, string>> = { accent: "text-accent-text", amber: "text-amber", red: "text-red", neutral: "text-fg-2" };
 const TONE_FILL: Readonly<Record<Tone, string>> = { accent: "bg-accent-soft", amber: "bg-amber-soft", red: "bg-red-soft", neutral: "bg-subtle" };
+/** Words on a tone's fill: the tone's higher-contrast shade (ruling M); the icon beside them is a mark and keeps TONE_TEXT. */
+const TONE_INK: Readonly<Record<Tone, string>> = { accent: "text-accent-text", amber: "text-amber-on-tint", red: "text-red-on-tint", neutral: "text-fg-2" };
 
 /**
  * One Agent on this Mac (Agent board): its mark, name, version · channel, state, one sentence of facts, and its actions.
@@ -639,7 +641,7 @@ function AgentDetail(props: HarnessProps & { harness: HarnessView; state: AgentS
     <div className="scroll-area flex min-h-0 flex-1 flex-col gap-5 px-5 pb-6">
       {props.error ? <Notice tone="red" onDismiss={props.onDismissError}>{props.error}</Notice> : null}
       {health ? <div className={cn("agent-health flex flex-col gap-1.5 rounded-block px-4 py-3.5", TONE_FILL[state.tone])}>
-        <span className={cn("flex items-center gap-2 text-ui font-semibold", TONE_TEXT[state.tone])}><StateIcon state={state}/><SwapText text={state.title}/></span>
+        <span className={cn("flex items-center gap-2 text-ui font-semibold", TONE_TEXT[state.tone])}><StateIcon state={state}/><span className={cn("min-w-0", TONE_INK[state.tone])}><SwapText text={state.title}/></span></span>
         <span className="text-ui-sm text-fg-2" {...(state.hint ? { title: state.hint } : {})}>{state.detail ?? state.summary}</span>
         {unconfirmed ? <div className="mt-1.5 flex flex-wrap gap-2"><button type="button" className="btn btn-sm btn-primary" disabled={props.submitting.includes(harness.id)} onClick={() => props.onConfirm(harness.id)}>确认上次请求</button></div>
           : available(harness) && !busy && (state.kind === "ready" || state.kind === "update" || state.kind === "signin" || state.kind === "readfail")

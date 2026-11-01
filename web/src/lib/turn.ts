@@ -91,14 +91,17 @@ export function toolSummary(tools: readonly Tool[], active: boolean): ToolSummar
 export type Step = { readonly kind: "tool"; readonly key: string; readonly tool: Tool } | { readonly kind: "reads"; readonly key: string; readonly tools: readonly Tool[] };
 /**
  * The steps of one level of the tool tree: consecutive reads without tools of their own become one group. A group keeps
- * the key of its first read, so a read that grows into a group stays the same row.
+ * the key of its first read, so a read that grows into a group stays the same row. The tool named `apart` (the step an
+ * approval asks for, ADR-054 ruling J) stays a step of its own while it asks: its row says what it wants to do, which a
+ * group's words could not; once decided it joins the group again under the group's key.
  */
-export function groupSteps(tools: readonly Tool[], children: ReadonlyMap<string, readonly Tool[]>): readonly Step[] {
+export function groupSteps(tools: readonly Tool[], children: ReadonlyMap<string, readonly Tool[]>, apart?: string): readonly Step[] {
   const steps: Step[] = [];
+  const read = (tool: Tool) => tool.id !== apart && toolCategory(tool, (children.get(tool.id)?.length ?? 0) > 0) === "read";
   for (const tool of tools) {
-    const read = toolCategory(tool, (children.get(tool.id)?.length ?? 0) > 0) === "read", last = steps.at(-1);
-    if (read && last?.kind === "reads") { steps[steps.length - 1] = { kind: "reads", key: last.key, tools: [...last.tools, tool] }; continue; }
-    if (read && last?.kind === "tool" && toolCategory(last.tool, (children.get(last.tool.id)?.length ?? 0) > 0) === "read") { steps[steps.length - 1] = { kind: "reads", key: last.key, tools: [last.tool, tool] }; continue; }
+    const last = steps.at(-1);
+    if (read(tool) && last?.kind === "reads") { steps[steps.length - 1] = { kind: "reads", key: last.key, tools: [...last.tools, tool] }; continue; }
+    if (read(tool) && last?.kind === "tool" && read(last.tool)) { steps[steps.length - 1] = { kind: "reads", key: last.key, tools: [last.tool, tool] }; continue; }
     steps.push({ kind: "tool", key: tool.id, tool });
   }
   return steps;
@@ -150,6 +153,20 @@ export function stepLabel(tool: Pick<Tool, "kind" | "title">, nested = false): S
 export function readsLabel(tools: readonly Pick<Tool, "kind" | "title">[]): StepLabel {
   return { verb: `读取 ${tools.length} 个文件`, running: `正在读取 ${tools.length} 个文件`, target: tools.map(tool => stepLabel(tool).target).join(" · ") };
 }
+/**
+ * The verb of a step while an approval for it waits, in the Interaction board's "想…" form ("想运行", "想修改", "想读取",
+ * "想删除"): the verb of its kind as stepLabel gives it, so the step list and the process line say the same words. Null for
+ * a step without a verb (a sub-agent call, a tool of no known kind), which is never guessed at (ADR-054 ruling J).
+ */
+export function wantedVerb(label: Pick<StepLabel, "verb">): string | null { return label.verb === null ? null : "想" + label.verb; }
+/**
+ * The step an approval waiting in the composer's place asks for, as far as the Turn's facts tell (ADR-054 ruling J): the
+ * most recent step of the Turn's own (not a sub-agent's tool) that has not ended, pending or in progress. ACP agents report
+ * the call they ask about as pending until it is allowed, Codex its command as in progress. Null when every step ended.
+ */
+export function askingStep(tools: readonly Tool[]): Tool | null {
+  return [...toolTree(tools).roots].reverse().find(tool => TOOL_PENDING.has(tool.status)) ?? null;
+}
 
 /** What a queued Turn shows about what it waits for (ADR-036); no paths. */
 export type QueueNotice = ({
@@ -162,8 +179,8 @@ export type QueueNotice = ({
 /**
  * What a running Turn says it is doing (ADR-054 §3, Interaction board's states), from the phases the Runtime recorded and
  * the tool running now. `tone` picks the symbol: "run" a turning arc with the sweep over the words, "wait" a still grey dot
- * while it waits for you with no step in progress, "queue" the dashed circle of work not started. Queue explanations wrap
- * instead of sliding.
+ * while it waits for you (an approval, or a question with no step in progress), "queue" the dashed circle of work not
+ * started. Queue explanations wrap instead of sliding.
  */
 export interface LiveStatus {
   readonly text: string;
@@ -187,26 +204,33 @@ function runningText(tools: readonly Tool[], running: Tool): string {
 /** Statuses of a step that has started and not ended; "pending" is not one: such a call has not started (TOOL_STATUS: 等待). */
 const IN_PROGRESS: ReadonlySet<string> = new Set([...TOOL_PENDING].filter(status => status !== "pending"));
 /**
- * What a running Turn says now, and with which symbol; a finished one is described by its process line instead. While it
- * waits for you (ADR-054 decision F), the line keeps naming the step in progress with its arc and timer; only without one
- * does it say "等你批准" or "等你回答", in its usual grey with the timer. A call that has not started is not in progress:
- * ACP agents report the call they ask approval for as "pending" until it is allowed, and the line never says it runs. The
- * one amber line, pointing at an approval that waits in the composer's place, is the Turn's marker, never this line.
+ * What a running Turn says now, and with which symbol; a finished one is described by its process line instead. While an
+ * approval waits in the composer's place (ADR-054 ruling J), the line names the step it asks for in the "想…" form
+ * ("想运行 rm -rf build"), grey and still (no arc, no sweep) with the timer; without such a step, or for one whose kind has
+ * no verb, it says "等你批准". Nothing runs while it waits, so the line never says "正在…" then. While a question waits
+ * (decision F), the line keeps naming the step in progress with its arc, else says "等你回答" in grey; a question never
+ * names a step of its own. The one amber line, pointing at an approval that waits, is the Turn's marker, never this line.
  */
 export function liveStatus(run: PublicRun | undefined, status: RunStatus, harness: string, now: number, startupHint?: { readonly seconds: number; readonly usual: boolean }, queue?: QueueNotice, waiting?: "approval" | "question", text = ""): LiveStatus {
   const plain = { tone: "run" as const, timer: true, wrap: false, thinking: false };
   if (run?.cancelRequested) return { ...plain, text: "正在停止并清理资源" };
-  if (waiting) {
-    const tools = run?.tools ?? [], step = [...tools].reverse().find(tool => IN_PROGRESS.has(tool.status));
-    return step ? { ...plain, text: runningText(tools, step) } : { ...plain, tone: "wait", text: waiting === "question" ? "等你回答" : "等你批准" };
+  if (waiting === "approval") {
+    const tools = run?.tools ?? [], asking = askingStep(tools);
+    const label = asking ? stepLabel(asking, (toolTree(tools).children.get(asking.id)?.length ?? 0) > 0) : null, verb = label ? wantedVerb(label) : null;
+    return { ...plain, tone: "wait", text: label && verb ? verb + " " + clip(label.target) : "等你批准" };
   }
+  if (waiting === "question") {
+    const tools = run?.tools ?? [], step = [...tools].reverse().find(tool => IN_PROGRESS.has(tool.status));
+    return step ? { ...plain, text: runningText(tools, step) } : { ...plain, tone: "wait", text: "等你回答" };
+  }
+  // A Turn not started yet reads "排队中" wherever it is named (ruling N); a longer explanation keeps its reason after it.
   const queued = { tone: "queue" as const, timer: false, wrap: true, thinking: false };
-  if (run?.awaitingSwitchId && status === "queued") return { ...queued, text: "等待选择切换生效" };
+  if (run?.awaitingSwitchId && status === "queued") return { ...queued, text: "排队中：等待选择切换生效" };
   // What the conversation holding the workspace waits for, in the words every other place uses (decision G).
   if (queue?.kind === "workspace" && status === "queued") return { ...queued, text: `排队中：等待对话「${queue.holderTitle}」释放工作区（${queue.holderWaits === "approval" ? "它在等你批准" : queue.holderWaits === "question" ? "它在等你回答" : "它正在运行"}）` };
-  if (queue?.kind === "slot" && status === "queued") return { ...queued, text: `等待开始：${queue.running} 个对话正在执行，其中一个结束后自动开始` };
+  if (queue?.kind === "slot" && status === "queued") return { ...queued, text: `排队中：${queue.running} 个对话正在执行，其中一个结束后自动开始` };
   switch (status) {
-    case "queued": return { ...queued, text: "等待开始" };
+    case "queued": return { ...queued, text: "排队中" };
     case "preparing": return { ...plain, text: "正在启动 " + harness + (startupHint !== undefined && startupHint.seconds >= 2 ? (startupHint.usual ? "（通常约 " : "（上次约 ") + Math.round(startupHint.seconds) + " 秒）" : "") };
     case "settling": return { ...plain, text: "正在结束执行" };
     case "running": {
@@ -220,12 +244,15 @@ export function liveStatus(run: PublicRun | undefined, status: RunStatus, harnes
     default: return { ...plain, timer: false, text: activityLabel(run, status, harness, now) };
   }
 }
-/** What the Turn is doing, or how it ended, in words (the Interaction board's eight states). */
+/**
+ * What the Turn is doing, or how it ended, in words (the Interaction board's eight states), as every place names the state
+ * (ruling N): "已完成", "失败", "排队中". The Agent's own words for a failure stay on the Turn's error card.
+ */
 export function activityLabel(run: PublicRun | undefined, status: RunStatus, harness: string, now: number, startupHint?: { readonly seconds: number; readonly usual: boolean }, queue?: QueueNotice, waiting?: "approval" | "question"): string {
   switch (status) {
     case "completed": return "已完成";
     case "cancelled": return run ? cancelledWords(run) : "已取消";
-    case "failed": return "回复未能完成";
+    case "failed": return "失败";
     case "unknown": return "结果未知：可能已经执行，不会自动重发";
     default: return liveStatus(run, status, harness, now, startupHint, queue, waiting).text;
   }
@@ -405,6 +432,21 @@ export function rehypeReveal(options: { readonly chunks: readonly Chunk[] }) {
  */
 export interface Reveal { readonly text: string; readonly shown: number; readonly rate: number; readonly chunks: readonly Chunk[]; readonly at: number }
 export type RevealAction = { readonly type: "arrive"; readonly text: string; readonly at: number; readonly animate: boolean } | { readonly type: "tick" } | { readonly type: "flush" } | { readonly type: "settle" };
+/**
+ * Where a release ending at `to` may stop: never inside a run of fence characters (` or ~) that opens a line after at most
+ * three spaces. Half a closing fence ("``") would show as one more line of code until the rest came, so the block would grow
+ * by a line and shrink again just as the reply ends (ruling L: its end must not jump); the whole run goes at once instead.
+ */
+function fenceStop(text: string, to: number): number {
+  const mark = text[to - 1];
+  if ((mark !== "`" && mark !== "~") || text[to] !== mark) return to;
+  let start = to - 1;
+  while (start > 0 && text[start - 1] === mark) start--;
+  if (!/^ {0,3}$/u.test(text.slice(text.lastIndexOf("\n", start - 1) + 1, start))) return to;
+  let end = to;
+  while (end < text.length && text[end] === mark) end++;
+  return end;
+}
 export function reveal(state: Reveal, action: RevealAction): Reveal {
   switch (action.type) {
     case "arrive": {
@@ -419,9 +461,10 @@ export function reveal(state: Reveal, action: RevealAction): Reveal {
       if (backlog <= 0) return state;
       const rate = state.rate * .9 + backlog * .1;
       let to = state.shown + Math.max(1, Math.min(backlog, Math.ceil(rate / 20)));
-      // Never between the two halves of a character outside the basic plane.
+      // Never between the two halves of a character outside the basic plane, nor inside a fence marker.
       const unit = state.text.charCodeAt(to - 1);
       if (to < state.text.length && unit >= 0xD800 && unit <= 0xDBFF) to++;
+      to = fenceStop(state.text, to);
       return { ...state, rate, shown: to, chunks: [...state.chunks, { from: state.shown, to }] };
     }
     case "flush": return state.shown < state.text.length || state.chunks.length ? { ...state, shown: state.text.length, chunks: [] } : state;

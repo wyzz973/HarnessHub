@@ -29,7 +29,7 @@ import { BrandIcon } from "./components/BrandIcon.js";
 import { attachmentKind, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, MAX_MESSAGE_ATTACHMENT_BYTES, type AttachmentDraft } from "./components/Attachments.js";
 import { parseContentRef, type ContentRef } from "../../src/contracts/content.js";
 import { hiddenHarnesses, useMedia, useNow, usePreferences } from "./lib/prefs.js";
-import { finished } from "./lib/turn.js";
+import { finished, stoppedByUser } from "./lib/turn.js";
 import { cn } from "./lib/cn.js";
 import { backgroundOutcome, enableNotifications, markNotificationAsked, notificationsOfferable, notifyTurnEnded } from "./lib/notify.js";
 import { useToast } from "./ui/overlay.js";
@@ -911,13 +911,13 @@ export function App() {
   };
   const dirtyChanged = useCallback((dirty: boolean) => setEditorDirty(dirty), []);
   const harnessName = (id: string) => state?.harnesses.find(harness => harness.id === id)?.name ?? id;
-  // The open conversation's latest Turn, once it ends after the page went out of sight, is announced (ADR-054 X04): done
-  // or failed silently, an unknown result with the sound; one the user stopped is not. Each Turn once. Without
-  // notifications chosen, the first such Turn leads to one offer when the page is back.
+  // The open conversation's latest Turn, once it ends after the page went out of sight, is announced (ADR-054 X04): done,
+  // failed or cancelled by the Runtime silently (ruling K), an unknown result with the sound; one the user stopped is not.
+  // Each Turn once. Without notifications chosen, the first such Turn leads to one offer when the page is back.
   const hiddenSince = useRef<number | null>(document.visibilityState === "hidden" ? Date.now() : null), announced = useRef(new Set<string>()), offerNotifications = useRef<RunStatus | null>(null);
   watchTurn.current = (view: SessionView) => {
     const run: PublicRun | undefined = view.runs.at(-1), ended = run?.timing?.endedAt, since = hiddenSince.current;
-    if (!run || since === null || document.visibilityState !== "hidden" || !finished(run.status) || run.status === "cancelled" || ended === undefined || ended < since || announced.current.has(run.id)) return;
+    if (!run || since === null || document.visibilityState !== "hidden" || !finished(run.status) || run.status === "cancelled" && stoppedByUser(run) || ended === undefined || ended < since || announced.current.has(run.id)) return;
     announced.current.add(run.id);
     notifyTurnEnded(run, harnessName(run.selection.harnessId), () => openFromNotice.current(view.id));
     if (notificationsOfferable()) offerNotifications.current = run.status;
@@ -967,14 +967,15 @@ export function App() {
     return [
       { id: "new", group: "操作", label: "新对话", icon: <SquarePen size={16}/>, shortcut: "⇧⌘O", run: newChat },
       { id: "inbox", group: "操作", label: "等你处理", ...(waiting ? { hint: waiting + " 项" } : {}), keywords: "收件箱 审批 提问", icon: <Inbox size={16}/>, run: openInbox },
-      { id: "next-waiting", group: "操作", label: "下一件等你处理", keywords: "审批 提问", icon: <ArrowDown size={16}/>, shortcut: "⌥⌘↓", run: nextWaiting },
+      { id: "next-waiting", group: "操作", label: "下一件“等你处理”", keywords: "下一件等你处理 审批 提问", icon: <ArrowDown size={16}/>, shortcut: "⌥⌘↓", run: nextWaiting },
       ...state.sessions.slice(0, 200).map(item => ({ id: "session:" + item.id, group: "对话", label: item.title || "新对话", hint: harnessName(item.selection.harnessId), keywords: item.workspace, icon: <BrandIcon brand={item.selection.harnessId} name={harnessName(item.selection.harnessId)} size={16}/>, run: () => selectSession(item.id) })),
       ...state.harnesses.filter(harness => !hidden.has(harness.id) && harness.controls.some(control => control.available)).map(harness => ({ id: "start:" + harness.id, group: "用 Agent 开始新对话", label: "用 " + harness.name + " 开始新对话", keywords: harness.id, icon: <BrandIcon brand={harness.id} name={harness.name} size={16}/>, run: () => chooseHarness(harness) })),
       // The Agent page was called "我的 Agent" before ADR-054; the old name still finds it.
       { id: "harnesses", group: "前往", label: "Agent", keywords: "我的 Agent Harness 安装 升级 更新 卸载", icon: <Bot size={16}/>, run: go("harnesses") },
       { id: "capabilities", group: "前往", label: "能力", keywords: "技能 MCP 指令 子 Agent 插件 Hooks", icon: <Blocks size={16}/>, run: () => { setCapabilityHarness(null); go("capabilities")(); } },
       { id: "settings", group: "前往", label: "设置", keywords: "主题 通知 发现 快捷键", icon: <Settings size={16}/>, run: go("settings") },
-      ...(state.providerManagement !== false ? [{ id: "providers", group: "前往", label: "模型与账号", keywords: "Provider 模型连接", icon: <SlidersHorizontal size={16}/>, run: go("providers") }] : []),
+      // The provider page has one name, 模型连接 (ruling O); the name it had before still finds it.
+      ...(state.providerManagement !== false ? [{ id: "providers", group: "前往", label: "模型连接", keywords: "Provider 模型与账号", icon: <SlidersHorizontal size={16}/>, run: go("providers") }] : []),
       { id: "panel", group: "显示", label: preferences.panel ? "收起详情面板" : "打开详情面板", icon: <PanelRight size={16}/>, shortcut: "⌘\\", run: () => setPreference("panel", !preferences.panel) },
       { id: "sidebar", group: "显示", label: preferences.sidebar ? "收起侧栏" : "展开侧栏", icon: <PanelLeft size={16}/>, shortcut: "⌘B", run: () => showSidebar(!preferences.sidebar) },
       { id: "density", group: "显示", label: preferences.density === "compact" ? "过程显示：详细" : "过程显示：简洁", icon: <ListCollapse size={16}/>, run: () => setPreference("density", preferences.density === "compact" ? "detailed" : "compact") },

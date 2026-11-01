@@ -7,7 +7,7 @@ import type { PublicActivity, PublicNotice, PublicOutput, PublicPlan } from "../
 import { contentUrl, errorMessage, type ToolDetailView } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { bytes, compact } from "../lib/format.js";
-import { diffTotals, groupSteps, knownToolDetail, parseUnifiedDiff, readsLabel, readToolDetail, stepLabel, TOOL_PENDING, TOOL_STATUS, toolCategory, toolFailed, toolTree, toolUnfinished, type DiffFile, type Step, type Tool } from "../lib/turn.js";
+import { diffTotals, groupSteps, knownToolDetail, parseUnifiedDiff, readsLabel, readToolDetail, stepLabel, TOOL_PENDING, TOOL_STATUS, toolCategory, toolFailed, toolTree, toolUnfinished, wantedVerb, type DiffFile, type Step, type Tool } from "../lib/turn.js";
 import { Collapsible, DrawnCheck, motionStyle, useReducedMotion } from "../ui/motion.js";
 import { Spinner } from "../ui/primitives.js";
 
@@ -111,28 +111,35 @@ function useJustDone(pending: boolean, done: boolean, reduced: boolean): { reado
  */
 export type SeenSteps = Set<string>;
 
-interface StepProps { readonly step: Step; readonly active: boolean; readonly loadDetail: ToolDetailLoader | undefined; readonly children: ReadonlyMap<string, readonly Tool[]>; readonly fresh: boolean; readonly reduced: boolean; readonly seen: SeenSteps | undefined }
+interface StepProps {
+  readonly step: Step; readonly active: boolean; readonly loadDetail: ToolDetailLoader | undefined; readonly children: ReadonlyMap<string, readonly Tool[]>; readonly fresh: boolean; readonly reduced: boolean; readonly seen: SeenSteps | undefined;
+  /** An approval waiting in the composer's place asks for this step (ADR-054 ruling J). */
+  readonly asking?: boolean;
+}
 /**
  * One step of the process (Conversation board): the icon of its kind (a spinner while it runs), the verb in its tense, what
  * it acted on, and what came of it: lines added and removed by an edit, the exit code of a command, a failure in red. A
- * step with stored detail opens its raw input and output; consecutive reads open the reads they group.
+ * step with stored detail opens its raw input and output; consecutive reads open the reads they group. While an approval
+ * asks for it, the step does not run: it keeps the icon of its kind, still, and says what it wants to do in the words of
+ * the process line ("想运行"); once decided it runs ("正在运行") or ends as it ends (ruling J).
  */
-const StepItem = memo(function StepItem({ step, active, loadDetail, children, fresh, reduced, seen }: StepProps) {
+const StepItem = memo(function StepItem({ step, active, loadDetail, children, fresh, reduced, seen, asking = false }: StepProps) {
   const [open, setOpen] = useState(false);
   const [entering] = useState(fresh);
   const panel = useId();
   const tools = step.kind === "reads" ? step.tools : [step.tool], first = tools[0]!;
   const nested = step.kind === "tool" ? children.get(first.id) ?? [] : [];
-  const pending = active && tools.some(tool => TOOL_PENDING.has(tool.status));
+  const unended = active && tools.some(tool => TOOL_PENDING.has(tool.status)), wants = asking && unended, pending = unended && !wants;
   const failed = tools.some(toolFailed), unfinished = tools.some(tool => toolUnfinished(tool, active));
-  const done = !pending && !failed && !unfinished && tools.every(tool => !TOOL_PENDING.has(tool.status));
-  const { check, after } = useJustDone(pending, done, reduced);
+  const done = !unended && !failed && !unfinished && tools.every(tool => !TOOL_PENDING.has(tool.status));
+  // A step that waited for its approval and then ended in front of the reader still draws its check.
+  const { check, after } = useJustDone(unended, done, reduced);
   const category = toolCategory(first, nested.length > 0), edit = step.kind === "tool" && category === "edit";
   // An edit's diff gives its line counts and whether it created the file: read as soon as the step is shown.
   const { detail } = useToolDetail(edit ? first.detail : undefined, loadDetail, edit);
   const diff = useMemo(() => detail?.diff ? diffTotals(parseUnifiedDiff(detail.diff, first.title)) : null, [detail, first.title]);
   const label = step.kind === "reads" ? readsLabel(step.tools) : stepLabel(first, nested.length > 0);
-  const verb = pending ? label.running : diff?.created && label.verb === "修改" ? "新建" : label.verb;
+  const verb = wants ? wantedVerb(label) : pending ? label.running : diff?.created && label.verb === "修改" ? "新建" : label.verb;
   const expandable = step.kind === "reads" || first.detail !== undefined && loadDetail !== undefined;
   const iconKind = nested.length ? "subagent" : diff?.created ? "create" : first.kind;
   const icon = pending ? <Spinner size={14} tone="run" label=""/> : check ? <DrawnCheck size={15} className="text-fg-3"/>
@@ -141,9 +148,9 @@ const StepItem = memo(function StepItem({ step, active, loadDetail, children, fr
     : step.kind === "tool" && first.exitCode !== undefined ? <span className={first.exitCode === 0 ? undefined : "text-red"}>退出码 {first.exitCode}</span> : null;
   const status = unfinished ? <span className="text-red" title="回合结束时原程序没有报告这个工具已结束；它可能执行过，也可能没有">未完成</span>
     : failed ? <span className="text-red">{TOOL_STATUS[tools.find(toolFailed)!.status] ?? "失败"}</span>
-    : pending && !label.verb ? <span className="text-accent-text">进行中</span>
+    : wants ? null : pending && !label.verb ? <span className="text-accent-text">进行中</span>
     : !pending && !done && step.kind === "tool" && first.status !== "completed" ? <span>{TOOL_STATUS[first.status] ?? first.status}</span> : null;
-  const facts = diff && (diff.add || diff.del) ? <span className="mono flex gap-1.5 text-[11px]">{diff.add ? <span className="text-add">+{diff.add}</span> : null}{diff.del ? <span className="text-del">−{diff.del}</span> : null}</span> : null;
+  const facts = diff && (diff.add || diff.del) ? <span className="mono flex gap-1.5 text-[11px]">{diff.add ? <span className="text-add-on-tint">+{diff.add}</span> : null}{diff.del ? <span className="text-del-on-tint">−{diff.del}</span> : null}</span> : null;
   const right = facts || note || status ? <span className={cn("flex flex-none items-center gap-2 whitespace-nowrap text-caption text-fg-3", check && "motion-fade-in")}>{facts}{note}{status}</span> : null;
   const content = <>
     <span className="flex size-[15px] flex-none items-center justify-center">{icon}</span>
@@ -158,7 +165,7 @@ const StepItem = memo(function StepItem({ step, active, loadDetail, children, fr
     {expandable ? <button type="button" className={cn(row, "row border-none bg-transparent text-fg")} aria-expanded={open} aria-controls={panel} onClick={() => setOpen(value => !value)}
       title={step.kind === "reads" ? "查看每一次读取" : "查看工具输入与输出"}>{content}</button>
       : <div className={row}>{content}</div>}
-    {expandable ? <Collapsible open={open} id={panel} className="grid-cols-[minmax(0,1fr)]">
+    {expandable ? <Collapsible open={open} id={panel}>
       {step.kind === "reads" ? <ol className="m-0 mb-1 ml-[30px] flex list-none flex-col gap-px p-0" aria-label={"读取的文件：" + step.tools.length + " 个"}>
         {step.tools.map(tool => <StepItem key={tool.id} step={{ kind: "tool", key: tool.id, tool }} active={active} loadDetail={loadDetail} children={children} fresh={false} reduced={reduced} seen={seen}/>)}</ol>
         : <ToolDetail tool={first} load={loadDetail}/>}
@@ -167,25 +174,26 @@ const StepItem = memo(function StepItem({ step, active, loadDetail, children, fr
   </li>;
 });
 
-function StepList({ tools, all, active, loadDetail, seen: known, label, className }: { readonly tools: readonly Tool[]; readonly all: ReadonlyMap<string, readonly Tool[]>; readonly active: boolean; readonly loadDetail: ToolDetailLoader | undefined; readonly seen: SeenSteps | undefined; readonly label: string; readonly className?: string }) {
+function StepList({ tools, all, active, loadDetail, seen: known, label, className, asking }: { readonly tools: readonly Tool[]; readonly all: ReadonlyMap<string, readonly Tool[]>; readonly active: boolean; readonly loadDetail: ToolDetailLoader | undefined; readonly seen: SeenSteps | undefined; readonly label: string; readonly className?: string; readonly asking?: string | undefined }) {
   const reduced = useReducedMotion();
   // Steps the reader has seen are history; the others come in (Motion board #05). Without a record from the Turn, the steps
   // present when this list is first shown are history.
   const seen = useRef<SeenSteps | null>(null);
   seen.current ??= known ?? new Set(tools.map(tool => tool.id));
   useLayoutEffect(() => { for (const tool of tools) seen.current!.add(tool.id); }, [tools]);
-  const steps = useMemo(() => groupSteps(tools, all), [tools, all]);
+  const steps = useMemo(() => groupSteps(tools, all, asking), [tools, all, asking]);
   return <ul className={cn("native-tools m-0 flex list-none flex-col gap-px p-0", className)} aria-label={label}>
-    {steps.map(step => <StepItem key={step.key} step={step} active={active} loadDetail={loadDetail} children={all} fresh={!seen.current!.has(step.key)} reduced={reduced} seen={known}/>)}
+    {steps.map(step => <StepItem key={step.key} step={step} active={active} loadDetail={loadDetail} children={all} fresh={!seen.current!.has(step.key)} reduced={reduced} seen={known} asking={step.kind === "tool" && step.tool.id === asking}/>)}
   </ul>;
 }
 /**
  * A Turn's tools as steps, in call order (ADR-054 §5): consecutive reads are one group, and a tool whose parent call is
- * listed is shown under it, as the sub-agent work of that call. `seen` is the Turn's record of the steps its reader saw.
+ * listed is shown under it, as the sub-agent work of that call. `seen` is the Turn's record of the steps its reader saw;
+ * `asking` names the step a waiting approval asks for (askingStep), which says what it wants to do instead of running.
  */
-export function ToolList({ tools, active, loadDetail, seen }: { tools: readonly Tool[]; active: boolean; loadDetail: ToolDetailLoader | undefined; seen?: SeenSteps | undefined }) {
+export function ToolList({ tools, active, loadDetail, seen, asking }: { tools: readonly Tool[]; active: boolean; loadDetail: ToolDetailLoader | undefined; seen?: SeenSteps | undefined; asking?: string | undefined }) {
   const { roots, children } = useMemo(() => toolTree(tools), [tools]);
-  return <StepList tools={roots} all={children} active={active} loadDetail={loadDetail} seen={seen} label="工具活动"/>;
+  return <StepList tools={roots} all={children} active={active} loadDetail={loadDetail} seen={seen} label="工具活动" asking={asking}/>;
 }
 
 /**
@@ -213,7 +221,7 @@ export function NoticeList({ notices }: { notices: readonly PublicNotice[] }) {
   return <div className="flex flex-col gap-1.5">{notices.map((notice, index) => <div key={index} role={notice.severity === "error" ? "alert" : "status"}
     className={cn("native-notice flex items-start gap-2.5 rounded-block px-3 py-2.5 text-ui-sm", notice.severity === "error" ? "bg-red-soft" : "bg-surface shadow-hairline")}>
     {notice.severity === "info" ? <Info size={16} className="mt-0.5 flex-none text-fg-3" aria-hidden="true"/> : <TriangleAlert size={16} className={cn("mt-0.5 flex-none", notice.severity === "error" ? "text-red" : "text-fg-2")} aria-hidden="true"/>}
-    <div className="min-w-0"><strong className={cn("font-semibold", notice.severity === "error" && "text-red")}>{notice.title}</strong>{notice.detail ? <p className="m-0 mt-0.5 break-words text-fg-2">{notice.detail}</p> : null}</div>
+    <div className="min-w-0"><strong className={cn("font-semibold", notice.severity === "error" && "text-red-on-tint")}>{notice.title}</strong>{notice.detail ? <p className="m-0 mt-0.5 break-words text-fg-2">{notice.detail}</p> : null}</div>
   </div>)}</div>;
 }
 export const ACTIVITY_KIND: Readonly<Record<PublicActivity["kind"], string>> = { subagent: "子 Agent", task: "后台任务", compaction: "上下文压缩", retry: "自动重试", review: "代码审查" };

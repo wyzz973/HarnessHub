@@ -3,7 +3,7 @@ import test from "node:test";
 import type { PublicRun, PublicTool } from "../../src/contracts/session.js";
 import { workspacePath } from "../../web/src/lib/format.js";
 import { readPreferences } from "../../web/src/lib/prefs.js";
-import { activityLabel, cancelledWords, changeCount, diffTotals, groupSteps, liveStatus, noteMount, parseUnifiedDiff, readsLabel, rememberShown, reveal, shownSteps, spentText, stepLabel, stoppedByUser, toolSummary, toolTree, wrapChunks, type HastNode, type QueueNotice, type Reveal } from "../../web/src/lib/turn.js";
+import { activityLabel, askingStep, cancelledWords, changeCount, diffTotals, groupSteps, liveStatus, noteMount, parseUnifiedDiff, readsLabel, rememberShown, reveal, shownSteps, spentText, stepLabel, stoppedByUser, toolSummary, toolTree, wantedVerb, wrapChunks, type HastNode, type QueueNotice, type Reveal } from "../../web/src/lib/turn.js";
 
 /** A running Run with the facts the status line reads; the rest of a Run does not matter to it. */
 function runningRun(tools: readonly PublicTool[] = [], extra: Partial<PublicRun> = {}): PublicRun {
@@ -49,21 +49,22 @@ test("G054-FR3 the details button, its tab and its scopes count the edits with s
   assert.deepEqual([changeCount([first, second]), changeCount([first]), changeCount([second]), changeCount([]), changeCount([{}])], [3, 2, 1, 0, 0]);
 });
 
-test("G054-DL5 a Turn waiting for you keeps naming the step in progress with its arc; without one it says 等你批准 or 等你回答 in grey, and never the marker's words", () => {
+test("G054-DL5 while an approval waits the Turn names the step it asks for in the 想… form, grey and still; a question keeps naming the step in progress; without a step each says 等你批准 or 等你回答, never the marker's words", () => {
   const step: PublicTool = { id: "diff", title: "git diff --stat", kind: "execute", status: "in_progress" };
-  // Decision F: the process line names the step in progress, with the arc and the timer, while an approval waits below.
-  assert.deepEqual(liveStatus(runningRun([step]), "running", "Codex", 42_000, undefined, undefined, "approval"), { text: "正在运行 git diff --stat", tone: "run", timer: true, wrap: false, thinking: false });
-  assert.equal(liveStatus(runningRun([step]), "running", "Codex", 42_000, undefined, undefined, "question").text, "正在运行 git diff --stat");
-  // With no step in progress the line itself says what it waits for: the still grey dot ("wait"), the timer, no thinking words,
-  // also when reply text came before the request.
   const quiet = { tone: "wait", timer: true, wrap: false, thinking: false };
+  // Ruling J (replacing decision F for approvals): nothing runs while the approval waits, so Codex's command in progress is
+  // the step it asks for, named in the Interaction board's form: the still grey dot ("wait"), no sweep, the timer.
+  assert.deepEqual(liveStatus(runningRun([step]), "running", "Codex", 42_000, undefined, undefined, "approval"), { ...quiet, text: "想运行 git diff --stat" });
+  // A question never names a step of its own: the step in progress keeps its arc (decision F).
+  assert.deepEqual(liveStatus(runningRun([step]), "running", "Codex", 42_000, undefined, undefined, "question"), { text: "正在运行 git diff --stat", tone: "run", timer: true, wrap: false, thinking: false });
+  // With no step open the line itself says what it waits for, also when reply text came before the request.
   assert.deepEqual(liveStatus(runningRun([{ ...step, status: "completed" }]), "running", "Codex", 42_000, undefined, undefined, "approval", "先看一下改动。"), { ...quiet, text: "等你批准" });
   assert.deepEqual(liveStatus(runningRun(), "running", "Codex", 90_000, undefined, undefined, "question"), { ...quiet, text: "等你回答" });
-  // A step that has not started is not in progress: an ACP agent reports the call it asks approval for as "pending" until it
-  // is allowed, so the line says 等你批准, never "正在运行" the command that waits. The step in progress beside it is still named.
+  // An ACP agent reports the call it asks about as "pending" until it is allowed: the line says what it wants, never that it
+  // runs. Beside a step in progress, the most recent open step is the one asked about.
   const asked: PublicTool = { id: "ask", title: "rm -rf build", kind: "execute", status: "pending" };
-  assert.deepEqual(liveStatus(runningRun([asked]), "running", "Claude Code", 42_000, undefined, undefined, "approval"), { ...quiet, text: "等你批准" });
-  assert.equal(liveStatus(runningRun([step, asked]), "running", "Claude Code", 42_000, undefined, undefined, "approval").text, "正在运行 git diff --stat");
+  assert.deepEqual(liveStatus(runningRun([asked]), "running", "Claude Code", 42_000, undefined, undefined, "approval"), { ...quiet, text: "想运行 rm -rf build" });
+  assert.equal(liveStatus(runningRun([step, asked]), "running", "Claude Code", 42_000, undefined, undefined, "approval").text, "想运行 rm -rf build");
   // The amber line pointing at the approval is the Turn's marker alone: the status line never says it.
   for (const waiting of ["approval", "question"] as const) for (const tools of [[], [step]]) assert.doesNotMatch(liveStatus(runningRun(tools), "running", "Codex", 0, undefined, undefined, waiting).text, /请求停在下方输入框/u);
   // A stop asked for is said first, whatever waits.
@@ -72,6 +73,45 @@ test("G054-DL5 a Turn waiting for you keeps naming the step in progress with its
   const queue = (holderWaits: "approval" | "question" | null): QueueNotice => ({ kind: "workspace", holderTitle: "approve this", holderWaits, endsAt: 0, cancelling: false });
   assert.deepEqual([queue("approval"), queue("question"), queue(null)].map(item => liveStatus(runningRun([], { status: "queued" }), "queued", "Codex", 0, undefined, item).text), [
     "排队中：等待对话「approve this」释放工作区（它在等你批准）", "排队中：等待对话「approve this」释放工作区（它在等你回答）", "排队中：等待对话「approve this」释放工作区（它正在运行）"]);
+});
+
+test("G054-DL5 a queued Turn reads 排队中 and a failed one 失败, the words every place uses for those states (ruling N)", () => {
+  // Queued: the word alone, or the word first with the reason after it; the dashed symbol, no timer.
+  const queuedRun = runningRun([], { status: "queued" });
+  assert.deepEqual(liveStatus(queuedRun, "queued", "Codex", 0), { text: "排队中", tone: "queue", timer: false, wrap: true, thinking: false });
+  assert.equal(liveStatus(queuedRun, "queued", "Codex", 0, undefined, { kind: "slot", running: 4, cancelling: false }).text, "排队中：4 个对话正在执行，其中一个结束后自动开始");
+  assert.equal(liveStatus(runningRun([], { status: "queued", awaitingSwitchId: "switch-1" } as Partial<PublicRun>), "queued", "Codex", 0).text, "排队中：等待选择切换生效");
+  // Failed: the state's word; the Agent's own words belong to the error card. The other finished states keep theirs.
+  assert.deepEqual(["failed", "completed", "unknown"].map(status => activityLabel({ ...runningRun(), status } as PublicRun, status as PublicRun["status"], "Codex", 0)),
+    ["失败", "已完成", "结果未知：可能已经执行，不会自动重发"]);
+});
+
+test("G054-DL5 the step an approval asks for is the latest open step of the Turn's own, said with the verb of its kind, and a step without one is never guessed at (ruling J)", () => {
+  const tool = (id: string, kind: string | undefined, title: string, status: string, parentId?: string): PublicTool => ({ id, title, status, ...(kind ? { kind } : {}), ...(parentId ? { parentId } : {}) });
+  const wanted = (tools: readonly PublicTool[]) => liveStatus(runningRun(tools), "running", "Claude Code", 42_000, undefined, undefined, "approval");
+  // Each kind in its own words, as the steps show them: a path is named by its file, a verb the program wrote is not repeated.
+  for (const [kind, title, words] of [["edit", "Edit src/app.ts", "想修改 src/app.ts"], ["edit", "新建 web/src/Steps.tsx", "想新建 web/src/Steps.tsx"], ["read", "Read /Users/someone/project/secret.txt", "想读取 secret.txt"],
+    ["delete", "Delete /w/build/out.js", "想删除 out.js"], ["move", "Move a.ts", "想移动 a.ts"], ["search", "搜索：token", "想搜索 token"], ["fetch", "Fetch https://example.invalid/a", "想访问 https://example.invalid/a"],
+    ["mcp", "docs.lookup", "想调用 docs.lookup"], ["execute", "terminal: rm -rf build", "想运行 rm -rf build"]] as const) {
+    assert.deepEqual(wanted([tool("done", "read", "Read a.ts", "completed"), tool("ask", kind, title, "pending")]), { text: words, tone: "wait", timer: true, wrap: false, thinking: false }, kind + ": " + title);
+  }
+  // Every open status counts, and only the Turn's own steps: a sub-agent call has no verb of its own, so while one of its
+  // tools waits the line says 等你批准 instead of guessing which. So does a step of no known kind.
+  for (const status of ["pending", "in_progress", "inProgress", "running"]) assert.equal(wanted([tool("ask", "execute", "make", status)]).text, "想运行 make", status);
+  const agent = [tool("agent", "think", "Run echo SUB-OK", "in_progress"), tool("bash", "execute", "rm -rf build", "pending", "agent")];
+  assert.equal(askingStep(agent)?.id, "agent");
+  assert.deepEqual([wanted(agent).text, wanted([tool("plan", "switch_mode", "Ready to code?", "pending")]).text, wanted([tool("odd", undefined, "something", "pending")]).text], ["等你批准", "等你批准", "等你批准"]);
+  // The latest open step, not the latest step: one that ended after it does not take its place.
+  assert.equal(askingStep([tool("ask", "execute", "make", "pending"), tool("late", "read", "Read b.ts", "completed")])?.id, "ask");
+  assert.equal(askingStep([tool("x", "execute", "make", "completed")]), null);
+  // A long target is cut at 80 characters, as a running step's is; the verb alone is what a step's row puts before its target.
+  assert.equal([...wanted([tool("long", "execute", "x".repeat(200), "pending")]).text].length, "想运行 ".length + 80);
+  assert.deepEqual([wantedVerb({ verb: "运行" }), wantedVerb({ verb: null })], ["想运行", null]);
+  // While it asks, a read stays a step of its own, so its row can say what it wants; once decided it joins its group again.
+  const reads = [tool("r1", "read", "Read a.ts", "completed"), tool("r2", "read", "Read b.ts", "pending"), tool("r3", "read", "Read c.ts", "completed")];
+  const steps = (apart?: string) => groupSteps(toolTree(reads).roots, new Map(), apart).map(step => step.kind === "reads" ? [step.key, step.tools.map(item => item.id)] : [step.key]);
+  assert.deepEqual(steps("r2"), [["r1"], ["r2"], ["r3"]]);
+  assert.deepEqual(steps(), [["r1", ["r1", "r2", "r3"]]]);
 });
 
 test("G054-DL7 a Turn the user stopped says 已停止; one the Runtime cancelled keeps the contract's words, and the header's short word is 已取消", () => {
@@ -211,6 +251,25 @@ test("G054-DL7 streamed text is released as a growing prefix at the backlog's pa
   let emoji: Reveal = { text: "a", shown: 1, rate: 0, chunks: [], at: 0 };
   emoji = reveal(emoji, { type: "arrive", text: "a😀😀😀", at: 1000, animate: true });
   for (let tick = 0; tick < 20 && emoji.shown < emoji.text.length; tick++) { emoji = reveal(emoji, { type: "tick" }); assert.doesNotMatch(emoji.text.slice(0, emoji.shown), /[\uD800-\uDBFF]$/u); }
+});
+
+test("G054-DL7 a release never stops inside a fence marker that opens a line, so a closing fence never shows as one more line of code (ruling L)", () => {
+  // Each release of a text that arrives at rest after `shown`, at the pace a short arrival gets: one character a tick.
+  const releases = (shown: string, more: string) => {
+    let state: Reveal = { text: shown, shown: shown.length, rate: 0, chunks: [], at: 0 };
+    state = reveal(state, { type: "arrive", text: shown + more, at: 1000, animate: true });
+    const seen: string[] = [];
+    for (let tick = 0; tick < 40 && state.shown < state.text.length; tick++) { state = reveal(state, { type: "tick" }); seen.push(state.text.slice(shown.length, state.shown)); }
+    return seen;
+  };
+  // A code block closed as the reply ends: its fence goes whole, never "`" or "``" shown as a line of the code.
+  assert.deepEqual(releases("最后运行：\n\n```sh\npnpm test", "\n```"), ["\n", "\n```"]);
+  assert.deepEqual(releases("```\nx", "\n   ~~~~\n完"), ["\n", "\n ", "\n  ", "\n   ", "\n   ~~~~", "\n   ~~~~\n", "\n   ~~~~\n完"]);
+  // An opening fence goes whole as well, its language after it at the pace.
+  assert.deepEqual(releases("看：", "\n```ts"), ["\n", "\n```", "\n```t", "\n```ts"]);
+  // Backticks inside a line, or after four spaces (an indented code line), are text like any other.
+  assert.deepEqual(releases("用", " ``a``"), [" ", " `", " ``", " ``a", " ``a`", " ``a``"]);
+  assert.deepEqual(releases("x\n", "    ``"), [" ", "  ", "   ", "    ", "    `", "    ``"]);
 });
 
 test("G054-DL7 the fading pieces wrap the released text where it is, leave code blocks whole and keep every character in order", () => {

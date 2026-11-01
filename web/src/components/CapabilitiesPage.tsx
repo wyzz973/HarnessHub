@@ -64,7 +64,7 @@ function factsText(facts: CapabilityFacts): string {
     case "instructions": return size(facts.bytes) + (facts.managedBlocks.length ? " · 含 " + facts.managedBlocks.join("、") + " 管理的区块" : "");
     case "subagent": case "command": return facts.format === "toml" ? "TOML" : "Markdown";
     case "hook": return [facts.event, facts.matcher ? "匹配 " + facts.matcher : null, facts.program ? "运行 " + facts.program : null].filter(Boolean).join(" · ");
-    case "plugin": return [facts.version ? "v" + facts.version : null, facts.enabled === null ? "启停未知" : facts.enabled ? "已启用" : "已停用"].filter(Boolean).join(" · ");
+    case "plugin": return [facts.version || null, facts.enabled === null ? "启停未知" : facts.enabled ? "已启用" : "已停用"].filter(Boolean).join(" · ");
   }
 }
 /** A column's short name, as the board shows it (Claude, Hermes, DeepSeek): the product name without its generic last word. */
@@ -169,7 +169,7 @@ function CellMark({ cell, picked, raised, onPick, describedBy }: { readonly cell
         picked ? "bg-surface text-accent-text shadow-[inset_0_0_0_1.5px_var(--accent-text)]" : "bg-transparent shadow-[inset_0_0_0_1px_var(--border-strong)] hover:bg-subtle")}>
       <Plus size={14} strokeWidth={2.4} aria-hidden="true" className={cn("[transition:scale_300ms_var(--ease-overshoot),opacity_120ms_var(--ease-standard)] keyboard:[transition:none]",
         picked ? "scale-100 opacity-100" : "scale-50 opacity-0")}/></button>;
-    case "chip": return <span role="img" aria-label={cell.label} title={cell.label} className={cn("inline-flex h-5 items-center rounded-full px-2 text-[11px] leading-4 font-medium whitespace-nowrap", cell.failed ? "bg-red-soft text-red" : raised ? "bg-surface text-fg-2 shadow-hairline" : "bg-subtle text-fg-2")}>{cell.text}</span>;
+    case "chip": return <span role="img" aria-label={cell.label} title={cell.label} className={cn("inline-flex h-5 items-center rounded-full px-2 text-[11px] leading-4 font-medium whitespace-nowrap", cell.failed ? "bg-red-soft text-red-on-tint" : raised ? "bg-surface text-fg-2 shadow-hairline" : "bg-subtle text-fg-2")}>{cell.text}</span>;
     case "none": return <span role="img" aria-label={cell.label} title={cell.label} className="text-ui-sm text-fg-3">{cell.glyph}</span>;
   }
 }
@@ -578,7 +578,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
   useEffect(() => setScrolled((frame?.scrollLeft ?? 0) > 0), [frame]);
   const wide = width === null || width >= WIDE_PAGE, narrowScreen = useMedia("(max-width: 759px)");
   const shellButton = narrowScreen ? <button type="button" className="icon-btn navigation-toggle" onClick={onMenu} aria-label="打开导航"><MenuIcon size={18}/></button>
-    : sidebarHidden ? <Tip label="展开侧栏"><button type="button" className="icon-btn" aria-label="展开侧栏" onClick={onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null;
+    : sidebarHidden ? <Tip label="展开侧栏 ⌘B"><button type="button" className="icon-btn" aria-label="展开侧栏" aria-keyshortcuts="Meta+B" onClick={onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null;
   const reload = <Tip label="重新读取"><button type="button" className="icon-btn" aria-label="重新读取" onClick={() => load()} disabled={loading}>{loading ? <Spinner size={15} label=""/> : <RefreshCw size={16}/>}</button></Tip>;
   const title = <h1 id="capabilities-title" className="m-0 min-w-0 flex-1 trunc text-[22px] leading-[30px] font-semibold tracking-[-0.02em]">能力</h1>;
   const ready = view !== null && view.harnesses.length > 0;
@@ -635,10 +635,10 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
           <colgroup><col/>{columns.map((item, index) => <col key={item.harnessId} style={{ width: MATRIX_COLUMN + (index === columns.length - 1 ? MATRIX_INSET : 0) }}/>)}</colgroup>
           <thead><tr className="hairline-b">
             <th scope="col" className={cn("sticky left-0 z-[1] bg-surface pt-3.5 pr-3 pb-2.5 pl-4 align-bottom text-caption leading-5 font-normal text-fg-3", NAME_EDGE)}>{KIND_HEAD[kind]}</th>
-            {columns.map((item, index) => <th key={item.harnessId} scope="col" className={cn("pt-3.5 pb-2.5 pl-0.5 align-bottom font-normal", index === columns.length - 1 ? "pr-4" : "pr-0.5")} title={item.name + " · " + (item.version ? "v" + item.version : "版本未知")}>
-              <span className="flex flex-col items-center gap-1.5"><BrandIcon brand={item.harnessId} name={item.name} size={26}/>
+            {columns.map((item, index) => <th key={item.harnessId} scope="col" className={cn("pt-3.5 pb-2.5 pl-0.5 align-bottom font-normal", index === columns.length - 1 ? "pr-4" : "pr-0.5")} title={item.name + " · " + (item.version || "版本未知")}>
+              <span className="relative flex flex-col items-center gap-1.5"><BrandIcon brand={item.harnessId} name={item.name} size={26}/>
                 <span aria-hidden="true" className="max-w-[66px] trunc text-[11px] leading-5 text-fg-2">{shortName(item.name)}</span>
-                <span className="sr-only">{item.name} {item.version ? "v" + item.version : "版本未知"}</span></span></th>)}
+                <span className="sr-only">{item.name} {item.version || "版本未知"}</span></span></th>)}
           </tr></thead>
           <tbody className="[&>tr:last-child]:border-b-0">{rows.map(entry => { const warnings = warningCount(entry), update = updateOf(entry);
             return <MatrixRow key={entry.key} entry={entry} columns={columns} expanded={open === entry.key} onToggle={() => setOpen(current => current === entry.key ? null : entry.key)}
@@ -683,7 +683,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
       <div className="flex flex-col gap-3 px-4 pb-4">
         <ul className="m-0 flex list-none flex-col gap-2.5 p-0">{shown.map(item => <li key={item.harnessId} className="flex flex-col gap-0.5">
           <span className="flex items-center gap-2"><BrandIcon brand={item.harnessId} name={item.name} size={18}/><strong className="font-medium">{item.name}</strong>
-            <span className="text-caption text-fg-3">{item.version ? "v" + item.version : "版本未知"} · 读取规则见说明</span></span>
+            <span className="text-caption text-fg-3">{item.version || "版本未知"} · 读取规则见说明</span></span>
           {item.notes.length ? <ul className="m-0 list-disc pl-[46px] text-fg-2 marker:text-fg-3">{item.notes.map((note, index) => <li key={index}>{note}</li>)}</ul> : null}</li>)}</ul>
         <p className="m-0 text-caption text-fg-3">读取时间 {new Date(view.checkedAt).toLocaleString()}。只显示名字与数量，不显示任何环境变量、请求头或参数的值。</p>
       </div></details> : null}
@@ -700,7 +700,9 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
     </nav> : null}
     <div className="flex min-w-0 flex-1 flex-col">
       {wide ? null : <header className="flex h-14 flex-none items-center gap-2 pr-3.5 pl-3 sm:pl-[18px]">{shellButton}{title}{reload}</header>}
-      {!wide && ready ? <div className="flex-none overflow-x-auto hairline-b px-4"><Tabs items={tabItems} value={kind} onChange={choose} label="能力类别" idPrefix="capability-tab" panelId="capability-tabpanel" className="h-11 [&>.tab]:h-11"/></div> : null}
+      {/* The narrow category row scrolls sideways when the kinds do not fit; its padding scrolls with it, so the last tab keeps
+          its 16 px from the edge, and 16 px between tabs let the six kinds fit a 390 px phone. */}
+      {!wide && ready ? <div className="flex-none overflow-x-auto hairline-b"><Tabs items={tabItems} value={kind} onChange={choose} label="能力类别" idPrefix="capability-tab" panelId="capability-tabpanel" className="h-11 w-max px-4 [&>.tab]:h-11 [&>.tab+.tab]:ml-4"/></div> : null}
       <div className="scroll-area min-h-0 flex-1">
         <div className={cn("flex w-full max-w-[1040px] flex-col gap-5", wide ? "px-9 pt-10 pb-[120px]" : "px-4 pt-5 pb-[120px]")}>
           {view === null ? <>

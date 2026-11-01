@@ -40,7 +40,7 @@ export function selectionProblem(draft: SelectionDraft, harnesses: readonly Harn
   const provider = providers.find(row => row.id === draft.providerId);
   if (!provider || !provider.enabled) return "这个 Provider 已停用或不可用，请重新选择。";
   if (!harness.providerProtocols.includes(provider.protocol)) return "这个 Harness 暂不支持所选 Provider 的协议。请选择兼容的 Provider。";
-  if (provider.protocol === "gemini" && !provider.hasCredential && draft.providerRevision === provider.revision) return "Gemini 连接需要 API Key，请先在模型与账号中补充密钥。";
+  if (provider.protocol === "gemini" && !provider.hasCredential && draft.providerRevision === provider.revision) return "Gemini 连接需要 API Key，请先在模型连接中补充密钥。";
   if (!draft.model || draft.providerRevision === null) return "请选择要使用的模型。";
   if (draft.providerRevision === provider.revision && !provider.models.includes(draft.model)) return "所选模型不在当前 Provider 的配置中。";
   return null;
@@ -233,11 +233,22 @@ export function ChatPage(props: ChatProps) {
     refocus.current = false;
     if (document.activeElement === null || document.activeElement === document.body) textarea.current?.focus({ preventScroll: true });
   }, [session?.id]);
+  // A first message sent from here: the conversation it goes to (one it creates, `id` null until it is shown) opens empty
+  // until the message is in its view, also for a moment after the send was acknowledged. It is not shown as ready then.
+  const [firstSend, setFirstSend] = useState<{ readonly id: string | null } | null>(null);
+  useEffect(() => {
+    if (firstSend === null || session === null) return;
+    if (session.messages.length > 0 || firstSend.id !== null && firstSend.id !== session.id) setFirstSend(null);
+    else if (firstSend.id === null) setFirstSend({ id: session.id });
+  }, [firstSend, session?.id, session?.messages.length]);
   // A retry resends the original input with the attachments it was sent with; a new message takes the composer's.
   const send = async (text: string, retryAttachments?: readonly ContentRef[]) => {
     // The first message moves the composer from the welcome to the foot of the new conversation; the focus goes with it.
     if (session === null && document.activeElement === textarea.current) refocus.current = true;
-    await props.onSend(text, retryAttachments);
+    const first = session === null || session.messages.length === 0;
+    if (first) setFirstSend({ id: session?.id ?? null });
+    try { await props.onSend(text, retryAttachments); }
+    catch (failure: unknown) { if (first && mounted.current) setFirstSend(null); throw failure; }
     if (mounted.current) { props.onMessageDraft(value => value === text ? "" : value); resumeFollowing(); }
   };
   // The latest message was refused because another conversation's kept process holds this workspace (ADR-030, option C).
@@ -408,7 +419,14 @@ export function ChatPage(props: ChatProps) {
       <PlanBar session={session} active={active} harnessName={harnessName}/>
     </> : null}
     below={session ? <StatusLine session={session} active={active}/> : null}/>;
-  const status = props.loading ? "正在读取对话" : props.sessionError ? "对话读取失败" : session?.status === "blocked" ? "执行暂时暂停，可以编辑草稿和检查恢复连接" : session?.status === "closed" ? "对话已关闭，可查看历史" : active ? active.cancelRequested ? "正在停止回复" : runStatusLabel(active.status) : pending ? "等待选择切换生效" : session ? "可以继续对话" : "选择执行者后开始新对话";
+  // What the page announces of the Turn in progress, or of one waiting in the queue (never the active Run), in the header's
+  // words for the same state: the two waits as 等你批准 and 等你回答 (decision G), a Turn not started yet as 排队中 (ruling N).
+  const latestRun = session?.runs.at(-1), current = active ?? (latestRun?.status === "queued" ? latestRun : null);
+  const currentWaits = current ? (session?.permissions ?? []).filter(request => request.runId === current.id && !request.decided) : [];
+  const currentState = current === null ? null : current.cancelRequested ? "正在停止回复" : currentWaits.length ? currentWaits.some(dockedRequest) ? "等你批准" : "等你回答"
+    : current.status === "queued" ? "排队中" : runStatusLabel(current.status);
+  const status = props.loading ? "正在读取对话" : props.sessionError ? "对话读取失败" : session?.status === "blocked" ? "执行暂时暂停，可以编辑草稿和检查恢复连接" : session?.status === "closed" ? "对话已关闭，可查看历史"
+    : currentState ?? (pending ? "等待选择切换生效" : session ? "可以继续对话" : "选择执行者后开始新对话");
   const panel = session ? <DetailsPanel session={session} harnesses={harnesses} providers={providers} tab={panelTab} onTab={setTab} runId={panelRun} onRun={setPanelRun} describe={describe}
     loadToolDetail={props.onToolDetail} loadDiagnostics={props.onDiagnostics} loadNativeResume={props.onLoadNativeResume} onEndProcess={props.onEndProcess} busy={mutation !== null} onClose={() => setPanel(false)}/> : null;
   // #23: the panel opens by widening (300 ms) and pushes the conversation aside; its content follows 60 ms later from 24 px to
@@ -420,7 +438,7 @@ export function ChatPage(props: ChatProps) {
     {/* The header of the Conversation board: 54 px on a hairline, its parts 10 px apart (closer on a phone). */}
     <header className={cn("flex h-[54px] flex-none items-center gap-2 bg-app pr-3 pl-3 sm:gap-2.5", session ? "hairline-b sm:pl-6" : "sm:pl-4")}>
       {narrow ? <button type="button" className="icon-btn navigation-toggle" onClick={props.onMenu} aria-label="打开导航"><MenuIcon size={18}/></button>
-        : props.sidebarHidden ? <Tip label="展开侧栏"><button type="button" className="icon-btn" aria-label="展开侧栏" onClick={props.onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null}
+        : props.sidebarHidden ? <Tip label="展开侧栏 ⌘B"><button type="button" className="icon-btn" aria-label="展开侧栏" aria-keyshortcuts="Meta+B" onClick={props.onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null}
       <div className="flex min-w-0 flex-1 items-baseline gap-2.5">
         <h1 id="chat-title" className={cn("m-0 min-w-0 truncate text-ui font-semibold", !session && "sr-only")} title={title}>{title}{session && session.status !== "open" ? <span className="ml-2 text-caption font-medium text-fg-3">{session.status === "closed" ? "已结束" : "需要核实"}</span> : null}</h1>
         {session ? <span className="hidden min-w-0 flex-none truncate text-caption text-fg-3 sm:inline sm:max-w-[40%]" title={session.workspace}>{folderName(session.workspace)}</span> : null}
@@ -483,7 +501,9 @@ export function ChatPage(props: ChatProps) {
               }}/>
             : <div className="transcript mx-auto flex max-w-reading flex-col gap-7 pb-4" ref={transcript} role="log" aria-label="对话历史" aria-live="off">
               {session.origin ? <BranchOrigin origin={session.origin} session={session} harnesses={harnesses} onOpenSource={props.onOpenSession}/> : null}
-              {session.messages.length === 0 && !session.origin ? <EmptyState title="对话准备好了">发出第一条消息，开始这次协作。</EmptyState> : null}
+              {/* A first message sent from the home opens its conversation empty for a moment: it is not shown as ready meanwhile. */}
+              {session.messages.length === 0 && !session.origin && mutation !== "sending" && !(firstSend !== null && (firstSend.id === null || firstSend.id === session.id))
+                ? <EmptyState title="对话准备好了">发出第一条消息，开始这次协作。</EmptyState> : null}
               {transcriptItems(session)}
               {orphanCards.length ? orphanCards : null}
             </div>}
@@ -526,7 +546,8 @@ function ChangeBadge({ count, news }: { readonly count: number; readonly news: b
  * The conversation's state in the header (Conversation and Interaction boards): who works and what it does now, in the
  * words the sidebar and the Turn use. Running work is blue with a breathing dot and a clock; waiting for the user is
  * amber; a failure is red; a Turn that ended quietly is grey: "已停止" when the user stopped it, "已取消" when the Runtime
- * cancelled it (ADR-036, decision H).
+ * cancelled it (ADR-036, decision H). A Turn waiting in the queue is not the active Run (only a started one is), and is
+ * named 排队中 as the Turn names it (ruling N).
  */
 function HeaderState({ session, active, harnessName }: { readonly session: SessionView; readonly active: PublicRun | null; readonly harnessName: (id: string) => string }) {
   const now = useNow(active !== null);
@@ -551,6 +572,7 @@ function HeaderState({ session, active, harnessName }: { readonly session: Sessi
     }
     if (!latest) return { text: "", tone: "neutral" };
     switch (latest.status) {
+      case "queued": return { text: latest.cancelRequested ? "正在停止" : "排队中", tone: "neutral" };
       case "completed": return { text: "已完成", tone: "neutral" };
       case "failed": return { text: "失败", tone: "red" };
       case "cancelled": return { text: cancelledWords(latest, true), tone: "neutral" };
@@ -585,7 +607,7 @@ function PlanBar({ session, active, harnessName }: { readonly session: SessionVi
       <span className="min-w-0 flex-1 truncate text-fg-3">{done} / {total} · {where}</span>
       <span className="relative h-1 w-[72px] flex-none overflow-hidden rounded-[2px] bg-hover max-sm:hidden" aria-hidden="true">
         <span className="absolute inset-0 origin-left rounded-[2px] bg-run transition-transform duration-200 ease-standard" style={{ transform: `scaleX(${total ? done / total : 0})` }}/></span>
-      <ChevronUp size={12} strokeWidth={2} className={cn("flex-none text-fg-3 transition-[rotate] duration-200 ease-expo keyboard:duration-0", open && "rotate-180")} aria-hidden="true"/>
+      <ChevronUp size={12} strokeWidth={2} className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-180")} aria-hidden="true"/>
     </button>
     <Collapsible open={open} id={id}>
       <div className="pt-2"><ul className="card m-0 grid max-h-[min(40vh,320px)] list-none grid-cols-1 gap-x-4 gap-y-2 overflow-y-auto px-4 py-3 text-ui-sm sm:grid-cols-2" aria-label={`${harnessName(owner.selection.harnessId)} 维护的计划`}>

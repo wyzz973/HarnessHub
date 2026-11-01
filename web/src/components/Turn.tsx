@@ -8,7 +8,7 @@ import { failureMessage } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { duration, elapsed } from "../lib/format.js";
 import { useNow } from "../lib/prefs.js";
-import { cancelledWords, finished, liveStatus, noteMount, rememberShown, runDuration, shownSteps, spentText, toolSummary, type LiveStatus, type QueueNotice } from "../lib/turn.js";
+import { askingStep, cancelledWords, finished, liveStatus, noteMount, rememberShown, runDuration, shownSteps, spentText, toolSummary, type LiveStatus, type QueueNotice } from "../lib/turn.js";
 import { Collapsible, DrawnCheck, motionStyle, SwapText } from "../ui/motion.js";
 import { Spinner, StatusDot, Tip } from "../ui/primitives.js";
 import { ActivityList, NoticeList, OutputList, ToolList, usageParts, type SeenSteps, type ToolDetailLoader } from "./Activity.js";
@@ -61,7 +61,8 @@ function usePhase(terminal: boolean): Phase {
 function textWidth(text: string): number { let width = 0; for (const character of text) width += /[\u2e80-\uffff]/u.test(character) ? 13 : 8; return width; }
 /**
  * The symbol of a state (Icons board), 15 px: the arc while working, dashed before it starts, and a still grey dot while
- * the Turn waits for you with no step in progress; the amber of waiting belongs to the Turn's one marker line (decision F).
+ * the Turn waits for you: for an approval whatever its step (ruling J), for a question with no step in progress (decision
+ * F). The amber of waiting belongs to the Turn's one marker line.
  */
 function LiveIcon({ tone, className }: { readonly tone: LiveStatus["tone"]; readonly className?: string | undefined }) {
   return <span className={cn("flex size-[15px] flex-none items-center justify-center", className)}>
@@ -69,12 +70,16 @@ function LiveIcon({ tone, className }: { readonly tone: LiveStatus["tone"]; read
   </span>;
 }
 interface Outcome { readonly icon: ReactNode; readonly arriving: string; readonly settled: string; readonly tone: "done" | "fail" | "quiet" }
-/** How a finished Turn reads: the drawn check, then its tools, failures and unfinished steps, and how long it took. */
+/**
+ * How a finished Turn reads: the drawn check, then its tools, failures and unfinished steps, and how long it took. A failed
+ * one says the state's word first, as every place does (ruling N): "失败 · 读了 2 个文件，1 项失败 · 用时 3.6 秒"; the
+ * Agent's own words are on the error card below.
+ */
 function outcome(run: PublicRun | undefined, status: RunStatus, text: string, drawing: boolean): Outcome {
   const tools = run?.tools ?? [], summary = tools.length ? toolSummary(tools, false).text : "", total = run ? runDuration(run) : null, time = total === null ? "" : spentText(total);
   const join = (...parts: string[]) => parts.filter(Boolean).join(" · ");
   switch (status) {
-    case "failed": { const words = join("回复未能完成", summary, time); return { icon: <CircleAlert size={15} strokeWidth={1.9} className="text-red" aria-hidden="true"/>, arriving: words, settled: words, tone: "fail" }; }
+    case "failed": { const words = join("失败", summary, time ? "用时 " + time : ""); return { icon: <CircleAlert size={15} strokeWidth={1.9} className="text-red" aria-hidden="true"/>, arriving: words, settled: words, tone: "fail" }; }
     case "cancelled": { const words = join(run ? cancelledWords(run) : "已取消", summary, time); return { icon: <CircleStop size={15} strokeWidth={1.9} className="text-fg-3" aria-hidden="true"/>, arriving: words, settled: words, tone: "quiet" }; }
     case "unknown": { const words = join("结果未知：可能已经执行，不会自动重发", summary, time); return { icon: <CircleHelp size={15} strokeWidth={1.9} className="text-fg-3" aria-hidden="true"/>, arriving: words, settled: words, tone: "quiet" }; }
     default: {
@@ -102,6 +107,8 @@ function TurnProcess({ run, status, text, phase, detailed, now, harness, startup
   const terminal = finished(status), steps = useId();
   const tools = run?.tools ?? [], activities = run?.activities ?? [], thinking = run?.thinking ?? "";
   const expandable = tools.length > 0 || activities.length > 0 || thinking.length > 0;
+  // The step an approval waiting in the composer's place asks for: the line and the steps name it the same way (ruling J).
+  const asking = waiting === "approval" && !terminal ? askingStep(tools)?.id : undefined;
   const [choice, setChoice] = useState<boolean | null>(null);
   const open = expandable && (choice ?? (detailed || phase !== "settled"));
   const [thoughts, setThoughts] = useState<boolean | null>(null);
@@ -155,12 +162,13 @@ function TurnProcess({ run, status, text, phase, detailed, now, harness, startup
   const words = end ? phase === "settled" ? end.settled : end.arriving : "";
   const doneLayer = end ? <span key="done" className={cn("flex min-w-0 items-start gap-[7px]", (phase === "handoff" || phase === "done") && "motion-arrive")}>
     <span className="mt-[2.5px] flex size-[15px] flex-none items-center justify-center">{end.icon}</span>
-    <span className={cn("flex min-w-0", !text && "response-status", end.tone === "fail" ? "text-red" : "")} style={budget(null)}><SwapText text={words} className={wrap}/></span>
+    {/* A failed Turn's words are text on the line's tint when it is pointed at: the higher-contrast red (ruling M). */}
+    <span className={cn("flex min-w-0", !text && "response-status", end.tone === "fail" ? "text-red-on-tint" : "")} style={budget(null)}><SwapText text={words} className={wrap}/></span>
   </span> : null;
   const layers = <span className="grid min-w-0 [&>*]:col-start-1 [&>*]:row-start-1">
     {ended ? <>{phase === "handoff" && last.current ? liveLayer(last.current, true) : null}{doneLayer}</> : live ? liveLayer(live, false) : null}
   </span>;
-  const chevron = expandable ? <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("mt-1 flex-none self-start text-fg-3 transition-[rotate] duration-200 ease-expo keyboard:transition-none", open && "rotate-90")}/> : null;
+  const chevron = expandable ? <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("mt-1 flex-none self-start text-fg-3 motion-rotate", open && "rotate-90")}/> : null;
   // The line is one element for the whole Turn, a button for its steps once there are any: when the first step arrives the
   // words change in place (#07) and the arc keeps turning, instead of the line being drawn anew.
   const toggle = () => setChoice(!open);
@@ -169,17 +177,17 @@ function TurnProcess({ run, status, text, phase, detailed, now, harness, startup
   // A Turn just started shows its status 0.25 s after the message (Motion board #01).
   return <div ref={box} className={cn("turn-process flex min-w-0 flex-col", entering && "motion-fade-in")} style={entering ? motionStyle({ delay: 250 }) : undefined}>
     <div className={cn("process-summary -ml-2 flex min-h-7 max-w-full min-w-0 items-start gap-[7px] self-start rounded-row px-2 py-1 text-ui-sm text-fg-3", expandable && "row cursor-pointer select-none")} {...control}>{layers}{chevron}</div>
-    {expandable ? <Collapsible open={open} id={steps} className="grid-cols-[minmax(0,1fr)]">
+    {expandable ? <Collapsible open={open} id={steps}>
       <div className="mt-1 mb-1.5 ml-[7px] flex min-w-0 flex-col gap-px border-l border-line-strong pl-[9px]">
         {thinking ? <div className="flex min-w-0 flex-col">
           <button type="button" aria-expanded={thoughts ?? detailed} onClick={() => setThoughts(!(thoughts ?? detailed))} className="row group/step flex min-h-[30px] w-full items-center gap-[9px] border-none bg-transparent px-1.5 py-[5px] text-left text-ui-sm leading-[18px] text-fg-2">
             <span className="flex size-[15px] flex-none items-center justify-center text-fg-3"><Brain size={15} aria-hidden="true"/></span><span className="flex-1">思考过程</span>
-            <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("flex-none text-fg-3 transition-[rotate] duration-200 ease-expo keyboard:transition-none", (thoughts ?? detailed) && "rotate-90")}/>
+            <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("flex-none text-fg-3 motion-rotate", (thoughts ?? detailed) && "rotate-90")}/>
           </button>
-          <Collapsible open={thoughts ?? detailed} className="grid-cols-[minmax(0,1fr)]"><div className="native-thinking mt-0.5 mb-2 ml-[30px] border-l border-line-strong pl-3 text-ui-sm text-fg-2"><StreamingMarkdown text={thinking} isStreaming={!terminal}/></div></Collapsible>
+          <Collapsible open={thoughts ?? detailed}><div className="native-thinking mt-0.5 mb-2 ml-[30px] border-l border-line-strong pl-3 text-ui-sm text-fg-2"><StreamingMarkdown text={thinking} isStreaming={!terminal}/></div></Collapsible>
         </div> : null}
         {activities.length ? <ActivityList activities={activities}/> : null}
-        {tools.length ? <ToolList tools={tools} active={!terminal} loadDetail={loadDetail} seen={seen}/> : null}
+        {tools.length ? <ToolList tools={tools} active={!terminal} loadDetail={loadDetail} seen={seen} asking={asking}/> : null}
       </div>
     </Collapsible> : null}
   </div>;
