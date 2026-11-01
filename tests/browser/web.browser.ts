@@ -855,9 +855,19 @@ test("the native extensions panel lists skills, MCP servers and plugins and invo
   // A version is shown as the program reported it, without a "v" the page would add (ruling P).
   await expect(panel).toContainText("2.0.0"); await expect(panel).not.toContainText("v2.0.0");
   await page.screenshot({ path: join(artifact, "native-extensions.png"), animations: "disabled" });
+  // Choosing a skill puts its command in the message as choosing a "/" command does: the panel closes and the caret stands
+  // after the command, in the focused message box.
+  const caret = () => composer.evaluate(element => { const field = element as HTMLTextAreaElement; return [field.selectionStart, field.selectionEnd, field.value.length]; });
   await panel.getByRole("button", { name: "browser-skill", exact: true }).click();
   await expect(composer).toHaveValue("/skill:browser-skill ");
-  await composer.press("End"); await composer.type("看看这个仓库"); await composer.press("Enter");
+  await expect(panel).toHaveCount(0); await expect(composer).toBeFocused(); assert.deepEqual(await caret(), [21, 21, 21]);
+  // From the keyboard as well, and after the command also when the message already was that command, the caret elsewhere.
+  await composer.evaluate(element => (element as HTMLTextAreaElement).setSelectionRange(3, 3));
+  await openExtensions(page);
+  await panel.getByRole("button", { name: "browser-skill", exact: true }).focus(); await page.keyboard.press("Enter");
+  await expect(panel).toHaveCount(0); await expect(composer).toBeFocused(); assert.deepEqual(await caret(), [21, 21, 21]);
+  await expect(composer).toHaveValue("/skill:browser-skill ");
+  await composer.type("看看这个仓库"); await composer.press("Enter");
   await expect(log).toContainText("已使用技能 browser-skill：看看这个仓库", { timeout: 15000 });
   assert.deepEqual(errors, []);
 });
@@ -2423,8 +2433,8 @@ test("G054-DL5 an approval that takes the composer's place closes a panel the co
   await page.waitForTimeout(500);
   await expect(panel).toHaveCount(0); await expect(composer).toBeFocused();
   await expect(page.locator("[data-run-status=completed]")).toHaveCount(2, { timeout: 15000 });
-  // The same when the message box has the focus and the panel stays open beside it (as after a skill is chosen in the
-  // extensions): the approval takes the focus from the message box, and once decided the panel stays closed.
+  // The same when the message box has the focus and the panel stays open beside it: the approval takes the focus from the
+  // message box, and once decided the panel stays closed.
   await openAdvanced(page);
   await composer.fill("approve this"); await expect(panel).toHaveCount(1); await composer.press("Enter");
   await expect(dock).toContainText("rm -rf build", { timeout: 15000 });
