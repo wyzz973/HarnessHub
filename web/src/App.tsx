@@ -1,6 +1,8 @@
-import { Blocks, Bot, Columns2, Keyboard, MessageSquarePlus, Monitor, Moon, PanelLeft, RefreshCw, Settings, SlidersHorizontal, Sun } from "lucide-react";
+import { ArrowDown, Blocks, Bot, Inbox, Keyboard, ListCollapse, Monitor, Moon, PanelLeft, PanelRight, RefreshCw, Settings, SlidersHorizontal, SquarePen, Sun } from "lucide-react";
+import { Dialog as BaseDialog } from "@base-ui/react/dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { SelectionRequest } from "../../src/contracts/session.js";
+import type { ReactNode, RefObject } from "react";
+import type { AttentionItem, PublicRun, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
 import type { ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
 import { parseProviderTarget } from "../../src/contracts/provider.js";
 import { conversationTitle, type AttentionFrame, type HarnessView, type InstallationView, type SessionView, type WebState } from "../../src/contracts/web.js";
@@ -8,7 +10,7 @@ import type { NativeModelCatalog } from "../../src/contracts/control.js";
 import type { InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
 import { parseNativeOptions, sessionId as validateSessionId } from "../../src/contracts/session.js";
 import { applySessionStreamFrame } from "./session-stream.js";
-import { notifyWaiting } from "./attention.js";
+import { liveItems, notifyWaiting } from "./attention.js";
 import { ApiError, errorMessage, GatewayApi, requestKey } from "./api.js";
 import { ChatPage, effectiveProviderProblem, EMPTY_SELECTION, selectionDraft, selectionProblem, selectionRequest } from "./components/ChatPage.js";
 import type { QueuedMessage, SelectionDraft } from "./components/ChatPage.js";
@@ -18,18 +20,19 @@ import type { UpgradeConsent } from "./components/UpgradeDialog.js";
 import type { UninstallConsent } from "./components/UninstallDialog.js";
 import { ProvidersPage } from "./components/ProvidersPage.js";
 import type { ProviderProbeState } from "./components/ProvidersPage.js";
-import { Sidebar } from "./components/Sidebar.js";
-import type { Page } from "./components/Sidebar.js";
+import { byUrgency, InboxList, Sidebar } from "./components/Sidebar.js";
+import type { InboxSource, Page } from "./components/Sidebar.js";
 import { SettingsPage } from "./components/SettingsPage.js";
 import { CapabilitiesPage } from "./components/CapabilitiesPage.js";
 import { CommandPalette, ShortcutsDialog, type PaletteCommand } from "./components/CommandPalette.js";
 import { BrandIcon } from "./components/BrandIcon.js";
 import { attachmentKind, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, MAX_MESSAGE_ATTACHMENT_BYTES, type AttachmentDraft } from "./components/Attachments.js";
 import { parseContentRef, type ContentRef } from "../../src/contracts/content.js";
-import { hiddenHarnesses, useMedia, usePreferences } from "./lib/prefs.js";
+import { hiddenHarnesses, useMedia, useNow, usePreferences } from "./lib/prefs.js";
 import { finished } from "./lib/turn.js";
 import { cn } from "./lib/cn.js";
-import { Dialog } from "./ui/overlay.js";
+import { backgroundOutcome, enableNotifications, markNotificationAsked, notificationsOfferable, notifyTurnEnded } from "./lib/notify.js";
+import { useToast } from "./ui/overlay.js";
 import { LogoMark, Notice, Spinner, TipProvider } from "./ui/primitives.js";
 
 interface PendingMessage { text: string; attachments: readonly string[]; createKey: string; sessionId: string | null; sendKey: string; committed: boolean;
@@ -156,6 +159,40 @@ function writeSessionRoute(id: string | null): void {
   window.history.replaceState(null, "", window.location.pathname + (id ? "#" + new URLSearchParams({ session: id }).toString() : ""));
 }
 const SHORTCUT_TARGETS = "input, textarea, select, [contenteditable=true]";
+const NO_ITEMS: readonly AttentionItem[] = [];
+/**
+ * Whether the Gateway reports an update for this Agent (ADR-054 S01): its upgrade check found one, or an installation's
+ * channel knows a version other than the installed one, as the Agent page says "可升级到 vX". Nothing is estimated.
+ */
+function hasUpdate(harness: HarnessView): boolean {
+  return harness.management.updateStatus === "available" || harness.installations.some(item => item.upgrade !== null && item.version !== null && item.latest !== null
+    && item.latest.error === null && item.latest.version !== null && item.latest.version !== item.version);
+}
+/**
+ * A modal layer of the shell drawn with the overlay classes of styles.css (the narrow drawer, the inbox sheet), as
+ * ui/overlay.tsx's Dialog draws them, which also says when its close has completed so the next layer can open after it.
+ */
+function Layer({ open, onOpenChange, onClosed, title, className, initialFocus, children }: {
+  readonly open: boolean; readonly onOpenChange: (open: boolean) => void; readonly onClosed: () => void; readonly title: string; readonly className: string;
+  readonly initialFocus?: RefObject<HTMLElement | null>; readonly children: ReactNode;
+}) {
+  return <BaseDialog.Root open={open} onOpenChange={next => onOpenChange(next)} onOpenChangeComplete={opened => { if (!opened) onClosed(); }}>
+    <BaseDialog.Portal>
+      <BaseDialog.Backdrop className="backdrop z-[60]"/>
+      <BaseDialog.Popup className={cn(className, "z-[61]")} {...(initialFocus ? { initialFocus } : {})}><BaseDialog.Title className="sr-only">{title}</BaseDialog.Title>{children}</BaseDialog.Popup>
+    </BaseDialog.Portal>
+  </BaseDialog.Root>;
+}
+/**
+ * The tab's title counts what waits for the user, "(2) HarnessHub" (ADR-054 X04), with its own clock so a deadline
+ * passing updates it without re-rendering the page.
+ */
+function WaitingTitle({ items }: { readonly items: readonly AttentionItem[] }) {
+  const now = useNow(items.some(item => item.expiresAt !== undefined)), count = liveItems(items, now).length;
+  useEffect(() => { document.title = count ? `(${count}) HarnessHub` : "HarnessHub"; }, [count]);
+  useEffect(() => () => { document.title = "HarnessHub"; }, []);
+  return null;
+}
 export function App() {
   const [api] = useState(() => new GatewayApi());
   const [initialRoute] = useState(sessionRoute);
@@ -164,6 +201,9 @@ export function App() {
   const [attention, setAttention] = useState<AttentionFrame | null>(null);
   const attentionSeen = useRef(new Set<string>());
   const openFromNotice = useRef<(id: string) => void>(() => {});
+  // Sees the open conversation's views as its stream delivers them, so a Turn that ends while the page is hidden is
+  // announced at once: the page's own render waits for an animation frame, which a hidden page does not get.
+  const watchTurn = useRef<(view: SessionView) => void>(() => {});
   const acceptAttention = useCallback((frame: AttentionFrame) => {
     setAttention(current => current !== null && current.revision > frame.revision ? current : frame);
     const names = new Map((liveState.current?.harnesses ?? []).map(harness => [harness.id, harness.name]));
@@ -184,6 +224,14 @@ export function App() {
   const narrow = useMedia("(max-width: 759px)");
   const [palette, setPalette] = useState(false);
   const [shortcuts, setShortcuts] = useState(false);
+  // The inbox of everything waiting for the user: beside its sidebar row, or a sheet of its own on a narrow screen.
+  const [inboxOpen, setInboxOpen] = useState(false);
+  // How the latest Turn of each conversation this page has shown ended, and the conversation's event sequence then; the
+  // summaries carry no outcome (ADR-054 S03).
+  const [outcomes, setOutcomes] = useState<ReadonlyMap<string, { readonly status: RunStatus; readonly seq: number }>>(() => new Map());
+  const toast = useToast();
+  // The inbox sheet focuses its first waiting item when it opens.
+  const firstWaiting = useRef<HTMLButtonElement>(null);
   // The message written while a reply runs, held by this tab until that Turn ends (ADR-042).
   const [queued, setQueued] = useState<QueuedMessage | null>(null);
   const [queueNotice, setQueueNotice] = useState<string | null>(null);
@@ -340,7 +388,7 @@ export function App() {
             if (stopped || sessionIdRef.current !== sessionId) return;
             const base = liveSession.current?.id === sessionId ? liveSession.current : null;
             const next = applySessionStreamFrame(base, frame, sessionId);
-            setConnectionError(null); stage(next);
+            setConnectionError(null); stage(next); watchTurn.current(next);
           }, frame => { if (!stopped) acceptAttention(frame); });
           if (!stopped) {
             if (performance.now() - started < 45_000) throw new ApiError("STREAM_EARLY_EOF", "实时连接提前结束。");
@@ -418,7 +466,9 @@ export function App() {
     return () => { stopped = true; controller.abort(); window.removeEventListener("focus", returned); document.removeEventListener("visibilitychange", visible); };
   }, [state !== null, readState, scanIfStale, scanSettled]);
   // Without a conversation open, the page subscribes to waiting requests alone; with one open, that conversation's stream
-  // carries them, so a page holds one long-lived connection either way.
+  // carries them, so a page holds one long-lived connection either way. While this one is down, the sidebar's service
+  // status says so; every connection starts with a frame, which says it is up again.
+  const [attentionDown, setAttentionDown] = useState(false);
   useEffect(() => {
     if (!state || sessionId !== null) return;
     let stopped = false, failures = 0;
@@ -431,17 +481,19 @@ export function App() {
     void (async () => {
       while (!stopped) {
         try {
-          await api.streamAttention(controller.signal, frame => { if (!stopped) { failures = 0; acceptAttention(frame); } });
+          await api.streamAttention(controller.signal, frame => { if (!stopped) { failures = 0; setAttentionDown(false); acceptAttention(frame); } });
           if (!stopped) await wait(250);
         } catch (failure: unknown) {
           if (stopped) return;
+          setAttentionDown(true);
           // The reminder is secondary: it retries quietly and gives up only when the login is gone.
           if (failure instanceof ApiError && ["AUTH_REQUIRED", "HOST_REJECTED", "ORIGIN_REJECTED"].includes(failure.code)) return;
           failures += 1; await wait(Math.min(15000, 500 * 2 ** Math.min(failures, 5)));
         }
       }
     })();
-    return () => { stopped = true; controller.abort(); };
+    // A conversation's own stream takes over, and reports its own state.
+    return () => { stopped = true; controller.abort(); setAttentionDown(false); };
   }, [api, state !== null, sessionId === null, acceptAttention]);
   const leave = (action: () => void) => {
     if (operation.current) return;
@@ -498,20 +550,60 @@ export function App() {
     setDraft({ ...EMPTY_SELECTION, harnessId: harness.id, controlId: entry?.controlId ?? control.id, model: entry?.nativeModel ?? "", nativeOptions: entry?.nativeOptions ?? {} }); setMessageDraft(""); setAttachments([]);
     setChatKey(value => value + 1); setPage("chat"); setSidebarOpen(false); setError(null); setConnectionError(null);
   });
+  /**
+   * ⌥⌘↓: opens the next conversation waiting for the user, in the inbox's order (most urgent first), after the one open
+   * now; with nothing waiting, or only the open one, a short note says so.
+   */
+  const nextWaiting = () => {
+    setPalette(false); setShortcuts(false); setInboxOpen(false);
+    const order: readonly string[] = [...new Set([...liveItems(attention?.items ?? [], Date.now())].sort(byUrgency).map(item => String(item.sessionId)))];
+    const here = page === "chat" ? order.indexOf(sessionIdRef.current ?? "") : -1, next = order[(here + 1) % Math.max(1, order.length)];
+    if (next === undefined) { toast.show({ title: "没有等你处理的事" }); return; }
+    if (here >= 0 && next === sessionIdRef.current) { toast.show({ title: "等你处理的只有这个对话" }); return; }
+    selectSession(next);
+  };
+  // One modal layer at a time (the palette, the shortcut sheet, and on a narrow screen the drawer and the inbox sheet): a
+  // layer that replaces another opens once the other has finished closing, so it holds the keyboard from the start
+  // instead of losing it to the closing one.
+  const afterLayer = useRef<(() => void) | null>(null);
+  const layerClosed = () => { const next = afterLayer.current; afterLayer.current = null; next?.(); };
+  const openLayer = (open: () => void) => {
+    if (!(palette || shortcuts || narrow && (sidebarOpen || inboxOpen))) { open(); return; }
+    afterLayer.current = open; setPalette(false); setShortcuts(false); setSidebarOpen(false); if (narrow) setInboxOpen(false);
+  };
+  // The drawer and the inbox take another form across the narrow breakpoint; crossing it closes them in the same render,
+  // so a drawer left open on a narrow window never shows again by itself the next time the window becomes narrow.
+  const [layoutNarrow, setLayoutNarrow] = useState(narrow);
+  if (layoutNarrow !== narrow) { setLayoutNarrow(narrow); setSidebarOpen(false); setInboxOpen(false); afterLayer.current = null; }
+  // The application's shortcuts (ADR-054 §5): ⇧⌘O, ⌘K, ⌘/, ⌥⌘↓ and ⌘B. The composer, approval dock and details panel
+  // handle ⌘J, ⌘., ⌘\, ⏎, esc and ↑ themselves. An input method's composition never triggers one, and ⌘N, ⌘T and ⌘W
+  // stay the browser's.
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (event.isComposing) return;
-      const command = event.metaKey || event.ctrlKey, key = event.key.toLowerCase();
-      if (command && event.shiftKey && key === "o") { event.preventDefault(); newChat(); return; }
-      if (command && !event.shiftKey && key === "k") { event.preventDefault(); setShortcuts(false); setPalette(value => !value); return; }
-      if (command && event.key === "/") { event.preventDefault(); setPalette(false); setShortcuts(value => !value); return; }
-      if (command && event.key === ".") { event.preventDefault(); setPreference("panel", !preferences.panel); return; }
-      if (command && !event.shiftKey && key === "b" && !(event.target instanceof Element && event.target.closest(SHORTCUT_TARGETS))) { event.preventDefault(); if (narrow) setSidebarOpen(value => !value); else setPreference("sidebar", !preferences.sidebar); return; }
+      if (event.isComposing || event.keyCode === 229 || !(event.metaKey || event.ctrlKey)) return;
+      const key = event.key.toLowerCase();
+      if (event.shiftKey && !event.altKey && key === "o") { event.preventDefault(); newChat(); return; }
+      if (!event.shiftKey && !event.altKey && key === "k") { event.preventDefault(); if (!narrow) setInboxOpen(false); if (palette) setPalette(false); else openLayer(() => setPalette(true)); return; }
+      if (!event.altKey && event.key === "/") { event.preventDefault(); if (!narrow) setInboxOpen(false); if (shortcuts) setShortcuts(false); else openLayer(() => setShortcuts(true)); return; }
+      if (event.altKey && !event.shiftKey && event.key === "ArrowDown") { event.preventDefault(); nextWaiting(); return; }
+      if (!event.shiftKey && !event.altKey && key === "b" && !(event.target instanceof Element && event.target.closest(SHORTCUT_TARGETS))) { event.preventDefault(); if (narrow) setSidebarOpen(value => !value); else setPreference("sidebar", !preferences.sidebar); return; }
     };
     window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
   });
   const startOperation = (label: string): boolean => { if (operation.current) return false; operation.current = true; setMutation(label); setError(null); return true; };
   const endOperation = () => { operation.current = false; if (mounted.current) setMutation(null); };
+  /**
+   * Sends a one-time option chosen in the inbox (ADR-054 X03). Another conversation's request is decided directly; the open
+   * conversation's goes through its operation and reads its view again, as a click in the conversation does.
+   */
+  const decideWaiting = async (item: AttentionItem, optionId: string): Promise<void> => {
+    if (item.sessionId !== sessionIdRef.current) { await api.decidePermission(item.sessionId, item.permissionId, optionId, requestKey()); return; }
+    if (!startOperation("permission")) throw new ApiError("OPERATION_PENDING", "这个对话正在处理另一项操作，稍后再试。");
+    try { await api.decidePermission(item.sessionId, item.permissionId, optionId, requestKey()); }
+    finally { endOperation(); }
+    // The decision is in; the view follows on the conversation's stream as well, so a failed read here changes nothing.
+    void api.session(item.sessionId, AbortSignal.timeout(15_000)).then(acceptSession, () => undefined);
+  };
   const send = async (value: string, retryAttachments?: readonly ContentRef[]) => {
     if (!state) throw new ApiError("NOT_READY", "工作空间尚未连接。");
     if (!startOperation("sending")) throw new ApiError("OPERATION_PENDING", "正在处理当前选择，请稍候；草稿已保留。");
@@ -808,49 +900,100 @@ export function App() {
   };
   const dirtyChanged = useCallback((dirty: boolean) => setEditorDirty(dirty), []);
   const harnessName = (id: string) => state?.harnesses.find(harness => harness.id === id)?.name ?? id;
+  // The open conversation's latest Turn, once it ends after the page went out of sight, is announced (ADR-054 X04): done
+  // or failed silently, an unknown result with the sound; one the user stopped is not. Each Turn once. Without
+  // notifications chosen, the first such Turn leads to one offer when the page is back.
+  const hiddenSince = useRef<number | null>(document.visibilityState === "hidden" ? Date.now() : null), announced = useRef(new Set<string>()), offerNotifications = useRef<RunStatus | null>(null);
+  watchTurn.current = (view: SessionView) => {
+    const run: PublicRun | undefined = view.runs.at(-1), ended = run?.timing?.endedAt, since = hiddenSince.current;
+    if (!run || since === null || document.visibilityState !== "hidden" || !finished(run.status) || run.status === "cancelled" || ended === undefined || ended < since || announced.current.has(run.id)) return;
+    announced.current.add(run.id);
+    notifyTurnEnded(run, harnessName(run.selection.harnessId), () => openFromNotice.current(view.id));
+    if (notificationsOfferable()) offerNotifications.current = run.status;
+  };
+  useEffect(() => {
+    const back = () => {
+      if (document.visibilityState === "hidden") { hiddenSince.current ??= Date.now(); return; }
+      hiddenSince.current = null;
+      const outcome = offerNotifications.current;
+      if (outcome === null) return;
+      offerNotifications.current = null; markNotificationAsked();
+      // The offer says how that Turn ended, so a failed one is never called done.
+      const id = toast.show({ title: backgroundOutcome(outcome), description: "要在做完或需要你时用系统通知告诉你吗？", action: { label: "开启通知", onClick: () => { toast.close(id); void enableNotifications(); } }, timeout: 8000 });
+    };
+    document.addEventListener("visibilitychange", back); window.addEventListener("focus", back);
+    return () => { document.removeEventListener("visibilitychange", back); window.removeEventListener("focus", back); };
+  }, [toast]);
+  // The outcome of each shown conversation's latest Turn, for the sidebar's red dot. It counts only while the summary still
+  // has the sequence it was seen at: once the conversation moved on out of sight, a later Turn may have ended otherwise,
+  // and the dot is left out rather than kept stale.
+  const lastStatus = session?.runs.at(-1)?.status, lastSeq = session?.lastSeq;
+  useEffect(() => {
+    if (!session || lastStatus === undefined || lastSeq === undefined) return;
+    const id = session.id;
+    setOutcomes(current => { const known = current.get(id); return known?.status === lastStatus && known.seq === lastSeq ? current : new Map(current).set(id, { status: lastStatus, seq: lastSeq }); });
+  }, [session?.id, lastStatus, lastSeq]);
+  const failed = useMemo(() => new Set((state?.sessions ?? []).flatMap(item => {
+    const known = outcomes.get(item.id);
+    return known?.status === "failed" && known.seq === item.updatedSeq ? [item.id] : [];
+  })), [outcomes, state?.sessions]);
   // What the lists offering a Harness for new work leave out (ADR-050): the frozen ones unless shown, never the open
   // conversation's or the draft's choice. Names, the inbox, details and history keep using every Harness.
   const currentHarness = session?.selection.harnessId ?? "";
   const hidden = useMemo(() => hiddenHarnesses(state?.harnesses ?? [], preferences.showFrozen, [draft.harnessId, currentHarness]), [state?.harnesses, preferences.showFrozen, draft.harnessId, currentHarness]);
+  const attentionItems = attention?.items ?? NO_ITEMS;
+  /** Opens the inbox: a sheet on a narrow screen, otherwise beside its sidebar row, showing the sidebar if it was hidden. */
+  const openInbox = () => {
+    if (narrow) { openLayer(() => setInboxOpen(true)); return; }
+    if (!preferences.sidebar) setPreference("sidebar", true);
+    setInboxOpen(true);
+  };
   const commands = ((): readonly PaletteCommand[] => {
     if (!state) return [];
     const go = (target: Page) => () => navigate(target);
     const theme = (value: "system" | "light" | "dark") => () => setPreference("theme", value);
+    const waiting = liveItems(attentionItems, Date.now()).length;
     return [
-      { id: "new", group: "操作", label: "新对话", icon: <MessageSquarePlus size={16}/>, shortcut: "⇧⌘O", run: newChat },
+      { id: "new", group: "操作", label: "新对话", icon: <SquarePen size={16}/>, shortcut: "⇧⌘O", run: newChat },
+      { id: "inbox", group: "操作", label: "等你处理", ...(waiting ? { hint: waiting + " 项" } : {}), keywords: "收件箱 审批 提问", icon: <Inbox size={16}/>, run: openInbox },
+      { id: "next-waiting", group: "操作", label: "下一件等你处理", keywords: "审批 提问", icon: <ArrowDown size={16}/>, shortcut: "⌥⌘↓", run: nextWaiting },
       ...state.sessions.slice(0, 200).map(item => ({ id: "session:" + item.id, group: "对话", label: item.title || "新对话", hint: harnessName(item.selection.harnessId), keywords: item.workspace, icon: <BrandIcon brand={item.selection.harnessId} name={harnessName(item.selection.harnessId)} size={16}/>, run: () => selectSession(item.id) })),
       ...state.harnesses.filter(harness => !hidden.has(harness.id) && harness.controls.some(control => control.available)).map(harness => ({ id: "start:" + harness.id, group: "用 Agent 开始新对话", label: "用 " + harness.name + " 开始新对话", keywords: harness.id, icon: <BrandIcon brand={harness.id} name={harness.name} size={16}/>, run: () => chooseHarness(harness) })),
-      { id: "harnesses", group: "前往", label: "我的 Agent", icon: <Bot size={16}/>, run: go("harnesses") },
-      { id: "capabilities", group: "前往", label: "能力", icon: <Blocks size={16}/>, run: () => { setCapabilityHarness(null); go("capabilities")(); } },
-      { id: "settings", group: "前往", label: "设置", icon: <Settings size={16}/>, run: go("settings") },
-      ...(state.providerManagement !== false ? [{ id: "providers", group: "前往", label: "模型与账号", icon: <SlidersHorizontal size={16}/>, run: go("providers") }] : []),
-      { id: "panel", group: "显示", label: preferences.panel ? "隐藏详情栏" : "显示详情栏", icon: <Columns2 size={16}/>, shortcut: "⌘.", run: () => setPreference("panel", !preferences.panel) },
+      // The Agent page was called "我的 Agent" before ADR-054; the old name still finds it.
+      { id: "harnesses", group: "前往", label: "Agent", keywords: "我的 Agent Harness 安装 升级 更新 卸载", icon: <Bot size={16}/>, run: go("harnesses") },
+      { id: "capabilities", group: "前往", label: "能力", keywords: "技能 MCP 指令 子 Agent 插件 Hooks", icon: <Blocks size={16}/>, run: () => { setCapabilityHarness(null); go("capabilities")(); } },
+      { id: "settings", group: "前往", label: "设置", keywords: "主题 通知 发现 快捷键", icon: <Settings size={16}/>, run: go("settings") },
+      ...(state.providerManagement !== false ? [{ id: "providers", group: "前往", label: "模型与账号", keywords: "Provider 模型连接", icon: <SlidersHorizontal size={16}/>, run: go("providers") }] : []),
+      { id: "panel", group: "显示", label: preferences.panel ? "收起详情面板" : "打开详情面板", icon: <PanelRight size={16}/>, shortcut: "⌘\\", run: () => setPreference("panel", !preferences.panel) },
       { id: "sidebar", group: "显示", label: preferences.sidebar ? "收起侧栏" : "展开侧栏", icon: <PanelLeft size={16}/>, shortcut: "⌘B", run: () => setPreference("sidebar", !preferences.sidebar) },
-      { id: "density", group: "显示", label: preferences.density === "compact" ? "过程显示：详细" : "过程显示：简洁", icon: <Columns2 size={16}/>, run: () => setPreference("density", preferences.density === "compact" ? "detailed" : "compact") },
+      { id: "density", group: "显示", label: preferences.density === "compact" ? "过程显示：详细" : "过程显示：简洁", icon: <ListCollapse size={16}/>, run: () => setPreference("density", preferences.density === "compact" ? "detailed" : "compact") },
       { id: "theme-system", group: "显示", label: "主题：跟随系统", icon: <Monitor size={16}/>, run: theme("system") },
       { id: "theme-light", group: "显示", label: "主题：浅色", icon: <Sun size={16}/>, run: theme("light") },
       { id: "theme-dark", group: "显示", label: "主题：深色", icon: <Moon size={16}/>, run: theme("dark") },
-      { id: "shortcuts", group: "帮助", label: "快捷键", icon: <Keyboard size={16}/>, shortcut: "⌘/", run: () => setShortcuts(true) },
+      { id: "shortcuts", group: "帮助", label: "全部快捷键", keywords: "快捷键 键盘", icon: <Keyboard size={16}/>, shortcut: "⌘/", run: () => setShortcuts(true) },
     ];
   })();
   if (!state) return <div className="flex h-dvh flex-col items-center justify-center gap-4 bg-app px-6 text-center">
-    <LogoMark size={40}/><h1 className="m-0 text-[20px] font-semibold tracking-[-0.01em]">HarnessHub</h1>
-    {bootError ? <div className="flex max-w-md flex-col items-center gap-3"><Notice tone="red">{bootError}</Notice><p className="m-0 text-[13px] text-fg-2">请使用本机网关启动时提供的入口链接。验证完成后，页面会自动隐藏链接中的令牌。</p>
-      <button className="btn" onClick={() => setBootAttempt(value => value + 1)}><RefreshCw size={14}/>重新连接</button></div>
-      : <div className="flex items-center gap-2 text-[13px] text-fg-2" role="status"><Spinner/>正在连接你的工作空间</div>}
+    <LogoMark size={40}/><h1 className="m-0 text-section">HarnessHub</h1>
+    {bootError ? <div className="flex max-w-md flex-col items-center gap-3"><Notice tone="red">{bootError}</Notice><p className="m-0 text-ui-sm text-fg-2">请使用本机网关启动时提供的入口链接。验证完成后，页面会自动隐藏链接中的令牌。</p>
+      <button type="button" className="btn" onClick={() => setBootAttempt(value => value + 1)}><RefreshCw size={14} aria-hidden="true"/>重新连接</button></div>
+      : <div className="flex items-center gap-2 text-ui-sm text-fg-2" role="status"><Spinner label=""/>正在连接你的工作空间</div>}
   </div>;
   const chooseAndClose = (id: string) => { setSidebarOpen(false); selectSession(id); };
   // An address naming the Provider page where Provider management is off opens the conversation instead.
   const shown: Page = page === "providers" && state.providerManagement === false ? "chat" : page;
-  const sidebar = <Sidebar providerManagement={state.providerManagement !== false} page={shown} sessions={state.sessions} attention={attention?.items ?? []} harnesses={state.harnesses} currentId={sessionId}
-    interactionBusy={mutation !== null} activeJobs={state.jobs.filter(installationActive).length} updates={state.harnesses.filter(harness => harness.management.updateStatus === "available").length}
-    groupBy={preferences.groupBy} onGroupBy={value => setPreference("groupBy", value)} connected={connectionError === null && managementConnectionError === null}
-    onCollapse={() => setPreference("sidebar", false)} {...(narrow ? { onClose: () => setSidebarOpen(false) } : {})} onPage={next => { setSidebarOpen(false); if (next === "capabilities") setCapabilityHarness(null); navigate(next); }} onNew={newChat} onSession={chooseAndClose} onPalette={() => { setSidebarOpen(false); setPalette(true); }}/>;
+  const inbox: InboxSource = { items: attentionItems, sessions: state.sessions, harnesses: state.harnesses, current: session, onLoad: (id, signal) => api.session(id, signal), onDecide: decideWaiting,
+    onOpen: id => { setInboxOpen(false); setSidebarOpen(false); selectSession(id); } };
+  const sidebar = <Sidebar providerManagement={state.providerManagement !== false} page={shown} sessions={state.sessions} harnesses={state.harnesses} currentId={sessionId}
+    interactionBusy={mutation !== null} activeJobs={state.jobs.filter(installationActive).length} updates={state.harnesses.filter(harness => !hidden.has(harness.id) && hasUpdate(harness)).length}
+    failed={failed} connected={connectionError === null && managementConnectionError === null && !attentionDown} inbox={inbox} inboxOpen={inboxOpen && !narrow} onInboxOpenChange={setInboxOpen}
+    onCollapse={() => setPreference("sidebar", false)} {...(narrow ? { onClose: () => setSidebarOpen(false), onInbox: openInbox } : {})} onPage={next => { setSidebarOpen(false); if (next === "capabilities") setCapabilityHarness(null); navigate(next); }} onNew={newChat} onSession={chooseAndClose} onPalette={() => openLayer(() => setPalette(true))}/>;
   const shell = { onMenu: () => setSidebarOpen(value => !value), sidebarHidden: !preferences.sidebar, onExpandSidebar: () => setPreference("sidebar", true), onChat: () => navigate("chat") };
   return <TipProvider delay={500}><div className="app-shell flex h-dvh overflow-hidden bg-app text-fg" data-page={shown}>
-    <a className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[80] focus:rounded-lg focus:bg-surface focus:px-3 focus:py-2 focus:shadow-md" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>跳到主要内容</a>
-    {narrow ? <Dialog open={sidebarOpen} onOpenChange={setSidebarOpen} title="主导航" kind="left">{sidebar}</Dialog>
-      : preferences.sidebar ? <div className="w-[264px] flex-none border-r border-line">{sidebar}</div> : null}
+    <WaitingTitle items={attentionItems}/>
+    <a className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[80] focus:rounded-control focus:bg-surface focus:px-3 focus:py-2 focus:text-ui-sm focus:shadow-pop" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>跳到主要内容</a>
+    {narrow ? <Layer open={sidebarOpen} onOpenChange={setSidebarOpen} onClosed={layerClosed} title="主导航" className="drawer-left-pop">{sidebar}</Layer>
+      : preferences.sidebar ? <div className="w-sidebar flex-none hairline-r">{sidebar}</div> : null}
     <main id="main-content" className={cn("flex min-w-0 flex-1 flex-col outline-none")} tabIndex={-1}>
       {shown === "chat" ? <ChatPage providerManagement={state.providerManagement !== false} onToolDetail={content => api.toolDetail(content)} {...(sessionId === null ? {} : { onDiagnostics: (run: string, includeContent: boolean) => api.runDiagnostics(sessionId, run, includeContent) })} onNativeBranch={()=>{ if(!session||!startOperation("native-branch"))return; void api.branchNative(session.id,session.epoch,requestKey()).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
         retainNew={keepNew}
@@ -874,8 +1017,9 @@ export function App() {
         : shown === "settings" ? <SettingsPage api={api} preferences={preferences} onPreference={setPreference} onRescan={() => void rescan()} scanning={mutation === "scanning"} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
         : <HarnessesPage api={api} harnesses={state.harnesses} hidden={hidden} onSettings={() => navigate("settings")} installationPolicy={state.installationPolicy} onUninstall={uninstall} onInstallOfficial={installOfficial} onUpgradeInstallation={upgradeInstallation} jobs={state.jobs} scanning={mutation === "scanning"} checking={checkingUpdates} submitting={submittingInstallations} cancelling={cancellingInstallations} unconfirmed={unconfirmedInstallations} error={error} connectionError={managementConnectionError} onRescan={() => void rescan()} onCheckUpdates={ids => void checkUpdates(ids)} onInstall={install} onOpenSession={selectSession} onConfirm={confirmInstallation} onCancelJob={job => void cancelInstallation(job)} onDismissError={() => setError(null)} onChoose={chooseHarness} onCapabilities={id => { setCapabilityHarness(id); navigate("capabilities"); }} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>}
     </main>
-    {leaveAction ? <div className="fixed right-4 bottom-4 left-4 z-[70] mx-auto max-w-[560px]"><Notice tone="amber" title="有尚未保存的修改" action={<><button className="btn btn-sm" onClick={() => setLeaveAction(null)}>继续编辑</button><button className="btn btn-sm btn-primary" onClick={() => { const action = leaveAction; setLeaveAction(null); setEditorDirty(false); action(); }}>放弃修改，离开</button></>} onDismiss={() => setLeaveAction(null)}>离开会丢弃编辑草稿。已受理的请求可在列表中查看。</Notice></div> : null}
-    <CommandPalette open={palette} onOpenChange={setPalette} commands={commands}/>
-    <ShortcutsDialog open={shortcuts} onOpenChange={setShortcuts}/>
+    {leaveAction ? <div className="motion-enter fixed right-4 bottom-4 left-4 z-[70] mx-auto max-w-[560px] rounded-block bg-surface shadow-pop"><Notice tone="amber" title="有尚未保存的修改" action={<><button type="button" className="btn btn-sm" onClick={() => setLeaveAction(null)}>继续编辑</button><button type="button" className="btn btn-sm btn-primary" onClick={() => { const action = leaveAction; setLeaveAction(null); setEditorDirty(false); action(); }}>放弃修改，离开</button></>} onDismiss={() => setLeaveAction(null)}>离开会丢弃编辑草稿。已受理的请求可在列表中查看。</Notice></div> : null}
+    {narrow ? <Layer open={inboxOpen} onOpenChange={setInboxOpen} onClosed={layerClosed} title="等你处理" className="sheet-pop inbox-pop" initialFocus={firstWaiting}><InboxList {...inbox} focusRef={firstWaiting} onClose={() => setInboxOpen(false)}/></Layer> : null}
+    <CommandPalette open={palette} onOpenChange={setPalette} commands={commands} onClosed={layerClosed}/>
+    <ShortcutsDialog open={shortcuts} onOpenChange={setShortcuts} onClosed={layerClosed}/>
   </div></TipProvider>;
 }
