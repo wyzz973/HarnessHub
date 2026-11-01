@@ -1,10 +1,11 @@
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { at, record, type ConfigFormat } from "./formats.js";
-import { appendJsonItem, appendTomlBlock, appendYamlItem, oneLineChange, onlyChanged, parsed, removeJsonItem, removeTomlBlock, removeYamlItem, setJson, setTomlKey, tomlBlocks, tomlTable, UnsafeEdit, type KeyPath } from "./edits.js";
+import type { OpenCodeLine } from "../../adapters/catalog-channels.js";
+import { appendJsonItem, appendJsonValue, appendTomlBlock, appendYamlItem, oneLineChange, onlyChanged, parsed, removeJsonElements, removeJsonItem, removeTomlBlock, removeYamlItem, setJson, setTomlKey, tomlBlocks, tomlTable, UnsafeEdit, type KeyPath } from "./edits.js";
 import type { LedgerEntry } from "./store.js";
 import { ownedOf, type McpStyle } from "./mcp-definitions.js";
-import { mcpEntry, mcpLocation } from "./mcp-edits.js";
+import { mcpEntry, mcpLocation, opencodeMcpStyle } from "./mcp-edits.js";
 import { findBlock } from "./instruction-blocks.js";
 
 /** Turning one skill off or on in one Harness's own switch (ADR-045 §4). `folder` is the copy Codex switches by its path. */
@@ -48,6 +49,13 @@ function none(file: string, reason: string): SwitchPlan { return { kind: "none",
 // What each switch reads as a skill's current setting, shared with `heldValue`.
 function overrideOf(value: unknown, name: string): unknown { return own(record(at(value, ["skillOverrides"])), name); }
 function skillRuleOf(value: unknown, name: string): unknown { const rule = at(value, ["permission", "skill"]); return typeof rule === "string" ? undefined : own(record(rule), name); }
+/** OpenCode 2's skill rules of a parsed file, in order: the `permissions` entries with action skill, a resource pattern and an effect (https://opencode.ai/v2/docs/permissions/). */
+function v2SkillRules(value: unknown): readonly { readonly resource: string; readonly effect: string }[] {
+  return list(at(value, ["permissions"])).map(record).flatMap(rule => rule.action === "skill" && typeof rule.resource === "string" && typeof rule.effect === "string" ? [{ resource: rule.resource, effect: rule.effect }] : []);
+}
+/** OpenCode 2: the effect of the last rule naming exactly this skill (what HarnessHub writes and reads back), or undefined. */
+function v2SkillRuleOf(value: unknown, name: string): unknown { return v2SkillRules(value).filter(rule => rule.resource === name).at(-1)?.effect; }
+function globMatch(pattern: string, name: string): boolean { return new RegExp("^" + pattern.replace(/[.+^${}()|[\]\\]/gu, "\\$&").replace(/\*/gu, ".*").replace(/\?/gu, ".") + "$", "u").test(name); }
 function entryEnabledOf(value: unknown, name: string): unknown { return record(own(record(at(value, ["skills", "entries"])), name)).enabled; }
 function copiesOf(text: string, skill: string): ReturnType<typeof tomlBlocks> { return tomlBlocks(text, "skills.config").filter(block => block.keys.get("path")?.value === skill); }
 function pluginEntryOf(value: unknown, id: string): unknown { return own(record(at(value, ["enabledPlugins"])), id); }
@@ -105,33 +113,47 @@ export function listSwitch(file: string, text: string, format: "jsonc" | "yaml",
     check: (before, after) => onlyChanged(before, after, path) && isDeepStrictEqual(plain(list(at(after, path))), plain(expected)) };
 }
 
-/** OpenCode's permission for a skill across its configuration files in load order: the last matching pattern decides. */
+/**
+ * OpenCode's permission for a skill across its configuration files in load order: the last matching rule decides, as in
+ * both dialects. Each file's OpenCode 1 rules (`permission.skill`: a string, or patterns to actions) are read before its
+ * OpenCode 2 rules (`permissions` entries with action skill); OpenCode 2 reads V1 files normalised the same way.
+ */
 export function opencodePermission(values: readonly unknown[], name: string): string | null {
   let action: string | null = null;
   for (const value of values) {
     const rule = at(value, ["permission", "skill"]);
     if (typeof rule === "string") action = rule;
-    else for (const [pattern, decided] of Object.entries(record(rule))) if (typeof decided === "string" && new RegExp("^" + pattern.replace(/[.+^${}()|[\]\\]/gu, "\\$&").replace(/\*/gu, ".*").replace(/\?/gu, ".") + "$", "u").test(name)) action = decided;
+    else for (const [pattern, decided] of Object.entries(record(rule))) if (typeof decided === "string" && globMatch(pattern, name)) action = decided;
+    for (const v2 of v2SkillRules(value)) if (globMatch(v2.resource, name)) action = v2.effect;
   }
   return action;
 }
-/** The last OpenCode rule that denies a skill, as written (`"be*": "deny"`), or null when none does. */
+/** The last OpenCode rule that matches a skill when it denies it, as written (`"be*": "deny"`, or a V2 rule object), or null when the last match allows. */
 function denyingRule(values: readonly unknown[], name: string): string | null {
   let found: string | null = null;
   for (const value of values) {
     const rule = at(value, ["permission", "skill"]);
     if (typeof rule === "string") found = rule === "deny" ? "\"skill\": \"deny\"" : null;
-    else for (const [pattern, decided] of Object.entries(record(rule))) if (opencodePermission([{ permission: { skill: { [pattern]: decided } } }], name) !== null) found = decided === "deny" ? JSON.stringify(pattern) + ": \"deny\"" : null;
+    else for (const [pattern, decided] of Object.entries(record(rule))) if (typeof decided === "string" && globMatch(pattern, name)) found = decided === "deny" ? JSON.stringify(pattern) + ": \"deny\"" : null;
+    for (const v2 of v2SkillRules(value)) if (globMatch(v2.resource, name)) found = v2.effect === "deny" ? JSON.stringify({ action: "skill", resource: v2.resource, effect: "deny" }) : null;
   }
   return found;
 }
+const OPENCODE_RESTART_NOTE = "OpenCode 不监视配置文件，重开后生效。";
 /**
- * OpenCode: `permission.skill.<name>` in the last of its configuration files that exists (or a new opencode.json), set to
- * "deny"; a rule is moved to the end so it is the last that matches. Turning it on restores HarnessHub's replaced value
- * and adds "allow" only where another pattern still denies it. `earlier` are the parsed files loaded before this one.
+ * OpenCode: the skill's rule in the last of its configuration files that exists (or a new opencode.json), in the dialect
+ * the caller decided (OpenCodeDialectSpec: the file's own, else the installed line's). OpenCode 1: `permission.skill.<name>`
+ * set to "deny", moved to the end so it is the last that matches. OpenCode 2: a `permissions` rule {action: "skill",
+ * resource: <name>, effect: "deny"} appended last. Turning it on restores HarnessHub's replaced value and adds an allow
+ * only where another pattern still denies it. `earlier` are the parsed files loaded before this one; `basis` says why
+ * this dialect, for the confirmation. A file holding both dialects' skill rules is refused: OpenCode's reading of it is
+ * not something HarnessHub can promise.
  */
-export function opencodeSwitch(file: string, text: string, earlier: readonly unknown[], request: SwitchRequest, context: SwitchContext): SwitchPlan {
-  const value = parsed(text, "jsonc"), rule = at(value, ["permission", "skill"]), path: KeyPath = ["permission", "skill"], key = "permission.skill/" + request.name;
+export function opencodeSwitch(file: string, text: string, earlier: readonly unknown[], request: SwitchRequest, context: SwitchContext, dialect: OpenCodeLine = "v1", basis: string | null = null): SwitchPlan {
+  const value = parsed(text, "jsonc"), notes = [OPENCODE_RESTART_NOTE, ...(basis === null ? [] : [basis])];
+  if (at(value, ["permission", "skill"]) !== undefined && v2SkillRules(value).length > 0) throw new UnsafeEdit("文件里同时有 permission.skill 与 permissions 的 skill 规则，两种写法混用，不知道 OpenCode 以哪条为准");
+  if (dialect === "v2") return opencodeSwitchV2(file, text, value, earlier, request, context, notes);
+  const rule = at(value, ["permission", "skill"]), path: KeyPath = ["permission", "skill"], key = "permission.skill/" + request.name;
   const current = skillRuleOf(value, request.name), entry = context.ledger(file, key), by = owner(entry, current, context);
   const effective = (parse: unknown) => opencodePermission([...earlier, parse], request.name);
   const moveTo = (source: string, decided: string): string => {
@@ -148,19 +170,51 @@ export function opencodeSwitch(file: string, text: string, earlier: readonly unk
   if (!request.enabled) {
     if (effective(value) === "deny") return none(file, "OpenCode 的 permission.skill 已经拒绝它。");
     return { kind: "edit", file, format: "jsonc", after: moveTo(text, "deny"), key, written: "deny", previous: current === undefined ? null : JSON.stringify(current), current: by, ledger: "set",
-      notes: ["OpenCode 不监视配置文件，重开后生效。"], check: (before, after) => onlyChanged(before, after, path) && othersKept(before, after) && effective(after) === "deny" };
+      notes, check: (before, after) => onlyChanged(before, after, path) && othersKept(before, after) && effective(after) === "deny" };
   }
   if (effective(value) !== "deny") return none(file, "OpenCode 没有拒绝它。");
   // Only a "deny" of its own name is taken back; a user's "allow" or "ask" stays, moved last when another pattern still denies.
   let after = text, wroteAllow = false;
   if (current === "deny") after = setJson(after, [...path, request.name], by === "harnesshub" && entry?.previous != null ? JSON.parse(entry.previous) as unknown : undefined);
-  const notes = ["OpenCode 不监视配置文件，重开后生效。"];
   if (effective(parsed(after, "jsonc")) === "deny") {
     const denying = denyingRule([...earlier, parsed(after, "jsonc")], request.name);
     after = moveTo(after, "allow"); wroteAllow = true;
     notes.push("你现有的规则 " + (denying ?? "permission.skill") + " 拒绝了它；启用会在末尾追加 " + JSON.stringify(request.name) + ": \"allow\" 覆盖它，这条 allow 记为 HarnessHub 写的。");
   }
   const written = own(record(at(parsed(after, "jsonc"), path)), request.name);
+  return { kind: "edit", file, format: "jsonc", after, key, written, previous: current === undefined ? null : JSON.stringify(current), current: by, ledger: wroteAllow ? "set" : "drop", notes,
+    check: (before, after) => onlyChanged(before, after, path) && othersKept(before, after) && effective(after) !== "deny" };
+}
+/**
+ * OpenCode 2's dialect of the switch: HarnessHub's rule for the skill is the one `permissions` entry with action skill and
+ * the skill's exact name as resource, kept last (the last matching rule wins); every other rule stays as it is. Turning
+ * the skill off appends {action: "skill", resource: <name>, effect: "deny"} (an existing rule of the name moves to the
+ * end); turning it on removes HarnessHub's deny or puts back the effect it replaced, and appends an allow only where
+ * another pattern still denies. The ledger key is `permissions.skill/<name>`.
+ */
+function opencodeSwitchV2(file: string, text: string, value: unknown, earlier: readonly unknown[], request: SwitchRequest, context: SwitchContext, notes: string[]): SwitchPlan {
+  const path: KeyPath = ["permissions"], key = "permissions.skill/" + request.name;
+  const current = v2SkillRuleOf(value, request.name), entry = context.ledger(file, key), by = owner(entry, current, context);
+  const effective = (parse: unknown) => opencodePermission([...earlier, parse], request.name);
+  const ours = (rule: unknown) => record(rule).action === "skill" && record(rule).resource === request.name;
+  const others = (parse: unknown) => plain(list(at(parse, path)).filter(rule => !ours(rule)));
+  const othersKept = (before: unknown, after: unknown) => isDeepStrictEqual(others(before), others(after));
+  const moveTo = (source: string, effect: string): string => appendJsonValue(removeJsonElements(source, path, ours), path, { action: "skill", resource: request.name, effect });
+  if (!request.enabled) {
+    if (effective(value) === "deny") return none(file, "OpenCode 的 permissions 已经拒绝它。");
+    return { kind: "edit", file, format: "jsonc", after: moveTo(text, "deny"), key, written: "deny", previous: current === undefined ? null : JSON.stringify(current), current: by, ledger: "set",
+      notes, check: (before, after) => onlyChanged(before, after, path) && othersKept(before, after) && effective(after) === "deny" };
+  }
+  if (effective(value) !== "deny") return none(file, "OpenCode 没有拒绝它。");
+  // Only a deny of its own name is taken back; what HarnessHub replaced comes back, and a user's allow or ask stays.
+  let after = text, wroteAllow = false;
+  if (current === "deny") after = by === "harnesshub" && entry?.previous != null ? moveTo(after, JSON.parse(entry.previous) as string) : removeJsonElements(after, path, ours);
+  if (effective(parsed(after, "jsonc")) === "deny") {
+    const denying = denyingRule([...earlier, parsed(after, "jsonc")], request.name);
+    after = moveTo(after, "allow"); wroteAllow = true;
+    notes.push("你现有的规则 " + (denying ?? "permissions") + " 拒绝了它；启用会在 permissions 末尾追加 { \"action\": \"skill\", \"resource\": " + JSON.stringify(request.name) + ", \"effect\": \"allow\" } 覆盖它，这条 allow 记为 HarnessHub 写的。");
+  }
+  const written = v2SkillRuleOf(parsed(after, "jsonc"), request.name);
   return { kind: "edit", file, format: "jsonc", after, key, written, previous: current === undefined ? null : JSON.stringify(current), current: by, ledger: wroteAllow ? "set" : "drop", notes,
     check: (before, after) => onlyChanged(before, after, path) && othersKept(before, after) && effective(after) !== "deny" };
 }
@@ -281,7 +335,11 @@ function isMcpStyle(harnessId: string): harnessId is McpStyle { return ["claude"
 export function heldValue(harnessId: string, key: string, text: string, shared: (raw: string) => boolean): unknown {
   const slash = key.indexOf("/"), prefix = key.slice(0, slash), rest = key.slice(slash + 1);
   // An MCP server HarnessHub wrote: its owned keys, read the way its writer reads them.
-  if (prefix === "mcp" && rest && isMcpStyle(harnessId)) { const style = harnessId; return ownedOf(mcpEntry(parsed(text, mcpLocation(style).format), style, rest), style); }
+  if (prefix === "mcp" && rest && isMcpStyle(harnessId)) {
+    // An OpenCode file is read in the dialect its own servers use (opencode-v2 for mcp.servers), whichever line is installed.
+    const value = parsed(text, mcpLocation(harnessId).format), style: McpStyle = harnessId === "opencode" ? opencodeMcpStyle(value) : harnessId;
+    return ownedOf(mcpEntry(value, style, rest), style);
+  }
   // A subagent file HarnessHub wrote: the whole file is HarnessHub's, so its text is the value.
   if (prefix === "subagent" && rest) return text;
   // A plugin switch: Claude Code's `enabledPlugins.<id>`, Codex's `enabled` in the plugin's table (undefined: not there).
@@ -300,6 +358,7 @@ export function heldValue(harnessId: string, key: string, text: string, shared: 
   if (prefix === "skillOverrides" && harnessId === "claude") return overrideOf(value, rest);
   if (prefix === "skills.disabled" && (harnessId === "gemini" || harnessId === "hermes")) return list(at(value, ["skills", "disabled"])).includes(rest) ? true : undefined;
   if (prefix === "permission.skill" && harnessId === "opencode") return skillRuleOf(value, rest);
+  if (prefix === "permissions.skill" && harnessId === "opencode") return v2SkillRuleOf(value, rest);
   if (prefix === "skills.entries" && harnessId === "openclaw") return entryEnabledOf(value, rest);
   if (prefix === "skills.external_dirs" && harnessId === "hermes") { const matching = externalDirsOf(value).filter(shared); return matching.length ? matching : undefined; }
   throw new UnsafeEdit("台账里有这个版本不认识的设置");

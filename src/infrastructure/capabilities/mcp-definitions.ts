@@ -21,8 +21,12 @@ export interface McpDefinition {
   readonly env: readonly McpEnv[];
   readonly headers: readonly McpHeader[];
 }
-/** The Harnesses whose MCP configuration HarnessHub reads into the list, by their file's style. */
-export type McpStyle = "claude" | "codex" | "cursor" | "opencode" | "gemini" | "hermes" | "dsh";
+/**
+ * The Harnesses whose MCP configuration HarnessHub reads into the list, by their file's style. OpenCode has two:
+ * `opencode` is OpenCode 1's dialect (`mcp.<name>`), `opencode-v2` OpenCode 2's (`mcp.servers.<name>`); a server is
+ * written the same way in both (https://opencode.ai/v2/docs/mcp-servers/, read 2026-11-01), only its place differs.
+ */
+export type McpStyle = "claude" | "codex" | "cursor" | "opencode" | "opencode-v2" | "gemini" | "hermes" | "dsh";
 /**
  * A JavaScript expression in DeepSeek Harness's YAML (`!!js …`), as the reader returns it; never evaluated. HarnessHub
  * writes only `process.env.NAME` and `'<prefix>' + process.env.NAME` with a checked name and prefix.
@@ -43,7 +47,7 @@ export interface McpRead { readonly definition: McpDefinition | null; readonly p
 
 /** The variable a whole value refers to in a style, with what comes before it (a header's `Bearer `); null for a literal. */
 function reference(value: string, style: McpStyle): { readonly variable: string; readonly prefix: string } | null {
-  const pattern = style === "cursor" ? /^(.*?)\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/su : style === "opencode" ? /^(.*?)\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/su
+  const pattern = style === "cursor" ? /^(.*?)\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/su : style === "opencode" || style === "opencode-v2" ? /^(.*?)\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/su
     : /^(.*?)\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))$/su;
   const match = pattern.exec(value);
   if (!match) return null;
@@ -127,7 +131,7 @@ export function readMcp(raw: unknown, style: McpStyle): McpRead {
       if (value.cwd !== undefined && jsReference(value.cwd) !== "cwd" && typeof value.cwd !== "string") return { definition: null, problem: "工作目录是 HarnessHub 读不了的表达式" };
       break;
     }
-    case "opencode": {
+    case "opencode": case "opencode-v2": {
       const list = strings(value.command) ?? [];
       url = text(value.url); command = list[0] ?? null; args = list.slice(1);
       transport = value.type === "remote" || url !== null ? "http" : "stdio";
@@ -167,6 +171,7 @@ export const MCP_OWNED: Readonly<Record<McpStyle, readonly string[]>> = {
   gemini: ["command", "args", "env", "cwd", "url", "httpUrl", "headers"],
   hermes: ["command", "args", "env", "cwd", "url", "headers"],
   opencode: ["type", "command", "environment", "url", "headers"],
+  "opencode-v2": ["type", "command", "environment", "url", "headers"],
   codex: ["command", "args", "env", "env_vars", "cwd", "url", "bearer_token_env_var", "env_http_headers", "http_headers"],
   dsh: ["serverName", "transport", "command", "args", "env", "cwd", "url", "headers"],
 };
@@ -189,7 +194,7 @@ export function mcpNameProblem(name: string, style: McpStyle): string | null {
  */
 export function renderMcp(definition: McpDefinition, style: McpStyle): McpRender {
   const refuse = (reason: string): McpRender => ({ ok: false, reason });
-  const ref = (variable: string, prefix = ""): string => prefix + (style === "cursor" ? "${env:" + variable + "}" : style === "opencode" ? "{env:" + variable + "}" : "${" + variable + "}");
+  const ref = (variable: string, prefix = ""): string => prefix + (style === "cursor" ? "${env:" + variable + "}" : style === "opencode" || style === "opencode-v2" ? "{env:" + variable + "}" : "${" + variable + "}");
   const env = Object.fromEntries(definition.env.map(item => [item.key, "variable" in item ? ref(item.variable) : item.value]));
   const headers = Object.fromEntries(definition.headers.map(item => [item.name, "variable" in item ? ref(item.variable, item.prefix) : item.value]));
   const optional = (key: string, value: unknown) => value === null || value === undefined || (Array.isArray(value) && !value.length) || (typeof value === "object" && !Array.isArray(value) && !Object.keys(value as object).length) ? {} : { [key]: value };
@@ -207,7 +212,7 @@ export function renderMcp(definition: McpDefinition, style: McpStyle): McpRender
         ...optional("env_http_headers", Object.fromEntries(definition.headers.filter(item => item !== bearer && "variable" in item).map(item => [item.name, (item as { variable: string }).variable]))),
         ...optional("http_headers", Object.fromEntries(definition.headers.filter(item => "value" in item).map(item => [item.name, (item as { value: string }).value]))) });
     }
-    case "opencode":
+    case "opencode": case "opencode-v2":
       return definition.transport === "stdio" ? done({ type: "local", command: [definition.command, ...definition.args], ...optional("environment", env) })
         : done({ type: "remote", url: definition.url, ...optional("headers", headers) });
     case "hermes":

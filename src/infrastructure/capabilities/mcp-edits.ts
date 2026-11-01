@@ -1,8 +1,9 @@
 import { isDeepStrictEqual } from "node:util";
 import { isMap, isScalar, isSeq, parseDocument, stringify } from "yaml";
+import { opencodeMcpServers } from "../../adapters/capability-reads.js";
 import { parsed, setJson, UnsafeEdit } from "./edits.js";
 import type { ConfigFormat } from "./formats.js";
-import { record } from "./formats.js";
+import { at, record } from "./formats.js";
 import { MCP_OWNED, ownedOf, type McpStyle } from "./mcp-definitions.js";
 
 /**
@@ -16,11 +17,14 @@ export function mcpLocation(style: McpStyle): { readonly path: readonly string[]
   switch (style) {
     case "claude": case "cursor": case "gemini": return { path: ["mcpServers"], format: "jsonc" };
     case "opencode": return { path: ["mcp"], format: "jsonc" };
+    case "opencode-v2": return { path: ["mcp", "servers"], format: "jsonc" };
     case "hermes": return { path: ["mcp_servers"], format: "yaml" };
     case "codex": return { path: ["mcp_servers"], format: "toml" };
     case "dsh": return { path: [], format: "yaml" };
   }
 }
+/** The style an OpenCode file's servers are read with: `opencode-v2` when they sit under `mcp.servers`, else OpenCode 1's `mcp.<name>`. */
+export function opencodeMcpStyle(value: unknown): "opencode" | "opencode-v2" { return opencodeMcpServers(value)?.dialect === "v2" ? "opencode-v2" : "opencode"; }
 /** DeepSeek Harness's MCP client rows in a patch list: the patch's index, the row's id and its `config`. */
 const DSH_CLIENT = "@deepseek-ai/dsh-mcp-client", DSH_PREFIX = "harnesshub-mcp-";
 export function dshRows(value: unknown): readonly { readonly index: number; readonly id: string | null; readonly config: Readonly<Record<string, unknown>> }[] {
@@ -48,8 +52,11 @@ export function editMcp(text: string, style: McpStyle, name: string, owned: Read
   let after: string;
   if (style === "dsh") after = setDshPatch(text, name, owned);
   else if (format === "jsonc") {
-    if (owned === undefined || current === undefined) after = setJson(text, [...path, name], owned === undefined ? undefined : { ...owned });
-    else {
+    if (owned === undefined || current === undefined) {
+      after = setJson(text, [...path, name], owned === undefined ? undefined : { ...owned });
+      // OpenCode 2 keeps its servers two levels down: an `mcp` left with nothing once the last server goes (its emptied `servers` map went with setJson) goes too, so the file returns byte for byte.
+      if (style === "opencode-v2" && owned === undefined) { const left = at(parsed(after, format), ["mcp"]); if (left !== null && typeof left === "object" && !Array.isArray(left) && Object.keys(left).length === 0) after = setJson(after, ["mcp"], undefined); }
+    } else {
       after = text;
       const entry = record(current);
       for (const key of MCP_OWNED[style]) {
@@ -88,12 +95,12 @@ function merged(current: Readonly<Record<string, unknown>>, owned: Readonly<Reco
 }
 function notOwned(entry: unknown, style: McpStyle): unknown { return Object.fromEntries(Object.entries(record(entry)).filter(([key]) => !MCP_OWNED[style].includes(key))); }
 function withoutEntry(value: unknown, path: readonly string[], name: string): unknown {
-  const copy = structuredClone(value ?? {}) as Record<string, unknown>;
+  const copy = structuredClone(value ?? {}) as Record<string, unknown>, chain: Record<string, unknown>[] = [copy];
   let node: Record<string, unknown> = copy;
-  for (const key of path) { const next = node[key]; if (next === null || typeof next !== "object" || Array.isArray(next)) return JSON.parse(JSON.stringify(copy)); node = next as Record<string, unknown>; }
+  for (const key of path) { const next = node[key]; if (next === null || typeof next !== "object" || Array.isArray(next)) return JSON.parse(JSON.stringify(copy)); node = next as Record<string, unknown>; chain.push(node); }
   delete node[name];
-  // An empty map and an absent one mean the same: no servers.
-  if (Object.keys(node).length === 0) { let parent: Record<string, unknown> = copy; for (const key of path.slice(0, -1)) parent = parent[key] as Record<string, unknown>; delete parent[path.at(-1)!]; }
+  // An empty map and an absent one mean the same: no servers; so does a container (OpenCode 2's `mcp`) holding nothing but one.
+  for (let depth = path.length; depth >= 1 && Object.keys(chain[depth]!).length === 0; depth--) delete chain[depth - 1]![path[depth - 1]!];
   return JSON.parse(JSON.stringify(copy));
 }
 

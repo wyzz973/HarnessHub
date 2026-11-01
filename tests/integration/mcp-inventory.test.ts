@@ -156,6 +156,32 @@ test("G064-M2 through the formal Gateway, a server the Harnesses have is listed 
   await f.clean();
 });
 
+test("G064-M8 through the formal Gateway, an OpenCode file in OpenCode 2's dialect is written under mcp.servers whatever line is installed, its own servers are listed, and removal brings it back byte for byte", macOnly, async t => {
+  const f = await gateway(t), opencodeFile = join(f.home, ".config", "opencode", "opencode.jsonc");
+  // The fixture's OpenCode is npm opencode-ai (OpenCode 1); this file is already in OpenCode 2's dialect, which decides.
+  const V2 = "{\n  // OpenCode 2's dialect, kept as it is\n  \"mcp\": {\n    \"servers\": {\n      \"two\": { \"type\": \"remote\", \"url\": \"https://two.example.com/mcp\", \"headers\": { \"Authorization\": \"Bearer {env:TWO_TOKEN}\" }, \"disabled\": true }\n    },\n    \"timeout\": { \"catalog\": 30000 }\n  },\n  \"plugins\": [\"opencode-foo@1.0.0\"],\n}\n";
+  await writeFile(opencodeFile, V2);
+  let view = await f.inventory();
+  assert.deepEqual(view.candidates.find(item => item.name === "two")?.foundIn, [{ harnessId: "opencode", file: "~/.config/opencode/opencode.jsonc" }], "a V2 file's own servers are listed");
+  assert.equal(view.candidates.some(item => item.name === "servers" || item.name === "timeout"), false);
+  await f.call("/capabilities/mcp/import", { candidate: view.candidates.find(item => item.name === "fs")!.id, claim: [] });
+  const check = await f.sync("fs", "opencode");
+  assert.equal(check.value.blocked, null, JSON.stringify(check.value));
+  assert.ok(check.value.notes.some(note => note === "写法：文件里已有 OpenCode 2 的写法（mcp.servers.<名>）。"), check.value.notes.join(" | "));
+  assert.ok(check.value.diff?.includes("\"fs\"") && !check.value.diff.includes("TWO_TOKEN"), check.value.diff ?? "");
+  assert.equal((await f.apply(check.value.fingerprint, "fs-opencode-v2")).value.status, "applied");
+  const written = JSON.parse((await readFile(opencodeFile, "utf8")).replace(/^\s*\/\/.*$/gmu, "").replace(/,(\s*[}\]])/gu, "$1")) as { mcp: { servers: Record<string, unknown>; timeout: unknown } };
+  assert.deepEqual(Object.keys(written.mcp.servers), ["two", "fs"]); assert.deepEqual(written.mcp.timeout, { catalog: 30000 });
+  assert.deepEqual(written.mcp.servers.fs, { type: "local", command: ["npx", "-y", "@modelcontextprotocol/server-filesystem"], environment: { FS_TOKEN: "{env:FS_TOKEN}" } });
+  view = await f.inventory();
+  assert.equal(state(view, "fs", "opencode"), "synced");
+  const remove = await f.call<CapabilityChangeCheck>("/capabilities/mcp/remove?" + new URLSearchParams({ name: "fs", harnessId: "opencode" }));
+  assert.equal(remove.value.blocked, null, JSON.stringify(remove.value));
+  assert.equal((await f.apply(remove.value.fingerprint, "fs-opencode-v2-remove")).value.status, "applied");
+  assert.equal(await readFile(opencodeFile, "utf8"), V2, "every other byte of the V2 file as it was");
+  await f.clean();
+});
+
 test("G064-M3 an entry someone else changed is left alone until the user writes it again, a same-named server of the user's is never overwritten, and what a Harness cannot express is refused", macOnly, async t => {
   const f = await gateway(t);
   let view = await f.inventory();

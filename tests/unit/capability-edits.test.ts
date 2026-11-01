@@ -27,6 +27,8 @@ const CODEX = "model = \"gpt-5\"            # the model stays\nmodel_reasoning_e
   + "# MCP servers\n[mcp_servers.docs]\ncommand = \"uvx\"\nargs = [\"docs-mcp\"]\nnote = \"\"\"\n[[skills.config]]\npath = \"/not/a/header\"\n\"\"\"\n\n[profiles.fast]\nmodel = \"gpt-5-mini\"\n";
 const HERMES = "# Hermes settings\nmodel:\n  default: deepseek-v4  # chosen\nskills:\n  disabled: [beta]\n  external_dirs:\n    - ~/.agents/skills\nmcp_servers: {}\n";
 const OPENCODE = "{\n  // the user's note\n  \"model\": \"deepseek/deepseek-v4\",\n  \"permission\": {\n    \"skill\": {\n      \"*\": \"allow\",\n      \"be*\": \"deny\"\n    }\n  },\n}\n";
+/** The same rules in OpenCode 2's dialect (https://opencode.ai/v2/docs/permissions/): an ordered array, the last matching rule wins. */
+const OPENCODE_V2 = "{\n  // OpenCode 2's dialect\n  \"model\": \"deepseek/deepseek-v4\",\n  \"permissions\": [\n    { \"action\": \"skill\", \"resource\": \"*\", \"effect\": \"allow\" },\n    { \"action\": \"skill\", \"resource\": \"be*\", \"effect\": \"deny\" },\n    { \"action\": \"shell\", \"resource\": \"git push *\", \"effect\": \"ask\" }\n  ],\n}\n";
 
 test("G064-W1 JSON and JSONC edits change only the setting: comments, order, indentation, the model and every other key stay byte for byte", () => {
   const off = setJson(CLAUDE, ["skillOverrides", "alpha"], "off");
@@ -129,6 +131,60 @@ test("G064-W2 each Harness's switch plans its own setting, restores what Harness
   assert.throws(() => openclawSwitch("/o/openclaw.json", "{}", request("a.b", false), context()), /点号/u);
   const clawOn = openclawSwitch("/o/openclaw.json", "{\"skills\":{\"entries\":{\"alpha\":{\"enabled\":false}}}}", request("alpha", true), context());
   assert.ok(clawOn.kind === "command" && clawOn.args.join(" ") === "config unset skills.entries.alpha.enabled" && !clawOn.comments && clawOn.check({ skills: { entries: { alpha: {} } } }));
+});
+
+test("G064-W12 OpenCode 2's permissions array is switched in its own dialect: a rule appended last, the file's other rules and comments kept, and the file back byte for byte; a mixed file is refused", () => {
+  const value = parsed(OPENCODE_V2, "jsonc"), rules = (text: string) => (parsed(text, "jsonc") as { permissions?: unknown[] }).permissions;
+  const ledger = (previous: string | null) => context([{ harnessId: "opencode", file: "/o.jsonc", key: "permissions.skill/alpha", valueHash: hash("deny"), previous }]);
+  // Reading: both dialects across files in load order, the last matching rule wins; a V2 file after a V1 file, and a V1 rule after a V2 file.
+  assert.deepEqual([opencodePermission([value], "beta"), opencodePermission([value], "alpha"), opencodePermission([parsed(OPENCODE, "jsonc"), value], "beta"), opencodePermission([value, { permission: { skill: { beta: "allow" } } }], "beta")], ["deny", "allow", "deny", "allow"]);
+  // Off: HarnessHub's rule goes last; the comment, the shell rule and the user's skill rules stay; the ledger key is the V2 one and the basis is a note.
+  const off = opencodeSwitch("/o.jsonc", OPENCODE_V2, [], request("alpha", false), context(), "v2", "写法：按安装的产品线");
+  assert.ok(off.kind === "edit" && off.key === "permissions.skill/alpha" && off.written === "deny" && off.previous === null && off.ledger === "set" && off.current === "none" && off.notes.includes("写法：按安装的产品线"));
+  const offText = off.kind === "edit" ? off.after : "";
+  assert.ok(offText.includes("// OpenCode 2's dialect") && offText.includes("\"git push *\""), offText);
+  assert.deepEqual(rules(offText), [{ action: "skill", resource: "*", effect: "allow" }, { action: "skill", resource: "be*", effect: "deny" }, { action: "shell", resource: "git push *", effect: "ask" }, { action: "skill", resource: "alpha", effect: "deny" }]);
+  assert.equal(opencodePermission([parsed(offText, "jsonc")], "alpha"), "deny"); assert.ok(off.kind === "edit" && off.check(value, parsed(offText, "jsonc")));
+  assert.equal(opencodeSwitch("/o.jsonc", offText, [], request("alpha", false), context(), "v2").kind, "none");
+  // On: HarnessHub's own deny is removed and the file is byte for byte what it was.
+  const on = opencodeSwitch("/o.jsonc", offText, [], request("alpha", true), ledger(null), "v2");
+  assert.ok(on.kind === "edit" && on.after === OPENCODE_V2 && on.ledger === "drop" && on.current === "harnesshub" && on.written === undefined);
+  // On where another pattern still denies: an allow goes last, and the note names the V2 rule it overrides.
+  const beta = opencodeSwitch("/o.jsonc", OPENCODE_V2, [], request("beta", true), context(), "v2");
+  assert.ok(beta.kind === "edit" && beta.ledger === "set" && beta.written === "allow" && beta.key === "permissions.skill/beta");
+  assert.deepEqual(rules(beta.kind === "edit" ? beta.after : "")?.at(-1), { action: "skill", resource: "beta", effect: "allow" });
+  assert.ok(beta.kind === "edit" && beta.notes.some(note => note.includes("{\"action\":\"skill\",\"resource\":\"be*\",\"effect\":\"deny\"}") && note.includes("\"effect\": \"allow\"")));
+  assert.ok(beta.kind === "edit" && beta.check(value, parsed(beta.after, "jsonc")));
+  // A file without permissions: the array is created for the deny and goes again with it, so the file returns byte for byte.
+  const bare = "{\n  // OpenCode 2 without rules\n  \"plugins\": [\"p\"],\n}\n";
+  const created = opencodeSwitch("/o.jsonc", bare, [], request("alpha", false), context(), "v2"), createdText = created.kind === "edit" ? created.after : "";
+  assert.deepEqual(rules(createdText), [{ action: "skill", resource: "alpha", effect: "deny" }]); assert.ok(createdText.includes("// OpenCode 2 without rules"));
+  const back = opencodeSwitch("/o.jsonc", createdText, [], request("alpha", true), ledger(null), "v2");
+  assert.equal(back.kind === "edit" ? back.after : "", bare);
+  // A one-line array stays on one line.
+  const oneLine = "{ \"permissions\": [{ \"action\": \"skill\", \"resource\": \"*\", \"effect\": \"allow\" }] }\n";
+  const oneOff = opencodeSwitch("/o.json", oneLine, [], request("alpha", false), context(), "v2");
+  assert.ok(oneOff.kind === "edit" && oneOff.after.split("\n").length === 2 && rules(oneOff.after)?.length === 2, oneOff.kind === "edit" ? oneOff.after : "");
+  // The user's own rule for the name is replaced by the deny and put back (moved last) on enabling, as the ledger remembers it; someone else's deny is only removed.
+  const asked = "{\n  \"permissions\": [\n    { \"action\": \"skill\", \"resource\": \"alpha\", \"effect\": \"ask\" },\n    { \"action\": \"shell\", \"resource\": \"*\", \"effect\": \"ask\" }\n  ]\n}\n";
+  const askOff = opencodeSwitch("/o.jsonc", asked, [], request("alpha", false), context(), "v2");
+  assert.ok(askOff.kind === "edit" && askOff.previous === "\"ask\"" && askOff.current === "other");
+  const askOn = opencodeSwitch("/o.jsonc", askOff.kind === "edit" ? askOff.after : "", [], request("alpha", true), ledger("\"ask\""), "v2");
+  assert.deepEqual(rules(askOn.kind === "edit" ? askOn.after : ""), [{ action: "shell", resource: "*", effect: "ask" }, { action: "skill", resource: "alpha", effect: "ask" }]);
+  const foreign = opencodeSwitch("/o.jsonc", askOff.kind === "edit" ? askOff.after : "", [], request("alpha", true), context(), "v2");
+  assert.ok(foreign.kind === "edit" && foreign.current === "other" && rules(foreign.after)?.every(rule => (rule as { resource: string }).resource !== "alpha"));
+  // Invalid samples: a file holding both dialects' skill rules is not written in either; a permissions value that is not a list is not a list.
+  assert.throws(() => opencodeSwitch("/o.json", "{ \"permission\": { \"skill\": { \"a\": \"deny\" } }, \"permissions\": [{ \"action\": \"skill\", \"resource\": \"b\", \"effect\": \"deny\" }] }", [], request("alpha", false), context(), "v2"), /混用/u);
+  assert.throws(() => opencodeSwitch("/o.json", "{ \"permission\": { \"skill\": { \"a\": \"deny\" } }, \"permissions\": [{ \"action\": \"skill\", \"resource\": \"b\", \"effect\": \"deny\" }] }", [], request("alpha", false), context()), /混用/u);
+  assert.throws(() => opencodeSwitch("/o.json", "{ \"permissions\": { \"skill\": \"deny\" } }", [], request("alpha", false), context(), "v2"), /不是列表/u);
+  // The V1 dialect is untouched by the new one: the same call without a dialect writes permission.skill.
+  const v1 = opencodeSwitch("/o.jsonc", OPENCODE, [], request("alpha", false), context());
+  assert.ok(v1.kind === "edit" && v1.key === "permission.skill/alpha" && rules(v1.after) === undefined);
+  // The ledger reads both keys back, and an MCP entry of a V2 file by its own place.
+  const held = (key: string, text: string) => heldValue("opencode", key, text, () => false);
+  assert.deepEqual([held("permissions.skill/alpha", offText), held("permissions.skill/zeta", offText), held("permissions.skill/alpha", OPENCODE), held("permission.skill/alpha", offText)], ["deny", undefined, undefined, undefined]);
+  assert.deepEqual(held("mcp/docs", "{ \"mcp\": { \"servers\": { \"docs\": { \"type\": \"local\", \"command\": [\"npx\"], \"disabled\": true } } } }"), { command: ["npx"], type: "local" });
+  assert.deepEqual(held("mcp/docs", "{ \"mcp\": { \"docs\": { \"type\": \"local\", \"command\": [\"npx\"], \"enabled\": false } } }"), { command: ["npx"], type: "local" });
 });
 
 test("G064-W2 the ledger reads what HarnessHub wrote back from each file as its switch reads it, so a removed or changed value is told from one still in place", () => {

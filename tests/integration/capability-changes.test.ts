@@ -99,6 +99,30 @@ test("G064-W3 under the Gateway's umask 077 a switched file keeps its own mode a
   await f.clean();
 });
 
+test("G064-W13 through the formal Gateway, an OpenCode file in OpenCode 2's dialect gets its skill rule appended to permissions whatever line is installed, and enabling brings the file back byte for byte", macOnly, async t => {
+  const f = await gateway(t), opencodeFile = join(f.home, ".config", "opencode", "opencode.jsonc");
+  await writeFile(join(f.home, ".config", "opencode", "config.json"), "{}\n");
+  // The fixture's OpenCode is npm opencode-ai (OpenCode 1); this file already uses OpenCode 2's permissions array, which decides the dialect.
+  const V2 = "{\n  // OpenCode 2's dialect\n  \"permissions\": [\n    { \"action\": \"skill\", \"resource\": \"*\", \"effect\": \"allow\" },\n    { \"action\": \"shell\", \"resource\": \"git push *\", \"effect\": \"ask\" }\n  ],\n}\n";
+  await writeFile(opencodeFile, V2);
+  const off = await f.check("opencode", "alpha", false);
+  assert.equal(off.value.blocked, null, JSON.stringify(off.value));
+  assert.ok(off.value.notes.some(note => note === "写法：文件里已有 OpenCode 2 的写法（permissions）。"), off.value.notes.join(" | "));
+  assert.ok(off.value.diff?.includes("+    { \"action\": \"skill\", \"resource\": \"alpha\", \"effect\": \"deny\" }") || off.value.diff?.includes("\"resource\": \"alpha\""), off.value.diff ?? "");
+  assert.equal((await f.apply(off.value.fingerprint, "switch-opencode-v2")).value.status, "applied");
+  const after = await readFile(opencodeFile, "utf8");
+  assert.ok(after.includes("// OpenCode 2's dialect") && !after.includes("\"permission\":"), after);
+  assert.deepEqual((JSON.parse(after.replace(/^\s*\/\/.*$/gmu, "").replace(/,(\s*[}\]])/gu, "$1")) as { permissions: unknown[] }).permissions.at(-1), { action: "skill", resource: "alpha", effect: "deny" });
+  const view = await f.call<CapabilitiesView>("/capabilities");
+  const alpha = view.value.entries.find(item => item.kind === "skill" && item.name === "alpha")!;
+  assert.ok(alpha.edges.filter(edge => edge.harnessId === "opencode").every(edge => edge.status === "disabled" && edge.reason?.includes("permissions 里 action 为 skill 的规则拒绝它（resource alpha）")), JSON.stringify(alpha.edges));
+  const on = await f.check("opencode", "alpha", true);
+  assert.equal(on.value.blocked, null, JSON.stringify(on.value));
+  assert.equal((await f.apply(on.value.fingerprint, "switch-opencode-v2-back")).value.status, "applied");
+  assert.equal(await readFile(opencodeFile, "utf8"), V2);
+  await f.clean();
+});
+
 test("G064-W3 a file changed after its check, a linked file, a Harness without a switch and a skill it does not see are refused before anything is written", macOnly, async t => {
   const f = await gateway(t), settings = join(f.home, ".claude", "settings.json");
   const stale = await f.check("claude", "epsilon", false);

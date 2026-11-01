@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { applyEdits, findNodeAtLocation, modify, parseTree, type FormattingOptions } from "jsonc-parser";
+import { applyEdits, findNodeAtLocation, getNodeValue, modify, parseTree, type FormattingOptions } from "jsonc-parser";
 import { parse as parseToml } from "smol-toml";
 import { isMap, isScalar, isSeq, parseDocument } from "yaml";
 import { parseConfig, record, type ConfigFormat } from "./formats.js";
@@ -21,28 +21,112 @@ export function jsonFormatting(text: string): FormattingOptions {
 }
 function splitBom(text: string): { bom: string; body: string } { return text.startsWith("﻿") ? { bom: "﻿", body: text.slice(1) } : { bom: "", body: text }; }
 
-/** JSON or JSONC: sets `path` to `value`, or removes it when `value` is undefined; an object left empty by a removal goes too. */
+/** The indentation unit a file uses, as text (two spaces unless its lines say otherwise). */
+function indentUnit(options: FormattingOptions): string { return options.insertSpaces === false ? "\t" : " ".repeat(options.tabSize ?? 2); }
+/** A value as JSON in the file's indentation, every line after the first indented like the line it goes on. */
+function printed(value: unknown, options: FormattingOptions, base: string): string { return JSON.stringify(value, null, indentUnit(options)).split("\n").join((options.eol ?? "\n") + base); }
+/** A value on one line (`{ "action": "skill", "resource": "x", "effect": "deny" }`) when it holds only scalars, else `printed`. */
+function compact(value: unknown, options: FormattingOptions, base: string): string {
+  const scalar = (item: unknown) => item === null || typeof item !== "object";
+  if (Array.isArray(value) && value.every(scalar)) return "[" + value.map(item => JSON.stringify(item)).join(", ") + "]";
+  if (value !== null && typeof value === "object" && !Array.isArray(value) && Object.values(value).every(scalar)) { const entries = Object.entries(value); return entries.length ? "{ " + entries.map(([key, item]) => JSON.stringify(key) + ": " + JSON.stringify(item)).join(", ") + " }" : "{}"; }
+  return printed(value, options, base);
+}
+/** The whitespace a line starts with before `offset`, when nothing else precedes it on that line; "" otherwise. */
+function indentBefore(body: string, offset: number): string { const line = body.slice(body.lastIndexOf("\n", offset - 1) + 1, offset); return /^[ \t]*$/u.test(line) ? line : ""; }
+/** The offset just after a comma that follows `end` with only blanks between (JSONC's trailing-comma style), or -1. */
+function commaAfter(body: string, end: number): number { let index = end; while (index < body.length && (body[index] === " " || body[index] === "\t")) index++; return body[index] === "," ? index + 1 : -1; }
+/**
+ * Appends a member to a non-empty multi-line object or array as text, after its last member and in the file's own
+ * trailing-comma style, without re-formatting anything else: jsonc-parser's `modify` would re-format the whole line the
+ * insertion touches, which expands a one-line sibling onto several lines. Null when the container is absent, empty or on
+ * one line, so the caller falls back to `modify`. `member` gets the indentation the new line has.
+ */
+function appendMember(body: string, container: KeyPath, member: (base: string) => string, options: FormattingOptions): string | null {
+  const tree = parseTree(body), node = tree === undefined ? undefined : container.length === 0 ? tree : findNodeAtLocation(tree, [...container]);
+  if (node === undefined || (node.type !== "object" && node.type !== "array") || !node.children?.length) return null;
+  const last = node.children.at(-1)!, end = last.offset + last.length;
+  if (!body.slice(node.offset, end).includes("\n")) return null;
+  const eol = options.eol ?? "\n", base = indentBefore(body, last.offset), comma = commaAfter(body, end);
+  return comma >= 0 ? body.slice(0, comma) + eol + base + member(base) + "," + body.slice(comma) : body.slice(0, end) + "," + eol + base + member(base) + body.slice(end);
+}
+/**
+ * Removes one member (a property or an array element) that has siblings as text: with the separating comma and blanks
+ * before it when it is the last, up to the next member's start otherwise, as jsonc-parser removes it but without its
+ * re-formatting of the neighbouring line. Null when the path is absent or the member is alone (the caller uses `modify`,
+ * which then also takes an emptied container).
+ */
+function cutMember(body: string, path: readonly (string | number)[]): string | null {
+  const tree = parseTree(body), node = tree === undefined ? undefined : findNodeAtLocation(tree, [...path]);
+  const member = node?.parent?.type === "property" ? node.parent : node, siblings = member?.parent?.children;
+  if (member === undefined || siblings === undefined || siblings.length < 2) return null;
+  const index = siblings.indexOf(member), previous = siblings[index - 1], next = siblings[index + 1];
+  if (index < 0) return null;
+  return next !== undefined ? body.slice(0, member.offset) + body.slice(next.offset) : body.slice(0, previous!.offset + previous!.length) + body.slice(member.offset + member.length);
+}
+/**
+ * JSON or JSONC: sets `path` to `value`, or removes it when `value` is undefined; an object left empty by a removal goes
+ * too. A new key goes after the last member of its nearest existing object (with its missing parents nested inside it),
+ * and a removal cuts the member alone, so every other line keeps its bytes; a value that exists is replaced in place.
+ */
 export function setJson(text: string, path: KeyPath, value: unknown): string {
   const { bom, body } = splitBom(text), formattingOptions = jsonFormatting(body);
-  let next = applyEdits(body, modify(body, [...path], value, { formattingOptions }));
+  const tree = parseTree(body), existing = tree === undefined ? undefined : findNodeAtLocation(tree, [...path]);
+  let next: string | null = null;
+  if (value === undefined) next = cutMember(body, path);
+  else if (existing === undefined) {
+    // The nearest existing ancestor object takes a new member; the keys below it are nested inside the value.
+    for (let depth = path.length - 1; depth >= 0 && next === null; depth--) {
+      const container = depth === 0 ? tree : tree === undefined ? undefined : findNodeAtLocation(tree, [...path.slice(0, depth)]);
+      if (container === undefined) continue;
+      if (container.type !== "object") break;
+      const nested = path.slice(depth + 1).reduceRight<unknown>((inner, key) => ({ [key]: inner }), value);
+      next = appendMember(body, path.slice(0, depth), base => JSON.stringify(path[depth]) + ": " + printed(nested, formattingOptions, base), formattingOptions);
+      break;
+    }
+  }
+  next ??= applyEdits(body, modify(body, [...path], value, { formattingOptions }));
   if (value === undefined && path.length > 1) {
     const parent = findNodeAtLocation(parseTree(next) ?? { type: "null", offset: 0, length: 0 }, [...path.slice(0, -1)]);
-    if (parent?.type === "object" && (parent.children?.length ?? 0) === 0) next = applyEdits(next, modify(next, [...path.slice(0, -1)], undefined, { formattingOptions }));
+    if (parent?.type === "object" && (parent.children?.length ?? 0) === 0) next = cutMember(next, path.slice(0, -1)) ?? applyEdits(next, modify(next, [...path.slice(0, -1)], undefined, { formattingOptions }));
   }
   if (body.trim() === "") next += formattingOptions.eol;
   return bom + next;
 }
 /** JSON or JSONC: appends a string to the array at `path`, creating it when absent; a one-line array stays on one line. */
-export function appendJsonItem(text: string, path: KeyPath, item: string): string {
-  const { bom, body } = splitBom(text), tree = parseTree(body), node = tree === undefined ? undefined : findNodeAtLocation(tree, [...path]);
-  if (node === undefined) return setJson(text, path, [item]);
+export function appendJsonItem(text: string, path: KeyPath, item: string): string { return appendJsonValue(text, path, item); }
+/**
+ * JSON or JSONC: appends any JSON value (OpenCode 2's permission rules are objects) to the array at `path`, creating it
+ * when absent; a one-line array stays on one line, a multi-line one gets a new line in its own style, and an object of
+ * scalars is written on one line (`{ "action": "skill", … }`). Nothing else in the file changes.
+ */
+export function appendJsonValue(text: string, path: KeyPath, value: unknown): string {
+  const { bom, body } = splitBom(text), tree = parseTree(body), node = tree === undefined ? undefined : findNodeAtLocation(tree, [...path]), formattingOptions = jsonFormatting(body);
+  if (node === undefined) return setJson(text, path, [value]);
   if (node.type !== "array") throw new UnsafeEdit("这个设置不是列表");
   const source = body.slice(node.offset, node.offset + node.length);
   if (!source.includes("\n")) {
     const close = node.offset + node.length - 1;
-    return bom + body.slice(0, close) + ((node.children?.length ?? 0) ? ", " : "") + JSON.stringify(item) + body.slice(close);
+    return bom + body.slice(0, close) + ((node.children?.length ?? 0) ? ", " : "") + compact(value, formattingOptions, "") + body.slice(close);
   }
-  return bom + applyEdits(body, modify(body, [...path, node.children?.length ?? 0], item, { formattingOptions: jsonFormatting(body), isArrayInsertion: true }));
+  return bom + (appendMember(body, path, base => compact(value, formattingOptions, base), formattingOptions) ?? applyEdits(body, modify(body, [...path, node.children?.length ?? 0], value, { formattingOptions, isArrayInsertion: true })));
+}
+/**
+ * JSON or JSONC: removes the elements of the array at `path` that `drop` selects by their parsed value, each cut alone; a
+ * one-line array is written back on one line, and an array left empty goes with its key, as `setJson` takes an emptied
+ * object, so a list HarnessHub created returns to never having been there.
+ */
+export function removeJsonElements(text: string, path: KeyPath, drop: (value: unknown) => boolean): string {
+  const { bom, body } = splitBom(text), tree = parseTree(body), node = tree === undefined ? undefined : findNodeAtLocation(tree, [...path]);
+  if (node === undefined || node.type !== "array") return text;
+  const children = node.children ?? [], dropped = children.map(child => drop(getNodeValue(child) as unknown));
+  if (!dropped.some(Boolean)) return text;
+  if (dropped.every(Boolean)) return setJson(text, path, undefined);
+  const source = body.slice(node.offset, node.offset + node.length);
+  if (!source.includes("\n")) return bom + body.slice(0, node.offset) + "[" + children.filter((_, index) => !dropped[index]).map(child => body.slice(child.offset, child.offset + child.length)).join(", ") + "]" + body.slice(node.offset + node.length);
+  let next = body;
+  for (let index = children.length - 1; index >= 0; index--) if (dropped[index]) next = cutMember(next, [...path, index]) ?? applyEdits(next, modify(next, [...path, index], undefined, { formattingOptions: jsonFormatting(body) }));
+  return bom + next;
 }
 /** JSON or JSONC: removes every element equal to `item` from the array at `path`; a one-line array is written back on one line. */
 export function removeJsonItem(text: string, path: KeyPath, item: string): string {

@@ -1,12 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { HarnessReadTable, ReadEnvironment } from "../../adapters/capability-reads.js";
+import { opencodeWriteDialect, type HarnessReadTable, type ReadEnvironment } from "../../adapters/capability-reads.js";
 import { CapabilityError, type CapabilityChangeCheck, type CapabilityChangeView, type McpCandidateView, type McpDefinitionView, type McpInventoryView, type McpServerView, type McpTargetView } from "../../contracts/capabilities.js";
 import { parsed, UnsafeEdit } from "./edits.js";
 import { readTarget, type TargetRead } from "./files.js";
 import { canonical, commandLine, definitionProblem, MCP_NAME, mcpNameProblem, mcpVariables, ownedOf, readMcp, renderMcp, sameMcp, type McpDefinition, type McpRender, type McpStyle } from "./mcp-definitions.js";
-import { dshRows, editMcp, mcpEntry, mcpGuard, mcpLocation } from "./mcp-edits.js";
+import { dshRows, editMcp, mcpEntry, mcpGuard, mcpLocation, opencodeMcpStyle } from "./mcp-edits.js";
 import type { InstalledHarness } from "./scan.js";
 import type { CapabilityStore } from "./store.js";
 import type { SwitchPlan } from "./switches.js";
@@ -76,12 +76,21 @@ export class McpInventory {
       return definition !== null && typeof definition === "object" && definitionProblem(definition) === null ? [{ name: row.name, definition, updatedAt: row.updatedAt }] : [];
     });
   }
-  /** Where a Harness keeps its servers (the file HarnessHub writes), or why HarnessHub does not write it. */
-  private async targetFile(table: HarnessReadTable | undefined, harnessId: string): Promise<{ readonly file: string; readonly style: McpStyle } | { readonly reason: string }> {
+  /**
+   * Where a Harness keeps its servers (the file HarnessHub writes), or why HarnessHub does not write it. OpenCode: the last
+   * of its configuration files that exists (else opencode.json), written in the dialect that file already uses, else the
+   * installed line's (OpenCodeDialectSpec); `note` says which and why, for the confirmation.
+   */
+  private async targetFile(table: HarnessReadTable | undefined, harnessId: string): Promise<{ readonly file: string; readonly style: McpStyle; readonly note?: string } | { readonly reason: string }> {
     if (table === undefined) return { reason: "这个 Harness 没有官网安装" };
     if (!isStyle(harnessId) || !WRITABLE.includes(harnessId)) return { reason: NOT_YET[harnessId] ?? "HarnessHub 不写这个 Harness 的 MCP 配置" };
     const source = table.mcp;
-    if (source.style === "opencode") { const existing = source.files.filter(file => existsSync(file)); return { file: existing.at(-1) ?? source.files[1] ?? source.files[0]!, style: "opencode" }; }
+    if (source.style === "opencode") {
+      const existing = source.files.filter(file => existsSync(file)), file = existing.at(-1) ?? source.files[1] ?? source.files[0]!, spec = table.dialect ?? { line: null, basis: null, cli: "", tui: "" };
+      const decided = opencodeWriteDialect(this.entries(file, "opencode")?.value ?? {}, "mcp", spec, { cli: spec.cli !== "" && existsSync(spec.cli), tui: spec.tui !== "" && existsSync(spec.tui) });
+      if (decided.dialect === "mixed") return { reason: decided.basis };
+      return { file, style: decided.dialect === "v2" ? "opencode-v2" : "opencode", note: "写法：" + decided.basis + "。" };
+    }
     if (source.style === "dsh") return { file: source.file, style: "dsh" };
     if (source.style === "unsupported" || source.style === "openclaw") return { reason: NOT_YET[harnessId] ?? "HarnessHub 不写这个 Harness 的 MCP 配置" };
     return { file: source.file, style: harnessId };
@@ -126,12 +135,14 @@ export class McpInventory {
     for (const harness of installed) {
       const table = tables.find(item => item.harnessId === harness.harnessId);
       if (table === undefined || !isStyle(harness.harnessId)) continue;
-      const style = harness.harnessId, source = table.mcp;
+      const source = table.mcp;
       const files = source.style === "opencode" ? source.files : source.style === "dsh" ? [...(() => { try { return readdirSync(source.profiles, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => join(source.profiles, entry.name, "cordis.patch.yml")).sort(); } catch { return []; } })(), source.file]
         : source.style === "unsupported" || source.style === "openclaw" ? [] : [source.file];
       for (const file of files) {
-        const entries = this.entries(file, style);
+        const entries = this.entries(file, harness.harnessId);
         if (entries === null) continue;
+        // An OpenCode file is read in the dialect its own servers are written in, whichever line is installed.
+        const style: McpStyle = harness.harnessId === "opencode" ? opencodeMcpStyle(entries.value) : harness.harnessId;
         const servers = style === "dsh" ? Object.fromEntries(dshRows(entries.value).flatMap(row => typeof row.config.serverName === "string" ? [[row.config.serverName, row.config]] : []))
           : (() => { let node: unknown = entries.value; for (const key of mcpLocation(style).path) node = node !== null && typeof node === "object" ? (node as Record<string, unknown>)[key] : undefined; return node !== null && typeof node === "object" && !Array.isArray(node) ? node as Record<string, unknown> : {}; })();
         for (const [name, raw] of Object.entries(servers)) {
@@ -227,7 +238,7 @@ export class McpInventory {
     const command = commandLine(item.definition), variables = mcpVariables(item.definition), values = this.host.environment.values, harnessName = installed.find(harness => harness.harnessId === harnessId)?.name ?? harnessId;
     const notes = [command === null ? "服务器在 " + item.definition.url + "，" + harnessName + " 会连接它。" : "目标 Harness 会以你的身份运行这个程序：" + this.shownText(command),
       ...(variables.length ? ["需要的环境变量：" + variables.map(variable => variable + (typeof values[variable] === "string" && values[variable] !== "" ? "（已设置）" : "（HarnessHub 的环境里未设置）")).join("、") + "。值不写进配置文件。"] : []),
-      ...await this.host.runningNotes(harnessId), AFTER[harnessId] ?? ""].filter(Boolean);
+      ...await this.host.runningNotes(harnessId), AFTER[harnessId] ?? "", "note" in located && located.note !== undefined ? located.note : ""].filter(Boolean);
     let blocked: string | null = null;
     if (!rendered.ok) blocked = rendered.reason;
     else if (state.state === "synced") blocked = "无需修改：" + harnessId + " 里已是清单的定义。";

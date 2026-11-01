@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promi
 import { isDeepStrictEqual } from "node:util";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
-import { capabilityReadTables, harnessDirectories, type HarnessReadTable, type PluginSource, type ReadEnvironment } from "../../adapters/capability-reads.js";
+import { capabilityReadTables, harnessDirectories, opencodeWriteDialect, type HarnessReadTable, type PluginSource, type ReadEnvironment } from "../../adapters/capability-reads.js";
 import { CAPABILITY_CHECK_MS, CapabilityError, LOCAL_SKILL_SOURCE, SKILL_SNAPSHOT_CHANGES, type CapabilityChangeCheck, type CapabilityChangeKind, type CapabilityChangeView, type CapabilityDrift, type CapabilityDriftState, type CapabilityHistory,
   type CapabilityLinkChange, type CapabilityOrphan, type CapabilityRestoreCheck, type InstructionCheckOption, type InstructionsView, type McpDefinitionView, type McpInventoryView, type SkillSourceListing,
   type SkillTextView, type SkillUpdateView, type SubagentDefinitionView, type SubagentInventoryView } from "../../contracts/capabilities.js";
@@ -625,7 +625,13 @@ export class CapabilityChanges {
         case "codex-skills-config": return { file, read, plan: codexSwitch(file, content, request, context), blocked: null };
         case "gemini-skills-disabled": return { file, read, plan: listSwitch(file, content, "jsonc", request, context, ["改完后在 Gemini 里用 /skills reload 或重开才生效。"]), blocked: null };
         case "hermes-skills-disabled": return { file, read, plan: listSwitch(file, content, "yaml", request, context, ["正在运行的 Hermes 网关（QQ 等消息渠道）不会被 HarnessHub 重启；长驻的 Hermes 进程要 /reload-skills 或重启后才生效。"]), blocked: null };
-        case "opencode-permission": return { file, read, plan: opencodeSwitch(file, content, earlier, request, context), blocked: null };
+        case "opencode-permission": {
+          // The dialect the rule is written in (OpenCodeDialectSpec): the file's own, else the installed line's, else its other keys and the terminal-client files, else OpenCode 2.
+          const spec = table.dialect ?? { line: null, basis: null, cli: "", tui: "" };
+          const decided = opencodeWriteDialect(parsed(content, "jsonc"), "permissions", spec, { cli: spec.cli !== "" && existsSync(spec.cli), tui: spec.tui !== "" && existsSync(spec.tui) });
+          if (decided.dialect === "mixed") return { file, read, plan: null, blocked: "无法安全修改 " + this.shown(file) + "：" + decided.basis + "。" };
+          return { file, read, plan: opencodeSwitch(file, content, earlier, request, context, decided.dialect, "写法：" + decided.basis + "。"), blocked: null };
+        }
         case "openclaw-entries": return { file, read, plan: openclawSwitch(file, content, request, context), blocked: null };
       }
     } catch (error) {

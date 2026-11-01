@@ -9527,6 +9527,38 @@
       "evidence": null
     },
     {
+      "id": "G064-W12",
+      "task": "G064",
+      "requirements": [
+        "R27"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "planned_file": "tests/unit/capability-edits.test.ts",
+      "scenario": "OpenCode 2 的 permissions 数组按自己的写法停用与启用技能，V1 文件仍按 permission.skill（ADR-053，2026-11-01）",
+      "expected": "opencodePermission 跨文件、跨两种写法按加载顺序取最后匹配的规则；停用时在 permissions 末尾追加 {action: skill, resource: <名>, effect: deny}，注释、shell 规则与用户的 skill 规则原样保留，台账键为 permissions.skill/<名>，写法依据作为 note；再停用为 none；启用时删掉 HarnessHub 自己的 deny，文件逐字节回到原样；被其他模式拒绝时末尾追加 allow 并在说明里点名那条 V2 规则；没有 permissions 的文件会建出数组、启用后数组随之去掉、文件逐字节回到原样；单行数组保持单行；用户自己的 ask 规则被替换后按台账恢复并移到末尾，别人的 deny 只删除；同时有 permission.skill 与 permissions 的文件两种写法都拒绝（混用），permissions 不是列表时拒绝；不传写法时仍写 permission.skill；heldValue 读回 permissions.skill/<名> 与 permission.skill/<名>，以及 V2 文件里 mcp.servers 下与 V1 文件里 mcp 下的服务器自有键",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G064-W13",
+      "task": "G064",
+      "requirements": [
+        "R27"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/capability-changes.test.ts",
+      "scenario": "经正式 Gateway 在 OpenCode 2 写法的文件里停用与启用技能，不论本机装的是哪条线",
+      "expected": "本机安装是 npm opencode-ai（OpenCode 1），而 opencode.jsonc 已用 permissions 数组：检查不阻止，notes 写明“写法：文件里已有 OpenCode 2 的写法（permissions）”，差异显示追加的 skill 规则；应用后文件保留注释、没有 permission 键、permissions 末尾是 {action: skill, resource: alpha, effect: deny}；能力视图里该技能对 OpenCode 显示停用、原因写明 permissions 的 skill 规则与 resource；启用后文件逐字节回到原样；回答不含凭据与家目录，没有程序在沙箱外运行",
+      "status": "planned",
+      "evidence": null
+    },
+    {
       "id": "G064-M1",
       "task": "G064",
       "requirements": [
@@ -9619,6 +9651,38 @@
       "planned_file": "tests/unit/mcp-inventory.test.ts",
       "scenario": "DeepSeek Harness 的 MCP 客户端行与补丁列表",
       "expected": "按 dsh 的写法读出服务器（!!js process.env.X 为引用，process.cwd() 等同不写工作目录），写回时变量与带前缀的请求头都是 !!js 表达式，不支持 SSE，读不了的表达式拒绝；空列表 [] 里加入一条后是块列表，第二条在后，原位替换，全部移除后逐字节回到原文件；原来没有的文件新建为列表、移除后留下 []，绝不留空文件；单行的非空列表与非列表的顶层被拒绝",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G064-M7",
+      "task": "G064",
+      "requirements": [
+        "R27"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "planned_file": "tests/unit/mcp-inventory.test.ts",
+      "scenario": "OpenCode 2 的 MCP 写法（mcp.servers）与 OpenCode 1 的（mcp.<名>）各自原样读写（ADR-053，2026-11-01）",
+      "expected": "opencodeMcpStyle 按文件自己的服务器位置选 opencode 或 opencode-v2，两条路径互不看见对方的服务器；同一服务器在两种写法里渲染相同（type local 的 command 数组、type remote 的 url，{env:NAME} 引用），MCP_OWNED 相同；V2 文件加服务器写进 mcp.servers、保留注释与 timeout 默认值、只改自有键而留下用户的 disabled，删除后逐字节回到原样；V1 文件加服务器仍写在 mcp 下、不出现 servers，删除后逐字节回到原样；没有服务器的文件按调用方决定的写法建出 mcp.servers.<名> 或 mcp.<名>，最后一个服务器删除后整个 mcp 键也去掉、文件逐字节回到原样；按 V1 路径读 V2 文件会把 servers 容器当成服务器，所以写法在任何改动前先按文件判定",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G064-M8",
+      "task": "G064",
+      "requirements": [
+        "R27"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/mcp-inventory.test.ts",
+      "scenario": "经正式 Gateway 把清单里的服务器写进 OpenCode 2 写法的文件，不论本机装的是哪条线",
+      "expected": "本机安装是 npm opencode-ai（OpenCode 1），而 opencode.jsonc 已用 mcp.servers：候选里列出该文件自己的服务器、不把 servers 或 timeout 当服务器；写入检查不阻止，notes 写明“写法：文件里已有 OpenCode 2 的写法（mcp.servers.<名>）”，差异不含 TWO_TOKEN；应用后 mcp.servers 多出该服务器（type local、command 数组、environment 的 {env:FS_TOKEN}）、timeout 默认值与其他服务器不动，状态为 synced；移除后文件逐字节回到原样；回答不含凭据与家目录，没有程序在沙箱外运行",
       "status": "planned",
       "evidence": null
     },

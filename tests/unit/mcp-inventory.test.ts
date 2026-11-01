@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parse as parseToml } from "smol-toml";
 import { parse as parseYaml } from "yaml";
-import { UnsafeEdit } from "../../src/infrastructure/capabilities/edits.js";
-import { editMcp, mcpEntry } from "../../src/infrastructure/capabilities/mcp-edits.js";
-import { commandLine, definitionProblem, mcpNameProblem, mcpVariables, ownedOf, readMcp, renderMcp, sameMcp, type McpDefinition } from "../../src/infrastructure/capabilities/mcp-definitions.js";
+import { parsed, UnsafeEdit } from "../../src/infrastructure/capabilities/edits.js";
+import { editMcp, mcpEntry, opencodeMcpStyle } from "../../src/infrastructure/capabilities/mcp-edits.js";
+import { commandLine, definitionProblem, MCP_OWNED, mcpNameProblem, mcpVariables, ownedOf, readMcp, renderMcp, sameMcp, type McpDefinition } from "../../src/infrastructure/capabilities/mcp-definitions.js";
 
 const DOCS: McpDefinition = { transport: "stdio", command: "npx", args: ["-y", "@acme/docs-mcp"], cwd: null, url: null,
   env: [{ key: "DOCS_TOKEN", variable: "DOCS_TOKEN" }, { key: "LOG_LEVEL", value: "info" }], headers: [] };
@@ -112,6 +112,41 @@ test("G064-M1 a JSON server's owned keys change in place, the user's keys and co
   const added = editMcp(CURSOR, "cursor", "remote", (renderMcp(REMOTE, "cursor") as { value: Record<string, unknown> }).value);
   assert.deepEqual(Object.keys(JSON.parse(added.replace(/\/\/.*\n/u, "\n")).mcpServers), ["docs", "remote"]);
   assert.equal(editMcp(added, "cursor", "remote", undefined).replace(/\s+/gu, ""), CURSOR.replace(/\s+/gu, ""));
+});
+
+test("G064-M7 OpenCode 2's dialect keeps servers under mcp.servers: read, rendered and edited like OpenCode 1's, each file in its own shape and back byte for byte", () => {
+  const V1 = "{\n  // OpenCode 1\n  \"model\": \"m\",\n  \"mcp\": {\n    \"docs\": { \"type\": \"local\", \"command\": [\"npx\", \"-y\", \"@acme/docs-mcp\"], \"enabled\": false }\n  }\n}\n";
+  const V2 = "{\n  // OpenCode 2\n  \"model\": \"m\",\n  \"mcp\": {\n    \"servers\": {\n      \"docs\": { \"type\": \"local\", \"command\": [\"npx\", \"-y\", \"@acme/docs-mcp\"], \"disabled\": true }\n    },\n    \"timeout\": { \"catalog\": 30000 }\n  }\n}\n";
+  const PLAIN = "{\n  // no servers yet\n  \"plugins\": [\"opencode-foo\"],\n}\n";
+  // Which style a file's servers are read with is the file's own; the V1 path does not see V2's servers and the other way round.
+  assert.deepEqual([opencodeMcpStyle(parsed(V1, "jsonc")), opencodeMcpStyle(parsed(V2, "jsonc")), opencodeMcpStyle(parsed(PLAIN, "jsonc"))], ["opencode", "opencode-v2", "opencode"]);
+  assert.deepEqual([mcpEntry(parsed(V2, "jsonc"), "opencode-v2", "docs") !== undefined, mcpEntry(parsed(V2, "jsonc"), "opencode", "docs"), mcpEntry(parsed(V1, "jsonc"), "opencode-v2", "docs")], [true, undefined, undefined]);
+  // A server is written the same way in both dialects; only its place differs, and the owned keys are the same.
+  const rendered = renderMcp(DOCS, "opencode-v2"), remote = renderMcp(REMOTE, "opencode-v2");
+  assert.deepEqual(rendered, renderMcp(DOCS, "opencode")); assert.deepEqual(remote, renderMcp(REMOTE, "opencode"));
+  assert.ok(rendered.ok && remote.ok && sameMcp(readMcp(rendered.value, "opencode-v2").definition!, DOCS) && sameMcp(readMcp(remote.value, "opencode-v2").definition!, REMOTE));
+  assert.deepEqual(MCP_OWNED["opencode-v2"], MCP_OWNED.opencode);
+  if (!rendered.ok || !remote.ok) return;
+  // A V2 file gains a server under mcp.servers, keeps its comment and its timeout defaults, and comes back byte for byte.
+  const addedV2 = editMcp(V2, "opencode-v2", "remote", remote.value), valueV2 = parsed(addedV2, "jsonc") as { mcp: { servers: Record<string, unknown>; timeout: unknown } };
+  assert.deepEqual([Object.keys(valueV2.mcp.servers), valueV2.mcp.timeout, addedV2.includes("// OpenCode 2")], [["docs", "remote"], { catalog: 30000 }, true]);
+  assert.deepEqual(ownedOf(mcpEntry(valueV2, "opencode-v2", "remote"), "opencode-v2"), remote.value);
+  assert.equal(editMcp(addedV2, "opencode-v2", "remote", undefined), V2);
+  // Its owned keys change in place; the user's disabled stays.
+  const changedV2 = editMcp(V2, "opencode-v2", "docs", rendered.value), docs = mcpEntry(parsed(changedV2, "jsonc"), "opencode-v2", "docs") as Record<string, unknown>;
+  assert.deepEqual([ownedOf(docs, "opencode-v2"), docs.disabled], [rendered.value, true]);
+  // A V1 file stays V1: the server goes beside the others under mcp, never under a servers map.
+  const addedV1 = editMcp(V1, "opencode", "remote", remote.value), valueV1 = parsed(addedV1, "jsonc") as { mcp: Record<string, unknown> };
+  assert.deepEqual([Object.keys(valueV1.mcp), "servers" in valueV1.mcp], [["docs", "remote"], false]);
+  assert.equal(editMcp(addedV1, "opencode", "remote", undefined), V1);
+  // A file without servers takes the dialect the caller decided, and loses the whole mcp key again when the last server goes.
+  const firstV2 = editMcp(PLAIN, "opencode-v2", "remote", remote.value), firstV1 = editMcp(PLAIN, "opencode", "remote", remote.value);
+  assert.deepEqual(Object.keys((parsed(firstV2, "jsonc") as { mcp: { servers: Record<string, unknown> } }).mcp.servers), ["remote"]);
+  assert.deepEqual(Object.keys((parsed(firstV1, "jsonc") as { mcp: Record<string, unknown> }).mcp), ["remote"]);
+  assert.equal(editMcp(firstV2, "opencode-v2", "remote", undefined), PLAIN); assert.equal(editMcp(firstV1, "opencode", "remote", undefined), PLAIN);
+  // Why the style is decided per file before any edit: read the V1 way, a V2 file's `servers` container looks like one server named servers.
+  assert.notEqual(mcpEntry(parsed(V2, "jsonc"), "opencode", "servers"), undefined);
+  assert.equal(opencodeMcpStyle(parsed(V2, "jsonc")), "opencode-v2", "so the planners never take the V1 path through a V2 file");
 });
 
 test("G064-M4 Claude's MCP entries are written by its own commands, predicted on a private copy, checked only at the server's entry, and a session's overwrite shows as lost", async t => {
