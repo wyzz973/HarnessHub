@@ -226,8 +226,9 @@ export function App() {
   const [shortcuts, setShortcuts] = useState(false);
   // The inbox of everything waiting for the user: beside its sidebar row, or a sheet of its own on a narrow screen.
   const [inboxOpen, setInboxOpen] = useState(false);
-  // How the latest Turn of each conversation this page has shown ended; the summaries carry no outcome (ADR-054 S03).
-  const [outcomes, setOutcomes] = useState<ReadonlyMap<string, RunStatus>>(() => new Map());
+  // How the latest Turn of each conversation this page has shown ended, and the conversation's event sequence then; the
+  // summaries carry no outcome (ADR-054 S03).
+  const [outcomes, setOutcomes] = useState<ReadonlyMap<string, { readonly status: RunStatus; readonly seq: number }>>(() => new Map());
   const toast = useToast();
   // The inbox sheet focuses its first waiting item when it opens.
   const firstWaiting = useRef<HTMLButtonElement>(null);
@@ -923,14 +924,19 @@ export function App() {
     document.addEventListener("visibilitychange", back); window.addEventListener("focus", back);
     return () => { document.removeEventListener("visibilitychange", back); window.removeEventListener("focus", back); };
   }, [toast]);
-  // The outcome of each shown conversation's latest Turn, for the sidebar's red dot.
-  const lastStatus = session?.runs.at(-1)?.status;
+  // The outcome of each shown conversation's latest Turn, for the sidebar's red dot. It counts only while the summary still
+  // has the sequence it was seen at: once the conversation moved on out of sight, a later Turn may have ended otherwise,
+  // and the dot is left out rather than kept stale.
+  const lastStatus = session?.runs.at(-1)?.status, lastSeq = session?.lastSeq;
   useEffect(() => {
-    if (!session || lastStatus === undefined) return;
+    if (!session || lastStatus === undefined || lastSeq === undefined) return;
     const id = session.id;
-    setOutcomes(current => current.get(id) === lastStatus ? current : new Map(current).set(id, lastStatus));
-  }, [session?.id, lastStatus]);
-  const failed = useMemo(() => new Set([...outcomes].flatMap(([id, status]) => status === "failed" ? [id] : [])), [outcomes]);
+    setOutcomes(current => { const known = current.get(id); return known?.status === lastStatus && known.seq === lastSeq ? current : new Map(current).set(id, { status: lastStatus, seq: lastSeq }); });
+  }, [session?.id, lastStatus, lastSeq]);
+  const failed = useMemo(() => new Set((state?.sessions ?? []).flatMap(item => {
+    const known = outcomes.get(item.id);
+    return known?.status === "failed" && known.seq === item.updatedSeq ? [item.id] : [];
+  })), [outcomes, state?.sessions]);
   // What the lists offering a Harness for new work leave out (ADR-050): the frozen ones unless shown, never the open
   // conversation's or the draft's choice. Names, the inbox, details and history keep using every Harness.
   const currentHarness = session?.selection.harnessId ?? "";

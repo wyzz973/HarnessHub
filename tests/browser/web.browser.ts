@@ -1628,6 +1628,12 @@ test("G054-DL2 the sidebar groups conversations by project with a state dot each
   await page.screenshot({ path: join(artifact, "dl2-inbox-sheet-light-320.png"), animations: "disabled" });
   await page.keyboard.press("Escape"); await expect(sheet).toHaveCount(0);
   assert.equal((await write("/api/v1/sessions/" + running + "/cancel", { commandId: "dl2-cancel-running" })).status(), 202);
+  // The red dot is what this page saw: once that conversation moves on out of sight, its next Turn may end otherwise, so
+  // the dot leaves rather than stays stale.
+  await page.setViewportSize({ width: 1440, height: 900 }); await expect(row("FAIL_ONCE 第一段").locator(".status-dot")).toHaveAttribute("data-tone", "fail");
+  const failedOnce = ((await (await context.request.get(origin + "/api/v1/state")).json()) as { sessions: { id: string; title: string }[] }).sessions.find(item => item.title === "FAIL_ONCE 第一段");
+  assert.ok(failedOnce); assert.equal((await write("/api/v1/sessions/" + failedOnce.id + "/messages", { text: "第二段", commandId: "dl2-send-again" })).status(), 202);
+  await expect.poll(async () => { await page.evaluate(() => { window.dispatchEvent(new Event("focus")); }); return row("FAIL_ONCE 第一段").locator(".status-dot").count(); }, { timeout: 15000 }).toBe(0);
   assert.deepEqual(errors, []);
 });
 
