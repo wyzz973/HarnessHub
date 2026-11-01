@@ -4877,3 +4877,453 @@ test("G054-FZ3 DeepSeek Harness of any version shows its one-question command wi
   await page.screenshot({ path: join(artifact, "native-resume-once.png"), animations: "disabled" });
   assert.deepEqual(errors, []);
 });
+
+/** The sizes G054-DL10 looks at (ADR-054 验证): a desktop, a phone and the narrowest phone, each at its own height. */
+const DL10_SIZES = [{ width: 1440, height: 900 }, { width: 390, height: 844 }, { width: 320, height: 640 }] as const;
+type Dl10Size = (typeof DL10_SIZES)[number];
+type Dl10Locator = ReturnType<Page["locator"]>;
+/** The page's uncaught exceptions and console errors; G054-DL10 causes none, so each of its tests expects this to stay empty. */
+function dl10Errors(page: Page): string[] {
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  return errors;
+}
+/**
+ * Waits until the page has settled: nothing finite moves (transitions, entrances) and no element moved or changed size across two
+ * frames, so a check or a shot sees the layout the page chose for its size (a resize reaches it through media queries a frame or
+ * more later). What a loop moves (a turning arc) is left out.
+ */
+async function dl10Settle(page: Page): Promise<void> {
+  await expect.poll(() => page.evaluate(async () => {
+    const looping = document.getAnimations().filter(animation => animation.effect?.getComputedTiming().iterations === Infinity).flatMap(animation => {
+      const target = (animation.effect as KeyframeEffect | null)?.target; return target ? [target] : []; });
+    const shape = () => [...document.querySelectorAll("body *")].filter(element => !looping.some(target => target.contains(element))).map(element => {
+      const box = element.getBoundingClientRect(); return [box.x, box.y, box.width, box.height].join(","); }).join(";");
+    const before = shape();
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return shape() === before && !document.getAnimations().some(animation => animation.playState === "running" && animation.effect?.getComputedTiming().iterations !== Infinity);
+  }), { message: "the page settles", timeout: 15000 }).toBe(true);
+}
+/**
+ * Asserts the page fits its width (ADR-054 R01): neither the document nor the scrolling body of any of `anchors` (the nearest
+ * element at or above it whose overflow-y scrolls, else the anchor itself) scrolls sideways, and no visible element ends past the
+ * viewport's right edge, except inside an element that scrolls sideways on purpose (overflow-x auto or scroll with wider content:
+ * code, diffs, the capability matrix) or inside a clipping box with no room left inside its borders, which shows nothing. The failure
+ * names each offender by a selector and its text.
+ */
+async function dl10Fits(page: Page, label: string, anchors: readonly Dl10Locator[]): Promise<void> {
+  const handles = await Promise.all(anchors.map(anchor => anchor.elementHandle({ timeout: 10000 })));
+  try {
+    const problems = await page.evaluate(bodies => {
+      const limit = document.documentElement.clientWidth, problems: string[] = [];
+      const name = (element: Element) => {
+        const parts: string[] = [];
+        for (let node: Element | null = element, depth = 0; node && node !== document.body && depth < 3; node = node.parentElement, depth++) {
+          const classes = (node.getAttribute("class") ?? "").trim().split(/\s+/u).filter(Boolean).slice(0, 3), role = node.getAttribute("role"), label = node.getAttribute("aria-label");
+          parts.unshift(node.tagName.toLowerCase() + (node.id ? "#" + node.id : "") + (classes.length ? "." + classes.join(".") : "") + (role ? `[role=${role}]` : "") + (label ? `[aria-label="${label}"]` : ""));
+        }
+        const text = (element.textContent ?? "").replace(/\s+/gu, " ").trim().slice(0, 60);
+        return (parts.join(" > ") || element.tagName.toLowerCase()) + (text ? ` “${text}”` : "");
+      };
+      for (const element of [document.documentElement, document.body]) if (element.scrollWidth > element.clientWidth + 1) problems.push(`${name(element)} scrolls sideways (${element.scrollWidth} > ${element.clientWidth})`);
+      for (const anchor of bodies) {
+        let body: Element | null = anchor;
+        while (body && !/^(auto|scroll)$/u.test(getComputedStyle(body).overflowY)) body = body.parentElement;
+        const target = body ?? anchor;
+        if (target.scrollWidth > target.clientWidth + 1) problems.push(`the body ${name(target)} scrolls sideways (${target.scrollWidth} > ${target.clientWidth})`);
+      }
+      // The outermost element that sticks out is named; what is inside it sticks out with it.
+      const walk = (element: Element) => {
+        const style = getComputedStyle(element);
+        if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return;
+        const box = element.getBoundingClientRect();
+        if (box.width > 0 && box.height > 0 && box.right > limit + 1) { problems.push(`${name(element)} ends at ${Math.round(box.right)}, past ${limit}`); return; }
+        // A box that clips and has no room left inside its borders (a panel closed to its hairline, still mounted) shows nothing inside.
+        if (style.overflowX !== "visible" && !/^(inline|contents)$/u.test(style.display) && (element.clientWidth === 0 || element.clientHeight === 0)) return;
+        if (/^(auto|scroll)$/u.test(style.overflowX) && element.scrollWidth > element.clientWidth + 1) return;
+        for (const child of element.children) walk(child);
+      };
+      walk(document.body);
+      return problems;
+    }, handles);
+    assert.deepEqual(problems, [], `${label} does not fit its width:\n${problems.join("\n")}`);
+  } finally { await Promise.all(handles.map(handle => handle.dispose())); }
+}
+/**
+ * Asserts the page reads in its theme (ADR-054 R02): its own background is the theme's (light or dark), and every visible text is
+ * read against what is painted behind it, its own and its ancestors' backgrounds laid over each other. Grey text on a grey ground
+ * (the neutral text tokens on the neutral surfaces, ADR-054 F08) needs WCAG AA, 4.5:1, or 3:1 from 24 px; text in a status colour
+ * or on a tint (amber, red, the diff's lines, blue) needs at least 3:1. Text an ancestor fades (a disabled control) or that sits on
+ * an image is left to the shots.
+ */
+async function dl10Readable(page: Page, label: string, scheme: "light" | "dark"): Promise<void> {
+  const { ground, faint } = await page.evaluate(() => {
+    const canvas = document.createElement("canvas"); canvas.width = canvas.height = 1;
+    const paint = canvas.getContext("2d", { willReadFrequently: true })!;
+    // Any CSS color as the 8-bit sRGB pixel it paints, and its alpha.
+    const rgba = (value: string): [number, number, number, number] => {
+      paint.clearRect(0, 0, 1, 1); paint.fillStyle = "#000"; paint.fillStyle = value; paint.fillRect(0, 0, 1, 1);
+      const [r = 0, g = 0, b = 0, a = 0] = paint.getImageData(0, 0, 1, 1).data; return [r, g, b, a / 255];
+    };
+    const over = (top: readonly number[], bottom: readonly number[]) => [0, 1, 2].map(index => top[index]! * top[3]! + bottom[index]! * (1 - top[3]!));
+    const luminance = (color: readonly number[]) => { const [r = 0, g = 0, b = 0] = color.map(value => { const c = value / 255; return c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4; }); return .2126 * r + .7152 * g + .0722 * b; };
+    const behind = (element: Element): number[] | null => {
+      const layers: number[][] = [];
+      for (let node: Element | null = element; node; node = node.parentElement) {
+        const style = getComputedStyle(node);
+        if (Number(style.opacity) < 1 || style.backgroundImage !== "none") return null;
+        const color = rgba(style.backgroundColor);
+        if (color[3] > 0) layers.push(color);
+        if (color[3] >= 1) break;
+      }
+      return layers.reverse().reduce<number[]>((ground, layer) => over(layer, ground), [255, 255, 255]);
+    };
+    // How far a color is from grey: the spread of its channels (the text tokens spread 15 at most, the surfaces 5, a tint 17 or more).
+    const spread = (color: readonly number[]) => Math.max(color[0]!, color[1]!, color[2]!) - Math.min(color[0]!, color[1]!, color[2]!);
+    const width = document.documentElement.clientWidth, height = document.documentElement.clientHeight, faint: string[] = [];
+    for (const element of document.querySelectorAll("body *")) {
+      if (![...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && (node.textContent ?? "").trim())) continue;
+      const box = element.getBoundingClientRect(), style = getComputedStyle(element), ink = rgba(style.color);
+      if (box.width < 2 || box.height < 2 || box.right <= 0 || box.left >= width || box.bottom <= 0 || box.top >= height || style.visibility !== "visible" || ink[3] === 0) continue;
+      const ground = behind(element);
+      if (!ground) continue;
+      const shown = over(ink, ground), [light = 0, dark = 0] = [luminance(shown), luminance(ground)].sort((a, b) => b - a), ratio = (light + .05) / (dark + .05);
+      const floor = spread(shown) <= 24 && spread(ground) <= 12 && parseFloat(style.fontSize) < 24 ? 4.5 : 3;
+      if (ratio < floor) faint.push(`${ratio.toFixed(2)}:1 (under ${floor}:1) ${style.color} on rgb(${ground.map(Math.round).join(", ")}) ${element.tagName.toLowerCase()}.${(element.getAttribute("class") ?? "").trim().split(/\s+/u).slice(0, 4).join(".")} “${(element.textContent ?? "").trim().slice(0, 40)}”`);
+    }
+    return { ground: luminance(behind(document.body) ?? [255, 255, 255]), faint };
+  });
+  assert.ok(scheme === "dark" ? ground < .05 : ground > .9, `${label}: the page's background follows the ${scheme} theme (luminance ${ground.toFixed(3)})`);
+  assert.deepEqual(faint, [], `${label}: text too faint to read:\n${faint.join("\n")}`);
+}
+/** Whether the sidebar (complementary 主导航) is anywhere on screen, also behind a modal layer that hides it from assistive technology. */
+function dl10SidebarShown(page: Page): Promise<boolean> {
+  return page.getByRole("complementary", { name: "主导航", includeHidden: true }).evaluateAll(elements => elements.some(element => {
+    const box = element.getBoundingClientRect(); return box.width > 0 && box.height > 0 && box.right > 0 && box.left < innerWidth && getComputedStyle(element).visibility !== "hidden"; }));
+}
+/**
+ * On a phone the sidebar is a drawer (ADR-054 S06): off screen until 打开导航 opens it, which Enter on the button does; the drawer
+ * takes the focus and fits the screen, Escape closes it and the focus is back on 打开导航. With `shot`, the open drawer is saved
+ * under that file name. Returns with nothing focused, so the next shot shows no focus ring.
+ */
+async function dl10Drawer(page: Page, label: string, shot?: string): Promise<void> {
+  const menu = page.getByRole("button", { name: "打开导航", exact: true }), drawer = page.getByRole("dialog", { name: "主导航" });
+  assert.equal(await dl10SidebarShown(page), false, label + ": the sidebar stays off screen until it is opened");
+  await menu.focus(); await page.keyboard.press("Enter");
+  await expect(drawer.getByRole("complementary", { name: "主导航" })).toBeVisible(); await dl10Settle(page);
+  assert.equal(await dl10SidebarShown(page), true, label + ": 打开导航 brings the sidebar on screen");
+  await expect.poll(() => drawer.evaluate(element => element.contains(document.activeElement)), { message: label + ": the drawer takes the focus" }).toBe(true);
+  await dl10Opaque(drawer.getByRole("complementary", { name: "主导航" }), label + " with the drawer open");
+  await dl10Fits(page, label + " with the drawer open", [drawer.getByRole("complementary", { name: "主导航" })]);
+  if (shot) await page.screenshot({ path: join(artifact, shot), animations: "disabled" });
+  await page.keyboard.press("Escape");
+  await expect(drawer).toHaveCount(0); await expect(menu).toBeFocused();
+  assert.equal(await dl10SidebarShown(page), false, label + ": Escape takes the sidebar off screen again");
+  await menu.evaluate(element => (element as HTMLElement).blur());
+}
+/**
+ * Waits until `target` and everything above it are at full opacity (D6): what fades in is checked and saved whole, and
+ * dl10Readable, which leaves faded text to the shots, does not pass over it.
+ */
+async function dl10Opaque(target: Dl10Locator, label: string): Promise<void> {
+  await expect.poll(() => target.evaluate(element => {
+    let opacity = 1;
+    for (let node: Element | null = element; node; node = node.parentElement) opacity *= Number(getComputedStyle(node).opacity);
+    return opacity;
+  }), { message: label + ": shown at full opacity", timeout: 10000 }).toBe(1);
+}
+/**
+ * One state of a page at each size in both themes (ADR-054 R01, R02): `ready` brings the state back at a size (some take another
+ * form across the narrow breakpoint); on the settled page each of `anchors` is at full opacity, the sidebar is beside the page on
+ * the desktop and off screen on a phone, `check` asserts what the state itself must be at that size, and the page must fit
+ * (dl10Fits on `anchors`) and read (dl10Readable). The page is then saved as dl10-<name>-<light|dark>-<width>.png, with the pointer
+ * resting in a corner. With `drawer`, on a phone the sidebar's drawer is also opened and closed from the keyboard: in the light
+ * theme, or with "shoot" in both and saved as dl10-drawer-<light|dark>-<width>.png.
+ */
+async function dl10Shoot(page: Page, name: string, options: { readonly anchors: () => readonly Dl10Locator[]; readonly ready?: (size: Dl10Size) => Promise<void>; readonly check?: (size: Dl10Size, label: string) => Promise<void>; readonly sizes?: readonly Dl10Size[]; readonly drawer?: "check" | "shoot" }): Promise<void> {
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    for (const size of options.sizes ?? DL10_SIZES) {
+      await page.setViewportSize(size); await page.mouse.move(size.width - 2, size.height - 2); await dl10Settle(page);
+      await options.ready?.(size); await page.mouse.move(size.width - 2, size.height - 2); await dl10Settle(page);
+      const label = `${name} at ${size.width} in ${scheme}`, phone = size.width < 760;
+      for (const anchor of options.anchors()) await dl10Opaque(anchor, label);
+      assert.equal(await dl10SidebarShown(page), !phone, label + (phone ? ": on a phone the sidebar is a drawer, off screen until opened" : ": on a desktop the sidebar is beside the page"));
+      await options.check?.(size, label);
+      await dl10Fits(page, label, options.anchors());
+      await dl10Readable(page, label, scheme);
+      await page.screenshot({ path: join(artifact, `dl10-${name}-${scheme}-${size.width}.png`), animations: "disabled" });
+      if (phone && options.drawer && (scheme === "light" || options.drawer === "shoot")) await dl10Drawer(page, label, options.drawer === "shoot" ? `dl10-drawer-${scheme}-${size.width}.png` : undefined);
+    }
+  }
+  await page.emulateMedia({ colorScheme: "light" }); await page.setViewportSize(DL10_SIZES[0]); await dl10Settle(page);
+}
+/** One animation or transition the page ran: what it animates, for how long, after what delay, how many times, and on what. */
+interface Dl10Motion { readonly kind: string; readonly properties: readonly string[]; readonly duration: number; readonly delay: number; readonly iterations: number; readonly target: string }
+/**
+ * Records every animation and transition the pages of `context` run (ADR-054 §3): at each animation frame and each start event the
+ * page's document.getAnimations() is read, and each animation is kept once (dl10Still reads and empties the record).
+ */
+async function dl10RecordMotion(context: Awaited<ReturnType<typeof isolatedContext>>): Promise<void> {
+  await context.addInitScript(() => {
+    const record: unknown[] = [], seen = new WeakSet<Animation>();
+    const look = () => {
+      for (const animation of document.getAnimations()) {
+        if (seen.has(animation)) continue;
+        seen.add(animation);
+        const effect = animation.effect as KeyframeEffect | null, timing = effect?.getComputedTiming(), target = effect?.target ?? null;
+        const properties = animation instanceof CSSTransition ? [animation.transitionProperty] : [...new Set((effect?.getKeyframes() ?? []).flatMap(frame =>
+          Object.keys(frame).filter(key => !["offset", "computedOffset", "easing", "composite"].includes(key)).map(key => key.replace(/[A-Z]/gu, letter => "-" + letter.toLowerCase()))))];
+        record.push({ kind: animation instanceof CSSTransition ? "transition" : animation instanceof CSSAnimation ? "animation " + animation.animationName : "script animation", properties,
+          duration: Number(timing?.duration ?? 0), delay: timing?.delay ?? 0, iterations: timing?.iterations ?? 1,
+          target: target ? target.tagName.toLowerCase() + "." + (target.getAttribute("class") ?? "").trim().split(/\s+/u).slice(0, 4).join(".") + (effect?.pseudoElement ?? "") : "" });
+      }
+    };
+    const frame = () => { look(); requestAnimationFrame(frame); };
+    requestAnimationFrame(frame);
+    for (const type of ["transitionrun", "animationstart"]) document.addEventListener(type, look, true);
+    Object.defineProperty(window, "__dl10Motion", { value: () => record.splice(0) });
+  });
+}
+/** The colors a hover or focus changes (#30), which reduced motion keeps changing as usual: they move nothing. */
+const DL10_COLORS = new Set(["color", "background-color", "border-color", "border-top-color", "border-right-color", "border-bottom-color", "border-left-color", "outline-color", "box-shadow", "fill", "stroke", "text-decoration-color"]);
+/**
+ * Asserts that, with reduced motion, all the page ran since the last call only faded (ADR-054 §3, R04): every animation and
+ * transition the record caught changes opacity (a transition may also change a hover or focus color), lasts 150 ms or less with its
+ * delay, and does not loop. Returns what ran.
+ */
+async function dl10Still(page: Page, label: string): Promise<readonly Dl10Motion[]> {
+  await dl10Settle(page);
+  const ran = await page.evaluate(() => (window as unknown as { __dl10Motion: () => Dl10Motion[] }).__dl10Motion());
+  const moving = ran.filter(entry => entry.iterations === Infinity || entry.delay + entry.duration * entry.iterations > 150
+    || entry.duration > 0 && !entry.properties.every(property => property === "opacity" || entry.kind === "transition" && DL10_COLORS.has(property)));
+  assert.deepEqual(moving, [], `${label}: with reduced motion only fades of 150 ms or less run:\n${moving.map(entry => `${entry.kind} of ${entry.properties.join(", ")} on ${entry.target}: ${entry.duration} ms × ${entry.iterations} after ${entry.delay} ms`).join("\n")}`);
+  return ran;
+}
+
+test("G054-DL10 the home on first use and on return, a finished Turn with its steps and diff and its details, an approval at the composer, the inbox, the palette and the shortcut sheet fit 1440, 390 and 320 and read in both themes, and on a phone the sidebar is a drawer the keyboard opens and closes", { timeout: 300000 }, async t => {
+  // The DeepSeek Harness shim keeps discovery to the fixture's programs: the PATH holds Node.js alone, not what this computer has installed.
+  const fixture = await launchFixture(false, { name: "Shared Agent", scenario: "hermes" }, null, false, undefined, undefined, { dsh: "0.3.1" }); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  await mkdir(artifact, { recursive: true });
+  const context = await isolatedContext(browser, { viewport: DL10_SIZES[0] }), page = await context.newPage(), errors = dl10Errors(page);
+  await page.goto(fixture.gateway.url);
+  const origin = new URL(fixture.gateway.url).origin, composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  const pick = async (name: string) => { await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name, exact: true }).click(); };
+  const greeting = page.getByRole("heading", { name: "今天想让哪个 Agent 做什么？", exact: true }), navigation = page.getByRole("complementary", { name: "主导航" });
+  // H06: the first time, the home walks through its three steps.
+  await expect(greeting).toBeVisible(); await expect(page.getByRole("list", { name: "开始使用" }).getByRole("listitem")).toHaveCount(3);
+  await dl10Shoot(page, "home-first", { anchors: () => [greeting], drawer: "check" });
+
+  // A finished Turn with its steps opened and the edit's diff shown in the conversation.
+  await pick("Codex"); await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter");
+  await expect(log).toContainText("原生活动已完成。");
+  await expect.poll(async () => (await current()).runs[0]?.status, { timeout: 15000 }).toBe("completed");
+  const process = log.getByRole("button", { name: /运行 1 条命令/u });
+  await expect(process).toHaveAttribute("aria-expanded", "false"); await process.click(); await expect(process).toHaveAttribute("aria-expanded", "true");
+  await log.getByRole("list", { name: "工具活动" }).getByRole("button", { name: /修改 README\.md/u }).click();
+  await expect(log.getByText("新内容", { exact: true }).first()).toBeVisible();
+  // The details panel is not taken to be open or closed by default: its header button says which, and is pressed until it does.
+  const details = page.getByRole("button", { name: "详情栏", exact: true }), panel = page.getByRole("complementary", { name: "详情栏" });
+  const showDetails = async (open: boolean) => { if (await details.getAttribute("aria-pressed") !== String(open)) await details.click(); await expect(details).toHaveAttribute("aria-pressed", String(open)); };
+  await dl10Shoot(page, "conversation", { anchors: () => [log], drawer: "shoot", ready: async size => { if (size.width === 1440) await showDetails(false); } });
+  // D01-D03: the same conversation with its details beside it, on 改动.
+  await dl10Shoot(page, "conversation-panel", { sizes: [DL10_SIZES[0]], anchors: () => [log, panel.getByRole("tabpanel")], ready: async () => {
+    await showDetails(true);
+    const changes = panel.getByRole("tab", { name: /^改动/u }); await changes.click(); await expect(changes).toHaveAttribute("aria-selected", "true");
+    await expect(panel.getByRole("tabpanel")).toContainText("README.md");
+  } });
+  await showDetails(false);
+
+  // On return the home says who is ready instead of the first steps.
+  await navigation.getByRole("button", { name: "新对话", exact: true }).click();
+  await expect(greeting).toBeVisible(); await expect(page.getByRole("list", { name: "开始使用" })).toHaveCount(0);
+  await dl10Shoot(page, "home", { anchors: () => [greeting], drawer: "check" });
+
+  // P02: an approval waits in the composer's place.
+  await pick("Shared Agent"); await composer.fill("approve this"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
+  const dock = page.getByRole("region", { name: "工具审批", exact: true });
+  await expect(dock).toContainText("rm -rf build", { timeout: 15000 }); await expect(composer).toBeHidden();
+  await dl10Shoot(page, "approval", { anchors: () => [log, dock], drawer: "check" });
+  // The keyboard's trips through the drawer decided nothing: Enter went to 打开导航, not to the approval.
+  await expect(dock).toContainText("rm -rf build");
+
+  // X03: the inbox, beside its row on the desktop and a sheet of its own on a phone (crossing the breakpoint closes either).
+  await navigation.getByRole("button", { name: "新对话", exact: true }).click(); await expect(greeting).toBeVisible();
+  const inbox = page.getByRole("dialog", { name: "等你处理" }), inboxRow = navigation.getByRole("button", { name: "等你处理（1 项）", exact: true });
+  await dl10Shoot(page, "inbox", { anchors: () => [inbox], ready: async size => {
+    if (await inbox.count()) return;
+    if (size.width < 760) { await page.getByRole("button", { name: "打开导航", exact: true }).click(); await page.getByRole("dialog", { name: "主导航" }).getByRole("button", { name: "等你处理（1 项）", exact: true }).click(); }
+    else await inboxRow.click();
+    await expect(inbox).toContainText("approve this"); await expect(inbox).toContainText("rm -rf build");
+  }, check: async (size, label) => {
+    // The form it takes there: a sheet across the bottom of a phone, a popover level with its row beside the sidebar on a desktop.
+    const box = await inbox.boundingBox(); assert.ok(box, label + ": the inbox is on screen");
+    if (size.width < 760) assert.ok(box.x <= 16 && box.x + box.width >= size.width - 16 && box.y + box.height >= size.height - 16, `${label}: on a phone the inbox is a sheet across the bottom of the screen: ${JSON.stringify(box)}`);
+    else {
+      const row = await inboxRow.boundingBox(), sidebar = await navigation.boundingBox(); assert.ok(row && sidebar);
+      assert.ok(box.x >= sidebar.x + sidebar.width - 1 && box.y <= row.y + row.height && box.y + box.height >= row.y && box.width < size.width / 2,
+        `${label}: on a desktop the inbox is a popover beside its row, right of the sidebar: ${JSON.stringify({ box, row, sidebar })}`);
+    }
+  } });
+  await page.keyboard.press("Escape"); await expect(inbox).toHaveCount(0);
+
+  // ⌘K and ⌘/.
+  const search = page.getByRole("combobox", { name: "搜索对话、页面或操作", exact: true }), palette = page.getByRole("dialog").filter({ has: search });
+  await page.keyboard.press("ControlOrMeta+K"); await expect(search).toBeFocused();
+  await expect(palette.getByRole("option", { name: /NATIVE_ACTIVITY/u })).toBeVisible();
+  await dl10Shoot(page, "palette", { anchors: () => [palette.getByRole("listbox")] });
+  await page.keyboard.press("Escape"); await expect(palette).toHaveCount(0);
+  const sheet = page.getByRole("dialog", { name: "快捷键" });
+  await page.keyboard.press("ControlOrMeta+/"); await expect(sheet).toContainText("搜索与命令");
+  await dl10Shoot(page, "shortcuts", { anchors: () => [sheet] });
+  await page.keyboard.press("Escape"); await expect(sheet).toHaveCount(0);
+  assert.deepEqual(errors, []);
+});
+
+test("G054-DL10 the Agent page and an Agent's details, the capabilities, the settings and the model connections fit 1440, 390 and 320 and read in both themes, and on a phone the sidebar is a drawer the keyboard opens and closes", { timeout: 300000 }, async t => {
+  // Provider management is on so the model connections page is shown; the DeepSeek Harness shim keeps discovery to the fixture's programs.
+  const fixture = await launchFixture(true, null, null, false, undefined, undefined, { dsh: "0.3.1" }); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  await mkdir(artifact, { recursive: true });
+  const context = await isolatedContext(browser, { viewport: DL10_SIZES[0] }), page = await context.newPage(), errors = dl10Errors(page);
+  // The capability page shows the synthetic view the CA tests use, so its matrix has every kind of cell.
+  await page.route("**/api/v1/capabilities", route => route.fulfill({ json: capabilityView() }));
+  // One model connection exists before the page opens, so its page lists it.
+  const launch = new URL(fixture.gateway.url), origin = launch.origin;
+  const boot = await context.request.post(origin + "/api/v1/auth/bootstrap", { headers: { Origin: origin }, data: { token: new URLSearchParams(launch.hash.slice(1)).get("token") } });
+  assert.equal(boot.status(), 200); const csrf = String((await boot.json()).csrfToken);
+  assert.equal((await context.request.post(origin + "/api/v1/providers", { headers: { Origin: origin, "X-CSRF-Token": csrf }, data: { commandId: "dl10-provider", input: {
+    name: "验收模型连接", protocol: "openai-responses", baseUrl: fixture.baseUrl, models: ["model-a", "model-b"], defaultModel: "model-a", enabled: true, apiKey: "dl10-synthetic-fixture-key" } } })).status(), 201);
+  await page.goto(origin);
+  const navigation = page.getByRole("complementary", { name: "主导航" }), go = (name: string) => navigation.getByRole("button", { name, exact: true }).click();
+  await expect(navigation.getByRole("button", { name: "新对话", exact: true })).toBeVisible();
+
+  await go("Agent");
+  const agents = page.getByRole("heading", { level: 1, name: "Agent", exact: true });
+  await expect(agents).toBeVisible(); await expect(page.getByRole("button", { name: "查看 Codex 详情", exact: true })).toBeVisible();
+  await dl10Shoot(page, "agents", { anchors: () => [agents], drawer: "check" });
+  // A03: one Agent's details, beside the cards on the desktop and over the page on a phone. Beside them the cards make room, so the
+  // page's own body is checked as well (found under the phone's modal drawer too).
+  const codex = page.getByRole("dialog", { name: "Codex 详情" }), agentsBody = page.getByRole("heading", { level: 1, name: "Agent", exact: true, includeHidden: true });
+  await dl10Shoot(page, "agent-details", { anchors: () => [agentsBody, codex.getByRole("heading", { name: "模型与登录", exact: true })], ready: async () => {
+    if (await codex.count()) return;
+    await page.getByRole("button", { name: "查看 Codex 详情", exact: true }).click(); await expect(codex).toBeVisible();
+  } });
+  await page.keyboard.press("Escape"); await expect(codex).toHaveCount(0);
+
+  await go("能力");
+  await expect(page.getByRole("heading", { name: /^技能/u })).toBeVisible(); await expect(page.getByRole("tabpanel")).toContainText("alpha");
+  await dl10Shoot(page, "capabilities", { anchors: () => [page.getByRole("tabpanel")], drawer: "check" });
+
+  await go("设置");
+  const settings = page.getByRole("heading", { level: 1, name: "设置", exact: true });
+  await expect(settings).toBeVisible();
+  await dl10Shoot(page, "settings", { anchors: () => [settings], drawer: "check" });
+
+  await go("模型与账号");
+  const providers = page.getByRole("heading", { level: 1, name: "模型连接", exact: true });
+  await expect(providers).toBeVisible(); await expect(page.getByRole("heading", { name: "验收模型连接", exact: true })).toBeVisible();
+  await dl10Shoot(page, "providers", { anchors: () => [providers], drawer: "check" });
+  assert.ok(!(await page.locator("body").innerText()).includes("dl10-synthetic-fixture-key"), "the connection's key is never shown");
+  assert.deepEqual(errors, []);
+});
+
+test("G054-DL10 with reduced motion a Turn, the palette, the details, an Agent's details, a capability dialog and the drawer only fade, within 150 ms and never in a loop, and each opens and closes from the pointer and from the keyboard", { timeout: 300000 }, async t => {
+  const fixture = await launchFixture(false, null, null, false, undefined, undefined, { dsh: "0.3.1" }); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: DL10_SIZES[0] });
+  await dl10RecordMotion(context);
+  const page = await context.newPage(), errors = dl10Errors(page);
+  await page.route("**/api/v1/capabilities", route => route.fulfill({ json: capabilityView() }));
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto(fixture.gateway.url);
+  const origin = new URL(fixture.gateway.url).origin, composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
+  const navigation = page.getByRole("complementary", { name: "主导航" }), go = (name: string) => navigation.getByRole("button", { name, exact: true }).click();
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  await expect(page.getByRole("heading", { name: "今天想让哪个 Agent 做什么？", exact: true })).toBeVisible();
+  await dl10Still(page, "the home as it opens");
+  // The palette: opened with the pointer it fades in (so the record is known to catch a fade) and fades out when the scrim beside it is
+  // clicked; ⌘K and esc open and close it at once.
+  const search = page.getByRole("combobox", { name: "搜索对话、页面或操作", exact: true }), palette = page.getByRole("dialog").filter({ has: search });
+  const paletteBoth = async (where: string) => {
+    await navigation.getByRole("button", { name: "搜索与命令", exact: true }).click(); await expect(search).toBeFocused();
+    const opened = await dl10Still(page, `the palette opened with the pointer on ${where}`);
+    assert.ok(opened.some(entry => entry.properties.includes("opacity")), `the palette fades in on ${where}: ` + JSON.stringify(opened));
+    await page.mouse.click(page.viewportSize()!.width - 8, 8); await expect(palette).toHaveCount(0);
+    await dl10Still(page, `the palette closed with the pointer on ${where}`);
+    await page.keyboard.press("ControlOrMeta+K"); await expect(search).toBeFocused(); await search.fill("设置"); await expect(palette.getByRole("option").first()).toBeVisible();
+    await page.keyboard.press("Escape"); await expect(palette).toHaveCount(0);
+    await dl10Still(page, `the palette from the keyboard on ${where}`);
+  };
+  await paletteBoth("the home");
+
+  // A whole Turn, from the message rising in to its folded process line, only fades.
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter");
+  await expect(log).toContainText("原生活动已完成。");
+  await expect.poll(async () => (await current()).runs[0]?.status, { timeout: 15000 }).toBe("completed");
+  await expect(log.getByRole("button", { name: /运行 1 条命令/u })).toHaveAttribute("aria-expanded", "false");
+  await dl10Still(page, "a Turn from its message to its folded process");
+  await paletteBoth("the conversation");
+  // The details beside the conversation: from the pointer and from ⌘\, open and closed again.
+  const details = page.getByRole("button", { name: "详情栏", exact: true }), panel = page.getByRole("complementary", { name: "详情栏" });
+  const pressed = async (open: boolean) => { await expect(details).toHaveAttribute("aria-pressed", String(open)); if (open) await expect(panel.getByRole("tab").first()).toBeVisible(); else await expect(panel).toHaveCount(0); };
+  const before = await details.getAttribute("aria-pressed") === "true";
+  for (const open of [!before, before]) { await details.click(); await pressed(open); await dl10Still(page, `the details ${open ? "opened" : "closed"} with the pointer`); }
+  for (const open of [!before, before]) { await page.keyboard.press("ControlOrMeta+\\"); await pressed(open); await dl10Still(page, `the details ${open ? "opened" : "closed"} with ⌘\\`); }
+  // On a phone they are a sheet over the conversation: the pointer opens it and its close button closes it; Enter and esc do the same.
+  await page.setViewportSize(DL10_SIZES[1]); await dl10Settle(page);
+  const sheet = page.getByRole("dialog", { name: "详情栏" });
+  await details.click(); await expect(sheet.getByRole("tab").first()).toBeVisible();
+  await dl10Still(page, "the details sheet opened with the pointer");
+  await sheet.getByRole("button", { name: "关闭详情栏", exact: true }).click(); await expect(sheet).toHaveCount(0);
+  await dl10Still(page, "the details sheet closed with the pointer");
+  await details.focus(); await page.keyboard.press("Enter"); await expect(sheet.getByRole("tab").first()).toBeVisible();
+  await expect.poll(() => sheet.evaluate(element => element.contains(document.activeElement)), { message: "the details sheet takes the focus" }).toBe(true);
+  await page.keyboard.press("Escape"); await expect(sheet).toHaveCount(0); await expect(details).toBeFocused();
+  await dl10Still(page, "the details sheet from the keyboard");
+  // The drawer of the sidebar: the pointer opens it and its close button closes it; Enter and esc do the same (dl10Drawer).
+  const drawer = page.getByRole("dialog", { name: "主导航" });
+  await page.getByRole("button", { name: "打开导航", exact: true }).click(); await expect(drawer.getByRole("complementary", { name: "主导航" })).toBeVisible();
+  await dl10Still(page, "the drawer opened with the pointer");
+  await drawer.getByRole("button", { name: "关闭导航", exact: true }).click(); await expect(drawer).toHaveCount(0);
+  await dl10Still(page, "the drawer closed with the pointer");
+  await dl10Drawer(page, "the drawer from the keyboard with reduced motion");
+  await dl10Still(page, "the drawer from the keyboard");
+  await page.setViewportSize(DL10_SIZES[0]); await dl10Settle(page); await dl10Still(page, "the conversation back on the desktop");
+
+  // An Agent's details: from the pointer (opened from its card, closed by its close button) and from the keyboard (Enter, esc).
+  await go("Agent"); await expect(page.getByRole("heading", { level: 1, name: "Agent", exact: true })).toBeVisible();
+  await dl10Still(page, "the Agent page as it opens");
+  await paletteBoth("the Agent page");
+  const open = page.getByRole("button", { name: "查看 Codex 详情", exact: true }), codex = page.getByRole("dialog", { name: "Codex 详情" });
+  await open.click(); await expect(codex).toBeVisible();
+  await dl10Still(page, "an Agent's details opened with the pointer");
+  await codex.getByRole("button", { name: "关闭 Harness 详情", exact: true }).click(); await expect(codex).toHaveCount(0);
+  await dl10Still(page, "an Agent's details closed with the pointer");
+  await open.focus(); await page.keyboard.press("Enter"); await expect(codex).toBeVisible();
+  await expect.poll(() => codex.evaluate(element => element.contains(document.activeElement)), { message: "the details take the focus" }).toBe(true);
+  await page.keyboard.press("Escape"); await expect(codex).toHaveCount(0); await expect(open).toBeFocused();
+  await dl10Still(page, "an Agent's details from the keyboard");
+
+  // A capability dialog: 新建技能 from the pointer (closed by 取消) and from the keyboard (Enter, esc).
+  await go("能力"); await expect(page.getByRole("tabpanel")).toContainText("alpha");
+  await dl10Still(page, "the capability page as it opens");
+  await paletteBoth("the capability page");
+  const create = page.getByRole("button", { name: "新建技能", exact: true }), dialog = page.getByRole("dialog", { name: "新建技能" });
+  await create.click(); await expect(dialog.getByRole("textbox", { name: "技能名字" })).toBeVisible();
+  await dl10Still(page, "a capability dialog opened with the pointer");
+  await dialog.getByRole("button", { name: "取消", exact: true }).click(); await expect(dialog).toHaveCount(0);
+  await dl10Still(page, "a capability dialog closed with the pointer");
+  await create.focus(); await page.keyboard.press("Enter"); await expect(dialog).toBeVisible();
+  await expect.poll(() => dialog.evaluate(element => element.contains(document.activeElement)), { message: "the dialog takes the focus" }).toBe(true);
+  await page.keyboard.press("Escape"); await expect(dialog).toHaveCount(0); await expect(create).toBeFocused();
+  await dl10Still(page, "a capability dialog from the keyboard");
+  assert.deepEqual(errors, []);
+});
