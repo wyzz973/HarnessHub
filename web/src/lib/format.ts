@@ -5,6 +5,15 @@ export function duration(milliseconds: number): string {
   if (seconds < 60) return Math.round(seconds) + " 秒";
   return Math.floor(seconds / 60) + " 分 " + Math.round(seconds % 60) + " 秒";
 }
+/**
+ * Time spent on running work, updated every second (Motion board #03): "42 秒", then "1 分 05 秒", then "1 小时 02 分".
+ * Whole seconds only, so the text changes once a second; show it with tabular figures (the page default) so it never jitters.
+ */
+export function elapsed(milliseconds: number): string {
+  const total = Math.max(0, Math.floor(milliseconds / 1000)), hours = Math.floor(total / 3600), minutes = Math.floor(total % 3600 / 60), seconds = total % 60;
+  if (hours > 0) return hours + " 小时 " + String(minutes).padStart(2, "0") + " 分";
+  return minutes > 0 ? minutes + " 分 " + String(seconds).padStart(2, "0") + " 秒" : seconds + " 秒";
+}
 /** Elapsed time as a clock (m:ss or h:mm:ss), for a running Turn in a list. */
 export function clock(milliseconds: number): string {
   const total = Math.max(0, Math.floor(milliseconds / 1000)), hours = Math.floor(total / 3600), minutes = Math.floor(total % 3600 / 60), seconds = total % 60;

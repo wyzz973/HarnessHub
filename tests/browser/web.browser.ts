@@ -13,8 +13,8 @@ import { startWebServer } from "../../src/web/server.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 
 /**
- * A browser context whose requests for the Chinese web font (Google Fonts, ADR-042) are answered locally and empty, so
- * no test depends on the network or on Google; the page then shows its system-font fallback.
+ * A browser context that answers any request for Google Fonts locally and empty. The page asks for none since ADR-054 §2
+ * (G054-FR6 and G054-DL1 prove it); the route stays as a guard, so a regression could not make a test depend on Google.
  */
 async function isolatedContext(browser: Browser, options?: BrowserContextOptions) {
   const context = await browser.newContext(options);
@@ -190,11 +190,12 @@ test("real browser validates Provider management, public chat switching, cancell
   await page.keyboard.press("Escape"); await expect(harnessTrigger).toBeFocused();
   await page.emulateMedia({ reducedMotion: "reduce" });
   await harnessTrigger.click();
-  const duration = await page.locator(".picker-popover").evaluate(element => {
+  // Reduced motion leaves popups only a fade of 150 ms or less (ADR-054 §3): the picker neither grows nor moves.
+  const motion = await page.locator(".picker-popover").evaluate(element => {
     const style = getComputedStyle(element);
-    return [style.animationDuration, style.transitionDuration].flatMap(value => value.split(",").map(part => parseFloat(part) * (part.trim().endsWith("ms") ? 1 : 1000)));
+    return { properties: style.transitionProperty, durations: [style.animationDuration, style.transitionDuration].flatMap(value => value.split(",").map(part => parseFloat(part) * (part.trim().endsWith("ms") ? 1 : 1000))) };
   });
-  assert.ok(duration.every(value => value <= 1), "reduced motion disables picker animation");
+  assert.ok(motion.durations.every(value => value <= 150) && motion.properties.split(",").every(property => property.trim() === "opacity"), "reduced motion leaves the picker only a short fade: " + motion.properties + " " + motion.durations.join(","));
   await page.keyboard.press("Escape"); await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await pick("选择 Provider", "工作模型 A");
@@ -1447,11 +1448,10 @@ test("G054-FR6 the chosen theme applies before the first paint and survives relo
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   page.on("request", request => { if (/^https:\/\/fonts\.(?:googleapis|gstatic)\.com\//u.test(request.url())) fonts.push(request.url()); });
   await page.goto(fixture.gateway.url);
-  // The Chinese web font is the only content from elsewhere (ADR-042): its stylesheet and files are allowed, nothing else.
+  // Nothing comes from elsewhere (ADR-054 §2): the policy allows only this Gateway, and the text uses the system fonts.
   const policy = (await context.request.get(new URL(fixture.gateway.url).origin + "/")).headers()["content-security-policy"] ?? "";
-  assert.equal(policy, "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data:; font-src 'self' https://fonts.gstatic.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'");
-  await expect.poll(() => fonts.some(url => url.startsWith("https://fonts.googleapis.com/css2?family=Noto+Sans+SC"))).toBe(true);
-  assert.match(await page.evaluate(() => getComputedStyle(document.body).fontFamily), /^"Geist Variable", "Noto Sans SC", /u);
+  assert.equal(policy, "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'");
+  assert.match(await page.evaluate(() => getComputedStyle(document.body).fontFamily), /^"HH Quote", -apple-system, /u);
   // Without a session, the startup page explains how to sign in, in Chinese.
   const visitor = await isolatedContext(browser), outside = await visitor.newPage();
   await outside.goto(new URL(fixture.gateway.url).origin + "/");
@@ -1461,7 +1461,8 @@ test("G054-FR6 the chosen theme applies before the first paint and survives relo
   await page.getByRole("radio", { name: /深色/u }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   const background = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
-  assert.equal(await background(), "rgb(20, 20, 19)");
+  // The dark main area of ADR-054 §1 (#18191C).
+  assert.equal(await background(), "rgb(24, 25, 28)");
   await page.reload(); await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await expect(page.getByRole("heading", { name: "设置", exact: true })).toBeVisible();
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true });
@@ -1480,11 +1481,111 @@ test("G054-FR6 the chosen theme applies before the first paint and survives relo
   }
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.keyboard.press("ControlOrMeta+K");
+  // With reduced motion only fades of 150 ms or less remain (ADR-054 §3); the palette, opened from the keyboard, appears at once.
   const durations = await page.locator(".palette-pop").evaluate(element => { const style = getComputedStyle(element); return [style.animationDuration, style.transitionDuration].flatMap(value => value.split(",").map(part => parseFloat(part) * (part.trim().endsWith("ms") ? 1 : 1000))); });
-  assert.ok(durations.every(value => value <= 1), "reduced motion stops the palette transition: " + durations.join(","));
+  assert.ok(durations.every(value => value <= 1), "a palette opened from the keyboard is not animated: " + durations.join(","));
   await page.keyboard.press("Escape");
+  // A popover opened with the pointer keeps only a short fade: it neither grows nor moves.
+  const popover = await page.evaluate(() => {
+    document.dispatchEvent(new PointerEvent("pointerdown"));
+    const probe = document.createElement("div"); probe.className = "surface-pop"; probe.setAttribute("data-starting-style", ""); document.body.append(probe);
+    const style = getComputedStyle(probe), result = { input: document.documentElement.dataset.input, properties: style.transitionProperty, transform: style.transform, animation: style.animationName,
+      durations: [style.animationDuration, style.transitionDuration].flatMap(value => value.split(",").map(part => parseFloat(part) * (part.trim().endsWith("ms") ? 1 : 1000))) };
+    probe.remove(); return result;
+  });
+  assert.deepEqual([popover.input, popover.properties, popover.transform, popover.animation], ["pointer", "opacity", "none", "none"]);
+  assert.ok(popover.durations.every(value => value <= 150) && popover.durations.some(value => value > 0), "a popover only fades, within 150 ms: " + popover.durations.join(","));
   await page.getByRole("radio", { name: /跟随系统/u }).click();
   await expect(page.locator("html")).not.toHaveAttribute("data-theme", /.+/u);
+  // No request went to Google Fonts while the pages above were shown.
+  assert.deepEqual(fonts, []);
+  assert.deepEqual(errors, []);
+});
+
+test("G054-DL1 the neutral tokens follow the system in both themes, text uses the system fonts, nothing loads from elsewhere, and the icon is the one-point mark", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  await mkdir(artifact, { recursive: true });
+  const origin = new URL(fixture.gateway.url).origin;
+  const context = await isolatedContext(browser, { viewport: { width: 1440, height: 900 } }), page = await context.newPage(), errors: string[] = [], elsewhere: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  page.on("request", request => { const url = request.url(); if (!url.startsWith("data:") && new URL(url).origin !== origin) elsewhere.push(url); });
+  await page.goto(fixture.gateway.url);
+  await expect(page.locator("svg.logo-mark").first()).toBeVisible();
+
+  // §2: the policy allows only this Gateway, the page asks nothing of anywhere else, and no Google Fonts rule remains.
+  const policy = (await context.request.get(origin + "/")).headers()["content-security-policy"] ?? "";
+  assert.equal(policy, "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'");
+  assert.doesNotMatch(policy, /fonts\.(?:googleapis|gstatic)\.com/u);
+  assert.equal(await page.locator("link[href*='fonts.googleapis.com'], link[href*='fonts.gstatic.com']").count(), 0);
+  // §2: system fonts with the PingFang quotes, Geist Mono for code, tabular figures, weights up to 600.
+  const type = await page.evaluate(async () => {
+    await document.fonts.ready;
+    const code = document.createElement("code"), strong = document.createElement("strong"), token = document.createElement("i"); token.style.fontFamily = "var(--font-sans)"; document.body.append(code, strong, token);
+    const result = { stack: getComputedStyle(document.documentElement).getPropertyValue("--font-sans").trim(), body: getComputedStyle(document.body).fontFamily, token: getComputedStyle(token).fontFamily,
+      size: getComputedStyle(document.body).fontSize + "/" + getComputedStyle(document.body).lineHeight, code: getComputedStyle(code).fontFamily, numbers: getComputedStyle(document.body).fontVariantNumeric,
+      strong: getComputedStyle(strong).fontWeight, quote: [...document.fonts].filter(face => face.family.replaceAll("\"", "") === "HH Quote").map(face => face.weight + " " + face.unicodeRange).sort() };
+    code.remove(); strong.remove(); token.remove(); return result;
+  });
+  // Chrome reports BlinkMacSystemFont as "system-ui" once computed, so the stack is read from its token and the page uses that token.
+  assert.equal(type.stack, "\"HH Quote\", -apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", sans-serif");
+  assert.match(type.body, /^"HH Quote", -apple-system, /u); assert.equal(type.body, type.token);
+  assert.match(type.code, /^"Geist Mono Variable", /u);
+  assert.deepEqual([type.size, type.numbers, type.strong], ["14px/20px", "tabular-nums", "600"]);
+  assert.deepEqual(type.quote, ["400 U+2018-2019, U+201C-201D", "500 U+2018-2019, U+201C-201D", "600 U+2018-2019, U+201C-201D"]);
+  // §1 and §2: the type scale (size/line height · weight), the radii and the composer's three-layer shadow.
+  const scale = await page.evaluate(() => {
+    const root = getComputedStyle(document.documentElement), value = (name: string) => root.getPropertyValue(name).trim();
+    const steps = ["greeting", "title", "section", "panel", "reading", "ui", "ui-sm", "caption", "code"].map(step => value(`--text-${step}`) + "/" + value(`--text-${step}--line-height`) + (value(`--text-${step}--font-weight`) ? " · " + value(`--text-${step}--font-weight`) : ""));
+    return { steps, radii: ["tag", "row", "control", "block", "card", "composer"].map(radius => value(`--radius-${radius}`)) };
+  });
+  assert.deepEqual(scale.steps, ["32px/42px · 500", "28px/36px · 600", "20px/28px · 600", "17px/24px · 600", "15px/26px", "14px/20px", "13px/20px", "12px/18px", "12.5px/20px"]);
+  assert.deepEqual(scale.radii, ["6px", "8px", "10px", "12px", "14px", "28px"]);
+
+  // §1: tokens read through the same variables the components use, light by default and dark when the system is dark.
+  const tokens = () => page.evaluate(() => {
+    const probe = document.createElement("i"), well = document.createElement("span"), app = document.createElement("span"), mono = document.createElement("img");
+    well.className = "brand-tile"; well.dataset.kind = "mark"; app.className = "brand-tile"; app.dataset.kind = "app"; mono.className = "brand-mono";
+    document.body.append(probe, well, app, mono);
+    const color = (name: string) => { probe.style.color = `var(${name})`; return getComputedStyle(probe).color; };
+    const names = ["--bg-sidebar", "--bg-app", "--bg-surface", "--bg-subtle", "--bg-hover", "--bg-selected", "--text", "--text-2", "--text-3", "--accent", "--accent-text", "--on-accent", "--amber-dot", "--amber", "--red-dot", "--red", "--add-text"];
+    probe.style.boxShadow = "var(--sh-composer)";
+    const result = { ...Object.fromEntries(names.map(name => [name, color(name)])), page: getComputedStyle(document.body).backgroundColor, composer: getComputedStyle(probe).boxShadow,
+      well: getComputedStyle(well).backgroundColor, app: getComputedStyle(app).backgroundColor, mono: getComputedStyle(mono).filter, theme: document.documentElement.getAttribute("data-theme") };
+    probe.remove(); well.remove(); app.remove(); mono.remove(); return result;
+  });
+  assert.deepEqual(await tokens(), {
+    "--bg-sidebar": "rgb(249, 250, 251)", "--bg-app": "rgb(255, 255, 255)", "--bg-surface": "rgb(255, 255, 255)", "--bg-subtle": "rgb(244, 245, 247)", "--bg-hover": "rgb(235, 237, 240)",
+    "--bg-selected": "rgba(38, 49, 72, 0.07)", "--text": "rgb(15, 17, 21)", "--text-2": "rgb(75, 80, 89)", "--text-3": "rgb(100, 105, 115)", "--accent": "rgb(58, 106, 224)",
+    "--accent-text": "rgb(47, 95, 208)", "--on-accent": "rgb(255, 255, 255)", "--amber-dot": "rgb(245, 158, 11)", "--amber": "rgb(180, 83, 9)", "--red-dot": "rgb(239, 68, 68)",
+    "--red": "rgb(220, 38, 38)", "--add-text": "rgb(21, 128, 61)", page: "rgb(255, 255, 255)",
+    composer: "rgba(0, 0, 0, 0.1) 0px 0px 0px 0.5px, rgba(0, 0, 0, 0.03) 0px 4px 16px 0px, rgba(0, 0, 0, 0.03) 0px 0px 24px 0px",
+    well: "rgb(255, 255, 255)", app: "rgba(0, 0, 0, 0)", mono: "none", theme: null });
+  // §4: every Agent mark on the page sits in a tile of at least 16 px.
+  for (const tile of await page.locator(".brand-tile").all()) { const box = await tile.boundingBox(); assert.ok(box === null || (box.width >= 16 && box.height >= 16), "an Agent mark is at least 16 px"); }
+  await page.screenshot({ path: join(artifact, "dl1-light-1440.png"), animations: "disabled" });
+  await page.emulateMedia({ colorScheme: "dark" });
+  assert.deepEqual(await tokens(), {
+    "--bg-sidebar": "rgb(17, 18, 20)", "--bg-app": "rgb(24, 25, 28)", "--bg-surface": "rgb(31, 32, 35)", "--bg-subtle": "rgb(38, 39, 43)", "--bg-hover": "rgb(47, 48, 52)",
+    "--bg-selected": "rgba(255, 255, 255, 0.08)", "--text": "rgb(243, 244, 246)", "--text-2": "rgb(180, 184, 191)", "--text-3": "rgb(149, 154, 162)", "--accent": "rgb(58, 106, 224)",
+    "--accent-text": "rgb(138, 176, 255)", "--on-accent": "rgb(255, 255, 255)", "--amber-dot": "rgb(245, 158, 11)", "--amber": "rgb(251, 191, 36)", "--red-dot": "rgb(240, 82, 82)",
+    "--red": "rgb(248, 113, 113)", "--add-text": "rgb(74, 222, 128)", page: "rgb(24, 25, 28)",
+    composer: "rgba(255, 255, 255, 0.12) 0px 0px 0px 0.5px, rgba(0, 0, 0, 0.35) 0px 8px 24px 0px",
+    well: "rgb(42, 43, 47)", app: "rgba(0, 0, 0, 0)", mono: "invert(1)", theme: null });
+  await page.screenshot({ path: join(artifact, "dl1-dark-1440.png"), animations: "disabled" });
+
+  // §4: the favicon and the sidebar mark are "one point fanning out": a blue tile, one dot, three lines, on the 32 grid.
+  const icon = decodeURIComponent((await page.locator("link[rel='icon']").getAttribute("href") ?? "").replace(/^data:image\/svg\+xml,/u, ""));
+  assert.match(icon, /^<svg xmlns='http:\/\/www\.w3\.org\/2000\/svg' viewBox='0 0 32 32'>/u);
+  for (const part of ["<stop offset='0' stop-color='#5a87f2'/>", "<stop offset='1' stop-color='#2f5fd6'/>", "<rect width='32' height='32' rx='7.5' fill='url(#t)'/>", "stroke='#fff' stroke-width='2.75'",
+    "<path d='M12 16c4.5 0 5.5-6.5 12.5-6.5'/>", "<path d='M12 16h12.5'/>", "<path d='M12 16c4.5 0 5.5 6.5 12.5 6.5'/>", "<circle cx='10' cy='16' r='4' fill='#fff'/>"]) assert.ok(icon.includes(part), "the favicon draws " + part);
+  const mark = page.locator("svg.logo-mark").first();
+  assert.deepEqual(await mark.evaluate(svg => ({ box: svg.getAttribute("viewBox"), stops: [...svg.querySelectorAll("stop")].map(stop => stop.getAttribute("stop-color")), lines: [...svg.querySelectorAll("path")].map(path => path.getAttribute("d")),
+    dot: [...svg.querySelectorAll("circle")].map(circle => [circle.getAttribute("cx"), circle.getAttribute("cy"), circle.getAttribute("r")].join(" ")),
+    filled: getComputedStyle(svg.querySelector("rect") as Element).fill.startsWith("url(") })), {
+    box: "0 0 32 32", stops: ["#5a87f2", "#2f5fd6"], lines: ["M12 16c4.5 0 5.5-6.5 12.5-6.5", "M12 16h12.5", "M12 16c4.5 0 5.5 6.5 12.5 6.5"], dot: ["10 16 4"], filled: true });
+  assert.deepEqual(elsewhere, []);
   assert.deepEqual(errors, []);
 });
 

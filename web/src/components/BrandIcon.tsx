@@ -46,8 +46,11 @@ import auggie from "../assets/auggie.svg";
 import dirac from "../assets/dirac.svg";
 import nova from "../assets/nova.svg";
 import stakpak from "../assets/stakpak.svg";
+import dshApp from "../assets/dsh-app.png";
+import workbuddyApp from "../assets/workbuddy-app.png";
+import { cn } from "../lib/cn.js";
 
-/** Pinned local SVGs identify known products. Initials are explicitly generic for brands without reviewed assets. */
+/** Pinned local images identify known products. Initials are explicitly generic for brands without reviewed assets. */
 const assets: Readonly<Record<string, string>> = {
   "agoragentic-acp": brand_agoragentic_acp,
   "autohand": brand_autohand,
@@ -64,17 +67,41 @@ const assets: Readonly<Record<string, string>> = {
   "vtcode": brand_vtcode,
 
   "amp-acp": amp, "antigravity-acp": antigravity, anthropic, auggie, claude, cline, "codebuddy-code": codebuddy, codex, cursor,
-  "claude-acp": claudeCode, "claude-code": claudeCode, "pi-acp": pi, deepseek, dsh: deepseek, devin, hermes, "factory-droid": factory, gemini, "github-copilot": copilot, "github-copilot-cli": copilot, "glm-acp-agent": glm, goose, "grok-build": grok,
+  "claude-acp": claudeCode, "claude-code": claudeCode, "pi-acp": pi, deepseek, dsh: dshApp, devin, hermes, "factory-droid": factory, gemini, "github-copilot": copilot, "github-copilot-cli": copilot, "glm-acp-agent": glm, goose, "grok-build": grok,
   dirac, junie, kilo, kimi, "minimax-code": minimax, "mistral-vibe": mistral, nova, openai, openclaw, opencode, openrouter, pi, poolside, qoder, qwen, "qwen-code": qwen, stakpak,
+  workbuddy: workbuddyApp,
 };
-/** Single-color marks drawn in black; the dark theme inverts them so they stay visible. */
-const MONOCHROME = new Set(["anthropic", "cline", "cursor", "devin", "github-copilot", "github-copilot-cli", "goose", "grok-build", "hermes", "kilo", "openai", "opencode", "pi", "pi-acp"]);
-export function BrandIcon({ brand, name, size = 24 }: { brand: string; name: string; size?: number }) {
-  const source = assets[brand];
-  const characters = Array.from(name.trim());
-  const initials = /^[\x20-\x7e]$/u.test(characters[0] ?? "") ? characters.slice(0, 2).join("").toLocaleUpperCase() : characters[0] ?? "?";
-  return source ? <img className={"brand-icon flex-none select-none" + (MONOCHROME.has(brand) ? " brand-mono" : "")} src={source} alt="" width={size} height={size} aria-hidden="true" draggable={false}/>
-    : <span className="brand-icon brand-fallback inline-flex flex-none select-none items-center justify-center rounded-[28%] bg-subtle font-semibold text-fg-2 ring-1 ring-line ring-inset" style={{ width: size, height: size, fontSize: Math.max(9, Math.round(size * .4)) }} aria-hidden="true" title={`${name}：通用标识`}>{initials}</span>;
+/**
+ * How a mark sits in its tile (Icons board): "app" is a Mac application icon that fills the tile; "tile" is a mark drawn
+ * as its own tile (Codex) and also fills it; "mono" is a single-color mark, drawn black and inverted in the dark; every
+ * other official mark is "mark", two thirds of a white rounded tile (dark grey in the dark).
+ */
+type Kind = "app" | "tile" | "mono" | "mark";
+const APP = new Set(["dsh", "workbuddy"]);
+const TILE = new Set(["codex"]);
+/** Single-color marks: the Lobe icons drawn in currentColor and every local SVG, which an <img> renders black. */
+const MONOCHROME = new Set(["anthropic", "cline", "cursor", "devin", "github-copilot", "github-copilot-cli", "goose", "grok-build", "hermes", "kilo", "openai", "opencode", "pi", "pi-acp",
+  "agoragentic-acp", "autohand", "cortex-code", "corust-agent", "crow-cli", "deepagents", "dimcode", "fast-agent", "harn", "kimchi", "minion-code", "sigit", "vtcode",
+  "factory-droid", "auggie", "dirac", "nova", "stakpak"]);
+function kindOf(brand: string): Kind { return APP.has(brand) ? "app" : TILE.has(brand) ? "tile" : MONOCHROME.has(brand) ? "mono" : "mark"; }
+
+/**
+ * An Agent's or Provider's identity: its official mark in a uniform rounded tile, or its Mac application icon. Never
+ * smaller than 16 px. Products without a reviewed asset show their initials in the same tile, marked as generic.
+ * Decorative: the name always appears next to it or names the control it sits in.
+ */
+export function BrandIcon({ brand, name, size = 24, className }: { readonly brand: string; readonly name: string; readonly size?: number; readonly className?: string }) {
+  const source = assets[brand], side = Math.max(16, Math.round(size)), radius = Math.round(side * .28), kind = kindOf(brand);
+  if (!source) {
+    const characters = Array.from(name.trim());
+    const initials = /^[\x20-\x7e]$/u.test(characters[0] ?? "") ? characters.slice(0, 2).join("").toLocaleUpperCase() : characters[0] ?? "?";
+    return <span className={cn("brand-tile brand-icon brand-fallback select-none", className)} data-kind="mark" data-brand={brand} style={{ width: side, height: side, borderRadius: radius, fontSize: Math.max(8, Math.round(side * .4)) }}
+      aria-hidden="true" title={`${name}：通用标识`}>{initials}</span>;
+  }
+  const inner = kind === "app" || kind === "tile" ? side : Math.round(side * .66);
+  return <span className={cn("brand-tile", className)} data-kind={kind} data-brand={brand} style={{ width: side, height: side, borderRadius: radius }} aria-hidden="true">
+    <img className={cn("brand-icon select-none", kind === "mono" && "brand-mono")} src={source} alt="" width={inner} height={inner} draggable={false}/>
+  </span>;
 }
 export function providerBrand(baseUrl: string): string {
   try {

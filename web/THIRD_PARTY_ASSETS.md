@@ -2,13 +2,30 @@
 
 ## 字体
 
-界面字体 Geist 与 Geist Mono 随前端打包，来自固定依赖 `@fontsource-variable/geist@5.3.0` 与 `@fontsource-variable/geist-mono@5.3.0`，按 [SIL Open Font License 1.1](https://github.com/vercel/geist-font/blob/main/OFL.txt) 分发（Copyright 2024 The Geist Project Authors）。
+正文用本机的系统字体（SF Pro、苹方等），不随前端分发，也不从网络加载（ADR-054 第 2 节）。中文引号所用的“HH Quote”只是一条 `@font-face` 规则，用 `local()` 指向本机已装的苹方，不包含任何字体文件。
 
-中文字体 Noto Sans SC 不随前端分发，页面运行时从 Google Fonts 加载（[SIL Open Font License 1.1](https://fonts.google.com/noto/specimen/Noto+Sans+SC/license)）；没有网络时回退到系统字体（ADR-042 补充）。
+代码字体 Geist Mono 随前端打包，来自固定依赖 `@fontsource-variable/geist-mono@5.3.0`，按 [SIL Open Font License 1.1](https://github.com/vercel/geist-font/blob/main/OFL.txt) 分发（Copyright 2024 The Geist Project Authors）。
+
+2026-11-01 起不再打包正文字体 Geist（移除依赖 `@fontsource-variable/geist`），也不再从 Google Fonts 加载 Noto Sans SC；ADR-042 补充里为它放开的两处内容安全策略来源已撤销。
 
 ## 界面依赖
 
-Tailwind CSS 4.3.3、Base UI 1.8.0、Shiki 4.4.3、clsx 2.1.1 与 tailwind-merge 3.7.0 均为 MIT 许可，版本在 `package.json` 中精确锁定。Shiki 只打包所用的语法与 GitHub 浅色、深色两个主题，按需加载，使用 JavaScript 正则引擎。
+Tailwind CSS 4.3.3、Base UI 1.8.0、Shiki 4.4.3、clsx 2.1.1、tailwind-merge 3.7.0 与 lucide-react 1.54.0 均为 MIT 或 ISC 许可，版本在 `package.json` 中精确锁定。Shiki 只打包所用的语法与 GitHub 浅色、深色两个主题，按需加载，使用 JavaScript 正则引擎。界面图标用 Lucide（ISC），描边统一为 1.75。
+
+## 应用图标
+
+HarnessHub 的应用图标“一点分发”是本项目自己绘制的（ADR-054 第 4 节），网页图标以内联 SVG 写在 `index.html`，侧栏标志由 `LogoMark` 绘制，不引用外部文件。
+
+## Mac 应用图标（2026-11-01）
+
+两款带 Mac 应用的 Agent 按设计稿（ADR-054 第 4 节）显示各自的应用图标。图标取自本机 `/Applications` 里的应用包，只用于辨认产品，不表示合作或背书；图标的版权与商标归各自权利人所有，本项目不对其作任何许可声明。
+
+做法：用 macOS 的 `sips` 把应用包里的 `icon.icns` 转成 1024 像素 PNG，裁去圆角方块外的透明边（1024 画布上自 (100, 100) 起 824 × 824），缩到 128 × 128，再删除 EXIF、XMP 与分辨率等附加数据块（只保留 IHDR、gAMA、cHRM、IDAT、IEND）。
+
+| 本地文件 | 来源 | 源文件 SHA-256 | 本地文件 SHA-256 |
+|---|---|---|---|
+| `src/assets/dsh-app.png` | DeepSeek Harness.app 0.2.1-rc.5（`com.deepseek.dsh`）的 `Contents/Resources/icon.icns` | `8d84ca64a43e4cab085d23c31eafc96e78e5229a7b2ccf4e4c4f845b3fc482f2` | `91a9a3bdfc454cf81950f4dd3c55e43aa98833dbcd37209542457ef82faa481b` |
+| `src/assets/workbuddy-app.png` | WorkBuddy.app 5.3.14（`com.workbuddy.workbuddy`）的 `Contents/Resources/icon.icns` | `222fd607a9dadd54252724c44123acca508a5da9d419b7d6cc19dc539c0fe134` | `a2b49b7e27eb340f37b1df81290c32666b542a772521c640246728ac38ba930b` |
 
 ## 品牌图标来源
 
