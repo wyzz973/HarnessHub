@@ -1,8 +1,53 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { PublicTool } from "../../src/contracts/session.js";
+import type { PublicRun, PublicTool } from "../../src/contracts/session.js";
 import { workspacePath } from "../../web/src/lib/format.js";
-import { diffTotals, groupSteps, noteMount, parseUnifiedDiff, readsLabel, rememberShown, reveal, shownSteps, spentText, stepLabel, toolSummary, toolTree, wrapChunks, type HastNode, type Reveal } from "../../web/src/lib/turn.js";
+import { activityLabel, cancelledWords, diffTotals, groupSteps, liveStatus, noteMount, parseUnifiedDiff, readsLabel, rememberShown, reveal, shownSteps, spentText, stepLabel, stoppedByUser, toolSummary, toolTree, wrapChunks, type HastNode, type QueueNotice, type Reveal } from "../../web/src/lib/turn.js";
+
+/** A running Run with the facts the status line reads; the rest of a Run does not matter to it. */
+function runningRun(tools: readonly PublicTool[] = [], extra: Partial<PublicRun> = {}): PublicRun {
+  return { id: "run-live", status: "running", cancelRequested: false, error: null, tools, timing: { acceptedAt: 0, dispatchedAt: 10, firstOutputAt: 20 }, ...extra } as PublicRun;
+}
+
+test("G054-DL5 a Turn waiting for you keeps naming the step in progress with its arc; without one it says 等你批准 or 等你回答 in grey, and never the marker's words", () => {
+  const step: PublicTool = { id: "diff", title: "git diff --stat", kind: "execute", status: "in_progress" };
+  // Decision F: the process line names the step in progress, with the arc and the timer, while an approval waits below.
+  assert.deepEqual(liveStatus(runningRun([step]), "running", "Codex", 42_000, undefined, undefined, "approval"), { text: "正在运行 git diff --stat", tone: "run", timer: true, wrap: false, thinking: false });
+  assert.equal(liveStatus(runningRun([step]), "running", "Codex", 42_000, undefined, undefined, "question").text, "正在运行 git diff --stat");
+  // With no step in progress the line itself says what it waits for: the still grey dot ("wait"), the timer, no thinking words,
+  // also when reply text came before the request.
+  const quiet = { tone: "wait", timer: true, wrap: false, thinking: false };
+  assert.deepEqual(liveStatus(runningRun([{ ...step, status: "completed" }]), "running", "Codex", 42_000, undefined, undefined, "approval", "先看一下改动。"), { ...quiet, text: "等你批准" });
+  assert.deepEqual(liveStatus(runningRun(), "running", "Codex", 90_000, undefined, undefined, "question"), { ...quiet, text: "等你回答" });
+  // The amber line pointing at the approval is the Turn's marker alone: the status line never says it.
+  for (const waiting of ["approval", "question"] as const) for (const tools of [[], [step]]) assert.doesNotMatch(liveStatus(runningRun(tools), "running", "Codex", 0, undefined, undefined, waiting).text, /请求停在下方输入框/u);
+  // A stop asked for is said first, whatever waits.
+  assert.equal(liveStatus(runningRun([step], { cancelRequested: true }), "running", "Codex", 0, undefined, undefined, "approval").text, "正在停止并清理资源");
+  // A Turn queued behind another conversation says what that one waits for in the same words (decision G).
+  const queue = (holderWaits: "approval" | "question" | null): QueueNotice => ({ kind: "workspace", holderTitle: "approve this", holderWaits, endsAt: 0, cancelling: false });
+  assert.deepEqual([queue("approval"), queue("question"), queue(null)].map(item => liveStatus(runningRun([], { status: "queued" }), "queued", "Codex", 0, undefined, item).text), [
+    "排队中：等待对话「approve this」释放工作区（它在等你批准）", "排队中：等待对话「approve this」释放工作区（它在等你回答）", "排队中：等待对话「approve this」释放工作区（它正在运行）"]);
+});
+
+test("G054-DL7 a Turn the user stopped says 已停止; one the Runtime cancelled keeps the contract's words, and the header's short word is 已取消", () => {
+  const cancelled = (code: string | null, cancelRequested: boolean) => ({ error: code === null ? null : { code, message: "" }, cancelRequested });
+  // The user's stop: cancelRequested with none of the Runtime's causes, also when the program reported its own code for it.
+  for (const run of [cancelled(null, true), cancelled("CANCELLED", true)]) {
+    assert.equal(stoppedByUser(run), true); assert.deepEqual([cancelledWords(run), cancelledWords(run, true)], ["已停止", "已停止"]);
+  }
+  // The Runtime's cancellations keep the contract's words, and are never the user's, even when a stop was asked for as well.
+  for (const [code, words] of [["RUN_TIMEOUT", "已取消（执行预算用尽）"], ["WAIT_EXPIRED", "已取消（等待你的决定超时）"], ["OWNER_ENDED", "已取消（服务重启，这条消息没有发出）"]] as const) {
+    for (const asked of [false, true]) {
+      const run = cancelled(code, asked);
+      assert.equal(stoppedByUser(run), false, code); assert.deepEqual([cancelledWords(run), cancelledWords(run, true)], [words, "已取消"], code);
+    }
+  }
+  // Cancelled without anyone asking (the program ended its own turn so): not the user's either.
+  assert.deepEqual([stoppedByUser(cancelled(null, false)), cancelledWords(cancelled(null, false)), cancelledWords(cancelled(null, false), true)], [false, "已取消", "已取消"]);
+  // The Turn's finished words follow the same rule.
+  assert.equal(activityLabel({ ...runningRun(), status: "cancelled", ...cancelled(null, true) }, "cancelled", "Codex", 0), "已停止");
+  assert.equal(activityLabel({ ...runningRun(), status: "cancelled", ...cancelled("WAIT_EXPIRED", false) }, "cancelled", "Codex", 0), "已取消（等待你的决定超时）");
+});
 
 test("G054-FR7 a unified diff splits into files with numbered lines and counts, and text without headers keeps the given name", () => {
   const files = parseUnifiedDiff([

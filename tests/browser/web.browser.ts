@@ -286,7 +286,9 @@ test("real browser validates Provider management, public chat switching, cancell
   await page.getByRole("button", { name: "发送消息", exact: true }).click();
   await expect(page.getByRole("button", { name: "停止当前回复", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "停止当前回复", exact: true }).click();
-  await expect(page.getByRole("log")).toContainText("已取消（用户停止）");
+  // A Turn the user stopped says so in the Interaction board's words (ADR-054 decision H).
+  await expect(page.getByRole("log").locator("[data-run-status=cancelled]")).toContainText("已停止");
+  await expect(page.getByRole("log").locator("[data-run-status=cancelled]")).not.toContainText("已取消");
   current = await snapshot(); assert.equal(current.runs.at(-1)?.status, "cancelled");
   await page.getByRole("button", { name: "模型与账号", exact: true }).click();
   await page.getByRole("button", { name: "编辑 工作模型 B", exact: true }).click();
@@ -469,7 +471,9 @@ test("live chat renders committed partial Markdown before completion, respects r
   const partial = await current(); assert.equal(partial.runs.length, 2); assert.equal(partial.runs[1]!.status, "running");
   assert.ok(String(partial.messages.at(-1)?.text).includes("第一段已经到达。"));
   await page.getByRole("button", { name: "停止当前回复", exact: true }).click();
-  await expect(page.locator(".assistant-message").last()).toContainText("已取消（用户停止）");
+  // The user stopped it: the Turn and the header say 已停止 (ADR-054 decision H).
+  await expect(page.locator(".assistant-message").last()).toContainText("已停止");
+  await expect(page.locator(".chat-page > header .status-pill")).toHaveText("Codex 已停止");
   const stopped = await current(); assert.equal(stopped.runs.length, 2); assert.equal(stopped.runs[1]!.status, "cancelled");
   assert.ok(String(stopped.messages.at(-1)?.text).includes("第一段已经到达。"));
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -1083,7 +1087,8 @@ test("a Turn waiting for another conversation's work in their workspace names it
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
   await send("queued work");
   const status = log.locator(".response-status");
-  await expect(status).toHaveText("排队中：等待对话「approve this」释放工作区（它正在等待你的审批）", { timeout: 15000 });
+  // What the holder waits for is said as every other place says it (ADR-054 decision G).
+  await expect(status).toHaveText("排队中：等待对话「approve this」释放工作区（它在等你批准）", { timeout: 15000 });
   await expect(log.locator(".queued-turn small")).toHaveText("最多再等 30 分钟，到时这条消息不会发出。");
   assert.equal((await log.textContent())?.includes(fixture.root), false, "no private path reaches the page");
   await page.screenshot({ path: join(artifact, "queued-turn.png"), animations: "disabled" });
@@ -1126,6 +1131,34 @@ test("a Turn that waits for its workspace past its wait budget is not sent, and 
   assert.deepEqual(errors, []);
 });
 
+test("a Turn the Runtime cancelled when its wait budget ran out keeps the contract's words in the Turn and the details, and the header says 已取消, never 已停止 (ADR-036, ADR-054 decision H)", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false, { name: "Shared Agent", scenario: "hermes" }, null, false, { executionBudgetMs: 60_000, waitBudgetMs: 2000 }); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  // At this width the details open over the conversation, from the Turn's own button.
+  const context = await isolatedContext(browser, { viewport: { width: 943, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" }), origin = new URL(fixture.gateway.url).origin;
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
+  await composer.fill("approve this"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
+  await expect(page.getByRole("region", { name: "工具审批", exact: true })).toContainText("rm -rf build", { timeout: 15000 });
+  // Nobody decides: HarnessHub's wait budget runs out and the Runtime stops the Turn, which the program settles as cancelled.
+  const turn = log.locator(".assistant-message").last();
+  await expect(turn).toHaveAttribute("data-run-status", "cancelled", { timeout: 15000 });
+  const run = (await current()).runs.at(-1);
+  assert.deepEqual([run.status, run.error?.code, run.cancelRequested], ["cancelled", "WAIT_EXPIRED", false]);
+  // The Turn keeps the contract's own words; the header's word is 已取消; nothing calls it the user's stop.
+  await expect(turn.locator(".process-summary")).toContainText("已取消（等待你的决定超时）"); await expect(turn.locator(".process-summary")).not.toContainText("已停止");
+  await expect(page.locator(".chat-page > header .status-pill")).toHaveText("Shared Agent 已取消");
+  await turn.hover(); await turn.getByRole("button", { name: "执行详情", exact: true }).click();
+  const facts = page.getByRole("complementary", { name: "详情栏" }).locator(".execution-details");
+  await expect(facts.locator("dt", { hasText: "执行状态" }).locator("xpath=following-sibling::dd[1]")).toHaveText("已取消（等待你的决定超时）");
+  await page.screenshot({ path: join(artifact, "runtime-cancelled.png"), animations: "disabled" });
+  assert.deepEqual(errors, []);
+});
+
 test("a Turn waiting for a slot says how many conversations run, has no deadline of its own, and can be cancelled", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false, { name: "Busy Agent", scenario: "hermes" }); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
@@ -1154,7 +1187,8 @@ test("a Turn waiting for a slot says how many conversations run, has no deadline
   await expect(log.getByRole("button", { name: "打开那个对话", exact: true })).toHaveCount(0);
   await page.screenshot({ path: join(artifact, "slot-wait.png"), animations: "disabled" });
   await log.getByRole("button", { name: "取消排队", exact: true }).click();
-  await expect(log.locator("[data-run-status=cancelled]")).toContainText("已取消（用户停止）");
+  // The user cancelled it before it started: a stop of the user's, said 已停止 (ADR-054 decision H).
+  await expect(log.locator("[data-run-status=cancelled]")).toContainText("已停止");
   assert.deepEqual(errors, []);
 });
 
@@ -1820,7 +1854,19 @@ test("G054-DL5 an approval waits in the composer's place: ⏎ allows once and es
   // P04: the amber ring, and the Turn keeps a mark that points to it.
   await expect.poll(() => box.evaluate(element => getComputedStyle(element).boxShadow)).toContain("rgb(245, 158, 11) 0px 0px 0px 1.5px");
   await expect(log.getByRole("button", { name: "等你批准，请求停在下方输入框的位置", exact: true })).toBeVisible();
+  // Decision F: the Turn says the wait once. No step is in progress here, so its process line says 等你批准 in the process's
+  // grey with the timer and without the arc; the one amber line is the mark under it.
+  const waiting = log.locator(".assistant-message").last(), line = waiting.locator(".process-summary"), marker = waiting.locator(".docked-approval");
+  await expect(line.locator(".response-status")).toHaveText("等你批准"); await expect(line).toContainText(/· 已用 \d+ 秒/u);
+  await expect(line.locator(".spinner")).toHaveCount(0); await expect(line.locator(".shimmer-text")).toHaveCount(0);
+  await expect(marker).toHaveCount(1); await expect(marker).toHaveText("等你批准，请求停在下方输入框的位置");
+  const amber = await marker.evaluate(element => getComputedStyle(element).color);
+  assert.deepEqual(await waiting.evaluate((turn, color) => [...turn.querySelectorAll("*")].filter(node => [...node.childNodes].some(child => child.nodeType === Node.TEXT_NODE && child.textContent!.trim() !== "")
+    && getComputedStyle(node).color === color).map(node => node.textContent!.trim()), amber), ["等你批准，请求停在下方输入框的位置"], "the mark is the Turn's only amber line");
   await shoot("dl5-dock");
+  // The mark is a control: ⏎ on it, or a click, moves the focus to the approval.
+  await page.locator("#chat-title").click(); await marker.focus(); await page.keyboard.press("Enter"); await expect(dock).toBeFocused();
+  await page.locator("#chat-title").click(); await marker.click(); await expect(dock).toBeFocused();
   // Pointing at the approval makes the keys its own at once.
   await dock.click({ position: { x: 60, y: 8 } }); await expect(dock).toBeFocused();
   await page.keyboard.press("Enter");

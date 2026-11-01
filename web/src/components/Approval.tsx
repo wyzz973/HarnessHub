@@ -206,7 +206,11 @@ export function DecisionLine({ decision }: { readonly decision: Decision }) {
     <Icon size={15} className="flex-none" aria-hidden="true"/><span className="min-w-0 truncate" title={decision.title}>{text}<span className="mono text-[12.5px]">{decision.title}</span></span>
   </p>;
 }
-/** The mark a Turn keeps while its approval waits in the composer's place; pressing it moves focus there. */
+/**
+ * The mark a Turn keeps while its approval waits in the composer's place (Conversation board, decision F): the Turn's one
+ * amber line, drawn once for the Turn's waiting approvals; the process line above it keeps its grey. A button, so a click
+ * or ⏎ moves the focus to the approval.
+ */
 export function DockedMarker() {
   return <button type="button" className="docked-approval flex items-center gap-2 self-start rounded-row border-none bg-transparent px-0 text-ui-sm text-amber"
     onClick={() => document.getElementById("approval-dock")?.focus()}>

@@ -1,5 +1,5 @@
 import type { ContentRef } from "../../../src/contracts/content.js";
-import type { PublicRun, PublicTool, RunStatus } from "../../../src/contracts/session.js";
+import { cancelledLabel, type PublicRun, type PublicTool, type RunStatus } from "../../../src/contracts/session.js";
 import type { ToolDetailView } from "../api.js";
 import { toolParents } from "../tool-tree.js";
 import { elapsed } from "./format.js";
@@ -8,6 +8,22 @@ export type Tool = PublicTool;
 export const TOOL_PENDING = new Set(["pending", "in_progress", "inProgress", "running"]);
 export const TOOL_STATUS: Readonly<Record<string, string>> = { pending: "等待", in_progress: "执行中", inProgress: "执行中", running: "执行中", completed: "完成", failed: "失败", declined: "已拒绝", cancelled: "已取消", interrupted: "已中断" };
 export function finished(status: RunStatus): boolean { return status === "completed" || status === "cancelled" || status === "failed" || status === "unknown"; }
+/**
+ * Whether the user stopped this Run: the contract words its cancellation as a user stop, that is, the cancellation was
+ * asked for (cancelRequested) and none of the Runtime's own causes ended it (an execution budget used up, a wait deadline
+ * passed, a service restart). Derived from `cancelledLabel`, so a cause the contract adds is never taken for the user's.
+ */
+export function stoppedByUser(run: Pick<PublicRun, "error" | "cancelRequested">): boolean {
+  return run.cancelRequested && cancelledLabel(run) === cancelledLabel({ error: null, cancelRequested: true });
+}
+/**
+ * How a cancelled Run ended, in words (Interaction board, ADR-054 decision H): "已停止" when the user stopped it; any other
+ * cancellation keeps the contract's own words ("已取消（执行预算用尽）"), since the Runtime's stop is never called the user's
+ * (ADR-036). `short` is the header pill's word, "已停止" or "已取消". The header, the Turn and the details all use this.
+ */
+export function cancelledWords(run: Pick<PublicRun, "error" | "cancelRequested">, short = false): string {
+  return stoppedByUser(run) ? "已停止" : short ? "已取消" : cancelledLabel(run);
+}
 export function toolFailed(tool: Pick<Tool, "status">): boolean { return tool.status === "failed" || tool.status === "declined"; }
 /** Once the Turn has ended, a tool whose end was never reported did not finish as far as anyone can tell. */
 export function toolUnfinished(tool: Pick<Tool, "status">, active: boolean): boolean { return !active && TOOL_PENDING.has(tool.status); }
@@ -133,6 +149,83 @@ export function stepLabel(tool: Pick<Tool, "kind" | "title">, nested = false): S
 /** The label of a group of consecutive reads, with the files' names joined as the board shows them. */
 export function readsLabel(tools: readonly Pick<Tool, "kind" | "title">[]): StepLabel {
   return { verb: `读取 ${tools.length} 个文件`, running: `正在读取 ${tools.length} 个文件`, target: tools.map(tool => stepLabel(tool).target).join(" · ") };
+}
+
+/** What a queued Turn shows about what it waits for (ADR-036); no paths. */
+export type QueueNotice = ({
+  /** Another conversation's work holds the workspace: which one, what it waits for (approval, an answer, or nothing: it runs), and the deadline. */
+  readonly kind: "workspace"; readonly holderTitle: string; readonly holderWaits: "approval" | "question" | null; readonly endsAt: number; readonly onOpen?: (() => void) | undefined;
+} | {
+  /** Every slot is taken: how many conversations run; there is no deadline of its own. */
+  readonly kind: "slot"; readonly running: number;
+}) & { readonly cancelling: boolean; readonly onCancel?: (() => void) | undefined };
+/**
+ * What a running Turn says it is doing (ADR-054 §3, Interaction board's states), from the phases the Runtime recorded and
+ * the tool running now. `tone` picks the symbol: "run" a turning arc with the sweep over the words, "wait" a still grey dot
+ * while it waits for you with no step in progress, "queue" the dashed circle of work not started. Queue explanations wrap
+ * instead of sliding.
+ */
+export interface LiveStatus {
+  readonly text: string;
+  readonly tone: "run" | "wait" | "queue";
+  /** The time since the input was accepted follows the words. */
+  readonly timer: boolean;
+  readonly wrap: boolean;
+  /** Thinking: the words breathe after 3 s and change at 15, 30, 45 and 60 s (Motion board #04). */
+  readonly thinking: boolean;
+}
+const THINKING: readonly (readonly [number, string])[] = [[60_000, "快想好了"], [45_000, "想得更深"], [30_000, "再想想"], [15_000, "还在想"]];
+function clip(text: string, limit = 80): string { const characters = [...text]; return characters.length > limit ? characters.slice(0, limit - 1).join("") + "…" : text; }
+/** The running tool in the words of its step: "正在运行 git diff --stat", or "正在读取 3 个文件" inside a group of reads. */
+function runningText(tools: readonly Tool[], running: Tool): string {
+  const { roots, children } = toolTree(tools);
+  const group = groupSteps(roots, children).find(step => step.kind === "reads" && step.tools.includes(running));
+  const label = group?.kind === "reads" ? readsLabel(group.tools) : stepLabel(running, (children.get(running.id)?.length ?? 0) > 0);
+  if (group) return label.running!;
+  return label.running ? label.running + " " + clip(label.target) : "正在执行 " + clip(label.target);
+}
+/**
+ * What a running Turn says now, and with which symbol; a finished one is described by its process line instead. While it
+ * waits for you (ADR-054 decision F), the line keeps naming the step in progress with its arc and timer; only without one
+ * does it say "等你批准" or "等你回答", in its usual grey with the timer. The one amber line, pointing at an approval that
+ * waits in the composer's place, is the Turn's marker, never this line.
+ */
+export function liveStatus(run: PublicRun | undefined, status: RunStatus, harness: string, now: number, startupHint?: { readonly seconds: number; readonly usual: boolean }, queue?: QueueNotice, waiting?: "approval" | "question", text = ""): LiveStatus {
+  const plain = { tone: "run" as const, timer: true, wrap: false, thinking: false };
+  if (run?.cancelRequested) return { ...plain, text: "正在停止并清理资源" };
+  if (waiting) {
+    const tools = run?.tools ?? [], running = toolSummary(tools, true).running;
+    return running ? { ...plain, text: runningText(tools, running) } : { ...plain, tone: "wait", text: waiting === "question" ? "等你回答" : "等你批准" };
+  }
+  const queued = { tone: "queue" as const, timer: false, wrap: true, thinking: false };
+  if (run?.awaitingSwitchId && status === "queued") return { ...queued, text: "等待选择切换生效" };
+  // What the conversation holding the workspace waits for, in the words every other place uses (decision G).
+  if (queue?.kind === "workspace" && status === "queued") return { ...queued, text: `排队中：等待对话「${queue.holderTitle}」释放工作区（${queue.holderWaits === "approval" ? "它在等你批准" : queue.holderWaits === "question" ? "它在等你回答" : "它正在运行"}）` };
+  if (queue?.kind === "slot" && status === "queued") return { ...queued, text: `等待开始：${queue.running} 个对话正在执行，其中一个结束后自动开始` };
+  switch (status) {
+    case "queued": return { ...queued, text: "等待开始" };
+    case "preparing": return { ...plain, text: "正在启动 " + harness + (startupHint !== undefined && startupHint.seconds >= 2 ? (startupHint.usual ? "（通常约 " : "（上次约 ") + Math.round(startupHint.seconds) + " 秒）" : "") };
+    case "settling": return { ...plain, text: "正在结束执行" };
+    case "running": {
+      const tools = run?.tools ?? [], running = toolSummary(tools, true).running, timing = run?.timing;
+      if (running) return { ...plain, text: runningText(tools, running) };
+      if (text) return { ...plain, text: "正在回复" };
+      if (timing !== undefined && timing.dispatchedAt === undefined) return { ...plain, text: "已连接 " + harness + "，正在发送" };
+      const waited = timing?.dispatchedAt !== undefined && timing.firstOutputAt === undefined ? now - timing.dispatchedAt : 0;
+      return { ...plain, thinking: true, text: THINKING.find(([after]) => waited >= after)?.[1] ?? "正在思考" };
+    }
+    default: return { ...plain, timer: false, text: activityLabel(run, status, harness, now) };
+  }
+}
+/** What the Turn is doing, or how it ended, in words (the Interaction board's eight states). */
+export function activityLabel(run: PublicRun | undefined, status: RunStatus, harness: string, now: number, startupHint?: { readonly seconds: number; readonly usual: boolean }, queue?: QueueNotice, waiting?: "approval" | "question"): string {
+  switch (status) {
+    case "completed": return "已完成";
+    case "cancelled": return run ? cancelledWords(run) : "已取消";
+    case "failed": return "回复未能完成";
+    case "unknown": return "结果未知：可能已经执行，不会自动重发";
+    default: return liveStatus(run, status, harness, now, startupHint, queue, waiting).text;
+  }
 }
 
 export interface DiffLine { readonly kind: "add" | "remove" | "context" | "hunk" | "file" | "meta"; readonly text: string; readonly oldNo?: number; readonly newNo?: number }

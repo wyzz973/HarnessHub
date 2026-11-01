@@ -10,7 +10,7 @@ import { failureMessage, runStatusLabel } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { clock, compact, duration, elapsed, folderName, shortTitle } from "../lib/format.js";
 import { useMedia, useNow, type Preferences } from "../lib/prefs.js";
-import { editTools, finished, toolTree, TOOL_PENDING } from "../lib/turn.js";
+import { cancelledWords, editTools, finished, toolTree, TOOL_PENDING, type QueueNotice } from "../lib/turn.js";
 import { Collapsible, motionStyle, usePresence } from "../ui/motion.js";
 import { Dialog, Menu } from "../ui/overlay.js";
 import { EmptyState, Notice, Spinner, StatusPill, Tip } from "../ui/primitives.js";
@@ -20,7 +20,7 @@ import type { AttachmentDraft } from "./Attachments.js";
 import { BranchOrigin } from "./BranchOrigin.js";
 import { Composer, OPTION_NAMES, THINKING_NAMES, type DockedApproval } from "./Composer.js";
 import { DetailsPanel, type PanelTab } from "./DetailsPanel.js";
-import { AssistantTurn, SwitchDivider, UserMessage, type QueueNotice } from "./Turn.js";
+import { AssistantTurn, SwitchDivider, UserMessage } from "./Turn.js";
 import { Welcome } from "./Welcome.js";
 
 export interface SelectionDraft { harnessId: string; controlId: string; providerId: string; providerRevision: number | null; model: string; nativeOptions: Readonly<Record<string, string>> }
@@ -481,7 +481,8 @@ export function ChatPage(props: ChatProps) {
 /**
  * The conversation's state in the header (Conversation and Interaction boards): who works and what it does now, in the
  * words the sidebar and the Turn use. Running work is blue with a breathing dot and a clock; waiting for the user is
- * amber; a failure is red; a Turn that ended quietly is grey.
+ * amber; a failure is red; a Turn that ended quietly is grey: "已停止" when the user stopped it, "已取消" when the Runtime
+ * cancelled it (ADR-036, decision H).
  */
 function HeaderState({ session, active, harnessName }: { readonly session: SessionView; readonly active: PublicRun | null; readonly harnessName: (id: string) => string }) {
   const now = useNow(active !== null);
@@ -508,7 +509,7 @@ function HeaderState({ session, active, harnessName }: { readonly session: Sessi
     switch (latest.status) {
       case "completed": return { text: "已完成", tone: "neutral" };
       case "failed": return { text: "失败", tone: "red" };
-      case "cancelled": return { text: "已停止", tone: "neutral" };
+      case "cancelled": return { text: cancelledWords(latest, true), tone: "neutral" };
       case "unknown": return { text: "结果未知", tone: "amber" };
       default: return { text: "", tone: "neutral" };
     }

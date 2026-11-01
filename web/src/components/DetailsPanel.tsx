@@ -1,14 +1,14 @@
 import { ChevronRight, Clock, File, FileText, ListChecks, X } from "lucide-react";
 import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { cancelledLabel, type PublicRun } from "../../../src/contracts/session.js";
+import type { PublicRun } from "../../../src/contracts/session.js";
 import type { HarnessView, NativeResumeView, SessionView } from "../../../src/contracts/web.js";
 import type { ProviderView } from "../../../src/contracts/provider.js";
 import { errorMessage } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { duration, elapsed, folderName, homePath, workspacePath } from "../lib/format.js";
 import { useNow } from "../lib/prefs.js";
-import { editTools, finished, knownToolDetail, noteMount, parseUnifiedDiff, readToolDetail, RUN_STATE, runDuration, spentText, toolSummary, type DiffFile } from "../lib/turn.js";
+import { cancelledWords, editTools, finished, knownToolDetail, noteMount, parseUnifiedDiff, readToolDetail, RUN_STATE, runDuration, spentText, toolSummary, type DiffFile } from "../lib/turn.js";
 import { Collapsible } from "../ui/motion.js";
 import { EmptyState, Fact, Segmented, Spinner, StatusDot, Tabs } from "../ui/primitives.js";
 import { ACTIVITY_KIND, ACTIVITY_STATUS, DiffLines, PlanView, ToolList, usageFacts, type ToolDetailLoader } from "./Activity.js";
@@ -220,7 +220,7 @@ function RunProcess({ run, index, open, onToggle, loadToolDetail, name, describe
   const active = !finished(run.status), panel = useId(), at = (time: number | undefined) => time === undefined ? null : new Date(time).toLocaleTimeString("zh-CN", { hour12: false });
   const summary = run.tools?.length ? toolSummary(run.tools, active).compact : "", total = runDuration(run);
   const time = total !== null ? spentText(total) : active && run.timing ? "已用 " + elapsed(now - run.timing.acceptedAt) : "";
-  const steps: [string, number | undefined][] = [["收到消息", run.timing?.acceptedAt], ["开始启动原程序", run.timing?.preparingAt], ["原生会话就绪", run.timing?.readyAt], ["发给原程序", run.timing?.dispatchedAt], ["首个输出", run.timing?.firstOutputAt], [run.status === "cancelled" ? cancelledLabel(run) : RUN_STATE[run.status], run.timing?.endedAt]];
+  const steps: [string, number | undefined][] = [["收到消息", run.timing?.acceptedAt], ["开始启动原程序", run.timing?.preparingAt], ["原生会话就绪", run.timing?.readyAt], ["发给原程序", run.timing?.dispatchedAt], ["首个输出", run.timing?.firstOutputAt], [run.status === "cancelled" ? cancelledWords(run) : RUN_STATE[run.status], run.timing?.endedAt]];
   const model = describe(run);
   return <li className="flex min-w-0 flex-col">
     <button type="button" className="row flex min-h-9 w-full min-w-0 items-center gap-2 border-none bg-transparent px-1.5 py-1.5 text-left text-ui-sm text-fg-2" aria-expanded={open} aria-controls={panel} onClick={onToggle}>
@@ -289,7 +289,7 @@ function RunFacts(props: PanelProps & { readonly run: PublicRun; readonly runs: 
       {options.length ? <Fact label="原生选项">{options.map(([id, value]) => `${id} ${value}`).join("、")}</Fact> : null}
       <Fact label="控制入口"><code className="text-code">{run.selection.controlId}</code></Fact>
       <Fact label="工作区"><span className="mono text-code" title={session.workspace}>{homePath(session.workspace) || folderName(session.workspace)}</span></Fact>
-      <Fact label="执行状态">{status === "cancelled" ? cancelledLabel(run) : RUN_STATE[status]}</Fact>
+      <Fact label="执行状态">{status === "cancelled" ? cancelledWords(run) : RUN_STATE[status]}</Fact>
       <Fact label="执行标识"><code className="text-code break-all">{run.id}</code></Fact>
       {run.timing?.readyAt !== undefined && run.timing.preparingAt !== undefined ? <Fact label="启动原程序">{duration(run.timing.readyAt - run.timing.preparingAt)}{run.reused ? "（复用保留的进程）" : ""}</Fact> : null}
       {run.timing?.firstOutputAt !== undefined && run.timing.dispatchedAt !== undefined ? <Fact label="发送后首个输出">{duration(run.timing.firstOutputAt - run.timing.dispatchedAt)}</Fact> : null}
