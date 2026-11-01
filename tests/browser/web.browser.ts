@@ -773,7 +773,9 @@ test("the native extensions panel lists skills, MCP servers and plugins and invo
   await expect(panel.getByRole("button", { name: "browser-skill", exact: true })).toBeVisible({ timeout: 15000 });
   await expect(panel).toContainText("浏览器验收技能");
   await panel.getByText("MCP 服务器").click(); await expect(panel).toContainText("browser-docs"); await expect(panel).toContainText("已连接"); await expect(panel).toContainText("1 个工具");
-  await panel.getByText("插件与扩展").click(); await expect(panel).toContainText("browser-plugin"); await expect(panel).toContainText("v2.0.0");
+  await panel.getByText("插件与扩展").click(); await expect(panel).toContainText("browser-plugin");
+  // A version is shown as the program reported it, without a "v" the page would add (ruling P).
+  await expect(panel).toContainText("2.0.0"); await expect(panel).not.toContainText("v2.0.0");
   await page.screenshot({ path: join(artifact, "native-extensions.png"), animations: "disabled" });
   await panel.getByRole("button", { name: "browser-skill", exact: true }).click();
   await expect(composer).toHaveValue("/skill:browser-skill ");
@@ -3848,12 +3850,12 @@ test("G054-CA1 the capability page opens from the sidebar and from a Harness's d
   for (const [label, count] of [["技能", 2], ["MCP", 1], ["指令", 1], ["子 Agent", 1], ["插件", 1], ["Hooks", 1]] as const) await expect(tabs.getByRole("tab", { name: label + " " + count, exact: true })).toBeVisible();
   await expect(tabs.getByRole("tab")).toHaveText([/^技能/u, /^MCP/u, /^指令/u, /^子 Agent/u, /^插件/u, /^Hooks/u]);
   // Each column names its Harness and the version its channel records, Cursor's dated one like the others; no column says anything about its version (ADR-053).
-  await expect(matrix.locator("thead th")).toHaveText([/技能/u, /Claude Code.*v2\.1\.302/u, /Codex.*v0\.162\.1/u, /Cursor.*v2026\.10\.01-e373342/u, /Hermes Agent.*v0\.12\.0/u]);
+  await expect(matrix.locator("thead th")).toHaveText([/技能/u, /Claude Code.*(?<!v)2\.1\.302/u, /Codex.*(?<!v)0\.162\.1/u, /Cursor.*(?<!v)2026\.10\.01-e373342/u, /Hermes Agent.*(?<!v)0\.12\.0/u]);
   await expect(matrix.locator("thead")).not.toContainText("核实");
   // The rules section says which version each Harness runs and points to its notes, and nothing about the version.
   const rules = page.locator("details").filter({ hasText: "各 Harness 的读取规则与说明" });
   await rules.locator("summary").click();
-  await expect(rules).toContainText("v2026.10.01-e373342 · 读取规则见说明"); await expect(rules).toContainText("Cursor 的用户规则保存在应用设置里，不在磁盘上。");
+  await expect(rules).toContainText(/(?<!v)2026\.10\.01-e373342 · 读取规则见说明/u); await expect(rules).not.toContainText("v2026.10.01"); await expect(rules).toContainText("Cursor 的用户规则保存在应用设置里，不在磁盘上。");
   await expect(rules).not.toContainText("核实");
   await rules.locator("summary").click();
   // A cell is in use (a check named with the way the Harness finds it), a state worth its own word, or one that can be turned on (ADR-054 §5).
@@ -4497,7 +4499,7 @@ test("G054-CA9 the plugins tab says whose plugins can be switched and why the ot
   await expect(matrix.locator("tbody tr")).toHaveCount(1);
   await matrix.locator("tbody tr").first().getByRole("button", { name: /tool@market/u }).click();
   const detail = page.locator(".capability-detail");
-  await expect(detail).toContainText("v1.2.0 · 已启用"); await expect(detail).toContainText("v1.1.0 · 已停用"); await expect(detail).toContainText("Codex 停用了它");
+  await expect(detail).toContainText(/(?<!v)1\.2\.0 · 已启用/u); await expect(detail).toContainText(/(?<!v)1\.1\.0 · 已停用/u); await expect(detail).not.toContainText(/v1\.[12]\.0/u); await expect(detail).toContainText("Codex 停用了它");
   const switches = page.locator(".plugin-switches");
   await expect(switches.getByRole("button")).toHaveText(["在 Claude Code 中停用", "在 Codex 中启用"]);
   await page.screenshot({ path: join(artifact, "capabilities-plugins.png"), animations: "disabled", fullPage: true }); await captureDark(page, "capabilities-plugins");
@@ -4612,8 +4614,8 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
   await page.keyboard.press("Home"); await expect(tabs.getByRole("tab", { name: "技能 3", exact: true })).toBeFocused();
   // Each column is an Agent, by its mark and short name; its full name and version are read out and shown on hover.
   const matrix = page.locator(".capability-matrix"), row = (name: string) => matrix.locator("tbody tr").filter({ hasText: name }).first();
-  await expect(matrix.locator("thead th")).toHaveText([/^技能 · 来源$/u, /Claude Code v2\.1\.302/u, /Codex v0\.162\.1/u, /Hermes Agent v0\.12\.0/u]);
-  await expect(matrix.locator("thead th").nth(1)).toHaveAttribute("title", "Claude Code · v2.1.302");
+  await expect(matrix.locator("thead th")).toHaveText([/^技能 · 来源$/u, /Claude Code 2\.1\.302/u, /Codex 0\.162\.1/u, /Hermes Agent 0\.12\.0/u]);
+  await expect(matrix.locator("thead th").nth(1)).toHaveAttribute("title", "Claude Code · 2.1.302");
   // Three states: in use, can be turned on, not read; and each entry's source.
   await expect(row("alpha").locator("td").nth(0).getByRole("img")).toHaveAccessibleName("已生效 · 链接");
   const beta = row("beta").locator("td").nth(0).getByRole("button"), gamma = row("gamma").locator("td").nth(0).getByRole("button");

@@ -64,7 +64,7 @@ function factsText(facts: CapabilityFacts): string {
     case "instructions": return size(facts.bytes) + (facts.managedBlocks.length ? " · 含 " + facts.managedBlocks.join("、") + " 管理的区块" : "");
     case "subagent": case "command": return facts.format === "toml" ? "TOML" : "Markdown";
     case "hook": return [facts.event, facts.matcher ? "匹配 " + facts.matcher : null, facts.program ? "运行 " + facts.program : null].filter(Boolean).join(" · ");
-    case "plugin": return [facts.version ? "v" + facts.version : null, facts.enabled === null ? "启停未知" : facts.enabled ? "已启用" : "已停用"].filter(Boolean).join(" · ");
+    case "plugin": return [facts.version || null, facts.enabled === null ? "启停未知" : facts.enabled ? "已启用" : "已停用"].filter(Boolean).join(" · ");
   }
 }
 /** A column's short name, as the board shows it (Claude, Hermes, DeepSeek): the product name without its generic last word. */
@@ -635,10 +635,10 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
           <colgroup><col/>{columns.map((item, index) => <col key={item.harnessId} style={{ width: MATRIX_COLUMN + (index === columns.length - 1 ? MATRIX_INSET : 0) }}/>)}</colgroup>
           <thead><tr className="hairline-b">
             <th scope="col" className={cn("sticky left-0 z-[1] bg-surface pt-3.5 pr-3 pb-2.5 pl-4 align-bottom text-caption leading-5 font-normal text-fg-3", NAME_EDGE)}>{KIND_HEAD[kind]}</th>
-            {columns.map((item, index) => <th key={item.harnessId} scope="col" className={cn("pt-3.5 pb-2.5 pl-0.5 align-bottom font-normal", index === columns.length - 1 ? "pr-4" : "pr-0.5")} title={item.name + " · " + (item.version ? "v" + item.version : "版本未知")}>
+            {columns.map((item, index) => <th key={item.harnessId} scope="col" className={cn("pt-3.5 pb-2.5 pl-0.5 align-bottom font-normal", index === columns.length - 1 ? "pr-4" : "pr-0.5")} title={item.name + " · " + (item.version || "版本未知")}>
               <span className="relative flex flex-col items-center gap-1.5"><BrandIcon brand={item.harnessId} name={item.name} size={26}/>
                 <span aria-hidden="true" className="max-w-[66px] trunc text-[11px] leading-5 text-fg-2">{shortName(item.name)}</span>
-                <span className="sr-only">{item.name} {item.version ? "v" + item.version : "版本未知"}</span></span></th>)}
+                <span className="sr-only">{item.name} {item.version || "版本未知"}</span></span></th>)}
           </tr></thead>
           <tbody className="[&>tr:last-child]:border-b-0">{rows.map(entry => { const warnings = warningCount(entry), update = updateOf(entry);
             return <MatrixRow key={entry.key} entry={entry} columns={columns} expanded={open === entry.key} onToggle={() => setOpen(current => current === entry.key ? null : entry.key)}
@@ -683,7 +683,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
       <div className="flex flex-col gap-3 px-4 pb-4">
         <ul className="m-0 flex list-none flex-col gap-2.5 p-0">{shown.map(item => <li key={item.harnessId} className="flex flex-col gap-0.5">
           <span className="flex items-center gap-2"><BrandIcon brand={item.harnessId} name={item.name} size={18}/><strong className="font-medium">{item.name}</strong>
-            <span className="text-caption text-fg-3">{item.version ? "v" + item.version : "版本未知"} · 读取规则见说明</span></span>
+            <span className="text-caption text-fg-3">{item.version || "版本未知"} · 读取规则见说明</span></span>
           {item.notes.length ? <ul className="m-0 list-disc pl-[46px] text-fg-2 marker:text-fg-3">{item.notes.map((note, index) => <li key={index}>{note}</li>)}</ul> : null}</li>)}</ul>
         <p className="m-0 text-caption text-fg-3">读取时间 {new Date(view.checkedAt).toLocaleString()}。只显示名字与数量，不显示任何环境变量、请求头或参数的值。</p>
       </div></details> : null}

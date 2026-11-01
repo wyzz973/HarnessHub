@@ -61,7 +61,7 @@ export function NativeExtensionsPanel({ load, onCommand, disabled, side = "top" 
         </Section>
         <Section title="插件与扩展" count={value.plugins.length}>
           {value.plugins.length ? <ul className="m-0 list-none p-0">{value.plugins.map((plugin, index) => <li key={plugin.name + index} className={row}>
-            <strong className={cn("font-medium", !plugin.enabled && "text-fg-3")}>{plugin.name}</strong>{plugin.version ? <small className="text-caption text-fg-3">v{plugin.version}</small> : null}{plugin.source ? <small className="text-caption text-fg-3">{plugin.source}</small> : null}{!plugin.enabled ? <small className="text-caption text-fg-3">已停用</small> : null}
+            <strong className={cn("font-medium", !plugin.enabled && "text-fg-3")}>{plugin.name}</strong>{plugin.version ? <small className="text-caption text-fg-3">{plugin.version}</small> : null}{plugin.source ? <small className="text-caption text-fg-3">{plugin.source}</small> : null}{!plugin.enabled ? <small className="text-caption text-fg-3">已停用</small> : null}
           </li>)}</ul> : <p className="m-0 text-ui-sm text-fg-3">没有插件。</p>}
         </Section>
         {value.truncated ? <p className="m-0 px-2 text-caption text-fg-3">列表较长，只显示前 512 项。</p> : null}
