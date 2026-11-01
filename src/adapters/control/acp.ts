@@ -170,6 +170,7 @@ export class AcpControl implements HarnessControl {
   }
   private async initializeOnce(): Promise<ProtocolObservation> {
     try {
+      await this.beforeConnect();
       const response = object(await this.rpc.request("initialize", {
         // Notices and compaction arrive as their own updates instead of being folded into reply text or fake tools.
         // elicitation.form lets an agent ask the user through a form (Claude's AskUserQuestion); the chat asks it field by field.
@@ -387,6 +388,14 @@ export class AcpControl implements HarnessControl {
    */
   protected get sessionMeta(): Readonly<Record<string, unknown>> | null { return null; }
   protected async sessionParameters(cwd: string): Promise<Readonly<Record<string, unknown>>> { const meta = this.sessionMeta; return { cwd, mcpServers: [], ...(meta === null ? {} : { _meta: meta }) }; }
+  /**
+   * Runs once, before the agent's program is started (initialize is the first request, and the process is spawned for it).
+   * A driver whose program would act on the user's machine merely by starting (Hermes's `hermes acp` starts, stops or
+   * replaces the user's gateway when no compatible one runs, ADR-051) judges that here from read-only facts and throws a
+   * ControlError to refuse: nothing has been spawned then, the connection fails as a failed initialize does, and open(),
+   * the catalog read and every later call refuse with the same error. The default does nothing.
+   */
+  protected async beforeConnect(): Promise<void> {}
   /** Recovery uses session/load even when session/resume is declared, for an agent whose resume of an unknown identity starts a new session. */
   protected get restoreByLoad(): boolean { return false; }
   /** How long the agent itself waits for an approval before refusing it, or null when it waits for the user. */

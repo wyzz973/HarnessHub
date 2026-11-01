@@ -826,6 +826,7 @@ export function failureMessage(failure: { readonly code: string; readonly messag
     PROCESS_EXITED: "Harness 提前退出了。历史已保留，可以重试或选择其他 Harness。",
     REMOTE_ERROR: "Harness 拒绝了这次请求。请检查连接配置，或选择其他 Harness。",
     NATIVE_AUTH_REQUIRED: "这个 Harness 尚未登录。请在本机完成登录后再试，也可以选择其他 Harness 继续。",
+    NATIVE_GATEWAY_UNAVAILABLE: "Hermes 的网关当前不可用：没有在运行、正在启动，或运行的代码与已安装的 Hermes 不一致。HarnessHub 不会代为启动、停止或替换它；请在终端运行 hermes gateway status 查看，再按需 hermes gateway start 或 hermes gateway restart，之后重试。",
     NATIVE_QUOTA_EXCEEDED: "这个 Harness 的账号额度或余额不足。可等待额度恢复或充值，也可以选择其他 Harness 继续。",
     NATIVE_CLIENT_UNSUPPORTED: "模型服务已停止支持这个本机客户端。原配置已保留，可以选择其他 Harness 继续。",
     NATIVE_CONNECTION_FAILED: "这个 Harness 配置的模型服务无法连接。请检查它本机的模型配置，或选择其他模型继续。",

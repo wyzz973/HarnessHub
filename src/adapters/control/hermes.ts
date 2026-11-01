@@ -3,6 +3,7 @@ import { ControlError, classifyRemoteFailure } from "../../infrastructure/contro
 import { nativeCommand } from "../../infrastructure/control/native-command.js";
 import type { ControlAttachment } from "../../contracts/content.js";
 import { AcpControl } from "./acp.js";
+import { gatewayRefusalMessage, hermesGatewayPreflight, type HermesGatewayPreflight } from "./hermes-gateway.js";
 
 const EXPORT = { name: "export", description: "导出原生会话记录（Hermes 会话 JSONL）" } as const;
 /** One session's export is small and quick; one that is larger or slower fails rather than being cut short (E). */
@@ -47,8 +48,11 @@ const OPTION_NOTES: Readonly<Record<string, (name: string) => string>> = {
 /**
  * Hermes Agent's ACP server (`hermes acp`). The baseline is its latest release (ADR-053): from v0.22.3 the command is a viewer
  * of the user's Hermes gateway, which runs the sessions, their tools and approvals; 0.12 ran them in the ACP process itself,
- * and is kept as history where it still behaves differently. Where Hermes departs from ACP v1 the departure is handled here
- * instead of being absorbed by the generic layer:
+ * and is kept as history where it still behaves differently. Before the viewer is started, the gateway preflight of
+ * ADR-051 A2 (hermes-gateway.ts) judges the user's gateway from read-only facts: only a compatible running gateway (A) is
+ * attached to; when the viewer would stop, replace, wait for or start one (B–E) the connection refuses with
+ * NATIVE_GATEWAY_UNAVAILABLE and Hermes's own commands, and no process exists. Where Hermes departs from ACP v1 the
+ * departure is handled here instead of being absorbed by the generic layer:
  * - recovery uses session/load: 0.12's session/resume of an identity it does not have started a new session silently and
  *   said nothing; session/load of an unknown identity is a missing session, which 0.12 answered with null and the gateway
  *   viewer refuses with not_found in its error data;
@@ -80,7 +84,19 @@ const OPTION_NOTES: Readonly<Record<string, (name: string) => string>> = {
 export class HermesControl extends AcpControl {
   private hubExport = false;
   private readonly exports = new AbortController();
-  constructor(private readonly hermesLaunch: ControlLaunch, private readonly hermesOptions: ControlOptions) { super(hermesLaunch, hermesOptions); }
+  /** `preflight` judges the user's gateway before `hermes acp` is started (ADR-051 A2); tests inject a judgement, the factory keeps the real reader. */
+  constructor(private readonly hermesLaunch: ControlLaunch, private readonly hermesOptions: ControlOptions, private readonly preflight: HermesGatewayPreflight = hermesGatewayPreflight) { super(hermesLaunch, hermesOptions); }
+  /**
+   * ADR-051 A2 condition 1: the viewer is started only when a compatible gateway is already running (verdict A). Anything
+   * else the viewer would do to the user's gateway — stop and replace it (B), wait a minute for it (C), start its launchd
+   * service (D) or an unsupervised daemon (E) — is refused here, before any process exists, with the Hermes commands that
+   * put it right. A checkout without the viewer runs its sessions in-process and is not judged. The facts are read when
+   * the connection is made, so the gateway can still change before session/new: the message says so.
+   */
+  protected override async beforeConnect(): Promise<void> {
+    const judged = await this.preflight({ ...this.hermesOptions.env, ...this.hermesLaunch.env }, this.hermesLaunch.executable);
+    if (judged.kind === "refuse") throw new ControlError("NATIVE_GATEWAY_UNAVAILABLE", gatewayRefusalMessage(judged));
+  }
   protected override get restoreByLoad(): boolean { return true; }
   protected override get fileBlocks(): boolean { return false; }
   // ADR-053's registered exception: 0.12's bridge announces a fixed 60-second wait; later versions make it configurable and

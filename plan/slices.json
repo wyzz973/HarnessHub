@@ -732,7 +732,8 @@
         "tests/real/gemini-provider.real.ts",
         "tests/real/harness-provider-switch.real.ts",
         "tests/real/live-web-stream.real.ts",
-        "tests/real/provider-switch.real.ts"
+        "tests/real/provider-switch.real.ts",
+        "src/adapters/control/hermes-gateway.ts"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/complete-native-capabilities-2026-10-11.md"

@@ -2345,7 +2345,9 @@
         "src/adapters/control/hermes.ts",
         "tests/fixtures/hermes-cli.mjs",
         "tests/protocol/openclaw.test.ts",
-        "tests/fixtures/openclaw-bridge-peer.mjs"
+        "tests/fixtures/openclaw-bridge-peer.mjs",
+        "src/adapters/control/hermes-gateway.ts",
+        "tests/unit/hermes-gateway.test.ts"
       ],
       "requirements": [
         "R11",
@@ -2408,7 +2410,10 @@
         "G032-OC1",
         "G032-OC2",
         "G032-OC3",
-        "G032-OC4"
+        "G032-OC4",
+        "G032-NC31",
+        "G032-NC32",
+        "G032-NC33"
       ],
       "active_slice": "native-installation-management"
     },
