@@ -8,7 +8,7 @@ import { failureMessage } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { duration, elapsed } from "../lib/format.js";
 import { useNow } from "../lib/prefs.js";
-import { cancelledWords, finished, liveStatus, noteMount, rememberShown, runDuration, shownSteps, spentText, toolSummary, type LiveStatus, type QueueNotice } from "../lib/turn.js";
+import { askingStep, cancelledWords, finished, liveStatus, noteMount, rememberShown, runDuration, shownSteps, spentText, toolSummary, type LiveStatus, type QueueNotice } from "../lib/turn.js";
 import { Collapsible, DrawnCheck, motionStyle, SwapText } from "../ui/motion.js";
 import { Spinner, StatusDot, Tip } from "../ui/primitives.js";
 import { ActivityList, NoticeList, OutputList, ToolList, usageParts, type SeenSteps, type ToolDetailLoader } from "./Activity.js";
@@ -61,7 +61,8 @@ function usePhase(terminal: boolean): Phase {
 function textWidth(text: string): number { let width = 0; for (const character of text) width += /[\u2e80-\uffff]/u.test(character) ? 13 : 8; return width; }
 /**
  * The symbol of a state (Icons board), 15 px: the arc while working, dashed before it starts, and a still grey dot while
- * the Turn waits for you with no step in progress; the amber of waiting belongs to the Turn's one marker line (decision F).
+ * the Turn waits for you: for an approval whatever its step (ruling J), for a question with no step in progress (decision
+ * F). The amber of waiting belongs to the Turn's one marker line.
  */
 function LiveIcon({ tone, className }: { readonly tone: LiveStatus["tone"]; readonly className?: string | undefined }) {
   return <span className={cn("flex size-[15px] flex-none items-center justify-center", className)}>
@@ -102,6 +103,8 @@ function TurnProcess({ run, status, text, phase, detailed, now, harness, startup
   const terminal = finished(status), steps = useId();
   const tools = run?.tools ?? [], activities = run?.activities ?? [], thinking = run?.thinking ?? "";
   const expandable = tools.length > 0 || activities.length > 0 || thinking.length > 0;
+  // The step an approval waiting in the composer's place asks for: the line and the steps name it the same way (ruling J).
+  const asking = waiting === "approval" && !terminal ? askingStep(tools)?.id : undefined;
   const [choice, setChoice] = useState<boolean | null>(null);
   const open = expandable && (choice ?? (detailed || phase !== "settled"));
   const [thoughts, setThoughts] = useState<boolean | null>(null);
@@ -179,7 +182,7 @@ function TurnProcess({ run, status, text, phase, detailed, now, harness, startup
           <Collapsible open={thoughts ?? detailed}><div className="native-thinking mt-0.5 mb-2 ml-[30px] border-l border-line-strong pl-3 text-ui-sm text-fg-2"><StreamingMarkdown text={thinking} isStreaming={!terminal}/></div></Collapsible>
         </div> : null}
         {activities.length ? <ActivityList activities={activities}/> : null}
-        {tools.length ? <ToolList tools={tools} active={!terminal} loadDetail={loadDetail} seen={seen}/> : null}
+        {tools.length ? <ToolList tools={tools} active={!terminal} loadDetail={loadDetail} seen={seen} asking={asking}/> : null}
       </div>
     </Collapsible> : null}
   </div>;

@@ -91,14 +91,17 @@ export function toolSummary(tools: readonly Tool[], active: boolean): ToolSummar
 export type Step = { readonly kind: "tool"; readonly key: string; readonly tool: Tool } | { readonly kind: "reads"; readonly key: string; readonly tools: readonly Tool[] };
 /**
  * The steps of one level of the tool tree: consecutive reads without tools of their own become one group. A group keeps
- * the key of its first read, so a read that grows into a group stays the same row.
+ * the key of its first read, so a read that grows into a group stays the same row. The tool named `apart` (the step an
+ * approval asks for, ADR-054 ruling J) stays a step of its own while it asks: its row says what it wants to do, which a
+ * group's words could not; once decided it joins the group again under the group's key.
  */
-export function groupSteps(tools: readonly Tool[], children: ReadonlyMap<string, readonly Tool[]>): readonly Step[] {
+export function groupSteps(tools: readonly Tool[], children: ReadonlyMap<string, readonly Tool[]>, apart?: string): readonly Step[] {
   const steps: Step[] = [];
+  const read = (tool: Tool) => tool.id !== apart && toolCategory(tool, (children.get(tool.id)?.length ?? 0) > 0) === "read";
   for (const tool of tools) {
-    const read = toolCategory(tool, (children.get(tool.id)?.length ?? 0) > 0) === "read", last = steps.at(-1);
-    if (read && last?.kind === "reads") { steps[steps.length - 1] = { kind: "reads", key: last.key, tools: [...last.tools, tool] }; continue; }
-    if (read && last?.kind === "tool" && toolCategory(last.tool, (children.get(last.tool.id)?.length ?? 0) > 0) === "read") { steps[steps.length - 1] = { kind: "reads", key: last.key, tools: [last.tool, tool] }; continue; }
+    const last = steps.at(-1);
+    if (read(tool) && last?.kind === "reads") { steps[steps.length - 1] = { kind: "reads", key: last.key, tools: [...last.tools, tool] }; continue; }
+    if (read(tool) && last?.kind === "tool" && read(last.tool)) { steps[steps.length - 1] = { kind: "reads", key: last.key, tools: [last.tool, tool] }; continue; }
     steps.push({ kind: "tool", key: tool.id, tool });
   }
   return steps;
@@ -150,6 +153,20 @@ export function stepLabel(tool: Pick<Tool, "kind" | "title">, nested = false): S
 export function readsLabel(tools: readonly Pick<Tool, "kind" | "title">[]): StepLabel {
   return { verb: `读取 ${tools.length} 个文件`, running: `正在读取 ${tools.length} 个文件`, target: tools.map(tool => stepLabel(tool).target).join(" · ") };
 }
+/**
+ * The verb of a step while an approval for it waits, in the Interaction board's "想…" form ("想运行", "想修改", "想读取",
+ * "想删除"): the verb of its kind as stepLabel gives it, so the step list and the process line say the same words. Null for
+ * a step without a verb (a sub-agent call, a tool of no known kind), which is never guessed at (ADR-054 ruling J).
+ */
+export function wantedVerb(label: Pick<StepLabel, "verb">): string | null { return label.verb === null ? null : "想" + label.verb; }
+/**
+ * The step an approval waiting in the composer's place asks for, as far as the Turn's facts tell (ADR-054 ruling J): the
+ * most recent step of the Turn's own (not a sub-agent's tool) that has not ended, pending or in progress. ACP agents report
+ * the call they ask about as pending until it is allowed, Codex its command as in progress. Null when every step ended.
+ */
+export function askingStep(tools: readonly Tool[]): Tool | null {
+  return [...toolTree(tools).roots].reverse().find(tool => TOOL_PENDING.has(tool.status)) ?? null;
+}
 
 /** What a queued Turn shows about what it waits for (ADR-036); no paths. */
 export type QueueNotice = ({
@@ -162,8 +179,8 @@ export type QueueNotice = ({
 /**
  * What a running Turn says it is doing (ADR-054 §3, Interaction board's states), from the phases the Runtime recorded and
  * the tool running now. `tone` picks the symbol: "run" a turning arc with the sweep over the words, "wait" a still grey dot
- * while it waits for you with no step in progress, "queue" the dashed circle of work not started. Queue explanations wrap
- * instead of sliding.
+ * while it waits for you (an approval, or a question with no step in progress), "queue" the dashed circle of work not
+ * started. Queue explanations wrap instead of sliding.
  */
 export interface LiveStatus {
   readonly text: string;
@@ -187,18 +204,24 @@ function runningText(tools: readonly Tool[], running: Tool): string {
 /** Statuses of a step that has started and not ended; "pending" is not one: such a call has not started (TOOL_STATUS: 等待). */
 const IN_PROGRESS: ReadonlySet<string> = new Set([...TOOL_PENDING].filter(status => status !== "pending"));
 /**
- * What a running Turn says now, and with which symbol; a finished one is described by its process line instead. While it
- * waits for you (ADR-054 decision F), the line keeps naming the step in progress with its arc and timer; only without one
- * does it say "等你批准" or "等你回答", in its usual grey with the timer. A call that has not started is not in progress:
- * ACP agents report the call they ask approval for as "pending" until it is allowed, and the line never says it runs. The
- * one amber line, pointing at an approval that waits in the composer's place, is the Turn's marker, never this line.
+ * What a running Turn says now, and with which symbol; a finished one is described by its process line instead. While an
+ * approval waits in the composer's place (ADR-054 ruling J), the line names the step it asks for in the "想…" form
+ * ("想运行 rm -rf build"), grey and still (no arc, no sweep) with the timer; without such a step, or for one whose kind has
+ * no verb, it says "等你批准". Nothing runs while it waits, so the line never says "正在…" then. While a question waits
+ * (decision F), the line keeps naming the step in progress with its arc, else says "等你回答" in grey; a question never
+ * names a step of its own. The one amber line, pointing at an approval that waits, is the Turn's marker, never this line.
  */
 export function liveStatus(run: PublicRun | undefined, status: RunStatus, harness: string, now: number, startupHint?: { readonly seconds: number; readonly usual: boolean }, queue?: QueueNotice, waiting?: "approval" | "question", text = ""): LiveStatus {
   const plain = { tone: "run" as const, timer: true, wrap: false, thinking: false };
   if (run?.cancelRequested) return { ...plain, text: "正在停止并清理资源" };
-  if (waiting) {
+  if (waiting === "approval") {
+    const tools = run?.tools ?? [], asking = askingStep(tools);
+    const label = asking ? stepLabel(asking, (toolTree(tools).children.get(asking.id)?.length ?? 0) > 0) : null, verb = label ? wantedVerb(label) : null;
+    return { ...plain, tone: "wait", text: label && verb ? verb + " " + clip(label.target) : "等你批准" };
+  }
+  if (waiting === "question") {
     const tools = run?.tools ?? [], step = [...tools].reverse().find(tool => IN_PROGRESS.has(tool.status));
-    return step ? { ...plain, text: runningText(tools, step) } : { ...plain, tone: "wait", text: waiting === "question" ? "等你回答" : "等你批准" };
+    return step ? { ...plain, text: runningText(tools, step) } : { ...plain, tone: "wait", text: "等你回答" };
   }
   const queued = { tone: "queue" as const, timer: false, wrap: true, thinking: false };
   if (run?.awaitingSwitchId && status === "queued") return { ...queued, text: "等待选择切换生效" };

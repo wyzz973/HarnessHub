@@ -1998,6 +1998,59 @@ test("G054-DL5 an approval waits in the composer's place: ⏎ allows once and es
   assert.deepEqual(errors, []);
 });
 
+test("G054-DL5 while an approval waits, the Turn names the step it asks for in the 想… form, grey and still with its timer, in its line, its steps and the details; once allowed the step runs (ruling J)", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false, { name: "Shared Agent", scenario: "hermes" }); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  await mkdir(artifact, { recursive: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1440, height: 960 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
+  const dock = page.locator(".composer-box").getByRole("region", { name: "工具审批", exact: true });
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
+  // The fixture reads a file, then asks before it runs a command, which it reports as pending until it is allowed.
+  await composer.fill("STEP_APPROVAL 清理构建目录"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
+  await expect(dock).toContainText("rm -rf build", { timeout: 15000 });
+  const turn = log.locator(".assistant-message").last(), line = turn.locator(".process-summary"), steps = turn.getByRole("list", { name: "工具活动", exact: true });
+  const asked = steps.locator(".native-tool").filter({ hasText: "rm -rf build" });
+  // The line names the step in the Interaction board's words, grey and still beside its timer: no arc, no sweep, no amber.
+  await expect(line.locator(".response-status")).toHaveText("想运行 rm -rf build"); await expect(line).toContainText(/· 已用 \d+ 秒/u);
+  await expect(line.locator(".spinner")).toHaveCount(0); await expect(line.locator(".shimmer-text")).toHaveCount(0);
+  await expect(line.locator(".status-dot")).toHaveAttribute("data-tone", "idle");
+  // Its step says the same words and does not spin either; the read before it is done. Nothing in the Turn turns.
+  await expect(steps.locator(".native-tool")).toHaveCount(2);
+  await expect(steps.locator(".native-tool").first()).toHaveText("读取 app.ts"); await expect(asked).toHaveText("想运行 rm -rf build");
+  await expect(turn.locator(".spinner")).toHaveCount(0);
+  // The mark under it stays the Turn's only amber line.
+  const marker = turn.locator(".docked-approval");
+  await expect(marker).toHaveText("等你批准，请求停在下方输入框的位置");
+  const amber = await marker.evaluate(element => getComputedStyle(element).color);
+  assert.deepEqual(await turn.evaluate((root, color) => [...root.querySelectorAll("*")].filter(node => [...node.childNodes].some(child => child.nodeType === Node.TEXT_NODE && child.textContent!.trim() !== "")
+    && getComputedStyle(node).color === color).map(node => node.textContent!.trim()), amber), ["等你批准，请求停在下方输入框的位置"], "the mark is the Turn's only amber line");
+  // The details list the same step in the same words.
+  await page.keyboard.press("ControlOrMeta+Backslash");
+  const details = page.getByRole("complementary", { name: "详情栏" });
+  await details.getByRole("tab", { name: "过程", exact: true }).click();
+  const listed = details.getByRole("list", { name: "工具活动", exact: true }).locator(".native-tool").filter({ hasText: "rm -rf build" });
+  await expect(listed).toHaveText("想运行 rm -rf build"); await expect(listed.locator(".spinner")).toHaveCount(0);
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: join(artifact, "dl5-asking-step-light-1440.png"), animations: "disabled" });
+  await page.emulateMedia({ colorScheme: "dark" }); await page.screenshot({ path: join(artifact, "dl5-asking-step-dark-1440.png"), animations: "disabled" }); await page.emulateMedia({ colorScheme: "light" });
+  // Allowed, the step runs: the line and the step say 正在运行 with the arc, and the line sweeps again.
+  await dock.getByRole("button", { name: "Allow once", exact: true }).click();
+  await expect(line.locator(".response-status")).toHaveText("正在运行 rm -rf build", { timeout: 15000 });
+  await expect(line.locator(".spinner")).toHaveCount(1); await expect(line.locator(".shimmer-text")).toHaveText("正在运行 rm -rf build");
+  await expect(asked).toHaveText("正在运行 rm -rf build"); await expect(asked.locator(".spinner")).toHaveCount(1);
+  await expect(listed).toHaveText("正在运行 rm -rf build"); await expect(listed.locator(".spinner")).toHaveCount(1);
+  // Done, it reads as a step that ran, and the folded line counts it.
+  await writeFile(join(fixture.root, "workspace", "step-continue"), "go");
+  await expect(turn).toHaveAttribute("data-run-status", "completed", { timeout: 15000 });
+  await expect(listed).toHaveText("运行 rm -rf build");
+  await expect(line).toContainText("读了 1 个文件，运行 1 条命令");
+  assert.deepEqual(errors, []);
+});
+
 test("G054-DL6 the plan bar above the composer says how far the plan is and opens every step, and the line under it shows the round, steps and time with only the usage the Gateway reported", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });

@@ -8,10 +8,11 @@ import { errorMessage } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { duration, elapsed, folderName, homePath, workspacePath } from "../lib/format.js";
 import { useNow } from "../lib/prefs.js";
-import { cancelledWords, changeCount, editTools, finished, knownToolDetail, parseUnifiedDiff, readToolDetail, RUN_STATE, runDuration, spentText, toolSummary, type DiffFile } from "../lib/turn.js";
+import { askingStep, cancelledWords, changeCount, editTools, finished, knownToolDetail, parseUnifiedDiff, readToolDetail, RUN_STATE, runDuration, spentText, toolSummary, type DiffFile } from "../lib/turn.js";
 import { Collapsible } from "../ui/motion.js";
 import { EmptyState, Fact, Segmented, Spinner, StatusDot, Tabs } from "../ui/primitives.js";
 import { ACTIVITY_KIND, ACTIVITY_STATUS, DiffLines, PlanView, ToolList, usageFacts, type ToolDetailLoader } from "./Activity.js";
+import { dockedRequest } from "./Approval.js";
 import { BrandIcon } from "./BrandIcon.js";
 import { NativeResume } from "./NativeResume.js";
 
@@ -130,6 +131,8 @@ export function DetailsPanel(props: PanelProps) {
   const name = (id: string | undefined) => props.harnesses.find(row => row.id === id)?.name ?? id ?? "Harness";
   // The header button's number, from the same summaries: shown at once, never waiting for a diff to be read.
   const total = changeCount(runs);
+  // The step a Run's waiting approval asks for says what it wants to do here as in its Turn (ruling J).
+  const asking = (run: PublicRun) => !finished(run.status) && (session.permissions ?? []).some(request => request.runId === run.id && !request.decided && dockedRequest(request)) ? askingStep(run.tools ?? [])?.id : undefined;
   const tabs = [
     { id: "changes" as const, label: "改动", count: total || null },
     { id: "plan" as const, label: "计划" }, { id: "process" as const, label: "过程" },
@@ -142,7 +145,7 @@ export function DetailsPanel(props: PanelProps) {
     </div>
     <div className="scroll-area min-h-0 flex-1" role="tabpanel" id="details-tabpanel" aria-labelledby={`details-tab-${tab}`}>
       {tab === "changes" ? <Changes changes={changes} counts={{ turn: selected ? changeCount([selected]) : 0, all: total }} selected={selected} workspace={session.workspace} name={name} sessionId={session.id}/>
-        : tab === "process" ? selected ? <Process run={selected} runs={runs} onRun={props.onRun} describe={props.describe} loadToolDetail={props.loadToolDetail} name={name}/> : <Empty>这个对话还没有执行记录。</Empty>
+        : tab === "process" ? selected ? <Process run={selected} runs={runs} onRun={props.onRun} describe={props.describe} loadToolDetail={props.loadToolDetail} name={name} asking={asking}/> : <Empty>这个对话还没有执行记录。</Empty>
         : tab === "plan" ? plan ? <div className="px-4 pt-3 pb-4"><PlanView plan={plan} owner={name(planRun?.selection.harnessId)}/></div> : <EmptyState icon={<ListChecks size={22}/>} title="还没有计划">Agent 报告计划后会显示在这里。</EmptyState>
         : tab === "background" ? <Background session={session} kept={kept} items={background} busy={props.busy} onEndProcess={props.onEndProcess} name={name}/>
         : selected ? <RunFacts {...props} run={selected} runs={runs}/> : <Empty>发出第一条消息后，这里会显示执行者、阶段耗时与用量。</Empty>}
@@ -216,7 +219,7 @@ function Phases({ run }: { readonly run: PublicRun }) {
   </section>;
 }
 /** One Turn in the list of every Turn's steps: who ran it and what it did, opened to its timeline and tools. */
-function RunProcess({ run, index, open, onToggle, loadToolDetail, name, describe, now }: { readonly run: PublicRun; readonly index: number; readonly open: boolean; readonly onToggle: () => void; readonly loadToolDetail: ToolDetailLoader | undefined; readonly name: (id: string) => string; readonly describe: (run: PublicRun) => string; readonly now: number }) {
+function RunProcess({ run, index, open, onToggle, loadToolDetail, name, describe, now, asking }: { readonly run: PublicRun; readonly index: number; readonly open: boolean; readonly onToggle: () => void; readonly loadToolDetail: ToolDetailLoader | undefined; readonly name: (id: string) => string; readonly describe: (run: PublicRun) => string; readonly now: number; readonly asking: string | undefined }) {
   const active = !finished(run.status), panel = useId(), at = (time: number | undefined) => time === undefined ? null : new Date(time).toLocaleTimeString("zh-CN", { hour12: false });
   const summary = run.tools?.length ? toolSummary(run.tools, active).compact : "", total = runDuration(run);
   const time = total !== null ? spentText(total) : active && run.timing ? "已用 " + elapsed(now - run.timing.acceptedAt) : "";
@@ -236,19 +239,19 @@ function RunProcess({ run, index, open, onToggle, loadToolDetail, name, describe
         {model ? <p className="m-0 text-caption text-fg-3">{model}</p> : null}
         <ol className="m-0 flex list-none flex-col gap-1.5 p-0" aria-label="时间线">{steps.filter(([, time]) => time !== undefined).map(([label, time]) => <li key={label} className="grid grid-cols-[64px_minmax(0,1fr)] items-baseline gap-2.5 text-ui-sm"><span className="mono text-[11.5px] text-fg-3">{at(time)}</span><span>{label}</span></li>)}</ol>
         {run.activities?.length ? <div className="flex flex-col gap-1.5"><span className="text-caption text-fg-3">原生活动</span>{run.activities.map(activity => <div key={activity.id} className="flex items-center gap-2 text-ui-sm"><span className="min-w-0 flex-1">{ACTIVITY_KIND[activity.kind]} · {activity.title}</span><span className="flex-none text-caption text-fg-3">{ACTIVITY_STATUS[activity.status]}</span></div>)}</div> : null}
-        {run.tools?.length ? <div className="-ml-1.5 flex min-w-0 flex-col"><ToolList tools={run.tools} active={active} loadDetail={loadToolDetail}/></div> : <p className="m-0 text-caption text-fg-3">这一轮没有调用工具。</p>}
+        {run.tools?.length ? <div className="-ml-1.5 flex min-w-0 flex-col"><ToolList tools={run.tools} active={active} loadDetail={loadToolDetail} asking={asking}/></div> : <p className="m-0 text-caption text-fg-3">这一轮没有调用工具。</p>}
       </div>
     </Collapsible>
   </li>;
 }
 /** Every Turn's steps, oldest first, the chosen one open (Conversation board: "两个 Agent 的全部步骤，按时间排列"). */
-function Process({ run, runs, onRun, describe, loadToolDetail, name }: { readonly run: PublicRun; readonly runs: readonly PublicRun[]; readonly onRun: (id: string) => void; readonly describe: (run: PublicRun) => string; readonly loadToolDetail: ToolDetailLoader | undefined; readonly name: (id: string) => string }) {
+function Process({ run, runs, onRun, describe, loadToolDetail, name, asking }: { readonly run: PublicRun; readonly runs: readonly PublicRun[]; readonly onRun: (id: string) => void; readonly describe: (run: PublicRun) => string; readonly loadToolDetail: ToolDetailLoader | undefined; readonly name: (id: string) => string; readonly asking: (run: PublicRun) => string | undefined }) {
   const [closed, setClosed] = useState<string | null>(null);
   const now = useNow(runs.some(item => !finished(item.status)));
   const agents = new Set(runs.map(item => item.selection.harnessId)).size;
   return <div className="flex flex-col gap-1 px-2.5 pt-3 pb-4">
     <p className="m-0 px-1.5 pb-1 text-caption text-fg-3">{agents > 1 ? (agents === 2 ? "两个" : agents + " 个") + " Agent 的全部步骤，按时间排列" : "这个对话的全部步骤，按时间排列"}</p>
-    <ol className="m-0 flex list-none flex-col gap-px p-0">{runs.map((item, index) => <RunProcess key={item.id} run={item} index={index} open={item.id === run.id && closed !== item.id} now={now} name={name} describe={describe} loadToolDetail={loadToolDetail}
+    <ol className="m-0 flex list-none flex-col gap-px p-0">{runs.map((item, index) => <RunProcess key={item.id} run={item} index={index} open={item.id === run.id && closed !== item.id} now={now} name={name} describe={describe} loadToolDetail={loadToolDetail} asking={asking(item)}
       onToggle={() => { if (item.id === run.id) setClosed(closed === item.id ? null : item.id); else { setClosed(null); onRun(item.id); } }}/>)}</ol>
   </div>;
 }
