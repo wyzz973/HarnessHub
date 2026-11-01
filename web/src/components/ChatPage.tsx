@@ -15,7 +15,7 @@ import { Collapsible, motionStyle, usePresence } from "../ui/motion.js";
 import { Dialog, Menu } from "../ui/overlay.js";
 import { EmptyState, Notice, Spinner, StatusPill, Tip } from "../ui/primitives.js";
 import type { ToolDetailLoader } from "./Activity.js";
-import { DecisionLine, DockedMarker, dockedRequest, PermissionCard, type Decision, type PermissionRequestView } from "./Approval.js";
+import { DecisionLine, decisionRole, DockedMarker, dockedRequest, PermissionCard, type Decision, type PermissionRequestView } from "./Approval.js";
 import type { AttachmentDraft } from "./Attachments.js";
 import { BranchOrigin } from "./BranchOrigin.js";
 import { Composer, OPTION_NAMES, THINKING_NAMES, type DockedApproval } from "./Composer.js";
@@ -279,9 +279,17 @@ export function ChatPage(props: ChatProps) {
   const waitingApprovals = useMemo(() => (session?.permissions ?? []).filter(request => !request.decided && dockedRequest(request)).sort((a, b) => a.requestedAt - b.requestedAt), [session?.permissions]);
   const docked = session !== null && session.status !== "closed" ? waitingApprovals[0] ?? null : null;
   const decide = (request: PermissionRequestView, option: string, input?: string) => {
-    if (dockedRequest(request)) setDecisions(map => new Map(map).set(request.id, { title: request.title, option: request.options.find(row => row.id === option) ?? null, harness: requestHarness(request), runId: request.runId }));
+    const chosen = request.options.find(row => row.id === option);
+    if (dockedRequest(request)) setDecisions(map => new Map(map).set(request.id, { title: request.title, option: chosen ? { ...chosen, role: decisionRole(request.options, chosen.id) } : null, harness: requestHarness(request), runId: request.runId }));
     props.onPermission?.(request.id, option, input);
   };
+  // A decision is written back only once the Gateway has it: one whose request is still waiting after the page's work
+  // ended was not taken (refused or not sent), and is forgotten rather than shown later as if it had been.
+  useEffect(() => {
+    if (mutation !== null || decisions.size === 0) return;
+    const waiting = [...decisions.keys()].filter(id => session?.permissions?.some(request => request.id === id && !request.decided));
+    if (waiting.length) setDecisions(map => { const next = new Map(map); for (const id of waiting) next.delete(id); return next; });
+  }, [mutation, decisions, session?.permissions]);
   // The rule that asked, by the program's own name, when its configuration reports one (Codex's approval policy).
   const policy = (() => {
     if (!docked || !session) return undefined;

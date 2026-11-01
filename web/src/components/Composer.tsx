@@ -224,7 +224,8 @@ export function Composer(props: ComposerProps) {
   ];
   if (provider && draft.model && !provider.models.includes(draft.model)) modelOptions.unshift({ value: draft.model, label: draft.model, description: `固定配置 v${draft.providerRevision}`, group: "会话当前版本" });
   if (!provider && draft.model && props.nativeModels && !props.nativeModels.models.some(model => model.id === draft.model)) modelOptions.unshift({ value: draft.model, label: draft.model + " · 不可用", disabled: true, reason: "当前本机目录未提供这个模型" });
-  const nativeOptions = [...(props.nativeModels?.options ?? []), ...(props.nativeModels?.models.find(model => model.id === (draft.model || props.nativeModels?.defaultModel))?.options ?? [])];
+  // Native options belong to the Harness's own connection: a managed Provider's model takes none of them.
+  const nativeOptions = draft.providerId ? [] : [...(props.nativeModels?.options ?? []), ...(props.nativeModels?.models.find(model => model.id === (draft.model || props.nativeModels?.defaultModel))?.options ?? [])];
   const thought = nativeOptions.find(option => option.category === "thought_level");
   // The merged picker shows one pill, as the boards do: the thinking level, or the mode where there is no thinking level
   // (OpenCode's Build). With both, the mode is among the execution settings.

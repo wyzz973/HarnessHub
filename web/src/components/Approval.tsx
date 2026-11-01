@@ -181,15 +181,23 @@ export function ApprovalDock({ request, harness, busy, onDecision, onStop, stopD
   </section>;
 }
 
-/** What the user decided on an approval, as this page sent it; `null` option when it was decided elsewhere. */
-export interface Decision { readonly title: string; readonly option: { readonly id: string; readonly name: string } | null; readonly harness: string }
+/**
+ * What the user decided on an approval, as this page sent it: the option and its role in the dock ("once" is the one ⏎
+ * allows). `null` option when it was decided elsewhere and this page does not know how.
+ */
+export interface Decision { readonly title: string; readonly option: { readonly id: string; readonly name: string; readonly role: "once" | "refuse" | "other" } | null; readonly harness: string }
+/** The role an option played in its approval, for the line written back. */
+export function decisionRole(options: readonly Option[], id: string): "once" | "refuse" | "other" {
+  const { primary, refuse } = approvalRoles(options);
+  return primary?.id === id ? "once" : refuse?.id === id || options.some(option => option.id === id && refusingOption(option)) ? "refuse" : "other";
+}
 /**
  * The one line an approval leaves in its Turn once decided (Motion board #21: it fades in, 200 ms). Allowing and refusing
  * say so with the request's own title; a decision made elsewhere says only that it was handled.
  */
 export function DecisionLine({ decision }: { readonly decision: Decision }) {
-  const option = decision.option, refused = option !== null && refusingOption(option);
-  const text = option === null ? `这次审批已处理，等待 ${decision.harness} 继续：` : refused ? "你拒绝了：" : lastingOption(option) ? `你选择了“${option.name}”：` : `你允许了一次：`;
+  const option = decision.option, refused = option?.role === "refuse";
+  const text = option === null ? `这次审批已处理，等待 ${decision.harness} 继续：` : refused ? "你拒绝了：" : option.role === "once" ? "你允许了一次：" : `你选择了“${option.name}”：`;
   const Icon = refused ? ShieldX : ShieldCheck;
   return <p className="approval-result motion-fade-in m-0 flex min-w-0 items-center gap-2 text-ui-sm text-fg-3" role="status">
     <Icon size={15} className="flex-none" aria-hidden="true"/><span className="min-w-0 truncate" title={decision.title}>{text}<span className="mono text-[12.5px]">{decision.title}</span></span>

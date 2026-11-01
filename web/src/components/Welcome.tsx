@@ -119,7 +119,7 @@ function AgentList({ trigger, open, onOpenChange, harnesses, status, selected, f
           className="surface-pop flex max-h-[min(520px,var(--available-height))] w-[380px] max-w-[calc(100vw-24px)] flex-col overflow-hidden">
           <section aria-label="本机发现的 Harness" className="flex min-h-0 flex-col">
             <div className="flex items-baseline justify-between gap-3 px-3.5 pt-3 pb-1.5">
-              <h3 className="m-0 text-ui-sm font-semibold">{firstUse ? `在这台电脑上找到 ${harnesses.length} 个 Harness` : "本机可用"}</h3>
+              <h3 className="m-0 text-ui-sm font-semibold">本机可用的 Agent</h3>
               <button type="button" className="link-btn flex items-center gap-1 text-caption" onClick={() => { onOpenChange(false); onHarnesses(); }}>查看全部<ArrowRight size={12} aria-hidden="true"/></button>
             </div>
             {firstUse ? <p className="m-0 px-3.5 pb-2 text-caption text-fg-2">HarnessHub 直接使用它们本机的安装、模型配置和登录状态，不复制、不修改。登录是否有效、额度是否够用，会在第一次使用时由各自核实。</p> : null}
@@ -136,11 +136,11 @@ function AgentList({ trigger, open, onOpenChange, harnesses, status, selected, f
               </button>;
             })}</div>
             {firstUse ? <div className="flex flex-wrap items-center gap-2 px-3.5 py-2.5 text-caption text-fg-2 hairline-t">
-              <span className="w-full">没找到你装的某个 Harness？可能它在登录 shell 的 PATH 里，或者是自定义安装。</span>
+              <span className="w-full">没找到你装的某个 Agent？可能它在登录 shell 的 PATH 里，或者是自定义安装。</span>
               <button type="button" className="btn btn-sm" onClick={() => { onOpenChange(false); onSettings(); }}>从登录 shell 补充目录</button>
               <button type="button" className="btn btn-sm" onClick={onRescan} disabled={scanning}><RefreshCw size={12} className={cn(scanning && "spin")} aria-hidden="true"/>重新检测</button>
             </div> : null}
-            {missing > 0 ? <p className="m-0 px-3.5 py-2.5 text-caption text-fg-3 hairline-t">另有 {missing} 个 Harness 在目录中但未安装，可以在“我的 Agent”里查看官方安装方式。HarnessHub 不会替你运行安装命令。</p> : null}
+            {missing > 0 ? <p className="m-0 px-3.5 py-2.5 text-caption text-fg-3 hairline-t">另有 {missing} 个 Agent 在目录中但未安装，可以在“我的 Agent”里查看官方安装方式。HarnessHub 不会替你运行安装命令。</p> : null}
           </section>
         </BasePopover.Popup>
       </BasePopover.Positioner>

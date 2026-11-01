@@ -501,15 +501,18 @@ test("unavailable native authentication keeps the same conversation usable, show
   await page.goto(origin);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
   const pick = async (label: string, value: string) => { await page.getByRole("button", { name: label, exact: true }).click(); await page.getByRole("option", { name: value, exact: true }).click(); };
+  // An Agent's catalog arrives just after it is chosen and the merged picker re-flows (its model and pill change): the next
+  // part is pressed once it has, so the press does not straddle the move.
+  const agent = async (name: string) => { await pick("选择 Harness", name); await expect(page.getByRole("button", { name: "选择模型", exact: true })).not.toHaveText(/读取/u); };
   const current = async () => {
     const id = new URL(page.url()).hash.slice(1).split("session=")[1]; assert.ok(id);
     const response = await context.request.get(origin + "/api/v1/sessions/" + id); assert.equal(response.status(), 200); return await response.json();
   };
-  await pick("选择 Harness", "Codex"); await pick("选择 Provider", "可用模型连接");
+  await agent("Codex"); await pick("选择 Provider", "可用模型连接");
   await composer.fill("FIRST_CONVERSATION"); await composer.press("Enter"); await expect(log).toContainText("已由");
   await expect.poll(async () => (await current()).runs[0].status).toBe("completed"); const first = await current();
   await composer.fill("选择失败也要保留这条草稿");
-  await pick("选择 Harness", "OpenClaw"); await pick("选择 Provider", "Harness 原生连接");
+  await agent("OpenClaw"); await pick("选择 Provider", "Harness 原生连接");
   await expect(page.getByText(/本机认证尚未就绪/)).toBeVisible();
   await expect(page.getByRole("button",{name:"发送消息",exact:true})).toBeDisabled();
   // The picker shows what the latest catalog read and Runs found, before anything else is sent.
@@ -526,7 +529,7 @@ test("unavailable native authentication keeps the same conversation usable, show
   await expect(page.getByText(/本机认证尚未就绪/)).toBeVisible();
   await expect(composer).toHaveValue("选择失败也要保留这条草稿");
   assert.equal((await current()).switches.length, failed.switches.length, "refresh must not retry an already failed selection");
-  await pick("选择 Harness","Codex"); await pick("选择 Provider","可用模型连接");
+  await agent("Codex"); await pick("选择 Provider","可用模型连接");
   await expect(page.getByRole("button", { name: "选择 Harness", exact: true })).toContainText("Codex");
   await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled();
   await composer.press("Enter"); await expect.poll(async () => (await current()).runs[1]?.status).toBe("completed");
@@ -538,7 +541,7 @@ test("unavailable native authentication keeps the same conversation usable, show
   const retried = await current(); assert.equal(retried.runs[2].status, "failed"); assert.notEqual(retried.runs[2].id, retried.runs[3].id);
   await composer.fill("第一段对话的未发送草稿");
   await page.getByRole("button", { name: "新对话", exact: true }).click();
-  await pick("选择 Harness", "Codex"); await pick("选择 Provider", "可用模型连接");
+  await agent("Codex"); await pick("选择 Provider", "可用模型连接");
   await composer.fill("SECOND_CONVERSATION"); await composer.press("Enter"); await expect(page).toHaveURL(/#session=/u); await expect.poll(async () => (await current()).runs[0]?.status).toBe("completed");
   const second = await current(); assert.notEqual(second.id, first.id); await composer.fill("第二段对话的未发送草稿");
   await page.getByRole("button", { name: "FIRST_CONVERSATION", exact: true }).click();
