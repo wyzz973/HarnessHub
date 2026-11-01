@@ -4602,6 +4602,7 @@ async function dl10Drawer(page: Page, label: string, shot?: string): Promise<voi
   await expect(drawer.getByRole("complementary", { name: "主导航" })).toBeVisible(); await dl10Settle(page);
   assert.equal(await dl10SidebarShown(page), true, label + ": 打开导航 brings the sidebar on screen");
   await expect.poll(() => drawer.evaluate(element => element.contains(document.activeElement)), { message: label + ": the drawer takes the focus" }).toBe(true);
+  await dl10Opaque(drawer.getByRole("complementary", { name: "主导航" }), label + " with the drawer open");
   await dl10Fits(page, label + " with the drawer open", [drawer.getByRole("complementary", { name: "主导航" })]);
   if (shot) await page.screenshot({ path: join(artifact, shot), animations: "disabled" });
   await page.keyboard.press("Escape");
@@ -4610,11 +4611,23 @@ async function dl10Drawer(page: Page, label: string, shot?: string): Promise<voi
   await menu.evaluate(element => (element as HTMLElement).blur());
 }
 /**
+ * Waits until `target` and everything above it are at full opacity (D6): what fades in is checked and saved whole, and
+ * dl10Readable, which leaves faded text to the shots, does not pass over it.
+ */
+async function dl10Opaque(target: Dl10Locator, label: string): Promise<void> {
+  await expect.poll(() => target.evaluate(element => {
+    let opacity = 1;
+    for (let node: Element | null = element; node; node = node.parentElement) opacity *= Number(getComputedStyle(node).opacity);
+    return opacity;
+  }), { message: label + ": shown at full opacity", timeout: 10000 }).toBe(1);
+}
+/**
  * One state of a page at each size in both themes (ADR-054 R01, R02): `ready` brings the state back at a size (some take another
- * form across the narrow breakpoint); on the settled page the sidebar is beside the page on the desktop and off screen on a phone,
- * and the page must fit (dl10Fits on `anchors`) and read (dl10Readable). The page is then saved as
- * dl10-<name>-<light|dark>-<width>.png, with the pointer resting in a corner. With `drawer`, on a phone the sidebar's drawer is also
- * opened and closed from the keyboard: in the light theme, or with "shoot" in both and saved as dl10-drawer-<light|dark>-<width>.png.
+ * form across the narrow breakpoint); on the settled page each of `anchors` is at full opacity, the sidebar is beside the page on
+ * the desktop and off screen on a phone, and the page must fit (dl10Fits on `anchors`) and read (dl10Readable). The page is then
+ * saved as dl10-<name>-<light|dark>-<width>.png, with the pointer resting in a corner. With `drawer`, on a phone the sidebar's
+ * drawer is also opened and closed from the keyboard: in the light theme, or with "shoot" in both and saved as
+ * dl10-drawer-<light|dark>-<width>.png.
  */
 async function dl10Shoot(page: Page, name: string, options: { readonly anchors: () => readonly Dl10Locator[]; readonly ready?: (size: Dl10Size) => Promise<void>; readonly sizes?: readonly Dl10Size[]; readonly drawer?: "check" | "shoot" }): Promise<void> {
   for (const scheme of ["light", "dark"] as const) {
@@ -4623,6 +4636,7 @@ async function dl10Shoot(page: Page, name: string, options: { readonly anchors: 
       await page.setViewportSize(size); await page.mouse.move(size.width - 2, size.height - 2); await dl10Settle(page);
       await options.ready?.(size); await page.mouse.move(size.width - 2, size.height - 2); await dl10Settle(page);
       const label = `${name} at ${size.width} in ${scheme}`, phone = size.width < 760;
+      for (const anchor of options.anchors()) await dl10Opaque(anchor, label);
       assert.equal(await dl10SidebarShown(page), !phone, label + (phone ? ": on a phone the sidebar is a drawer, off screen until opened" : ": on a desktop the sidebar is beside the page"));
       await dl10Fits(page, label, options.anchors());
       await dl10Readable(page, label, scheme);
@@ -4771,9 +4785,10 @@ test("G054-DL10 the Agent page and an Agent's details, the capabilities, the set
   const agents = page.getByRole("heading", { level: 1, name: "Agent", exact: true });
   await expect(agents).toBeVisible(); await expect(page.getByRole("button", { name: "查看 Codex 详情", exact: true })).toBeVisible();
   await dl10Shoot(page, "agents", { anchors: () => [agents], drawer: "check" });
-  // A03: one Agent's details, beside the cards on the desktop and over the page on a phone.
-  const codex = page.getByRole("dialog", { name: "Codex 详情" });
-  await dl10Shoot(page, "agent-details", { anchors: () => [codex.getByRole("heading", { name: "模型与登录", exact: true })], ready: async () => {
+  // A03: one Agent's details, beside the cards on the desktop and over the page on a phone. Beside them the cards make room, so the
+  // page's own body is checked as well (found under the phone's modal drawer too).
+  const codex = page.getByRole("dialog", { name: "Codex 详情" }), agentsBody = page.getByRole("heading", { level: 1, name: "Agent", exact: true, includeHidden: true });
+  await dl10Shoot(page, "agent-details", { anchors: () => [agentsBody, codex.getByRole("heading", { name: "模型与登录", exact: true })], ready: async () => {
     if (await codex.count()) return;
     await page.getByRole("button", { name: "查看 Codex 详情", exact: true }).click(); await expect(codex).toBeVisible();
   } });
