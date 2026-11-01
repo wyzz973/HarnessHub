@@ -2342,6 +2342,12 @@ test("G054-DL9 the application's shortcuts open what they name, ⌥⌘↓ goes t
   // The two buttons do the same from the keyboard.
   await page.keyboard.press("Enter"); await expect(navigation).toHaveCount(0); await expect(expand).toBeFocused();
   await page.keyboard.press("Enter"); await expect(navigation).toBeVisible(); await expect(collapse).toBeFocused();
+  // So does the palette's command: the palette gives focus back to the button it was opened from, which then leaves.
+  const command = page.getByRole("combobox", { name: "搜索对话、页面或操作", exact: true });
+  await page.keyboard.press("ControlOrMeta+K"); await command.fill("收起侧栏"); await command.press("Enter");
+  await expect(navigation).toHaveCount(0); await expect(expand).toBeFocused();
+  await page.keyboard.press("ControlOrMeta+K"); await command.fill("展开侧栏"); await command.press("Enter");
+  await expect(navigation).toBeVisible(); await expect(collapse).toBeFocused();
   // ⌘/ lists every shortcut in the board's words, each key as its own cap, with what the browser keeps. Stopping a reply
   // also takes esc in the composer, so its row gives both.
   await page.keyboard.press("ControlOrMeta+/");

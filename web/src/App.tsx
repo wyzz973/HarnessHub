@@ -976,7 +976,7 @@ export function App() {
       { id: "settings", group: "前往", label: "设置", keywords: "主题 通知 发现 快捷键", icon: <Settings size={16}/>, run: go("settings") },
       ...(state.providerManagement !== false ? [{ id: "providers", group: "前往", label: "模型与账号", keywords: "Provider 模型连接", icon: <SlidersHorizontal size={16}/>, run: go("providers") }] : []),
       { id: "panel", group: "显示", label: preferences.panel ? "收起详情面板" : "打开详情面板", icon: <PanelRight size={16}/>, shortcut: "⌘\\", run: () => setPreference("panel", !preferences.panel) },
-      { id: "sidebar", group: "显示", label: preferences.sidebar ? "收起侧栏" : "展开侧栏", icon: <PanelLeft size={16}/>, shortcut: "⌘B", run: () => setPreference("sidebar", !preferences.sidebar) },
+      { id: "sidebar", group: "显示", label: preferences.sidebar ? "收起侧栏" : "展开侧栏", icon: <PanelLeft size={16}/>, shortcut: "⌘B", run: () => showSidebar(!preferences.sidebar) },
       { id: "density", group: "显示", label: preferences.density === "compact" ? "过程显示：详细" : "过程显示：简洁", icon: <ListCollapse size={16}/>, run: () => setPreference("density", preferences.density === "compact" ? "detailed" : "compact") },
       { id: "theme-system", group: "显示", label: "主题：跟随系统", icon: <Monitor size={16}/>, run: theme("system") },
       { id: "theme-light", group: "显示", label: "主题：浅色", icon: <Sun size={16}/>, run: theme("light") },
