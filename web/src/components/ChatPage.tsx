@@ -636,10 +636,13 @@ function money(cost: { readonly amount: number; readonly currency: string }): st
 function StatusLine({ session, active }: { readonly session: SessionView; readonly active: PublicRun | null }) {
   const run = active ?? session.runs.at(-1) ?? null;
   const running = run !== null && !finished(run.status);
-  const now = useNow(running);
+  // A Turn waiting in the queue has not started: as its own line says 排队中 without a timer (ruling N), this line counts no
+  // time for it either, until a stop is asked for, when the Turn's line counts again (liveStatus).
+  const counting = running && (run.status !== "queued" || run.cancelRequested);
+  const now = useNow(counting);
   if (!run) return null;
   const round = session.runs.indexOf(run) + 1, steps = toolTree(run.tools ?? []).roots.length, timing = run.timing;
-  const spent = timing ? (running ? now : timing.endedAt ?? null) : null;
+  const spent = timing ? (counting ? now : running ? null : timing.endedAt ?? null) : null;
   const usage = run.usage, context = usage?.context;
   const share = context?.size ? Math.min(100, Math.round(context.used / context.size * 100)) : null;
   // A running time counts whole seconds (#03); an ended one is said as the Turn says it, with tenths under ten seconds.

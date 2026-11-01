@@ -1155,6 +1155,8 @@ test("a Turn waiting for another conversation's work in their workspace names it
   const status = log.locator(".response-status");
   // What the holder waits for is said as every other place says it (ADR-054 decision G).
   await expect(status).toHaveText("排队中：等待对话「approve this」释放工作区（它在等你批准）", { timeout: 15000 });
+  // Waiting, it has not started: the line under the composer counts no time for it, as the Turn's own line counts none.
+  await expect(page.locator(".composer-status")).toHaveText("第 1 轮");
   await expect(log.locator(".queued-turn small")).toHaveText("最多再等 30 分钟，到时这条消息不会发出。");
   assert.equal((await log.textContent())?.includes(fixture.root), false, "no private path reaches the page");
   await page.screenshot({ path: join(artifact, "queued-turn.png"), animations: "disabled" });
@@ -1291,6 +1293,8 @@ test("a Turn waiting for a slot says how many conversations run, has no deadline
   await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Busy Agent", exact: true }).click();
   await composer.fill("queued work"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
   await expect(log.locator(".response-status")).toHaveText("排队中：4 个对话正在执行，其中一个结束后自动开始", { timeout: 15000 });
+  // Nothing of it has started, so the line under the composer counts no time for it, as the Turn's own line counts none.
+  await expect(page.locator(".composer-status")).toHaveText("第 1 轮");
   // The header and the page's announcement name the state as the Turn does (ruling N).
   await expect(page.locator(".chat-page > header .status-pill")).toHaveText("Busy Agent 排队中"); await expect(page.locator(".chat-page > .sr-only[role=status]")).toHaveText("排队中");
   // So do the details: a Turn not started has no dot of work going on, and its facts say 排队中.
