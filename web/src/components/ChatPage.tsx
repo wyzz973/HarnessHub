@@ -540,7 +540,7 @@ function PlanBar({ session, active, harnessName }: { readonly session: SessionVi
       <span className="min-w-0 flex-1 truncate text-fg-3">{done} / {total} · {where}</span>
       <span className="relative h-1 w-[72px] flex-none overflow-hidden rounded-[2px] bg-hover max-sm:hidden" aria-hidden="true">
         <span className="absolute inset-0 origin-left rounded-[2px] bg-run transition-transform duration-200 ease-standard" style={{ transform: `scaleX(${total ? done / total : 0})` }}/></span>
-      <ChevronUp size={12} strokeWidth={2} className={cn("motion-rotate flex-none text-fg-3 keyboard:duration-0", open && "rotate-180")} aria-hidden="true"/>
+      <ChevronUp size={12} strokeWidth={2} className={cn("flex-none text-fg-3 transition-[rotate] duration-200 ease-expo keyboard:duration-0", open && "rotate-180")} aria-hidden="true"/>
     </button>
     <Collapsible open={open} id={id}>
       <div className="pt-2"><ul className="card m-0 grid max-h-[min(40vh,320px)] list-none grid-cols-1 gap-x-4 gap-y-2 overflow-y-auto px-4 py-3 text-ui-sm sm:grid-cols-2" aria-label={`${harnessName(owner.selection.harnessId)} 维护的计划`}>

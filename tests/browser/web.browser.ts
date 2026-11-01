@@ -412,6 +412,8 @@ test("live chat renders committed partial Markdown before completion, respects r
   await scroll.evaluate(element => { element.scrollTop = 0; });
   await expect(page.getByRole("button", { name: "回到最新回复", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "回到最新回复", exact: true })).toHaveText("回到最新");
+  // #14: it rises and fades in over 200 ms.
+  assert.deepEqual(await page.getByRole("button", { name: "回到最新回复", exact: true }).evaluate(element => { const style = getComputedStyle(element); return [style.animationName, style.animationDuration]; }), ["hh-enter", "0.2s"]);
   await page.waitForTimeout(250); await page.screenshot({ path: join(artifact, "follow-latest-943.png"), animations: "disabled" });
   async function step(stage: string) {
     const pending = join(fixture.root, "workspace", "next-stream-control.json"), target = join(fixture.root, "workspace", "stream-control.json");
@@ -1653,6 +1655,16 @@ test("G054-DL6 the plan bar above the composer says how far the plan is and open
   const origin = new URL(fixture.gateway.url).origin, composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
   const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
   const step = async (stage: string) => { const pending = join(fixture.root, "workspace", "next-stream-control.json"); await writeFile(pending, JSON.stringify({ stage })); await rename(pending, join(fixture.root, "workspace", "stream-control.json")); };
+  // The motions this page plays are logged as they start: the send key's glyph (#16, #17) and the plan bar's parts (#22).
+  await page.evaluate(() => {
+    const entries: string[] = []; (window as unknown as { __motion: string[] }).__motion = entries;
+    document.addEventListener("animationstart", event => { const { animationName } = event as AnimationEvent; if (/^hh-(send-to-stop|stop-to-send)$/u.test(animationName)) entries.push(animationName + ":" + getComputedStyle(event.target as Element).animationDuration); }, true);
+    document.addEventListener("transitionrun", event => {
+      const target = event.target as Element, { propertyName } = event as TransitionEvent;
+      if (target.matches(".plan-bar .collapsible") && propertyName === "grid-template-rows" || target.matches(".plan-bar svg") && propertyName === "rotate") entries.push(propertyName + ":" + getComputedStyle(target).transitionDuration.split(",")[0]!.trim());
+    }, true);
+  });
+  const motion = () => page.evaluate(() => [...(window as unknown as { __motion: string[] }).__motion]);
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
   await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter");
   await expect(log).toContainText("原生活动已完成。");
@@ -1666,6 +1678,8 @@ test("G054-DL6 the plan bar above the composer says how far the plan is and open
   await toggle.click(); await expect(toggle).toHaveAttribute("aria-expanded", "true");
   await expect(bar.getByRole("list", { name: "Codex 维护的计划" }).getByRole("listitem")).toHaveText(["读取工作区", "修改文件"]);
   await expect(toggle.locator("svg").last()).toHaveClass(/rotate-180/u);
+  // #22: the steps open by their height (0fr → 1fr) and the arrow turns, both in 200 ms.
+  await expect.poll(motion).toEqual(expect.arrayContaining(["grid-template-rows:0.2s", "rotate:0.2s"]));
   await shoot("dl6-plan-open");
   await toggle.click(); await expect(toggle).toHaveAttribute("aria-expanded", "false");
   // P05: the round, its steps and its time, then exactly the usage the run reported: no cost, since the fixture reports none.
@@ -1682,15 +1696,18 @@ test("G054-DL6 the plan bar above the composer says how far the plan is and open
   await expect(log.locator(".motion-message-in .user-message").last()).toContainText("STREAM_RENDER：计时");
   assert.match(await log.locator(".motion-message-in").last().evaluate(element => getComputedStyle(element).animationName), /hh-message-rise/u);
   await expect(page.getByRole("button", { name: "停止当前回复", exact: true }).locator(".send-stop")).toHaveAttribute("data-state", "stop");
+  await expect.poll(motion).toContain("hh-send-to-stop:0.48s");
   // P06: meanwhile the next message is written and held above the plan bar; withdrawn, it is never sent.
   await composer.fill("下一条：先暂存"); await composer.press("Enter");
   const held = page.locator(".queued-message"); await expect(held).toContainText("将在本轮结束后发送"); await expect(composer).toHaveValue("");
   await shoot("dl6-running");
   await held.getByRole("button", { name: "撤回", exact: true }).click(); await expect(held).toHaveCount(0);
+  const turnedBack = async () => (await motion()).filter(entry => entry === "hh-stop-to-send:0.48s").length, before = await turnedBack();
   await step("finish");
   await expect.poll(async () => (await current()).runs.at(-1).status, { timeout: 15000 }).toBe("completed");
   await expect(line).toContainText(/用时 [\d.]+ 秒/u);
   await expect(page.getByRole("button", { name: "发送消息", exact: true }).locator(".send-stop")).toHaveAttribute("data-state", "send");
+  await expect.poll(turnedBack).toBe(before + 1);
   // The history a page opens with does not move.
   await page.reload(); await expect(log.locator(".user-message")).toHaveCount(2); await expect(log.locator(".motion-message-in")).toHaveCount(0);
   assert.deepEqual(errors, []);
@@ -1748,6 +1765,13 @@ test("G054-DL9 ⌘J opens the Agent list, ⌘. stops the reply, ⌘\\ opens and 
   await composer.fill(""); await composer.press("ArrowUp"); await expect(composer).toHaveValue("STREAM_RENDER：⌘. 停止");
   assert.equal((await current()).runs.length, 1);
   // ⌘\ opens and closes the details, pushing the conversation aside instead of covering it; the header button does the same.
+  // The panel's width transitions and its content's slide are logged as they start (#23, #37).
+  await page.evaluate(() => {
+    const entries: string[] = []; (window as unknown as { __panel: string[] }).__panel = entries;
+    document.addEventListener("transitionrun", event => { const target = event.target as Element; if (target.classList.contains("details-aside") && (event as TransitionEvent).propertyName === "width") entries.push("width:" + getComputedStyle(target).transitionDuration); }, true);
+    document.addEventListener("animationstart", event => { if ((event as AnimationEvent).animationName === "hh-panel-in") entries.push("slide:" + getComputedStyle(event.target as Element).animationDelay); }, true);
+  });
+  const panelLog = () => page.evaluate(() => [...(window as unknown as { __panel: string[] }).__panel]);
   const width = () => page.locator(".chat-scroll").evaluate(element => Math.round(element.getBoundingClientRect().width));
   if (open) { await page.keyboard.press("ControlOrMeta+\\"); await expect(panel).toHaveCount(0); }
   const full = await width();
@@ -1755,12 +1779,17 @@ test("G054-DL9 ⌘J opens the Agent list, ⌘. stops the reply, ⌘\\ opens and 
   await expect.poll(width).toBeLessThanOrEqual(full - 380);
   await page.screenshot({ path: join(artifact, "dl9-panel.png"), animations: "disabled" });
   await page.keyboard.press("ControlOrMeta+\\"); await expect(panel).toHaveCount(0); await expect.poll(width).toBe(full);
+  assert.deepEqual(await panelLog(), [], "from the keyboard the panel opens and closes at once");
   const button = page.getByRole("button", { name: "详情栏", exact: true });
   await button.click(); await expect(panel).toBeVisible(); await expect(button).toHaveAttribute("aria-pressed", "true");
+  // With the pointer it widens in 300 ms and its content slides in 60 ms later.
+  await expect.poll(panelLog).toEqual(["width:0.3s", "slide:0.06s"]);
   // Its content slid in once: a key and then the pointer again (the input mode changing) do not make it start over.
   await page.waitForTimeout(400); await page.keyboard.press("Shift");
   assert.equal(await page.evaluate(() => { document.dispatchEvent(new PointerEvent("pointerdown")); return getComputedStyle(document.querySelector(".details-aside")!.firstElementChild!).opacity; }), "1");
   await button.click(); await expect(panel).toHaveCount(0); await expect(button).toHaveAttribute("aria-pressed", "false");
+  // It closes in 200 ms; the slide never started over.
+  await expect.poll(panelLog).toEqual(["width:0.3s", "slide:0.06s", "width:0.2s"]);
   // With reduced motion the panel appears at once: no widening and no slide.
   await page.emulateMedia({ reducedMotion: "reduce" });
   await button.click(); await expect(panel).toBeVisible();
