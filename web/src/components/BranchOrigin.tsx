@@ -1,9 +1,11 @@
 import { ArrowUpRight, ChevronRight, GitBranch, History } from "lucide-react";
-import { useState } from "react";
+import { useId, useState } from "react";
 import type { SessionOrigin } from "../../../src/contracts/session.js";
 import type { HarnessView, SessionView } from "../../../src/contracts/web.js";
 import { cn } from "../lib/cn.js";
+import { Collapsible } from "../ui/motion.js";
 import { MessageAttachments } from "./Attachments.js";
+import { BrandIcon } from "./BrandIcon.js";
 import { StreamingMarkdown } from "./StreamingMarkdown.js";
 
 /** How the conversation continues natively, stated from the committed native state rather than assumed. */
@@ -20,30 +22,35 @@ function nativeNote(session: SessionView, origin: SessionOrigin): string {
   return "这个分支以公共历史继续：下一条消息会带上下面的对话。";
 }
 
-/** The quoted history a branch started from, shown before its own messages and never sent again as new input. */
+/**
+ * The quoted history a branch started from, shown before its own messages and never sent again as new input: a quiet card
+ * that says where the conversation came from and how it continues natively, with the history behind one disclosure.
+ */
 export function BranchOrigin({ origin, session, harnesses, onOpenSource }: { origin: SessionOrigin; session: SessionView; harnesses: readonly HarnessView[]; onOpenSource: ((id: string) => void) | undefined }) {
   const [open, setOpen] = useState(false);
+  const history = useId();
   const name = (id: string | undefined) => harnesses.find(row => row.id === id)?.name ?? id ?? "Harness";
   const imported = origin.kind === "import" ? origin : null;
   const earlier = imported && (imported.omitted > 0 || !imported.complete) ? imported.historyRead ? "更早的历史只保留在原程序中" : "原程序没有提供历史" : null;
-  return <section className="branch-origin flex flex-col gap-2 rounded-xl border border-dashed border-line-strong bg-app px-3.5 py-3" aria-label={imported ? "接续来源" : "分支来源"}>
-    <header className="flex flex-wrap items-center gap-2 text-[13px]">
-      <span className="text-fg-3">{imported ? <History size={14} aria-hidden="true"/> : <GitBranch size={14} aria-hidden="true"/>}</span>
-      <strong className="font-semibold">{imported ? "接续本机 " + name(imported.harnessId) + " 会话" + (imported.title ? "「" + imported.title + "」" : "") : "分支自之前的对话"}</strong>
-      <small className="text-[12px] text-fg-3">{origin.history.length} 条消息{earlier ? " · " + earlier : ""}</small>
+  return <section className="branch-origin flex flex-col gap-2 rounded-card bg-surface px-4 py-3 shadow-hairline" aria-label={imported ? "接续来源" : "分支来源"}>
+    <header className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-ui-sm">
+      <span className="flex text-fg-3">{imported ? <BrandIcon brand={imported.harnessId} name={name(imported.harnessId)} size={18}/> : <GitBranch size={16} aria-hidden="true"/>}</span>
+      <strong className="min-w-0 font-semibold text-fg">{imported ? "接续本机 " + name(imported.harnessId) + " 会话" + (imported.title ? "「" + imported.title + "」" : "") : "分支自之前的对话"}</strong>
+      <small className="text-caption text-fg-3">{origin.history.length} 条消息{earlier ? " · " + earlier : ""}</small>
       <span className="flex-1"/>
-      {origin.kind === "fork" && onOpenSource ? <button type="button" className="link-btn inline-flex items-center gap-1 text-[12.5px]" onClick={() => onOpenSource(origin.sessionId)}>打开原对话 <ArrowUpRight size={12} aria-hidden="true"/></button> : null}
+      {origin.kind === "fork" && onOpenSource ? <button type="button" className="link-btn inline-flex items-center gap-1 text-caption" onClick={() => onOpenSource(origin.sessionId)}>打开原对话 <ArrowUpRight size={12} aria-hidden="true"/></button> : null}
     </header>
-    <p className="m-0 text-[12.5px] text-fg-2" role="status">{nativeNote(session, origin)}</p>
-    {origin.history.length ? <div>
-      <button type="button" aria-expanded={open} onClick={() => setOpen(value => !value)} className="flex items-center gap-1 rounded-md border-none bg-transparent px-1 py-0.5 text-[12.5px] text-fg-2 hover:bg-hover">
-        <ChevronRight size={12} className={cn("transition-transform duration-150", open && "rotate-90")} aria-hidden="true"/>{imported ? "查看本机会话的历史" : "查看分支前的对话"}
+    <p className="m-0 text-ui-sm text-fg-2" role="status">{nativeNote(session, origin)}</p>
+    {origin.history.length ? <div className="flex flex-col">
+      <button type="button" aria-expanded={open} aria-controls={history} onClick={() => setOpen(value => !value)} className="row -ml-1.5 flex h-7 items-center gap-1.5 self-start border-none bg-transparent px-1.5 text-ui-sm text-fg-2">
+        {imported ? <History size={14} className="text-fg-3" aria-hidden="true"/> : null}{imported ? "查看本机会话的历史" : "查看分支前的对话"}
+        <ChevronRight size={12} strokeWidth={2.2} className={cn("text-fg-3 transition-[rotate] duration-200 ease-expo keyboard:transition-none", open && "rotate-90")} aria-hidden="true"/>
       </button>
-      {open ? <ol className="enter m-0 mt-2 flex list-none flex-col gap-3 border-l-2 border-line p-0 pl-3">{origin.history.map((message, index) => <li key={index} className="flex flex-col gap-1">
-        <span className="text-[11.5px] font-medium text-fg-3">{message.role === "user" ? "你" : name(message.harnessId)}</span>
+      <Collapsible open={open} id={history} className="grid-cols-[minmax(0,1fr)]"><ol className="m-0 mt-2 ml-1 flex list-none flex-col gap-3 border-l border-line-strong p-0 pl-3.5">{origin.history.map((message, index) => <li key={index} className="flex min-w-0 flex-col gap-1">
+        <span className="text-caption font-medium text-fg-3">{message.role === "user" ? "你" : name(message.harnessId)}</span>
         {message.attachments?.length ? <MessageAttachments attachments={message.attachments} align="start"/> : null}
-        {message.role === "user" ? <p className="m-0 whitespace-pre-wrap text-[13px]">{message.text}</p> : <StreamingMarkdown text={message.text} isStreaming={false} className="text-[13px]"/>}
-      </li>)}</ol> : null}
+        {message.role === "user" ? <p className="m-0 whitespace-pre-wrap break-words text-ui-sm">{message.text}</p> : <StreamingMarkdown text={message.text} isStreaming={false} className="text-ui-sm"/>}
+      </li>)}</ol></Collapsible>
     </div> : null}
   </section>;
 }
