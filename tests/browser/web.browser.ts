@@ -1594,14 +1594,18 @@ test("G054-DL5 an approval waits in the composer's place: ⏎ allows once and es
   await box.evaluate(element => {
     const entries: string[] = []; (window as unknown as { __box: string[] }).__box = entries;
     for (const type of ["transitionrun", "transitionend", "transitioncancel"]) element.addEventListener(type, event => {
-      const name = (event as TransitionEvent).propertyName;
-      if (event.target === element && (name === "height" || name === "box-shadow")) entries.push(type.slice(10) + ":" + name + (type === "transitionrun" && name === "height" ? ":" + getComputedStyle(element).transitionDuration.split(",")[0]!.trim() : ""));
+      const name = (event as TransitionEvent).propertyName, target = event.target as Element;
+      if (target === element && (name === "height" || name === "box-shadow")) entries.push(type.slice(10) + ":" + name + (type === "transitionrun" && name === "height" ? ":" + getComputedStyle(element).transitionDuration.split(",")[0]!.trim() : ""));
+      // The composer's own layer fades out and back in over 100 ms.
+      if (type === "transitionrun" && target.matches("form.composer") && name === "opacity") entries.push("composer-fade:" + getComputedStyle(target).transitionDuration);
     });
+    // The approval's layer rises in 80 ms after the composer's starts to leave.
+    element.addEventListener("animationstart", event => { const target = event.target as Element, style = getComputedStyle(target); if (target.querySelector("#approval-dock")) entries.push("dock-in:" + (event as AnimationEvent).animationName + ":" + style.animationDelay + ":" + style.animationDuration); });
   });
   const boxLog = () => page.evaluate(() => [...(window as unknown as { __box: string[] }).__box]);
   // esc refuses (a key right after the approval took the focus is still taken as meant for the message being typed).
   await ask(); await expect(dock).toBeFocused();
-  await expect.poll(boxLog).toEqual(expect.arrayContaining(["run:height:0.3s", "end:height", "end:box-shadow"]));
+  await expect.poll(boxLog).toEqual(expect.arrayContaining(["run:height:0.3s", "end:height", "end:box-shadow", "composer-fade:0.1s", "dock-in:hh-enter:0.08s:0.2s"]));
   assert.ok(!(await boxLog()).includes("cancel:box-shadow"), "the morph does not cut the ring's fade short");
   await page.waitForTimeout(600);
   const docked = (await boxLog()).length;
@@ -1610,15 +1614,24 @@ test("G054-DL5 an approval waits in the composer's place: ⏎ allows once and es
   await expect(results).toHaveText(["你允许了一次：rm -rf build", "你拒绝了：rm -rf build"]);
   await expect(composer).toBeVisible(); await page.waitForTimeout(300);
   const back = (await boxLog()).slice(docked);
-  assert.ok(!back.some(entry => entry.startsWith("run:height") || entry === "end:box-shadow"), `from the keyboard the composer comes back at once (${back.join(", ")})`);
+  assert.ok(!back.some(entry => entry.startsWith("run:height") || entry === "end:box-shadow" || entry.startsWith("composer-fade")), `from the keyboard the composer comes back at once (${back.join(", ")})`);
   // A lasting option answers to no key and only to a click; the pointer's decision morphs back in 200 ms.
   await ask(); await page.waitForTimeout(600); await page.keyboard.press("3"); await expect(dock).toBeVisible();
   const clicked = (await boxLog()).length;
   await dock.getByRole("button", { name: "Allow always", exact: true }).click();
   await expect(log).toContainText('"optionId":"allow_always"', { timeout: 15000 });
   await expect(results.last()).toHaveText("你选择了“Allow always”：rm -rf build");
-  await expect.poll(async () => (await boxLog()).slice(clicked)).toEqual(expect.arrayContaining(["run:height:0.2s", "end:height", "end:box-shadow"]));
+  await expect.poll(async () => (await boxLog()).slice(clicked)).toEqual(expect.arrayContaining(["run:height:0.2s", "end:height", "end:box-shadow", "composer-fade:0.1s"]));
   await shoot("dl5-decided");
+  // R04: with reduced motion the composer and the approval swap at once (no height, no ring fade, no rise): the approval
+  // only fades in over 120 ms. (The shots above switched the colour scheme; its shadow change settles first.)
+  await page.waitForTimeout(300); await page.emulateMedia({ reducedMotion: "reduce" });
+  const calm = (await boxLog()).length;
+  await ask(); await page.waitForTimeout(600);
+  await dock.getByRole("button", { name: "Allow once", exact: true }).click(); await expect(composer).toBeVisible(); await page.waitForTimeout(300);
+  const swapped = (await boxLog()).slice(calm);
+  assert.deepEqual(swapped, ["dock-in:hh-fade-in:0s:0.12s"], `reduced motion swaps at once (${swapped.join(", ")})`);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   // A question stays in its Turn, and the composer stays where it is.
   await page.getByRole("button", { name: "新对话", exact: true }).click();
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex Question", exact: true }).click();
