@@ -160,6 +160,7 @@ test("real browser validates Provider management, public chat switching, cancell
   await page.getByRole("button", { name: "添加 Provider", exact: true }).click();
   await createProvider("工作模型 B", "model-b", "browser-fixture-key-B");
   await page.screenshot({ path: join(artifact, "providers-desktop.png"), fullPage: true, animations: "disabled" });
+  await page.emulateMedia({ colorScheme: "dark" }); await page.screenshot({ path: join(artifact, "providers-dark-desktop.png"), fullPage: true, animations: "disabled" }); await page.emulateMedia({ colorScheme: "light" });
   await responsive("providers");
   await page.getByRole("button", { name: "新对话", exact: false }).first().click();
   async function pick(label: string, value: string) {
