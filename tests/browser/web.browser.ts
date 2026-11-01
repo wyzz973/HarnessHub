@@ -1630,6 +1630,17 @@ test("G054-DL4 each reply names its Agent, model and thinking level, a hand-over
   await command.getByRole("button", { name: /ls -la/u }).click();
   const raw = command.locator(".native-tool-detail");
   await expect(raw.locator("pre").first()).toHaveText("ls -la"); await expect(raw).toContainText("输出"); await expect(raw).toContainText("README.md");
+  // A step that opens tints when pointed at (Motion board #30: its background, 120 ms on the standard curve) and untints when
+  // left; from the keyboard its focus ring is the row's, 2 px inside its edge.
+  const editRow = edit.getByRole("button", { name: /修改 README\.md/u }), tint = () => editRow.evaluate(element => getComputedStyle(element).backgroundColor);
+  assert.equal(await tint(), "rgba(0, 0, 0, 0)");
+  await editRow.hover(); await expect.poll(tint).toBe("rgb(244, 245, 247)");
+  assert.deepEqual(await editRow.evaluate(element => { const style = getComputedStyle(element); return [style.transitionProperty, style.transitionDuration, style.transitionTimingFunction]; }),
+    ["background-color", "0.12s", "cubic-bezier(0.2, 0, 0, 1)"]);
+  await page.mouse.move(2, 2); await expect.poll(tint).toBe("rgba(0, 0, 0, 0)");
+  await page.keyboard.press("Shift"); await editRow.focus();
+  assert.deepEqual(await editRow.evaluate(element => { const style = getComputedStyle(element); return [element.matches(":focus-visible"), style.outlineStyle, style.outlineWidth, style.outlineOffset]; }), [true, "solid", "2px", "-2px"]);
+  await editRow.blur();
   await page.screenshot({ path: join(artifact, "dl4-turn-light-1440.png"), animations: "disabled" });
   // D02: the details tabs are 改动 (with the number of changes, the button's), 计划, 过程, 后台 and 执行; the underline sits under
   // the chosen tab. The panel is closed until opened (decision E).

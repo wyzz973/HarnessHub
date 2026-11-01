@@ -180,7 +180,7 @@ function TurnProcess({ run, status, text, phase, detailed, now, harness, startup
     {expandable ? <Collapsible open={open} id={steps}>
       <div className="mt-1 mb-1.5 ml-[7px] flex min-w-0 flex-col gap-px border-l border-line-strong pl-[9px]">
         {thinking ? <div className="flex min-w-0 flex-col">
-          <button type="button" aria-expanded={thoughts ?? detailed} onClick={() => setThoughts(!(thoughts ?? detailed))} className="row group/step flex min-h-[30px] w-full items-center gap-[9px] border-none bg-transparent px-1.5 py-[5px] text-left text-ui-sm leading-[18px] text-fg-2">
+          <button type="button" aria-expanded={thoughts ?? detailed} onClick={() => setThoughts(!(thoughts ?? detailed))} className="row group/step flex min-h-[30px] w-full items-center gap-[9px] border-none bg-transparent px-1.5 py-[5px] text-left text-ui-sm leading-[18px] text-fg-2 hover:bg-subtle">
             <span className="flex size-[15px] flex-none items-center justify-center text-fg-3"><Brain size={15} aria-hidden="true"/></span><span className="flex-1">思考过程</span>
             <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("flex-none text-fg-3 motion-rotate", (thoughts ?? detailed) && "rotate-90")}/>
           </button>
