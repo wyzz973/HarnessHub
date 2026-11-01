@@ -4624,12 +4624,12 @@ async function dl10Opaque(target: Dl10Locator, label: string): Promise<void> {
 /**
  * One state of a page at each size in both themes (ADR-054 R01, R02): `ready` brings the state back at a size (some take another
  * form across the narrow breakpoint); on the settled page each of `anchors` is at full opacity, the sidebar is beside the page on
- * the desktop and off screen on a phone, and the page must fit (dl10Fits on `anchors`) and read (dl10Readable). The page is then
- * saved as dl10-<name>-<light|dark>-<width>.png, with the pointer resting in a corner. With `drawer`, on a phone the sidebar's
- * drawer is also opened and closed from the keyboard: in the light theme, or with "shoot" in both and saved as
- * dl10-drawer-<light|dark>-<width>.png.
+ * the desktop and off screen on a phone, `check` asserts what the state itself must be at that size, and the page must fit
+ * (dl10Fits on `anchors`) and read (dl10Readable). The page is then saved as dl10-<name>-<light|dark>-<width>.png, with the pointer
+ * resting in a corner. With `drawer`, on a phone the sidebar's drawer is also opened and closed from the keyboard: in the light
+ * theme, or with "shoot" in both and saved as dl10-drawer-<light|dark>-<width>.png.
  */
-async function dl10Shoot(page: Page, name: string, options: { readonly anchors: () => readonly Dl10Locator[]; readonly ready?: (size: Dl10Size) => Promise<void>; readonly sizes?: readonly Dl10Size[]; readonly drawer?: "check" | "shoot" }): Promise<void> {
+async function dl10Shoot(page: Page, name: string, options: { readonly anchors: () => readonly Dl10Locator[]; readonly ready?: (size: Dl10Size) => Promise<void>; readonly check?: (size: Dl10Size, label: string) => Promise<void>; readonly sizes?: readonly Dl10Size[]; readonly drawer?: "check" | "shoot" }): Promise<void> {
   for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme });
     for (const size of options.sizes ?? DL10_SIZES) {
@@ -4638,6 +4638,7 @@ async function dl10Shoot(page: Page, name: string, options: { readonly anchors: 
       const label = `${name} at ${size.width} in ${scheme}`, phone = size.width < 760;
       for (const anchor of options.anchors()) await dl10Opaque(anchor, label);
       assert.equal(await dl10SidebarShown(page), !phone, label + (phone ? ": on a phone the sidebar is a drawer, off screen until opened" : ": on a desktop the sidebar is beside the page"));
+      await options.check?.(size, label);
       await dl10Fits(page, label, options.anchors());
       await dl10Readable(page, label, scheme);
       await page.screenshot({ path: join(artifact, `dl10-${name}-${scheme}-${size.width}.png`), animations: "disabled" });
@@ -4740,12 +4741,21 @@ test("G054-DL10 the home on first use and on return, a finished Turn with its st
 
   // X03: the inbox, beside its row on the desktop and a sheet of its own on a phone (crossing the breakpoint closes either).
   await navigation.getByRole("button", { name: "新对话", exact: true }).click(); await expect(greeting).toBeVisible();
-  const inbox = page.getByRole("dialog", { name: "等你处理" });
+  const inbox = page.getByRole("dialog", { name: "等你处理" }), inboxRow = navigation.getByRole("button", { name: "等你处理（1 项）", exact: true });
   await dl10Shoot(page, "inbox", { anchors: () => [inbox], ready: async size => {
     if (await inbox.count()) return;
     if (size.width < 760) { await page.getByRole("button", { name: "打开导航", exact: true }).click(); await page.getByRole("dialog", { name: "主导航" }).getByRole("button", { name: "等你处理（1 项）", exact: true }).click(); }
-    else await navigation.getByRole("button", { name: "等你处理（1 项）", exact: true }).click();
+    else await inboxRow.click();
     await expect(inbox).toContainText("approve this"); await expect(inbox).toContainText("rm -rf build");
+  }, check: async (size, label) => {
+    // The form it takes there: a sheet across the bottom of a phone, a popover level with its row beside the sidebar on a desktop.
+    const box = await inbox.boundingBox(); assert.ok(box, label + ": the inbox is on screen");
+    if (size.width < 760) assert.ok(box.x <= 16 && box.x + box.width >= size.width - 16 && box.y + box.height >= size.height - 16, `${label}: on a phone the inbox is a sheet across the bottom of the screen: ${JSON.stringify(box)}`);
+    else {
+      const row = await inboxRow.boundingBox(), sidebar = await navigation.boundingBox(); assert.ok(row && sidebar);
+      assert.ok(box.x >= sidebar.x + sidebar.width - 1 && box.y <= row.y + row.height && box.y + box.height >= row.y && box.width < size.width / 2,
+        `${label}: on a desktop the inbox is a popover beside its row, right of the sidebar: ${JSON.stringify({ box, row, sidebar })}`);
+    }
   } });
   await page.keyboard.press("Escape"); await expect(inbox).toHaveCount(0);
 
