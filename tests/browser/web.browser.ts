@@ -411,6 +411,8 @@ test("live chat renders committed partial Markdown before completion, respects r
   await page.screenshot({ path: join(artifact, "streaming-943.png"), fullPage: true, animations: "disabled" });
   await scroll.evaluate(element => { element.scrollTop = 0; });
   await expect(page.getByRole("button", { name: "回到最新回复", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "回到最新回复", exact: true })).toHaveText("回到最新");
+  await page.waitForTimeout(250); await page.screenshot({ path: join(artifact, "follow-latest-943.png"), animations: "disabled" });
   async function step(stage: string) {
     const pending = join(fixture.root, "workspace", "next-stream-control.json"), target = join(fixture.root, "workspace", "stream-control.json");
     await writeFile(pending, JSON.stringify({ stage })); await rename(pending, target);
@@ -1747,6 +1749,12 @@ test("G054-DL9 ⌘J opens the Agent list, ⌘. stops the reply, ⌘\\ opens and 
   await expect.poll(async () => { const value = await current(); return value.activeRunId === null && value.pendingSwitchId === null && value.selection.harnessId; }, { timeout: 15000 }).toBe("native-acp");
   const handed = await current(); assert.equal(handed.runs.at(-1).status, "completed"); assert.equal(handed.runs.at(-1).selection.harnessId, "codex");
   await expect(strip).toHaveCount(0); await expect(trigger).toContainText("Shared Agent");
+  // A new conversation opened from the keyboard (⇧⌘O) is simply there (#37); opened with the pointer, the greeting rises in.
+  const greeting = page.getByRole("heading", { name: "今天想让哪个 Agent 做什么？", exact: true });
+  await page.keyboard.press("ControlOrMeta+Shift+O"); await expect(greeting).toBeVisible();
+  assert.equal(await greeting.evaluate(element => getComputedStyle(element).animationName), "none");
+  await page.getByRole("button", { name: "新对话", exact: true }).click(); await expect(greeting).toBeVisible();
+  assert.equal(await greeting.evaluate(element => getComputedStyle(element).animationName), "hh-enter");
   assert.deepEqual(errors, []);
 });
 
