@@ -1190,8 +1190,8 @@ test("a Harness of a version HarnessHub never ran shows that version alone in th
   await sayNothing("the Harness list");
   await page.screenshot({ path: join(artifact, "version-fact.png"), animations: "disabled" });
   // The welcome's list of Agents (opened from its summary, ADR-054 §5) and the picker show the version the same way, and
-  // the Harness is chosen like any other.
-  await page.getByRole("button", { name: "返回对话", exact: true }).click();
+  // the Harness is chosen like any other. The Agent page has no way back of its own (ADR-054 补充 D): the sidebar leads there.
+  await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "新对话", exact: true }).click();
   await page.locator(".agent-summary").click();
   const card = page.getByRole("region", { name: "本机发现的 Harness" }).getByRole("button", { name: "选择 Gemini CLI", exact: true });
   await expect(card).toContainText("v1.0.0"); await expect(card.locator(".badge")).toHaveCount(0);
@@ -3025,8 +3025,17 @@ test("G054-DL8 the Agent page gives each Agent a card with its version and chann
   assert.ok(titleBox && leadBox && checkBox && headerBox);
   assert.ok(Math.abs(checkBox.x + checkBox.width - (headerBox.x + headerBox.width)) <= 1 && checkBox.y >= titleBox.y && checkBox.y + checkBox.height <= leadBox.y + leadBox.height + 1, "检查更新 sits at the right end of the title block");
   assert.deepEqual(await title.evaluate(element => { const style = getComputedStyle(element); return [style.fontSize, style.lineHeight, style.fontWeight]; }), ["28px", "36px", "600"]);
-  // Above it, a quiet bar holds the way back to the conversation, as on the other pages beside it.
-  await expect(main.getByRole("button", { name: "返回对话", exact: true })).toBeVisible();
+  // The board has no way back of its own (ADR-054 补充 D): the sidebar is it. With the sidebar shown on a wide screen no
+  // bar sits above the page, and the title starts 44 px below the top, as on the board; hiding the sidebar brings a bar
+  // holding the button that shows it again, and nothing else.
+  await expect(main.getByRole("button", { name: "返回对话", exact: true })).toHaveCount(0);
+  assert.equal(titleBox.y, 44, "the title starts at the board's top spacing");
+  await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "收起侧栏", exact: true }).click();
+  const expand = main.getByRole("button", { name: "展开侧栏", exact: true });
+  await expect(expand).toBeVisible(); await expect(main.getByRole("button", { name: "返回对话", exact: true })).toHaveCount(0);
+  assert.equal((await title.boundingBox())?.y, 56, "the title sits under the bar that shows the sidebar again");
+  await expand.click(); await expect(page.getByRole("complementary", { name: "主导航" })).toBeVisible(); await expect(expand).toHaveCount(0);
+  assert.equal((await title.boundingBox())?.y, 44);
 
   // A02: one card per Agent: its mark, name, version · channel, state, one sentence of facts, and its actions; no count without a fact.
   const mine = main.getByRole("region", { name: "这台 Mac 上的 Agent" }), cards = mine.getByRole("article"), card = (name: string) => mine.getByRole("article", { name, exact: true });
@@ -3169,6 +3178,9 @@ test("G054-DL8 the Agent page gives each Agent a card with its version and chann
     assert.equal(await main.locator("section.management-page").evaluate(element => getComputedStyle(element).backgroundColor), scheme === "dark" ? "rgb(24, 25, 28)" : "rgb(255, 255, 255)");
     for (const width of [1440, 390, 320]) {
       await page.setViewportSize({ width, height: width === 1440 ? 1000 : 844 });
+      // A bar only on a narrow screen, holding the navigation; never a way back (ADR-054 补充 D).
+      await expect(main.getByRole("button", { name: "打开导航", exact: true })).toHaveCount(width === 1440 ? 0 : 1);
+      await expect(main.getByRole("button", { name: "返回对话", exact: true })).toHaveCount(0);
       // The page at rest: the details gone and no focus ring left by the keyboard.
       await expect.poll(() => body.evaluate(element => getComputedStyle(element).marginRight)).toBe("0px");
       await page.evaluate(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
@@ -4351,8 +4363,8 @@ test("G054-FZ1 the frozen Harnesses stay out of the picker, the welcome, the pal
   for (const name of frozen) await expect(row(name).locator(".harness-frozen")).toHaveText("冻结");
   await expect(row("Codex").locator(".harness-frozen")).toHaveCount(0); await expect(note).toHaveCount(0);
   await page.screenshot({ path: join(artifact, "frozen-shown.png"), animations: "disabled" });
-  // A conversation on Gemini CLI.
-  await page.getByRole("button", { name: "返回对话", exact: true }).click();
+  // A conversation on Gemini CLI, begun from the sidebar: the Agent page has no way back of its own (ADR-054 补充 D).
+  await navigation.getByRole("button", { name: "新对话", exact: true }).click();
   await picker.click(); await page.getByRole("option", { name: "Gemini CLI", exact: true }).click();
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
   await composer.fill("frozen work"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
