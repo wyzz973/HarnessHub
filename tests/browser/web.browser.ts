@@ -1486,9 +1486,11 @@ test("G054-DL4 each reply names its Agent, model and thinking level, a hand-over
   // C08: switching the model takes effect between Turns and marks the place: a hairline with the pill in the middle.
   await pick("选择模型", "Native A");
   await expect.poll(async () => { const value = await current(); return value.pendingSwitchId === null && value.selection.nativeModel === "native-a"; }).toBe(true);
-  // The same Agent with another model says "改用" once the page names the Agent before the change; until then it says who took over.
-  const handover = log.getByRole("separator", { name: /^从这里起(?:由 Codex 接手 · |改用 )/u });
-  await expect(handover).toBeVisible(); await expect(handover).toContainText(/从这里起(?:由 Codex 接手 · |改用 )(?:native-a|Native A)/u);
+  // The same Agent with another model says "改用" and the new choice in the words of a Turn's identity line (the model alone:
+  // the change keeps no thinking level of its own); the pill shows the Agent's mark, without the arrow of a hand-over.
+  const handover = log.getByRole("separator", { name: "从这里起改用 Native A", exact: true });
+  await expect(handover).toBeVisible(); await expect(handover).toHaveText("从这里起改用 Native A");
+  await expect(handover.locator(".brand-tile")).toHaveCount(1); await expect(handover.locator("path[pathLength]")).toHaveCount(0);
   const pill = await handover.evaluate(element => { const pill = element.querySelector(":scope > span:nth-child(2)") as HTMLElement, line = element.firstElementChild as HTMLElement;
     return { radius: getComputedStyle(pill).borderRadius, height: pill.getBoundingClientRect().height, line: line.getBoundingClientRect().height, shadow: getComputedStyle(pill).boxShadow }; });
   assert.ok(pill.radius.startsWith("3.35544e+07") || parseFloat(pill.radius) >= 15, "the pill is round: " + pill.radius);
@@ -2131,6 +2133,21 @@ test("G054-DL9 ⌘J opens the Agent list, ⌘. stops the reply, ⌘\\ opens and 
   await expect.poll(async () => { const value = await current(); return value.activeRunId === null && value.pendingSwitchId === null && value.selection.harnessId; }, { timeout: 15000 }).toBe("native-acp");
   const handed = await current(); assert.equal(handed.runs.at(-1).status, "completed"); assert.equal(handed.runs.at(-1).selection.harnessId, "codex");
   await expect(strip).toHaveCount(0); await expect(trigger).toContainText("Shared Agent");
+  // C08: where it took over, a pill with the mark of the Agent before, an arrow and the new Agent's mark (Conversation board).
+  const handover = page.getByRole("log", { name: "对话历史" }).getByRole("separator", { name: "从这里起由 Shared Agent 接手", exact: true });
+  await expect(handover).toBeVisible();
+  await expect(handover.locator(".brand-tile")).toHaveCount(2); await expect(handover.locator(".brand-tile").first()).toHaveAttribute("data-brand", "codex");
+  // #19: made in view, it comes in: the pill fades in, the arrow draws in 160 ms, the new mark pops from .6, the lines grow.
+  const handoverMotion = () => handover.evaluate(element => {
+    const pill = element.children[1]!, arrow = pill.querySelector("path[pathLength]")!, mark = pill.children[2]!;
+    const motion = (node: Element) => { const style = getComputedStyle(node); return [style.animationName, style.animationDuration, style.animationDelay].join(" / "); };
+    return { pill: motion(pill), arrow: motion(arrow), mark: motion(mark) + " / " + getComputedStyle(mark).getPropertyValue("--motion-scale-from").trim(), lines: [motion(element.firstElementChild!), motion(element.lastElementChild!)] };
+  });
+  assert.deepEqual(await handoverMotion(), { pill: "hh-fade-in / 0.2s / 0s", arrow: "hh-draw / 0.16s / 0.14s", mark: "hh-pop-in, hh-fade-in / 0.3s, 0.12s / 0.22s / 0.6",
+    lines: ["hh-line-grow / 0.3s / 0.12s", "hh-line-grow / 0.3s / 0.12s"] });
+  // Found in the history the page opens with, it stays still.
+  await page.reload(); await expect(handover).toBeVisible();
+  assert.deepEqual(await handoverMotion(), { pill: "none / 0s / 0s", arrow: "none / 0s / 0s", mark: "none / 0s / 0s / ", lines: ["none / 0s / 0s", "none / 0s / 0s"] });
   // A new conversation opened from the keyboard (⇧⌘O) is simply there (#37); opened with the pointer, the greeting rises in.
   const greeting = page.getByRole("heading", { name: "今天想让哪个 Agent 做什么？", exact: true });
   await page.keyboard.press("ControlOrMeta+Shift+O"); await expect(greeting).toBeVisible();

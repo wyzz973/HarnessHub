@@ -121,6 +121,8 @@ export interface ChatProps {
   contextUsage?: number | null; onShowResume?: (() => void) | undefined; onSendDraft?: (text: string) => Promise<void>;
 }
 
+/** A hand-over drawn in the transcript: the effective change and the selection that answered before it. */
+interface Divider { readonly change: NonNullable<SessionView["switches"]>[number]; readonly from: HarnessSelection }
 /** The latest values the page's shortcuts act on, read when a key is pressed rather than bound into the listener. */
 interface ShortcutState { readonly stop: (() => void) | null; readonly togglePanel: (() => void) | null; readonly openPicker: (() => void) | null }
 /** A local decision on an approval, kept until the page leaves the conversation, to write its result back into the Turn. */
@@ -170,18 +172,20 @@ export function ChatPage(props: ChatProps) {
     }
     return hints;
   }, [session?.runs, props.readiness]);
-  // Names a Turn's model and thinking level with the catalog's own names when the composer has that Harness's catalog loaded.
-  const describe = useCallback((run: PublicRun): string => {
-    const catalog = run.selection.harnessId === draft.harnessId && !run.selection.provider ? props.nativeModels : null;
-    const model = run.selection.provider?.model ?? (run.selection.nativeModel ? catalog?.models.find(row => row.id === run.selection.nativeModel)?.name ?? run.selection.nativeModel : null);
-    const known = [...(catalog?.options ?? []), ...(catalog?.models.find(row => row.id === (run.selection.nativeModel ?? catalog.defaultModel))?.options ?? [])];
-    const options = Object.entries(run.selection.nativeOptions ?? {}).map(([id, value]) => {
+  // Names a selection's model and thinking level with the catalog's own names when the composer has that Harness's catalog
+  // loaded: a Turn's identity line ("Native B · 思考 高"), and the same words on the pill of a hand-over to it.
+  const describeSelection = useCallback((selection: HarnessSelection): string => {
+    const catalog = selection.harnessId === draft.harnessId && !selection.provider ? props.nativeModels : null;
+    const model = selection.provider?.model ?? (selection.nativeModel ? catalog?.models.find(row => row.id === selection.nativeModel)?.name ?? selection.nativeModel : null);
+    const known = [...(catalog?.options ?? []), ...(catalog?.models.find(row => row.id === (selection.nativeModel ?? catalog.defaultModel))?.options ?? [])];
+    const options = Object.entries(selection.nativeOptions ?? {}).map(([id, value]) => {
       const option = known.find(row => row.id === id), name = option?.values.find(row => row.value === value)?.name ?? value;
       if (option?.category === "thought_level" || id === "thought_level" || /thought|effort|reasoning/u.test(id)) return "思考 " + (THINKING_NAMES[value] ?? name);
       return (option?.category === "mode" ? "模式" : OPTION_NAMES[id] ?? option?.name ?? id) + " " + name;
     });
     return [model, ...options].filter(Boolean).join(" · ");
   }, [draft.harnessId, props.nativeModels]);
+  const describe = useCallback((run: PublicRun): string => describeSelection(run.selection), [describeSelection]);
   // The queued Turn names the conversation whose work holds the workspace (ADR-036); whether that one waits for the user
   // follows the pushed list of waiting requests, and the view's own answer until the first list arrives.
   const [cancellingQueue, setCancellingQueue] = useState<string | null>(null);
@@ -254,24 +258,29 @@ export function ChatPage(props: ChatProps) {
   const showResume = () => { setPanelRun(session?.runs.at(-1)?.id ?? null); setTab("run"); setPanel(true); };
   const detailed = preferences.density === "detailed";
   const changes = useMemo(() => session?.runs.reduce((count, run) => count + editTools(run).length, 0) ?? 0, [session?.runs]);
-  // Effective changes of Harness or model, placed after the history they carried (ADR-042).
+  // Effective changes of Harness or model, placed after the history they carried (ADR-042), each with `from`, the selection
+  // before it, which the pill draws with an arrow to the new one (C08). Changes with no message between them are one
+  // hand-over, from the first one's `from` to the last one's target; none is left when they come back to where they began.
   const dividers = useMemo(() => {
-    const result = new Map<number, NonNullable<SessionView["switches"]>[number]>();
+    const result = new Map<number, Divider>();
+    const differs = (a: HarnessSelection, b: HarnessSelection) => a.harnessId !== b.harnessId || a.nativeModel !== b.nativeModel || a.provider?.model !== b.provider?.model;
     let previous: HarnessSelection | null = session?.runs[0]?.selection ?? null;
     for (const change of session?.switches ?? []) {
       if (change.status !== "effective" || change.target === null) continue;
-      if (previous !== null && (previous.harnessId !== change.target.harnessId || previous.nativeModel !== change.target.nativeModel || previous.provider?.model !== change.target.provider?.model) && session!.messages.some(message => message.seq <= change.throughSeq)) result.set(change.throughSeq, change);
+      const from = result.get(change.throughSeq)?.from ?? previous;
+      if (from !== null && differs(from, change.target) && session!.messages.some(message => message.seq <= change.throughSeq)) result.set(change.throughSeq, { change, from });
+      else result.delete(change.throughSeq);
       previous = change.target;
     }
     return result;
   }, [session?.switches, session?.runs, session?.messages]);
   const dividerAfter = useMemo(() => {
-    const result = new Map<string, NonNullable<SessionView["switches"]>[number]>(), messages = session?.messages ?? [];
-    for (const [through, change] of dividers) { const last = messages.filter(message => message.seq <= through).at(-1); if (last) result.set(last.id, change); }
+    const result = new Map<string, Divider>(), messages = session?.messages ?? [];
+    for (const [through, divider] of dividers) { const last = messages.filter(message => message.seq <= through).at(-1); if (last) result.set(last.id, divider); }
     return result;
   }, [dividers, session?.messages]);
   const lastDivider = [...dividers.values()].at(-1);
-  const revertTo = lastDivider ? [...(session?.runs ?? [])].reverse().find(run => run.selection.harnessId !== lastDivider.target?.harnessId || run.selection.nativeModel !== lastDivider.target?.nativeModel)?.selection : undefined;
+  const revertTo = lastDivider ? [...(session?.runs ?? [])].reverse().find(run => run.selection.harnessId !== lastDivider.change.target?.harnessId || run.selection.nativeModel !== lastDivider.change.target?.nativeModel)?.selection : undefined;
 
   // Approvals wait in the composer's place, oldest first (ADR-054 §5); questions and forms stay in their Turn.
   const requestHarness = (request: PermissionRequestView) => harnessName(runs.get(request.runId as never)?.selection.harnessId ?? session?.selection.harnessId ?? "");
@@ -337,7 +346,7 @@ export function ChatPage(props: ChatProps) {
         : <div key={message.id} className="motion-message-in"><UserMessage message={message} run={run} onEdit={fillDraft}/></div>);
       if (!drawn.has(message.runId) && (run !== undefined || message.role === "assistant")) { drawn.add(message.runId); items.push(turn(message.runId)); }
       const divider = dividerAfter.get(message.id);
-      if (divider) items.push(<SwitchDivider key={"switch:" + divider.id} change={divider} harnesses={harnesses}
+      if (divider) items.push(<SwitchDivider key={"switch:" + divider.change.id} change={divider.change} from={divider.from} detail={divider.change.target ? describeSelection(divider.change.target) : undefined} harnesses={harnesses}
         {...(divider === lastDivider && revertTo && current.status === "open" ? { onRevert: () => props.onDraft(selectionDraft(revertTo)), revertDisabled: mutation !== null || pending || active !== null } : {})}/>);
     }
     return items;

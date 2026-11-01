@@ -312,16 +312,18 @@ export const AssistantTurn = memo(function AssistantTurn({ message, run, harness
 /**
  * Where another Harness took over the conversation (ADR-054 §5, Conversation board): a hairline with a pill in its middle,
  * "从这里起由 X 接手 · 模型 · 思考". `from` names the Harness before the change, drawn with an arrow to the new one; when it
- * is the same Harness, the pill says "从这里起改用 模型" instead. `detail` is the target's model and thinking level in the
- * caller's words (without it, the model's id). A hand-over made while the conversation is open comes in: the pill rises,
- * the arrow draws, the new mark pops and the lines grow (#19, ~500 ms).
+ * is the same Harness, the pill says "从这里起改用 模型" instead (the program's default model when the new choice names
+ * none). `detail` is the target's model and thinking level in the words of a Turn's identity line (without it, the model's
+ * id). A hand-over made while the conversation is open comes in: the pill fades in, the arrow draws in 160 ms, the new mark
+ * pops from .6 and the lines grow (#19, ~500 ms); one drawn with the page's history stays still.
  */
 export function SwitchDivider({ change, harnesses, onRevert, revertDisabled, from, detail }: { readonly change: PublicSwitch; readonly harnesses: readonly HarnessView[]; readonly onRevert?: (() => void) | undefined; readonly revertDisabled?: boolean; readonly from?: Pick<HarnessSelection, "harnessId"> | undefined; readonly detail?: string | undefined }) {
   const entering = useEntrance(true);
   const target = change.target ?? null, name = (id: string) => harnesses.find(row => row.id === id)?.name ?? id;
   if (target === null) return null;
-  const model = detail || target.provider?.model || target.nativeModel || "", same = from !== undefined && from.harnessId === target.harnessId && model !== "";
-  const label = same ? "从这里起改用 " + model : "从这里起由 " + name(target.harnessId) + " 接手" + (model ? " · " + model : "");
+  const model = detail || target.provider?.model || target.nativeModel || "", same = from !== undefined && from.harnessId === target.harnessId;
+  const changed = target.provider?.model || target.nativeModel ? model : ["本机默认模型", model].filter(Boolean).join(" · ");
+  const label = same ? "从这里起改用 " + changed : "从这里起由 " + name(target.harnessId) + " 接手" + (model ? " · " + model : "");
   const line = (side: "left" | "right") => <span className={cn("h-[.5px] min-w-3 flex-1 bg-line-strong", side === "left" ? "origin-right" : "origin-left", entering && "motion-line-grow")} style={entering ? motionStyle({ delay: 120 }) : undefined}/>;
   return <div className="switch-divider flex min-w-0 items-center gap-2">
     {/* "改回" on the right is matched on the left, so the pill stays in the middle of the column where there is room */}
@@ -335,7 +337,7 @@ export function SwitchDivider({ change, harnesses, onRevert, revertDisabled, fro
             <path pathLength={1} className={entering ? "motion-draw" : undefined} style={entering ? motionStyle({ duration: 160, delay: 100 }) : undefined} d="M5 12h14M12 5l7 7-7 7"/></svg>
         </> : null}
         <span className={cn("flex flex-none", entering && "motion-pop-in")} style={entering ? motionStyle({ delay: 220, scaleFrom: .6 }) : undefined}><BrandIcon brand={target.harnessId} name={name(target.harnessId)} size={18}/></span>
-        <span className={cn("min-w-0 trunc", entering && "motion-fade-in")} style={entering ? motionStyle({ delay: 300 }) : undefined}>{same ? <>从这里起改用 <strong className="font-semibold text-fg">{model}</strong></>
+        <span className={cn("min-w-0 trunc", entering && "motion-fade-in")} style={entering ? motionStyle({ delay: 300 }) : undefined}>{same ? <>从这里起改用 <strong className="font-semibold text-fg">{changed}</strong></>
           : <>从这里起由 <strong className="font-semibold text-fg">{name(target.harnessId)}</strong> 接手{model ? " · " + model : ""}</>}</span>
       </span>
       {line("right")}
