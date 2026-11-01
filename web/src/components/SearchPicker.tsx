@@ -1,7 +1,7 @@
 import { Popover as BasePopover } from "@base-ui/react/popover";
 import { Check, ChevronDown, Search } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import type { ReactNode, RefObject } from "react";
 import { cn } from "../lib/cn.js";
 
 export interface PickerOption {
@@ -28,7 +28,7 @@ const TONES = { success: "badge-accent", warning: "badge-amber", danger: "badge-
  * the search field and returns to the trigger when the list closes.
  */
 export function SearchPicker({ label, value, placeholder, options, onChange, disabled = false, footer, prefix, className, wide = false, side = "top", align = "start",
-  open: controlledOpen, onOpenChange, title, trigger, chevron = true, size = "md", empty }: {
+  open: controlledOpen, onOpenChange, title, trigger, chevron = true, size = "md", empty, triggerRef: outerTrigger, describedBy }: {
   label: string; value: string; placeholder: string; options: readonly PickerOption[];
   onChange: (value: string) => void; disabled?: boolean; footer?: ReactNode; prefix?: string; className?: string; wide?: boolean; side?: "top" | "bottom";
   align?: "start" | "end";
@@ -43,6 +43,10 @@ export function SearchPicker({ label, value, placeholder, options, onChange, dis
   size?: "md" | "lg";
   /** What the list says when it has no choices at all (rather than none matching the search). */
   empty?: ReactNode;
+  /** Receives the trigger, for a panel the list's footer opens to give the focus back to it. */
+  triggerRef?: RefObject<HTMLButtonElement | null>;
+  /** The id of what describes the trigger beyond its name, such as a mark the trigger shows. */
+  describedBy?: string | undefined;
 }) {
   const [ownOpen, setOwnOpen] = useState(false);
   const open = controlledOpen ?? ownOpen;
@@ -69,8 +73,9 @@ export function SearchPicker({ label, value, placeholder, options, onChange, dis
   const choose = (option: PickerOption) => { if (option.disabled) return; onChange(option.value); setOpen(false); };
   const name = label.replace(/^选择/u, "");
   const large = size === "lg";
+  const setTrigger = useCallback((node: HTMLButtonElement | null) => { triggerRef.current = node; if (outerTrigger) outerTrigger.current = node; }, [outerTrigger]);
   return <BasePopover.Root open={open} onOpenChange={next => setOpen(next)}>
-    <BasePopover.Trigger render={<button ref={triggerRef} type="button" aria-label={label} disabled={disabled} title={selected?.label ?? placeholder}
+    <BasePopover.Trigger render={<button ref={setTrigger} type="button" aria-label={label} aria-describedby={describedBy} disabled={disabled} title={selected?.label ?? placeholder}
       className={cn("selection-trigger inline-flex h-[30px] max-w-[220px] min-w-0 items-center gap-1.5 rounded-row border-none bg-transparent px-2 text-ui-sm text-fg-2 transition-[color,background-color] duration-120 ease-standard hover:bg-subtle hover:text-fg disabled:opacity-45 data-[popup-open]:bg-subtle data-[popup-open]:text-fg",
         selected?.icon && !trigger && "font-medium text-fg", className)}/>}>
       {trigger ? trigger(selected) : <>

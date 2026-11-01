@@ -93,7 +93,7 @@ export function UpgradeDialog({ api, harness, onClose, onConfirm, onOpenSession 
       .then(value => { if (!controller.signal.aborted) setCheck(value); }, error => { if (!controller.signal.aborted) setFailure(errorMessage(error)); });
     return () => controller.abort();
   }, [api, id, attempt]);
-  const name = harness?.name ?? "Harness", current = check?.currentVersion ?? harness?.management.programVersion ?? "当前版本", target = check?.targetVersion ?? harness?.management.latestVersion ?? "最新版本";
+  const name = harness?.name ?? "Agent", current = check?.currentVersion ?? harness?.management.programVersion ?? "当前版本", target = check?.targetVersion ?? harness?.management.latestVersion ?? "最新版本";
   const busy = check?.conversations.filter(item => item.busy) ?? [], idle = check?.conversations.filter(item => !item.busy) ?? [], sequence = check?.sequence;
   // A runtime the upgrade starts the new version on must meet its range; one it leaves running only needs it before its own restart.
   // A sequence installs several releases: each hop's range is checked, and an unmet one names its hop.

@@ -2,8 +2,8 @@ import { Dialog as BaseDialog } from "@base-ui/react/dialog";
 import { Menu as BaseMenu } from "@base-ui/react/menu";
 import { Popover as BasePopover } from "@base-ui/react/popover";
 import { Toast as BaseToast } from "@base-ui/react/toast";
-import { X } from "lucide-react";
-import { useMemo, type ReactElement, type ReactNode, type RefObject } from "react";
+import { Check, X } from "lucide-react";
+import { useId, useMemo, useRef, type ReactElement, type ReactNode, type RefObject } from "react";
 import { cn } from "../lib/cn.js";
 
 type Side = "top" | "bottom" | "left" | "right";
@@ -20,16 +20,28 @@ type Align = "start" | "center" | "end";
 /**
  * A popover anchored to its trigger. The trigger element keeps its own accessible name; the popup is labelled by `label`.
  * Controlled when `open` is given. Focus moves into the popup (or to `initialFocus`) and returns to the trigger.
+ *
+ * Without a trigger it is a panel that another control opens, such as a menu item: controlled by `open`, placed against
+ * `anchor`, and giving the focus back to `returnFocus` (the control that holds the item) when it closes, unless the user
+ * has already moved it somewhere else, into the message say.
  */
-export function Popover({ trigger, children, label, open, onOpenChange, side = "bottom", align = "start", sideOffset = 8, className, initialFocus }: {
-  readonly trigger: ReactElement; readonly children: ReactNode; readonly label: string; readonly open?: boolean; readonly onOpenChange?: (open: boolean) => void;
+export function Popover({ trigger, children, label, open, onOpenChange, side = "bottom", align = "start", sideOffset = 8, className, initialFocus, anchor, returnFocus }: {
+  readonly trigger?: ReactElement; readonly children: ReactNode; readonly label: string; readonly open?: boolean; readonly onOpenChange?: (open: boolean) => void;
   readonly side?: Side; readonly align?: Align; readonly sideOffset?: number; readonly className?: string; readonly initialFocus?: RefObject<HTMLElement | null>;
+  readonly anchor?: RefObject<Element | null>; readonly returnFocus?: RefObject<HTMLElement | null>;
 }) {
+  const popup = useRef<HTMLDivElement>(null);
+  const finalFocus = returnFocus ? () => {
+    const focused = document.activeElement;
+    if (focused !== null && focused !== document.body && !popup.current?.contains(focused)) return false;
+    return returnFocus.current?.isConnected ? returnFocus.current : true;
+  } : undefined;
   return <BasePopover.Root {...(open === undefined ? {} : { open })} {...(onOpenChange ? { onOpenChange: (next: boolean) => onOpenChange(next) } : {})}>
-    <BasePopover.Trigger render={trigger}/>
+    {trigger ? <BasePopover.Trigger render={trigger}/> : null}
     <BasePopover.Portal>
-      <BasePopover.Positioner side={side} align={align} sideOffset={sideOffset} collisionPadding={12} positionMethod="fixed" className="hh-positioner z-50">
-        <BasePopover.Popup aria-label={label} className={cn("surface-pop max-h-[min(560px,var(--available-height))] overflow-y-auto", className)} {...(initialFocus ? { initialFocus } : {})}>{children}</BasePopover.Popup>
+      <BasePopover.Positioner side={side} align={align} sideOffset={sideOffset} collisionPadding={12} positionMethod="fixed" className="hh-positioner z-50" {...(anchor ? { anchor } : {})}>
+        <BasePopover.Popup ref={popup} aria-label={label} className={cn("surface-pop max-h-[min(560px,var(--available-height))] overflow-y-auto", className)} {...(initialFocus ? { initialFocus } : {})}
+          {...(finalFocus ? { finalFocus } : {})}>{children}</BasePopover.Popup>
       </BasePopover.Positioner>
     </BasePopover.Portal>
   </BasePopover.Root>;
@@ -48,29 +60,51 @@ export interface MenuEntry {
   readonly label: ReactNode;
   readonly icon?: ReactNode;
   readonly hint?: ReactNode;
+  /** A second line under the label, in the caption style; it is also the item's accessible description. */
+  readonly description?: ReactNode;
   readonly onSelect?: () => void;
   readonly href?: string;
   readonly download?: boolean;
   readonly disabled?: boolean;
   readonly danger?: boolean;
+  /**
+   * Makes the entry a checkable one (role menuitemcheckbox, aria-checked) that shows its state with the blue check on the
+   * right, as the pickers mark their choice. Choosing it calls `onSelect` and closes the menu like any other item.
+   */
+  readonly checked?: boolean;
   readonly separator?: false;
 }
-/** A menu of actions; links download or navigate natively, items run their handler and close the menu. */
+/**
+ * A menu of actions; links download or navigate natively, items run their handler and close the menu. An item that opens
+ * a panel (a triggerless Popover) leaves the focus to that panel: the menu gives the focus back to its trigger only while
+ * nothing outside it has taken it.
+ */
 export function Menu({ trigger, items, side = "bottom", align = "end", footer, className }: {
   readonly trigger: ReactElement; readonly items: readonly (MenuEntry | { readonly separator: true } | { readonly heading: string })[];
   readonly side?: Side; readonly align?: Align; readonly footer?: ReactNode; readonly className?: string;
 }) {
+  const id = useId();
   return <BaseMenu.Root>
     <BaseMenu.Trigger render={trigger}/>
     <BaseMenu.Portal>
       <BaseMenu.Positioner side={side} align={align} sideOffset={6} collisionPadding={12} positionMethod="fixed" className="hh-positioner z-50">
-        <BaseMenu.Popup className={cn("surface-pop min-w-[220px] p-[5px]", className)}>
+        {/* Never wider than the screen within its collision padding: on a 320 px phone a long footer wraps instead. */}
+        <BaseMenu.Popup className={cn("surface-pop max-w-[calc(100vw-24px)] min-w-[220px] p-[5px]", className)}>
           {items.map((item, index) => "separator" in item && item.separator ? <div key={index} className="menu-sep" role="separator"/>
             : "heading" in item ? <div key={index} className="menu-label">{item.heading}</div>
-            : (() => { const entry = item as MenuEntry; const body = <>{entry.icon ? <span className="flex w-4 flex-none justify-center text-fg-3" aria-hidden="true">{entry.icon}</span> : null}<span className="flex-1">{entry.label}</span>{entry.hint ? <span className="text-caption text-fg-3">{entry.hint}</span> : null}</>;
+            : (() => {
+              const entry = item as MenuEntry, described = entry.description === undefined ? undefined : `${id}-${index}-description`;
+              const body = <>{entry.icon ? <span className={cn("flex w-4 flex-none justify-center text-fg-3", described && "self-start pt-0.5")} aria-hidden="true">{entry.icon}</span> : null}
+                {/* Hidden from the item's name, the description is read as its description (aria-describedby). */}
+                {described ? <span className="flex min-w-0 flex-1 flex-col"><span>{entry.label}</span><span id={described} className="text-caption text-fg-3" aria-hidden="true">{entry.description}</span></span> : <span className="flex-1">{entry.label}</span>}
+                {entry.hint ? <span className="text-caption text-fg-3">{entry.hint}</span> : null}
+                {entry.checked !== undefined ? <Check size={15} strokeWidth={2.2} className={cn("flex-none text-accent-text", !entry.checked && "invisible")} aria-hidden="true"/> : null}</>;
+              const look = cn("menu-item", entry.danger && "menu-item-danger");
               return entry.href !== undefined
-                ? <BaseMenu.LinkItem key={index} className={cn("menu-item", entry.danger && "menu-item-danger")} href={entry.href} {...(entry.download ? { download: "" } : {})}>{body}</BaseMenu.LinkItem>
-                : <BaseMenu.Item key={index} className={cn("menu-item", entry.danger && "menu-item-danger")} disabled={entry.disabled ?? false} onClick={() => entry.onSelect?.()}>{body}</BaseMenu.Item>; })())}
+                ? <BaseMenu.LinkItem key={index} className={look} href={entry.href} {...(entry.download ? { download: "" } : {})}>{body}</BaseMenu.LinkItem>
+                : entry.checked !== undefined
+                  ? <BaseMenu.CheckboxItem key={index} className={look} checked={entry.checked} closeOnClick disabled={entry.disabled ?? false} aria-describedby={described} onCheckedChange={() => entry.onSelect?.()}>{body}</BaseMenu.CheckboxItem>
+                  : <BaseMenu.Item key={index} className={look} disabled={entry.disabled ?? false} aria-describedby={described} onClick={() => entry.onSelect?.()}>{body}</BaseMenu.Item>; })())}
           {footer ? <div className="mt-1 hairline-t px-2 pt-2 pb-1.5 text-caption text-fg-3">{footer}</div> : null}
         </BaseMenu.Popup>
       </BaseMenu.Positioner>

@@ -29,7 +29,7 @@ function nativeNote(session: SessionView, origin: SessionOrigin): string {
 export function BranchOrigin({ origin, session, harnesses, onOpenSource }: { origin: SessionOrigin; session: SessionView; harnesses: readonly HarnessView[]; onOpenSource: ((id: string) => void) | undefined }) {
   const [open, setOpen] = useState(false);
   const history = useId();
-  const name = (id: string | undefined) => harnesses.find(row => row.id === id)?.name ?? id ?? "Harness";
+  const name = (id: string | undefined) => harnesses.find(row => row.id === id)?.name ?? id ?? "Agent";
   const imported = origin.kind === "import" ? origin : null;
   const earlier = imported && (imported.omitted > 0 || !imported.complete) ? imported.historyRead ? "更早的历史只保留在原程序中" : "原程序没有提供历史" : null;
   return <section className="branch-origin flex flex-col gap-2 rounded-card bg-surface px-4 py-3 shadow-hairline" aria-label={imported ? "接续来源" : "分支来源"}>

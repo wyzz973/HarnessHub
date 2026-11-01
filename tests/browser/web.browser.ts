@@ -86,12 +86,34 @@ async function launchFixture(providerManagement = true, nativeAcp: { readonly na
   return { root, gateway, runtime: () => { assert.ok(composed); return composed.runtime; }, setVersion: (value: string) => { fixtureVersion = value; }, baseUrl: `http://127.0.0.1:${address.port}/v1`, close: async () => { await gateway.close(); modelServer.closeAllConnections(); await new Promise<void>(done => modelServer.close(() => done())); await rm(root, { recursive: true, force: true }); } };
 }
 /** The settings switch that lists the frozen Harnesses (Cursor, Gemini CLI, Pi) for new work as well (ADR-050). */
-const FROZEN_SWITCH = "显示冻结的 Harness（Cursor、Gemini CLI、Pi）";
+const FROZEN_SWITCH = "显示冻结的 Agent（Cursor、Gemini CLI、Pi）";
 /** Shows the frozen Harnesses through the settings page, as a user does; the page stays on the settings. */
 async function showFrozenHarnesses(page: Page): Promise<void> {
   await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "设置", exact: true }).click();
   const toggle = page.getByRole("switch", { name: FROZEN_SWITCH });
   await toggle.click(); await expect(toggle).toBeChecked();
+}
+/**
+ * Opens the composer's advanced settings (控制入口、原生选项与后台进程) as a user does since ruling R2: from the footer of
+ * the Agent list, which closes as the panel opens.
+ */
+async function openAdvanced(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click();
+  await page.getByRole("button", { name: "高级配置…", exact: true }).click();
+  // Fully in, so that a screenshot taken next shows it whole.
+  await expect(page.locator(".composer-settings-panel")).toHaveCSS("opacity", "1");
+}
+/** Opens the Agent's read-only skills, MCP servers and plugins from the footer of the Agent list (ruling R2). */
+async function openExtensions(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click();
+  await page.getByRole("button", { name: "查看技能与扩展…", exact: true }).click();
+  await expect(page.locator(".native-extensions")).toHaveCSS("opacity", "1");
+}
+/** Opens the Agent's own sessions in this workspace from the composer's "+" menu (ruling R2). */
+async function openNativeSessions(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "添加文件或上下文", exact: true }).click();
+  await page.getByRole("menuitem", { name: "继续原程序的会话…", exact: true }).click();
+  await expect(page.locator(".native-sessions")).toHaveCSS("opacity", "1");
 }
 
 test("real browser validates Provider management, public chat switching, cancellation and responsive layouts", { timeout: 120000 }, async t => {
@@ -167,9 +189,9 @@ test("real browser validates Provider management, public chat switching, cancell
     await page.getByRole("button", { name: label, exact: true }).click();
     await page.getByRole("option", { name: value, exact: true }).click();
   }
-  const harnessTrigger = page.getByRole("button", { name: "选择 Harness", exact: true });
+  const harnessTrigger = page.getByRole("button", { name: "选择 Agent", exact: true });
   await harnessTrigger.click();
-  const search = page.getByRole("combobox", { name: "搜索 Harness", exact: true });
+  const search = page.getByRole("combobox", { name: "搜索 Agent", exact: true });
   await expect(search).toBeFocused();
   await search.fill("no-such-harness-fixture");
   await expect(page.getByText("没有匹配的选项", { exact: true })).toBeVisible();
@@ -265,16 +287,29 @@ test("real browser validates Provider management, public chat switching, cancell
   await responsive("chat");
   await page.getByRole("button", { name: "模型连接", exact: true }).click();
   await page.getByRole("button", { name: "编辑 工作模型 B", exact: true }).click();
+  // A connection's configuration version is said in words, without a "v" the page would add (ruling P).
+  await expect(page.getByText("配置版本 1", { exact: true })).toBeVisible();
   await expect(page.getByLabel(/API Key/u)).toHaveValue("");
   await page.getByLabel("模型 ID 列表", { exact: true }).fill("model-b\nmodel-b2");
   await page.getByRole("button", { name: "保存修改", exact: true }).click();
   await expect(page.getByRole("heading", { name: "工作模型 B", exact: true })).toBeVisible();
+  const edited = page.getByRole("article", { name: "工作模型 B", exact: true });
+  await expect(edited.getByText("配置版本 2", { exact: true })).toBeVisible(); await expect(edited).not.toContainText("v2");
   await page.getByRole("button", { name: "返回对话", exact: true }).click();
-  await page.getByRole("button", { name: "高级配置", exact: true }).click();
-  await expect(page.getByRole("button", { name: "使用最新 v2", exact: true })).toBeVisible();
+  // The newer version of the connection in use waits in the advanced settings: its amber dot is on the Agent part of the
+  // merged picker, and on 高级配置… in the Agent list's footer (ruling R2), each described in words.
+  const agentPart = page.getByRole("button", { name: "选择 Agent", exact: true }), newer = "所选模型连接有新的配置版本，可以在高级配置里改用";
+  await expect(agentPart.locator(".outdated-dot")).toBeVisible(); await expect(agentPart).toHaveAccessibleDescription(newer);
+  await agentPart.click();
+  const advanced = page.getByRole("button", { name: "高级配置…", exact: true });
+  await expect(advanced).toHaveAccessibleDescription(newer); await expect(page.locator(".picker-popover")).toHaveCSS("opacity", "1");
+  await page.screenshot({ path: join(artifact, "outdated-connection.png"), animations: "disabled" });
+  await advanced.click();
+  await expect(page.getByRole("button", { name: "使用最新版本 2", exact: true })).toBeVisible();
   current = await snapshot(); assert.equal(current.selection.provider.revision, 1);
-  await page.getByRole("button", { name: "使用最新 v2", exact: true }).click();
+  await page.getByRole("button", { name: "使用最新版本 2", exact: true }).click();
   await page.getByRole("button", { name: "收起高级配置", exact: true }).click();
+  await expect(agentPart.locator(".outdated-dot")).toHaveCount(0); await expect(agentPart).not.toHaveAccessibleDescription(newer);
   await pick("选择模型", "model-b2");
   await composer.fill("第三轮使用新版本"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
   await expect(log).toContainText("已由 model-b2 处理");
@@ -343,7 +378,7 @@ test("real browser validates Provider management, public chat switching, cancell
   // Installed and current, it can start a conversation from its details; its card says it is ready and offers no upgrade.
   await expect(detail.getByRole("button", { name: "开始对话", exact: true })).toBeVisible();
   await page.screenshot({ path: join(artifact, "upgrade-detail.png"), fullPage: true, animations: "disabled" });
-  await detail.getByRole("button", { name: "关闭 Harness 详情", exact: true }).click();
+  await detail.getByRole("button", { name: "关闭 Agent 详情", exact: true }).click();
   await expect(target.locator(".status-pill")).toHaveText("就绪");
   await expect(target.getByRole("button", { name: /^升级/u })).toHaveCount(0);
   await page.locator(".harness-management-body").evaluate(element => { element.scrollTop = 0; });
@@ -390,7 +425,7 @@ test("live chat renders committed partial Markdown before completion, respects r
     name: "流式验收模型", protocol: "openai-responses", baseUrl: fixture.baseUrl, models: ["model-a"], defaultModel: "model-a", enabled: true, apiKey: "synthetic-stream-fixture-key",
   } } }); assert.equal(created.status(), 201);
   await page.goto(origin); await expect(page.getByRole("textbox", { name: "发送消息", exact: true })).toBeVisible();
-  for (const [label, value] of [["选择 Harness", "Codex"], ["选择 Provider", "流式验收模型"]] as const) {
+  for (const [label, value] of [["选择 Agent", "Codex"], ["选择 Provider", "流式验收模型"]] as const) {
     await page.getByRole("button", { name: label, exact: true }).click(); await page.getByRole("option", { name: value, exact: true }).click();
   }
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
@@ -465,6 +500,8 @@ test("live chat renders committed partial Markdown before completion, respects r
   // At this width the details panel opens as a drawer over the conversation, with the Turn's execution facts.
   await log.getByRole("button", { name: "执行详情", exact: true }).last().click();
   await expect(page.getByRole("complementary", { name: "详情栏" }).getByText("流式验收模型", { exact: true })).toBeVisible();
+  // The connection's configuration version is a number under its name, without a "v" the page would add (ruling P).
+  await expect(page.getByRole("complementary", { name: "详情栏" }).locator(".execution-details dt", { hasText: "配置版本" }).locator("xpath=following-sibling::dd[1]")).toHaveText("1");
   await page.getByRole("button", { name: "关闭详情栏", exact: true }).click();
   await expect(page.getByRole("complementary", { name: "详情栏" })).toHaveCount(0);
   await page.screenshot({ path: join(artifact, "chat-completed-943.png"), fullPage: true, animations: "disabled" });
@@ -485,13 +522,18 @@ test("live chat renders committed partial Markdown before completion, respects r
     const style = getComputedStyle(element); return [style.animationDuration, style.transitionDuration].flatMap(value => value.split(",").map(part => parseFloat(part) * (part.trim().endsWith("ms") ? 1 : 1000)));
   }); assert.ok(motion.every(value => value <= 1));
   await page.screenshot({ path: join(artifact, "chat-cancelled-943.png"), fullPage: true, animations: "disabled" });
-  await page.getByRole("button", { name: "关闭这个对话", exact: true }).click();
+  // The conversation ends from the "…" menu's 结束对话… alone (ruling R3): the header has no × of its own.
+  await expect(page.getByRole("button", { name: "关闭这个对话" })).toHaveCount(0);
+  const more = page.getByRole("button", { name: "更多操作", exact: true }), end = page.getByRole("menuitem", { name: "结束对话…", exact: true });
+  await more.click(); await expect(end).toHaveAccessibleDescription("结束会话，保留历史"); await end.click();
   await expect(page.getByRole("dialog", { name: "结束这次会话？", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "继续对话", exact: true }).click();
   assert.equal((await current()).snapshot.status, "open");
-  await page.getByRole("button", { name: "关闭这个对话", exact: true }).click();
+  await more.click(); await end.click();
   await page.getByRole("button", { name: "结束会话", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "发送消息", exact: true })).toBeDisabled();
+  // Once ended, the item stays in the menu, disabled.
+  await more.click(); await expect(end).toBeDisabled(); await page.keyboard.press("Escape");
   await expect(page.getByRole("status").filter({ hasText: "对话已关闭，可查看历史" })).toBeVisible();
   await expect(page.getByText("可以继续对话", { exact: true })).toHaveCount(0);
   assert.equal((await current()).snapshot.status, "closed");
@@ -520,7 +562,7 @@ test("unavailable native authentication keeps the same conversation usable, show
   const pick = async (label: string, value: string) => { await page.getByRole("button", { name: label, exact: true }).click(); await page.getByRole("option", { name: value, exact: true }).click(); };
   // An Agent's catalog arrives just after it is chosen and the merged picker re-flows (its model and pill change): the next
   // part is pressed once it has, so the press does not straddle the move.
-  const agent = async (name: string) => { await pick("选择 Harness", name); await expect(page.getByRole("button", { name: "选择模型", exact: true })).not.toHaveText(/读取/u); };
+  const agent = async (name: string) => { await pick("选择 Agent", name); await expect(page.getByRole("button", { name: "选择模型", exact: true })).not.toHaveText(/读取/u); };
   const current = async () => {
     const id = new URL(page.url()).hash.slice(1).split("session=")[1]; assert.ok(id);
     const response = await context.request.get(origin + "/api/v1/sessions/" + id); assert.equal(response.status(), 200); return await response.json();
@@ -529,11 +571,11 @@ test("unavailable native authentication keeps the same conversation usable, show
   await composer.fill("FIRST_CONVERSATION"); await composer.press("Enter"); await expect(log).toContainText("已由");
   await expect.poll(async () => (await current()).runs[0].status).toBe("completed"); const first = await current();
   await composer.fill("选择失败也要保留这条草稿");
-  await agent("OpenClaw"); await pick("选择 Provider", "Harness 原生连接");
+  await agent("OpenClaw"); await pick("选择 Provider", "Agent 原生连接");
   await expect(page.getByText(/本机认证尚未就绪/)).toBeVisible();
   await expect(page.getByRole("button",{name:"发送消息",exact:true})).toBeDisabled();
   // The picker shows what the latest catalog read and Runs found, before anything else is sent.
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click();
   await expect(page.getByRole("option", { name: "OpenClaw", exact: true })).toHaveAccessibleDescription(/需要登录/);
   await expect(page.getByRole("option", { name: "Codex", exact: true })).toHaveAccessibleDescription(/启动约 \d+ 秒/);
   await page.keyboard.press("Escape");
@@ -547,7 +589,7 @@ test("unavailable native authentication keeps the same conversation usable, show
   await expect(composer).toHaveValue("选择失败也要保留这条草稿");
   assert.equal((await current()).switches.length, failed.switches.length, "refresh must not retry an already failed selection");
   await agent("Codex"); await pick("选择 Provider","可用模型连接");
-  await expect(page.getByRole("button", { name: "选择 Harness", exact: true })).toContainText("Codex");
+  await expect(page.getByRole("button", { name: "选择 Agent", exact: true })).toContainText("Codex");
   await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled();
   await composer.press("Enter"); await expect.poll(async () => (await current()).runs[1]?.status).toBe("completed");
   assert.equal((await current()).id, first.id);
@@ -591,7 +633,7 @@ test("native settings switch without Apply and approvals survive refresh or canc
   await expect(page.getByRole("button", { name: "选择 Provider", exact: true })).toHaveCount(0);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true });
   const pick = async (label: string, value: string) => { await page.getByRole("button", { name: label, exact: true }).click(); await page.getByRole("option", { name: value, exact: true }).click(); };
-  await pick("选择 Harness", "Codex"); await expect(page.getByRole("button", { name: "选择模型", exact: true })).toBeEnabled();
+  await pick("选择 Agent", "Codex"); await expect(page.getByRole("button", { name: "选择模型", exact: true })).toBeEnabled();
   await pick("选择模型", "Native B"); await expect(page.getByRole("button",{name:"思考强度",exact:true})).toBeEnabled(); await pick("思考强度","高"); await composer.fill("NATIVE_FIRST：沿用本机配置"); await composer.press("Enter");
   await expect(page.getByRole("log", { name: "对话历史" })).toContainText("已由 native-b 处理");
   const origin = new URL(fixture.gateway.url).origin;
@@ -633,7 +675,7 @@ test("native settings switch without Apply and approvals survive refresh or canc
   await expect.poll(async () => (await current()).runs[4]?.status).toBe("cancelled");
   await expect(approval).toHaveCount(0); assert.equal((await current()).status, "open");
   const beforeBranch = await current();
-  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  await openAdvanced(page);
   await expect(page.getByText("继续已有会话", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "重新建立原生会话", exact: true }).click();
   await expect.poll(async () => (await current()).nativeStates.length).toBe(0);
@@ -649,7 +691,7 @@ test("unified chat shows native plan, notices, tool details with diffs and turn 
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
   await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter");
   await expect(log).toContainText("原生活动已完成。");
   // ADR-054: the plan stands above the composer and in the details, not inside the Turn. The panel is closed until opened
@@ -689,12 +731,12 @@ test("unified chat attaches files, refuses inputs the model does not take, keeps
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" }), chips = page.getByRole("list", { name: "待发送的附件" });
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
   const picker = page.locator("input[type=file]");
   // The selected model lists no audio input, so a voice note is marked and blocks sending until it is removed.
   await picker.setInputFiles([{ name: "voice.wav", mimeType: "audio/wav", buffer: Buffer.from("RIFF\0\0\0\0WAVEfmt ") }]);
-  await expect(chips.getByText("当前 Harness 或模型不接受音频")).toBeVisible();
+  await expect(chips.getByText("当前 Agent 或模型不接受音频")).toBeVisible();
   await composer.fill("ATTACHMENTS 看看这些");
   await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeDisabled();
   await page.getByRole("button", { name: "移除附件 voice.wav", exact: true }).click();
@@ -734,7 +776,7 @@ test("a branch opens with the quoted history and continues in its own native cop
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
   await composer.fill("分支前的第一条消息"); await composer.press("Enter");
   await expect(log).toContainText("分支前的第一条消息", { timeout: 15000 }); await expect(log.locator(".assistant-message")).toHaveCount(1);
   await expect(log.locator(".assistant-message").last()).toContainText("已由");
@@ -767,11 +809,25 @@ test("the native extensions panel lists skills, MCP servers and plugins and invo
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
-  await page.getByRole("button", { name: "原生扩展", exact: true }).click();
-  const panel = page.locator(".native-extensions");
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  const reads: string[] = []; page.on("request", request => { if (/\/harnesses\/[^/]+\/extensions\?/u.test(request.url())) reads.push(request.url()); });
+  await openExtensions(page);
+  const panel = page.locator(".native-extensions"), agentPart = page.getByRole("button", { name: "选择 Agent", exact: true });
   await expect(panel.getByRole("button", { name: "browser-skill", exact: true })).toBeVisible({ timeout: 15000 });
-  await expect(panel).toContainText("浏览器验收技能");
+  // Opened from the Agent list's footer, the panel takes the focus; closed, it gives it back to the Agent part of the merged
+  // picker, the control that held the item (ruling R2). Opened again, it shows what it read without reading again.
+  await expect.poll(() => panel.evaluate(element => element.contains(document.activeElement))).toBe(true);
+  await page.keyboard.press("Escape"); await expect(panel).toHaveCount(0); await expect(agentPart).toBeFocused();
+  // From the keyboard as well: ⌘J opens the Agent list, Tab walks on to its footer, ⏎ on 查看技能与扩展… opens the panel with
+  // the focus inside it, and esc gives the focus back to the Agent part.
+  const footerItem = page.getByRole("button", { name: "查看技能与扩展…", exact: true });
+  await page.keyboard.press("ControlOrMeta+J"); await expect(page.getByRole("combobox", { name: "搜索 Agent", exact: true })).toBeFocused();
+  for (let step = 0; step < 12 && !(await page.evaluate(() => document.activeElement?.textContent === "查看技能与扩展…")); step++) await page.keyboard.press("Tab");
+  await expect(footerItem).toBeFocused(); await page.keyboard.press("Enter");
+  await expect.poll(() => panel.evaluate(element => element.contains(document.activeElement))).toBe(true);
+  await page.keyboard.press("Escape"); await expect(panel).toHaveCount(0); await expect(agentPart).toBeFocused();
+  await openExtensions(page);
+  await expect(panel).toContainText("浏览器验收技能"); assert.equal(reads.length, 1, "the extensions are read once");
   await panel.getByText("MCP 服务器").click(); await expect(panel).toContainText("browser-docs"); await expect(panel).toContainText("已连接"); await expect(panel).toContainText("1 个工具");
   await panel.getByText("插件与扩展").click(); await expect(panel).toContainText("browser-plugin");
   // A version is shown as the program reported it, without a "v" the page would add (ruling P).
@@ -794,8 +850,8 @@ test("a setting a native command changed is kept, shown in the composer and can 
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
   const origin = new URL(fixture.gateway.url).origin;
   const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Native Settings", exact: true }).click();
-  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Native Settings", exact: true }).click();
+  await openAdvanced(page);
   await page.getByRole("button", { name: "Native fast", exact: true }).click();
   // An option list opened from the settings panel stacks above it, wherever it happens to be placed.
   const stacking = await page.evaluate(() => [".picker-popover", ".composer-settings-panel"].map(selector => Number(getComputedStyle(document.querySelector(selector)!.closest(".hh-positioner")!).zIndex)));
@@ -812,7 +868,7 @@ test("a setting a native command changed is kept, shown in the composer and can 
   await reply("/native-fast on", 2);
   const hint = page.locator(".native-carried");
   await expect(hint).toContainText("原生命令已改为 Native fast On；下一回合沿用，不改回所选。");
-  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  await openAdvanced(page);
   await expect(page.locator(".native-observed")).toContainText("Native fast On"); await page.keyboard.press("Escape");
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 844 });
@@ -838,8 +894,8 @@ test("a native session of the workspace is continued from the composer, quoted a
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Native Sessions", exact: true }).click();
-  await page.getByRole("button", { name: "本机会话", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Native Sessions", exact: true }).click();
+  await openNativeSessions(page);
   const panel = page.locator(".native-sessions");
   await expect(panel.getByText("Earlier work", { exact: true })).toBeVisible({ timeout: 15000 });
   await panel.getByRole("button", { name: "加载更早的会话", exact: true }).click(); await expect(panel.getByText("未命名会话", { exact: true })).toBeVisible({ timeout: 15000 });
@@ -851,9 +907,19 @@ test("a native session of the workspace is continued from the composer, quoted a
   await expect(page.getByRole("button", { name: "接续 · Earlier work", exact: true })).toBeVisible();
   await composer.fill("what did I ask first?"); await composer.press("Enter");
   await expect(log.locator(".assistant-message").last()).toContainText("你好 fixture", { timeout: 15000 });
-  await page.getByRole("button", { name: "本机会话", exact: true }).click();
+  await openNativeSessions(page);
   await expect(page.locator(".native-sessions li", { hasText: "Earlier work" }).getByRole("button", { name: /打开对话/u })).toBeVisible({ timeout: 15000 });
-  await page.keyboard.press("Escape");
+  // Opened from the "+" menu, the panel holds the focus; closed, it gives it back to "+", the control that held the item (ruling R2).
+  await expect.poll(() => panel.evaluate(element => element.contains(document.activeElement))).toBe(true);
+  await page.keyboard.press("Escape"); await expect(panel).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "添加文件或上下文", exact: true })).toBeFocused();
+  // From the keyboard as well: ⏎ on "+" opens its menu at its first item, End goes to 继续原程序的会话… (its last), ⏎ opens
+  // the panel with the focus inside it, and esc gives the focus back to "+".
+  const add = page.getByRole("button", { name: "添加文件或上下文", exact: true }), resume = page.getByRole("menuitem", { name: "继续原程序的会话…", exact: true });
+  await page.keyboard.press("Enter"); await expect(page.getByRole("menuitem").first()).toBeFocused();
+  await page.keyboard.press("End"); await expect(resume).toBeFocused(); await page.keyboard.press("Enter");
+  await expect.poll(() => panel.evaluate(element => element.contains(document.activeElement))).toBe(true);
+  await page.keyboard.press("Escape"); await expect(panel).toHaveCount(0); await expect(add).toBeFocused();
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "the continued conversation must not overflow a narrow screen");
   await page.screenshot({ path: join(artifact, "native-session-continued-390.png"), animations: "disabled" });
@@ -868,7 +934,7 @@ test("tools a sub-agent ran are shown under the sub-agent call", { timeout: 1200
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Native Agents", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Native Agents", exact: true }).click();
   await composer.fill("让子代理运行 echo"); await composer.press("Enter");
   await expect(log.locator(".assistant-message").last()).toContainText("你好 fixture", { timeout: 15000 });
   // The steps stay open while the Turn runs and fold 1.1 s after it ended (ADR-054 §3); opened again, they list the tools.
@@ -904,7 +970,7 @@ test("Codex plan mode answers with its plan, and a thread that follows the nativ
     await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
     await expect.poll(async () => { if (!new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session")) return null; const value = await current(); return value.runs.length === count && value.activeRunId === null && value.runs.at(-1).status; }, { timeout: 15000 }).toBe("completed");
   };
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex Plan", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Codex Plan", exact: true }).click();
   await mode("计划");
   await expect(note).toContainText("计划模式：Codex Plan 先给出方案");
   await reply("plan it", 1);
@@ -937,19 +1003,24 @@ test("a conversation keeps its native process between Turns, shows it, and ends 
     await composer.fill(text); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
     await expect.poll(async () => { if (!new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session")) return null; const value = await current(); return value.runs.length === count && value.activeRunId === null && value.runs.at(-1).status; }, { timeout: 15000 }).toBe("completed");
   };
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Kept Agent", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Kept Agent", exact: true }).click();
   // Off by default; a new conversation can choose it before its first message, so even the first Turn's process is kept.
-  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  await openAdvanced(page);
+  // Opened from the Agent list's footer, the settings take the focus, and closed they give it back to the Agent part of the
+  // merged picker, the control that held the item (ruling R2).
+  const settings = page.locator(".composer-settings-panel");
+  await expect.poll(() => settings.evaluate(element => element.contains(document.activeElement))).toBe(true);
   const keep = page.getByRole("checkbox", { name: "保持原生进程" });
   await expect(keep).not.toBeChecked(); await keep.click(); await expect(keep).toBeChecked();
-  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape"); await expect(settings).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "选择 Agent", exact: true })).toBeFocused();
   await reply("first", 1);
   const first = await current();
   assert.equal(first.retention.enabled, true); assert.equal(first.runs[0].retained, true); assert.equal(first.retention.process?.harnessId, "native-acp");
   await reply("second", 2);
   const reused = await current();
   assert.equal(reused.runs[1].reused, true); assert.equal(reused.runs[1].retained, true); assert.equal(reused.runs[1].cleanup, null);
-  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  await openAdvanced(page);
   await expect(page.locator(".kept-setting")).toContainText("原生进程保留中");
   await page.screenshot({ path: join(artifact, "kept-process-panel.png"), animations: "disabled" });
   await page.locator(".kept-setting").getByRole("button", { name: "结束后台进程", exact: true }).click();
@@ -969,9 +1040,9 @@ test("a new conversation starts a Harness with the model and thinking level last
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), fast = page.getByRole("button", { name: "Native fast", exact: true }), thinking = page.getByRole("button", { name: "思考强度", exact: true });
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Native Settings", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Native Settings", exact: true }).click();
   await thinking.click(); await page.getByRole("option", { name: "最大", exact: true }).click();
-  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  await openAdvanced(page);
   await fast.click(); await page.getByRole("option", { name: "On", exact: true }).click(); await page.keyboard.press("Escape");
   await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeDisabled(); await composer.fill("first");
   await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
@@ -980,11 +1051,11 @@ test("a new conversation starts a Harness with the model and thinking level last
     // The thinking level comes back, marked as last used; the other native setting follows the program's default.
     await expect(thinking).toContainText("最大");
     await thinking.click(); await expect(page.getByRole("option", { name: "最大", exact: true })).toHaveAccessibleDescription(/上次使用/); await page.keyboard.press("Escape");
-    await page.getByRole("button", { name: "高级配置", exact: true }).click(); await expect(fast).toContainText("本机默认"); await page.keyboard.press("Escape");
+    await openAdvanced(page); await expect(fast).toContainText("本机默认"); await page.keyboard.press("Escape");
   };
   // Through the picker of a new conversation.
   await page.getByRole("button", { name: "新对话", exact: true }).click();
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Native Settings", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Native Settings", exact: true }).click();
   await check();
   // Through the welcome's list of ready Agents (opened from its summary, ADR-054 §5) in another new conversation.
   await page.getByRole("button", { name: "新对话", exact: true }).click();
@@ -1015,7 +1086,7 @@ test("a waiting approval is marked in the sidebar with whose deadline it is, cou
   const toggle = page.getByRole("button", { name: "待处理时通知我", exact: true });
   await expect(toggle).toHaveAttribute("aria-pressed", "false"); await toggle.click(); await expect(toggle).toHaveAttribute("aria-pressed", "true");
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Hermes Agent", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Hermes Agent", exact: true }).click();
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true });
   await composer.fill("approve this"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled();
   // The page is in the background when Hermes asks, so a notification goes out.
@@ -1058,7 +1129,7 @@ test("a Turn's diagnostics are copied from its details without conversation cont
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
   await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter");
   await expect(log).toContainText("原生活动已完成。");
   await log.getByRole("button", { name: "执行详情", exact: true }).last().click();
@@ -1086,7 +1157,7 @@ test("a Turn waiting for another conversation's work in their workspace names it
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
   const send = async (text: string) => { await composer.fill(text); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter"); };
   // The first conversation waits for an approval, holding the workspace; its deadline is HarnessHub's wait budget.
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
   await send("approve this");
   const card = page.getByRole("region", { name: "工具审批", exact: true });
   await expect(card).toContainText("rm -rf build", { timeout: 15000 });
@@ -1094,11 +1165,13 @@ test("a Turn waiting for another conversation's work in their workspace names it
   await expect(page.locator(".session-item.has-attention .attention-line")).toHaveText("等你批准 · 等待期限 剩余 30 分");
   // A second conversation in the same workspace queues behind it, and says which conversation and why, without paths.
   await page.getByRole("button", { name: "新对话", exact: true }).click();
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
   await send("queued work");
   const status = log.locator(".response-status");
   // What the holder waits for is said as every other place says it (ADR-054 decision G).
   await expect(status).toHaveText("排队中：等待对话「approve this」释放工作区（它在等你批准）", { timeout: 15000 });
+  // Waiting, it has not started: the line under the composer counts no time for it, as the Turn's own line counts none.
+  await expect(page.locator(".composer-status")).toHaveText("第 1 轮");
   await expect(log.locator(".queued-turn small")).toHaveText("最多再等 30 分钟，到时这条消息不会发出。");
   assert.equal((await log.textContent())?.includes(fixture.root), false, "no private path reaches the page");
   await page.screenshot({ path: join(artifact, "queued-turn.png"), animations: "disabled" });
@@ -1125,10 +1198,10 @@ test("a Turn that waits for its workspace past its wait budget is not sent, and 
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
   const send = async (text: string) => { await composer.fill(text); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter"); };
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Busy Agent", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Busy Agent", exact: true }).click();
   await send("long work"); await expect(log).toContainText("你好 fixture", { timeout: 15000 });
   await page.getByRole("button", { name: "新对话", exact: true }).click();
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Busy Agent", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Busy Agent", exact: true }).click();
   await send("waits too long");
   await expect(log.locator(".response-status")).toHaveText("排队中：等待对话「long work」释放工作区（它正在运行）", { timeout: 15000 });
   const failure = log.locator(".run-error");
@@ -1168,7 +1241,7 @@ test("a Turn the Runtime cancelled when its wait budget ran out keeps the contra
     await composer.fill("approve this"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
     await expect(page.getByRole("region", { name: "工具审批", exact: true })).toContainText("rm -rf build", { timeout: 15000 });
   };
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
   await ask();
   // Nobody decides, and the page is out of sight: HarnessHub's wait budget runs out and the Runtime stops the Turn, which the
   // program settles as cancelled.
@@ -1232,9 +1305,11 @@ test("a Turn waiting for a slot says how many conversations run, has no deadline
   await expect(page.locator(".attention-count")).toHaveText("4", { timeout: 15000 });
   // A fifth conversation, in another workspace, waits for one of them to end.
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Busy Agent", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Busy Agent", exact: true }).click();
   await composer.fill("queued work"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
   await expect(log.locator(".response-status")).toHaveText("排队中：4 个对话正在执行，其中一个结束后自动开始", { timeout: 15000 });
+  // Nothing of it has started, so the line under the composer counts no time for it, as the Turn's own line counts none.
+  await expect(page.locator(".composer-status")).toHaveText("第 1 轮");
   // The header and the page's announcement name the state as the Turn does (ruling N).
   await expect(page.locator(".chat-page > header .status-pill")).toHaveText("Busy Agent 排队中"); await expect(page.locator(".chat-page > .sr-only[role=status]")).toHaveText("排队中");
   // So do the details: a Turn not started has no dot of work going on, and its facts say 排队中.
@@ -1279,7 +1354,7 @@ test("a Harness of a version HarnessHub never ran shows that version alone in th
   await expect(detail.getByText("当前版本", { exact: true }).locator("..")).toContainText("1.0.0");
   await expect(detail.getByText("最新版本", { exact: true })).toBeVisible();
   await sayNothing("the detail");
-  await detail.getByRole("button", { name: "关闭 Harness 详情", exact: true }).click();
+  await detail.getByRole("button", { name: "关闭 Agent 详情", exact: true }).click();
   // The card: the version alone before its channel, with no mark beside it, like the Harness nothing was ever recorded for.
   await expect(row.locator(".agent-meta")).toHaveText(/^1\.0\.0 · /u); await expect(row.locator(".badge")).toHaveText(["冻结"]);
   const autohand = page.locator(".agent-entry").filter({ has: page.getByRole("button", { name: "查看 Autohand Code 详情", exact: true }) });
@@ -1291,16 +1366,16 @@ test("a Harness of a version HarnessHub never ran shows that version alone in th
   // no way back of its own (ADR-054 补充 D): the sidebar leads there.
   await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "新对话", exact: true }).click();
   await page.locator(".agent-summary").click();
-  const card = page.getByRole("region", { name: "本机发现的 Harness" }).getByRole("button", { name: "选择 Gemini CLI", exact: true });
+  const card = page.getByRole("region", { name: "本机发现的 Agent" }).getByRole("button", { name: "选择 Gemini CLI", exact: true });
   await expect(card).toContainText(/(?<!v)1\.0\.0 · /u); await expect(card).not.toContainText("v1.0.0"); await expect(card.locator(".badge")).toHaveCount(0);
   await sayNothing("the welcome");
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click();
   const option = page.getByRole("option", { name: "Gemini CLI", exact: true });
   await expect(option).toContainText("1.0.0"); await expect(option).not.toContainText("v1.0.0"); await expect(option).toBeEnabled();
   await sayNothing("the picker");
   await option.click();
-  await expect(page.getByRole("button", { name: "选择 Harness", exact: true })).toContainText("Gemini CLI");
+  await expect(page.getByRole("button", { name: "选择 Agent", exact: true })).toContainText("Gemini CLI");
   assert.deepEqual(errors, []);
 });
 
@@ -1312,7 +1387,7 @@ test("the execution settings name the native session and give the program's own 
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
   await composer.fill("hello"); await composer.press("Enter");
   await expect(log.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
   // The panel is closed until opened (ADR-054 decision E); without changes or a plan it opens on the Turn's execution facts.
@@ -1348,12 +1423,12 @@ test("ending a kept process says once that its background tasks outside its grou
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Kept Agent", exact: true }).click();
-  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Kept Agent", exact: true }).click();
+  await openAdvanced(page);
   await page.getByRole("checkbox", { name: "保持原生进程" }).click(); await page.keyboard.press("Escape");
   await composer.fill("first"); await composer.press("Enter");
   await expect(log.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
-  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  await openAdvanced(page);
   await expect(page.locator(".kept-setting")).toContainText("原生进程保留中");
   await page.locator(".kept-setting").getByRole("button", { name: "结束后台进程", exact: true }).click();
   await expect(page.locator(".kept-setting")).not.toContainText("原生进程保留中");
@@ -1412,7 +1487,7 @@ test("G054-FR1 G054-FR8 a conversation that needs the user leads the sidebar and
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
   await composer.fill("approve this"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
   const card = page.getByRole("region", { name: "工具审批", exact: true });
   await expect(card).toContainText("rm -rf build", { timeout: 15000 });
@@ -1455,7 +1530,7 @@ test("G054-FR2 G054-FR3 the process folds into one line, the density choice stay
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
   await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter");
   await expect(log).toContainText("原生活动已完成。");
   // D04: the panel stays closed and its button carries the number. The number pops in as news, when changes come while the
@@ -1469,12 +1544,17 @@ test("G054-FR2 G054-FR3 the process folds into one line, the density choice stay
   const summary = log.locator(".process-summary");
   await expect(summary).toHaveText(/^改了 1 处，运行 1 条命令 · [0-9.]+ 秒$/u); await expect(summary).toHaveAttribute("aria-expanded", "false");
   await expect(log.getByRole("list", { name: "工具活动" })).toHaveCount(0);
-  await page.getByRole("button", { name: "详细", exact: true }).click();
+  // The density is the "…" menu's checkable 显示每一步, checked for every step (ruling R1); the header has no 简洁 or 详细.
+  const header = page.locator(".chat-page > header"), more = header.getByRole("button", { name: "更多操作", exact: true });
+  const everyStep = page.getByRole("menuitemcheckbox", { name: "显示每一步", exact: true });
+  await expect(header.getByRole("button", { name: /^(简洁|详细)$/u })).toHaveCount(0);
+  await more.click(); await expect(everyStep).toHaveAttribute("aria-checked", "false"); await everyStep.click();
+  await expect(everyStep).toHaveCount(0);
   await expect(log.getByRole("list", { name: "工具活动" })).toBeVisible();
   await page.reload();
-  await expect(page.getByRole("button", { name: "详细", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await more.click(); await expect(everyStep).toHaveAttribute("aria-checked", "true");
   await expect(log.getByRole("list", { name: "工具活动" })).toBeVisible();
-  await page.getByRole("button", { name: "简洁", exact: true }).click();
+  await everyStep.click();
   await expect(log.getByRole("list", { name: "工具活动" })).toHaveCount(0);
   // D04 (ADR-054 decision E): wide enough for the panel beside the conversation, it still stays closed, changes or not; its
   // button carries the number of changes, said in full to a screen reader. A page drawn again in the compact density reads
@@ -1515,6 +1595,13 @@ test("G054-FR2 G054-FR3 the process folds into one line, the density choice stay
   await expect(page.getByRole("dialog")).toContainText("本轮用量");
   await page.getByRole("button", { name: "关闭详情栏", exact: true }).click(); await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
+  // On a phone the menu offers 显示每一步 as well (ruling R1: at every width).
+  await more.click(); await expect(everyStep).toBeVisible(); await expect(everyStep).toHaveAttribute("aria-checked", "false"); await page.keyboard.press("Escape");
+  // At 320 the whole menu stays on the screen: its footer wraps rather than push the menu past the edge.
+  await page.setViewportSize({ width: 320, height: 844 });
+  await more.click(); await expect(everyStep).toBeVisible();
+  await expect.poll(async () => { const box = await page.getByRole("menu").boundingBox(); return box !== null && box.x >= 0 && box.x + box.width <= 320; }, { message: "the … menu fits a 320 px screen" }).toBe(true);
+  await page.keyboard.press("Escape"); await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "详情栏", exact: true }).click(); await expect(page.getByRole("dialog")).toBeVisible();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "the details sheet must not overflow a narrow screen");
   await page.screenshot({ path: join(artifact, "details-sheet-390.png"), animations: "disabled" });
@@ -1531,7 +1618,7 @@ test("G054-DL4 each reply names its Agent, model and thinking level, a hand-over
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" }), origin = new URL(fixture.gateway.url).origin;
   const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
   const pick = async (label: string, value: string) => { await page.getByRole("button", { name: label, exact: true }).click(); await page.getByRole("option", { name: value, exact: true }).click(); };
-  await pick("选择 Harness", "Codex"); await expect(page.getByRole("button", { name: "选择模型", exact: true })).toBeEnabled();
+  await pick("选择 Agent", "Codex"); await expect(page.getByRole("button", { name: "选择模型", exact: true })).toBeEnabled();
   await pick("选择模型", "Native B"); await expect(page.getByRole("button", { name: "思考强度", exact: true })).toBeEnabled(); await pick("思考强度", "高");
   await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter");
   await expect(log).toContainText("原生活动已完成。");
@@ -1563,6 +1650,17 @@ test("G054-DL4 each reply names its Agent, model and thinking level, a hand-over
   await command.getByRole("button", { name: /ls -la/u }).click();
   const raw = command.locator(".native-tool-detail");
   await expect(raw.locator("pre").first()).toHaveText("ls -la"); await expect(raw).toContainText("输出"); await expect(raw).toContainText("README.md");
+  // A step that opens tints when pointed at (Motion board #30: its background, 120 ms on the standard curve) and untints when
+  // left; from the keyboard its focus ring is the row's, 2 px inside its edge.
+  const editRow = edit.getByRole("button", { name: /修改 README\.md/u }), tint = () => editRow.evaluate(element => getComputedStyle(element).backgroundColor);
+  assert.equal(await tint(), "rgba(0, 0, 0, 0)");
+  await editRow.hover(); await expect.poll(tint).toBe("rgb(244, 245, 247)");
+  assert.deepEqual(await editRow.evaluate(element => { const style = getComputedStyle(element); return [style.transitionProperty, style.transitionDuration, style.transitionTimingFunction]; }),
+    ["background-color", "0.12s", "cubic-bezier(0.2, 0, 0, 1)"]);
+  await page.mouse.move(2, 2); await expect.poll(tint).toBe("rgba(0, 0, 0, 0)");
+  await page.keyboard.press("Shift"); await editRow.focus();
+  assert.deepEqual(await editRow.evaluate(element => { const style = getComputedStyle(element); return [element.matches(":focus-visible"), style.outlineStyle, style.outlineWidth, style.outlineOffset]; }), [true, "solid", "2px", "-2px"]);
+  await editRow.blur();
   await page.screenshot({ path: join(artifact, "dl4-turn-light-1440.png"), animations: "disabled" });
   // D02: the details tabs are 改动 (with the number of changes, the button's), 计划, 过程, 后台 and 执行; the underline sits under
   // the chosen tab. The panel is closed until opened (decision E).
@@ -1650,7 +1748,7 @@ test("G054-DL7 a running Turn shows the arc, the swept words and a timer every s
     }
     return { samples, token };
   }, settle);
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
   // The Turn is drawn once: its process line is held from the moment it appears, before the reply has any text. Until
   // then the conversation the first message creates is never shown as empty and ready for one.
   await page.evaluate(() => {
@@ -1804,7 +1902,7 @@ test("G054-DL7 an end dot on its own line after a code block closes that line as
   }));
   /** The frames while the reply's dot was going: from the last frame before it was done to the end. */
   const closing = (frames: readonly [number, number, boolean, boolean, number][]) => { const first = frames.findIndex(([, , done]) => done); assert.ok(first > 0, "the reply was seen being written, then done"); return frames.slice(first - 1); };
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
   await composer.fill("STREAM_BLOCK：以代码块结尾"); await composer.press("Enter");
   const turn = log.locator(".assistant-message").last(), reply = turn.locator(".markdown.text-reading");
   await expect(reply.locator(".code-block")).toContainText("pnpm test", { timeout: 15000 });
@@ -1863,7 +1961,7 @@ test("G054-FR4 a message written while a reply runs is sent once after a complet
   const opened = () => new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session") !== null;
   const running = async (count: number) => { await expect.poll(async () => { if (!opened()) return null; const value = await current(); return value.runs.length === count && value.runs.at(-1).status; }, { timeout: 15000 }).toBe("running"); };
   const settled = async (count: number, status: string) => { await expect.poll(async () => { if (!opened()) return null; const value = await current(); return value.runs.length === count && value.activeRunId === null && value.runs.at(-1).status; }, { timeout: 15000 }).toBe(status); };
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
   // Completed: the held message is sent once, as a normal message.
   await composer.fill("STREAM_RENDER：第一轮"); await composer.press("Enter"); await running(1);
   await composer.fill("下一条：本轮结束后发送"); await composer.press("Enter");
@@ -1895,7 +1993,7 @@ test("G054-FR4 a message written while a reply runs is sent once after a complet
   await composer.fill("换模型后放回"); await composer.press("Enter"); await expect(held).toBeVisible();
   await page.getByRole("button", { name: "选择模型", exact: true }).click(); await page.getByRole("option", { name: "Native B", exact: true }).click();
   await step("finish"); await settled(6, "completed");
-  await expect(composer).toHaveValue("换模型后放回"); await expect(notice("所选 Harness 或模型已改变，暂存的消息已放回输入框，没有发出。")).toBeVisible();
+  await expect(composer).toHaveValue("换模型后放回"); await expect(notice("所选 Agent 或模型已改变，暂存的消息已放回输入框，没有发出。")).toBeVisible();
   await page.waitForTimeout(1000); assert.equal((await current()).runs.length, 6);
   assert.deepEqual(errors, []);
 });
@@ -1948,9 +2046,9 @@ test("G054-DL3 the home greets, says who is ready from the readiness facts and w
   assert.ok(frame && plus && picker && send);
   assert.ok(plus.x - frame.x < 24 && frame.x + frame.width - (send.x + send.width) < 20 && picker.x > plus.x + plus.width && picker.x + picker.width <= send.x, "add | … | picker · send");
   assert.ok(frame.y + frame.height - (send.y + send.height) < 16 && frame.y + frame.height - (plus.y + plus.height) < 20, "both at the bottom of the box");
-  await expect(chip).toContainText("选择 Harness");
+  await expect(chip).toContainText("选择 Agent");
   // Each part of the merged picker opens its own list: the Agent (its list says ⌘J), the model, the thinking level.
-  await chip.getByRole("button", { name: "选择 Harness", exact: true }).click();
+  await chip.getByRole("button", { name: "选择 Agent", exact: true }).click();
   await expect(page.locator(".picker-popover")).toContainText("由谁来做");
   await page.waitForTimeout(200);
   for (const scheme of ["light", "dark"] as const) { await page.emulateMedia({ colorScheme: scheme }); await page.screenshot({ path: join(artifact, `dl3-agents-${scheme}-1440.png`), animations: "disabled" }); }
@@ -1968,7 +2066,7 @@ test("G054-DL3 the home greets, says who is ready from the readiness facts and w
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 844 });
     assert.ok(await chip.evaluate(element => element.scrollWidth <= element.clientWidth), `the merged picker fits at ${width}`);
-    assert.ok(await chip.getByRole("button", { name: "选择 Harness", exact: true }).locator("span.truncate").evaluate(element => element.scrollWidth <= element.clientWidth), `the Agent keeps its name at ${width}`);
+    assert.ok(await chip.getByRole("button", { name: "选择 Agent", exact: true }).locator("span.truncate").evaluate(element => element.scrollWidth <= element.clientWidth), `the Agent keeps its name at ${width}`);
     const [whole, pill, chevron] = await Promise.all([chip.boundingBox(), thinking.boundingBox(), chip.locator("svg.lucide-chevron-down").boundingBox()]);
     assert.ok(whole && pill && chevron && pill.x >= whole.x && chevron.x + chevron.width <= whole.x + whole.width, `its pill and chevron show whole at ${width}`);
   }
@@ -1984,7 +2082,7 @@ test("G054-DL3 the home greets, says who is ready from the readiness facts and w
   assert.doesNotMatch(await welcome.innerText(), /分支|branch|git/iu, "the Gateway gives no branch, so none is shown");
   // H02: an Agent whose latest read asked for a sign-in moves from ready to needing the user (OpenClaw's fixture is signed out).
   const ready = Number(/^(\d+)/u.exec(await words.innerText())?.[1]);
-  await chip.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "OpenClaw", exact: true }).click();
+  await chip.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "OpenClaw", exact: true }).click();
   await expect(page.getByText(/本机认证尚未就绪/u)).toBeVisible();
   // (Other Agents this computer has, found but not ready to run, are named there as well.)
   const needs = welcome.getByRole("button", { name: /(?:OpenClaw|\d+ 个 Agent) 需要处理$/u });
@@ -1995,7 +2093,7 @@ test("G054-DL3 the home greets, says who is ready from the readiness facts and w
   assert.ok(said && dot && link && Math.abs((dot.x - said.x - said.width) - (link.x - dot.x - dot.width)) <= 1, "the dot is centred between the two");
   // The summary lists the available Agents with their versions and states, and chooses one.
   await summary.click();
-  const list = page.getByRole("region", { name: "本机发现的 Harness" });
+  const list = page.getByRole("region", { name: "本机发现的 Agent" });
   await expect(list.getByRole("button", { name: "选择 OpenClaw", exact: true })).toContainText("需要登录");
   // What is not installed is found on the Agent page, called by that page's name.
   await expect(list).toContainText(/另有 \d+ 个 Agent 在目录中但未安装，可以在 Agent 页查看官方安装方式。/u); await expect(list).not.toContainText("我的 Agent");
@@ -2003,7 +2101,7 @@ test("G054-DL3 the home greets, says who is ready from the readiness facts and w
   await expect(chip).toContainText("Codex"); await expect(composer).toBeFocused();
   await shoot("dl3-home");
   // H05: the program's own approval rule sits at the bottom left after the attachments, before the merged picker.
-  await chip.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex Policy", exact: true }).click();
+  await chip.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Codex Policy", exact: true }).click();
   const rule = page.getByRole("button", { name: "审批策略", exact: true });
   await expect(rule).toHaveText("从不请求审批");
   const [ruleBox, addBox, chipBox] = await Promise.all([rule.boundingBox(), add.boundingBox(), chip.boundingBox()]);
@@ -2011,6 +2109,22 @@ test("G054-DL3 the home greets, says who is ready from the readiness facts and w
     "the rule follows the add button on its line, before the picker");
   await rule.click(); await expect(page.getByRole("option", { name: "按需请求审批", exact: true })).toBeVisible();
   await page.keyboard.press("Escape"); await expect(rule).toBeFocused();
+  // Ruling R2: the bottom left keeps "+" and the rule only, as the Main board draws it. What adds to this message is in "+",
+  // the native sessions included; the Agent's extensions and advanced settings are in the Agent list's footer.
+  const corner = page.getByRole("group", { name: "附件与权限", exact: true });
+  await expect(corner.getByRole("button")).toHaveCount(2);
+  await expect(corner.getByRole("button").nth(0)).toHaveAccessibleName("添加文件或上下文"); await expect(corner.getByRole("button").nth(1)).toHaveAccessibleName("审批策略");
+  await expect(page.getByRole("button", { name: /^(本机会话|原生扩展|高级配置)$/u })).toHaveCount(0);
+  await add.click();
+  await expect(page.getByRole("menuitem", { name: /^添加文件或图片…/u })).toBeVisible(); await expect(page.getByRole("menuitem", { name: "继续原程序的会话…", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape"); await expect(add).toBeFocused();
+  await chip.getByRole("button", { name: "选择 Agent", exact: true }).click();
+  const agentList = page.locator(".picker-popover");
+  await expect(agentList.getByRole("button", { name: "查看技能与扩展…", exact: true })).toBeVisible(); await expect(agentList.getByRole("button", { name: "高级配置…", exact: true })).toBeVisible();
+  await page.waitForTimeout(200);
+  for (const scheme of ["light", "dark"] as const) { await page.emulateMedia({ colorScheme: scheme }); await page.screenshot({ path: join(artifact, `dl3-agent-footer-${scheme}-1440.png`), animations: "disabled" }); }
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.keyboard.press("Escape");
   await shoot("dl3-permission");
   assert.deepEqual(errors, []);
 });
@@ -2039,7 +2153,7 @@ test("G054-DL5 an approval waits in the composer's place: ⏎ allows once and es
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" }), box = page.locator(".composer-box");
   const dock = box.getByRole("region", { name: "工具审批", exact: true }), results = log.locator(".approval-result");
   const ask = async () => { await composer.fill("approve this"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter"); await expect(dock).toContainText("rm -rf build", { timeout: 15000 }); };
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
   await ask();
   // P02: in the composer's place and with the composer's focus: who asks and whose deadline, the command, what a lasting choice means.
   await expect(composer).toBeHidden(); await expect(dock).toBeFocused();
@@ -2128,9 +2242,9 @@ test("G054-DL5 an approval waits in the composer's place: ⏎ allows once and es
   await page.emulateMedia({ reducedMotion: "no-preference" });
   // A question stays in its Turn, and the composer stays where it is.
   await page.getByRole("button", { name: "新对话", exact: true }).click();
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex Question", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Codex Question", exact: true }).click();
   await composer.fill("ask me"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
-  const question = log.getByRole("region", { name: "Harness 交互", exact: true });
+  const question = log.getByRole("region", { name: "审批与提问", exact: true });
   await expect(question).toContainText("选择原生计划", { timeout: 15000 });
   await expect(composer).toBeVisible(); await expect(box.getByRole("region", { name: "工具审批", exact: true })).toHaveCount(0);
   // The same state says the same words everywhere (decision G): the card, the header and the Turn's line say 等你回答; no
@@ -2153,7 +2267,7 @@ test("G054-DL5 while an approval waits, the Turn names the step it asks for in t
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
   const dock = page.locator(".composer-box").getByRole("region", { name: "工具审批", exact: true });
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
   // The fixture reads a file, then asks before it runs a command, which it reports as pending until it is allowed.
   await composer.fill("STEP_APPROVAL 清理构建目录"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
   await expect(dock).toContainText("rm -rf build", { timeout: 15000 });
@@ -2223,6 +2337,63 @@ test("G054-DL5 while an approval waits, the Turn names the step it asks for in t
   assert.deepEqual(errors, []);
 });
 
+test("G054-DL5 an approval that takes the composer's place closes a panel the composer opened and takes the focus it held, and the panel does not come back once the approval is decided (ruling R2)", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false, { name: "Shared Agent", scenario: "hermes" }); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1440, height: 960 } });
+  // Holds the event stream's bytes while asked to, so that the approval arrives while the panel is open and holds the focus.
+  await context.addInitScript(() => {
+    const original = window.fetch.bind(window); let held = false;
+    const waiters: Array<() => void> = [];
+    Reflect.set(window, "__holdFactDelivery", (next: boolean) => { held = next; if (!held) for (const release of waiters.splice(0)) release(); });
+    window.fetch = async (input, init) => {
+      const response = await original(input, init);
+      const url = typeof input === "string" ? input : input instanceof Request ? input.url : String(input);
+      if (!url.includes("/events/stream") || !response.ok || response.body === null) return response;
+      const body = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({ async transform(chunk, sink) {
+        if (held) await new Promise<void>(resolve => waiters.push(resolve)); sink.enqueue(chunk);
+      } }));
+      return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+    };
+  });
+  const page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  const hold = (next: boolean) => page.evaluate(value => { const set = Reflect.get(window, "__holdFactDelivery"); if (typeof set !== "function") throw new Error("missing fact delivery fixture"); set(value); }, next);
+  t.after(async () => { if (!page.isClosed()) await hold(false); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), panel = page.locator(".composer-settings-panel");
+  const dock = page.locator(".composer-box").getByRole("region", { name: "工具审批", exact: true });
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
+  await composer.fill("hello"); await composer.press("Enter");
+  await expect(page.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
+  // The next message asks before it runs a command; its request waits in the held stream while the settings are opened.
+  await hold(true);
+  await composer.fill("approve this"); await composer.press("Enter"); await expect(composer).toHaveValue("");
+  await openAdvanced(page);
+  await expect.poll(() => panel.evaluate(element => element.contains(document.activeElement))).toBe(true);
+  await hold(false);
+  await expect(dock).toContainText("rm -rf build", { timeout: 15000 });
+  // The approval closes the panel and takes the focus the panel held, as it takes the focus from the message box.
+  await expect(panel).toHaveCount(0); await expect(dock).toBeFocused();
+  await dock.getByRole("button", { name: "Allow once", exact: true }).click();
+  await expect(dock).toHaveCount(0, { timeout: 15000 }); await expect(composer).toBeFocused();
+  // Decided, the composer is back with the focus, and the panel stays closed: it does not open again by itself.
+  await page.waitForTimeout(500);
+  await expect(panel).toHaveCount(0); await expect(composer).toBeFocused();
+  await expect(page.locator("[data-run-status=completed]")).toHaveCount(2, { timeout: 15000 });
+  // The same when the message box has the focus and the panel stays open beside it (as after a skill is chosen in the
+  // extensions): the approval takes the focus from the message box, and once decided the panel stays closed.
+  await openAdvanced(page);
+  await composer.fill("approve this"); await expect(panel).toHaveCount(1); await composer.press("Enter");
+  await expect(dock).toContainText("rm -rf build", { timeout: 15000 });
+  await expect(panel).toHaveCount(0); await expect(dock).toBeFocused();
+  await dock.getByRole("button", { name: "Allow once", exact: true }).click();
+  await expect(dock).toHaveCount(0, { timeout: 15000 }); await page.waitForTimeout(500);
+  await expect(panel).toHaveCount(0); await expect(composer).toBeFocused();
+  assert.deepEqual(errors, []);
+});
+
 test("G054-DL6 the plan bar above the composer says how far the plan is and opens every step, and the line under it shows the round, steps and time with only the usage the Gateway reported", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
@@ -2257,7 +2428,7 @@ test("G054-DL6 the plan bar above the composer says how far the plan is and open
     }, true);
   });
   const motion = () => page.evaluate(() => [...(window as unknown as { __motion: string[] }).__motion]);
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
   await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter");
   await expect(log).toContainText("原生活动已完成。");
   // #15: the first message, sent from the home, rises into the conversation it opened, once: one rise in the log, around it.
@@ -2318,7 +2489,7 @@ test("G054-DL9 ⌘J opens the Agent list, ⌘. stops the reply, ⌘\\ opens and 
   await page.goto(fixture.gateway.url);
   const origin = new URL(fixture.gateway.url).origin, composer = page.getByRole("textbox", { name: "发送消息", exact: true });
   const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
-  const search = page.getByRole("combobox", { name: "搜索 Harness", exact: true }), trigger = page.getByRole("button", { name: "选择 Harness", exact: true });
+  const search = page.getByRole("combobox", { name: "搜索 Agent", exact: true }), trigger = page.getByRole("button", { name: "选择 Agent", exact: true });
   // ⌘J: the Agent list with its search; composition never opens it.
   await composer.focus(); await composer.dispatchEvent("keydown", { key: "j", code: "KeyJ", metaKey: true, ctrlKey: true, isComposing: true, bubbles: true });
   await expect(search).toHaveCount(0);
@@ -2442,7 +2613,7 @@ test("G054-FR5 the command palette searches conversations and actions, and the s
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
   await composer.fill("PALETTE_TARGET 第一段对话"); await composer.press("Enter"); await expect(log).toContainText("已由");
   await page.keyboard.press("ControlOrMeta+Shift+O");
   await expect(page.getByRole("heading", { name: "新对话", exact: true })).toBeVisible();
@@ -2515,7 +2686,7 @@ test("G054-DL2 the sidebar groups conversations by project with a state dot each
   await expect(navigation.locator(".badge-accent")).toHaveCount(0);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true });
   const send = async (text: string) => { await composer.fill(text); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter"); };
-  const pick = async (name: string) => { await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name, exact: true }).click(); };
+  const pick = async (name: string) => { await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name, exact: true }).click(); };
   // A conversation's row opens in place at the top of its project when it first appears (Motion board #36): the observer
   // marks each row that arrives already opening, before its title becomes its first message.
   await page.evaluate(() => {
@@ -2797,7 +2968,7 @@ test("G054-FR6 the chosen theme and its theme color apply before the first paint
   await expect(page.getByRole("heading", { name: "设置", exact: true })).toBeVisible();
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true });
   await page.getByRole("button", { name: "返回对话", exact: true }).click();
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
   await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter"); await expect(page.getByRole("log", { name: "对话历史" })).toContainText("原生活动已完成。");
   for (const target of ["chat", "harnesses", "settings"] as const) {
     if (target === "harnesses") await page.getByRole("button", { name: "Agent", exact: true }).click();
@@ -3122,8 +3293,8 @@ test("G054-UP2 a conversation whose kept process an upgrade closed says so until
     await composer.fill(text); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
     await expect.poll(async () => { if (!new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session")) return null; const value = await current(); return value.runs.length === count && value.activeRunId === null && value.runs.at(-1).status; }, { timeout: 15000 }).toBe("completed");
   };
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Kept Agent", exact: true }).click();
-  await page.getByRole("button", { name: "高级配置", exact: true }).click(); await page.getByRole("checkbox", { name: "保持原生进程" }).click(); await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Kept Agent", exact: true }).click();
+  await openAdvanced(page); await page.getByRole("checkbox", { name: "保持原生进程" }).click(); await page.keyboard.press("Escape");
   await reply("first", 1);
   assert.equal((await current()).retention.process?.harnessId, "native-acp");
   assert.equal(await fixture.runtime().releaseForUpgrade("native-acp"), 1);
@@ -3275,13 +3446,13 @@ test("G054-OC1 a Harness lists each official installation with the one in use, a
   // Pictured once the details have slid in.
   await expect.poll(() => codex.evaluate(element => getComputedStyle(element).opacity === "1" && getComputedStyle(element).transform === "none")).toBe(true);
   await page.screenshot({ path: join(artifact, "harness-installations.png"), animations: "disabled" });
-  await codex.getByRole("button", { name: "关闭 Harness 详情" }).click();
+  await codex.getByRole("button", { name: "关闭 Agent 详情" }).click();
   await page.getByRole("button", { name: "查看 DeepSeek Harness 详情", exact: true }).click();
   const dsh = page.getByRole("dialog", { name: "DeepSeek Harness 详情" });
   await expect(dsh.locator(".harness-unofficial")).toHaveText("在 PATH 中发现一个非官网安装（开发目录、npm link 或其他），命令名 dsh；平台不使用也不维护它。终端里能用的就是它。");
   await expect(dsh.locator(".harness-installations")).toHaveCount(0);
   await expect(dsh).toContainText("npm install -g @deepseek-ai/dsh"); await expect(dsh).toContainText("命令于 2026-10-17 对照官方说明核对。");
-  await dsh.getByRole("button", { name: "关闭 Harness 详情" }).click();
+  await dsh.getByRole("button", { name: "关闭 Agent 详情" }).click();
   // The official page's own note travels with the product, installed or not. Frozen entries come last in "还可以安装".
   await page.getByRole("button", { name: /^显示全部/u }).click();
   await page.getByRole("button", { name: "查看 Gemini CLI 详情", exact: true }).click();
@@ -3491,7 +3662,7 @@ test("G054-UG1 upgrading one installation first says the versions, what runs and
   assert.deepEqual(consent, { harnessId: "claude", action: "upgrade", installation: homebrewNode, expectedInstallationFingerprint: fingerprint }, "the request is exactly the confirmed check");
   await expect(page.getByRole("dialog", { name: "Claude Code 详情" }).locator(".installation-state")).toContainText(`已升级${label}里的 Claude Code：2.1.296 → 2.1.305。`);
   // Hermes updates only in a terminal: the command and what it does are shown, and nothing can be confirmed.
-  await page.getByRole("dialog", { name: "Claude Code 详情" }).getByRole("button", { name: "关闭 Harness 详情" }).click();
+  await page.getByRole("dialog", { name: "Claude Code 详情" }).getByRole("button", { name: "关闭 Agent 详情" }).click();
   await page.getByRole("button", { name: "查看 Hermes Agent 详情", exact: true }).click();
   await page.getByRole("dialog", { name: "Hermes Agent 详情" }).getByRole("button", { name: "更新方式：官方安装脚本里的 hermes", exact: true }).click();
   const terminal = page.getByRole("dialog", { name: "升级 Hermes Agent" });
@@ -3635,7 +3806,7 @@ test("G054-DL8 the Agent page gives each Agent a card with its version and chann
   await expect(switched.locator(".agent-health")).toHaveText("有新版本 0.167.0当前 0.166.0。升级沿用它原来的安装方式，在下面的“维护”里进行。开始对话");
   await expect(switched.getByRole("button", { name: "升级到 0.167.0", exact: true })).toBeVisible();
   await settled(switched); await page.screenshot({ path: join(artifact, "agents-drawer-update-1440.png"), animations: "disabled" });
-  await switched.getByRole("button", { name: "关闭 Harness 详情", exact: true }).click(); await expect(switched).toBeHidden();
+  await switched.getByRole("button", { name: "关闭 Agent 详情", exact: true }).click(); await expect(switched).toBeHidden();
   await expect(main.locator(".agent-card[data-selected='true']")).toHaveCount(0);
   // Once the details have gone, the cards take the width back.
   const body = main.locator(".harness-management-body");
@@ -3704,7 +3875,7 @@ test("G054-DL8 the Agent page gives each Agent a card with its version and chann
   const codex = page.getByRole("dialog", { name: "Codex 详情" });
   await expect(codex).toBeVisible();
   const instant = await motion(); assert.ok(instant.drawer && instant.drawer.durations.every(value => value === 0), "a drawer opened from the keyboard is not animated: " + JSON.stringify(instant.drawer));
-  const close = codex.getByRole("button", { name: "关闭 Harness 详情", exact: true });
+  const close = codex.getByRole("button", { name: "关闭 Agent 详情", exact: true });
   await expect(close).toBeFocused();
   await page.keyboard.press("Shift+Tab");
   await expect.poll(() => page.evaluate(() => document.activeElement !== null && document.activeElement !== document.body && document.querySelector("#main-content")?.contains(document.activeElement) === true)).toBe(true);
@@ -3788,7 +3959,7 @@ test("G054-DL8 the Agent page gives each Agent a card with its version and chann
   // that it was signed in, and offer the command that continues the conversation in Codex itself. A read that asked
   // Claude Code to sign in is its card's state.
   await navigation.getByRole("button", { name: "新对话", exact: true }).click();
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true });
   await composer.fill("hello"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
   await expect(page.getByRole("log", { name: "对话历史" }).locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
@@ -3886,19 +4057,19 @@ test("G054-CA1 the capability page opens from the sidebar and from a Harness's d
   // Cursor is frozen: its column, its place in the Harness list and its reading rules stay out until the settings show it (ADR-050).
   const matrix = page.locator(".capability-matrix");
   await expect(matrix.locator("thead th")).toHaveText([/技能/u, /Claude Code/u, /Codex/u, /Hermes Agent/u]);
-  await expect(page.getByRole("combobox", { name: "只看一个 Harness" }).locator("option")).toHaveText(["全部 Harness", "Claude Code", "Codex", "Hermes Agent"]);
+  await expect(page.getByRole("combobox", { name: "只看一个 Agent" }).locator("option")).toHaveText(["全部 Agent", "Claude Code", "Codex", "Hermes Agent"]);
   await showFrozenHarnesses(page);
   await navigation.getByRole("button", { name: "能力", exact: true }).click();
   // The board's six kinds in its order, each with its count (ADR-054 §5); commands are listed only while an Agent has any.
   // The skills matrix has one column per Harness, saying how each sees each skill.
   const tabs = page.getByRole("tablist", { name: "能力类别" });
-  for (const [label, count] of [["技能", 2], ["MCP", 1], ["指令", 1], ["子 Agent", 1], ["插件", 1], ["Hooks", 1]] as const) await expect(tabs.getByRole("tab", { name: label + " " + count, exact: true })).toBeVisible();
+  for (const [label, count] of [["技能", 2], ["MCP 服务器", 1], ["指令", 1], ["子 Agent", 1], ["插件", 1], ["Hooks", 1]] as const) await expect(tabs.getByRole("tab", { name: label + " " + count, exact: true })).toBeVisible();
   await expect(tabs.getByRole("tab")).toHaveText([/^技能/u, /^MCP/u, /^指令/u, /^子 Agent/u, /^插件/u, /^Hooks/u]);
   // Each column names its Harness and the version its channel records, Cursor's dated one like the others; no column says anything about its version (ADR-053).
   await expect(matrix.locator("thead th")).toHaveText([/技能/u, /Claude Code.*(?<!v)2\.1\.302/u, /Codex.*(?<!v)0\.162\.1/u, /Cursor.*(?<!v)2026\.10\.01-e373342/u, /Hermes Agent.*(?<!v)0\.12\.0/u]);
   await expect(matrix.locator("thead")).not.toContainText("核实");
   // The rules section says which version each Harness runs and points to its notes, and nothing about the version.
-  const rules = page.locator("details").filter({ hasText: "各 Harness 的读取规则与说明" });
+  const rules = page.locator("details").filter({ hasText: "各 Agent 的读取规则与说明" });
   await rules.locator("summary").click();
   await expect(rules).toContainText(/(?<!v)2026\.10\.01-e373342 · 读取规则见说明/u); await expect(rules).not.toContainText("v2026.10.01"); await expect(rules).toContainText("Cursor 的用户规则保存在应用设置里，不在磁盘上。");
   await expect(rules).not.toContainText("核实");
@@ -3931,11 +4102,11 @@ test("G054-CA1 the capability page opens from the sidebar and from a Harness's d
   await expect(page.locator(".capability-detail")).toContainText("Cursor 默认也会运行这个 Hook");
   // No Harness has a command, so the kind is not offered; an empty kind still says so (below, MCP with only Codex).
   await expect(tabs.getByRole("tab", { name: /^命令/u })).toHaveCount(0);
-  await tabs.getByRole("tab", { name: "MCP 1", exact: true }).click();
+  await tabs.getByRole("tab", { name: "MCP 服务器 1", exact: true }).click();
   await expect(matrix.locator("tbody tr").first().locator("td").nth(0).getByRole("img")).toHaveAccessibleName("已生效 · 配置");
-  await page.getByRole("combobox", { name: "只看一个 Harness" }).selectOption("codex");
+  await page.getByRole("combobox", { name: "只看一个 Agent" }).selectOption("codex");
   await expect(page.getByText("这一类还没有条目")).toBeVisible();
-  await page.getByRole("combobox", { name: "只看一个 Harness" }).selectOption("");
+  await page.getByRole("combobox", { name: "只看一个 Agent" }).selectOption("");
   await tabs.getByRole("tab", { name: "技能 2", exact: true }).click();
   await page.screenshot({ path: join(artifact, "capabilities.png"), animations: "disabled" });
   // From a Harness's details, the page opens on that Harness.
@@ -3943,7 +4114,7 @@ test("G054-CA1 the capability page opens from the sidebar and from a Harness's d
   await page.getByRole("button", { name: "查看 Claude Code 详情", exact: true }).click();
   await page.getByRole("dialog", { name: "Claude Code 详情" }).getByRole("button", { name: "查看 Claude Code 的能力", exact: true }).click();
   await expect(page.getByRole("heading", { name: "能力", exact: true })).toBeVisible();
-  await expect(page.getByRole("combobox", { name: "只看一个 Harness" })).toHaveValue("claude");
+  await expect(page.getByRole("combobox", { name: "只看一个 Agent" })).toHaveValue("claude");
   await expect(page.locator(".capability-matrix thead th")).toHaveCount(2);
   // At phone width the matrix scrolls inside its frame; the page itself does not scroll sideways.
   await page.setViewportSize({ width: 390, height: 844 });
@@ -4254,7 +4425,7 @@ test("G054-CA5 skills are added from a GitHub repository after reading it, updat
   await page.getByRole("button", { name: "检查更新", exact: true }).click();
   await expect(page.locator(".skill-update-summary")).toContainText("1 个技能有新版本");
   const alphaRow = page.locator(".capability-matrix tbody tr").filter({ hasText: "alpha" }).first();
-  await expect(alphaRow.locator(".badge")).toContainText(["有新版本"]);
+  await expect(alphaRow.locator(".badge")).toContainText(["可更新"]);
   await alphaRow.getByRole("button", { name: /alpha/u }).click();
   const detail = page.locator(".capability-detail");
   await expect(detail.getByRole("button", { name: "覆盖本地改动并更新" })).toHaveCount(0);
@@ -4647,13 +4818,15 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
   // The board's categories beside the content, each with its count, in its order; commands come last, listed because an Agent has one.
   const tabs = page.getByRole("tablist", { name: "能力类别" });
   await expect(tabs).toHaveAttribute("aria-orientation", "vertical");
-  for (const [label, count] of [["技能", 3], ["MCP", 1], ["指令", 1], ["子 Agent", 1], ["插件", 1], ["Hooks", 1], ["命令", 1]] as const) await expect(tabs.getByRole("tab", { name: label + " " + count, exact: true })).toBeVisible();
+  for (const [label, count] of [["技能", 3], ["MCP 服务器", 1], ["指令", 1], ["子 Agent", 1], ["插件", 1], ["Hooks", 1], ["命令", 1]] as const) await expect(tabs.getByRole("tab", { name: label + " " + count, exact: true })).toBeVisible();
   await expect(tabs.getByRole("tab")).toHaveText([/^技能/u, /^MCP/u, /^指令/u, /^子 Agent/u, /^插件/u, /^Hooks/u, /^命令/u]);
   await expect(page.getByRole("heading", { name: "技能 3", exact: true })).toBeVisible();
   await expect(page.getByText("点空着的格子就能启用；写入前会给你看每个文件改哪几行。")).toBeVisible();
   // The list moves with the arrow keys, Home and End, choosing as it goes.
   await tabs.getByRole("tab", { name: "技能 3", exact: true }).focus(); await page.keyboard.press("ArrowDown");
-  await expect(tabs.getByRole("tab", { name: "MCP 1", exact: true })).toBeFocused(); await expect(tabs.getByRole("tab", { name: "MCP 1", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(tabs.getByRole("tab", { name: "MCP 服务器 1", exact: true })).toBeFocused(); await expect(tabs.getByRole("tab", { name: "MCP 服务器 1", exact: true })).toHaveAttribute("aria-selected", "true");
+  // The category is named as the board names it in its heading and its search too (MCP 服务器, not MCP).
+  await expect(page.getByRole("heading", { name: "MCP 服务器 1", exact: true })).toBeVisible(); await expect(page.getByRole("textbox", { name: "搜索能力" })).toHaveAttribute("placeholder", "搜索 MCP 服务器");
   await page.keyboard.press("End"); await expect(tabs.getByRole("tab", { name: "命令 1", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("heading", { name: "命令 1", exact: true })).toBeVisible();
   await page.keyboard.press("Home"); await expect(tabs.getByRole("tab", { name: "技能 3", exact: true })).toBeFocused();
@@ -4944,8 +5117,8 @@ test("G054-FZ1 the frozen Harnesses stay out of the picker, the welcome, the pal
   const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url); await expect(page.getByRole("button", { name: "新对话", exact: true })).toBeVisible();
-  const frozen = ["Gemini CLI", "Cursor", "Pi"], picker = page.getByRole("button", { name: "选择 Harness", exact: true });
-  const welcome = page.getByRole("region", { name: "本机发现的 Harness" }), navigation = page.getByRole("complementary", { name: "主导航" });
+  const frozen = ["Gemini CLI", "Cursor", "Pi"], picker = page.getByRole("button", { name: "选择 Agent", exact: true });
+  const welcome = page.getByRole("region", { name: "本机发现的 Agent" }), navigation = page.getByRole("complementary", { name: "主导航" });
   const row = (name: string) => page.locator(".agent-entry").filter({ has: page.getByRole("button", { name: `查看 ${name} 详情`, exact: true }) });
   // By default none of them is offered for new work, though Gemini CLI is installed and ready: not in the welcome's list of
   // Agents (opened from its summary, ADR-054 §5), nor in its icons, nor in the picker.
@@ -4966,7 +5139,7 @@ test("G054-FZ1 the frozen Harnesses stay out of the picker, the welcome, the pal
   for (const name of frozen) await expect(row(name)).toHaveCount(0);
   // The list says how many it left out, and leads to the switch that shows them.
   const note = page.locator(".hidden-frozen");
-  await expect(note).toHaveText("已隐藏 3 个冻结的 Harness，可在设置里显示");
+  await expect(note).toHaveText("已隐藏 3 个冻结的 Agent，可在设置里显示");
   await note.getByRole("button", { name: "可在设置里显示", exact: true }).click();
   await expect(page.getByRole("heading", { name: "设置", exact: true })).toBeVisible();
   const toggle = page.getByRole("switch", { name: FROZEN_SWITCH });
@@ -4995,7 +5168,7 @@ test("G054-FZ1 the frozen Harnesses stay out of the picker, the welcome, the pal
   await picker.click(); await expect(page.getByRole("option", { name: "Gemini CLI", exact: true })).toBeVisible(); await page.keyboard.press("Escape");
   await expect(navigation.getByRole("button", { name: "frozen work", exact: true })).toHaveAccessibleDescription("Gemini CLI");
   await navigation.getByRole("button", { name: "新对话", exact: true }).click();
-  await expect(picker).toContainText("选择 Harness");
+  await expect(picker).toContainText("选择 Agent");
   await picker.click(); await expect(page.getByRole("option", { name: "Gemini CLI", exact: true })).toHaveCount(0); await page.keyboard.press("Escape");
   await page.locator(".agent-summary").click(); await expect(welcome.getByRole("button", { name: "选择 Codex", exact: true })).toBeVisible();
   await expect(welcome.getByRole("button", { name: "选择 Gemini CLI", exact: true })).toHaveCount(0); await page.keyboard.press("Escape");
@@ -5082,7 +5255,7 @@ test("G054-FZ3 DeepSeek Harness of any version shows its one-question command wi
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click();
   const option = page.getByRole("option", { name: "DeepSeek Harness", exact: true });
   // The picker shows the version as a fact, as the Agent page does (no "v"), and nothing about it.
   await expect(option).toContainText("0.3.1"); await expect(option).not.toContainText("v0.3.1"); await expect(option).not.toContainText("验证"); await option.click();
@@ -5335,7 +5508,7 @@ test("G054-DL10 the home on first use and on return, a finished Turn with its st
   await page.goto(fixture.gateway.url);
   const origin = new URL(fixture.gateway.url).origin, composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
   const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
-  const pick = async (name: string) => { await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name, exact: true }).click(); };
+  const pick = async (name: string) => { await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name, exact: true }).click(); };
   const greeting = page.getByRole("heading", { name: "今天想让哪个 Agent 做什么？", exact: true }), navigation = page.getByRole("complementary", { name: "主导航" });
   // H06: the first time, the home walks through its three steps.
   await expect(greeting).toBeVisible(); await expect(page.getByRole("list", { name: "开始使用" }).getByRole("listitem")).toHaveCount(3);
@@ -5487,7 +5660,7 @@ test("G054-DL10 with reduced motion a Turn, the palette, the details, an Agent's
   await paletteBoth("the home");
 
   // A whole Turn, from the message rising in to its folded process line, only fades.
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
   await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter");
   await expect(log).toContainText("原生活动已完成。");
   await expect.poll(async () => (await current()).runs[0]?.status, { timeout: 15000 }).toBe("completed");
@@ -5528,7 +5701,7 @@ test("G054-DL10 with reduced motion a Turn, the palette, the details, an Agent's
   const open = page.getByRole("button", { name: "查看 Codex 详情", exact: true }), codex = page.getByRole("dialog", { name: "Codex 详情" });
   await open.click(); await expect(codex).toBeVisible();
   await dl10Still(page, "an Agent's details opened with the pointer");
-  await codex.getByRole("button", { name: "关闭 Harness 详情", exact: true }).click(); await expect(codex).toHaveCount(0);
+  await codex.getByRole("button", { name: "关闭 Agent 详情", exact: true }).click(); await expect(codex).toHaveCount(0);
   await dl10Still(page, "an Agent's details closed with the pointer");
   await open.focus(); await page.keyboard.press("Enter"); await expect(codex).toBeVisible();
   await expect.poll(() => codex.evaluate(element => element.contains(document.activeElement)), { message: "the details take the focus" }).toBe(true);

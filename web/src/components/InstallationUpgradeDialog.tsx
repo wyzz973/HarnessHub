@@ -47,7 +47,7 @@ export function InstallationUpgradeDialog({ api, harness, installation, onClose,
       .then(value => { if (!controller.signal.aborted) setCheck(value); }, error => { if (!controller.signal.aborted) setFailure(errorMessage(error)); });
     return () => controller.abort();
   }, [api, id, ref, attempt]);
-  const name = harness?.name ?? "Harness", what = installation?.role === "adapter" ? `${name} 的接入口 ${installation.command}` : name;
+  const name = harness?.name ?? "Agent", what = installation?.role === "adapter" ? `${name} 的接入口 ${installation.command}` : name;
   const update = check ? check.kind === "self-update" || check.kind === "rerun" : installation?.upgrade === "self-update" || installation?.upgrade === "rerun";
   const busy = check?.conversations.filter(item => item.busy) ?? [], idle = check?.conversations.filter(item => !item.busy) ?? [];
   return <Dialog open={harness !== null && installation !== null} onOpenChange={open => { if (!open) onClose(); }} title={`${update ? "更新" : "升级"} ${what}`}

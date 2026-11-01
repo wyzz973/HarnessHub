@@ -622,7 +622,7 @@ export function App() {
     try {
       if (retryAttachments === undefined && attachments.some(item => item.status !== "ready")) throw new ApiError("ATTACHMENT_PENDING", "附件还在上传或上传失败，处理后再发送。");
       if (session && (session.pendingSwitchId !== null || JSON.stringify(draft) !== JSON.stringify(selectionDraft(session.selection))))
-        throw new ApiError("SELECTION_PENDING", "正在切换到所选 Harness 或模型，请稍候；草稿已保留。");
+        throw new ApiError("SELECTION_PENDING", "正在切换到所选 Agent 或模型，请稍候；草稿已保留。");
       const isEffective = session !== null && JSON.stringify(draft) === JSON.stringify(selectionDraft(session.selection));
       const problem = (isEffective && session ? effectiveProviderProblem(session.selection, state.providers) : null) ?? selectionProblem(draft, state.harnesses, state.providers); if (problem) throw new ApiError("INVALID_SELECTION", problem);
       const previous = pendingMessage.current, same = previous !== null && previous.text === value && previous.attachments.join() === ids.join();
@@ -689,7 +689,7 @@ export function App() {
     if (run === undefined || run.status !== "completed") { returnQueued(item, "上一轮没有正常结束，暂存的消息已放回输入框，没有发出。"); return; }
     if (live.status !== "open") { returnQueued(item, "这个对话现在不能接收消息，暂存的消息已放回输入框，没有发出。"); return; }
     // A selection change made after the message was held, applied or still pending, puts it back: it was written for the earlier one.
-    if (live.pendingSwitchId !== null || JSON.stringify(draft) !== JSON.stringify(selectionDraft(live.selection)) || JSON.stringify(selectionDraft(live.selection)) !== item.selection) { returnQueued(item, "所选 Harness 或模型已改变，暂存的消息已放回输入框，没有发出。"); return; }
+    if (live.pendingSwitchId !== null || JSON.stringify(draft) !== JSON.stringify(selectionDraft(live.selection)) || JSON.stringify(selectionDraft(live.selection)) !== item.selection) { returnQueued(item, "所选 Agent 或模型已改变，暂存的消息已放回输入框，没有发出。"); return; }
     setQueued(null);
     void send(item.text, item.attachments).catch((failure: unknown) => { if (mounted.current) returnQueued(item, "暂存的消息没有发出：" + errorMessage(failure) + " 已放回输入框。"); });
   }, [queued, session?.version, session?.activeRunId, mutation]);
@@ -864,7 +864,7 @@ export function App() {
     const previous = installationWrites.current.get(harness.id);
     if (previous && previous.action !== action) { setError("上一次安装请求的接收结果还未确认。请先确认原请求，再发起其他操作。"); return; }
     const controlId = harness.management.recipe?.controlId;
-    if (!controlId) { setError("这个 Harness 暂无受管安装配方。"); return; }
+    if (!controlId) { setError("这个 Agent 暂无受管安装配方。"); return; }
     // An upgrade carries what the user agreed to in its confirmation, for the installation that confirmation described (ADR-043),
     // and for a product upgraded through its documented sequence that its backup was made (ADR-052).
     const input = previous ?? { harnessId: harness.id, controlId, action, commandId: requestKey(), expectedDefaultRevision: harness.management.defaultRevision,

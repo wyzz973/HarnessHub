@@ -43,7 +43,7 @@ function LoginShellPanel({ api, onChanged }: { readonly api: GatewayApi; readonl
 
 const THEMES: readonly { readonly value: Preferences["theme"]; readonly label: string; readonly icon: typeof Sun }[] = [{ value: "system", label: "跟随系统", icon: Monitor }, { value: "light", label: "浅色", icon: Sun }, { value: "dark", label: "深色", icon: Moon }];
 /** The frozen Harnesses' switch (ADR-050), named by this label as well. */
-const FROZEN_LABEL = "显示冻结的 Harness（Cursor、Gemini CLI、Pi）";
+const FROZEN_LABEL = "显示冻结的 Agent（Cursor、Gemini CLI、Pi）";
 /**
  * Settings (ADR-042 §5, ADR-054): appearance and process display of this browser, notifications, discovery on this
  * computer, every shortcut, and where data lives. Theme and display choices apply at once and stay after a reload.
@@ -95,7 +95,7 @@ export function SettingsPage({ api, preferences, onPreference, onRescan, scannin
           <p className="m-0">这个浏览器只保存未发送的草稿（关闭标签页后清除）、显示偏好、通知开关，以及每个 Agent 上次用的入口、模型和思考档位，不保存密钥。</p>
         </div>
         <Row title="显示偏好" control={<button type="button" className="btn btn-sm" onClick={() => (Object.keys(DEFAULT_PREFERENCES) as (keyof Preferences)[]).forEach(key => onPreference(key, DEFAULT_PREFERENCES[key] as never))}>恢复默认</button>}>
-          主题、过程显示、侧栏、详情面板和冻结 Harness 的显示回到默认。</Row>
+          主题、过程显示、侧栏、详情面板和冻结 Agent 的显示回到默认。</Row>
       </Card>
     </Section>
   </PageShell>;

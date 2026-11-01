@@ -30,7 +30,7 @@ export function attachmentKind(type: string): ContentRef["kind"] {
 }
 /** Why the current selection cannot take this attachment, or null. Unknown inputs are left to the Harness to decide. */
 export function attachmentProblem(item: Pick<AttachmentDraft, "kind">, inputs: NativeInputs | undefined): string | null {
-  return inputs !== undefined && !inputs[item.kind] ? `当前 Harness 或模型不接受${KIND_LABEL[item.kind]}` : null;
+  return inputs !== undefined && !inputs[item.kind] ? `当前 Agent 或模型不接受${KIND_LABEL[item.kind]}` : null;
 }
 function KindIcon({ kind }: { kind: ContentRef["kind"] }) {
   return kind === "image" ? <Image size={13} aria-hidden="true"/> : kind === "audio" ? <AudioLines size={13} aria-hidden="true"/> : <FileText size={13} aria-hidden="true"/>;

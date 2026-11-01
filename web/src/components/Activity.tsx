@@ -161,8 +161,10 @@ const StepItem = memo(function StepItem({ step, active, loadDetail, children, fr
     {expandable ? <ChevronRight size={12} strokeWidth={2.2} className={cn("flex-none text-fg-3 opacity-0 transition-[rotate,opacity] duration-200 ease-expo group-hover/step:opacity-100 group-focus-visible/step:opacity-100 keyboard:transition-none", open && "rotate-90 opacity-100")} aria-hidden="true"/> : null}
   </>;
   const row = "group/step flex min-h-[30px] w-full min-w-0 items-center gap-[9px] rounded-row px-1.5 py-[5px] text-left text-ui-sm leading-[18px]";
+  // A step that opens tints when pointed at (Motion board #30: its background, 120 ms on the standard curve, from .row). The
+  // button's bg-transparent utility would outrank .row:hover, so the tint is a utility of its own; the focus ring is .row's.
   return <li className={cn("native-tool min-w-0", failed && "is-failed", open && "is-open", entering && "motion-row-in")}>
-    {expandable ? <button type="button" className={cn(row, "row border-none bg-transparent text-fg")} aria-expanded={open} aria-controls={panel} onClick={() => setOpen(value => !value)}
+    {expandable ? <button type="button" className={cn(row, "row border-none bg-transparent text-fg hover:bg-subtle")} aria-expanded={open} aria-controls={panel} onClick={() => setOpen(value => !value)}
       title={step.kind === "reads" ? "查看每一次读取" : "查看工具输入与输出"}>{content}</button>
       : <div className={row}>{content}</div>}
     {expandable ? <Collapsible open={open} id={panel}>

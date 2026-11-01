@@ -128,7 +128,7 @@ export function DetailsPanel(props: PanelProps) {
   const kept = session.retention?.process ?? null;
   const background = runs.flatMap(run => (run.activities ?? []).filter(activity => activity.kind === "task" || activity.kind === "subagent").map(activity => ({ run, activity })));
   const running = background.filter(item => item.activity.status === "running").length + (kept ? 1 : 0);
-  const name = (id: string | undefined) => props.harnesses.find(row => row.id === id)?.name ?? id ?? "Harness";
+  const name = (id: string | undefined) => props.harnesses.find(row => row.id === id)?.name ?? id ?? "Agent";
   // The header button's number, from the same summaries: shown at once, never waiting for a diff to be read.
   const total = changeCount(runs);
   // The step a Run's waiting approval asks for says what it wants to do here as in its Turn (ruling J).
@@ -272,7 +272,7 @@ function Process({ run, runs, onRun, describe, loadToolDetail, name, asking, wai
 }
 function Background({ session, kept, items, busy, onEndProcess, name }: { readonly session: SessionView; readonly kept: NonNullable<SessionView["retention"]>["process"] | null; readonly items: readonly { readonly run: PublicRun; readonly activity: NonNullable<PublicRun["activities"]>[number] }[]; readonly busy: boolean; readonly onEndProcess?: (() => void) | undefined; readonly name: (id: string | undefined) => string }) {
   const now = useNow(kept !== null), keeper = kept ? name(kept.harnessId) : "原程序";
-  const hint = session.retention?.enabled ? "已开启保持原生进程：下一轮结束后原程序会留在后台。" : "回合结束时原程序随之关闭。需要它在后台继续运行任务时，在输入框的高级配置里开启“保持原生进程”。";
+  const hint = session.retention?.enabled ? "已开启保持原生进程：下一轮结束后原程序会留在后台。" : "回合结束时原程序随之关闭。需要它在后台继续运行任务时，在 Agent 选择器（⌘J）底部打开“高级配置…”，开启“保持原生进程”。";
   return <div className="flex flex-col gap-3 px-4 pt-3 pb-4">
     {kept ? <div className="kept-panel flex flex-col gap-2 rounded-block bg-surface p-3 shadow-hairline">
       <div className="flex items-center gap-2"><StatusDot tone="run"/><strong className="text-ui-sm font-semibold">原生进程保留中</strong></div>
@@ -301,8 +301,8 @@ function RunFacts(props: PanelProps & { readonly run: PublicRun; readonly runs: 
     <RunPicker runs={props.runs} run={run} onRun={props.onRun}/>
     <dl className="m-0 grid grid-cols-[96px_minmax(0,1fr)] gap-x-3 gap-y-2">
       <Fact label="执行者"><span className="inline-flex items-center gap-1.5"><BrandIcon brand={run.selection.harnessId} name={harness?.name ?? run.selection.harnessId} size={16}/>{harness?.name ?? run.selection.harnessId}{version ? ` ${version}` : ""}{adapter ? ` · 接入口 ${adapter}` : ""}</span></Fact>
-      <Fact label="模型连接">{provider?.name ?? (run.selection.provider ? "Provider" : "Harness 原生连接")}</Fact>
-      {run.selection.provider ? <><Fact label="模型">{run.selection.provider.model}</Fact><Fact label="配置版本">v{run.selection.provider.revision}</Fact></>
+      <Fact label="模型连接">{provider?.name ?? (run.selection.provider ? "Provider" : "Agent 原生连接")}</Fact>
+      {run.selection.provider ? <><Fact label="模型">{run.selection.provider.model}</Fact><Fact label="配置版本">{run.selection.provider.revision}</Fact></>
         : <Fact label="模型">{run.selection.nativeModel ? <code className="text-code">{run.selection.nativeModel}</code> : "本机默认"}</Fact>}
       {options.length ? <Fact label="原生选项">{options.map(([id, value]) => `${id} ${value}`).join("、")}</Fact> : null}
       <Fact label="控制入口"><code className="text-code">{run.selection.controlId}</code></Fact>
