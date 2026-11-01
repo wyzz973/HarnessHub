@@ -2806,22 +2806,25 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
     if (path === "skill-switch") return route.fulfill({ json: check({ kind: "skill-switch", harnessId: "claude", name: "beta", enabled: true, file: settings, diff: betaDiff, fingerprint: "1".repeat(64), notes: ["Claude Code 会立即读到改动。"] }) });
     if (path === "skill-link") return route.fulfill({ json: check({ kind: "skill-link", harnessId: "claude", name: "gamma", enabled: true, file: "~/.claude/skills", diff: null, current: "none", fingerprint: "2".repeat(64),
       links: [{ path: "~/.claude/skills/gamma", target: "~/.agents/skills/gamma", action: "create" }] }) });
-    // Prepared again after beta's change wrote the same file: the lines around the change moved, the change itself did not.
+    // Prepared again after beta's change wrote the same file (the 2nd): the lines around the change moved, the change itself
+    // did not. The 4th, prepared again in the second batch, finds the plugin's line followed by another: a different change.
     pluginChecks++;
-    return route.fulfill({ json: check({ kind: "plugin-switch", harnessId: "claude", name: "tool@market", enabled: true, file: settings, fingerprint: (pluginChecks === 1 ? "3" : "4").repeat(64),
-      diff: pluginDiff(pluginChecks === 1 ? "   \"skillOverrides\": {\n    \"beta\": \"off\"\n   },\n" : "   \"skillOverrides\": {},\n"), notes: ["Claude Code 会立即读到改动。", "新开的 Claude Code 会话才读到这次插件改动。"] }) });
+    return route.fulfill({ json: check({ kind: "plugin-switch", harnessId: "claude", name: "tool@market", enabled: true, file: settings, fingerprint: (["3", "4", "7", "8"][pluginChecks - 1] ?? "9").repeat(64),
+      diff: pluginChecks === 4 ? "--- a/~/.claude/settings.json\n+++ b/~/.claude/settings.json\n@@ -4,4 +4,4 @@\n   \"enabledPlugins\": {\n-    \"tool@market\": false,\n+    \"tool@market\": true,\n     \"lone@market\": true\n"
+        : pluginDiff(pluginChecks % 2 === 1 ? "   \"skillOverrides\": {\n    \"beta\": \"off\"\n   },\n" : "   \"skillOverrides\": {},\n"), notes: ["Claude Code 会立即读到改动。", "新开的 Claude Code 会话才读到这次插件改动。"] }) });
   });
   const results: Record<string, unknown> = {
     ["1".repeat(64)]: { id: "21111111-1111-4111-8111-111111111111", kind: "skill-switch", harnessId: "claude", subject: "beta", file: settings, status: "applied", diff: betaDiff, backupId: "31111111-1111-4111-8111-111111111111", error: null, notes: ["Claude Code 会立即读到改动。"], at },
     ["4".repeat(64)]: { id: "22222222-2222-4222-8222-222222222222", kind: "plugin-switch", harnessId: "claude", subject: "tool@market", file: settings, status: "applied", diff: null, backupId: "32222222-2222-4222-8222-222222222222", error: null, notes: ["新开的 Claude Code 会话才读到这次插件改动。"], at },
     ["2".repeat(64)]: { id: "23333333-3333-4333-8333-333333333333", kind: "skill-link", harnessId: "claude", subject: "gamma", file: "~/.claude/skills", status: "applied", diff: null, backupId: null, error: null, notes: [],
       links: [{ path: "~/.claude/skills/gamma", target: "~/.agents/skills/gamma", action: "create" }], at },
+    ["8".repeat(64)]: { id: "26666666-6666-4666-8666-666666666666", kind: "plugin-switch", harnessId: "claude", subject: "tool@market", file: settings, status: "applied", diff: null, backupId: "36666666-6666-4666-8666-666666666666", error: null, notes: [], at },
     ["5".repeat(64)]: { id: "24444444-4444-4444-8444-444444444444", kind: "link-undo", harnessId: "claude", subject: "gamma", file: "~/.claude/skills", status: "applied", diff: null, backupId: null, error: null, notes: [],
       links: [{ path: "~/.claude/skills/gamma", target: "~/.agents/skills/gamma", action: "remove" }], at } };
   await page.route("**/api/v1/capabilities/changes", route => {
     const body = route.request().postDataJSON() as { fingerprint: string }; posted.push(body.fingerprint);
     // The plugin's first check was read before beta's change wrote the same file: the Gateway refuses it, as it does.
-    if (body.fingerprint === "3".repeat(64)) return route.fulfill({ status: 409, json: { code: "CAPABILITY_TARGET_CHANGED", message: "文件在确认之后被改动过，没有写入；请重新检查" } });
+    if (body.fingerprint === "3".repeat(64) || body.fingerprint === "7".repeat(64)) return route.fulfill({ status: 409, json: { code: "CAPABILITY_TARGET_CHANGED", message: "文件在确认之后被改动过，没有写入；请重新检查" } });
     history = { ...history, changes: [results[body.fingerprint], ...history.changes] };
     return route.fulfill({ json: results[body.fingerprint] });
   });
@@ -2940,6 +2943,23 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
   assert.ok(requests.includes("backups/31111111-1111-4111-8111-111111111111/restore") && requests.includes("changes/23333333-3333-4333-8333-333333333333/undo"));
   await expect(result).toContainText("已撤销这次写入，改回了 2 个文件"); await expect(written).toBeHidden();
 
+  // A stale check that, prepared again, makes a different change stops the writing: the new lines are shown and only
+  // written once the user confirms again.
+  await tabs.getByRole("tab", { name: "技能 3", exact: true }).click(); await beta.click();
+  await tabs.getByRole("tab", { name: "插件 1", exact: true }).click(); await plugin.click();
+  await expect(bar).toContainText("已选 2 处 · 会改 1 个文件");
+  await bar.getByRole("button", { name: "预览写入", exact: true }).click();
+  const again = page.getByRole("dialog", { name: "写入 1 个文件" }), second = again.locator(".capability-write-item").filter({ hasText: "启用插件 tool@market" });
+  await again.getByRole("button", { name: "写入", exact: true }).click();
+  await expect(again.locator(".write-changed")).toHaveText("写入前一项后，这一项的改动变成了下面这样，请再看一遍。");
+  await expect(second.locator(".capability-diff .text-green")).toHaveText(["+    \"tool@market\": true,"]);
+  await expect(again.locator(".capability-write-item").filter({ hasText: "启用 beta" })).toContainText("已写入");
+  assert.deepEqual(posted.slice(-2), ["1".repeat(64), "7".repeat(64)], "nothing more is sent until the new change is confirmed");
+  await page.screenshot({ path: join(artifact, "dl8-capabilities-changed-light-1440.png"), animations: "disabled" });
+  await again.getByRole("button", { name: "继续写入", exact: true }).click(); await expect(again).toBeHidden();
+  assert.equal(posted.at(-1), "8".repeat(64)); assert.equal(pluginChecks, 4);
+  await expect(written).toContainText("已写入 1 个文件");
+
   // With reduced motion a pressed cell does not shrink, the ring and the plus change at once, and the bar only fades (ADR-054 §3).
   await page.emulateMedia({ reducedMotion: "reduce" });
   await tabs.getByRole("tab", { name: "技能 3", exact: true }).click();
@@ -2962,9 +2982,10 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
   const darkPreview = page.getByRole("dialog", { name: "写入 1 个文件" });
   await expect(darkPreview.locator(".capability-diff .text-red")).toHaveText(["-    \"beta\": \"off\""]); await expect(darkPreview).toHaveCSS("opacity", "1");
   await page.screenshot({ path: join(artifact, "dl8-capabilities-preview-dark-1440.png"), animations: "disabled" });
+  const sent = posted.length;
   await darkPreview.getByRole("button", { name: "取消", exact: true }).click(); await expect(darkPreview).toBeHidden();
   await expect(bar).toContainText("已选 1 处 · 会改 1 个文件");
-  assert.equal(posted.at(-1), "5".repeat(64), "cancelling the preview writes nothing");
+  assert.equal(posted.length, sent, "cancelling the preview writes nothing");
   for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme });
     for (const width of [390, 320]) {
@@ -2975,8 +2996,8 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
       await page.screenshot({ path: join(artifact, `dl8-capabilities-${scheme}-${width}.png`), animations: "disabled" });
     }
   }
-  // The one error the browser logs is the Gateway's refusal of the stale check, which the page answered by checking again.
-  assert.deepEqual(errors, ["Failed to load resource: the server responded with a status of 409 (Conflict)"]);
+  // The only errors the browser logs are the Gateway's refusals of the two stale checks, which the page answered by checking again.
+  assert.deepEqual(errors, Array(2).fill("Failed to load resource: the server responded with a status of 409 (Conflict)"));
 });
 
 test("G054-FZ1the frozen Harnesses stay out of the picker, the welcome, the palette and my Agents until the settings show them, and a conversation on one still opens with its choice (ADR-050)", { timeout: 120000 }, async t => {
