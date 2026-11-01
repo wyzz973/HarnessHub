@@ -2365,7 +2365,7 @@ test("G054-DL9 the application's shortcuts open what they name, ⌥⌘↓ goes t
   assert.deepEqual(errors, []);
 });
 
-test("G054-FR6 the chosen theme applies before the first paint and survives reload, dark pages fit narrow screens, and reduced motion stops transitions", { timeout: 120000 }, async t => {
+test("G054-FR6 the chosen theme applies before the first paint and survives reload, dark pages fit narrow screens, and reduced motion and the keyboard stop transitions", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
@@ -2404,6 +2404,24 @@ test("G054-FR6 the chosen theme applies before the first paint and survives relo
     }
     await page.setViewportSize({ width: 1280, height: 900 });
   }
+  // ADR-054 §3 for the classes that carry motion: the longest transition of each, in ms. A chevron turns on the `rotate`
+  // property that rotate-90 sets: the moment the angle changes, it still shows the old one.
+  const motions = () => page.evaluate(() => {
+    const holder = document.createElement("div"), longest = (node: Element) => Math.max(...getComputedStyle(node).transitionDuration.split(",").map(part => parseFloat(part) * (part.trim().endsWith("ms") ? 1 : 1000)));
+    holder.innerHTML = "<div class='motion-rotate'></div><div class='collapsible' data-open='true'></div><div class='backdrop'></div><div class='floating-bar'></div>";
+    document.body.append(holder);
+    const [chevron, collapsible, veil, bar] = [...holder.children], from = getComputedStyle(chevron!).rotate; chevron!.classList.add("rotate-90");
+    const result = {
+      chevron: [getComputedStyle(chevron!).transitionProperty, longest(chevron!), from, getComputedStyle(chevron!).rotate], collapsible: longest(collapsible!),
+      veil: [getComputedStyle(veil!).transitionProperty, longest(veil!)], bar: [getComputedStyle(bar!).transitionProperty, longest(bar!)] };
+    holder.remove(); return result;
+  });
+  const pointer = await motions();
+  assert.notEqual(pointer.chevron[3], "90deg", "a chevron turns instead of jumping");
+  assert.deepEqual({ ...pointer, chevron: pointer.chevron.slice(0, 3) }, { chevron: ["rotate", 200, "none"], collapsible: 200, veil: ["opacity", 200], bar: ["opacity, transform", 300] });
+  // #37: from the keyboard the same changes are instant.
+  await page.keyboard.press("Shift");
+  assert.deepEqual(await motions(), { chevron: ["rotate", 0, "none", "90deg"], collapsible: 0, veil: ["opacity", 0], bar: ["opacity, transform", 0] });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.keyboard.press("ControlOrMeta+K");
   // With reduced motion only fades of 150 ms or less remain (ADR-054 §3); the palette, opened from the keyboard, appears at once.
@@ -2420,6 +2438,8 @@ test("G054-FR6 the chosen theme applies before the first paint and survives relo
   });
   assert.deepEqual([popover.input, popover.properties, popover.transform, popover.animation], ["pointer", "opacity", "none", "none"]);
   assert.ok(popover.durations.every(value => value <= 150) && popover.durations.some(value => value > 0), "a popover only fades, within 150 ms: " + popover.durations.join(","));
+  // #38 with the pointer: the chevron and the collapsible change at once, the veil and the bar only fade.
+  assert.deepEqual(await motions(), { chevron: ["rotate", 0, "none", "90deg"], collapsible: 0, veil: ["opacity", 120], bar: ["opacity", 120] });
   await page.getByRole("radio", { name: /跟随系统/u }).click();
   await expect(page.locator("html")).not.toHaveAttribute("data-theme", /.+/u);
   // No request went to Google Fonts while the pages above were shown.

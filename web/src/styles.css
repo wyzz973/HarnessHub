@@ -319,8 +319,8 @@
   /* #36 A new item at the top of a list: its height opens while it fades in; the child needs min-height: 0 */
   .motion-list-insert { display: grid; animation: hh-list-insert var(--dur-base) var(--ease-expo) both; }
   .motion-list-insert > * { min-height: 0; overflow: hidden; }
-  /* #18 / #22 Chevrons turn with the expand curve; the caller sets the angle */
-  .motion-rotate { transition: transform var(--dur-base) var(--ease-expo); }
+  /* #18 / #22 Chevrons turn with the expand curve; the caller sets the angle with rotate-90 or rotate-180, the `rotate` property */
+  .motion-rotate { transition: rotate var(--dur-base) var(--ease-expo); }
   /* #16 / #17 Send ⇄ stop: the icon turns through 96° and lifts 2.5 px; the glyphs cross-fade */
   .send-stop { position: relative; display: inline-flex; width: 1em; height: 1em; align-items: center; justify-content: center; }
   .send-stop[data-morph="stop"] { animation: hh-send-to-stop 480ms var(--ease-panel) both; }
@@ -608,7 +608,7 @@
  * Important declarations in the base layer outrank those of later layers, so this also wins over the reduced-motion fades.
  */
 @layer base {
-  :root[data-input="keyboard"] :is(.surface-pop, .tooltip-pop, .backdrop, .dialog-pop, .palette-pop, .drawer-pop, .drawer-left-pop, .sheet-pop, .tabs-indicator, .segmented-thumb, .switch, .switch-thumb, .collapsible, .floating-bar, .btn, .press) {
+  :root[data-input="keyboard"] :is(.surface-pop, .tooltip-pop, .backdrop, .dialog-pop, .palette-pop, .drawer-pop, .drawer-left-pop, .sheet-pop, .tabs-indicator, .segmented-thumb, .switch, .switch-thumb, .collapsible, .motion-rotate, .floating-bar, .btn, .press) {
     transition-duration: 0s !important;
   }
   :root[data-input="keyboard"] :is(.btn, .press):active { transform: none !important; }
