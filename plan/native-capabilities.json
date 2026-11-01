@@ -852,7 +852,7 @@
     {
       "id": "opencode",
       "name": "OpenCode",
-      "installation": "OpenCode 真实验收版本 1.18.35（Homebrew anomalyco/tap，本机原配置；版本只作证据，OpenCode 1 线最新版 1.19.3 的验收待用户升级）",
+      "installation": "OpenCode 真实验收版本 2.2.5（OpenCode 2，homebrew/core 的 opencode；2026-11-01 之前：OpenCode 1 的 1.18.35（anomalyco/tap），其记录只作证据；版本只作证据（ADR-053））",
       "control": "acp-v1（opencode acp）",
       "tier": "focus",
       "capabilities": {
@@ -864,7 +864,8 @@
           "real": "partial",
           "evidence": [
             "docs/verification/native-models-2026-10-11.md",
-            ".tmp/cc-native-resume-batch1.json"
+            ".tmp/cc-native-resume-batch1.json",
+            "docs/verification/opencode-latest-2026-11-01.md"
           ],
           "note": "默认 opencode/big-pickle 真实生成；原生接口选择 opencode/exo-free 已生效但未生成"
         },
@@ -887,7 +888,8 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-native-options-opencode.json",
-            "docs/verification/native-options-2026-10-11.md"
+            "docs/verification/native-options-2026-10-11.md",
+            "docs/verification/opencode-latest-2026-11-01.md"
           ],
           "note": "mode=plan 真实生效：原生回报 plan，要求修改文件的回合未改动文件"
         },
@@ -899,9 +901,10 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-native-options-opencode-init.json",
-            "docs/verification/native-options-2026-10-11.md"
+            "docs/verification/native-options-2026-10-11.md",
+            "docs/verification/opencode-latest-2026-11-01.md"
           ],
-          "note": "目录真实读取 104 条；/init 作为原生命令执行并生成 AGENTS.md；未知 / 开头文本会被原程序丢弃"
+          "note": "目录真实读取 104 条；/init 作为原生命令执行并生成 AGENTS.md；未知 / 开头文本会被原程序丢弃；2026-11-01（2.2.5）：/compact 由 OpenCode 2 自己宣告（Hub 不再补入）；/init 被接受但没有生成 AGENTS.md"
         },
         "config-sync": {
           "native": "unknown",
@@ -920,7 +923,8 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-native-thinking-opencode.json",
-            "docs/verification/native-thinking-2026-10-11.md"
+            "docs/verification/native-thinking-2026-10-11.md",
+            "docs/verification/opencode-latest-2026-11-01.md"
           ],
           "note": "推理题的思考内容记录在 Run 上，不混入回复"
         },
@@ -932,7 +936,8 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-native-activity-opencode.json",
-            "docs/verification/native-activity-2026-10-11.md"
+            "docs/verification/native-activity-2026-10-11.md",
+            "docs/verification/opencode-latest-2026-11-01.md"
           ],
           "note": "命令、读取、编辑与 todowrite 真实回合"
         },
@@ -944,7 +949,8 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-native-activity-opencode.json",
-            "docs/verification/native-activity-2026-10-11.md"
+            "docs/verification/native-activity-2026-10-11.md",
+            "docs/verification/opencode-latest-2026-11-01.md"
           ],
           "note": "命令/读取/编辑详情与差异真实存储；标题为原程序给出的路径"
         },
@@ -978,9 +984,10 @@
           "evidence": [
             ".tmp/cc-native-activity-opencode-approval.json",
             "docs/verification/native-activity-2026-10-11.md",
-            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md",
+            "docs/verification/opencode-latest-2026-11-01.md"
           ],
-          "note": "工作区级 opencode.json 要求询问时真实审批（允许一次）；批准编辑后原程序调用未宣告的 fs/write_text_file，Hub 回 -32601 并留审计行，编辑仍由原程序完成；审批卡显示命令或将要修改的差异"
+          "note": "工作区级 opencode.json 要求询问时真实审批（允许一次）；批准编辑后原程序调用未宣告的 fs/write_text_file，Hub 回 -32601 并留审计行，编辑仍由原程序完成；审批卡显示命令或将要修改的差异；2026-11-01（2.2.5）：命令与编辑各请求一次审批（once/always/reject），允许一次后完成"
         },
         "questions": {
           "native": "unknown",
@@ -1000,9 +1007,10 @@
           "evidence": [
             ".tmp/cc-native-attachments-opencode-vision.json",
             ".tmp/cc-native-attachments-opencode-openclaw.json",
-            "docs/verification/native-attachments-2026-10-11.md"
+            "docs/verification/native-attachments-2026-10-11.md",
+            "docs/verification/opencode-latest-2026-11-01.md"
           ],
-          "note": "代理级声明再按 opencode models --verbose 的模型输入细化；mimo-v2.6-flash-free 真实识别图片，默认 big-pickle 在派发前拒绝"
+          "note": "代理级声明再按 opencode models --verbose 的模型输入细化；mimo-v2.6-flash-free 真实识别图片，默认 big-pickle 在派发前拒绝；2026-11-01（2.2.5）：opencode/mimo-v2.6-flash-free 识图答出颜色；默认 big-pickle 不识图；V2 没有 models --verbose，Hub 只试一次后退回代理声明"
         },
         "input-audio": {
           "native": "no",
@@ -1022,7 +1030,8 @@
           "evidence": [
             ".tmp/cc-native-attachments-opencode-vision.json",
             ".tmp/cc-native-attachments-opencode-openclaw.json",
-            "docs/verification/native-attachments-2026-10-11.md"
+            "docs/verification/native-attachments-2026-10-11.md",
+            "docs/verification/opencode-latest-2026-11-01.md"
           ],
           "note": "小文本以嵌入资源发送；模型主动读取工作区外副本时原程序请求外部目录审批"
         },
@@ -1041,8 +1050,10 @@
           "hub": "partial",
           "protocol": "pass",
           "real": "none",
-          "evidence": [],
-          "note": "通过原生命令执行"
+          "evidence": [
+            "docs/verification/opencode-latest-2026-11-01.md"
+          ],
+          "note": "通过原生命令执行；2026-11-01（2.2.5）：discoverExtensions 为 null，没有列表证据"
         },
         "mcp": {
           "native": "yes",
@@ -1050,8 +1061,10 @@
           "hub": "partial",
           "protocol": "none",
           "real": "none",
-          "evidence": [],
-          "note": "原程序加载；Hub 无状态界面"
+          "evidence": [
+            "docs/verification/opencode-latest-2026-11-01.md"
+          ],
+          "note": "原程序加载；Hub 无状态界面；2026-11-01（2.2.5）：discoverExtensions 为 null，没有列表证据"
         },
         "plugins": {
           "native": "yes",
@@ -1059,8 +1072,10 @@
           "hub": "partial",
           "protocol": "none",
           "real": "none",
-          "evidence": [],
-          "note": "原程序加载；Hub 无管理界面"
+          "evidence": [
+            "docs/verification/opencode-latest-2026-11-01.md"
+          ],
+          "note": "原程序加载；Hub 无管理界面；2026-11-01（2.2.5）：discoverExtensions 为 null，没有列表证据"
         },
         "resume": {
           "native": "yes",
@@ -1072,7 +1087,8 @@
             ".tmp/cc-native-resume-batch1.json",
             ".tmp/cc-opencode-native-resume.json",
             ".tmp/cc-native-resume-commands-2026-10-12.json",
-            "docs/verification/native-capabilities-round2-2026-10-11.md"
+            "docs/verification/native-capabilities-round2-2026-10-11.md",
+            "docs/verification/opencode-latest-2026-11-01.md"
           ],
           "note": "在原程序中继续：`opencode -s <id>`（help 确认），以 `opencode run -s <id> \"…\"` 真实验证答出标记（ADR-039）"
         },
@@ -1084,7 +1100,8 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-native-import-opencode.json",
-            "docs/verification/native-session-import-2026-10-11.md"
+            "docs/verification/native-session-import-2026-10-11.md",
+            "docs/verification/opencode-latest-2026-11-01.md"
           ],
           "note": "通用 ACP 实现；opencode run 在新工作区创建的会话被列出、接续并答出标记"
         },
@@ -1096,7 +1113,8 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-native-branch-codex-acp.json",
-            "docs/verification/native-branch-2026-10-11.md"
+            "docs/verification/native-branch-2026-10-11.md",
+            "docs/verification/opencode-latest-2026-11-01.md"
           ],
           "note": "session/fork 建立原生副本，复制历史的回放不归属；更早位置以公共历史分支"
         },
@@ -1107,9 +1125,10 @@
           "protocol": "pass",
           "real": "pass",
           "evidence": [
-            "docs/verification/opencode-compact-2026-10-22.md"
+            "docs/verification/opencode-compact-2026-10-22.md",
+            "docs/verification/opencode-latest-2026-11-01.md"
           ],
-          "note": "OpenCode 的 ACP 命令目录不列出压缩命令；Hub 在目录未列出时对任何版本补入 /compact 并原样转发，回合没有任何回复、工具或活动时判为原程序没有执行（NATIVE_COMMAND_IGNORED；ADR-053、G032-NC24）；2026-10-22 真实回合：压缩完成并以回复文本交回，压缩后仍记得先前事实，没有压缩活动"
+          "note": "OpenCode 的 ACP 命令目录不列出压缩命令；Hub 在目录未列出时对任何版本补入 /compact 并原样转发，回合没有任何回复、工具或活动时判为原程序没有执行（NATIVE_COMMAND_IGNORED；ADR-053、G032-NC24）；2026-10-22 真实回合：压缩完成并以回复文本交回，压缩后仍记得先前事实，没有压缩活动；2026-11-01（2.2.5）：V2 内置 compact，压缩后仍记得先前事实"
         },
         "rollback": {
           "native": "unknown",

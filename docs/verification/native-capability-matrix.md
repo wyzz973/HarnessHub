@@ -120,33 +120,33 @@
 
 ## OpenCode
 
-原安装：OpenCode 真实验收版本 1.18.35（Homebrew anomalyco/tap，本机原配置；版本只作证据，OpenCode 1 线最新版 1.19.3 的验收待用户升级）；控制入口：acp-v1（opencode acp）；分层：焦点。
+原安装：OpenCode 真实验收版本 2.2.5（OpenCode 2，homebrew/core 的 opencode；2026-11-01 之前：OpenCode 1 的 1.18.35（anomalyco/tap），其记录只作证据；版本只作证据（ADR-053））；控制入口：acp-v1（opencode acp）；分层：焦点。
 
 | 能力 | 原接口 | 来源 | Hub | 协议 | 真实原安装 | 证据 | 说明 |
 |---|---|---|---|---|---|---|---|
-| 模型目录与选择 | 具备 | configOptions model(provider/model) | 已接出 | 通过 | 部分通过 | docs/verification/native-models-2026-10-11.md；.tmp/cc-native-resume-batch1.json | 默认 opencode/big-pickle 真实生成；原生接口选择 opencode/exo-free 已生效但未生成 |
+| 模型目录与选择 | 具备 | configOptions model(provider/model) | 已接出 | 通过 | 部分通过 | docs/verification/native-models-2026-10-11.md；.tmp/cc-native-resume-batch1.json；docs/verification/opencode-latest-2026-11-01.md | 默认 opencode/big-pickle 真实生成；原生接口选择 opencode/exo-free 已生效但未生成 |
 | 思考档位 | 具备 | configOptions effort（仅模型有 variants 时） | 已接出 | 通过 | 受阻 | docs/verification/native-options-2026-10-11.md | 本机 OpenCode 模型均无思考档位变体（effort 选项只在有变体的模型上出现），无法真实验收 |
-| 模式与原生设置 | 具备 | configOptions mode(build/plan) | 已接出 | 通过 | 通过 | .tmp/cc-native-options-opencode.json；docs/verification/native-options-2026-10-11.md | mode=plan 真实生效：原生回报 plan，要求修改文件的回合未改动文件 |
-| 原生命令目录与执行 | 具备 | available_commands_update（init/review、配置命令、MCP prompt、skills） | 已接出 | 通过 | 通过 | .tmp/cc-native-options-opencode-init.json；docs/verification/native-options-2026-10-11.md | 目录真实读取 104 条；/init 作为原生命令执行并生成 AGENTS.md；未知 / 开头文本会被原程序丢弃 |
+| 模式与原生设置 | 具备 | configOptions mode(build/plan) | 已接出 | 通过 | 通过 | .tmp/cc-native-options-opencode.json；docs/verification/native-options-2026-10-11.md；docs/verification/opencode-latest-2026-11-01.md | mode=plan 真实生效：原生回报 plan，要求修改文件的回合未改动文件 |
+| 原生命令目录与执行 | 具备 | available_commands_update（init/review、配置命令、MCP prompt、skills） | 已接出 | 通过 | 通过 | .tmp/cc-native-options-opencode-init.json；docs/verification/native-options-2026-10-11.md；docs/verification/opencode-latest-2026-11-01.md | 目录真实读取 104 条；/init 作为原生命令执行并生成 AGENTS.md；未知 / 开头文本会被原程序丢弃；2026-11-01（2.2.5）：/compact 由 OpenCode 2 自己宣告（Hub 不再补入）；/init 被接受但没有生成 AGENTS.md |
 | 原生命令改配置后的同步 | 未核实 | 1.18.35 只在客户端 session/set_config_option（model）后发送 config_option_update；未发现原生命令修改设置后的宣告 | 未接出 | 未接出 | 未接出 | — | 若它宣告设置变化，通用 ACP 机制（ADR-028）会同样记录并沿用；未确认，不计为已接出 |
-| 思考输出 | 具备 | agent_thought_chunk | 已接出 | 通过 | 通过 | .tmp/cc-native-thinking-opencode.json；docs/verification/native-thinking-2026-10-11.md | 推理题的思考内容记录在 Run 上，不混入回复 |
-| 工具状态 | 具备 | tool_call/tool_call_update | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-opencode.json；docs/verification/native-activity-2026-10-11.md | 命令、读取、编辑与 todowrite 真实回合 |
-| 工具输入/输出/差异 | 具备 | rawInput/rawOutput、diff、图片附件 | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-opencode.json；docs/verification/native-activity-2026-10-11.md | 命令/读取/编辑详情与差异真实存储；标题为原程序给出的路径 |
+| 思考输出 | 具备 | agent_thought_chunk | 已接出 | 通过 | 通过 | .tmp/cc-native-thinking-opencode.json；docs/verification/native-thinking-2026-10-11.md；docs/verification/opencode-latest-2026-11-01.md | 推理题的思考内容记录在 Run 上，不混入回复 |
+| 工具状态 | 具备 | tool_call/tool_call_update | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-opencode.json；docs/verification/native-activity-2026-10-11.md；docs/verification/opencode-latest-2026-11-01.md | 命令、读取、编辑与 todowrite 真实回合 |
+| 工具输入/输出/差异 | 具备 | rawInput/rawOutput、diff、图片附件 | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-opencode.json；docs/verification/native-activity-2026-10-11.md；docs/verification/opencode-latest-2026-11-01.md | 命令/读取/编辑详情与差异真实存储；标题为原程序给出的路径 |
 | 计划 | 不提供 | 不发送 plan 更新 | 不适用 | 不适用 | 不适用 | — | 原程序 todowrite 以工具（N todos）显示，不发 ACP plan |
 | 用量/上下文/费用 | 具备 | 每轮 usage_update {used,size,cost}、PromptResponse.usage | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-opencode.json；docs/verification/native-activity-2026-10-11.md | 本轮 token、上下文与会话累计费用（原程序报告） |
-| 工具审批 | 具备 | session/request_permission(once/always/reject) | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-opencode-approval.json；docs/verification/native-activity-2026-10-11.md；docs/verification/claude-real-and-approval-detail-2026-10-11.md | 工作区级 opencode.json 要求询问时真实审批（允许一次）；批准编辑后原程序调用未宣告的 fs/write_text_file，Hub 回 -32601 并留审计行，编辑仍由原程序完成；审批卡显示命令或将要修改的差异 |
+| 工具审批 | 具备 | session/request_permission(once/always/reject) | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-opencode-approval.json；docs/verification/native-activity-2026-10-11.md；docs/verification/claude-real-and-approval-detail-2026-10-11.md；docs/verification/opencode-latest-2026-11-01.md | 工作区级 opencode.json 要求询问时真实审批（允许一次）；批准编辑后原程序调用未宣告的 fs/write_text_file，Hub 回 -32601 并留审计行，编辑仍由原程序完成；审批卡显示命令或将要修改的差异；2026-11-01（2.2.5）：命令与编辑各请求一次审批（once/always/reject），允许一次后完成 |
 | 原生提问与表单 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
-| 图片输入 | 具备 | promptCapabilities.image | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-opencode-vision.json；.tmp/cc-native-attachments-opencode-openclaw.json；docs/verification/native-attachments-2026-10-11.md | 代理级声明再按 opencode models --verbose 的模型输入细化；mimo-v2.6-flash-free 真实识别图片，默认 big-pickle 在派发前拒绝 |
+| 图片输入 | 具备 | promptCapabilities.image | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-opencode-vision.json；.tmp/cc-native-attachments-opencode-openclaw.json；docs/verification/native-attachments-2026-10-11.md；docs/verification/opencode-latest-2026-11-01.md | 代理级声明再按 opencode models --verbose 的模型输入细化；mimo-v2.6-flash-free 真实识别图片，默认 big-pickle 在派发前拒绝；2026-11-01（2.2.5）：opencode/mimo-v2.6-flash-free 识图答出颜色；默认 big-pickle 不识图；V2 没有 models --verbose，Hub 只试一次后退回代理声明 |
 | 音频输入 | 不提供 | 未声明 audio | 不适用 | 不适用 | 不适用 | — | — |
-| 文件/文档输入 | 具备 | promptCapabilities.embeddedContext | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-opencode-vision.json；.tmp/cc-native-attachments-opencode-openclaw.json；docs/verification/native-attachments-2026-10-11.md | 小文本以嵌入资源发送；模型主动读取工作区外副本时原程序请求外部目录审批 |
+| 文件/文档输入 | 具备 | promptCapabilities.embeddedContext | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-opencode-vision.json；.tmp/cc-native-attachments-opencode-openclaw.json；docs/verification/native-attachments-2026-10-11.md；docs/verification/opencode-latest-2026-11-01.md | 小文本以嵌入资源发送；模型主动读取工作区外副本时原程序请求外部目录审批 |
 | 非文本输出 | 部分 | 工具结果中的图片附件；回放中的图片/资源 | 已接出 | 通过 | 未接出 | — | ACP 非文本块进入产物；真实未验收 |
-| Skills | 具备 | skills 出现在原生命令目录 | 部分 | 通过 | 未接出 | — | 通过原生命令执行 |
-| MCP | 具备 | 用户 MCP 配置按原程序加载 | 部分 | 未接出 | 未接出 | — | 原程序加载；Hub 无状态界面 |
-| 插件/扩展 | 具备 | 插件按原配置加载 | 部分 | 未接出 | 未接出 | — | 原程序加载；Hub 无管理界面 |
-| 原生会话恢复 | 具备 | session/resume（不回放）；跨 Hub 进程重启 | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；.tmp/cc-opencode-native-resume.json；.tmp/cc-native-resume-commands-2026-10-12.json；docs/verification/native-capabilities-round2-2026-10-11.md | 在原程序中继续：`opencode -s <id>`（help 确认），以 `opencode run -s <id> "…"` 真实验证答出标记（ADR-039） |
-| 原生会话列表/接续 | 具备 | session/list（每页 100，根会话）、session/load 回放全部历史 | 已接出 | 通过 | 通过 | .tmp/cc-native-import-opencode.json；docs/verification/native-session-import-2026-10-11.md | 通用 ACP 实现；opencode run 在新工作区创建的会话被列出、接续并答出标记 |
-| 原生分支 | 具备 | session/fork | 已接出 | 通过 | 通过 | .tmp/cc-native-branch-codex-acp.json；docs/verification/native-branch-2026-10-11.md | session/fork 建立原生副本，复制历史的回放不归属；更早位置以公共历史分支 |
-| 上下文压缩 | 具备 | /compact 原生命令；ACP 模块接受目录未列出的 compact（调用 session.summarize；1.0.0–1.19.3 与 2.x 的已发布版本都处理，1.16–1.19 对不认识的 / 文本静默丢弃） | 已接出 | 通过 | 通过 | docs/verification/opencode-compact-2026-10-22.md | OpenCode 的 ACP 命令目录不列出压缩命令；Hub 在目录未列出时对任何版本补入 /compact 并原样转发，回合没有任何回复、工具或活动时判为原程序没有执行（NATIVE_COMMAND_IGNORED；ADR-053、G032-NC24）；2026-10-22 真实回合：压缩完成并以回复文本交回，压缩后仍记得先前事实，没有压缩活动 |
+| Skills | 具备 | skills 出现在原生命令目录 | 部分 | 通过 | 未接出 | docs/verification/opencode-latest-2026-11-01.md | 通过原生命令执行；2026-11-01（2.2.5）：discoverExtensions 为 null，没有列表证据 |
+| MCP | 具备 | 用户 MCP 配置按原程序加载 | 部分 | 未接出 | 未接出 | docs/verification/opencode-latest-2026-11-01.md | 原程序加载；Hub 无状态界面；2026-11-01（2.2.5）：discoverExtensions 为 null，没有列表证据 |
+| 插件/扩展 | 具备 | 插件按原配置加载 | 部分 | 未接出 | 未接出 | docs/verification/opencode-latest-2026-11-01.md | 原程序加载；Hub 无管理界面；2026-11-01（2.2.5）：discoverExtensions 为 null，没有列表证据 |
+| 原生会话恢复 | 具备 | session/resume（不回放）；跨 Hub 进程重启 | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；.tmp/cc-opencode-native-resume.json；.tmp/cc-native-resume-commands-2026-10-12.json；docs/verification/native-capabilities-round2-2026-10-11.md；docs/verification/opencode-latest-2026-11-01.md | 在原程序中继续：`opencode -s <id>`（help 确认），以 `opencode run -s <id> "…"` 真实验证答出标记（ADR-039） |
+| 原生会话列表/接续 | 具备 | session/list（每页 100，根会话）、session/load 回放全部历史 | 已接出 | 通过 | 通过 | .tmp/cc-native-import-opencode.json；docs/verification/native-session-import-2026-10-11.md；docs/verification/opencode-latest-2026-11-01.md | 通用 ACP 实现；opencode run 在新工作区创建的会话被列出、接续并答出标记 |
+| 原生分支 | 具备 | session/fork | 已接出 | 通过 | 通过 | .tmp/cc-native-branch-codex-acp.json；docs/verification/native-branch-2026-10-11.md；docs/verification/opencode-latest-2026-11-01.md | session/fork 建立原生副本，复制历史的回放不归属；更早位置以公共历史分支 |
+| 上下文压缩 | 具备 | /compact 原生命令；ACP 模块接受目录未列出的 compact（调用 session.summarize；1.0.0–1.19.3 与 2.x 的已发布版本都处理，1.16–1.19 对不认识的 / 文本静默丢弃） | 已接出 | 通过 | 通过 | docs/verification/opencode-compact-2026-10-22.md；docs/verification/opencode-latest-2026-11-01.md | OpenCode 的 ACP 命令目录不列出压缩命令；Hub 在目录未列出时对任何版本补入 /compact 并原样转发，回合没有任何回复、工具或活动时判为原程序没有执行（NATIVE_COMMAND_IGNORED；ADR-053、G032-NC24）；2026-10-22 真实回合：压缩完成并以回复文本交回，压缩后仍记得先前事实，没有压缩活动；2026-11-01（2.2.5）：V2 内置 compact，压缩后仍记得先前事实 |
 | 回滚/回退 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
 | 子 Agent | 具备 | 子会话（task 子 Agent）权限请求 | 未接出 | 未接出 | 未接出 | — | task 子 Agent 的子会话工具不经 ACP 转发；子会话的权限请求被原程序丢弃（原程序限制） |
 | 后台任务 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
