@@ -93,6 +93,28 @@ async function showFrozenHarnesses(page: Page): Promise<void> {
   const toggle = page.getByRole("switch", { name: FROZEN_SWITCH });
   await toggle.click(); await expect(toggle).toBeChecked();
 }
+/**
+ * Opens the composer's advanced settings (控制入口、原生选项与后台进程) as a user does since ruling R2: from the footer of
+ * the Agent list, which closes as the panel opens.
+ */
+async function openAdvanced(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click();
+  await page.getByRole("button", { name: "高级配置…", exact: true }).click();
+  // Fully in, so that a screenshot taken next shows it whole.
+  await expect(page.locator(".composer-settings-panel")).toHaveCSS("opacity", "1");
+}
+/** Opens the Agent's read-only skills, MCP servers and plugins from the footer of the Agent list (ruling R2). */
+async function openExtensions(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click();
+  await page.getByRole("button", { name: "查看技能与扩展…", exact: true }).click();
+  await expect(page.locator(".native-extensions")).toHaveCSS("opacity", "1");
+}
+/** Opens the Agent's own sessions in this workspace from the composer's "+" menu (ruling R2). */
+async function openNativeSessions(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "添加文件或上下文", exact: true }).click();
+  await page.getByRole("menuitem", { name: "继续原程序的会话…", exact: true }).click();
+  await expect(page.locator(".native-sessions")).toHaveCSS("opacity", "1");
+}
 
 test("real browser validates Provider management, public chat switching, cancellation and responsive layouts", { timeout: 120000 }, async t => {
   const fixture = await launchFixture();
@@ -270,11 +292,20 @@ test("real browser validates Provider management, public chat switching, cancell
   await page.getByRole("button", { name: "保存修改", exact: true }).click();
   await expect(page.getByRole("heading", { name: "工作模型 B", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "返回对话", exact: true }).click();
-  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  // The newer version of the connection in use waits in the advanced settings: its amber dot is on the Agent part of the
+  // merged picker, and on 高级配置… in the Agent list's footer (ruling R2), each described in words.
+  const agentPart = page.getByRole("button", { name: "选择 Agent", exact: true }), newer = "所选模型连接有新的配置版本，可以在高级配置里改用";
+  await expect(agentPart.locator(".outdated-dot")).toBeVisible(); await expect(agentPart).toHaveAccessibleDescription(newer);
+  await agentPart.click();
+  const advanced = page.getByRole("button", { name: "高级配置…", exact: true });
+  await expect(advanced).toHaveAccessibleDescription(newer); await expect(page.locator(".picker-popover")).toHaveCSS("opacity", "1");
+  await page.screenshot({ path: join(artifact, "outdated-connection.png"), animations: "disabled" });
+  await advanced.click();
   await expect(page.getByRole("button", { name: "使用最新 v2", exact: true })).toBeVisible();
   current = await snapshot(); assert.equal(current.selection.provider.revision, 1);
   await page.getByRole("button", { name: "使用最新 v2", exact: true }).click();
   await page.getByRole("button", { name: "收起高级配置", exact: true }).click();
+  await expect(agentPart.locator(".outdated-dot")).toHaveCount(0); await expect(agentPart).not.toHaveAccessibleDescription(newer);
   await pick("选择模型", "model-b2");
   await composer.fill("第三轮使用新版本"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
   await expect(log).toContainText("已由 model-b2 处理");
@@ -638,7 +669,7 @@ test("native settings switch without Apply and approvals survive refresh or canc
   await expect.poll(async () => (await current()).runs[4]?.status).toBe("cancelled");
   await expect(approval).toHaveCount(0); assert.equal((await current()).status, "open");
   const beforeBranch = await current();
-  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  await openAdvanced(page);
   await expect(page.getByText("继续已有会话", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "重新建立原生会话", exact: true }).click();
   await expect.poll(async () => (await current()).nativeStates.length).toBe(0);
@@ -773,10 +804,16 @@ test("the native extensions panel lists skills, MCP servers and plugins and invo
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
   await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
-  await page.getByRole("button", { name: "原生扩展", exact: true }).click();
-  const panel = page.locator(".native-extensions");
+  const reads: string[] = []; page.on("request", request => { if (/\/harnesses\/[^/]+\/extensions\?/u.test(request.url())) reads.push(request.url()); });
+  await openExtensions(page);
+  const panel = page.locator(".native-extensions"), agentPart = page.getByRole("button", { name: "选择 Agent", exact: true });
   await expect(panel.getByRole("button", { name: "browser-skill", exact: true })).toBeVisible({ timeout: 15000 });
-  await expect(panel).toContainText("浏览器验收技能");
+  // Opened from the Agent list's footer, the panel takes the focus; closed, it gives it back to the Agent part of the merged
+  // picker, the control that held the item (ruling R2). Opened again, it shows what it read without reading again.
+  await expect.poll(() => panel.evaluate(element => element.contains(document.activeElement))).toBe(true);
+  await page.keyboard.press("Escape"); await expect(panel).toHaveCount(0); await expect(agentPart).toBeFocused();
+  await openExtensions(page);
+  await expect(panel).toContainText("浏览器验收技能"); assert.equal(reads.length, 1, "the extensions are read once");
   await panel.getByText("MCP 服务器").click(); await expect(panel).toContainText("browser-docs"); await expect(panel).toContainText("已连接"); await expect(panel).toContainText("1 个工具");
   await panel.getByText("插件与扩展").click(); await expect(panel).toContainText("browser-plugin");
   // A version is shown as the program reported it, without a "v" the page would add (ruling P).
@@ -800,7 +837,7 @@ test("a setting a native command changed is kept, shown in the composer and can 
   const origin = new URL(fixture.gateway.url).origin;
   const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
   await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Native Settings", exact: true }).click();
-  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  await openAdvanced(page);
   await page.getByRole("button", { name: "Native fast", exact: true }).click();
   // An option list opened from the settings panel stacks above it, wherever it happens to be placed.
   const stacking = await page.evaluate(() => [".picker-popover", ".composer-settings-panel"].map(selector => Number(getComputedStyle(document.querySelector(selector)!.closest(".hh-positioner")!).zIndex)));
@@ -817,7 +854,7 @@ test("a setting a native command changed is kept, shown in the composer and can 
   await reply("/native-fast on", 2);
   const hint = page.locator(".native-carried");
   await expect(hint).toContainText("原生命令已改为 Native fast On；下一回合沿用，不改回所选。");
-  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  await openAdvanced(page);
   await expect(page.locator(".native-observed")).toContainText("Native fast On"); await page.keyboard.press("Escape");
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 844 });
@@ -844,7 +881,7 @@ test("a native session of the workspace is continued from the composer, quoted a
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
   await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Native Sessions", exact: true }).click();
-  await page.getByRole("button", { name: "本机会话", exact: true }).click();
+  await openNativeSessions(page);
   const panel = page.locator(".native-sessions");
   await expect(panel.getByText("Earlier work", { exact: true })).toBeVisible({ timeout: 15000 });
   await panel.getByRole("button", { name: "加载更早的会话", exact: true }).click(); await expect(panel.getByText("未命名会话", { exact: true })).toBeVisible({ timeout: 15000 });
@@ -856,9 +893,12 @@ test("a native session of the workspace is continued from the composer, quoted a
   await expect(page.getByRole("button", { name: "接续 · Earlier work", exact: true })).toBeVisible();
   await composer.fill("what did I ask first?"); await composer.press("Enter");
   await expect(log.locator(".assistant-message").last()).toContainText("你好 fixture", { timeout: 15000 });
-  await page.getByRole("button", { name: "本机会话", exact: true }).click();
+  await openNativeSessions(page);
   await expect(page.locator(".native-sessions li", { hasText: "Earlier work" }).getByRole("button", { name: /打开对话/u })).toBeVisible({ timeout: 15000 });
-  await page.keyboard.press("Escape");
+  // Opened from the "+" menu, the panel holds the focus; closed, it gives it back to "+", the control that held the item (ruling R2).
+  await expect.poll(() => panel.evaluate(element => element.contains(document.activeElement))).toBe(true);
+  await page.keyboard.press("Escape"); await expect(panel).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "添加文件或上下文", exact: true })).toBeFocused();
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "the continued conversation must not overflow a narrow screen");
   await page.screenshot({ path: join(artifact, "native-session-continued-390.png"), animations: "disabled" });
@@ -944,17 +984,22 @@ test("a conversation keeps its native process between Turns, shows it, and ends 
   };
   await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Kept Agent", exact: true }).click();
   // Off by default; a new conversation can choose it before its first message, so even the first Turn's process is kept.
-  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  await openAdvanced(page);
+  // Opened from the Agent list's footer, the settings take the focus, and closed they give it back to the Agent part of the
+  // merged picker, the control that held the item (ruling R2).
+  const settings = page.locator(".composer-settings-panel");
+  await expect.poll(() => settings.evaluate(element => element.contains(document.activeElement))).toBe(true);
   const keep = page.getByRole("checkbox", { name: "保持原生进程" });
   await expect(keep).not.toBeChecked(); await keep.click(); await expect(keep).toBeChecked();
-  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape"); await expect(settings).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "选择 Agent", exact: true })).toBeFocused();
   await reply("first", 1);
   const first = await current();
   assert.equal(first.retention.enabled, true); assert.equal(first.runs[0].retained, true); assert.equal(first.retention.process?.harnessId, "native-acp");
   await reply("second", 2);
   const reused = await current();
   assert.equal(reused.runs[1].reused, true); assert.equal(reused.runs[1].retained, true); assert.equal(reused.runs[1].cleanup, null);
-  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  await openAdvanced(page);
   await expect(page.locator(".kept-setting")).toContainText("原生进程保留中");
   await page.screenshot({ path: join(artifact, "kept-process-panel.png"), animations: "disabled" });
   await page.locator(".kept-setting").getByRole("button", { name: "结束后台进程", exact: true }).click();
@@ -976,7 +1021,7 @@ test("a new conversation starts a Harness with the model and thinking level last
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), fast = page.getByRole("button", { name: "Native fast", exact: true }), thinking = page.getByRole("button", { name: "思考强度", exact: true });
   await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Native Settings", exact: true }).click();
   await thinking.click(); await page.getByRole("option", { name: "最大", exact: true }).click();
-  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  await openAdvanced(page);
   await fast.click(); await page.getByRole("option", { name: "On", exact: true }).click(); await page.keyboard.press("Escape");
   await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeDisabled(); await composer.fill("first");
   await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
@@ -985,7 +1030,7 @@ test("a new conversation starts a Harness with the model and thinking level last
     // The thinking level comes back, marked as last used; the other native setting follows the program's default.
     await expect(thinking).toContainText("最大");
     await thinking.click(); await expect(page.getByRole("option", { name: "最大", exact: true })).toHaveAccessibleDescription(/上次使用/); await page.keyboard.press("Escape");
-    await page.getByRole("button", { name: "高级配置", exact: true }).click(); await expect(fast).toContainText("本机默认"); await page.keyboard.press("Escape");
+    await openAdvanced(page); await expect(fast).toContainText("本机默认"); await page.keyboard.press("Escape");
   };
   // Through the picker of a new conversation.
   await page.getByRole("button", { name: "新对话", exact: true }).click();
@@ -1354,11 +1399,11 @@ test("ending a kept process says once that its background tasks outside its grou
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
   await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Kept Agent", exact: true }).click();
-  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  await openAdvanced(page);
   await page.getByRole("checkbox", { name: "保持原生进程" }).click(); await page.keyboard.press("Escape");
   await composer.fill("first"); await composer.press("Enter");
   await expect(log.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
-  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  await openAdvanced(page);
   await expect(page.locator(".kept-setting")).toContainText("原生进程保留中");
   await page.locator(".kept-setting").getByRole("button", { name: "结束后台进程", exact: true }).click();
   await expect(page.locator(".kept-setting")).not.toContainText("原生进程保留中");
@@ -2023,6 +2068,22 @@ test("G054-DL3 the home greets, says who is ready from the readiness facts and w
     "the rule follows the add button on its line, before the picker");
   await rule.click(); await expect(page.getByRole("option", { name: "按需请求审批", exact: true })).toBeVisible();
   await page.keyboard.press("Escape"); await expect(rule).toBeFocused();
+  // Ruling R2: the bottom left keeps "+" and the rule only, as the Main board draws it. What adds to this message is in "+",
+  // the native sessions included; the Agent's extensions and advanced settings are in the Agent list's footer.
+  const corner = page.getByRole("group", { name: "附件与权限", exact: true });
+  await expect(corner.getByRole("button")).toHaveCount(2);
+  await expect(corner.getByRole("button").nth(0)).toHaveAccessibleName("添加文件或上下文"); await expect(corner.getByRole("button").nth(1)).toHaveAccessibleName("审批策略");
+  await expect(page.getByRole("button", { name: /^(本机会话|原生扩展|高级配置)$/u })).toHaveCount(0);
+  await add.click();
+  await expect(page.getByRole("menuitem", { name: /^添加文件或图片…/u })).toBeVisible(); await expect(page.getByRole("menuitem", { name: "继续原程序的会话…", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape"); await expect(add).toBeFocused();
+  await chip.getByRole("button", { name: "选择 Agent", exact: true }).click();
+  const agentList = page.locator(".picker-popover");
+  await expect(agentList.getByRole("button", { name: "查看技能与扩展…", exact: true })).toBeVisible(); await expect(agentList.getByRole("button", { name: "高级配置…", exact: true })).toBeVisible();
+  await page.waitForTimeout(200);
+  for (const scheme of ["light", "dark"] as const) { await page.emulateMedia({ colorScheme: scheme }); await page.screenshot({ path: join(artifact, `dl3-agent-footer-${scheme}-1440.png`), animations: "disabled" }); }
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.keyboard.press("Escape");
   await shoot("dl3-permission");
   assert.deepEqual(errors, []);
 });
@@ -3135,7 +3196,7 @@ test("G054-UP2 a conversation whose kept process an upgrade closed says so until
     await expect.poll(async () => { if (!new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session")) return null; const value = await current(); return value.runs.length === count && value.activeRunId === null && value.runs.at(-1).status; }, { timeout: 15000 }).toBe("completed");
   };
   await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Kept Agent", exact: true }).click();
-  await page.getByRole("button", { name: "高级配置", exact: true }).click(); await page.getByRole("checkbox", { name: "保持原生进程" }).click(); await page.keyboard.press("Escape");
+  await openAdvanced(page); await page.getByRole("checkbox", { name: "保持原生进程" }).click(); await page.keyboard.press("Escape");
   await reply("first", 1);
   assert.equal((await current()).retention.process?.harnessId, "native-acp");
   assert.equal(await fixture.runtime().releaseForUpgrade("native-acp"), 1);

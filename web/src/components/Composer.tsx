@@ -1,4 +1,4 @@
-import { ArrowLeftRight, ListPlus, Paperclip, Plus, RefreshCw, ShieldCheck, SlidersHorizontal, SquareSlash, TriangleAlert } from "lucide-react";
+import { ArrowLeftRight, History, ListPlus, Paperclip, Plus, RefreshCw, ShieldCheck, SquareSlash, TriangleAlert } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import type { PublicRun } from "../../../src/contracts/session.js";
@@ -341,6 +341,27 @@ export function Composer(props: ComposerProps) {
     props.onDraft({ ...draft, harnessId: value, controlId: control, model: draft.providerId ? draft.model : previous?.nativeModel ?? "", nativeOptions: draft.providerId ? {} : previous?.nativeOptions ?? {} });
   };
 
+  // Ruling R2: the bottom left keeps "+" and the approval rule only. What adds to this message is in the "+" menu, the
+  // native sessions included; the Agent's read-only extensions and its advanced settings are in the Agent list's footer.
+  // Each opens its panel, which takes the focus and gives it back to the control that held the item: the "+" button, or the
+  // Agent part of the merged picker. A panel belongs to the Agent it was opened for, and none stays while an approval
+  // takes the composer's place.
+  const plusButton = useRef<HTMLButtonElement>(null), agentButton = useRef<HTMLButtonElement>(null), chip = useRef<HTMLDivElement>(null), outdatedId = useId();
+  const [panel, setPanel] = useState<{ readonly kind: "sessions" | "extensions" | "advanced"; readonly harnessId: string } | null>(null);
+  const shownPanel = panel !== null && panel.harnessId === draft.harnessId && !docked ? panel.kind : null;
+  const openPanel = (kind: NonNullable<typeof panel>["kind"]) => setPanel({ kind, harnessId: draft.harnessId });
+  const panelOpenChange = (kind: NonNullable<typeof panel>["kind"]) => (open: boolean) => setPanel(open ? { kind, harnessId: draft.harnessId } : null);
+  const fromAgentList = (kind: NonNullable<typeof panel>["kind"]) => { props.onAgentPickerOpen(false); openPanel(kind); };
+  const sessionsOffered = !draft.providerId && draft.harnessId !== "" && props.onLoadNativeSessions !== undefined && props.onImportNative !== undefined && props.onOpenSession !== undefined;
+  const extensionsOffered = !draft.providerId && draft.harnessId !== "" && props.onLoadExtensions !== undefined;
+  // The footer of the Agent list: its two ways into what the Agent has, beside each other as the model connections' link is
+  // in its own list. The amber dot of a newer model connection version is on the advanced settings, as on the trigger.
+  const agentFooter = draft.harnessId ? <span className="flex flex-wrap items-center gap-x-3.5 gap-y-1">
+    {extensionsOffered ? <button type="button" className="link-btn text-caption" onClick={() => fromAgentList("extensions")}>查看技能与扩展…</button> : null}
+    <button type="button" className="link-btn inline-flex items-center gap-1.5 text-caption" aria-describedby={outdated ? outdatedId : undefined} onClick={() => fromAgentList("advanced")}>高级配置…
+      {outdated ? <span className="size-1.5 flex-none rounded-full bg-amber-dot" aria-hidden="true"/> : null}</button>
+  </span> : <span>↑ ↓ 选择 · Enter 确认 · 模型和思考强度在旁边的按钮里换</span>;
+
   return <div className="composer-wrap flex flex-col gap-2">
     {/* Notices above the box: what waits, what is unavailable and why, with at most two ways forward (Interaction board). */}
     {pending || dirty && !blocked ? <div className="composer-change motion-fade-in flex flex-wrap items-center gap-2" role="status">
@@ -425,28 +446,29 @@ export function Composer(props: ComposerProps) {
           <p id="composer-keyboard-hint" className="sr-only">Enter 发送，Shift+Enter 换行{commands.length ? "，/ 原生命令" : ""}，@ 添加文件，输入框为空时 ↑ 编辑上一条{active ? "，Esc 或 ⌘. 停止当前回复" : ""}</p>
           <input ref={picker} type="file" multiple hidden tabIndex={-1} aria-hidden="true" onChange={event => { attach(event.target.files); event.target.value = ""; }}/>
           <div className="flex flex-wrap items-center gap-x-1 gap-y-2">
-            <div className="-ml-2 flex flex-none items-center gap-0.5" role="group" aria-label="附件、权限与原生会话">
-              <Menu side={popSide} align="start" trigger={<button type="button" className="press mr-0.5 flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg disabled:opacity-45"
+            <div className="-ml-2 flex flex-none items-center gap-0.5" role="group" aria-label="附件与权限">
+              <Menu side={popSide} align="start" trigger={<button ref={plusButton} type="button" className="press mr-0.5 flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg disabled:opacity-45"
                 aria-label="添加文件或上下文" disabled={readonly}><Plus size={16} strokeWidth={1.9}/></button>} items={[
                 { label: "添加文件或图片…", icon: <Paperclip size={15}/>, hint: "@", disabled: !canAttach, onSelect: () => picker.current?.click() },
                 ...(commands.length ? [{ label: "原生命令", icon: <SquareSlash size={15}/>, hint: "/", disabled: disabled, onSelect: () => { setSlashClosedAt(null); props.onMessageDraft("/"); setTimeout(() => inputRef.current?.focus(), 0); } }] : []),
+                ...(sessionsOffered ? [{ label: "继续原程序的会话…", icon: <History size={15}/>, disabled: disabled || props.mutation !== null, onSelect: () => openPanel("sessions") }] : []),
               ]} footer={props.attachments.length >= 8 ? "每条消息最多 8 个附件" : undefined}/>
               {permission ? <SearchPicker side={popSide} label={OPTION_NAMES[permission.id] ?? permission.name} value={draft.nativeOptions[permission.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(permission, true)}
                 disabled={disabled || props.nativeModelsLoading} onChange={value => changeOption(permission.id, value)} chevron className="gap-[5px] text-fg-2"
                 trigger={selected => <><ShieldCheck size={15} className="flex-none" aria-hidden="true"/><span className="hidden max-w-[140px] truncate sm:inline">{selected?.short ?? selected?.label ?? valueName(permission, permission.currentValue)}</span></>}/> : null}
-              {!draft.providerId && draft.harnessId && props.onLoadNativeSessions && props.onImportNative && props.onOpenSession ? <NativeSessionsPanel key={"sessions:" + draft.harnessId + ":" + draft.controlId} side={popSide} load={props.onLoadNativeSessions}
-                disabled={disabled || props.mutation !== null} onImport={props.onImportNative} onOpen={props.onOpenSession}/> : null}
-              {!draft.providerId && draft.harnessId && props.onLoadExtensions ? <NativeExtensionsPanel key={draft.harnessId + ":" + draft.controlId} side={popSide} load={props.onLoadExtensions} disabled={disabled} onCommand={command => { props.onMessageDraft("/" + command + " "); inputRef.current?.focus(); }}/> : null}
-              {draft.harnessId ? <AdvancedSettings {...props} popSide={popSide} controls={controls} selectedControl={selectedControl} outdated={outdated} disabled={disabled} nativeOptions={nativeOptions.filter(option => option !== thought && !(option === mode && modeInChip) && option !== permission)} optionPicker={optionPicker} nativeState={nativeState} describeNative={describeNative}/> : null}
             </div>
             <div className="ml-auto flex max-w-full min-w-0 items-center gap-1">
-              <div className="agent-chip flex h-[34px] max-w-full min-w-0 items-center overflow-hidden rounded-[12px] p-0.5 transition-[color,background-color] duration-120 ease-standard hover:bg-subtle has-[[data-popup-open]]:bg-subtle"
+              <div ref={chip} className="agent-chip flex h-[34px] max-w-full min-w-0 items-center overflow-hidden rounded-[12px] p-0.5 transition-[color,background-color] duration-120 ease-standard hover:bg-subtle has-[[data-popup-open]]:bg-subtle"
                 role="group" aria-label="由谁来做：Agent、模型与思考强度">
                 <SearchPicker side={popSide} label="选择 Agent" value={draft.harnessId} placeholder="选择 Agent" options={harnessChoices} disabled={disabled} wide size="lg" align="end" chevron={last === "agent"}
                   title={<span className="flex items-center gap-1">由谁来做 · <Kbd>⌘</Kbd><Kbd>J</Kbd></span>} open={props.agentPickerOpen} onOpenChange={props.onAgentPickerOpen} className={cn(SEGMENT, "flex-none gap-[7px] pl-1")}
-                  footer={<span>↑ ↓ 选择 · Enter 确认 · 模型和思考强度在旁边的按钮里换</span>}
+                  footer={agentFooter} triggerRef={agentButton} describedBy={outdated ? outdatedId : undefined}
                   empty={<>这台电脑上还没有找到可用的 Agent。<button type="button" className="link-btn" onClick={props.onHarnesses}>查看安装方式</button></>}
-                  trigger={selected => selected && harness ? <><BrandIcon brand={harness.id} name={harness.name} size={22}/><span className="max-w-[150px] truncate font-medium text-fg max-sm:max-w-[80px]">{selected.label}</span></>
+                  trigger={selected => selected && harness ? <>
+                    {/* A newer version of the model connection in use waits in the advanced settings: its amber dot stays in sight here. */}
+                    <span className="relative flex flex-none"><BrandIcon brand={harness.id} name={harness.name} size={22}/>
+                      {outdated ? <span className="outdated-dot absolute -top-0.5 -right-0.5 size-2 rounded-full bg-amber-dot shadow-[0_0_0_1.5px_var(--bg-surface)]" aria-hidden="true"/> : null}</span>
+                    <span className="max-w-[150px] truncate font-medium text-fg max-sm:max-w-[80px]">{selected.label}</span></>
                     : <span className="text-fg-2">选择 Agent</span>} onChange={pickAgent}/>
                 {showProvider ? <SearchPicker side={popSide} label="选择 Provider" value={draft.providerId} placeholder="选择 Provider" options={providerOptions} disabled={disabled} align="end" chevron={last === "provider"} className={cn(SEGMENT, "gap-1.5")}
                   trigger={selected => <>{selected?.icon ? <span className="flex flex-none items-center">{selected.icon}</span> : null}<span className="max-w-[140px] truncate text-fg-2">{selected?.short ?? selected?.label ?? "选择 Provider"}</span></>}
@@ -477,6 +499,14 @@ export function Composer(props: ComposerProps) {
             </div>
           </div>
         </form>
+        {/* The panels the "+" menu and the Agent list open (ruling R2), placed against the control that holds their item. */}
+        {sessionsOffered ? <NativeSessionsPanel key={"sessions:" + draft.harnessId + ":" + draft.controlId} side={popSide} load={props.onLoadNativeSessions!} disabled={disabled || props.mutation !== null}
+          onImport={props.onImportNative!} onOpen={props.onOpenSession!} open={shownPanel === "sessions"} onOpenChange={panelOpenChange("sessions")} anchor={plusButton} returnFocus={plusButton}/> : null}
+        {extensionsOffered ? <NativeExtensionsPanel key={draft.harnessId + ":" + draft.controlId} side={popSide} load={props.onLoadExtensions!} onCommand={command => { props.onMessageDraft("/" + command + " "); inputRef.current?.focus(); }}
+          open={shownPanel === "extensions"} onOpenChange={panelOpenChange("extensions")} anchor={chip} returnFocus={agentButton}/> : null}
+        {draft.harnessId ? <AdvancedSettings {...props} popSide={popSide} controls={controls} selectedControl={selectedControl} outdated={outdated} disabled={disabled} nativeOptions={nativeOptions.filter(option => option !== thought && !(option === mode && modeInChip) && option !== permission)} optionPicker={optionPicker} nativeState={nativeState} describeNative={describeNative}
+          open={shownPanel === "advanced"} onOpenChange={panelOpenChange("advanced")} anchor={chip} returnFocus={agentButton}/> : null}
+        <span id={outdatedId} hidden>所选模型连接有新的配置版本，可以在高级配置里改用</span>
         {dockShown ? <div ref={dockLayer} className={cn("ease-standard", docked ? "motion-enter relative" : "pointer-events-none absolute inset-x-0 top-0 opacity-0 transition-opacity duration-100")}
           style={docked ? motionStyle({ delay: 80, shift: 4 }) : undefined} aria-hidden={!docked || undefined} inert={!docked}>
           <ApprovalDock key={dockShown.request.id} request={dockShown.request} harness={dockShown.harness} waiting={dockShown.waiting} policy={dockShown.policy} busy={props.mutation !== null}
@@ -504,20 +534,25 @@ function ComposerNotice({ id, title, children, action }: { readonly id?: string;
 }
 
 type NativeOption = NonNullable<import("../../../src/contracts/control.js").NativeModelCatalog["options"]>[number];
-/** Execution settings that are not in the composer row: further native options, the control entry, the kept process and the native session. */
+/**
+ * Execution settings that are not in the composer row: further native options, the control entry, the kept process and the
+ * native session. The Agent list's 高级配置… opens them (ruling R2), against the merged picker.
+ */
 function AdvancedSettings(props: ComposerProps & {
   readonly controls: readonly HarnessView["controls"][number][]; readonly selectedControl: HarnessView["controls"][number] | undefined; readonly outdated: boolean; readonly disabled: boolean;
   readonly nativeOptions: readonly NativeOption[]; readonly optionPicker: (option: NativeOption, label: string) => ReactNode;
   readonly nativeState: NonNullable<NonNullable<ComposerProps["session"]>["nativeStates"]>[number] | undefined; readonly describeNative: (model: string | undefined, options: Readonly<Record<string, string>> | undefined) => string;
   /** Where its panel opens: below the box on the home, above it in a conversation. */
   readonly popSide: "top" | "bottom";
+  readonly open: boolean; readonly onOpenChange: (open: boolean) => void;
+  readonly anchor: RefObject<Element | null>; readonly returnFocus: RefObject<HTMLElement | null>;
 }) {
   const { draft, providers, session, controls, selectedControl, outdated, disabled, nativeState } = props;
   const provider = providers.find(row => row.id === draft.providerId);
   const row = "execution-setting flex flex-col gap-1.5 px-3.5 py-3 hairline-b last:border-b-0";
   const heading = "text-caption font-medium text-fg-3";
-  return <Popover label="执行配置" side={props.popSide} align="start" className="composer-settings-panel w-[380px] max-w-[calc(100vw-24px)]"
-    trigger={<button type="button" className="icon-btn relative text-fg-3" aria-label="高级配置" title="控制入口、原生选项与后台进程" disabled={disabled}><SlidersHorizontal size={16}/>{outdated ? <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-amber-dot"/> : null}</button>}>
+  return <Popover label="执行配置" open={props.open} onOpenChange={props.onOpenChange} anchor={props.anchor} returnFocus={props.returnFocus} side={props.popSide} align="end"
+    className="composer-settings-panel w-[380px] max-w-[calc(100vw-24px)]">
     <PopHead title="执行配置" closeLabel="收起高级配置"/>
     {props.nativeOptions.map(option => <div className={cn(row, "native-setting")} key={option.id}><span className={heading}>{OPTION_NAMES[option.id] ?? option.name}</span><div className="-ml-2">{props.optionPicker(option, OPTION_NAMES[option.id] ?? option.name)}</div></div>)}
     {!provider && APPROVAL_NOTES[draft.harnessId] ? <div className={row}><span className={heading}>审批</span><small className="text-ui-sm text-fg-2">{APPROVAL_NOTES[draft.harnessId]}</small></div> : null}

@@ -1,6 +1,6 @@
-import { ChevronRight, Puzzle, RefreshCw } from "lucide-react";
-import { useId, useState } from "react";
-import type { ReactNode } from "react";
+import { ChevronRight, RefreshCw } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
+import type { ReactNode, RefObject } from "react";
 import type { NativeExtensions } from "../../../src/contracts/control.js";
 import { errorMessage } from "../api.js";
 import { cn } from "../lib/cn.js";
@@ -22,24 +22,31 @@ function Section({ title, count, defaultOpen = false, children }: { readonly tit
   </div>;
 }
 /**
- * Read-only view of what the selected Harness has loaded: skills, MCP servers and plugins, read on demand from the original
- * installation. Choosing an invocable skill fills its command into the composer; nothing here changes the Harness.
+ * Read-only view of what the selected Agent has loaded: skills, MCP servers and plugins, read from the original installation
+ * when the panel opens (again only when nothing was read yet, or from its refresh button). Choosing an invocable skill fills
+ * its command into the composer; nothing here changes the Agent. The Agent list's 查看技能与扩展… opens it (ruling R2): it
+ * is placed against `anchor` and gives the focus back to `returnFocus` when it closes.
  */
-export function NativeExtensionsPanel({ load, onCommand, disabled, side = "top" }: {
-  load: (signal: AbortSignal) => Promise<NativeExtensions | null>; onCommand: (command: string) => void; disabled: boolean;
-  /** Where the panel opens from its button: above it (the default, at the foot of a conversation) or below it. */
+export function NativeExtensionsPanel({ load, onCommand, side = "top", open, onOpenChange, anchor, returnFocus }: {
+  load: (signal: AbortSignal) => Promise<NativeExtensions | null>; onCommand: (command: string) => void;
+  /** Where the panel opens from its anchor: above it (the default, at the foot of a conversation) or below it. */
   side?: "top" | "bottom";
+  readonly open: boolean; readonly onOpenChange: (open: boolean) => void;
+  readonly anchor: RefObject<Element | null>; readonly returnFocus: RefObject<HTMLElement | null>;
 }) {
   const [state, setState] = useState<{ loading: boolean; value: NativeExtensions | null | undefined; error: string | null }>({ loading: false, value: undefined, error: null });
+  // A read in flight is not started twice, also when an effect runs again (React's development checks run effects twice).
+  const reading = useRef(false);
   const read = () => {
+    reading.current = true;
     setState({ loading: true, value: undefined, error: null });
-    load(new AbortController().signal).then(value => setState({ loading: false, value, error: null }), error => setState({ loading: false, value: undefined, error: errorMessage(error) }));
+    load(new AbortController().signal).then(value => { reading.current = false; setState({ loading: false, value, error: null }); },
+      error => { reading.current = false; setState({ loading: false, value: undefined, error: errorMessage(error) }); });
   };
+  useEffect(() => { if (open && state.value === undefined && !reading.current) read(); }, [open]);
   const value = state.value;
   const row = "flex flex-wrap items-baseline gap-x-2 gap-y-0.5 py-1 text-ui-sm";
-  return <Popover label="原生扩展" side={side} align="start" className="native-extensions w-[380px] max-w-[calc(100vw-24px)]"
-    onOpenChange={open => { if (open && state.value === undefined && !state.loading) read(); }}
-    trigger={<button type="button" className="icon-btn text-fg-3" aria-label="原生扩展" title="技能、MCP 与插件" disabled={disabled}><Puzzle size={16}/></button>}>
+  return <Popover label="原生扩展" open={open} onOpenChange={onOpenChange} anchor={anchor} returnFocus={returnFocus} side={side} align="end" className="native-extensions w-[380px] max-w-[calc(100vw-24px)]">
     <PopHead title="原生扩展" closeLabel="收起原生扩展"><button type="button" className="icon-btn icon-btn-sm" aria-label="重新读取原生扩展" onClick={read} disabled={state.loading}><RefreshCw size={13}/></button></PopHead>
     <div className="flex flex-col gap-0.5 p-[5px]">
       {state.loading ? <p className="m-0 flex items-center gap-2 px-2 py-1.5 text-ui-sm text-fg-3"><Spinner size={13} label=""/>正在从本机安装读取…</p> : null}

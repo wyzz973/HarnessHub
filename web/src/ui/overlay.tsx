@@ -3,7 +3,7 @@ import { Menu as BaseMenu } from "@base-ui/react/menu";
 import { Popover as BasePopover } from "@base-ui/react/popover";
 import { Toast as BaseToast } from "@base-ui/react/toast";
 import { Check, X } from "lucide-react";
-import { useId, useMemo, type ReactElement, type ReactNode, type RefObject } from "react";
+import { useId, useMemo, useRef, type ReactElement, type ReactNode, type RefObject } from "react";
 import { cn } from "../lib/cn.js";
 
 type Side = "top" | "bottom" | "left" | "right";
@@ -20,16 +20,28 @@ type Align = "start" | "center" | "end";
 /**
  * A popover anchored to its trigger. The trigger element keeps its own accessible name; the popup is labelled by `label`.
  * Controlled when `open` is given. Focus moves into the popup (or to `initialFocus`) and returns to the trigger.
+ *
+ * Without a trigger it is a panel that another control opens, such as a menu item: controlled by `open`, placed against
+ * `anchor`, and giving the focus back to `returnFocus` (the control that holds the item) when it closes, unless the user
+ * has already moved it somewhere else, into the message say.
  */
-export function Popover({ trigger, children, label, open, onOpenChange, side = "bottom", align = "start", sideOffset = 8, className, initialFocus }: {
-  readonly trigger: ReactElement; readonly children: ReactNode; readonly label: string; readonly open?: boolean; readonly onOpenChange?: (open: boolean) => void;
+export function Popover({ trigger, children, label, open, onOpenChange, side = "bottom", align = "start", sideOffset = 8, className, initialFocus, anchor, returnFocus }: {
+  readonly trigger?: ReactElement; readonly children: ReactNode; readonly label: string; readonly open?: boolean; readonly onOpenChange?: (open: boolean) => void;
   readonly side?: Side; readonly align?: Align; readonly sideOffset?: number; readonly className?: string; readonly initialFocus?: RefObject<HTMLElement | null>;
+  readonly anchor?: RefObject<Element | null>; readonly returnFocus?: RefObject<HTMLElement | null>;
 }) {
+  const popup = useRef<HTMLDivElement>(null);
+  const finalFocus = returnFocus ? () => {
+    const focused = document.activeElement;
+    if (focused !== null && focused !== document.body && !popup.current?.contains(focused)) return false;
+    return returnFocus.current?.isConnected ? returnFocus.current : true;
+  } : undefined;
   return <BasePopover.Root {...(open === undefined ? {} : { open })} {...(onOpenChange ? { onOpenChange: (next: boolean) => onOpenChange(next) } : {})}>
-    <BasePopover.Trigger render={trigger}/>
+    {trigger ? <BasePopover.Trigger render={trigger}/> : null}
     <BasePopover.Portal>
-      <BasePopover.Positioner side={side} align={align} sideOffset={sideOffset} collisionPadding={12} positionMethod="fixed" className="hh-positioner z-50">
-        <BasePopover.Popup aria-label={label} className={cn("surface-pop max-h-[min(560px,var(--available-height))] overflow-y-auto", className)} {...(initialFocus ? { initialFocus } : {})}>{children}</BasePopover.Popup>
+      <BasePopover.Positioner side={side} align={align} sideOffset={sideOffset} collisionPadding={12} positionMethod="fixed" className="hh-positioner z-50" {...(anchor ? { anchor } : {})}>
+        <BasePopover.Popup ref={popup} aria-label={label} className={cn("surface-pop max-h-[min(560px,var(--available-height))] overflow-y-auto", className)} {...(initialFocus ? { initialFocus } : {})}
+          {...(finalFocus ? { finalFocus } : {})}>{children}</BasePopover.Popup>
       </BasePopover.Positioner>
     </BasePopover.Portal>
   </BasePopover.Root>;
@@ -62,7 +74,11 @@ export interface MenuEntry {
   readonly checked?: boolean;
   readonly separator?: false;
 }
-/** A menu of actions; links download or navigate natively, items run their handler and close the menu. */
+/**
+ * A menu of actions; links download or navigate natively, items run their handler and close the menu. An item that opens
+ * a panel (a triggerless Popover) leaves the focus to that panel: the menu gives the focus back to its trigger only while
+ * nothing outside it has taken it.
+ */
 export function Menu({ trigger, items, side = "bottom", align = "end", footer, className }: {
   readonly trigger: ReactElement; readonly items: readonly (MenuEntry | { readonly separator: true } | { readonly heading: string })[];
   readonly side?: Side; readonly align?: Align; readonly footer?: ReactNode; readonly className?: string;

@@ -272,7 +272,7 @@ function Process({ run, runs, onRun, describe, loadToolDetail, name, asking, wai
 }
 function Background({ session, kept, items, busy, onEndProcess, name }: { readonly session: SessionView; readonly kept: NonNullable<SessionView["retention"]>["process"] | null; readonly items: readonly { readonly run: PublicRun; readonly activity: NonNullable<PublicRun["activities"]>[number] }[]; readonly busy: boolean; readonly onEndProcess?: (() => void) | undefined; readonly name: (id: string | undefined) => string }) {
   const now = useNow(kept !== null), keeper = kept ? name(kept.harnessId) : "原程序";
-  const hint = session.retention?.enabled ? "已开启保持原生进程：下一轮结束后原程序会留在后台。" : "回合结束时原程序随之关闭。需要它在后台继续运行任务时，在输入框的高级配置里开启“保持原生进程”。";
+  const hint = session.retention?.enabled ? "已开启保持原生进程：下一轮结束后原程序会留在后台。" : "回合结束时原程序随之关闭。需要它在后台继续运行任务时，在 Agent 选择器（⌘J）底部打开“高级配置…”，开启“保持原生进程”。";
   return <div className="flex flex-col gap-3 px-4 pt-3 pb-4">
     {kept ? <div className="kept-panel flex flex-col gap-2 rounded-block bg-surface p-3 shadow-hairline">
       <div className="flex items-center gap-2"><StatusDot tone="run"/><strong className="text-ui-sm font-semibold">原生进程保留中</strong></div>
