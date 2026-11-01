@@ -2365,14 +2365,23 @@ test("G054-DL9 the application's shortcuts open what they name, ⌥⌘↓ goes t
   assert.deepEqual(errors, []);
 });
 
-test("G054-FR6 the chosen theme applies before the first paint and survives reload, dark pages fit narrow screens with open collapsibles and uncut status words, the end dot follows a reply's last block, and reduced motion and the keyboard stop transitions", { timeout: 120000 }, async t => {
+test("G054-FR6 the chosen theme and its theme color apply before the first paint and survive reload, dark pages fit narrow screens with open collapsibles and uncut status words, the end dot follows a reply's last block, and reduced motion and the keyboard stop transitions", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
   const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [], fonts: string[] = [];
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   page.on("request", request => { if (/^https:\/\/fonts\.(?:googleapis|gstatic)\.com\//u.test(request.url())) fonts.push(request.url()); });
+  // The browser's theme color (its window or tab bar) is the first theme-color whose media matches; it is also read once
+  // the page's scripts have run, before the application has drawn anything.
+  await page.addInitScript(() => document.addEventListener("DOMContentLoaded", () => {
+    (window as unknown as { __loadedThemeColor: string | null }).__loadedThemeColor = [...document.querySelectorAll<HTMLMetaElement>("meta[name='theme-color']")].find(meta => !meta.media || matchMedia(meta.media).matches)?.content ?? null;
+  }, { once: true }));
+  const themeColor = () => page.evaluate(() => [...document.querySelectorAll<HTMLMetaElement>("meta[name='theme-color']")].find(meta => !meta.media || matchMedia(meta.media).matches)?.content ?? null);
+  const loadedThemeColor = () => page.evaluate(() => (window as unknown as { __loadedThemeColor: string | null }).__loadedThemeColor);
   await page.goto(fixture.gateway.url);
+  // Without a choice the theme color is the light main area of a light system.
+  assert.deepEqual([await loadedThemeColor(), await themeColor()], ["#FFFFFF", "#FFFFFF"]);
   // Nothing comes from elsewhere (ADR-054 §2): the policy allows only this Gateway, and the text uses the system fonts.
   const policy = (await context.request.get(new URL(fixture.gateway.url).origin + "/")).headers()["content-security-policy"] ?? "";
   assert.equal(policy, "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'");
@@ -2386,9 +2395,12 @@ test("G054-FR6 the chosen theme applies before the first paint and survives relo
   await page.getByRole("radio", { name: /深色/u }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   const background = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
-  // The dark main area of ADR-054 §1 (#18191C).
+  // The dark main area of ADR-054 §1 (#18191C), and the theme color with it although the system is light.
   assert.equal(await background(), "rgb(24, 25, 28)");
+  await expect.poll(themeColor).toBe("#18191C");
   await page.reload(); await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  // After a reload the chosen theme color is in place as soon as the scripts have run, together with the theme.
+  assert.deepEqual([await loadedThemeColor(), await themeColor()], ["#18191C", "#18191C"]);
   await expect(page.getByRole("heading", { name: "设置", exact: true })).toBeVisible();
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true });
   await page.getByRole("button", { name: "返回对话", exact: true }).click();
@@ -2482,6 +2494,11 @@ test("G054-FR6 the chosen theme applies before the first paint and survives relo
   assert.deepEqual(await motions(), { chevron: ["rotate", 0, "none", "90deg"], collapsible: 0, veil: ["opacity", 120], bar: ["opacity", 120], dot: ["none", "1"] });
   await page.getByRole("radio", { name: /跟随系统/u }).click();
   await expect(page.locator("html")).not.toHaveAttribute("data-theme", /.+/u);
+  // Following the system again, the theme color follows its changes; a manual light choice keeps light under a dark system.
+  await expect.poll(themeColor).toBe("#FFFFFF");
+  await page.emulateMedia({ colorScheme: "dark" }); await expect.poll(themeColor).toBe("#18191C");
+  await page.getByRole("radio", { name: /浅色/u }).click(); await expect.poll(themeColor).toBe("#FFFFFF");
+  await page.getByRole("radio", { name: /跟随系统/u }).click(); await expect.poll(themeColor).toBe("#18191C");
   // No request went to Google Fonts while the pages above were shown.
   assert.deepEqual(fonts, []);
   assert.deepEqual(errors, []);
