@@ -1655,6 +1655,12 @@ test("G054-DL9 ⌘J opens the Agent list, ⌘. stops the reply, ⌘\\ opens and 
   await search.fill("Codex"); await search.press("Enter");
   // Opened from the keyboard while writing, the list gives the focus back to the message.
   await expect(trigger).toContainText("Codex"); await expect(composer).toBeFocused();
+  // Moving on with the keyboard, the focus ring shows at once around each part of the merged picker, inside its edge.
+  await page.keyboard.press("Shift+Tab"); await page.keyboard.press("Tab");
+  for (let step = 0; step < 8 && !(await trigger.evaluate(element => element === document.activeElement)); step++) await page.keyboard.press("Tab");
+  await expect(trigger).toBeFocused();
+  assert.deepEqual(await trigger.evaluate(element => { const style = getComputedStyle(element); return [style.outlineStyle, style.outlineWidth, style.outlineOffset, style.transitionProperty.includes("outline")]; }), ["solid", "2px", "-2px", false]);
+  await page.screenshot({ path: join(artifact, "dl9-focus.png"), clip: { x: 640, y: 560, width: 640, height: 200 } });
   // / lists the native commands; ↑ ↓ and ⏎ fill one in; esc closes the list and keeps the text.
   await composer.fill("/");
   const commands = page.getByRole("listbox", { name: "原生命令", exact: true });

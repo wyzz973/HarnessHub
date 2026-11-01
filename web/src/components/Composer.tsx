@@ -398,7 +398,7 @@ export function Composer(props: ComposerProps) {
           <input ref={picker} type="file" multiple hidden tabIndex={-1} aria-hidden="true" onChange={event => { attach(event.target.files); event.target.value = ""; }}/>
           <div className="flex flex-wrap items-center gap-x-1 gap-y-2">
             <div className="-ml-2 flex flex-none items-center gap-0.5" role="group" aria-label="附件、权限与原生会话">
-              <Menu side="top" align="start" trigger={<button type="button" className="press mr-0.5 flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-colors duration-120 ease-standard hover:bg-hover hover:text-fg disabled:opacity-45"
+              <Menu side="top" align="start" trigger={<button type="button" className="press mr-0.5 flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg disabled:opacity-45"
                 aria-label="添加文件或上下文" disabled={readonly}><Plus size={16} strokeWidth={1.9}/></button>} items={[
                 { label: "添加文件或图片…", icon: <Paperclip size={15}/>, hint: "@", disabled: !canAttach, onSelect: () => picker.current?.click() },
                 ...(commands.length ? [{ label: "原生命令", icon: <SquareSlash size={15}/>, hint: "/", disabled: disabled, onSelect: () => { setSlashClosedAt(null); props.onMessageDraft("/"); setTimeout(() => inputRef.current?.focus(), 0); } }] : []),
@@ -412,7 +412,7 @@ export function Composer(props: ComposerProps) {
               {draft.harnessId ? <AdvancedSettings {...props} controls={controls} selectedControl={selectedControl} outdated={outdated} disabled={disabled} nativeOptions={nativeOptions.filter(option => option !== thought && !(option === mode && modeInChip) && option !== permission)} optionPicker={optionPicker} nativeState={nativeState} describeNative={describeNative}/> : null}
             </div>
             <div className="ml-auto flex max-w-full min-w-0 items-center gap-1">
-              <div className="agent-chip flex h-[34px] max-w-full min-w-0 items-center overflow-x-auto rounded-[12px] p-0.5 transition-colors duration-120 ease-standard [scrollbar-width:none] hover:bg-subtle has-[[data-popup-open]]:bg-subtle [&::-webkit-scrollbar]:hidden [&>*]:flex-none"
+              <div className="agent-chip flex h-[34px] max-w-full min-w-0 items-center overflow-x-auto rounded-[12px] p-0.5 transition-[color,background-color] duration-120 ease-standard [scrollbar-width:none] hover:bg-subtle has-[[data-popup-open]]:bg-subtle [&::-webkit-scrollbar]:hidden [&>*]:flex-none"
                 role="group" aria-label="由谁来做：Agent、模型与思考强度">
                 <SearchPicker label="选择 Harness" value={draft.harnessId} placeholder="选择 Harness" options={harnessChoices} disabled={disabled} wide size="lg" align="end" chevron={last === "agent"}
                   title={<span className="flex items-center gap-1">由谁来做 · <Kbd>⌘</Kbd><Kbd>J</Kbd></span>} open={props.agentPickerOpen} onOpenChange={props.onAgentPickerOpen} className={cn(SEGMENT, "gap-[7px] pl-1")}
@@ -435,11 +435,12 @@ export function Composer(props: ComposerProps) {
                 {mode && modeInChip ? <SearchPicker label={OPTION_NAMES[mode.id] ?? mode.name} value={draft.nativeOptions[mode.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(mode, true)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "mode"}
                   className={cn(SEGMENT, "px-1")} trigger={() => <Pill>{modeShown}</Pill>} onChange={value => changeOption(mode.id, value)}/> : null}
               </div>
-              {canQueue ? <Tip label="本轮结束后发送（Enter）"><button type="button" className="press flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-colors duration-120 ease-standard hover:bg-hover hover:text-fg"
+              {canQueue ? <Tip label="本轮结束后发送（Enter）"><button type="button" className="press flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg"
                 aria-label="本轮结束后发送" onClick={() => props.onQueue?.()}><ListPlus size={16}/></button></Tip> : null}
               <Tip label={active ? "停止当前回复（⌘.）" : "发送（Enter）"}><button type={active ? "button" : "submit"} aria-label={active ? "停止当前回复" : "发送消息"}
-                className={cn("press ml-0.5 flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none transition-[background-color,opacity] duration-200 ease-standard disabled:cursor-default",
+                className={cn("press ml-0.5 flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none disabled:cursor-default",
                   active ? "bg-fg text-app disabled:opacity-45" : "bg-accent text-on-accent hover:bg-accent-hover disabled:opacity-35")}
+                style={{ transition: "background-color 200ms var(--ease-standard), opacity 200ms var(--ease-standard), transform 120ms var(--ease-snap)" }}
                 disabled={active ? active.cancelRequested || props.mutation !== null : disableSend} onClick={active ? props.onCancel : undefined}>
                 {/* One glyph throughout, so the arrow turns into the square and back (#16, #17); sending and stopping only dim the key. */}
                 <SendStopIcon stop={active !== null}/>

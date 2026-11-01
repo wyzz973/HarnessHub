@@ -69,7 +69,7 @@ export function SearchPicker({ label, value, placeholder, options, onChange, dis
   const large = size === "lg";
   return <BasePopover.Root open={open} onOpenChange={next => setOpen(next)}>
     <BasePopover.Trigger render={<button ref={triggerRef} type="button" aria-label={label} disabled={disabled} title={selected?.label ?? placeholder}
-      className={cn("selection-trigger inline-flex h-[30px] max-w-[220px] min-w-0 items-center gap-1.5 rounded-row border-none bg-transparent px-2 text-ui-sm text-fg-2 transition-colors duration-120 ease-standard hover:bg-subtle hover:text-fg disabled:opacity-45 data-[popup-open]:bg-subtle data-[popup-open]:text-fg",
+      className={cn("selection-trigger inline-flex h-[30px] max-w-[220px] min-w-0 items-center gap-1.5 rounded-row border-none bg-transparent px-2 text-ui-sm text-fg-2 transition-[color,background-color] duration-120 ease-standard hover:bg-subtle hover:text-fg disabled:opacity-45 data-[popup-open]:bg-subtle data-[popup-open]:text-fg",
         selected?.icon && !trigger && "font-medium text-fg", className)}/>}>
       {trigger ? trigger(selected) : <>
         {selected?.icon ? <span className="flex flex-none items-center">{selected.icon}</span> : null}
@@ -108,7 +108,7 @@ export function SearchPicker({ label, value, placeholder, options, onChange, dis
                 <button type="button" id={id} role="option" aria-label={option.label} aria-describedby={[option.status ? `${id}-status` : "", describe ? `${id}-description` : ""].filter(Boolean).join(" ") || undefined}
                   aria-selected={value === option.value} disabled={option.disabled} aria-disabled={option.disabled ?? false}
                   onPointerMove={() => { if (!option.disabled) setActiveValue(option.value); }} onClick={() => choose(option)}
-                  className={cn("picker-option flex w-full items-center gap-2.5 rounded-[9px] border-none bg-transparent px-2.5 text-left outline-offset-[-2px] transition-colors duration-120 ease-standard disabled:cursor-not-allowed disabled:opacity-55",
+                  className={cn("picker-option flex w-full items-center gap-2.5 rounded-[9px] border-none bg-transparent px-2.5 text-left outline-offset-[-2px] transition-[color,background-color] duration-120 ease-standard disabled:cursor-not-allowed disabled:opacity-55",
                     large ? "py-2" : "py-[7px]", active?.value === option.value && "is-active bg-subtle")}>
                   {option.icon ? <span className="flex flex-none items-center">{option.icon}</span> : null}
                   <span className="flex min-w-0 flex-1 flex-col">

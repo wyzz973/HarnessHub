@@ -50,10 +50,10 @@ export function Welcome({ harnesses, readiness, firstUse, selected, workspace, o
           : <button type="button" className="btn btn-sm self-start" onClick={onRescan} disabled={scanning}><RefreshCw size={12} className={cn(scanning && "spin")} aria-hidden="true"/>重新检测</button>}
       </Step>
       <Step index={2} title="选一个项目文件夹" text="Agent 在这里读写文件。以后每个对话都可以换。">
-        <WorkspaceEditor workspace={workspace} onWorkspace={onWorkspace} trigger={<button type="button" className="h-[30px] w-full min-w-0 truncate rounded-row border-none bg-surface px-2.5 text-left text-caption text-fg-2 shadow-hairline transition-colors duration-120 ease-standard hover:text-fg" title={workspace}>{homePath(workspace) || "填写工作目录"}</button>}/>
+        <WorkspaceEditor workspace={workspace} onWorkspace={onWorkspace} trigger={<button type="button" className="h-[30px] w-full min-w-0 truncate rounded-row border-none bg-surface px-2.5 text-left text-caption text-fg-2 shadow-hairline transition-[color,background-color] duration-120 ease-standard hover:text-fg" title={workspace}>{homePath(workspace) || "填写工作目录"}</button>}/>
       </Step>
       <Step index={3} title="开始第一段对话" text="给一个现成的问题，回车就能看到效果。">
-        <button type="button" className="press h-[30px] self-start rounded-full border-none bg-transparent px-3 text-caption text-fg-2 shadow-[inset_0_0_0_1px_var(--border-strong)] transition-colors duration-120 ease-standard hover:bg-subtle hover:text-fg" onClick={() => onSuggest("讲讲这个项目的结构")}>讲讲这个项目的结构</button>
+        <button type="button" className="press h-[30px] self-start rounded-full border-none bg-transparent px-3 text-caption text-fg-2 shadow-[inset_0_0_0_1px_var(--border-strong)] transition-[color,background-color,transform] duration-120 ease-standard hover:bg-subtle hover:text-fg" onClick={() => onSuggest("讲讲这个项目的结构")}>讲讲这个项目的结构</button>
       </Step>
     </ol> : <>
       <div className="motion-enter mt-3 mb-7 flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1 text-ui-sm text-fg-3" style={motionStyle({ delay: 40 })}>
@@ -65,7 +65,7 @@ export function Welcome({ harnesses, readiness, firstUse, selected, workspace, o
           : available.length ? null : <><span aria-hidden="true" className="max-sm:hidden">·</span><button type="button" className="link-btn font-normal" onClick={onHarnesses}>查看安装方式</button></>}
       </div>
       <div className="flex items-center gap-0.5 px-2 pb-2">
-        <WorkspaceEditor workspace={workspace} onWorkspace={onWorkspace} trigger={<button type="button" className="flex h-[30px] max-w-full min-w-0 items-center gap-1.5 rounded-row border-none bg-transparent px-2 text-ui-sm font-medium text-fg transition-colors duration-120 ease-standard hover:bg-subtle data-[popup-open]:bg-subtle" title={workspace}>
+        <WorkspaceEditor workspace={workspace} onWorkspace={onWorkspace} trigger={<button type="button" className="flex h-[30px] max-w-full min-w-0 items-center gap-1.5 rounded-row border-none bg-transparent px-2 text-ui-sm font-medium text-fg transition-[color,background-color] duration-120 ease-standard hover:bg-subtle data-[popup-open]:bg-subtle" title={workspace}>
           <Folder size={15} className="flex-none text-fg-2" aria-hidden="true"/><span className="min-w-0 truncate">{folderName(workspace) || "选择工作区"}</span><ChevronDown size={12} strokeWidth={2} className="flex-none text-fg-3" aria-hidden="true"/></button>}/>
       </div>
     </>}
