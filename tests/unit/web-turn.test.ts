@@ -34,6 +34,9 @@ test("G054-FR1 preferences stored with the sidebar's old grouping still read, wi
     const read = readStored({ theme: "light", density: "detailed", panel: false, sidebar: false, groupBy, showFrozen: true, version: 2 });
     assert.deepEqual(read, { theme: "light", density: "detailed", panel: false, sidebar: false, showFrozen: true });
     assert.equal(Object.hasOwn(read, "groupBy"), false);
+    // The shape exactly as the previous code wrote it, with no version: the same choices are kept, and the panel starts closed.
+    assert.deepEqual(readStored({ theme: "dark", density: "detailed", panel: true, sidebar: false, groupBy, showFrozen: true }),
+      { theme: "dark", density: "detailed", panel: false, sidebar: false, showFrozen: true });
   }
 });
 
