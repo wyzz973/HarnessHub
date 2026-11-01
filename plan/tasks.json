@@ -1321,7 +1321,8 @@
         "发布新revision并保留历史",
         "提交前拒绝",
         "内存目录不先更新",
-        "src/infrastructure/management/verified-versions.ts 只放各产品的续接命令表 RESUME_COMMANDS（ADR-039、ADR-053；版本表 VERIFIED_VERSIONS 与对账 versionConsistency 由第三批 D1 删除），文件路径保留到 T-ARCH-03 迁入 Harness 描述模块；续接命令对任何版本给出，版本只作证据"
+        "src/infrastructure/management/verified-versions.ts 只放各产品的续接命令表 RESUME_COMMANDS（ADR-039、ADR-053；版本表 VERIFIED_VERSIONS 与对账 versionConsistency 由第三批 D1 删除），文件路径保留到 T-ARCH-03 迁入 Harness 描述模块；续接命令对任何版本给出，版本只作证据",
+        "OpenClaw 的 npm 安装按 ADR-052 实现裁决（2026-11-01）在“升级 Harness”里按官方文档的顺序升级：配方声明 upgradeSequence（桥接 2026.9.5、--allow-scripts=openclaw、gateway stop/start/status --deep、doctor --fix --yes、node restart、备份命令、Doctor 改写的文件），管理代码不按产品分支；gateway stop → 每跳 npm 安装并读 package.json 核实 → doctor → gateway start → 恢复判定（不 kickstart）→ status --deep 入日志 → node restart；每跳的 engines.node 对照程序解释器与服务的 Node.js，备份确认（backupConfirmed）计入指纹、缺它在改动前拒绝；事实 hops/services/backupConfirmed/configurationMigrated 在 view_json 里，不升管理库版本。2026-10-22 的过渡措施（UNSUPPORTED_UPGRADE）由此取代；逐份升级路径对 OpenClaw 仍拒绝单独直装并指向“升级 Harness”。真机升级与 T-OC-12 由主代理另行执行，本任务只有替身证据"
       ],
       "test_cases": [
         "G011-C01",
@@ -1375,7 +1376,15 @@
         "G011-NC4",
         "G011-UG11",
         "G011-N04",
-        "G011-N05"
+        "G011-N05",
+        "G011-UP10",
+        "G011-UP11",
+        "G011-UP12",
+        "G011-UP13",
+        "G011-UP14",
+        "G011-UP15",
+        "G011-UP16",
+        "G011-UP17"
       ],
       "active_slice": "upgrade-with-running-programs"
     },
@@ -3528,6 +3537,7 @@
         "G054-FR8",
         "G054-UP1",
         "G054-UP2",
+        "G054-UP3",
         "G054-OC1",
         "G054-UN1",
         "G054-IN1",

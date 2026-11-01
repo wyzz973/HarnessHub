@@ -10464,11 +10464,11 @@
         "INV-16"
       ],
       "layer": "integration",
-      "scenario": "OpenClaw 的 npm 直装升级在路线 A 落地前返回 UNSUPPORTED_UPGRADE（ADR-052 过渡措施，审批代理裁决 11）",
-      "expected": "OpenClaw 的维护升级在准备阶段以 409 UNSUPPORTED_UPGRADE 返回，说明升级由 openclaw update 完成（会运行 Doctor 迁移配置并重启 Gateway），路线见 ADR-052；候选版本的临时目录 config validate 预演不再运行（没有子进程、没有临时安装）；其他产品的 npm 维护升级不受影响；没有任何按版本号的判断",
+      "scenario": "OpenClaw 的 npm 包不单独直装（ADR-052 实现裁决取代了 2026-10-22 的过渡措施）",
+      "expected": "ADR-044 的逐份升级路径对 OpenClaw 的 npm 安装仍在准备阶段以 409 UNSUPPORTED_UPGRADE 返回，说明要按官方顺序（停 Gateway、逐版本安装并运行 openclaw doctor --fix、再启动 Gateway）在“升级 Harness”里升级、跳过 Doctor 会让新版 Gateway 拒绝启动、路线见 ADR-052，不查找任何发布、不留下预备的检查；维护路径（升级 Harness）对 OpenClaw 不再拒绝，改为运行该顺序（G011-UP10–UP16）；其他产品的 npm 升级不受影响；没有任何按版本号的判断",
       "status": "planned",
       "evidence": null,
-      "planned_file": "tests/integration/native-management.test.ts"
+      "planned_file": "tests/integration/installation-upgrade.test.ts"
     },
     {
       "id": "G032-NC31",
@@ -10525,6 +10525,150 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/protocol/acp.test.ts"
+    },
+    {
+      "id": "G011-UP10",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/native-management.test.ts",
+      "scenario": "OpenClaw 官方升级顺序的跳数计算（ADR-052 实现裁决）",
+      "expected": "按配方声明的桥接版本：已装版本早于 2026.7.0 且目标晚于 2026.9.5 时两跳 [2026.9.5, 目标]（2026.3.23-2 → 2026.10.9），否则一跳 [目标]（2026.9.36、2026.7.0 直达；目标就是 2026.9.5 时一跳）；已装版本未知或不可比较时以 INVALID_METADATA 拒绝，不猜；OpenClaw 配方声明的正是上游命令：gateway stop/start/status --deep、doctor --fix --yes、--allow-scripts=openclaw、node restart、backup create --output <目录> --verify、迁移 ~/.openclaw/openclaw.json",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UP11",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/native-management.test.ts",
+      "scenario": "OpenClaw 顺序升级的正路：命令顺序、恢复判定与事实",
+      "expected": "确认框列出两跳、按序的命令原文、第一跳前停止的 Gateway、Gateway 恢复后由产品命令重启的 node 服务、备份命令、Doctor 改写的文件与 .bak 说明，rollback 为 null，node 服务不再列为“继续用旧版本”；检查不运行任何产品命令。同意（带 backupConfirmed）后替身记录的命令行正好是：gateway stop → npm install（--allow-scripts、公共注册表、精确版本）→ doctor --fix --yes（每跳）→ gateway start → gateway status --deep → node restart；没有 kickstart；Gateway 在第一次 npm 之前停止、在最后一次 Doctor 之后启动；恢复判定通过（新进程、端口监听）；hops、services、backupConfirmed、restartServices、actualVersion 如实记录，configurationMigrated 不出现；日志含每步命令原文、status 的末尾与“已核实本机程序为 <目标>”；任务 completed 且 resolvedVersion 为目标；事实原样读回",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UP12",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/native-management.test.ts",
+      "scenario": "第二跳的 Doctor 拒绝",
+      "expected": "Doctor 以非零退出并提到 2026.9.7 时任务 failed（DOCTOR_FAILED），错误带 Doctor 原话、已装入的版本与“没有回滚也没有重试”；hops 为 [{2026.9.5, installed, ok}, {目标, installed, failed}]，actualVersion 是磁盘上的第二跳版本，services 不出现，configurationPreserved 未确认；之后的命令（gateway start、status、node restart）都没有运行，Gateway 保持停止，没有 kickstart；结果已知，维护锁释放",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UP13",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/native-management.test.ts",
+      "scenario": "某一跳的 Node.js 要求不满足 Gateway 或 node 服务的 Node.js",
+      "expected": "确认框按跳列出要求：桥接跳全部满足，目标跳的 Gateway 与 node 服务都不满足且都算“随升级重启”（node 服务由顺序重启）；check.runtimes 是目标跳的；任务在改动前以 RUNTIME_INCOMPATIBLE 停下并指名那一跳的版本、服务与 brew upgrade 命令；没有运行 gateway stop，原版本不变，hops 不出现",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UP14",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/native-management.test.ts",
+      "scenario": "没有备份确认的顺序升级",
+      "expected": "不带 backupConfirmed 的提交在创建任务之前以 BACKUP_CONFIRMATION_REQUIRED 拒绝（消息含备份命令，以“没有升级”结尾）；backupConfirmed: false 是 INVALID_INPUT；没有任何任务、没有运行任何命令、原版本不变；普通 npm 产品带 backupConfirmed 是 INVALID_INPUT；带确认的同一命令与不带的是不同指纹（COMMAND_CONFLICT），重复提交幂等",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UP15",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/native-management.test.ts",
+      "scenario": "Doctor 改写受保护配置记为迁移",
+      "expected": "2026 年 7 月之后的安装一跳直达；Doctor 改写 ~/.openclaw/openclaw.json 后任务仍 completed，configurationMigrated 为 [\"~/.openclaw/openclaw.json\"]，configurationPreserved 为 true（HarnessHub 自己没有写入），Doctor 的改写保留，其他受保护文件不变；日志写明由产品的 Doctor 改写、原件在 .bak 备份里",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UP16",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "planned_file": "tests/integration/native-management.test.ts",
+      "scenario": "gateway start 之后 60 秒内没有在端口上监听",
+      "expected": "任务 failed（SERVICE_NOT_READY），actualVersion 与磁盘都是目标版本，hops 全部 ok，services 只有 Gateway（restarted，ready false）；错误给出已安装的版本与重试指令（gateway status --deep、stop 后再 start）；status --deep 的末尾已写入日志；node 服务没有重启并在日志说明原因；没有 kickstart、没有重试；结果已知，维护锁释放",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G011-UP17",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "planned_file": "tests/unit/management-state.test.ts",
+      "scenario": "顺序升级的事实与同意的解析",
+      "expected": "parseManagementJob 原样读回 hops、backupConfirmed、configurationMigrated 与 services；拒绝空的或超过 4 项的 hops、installed 为假却有 Doctor 结果、未知的 doctor 取值、多余字段、与 actualVersion 不符的 hops、非布尔的 backupConfirmed、空路径或超过 8 项的 configurationMigrated、带 hops 的 install 任务；parseManagementInput 只对带 expectedNativeFingerprint 的 upgrade 受理 backupConfirmed: true，false、字符串、install 或缺指纹都是 INVALID_INPUT",
+      "status": "planned",
+      "evidence": null
+    },
+    {
+      "id": "G054-UP3",
+      "task": "G054",
+      "requirements": [
+        "R22"
+      ],
+      "invariants": [
+        "INV-25"
+      ],
+      "layer": "e2e",
+      "planned_file": "tests/browser/web.browser.ts",
+      "scenario": "OpenClaw 顺序升级的确认框与任务事实（ADR-052）",
+      "expected": "确认框列出跳数与中间版本、按序的命令原文（含 --allow-scripts=openclaw）、Gateway 在第一跳前由产品命令停止、最后一跳后启动且期间渠道离线、不用 kickstart、node 服务由产品命令重启、Doctor 改写的文件与 .bak 说明、插件、只能从备份退回且没有 npm 退回命令；确认按钮在勾选“我已运行 openclaw backup create … 并核对了备份”之前不可用，取消勾选又不可用；提交带 backupConfirmed: true、同意的服务与这次检查的指纹；任务详情显示每一跳、Gateway 与 node 的结果、配置由 Doctor 迁移、HarnessHub 没有写入；无页面错误",
+      "status": "planned",
+      "evidence": null
     }
   ]
 }

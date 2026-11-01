@@ -38,7 +38,7 @@ Web界面按用户确认的设计稿重写（[ADR-042](docs/decisions/0042-front
 升级本机 Harness 时先检查再确认（[ADR-043](docs/decisions/0043-upgrade-with-running-programs.md)）：
 - 确认框列出会重启的后台服务及命令原文、仍用旧版本的程序、会先关闭的 HarnessHub 空闲进程、插件、退回命令，以及新版本要求的 Node.js。
 - 正在回复的对话、其他 HarnessHub 进程、不满足的 Node.js 要求会阻止升级。
-- 同意后安装并核实版本，随即按产品自己的方式重启它的服务（OpenClaw 只重启 Gateway，Node 由用户用 `openclaw node restart` 重启），并确认它重新运行、在端口上监听。
+- 同意后安装并核实版本，随即按产品自己的方式重启它的服务，并确认它重新运行、在端口上监听。OpenClaw 按它官方文档的顺序（[ADR-052](docs/decisions/0052-openclaw-upgrade-route.md)，2026-11-01）：先 `openclaw gateway stop`，逐个版本 npm 安装（2026 年 7 月前的安装先经 2026.9.5）并运行 `openclaw doctor --fix --yes`，再 `openclaw gateway start` 与 `openclaw node restart`；确认框列出命令原文，要求先运行 `openclaw backup create` 并勾选，退回旧版本只能从这份备份恢复。
 - 改动前停下的任务显示“没有升级”。管理库因此升到 v3（只改版本号），退回旧构建前用 `tools/management-v3-to-v2.sql` 降级。验收见[升级与重启验收](docs/verification/upgrade-restart-2026-10-12.md)。
 
 只认官网安装方式（[ADR-044](docs/decisions/0044-macos-official-channels.md)，2026-10-17）：

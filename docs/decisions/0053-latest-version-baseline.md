@@ -80,7 +80,7 @@
 8. **Codex 协作模式总是提供、`collaborationMode/list` 不可用时 `NATIVE_OPTION_UNAVAILABLE`；OpenCode `/compact` 对任何版本补入、空回合判 `NATIVE_COMMAND_IGNORED`；OpenClaw 的 fork 硬拒绝删除**：同意。条件：错误消息带原程序给出的原因；`/compact` 空回合判定只对 OpenCode，并以 1.18.35 的真实形状（回复文本）为 completed 的依据（[opencode-compact-2026-10-22.md](../verification/opencode-compact-2026-10-22.md)）；协议测试用能力场景而不是版本场景。
 9. **JSON-RPC 错误的 `data.details` 透出到 `ControlError.remoteDetail`**：同意，附条件——截 2 KiB、剔除控制字符、不进日志原文；进入用户可见消息的只有匹配固定前缀的分类结果（`not_found`、`Gateway …`），不回显任意文本；`unknown_execution` 本批不映射为 failed（`BackendResult` 没有未知，把未知记成失败违反运行契约），只在诊断里透出原因与 `/discard` 提示，等“未知结果”契约任务。
 10. **OpenClaw 思考与识图两格记为本机受阻并写明原因**：同意。说明写“本机默认模型不输出思考/不看图，非接口缺口；用户配置推理或多模态模型后复验”，用户任何时候可以改为先配好模型再验收。
-11. **OpenClaw 的 npm 直装升级在本批改为 `UNSUPPORTED_UPGRADE` 并说明改走 `openclaw update`；候选版本的 `config validate` 预演删除**：同意，作为过渡措施，第四批路线 A 落地后放开；确认框文案指向 ADR-052 修订版；用户现在点击升级会看到说明，而不是校验失败。
+11. **OpenClaw 的 npm 直装升级在本批改为 `UNSUPPORTED_UPGRADE` 并说明改走 `openclaw update`；候选版本的 `config validate` 预演删除**：同意，作为过渡措施，第四批路线 A 落地后放开；确认框文案指向 ADR-052 修订版；用户现在点击升级会看到说明，而不是校验失败。（2026-11-01 已放开：“升级 Harness”按 [ADR-052](0052-openclaw-upgrade-route.md) 实现裁决运行官方顺序；逐份升级路径对 OpenClaw 仍拒绝单独直装。）
 12. **否决**：ADR-051 的 A1（钉住 v0.22.2 并禁止 `hermes update`）、B 作为终态（停在 0.12.0）、第 8 条（≥ 0.22.3 拒绝建会话）——与用户原则直接冲突；ADR-052 推荐的 extended-stable 2026.9.33 轨道——原则定为 latest，研究中“extended-stable 含同样的 ACP 桥改进”的事实不否认，但不再作为选择依据。
 13. **真实验收费用上限**：沿用[手册](../engineering/real-acceptance.md)第 4 节，OpenCode 从 5 次放宽到 ≤ 10 次提示（`/compact` 与可选的 thought-level），Hermes 本轮不做；单回合 > 150k token 或 > 5 分钟即停。
 14. **把本机各家升到最新版用于真实验收**：由用户决定（“待用户决定”第 1 题）；无论答复如何，升级只由用户在 Hub 点击或明确同意；OpenCode 的 Hub 升级要等 Homebrew 公式全名的修复部署后再点，否则可能被换成 Core 的 OpenCode 2。
@@ -111,7 +111,7 @@
 1. 是否把本机 Claude Code（2.1.306 → 2.1.307，适配器 0.89.1 → 0.94.0）、Codex（0.162.1 → 0.163.0）、OpenCode（1.18.35 → 1.19.3，等公式全名修复部署后）、dsh（0.2.0-rc.2 → 0.2.1-rc.2）升到渠道最新版用于真实验收（都经 Hub 的升级入口或用户确认后执行；推荐都升）。答复前：Hub 的功能照常对当前版本可用，不做任何版本提示。
 2. OpenCode 的“最新版”按 OpenCode 1 的 1.19.3（与本机、npm opencode-ai、ACP 注册表一致，推荐）还是直接换到 OpenCode 2（2.1.2，需用户同意替换本机 V1，Hub 要新加渠道识别与 V1/V2 读表）。答复前：本批按 1.19.3 写配方，不加 V2 渠道。
 3. Hermes 最新版 v0.22.4 的 `hermes acp` 会附着到用户正在运行、同时服务 QQ 的网关：是否允许 HarnessHub 的 Hermes 会话进入它（[ADR-051](0051-hermes-upgrade-route.md) 修订版只剩这一个待决项）。答复前：Hub 仍接入本机 0.12.0，不做版本提示，不运行任何网关命令，本轮不做 Hermes 真实验收。**用户 2026-10-22 答复：允许**——HarnessHub 的 Hermes 会话可以进入正在运行的网关，Hermes 由用户交 HarnessHub 支配；ADR-051 随之 accepted，A2 的建会话前只读预检 2026-11-01 落地（ADR-051“实现”），真实验收按 ADR-051“验证”分两步进行。
-4. OpenClaw 升到 latest 的方式：由 HarnessHub 两跳升级（路线 A，推荐）、用户在终端自己按官方命令升级（B）或暂不升级（C）（[ADR-052](0052-openclaw-upgrade-route.md) 修订版）。答复前：OpenClaw 的 npm 直装升级显示说明（裁决 11），在 2026.3.23-2 上用当前代码重做 T-OC-08 复验。
+4. OpenClaw 升到 latest 的方式：由 HarnessHub 两跳升级（路线 A，推荐）、用户在终端自己按官方命令升级（B）或暂不升级（C）（[ADR-052](0052-openclaw-upgrade-route.md) 修订版）。答复前：OpenClaw 的 npm 直装升级显示说明（裁决 11），在 2026.3.23-2 上用当前代码重做 T-OC-08 复验。**已答复（2026-10-22）**：“由你直接升级……OpenClaw 完全由你支配”；2026-11-01 按 ADR-052 实现裁决落地——由 HarnessHub 在“升级 Harness”里按上游文档的显式顺序两跳升级（不经 `openclaw update`），用户只需先运行 `openclaw backup create` 并在确认框勾选。
 
 WorkBuddy 的遥测开关与本原则无关，M4 开始前再问（ADR-048）。
 
@@ -132,7 +132,7 @@ WorkBuddy 的遥测开关与本原则无关，M4 开始前再问（ADR-048）。
 | [ADR-048](0048-harness-scope-and-workbuddy.md) | 完成定义第 4 层与“做精”判据改为最新正式版；用户决定 3（区间加冒烟）、4（dsh 精确基线）、5（Hermes 停在 0.12.0）按本记录修订；第 21、51、105、117 行同步；新增“ADR-053 对本记录的修订”一节 | accepted，已修订 |
 | [ADR-050](0050-harness-tiers-and-on-demand-refresh.md) | 第 30 行“原生恢复命令按请求扫描”改为不扫描；决定 4 的文案去掉“已用真实回合验证” | accepted，已修订 |
 | [ADR-051](0051-hermes-upgrade-route.md) | 重写为“Hermes 最新版的接入方式”：删除 A1、B 作为终态与第 8 条；第 1、2 条改引本记录例外；第 6 条由第三批 D4 承接；第 7 条区间删除；唯一待决项是 A2（网关查看器附着） | accepted（第 3 题 2026-10-22 答复“允许”；A2 的建会话前只读预检 2026-11-01 落地，见 ADR-051“实现”） |
-| [ADR-052](0052-openclaw-upgrade-route.md) | 轨道改为 latest；路线 A 保留为推荐并等用户确认，流程细节按研究改写；路线 C 只作研究期间的现状；T-OC-11 改为按能力；第 59、76 行文案改写；本批的过渡措施（裁决 11）登记 | proposed（等第 4 题） |
+| [ADR-052](0052-openclaw-upgrade-route.md) | 轨道改为 latest；路线 A 保留为推荐并等用户确认，流程细节按研究改写；路线 C 只作研究期间的现状；T-OC-11 改为按能力；第 59、76 行文案改写；本批的过渡措施（裁决 11）登记 | proposed（等第 4 题）；2026-11-01 accepted（实现裁决） |
 | [索引](README.md) | ADR-038 标 superseded；ADR-034、039、046、048、051、052 的摘要同步；新增本记录 | — |
 
 ## 影响

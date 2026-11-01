@@ -95,11 +95,18 @@ HarnessHub 只对已加载、正在运行的任务执行 kickstart，不替产�
 - **现在。** 按 [ADR-044](0044-macos-official-channels.md) 第六轮裁决，检查与升级都用用户真实的 HOME、`HOMEBREW_*` 设置和缓存，带 `HOMEBREW_NO_AUTO_UPDATE=1`、`HOMEBREW_NO_INSTALL_CLEANUP=1`、`HOMEBREW_NO_AUTOREMOVE=1`。检查在禁写、禁网的沙箱里读本地记录，升级仍在 Homebrew 自己的继承沙箱里运行，用户配置照旧不可写。
 - **证据。** `tests/real/homebrew-native.real.ts` 在真实 Homebrew 下证明：以测试自己的家目录为 HOME 时，Homebrew 写的是那个家目录下的缓存，而 `~/.zshrc` 和 `~/.config` 仍然写不进去。
 
+## OpenClaw 按它自己的命令停止与启动，Doctor 由 HarnessHub 运行（2026-11-01 补充，[ADR-052](0052-openclaw-upgrade-route.md) 实现裁决）
+
+- 对声明了官方升级顺序的产品（现在只有 OpenClaw 的 npm 安装），“升级 Harness”不再“装包后 `launchctl kickstart -k`”：先 `openclaw gateway stop`，每一跳 npm 安装（`--allow-scripts=openclaw`）并读包目录核实，再运行 `openclaw doctor --fix --yes`，最后一跳之后 `openclaw gateway start`，用第 5 条的判定核实它重新运行、在端口上监听（不 kickstart），`openclaw gateway status --deep` 的末尾写入任务日志；`ai.openclaw.node` 升级前在运行时由 HarnessHub 运行 `openclaw node restart` 并做同样的判定。决定 2 里“HarnessHub 不运行 `openclaw doctor`，需要迁移时由用户运行”与下面“不运行 doctor，不迁移配置”对 OpenClaw 已被取代；配方的 `restartCommand: openclaw node restart` 对其他路线仍是用户自己运行的命令。
+- Doctor 改写 `~/.openclaw/openclaw.json` 是这条路线的预期：记为 `native.configurationMigrated`，不判失败，也不算“重启后的服务自己写的”；`configurationPreserved: true` 仍只表示 HarnessHub 自己没有写入。原件由 Doctor 轮换为 `.bak`（.bak.1–.bak.4）。
+- 确认框多一步：用户先运行 `openclaw backup create --output <目录> --verify` 并勾选“我已运行……并核对了备份”，同意带 `backupConfirmed: true`；没有它在改动前拒绝。退回旧版本只能从这份备份恢复，所以确认框对 OpenClaw 不再给 npm 的退回命令。
+- 每一跳的 `engines.node` 都对照 CLI 的解释器与两个服务的 Node.js（第 7 条的规则），不满足的那一跳阻止确认、在改动前拒绝。
+
 ## 不做与未验证
 
 - Linux：不读 systemd，常驻进程只归入“不随升级重启”，提示自行重启，没有真实验证。Windows：原生升级仍不支持。
-- 产品自定义的就绪检查（例如 `openclaw health`）：只检查端口监听，不连接、不调用产品命令。
-- 不替产品 bootstrap 或 enable 已卸载的服务，不运行 doctor，不迁移配置。
+- 产品自定义的就绪检查（例如 `openclaw health`）：只检查端口监听，不连接、不调用产品命令（`openclaw gateway status --deep` 只记入日志，不作判定）。
+- 不替产品 bootstrap 或 enable 已卸载的服务；除声明了升级顺序的产品（OpenClaw，见上节）外不运行 doctor，不迁移配置。
 - 源码安装（Hermes、dsh、Pi 开发目录）仍不在 HarnessHub 里升级，“本机安装”里会说明请用它自己的更新方式。
 
 ## 验证

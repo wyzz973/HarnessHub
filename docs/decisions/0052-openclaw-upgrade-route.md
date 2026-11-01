@@ -1,6 +1,6 @@
 # ADR-052：OpenClaw 的升级路线与轨道
 
-状态：proposed，2026-10-22（第二批 C6 的只读研究草案；同日按 [ADR-053](0053-latest-version-baseline.md) 修订——轨道由原则定为 latest，路线 A 保留为推荐并等用户确认，流程细节按研究改写；用户答复后由主代理改 accepted。没有代码改动；本批的过渡措施见文末）。事实见 [OpenClaw 2026.10.x 升级就绪](../research/openclaw-2026.10-upgrade-readiness-2026-10-22.md)与 ADR-053“研究结论摘要”。依据 [ADR-043](0043-upgrade-with-running-programs.md)、[ADR-044](0044-macos-official-channels.md)、[ADR-045](0045-unified-capability-management.md) 裁决 9（已按 ADR-053 修订）、[ADR-048](0048-harness-scope-and-workbuddy.md) 与 ADR-053。
+状态：accepted，2026-11-01。2026-10-22 作为第二批 C6 的只读研究草案提出，同日按 [ADR-053](0053-latest-version-baseline.md) 修订（轨道由原则定为 latest，路线 A 保留为推荐并等用户确认）；用户同日答复 ADR-053“待用户决定”第 4 题“由你直接升级……OpenClaw 完全由你支配”，2026-11-01 由用户授权的审批代理（Fable 5.1）裁决实现形态并落地，见文末“2026-11-01 实现裁决”——它是实现依据，上文“路线”一节保留为研究时的草案，与它不同处以它为准。事实见 [OpenClaw 2026.10.x 升级就绪](../research/openclaw-2026.10-upgrade-readiness-2026-10-22.md)与 ADR-053“研究结论摘要”。依据 [ADR-043](0043-upgrade-with-running-programs.md)、[ADR-044](0044-macos-official-channels.md)、[ADR-045](0045-unified-capability-management.md) 裁决 9（已按 ADR-053 修订）、[ADR-048](0048-harness-scope-and-workbuddy.md) 与 ADR-053。
 
 ## 背景
 
@@ -79,18 +79,50 @@
 2. 原则把升级目标定为渠道最新版（ADR-053 决定 6）；两跳、插件装回与两次重启都要写进确认框；第一跳失败就停。
 3. A 的具体形态（两跳、Doctor 改写 `openclaw.json`、两次重启 Gateway 中断微信/飞书、装回两个插件）与用户当初同意的“npm + kickstart”不同，所以仍需用户再确认一次（ADR-053“待用户决定”第 4 题）；实现放第四批。
 
-## 过渡措施（第三批 D4，审批代理裁决 11）
+## 过渡措施（历史：2026-10-22 第三批 D4，审批代理裁决 11；2026-11-01 由下文的实现裁决取代）
 
-在路线 A 落地之前，OpenClaw 的 npm 直装升级在准备阶段返回 `UNSUPPORTED_UPGRADE` 并说明：“OpenClaw 的升级由它自己的 `openclaw update` 完成（会运行 Doctor 迁移配置并重启 Gateway），HarnessHub 的 npm 直装路径不再用于 OpenClaw；路线见 ADR-052。”候选版本的 `config validate` 预演删除。D4 部署后用户点击升级看到的是说明，而不是校验失败；第四批把 `native-update` 接上后放开。
+2026-10-22 至 2026-11-01，OpenClaw 的 npm 直装升级在准备阶段返回 `UNSUPPORTED_UPGRADE` 并说明：“OpenClaw 的升级由它自己的 `openclaw update` 完成（会运行 Doctor 迁移配置并重启 Gateway），HarnessHub 的 npm 直装路径不再用于 OpenClaw；路线见 ADR-052。”候选版本的 `config validate` 预演同时删除。D4 部署后用户点击升级看到的是说明，而不是校验失败。实现裁决落地后，“升级 Harness”对 OpenClaw 运行下文的顺序；ADR-044 的逐份升级路径（单独 npm 直装某一份 OpenClaw）仍拒绝，说明改走“升级 Harness”。
+
+## 2026-11-01 实现裁决（审批代理；用户 2026-10-22 答复“由你直接升级……OpenClaw 完全由你支配”）
+
+### 本机事实（2026-11-01 核对）
+
+- OpenClaw 2026.3.23-2 装在 Homebrew Node 前缀的 npm 全局：包目录 `/opt/homebrew/lib/node_modules/openclaw`，入口 `/opt/homebrew/bin/openclaw → ../lib/node_modules/openclaw/openclaw.mjs`，npm `/opt/homebrew/bin/npm`（11.20.0）。npm dist-tags：latest 2026.10.9、extended-stable 2026.9.36、beta 2026.10.10-beta.5。
+- launchd：`ai.openclaw.gateway` 在运行（`/opt/homebrew/opt/node/bin/node … gateway --port 18789`，runs = 1），`ai.openclaw.node` 在运行。`openclaw gateway status` 报告 “Gateway service PATH missing required dirs: ~/.nvm; run openclaw doctor”。
+- 本机 2026.3.23-2 的 CLI：`openclaw update [--tag] [--dry-run] [--json] [--yes] [--timeout <秒>，默认 1200] [--no-restart] [--channel]`；`openclaw update --dry-run --json` 给出 installKind package、mode npm、tag openclaw@latest、2026.3.23-2 → 2026.10.9、downgradeRisk false 与四步动作（装包、同步插件、刷新补全、重启 gateway 并跑 doctor）；`openclaw update status --json` 却把 packageManager 判为 pnpm（deps lockfile missing）。另有 `openclaw doctor [--fix|--repair] [--yes] [--non-interactive] [--deep] [--force]`、`openclaw backup create|verify`、`openclaw gateway stop|start|status [--deep]`、`openclaw node restart`。
+
+### 上游（docs.openclaw.ai，2026-11-01 读）
+
+- [install/updating](https://docs.openclaw.ai/install/updating) “Upgrading very old versions”：2026 年 7 月之前的安装先升到 2026.9.5、运行它的 Doctor 迁移，再升到 latest。npm 顺序：`openclaw gateway stop && npm install -g openclaw@2026.9.5 --allow-scripts=openclaw && openclaw --version && openclaw doctor --fix`，然后 `npm install -g openclaw@latest --allow-scripts=openclaw && openclaw doctor --fix && openclaw gateway start && openclaw gateway status --deep`。直接装了太新版本的，Doctor 在改写含退役键的配置前停下并指回这一跳；退役的同文件记忆索引要先经 2026.9.7（[cli/doctor/state-migrations](https://docs.openclaw.ai/cli/doctor/state-migrations)，CHANGELOG/2026.9.7.md）。
+- [cli/doctor/checks](https://docs.openclaw.ai/cli/doctor/checks)：Doctor 每次写配置都轮换 `~/.openclaw/openclaw.json.bak`（.bak.1–.bak.4）。
+- npm 注册表的 `engines.node`：2026.9.5 与 2026.9.7 是 `>=24.16.0 <25 || >=26.1.0`；2026.10.6–2026.10.9 是 `>=24.22.1 <25 || >=26.12.1`。本机 Homebrew Node 2026-11-01 是 26.11.1，真机运行前由主代理升级（`brew upgrade node`）；代码对服务的 Node 不满足的那一跳阻止升级，给出这条命令。
+- 2026.10.x 的 `openclaw update` 带 `--json` 输出 `UpdateRunResult`，交给受管服务助手时以退出码 75 返回（`src/infra/update-run-result.ts`、`src/cli/update-cli/update-command-handoff.ts`）；更新器只重启 gateway，不重启 `ai.openclaw.node`（[install/update-troubleshooting](https://docs.openclaw.ai/install/update-troubleshooting#headless-nodes-waiting-on-2026-9-6)）。
+- [cli/backup](https://docs.openclaw.ai/cli/backup)、[install/updating/rollback-and-recovery](https://docs.openclaw.ai/install/updating/rollback-and-recovery)：`openclaw backup create --output <目录> --verify` 写出带时间戳的 .tar.gz；恢复只用 `openclaw backup restore <备份文件> --target <新目录>`，不在原地恢复。旧版本打不开新版本的数据库，“退回旧版本”只能从升级前的备份。
+
+### 裁决
+
+1. **路线是上游文档的显式顺序，由 HarnessHub 在 ADR-043 的“升级 Harness”里驱动；npm 安装的 OpenClaw 只有这一条代码路径。** `openclaw gateway stop` → 每一跳：`<前缀的 npm> install --global --prefix <前缀> --no-audit --no-fund --allow-scripts=openclaw --registry=https://registry.npmjs.org openclaw@<版本>`（现有的配置写保护沙箱里；前缀的 npm 用的是服务启动用的那个 Node.js，所以发布的 preinstall 核对的正是它）→ 读包目录的 `package.json` 核实版本（不运行程序：生命周期脚本可能仍待补跑）→ `openclaw doctor --fix --yes` → 最后一跳之后 `openclaw gateway start` → 恢复判定（ADR-043 第 5 条的规则，但**不 kickstart**：state running、新进程、runs ≤ 升级前 + 1、连续 5 秒不变、60 秒内在 18789 上监听；等待循环抽成 `awaitServiceRecovery`）→ `openclaw gateway status --deep` 的末尾写入任务日志（有界）→ 升级前 `ai.openclaw.node` 在运行时 `openclaw node restart` 并做同样的判定（无端口）。跳数：已装版本早于 2026.7.0（`compareReleases`）时 [2026.9.5, 目标]，否则 [目标]。不调用 2026.3.23-2 的 `openclaw update --tag`：它在本机把包管理器判为 pnpm，也不传 `--allow-scripts`，第一跳可能落到别的前缀或留下待补跑的脚本；上游对 7 月前的安装给的就是显式顺序。`openclaw update` 的分阶段准入（与退出码 75）记为将来的细化，现在不实现。2026.9.7 一跳不自动加：某一跳的 Doctor 拒绝时任务停在那一跳、带 Doctor 原话（`DOCTOR_FAILED`），已装入的版本如实记录（磁盘上是哪一跳就记哪一跳），不回滚不重试（ADR-043 第 6 条）。
+2. **确认框**（`MaintenanceCheck.sequence` → `MaintenanceView` → `UpgradeDialog`）：跳 `[{version, bridge, runtimes}]`、命令原文（家目录写作 ~）、Gateway 在第一跳前停止、最后一跳后启动（期间渠道离线；HarnessHub 不 kickstart）、node 服务的重启、Doctor 改写的配置与 .bak 轮换、备份要求（`openclaw backup create --output <目录> --verify`）、插件说明（官方插件由 Doctor 按核心版本修复；第三方如 openclaw-weixin 可能要 `openclaw plugins update`）、只能从备份退回（顶层 `rollback` 为 null，确认框说明原因）。必选复选框“我已运行 openclaw backup create … 并核对了备份”放开确认按钮；同意带 `backupConfirmed: true` 随命令提交（`parseManagementInput` 只对带本机安装指纹的 Harness 升级受理；服务层只对声明了顺序的配方受理），计入命令指纹并记入任务事实；没有它的提交在创建任务之前拒绝（409 `BACKUP_CONFIRMATION_REQUIRED`）。
+3. **运行环境**：每一跳的 `engines.node`（npm 注册表元数据）对照 CLI 的解释器与 Gateway、node 服务的 Node.js；不满足的跳阻止确认，并在改动前拒绝任务（`RUNTIME_INCOMPATIBLE`，指名那一跳的版本）。node 服务由这条路线重启，所以它的 Node.js 也算“随升级重启”。
+4. **同意**：`ai.openclaw.gateway` 的同意沿用现状（`restartServices`）；对这条路线它表示“升级前由 OpenClaw 自己的命令停止、最后一跳后启动”。
+5. **事实**：`native.hops: [{version, installed, doctor: ok|failed|skipped}]`（≤ 4）、gateway start 与 node restart 作为 `native.services` 里的 `ServiceRestartFact`、`native.backupConfirmed`、新事实 `native.configurationMigrated: ["~/.openclaw/openclaw.json"]`——这条路线里受保护配置摘要的变化是预期的，记录而不判失败；`configurationPreserved: true` 仍只表示 HarnessHub 自己没有写入。`parseManagementJob` 校验全部事实并保持 64 KiB 视图预算；不升管理库版本（事实在 `view_json` 里，v6 的读取器以外的旧构建会拒绝这些字段，与 v3 以来的做法相同）。
+6. **进程**：npm 在现有的“configuration”写保护沙箱里运行（用户配置目录拒写）；`openclaw gateway stop/start/status`、`doctor --fix --yes`、`node restart` 不带那层拒写（它们要写配置与 launchd 状态），但用用户真实的家目录与 `OPENCLAW_*` 变量、以任务目录为 TMPDIR、输出有界、各有期限（doctor ≤ 1800 秒，其余 ≤ 120 秒）；任务外层期限对这条路线按每跳 3600 秒（`SEQUENCE_HOP_MS`）。所有进程经 `runManagementProcess` / `ProgramHost`，测试可替身。
+7. **路线由配方声明**（`ManagementRecipe.upgradeSequence`：`bridge`、`npmFlags`、`gateway` 的 stop/start/status、`doctor`、`restarts`、`backupCommand`、`migrates`、`migrationBackups`、`rollback`），管理代码按声明执行、不按产品分支（ADR-043 决定 9）。
+
+### 验证
+
+- 替身（无真实运行）：`tests/integration/native-management.test.ts` 的 G011-UP10–UP16（跳的计算；命令顺序、恢复判定与事实；第二跳 Doctor 拒绝；某跳运行环境不满足；缺备份确认；Doctor 改写配置记为迁移；gateway start 后不监听），`tests/unit/management-state.test.ts` 的 G011-UP17（事实与同意的解析），`tests/browser/web.browser.ts` 的 G054-UP3（确认框、复选框、提交的同意与任务事实）。替身的 `openclaw` 把每条命令行记入轨迹文件，launchd 替身由产品的 stop/start/restart 驱动。
+- 真机：由主代理在本机 Node 升到 ≥ 26.12.1、用户运行 `openclaw backup create --output <目录> --verify` 之后，在 4317 点击“升级 Harness”执行，之后做 T-OC-12（只读回合，≤ ¥5）。本记录不声称任何真实运行；结果写入 `docs/verification/`。
 
 ## 不做
 
-- 不复制 `openclaw.json` 作备份（含渠道凭据），不代跑 `openclaw backup`（本轮也不代跑 `openclaw plugins install`，预检第 2 项核实后再定），不在 `openclaw update` 之外再 kickstart。
+- 不复制 `openclaw.json` 作备份（含渠道凭据），不代跑 `openclaw backup`（用户运行后在确认框勾选），本轮不代跑 `openclaw plugins install`。
+- 不 kickstart；不调用 `openclaw update`（2026-11-01 实现裁决 1）。
 - 不选 extended-stable 轨道；不按版本号门控任何功能（T-OC-11 按能力）。
 - ADR-045 裁决 9 的 MCP 与插件写入：按最新版的实际行为（热重载表）决定，由 T-OC-12 在升级后的版本上真实核实后解锁，不写“这个版本”（原第 76 行“等升级后核实再解锁”的说法随 ADR-053 改写）。
 
-## 验证（选定后）
+## 验证（2026-10-22 研究时的计划；实际验证见“2026-11-01 实现裁决”）
 
-- 集成：`openclaw update` 的替身输出 `UpdateRunResult`（成功、第一跳失败、第二跳失败、退出码 75 的交接）各一例；`--dry-run --json` 计划的解析；latest 的解析与 `--tag <精确版本>` 冻结，升级前目标变了即停止；2026.9.7 条件跳；每跳后的 `openclaw node restart` 与恢复判定；两跳任务的记录与“没有升级”的显示；无效样例：Doctor 拒绝退役键时任务停在第一跳，候选 `config validate` 不在路径上。过渡期：OpenClaw 的 npm 直装升级在准备阶段返回 `UNSUPPORTED_UPGRADE` 并带说明（第三批 D4 的集成测试）。
+- 集成：`openclaw update` 的替身输出 `UpdateRunResult`（成功、第一跳失败、第二跳失败、退出码 75 的交接）各一例；`--dry-run --json` 计划的解析；latest 的解析与 `--tag <精确版本>` 冻结，升级前目标变了就停止；2026.9.7 条件跳；每跳后的 `openclaw node restart` 与恢复判定；两跳任务的记录与“没有升级”的显示；无效样例：Doctor 拒绝退役键时任务停在第一跳，候选 `config validate` 不在路径上。过渡期：OpenClaw 的 npm 直装升级在准备阶段返回 `UNSUPPORTED_UPGRADE` 并带说明（第三批 D4 的集成测试）。
 - 浏览器：确认框的两跳、插件装回、备份要求、`--accept-capabilities` 的说明、从 extended-stable 换到 latest 轨道的说明与红字说明。
 - 真机：只有用户点击；按 ADR-043 第 5 条核实两次重启的恢复与端口；升级后按审批代理的条件做 T-OC-12（只读回合、不停不重启 Gateway 与 Node、`openclaw.json` 前后摘要一致），证据入库后矩阵 `installation` 改为“真实验收版本 2026.10.x”（ADR-053 决定 8）。

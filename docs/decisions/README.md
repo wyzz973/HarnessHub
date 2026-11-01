@@ -106,6 +106,7 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
   - 取代 ADR-017 中“发现活动本机进程时拒绝原地升级”一条。按用户决定，升级前先列出会重启、会关闭和仍用旧版本的程序，用户同意后在新版本核实后立即按产品自己的方式重启它的后台服务（launchd `kickstart -k`）。
   - HarnessHub 自己的空闲进程先关闭；正在回复的对话、其他 HarnessHub 进程、不满足的 Node.js 要求阻止升级；写记录的进程已结束的旧记录在维护锁内清除。
   - 管理库 v3（只改版本号，附经过测试的降级 SQL）；业务库仍是 v12。
+  - 2026-11-01 补充：声明了官方升级顺序的产品（OpenClaw 的 npm 安装）由它自己的命令停止与启动，HarnessHub 运行它的 Doctor，配置迁移记为 `configurationMigrated`（[ADR-052](0052-openclaw-upgrade-route.md) 实现裁决）。
 - [ADR-044：只面向 macOS，按官网安装渠道探测和维护 Harness](0044-macos-official-channels.md)（accepted）：
   - 程序落在产品官网写明的渠道里才算已安装；同一产品的多份安装全部列出并标出当前使用的一份；正式入口默认只认官网。
   - 每份官网安装可按其渠道单独卸载（只删程序）、单独升级；没装的产品可以按官网方式代为安装。每次都先确认，写入在沙箱里受限。
@@ -127,7 +128,7 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
 - [ADR-049：业务库迁移前备份](0049-business-store-backup-before-migration.md)（accepted，2026-10-22，第二批 C4）：每次业务库版本提升前用 `VACUUM INTO` 在数据根的 backups 目录留备份，只保留最新 2 份；备份失败则迁移不发生（`STORAGE_BACKUP_FAILED`，user_version 不变、不接管 owner）。
 - [ADR-050：Harness 分层与按需刷新](0050-harness-tiers-and-on-demand-refresh.md)（accepted，2026-10-22，第二批 C3）：目录按 focus、frozen、catalog 分层（`HarnessView.tier`），冻结的三个默认不在选择器、欢迎页、“我的 Agent”与能力页里，设置开关可再显示，停在它们上面的对话照常打开；页面不再后台轮询，重新检测、安装任务完成与窗口重新获焦（至少间隔 60 秒）时刷新。
 - [ADR-051：Hermes 最新版的接入方式](0051-hermes-upgrade-route.md)（accepted，用户 2026-10-22 答复允许；A2 的预检 2026-11-01 落地；原为 2026-10-22 第二批 C6 的只读研究，同日按 ADR-053 重写）：最新版 v0.22.4 的 `hermes acp` 只是网关的查看器，没有进程内模式；钉住 v0.22.2（A1）、停在 0.12.0 作终态（B）与“≥ 0.22.3 拒绝建会话”（第 8 条）按用户原则撤销；采纳 A2——HarnessHub 的 Hermes 会话附着到用户正在运行的兼容网关：建会话前的只读预检（gateway.sock、gateway_state.json、gateway.pid/.lock、install-stamp.json、`launchctl print`、`ps`）只在判定 A 时启动 `hermes acp`，B（会停掉旧网关换新）、C（会等 60 秒）、D（会拉起 launchd 服务）、E（会起无监督守护进程）以 `NATIVE_GATEWAY_UNAVAILABLE` 拒绝并给出 Hermes 自己的命令，从不启动、停止或替换用户的网关；没有网关查看器的检出照常在进程内运行。未知结果契约与 60 秒例外的退出条件仍待做；真实两步验收待运行。
-- [ADR-052：OpenClaw 升级路线](0052-openclaw-upgrade-route.md)（proposed，2026-10-22，第二批 C6 的只读研究；同日按 ADR-053 修订）：轨道定为 latest（点击时解析 npm latest，2026-10-22 为 2026.10.5），保留上游要求的 2026.9.5 中间跳；路线 A（HarnessHub 在预检与备份后调用 `openclaw update` 两跳升级）为推荐、等用户确认；2026-10-17 用户点击升级被目标版本的配置校验拦下，原安装 2026.3.23-2 保留，本批的 npm 直装升级改为说明“改走 openclaw update”。
+- [ADR-052：OpenClaw 升级路线](0052-openclaw-upgrade-route.md)（accepted，2026-11-01；2026-10-22 作为第二批 C6 的只读研究提出并按 ADR-053 修订）：轨道 latest（点击时解析 npm latest），保留上游要求的 2026.9.5 中间跳；用户答复“由你直接升级”后，2026-11-01 实现裁决定为上游文档的显式顺序，由“升级 Harness”驱动：`openclaw gateway stop` → 每跳 npm 安装（`--allow-scripts=openclaw`）、核实、`openclaw doctor --fix --yes` → `openclaw gateway start` 与恢复判定（不 kickstart）→ `status --deep` 入日志 → `openclaw node restart`；确认框显示跳与命令原文，要求先 `openclaw backup create` 并勾选（`backupConfirmed`），每跳的 Node.js 要求都核对；事实 `hops`、`services`、`configurationMigrated`。不调用 `openclaw update`；2026-10-22 的过渡措施（npm 直装返回 `UNSUPPORTED_UPGRADE`）成为历史，逐份升级路径对 OpenClaw 仍拒绝单独直装。
 - [ADR-053：按各 Harness 的最新正式版适配，版本只作工程证据](0053-latest-version-baseline.md)（accepted，2026-10-22，用户原则“接入不限定版本，默认按最新版”）：
   - 任何官网渠道的安装、任何版本（包括读不出版本的）都能接入；不再按版本号提示或劝阻；续接命令按产品对任何版本给出；读表每家一张、`checkedOn` 只作证据；功能按程序实际报告的能力判断，缺的能力在用到时明确失败并带原因；升级目标是渠道最新版；真实验收以验收当日的最新正式版为对象。
   - 取代 ADR-038 全文，修订 ADR-031/034/035/036/039/043/044/045/046/048/050，重排 ADR-051/052 的选项；登记 Hermes 0.12 的 60 秒审批期限为唯一例外及其退出条件；撤销 ADR-034 第 37 行、ADR-051 第 8 条、ADR-052 T-OC-11、ADR-048 决定 3 页面冒烟入口等已登记的版本门槛计划。
