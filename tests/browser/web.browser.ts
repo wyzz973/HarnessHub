@@ -1546,6 +1546,7 @@ test("G054-DL5 an approval waits in the composer's place: ⏎ allows once and es
   await expect(log).toContainText('"optionId":"allow_once"', { timeout: 15000 });
   await expect(dock).toHaveCount(0); await expect(composer).toBeVisible(); await expect(composer).toBeFocused();
   await expect(results).toHaveText(["你允许了一次：rm -rf build"]);
+  assert.equal(await results.first().evaluate(element => getComputedStyle(element).animationName), "hh-fade-in");
   await expect(log.getByRole("button", { name: "等你批准，请求停在下方输入框的位置", exact: true })).toHaveCount(0);
   await expect.poll(() => box.evaluate(element => getComputedStyle(element).boxShadow)).not.toContain("rgb(245, 158, 11)");
   // esc refuses (a key right after the approval took the focus is still taken as meant for the message being typed).
@@ -1619,9 +1620,16 @@ test("G054-DL6 the plan bar above the composer says how far the plan is and open
   await composer.fill("STREAM_RENDER：计时"); await composer.press("Enter");
   await expect.poll(async () => (await current()).runs.at(-1).status, { timeout: 15000 }).toBe("running");
   await expect(line).toContainText("第 2 轮"); await expect(line).toContainText(/已用 \d+ 秒/u); await expect(line).not.toContainText("输入");
+  // #15: a message sent here rises into place; #16: the send key's glyph has turned into the stop square.
+  await expect(log.locator(".motion-message-in .user-message").last()).toContainText("STREAM_RENDER：计时");
+  assert.match(await log.locator(".motion-message-in").last().evaluate(element => getComputedStyle(element).animationName), /hh-message-rise/u);
+  await expect(page.getByRole("button", { name: "停止当前回复", exact: true }).locator(".send-stop")).toHaveAttribute("data-state", "stop");
   await step("finish");
   await expect.poll(async () => (await current()).runs.at(-1).status, { timeout: 15000 }).toBe("completed");
   await expect(line).toContainText(/用时 [\d.]+ 秒/u);
+  await expect(page.getByRole("button", { name: "发送消息", exact: true }).locator(".send-stop")).toHaveAttribute("data-state", "send");
+  // The history a page opens with does not move.
+  await page.reload(); await expect(log.locator(".user-message")).toHaveCount(2); await expect(log.locator(".motion-message-in")).toHaveCount(0);
   assert.deepEqual(errors, []);
 });
 
@@ -1680,7 +1688,15 @@ test("G054-DL9 ⌘J opens the Agent list, ⌘. stops the reply, ⌘\\ opens and 
   await page.keyboard.press("ControlOrMeta+\\"); await expect(panel).toHaveCount(0); await expect.poll(width).toBe(full);
   const button = page.getByRole("button", { name: "详情栏", exact: true });
   await button.click(); await expect(panel).toBeVisible(); await expect(button).toHaveAttribute("aria-pressed", "true");
+  // Its content slid in once: a key and then the pointer again (the input mode changing) do not make it start over.
+  await page.waitForTimeout(400); await page.keyboard.press("Shift");
+  assert.equal(await page.evaluate(() => { document.dispatchEvent(new PointerEvent("pointerdown")); return getComputedStyle(document.querySelector(".details-aside")!.firstElementChild!).opacity; }), "1");
   await button.click(); await expect(panel).toHaveCount(0); await expect(button).toHaveAttribute("aria-pressed", "false");
+  // With reduced motion the panel appears at once: no widening and no slide.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await button.click(); await expect(panel).toBeVisible();
+  assert.deepEqual(await page.locator(".details-aside").evaluate(element => [getComputedStyle(element).transitionDuration, getComputedStyle(element.firstElementChild!).animationName]), ["0s", "none"]);
+  await button.click(); await expect(panel).toHaveCount(0); await page.emulateMedia({ reducedMotion: "no-preference" });
   assert.deepEqual(errors, []);
 });
 

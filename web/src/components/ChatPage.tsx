@@ -8,7 +8,7 @@ import type { AttentionItem, HarnessSelection, PublicPlan, PublicRun, SelectionR
 import type { HarnessReadinessView, HarnessView, NativeResumeView, NativeSessionListView, SessionView } from "../../../src/contracts/web.js";
 import { failureMessage, runStatusLabel } from "../api.js";
 import { cn } from "../lib/cn.js";
-import { clock, compact, elapsed, folderName, shortTitle } from "../lib/format.js";
+import { clock, compact, duration, elapsed, folderName, shortTitle } from "../lib/format.js";
 import { useMedia, useNow, type Preferences } from "../lib/prefs.js";
 import { editTools, finished, toolTree, TOOL_PENDING } from "../lib/turn.js";
 import { Collapsible, motionStyle, usePresence } from "../ui/motion.js";
@@ -244,7 +244,10 @@ export function ChatPage(props: ChatProps) {
   const inline = wide && session !== null;
   const panelOpen = session !== null && (inline ? preferences.panel : overlay);
   const panelTab: PanelTab = tab ?? (session?.runs.some(run => run.tools?.some(tool => ["edit", "delete", "move"].includes(tool.kind ?? "") && tool.detail)) ? "changes" : session?.runs.some(run => run.plan?.entries.length) ? "plan" : "run");
-  const setPanel = (open: boolean) => { if (inline) props.onPreference("panel", open); else setOverlay(open); };
+  // Opened from the keyboard (⌘\), the panel's content does not slide in (#37). Decided once per opening: an animation
+  // that followed the live input mode would start over whenever the next input came from the pointer.
+  const [panelFromKeyboard, setPanelFromKeyboard] = useState(false);
+  const setPanel = (open: boolean) => { if (open && !panelOpen) setPanelFromKeyboard(document.documentElement.dataset.input === "keyboard"); if (inline) props.onPreference("panel", open); else setOverlay(open); };
   const openDetails = (runId: string) => {
     if (panelOpen && panelTab === "run" && (panelRun ?? session?.runs.at(-1)?.id) === runId) { setPanel(false); return; }
     setPanelRun(runId); setTab("run"); setPanel(true);
@@ -452,7 +455,7 @@ export function ChatPage(props: ChatProps) {
       </div>
       {inline && asidePresence !== "closed" ? <aside className={cn("details-aside flex-none overflow-hidden bg-app hairline-l transition-[width] ease-panel keyboard:duration-0",
         panelOpen ? "w-[400px] duration-300 starting:w-0 min-[1440px]:w-[420px]" : "w-0 duration-200")} aria-label="详情栏" aria-hidden={!panelOpen || undefined} inert={!panelOpen}>
-        <div className="motion-panel-in flex h-full w-[400px] keyboard:animate-none min-[1440px]:w-[420px]">{panel}</div>
+        <div className={cn("flex h-full w-[400px] min-[1440px]:w-[420px]", !panelFromKeyboard && "motion-panel-in")}>{panel}</div>
       </aside> : null}
     </div>
     {!inline && session ? <Dialog open={overlay} onOpenChange={setOverlay} title="详情栏" kind={narrow ? "sheet" : "drawer"} className={narrow ? "h-[80dvh]" : ""}><aside className="flex min-h-0 flex-1 flex-col" aria-label="详情栏">{panel}</aside></Dialog> : null}
@@ -560,11 +563,12 @@ function StatusLine({ session, active }: { readonly session: SessionView; readon
   const spent = timing ? (running ? now : timing.endedAt ?? null) : null;
   const usage = run.usage, context = usage?.context;
   const share = context?.size ? Math.min(100, Math.round(context.used / context.size * 100)) : null;
-  const parts: ReactNode[] = [`第 ${round} 轮`, ...(steps ? [`${steps} 步`] : []), ...(timing && spent !== null ? [(running ? "已用 " : "用时 ") + elapsed(spent - timing.acceptedAt)] : [])];
+  // A running time counts whole seconds (#03); an ended one is said as the Turn says it, with tenths under ten seconds.
+  const parts: ReactNode[] = [`第 ${round} 轮`, ...(steps ? [`${steps} 步`] : []), ...(timing && spent !== null ? [running ? "已用 " + elapsed(spent - timing.acceptedAt) : "用时 " + duration(spent - timing.acceptedAt)] : [])];
   if (usage?.turn?.input !== undefined) parts.push(`输入 ${compact(usage.turn.input)}`);
   if (context && share !== null) parts.push(<span key="context" className="inline-flex items-center gap-[5px]" title={`上下文已用 ${share}%（由原程序报告）`}>
     <svg width="13" height="13" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" fill="none" stroke="var(--bg-hover)" strokeWidth="3"/>
-      <circle cx="10" cy="10" r="7.5" fill="none" stroke={share >= 85 ? "var(--amber-dot)" : "var(--text-3)"} strokeWidth="3" strokeDasharray={`${(share / 100 * 47.1).toFixed(1)} 47.1`} strokeLinecap="round" transform="rotate(-90 10 10)"/></svg>上下文 {share}%</span>);
+      <circle cx="10" cy="10" r="7.5" fill="none" stroke="var(--text-3)" strokeWidth="3" strokeDasharray={`${(share / 100 * 47.1).toFixed(1)} 47.1`} strokeLinecap="round" transform="rotate(-90 10 10)"/></svg>上下文 {share}%</span>);
   else if (context) parts.push(`上下文 ${compact(context.used)}`);
   if (usage?.cost) parts.push(`${usage.cost.scope === "session" ? "会话累计" : "本轮"} ${money(usage.cost)}`);
   return <p className="composer-status m-0 flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 px-1 text-caption text-fg-3" aria-label="本轮状态">

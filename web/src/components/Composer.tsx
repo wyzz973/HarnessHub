@@ -95,9 +95,9 @@ export function harnessOptions(harnesses: readonly HarnessView[], readiness: rea
 
 /** One clickable part of the merged picker: the hovered part takes the hover fill inside the chip's lighter one. */
 const SEGMENT = "h-[30px] max-w-none rounded-row px-1.5 outline-offset-[-2px] hover:bg-hover data-[popup-open]:bg-hover";
-/** The small pill of a native option inside the merged picker (thinking level, mode). */
-function Pill({ children, accent }: { readonly children: ReactNode; readonly accent: boolean }) {
-  return <span className={cn("inline-flex h-5 items-center rounded-full px-[7px] text-[11px] leading-4 font-medium whitespace-nowrap", accent ? "bg-accent-soft text-accent-text" : "bg-subtle text-fg-2")}>{children}</span>;
+/** The small blue pill of a native option inside the merged picker (the thinking level, or the mode). */
+function Pill({ children }: { readonly children: ReactNode }) {
+  return <span className="inline-flex h-5 items-center rounded-full bg-accent-soft px-[7px] text-[11px] leading-4 font-medium whitespace-nowrap text-accent-text">{children}</span>;
 }
 
 /**
@@ -276,7 +276,7 @@ export function Composer(props: ComposerProps) {
     : problem;
   // The pending or failed switch speaks for itself in its own strip, and the blocked conversation in its notice; before any
   // Agent is chosen, the merged picker's "选择 Harness" already says what is missing.
-  const noteShown = note !== null && !(pending || dirty && !blocked) && !(blocked && !readonly) && !(onboarding && note === problem);
+  const noteShown = note !== null && !(pending || dirty && !blocked) && !(blocked && !readonly) && !(onboarding && note === problem) && !docked;
   // While a switch is saved or waits for the reply to end, its strip is what the message is described by.
   const stripNotice = (pending || dirty && !blocked) && !blocked && !(selectionFailed && !pending) && problem === null;
 
@@ -311,7 +311,6 @@ export function Composer(props: ComposerProps) {
     const control = previous && next?.controls.some(row => row.id === previous.controlId && row.available) ? previous.controlId : next?.controls.find(row => row.id === next.defaultControlId && row.available)?.id ?? next?.controls.find(row => row.available)?.id ?? "";
     props.onDraft({ ...draft, harnessId: value, controlId: control, model: draft.providerId ? draft.model : previous?.nativeModel ?? "", nativeOptions: draft.providerId ? {} : previous?.nativeOptions ?? {} });
   };
-  const stopping = active !== null && (active.cancelRequested || props.mutation === "cancelling");
 
   return <div className="composer-wrap flex flex-col gap-2">
     {/* Notices above the box: what waits, what is unavailable and why, with at most two ways forward (Interaction board). */}
@@ -321,15 +320,15 @@ export function Composer(props: ComposerProps) {
         : active ? <span className="inline-flex h-[30px] items-center gap-2 rounded-control bg-accent-soft px-2.5 text-caption text-accent-text"><ArrowLeftRight size={14} aria-hidden="true"/><span id={stripNotice ? "composer-notice" : undefined}>本轮结束后{takeOver}</span></span>
         : <span className="inline-flex h-[30px] items-center gap-2 px-1 text-caption text-fg-2"><Spinner size={13} label=""/><span id={stripNotice ? "composer-notice" : undefined}>正在保存选择</span></span>}
     </div> : null}
-    {carried && !readonly ? <div className="composer-change native-carried motion-fade-in flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-caption text-fg-2" role="status"><span>原生命令已改为 {carried}；下一回合沿用，不改回所选。</span><button type="button" className="link-btn" onClick={props.onApply} disabled={disabled || props.mutation !== null}>改用所选设置</button></div> : null}
+    {carried && !readonly && !docked ? <div className="composer-change native-carried motion-fade-in flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-caption text-fg-2" role="status"><span>原生命令已改为 {carried}；下一回合沿用，不改回所选。</span><button type="button" className="link-btn" onClick={props.onApply} disabled={disabled || props.mutation !== null}>改用所选设置</button></div> : null}
     {blocked && !readonly ? <ComposerNotice title="执行已暂停，对话历史和草稿仍保留。" action={<button type="button" className="btn btn-sm" onClick={props.onApply} disabled={disabled || pending || props.mutation !== null || problem !== null || resourcesUnconfirmed}><RefreshCw size={12}/>{unknown.length ? "确认保留未知结果并继续" : "检查连接并恢复对话"}</button>}>
       <p id="composer-notice" className="m-0" role="status">{unknown.length ? "上一轮结果未知，不会自动重发。" : ""}{note}</p></ComposerNotice> : null}
     {noteShown ? noteDanger || authMissing ? <ComposerNotice action={authMissing || problem !== null ? <>
-        {authMissing ? <button type="button" className="btn btn-sm" onClick={props.onRefreshModels}>刷新本机模型</button> : null}
+        {authMissing ? <button type="button" className="btn btn-sm" onClick={props.onRefreshModels}>刷新本机模型</button> : <button type="button" className="btn btn-sm" onClick={props.onHarnesses}>查看原因</button>}
         <button type="button" className="btn btn-sm" disabled={disabled} onClick={() => props.onAgentPickerOpen(true)}>换一个 Agent</button></> : undefined}>
         <p id="composer-notice" className="composer-note m-0" role="status">{note}</p></ComposerNotice>
       : <p id="composer-notice" className="composer-note motion-fade-in m-0 px-1 text-caption text-fg-2">{note}</p> : null}
-    {!draft.providerId && props.nativeModelsError && !selectionFailed ? <p className="composer-note m-0 px-1 text-caption text-fg-2" role="status">{props.nativeModelsError} <button type="button" className="link-btn" onClick={props.onRefreshModels}>刷新模型</button></p> : null}
+    {!draft.providerId && props.nativeModelsError && !selectionFailed && !docked ? <p className="composer-note m-0 px-1 text-caption text-fg-2" role="status">{props.nativeModelsError} <button type="button" className="link-btn" onClick={props.onRefreshModels}>刷新模型</button></p> : null}
     {props.above}
     <div className="relative">
       {slashOpen ? <div className="surface-pop motion-fade-in absolute bottom-[calc(100%+8px)] left-0 z-20 flex max-h-[min(320px,50vh)] w-[min(400px,100%)] flex-col overflow-hidden" style={motionStyle({ duration: 120 })}>
@@ -354,7 +353,7 @@ export function Composer(props: ComposerProps) {
       <div ref={box} className={cn("composer-box relative rounded-composer bg-surface transition-[box-shadow] duration-200 ease-standard",
         docked ? "shadow-[0_0_0_1.5px_var(--amber-dot),0_0_0_5px_var(--amber-soft),var(--sh-composer)]"
           : dragging ? "shadow-focus" : "shadow-composer has-[.composer:focus-within]:shadow-focus")}>
-        <form ref={form} className={cn("composer flex flex-col gap-3 rounded-composer pt-4 pr-2.5 pb-2.5 pl-5 ease-standard",
+        <form ref={form} className={cn("composer flex flex-col rounded-composer pt-4 pr-2.5 pb-2.5 pl-5 ease-standard", session ? "gap-2.5" : "gap-3",
           docked ? "invisible pointer-events-none absolute inset-x-0 bottom-0 -translate-y-1 opacity-0 transition-[opacity,translate,visibility] duration-100"
             : "visible translate-y-0 opacity-100 transition-[opacity,translate] delay-100 duration-100", dragging && "is-dropping")}
           aria-label={session ? "继续对话" : "新对话"} aria-hidden={docked || undefined} inert={docked}
@@ -416,6 +415,7 @@ export function Composer(props: ComposerProps) {
                 role="group" aria-label="由谁来做：Agent、模型与思考强度">
                 <SearchPicker label="选择 Harness" value={draft.harnessId} placeholder="选择 Harness" options={harnessChoices} disabled={disabled} wide size="lg" align="end" chevron={last === "agent"}
                   title={<span className="flex items-center gap-1">由谁来做 · <Kbd>⌘</Kbd><Kbd>J</Kbd></span>} open={props.agentPickerOpen} onOpenChange={props.onAgentPickerOpen} className={cn(SEGMENT, "gap-[7px] pl-1")}
+                  footer={<span>↑ ↓ 选择 · Enter 确认 · 模型和思考强度在旁边的按钮里换</span>}
                   trigger={selected => selected && harness ? <><BrandIcon brand={harness.id} name={harness.name} size={22}/><span className="max-w-[150px] truncate font-medium text-fg">{selected.label}</span></>
                     : <span className="text-fg-2">选择 Harness</span>} onChange={pickAgent}/>
                 {showProvider ? <SearchPicker label="选择 Provider" value={draft.providerId} placeholder="选择 Provider" options={providerOptions} disabled={disabled} align="end" chevron={last === "provider"} className={cn(SEGMENT, "gap-1.5")}
@@ -430,17 +430,18 @@ export function Composer(props: ComposerProps) {
                     props.onDraft({ ...draft, model: value, nativeOptions: independent });
                   }} footer={!provider ? <><span>{props.nativeModelsLoading ? "正在读取本机模型…" : "列表来自本机安装"}</span><button type="button" className="link-btn text-caption" onClick={props.onRefreshModels}>刷新本机模型</button></> : undefined}/> : null}
                 {thought ? <SearchPicker label="思考强度" value={draft.nativeOptions[thought.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(thought, true)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "thought"}
-                  className={cn(SEGMENT, "px-1")} trigger={() => <Pill accent>思考 {thinkingShown}</Pill>} onChange={value => changeOption(thought.id, value)}/> : null}
+                  className={cn(SEGMENT, "px-1")} trigger={() => <Pill>思考 {thinkingShown}</Pill>} onChange={value => changeOption(thought.id, value)}/> : null}
                 {mode && modeInChip ? <SearchPicker label={OPTION_NAMES[mode.id] ?? mode.name} value={draft.nativeOptions[mode.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(mode, true)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "mode"}
-                  className={cn(SEGMENT, "px-1")} trigger={() => <Pill accent>{modeShown}</Pill>} onChange={value => changeOption(mode.id, value)}/> : null}
+                  className={cn(SEGMENT, "px-1")} trigger={() => <Pill>{modeShown}</Pill>} onChange={value => changeOption(mode.id, value)}/> : null}
               </div>
               {canQueue ? <Tip label="本轮结束后发送（Enter）"><button type="button" className="press flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-colors duration-120 ease-standard hover:bg-hover hover:text-fg"
                 aria-label="本轮结束后发送" onClick={() => props.onQueue?.()}><ListPlus size={16}/></button></Tip> : null}
               <Tip label={active ? "停止当前回复（⌘.）" : "发送（Enter）"}><button type={active ? "button" : "submit"} aria-label={active ? "停止当前回复" : "发送消息"}
-                className={cn("press ml-0.5 flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none transition-[background-color,opacity] duration-200 ease-standard",
-                  active ? "bg-fg text-app" : "bg-accent text-on-accent hover:bg-accent-hover disabled:cursor-default disabled:opacity-35")}
+                className={cn("press ml-0.5 flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none transition-[background-color,opacity] duration-200 ease-standard disabled:cursor-default",
+                  active ? "bg-fg text-app disabled:opacity-45" : "bg-accent text-on-accent hover:bg-accent-hover disabled:opacity-35")}
                 disabled={active ? active.cancelRequested || props.mutation !== null : disableSend} onClick={active ? props.onCancel : undefined}>
-                {props.mutation === "sending" ? <Spinner size={15} label="正在发送" className="text-on-accent"/> : stopping ? <Spinner size={15} label="正在停止" className="text-app"/> : <SendStopIcon stop={active !== null}/>}
+                {/* One glyph throughout, so the arrow turns into the square and back (#16, #17); sending and stopping only dim the key. */}
+                <SendStopIcon stop={active !== null}/>
               </button></Tip>
             </div>
           </div>

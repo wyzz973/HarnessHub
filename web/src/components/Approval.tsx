@@ -169,10 +169,10 @@ export function ApprovalDock({ request, harness, busy, onDecision, onStop, stopD
       {request.detail ? <span className="max-h-[7.5rem] overflow-auto text-caption whitespace-pre-wrap break-words text-fg-3">{request.detail}</span> : null}
     </div>
     {lasting.length ? <p className="m-0 text-caption text-fg-3">选{lasting.map(option => `“${option.name}”`).join("或")}后，{harness} 会按它自己的规则记住这个决定，之后同类请求可能不再询问。这类选项不绑快捷键，只能点选。</p> : null}
-    <div className="flex flex-wrap items-center gap-2">
-      {onStop ? <Tip label="停止当前回复（⌘.）" side="top"><button type="button" className="btn btn-ghost -ml-1.5 px-2.5" aria-label="停止当前回复" disabled={stopDisabled} onClick={onStop}>
+    {/* The decisions keep to the right, the primary last, also when they wrap on a narrow screen. */}
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      {onStop ? <Tip label="停止当前回复（⌘.）" side="top"><button type="button" className="btn btn-ghost -ml-1.5 mr-auto px-2.5" aria-label="停止当前回复" disabled={stopDisabled} onClick={onStop}>
         <Square size={10} fill="currentColor" aria-hidden="true"/><span>停止</span></button></Tip> : null}
-      <span className="flex-1"/>
       {refusals.map(option => button(option, "ghost"))}
       {lasting.map(option => button(option, "plain"))}
       {others.map(option => button(option, "plain"))}
