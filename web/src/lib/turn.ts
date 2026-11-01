@@ -184,18 +184,21 @@ function runningText(tools: readonly Tool[], running: Tool): string {
   if (group) return label.running!;
   return label.running ? label.running + " " + clip(label.target) : "正在执行 " + clip(label.target);
 }
+/** Statuses of a step that has started and not ended; "pending" is not one: such a call has not started (TOOL_STATUS: 等待). */
+const IN_PROGRESS: ReadonlySet<string> = new Set([...TOOL_PENDING].filter(status => status !== "pending"));
 /**
  * What a running Turn says now, and with which symbol; a finished one is described by its process line instead. While it
  * waits for you (ADR-054 decision F), the line keeps naming the step in progress with its arc and timer; only without one
- * does it say "等你批准" or "等你回答", in its usual grey with the timer. The one amber line, pointing at an approval that
- * waits in the composer's place, is the Turn's marker, never this line.
+ * does it say "等你批准" or "等你回答", in its usual grey with the timer. A call that has not started is not in progress:
+ * ACP agents report the call they ask approval for as "pending" until it is allowed, and the line never says it runs. The
+ * one amber line, pointing at an approval that waits in the composer's place, is the Turn's marker, never this line.
  */
 export function liveStatus(run: PublicRun | undefined, status: RunStatus, harness: string, now: number, startupHint?: { readonly seconds: number; readonly usual: boolean }, queue?: QueueNotice, waiting?: "approval" | "question", text = ""): LiveStatus {
   const plain = { tone: "run" as const, timer: true, wrap: false, thinking: false };
   if (run?.cancelRequested) return { ...plain, text: "正在停止并清理资源" };
   if (waiting) {
-    const tools = run?.tools ?? [], running = toolSummary(tools, true).running;
-    return running ? { ...plain, text: runningText(tools, running) } : { ...plain, tone: "wait", text: waiting === "question" ? "等你回答" : "等你批准" };
+    const tools = run?.tools ?? [], step = [...tools].reverse().find(tool => IN_PROGRESS.has(tool.status));
+    return step ? { ...plain, text: runningText(tools, step) } : { ...plain, tone: "wait", text: waiting === "question" ? "等你回答" : "等你批准" };
   }
   const queued = { tone: "queue" as const, timer: false, wrap: true, thinking: false };
   if (run?.awaitingSwitchId && status === "queued") return { ...queued, text: "等待选择切换生效" };

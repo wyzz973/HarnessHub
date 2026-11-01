@@ -59,6 +59,11 @@ test("G054-DL5 a Turn waiting for you keeps naming the step in progress with its
   const quiet = { tone: "wait", timer: true, wrap: false, thinking: false };
   assert.deepEqual(liveStatus(runningRun([{ ...step, status: "completed" }]), "running", "Codex", 42_000, undefined, undefined, "approval", "先看一下改动。"), { ...quiet, text: "等你批准" });
   assert.deepEqual(liveStatus(runningRun(), "running", "Codex", 90_000, undefined, undefined, "question"), { ...quiet, text: "等你回答" });
+  // A step that has not started is not in progress: an ACP agent reports the call it asks approval for as "pending" until it
+  // is allowed, so the line says 等你批准, never "正在运行" the command that waits. The step in progress beside it is still named.
+  const asked: PublicTool = { id: "ask", title: "rm -rf build", kind: "execute", status: "pending" };
+  assert.deepEqual(liveStatus(runningRun([asked]), "running", "Claude Code", 42_000, undefined, undefined, "approval"), { ...quiet, text: "等你批准" });
+  assert.equal(liveStatus(runningRun([step, asked]), "running", "Claude Code", 42_000, undefined, undefined, "approval").text, "正在运行 git diff --stat");
   // The amber line pointing at the approval is the Turn's marker alone: the status line never says it.
   for (const waiting of ["approval", "question"] as const) for (const tools of [[], [step]]) assert.doesNotMatch(liveStatus(runningRun(tools), "running", "Codex", 0, undefined, undefined, waiting).text, /请求停在下方输入框/u);
   // A stop asked for is said first, whatever waits.
