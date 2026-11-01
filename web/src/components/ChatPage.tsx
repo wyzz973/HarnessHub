@@ -419,7 +419,14 @@ export function ChatPage(props: ChatProps) {
       <PlanBar session={session} active={active} harnessName={harnessName}/>
     </> : null}
     below={session ? <StatusLine session={session} active={active}/> : null}/>;
-  const status = props.loading ? "正在读取对话" : props.sessionError ? "对话读取失败" : session?.status === "blocked" ? "执行暂时暂停，可以编辑草稿和检查恢复连接" : session?.status === "closed" ? "对话已关闭，可查看历史" : active ? active.cancelRequested ? "正在停止回复" : runStatusLabel(active.status) : pending ? "等待选择切换生效" : session ? "可以继续对话" : "选择执行者后开始新对话";
+  // What the page announces of the Turn in progress, or of one waiting in the queue (never the active Run), in the header's
+  // words for the same state: the two waits as 等你批准 and 等你回答 (decision G), a Turn not started yet as 排队中 (ruling N).
+  const latestRun = session?.runs.at(-1), current = active ?? (latestRun?.status === "queued" ? latestRun : null);
+  const currentWaits = current ? (session?.permissions ?? []).filter(request => request.runId === current.id && !request.decided) : [];
+  const currentState = current === null ? null : current.cancelRequested ? "正在停止回复" : currentWaits.length ? currentWaits.some(dockedRequest) ? "等你批准" : "等你回答"
+    : current.status === "queued" ? "排队中" : runStatusLabel(current.status);
+  const status = props.loading ? "正在读取对话" : props.sessionError ? "对话读取失败" : session?.status === "blocked" ? "执行暂时暂停，可以编辑草稿和检查恢复连接" : session?.status === "closed" ? "对话已关闭，可查看历史"
+    : currentState ?? (pending ? "等待选择切换生效" : session ? "可以继续对话" : "选择执行者后开始新对话");
   const panel = session ? <DetailsPanel session={session} harnesses={harnesses} providers={providers} tab={panelTab} onTab={setTab} runId={panelRun} onRun={setPanelRun} describe={describe}
     loadToolDetail={props.onToolDetail} loadDiagnostics={props.onDiagnostics} loadNativeResume={props.onLoadNativeResume} onEndProcess={props.onEndProcess} busy={mutation !== null} onClose={() => setPanel(false)}/> : null;
   // #23: the panel opens by widening (300 ms) and pushes the conversation aside; its content follows 60 ms later from 24 px to
@@ -539,7 +546,8 @@ function ChangeBadge({ count, news }: { readonly count: number; readonly news: b
  * The conversation's state in the header (Conversation and Interaction boards): who works and what it does now, in the
  * words the sidebar and the Turn use. Running work is blue with a breathing dot and a clock; waiting for the user is
  * amber; a failure is red; a Turn that ended quietly is grey: "已停止" when the user stopped it, "已取消" when the Runtime
- * cancelled it (ADR-036, decision H).
+ * cancelled it (ADR-036, decision H). A Turn waiting in the queue is not the active Run (only a started one is), and is
+ * named 排队中 as the Turn names it (ruling N).
  */
 function HeaderState({ session, active, harnessName }: { readonly session: SessionView; readonly active: PublicRun | null; readonly harnessName: (id: string) => string }) {
   const now = useNow(active !== null);
@@ -564,6 +572,7 @@ function HeaderState({ session, active, harnessName }: { readonly session: Sessi
     }
     if (!latest) return { text: "", tone: "neutral" };
     switch (latest.status) {
+      case "queued": return { text: latest.cancelRequested ? "正在停止" : "排队中", tone: "neutral" };
       case "completed": return { text: "已完成", tone: "neutral" };
       case "failed": return { text: "失败", tone: "red" };
       case "cancelled": return { text: cancelledWords(latest, true), tone: "neutral" };

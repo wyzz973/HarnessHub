@@ -1235,6 +1235,8 @@ test("a Turn waiting for a slot says how many conversations run, has no deadline
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Busy Agent", exact: true }).click();
   await composer.fill("queued work"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
   await expect(log.locator(".response-status")).toHaveText("排队中：4 个对话正在执行，其中一个结束后自动开始", { timeout: 15000 });
+  // The header and the page's announcement name the state as the Turn does (ruling N).
+  await expect(page.locator(".chat-page > header .status-pill")).toHaveText("Busy Agent 排队中"); await expect(page.locator(".chat-page > .sr-only[role=status]")).toHaveText("排队中");
   await expect(log.locator(".queued-turn small")).toHaveText("没有单独的等待期限，按发送先后轮到。");
   await expect(log.getByRole("button", { name: "打开那个对话", exact: true })).toHaveCount(0);
   await page.screenshot({ path: join(artifact, "slot-wait.png"), animations: "disabled" });
@@ -2158,6 +2160,9 @@ test("G054-DL5 while an approval waits, the Turn names the step it asks for in t
   const amber = await marker.evaluate(element => getComputedStyle(element).color);
   assert.deepEqual(await turn.evaluate((root, color) => [...root.querySelectorAll("*")].filter(node => [...node.childNodes].some(child => child.nodeType === Node.TEXT_NODE && child.textContent!.trim() !== "")
     && getComputedStyle(node).color === color).map(node => node.textContent!.trim()), amber), ["等你批准，请求停在下方输入框的位置"], "the mark is the Turn's only amber line");
+  // The page announces the same state in the header's words (decision G), never that the reply runs.
+  const announced = page.locator(".chat-page > .sr-only[role=status]");
+  await expect(announced).toHaveText("等你批准");
   // The details list the same step in the same words.
   await page.keyboard.press("ControlOrMeta+Backslash");
   const details = page.getByRole("complementary", { name: "详情栏" });
@@ -2173,6 +2178,7 @@ test("G054-DL5 while an approval waits, the Turn names the step it asks for in t
   await expect(line.locator(".spinner")).toHaveCount(1); await expect(line.locator(".shimmer-text")).toHaveText("正在运行 rm -rf build");
   await expect(asked).toHaveText("正在运行 rm -rf build"); await expect(asked.locator(".spinner")).toHaveCount(1);
   await expect(listed).toHaveText("正在运行 rm -rf build"); await expect(listed.locator(".spinner")).toHaveCount(1);
+  await expect(announced).not.toHaveText("等你批准");
   // Done, it reads as a step that ran, and the folded line counts it.
   await writeFile(join(fixture.root, "workspace", "step-continue"), "go");
   await expect(turn).toHaveAttribute("data-run-status", "completed", { timeout: 15000 });
