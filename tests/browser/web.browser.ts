@@ -2909,7 +2909,7 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
   await expect(files.nth(0).locator(".capability-diff .text-green")).toHaveText(["+    \"tool@market\": true"]);
   await expect(files.nth(0)).toContainText("现在的设置：不是 HarnessHub 写的"); await expect(files.nth(0)).toContainText("新开的 Claude Code 会话才读到这次插件改动。");
   await expect(files.nth(1)).toContainText("~/.claude/skills"); await expect(files.nth(1).locator(".capability-links li")).toHaveText(["+ 新建~/.claude/skills/gamma → ~/.agents/skills/gamma"]);
-  await expect(bar).toBeHidden();
+  await expect(bar).toBeHidden(); await expect(write).toHaveCSS("opacity", "1");
   await page.screenshot({ path: join(artifact, "dl8-capabilities-preview-light-1440.png"), animations: "disabled" });
   assert.deepEqual(posted, [], "the preview alone writes nothing");
   await write.getByRole("button", { name: "写入", exact: true }).click(); await expect(write).toBeHidden();
@@ -2932,7 +2932,7 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
   await expect(back).toHaveCount(2);
   await expect(back.nth(0)).toContainText("这次改了 2 处");
   await expect(back.nth(0).locator(".capability-diff .text-green")).toHaveText(["+    \"beta\": \"off\"", "+    \"tool@market\": false"]);
-  await expect(back.nth(1).locator(".capability-links li")).toHaveText(["− 删除~/.claude/skills/gamma → ~/.agents/skills/gamma"]);
+  await expect(back.nth(1).locator(".capability-links li")).toHaveText(["− 删除~/.claude/skills/gamma → ~/.agents/skills/gamma"]); await expect(undo).toHaveCSS("opacity", "1");
   await page.screenshot({ path: join(artifact, "dl8-capabilities-undo-light-1440.png"), animations: "disabled" });
   assert.deepEqual(restores, []);
   await undo.getByRole("button", { name: "撤销", exact: true }).click(); await expect(undo).toBeHidden();
@@ -2960,7 +2960,7 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
   await page.screenshot({ path: join(artifact, "dl8-capabilities-dark-1440.png"), animations: "disabled" });
   await bar.getByRole("button", { name: "预览写入", exact: true }).click();
   const darkPreview = page.getByRole("dialog", { name: "写入 1 个文件" });
-  await expect(darkPreview.locator(".capability-diff .text-red")).toHaveText(["-    \"beta\": \"off\""]);
+  await expect(darkPreview.locator(".capability-diff .text-red")).toHaveText(["-    \"beta\": \"off\""]); await expect(darkPreview).toHaveCSS("opacity", "1");
   await page.screenshot({ path: join(artifact, "dl8-capabilities-preview-dark-1440.png"), animations: "disabled" });
   await darkPreview.getByRole("button", { name: "取消", exact: true }).click(); await expect(darkPreview).toBeHidden();
   await expect(bar).toContainText("已选 1 处 · 会改 1 个文件");
