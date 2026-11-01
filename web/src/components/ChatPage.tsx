@@ -233,11 +233,22 @@ export function ChatPage(props: ChatProps) {
     refocus.current = false;
     if (document.activeElement === null || document.activeElement === document.body) textarea.current?.focus({ preventScroll: true });
   }, [session?.id]);
+  // A first message sent from here: the conversation it goes to (one it creates, `id` null until it is shown) opens empty
+  // until the message is in its view, also for a moment after the send was acknowledged. It is not shown as ready then.
+  const [firstSend, setFirstSend] = useState<{ readonly id: string | null } | null>(null);
+  useEffect(() => {
+    if (firstSend === null || session === null) return;
+    if (session.messages.length > 0 || firstSend.id !== null && firstSend.id !== session.id) setFirstSend(null);
+    else if (firstSend.id === null) setFirstSend({ id: session.id });
+  }, [firstSend, session?.id, session?.messages.length]);
   // A retry resends the original input with the attachments it was sent with; a new message takes the composer's.
   const send = async (text: string, retryAttachments?: readonly ContentRef[]) => {
     // The first message moves the composer from the welcome to the foot of the new conversation; the focus goes with it.
     if (session === null && document.activeElement === textarea.current) refocus.current = true;
-    await props.onSend(text, retryAttachments);
+    const first = session === null || session.messages.length === 0;
+    if (first) setFirstSend({ id: session?.id ?? null });
+    try { await props.onSend(text, retryAttachments); }
+    catch (failure: unknown) { if (first && mounted.current) setFirstSend(null); throw failure; }
     if (mounted.current) { props.onMessageDraft(value => value === text ? "" : value); resumeFollowing(); }
   };
   // The latest message was refused because another conversation's kept process holds this workspace (ADR-030, option C).
@@ -484,7 +495,8 @@ export function ChatPage(props: ChatProps) {
             : <div className="transcript mx-auto flex max-w-reading flex-col gap-7 pb-4" ref={transcript} role="log" aria-label="对话历史" aria-live="off">
               {session.origin ? <BranchOrigin origin={session.origin} session={session} harnesses={harnesses} onOpenSource={props.onOpenSession}/> : null}
               {/* A first message sent from the home opens its conversation empty for a moment: it is not shown as ready meanwhile. */}
-              {session.messages.length === 0 && !session.origin && mutation !== "sending" ? <EmptyState title="对话准备好了">发出第一条消息，开始这次协作。</EmptyState> : null}
+              {session.messages.length === 0 && !session.origin && mutation !== "sending" && !(firstSend !== null && (firstSend.id === null || firstSend.id === session.id))
+                ? <EmptyState title="对话准备好了">发出第一条消息，开始这次协作。</EmptyState> : null}
               {transcriptItems(session)}
               {orphanCards.length ? orphanCards : null}
             </div>}

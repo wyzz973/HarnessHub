@@ -1640,11 +1640,13 @@ test("G054-DL7 a running Turn shows the arc, the swept words and a timer every s
     return { samples, token };
   }, settle);
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
-  // The Turn is drawn once: its process line is held from the moment it appears, before the reply has any text.
+  // The Turn is drawn once: its process line is held from the moment it appears, before the reply has any text. Until
+  // then the conversation the first message creates is never shown as empty and ready for one.
   await page.evaluate(() => {
-    const probe: { line: Element | null; textless: boolean } = { line: null, textless: false };
+    const probe: { line: Element | null; textless: boolean; ready: boolean } = { line: null, textless: false, ready: false };
     (window as unknown as { __turnLine: typeof probe }).__turnLine = probe;
     const observer = new MutationObserver(() => {
+      probe.ready ||= [...document.querySelectorAll("[role=log] h2")].some(node => node.textContent === "对话准备好了");
       const line = document.querySelector("[role=log] .assistant-message .turn-process");
       if (line === null) return;
       probe.line = line; probe.textless = line.closest(".assistant-message")!.querySelector(".markdown") === null; observer.disconnect();
@@ -1658,6 +1660,7 @@ test("G054-DL7 a running Turn shows the arc, the swept words and a timer every s
   assert.deepEqual(await page.evaluate(() => { const probe = (window as unknown as { __turnLine: { line: Element | null; textless: boolean } }).__turnLine;
     return [probe.textless, probe.line?.isConnected ?? null, probe.line === [...document.querySelectorAll("[role=log] .assistant-message .turn-process")].at(-1)]; }),
     [true, true, true], "the Turn keeps its element as its reply starts");
+  assert.equal(await page.evaluate(() => (window as unknown as { __turnLine: { ready: boolean } }).__turnLine.ready), false, "the new conversation is not shown as empty while its first message is on its way");
   // #10: the first piece arrived as more than 120 characters at once, so it is shown at once, without fading pieces.
   await expect.poll(() => reply.evaluate(element => element.dataset.shown === element.dataset.committed)).toBe(true);
   await expect(reply.locator(".motion-token")).toHaveCount(0);
