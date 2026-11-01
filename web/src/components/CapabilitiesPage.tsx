@@ -311,7 +311,7 @@ function DriftNotice({ api, drift, harnesses, onChange, onForgotten }: { readonl
   const [busy, setBusy] = useState<string | null>(null), [failure, setFailure] = useState<string | null>(null);
   const forget = (id: string) => { setBusy(id); setFailure(null); api.forgetDrift(id).then(() => { setBusy(null); onForgotten(); }, error => { setBusy(null); setFailure(errorMessage(error)); }); };
   return <Notice tone="amber" className="capability-drift" title={"HarnessHub 写过的 " + drift.length + " 项设置已不在原处"}>
-    <p className="m-0">多半是 Harness 自己重写了配置文件，或在别处改过。HarnessHub 不会自动改回：可以重新应用（先显示改动），或不再跟踪（文件不变）。</p>
+    <p className="m-0">多半是 Agent 自己重写了配置文件，或在别处改过。HarnessHub 不会自动改回：可以重新应用（先显示改动），或不再跟踪（文件不变）。</p>
     <ul className="m-0 mt-2 flex list-none flex-col gap-1.5 p-0">{drift.map(item => <li key={item.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-fg">
       <strong className="font-medium">{harnesses.find(harness => harness.harnessId === item.harnessId)?.name ?? item.harnessId} · {item.kind === "mcp" ? "MCP" : item.kind === "instructions" ? "指令区块" : item.kind === "subagent" ? "子 Agent" : item.kind === "plugin" ? "插件" : CHANGE_LABEL[item.kind]} · {item.subject}</strong>
       <Badge tone="amber">{item.kind === "mcp" && item.harnessId === "claude" && item.state === "removed" ? "写入丢失（可能被运行中的 Claude Code 会话冲掉）" : DRIFT_LABEL[item.state]}</Badge><code className="text-caption break-all text-fg-2">{item.file}</code>
@@ -346,7 +346,7 @@ function ChangeHistory({ api, history, onRestore, onChange }: { readonly api: Ga
     <span className="min-w-0 trunc text-caption text-fg-3">{history.changes.length} 次修改 · {history.backups.length} 份备份{history.snapshots.count ? " · " + history.snapshots.count + " 份技能快照（" + size(history.snapshots.bytes) + "）" : ""}</span></summary>
     <div className="flex flex-col gap-2 px-4 pb-4">
       <p className="m-0 text-caption text-fg-3">技能的添加、更新和删除会先存快照；只保留最近 {history.snapshots.keep} 次修改用到的快照，更早的修改无法撤销。</p>
-      {history.changes.length === 0 ? <p className="m-0 text-fg-3">HarnessHub 还没有改过任何 Harness 的配置。</p> : <ul className="m-0 flex list-none flex-col overflow-hidden rounded-block p-0 shadow-[inset_0_0_0_1px_var(--border)]">{history.changes.map(change =>
+      {history.changes.length === 0 ? <p className="m-0 text-fg-3">HarnessHub 还没有改过任何 Agent 的配置。</p> : <ul className="m-0 flex list-none flex-col overflow-hidden rounded-block p-0 shadow-[inset_0_0_0_1px_var(--border)]">{history.changes.map(change =>
         <li key={change.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 [&+&]:hairline-t">
           <span className="text-caption text-fg-3">{new Date(change.at).toLocaleString()}</span><strong className="font-medium">{CHANGE_LABEL[change.kind]} · {change.subject}</strong>
           <Badge tone={change.status === "applied" ? "accent" : "red"}>{change.status === "applied" ? "已完成" : "失败"}</Badge><code className="min-w-0 text-caption break-all text-fg-2">{change.file}</code>
@@ -624,8 +624,8 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
       <ul className="m-0 flex list-none flex-col gap-0.5 p-0">{view.unreadable.map((item, index) => <li key={index}><code className="text-caption">{item.file}</code>：{item.reason}</li>)}</ul></Notice> : null}
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-ui-sm">
       <span className="relative inline-flex">
-        <select className="field h-[30px] w-auto appearance-none py-0 pr-8 pl-2.5" aria-label="只看一个 Harness" value={harness ?? ""} onChange={event => setHarness(event.target.value || null)}>
-          <option value="">全部 Harness</option>{shown.map(item => <option key={item.harnessId} value={item.harnessId}>{item.name}</option>)}</select>
+        <select className="field h-[30px] w-auto appearance-none py-0 pr-8 pl-2.5" aria-label="只看一个 Agent" value={harness ?? ""} onChange={event => setHarness(event.target.value || null)}>
+          <option value="">全部 Agent</option>{shown.map(item => <option key={item.harnessId} value={item.harnessId}>{item.name}</option>)}</select>
         <ChevronDown size={14} aria-hidden="true" className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-fg-3"/></span>
       <label className="flex items-center gap-2 text-fg-2"><input type="checkbox" className="size-3.5 accent-accent" checked={onlyWarnings} onChange={event => setOnlyWarnings(event.target.checked)}/>只看有提示或未生效的</label>
     </div>
@@ -656,7 +656,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
         {states.has("—") ? <span className="flex items-center gap-1.5"><span className="w-[18px] text-center" aria-hidden="true">—</span>这个 Agent 不读它</span> : null}
         {states.has("?") ? <span className="flex items-center gap-1.5"><span className="w-[18px] text-center" aria-hidden="true">?</span>保存在磁盘之外，无法读取</span> : null}
       </div> : null}
-    </> : <EmptyState title={query || onlyWarnings ? "没有匹配的条目" : "这一类还没有条目"}>{columns.some(item => item.kinds[kind] !== "read") ? "部分 Harness 没有这类能力，或保存在磁盘之外。" : "各 Harness 的用户级配置里没有这一类。"}</EmptyState>}
+    </> : <EmptyState title={query || onlyWarnings ? "没有匹配的条目" : "这一类还没有条目"}>{columns.some(item => item.kinds[kind] !== "read") ? "部分 Agent 没有这类能力，或保存在磁盘之外。" : "各 Agent 的用户级配置里没有这一类。"}</EmptyState>}
     {/* Placed against the page, but right after the matrix in the reading and Tab order, so the bar is the next stop after the
       * cells. Sized as on the Capabilities board: 52 px tall with 13 px words and the 34 px buttons; the result bar 46 px. */}
     <FloatingBar open={picked.size > 0 && !previewing} label="已选的格子" className="absolute bottom-6 z-30 min-h-[52px] gap-2.5 pl-[18px] text-ui-sm">
@@ -679,7 +679,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
     {kind === "instructions" ? <InstructionsPanel api={api} harness={harness} reload={reloads} onChange={change} onNotice={(text, failed) => setNotice({ text, failed })}/> : null}
     {kind === "subagent" ? <SubagentsPanel api={api} harness={harness} reload={reloads} onChange={change} onNotice={(text, failed) => setNotice({ text, failed })}/> : null}
     {kind === "plugin" ? <PluginSupport harnesses={columns}/> : null}
-    {view ? <details className={DISCLOSURE}><summary><DisclosureChevron/><Eye size={15} className="flex-none text-fg-3" aria-hidden="true"/><span className="font-medium">各 Harness 的读取规则与说明</span></summary>
+    {view ? <details className={DISCLOSURE}><summary><DisclosureChevron/><Eye size={15} className="flex-none text-fg-3" aria-hidden="true"/><span className="font-medium">各 Agent 的读取规则与说明</span></summary>
       <div className="flex flex-col gap-3 px-4 pb-4">
         <ul className="m-0 flex list-none flex-col gap-2.5 p-0">{shown.map(item => <li key={item.harnessId} className="flex flex-col gap-0.5">
           <span className="flex items-center gap-2"><BrandIcon brand={item.harnessId} name={item.name} size={18}/><strong className="font-medium">{item.name}</strong>

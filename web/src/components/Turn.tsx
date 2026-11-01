@@ -270,7 +270,7 @@ export const AssistantTurn = memo(function AssistantTurn({ message, run, harness
   // Only a Turn's first showing on the page can be news: one drawn again, when its conversation is opened again, is not.
   const [firstShowing] = useState(() => run === undefined || shownSteps(run.id) === undefined);
   const entering = useEntrance(firstShowing && !terminal && acceptedRecently(run));
-  const harnessName = harnesses.find(row => row.id === run?.selection.harnessId)?.name ?? run?.selection.harnessId ?? "Harness";
+  const harnessName = harnesses.find(row => row.id === run?.selection.harnessId)?.name ?? run?.selection.harnessId ?? "Agent";
   const detail = run ? describe(run) : "";
   const write = async () => {
     try {

@@ -225,18 +225,18 @@ export function Composer(props: ComposerProps) {
   // The picker offers what the user can start with (ADR-050): the Agents on this computer, as the boards list them; what
   // is not installed is found on the Agent page. The current choice is never among the hidden or left-out ones.
   const harnessChoices = harnessOptions(harnesses.filter(row => row.id === draft.harnessId || !props.hiddenHarnesses.has(row.id) && (row.installed || row.controls.some(control => control.available))), props.readiness, draft);
-  const providerOptions: PickerOption[] = [{ value: "", label: "Harness 原生连接", short: "原生连接", description: "由 Harness 提供模型连接，需要完成相应认证", icon: <LogoMark size={18}/> }, ...providers.map(row => {
+  const providerOptions: PickerOption[] = [{ value: "", label: "Agent 原生连接", short: "原生连接", description: "由 Agent 自己提供模型连接，需要完成相应认证", icon: <LogoMark size={18}/> }, ...providers.map(row => {
     const supported = !harness || harness.providerProtocols.includes(row.protocol);
     const missingKey = row.protocol === "gemini" && !row.hasCredential;
     return { value: row.id, label: row.name, icon: <BrandIcon brand={providerBrand(row.baseUrl)} name={row.name} size={18}/>, description: protocolLabel(row.protocol),
-      disabled: !row.enabled || !supported || missingKey, reason: !row.enabled ? "已停用" : !supported ? "当前 Harness 暂不支持这个协议" : missingKey ? "缺少 Gemini API Key" : "" };
+      disabled: !row.enabled || !supported || missingKey, reason: !row.enabled ? "已停用" : !supported ? "当前 Agent 暂不支持这个协议" : missingKey ? "缺少 Gemini API Key" : "" };
   })];
   const nativeDefault = props.nativeModels?.models.find(model => model.id === props.nativeModels?.defaultModel)?.name ?? props.nativeModels?.defaultModel;
   // What this browser last sent with the Harness, shown as such while a new conversation starts with it.
   const recalled = !provider && !session?.runs.some(run => run.selection.harnessId === draft.harnessId) ? props.rememberedChoice?.(draft.harnessId) ?? null : null;
   const lastUsed = (value: string, recalledValue: string | undefined) => recalled !== null && recalledValue !== undefined && value === recalledValue ? "上次使用" : undefined;
   const modelOptions: PickerOption[] = provider ? provider.models.map(model => ({ value: model, label: model, group: provider.name })) : [
-    { value: "", label: nativeDefault ? `${nativeDefault} · 本机默认` : props.nativeModelsLoading ? "读取本机模型…" : "跟随本机配置", short: nativeDefault ?? (props.nativeModelsLoading ? "读取模型…" : "本机默认模型"), description: "本机当前默认模型", group: "跟随 Harness" },
+    { value: "", label: nativeDefault ? `${nativeDefault} · 本机默认` : props.nativeModelsLoading ? "读取本机模型…" : "跟随本机配置", short: nativeDefault ?? (props.nativeModelsLoading ? "读取模型…" : "本机默认模型"), description: "本机当前默认模型", group: "跟随 Agent" },
     ...(props.nativeModels?.models.map(model => ({ value: model.id, label: model.name, description: lastUsed(model.id, recalled?.nativeModel) ?? model.id, group: harness?.name ?? "本机模型" })) ?? []),
   ];
   if (provider && draft.model && !provider.models.includes(draft.model)) modelOptions.unshift({ value: draft.model, label: draft.model, description: `固定配置 v${draft.providerRevision}`, group: "会话当前版本" });
@@ -252,7 +252,7 @@ export function Composer(props: ComposerProps) {
   const permission = nativeOptions.find(option => option.category === "permission");
   const changeOption = (id: string, value: string) => { const choices = { ...draft.nativeOptions }; if (value) choices[id] = value; else delete choices[id]; props.onDraft({ ...draft, nativeOptions: Object.fromEntries(Object.entries(choices).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) }); };
   const valueName = (option: typeof nativeOptions[number], value: string) => (option.category === "thought_level" ? THINKING_NAMES[value] : undefined) ?? option.values.find(row => row.value === value)?.name ?? value;
-  const optionChoices = (option: typeof nativeOptions[number], short: boolean): PickerOption[] => [{ value: "", label: `${valueName(option, option.currentValue)} · 本机默认`, ...(short ? { short: valueName(option, option.currentValue) } : {}), group: "跟随 Harness" },
+  const optionChoices = (option: typeof nativeOptions[number], short: boolean): PickerOption[] => [{ value: "", label: `${valueName(option, option.currentValue)} · 本机默认`, ...(short ? { short: valueName(option, option.currentValue) } : {}), group: "跟随 Agent" },
     ...option.values.map(value => ({ value: value.value, label: option.category === "thought_level" ? THINKING_NAMES[value.value] ?? value.name : value.name, description: lastUsed(value.value, recalled?.nativeOptions?.[option.id]) ?? value.value, group: harness?.name ?? "原生选项" }))];
   const optionPicker = (option: typeof nativeOptions[number], label: string, extra?: { readonly prefix?: string; readonly className?: string }) => <SearchPicker label={label} value={draft.nativeOptions[option.id] ?? ""} placeholder="跟随本机配置" {...extra}
     options={optionChoices(option, extra?.prefix !== undefined)} disabled={disabled || props.nativeModelsLoading} onChange={value => changeOption(option.id, value)}/>;
@@ -266,23 +266,23 @@ export function Composer(props: ComposerProps) {
   const onboarding = session === null && draft.harnessId === "";
   const authMissing = !draft.providerId && props.nativeModels?.authentication === "missing";
   // What happened leads in amber, then what to do (Interaction board, "Agent 暂时不可用"); the message stays in the box.
-  const authTitle = `${harness?.name ?? "所选 Harness"} 的本机认证尚未就绪`;
+  const authTitle = `${harness?.name ?? "所选 Agent"} 的本机认证尚未就绪`;
   const authText = !authMissing ? null : SETUP_COMMANDS[draft.harnessId]
     ? `它还没有可用的模型提供方。请在终端运行 ${SETUP_COMMANDS[draft.harnessId]} 完成配置，然后刷新本机模型；也可以换一个 Agent。`
     : "请在它自己的程序中完成登录或 Gateway 连接配置，然后刷新本机模型；也可以换一个 Agent。";
   const noteDanger = bytes > 64 * 1024 || problem !== null && !onboarding;
   const note = bytes > 64 * 1024 ? "单条消息不能超过 64 KiB，请缩短内容。"
     : active?.cancelRequested ? "停止已受理，正在等待执行结束和资源清理。"
-    : blocked && !readonly ? resourcesUnconfirmed ? "资源停止还未确认。你可以编辑草稿、查看历史；核实后再恢复执行。" : "选择可用的 Harness 后，检查连接并继续这次对话。"
+    : blocked && !readonly ? resourcesUnconfirmed ? "资源停止还未确认。你可以编辑草稿、查看历史；核实后再恢复执行。" : "选择可用的 Agent 后，检查连接并继续这次对话。"
     : pending ? active ? "当前回复结束后应用新选择，草稿已保留。" : "正在保存下一条消息的选择。"
-    : dirty ? problem ?? (selectionFailed ? "所选连接未生效，可以重试切换或选择其他 Harness。" : "正在切换所选 Harness 或模型，草稿已保留。")
+    : dirty ? problem ?? (selectionFailed ? "所选连接未生效，可以重试切换或换一个 Agent。" : "正在切换所选 Agent 或模型，草稿已保留。")
     : authText !== null ? authText
     : uploading ? "附件上传中，完成后即可发送。"
-    : attachmentBlocked ? "有附件无法随这条消息发送，请移除标记的附件或切换到支持它的 Harness 或模型。"
+    : attachmentBlocked ? "有附件无法随这条消息发送，请移除标记的附件或切换到支持它的 Agent 或模型。"
     : props.attachments.length && !props.messageDraft.trim() ? "请写一句说明，再和附件一起发送。"
     // Codex's collaboration mode stays with its thread: plan mode answers with a plan, and following the native configuration
     // does not leave it (ADR-034).
-    : !draft.providerId && draft.nativeOptions.collaboration_mode === "plan" ? `计划模式：${harness?.name ?? "Harness"} 先给出方案。要让它执行，把协作模式改为“默认”后再发送。`
+    : !draft.providerId && draft.nativeOptions.collaboration_mode === "plan" ? `计划模式：${harness?.name ?? "Agent"} 先给出方案。要让它执行，把协作模式改为“默认”后再发送。`
     // The previous service ended without closing this conversation's kept process; what this one found at start is said
     // here until the conversation's next Turn (ADR-030).
     : session?.retention?.lost ? session.retention.lost.outcome === "unconfirmed"
@@ -292,11 +292,11 @@ export function Composer(props: ComposerProps) {
     : session?.retention?.upgraded ? `升级 ${harnesses.find(row => row.id === session.retention!.upgraded!.harnessId)?.name ?? session.retention.upgraded.harnessId} 前，HarnessHub 关闭了这个对话保留的后台进程。下一条消息会用新版本重新启动原程序，并恢复原生会话。`
     // Processes the closed program had moved out of its own group are left alone; the conversation hears of them once.
     : session?.retention?.outside ? `原程序的后台任务可能仍在运行（${session.retention.outside.count} 个进程）：它们已离开原程序的进程组，HarnessHub 没有结束它们。`
-    : !draft.providerId && draft.nativeOptions.collaboration_mode === undefined && nativeState?.observed?.options.collaboration_mode === "plan" ? `这个 ${harness?.name ?? "Harness"} 线程仍为计划模式：跟随本机配置不会改回，把协作模式改为“默认”即可退出。`
+    : !draft.providerId && draft.nativeOptions.collaboration_mode === undefined && nativeState?.observed?.options.collaboration_mode === "plan" ? `这个 ${harness?.name ?? "Agent"} 线程仍为计划模式：跟随本机配置不会改回，把协作模式改为“默认”即可退出。`
     : active && props.queued === null && props.messageDraft.trim() ? "回复进行中：按 Enter 先暂存这条消息，本轮正常结束后自动发出。"
     : problem;
   // The pending or failed switch speaks for itself in its own strip, and the blocked conversation in its notice; before any
-  // Agent is chosen, the merged picker's "选择 Harness" already says what is missing.
+  // Agent is chosen, the merged picker's "选择 Agent" already says what is missing.
   const noteShown = note !== null && !(pending || dirty && !blocked) && !(blocked && !readonly) && !(onboarding && note === problem) && !docked;
   // The ways out belong to the note shown: sign-in notes offer a refresh, selection problems their reason; both another Agent.
   const noteIsAuth = authText !== null && note === authText, noteIsProblem = problem !== null && note === problem;
@@ -442,12 +442,12 @@ export function Composer(props: ComposerProps) {
             <div className="ml-auto flex max-w-full min-w-0 items-center gap-1">
               <div className="agent-chip flex h-[34px] max-w-full min-w-0 items-center overflow-hidden rounded-[12px] p-0.5 transition-[color,background-color] duration-120 ease-standard hover:bg-subtle has-[[data-popup-open]]:bg-subtle"
                 role="group" aria-label="由谁来做：Agent、模型与思考强度">
-                <SearchPicker side={popSide} label="选择 Harness" value={draft.harnessId} placeholder="选择 Harness" options={harnessChoices} disabled={disabled} wide size="lg" align="end" chevron={last === "agent"}
+                <SearchPicker side={popSide} label="选择 Agent" value={draft.harnessId} placeholder="选择 Agent" options={harnessChoices} disabled={disabled} wide size="lg" align="end" chevron={last === "agent"}
                   title={<span className="flex items-center gap-1">由谁来做 · <Kbd>⌘</Kbd><Kbd>J</Kbd></span>} open={props.agentPickerOpen} onOpenChange={props.onAgentPickerOpen} className={cn(SEGMENT, "flex-none gap-[7px] pl-1")}
                   footer={<span>↑ ↓ 选择 · Enter 确认 · 模型和思考强度在旁边的按钮里换</span>}
                   empty={<>这台电脑上还没有找到可用的 Agent。<button type="button" className="link-btn" onClick={props.onHarnesses}>查看安装方式</button></>}
                   trigger={selected => selected && harness ? <><BrandIcon brand={harness.id} name={harness.name} size={22}/><span className="max-w-[150px] truncate font-medium text-fg max-sm:max-w-[80px]">{selected.label}</span></>
-                    : <span className="text-fg-2">选择 Harness</span>} onChange={pickAgent}/>
+                    : <span className="text-fg-2">选择 Agent</span>} onChange={pickAgent}/>
                 {showProvider ? <SearchPicker side={popSide} label="选择 Provider" value={draft.providerId} placeholder="选择 Provider" options={providerOptions} disabled={disabled} align="end" chevron={last === "provider"} className={cn(SEGMENT, "gap-1.5")}
                   trigger={selected => <>{selected?.icon ? <span className="flex flex-none items-center">{selected.icon}</span> : null}<span className="max-w-[140px] truncate text-fg-2">{selected?.short ?? selected?.label ?? "选择 Provider"}</span></>}
                   onChange={value => { const next = providers.find(row => row.id === value); props.onDraft({ ...draft, providerId: next?.id ?? "", providerRevision: next?.revision ?? null, model: next?.defaultModel ?? "", nativeOptions: {} }); }}
@@ -525,7 +525,7 @@ function AdvancedSettings(props: ComposerProps & {
       : <div className={row}><span className={heading}>控制入口</span><span className="flex items-center gap-2 text-ui-sm"><strong className="font-medium">{selectedControl ? protocolLabel(selectedControl.protocol) : "尚未选择"}</strong>{draft.controlId ? <code className="text-caption text-fg-3">{draft.controlId}</code> : null}</span></div>}
     {provider && draft.providerRevision !== null ? <div className={row}><span className={heading}>Provider 配置</span><strong className="text-ui-sm font-medium">{provider.name} · v{draft.providerRevision}</strong>
       {outdated ? <button type="button" className="btn btn-sm self-start" disabled={disabled} onClick={() => props.onDraft({ ...draft, providerRevision: provider.revision, model: provider.models.includes(draft.model) ? draft.model : provider.defaultModel })}>使用最新 v{provider.revision}</button> : <small className="text-caption text-fg-3">会话固定使用这个版本。</small>}</div>
-      : <p className="m-0 px-3.5 py-3 text-ui-sm text-fg-2 hairline-b">沿用本机已安装 Harness 的模型配置和登录状态。</p>}
+      : <p className="m-0 px-3.5 py-3 text-ui-sm text-fg-2 hairline-b">沿用本机已安装 Agent 的模型配置和登录状态。</p>}
     {!provider && props.onRetention ? <div className={cn(row, "kept-setting")}><span className={heading}>后台任务</span>
       <label className="flex items-center gap-2 text-ui-sm font-medium"><input type="checkbox" className="h-4 w-4 accent-[var(--accent)]" checked={session ? session.retention?.enabled === true : props.retainNew === true} disabled={disabled || props.mutation !== null} onChange={event => props.onRetention!(event.target.checked)}/>保持原生进程</label>
       <small className="text-caption text-fg-2">开启后，回合结束时不关闭原程序：它在后台运行的任务可以继续，下一条消息也不必重新启动它。空闲 30 分钟后结束，同时最多保留 4 个。</small>

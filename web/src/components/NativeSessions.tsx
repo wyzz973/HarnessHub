@@ -35,11 +35,11 @@ export function NativeSessionsPanel({ load, onImport, onOpen, disabled, side = "
   const sessions = state.value?.sessions, hidden = state.value?.hiddenProbes ?? 0;
   return <Popover label="本机会话" side={side} align="start" className="native-sessions w-[360px] max-w-[calc(100vw-24px)]"
     onOpenChange={open => { if (open && state.value === undefined && !state.loading) read(); }}
-    trigger={<button type="button" className="icon-btn text-fg-3" aria-label="本机会话" title="继续这个 Harness 在本工作区的会话" disabled={disabled}><History size={16}/></button>}>
+    trigger={<button type="button" className="icon-btn text-fg-3" aria-label="本机会话" title="继续这个 Agent 在本工作区的会话" disabled={disabled}><History size={16}/></button>}>
     <PopHead title="本机会话" closeLabel="收起本机会话"><button type="button" className="icon-btn icon-btn-sm" aria-label="重新读取本机会话" onClick={() => read()} disabled={state.loading}><RefreshCw size={13}/></button></PopHead>
     <div className="flex flex-col gap-1 p-[5px]">
       {state.error ? <p className="m-0 px-2 py-1.5 text-ui-sm text-red" role="alert">{state.error}</p> : null}
-      {state.value !== undefined && sessions === null ? <p className="m-0 px-2 py-1.5 text-ui-sm text-fg-2">这个 Harness 的接口不能列出或继续它自己的会话。</p> : null}
+      {state.value !== undefined && sessions === null ? <p className="m-0 px-2 py-1.5 text-ui-sm text-fg-2">这个 Agent 的接口不能列出或继续它自己的会话。</p> : null}
       {sessions ? sessions.length ? <ul className="m-0 flex list-none flex-col p-0">{sessions.map(row => <li key={row.id} className="row flex items-center gap-2 rounded-[9px] px-2 py-1.5">
         <div className="min-w-0 flex-1"><strong className="block truncate text-ui-sm font-medium">{row.title ?? "未命名会话"}</strong><small className="text-caption text-fg-3">{[when(row.updatedAt), row.source ? SOURCES[row.source] ?? row.source : ""].filter(Boolean).join(" · ")}</small></div>
         {row.conversationId

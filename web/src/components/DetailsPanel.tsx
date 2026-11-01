@@ -128,7 +128,7 @@ export function DetailsPanel(props: PanelProps) {
   const kept = session.retention?.process ?? null;
   const background = runs.flatMap(run => (run.activities ?? []).filter(activity => activity.kind === "task" || activity.kind === "subagent").map(activity => ({ run, activity })));
   const running = background.filter(item => item.activity.status === "running").length + (kept ? 1 : 0);
-  const name = (id: string | undefined) => props.harnesses.find(row => row.id === id)?.name ?? id ?? "Harness";
+  const name = (id: string | undefined) => props.harnesses.find(row => row.id === id)?.name ?? id ?? "Agent";
   // The header button's number, from the same summaries: shown at once, never waiting for a diff to be read.
   const total = changeCount(runs);
   // The step a Run's waiting approval asks for says what it wants to do here as in its Turn (ruling J).
@@ -301,7 +301,7 @@ function RunFacts(props: PanelProps & { readonly run: PublicRun; readonly runs: 
     <RunPicker runs={props.runs} run={run} onRun={props.onRun}/>
     <dl className="m-0 grid grid-cols-[96px_minmax(0,1fr)] gap-x-3 gap-y-2">
       <Fact label="执行者"><span className="inline-flex items-center gap-1.5"><BrandIcon brand={run.selection.harnessId} name={harness?.name ?? run.selection.harnessId} size={16}/>{harness?.name ?? run.selection.harnessId}{version ? ` ${version}` : ""}{adapter ? ` · 接入口 ${adapter}` : ""}</span></Fact>
-      <Fact label="模型连接">{provider?.name ?? (run.selection.provider ? "Provider" : "Harness 原生连接")}</Fact>
+      <Fact label="模型连接">{provider?.name ?? (run.selection.provider ? "Provider" : "Agent 原生连接")}</Fact>
       {run.selection.provider ? <><Fact label="模型">{run.selection.provider.model}</Fact><Fact label="配置版本">v{run.selection.provider.revision}</Fact></>
         : <Fact label="模型">{run.selection.nativeModel ? <code className="text-code">{run.selection.nativeModel}</code> : "本机默认"}</Fact>}
       {options.length ? <Fact label="原生选项">{options.map(([id, value]) => `${id} ${value}`).join("、")}</Fact> : null}

@@ -121,7 +121,7 @@ function AgentList({ trigger, open, onOpenChange, harnesses, status, selected, f
           return chose.current ? document.getElementById("message-input") : true;
         }}
           className="surface-pop flex max-h-[min(520px,var(--available-height))] w-[380px] max-w-[calc(100vw-24px)] flex-col overflow-hidden">
-          <section aria-label="本机发现的 Harness" className="flex min-h-0 flex-col">
+          <section aria-label="本机发现的 Agent" className="flex min-h-0 flex-col">
             <div className="flex items-baseline justify-between gap-3 px-3.5 pt-3 pb-1.5">
               <h3 className="m-0 text-ui-sm font-semibold">本机可用的 Agent</h3>
               <button type="button" className="link-btn flex items-center gap-1 text-caption" onClick={() => { onOpenChange(false); onHarnesses(); }}>查看全部<ArrowRight size={12} aria-hidden="true"/></button>

@@ -26,7 +26,7 @@ export function UninstallDialog({ api, harness, installation, onClose, onConfirm
       .then(value => { if (!controller.signal.aborted) setCheck(value); }, error => { if (!controller.signal.aborted) setFailure(errorMessage(error)); });
     return () => controller.abort();
   }, [api, id, ref, attempt]);
-  const name = harness?.name ?? "Harness", what = installation?.role === "adapter" ? `${name} 的接入口 ${installation.command}` : name;
+  const name = harness?.name ?? "Agent", what = installation?.role === "adapter" ? `${name} 的接入口 ${installation.command}` : name;
   const busy = check?.conversations.filter(item => item.busy) ?? [], idle = check?.conversations.filter(item => !item.busy) ?? [];
   const blocked = busy.length > 0 || (check?.otherUsers.length ?? 0) > 0 || (check?.undeclaredServices.length ?? 0) > 0 || (check?.resident.length ?? 0) > 0;
   const after = check?.after;

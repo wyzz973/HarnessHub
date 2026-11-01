@@ -60,7 +60,7 @@ export function PermissionCard({ request, harness, busy, onDecision }: { readonl
     if (Number.isInteger(index) && index >= 0 && index < keyed.length) { event.preventDefault(); decide(keyed[index]!.id); }
   };
   const urgent = seconds !== null && seconds <= 60;
-  return <section tabIndex={-1} onKeyDown={onKeyDown} aria-label={question ? "Harness 交互" : "工具审批"}
+  return <section tabIndex={-1} onKeyDown={onKeyDown} aria-label={question ? "审批与提问" : "工具审批"}
     className={cn("native-permission motion-enter flex flex-col gap-2.5 rounded-card bg-surface p-3.5 outline-offset-2", request.decided ? "shadow-hairline" : "shadow-[0_0_0_1px_var(--amber-line)]")}>
     <div className="flex items-center gap-2 text-ui-sm">
       <span className={cn("flex h-5 w-5 flex-none items-center justify-center rounded-tag", request.decided ? "bg-subtle text-fg-3" : "bg-amber-soft text-amber")} aria-hidden="true">{question ? <CircleHelp size={13}/> : <ShieldAlert size={13}/>}</span>

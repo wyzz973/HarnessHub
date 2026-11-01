@@ -483,7 +483,7 @@ export function HarnessesPage(props: HarnessProps) {
       </div>
     </section> : null}
     <div className="-mt-2 flex flex-col gap-1.5 text-ui-sm text-fg-3">
-      {hiddenCount > 0 ? <p className="hidden-frozen m-0">已隐藏 {hiddenCount} 个冻结的 Harness，<button type="button" className="link-btn" onClick={props.onSettings}>可在设置里显示</button></p> : null}
+      {hiddenCount > 0 ? <p className="hidden-frozen m-0">已隐藏 {hiddenCount} 个冻结的 Agent，<button type="button" className="link-btn" onClick={props.onSettings}>可在设置里显示</button></p> : null}
       <p className="m-0">没找到装在别处的 Agent？在<button type="button" className="link-btn" onClick={props.onSettings}>设置</button>的“发现”里添加它所在的目录，再重新检测。</p>
     </div>
     </PageShell>
@@ -636,7 +636,7 @@ function AgentDetail(props: HarnessProps & { harness: HarnessView; state: AgentS
         <div className="flex min-w-0 items-center gap-1.5"><h2 className="trunc m-0 text-panel">{name}</h2>{harness.tier === "frozen" ? <Badge tone="neutral" title="冻结：保留适配与历史对话，不再打磨">冻结</Badge> : null}</div>
         <p className="agent-meta m-0 text-caption text-fg-3">{here ? `${version ?? "版本未知"} · ${placeOf(harness, true)}` : "未安装"}</p>
       </div>
-      <button type="button" className="icon-btn self-start text-fg-3" aria-label="关闭 Harness 详情" onClick={props.onClose}><X size={15}/></button>
+      <button type="button" className="icon-btn self-start text-fg-3" aria-label="关闭 Agent 详情" onClick={props.onClose}><X size={15}/></button>
     </header>
     <div className="scroll-area flex min-h-0 flex-1 flex-col gap-5 px-5 pb-6">
       {props.error ? <Notice tone="red" onDismiss={props.onDismissError}>{props.error}</Notice> : null}
