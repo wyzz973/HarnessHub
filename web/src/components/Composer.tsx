@@ -1,4 +1,4 @@
-import { ArrowLeftRight, AtSign, ListPlus, Paperclip, Plus, RefreshCw, ShieldCheck, SlidersHorizontal, SquareSlash, TriangleAlert } from "lucide-react";
+import { ArrowLeftRight, ListPlus, Paperclip, Plus, RefreshCw, ShieldCheck, SlidersHorizontal, SquareSlash, TriangleAlert } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import type { PublicRun } from "../../../src/contracts/session.js";
