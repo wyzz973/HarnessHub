@@ -1746,6 +1746,83 @@ test("G054-DL7 a running Turn shows the arc, the swept words and a timer every s
   assert.deepEqual(errors, []);
 });
 
+test("G054-DL7 an end dot on its own line after a code block closes that line as it fades, so the end of a reply does not jump and following the latest keeps the bottom; reduced motion lets it go at once, and history shows no dot (ruling L)", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  await mkdir(artifact, { recursive: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1440, height: 700 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
+  const step = async (stage: string) => {
+    const pending = join(fixture.root, "workspace", "next-stream-control.json"), target = join(fixture.root, "workspace", "stream-control.json");
+    await writeFile(pending, JSON.stringify({ stage })); await rename(pending, target);
+  };
+  // Every frame from the finish until the dot is gone: the room the reply keeps under its last block (the dot's line), how
+  // far the page is from its bottom, whether the reply is done (data-done) or still holds the dot, and whether "回到最新"
+  // showed; with the dot line's transition. (The code block above may change by itself as its closing fence comes in.)
+  const watchEnd = () => page.evaluate(() => new Promise<{ frames: [number, number, boolean, boolean][]; follow: boolean; transition: string | null }>(resolve => {
+    const reply = [...document.querySelectorAll(".assistant-message")].at(-1)!.querySelector<HTMLElement>(".markdown.text-reading")!, scroller = document.querySelector<HTMLElement>(".chat-scroll")!;
+    const frames: [number, number, boolean, boolean][] = [];
+    let follow = false, transition: string | null = null, until = Number.POSITIVE_INFINITY;
+    reply.addEventListener("transitionrun", event => {
+      if ((event as TransitionEvent).pseudoElement === "::after" && (event as TransitionEvent).propertyName === "height") { const style = getComputedStyle(reply, "::after"); transition = style.transitionDuration + " " + style.transitionTimingFunction; }
+    });
+    const stop = setTimeout(() => resolve({ frames, follow, transition }), 8000);
+    const frame = () => {
+      frames.push([reply.getBoundingClientRect().bottom - reply.lastElementChild!.getBoundingClientRect().bottom, scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight, reply.hasAttribute("data-done"), reply.classList.contains("caret-host")]);
+      if (document.querySelector(".follow-stream")) follow = true;
+      if (!reply.classList.contains("caret-host") && until === Number.POSITIVE_INFINITY) until = performance.now() + 300;
+      if (performance.now() > until) { clearTimeout(stop); resolve({ frames, follow, transition }); return; }
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  }));
+  /** The frames while the reply's dot was going: from the last frame before it was done to the end. */
+  const closing = (frames: readonly [number, number, boolean, boolean][]) => { const first = frames.findIndex(([, , done]) => done); assert.ok(first > 0, "the reply was seen being written, then done"); return frames.slice(first - 1); };
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  await composer.fill("STREAM_BLOCK：以代码块结尾"); await composer.press("Enter");
+  const turn = log.locator(".assistant-message").last(), reply = turn.locator(".markdown.text-reading");
+  await expect(reply.locator(".code-block")).toContainText("pnpm test", { timeout: 15000 });
+  // While it is written the dot stands on a line of its own under the code block: a block one line (26 px) high.
+  await expect(reply).toHaveClass(/caret-host/u);
+  assert.deepEqual(await reply.evaluate(element => { const style = getComputedStyle(element, "::after"); return [style.content, style.display, style.height, style.width, style.animationName]; }), ['""', "block", "26px", "7px", "hh-end-dot"]);
+  // The conversation is longer than the window and follows the latest reply.
+  await expect.poll(() => page.locator(".chat-scroll").evaluate(element => element.scrollHeight > element.clientHeight + 200 && element.scrollHeight - element.scrollTop - element.clientHeight < 2)).toBe(true);
+  const ending = watchEnd(); await step("finish"); const seen = await ending;
+  await expect(turn).toHaveAttribute("data-run-status", "completed");
+  const going = closing(seen.frames), lines = going.map(([line]) => line);
+  // The dot's line closes with its fade: from 26 px to nothing in 200 ms on the fade's curve, through the frames between,
+  // never at once, and only closing.
+  assert.ok(Math.abs(lines[0]! - 26) <= .5 && Math.abs(lines.at(-1)!) <= .5, "the dot's line closes: " + JSON.stringify(lines));
+  assert.ok(lines.filter(line => line < 25.5 && line > .5).length >= 2, "the reply's end moves over several frames: " + JSON.stringify(lines));
+  assert.ok(lines.every((line, index) => index === 0 || line <= lines[index - 1]! + .01), "it only closes: " + JSON.stringify(lines));
+  assert.equal(seen.transition, "0.2s, 0.2s cubic-bezier(0.2, 0, 0, 1), cubic-bezier(0.2, 0, 0, 1)");
+  // Following the latest is kept: the page stays at its bottom in every frame, and "回到最新" never shows.
+  assert.ok(going.every(([, gap]) => gap < 2), "the page stays at its bottom: " + JSON.stringify(going.map(([, gap]) => gap)));
+  assert.equal(seen.follow, false); await expect(page.getByRole("button", { name: "回到最新回复", exact: true })).toHaveCount(0);
+  await expect(reply).not.toHaveClass(/caret-host/u); assert.equal(await reply.evaluate(element => getComputedStyle(element, "::after").content), "none");
+  await page.screenshot({ path: join(artifact, "dl7-end-dot-closed-light-1440.png"), animations: "disabled" });
+  // With reduced motion the dot and its line go at once: the reply ends where it ends in one step.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await composer.fill("STREAM_BLOCK：减少动态效果"); await composer.press("Enter");
+  const calm = log.locator(".assistant-message").last().locator(".markdown.text-reading");
+  await expect(log.locator(".assistant-message")).toHaveCount(2); await expect(calm.locator(".code-block")).toContainText("pnpm test", { timeout: 15000 });
+  await expect(calm).toHaveClass(/caret-host/u);
+  await expect.poll(() => page.locator(".chat-scroll").evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight < 2)).toBe(true);
+  const sudden = watchEnd(); await step("finish"); const instant = await sudden;
+  const quick = closing(instant.frames).map(([line]) => line);
+  assert.ok(Math.abs(quick[0]! - 26) <= .5 && quick.slice(1).every(line => Math.abs(line) <= .5), "with reduced motion the line goes at once: " + JSON.stringify(quick));
+  assert.ok(closing(instant.frames).every(([, gap]) => gap < 2), "the page stays at its bottom"); assert.equal(instant.follow, false);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  // Drawn from history, a reply never shows the dot.
+  await page.reload(); await expect(log.locator(".assistant-message")).toHaveCount(2);
+  await expect(log.locator(".markdown.text-reading")).toHaveCount(2); await expect(log.locator(".caret-host, [data-done]")).toHaveCount(0);
+  assert.deepEqual(await log.locator(".markdown.text-reading").evaluateAll(elements => elements.map(element => getComputedStyle(element, "::after").content)), ["none", "none"]);
+  assert.deepEqual(errors, []);
+});
+
 test("G054-FR4 a message written while a reply runs is sent once after a completed Turn, and goes back to the composer unsent otherwise", { timeout: 180000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });

@@ -300,11 +300,19 @@
   .caret-host :is(p, h1, h2, h3, h4, h5, h6):last-child:not(.caret-host :is(:not(:last-child), :not(ul, ol, li, blockquote)) *)::after,
   .caret-host :is(li, blockquote):last-child:not(.caret-host :is(:not(:last-child), :not(ul, ol, li, blockquote)) *):not(:has(> :is(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote):last-child))::after,
   .caret-host:has(> :last-child:not(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote))::after {
-    content: ""; display: inline-block; width: 7px; height: 7px; margin-left: var(--end-dot-gap, 4px); border-radius: 50%; background: var(--text); vertical-align: 1px;
-    opacity: var(--end-dot-opacity); animation: var(--end-dot-animation); animation-play-state: var(--end-dot-play); transition: opacity var(--dur-base) var(--ease-standard);
+    content: ""; display: var(--end-dot-display, inline-block); width: 7px; height: var(--end-dot-height, 7px); margin-left: var(--end-dot-gap, 4px); border-radius: var(--end-dot-shape, 50%);
+    background: var(--end-dot-fill, var(--text)); vertical-align: 1px; opacity: var(--end-dot-opacity); animation: var(--end-dot-animation); animation-play-state: var(--end-dot-play);
+    transition: opacity var(--dur-base) var(--ease-standard), height var(--dur-base) var(--ease-standard);
   }
-  /* After a block it starts its own line, at the block's edge */
-  .caret-host:has(> :last-child:not(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote))::after, .caret-host :is(li, blockquote):has(> :last-child:is(div, pre, table, hr))::after { --end-dot-gap: 0px; }
+  /*
+   * After a block it starts its own line, at the block's edge: a block one line high with the dot in its middle. Once the
+   * reply is done that line closes as the dot fades, in the same 200 ms on the same curve, so what follows the reply does
+   * not jump when the dot goes (ruling L). With reduced motion both go at once.
+   */
+  .caret-host:has(> :last-child:not(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote))::after, .caret-host :is(li, blockquote):has(> :last-child:is(div, pre, table, hr))::after {
+    --end-dot-gap: 0px; --end-dot-display: block; --end-dot-height: 1lh; --end-dot-shape: 0; --end-dot-fill: radial-gradient(circle 3.5px at 3.5px 50%, var(--text) 3px, transparent 3.5px);
+  }
+  .caret-host[data-done]:has(> :last-child:not(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote))::after, .caret-host[data-done] :is(li, blockquote):has(> :last-child:is(div, pre, table, hr))::after { --end-dot-height: 0px; }
   /* #06 A check drawn in one stroke (path with pathLength="1"); #19 draws its arrow in 160 ms through --motion-duration */
   .motion-draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: hh-draw var(--motion-duration, 240ms) var(--ease-standard) calc(40ms + var(--motion-delay, 0ms)) forwards; }
   /* #05 A tool step arrives: settles 5 px and .96 in the first 30 %, then the 4 px blur clears */
