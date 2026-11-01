@@ -1396,6 +1396,14 @@ test("G054-FR2 G054-FR3 the process folds into one line, the density choice stay
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
   await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter");
   await expect(log).toContainText("原生活动已完成。");
+  // D04: the panel stays closed and its button carries the number. The number pops in as news, when changes come while the
+  // conversation is shown; brought back by closing the panel, here from the keyboard (#37), it is simply there.
+  const button = page.getByRole("button", { name: "详情栏", exact: true });
+  const pop = () => button.evaluate(element => [...element.querySelectorAll(":scope > span")].map(span => getComputedStyle(span).animationName).join());
+  await expect(button).toHaveText("1"); assert.match(await pop(), /hh-pop-in/u, "a change made in view pops the number in");
+  await page.keyboard.press("ControlOrMeta+\\"); await expect(button).toHaveAttribute("aria-pressed", "true"); await expect(button).toHaveText("");
+  await page.keyboard.press("ControlOrMeta+\\"); await expect(button).toHaveAttribute("aria-pressed", "false");
+  await expect(button).toHaveText("1"); assert.equal(await pop(), "none", "closing the panel brings the number back without motion");
   const summary = log.locator(".process-summary");
   await expect(summary).toHaveText(/^改了 1 处，运行 1 条命令 · [0-9.]+ 秒$/u); await expect(summary).toHaveAttribute("aria-expanded", "false");
   await expect(log.getByRole("list", { name: "工具活动" })).toHaveCount(0);
@@ -1409,7 +1417,7 @@ test("G054-FR2 G054-FR3 the process folds into one line, the density choice stay
   // D04 (ADR-054 decision E): wide enough for the panel beside the conversation, it still stays closed, changes or not; its
   // button carries the number of changes, said in full to a screen reader. A page drawn again in the compact density reads
   // no tool detail while the panel is closed.
-  const panel = page.getByRole("complementary", { name: "详情栏" }), button = page.getByRole("button", { name: "详情栏", exact: true });
+  const panel = page.getByRole("complementary", { name: "详情栏" });
   const origin = new URL(fixture.gateway.url).origin, id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session");
   const details = ((await (await context.request.get(origin + "/api/v1/sessions/" + id)).json()).runs as { tools?: { detail?: { id: string } }[] }[]).flatMap(run => (run.tools ?? []).flatMap(tool => tool.detail ? [tool.detail.id] : []));
   assert.ok(details.length > 0, "the fixture's tools carry stored detail");
@@ -1418,6 +1426,7 @@ test("G054-FR2 G054-FR3 the process folds into one line, the density choice stay
   await page.reload(); await expect(log).toContainText("原生活动已完成。");
   await expect(panel).toHaveCount(0); await expect(button).toHaveAttribute("aria-pressed", "false");
   await expect(button).toHaveText("1"); await expect(button).toHaveAccessibleDescription("本对话改动 1 处");
+  assert.equal(await pop(), "none", "drawn with the conversation, the number is simply there");
   await page.waitForTimeout(500); assert.deepEqual(reads, [], "no tool detail is read while the panel is closed");
   // Opened, it shows the conversation's changes, read-only. The 改动 tab and its scope say the button's number at once, from
   // the same facts, before any diff is read; the file comes with the read.

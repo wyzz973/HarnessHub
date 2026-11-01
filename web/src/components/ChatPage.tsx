@@ -251,6 +251,11 @@ export function ChatPage(props: ChatProps) {
   // How many changes the conversation made, from the tools' summaries: the button, its 改动 tab and the tab's scopes say this
   // one number, and nothing is read while the panel is closed.
   const changes = useMemo(() => changeCount(session?.runs ?? []), [session?.runs]);
+  // The number comes in as news only (ADR-054 §3): when changes arrive while the conversation is shown. Drawn with the
+  // conversation, or back on the button because the panel closed (from the keyboard as well, #37), it is simply there.
+  const shownChanges = useRef<{ id: string | null; count: number }>({ id: null, count: 0 });
+  const changesArrived = session !== null && shownChanges.current.id === session.id && changes > shownChanges.current.count;
+  useLayoutEffect(() => { shownChanges.current = { id: session?.id ?? null, count: changes }; });
   const panelTab: PanelTab = tab ?? (changes ? "changes" : session?.runs.some(run => run.plan?.entries.length) ? "plan" : "run");
   // Opened from the keyboard (⌘\), the panel's content does not slide in (#37). Decided once per opening: an animation
   // that followed the live input mode would start over whenever the next input came from the pointer.
@@ -427,7 +432,7 @@ export function ChatPage(props: ChatProps) {
           <button type="button" aria-pressed={detailed} onClick={() => props.onPreference("density", "detailed")}>详细</button></div></div>
         <div className="flex items-center gap-0.5 sm:gap-2.5">
           <Tip label={<>{panelOpen ? "收起详情" : "打开详情"}（⌘\）</>}><button type="button" className="icon-btn relative" aria-label="详情栏" aria-pressed={panelOpen} aria-describedby={changes ? "details-changes" : undefined} onClick={() => setPanel(!panelOpen)}>
-            <PanelRight size={16}/>{!panelOpen && changes ? <span className="motion-pop-in absolute top-px right-0 min-w-[15px] rounded-full bg-accent px-1 text-center text-[10px] leading-[15px] font-semibold text-on-accent" style={motionStyle({ scaleFrom: .6 })} aria-hidden="true">{changes}</span> : null}
+            <PanelRight size={16}/>{!panelOpen && changes ? <ChangeBadge count={changes} news={changesArrived}/> : null}
           </button></Tip>
           {changes ? <span id="details-changes" className="sr-only">本对话改动 {changes} 处</span> : null}
           <Menu align="end" trigger={<button type="button" className="icon-btn" aria-label="更多操作" title="更多操作"><MoreHorizontal size={16}/></button>} items={[
@@ -505,6 +510,16 @@ export function ChatPage(props: ChatProps) {
       </div>
     </Dialog>
   </section>;
+}
+
+/**
+ * The number of changes on the details button while the panel is closed (Conversation board: top right, 15 px, accent).
+ * Decided once, when it appears: as news it pops in from .6; otherwise it is simply there.
+ */
+function ChangeBadge({ count, news }: { readonly count: number; readonly news: boolean }) {
+  const [entering] = useState(news);
+  return <span className={cn("absolute top-px right-0 min-w-[15px] rounded-full bg-accent px-1 text-center text-[10px] leading-[15px] font-semibold text-on-accent", entering && "motion-pop-in")}
+    style={entering ? motionStyle({ scaleFrom: .6 }) : undefined} aria-hidden="true">{count}</span>;
 }
 
 /**
