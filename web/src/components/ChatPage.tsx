@@ -40,7 +40,7 @@ export function selectionProblem(draft: SelectionDraft, harnesses: readonly Harn
   const provider = providers.find(row => row.id === draft.providerId);
   if (!provider || !provider.enabled) return "这个 Provider 已停用或不可用，请重新选择。";
   if (!harness.providerProtocols.includes(provider.protocol)) return "这个 Harness 暂不支持所选 Provider 的协议。请选择兼容的 Provider。";
-  if (provider.protocol === "gemini" && !provider.hasCredential && draft.providerRevision === provider.revision) return "Gemini 连接需要 API Key，请先在模型与账号中补充密钥。";
+  if (provider.protocol === "gemini" && !provider.hasCredential && draft.providerRevision === provider.revision) return "Gemini 连接需要 API Key，请先在模型连接中补充密钥。";
   if (!draft.model || draft.providerRevision === null) return "请选择要使用的模型。";
   if (draft.providerRevision === provider.revision && !provider.models.includes(draft.model)) return "所选模型不在当前 Provider 的配置中。";
   return null;

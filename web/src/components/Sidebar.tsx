@@ -175,7 +175,7 @@ export function Sidebar(props: SidebarProps) {
     {nav("harnesses", "Agent", <Bot size={16}/>, props.activeJobs ? <Spinner size={13} tone="run" label={`${props.activeJobs} 个安装任务进行中`}/>
       : props.updates ? <Badge tone="accent" className="h-[18px]">{props.updates} 个更新</Badge> : null)}
     {nav("capabilities", "能力", <Blocks size={16}/>)}
-    {props.providerManagement ? nav("providers", "模型与账号", <SlidersHorizontal size={16}/>) : null}
+    {props.providerManagement ? nav("providers", "模型连接", <SlidersHorizontal size={16}/>) : null}
     <div className="session-section mt-3.5 flex min-h-0 flex-1 flex-col gap-0.5">
       <h2 className="m-0 flex h-[30px] flex-none items-center pr-1 pl-2.5 text-ui-sm font-normal text-fg-3">项目</h2>
       <nav className="-mx-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain px-1 pb-2" aria-label="对话列表">

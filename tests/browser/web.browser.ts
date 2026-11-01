@@ -140,7 +140,7 @@ test("real browser validates Provider management, public chat switching, cancell
   }
   await responsive("initial");
 
-  await page.getByRole("button", { name: "模型与账号", exact: true }).click();
+  await page.getByRole("button", { name: "模型连接", exact: true }).click();
   await expect(page.getByRole("heading", { name: "连接你的第一个模型服务" })).toBeVisible();
   await page.getByRole("button", { name: "添加 Provider", exact: true }).first().click();
   await responsive("provider-editor");
@@ -263,7 +263,7 @@ test("real browser validates Provider management, public chat switching, cancell
   let current = await snapshot(); assert.equal(current.epoch, 2); assert.equal(current.runs[0]!.selection.provider.model, "model-a"); assert.equal(current.runs[1]!.selection.provider.model, "model-b");
   await page.screenshot({ path: join(artifact, "chat-desktop.png"), fullPage: true, animations: "disabled" });
   await responsive("chat");
-  await page.getByRole("button", { name: "模型与账号", exact: true }).click();
+  await page.getByRole("button", { name: "模型连接", exact: true }).click();
   await page.getByRole("button", { name: "编辑 工作模型 B", exact: true }).click();
   await expect(page.getByLabel(/API Key/u)).toHaveValue("");
   await page.getByLabel("模型 ID 列表", { exact: true }).fill("model-b\nmodel-b2");
@@ -290,7 +290,7 @@ test("real browser validates Provider management, public chat switching, cancell
   await expect(page.getByRole("log").locator("[data-run-status=cancelled]")).toContainText("已停止");
   await expect(page.getByRole("log").locator("[data-run-status=cancelled]")).not.toContainText("已取消");
   current = await snapshot(); assert.equal(current.runs.at(-1)?.status, "cancelled");
-  await page.getByRole("button", { name: "模型与账号", exact: true }).click();
+  await page.getByRole("button", { name: "模型连接", exact: true }).click();
   await page.getByRole("button", { name: "编辑 工作模型 B", exact: true }).click();
   await page.getByRole("checkbox", { name: "启用这个 Provider", exact: true }).uncheck();
   await page.getByRole("button", { name: "保存修改", exact: true }).click();
@@ -298,7 +298,11 @@ test("real browser validates Provider management, public chat switching, cancell
   await page.getByRole("button", { name: "返回对话", exact: true }).click();
   await page.getByRole("textbox", { name: "发送消息", exact: true }).fill("停用后不能发起新调用");
   await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeDisabled();
-  await page.getByRole("button", { name: "模型与账号", exact: true }).click();
+  // The palette names the page as the sidebar and its heading do; the name it had before still finds it (ruling O).
+  await page.keyboard.press("ControlOrMeta+K");
+  const palette = page.getByRole("combobox", { name: "搜索对话、页面或操作", exact: true }); await palette.fill("模型与账号");
+  await expect(page.getByRole("option")).toHaveCount(1); await expect(page.getByRole("option")).toHaveAccessibleName(/^模型连接/u);
+  await palette.press("Enter"); await expect(page.getByRole("heading", { name: "模型连接", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "添加 Provider", exact: true }).click();
   await createProvider("其他协议连接", "claude-fixture", "browser-fixture-key-C", "anthropic-messages");
   await page.getByRole("button", { name: "返回对话", exact: true }).click();
@@ -583,7 +587,7 @@ test("native settings switch without Apply and approvals survive refresh or canc
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true }); const context = await isolatedContext(browser, { viewport: { width: 943, height: 1079 } }), page = await context.newPage();
   await page.goto(fixture.gateway.url);
-  await expect(page.getByRole("button", { name: "模型与账号", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "模型连接", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "选择 Provider", exact: true })).toHaveCount(0);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true });
   const pick = async (label: string, value: string) => { await page.getByRole("button", { name: label, exact: true }).click(); await page.getByRole("option", { name: value, exact: true }).click(); };
@@ -5397,7 +5401,7 @@ test("G054-DL10 the Agent page and an Agent's details, the capabilities, the set
   await expect(settings).toBeVisible();
   await dl10Shoot(page, "settings", { anchors: () => [settings], drawer: "check" });
 
-  await go("模型与账号");
+  await go("模型连接");
   const providers = page.getByRole("heading", { level: 1, name: "模型连接", exact: true });
   await expect(providers).toBeVisible(); await expect(page.getByRole("heading", { name: "验收模型连接", exact: true })).toBeVisible();
   await dl10Shoot(page, "providers", { anchors: () => [providers], drawer: "check" });
