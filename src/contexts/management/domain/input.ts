@@ -16,9 +16,12 @@ export function parseManagementInput(value: unknown): ManagementJobInput {
   if (value === null || typeof value !== "object" || Array.isArray(value) ||
       Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) throw new ManagementError("INVALID_INPUT", "management request must be a plain object");
   const row = value as Record<string, unknown>;
-  if (Object.keys(row).some(key => !["harnessId", "controlId", "action", "commandId", "expectedDefaultRevision", "expectedNativeFingerprint", "restartServices", "installation", "expectedInstallationFingerprint", "stopServices", "expectedInstallFingerprint"].includes(key)))
+  if (Object.keys(row).some(key => !["harnessId", "controlId", "action", "commandId", "expectedDefaultRevision", "expectedNativeFingerprint", "restartServices", "installation", "expectedInstallationFingerprint", "stopServices", "expectedInstallFingerprint", "backupConfirmed"].includes(key)))
     throw new ManagementError("INVALID_INPUT", "unknown management request fields");
   if (row.action !== "install" && row.action !== "upgrade" && row.action !== "uninstall") throw new ManagementError("INVALID_INPUT", "unsupported management action");
+  // The backup confirmation belongs to a Harness upgrade of the native installation the user confirmed (ADR-052); it is only ever `true`.
+  if (row.backupConfirmed !== undefined && (row.backupConfirmed !== true || row.action !== "upgrade" || row.expectedNativeFingerprint === undefined))
+    throw new ManagementError("INVALID_INPUT", "a backup confirmation is true and belongs to a Harness upgrade of a confirmed native installation");
   // An uninstall, or an upgrade of one installation, names it and the check the user confirmed; installs take neither (ADR-044).
   const uninstall = row.action === "uninstall", perInstallation = row.installation !== undefined;
   if (perInstallation !== (row.expectedInstallationFingerprint !== undefined) || uninstall && !perInstallation || row.action === "install" && perInstallation
@@ -43,6 +46,7 @@ export function parseManagementInput(value: unknown): ManagementJobInput {
     ...(row.expectedDefaultRevision === undefined ? {} : { expectedDefaultRevision: row.expectedDefaultRevision }),
     ...(row.expectedNativeFingerprint === undefined ? {} : { expectedNativeFingerprint: row.expectedNativeFingerprint }),
     ...(row.restartServices === undefined ? {} : { restartServices: [...row.restartServices as string[]].sort() }),
+    ...(row.backupConfirmed === undefined ? {} : { backupConfirmed: true as const }),
     ...(row.expectedInstallFingerprint === undefined ? {} : { expectedInstallFingerprint: row.expectedInstallFingerprint as string }),
     ...(row.installation === undefined ? {} : { installation: row.installation as string, expectedInstallationFingerprint: row.expectedInstallationFingerprint as string,
       ...(uninstall ? { stopServices: [...(row.stopServices ?? []) as string[]].sort() } : {}) }) };

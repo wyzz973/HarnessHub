@@ -263,7 +263,7 @@ function publicFailure(error: unknown, homes: readonly string[]): { readonly sta
   if (error instanceof SessionError || error instanceof ProviderError || error instanceof ManagementError || error instanceof CapabilityError) {
     const code = error.code;
     const status = code.includes("NOT_FOUND") ? 404 : code === "INVALID_INPUT" ? 400 : code.includes("LIMIT") || code === "QUEUE_FULL" ? 429
-      : code.startsWith("RECOVERY_") || code.includes("UNAVAILABLE") || code.includes("CLOSED") || code.includes("BLOCKED") || code.includes("CONFLICT") || code.includes("PENDING") || code.includes("REVISION") || code.includes("UNSUPPORTED") || code.includes("BUSY") || code.includes("ACTIVE") || code === "STALE_DEFAULT" || code.endsWith("_CHANGED") || code.includes("REFUSED") || code.endsWith("_EXPIRED") || code.includes("INCOMPATIBLE") ? 409 : 502;
+      : code.startsWith("RECOVERY_") || code.includes("UNAVAILABLE") || code.includes("CLOSED") || code.includes("BLOCKED") || code.includes("CONFLICT") || code.includes("PENDING") || code.includes("REVISION") || code.includes("UNSUPPORTED") || code.includes("BUSY") || code.includes("ACTIVE") || code === "STALE_DEFAULT" || code.endsWith("_CHANGED") || code.includes("REFUSED") || code.endsWith("_EXPIRED") || code.includes("INCOMPATIBLE") || code.endsWith("_REQUIRED") ? 409 : 502;
     // Write ~ before cutting: every whole spelling of the home is replaced first, so a home that crosses the 512th
     // character can no longer leave its first half in the answer; the cut then only shortens text that already says ~.
     return { status, code, message: homeText(homes)(error.message).slice(0, 512) };
@@ -875,32 +875,32 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (path === "/api/v1/installation-jobs") {
       if (method === "GET") { queries(url, ["limit"]); json(response, 200, app.management.listJobs().slice(0, cursor(url.searchParams.get("limit"), 50, 1, 100))); return; }
       if (method === "POST") {
-        queries(url, []); const input = record(await body(request), ["harnessId", "controlId", "action", "commandId", "expectedDefaultRevision", "expectedNativeFingerprint", "restartServices", "installation", "expectedInstallationFingerprint", "stopServices", "expectedInstallFingerprint"], ["harnessId", "action", "commandId"]);
+        queries(url, []); const input = record(await body(request), ["harnessId", "controlId", "action", "commandId", "expectedDefaultRevision", "expectedNativeFingerprint", "restartServices", "installation", "expectedInstallationFingerprint", "stopServices", "expectedInstallFingerprint", "backupConfirmed"], ["harnessId", "action", "commandId"]);
         if (input.action !== "install" && input.action !== "upgrade" && input.action !== "uninstall") throw new HttpError(400, "INVALID_INPUT", "Expected install, upgrade or uninstall action");
         await rescan();
+        // Every consent field reaches the management parser, which refuses the ones that do not belong to the action (ADR-043, ADR-044, ADR-052).
+        const consent = { ...(input.expectedNativeFingerprint === undefined ? {} : { expectedNativeFingerprint: input.expectedNativeFingerprint }), ...(input.restartServices === undefined ? {} : { restartServices: input.restartServices }),
+          ...(input.backupConfirmed === undefined ? {} : { backupConfirmed: input.backupConfirmed }) };
         if (input.action === "install" && input.expectedInstallFingerprint !== undefined) {
           json(response, 202, app.management.submitOfficialInstall({ harnessId: text(input.harnessId, "Harness identity", 96), action: "install", commandId: command(input.commandId), expectedInstallFingerprint: input.expectedInstallFingerprint,
-            ...(input.controlId === undefined ? {} : { controlId: input.controlId }), ...(input.expectedDefaultRevision === undefined ? {} : { expectedDefaultRevision: input.expectedDefaultRevision }),
-            ...(input.expectedNativeFingerprint === undefined ? {} : { expectedNativeFingerprint: input.expectedNativeFingerprint }), ...(input.restartServices === undefined ? {} : { restartServices: input.restartServices }) })); return;
+            ...(input.controlId === undefined ? {} : { controlId: input.controlId }), ...(input.expectedDefaultRevision === undefined ? {} : { expectedDefaultRevision: input.expectedDefaultRevision }), ...consent })); return;
         }
         if (input.action === "upgrade" && input.installation !== undefined) {
           json(response, 202, await app.management.submitInstallationUpgrade({ harnessId: text(input.harnessId, "Harness identity", 96), action: "upgrade", commandId: command(input.commandId),
             installation: input.installation, ...(input.expectedInstallationFingerprint === undefined ? {} : { expectedInstallationFingerprint: input.expectedInstallationFingerprint }),
             ...(input.stopServices === undefined ? {} : { stopServices: input.stopServices }), ...(input.controlId === undefined ? {} : { controlId: input.controlId }),
-            ...(input.expectedDefaultRevision === undefined ? {} : { expectedDefaultRevision: input.expectedDefaultRevision }),
-            ...(input.expectedNativeFingerprint === undefined ? {} : { expectedNativeFingerprint: input.expectedNativeFingerprint }), ...(input.restartServices === undefined ? {} : { restartServices: input.restartServices }) })); return;
+            ...(input.expectedDefaultRevision === undefined ? {} : { expectedDefaultRevision: input.expectedDefaultRevision }), ...consent })); return;
         }
         if (input.action === "uninstall") {
           json(response, 202, await app.management.submitUninstall({ harnessId: text(input.harnessId, "Harness identity", 96), action: "uninstall", commandId: command(input.commandId),
             installation: input.installation, expectedInstallationFingerprint: input.expectedInstallationFingerprint, ...(input.stopServices === undefined ? {} : { stopServices: input.stopServices }),
-            ...(input.controlId === undefined ? {} : { controlId: input.controlId }), ...(input.expectedDefaultRevision === undefined ? {} : { expectedDefaultRevision: input.expectedDefaultRevision }),
-            ...(input.expectedNativeFingerprint === undefined ? {} : { expectedNativeFingerprint: input.expectedNativeFingerprint }), ...(input.restartServices === undefined ? {} : { restartServices: input.restartServices }) })); return;
+            ...(input.controlId === undefined ? {} : { controlId: input.controlId }), ...(input.expectedDefaultRevision === undefined ? {} : { expectedDefaultRevision: input.expectedDefaultRevision }), ...consent })); return;
         }
         json(response, 202, app.management.submit({ harnessId: text(input.harnessId, "Harness identity", 96), action: input.action, commandId: command(input.commandId),
           ...(input.controlId === undefined ? {} : { controlId: text(input.controlId, "control identity", 96) }),
           ...(input.expectedDefaultRevision === undefined ? {} : { expectedDefaultRevision: integer(input.expectedDefaultRevision, 0, Number.MAX_SAFE_INTEGER, "default revision") }),
           ...(input.expectedNativeFingerprint === undefined ? {} : { expectedNativeFingerprint: text(input.expectedNativeFingerprint, "native fingerprint", 64) }),
-          ...(input.restartServices === undefined ? {} : { restartServices: input.restartServices }) })); return;
+          ...(input.restartServices === undefined ? {} : { restartServices: input.restartServices }), ...(input.backupConfirmed === undefined ? {} : { backupConfirmed: input.backupConfirmed }) })); return;
       }
     }
     const jobRoute = /^\/api\/v1\/installation-jobs\/([^/]+)(?:\/(logs|cancel|inspect))?$/u.exec(path);

@@ -3,7 +3,7 @@ import { readSseBlocks } from "./attention.js";
 import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
 import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, LoginShellView, MaintenanceView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, UninstallCheckView, InstallCheckView, InstallationUpgradeCheckView, WebState } from "../../src/contracts/web.js";
 import { HARNESS_TIERS } from "../../src/contracts/web.js";
-import type { HarnessManagementView, InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
+import type { HarnessManagementView, InstallationJobView, ManagementJobInput, RuntimeRequirement, UpgradeSequenceCheck } from "../../src/contracts/management.js";
 import type { AttentionItem, HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
 import type { NativeExtensions, NativeInputs, NativeOption, NativeModelCatalog } from "../../src/contracts/control.js";
 import { parseNativeOptions, commandId, messageId, runId, sessionId, switchId } from "../../src/contracts/session.js";
@@ -117,7 +117,11 @@ export function decodeInstallationJob(value: unknown): InstallationJobView {
         configChanges: list(facts.configChanges, item => { const change = record(item); return { file: text(change.file), keys: list(change.keys, key => { const entry = record(key); return { path: text(entry.path), value: nullableText(entry.value) }; }, 64) }; }, 4),
         blocked: list(facts.blocked, text, 16), installed: bool(facts.installed) }; })() }),
       ...(native.installation === undefined ? {} : { installation: (() => { const facts = record(native.installation); return { label: text(facts.label), role: choice(facts.role, ["product", "adapter"]),
-        kind: choice(facts.kind, ["version", "self-update", "rerun"]), command: text(facts.command), dependencies: list(facts.dependencies, text, 64), ...changes(facts), blocked: list(facts.blocked, text, 16) }; })() }) }; })() }) };
+        kind: choice(facts.kind, ["version", "self-update", "rerun"]), command: text(facts.command), dependencies: list(facts.dependencies, text, 64), ...changes(facts), blocked: list(facts.blocked, text, 16) }; })() }),
+      // A sequenced upgrade's hops, backup confirmation and the configuration its Doctor migrated (ADR-052).
+      ...(native.hops === undefined ? {} : { hops: list(native.hops, value => { const hop = record(value); return { version: text(hop.version), installed: bool(hop.installed), doctor: choice(hop.doctor, ["ok", "failed", "skipped"]) }; }, 4) }),
+      ...(native.backupConfirmed === undefined ? {} : { backupConfirmed: bool(native.backupConfirmed) }),
+      ...(native.configurationMigrated === undefined ? {} : { configurationMigrated: list(native.configurationMigrated, text, 8) }) }; })() }) };
 }
 /** Lines an installer changed in a shell startup file and key paths it changed in a product configuration (ADR-044). */
 function changes(facts: Record<string, unknown>): Pick<NonNullable<NonNullable<InstallationJobView["native"]>["installation"]>, "shellChanges" | "configChanges"> {
@@ -167,6 +171,20 @@ export function decodeUninstallCheck(value: unknown): UninstallCheckView {
     otherUsers: list(row.otherUsers, item => ({ pid: number(record(item).pid) }), 256), localChanges: row.localChanges === null ? null : number(row.localChanges),
     after: kind === "next" ? { kind, label: text(after.label), version: nullableText(after.version) } : { kind } };
 }
+/** A release's Node.js range against one runtime that will run it (ADR-043). */
+function decodeRuntime(value: unknown): RuntimeRequirement {
+  const runtime = record(value);
+  return { runtime: choice(runtime.runtime, ["Node.js"]), required: text(runtime.required), found: nullableText(runtime.found), path: text(runtime.path),
+    satisfied: bool(runtime.satisfied), service: nullableText(runtime.service), restarted: bool(runtime.restarted), upgradeCommand: nullableText(runtime.upgradeCommand) };
+}
+/** A product's documented upgrade sequence as the confirmation shows it (ADR-052). */
+function decodeSequence(value: unknown): UpgradeSequenceCheck {
+  const row = record(value), gateway = row.gateway === null ? null : record(row.gateway), doctor = record(row.doctor);
+  return { hops: list(row.hops, item => { const hop = record(item); return { version: text(hop.version), bridge: bool(hop.bridge), runtimes: list(hop.runtimes, decodeRuntime, 32) }; }, 4), commands: list(row.commands, text, 32),
+    gateway: gateway === null ? null : { label: text(gateway.label), name: text(gateway.name), pid: number(gateway.pid) },
+    restarts: list(row.restarts, item => { const service = record(item); return { label: text(service.label), name: text(service.name), pid: number(service.pid), command: text(service.command) }; }, 16),
+    backupCommand: text(row.backupCommand), doctor: { command: text(doctor.command), rewrites: list(doctor.rewrites, text, 8), backups: text(doctor.backups) }, rollback: text(row.rollback) };
+}
 /** What upgrading a Harness would touch (ADR-043). */
 export function decodeMaintenance(value: unknown): MaintenanceView {
   const row = record(value), entry = (item: unknown) => { const program = record(item); return { pid: number(program.pid), name: text(program.name) }; };
@@ -178,8 +196,7 @@ export function decodeMaintenance(value: unknown): MaintenanceView {
     conversations: list(row.conversations, item => { const conversation = record(item); return { sessionId: text(conversation.sessionId), title: text(conversation.title), busy: bool(conversation.busy) }; }, 256),
     otherUsers: list(row.otherUsers, item => ({ pid: number(record(item).pid) }), 256), staleRecords: number(row.staleRecords),
     plugins: list(row.plugins, text, 32), notes: list(row.notes, text, 16), rollback: nullableText(row.rollback),
-    runtimes: list(row.runtimes, value => { const runtime = record(value); return { runtime: choice(runtime.runtime, ["Node.js"]), required: text(runtime.required), found: nullableText(runtime.found), path: text(runtime.path),
-      satisfied: bool(runtime.satisfied), service: nullableText(runtime.service), restarted: bool(runtime.restarted), upgradeCommand: nullableText(runtime.upgradeCommand) }; }, 32) };
+    runtimes: list(row.runtimes, decodeRuntime, 32), ...(row.sequence === undefined ? {} : { sequence: decodeSequence(row.sequence) }) };
 }
 function decodeCapabilityFacts(value: unknown): CapabilityFacts {
   const row = record(value);

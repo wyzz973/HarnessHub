@@ -45,6 +45,20 @@ export interface NativeJobFacts {
   readonly official?: OfficialInstallFacts;
   /** What upgrading one installation through its channel did (ADR-044); present on those upgrade jobs only, from management schema v6. */
   readonly installation?: InstallationUpgradeFacts;
+  /** The hops of a product's documented upgrade sequence (ADR-052), in the order they ran, at most 4; present on such upgrades only. */
+  readonly hops?: readonly UpgradeHopFact[];
+  /** That the user confirmed the product's own backup before a sequenced upgrade (ADR-052); part of the command's identity. */
+  readonly backupConfirmed?: boolean;
+  /** Protected configuration files (with ~) the product's Doctor rewrote during the sequence: expected there and recorded, not a failure; HarnessHub itself wrote nothing. */
+  readonly configurationMigrated?: readonly string[];
+}
+/** One hop of a product's documented upgrade sequence (ADR-052): whether its release was installed and verified, and what its Doctor did. */
+export interface UpgradeHopFact {
+  readonly version: string;
+  /** Whether the package was installed and its manifest read back at this version. */
+  readonly installed: boolean;
+  /** The product's Doctor after the install: `ok`; `failed` (the sequence stopped here, its words in the job's error); `skipped` (not reached). */
+  readonly doctor: "ok" | "failed" | "skipped";
 }
 /** How one installation is upgraded through its own channel (ADR-044). */
 export type UpgradeKind = "version" | "self-update" | "rerun";
@@ -179,6 +193,24 @@ export interface NativeManagementPort {
    */
   runtimes(plan: NativeInstallPlan, recipe: ManagementRecipe, version: string, services: readonly UsedService[], context: ManagementInstallContext): Promise<readonly RuntimeRequirement[]>;
   inspect(plan: NativeInstallPlan, context: ManagementInstallContext): Promise<string>;
+  /**
+   * Runs the product's documented upgrade sequence (ADR-052) over `hops`, in order. Every release is resolved first;
+   * then (beginMutation) the gateway service among `services` is stopped with the product's command; each hop installs
+   * its npm release with the product's lifecycle scripts allowed under the configuration write protection, is verified
+   * by the package manifest it left, and has the product's Doctor run without that protection (it migrates the
+   * configuration); after the last hop the gateway is started with the product's command and must run again (ADR-043
+   * 决定 5, no kickstart), its status is captured to the log, and the services the recipe restarts are restarted with the
+   * product's commands when they ran before. Each hop and service is reported through `context` as it settles, so a
+   * failure keeps what ran. Rejects at the first failure (DOCTOR_FAILED with the Doctor's words, SERVICE_NOT_RECOVERED,
+   * SERVICE_NOT_READY, …); nothing is retried or rolled back. Resolves with the version verified and the protected files
+   * the Doctor rewrote. Only for a recipe declaring `upgradeSequence` on an npm plan.
+   */
+  executeSequence(plan: NativeInstallPlan, recipe: ManagementRecipe, hops: readonly string[], services: readonly UsedService[], context: SequenceContext): Promise<{ readonly version: string; readonly configurationMigrated: readonly string[] }>;
+}
+/** The job's view of a running upgrade sequence (ADR-052): each hop and service fact is recorded as it settles. */
+export interface SequenceContext extends NativeInstallContext {
+  hop(fact: UpgradeHopFact): void;
+  service(fact: ServiceRestartFact): void;
 }
 /** A running service-manager job whose program is this installation, with the recipe's facts when it declares the job. */
 export interface UsedService {
@@ -260,6 +292,28 @@ export interface MaintenanceCheck {
   readonly rollback: string | null;
   /** The target's runtime requirement against each runtime that will run it; a restarted one not met blocks the upgrade. Empty when none is declared or it could not be read. */
   readonly runtimes: readonly RuntimeRequirement[];
+  /** The product's documented upgrade sequence HarnessHub drives instead of installing the package alone (ADR-052); absent for every other product. */
+  readonly sequence?: UpgradeSequenceCheck;
+}
+/**
+ * A product's documented upgrade sequence as the confirmation shows it (ADR-052). Commands are the exact lines that run,
+ * with ~ for the home directory; `rollback` of the check is null then, since an older release cannot open the data a
+ * newer one migrated: the previous version is only returned to from the product's own backup.
+ */
+export interface UpgradeSequenceCheck {
+  /** Each release installed in order; `bridge` marks an intermediate one upstream requires first. Each hop's Node.js range against the runtimes that will run it; an unmet one of a restarted runtime blocks. */
+  readonly hops: readonly { readonly version: string; readonly bridge: boolean; readonly runtimes: readonly RuntimeRequirement[] }[];
+  readonly commands: readonly string[];
+  /** The gateway service stopped before the first hop and started after the last (its channels are offline throughout); null when it does not run now, then it is not started. */
+  readonly gateway: { readonly label: string; readonly name: string; readonly pid: number } | null;
+  /** Services restarted with the product's own command once the gateway recovered, as they run now. */
+  readonly restarts: readonly { readonly label: string; readonly name: string; readonly pid: number; readonly command: string }[];
+  /** The product's backup command the user must have run; a submission without the confirmation is refused before anything changes. */
+  readonly backupCommand: string;
+  /** The product's Doctor command, the configuration files (with ~) it rewrites, and how it keeps the previous copies. */
+  readonly doctor: { readonly command: string; readonly rewrites: readonly string[]; readonly backups: string };
+  /** How the previous version is returned to: only from the backup. */
+  readonly rollback: string;
 }
 /** One background service a product's default installation registers with the host's service manager (ADR-043). */
 export interface RecipeService {
@@ -565,6 +619,8 @@ export interface ManagementJobInput {
   readonly expectedNativeFingerprint?: string;
   /** The service labels the user agreed to have restarted (ADR-043); an upgrade finding another one to restart stops before changing anything. */
   readonly restartServices?: readonly string[];
+  /** That the user ran the product's own backup before a sequenced upgrade (ADR-052); only such an upgrade takes it, and it is refused without it. */
+  readonly backupConfirmed?: true;
 }
 export interface ManagementRecipe {
   readonly harnessId: string;
@@ -588,6 +644,33 @@ export interface ManagementRecipe {
   readonly pluginDirectory?: string;
   /** Product facts shown before an upgrade: what HarnessHub does not run, and how the user does it. */
   readonly upgradeNotes?: readonly string[];
+  /** The product's documented upgrade sequence HarnessHub drives for its npm installation (ADR-052), instead of installing the package alone. */
+  readonly upgradeSequence?: UpgradeSequenceRecipe;
+}
+/**
+ * A product's documented upgrade sequence (ADR-052): its gateway service is stopped with the product's command, each hop
+ * installs the npm release with the product's lifecycle scripts allowed and runs its Doctor, the gateway is started after
+ * the last hop, and the services named are restarted with the product's own commands. Arguments are the product command's;
+ * its installed entry runs them. Declared by the recipe so that the Gateway branches on no product (ADR-043 决定 9).
+ */
+export interface UpgradeSequenceRecipe {
+  /** Installations older than `before` go through `version` first: upstream's migration bridge, not a version gate. */
+  readonly bridge: { readonly before: string; readonly version: string };
+  /** npm flags the product's install documents, such as `--allow-scripts=openclaw`. */
+  readonly npmFlags: readonly string[];
+  /** The gateway service by the label declared in `services`, and the product's arguments that stop, start and report it. */
+  readonly gateway: { readonly label: string; readonly stop: readonly string[]; readonly start: readonly string[]; readonly status: readonly string[] };
+  /** The product's Doctor, run after each hop's install; it may rewrite `migrates`. */
+  readonly doctor: readonly string[];
+  /** Services restarted with the product's own arguments once the gateway recovered, when they ran before the upgrade. */
+  readonly restarts: readonly { readonly label: string; readonly args: readonly string[] }[];
+  /** The product's backup command the user runs before confirming, as shown. */
+  readonly backupCommand: string;
+  /** Configuration files, relative to the home, the Doctor rewrites; `migrationBackups` says how it keeps the previous copies. */
+  readonly migrates: readonly string[];
+  readonly migrationBackups: string;
+  /** How the user returns to the previous version: only from the backup. */
+  readonly rollback: string;
 }
 export interface ResolvedInstallSpec {
   readonly recipe: ManagementRecipe;

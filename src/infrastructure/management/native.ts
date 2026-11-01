@@ -3,7 +3,7 @@ import { access, lstat, mkdir, open, readFile, readdir, realpath, rename, stat, 
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { compare, prerelease, valid, satisfies } from "semver";
-import { ManagementError, type ManagementInstallContext, type ManagementRecipe, type NativeInstallPlan, type NativeManagementPort, type SystemInstallationObservation, type NativeInstallContext, type ManagementMetadataPort, type ProgramUsage, type ResolvedInstallSpec, type RuntimeRequirement, type UsedService } from "../../contracts/management.js";
+import { ManagementError, type ManagementInstallContext, type ManagementRecipe, type NativeInstallPlan, type NativeManagementPort, type SystemInstallationObservation, type NativeInstallContext, type ManagementMetadataPort, type ProgramUsage, type ResolvedInstallSpec, type RuntimeRequirement, type SequenceContext, type UpgradeSequenceRecipe, type UsedService } from "../../contracts/management.js";
 import { homebrewName } from "../../contexts/catalog/domain/channels.js";
 import { homebrewTap } from "../discovery/packages.js";
 import { captureNativeEnvironment, nativeBaseValues, nativeValues, type NativeEnvironment } from "../session/native-environment.js";
@@ -12,7 +12,7 @@ import { DefaultManagementInstaller } from "./installer.js";
 import { runManagementProcess } from "./process.js";
 import { systemVersionFromOutput } from "./system-version.js";
 import { homebrewEnvironment, homebrewSandboxIdentity, runHomebrewProtected } from "./homebrew.js";
-import { inspectProgramUsage, restartProgramService, systemProgramHost, type ProgramHost } from "./program-usage.js";
+import { awaitServiceRecovery, inspectProgramUsage, parseServiceState, restartProgramService, systemProgramHost, type ProgramHost } from "./program-usage.js";
 
 const MAX_JSON = 2 * 1024 * 1024;
 function object(value: unknown): Record<string, unknown> { if (value === null || typeof value !== "object" || Array.isArray(value)) throw new ManagementError("INVALID_METADATA", "native installation metadata is invalid"); return value as Record<string, unknown>; }
@@ -58,13 +58,39 @@ export function isPrerelease(version: string): boolean {
   return !CALENDAR_REVISION.test(version) && valid(version) !== null && prerelease(version) !== null;
 }
 /**
- * Refuses HarnessHub's own npm upgrade of OpenClaw, before anything is resolved or changed. A transition until its own
- * `openclaw update` is wired in (ADR-052 as revised, the fourth batch): that updater runs OpenClaw's Doctor, which
- * migrates the configuration the latest release requires before its Gateway starts, and restarts the Gateway; installing
- * the package directly does neither. Throws UNSUPPORTED_UPGRADE for OpenClaw and returns for every other Harness.
+ * Refuses installing OpenClaw's npm package on its own (the upgrade of one installation, ADR-044), before anything is
+ * resolved or changed. OpenClaw upgrades through its documented sequence (ADR-052), which "升级 Harness" drives: the
+ * Gateway stopped first, each release installed with its lifecycle scripts allowed and its Doctor run, the Gateway
+ * started after the last. A package installed without the Doctor leaves a configuration the new Gateway refuses to start
+ * on. Throws UNSUPPORTED_UPGRADE for OpenClaw and returns for every other Harness.
  */
 export function refuseOpenClawNpmUpgrade(harnessId: string): void {
-  if (harnessId === "openclaw") throw new ManagementError("UNSUPPORTED_UPGRADE", "OpenClaw 的升级由它自己的 openclaw update 完成（会运行 Doctor 迁移配置并重启 Gateway），HarnessHub 的 npm 直装路径不再用于 OpenClaw；路线见 ADR-052。");
+  if (harnessId === "openclaw") throw new ManagementError("UNSUPPORTED_UPGRADE", "OpenClaw 要按它官方文档的步骤升级：先停 Gateway，逐个版本用 npm 安装并运行 openclaw doctor --fix，最后再启动 Gateway。HarnessHub 在“升级 Harness”里按这个顺序执行，不单独 npm 直装某一份 OpenClaw（跳过 Doctor 会让新版 Gateway 拒绝启动）；路线见 ADR-052。");
+}
+/**
+ * The hops of a product's documented upgrade sequence (ADR-052) from `installed` to `target`: the bridge release first
+ * when the installed one predates upstream's cut-off and the bridge is older than the target, otherwise the target alone.
+ * Pure. Fails with INVALID_METADATA when the installed version is unknown or the versions do not compare: the sequence
+ * cannot then be planned truthfully, and an upgrade is not started on a guess.
+ */
+export function upgradeHops(sequence: UpgradeSequenceRecipe, installed: string | null, target: string): readonly { readonly version: string; readonly bridge: boolean }[] {
+  if (installed === null) throw new ManagementError("INVALID_METADATA", "the installed version is unknown, so the upgrade sequence cannot be planned");
+  const before = compareReleases(installed, sequence.bridge.before), bridged = compareReleases(sequence.bridge.version, target);
+  if (before === null || bridged === null) throw new ManagementError("INVALID_METADATA", "the installed, bridge and target versions do not compare");
+  return before < 0 && bridged < 0 ? [{ version: sequence.bridge.version, bridge: true }, { version: target, bridge: false }] : [{ version: target, bridge: false }];
+}
+/** How long one product command of an upgrade sequence may take (ADR-052): its Doctor migrates and may download; the service commands only talk to launchd. */
+export const SEQUENCE_DOCTOR_MS = 1800 * 1000, SEQUENCE_COMMAND_MS = 120 * 1000;
+/**
+ * The npm that installs a sequence's hops: the prefix's own (`<prefix>/bin/npm`, whose Node.js is the one the product's
+ * services start on, so the release's preinstall checks that Node.js), else the one the plan was made with.
+ */
+export async function sequenceNpm(plan: NativeInstallPlan): Promise<string> {
+  const own = join(plan.prefix, "bin", "npm"); return await available(own) ? own : plan.manager;
+}
+/** The arguments of one hop's install, as documented by the product: its lifecycle scripts allowed, the public registry, the exact release. */
+export function sequenceInstallArguments(plan: NativeInstallPlan, sequence: UpgradeSequenceRecipe, version: string): readonly string[] {
+  return ["install", "--global", "--prefix", plan.prefix, "--no-audit", "--no-fund", ...sequence.npmFlags, "--registry=https://registry.npmjs.org", plan.reference + "@" + version];
 }
 const CHANNEL_REASONS = {
   project: "这个程序在源码目录或 HarnessHub 尚未支持的安装方式里，HarnessHub 不替你升级它；请用它自己的方式更新（例如在源码目录里更新，或运行它自带的更新命令）。",
@@ -208,10 +234,14 @@ export class NativeManagement implements NativeManagementPort {
     const order = plan.beforeVersion === null ? null : compareReleases(version, plan.beforeVersion);
     if (order !== null && order <= 0) throw new ManagementError("NO_UPDATE", "the original installation is already at or above its channel version");
     if (plan.channel !== "npm") return;
-    refuseOpenClawNpmUpgrade(plan.harnessId);
-    const spec = await this.npmRelease(plan, recipe, version, context);
-    const runtime = spec.engines.node ? await this.runtimeAt((plan.actualEntry ? await this.interpreter(plan.actualEntry) : null) ?? this.node, spec.engines.node, null, true, context) : null;
-    if (runtime && !runtime.satisfied) throw new ManagementError("RUNTIME_INCOMPATIBLE", runtimeRefusal(version, runtime));
+    // A sequence installs every hop's release on the program's interpreter: each one is resolved and its range checked, the unmet hop named.
+    const hops = recipe.upgradeSequence === undefined ? [version] : upgradeHops(recipe.upgradeSequence, plan.beforeVersion, version).map(hop => hop.version);
+    const interpreter = (plan.actualEntry ? await this.interpreter(plan.actualEntry) : null) ?? this.node;
+    for (const hop of hops) {
+      const spec = await this.npmRelease(plan, recipe, hop, context);
+      const runtime = spec.engines.node ? await this.runtimeAt(interpreter, spec.engines.node, null, true, context) : null;
+      if (runtime && !runtime.satisfied) throw new ManagementError("RUNTIME_INCOMPATIBLE", runtimeRefusal(hop, runtime));
+    }
   }
   async execute(plan: NativeInstallPlan, recipe: ManagementRecipe, version: string, context: NativeInstallContext): Promise<{ version: string; configurationPreserved: boolean }> {
     context.assertOwned();
@@ -226,7 +256,8 @@ export class NativeManagement implements NativeManagementPort {
         // --ignore-scripts: no lifecycle script of the package runs in this install. A package that needs them completes
         // them itself later: OpenClaw keeps .openclaw-lifecycle-pending in its package root and its launcher runs them at
         // its next start, here the protected --version check below, which fails with "package lifecycle is incomplete"
-        // when they cannot run. OpenClaw's npm upgrade is refused in prepare meanwhile (refuseOpenClawNpmUpgrade).
+        // when they cannot run. OpenClaw's own npm installation goes through executeSequence instead (ADR-052), which
+        // allows its scripts and runs its Doctor; this plain install is for the other npm products.
         await this.process(plan.manager, ["install", "--global", "--prefix", plan.prefix, "--no-audit", "--no-fund", "--ignore-scripts", "--registry=https://registry.npmjs.org", plan.reference + "@" + version], context, "configuration");
         const manifest = await json(join(plan.prefix, "lib", "node_modules", plan.reference, "package.json"));
         if (manifest.name !== plan.reference || manifest.version !== version) throw new ManagementError("NATIVE_VERIFICATION_FAILED", "installed npm identity/version did not match its frozen target");
@@ -303,6 +334,123 @@ export class NativeManagement implements NativeManagementPort {
   }
   usage(plan: NativeInstallPlan, recipe: ManagementRecipe, context: ManagementInstallContext): Promise<ProgramUsage> { return inspectProgramUsage(plan, recipe, this.host, context); }
   restartService(service: UsedService, context: ManagementInstallContext): Promise<{ readonly pid: number; readonly ready: boolean | null } | null> { return restartProgramService(service, this.host, context); }
+  async executeSequence(plan: NativeInstallPlan, recipe: ManagementRecipe, hops: readonly string[], services: readonly UsedService[], context: SequenceContext): Promise<{ readonly version: string; readonly configurationMigrated: readonly string[] }> {
+    context.assertOwned();
+    const sequence = recipe.upgradeSequence;
+    if (sequence === undefined || plan.channel !== "npm") throw new ManagementError("UNSUPPORTED_NATIVE_MANAGEMENT", "this installation has no documented upgrade sequence");
+    if (plan.reason !== null) throw new ManagementError("CONFIGURATION_PROTECTION_UNAVAILABLE", plan.reason);
+    if (hops.length === 0 || hops.length > 4 || new Set(hops).size !== hops.length) throw new ManagementError("INVALID_INPUT", "an upgrade sequence has one to four distinct hops");
+    if (!plan.actualEntry || await realpath(plan.entry) !== plan.actualEntry) throw new ManagementError("NATIVE_INSTALLATION_CHANGED", "original executable changed after planning");
+    // Every release is resolved, and no hop may replace another program's executable, before anything stops or changes.
+    for (const version of hops) await this.npmRelease(plan, recipe, version, context);
+    const gateway = services.find(service => service.label === sequence.gateway.label) ?? null;
+    const restarts = sequence.restarts.flatMap(item => { const service = services.find(entry => entry.label === item.label); return service === undefined ? [] : [{ service, args: item.args }]; });
+    const manifest = join(plan.prefix, "lib", "node_modules", plan.reference, "package.json"), npm = await sequenceNpm(plan), before = await this.configurationHashes();
+    const command = (args: readonly string[]) => [plan.entry, ...args].join(" ");
+    const runs = gateway === null ? null : parseServiceState(await this.host.print(gateway.target, context) ?? "").runs;
+    const startAgain = gateway === null ? "" : "可以在终端运行 " + command(sequence.gateway.start) + " 让 Gateway 恢复运行。";
+    let installed = plan.beforeVersion;
+    context.beginMutation();
+    // 1. The gateway stops before the first release changes under it; its channels are offline until it starts again.
+    if (gateway !== null) await this.product(plan, sequence.gateway.stop, context, SEQUENCE_COMMAND_MS, "GATEWAY_STOP_FAILED", "停止 " + gateway.label);
+    // 2. Each hop: install with the product's lifecycle scripts allowed, verify by the manifest, then the product's Doctor.
+    for (const [index, version] of hops.entries()) {
+      const label = "第 " + (index + 1) + " 跳 " + version;
+      try { await this.process(npm, sequenceInstallArguments(plan, sequence, version), context, "configuration"); }
+      catch (error) {
+        if (!(error instanceof ManagementError) || error.code !== "PROCESS_FAILED" && error.code !== "PROCESS_START_FAILED" && error.code !== "OUTPUT_LIMIT") throw error;
+        // npm did not finish: what is on disk is known only when its manifest still reads the release before this hop.
+        const current = await this.manifestVersion(manifest, plan.reference);
+        if (current !== installed) throw new ManagementError("NATIVE_VERIFICATION_FAILED", label + " 的 npm 没有成功结束，包目录现在" + (current === null ? "没有可读的清单" : "是 " + current) + "，结果未知。");
+        context.hop({ version, installed: false, doctor: "skipped" });
+        throw new ManagementError("HOP_INSTALL_FAILED", label + " 没有装入：npm 没有成功结束，包目录仍是 " + current + "。没有重试。" + startAgain);
+      }
+      const current = await this.manifestVersion(manifest, plan.reference);
+      if (current !== version) throw new ManagementError("NATIVE_VERIFICATION_FAILED", label + " 安装后包目录的版本是 " + (current ?? "读不出") + "，不是 " + version + "。");
+      installed = version; context.hop({ version, installed: true, doctor: "skipped" });
+      try { await this.product(plan, sequence.doctor, context, SEQUENCE_DOCTOR_MS, "DOCTOR_FAILED", label + " 的 Doctor"); }
+      catch (error) {
+        if (!(error instanceof ManagementError) || error.code !== "DOCTOR_FAILED") throw error;
+        context.hop({ version, installed: true, doctor: "failed" });
+        throw new ManagementError("DOCTOR_FAILED", error.message + " " + version + " 已装入，但它的配置迁移没有完成，Gateway 没有启动；没有回滚也没有重试。按 Doctor 的提示处理（例如先装它要求的版本并运行 " + command(sequence.doctor) + "）后，再运行 " + command(sequence.doctor) + (gateway === null ? "。" : " 与 " + command(sequence.gateway.start) + "。"));
+      }
+      context.hop({ version, installed: true, doctor: "ok" });
+    }
+    // 3. The gateway starts again with the product's command and must run again (ADR-043 决定 5); its status goes to the log.
+    let failure: ManagementError | null = null;
+    if (gateway !== null) {
+      try { await this.product(plan, sequence.gateway.start, context, SEQUENCE_COMMAND_MS, "GATEWAY_START_FAILED", "启动 " + gateway.label); }
+      catch (error) { if (!(error instanceof ManagementError) || error.code !== "GATEWAY_START_FAILED") throw error; context.service({ label: gateway.label, outcome: "not_recovered", pid: null, ready: null }); throw new ManagementError(error.code, error.message + " 新版本 " + installed + " 已安装。" + startAgain); }
+      try {
+        const outcome = await awaitServiceRecovery(gateway, this.host, context, runs);
+        context.service({ label: gateway.label, outcome: "restarted", pid: outcome.pid, ready: outcome.ready });
+        if (outcome.ready === false) failure = new ManagementError("SERVICE_NOT_READY", gateway.label + " 已重新运行（进程 " + outcome.pid + "），但 60 秒内没有在端口 " + gateway.port + " 上监听。新版本 " + installed + " 已安装。可以在终端运行 " + command(sequence.gateway.status) + " 查看它的状态，或 " + command(sequence.gateway.stop) + " 后再 " + command(sequence.gateway.start) + " 再试一次。");
+        else context.log("system", gateway.label + " 已重新运行（进程 " + outcome.pid + "）" + (outcome.ready === true ? "，正在端口 " + gateway.port + " 上监听。" : "；不知道它监听的端口，可用性未验证。"));
+      } catch (error) {
+        if (!(error instanceof ManagementError) || error.code !== "SERVICE_NOT_RECOVERED") throw error;
+        context.service({ label: gateway.label, outcome: "not_recovered", pid: null, ready: null });
+        failure = new ManagementError("SERVICE_NOT_RECOVERED", "启动后 60 秒内 " + gateway.label + " 没有重新运行。新版本 " + installed + " 已安装。" + startAgain + " 没有重试。");
+      }
+      await this.productTail(plan, sequence.gateway.status, context);
+      if (failure !== null) { if (restarts.length) context.log("system", "Gateway 没有恢复，所以没有重启 " + restarts.map(item => item.service.label).join("、") + "。"); throw failure; }
+    }
+    // 4. Services the product's own update leaves alone are restarted with its command, when they ran before.
+    for (const { service, args } of restarts) {
+      try {
+        const current = parseServiceState(await this.host.print(service.target, context) ?? "").runs;
+        await this.product(plan, args, context, SEQUENCE_COMMAND_MS, "SERVICE_RESTART_FAILED", "重启 " + service.label);
+        const outcome = await awaitServiceRecovery({ ...service, port: null }, this.host, context, current);
+        context.service({ label: service.label, outcome: "restarted", pid: outcome.pid, ready: null });
+        context.log("system", service.label + " 已重新运行（进程 " + outcome.pid + "）。");
+      } catch (error) {
+        if (!(error instanceof ManagementError) || error.code !== "SERVICE_NOT_RECOVERED" && error.code !== "SERVICE_RESTART_FAILED") throw error;
+        context.service({ label: service.label, outcome: "not_recovered", pid: null, ready: null });
+        failure ??= new ManagementError(error.code, (error.code === "SERVICE_RESTART_FAILED" ? error.message : "重启后 60 秒内 " + service.label + " 没有重新运行。") + " 新版本 " + installed + " 已安装，Gateway 已恢复。可以在终端运行 " + command(args) + " 再试一次。");
+      }
+    }
+    if (failure !== null) throw failure;
+    // 5. The Doctor rewrites the product's own configuration: expected and recorded. Any other protected file that changed was another running program's.
+    const after = await this.configurationHashes(), changed = Object.keys({ ...before, ...after }).filter(path => before[path] !== after[path]);
+    const migrated = changed.filter(path => sequence.migrates.includes(path)), others = changed.filter(path => !sequence.migrates.includes(path));
+    if (others.length) context.log("system", "升级期间这些受保护的配置文件有了变化：" + others.map(path => "~/" + path).join("、") + "。升级在沙箱里不能写它们，变化来自仍在运行的程序。");
+    return { version: hops[hops.length - 1]!, configurationMigrated: migrated.map(path => "~/" + path) };
+  }
+  /** The version an npm package's manifest records, or null when there is no readable manifest of that package. */
+  private async manifestVersion(manifest: string, reference: string): Promise<string | null> {
+    try { const value = await json(manifest); return value.name === reference && typeof value.version === "string" ? parseVersion(value.version) : null; }
+    catch (error) { if (missing(error) || error instanceof ManagementError || error instanceof SyntaxError) return null; throw error; }
+  }
+  /**
+   * Runs one of the product's own commands of an upgrade sequence with the user's real home and profile (it migrates
+   * configuration and talks to launchd), the stage as TMPDIR and a deadline. Its output goes to the job log; a failure or
+   * the deadline becomes `code` with the command and the last lines said.
+   */
+  private async product(plan: NativeInstallPlan, args: readonly string[], context: ManagementInstallContext, deadlineMs: number, code: string, what: string): Promise<string> {
+    const line = [plan.entry, ...args].join(" "), tail: string[] = [];
+    context.log("system", what + "：" + line);
+    const bounded: ManagementInstallContext = { stage: context.stage, assertOwned: context.assertOwned, signal: AbortSignal.any([context.signal, AbortSignal.timeout(deadlineMs)]),
+      log: (stream, text) => { context.log(stream, text); tail.push(text.slice(0, 256)); if (tail.length > 8) tail.shift(); } };
+    try { return await this.process(plan.entry, args, bounded, "none", this.productEnvironment(plan)); }
+    catch (error) {
+      if (!(error instanceof ManagementError)) throw error;
+      if (error.code === "CANCELLED" && !context.signal.aborted) throw new ManagementError(code, what + "（" + line + "）在 " + deadlineMs / 1000 + " 秒内没有结束。");
+      if (error.code === "PROCESS_FAILED" || error.code === "PROCESS_START_FAILED" || error.code === "OUTPUT_LIMIT") throw new ManagementError(code, what + "（" + line + "）没有成功结束" + (tail.length ? "：" + tail.join(" / ") : "") + "。");
+      throw error;
+    }
+  }
+  /** The user's real home, profile directories and the product's own variables (`OPENCLAW_*` for openclaw): a product command of a sequence runs where the product lives, not in the stage. */
+  private productEnvironment(plan: NativeInstallPlan): Readonly<Record<string, string>> { return { ...nativeBaseValues(this.source, null, plan.harnessId), ...nativeValues(this.source, null) }; }
+  /** The last lines of a product's status command, captured to the log; a status that fails is said as such and changes nothing. */
+  private async productTail(plan: NativeInstallPlan, args: readonly string[], context: ManagementInstallContext): Promise<void> {
+    const line = [plan.entry, ...args].join(" "), tail: string[] = [];
+    const quiet: ManagementInstallContext = { stage: context.stage, assertOwned: context.assertOwned, signal: AbortSignal.any([context.signal, AbortSignal.timeout(SEQUENCE_COMMAND_MS)]),
+      log: (_stream, text) => { tail.push(text.slice(0, 512)); if (tail.length > 40) tail.shift(); } };
+    let outcome = "";
+    try { await this.process(plan.entry, args, quiet, "none", this.productEnvironment(plan)); }
+    catch (error) { if (!(error instanceof ManagementError) || error.code === "CANCELLED" && context.signal.aborted) throw error; outcome = "（命令" + (error.code === "CANCELLED" ? "在 " + SEQUENCE_COMMAND_MS / 1000 + " 秒内没有结束" : "没有成功结束") + "）"; }
+    context.log("system", line + outcome + "：");
+    for (const text of tail) context.log("stdout", text);
+  }
   async configuration(): Promise<string> { return JSON.stringify(await this.configurationHashes()); }
   /** Directory names under the product's plugin directory, for the confirmation; hidden ones (a product's own backups) are not plugins, and contents are never read. */
   async plugins(recipe: ManagementRecipe): Promise<readonly string[]> {

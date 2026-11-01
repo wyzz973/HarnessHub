@@ -431,7 +431,7 @@ test("G011-UG10 a conversation replying with the installation blocks its upgrade
   assert.equal(owned.installationUpgrade("openclaw", other.ref)?.kind, "version");
 });
 
-test("G011-UG10 an OpenClaw npm installation is offered for upgrade but its check says OpenClaw upgrades through its own openclaw update, before any release is looked up", macOnly, async t => {
+test("G011-UG10 an OpenClaw npm installation is offered for upgrade but its check says OpenClaw upgrades through its documented sequence in 升级 Harness, before any release is looked up", macOnly, async t => {
   const closers: (() => Promise<void>)[] = [];
   const root = await temporary(t, "upgrade-openclaw-", closers), home = join(root, "home"); await mkdir(home); await mkdir(join(root, "data"));
   const prefix = join(home, ".nvm/versions/node/v26.0.0"), packageRoot = join(prefix, "lib/node_modules/openclaw");
@@ -446,10 +446,10 @@ test("G011-UG10 an OpenClaw npm installation is offered for upgrade but its chec
   const openclaw: InstallationObservation = { harnessId: "openclaw", controlId: "openclaw-native", ref: "b".repeat(64), role: "product", channel: "npm", name: "openclaw", root: packageRoot, prefix,
     entry: join(prefix, "bin/openclaw"), resolvedPath: join(packageRoot, "openclaw.mjs"), version: "2026.3.23-2", active: true, label: "npm 全局（nvm v26.0.0）" };
   manager.setInstallations([openclaw]);
-  // The page offers it, and the check explains instead of running anything (ADR-052, until its updater is wired in).
+  // The page offers it, and the check explains instead of running anything: installing the package alone skips the Doctor the sequence runs (ADR-052).
   assert.equal(manager.installationUpgrade("openclaw", openclaw.ref)?.kind, "version");
   await assert.rejects(manager.upgradeCheck("openclaw", openclaw.ref), (error: unknown) => error instanceof ManagementError && error.code === "UNSUPPORTED_UPGRADE"
-    && error.message.includes("openclaw update") && error.message.includes("ADR-052"));
+    && error.message.includes("升级 Harness") && error.message.includes("openclaw doctor --fix") && error.message.includes("ADR-052"));
   assert.equal(JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8")).version, "2026.3.23-2");
   assert.deepEqual(await readdir(join(root, "data", "management", "install-checks")).catch(() => []), [], "no prepared check is left behind");
 });

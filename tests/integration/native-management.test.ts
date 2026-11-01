@@ -9,7 +9,8 @@ import { NativeInstallationLocks } from "../../src/infrastructure/management/nat
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
 import { ManagementError, type ManagementMetadataPort, type ManagementRecipe, type NativeProgramUsers } from "../../src/contracts/management.js";
 import { systemProgramHost, type ProgramHost } from "../../src/infrastructure/management/program-usage.js";
-import { compareReleases, isolatedSandboxProfile, isPrerelease } from "../../src/infrastructure/management/native.js";
+import { compareReleases, isolatedSandboxProfile, isPrerelease, upgradeHops } from "../../src/infrastructure/management/native.js";
+import { builtinManagementRecipes } from "../../src/adapters/management/recipes.js";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { randomUUID } from "node:crypto";
@@ -22,11 +23,17 @@ import { DatabaseSync } from "node:sqlite";
 import { existsSync } from "node:fs";
 
 const recipe: ManagementRecipe = { harnessId: "native-fixture", controlId: "native-fixture-npm", kind: "npm", packageName: "fixture-agent", referenceVersion: "1.0.0", binName: "fixture-agent", args: [], archiveUrl: null, archiveSha256: null, relativeExecutable: null, dependencies: [] };
-/** launchd as a test sees it: jobs running the fixture's programs, what `print` says after each restart, and every restart asked for. */
+/**
+ * launchd as a test sees it: jobs running the fixture's programs, what `print` says after each restart, and every restart
+ * asked for. `restarts` counts restarts the product's own commands made (a sequence's `gateway start`, `node restart`),
+ * `stopped` says a job the product stopped and has not started again.
+ */
 interface FakeLaunchd {
   readonly services: readonly { readonly label: string; readonly pid: number; readonly args: (packageRoot: string) => readonly string[] }[];
   readonly after: (label: string, restarts: number) => { readonly state: string; readonly pid: number | null; readonly runs: number } | null;
   readonly listening?: (pid: number) => string;
+  readonly restarts?: (label: string) => number;
+  readonly stopped?: (label: string) => boolean;
   readonly kicked: string[];
 }
 const jobText = (pid: number, args: readonly string[]) => "{\n\t\"Label\" = \"fixture\";\n\t\"PID\" = " + pid + ";\n\t\"Program\" = \"" + args[0] + "\";\n\t\"ProgramArguments\" = (\n" + args.map(arg => "\t\t\"" + arg + "\";\n").join("") + "\t);\n};\n";
@@ -38,32 +45,54 @@ function fakeHost(packageRoot: string, launchd: FakeLaunchd | undefined): Progra
   return { ...systemProgramHost(), platform: launchd === undefined ? process.platform : "darwin",
     jobs: async () => "PID\tStatus\tLabel\n" + (launchd?.services ?? []).map(item => item.pid + "\t0\t" + item.label + "\n").join(""),
     job: async label => { const item = launchd?.services.find(entry => entry.label === label); return item ? jobText(item.pid, item.args(packageRoot)) : null; },
-    print: async target => { const item = service(target); if (!item || !target.startsWith("gui/")) return null; const restarts = launchd!.kicked.filter(entry => entry === target).length;
+    print: async target => { const item = service(target); if (!item || !target.startsWith("gui/")) return null;
+      if (launchd!.stopped?.(item.label)) return printText({ state: "not running", pid: null, runs: 1 });
+      const restarts = launchd!.kicked.filter(entry => entry === target).length + (launchd!.restarts?.(item.label) ?? 0);
       const state = restarts === 0 ? { state: "running", pid: item.pid, runs: 1 } : launchd!.after(item.label, restarts); return state === null ? null : printText(state); },
     kickstart: async target => { launchd?.kicked.push(target); }, listening: async pid => launchd?.listening?.(pid) ?? "", openers: async () => "",
     sleep: async () => {}, now: () => (clock += 250) };
 }
+/**
+ * The fixture's program as a product with its own service commands (OpenClaw's `gateway stop|start|status --deep`,
+ * `doctor --fix --yes`, `node restart`): every command line is appended to `trace`, the service commands leave marks the
+ * fake launchd reads, the Doctor runs only with the user's home, fails at `doctorFailsAt` naming the release upstream
+ * requires, and writes the product's configuration under the home when `doctorWrites`.
+ */
+interface ProductFixture { readonly doctorFailsAt?: string; readonly doctorWrites?: boolean }
 async function fixture(t: test.TestContext, attack = false, beforeCleanup?: () => Promise<void>, verificationAttack = false,
-  extra: { readonly recipe?: ManagementRecipe; readonly launchd?: FakeLaunchd; readonly users?: NativeProgramUsers; readonly pause?: { readonly started: string; readonly go: string } } = {}) {
+  extra: { readonly recipe?: ManagementRecipe; readonly launchd?: FakeLaunchd; readonly users?: NativeProgramUsers; readonly pause?: { readonly started: string; readonly go: string }; readonly installedVersion?: string; readonly product?: ProductFixture } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "native-install-test-"))), home = join(root, "user-home"), prefix = join(root, "global"), data = join(root, "data"), packageRoot = join(prefix, "lib", "node_modules", "fixture-agent"), entry = join(prefix, "bin", "fixture-agent"), npm = join(root, "npm");
-  await mkdir(home); await mkdir(packageRoot, { recursive: true }); await mkdir(dirname(entry), { recursive: true });
+  const trace = join(root, "trace.log"), marks = join(root, "marks"), installed = extra.installedVersion ?? "1.0.0";
+  await mkdir(home); await mkdir(marks); await mkdir(packageRoot, { recursive: true }); await mkdir(dirname(entry), { recursive: true });
   const config = join(home, ".claude.json"); await writeFile(config, '{"model":"keep-model","login":"synthetic-login"}');
-  await writeFile(join(packageRoot, "package.json"), JSON.stringify({ name: "fixture-agent", version: "1.0.0", bin: { "fixture-agent": "entry.mjs" } }));
-  await writeFile(join(packageRoot, "entry.mjs"), "#!" + process.execPath + "\nimport{readFileSync,writeFileSync}from'node:fs';import{dirname,join}from'node:path';" + (verificationAttack ? "writeFileSync(" + JSON.stringify(config) + ",'changed during version check');" : "") + "console.log(JSON.parse(readFileSync(join(dirname(process.argv[1]),'package.json'))).version);\n", { mode: 0o700 });
+  await writeFile(join(packageRoot, "package.json"), JSON.stringify({ name: "fixture-agent", version: installed, bin: { "fixture-agent": "entry.mjs" } }));
+  const product = extra.product === undefined ? "" : "if(a[0]==='gateway'&&a[1]==='stop'){writeFileSync(" + JSON.stringify(join(marks, "gateway-stopped")) + ",'1');console.log('gateway stopped');process.exit(0);}"
+    + "if(a[0]==='gateway'&&a[1]==='start'){writeFileSync(" + JSON.stringify(join(marks, "gateway-started")) + ",version);console.log('gateway started');process.exit(0);}"
+    + "if(a[0]==='gateway'&&a[1]==='status'){console.log('Gateway service: running (deep)');console.log('Version: '+version);process.exit(0);}"
+    + "if(a[0]==='node'&&a[1]==='restart'){writeFileSync(" + JSON.stringify(join(marks, "node-restarted")) + ",'1');console.log('node restarted');process.exit(0);}"
+    + "if(a[0]==='doctor'){if(process.env.HOME!==" + JSON.stringify(home) + "){console.error('doctor ran without the user home');process.exit(3);}"
+    + (extra.product.doctorFailsAt === undefined ? "" : "if(version===" + JSON.stringify(extra.product.doctorFailsAt) + "){console.error('Doctor: the memory index of this install is retired; install 2026.9.7 first and run doctor --fix');process.exit(1);}")
+    + (extra.product.doctorWrites ? "mkdirSync(" + JSON.stringify(join(home, ".openclaw")) + ",{recursive:true});writeFileSync(" + JSON.stringify(join(home, ".openclaw", "openclaw.json")) + ",JSON.stringify({migratedTo:version}));" : "")
+    + "console.log('doctor ok '+version);process.exit(0);}console.error('unexpected command '+a.join(' '));process.exit(2);";
+  await writeFile(join(packageRoot, "entry.mjs"), "#!" + process.execPath + "\nimport{readFileSync,writeFileSync,appendFileSync,mkdirSync}from'node:fs';import{dirname,join}from'node:path';const a=process.argv.slice(2);"
+    + "const version=JSON.parse(readFileSync(join(dirname(process.argv[1]),'package.json'))).version;" + (extra.product === undefined ? "" : "appendFileSync(" + JSON.stringify(trace) + ",['fixture-agent',...a].join(' ')+'\\n');")
+    + (verificationAttack ? "writeFileSync(" + JSON.stringify(config) + ",'changed during version check');" : "") + "if(a.length===0||a[0]==='--version'){console.log(version);process.exit(0);}" + product + "\n", { mode: 0o700 });
   await symlink(join(packageRoot, "entry.mjs"), entry);
-  const code = "#!" + process.execPath + "\nimport{writeFile}from'node:fs/promises';const a=process.argv.slice(2);if(a[0]==='prefix'){if(process.env.HOME!==" + JSON.stringify(home) + ")throw Error('prefix query lost native HOME');console.log(" + JSON.stringify(prefix) + ");process.exit(0);}if(a[0]!=='install')throw Error('unexpected command');" + (attack ? "await writeFile(" + JSON.stringify(config) + ",'changed');" : "")
+  const code = "#!" + process.execPath + "\nimport{writeFile,appendFile}from'node:fs/promises';const a=process.argv.slice(2);" + (extra.product === undefined ? "" : "await appendFile(" + JSON.stringify(trace) + ",['npm',...a].join(' ')+'\\n');")
+    + "if(a[0]==='prefix'){if(process.env.HOME!==" + JSON.stringify(home) + ")throw Error('prefix query lost native HOME');console.log(" + JSON.stringify(prefix) + ");process.exit(0);}if(a[0]!=='install')throw Error('unexpected command');" + (attack ? "await writeFile(" + JSON.stringify(config) + ",'changed');" : "")
     + (extra.pause ? "await writeFile(" + JSON.stringify(extra.pause.started) + ",'1');const{existsSync}=await import('node:fs');while(!existsSync(" + JSON.stringify(extra.pause.go) + "))await new Promise(r=>setTimeout(r,20));" : "") + "const version=a.at(-1).split('@').at(-1);await writeFile(" + JSON.stringify(join(packageRoot, "package.json")) + ",JSON.stringify({name:'fixture-agent',version,bin:{'fixture-agent':'entry.mjs'}}));console.log('native package updated');\n";
   await writeFile(npm, code, { mode: 0o700 });
-  let version = "2.0.0", binNames = [recipe.binName], engines: Record<string, string> = {};
-  const metadata: ManagementMetadataPort = { resolve: async original => ({ recipe: original, version: original.referenceVersion === "latest" ? version : original.referenceVersion, artifactUrl: null, integrity: null, engines, binNames, dependencies: [] }) };
+  let version = "2.0.0", binNames = [recipe.binName], engines: (release: string) => Record<string, string> = () => ({});
+  const metadata: ManagementMetadataPort = { resolve: async original => { const resolved = original.referenceVersion === "latest" ? version : original.referenceVersion; return { recipe: original, version: resolved, artifactUrl: null, integrity: null, engines: engines(resolved), binNames, dependencies: [] }; } };
   const environment = { home, values: { HOME: home, PATH: dirname(process.execPath) + ":/usr/bin:/bin" } };
   const native = new NativeManagement(npm, null, process.execPath, environment, metadata, fakeHost(packageRoot, extra.launchd)), store = new SqliteSessionStore(data), locks = new NativeInstallationLocks(join(root, "locks"));
   const manager = new LocalHarnessManagement(data, { assertOwner: () => store.assertOwner(), ownerGeneration: store.ownerGeneration, recipes: [extra.recipe ?? recipe], native, nativeLocks: locks });
   if (extra.users) manager.attachProgramUsers(extra.users);
-  manager.setSystemObservations([{ harnessId: recipe.harnessId, controlId: recipe.controlId, command: { executable: entry, args: [], env: {} }, packageVersion: "1.0.0" }]);
+  manager.setSystemObservations([{ harnessId: recipe.harnessId, controlId: recipe.controlId, command: { executable: entry, args: [], env: {} }, packageVersion: installed }]);
   await manager.refreshNativeCapabilities();
   t.after(async () => { await beforeCleanup?.(); await manager.shutdown(); store.close(); await rm(root, { recursive: true, force: true }); });
-  return { root, manager, locks, config, packageRoot, native, environment, entry, setVersion: (value: string) => { version = value; }, setBins: (value: string[]) => { binNames = value; }, setEngines: (value: Record<string, string>) => { engines = value; } };
+  return { root, manager, locks, config, packageRoot, native, environment, entry, npm, trace, marks, setVersion: (value: string) => { version = value; }, setBins: (value: string[]) => { binNames = value; },
+    setEngines: (value: Record<string, string> | ((release: string) => Record<string, string>)) => { engines = typeof value === "function" ? value : () => value; } };
 }
 async function settled(manager: LocalHarnessManagement, id: string) {
   const until = Date.now() + 10000;
@@ -430,36 +459,177 @@ test("G011-UP1 releases are ordered by semver, with a calendar version's -N as a
   for (const version of ["0.2.1-rc.2", "0.2.1-alpha.5", "2026.10.10-beta.3", "1.0.0-1"]) assert.equal(isPrerelease(version), true, version);
 });
 
-test("G011-UP1 an upgrade is refused as no update only when the channel's version is not newer by that order, and OpenClaw's npm upgrade is refused for its own updater before anything is resolved", async t => {
+test("G011-UP1 an upgrade is refused as no update only when the channel's version is not newer by that order, and a sequenced upgrade resolves every hop's release and checks each hop's runtime before anything changes", async t => {
   const f = await fixture(t), context = { stage: f.root, signal: new AbortController().signal, assertOwned() {}, log() {} };
   const plan = await f.native.describe(recipe, { harnessId: recipe.harnessId, controlId: recipe.controlId, command: { executable: f.entry, args: [], env: {} } }, "1.0.0", context);
   // A calendar revision of the installed release is newer; the base release under its revision is not.
   await f.native.prepare({ ...plan, beforeVersion: "2026.3.23" }, recipe, "2026.3.23-2", context);
   for (const [before, target] of [["2026.3.23-2", "2026.3.23"], ["2026.3.23-2", "2026.3.23-2"], ["2026.9.5", "2026.3.23-2"]] as const)
     await assert.rejects(f.native.prepare({ ...plan, beforeVersion: before }, recipe, target, context), (error: unknown) => error instanceof ManagementError && error.code === "NO_UPDATE", before + " -> " + target);
-  // OpenClaw: its npm upgrade waits for `openclaw update` (ADR-052); refused before its release is looked up, nothing installed.
-  const unresolved = new NativeManagement(null, null, process.execPath, f.environment, { resolve: async () => assert.fail("OpenClaw's release is never looked up") });
-  const openclaw = { ...plan, harnessId: "openclaw", controlId: "openclaw-native", beforeVersion: "2026.3.23" }, openclawRecipe = { ...recipe, harnessId: "openclaw", controlId: "openclaw-native" };
-  await assert.rejects(unresolved.prepare(openclaw, openclawRecipe, "2026.3.23-2", context), (error: unknown) =>
-    error instanceof ManagementError && error.code === "UNSUPPORTED_UPGRADE" && error.message === "OpenClaw 的升级由它自己的 openclaw update 完成（会运行 Doctor 迁移配置并重启 Gateway），HarnessHub 的 npm 直装路径不再用于 OpenClaw；路线见 ADR-052。");
-  await assert.rejects(unresolved.prepare({ ...openclaw, beforeVersion: "2026.3.23-2" }, openclawRecipe, "2026.3.23", context), (error: unknown) => error instanceof ManagementError && error.code === "NO_UPDATE", "already newer is said first");
+  // OpenClaw's sequence (ADR-052): both hops are resolved; a hop whose range the program's Node.js does not meet is named, and nothing is installed.
+  const sequenced: ManagementRecipe = { ...recipe, upgradeSequence: OPENCLAW_SEQUENCE }, resolved: string[] = [];
+  f.setEngines(release => release === "2026.10.9" ? { node: ">=99" } : { node: ">=1" });
+  const counting = new NativeManagement(f.npm, null, process.execPath, f.environment, { resolve: async (original, _signal, exact) => { resolved.push(exact ?? original.referenceVersion); return { recipe: original, version: exact ?? "2026.10.9", artifactUrl: null, integrity: null, engines: exact === "2026.10.9" ? { node: ">=99" } : { node: ">=1" }, binNames: [recipe.binName], dependencies: [] }; } });
+  await assert.rejects(counting.prepare({ ...plan, beforeVersion: "2026.3.23-2" }, sequenced, "2026.10.9", context), (error: unknown) => error instanceof ManagementError && error.code === "RUNTIME_INCOMPATIBLE" && error.message.startsWith("新版本 2026.10.9 要求 Node.js >=99，运行它的 Node.js 是 " + process.versions.node));
+  assert.deepEqual(resolved, ["2026.9.5", "2026.10.9"], "the bridge then the target, each by its exact version");
+  f.setEngines(() => ({ node: ">=1" })); await f.native.prepare({ ...plan, beforeVersion: "2026.3.23-2" }, sequenced, "2026.10.9", context);
   assert.equal(await version(f), "1.0.0");
 });
 
-test("G011-UP1 through native maintenance, OpenClaw's npm upgrade fails with the reason before npm runs, instead of a configuration check of the target", { skip: process.platform !== "darwin" && "native upgrades need the macOS sandbox" }, async t => {
-  // This management service closes before the fixture's directory is removed.
-  let manager: LocalHarnessManagement | undefined;
-  const f = await fixture(t, false, async () => { await manager?.shutdown(); }), openclaw: ManagementRecipe = { ...recipe, harnessId: "openclaw", controlId: "openclaw-native" };
-  await mkdir(join(f.root, "data-openclaw"));
-  manager = new LocalHarnessManagement(join(f.root, "data-openclaw"), { installationMode: "native", native: f.native, assertOwner: () => {}, ownerGeneration: 1, recipes: [openclaw],
-    nativeEnvironment: f.environment, nativeLocks: new NativeInstallationLocks(join(f.root, "locks-openclaw")) });
-  manager.setSystemObservations([{ harnessId: "openclaw", controlId: "openclaw-native", command: { executable: f.entry, args: [], env: {} }, packageVersion: "1.0.0" }]);
-  await manager.refreshNativeCapabilities();
-  const capability = manager.views(["openclaw"])[0]!.native!;
-  assert.equal(capability.channel, "npm");
-  const job = await settled(manager, manager.submit({ harnessId: "openclaw", action: "upgrade", commandId: "openclaw-npm", expectedNativeFingerprint: capability.fingerprint }).id);
-  assert.equal(job.status, "failed"); assert.equal(job.error?.code, "UNSUPPORTED_UPGRADE"); assert.equal(job.native?.dispatched, false);
-  assert.match(job.error!.message, /openclaw update/u); assert.match(job.error!.message, /ADR-052/u);
-  assert.ok(!logs({ ...f, manager }, job.id).some(line => line.includes("校验")), "no configuration check of the target runs");
-  assert.equal(await version(f), "1.0.0", "npm never ran");
+const GATEWAY = "ai.openclaw.gateway", NODE = "ai.openclaw.node";
+/** OpenClaw's documented sequence as the builtin recipe declares it; the fixture's program answers its commands under its own name. */
+const OPENCLAW_SEQUENCE = builtinManagementRecipes().find(item => item.controlId === "openclaw-native")!.upgradeSequence!;
+const sequenceRecipe: ManagementRecipe = { ...recipe, processNames: ["fixture-agent-daemon"], pluginDirectory: ".openclaw/extensions", upgradeSequence: OPENCLAW_SEQUENCE,
+  upgradeNotes: ["升级期间 Gateway 停止，渠道离线。"],
+  services: [{ label: GATEWAY, name: "OpenClaw Gateway", restart: true, portFlag: "--port" }, { label: NODE, name: "OpenClaw Node", restart: false, restartCommand: "fixture-agent node restart" }] };
+/** launchd for the sequence: the gateway and node jobs run the fixture's program; the product's own stop, start and restart move them. */
+function sequenceLaunchd(marks: { dir: string }, listening: FakeLaunchd["listening"] = pid => pid === 42001 ? "p42001\nf3\nn127.0.0.1:18789\n" : ""): FakeLaunchd {
+  return { kicked: [], listening, after: label => ({ state: "running", pid: label === GATEWAY ? 42001 : 42002, runs: 2 }),
+    restarts: label => marks.dir && existsSync(join(marks.dir, label === GATEWAY ? "gateway-started" : "node-restarted")) ? 1 : 0,
+    stopped: label => label === GATEWAY && !!marks.dir && existsSync(join(marks.dir, "gateway-stopped")) && !existsSync(join(marks.dir, "gateway-started")),
+    services: [{ label: GATEWAY, pid: 41001, args: root => [process.execPath, join(root, "entry.mjs"), "gateway", "--port", "18789"] },
+      { label: NODE, pid: 41002, args: root => [process.execPath, join(root, "entry.mjs"), "node", "run"] }] };
+}
+const traced = async (f: { readonly trace: string }) => (await readFile(f.trace, "utf8").catch(() => "")).trim().split("\n").filter(Boolean);
+/** The commands upstream documents for an install from before July 2026, as the fixture's program and npm see them. */
+const sequenceCommands = (f: Awaited<ReturnType<typeof fixture>>, hops: readonly string[]) => [
+  "fixture-agent gateway stop",
+  ...hops.flatMap(hop => ["npm install --global --prefix " + join(f.root, "global") + " --no-audit --no-fund --allow-scripts=openclaw --registry=https://registry.npmjs.org fixture-agent@" + hop, "fixture-agent doctor --fix --yes"]),
+  "fixture-agent gateway start", "fixture-agent gateway status --deep", "fixture-agent node restart"];
+
+test("G011-UP10 the hops of OpenClaw's documented sequence: an installation from before July 2026 goes through 2026.9.5 first, a later one straight to the target (ADR-052)", () => {
+  assert.deepEqual(upgradeHops(OPENCLAW_SEQUENCE, "2026.3.23-2", "2026.10.9"), [{ version: "2026.9.5", bridge: true }, { version: "2026.10.9", bridge: false }]);
+  assert.deepEqual(upgradeHops(OPENCLAW_SEQUENCE, "2026.9.36", "2026.10.9"), [{ version: "2026.10.9", bridge: false }]);
+  assert.deepEqual(upgradeHops(OPENCLAW_SEQUENCE, "2026.7.0", "2026.10.9"), [{ version: "2026.10.9", bridge: false }], "July 2026 itself needs no bridge");
+  assert.deepEqual(upgradeHops(OPENCLAW_SEQUENCE, "2026.6.30", "2026.9.5"), [{ version: "2026.9.5", bridge: false }], "a target at the bridge is one hop");
+  for (const [installed, target] of [[null, "2026.10.9"], ["latest", "2026.10.9"], ["2026.3.23-2", "latest"]] as const)
+    assert.throws(() => upgradeHops(OPENCLAW_SEQUENCE, installed, target), (error: unknown) => error instanceof ManagementError && error.code === "INVALID_METADATA", String(installed) + " -> " + target);
+  // The declaration is upstream's: its commands, the npm flag its install documents, and the bridge.
+  assert.deepEqual(OPENCLAW_SEQUENCE.bridge, { before: "2026.7.0", version: "2026.9.5" }); assert.deepEqual(OPENCLAW_SEQUENCE.npmFlags, ["--allow-scripts=openclaw"]);
+  assert.deepEqual(OPENCLAW_SEQUENCE.gateway, { label: GATEWAY, stop: ["gateway", "stop"], start: ["gateway", "start"], status: ["gateway", "status", "--deep"] });
+  assert.deepEqual(OPENCLAW_SEQUENCE.doctor, ["doctor", "--fix", "--yes"]); assert.deepEqual(OPENCLAW_SEQUENCE.restarts, [{ label: NODE, args: ["node", "restart"] }]);
+  assert.equal(OPENCLAW_SEQUENCE.backupCommand, "openclaw backup create --output <目录> --verify"); assert.deepEqual(OPENCLAW_SEQUENCE.migrates, [".openclaw/openclaw.json"]);
+});
+
+test("G011-UP11 OpenClaw's upgrade runs upstream's sequence in order: gateway stop, each hop's install with its scripts allowed and its Doctor, gateway start and recovery, status, node restart; no kickstart, every step recorded (ADR-052)", { skip: process.platform !== "darwin" && "native upgrades need the macOS sandbox" }, async t => {
+  const marks = { dir: "" }, daemon = sequenceLaunchd(marks), port = users([{ sessionId: "idle", busy: false }]);
+  const f = await fixture(t, false, undefined, false, { recipe: sequenceRecipe, launchd: daemon, users: port, installedVersion: "2026.3.23-2", product: {} }); marks.dir = f.marks;
+  f.setVersion("2026.10.9"); await f.manager.checkUpdates([recipe.harnessId]);
+  // The plan's entry is the program itself here: the fixture's PATH has no bin directory for it (on the user's computer, /opt/homebrew/bin/openclaw).
+  const check = await f.manager.maintenance(recipe.harnessId), entry = join(f.packageRoot, "entry.mjs");
+  // The confirmation: the hops, the exact lines in order, the gateway offline throughout, the node service restarted by the product, no npm rollback.
+  assert.deepEqual(check.sequence?.hops.map(hop => [hop.version, hop.bridge]), [["2026.9.5", true], ["2026.10.9", false]]);
+  assert.deepEqual(check.sequence?.commands, [entry + " gateway stop",
+    f.npm + " install --global --prefix " + join(f.root, "global") + " --no-audit --no-fund --allow-scripts=openclaw --registry=https://registry.npmjs.org fixture-agent@2026.9.5", entry + " doctor --fix --yes",
+    f.npm + " install --global --prefix " + join(f.root, "global") + " --no-audit --no-fund --allow-scripts=openclaw --registry=https://registry.npmjs.org fixture-agent@2026.10.9", entry + " doctor --fix --yes",
+    entry + " gateway start", entry + " gateway status --deep", entry + " node restart"]);
+  assert.deepEqual(check.sequence?.gateway, { label: GATEWAY, name: "OpenClaw Gateway", pid: 41001 });
+  assert.deepEqual(check.sequence?.restarts, [{ label: NODE, name: "OpenClaw Node", pid: 41002, command: entry + " node restart" }]);
+  assert.deepEqual(check.restart, [{ label: GATEWAY, name: "OpenClaw Gateway", pid: 41001, command: entry + " gateway start", portKnown: true }]);
+  assert.deepEqual(check.resident, [], "the node service is restarted by the sequence, not left to the user");
+  assert.equal(check.rollback, null); assert.equal(check.sequence?.backupCommand, "openclaw backup create --output <目录> --verify");
+  assert.deepEqual(check.sequence?.doctor, { command: entry + " doctor --fix --yes", rewrites: ["~/.openclaw/openclaw.json"], backups: OPENCLAW_SEQUENCE.migrationBackups }); assert.equal(check.sequence?.rollback, OPENCLAW_SEQUENCE.rollback);
+  assert.deepEqual(check.sequence?.hops.map(hop => hop.runtimes), [[], []], "no range declared, nothing to check"); assert.deepEqual(await traced(f), [], "the check runs no product command");
+  const job = await settled(f.manager, f.manager.submit({ harnessId: recipe.harnessId, action: "upgrade", commandId: "sequence", expectedNativeFingerprint: check.fingerprint, restartServices: [GATEWAY], backupConfirmed: true }).id);
+  assert.equal(job.status, "completed", JSON.stringify(job)); assert.equal(job.resolvedVersion, "2026.10.9"); assert.equal(await version(f), "2026.10.9");
+  assert.deepEqual(await traced(f), sequenceCommands(f, ["2026.9.5", "2026.10.9"]), "exactly upstream's order");
+  assert.deepEqual(daemon.kicked, [], "the gateway is started by OpenClaw's own command, never kickstarted");
+  assert.deepEqual(job.native?.hops, [{ version: "2026.9.5", installed: true, doctor: "ok" }, { version: "2026.10.9", installed: true, doctor: "ok" }]);
+  assert.deepEqual(job.native?.services, [{ label: GATEWAY, outcome: "restarted", pid: 42001, ready: true }, { label: NODE, outcome: "restarted", pid: 42002, ready: null }]);
+  assert.equal(job.native?.backupConfirmed, true); assert.deepEqual(job.native?.restartServices, [GATEWAY]); assert.equal(job.native?.actualVersion, "2026.10.9");
+  assert.equal(job.native?.configurationPreserved, true); assert.equal(job.native?.configurationMigrated, undefined); assert.equal(job.native?.closedConversations, 1);
+  const text = logs(f, job.id);
+  for (const line of ["目标版本 2026.10.9，按产品官方文档的步骤升级，共 2 跳：2026.9.5 → 2026.10.9。", "停止 " + GATEWAY + "：" + entry + " gateway stop", "第 1 跳 2026.9.5 的 Doctor：" + entry + " doctor --fix --yes", "第 2 跳 2026.10.9 的 Doctor：" + entry + " doctor --fix --yes",
+    "启动 " + GATEWAY + "：" + entry + " gateway start", GATEWAY + " 已重新运行（进程 42001），正在端口 18789 上监听。", entry + " gateway status --deep：", "Gateway service: running (deep)", "Version: 2026.10.9",
+    "重启 " + NODE + "：" + entry + " node restart", NODE + " 已重新运行（进程 42002）。", "已核实本机程序为 2026.10.9，受保护的配置文件没有改动。"]) assert.ok(text.includes(line), line + "\n" + JSON.stringify(text, null, 1));
+  const stop = text.indexOf("停止 " + GATEWAY + "：" + entry + " gateway stop"), start = text.indexOf("启动 " + GATEWAY + "：" + entry + " gateway start");
+  assert.ok(stop >= 0 && text.findIndex(line => line === "native package updated") > stop && start > text.lastIndexOf("doctor ok 2026.10.9"), "stopped before the first install, started after the last Doctor");
+  assert.deepEqual(f.manager.readJob(job.id), job, "the facts read back as written");
+});
+
+test("G011-UP12 a hop whose Doctor refuses stops the sequence there: the release on disk and the Doctor's words are recorded, nothing after it runs, nothing is rolled back or retried (ADR-052)", { skip: process.platform !== "darwin" && "native upgrades need the macOS sandbox" }, async t => {
+  const marks = { dir: "" }, daemon = sequenceLaunchd(marks);
+  const f = await fixture(t, false, undefined, false, { recipe: sequenceRecipe, launchd: daemon, installedVersion: "2026.3.23-2", product: { doctorFailsAt: "2026.10.9" } }); marks.dir = f.marks;
+  f.setVersion("2026.10.9");
+  const check = await f.manager.maintenance(recipe.harnessId);
+  const job = await settled(f.manager, f.manager.submit({ harnessId: recipe.harnessId, action: "upgrade", commandId: "doctor", expectedNativeFingerprint: check.fingerprint, restartServices: [GATEWAY], backupConfirmed: true }).id);
+  assert.equal(job.status, "failed"); assert.equal(job.error?.code, "DOCTOR_FAILED"); assert.equal(job.native?.dispatched, true);
+  assert.match(job.error!.message, /2026\.9\.7/u, "the Doctor's own words"); assert.match(job.error!.message, /2026\.10\.9 已装入/u); assert.match(job.error!.message, /没有回滚也没有重试/u);
+  assert.deepEqual(job.native?.hops, [{ version: "2026.9.5", installed: true, doctor: "ok" }, { version: "2026.10.9", installed: true, doctor: "failed" }]);
+  // The second hop's package is what is on disk: recorded as such; its Doctor did not pass, so the gateway was not started and nothing else ran.
+  assert.equal(job.native?.actualVersion, "2026.10.9"); assert.equal(await version(f), "2026.10.9"); assert.equal(job.native?.services, undefined); assert.equal(job.native?.configurationPreserved, null);
+  assert.deepEqual(await traced(f), sequenceCommands(f, ["2026.9.5", "2026.10.9"]).slice(0, 5), "stops at the second Doctor");
+  assert.deepEqual(daemon.kicked, []); assert.ok(existsSync(join(f.marks, "gateway-stopped")) && !existsSync(join(f.marks, "gateway-started")), "the gateway stays stopped, as the error says");
+  // The result is known, so the program is not left as a pending maintenance.
+  f.locks.read(recipe.harnessId).release();
+});
+
+test("G011-UP13 a hop whose Node.js range the gateway's or node service's Node.js does not meet is named in the confirmation and refuses the upgrade before the gateway stops (ADR-052)", { skip: process.platform !== "darwin" && "native upgrades need the macOS sandbox" }, async t => {
+  // The services start a Homebrew-style Node.js reporting 1.0.0; the program itself runs on this test's Node.js.
+  const root = await realpath(await mkdtemp(join(tmpdir(), "native-sequence-runtime-"))); t.after(() => rm(root, { recursive: true, force: true }));
+  const keg = join(root, "homebrew", "Cellar", "node", "1.0.0_1", "bin"), linked = join(root, "homebrew", "opt", "node", "bin", "node");
+  await mkdir(keg, { recursive: true }); await writeFile(join(keg, "node"), "#!/bin/sh\necho v1.0.0\n", { mode: 0o755 });
+  await mkdir(join(root, "homebrew", "opt"), { recursive: true }); await symlink(join(root, "homebrew", "Cellar", "node", "1.0.0_1"), join(root, "homebrew", "opt", "node"));
+  const marks = { dir: "" }, daemon = { ...sequenceLaunchd(marks), services: [
+    { label: GATEWAY, pid: 41001, args: (packageRoot: string) => [linked, join(packageRoot, "entry.mjs"), "gateway", "--port", "18789"] },
+    { label: NODE, pid: 41002, args: (packageRoot: string) => [linked, join(packageRoot, "entry.mjs"), "node", "run"] }] };
+  const f = await fixture(t, false, undefined, false, { recipe: sequenceRecipe, launchd: daemon, installedVersion: "2026.3.23-2", product: {} }); marks.dir = f.marks;
+  f.setVersion("2026.10.9"); f.setEngines(release => release === "2026.10.9" ? { node: ">=2" } : { node: ">=1" }); await f.manager.checkUpdates([recipe.harnessId]);
+  const check = await f.manager.maintenance(recipe.harnessId);
+  // The bridge's range is met everywhere; the target's is not met by either service, and the node service counts as restarted: the sequence restarts it.
+  assert.deepEqual(check.sequence?.hops.map(hop => [hop.version, hop.runtimes.map(runtime => [runtime.service, runtime.found, runtime.satisfied, runtime.restarted])]), [
+    ["2026.9.5", [[null, process.versions.node, true, true], [GATEWAY, "1.0.0", true, true], [NODE, "1.0.0", true, true]]],
+    ["2026.10.9", [[null, process.versions.node, true, true], [GATEWAY, "1.0.0", false, true], [NODE, "1.0.0", false, true]]]]);
+  assert.deepEqual(check.runtimes, check.sequence!.hops[1]!.runtimes, "the check's runtimes are the target's");
+  const job = await settled(f.manager, f.manager.submit({ harnessId: recipe.harnessId, action: "upgrade", commandId: "runtime", expectedNativeFingerprint: check.fingerprint, restartServices: [GATEWAY], backupConfirmed: true }).id);
+  assert.equal(job.status, "failed"); assert.equal(job.error?.code, "RUNTIME_INCOMPATIBLE"); assert.equal(job.native?.dispatched, false);
+  assert.equal(job.error?.message, "新版本 2026.10.9 要求 Node.js >=2，" + GATEWAY + " 启动用的 Node.js 是 1.0.0（" + linked + "）。先升级 Node.js 再升级（可以运行 brew upgrade node）；HarnessHub 不替你升级 Node.js。没有升级。");
+  assert.deepEqual(await traced(f), [], "the gateway was not stopped"); assert.equal(await version(f), "2026.3.23-2"); assert.equal(job.native?.hops, undefined);
+});
+
+test("G011-UP14 a sequenced upgrade without the backup confirmation is refused before a job exists, and the confirmation is part of the command's identity (ADR-052)", { skip: process.platform !== "darwin" && "native upgrades need the macOS sandbox" }, async t => {
+  const marks = { dir: "" }, f = await fixture(t, false, undefined, false, { recipe: sequenceRecipe, launchd: sequenceLaunchd(marks), installedVersion: "2026.3.23-2", product: {} }); marks.dir = f.marks;
+  f.setVersion("2026.10.9"); const check = await f.manager.maintenance(recipe.harnessId);
+  const request = { harnessId: recipe.harnessId, action: "upgrade" as const, commandId: "no-backup", expectedNativeFingerprint: check.fingerprint, restartServices: [GATEWAY] };
+  assert.throws(() => f.manager.submit(request), (error: unknown) => error instanceof ManagementError && error.code === "BACKUP_CONFIRMATION_REQUIRED" && error.message.includes("openclaw backup create --output <目录> --verify") && error.message.endsWith("没有升级。"));
+  assert.throws(() => f.manager.submit({ ...request, backupConfirmed: false }), (error: unknown) => error instanceof ManagementError && error.code === "INVALID_INPUT", "only true is a confirmation");
+  assert.equal(f.manager.listJobs().length, 0, "nothing was queued"); assert.deepEqual(await traced(f), []); assert.equal(await version(f), "2026.3.23-2");
+  // A plain npm product takes no backup confirmation: it is not part of its route.
+  const plain = await fixture(t), capability = plain.manager.views([recipe.harnessId])[0]!.native!;
+  assert.throws(() => plain.manager.submit({ harnessId: recipe.harnessId, action: "upgrade", commandId: "plain", expectedNativeFingerprint: capability.fingerprint, backupConfirmed: true }), (error: unknown) => error instanceof ManagementError && error.code === "INVALID_INPUT");
+  // The same command with the confirmation is another command.
+  const job = f.manager.submit({ ...request, backupConfirmed: true });
+  assert.throws(() => f.manager.submit(request), (error: unknown) => error instanceof ManagementError && error.code === "COMMAND_CONFLICT");
+  assert.equal(f.manager.submit({ ...request, backupConfirmed: true }).id, job.id);
+  assert.equal((await settled(f.manager, job.id)).status, "completed");
+});
+
+test("G011-UP15 the configuration the Doctor rewrites during the sequence is recorded as migrated, the upgrade completes, and HarnessHub itself wrote nothing (ADR-052)", { skip: process.platform !== "darwin" && "native upgrades need the macOS sandbox" }, async t => {
+  const marks = { dir: "" }, f = await fixture(t, false, undefined, false, { recipe: sequenceRecipe, launchd: sequenceLaunchd(marks), installedVersion: "2026.9.36", product: { doctorWrites: true } }); marks.dir = f.marks;
+  await mkdir(join(f.environment.home, ".openclaw")); await writeFile(join(f.environment.home, ".openclaw", "openclaw.json"), "{\"gateway\":{\"port\":18789}}");
+  f.setVersion("2026.10.9"); await f.manager.checkUpdates([recipe.harnessId]); const check = await f.manager.maintenance(recipe.harnessId);
+  assert.deepEqual(check.sequence?.hops.map(hop => hop.version), ["2026.10.9"], "an installation after July 2026 needs no bridge");
+  const job = await settled(f.manager, f.manager.submit({ harnessId: recipe.harnessId, action: "upgrade", commandId: "migrated", expectedNativeFingerprint: check.fingerprint, restartServices: [GATEWAY], backupConfirmed: true }).id);
+  assert.equal(job.status, "completed", JSON.stringify(job)); assert.deepEqual(job.native?.configurationMigrated, ["~/.openclaw/openclaw.json"]); assert.equal(job.native?.configurationPreserved, true);
+  assert.deepEqual(job.native?.hops, [{ version: "2026.10.9", installed: true, doctor: "ok" }]);
+  assert.equal(await readFile(join(f.environment.home, ".openclaw", "openclaw.json"), "utf8"), "{\"migratedTo\":\"2026.10.9\"}", "the Doctor's rewrite stands");
+  assert.deepEqual(await traced(f), sequenceCommands(f, ["2026.10.9"]));
+  assert.ok(logs(f, job.id).includes("已核实本机程序为 2026.10.9。~/.openclaw/openclaw.json 由产品的 Doctor 改写（原件保留在它的 .bak 备份里）；HarnessHub 自己没有写入任何配置。"), JSON.stringify(logs(f, job.id)));
+  assert.equal(await readFile(f.config, "utf8"), '{"model":"keep-model","login":"synthetic-login"}', "the other protected files are untouched");
+});
+
+test("G011-UP16 a gateway that starts but never listens fails the sequence with the installed version, its status and the retry instructions recorded; the node service is left alone and nothing is retried (ADR-052)", { skip: process.platform !== "darwin" && "native upgrades need the macOS sandbox" }, async t => {
+  const marks = { dir: "" }, daemon = sequenceLaunchd(marks, () => "");
+  const f = await fixture(t, false, undefined, false, { recipe: sequenceRecipe, launchd: daemon, installedVersion: "2026.3.23-2", product: {} }); marks.dir = f.marks;
+  f.setVersion("2026.10.9"); const check = await f.manager.maintenance(recipe.harnessId);
+  const job = await settled(f.manager, f.manager.submit({ harnessId: recipe.harnessId, action: "upgrade", commandId: "deaf", expectedNativeFingerprint: check.fingerprint, restartServices: [GATEWAY], backupConfirmed: true }).id);
+  assert.equal(job.status, "failed"); assert.equal(job.error?.code, "SERVICE_NOT_READY"); assert.equal(job.native?.actualVersion, "2026.10.9"); assert.equal(await version(f), "2026.10.9");
+  assert.deepEqual(job.native?.hops, [{ version: "2026.9.5", installed: true, doctor: "ok" }, { version: "2026.10.9", installed: true, doctor: "ok" }]);
+  assert.deepEqual(job.native?.services, [{ label: GATEWAY, outcome: "restarted", pid: 42001, ready: false }], "the node service was not restarted");
+  assert.match(job.error!.message, /60 秒内没有在端口 18789 上监听。新版本 2026\.10\.9 已安装。/u); assert.ok(job.error!.message.includes(join(f.packageRoot, "entry.mjs") + " gateway status --deep"), job.error!.message);
+  assert.deepEqual(await traced(f), sequenceCommands(f, ["2026.9.5", "2026.10.9"]).slice(0, 7), "status is captured, the node restart does not run");
+  const text = logs(f, job.id); assert.ok(text.includes("Version: 2026.10.9") && text.includes("Gateway 没有恢复，所以没有重启 " + NODE + "。"), JSON.stringify(text));
+  assert.deepEqual(daemon.kicked, []);
+  // The installation is known, so the maintenance lock is released and the program can be used.
+  f.locks.read(recipe.harnessId).release();
 });

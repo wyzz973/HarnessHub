@@ -30,6 +30,27 @@ test("native receipts require real version/configuration evidence and frozen pat
   assert.equal(parseNativePlan(plan).reference, "@fixture/agent");
   for (const patch of [{ manager: "npm" }, { prefix: "relative" }, { reference: "--prefix=/other" }, { reference: "../../agent" }, { fingerprint: "invalid" }]) assert.throws(() => parseNativePlan({ ...plan, ...patch }));
 });
+test("G011-UP17 a sequenced upgrade's facts read back as written, and hops that contradict the verified version, exceed four or belong to another kind of job are refused (ADR-052)", () => {
+  const native = { channel: "npm", location: "/opt/homebrew/bin/openclaw", beforeVersion: "2026.3.23-2", actualVersion: "2026.10.9", dispatched: true, configurationPreserved: true, restartServices: ["ai.openclaw.gateway"], backupConfirmed: true,
+    hops: [{ version: "2026.9.5", installed: true, doctor: "ok" }, { version: "2026.10.9", installed: true, doctor: "ok" }],
+    services: [{ label: "ai.openclaw.gateway", outcome: "restarted", pid: 50001, ready: true }, { label: "ai.openclaw.node", outcome: "restarted", pid: 50002, ready: null }], configurationMigrated: ["~/.openclaw/openclaw.json"] };
+  const completed = { ...job, harnessId: "openclaw", controlId: "openclaw-native", action: "upgrade", status: "completed", phase: "completed", resolvedVersion: "2026.10.9", native };
+  assert.deepEqual(parseManagementJob(completed), completed);
+  // Stopped at the second hop's Doctor: the release on disk is the second hop's, its Doctor failed, nothing after it ran.
+  const failed = { ...completed, status: "failed", phase: "failed", error: { code: "DOCTOR_FAILED", message: "第 2 跳的 Doctor 没有通过" }, native: { ...native, services: undefined, configurationMigrated: undefined, hops: [{ version: "2026.9.5", installed: true, doctor: "ok" }, { version: "2026.10.9", installed: true, doctor: "failed" }] } };
+  assert.equal(parseManagementJob(JSON.parse(JSON.stringify(failed))).native?.hops?.[1]?.doctor, "failed");
+  for (const patch of [
+    { hops: [] }, { hops: [...native.hops, ...native.hops, ...native.hops] }, { hops: [{ version: "2026.9.5", installed: false, doctor: "ok" }] }, { hops: [{ version: "2026.9.5", installed: true, doctor: "maybe" }] },
+    { hops: [{ version: "2026.9.5", installed: true, doctor: "ok", extra: 1 }] }, { hops: [{ version: "2026.9.5", installed: true, doctor: "ok" }] }, { backupConfirmed: undefined }, { backupConfirmed: "yes" },
+    { configurationMigrated: [""] }, { configurationMigrated: new Array(9).fill("~/.openclaw/openclaw.json") }])
+    assert.throws(() => parseManagementJob(JSON.parse(JSON.stringify({ ...completed, native: { ...native, ...patch } }))), ManagementError, JSON.stringify(patch));
+  assert.throws(() => parseManagementJob(JSON.parse(JSON.stringify({ ...completed, action: "install", native: { ...native, restartServices: undefined } }))), ManagementError, "only an upgrade carries hops");
+  // The consent: `backupConfirmed` is only ever true, and only on a Harness upgrade of a confirmed native installation.
+  const consent = { harnessId: "openclaw", action: "upgrade", commandId: "k", expectedNativeFingerprint: "a".repeat(64), restartServices: ["ai.openclaw.gateway"], backupConfirmed: true };
+  assert.equal(parseManagementInput(consent).backupConfirmed, true);
+  for (const input of [{ ...consent, backupConfirmed: false }, { ...consent, backupConfirmed: "true" }, { ...consent, action: "install" }, { ...consent, expectedNativeFingerprint: undefined }])
+    assert.throws(() => parseManagementInput(JSON.parse(JSON.stringify(input))), error => error instanceof ManagementError && error.code === "INVALID_INPUT", JSON.stringify(input));
+});
 test("frozen native npm releases read their exact metadata instead of a newer latest release", async t => {
   const recipe = { ...builtinManagementRecipes().find(row => row.controlId === "codex-native")!, dependencies: [] };
   const requests: string[] = [];

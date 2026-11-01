@@ -1,4 +1,4 @@
-import { ManagementError, type HarnessManagementView, type InstallationJobStatus, type InstallationJobView, type InstallationLog, type InstallationTarget, type OfficialInstallFacts, type PreparedInstall, type InstallationUpgradeFacts, type PreparedUpgrade, type ResolvedManagedControl, type NativeInstallPlan, type RuntimeRequirement, type ServiceRestartFact, type UninstallFacts } from "../../../contracts/management.js";
+import { ManagementError, type HarnessManagementView, type InstallationJobStatus, type InstallationJobView, type InstallationLog, type InstallationTarget, type OfficialInstallFacts, type PreparedInstall, type InstallationUpgradeFacts, type PreparedUpgrade, type ResolvedManagedControl, type NativeInstallPlan, type RuntimeRequirement, type ServiceRestartFact, type UninstallFacts, type UpgradeHopFact } from "../../../contracts/management.js";
 import { installationJobId, installationRef, managementSlug, serviceLabel } from "./input.js";
 import { isAbsolute } from "node:path";
 
@@ -39,6 +39,16 @@ function serviceFact(value: unknown): ServiceRestartFact {
 function labels(value: unknown): readonly string[] {
   if (!Array.isArray(value) || value.length > 16 || value.some(label => !serviceLabel(label))) throw new ManagementError("INVALID_DATA", "service labels are invalid");
   return (value as readonly string[]).slice();
+}
+/** The hops of a sequenced upgrade (ADR-052): at most four, each a version with whether it was installed and what its Doctor did. */
+function hopFacts(value: unknown): readonly UpgradeHopFact[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 4) throw new ManagementError("INVALID_DATA", "upgrade hop facts are invalid");
+  return value.map(item => {
+    const row = managementObject(item, ["version", "installed", "doctor"]);
+    if (typeof row.installed !== "boolean" || row.doctor !== "ok" && row.doctor !== "failed" && row.doctor !== "skipped" || !row.installed && row.doctor !== "skipped")
+      throw new ManagementError("INVALID_DATA", "upgrade hop facts are invalid");
+    return { version: managementString(row.version, 128), installed: row.installed, doctor: row.doctor };
+  });
 }
 function uninstallFacts(value: unknown): UninstallFacts {
   const row = managementObject(value, ["label", "role", "stopServices", "stoppedServices", "removed"]);
@@ -81,12 +91,19 @@ export function parseManagementJob(value: unknown): InstallationJobView {
   const resolvedVersion = row.resolvedVersion === null ? null : managementString(row.resolvedVersion, 128), installationId = row.installationId === null ? null : managementInstallationId(row.installationId), error = errorValue(row.error);
   let native: InstallationJobView["native"];
   if (row.native !== undefined) {
-    const value = managementObject(row.native, ["channel", "location", "beforeVersion", "actualVersion", "dispatched", "configurationPreserved", "restartServices", "closedConversations", "clearedRecords", "services", "configurationChangedByService", "uninstall", "official", "installation"]);
+    const value = managementObject(row.native, ["channel", "location", "beforeVersion", "actualVersion", "dispatched", "configurationPreserved", "restartServices", "closedConversations", "clearedRecords", "services", "configurationChangedByService", "uninstall", "official", "installation", "hops", "backupConfirmed", "configurationMigrated"]);
     if (typeof value.dispatched !== "boolean" || value.configurationPreserved !== null && typeof value.configurationPreserved !== "boolean") throw new ManagementError("INVALID_DATA", "native maintenance facts are invalid");
     if (value.restartServices !== undefined && (!Array.isArray(value.restartServices) || value.restartServices.length > 16 || value.restartServices.some(label => !serviceLabel(label)))
       || value.closedConversations !== undefined && managementInteger(value.closedConversations) > 1024 || value.clearedRecords !== undefined && managementInteger(value.clearedRecords) > 1024
       || value.configurationChangedByService !== undefined && typeof value.configurationChangedByService !== "boolean"
-      || value.services !== undefined && (!Array.isArray(value.services) || value.services.length > 16)) throw new ManagementError("INVALID_DATA", "native maintenance facts are invalid");
+      || value.services !== undefined && (!Array.isArray(value.services) || value.services.length > 16)
+      || value.backupConfirmed !== undefined && typeof value.backupConfirmed !== "boolean"
+      || value.configurationMigrated !== undefined && (!Array.isArray(value.configurationMigrated) || value.configurationMigrated.length > 8)) throw new ManagementError("INVALID_DATA", "native maintenance facts are invalid");
+    // A sequence's facts belong to an upgrade of a native installation that recorded its backup confirmation; the hops never contradict the version verified.
+    const hops = value.hops === undefined ? undefined : hopFacts(value.hops);
+    if ((hops !== undefined || value.configurationMigrated !== undefined) && (row.action !== "upgrade" || value.backupConfirmed !== true || value.installation !== undefined || value.official !== undefined || value.uninstall !== undefined)
+        || hops !== undefined && value.actualVersion !== null && !hops.some(hop => hop.installed && hop.version === value.actualVersion))
+      throw new ManagementError("INVALID_DATA", "upgrade sequence facts are inconsistent");
     native = { channel: managementString(value.channel, 32), location: managementString(value.location, 4096, true), beforeVersion: value.beforeVersion === null ? null : managementString(value.beforeVersion, 128), actualVersion: value.actualVersion === null ? null : managementString(value.actualVersion, 128), dispatched: value.dispatched, configurationPreserved: value.configurationPreserved,
       ...(value.restartServices === undefined ? {} : { restartServices: (value.restartServices as readonly string[]).slice() }),
       ...(value.closedConversations === undefined ? {} : { closedConversations: managementInteger(value.closedConversations) }),
@@ -95,7 +112,10 @@ export function parseManagementJob(value: unknown): InstallationJobView {
       ...(value.configurationChangedByService === undefined ? {} : { configurationChangedByService: value.configurationChangedByService as boolean }),
       ...(value.uninstall === undefined ? {} : { uninstall: uninstallFacts(value.uninstall) }),
       ...(value.official === undefined ? {} : { official: officialFacts(value.official) }),
-      ...(value.installation === undefined ? {} : { installation: installationUpgradeFacts(value.installation) }) };
+      ...(value.installation === undefined ? {} : { installation: installationUpgradeFacts(value.installation) }),
+      ...(hops === undefined ? {} : { hops }),
+      ...(value.backupConfirmed === undefined ? {} : { backupConfirmed: value.backupConfirmed as boolean }),
+      ...(value.configurationMigrated === undefined ? {} : { configurationMigrated: texts(value.configurationMigrated, 8, 1024).map(path => { if (!path) throw new ManagementError("INVALID_DATA", "migrated configuration paths are invalid"); return path; }) }) };
   }
   // An upgrade of one installation through its channel (ADR-044) publishes no private installation; it completes once the new version was read.
   if (native?.installation !== undefined) {
