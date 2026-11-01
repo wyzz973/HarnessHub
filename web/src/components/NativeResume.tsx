@@ -46,7 +46,7 @@ export function NativeResume({ load }: { readonly load: (signal: AbortSignal) =>
     {view.interactive ? <>
       <Row label="在该对话的工作区目录中运行" value={view.interactive} copy="复制恢复命令" title="交互形式按原程序帮助给出"/>
       {view.once ? <div className="flex flex-col">
-        <button type="button" aria-expanded={once} aria-controls={onceId} onClick={() => setOnce(value => !value)} className="row flex h-7 items-center gap-1 self-start border-none bg-transparent px-1.5 text-caption text-fg-2">
+        <button type="button" aria-expanded={once} aria-controls={onceId} onClick={() => setOnce(value => !value)} className="row flex h-7 items-center gap-1 self-start border-none bg-transparent px-1.5 text-caption text-fg-2 hover:bg-subtle">
           <ChevronRight size={12} strokeWidth={2.2} className={cn("text-fg-3 motion-rotate", once && "rotate-90")} aria-hidden="true"/>只问一次</button>
         <Collapsible open={once} id={onceId}><div className="mt-1.5 flex flex-col gap-1"><Row value={view.once} copy="复制只问一次的命令" {...(view.onceNote ? { title: view.onceNote } : {})}/>{onceNote}</div></Collapsible>
       </div> : null}

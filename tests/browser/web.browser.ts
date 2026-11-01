@@ -137,6 +137,18 @@ async function holdFactDelivery(context: Awaited<ReturnType<typeof isolatedConte
   });
   return (page, held) => page.evaluate(value => { const set = Reflect.get(window, "__holdFactDelivery"); if (typeof set !== "function") throw new Error("missing fact delivery fixture"); set(value); }, held);
 }
+/**
+ * Points at a row button and reads the tint it takes, then leaves it and reads the tint gone (Motion board #30: its
+ * background, 120 ms on the standard curve). `tint` is the subtle fill, or the hover fill for a row on a subtle surface.
+ */
+async function rowTint(page: Page, row: ReturnType<Page["locator"]>, tint = "rgb(244, 245, 247)"): Promise<void> {
+  const background = () => row.evaluate(element => getComputedStyle(element).backgroundColor);
+  await page.mouse.move(2, 2); await expect.poll(background).toBe("rgba(0, 0, 0, 0)");
+  await row.hover(); await expect.poll(background).toBe(tint);
+  assert.deepEqual(await row.evaluate(element => { const style = getComputedStyle(element); return [style.transitionProperty, style.transitionDuration, style.transitionTimingFunction]; }),
+    ["background-color", "0.12s", "cubic-bezier(0.2, 0, 0, 1)"]);
+  await page.mouse.move(2, 2); await expect.poll(background).toBe("rgba(0, 0, 0, 0)");
+}
 
 test("real browser validates Provider management, public chat switching, cancellation and responsive layouts", { timeout: 120000 }, async t => {
   const fixture = await launchFixture();
@@ -850,6 +862,8 @@ test("the native extensions panel lists skills, MCP servers and plugins and invo
   await page.keyboard.press("Escape"); await expect(panel).toHaveCount(0); await expect(agentPart).toBeFocused();
   await openExtensions(page);
   await expect(panel).toContainText("浏览器验收技能"); assert.equal(reads.length, 1, "the extensions are read once");
+  // Each group's line opens it in place and, pointed at, tints like any row.
+  await rowTint(page, panel.getByRole("button", { name: /^MCP 服务器/u }));
   await panel.getByText("MCP 服务器").click(); await expect(panel).toContainText("browser-docs"); await expect(panel).toContainText("已连接"); await expect(panel).toContainText("1 个工具");
   await panel.getByText("插件与扩展").click(); await expect(panel).toContainText("browser-plugin");
   // A version is shown as the program reported it, without a "v" the page would add (ruling P).
@@ -938,6 +952,7 @@ test("a native session of the workspace is continued from the composer, quoted a
   // The panel and the button pressed went away with the page that held them; the conversation that opens takes the focus
   // where the user continues, its message box, instead of leaving it to the page.
   await expect(composer).toBeFocused();
+  await rowTint(page, origin.getByRole("button", { name: "查看本机会话的历史", exact: true }));
   await origin.getByText("查看本机会话的历史").click(); await expect(origin).toContainText("first question"); await expect(origin).toContainText("second answer");
   await expect(page.getByRole("button", { name: "接续 · Earlier work", exact: true })).toBeVisible();
   await composer.fill("what did I ask first?"); await composer.press("Enter");
@@ -1462,7 +1477,9 @@ test("the execution settings name the native session and give the program's own 
   await expect(resume.locator(".native-resume-row small")).toHaveText(["原生会话 ID", "在该对话的工作区目录中运行"]);
   await expect(resume.getByRole("button", { name: "复制原生会话 ID", exact: true })).toBeVisible();
   await expect(resume.getByRole("button", { name: "复制恢复命令", exact: true })).toBeVisible();
-  // The one-question form unfolds with its flag, since the fixture's workspace is no Git repository.
+  // The one-question form unfolds with its flag, since the fixture's workspace is no Git repository. Its line tints when
+  // pointed at, like any row.
+  await rowTint(page, resume.getByRole("button", { name: "只问一次", exact: true }));
   await resume.getByRole("button", { name: "只问一次", exact: true }).click();
   await expect(resume.locator(".native-resume-row code").nth(2)).toHaveText(/^codex exec --skip-git-repo-check resume browser-native-\d+ "你的问题"$/u);
   await expect(resume.getByRole("button", { name: "复制只问一次的命令", exact: true })).toBeVisible();
@@ -1768,6 +1785,8 @@ test("G054-DL4 each reply names its Agent, model and thinking level, a hand-over
   await panel.getByRole("tab", { name: /^过程/u }).click();
   await expect(panel).toContainText("这个对话的全部步骤，按时间排列");
   await expect(panel.getByRole("button", { name: /第 1 轮/u })).toContainText("修改 1 · 运行 1"); await expect(panel.getByRole("button", { name: /第 2 轮/u })).toHaveAttribute("aria-expanded", "true");
+  // A Turn's line opens its steps and, pointed at, tints like any row.
+  await rowTint(page, panel.getByRole("button", { name: /第 1 轮/u }));
   await page.screenshot({ path: join(artifact, "dl4-handover-light-1440.png"), animations: "disabled" });
   await page.emulateMedia({ colorScheme: "dark" });
   await page.screenshot({ path: join(artifact, "dl4-handover-dark-1440.png"), animations: "disabled" });
@@ -2095,6 +2114,8 @@ test("G054-DL3 the home greets, says who is ready from the readiness facts and w
   await expect(steps.nth(0)).toContainText(/找到了 \d+ 个 Agent/u); await expect(steps.nth(1)).toContainText("选一个项目文件夹"); await expect(steps.nth(1)).toContainText("/workspace");
   await expect(steps.nth(2)).toContainText("讲讲这个项目的结构");
   await shoot("dl3-first");
+  // What was found opens the list of Agents; pointed at, it tints a shade darker than the step it sits on.
+  await rowTint(page, steps.nth(0).getByRole("button", { name: /^查看找到的 \d+ 个 Agent$/u }), "rgb(235, 237, 240)");
   await steps.nth(2).getByRole("button", { name: "讲讲这个项目的结构", exact: true }).click();
   await expect(composer).toHaveValue("讲讲这个项目的结构"); await expect(composer).toBeFocused(); await composer.fill("");
   // H04: radius 28 and the three-layer shadow, blue while focused.
@@ -2142,6 +2163,7 @@ test("G054-DL3 the home greets, says who is ready from the readiness facts and w
   // The summary's words, apart from its icons (an Agent without a reviewed mark shows its initials in its tile).
   const summary = page.locator(".agent-summary"), words = summary.locator(":scope > span").last();
   await expect(words).toHaveText(/^\d+ 个 Agent 就绪$/u); await expect(summary).toHaveAccessibleName(/^\d+ 个 Agent 就绪$/u);
+  await rowTint(page, summary);
   await expect(welcome.getByRole("button", { name: "workspace", exact: true })).toBeVisible();
   assert.doesNotMatch(await welcome.innerText(), /分支|branch|git/iu, "the Gateway gives no branch, so none is shown");
   // H02: an Agent whose latest read asked for a sign-in moves from ready to needing the user (OpenClaw's fixture is signed out).
@@ -2159,6 +2181,7 @@ test("G054-DL3 the home greets, says who is ready from the readiness facts and w
   await summary.click();
   const list = page.getByRole("region", { name: "本机发现的 Agent" });
   await expect(list.getByRole("button", { name: "选择 OpenClaw", exact: true })).toContainText("需要登录");
+  await rowTint(page, list.getByRole("button", { name: "选择 Codex", exact: true }));
   // What is not installed is found on the Agent page, called by that page's name.
   await expect(list).toContainText(/另有 \d+ 个 Agent 在目录中但未安装，可以在 Agent 页查看官方安装方式。/u); await expect(list).not.toContainText("我的 Agent");
   await list.getByRole("button", { name: "选择 Codex", exact: true }).click();
@@ -3924,6 +3947,8 @@ test("G054-DL8 the Agent page gives each Agent a card with its version and chann
   await expect(tasks).toHaveAttribute("aria-expanded", "false"); await tasks.click(); await expect(tasks).toHaveAttribute("aria-expanded", "true");
   const taskList = main.getByRole("region", { name: "安装任务" });
   await expect(taskList.getByRole("listitem")).toHaveCount(1); await expect(taskList.locator(".status-pill")).toHaveText("已升级，服务未就绪");
+  // Its row tints when pointed at, once the list has finished opening (until then it is clipped and scrolls into view).
+  await expect(main.locator("#installation-tasks")).toHaveAttribute("data-state", "open"); await rowTint(page, taskList.getByRole("button"));
   await page.screenshot({ path: join(artifact, "agents-tasks-light-1440.png"), animations: "disabled" });
   await tasks.click(); await expect(tasks).toHaveAttribute("aria-expanded", "false"); await expect(taskList).toHaveCount(0);
 

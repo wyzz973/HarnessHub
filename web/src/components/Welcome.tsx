@@ -47,7 +47,7 @@ export function Welcome({ harnesses, readiness, firstUse, selected, workspace, o
     <h2 className={cn(enter, "m-0 text-center text-[24px] leading-8 font-medium tracking-[-0.02em] text-balance sm:text-greeting sm:leading-[42px]")}>今天想让哪个 Agent 做什么？</h2>
     {firstUse ? <ol className="m-0 mt-6 mb-6 grid list-none grid-cols-1 gap-3 p-0 sm:grid-cols-3" aria-label="开始使用">
       <Step index={1} enter={enter} title={found.length ? `找到了 ${found.length} 个 Agent` : "还没有找到 Agent"} text={found.length ? "用你已经装好的，登录和模型都沿用原来的。" : "装好之后点“重新检测”，或从登录 shell 补充目录。"}>
-        {found.length ? list(<button type="button" className="agent-summary row -mx-1 flex min-h-[30px] flex-wrap items-center gap-1.5 self-start border-none bg-transparent px-1 py-1" aria-label={`查看找到的 ${found.length} 个 Agent`}>
+        {found.length ? list(<button type="button" className="agent-summary row -mx-1 flex min-h-[30px] flex-wrap items-center gap-1.5 self-start border-none bg-transparent px-1 py-1 hover:bg-hover" aria-label={`查看找到的 ${found.length} 个 Agent`}>
           {found.slice(0, 8).map(harness => <BrandIcon key={harness.id} brand={harness.id} name={harness.name} size={22} className={cn(!ready.includes(harness) && "opacity-45")}/>)}
           {found.length > 8 ? <span className="text-caption text-fg-3">+{found.length - 8}</span> : null}</button>)
           : <button type="button" className="btn btn-sm self-start" onClick={onRescan} disabled={scanning}><RefreshCw size={12} className={cn(scanning && "spin")} aria-hidden="true"/>重新检测</button>}
@@ -61,7 +61,7 @@ export function Welcome({ harnesses, readiness, firstUse, selected, workspace, o
     </ol> : <>
       <div className={cn(enter, "mt-3 mb-7 flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1 text-ui-sm text-fg-3")} style={enter ? motionStyle({ delay: 40 }) : undefined}>
         {/* The summary's own padding is taken back from the row's gaps, so the dot sits 10 px from the words on both sides. */}
-        {available.length ? list(<button type="button" className="agent-summary row -mx-1.5 flex h-7 items-center gap-2.5 border-none bg-transparent px-1.5 text-ui-sm text-fg-3 hover:text-fg-2" title="查看本机的 Agent">
+        {available.length ? list(<button type="button" className="agent-summary row -mx-1.5 flex h-7 items-center gap-2.5 border-none bg-transparent px-1.5 text-ui-sm text-fg-3 hover:bg-subtle hover:text-fg-2" title="查看本机的 Agent">
           <span className="flex items-center" aria-hidden="true">{found.slice(0, 6).map((harness, index) => <BrandIcon key={harness.id} brand={harness.id} name={harness.name} size={22} className={cn("outline-2 outline-app", index > 0 && "-ml-1.5")}/>)}</span>
           <span>{ready.length} 个 Agent 就绪</span></button>)
           : <span>这台电脑上还没有找到可用的 Agent</span>}
@@ -131,7 +131,7 @@ function AgentList({ trigger, open, onOpenChange, harnesses, status, selected, f
               const state = status(harness), version = harness.management.programVersion ?? harness.management.installedVersion;
               return <button key={harness.id} type="button" aria-label={`选择 ${harness.name}`} aria-pressed={selected === harness.id}
                 onClick={() => { chose.current = true; onChoose(harness); onOpenChange(false); }}
-                className="row flex w-full items-center gap-3 rounded-[9px] border-none bg-transparent px-2.5 py-2 text-left">
+                className="row flex w-full items-center gap-3 rounded-[9px] border-none bg-transparent px-2.5 py-2 text-left hover:bg-subtle">
                 <BrandIcon brand={harness.id} name={harness.name} size={28}/>
                 <span className="flex min-w-0 flex-1 flex-col"><strong className="trunc text-ui font-medium">{harness.name}</strong>
                   <span className="trunc text-caption text-fg-3">{[version ?? null, SOURCE[harness.management.source] ?? null].filter(Boolean).join(" · ")}</span></span>

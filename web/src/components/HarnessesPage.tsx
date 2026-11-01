@@ -456,7 +456,7 @@ export function HarnessesPage(props: HarnessProps) {
         <section aria-label="安装任务" className="card mt-5 p-1.5">
           <p className="m-0 px-2.5 pt-1.5 pb-1 text-caption text-fg-3">任务在本机服务里独立运行，关闭详情后仍可在这里查看。</p>
           <ul className="m-0 flex list-none flex-col p-0">{jobs.map(job => <li key={job.id}>
-            <button type="button" onClick={() => setSelectedId(job.harnessId)} className="row flex w-full items-center gap-2.5 border-none bg-transparent px-2.5 py-2 text-left">
+            <button type="button" onClick={() => setSelectedId(job.harnessId)} className="row flex w-full items-center gap-2.5 border-none bg-transparent px-2.5 py-2 text-left hover:bg-subtle">
               <BrandIcon brand={job.harnessId} name={harnesses.find(h => h.id === job.harnessId)?.name ?? job.harnessId} size={24}/>
               <span className="min-w-0 flex-1"><span className="trunc block text-ui-sm font-medium">{harnesses.find(h => h.id === job.harnessId)?.name ?? job.harnessId}</span><span className="block text-caption text-fg-3">{verbOf(job)} · {job.resolvedVersion ?? "版本待解析"} · {when(job.createdAt)}</span></span>
               <StatusPill tone={jobTone(job)} live={installationActive(job)}>{installationStatus(job)}</StatusPill>

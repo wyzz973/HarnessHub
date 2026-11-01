@@ -42,7 +42,7 @@ export function BranchOrigin({ origin, session, harnesses, onOpenSource }: { ori
     </header>
     <p className="m-0 text-ui-sm text-fg-2" role="status">{nativeNote(session, origin)}</p>
     {origin.history.length ? <div className="flex flex-col">
-      <button type="button" aria-expanded={open} aria-controls={history} onClick={() => setOpen(value => !value)} className="row -ml-1.5 flex h-7 items-center gap-1.5 self-start border-none bg-transparent px-1.5 text-ui-sm text-fg-2">
+      <button type="button" aria-expanded={open} aria-controls={history} onClick={() => setOpen(value => !value)} className="row -ml-1.5 flex h-7 items-center gap-1.5 self-start border-none bg-transparent px-1.5 text-ui-sm text-fg-2 hover:bg-subtle">
         {imported ? <History size={14} className="text-fg-3" aria-hidden="true"/> : null}{imported ? "查看本机会话的历史" : "查看分支前的对话"}
         <ChevronRight size={12} strokeWidth={2.2} className={cn("text-fg-3 motion-rotate", open && "rotate-90")} aria-hidden="true"/>
       </button>

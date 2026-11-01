@@ -16,7 +16,7 @@ function Section({ title, count, defaultOpen = false, children }: { readonly tit
   const [open, setOpen] = useState(defaultOpen);
   const id = useId();
   return <div>
-    <button type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen(value => !value)} className="row flex h-8 w-full items-center gap-1.5 border-none bg-transparent px-2 text-left text-ui-sm font-medium">
+    <button type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen(value => !value)} className="row flex h-8 w-full items-center gap-1.5 border-none bg-transparent px-2 text-left text-ui-sm font-medium hover:bg-subtle">
       <ChevronRight size={12} strokeWidth={2} className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")} aria-hidden="true"/>{title}<span className="font-normal text-fg-3">{count}</span></button>
     <Collapsible open={open} id={id}><div className="px-2 pt-0.5 pb-2">{children}</div></Collapsible>
   </div>;
