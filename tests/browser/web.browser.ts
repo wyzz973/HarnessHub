@@ -1552,9 +1552,24 @@ test("G054-DL7 a running Turn shows the arc, the swept words and a timer every s
     return { samples, token };
   }, settle);
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  // The Turn is drawn once: its process line is held from the moment it appears, before the reply has any text.
+  await page.evaluate(() => {
+    const probe: { line: Element | null; textless: boolean } = { line: null, textless: false };
+    (window as unknown as { __turnLine: typeof probe }).__turnLine = probe;
+    const observer = new MutationObserver(() => {
+      const line = document.querySelector("[role=log] .assistant-message .turn-process");
+      if (line === null) return;
+      probe.line = line; probe.textless = line.closest(".assistant-message")!.querySelector(".markdown") === null; observer.disconnect();
+    });
+    observer.observe(document.body, { subtree: true, childList: true });
+  });
   await composer.fill("STREAM_RENDER：动效验收"); await composer.press("Enter");
   const turn = log.locator(".assistant-message").last(), row = turn.locator(".process-summary"), reply = turn.locator(".markdown.text-reading");
   await expect(turn).toContainText("第一段已经到达。");
+  // When the reply's first text came (the Runtime creates its message then), the same line is still in the page: not drawn anew.
+  assert.deepEqual(await page.evaluate(() => { const probe = (window as unknown as { __turnLine: { line: Element | null; textless: boolean } }).__turnLine;
+    return [probe.textless, probe.line?.isConnected ?? null, probe.line === [...document.querySelectorAll("[role=log] .assistant-message .turn-process")].at(-1)]; }),
+    [true, true, true], "the Turn keeps its element as its reply starts");
   // #10: the first piece arrived as more than 120 characters at once, so it is shown at once, without fading pieces.
   await expect.poll(() => reply.evaluate(element => element.dataset.shown === element.dataset.committed)).toBe(true);
   await expect(reply.locator(".motion-token")).toHaveCount(0);

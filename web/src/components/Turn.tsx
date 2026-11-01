@@ -105,7 +105,7 @@ function TurnProcess({ run, status, text, phase, detailed, now, harness, startup
   const open = expandable && (choice ?? (detailed || phase !== "settled"));
   const [thoughts, setThoughts] = useState<boolean | null>(null);
   // The record of the steps the reader saw, kept for this Run on the page: steps found here are history, the first step of
-  // a Turn seen running comes in, and a Turn drawn again in another place shows nothing twice (Motion board #05).
+  // a Turn seen running comes in, and a Turn drawn again (its conversation opened again) shows nothing twice (Motion board #05).
   const [seen] = useState<SeenSteps>(() => (run ? shownSteps(run.id) : undefined) ?? new Set(tools.map(tool => tool.id)));
   const runId = run?.id;
   useLayoutEffect(() => { if (runId !== undefined) rememberShown(runId, seen); }, [runId, seen]);
@@ -258,7 +258,7 @@ export const AssistantTurn = memo(function AssistantTurn({ message, run, harness
   const ended = terminal && !behind;
   const now = useNow(!ended);
   const phase = usePhase(ended);
-  // Only a Turn's first showing on the page can be news: the conversation draws a Turn again once its reply begins.
+  // Only a Turn's first showing on the page can be news: one drawn again, when its conversation is opened again, is not.
   const [firstShowing] = useState(() => run === undefined || shownSteps(run.id) === undefined);
   const entering = useEntrance(firstShowing && !terminal && acceptedRecently(run));
   const harnessName = harnesses.find(row => row.id === run?.selection.harnessId)?.name ?? run?.selection.harnessId ?? "Harness";

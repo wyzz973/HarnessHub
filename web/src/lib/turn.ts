@@ -322,10 +322,10 @@ export function noteMount(fresh: boolean, now = performance.now()): boolean {
 }
 
 /*
- * What the reader has already been shown of each Turn on this page, kept when the page draws a Turn again in another
- * place (the conversation moves a Turn once its reply begins): a Turn shown before is not news, and the record of the
- * steps it showed carries over, so nothing comes in twice. At most 500 Turns are remembered; a forgotten one is drawn
- * as history. Read during render, recorded from a layout effect.
+ * What the reader has already been shown of each Turn on this page, kept when the page draws a Turn again (its
+ * conversation left and opened again): a Turn shown before is not news, and the record of the steps it showed carries
+ * over, so nothing comes in twice. At most 500 Turns are remembered; a forgotten one is drawn as history. Read during
+ * render, recorded from a layout effect.
  */
 const shownTurns = new Map<string, Set<string>>();
 /** The record of the steps a Turn showed, or undefined when this Run's Turn has not been shown on this page. */

@@ -157,7 +157,6 @@ export function ChatPage(props: ChatProps) {
   const branchedTitle = session?.origin?.history.find(message => message.role === "user")?.text;
   const title = session?.messages.find(message => message.role === "user")?.text ?? (branchedTitle ? "分支 · " + branchedTitle : props.sessionRequested || props.sessionError ? "打开对话" : "新对话");
   const runs = useMemo(() => new Map(session?.runs.map(run => [run.id, run])), [session?.runs]);
-  const assistantRuns = useMemo(() => new Set(session?.messages.filter(message => message.role === "assistant").map(message => message.runId)), [session?.messages]);
   const harnessName = (id: string) => harnesses.find(row => row.id === id)?.name ?? id;
   // How long the same Harness took to start in the latest earlier Run of this conversation, shown while a Run starts;
   // without one, its usual startup over its latest Runs anywhere.
@@ -315,6 +314,34 @@ export function ChatPage(props: ChatProps) {
   };
   const orphanCards = (session?.permissions ?? []).filter(request => !runs.has(request.runId as never) && !dockedRequest(request))
     .map(request => <PermissionCard key={request.id} request={request} harness={requestHarness(request)} busy={mutation !== null} onDecision={(option, input) => decide(request, option, input)}/>);
+  /**
+   * The transcript, one flat list of keyed parts: each message of yours, then its Turn, drawn once and keyed by its Run. The
+   * Runtime creates the reply's message when its first text is committed; that message joins the Turn already drawn instead
+   * of having it drawn anew in another place, so the Turn never remounts as its reply starts: its status, timer and arc carry
+   * on. A reply without a message of yours in this history stands where it is; a hand-over follows the last message before it.
+   */
+  const transcriptItems = (current: SessionView): ReactNode[] => {
+    const replies = new Map(current.messages.filter(message => message.role === "assistant").map(message => [message.runId, message] as const));
+    const drawn = new Set<string>(), items: ReactNode[] = [];
+    const turn = (runId: PublicRun["id"]) => {
+      const run = runs.get(runId), open = (current.permissions ?? []).filter(request => request.runId === runId && !request.decided);
+      return <AssistantTurn key={"turn:" + runId} message={replies.get(runId)} run={run} harnesses={harnesses} providers={providers} describe={describe} detailed={detailed}
+        onRetry={canRetry ? (text, sent) => { void send(text, sent ?? []).catch(() => {}); } : undefined} loadToolDetail={props.onToolDetail} onBranch={canBranch ? props.onBranch : undefined}
+        onDetails={openDetails} detailsOpen={panelOpen && panelTab === "run" && (panelRun ?? current.runs.at(-1)?.id) === runId} startupHint={startupHints.get(runId)}
+        queue={queue?.runId === runId ? queueNotice : undefined} busyHolder={busyHolder(runId)}
+        waiting={run && open.length ? open.some(request => dockedRequest(request)) ? "approval" : "question" : undefined}>{run ? turnRequests(runId) : null}</AssistantTurn>;
+    };
+    for (const message of current.messages) {
+      const run = runs.get(message.runId);
+      if (message.role === "user") items.push(known.current.messages.has(message.id) ? <UserMessage key={message.id} message={message} run={run} onEdit={fillDraft}/>
+        : <div key={message.id} className="motion-message-in"><UserMessage message={message} run={run} onEdit={fillDraft}/></div>);
+      if (!drawn.has(message.runId) && (run !== undefined || message.role === "assistant")) { drawn.add(message.runId); items.push(turn(message.runId)); }
+      const divider = dividerAfter.get(message.id);
+      if (divider) items.push(<SwitchDivider key={"switch:" + divider.id} change={divider} harnesses={harnesses}
+        {...(divider === lastDivider && revertTo && current.status === "open" ? { onRevert: () => props.onDraft(selectionDraft(revertTo)), revertDisabled: mutation !== null || pending || active !== null } : {})}/>);
+    }
+    return items;
+  };
 
   // ↑ in an empty composer: the held message comes back first, otherwise the last message sent becomes the draft.
   const editLast = session ? () => {
@@ -437,20 +464,7 @@ export function ChatPage(props: ChatProps) {
             : <div className="transcript mx-auto flex max-w-reading flex-col gap-7 pb-4" ref={transcript} role="log" aria-label="对话历史" aria-live="off">
               {session.origin ? <BranchOrigin origin={session.origin} session={session} harnesses={harnesses} onOpenSource={props.onOpenSession}/> : null}
               {session.messages.length === 0 && !session.origin ? <EmptyState title="对话准备好了">发出第一条消息，开始这次协作。</EmptyState> : null}
-              {session.messages.map(message => {
-                const run = runs.get(message.runId), divider = dividerAfter.get(message.id);
-                const turn = (msg: typeof message | undefined) => <AssistantTurn message={msg} run={run} harnesses={harnesses} providers={providers} describe={describe} detailed={detailed}
-                  onRetry={canRetry ? (text, sent) => { void send(text, sent ?? []).catch(() => {}); } : undefined} loadToolDetail={props.onToolDetail} onBranch={canBranch ? props.onBranch : undefined}
-                  onDetails={openDetails} detailsOpen={panelOpen && panelTab === "run" && (panelRun ?? session.runs.at(-1)?.id) === run?.id} startupHint={startupHints.get(message.runId)}
-                  queue={queue?.runId === message.runId ? queueNotice : undefined} busyHolder={busyHolder(message.runId)}
-                  waiting={run ? (() => { const open = (session.permissions ?? []).filter(request => request.runId === run.id && !request.decided); return open.length ? open.some(request => dockedRequest(request)) ? "approval" as const : "question" as const : undefined; })() : undefined}>{run ? turnRequests(run.id) : null}</AssistantTurn>;
-                const fresh = message.role === "user" && !known.current.messages.has(message.id);
-                return <Fragment key={message.id}>
-                  {message.role === "user" ? fresh ? <div className="motion-message-in"><UserMessage message={message} run={run} onEdit={fillDraft}/></div> : <UserMessage message={message} run={run} onEdit={fillDraft}/> : turn(message)}
-                  {message.role === "user" && !assistantRuns.has(message.runId) && run ? turn(undefined) : null}
-                  {divider ? <SwitchDivider change={divider} harnesses={harnesses} {...(divider === lastDivider && revertTo && session.status === "open" ? { onRevert: () => props.onDraft(selectionDraft(revertTo)), revertDisabled: mutation !== null || pending || active !== null } : {})}/> : null}
-                </Fragment>;
-              })}
+              {transcriptItems(session)}
               {orphanCards.length ? orphanCards : null}
             </div>}
         </div>
