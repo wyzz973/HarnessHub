@@ -88,7 +88,8 @@ export function Menu({ trigger, items, side = "bottom", align = "end", footer, c
     <BaseMenu.Trigger render={trigger}/>
     <BaseMenu.Portal>
       <BaseMenu.Positioner side={side} align={align} sideOffset={6} collisionPadding={12} positionMethod="fixed" className="hh-positioner z-50">
-        <BaseMenu.Popup className={cn("surface-pop min-w-[220px] p-[5px]", className)}>
+        {/* Never wider than the screen within its collision padding: on a 320 px phone a long footer wraps instead. */}
+        <BaseMenu.Popup className={cn("surface-pop max-w-[calc(100vw-24px)] min-w-[220px] p-[5px]", className)}>
           {items.map((item, index) => "separator" in item && item.separator ? <div key={index} className="menu-sep" role="separator"/>
             : "heading" in item ? <div key={index} className="menu-label">{item.heading}</div>
             : (() => {

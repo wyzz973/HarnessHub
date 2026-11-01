@@ -1582,6 +1582,11 @@ test("G054-FR2 G054-FR3 the process folds into one line, the density choice stay
   await page.setViewportSize({ width: 390, height: 844 });
   // On a phone the menu offers 显示每一步 as well (ruling R1: at every width).
   await more.click(); await expect(everyStep).toBeVisible(); await expect(everyStep).toHaveAttribute("aria-checked", "false"); await page.keyboard.press("Escape");
+  // At 320 the whole menu stays on the screen: its footer wraps rather than push the menu past the edge.
+  await page.setViewportSize({ width: 320, height: 844 });
+  await more.click(); await expect(everyStep).toBeVisible();
+  await expect.poll(async () => { const box = await page.getByRole("menu").boundingBox(); return box !== null && box.x >= 0 && box.x + box.width <= 320; }, { message: "the … menu fits a 320 px screen" }).toBe(true);
+  await page.keyboard.press("Escape"); await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "详情栏", exact: true }).click(); await expect(page.getByRole("dialog")).toBeVisible();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "the details sheet must not overflow a narrow screen");
   await page.screenshot({ path: join(artifact, "details-sheet-390.png"), animations: "disabled" });
