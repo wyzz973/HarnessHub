@@ -36,11 +36,21 @@ const PROFILE_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/u;
 const COMMIT = /^[0-9a-f]{7,64}$/u;
 /**
  * A live command line that hosts the gateway runtime (gateway/status.py `_gateway_command_subcommand` and
- * `looks_like_gateway_runtime_command_line`, lines 592-663): a Hermes entry point with `gateway run` or `gateway restart`, or
- * the dedicated `gateway/run.py` / `-m gateway.run` entry. The launchd job's `osascript` wrapper carries the gateway argv in
- * its script and is not the gateway (status.py:620-623); `gateway status` and `tui_gateway` are not either.
+ * `looks_like_gateway_runtime_command_line`, v0.22.5 lines 541-656): a Hermes entry point with `gateway run` or `gateway restart`,
+ * or the dedicated `gateway/run.py` / `-m gateway.run` entry. The launchd job's `osascript` wrapper carries the gateway argv in
+ * its script and is not the gateway (status.py:567-570); `gateway status` and `tui_gateway` are not either.
  */
 const GATEWAY_COMMAND = /(?:^|\s)gateway\s+(?:run|restart)(?:\s|$)|(?:^|[\s/])gateway\/run\.py(?:\s|$)|\s-m\s+gateway\.run(?:\s|$)/u;
+/**
+ * An interpreter running inline source (`python -c <src> …`). Hermes's own launchers start the gateway this way (the store
+ * launcher's closure repair, then the entry point in the same process), so the gateway's live command line is the bootstrap
+ * source, and its identity is the argv its record keeps (status.py:555-563, gateway/status_inline_source.py:67-162, #124318).
+ * `ps` also truncates such a line long before the trailing argv. Operand-taking interpreter flags (`-X`, `-W`) are not
+ * expected in Hermes's own spawns.
+ */
+const INLINE_SOURCE = /^(?:\S*\/)?python[0-9.]*(?:\s+-[A-Za-z]+)*\s+-c(?:\s|$)/u;
+/** The `kind` Hermes writes into its gateway records (`_GATEWAY_KIND`, gateway/status.py:40). */
+const GATEWAY_KIND = "hermes-gateway";
 
 /** One of Hermes's gateway identity records: `gateway.pid`, `gateway.lock` and the process fields of `gateway_state.json` (gateway/status.py:786-794). */
 export interface GatewayRecord {
@@ -120,8 +130,10 @@ function liveGateway(record: GatewayRecord, process: ProcessFact | null, home: s
   // known (a recycled pid differs), the record not another profile's, and the live command line a gateway's.
   if (record.startTime !== null && process.startedAt !== null && Math.abs(record.startTime * 10 - process.startedAt) > START_TIME_TOLERANCE_MS) return false;
   if (record.hermesHome !== null && !samePath(record.hermesHome, home)) return false;
-  if (process.command) return GATEWAY_COMMAND.test(process.command) && !/^\S*osascript(?:\s|$)/u.test(process.command);
-  return record.kind === "gateway" && record.argv !== null && GATEWAY_COMMAND.test(record.argv.join(" "));
+  // A readable command line decides, unless it is a Hermes inline bootstrap: then, as for an unreadable one, the record's own
+  // kind and argv are the identity (status.py:664-669 `_record_looks_like_gateway`).
+  if (process.command && !INLINE_SOURCE.test(process.command)) return GATEWAY_COMMAND.test(process.command) && !/^\S*osascript(?:\s|$)/u.test(process.command);
+  return record.kind === GATEWAY_KIND && record.argv !== null && GATEWAY_COMMAND.test(record.argv.join(" "));
 }
 
 /** Judges the facts as `ensure_gateway_runtime` would, from files instead of the live `identify`: pure, so every verdict has samples. */

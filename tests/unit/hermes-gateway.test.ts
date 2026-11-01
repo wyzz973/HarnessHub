@@ -14,7 +14,7 @@ const STARTED = Date.UTC(2026, 9, 22, 2, 11, 12);
 const LIVE = "/Users/fixture/.hermes/hermes-agent/.hermes/bin/hermes gateway run --external-supervisor";
 const ABSENT = { label: "ai.hermes.gateway", status: "absent", state: null, pid: null, installed: false } as const;
 function record(over: Partial<GatewayRecord> = {}): GatewayRecord {
-  return { pid: 63966, startTime: STARTED / 10, hermesHome: GATEWAY_HOME, kind: "gateway", argv: ["/Users/fixture/.hermes/hermes-agent/.hermes/bin/hermes", "gateway", "run", "--external-supervisor"], ...over };
+  return { pid: 63966, startTime: STARTED / 10, hermesHome: GATEWAY_HOME, kind: "hermes-gateway", argv: ["/Users/fixture/.hermes/hermes-agent/.hermes/bin/hermes", "gateway", "run", "--external-supervisor"], ...over };
 }
 /** The facts of this machine on 2026-10-22: a launchd-supervised v0.22.4 gateway serving QQ, booted from the installed commit. */
 function facts(over: Partial<GatewayFacts> = {}): GatewayFacts {
@@ -40,6 +40,12 @@ test("G032-NC31 the gateway preflight attaches only to a running gateway whose p
   // An unreadable command line falls back to the record's own argv and kind, as Hermes does.
   assert.equal(verdict(judgeGateway(facts({ process: { startedAt: STARTED, command: "" } }))), "A");
   assert.notEqual(verdict(judgeGateway(facts({ process: { startedAt: STARTED, command: "" }, state: { ...facts().state!, kind: "maintenance" } }))), "A");
+  // So does a Hermes inline bootstrap (the real v0.22.5 launchd gateway: python3 -I -c <closure repair…>, truncated by ps long
+  // before its argv); its record carries kind hermes-gateway and the gateway argv. Another kind, or a non-gateway argv, is not it.
+  const bootstrap = "/Users/fixture/.hermes/tools/python-3.14.9+20261021-darwin-arm64/bin/python3 -I -c import os, re, sys\\012import contextlib, hashlib, io, pathlib, shutil, subprocess\\012os.environ.pop('PYTHONHOME', None)";
+  assert.equal(verdict(judgeGateway(facts({ process: { startedAt: STARTED, command: bootstrap }, state: { ...facts().state!, argv: ["/Users/fixture/.hermes/hermes-agent/hermes_cli/main.py", "gateway", "run", "--external-supervisor"] } }))), "A");
+  assert.notEqual(verdict(judgeGateway(facts({ process: { startedAt: STARTED, command: bootstrap }, state: { ...facts().state!, kind: "gateway" } }))), "A", "an unknown record kind");
+  assert.notEqual(verdict(judgeGateway(facts({ process: { startedAt: STARTED, command: bootstrap }, state: { ...facts().state!, argv: ["python", "-m", "hermes_cli.main", "gateway", "status"] } }))), "A", "a bootstrap of another command");
   // A record without a start time or home proves nothing against the process and still attaches (Hermes: a conflict needs both sides).
   assert.equal(verdict(judgeGateway(facts({ state: { ...facts().state!, startTime: null, hermesHome: null } }))), "A");
   // Negative samples: each breaks the chain and nothing is attached.
@@ -149,10 +155,10 @@ function fakeHost(questions: { targets: string[]; pids: number[] }, launchd: { s
 }
 /** A home as the installer and a running gateway leave it, with credentials beside the records. */
 async function hermesHome(t: TestContext, home: string, checkout: string, startedAt: number): Promise<void> {
-  await put(join(home, "gateway_state.json"), JSON.stringify({ pid: 63966, kind: "gateway", argv: ["python", "-m", "hermes_cli.main", "gateway", "run"], start_time: startedAt / 10, hermes_home: home, gateway_state: "running",
+  await put(join(home, "gateway_state.json"), JSON.stringify({ pid: 63966, kind: "hermes-gateway", argv: ["python", "-m", "hermes_cli.main", "gateway", "run"], start_time: startedAt / 10, hermes_home: home, gateway_state: "running",
     exit_reason: null, restart_requested: false, active_agents: 0, platforms: { qqbot: { state: "connected" } }, updated_at: "2026-10-22T02:12:00+00:00", code_sha: COMMIT, code_version: "0.22.4+70.g4e58c72", session_store: { status: "ok" } }));
   await put(join(home, "gateway.pid"), "63966\n", 0o755);
-  await put(join(home, "gateway.lock"), JSON.stringify({ pid: 63966, kind: "gateway", argv: ["python", "-m", "hermes_cli.main", "gateway", "run"], start_time: startedAt / 10, hermes_home: home, profile: "default" }));
+  await put(join(home, "gateway.lock"), JSON.stringify({ pid: 63966, kind: "hermes-gateway", argv: ["python", "-m", "hermes_cli.main", "gateway", "run"], start_time: startedAt / 10, hermes_home: home, profile: "default" }));
   await listen(t, join(home, "gateway.sock"));
   await put(join(checkout, "install-stamp.json"), JSON.stringify({ schemaVersion: 2, commit: COMMIT, baseVersion: "0.22.4", displayVersion: "0.22.4+70.g4e58c72" }));
   await put(join(checkout, "acp_adapter", "gateway_server.py"), "# viewer\n");
@@ -167,7 +173,7 @@ test("G032-NC32 the reader resolves the home as hermes does, reads only the name
   const touched: string[] = [], questions = { targets: [] as string[], pids: [] as number[] };
   const read = await readGatewayFacts({ HOME: root }, join(root, ".local", "bin", "hermes"), fakeHost(questions), path => touched.push(path));
   assert.equal(read.home, home); assert.equal(read.viewer, true); assert.equal(read.stampCommit, COMMIT); assert.equal(read.socket, true); assert.equal(read.updating, false);
-  assert.deepEqual(read.state, { pid: 63966, startTime: started / 10, hermesHome: home, kind: "gateway", argv: ["python", "-m", "hermes_cli.main", "gateway", "run"], gatewayState: "running", codeSha: COMMIT, updatedAt: "2026-10-22T02:12:00+00:00", platforms: ["qqbot"] });
+  assert.deepEqual(read.state, { pid: 63966, startTime: started / 10, hermesHome: home, kind: "hermes-gateway", argv: ["python", "-m", "hermes_cli.main", "gateway", "run"], gatewayState: "running", codeSha: COMMIT, updatedAt: "2026-10-22T02:12:00+00:00", platforms: ["qqbot"] });
   assert.deepEqual(read.pidRecord, { pid: 63966, startTime: null, hermesHome: null, kind: null, argv: null }, "a bare pid file is a record of its pid alone");
   assert.equal(read.lockRecord?.pid, 63966); assert.equal(read.lockRecord?.hermesHome, home);
   assert.deepEqual(read.process, { startedAt: started, command: LIVE });
