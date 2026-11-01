@@ -4505,7 +4505,8 @@ async function dl10Settle(page: Page): Promise<void> {
  * Asserts the page fits its width (ADR-054 R01): neither the document nor the scrolling body of any of `anchors` (the nearest
  * element at or above it whose overflow-y scrolls, else the anchor itself) scrolls sideways, and no visible element ends past the
  * viewport's right edge, except inside an element that scrolls sideways on purpose (overflow-x auto or scroll with wider content:
- * code, diffs, the capability matrix). The failure names each offender by a selector and its text.
+ * code, diffs, the capability matrix) or inside a clipping box with no room left inside its borders, which shows nothing. The failure
+ * names each offender by a selector and its text.
  */
 async function dl10Fits(page: Page, label: string, anchors: readonly Dl10Locator[]): Promise<void> {
   const handles = await Promise.all(anchors.map(anchor => anchor.elementHandle({ timeout: 10000 })));
@@ -4534,6 +4535,8 @@ async function dl10Fits(page: Page, label: string, anchors: readonly Dl10Locator
         if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return;
         const box = element.getBoundingClientRect();
         if (box.width > 0 && box.height > 0 && box.right > limit + 1) { problems.push(`${name(element)} ends at ${Math.round(box.right)}, past ${limit}`); return; }
+        // A box that clips and has no room left inside its borders (a panel closed to its hairline, still mounted) shows nothing inside.
+        if (style.overflowX !== "visible" && !/^(inline|contents)$/u.test(style.display) && (element.clientWidth === 0 || element.clientHeight === 0)) return;
         if (/^(auto|scroll)$/u.test(style.overflowX) && element.scrollWidth > element.clientWidth + 1) return;
         for (const child of element.children) walk(child);
       };
