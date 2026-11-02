@@ -2477,7 +2477,7 @@ test("G054-DL5 an approval that takes the composer's place closes a panel the co
   assert.deepEqual(errors, []);
 });
 
-test("G054-DL5 an approval that takes the composer's place also closes the Agent list, the model and thinking lists and the \"+\" menu, takes the focus they held, and none of them comes back once it is decided (ruling R2)", { timeout: 150000 }, async t => {
+test("G054-DL5 an approval that takes the composer's place also closes the Agent list, the model and thinking lists, the \"+\" menu and a list open in the advanced settings, takes the focus they held, and none of them comes back once it is decided (ruling R2)", { timeout: 150000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
@@ -2526,6 +2526,34 @@ test("G054-DL5 an approval that takes the composer's place also closes the Agent
     await page.waitForTimeout(500);
     await expect(layers, name).toHaveCount(0); await expect(composer, name).toBeFocused();
   }
+  // A list open in the advanced settings (协作模式) closes as the panel does, instead of staying whole over the dock until
+  // the panel has gone; the dock takes the focus it held.
+  await hold(true);
+  await composer.fill("APPROVAL：a list in the advanced settings"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
+  await expect(composer).toHaveValue("");
+  await openAdvanced(page);
+  const settings = page.locator(".composer-settings-panel");
+  await settings.getByRole("button", { name: "协作模式", exact: true }).click(); await expect(page.getByRole("combobox", { name: "搜索协作模式", exact: true })).toBeFocused();
+  await expect(layers).toHaveCount(1);
+  // Whether the list starts its own exit (Base UI's data-ending-style) before it is removed, or is removed whole with the
+  // panel once the panel's exit has ended.
+  await layers.evaluate(list => {
+    const record = { exit: "" }; Reflect.set(window, "__nestedListExit", record);
+    const observer = new MutationObserver(() => {
+      if (list.hasAttribute("data-ending-style")) { record.exit = "its own exit"; observer.disconnect(); }
+      else if (!list.isConnected) { record.exit = "removed whole"; observer.disconnect(); }
+    });
+    observer.observe(list, { attributes: true }); observer.observe(document.body, { childList: true, subtree: true });
+  });
+  await hold(false);
+  await expect(dock).toContainText("读取验收工作区", { timeout: 15000 });
+  await expect.poll(() => page.evaluate(() => (Reflect.get(window, "__nestedListExit") as { readonly exit: string }).exit)).toBe("its own exit");
+  await expect(settings).toHaveCount(0); await expect(layers).toHaveCount(0); await expect(dock).toBeFocused();
+  await dock.getByRole("button", { name: "允许一次", exact: true }).click();
+  await expect(dock).toHaveCount(0, { timeout: 15000 }); await expect(composer).toBeFocused();
+  await expect(page.locator("[data-run-status=completed]")).toHaveCount(openers.length + 2, { timeout: 15000 });
+  await page.waitForTimeout(500);
+  await expect(settings).toHaveCount(0); await expect(layers).toHaveCount(0); await expect(composer).toBeFocused();
   await expect(page.getByRole("log", { name: "对话历史" })).toContainText("原生审批已收到：decline");
   // The Agent list the approval closed opens again from ⌘J.
   await page.keyboard.press("ControlOrMeta+J"); await expect(page.getByRole("combobox", { name: "搜索 Agent", exact: true })).toBeFocused();

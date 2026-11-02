@@ -259,7 +259,7 @@ export function Composer(props: ComposerProps) {
   const valueName = (option: typeof nativeOptions[number], value: string) => (option.category === "thought_level" ? THINKING_NAMES[value] : undefined) ?? option.values.find(row => row.value === value)?.name ?? value;
   const optionChoices = (option: typeof nativeOptions[number], short: boolean): PickerOption[] => [{ value: "", label: `${valueName(option, option.currentValue)} · 本机默认`, ...(short ? { short: valueName(option, option.currentValue) } : {}), group: "跟随 Agent" },
     ...option.values.map(value => ({ value: value.value, label: option.category === "thought_level" ? THINKING_NAMES[value.value] ?? value.name : value.name, description: lastUsed(value.value, recalled?.nativeOptions?.[option.id]) ?? value.value, group: harness?.name ?? "原生选项" }))];
-  const optionPicker = (option: typeof nativeOptions[number], label: string, extra?: { readonly prefix?: string; readonly className?: string }) => <SearchPicker label={label} value={draft.nativeOptions[option.id] ?? ""} placeholder="跟随本机配置" {...extra}
+  const optionPicker = (option: typeof nativeOptions[number], label: string, extra?: { readonly prefix?: string; readonly className?: string; readonly open?: boolean }) => <SearchPicker label={label} value={draft.nativeOptions[option.id] ?? ""} placeholder="跟随本机配置" {...extra}
     options={optionChoices(option, extra?.prefix !== undefined)} disabled={disabled || props.nativeModelsLoading} onChange={value => changeOption(option.id, value)}/>;
   // The native session's own values, as it reported them after its last Turn (ADR-028).
   const nativeState = provider ? undefined : session?.nativeStates?.find(state => state.harnessId === draft.harnessId && state.controlId === draft.controlId);
@@ -561,7 +561,7 @@ type NativeOption = NonNullable<import("../../../src/contracts/control.js").Nati
  */
 function AdvancedSettings(props: ComposerProps & {
   readonly controls: readonly HarnessView["controls"][number][]; readonly selectedControl: HarnessView["controls"][number] | undefined; readonly outdated: boolean; readonly disabled: boolean;
-  readonly nativeOptions: readonly NativeOption[]; readonly optionPicker: (option: NativeOption, label: string) => ReactNode;
+  readonly nativeOptions: readonly NativeOption[]; readonly optionPicker: (option: NativeOption, label: string, extra?: { readonly open?: boolean }) => ReactNode;
   readonly nativeState: NonNullable<NonNullable<ComposerProps["session"]>["nativeStates"]>[number] | undefined; readonly describeNative: (model: string | undefined, options: Readonly<Record<string, string>> | undefined) => string;
   /** Where its panel opens: below the box on the home, above it in a conversation. */
   readonly popSide: "top" | "bottom";
@@ -572,12 +572,15 @@ function AdvancedSettings(props: ComposerProps & {
   const provider = providers.find(row => row.id === draft.providerId);
   const row = "execution-setting flex flex-col gap-1.5 px-3.5 py-3 hairline-b last:border-b-0";
   const heading = "text-caption font-medium text-fg-3";
+  // A list opened in the panel closes when the panel does, as when an approval takes the composer's place while one is
+  // open, instead of staying whole over the page until the panel has gone.
+  const nested: { readonly open?: boolean } = props.open ? {} : { open: false };
   return <Popover label="执行配置" open={props.open} onOpenChange={props.onOpenChange} anchor={props.anchor} returnFocus={props.returnFocus} side={props.popSide} align="end"
     className="composer-settings-panel w-[380px] max-w-[calc(100vw-24px)]">
     <PopHead title="执行配置" closeLabel="收起高级配置"/>
-    {props.nativeOptions.map(option => <div className={cn(row, "native-setting")} key={option.id}><span className={heading}>{OPTION_NAMES[option.id] ?? option.name}</span><div className="-ml-2">{props.optionPicker(option, OPTION_NAMES[option.id] ?? option.name)}</div></div>)}
+    {props.nativeOptions.map(option => <div className={cn(row, "native-setting")} key={option.id}><span className={heading}>{OPTION_NAMES[option.id] ?? option.name}</span><div className="-ml-2">{props.optionPicker(option, OPTION_NAMES[option.id] ?? option.name, nested)}</div></div>)}
     {!provider && APPROVAL_NOTES[draft.harnessId] ? <div className={row}><span className={heading}>审批</span><small className="text-ui-sm text-fg-2">{APPROVAL_NOTES[draft.harnessId]}</small></div> : null}
-    {controls.length > 1 ? <div className={row}><span className={heading}>控制入口</span><div className="-ml-2"><SearchPicker label="选择控制入口" value={draft.controlId} placeholder="控制入口" options={controls.map(control => ({ value: control.id, label: protocolLabel(control.protocol), description: control.id }))} disabled={disabled} onChange={value => props.onDraft({ ...draft, controlId: value, nativeOptions: {} })}/></div></div>
+    {controls.length > 1 ? <div className={row}><span className={heading}>控制入口</span><div className="-ml-2"><SearchPicker label="选择控制入口" {...nested} value={draft.controlId} placeholder="控制入口" options={controls.map(control => ({ value: control.id, label: protocolLabel(control.protocol), description: control.id }))} disabled={disabled} onChange={value => props.onDraft({ ...draft, controlId: value, nativeOptions: {} })}/></div></div>
       : <div className={row}><span className={heading}>控制入口</span><span className="flex items-center gap-2 text-ui-sm"><strong className="font-medium">{selectedControl ? protocolLabel(selectedControl.protocol) : "尚未选择"}</strong>{draft.controlId ? <code className="text-caption text-fg-3">{draft.controlId}</code> : null}</span></div>}
     {provider && draft.providerRevision !== null ? <div className={row}><span className={heading}>Provider 配置</span><strong className="text-ui-sm font-medium">{provider.name} · 版本 {draft.providerRevision}</strong>
       {outdated ? <button type="button" className="btn btn-sm self-start" disabled={disabled} onClick={() => props.onDraft({ ...draft, providerRevision: provider.revision, model: provider.models.includes(draft.model) ? draft.model : provider.defaultModel })}>使用最新版本 {provider.revision}</button> : <small className="text-caption text-fg-3">会话固定使用这个版本。</small>}</div>
