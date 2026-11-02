@@ -1,0 +1,1670 @@
+{
+  "meta": {
+    "title": "HarnessHub Relay v1 原型测量（spikes/relay）",
+    "disclaimer": "原型，仅用于测量，不是实现。全部输入为合成数据。",
+    "startedAt": "2026-11-02T20:23:24.666Z",
+    "wallSeconds": 21.9,
+    "machine": {
+      "node": "v26.11.1",
+      "v8": "14.6.202.34-node.37",
+      "platform": "darwin",
+      "arch": "arm64",
+      "osRelease": "27.0.0",
+      "macos": "27.0.1",
+      "cpu": "Apple M5 Pro",
+      "logicalCpus": 18,
+      "perfCores": "6",
+      "effCores": "12",
+      "memoryGiB": 64,
+      "git": "git version 2.54.0 (Apple Git-157)",
+      "sqlite": "3.53.4"
+    },
+    "baseline": {
+      "branch": "cc/relay-design",
+      "base": "07a0825",
+      "design": "docs/proposals/relay/round3/v1-architecture.md"
+    },
+    "command": "node spikes/relay/bench/run-all.ts"
+  },
+  "measurements": [
+    {
+      "id": "1a",
+      "name": "RunDigest 抽取耗时 p50/p95（典型，0–128 个工具，取各档中最大的 p95）",
+      "value": "0.447 / 0.578 ms",
+      "target": "p95 ≤ 2 ms CPU（v1 §11.1）",
+      "pass": true,
+      "basis": "实测"
+    },
+    {
+      "id": "1b",
+      "name": "RunDigest 抽取耗时 p50/p95（最坏：128 工具，输入 16 KiB / 输出 64 KiB / 差异 64 KiB，回复 1 MiB，中文）",
+      "value": "1.256 / 1.779 ms",
+      "target": "p95 ≤ 2 ms CPU",
+      "pass": true,
+      "basis": "实测"
+    },
+    {
+      "id": "1c",
+      "name": "RunDigest 抽取耗时 p50/p95（病态：所有有上限的字段都用中文填满）",
+      "value": "1.392 / 1.620 ms",
+      "target": "p95 ≤ 2 ms CPU",
+      "pass": true,
+      "basis": "实测"
+    },
+    {
+      "id": "1d",
+      "name": "RunDigest 记录字节（典型 128 工具 p95 / 全部剖面最大）",
+      "value": "16,782 B / 31,581 B",
+      "target": "≤ 64 KiB（65,536 B）",
+      "pass": true,
+      "basis": "实测"
+    },
+    {
+      "id": "1e",
+      "name": "v1 §4 逐字段上限之和（全中文，未收紧）",
+      "value": "181,512 B",
+      "target": "≤ 64 KiB 需要最后一步收紧",
+      "pass": false,
+      "basis": "推算"
+    },
+    {
+      "id": "2-standard-mem",
+      "name": "标准档投影 + 渲染 p50/p95（256 Run，快照 7.87 MiB；摘要已在内存）",
+      "value": "1.32 / 1.52 ms",
+      "target": "p50 ≤ 5 ms，p95 ≤ 25 ms（v1 §11.1）",
+      "pass": true,
+      "basis": "实测"
+    },
+    {
+      "id": "2-standard-parse",
+      "name": "标准档投影 + 渲染 p50/p95（含解析 256 行摘要 JSON，共 1431 KiB）",
+      "value": "3.84 / 4.29 ms",
+      "target": "p50 ≤ 5 ms，p95 ≤ 25 ms",
+      "pass": true,
+      "basis": "实测"
+    },
+    {
+      "id": "2-full-mem",
+      "name": "完整档投影 + 渲染 p50/p95（256 Run，快照 7.87 MiB；摘要已在内存）",
+      "value": "2.17 / 2.49 ms",
+      "target": "p50 ≤ 5 ms，p95 ≤ 25 ms（v1 §11.1）",
+      "pass": true,
+      "basis": "实测"
+    },
+    {
+      "id": "2-full-parse",
+      "name": "完整档投影 + 渲染 p50/p95（含解析 256 行摘要 JSON，共 1431 KiB）",
+      "value": "4.59 / 5.13 ms",
+      "target": "p50 ≤ 5 ms，p95 ≤ 25 ms",
+      "pass": true,
+      "basis": "实测"
+    },
+    {
+      "id": "2-det",
+      "name": "同一输入渲染 100 次的 sha256 个数（标准档 / 完整档；另 3 个子进程、不同 TZ 与 LANG）",
+      "value": "1 / 1；子进程 3/3 相同",
+      "target": "1（v1 §11.1 硬性）",
+      "pass": true,
+      "basis": "实测"
+    },
+    {
+      "id": "3-goal",
+      "name": "交接单大小 · goal 档（256 Run，目标 dsh，est/1 系数 1.0；括号内为 Anthropic 系数 1.3）",
+      "value": "5,371 B · 1,726 token（2,244）· 不可信 8",
+      "target": "≤ 2,000 token，不可信 ≤ 300；省略账目恒等式成立",
+      "pass": true,
+      "basis": "实测（token 为 est/1 估算）"
+    },
+    {
+      "id": "3-brief",
+      "name": "交接单大小 · brief 档（256 Run，目标 dsh，est/1 系数 1.0；括号内为 Anthropic 系数 1.3）",
+      "value": "11,903 B · 3,759 token（4,886）· 不可信 1,001",
+      "target": "≤ 4,000 token，不可信 ≤ 1,500；省略账目恒等式成立",
+      "pass": true,
+      "basis": "实测（token 为 est/1 估算）"
+    },
+    {
+      "id": "3-standard",
+      "name": "交接单大小 · standard 档（256 Run，目标 dsh，est/1 系数 1.0；括号内为 Anthropic 系数 1.3）",
+      "value": "24,455 B · 7,652 token（9,947）· 不可信 2,561",
+      "target": "≤ 8,000 token，不可信 ≤ 3,000；省略账目恒等式成立",
+      "pass": true,
+      "basis": "实测（token 为 est/1 估算）"
+    },
+    {
+      "id": "3-fidelity",
+      "name": "交接单大小 · fidelity 档（256 Run，目标 dsh，est/1 系数 1.0；括号内为 Anthropic 系数 1.3）",
+      "value": "48,199 B · 15,032 token（19,541）· 不可信 7,159",
+      "target": "≤ 16,000 token，不可信 ≤ 8,000；省略账目恒等式成立",
+      "pass": true,
+      "basis": "实测（token 为 est/1 估算）"
+    },
+    {
+      "id": "3-full",
+      "name": "交接单大小 · full 档（256 Run，目标 dsh，est/1 系数 1.0；括号内为 Anthropic 系数 1.3）",
+      "value": "101,245 B · 31,509 token（40,961）· 不可信 20,872",
+      "target": "≤ 32,000 token，不可信 ≤ 24,000；省略账目恒等式成立",
+      "pass": true,
+      "basis": "实测（token 为 est/1 估算）"
+    },
+    {
+      "id": "3-literal",
+      "name": "按 v1 §6.3 字面（fresh 目标的“上次送达以来的用户消息”= 全部 255 条）算必含块",
+      "value": "83,112 token → blocked",
+      "target": "≤ 8,000（标准档）；§0 称长历史只分层不失败",
+      "pass": false,
+      "basis": "实测（est/1）"
+    },
+    {
+      "id": "3-s1",
+      "name": "S1 样例实际大小（原型渲染，单 text：正文 + 换行 + 原话）",
+      "value": "5,047 B · 1,619 token（OpenAI 系数）/ 2,104（Anthropic）· 不可信 384 · complete=true",
+      "target": "complete=true，且与 §12.1 卡片估算约 1.7k token 相差 ≤20%（v1 §5.6 另称叙述化历史约 1,650、不可信约 900，均为推算；文档样例全文 4,951 B / 1,590 token）",
+      "pass": true,
+      "basis": "实测（est/1）；文档数为推算"
+    },
+    {
+      "id": "4-core",
+      "name": "转义模糊测试（10,000 例，v1 规则）：核心性质违例的用例数",
+      "value": "0 / 9,433 个交接单（另 565 例零注入原样发送）；检查了 39,905 个围栏、12,148 个记录区、107,166 个行内代码、364,408 个哨兵",
+      "target": "0：开闭定界符各恰好一个，不可信字节都在槽位内（J4 M6）",
+      "pass": true,
+      "basis": "实测"
+    },
+    {
+      "id": "4-mut",
+      "name": "检查器的变异对照（故意弄坏 5 条转义规则，各 1,000 例）",
+      "value": "fixedFenceLength3 431/942；noReservedRewrite 653/942；noMarkerQuoting 295/942；inlineKeepsBackticks 410/942；inlineKeepsNewlines 747/942",
+      "target": "每个变异都被检出（>0）",
+      "pass": true,
+      "basis": "实测"
+    },
+    {
+      "id": "4-ext-v1",
+      "name": "扩展性质在 v1 规则下（不可见字符全集、增量/英文框架标记、大小写与全角定界符变体）",
+      "value": "9,048 / 9,433（不可见 8,519、伪造标记 5,744、定界符变体 3,329）",
+      "target": "0（原型建议，不是 v1 条款）",
+      "pass": false,
+      "basis": "实测"
+    },
+    {
+      "id": "4-ext-x",
+      "name": "扩展规则下的扩展性质（只剩首行逐字前缀的影响）",
+      "value": "830 / 9,435（首行反引号奇数 730、首行开出代码围栏 177）；核心违例 0",
+      "target": "0（原型建议）",
+      "pass": false,
+      "basis": "实测"
+    },
+    {
+      "id": "5-tp",
+      "name": "精确匹配脱敏吞吐（1 MiB、50 个秘密 = 70 个模式；regex 引擎；原文视图 / 骨架视图 / 骨架 + 形状规则）",
+      "value": "1.25 / 1.85 / 2.91 ms/MiB（p50）；801.9 MiB/s",
+      "target": "v1 §11.1 引 P3 本机约 10 ms/MiB；扫描上限 2 MiB",
+      "pass": true,
+      "basis": "实测"
+    },
+    {
+      "id": "5-fx",
+      "name": "已知秘密夹具漏检数（1301 例 × 12 种引擎/视图/形状组合；原值、JSON 转义、URL 编码 × 10 种上下文 + 重叠）",
+      "value": "0",
+      "target": "0（J4 M1）",
+      "pass": true,
+      "basis": "实测"
+    },
+    {
+      "id": "5-hash",
+      "name": "输出中出现秘密原值的未加盐 sha256 的个数",
+      "value": "0",
+      "target": "0（INV-29）",
+      "pass": true,
+      "basis": "实测"
+    },
+    {
+      "id": "6-inc",
+      "name": "run.ended 事务里追加 relay_digests 行的提交耗时增量（成对差 p50 / p95；8 MiB 快照 · 1 MiB 快照）",
+      "value": "0.060 / 0.724 ms · 0.049 / 0.686 ms（基线提交 8.96 ms / 0.95 ms）",
+      "target": "额外提交 0；摘要写入 p95 ≤ 2 ms（v1 §11.1）",
+      "pass": true,
+      "basis": "实测（node:sqlite 3.53.4，WAL + synchronous=FULL）"
+    },
+    {
+      "id": "6-append",
+      "name": "只追加一行摘要的独立提交 p50 / p95（与 R6“账本式追加”同口径）",
+      "value": "0.076 / 0.113 ms；WAL 28,840 B/次",
+      "target": "R6 实测 0.06 / 0.75 ms（参考）",
+      "pass": true,
+      "basis": "实测"
+    },
+    {
+      "id": "6-read",
+      "name": "从 relay_digests 读 256 行并解析 p50 / p95",
+      "value": "3.23 / 3.63 ms",
+      "target": "（无单列目标；计入渲染预算时见 2-*-parse）",
+      "pass": true,
+      "basis": "实测"
+    },
+    {
+      "id": "7-obs",
+      "name": "工作区观测（status 与 diff 并行）p50 / p95，本工作区 495 个跟踪文件",
+      "value": "13.98 / 15.06 ms（status 11.07，diff 9.48）；超 250 ms 0 次",
+      "target": "3k 文件 p95 ≤ 60 ms，硬上限 250 ms（v1 §11.1）",
+      "pass": true,
+      "basis": "实测（本工作区不足 3k 文件）"
+    },
+    {
+      "id": "7-exec",
+      "name": "观测命令在合成仓库里是否会执行仓库配置的外部程序（clean 过滤器 / fsmonitor / 钩子）",
+      "value": "diff --numstat（按任务原样）→ clean 过滤器运行次数：2 次；diff 加 --attr-source=<空树>，但 .git/info/attributes 里有过滤属性：2 次；status：只改 mtime（内容相同）→ clean 过滤器运行次数：1 次；diff（按任务原样，无 -c core.fsmonitor=false）→ fsmonitor 钩子运行次数：2 次",
+      "target": "0 次（v1 §10.6：观测子进程不得在别处执行代码）",
+      "pass": false,
+      "basis": "实测（git git version 2.54.0 (Apple Git-157)）"
+    },
+    {
+      "id": "b-invalid",
+      "name": "预算解析器：无效配置明确失败",
+      "value": "11 / 11",
+      "target": "全部拒绝（AGENTS.md：无效配置明确失败）",
+      "pass": true,
+      "basis": "实测"
+    },
+    {
+      "id": "d-s2",
+      "name": "A→B→A 增量（S2：dsh 做 2 轮后回 Claude Code）：带基准交接单 / 无基准（原型补全约定）",
+      "value": "642 / 1,095 token（Anthropic 系数）；渲染 p95 0.038 ms；之后一条原样发送：raw",
+      "target": "v1 §5.6 约 520 token（推算）；文档样例全文 659 token（Anthropic）；增量 ≤ 1,500",
+      "pass": true,
+      "basis": "实测（est/1）"
+    },
+    {
+      "id": "d-away",
+      "name": "离开期间 128 轮的增量",
+      "value": "3,932 token（上限 4000）；逐字用户原话 39 条、只计数 89 条",
+      "target": "J3 M8：上次送达以来的用户消息不得省略；DELTA_USER_CAP 4,000",
+      "pass": false,
+      "basis": "实测（est/1）"
+    }
+  ],
+  "raw": {
+    "budget": {
+      "rows": [
+        {
+          "name": "窗口未知（按 128k）· Claude Opus 5.5 · 默认档",
+          "outcome": "ok",
+          "tier": "standard",
+          "T": 6400,
+          "untrustedCap": 3000,
+          "window": 128000,
+          "windowSource": "assumed",
+          "clampedBy": [
+            "window"
+          ],
+          "caps": {
+            "tier": 8000,
+            "window": 6400,
+            "cliff": null,
+            "latency": 12000,
+            "cost": 9615,
+            "hard": 6400
+          },
+          "inputCap": null,
+          "lifetimeUsdPerToken": 0.0000208
+        },
+        {
+          "name": "窗口未知 · 用户选完整档",
+          "outcome": "ok",
+          "tier": "full",
+          "T": 6400,
+          "untrustedCap": 6400,
+          "window": 128000,
+          "windowSource": "assumed",
+          "clampedBy": [
+            "window"
+          ],
+          "caps": {
+            "tier": 32000,
+            "window": 6400,
+            "cliff": null,
+            "latency": 12000,
+            "cost": 9615,
+            "hard": 6400
+          },
+          "inputCap": null,
+          "lifetimeUsdPerToken": 0.0000208
+        },
+        {
+          "name": "Codex gpt-6.1-sol · 会话报告 400k · 默认档",
+          "outcome": "ok",
+          "tier": "standard",
+          "T": 8000,
+          "untrustedCap": 3000,
+          "window": 400000,
+          "windowSource": "session_report",
+          "clampedBy": [],
+          "caps": {
+            "tier": 8000,
+            "window": 20000,
+            "cliff": 241000,
+            "latency": 12000,
+            "cost": 19230,
+            "hard": 20000
+          },
+          "inputCap": {
+            "unit": "chars",
+            "limit": 1044478
+          },
+          "lifetimeUsdPerToken": 0.0000104
+        },
+        {
+          "name": "GPT-5.5 · 400k · 默认档（费用压低）",
+          "outcome": "ok",
+          "tier": "standard",
+          "T": 4494,
+          "untrustedCap": 3000,
+          "window": 400000,
+          "windowSource": "session_report",
+          "clampedBy": [
+            "cost"
+          ],
+          "caps": {
+            "tier": 8000,
+            "window": 20000,
+            "cliff": 241000,
+            "latency": 12000,
+            "cost": 4494,
+            "hard": 20000
+          },
+          "inputCap": null,
+          "lifetimeUsdPerToken": 0.0000445
+        },
+        {
+          "name": "GPT-5.5 · 400k · 用户选标准档（费用不压低用户选择）",
+          "outcome": "ok",
+          "tier": "standard",
+          "T": 8000,
+          "untrustedCap": 3000,
+          "window": 400000,
+          "windowSource": "session_report",
+          "clampedBy": [],
+          "caps": {
+            "tier": 8000,
+            "window": 20000,
+            "cliff": 241000,
+            "latency": 12000,
+            "cost": 4494,
+            "hard": 20000
+          },
+          "inputCap": null,
+          "lifetimeUsdPerToken": 0.0000445
+        },
+        {
+          "name": "dsh deepseek-v4-flash · 文档 1M · 完整档",
+          "outcome": "ok",
+          "tier": "full",
+          "T": 32000,
+          "untrustedCap": 24000,
+          "window": 1000000,
+          "windowSource": "documented",
+          "clampedBy": [],
+          "caps": {
+            "tier": 32000,
+            "window": 50000,
+            "cliff": null,
+            "latency": 12000,
+            "cost": 258397,
+            "hard": 32000
+          },
+          "inputCap": null,
+          "lifetimeUsdPerToken": 7.74e-7
+        },
+        {
+          "name": "dsh · 1M · 保真档",
+          "outcome": "ok",
+          "tier": "fidelity",
+          "T": 16000,
+          "untrustedCap": 8000,
+          "window": 1000000,
+          "windowSource": "documented",
+          "clampedBy": [],
+          "caps": {
+            "tier": 16000,
+            "window": 50000,
+            "cliff": null,
+            "latency": 12000,
+            "cost": 258397,
+            "hard": 32000
+          },
+          "inputCap": null,
+          "lifetimeUsdPerToken": 7.74e-7
+        },
+        {
+          "name": "Claude Haiku 5.5 · 新会话（已用 0）",
+          "outcome": "ok",
+          "tier": "standard",
+          "T": 8000,
+          "untrustedCap": 3000,
+          "window": 200000,
+          "windowSource": "documented",
+          "clampedBy": [],
+          "caps": {
+            "tier": 8000,
+            "window": 10000,
+            "cliff": 69000,
+            "latency": 12000,
+            "cost": null,
+            "hard": 10000
+          },
+          "inputCap": null,
+          "lifetimeUsdPerToken": null
+        },
+        {
+          "name": "Claude Haiku 5.5 · 返回时已用 75k（价格悬崖）",
+          "outcome": "blocked",
+          "code": "RELAY_INPUT_LIMIT",
+          "reason": "price_cliff",
+          "hardCap": -6000
+        },
+        {
+          "name": "本地小模型 · 窗口 16k",
+          "outcome": "blocked",
+          "code": "RELAY_INPUT_LIMIT",
+          "reason": "window",
+          "hardCap": 800
+        },
+        {
+          "name": "Codex · 原话 1,040,000 字符（逼近 1,048,576 上限）",
+          "outcome": "ok",
+          "tier": "standard",
+          "T": 8000,
+          "untrustedCap": 3000,
+          "window": 400000,
+          "windowSource": "session_report",
+          "clampedBy": [],
+          "caps": {
+            "tier": 8000,
+            "window": 20000,
+            "cliff": 241000,
+            "latency": 12000,
+            "cost": 19230,
+            "hard": 20000
+          },
+          "inputCap": {
+            "unit": "chars",
+            "limit": 4480
+          },
+          "lifetimeUsdPerToken": 0.0000104
+        },
+        {
+          "name": "Codex · 原话 1,046,000 字符（超过上限 − 4,096 余量）",
+          "outcome": "blocked",
+          "code": "RELAY_INPUT_LIMIT",
+          "reason": "input_limit",
+          "hardCap": 20000
+        }
+      ],
+      "rejected": [
+        {
+          "name": "未知键",
+          "rejected": true,
+          "message": "relay policy: unknown key tierCapp"
+        },
+        {
+          "name": "未知档位",
+          "rejected": true,
+          "message": "tierCap: unknown tier huge"
+        },
+        {
+          "name": "非正数",
+          "rejected": true,
+          "message": "deltaCap must be a positive integer"
+        },
+        {
+          "name": "非整数",
+          "rejected": true,
+          "message": "goalFloor must be a positive integer"
+        },
+        {
+          "name": "档位递减",
+          "rejected": true,
+          "message": "tierCap must not decrease from goal to brief"
+        },
+        {
+          "name": "不可信上限大于档位",
+          "rejected": true,
+          "message": "untrustedCap.goal exceeds tierCap.goal"
+        },
+        {
+          "name": "下限大于只交目标档",
+          "rejected": true,
+          "message": "goalFloor exceeds tierCap.goal"
+        },
+        {
+          "name": "窗口份额 > 1",
+          "rejected": true,
+          "message": "windowShare must be at most 1"
+        },
+        {
+          "name": "增量上限大于扩展上限",
+          "rejected": true,
+          "message": "deltaCap exceeds deltaUserCap"
+        },
+        {
+          "name": "k̂ > R̂ − 1",
+          "rejected": true,
+          "message": "lifetime.misses must be below lifetime.requests"
+        },
+        {
+          "name": "不是对象",
+          "rejected": true,
+          "message": "relay policy must be an object"
+        }
+      ],
+      "allRejected": true,
+      "chooseBudgetMs": {
+        "n": 2000,
+        "p50": 0.00029,
+        "p95": 0.00075,
+        "max": 0.17792,
+        "mean": 0.0005
+      },
+      "windowNeededForTier": {
+        "goal": 40000,
+        "brief": 80000,
+        "standard": 160000,
+        "fidelity": 320000,
+        "full": 640000
+      }
+    },
+    "digest": {
+      "fieldCapBound": {
+        "narrated": 48000,
+        "commands": 24000,
+        "failures": 16200,
+        "files": 49152,
+        "plan": 12000,
+        "approvals": 9600,
+        "outputsAndAttachments": 19200,
+        "replyTail": 1800,
+        "userHead": 360,
+        "error": 1200,
+        "total": 181512
+      },
+      "profiles": [
+        {
+          "profile": "typical",
+          "tools": 0,
+          "runs": 300,
+          "ms": {
+            "n": 300,
+            "p50": 0.0652,
+            "p95": 0.144,
+            "max": 0.358,
+            "mean": 0.0748
+          },
+          "bytes": {
+            "n": 300,
+            "p50": 2683,
+            "p95": 2884,
+            "max": 2990,
+            "mean": 2671
+          },
+          "over64KiB": 0,
+          "sizeCappedReplies": 0
+        },
+        {
+          "profile": "typical",
+          "tools": 1,
+          "runs": 300,
+          "ms": {
+            "n": 300,
+            "p50": 0.0698,
+            "p95": 0.1441,
+            "max": 0.2795,
+            "mean": 0.0784
+          },
+          "bytes": {
+            "n": 300,
+            "p50": 2803,
+            "p95": 3105,
+            "max": 4785,
+            "mean": 2842
+          },
+          "over64KiB": 0,
+          "sizeCappedReplies": 0
+        },
+        {
+          "profile": "typical",
+          "tools": 4,
+          "runs": 300,
+          "ms": {
+            "n": 300,
+            "p50": 0.0815,
+            "p95": 0.1558,
+            "max": 0.4493,
+            "mean": 0.09
+          },
+          "bytes": {
+            "n": 300,
+            "p50": 3187,
+            "p95": 4896,
+            "max": 5250,
+            "mean": 3313
+          },
+          "over64KiB": 0,
+          "sizeCappedReplies": 0
+        },
+        {
+          "profile": "typical",
+          "tools": 16,
+          "runs": 300,
+          "ms": {
+            "n": 300,
+            "p50": 0.1303,
+            "p95": 0.208,
+            "max": 0.2716,
+            "mean": 0.1352
+          },
+          "bytes": {
+            "n": 300,
+            "p50": 4726,
+            "p95": 7414,
+            "max": 10002,
+            "mean": 5210
+          },
+          "over64KiB": 0,
+          "sizeCappedReplies": 0
+        },
+        {
+          "profile": "typical",
+          "tools": 32,
+          "runs": 300,
+          "ms": {
+            "n": 300,
+            "p50": 0.2062,
+            "p95": 0.3067,
+            "max": 0.9641,
+            "mean": 0.2192
+          },
+          "bytes": {
+            "n": 300,
+            "p50": 7767,
+            "p95": 10768,
+            "max": 12422,
+            "mean": 7811
+          },
+          "over64KiB": 0,
+          "sizeCappedReplies": 0
+        },
+        {
+          "profile": "typical",
+          "tools": 64,
+          "runs": 300,
+          "ms": {
+            "n": 300,
+            "p50": 0.31,
+            "p95": 0.431,
+            "max": 1.3981,
+            "mean": 0.3272
+          },
+          "bytes": {
+            "n": 300,
+            "p50": 11419,
+            "p95": 14907,
+            "max": 17587,
+            "mean": 11607
+          },
+          "over64KiB": 0,
+          "sizeCappedReplies": 0
+        },
+        {
+          "profile": "typical",
+          "tools": 128,
+          "runs": 300,
+          "ms": {
+            "n": 300,
+            "p50": 0.4472,
+            "p95": 0.5782,
+            "max": 1.4825,
+            "mean": 0.4644
+          },
+          "bytes": {
+            "n": 300,
+            "p50": 14949,
+            "p95": 16782,
+            "max": 18031,
+            "mean": 14729
+          },
+          "over64KiB": 0,
+          "sizeCappedReplies": 0
+        },
+        {
+          "profile": "max",
+          "tools": 128,
+          "runs": 100,
+          "ms": {
+            "n": 100,
+            "p50": 1.2564,
+            "p95": 1.7793,
+            "max": 2.8653,
+            "mean": 1.3473
+          },
+          "bytes": {
+            "n": 100,
+            "p50": 28607,
+            "p95": 30656,
+            "max": 31581,
+            "mean": 28559
+          },
+          "over64KiB": 0,
+          "sizeCappedReplies": 100
+        },
+        {
+          "profile": "typical-cjk",
+          "tools": 64,
+          "runs": 200,
+          "ms": {
+            "n": 200,
+            "p50": 0.291,
+            "p95": 0.3827,
+            "max": 2.491,
+            "mean": 0.3101
+          },
+          "bytes": {
+            "n": 200,
+            "p50": 12300,
+            "p95": 15566,
+            "max": 16990,
+            "mean": 12401
+          },
+          "over64KiB": 0,
+          "sizeCappedReplies": 0
+        },
+        {
+          "profile": "pathological-fields",
+          "tools": 128,
+          "runs": 30,
+          "ms": {
+            "n": 30,
+            "p50": 1.3923,
+            "p95": 1.6204,
+            "max": 1.6479,
+            "mean": 1.4209
+          },
+          "bytes": {
+            "n": 30,
+            "p50": 29790,
+            "p95": 29790,
+            "max": 29790,
+            "mean": 29789
+          },
+          "over64KiB": 0,
+          "sizeCappedReplies": 0
+        }
+      ],
+      "notes": [
+        "耗时是单线程墙钟（process.hrtime），每条摘要单独计时；包含规范化、窗口脱敏（12 个已知秘密 + 形状规则）、截断、两种语言 × 三个等级的尺寸计算与 ≤64 KiB 收紧。",
+        "字节数是规范化 JSON（键排序）的 UTF-8 长度，即 relay_digests.digest_json 的大小。"
+      ]
+    },
+    "render": {
+      "session": {
+        "runs": 256,
+        "snapshotMiB": 7.87,
+        "digestRowsKiB": 1431,
+        "digestRowMaxBytes": 9978
+      },
+      "timing": {
+        "standard": {
+          "inMemory": {
+            "n": 300,
+            "p50": 1.321,
+            "p95": 1.518,
+            "max": 1.914,
+            "mean": 1.355
+          },
+          "parseRows": {
+            "n": 300,
+            "p50": 3.838,
+            "p95": 4.291,
+            "max": 4.924,
+            "mean": 3.916
+          }
+        },
+        "full": {
+          "inMemory": {
+            "n": 300,
+            "p50": 2.172,
+            "p95": 2.488,
+            "max": 3.298,
+            "mean": 2.229
+          },
+          "parseRows": {
+            "n": 300,
+            "p50": 4.595,
+            "p95": 5.128,
+            "max": 5.686,
+            "mean": 4.678
+          }
+        },
+        "parseRowsOnly": {
+          "n": 300,
+          "p50": 2.317,
+          "p95": 2.48,
+          "max": 2.665,
+          "mean": 2.335
+        }
+      },
+      "determinism": {
+        "standard": {
+          "renders": 100,
+          "distinctSha256": 1,
+          "distinctIds": 1,
+          "sha256": "6b13980e150bbff1495dfa2f8948c115a137708b11aa3ae1c0f977c35f5d5b75"
+        },
+        "full": {
+          "renders": 100,
+          "distinctSha256": 1,
+          "distinctIds": 1,
+          "sha256": "7136756460cc0e0cf9a9414745a7f523a69fb8f8d00d4264ec8d7d4cb3a519c7"
+        },
+        "crossProcess": {
+          "children": [
+            {
+              "env": "UTC/C",
+              "sha256": "6b13980e150bbff1495dfa2f8948c115a137708b11aa3ae1c0f977c35f5d5b75",
+              "status": 0
+            },
+            {
+              "env": "Asia/Shanghai/zh_CN.UTF-8",
+              "sha256": "6b13980e150bbff1495dfa2f8948c115a137708b11aa3ae1c0f977c35f5d5b75",
+              "status": 0
+            },
+            {
+              "env": "America/Los_Angeles/en_US.UTF-8",
+              "sha256": "6b13980e150bbff1495dfa2f8948c115a137708b11aa3ae1c0f977c35f5d5b75",
+              "status": 0
+            }
+          ],
+          "allEqualInProcess": true
+        }
+      },
+      "tiers": {
+        "goal": {
+          "cap": 2000,
+          "bytes": 5371,
+          "estTokens": 1726,
+          "estTokensAnthropic": 2244,
+          "estTokensOpenAI": 1726,
+          "untrustedTokens": 8,
+          "untrustedCap": 300,
+          "withinCap": true,
+          "mustHaveTokens": 1738,
+          "fold": {
+            "range": 256
+          },
+          "goalsMessages": 2,
+          "identityErrors": [],
+          "complete": false
+        },
+        "brief": {
+          "cap": 4000,
+          "bytes": 11903,
+          "estTokens": 3759,
+          "estTokensAnthropic": 4886,
+          "estTokensOpenAI": 3759,
+          "untrustedTokens": 1001,
+          "untrustedCap": 1500,
+          "withinCap": true,
+          "mustHaveTokens": 1738,
+          "fold": {
+            "line": 3,
+            "range": 252,
+            "verbatim": 1
+          },
+          "goalsMessages": 2,
+          "identityErrors": [],
+          "complete": false
+        },
+        "standard": {
+          "cap": 8000,
+          "bytes": 24455,
+          "estTokens": 7652,
+          "estTokensAnthropic": 9947,
+          "estTokensOpenAI": 7652,
+          "untrustedTokens": 2561,
+          "untrustedCap": 3000,
+          "withinCap": true,
+          "mustHaveTokens": 2699,
+          "fold": {
+            "line": 6,
+            "range": 249,
+            "verbatim": 1
+          },
+          "goalsMessages": 5,
+          "identityErrors": [],
+          "complete": false
+        },
+        "fidelity": {
+          "cap": 16000,
+          "bytes": 48199,
+          "estTokens": 15032,
+          "estTokensAnthropic": 19541,
+          "estTokensOpenAI": 15032,
+          "untrustedTokens": 7159,
+          "untrustedCap": 8000,
+          "withinCap": true,
+          "mustHaveTokens": 2699,
+          "fold": {
+            "compact": 6,
+            "range": 248,
+            "line": 1,
+            "verbatim": 1
+          },
+          "goalsMessages": 5,
+          "identityErrors": [],
+          "complete": false
+        },
+        "full": {
+          "cap": 32000,
+          "bytes": 101245,
+          "estTokens": 31509,
+          "estTokensAnthropic": 40961,
+          "estTokensOpenAI": 31509,
+          "untrustedTokens": 20872,
+          "untrustedCap": 24000,
+          "withinCap": true,
+          "mustHaveTokens": 2699,
+          "fold": {
+            "compact": 9,
+            "range": 243,
+            "line": 1,
+            "verbatim": 3
+          },
+          "goalsMessages": 5,
+          "identityErrors": [],
+          "complete": false
+        },
+        "standardLiteralUserWords": {
+          "outcome": "blocked",
+          "reason": "user_words_exceed_cap",
+          "mustHaveTokens": 83112,
+          "cap": 8000
+        }
+      },
+      "s1": {
+        "prototype": {
+          "bytes": 5047,
+          "estTokensOpenAI": 1619,
+          "estTokensAnthropic": 2104,
+          "bodyBytes": 4992,
+          "bodyEstTokens": 1600,
+          "untrustedTokens": 384,
+          "complete": true,
+          "omissions": [
+            "tool_output:5",
+            "diff:7",
+            "thinking:2"
+          ],
+          "identityErrors": [],
+          "renderMs": {
+            "n": 200,
+            "p50": 0.055,
+            "p95": 0.07,
+            "max": 0.436,
+            "mean": 0.06
+          }
+        },
+        "docSample": {
+          "bytes": 4951,
+          "estTokensOpenAI": 1590,
+          "estTokensAnthropic": 2067
+        },
+        "docClaims": {
+          "narratedHistoryTokens": 1650,
+          "untrustedTokens": 900,
+          "cardTokens": 1700,
+          "source": "v1 §5.6 与 §12.1（推算）"
+        }
+      },
+      "delta": {
+        "s2": {
+          "docSample": {
+            "bytes": 1575,
+            "estTokensAnthropic": 659,
+            "estTokensOpenAI": 507
+          },
+          "docClaimTokens": 520,
+          "baseNull": {
+            "kind": "delta",
+            "bytes": 2583,
+            "estTokens": 1095,
+            "cap": 1500,
+            "untrustedTokens": 65,
+            "identityErrors": [],
+            "renderMs": {
+              "n": 200,
+              "p50": 0.032,
+              "p95": 0.043,
+              "max": 0.343,
+              "mean": 0.036
+            },
+            "nextTurn": {
+              "kind": "raw",
+              "identical": true
+            }
+          },
+          "baseFromDoc": {
+            "kind": "delta",
+            "bytes": 1535,
+            "estTokens": 642,
+            "cap": 1500,
+            "untrustedTokens": 65,
+            "identityErrors": [],
+            "renderMs": {
+              "n": 200,
+              "p50": 0.028,
+              "p95": 0.038,
+              "max": 0.076,
+              "mean": 0.029
+            },
+            "nextTurn": {
+              "kind": "raw",
+              "identical": true
+            }
+          }
+        },
+        "awayScaling": {
+          "away2": {
+            "bytes": 3164,
+            "estTokens": 1326,
+            "cap": 1500,
+            "userWordsShown": 2,
+            "userWordsOmitted": 0,
+            "identityErrors": [],
+            "renderMs": {
+              "n": 100,
+              "p50": 0.037,
+              "p95": 0.054,
+              "max": 0.339,
+              "mean": 0.043
+            }
+          },
+          "away8": {
+            "bytes": 5916,
+            "estTokens": 2420,
+            "cap": 4000,
+            "userWordsShown": 8,
+            "userWordsOmitted": 0,
+            "identityErrors": [],
+            "renderMs": {
+              "n": 100,
+              "p50": 0.067,
+              "p95": 0.073,
+              "max": 0.082,
+              "mean": 0.068
+            }
+          },
+          "away32": {
+            "bytes": 9369,
+            "estTokens": 3845,
+            "cap": 4000,
+            "userWordsShown": 32,
+            "userWordsOmitted": 0,
+            "identityErrors": [],
+            "renderMs": {
+              "n": 100,
+              "p50": 0.117,
+              "p95": 0.135,
+              "max": 0.462,
+              "mean": 0.124
+            }
+          },
+          "away128": {
+            "bytes": 9583,
+            "estTokens": 3932,
+            "cap": 4000,
+            "userWordsShown": 39,
+            "userWordsOmitted": 89,
+            "identityErrors": [],
+            "renderMs": {
+              "n": 100,
+              "p50": 0.321,
+              "p95": 0.384,
+              "max": 0.911,
+              "mean": 0.329
+            }
+          }
+        }
+      }
+    },
+    "fuzz": {
+      "v1": {
+        "cases": 10000,
+        "packets": 9433,
+        "raw": 565,
+        "blocked": 2,
+        "threw": 0,
+        "casesWithCoreViolation": 0,
+        "casesWithExtendedViolation": 9048,
+        "violations": {
+          "core": {},
+          "extended": {
+            "lookalike_delimiter": 3329,
+            "invisible_ext": 8519,
+            "forged_marker_line_ext": 5744,
+            "first_line_odd_backticks": 729,
+            "first_line_opens_fence": 177
+          }
+        },
+        "counts": {
+          "fences": 39905,
+          "regions": 12148,
+          "spans": 107166,
+          "sentinels": 364408
+        }
+      },
+      "extended": {
+        "cases": 10000,
+        "packets": 9435,
+        "raw": 565,
+        "blocked": 0,
+        "threw": 0,
+        "casesWithCoreViolation": 0,
+        "casesWithExtendedViolation": 830,
+        "violations": {
+          "core": {},
+          "extended": {
+            "first_line_odd_backticks": 730,
+            "first_line_opens_fence": 177
+          }
+        },
+        "counts": {
+          "fences": 39906,
+          "regions": 12149,
+          "spans": 107172,
+          "sentinels": 364429
+        }
+      },
+      "mutations": {
+        "fixedFenceLength3": {
+          "cases": 1000,
+          "packets": 942,
+          "casesWithCoreViolation": 431,
+          "violations": {
+            "untrusted_outside_slot": 423,
+            "wrong_slot_kind": 253,
+            "two_inputs_in_one_slot": 222,
+            "sentinel_order": 222,
+            "reserved_inside_fence": 224,
+            "unmatched_region_end": 94,
+            "delimiter_not_exactly_once": 192,
+            "unclosed_fence": 136,
+            "unclosed_region": 98,
+            "unbalanced_backticks": 17
+          }
+        },
+        "noReservedRewrite": {
+          "cases": 1000,
+          "packets": 942,
+          "casesWithCoreViolation": 653,
+          "violations": {
+            "reserved_inside_fence": 492,
+            "stray_reserved": 402
+          }
+        },
+        "noMarkerQuoting": {
+          "cases": 1000,
+          "packets": 942,
+          "casesWithCoreViolation": 295,
+          "violations": {
+            "forged_marker_line": 295
+          }
+        },
+        "inlineKeepsBackticks": {
+          "cases": 1000,
+          "packets": 942,
+          "casesWithCoreViolation": 410,
+          "violations": {
+            "unbalanced_backticks": 405,
+            "untrusted_outside_slot": 410
+          }
+        },
+        "inlineKeepsNewlines": {
+          "cases": 1000,
+          "packets": 942,
+          "casesWithCoreViolation": 747,
+          "violations": {
+            "unbalanced_backticks": 747,
+            "untrusted_outside_slot": 747
+          }
+        }
+      }
+    },
+    "redact": {
+      "corpus": {
+        "bytes": 1051010,
+        "secrets": 50,
+        "planted": 255
+      },
+      "throughput": {
+        "regex/raw": {
+          "patterns": 70,
+          "msPerMiB": {
+            "p50": 1.25,
+            "p95": 1.42
+          },
+          "MiBps": 801.9,
+          "leaks": 0,
+          "sameOutputAsRegex": true
+        },
+        "regex/raw+shapes": {
+          "patterns": 70,
+          "msPerMiB": {
+            "p50": 2.13,
+            "p95": 2.26
+          },
+          "MiBps": 470.6,
+          "leaks": 0,
+          "sameOutputAsRegex": true
+        },
+        "regex/skeleton": {
+          "patterns": 70,
+          "msPerMiB": {
+            "p50": 1.85,
+            "p95": 2.07
+          },
+          "MiBps": 541.8,
+          "leaks": 0,
+          "sameOutputAsRegex": true
+        },
+        "regex/skeleton+shapes": {
+          "patterns": 70,
+          "msPerMiB": {
+            "p50": 2.91,
+            "p95": 3
+          },
+          "MiBps": 343.3,
+          "leaks": 0,
+          "sameOutputAsRegex": true
+        },
+        "aho/raw": {
+          "patterns": 70,
+          "msPerMiB": {
+            "p50": 1.67,
+            "p95": 2.12
+          },
+          "MiBps": 600.2,
+          "leaks": 0,
+          "sameOutputAsRegex": true
+        },
+        "aho/raw+shapes": {
+          "patterns": 70,
+          "msPerMiB": {
+            "p50": 2.42,
+            "p95": 2.6
+          },
+          "MiBps": 412.5,
+          "leaks": 0,
+          "sameOutputAsRegex": true
+        },
+        "aho/skeleton": {
+          "patterns": 70,
+          "msPerMiB": {
+            "p50": 2.15,
+            "p95": 2.21
+          },
+          "MiBps": 466.2,
+          "leaks": 0,
+          "sameOutputAsRegex": true
+        },
+        "aho/skeleton+shapes": {
+          "patterns": 70,
+          "msPerMiB": {
+            "p50": 2.95,
+            "p95": 3.14
+          },
+          "MiBps": 338.6,
+          "leaks": 0,
+          "sameOutputAsRegex": true
+        },
+        "indexof/raw": {
+          "patterns": 70,
+          "msPerMiB": {
+            "p50": 3,
+            "p95": 3.17
+          },
+          "MiBps": 333,
+          "leaks": 0,
+          "sameOutputAsRegex": true
+        },
+        "indexof/raw+shapes": {
+          "patterns": 70,
+          "msPerMiB": {
+            "p50": 3.76,
+            "p95": 3.84
+          },
+          "MiBps": 265.9,
+          "leaks": 0,
+          "sameOutputAsRegex": true
+        },
+        "indexof/skeleton": {
+          "patterns": 70,
+          "msPerMiB": {
+            "p50": 3.55,
+            "p95": 3.8
+          },
+          "MiBps": 281.6,
+          "leaks": 0,
+          "sameOutputAsRegex": true
+        },
+        "indexof/skeleton+shapes": {
+          "patterns": 70,
+          "msPerMiB": {
+            "p50": 4.35,
+            "p95": 4.65
+          },
+          "MiBps": 229.9,
+          "leaks": 0,
+          "sameOutputAsRegex": true
+        }
+      },
+      "fixture": {
+        "regex/raw": {
+          "cases": 1301,
+          "missed": 0,
+          "missedNames": []
+        },
+        "regex/raw+shapes": {
+          "cases": 1301,
+          "missed": 0,
+          "missedNames": []
+        },
+        "regex/skeleton": {
+          "cases": 1301,
+          "missed": 0,
+          "missedNames": []
+        },
+        "regex/skeleton+shapes": {
+          "cases": 1301,
+          "missed": 0,
+          "missedNames": []
+        },
+        "aho/raw": {
+          "cases": 1301,
+          "missed": 0,
+          "missedNames": []
+        },
+        "aho/raw+shapes": {
+          "cases": 1301,
+          "missed": 0,
+          "missedNames": []
+        },
+        "aho/skeleton": {
+          "cases": 1301,
+          "missed": 0,
+          "missedNames": []
+        },
+        "aho/skeleton+shapes": {
+          "cases": 1301,
+          "missed": 0,
+          "missedNames": []
+        },
+        "indexof/raw": {
+          "cases": 1301,
+          "missed": 0,
+          "missedNames": []
+        },
+        "indexof/raw+shapes": {
+          "cases": 1301,
+          "missed": 0,
+          "missedNames": []
+        },
+        "indexof/skeleton": {
+          "cases": 1301,
+          "missed": 0,
+          "missedNames": []
+        },
+        "indexof/skeleton+shapes": {
+          "cases": 1301,
+          "missed": 0,
+          "missedNames": []
+        }
+      },
+      "unsaltedHashHits": 0,
+      "adversarial": {
+        "lowercase-percent-encoding": {
+          "v1-forms/raw": "leak:passed-through",
+          "v1-forms/skeleton": "leak:passed-through",
+          "extended-forms/skeleton": "redacted",
+          "v1-forms/skeleton+shapes": "leak:passed-through"
+        },
+        "form-encoding (+ for space)": {
+          "v1-forms/raw": "leak:passed-through",
+          "v1-forms/skeleton": "leak:passed-through",
+          "extended-forms/skeleton": "redacted",
+          "v1-forms/skeleton+shapes": "leak:passed-through"
+        },
+        "json-escaped-slash (\\/)": {
+          "v1-forms/raw": "leak:passed-through",
+          "v1-forms/skeleton": "leak:passed-through",
+          "extended-forms/skeleton": "redacted",
+          "v1-forms/skeleton+shapes": "leak:passed-through"
+        },
+        "json-unicode-escape (\\u00e9)": {
+          "v1-forms/raw": "leak:passed-through",
+          "v1-forms/skeleton": "leak:passed-through",
+          "extended-forms/skeleton": "redacted",
+          "v1-forms/skeleton+shapes": "leak:passed-through"
+        },
+        "double-url-encoding": {
+          "v1-forms/raw": "leak:passed-through",
+          "v1-forms/skeleton": "leak:passed-through",
+          "extended-forms/skeleton": "redacted",
+          "v1-forms/skeleton+shapes": "leak:passed-through"
+        },
+        "base64": {
+          "v1-forms/raw": "leak:passed-through",
+          "v1-forms/skeleton": "leak:passed-through",
+          "extended-forms/skeleton": "leak:passed-through",
+          "v1-forms/skeleton+shapes": "leak:passed-through"
+        },
+        "html-entities": {
+          "v1-forms/raw": "leak:passed-through",
+          "v1-forms/skeleton": "leak:passed-through",
+          "extended-forms/skeleton": "leak:passed-through",
+          "v1-forms/skeleton+shapes": "leak:passed-through"
+        },
+        "split-by-zero-width (U+200B)": {
+          "v1-forms/raw": "leak:passed-through",
+          "v1-forms/skeleton": "redacted",
+          "extended-forms/skeleton": "redacted",
+          "v1-forms/skeleton+shapes": "redacted"
+        },
+        "split-by-NUL, v1 order (redact before C0 removal)": {
+          "v1-forms/raw": "leak:raw",
+          "v1-forms/skeleton": "redacted",
+          "extended-forms/skeleton": "redacted",
+          "v1-forms/skeleton+shapes": "redacted"
+        },
+        "split-by-NUL, prototype order (C0 removal first)": {
+          "v1-forms/raw": "redacted",
+          "v1-forms/skeleton": "redacted",
+          "extended-forms/skeleton": "redacted",
+          "v1-forms/skeleton+shapes": "redacted"
+        },
+        "tail truncation before redaction (cut inside the secret)": {
+          "v1-forms/raw": "leak:passed-through",
+          "v1-forms/skeleton": "leak:passed-through",
+          "extended-forms/skeleton": "leak:passed-through",
+          "v1-forms/skeleton+shapes": "leak:passed-through"
+        }
+      }
+    },
+    "sqlite": {
+      "digestRowBytes": {
+        "n": 256,
+        "p50": 5344,
+        "p95": 7352,
+        "max": 9978,
+        "mean": 5725
+      },
+      "sqliteVersion": "3.53.4",
+      "snapshot1MiB": {
+        "commitWithoutDigestMs": {
+          "n": 80,
+          "p50": 0.955,
+          "p95": 1.442,
+          "max": 2.789,
+          "mean": 1.025
+        },
+        "commitWithDigestMs": {
+          "n": 80,
+          "p50": 0.996,
+          "p95": 1.533,
+          "max": 4.513,
+          "mean": 1.132
+        },
+        "pairedIncrementMs": {
+          "n": 80,
+          "p50": 0.049,
+          "p95": 0.686,
+          "max": 2.53,
+          "mean": 0.108
+        },
+        "appendOnlyCommitMs": {
+          "n": 200,
+          "p50": 0.083,
+          "p95": 0.151,
+          "max": 0.818,
+          "mean": 0.092
+        },
+        "appendOnlyWalBytes": {
+          "n": 154,
+          "p50": 28840,
+          "p95": 28840,
+          "max": 28840,
+          "mean": 26753
+        },
+        "read256DigestsAndParseMs": {
+          "n": 50,
+          "p50": 3.321,
+          "p95": 3.625,
+          "max": 3.682,
+          "mean": 3.36
+        }
+      },
+      "snapshot8MiB": {
+        "commitWithoutDigestMs": {
+          "n": 40,
+          "p50": 8.959,
+          "p95": 9.339,
+          "max": 23.484,
+          "mean": 9.299
+        },
+        "commitWithDigestMs": {
+          "n": 40,
+          "p50": 8.945,
+          "p95": 9.367,
+          "max": 9.735,
+          "mean": 8.945
+        },
+        "pairedIncrementMs": {
+          "n": 40,
+          "p50": 0.06,
+          "p95": 0.724,
+          "max": 1.102,
+          "mean": -0.355
+        },
+        "appendOnlyCommitMs": {
+          "n": 200,
+          "p50": 0.076,
+          "p95": 0.113,
+          "max": 0.733,
+          "mean": 0.079
+        },
+        "appendOnlyWalBytes": {
+          "n": 154,
+          "p50": 28840,
+          "p95": 28840,
+          "max": 28840,
+          "mean": 26860
+        },
+        "read256DigestsAndParseMs": {
+          "n": 50,
+          "p50": 3.227,
+          "p95": 3.625,
+          "max": 4.256,
+          "mean": 3.268
+        }
+      }
+    },
+    "git": {
+      "worktree": {
+        "trackedFiles": 495,
+        "head": "1dec73c",
+        "statusEntries": 2,
+        "env": [
+          "PATH",
+          "HOME",
+          "LC_ALL",
+          "GIT_OPTIONAL_LOCKS",
+          "GIT_TERMINAL_PROMPT"
+        ]
+      },
+      "timings": {
+        "status": {
+          "label": "status --porcelain=v2 -z（-c core.fsmonitor=false）",
+          "n": 40,
+          "p50": 11.07,
+          "p95": 12.25,
+          "max": 12.46,
+          "mean": 11.21,
+          "timeoutsAt250ms": 0,
+          "nonZeroExit": 0
+        },
+        "diff": {
+          "label": "diff --numstat --no-ext-diff --no-textconv（按任务原样）",
+          "n": 40,
+          "p50": 9.48,
+          "p95": 10.21,
+          "max": 11.01,
+          "mean": 9.55,
+          "timeoutsAt250ms": 0,
+          "nonZeroExit": 0
+        },
+        "diffWithFsmonitorOff": {
+          "label": "diff …（加 -c core.fsmonitor=false）",
+          "n": 40,
+          "p50": 10.36,
+          "p95": 11.58,
+          "max": 13.67,
+          "mean": 10.49,
+          "timeoutsAt250ms": 0,
+          "nonZeroExit": 0
+        },
+        "observation": {
+          "label": "观测 = status 与 diff 并行，等两者结束",
+          "n": 40,
+          "p50": 13.98,
+          "p95": 15.06,
+          "max": 15.68,
+          "mean": 14.19,
+          "timeoutsAt250ms": 0,
+          "nonZeroExit": 0
+        }
+      },
+      "safetyProbe": {
+        "status：内容与大小都变了 → clean 过滤器运行次数": 0,
+        "diff --numstat（按任务原样）→ clean 过滤器运行次数": 2,
+        "diff 加 --attr-source=<空树> → clean 过滤器运行次数": 0,
+        "diff 加 -c filter.probe.clean= → clean 过滤器运行次数": 0,
+        "diff 加 --attr-source=<空树>，但 .git/info/attributes 里有过滤属性 → clean 过滤器运行次数": 2,
+        "status：只改 mtime（内容相同）→ clean 过滤器运行次数": 1,
+        "diff（按任务原样，无 -c core.fsmonitor=false）→ fsmonitor 钩子运行次数": 2,
+        "diff 加 -c core.fsmonitor=false → fsmonitor 钩子运行次数": 0,
+        "status 加 -c core.fsmonitor=false → fsmonitor 钩子运行次数": 0,
+        "status（GIT_OPTIONAL_LOCKS=0）→ post-index-change 钩子运行次数": 0,
+        "status（GIT_OPTIONAL_LOCKS=1，对照）→ post-index-change 钩子运行次数": 1
+      }
+    }
+  }
+}
