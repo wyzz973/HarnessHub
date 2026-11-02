@@ -267,7 +267,7 @@ sequenceDiagram
 W      = 原生回报 | 同 Harness+模型最近一次观测 | 厂商文档常量 | 未知（按 128k，界面标“窗口未知”，R5 D10）
 est(s) = ceil(ASCII 字节/3) + ceil(非 ASCII 码点 × 1.5)        // 有意偏高，按 usage 校准（推算）
 profile= 用户所选 ?? (无拉取通道 → standard
-                      : 类别表[policy](harness, 模型) → lean | standard)
+                      : 类别表[policy] (harness, 模型) → lean | standard)
 cap0   = min(2000, 0.05·W)
 capL1  = lean: 0；standard: min(4000, 0.05·W)；full: min(24000, 0.10·W) − L0
 若全部历史按 L1 渲染 ≤1500：整段直送
