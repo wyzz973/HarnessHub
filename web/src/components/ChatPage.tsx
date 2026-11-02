@@ -91,8 +91,12 @@ export interface ChatProps {
   /** One Turn's diagnostics, assembled and scrubbed by the Gateway (ADR-037). */
   onDiagnostics?: (runId: string, includeContent: boolean) => Promise<string>;
   attachments: readonly AttachmentDraft[];
-  /** Branches after a finished reply; omitted while branching is unavailable. */
+  /** Branches after a finished reply, then opens the branch as `onOpenSession` does; omitted while branching is unavailable. */
   onBranch?: (runId: string) => void;
+  /**
+   * Opens another conversation in place of this page, from an action on it (打开原对话, the conversation that holds the
+   * workspace, a native session's conversation); it opens with `focusOnOpen`.
+   */
   onOpenSession?: (id: string) => void;
   /** Another conversation's title, to name the one whose work holds this conversation's workspace (ADR-036). */
   sessionTitle?: (id: string) => string | null;
@@ -106,14 +110,14 @@ export interface ChatProps {
   onLoadExtensions?: (signal: AbortSignal) => Promise<NativeExtensions | null>;
   /** `probes` includes the sessions that catalog reads opened, which are left out otherwise. */
   onLoadNativeSessions?: (cursor: string | undefined, signal: AbortSignal, probes?: boolean) => Promise<NativeSessionListView>;
+  /** Continues a listed native session as a new conversation, then opens it as `onOpenSession` does. */
   onImportNative?: (nativeId: string) => void;
-  /** Opens the conversation that already continues a native session, as continuing one does (`focusOnOpen`). */
-  onOpenContinued?: (id: string) => void;
   /**
-   * Set while this conversation was opened from the composer's native sessions panel, whose page held the focus and went
-   * away with it. Once the conversation is shown, the focus goes on where the user continues: the message box, or the
-   * title when the conversation cannot take a message; focus the user moved elsewhere meanwhile stays. `onOpenFocused`
-   * then clears the request.
+   * Set while this conversation was opened by an action on the page it replaced (continuing a native session, a branch,
+   * 打开原对话, the conversation that holds the workspace), whose pressed control went away with that page. Once the
+   * conversation is shown, the focus goes on where the user continues: the message box; the approval waiting in its place;
+   * or the title when the conversation cannot take a message. Focus the user moved elsewhere meanwhile stays.
+   * `onOpenFocused` then clears the request.
    */
   focusOnOpen?: boolean; onOpenFocused?: () => void;
   onAttach: (files: readonly File[]) => void;
@@ -242,9 +246,10 @@ export function ChatPage(props: ChatProps) {
     refocus.current = false;
     if (document.activeElement === null || document.activeElement === document.body) textarea.current?.focus({ preventScroll: true });
   }, [session?.id]);
-  // Opened from the composer's native sessions panel (continued, or the conversation that continues the session), the
-  // conversation replaced the page that held the focus. Once it is read, the focus goes on where the user continues: the
-  // message box, or the title while there is none to write in (R03). Focus the user moved meanwhile stays where it is.
+  // Opened by an action on the page it replaced (`focusOnOpen`: continuing a native session, a branch, 打开原对话, the
+  // conversation that holds the workspace), the conversation takes the focus that went away with that page once it is read:
+  // the message box, or the title while there is none to write in (R03). An approval waiting in the box's place took it as
+  // it was shown (Composer); the title is there should it not have. Focus the user moved meanwhile stays where it is.
   const heading = useRef<HTMLHeadingElement>(null);
   const { focusOnOpen, onOpenFocused } = props;
   useLayoutEffect(() => {
@@ -253,7 +258,7 @@ export function ChatPage(props: ChatProps) {
     const focused = document.activeElement;
     if (focused !== null && focused !== document.body) return;
     const field = textarea.current;
-    (field !== null && !field.disabled ? field : heading.current)?.focus({ preventScroll: true });
+    (field !== null && !field.disabled && docked === null ? field : heading.current)?.focus({ preventScroll: true });
   }, [focusOnOpen, props.loading]);
   // A first message sent from here: the conversation it goes to (one it creates, `id` null until it is shown) opens empty
   // until the message is in its view, also for a moment after the send was acknowledged. It is not shown as ready then.

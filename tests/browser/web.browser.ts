@@ -818,6 +818,9 @@ test("a branch opens with the quoted history and continues in its own native cop
   await page.getByRole("button", { name: "从这里分支", exact: true }).click();
   const origin = page.getByRole("region", { name: "分支来源" });
   await expect(origin).toContainText("分支自之前的对话"); await expect(origin).toContainText("2 条消息");
+  // The branch opened in place of the page whose button was pressed, and that button went away with it: the branch takes
+  // the focus where the user continues, its message box, instead of leaving it to the page.
+  await expect(composer).toBeFocused();
   await expect(origin.getByText("原生会话已分支")).toBeVisible({ timeout: 15000 });
   await origin.getByText("查看分支前的对话").click(); await expect(origin).toContainText("分支前的第一条消息");
   await expect(page.getByRole("button", { name: "分支 · 分支前的第一条消息", exact: true })).toBeVisible();
@@ -825,13 +828,18 @@ test("a branch opens with the quoted history and continues in its own native cop
   await page.screenshot({ path: join(artifact, "branch-origin.png"), animations: "disabled" });
   await composer.fill("WHICH_THREAD 分支"); await composer.press("Enter");
   await expect(log).toContainText("原生分支线程，公共历史 0 轮，分支历史 0 条", { timeout: 15000 });
-  // The original conversation keeps its own native thread and history.
+  // The original conversation keeps its own native thread and history. Opened from 打开原对话, it takes the focus in its
+  // message box as well.
   await origin.getByRole("button", { name: /打开原对话/u }).click();
-  await expect(page.getByRole("region", { name: "分支来源" })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "分支来源" })).toHaveCount(0); await expect(composer).toBeFocused();
   await composer.fill("WHICH_THREAD 原对话"); await composer.press("Enter");
   await expect(log).toContainText("原线程", { timeout: 15000 });
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "the branch view must not overflow a narrow screen");
+  // The header's … menu branches from the latest reply, and that branch takes the focus in its message box too.
+  await page.setViewportSize({ width: 1280, height: 900 }); await expect(log.locator("[data-run-status=completed]")).toHaveCount(2, { timeout: 15000 });
+  await page.getByRole("button", { name: "更多操作", exact: true }).click(); await page.getByRole("menuitem", { name: "从最新回复分支", exact: true }).click();
+  await expect(origin).toContainText("4 条消息", { timeout: 15000 }); await expect(composer).toBeFocused();
   assert.deepEqual(errors, []);
 });
 
@@ -1280,8 +1288,9 @@ test("a Turn waiting for another conversation's work in their workspace names it
   await send("queued again");
   await expect(log.locator(".response-status").last()).toHaveText(/^排队中：等待对话「approve this」/u, { timeout: 15000 });
   // The holder opens from the queued Turn; once its approval is decided and its Turn ends, the queued Turn starts by itself.
+  // It opened in place of the page whose link was pressed: the approval waiting in its composer's place takes the focus.
   await log.getByRole("button", { name: "打开那个对话", exact: true }).click();
-  await expect(card).toBeVisible(); await card.getByRole("button", { name: "Allow once", exact: true }).click();
+  await expect(card).toBeVisible(); await expect(card).toBeFocused(); await card.getByRole("button", { name: "Allow once", exact: true }).click();
   await page.locator(".session-item", { hasText: "queued work" }).click();
   await expect(log.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
   await expect(log).toContainText("你好 fixture");
@@ -1306,8 +1315,9 @@ test("a Turn that waits for its workspace past its wait budget is not sent, and 
   const failure = log.locator(".run-error");
   await expect(failure).toHaveText("工作区正被另一项任务使用，这条消息没有发出。可以等它结束后重新发送，或为新对话选择其他工作区。占用它的是对话「long work」。打开那个对话", { timeout: 15000 });
   await page.screenshot({ path: join(artifact, "workspace-busy.png"), animations: "disabled" });
+  // The conversation that held the workspace opens in place of this page and takes the focus in its message box.
   await failure.getByRole("button", { name: "打开那个对话", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "long work" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "long work" })).toBeVisible(); await expect(composer).toBeFocused();
   await page.getByRole("button", { name: "停止当前回复", exact: true }).click();
   await expect(log.locator("[data-run-status=cancelled]")).toHaveCount(1, { timeout: 15000 });
   assert.deepEqual(errors, []);

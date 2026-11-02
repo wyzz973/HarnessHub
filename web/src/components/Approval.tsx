@@ -94,7 +94,8 @@ const TYPING_GUARD_MS = 500;
  * applies, the command as the program wrote it, the scope of any option that lasts, and the decisions. ⏎ allows once and
  * esc refuses while the dock has focus; the number keys choose the one-time options (shown to keyboard users); options
  * that last are click-only. When it takes the composer's place while the composer had focus, it takes the focus, and for
- * a moment ignores keys still meant for the message being typed. `onDecision` says whether the key or the pointer decided,
+ * a moment ignores keys still meant for the message being typed; the same when its conversation opens from an action on
+ * the page it replaced, whose focus went away with that page. `onDecision` says whether the key or the pointer decided,
  * since actions from the keyboard finish without animation (Motion board #37).
  */
 export function ApprovalDock({ request, harness, busy, onDecision, onStop, stopDisabled = false, waiting = 1, policy, focus = null }: {
@@ -106,8 +107,9 @@ export function ApprovalDock({ request, harness, busy, onDecision, onStop, stopD
   /** The program's approval rule that asked, by its own name, when the native configuration reports it. */
   readonly policy?: string | undefined;
   /**
-   * Whether to take the focus when shown: "guarded" when it takes the composer's focus (keys for a moment are still taken
-   * as meant for the message), "plain" when the previous request in the dock had it, null to leave it where it is.
+   * Whether to take the focus when shown: "guarded" when it takes the composer's focus, or the focus of the page its
+   * conversation replaced (keys for a moment are still taken as meant for the message or that page), "plain" when the
+   * previous request in the dock had it, null to leave it where it is.
    */
   readonly focus?: "guarded" | "plain" | null;
 }) {
