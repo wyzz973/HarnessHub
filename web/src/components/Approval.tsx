@@ -94,7 +94,8 @@ const TYPING_GUARD_MS = 500;
  * applies, the command as the program wrote it, the scope of any option that lasts, and the decisions. ⏎ allows once and
  * esc refuses while the dock has focus; the number keys choose the one-time options (shown to keyboard users); options
  * that last are click-only. When it takes the composer's place while the composer had focus, it takes the focus, and for
- * a moment ignores keys still meant for the message being typed. `onDecision` says whether the key or the pointer decided,
+ * a moment ignores keys still meant for the message being typed; the same when its conversation opens from an action on
+ * the page it replaced, whose focus went away with that page. `onDecision` says whether the key or the pointer decided,
  * since actions from the keyboard finish without animation (Motion board #37).
  */
 export function ApprovalDock({ request, harness, busy, onDecision, onStop, stopDisabled = false, waiting = 1, policy, focus = null }: {
@@ -106,8 +107,9 @@ export function ApprovalDock({ request, harness, busy, onDecision, onStop, stopD
   /** The program's approval rule that asked, by its own name, when the native configuration reports it. */
   readonly policy?: string | undefined;
   /**
-   * Whether to take the focus when shown: "guarded" when it takes the composer's focus (keys for a moment are still taken
-   * as meant for the message), "plain" when the previous request in the dock had it, null to leave it where it is.
+   * Whether to take the focus when shown: "guarded" when it takes the composer's focus, or the focus of the page its
+   * conversation replaced (keys for a moment are still taken as meant for the message or that page), "plain" when the
+   * previous request in the dock had it, null to leave it where it is.
    */
   readonly focus?: "guarded" | "plain" | null;
 }) {
@@ -142,11 +144,13 @@ export function ApprovalDock({ request, harness, busy, onDecision, onStop, stopD
   const button = (option: Option, tone: "primary" | "ghost" | "plain") => {
     const key = keyed.indexOf(option);
     // One-time options carry their number (shown to keyboard users, G054-FR8); ⏎ and esc are shown as the board shows them.
+    // Hidden, the number keeps its room (`decision-key`): a pointer press hides it, and the decision pressed must not move.
+    // Pressed, a decision keeps the room it was pressed in under the pointer (`decision`), though it scales to .97 (#31).
     // On a phone the decisions fill the lines they wrap onto, so the primary is never left alone at one end.
     return <button key={option.id} type="button" aria-label={option.name} disabled={disabled} onClick={() => decide(option, false)}
       aria-keyshortcuts={[key >= 0 ? String(key + 1) : "", option === primary ? "Enter" : "", option === refuse ? "Escape" : ""].filter(Boolean).join(" ") || undefined}
-      className={cn("btn press max-sm:grow", tone === "primary" ? "btn-primary px-3.5" : tone === "ghost" ? "btn-ghost" : "")}>
-      {key >= 0 ? <span aria-hidden="true" className="kbd-hint hidden font-mono keyboard:inline">{key + 1}</span> : null}
+      className={cn("decision btn press max-sm:grow", tone === "primary" ? "btn-primary px-3.5" : tone === "ghost" ? "btn-ghost" : "")}>
+      {key >= 0 ? <span aria-hidden="true" className="kbd-hint decision-key font-mono">{key + 1}</span> : null}
       <span>{option.name}</span>
       {option === primary ? <Kbd variant="hint">⏎</Kbd> : option === refuse ? <Kbd variant="hint">esc</Kbd> : null}
     </button>;

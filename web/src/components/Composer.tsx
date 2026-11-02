@@ -209,13 +209,16 @@ export function Composer(props: ComposerProps) {
   // The layers the composer opens belong to it too, though each is drawn in a layer of its own: the "+" menu, the lists of
   // the merged picker and the approval rule, and the panels (ruling R2). The dock closes them and takes the focus they held,
   // which would otherwise be lost. Focus events follow the React tree through those portals, so the box hears of them all.
+  // A conversation opened by an action on the page it replaced asks for that page's focus (`focusOnOpen`): an approval
+  // already waiting in the composer's place takes it, guarded as well, since a key may still be meant for the page left.
   const dockFocus = useRef<{ readonly id: string | null; readonly mode: "guarded" | "plain" | null }>({ id: null, mode: null });
   const focusedHere = useRef<EventTarget | null>(null);
   if ((approval?.request.id ?? null) !== dockFocus.current.id) {
     const focused = document.activeElement, previous = dockFocus.current.id;
     const inComposer = focused !== null && focused !== document.body && focused === focusedHere.current;
+    const opening = props.focusOnOpen === true && (focused === null || focused === document.body);
     dockFocus.current = { id: approval?.request.id ?? null, mode: approval === null ? null
-      : previous === null ? inComposer ? "guarded" : null
+      : previous === null ? inComposer || opening ? "guarded" : null
       : dockLayer.current?.contains(focused) || focused === document.body ? "plain" : null };
   }
 
@@ -367,11 +370,21 @@ export function Composer(props: ComposerProps) {
   const openPanel = (kind: NonNullable<typeof panel>["kind"]) => setPanel({ kind, harnessId: draft.harnessId });
   const panelOpenChange = (kind: NonNullable<typeof panel>["kind"]) => (open: boolean) => setPanel(open ? { kind, harnessId: draft.harnessId } : null);
   const fromAgentList = (kind: NonNullable<typeof panel>["kind"]) => { props.onAgentPickerOpen(false); openPanel(kind); };
-  // A skill chosen in the extensions puts its command in the message as choosing a "/" command does, and the panel closes:
-  // the user goes on writing, after the command (also when the message already was that command).
+  // A skill chosen in the extensions puts its command in front of the message, "/command " and then what was written, which
+  // is never lost; a message that already starts with that command keeps it once. The panel closes, and the user goes on
+  // writing right after the command. A message that changes takes that caret once its new value is shown (`caretAfter`):
+  // showing a new value puts the caret at its end.
+  const caretAfter = useRef<{ readonly value: string; readonly at: number } | null>(null);
+  useLayoutEffect(() => {
+    const pending = caretAfter.current; caretAfter.current = null;
+    if (pending !== null && pending.value === props.messageDraft) inputRef.current?.setSelectionRange(pending.at, pending.at);
+  }, [props.messageDraft, inputRef]);
   const commandFromPanel = (command: string) => {
-    setPanel(null); chooseCommand(command);
-    const end = ("/" + command + " ").length; inputRef.current?.setSelectionRange(end, end);
+    const token = "/" + command, prefix = token + " ", message = props.messageDraft;
+    const next = message === token ? prefix : message.startsWith(token) && /^\s/u.test(message.slice(token.length)) ? message : prefix + message;
+    setPanel(null); setSlashClosedAt(null);
+    if (next !== message) { caretAfter.current = { value: next, at: prefix.length }; props.onMessageDraft(next); }
+    const field = inputRef.current; field?.focus(); field?.setSelectionRange(prefix.length, prefix.length);
   };
   const sessionsOffered = !draft.providerId && draft.harnessId !== "" && props.onLoadNativeSessions !== undefined && props.onImportNative !== undefined && props.onOpenSession !== undefined;
   const extensionsOffered = !draft.providerId && draft.harnessId !== "" && props.onLoadExtensions !== undefined;
@@ -522,7 +535,7 @@ export function Composer(props: ComposerProps) {
         </form>
         {/* The panels the "+" menu and the Agent list open (ruling R2), placed against the control that holds their item. */}
         {sessionsOffered ? <NativeSessionsPanel key={"sessions:" + draft.harnessId + ":" + draft.controlId} side={popSide} load={props.onLoadNativeSessions!} disabled={disabled || props.mutation !== null}
-          onImport={props.onImportNative!} onOpen={props.onOpenContinued ?? props.onOpenSession!} open={shownPanel === "sessions"} onOpenChange={panelOpenChange("sessions")} anchor={plusButton} returnFocus={plusButton}/> : null}
+          onImport={props.onImportNative!} onOpen={props.onOpenSession!} open={shownPanel === "sessions"} onOpenChange={panelOpenChange("sessions")} anchor={plusButton} returnFocus={plusButton}/> : null}
         {extensionsOffered ? <NativeExtensionsPanel key={draft.harnessId + ":" + draft.controlId} side={popSide} load={props.onLoadExtensions!} onCommand={commandFromPanel}
           open={shownPanel === "extensions"} onOpenChange={panelOpenChange("extensions")} anchor={chip} returnFocus={agentButton}/> : null}
         {draft.harnessId ? <AdvancedSettings {...props} popSide={popSide} controls={controls} selectedControl={selectedControl} outdated={outdated} disabled={disabled} nativeOptions={nativeOptions.filter(option => option !== thought && !(option === mode && modeInChip) && option !== permission)} optionPicker={optionPicker} nativeState={nativeState} describeNative={describeNative}

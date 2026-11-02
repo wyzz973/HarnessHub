@@ -818,6 +818,9 @@ test("a branch opens with the quoted history and continues in its own native cop
   await page.getByRole("button", { name: "从这里分支", exact: true }).click();
   const origin = page.getByRole("region", { name: "分支来源" });
   await expect(origin).toContainText("分支自之前的对话"); await expect(origin).toContainText("2 条消息");
+  // The branch opened in place of the page whose button was pressed, and that button went away with it: the branch takes
+  // the focus where the user continues, its message box, instead of leaving it to the page.
+  await expect(composer).toBeFocused();
   await expect(origin.getByText("原生会话已分支")).toBeVisible({ timeout: 15000 });
   await origin.getByText("查看分支前的对话").click(); await expect(origin).toContainText("分支前的第一条消息");
   await expect(page.getByRole("button", { name: "分支 · 分支前的第一条消息", exact: true })).toBeVisible();
@@ -825,13 +828,18 @@ test("a branch opens with the quoted history and continues in its own native cop
   await page.screenshot({ path: join(artifact, "branch-origin.png"), animations: "disabled" });
   await composer.fill("WHICH_THREAD 分支"); await composer.press("Enter");
   await expect(log).toContainText("原生分支线程，公共历史 0 轮，分支历史 0 条", { timeout: 15000 });
-  // The original conversation keeps its own native thread and history.
+  // The original conversation keeps its own native thread and history. Opened from 打开原对话, it takes the focus in its
+  // message box as well.
   await origin.getByRole("button", { name: /打开原对话/u }).click();
-  await expect(page.getByRole("region", { name: "分支来源" })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "分支来源" })).toHaveCount(0); await expect(composer).toBeFocused();
   await composer.fill("WHICH_THREAD 原对话"); await composer.press("Enter");
   await expect(log).toContainText("原线程", { timeout: 15000 });
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "the branch view must not overflow a narrow screen");
+  // The header's … menu branches from the latest reply, and that branch takes the focus in its message box too.
+  await page.setViewportSize({ width: 1280, height: 900 }); await expect(log.locator("[data-run-status=completed]")).toHaveCount(2, { timeout: 15000 });
+  await page.getByRole("button", { name: "更多操作", exact: true }).click(); await page.getByRole("menuitem", { name: "从最新回复分支", exact: true }).click();
+  await expect(origin).toContainText("4 条消息", { timeout: 15000 }); await expect(composer).toBeFocused();
   assert.deepEqual(errors, []);
 });
 
@@ -881,7 +889,18 @@ test("the native extensions panel lists skills, MCP servers and plugins and invo
   await panel.getByRole("button", { name: "browser-skill", exact: true }).focus(); await page.keyboard.press("Enter");
   await expect(panel).toHaveCount(0); await expect(composer).toBeFocused(); assert.deepEqual(await caret(), [21, 21, 21]);
   await expect(composer).toHaveValue("/skill:browser-skill ");
-  await composer.type("看看这个仓库"); await composer.press("Enter");
+  // A message already written is never lost: the command goes in front of it, the caret right after the command. Chosen
+  // again with the caret at the end, the command is not put in a second time, and the caret goes back after it.
+  await composer.fill("这个仓库");
+  await openExtensions(page);
+  await panel.getByRole("button", { name: "browser-skill", exact: true }).click();
+  await expect(panel).toHaveCount(0); await expect(composer).toBeFocused();
+  await expect(composer).toHaveValue("/skill:browser-skill 这个仓库"); assert.deepEqual(await caret(), [21, 21, 25]);
+  await composer.press("End"); await openExtensions(page);
+  await panel.getByRole("button", { name: "browser-skill", exact: true }).focus(); await page.keyboard.press("Enter");
+  await expect(panel).toHaveCount(0); await expect(composer).toBeFocused();
+  await expect(composer).toHaveValue("/skill:browser-skill 这个仓库"); assert.deepEqual(await caret(), [21, 21, 25]);
+  await composer.type("看看"); await expect(composer).toHaveValue("/skill:browser-skill 看看这个仓库"); await composer.press("Enter");
   await expect(log).toContainText("已使用技能 browser-skill：看看这个仓库", { timeout: 15000 });
   assert.deepEqual(errors, []);
 });
@@ -1269,8 +1288,9 @@ test("a Turn waiting for another conversation's work in their workspace names it
   await send("queued again");
   await expect(log.locator(".response-status").last()).toHaveText(/^排队中：等待对话「approve this」/u, { timeout: 15000 });
   // The holder opens from the queued Turn; once its approval is decided and its Turn ends, the queued Turn starts by itself.
+  // It opened in place of the page whose link was pressed: the approval waiting in its composer's place takes the focus.
   await log.getByRole("button", { name: "打开那个对话", exact: true }).click();
-  await expect(card).toBeVisible(); await card.getByRole("button", { name: "Allow once", exact: true }).click();
+  await expect(card).toBeVisible(); await expect(card).toBeFocused(); await card.getByRole("button", { name: "Allow once", exact: true }).click();
   await page.locator(".session-item", { hasText: "queued work" }).click();
   await expect(log.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
   await expect(log).toContainText("你好 fixture");
@@ -1295,8 +1315,9 @@ test("a Turn that waits for its workspace past its wait budget is not sent, and 
   const failure = log.locator(".run-error");
   await expect(failure).toHaveText("工作区正被另一项任务使用，这条消息没有发出。可以等它结束后重新发送，或为新对话选择其他工作区。占用它的是对话「long work」。打开那个对话", { timeout: 15000 });
   await page.screenshot({ path: join(artifact, "workspace-busy.png"), animations: "disabled" });
+  // The conversation that held the workspace opens in place of this page and takes the focus in its message box.
   await failure.getByRole("button", { name: "打开那个对话", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "long work" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "long work" })).toBeVisible(); await expect(composer).toBeFocused();
   await page.getByRole("button", { name: "停止当前回复", exact: true }).click();
   await expect(log.locator("[data-run-status=cancelled]")).toHaveCount(1, { timeout: 15000 });
   assert.deepEqual(errors, []);
@@ -2558,6 +2579,113 @@ test("G054-DL5 an approval that takes the composer's place also closes the Agent
   // The Agent list the approval closed opens again from ⌘J.
   await page.keyboard.press("ControlOrMeta+J"); await expect(page.getByRole("combobox", { name: "搜索 Agent", exact: true })).toBeFocused();
   await page.keyboard.press("Escape"); await expect(layers).toHaveCount(0); await expect(composer).toBeFocused();
+  assert.deepEqual(errors, []);
+});
+
+test("G054-FR8 G054-DL5 a decision of the docked approval pressed with the pointer after keyboard use is sent on that one press: the numbers show for the keyboard only and keep their room, so no decision moves under the pointer, at 390, 320 and 1440 in both themes", { timeout: 180000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  await mkdir(artifact, { recursive: true });
+  const context = await isolatedContext(browser, { viewport: { width: 390, height: 844 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
+  // The number of each one-time option: the part of its button hidden from assistive technology, which hears the key named.
+  const dock = page.locator(".composer-box").getByRole("region", { name: "工具审批", exact: true }), keys = dock.locator("button[aria-keyshortcuts] > [aria-hidden=true]");
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  // Where each of the dock's buttons is laid out (transforms aside: a pressed button scales to .97).
+  const layout = () => dock.getByRole("button").evaluateAll(buttons => buttons.map(button => {
+    const element = button as HTMLElement; return `${element.getAttribute("aria-label")} ${element.offsetLeft},${element.offsetTop} ${element.offsetWidth}×${element.offsetHeight}`; }));
+  // Codex asks with three one-time options, each with its number for the keyboard: 允许一次 (⏎), 拒绝 (esc) and 取消.
+  const decisions = [["允许一次", "accept", "你允许了一次：读取验收工作区"], ["拒绝", "decline", "你拒绝了：读取验收工作区"], ["取消", "cancel", "你拒绝了：读取验收工作区"]] as const;
+  let round = 0;
+  for (const [shade, scheme] of (["light", "dark"] as const).entries()) for (const [step, width] of [390, 320, 1440].entries()) {
+    await page.emulateMedia({ colorScheme: scheme }); await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 });
+    // Each width presses a different decision in each theme.
+    const [name, id, result] = decisions[(step + shade) % decisions.length]!; round++;
+    // Sent from the keyboard: the approval takes the focus and each one-time option shows its number.
+    await composer.fill(`APPROVAL：${name} ${width} ${scheme}`); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
+    await expect(dock).toContainText("读取验收工作区", { timeout: 15000 }); await expect(dock).toBeFocused();
+    await expect(keys).toHaveText(["2", "3", "1"]);
+    for (const key of await keys.all()) await expect(key).toBeVisible();
+    await dl10Settle(page);
+    const before = await layout();
+    await page.screenshot({ path: join(artifact, `dl5-dock-keys-${scheme}-${width}.png`), animations: "disabled" });
+    // The press hides the numbers as it starts, the page reading the pointer from there (Motion board #37); the decisions
+    // keep their size and place meanwhile, so the press ends on the decision it began on, and that one press decides.
+    const box = await dock.getByRole("button", { name, exact: true }).boundingBox(); assert.ok(box);
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down();
+    await expect(keys.first()).toBeHidden();
+    const pressed = await layout();
+    await page.mouse.up();
+    await expect(log.locator(".approval-result")).toHaveCount(round, { timeout: 15000 });
+    await expect(log.locator(".approval-result").last()).toHaveText(result);
+    await expect(dock).toHaveCount(0); await expect(log).toContainText("原生审批已收到：" + id, { timeout: 15000 });
+    assert.deepEqual(pressed, before, `no decision moves under the pointer at ${width} in ${scheme}`);
+    await expect(page.locator("[data-run-status=completed]")).toHaveCount(round, { timeout: 15000 });
+  }
+  // Without the keyboard the numbers stay hidden, and the decisions take the same room as with them.
+  await page.emulateMedia({ colorScheme: "light" }); await page.setViewportSize({ width: 390, height: 844 });
+  await composer.fill("APPROVAL：pointer only"); await page.getByRole("button", { name: "发送消息", exact: true }).click();
+  await expect(dock).toContainText("读取验收工作区", { timeout: 15000 }); await expect(keys).toHaveCount(3);
+  for (const key of await keys.all()) await expect(key).toBeHidden();
+  await dl10Settle(page);
+  const plain = await layout();
+  await page.screenshot({ path: join(artifact, "dl5-dock-pointer-light-390.png"), animations: "disabled" });
+  await page.keyboard.press("Shift"); for (const key of await keys.all()) await expect(key).toBeVisible();
+  assert.deepEqual(await layout(), plain, "the numbers take their room whether they show or not");
+  await dock.getByRole("button", { name: "允许一次", exact: true }).click();
+  await expect(log.locator(".approval-result")).toHaveCount(round + 1, { timeout: 15000 });
+  assert.deepEqual(errors, []);
+});
+
+test("G054-DL5 a decision of the docked approval pressed at its very edge is sent on that press, though pressing scales it to .97 (#31), at 390, 320 and 1440 in both themes; let go off it, nothing is sent", { timeout: 180000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 390, height: 844 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  const sent: string[] = []; page.on("request", request => { if (request.method() === "POST" && /\/permissions\//u.test(request.url())) sent.push(request.url()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" }), send = page.getByRole("button", { name: "发送消息", exact: true });
+  const dock = page.locator(".composer-box").getByRole("region", { name: "工具审批", exact: true });
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  // Codex asks with 允许一次 (⏎), 拒绝 (esc) and 取消. On a phone 允许一次 fills a line of its own, and .97 draws each of its
+  // ends in by some 5 px.
+  const rounds = [[390, "light", "允许一次", "left"], [390, "dark", "拒绝", "right"], [320, "light", "允许一次", "right"], [320, "dark", "取消", "left"], [1440, "light", "允许一次", "right"], [1440, "dark", "拒绝", "left"]] as const;
+  for (const [index, [width, scheme, name, edge]] of rounds.entries()) {
+    await page.emulateMedia({ colorScheme: scheme }); await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 });
+    // Asked after keyboard use and after pointer use in turn.
+    await composer.fill(`APPROVAL：${name} ${edge} ${width} ${scheme}`); await expect(send).toBeEnabled();
+    if (index % 2 === 0) await composer.press("Enter"); else await send.click();
+    await expect(dock).toContainText("读取验收工作区", { timeout: 15000 }); await dl10Settle(page);
+    const button = dock.getByRole("button", { name, exact: true }), box = await button.boundingBox(); assert.ok(box);
+    // Pressed 1 px inside one end and held until the decision has scaled all the way, the pointer is outside what is drawn
+    // of it; let go there, the press still sends it.
+    const x = edge === "left" ? box.x + 1 : box.x + box.width - 1;
+    await page.mouse.move(x, box.y + box.height / 2); await page.mouse.down();
+    await expect.poll(() => button.evaluate(element => getComputedStyle(element).transform)).toBe("matrix(0.97, 0, 0, 0.97, 0, 0)");
+    const drawn = await button.boundingBox(); assert.ok(drawn && (x < drawn.x || x > drawn.x + drawn.width), `the press at ${width} is outside the pressed ${name}`);
+    await page.mouse.up();
+    await expect(log.locator(".approval-result")).toHaveCount(index + 1, { timeout: 15000 }); await expect(dock).toHaveCount(0);
+    assert.equal(sent.length, index + 1, `one press at ${width} in ${scheme} sends ${name} once`);
+    await expect(page.locator("[data-run-status=completed]")).toHaveCount(index + 1, { timeout: 15000 });
+  }
+  // The room kept is the decision's own and no more, all through the press: let go a few pixels past its end, at once or once
+  // it has scaled, a press sends nothing, and the approval keeps waiting.
+  await page.emulateMedia({ colorScheme: "light" }); await page.setViewportSize({ width: 390, height: 844 });
+  await composer.fill("APPROVAL：let go off it"); await send.click();
+  await expect(dock).toContainText("读取验收工作区", { timeout: 15000 }); await dl10Settle(page);
+  const allow = dock.getByRole("button", { name: "允许一次", exact: true }), box = await allow.boundingBox(); assert.ok(box);
+  for (const held of [false, true]) {
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down();
+    if (held) await expect.poll(() => allow.evaluate(element => getComputedStyle(element).transform)).toBe("matrix(0.97, 0, 0, 0.97, 0, 0)");
+    await page.mouse.move(box.x + box.width + 3, box.y + box.height / 2); await page.mouse.up();
+  }
+  await page.waitForTimeout(500);
+  assert.equal(sent.length, rounds.length, "a press let go off the decision sends nothing"); await expect(dock).toBeVisible();
+  await allow.click(); await expect(log.locator(".approval-result")).toHaveCount(rounds.length + 1, { timeout: 15000 });
   assert.deepEqual(errors, []);
 });
 
