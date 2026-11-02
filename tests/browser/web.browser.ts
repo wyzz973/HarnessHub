@@ -881,7 +881,18 @@ test("the native extensions panel lists skills, MCP servers and plugins and invo
   await panel.getByRole("button", { name: "browser-skill", exact: true }).focus(); await page.keyboard.press("Enter");
   await expect(panel).toHaveCount(0); await expect(composer).toBeFocused(); assert.deepEqual(await caret(), [21, 21, 21]);
   await expect(composer).toHaveValue("/skill:browser-skill ");
-  await composer.type("看看这个仓库"); await composer.press("Enter");
+  // A message already written is never lost: the command goes in front of it, the caret right after the command. Chosen
+  // again with the caret at the end, the command is not put in a second time, and the caret goes back after it.
+  await composer.fill("这个仓库");
+  await openExtensions(page);
+  await panel.getByRole("button", { name: "browser-skill", exact: true }).click();
+  await expect(panel).toHaveCount(0); await expect(composer).toBeFocused();
+  await expect(composer).toHaveValue("/skill:browser-skill 这个仓库"); assert.deepEqual(await caret(), [21, 21, 25]);
+  await composer.press("End"); await openExtensions(page);
+  await panel.getByRole("button", { name: "browser-skill", exact: true }).focus(); await page.keyboard.press("Enter");
+  await expect(panel).toHaveCount(0); await expect(composer).toBeFocused();
+  await expect(composer).toHaveValue("/skill:browser-skill 这个仓库"); assert.deepEqual(await caret(), [21, 21, 25]);
+  await composer.type("看看"); await expect(composer).toHaveValue("/skill:browser-skill 看看这个仓库"); await composer.press("Enter");
   await expect(log).toContainText("已使用技能 browser-skill：看看这个仓库", { timeout: 15000 });
   assert.deepEqual(errors, []);
 });

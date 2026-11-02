@@ -367,11 +367,21 @@ export function Composer(props: ComposerProps) {
   const openPanel = (kind: NonNullable<typeof panel>["kind"]) => setPanel({ kind, harnessId: draft.harnessId });
   const panelOpenChange = (kind: NonNullable<typeof panel>["kind"]) => (open: boolean) => setPanel(open ? { kind, harnessId: draft.harnessId } : null);
   const fromAgentList = (kind: NonNullable<typeof panel>["kind"]) => { props.onAgentPickerOpen(false); openPanel(kind); };
-  // A skill chosen in the extensions puts its command in the message as choosing a "/" command does, and the panel closes:
-  // the user goes on writing, after the command (also when the message already was that command).
+  // A skill chosen in the extensions puts its command in front of the message, "/command " and then what was written, which
+  // is never lost; a message that already starts with that command keeps it once. The panel closes, and the user goes on
+  // writing right after the command. A message that changes takes that caret once its new value is shown (`caretAfter`):
+  // showing a new value puts the caret at its end.
+  const caretAfter = useRef<{ readonly value: string; readonly at: number } | null>(null);
+  useLayoutEffect(() => {
+    const pending = caretAfter.current; caretAfter.current = null;
+    if (pending !== null && pending.value === props.messageDraft) inputRef.current?.setSelectionRange(pending.at, pending.at);
+  }, [props.messageDraft, inputRef]);
   const commandFromPanel = (command: string) => {
-    setPanel(null); chooseCommand(command);
-    const end = ("/" + command + " ").length; inputRef.current?.setSelectionRange(end, end);
+    const token = "/" + command, prefix = token + " ", message = props.messageDraft;
+    const next = message === token ? prefix : message.startsWith(token) && /^\s/u.test(message.slice(token.length)) ? message : prefix + message;
+    setPanel(null); setSlashClosedAt(null);
+    if (next !== message) { caretAfter.current = { value: next, at: prefix.length }; props.onMessageDraft(next); }
+    const field = inputRef.current; field?.focus(); field?.setSelectionRange(prefix.length, prefix.length);
   };
   const sessionsOffered = !draft.providerId && draft.harnessId !== "" && props.onLoadNativeSessions !== undefined && props.onImportNative !== undefined && props.onOpenSession !== undefined;
   const extensionsOffered = !draft.providerId && draft.harnessId !== "" && props.onLoadExtensions !== undefined;
