@@ -2561,6 +2561,64 @@ test("G054-DL5 an approval that takes the composer's place also closes the Agent
   assert.deepEqual(errors, []);
 });
 
+test("G054-FR8 G054-DL5 a decision of the docked approval pressed with the pointer after keyboard use is sent on that one press: the numbers show for the keyboard only and keep their room, so no decision moves under the pointer, at 390, 320 and 1440 in both themes", { timeout: 180000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  await mkdir(artifact, { recursive: true });
+  const context = await isolatedContext(browser, { viewport: { width: 390, height: 844 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
+  // The number of each one-time option: the part of its button hidden from assistive technology, which hears the key named.
+  const dock = page.locator(".composer-box").getByRole("region", { name: "工具审批", exact: true }), keys = dock.locator("button[aria-keyshortcuts] > [aria-hidden=true]");
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  // Where each of the dock's buttons is laid out (transforms aside: a pressed button scales to .97).
+  const layout = () => dock.getByRole("button").evaluateAll(buttons => buttons.map(button => {
+    const element = button as HTMLElement; return `${element.getAttribute("aria-label")} ${element.offsetLeft},${element.offsetTop} ${element.offsetWidth}×${element.offsetHeight}`; }));
+  // Codex asks with three one-time options, each with its number for the keyboard: 允许一次 (⏎), 拒绝 (esc) and 取消.
+  const decisions = [["允许一次", "accept", "你允许了一次：读取验收工作区"], ["拒绝", "decline", "你拒绝了：读取验收工作区"], ["取消", "cancel", "你拒绝了：读取验收工作区"]] as const;
+  let round = 0;
+  for (const [shade, scheme] of (["light", "dark"] as const).entries()) for (const [step, width] of [390, 320, 1440].entries()) {
+    await page.emulateMedia({ colorScheme: scheme }); await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 });
+    // Each width presses a different decision in each theme.
+    const [name, id, result] = decisions[(step + shade) % decisions.length]!; round++;
+    // Sent from the keyboard: the approval takes the focus and each one-time option shows its number.
+    await composer.fill(`APPROVAL：${name} ${width} ${scheme}`); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
+    await expect(dock).toContainText("读取验收工作区", { timeout: 15000 }); await expect(dock).toBeFocused();
+    await expect(keys).toHaveText(["2", "3", "1"]);
+    for (const key of await keys.all()) await expect(key).toBeVisible();
+    await dl10Settle(page);
+    const before = await layout();
+    await page.screenshot({ path: join(artifact, `dl5-dock-keys-${scheme}-${width}.png`), animations: "disabled" });
+    // The press hides the numbers as it starts, the page reading the pointer from there (Motion board #37); the decisions
+    // keep their size and place meanwhile, so the press ends on the decision it began on, and that one press decides.
+    const box = await dock.getByRole("button", { name, exact: true }).boundingBox(); assert.ok(box);
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down();
+    await expect(keys.first()).toBeHidden();
+    const pressed = await layout();
+    await page.mouse.up();
+    await expect(log.locator(".approval-result")).toHaveCount(round, { timeout: 15000 });
+    await expect(log.locator(".approval-result").last()).toHaveText(result);
+    await expect(dock).toHaveCount(0); await expect(log).toContainText("原生审批已收到：" + id, { timeout: 15000 });
+    assert.deepEqual(pressed, before, `no decision moves under the pointer at ${width} in ${scheme}`);
+    await expect(page.locator("[data-run-status=completed]")).toHaveCount(round, { timeout: 15000 });
+  }
+  // Without the keyboard the numbers stay hidden, and the decisions take the same room as with them.
+  await page.emulateMedia({ colorScheme: "light" }); await page.setViewportSize({ width: 390, height: 844 });
+  await composer.fill("APPROVAL：pointer only"); await page.getByRole("button", { name: "发送消息", exact: true }).click();
+  await expect(dock).toContainText("读取验收工作区", { timeout: 15000 }); await expect(keys).toHaveCount(3);
+  for (const key of await keys.all()) await expect(key).toBeHidden();
+  await dl10Settle(page);
+  const plain = await layout();
+  await page.screenshot({ path: join(artifact, "dl5-dock-pointer-light-390.png"), animations: "disabled" });
+  await page.keyboard.press("Shift"); for (const key of await keys.all()) await expect(key).toBeVisible();
+  assert.deepEqual(await layout(), plain, "the numbers take their room whether they show or not");
+  await dock.getByRole("button", { name: "允许一次", exact: true }).click();
+  await expect(log.locator(".approval-result")).toHaveCount(round + 1, { timeout: 15000 });
+  assert.deepEqual(errors, []);
+});
+
 test("G054-DL6 the plan bar above the composer says how far the plan is and opens every step, and the line under it shows the round, steps and time with only the usage the Gateway reported", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });

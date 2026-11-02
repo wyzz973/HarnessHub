@@ -431,6 +431,13 @@
   .kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: var(--radius-tag); background: var(--bg-surface); box-shadow: var(--sh-kbd); color: var(--text); font-family: inherit; font-size: 11px; line-height: 16px; font-weight: 400; }
   .kbd-hint { font-family: inherit; font-size: 11px; line-height: 16px; font-weight: 400; color: var(--text-3); }
   .btn-primary .kbd-hint { color: inherit; opacity: .8; }
+  /* The number a one-time decision of the approval dock carries for the keyboard (G054-FR8), 7 px wide. It keeps its room
+     while hidden, its 7 px and the button's 6 px gap after it going half to each side: a press of the pointer hides it as
+     the press starts (the input is read from there, Motion board #37), and no decision may change size or place under it. */
+  .decision-key { width: 7px; text-align: center; }
+  :root:not([data-input="keyboard"]) .decision-key { display: none; }
+  :root:not([data-input="keyboard"]) .decision-key + * { margin-left: 6.5px; }
+  :root:not([data-input="keyboard"]) .decision-key ~ :last-child { margin-right: 6.5px; }
 
   /* Fields (radius 10) */
   .field {
