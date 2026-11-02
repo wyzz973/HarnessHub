@@ -427,20 +427,20 @@ export function HarnessesPage(props: HarnessProps) {
   };
   // An error is said once: in the details while they sit beside the cards (where the action was taken), else on the page.
   const pageError = beside && selected !== null ? null : props.error;
-  const detailTitle = drawn ? `${drawn.name} 详情` : "Agent 详情";
+  const detailTitle = drawn ? `${drawn.name} 详情` : "Harness 详情";
   const details = drawn ? <AgentDetail {...props} key={drawn.id} harness={drawn} state={agentState(drawn, facts)} onClose={() => setSelectedId(null)} onRequest={harness => request(harness, true)} onInstallRequest={harness => installOfficial(harness, true)}
     onUninstallRequest={(harness, installation) => { makeWay(); setRemoving({ harness, installation }); }}
     onUpgradeRequest={(harness, installation) => upgradeInstallation(harness, installation, true)}/> : null;
   // The frame of the pages beside the conversation (Agent board), without a way back of its own: the sidebar is it (ADR-054
   // 补充 D). While the details sit beside the cards, the body (and its scrollbar) ends where the sheet begins.
-  return <><PageShell ref={frame} title="Agent" titleId="harnesses-title" wide bodyClassName={cn("harness-management-body", room && "mr-[360px]")}
+  return <><PageShell ref={frame} title="Harness" titleId="harnesses-title" wide bodyClassName={cn("harness-management-body", room && "mr-[360px]")}
     onMenu={props.onMenu} sidebarHidden={props.sidebarHidden} onExpandSidebar={props.onExpandSidebar}
-    description={mine.length ? `这台 Mac 上的 ${mine.length} 个 Agent。用它们原来的安装和登录；升级、卸载都按官网的方式来。`
-      : "这台 Mac 上还没有找到 Agent。装好以后，HarnessHub 用它们原来的安装和登录；安装、升级、卸载都按官网的方式来。"}
+    description={mine.length ? `这台 Mac 上的 ${mine.length} 个 Harness。用它们原来的安装和登录；升级、卸载都按官网的方式来。`
+      : "这台 Mac 上还没有找到 Harness。装好以后，HarnessHub 用它们原来的安装和登录；安装、升级、卸载都按官网的方式来。"}
     actions={<>
       {jobs.length ? <button type="button" className={cn("btn btn-ghost", active.length > 0 && "text-accent-text")} onClick={() => setShowTasks(value => !value)} aria-expanded={showTasks} aria-controls="installation-tasks">
         {active.length ? <Spinner size={14} tone="run" label=""/> : <Clock3 size={15}/>}安装任务<span className={active.length ? "" : "text-fg-3"}>{active.length || jobs.length}</span></button> : null}
-      <Tip label="重新检测本机的 Agent"><button type="button" className="icon-btn" aria-label="重新检测" onClick={props.onRescan} disabled={props.scanning}>{props.scanning ? <Spinner size={15} label=""/> : <ScanSearch size={16}/>}</button></Tip>
+      <Tip label="重新检测本机的 Harness"><button type="button" className="icon-btn" aria-label="重新检测" onClick={props.onRescan} disabled={props.scanning}>{props.scanning ? <Spinner size={15} label=""/> : <ScanSearch size={16}/>}</button></Tip>
       <button type="button" className="btn" onClick={() => props.onCheckUpdates()} disabled={props.checking}>{props.checking ? <Spinner size={14} label=""/> : <RefreshCw size={15} className="text-fg-2"/>}{props.checking ? "正在检查更新" : "检查更新"}</button>
     </>}
     belowHeader={<>
@@ -465,7 +465,7 @@ export function HarnessesPage(props: HarnessProps) {
       </Collapsible> : null}
     </>}>
     {mine.length ? <section aria-labelledby="agents-mine-title">
-      <h2 id="agents-mine-title" className="sr-only">这台 Mac 上的 Agent</h2>
+      <h2 id="agents-mine-title" className="sr-only">这台 Mac 上的 Harness</h2>
       <div className="grid grid-cols-[repeat(auto-fill,minmax(min(300px,100%),1fr))] gap-3.5">
         {mine.map(harness => { const state = agentState(harness, facts); return <AgentCard key={harness.id} harness={harness} state={state} action={cardAction(harness, state)} selected={selectedId === harness.id} onOpen={() => setSelectedId(harness.id)}/>; })}
       </div>
@@ -483,8 +483,8 @@ export function HarnessesPage(props: HarnessProps) {
       </div>
     </section> : null}
     <div className="-mt-2 flex flex-col gap-1.5 text-ui-sm text-fg-3">
-      {hiddenCount > 0 ? <p className="hidden-frozen m-0">已隐藏 {hiddenCount} 个冻结的 Agent，<button type="button" className="link-btn" onClick={props.onSettings}>可在设置里显示</button></p> : null}
-      <p className="m-0">没找到装在别处的 Agent？在<button type="button" className="link-btn" onClick={props.onSettings}>设置</button>的“发现”里添加它所在的目录，再重新检测。</p>
+      {hiddenCount > 0 ? <p className="hidden-frozen m-0">已隐藏 {hiddenCount} 个冻结的 Harness，<button type="button" className="link-btn" onClick={props.onSettings}>可在设置里显示</button></p> : null}
+      <p className="m-0">没找到装在别处的 Harness？在<button type="button" className="link-btn" onClick={props.onSettings}>设置</button>的“发现”里添加它所在的目录，再重新检测。</p>
     </div>
     </PageShell>
     {beside
@@ -636,7 +636,7 @@ function AgentDetail(props: HarnessProps & { harness: HarnessView; state: AgentS
         <div className="flex min-w-0 items-center gap-1.5"><h2 className="trunc m-0 text-panel">{name}</h2>{harness.tier === "frozen" ? <Badge tone="neutral" title="冻结：保留适配与历史对话，不再打磨">冻结</Badge> : null}</div>
         <p className="agent-meta m-0 text-caption text-fg-3">{here ? `${version ?? "版本未知"} · ${placeOf(harness, true)}` : "未安装"}</p>
       </div>
-      <button type="button" className="icon-btn self-start text-fg-3" aria-label="关闭 Agent 详情" onClick={props.onClose}><X size={15}/></button>
+      <button type="button" className="icon-btn self-start text-fg-3" aria-label="关闭 Harness 详情" onClick={props.onClose}><X size={15}/></button>
     </header>
     <div className="scroll-area flex min-h-0 flex-1 flex-col gap-5 px-5 pb-6">
       {props.error ? <Notice tone="red" onDismiss={props.onDismissError}>{props.error}</Notice> : null}

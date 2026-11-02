@@ -26,7 +26,7 @@ export function UninstallDialog({ api, harness, installation, onClose, onConfirm
       .then(value => { if (!controller.signal.aborted) setCheck(value); }, error => { if (!controller.signal.aborted) setFailure(errorMessage(error)); });
     return () => controller.abort();
   }, [api, id, ref, attempt]);
-  const name = harness?.name ?? "Agent", what = installation?.role === "adapter" ? `${name} 的接入口 ${installation.command}` : name;
+  const name = harness?.name ?? "Harness", what = installation?.role === "adapter" ? `${name} 的接入口 ${installation.command}` : name;
   const busy = check?.conversations.filter(item => item.busy) ?? [], idle = check?.conversations.filter(item => !item.busy) ?? [];
   const blocked = busy.length > 0 || (check?.otherUsers.length ?? 0) > 0 || (check?.undeclaredServices.length ?? 0) > 0 || (check?.resident.length ?? 0) > 0;
   const after = check?.after;
@@ -63,7 +63,7 @@ export function UninstallDialog({ api, harness, installation, onClose, onConfirm
           {check.processes.length ? <Notice tone="amber">这些程序正在运行这份安装，不会被关闭；卸载后它们可能出错，建议先退出：{check.processes.map(item => `${item.name}（进程 ${item.pid}）`).join("、")}。</Notice> : null}
           {check.localChanges ? <Notice tone="amber">安装目录里有 {check.localChanges} 处本地改动，卸载会一并删除。</Notice> : null}
           <p className="uninstall-after m-0 text-ui-sm text-fg-2">{after?.kind === "next" ? `卸载后，HarnessHub 改用${after.label}${after.version ? ` 的 ${after.version}` : ""}。`
-            : after?.kind === "none" ? installation?.role === "adapter" ? `卸载后，${name} 的接入口不可用，可以在 Agent 页重新安装。` : `卸载后，${name} 在 HarnessHub 里显示为未安装。`
+            : after?.kind === "none" ? installation?.role === "adapter" ? `卸载后，${name} 的接入口不可用，可以在 Harness 页重新安装。` : `卸载后，${name} 在 HarnessHub 里显示为未安装。`
             : "HarnessHub 当前使用的不是这一份，卸载不影响 HarnessHub 的对话。"}</p>
         </>}
     </ConfirmBody>

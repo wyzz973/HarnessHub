@@ -25,7 +25,7 @@ export function ProvidersPage(props: ProvidersProps) {
   const add = <button type="button" className="btn btn-primary" onClick={() => props.onEdit("new")}><Plus size={15} aria-hidden="true"/>添加 Provider</button>;
   // With no connection yet the empty place offers the one way forward; the head offers it once there is a list.
   return <PageShell title="模型连接" titleId="providers-title" onMenu={props.onMenu} sidebarHidden={props.sidebarHidden} onExpandSidebar={props.onExpandSidebar} onBack={props.onChat}
-    description="一个连接，一组模型；在兼容的 Agent 里单独选择。连接保存在本机，不改 Agent 自己的全局配置。" {...(props.providers.length ? { actions: add } : {})}>
+    description="一个连接，一组模型；在兼容的 Harness 里单独选择。连接保存在本机，不改 Harness 自己的全局配置。" {...(props.providers.length ? { actions: add } : {})}>
     {props.error ? <Notice tone="red" onDismiss={props.onDismissError}>{props.error}</Notice> : null}
     {props.providers.length === 0 ? <EmptyState icon={<SlidersHorizontal size={22}/>} title="连接你的第一个模型服务" action={add}>填写服务地址和密钥，再添加要使用的模型。</EmptyState> : <>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">

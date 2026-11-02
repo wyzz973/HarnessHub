@@ -51,7 +51,7 @@ export function NativeExtensionsPanel({ load, onCommand, side = "top", open, onO
     <div className="flex flex-col gap-0.5 p-[5px]">
       {state.loading ? <p className="m-0 flex items-center gap-2 px-2 py-1.5 text-ui-sm text-fg-3"><Spinner size={13} label=""/>正在从本机安装读取…</p> : null}
       {state.error ? <p className="m-0 px-2 py-1.5 text-ui-sm text-red" role="alert">{state.error}</p> : null}
-      {value === null ? <p className="m-0 px-2 py-1.5 text-ui-sm text-fg-2">这个 Agent 的接口不提供扩展列表；它的技能与 MCP 提示在“命令”中按原生名称列出。</p> : null}
+      {value === null ? <p className="m-0 px-2 py-1.5 text-ui-sm text-fg-2">这个 Harness 的接口不提供扩展列表；它的技能与 MCP 提示在“命令”中按原生名称列出。</p> : null}
       {value ? <>
         <Section title="技能" count={value.skills.length} defaultOpen>
           {value.skills.length ? <ul className="m-0 list-none p-0">{value.skills.map(skill => <li key={skill.name} className={row}>

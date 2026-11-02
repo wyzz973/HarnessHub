@@ -55,7 +55,7 @@ export function NativeSessionsPanel({ load, onImport, onOpen, disabled, side = "
     <PopHead title="本机会话" closeLabel="收起本机会话"><button type="button" className="icon-btn icon-btn-sm" aria-label="重新读取本机会话" onClick={() => read()} disabled={state.loading}><RefreshCw size={13}/></button></PopHead>
     <div className="flex flex-col gap-1 p-[5px]">
       {state.error ? <p className="m-0 px-2 py-1.5 text-ui-sm text-red" role="alert">{state.error}</p> : null}
-      {state.value !== undefined && sessions === null ? <p className="m-0 px-2 py-1.5 text-ui-sm text-fg-2">这个 Agent 的接口不能列出或继续它自己的会话。</p> : null}
+      {state.value !== undefined && sessions === null ? <p className="m-0 px-2 py-1.5 text-ui-sm text-fg-2">这个 Harness 的接口不能列出或继续它自己的会话。</p> : null}
       {sessions ? sessions.length ? <ul className="m-0 flex list-none flex-col p-0">{sessions.map(row => <li key={row.id} className="row flex items-center gap-2 rounded-[9px] px-2 py-1.5">
         <div className="min-w-0 flex-1"><strong className="block truncate text-ui-sm font-medium">{row.title ?? "未命名会话"}</strong><small className="text-caption text-fg-3">{[when(row.updatedAt), row.source ? SOURCES[row.source] ?? row.source : ""].filter(Boolean).join(" · ")}</small></div>
         {row.conversationId

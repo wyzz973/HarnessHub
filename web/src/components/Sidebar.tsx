@@ -172,7 +172,7 @@ export function Sidebar(props: SidebarProps) {
       {icon(<Search size={16}/>)}<span className="flex-1">搜索</span><span className="text-caption text-fg-3" aria-hidden="true">⌘K</span></button>
     {props.onInbox ? inboxRow : <Popover label="等你处理" open={props.inboxOpen} onOpenChange={props.onInboxOpenChange} side="right" align="start" sideOffset={20} initialFocus={firstWaiting}
       className="inbox-pop flex w-[440px] max-w-[calc(100vw-24px)] flex-col" trigger={inboxRow}><InboxList {...props.inbox} focusRef={firstWaiting}/></Popover>}
-    {nav("harnesses", "Agent", <Bot size={16}/>, props.activeJobs ? <Spinner size={13} tone="run" label={`${props.activeJobs} 个安装任务进行中`}/>
+    {nav("harnesses", "Harness", <Bot size={16}/>, props.activeJobs ? <Spinner size={13} tone="run" label={`${props.activeJobs} 个安装任务进行中`}/>
       : props.updates ? <Badge tone="accent" className="h-[18px]">{props.updates} 个更新</Badge> : null)}
     {nav("capabilities", "能力", <Blocks size={16}/>)}
     {props.providerManagement ? nav("providers", "模型连接", <SlidersHorizontal size={16}/>) : null}

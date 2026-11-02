@@ -33,7 +33,7 @@ function LoginShellPanel({ api, onChanged }: { readonly api: GatewayApi; readonl
   return <section className="login-shell-panel flex flex-col gap-3 px-4 py-3.5" aria-label="来自登录 shell 的目录">
     <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2.5">
       <div className="min-w-[min(240px,100%)] flex-1"><div className="text-ui font-medium">从登录 shell 补充搜索目录</div>
-        <p className="m-0 mt-0.5 text-ui-sm text-fg-2">会执行你的 shell 登录配置{view.shell ? `（${view.shell} -l）` : ""}来读取 PATH；新增的目录只用于发现 Agent，不改变 HarnessHub 自己的环境。只运行列在 /etc/shells 中的 shell：用 Homebrew 等方式安装、没有加入这个文件的 shell 会被拒绝。</p></div>
+        <p className="m-0 mt-0.5 text-ui-sm text-fg-2">会执行你的 shell 登录配置{view.shell ? `（${view.shell} -l）` : ""}来读取 PATH；新增的目录只用于发现 Harness，不改变 HarnessHub 自己的环境。只运行列在 /etc/shells 中的 shell：用 Homebrew 等方式安装、没有加入这个文件的 shell 会被拒绝。</p></div>
       {view.available ? <button type="button" className="btn flex-none" disabled={busy} onClick={() => change(api.readLoginShell(crypto.randomUUID()))}>{busy ? <Spinner size={13} label=""/> : <RefreshCw size={14} aria-hidden="true"/>}读取并重新检测</button> : null}</div>
     {view.dirs.length ? <ul className="m-0 flex list-none flex-col gap-1 p-0">{view.dirs.map(dir => <li key={dir} className="flex items-center gap-2 rounded-row bg-inset py-1 pr-1 pl-3"><code className="min-w-0 flex-1 text-code break-all">{dir}</code><button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => change(api.removeLoginShellDirectory(dir, crypto.randomUUID()))}>移除</button></li>)}</ul>
       : view.readAt !== null ? <small className="text-ui-sm text-fg-3">登录 shell 的 PATH 没有带来新的目录。</small> : null}
@@ -43,7 +43,7 @@ function LoginShellPanel({ api, onChanged }: { readonly api: GatewayApi; readonl
 
 const THEMES: readonly { readonly value: Preferences["theme"]; readonly label: string; readonly icon: typeof Sun }[] = [{ value: "system", label: "跟随系统", icon: Monitor }, { value: "light", label: "浅色", icon: Sun }, { value: "dark", label: "深色", icon: Moon }];
 /** The frozen Harnesses' switch (ADR-050), named by this label as well. */
-const FROZEN_LABEL = "显示冻结的 Agent（Cursor、Gemini CLI、Pi）";
+const FROZEN_LABEL = "显示冻结的 Harness（Cursor、Gemini CLI、Pi）";
 /**
  * Settings (ADR-042 §5, ADR-054): appearance and process display of this browser, notifications, discovery on this
  * computer, every shortcut, and where data lives. Theme and display choices apply at once and stay after a reload.
@@ -71,11 +71,11 @@ export function SettingsPage({ api, preferences, onPreference, onRescan, scannin
     <Section title="通知">
       <Card className={ROWS}>
         <Row title="系统通知" control={<Switch checked={notify.on} onChange={() => void notify.toggle()} disabled={!notify.supported || notify.blocked} label="系统通知"/>}>
-          页面在后台时：有审批或提问等你时通知并响一声；正在看的对话做完或失败时只通知、不响。在前台时只更新侧栏和标签页标题。通知只写 Agent 的名称、状态、步数和用时，不含对话内容。
+          页面在后台时：有审批或提问等你时通知并响一声；正在看的对话做完或失败时只通知、不响。在前台时只更新侧栏和标签页标题。通知只写 Harness 的名称、状态、步数和用时，不含对话内容。
           {!notify.supported ? <span className="mt-1 block text-fg-3">这个浏览器不支持通知。</span> : notify.blocked ? <span className="mt-1 block text-fg-3">浏览器已阻止本页的通知，可在浏览器的网站设置中允许。</span> : null}</Row>
       </Card>
     </Section>
-    <Section title="发现" description="按各产品的官方命令名和官网安装目录查找本机的 Agent。">
+    <Section title="发现" description="按各产品的官方命令名和官网安装目录查找本机的 Harness。">
       <Card className={ROWS}>
         <LoginShellPanel api={api} onChanged={onRescan}/>
         <Row title="重新检测" control={<button type="button" className="btn" onClick={onRescan} disabled={scanning}>{scanning ? <Spinner size={13} label=""/> : <RefreshCw size={14} aria-hidden="true"/>}立即检测</button>}>
@@ -91,11 +91,11 @@ export function SettingsPage({ api, preferences, onPreference, onRescan, scannin
     <Section title="数据">
       <Card className={ROWS}>
         <div className="flex flex-col gap-2 px-4 py-3.5 text-ui-sm text-fg-2">
-          <p className="m-0">对话、执行记录和附件保存在本机网关的数据目录里。各 Agent 自己的会话、配置和登录状态留在它们原来的位置，HarnessHub 不复制、不修改。</p>
-          <p className="m-0">这个浏览器只保存未发送的草稿（关闭标签页后清除）、显示偏好、通知开关，以及每个 Agent 上次用的入口、模型和思考档位，不保存密钥。</p>
+          <p className="m-0">对话、执行记录和附件保存在本机网关的数据目录里。各 Harness 自己的会话、配置和登录状态留在它们原来的位置，HarnessHub 不复制、不修改。</p>
+          <p className="m-0">这个浏览器只保存未发送的草稿（关闭标签页后清除）、显示偏好、通知开关，以及每个 Harness 上次用的入口、模型和思考档位，不保存密钥。</p>
         </div>
         <Row title="显示偏好" control={<button type="button" className="btn btn-sm" onClick={() => (Object.keys(DEFAULT_PREFERENCES) as (keyof Preferences)[]).forEach(key => onPreference(key, DEFAULT_PREFERENCES[key] as never))}>恢复默认</button>}>
-          主题、过程显示、侧栏、详情面板和冻结 Agent 的显示回到默认。</Row>
+          主题、过程显示、侧栏、详情面板和冻结 Harness 的显示回到默认。</Row>
       </Card>
     </Section>
   </PageShell>;

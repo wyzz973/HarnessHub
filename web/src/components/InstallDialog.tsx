@@ -31,7 +31,7 @@ export function InstallDialog({ api, harness, onClose, onConfirm }: {
       .then(value => { if (!controller.signal.aborted) setCheck(value); }, error => { if (!controller.signal.aborted) setFailure(errorMessage(error)); });
     return () => controller.abort();
   }, [api, id, attempt]);
-  const name = harness?.name ?? "Agent";
+  const name = harness?.name ?? "Harness";
   return <Dialog open={harness !== null} onOpenChange={open => { if (!open) onClose(); }} title={`安装 ${name}`} description={check ? check.method === "npm" ? "按官网方式，用 npm 安装" : "按官网方式，运行官方安装脚本" : "按官网方式安装"}
     className="install-dialog w-[min(560px,calc(100vw-32px))]">
     <ConfirmBody>
