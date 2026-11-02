@@ -2223,7 +2223,7 @@ test("G054-DL3 the home greets, says who is ready from the readiness facts and w
   await expect(list.getByRole("button", { name: "选择 OpenClaw", exact: true })).toContainText("需要登录");
   await rowTint(page, list.getByRole("button", { name: "选择 Codex", exact: true }));
   // What is not installed is found on the Agent page, called by that page's name.
-  await expect(list).toContainText(/另有 \d+ 个 Harness 在目录中但未安装，可以在 Harness 页查看官方安装方式。/u); await expect(list).not.toContainText("我的 Agent");
+  await expect(list).toContainText(/另有 \d+ 个在目录中但未安装，可以在 Harness 页查看官方安装方式。/u); await expect(list).not.toContainText(/我的 Agent|Agent 页/u);
   await list.getByRole("button", { name: "选择 Codex", exact: true }).click();
   await expect(chip).toContainText("Codex"); await expect(composer).toBeFocused();
   await shoot("dl3-home");

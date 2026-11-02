@@ -70,7 +70,7 @@ export function InstructionsPanel({ api, harness, reload, onChange, onNotice }: 
   };
   return <section className="instructions-panel card px-4 py-3.5 text-ui-sm" aria-label="统一指令">
     <div className="flex min-w-0 max-w-reading flex-col gap-0.5"><h3 className="m-0 text-ui font-semibold">统一指令</h3>
-      <span className="text-caption text-fg-3">HarnessHub 保存一份共享指令和每个 Harness 的追加文本，以带标记的区块写进各 Harness 的用户级指令文件；区块外的内容不动。</span></div>
+      <span className="text-caption text-fg-3">HarnessHub 保存一份共享指令和每个 Harness 的追加文本，以带标记的区块写进各家的用户级指令文件；区块外的内容不动。</span></div>
     {problem ? <Notice tone="red" className="mt-3">{problem}</Notice> : null}
     {view === null ? problem ? null : <p className="m-0 mt-3 flex items-center gap-2 text-fg-2" role="status"><Spinner size={13} label=""/>正在读取指令</p> : <>
       <label className="mt-3 flex flex-col gap-1.5">

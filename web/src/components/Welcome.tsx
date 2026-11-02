@@ -144,7 +144,7 @@ function AgentList({ trigger, open, onOpenChange, harnesses, status, selected, f
               <button type="button" className="btn btn-sm" onClick={() => { onOpenChange(false); onSettings(); }}>从登录 shell 补充目录</button>
               <button type="button" className="btn btn-sm" onClick={onRescan} disabled={scanning}><RefreshCw size={12} className={cn(scanning && "spin")} aria-hidden="true"/>重新检测</button>
             </div> : null}
-            {missing > 0 ? <p className="m-0 px-3.5 py-2.5 text-caption text-fg-3 hairline-t">另有 {missing} 个 Harness 在目录中但未安装，可以在 Harness 页查看官方安装方式。HarnessHub 不会替你运行安装命令。</p> : null}
+            {missing > 0 ? <p className="m-0 px-3.5 py-2.5 text-caption text-fg-3 hairline-t">另有 {missing} 个在目录中但未安装，可以在 Harness 页查看官方安装方式。HarnessHub 不会替你运行安装命令。</p> : null}
           </section>
         </BasePopover.Popup>
       </BasePopover.Positioner>
