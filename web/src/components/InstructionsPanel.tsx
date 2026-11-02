@@ -43,7 +43,7 @@ export function InstructionsPanel({ api, harness, reload, onChange, onNotice }: 
     setBusy(true);
     api.saveInstructions(shared, Object.fromEntries(Object.entries(additions).filter(([, text]) => text.trim() !== ""))).then(next => {
       setBusy(false); setEdited(false); setView(next); setShared(next.shared.text); setAdditions(savedAdditions(next));
-      onNotice("已保存指令。要写进各 Agent，请在下面逐个确认。", false);
+      onNotice("已保存指令。要写进各 Harness，请在下面逐个确认。", false);
     }, error => { setBusy(false); onNotice(errorMessage(error), true); });
   };
   const discard = () => { if (view === null) return; setEdited(false); setShared(view.shared.text); setAdditions(savedAdditions(view)); };
@@ -70,17 +70,17 @@ export function InstructionsPanel({ api, harness, reload, onChange, onNotice }: 
   };
   return <section className="instructions-panel card px-4 py-3.5 text-ui-sm" aria-label="统一指令">
     <div className="flex min-w-0 max-w-reading flex-col gap-0.5"><h3 className="m-0 text-ui font-semibold">统一指令</h3>
-      <span className="text-caption text-fg-3">HarnessHub 保存一份共享指令和每个 Agent 的追加文本，以带标记的区块写进各 Agent 的用户级指令文件；区块外的内容不动。</span></div>
+      <span className="text-caption text-fg-3">HarnessHub 保存一份共享指令和每个 Harness 的追加文本，以带标记的区块写进各 Harness 的用户级指令文件；区块外的内容不动。</span></div>
     {problem ? <Notice tone="red" className="mt-3">{problem}</Notice> : null}
     {view === null ? problem ? null : <p className="m-0 mt-3 flex items-center gap-2 text-fg-2" role="status"><Spinner size={13} label=""/>正在读取指令</p> : <>
       <label className="mt-3 flex flex-col gap-1.5">
         <span className="flex items-baseline justify-between gap-2 text-caption"><span className="font-medium text-fg-2">共享指令</span><span className={utf8(shared) > limit ? "text-red" : "text-fg-3"}>{kib(utf8(shared))} / {kib(limit)}</span></span>
         <textarea className="field min-h-[132px] font-mono text-code" aria-label="共享指令" aria-describedby="instructions-hint" value={shared} placeholder="例如：回复使用中文；提交信息写清改了什么、为什么。"
           onChange={event => { setEdited(true); setShared(event.target.value); }}/>
-        <span id="instructions-hint" className="text-caption text-fg-3">家目录请写成 ~（例如 ~/projects），不要写完整路径；不要写密钥。各 Agent 会把这段文字当作你的长期指令。</span>
+        <span id="instructions-hint" className="text-caption text-fg-3">家目录请写成 ~（例如 ~/projects），不要写完整路径；不要写密钥。各 Harness 会把这段文字当作你的长期指令。</span>
       </label>
       <button type="button" className="btn btn-ghost btn-sm mt-2 -ml-2.5 self-start" aria-expanded={open} aria-controls="instruction-additions" onClick={() => setOpen(value => !value)}>
-        <ChevronRight size={13} aria-hidden="true" className={open ? "motion-rotate rotate-90" : "motion-rotate"}/>每个 Agent 的追加文本{written ? "（" + written + "）" : ""}</button>
+        <ChevronRight size={13} aria-hidden="true" className={open ? "motion-rotate rotate-90" : "motion-rotate"}/>每个 Harness 的追加文本{written ? "（" + written + "）" : ""}</button>
       <Collapsible open={open} id="instruction-additions"><div className="instruction-additions flex flex-col gap-3 pt-1.5 pb-1">{writable.map(target => <label key={target.harnessId} className="flex flex-col gap-1.5">
         <span className="flex items-baseline justify-between gap-2 text-caption"><span className="font-medium text-fg-2">{target.name}</span><span className="text-fg-3">接在共享指令后面，只写进 {target.name}</span></span>
         <textarea className="field min-h-[56px] font-mono text-code" aria-label={target.name + " 的追加文本"} value={additions[target.harnessId] ?? ""}
@@ -89,10 +89,10 @@ export function InstructionsPanel({ api, harness, reload, onChange, onNotice }: 
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <button type="button" className="btn btn-primary btn-sm" disabled={!dirty || busy || over} onClick={save}>{busy ? <Spinner size={12} label=""/> : <Save size={13}/>}保存</button>
         <button type="button" className="btn btn-ghost btn-sm" disabled={!dirty || busy} onClick={discard}><Undo2 size={13}/>放弃修改</button>
-        {dirty ? <span className="text-caption text-amber">有未保存的修改；写入各 Agent 前请先保存。</span> : view.shared.updatedAt ? <span className="text-caption text-fg-3">保存于 {new Date(view.shared.updatedAt).toLocaleString()}</span> : null}
+        {dirty ? <span className="text-caption text-amber">有未保存的修改；写入各 Harness 前请先保存。</span> : view.shared.updatedAt ? <span className="text-caption text-fg-3">保存于 {new Date(view.shared.updatedAt).toLocaleString()}</span> : null}
       </div>
       <div className="mt-4 overflow-x-auto"><table className="instruction-targets w-full border-collapse text-left">
-        <thead><tr className="hairline-b text-caption text-fg-3"><th scope="col" className="py-2 pr-3 font-normal">Agent</th><th scope="col" className="px-2 py-2 font-normal">文件</th>
+        <thead><tr className="hairline-b text-caption text-fg-3"><th scope="col" className="py-2 pr-3 font-normal">Harness</th><th scope="col" className="px-2 py-2 font-normal">文件</th>
           <th scope="col" className="px-2 py-2 font-normal">状态</th><th scope="col" className="px-2 py-2 font-normal">什么时候生效</th><th scope="col" className="px-2 py-2 font-normal">操作</th></tr></thead>
         <tbody>{rows.map(target => <tr key={target.harnessId} className="align-top [&+&]:hairline-t" data-harness={target.harnessId}>
           <th scope="row" className="py-2.5 pr-3 font-medium"><span className="flex items-center gap-2 whitespace-nowrap"><BrandIcon brand={target.harnessId} name={target.name} size={16}/>{target.name}</span></th>

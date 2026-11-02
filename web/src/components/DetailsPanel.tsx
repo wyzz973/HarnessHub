@@ -128,7 +128,7 @@ export function DetailsPanel(props: PanelProps) {
   const kept = session.retention?.process ?? null;
   const background = runs.flatMap(run => (run.activities ?? []).filter(activity => activity.kind === "task" || activity.kind === "subagent").map(activity => ({ run, activity })));
   const running = background.filter(item => item.activity.status === "running").length + (kept ? 1 : 0);
-  const name = (id: string | undefined) => props.harnesses.find(row => row.id === id)?.name ?? id ?? "Agent";
+  const name = (id: string | undefined) => props.harnesses.find(row => row.id === id)?.name ?? id ?? "Harness";
   // The header button's number, from the same summaries: shown at once, never waiting for a diff to be read.
   const total = changeCount(runs);
   // The step a Run's waiting approval asks for says what it wants to do here as in its Turn (ruling J).
@@ -146,7 +146,7 @@ export function DetailsPanel(props: PanelProps) {
     <div className="scroll-area min-h-0 flex-1" role="tabpanel" id="details-tabpanel" aria-labelledby={`details-tab-${tab}`}>
       {tab === "changes" ? <Changes changes={changes} counts={{ turn: selected ? changeCount([selected]) : 0, all: total }} selected={selected} workspace={session.workspace} name={name} sessionId={session.id}/>
         : tab === "process" ? selected ? <Process run={selected} runs={runs} onRun={props.onRun} describe={props.describe} loadToolDetail={props.loadToolDetail} name={name} asking={asking} waiting={run => waitingWords(session, run)}/> : <Empty>这个对话还没有执行记录。</Empty>
-        : tab === "plan" ? plan ? <div className="px-4 pt-3 pb-4"><PlanView plan={plan} owner={name(planRun?.selection.harnessId)}/></div> : <EmptyState icon={<ListChecks size={22}/>} title="还没有计划">Agent 报告计划后会显示在这里。</EmptyState>
+        : tab === "plan" ? plan ? <div className="px-4 pt-3 pb-4"><PlanView plan={plan} owner={name(planRun?.selection.harnessId)}/></div> : <EmptyState icon={<ListChecks size={22}/>} title="还没有计划">Harness 报告计划后会显示在这里。</EmptyState>
         : tab === "background" ? <Background session={session} kept={kept} items={background} busy={props.busy} onEndProcess={props.onEndProcess} name={name}/>
         : selected ? <RunFacts {...props} run={selected} runs={runs}/> : <Empty>发出第一条消息后，这里会显示执行者、阶段耗时与用量。</Empty>}
     </div>
@@ -180,7 +180,7 @@ function Changes({ changes, counts, selected, workspace, name, sessionId }: { re
   const [scope, setScope] = useState<"turn" | "all">("all");
   const [chosen, setChosen] = useState<string | null>(null);
   useEffect(() => { setChosen(null); setScope("all"); }, [sessionId]);
-  if (!changes.edits) return <EmptyState icon={<FileText size={22}/>} title="还没有改动">Agent 在这个对话里编辑文件后，改动会按文件列在这里，只读，不提供撤销。</EmptyState>;
+  if (!changes.edits) return <EmptyState icon={<FileText size={22}/>} title="还没有改动">Harness 在这个对话里编辑文件后，改动会按文件列在这里，只读，不提供撤销。</EmptyState>;
   const turn = selected ? changes.files.filter(file => file.runIds.has(selected.id)) : [];
   const files = scope === "turn" ? turn : changes.files;
   const current = files.find(file => file.path === chosen) ?? files[0];
@@ -207,7 +207,7 @@ function Changes({ changes, counts, selected, workspace, name, sessionId }: { re
       </div>
       <div className="native-diff diff py-1.5" role="group" aria-label="差异">{current.diffs.map((diff, index) => <div key={index} className={cn(index > 0 && "hairline-t")}><DiffLines file={diff} headers={false}/></div>)}</div>
     </section>
-      : !changes.loading && !changes.failures.length ? <p className="m-0 px-4 pb-4 text-caption text-fg-3">{scope === "turn" && changes.files.length ? "这一轮没有改动文件。" : "Agent 改了文件，但没有返回差异文本。"}</p> : null}
+      : !changes.loading && !changes.failures.length ? <p className="m-0 px-4 pb-4 text-caption text-fg-3">{scope === "turn" && changes.files.length ? "这一轮没有改动文件。" : "Harness 改了文件，但没有返回差异文本。"}</p> : null}
   </div>;
 }
 
@@ -265,14 +265,14 @@ function Process({ run, runs, onRun, describe, loadToolDetail, name, asking, wai
   const now = useNow(runs.some(item => !finished(item.status)));
   const agents = new Set(runs.map(item => item.selection.harnessId)).size;
   return <div className="flex flex-col gap-1 px-2.5 pt-3 pb-4">
-    <p className="m-0 px-1.5 pb-1 text-caption text-fg-3">{agents > 1 ? (agents === 2 ? "两个" : agents + " 个") + " Agent 的全部步骤，按时间排列" : "这个对话的全部步骤，按时间排列"}</p>
+    <p className="m-0 px-1.5 pb-1 text-caption text-fg-3">{agents > 1 ? (agents === 2 ? "两个" : agents + " 个") + " Harness 的全部步骤，按时间排列" : "这个对话的全部步骤，按时间排列"}</p>
     <ol className="m-0 flex list-none flex-col gap-px p-0">{runs.map((item, index) => <RunProcess key={item.id} run={item} index={index} open={item.id === run.id && closed !== item.id} now={now} name={name} describe={describe} loadToolDetail={loadToolDetail} asking={asking(item)} waiting={waiting(item)}
       onToggle={() => { if (item.id === run.id) setClosed(closed === item.id ? null : item.id); else { setClosed(null); onRun(item.id); } }}/>)}</ol>
   </div>;
 }
 function Background({ session, kept, items, busy, onEndProcess, name }: { readonly session: SessionView; readonly kept: NonNullable<SessionView["retention"]>["process"] | null; readonly items: readonly { readonly run: PublicRun; readonly activity: NonNullable<PublicRun["activities"]>[number] }[]; readonly busy: boolean; readonly onEndProcess?: (() => void) | undefined; readonly name: (id: string | undefined) => string }) {
   const now = useNow(kept !== null), keeper = kept ? name(kept.harnessId) : "原程序";
-  const hint = session.retention?.enabled ? "已开启保持原生进程：下一轮结束后原程序会留在后台。" : "回合结束时原程序随之关闭。需要它在后台继续运行任务时，在 Agent 选择器（⌘J）底部打开“高级配置…”，开启“保持原生进程”。";
+  const hint = session.retention?.enabled ? "已开启保持原生进程：下一轮结束后原程序会留在后台。" : "回合结束时原程序随之关闭。需要它在后台继续运行任务时，在 Harness 选择器（⌘J）底部打开“高级配置…”，开启“保持原生进程”。";
   return <div className="flex flex-col gap-3 px-4 pt-3 pb-4">
     {kept ? <div className="kept-panel flex flex-col gap-2 rounded-block bg-surface p-3 shadow-hairline">
       <div className="flex items-center gap-2"><StatusDot tone="run"/><strong className="text-ui-sm font-semibold">原生进程保留中</strong></div>
@@ -287,7 +287,7 @@ function Background({ session, kept, items, busy, onEndProcess, name }: { readon
       <ul className="m-0 flex list-none flex-col gap-px p-0">{items.map(({ activity }) => <li key={activity.id} className="flex min-h-[30px] items-center gap-2.5 px-1 text-ui-sm">
         <StatusDot tone={activity.status === "running" ? "run" : activity.status === "failed" ? "fail" : "idle"}/>
         <span className="min-w-0 flex-1"><span className="text-fg-3">{ACTIVITY_KIND[activity.kind]} · </span>{activity.title}</span><span className={cn("flex-none text-caption", activity.status === "failed" ? "text-red" : "text-fg-3")}>{ACTIVITY_STATUS[activity.status]}</span></li>)}</ul>
-    </> : kept ? null : <EmptyState icon={<Clock size={22}/>} title="没有后台任务">Agent 在后台运行的命令和子 Agent 会出现在这里。</EmptyState>}
+    </> : kept ? null : <EmptyState icon={<Clock size={22}/>} title="没有后台任务">Harness 在后台运行的命令和子 Agent 会出现在这里。</EmptyState>}
     {kept ? null : <p className="m-0 text-center text-caption text-fg-3">{hint}</p>}
   </div>;
 }
@@ -301,7 +301,7 @@ function RunFacts(props: PanelProps & { readonly run: PublicRun; readonly runs: 
     <RunPicker runs={props.runs} run={run} onRun={props.onRun}/>
     <dl className="m-0 grid grid-cols-[96px_minmax(0,1fr)] gap-x-3 gap-y-2">
       <Fact label="执行者"><span className="inline-flex items-center gap-1.5"><BrandIcon brand={run.selection.harnessId} name={harness?.name ?? run.selection.harnessId} size={16}/>{harness?.name ?? run.selection.harnessId}{version ? ` ${version}` : ""}{adapter ? ` · 接入口 ${adapter}` : ""}</span></Fact>
-      <Fact label="模型连接">{provider?.name ?? (run.selection.provider ? "Provider" : "Agent 原生连接")}</Fact>
+      <Fact label="模型连接">{provider?.name ?? (run.selection.provider ? "Provider" : "Harness 原生连接")}</Fact>
       {run.selection.provider ? <><Fact label="模型">{run.selection.provider.model}</Fact><Fact label="配置版本">{run.selection.provider.revision}</Fact></>
         : <Fact label="模型">{run.selection.nativeModel ? <code className="text-code">{run.selection.nativeModel}</code> : "本机默认"}</Fact>}
       {options.length ? <Fact label="原生选项">{options.map(([id, value]) => `${id} ${value}`).join("、")}</Fact> : null}

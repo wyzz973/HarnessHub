@@ -42,7 +42,7 @@ function SubagentDialog({ api, editing, onClose, onSaved }: { readonly api: Gate
     <div className={DIALOG_BODY}>
       {failure ? <Notice tone="red">{failure}</Notice> : null}
       {editing?.name ? null : <Field label="名字（小写字母、数字和 -）"><input className="field" aria-label="子 Agent 名字" value={name} placeholder="code-checker" onChange={event => setName(event.target.value)}/></Field>}
-      <Field label="说明（一行；各 Agent 按它决定什么时候交给这个子 Agent）"><input className="field" aria-label="子 Agent 说明" value={description} onChange={event => setDescription(event.target.value)}/></Field>
+      <Field label="说明（一行；各 Harness 按它决定什么时候交给这个子 Agent）"><input className="field" aria-label="子 Agent 说明" value={description} onChange={event => setDescription(event.target.value)}/></Field>
       <Field label="正文（子 Agent 的系统提示；家目录写成 ~）"><textarea className="field min-h-[160px] font-mono text-code" aria-label="子 Agent 正文" value={prompt} onChange={event => setPrompt(event.target.value)}/></Field>
     </div>
     <div className={DIALOG_FOOT}>
@@ -65,16 +65,16 @@ export function SubagentsPanel({ api, harness, reload, onChange, onNotice }: { r
   const columns = useMemo(() => view?.harnesses.filter(item => item.writable && (harness === null || item.harnessId === harness)) ?? [], [view, harness]);
   const skipped = useMemo(() => view?.harnesses.filter(item => !item.writable && (harness === null || item.harnessId === harness)) ?? [], [view, harness]);
   const claim = (name: string, harnessId: string) => api.claimSubagent(name, [harnessId]).then(() => { onNotice("已认领 " + name + "：文件由 HarnessHub 管理，没有改动。", false); setTick(value => value + 1); }, error => onNotice(errorMessage(error), true));
-  const remove = (name: string) => api.removeSubagent(name).then(() => { onNotice("已从清单删除 " + name + "。各 Agent 的文件没有改动。", false); setTick(value => value + 1); }, error => onNotice(errorMessage(error), true));
+  const remove = (name: string) => api.removeSubagent(name).then(() => { onNotice("已从清单删除 " + name + "。各 Harness 的文件没有改动。", false); setTick(value => value + 1); }, error => onNotice(errorMessage(error), true));
   return <section className="subagent-inventory card px-4 py-3.5 text-ui-sm" aria-label="统一子 Agent">
     <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
       <div className="flex min-w-0 max-w-reading flex-col gap-0.5"><h3 className="m-0 text-ui font-semibold">统一子 Agent</h3>
-        <span className="text-caption text-fg-3">HarnessHub 保存一份子 Agent 清单（名字、说明、正文），按各 Agent 自己的格式写成它们用户级目录里的文件。</span></div>
+        <span className="text-caption text-fg-3">HarnessHub 保存一份子 Agent 清单（名字、说明、正文），按各 Harness 自己的格式写成它们用户级目录里的文件。</span></div>
       <button type="button" className="btn btn-sm" onClick={() => setEditing({ name: null, definition: { description: "", prompt: "" } })}><Plus size={13}/>新建子 Agent</button>
     </div>
     {problem ? <Notice tone="red" className="mt-3">{problem}</Notice> : null}
     {view === null ? problem ? null : <p className="m-0 mt-3 flex items-center gap-2 text-fg-2" role="status"><Spinner size={13} label=""/>正在读取清单</p>
-      : view.subagents.length === 0 ? <p className="m-0 mt-3 text-fg-3">清单是空的。新建一个子 Agent，再逐个写入各 Agent。</p>
+      : view.subagents.length === 0 ? <p className="m-0 mt-3 text-fg-3">清单是空的。新建一个子 Agent，再逐个写入各 Harness。</p>
       : <div className="mt-3 overflow-x-auto"><table className="subagents w-full border-collapse text-left">
         <thead><tr className="hairline-b"><th scope="col" className="min-w-[220px] py-2 pr-3 text-caption font-normal text-fg-3">子 Agent</th>
           {columns.map(item => <th key={item.harnessId} scope="col" className="min-w-[96px] px-2 py-2 text-caption font-normal text-fg-2">
@@ -87,6 +87,6 @@ export function SubagentsPanel({ api, harness, reload, onChange, onNotice }: { r
           {columns.map(item => { const target = agent.targets.find(entry => entry.harnessId === item.harnessId); return <td key={item.harnessId} className="px-2 py-2.5">{target ? <TargetCell api={api} agent={agent} target={target} harnessName={item.name} onChange={onChange} onClaim={(name, harnessId) => void claim(name, harnessId)}/> : null}</td>; })}
         </tr>)}</tbody></table></div>}
     {skipped.length ? <ul className="m-0 mt-3 flex list-none flex-col gap-0.5 p-0 text-caption text-fg-3">{skipped.map(item => <li key={item.harnessId}>{item.name}：{item.reason}</li>)}</ul> : null}
-    <SubagentDialog api={api} editing={editing} onClose={() => setEditing(null)} onSaved={name => { setEditing(null); onNotice("已保存 " + name + " 到清单。要写入各 Agent，请在表格里逐个确认。", false); setTick(value => value + 1); }}/>
+    <SubagentDialog api={api} editing={editing} onClose={() => setEditing(null)} onSaved={name => { setEditing(null); onNotice("已保存 " + name + " 到清单。要写入各 Harness，请在表格里逐个确认。", false); setTick(value => value + 1); }}/>
   </section>;
 }

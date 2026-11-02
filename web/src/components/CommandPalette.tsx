@@ -103,7 +103,7 @@ export const SHORTCUT_GROUPS: readonly { readonly title: string; readonly rows: 
     { label: "收起或展开侧栏", keys: ["⌘", "B"] }, { label: "全部快捷键", keys: ["⌘", "/"] }, { label: "关闭弹出层", keys: ["esc"] },
   ] },
   { title: "对话", rows: [
-    { label: "发送；回复进行中时先暂存下一条", keys: ["⏎"] }, { label: "换行", keys: ["⇧", "⏎"] }, { label: "换 Agent", keys: ["⌘", "J"] }, { label: "停止当前回复", keys: ["⌘", "."], or: ["esc"] },
+    { label: "发送；回复进行中时先暂存下一条", keys: ["⏎"] }, { label: "换行", keys: ["⇧", "⏎"] }, { label: "换 Harness", keys: ["⌘", "J"] }, { label: "停止当前回复", keys: ["⌘", "."], or: ["esc"] },
     { label: "打开或收起详情面板", keys: ["⌘", "\\"] }, { label: "编辑上一条（输入框为空时）", keys: ["↑"] }, { label: "原生命令 · 引用文件", keys: ["/", "@"] },
   ] },
   { title: "审批停在输入框时", rows: [

@@ -94,10 +94,10 @@ function ImportDialog({ api, view, open, onClose, onImported }: { readonly api: 
     try { for (const [id, claim] of chosen) await api.importMcpServer(id, [...claim]); setBusy(false); onImported(chosen.size); }
     catch (error) { setBusy(false); setFailure(errorMessage(error)); }
   };
-  return <Dialog open={open} onOpenChange={value => { if (!value && !busy) onClose(); }} title="从现有配置导入 MCP 服务器" description="收进 HarnessHub 的清单；勾选“认领”的 Agent 里那一项会记为 HarnessHub 管理的。不改任何配置文件。" className="mcp-import-dialog w-[min(680px,calc(100vw-32px))]">
+  return <Dialog open={open} onOpenChange={value => { if (!value && !busy) onClose(); }} title="从现有配置导入 MCP 服务器" description="收进 HarnessHub 的清单；勾选“认领”的 Harness 里那一项会记为 HarnessHub 管理的。不改任何配置文件。" className="mcp-import-dialog w-[min(680px,calc(100vw-32px))]">
     <div className={DIALOG_BODY}>
       {failure ? <Notice tone="red">{failure}</Notice> : null}
-      {view.candidates.length === 0 ? <p className="m-0 text-fg-3">各 Agent 的用户级配置里没有 MCP 服务器。</p>
+      {view.candidates.length === 0 ? <p className="m-0 text-fg-3">各 Harness 的用户级配置里没有 MCP 服务器。</p>
         : <ul className="mcp-candidates m-0 flex list-none flex-col overflow-hidden rounded-block p-0 shadow-[inset_0_0_0_1px_var(--border)]">{view.candidates.map(candidate => {
         const selectable = candidate.definition !== null && candidate.state === "new", claims = chosen.get(candidate.id);
         return <li key={candidate.id} className="flex items-start gap-2.5 px-3 py-2.5 [&+&]:hairline-t">
@@ -133,12 +133,12 @@ export function McpInventoryPanel({ api, harness, reload, onChange, onNotice }: 
   useEffect(() => { const controller = new AbortController(); api.mcpInventory(controller.signal).then(next => { setView(next); setProblem(null); }, error => { if (!controller.signal.aborted) setProblem(errorMessage(error)); }); return () => controller.abort(); }, [api, reload, tick]);
   const columns = useMemo(() => view?.harnesses.filter(item => harness === null || item.harnessId === harness) ?? [], [view, harness]);
   const fresh = view?.candidates.filter(item => item.state === "new" && item.definition !== null).length ?? 0;
-  const claim = (name: string, harnessId: string) => api.claimMcpServer(name, [harnessId]).then(() => { onNotice("已认领 " + name + "：它在这个 Agent 里由 HarnessHub 管理，文件没有改动。", false); setTick(value => value + 1); }, error => onNotice(errorMessage(error), true));
-  const remove = (name: string) => api.removeMcpServer(name).then(() => { onNotice("已从清单删除 " + name + "。各 Agent 的配置没有改动。", false); setTick(value => value + 1); }, error => onNotice(errorMessage(error), true));
+  const claim = (name: string, harnessId: string) => api.claimMcpServer(name, [harnessId]).then(() => { onNotice("已认领 " + name + "：它在这个 Harness 里由 HarnessHub 管理，文件没有改动。", false); setTick(value => value + 1); }, error => onNotice(errorMessage(error), true));
+  const remove = (name: string) => api.removeMcpServer(name).then(() => { onNotice("已从清单删除 " + name + "。各 Harness 的配置没有改动。", false); setTick(value => value + 1); }, error => onNotice(errorMessage(error), true));
   return <section className="mcp-inventory card px-4 py-3.5 text-ui-sm" aria-label="MCP 统一清单">
     <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
       <div className="flex min-w-0 max-w-reading flex-col gap-0.5"><h3 className="m-0 text-ui font-semibold">MCP 统一清单</h3>
-        <span className="text-caption text-fg-3">HarnessHub 保存一份服务器清单（不保存任何密钥值），按各 Agent 自己的写法写入它们的用户级配置。</span></div>
+        <span className="text-caption text-fg-3">HarnessHub 保存一份服务器清单（不保存任何密钥值），按各 Harness 自己的写法写入它们的用户级配置。</span></div>
       <div className="flex flex-wrap gap-1.5">
         <button type="button" className="btn btn-sm" disabled={view === null} onClick={() => setImporting(true)}><Download size={13}/>从现有配置导入{fresh ? "（" + fresh + "）" : ""}</button>
         <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing({ name: null, definition: EMPTY })}><Plus size={13}/>新建服务器</button>
@@ -146,7 +146,7 @@ export function McpInventoryPanel({ api, harness, reload, onChange, onNotice }: 
     </div>
     {problem ? <Notice tone="red" className="mt-3">{problem}</Notice> : null}
     {view === null ? problem ? null : <p className="m-0 mt-3 flex items-center gap-2 text-fg-2" role="status"><Spinner size={13} label=""/>正在读取清单</p>
-      : view.servers.length === 0 ? <p className="m-0 mt-3 text-fg-3">清单是空的。可以从各 Agent 现有的配置导入，或新建一个。</p>
+      : view.servers.length === 0 ? <p className="m-0 mt-3 text-fg-3">清单是空的。可以从各 Harness 现有的配置导入，或新建一个。</p>
       : <div className="mt-3 overflow-x-auto"><table className="mcp-servers w-full border-collapse text-left">
         <thead><tr className="hairline-b"><th scope="col" className="min-w-[220px] py-2 pr-3 text-caption font-normal text-fg-3">服务器</th>
           {columns.map(item => <th key={item.harnessId} scope="col" className="min-w-[96px] px-2 py-2 text-caption font-normal text-fg-2" title={item.reason ?? undefined}>
@@ -159,7 +159,7 @@ export function McpInventoryPanel({ api, harness, reload, onChange, onNotice }: 
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => void remove(server.name)}><Trash2 size={12}/>从清单删除</button></span></span></th>
           {columns.map(item => { const target = server.targets.find(entry => entry.harnessId === item.harnessId); return <td key={item.harnessId} className="px-2 py-2.5">{target ? <TargetCell api={api} server={server} target={target} harnessName={item.name} onChange={onChange} onClaim={(name, harnessId) => void claim(name, harnessId)}/> : null}</td>; })}
         </tr>)}</tbody></table></div>}
-    {view ? <ImportDialog api={api} view={view} open={importing} onClose={() => setImporting(false)} onImported={count => { setImporting(false); onNotice("已导入 " + count + " 个服务器。各 Agent 的配置没有改动。", false); setTick(value => value + 1); }}/> : null}
-    <ServerDialog api={api} editing={editing} onClose={() => setEditing(null)} onSaved={name => { setEditing(null); onNotice("已保存 " + name + " 到清单。要写入各 Agent，请在表格里逐个确认。", false); setTick(value => value + 1); }}/>
+    {view ? <ImportDialog api={api} view={view} open={importing} onClose={() => setImporting(false)} onImported={count => { setImporting(false); onNotice("已导入 " + count + " 个服务器。各 Harness 的配置没有改动。", false); setTick(value => value + 1); }}/> : null}
+    <ServerDialog api={api} editing={editing} onClose={() => setEditing(null)} onSaved={name => { setEditing(null); onNotice("已保存 " + name + " 到清单。要写入各 Harness，请在表格里逐个确认。", false); setTick(value => value + 1); }}/>
   </section>;
 }
