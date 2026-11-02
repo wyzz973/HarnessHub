@@ -13,12 +13,12 @@ function nativeNote(session: SessionView, origin: SessionOrigin): string {
   const state = session.nativeStates?.find(item => item.harnessId === session.selection.harnessId && item.controlId === session.selection.controlId);
   if (origin.kind === "import") {
     if (state?.status === "ready") return "新消息直接发给这个本机会话，它记得自己的全部历史；请不要同时在原程序中继续它。";
-    if (state?.status === "unconfirmed") return "本机会话的状态尚未确认；可在高级配置中重新建立原生会话。";
+    if (state?.status === "unconfirmed") return "本机会话的状态尚未确认；可在 Agent 选择器（⌘J）底部的“高级配置…”中重新建立原生会话。";
     return "这个对话不再使用原来的本机会话：下一条消息会带上下面引用的历史。";
   }
   if (state?.status === "forking") return "正在为分支建立原生会话副本，完成后再处理新消息。";
   if (state?.status === "ready") return "原生会话已分支：新消息在原生副本中继续，原对话不受影响。";
-  if (state?.status === "unconfirmed") return "原生分支结果尚未确认；可在高级配置中重新建立原生会话。";
+  if (state?.status === "unconfirmed") return "原生分支结果尚未确认；可在 Agent 选择器（⌘J）底部的“高级配置…”中重新建立原生会话。";
   return "这个分支以公共历史继续：下一条消息会带上下面的对话。";
 }
 
@@ -42,7 +42,7 @@ export function BranchOrigin({ origin, session, harnesses, onOpenSource }: { ori
     </header>
     <p className="m-0 text-ui-sm text-fg-2" role="status">{nativeNote(session, origin)}</p>
     {origin.history.length ? <div className="flex flex-col">
-      <button type="button" aria-expanded={open} aria-controls={history} onClick={() => setOpen(value => !value)} className="row -ml-1.5 flex h-7 items-center gap-1.5 self-start border-none bg-transparent px-1.5 text-ui-sm text-fg-2">
+      <button type="button" aria-expanded={open} aria-controls={history} onClick={() => setOpen(value => !value)} className="row -ml-1.5 flex h-7 items-center gap-1.5 self-start border-none bg-transparent px-1.5 text-ui-sm text-fg-2 hover:bg-subtle">
         {imported ? <History size={14} className="text-fg-3" aria-hidden="true"/> : null}{imported ? "查看本机会话的历史" : "查看分支前的对话"}
         <ChevronRight size={12} strokeWidth={2.2} className={cn("text-fg-3 motion-rotate", open && "rotate-90")} aria-hidden="true"/>
       </button>

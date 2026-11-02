@@ -77,14 +77,15 @@ export interface MenuEntry {
 /**
  * A menu of actions; links download or navigate natively, items run their handler and close the menu. An item that opens
  * a panel (a triggerless Popover) leaves the focus to that panel: the menu gives the focus back to its trigger only while
- * nothing outside it has taken it.
+ * nothing outside it has taken it. Controlled when `open` is given, as a Popover is, so that its owner can also close it.
  */
-export function Menu({ trigger, items, side = "bottom", align = "end", footer, className }: {
+export function Menu({ trigger, items, side = "bottom", align = "end", footer, className, open, onOpenChange }: {
   readonly trigger: ReactElement; readonly items: readonly (MenuEntry | { readonly separator: true } | { readonly heading: string })[];
   readonly side?: Side; readonly align?: Align; readonly footer?: ReactNode; readonly className?: string;
+  readonly open?: boolean; readonly onOpenChange?: (open: boolean) => void;
 }) {
   const id = useId();
-  return <BaseMenu.Root>
+  return <BaseMenu.Root {...(open === undefined ? {} : { open })} {...(onOpenChange ? { onOpenChange: (next: boolean) => onOpenChange(next) } : {})}>
     <BaseMenu.Trigger render={trigger}/>
     <BaseMenu.Portal>
       <BaseMenu.Positioner side={side} align={align} sideOffset={6} collisionPadding={12} positionMethod="fixed" className="hh-positioner z-50">

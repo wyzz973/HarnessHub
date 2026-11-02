@@ -240,6 +240,9 @@ export function App() {
   const [sessionLoading, setSessionLoading] = useState(initialRoute.id !== null);
   const [sessionError, setSessionError] = useState<string | null>(initialRoute.error);
   const [chatKey, setChatKey] = useState(0);
+  // The conversation the composer's native sessions panel opened (continued, or the one that already continues the session)
+  // in place of the page whose control was pressed; it takes the focus once shown (ChatPage `focusOnOpen`).
+  const [continued, setContinued] = useState<string | null>(null);
   const [draft, setDraft] = useState<SelectionDraft>({ ...EMPTY_SELECTION });
   const [messageDraft, setMessageDraft] = useState("");
   const [attachments, setAttachments] = useState<readonly AttachmentDraft[]>([]);
@@ -725,12 +728,14 @@ export function App() {
     // Withdrawing is best effort; an unsent upload is collected after the retention window anyway.
     if (item?.ref) void api.discardAttachment(item.ref.id).catch(() => {});
   };
+  /** Opens a conversation to continue a native session in, from the composer's panel; it takes the focus once shown. */
+  const openContinued = (id: string) => { setContinued(id); selectSession(id); };
   /** Creates the branch, then opens it; the new conversation keeps the same Harness selection. */
   /** Continues a listed native session as a new conversation and opens it; the selection stays the Harness's own. */
   const importNative = (nativeId: string) => {
     if (!startOperation("importing")) return;
     const target = { harnessId: draft.harnessId, controlId: draft.controlId };
-    void api.importNativeSession(session?.workspace ?? workspace, target, nativeId, requestKey()).then(async created => { await refreshState().catch(() => {}); endOperation(); selectSession(created.id); },
+    void api.importNativeSession(session?.workspace ?? workspace, target, nativeId, requestKey()).then(async created => { await refreshState().catch(() => {}); endOperation(); openContinued(created.id); },
       failure => { setError(errorMessage(failure)); endOperation(); });
   };
   const branch = (runId: string) => {
@@ -1020,7 +1025,7 @@ export function App() {
         onRetryConnection={() => setStreamAttempt(value => value + 1)} onDraft={changeSelection} onWorkspace={setWorkspace} onSend={send} attachments={attachments} onAttach={attachFiles} onRemoveAttachment={removeAttachment} onBranch={branch} onOpenSession={selectSession}
         sessionTitle={id => state.sessions.find(item => item.id === id)?.title ?? null} attention={attention?.items ?? null} onCancelQueued={cancelQueued} onLoadNativeResume={session ? signal => api.nativeResume(session.id, signal) : undefined}
         onLoadExtensions={signal => api.nativeExtensions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, signal)} onLoadNativeSessions={(cursor, signal, probes) => api.nativeSessions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, cursor, signal, probes)}
-        onImportNative={importNative} onApply={() => { lastAutoSelection.current = null; void applySelection(); }} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }}
+        onImportNative={importNative} onOpenContinued={openContinued} focusOnOpen={sessionId !== null && continued === sessionId} onOpenFocused={() => setContinued(null)} onApply={() => { lastAutoSelection.current = null; void applySelection(); }} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }}
         onProviders={() => navigate("providers")} onNew={newChat} onMenu={shell.onMenu}
         queued={queued} onQueue={queueMessage} onEditQueued={() => { if (queued) returnQueued(queued, null); }} onWithdrawQueued={withdrawQueued} queueNotice={queueNotice} onDismissQueueNotice={() => setQueueNotice(null)}
         preferences={preferences} onPreference={setPreference} conversations={state.sessions.length} sidebarHidden={!narrow && !preferences.sidebar} onExpandSidebar={shell.onExpandSidebar} onHarnesses={() => navigate("harnesses")} onSettings={() => navigate("settings")} onRescan={() => void rescan()} scanning={mutation === "scanning"}/>

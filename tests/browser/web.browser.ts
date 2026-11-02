@@ -115,6 +115,40 @@ async function openNativeSessions(page: Page): Promise<void> {
   await page.getByRole("menuitem", { name: "继续原程序的会话…", exact: true }).click();
   await expect(page.locator(".native-sessions")).toHaveCSS("opacity", "1");
 }
+/**
+ * Holds the event stream's bytes while asked to (fault injection on the delivery of real SSE bytes: the server, its store
+ * and every command are untouched), so that a request such as an approval arrives at a moment the test chooses. Install it
+ * on the context before the page opens; the returned function holds (true) or releases (false) the page's stream.
+ */
+async function holdFactDelivery(context: Awaited<ReturnType<typeof isolatedContext>>): Promise<(page: Page, held: boolean) => Promise<void>> {
+  await context.addInitScript(() => {
+    const original = window.fetch.bind(window); let held = false;
+    const waiters: Array<() => void> = [];
+    Reflect.set(window, "__holdFactDelivery", (next: boolean) => { held = next; if (!held) for (const release of waiters.splice(0)) release(); });
+    window.fetch = async (input, init) => {
+      const response = await original(input, init);
+      const url = typeof input === "string" ? input : input instanceof Request ? input.url : String(input);
+      if (!url.includes("/events/stream") || !response.ok || response.body === null) return response;
+      const body = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({ async transform(chunk, sink) {
+        if (held) await new Promise<void>(resolve => waiters.push(resolve)); sink.enqueue(chunk);
+      } }));
+      return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+    };
+  });
+  return (page, held) => page.evaluate(value => { const set = Reflect.get(window, "__holdFactDelivery"); if (typeof set !== "function") throw new Error("missing fact delivery fixture"); set(value); }, held);
+}
+/**
+ * Points at a row button and reads the tint it takes, then leaves it and reads the tint gone (Motion board #30: its
+ * background, 120 ms on the standard curve). `tint` is the subtle fill, or the hover fill for a row on a subtle surface.
+ */
+async function rowTint(page: Page, row: ReturnType<Page["locator"]>, tint = "rgb(244, 245, 247)"): Promise<void> {
+  const background = () => row.evaluate(element => getComputedStyle(element).backgroundColor);
+  await page.mouse.move(2, 2); await expect.poll(background).toBe("rgba(0, 0, 0, 0)");
+  await row.hover(); await expect.poll(background).toBe(tint);
+  assert.deepEqual(await row.evaluate(element => { const style = getComputedStyle(element); return [style.transitionProperty, style.transitionDuration, style.transitionTimingFunction]; }),
+    ["background-color", "0.12s", "cubic-bezier(0.2, 0, 0, 1)"]);
+  await page.mouse.move(2, 2); await expect.poll(background).toBe("rgba(0, 0, 0, 0)");
+}
 
 test("real browser validates Provider management, public chat switching, cancellation and responsive layouts", { timeout: 120000 }, async t => {
   const fixture = await launchFixture();
@@ -828,14 +862,26 @@ test("the native extensions panel lists skills, MCP servers and plugins and invo
   await page.keyboard.press("Escape"); await expect(panel).toHaveCount(0); await expect(agentPart).toBeFocused();
   await openExtensions(page);
   await expect(panel).toContainText("浏览器验收技能"); assert.equal(reads.length, 1, "the extensions are read once");
+  // Each group's line opens it in place and, pointed at, tints like any row.
+  await rowTint(page, panel.getByRole("button", { name: /^MCP 服务器/u }));
   await panel.getByText("MCP 服务器").click(); await expect(panel).toContainText("browser-docs"); await expect(panel).toContainText("已连接"); await expect(panel).toContainText("1 个工具");
   await panel.getByText("插件与扩展").click(); await expect(panel).toContainText("browser-plugin");
   // A version is shown as the program reported it, without a "v" the page would add (ruling P).
   await expect(panel).toContainText("2.0.0"); await expect(panel).not.toContainText("v2.0.0");
   await page.screenshot({ path: join(artifact, "native-extensions.png"), animations: "disabled" });
+  // Choosing a skill puts its command in the message as choosing a "/" command does: the panel closes and the caret stands
+  // after the command, in the focused message box.
+  const caret = () => composer.evaluate(element => { const field = element as HTMLTextAreaElement; return [field.selectionStart, field.selectionEnd, field.value.length]; });
   await panel.getByRole("button", { name: "browser-skill", exact: true }).click();
   await expect(composer).toHaveValue("/skill:browser-skill ");
-  await composer.press("End"); await composer.type("看看这个仓库"); await composer.press("Enter");
+  await expect(panel).toHaveCount(0); await expect(composer).toBeFocused(); assert.deepEqual(await caret(), [21, 21, 21]);
+  // From the keyboard as well, and after the command also when the message already was that command, the caret elsewhere.
+  await composer.evaluate(element => (element as HTMLTextAreaElement).setSelectionRange(3, 3));
+  await openExtensions(page);
+  await panel.getByRole("button", { name: "browser-skill", exact: true }).focus(); await page.keyboard.press("Enter");
+  await expect(panel).toHaveCount(0); await expect(composer).toBeFocused(); assert.deepEqual(await caret(), [21, 21, 21]);
+  await expect(composer).toHaveValue("/skill:browser-skill ");
+  await composer.type("看看这个仓库"); await composer.press("Enter");
   await expect(log).toContainText("已使用技能 browser-skill：看看这个仓库", { timeout: 15000 });
   assert.deepEqual(errors, []);
 });
@@ -903,6 +949,10 @@ test("a native session of the workspace is continued from the composer, quoted a
   await panel.locator("li", { hasText: "Earlier work" }).getByRole("button", { name: "接续", exact: true }).click();
   const origin = page.getByRole("region", { name: "接续来源" });
   await expect(origin).toContainText("接续本机 Native Sessions 会话「Earlier work」", { timeout: 15000 }); await expect(origin).toContainText("4 条消息");
+  // The panel and the button pressed went away with the page that held them; the conversation that opens takes the focus
+  // where the user continues, its message box, instead of leaving it to the page.
+  await expect(composer).toBeFocused();
+  await rowTint(page, origin.getByRole("button", { name: "查看本机会话的历史", exact: true }));
   await origin.getByText("查看本机会话的历史").click(); await expect(origin).toContainText("first question"); await expect(origin).toContainText("second answer");
   await expect(page.getByRole("button", { name: "接续 · Earlier work", exact: true })).toBeVisible();
   await composer.fill("what did I ask first?"); await composer.press("Enter");
@@ -923,7 +973,45 @@ test("a native session of the workspace is continued from the composer, quoted a
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "the continued conversation must not overflow a narrow screen");
   await page.screenshot({ path: join(artifact, "native-session-continued-390.png"), animations: "disabled" });
-  assert.deepEqual(errors, []);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  // 打开对话 opens the conversation that already continues the session in place of this page, as 接续 does, and its
+  // message box takes the focus as well.
+  const newChat = page.getByRole("button", { name: "新对话", exact: true });
+  await newChat.click(); await expect(origin).toHaveCount(0);
+  await openNativeSessions(page);
+  await panel.locator("li", { hasText: "Earlier work" }).getByRole("button", { name: /打开对话/u }).click();
+  await expect(origin).toContainText("「Earlier work」", { timeout: 15000 }); await expect(composer).toBeFocused();
+  // Focus the user moves elsewhere while the next conversation is being created (here to the sidebar's search, which stays
+  // usable meanwhile) stays where they put it.
+  await newChat.click(); await openNativeSessions(page);
+  await panel.getByRole("button", { name: "加载更早的会话", exact: true }).click(); await expect(panel.getByText("未命名会话", { exact: true })).toBeVisible({ timeout: 15000 });
+  // A conversation the Gateway does not create leaves the panel open and the page says why; the 接续 pressed, which waited
+  // disabled meanwhile, has the focus again, so the user tries again from where they were rather than from the page.
+  await page.route("**/api/v1/sessions/import", route => route.fulfill({ status: 503, json: { code: "HARNESS_UNAVAILABLE", message: "refused by the test" } }));
+  const unnamed = panel.locator("li", { hasText: "未命名会话" }).getByRole("button", { name: "接续", exact: true });
+  await unnamed.focus(); await page.keyboard.press("Enter");
+  await expect(page.getByRole("alert").filter({ hasText: "这个 Agent 当前不可用" })).toBeVisible({ timeout: 15000 });
+  await expect(unnamed).toBeEnabled(); await expect(unnamed).toBeFocused(); await expect(panel).toHaveCount(1);
+  await page.unroute("**/api/v1/sessions/import");
+  let create = () => {}; const creating = new Promise<void>(resolve => { create = resolve; });
+  await page.route("**/api/v1/sessions/import", async route => { await creating; await route.fallback(); });
+  await panel.locator("li", { hasText: "未命名会话" }).getByRole("button", { name: "接续", exact: true }).click();
+  const search = page.getByRole("button", { name: "搜索与命令", exact: true });
+  await search.focus(); await expect(search).toBeFocused(); create();
+  await expect(origin).toContainText("接续本机 Native Sessions 会话", { timeout: 15000 }); await expect(origin).not.toContainText("Earlier work");
+  await expect(search).toBeFocused();
+  await page.unroute("**/api/v1/sessions/import");
+  // Where the conversation that opens takes no message, its title takes the focus: here that conversation, once ended.
+  await page.getByRole("button", { name: "更多操作", exact: true }).click(); await page.getByRole("menuitem", { name: /^结束对话…/u }).click();
+  await page.getByRole("dialog", { name: "结束这次会话？" }).getByRole("button", { name: "结束会话", exact: true }).click();
+  const title = page.locator("#chat-title");
+  await expect(title).toContainText("已结束", { timeout: 15000 });
+  await newChat.click(); await openNativeSessions(page);
+  await panel.getByRole("button", { name: "加载更早的会话", exact: true }).click();
+  await panel.locator("li", { hasText: "未命名会话" }).getByRole("button", { name: /打开对话/u }).click();
+  await expect(title).toContainText("已结束", { timeout: 15000 }); await expect(composer).toBeDisabled(); await expect(title).toBeFocused();
+  // The one refused import is the only failed request.
+  assert.deepEqual(errors, ["Failed to load resource: the server responded with a status of 503 (Service Unavailable)"]);
 });
 
 test("tools a sub-agent ran are shown under the sub-agent call", { timeout: 120000 }, async t => {
@@ -1398,7 +1486,9 @@ test("the execution settings name the native session and give the program's own 
   await expect(resume.locator(".native-resume-row small")).toHaveText(["原生会话 ID", "在该对话的工作区目录中运行"]);
   await expect(resume.getByRole("button", { name: "复制原生会话 ID", exact: true })).toBeVisible();
   await expect(resume.getByRole("button", { name: "复制恢复命令", exact: true })).toBeVisible();
-  // The one-question form unfolds with its flag, since the fixture's workspace is no Git repository.
+  // The one-question form unfolds with its flag, since the fixture's workspace is no Git repository. Its line tints when
+  // pointed at, like any row.
+  await rowTint(page, resume.getByRole("button", { name: "只问一次", exact: true }));
   await resume.getByRole("button", { name: "只问一次", exact: true }).click();
   await expect(resume.locator(".native-resume-row code").nth(2)).toHaveText(/^codex exec --skip-git-repo-check resume browser-native-\d+ "你的问题"$/u);
   await expect(resume.getByRole("button", { name: "复制只问一次的命令", exact: true })).toBeVisible();
@@ -1704,6 +1794,8 @@ test("G054-DL4 each reply names its Agent, model and thinking level, a hand-over
   await panel.getByRole("tab", { name: /^过程/u }).click();
   await expect(panel).toContainText("这个对话的全部步骤，按时间排列");
   await expect(panel.getByRole("button", { name: /第 1 轮/u })).toContainText("修改 1 · 运行 1"); await expect(panel.getByRole("button", { name: /第 2 轮/u })).toHaveAttribute("aria-expanded", "true");
+  // A Turn's line opens its steps and, pointed at, tints like any row.
+  await rowTint(page, panel.getByRole("button", { name: /第 1 轮/u }));
   await page.screenshot({ path: join(artifact, "dl4-handover-light-1440.png"), animations: "disabled" });
   await page.emulateMedia({ colorScheme: "dark" });
   await page.screenshot({ path: join(artifact, "dl4-handover-dark-1440.png"), animations: "disabled" });
@@ -2031,6 +2123,8 @@ test("G054-DL3 the home greets, says who is ready from the readiness facts and w
   await expect(steps.nth(0)).toContainText(/找到了 \d+ 个 Agent/u); await expect(steps.nth(1)).toContainText("选一个项目文件夹"); await expect(steps.nth(1)).toContainText("/workspace");
   await expect(steps.nth(2)).toContainText("讲讲这个项目的结构");
   await shoot("dl3-first");
+  // What was found opens the list of Agents; pointed at, it tints a shade darker than the step it sits on.
+  await rowTint(page, steps.nth(0).getByRole("button", { name: /^查看找到的 \d+ 个 Agent$/u }), "rgb(235, 237, 240)");
   await steps.nth(2).getByRole("button", { name: "讲讲这个项目的结构", exact: true }).click();
   await expect(composer).toHaveValue("讲讲这个项目的结构"); await expect(composer).toBeFocused(); await composer.fill("");
   // H04: radius 28 and the three-layer shadow, blue while focused.
@@ -2078,6 +2172,7 @@ test("G054-DL3 the home greets, says who is ready from the readiness facts and w
   // The summary's words, apart from its icons (an Agent without a reviewed mark shows its initials in its tile).
   const summary = page.locator(".agent-summary"), words = summary.locator(":scope > span").last();
   await expect(words).toHaveText(/^\d+ 个 Agent 就绪$/u); await expect(summary).toHaveAccessibleName(/^\d+ 个 Agent 就绪$/u);
+  await rowTint(page, summary);
   await expect(welcome.getByRole("button", { name: "workspace", exact: true })).toBeVisible();
   assert.doesNotMatch(await welcome.innerText(), /分支|branch|git/iu, "the Gateway gives no branch, so none is shown");
   // H02: an Agent whose latest read asked for a sign-in moves from ready to needing the user (OpenClaw's fixture is signed out).
@@ -2095,6 +2190,7 @@ test("G054-DL3 the home greets, says who is ready from the readiness facts and w
   await summary.click();
   const list = page.getByRole("region", { name: "本机发现的 Agent" });
   await expect(list.getByRole("button", { name: "选择 OpenClaw", exact: true })).toContainText("需要登录");
+  await rowTint(page, list.getByRole("button", { name: "选择 Codex", exact: true }));
   // What is not installed is found on the Agent page, called by that page's name.
   await expect(list).toContainText(/另有 \d+ 个 Agent 在目录中但未安装，可以在 Agent 页查看官方安装方式。/u); await expect(list).not.toContainText("我的 Agent");
   await list.getByRole("button", { name: "选择 Codex", exact: true }).click();
@@ -2343,23 +2439,10 @@ test("G054-DL5 an approval that takes the composer's place closes a panel the co
   browser = await chromium.launch({ headless: true });
   const context = await isolatedContext(browser, { viewport: { width: 1440, height: 960 } });
   // Holds the event stream's bytes while asked to, so that the approval arrives while the panel is open and holds the focus.
-  await context.addInitScript(() => {
-    const original = window.fetch.bind(window); let held = false;
-    const waiters: Array<() => void> = [];
-    Reflect.set(window, "__holdFactDelivery", (next: boolean) => { held = next; if (!held) for (const release of waiters.splice(0)) release(); });
-    window.fetch = async (input, init) => {
-      const response = await original(input, init);
-      const url = typeof input === "string" ? input : input instanceof Request ? input.url : String(input);
-      if (!url.includes("/events/stream") || !response.ok || response.body === null) return response;
-      const body = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({ async transform(chunk, sink) {
-        if (held) await new Promise<void>(resolve => waiters.push(resolve)); sink.enqueue(chunk);
-      } }));
-      return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
-    };
-  });
+  const delivery = await holdFactDelivery(context);
   const page = await context.newPage(), errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
-  const hold = (next: boolean) => page.evaluate(value => { const set = Reflect.get(window, "__holdFactDelivery"); if (typeof set !== "function") throw new Error("missing fact delivery fixture"); set(value); }, next);
+  const hold = (next: boolean) => delivery(page, next);
   t.after(async () => { if (!page.isClosed()) await hold(false); });
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), panel = page.locator(".composer-settings-panel");
@@ -2382,8 +2465,8 @@ test("G054-DL5 an approval that takes the composer's place closes a panel the co
   await page.waitForTimeout(500);
   await expect(panel).toHaveCount(0); await expect(composer).toBeFocused();
   await expect(page.locator("[data-run-status=completed]")).toHaveCount(2, { timeout: 15000 });
-  // The same when the message box has the focus and the panel stays open beside it (as after a skill is chosen in the
-  // extensions): the approval takes the focus from the message box, and once decided the panel stays closed.
+  // The same when the message box has the focus and the panel stays open beside it: the approval takes the focus from the
+  // message box, and once decided the panel stays closed.
   await openAdvanced(page);
   await composer.fill("approve this"); await expect(panel).toHaveCount(1); await composer.press("Enter");
   await expect(dock).toContainText("rm -rf build", { timeout: 15000 });
@@ -2391,6 +2474,90 @@ test("G054-DL5 an approval that takes the composer's place closes a panel the co
   await dock.getByRole("button", { name: "Allow once", exact: true }).click();
   await expect(dock).toHaveCount(0, { timeout: 15000 }); await page.waitForTimeout(500);
   await expect(panel).toHaveCount(0); await expect(composer).toBeFocused();
+  assert.deepEqual(errors, []);
+});
+
+test("G054-DL5 an approval that takes the composer's place also closes the Agent list, the model and thinking lists, the \"+\" menu and a list open in the advanced settings, takes the focus they held, and none of them comes back once it is decided (ruling R2)", { timeout: 150000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 1440, height: 960 } });
+  // Holds the event stream's bytes while asked to, so that the approval arrives while a list or the menu is open.
+  const delivery = await holdFactDelivery(context);
+  const page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  const hold = (next: boolean) => delivery(page, next);
+  t.after(async () => { if (!page.isClosed()) await hold(false); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), chip = page.locator(".agent-chip"), add = page.getByRole("button", { name: "添加文件或上下文", exact: true });
+  const dock = page.locator(".composer-box").getByRole("region", { name: "工具审批", exact: true }), layers = page.locator(".picker-popover, [role=menu]");
+  const pick = async (label: string, value: string) => { await chip.getByRole("button", { name: label, exact: true }).click(); await page.getByRole("option", { name: value, exact: true }).click(); };
+  // Codex with Native B shows the whole merged picker: the Agent, the model and the thinking level.
+  await pick("选择 Agent", "Codex"); await expect(chip.getByRole("button", { name: "选择模型", exact: true })).toBeEnabled();
+  await pick("选择模型", "Native B"); await expect(chip.getByRole("button", { name: "思考强度", exact: true })).toBeEnabled();
+  await composer.fill("hello"); await composer.press("Enter");
+  await expect(page.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
+  // Each layer the composer opens, opened as a user does, with the focus in it.
+  const openers: readonly (readonly [string, () => Promise<void>])[] = [
+    ["the Agent list (⌘J)", async () => { await page.keyboard.press("ControlOrMeta+J"); await expect(page.getByRole("combobox", { name: "搜索 Agent", exact: true })).toBeFocused(); }],
+    ["the model list", async () => { await chip.getByRole("button", { name: "选择模型", exact: true }).click(); await expect(page.getByRole("combobox", { name: "搜索模型", exact: true })).toBeFocused(); }],
+    ["the thinking list", async () => { await chip.getByRole("button", { name: "思考强度", exact: true }).click(); await expect(page.getByRole("combobox", { name: "搜索思考强度", exact: true })).toBeFocused(); }],
+    ["the + menu from the keyboard", async () => { await add.focus(); await page.keyboard.press("Enter"); await expect(page.getByRole("menuitem").first()).toBeFocused(); }],
+    ["the + menu from the pointer", async () => { await add.click(); await expect.poll(() => page.getByRole("menu").evaluate(menu => menu.contains(document.activeElement))).toBe(true); }],
+  ];
+  for (const [index, [name, open]] of openers.entries()) {
+    // The next message asks before it reads the workspace; its request waits in the held stream while the layer opens.
+    await hold(true);
+    await composer.fill("APPROVAL：" + name); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
+    await expect(composer).toHaveValue("");
+    await open(); await expect(layers).toHaveCount(1);
+    await hold(false);
+    await expect(dock).toContainText("读取验收工作区", { timeout: 15000 });
+    // The approval closes the layer and takes the focus it held, as it takes the focus from the message box.
+    await expect(layers, name).toHaveCount(0); await expect(dock, name).toBeFocused();
+    if (index === 0) {
+      // Past the moment it ignores keys still meant for the message, esc refuses there: the focus goes back to the message
+      // box, never to the page.
+      await page.waitForTimeout(600); await page.keyboard.press("Escape");
+    } else await dock.getByRole("button", { name: "允许一次", exact: true }).click();
+    await expect(dock).toHaveCount(0, { timeout: 15000 }); await expect(composer, name).toBeFocused();
+    await expect(page.locator("[data-run-status=completed]")).toHaveCount(index + 2, { timeout: 15000 });
+    // Decided, nothing the composer had open comes back by itself.
+    await page.waitForTimeout(500);
+    await expect(layers, name).toHaveCount(0); await expect(composer, name).toBeFocused();
+  }
+  // A list open in the advanced settings (协作模式) closes as the panel does, instead of staying whole over the dock until
+  // the panel has gone; the dock takes the focus it held.
+  await hold(true);
+  await composer.fill("APPROVAL：a list in the advanced settings"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
+  await expect(composer).toHaveValue("");
+  await openAdvanced(page);
+  const settings = page.locator(".composer-settings-panel");
+  await settings.getByRole("button", { name: "协作模式", exact: true }).click(); await expect(page.getByRole("combobox", { name: "搜索协作模式", exact: true })).toBeFocused();
+  await expect(layers).toHaveCount(1);
+  // Whether the list starts its own exit (Base UI's data-ending-style) before it is removed, or is removed whole with the
+  // panel once the panel's exit has ended.
+  await layers.evaluate(list => {
+    const record = { exit: "" }; Reflect.set(window, "__nestedListExit", record);
+    const observer = new MutationObserver(() => {
+      if (list.hasAttribute("data-ending-style")) { record.exit = "its own exit"; observer.disconnect(); }
+      else if (!list.isConnected) { record.exit = "removed whole"; observer.disconnect(); }
+    });
+    observer.observe(list, { attributes: true }); observer.observe(document.body, { childList: true, subtree: true });
+  });
+  await hold(false);
+  await expect(dock).toContainText("读取验收工作区", { timeout: 15000 });
+  await expect.poll(() => page.evaluate(() => (Reflect.get(window, "__nestedListExit") as { readonly exit: string }).exit)).toBe("its own exit");
+  await expect(settings).toHaveCount(0); await expect(layers).toHaveCount(0); await expect(dock).toBeFocused();
+  await dock.getByRole("button", { name: "允许一次", exact: true }).click();
+  await expect(dock).toHaveCount(0, { timeout: 15000 }); await expect(composer).toBeFocused();
+  await expect(page.locator("[data-run-status=completed]")).toHaveCount(openers.length + 2, { timeout: 15000 });
+  await page.waitForTimeout(500);
+  await expect(settings).toHaveCount(0); await expect(layers).toHaveCount(0); await expect(composer).toBeFocused();
+  await expect(page.getByRole("log", { name: "对话历史" })).toContainText("原生审批已收到：decline");
+  // The Agent list the approval closed opens again from ⌘J.
+  await page.keyboard.press("ControlOrMeta+J"); await expect(page.getByRole("combobox", { name: "搜索 Agent", exact: true })).toBeFocused();
+  await page.keyboard.press("Escape"); await expect(layers).toHaveCount(0); await expect(composer).toBeFocused();
   assert.deepEqual(errors, []);
 });
 
@@ -3817,6 +3984,8 @@ test("G054-DL8 the Agent page gives each Agent a card with its version and chann
   await expect(tasks).toHaveAttribute("aria-expanded", "false"); await tasks.click(); await expect(tasks).toHaveAttribute("aria-expanded", "true");
   const taskList = main.getByRole("region", { name: "安装任务" });
   await expect(taskList.getByRole("listitem")).toHaveCount(1); await expect(taskList.locator(".status-pill")).toHaveText("已升级，服务未就绪");
+  // Its row tints when pointed at, once the list has finished opening (until then it is clipped and scrolls into view).
+  await expect(main.locator("#installation-tasks")).toHaveAttribute("data-state", "open"); await rowTint(page, taskList.getByRole("button"));
   await page.screenshot({ path: join(artifact, "agents-tasks-light-1440.png"), animations: "disabled" });
   await tasks.click(); await expect(tasks).toHaveAttribute("aria-expanded", "false"); await expect(taskList).toHaveCount(0);
 

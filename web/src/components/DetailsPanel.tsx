@@ -192,7 +192,7 @@ function Changes({ changes, counts, selected, workspace, name, sessionId }: { re
     {files.length ? <ul className="m-0 flex list-none flex-col gap-px px-2.5 pb-2" aria-label="改动的文件">{files.map(file => {
       const shown = workspacePath(file.path, workspace), cut = shown.lastIndexOf("/") + 1;
       return <li key={file.path}><button type="button" onClick={() => setChosen(file.path)} aria-pressed={current?.path === file.path} title={file.path}
-        className={cn("row flex h-8 w-full min-w-0 items-center gap-2 border-none px-2.5 text-left font-mono text-caption text-fg", current?.path === file.path ? "bg-subtle" : "bg-transparent")}>
+        className={cn("row flex h-8 w-full min-w-0 items-center gap-2 border-none px-2.5 text-left font-mono text-caption text-fg", current?.path === file.path ? "bg-subtle" : "bg-transparent hover:bg-subtle")}>
         <File size={15} className="flex-none text-fg-3" aria-hidden="true"/>
         <span className="min-w-0 flex-1 trunc"><span className="text-fg-3">{shown.slice(0, cut)}</span>{shown.slice(cut)}</span>
         {file.add ? <span className="flex-none text-[11px] text-add-on-tint">+{file.add}</span> : null}{file.del ? <span className="flex-none text-[11px] text-del-on-tint">−{file.del}</span> : null}
@@ -241,7 +241,7 @@ function RunProcess({ run, index, open, onToggle, loadToolDetail, name, describe
   const steps: [string, number | undefined][] = [["收到消息", run.timing?.acceptedAt], ["开始启动原程序", run.timing?.preparingAt], ["原生会话就绪", run.timing?.readyAt], ["发给原程序", run.timing?.dispatchedAt], ["首个输出", run.timing?.firstOutputAt], [run.status === "cancelled" ? cancelledWords(run) : RUN_STATE[run.status], run.timing?.endedAt]];
   const model = describe(run);
   return <li className="flex min-w-0 flex-col">
-    <button type="button" className="row flex min-h-9 w-full min-w-0 items-center gap-2 border-none bg-transparent px-1.5 py-1.5 text-left text-ui-sm text-fg-2" aria-expanded={open} aria-controls={panel} onClick={onToggle}>
+    <button type="button" className="row flex min-h-9 w-full min-w-0 items-center gap-2 border-none bg-transparent px-1.5 py-1.5 text-left text-ui-sm text-fg-2 hover:bg-subtle" aria-expanded={open} aria-controls={panel} onClick={onToggle}>
       <BrandIcon brand={run.selection.harnessId} name={name(run.selection.harnessId)} size={18}/>
       {/* What the Turn did and its time stay whole: in the narrow panel the line wraps between its parts, never in a number */}
       <span className="min-w-0 flex-1 break-words"><span className="text-fg">{name(run.selection.harnessId)}</span>{[...(summary ? summary.split(" · ") : []), ...(time ? [time] : [])].map((part, index) => <Fragment key={index}> · <span className="whitespace-nowrap">{part}</span></Fragment>)}</span>
