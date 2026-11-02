@@ -2640,6 +2640,55 @@ test("G054-FR8 G054-DL5 a decision of the docked approval pressed with the point
   assert.deepEqual(errors, []);
 });
 
+test("G054-DL5 a decision of the docked approval pressed at its very edge is sent on that press, though pressing scales it to .97 (#31), at 390, 320 and 1440 in both themes; let go off it, nothing is sent", { timeout: 180000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await isolatedContext(browser, { viewport: { width: 390, height: 844 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  const sent: string[] = []; page.on("request", request => { if (request.method() === "POST" && /\/permissions\//u.test(request.url())) sent.push(request.url()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" }), send = page.getByRole("button", { name: "发送消息", exact: true });
+  const dock = page.locator(".composer-box").getByRole("region", { name: "工具审批", exact: true });
+  await page.getByRole("button", { name: "选择 Agent", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  // Codex asks with 允许一次 (⏎), 拒绝 (esc) and 取消. On a phone 允许一次 fills a line of its own, and .97 draws each of its
+  // ends in by some 5 px.
+  const rounds = [[390, "light", "允许一次", "left"], [390, "dark", "拒绝", "right"], [320, "light", "允许一次", "right"], [320, "dark", "取消", "left"], [1440, "light", "允许一次", "right"], [1440, "dark", "拒绝", "left"]] as const;
+  for (const [index, [width, scheme, name, edge]] of rounds.entries()) {
+    await page.emulateMedia({ colorScheme: scheme }); await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 });
+    // Asked after keyboard use and after pointer use in turn.
+    await composer.fill(`APPROVAL：${name} ${edge} ${width} ${scheme}`); await expect(send).toBeEnabled();
+    if (index % 2 === 0) await composer.press("Enter"); else await send.click();
+    await expect(dock).toContainText("读取验收工作区", { timeout: 15000 }); await dl10Settle(page);
+    const button = dock.getByRole("button", { name, exact: true }), box = await button.boundingBox(); assert.ok(box);
+    // Pressed 1 px inside one end and held until the decision has scaled all the way, the pointer is outside what is drawn
+    // of it; let go there, the press still sends it.
+    const x = edge === "left" ? box.x + 1 : box.x + box.width - 1;
+    await page.mouse.move(x, box.y + box.height / 2); await page.mouse.down();
+    await expect.poll(() => button.evaluate(element => getComputedStyle(element).transform)).toBe("matrix(0.97, 0, 0, 0.97, 0, 0)");
+    const drawn = await button.boundingBox(); assert.ok(drawn && (x < drawn.x || x > drawn.x + drawn.width), `the press at ${width} is outside the pressed ${name}`);
+    await page.mouse.up();
+    await expect(log.locator(".approval-result")).toHaveCount(index + 1, { timeout: 15000 }); await expect(dock).toHaveCount(0);
+    assert.equal(sent.length, index + 1, `one press at ${width} in ${scheme} sends ${name} once`);
+    await expect(page.locator("[data-run-status=completed]")).toHaveCount(index + 1, { timeout: 15000 });
+  }
+  // The room kept is the decision's own and no more, all through the press: let go a few pixels past its end, at once or once
+  // it has scaled, a press sends nothing, and the approval keeps waiting.
+  await page.emulateMedia({ colorScheme: "light" }); await page.setViewportSize({ width: 390, height: 844 });
+  await composer.fill("APPROVAL：let go off it"); await send.click();
+  await expect(dock).toContainText("读取验收工作区", { timeout: 15000 }); await dl10Settle(page);
+  const allow = dock.getByRole("button", { name: "允许一次", exact: true }), box = await allow.boundingBox(); assert.ok(box);
+  for (const held of [false, true]) {
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down();
+    if (held) await expect.poll(() => allow.evaluate(element => getComputedStyle(element).transform)).toBe("matrix(0.97, 0, 0, 0.97, 0, 0)");
+    await page.mouse.move(box.x + box.width + 3, box.y + box.height / 2); await page.mouse.up();
+  }
+  await page.waitForTimeout(500);
+  assert.equal(sent.length, rounds.length, "a press let go off the decision sends nothing"); await expect(dock).toBeVisible();
+  await allow.click(); await expect(log.locator(".approval-result")).toHaveCount(rounds.length + 1, { timeout: 15000 });
+  assert.deepEqual(errors, []);
+});
+
 test("G054-DL6 the plan bar above the composer says how far the plan is and opens every step, and the line under it shows the round, steps and time with only the usage the Gateway reported", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });

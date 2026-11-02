@@ -438,6 +438,13 @@
   :root:not([data-input="keyboard"]) .decision-key { display: none; }
   :root:not([data-input="keyboard"]) .decision-key + * { margin-left: 6.5px; }
   :root:not([data-input="keyboard"]) .decision-key ~ :last-child { margin-right: 6.5px; }
+  /* A decision of the dock is sent wherever on it the press begins and ends. Pressed from the pointer it scales to .97 (#31),
+     drawing its edges in from under the pointer: let go there, the press would end on the row around it and send nothing.
+     A layer over it scales back by as much on the same clock, so the decision keeps its whole room, and no more, under the
+     pointer all through the press. */
+  .decision { position: relative; }
+  .decision::after { content: ""; position: absolute; inset: 0; border-radius: inherit; transition: transform var(--dur-fast) var(--ease-snap); }
+  :root:not([data-input="keyboard"]) .decision:active:not(:disabled)::after { transform: scale(calc(1 / .97)); transition-duration: var(--dur-instant); }
 
   /* Fields (radius 10) */
   .field {
@@ -699,6 +706,7 @@
     /* Hover and focus colors are not motion: they change as usual (#30) */
     :is(.btn, .icon-btn, .menu-item, .nav-row, .row, .tab, .segmented > button, .link-btn) { transition-property: background-color, color, box-shadow !important; transition-duration: var(--dur-fast) !important; }
     .btn:active:not(:disabled), .press:active:not(:disabled) { transform: none; }
+    :root:not([data-input="keyboard"]) .decision:active:not(:disabled)::after { transform: none; }
     @starting-style { .floating-bar { opacity: 0; transform: none; } }
   }
 }

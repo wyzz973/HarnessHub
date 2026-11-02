@@ -145,10 +145,11 @@ export function ApprovalDock({ request, harness, busy, onDecision, onStop, stopD
     const key = keyed.indexOf(option);
     // One-time options carry their number (shown to keyboard users, G054-FR8); ⏎ and esc are shown as the board shows them.
     // Hidden, the number keeps its room (`decision-key`): a pointer press hides it, and the decision pressed must not move.
+    // Pressed, a decision keeps the room it was pressed in under the pointer (`decision`), though it scales to .97 (#31).
     // On a phone the decisions fill the lines they wrap onto, so the primary is never left alone at one end.
     return <button key={option.id} type="button" aria-label={option.name} disabled={disabled} onClick={() => decide(option, false)}
       aria-keyshortcuts={[key >= 0 ? String(key + 1) : "", option === primary ? "Enter" : "", option === refuse ? "Escape" : ""].filter(Boolean).join(" ") || undefined}
-      className={cn("btn press max-sm:grow", tone === "primary" ? "btn-primary px-3.5" : tone === "ghost" ? "btn-ghost" : "")}>
+      className={cn("decision btn press max-sm:grow", tone === "primary" ? "btn-primary px-3.5" : tone === "ghost" ? "btn-ghost" : "")}>
       {key >= 0 ? <span aria-hidden="true" className="kbd-hint decision-key font-mono">{key + 1}</span> : null}
       <span>{option.name}</span>
       {option === primary ? <Kbd variant="hint">⏎</Kbd> : option === refuse ? <Kbd variant="hint">esc</Kbd> : null}
