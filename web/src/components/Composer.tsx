@@ -46,6 +46,8 @@ interface ComposerProps extends ChatProps {
   readonly onAgentPickerOpen: (open: boolean) => void;
   /** ↑ in an empty composer: takes the held message back, or the last sent message as a draft. */
   readonly onEditLast?: (() => void) | undefined;
+  /** Fills the composer with text; a draft it replaces stays recoverable (ChatPage offers to put it back). */
+  readonly onReplaceDraft?: ((text: string) => void) | undefined;
 }
 
 /** Products whose own documentation names the command that sets up a missing sign-in or provider. */
@@ -484,7 +486,7 @@ export function Composer(props: ComposerProps) {
               <Menu side={popSide} align="start" {...listOpen("add")} trigger={<button ref={plusButton} type="button" className="press mr-0.5 flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg disabled:opacity-45"
                 aria-label="添加文件或上下文" disabled={readonly}><Plus size={16} strokeWidth={1.9}/></button>} items={[
                 { label: "添加文件或图片…", icon: <Paperclip size={15}/>, hint: "@", disabled: !canAttach, onSelect: () => picker.current?.click() },
-                ...(commands.length ? [{ label: "原生命令", icon: <SquareSlash size={15}/>, hint: "/", disabled: disabled, onSelect: () => { setSlashClosedAt(null); props.onMessageDraft("/"); setTimeout(() => inputRef.current?.focus(), 0); } }] : []),
+                ...(commands.length ? [{ label: "原生命令", icon: <SquareSlash size={15}/>, hint: "/", disabled: disabled, onSelect: () => { setSlashClosedAt(null); (props.onReplaceDraft ?? props.onMessageDraft)("/"); setTimeout(() => inputRef.current?.focus(), 0); } }] : []),
                 ...(sessionsOffered ? [{ label: "继续原程序的会话…", icon: <History size={15}/>, disabled: disabled || props.mutation !== null, onSelect: () => openPanel("sessions") }] : []),
               ]} footer={props.attachments.length >= 8 ? "每条消息最多 8 个附件" : undefined}/>
               {permission ? <SearchPicker side={popSide} {...listOpen("permission")} label={OPTION_NAMES[permission.id] ?? permission.name} value={draft.nativeOptions[permission.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(permission, true)}

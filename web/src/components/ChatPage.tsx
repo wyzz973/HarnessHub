@@ -12,7 +12,7 @@ import { clock, compact, duration, elapsed, folderName, shortTitle } from "../li
 import { useMedia, useNow, type Preferences } from "../lib/prefs.js";
 import { cancelledWords, changeCount, finished, toolTree, TOOL_PENDING, type QueueNotice } from "../lib/turn.js";
 import { Collapsible, motionStyle, usePresence } from "../ui/motion.js";
-import { Dialog, Menu } from "../ui/overlay.js";
+import { Dialog, Menu, useToast } from "../ui/overlay.js";
 import { EmptyState, Notice, Spinner, StatusPill, Tip } from "../ui/primitives.js";
 import type { ToolDetailLoader } from "./Activity.js";
 import { DecisionLine, decisionRole, DockedMarker, dockedRequest, PermissionCard, type Decision, type PermissionRequestView } from "./Approval.js";
@@ -239,7 +239,17 @@ export function ChatPage(props: ChatProps) {
     observer.observe(element); observer.observe(content);
     return () => observer.disconnect();
   }, [session?.id, props.loading, scrollToLatest]);
-  const fillDraft = useCallback((text: string) => { props.onMessageDraft(text); textarea.current?.focus(); }, [props.onMessageDraft]);
+  // A draft the user wrote is never lost to an action that fills the composer (放回输入框, a suggestion, 原生命令): for a
+  // few seconds it can be put back, as long as the composer still holds what replaced it.
+  // The draft is read through a ref, so the callback stays the same while the user types and memoised messages keep it.
+  const toast = useToast(), draftNow = useRef(props.messageDraft);
+  draftNow.current = props.messageDraft;
+  const fillDraft = useCallback((text: string) => {
+    const previous = draftNow.current;
+    props.onMessageDraft(text); textarea.current?.focus();
+    if (!previous.trim() || previous === text) return;
+    const id = toast.show({ title: "已替换输入框里的草稿", action: { label: "撤销", onClick: () => { toast.close(id); props.onMessageDraft(value => value === text ? previous : value); textarea.current?.focus(); } } });
+  }, [props.onMessageDraft, toast]);
   const refocus = useRef(false);
   useLayoutEffect(() => {
     if (!session || !refocus.current) return;
@@ -435,7 +445,7 @@ export function ChatPage(props: ChatProps) {
   }, []);
 
   const composer = <Composer {...props} onSendDraft={text => send(text)} active={active} dirty={dirty} pending={pending} problem={problem} blocked={blocked} inputRef={textarea}
-    onShowResume={session ? showResume : undefined} approval={approval} agentPickerOpen={agentPicker} onAgentPickerOpen={setAgentPicker} onEditLast={editLast}
+    onShowResume={session ? showResume : undefined} approval={approval} agentPickerOpen={agentPicker} onAgentPickerOpen={setAgentPicker} onEditLast={editLast} onReplaceDraft={fillDraft}
     above={session ? <>
       {props.queued ? <div className="queued-message motion-fade-in flex items-center gap-2.5 rounded-block bg-subtle py-1.5 pr-1.5 pl-3 text-ui-sm" role="status">
         <CircleDashed size={15} className="flex-none text-fg-3" aria-hidden="true"/>

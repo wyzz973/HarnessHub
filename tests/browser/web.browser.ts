@@ -539,8 +539,18 @@ test("live chat renders committed partial Markdown before completion, respects r
   await page.getByRole("button", { name: "关闭详情栏", exact: true }).click();
   await expect(page.getByRole("complementary", { name: "详情栏" })).toHaveCount(0);
   await page.screenshot({ path: join(artifact, "chat-completed-943.png"), fullPage: true, animations: "disabled" });
+  // A draft the user wrote is not lost when 放回输入框 fills the composer: a toast offers to put it back.
+  await composer.fill("还没写完的草稿");
+  await log.getByRole("button", { name: "放回输入框", exact: true }).first().click();
+  await expect(composer).toHaveValue("STREAM_RENDER：逐段展示，完成前保持连接");
+  const replaced = page.getByRole("dialog", { name: "已替换输入框里的草稿" });
+  await expect(replaced).toBeVisible(); await replaced.getByRole("button", { name: "撤销", exact: true }).click();
+  await expect(composer).toHaveValue("还没写完的草稿"); await expect(composer).toBeFocused();
+  // An empty composer is filled without a toast.
+  await composer.fill("");
   await log.getByRole("button", { name: "放回输入框", exact: true }).first().click();
   await expect(composer).toHaveValue("STREAM_RENDER：逐段展示，完成前保持连接"); assert.equal((await current()).runs.length, 1, "editing a draft does not re-dispatch a Run");
+  await expect(replaced).toHaveCount(0);
   await composer.fill("STREAM_CANCEL：保留已经收到的部分内容"); await composer.press("Enter");
   await expect(page.locator('.assistant-message[data-run-status="running"]')).toContainText("第一段已经到达。");
   const partial = await current(); assert.equal(partial.runs.length, 2); assert.equal(partial.runs[1]!.status, "running");
