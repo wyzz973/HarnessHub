@@ -3,7 +3,7 @@ import { Menu as BaseMenu } from "@base-ui/react/menu";
 import { Popover as BasePopover } from "@base-ui/react/popover";
 import { Toast as BaseToast } from "@base-ui/react/toast";
 import { Check, X } from "lucide-react";
-import { useId, useMemo, useRef, type ReactElement, type ReactNode, type RefObject } from "react";
+import { useId, useMemo, useRef, useState, type ReactElement, type ReactNode, type RefObject } from "react";
 import { cn } from "../lib/cn.js";
 
 type Side = "top" | "bottom" | "left" | "right";
@@ -181,4 +181,14 @@ function ToastList() {
       {toast.actionProps ? <BaseToast.Action className="toast-action"/> : null}
     </BaseToast.Content>
   </BaseToast.Root>);
+}
+
+/**
+ * What a dialog was opened for, kept while it closes: its owner clears the value as the dialog starts its 200 ms exit,
+ * and without this the title and sentences would fall back to their generic words during that exit.
+ */
+export function useClosingValue<T>(value: T | null): T | null {
+  const [kept, setKept] = useState(value);
+  if (value !== null && value !== kept) setKept(value);
+  return value ?? kept;
 }

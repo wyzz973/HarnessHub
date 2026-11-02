@@ -2,7 +2,7 @@ import { Download } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { HarnessView, InstallCheckView } from "../../../src/contracts/web.js";
 import { errorMessage, type GatewayApi } from "../api.js";
-import { Dialog } from "../ui/overlay.js";
+import { Dialog, useClosingValue } from "../ui/overlay.js";
 import { Notice } from "../ui/primitives.js";
 import { Checking, CheckFailed, ConfirmBody, ConfirmFooter, Fact, Facts } from "./UpgradeDialog.js";
 
@@ -31,7 +31,8 @@ export function InstallDialog({ api, harness, onClose, onConfirm }: {
       .then(value => { if (!controller.signal.aborted) setCheck(value); }, error => { if (!controller.signal.aborted) setFailure(errorMessage(error)); });
     return () => controller.abort();
   }, [api, id, attempt]);
-  const name = harness?.name ?? "Harness";
+  // The title keeps the Harness while the dialog closes (useClosingValue); it opens and closes with `harness`.
+  const name = useClosingValue(harness)?.name ?? "Harness";
   return <Dialog open={harness !== null} onOpenChange={open => { if (!open) onClose(); }} title={`安装 ${name}`} description={check ? check.method === "npm" ? "按官网方式，用 npm 安装" : "按官网方式，运行官方安装脚本" : "按官网方式安装"}
     className="install-dialog w-[min(560px,calc(100vw-32px))]">
     <ConfirmBody>

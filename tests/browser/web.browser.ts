@@ -1485,7 +1485,7 @@ test("a Harness of a version HarnessHub never ran shows that version alone in th
   // no way back of its own (ADR-054 补充 D): the sidebar leads there.
   await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "新对话", exact: true }).click();
   await page.locator(".agent-summary").click();
-  const card = page.getByRole("region", { name: "本机发现的 Harness" }).getByRole("button", { name: "选择 Gemini CLI", exact: true });
+  const card = page.getByRole("region", { name: "本机可用的 Harness" }).getByRole("button", { name: "选择 Gemini CLI", exact: true });
   await expect(card).toContainText(/(?<!v)1\.0\.0 · /u); await expect(card).not.toContainText("v1.0.0"); await expect(card.locator(".badge")).toHaveCount(0);
   await sayNothing("the welcome");
   await page.keyboard.press("Escape");
@@ -2219,7 +2219,7 @@ test("G054-DL3 the home greets, says who is ready from the readiness facts and w
   assert.ok(said && dot && link && Math.abs((dot.x - said.x - said.width) - (link.x - dot.x - dot.width)) <= 1, "the dot is centred between the two");
   // The summary lists the available Agents with their versions and states, and chooses one.
   await summary.click();
-  const list = page.getByRole("region", { name: "本机发现的 Harness" });
+  const list = page.getByRole("region", { name: "本机可用的 Harness" });
   await expect(list.getByRole("button", { name: "选择 OpenClaw", exact: true })).toContainText("需要登录");
   await rowTint(page, list.getByRole("button", { name: "选择 Codex", exact: true }));
   // What is not installed is found on the Agent page, called by that page's name.
@@ -3810,7 +3810,15 @@ test("G054-UN1 uninstalling one installation first says what it stops, removes a
   await expect(dialog.getByText("现在不能卸载")).toBeVisible();
   await expect(dialog.locator(".uninstall-resident")).toHaveText("openclaw-node（进程 6576）正在运行，先运行 openclaw node stop 停止它，再卸载。");
   await expect(dialog.getByRole("button", { name: "停止服务并卸载" })).toBeDisabled();
+  // While it closes (200 ms) the dialog keeps naming what it was opened for: its title never falls back to the generic word.
+  await page.evaluate(() => {
+    const seen: string[] = []; (window as unknown as { __closingTitles: string[] }).__closingTitles = seen;
+    const read = () => { for (const node of document.querySelectorAll(".uninstall-dialog h2")) seen.push(node.textContent ?? ""); };
+    new MutationObserver(read).observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true });
+  });
   await dialog.getByRole("button", { name: "取消", exact: true }).click(); await expect(dialog).toBeHidden();
+  const closingTitles = await page.evaluate(() => (window as unknown as { __closingTitles: string[] }).__closingTitles);
+  assert.ok(closingTitles.length > 0 && closingTitles.every(title => title === "卸载 OpenClaw"), "the closing dialog kept its title: " + JSON.stringify([...new Set(closingTitles)]));
   await expect(detail).toBeVisible(); assert.equal(submitted, null, "nothing is sent while the uninstall is blocked");
   // Otherwise it says what it stops first, what it removes, what stays and what is used afterwards.
   blocked = false;
@@ -5427,7 +5435,7 @@ test("G054-FZ1 the frozen Harnesses stay out of the picker, the welcome, the pal
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url); await expect(page.getByRole("button", { name: "新对话", exact: true })).toBeVisible();
   const frozen = ["Gemini CLI", "Cursor", "Pi"], picker = page.getByRole("button", { name: "选择 Harness", exact: true });
-  const welcome = page.getByRole("region", { name: "本机发现的 Harness" }), navigation = page.getByRole("complementary", { name: "主导航" });
+  const welcome = page.getByRole("region", { name: "本机可用的 Harness" }), navigation = page.getByRole("complementary", { name: "主导航" });
   const row = (name: string) => page.locator(".agent-entry").filter({ has: page.getByRole("button", { name: `查看 ${name} 详情`, exact: true }) });
   // By default none of them is offered for new work, though Gemini CLI is installed and ready: not in the welcome's list of
   // Agents (opened from its summary, ADR-054 §5), nor in its icons, nor in the picker.

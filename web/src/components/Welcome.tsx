@@ -115,15 +115,16 @@ function AgentList({ trigger, open, onOpenChange, harnesses, status, selected, f
     <BasePopover.Trigger render={trigger}/>
     <BasePopover.Portal>
       <BasePopover.Positioner side="bottom" align="center" sideOffset={8} collisionPadding={12} positionMethod="fixed" className="hh-positioner z-50">
-        <BasePopover.Popup aria-label="本机的 Harness" ref={popup} finalFocus={() => {
+        <BasePopover.Popup aria-labelledby="welcome-harness-list-title" ref={popup} finalFocus={() => {
           const focused = document.activeElement;
           if (focused !== null && focused !== document.body && !popup.current?.contains(focused)) return false;
           return chose.current ? document.getElementById("message-input") : true;
         }}
           className="surface-pop flex max-h-[min(520px,var(--available-height))] w-[380px] max-w-[calc(100vw-24px)] flex-col overflow-hidden">
-          <section aria-label="本机发现的 Harness" className="flex min-h-0 flex-col">
+          {/* One name for the list: the popup and its region take the heading's words. */}
+          <section aria-labelledby="welcome-harness-list-title" className="flex min-h-0 flex-col">
             <div className="flex items-baseline justify-between gap-3 px-3.5 pt-3 pb-1.5">
-              <h3 className="m-0 text-ui-sm font-semibold">本机可用的 Harness</h3>
+              <h3 id="welcome-harness-list-title" className="m-0 text-ui-sm font-semibold">本机可用的 Harness</h3>
               <button type="button" className="link-btn flex items-center gap-1 text-caption" onClick={() => { onOpenChange(false); onHarnesses(); }}>查看全部<ArrowRight size={12} aria-hidden="true"/></button>
             </div>
             {firstUse ? <p className="m-0 px-3.5 pb-2 text-caption text-fg-2">HarnessHub 直接使用它们本机的安装、模型配置和登录状态，不复制、不修改。登录是否有效、额度是否够用，会在第一次使用时由各自核实。</p> : null}

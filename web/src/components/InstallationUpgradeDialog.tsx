@@ -2,7 +2,7 @@ import { ArrowUpRight, Check, Copy } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { HarnessView, InstallationUpgradeCheckView, InstallationView } from "../../../src/contracts/web.js";
 import { errorMessage, type GatewayApi } from "../api.js";
-import { Dialog } from "../ui/overlay.js";
+import { Dialog, useClosingValue } from "../ui/overlay.js";
 import { Notice } from "../ui/primitives.js";
 import { Checking, CheckFailed, Command, ConfirmBody, ConfirmFooter, Fact, Facts, SessionLink } from "./UpgradeDialog.js";
 
@@ -47,11 +47,13 @@ export function InstallationUpgradeDialog({ api, harness, installation, onClose,
       .then(value => { if (!controller.signal.aborted) setCheck(value); }, error => { if (!controller.signal.aborted) setFailure(errorMessage(error)); });
     return () => controller.abort();
   }, [api, id, ref, attempt]);
-  const name = harness?.name ?? "Harness", what = installation?.role === "adapter" ? `${name} 的接入口 ${installation.command}` : name;
-  const update = check ? check.kind === "self-update" || check.kind === "rerun" : installation?.upgrade === "self-update" || installation?.upgrade === "rerun";
+  // Its words keep the Harness and installation while the dialog closes (useClosingValue).
+  const shownInstallation = useClosingValue(installation);
+  const name = useClosingValue(harness)?.name ?? "Harness", what = shownInstallation?.role === "adapter" ? `${name} 的接入口 ${shownInstallation.command}` : name;
+  const update = check ? check.kind === "self-update" || check.kind === "rerun" : shownInstallation?.upgrade === "self-update" || shownInstallation?.upgrade === "rerun";
   const busy = check?.conversations.filter(item => item.busy) ?? [], idle = check?.conversations.filter(item => !item.busy) ?? [];
   return <Dialog open={harness !== null && installation !== null} onOpenChange={open => { if (!open) onClose(); }} title={`${update ? "更新" : "升级"} ${what}`}
-    description={`${installation?.label ?? ""}${installation?.version ? ` · ${installation.version}` : ""}`} className="upgrade-installation-dialog w-[min(560px,calc(100vw-32px))]">
+    description={`${shownInstallation?.label ?? ""}${shownInstallation?.version ? ` · ${shownInstallation.version}` : ""}`} className="upgrade-installation-dialog w-[min(560px,calc(100vw-32px))]">
     <ConfirmBody>
       {failure ? <CheckFailed message={failure} onRetry={() => setAttempt(value => value + 1)}/>
         : check === null ? <Checking>正在准备：读取最新版本、运行 Homebrew 预演或下载官方脚本…</Checking>
