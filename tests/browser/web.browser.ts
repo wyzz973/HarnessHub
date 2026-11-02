@@ -985,6 +985,14 @@ test("a native session of the workspace is continued from the composer, quoted a
   // usable meanwhile) stays where they put it.
   await newChat.click(); await openNativeSessions(page);
   await panel.getByRole("button", { name: "加载更早的会话", exact: true }).click(); await expect(panel.getByText("未命名会话", { exact: true })).toBeVisible({ timeout: 15000 });
+  // A conversation the Gateway does not create leaves the panel open and the page says why; the 接续 pressed, which waited
+  // disabled meanwhile, has the focus again, so the user tries again from where they were rather than from the page.
+  await page.route("**/api/v1/sessions/import", route => route.fulfill({ status: 503, json: { code: "HARNESS_UNAVAILABLE", message: "refused by the test" } }));
+  const unnamed = panel.locator("li", { hasText: "未命名会话" }).getByRole("button", { name: "接续", exact: true });
+  await unnamed.focus(); await page.keyboard.press("Enter");
+  await expect(page.getByRole("alert").filter({ hasText: "这个 Agent 当前不可用" })).toBeVisible({ timeout: 15000 });
+  await expect(unnamed).toBeEnabled(); await expect(unnamed).toBeFocused(); await expect(panel).toHaveCount(1);
+  await page.unroute("**/api/v1/sessions/import");
   let create = () => {}; const creating = new Promise<void>(resolve => { create = resolve; });
   await page.route("**/api/v1/sessions/import", async route => { await creating; await route.fallback(); });
   await panel.locator("li", { hasText: "未命名会话" }).getByRole("button", { name: "接续", exact: true }).click();
@@ -1002,7 +1010,8 @@ test("a native session of the workspace is continued from the composer, quoted a
   await panel.getByRole("button", { name: "加载更早的会话", exact: true }).click();
   await panel.locator("li", { hasText: "未命名会话" }).getByRole("button", { name: /打开对话/u }).click();
   await expect(title).toContainText("已结束", { timeout: 15000 }); await expect(composer).toBeDisabled(); await expect(title).toBeFocused();
-  assert.deepEqual(errors, []);
+  // The one refused import is the only failed request.
+  assert.deepEqual(errors, ["Failed to load resource: the server responded with a status of 503 (Service Unavailable)"]);
 });
 
 test("tools a sub-agent ran are shown under the sub-agent call", { timeout: 120000 }, async t => {
