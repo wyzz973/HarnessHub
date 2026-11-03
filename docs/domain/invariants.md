@@ -1,6 +1,6 @@
 # 核心不变量
 
-状态：proposed。每条必须映射到自动测试或明确人工证据；测试矩阵记录覆盖范围。INV-13、INV-14、INV-22 按 [ADR-055](../decisions/0055-relay-and-context-scheduling.md) 改写，INV-21 按 ADR-055 扩展，INV-29–36 由 ADR-055 新增（接力系统，2026-11-03），已于 2026-11-03 随 ADR-055 接受，尚未实现、未经真机验证；这些条目的所有者、检查方式与计划用例见下文“接力不变量（ADR-055）”一节。INV-37–42 由 [ADR-056](../decisions/0056-native-hosts-and-sessions.md)（原生宿主与会话租借，proposed，2026-11-03）提出，未接受、未实现，见下文“宿主与会话租借不变量（ADR-056）”一节。
+状态：proposed。每条必须映射到自动测试或明确人工证据；测试矩阵记录覆盖范围。INV-13、INV-14、INV-22 按 [ADR-055](../decisions/0055-relay-and-context-scheduling.md) 改写，INV-21 按 ADR-055 扩展，INV-29–36 由 ADR-055 新增（接力系统，2026-11-03），已于 2026-11-03 随 ADR-055 接受，尚未实现、未经真机验证；这些条目的所有者、检查方式与计划用例见下文“接力不变量（ADR-055）”一节。INV-37–42 由 [ADR-056](../decisions/0056-native-hosts-and-sessions.md)（原生宿主与会话租借，2026-11-03 接受）提出，未实现，见下文“宿主与会话租借不变量（ADR-056）”一节。
 
 | ID | 不变量 |
 |---|---|
@@ -182,7 +182,7 @@
 
 ## 宿主与会话租借不变量（ADR-056）
 
-状态：proposed（[ADR-056](../decisions/0056-native-hosts-and-sessions.md)，2026-11-03），未接受、未实现、未真机验证。陈述以上表为准，出处是[原生宿主与会话租借设计](../proposals/native-hosts/design.md)第 4 节；本节逐条记录所有者、检查方式与计划用例。全部是计划中的自动测试（unit、integration、property、protocol、platform 层用真实的 `SqliteSessionStore`、真实工作区租约与走 stdio 的子进程夹具）与真机探针（probe 层，最新正式版），没有只靠人工审查的条目。
+状态：已接受（[ADR-056](../decisions/0056-native-hosts-and-sessions.md)，2026-11-03 验收），未实现、未真机验证。陈述以上表为准，出处是[原生宿主与会话租借设计](../proposals/native-hosts/design.md)第 4 节；本节逐条记录所有者、检查方式与计划用例。全部是计划中的自动测试（unit、integration、property、protocol、platform 层用真实的 `SqliteSessionStore`、真实工作区租约与走 stdio 的子进程夹具）与真机探针（probe 层，最新正式版），没有只靠人工审查的条目。
 
 - **INV-37** — 所有者：G079（宿主池与租借，`src/contexts/session/application/host-pool.ts`）；G081（Driver 多会话事件归属）。检查方式：属性测试 G079-P01（任意租借、释放、淘汰、崩溃序列下每个原生会话至多一个持有者）；协议测试 G081-C02（同连接两个会话的事件按会话归属，附着的子线程不归属）。
 - **INV-38** — 所有者：G079（新鲜度判定 `src/contexts/session/domain/host-freshness.ts`）；G083（真机探针 H4 外来回合检测）。检查方式：单元测试 G079-C04（判定表每条一个无效样例，命中即重开并记原因）；探针 G083-R03。

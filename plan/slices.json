@@ -1041,7 +1041,7 @@
     },
     {
       "id": "native-hosts",
-      "status": "proposed",
+      "status": "accepted",
       "scope": "原生宿主与会话租借（ADR-056，设计正文为 docs/proposals/native-hosts/design.md）：会话是数据、进程是可以切换会话的宿主——回合租借宿主上的原生会话而不拥有进程；宿主池按 Harness + 入口 + 安装指纹 + 启动环境分类、预算以内存为主、按类封顶（2026-11-03 实测）；复用须通过新鲜度判定；空闲宿主不持工作区租约、有后台任务的宿主固定在对话上（ADR-030 方案 C 保留）；宿主登记先于使用、崩溃后按进程组身份接管；关闭宽限 ≥1.5 s、先 EOF 再核对离组后代、每类一个稳定私有 TMPDIR、预热不建会话；三期：按会话复用的进程池与切换后保留来源宿主 → 宿主多会话（先 OpenCode、dsh、Hermes，再 Claude 的适配器常驻加会话收回，Codex 不做）→ 记录树。本切片的任务为 G078–G085 及被修改文件的既有所有者；取舍 D1–D7 待用户拍板，未实现、未真机验证",
       "task_ids": [
         "G078",
@@ -1067,7 +1067,7 @@
       ],
       "decision": "docs/decisions/0056-native-hosts-and-sessions.md",
       "allowed_files": [],
-      "note": "2026-11-03 proposed：等用户对 ADR-056 的 D1–D7 拍板后改为 accepted；allowed_files 在任务开工时只登记该任务拥有、且本切片要新增的 src/、web/ 文件。实测 spikes/native-hosts/（2026-11-03，六家）由另一位成员完成，是预算初始值与归类的依据，不归本切片任务拥有",
+      "note": "2026-11-03 用户按推荐项接受 ADR-056 的 D1–D7（原话“按推荐接受”），切片改为 accepted；allowed_files 在任务开工时只登记该任务拥有、且本切片要新增的 src/、web/ 文件。实测 spikes/native-hosts/（2026-11-03，六家）由另一位成员完成，是预算初始值与归类的依据，不归本切片任务拥有",
       "implementation_state": "not_started",
       "verification_record": "docs/verification/native-hosts-conformance.md"
     }
