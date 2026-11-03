@@ -99,6 +99,14 @@
 | G075 | 存储优化前置片 | G008, G028 | G1 | planned |
 | G076 | v1.1 增强通道 | G074 | G1 | deferred |
 | G077 | v1.2 stdio 接力 MCP | G076 | G1 | deferred |
+| G078 | 宿主与会话租借契约 | G004, G007 | G1 | planned |
+| G079 | 宿主池、会话租借、按类预算与新鲜度判定 | G078, G028, G026, G059 | G1 | planned |
+| G080 | 宿主登记、接管与度量 | G078, G008, G031 | G1 | planned |
+| G081 | Driver 宿主能力声明与多会话适配 | G078, G032, G034 | G1 | planned |
+| G082 | 宿主界面、API 与可观测指标 | G079, G080, G050, G054 | G1 | planned |
+| G083 | 宿主探针与真机验收 | G079, G081, G060 | G1 | planned |
+| G084 | 记录树存储（长期） | G066, G080 | G1 | deferred |
+| G085 | 宿主关闭链、关闭宽限与私有 TMPDIR | G078, G031, G059 | G1 | planned |
 
 ## V001 验证并锁定工具链与依赖许可
 
@@ -2423,3 +2431,181 @@
 场景：G077-C01, G077-C02。
 
 禁止范围：G076 完成且 RelayBench 拉取率 ≥60% 之前不实现；不用回环 HTTP + bearer，不给 Hermes 挂 MCP（第 8.2 节“永不”一行）；现有文件只经其既有所有者修改，不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
+
+## G078 宿主与会话租借契约
+
+范围：ADR-056（设计第 4.2 节）：契约层类型——品牌 `HostId`、`SessionLeaseId`、`HostClassKey`，Driver 静态声明 `HostCapabilities`（只写机制、不出现产品名、缺项按最保守值），`NativeHost`、`HostedSession`、`SessionLease`、`SessionLeaseRequest`、`HostPool`、`FreshnessVerdict`、`StaleReason`、`HostCloseReason`、`HostHealth`、实测维度 `sessionMemory`（light / heavy / unknown）与 `sessionRelease`（in_process / process_only / unknown）、宿主事件名与 `resolveHostBudgets` 配置解析器（以内存为主、按类封顶：`hostMemoryBudgetBytes`、`classCaps`、关闭宽限 ≥1.5 s、固定与并行上限，默认值与上限集中在一处，无效即拒绝）；契约文档 `docs/contracts/native-hosts.md`。现有文件：`src/contracts/control.ts` 的可选多会话方法（`openSession`、`closeSession`、`switchSession`）经既有所有者 G007 修改；`src/contracts/session.ts` 的 `PreparedSessionBinding` 注释经 G004 修改。
+
+依赖：G004, G007。需求：R04, R11, R19, R25。
+
+唯一交付物：
+- src/contracts/native-host.ts
+- docs/contracts/native-hosts.md
+- tests/unit/native-host-contract.test.ts
+
+验收：
+- 每个品牌 ID 与声明都有解析器，无效样例被拒绝
+- `HostCapabilities` 缺项按最保守值解析，声明文本不含产品名（用词检查）
+- `resolveHostBudgets` 的默认值与上限集中解析，越界值拒绝而不是调整
+
+场景：G078-C01, G078-C02。
+
+禁止范围：不实现池、登记、Driver 与界面；现有文件只经其既有所有者修改，不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
+
+## G079 宿主池、会话租借、按类预算与新鲜度判定
+
+范围：ADR-056（设计第 4.3–4.6、8 节第一期）：宿主池 `HostPool.lease` 的选宿主顺序、分类键（含工作区）、以内存为主、按类封顶的预算（`hostMemoryBudget`、`classCaps`：重且可收回的类活会话 ≤3 / 空闲 10 分钟 `session/close` / 无会话 2 分钟关进程，重且收不回的类每对话一个进程 / 全局 ≤3 / 5 分钟，轻多会话与服务型每进程 ≤8 / 10–15 分钟；初始值按 2026-11-03 实测，要按目标机器调整）、淘汰顺序先收回空闲会话再关空闲宿主且只碰空闲未固定者、按类空闲时限与固定宿主的两档时限加 4 小时硬上限、保活与预热不建会话（INV-42）、活会话直接按 ID 续用而 load/resume 只在重开时使用（dsh 对活会话的 resume 会被拒）、新鲜度判定表的全部规则（纯函数 `host-freshness.ts`）、租借归还（settled / pin / unknown）、空闲宿主不持工作区租约、固定（ADR-030 子集）、切换后保留来源宿主、A→B→A 续用或重开、分支与关闭对话时的 unpin。现有文件：`src/contexts/session/application/runtime.ts`（`kept`、`takeKept`、`keepable`、`release`、`applySwitch`、回合准备）经既有所有者 G028 修改；`src/infrastructure/session/binding-factory.ts`（宿主私有根、按类复用 control）经 G059 修改；`src/infrastructure/session/workspace-lease.ts` 经 G026 修改。
+
+依赖：G078, G028, G026, G059。需求：R09, R11, R13, R14, R18, R26。
+
+唯一交付物：
+- src/contexts/session/application/host-pool.ts
+- src/contexts/session/domain/host-freshness.ts
+- src/contexts/session/domain/host-budget.ts
+- tests/unit/host-freshness.test.ts
+- tests/unit/host-budget.test.ts
+- tests/integration/host-pool.test.ts
+- tests/property/host-pool.test.ts
+
+验收：
+- 连续发消息（同选择、无不新鲜条件）第 2 回合起复用率 100%，Run 记 `reused: true`
+- A→B→A 不重启 A，来源宿主转空闲或继续固定
+- 同工作区两个对话串行共用一个空闲宿主且租约随写走；固定宿主持租约时另一对话得到 `WORKSPACE_KEPT`
+- 类上限或内存预算满时按淘汰顺序只收回空闲未固定的会话与宿主（重的类先于轻的类），仍不能则回合等空位且可见
+- 新鲜度表每条各有一个无效样例：命中即重开并记原因
+- 结果未知的宿主转 dead 不进池；空闲时限与硬上限用假时钟验证
+- 保活期间与任何预热路径上原生侧没有新会话（INV-42）；活会话直接按 ID 续用，不发 load/resume
+
+场景：G079-C01, G079-C02, G079-C03, G079-C04, G079-C05, G079-C06, G079-C07, G079-C08, G079-P01, G079-C09。
+
+禁止范围：不改 Driver 的一连接一会话限制（第二期 G081）；不做登记表与接管（G080）；不做界面（G082）；现有文件只经其既有所有者修改，不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
+
+## G080 宿主登记、接管与度量
+
+范围：ADR-056（设计第 4.8、4.10 节）：业务库 v14 的安装级表 `native_hosts`（host_id、class_key、harness_id、control_id、workspace、pgid、started_at、state、pinned_session_id、run_id、last_used_at、rss_bytes、owner_generation），不经快照的写入路径 `hostWrite`（单独事务、不升 version），迁移前备份（ADR-049）与 v13 构建拒绝 v14；服务启动时的接管：按进程组身份结束 idle / pinned / leased 的遗留宿主，固定宿主沿用 ADR-030 的租约释放规则，leased 的只补“进程组已结束”证据；macOS 的 RSS 采样（`ps -o rss= -g`，2 秒上限，失败记 null）与进程组身份读取。现有文件：`src/infrastructure/session/sqlite-store.ts`（v14 迁移与 `hostWrite`）经既有所有者 G008 修改；`src/infrastructure/control/process-group.ts` 经 G031 修改；`src/contexts/session/application/runtime.ts` 的 `reapKept` 经 G028 修改（由 G079 协调）。
+
+依赖：G078, G008, G031。需求：R11, R14, R19, R20, R26。
+
+唯一交付物：
+- src/infrastructure/session/host-registry.ts
+- src/infrastructure/control/host-metrics.ts
+- tests/integration/host-registry.test.ts
+- tests/integration/host-takeover.test.ts
+- tests/fixtures/host-owner.mjs
+- tests/platform/host-metrics.test.ts
+
+验收：
+- 未登记的宿主不得承载回合（无效样例）；登记写入失败时回合以 `HOST_REGISTRY_FAILED` 失败且宿主关闭
+- 另起所有者登记 idle / pinned / leased 三种宿主后 SIGKILL，新所有者结束进程组、记录 terminated / gone / unconfirmed，固定宿主按 ADR-030 释放或隔离租约，leased 的 Run 仍 unknown
+- v13→v14 只加表、不改快照；迁移前备份；v13 构建拒绝 v14；迁移失败整笔回滚
+- RSS 采样只用 macOS 的 `ps`，读不到记 null，不记路径与环境值
+
+场景：G080-C01, G080-C02, G080-C03, G080-C04。
+
+禁止范围：不做记录树（G084）；不响应系统内存压力信号（设计 Q7）；现有文件只经其既有所有者修改，不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
+
+## G081 Driver 宿主能力声明与多会话适配
+
+范围：ADR-056（设计第 5 节、第 8 节第二期）：七家的 `HostCapabilities` 静态声明按 2026-11-03 实测填 `sessions`、`sessionMemory`、`sessionRelease`（`probed` 先为 false；WorkBuddy 接入时最保守值）；第二期的多会话方法按收益排序——先 OpenCode、dsh、Hermes 的 `openSession` / `closeSession` / `switchSession` 与活会话表（活会话直接按 ID 用，dsh 对活会话的 resume 会被拒，Hermes 不声明 close），再 Claude 的适配器常驻与 `session/close` 收回；Codex 不做多会话（每线程独占 MCP、`thread/unsubscribe` 不释放，声明 `sessionRelease: process_only`，池因此每对话一个进程），只把它的线程事件按 `threadId` 归属、附着的子 Agent 线程不归属，`probed` 只在探针（G083）通过后翻转；固定对端夹具 `multi-session-peer.mjs` 模拟同连接多会话。现有文件：`src/adapters/control/acp.ts`、`claude.ts`、`opencode.ts`、`hermes.ts`、`openclaw.ts`、`pi.ts`、`factory.ts` 经既有所有者 G032 修改；`src/adapters/control/codex.ts` 经 G034 修改。
+
+依赖：G078, G032, G034。需求：R04, R11, R25。
+
+唯一交付物：
+- src/adapters/control/host-capabilities.ts
+- tests/protocol/host-sessions.test.ts
+- tests/fixtures/multi-session-peer.mjs
+
+验收：
+- 同一连接打开两个会话：各自 open / prompt / close，事件按会话归属，附着的子线程不归属任何会话（固定对端）
+- 声明不含产品名，缺项按最保守值；Runtime 没有按产品名的分支
+- 第一期声明下现有协议测试全部不变
+- Codex 的声明为 `sessionRelease: process_only`，宿主池据此对它每对话一个进程、不打开第二个线程
+
+场景：G081-C01, G081-C02, G081-C03。
+
+禁止范围：不按版本号开关多会话能力（ADR-053）；不用用户级守护进程；不改网关的启停（ADR-051、ADR-052）；现有文件只经其既有所有者修改，不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
+
+## G082 宿主界面、API 与可观测指标
+
+范围：ADR-056（设计第 4.3、4.7、4.10 节）：只读 `GET /api/v1/native-hosts`（按类与状态的宿主数、每个宿主的 Harness、所属对话、状态、会话数、空闲时长、RSS 采样、复用率、冷启动与重开用时分布、淘汰与接管计数；不含路径、环境值与会话内容）；设置页只读显示按类预算与保活时限（没有预热开关：预热不建会话，INV-42）；对话执行详情里的“本次复用了宿主 / 检测到原程序里的新回合，已重新读取”说明；Harnesses 页的宿主列表与“结束宿主”；ADR-043 升级确认框列出被排空的宿主。现有文件：`src/web/server.ts` 经既有所有者 G050 修改；`web/src/api.ts`、`web/src/components/ChatPage.tsx`、`HarnessesPage.tsx` 经 G054 修改。界面文案与无障碍名统一称 Harness。
+
+依赖：G079, G080, G050, G054。需求：R01, R16, R26。
+
+唯一交付物：
+- src/web/native-hosts.ts
+- web/src/components/NativeHostsPanel.tsx
+- tests/integration/web-native-hosts.test.ts
+- tests/browser/native-hosts.browser.ts
+
+验收：
+- API 返回不含路径、环境变量值与会话内容（安全断言）
+- 浏览器：连续两回合后显示复用说明；在原程序里继续后显示重开说明；“结束宿主”走正常停止链并显示证据
+- 没有预热开关；设置页按类预算与保活时限只读显示，并说明保活期间不建原生会话
+
+场景：G082-C01, G082-C02。
+
+禁止范围：不新增执行权：界面只读与发命令，语义与 API 相同（INV-25）；现有文件只经其既有所有者修改，不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
+
+## G083 宿主探针与真机验收
+
+范围：ADR-056（设计第 10 节）：在 2026-11-03 实测（`spikes/native-hosts/`，六家、不发提示）之后仍要用模型调用补的真机探针——H3 同宿主并发回合；H4 发过提示后的外来回合检测与 Hermes、OpenClaw 的 cwd 核实；H6 结算后后台活动的判定；H7 补测进程重启后对发过提示的会话的 load/resume（Codex `thread/resume`、OpenClaw `session/load` 与 `session/resume`、dsh、Claude、OpenCode）；H8 补测生产关闭链（1.5 s 宽限、先 EOF 再核对离组后代）下的关闭与离组后代退出；回合期间的 RSS；Pi 在开发策略下的 `switch_session`（只读研究，不改官网策略）。结果写入 `docs/verification/native-hosts-conformance.md`（按日期分节），每家 `probed` 只在探针通过后由 G081 翻转；用最便宜的模型、临时工作区、不用用户凭据、结束即删。2026-11-03 的 `spikes/native-hosts/` 实测是本任务的输入证据与对照基线，不由本任务拥有。
+
+依赖：G079, G081, G060。需求：R04, R20, R24。
+
+唯一交付物：
+- tests/real/native-hosts.real.ts
+- docs/verification/native-hosts-conformance.md
+
+验收：
+- H3、H4、H6、H7 补测、H8 补测在六家各有记录或写明不适用；Pi 的 `switch_session` 有只读研究结论
+- 归类表的“仍待验证”列清空或写明原因，并注明版本作为证据（ADR-053）
+- Claude、Codex 各一次连续三回合与一次 A→B→A 经 4317 正式入口真实通过，记录冷启动、复用、重开用时与 RSS
+
+场景：G083-R01, G083-R02, G083-R03, G083-R04, G083-R05。
+
+禁止范围：不改 Driver 声明（G081）；不把探针通过当作真实验收通过：真实验收另按手册经 4317 正式入口；现有文件只经其既有所有者修改，不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
+
+## G084 记录树存储（长期）
+
+范围：ADR-056（设计第 7 节）：公共对话改为只追加的记录树——`RecordEntry`（id、parentId、seq、kind、runId、executedOn、payload）、`SessionTreeHead`（leafId）、快照成为从叶子到根的确定性投影、分支与接续改为父指针与标记记录、原生绑定位置改为 `throughEntryId`、v13 的 `relay_digests` 与 `relay_deliveries` 保持 Run 键只加 entry 范围；迁移把线性会话展开成链。现有文件：`src/contexts/session/domain/state.ts`、`src/contracts/session.ts` 经 G004 修改；`src/infrastructure/session/sqlite-store.ts` 经 G008 修改；界面与导出经各自所有者修改。
+
+依赖：G066, G080。需求：R07, R08, R15, R19。
+
+唯一交付物：
+- src/contexts/session/domain/tree/entries.ts
+- src/contexts/session/domain/tree/projection.ts
+- src/contexts/session/domain/tree/migrate.ts
+- tests/property/record-tree.test.ts
+- tests/integration/record-tree-migrate.test.ts
+
+验收：
+- 500 个随机会话“增量投影 = 重建”
+- 1 GiB 合成库的迁移时长写进验证记录
+- 分支与接续不再复制历史；接力表的 Run 键不变
+
+场景：G084-C01, G084-C02。
+
+禁止范围：G066–G074 稳定之前不实现；不改接力的送达规则与同意规则；现有文件只经其既有所有者修改，不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
+
+## G085 宿主关闭链、关闭宽限与私有 TMPDIR
+
+范围：ADR-056（设计第 4.11、4.12 节；依据 2026-11-03 实测）：关闭宽限 ≥1.5 s（现状 500 ms，实测 Claude 带会话 0.8 s、Codex 最长 1124 ms 才自然退出）；关闭链改为关 stdin → 等领头进程退出且进程组清空 → 按 pid 加启动时间核对此前采样到的离组后代（Codex 19 个后代里 18 个、Claude 2 个、OpenCode 与 OpenClaw 各 1 个不在领头进程组）→ 仍活着的再等最多 10 s 并记入 `cleanup.stage` 与 `outside` → SIGTERM、SIGKILL 只作兜底；每个宿主类一个稳定、私有（0700）的 TMPDIR（`os.tmpdir()/harnesshub-hosts-<uid>/<classKey>/`，与数据根互不包含，升级时清空，7 天未用删除，超 256 MiB 在无活宿主时清空；实测持久 TMPDIR 让 OpenCode initialize 约 590 → 160 ms、dsh 约 960 → 580 ms、OpenClaw 约 1250 → 1100 ms）。现有文件：`src/infrastructure/control/json-rpc-process.ts`（关闭链、`closeGraceMs`）与 `src/infrastructure/control/process-group.ts`（离组后代核对）经既有所有者 G031 修改；`src/infrastructure/session/binding-factory.ts`（`closeGraceMs: 500`、每回合新建 TMPDIR）经 G059 修改。
+
+依赖：G078, G031, G059。需求：R11, R13, R17, R20, R26。
+
+唯一交付物：
+- src/infrastructure/control/host-shutdown.ts
+- src/infrastructure/session/host-tmpdir.ts
+- tests/integration/host-shutdown.test.ts
+- tests/integration/host-tmpdir.test.ts
+- tests/platform/host-outsiders.test.ts
+
+验收：
+- 真实子进程在 EOF 后 1.2 s 退出时不收到 SIGTERM；超过宽限才 SIGTERM、再 SIGKILL，`cleanup.stage` 如实记录
+- 离组后代按 pid 加启动时间核对：已退出的不计残留，仍活着的在 10 s 内复查并记入 `outside.remaining`，从不发信号
+- TMPDIR 按类隔离（不同工作区不共享）、0700、与数据根互不包含；升级（安装指纹变化）清空；7 天未用删除；超 256 MiB 只在无活宿主时清空；不可建或不可写时回合以 `HOST_TMPDIR_FAILED` 失败并关闭宿主
+- 宽限与 TMPDIR 的上限都在同一配置解析器里，越界拒绝
+
+场景：G085-C01, G085-C02, G085-C03, G085-C04。
+
+禁止范围：不对离组后代发信号（ADR-030 补充条；是否结束本宿主自己的 MCP 服务器留设计 Q10）；不改数据根位置（ADR-055 D8）；不做宿主池本身（G079）；现有文件只经其既有所有者修改，不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。

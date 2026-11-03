@@ -696,3 +696,35 @@
 | G076-C02 | G076 | integration | 撤回同意后文件视图的供给 | 先提交“停止供给”，再留墓碑并删除文件；跨文件系统不能原子，以墓碑为准 | deferred |
 | G077-C01 | G077 | probe | v1.2 探针 P-M1–P-M4 | P-M1 残留进程 = 0；P-M2 argv 用脱敏规则扫描命中 0；P-M3 工具规格指纹跨恢复不变；P-M4 拉取率（细节题）≥60% 才改该接收方的默认档 | deferred |
 | G077-C02 | G077 | security | shim 的 argv 与工具规格 | 用脱敏规则扫描命中 0；规格零凭据、只读 | deferred |
+| G078-C01 | G078 | unit | 品牌 ID 与 `HostCapabilities` 的解析：空字符串、超长、含控制字符、未知枚举值、缺项 | 无效样例全部被拒绝；缺项按最保守值（`one_per_process`、`launch_cwd_only`、`reopen.cost: unknown`、`idleActivity: unknown`、`foreignTurns: undetectable`、`probed: false`） | planned |
+| G078-C02 | G078 | unit | `resolveHostBudgets`：默认值、每个参数的上下界、非整数、`maxPinned` 大于 `maxHosts`；声明文本扫描产品名 | 越界与非整数拒绝而不是调整；`maxPinned ≤ maxHosts`；声明里没有产品名 | planned |
+| G079-C01 | G079 | integration | 同一对话连续三回合（真实存储、真实子进程夹具、真实租约），选择不变、无不新鲜条件 | 第 2、3 回合复用同一宿主，Run 记 `reused: true`，事件 `native.session_reused{basis: same_owner_no_foreign}`；只启动一次进程；宿主在回合之间为 idle 且不持租约 | planned |
+| G079-C02 | G079 | integration | A→B→A：切到 B 时 A 的宿主状态；回到 A 时的新鲜度判定与欠交补发 | A 的宿主转 idle 而不是关闭；回到 A 续用（无不新鲜条件）或按原因重开；A 只冷启动一次；接力的送达结论不变 | planned |
+| G079-C03 | G079 | integration | 两个对话同一工作区同一类：对话 1 结算后对话 2 发消息；再回到对话 1 | 对话 2 取得租约并租借同一宿主为自己的会话打开；对话 1 的会话不受影响；每类最多 1 个空闲宿主；租约只在回合期间被持有 | planned |
+| G079-C04 | G079 | unit | 新鲜度判定表每条一个无效样例：原程序里继续过、结果未知、绑定 unconfirmed / forking、接力 pending / suspect、`contextEffect` 为 clear / rewind / unknown、配置指纹变化、安装指纹变化、启动参数变化、工作区身份变化、宿主不健康、`foreignTurns: undetectable`；以及全不命中的正例 | 每个样例给出对应的 `StaleReason`，正例为 fresh{same_owner_no_foreign}；`compact` 不算不新鲜 | planned |
+| G079-C05 | G079 | integration | 类上限（重且可收回的类活会话 ≤3、重且收不回的类进程 ≤3）或内存预算 `hostMemoryBudget`（假宿主报告的进程树 RSS）已满：存在空闲会话、空闲宿主、固定宿主、正在回合的宿主各若干，新回合到来；再把可收回者全部占满 | 先收回最久未用的空闲会话（记 `native.session_closed{reason: "evicted"}`），再关最久未用的空闲宿主（`native.host_closed{reason: "evicted"}`），重的类先于轻的类；固定与正在回合的从不被结束；无可收回者时回合等空位并可见（`run.waiting{kind: slot}`），不拒绝 | planned |
+| G079-C06 | G079 | integration | 开启保持的对话有后台活动时切换 Harness；另一对话同工作区发消息；用户选择结束后台进程 | 固定宿主不因切换关闭并继续持有租约；另一对话得到 `WORKSPACE_KEPT`；用户结束后走停止链、记 `ended_by_user`，另一对话继续 | planned |
+| G079-C07 | G079 | integration | 假时钟：池内空闲宿主到 `idleTtl`；固定宿主在“没有回合也没有原生事件”30 分钟、以及自上一回合起 4 小时硬上限 | 分别以 `idle` 关闭并记 `cleanup`；有原生事件时固定宿主的空闲计时重置但硬上限不重置 | planned |
+| G079-C08 | G079 | integration | 回合进行中杀掉宿主的进程组；清理未确认的变体 | Run unknown、对话 blocked、宿主 dead 不进池；该绑定判 `unknown_outcome` 不被任何宿主复用；清理未确认时租约隔离；不自动重跑 | planned |
+| G079-P01 | G079 | property | 随机的租借、归还（settled / pin / unknown）、淘汰、关闭、所有者崩溃序列，带 seed | 任意时刻每个原生会话至多一个持有者；宿主总数不超过 `maxHosts`；从不淘汰 leased 或 pinned；每个宿主的关闭都有原因与证据 | planned |
+| G080-C01 | G080 | integration | 宿主未登记就尝试承载回合（无效样例）；登记写入被注入失败 | 前者被拒绝；后者回合以 `HOST_REGISTRY_FAILED` 失败且宿主关闭、留 `cleanup` | planned |
+| G080-C02 | G080 | integration | 另起一个所有者进程登记 idle、pinned、leased 三种宿主（真实子进程）后被 SIGKILL；新所有者启动 | 三种宿主的进程组都被识别并结束，结果 terminated / gone / unconfirmed 记入事件；pinned 的租约按 ADR-030 释放或隔离；leased 的 Run 仍 unknown 但带“进程组已结束”证据；unconfirmed 不释放任何租约 | planned |
+| G080-C03 | G080 | integration | v13 库迁到 v14：只加表、快照不变；迁移前备份；v13 构建打开 v14；迁移中途注入失败 | 快照字节不变；备份存在且只保留 2 份（ADR-049）；v13 构建以未知版本拒绝；失败整笔回滚、备份保留 | planned |
+| G080-C04 | G080 | platform | macOS 上对真实进程组采样 RSS（`ps -o rss= -g`）；进程已退出、`ps` 超时的变体 | 采样值为正整数字节；退出或超时记 null 而不是抛错；输出不含路径与环境值 | planned |
+| G081-C01 | G081 | protocol | 固定对端上同一连接打开两个会话：各自 open、prompt、close；第二个会话用 `session/load` 与 `thread/resume` 两种形状 | 两个会话各自得到正确的回复与结算；关闭一个不影响另一个；连接只启动一个进程 | planned |
+| G081-C02 | G081 | protocol | 同连接两个会话各有回合时，对端穿插发送带另一会话 ID 的事件与附着的子线程事件 | 事件只归属持有该会话租借的 Run；附着的子线程与他人的会话只计数、不归属 | planned |
+| G081-C03 | G081 | unit | 七家的 `HostCapabilities` 声明：扫描产品名；缺项；`probed` 的初值 | 声明不含产品名；缺项按最保守值；`probed` 全部为 false 直到探针记录登记 | planned |
+| G082-C01 | G082 | integration | `GET /api/v1/native-hosts` 在有空闲、固定、正在回合的宿主时的返回；结束宿主的命令与界面语义 | 字段齐全且不含路径、环境变量值与会话内容；结束宿主经同一应用入口、走停止链并返回证据 | planned |
+| G082-C02 | G082 | e2e | 浏览器：连续两回合后的复用说明；模拟原程序里的新回合后的重开说明；设置页的按类预算与保活时限只读显示 | 说明文案出现且称 Harness；设置页没有预热开关，预算与保活时限按类显示并注明是起点 | planned |
+| G083-R01 | G083 | probe | H1 复核：发一条最便宜的提示后回合期间与之后空闲 10 分钟的进程树 RSS（每分钟采样），与 2026-11-03 未发提示的数字对照 | 每家一行实测数字写进验证记录；回合期间的峰值与空闲回收的时刻记录 | planned |
+| G083-R02 | G083 | probe | H7 补测与 H3：发过提示的会话在进程重启后的 load/resume（Codex `thread/resume`、OpenClaw `session/load` 与 `session/resume`、dsh、Claude、OpenCode 的用时）；同宿主两个会话并发回合（最便宜模型，≤2 回合/家） | 每家记录接受 / 拒绝 / 未知与用时；Codex 与 OpenClaw 对发过提示的会话能否恢复有结论；归类表据此定稿 | planned |
+| G083-R03 | G083 | probe | H4：发过提示后在原程序里加一回合，Hub 按声明的检测方式（列表 `updatedAt`、回合数、回放计数、`chat.history`）判定；Hermes 与 OpenClaw 的 cwd 是否生效由工具调用的工作区核实 | 每家写明外来回合能否被检测与依据；不能检测的声明为 `undetectable` | planned |
+| G083-R04 | G083 | probe | H6：后台任务运行中结算，读 `unattributedUpdates` 与进程组成员 | 记录“结算后无未归属事件”是否等价于“没有后台活动”；不等价时该 Driver 的 `idleActivity` 定为 `background_possible` | planned |
+| G083-R05 | G083 | probe | H8 补测：生产关闭链（1.5 s 宽限、先 EOF 再按 pid 加启动时间核对离组后代）下六家的关闭用时与离组后代的退出；持久 TMPDIR 下的冷启动与首个会话各 5 次；Pi 在开发策略 `--allow-unofficial` 下的 `switch_session`（只读研究） | 数字写进验证记录并标明版本；离组后代在 10 s 内是否自行退出有结论；预算与宽限的默认值据此校准 | planned |
+| G084-C01 | G084 | property | 500 个随机会话（含分支、切换、压缩标记、接续）的记录树：增量投影与从头重建 | 逐字节相同；叶子只能移到已存在的记录；记录只追加 | deferred |
+| G084-C02 | G084 | integration | 线性会话与带 `origin.history` 的分支、接续会话迁移成记录树；1 GiB 合成库 | 迁移后投影等于迁移前快照；来源历史变成父指针或标记而不再复制；接力表的 Run 键不变；时长写进验证记录 | deferred |
+| G079-C09 | G079 | integration | 保活：宿主 initialize 之后没有会话时保活到按类时限；回合在取得工作区租约之前尝试取得租借；任何预热路径（无） | 对端夹具计数 `session/new`、`thread/start` 在保活期间为 0；没有租约的租借请求被拒绝；原生会话只在取得租约的回合里建立；无会话的宿主到时按 `idle` 关闭 | planned |
+| G085-C01 | G085 | integration | 真实子进程夹具在 stdin EOF 后分别 0.3 s、1.2 s、2.5 s 退出；关闭宽限 1.5 s | 前两者不收到任何信号、`cleanup.stage: "eof"`；第三者在 1.5 s 后收到 SIGTERM（`stage: "sigterm"`），不响应则 SIGKILL；关闭用时记入证据 | planned |
+| G085-C02 | G085 | platform | macOS 上宿主启动两个自成进程组的后代（一个随 EOF 退出、一个存活 3 s）；关闭时按 pid 加启动时间核对 | 已退出的不计残留；存活者在 10 s 内复查到退出后 `outside.remaining` 为 0；全程不向离组后代发信号；pid 被复用的进程不被认错 | planned |
+| G085-C03 | G085 | integration | 两个工作区、同一 Harness 的宿主各自的 TMPDIR；同类第二个宿主复用同一目录；目录被改为符号链接或 0755 | 目录按类隔离、0700、与数据根互不包含；同类复用同一目录；符号链接或权限不对时回合以 `HOST_TMPDIR_FAILED` 失败并关闭宿主，不跟随链接 | planned |
+| G085-C04 | G085 | integration | 安装指纹变化（升级）后首次启动；7 天未用的目录；超过 256 MiB 的目录分别在有、无活宿主时 | 升级后目录被清空再使用；陈旧目录在 Hub 启动时删除；超限目录只在该类没有活宿主时清空，删除失败只记诊断不影响回合 | planned |

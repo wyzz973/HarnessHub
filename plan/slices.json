@@ -1038,6 +1038,38 @@
       "note": "2026-11-03 用户验收，按推荐项接受 D1–D11，切片改为 accepted。allowed_files 暂为空：按终稿第 17 节，任务开工时只登记该任务拥有、且本切片要新增的 src/、web/ 文件。验收时删去了 G028（原依赖 G025）、G047（G045）、G050（G045、G046）、G059（G046），以及计划中的 G048、G049、G057（G046）对已延期任务的依赖：接替任务 G068 与 G072 已经依赖它们，照字面改指会成环。",
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/relay-p0-2026-11-03.md"
+    },
+    {
+      "id": "native-hosts",
+      "status": "proposed",
+      "scope": "原生宿主与会话租借（ADR-056，设计正文为 docs/proposals/native-hosts/design.md）：会话是数据、进程是可以切换会话的宿主——回合租借宿主上的原生会话而不拥有进程；宿主池按 Harness + 入口 + 安装指纹 + 启动环境分类、预算以内存为主、按类封顶（2026-11-03 实测）；复用须通过新鲜度判定；空闲宿主不持工作区租约、有后台任务的宿主固定在对话上（ADR-030 方案 C 保留）；宿主登记先于使用、崩溃后按进程组身份接管；关闭宽限 ≥1.5 s、先 EOF 再核对离组后代、每类一个稳定私有 TMPDIR、预热不建会话；三期：按会话复用的进程池与切换后保留来源宿主 → 宿主多会话（先 OpenCode、dsh、Hermes，再 Claude 的适配器常驻加会话收回，Codex 不做）→ 记录树。本切片的任务为 G078–G085 及被修改文件的既有所有者；取舍 D1–D7 待用户拍板，未实现、未真机验证",
+      "task_ids": [
+        "G078",
+        "G079",
+        "G080",
+        "G081",
+        "G082",
+        "G083",
+        "G084",
+        "G085",
+        "G004",
+        "G007",
+        "G008",
+        "G026",
+        "G028",
+        "G031",
+        "G032",
+        "G034",
+        "G050",
+        "G054",
+        "G059",
+        "G060"
+      ],
+      "decision": "docs/decisions/0056-native-hosts-and-sessions.md",
+      "allowed_files": [],
+      "note": "2026-11-03 proposed：等用户对 ADR-056 的 D1–D7 拍板后改为 accepted；allowed_files 在任务开工时只登记该任务拥有、且本切片要新增的 src/、web/ 文件。实测 spikes/native-hosts/（2026-11-03，六家）由另一位成员完成，是预算初始值与归类的依据，不归本切片任务拥有",
+      "implementation_state": "not_started",
+      "verification_record": "docs/verification/native-hosts-conformance.md"
     }
   ]
 }
