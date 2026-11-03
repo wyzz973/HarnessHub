@@ -1,6 +1,6 @@
 import type { ControlProtocol } from "../contexts/catalog/domain/discovery.js";
 import type { ResolvedCommand } from "../contexts/catalog/domain/catalog.js";
-import type { ContentRef, ControlAttachment } from "./content.js";
+import type { ContentKind, ContentRef, ControlAttachment } from "./content.js";
 
 declare const nativeConversationBrand: unique symbol;
 export type NativeConversationId = string & { readonly [nativeConversationBrand]: true };
@@ -101,6 +101,21 @@ export interface BackendResult {
   readonly status: "completed" | "cancelled" | "failed";
   readonly reason: string;
   readonly error?: { readonly code: string; readonly message: string };
+  /**
+   * What the driver knows of the prompt reaching the native history (ADR-055 §7.1), whatever the status: "recorded" when
+   * the native side took it into its history (it answered the prompt, or its protocol says so even of a failure after the
+   * prompt was inserted), "not_recorded" when nothing was sent or the native side refused it before inserting it (the
+   * driver's own results, such as a refused command or an unapplied model, included). Absent is unknown: no evidence either
+   * way, which is never read as not recorded. A command prompt is never reported recorded on its reply alone. The Session
+   * keeps this only in the Turn's end event; its snapshot never stores it.
+   */
+  readonly input?: "recorded" | "not_recorded";
+  /**
+   * What the driver knows of a command prompt beyond its status (ADR-055 §7.6): "noop" when the native side answered, in
+   * its own fixed words, that the command it ran changed nothing (Hermes's `/compress` with nothing to remove). Absent says
+   * nothing. The Session reads it only for the command's effect and stores it nowhere.
+   */
+  readonly command?: "noop";
 }
 export interface NativeOption {
   readonly id: string;
@@ -150,6 +165,35 @@ export interface NativeSessionImport {
   readonly historyRead: boolean;
 }
 export const MAX_NATIVE_SESSIONS = 200;
+/**
+ * What running a native command does to the native context (ADR-055 R0d): it enters the history like a message (keep),
+ * leaves the history alone (none), compacts, clears or rewinds it, or the driver cannot tell (unknown).
+ */
+export type ContextEffect = "keep" | "none" | "compact" | "clear" | "rewind" | "unknown";
+/** A native command as its driver declares it; an absent effect is unknown. */
+export interface NativeCommand { readonly name: string; readonly description: string; readonly contextEffect?: ContextEffect }
+/**
+ * How the native side reads one input, as its driver reproduces the native parsing (leading whitespace, names, aliases,
+ * paths): a command with its effect for these arguments, content, or a possible command whose name only the catalog can
+ * settle (read without a catalog).
+ */
+export type CommandClass =
+  | { readonly kind: "command"; readonly name: string; readonly args: string; readonly effect: ContextEffect }
+  | { readonly kind: "content" }
+  | { readonly kind: "possible_command"; readonly name: string };
+/**
+ * The reading every native interface shares unless its driver knows better: an input that starts with "/" names a command
+ * by its first word, which is a command when the catalog lists it (its declared effect) and content otherwise. Without a
+ * catalog such an input is a possible command.
+ */
+export function listedCommand(text: string, catalog: NativeModelCatalog | null): CommandClass {
+  if (!text.startsWith("/")) return { kind: "content" };
+  const name = text.slice(1).split(/\s/u)[0]!;
+  if (!name) return { kind: "content" };
+  if (catalog === null) return { kind: "possible_command", name };
+  const listed = catalog.commands?.find(command => command.name === name);
+  return listed === undefined ? { kind: "content" } : { kind: "command", name, args: text.slice(1 + name.length).trim(), effect: listed.contextEffect ?? "unknown" };
+}
 export interface NativeModelCatalog {
   readonly models: readonly { readonly id: string; readonly name: string; readonly options?: readonly NativeOption[]; readonly inputs?: NativeInputs }[];
   /** Agent-level inputs; a model's own `inputs` take precedence when the native interface declares them per model. */
@@ -160,7 +204,9 @@ export interface NativeModelCatalog {
   readonly authentication: "ready" | "missing" | "unknown";
   readonly canSelect: boolean;
   readonly options?: readonly NativeOption[];
-  readonly commands?: readonly { readonly name: string; readonly description: string }[];
+  readonly commands?: readonly NativeCommand[];
+  /** Commands the native side runs although it does not list them (Claude's `/clear`), with their effects (ADR-055 R0d). */
+  readonly hiddenCommands?: readonly NativeCommand[];
 }
 export interface StopRequestReceipt { readonly requested: true }
 export interface CleanupEvidence {
@@ -182,6 +228,14 @@ export interface HarnessControl {
   /** Private Driver-owned recovery reference, never credentials. Null means the current native interface cannot resume. */
   checkpoint?(): Promise<string | null>;
   models?(): Promise<NativeModelCatalog>;
+  /**
+   * Reads an input the way the native side will (ADR-055 R0d), synchronously and without I/O: with this connection's
+   * catalog (models()), or with null before it is read, when a name only the catalog can settle is a possible command.
+   * `attachments` are the kinds of the input's attachments, none by default: with some kinds a native side reads any input
+   * as a prompt (Hermes with an image). startText treats the input by this same reading. Absent means the shared reading
+   * (listedCommand).
+   */
+  classify?(text: string, catalog: NativeModelCatalog | null, attachments?: readonly ContentKind[]): CommandClass;
   /**
    * Rejects with ATTACHMENT_UNSUPPORTED (or a size code) before anything is sent when the open conversation's agent or
    * model cannot take one of the attachments. Called by the Runtime before dispatch; a control without it takes none.

@@ -1,12 +1,24 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { MAX_CONTENT_BYTES, type ControlAttachment } from "../../contracts/content.js";
-import type { BackendResult, ControlEvent, ControlLaunch, ControlOptions, ControlRun, NativeConversationId, NativeModelCatalog } from "../../contracts/control.js";
+import { MAX_CONTENT_BYTES, type ContentKind, type ControlAttachment } from "../../contracts/content.js";
+import type { BackendResult, CommandClass, ContextEffect, ControlEvent, ControlLaunch, ControlOptions, ControlRun, NativeCommand, NativeConversationId, NativeModelCatalog } from "../../contracts/control.js";
 import { ControlError } from "../../infrastructure/control/json-rpc-process.js";
 import { AcpControl } from "./acp.js";
 
-const EXPORT = { name: "export", description: "导出原生会话记录（Claude Code 转录 JSONL）" } as const;
+const EXPORT = { name: "export", description: "导出原生会话记录（Claude Code 转录 JSONL）", contextEffect: "none" } as const;
+/** A command name as Claude Code reads one after a leading slash (its CLI strings); a path such as `/Users/…` names none. */
+const COMMAND_NAME = /^[a-zA-Z0-9_][a-zA-Z0-9:_-]*$/u;
+/**
+ * Commands Claude Code runs although claude-agent-acp does not list them (ADR-055 R0d): `/clear` and its aliases start a
+ * new native conversation, and the adapter's `/remote-control`, which this driver refuses, changes nothing.
+ */
+const HIDDEN: readonly NativeCommand[] = [
+  ...["clear", "reset", "new"].map(name => ({ name, description: "清空 Claude Code 的会话上下文", contextEffect: "clear" as const })),
+  { name: "remote-control", description: "Claude Code 的 Remote Control（HarnessHub 不发送）", contextEffect: "none" },
+];
+/** Listed commands that are no prompt: compaction, and the CLI's local reports, which leave the context as it is; any other listed command (a skill, a custom command) enters it like a message. */
+const LISTED_EFFECTS: Readonly<Record<string, ContextEffect>> = { compact: "compact", model: "none", status: "none", usage: "none", context: "none", mcp: "none", cost: "none", export: "none" };
 /** Project directories searched for a transcript, as claude-agent-acp itself searches them. */
 const MAX_PROJECT_DIRECTORIES = 4096;
 /** claude-agent-acp's connection-level report of the sign-in it uses (auth-status.js, the same report in 0.89.1 and 0.94.0). */
@@ -20,9 +32,34 @@ const SIGNED_IN: ReadonlySet<string> = new Set(["account", "api_key", "external"
 const SESSION_META: Readonly<Record<string, unknown>> = { claudeCode: { options: { promptSuggestions: false } } };
 /** The adapter's own `/remote-control` (0.93.0 and later), which the Hub neither lists nor sends. */
 const REMOTE_CONTROL = "remote-control";
-const REMOTE_CONTROL_PROMPT = /^\/remote-control(\s|$)/u;
 const REMOTE_CONTROL_REFUSED: BackendResult = { status: "failed", reason: "command_unavailable", error: { code: "NATIVE_COMMAND_UNAVAILABLE",
-  message: "/remote-control 没有发给 Claude：HarnessHub 默认在每个回合结束时关闭 Claude 的适配器进程，Remote Control 会随之断开；保持原生进程时，从 claude.ai 发来的回合也不属于这段对话。" } };
+  message: "/remote-control 没有发给 Claude：HarnessHub 默认在每个回合结束时关闭 Claude 的适配器进程，Remote Control 会随之断开；保持原生进程时，从 claude.ai 发来的回合也不属于这段对话。" }, input: "not_recorded" };
+/** Stop reasons claude-agent-acp gives only once Claude Code wrote the prompt to its transcript, which it does before calling the model. */
+const RECORDED_STOPS: ReadonlySet<string> = new Set(["end_turn", "max_tokens", "max_turn_requests"]);
+/**
+ * claude-agent-acp's `errorKind` for a turn whose model call failed (0.99.1 `errorKindData(lastAssistantError)`, the Agent
+ * SDK's SDKAssistantMessageError): the prompt was in the transcript before that call. authentication_failed and
+ * oauth_org_not_allowed never arrive so: the adapter fails those turns, and the CLI's "run /login" replies, with a bare
+ * auth_required (-32000, no data), which it also sends before a turn starts (its `--hide-claude-auth` guard), so that one
+ * stays unknown. The adapter's own kinds (transport_lost, worker_shutdown, no_result, incomplete_tool_call) can come before
+ * the model call, and are not among them either.
+ */
+const MODEL_FAILURES: ReadonlySet<string> = new Set(["account_on_hold", "verification_required", "billing_error", "rate_limit", "overloaded", "invalid_request",
+  "model_not_found", "server_error", "unknown", "max_output_tokens", "cloud_credential_error"]);
+/**
+ * claude-agent-acp 0.99.1 refuses a prompt with this before enqueueing it, when the session's query stream has ended (and
+ * fails each queued prompt the stream never started with it): `RequestError.internalError(undefined, SESSION_ENDED_MESSAGE)`.
+ */
+const SESSION_ENDED = "Internal error: The Claude Agent session has ended. Please start a new session.";
+/** ACP's resource-not-found code, with which claude-agent-acp refuses a prompt for a session it does not have (`sessionNotFound`). */
+const SESSION_NOT_FOUND = -32002;
+/** The command an input names as Claude Code reads one: after leading whitespace, a slash and a command name; null for content. */
+function commandOf(text: string): { readonly name: string; readonly args: string } | null {
+  const trimmed = text.trimStart();
+  if (!trimmed.startsWith("/")) return null;
+  const name = trimmed.slice(1).split(/\s/u)[0]!;
+  return COMMAND_NAME.test(name) ? { name, args: trimmed.slice(1 + name.length).trim() } : null;
+}
 
 /**
  * Claude Code over claude-agent-acp, with the latest adapter (0.94.0, with CLI 2.1.307) as the baseline; 0.89.1 (with CLI
@@ -50,10 +87,32 @@ const REMOTE_CONTROL_REFUSED: BackendResult = { status: "failed", reason: "comma
  * The adapter's `/remote-control` is neither listed nor sent, and a prompt that runs it fails with NATIVE_COMMAND_UNAVAILABLE:
  * the Hub closes the adapter process when a Turn ends, which disconnects Remote Control, and turns sent from claude.ai while
  * a process is kept belong to no Run here (ADR-053).
+ *
+ * Inputs are read as Claude Code reads them (ADR-055 R0d): after leading whitespace, a slash and a command name is a
+ * command, listed or not, since Claude Code runs commands its adapter does not list (`/clear`, `/reset` and `/new` clear the
+ * native conversation); a slash path is content. The Hub's own `/export` is that command alone, without attachments. A
+ * content prompt that ended with end_turn, max_tokens or max_turn_requests, or failed with a model failure's errorKind, was
+ * written to the transcript; a prompt refused because the session's stream had ended or the session is unknown (R8 C4),
+ * and what this driver refuses or exports itself, never reached Claude (not recorded).
  */
 export class ClaudeControl extends AcpControl {
   private hubExport = false;
   constructor(private readonly claudeLaunch: ControlLaunch, options: ControlOptions) { super(claudeLaunch, options); }
+  protected override promptRecorded(reason: string): boolean { return RECORDED_STOPS.has(reason); }
+  protected override refusedPrompt(error: ControlError): "recorded" | "not_recorded" | null {
+    if (error.remoteCode === SESSION_NOT_FOUND || error.remoteCode === -32603 && error.remoteMessage === SESSION_ENDED && error.remoteFields === undefined) return "not_recorded";
+    return error.remoteCode === -32603 && MODEL_FAILURES.has(error.remoteFields?.errorKind ?? "") ? "recorded" : null;
+  }
+  override classify(text: string, catalog: NativeModelCatalog | null, attachments: readonly ContentKind[] = []): CommandClass {
+    const named = commandOf(text);
+    if (named === null) return { kind: "content" };
+    const { name, args } = named, hidden = HIDDEN.find(command => command.name === name);
+    if (hidden !== undefined) return { kind: "command", name, args, effect: hidden.contextEffect ?? "unknown" };
+    if (catalog === null) return { kind: "possible_command", name };
+    // With attachments `/export` is not the Hub's export (startText sends it to Claude Code), whatever the catalog lists.
+    const listed = attachments.length && this.hubExport && name === EXPORT.name ? undefined : catalog.commands?.find(command => command.name === name);
+    return { kind: "command", name, args, effect: listed === undefined ? "unknown" : listed.contextEffect ?? LISTED_EFFECTS[name] ?? "keep" };
+  }
   protected override get sessionMeta(): Readonly<Record<string, unknown>> { return SESSION_META; }
   protected override extensionNotification(method: string, params: Readonly<Record<string, unknown>>): boolean {
     if (method !== AUTH_STATUS) return false;
@@ -64,11 +123,13 @@ export class ClaudeControl extends AcpControl {
   override async models(): Promise<NativeModelCatalog> {
     const catalog = await super.models(), commands = (catalog.commands ?? []).filter(command => command.name !== REMOTE_CONTROL);
     this.hubExport = !commands.some(command => command.name === EXPORT.name);
-    return { ...catalog, commands: this.hubExport ? [...commands, EXPORT] : commands };
+    return { ...catalog, commands: (this.hubExport ? [...commands, EXPORT] : commands).map(command => ({ ...command, contextEffect: command.contextEffect ?? LISTED_EFFECTS[command.name] ?? "keep" })), hiddenCommands: HIDDEN };
   }
   override async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
-    if (REMOTE_CONTROL_PROMPT.test(prompt)) return { result: Promise.resolve(REMOTE_CONTROL_REFUSED), requestStop: () => Promise.reject(new ControlError("INVALID_STATE", "a refused command has no native turn to stop")) };
-    if (this.hubExport && !attachments.length && /^\/export\s*$/u.test(prompt)) {
+    // The same reading as classify(): the command name and arguments after leading whitespace.
+    const named = commandOf(prompt);
+    if (named?.name === REMOTE_CONTROL) return { result: Promise.resolve(REMOTE_CONTROL_REFUSED), requestStop: () => Promise.reject(new ControlError("INVALID_STATE", "a refused command has no native turn to stop")) };
+    if (this.hubExport && !attachments.length && named?.name === EXPORT.name && named.args === "") {
       return { result: this.exportTranscript(id, onEvent), requestStop: () => Promise.reject(new ControlError("INVALID_STATE", "an export has no native turn to stop")) };
     }
     return super.startText(id, prompt, onEvent, attachments);
@@ -88,10 +149,11 @@ export class ClaudeControl extends AcpControl {
       const info = await stat(found);
       if (info.size < 1 || info.size > MAX_CONTENT_BYTES) throw new ControlError("NATIVE_EXPORT_UNAVAILABLE", "the Claude Code transcript is empty or exceeds 20 MiB");
       onEvent({ type: "output", output: { kind: "content", name: "claude-" + id + ".jsonl", mediaType: "application/x-ndjson", data: await readFile(found) } });
-      return { status: "completed", reason: "exported" };
+      // The export reads Claude Code's record; nothing reaches Claude.
+      return { status: "completed", reason: "exported", input: "not_recorded" };
     } catch (error) {
       const code = error instanceof ControlError ? error.code : "NATIVE_EXPORT_UNAVAILABLE";
-      return { status: "failed", reason: "export_failed", error: { code, message: error instanceof ControlError ? error.message : "the Claude Code transcript could not be read" } };
+      return { status: "failed", reason: "export_failed", error: { code, message: error instanceof ControlError ? error.message : "the Claude Code transcript could not be read" }, input: "not_recorded" };
     }
   }
 }

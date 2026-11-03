@@ -371,6 +371,8 @@ plan(run, binding, request, budget?):
 
 #### R3.6 v12 过渡期的推进规则（P0，G067，不升库）
 
+**实现状态**：代码完成、合成测试通过（G067，2026-11-03），未真机验证，见[验证记录](../verification/relay-p0-2026-11-03.md)。实现时对引文的细化：`classify` 的第三个参数是附件种类（Hermes 只在带图片时不解析命令）；“是否重发”只在当前原生会话里判断；非精确分支的绑定在第一次携带之前欠着来源历史，只携带来源历史的回合在 `run.context_prepared` 记 `carriedOrigin: true`；Hermes 的命令表是核对于 v0.22.5 的副本，表外又未宣告的“像命令”的输入不按 E3 记 recorded。
+
 引文（终稿第 7.6 节）：
 
 v12 只有 `throughRunId` 一个字段，它继续表示原生位置，推进规则写死为 `advance ⇔ dispatched ∧ (due = ∅ ∨ carried ∧ (input = recorded ∨ input = unknown ∧ 已重发一次))`（J1 F1 裁定，RT2-03、VF1-11 修订），其中 due 是本回合开始时应补交给该绑定的来源集合、carried 表示本回合携带了交接内容、“已重发一次”由 `run.ended.data.relayResendOf`（重发回合指向被取代的回合）推出。含义：单 Harness（due=∅）下任何已派发回合都推进，本绑定 not_recorded 的回合也推进（否则下一回合把失败回合当来源改发 JSON 信封，`runtime.ts:1337–1339`、`:1392`【事实】，是 OpenClaw `model_not_applied` 与 Codex 无 turnId 拒绝之后的新回归）；due≠∅ 时命令回合不推进（D1、D2）；携带回合 not_recorded 不推进；unknown 第一次不推进、下一回合重发，重发后推进（“插入前取消”在 P0 仍可能重复一次，v13 改按核对）。配套：`runtime.ts:1337–1339` 的来源过滤排除未派发的 Run（现状把无 `dispatchedAt` 的 Run 也算来源【推断】）；`runtime.ts:438` 增加“through 之后没有在同一 harness/control 上派发过的 Run”；`state.ts:392` 改为取该绑定最后一个已派发的 Run（命令回合不推进水位后，配置承接不再依赖 `throughRunId`）；`BackendResult.input` 为瞬时字段，持久化前剥离（`state.ts:95` 白名单不变【事实】），但 `run.ended` 事件数据保留 `input`、`contextEffect` 与 `relayResendOf`（事件类型开放，`sqlite-store.ts:85–106`【事实】），供 v13 迁移作直接证据（RT1-B1）。清空、回退与效果未知的命令在 v12 只记录 `contextEffect`、不改水位；它们欠下的补交由 v13 的 suspect 核对补齐；v12 也没有纪元，清空之后的旧位置仍会被 `runtime.ts:438` 判为精确。**已知局限**（写进发布说明，v13 关闭）：上述两点；以及 R0a 只对将要发送的内容预算，切到新目标时要发的就是全部来源，900 KiB 回复之后 B 的第一条仍可能 `CONTEXT_TOO_LARGE`（R4 的 R3、R6），R0a 对这条错误提供“只发这条消息”（`attach:"none"` 的 P0 版本：原样发送、不改 `throughRunId`），分层预算要到 G070（VF1-11）。
@@ -415,7 +417,7 @@ export type CommandClass = { kind: "command"; name: string; args: string; effect
 | Harness | `classify` 规则 | clear | compact | rewind | keep（acceptsRelay） | 其余 |
 |---|---|---|---|---|---|---|
 | Claude Code | 去前导空白后按 `^[a-zA-Z0-9_][a-zA-Z0-9:_-]*$` 取名字，路径不是命令；unlistedSlash executed | clear、reset、new，由 Driver 合成（R6）；不保留进程时从审批选项去掉 `exit-plan-clear-*`，保留时记为一次 clear | compact | — | 技能与自定义命令 → keep | `/model` 等 → none；`remote-control` → hidden none；目录外合语法的 `/x` → unknown |
-| Codex | 同 ACP（去前导空白） | 终稿未写 | compact | — | `skill:*` → keep 且 acceptsRelay | export → none |
+| Codex | 复刻 codex.ts 的实际解析：只认精确的 `/export`、`/compact`、`/skill:`，不去前导空白，带附件时按普通文本（G067 实现时改正） | 终稿未写 | compact | — | `skill:*` → keep 且 acceptsRelay | export → none |
 | OpenCode 2 | 目录内命令 | 终稿未写 | compact（Hub 补入） | — | 配置命令 → keep（提交即返回、模板在回合外续跑，交接单状态节写“命令在后台继续运行，结果未记录”） | 被合成忽略的命令不按声明效果转换 |
 | DeepSeek Harness | unlistedSlash text；`classify` 恒为 content（dsh 无命令） | — | — | — | — | — |
 | Hermes Agent | 复刻 `gateway_server.py:32` 的 `lstrip()` 后按注册表全部名字与别名判定（约 104 条，RT5-05 的 grep 计数；公告只有 14 条）；unlistedSlash executed | new、clear、reset | compress；`--preview` → none（byArgs）；`/compress` 答 noop 时不转换 | undo、retry | queue、steer → keep 且 acceptsRelay | 其余 none 或 unknown |

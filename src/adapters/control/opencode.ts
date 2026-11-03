@@ -1,13 +1,34 @@
-import type { ContentRef, ControlAttachment } from "../../contracts/content.js";
-import type { BackendResult, CleanupEvidence, ControlEvent, ControlLaunch, ControlOptions, ControlRun, NativeConversationId, NativeInputs, NativeModelCatalog, NativeOptions } from "../../contracts/control.js";
+import type { ContentKind, ContentRef, ControlAttachment } from "../../contracts/content.js";
+import type { BackendResult, CleanupEvidence, CommandClass, ControlEvent, ControlLaunch, ControlOptions, ControlRun, NativeConversationId, NativeInputs, NativeModelCatalog, NativeOptions } from "../../contracts/control.js";
 import { checkInputs } from "../../infrastructure/control/attachments.js";
+import type { ControlError } from "../../infrastructure/control/json-rpc-process.js";
 import { nativeCommand } from "../../infrastructure/control/native-command.js";
 import { AcpControl } from "./acp.js";
 
-const COMPACT = { name: "compact", description: "压缩上下文（OpenCode 的 /compact；原程序的 ACP 目录没有列出，由 HarnessHub 补入）" } as const;
+const COMPACT = { name: "compact", description: "压缩上下文（OpenCode 的 /compact；原程序的 ACP 目录没有列出，由 HarnessHub 补入）", contextEffect: "compact" } as const;
 /** A `/compact` that OpenCode answered with nothing at all: its ACP dropped the command instead of compacting. */
 const COMPACT_IGNORED: BackendResult = { status: "failed", reason: "native_error",
-  error: { code: "NATIVE_COMMAND_IGNORED", message: "OpenCode 没有执行 /compact：这个版本的 ACP 没有处理这条命令，也没有返回任何内容。" } };
+  error: { code: "NATIVE_COMMAND_IGNORED", message: "OpenCode 没有执行 /compact：这个版本的 ACP 没有处理这条命令，也没有返回任何内容。" }, input: "not_recorded" };
+/** Stop reasons OpenCode gives a prompt only after it delivered the prompt into the session (its turn started). */
+const RECORDED_STOPS: ReadonlySet<string> = new Set(["end_turn", "max_tokens", "refusal"]);
+/**
+ * How OpenCode 2.2.5's ACP refuses a prompt (packages/cli/src/acp, read from the released binary). Its turn reads a step or
+ * execution error only once the prompt was delivered into the session, and reports a model failure then as ServiceFailure
+ * with `service: "session"` and the error's type as `errorName` (R8 O3), or a provider sign-in failure as auth_required
+ * with this message. Before delivery it refuses with invalid params naming the request's `field` (an image without data,
+ * an attachment or skill the session refused) or the unknown `sessionId` (R8 O4), with this message while the session
+ * already runs an ACP prompt, or with CatalogNotReady while its catalog is loading. Its other refusals (ServerUnavailable,
+ * an internal service failure, a prompt identity conflict) can come either way.
+ */
+const PROVIDER_AUTH = "Authentication required: provider authentication required", BUSY = "Internal error: Session already has an active ACP prompt: ";
+const REFUSED_FIELDS: ReadonlySet<string> = new Set(["prompt", "files", "skills"]);
+/** The command an input names as OpenCode's ACP reads one (`Iuf`): the trimmed input's first word after its slash; null for text. */
+function commandOf(text: string): { readonly name: string; readonly args: string } | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("/")) return null;
+  const [name, ...rest] = trimmed.slice(1).split(/\s+/u);
+  return name ? { name, args: rest.join(" ").trim() } : null;
+}
 
 /**
  * Model input kinds from OpenCode 1's `opencode models --verbose`: a `provider/id` line followed by that model's
@@ -55,12 +76,33 @@ export function parseOpenCodeModels(output: string): ReadonlyMap<string, { reado
  * conversation's own cwd, which OpenCode 2 requires to be the session's directory (packages/cli/src/acp at v2.2.5:
  * load, resume and fork refuse another directory); the Hub always opens a session in its conversation's workspace, so
  * nothing here depends on the line.
+ *
+ * Inputs are read as OpenCode reads them (ADR-055 R0d): trimmed, a listed command, or `/compact`, is a command, with or
+ * without attachments; a configured command's template enters the session (keep); any other slash input is text for the
+ * model. A content prompt that ended with end_turn, max_tokens or refusal was delivered first (OpenCode starts a turn only
+ * on delivery), and so was one that failed with a model failure after delivery; a cancelled one stays unknown, since its
+ * input can still be delivered later; one refused before delivery, and an ignored `/compact`, reached nothing (not recorded).
  */
 export class OpenCodeControl extends AcpControl {
   private modelInputs: Promise<ReadonlyMap<string, { readonly image: boolean; readonly audio: boolean }> | null> | null = null;
   private openedModel: string | undefined;
   private readonly abort = new AbortController();
   constructor(private readonly nativeLaunch: ControlLaunch, private readonly nativeOptions: ControlOptions) { super(nativeLaunch, nativeOptions); }
+  protected override promptRecorded(reason: string): boolean { return RECORDED_STOPS.has(reason); }
+  protected override refusedPrompt(error: ControlError): "recorded" | "not_recorded" | null {
+    const fields = error.remoteFields;
+    if (error.remoteCode === -32603 && fields?.service === "session" && fields.errorName !== undefined || error.remoteCode === -32000 && error.remoteMessage === PROVIDER_AUTH) return "recorded";
+    if (error.remoteCode === -32602 && (REFUSED_FIELDS.has(fields?.field ?? "") || fields?.sessionId !== undefined)) return "not_recorded";
+    return error.remoteCode === -32603 && (error.remoteMessage?.startsWith(BUSY) === true || fields?.errorName === "CatalogNotReady") ? "not_recorded" : null;
+  }
+  override classify(text: string, catalog: NativeModelCatalog | null, _attachments: readonly ContentKind[] = []): CommandClass {
+    const named = commandOf(text);
+    if (named === null) return { kind: "content" };
+    if (named.name === COMPACT.name) return { kind: "command", name: COMPACT.name, args: named.args, effect: COMPACT.contextEffect };
+    if (catalog === null) return { kind: "possible_command", name: named.name };
+    const listed = catalog.commands?.find(command => command.name === named.name);
+    return listed === undefined ? { kind: "content" } : { kind: "command", name: named.name, args: named.args, effect: listed.contextEffect === undefined || listed.contextEffect === "unknown" ? "keep" : listed.contextEffect };
+  }
   /**
    * The per-model input kinds of the original CLI catalog, read once per control: null when the command is refused
    * (OpenCode 2 has no `models --verbose`), fails or prints no capabilities. Unavailable metadata only removes the
@@ -77,14 +119,16 @@ export class OpenCodeControl extends AcpControl {
     const id = await super.open(cwd, model, options, checkpoint); this.openedModel = model; return id;
   }
   override async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
-    if (attachments.length || !/^\/compact\s*$/u.test(prompt)) return super.startText(id, prompt, onEvent, attachments);
+    // The same reading as classify(): only a bare `/compact` without attachments is judged by what it answered.
+    const named = commandOf(prompt);
+    if (attachments.length || named?.name !== COMPACT.name || named.args !== "") return super.startText(id, prompt, onEvent, attachments);
     let answered = false;
     const run = await super.startText(id, prompt, event => { if (event.type === "text" || event.type === "tool" || event.type === "activity") answered = true; onEvent(event); });
     return { ...run, result: run.result.then(result => result.status === "completed" && !answered ? COMPACT_IGNORED : result) };
   }
   override async models(): Promise<NativeModelCatalog> {
-    const native = await super.models(), declared = await this.readInputs(), listed = native.commands ?? [];
-    const catalog = listed.some(command => command.name === COMPACT.name) ? native : { ...native, commands: [...listed, COMPACT] };
+    const native = await super.models(), declared = await this.readInputs(), listed = (native.commands ?? []).map(command => ({ ...command, contextEffect: command.name === COMPACT.name ? COMPACT.contextEffect : command.contextEffect ?? "keep" }));
+    const catalog = { ...native, commands: listed.some(command => command.name === COMPACT.name) ? listed : [...listed, COMPACT] };
     if (declared === null) return catalog;
     const agent: NativeInputs = catalog.inputs ?? { image: false, audio: false, file: true };
     return { ...catalog, models: catalog.models.map(row => { const own = declared.get(row.id); return own ? { ...row, inputs: { image: agent.image && own.image, audio: agent.audio && own.audio, file: true } } : row; }) };

@@ -143,7 +143,7 @@ test("OpenClaw does not emit a tool call the bridge streamed live again from the
     const events: ControlEvent[] = [];
     try {
       await driver.initialize(); const id = await driver.open(process.cwd());
-      assert.deepEqual(await (await driver.startText(id, "go", event => events.push(event))).result, { status: "completed", reason: "end_turn" }, String(tools));
+      assert.deepEqual(await (await driver.startText(id, "go", event => events.push(event))).result, { status: "completed", reason: "end_turn", input: "recorded" }, String(tools));
     } finally { await driver.close(); }
     const tool = events.flatMap(event => event.type === "tool" ? [event] : []);
     assert.deepEqual(tool.map(event => [event.id, event.title, event.status]), expected, String(tools) + (failed ? " failed" : ""));

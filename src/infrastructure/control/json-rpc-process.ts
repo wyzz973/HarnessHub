@@ -14,25 +14,38 @@ export class ControlError extends Error {
    * classification's wording, and a driver quotes it only through a fixed vocabulary.
    */
   readonly remoteDetail?: string;
-  constructor(readonly code: string, message: string, readonly remoteFailure?: { readonly code: string; readonly message: string }, remote?: { readonly code: number; readonly detail?: string }) {
+  /**
+   * The peer's own message for a request it refused (JSON-RPC `error.message`), kept like remoteDetail: at most 2 KiB,
+   * control characters removed, the peer's private text that only a driver's fixed vocabulary may quote.
+   */
+  readonly remoteMessage?: string;
+  /**
+   * The short machine-readable fields of the refusal's error data, as the peer wrote them: top-level strings of at most 64
+   * bytes made only of letters, digits and `_ . : / -` (claude-agent-acp's `errorKind`, OpenCode's `errorName`, `service`,
+   * `field` and `sessionId`), at most 8 of them in the order sent. Free text never qualifies; absent when none does.
+   */
+  readonly remoteFields?: Readonly<Record<string, string>>;
+  constructor(readonly code: string, message: string, readonly remoteFailure?: { readonly code: string; readonly message: string },
+    remote?: { readonly code: number; readonly detail?: string; readonly message?: string; readonly fields?: Readonly<Record<string, string>> }) {
     super(message); this.name = "ControlError";
-    if (remote !== undefined) { this.remoteCode = remote.code; if (remote.detail !== undefined) this.remoteDetail = remote.detail; }
+    if (remote !== undefined) {
+      this.remoteCode = remote.code;
+      if (remote.detail !== undefined) this.remoteDetail = remote.detail;
+      if (remote.message !== undefined) this.remoteMessage = remote.message;
+      if (remote.fields !== undefined) this.remoteFields = remote.fields;
+    }
   }
 }
 /** How much of a program's latest stderr stays readable for its driver. */
 const RECENT_STDERR_BYTES = 32 * 1024;
-/** How much of a peer's own explanation of a refusal (JSON-RPC `error.data.details`) is kept. */
+/** How much of a peer's own words about a refusal (JSON-RPC `error.message`, `error.data.details`) is kept, each. */
 const REMOTE_DETAIL_BYTES = 2048;
-/**
- * A peer's own explanation of a refused request, as the ACP SDK carries it (`error.data.details`, a string): control
- * characters removed, then cut to 2 KiB at a character boundary. Other data, and text that is only control characters,
- * carry none.
- */
-function remoteDetail(data: unknown): string | undefined {
-  const details = data !== null && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>).details : undefined;
-  if (typeof details !== "string") return undefined;
+/** A field of a refusal's error data short and plain enough to be a name, not text (ControlError.remoteFields). */
+const REMOTE_FIELD = /^[A-Za-z0-9_.:/-]{1,64}$/u, REMOTE_FIELDS = 8;
+/** A peer's text without control characters, cut to 2 KiB at a character boundary; nothing when nothing is left. */
+function bounded(text: string): string | undefined {
   let kept = "", bytes = 0;
-  for (const char of details) {
+  for (const char of text) {
     const point = char.codePointAt(0)!;
     if (point <= 0x1f || point === 0x7f) continue;
     const size = Buffer.byteLength(char);
@@ -40,6 +53,25 @@ function remoteDetail(data: unknown): string | undefined {
     kept += char; bytes += size;
   }
   return kept || undefined;
+}
+/**
+ * A peer's own explanation of a refused request, as the ACP SDK carries it (`error.data.details`, a string), bounded.
+ * Other data, and text that is only control characters, carry none.
+ */
+function remoteDetail(data: unknown): string | undefined {
+  const details = data !== null && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>).details : undefined;
+  return typeof details === "string" ? bounded(details) : undefined;
+}
+/** The short fields of a refusal's error data (ControlError.remoteFields); `details` is the free text and never one. */
+function remoteFields(data: unknown): Readonly<Record<string, string>> | undefined {
+  if (data === null || typeof data !== "object" || Array.isArray(data)) return undefined;
+  const fields: Record<string, string> = {}; let count = 0;
+  for (const [name, value] of Object.entries(data as Record<string, unknown>)) {
+    if (count >= REMOTE_FIELDS) break;
+    if (name === "details" || !REMOTE_FIELD.test(name) || typeof value !== "string" || !REMOTE_FIELD.test(value)) continue;
+    fields[name] = value; count++;
+  }
+  return count ? fields : undefined;
 }
 /** ACP's `auth_required` error code (agent-client-protocol schema); other JSON-RPC peers use -32000 for other server errors. */
 const ACP_AUTH_REQUIRED = -32000;
@@ -309,10 +341,10 @@ export class JsonRpcProcess {
       this.pending.delete(responseKey); clearTimeout(pending.timer);
       // The class may come from the detail too (an ACP agent's message is often only "Internal error"); neither text is kept
       // in the error's message.
-      const code = remote.code as number, detail = remoteDetail(remote.data);
+      const code = remote.code as number, detail = remoteDetail(remote.data), said = bounded(remote.message), fields = remoteFields(remote.data);
       pending.reject(new ControlError("REMOTE_ERROR", `Harness rejected the protocol request (${code})`,
         classifyRemoteFailure(detail === undefined ? remote.message : remote.message + " " + detail, this.launch.protocol === "acp-v1" ? code : undefined),
-        { code, ...(detail === undefined ? {} : { detail }) }));
+        { code, ...(detail === undefined ? {} : { detail }), ...(said === undefined ? {} : { message: said }), ...(fields === undefined ? {} : { fields }) }));
     } else {
       this.pending.delete(responseKey); clearTimeout(pending.timer); pending.resolve(message.result);
     }

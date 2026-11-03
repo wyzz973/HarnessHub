@@ -1,5 +1,5 @@
 import { isAbsolute } from "node:path";
-import { nativeConversationId, requestExpiry, type BackendResult, type CleanupEvidence, type ControlEvent,
+import { nativeConversationId, requestExpiry, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent,
   type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl,
   type NativeOptions, type NativeOption, type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
 import { ControlError, errorFrom, JsonRpcProcess, object, string, text, type RpcRequest } from "../../infrastructure/control/json-rpc-process.js";
@@ -7,7 +7,7 @@ import { diffPath } from "../../infrastructure/control/unified-diff.js";
 import type { NativeToolDetail, NativeUsage } from "../../contracts/control.js";
 import { readFile, stat } from "node:fs/promises";
 import { basename } from "node:path";
-import { MAX_CONTENT_BYTES, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
+import { MAX_CONTENT_BYTES, type ContentKind, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
 import { MAX_NATIVE_EXTENSIONS, MAX_NATIVE_SESSIONS, type NativeExtensions, type NativeSessionImport, type NativeSessionPage } from "../../contracts/control.js";
 import { checkInputs, fileMentions } from "../../infrastructure/control/attachments.js";
 
@@ -30,6 +30,8 @@ interface ActiveTurn {
   readonly agents: Map<string, { title: string; status: string; detail: NativeToolDetail }>;
   /** Thread token totals before this turn (including a historical total reported at turn start); turn usage is the difference. */
   baseline: Tokens | null;
+  /** Codex reported this turn's user input as an item of the thread (userMessage), which it does once the input is recorded. */
+  inputRecorded: boolean;
   turnId: string | null;
   settled: boolean;
   stopping: boolean;
@@ -101,7 +103,15 @@ function collaborationUnavailable(error: ControlError): ControlError {
   const reason = error.remoteCode === -32601 ? "它没有 collaborationMode/list 方法（-32601）" : "它拒绝了 collaborationMode/list" + (error.remoteCode === undefined ? "" : "（" + error.remoteCode + "）");
   return new ControlError("NATIVE_OPTION_UNAVAILABLE", "这个 Codex 不提供协作模式：" + reason + "。" + (error.remoteFailure?.message ?? ""));
 }
-const THREAD_COMMANDS = [{ name: "compact", description: "压缩当前会话上下文（原生 thread/compact/start）" }, { name: "export", description: "导出原生会话记录（Codex rollout JSONL）" }] as const;
+const THREAD_COMMANDS = [{ name: "compact", description: "压缩当前会话上下文（原生 thread/compact/start）", contextEffect: "compact" }, { name: "export", description: "导出原生会话记录（Codex rollout JSONL）", contextEffect: "none" }] as const;
+/** The inputs this driver turns into thread operations or skill inputs (startText); every other input is text to Codex. */
+const EXPORT_INPUT = /^\/export\s*$/u, COMPACT_INPUT = /^\/compact\s*$/u, SKILL_INPUT = /^\/skill:([A-Za-z0-9][A-Za-z0-9._:-]{0,255})(?:\s+([\s\S]*))?$/u;
+/** The driver's own thread operation an input asks for, read once for classify() and startText(): with attachments, none. */
+function threadOperation(text: string, attached: boolean): "export" | "compact" | null {
+  return attached ? null : EXPORT_INPUT.test(text) ? "export" : COMPACT_INPUT.test(text) ? "compact" : null;
+}
+/** A result this driver writes itself when nothing reached Codex (an export, or a request it refused before inserting it). */
+const NOT_RECORDED = { input: "not_recorded" } as const;
 const SANDBOX_TYPES: Readonly<Record<string, string>> = { readOnly: "read-only", workspaceWrite: "workspace-write", dangerFullAccess: "danger-full-access" };
 /**
  * The settings a thread/start or thread/resume response reports, each only when present with a value an option knows: the
@@ -247,8 +257,25 @@ export class CodexControl implements HarnessControl {
     const { models, defaultModel, options } = await this.nativeCatalog();
     const account = object(await this.rpc.request("account/read", { refreshToken: false }), "native account status");
     const skills = await this.readSkills();
-    const commands = [...THREAD_COMMANDS, ...skills.filter(skill => skill.enabled).slice(0, MAX_NATIVE_EXTENSIONS).map(skill => ({ name: "skill:" + skill.name, description: ("Skill · " + skill.description).slice(0, 1024) }))];
+    // A skill's input enters the thread like a message (keep).
+    const commands = [...THREAD_COMMANDS, ...skills.filter(skill => skill.enabled).slice(0, MAX_NATIVE_EXTENSIONS).map(skill => ({ name: "skill:" + skill.name, description: ("Skill · " + skill.description).slice(0, 1024), contextEffect: "keep" as const }))];
     return { models, defaultModel, canSelect: models.length > 0, ...(options.length ? { options } : {}), commands, authentication: account.requiresOpenaiAuth === false || account.account != null ? "ready" : account.requiresOpenaiAuth === true ? "missing" : "unknown" };
+  }
+  /**
+   * The app-server has no slash commands: exactly `/export` and `/compact`, without attachments, are this driver's thread
+   * operations, and `/skill:<name> …` is an input with that skill when the catalog lists it (only the catalog settles the
+   * name), as startText sends them. Anything else, leading whitespace included, is text for Codex.
+   */
+  classify(text: string, catalog: NativeModelCatalog | null, attachments: readonly ContentKind[] = []): CommandClass {
+    const operation = threadOperation(text, attachments.length > 0);
+    if (operation === "export") return { kind: "command", name: "export", args: "", effect: "none" };
+    if (operation === "compact") return { kind: "command", name: "compact", args: "", effect: "compact" };
+    const invoked = SKILL_INPUT.exec(text);
+    if (invoked === null) return { kind: "content" };
+    const name = "skill:" + invoked[1]!;
+    if (catalog === null) return { kind: "possible_command", name };
+    const listed = catalog.commands?.find(command => command.name === name);
+    return listed === undefined ? { kind: "content" } : { kind: "command", name, args: invoked[2]?.trim() ?? "", effect: listed.contextEffect ?? "keep" };
   }
   /** The configured and listed models with the native options; opening a thread validates against this without account or skill reads. */
   private async nativeCatalog(): Promise<{ readonly models: NativeModelCatalog["models"]; readonly defaultModel: string | null; readonly options: readonly NativeOption[] }> {
@@ -494,21 +521,23 @@ export class CodexControl implements HarnessControl {
     void started.catch(() => {});
     const active: ActiveTurn = { event: onEvent, resolve, reject, deadline: Date.now() + this.options.runTimeoutMs,
       timer: setTimeout(() => this.rpc.abort(new ControlError("RUN_TIMEOUT", "Codex turn exceeded its deadline")), this.options.runTimeoutMs),
-      started, signalStarted, rejectStarted, turnId: null, settled: false, stopping: false, stop: null, deltaItems: new Set(), items: new Map(), agents: new Map(), reads: new Set(), baseline: this.lastTotal };
+      started, signalStarted, rejectStarted, turnId: null, settled: false, stopping: false, stop: null, deltaItems: new Set(), items: new Map(), agents: new Map(), reads: new Set(), baseline: this.lastTotal, inputRecorded: false };
     this.active = active;
     // `/skill:<name> …` sends Codex's own skill input next to the remaining text, as its TUI does for a skill mention.
-    const invoked = /^\/skill:([A-Za-z0-9][A-Za-z0-9._:-]{0,255})(?:\s+([\s\S]*))?$/u.exec(prompt), skill = invoked ? this.skills.get(invoked[1]!) : undefined;
+    const invoked = SKILL_INPUT.exec(prompt), skill = invoked ? this.skills.get(invoked[1]!) : undefined;
     const text = skill ? invoked![2]?.trim() || "$" + skill.name : prompt;
     // Images and audio are read by Codex from the private copies; files have no input type and are named by path.
     const input = [{ type: "text", text: text + fileMentions(attachments.filter(file => file.kind === "file")), text_elements: [] }, ...(skill ? [{ type: "skill", name: skill.name, path: skill.path }] : []),
       ...attachments.flatMap(file => file.kind === "image" ? [{ type: "localImage", path: file.path }] : file.kind === "audio" ? [{ type: "localAudio", path: file.path }] : [])];
     // `/export` copies Codex's own rollout record; nothing is sent to the model.
-    if (/^\/export\s*$/u.test(prompt) && !attachments.length) {
+    const operation = threadOperation(prompt, attachments.length > 0);
+    if (operation === "export") {
       void this.exportThread(active, id);
     // `/compact` runs Codex's own compaction turn; its turn identity arrives with turn/started.
-    } else if (/^\/compact\s*$/u.test(prompt) && !attachments.length) {
+    } else if (operation === "compact") {
       void this.rpc.request("thread/compact/start", { threadId: id }).then(value => { if (Object.keys(object(value, "thread/compact/start result")).length) this.rpc.abort(new ControlError("INVALID_PROTOCOL", "compaction receipt must be empty")); }, (error: unknown) => {
-        if (error instanceof ControlError && error.code === "REMOTE_ERROR" && active.turnId === null && this.rpc.failure === null) { this.settleTurn(active); active.resolve({ status: "failed", reason: "request_rejected" }); }
+        // Refused before any turn exists: Codex ran nothing.
+        if (error instanceof ControlError && error.code === "REMOTE_ERROR" && active.turnId === null && this.rpc.failure === null) { this.settleTurn(active); active.resolve({ status: "failed", reason: "request_rejected", ...NOT_RECORDED }); }
         else this.rpc.abort(errorFrom(error));
       });
     } else void this.rpc.request("turn/start", { threadId: id, input, ...(this.effort === undefined ? {} : { effort: this.effort }),
@@ -523,8 +552,9 @@ export class CodexControl implements HarnessControl {
         active.signalStarted();
       } catch (error) { this.rpc.abort(errorFrom(error)); }
     }, (error: unknown) => {
+      // turn/start refuses only before it records anything (an unknown thread, an input too large, a draining server).
       if (error instanceof ControlError && error.code === "REMOTE_ERROR" && active.turnId === null && this.rpc.failure === null) {
-        this.settleTurn(active); active.resolve({ status: "failed", reason: "request_rejected" });
+        this.settleTurn(active); active.resolve({ status: "failed", reason: "request_rejected", ...NOT_RECORDED });
       } else this.rpc.abort(errorFrom(error));
     });
     return { result, requestStop: () => {
@@ -544,10 +574,10 @@ export class CodexControl implements HarnessControl {
       if (!info.isFile() || info.size < 1 || info.size > MAX_CONTENT_BYTES) throw new ControlError("NATIVE_EXPORT_UNAVAILABLE", "the Codex rollout record is missing or exceeds 20 MiB");
       const data = await readFile(this.threadPath);
       if (this.active === active && !active.settled) active.event({ type: "output", output: { kind: "content", name: "codex-" + id.replace(/[^A-Za-z0-9-]/gu, "") + ".jsonl", mediaType: "application/x-ndjson", data } });
-      result = { status: "completed", reason: "exported" };
+      result = { status: "completed", reason: "exported", ...NOT_RECORDED };
     } catch (error) {
       const code = error instanceof ControlError ? error.code : "NATIVE_EXPORT_UNAVAILABLE";
-      result = { status: "failed", reason: "export_failed", error: { code, message: code === "NATIVE_EXPORT_UNAVAILABLE" && error instanceof Error ? error.message : "Codex rollout record could not be read" } };
+      result = { status: "failed", reason: "export_failed", error: { code, message: code === "NATIVE_EXPORT_UNAVAILABLE" && error instanceof Error ? error.message : "Codex rollout record could not be read" }, ...NOT_RECORDED };
     }
     if (this.active === active && !active.settled) { this.settleTurn(active); active.resolve(result); }
   }
@@ -665,13 +695,16 @@ export class CodexControl implements HarnessControl {
       if (!active) throw new ControlError("INVALID_STATE", "no active turn");
       if (method === "turn/started") return;
       const status = string(turn.status, "completed turn status");
+      // Codex reports the user input as a thread item once it recorded it, before sampling; a completed turn without that
+      // item is no proof (a hook can stop a turn that then completes), so it stays unknown.
+      const recorded = active.inputRecorded ? { input: "recorded" as const } : {};
       let result: BackendResult;
       switch (status) {
-        case "completed": result = { status: "completed", reason: "completed" }; break;
-        case "interrupted": result = { status: "cancelled", reason: "interrupted" }; break;
+        case "completed": result = { status: "completed", reason: "completed", ...recorded }; break;
+        case "interrupted": result = { status: "cancelled", reason: "interrupted", ...recorded }; break;
         case "failed": {
           const error = turn.error == null ? {} : object(turn.error, "native turn error");
-          result = { status: "failed", reason: "failed", error: turnFailure(error) }; break;
+          result = { status: "failed", reason: "failed", error: turnFailure(error), ...recorded }; break;
         }
         default: throw new ControlError("INVALID_PROTOCOL", "turn/completed contains a nonterminal status");
       }
@@ -703,7 +736,8 @@ export class CodexControl implements HarnessControl {
       }
       // Plan mode answers with a proposed plan; the completed item is authoritative over its deltas.
       if (type === "plan") { if (method === "item/completed") active.event({ type: "text", text: text(item.text, "proposed plan") }); return; }
-      if (["userMessage", "reasoning", "hookPrompt", "functionCallOutput"].includes(type)) return;
+      if (type === "userMessage") { active.inputRecorded = true; return; }
+      if (["reasoning", "hookPrompt", "functionCallOutput"].includes(type)) return;
       const started = method === "item/started";
       // Codex reports a spawned sub-agent here (and in collaboration calls), not with thread/started: the child thread's own
       // items then nest under its entry.

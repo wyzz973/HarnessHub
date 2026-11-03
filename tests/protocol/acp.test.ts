@@ -41,7 +41,7 @@ test("ACP handshake, sequential prompts and exact client capability declaration"
     const id = await driver.open(process.cwd()), events: ControlEvent[] = [];
     for (let i = 0; i < 2; i++) {
       const run = await driver.startText(id, "hello", event => events.push(event));
-      assert.deepEqual(await run.result, { status: "completed", reason: "end_turn" });
+      assert.deepEqual(await run.result, { status: "completed", reason: "end_turn", input: "recorded" });
     }
     assert.deepEqual(events.filter(event => event.type === "text"), [{ type: "text", text: "你好 fixture" }, { type: "text", text: "你好 fixture" }]);
     const messages: unknown[] = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line));
@@ -84,7 +84,7 @@ test("ACP stops are idempotent receipts distinct from the prompt result", async 
     let settled = false; void run.result.then(() => { settled = true; });
     const first = run.requestStop(); assert.equal(run.requestStop(), first);
     assert.deepEqual(await first, { requested: true }); assert.equal(settled, false);
-    assert.deepEqual(await run.result, { status: "cancelled", reason: "cancelled" });
+    assert.deepEqual(await run.result, { status: "cancelled", reason: "cancelled", input: "recorded" });
     const messages = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line));
     assert.equal(messages.filter(message => message.method === "session/cancel").length, 1);
   } finally { await driver.close(); await rm(directory, { recursive: true, force: true }); }
@@ -157,7 +157,7 @@ test("ACP duplicate terminal response retains first backend fact but exposes con
   const driver = control("duplicate-complete");
   try {
     const id = await ready(driver), run = await driver.startText(id, "hello", () => {});
-    assert.deepEqual(await run.result, { status: "completed", reason: "end_turn" });
+    assert.deepEqual(await run.result, { status: "completed", reason: "end_turn", input: "recorded" });
     const cleanup = await driver.close(); assert.equal(cleanup.closed, true);
     assert.equal(cleanup.protocolFailure?.code, "UNKNOWN_RESPONSE");
   } finally { await driver.close(); }
@@ -253,7 +253,7 @@ test("ACP autonomous output after a prompt is never attributed and its permissio
   const driver = control("late-output", { FIXTURE_TRACE: trace });
   try {
     const id = await ready(driver), events: ControlEvent[] = [];
-    assert.deepEqual(await (await driver.startText(id, "hello", event => events.push(event))).result, { status: "completed", reason: "end_turn" });
+    assert.deepEqual(await (await driver.startText(id, "hello", event => events.push(event))).result, { status: "completed", reason: "end_turn", input: "recorded" });
     await new Promise(resolve => setTimeout(resolve, 80));
     assert.deepEqual(events.filter(event => event.type === "text").map(event => event.type === "text" ? event.text : ""), ["你好 fixture"]);
     const wire = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { id?: unknown; result?: unknown });
@@ -455,7 +455,7 @@ test("Hermes's silent model failures are reported from its own log class, and an
   try {
     await driver.initialize(); const id = await driver.open(process.cwd());
     const failed = await (await driver.startText(id, "fail quietly", () => {})).result;
-    assert.deepEqual(failed, { status: "failed", reason: "native_error", error: { code: "NATIVE_QUOTA_EXCEEDED", message: "这个 Harness 的账号额度或余额不足。可等待额度恢复或充值，也可以选择其他 Harness 继续。" } });
+    assert.deepEqual(failed, { status: "failed", reason: "native_error", error: { code: "NATIVE_QUOTA_EXCEEDED", message: "这个 Harness 的账号额度或余额不足。可等待额度恢复或充值，也可以选择其他 Harness 继续。" }, input: "recorded" });
     assert.ok(!JSON.stringify(failed).includes("deepseek-v4-pro"), "the log text itself is never published");
     assert.equal((await (await driver.startText(id, "recovered failure", () => {})).result).status, "completed");
   } finally { await driver.close(); }
@@ -644,7 +644,7 @@ test("an approval or a question the agent withdraws ($/cancel_request) closes as
     const trace = join(directory, scenario), driver = control(scenario, { FIXTURE_TRACE: trace }), events: ControlEvent[] = [];
     try {
       const id = await ready(driver); driver.enablePermissions();
-      assert.deepEqual(await (await driver.startText(id, "hello", event => events.push(event))).result, { status: "completed", reason: "end_turn" }, scenario);
+      assert.deepEqual(await (await driver.startText(id, "hello", event => events.push(event))).result, { status: "completed", reason: "end_turn", input: "recorded" }, scenario);
       assert.deepEqual(events.flatMap(event => event.type === "permission_requested" ? [event.id] : []), [asked], scenario);
       assert.deepEqual(events.filter(event => event.type === "permission"), [{ type: "permission", id: asked, decision: "cancelled" }], scenario);
       // The withdrawn request, then one that nothing here waits for; neither is recorded as an unsupported notification.
@@ -668,8 +668,8 @@ test("OpenClaw reconciles each turn from its own transcript: tools, reasoning, u
     { role: "assistant", content: [{ type: "thinking", thinking: "plan the command" }, { type: "toolCall", id: "call-1", name: "exec", arguments: { command: "echo HH" } }], usage: { input: 100, output: 20, cacheRead: 10, cacheWrite: 0, totalTokens: 130, cost: { total: 0.002 } }, stopReason: "toolUse", __openclaw: { seq: 7 } },
     { role: "toolResult", toolCallId: "call-1", toolName: "exec", content: [{ type: "text", text: "HH" }], isError: false, __openclaw: { seq: 8 } },
     { role: "assistant", content: [{ type: "text", text: "done" }], usage: { input: 150, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 155, cost: { total: 0.001 } }, stopReason: stop, ...extra, __openclaw: { seq: 9 } }];
-  for (const [stop, extra, expected] of [["stop", {}, { status: "completed", reason: "end_turn" }],
-    ["error", { errorMessage: "You've hit your weekly limit" }, { status: "failed", reason: "native_error", error: { code: "NATIVE_QUOTA_EXCEEDED", message: "这个 Harness 的账号额度或余额不足。可等待额度恢复或充值，也可以选择其他 Harness 继续。" } }]] as const) {
+  for (const [stop, extra, expected] of [["stop", {}, { status: "completed", reason: "end_turn", input: "recorded" }],
+    ["error", { errorMessage: "You've hit your weekly limit" }, { status: "failed", reason: "native_error", error: { code: "NATIVE_QUOTA_EXCEEDED", message: "这个 Harness 的账号额度或余额不足。可等待额度恢复或充值，也可以选择其他 Harness 继续。" }, input: "recorded" }]] as const) {
     let reads = 0;
     const driver = new OpenClawControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "basic"], env }, { ...options, env },
       async method => method === "sessions.get" ? { messages: reads++ === 0 ? [earlier] : turn(stop, extra) } : { models: [] });
@@ -798,7 +798,7 @@ test("Claude /export copies the session's own Claude Code transcript as an outpu
     const id = await ready(driver);
     assert.ok((await driver.models()).commands?.some(command => command.name === "export"), "the Hub offers /export when the agent has none");
     const events: ControlEvent[] = [], result = await (await driver.startText(id, "/export", event => events.push(event))).result;
-    assert.deepEqual(result, { status: "completed", reason: "exported" });
+    assert.deepEqual(result, { status: "completed", reason: "exported", input: "not_recorded" });
     const output = events.find(event => event.type === "output");
     assert.ok(output?.type === "output" && output.output.kind === "content" && output.output.name === "claude-session-fixture.jsonl" && Buffer.from(output.output.data).toString() === transcript);
   } finally { await driver.close(); }
@@ -1013,7 +1013,7 @@ test("G032-NC23 a sign-in state that a driver reads from its agent's own notific
     await running.initialize(); const id = await running.open(process.cwd());
     assert.equal((await running.models()).authentication, "ready");
     const events: ControlEvent[] = [];
-    assert.deepEqual(await (await running.startText(id, "hello", event => events.push(event))).result, { status: "completed", reason: "end_turn" });
+    assert.deepEqual(await (await running.startText(id, "hello", event => events.push(event))).result, { status: "completed", reason: "end_turn", input: "recorded" });
     assert.deepEqual(texts(events), ["你好 fixture"]);
     assert.equal((await running.models()).authentication, "missing");
     await assert.rejects(running.open(process.cwd()), authRequired);
@@ -1044,7 +1044,7 @@ test("G032-NC23 Claude's own sign-in report sets its readiness: a named identity
       await driver.initialize(); const id = await driver.open(process.cwd());
       assert.equal((await driver.models()).authentication, "ready", kind);
       const events: ControlEvent[] = [];
-      assert.deepEqual(await (await driver.startText(id, "hello", event => events.push(event))).result, { status: "completed", reason: "end_turn" }, kind);
+      assert.deepEqual(await (await driver.startText(id, "hello", event => events.push(event))).result, { status: "completed", reason: "end_turn", input: "recorded" }, kind);
       assert.deepEqual(texts(events), ["你好 fixture"], kind);
       assert.deepEqual(events.filter(event => event.type === "diagnostic"), [], kind);
       const catalog = await driver.models();
@@ -1068,7 +1068,7 @@ test("G032-NC24 OpenCode is offered its unlisted native /compact whatever versio
   const directory = await mkdtemp(join(tmpdir(), "gateway-opencode-compact-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
   const opencode = (env: Record<string, string> = {}) => new OpenCodeControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "opencode-compact"], env: { FIXTURE_TRACE: trace, ...env } }, options);
   const compacts = (commands: readonly { readonly name: string; readonly description: string }[] | undefined) => (commands ?? []).filter(command => command.name === "compact");
-  const added = [{ name: "compact", description: "压缩上下文（OpenCode 的 /compact；原程序的 ACP 目录没有列出，由 HarnessHub 补入）" }];
+  const added = [{ name: "compact", description: "压缩上下文（OpenCode 的 /compact；原程序的 ACP 目录没有列出，由 HarnessHub 补入）", contextEffect: "compact" }];
   const driver = opencode();
   try {
     assert.equal((await driver.initialize()).agentVersion, "1.18.35");
@@ -1092,7 +1092,7 @@ test("G032-NC24 OpenCode is offered its unlisted native /compact whatever versio
   }
   // An OpenCode that lists compact itself keeps its own entry, once.
   const listed = opencode({ FIXTURE_COMPACT_LISTED: "1" });
-  try { await listed.initialize(); await listed.open(process.cwd()); assert.deepEqual(compacts((await listed.models()).commands), [{ name: "compact", description: "OpenCode's own compact" }]); }
+  try { await listed.initialize(); await listed.open(process.cwd()); assert.deepEqual(compacts((await listed.models()).commands), [{ name: "compact", description: "OpenCode's own compact", contextEffect: "compact" }]); }
   finally { await listed.close(); }
   // A compaction reported as an activity alone is a compaction.
   const announced = opencode({ FIXTURE_COMPACT: "activity" });
@@ -1107,7 +1107,7 @@ test("G032-NC24 OpenCode is offered its unlisted native /compact whatever versio
     await ignoring.initialize(); const id = await ignoring.open(process.cwd()), events: ControlEvent[] = [];
     for (const prompt of ["/compact", "/compact  "])
       assert.deepEqual(await (await ignoring.startText(id, prompt, event => events.push(event))).result, { status: "failed", reason: "native_error",
-        error: { code: "NATIVE_COMMAND_IGNORED", message: "OpenCode 没有执行 /compact：这个版本的 ACP 没有处理这条命令，也没有返回任何内容。" } }, JSON.stringify(prompt));
+        error: { code: "NATIVE_COMMAND_IGNORED", message: "OpenCode 没有执行 /compact：这个版本的 ACP 没有处理这条命令，也没有返回任何内容。" }, input: "not_recorded" }, JSON.stringify(prompt));
     // Only /compact itself is judged: another prompt that brings nothing back keeps the agent's own result.
     assert.deepEqual(await (await ignoring.startText(id, "/compact now", event => events.push(event))).result, { status: "completed", reason: "end_turn" });
     assert.deepEqual(events, []);
@@ -1142,7 +1142,7 @@ async function openclawGateway(root: string, name: string, gateway: { readonly r
   const order = async () => (await received()).flatMap(row => row.gateway === "sessions.patch" ? ["patch"] : row.method === "session/prompt" ? ["prompt"] : []);
   return { driver, calls, patches: () => calls.filter(call => call.method === "sessions.patch").map(call => call.params), received, order };
 }
-const turnEnded = { status: "completed", reason: "end_turn" } as const;
+const turnEnded = { status: "completed", reason: "end_turn", input: "recorded" } as const;
 test("G032-NC25 (a) OpenClaw writes nothing to its Gateway to run the configured model: neither opening with it nor the first prompt patches the session (T-OC-03)", async t => {
   const root = await mkdtemp(join(tmpdir(), "openclaw-nc25-")); t.after(() => rm(root, { recursive: true, force: true }));
   const { driver, patches, order } = await openclawGateway(root, "configured");
@@ -1173,7 +1173,7 @@ test("G032-NC25 (c) a Gateway that resolves another model fails the Turn with MO
   try {
     await driver.initialize(); const id = await driver.open(process.cwd(), "vision/large"), events: ControlEvent[] = [];
     const run = await driver.startText(id, "hello", event => events.push(event));
-    assert.deepEqual(await run.result, { status: "failed", reason: "model_not_applied", error: { code: "MODEL_MISMATCH", message: "OpenClaw 没有确认所选模型，这条消息没有发出。" } });
+    assert.deepEqual(await run.result, { status: "failed", reason: "model_not_applied", error: { code: "MODEL_MISMATCH", message: "OpenClaw 没有确认所选模型，这条消息没有发出。" }, input: "not_recorded" });
     assert.deepEqual(events, []);
     await assert.rejects(run.requestStop(), (error: unknown) => error instanceof ControlError && error.code === "INVALID_STATE", "there is no prompt to stop");
     assert.deepEqual(patches().map(params => params.model), ["vision/large"]);
@@ -1310,7 +1310,7 @@ test("G032-NC34 OpenCode 2: an announced compact is kept once and /compact passe
     assert.equal((await announced.initialize()).agentVersion, "2.2.5");
     const id = await announced.open(process.cwd()), commands = (await announced.models()).commands ?? [];
     assert.deepEqual(commands.map(command => command.name), ["init", "review", "compact"], "OpenCode's own compact once, nothing filled in");
-    assert.deepEqual(commands.filter(command => command.name === "compact"), [{ name: "compact", description: "OpenCode's own compact" }]);
+    assert.deepEqual(commands.filter(command => command.name === "compact"), [{ name: "compact", description: "OpenCode's own compact", contextEffect: "compact" }]);
     const events: ControlEvent[] = [];
     assert.deepEqual(await (await announced.startText(id, "/compact", event => events.push(event))).result, { status: "completed", reason: "end_turn" });
     assert.deepEqual(events.map(event => event.type), ["activity", "activity"], "a compaction reported as an update is a compaction");

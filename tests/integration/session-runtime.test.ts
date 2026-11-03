@@ -107,7 +107,8 @@ class ControlledFactory implements SessionBindingFactory {
       open: async () => { opened = true; return nativeConversationId("external-fixture"); },
       startText: async (_id: NativeConversationId, text: string, output: (event: ControlEvent) => void): Promise<ControlRun> => {
         assert.equal(opened, true); fixture.started.resolve(text); output({ type: "text", text: fixture.output });
-        if (!fixture.holdResult) fixture.result.resolve({ status: "completed", reason: "fixture" });
+        // It answered the prompt, so like a driver it reports the prompt recorded (ADR-055 §7.1); no evidence would be resent once.
+        if (!fixture.holdResult) fixture.result.resolve({ status: "completed", reason: "fixture", input: "recorded" });
         return { result: fixture.result.promise, requestStop: async () => { fixture.stopCount += 1; return { requested: true }; } };
       },
       close: () => {

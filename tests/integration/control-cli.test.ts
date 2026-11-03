@@ -90,7 +90,7 @@ for (const protocol of ["acp-v1", "codex-app-server"] as const) {
     const output = records(result.stdout);
     assert.deepEqual(output.map((entry) => entry.type), ["protocol", "event", "event", "result", "cleanup"]);
     assert.deepEqual(output.filter((entry) => entry.type === "event").map((entry) => entry.event), [{ type: "text", text: "first " }, { type: "text", text: "second" }]);
-    assert.deepEqual(output.find((entry) => entry.type === "result")?.result, { status: "completed", reason: protocol === "acp-v1" ? "end_turn" : "completed" });
+    assert.deepEqual(output.find((entry) => entry.type === "result")?.result, { status: "completed", reason: protocol === "acp-v1" ? "end_turn" : "completed", ...(protocol === "acp-v1" ? { input: "recorded" } : {}) });
     const trace = await traces(f);
     const prompt = trace.find((entry) => entry.method === (protocol === "acp-v1" ? "session/prompt" : "turn/start"));
     assert.ok(prompt); assert.match(JSON.stringify(prompt), /fixture prompt/);
@@ -130,7 +130,7 @@ for (const protocol of ["acp-v1", "codex-app-server"] as const) {
     const result = invoke(f, ["run", "--harness", "cli-fixture", "--prompt", "duplicate terminal fixture", "--json"]);
     assert.notEqual(result.status, 0, result.stderr);
     const output = records(result.stdout);
-    assert.deepEqual(output.find((entry) => entry.type === "result")?.result, { status: "completed", reason: protocol === "acp-v1" ? "end_turn" : "completed" });
+    assert.deepEqual(output.find((entry) => entry.type === "result")?.result, { status: "completed", reason: protocol === "acp-v1" ? "end_turn" : "completed", ...(protocol === "acp-v1" ? { input: "recorded" } : {}) });
     const cleanup = output.find((entry) => entry.type === "cleanup")?.cleanup;
     assert.ok(cleanup && typeof cleanup === "object" && "closed" in cleanup && cleanup.closed === true && "protocolFailure" in cleanup && cleanup.protocolFailure !== null);
     assert.match(result.stderr, /connection failed/);
@@ -231,7 +231,7 @@ test("formal CLI signal waits for backend cancellation and reports a separate cl
   const result = await completed; clearTimeout(watchdog);
   assert.equal(sent, true); assert.equal(result.signal, null); assert.equal(result.code, 1, stderr);
   const output = records(stdout);
-  assert.deepEqual(output.find((entry) => entry.type === "result")?.result, { status: "cancelled", reason: "cancelled" });
+  assert.deepEqual(output.find((entry) => entry.type === "result")?.result, { status: "cancelled", reason: "cancelled", input: "recorded" });
   assert.equal(output.at(-1)?.type, "cleanup");
   assert.ok((await traces(f)).some((entry) => entry.method === "session/cancel"));
   await assertClosed(f);

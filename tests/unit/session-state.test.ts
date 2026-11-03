@@ -186,8 +186,18 @@ test("v9 bindings keep what the native session reported, and only a same-epoch c
   assert.equal(carriedNativeConfiguration(parsed, { harnessId: "alpha", controlId: "alpha-acp", provider: { providerId: "provider-fixture", revision: 1, model: "m" } } as typeof parsed.selection, 1), null);
   const unchanged = parseSession(observed({ model: null, options: { effort: "low", mode: "plan" } }));
   assert.equal(carriedNativeConfiguration(unchanged, unchanged.selection, 1), null);
-  const fresh = parseSession({ ...state, nativeBindings: [{ ...ready, throughRunId: null }] });
+  const elsewhere = { harnessId: "beta", controlId: "beta-acp" };
+  const fresh = parseSession({ ...state, runs: state.runs.map(row => ({ ...row, selection: elsewhere })), nativeBindings: [{ ...ready, throughRunId: null }] });
   assert.equal(carriedNativeConfiguration(fresh, fresh.selection, 1), null);
+  // The last Turn is the last one dispatched to the binding's Harness, not the binding's native position: a command Turn that
+  // owed facts leaves the position behind, and what it changed is still carried (ADR-055 §7.6).
+  const behind = parseSession({ ...state, nativeBindings: [{ ...ready, throughRunId: "run-one" }] });
+  assert.deepEqual(carriedNativeConfiguration(behind, behind.selection, 1), { model: "model-b", options: { effort: "high" } });
+  const later = parseSession({ ...state, runs: state.runs.map(row => row.id === "run-two" ? { ...row, epoch: 2 } : row), epoch: 2,
+    switches: [{ id: "switch-one", commandId: "switch-one", requested: { harnessId: "alpha" }, requestedSeq: 3, target: chosen, status: "effective", throughSeq: 3, sourceRunIds: ["run-one"], error: null }],
+    commands: [...state.commands, { id: "switch-one", kind: "switch", fingerprint, resultId: "switch-one" }], nativeBindings: [{ ...ready, throughRunId: "run-one" }] });
+  assert.deepEqual(carriedNativeConfiguration(later, later.selection, 2), { model: "model-b", options: { effort: "high" } });
+  assert.equal(carriedNativeConfiguration(later, later.selection, 1), null);
   // Only the Run that owns the native session may record what it reported.
   assert.throws(() => assertSessionTransition(parsed, parseSession({ ...state, version: state.version + 1, nativeBindings: [{ ...ready, observed: { model: null, options: {} } }] })),
     (error: unknown) => error instanceof SessionError && error.code === "INVALID_TRANSITION");

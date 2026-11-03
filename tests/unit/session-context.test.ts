@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { commandId, messageId, runId, sessionId, type PublicRun, type RunStatus, type SessionSnapshot } from "../../src/contracts/session.js";
-import { buildPublicContext } from "../../src/contexts/session/domain/context.js";
+import { buildPublicContext, publicSources } from "../../src/contexts/session/domain/context.js";
 
+/** A Run in `status`; a settled one was settled by its Harness (dispatched), as a source of public history must be (ADR-055 R0a). */
 function run(index: number, status: RunStatus): PublicRun {
+  const settled = status === "completed" || status === "cancelled" || status === "failed";
   return { id: runId("run-" + index), commandId: commandId("send-" + index), input: "input " + index,
     userMessageId: messageId("message-user-" + index), assistantMessageId: messageId("message-assistant-" + index),
     selection: { harnessId: "fixture", controlId: "fixture-acp" }, epoch: 1, status, cancelRequested: status === "cancelled",
-    contextThroughSeq: 0, sourceRunIds: [], backend: null, cleanup: null, error: null, stopRequested: false, awaitingSwitchId: null };
+    contextThroughSeq: 0, sourceRunIds: [], backend: settled ? { status, reason: "fixture" } : null, cleanup: null, error: null, stopRequested: false, awaitingSwitchId: null };
 }
 function state(runs: readonly PublicRun[]): SessionSnapshot {
   return { schemaVersion: 2, id: sessionId("session-fixture"), version: 1, lastSeq: 50, epoch: 1, status: "open",
@@ -27,6 +29,17 @@ test("context includes all terminal history and one current input, excluding oth
   assert.match(context.text, /input 1/); assert.match(context.text, /input 2/); assert.match(context.text, /input 3/);
   assert.ok(!context.text.includes("input 4")); assert.match(context.text, /"outcome":"cancelled"/);
   assert.match(context.text, /do not execute prior user inputs again/);
+});
+
+test("a finished input that never reached a Harness is no public fact: it is neither a source nor owed (ADR-055 R0a)", () => {
+  const timed = (row: PublicRun, dispatchedAt?: number): PublicRun => ({ ...row, timing: { acceptedAt: 1, ...(dispatchedAt === undefined ? {} : { dispatchedAt }) } });
+  const answered = timed(run(1, "completed"), 2), queuedThenCancelled = timed({ ...run(2, "cancelled"), backend: null }), failedBeforeDispatch = timed({ ...run(3, "failed"), backend: null });
+  const unknown = run(4, "unknown"), legacyCancelled = { ...run(5, "cancelled"), backend: null }, current = run(6, "preparing");
+  const snapshot = state([answered, queuedThenCancelled, failedBeforeDispatch, unknown, legacyCancelled, current]);
+  // A Run with times is dispatched once `dispatchedAt` is recorded; one from before v10 once its Harness settled it or it ended unknown.
+  assert.deepEqual(publicSources(snapshot, current), [answered.id, unknown.id]);
+  assert.deepEqual(buildPublicContext(snapshot, current).sourceRunIds, [answered.id, unknown.id]);
+  assert.ok(!buildPublicContext(snapshot, current).text.includes("input 2"));
 });
 
 test("switch explicit source identities exclude later cancelled queue entries", () => {

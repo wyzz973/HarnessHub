@@ -1,13 +1,14 @@
 import { parseProviderTarget } from "../../../contracts/provider.js";
-import { TOOL_DIFF_BYTES, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type BackendResult, type CleanupEvidence, type ControlEvent, type ControlRun, type NativeConversationId, type NativeToolDetail, type NativeUsage } from "../../../contracts/control.js";
-import { MAX_RUN_ATTACHMENTS, MAX_RUN_OUTPUTS, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
+import { TOOL_DIFF_BYTES, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, listedCommand, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent, type ControlRun, type HarnessControl, type NativeConversationId, type NativeModelCatalog, type NativeToolDetail, type NativeUsage } from "../../../contracts/control.js";
+import { MAX_RUN_ATTACHMENTS, MAX_RUN_OUTPUTS, type ContentKind, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
 import {
   SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId, DEFAULT_EXECUTION_BUDGET_MS, DEFAULT_WAIT_BUDGET_MS, MAX_PARALLEL_CONVERSATIONS, STOP_GRACE_MS, STREAM_WINDOW_BYTES, STREAM_WINDOW_MS,
   type AttentionItem, type ForkedMessage, type HarnessSelection, type KeptProcessIdentity, type OutsideEvidence, type OutsideProcess, type NativeConfiguration, type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicNotice, type PublicRun, type RunTiming,
   type SelectionRequest, type SendReceipt, type SessionBindingFactory, type SessionCommit, type SessionConfiguration,
   type SessionId, type SessionEvent, type SessionMutation, type SessionRuntimeOptions, type SessionSnapshot, type SessionStore, type SwitchReceipt,
 } from "../../../contracts/session.js";
-import { buildPublicContext } from "../domain/context.js";
+import { buildPublicContext, publicSources, type PublicContext } from "../domain/context.js";
+import { advances, commandEffect, commandOutcome, dispatched, type InputOutcome } from "../domain/relay/advance.js";
 import { MAX_COMMANDS, MAX_OUTPUT_BYTES, MAX_PLAN_ENTRIES, MAX_QUEUE, MAX_RUNS, MAX_RUN_ACTIVITIES, MAX_RUN_NOTICES, MAX_RUN_TOOLS, assertInput, carriedNativeConfiguration, parseConfiguration, parseNativeConfiguration, replayCommand, terminal, utf8Bytes } from "../domain/state.js";
 
 interface ActiveExecution {
@@ -128,6 +129,13 @@ function fault(error: unknown): { readonly code: string; readonly message: strin
 const RUN_DIAGNOSTIC_BYTES = 4096, MAX_RUN_DIAGNOSTICS = 64;
 /** Longest wait a driver may announce for one request (a day); anything else is ignored rather than shown. */
 const MAX_PERMISSION_WAIT_MS = 24 * 60 * 60 * 1000;
+/** Why a switch fails when the Turn it waited for ended without confirmed settlement (ADR-055 §9, RT2-04). */
+const STRANDED_SWITCH = { code: "SWITCH_SOURCE_UNKNOWN", message: "the Turn this switch waited for ended without confirmed settlement; the switch was not applied" } as const;
+/**
+ * How the user sends one input with respect to the conversation's history (ADR-055 R0a): `attach: "none"` sends it alone
+ * ("只发这条消息"), exactly as typed and without the public facts its Harness is owed, which stay owed.
+ */
+export interface RelayChoice { readonly attach: "none" }
 /** A duration in the user's words: seconds below a minute, whole minutes otherwise. */
 function duration(ms: number): string { return ms < 1000 ? ms + " 毫秒" : ms < 60_000 ? Math.round(ms / 1000) + " 秒" : Math.round(ms / 60_000) + " 分钟"; }
 /** What the conversation says when the Runtime stopped a Turn on its own (ADR-036). */
@@ -340,11 +348,19 @@ export class SessionRuntime {
     } catch (error) { this.fail(error, id); throw error; }
   }
 
-  send(id: SessionId, text: string, key: string, attachmentIds: readonly string[] = []): SendReceipt {
+  /**
+   * Accepts one input for the conversation's next Turn, idempotently by key. With `relay` `{ attach: "none" }` the input is
+   * sent alone, exactly as typed: the public facts its Harness is owed are neither sent nor counted as delivered, so the
+   * native position stays where it was (ADR-055 R0a); a key keeps its choice, and the same key with another choice conflicts.
+   */
+  send(id: SessionId, text: string, key: string, attachmentIds: readonly string[] = [], relay?: RelayChoice): SendReceipt {
     this.admit(); assertInput(text);
     if (!Array.isArray(attachmentIds) || attachmentIds.length > MAX_RUN_ATTACHMENTS || attachmentIds.some(value => typeof value !== "string")) throw new SessionError("INVALID_INPUT", "attachments must be at most 8 content identities");
-    // Without attachments the fingerprint keeps its earlier shape, so replayed commands from before attachments still match.
-    const command = commandId(key), fingerprint = this.fingerprint(attachmentIds.length ? { kind: "send", text, attachments: attachmentIds } : { kind: "send", text }), state = this.load(id);
+    const alone: unknown = relay;
+    if (alone !== undefined && (alone === null || typeof alone !== "object" || Array.isArray(alone) || Object.keys(alone).some(name => name !== "attach") || (alone as Record<string, unknown>).attach !== "none"))
+      throw new SessionError("INVALID_INPUT", "a relay choice can only send the input alone (attach: none)");
+    // Without attachments or a relay choice the fingerprint keeps its earlier shape, so replayed commands from before still match.
+    const command = commandId(key), fingerprint = this.fingerprint({ ...(attachmentIds.length ? { kind: "send", text, attachments: attachmentIds } : { kind: "send", text }), ...(relay === undefined ? {} : { relay: { attach: "none" } }) }), state = this.load(id);
     const prior = replayCommand(state, command, "send", fingerprint);
     if (prior) return { sessionId: id, runId: runId(prior.resultId), replayed: true };
     this.open(state); this.commandBudget(state);
@@ -365,7 +381,7 @@ export class SessionRuntime {
     this.commit(id, current => ({ next: { ...current, runs: [...current.runs, run],
       messages: [...current.messages, { id: userId, runId: nextId, role: "user", text, seq: current.lastSeq + 1, status: "queued" }],
       commands: [...current.commands, { id: command, kind: "send", fingerprint, resultId: nextId }] },
-      events: [event("message.accepted", { runId: nextId, messageId: userId, role: "user", text, ...(attachments.length ? { attachments } : {}) })] }));
+      events: [event("message.accepted", { runId: nextId, messageId: userId, role: "user", text, ...(attachments.length ? { attachments } : {}), ...(relay === undefined ? {} : { relay: { attach: "none" } }) })] }));
     this.schedule(id); return { sessionId: id, runId: nextId, replayed: false };
   }
 
@@ -435,7 +451,10 @@ export class SessionRuntime {
       return { role: message.role, text: message.text, status: run.status, ...(message.role === "assistant" ? { harnessId: run.selection.harnessId } : {}), ...(message.role === "user" && run.attachments?.length ? { attachments: run.attachments } : {}) };
     })];
     const native = source.selection.provider === undefined ? source.nativeBindings?.find(binding => binding.harnessId === source.selection.harnessId && binding.controlId === source.selection.controlId && binding.status === "ready") : undefined;
-    const nativeFork = native !== undefined && native.throughRunId === through.id;
+    // The native session is exactly at `through` only when no later Turn was dispatched to it: a command owing facts, or an
+    // input sent alone, reaches it without moving its native position (ADR-055 §7.6).
+    const nativeFork = native !== undefined && native.throughRunId === through.id && !source.runs.slice(last + 1).some(run =>
+      run.selection.provider === undefined && run.selection.harnessId === native.harnessId && run.selection.controlId === native.controlId && dispatched(run));
     const id = sessionId("session-" + this.options.id());
     const state: SessionSnapshot = { schemaVersion: 12, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration: source.configuration, selection: source.selection,
       activeRunId: null, pendingSwitchId: null, runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }],
@@ -1328,22 +1347,30 @@ export class SessionRuntime {
     let observed: NativeConfiguration | undefined, reported = false;
     // The process the conversation kept and this Turn reuses (ADR-030); null when the Turn starts the program itself.
     let reusing: KeptProcess | null = null, opened: NativeConversationId | null = null;
+    // This Turn's relay facts (ADR-055 §7.6): the public facts it owed its binding, whether it carried them, the native
+    // reading of its input when that is a command, the earlier Turn whose carried facts it sent again, and what the driver
+    // knew of the input reaching the native history (kept here only; the snapshot never stores it).
+    let due: readonly PublicRun["id"][] = [], origin = false, carried = false, command: Extract<CommandClass, { kind: "command" }> | null = null, relayResendOf: PublicRun["id"] | null = null;
+    let evidence: "recorded" | "not_recorded" | null = null, noop = false;
     try {
       this.commit(id, current => ({ next: { ...updatedRun(current, target, { status: "preparing", selection: pinned, epoch: waitedSwitch ? current.epoch : queued.epoch, ...phase(current, target, "preparingAt", this.options.now().getTime()) }), activeRunId: target },
         events: [event("run.preparing", { runId: target, selection: state.selection, epoch: state.epoch })] }));
-      let current = this.owned(execution), run = this.continue(execution), context = buildPublicContext(current, run);
+      const current = this.owned(execution), run = this.continue(execution);
       previousNative = run.selection.provider === undefined ? current.nativeBindings?.find(binding => binding.harnessId === run.selection.harnessId && binding.controlId === run.selection.controlId && binding.status !== "archived") : undefined;
       if (previousNative !== undefined && previousNative.status !== "ready") throw new SessionError("NATIVE_STATE_UNCONFIRMED", "原生会话状态尚未确认；可以切换其他 Harness，或明确建立新的原生分支。公共历史会保留。");
-      if (previousNative !== undefined) {
-        const through = previousNative.throughRunId === null ? -1 : current.runs.findIndex(run => run.id === previousNative!.throughRunId);
-        context = buildPublicContext(current, run, context.sourceRunIds.filter(id => current.runs.findIndex(run => run.id === id) > through));
-      }
-      this.commit(id, current => ({ next: updatedRun(current, target, { contextThroughSeq: context.throughSeq, sourceRunIds: context.sourceRunIds }),
-        events: [event("run.context_prepared", { runId: target, throughSeq: context.throughSeq, sourceRunIds: context.sourceRunIds, continuity: context.continuity })] }));
+      // What this Turn owes its native session (ADR-055 R0a): every earlier dispatched Run after the binding's native position,
+      // or all of them for a session the Turn starts, and the history a branch or an import started from until it reached
+      // this native session. It is rendered and budgeted only if it is sent.
+      const through = previousNative?.throughRunId == null ? -1 : current.runs.findIndex(row => row.id === previousNative!.throughRunId);
+      due = publicSources(current, run).filter(source => current.runs.findIndex(row => row.id === source) > through);
+      origin = this.owesOrigin(current, previousNative);
+      // A content input carries them unless the user chose to send it alone ("只发这条消息"), which leaves them owed.
+      const offered = (previousNative === undefined || due.length > 0 || origin) && !this.sentAlone(current, run);
+      let context: PublicContext | null = null;
       // A process the conversation kept takes the Turn when it still runs this selection; any other kept process is closed
       // first and the Turn starts the program as usual (ADR-030).
       reusing = run.selection.provider === undefined ? await this.takeKept(id, run.selection) : null;
-      let native: NativeConversationId;
+      let native: NativeConversationId | null = null;
       if (reusing !== null) {
         const kept = reusing, now = this.options.now().getTime();
         execution.binding = kept.binding; native = kept.conversation; execution.diagnosticMark = kept.binding.control.diagnosticMark?.() ?? null;
@@ -1365,13 +1392,20 @@ export class SessionRuntime {
           const installation = execution.binding.installation;
           this.commit(id, current => ({ next: current, events: [event("run.installation_resolved", { runId: target, installation })] }));
         }
-        const observation = await execution.binding.control.initialize(); this.continue(execution);
+      }
+      const control = execution.binding.control;
+      // An input its Harness reads as content without a catalog has what it carries budgeted now, before a started program
+      // or a native session exists for it (CONTEXT_TOO_LARGE then leaves no binding behind).
+      const kinds = run.attachments?.map(file => file.kind) ?? [], reading = this.classify(control, run.input, null, kinds);
+      if (offered && reading.kind === "content") context = buildPublicContext(current, run, due);
+      if (native === null) {
+        const observation = await control.initialize(); this.continue(execution);
         this.commit(id, current => ({ next: current, events: [event("run.protocol", { runId: target, observation })] }));
         // A requested value the native session changed itself is applied as it is now instead of being reverted (ADR-028).
-        const carried = carriedNativeConfiguration(current, run.selection, run.epoch);
-        if (carried !== null) this.commit(id, current => ({ next: current, events: [event("native.config_carried", { runId: target, ...carried })] }));
-        const nativeOptions = carried?.options === undefined ? run.selection.nativeOptions : { ...run.selection.nativeOptions, ...carried.options };
-        native = await execution.binding.control.open(execution.binding.workspace, carried?.model ?? run.selection.nativeModel, nativeOptions, previousNative?.checkpoint); this.continue(execution);
+        const carriedConfiguration = carriedNativeConfiguration(current, run.selection, run.epoch);
+        if (carriedConfiguration !== null) this.commit(id, current => ({ next: current, events: [event("native.config_carried", { runId: target, ...carriedConfiguration })] }));
+        const nativeOptions = carriedConfiguration?.options === undefined ? run.selection.nativeOptions : { ...run.selection.nativeOptions, ...carriedConfiguration.options };
+        native = await control.open(execution.binding.workspace, carriedConfiguration?.model ?? run.selection.nativeModel, nativeOptions, previousNative?.checkpoint); this.continue(execution);
       }
       opened = native;
       if (run.selection.provider === undefined && execution.binding.control.checkpoint) {
@@ -1386,16 +1420,28 @@ export class SessionRuntime {
           checkpointStored = true;
         }
       }
+      // Before authorization the native reading decides whether the input is a command (ADR-055 R0b): a command goes as
+      // typed and carries nothing, whatever it owes. A reading that is or may be a command is settled against the catalog
+      // (its effect, and the commands the driver itself offers there).
+      let classified = reading;
+      if (classified.kind !== "content" && control.models) { const catalog = await control.models(); this.continue(execution); classified = this.classify(control, run.input, catalog, kinds); }
+      if (classified.kind === "command") {
+        const named = classified; command = named;
+        this.commit(id, current => ({ next: current, events: [event("run.native_command", { runId: target, name: named.name, publicContextInjected: false, contextEffect: named.effect })] }));
+      }
+      carried = command === null && offered;
+      // An input read as a possible command is budgeted only now; its program has started, and its new session stays bound.
+      if (carried) context ??= buildPublicContext(current, run, due);
+      const prepared = carried && context !== null ? context : null;
+      relayResendOf = prepared !== null && previousNative !== undefined ? this.resendOf(current, previousNative, through, run) : null;
+      this.commit(id, latest => ({ next: updatedRun(latest, target, { contextThroughSeq: prepared?.throughSeq ?? current.lastSeq, sourceRunIds: prepared?.sourceRunIds ?? [] }),
+        events: [event("run.context_prepared", { runId: target, throughSeq: prepared?.throughSeq ?? current.lastSeq, sourceRunIds: prepared?.sourceRunIds ?? [], continuity: "public_context_rehydrate",
+          // The history the Session started from went too, which this binding was owed (only the event says so, for relayResendOf).
+          ...(prepared !== null && origin ? { carriedOrigin: true } : {}) })] }));
       this.commit(id, current => ({ next: updatedRun(current, target, { status: "running", ...phase(current, target, "readyAt", this.options.now().getTime()) }), events: [event("run.authorized", { runId: target, epoch: run.epoch })] }));
       this.continue(execution);
-      execution.binding.control.enablePermissions?.();
-      let input = previousNative !== undefined && context.sourceRunIds.length === 0 ? run.input : context.text;
-      if (run.input.startsWith("/") && execution.binding.control.models) {
-        const catalog = await execution.binding.control.models(); const name = run.input.slice(1).split(/\s/u)[0];
-        this.continue(execution);
-        if (catalog.commands?.some(command => command.name === name)) { input = run.input; this.commit(id, current => ({ next: current, events: [event("run.native_command", { runId: target, name, publicContextInjected: false })] })); }
-      }
-      this.continue(execution);
+      control.enablePermissions?.();
+      const input = prepared?.text ?? run.input;
       // Attachments are checked against the opened agent/model and copied before dispatch, so a refusal fails this input cleanly.
       let files: readonly ControlAttachment[] = [];
       if (run.attachments?.length) {
@@ -1414,11 +1460,13 @@ export class SessionRuntime {
       }
       this.commit(id, current => ({ next: updatedRun(current, target, phase(current, target, "dispatchedAt", this.options.now().getTime())), events: [event("run.dispatched", { runId: target })] }));
       execution.dispatched = true;
-      execution.run = await execution.binding.control.startText(native, input, value => this.output(execution, value), ...(files.length ? [files] : []));
+      execution.run = await control.startText(native, input, value => this.output(execution, value), ...(files.length ? [files] : []));
       this.owned(execution);
       void execution.run.result.then(() => { execution.backendSettled = true; }, () => { execution.backendSettled = true; });
       if (this.load(id).runs.find(run => run.id === target)!.cancelRequested || !this.accepting || this.fatal || this.closingSessions.has(id)) this.stop(execution);
-      backend = await execution.run.result; execution.backendSettled = true;
+      // What the driver knew of the input reaching the native history stays with this Turn; the stored result never holds it.
+      const { input: delivered, command: said, ...settled } = await execution.run.result; execution.backendSettled = true;
+      backend = settled; evidence = delivered === "recorded" || delivered === "not_recorded" ? delivered : null; noop = said === "noop";
       this.owned(execution);
       // Text still in its window is committed before the settlement, so the reply precedes run.backend_settled (ADR-047).
       this.flushStream(execution);
@@ -1485,6 +1533,11 @@ export class SessionRuntime {
         const failure = stopped ? { code: execution.stopReason!, message: execution.stopReason === "WAIT_EXPIRED" ? "the wait for the user's decision ran out" : "the Turn's execution budget ran out" }
           : problem ?? cleanup?.protocolFailure ?? backend?.error ?? null;
         const status = unsafe ? "unknown" : run.cancelRequested || problem?.code === "CANCELLED" || stopped ? "cancelled" : failure ? "failed" : backend?.status ?? "failed";
+        // The native position moves only by the v12 rule (ADR-055 §7.6); a command's effect counts only when it ran. Both go
+        // into the Turn's end event, the direct evidence a later store version migrates from.
+        const input: InputOutcome = !execution.dispatched ? "not_recorded" : evidence ?? "unknown";
+        const advance = advances({ dispatched: execution.dispatched, due: due.length + (origin ? 1 : 0), carried, input, resend: relayResendOf !== null });
+        const effect = command === null ? null : commandEffect(command.effect, commandOutcome(execution.dispatched, backend?.status ?? null, input, noop));
         this.commit(id, current => {
           let next: SessionSnapshot = { ...updatedRun(current, target, { status, backend, cleanup,
             error: failure, ...phase(current, target, "endedAt", endedAt), ...(keep.keep ? { retained: true as const } : {}) }), activeRunId: null, status: unsafe ? "blocked" : current.status,
@@ -1493,14 +1546,21 @@ export class SessionRuntime {
             next = { ...next, nativeBindings: next.nativeBindings?.map(binding => {
               if (binding.harnessId !== pinned.harnessId || binding.controlId !== pinned.controlId || binding.status === "archived") return binding;
               const { observed: earlier, ...rest } = binding, latest = reported ? observed : earlier;
-              return { ...rest, checkpoint: checkpoint!, status: "ready" as const, throughRunId: execution.dispatched ? run.id : binding.throughRunId, ...(latest === undefined ? {} : { observed: latest }) };
+              return { ...rest, checkpoint: checkpoint!, status: "ready" as const, throughRunId: advance ? run.id : binding.throughRunId, ...(latest === undefined ? {} : { observed: latest }) };
             }) ?? [] };
           }
           const cancelSwitch = (!this.accepting || this.closingSessions.has(id)) && next.pendingSwitchId !== null;
           if (cancelSwitch) next = this.cancelPending(next);
-          return { next, events: [event("run.ended", { runId: target, status, backend, cleanup, error: failure }),
+          // A switch waiting for a Turn whose end cannot be confirmed fails with it, and so does every input waiting for that
+          // switch: left pending, it would keep the blocked conversation from being recovered (RT2-04).
+          const stranded = unsafe && !cancelSwitch ? next.pendingSwitchId : null;
+          const waiting = stranded === null ? [] : next.runs.filter(row => row.status === "queued" && row.awaitingSwitchId === stranded).map(row => row.id);
+          if (stranded !== null) next = this.strandSwitch(next, stranded, waiting, endedAt);
+          return { next, events: [event("run.ended", { runId: target, status, backend, cleanup, error: failure, input, ...(effect === null ? {} : { contextEffect: effect }), ...(relayResendOf === null ? {} : { relayResendOf }) }),
             ...(keep.keep ? [event("native.process_retained", { runId: target, idleEndsAt: endedAt + idleMs })] : keep.skipped ? [event("native.retention_skipped", { runId: target, reason: keep.skipped })] : []),
             ...(cancelSwitch ? [event("switch.failed", { switchId: current.pendingSwitchId, reason: "cancelled by close" })] : []),
+            ...(stranded === null ? [] : [event("switch.failed", { switchId: stranded, error: STRANDED_SWITCH, reason: "the Turn it waited for ended without confirmed settlement" }),
+              ...waiting.map(queuedId => event("run.ended", { runId: queuedId, status: "failed", error: { code: "SWITCH_NOT_EFFECTIVE" }, neverDispatched: true }))]),
             ...(unsafe ? [event("session.blocked", { runId: target, reason: "execution or cleanup could not be safely confirmed" })] : [])] };
         });
         handed = keep.keep;
@@ -1566,11 +1626,13 @@ export class SessionRuntime {
       if (kept !== undefined && !sameSelection(kept.selection, target)) await this.release(id, "selection_changed");
       this.store.assertOwner(); let current = this.load(id);
       if (current.pendingSwitchId !== targetId || this.closingSessions.has(id) || !this.accepting) return;
+      // Validation fixes the switch's sources and watermark and renders nothing (ADR-055 R0a): no history is budgeted here,
+      // so a long conversation can still switch and recover; the first input on the target carries what it is owed.
       const sources = current.runs.filter(run => terminal(run.status) && current.messages.some(message => message.id === run.userMessageId && message.seq < pending.requestedSeq)).map(run => run.id);
-      const context = buildPublicContext(current, undefined, sources);
+      const throughSeq = current.lastSeq;
       this.commit(id, current => ({ next: { ...current, switches: current.switches.map(sw => sw.id === targetId
-        ? { ...sw, target, status: "validated", throughSeq: context.throughSeq, sourceRunIds: context.sourceRunIds } : sw) },
-        events: [event("switch.validated", { switchId: targetId, target, throughSeq: context.throughSeq, sourceRunIds: context.sourceRunIds, continuity: context.continuity })] }));
+        ? { ...sw, target, status: "validated", throughSeq, sourceRunIds: sources } : sw) },
+        events: [event("switch.validated", { switchId: targetId, target, throughSeq, sourceRunIds: sources, continuity: "public_context_rehydrate" })] }));
       if (recovery) {
       binding = await this.factory.prepare(target, initial.configuration, id, targetId);
       this.switchBindings.set(id, { binding, close: null });
@@ -1604,6 +1666,98 @@ export class SessionRuntime {
       switches: state.switches.map(sw => sw.id === targetId ? { ...sw, status: "effective", throughSeq: state.lastSeq } : sw) },
       events: [event("switch.effective", { switchId: targetId, target, epoch: state.epoch + 1, throughSeq: state.lastSeq,
         sourceRunIds: state.switches.find(sw => sw.id === targetId)!.sourceRunIds, cleanup, continuity: "public_context_rehydrate", ...(recovery ? { recovered: true } : {}) })] }));
+  }
+  /** How the native side reads an input: its driver's reading, or the shared one (listedCommand) for a driver without one. */
+  private classify(control: HarnessControl, text: string, catalog: NativeModelCatalog | null, attachments: readonly ContentKind[]): CommandClass {
+    return control.classify ? control.classify(text, catalog, attachments) : listedCommand(text, catalog);
+  }
+  /**
+   * Whether the history this Session started from (a branch's or an import's) is still owed to the native session a Turn
+   * continues (ADR-055 §7.6): only the native session the Session was made with holds it, the import's own or a branch's
+   * exact native fork. Any other, the one this Turn starts included, is owed it until a Turn carried it there, which
+   * moved its native position from null.
+   */
+  private owesOrigin(state: SessionSnapshot, binding: NativeSessionBinding | undefined): boolean {
+    if (!state.origin?.history.length) return false;
+    if (binding === undefined) return true;
+    if (binding.throughRunId !== null) return false;
+    if (state.nativeBindings?.indexOf(binding) !== 0) return true;
+    if (state.origin.kind === "import") return false;
+    const created = this.store.events(state.id, 0, 1)[0];
+    return !(created?.type === "session.created" && created.data.continuity === "native_fork");
+  }
+  /** Whether the user chose to send this input alone (ADR-055 R0a), as its acceptance event records; no record is no choice. */
+  private sentAlone(state: SessionSnapshot, run: PublicRun): boolean {
+    const message = state.messages.find(row => row.id === run.userMessageId);
+    const accepted = message === undefined ? undefined : this.store.events(state.id, message.seq - 1, 1)[0];
+    if (accepted?.type !== "message.accepted" || accepted.data.runId !== run.id) return false;
+    const relay = accepted.data.relay;
+    return relay !== null && typeof relay === "object" && !Array.isArray(relay) && (relay as Readonly<Record<string, unknown>>).attach === "none";
+  }
+  /**
+   * The earlier Turn whose carried facts this Turn sends again (ADR-055 §7.6, `relayResendOf`): the latest Turn dispatched
+   * to the binding's own native session after its native position that carried owed facts (Runs, or the history its
+   * Session started from) and whose outcome is unknown. A not recorded attempt in between changes nothing; a Turn whose
+   * end recorded no outcome (before ADR-055) ends the search; a Turn of an earlier native session of the same Harness
+   * (before a native reset) is none. Null when none.
+   */
+  private resendOf(state: SessionSnapshot, binding: NativeSessionBinding, through: number, current: PublicRun): PublicRun["id"] | null {
+    // After its native position every Turn on this Harness ran in this native session; without one, only those since it started.
+    const first = through >= 0 ? through + 1 : Math.max(0, this.bindingStart(state, binding));
+    for (let index = state.runs.length - 1; index >= first; index--) {
+      const row = state.runs[index]!;
+      if (row.id === current.id || !terminal(row.status) || row.selection.provider !== undefined || row.selection.harnessId !== binding.harnessId
+        || row.selection.controlId !== binding.controlId || !dispatched(row)) continue;
+      const relay = this.relayOf(state, row);
+      if (!row.sourceRunIds.length && !relay.carriedOrigin) continue;
+      if (relay.input === "unknown") return row.id;
+      if (relay.input !== "not_recorded") return null;
+    }
+    return null;
+  }
+  /**
+   * Where the native session a binding names started: the index of the Turn that opened it (the latest
+   * `native.binding_prepared` with `resumed: false` for its Harness and interface, read from the newest event back), or -1
+   * for the one the Session was made with (a branch's native fork, an import's own).
+   */
+  private bindingStart(state: SessionSnapshot, binding: NativeSessionBinding): number {
+    for (let before = state.lastSeq; before > 0;) {
+      const after = Math.max(0, before - 100), page = this.store.events(state.id, after, before - after);
+      for (let index = page.length - 1; index >= 0; index--) {
+        const item = page[index]!;
+        if (item.type === "native.binding_prepared" && item.data.resumed === false && item.data.harnessId === binding.harnessId && item.data.controlId === binding.controlId)
+          return state.runs.findIndex(row => row.id === item.data.runId);
+      }
+      before = after;
+    }
+    return -1;
+  }
+  /**
+   * What a finished Turn's own events say of its relay: whether its context carried the history its Session started from
+   * (`run.context_prepared`), and what its end recorded of its input reaching the native history (null when it recorded
+   * nothing). Read from its input's acceptance on, up to its end.
+   */
+  private relayOf(state: SessionSnapshot, run: PublicRun): { readonly carriedOrigin: boolean; readonly input: InputOutcome | null } {
+    let after = Math.max(0, (state.messages.find(row => row.id === run.userMessageId)?.seq ?? 1) - 1), carriedOrigin = false;
+    while (after < state.lastSeq) {
+      const page = this.store.events(state.id, after, 100);
+      if (!page.length) break;
+      for (const item of page) {
+        if (item.data.runId !== run.id) continue;
+        if (item.type === "run.context_prepared" && item.data.carriedOrigin === true) carriedOrigin = true;
+        if (item.type !== "run.ended") continue;
+        const input = item.data.input;
+        return { carriedOrigin, input: input === "recorded" || input === "not_recorded" || input === "unknown" ? input : null };
+      }
+      after = page.at(-1)!.seq;
+    }
+    return { carriedOrigin, input: null };
+  }
+  /** The pending switch fails as stranded, and each input waiting for it ends as not dispatched (SWITCH_NOT_EFFECTIVE). */
+  private strandSwitch(state: SessionSnapshot, switchId: string, waiting: readonly PublicRun["id"][], endedAt: number): SessionSnapshot {
+    let next: SessionSnapshot = { ...state, pendingSwitchId: null, switches: state.switches.map(sw => sw.id === switchId ? { ...sw, status: "failed" as const, error: STRANDED_SWITCH } : sw) };
+    for (const queued of waiting) next = updatedRun(next, queued, { status: "failed", error: { code: "SWITCH_NOT_EFFECTIVE", message: "requested Harness switch failed; this input was not dispatched" }, ...phase(next, queued, "endedAt", endedAt) });
+    return next;
   }
   private unknownOwnership(problem: ReturnType<typeof fault> | null): boolean {
     return problem !== null && ["OWNER_LOST", "OWNERSHIP_LOST", "WORKSPACE_OWNERSHIP_LOST", "BINDING_CLEANUP_FAILED", "CLEANUP_FAILED", "WORKSPACE_QUARANTINED"].includes(problem.code);

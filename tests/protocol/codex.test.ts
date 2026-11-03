@@ -132,7 +132,7 @@ test("an explicit Codex rejection before a turn exists fails the request without
   const driver = control("prompt-rejected");
   try {
     const id = await ready(driver), output: ControlEvent[] = [], run = await driver.startText(id, "rejected request", value => output.push(value));
-    assert.deepEqual(await run.result, { status: "failed", reason: "request_rejected" }); assert.deepEqual(output, []);
+    assert.deepEqual(await run.result, { status: "failed", reason: "request_rejected", input: "not_recorded" }); assert.deepEqual(output, []);
     assert.equal((await driver.close()).protocolFailure, null);
   } finally { await driver.close(); }
 });
@@ -278,7 +278,7 @@ test("Codex /export copies the thread's own rollout record as an output and fail
   const driver = control("rollout");
   try {
     await driver.initialize(); const id = await driver.open(process.cwd()), events: ControlEvent[] = [];
-    assert.deepEqual(await (await driver.startText(id, "/export", event => events.push(event))).result, { status: "completed", reason: "exported" });
+    assert.deepEqual(await (await driver.startText(id, "/export", event => events.push(event))).result, { status: "completed", reason: "exported", input: "not_recorded" });
     const output = events.find(event => event.type === "output");
     assert.ok(output?.type === "output" && output.output.kind === "content" && output.output.mediaType === "application/x-ndjson" && Buffer.from(output.output.data).toString() === '{"type":"session_meta"}\n');
   } finally { await driver.close(); }

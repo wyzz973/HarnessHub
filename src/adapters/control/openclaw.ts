@@ -3,7 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import JSON5 from "json5";
-import { MAX_NATIVE_EXTENSIONS, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type NativeExtensions, type NativeSessionImport, type NativeSessionPage, type BackendResult, type ControlEvent, type ControlRun, type ControlLaunch, type ControlOptions, type NativeConversationId, type NativeInputs, type NativeModelCatalog, type NativeOption, type NativeOptions, type NativeToolDetail, type CleanupEvidence } from "../../contracts/control.js";
+import { MAX_NATIVE_EXTENSIONS, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, listedCommand, type NativeExtensions, type NativeSessionImport, type NativeSessionPage, type BackendResult, type CommandClass, type ContextEffect, type ControlEvent, type ControlRun, type ControlLaunch, type ControlOptions, type NativeConversationId, type NativeInputs, type NativeModelCatalog, type NativeOption, type NativeOptions, type NativeToolDetail, type CleanupEvidence } from "../../contracts/control.js";
 import { AcpControl } from "./acp.js";
 import { classifyRemoteFailure, ControlError, object } from "../../infrastructure/control/json-rpc-process.js";
 import { nativeCommand } from "../../infrastructure/control/native-command.js";
@@ -89,8 +89,18 @@ function repeatsThinking(options: readonly NativeOption[] | undefined): boolean 
 }
 /** A Turn that ended before its prompt because the selected model could not be confirmed: failed, and nothing was sent. */
 function notSent(error: ControlError): ControlRun {
-  return { result: Promise.resolve({ status: "failed", reason: "model_not_applied", error: { code: error.code, message: "OpenClaw 没有确认所选模型，这条消息没有发出。" } }),
+  return { result: Promise.resolve({ status: "failed", reason: "model_not_applied", error: { code: error.code, message: "OpenClaw 没有确认所选模型，这条消息没有发出。" }, input: "not_recorded" }),
     requestStop: () => Promise.reject(new ControlError("INVALID_STATE", "this Turn ended before its prompt was sent")) };
+}
+/**
+ * What OpenClaw's own slash commands do to its session (docs/tools/slash-commands.md, v2026.10.9): `/new` archives it and
+ * starts another, `/reset` resets it in place (`/reset soft` keeps the transcript), `/compact` compacts it, `/stop` stops
+ * the run; the settings commands change no history; `/restart` and `/bash` act outside the session (unknown effect).
+ */
+const COMMAND_EFFECTS: Readonly<Record<string, ContextEffect>> = { new: "clear", reset: "clear", compact: "compact", stop: "none", restart: "unknown", bash: "unknown",
+  think: "none", verbose: "none", trace: "none", reasoning: "none", elevated: "none", model: "none", queue: "none", usage: "none", fast: "none" };
+function commandEffect(name: string, args: string): ContextEffect {
+  return name === "reset" && args.split(/\s+/u)[0] === "soft" ? "compact" : COMMAND_EFFECTS[name] ?? "unknown";
 }
 /** A Gateway session row's model in the catalog's provider/model form. */
 function rowModel(row: Record<string, unknown>): string | null {
@@ -435,7 +445,8 @@ export class OpenClawControl extends AcpControl {
       if (event.type === "tool") live.set(event.id, { title: event.title, status: event.status });
       onEvent(event);
     }, attachments);
-    const result = run.result.then(async backend => {
+    const content = this.readsAsContent(prompt, attachments.map(file => file.kind));
+    const result = run.result.then(async (backend): Promise<BackendResult> => {
       if (this.sessionKey !== null) { const pending = this.readSessionSettings(this.sessionKey); this.sessionSettings = pending; pending.catch(() => {}); }
       if (before === null || this.sessionKey === null || backend.status === "cancelled") return backend;
       let messages: unknown;
@@ -445,9 +456,19 @@ export class OpenClawControl extends AcpControl {
       const first = messages.reduce<number | null>((lowest, value) => { const seq = transcriptSeq(value); return seq !== null && (lowest === null || seq < lowest) ? seq : lowest; }, null);
       if (messages.length >= TRANSCRIPT_WINDOW && first !== null && first > before + 1)
         onEvent({ type: "diagnostic", message: `OpenClaw transcript window held ${messages.length} entries; ${first - before - 1} earlier entries of this turn were not reconciled` });
-      return reconcileTurn(messages.filter(value => (transcriptSeq(value) ?? 0) > before), backend, onEvent, !thought, live);
+      const turn = messages.filter(value => (transcriptSeq(value) ?? 0) > before), reconciled = reconcileTurn(turn, backend, onEvent, !thought, live);
+      // The Gateway commits the user turn to this session's transcript (only the Hub writes it) before the model sees it: a
+      // user row after the turn began is the input recorded, whatever the turn's outcome. None found leaves it unknown.
+      const recorded = content && turn.some(value => value !== null && typeof value === "object" && (value as { readonly role?: unknown }).role === "user");
+      return recorded ? { ...reconciled, input: "recorded" } : backend.input === undefined ? reconciled : { ...reconciled, input: backend.input };
     });
     return { result, requestStop: run.requestStop };
+  }
+  /** The bridge's listed commands, read with what each does to the session (COMMAND_EFFECTS); any other input is a prompt. */
+  override classify(text: string, catalog: NativeModelCatalog | null): CommandClass {
+    const reading = listedCommand(text, catalog);
+    // The effect of a command OpenClaw names here depends on its arguments (`/reset soft`), whatever the catalog declares.
+    return reading.kind === "command" && Object.hasOwn(COMMAND_EFFECTS, reading.name) ? { ...reading, effect: commandEffect(reading.name, reading.args) } : reading;
   }
   /**
    * What the Gateway holds for this session after the Turn: its model and each setting the bridge offers that the row (and
@@ -494,7 +515,8 @@ export class OpenClawControl extends AcpControl {
     const catalog = await super.models();
     const models = (await this.readNativeModels()).flatMap(({ unavailable, ...row }) => unavailable === null ? [row] : []);
     const options = catalog.options !== undefined && repeatsThinking(catalog.options) ? catalog.options.filter(option => option.id !== "__mode") : catalog.options;
-    return { ...catalog, ...(options === undefined ? {} : { options }), defaultModel: this.configuredModel, models, canSelect: models.length > 0 };
+    const commands = catalog.commands?.map(command => ({ ...command, contextEffect: command.contextEffect ?? COMMAND_EFFECTS[command.name] ?? "unknown" }));
+    return { ...catalog, ...(options === undefined ? {} : { options }), ...(commands === undefined ? {} : { commands }), defaultModel: this.configuredModel, models, canSelect: models.length > 0 };
   }
   override async close(): Promise<CleanupEvidence> { this.abort.abort(); const commands = [...this.commands]; const results = await Promise.allSettled(commands); const cleanup = await super.close(); const failed = results.find(result => result.status === "rejected" && result.reason instanceof ControlError && result.reason.code === "CLEANUP_FAILED"); if (failed?.status === "rejected") throw failed.reason; return cleanup; }
 }

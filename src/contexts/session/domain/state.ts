@@ -7,6 +7,7 @@ import {
 } from "../../../contracts/session.js";
 import type { BackendResult, CleanupEvidence, NativeOptions, NativeUsage } from "../../../contracts/control.js";
 import { MAX_RUN_OUTPUTS, parseAttachmentRefs, parseContentRef } from "../../../contracts/content.js";
+import { dispatched } from "./relay/advance.js";
 
 export const MAX_RUNS = 256;
 export const MAX_COMMANDS = 1024;
@@ -384,12 +385,15 @@ export function parseSession(value: unknown): SessionSnapshot {
 /**
  * Requested native values that the native session itself changed (by its own commands) since its last Turn under the same
  * selection epoch. The next Turn applies these native values instead of reverting them; an effective switch (a new epoch,
- * even to the same selection) applies the selection again. Values the selection does not request are never applied.
+ * even to the same selection) applies the selection again. Values the selection does not request are never applied. The
+ * last Turn is the last one dispatched to the binding's Harness, whether or not it moved the binding's native position
+ * (a command Turn owing facts does not, ADR-055 §7.6).
  */
 export function carriedNativeConfiguration(state: SessionSnapshot, selection: HarnessSelection, epoch: number): { readonly model?: string; readonly options?: NativeOptions } | null {
   if (selection.provider !== undefined) return null;
   const binding = state.nativeBindings?.find(item => item.harnessId === selection.harnessId && item.controlId === selection.controlId && item.status === "ready");
-  const observed = binding?.observed, last = binding?.throughRunId == null ? undefined : state.runs.find(run => run.id === binding.throughRunId);
+  const observed = binding?.observed, last = binding === undefined ? undefined
+    : state.runs.findLast(run => run.selection.provider === undefined && run.selection.harnessId === binding.harnessId && run.selection.controlId === binding.controlId && dispatched(run));
   if (observed === undefined || last === undefined || last.epoch !== epoch) return null;
   const model = selection.nativeModel !== undefined && observed.model !== null && observed.model !== selection.nativeModel ? observed.model : undefined;
   const options: Record<string, string> = {};

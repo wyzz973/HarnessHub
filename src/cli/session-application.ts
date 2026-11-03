@@ -2,8 +2,9 @@ import type { NativeEnvironment } from "../infrastructure/session/native-environ
 import { LocalHarnessManagement, type ManagementOptions } from "../infrastructure/management/service.js";
 import { LocalProviderService } from "../infrastructure/provider/service.js";
 import { createHash, randomUUID } from "node:crypto";
-import { lstatSync, mkdirSync } from "node:fs";
-import { isAbsolute, join, normalize, resolve } from "node:path";
+import { lstatSync, mkdirSync, opendirSync, realpathSync, statSync, type Dir } from "node:fs";
+import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 import { SessionError, type SelectionRequest, type SessionEvent } from "../contracts/session.js";
 import { SessionRuntime } from "../contexts/session/application/runtime.js";
 import { SqliteSessionStore } from "../infrastructure/session/sqlite-store.js";
@@ -18,6 +19,65 @@ export function dataRoot(value: string | undefined): string {
   const path = value === undefined ? resolve("data") : resolve(value);
   if ((value !== undefined && !value.trim()) || path.length > 4096 || /[\0\r\n]/u.test(path)) throw new SessionError("INVALID_INPUT", "invalid data directory");
   return path;
+}
+/** The ownership marker every data directory holds (sqlite-store.ts), searched for in a workspace within these bounds. */
+const DATA_MARKER = ".harness-gateway.json", MARKER_DEPTH = 6, MARKER_ENTRIES = 2000, MARKER_MS = 100;
+/**
+ * Where a data directory lies relative to a workspace (ADR-055 §10.1): whether one contains the other, compared by device
+ * and inode along each one's parent directories and never by spelling (case-insensitive volumes, symbolic links and
+ * firmlinks spell one directory several ways), the data directory's parents both as it resolves and as it is spelled (a
+ * link in the workspace that leads to it puts it in the workspace's reach); and the workspace directories holding a data
+ * directory's ownership marker (a copy left behind when the data was moved), found within 6 levels, 2,000 entries and
+ * 100 ms, however large one directory is, where a symbolic link is looked at (a marker it names, or one in the directory it
+ * leads to) but never entered. Paths are relative to the workspace: what a workspace observation leaves out, with `.tmp`.
+ * Read-only; what cannot be read proves nothing.
+ */
+export interface DataRootPlacement {
+  readonly containment: "separate" | "data_root_in_workspace" | "workspace_in_data_root";
+  readonly markers: readonly string[];
+}
+export function dataRootPlacement(root: string, workspace: string): DataRootPlacement {
+  const identity = (path: string) => { const info = statSync(path, { bigint: true }); return info.dev + ":" + info.ino; };
+  const within = (path: string, ancestor: string): boolean => {
+    for (let current = path; ; current = dirname(current)) {
+      if (identity(current) === ancestor) return true;
+      if (dirname(current) === current) return false;
+    }
+  };
+  const isFile = (path: string): boolean => { try { return statSync(path).isFile(); } catch { return false; } };
+  let place: string, containment: DataRootPlacement["containment"];
+  try {
+    const data = realpathSync(root), spelled = resolve(root); place = realpathSync(workspace);
+    const workspaceIdentity = identity(place);
+    containment = within(data, workspaceIdentity) || spelled !== data && within(spelled, workspaceIdentity) ? "data_root_in_workspace"
+      : within(place, identity(data)) ? "workspace_in_data_root" : "separate";
+  } catch { return { containment: "separate", markers: [] }; }
+  const markers: string[] = [], deadline = performance.now() + MARKER_MS, pending: { readonly path: string; readonly depth: number }[] = [{ path: place, depth: 0 }];
+  let entries = 0;
+  while (pending.length && entries < MARKER_ENTRIES && performance.now() < deadline) {
+    const { path, depth } = pending.shift()!;
+    let directory: Dir;
+    try { directory = opendirSync(path); } catch { continue; }
+    try {
+      // One entry at a time, so a single large directory is held to the same bounds.
+      for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {
+        if (++entries > MARKER_ENTRIES || performance.now() >= deadline) break;
+        const at = join(path, entry.name);
+        // A symbolic link is looked at but not followed into, so the search stays in the workspace.
+        if (entry.isSymbolicLink()) { if (entry.name === DATA_MARKER ? isFile(at) : isFile(join(at, DATA_MARKER))) markers.push(relative(place, entry.name === DATA_MARKER ? path : at) || "."); }
+        else if (entry.isFile() && entry.name === DATA_MARKER) markers.push(relative(place, path) || ".");
+        else if (entry.isDirectory() && depth < MARKER_DEPTH) pending.push({ path: at, depth: depth + 1 });
+      }
+    } catch { /* A directory that cannot be read further proves nothing. */ } finally { directory.closeSync(); }
+  }
+  return { containment, markers };
+}
+/** The startup warning for a data directory a workspace's Harnesses can read (ADR-055 §10.1, D8); null when there is none. */
+export function dataRootWarning(placement: DataRootPlacement): string | null {
+  if (placement.containment === "data_root_in_workspace") return "数据目录在工作区里，工作区里的 Harness 能直接读到全部对话（含其他 Harness 的内容）；请用 --data-dir 把数据目录放到工作区外。";
+  if (placement.containment === "workspace_in_data_root") return "工作区在数据目录里，Harness 在工作区里的读写都落在 HarnessGateway 的数据目录中；请用 --data-dir 把数据目录换成工作区之外的独立目录。";
+  if (placement.markers.length) return "工作区里有 HarnessGateway 的数据目录（" + placement.markers.slice(0, 4).map(path => path === "." ? "." : "./" + path).join("、") + (placement.markers.length > 4 ? " 等" : "") + "），工作区里的 Harness 能读到它们；数据目录应放在工作区外。";
+  return null;
 }
 export function selection(value: string, explicitControl?: string): SelectionRequest {
   const [harnessId, embeddedControl, ...extra] = value.split(":");

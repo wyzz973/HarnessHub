@@ -1,18 +1,24 @@
 import { isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
-import { nativeConversationId, requestExpiry, type BackendResult, type CleanupEvidence, type ControlEvent,
+import { listedCommand, nativeConversationId, requestExpiry, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent,
   type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl,
   type NativeOptions, type NativeOption, type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
 import { ControlError, errorFrom, JsonRpcProcess, object, string, text, type RpcRequest } from "../../infrastructure/control/json-rpc-process.js";
 import { unifiedDiff } from "../../infrastructure/control/unified-diff.js";
 import { MAX_NATIVE_SESSIONS, type NativeOutput, type NativeSessionImport, type NativeSessionPage, type NativeToolDetail, type NativeUsage } from "../../contracts/control.js";
-import { MAX_CONTENT_BYTES, textual, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
+import { MAX_CONTENT_BYTES, textual, type ContentKind, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
 import { checkInputs, fileMentions, readAttachment } from "../../infrastructure/control/attachments.js";
 
 interface ActivePrompt {
   readonly event: (event: ControlEvent) => void;
   /** When the prompt's own last update arrived; an agent that keeps sending after its prompt response is waited for. */
   lastUpdate: number;
+  /**
+   * The agent answered this prompt (a reply, thinking or tool call of its own), which it does only once it took the prompt
+   * into its turn: evidence that the prompt was recorded. Plans, usage and notices are no such answer (an agent can send a
+   * plan before it inserts the prompt).
+   */
+  answered: boolean;
   readonly tools: Map<string, { title: string; status: string }>;
   readonly compaction: Map<string, string>;
   stopping: boolean;
@@ -412,6 +418,27 @@ export class AcpControl implements HarnessControl {
    * the user's paths or credentials, so a failure quotes it only through a fixed vocabulary. The default names nothing.
    */
   protected refusal(_method: string, _error: ControlError, _report?: (event: ControlEvent) => void): { readonly code: string; readonly message: string } | null { return null; }
+  /**
+   * Where a refused prompt (session/prompt answered with REMOTE_ERROR on a healthy connection) stands, as only the agent's
+   * own error says it (ADR-055 §7.1, R0c; its code, message, detail and fields on ControlError): "not_recorded" for a
+   * refusal the agent gives only before inserting the prompt, "recorded" for one it gives only after (a model call that
+   * failed), null when the same error can come either way — then only the agent's answer to a content prompt proves it
+   * recorded. A command prompt is never reported recorded. The default knows no error.
+   */
+  protected refusedPrompt(_error: ControlError): "recorded" | "not_recorded" | null { return null; }
+  /**
+   * Whether this agent's stop reason for a content prompt proves the prompt reached its history (ADR-055 §7.1, E3), as
+   * its own protocol semantics say: an agent that records the prompt before calling its model can say so of end_turn and
+   * of failures after insertion. The default proves nothing by stop reason alone; an answer to the prompt still does.
+   */
+  protected promptRecorded(_reason: string): boolean { return false; }
+  /** The shared reading of an input (listedCommand); a driver whose agent parses commands otherwise reproduces that here. */
+  classify(text: string, catalog: NativeModelCatalog | null, _attachments: readonly ContentKind[] = []): CommandClass { return listedCommand(text, catalog); }
+  /**
+   * Whether the agent's answer or stop reason can prove this prompt recorded as content: it reads the prompt as content,
+   * against the commands it announced to this connection so far. A driver narrows it where its reading may be out of date.
+   */
+  protected readsAsContent(prompt: string, attachments: readonly ContentKind[]): boolean { return this.classify(prompt, this.catalog, attachments).kind === "content"; }
   /** Whether the agent hands ACP file blocks to its model; when it drops them, files travel as text pointers it reads with its own tools. */
   protected get fileBlocks(): boolean { return true; }
   /** A position in the agent's stderr and what it logged since, for an agent that reports some failures only there. */
@@ -529,8 +556,11 @@ export class AcpControl implements HarnessControl {
     const blocks: Record<string, unknown>[] = [{ type: "text", text: prompt + fileMentions(pointers) }];
     for (const file of attachments) if (!pointers.includes(file)) blocks.push(await this.promptBlock(file));
     if (this.active !== null) throw new ControlError("INVALID_STATE", "a prompt is already active");
-    const active: ActivePrompt = { event: onEvent, lastUpdate: 0, tools: new Map(), compaction: new Map(), stopping: false, settled: false, stop: null, deadline: Date.now() + this.options.runTimeoutMs };
+    const active: ActivePrompt = { event: onEvent, lastUpdate: 0, answered: false, tools: new Map(), compaction: new Map(), stopping: false, settled: false, stop: null, deadline: Date.now() + this.options.runTimeoutMs };
     this.active = active;
+    // Evidence of the prompt reaching the history is about content: a command's answer (a local reply) proves no such thing.
+    const content = this.readsAsContent(prompt, attachments.map(file => file.kind));
+    const recorded = (reason: string | null): { readonly input?: "recorded" } => content && (active.answered || reason !== null && this.promptRecorded(reason)) ? { input: "recorded" } : {};
     const result = this.rpc.request("session/prompt", { sessionId: id, prompt: blocks }, this.options.runTimeoutMs)
       .then(value => {
         const response = object(value, "session/prompt result");
@@ -553,11 +583,13 @@ export class AcpControl implements HarnessControl {
         // Late chunks of this prompt still belong to it: the turn settles only once they have stopped.
         const quiet = this.trailingQuietMs;
         if (quiet > 0) for (const answered = Date.now(); Date.now() - Math.max(active.lastUpdate, answered) < quiet && Date.now() - answered < TRAILING_SETTLE_MS;) await new Promise(resolve => setTimeout(resolve, Math.min(quiet, 50)));
-        return result;
+        return { ...result, ...recorded(result.reason) };
       }).catch((error: unknown): BackendResult => {
         if (error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null) {
-          const named = this.refusal("session/prompt", error, active.event);
-          return { status: "failed", reason: "request_rejected", ...(named !== null ? { error: named } : error.remoteFailure ? { error: error.remoteFailure } : {}) };
+          const named = this.refusal("session/prompt", error, active.event), stands = this.refusedPrompt(error);
+          // Where the driver cannot place the refusal before or after insertion, only the agent's answer proves the prompt recorded.
+          return { status: "failed", reason: "request_rejected", ...(named !== null ? { error: { code: named.code, message: named.message } } : error.remoteFailure ? { error: error.remoteFailure } : {}),
+            ...(stands === "not_recorded" ? { input: stands } : stands === "recorded" && content ? { input: stands } : recorded(null)) };
         }
         // The prompt request's own timeout is the Turn's deadline, reported as every driver reports it.
         const failure = error instanceof ControlError && error.code === "REQUEST_TIMEOUT" ? new ControlError("RUN_TIMEOUT", "ACP prompt exceeded its deadline") : errorFrom(error);
@@ -650,6 +682,7 @@ export class AcpControl implements HarnessControl {
     // prompts. They belong to no public Run, so they are counted and never attributed to another Turn.
     if (!active || active.settled) { this.unattributed++; return; }
     active.lastUpdate = Date.now();
+    if (kind === "agent_message_chunk" || kind === "agent_thought_chunk" || kind === "tool_call" || kind === "tool_call_update") active.answered = true;
     if (kind === "agent_message_chunk" || kind === "agent_thought_chunk" || kind === "user_message_chunk") {
       const content = object(update.content, "ACP message content");
       if (content.type !== "text") {
