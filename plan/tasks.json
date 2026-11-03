@@ -560,26 +560,37 @@
       "owns": [
         "contracts/context.schema.json",
         "contracts/examples/c006.json",
-        "docs/decisions/0006-context-handoff.md"
+        "docs/decisions/0006-context-handoff.md",
+        "docs/decisions/0055-relay-and-context-scheduling.md",
+        "docs/contracts/relay.md",
+        "docs/contracts/context-transfer.md",
+        "docs/contracts/switching.md",
+        "docs/contracts/storage-events.md",
+        "docs/contracts/public-api.md",
+        "docs/contracts/security.md",
+        "docs/domain/invariants.md"
       ],
       "requirements": [
         "R08",
-        "R09"
+        "R09",
+        "R19"
       ],
       "invariants": [
         "INV-13",
         "INV-14",
         "INV-22"
       ],
-      "scope": "冻结可交接上下文契约；只冻结所属契约或实现所属入口",
+      "scope": "ADR-055 改写（终稿第 17 节），保留为接力设计的 G0 契约任务：`contracts/context.schema.json` 改写为交接单清单 `RelayPacket` 与送达行 `DeliveryRecord` 的 JSON Schema（按终稿第 4 节），`contracts/examples/c006.json` 改为 S1 样例的清单与送达行，`docs/decisions/0006-context-handoff.md` 加“由 ADR-055 取代”的状态行；新增 `docs/decisions/0055-relay-and-context-scheduling.md` 与 `docs/contracts/relay.md`，并接管目前无主的 `docs/contracts/context-transfer.md`、`docs/contracts/switching.md`、`docs/contracts/storage-events.md`、`docs/contracts/public-api.md`、`docs/contracts/security.md` 与 `docs/domain/invariants.md`（按终稿更新，状态 proposed）；G066 依赖本任务",
       "out_of_scope": [
         "不修改其他任务所有权文件",
-        "契约冻结不表示应用实现或真实链路验收"
+        "契约冻结不表示应用实现或真实链路验收",
+        "状态保持 proposed，用户验收之前不进入实现"
       ],
       "acceptance": [
-        "manifest字段有有效样例与来源约束",
-        "无效材料不能进入执行",
-        "旧原生状态不冒充最新公共上下文"
+        "交接单清单 `RelayPacket` 与送达行 `DeliveryRecord` 的 JSON Schema 与终稿第 4 节一致，S1 样例的清单与送达行通过校验，所有枚举集中在第 4 节声明",
+        "缺引用、旧摘要、坏 hash 的材料不能进入执行；超限时分层并记省略账目，只有最小交接单加当前原话超限才 `RELAY_INPUT_LIMIT`",
+        "旧原生状态不冒充最新公共上下文",
+        "契约、不变量与 ADR-055 按终稿更新，状态 proposed"
       ],
       "test_cases": [
         "C006-C01",
@@ -1024,7 +1035,7 @@
         "INV-13",
         "INV-22"
       ],
-      "scope": "从已冻结契约生成或实现类型并做等价检查；不得在应用实现阶段重新定义wire契约",
+      "scope": "从已冻结契约生成或实现类型并做等价检查；不得在应用实现阶段重新定义wire契约；ADR-055（终稿第 17 节）起保留：接力对本任务文件的两次修改——G067 对 `src/contexts/session/domain/context.ts:56–58` 的修改（终稿称来源过滤，该处实际是 `CONTEXT_TOO_LARGE` 预算检查，来源选择在同文件 `:27–28` 与 `runtime.ts:1337–1339`）、G070 删除 `buildPublicContext`——由本任务的所有者串行进行；G006-C03 保持零注入的现有断言，接力自己的零注入用例在 G068",
       "out_of_scope": [
         "不修改其他任务所有权文件",
         "不把局部通过提升为完整链路或真实Harness通过"
@@ -1937,7 +1948,7 @@
       "title": "构建有界公共ContextManifest",
       "context": "continuity",
       "phase": "implementation",
-      "status": "planned",
+      "status": "deferred",
       "gate": "G1",
       "depends_on": [
         "G006",
@@ -1958,28 +1969,29 @@
         "INV-17",
         "INV-22"
       ],
-      "scope": "构建有界公共ContextManifest；仅交付所列文件与对应行为",
+      "scope": "构建有界公共ContextManifest；仅交付所列文件与对应行为；ADR-055 起 deferred：范围由 G070 的 packet.ts 与清单接管，build-manifest.ts、context-repository.ts 不再建立",
       "out_of_scope": [
         "不修改其他任务所有权文件",
         "不把局部通过提升为完整链路或真实Harness通过"
       ],
       "acceptance": [
         "来源、水位、预算与指纹完整",
-        "明确失败，不静默只取最近历史",
+        "超限时分层并记省略账目；摘要缺来源或旧水位明确失败，不静默只取最近历史",
         "保持数据等级与秘密边界"
       ],
       "test_cases": [
         "G024-C01",
         "G024-C02",
         "G024-C03"
-      ]
+      ],
+      "defer_reason": "ADR-055：范围由 G070 的 `packet.ts` 与清单接管；`build-manifest.ts`、`context-repository.ts` 不再建立"
     },
     {
       "id": "G025",
       "title": "验证交接水位与绑定新鲜度",
       "context": "continuity",
       "phase": "implementation",
-      "status": "planned",
+      "status": "deferred",
       "gate": "G1",
       "depends_on": [
         "G024",
@@ -1999,7 +2011,7 @@
         "INV-14",
         "INV-18"
       ],
-      "scope": "验证交接水位与绑定新鲜度；仅交付所列文件与对应行为",
+      "scope": "验证交接水位与绑定新鲜度；仅交付所列文件与对应行为；ADR-055 起 deferred：范围由 G068 接管，verify-handoff.ts 不再建立",
       "out_of_scope": [
         "不修改其他任务所有权文件",
         "不把局部通过提升为完整链路或真实Harness通过"
@@ -2013,7 +2025,8 @@
         "G025-C01",
         "G025-C02",
         "G025-C03"
-      ]
+      ],
+      "defer_reason": "ADR-055：范围由 G068 接管；`verify-handoff.ts` 不再建立"
     },
     {
       "id": "G026",
@@ -2960,7 +2973,7 @@
       "title": "提交idle切换并准备目标绑定",
       "context": "interaction",
       "phase": "implementation",
-      "status": "planned",
+      "status": "deferred",
       "gate": "G1",
       "depends_on": [
         "G023",
@@ -2985,7 +2998,7 @@
         "INV-13",
         "INV-21"
       ],
-      "scope": "提交idle切换并准备目标绑定；仅交付所列文件与对应行为",
+      "scope": "提交idle切换并准备目标绑定；仅交付所列文件与对应行为；ADR-055 起 deferred：范围由 G072 接管，切换生效不组包、目标绑定在下一条消息准备",
       "out_of_scope": [
         "不修改其他任务所有权文件",
         "不把局部通过提升为完整链路或真实Harness通过"
@@ -2999,14 +3012,15 @@
         "G045-C01",
         "G045-C02",
         "G045-C03"
-      ]
+      ],
+      "defer_reason": "ADR-055：范围由 G072 接管（切换生效不组包、目标绑定在下一条消息准备）"
     },
     {
       "id": "G046",
       "title": "协调busy切换的静止交接",
       "context": "interaction",
       "phase": "implementation",
-      "status": "planned",
+      "status": "deferred",
       "gate": "G1",
       "depends_on": [
         "G045",
@@ -3029,7 +3043,7 @@
         "INV-12",
         "INV-21"
       ],
-      "scope": "协调busy切换的静止交接；仅交付所列文件与对应行为",
+      "scope": "协调busy切换的静止交接；仅交付所列文件与对应行为；ADR-055 起 deferred：S5 的等待 / 停止并切换、停止未确认时待决切换失败由 G072（runtime 侧）与 G073（两个按钮）承担",
       "out_of_scope": [
         "不修改其他任务所有权文件",
         "不把局部通过提升为完整链路或真实Harness通过"
@@ -3045,7 +3059,8 @@
         "G046-C02",
         "G046-C03",
         "G046-C04"
-      ]
+      ],
+      "defer_reason": "ADR-055：范围由 G072（runtime 侧）与 G073（两个按钮）接管：S5 的等待 / 停止并切换、停止未确认时待决切换失败"
     },
     {
       "id": "G047",
@@ -3639,13 +3654,13 @@
         "INV-23",
         "INV-06"
       ],
-      "scope": "执行完整切换故障与容量矩阵；仅交付所列文件与对应行为",
+      "scope": "执行完整切换故障与容量矩阵；仅交付所列文件与对应行为；ADR-055 起范围缩小：本任务继续拥有六个测试文件；与接力相关的用例（S5、S6、S14、S15 的崩溃注入 K1–K18、容量下的交接）移到 G074 的 tests/integration/relay-fault-matrix.test.ts 与 tests/e2e/relay-switch.test.ts",
       "out_of_scope": [
         "不修改其他任务所有权文件",
         "不把局部通过提升为完整链路或真实Harness通过"
       ],
       "acceptance": [
-        "公共上下文/实际调用/成果连续可查",
+        "公共上下文经接力送达可查，实际调用与成果连续可查",
         "无重复副作用或并发写，未知结果不重跑",
         "内存句柄有界，取消与切换延迟可测",
         "不能改路由策略或提升权限",
@@ -4276,6 +4291,690 @@
       "test_cases": [
         "G065-A01"
       ]
+    },
+    {
+      "id": "G066",
+      "title": "v13 接力存储、契约类型与迁移",
+      "context": "session",
+      "phase": "implementation",
+      "status": "planned",
+      "gate": "G1",
+      "depends_on": [
+        "C006",
+        "G004",
+        "G008",
+        "G028",
+        "G067"
+      ],
+      "owns": [
+        "src/contracts/relay.ts",
+        "src/contexts/session/domain/relay/migrate.ts",
+        "src/infrastructure/session/relay-tables.ts",
+        "src/infrastructure/session/relay-log.ts",
+        "tests/unit/relay-contract.test.ts",
+        "tests/integration/relay-store.test.ts",
+        "tests/property/relay-migrate.test.ts",
+        "tests/performance/relay-store.test.ts",
+        "tests/fixtures/relay/v12"
+      ],
+      "requirements": [
+        "R07",
+        "R08",
+        "R09",
+        "R14",
+        "R19"
+      ],
+      "invariants": [
+        "INV-13",
+        "INV-14",
+        "INV-22",
+        "INV-31",
+        "INV-35"
+      ],
+      "scope": "ADR-055（终稿第 4、14.1、14.4、17 节）：v13 接力存储——第 14.1 节的 11 张表与 4 个触发器、`deleteSession`、`binding.relay`、`run.relay`、`run.relayRequest`、`switch.*`、`contextReadyAt`、解析器（含旧 `ContinuityLevel` 字符串与旧切换 `sourceRunIds`）、`recoverRelay` 的事务接入点、`relayWrite` / `appendRelayLog` / `upsertWindow` / `setPref`、迁移的纪元谱系与绑定推断（`migrate.ts` 纯函数）、备份条件、v13 代码点（第 14.1 节所列）。现有文件：`src/contracts/session.ts` 与 `src/contexts/session/domain/state.ts` 经既有所有者 G004 修改；`src/infrastructure/session/sqlite-store.ts` 经既有所有者 G008 修改；`src/contexts/session/application/runtime.ts` 的 `schemaVersion` 经既有所有者 G028 修改",
+      "out_of_scope": [
+        "不做渲染、送达判定、Driver、界面",
+        "现有文件只经其既有所有者修改，不修改其他任务所有权文件",
+        "不把局部通过提升为完整链路或真实Harness通过"
+      ],
+      "acceptance": [
+        "v12 夹具（每种绑定来源各一，含“reset + D1”）迁移后 `mark` 只降不升、纪元跨绑定单调、need=∅ 为 synced",
+        "v12 构建拒绝 v13",
+        "迁移失败整笔回滚、备份保留",
+        "≥1 GiB 合成事件库的迁移时长写进验证记录",
+        "崩溃注入后库可打开"
+      ],
+      "test_cases": [
+        "G066-C01",
+        "G066-C02",
+        "G066-C03",
+        "G066-C04",
+        "G066-C05",
+        "G066-C06",
+        "G066-C07",
+        "G066-C08",
+        "G066-C09",
+        "G066-C10"
+      ]
+    },
+    {
+      "id": "G067",
+      "title": "P0 过渡期修复（v12，不升库）",
+      "context": "session",
+      "phase": "implementation",
+      "status": "planned",
+      "gate": "G1",
+      "depends_on": [
+        "G004",
+        "G006",
+        "G007",
+        "G028",
+        "G032",
+        "G034"
+      ],
+      "owns": [
+        "src/contexts/session/domain/relay/advance.ts",
+        "tests/unit/relay-advance.test.ts",
+        "tests/integration/relay-p0.test.ts",
+        "tests/protocol/relay-insert-failures.test.ts"
+      ],
+      "requirements": [
+        "R08",
+        "R09",
+        "R14"
+      ],
+      "invariants": [
+        "INV-11",
+        "INV-13",
+        "INV-14",
+        "INV-21"
+      ],
+      "scope": "ADR-055（终稿第 7.6、17 节）：R0a 每回合只对将要发送的内容预算、切换校验不构建全量、来源过滤排除未派发 Run、`CONTEXT_TOO_LARGE` 的“只发这条消息”；R0b 推进规则 `advance.ts`、命令识别前移、`runtime.ts:438` 与 `state.ts:392`、`BackendResult.input` 瞬时字段与 `run.ended` 的 `input` / `contextEffect` / `relayResendOf`、unsafe 结束时待决切换 failed；R0c 五家插入前后的结果映射；R0d 目录 `contextEffect`、`hidden`、`classify` 的声明；R0e 数据根启动告警与观测排除。现有文件：`src/contexts/session/application/runtime.ts:1334–1342、:1389–1397、:1492–1497、:1490、:438、:1569–1573` 经既有所有者 G028 修改；`src/contexts/session/domain/context.ts`（终稿记作 `context.ts:56–58` 与 `domain/context.ts`）经既有所有者 G006 修改；`src/contexts/session/domain/state.ts:389–399、:93–98` 经既有所有者 G004 修改；`src/contracts/control.ts:100、:163` 经既有所有者 G007 修改；`src/adapters/control/` 下的 `acp.ts`、`claude.ts`、`opencode.ts`、`hermes.ts`、`openclaw.ts` 经既有所有者 G032 修改，`codex.ts` 经既有所有者 G034 修改；数据根启动告警所在的 `src/cli/session-application.ts` 经既有所有者 G059 修改、`src/cli/web.ts` 经既有所有者 G050 修改",
+      "out_of_scope": [
+        "不做升库、交接单渲染、`admit` 的 409",
+        "现有文件只经其既有所有者修改，不修改其他任务所有权文件",
+        "不把局部通过提升为完整链路或真实Harness通过"
+      ],
+      "acceptance": [
+        "8 MiB 快照上同 Harness 续接、切换校验、blocked 后恢复都不报 `CONTEXT_TOO_LARGE`，R6 的 66 回合画像作固定用例",
+        "J1 M1 的三条回归：A→B→A 后首条为 keep 类命令、再在 A 离开前那一轮分支，不产生原生 fork；命令回合 `/model X` 之后的内容回合仍用 X；单 Harness `/compact` 之后的下一条原样发送、不带信封",
+        "RT2-04 的“宽限到期后仍能 resume”",
+        "单 Harness `/export`、`/clear`、`model_not_applied` 后下一条原样"
+      ],
+      "test_cases": [
+        "G067-C01",
+        "G067-C02",
+        "G067-C03",
+        "G067-C04",
+        "G067-C05",
+        "G067-C06",
+        "G067-C07"
+      ]
+    },
+    {
+      "id": "G068",
+      "title": "送达状态机、核对与恢复",
+      "context": "session",
+      "phase": "implementation",
+      "status": "planned",
+      "gate": "G1",
+      "depends_on": [
+        "G066",
+        "G067"
+      ],
+      "owns": [
+        "src/contexts/session/domain/relay/delivery.ts",
+        "src/contexts/session/domain/relay/recover.ts",
+        "tests/unit/relay-delivery.test.ts",
+        "tests/property/relay-delivery.test.ts",
+        "tests/integration/relay-delivery.test.ts",
+        "tests/fixtures/relay-harness-peer.mjs"
+      ],
+      "requirements": [
+        "R08",
+        "R09",
+        "R14"
+      ],
+      "invariants": [
+        "INV-11",
+        "INV-14",
+        "INV-21",
+        "INV-30",
+        "INV-31"
+      ],
+      "scope": "ADR-055（终稿第 7、9、17 节）：第 7.2 节状态 × 事件全表的纯函数、第 7.3 节 `planReturn` 的核对计划、`pending.prior` 与 resend 的继承、`epochFloor` 与 `compactionSeen` 的更新、E1 同事务写送达与绑定、E2/E3 的结算接入、`recoverRelay`、D6 的 `unknown_turn` 路径、suspect / pending 不复用保留进程。现有文件：`src/contexts/session/application/runtime.ts` 的结算、`takeKept` 与 D6 的继续原会话经既有所有者 G028 修改；`src/infrastructure/session/sqlite-store.ts:577–590` 的 `claimAndRecover` 经既有所有者 G008 修改；`src/contexts/session/domain/state.ts:410–449` 的 `assertSessionTransition` 经既有所有者 G004 修改",
+      "out_of_scope": [
+        "不做渲染、预算、Driver 内部、界面",
+        "现有文件只经其既有所有者修改，不修改其他任务所有权文件",
+        "不把局部通过提升为完整链路或真实Harness通过"
+      ],
+      "acceptance": [
+        "夹具覆盖第 7.2 节的 4 × 13 格与 R8 §2.8 / 2.9 每一格",
+        "属性测试以 `relay-harness-peer.mjs` 维护的原生历史为参考模型",
+        "Hermes 回合结束 unknown → 下回合 open 核对 recorded，期间快照字节不变",
+        "窗口外核对只得 unknown",
+        "K7–K11 崩溃注入后送达表与绑定状态一致"
+      ],
+      "test_cases": [
+        "G068-C01",
+        "G068-P01",
+        "G068-C02",
+        "G068-C03",
+        "G068-C04",
+        "G068-C05",
+        "G068-C06",
+        "G068-C07",
+        "G068-C08",
+        "G068-C09",
+        "G068-C10"
+      ]
+    },
+    {
+      "id": "G069",
+      "title": "Driver 接力适配",
+      "context": "session",
+      "phase": "implementation",
+      "status": "planned",
+      "gate": "G1",
+      "depends_on": [
+        "G066",
+        "G067",
+        "G007",
+        "G032",
+        "G034"
+      ],
+      "owns": [
+        "src/adapters/control/relay-vendor.ts",
+        "src/adapters/control/relay-classify.ts",
+        "tests/protocol/relay-capabilities.test.ts",
+        "tests/unit/relay-vendor.test.ts",
+        "tests/unit/relay-classify.test.ts",
+        "tests/fixtures/relay-control-peer.mjs"
+      ],
+      "requirements": [
+        "R10",
+        "R12",
+        "R25"
+      ],
+      "invariants": [
+        "INV-09",
+        "INV-16",
+        "INV-17",
+        "INV-33"
+      ],
+      "scope": "ADR-055（终稿第 3.2、8.1、17 节）：六家的 `relayCapabilities` 静态声明（含 `probed=false` 初值）、`classify` 复刻原生解析、`resolveVendor` 与端点层解析（只读端点键）、`normalizeModel`、`deliveryPosition`、`input_recorded`、`verifyDelivered(position, markers)` 按标记逐个、`historyEmpty` 与压缩游标、`BackendResult.native`（Claude 合成清空、Hermes 固定回执、OpenClaw `sessions.get`）、`userTextOf`、`setTitle` 在首个提示之前（Hermes `/title` 吞回执）、`TurnText` 放置、`NativeUsage.requests`。现有文件：`src/contracts/control.ts` 经既有所有者 G007 修改；`src/adapters/control/` 下的 `acp.ts`、`claude.ts`、`opencode.ts`、`hermes.ts`、`hermes-gateway.ts`、`openclaw.ts`、`factory.ts` 经既有所有者 G032 修改，`codex.ts` 经既有所有者 G034 修改；`src/infrastructure/session/binding-factory.ts` 经既有所有者 G059 修改；`src/web/native-catalog-cache.ts` 经既有所有者 G050 修改",
+      "out_of_scope": [
+        "不做状态机、渲染、界面",
+        "不读 Harness 配置里端点键以外的任何键",
+        "现有文件只经其既有所有者修改，不修改其他任务所有权文件",
+        "不把局部通过提升为完整链路或真实Harness通过"
+      ],
+      "acceptance": [
+        "每家的声明与第 8.1 节逐格一致",
+        "协议夹具覆盖每种证据路径",
+        "厂商键四个夹具（Claude 用户设置 `ANTHROPIC_BASE_URL`、Codex `OPENAI_BASE_URL`、dsh 工作区 `.env`、Ollama `*-cloud`）都记为 `gateway:<host>`"
+      ],
+      "test_cases": [
+        "G069-C01",
+        "G069-C02",
+        "G069-C03",
+        "G069-C04",
+        "G069-C05",
+        "G069-C06",
+        "G069-C07",
+        "G069-C08",
+        "G069-C09"
+      ]
+    },
+    {
+      "id": "G070",
+      "title": "内容：摘要、渲染、预算与脱敏",
+      "context": "session",
+      "phase": "implementation",
+      "status": "planned",
+      "gate": "G1",
+      "depends_on": [
+        "G066",
+        "G006",
+        "G010",
+        "G026"
+      ],
+      "owns": [
+        "src/contexts/session/domain/relay/digest.ts",
+        "src/contexts/session/domain/relay/narration.ts",
+        "src/contexts/session/domain/relay/escape.ts",
+        "src/contexts/session/domain/relay/packet.ts",
+        "src/contexts/session/domain/relay/budget.ts",
+        "src/contexts/session/domain/relay/redaction.ts",
+        "src/infrastructure/text/secret-rules.ts",
+        "src/infrastructure/session/relay-keys.ts",
+        "tools/relay-policy-constants.mjs",
+        "tools/relay-token-fixtures.mjs",
+        "tests/unit/relay-digest.test.ts",
+        "tests/unit/relay-packet.test.ts",
+        "tests/unit/relay-budget.test.ts",
+        "tests/property/relay-packet.test.ts",
+        "tests/integration/relay-redaction.test.ts",
+        "tests/security/relay-redaction.test.ts",
+        "tests/security/relay-injection.test.ts",
+        "tests/performance/relay-render.test.ts",
+        "tests/fixtures/relay/golden",
+        "tests/fixtures/relay/tokens"
+      ],
+      "requirements": [
+        "R08",
+        "R17",
+        "R26"
+      ],
+      "invariants": [
+        "INV-13",
+        "INV-17",
+        "INV-22",
+        "INV-29",
+        "INV-32",
+        "INV-36"
+      ],
+      "scope": "ADR-055（终稿第 3.2、5、6.2–6.4、10.2–10.3、17 节）：RunDigest 与索引（已提交事实、SAVEPOINT、`bound()`、命中区间、`size.verbatim` 未知）、叙述化（N1 ANSI、N4 「」映射、HH-DATA 区含错误原文与钉住的助手话）、两遍折叠（只读索引，字段字节预算与收紧次序）、用户原话预算 U 按 token、`MIN_PACKET` / `FRAME_CAP` / `STATE_CAP` 的构建期生成（`relay-policy-constants.mjs` 进 `policyVersion`）、`cliffCheck`、est/2 与冻结计数夹具（`relay-token-fixtures.mjs`）、省略账目、按名定集合与 10 种形式、安装级与会话集合、规则三档与 `SecretScannerPort` 注入、HMAC 密钥与异常语义、钉住按位置、排除、第二段原样、黄金文件；`tests/security/` 目录由本任务首次建立。现有文件：`src/contexts/session/domain/context.ts` 删 `buildPublicContext` 经既有所有者 G006 修改；`src/infrastructure/capabilities/masking.ts` 经既有所有者 G064 修改；`src/web/run-diagnostics.ts` 经既有所有者 G050 修改；`src/infrastructure/session/redacted-control.ts` 与 `tests/unit/session-redaction.test.ts` 经既有所有者 G010 串行修改；`ContentPort` 新增有界只读 `readText(ref, maxBytes)`（懒重建旧 Run 的摘要时读工具详情，终稿第 3.2、6.4 节）：接口 `src/contracts/content.ts:97–101` 经既有所有者 G004 修改；`src/infrastructure/session/content-store.ts`（`LocalContentStore` 的 `readText` 实现与附件物化目录）经既有所有者 G008 修改，附件物化目录所在的 `src/infrastructure/control/attachments.ts` 经既有所有者 G032 修改；依赖旧信封前缀的夹具 `tests/fixtures/session-peer.mjs` 经既有所有者 G059 改写，`tests/fixtures/web-harness-peer.mjs` 与 `tests/real/codex-session.real.ts` 经既有所有者 G060 改写",
+      "out_of_scope": [
+        "不做观测子进程、调度、Driver、界面",
+        "现有文件只经其既有所有者修改，不修改其他任务所有权文件",
+        "不把局部通过提升为完整链路或真实Harness通过"
+      ],
+      "acceptance": [
+        "金样 `tests/fixtures/relay/golden/{s1-packet,s2-delta,anchor}.md` 与终稿 5.6 逐字节一致",
+        "重渲染 100 次 1 个 sha",
+        "恒等式属性测试",
+        "10.3 用例与 RT4 第 3 节 RD/IN 用例（含 RD-09、RD-10、IN-06）",
+        "模糊 10,000 例（核心 + 扩展 + 「」槽，变异对照）",
+        "秘密语料门槛",
+        "CI 断言模板 ≤ `FRAME_CAP`、最小交接单 ≤ `MIN_PACKET`",
+        "派生写失败不让 `run.ended` 失败",
+        "任意档位 ≤256 Run 不 blocked"
+      ],
+      "test_cases": [
+        "G070-C01",
+        "G070-C02",
+        "G070-P01",
+        "G070-P02",
+        "G070-C03",
+        "G070-C04",
+        "G070-C05",
+        "G070-C06",
+        "G070-S01",
+        "G070-S02",
+        "G070-S03",
+        "G070-S04",
+        "G070-S05",
+        "G070-S06",
+        "G070-S07",
+        "G070-S08",
+        "G070-S09",
+        "G070-S10",
+        "G070-S11",
+        "G070-S12",
+        "G070-C07",
+        "G070-C08",
+        "G070-S13"
+      ]
+    },
+    {
+      "id": "G071",
+      "title": "工作区观测器",
+      "context": "session",
+      "phase": "implementation",
+      "status": "planned",
+      "gate": "G1",
+      "depends_on": [
+        "G066",
+        "G026"
+      ],
+      "owns": [
+        "src/infrastructure/session/workspace-observer.ts",
+        "tests/integration/workspace-observer.test.ts",
+        "tests/security/workspace-observer.test.ts",
+        "tests/performance/workspace-observer.test.ts",
+        "tests/platform/workspace-observer.test.ts"
+      ],
+      "requirements": [
+        "R18",
+        "R26"
+      ],
+      "invariants": [
+        "INV-17",
+        "INV-26",
+        "INV-36"
+      ],
+      "scope": "ADR-055（终稿第 10.6、17 节）：git / 非 git 有界观测、git 可执行文件的启动解析、白名单环境、`GIT_CONFIG_COUNT/KEY/VALUE` 中和、驱动名正则与 tree 回退、toplevel / gitdir 检查、根目录与 HOME 不扫描、`.git/index` mtime 不变、LFS 未核验、数据根与 `.tmp/` 排除、250 ms 超时 SIGKILL 进程组、并发 ≤4、复用规则、`rev-parse` 与 `config --list` 并行与驱动名缓存。现有文件：`src/infrastructure/control/process-group.ts` 只读复用、不修改（所有者 G031）",
+      "out_of_scope": [
+        "不做观测结果的渲染（G070）",
+        "不做数据根互不包含检查本身（G072）",
+        "现有文件只经其既有所有者修改，不修改其他任务所有权文件",
+        "不把局部通过提升为完整链路或真实Harness通过"
+      ],
+      "acceptance": [
+        "WS-01–WS-06 全部通过并各附无效样例",
+        "3k 文件 p95 ≤60 ms、2 万文件 ≤200 ms 写进验证记录（含大文件与冷缓存一组）"
+      ],
+      "test_cases": [
+        "G071-S01",
+        "G071-C01",
+        "G071-C02",
+        "G071-C03",
+        "G071-C04",
+        "G071-C05"
+      ]
+    },
+    {
+      "id": "G072",
+      "title": "接力协调器与返回决策",
+      "context": "session",
+      "phase": "implementation",
+      "status": "planned",
+      "gate": "G1",
+      "depends_on": [
+        "G068",
+        "G069",
+        "G070",
+        "G071",
+        "G059",
+        "G075"
+      ],
+      "owns": [
+        "src/contexts/session/application/relay-coordinator.ts",
+        "src/contexts/session/domain/relay/return-policy.ts",
+        "src/contexts/session/domain/relay/windows.ts",
+        "tests/integration/relay-coordinator.test.ts",
+        "tests/integration/relay-consent.test.ts",
+        "tests/property/relay-coordinator.test.ts",
+        "tests/security/relay-data-root.test.ts",
+        "tests/unit/relay-return-policy.test.ts",
+        "tests/performance/relay-dispatch.test.ts"
+      ],
+      "requirements": [
+        "R07",
+        "R08",
+        "R09",
+        "R10",
+        "R18"
+      ],
+      "invariants": [
+        "INV-05",
+        "INV-06",
+        "INV-14",
+        "INV-21",
+        "INV-33",
+        "INV-36"
+      ],
+      "scope": "ADR-055（终稿第 6、7.3、9、10.1、10.4、17 节）：`admit`（目标 `pendingSwitch?.target ?? selection`、命令预分类、探针门控、数据根 `(st_dev, st_ino)` 检查、选择、同意与 `vendorObserved`、`MIN_PACKET`）、排队 Run 的重做、`prePlan`、`finalize`（分类复核、精化窗口、同意复检、`deliveryPosition` 时机、`cliffCheck`）、`settle`、预取 LRU（键含集合 HMAC）、窗口四级来源与 `relay_windows`（回合外 `usage_update`）、`return-policy.ts`（全程费用差、生存估计 R̂、热判定）、`realized` 惰性结算、懒重建队列、`observe=true` 预览、S5 的等待 / 停止并切换与停止未确认、`relay_prefs` 的读取。现有文件：`src/contexts/session/application/runtime.ts:343–370、:1325–1420` 经既有所有者 G028 修改；`src/infrastructure/session/binding-factory.ts` 的 `relayCapabilities` 经既有所有者 G059 修改；`src/adapters/control/acp.ts:634–636` 的回合外 `usage_update` 经既有所有者 G032 修改",
+      "out_of_scope": [
+        "不做渲染与脱敏算法、Driver 内部、界面",
+        "现有文件只经其既有所有者修改，不修改其他任务所有权文件",
+        "不把局部通过提升为完整链路或真实Harness通过"
+      ],
+      "acceptance": [
+        "派发路径 −1 提交、ABBA 成对差 p95 ≤15 ms、复用 ≤ 观测 p95 + 15 ms、事件 ≤3 + 同意镜像",
+        "admit 失败时没有 Run、没有进程",
+        "每个提交点崩溃注入",
+        "A→B→A 夹具",
+        "CS-01–CS-04"
+      ],
+      "test_cases": [
+        "G072-C01",
+        "G072-C02",
+        "G072-C03",
+        "G072-C04",
+        "G072-C05",
+        "G072-C06",
+        "G072-C07",
+        "G072-C08",
+        "G072-P01",
+        "G072-S01",
+        "G072-C09",
+        "G072-C10",
+        "G072-C11"
+      ]
+    },
+    {
+      "id": "G073",
+      "title": "界面、API 与用词检查",
+      "context": "web",
+      "phase": "implementation",
+      "status": "planned",
+      "gate": "G1",
+      "depends_on": [
+        "G072",
+        "G050",
+        "G054"
+      ],
+      "owns": [
+        "src/web/relay-routes.ts",
+        "web/src/relay.ts",
+        "web/src/components/RelayCard.tsx",
+        "web/src/components/RelayDivider.tsx",
+        "web/src/components/RelayConsent.tsx",
+        "web/src/components/RelayDetails.tsx",
+        "tools/check-ui-wording.mjs",
+        "tests/unit/check-ui-wording.test.ts",
+        "tests/integration/relay-api.test.ts",
+        "tests/security/relay-api.test.ts",
+        "tests/browser/relay.browser.ts",
+        "tests/e2e/relay-ui.test.ts"
+      ],
+      "requirements": [
+        "R01",
+        "R09",
+        "R22",
+        "R26"
+      ],
+      "invariants": [
+        "INV-21",
+        "INV-25",
+        "INV-29"
+      ],
+      "scope": "ADR-055（终稿第 12、17 节）：T0–T7 文案与组件、等级词汇、疲劳控制、费用显示（全程、每后续请求、悬崖）、用量环过滤、同意内联与设置页撤回、“核实厂商”、排除与撤回说明、“只发这条消息”与送达未确认的三选一、`/relay` 接口与错误码、`relay_prefs` 接口、SSE、ETag、既有导航“我的 Agent”改“Harness”、用词检查脚本扩到全部界面字符串与无障碍名。现有文件：`src/web/server.ts`、`src/contracts/web.ts`、`src/web/session-stream.ts` 经既有所有者 G050 修改（其中 `src/web/server.ts` 的错误码到 HTTP 状态的规则要扩展，使 `RELAY_TARGET_UNVERIFIED` 返回 409）；`web/src/api.ts`、`web/src/App.tsx` 与 `web/src/components/` 下的 `ChatPage.tsx`、`Turn.tsx`、`Composer.tsx`、`ChatComposer.tsx`、`DetailsPanel.tsx`、`Sidebar.tsx`、`HarnessesPage.tsx` 经既有所有者 G054 修改",
+      "out_of_scope": [
+        "不做运行时逻辑、Driver",
+        "现有文件只经其既有所有者修改，不修改其他任务所有权文件",
+        "不把局部通过提升为完整链路或真实Harness通过"
+      ],
+      "acceptance": [
+        "浏览器测试覆盖分隔线只在证据后出现、三种证据路径加“已开始回复”、卡片草稿与发送时拼接的说明、清空后一键附上、S5 的［等这一轮结束］［停止并切换］两个按钮、首次同意不增加点击且 Enter 只展开、疑似密钥提示",
+        "API 契约测试：409 五种、`relay.consent`、ETag、AP-01–AP-03",
+        "用词脚本的无效样例被拒且现有 11 处改完"
+      ],
+      "test_cases": [
+        "G073-C01",
+        "G073-C02",
+        "G073-C03",
+        "G073-C04",
+        "G073-C05",
+        "G073-S01",
+        "G073-C06",
+        "G073-C07"
+      ]
+    },
+    {
+      "id": "G074",
+      "title": "验收设施：RelayConformance、RelayBench 与故障矩阵",
+      "context": "verification",
+      "phase": "implementation",
+      "status": "planned",
+      "gate": "G1",
+      "depends_on": [
+        "G072",
+        "G073",
+        "G060"
+      ],
+      "owns": [
+        "tests/real/relay-conformance.real.ts",
+        "tests/integration/relay-fault-matrix.test.ts",
+        "tests/e2e/relay-switch.test.ts",
+        "tests/bench/relay-bench-x.test.ts",
+        "bench/relay",
+        "docs/verification/relay-conformance.md",
+        "docs/verification/relay-bench.md",
+        "docs/engineering/relay-benchmarks.md",
+        "spikes/relay/README.md"
+      ],
+      "requirements": [
+        "R04",
+        "R21",
+        "R24"
+      ],
+      "invariants": [
+        "INV-09",
+        "INV-16",
+        "INV-30",
+        "INV-33"
+      ],
+      "scope": "ADR-055（终稿第 13、17 节）：RelayConformance 六家跑 P1–P14（Claude Code 与 Codex 另跑 P15、P16）与三组 A→B→A、`probed` 翻转记录；RelayBench X 进 CI（语料、门槛、冻结夹具比对）、Q pilot 与正式的预注册（功效分析、序贯设计）、E2E 配方；确定性故障注入矩阵；接力相关的切换故障用例（S5、S6、S14、S15、K1–K18，自 G056 移入）；基准机器指纹与验证记录；原型脚本迁入。现有文件：`tests/real/guard.ts` 经既有所有者 G060 修改；探针通过后各 Driver 的 `probed` 经既有所有者 G032、G034 修改；`spikes/relay` 保留不删（删除会断链），测量脚本迁入 `tests/bench/` 后在原型 `spikes/relay/README.md` 加“已迁移”一行（该文件原无主，已列入本任务的 owns，只改这一行）",
+      "out_of_scope": [
+        "不改 Driver 声明以外的代码",
+        "真机探针不用用户凭据，只用独立凭据并设消费上限",
+        "现有文件只经其既有所有者修改，不修改其他任务所有权文件",
+        "不把局部通过提升为完整链路或真实Harness通过"
+      ],
+      "acceptance": [
+        "探针结果与第 8.1 节声明逐格一致并写进 `docs/verification/relay-conformance-<日期>.md`",
+        "pilot 跑通并估计方差",
+        "预注册写入 `docs/verification/relay-bench.md`",
+        "故障矩阵在 CI 全绿"
+      ],
+      "test_cases": [
+        "G074-C01",
+        "G074-C02",
+        "G074-R01",
+        "G074-R02",
+        "G074-R03",
+        "G074-C03",
+        "G074-C04",
+        "G074-C05"
+      ]
+    },
+    {
+      "id": "G075",
+      "title": "存储优化前置片",
+      "context": "session",
+      "phase": "implementation",
+      "status": "planned",
+      "gate": "G1",
+      "depends_on": [
+        "G008",
+        "G028"
+      ],
+      "owns": [
+        "src/infrastructure/session/snapshot-cache.ts",
+        "tests/performance/session-store-commit.test.ts",
+        "tests/integration/snapshot-cache.test.ts"
+      ],
+      "requirements": [
+        "R07",
+        "R15",
+        "R26"
+      ],
+      "invariants": [
+        "INV-06",
+        "INV-20",
+        "INV-23"
+      ],
+      "scope": "ADR-055（终稿第 11.2、17 节）：前置片五项——去掉 commit 前的重复 load、按 version 缓存已校验快照（字节上限 ≤96 MiB）、跳过未变的终态 Run 校验、事件字节改用计数列、finalize 复用 prePlan 的快照。现有文件：`src/infrastructure/session/sqlite-store.ts:343–363、:150–158` 经既有所有者 G008 修改；`src/contexts/session/application/runtime.ts:995–1011` 经既有所有者 G028 修改",
+      "out_of_scope": [
+        "不做接力逻辑",
+        "不升库：事件计数列若需 DDL 并入 G066 的 v13",
+        "现有文件只经其既有所有者修改，不修改其他任务所有权文件",
+        "不把局部通过提升为完整链路或真实Harness通过"
+      ],
+      "acceptance": [
+        "8 MiB 时受理→派发 p95 ≤400 ms 写进验证记录",
+        "提交次数与 load 次数基准"
+      ],
+      "test_cases": [
+        "G075-C01",
+        "G075-C02",
+        "G075-C03"
+      ]
+    },
+    {
+      "id": "G076",
+      "title": "v1.1 增强通道",
+      "context": "session",
+      "phase": "implementation",
+      "status": "deferred",
+      "gate": "G1",
+      "depends_on": [
+        "G074"
+      ],
+      "owns": [
+        "src/infrastructure/session/relay-files.ts",
+        "tests/integration/relay-files.test.ts",
+        "tests/real/relay-channels.real.ts"
+      ],
+      "requirements": [
+        "R08",
+        "R17"
+      ],
+      "invariants": [
+        "INV-17",
+        "INV-26"
+      ],
+      "scope": "ADR-055（终稿第 8.2、15、17 节）：v1.1 通道——文件视图、系统层静态协议、Codex `inject_items` 与 Claude 原始回显作 E1、异步 after 观测侧表、交出方说明入口、gateway 型只读核对打开（独立 ADR）、OpenClaw 标题。现有文件：`src/adapters/control/codex.ts` 经既有所有者 G034 修改；`src/adapters/control/` 下的 `claude.ts`、`hermes.ts`、`openclaw.ts` 与 `acp.ts:390` 经既有所有者 G032 修改",
+      "out_of_scope": [
+        "G074 的探针与独立 ADR 通过之前不实现，也不改 Driver 声明",
+        "现有文件只经其既有所有者修改，不修改其他任务所有权文件",
+        "不把局部通过提升为完整链路或真实Harness通过"
+      ],
+      "acceptance": [
+        "第 8.2 节 v1.1 各通道的启用条件全部满足，对应探针在最新正式版通过后才改该 Driver 的声明",
+        "撤回同意后先提交“停止供给”，再留墓碑并删除文件"
+      ],
+      "test_cases": [
+        "G076-C01",
+        "G076-C02"
+      ],
+      "defer_reason": "ADR-055：v1.1 增强通道待 G074 的探针与独立 ADR（终稿第 8.2、15 节）"
+    },
+    {
+      "id": "G077",
+      "title": "v1.2 stdio 接力 MCP",
+      "context": "session",
+      "phase": "implementation",
+      "status": "deferred",
+      "gate": "G1",
+      "depends_on": [
+        "G076"
+      ],
+      "owns": [
+        "src/infrastructure/relay/mcp-shim.ts",
+        "tests/integration/relay-mcp-shim.test.ts",
+        "tests/security/relay-mcp-shim.test.ts",
+        "tests/real/relay-mcp.real.ts"
+      ],
+      "requirements": [
+        "R08",
+        "R17",
+        "R25"
+      ],
+      "invariants": [
+        "INV-17",
+        "INV-26",
+        "INV-34"
+      ],
+      "scope": "ADR-055（终稿第 8.2、15、17 节）：v1.2 stdio 接力 MCP——shim（手写 JSON-RPC，B10）、挂载规则、`relayCall()` 识别、lean 档。现有文件：`src/adapters/control/` 下的 `acp.ts`、`claude.ts:20`、`opencode.ts` 经既有所有者 G032 修改，`codex.ts` 经既有所有者 G034 修改",
+      "out_of_scope": [
+        "G076 完成且 RelayBench 拉取率 ≥60% 之前不实现",
+        "不用回环 HTTP + bearer，不给 Hermes 挂 MCP（第 8.2 节“永不”一行）",
+        "现有文件只经其既有所有者修改，不修改其他任务所有权文件",
+        "不把局部通过提升为完整链路或真实Harness通过"
+      ],
+      "acceptance": [
+        "第 8.2 节 v1.2 的启用条件全部满足：shim 随 Hub 安装目录发布、挂载前核对哈希；规格只含绝对路径，无 headers、无 env 秘密；结束绑定 2 s 后 `ps` 无残留；工具列表在建会话时固定；单次结果 ≤16 KiB；只读已脱敏、已获同意的物化正文；真机确认不弹审批",
+        "INV-34 在 v1.2 生效：按会话注入的工具在建会话时固定、零凭据、只读"
+      ],
+      "test_cases": [
+        "G077-C01",
+        "G077-C02"
+      ],
+      "defer_reason": "ADR-055：v1.2 stdio 接力 MCP 待 G076 与 RelayBench 拉取率 ≥60%（终稿第 8.2、15 节）"
     }
   ]
 }

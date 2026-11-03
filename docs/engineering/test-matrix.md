@@ -100,12 +100,12 @@
 | G023-C01 | G023 | integration | 决策候选/排除/分数来源/目标 | 提交后可解释和复放 | planned |
 | G023-C02 | G023 | integration | 决定后目标停用或变版 | 明确失败或新auto决策，不伪造旧选择 | planned |
 | G023-C03 | G023 | integration | 保存失败 | 不启动未经持久记录的执行 | planned |
-| G024-C01 | G024 | unit | 公共消息/目标/产物引用 | 来源、水位、预算与指纹完整 | planned |
-| G024-C02 | G024 | unit | 超限/摘要缺来源/旧水位 | 明确失败，不静默只取最近历史 | planned |
-| G024-C03 | G024 | security | 工具输出夹带指令/秘密 | 保持数据等级与秘密边界 | planned |
-| G025-C01 | G025 | integration | A到B再回A的文件与消息变化 | 复用必须同步，不足时显式重建 | planned |
-| G025-C02 | G025 | integration | manifest冻结后新消息/外部写入 | 不偷偷吸收新输入，冲突可见 | planned |
-| G025-C03 | G025 | property | 不同epoch/旧checkpoint/hash不符 | 不把空会话当恢复成功 | planned |
+| G024-C01 | G024 | unit | 公共消息/目标/产物引用 | 来源、水位、预算与指纹完整 | deferred |
+| G024-C02 | G024 | unit | 超限/摘要缺来源/旧水位 | 超限时分层并记省略账目；摘要缺来源或旧水位明确失败，不静默只取最近历史 | deferred |
+| G024-C03 | G024 | security | 工具输出夹带指令/秘密 | 保持数据等级与秘密边界 | deferred |
+| G025-C01 | G025 | integration | A到B再回A的文件与消息变化 | 复用必须同步，不足时显式重建 | deferred |
+| G025-C02 | G025 | integration | manifest冻结后新消息/外部写入 | 不偷偷吸收新输入，冲突可见 | deferred |
+| G025-C03 | G025 | property | 不同epoch/旧checkpoint/hash不符 | 不把空会话当恢复成功 | deferred |
 | G026-C01 | G026 | integration | 两个Session同工作区竞争 | 同一时刻只有一个有效写者 | planned |
 | G026-C02 | G026 | integration | owner崩溃/旧lease/迟到续租 | 代次隔离，不能只凭PID夺权 | planned |
 | G026-C03 | G026 | platform | 外部程序写入或不支持强隔离 | 明确边界或拒绝强隔离要求 | planned |
@@ -167,13 +167,13 @@
 | G044-C01 | G044 | integration | 断线/重复/Last-Event-ID | 从持久水位追赶且去重 | planned |
 | G044-C02 | G044 | integration | 游标过期/错误Session/未知事件 | 明确错误，不漏事件或从零偷重播 | planned |
 | G044-C03 | G044 | performance | 慢客户端/高并发订阅 | 执行不阻塞、缓存有界且可关闭 | planned |
-| G045-C01 | G045 | integration | 空闲A到B再回A | 固定manifest与实际selection，Session身份保持 | planned |
-| G045-C02 | G045 | integration | 目标准备失败/变版/drain | 实际选择不提前生效，公共事实保留 | planned |
-| G045-C03 | G045 | property | 两个请求和expectedVersion冲突 | 唯一待决意图，无最后写入偷覆盖 | planned |
-| G046-C01 | G046 | integration | 运行/权限/模型在途收到切换 | 按冻结策略等待或取消，结算后才交权 | planned |
-| G046-C02 | G046 | integration | 清理unconfirmed/资源被旧进程写 | blocked，不启动新写者 | planned |
-| G046-C03 | G046 | property | 切换/完成/期限/新消息交错 | epoch与水位唯一一致 | planned |
-| G046-C04 | G046 | integration | 提交生效前后崩溃 | 按事实恢复，不自动重跑上一输入 | planned |
+| G045-C01 | G045 | integration | 空闲A到B再回A | 固定manifest与实际selection，Session身份保持 | deferred |
+| G045-C02 | G045 | integration | 目标准备失败/变版/drain | 实际选择不提前生效，公共事实保留 | deferred |
+| G045-C03 | G045 | property | 两个请求和expectedVersion冲突 | 唯一待决意图，无最后写入偷覆盖 | deferred |
+| G046-C01 | G046 | integration | 运行/权限/模型在途收到切换 | 按冻结策略等待或取消，结算后才交权 | deferred |
+| G046-C02 | G046 | integration | 清理unconfirmed/资源被旧进程写 | blocked，不启动新写者 | deferred |
+| G046-C03 | G046 | property | 切换/完成/期限/新消息交错 | epoch与水位唯一一致 | deferred |
+| G046-C04 | G046 | integration | 提交生效前后崩溃 | 按事实恢复，不自动重跑上一输入 | deferred |
 | G047-C01 | G047 | integration | 保持Harness只改Provider或模型 | 独立选择且实际调用目标正确 | planned |
 | G047-C02 | G047 | protocol | 原生config支持与不支持 | 原地或显式重建，不声称全组合热切换 | planned |
 | G047-C03 | G047 | integration | 模型变更失败与旧绑定已关闭 | 状态真实，公共Session不丢失 | planned |
@@ -202,7 +202,7 @@
 | G055-C01 | G055 | e2e | 双Harness固定模型预算重复任务 | 正确性独立评分并记录不确定性 | planned |
 | G055-C02 | G055 | e2e | 失败/超时/污染调参集 | 不以completed计质量，不混用保留集 | planned |
 | G055-C03 | G055 | integration | 规则路由与固定默认比较 | 有来源的分任务报告，不能宣称绝对最佳 | planned |
-| G056-C01 | G056 | e2e | A到B到A、只换模型、双换 | 公共上下文/实际调用/成果连续可查 | planned |
+| G056-C01 | G056 | e2e | A到B到A、只换模型、双换 | 公共上下文经接力送达可查，实际调用与成果连续可查 | planned |
 | G056-C02 | G056 | e2e | 每个提交/ACK/切换水位故障点 | 无重复副作用或并发写，未知结果不重跑 | planned |
 | G056-C03 | G056 | performance | 并发流/排队/慢客户端/长上下文 | 内存句柄有界，取消与切换延迟可测 | planned |
 | G056-C04 | G056 | security | 提示注入/恶意工具/越权身份 | 不能改路由策略或提升权限 | planned |
@@ -259,8 +259,8 @@
 | C005-C01 | C005 | review | 持久event与临时delta/心跳 | 只有持久事实推进公共seq | planned |
 | C005-C02 | C005 | review | 重复/过期游标和版本演进 | 重放去重、410和未知事件处理明确 | planned |
 | C005-C03 | C005 | review | 巨大正文与原生payload | 大小边界、产物引用和脱敏责任明确 | planned |
-| C006-C01 | C006 | review | 来源/水位/指纹/预算/等级 | manifest字段有有效样例与来源约束 | planned |
-| C006-C02 | C006 | review | 缺引用/旧摘要/坏hash/超限 | 无效材料不能进入执行 | planned |
+| C006-C01 | C006 | review | 交接单清单 `RelayPacket` 与送达行 `DeliveryRecord` 的 S1 样例对照 JSON Schema 与终稿第 4 节 | 清单样例与 Schema 一致，所有枚举集中在第 4 节声明 | planned |
+| C006-C02 | C006 | review | 缺引用/旧摘要/坏hash/超限 | 缺引用、旧摘要、坏 hash → 不进入执行；超限 → 分层并记省略账目，只有最小交接单 + 当前原话超限才 `RELAY_INPUT_LIMIT` | planned |
 | C006-C03 | C006 | review | A到B到A与工具历史 | 旧原生状态不冒充最新公共上下文 | planned |
 | C007-C01 | C007 | review | 候选/硬约束/unknown/策略版本 | 决策来源与质量不确定性可解释 | planned |
 | C007-C02 | C007 | review | 指定目标不可用或无候选 | 不能静默替换或放宽约束 | planned |
@@ -594,3 +594,105 @@
 | G011-UP16 | G011 | integration | gateway start 之后 60 秒内没有在端口上监听 | 任务 failed（SERVICE_NOT_READY），actualVersion 与磁盘都是目标版本，hops 全部 ok，services 只有 Gateway（restarted，ready false）；错误给出已安装的版本与重试指令（gateway status --deep、stop 后再 start）；status --deep 的末尾已写入日志；node 服务没有重启并在日志说明原因；没有 kickstart、没有重试；结果已知，维护锁释放 | planned |
 | G011-UP17 | G011 | unit | 顺序升级的事实与同意的解析 | parseManagementJob 原样读回 hops、backupConfirmed、configurationMigrated 与 services；拒绝空的或超过 4 项的 hops、installed 为假却有 Doctor 结果、未知的 doctor 取值、多余字段、与 actualVersion 不符的 hops、非布尔的 backupConfirmed、空路径或超过 8 项的 configurationMigrated、带 hops 的 install 任务；parseManagementInput 只对带 expectedNativeFingerprint 的 upgrade 受理 backupConfirmed: true，false、字符串、install 或缺指纹都是 INVALID_INPUT | planned |
 | G054-UP3 | G054 | e2e | OpenClaw 顺序升级的确认框与任务事实（ADR-052） | 确认框列出跳数与中间版本、按序的命令原文（含 --allow-scripts=openclaw）、Gateway 在第一跳前由产品命令停止、最后一跳后启动且期间渠道离线、不用 kickstart、node 服务由产品命令重启、Doctor 改写的文件与 .bak 说明、插件、只能从备份退回且没有 npm 退回命令；确认按钮在勾选“我已运行 openclaw backup create … 并核对了备份”之前不可用，取消勾选又不可用；提交带 backupConfirmed: true、同意的服务与这次检查的指纹；任务详情显示每一跳、Gateway 与 node 的结果、配置由 Doctor 迁移、HarnessHub 没有写入；无页面错误 | planned |
+| G066-C01 | G066 | integration | v12 迁移夹具 × 7 种绑定来源（D1 形态、派发前失败、插入前拒绝、导入、分支、清空、“reset + D1”）升到 v13 | 迁移后 `mark` 只降不升、纪元跨绑定单调、need=∅ 为 synced；v12 构建以未知版本拒绝 v13；迁移失败整笔回滚、备份保留；崩溃注入后库可打开 | planned |
+| G066-C02 | G066 | property | 随机生成的 v12 日志迁移到 v13；单一 (harness, control) 的 v12 会话迁移后再进行 20 轮 | `mark.throughSeq` ≤ 真实送达或亲历、只降不升，纪元跨绑定单调；该会话 20 轮 `dispatched === input` | planned |
+| G066-C03 | G066 | integration | 写 `relay_packets` 时的 fold 校验：fold 单元指向未终结的 Run，或该单元的用户消息晚于当前输入 | 两种都被拒绝，本 Run 以 `RELAY_PREPARE_FAILED{reason:"render"}` 失败、Store 不进入 failed；单元已终结且用户消息早于当前输入时正常写入 | planned |
+| G066-C04 | G066 | integration | 送达行转换：第 4 节允许表的全部转换、禁止转换、unknown→unknown 与 recorded→recorded 的同值写、无效样例 in_flight←recorded | 允许表全部通过；禁止转换被应用层拒绝；触发器对 unknown→unknown 同值写放行；无效样例（in_flight←recorded）被触发器拒绝 | planned |
+| G066-C05 | G066 | integration | 故障注入：超长钉住、2 万文件、字段打满的中文摘要、ID 冲突、扫描器异常、同值写 | Store 均不进入 failed；预期内的接力失败只让本 Run 失败，不让 Runtime fatal、不波及其他会话 | planned |
+| G066-C06 | G066 | unit | `assertSessionTransition` 的每条新规则各一个无效样例：非本绑定的 Run 改 `binding.relay`、`nativeEpoch` 回退、`epochFloor` 变小、同一纪元内 `mark.throughSeq` 在 clear 与 suspect 回退之外变小或低于 `epochFloor`、派发后改 `run.relay` 或 `contextReadyAt`、改归档绑定的 `relay`；写者 Run 的 `run.ended` 带与不带 `native.cleared` 时“归档 + 新建同 harness/control 绑定” | 每个无效样例都被拒绝；带 `native.cleared` 的归档放行，不带的拒绝 | planned |
+| G066-C07 | G066 | integration | `relayWrite` 写懒重建的摘要、索引与 `relay_deliveries.realized`，同时有并发的 `transact` | `relayWrite` 不升 version，与并发 `transact` 不互相覆盖；写失败只记诊断、留待下次 | planned |
+| G066-C08 | G066 | performance | 用最长合法值（`gateway:<253 字符主机名>`、最长 ID、pending 加 suspect prior）构造绑定与 Run 的接力字段并提交 | 快照增量每绑定 ≤1,024 B、每 Run ≤320 B | planned |
+| G066-C09 | G066 | integration | 安装级 `relay_log` 写到 65,536 行时再追加；读写 `relay_prefs` | 同一事务轮转：每个 (vendor, scope, session_id) 只保留最新一行，其余移入 `relay_log_archive`；轮转后仍满时报 `consent_log_full`（受理时为 `409 RELAY_UNAVAILABLE`）；`relay_prefs` 只接受四个键、值 ≤64 字节 | planned |
+| G066-C10 | G066 | review | `src/contracts/relay.ts` 与 C006 的 JSON Schema（交接单清单 `RelayPacket`、送达行 `DeliveryRecord`）逐项对照 | 类型与 Schema 等价、枚举一致；不一致即不通过 | planned |
+| G067-C01 | G067 | integration | v12 推进规则的四种组合：due=∅；carried 且 recorded；carried 且 unknown（第一次与重发之后）；carried 且 not_recorded | 按 `advance ⇔ dispatched ∧ (due=∅ ∨ carried ∧ (input=recorded ∨ input=unknown ∧ 已重发一次))`：due=∅ 与 carried recorded 推进；unknown 第一次不推进、重发后推进（次数由 `run.ended.data.relayResendOf` 推出）；carried not_recorded 不推进 | planned |
+| G067-C02 | G067 | integration | 单 Harness 对话里依次出现 `/export`、`/clear`、`model_not_applied`、Codex 无 turnId 的拒绝 | 每次之后的下一条 `dispatched === input`，不改发 JSON 信封 | planned |
+| G067-C03 | G067 | protocol | 五家 Driver 的插入前拒绝、插入后失败与 `unknown_execution` | 插入前拒绝 → not_recorded；插入后失败 → recorded；`unknown_execution` → unknown，不自动重跑 | planned |
+| G067-C04 | G067 | integration | 当前输入是全角前导空格的 `/clear`（“　/clear”） | 按 Driver 的 `classify` 判定，与原生解析一致（Hermes 先 `lstrip()` 再判为 `/clear`）：作为命令回合原样发送、不捎带，E3 不误判为 recorded | planned |
+| G067-C05 | G067 | integration | 8 MiB 快照上同 Harness 续接、切换校验、blocked 后恢复，以 R6 的 66 回合长回复画像作固定用例；切到新目标时要发的全部来源仍超限 | 三条路径都不报 `CONTEXT_TOO_LARGE`；仍超限时提供“只发这条消息”（原样发送、不改 `throughRunId`） | planned |
+| G067-C06 | G067 | unit | 命令回合的声明效果与执行结果组合：executed、not_recorded、noop | 命令效果只在 executed 时生效；not_recorded 或 noop 的命令回合不按声明效果转换 | planned |
+| G067-C07 | G067 | integration | Run 以 unsafe 结束时存在待决切换与等待它的排队 Run；之后停止宽限到期 | 同一事务把待决切换记为 `failed{SWITCH_SOURCE_UNKNOWN}`、排队 Run 记为 `SWITCH_NOT_EFFECTIVE`，不悬挂；宽限到期后仍能 resume | planned |
+| G068-C01 | G068 | integration | 20 轮零延迟假 Harness 对话，其间插入未派发回合、合成失败、`/export`、`/clear`、`/undo`、`attach:"none"` 与 WorkBuddy 目标 | 每一轮都 `dispatched === input` | planned |
+| G068-P01 | G068 | property | 任意证据序列驱动四种同步状态，以 `relay-harness-peer.mjs` 维护的原生历史为参考模型 | `mark` ≤ 实际送达或亲历；回退不低于 `epochFloor`；旧包 present 不推进 pending 包；fresh 上任意命令序列之后 need 不变；4 × 13 没有未定义的格 | planned |
+| G068-C02 | G068 | integration | pending 绑定收到下一条内容输入：可自动重发（autoResends=0）、自动重发已用尽、Driver 声明 `lateDelivery`、用户选 `attach:"none"` | 四种出路：自动重发一次；用尽后受理同步 `409 RELAY_CHOICE_REQUIRED{cause:"delivery_unconfirmed"}`；`lateDelivery` 不自动重发；`attach:"none"` 原样发送、不改状态与水位 | planned |
+| G068-C03 | G068 | integration | Hermes `/clear`：回复等于固定回执 `Conversation history cleared.`；回执不符之后下一次回放为空，或标记仍在 | 确认 → fresh{user_cleared}、`epochFloor` = 本 Run 的 `run.ended` seq、纪元 +1；确认不了 → `suspect{clear_unconfirmed}`，回放为空时才按清空生效，标记仍在则回到清空前的状态 | planned |
+| G068-C04 | G068 | integration | 本纪元收到过交接单的绑定：送达后压缩游标变化一次；游标未变 | 游标变化时置 reanchor 一次，下一条内容输入附要点；游标未变不置位 | planned |
+| G068-C05 | G068 | integration | 清空之后连续 20 轮；用户点“附上交接单”，附上的包结论 unknown 后重发 | 清空后 20 轮 `dispatched === input`；`relay.attach:"full"` 只对那一条忽略下限、一次性全量；resend 继承 `attachOverride` | planned |
+| G068-C06 | G068 | integration | A 清空 → B 两轮 → 回到 A；A 清空 → native-reset → 首条内容输入 | 回到 A 只补交 B 的两轮；native-reset 后的首条仍不含清空前的历史（`epochFloor` 随绑定谱系继承） | planned |
+| G068-C07 | G068 | integration | 保留进程开启时 Hermes `/undo` 之后的下一回合 | suspect 绑定不复用保留进程，先关闭再 open 回放核对；`mark` 回退（不低于 `epochFloor`），在同一会话补交 | planned |
+| G068-C08 | G068 | integration | Hub 中途重启时未派发、已派发、送达已 recorded 的 Run 各一；另一个会话的 relay 行写入失败 | `recoverRelay` 按会话 SAVEPOINT：未派发 → `not_recorded{never_dispatched}` 并回到 prior；已派发 → `unknown{owner_ended}`；已 recorded 不改；写失败的会话只标 `relay_recovery_failed`，不影响其他会话 | planned |
+| G068-C09 | G068 | integration | process 型 Driver 的回合以 unknown 结束，Hub 确认该回合的进程组已结束后用户选“继续原会话”（D6） | 只读 resume 并按 `DeliveryPosition` 核对：用户条目在 → synced{mark}，不在 → 回到 prior；need=∅ 原样续接；不重跑回合 | planned |
+| G068-C10 | G068 | unit | 先 `/model X` 再 `/clear`，Claude 的 Driver 合成清空并回报 `BackendResult.native.replaced.checkpoint` | 旧绑定归档，新绑定 fresh{user_cleared} 并继承旧绑定的 `observed`；配置承接读同一 (harnessId, controlId) 当前选择纪元内最后一个已派发且 input≠not_recorded 的 Run（跨因清空归档的绑定），模型仍为 X | planned |
+| G069-C01 | G069 | protocol | 六家的 `TurnText` 放置（两段 text、单 text、技能项 + 正文 + 余下原话）与首行省略：当前输入判为命令或疑似命令、当前输入含疑似密钥 | 各家按声明放置，第二段等于原话；两种情形都省略首行 | planned |
+| G069-C02 | G069 | protocol | `deliveryPosition` 在 open 之后、派发前记录；`verifyDelivered(position, markers)` 按标记逐个核对，含超出核对窗口与迟到写入 | 按标记逐个回 present / absent / outside_window / compacted / unavailable；窗口没覆盖派发位置时为 outside_window；迟到写入时按本包标题行查到的上一包顺带改记 recorded | planned |
+| G069-C03 | G069 | unit | `classify` 对半角 / 全角（U+3000）前导空格、路径（如 `/Users/…`）、别名、`unlistedSlash=text` 的输入 | 判定与各家原生规则一致；`unlistedSlash=text` 时恒为 content | planned |
+| G069-C04 | G069 | unit | `resolveVendor` 四个夹具：Claude 用户设置里的 `ANTHROPIC_BASE_URL`、Codex 的 `OPENAI_BASE_URL`、dsh 工作区 `.env`、Ollama `*-cloud` | 都得 `gateway:<host>` 且来源层正确；值不出现在任何日志 | planned |
+| G069-C05 | G069 | protocol | `BackendResult.native.cleared` 三家各一（Claude 合成 `session/new`、Hermes 固定回执、OpenClaw `sessions.get` 见新会话）与确认不了的路径 | 三家确认时回报 `native.cleared`（Claude 带 `replaced.checkpoint`）；确认不了时不回报 cleared，交给状态机记 `suspect{clear_unconfirmed}` | planned |
+| G069-C06 | G069 | protocol | 回放导入的用户条目带四类原生包装：Claude `<bash-input>` / `<bash-stdout>` / `<local-command-stdout>`、Hub 附件指针、Hermes `--- Attached Context ---`、OpenClaw `[Working directory: …]`；本安装的交接单带 Driver 声明的前后缀 | `userTextOf` 剥掉四类包装，剥下部分记 external_output 只计数；交接单识别允许 Driver 声明的前后缀 | planned |
+| G069-C07 | G069 | protocol | 因交接新建的会话回写原生标题：Codex `thread/name/set`、Claude `_session/rename`、Hermes `/title`；公共标题含疑似密钥 | 标题在 `session/new`（Codex `thread/start`）之后、首个提示之前回写；标题先经出境脱敏，有命中用“新对话”；Hermes `/title` 吞回执、不产生回合 | planned |
+| G069-C08 | G069 | unit | `normalizeModel` 输入 `provider/model`、`<provider>:<model>`、别名与 null | 归一为去掉 provider 前缀与别名的模型键；null 得空串 | planned |
+| G069-C09 | G069 | protocol | Driver 上报逐请求用量 `NativeUsage.requests`：正常、超过 64 条、不上报 | 有界上报（≤64 条）；不上报时记“未上报”，不算通过 | planned |
+| G070-C01 | G070 | unit | 同一输入重渲染 100 次；不同 TZ / LANG 的子进程渲染 | 只得到 1 个 sha256；跨 TZ/LANG 字节相同 | planned |
+| G070-C02 | G070 | unit | S1 交接单、A→B→A 增量、要点包三个样例场景渲染 | 与金样 `tests/fixtures/relay/golden/{s1-packet,s2-delta,anchor}.md`（终稿 5.6）逐字节一致 | planned |
+| G070-P01 | G070 | property | 随机会话、档位与包类型下渲染交接单；请求带 `attach:"none"` | 每类事实 已渲染 + 已省略 + 未统计 = 全部；verbatim + compact + line + ranged + excluded = \|need\|；`attach:"none"` 不调用 `chooseBudget` | planned |
+| G070-P02 | G070 | property | 500 个随机会话的增量摘要与重建（同一脱敏上下文；注入 earlyClose 与 storeDetail 失败） | 增量 = 重建，逐字节相同 | planned |
+| G070-C03 | G070 | unit | W 在 4k–2M 上按对数均匀取样；contextUsed ∈ [cliff−5k, cliff+2k]；CJK 夹具 | 受理通过即不 blocked；`cliffCheck` 的越线判定与 projected 一致、不越线不降档；用户原话预算 U 按 token 计 | planned |
+| G070-C04 | G070 | unit | 索引字段越界（`line.userHead` >360 B、`line.result` >64 B、`line.displayName` >64 B、`line.model` >128 B）；字段打满的摘要 | 按收紧次序截短，索引的 CHECK 2,048 B 只作断言；`bound()` 收紧到 ≤48 KiB | planned |
+| G070-C05 | G070 | unit | 工具输出里 ANSI 着色切开秘密（`grep --color=always`）；不可信字符串含「」；最近一回合的错误原文 | N1 先整段删除 ANSI 序列后秘密可命中；不可信内容里的「」映射为﹁﹂；错误原文在“状态与风险”节内的 HH-DATA 区 | planned |
+| G070-C06 | G070 | integration | 摘要记录命中区间后，已知秘密集合变小（令牌轮换后旧值仍有效）或变大，再重建与出境 | 集合变小后重建先套历史区间，曾被脱敏的位置仍被脱敏；集合变大不让摘要 behind（目标新带来的值只在出境复扫里补上） | planned |
+| G070-S01 | G070 | security | RD-01：`env_key="CORP_LLM"` 取 40 位十六进制值，`printenv` 后交给 dsh | 出境、`relay_bodies`、事件中均为 0 次 | planned |
+| G070-S02 | G070 | security | RD-02：从未交出的 `ZAI_API_KEY` 出现在 `~/.zshrc` 的回显里 | 0 次 | planned |
+| G070-S03 | G070 | security | RD-03：秘密跨在“末尾 20 行”或 G2 头尾的切口上；另一例 ANSI 着色在秘密内部 | 不出现长度 ≥8 的子串 | planned |
+| G070-S04 | G070 | security | RD-04：已知秘密以终稿 10.2 的 10 种形式出现（原值、JSON 转义含 `\/` 与 `\uXXXX`、URL 编码含大小写、表单 `+` 与双重编码、`'\''` 壳转义、折行、base64 三种对齐、十六进制）；postgres、redis 连接串 | 全部被替换，主机保留 | planned |
+| G070-S05 | G070 | security | RD-05：128 个工具 × 64 KiB；另一例向扫描器注入异常 | 前者交接成功并在账目记“未扫描”；后者 `RELAY_PREPARE_FAILED{reason:"redaction_failed"}`，不派发 | planned |
+| G070-S06 | G070 | security | RD-06：secret 输入与整条回复都是“hunter2” | RD-06a：出境字节、`relay_*` 表、`relay_log`、接力事件、日志与诊断中没有它的原值、sha256、sha1、md5；RD-06b：既有命令指纹 `sha256(JSON)` 登记为已知违例（终稿第 20 节 Q19），不作本用例的通过条件 | planned |
+| G070-S07 | G070 | security | RD-07：pending 期间改了环境后重启；或删掉 relay-key | 生成新 ID 并带 supersedes，不出现 INVALID_DATA | planned |
+| G070-S08 | G070 | security | RD-08：同一秘密出现在两个会话、交给两个厂商 | 两个会话的标签不同，不可跨会话关联；密钥文件的三种异常语义见 G070-S12 | planned |
+| G070-S09 | G070 | security | RD-09：会话环境含 `AWS_PROFILE=default`、`ANTHROPIC_MODEL=claude-opus-5-5`；配无效样例 | 按名排除、不进已知秘密集合，`default` 与来源说明不被改写成标签；无效样例证明检查能拒绝错误 | planned |
+| G070-S10 | G070 | security | RD-10：含 `/` 的 secret；令牌在 URL 路径里的 webhook URL；配无效样例 | 两者都被命中并替换；无效样例证明检查能拒绝错误 | planned |
+| G070-S11 | G070 | security | 终稿 10.3 的全部注入用例与 IN-01–IN-06（IN-06 为「」槽）；转义模糊测试 10,000 例（核心 + 扩展 + 「」槽，变异对照） | 注入文本只出现在带作者标注的围栏或「」引用槽内，伪造的标记行被改写，〔 只出现在 Hub 框架行；核心与扩展性质零违例，5 种变异各被检出 | planned |
+| G070-S12 | G070 | security | HMAC 密钥文件三种异常（长度不对；权限 0644 而属主是本用户；属主不是本用户或文件被替换）（RD-08）；当前输入含疑似密钥 | 长度不对拒绝使用并提示；0644 改回 0600、记告警、照常使用；属主不对则轮换、写新 `keyId`、放行记录失效并提示重新确认，摘要不 behind；第二段原样发送、省略首行，并给出卡片提示所需的命中计数 | planned |
+| G070-C07 | G070 | performance | 256 Run、8 MiB、打满上限的中文摘要渲染；脱敏按秘密数 {20, 100, 300} × 10 种形式 × 文本类型；RunDigest ≥1,000 样本；`--expose-gc` 后的堆增量 | 定档 p95 ≤2 ms，组装 + 脱敏 + 哈希 p95 ≤10 ms，合计 p50 ≤5 ms、p95 ≤15 ms，额外堆 ≤8 MiB；精确匹配 + 形状规则 ≤3 ms/MiB、加熵规则 ≤12 ms/MiB；RunDigest 典型 p95 ≤2 ms、最坏 p95 ≤3 ms、p99 ≤8 ms；毫秒目标在参考机上跑并写进验证记录，CI 只断言计数类量 | planned |
+| G070-C08 | G070 | review | 估算器 est/2 的冻结计数夹具（按模型 ID，记日期与分词器代次）与策略常量的变化 | 夹具的日期与分词器代次已登记；模板、转义表、脱敏规则、估算器系数、档位常量任一变化即升 `policyVersion` | planned |
+| G070-S13 | G070 | security | 附件物化与 HMAC 密钥的位置（D5 推荐项）：会话带图片与文本附件跨厂商交接，数据根、工作区、附件物化目录与 relay-key 各取临时目录 | 附件物化目录按会话建在数据根之外（0700、名字不可猜测），后续回合原生会话仍能再次读取同一只读副本（ADR-023 语义不变），删除会话时一并删除；relay-key 不在数据根内；交给目标的路径与交接单正文里不出现数据根路径；任一目录与工作区按 (st_dev, st_ino) 相互包含时跨厂商交接在派发前失败 | planned |
+| G071-S01 | G071 | security | WS-01–WS-06：过滤器名 `a=b` 与带点、process 过滤器、include、HOME 配置 lfs 与假 git-lfs、HOME 为仓库、gitdir 在外、Hub 环境含 `GIT_DIR` / `GIT_CONFIG_PARAMETERS` 与 API key、PATH 含工作区内目录时的假 git、数据根在工作区内（符号链接、大小写与 firmlink 写法、反向包含） | 过滤器、钩子与 fsmonitor 执行 0 次，include 那一例记 partial；`.git/lfs` 不变；不出现 `../`、不扫描 `.ssh`；gitdir 在外时拒绝观测；子进程环境恰为白名单；假 git 不被执行；数据根在工作区内时报 `data_root_in_workspace` 且观测结果不含 data；每条各附无效样例 | planned |
+| G071-C01 | G071 | integration | 非 git 目录 2 万项 | 只存 1,000 项并记 partial | planned |
+| G071-C02 | G071 | integration | 观测超过 250 ms | SIGKILL 整个进程组并等待退出；结果 `unavailable{timeout}`，不阻塞交接 | planned |
+| G071-C03 | G071 | integration | 返回时 HEAD 与 `.git/index` mtime 未变且距上次观测 ≤60 s；其一变化或已超过 60 s | 前者复用上次观测行，后者重新观测 | planned |
+| G071-C04 | G071 | performance | 3k 文件、2 万文件、大文件、冷缓存的合成仓库 | `observeMs` 分布写进验证记录：3k 文件 p95 ≤60 ms、2 万文件 p95 ≤200 ms、硬上限 250 ms | planned |
+| G071-C05 | G071 | platform | macOS APFS 上以大小写不同与 firmlink（`/System/Volumes/Data/…`）写法给出工作区 | 工作区 realpath 一致 | planned |
+| G072-C01 | G072 | integration | 空闲时切换到另一个 Harness，随后发送下一条消息 | 切换生效时不组包、不做预算、不启动目标；下一条消息受理后才准备目标绑定 | planned |
+| G072-C02 | G072 | integration | 受理时可判定的每种拒绝：`RELAY_TARGET_UNVERIFIED`（`probed=false`）、`RELAY_UNAVAILABLE{data_root_in_workspace}`、`RELAY_CHOICE_REQUIRED`（含 `delivery_unconfirmed`）、`RELAY_CONSENT_REQUIRED{missing}`、按保守窗口判定的 `RELAY_INPUT_LIMIT` | 都在受理时同步返回（`RELAY_INPUT_LIMIT` 为 HTTP 429，其余 409），不建 Run、不启动进程，草稿保留 | planned |
+| G072-C03 | G072 | integration | 执行中切换（S5）：长工具在跑且有待批准请求；用户选等这一轮结束，或停止并切换；停止未确认 | 默认 `wait_current` 到回合边界生效；停止并切换时审批关闭、不转交、工具不转移；停止未确认时 unsafe 的 `run.ended` 同一事务把待决切换记为 `failed{SWITCH_SOURCE_UNKNOWN}`、排队 Run 记为 `SWITCH_NOT_EFFECTIVE`，会话 blocked 后走恢复切换 | planned |
+| G072-C04 | G072 | integration | open 之后失败：分类复核不符、vendor_changed、精化窗口过小、渲染失败 | Run 失败且未派发（`RELAY_PREPARE_FAILED{…}` / `RELAY_CONSENT_REQUIRED{vendor_changed}` / `RELAY_INPUT_LIMIT`）；新建的空原生会话与绑定保留，下一次按它 resume；relay 状态不变 | planned |
+| G072-C05 | G072 | integration | 排在活动 Run 之后的消息，前一回合执行了 `/model` 或清空 | `prePlan` 时重做 admit；不通过的 Run 在启动前以同一错误码失败，没有进程，绑定不变 | planned |
+| G072-C06 | G072 | integration | CS-01–CS-04：gateway 登录并设了 base URL、`local/qwen` 没有回环报告；目标为 `unknown:*` 时打开 `allow`、首次跨厂商按 Enter；已收过包的 OpenCode 原地换成 deepseek、回合中途换厂商；撤回后返回 A 且有增量，同时有待发重发与 LRU 缓存；另加工作区文件来源的端点与 `allow` 对四类前缀 | 记 `gateway:<host>`、不豁免；返回 409 且不记为同意；派发前 blocked 并记 `relay.vendor_changed`；blocked 给出三个选项、什么都不发出；工作区文件来源的端点每个会话都问；`allow` 不覆盖 `unknown:*`、`gateway:*`、`router:*`、`provider:*` | planned |
+| G072-C07 | G072 | integration | A→B→A：热续接；冷且大；压缩后返回；返回核对时标记缺失；need=∅ 的 suspect（各种 cause） | 热续接在原会话发增量；冷且全程费用差 ≥ $0.10 或时延差 ≥10 s 时并列显示“新开并附交接单”；压缩后带要点；标记缺失且 need≠∅ → `RELAY_CHOICE_REQUIRED{cause:"marker_absent"}`；need=∅ 的 suspect 只对 legacy、verify_unavailable、vendor_changed、marker_absent 放行，其余先核对 | planned |
+| G072-C08 | G072 | integration | 同意在 `run.authorized` 之后、`run.dispatched` 之前被撤回 | `run.dispatched` 事务内复读同意，已撤回 → 不派发，Run 以 `RELAY_CONSENT_REQUIRED{reason:"revoked"}` 失败 | planned |
+| G072-P01 | G072 | property | 切换、消息、撤回同意的任意交错 | Session 身份不变，不出现两个活动 Run | planned |
+| G072-S01 | G072 | security | 数据根在工作区内的三种写法（符号链接、大小写、firmlink）、反向包含与工作区内 `.harness-gateway.json` 标记查找；跨厂商与同厂商各一 | 都报 `RELAY_UNAVAILABLE{reason:"data_root_in_workspace"}`（跨厂商受理即 409）；同厂商可继续；该工作区的全部会话告警 | planned |
+| G072-C09 | G072 | performance | 同一快照下 `relay.attach:"auto"` 与 `"none"` 的 ABBA 成对；假 Harness 启动延迟取 {0, 7 ms, 1.3 s} 三档；逐回合计提交、load 与事件 | p95(Δ_i − max(0, obs_i − start_i)) ≤15 ms；整份快照提交 −1；复用进程返回时 p95 ≤ 观测 p95 + 15 ms；每次交接新增事件 ≤3 条 + 同意镜像 1 条，普通回合 0 条 | planned |
+| G072-C10 | G072 | integration | 在派发路径的每个提交点注入崩溃后重启 | 恢复后送达表、绑定与快照一致 | planned |
+| G072-C11 | G072 | unit | `return-policy` 的 (R, k) ∈ {(80,0), (80,5), (300,0), (300,15)} 四点表驱动；生存估计；热判定 | 全程费用差与时延按公式；R̂、k̂ 取最近 50 个实现值的生存估计中位数，n<20 用先验并标注；热判定按最后一个请求的开始时刻；默认续接，从不静默改等级 | planned |
+| G073-C01 | G073 | e2e | E1、E2、E3 三种证据路径；只有 E3 的 Driver 先收到第一条输出 | 派发时只放占位行“送达中”；证据到达后才画分隔线“从这里起由 X 接手”；只有 E3 的 Driver 首条输出时显示“已开始回复，送达待确认”且不推进水位；证据之前不出现“已接棒” | planned |
+| G073-C02 | G073 | e2e | 交接卡：展开草稿、发送时拼接、附言、按轮排除与撤回、当前输入含疑似密钥、送达未确认且不能自动重发 | 写明“状态与文件改动按发送时的工作区生成”，内容变化时写“发送时已更新：原因”；写明撤回排除只影响尚未越过这些轮次的绑定；提示“这条消息里有 1 处像密钥的内容，会原样发给 X”；三选一为［再附一次］［只发这条消息］［新开原生会话］ | planned |
+| G073-C03 | G073 | e2e | 执行中切换（S5）且有待批准请求；停止未确认 | 写明“批准或拒绝之前这一轮不会结束”并提供［等这一轮结束］［停止并切换］两个按钮；停止未确认时提示切换没有生效、引导恢复切换 | planned |
+| G073-C04 | G073 | e2e | 清空命令之后：Hub 确认清空；清空未确认（Hermes 回执不符、OpenClaw 没看到新会话） | 确认后输入框上方显示“X 的上下文已清空 · 下一条不附历史［附上交接单］”，点“附上”后下一条带 `relay.attach:"full"`；未确认时显示“清空待确认 · 下一条消息发出前会核对” | planned |
+| G073-C05 | G073 | integration | `/relay` 接口：列表、正文 ETag、preview（含 `observe=true`）、pins、exclusions、consents、prefs；跨会话读取 packetId | 正文 ETag 为 sha256；preview 只定档、不落库，`observe=true` 只在用户点“核实厂商”时调用；跨会话 404；SSE 推 `relay.input_recorded`、`relay.verified`、`relay.vendor_changed` | planned |
+| G073-S01 | G073 | security | AP-01–AP-03：对 consents、pins、reveal 的跨源请求或缺 CSRF 的请求、读取其他会话的 packetId；排除后做增量、交给另一家、重发，按位置放行后同值出现在新位置；抓取全部 SSE 事件；新端点沿用 cookie、CSRF 与 Host/Origin/Sec-Fetch 校验 | 分别返回 403、404；被排除的轮次从不出现，新位置仍被脱敏；SSE 不含正文、原值，也不含原值的哈希 | planned |
+| G073-C06 | G073 | unit | 用词检查扫描全部界面字符串与无障碍名（`web/src` 与 `src/web` 的文案、`aria-label`），含无效样例与例外清单（`Hermes Agent`、`Claude Agent` 这类注册表名、`子 Agent`） | 无效样例被拒、非零退出；例外清单生效；既有 11 处“我的 Agent”清零 | planned |
+| G073-C07 | G073 | e2e | 费用显示：订阅、API key、越过价格悬崖 | 订阅只显示 token；API key 显示全程与每个后续请求的费用；越悬崖时提示［先压缩］［只发这条消息］［照发］ | planned |
+| G074-C01 | G074 | integration | 确定性故障注入矩阵：假 Harness 按 Driver 声明（live / verify / lateDelivery / execution）× 证据序列（E1、E3、absent、outside_window、compacted、unknown 一次、unknown 两次、not_recorded、清空确认 / 未确认、回退、attach none）× 崩溃点 K1–K18 | 重复注入 0、丢增量 0；外来事实为空的纪元里 `dispatched === input` | planned |
+| G074-C02 | G074 | e2e | S5、S6、S14、S15 的接力路径与崩溃注入 K1–K18（自 G056 移入） | 按终稿第 9 节收敛：待决切换失败而不悬挂；未知回合不重跑；gateway 型查看器被杀时绑定 unconfirmed、租约不交给他人；重启后 `recoverRelay` 的结论与送达表一致 | planned |
+| G074-R01 | G074 | probe | RelayConformance P1–P14：六家在临时 git 工作区各跑一遍（最新正式版、最便宜的模型、独立凭据与消费上限） | 送达证据与第 8 节声明逐格一致；能回读的几家找得到标记；不出现 `CONTEXT_TOO_LARGE`；P2、P3、P6、P11 通过后翻转 `probed=true`；结果写进 `docs/verification/relay-conformance-<日期>.md` | planned |
+| G074-R02 | G074 | probe | P15 真机零注入：Claude、Codex 各 20 轮单 Harness 对话，含 `/clear`、压缩后、外部编辑后各一例 | 从原生转录读回的每条用户输入与原文逐字节相同 | planned |
+| G074-R03 | G074 | probe | P14 厂商键四个夹具（Claude 用户设置 `ANTHROPIC_BASE_URL`、Codex `OPENAI_BASE_URL`、dsh 工作区 `.env`、Ollama `*-cloud`）；P16 process 型继续原会话（Claude、Codex 各一次回合中杀 Hub） | 目录缓存与 open 后观测一致，四个夹具都记为 `gateway:<host>`；确认进程组结束后只读 resume、核对位置、继续对话，只读打开不触发任何回合且下一条原样 | planned |
+| G074-C03 | G074 | performance | RelayBench-X 进 CI：48 个合成会话 + 12 个临时工作区真机会话 + 原型的 256 Run 画像与打满上限的中文摘要 | 改动文件召回 ≥0.98（git）、≥0.90（非 git）；命令与退出码、失败 1.0；省略账目恒等式 100%；确定性 100/100；增量与重建 500/500 一致；est/2 对冻结夹具整包误差 p90 ≤20%；脱敏夹具漏检 0、形状规则召回 ≥0.98、误报 ≤1% | planned |
+| G074-C04 | G074 | review | RelayBench Q 的预注册：假设 H1–H9、功效分析、序贯设计与预算 | 预注册写入 `docs/verification/relay-bench.md`：v0（72 配对）只作 −10 pp 初筛，正式采纳需 ≥300 配对、−5 pp（D10）；预算另批，独立凭据并设消费上限 | planned |
+| G074-C05 | G074 | review | 基准机器指纹与终稿第 11.1 节每行目标的实测 / 推算标注 | 每行目标都标明实测或推算并与验证记录对账；毫秒目标只在参考机上跑，CI 只断言计数类量 | planned |
+| G075-C01 | G075 | performance | 8 MiB 快照上从受理到派发；逐回合计提交与 load 次数 | 受理→派发 p95 ≤400 ms 写进验证记录；提交次数与 load 次数有基准并逐回合断言 | planned |
+| G075-C02 | G075 | integration | 按 version 缓存已校验的快照：version 变化；并发事务 | version 变化即失效；并发事务不读到旧快照 | planned |
+| G075-C03 | G075 | integration | 跳过未变的终态 Run 校验时提交一个无效转换（无效样例） | 无效转换仍被拒绝 | planned |
+| G076-C01 | G076 | probe | v1.1 通道探针 P-F1–P-F3、P-S1–P-S2、P-E1–P-E2、P-R1–P-R2 | P-F1 读取不弹审批；P-F2 `inside_workspace` 时不给路径；P-F3 撤回后供给停止且文件在下一次回收前删除；P-S1 两次新会话字节相同；P-S2 正文自足；P-E1 时延 ≤1 s/1.5 s；P-E2 拒绝不推进；P-R1 只读打开后网关无新回合；P-R2 未结算时保持 blocked | deferred |
+| G076-C02 | G076 | integration | 撤回同意后文件视图的供给 | 先提交“停止供给”，再留墓碑并删除文件；跨文件系统不能原子，以墓碑为准 | deferred |
+| G077-C01 | G077 | probe | v1.2 探针 P-M1–P-M4 | P-M1 残留进程 = 0；P-M2 argv 用脱敏规则扫描命中 0；P-M3 工具规格指纹跨恢复不变；P-M4 拉取率（细节题）≥60% 才改该接收方的默认档 | deferred |
+| G077-C02 | G077 | security | shim 的 argv 与工具规格 | 用脱敏规则扫描命中 0；规格零凭据、只读 | deferred |

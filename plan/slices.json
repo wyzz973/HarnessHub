@@ -998,6 +998,44 @@
       "note": "第一批不新增 src/web 文件，所改的源码文件都已在其他已接受切片的 allowed_files 内，所以这里为空；以后按描述模块新增的 src/web 文件登记在此。verification_record 暂指向 ADR-046，验收记录待补：第一批集成后另立 docs/verification/ 记录并把这里改过去",
       "implementation_state": "in_progress",
       "verification_record": "docs/decisions/0046-harness-focus-hardening.md"
+    },
+    {
+      "id": "relay",
+      "status": "proposed",
+      "scope": "接力系统与上下文调度（ADR-055，设计正文为 docs/proposals/relay/relay-architecture.md 终稿第三版）：控制面先于内容——送达证据（E1/E2/E3）、送达水位与清空下限、四种同步状态与状态 × 事件全表；内容是公共事实的确定性投影——交接单、用户原话预算与省略账目，切换路径上不调用模型；像原生、默认零操作——外来事实为空时零注入、命令回合不捎带、清空经 Hub 确认。本切片的任务为 C006 与 G066–G075 及被修改文件的既有所有者；G076、G077 待探针与独立 ADR。未实现、未真机验证，用户验收之前不进入实现",
+      "task_ids": [
+        "C006",
+        "G066",
+        "G067",
+        "G068",
+        "G069",
+        "G070",
+        "G071",
+        "G072",
+        "G073",
+        "G074",
+        "G075",
+        "G004",
+        "G006",
+        "G007",
+        "G008",
+        "G010",
+        "G026",
+        "G028",
+        "G031",
+        "G032",
+        "G034",
+        "G050",
+        "G054",
+        "G059",
+        "G060",
+        "G064"
+      ],
+      "decision": "docs/decisions/0055-relay-and-context-scheduling.md",
+      "allowed_files": [],
+      "note": "status 为 proposed（不是 accepted）：未经用户验收不开放源码路径，所以 allowed_files 为空；用户验收后改为 accepted，并按终稿第 17 节只登记这些任务拥有且本切片要改的 src/、web/ 文件。D1–D11 未另作决定时按终稿“状态与验收”一节的推荐项登记。verification_record 暂指向 ADR-055，实现后另立 docs/verification/ 记录并改过去。依赖已延期旧任务的进行中任务 G028（依赖 G025）、G047（依赖 G045）、G050（依赖 G045、G046）、G059（依赖 G046）这次不改依赖，用户验收后把这些依赖改指 G068 与 G072（G025 对应 G068，G045、G046 对应 G072）。直接改指会成环：G068 经 G066、G067 依赖 G028，G072 的依赖闭包含 G028、G047、G050、G059，所以届时须先拆环，例如删去这几条对已延期任务的依赖（先后关系已由 G068、G072 对它们的依赖表达），并以设计检查确认无环；依赖 G046 的计划中任务 G048、G049、G057 同样待验收后处理，也在 G072 的依赖闭包内",
+      "implementation_state": "not_started",
+      "verification_record": "docs/decisions/0055-relay-and-context-scheduling.md"
     }
   ]
 }
