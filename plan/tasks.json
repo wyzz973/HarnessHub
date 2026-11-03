@@ -4354,7 +4354,7 @@
       "title": "P0 过渡期修复（v12，不升库）",
       "context": "session",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G004",
@@ -4401,7 +4401,8 @@
         "G067-C05",
         "G067-C06",
         "G067-C07"
-      ]
+      ],
+      "active_slice": "relay"
     },
     {
       "id": "G068",
