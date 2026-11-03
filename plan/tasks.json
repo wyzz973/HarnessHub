@@ -580,11 +580,11 @@
         "INV-14",
         "INV-22"
       ],
-      "scope": "ADR-055 改写（终稿第 17 节），保留为接力设计的 G0 契约任务：`contracts/context.schema.json` 改写为交接单清单 `RelayPacket` 与送达行 `DeliveryRecord` 的 JSON Schema（按终稿第 4 节），`contracts/examples/c006.json` 改为 S1 样例的清单与送达行，`docs/decisions/0006-context-handoff.md` 加“由 ADR-055 取代”的状态行；新增 `docs/decisions/0055-relay-and-context-scheduling.md` 与 `docs/contracts/relay.md`，并接管目前无主的 `docs/contracts/context-transfer.md`、`docs/contracts/switching.md`、`docs/contracts/storage-events.md`、`docs/contracts/public-api.md`、`docs/contracts/security.md` 与 `docs/domain/invariants.md`（按终稿更新，状态 proposed）；G066 依赖本任务",
+      "scope": "ADR-055 改写（终稿第 17 节），保留为接力设计的 G0 契约任务：`contracts/context.schema.json` 改写为交接单清单 `RelayPacket` 与送达行 `DeliveryRecord` 的 JSON Schema（按终稿第 4 节），`contracts/examples/c006.json` 改为 S1 样例的清单与送达行，`docs/decisions/0006-context-handoff.md` 加“由 ADR-055 取代”的状态行；新增 `docs/decisions/0055-relay-and-context-scheduling.md` 与 `docs/contracts/relay.md`，并接管目前无主的 `docs/contracts/context-transfer.md`、`docs/contracts/switching.md`、`docs/contracts/storage-events.md`、`docs/contracts/public-api.md`、`docs/contracts/security.md` 与 `docs/domain/invariants.md`（按终稿更新，2026-11-03 随 ADR-055 接受）；G066 依赖本任务",
       "out_of_scope": [
         "不修改其他任务所有权文件",
         "契约冻结不表示应用实现或真实链路验收",
-        "状态保持 proposed，用户验收之前不进入实现"
+        "契约随 ADR-055 于 2026-11-03 接受；应用实现与真实验收由 G066–G075 承担"
       ],
       "acceptance": [
         "交接单清单 `RelayPacket` 与送达行 `DeliveryRecord` 的 JSON Schema 与终稿第 4 节一致，S1 样例的清单与送达行通过校验，所有枚举集中在第 4 节声明",
@@ -2128,7 +2128,6 @@
       "depends_on": [
         "G020",
         "G023",
-        "G025",
         "G027"
       ],
       "owns": [
@@ -3070,7 +3069,6 @@
       "status": "in_progress",
       "gate": "G1",
       "depends_on": [
-        "G045",
         "G035"
       ],
       "owns": [
@@ -3117,7 +3115,6 @@
       "depends_on": [
         "G028",
         "G043",
-        "G046",
         "G008",
         "G029"
       ],
@@ -3166,7 +3163,6 @@
       "gate": "G1",
       "depends_on": [
         "G041",
-        "G046",
         "G020"
       ],
       "owns": [
@@ -3208,8 +3204,6 @@
       "gate": "G1",
       "depends_on": [
         "G019",
-        "G045",
-        "G046",
         "G047",
         "G049",
         "G009",
@@ -3705,7 +3699,6 @@
       "gate": "G1",
       "depends_on": [
         "G043",
-        "G046",
         "G048"
       ],
       "owns": [
@@ -3802,7 +3795,6 @@
         "G034",
         "G043",
         "G044",
-        "G046",
         "G047",
         "G048",
         "G049",

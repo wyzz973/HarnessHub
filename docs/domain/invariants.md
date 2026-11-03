@@ -1,6 +1,6 @@
 # 核心不变量
 
-状态：proposed。每条必须映射到自动测试或明确人工证据；测试矩阵记录覆盖范围。INV-13、INV-14、INV-22 按 [ADR-055](../decisions/0055-relay-and-context-scheduling.md) 改写，INV-21 按 ADR-055 扩展，INV-29–36 由 ADR-055 新增（接力系统，2026-11-03），同为 proposed，未实现、未经真机验证；这些条目的所有者、检查方式与计划用例见下文“接力不变量（ADR-055）”一节。
+状态：proposed。每条必须映射到自动测试或明确人工证据；测试矩阵记录覆盖范围。INV-13、INV-14、INV-22 按 [ADR-055](../decisions/0055-relay-and-context-scheduling.md) 改写，INV-21 按 ADR-055 扩展，INV-29–36 由 ADR-055 新增（接力系统，2026-11-03），已于 2026-11-03 随 ADR-055 接受，尚未实现、未经真机验证；这些条目的所有者、检查方式与计划用例见下文“接力不变量（ADR-055）”一节。
 
 | ID | 不变量 |
 |---|---|
@@ -43,19 +43,19 @@
 
 ## 接力不变量（ADR-055）
 
-状态：proposed（[ADR-055](../decisions/0055-relay-and-context-scheduling.md)）。陈述以上表为准，出处是[接力系统终稿](../proposals/relay/relay-architecture.md)（下称“终稿”）第 14.3 节；本节逐条记录变更、所有者、检查方式、状态与说明。上表与本节里的“第 N 节”都指终稿的节号；VF1-10、F08、J1 M11 这类编号是各轮审查的发现与要求，处置见终稿第 18 节与[第四轮处置表](../proposals/relay/round4/v3-dispositions.md)。
+状态：已接受（[ADR-055](../decisions/0055-relay-and-context-scheduling.md)，2026-11-03 验收）。陈述以上表为准，出处是[接力系统终稿](../proposals/relay/relay-architecture.md)（下称“终稿”）第 14.3 节；本节逐条记录变更、所有者、检查方式、状态与说明。上表与本节里的“第 N 节”都指终稿的节号；VF1-10、F08、J1 M11 这类编号是各轮审查的发现与要求，处置见终稿第 18 节与[第四轮处置表](../proposals/relay/round4/v3-dispositions.md)。
 
 - **编号**：终稿 14.3 把 INV-29、INV-30、INV-33 标为“改”、把 INV-35 的变化写作“收窄”，都是相对[第二版草案](../proposals/relay/round3/v2-architecture.md)而言；本文件此前只登记到 INV-28，INV-29–36 在这里都是首次登记。
 - **所有者**：终稿第 17 节在“需求 · 不变量”列登记该条的任务；括号里是该任务负责的部分，取自第 17 节的范围与新建文件。第 17 节另让这些任务承担陈述未变的 INV-05、06、09、11、16、17、20、23、25、26，并把本文件划归改写后的 C006。
 - **检查方式**：全部是计划中的自动测试，尚未编写。unit、integration、property、security、e2e 层用真实存储与假 Harness（第 17 节：真实的 `SqliteSessionStore`、`LocalContentStore` 与走 stdio 的 `tests/fixtures/control-peer.mjs`）；probe 层是 RelayConformance 真机探针（确定性判定，按各 Harness 最新正式版运行，第 13.3 节）。没有只靠人工审查的条目。计划用例按第 17 节登记进 `plan/test-cases.json` 之后，设计检查（`python3 -I tools/check_design.py`）核对每条不变量至少有一条计划用例。
-- **状态**：全部 proposed（ADR-055），用户验收之前不进入实现。依赖终稿 D1–D11 取舍的地方按推荐项登记（终稿“状态与验收”：用户未另作决定时按推荐项），用户另作决定时随之修改。本节的数字都是终稿给定的设计常量或测试参数，不是实测。
+- **状态**：全部已接受（ADR-055，2026-11-03 验收），尚未实现。依赖终稿 D1–D11 取舍的地方按推荐项登记（用户 2026-11-03 按推荐项接受）。本节的数字都是终稿给定的设计常量或测试参数，不是实测。
 
 ### INV-13（改写）
 
 - 变更：原文“ContextManifest 的所有来源 ID、水位、内容指纹和策略版本可追溯；不静默丢弃事实”。ContextManifest 由交接单（`RelayPacket`）的清单与送达行（`DeliveryRecord`）取代；C006 把 `contracts/context.schema.json` 改写为这两者的 JSON Schema（第 17 节）。
 - 所有者：G070（渲染、ID 派生、清单与省略账目，`src/contexts/session/domain/relay/packet.ts`）；G066（`relay_packets` 写入时的 fold 校验）；G067（v12 过渡期的来源过滤：排除未派发的 Run，第 7.6 节）。
 - 检查方式：自动测试——属性测试（J1 M11）；重渲染 100 次 1 个 sha。计划用例：G070-P01（property）、G070-C01（unit）、G066-C03（integration，fold 校验）。
-- 状态：proposed（ADR-055）。
+- 状态：已接受（ADR-055）。
 - 说明：ID 为 `"relay-"` + 20 位 Crockford base32(sha256(最终正文，ID 槽位为占位符))（第 4、5.5 节）。交接单以 `INSERT … ON CONFLICT(session_id, packet_id) DO NOTHING` 入库；`manifest_json` 只含由正文决定的字段，逐 Run 的字段（同意 seq、输入 HMAC、送达位置、压缩游标、重发关系）在 `relay_deliveries`；清单头相同而字节不同在进入事务之前检出，该 Run 以 `RELAY_PREPARE_FAILED{reason:"render_mismatch"}` 失败；fold 校验不满足即 `RELAY_PREPARE_FAILED{reason:"render"}`（第 14.1 节）。当前输入指纹是 HMAC（`inputHmac`），不是未加盐的 sha256（INV-29）。脱敏上下文（`rulesVersion`、`keyId`、`setHmac`）记在送达行，不进清单；正文不变时 ID 与清单不变，脱敏上下文变化只在它改变了正文时才自然产生新 ID，`supersedes` 只用于 resend（第 10.2 节，写入阶段修订）。
 
 ### INV-14（改写）
@@ -63,7 +63,7 @@
 - 变更：原文“返回 A 时不能复用未同步 B 已完成变更的旧原生上下文”，改为由送达水位、清空下限与待核规则决定 A 已知哪些事实。
 - 所有者：G068（状态 × 事件全表、`planReturn` 的核对计划、`epochFloor` 与压缩游标的更新、`recoverRelay`：`src/contexts/session/domain/relay/delivery.ts`、`recover.ts`）；G066（`binding.relay`、迁移的纪元谱系、`assertSessionTransition` 的新规则）；G067（v12 推进规则，`src/contexts/session/domain/relay/advance.ts`）；G072（`admit` 的选择检查与 A→B→A 的接入，G072-C07）。
 - 检查方式：自动测试——属性测试：任意证据序列下水位单调且不超过实际送达或亲历，回退不低于下限；清空后 20 轮 `dispatched === input`；A 清空 → B 两轮 → 回 A 只补 B；旧包 present 不推进 pending 包。计划用例：G068-P01（property）、G068-C05、G068-C06、G068-C07（integration）。
-- 状态：proposed（ADR-055）。
+- 状态：已接受（ADR-055）。
 - 说明：
   - “待核”指 `pending` 与 `suspect` 两种同步状态（第 7.2 节）。need=∅ 时只对 `legacy`、`marker_absent` 两种 cause 放行；`rewind`、`unknown_command`、`clear_unconfirmed`、`unknown_turn` 在存在外来事实时先核对，无法核对时由用户选择（`RELAY_CHOICE_REQUIRED{cause:"verify_required"}`）；没有外来事实的单 Harness 对话不核对也不阻挡；`SuspectCause` 共 6 种，每种都由第 7.2 节的某个转换产生；`verify=on_next_open` 的 Driver 在绑定为 suspect 或 pending 时不复用保留进程（第 7.2、7.4 节）。
   - need 的下界恒为 max(mark, epochFloor)；只有用户一次性选择“附上交接单”（`relay.attach:"full"`）时忽略下限（第 6.3、7.4 节）。
@@ -75,7 +75,7 @@
 - 变更：保留原文“切换请求与生效不同；交接失败保留公共 Session 和真实结果，不假称迁移成功”，追加终稿 14.3 的四个分句。
 - 所有者：G072（open 之后的准备失败；S5 的等待、停止并切换与停止未确认）；G073（分隔线与“已接棒”按证据显示）；G068（恢复：`recoverRelay`）；G067（v12：unsafe 结束时待决切换记为 failed）。
 - 检查方式：自动测试——浏览器测试三种证据路径；故障注入；宽限到期后仍能 resume。计划用例：G073-C01（e2e）、G072-C04（integration）、G068-C08（integration）、G067-C07（integration，“宽限到期后仍能 resume”，写入阶段补入 14.3）。“relay 状态不变”指不建交接单行、送达行与 pending、水位不被这次准备推进；open 时回放核对得到的结果是事实，照常随 `run.ended` 提交（第 9 节）。
-- 状态：proposed（ADR-055）。
+- 状态：已接受（ADR-055）。
 - 说明：错误按阶段归属（第 9 节）：受理时能判定的同步 409，不建 Run、没有进程；启动前（`prePlan`）失败的 Run 没有进程、绑定不变；open 之后（finalize、同意复检、分类复核、精化窗口）失败的 Run 未派发，原生会话与绑定保留（新建的空原生会话下一次按它 resume，不再新建），relay 状态不变，错误经 `run.ended` 与 SSE 到达。停止未确认时，unsafe 的 `run.ended` 在同一事务里把待决切换记为 `failed{SWITCH_SOURCE_UNKNOWN}`、等待它的排队 Run 记为 `SWITCH_NOT_EFFECTIVE`（第 9 节）。
 
 ### INV-22（改写）
@@ -83,14 +83,14 @@
 - 变更：原文“配置与原生状态不能替代公共事实源；派生摘要、读模型可重建”。“派生摘要可重建”换成终稿 14.3 对 RunDigest 与交接单的表述；“配置与原生状态不能替代公共事实源”“读模型可重建”两句保留——终稿 14.3 在写入阶段修订后同样保留这两句、把接力条款作为补充，因为终稿第 1 节的硬约束仍以 INV-13、INV-22 表达“公共 Session 是唯一业务权威，派生物可追溯、可重建”，`plan/test-cases.json` 里也有标注 INV-22 的非接力用例（如 G008-C01、G015-C03、G057-C01、G060-NC1）。
 - 所有者：G070（RunDigest 与索引、命中区间、`bound()` 收紧，`src/contexts/session/domain/relay/digest.ts`）；G066（`relay_digests` 表与不升 version 的 `relayWrite`）。
 - 检查方式：自动测试——500 个随机会话增量 = 重建；故障注入（earlyClose、storeDetail 失败）下重建值与在线值相同。计划用例：G070-P02（property）、G070-C06（integration）。
-- 状态：proposed（ADR-055）。
+- 状态：已接受（ADR-055）。
 - 说明：摘要用安装级秘密集合，在 `run.ended` 时固定，目标新带来的值只在出境前的最终复扫里补上，集合变化不让摘要整体 behind（第 6.4、10.2 节）；摘要只记命中区间 `(ref, offset, length)`、不记值，重建时先套历史区间再扫当前集合，集合变小也不会让曾脱敏的位置复现（第 10.2 节）。派生写入失败只把该 Run 的摘要标为 behind 并异步补建，`run.ended` 照常提交（第 6.4、9 节）。`harness_note` 是交出方说明，v2 不提供入口（第 5.1、9 节）。
 
 ### INV-29（新增）
 
 - 所有者：G070（脱敏的应用 `src/contexts/session/domain/relay/redaction.ts`、规则数据 `src/infrastructure/text/secret-rules.ts`、HMAC 密钥 `src/infrastructure/session/relay-keys.ts`）；G073（API 侧，AP-01–AP-03，第 17 节 G073 行在写入阶段补列了 INV-29）。
 - 检查方式：自动测试——grep 原值、sha256/sha1/md5(原值) = 0；变异测试；RD-01–RD-10。计划用例：G070-S01…S10（security，RD-01–RD-10）、G073-S01（security，AP-01–AP-03）。
-- 状态：proposed（ADR-055）。
+- 状态：已接受（ADR-055）。
 - 说明：
   - 范围（第 10.2 节“INV-29 的范围”）：覆盖出境字节、`relay_*` 表、`relay_log`、接力事件的新增字段、日志与诊断、错误信息；不覆盖按设计逐字保存的公共事实（快照里的原话与回复、`run.output`）。relay 字段里凡可能对应秘密的值（原话指纹、发出字节指纹）一律用 HMAC 子密钥，不用未加盐 sha256。
   - 当前输入：第二段永远原样、不脱敏；当前输入里有疑似密钥命中时省略首行并在卡片提示（D4 推荐项 (a)，第 5.5、12.1 节）。“当前输入（第二段）除外”也适用于本条“出境字节……不含秘密原值”一句（按 D4 推荐项，第二段逐字节发送；终稿 14.3 已写明）。第 10.6 节威胁模型表“用户贴入的内容”一行在写入阶段改为“当前输入（第二段）永远原样、不脱敏”，与本条一致。`relayRequest.fingerprint` 等指纹一律用 HMAC 子密钥（`HmacDigest`）。
@@ -101,7 +101,7 @@
 
 - 所有者：G068（事件 b 与 n 的状态转换；零注入集成测试 G068-C01）；G074（真机零注入探针 P15，G074-R02）。
 - 检查方式：自动测试——20 轮零延迟假 Harness 插入未派发、合成失败、`/export`、`/clear`、`/undo`、attach none、WorkBuddy 目标断言 `dispatched === input`；ON CONFLICT DO NOTHING 计数。计划用例：G068-C01（integration）、G074-R02（probe，P15）。
-- 状态：proposed（ADR-055）。
+- 状态：已接受（ADR-055）。
 - 说明：
   - `attach:"none"` 即“只发这条消息”：原样发送，本回合不产生送达证据，sync、水位与 pending 都不变（事件 n，第 6.3、7.2 节）；pending 下它只在用户回应 `409 RELAY_CHOICE_REQUIRED{cause:"delivery_unconfirmed"}` 之后出现（D1 推荐项 (a)）。WorkBuddy 与未经探针（`probed=false`）的 Driver 作目标时只提供这一条（第 8.1 节；生产只对已探针的 Driver 开放接力，D11 推荐项 (a)）。
   - “携带包时第二段等于原话”依据 D4 推荐项 (a)（第 5.5 节）。
@@ -112,14 +112,14 @@
 
 - 所有者：G066（`relay_deliveries` 表、应用层转换校验与 `relay_deliveries_transition` 触发器）；G068（由逐回合证据判定送达结论）。
 - 检查方式：自动测试——独立表转换测试（J1 M3）；触发器无效样例。计划用例：G066-C04（integration）。
-- 状态：proposed（ADR-055）。
+- 状态：已接受（ADR-055）。
 - 说明：每个 Run 至多一条送达行（主键 `(session_id, run_id)`）。允许的转换（第 4 节 `DeliveryRecord`）：in_flight→{recorded, not_recorded, unknown}；unknown→{recorded, not_recorded}；not_recorded→recorded（只由后续正面证据触发）；unknown→unknown 与 recorded→recorded 的同值写允许（reason 细化、realized 结算）。转换先在应用层校验，触发器只作断言；`UPDATE` 只在 outcome 变化时才把它写进 SET（第 14.1 节）。送达结论存独立表，因为已终结的 Run 不可改写（`src/contexts/session/domain/state.ts:441`【事实】）。
 
 ### INV-32（新增）
 
 - 所有者：G070（省略账目与折叠恒等式，`src/contexts/session/domain/relay/packet.ts`）。
 - 检查方式：自动测试——属性测试。计划用例：G070-P01（property）。
-- 状态：proposed（ADR-055）。
+- 状态：已接受（ADR-055）。
 - 说明：账目按类别满足“已渲染 + 已省略 + 未统计 = 全部”（第 2 节），折叠满足 verbatim + compact + line + ranged + excluded = 需交事实的条数（第 6.3 节）；取回方式取 `hub_detail_view`、`workspace`、`native_session`、`none`，“未统计”是类别 `uncounted`（第 4 节 `Omission`）。交接单“未包含”一节不提 HarnessHub 的存放位置，结尾固定为“这些内容没有附上，你也无法读取；需要时以工作区为准。”（第 5.1 节）。
 
 ### INV-33（新增）
@@ -127,7 +127,7 @@
 - 变更（相对 14.3 的文本）：末句“目的厂商指主模型请求的实际处理方；Harness 自配的辅助模型与记忆不在 Hub 可见范围”取自第 10.4 节（“INV-33 写明……”），14.3 的文本没有这一句。
 - 所有者：G072（`admit` 预判、finalize 复检与 `run.dispatched` 事务内复读同意）；G074（真机探针 P14 的厂商键夹具）；G069（厂商键的解析，`src/adapters/control/relay-vendor.ts`，用例 G069-C04；第 17 节 G069 行在写入阶段补列了 INV-33）。
 - 检查方式：自动测试——集成测试（J4 M12 每条；CS-01–CS-04）。计划用例：G072-C06（integration，CS-01–CS-04）、G074-R03（probe，P14）。
-- 状态：proposed（ADR-055）。
+- 状态：已接受（ADR-055）。
 - 说明：
   - 时机（第 10.4 节）：受理时按绑定上缓存的 `vendorObserved` 或目录缓存预判，缺同意即同步 `409 RELAY_CONSENT_REQUIRED`；取不到厂商键时按 `unknown:<harnessId>` 询问，这个回答只记“已看过说明”；finalize 用 open 后观测到的模型与端点复检，不符即 `RELAY_CONSENT_REQUIRED{reason:"vendor_changed"}`、不派发；`run.dispatched` 的事务里再读一次，已撤回就不派发。本纪元内收过包的绑定厂商键变化时记 `relay.vendor_changed`。
   - 权威记录在安装级 `relay_log`（只追加，`command_id` 唯一），会话事件 `relay.consent_recorded` / `relay.consent_revoked` 只是镜像（第 10.4、14.2 节）。同一厂商的 account 与 api_key 同记一个键（D7 推荐项 (a)）。
@@ -137,7 +137,7 @@
 
 - 所有者：G077（v1.2 stdio 接力 MCP；deferred，待 G076 与 RelayBench 拉取率 ≥60%）。
 - 检查方式：真机探针，deferred——规格指纹跨恢复不变；argv 扫描。计划用例：G077-C01（deferred：v1.2 生效）；对应第 8.2 节的探针 P-M2（argv 用脱敏规则扫描命中 0）与 P-M3（工具规格指纹跨恢复不变）。
-- 状态：proposed（ADR-055）；v1.2 之前不适用。
+- 状态：已接受（ADR-055）；v1.2 之前不适用。
 - 说明：Driver 以 `sessionTools: { owner: "program"; listFrozenAtCreate: true; preApproval: … }` 声明（第 4 节）；shim 的规格只含绝对路径，无 headers、无 env 秘密（第 8.2 节）。
 
 ### INV-35（新增）
@@ -145,14 +145,14 @@
 - 变更：相对第二版草案的“接力的任何失败只让本 Run 失败”收窄为预期内的失败。
 - 所有者：G066（relay 行的字节校验、转换校验、SAVEPOINT 与恢复的事务接入点：`src/infrastructure/session/relay-tables.ts`，`sqlite-store.ts` 经 G008）。
 - 检查方式：自动测试——故障注入：超长钉住、2 万文件、字段打满的中文摘要、ID 冲突、扫描器异常、unknown 同值写，Store 均不 failed。计划用例：G066-C05（integration）。
-- 状态：proposed（ADR-055）。
+- 状态：已接受（ADR-055）。
 - 说明：写法（第 3.2、14.1 节）：`mutate` 之前完成全部序列化、字节校验与转换校验，事务内只剩 `INSERT … ON CONFLICT DO NOTHING` 与已校验的 UPDATE（不用 `INSERT OR IGNORE`：它会连 CHECK 违例一起吞掉，随后外键错误让 Store failed）；派生行（摘要、索引、观测）失败回滚到保存点，该 Run 标 behind；权威行写失败时本 Run 以 `RELAY_PREPARE_FAILED{reason:"storage"}` 失败；正文触顶时以 `RELAY_PREPARE_FAILED{reason:"storage_quota"}` 失败（第 9 节）。恢复按会话各自一个 SAVEPOINT，一个会话的 relay 行写失败只让该会话标为 `relay_recovery_failed` 并在打开时拒绝接力（第 9 节）。现状任何 SQLite 错误都会让 Store 置为 failed（`src/infrastructure/session/sqlite-store.ts:626`【事实】），所以约束错误仍按 bug 对待。
 
 ### INV-36（新增）
 
 - 所有者：G072（`admit` 的数据根互不包含检查，G072-S01）；G071（观测器排除数据根与 `.tmp/`，WS-01–WS-06）；G070（HMAC 密钥与附件物化目录移出数据根：`src/infrastructure/session/relay-keys.ts`；`content-store.ts` 与 `attachments.ts` 的物化目录经 G008、G032；第 17 节 G070 行在写入阶段补列了 INV-36）。
 - 检查方式：自动测试——WS-05、WS-06。计划用例：G071-S01（security，WS-01–WS-06）、G072-S01（security，admit 的数据根检查）。
-- 状态：proposed（ADR-055）。
+- 状态：已接受（ADR-055）。
 - 说明：
   - 判定（第 10.1 节）：启动时与每次 `admit` 沿父目录逐级比较 `(st_dev, st_ino)`，不比较路径字符串；另在工作区内有界查找（深度 ≤6、≤2,000 项、≤100 ms）`.harness-gateway.json` 标记，找到即视为包含。
   - 包含时（第 9、10.1 节）：启动时记录告警，对该工作区的全部会话在界面上告警并在首次发送时要求确认；跨厂商（任一来源的厂商键与目的厂商键不同）且将要携带接力内容的回合受理即 `409 RELAY_UNAVAILABLE{reason:"data_root_in_workspace"}`；同厂商与单 Harness 对话可继续；观测排除数据根与 `.tmp/`（第 6.1 节在写入阶段写明了这两个前提）。`admit` 只做 `(st_dev, st_ino)` 比较，标记查找在启动时与工作区顶层目录 mtime 变化时做并缓存。
@@ -172,4 +172,4 @@
 - 回合外的 `usage_update`（`src/adapters/control/acp.ts:634`【事实】）没有写者 Run，只写 `relay_windows`，不改绑定；
 - `pending.packetId` 等跨存储引用在 Store 写入时校验。
 
-所有者：G066（用例 G066-C06）；`state.ts` 归 G004，G066 与 G068 经 G004 修改（第 17 节）。检查方式：自动测试——G066-C06（unit）为每条规则各配一个无效样例，含带 `native.cleared` 的归档放行、不带的拒绝。状态：proposed（ADR-055）。
+所有者：G066（用例 G066-C06）；`state.ts` 归 G004，G066 与 G068 经 G004 修改（第 17 节）。检查方式：自动测试——G066-C06（unit）为每条规则各配一个无效样例，含带 `native.cleared` 的归档放行、不带的拒绝。状态：已接受（ADR-055）。

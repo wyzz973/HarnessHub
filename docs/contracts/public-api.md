@@ -44,13 +44,13 @@ Session/配置变更使用 expectedVersion 或条件请求；缺少必须前置�
 
 公共错误采用 RFC 9457 的 type/title/status/detail/instance，并扩展 code、requestId、可重试类别和字段错误；原生 cause 仅留脱敏诊断。领域错误码至少覆盖：UNSUPPORTED_CAPABILITY、NO_ELIGIBLE_HARNESS、MODEL_UNSUPPORTED、CONTEXT_TOO_LARGE、SESSION_BUSY、STALE_EPOCH、PERMISSION_EXPIRED、SWITCH_BLOCKED、RESOURCE_CLEANUP_UNCONFIRMED、STORAGE_UNAVAILABLE、EXECUTION_INTERRUPTED。
 
-proposed（ADR-055）：接力新增 `RELAY_INPUT_LIMIT`、`RELAY_PREPARE_FAILED`、`RELAY_CONSENT_REQUIRED`、`RELAY_CHOICE_REQUIRED`、`RELAY_TARGET_UNVERIFIED`、`RELAY_UNAVAILABLE`；切换与排队 Run 另有失败原因 `SWITCH_SOURCE_UNKNOWN`、`SWITCH_NOT_EFFECTIVE`；`NATIVE_STATE_UNCONFIRMED` 沿用。409 只覆盖受理时可判定的情形（`RELAY_INPUT_LIMIT` 在受理时是 429）；受理之后的接力失败是 Run 失败，经 `run.ended` 与 SSE 到达。长历史不再报 CONTEXT_TOO_LARGE：放不下的历史分层并记省略账目，只有“最小交接单 + 当前原话”放不下时才 `RELAY_INPUT_LIMIT`。阶段、HTTP 状态与选项见下文“接力：资源、接口与错误”。
+已接受（ADR-055）：接力新增 `RELAY_INPUT_LIMIT`、`RELAY_PREPARE_FAILED`、`RELAY_CONSENT_REQUIRED`、`RELAY_CHOICE_REQUIRED`、`RELAY_TARGET_UNVERIFIED`、`RELAY_UNAVAILABLE`；切换与排队 Run 另有失败原因 `SWITCH_SOURCE_UNKNOWN`、`SWITCH_NOT_EFFECTIVE`；`NATIVE_STATE_UNCONFIRMED` 沿用。409 只覆盖受理时可判定的情形（`RELAY_INPUT_LIMIT` 在受理时是 429）；受理之后的接力失败是 Run 失败，经 `run.ended` 与 SSE 到达。长历史不再报 CONTEXT_TOO_LARGE：放不下的历史分层并记省略账目，只有“最小交接单 + 当前原话”放不下时才 `RELAY_INPUT_LIMIT`。阶段、HTTP 状态与选项见下文“接力：资源、接口与错误”。
 
 重试建议不能等同于自动重跑。SDK 可以重连只读事件流；有副作用的提交只在相同幂等身份下重送，未知执行不以新 key 自动再跑。
 
-## 接力：资源、接口与错误（proposed（ADR-055））
+## 接力：资源、接口与错误（已接受（ADR-055））
 
-状态：proposed（[ADR-055](../decisions/0055-relay-and-context-scheduling.md)），未实现、未真机验证，用户验收之前不进入实现。本节按接力终稿 [relay-architecture.md](../proposals/relay/relay-architecture.md)（下称“终稿”）的第 4 节（类型草案）、6.1 节（受理时序）、7.4 节（选择与重发）、9 节（失败与边界）、12.4 节（API 与错误码）与 14.2 节（事件）写成；字段名与枚举以终稿第 4 节为唯一来源，本节不另起名字。终稿留给用户拍板的 D1（送达未确认时受理同步 409 三选一）、D2（小窗口目标在启动前 `RELAY_INPUT_LIMIT` 并提供“只发这条消息”）、D4（当前输入永远原样）、D11（生产只对已探针的 Driver 开放）按推荐项写入，用户另作决定时改写本节。
+状态：已接受（[ADR-055](../decisions/0055-relay-and-context-scheduling.md)，2026-11-03 验收），未实现、未真机验证。本节按接力终稿 [relay-architecture.md](../proposals/relay/relay-architecture.md)（下称“终稿”）的第 4 节（类型草案）、6.1 节（受理时序）、7.4 节（选择与重发）、9 节（失败与边界）、12.4 节（API 与错误码）与 14.2 节（事件）写成；字段名与枚举以终稿第 4 节为唯一来源，本节不另起名字。终稿留给用户拍板的 D1（送达未确认时受理同步 409 三选一）、D2（小窗口目标在启动前 `RELAY_INPUT_LIMIT` 并提供“只发这条消息”）、D4（当前输入永远原样）、D11（生产只对已探针的 Driver 开放）按推荐项写入，用户另作决定时改写本节。
 
 标注：【事实】是现状代码，`file:line` 以本仓库为准；【实测】是本文作者在本机对现状代码求值的结果；【推断】是终稿没有逐字写出、由其条文推出的解读；【推算】是终稿声明未经实测、待 G070–G074 校准的常量初值。其余条文是终稿的设计决定，数字除另注外都是终稿给定的设计上限或初值。安全侧的规则（出境类别、脱敏、同意、数据根）见 [security.md](security.md) 的接力一节。
 

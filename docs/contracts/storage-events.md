@@ -2,7 +2,7 @@
 
 状态：proposed。第一版采用事务存储加 append-only 事实日志与 outbox；不宣称采用完整 Event Sourcing，也不建立两份业务权威。
 
-**接力存储（proposed（ADR-055））**：凡标注“proposed（ADR-055）”的段落，以及“接力存储与事件”一章，来自[接力系统终稿](../proposals/relay/relay-architecture.md)（[ADR-055](../decisions/0055-relay-and-context-scheduling.md) 的设计正文，下称“终稿”）。它们的状态是 proposed，**未实现**：业务库仍是 v12，v13 的表、事件与迁移都没有写进代码，用户验收之前不改业务库格式。未标注的段落是 ADR-055 之前的契约原文，其中“业务库迁移前备份”一节已按 ADR-049 实现。切换、送达证据、水位与同步状态的语义见[切换契约](switching.md)的“接力”一章（下称“切换契约”）。标注约定与终稿相同：【事实】有代码或文档出处（代码位置都指基点 `07a0825` 的实际代码，本工作树的 `src/` 与之相同）；【实测】是原型或评审在本机测得的；【推断】由事实推出；【建议】是 ADR-055 的决定；【推算】是未经实测的数字。
+**接力存储（已接受（ADR-055））**：凡标注“已接受（ADR-055）”的段落，以及“接力存储与事件”一章，来自[接力系统终稿](../proposals/relay/relay-architecture.md)（[ADR-055](../decisions/0055-relay-and-context-scheduling.md) 的设计正文，下称“终稿”）。它们已于 2026-11-03 验收（ADR-055 accepted），**尚未实现**：业务库仍是 v12，v13 的表、事件与迁移都没有写进代码。未标注的段落是 ADR-055 之前的契约原文，其中“业务库迁移前备份”一节已按 ADR-049 实现。切换、送达证据、水位与同步状态的语义见[切换契约](switching.md)的“接力”一章（下称“切换契约”）。标注约定与终稿相同：【事实】有代码或文档出处（代码位置都指基点 `07a0825` 的实际代码，本工作树的 `src/` 与之相同）；【实测】是原型或评审在本机测得的；【推断】由事实推出；【建议】是 ADR-055 的决定；【推算】是未经实测的数字。
 
 ## 写入与一致性
 
@@ -10,7 +10,7 @@
 
 单进程 Store owner 为本机唯一逻辑写入者。Worker 与 Harness 只报告证据。跨重启 owner/进程身份使用不透明 token 与可核验的进程身份，不能只凭 PID 杀进程。
 
-**proposed（ADR-055）**：接力行与快照、事件在同一个 `transact` 事务里写入（`SessionMutation.relay`），派生行在 SAVEPOINT 内；另有三条不经快照的写入路径：`SessionStore.relayWrite`（单独事务、不升 version、只写派生行）与安装级的 `RelayLogPort.append`、`RelayLogPort.upsertWindow / setPref`（R1）。
+**已接受（ADR-055）**：接力行与快照、事件在同一个 `transact` 事务里写入（`SessionMutation.relay`），派生行在 SAVEPOINT 内；另有三条不经快照的写入路径：`SessionStore.relayWrite`（单独事务、不升 version、只写派生行）与安装级的 `RelayLogPort.append`、`RelayLogPort.upsertWindow / setPref`（R1）。
 
 ### Owner 排他与 fencing
 
@@ -24,7 +24,7 @@
 
 Session 事件采用独立递增 seq；Attempt 事件有自己的 seq/generation，并通过幂等投影关联公共事件。序号是持久事实的游标，传输 delta 不能冒充已落库事件。规范化公开消息可以分块有界保存；临时流块若不持久，必须显式标记且不推进持久游标。回复文本与思考的流块在 ≤100 ms 或 ≤16 KiB 的窗口内合并后一次提交（[ADR-047](../decisions/0047-stream-output-coalescing.md)），一个窗口一条 `run.output` 事件；未提交的窗口不推进持久游标，也不对外发布，崩溃最多丢失一个窗口。
 
-**proposed（ADR-055）**：E1（`relay.input_recorded`）提交前先冲刷打开的文字窗口，保持 ADR-047 的到达顺序；ADR-047 第 5 条补一条修订（RT2-21，R3）。
+**已接受（ADR-055）**：E1（`relay.input_recorded`）提交前先冲刷打开的文字窗口，保持 ADR-047 的到达顺序；ADR-047 第 5 条补一条修订（RT2-21，R3）。
 
 ## 存储对象建议
 
@@ -32,7 +32,7 @@ Session 状态/消息/输入幂等/outbox；Harness revisions 与 capability evi
 
 编号迁移只进不改历史；未知版本明确失败。大正文与二进制在受控对象存储，以 hash 和大小登记；数据库/文件的发布先验证文件再登记，失败孤儿清理有所有者，不能返回半成品。
 
-**proposed（ADR-055）**：业务库 v13 增加 11 张接力表，与 `sessions`、`events` 同库——会话级的 `relay_bodies`、`relay_packets`、`relay_deliveries`、`relay_digests`、`relay_workspace`、`relay_pins`、`relay_exclusions`，安装级的 `relay_windows`、`relay_log`、`relay_log_archive`、`relay_prefs`（R2）。上文的 context manifests 由 `relay_packets` 的清单承担。交接单正文（上限 256 KiB/条）放业务库而不放内容存储，理由见 R2；Store 只增加有界的只读查询，不公开通用 SQL。
+**已接受（ADR-055）**：业务库 v13 增加 11 张接力表，与 `sessions`、`events` 同库——会话级的 `relay_bodies`、`relay_packets`、`relay_deliveries`、`relay_digests`、`relay_workspace`、`relay_pins`、`relay_exclusions`，安装级的 `relay_windows`、`relay_log`、`relay_log_archive`、`relay_prefs`（R2）。上文的 context manifests 由 `relay_packets` 的清单承担。交接单正文（上限 256 KiB/条）放业务库而不放内容存储，理由见 R2；Store 只增加有界的只读查询，不公开通用 SQL。
 
 ## SSE 与客户端
 
@@ -40,7 +40,7 @@ Session 状态/消息/输入幂等/outbox；Harness revisions 与 capability evi
 
 慢消费者断开后按游标续读；不阻塞执行，也不维持无限内存缓冲。断流不取消运行；SDK 不因重连而再次提交消息。
 
-**proposed（ADR-055）**：SSE 增推 `run.context_prepared`、`relay.input_recorded`、`relay.verified`、`relay.vendor_changed`、`run.ended`。`Run.relay.delivery` 在 Run 结束后仍会变（Hermes 的 E2 下一回合才到），以 `relay.verified` 与 ETag 通知；交接单正文经 `GET …/relay/:packetId` 读取，`ETag` 为 sha256，读取其他会话的 packetId 返回 404。SSE 不含交接单正文、秘密原值与原值的哈希（RT4 AP-01–AP-03）。
+**已接受（ADR-055）**：SSE 增推 `run.context_prepared`、`relay.input_recorded`、`relay.verified`、`relay.vendor_changed`、`run.ended`。`Run.relay.delivery` 在 Run 结束后仍会变（Hermes 的 E2 下一回合才到），以 `relay.verified` 与 ETag 通知；交接单正文经 `GET …/relay/:packetId` 读取，`ETag` 为 sha256，读取其他会话的 packetId 返回 404。SSE 不含交接单正文、秘密原值与原值的哈希（RT4 AP-01–AP-03）。
 
 ## 失败与保留
 
@@ -48,7 +48,7 @@ Session 状态/消息/输入幂等/outbox；Harness revisions 与 capability evi
 
 幂等记录、事件、原生 checkpoint 和 Artifact 保留期分别定义。存在历史 revision、恢复材料或 pin 引用时不直接删对象。删除数据、备份一致快照与导出恢复是独立命令，不通过清库“修复”状态。
 
-**proposed（ADR-055）**：预期内的接力失败（校验、渲染、脱敏、配额、分类、同意）只让本 Run 失败，不让 Store 进入 failed、不让 Runtime fatal、不波及其他会话；SQLite 约束错误仍是 bug，由应用层校验与无效样例保证不出现（INV-35，R1）。派生行写失败只把 RunDigest 标为 behind，异步补建。接力对象各自的保留期与回收入口见 R7；删除会话在 v13 才有入口（`deleteSession`）。
+**已接受（ADR-055）**：预期内的接力失败（校验、渲染、脱敏、配额、分类、同意）只让本 Run 失败，不让 Store 进入 failed、不让 Runtime fatal、不波及其他会话；SQLite 约束错误仍是 bug，由应用层校验与无效样例保证不出现（INV-35，R1）。派生行写失败只把 RunDigest 标为 behind，异步补建。接力对象各自的保留期与回收入口见 R7；删除会话在 v13 才有入口（`deleteSession`）。
 
 SQLite [原子提交](https://www.sqlite.org/atomiccommit.html)与[WAL](https://www.sqlite.org/wal.html)是选型参考；持久性还依赖真实磁盘、fsync、journal 设置和故障测试，不能仅凭 SQLite 名称作保证。
 
@@ -63,9 +63,9 @@ SQLite [原子提交](https://www.sqlite.org/atomiccommit.html)与[WAL](https://
 - **失败**：任一步失败（目录不合要求、空间不足、源库损坏、回读不一致）时，Store 构造以 `STORAGE_BACKUP_FAILED` 失败，消息写明失败的步骤和不含路径的原因，原错误保留为 cause。此时只删除本次写出的文件；迁移事务没有开始，owner 没有接管（`owner_metadata` 不变），业务库的行与 `user_version` 不变，排他锁释放。修好原因后重新启动，即重新备份并迁移。备份成功而迁移本身失败（例如 `INVALID_DATA` 整笔回滚）时，这份备份保留。
 - **手动恢复**：1. 停止服务，等它退出；2. 用一份备份替换数据根中的 `gateway.sqlite`（复制过去，备份本身留在 `backups`）；3. 删除同目录的 `gateway.sqlite-wal` 与 `gateway.sqlite-shm`，它们属于被替换的库，留着会损坏恢复后的库；4. 用能读文件名中那个版本的旧构建启动。若用当前构建启动，它会再次备份并迁移。
 
-**proposed（ADR-055）**：v13 落地时这一节只改三处：备份条件从 1～11 改为 1～12（将被迁移到 13），owner 认的当前版本改为 13（现在的两处是 `sqlite-store.ts:396` 与 `:265`【事实】），回读核对的行数从 `sessions`、`events` 扩到 11 张接力表（`sqlite-store.ts:136–139`）。v12 的源库还没有接力表，扩展的行数核对只对 v13 及以后的源库有意义【推断】。位置、命名、写出、保留、失败与手动恢复都不变；HMAC 密钥 `relay-key` 在数据根之外，不进备份。降级与恢复备份的后果见 R5。
+**已接受（ADR-055）**：v13 落地时这一节只改三处：备份条件从 1～11 改为 1～12（将被迁移到 13），owner 认的当前版本改为 13（现在的两处是 `sqlite-store.ts:396` 与 `:265`【事实】），回读核对的行数从 `sessions`、`events` 扩到 11 张接力表（`sqlite-store.ts:136–139`）。v12 的源库还没有接力表，扩展的行数核对只对 v13 及以后的源库有意义【推断】。位置、命名、写出、保留、失败与手动恢复都不变；HMAC 密钥 `relay-key` 在数据根之外，不进备份。降级与恢复备份的后果见 R5。
 
-## 接力存储与事件（proposed（ADR-055），业务库 v13）
+## 接力存储与事件（已接受（ADR-055），业务库 v13）
 
 本章是 ADR-055 的设计（【建议】），全部未实现。读法与切换契约相同：
 

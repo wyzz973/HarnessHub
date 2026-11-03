@@ -1,6 +1,6 @@
 # HarnessHub 接力系统 · 统一架构终稿（relay-architecture，第三版）
 
-状态：终稿（第三版，proposed，登记为 ADR-055；未实现、未真机验证）。作者：总架构师 Fable 5.1，2026-11-03。基线 `cc/relay-design`（基点 `07a0825`；工作树 `src/`、`web/`、`tests/` 与基点相同，`git diff --stat 07a0825 HEAD -- src web tests` 为空【事实】），文中 `file:line` 均指该基点的实际代码；本稿只写本文件与 [round4/v3-dispositions.md](round4/v3-dispositions.md)。标注约定：【事实】有代码、契约、报告或实测出处；【实测】原型或评审本机测得；【推断】由事实推出；【建议】本稿的决定；【推算】未经实测的数字；数字注明依据（实测 / 文档常量 / 推算）。
+状态：终稿（第三版，accepted，登记为 ADR-055，2026-11-03 用户验收；未实现、未真机验证）。作者：总架构师 Fable 5.1，2026-11-03。基线 `cc/relay-design`（基点 `07a0825`；工作树 `src/`、`web/`、`tests/` 与基点相同，`git diff --stat 07a0825 HEAD -- src web tests` 为空【事实】），文中 `file:line` 均指该基点的实际代码；本稿只写本文件与 [round4/v3-dispositions.md](round4/v3-dispositions.md)。标注约定：【事实】有代码、契约、报告或实测出处；【实测】原型或评审本机测得；【推断】由事实推出；【建议】本稿的决定；【推算】未经实测的数字；数字注明依据（实测 / 文档常量 / 推算）。
 
 输入：[第一版](round3/v1-architecture.md)；五份红队审查 [RT1](round3/rt1-invariants-storage.md)（不变量、存储与迁移）、[RT2](round3/rt2-failure-races.md)（故障、竞态与恢复）、[RT3](round3/rt3-performance-cost.md)（性能与成本）、[RT4](round3/rt4-security-privacy.md)（安全与隐私）、[RT5](round3/rt5-native-fidelity.md)（原生保真与逐家可行性）；原型测量 [spikes/relay/README.md](../../../spikes/relay/README.md) 与 `results.json`（下称“原型”，编号 1a–7b、F1–F12）；[第二版](round3/v2-architecture.md)与它的四份终审核验 [VF1](round4/vf1-delivery-watermarks.md)（送达与水位）、[VF2](round4/vf2-performance-testability.md)（性能与可测性）、[VF3](round4/vf3-native-security.md)（原生体验、安全与隐私）、[VF4](round4/vf4-completeness.md)（完整性）。第三轮 105 条发现的逐条处置在 [round3/v2-dispositions.md](round3/v2-dispositions.md)；第四轮 69 条发现（blocker 7、major 49、minor 13）的逐条处置在 [round4/v3-dispositions.md](round4/v3-dispositions.md)；本稿正文只在相关节落实，不再复述处置理由。第二轮 J1–J4 的 76 条要求中处置有变化的列在第 18 节。
 
@@ -10,9 +10,9 @@
 
 ## 状态与验收
 
-**状态**：proposed，登记为 ADR-055（本稿是它的设计正文；契约、不变量与计划按本稿更新，状态同样是 proposed）。本设计**未实现、未真机验证**：没有改 Session 运行时，没有改业务库格式，没有运行任何 Harness 会话，没有改用户配置；原型只用合成数据（`spikes/relay/`，不在 TypeScript 构建范围内）。在用户验收之前不进入实现。
+**状态**：accepted，登记为 ADR-055（本稿是它的设计正文；契约、不变量与计划按本稿更新）。2026-11-03 用户验收，按推荐项接受 D1–D11（原话：“按推荐接受”）。本设计**未实现、未真机验证**：没有改 Session 运行时，没有改业务库格式，没有运行任何 Harness 会话，没有改用户配置；原型只用合成数据（`spikes/relay/`，不在 TypeScript 构建范围内）。实现按第 17 节的切片顺序进行。
 
-**需要用户拍板的取舍**（每条附推荐项；用户未另作决定时按推荐项登记进计划）：
+**用户拍板的取舍**（2026-11-03 已按推荐项全部接受；下表保留选项与理由）：
 
 | # | 取舍 | 选项 | 推荐与理由 |
 |---|---|---|---|
@@ -1303,7 +1303,7 @@ PRAGMA user_version=13;
 
 | 旧任务 | 处理 | 怎么做 |
 |---|---|---|
-| C006 冻结可交接上下文契约（planned） | **改写**，保留为本设计的 G0 契约任务 | `owns` 改为 `contracts/context.schema.json`（改写为交接单清单 `RelayPacket` 与送达行 `DeliveryRecord` 的 JSON Schema，按第 4 节）、`contracts/examples/c006.json`（改为 S1 样例的清单与送达行）、新增 `docs/decisions/0055-relay-and-context-scheduling.md`、`docs/contracts/relay.md`；ADR-006 没有独立文件（它只是 `docs/decisions/README.md` 议程表里的一行），不新建 `0006-context-handoff.md`，改为在 ADR-055 接受后由 C006 在索引的 ADR-006 一行登记“由 ADR-055 取代”（索引由 V008 维护，经它修改），并接管目前无主的 `docs/contracts/context-transfer.md`、`docs/contracts/switching.md`、`docs/contracts/storage-events.md`、`docs/contracts/public-api.md`、`docs/contracts/security.md`、`docs/domain/invariants.md`（按本稿更新，状态 proposed）；`requirements` 加 R19；用例 C006-C01 改为“清单样例与 Schema 一致、所有枚举集中在第 4 节声明”，C006-C02 改为“缺引用 / 旧摘要 / 坏 hash → 不进入执行；超限 → 分层并记账目，只有最小交接单 + 原话超限才 `RELAY_INPUT_LIMIT`”（与 `check_design.py` 现有用例 C006-C02 的“超限时报错”冲突处改写，F15），C006-C03 不变；G066 依赖它 |
+| C006 冻结可交接上下文契约（planned） | **改写**，保留为本设计的 G0 契约任务 | `owns` 改为 `contracts/context.schema.json`（改写为交接单清单 `RelayPacket` 与送达行 `DeliveryRecord` 的 JSON Schema，按第 4 节）、`contracts/examples/c006.json`（改为 S1 样例的清单与送达行）、新增 `docs/decisions/0055-relay-and-context-scheduling.md`、`docs/contracts/relay.md`；ADR-006 没有独立文件（它只是 `docs/decisions/README.md` 议程表里的一行），不新建 `0006-context-handoff.md`，改为在 ADR-055 接受后由 C006 在索引的 ADR-006 一行登记“由 ADR-055 取代”（索引由 V008 维护，经它修改），并接管目前无主的 `docs/contracts/context-transfer.md`、`docs/contracts/switching.md`、`docs/contracts/storage-events.md`、`docs/contracts/public-api.md`、`docs/contracts/security.md`、`docs/domain/invariants.md`（按本稿更新，2026-11-03 随 ADR-055 接受）；`requirements` 加 R19；用例 C006-C01 改为“清单样例与 Schema 一致、所有枚举集中在第 4 节声明”，C006-C02 改为“缺引用 / 旧摘要 / 坏 hash → 不进入执行；超限 → 分层并记账目，只有最小交接单 + 原话超限才 `RELAY_INPUT_LIMIT`”（与 `check_design.py` 现有用例 C006-C02 的“超限时报错”冲突处改写，F15），C006-C03 不变；G066 依赖它 |
 | G006 从冻结契约生成上下文类型（in_progress） | **保留** | 继续拥有 `src/contracts/context.ts`（计划中的文件，基点上尚不存在）、`src/contexts/session/domain/context.ts`、`tests/security/g006.test.ts`；接力对它们的两次修改（G067 改 `src/contexts/session/domain/context.ts:27–28` 的来源选择（排除未派发的 Run；`:56–58` 是 `CONTEXT_TOO_LARGE` 的预算检查，R0a 改它为只对将要发送的内容预算）；G070 删除 `buildPublicContext`）经 G006 的所有者串行进行，G006 的安全用例保持零注入的现有断言，接力自己的零注入用例在 G068 |
 | G024 构建有界公共 ContextManifest（planned） | **接管**（由 G070） | 状态改 `deferred`，`defer_reason`：“ADR-055：范围由 G070 的 `packet.ts` 与清单接管”；用例 G024-C01–C03 改 `deferred` 并在 `defer_reason` 按语义指向：C01（来源、水位、预算与指纹完整）→ G070-C02（金样含清单）；C02（超限分层并记账目；摘要缺来源或旧水位明确失败）→ G070-P01（账目恒等式）与 G066-C03（fold 校验拒绝）；C03（工具输出夹带指令与秘密）→ G070-S11（注入）与 G070-S01–S10（秘密）；G024-C02 的“超限时报错”预期改写为“分层并记账目”（F15）；`build-manifest.ts`、`context-repository.ts` 不再建立 |
 | G025 验证交接水位与绑定新鲜度（planned） | **接管**（由 G068） | 状态改 `deferred`，指向 G068；用例 G025-C01–C03 改 `deferred` 并按语义指向：C01（A 到 B 再回 A 的文件与消息变化：复用必须同步）→ G068-C06（A→B→A 只补 B）；C02（manifest 冻结后的新消息与外部写入不被偷偷吸收）→ G066-C03（fold 校验：单元已终结、用户消息早于当前输入）；C03（不同 epoch、旧 checkpoint、hash 不符不把空会话当恢复成功）→ G068-P01（任意证据序列与纪元下的水位性质）；`verify-handoff.ts` 不再建立 |
@@ -1343,7 +1343,7 @@ PRAGMA user_version=13;
 - **G076**（deferred，范围：8.2 的 v1.1 通道——文件视图、系统层静态协议、Codex `inject_items` 与 Claude 原始回显作 E1、异步 after 观测侧表、交出方说明入口、gateway 型只读核对打开（独立 ADR）、OpenClaw 标题）。用例：G076-C01 probe P-F1–P-F3、P-S1–P-S2、P-E1–P-E2、P-R1–P-R2（deferred：待独立 ADR 与探针）；G076-C02 integration 撤回同意后供给停止与墓碑（deferred）。
 - **G077**（deferred，范围：8.2 的 v1.2 stdio 接力 MCP——shim（手写 JSON-RPC，B10）、挂载规则、`relayCall()` 识别、lean 档）。用例：G077-C01 probe P-M1–P-M4（deferred：INV-34 在 v1.2 生效）；G077-C02 security argv 与规格的扫描命中 0（deferred）。
 
-**与计划文件的关系**：`plan/slices.json` 新建切片 `relay`（`status: accepted` 需用户验收后设置；`decision: docs/decisions/0055-relay-and-context-scheduling.md`；`task_ids`：C006、G066–G075 加被修改文件的所有者 G004、G006、G007、G008、G010、G026、G028、G031、G032、G034、G050、G054、G059、G060、G064；`allowed_files` 只列这些任务拥有且本切片要改的 `src/`、`web/` 文件；`note` 写明“G028、G047、G050、G059 这四个进行中的任务仍依赖已改为 deferred 的 G025、G045、G046，本轮不改它们的依赖，用户验收后把这些依赖改指 G068 与 G072”）；`plan/test-cases.json` 按上文登记每条用例的 `task`、`layer`、`planned_file`（在所属任务 `owns` 内）、`requirements`（取自所属任务）、`invariants`；`plan/native-capabilities.json` 不改；`docs/domain/invariants.md` 按第 14.3 节更新后每个 INV 都有计划用例；G010 的 `redacted-control.ts` 与 `session-redaction.test.ts` 由 G010 所有者串行修改；`tests/security/` 目录由 G070 首次建立；评测与真机探针只用独立凭据并设消费上限。
+**与计划文件的关系**：`plan/slices.json` 新建切片 `relay`（2026-11-03 验收后设为 `status: accepted`；`decision: docs/decisions/0055-relay-and-context-scheduling.md`；`task_ids`：C006、G066–G075 加被修改文件的所有者 G004、G006、G007、G008、G010、G026、G028、G031、G032、G034、G050、G054、G059、G060、G064；`allowed_files` 只列这些任务拥有且本切片要改的 `src/`、`web/` 文件；`note` 写明“G028、G047、G050、G059 这四个进行中的任务仍依赖已改为 deferred 的 G025、G045、G046，验收时删去了这些对已延期任务的依赖：接替任务 G068、G072 已经依赖它们，照字面改指会成环”）；`plan/test-cases.json` 按上文登记每条用例的 `task`、`layer`、`planned_file`（在所属任务 `owns` 内）、`requirements`（取自所属任务）、`invariants`；`plan/native-capabilities.json` 不改；`docs/domain/invariants.md` 按第 14.3 节更新后每个 INV 都有计划用例；G010 的 `redacted-control.ts` 与 `session-redaction.test.ts` 由 G010 所有者串行修改；`tests/security/` 目录由 G070 首次建立；评测与真机探针只用独立凭据并设消费上限。
 
 ## 18. 要求落实表
 

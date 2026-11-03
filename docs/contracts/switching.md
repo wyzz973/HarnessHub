@@ -2,7 +2,7 @@
 
 状态：proposed。切换过程由应用层 process manager 协调，Session 聚合控制意图准入和生效。
 
-**接力部分（proposed（ADR-055））**：凡标注“proposed（ADR-055）”的段落，以及“接力：切换、准备与送达”一章，来自[接力系统终稿](../proposals/relay/relay-architecture.md)（[ADR-055](../decisions/0055-relay-and-context-scheduling.md) 的设计正文，下称“终稿”）。它们的状态是 proposed，**未实现、未真机验证**：用户验收之前不改 Session 运行时，也不改业务库格式。未标注的段落是 ADR-055 之前的契约原文，其中已实现的部分以[公共Session本机切片](public-session-mvp.md)为准。接力的表、事件、迁移与保留期限见[存储契约](storage-events.md)的“接力存储与事件”一章。标注约定与终稿相同：【事实】有代码或文档出处（代码位置都指基点 `07a0825` 的实际代码，本工作树的 `src/` 与之相同）；【实测】是原型或评审在本机测得的；【推断】由事实推出；【建议】是 ADR-055 的决定；【推算】是未经实测的数字。
+**接力部分（已接受（ADR-055））**：凡标注“已接受（ADR-055）”的段落，以及“接力：切换、准备与送达”一章，来自[接力系统终稿](../proposals/relay/relay-architecture.md)（[ADR-055](../decisions/0055-relay-and-context-scheduling.md) 的设计正文，下称“终稿”）。它们已于 2026-11-03 验收（ADR-055 accepted），**尚未实现、未真机验证**；实现按终稿第 17 节的切片进行。未标注的段落是 ADR-055 之前的契约原文，其中已实现的部分以[公共Session本机切片](public-session-mvp.md)为准。接力的表、事件、迁移与保留期限见[存储契约](storage-events.md)的“接力存储与事件”一章。标注约定与终稿相同：【事实】有代码或文档出处（代码位置都指基点 `07a0825` 的实际代码，本工作树的 `src/` 与之相同）；【实测】是原型或评审在本机测得的；【推断】由事实推出；【建议】是 ADR-055 的决定；【推算】是未经实测的数字。
 
 ## 模式与入口
 
@@ -10,7 +10,7 @@
 
 切换可以只改 Harness、只改 Provider/模型或同时改；所有选择组成不可变 desiredSelection。是否继承默认模型/工具必须显式记录，不能因为换 Agent 就偷偷恢复它自己的账号。
 
-**proposed（ADR-055）**：执行中切换仍不替换正在运行的 Harness。`POST …/switches` 增加可选的 `mode`（`wait_current` ｜ `cancel_current`），快照里的切换记录同时记下 `mode`、`timing` 与 `acknowledgedUnknown`（R1.1）。切换只改选择；交接单在切换生效之后的第一条内容输入的 Run 里生成，不在切换时生成。
+**已接受（ADR-055）**：执行中切换仍不替换正在运行的 Harness。`POST …/switches` 增加可选的 `mode`（`wait_current` ｜ `cancel_current`），快照里的切换记录同时记下 `mode`、`timing` 与 `acknowledgedUnknown`（R1.1）。切换只改选择；交接单在切换生效之后的第一条内容输入的 Run 里生成，不在切换时生成。
 
 ## 过程建议
 
@@ -22,7 +22,7 @@ requested → validated → waiting_boundary/quiescing → preparing_context →
 4. 固定公共水位并构建 ContextManifest；准备目标绑定，模型变更需要验证原地操作或显式重建。
 5. Session 根以 CAS 更新 epoch 和实际 selection，发布 effective 事实；下一 Turn/Attempt 使用新快照。
 
-**proposed（ADR-055）对第 2–4 步的改写**：
+**已接受（ADR-055）对第 2–4 步的改写**：
 
 - 第 2 步：busy 时默认 `wait_current`，在回合边界生效；［停止并切换］即 `cancel_current`，走停止链（R1.1）。
 - 第 3 步：停止未确认时，unsafe 的 `run.ended` 在同一事务里把待决切换记为 `failed{SWITCH_SOURCE_UNKNOWN}`，等待它的排队 Run 以 `SWITCH_NOT_EFFECTIVE` 结束，切换不再悬挂（R1.1）。
@@ -36,7 +36,7 @@ requested → validated → waiting_boundary/quiescing → preparing_context →
 
 切换受理后不能自动重新运行上一输入。请求生效但响应丢失时按 SwitchId 查询；崩溃恢复先核对 epoch、执行、outbox、绑定和租约，再继续仅无副作用的准备步骤。
 
-**proposed（ADR-055）**：切换生效之后，交接准备失败（渲染、脱敏、字节越界、缺少同意、厂商变化、分类不符、精化窗口过小）时切换不回退：这条消息不派发，relay 状态不变，界面提供重试、改回原来的 Harness 与“只发这条消息”三个选择（R1.4）。崩溃恢复对送达表与绑定接力状态的处理见 R10。
+**已接受（ADR-055）**：切换生效之后，交接准备失败（渲染、脱敏、字节越界、缺少同意、厂商变化、分类不符、精化窗口过小）时切换不回退：这条消息不派发，relay 状态不变，界面提供重试、改回原来的 Harness 与“只发这条消息”三个选择（R1.4）。崩溃恢复对送达表与绑定接力状态的处理见 R10。
 
 ## 竞态
 
@@ -44,9 +44,9 @@ requested → validated → waiting_boundary/quiescing → preparing_context →
 
 每一种交错必须保留唯一实际 selection 和执行权；只有生效事件能改变用户看到的实际执行者。请求态界面不能提前把新 Harness 显示成已经运行。
 
-**proposed（ADR-055）**：接力新增的交错及其裁决见 R11。“已接棒”与分隔线只在送达证据之后出现（INV-21）。
+**已接受（ADR-055）**：接力新增的交错及其裁决见 R11。“已接棒”与分隔线只在送达证据之后出现（INV-21）。
 
-## 接力：切换、准备与送达（proposed（ADR-055））
+## 接力：切换、准备与送达（已接受（ADR-055））
 
 本章是 ADR-055 的设计（【建议】），全部未实现。读法：
 

@@ -49,7 +49,7 @@
 | G025 | 验证交接水位与绑定新鲜度 | G024, G026 | G1 | deferred |
 | G026 | 授予工作区单写租约 | G008, G017 | G1 | in_progress |
 | G027 | 仲裁Attempt状态与唯一终态 | G005, G008, G017 | G1 | planned |
-| G028 | 按持久意图幂等派发执行 | G020, G023, G025, G027 | G1 | in_progress |
+| G028 | 按持久意图幂等派发执行 | G020, G023, G027 | G1 | in_progress |
 | G029 | 实现POSIX进程监督与回收 | G007, G017, G027 | G1 | in_progress |
 | G030 | 实现Windows Job监督 | G007, G017, G027, V006 | G1 | deferred |
 | G031 | 实现ACP v1连接与有界framing | G007, G017, G029 | G1 | in_progress |
@@ -68,19 +68,19 @@
 | G044 | 提供持久事件游标与有界SSE | G019, G043, G009 | G1 | planned |
 | G045 | 提交idle切换并准备目标绑定 | G023, G025, G033, G034, G043 | G1 | deferred |
 | G046 | 协调busy切换的静止交接 | G045, G041, G026 | G1 | deferred |
-| G047 | 切换Provider模型并记录接续等级 | G045, G035 | G1 | in_progress |
-| G048 | 重启核对执行与绑定归属 | G028, G043, G046, G008, G029 | G1 | planned |
-| G049 | 关闭公共Session并收敛资源 | G041, G046, G020 | G1 | planned |
-| G050 | 接通Session类HTTP应用入口 | G019, G045, G046, G047, G049, G009, C009 | G1 | in_progress |
+| G047 | 切换Provider模型并记录接续等级 | G035 | G1 | in_progress |
+| G048 | 重启核对执行与绑定归属 | G028, G043, G008, G029 | G1 | planned |
+| G049 | 关闭公共Session并收敛资源 | G041, G020 | G1 | planned |
+| G050 | 接通Session类HTTP应用入口 | G019, G047, G049, G009, C009 | G1 | in_progress |
 | G051 | 接通执行控制与权限HTTP入口 | G043, G044, G039, G041, G009, C009 | G1 | planned |
 | G052 | 发布契约生成客户端与流重连 | G050, G051, G061, G062, C009 | G1 | planned |
 | G053 | 建立CLI对话命令入口 | G052, G059 | G1 | planned |
 | G054 | 建立薄Chat交互视图 | G052, G059 | G1 | in_progress |
 | G055 | 建立路由质量基线与保留集 | G059, V007 | G1 | planned |
 | G056 | 执行完整切换故障与容量矩阵 | G059, G055 | G1 | planned |
-| G057 | 提供有界脱敏诊断与证据导出 | G043, G046, G048 | G1 | planned |
+| G057 | 提供有界脱敏诊断与证据导出 | G043, G048 | G1 | planned |
 | G058 | 接入不可跳过的CI与发行门禁 | G056, G060, V008, G063 | G1 | planned |
-| G059 | 组合单体与正式运行入口 | G001, G014, G015, G028, G030, G033, G034, G043, G044, G046, G047, G048, G049, G050, G051, G052, G057, G061, G062 | G1 | in_progress |
+| G059 | 组合单体与正式运行入口 | G001, G014, G015, G028, G030, G033, G034, G043, G044, G047, G048, G049, G050, G051, G052, G057, G061, G062 | G1 | in_progress |
 | G060 | 运行真实协议与平台兼容验收 | G059 | G1 | in_progress |
 | G061 | 接通Harness管理HTTP入口 | G009, G011, G012, G013, G014, G015, C009 | G1 | in_progress |
 | G062 | 接通Provider管理HTTP入口 | G009, G010, G016, C009 | G1 | planned |
@@ -363,7 +363,7 @@
 
 ## C006 冻结可交接上下文契约
 
-范围：ADR-055 改写（终稿第 17 节），保留为接力设计的 G0 契约任务：`contracts/context.schema.json` 改写为交接单清单 `RelayPacket` 与送达行 `DeliveryRecord` 的 JSON Schema（按终稿第 4 节），`contracts/examples/c006.json` 改为 S1 样例的清单与送达行，`docs/decisions/0006-context-handoff.md` 加“由 ADR-055 取代”的状态行；新增 `docs/decisions/0055-relay-and-context-scheduling.md` 与 `docs/contracts/relay.md`，并接管目前无主的 `docs/contracts/context-transfer.md`、`docs/contracts/switching.md`、`docs/contracts/storage-events.md`、`docs/contracts/public-api.md`、`docs/contracts/security.md` 与 `docs/domain/invariants.md`（按终稿更新，状态 proposed）；G066 依赖本任务。
+范围：ADR-055 改写（终稿第 17 节），保留为接力设计的 G0 契约任务：`contracts/context.schema.json` 改写为交接单清单 `RelayPacket` 与送达行 `DeliveryRecord` 的 JSON Schema（按终稿第 4 节），`contracts/examples/c006.json` 改为 S1 样例的清单与送达行，`docs/decisions/0006-context-handoff.md` 加“由 ADR-055 取代”的状态行；新增 `docs/decisions/0055-relay-and-context-scheduling.md` 与 `docs/contracts/relay.md`，并接管目前无主的 `docs/contracts/context-transfer.md`、`docs/contracts/switching.md`、`docs/contracts/storage-events.md`、`docs/contracts/public-api.md`、`docs/contracts/security.md` 与 `docs/domain/invariants.md`（按终稿更新，2026-11-03 随 ADR-055 接受）；G066 依赖本任务。
 
 依赖：C001, V004。需求：R08, R09, R19。
 
@@ -388,7 +388,7 @@
 
 场景：C006-C01, C006-C02, C006-C03。
 
-禁止范围：不修改其他任务所有权文件；契约冻结不表示应用实现或真实链路验收；状态保持 proposed，用户验收之前不进入实现。
+禁止范围：不修改其他任务所有权文件；契约冻结不表示应用实现或真实链路验收；契约随 ADR-055 于 2026-11-03 接受；应用实现与真实验收由 G066–G075 承担。
 
 ## C007 冻结路由决策与执行计划契约
 
@@ -1117,7 +1117,7 @@
 
 范围：按持久意图幂等派发执行；仅交付所列文件与对应行为。
 
-依赖：G020, G023, G025, G027。需求：R07, R11, R14。
+依赖：G020, G023, G027。需求：R07, R11, R14。
 
 唯一交付物：
 - src/contexts/execution/application/dispatch.ts
@@ -1543,7 +1543,7 @@
 
 范围：切换Provider模型并记录接续等级；仅交付所列文件与对应行为。
 
-依赖：G045, G035。需求：R09, R10。
+依赖：G035。需求：R09, R10。
 
 唯一交付物：
 - src/contexts/interaction/application/change-model.ts
@@ -1565,7 +1565,7 @@
 
 范围：重启核对执行与绑定归属；仅交付所列文件与对应行为。
 
-依赖：G028, G043, G046, G008, G029。需求：R14, R20。
+依赖：G028, G043, G008, G029。需求：R14, R20。
 
 唯一交付物：
 - src/contexts/execution/application/reconcile.ts
@@ -1586,7 +1586,7 @@
 
 范围：关闭公共Session并收敛资源；仅交付所列文件与对应行为。
 
-依赖：G041, G046, G020。需求：R02, R13, R14。
+依赖：G041, G020。需求：R02, R13, R14。
 
 唯一交付物：
 - src/contexts/interaction/application/close-session.ts
@@ -1605,7 +1605,7 @@
 
 范围：接通Session类HTTP应用入口；仅交付所列文件与对应行为。
 
-依赖：G019, G045, G046, G047, G049, G009, C009。需求：R01, R07, R09, R19, R22。
+依赖：G019, G047, G049, G009, C009。需求：R01, R07, R09, R19, R22。
 
 唯一交付物：
 - src/infrastructure/http/session-routes.ts
@@ -1838,7 +1838,7 @@
 
 范围：提供有界脱敏诊断与证据导出；仅交付所列文件与对应行为。
 
-依赖：G043, G046, G048。需求：R16, R17, R26。
+依赖：G043, G048。需求：R16, R17, R26。
 
 唯一交付物：
 - src/infrastructure/observability/diagnostics.ts
@@ -1881,7 +1881,7 @@
 
 范围：组合单体与正式运行入口；仅交付所列文件与对应行为。
 
-依赖：G001, G014, G015, G028, G030, G033, G034, G043, G044, G046, G047, G048, G049, G050, G051, G052, G057, G061, G062。需求：R01, R11, R22, R25。
+依赖：G001, G014, G015, G028, G030, G033, G034, G043, G044, G047, G048, G049, G050, G051, G052, G057, G061, G062。需求：R01, R11, R22, R25。
 
 唯一交付物：
 - src/bootstrap/main.ts
