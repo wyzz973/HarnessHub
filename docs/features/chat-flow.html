@@ -1,0 +1,305 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: MIT -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="HarnessHub 的交互式链路说明：以 Chat 维持连续上下文，独立选择 Harness Agent 与 Provider/模型，理解执行、工具、切换和证据归属。">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>HarnessHub · 从一条消息到一次交接</title>
+  <style>
+    :root{color-scheme:light;--paper:#f5f4ef;--surface:#fffefa;--ink:#202b26;--muted:#58665d;--line:#d9ded4;--green:#186648;--green-soft:#e7eee4;--orange:#a64a28;--orange-soft:#f6e9df;--blue:#365e7b;--blue-soft:#e7edf2;--mono:"SFMono-Regular",Consolas,"Liberation Mono",monospace;--serif:"Iowan Old Style","Palatino Linotype","Songti SC","STSong",serif;--sans:"Avenir Next","PingFang SC","Microsoft YaHei",sans-serif}
+    *{box-sizing:border-box}[hidden]{display:none!important}html{scroll-behavior:smooth;scroll-padding-top:34px}body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.8}button,input,select{font:inherit}button,select,a{touch-action:manipulation}a{color:var(--green);text-underline-offset:4px}button{cursor:pointer}button:disabled{cursor:default;opacity:.45}button:focus-visible,a:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid var(--green);outline-offset:4px}h1,h2,h3,p{margin:0}h1,h2{font-weight:500;letter-spacing:-.04em}h3{font-size:17px;font-weight:600}small{font-size:12px}code,.mono{font-family:var(--mono)}.skip{position:absolute;left:16px;top:-80px;background:var(--ink);color:white;padding:10px 18px;z-index:10}.skip:focus{top:16px}
+    .top{height:76px;max-width:1440px;padding:0 44px;margin:auto;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);gap:20px}.wordmark{font-size:21px;font-weight:600;letter-spacing:-.06em}.wordmark span{display:inline-block;width:12px;height:12px;background:var(--green);margin-right:10px;transform:rotate(45deg)}.top-note{font-family:var(--mono);font-size:11px;letter-spacing:.12em;color:var(--muted)}.top-right{font-size:12px;color:var(--muted);text-align:right}.layout{max-width:1440px;margin:auto;display:grid;grid-template-columns:212px minmax(0,1fr);padding:0 44px;gap:46px}.rail{position:sticky;top:32px;align-self:start;padding-top:58px}.rail-title{font-size:10px;letter-spacing:.17em;color:var(--muted);margin-bottom:18px;font-family:var(--mono)}.rail a{display:block;text-decoration:none;color:var(--muted);font-size:13px;padding:9px 0}.rail a:hover{color:var(--green)}.rail a span{font-family:var(--mono);font-size:10px;margin-right:12px;color:var(--green)}.rail-bottom{border-top:1px solid var(--line);margin-top:30px;padding-top:18px;font-size:12px;color:var(--muted)}main{min-width:0}.hero{padding:58px 0 48px;border-bottom:1px solid var(--line)}.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.14em;color:var(--green);display:flex;align-items:center;gap:10px;margin-bottom:20px}.eyebrow:before{content:"";width:25px;height:1px;background:var(--green)}h1{font-size:clamp(38px,4.9vw,68px);line-height:1.15;font-family:var(--serif)}h1 em{font-style:normal;color:var(--green)}.hero-copy{max-width:690px;font-size:16px;color:var(--muted);margin:23px 0 24px}.hero-copy strong{font-weight:600;color:var(--ink)}.legend{display:flex;flex-wrap:wrap;gap:8px 20px;align-items:center}.badge{font-size:11px;padding:3px 9px;border-radius:3px;display:inline-block;line-height:1.7;font-weight:600;white-space:nowrap}.badge.target{color:var(--green);background:var(--green-soft)}.badge.current{color:var(--blue);background:var(--blue-soft)}.badge.pending{color:var(--orange);background:var(--orange-soft)}.legend-item{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted)}section{padding:43px 0;border-bottom:1px solid var(--line)}.section-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:23px}.section-num{font-family:var(--mono);font-size:11px;color:var(--green);letter-spacing:.1em;margin-bottom:7px}h2{font-family:var(--serif);font-size:32px;line-height:1.3}.intro{color:var(--muted);max-width:760px;margin-top:11px;font-size:14px}.section-head>.badge{margin-top:24px}.caption{font-size:12px;color:var(--muted);margin-top:14px}.section-link{font-size:12px}.fine{font-size:12px;color:var(--muted)}
+    .hub-boundary{border:1px solid var(--line);background:var(--surface);padding:19px 22px 23px}.boundary-label{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;color:var(--muted);font-family:var(--mono);font-size:10px;letter-spacing:.05em;margin-bottom:22px}.chain{display:grid;grid-template-columns:1fr 17px 1.15fr 17px 1.15fr 17px 1.15fr 17px 1.15fr;align-items:center;gap:3px}.chain-node{border:1px solid var(--line);background:transparent;text-align:left;color:var(--ink);padding:16px 10px;min-height:132px;width:100%;transition:background .18s,border-color .18s;overflow-wrap:anywhere}.chain-node:hover{background:var(--green-soft)}.chain-node[aria-pressed="true"]{border-color:var(--green);background:var(--green-soft)}.chain-node .node-kicker{font-size:10px;font-family:var(--mono);display:block;color:var(--muted);margin-bottom:6px}.chain-node strong{font-size:16px;font-weight:600;display:block;line-height:1.5}.chain-node .node-sub{display:block;font-size:11px;line-height:1.7;margin-top:7px;color:var(--muted)}.chain-arrow{text-align:center;color:var(--green);font-size:18px}.node-detail{display:grid;grid-template-columns:150px minmax(0,1fr);gap:15px;margin-top:22px;border-top:1px solid var(--line);padding-top:17px;font-size:13px;min-height:90px}.node-detail h3{font-size:14px}.node-detail p{color:var(--muted)}.loop-note{display:flex;align-items:flex-start;gap:11px;border-left:3px solid var(--green);padding:12px 16px;background:var(--green-soft);margin-top:19px;font-size:13px}.loop-note strong{white-space:nowrap}.resources{display:flex;gap:6px 16px;flex-wrap:wrap;margin-top:18px;font-size:12px;color:var(--muted)}.resources span:before{content:"+";color:var(--green);font-family:var(--mono);padding-right:6px}.route-pair{display:grid;grid-template-columns:1fr 1fr;gap:30px;margin-top:24px}.route-line{border-top:1px solid var(--line);padding-top:13px;font-size:13px}.route-line strong{display:block;font-size:14px;margin-bottom:3px}.route-line p{color:var(--muted)}
+    .walkthrough{display:grid;grid-template-columns:210px minmax(0,1fr);border:1px solid var(--line);background:var(--surface)}.step-list{padding:13px 0;border-right:1px solid var(--line)}.step-tab{width:100%;padding:12px 14px;background:transparent;border:0;text-align:left;color:var(--muted);display:flex;gap:11px;align-items:center;font-size:13px;line-height:1.6}.step-tab .index{font-family:var(--mono);font-size:11px;color:var(--muted)}.step-tab.active{color:var(--green);background:var(--green-soft);font-weight:600}.step-tab.active .index{color:var(--green)}.step-body{padding:27px 28px;min-width:0;min-height:365px}.step-meta{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:16px}.step-counter{font-family:var(--mono);font-size:11px;color:var(--muted)}.step-body h3{font-size:23px;font-family:var(--serif);font-weight:500;line-height:1.4;margin-bottom:11px}.step-desc{font-size:14px;color:var(--muted);min-height:74px}.io{display:grid;grid-template-columns:1fr 1fr;gap:22px;border-top:1px solid var(--line);margin-top:20px;padding-top:17px}.io-label{font-family:var(--mono);font-size:10px;letter-spacing:.1em;color:var(--green);margin-bottom:6px}.io-text{font-size:13px}.step-note{margin-top:18px;font-size:12px;color:var(--muted);border-left:2px solid var(--line);padding-left:12px}.walk-controls{display:flex;gap:9px;margin-top:23px;align-items:center}.button{border:1px solid var(--line);border-radius:3px;background:var(--surface);color:var(--ink);padding:8px 14px;font-size:12px;min-height:40px}.button:hover:not(:disabled){border-color:var(--green);color:var(--green)}.button.primary{background:var(--green);border-color:var(--green);color:#fff}.button.primary:hover:not(:disabled){background:#125038;color:#fff}.permission-demo{margin-top:16px;padding:13px 0;border-top:1px solid var(--line)}.permission-title{font-size:12px;margin-bottom:9px}.permission-buttons{display:flex;flex-wrap:wrap;gap:8px}.permission-result{font-size:12px;color:var(--green);margin-top:9px;min-height:22px}.loop-path{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-top:17px;font-size:12px;color:var(--muted)}.loop-path strong{color:var(--green);font-weight:600}
+    .continuity{display:flex;gap:10px 22px;justify-content:space-between;flex-wrap:wrap;border-top:2px solid var(--ink);border-bottom:1px solid var(--line);padding:14px 0;margin-bottom:22px}.continuity-id{font-family:var(--mono);font-size:13px;color:var(--green)}.continuity-details{font-size:12px;color:var(--muted)}.switch-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:15px}.field label{display:block;font-size:12px;color:var(--muted);margin-bottom:7px}.field select{width:100%;border:1px solid var(--line);border-radius:3px;background:var(--surface);padding:10px 34px 10px 12px;color:var(--ink);min-height:44px}.switch-action{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:16px}.switch-status{font-size:12px;color:var(--muted);min-height:22px}.switch-explain{font-size:13px;color:var(--muted);margin-top:20px}.timeline{list-style:none;padding:0;margin:24px 0 0}.timeline li{display:grid;grid-template-columns:65px minmax(0,1fr) 120px;gap:16px;border-top:1px solid var(--line);padding:14px 0;align-items:center}.round-num{font-family:var(--mono);font-size:11px;color:var(--muted)}.round-selection{font-size:14px;font-weight:600}.round-purpose{font-size:12px;color:var(--muted);margin-top:3px}.change-type{font-size:11px;color:var(--green);text-align:right}.timeline .new-round{animation:arrive .3s ease-out}.switch-foot{display:grid;grid-template-columns:1fr 1fr;gap:28px;margin-top:23px}.switch-foot h3{font-size:14px;margin-bottom:7px}.switch-foot p{font-size:13px;color:var(--muted)}.pending-rule{border-left:3px solid var(--orange);background:var(--orange-soft);padding:15px 18px;margin-top:24px;font-size:13px}.pending-rule strong{color:var(--orange)}.pending-rule p{margin-top:5px}.handoff-steps{display:flex;gap:8px 11px;align-items:center;flex-wrap:wrap;margin-top:12px;font-size:12px}.handoff-steps span{font-family:var(--mono);color:var(--orange)}
+    .ownership{display:grid;grid-template-columns:1.2fr .8fr;gap:32px}.owner-main{border-top:2px solid var(--green);padding-top:18px}.owner-private{border-top:2px solid var(--line);padding-top:18px}.owner-title{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:15px}.owner-title h3{font-size:18px;font-family:var(--serif);font-weight:500}.owner-list{list-style:none;padding:0;margin:0}.owner-list li{padding:9px 0;border-bottom:1px solid var(--line);font-size:13px;display:flex;gap:12px}.owner-list li span{color:var(--muted);flex:1}.owner-list li strong{font-weight:500;min-width:95px}.bridge{margin-top:24px;padding:17px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);font-size:13px}.bridge strong{color:var(--green)}.bridge p{margin-top:5px;color:var(--muted)}.settlement{display:grid;grid-template-columns:repeat(3,1fr);gap:25px;margin-top:26px}.settlement article{border-top:1px solid var(--line);padding-top:13px}.settlement .small-index{font-family:var(--mono);color:var(--green);font-size:11px}.settlement h3{font-size:14px;margin:7px 0 5px}.settlement p{font-size:12px;color:var(--muted)}
+    .comparison-wrap{overflow-x:auto}.comparison{width:100%;border-collapse:collapse;text-align:left;font-size:13px}.comparison th{font-size:11px;color:var(--muted);font-weight:500;padding:11px 10px;border-bottom:2px solid var(--ink)}.comparison td{vertical-align:top;padding:15px 10px;border-bottom:1px solid var(--line)}.comparison td:first-child{width:19%;font-weight:600}.comparison td:nth-child(2){width:35%}.comparison td:nth-child(3){width:46%;color:var(--muted)}.comparison .badge{margin-bottom:6px}.questions{margin-top:28px}.questions-title{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px}.questions-title h3{font-size:17px}.questions details{border-bottom:1px solid var(--line);padding:13px 0}.questions summary{cursor:pointer;font-size:14px;list-style-position:outside;margin-left:18px;padding-left:6px}.questions details p{font-size:13px;color:var(--muted);padding:9px 0 0 24px;max-width:760px}.closing{padding:34px 0 44px;display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap;color:var(--muted);font-size:12px}.closing strong{font-weight:500;color:var(--ink)}.source-links{display:flex;gap:16px;flex-wrap:wrap}.footer-line{font-family:var(--mono);font-size:10px;letter-spacing:.1em;margin-top:8px}
+    @keyframes arrive{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:translateY(0)}}
+    @media(min-width:1450px){.layout{gap:65px}.chain-node{padding:19px 13px}}
+    @media(max-width:1100px){.top{padding:0 28px}.layout{padding:0 28px;grid-template-columns:158px minmax(0,1fr);gap:28px}.chain{grid-template-columns:1fr;gap:5px}.chain-node{min-height:0;display:grid;grid-template-columns:70px 1fr 1.4fr;align-items:center;gap:10px;padding:13px 15px}.chain-node .node-kicker,.chain-node .node-sub{margin:0}.chain-arrow{transform:rotate(90deg);font-size:17px;line-height:1.1}.node-detail{grid-template-columns:120px minmax(0,1fr)}.walkthrough{grid-template-columns:175px minmax(0,1fr)}.step-body{padding:23px}.timeline li{grid-template-columns:55px minmax(0,1fr) 90px;gap:10px}.ownership{gap:24px}.comparison td:first-child{width:23%}}
+    @media(max-width:760px){.top{height:64px;padding:0 20px}.top-note{display:none}.top-right{font-size:10px}.layout{display:block;padding:0 20px}.rail{position:static;padding:15px 0 0}.rail-title,.rail-bottom{display:none}.rail nav{display:flex;gap:7px 17px;flex-wrap:wrap}.rail a{font-size:11px;padding:3px 0}.rail a span{margin-right:5px;font-size:9px}.hero{padding:36px 0}.hero-copy{font-size:14px}.eyebrow{font-size:9px}h1{font-size:47px}.section-head{gap:10px}h2{font-size:29px}.section-head>.badge{margin-top:20px}.hub-boundary{padding:16px}.node-detail{display:block;min-height:0}.node-detail h3{margin-bottom:7px}.route-pair{gap:20px}.walkthrough{display:block}.step-list{border-right:0;border-bottom:1px solid var(--line);display:grid;grid-template-columns:1fr 1fr;padding:8px}.step-tab{padding:9px 8px;font-size:12px}.step-body{padding:22px;min-height:0}.step-desc{min-height:0}.switch-grid{grid-template-columns:1fr}.field select{font-size:16px}.timeline li{grid-template-columns:47px minmax(0,1fr);gap:9px}.change-type{grid-column:2;text-align:left;margin-top:-4px}.ownership{grid-template-columns:1fr;gap:26px}.settlement{gap:16px}.settlement p{font-size:12px}.comparison th,.comparison td{padding-left:6px;padding-right:6px;font-size:12px}.comparison td:first-child{width:24%}.comparison .badge{font-size:10px}.loop-note{display:block}.loop-note strong{display:block;margin-bottom:4px}}
+    @media(max-width:390px){.layout{padding:0 16px}.top{padding:0 16px}.wordmark{font-size:18px}h1{font-size:40px}.section-head{display:block}.section-head>.badge{margin-top:11px}.chain-node{grid-template-columns:58px minmax(0,1fr)}.chain-node .node-sub{grid-column:2}.chain-node strong{font-size:15px}.boundary-label{font-size:9px}.route-pair,.switch-foot,.io,.settlement{grid-template-columns:1fr}.route-pair,.switch-foot{gap:18px}.step-body{padding:18px}.legend{gap:8px 13px}.comparison th,.comparison td{overflow-wrap:anywhere}.continuity{gap:5px}}
+    @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*:before,*:after{animation:none!important;transition:none!important}}
+    @media print{.rail,.walk-controls,.switch-action,.permission-buttons{display:none}.layout{display:block;padding:0 16px}.top{padding:0 16px}.hero{padding-top:25px}section{break-inside:avoid}.chain{grid-template-columns:1fr}body{background:white}.step-list{display:none}.walkthrough{display:block}}
+  </style>
+</head>
+<body>
+  <a class="skip" href="#main">跳到主要内容</a>
+  <header class="top">
+    <div class="wordmark"><span aria-hidden="true"></span>HarnessHub</div>
+    <div class="top-note">FLOW ATLAS / PRODUCT LOGIC</div>
+    <div class="top-right">2026.10.08<br>交互式链路说明 · 本地离线演示</div>
+  </header>
+  <div class="layout">
+    <aside class="rail">
+      <div class="rail-title">READ THE SYSTEM</div>
+      <nav aria-label="页面目录">
+        <a href="#overview"><span>01</span>整体关系</a>
+        <a href="#execution"><span>02</span>一轮怎样执行</a>
+        <a href="#switching"><span>03</span>切换后怎样继续</a>
+        <a href="#ownership"><span>04</span>上下文与结果归属</a>
+        <a href="#reality"><span>05</span>现状与待设计</a>
+      </nav>
+      <div class="rail-bottom">同一个 Chat<br>两个独立选择<br>一条完整执行链路</div>
+    </aside>
+    <main id="main">
+      <div class="hero">
+        <div class="eyebrow">ONE CHAT. SWITCHABLE EXECUTION.</div>
+        <h1>一个 Chat，<br><em>多种执行可能。</em></h1>
+        <p class="hero-copy">对话与工作持续留在 HarnessHub。<strong>Harness Agent 决定怎样执行，Provider／模型提供推理。</strong>用户在同一个 Chat 内更换两者，继续推进同一项工作。</p>
+        <div class="legend" aria-label="页面状态说明">
+          <span class="legend-item"><span class="badge target">已确认目标</span>产品方向</span>
+          <span class="legend-item"><span class="badge current">当前基础</span>已有实现，覆盖见文档</span>
+          <span class="legend-item"><span class="badge pending">待设计</span>机制尚未定案</span>
+        </div>
+        <p class="caption">这是程序逻辑的说明与模拟；所有选择和记录均为示意，不启动 Agent、不调用模型，也不修改用户配置。</p>
+      </div>
+
+      <section id="overview" aria-labelledby="overview-title">
+        <div class="section-head">
+          <div><div class="section-num">01 / THE WHOLE CHAIN</div><h2 id="overview-title">同一上下文，两个可变选择</h2><p class="intro">点击一个环节，查看它负责什么。交互入口和程序接口使用相同的目标链路。</p></div>
+          <span class="badge target">已确认目标链路</span>
+        </div>
+        <div class="hub-boundary">
+          <div class="boundary-label"><span>用户 → HARNESS → MODEL PROVIDER</span><span>公共上下文与执行归属由 HarnessHub 管理</span></div>
+          <div class="chain" role="group" aria-label="整体链路：用户，Chat，Harness Agent，共享模型网关，Provider 与模型">
+            <button type="button" class="chain-node" data-node="user" aria-pressed="false"><span class="node-kicker">INPUT</span><strong>用户</strong><span class="node-sub">界面交互<br>或上层应用</span></button>
+            <span class="chain-arrow" aria-hidden="true">→</span>
+            <button type="button" class="chain-node" data-node="chat" aria-pressed="true"><span class="node-kicker">CONTINUITY</span><strong>Chat</strong><span class="node-sub">对话 · 目标<br>进展 · 结果</span></button>
+            <span class="chain-arrow" aria-hidden="true">→</span>
+            <button type="button" class="chain-node" data-node="agent" aria-pressed="false"><span class="node-kicker">EXECUTION</span><strong>Harness Agent</strong><span class="node-sub">规划与工具调用<br>本段执行者</span></button>
+            <span class="chain-arrow" aria-hidden="true">→</span>
+            <button type="button" class="chain-node" data-node="gateway" aria-pressed="false"><span class="node-kicker">MODEL ACCESS</span><strong>模型网关</strong><span class="node-sub">凭据 · 协议<br>路由 · 调用账本</span></button>
+            <span class="chain-arrow" aria-hidden="true">→</span>
+            <button type="button" class="chain-node" data-node="provider" aria-pressed="false"><span class="node-kicker">INFERENCE</span><strong>Provider／模型</strong><span class="node-sub">本次选择的上游<br>与具体模型</span></button>
+          </div>
+          <div class="node-detail" id="node-detail" aria-live="polite">
+            <h3 id="node-detail-title">Chat · 连续性的主体</h3>
+            <p id="node-detail-copy">HarnessHub 保存公共对话、工作目标、进展与成果。换 Agent 或 Provider 后仍留在同一个 Chat；公共 Chat 与原生 Session 的映射尚待设计。</p>
+          </div>
+        </div>
+        <div class="loop-note"><strong>执行过程有一个循环</strong><span>模型提出工具调用 → Harness Agent 执行工具 → 工具结果交回模型 → 继续推理。模型服务与工具执行各有职责。</span></div>
+        <div class="resources" aria-label="共同准备的资源"><span>Agent 目录与能力</span><span>Provider 与凭据</span><span>Library 指令 / Skills / MCP</span><span>工作区与权限</span></div>
+        <div class="route-pair">
+          <div class="route-line"><strong>个人开发者 · 从界面进入</strong><p>在 Chat 里选择 Agent、模型和工具，发送消息、处理权限、切换并查看结果。</p></div>
+          <div class="route-line"><strong>工具与平台开发者 · 从程序进入</strong><p>经 API／SDK 使用相同语义。统一 Chat API 和完整执行 SDK 是目标，当前尚未具备。</p></div>
+        </div>
+      </section>
+
+      <section id="execution" aria-labelledby="execution-title">
+        <div class="section-head">
+          <div><div class="section-num">02 / ONE EXECUTION</div><h2 id="execution-title">一条消息，怎样变成一次执行</h2><p class="intro">逐步走完一个示意回合。一次输入可以触发多次模型调用和工具调用。</p></div>
+          <span class="badge target">目标链路分解</span>
+        </div>
+        <div class="walkthrough">
+          <div class="step-list" role="group" aria-label="选择执行环节" id="step-list">
+            <button type="button" class="step-tab active" data-step="0" aria-current="step"><span class="index">01</span>接收消息与选择</button>
+            <button type="button" class="step-tab" data-step="1"><span class="index">02</span>准备可交接上下文</button>
+            <button type="button" class="step-tab" data-step="2"><span class="index">03</span>准备 Agent 执行环境</button>
+            <button type="button" class="step-tab" data-step="3"><span class="index">04</span>调用所选模型</button>
+            <button type="button" class="step-tab" data-step="4"><span class="index">05</span>工具与权限往返</button>
+            <button type="button" class="step-tab" data-step="5"><span class="index">06</span>继续推理或结束</button>
+            <button type="button" class="step-tab" data-step="6"><span class="index">07</span>结算与返回结果</button>
+          </div>
+          <div class="step-body">
+            <div id="step-content" aria-live="polite" aria-atomic="true">
+              <div class="step-meta"><span class="step-counter" id="step-counter">STEP 01 / 07</span><span class="badge target" id="step-state">已确认目标</span></div>
+              <h3 id="step-title">接收消息与本次执行选择</h3>
+              <p class="step-desc" id="step-desc">用户继续当前 Chat，给出本次输入，并选定 Harness Agent 与 Provider／模型。Chat 的身份保持不变；实际选择应明确显示和记录。</p>
+              <div class="io"><div><div class="io-label">INPUT / 输入</div><div class="io-text" id="step-input">当前 Chat、用户消息、Agent 与模型选择</div></div><div><div class="io-label">OUTPUT / 交给下一环节</div><div class="io-text" id="step-output">关联同一 Chat 的本段执行意图</div></div></div>
+              <p class="step-note" id="step-note">当前已有 Session/Run 接收与持久化；跨 Agent 的公共 Chat 对象尚未实现。</p>
+            </div>
+            <div class="permission-demo" id="permission-demo" hidden>
+              <div class="permission-title">示意：Agent 请求修改工作区文件</div>
+              <div class="permission-buttons" role="group" aria-label="演示权限决定">
+                <button type="button" class="button" data-permission="allow" aria-pressed="false">允许这次操作（演示）</button>
+                <button type="button" class="button" data-permission="deny" aria-pressed="false">拒绝这次操作（演示）</button>
+              </div>
+              <p class="permission-result" id="permission-result" aria-live="polite">尚未作决定；本页不会实际修改文件。</p>
+            </div>
+            <div class="loop-path" id="loop-path" hidden><strong>04 模型</strong><span aria-hidden="true">→</span><span>05 工具</span><span aria-hidden="true">→</span><span>06 工具结果回传</span><span aria-hidden="true">↺</span><strong>04 再次推理</strong></div>
+            <div class="walk-controls"><button type="button" class="button" id="prev-step" disabled>上一步</button><button type="button" class="button primary" id="next-step">下一步</button><span class="fine">点击左侧环节也可直接查看</span></div>
+          </div>
+        </div>
+        <p class="caption">这里描述职责流转，尚未规定新 Chat／执行轮次怎样映射到现有 Session／Run，也不把概念演示计为真实执行证据。</p>
+      </section>
+
+      <section id="switching" aria-labelledby="switching-title">
+        <div class="section-head">
+          <div><div class="section-num">03 / CONTINUE WITH SOMEONE ELSE</div><h2 id="switching-title">换执行者，或换模型资源</h2><p class="intro">试着只换 Agent、只换 Provider，或同时更换。每次添加的是本页的示意记录。</p></div>
+          <span class="badge target">独立切换的目标</span>
+        </div>
+        <div class="continuity"><span class="continuity-id">CHAT · demo-01</span><span class="continuity-details">目标：完善项目的登录流程　/　工作区：同一示意项目</span></div>
+        <div class="switch-grid">
+          <div class="field"><label for="agent-select">下一段 Harness Agent</label><select id="agent-select"><option value="Claude Code">Claude Code（示例）</option><option value="Codex">Codex（示例）</option><option value="OpenCode">OpenCode（示例）</option></select></div>
+          <div class="field"><label for="provider-select">下一段 Provider</label><select id="provider-select"><option value="Provider X">Provider X（示例）</option><option value="Provider Y">Provider Y（示例）</option><option value="Provider Z">Provider Z（示例）</option></select></div>
+          <div class="field"><label for="model-select">该 Provider 的模型</label><select id="model-select"><option value="model-x-1">model-x-1</option><option value="model-x-2">model-x-2</option></select></div>
+        </div>
+        <div class="switch-action"><button type="button" class="button primary" id="apply-selection">添加下一段演示</button><button type="button" class="button" id="reset-demo">重置演示</button><span class="switch-status" id="switch-status" aria-live="polite">从 Claude Code ＋ Provider X / model-x-1 开始。</span></div>
+        <p class="switch-explain">选择相互独立，实际生效仍要校验 Agent 的协议、工具、上下文与模型切换能力。本页不证明这些示例组合已经通过兼容性验收。</p>
+        <ol class="timeline" id="execution-timeline" aria-label="同一 Chat 的示意执行历史">
+          <li><span class="round-num">第 01 段</span><div><div class="round-selection">Claude Code ＋ Provider X / model-x-1</div><div class="round-purpose">分析登录流程 · 示例记录，尚无真实执行</div></div><span class="change-type">开始当前 Chat</span></li>
+        </ol>
+        <p class="fine" style="margin-top:10px">最多保留 6 段演示记录；Chat 身份、目标与工作区始终不变。</p>
+        <div class="switch-foot">
+          <div><h3>保持的内容</h3><p>Chat 身份、公共对话、目标与进展、已有工作文件、产物和执行证据。新执行者从可交接上下文继续工作。</p></div>
+          <div><h3>允许变化的内容</h3><p>Harness Agent、Provider、具体模型，以及显式选择的工具配置。每次选择和实际执行结果需要分别记录。</p></div>
+        </div>
+        <div class="pending-rule"><strong>执行中也能提出切换；怎样生效仍待设计。</strong><p>当前模型调用、正在运行的工具、待决权限与进程资源需要明确处理。工作区里已经发生的操作仍然存在，换 Agent 不会自动撤销它们。</p><div class="handoff-steps" aria-label="待设计的交接责任"><span>提出切换</span><b aria-hidden="true">→</b><span>明确停止或结算边界</span><b aria-hidden="true">→</b><span>准备交接上下文</span><b aria-hidden="true">→</b><span>下一段执行</span></div><p class="fine">这是交接责任示意。等待、取消、超时、清理未确认时的具体状态机尚未定案。</p></div>
+      </section>
+
+      <section id="ownership" aria-labelledby="ownership-title">
+        <div class="section-head">
+          <div><div class="section-num">04 / WHO OWNS WHAT</div><h2 id="ownership-title">连续性来自公共上下文</h2><p class="intro">HarnessHub 组织能交接的工作记录；不同 Agent 的内部会话仍有各自的身份与能力边界。</p></div>
+        </div>
+        <div class="ownership">
+          <article class="owner-main"><div class="owner-title"><h3>HarnessHub 的公共工作记录</h3><span class="badge target">目标中的连续性</span></div><ul class="owner-list"><li><strong>对话与目标</strong><span>用户输入、公共回复、正在推进的工作目标</span></li><li><strong>进展与决定</strong><span>已完成事项、待办、已确认的选择与约束</span></li><li><strong>工作成果</strong><span>关联工作区、已修改文件、登记产物及完整性信息</span></li><li><strong>执行记录</strong><span>每段 Agent、模型、工具、权限、费用和结果归属</span></li></ul></article>
+          <article class="owner-private"><div class="owner-title"><h3>Agent 的原生会话</h3><span class="badge current">现有基础</span></div><ul class="owner-list"><li><strong>后端身份</strong><span>原生 Session ID 与可验证的恢复材料</span></li><li><strong>内部状态</strong><span>Agent 自己的上下文表示与执行状态</span></li><li><strong>运行资源</strong><span>Worker、引擎和工具进程的实际归属</span></li></ul></article>
+        </div>
+        <div class="bridge"><strong>交接时要定义：把哪些公共上下文，怎样交给下一个 Agent。</strong><p>候选材料包括相关对话、进展摘要、工作区状态、已有产物和待办。是否复用或新建原生 Session、如何补入其他 Agent 已完成的工作，均需设计和验证。公共上下文接续不等于原生会话无损迁移。</p></div>
+        <div class="settlement">
+          <article><span class="small-index">EVIDENCE 01</span><h3>执行是否正常结束</h3><p>Agent 与 Runtime 的执行状态、停止原因、取消与期限。</p></article>
+          <article><span class="small-index">EVIDENCE 02</span><h3>任务结果是否达标</h3><p>文件存在或 Agent 回复不能单独证明正确。当前独立评分主要在 Benchmark。</p></article>
+          <article><span class="small-index">EVIDENCE 03</span><h3>资源是否清理确认</h3><p>Worker、工具进程和在途调用的清理结果单独表达。</p></article>
+        </div>
+        <p class="caption">当前已有持久事件、SSE 回放、文件产物和执行观测。按 Run 的模型调用归属依赖 Session Key 路径，并非所有旧路径都已覆盖。</p>
+      </section>
+
+      <section id="reality" aria-labelledby="reality-title">
+        <div class="section-head">
+          <div><div class="section-num">05 / REALITY &amp; OPEN DECISIONS</div><h2 id="reality-title">把目标和现有基础对齐</h2><p class="intro">现状依据 main 的 6bc1baf 与功能文档。下表是能力范围说明，不是本次重新运行的功能验收。</p></div>
+        </div>
+        <div class="comparison-wrap"><table class="comparison"><thead><tr><th scope="col">链路中的能力</th><th scope="col">现在有什么</th><th scope="col">要连接成什么</th></tr></thead><tbody>
+          <tr><td>持续 Chat</td><td><span class="badge target">已确认目标</span><br>当前主要是固定引擎的 Session/Run。</td><td>用户始终在同一个公共 Chat 中工作。公共 Chat 对象、存储和接口尚未实现。</td></tr>
+          <tr><td>Harness Agent</td><td><span class="badge current">当前基础</span><br>引擎发现、登记、ACP/CLI 驱动与 Worker。</td><td>在 Chat 内切换执行者，并准备可交接上下文；每种组合的支持范围明确可查。</td></tr>
+          <tr><td>Provider／模型</td><td><span class="badge current">当前基础</span><br>共享模型网关、多 Provider、路由与凭据；部分 Run 可选模型。</td><td>成为与 Agent 独立的执行选择。现有 Agent 对运行中换模型的支持需分别验证，残留 Worker 网关仍待迁移。</td></tr>
+          <tr><td>工具与工作区</td><td><span class="badge current">当前基础</span><br>Library、Tool Pack、引擎配置和工作区。</td><td>同一组资源可供 Chat 选择，明确配置作用域、工具继承与真实加载；两套工具配置尚未统一。</td></tr>
+          <tr><td>控制与结果</td><td><span class="badge current">当前基础</span><br>权限、期限、取消、SSE、产物、观测与模型账本。</td><td>贯穿每段执行与每次切换，汇总回同一 Chat；缺失证据如实显示。</td></tr>
+          <tr><td>程序接入</td><td><span class="badge current">部分基础</span><br>旧 /v1 执行 API；SDK 主要覆盖新管理接口。</td><td>API/SDK 与界面共享 Chat 语义；执行认证、SDK、Chat 资源与切换接口仍需补齐。</td></tr>
+          <tr><td>执行中切换</td><td><span class="badge pending">待设计</span><br>已有取消与清理基础，没有完整的 Chat 交接机制。</td><td>定义生效边界、在途操作、待决权限、上下文准备、失败处理与资源隔离。</td></tr>
+        </tbody></table></div>
+        <div class="questions">
+          <div class="questions-title"><h3>接下来需要定清楚的五个问题</h3><span class="badge pending">点击展开</span></div>
+          <details><summary>Chat、任务、一段执行、Session／Run 怎样对应？</summary><p>Chat 的身份应持续。任务是否独立成实体、一条 Chat 如何处理多个目标、每段执行怎样关联现有 Run，以及原生 Session 的创建和复用规则，尚待设计。</p></details>
+          <details><summary>切换 Agent 时，哪些上下文需要交接？</summary><p>明确相关消息、摘要、约束、工作区变化、产物与待办的选择、版本和大小边界。不能只复制最后一句回复，也不能默认所有 Agent 能理解相同的内部会话格式。</p></details>
+          <details><summary>执行中提出切换，什么时候才真正生效？</summary><p>区分模型请求、工具运行、权限等待和结果结算。选择等待还是取消、如何确认停止、清理未确认时怎样阻止资源串用，必须有明确状态和证据。</p></details>
+          <details><summary>切换 Agent 或 Provider 后，工具与模型选择怎样继承？</summary><p>两个选择维度独立；默认保留什么、采用 Agent 自己默认值还是要求重选，需要明确。不可用的协议、模型、工具或上下文能力应说明原因并拒绝，不能静默换一个组合。</p></details>
+          <details><summary>怎样证明切换后仍在推进同一项工作？</summary><p>每段执行关联同一 Chat，记录所用上下文、配置、实际模型、工作成果和结果。测试需要覆盖 Agent A → B → A、只切 Provider、执行中切换、失败、重启与真实 Agent 组合；页面模拟不构成这些证据。</p></details>
+        </div>
+      </section>
+      <footer class="closing">
+        <div><strong>Chat 保持连续。Agent 与模型资源可以更换。</strong><div class="footer-line">HARNESSHUB / FLOW ATLAS / 2026.10.08</div></div>
+        <div class="source-links"><a href="user-journeys.md">用户任务与 58 个功能归属</a><a href="README.md">功能说明索引</a></div>
+      </footer>
+    </main>
+  </div>
+  <script>
+    'use strict';
+    const nodeDetails = {
+      user: ['用户 · 发起工作与作出选择', '个人开发者通过界面，上层应用通过 API／SDK 使用相同的目标链路。用户提供输入、选择 Agent 与模型，并处理需要本人确认的权限。完整 Chat API 与执行 SDK 尚未实现。'],
+      chat: ['Chat · 连续性的主体', 'HarnessHub 保存公共对话、工作目标、进展与成果。换 Agent 或 Provider 后仍留在同一个 Chat；公共 Chat 与原生 Session 的映射尚待设计。'],
+      agent: ['Harness Agent · 具体执行者', 'Claude Code、Codex、OpenCode 等负责自己的规划、工具调用与执行。HarnessHub 准备配置、上下文与资源并监督生命周期；每种 Agent 的支持能力需要分别声明和验证。'],
+      gateway: ['共享模型网关 · 统一模型入口', '管理 Provider、凭据、协议转换、路由、预算与 model.call 账本。目标是让执行统一使用这条模型路径；当前仍有 Worker 网关和原生登录等覆盖不同的路径。'],
+      provider: ['Provider／模型 · 推理资源', 'Provider 是提供模型的上游，模型是其具体推理能力。用户可独立选择该资源；真实组合能否切换，需要 Agent 适配能力和模型兼容性验证。工具调用由 Harness Agent 执行。']
+    };
+    document.querySelectorAll('[data-node]').forEach(function(button) {
+      button.addEventListener('click', function() {
+        document.querySelectorAll('[data-node]').forEach(function(item) { item.setAttribute('aria-pressed', String(item === button)); });
+        const detail = nodeDetails[button.dataset.node];
+        document.getElementById('node-detail-title').textContent = detail[0];
+        document.getElementById('node-detail-copy').textContent = detail[1];
+      });
+    });
+
+    const steps = [
+      {title:'接收消息与本次执行选择',state:'已确认目标',kind:'target',desc:'用户继续当前 Chat，给出本次输入，并选定 Harness Agent 与 Provider／模型。Chat 的身份保持不变；实际选择应明确显示和记录。',input:'当前 Chat、用户消息、Agent 与模型选择',output:'关联同一 Chat 的本段执行意图',note:'当前已有 Session/Run 接收与持久化；跨 Agent 的公共 Chat 对象尚未实现。'},
+      {title:'准备下一个执行者需要的上下文',state:'待设计',kind:'pending',desc:'HarnessHub 从公共工作记录中准备相关消息、目标、进展、约束、工作区状态与产物。切换 Agent 时，新执行者需要知道已经做了什么、接下来做什么。',input:'公共消息、工作进展、现有文件与产物',output:'可交接的上下文，以及它的来源与版本',note:'交接材料、摘要规则、大小限制、增量更新和原生会话映射尚未定案；不宣称会话无损迁移。'},
+      {title:'准备 Harness Agent 的执行环境',state:'当前基础＋目标扩展',kind:'current',desc:'准备所选 Agent 的启动方式、固定配置、工作区、指令、Skills 与 MCP。由 Worker/Driver 承接后端差异，检查能力后开始执行。',input:'Agent、配置选择、上下文、工作区与工具',output:'具备明确资源归属的执行环境',note:'现有 Session 固定绑定引擎与 revision。切换后创建、复用还是恢复哪一个后端会话仍需设计；Library 与 Tool Pack 尚未统一。'},
+      {title:'经共享网关调用所选模型',state:'当前基础',kind:'current',desc:'Agent 把模型请求交给共享网关。网关校验调用范围和预算，解析 Provider/模型与凭据，处理协议和路由，向上游发出请求。',input:'模型请求、目标模型、所属调用方与运行身份',output:'模型回复或工具调用请求，以及模型调用证据',note:'每次实际模型调用独立记账；按 Run 归属只覆盖 Session Key 路径。声明独立 Provider 的部分引擎仍使用 Worker 网关。'},
+      {title:'Agent 执行工具，必要时请求权限',state:'当前基础，覆盖有限',kind:'current',desc:'模型提出工具调用后，由 Harness Agent 组织执行。对引擎主动上报的权限请求，HarnessHub 展示真实选项，将决定持久化再交回引擎。',input:'模型给出的工具调用与实际权限选项',output:'工具执行结果、工作区变化或明确的拒绝记录',note:'权限决定被接收、被后端应用、工具执行成功是不同状态。公共权限链路不能自动覆盖 Agent 未上报的原生工具路径。'},
+      {title:'工具结果回传，再推理或结束',state:'当前执行基础',kind:'current',desc:'Agent 把工具结果放进后续模型请求，继续执行。一个用户回合可能往返多次；遇到期限、取消、错误或正常结束条件后，进入结算。',input:'工具结果、Agent 当前上下文、后续模型请求',output:'下一次模型调用，或 Agent 的后端结束证据',note:'模型 → 工具 → 模型的循环由 Agent 编排。收到文本、事件流结束或进程退出码为零，都不能单独证明任务达标。'},
+      {title:'结算证据，结果回到同一个 Chat',state:'当前基础＋目标归属',kind:'current',desc:'结算模型调用、执行状态、产物和清理结果。已提交的事件供订阅与回放；目标是把这些结果与工作进展归回同一 Chat，为后续继续或切换提供依据。',input:'后端结束证据、已提交调用、输出文件、停止与清理状态',output:'执行结果、文件产物、用量来源和可交接的进展',note:'当前已有在途调用结算、唯一终态、不可变产物与持久事件。持续 Chat 的归属尚待实现；执行结束、内容正确与清理确认分别表达。'}
+    ];
+    let currentStep = 0;
+    function showStep(index) {
+      currentStep = Math.max(0, Math.min(steps.length - 1, index));
+      const data = steps[currentStep];
+      document.getElementById('step-counter').textContent = 'STEP ' + String(currentStep + 1).padStart(2,'0') + ' / 07';
+      const badge = document.getElementById('step-state');
+      badge.textContent = data.state; badge.className = 'badge ' + data.kind;
+      ['title','desc','input','output','note'].forEach(function(key) { document.getElementById('step-' + key).textContent = data[key]; });
+      document.querySelectorAll('[data-step]').forEach(function(button) {
+        const active = Number(button.dataset.step) === currentStep;
+        button.classList.toggle('active',active);
+        if(active) button.setAttribute('aria-current','step'); else button.removeAttribute('aria-current');
+      });
+      document.getElementById('prev-step').disabled = currentStep === 0;
+      document.getElementById('next-step').disabled = currentStep === steps.length - 1;
+      document.getElementById('permission-demo').hidden = currentStep !== 4;
+      document.getElementById('loop-path').hidden = currentStep !== 5;
+    }
+    document.querySelectorAll('[data-step]').forEach(function(button) { button.addEventListener('click',function() { showStep(Number(button.dataset.step)); }); });
+    document.getElementById('prev-step').addEventListener('click',function() { showStep(currentStep - 1); });
+    document.getElementById('next-step').addEventListener('click',function() { showStep(currentStep + 1); });
+    document.querySelectorAll('[data-permission]').forEach(function(button) {
+      button.addEventListener('click',function() {
+        document.querySelectorAll('[data-permission]').forEach(function(item) { item.setAttribute('aria-pressed',String(item === button)); });
+        document.getElementById('permission-result').textContent = button.dataset.permission === 'allow'
+          ? '演示：先记录允许决定，再交回 Agent；是否应用与工具是否成功，仍需分别确认。'
+          : '演示：记录拒绝并交回 Agent。本次工具不被批准；后续是否继续由 Agent 行为与运行契约决定。';
+      });
+    });
+
+    const models = {'Provider X':['model-x-1','model-x-2'],'Provider Y':['model-y-1','model-y-2'],'Provider Z':['model-z-1','model-z-2']};
+    const agentSelect = document.getElementById('agent-select');
+    const providerSelect = document.getElementById('provider-select');
+    const modelSelect = document.getElementById('model-select');
+    let records = [{agent:'Claude Code',provider:'Provider X',model:'model-x-1',change:'开始当前 Chat',purpose:'分析登录流程'}];
+    providerSelect.addEventListener('change',function() {
+      modelSelect.replaceChildren();
+      models[providerSelect.value].forEach(function(model) { const option = document.createElement('option'); option.value = model; option.textContent = model; modelSelect.append(option); });
+    });
+    function renderTimeline() {
+      const list = document.getElementById('execution-timeline');
+      list.replaceChildren();
+      records.forEach(function(record,index) {
+        const li = document.createElement('li');
+        if(index === records.length - 1) li.className = 'new-round';
+        const count = document.createElement('span'); count.className = 'round-num'; count.textContent = '第 ' + String(index + 1).padStart(2,'0') + ' 段';
+        const body = document.createElement('div');
+        const selection = document.createElement('div'); selection.className = 'round-selection'; selection.textContent = record.agent + ' ＋ ' + record.provider + ' / ' + record.model;
+        const purpose = document.createElement('div'); purpose.className = 'round-purpose'; purpose.textContent = record.purpose + ' · 示例记录，尚无真实执行';
+        body.append(selection,purpose);
+        const change = document.createElement('span'); change.className = 'change-type'; change.textContent = record.change;
+        li.append(count,body,change); list.append(li);
+      });
+      document.getElementById('apply-selection').disabled = records.length >= 6;
+    }
+    document.getElementById('apply-selection').addEventListener('click',function() {
+      if(records.length >= 6) return;
+      const last = records[records.length - 1];
+      const agent = agentSelect.value, provider = providerSelect.value, model = modelSelect.value;
+      const agentChanged = agent !== last.agent;
+      const providerChanged = provider !== last.provider;
+      const modelChanged = model !== last.model;
+      let change = '沿用选择继续';
+      if(agentChanged && (providerChanged || modelChanged)) change = 'Agent 与模型资源均切换';
+      else if(agentChanged) change = '只切换 Agent';
+      else if(providerChanged) change = '只切换 Provider';
+      else if(modelChanged) change = '同 Provider 切模型';
+      records.push({agent:agent,provider:provider,model:model,change:change,purpose:'继续推进当前 Chat 的工作'});
+      renderTimeline();
+      document.getElementById('switch-status').textContent = '已添加第 ' + records.length + ' 段演示：' + change + '。Chat 仍为 demo-01。' + (records.length >= 6 ? ' 已达到演示上限，可重置。' : '');
+    });
+    document.getElementById('reset-demo').addEventListener('click',function() {
+      records = [{agent:'Claude Code',provider:'Provider X',model:'model-x-1',change:'开始当前 Chat',purpose:'分析登录流程'}];
+      agentSelect.value = 'Claude Code'; providerSelect.value = 'Provider X';
+      providerSelect.dispatchEvent(new Event('change')); modelSelect.value = 'model-x-1';
+      renderTimeline();
+      document.getElementById('switch-status').textContent = '演示已重置，从 Claude Code ＋ Provider X / model-x-1 开始。';
+    });
+  </script>
+</body>
+</html>

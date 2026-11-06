@@ -8,6 +8,7 @@ The documents below are in Chinese unless marked **(English)**; English becomes 
 
 | Document | What it covers |
 |---|---|
+| [Chat-centered build plan](proposals/chat-first/README.md) | The user's 2026-10-08 fresh-project direction: eight functional steps, candidate objects, inputs and outputs, acceptance criteria, cross-cutting foundations and a minimum continuous Chat with two Agents and two Providers; a plan rather than implemented behavior |
 | [Open-source design](proposals/oss/README.md) | Product definition benchmarked against Magpie, system architecture, the model, agent and run planes, interfaces, data and security, reliability, extensibility, engineering, governance, roadmap and ADR drafts |
 | [Roadmap](../ROADMAP.md) **(English)** | Milestones M0–M5 and their acceptance |
 | [Package migration](proposals/oss/13-package-migration.md) | OSS-004: dependencies, package mapping, boundary fixes, build and migration steps |
@@ -18,6 +19,8 @@ The documents below are in Chinese unless marked **(English)**; English becomes 
 | Document | What it covers |
 |---|---|
 | [Features](features/README.md) | HarnessHub's [positioning](features/positioning.md) against the current state, then every implemented feature point, grouped by plane: what it does, where to use it, where it is implemented, how far it is verified, its limits and optimization candidates; a summary of the candidates worth looking at first |
+| [Features by user task](features/user-journeys.md) | The confirmed product direction: one continuous Chat with switchable Harness Agents and Providers/models, exposed through interactive and programmatic entry points; all 58 feature pages mapped to user tasks, current gaps and proposed consolidation, with handoff mechanisms still to be designed |
+| [Chat flow explorer](features/chat-flow.html) | Offline interactive HTML: the Chat–Agent–Provider chain, a step-through execution, independent switching, context and evidence ownership, current foundations and open handoff decisions; all records are illustrative |
 | [Quickstart](quickstart.md) | `hh serve`, a provider from a preset (or the fake provider without a key), a Gateway Key, calls from OpenAI or Anthropic clients, usage and wiring an agent |
 | [Getting started](getting-started.md) | A fresh clone, ports, data directories, the console's pages, real engines and troubleshooting |
 | [Configuration](configuration.md) | `config.jsonc`: settings, precedence (flags, environment, file, defaults), validation, `hh config`, and what stays out of the file |
