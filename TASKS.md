@@ -99,14 +99,14 @@
 | G075 | 存储优化前置片 | G008, G028 | G1 | planned |
 | G076 | v1.1 增强通道 | G074 | G1 | deferred |
 | G077 | v1.2 stdio 接力 MCP | G076 | G1 | deferred |
-| G078 | 宿主与会话租借契约 | G004, G007 | G1 | planned |
+| G078 | 宿主与会话租借契约 | G004, G007 | G1 | in_progress |
 | G079 | 宿主池、会话租借、按类预算与新鲜度判定 | G078, G028, G026, G059 | G1 | planned |
 | G080 | 宿主登记、接管与度量 | G078, G008, G031 | G1 | planned |
 | G081 | Driver 宿主能力声明与多会话适配 | G078, G032, G034 | G1 | planned |
 | G082 | 宿主界面、API 与可观测指标 | G079, G080, G050, G054 | G1 | planned |
 | G083 | 宿主探针与真机验收 | G079, G081, G060 | G1 | planned |
 | G084 | 记录树存储（长期） | G066, G080 | G1 | deferred |
-| G085 | 宿主关闭链、关闭宽限与私有 TMPDIR | G078, G031, G059 | G1 | planned |
+| G085 | 宿主关闭链、关闭宽限与私有 TMPDIR | G078, G031, G059 | G1 | in_progress |
 
 ## V001 验证并锁定工具链与依赖许可
 

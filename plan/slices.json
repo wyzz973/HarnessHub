@@ -1066,9 +1066,13 @@
         "G060"
       ],
       "decision": "docs/decisions/0056-native-hosts-and-sessions.md",
-      "allowed_files": [],
+      "allowed_files": [
+        "src/contracts/native-host.ts",
+        "src/infrastructure/control/host-shutdown.ts",
+        "src/infrastructure/session/host-tmpdir.ts"
+      ],
       "note": "2026-11-03 用户按推荐项接受 ADR-056 的 D1–D7（原话“按推荐接受”），切片改为 accepted；allowed_files 在任务开工时只登记该任务拥有、且本切片要新增的 src/、web/ 文件。实测 spikes/native-hosts/（2026-11-03，六家）由另一位成员完成，是预算初始值与归类的依据，不归本切片任务拥有",
-      "implementation_state": "not_started",
+      "implementation_state": "in_progress",
       "verification_record": "docs/verification/native-hosts-conformance.md"
     }
   ]

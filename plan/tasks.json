@@ -4974,7 +4974,7 @@
       "title": "宿主与会话租借契约",
       "context": "contracts",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G004",
@@ -5009,7 +5009,8 @@
       "test_cases": [
         "G078-C01",
         "G078-C02"
-      ]
+      ],
+      "active_slice": "native-hosts"
     },
     {
       "id": "G079",
@@ -5319,7 +5320,7 @@
       "title": "宿主关闭链、关闭宽限与私有 TMPDIR",
       "context": "adapters",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G078",
@@ -5362,7 +5363,8 @@
         "G085-C02",
         "G085-C03",
         "G085-C04"
-      ]
+      ],
+      "active_slice": "native-hosts"
     }
   ]
 }
