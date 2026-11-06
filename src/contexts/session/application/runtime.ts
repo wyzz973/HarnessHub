@@ -410,6 +410,11 @@ export class SessionRuntime {
     this.schedule(id); return { sessionId: id, switchId: nextId, replayed: false };
   }
 
+  /**
+   * The user's stop of a Turn (the active one unless `target` names another), recorded as a command with run.cancel_requested.
+   * A queued Turn is cancelled before it starts and a running one is stopped through the stop chain; one whose program has
+   * already settled is not changed: its close goes on and it ends as the program reported. Idempotent per `key`.
+   */
   cancel(id: SessionId, key: string, target?: string): CancelReceipt {
     this.admit(); return this.cancelInternal(id, commandId(key), target === undefined ? undefined : runId(target));
   }
@@ -682,7 +687,10 @@ export class SessionRuntime {
     } finally { this.closingSessions.delete(id); }
   }
 
-  /** Stops owned work and admission. Public Sessions and Store remain available to the next owner. */
+  /**
+   * Stops owned work and admission, then ends what the binding factory still does in the background (its own bound, ADR-056
+   * §4.12). Public Sessions and Store remain available to the next owner.
+   */
   close(): Promise<void> {
     if (this.shutdown) return this.shutdown;
     this.accepting = false;
@@ -714,6 +722,8 @@ export class SessionRuntime {
       problem ??= result.reason; this.fail(result.reason);
     }
     this.work.clear();
+    // Last, once no binding runs: the factory's background work, such as removing host TMPDIRs moved aside (bounded).
+    try { await this.factory.close?.(); } catch (error) { problem ??= error; this.fail(error); }
     if (problem) throw problem;
     if (this.fatal) throw this.fatal;
   }
@@ -738,13 +748,16 @@ export class SessionRuntime {
     // Text the Turn streamed before the user's stop is committed first, so the stop never precedes it in the log (ADR-047).
     const active = this.actives.get(id), stopping = active !== undefined && active.runId === selected ? active : null;
     if (stopping) this.flushStreamQuietly(stopping);
+    // A Turn whose program already settled (its reply is in, it only closes) keeps its result: the stop is recorded, the
+    // close goes on as it would have, and the Turn ends as the program reported (ADR-056, implementation record item 12).
+    const settled = run?.status === "settling" || stopping?.backendSettled === true;
     this.commit(id, current => {
       let next = current;
-      if (run && !terminal(run.status)) next = updatedRun(current, run.id, { cancelRequested: true, ...(run.status === "queued" ? { status: "cancelled" as const, ...phase(current, run.id, "endedAt", this.options.now().getTime()) } : {}) });
+      if (run && !terminal(run.status) && !settled) next = updatedRun(current, run.id, { cancelRequested: true, ...(run.status === "queued" ? { status: "cancelled" as const, ...phase(current, run.id, "endedAt", this.options.now().getTime()) } : {}) });
       return { next: { ...next, commands: [...next.commands, { id: command, kind: "cancel", fingerprint, resultId: selected ?? "none" }] },
         events: [event("run.cancel_requested", { runId: selected, beforeStart: run?.status === "queued", alreadyTerminal: run === undefined || terminal(run.status) })] };
     });
-    if (stopping) this.stop(stopping);
+    if (stopping && !settled) this.stop(stopping);
     this.schedule(id); return { sessionId: id, target: selected, replayed: false };
   }
 

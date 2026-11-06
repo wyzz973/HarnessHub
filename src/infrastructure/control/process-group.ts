@@ -65,6 +65,33 @@ export function outsidersOf(table: string, group: number, now: number): readonly
   return outside;
 }
 function errorCode(error: unknown): unknown { return error !== null && typeof error === "object" && "code" in error ? error.code : undefined; }
+/**
+ * The descendants of `group`'s members that left the group, from the process table read now (2 s, 4 MiB); null when it
+ * cannot be read or no member is in it. Only meaningful while the caller knows the group is the one it means (it owns the
+ * leader, or checked the leader's start time): this reads the table and signals nothing.
+ */
+export async function outsidersOfGroup(group: number): Promise<readonly OutsideProcess[] | null> {
+  try {
+    const { stdout } = await execFileAsync("/bin/ps", ["-axo", "pid=,ppid=,pgid=,etime=,comm="], { timeout: 2000, maxBuffer: 4 * 1024 * 1024, env: { LC_ALL: "C", PATH: "/usr/bin:/bin" } });
+    return outsidersOf(stdout, group, Math.round(Date.now() / 1000));
+  } catch { return null; }
+}
+/**
+ * Which of these processes still run: the same id with a start time within 2 s of the recorded one, so an id given to
+ * another program since is not counted; null when the table cannot be read. Reading signals nothing.
+ */
+export async function stillRunning(processes: readonly OutsideProcess[]): Promise<readonly OutsideProcess[] | null> {
+  if (!processes.length) return [];
+  let stdout = "";
+  try { ({ stdout } = await execFileAsync("/bin/ps", ["-o", "pid=,etime=", "-p", processes.map(item => item.pid).join(",")], { timeout: 2000, maxBuffer: 1024 * 1024, env: { LC_ALL: "C", PATH: "/usr/bin:/bin" } })); }
+  catch (error) { if (errorCode(error) !== 1) return null; }
+  const now = Math.round(Date.now() / 1000), alive = new Map<number, number>();
+  for (const line of stdout.split(/\r?\n/u)) {
+    const match = /^\s*(\d+)\s+(\S+)\s*$/u.exec(line), elapsed = match ? elapsedSeconds(match[2]!) : null;
+    if (match && elapsed !== null) alive.set(Number(match[1]), now - elapsed);
+  }
+  return processes.filter(item => { const started = alive.get(item.pid); return started !== undefined && Math.abs(started - item.startedAt) <= START_TOLERANCE_S; });
+}
 /** Whether any member of the process group still runs; an unreadable answer counts as running. */
 function groupAlive(group: number): boolean {
   try { process.kill(-group, 0); return true; }
@@ -93,22 +120,10 @@ export class PosixProcessGroups implements ProcessGroupPort {
     try {
       const leader = await this.identify(identity.group), recorded = Number(identity.startedAt);
       if (leader === null || !Number.isFinite(recorded) || Math.abs(Number(leader) - recorded) > START_TOLERANCE_S) return null;
-      const { stdout } = await execFileAsync("/bin/ps", ["-axo", "pid=,ppid=,pgid=,etime=,comm="], { timeout: 2000, maxBuffer: 4 * 1024 * 1024, env: { LC_ALL: "C", PATH: "/usr/bin:/bin" } });
-      return outsidersOf(stdout, identity.group, Math.round(Date.now() / 1000));
     } catch { return null; }
+    return outsidersOfGroup(identity.group);
   }
-  async running(processes: readonly OutsideProcess[]): Promise<readonly OutsideProcess[] | null> {
-    if (!processes.length) return [];
-    let stdout = "";
-    try { ({ stdout } = await execFileAsync("/bin/ps", ["-o", "pid=,etime=", "-p", processes.map(item => item.pid).join(",")], { timeout: 2000, maxBuffer: 1024 * 1024, env: { LC_ALL: "C", PATH: "/usr/bin:/bin" } })); }
-    catch (error) { if (errorCode(error) !== 1) return null; }
-    const now = Math.round(Date.now() / 1000), alive = new Map<number, number>();
-    for (const line of stdout.split(/\r?\n/u)) {
-      const match = /^\s*(\d+)\s+(\S+)\s*$/u.exec(line), elapsed = match ? elapsedSeconds(match[2]!) : null;
-      if (match && elapsed !== null) alive.set(Number(match[1]), now - elapsed);
-    }
-    return processes.filter(item => { const started = alive.get(item.pid); return started !== undefined && Math.abs(started - item.startedAt) <= START_TOLERANCE_S; });
-  }
+  running(processes: readonly OutsideProcess[]): Promise<readonly OutsideProcess[] | null> { return stillRunning(processes); }
   async end(identity: { readonly group: number; readonly startedAt: string }): Promise<"terminated" | "gone" | "unconfirmed"> {
     const leader = await this.identify(identity.group), recorded = Number(identity.startedAt);
     if (leader !== null && (!Number.isFinite(recorded) || Math.abs(Number(leader) - recorded) > START_TOLERANCE_S)) return "gone";

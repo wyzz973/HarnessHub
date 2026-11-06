@@ -1,8 +1,10 @@
 import { darwinExitedGroupIsQuiescent } from "./process-group.js";
+import { POSIX_SHUTDOWN_PROBES, confirmOutside, quiesce } from "./host-shutdown.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { isAbsolute } from "node:path";
-import { performance } from "node:perf_hooks";
 import type { CleanupEvidence, ControlLaunch, ControlOptions } from "../../contracts/control.js";
+import { HOST_BUDGET_BOUNDS, type HostCleanup, type HostCloseEvidence } from "../../contracts/native-host.js";
+import type { OutsideProcess } from "../../contracts/session.js";
 
 export class ControlError extends Error {
   /** The JSON-RPC error code of a request the peer refused (REMOTE_ERROR); absent for any other failure. */
@@ -134,7 +136,6 @@ function id(value: unknown): RpcId {
   throw new ControlError("INVALID_PROTOCOL", "RPC id must be a bounded string or integer");
 }
 function key(value: RpcId): string { return JSON.stringify(value); }
-function delay(ms: number): Promise<void> { return new Promise(resolve => setTimeout(resolve, ms)); }
 /**
  * Cumulative inbound and outbound budget for one connection; streamed output is never unbounded.
  * Native agents legitimately repeat large tool results (content, raw output, hook payloads) and replay
@@ -143,6 +144,10 @@ function delay(ms: number): Promise<void> { return new Promise(resolve => setTim
 export const MAX_CONNECTION_WIRE_BYTES = 256 * 1024 * 1024;
 /** One native frame can carry a whole read file or a run summary several times over; this bounds parse memory. */
 export const NATIVE_FRAME_BYTES = 16 * 1024 * 1024;
+/** The cleanup fields a Run keeps (CleanupEvidence, the persisted shape), without the host close's own stage and time. */
+function persisted(cleanup: HostCleanup): CleanupEvidence {
+  return { closed: true, exitCode: cleanup.exitCode, signal: cleanup.signal, protocolFailure: cleanup.protocolFailure };
+}
 
 /** Owns one POSIX subprocess group, wire framing, request deadlines and awaited cleanup. */
 export class JsonRpcProcess {
@@ -154,7 +159,11 @@ export class JsonRpcProcess {
   private sequence = 0;
   private failed: Error | null = null;
   private closing = false;
+  /** The first part of the close (the group's end) and the cleanup taken from it; installed together on the first close. */
+  private quiet: Promise<{ readonly cleanup: HostCleanup; readonly found: readonly OutsideProcess[] | null }> | null = null;
   private cleanup: Promise<CleanupEvidence> | null = null;
+  /** The whole evidence, once asked for: only closeEvidence() looks again at what left the group, and waits for it. */
+  private evidence: Promise<HostCloseEvidence> | null = null;
   private closeObserved = false;
   private exitCode: number | null = null;
   private exitSignal: string | null = null;
@@ -176,7 +185,8 @@ export class JsonRpcProcess {
         throw new ControlError("INVALID_INPUT", "invalid private environment");
     for (const [name, value] of Object.entries({ requestTimeoutMs: options.requestTimeoutMs,
       runTimeoutMs: options.runTimeoutMs, maxFrameBytes: options.maxFrameBytes,
-      maxDiagnosticBytes: options.maxDiagnosticBytes, closeGraceMs: options.closeGraceMs, maxWireBytes: options.maxWireBytes ?? MAX_CONNECTION_WIRE_BYTES }))
+      maxDiagnosticBytes: options.maxDiagnosticBytes, closeGraceMs: options.closeGraceMs, closeOutsideWaitMs: options.closeOutsideWaitMs ?? HOST_BUDGET_BOUNDS.closeOutsideWaitMs.fallback,
+      maxWireBytes: options.maxWireBytes ?? MAX_CONNECTION_WIRE_BYTES }))
       if (!Number.isSafeInteger(value) || value <= 0 || value > 2_147_483_647)
         throw new ControlError("INVALID_INPUT", `${name} must be a positive bounded integer`);
   }
@@ -219,13 +229,40 @@ export class JsonRpcProcess {
     try { this.handlers.failure(error); } catch { /* Original failure remains authoritative. */ }
     void this.close().catch(() => { /* Awaited close() exposes cleanup failure to the owner. */ });
   }
+  /**
+   * Closes the connection (ADR-056 §4.11): its input first, its process group signalled only after the grace, and resolves
+   * once the group is empty with its cleanup, the fields a Run keeps. Nothing about processes that left the group is waited
+   * for. Rejects with CLEANUP_FAILED when the group cannot be confirmed ended. Idempotent: every call returns one promise.
+   */
   close(): Promise<CleanupEvidence> {
-    if (!this.cleanup) {
-      this.closing = true;
-      // Install promise ownership before invoking callbacks; reentrant close() returns the same promise.
-      this.cleanup = Promise.resolve().then(() => this.closeOwned());
-    }
-    return this.cleanup;
+    this.begin(false);
+    return this.cleanup!;
+  }
+  /**
+   * The whole evidence of a host's close: how far it went (no signal, SIGTERM or SIGKILL) and how long the group took to end,
+   * and what had left the group, read before its input closed and looked at again after it, waiting up to the configured
+   * outside wait for those still running (never signalling them). `signal` cuts that wait short, which records them as
+   * `remaining: null`; only the first call's signal counts. Started by this call, the close reads what left the group; a
+   * close already started by close() did not, and its outside evidence is unknown. Rejects as close() does, with the same
+   * error; a close asked for only through this call leaves no other rejection behind.
+   */
+  closeEvidence(signal?: AbortSignal): Promise<HostCloseEvidence> {
+    this.begin(true);
+    this.evidence ??= this.quiet!.then(async closed => ({ cleanup: closed.cleanup,
+      outside: await confirmOutside(closed.found, this.options.closeOutsideWaitMs ?? HOST_BUDGET_BOUNDS.closeOutsideWaitMs.fallback, POSIX_SHUTDOWN_PROBES.running, signal) }));
+    return this.evidence;
+  }
+  /** Starts the close once; `sample` reads what left the group before its input closes. */
+  private begin(sample: boolean): void {
+    if (this.cleanup) return;
+    this.closing = true;
+    // Install promise ownership before invoking callbacks; reentrant close() returns the same promise.
+    const quiet = Promise.resolve().then(() => this.closeOwned(sample));
+    this.quiet = quiet;
+    this.cleanup = quiet.then(closed => persisted(closed.cleanup));
+    // A close asked for only through closeEvidence() hands this promise to nobody: its failure reaches that caller there,
+    // and a later close() returns this promise with the same rejection.
+    void this.cleanup.catch(() => {});
   }
   private start(): void {
     if (this.child) return;
@@ -368,15 +405,7 @@ export class JsonRpcProcess {
     try { process.kill(-this.pid, signal); }
     catch (error) { if (object(error, "signal error").code !== "ESRCH" && !(object(error,"signal error").code==="EPERM"&&this.closeObserved)) throw error; }
   }
-  private async waitClosed(): Promise<boolean> {
-    const end = performance.now() + this.options.closeGraceMs;
-    do {
-      if (this.closeObserved && !this.groupAlive()) return true;
-      await delay(Math.min(20, Math.max(1, end - performance.now())));
-    } while (performance.now() < end);
-    return this.closeObserved && !this.groupAlive();
-  }
-  private async closeOwned(): Promise<CleanupEvidence> {
+  private async closeOwned(sample: boolean): Promise<{ readonly cleanup: HostCleanup; readonly found: readonly OutsideProcess[] | null }> {
     this.closing = true;
     const closed = new ControlError("CLOSED", "connection closed by its owner");
     this.rejectPending(this.failed ?? closed);
@@ -384,14 +413,14 @@ export class JsonRpcProcess {
       try { this.handlers.failure(closed); }
       catch (error) { this.failed = errorFrom(error); }
     }
-    if (!this.child) return { closed: true, exitCode: null, signal: null, protocolFailure: this.protocolFailure() };
-    this.child.stdin.end();
-    let done = await this.waitClosed();
-    if (!done) { this.signalGroup("SIGTERM"); done = await this.waitClosed(); }
-    if (!done) { this.signalGroup("SIGKILL"); done = await this.waitClosed(); }
-    if (!done) throw new ControlError("CLEANUP_FAILED", "owned process group or streams did not close within the cleanup budget");
+    const child = this.child;
+    if (!child) return { cleanup: { closed: true, exitCode: null, signal: null, protocolFailure: this.protocolFailure(), stage: null, closeMs: 0 }, found: null };
+    // EOF first; signals to the group only after the grace; what left the group is never signalled (ADR-056 §4.11).
+    const chain = await quiesce({ group: this.pid, leaderRunning: () => this.exitCode === null && this.exitSignal === null, endInput: () => child.stdin.end(),
+      quiescent: () => this.closeObserved && !this.groupAlive(), signal: signal => this.signalGroup(signal) }, this.options.closeGraceMs, sample ? POSIX_SHUTDOWN_PROBES.outsiders : undefined);
+    if (!chain.quiescent) throw new ControlError("CLEANUP_FAILED", "owned process group or streams did not close within the cleanup budget");
     this.input = Buffer.alloc(0);
-    return { closed: true, exitCode: this.exitCode, signal: this.exitSignal, protocolFailure: this.protocolFailure() };
+    return { cleanup: { closed: true, exitCode: this.exitCode, signal: this.exitSignal, protocolFailure: this.protocolFailure(), stage: chain.stage, closeMs: chain.closeMs }, found: chain.found };
   }
   private protocolFailure(): CleanupEvidence["protocolFailure"] {
     return this.failed === null ? null : {

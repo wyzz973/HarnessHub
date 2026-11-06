@@ -3,9 +3,12 @@ import { LocalHarnessManagement, type ManagementOptions } from "../infrastructur
 import { LocalProviderService } from "../infrastructure/provider/service.js";
 import { createHash, randomUUID } from "node:crypto";
 import { lstatSync, mkdirSync, opendirSync, realpathSync, statSync, type Dir } from "node:fs";
+import { totalmem } from "node:os";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
+import { resolveHostBudgets } from "../contracts/native-host.js";
 import { SessionError, type SelectionRequest, type SessionEvent } from "../contracts/session.js";
+import { HostTmpdirs, defaultHostTmpdirRoot } from "../infrastructure/session/host-tmpdir.js";
 import { SessionRuntime } from "../contexts/session/application/runtime.js";
 import { SqliteSessionStore } from "../infrastructure/session/sqlite-store.js";
 import { SqliteWorkspaceLeaseProvider } from "../infrastructure/session/workspace-lease.js";
@@ -99,6 +102,7 @@ export function errorRecord(error: unknown): { readonly code: string; readonly m
  * Gateways that use another one, so it is only for isolated tests or deliberately separate instances. Either way a missing
  * directory is created private, and one that is not a real directory owned by this user and closed to others is refused
  * with INVALID_STORAGE; an explicit path that is not absolute is refused with INVALID_INPUT before anything is created.
+ * The host classes' TMPDIRs follow the leases (hostTmpdirRoot): Gateways share them exactly where they share leases.
  */
 export function resolveWorkspaceLockRoot(explicit?: string): string {
   if (process.platform === "win32" || process.getuid === undefined) throw new SessionError("UNSUPPORTED_PLATFORM", "this session slice requires the current POSIX owner host");
@@ -109,6 +113,16 @@ export function resolveWorkspaceLockRoot(explicit?: string): string {
   const info = lstatSync(path);
   if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== uid || (info.mode & 0o077) !== 0) throw new SessionError("INVALID_STORAGE", "workspace lock namespace is not privately owned");
   return path;
+}
+/**
+ * Where the host classes' TMPDIRs live (ADR-056 §4.12): `harnesshub-hosts-<uid>` in the system's temporary directory beside
+ * the default workspace lock namespace, and `hosts` inside an explicit one. A class's directory is emptied or deleted only
+ * while no host of the class can run, which the workspace lease every host holds guarantees among the Gateways sharing
+ * that lease namespace, and only among them; so the two are shared together, and a test given its own lock root keeps its
+ * TMPDIRs there too. `lockRoot` is what resolveWorkspaceLockRoot returned for `explicit`.
+ */
+function hostTmpdirRoot(explicit: string | undefined, lockRoot: string): string {
+  return explicit === undefined ? defaultHostTmpdirRoot() : join(lockRoot, "hosts");
 }
 export function application(root: string, publish: (event: SessionEvent) => void, options: { readonly management?: Pick<ManagementOptions, "metadata" | "installer" | "recipes" | "installationMode" | "native" | "nativeLocks" | "removal" | "officialInstaller" | "npmRegistry">; readonly nativeEnvironment?: NativeEnvironment;
   /** The Turn budgets this Gateway was configured with (ADR-036); the defaults otherwise. */
@@ -121,11 +135,21 @@ export function application(root: string, publish: (event: SessionEvent) => void
   let providers: LocalProviderService | undefined;
   let management: LocalHarnessManagement | undefined;
   try {
-    const workspaces = new SqliteWorkspaceLeaseProvider(resolveWorkspaceLockRoot(options.workspaceLockRoot));
+    const lockRoot = resolveWorkspaceLockRoot(options.workspaceLockRoot);
+    const workspaces = new SqliteWorkspaceLeaseProvider(lockRoot);
     providers = new LocalProviderService(root, () => store.assertOwner());
     const nativeLocks = options.management?.installationMode === "private-fixture" ? undefined : options.management?.nativeLocks ?? new NativeInstallationLocks();
     management = new LocalHarnessManagement(root, { ...options.management, ...(nativeLocks === undefined ? {} : { nativeLocks }), ...(options.nativeEnvironment === undefined ? {} : { nativeEnvironment: options.nativeEnvironment }), assertOwner: () => store.assertOwner(), ownerGeneration: store.ownerGeneration, redactor: text => providers!.redact(text) });
-    const factory = new DirectorySessionBindingFactory(workspaces, () => store.assertOwner(), options.installations ?? "official", providers, management, options.nativeEnvironment, nativeLocks);
+    // The host budgets (ADR-056) are resolved once here; what the classes' TMPDIRs cannot remove goes to the service log.
+    // The runtime's close ends the factory's last, which bounds the removal of what was moved aside (closeWaitMs).
+    const hostBudgets = resolveHostBudgets({ physicalMemoryBytes: totalmem() });
+    const tmpdirs = new HostTmpdirs(hostTmpdirRoot(options.workspaceLockRoot, lockRoot), { maxBytes: hostBudgets.hostTmpdirMaxBytes, maxEntries: hostBudgets.hostTmpdirMaxEntries,
+      unusedMs: hostBudgets.hostTmpdirUnusedMs, closeWaitMs: hostBudgets.hostTmpdirCloseWaitMs, dataRoot: root,
+      report: problem => { process.stderr.write("HarnessGateway: HOST_TMPDIR (" + problem + ")\n"); } });
+    // Starting, before any Turn: class directories unused for a week go (ADR-056 §4.12), unless a host of another Gateway
+    // sharing the namespace is live; what is moved aside is removed in the background.
+    tmpdirs.sweep();
+    const factory = new DirectorySessionBindingFactory(workspaces, () => store.assertOwner(), options.installations ?? "official", providers, management, options.nativeEnvironment, nativeLocks, { budgets: hostBudgets, tmpdirs });
     // The owner is exclusive and quiescent here, so unreferenced content from earlier owners can be collected safely.
     const content = new LocalContentStore(root, () => store.assertOwner());
     content.collect(store.contentReferences());

@@ -3,11 +3,12 @@ import { resolveInstallationPolicy } from "../contexts/catalog/domain/catalog.js
 import { chooseControl } from "../contexts/catalog/application/select-control.js";
 export { chooseControl } from "../contexts/catalog/application/select-control.js";
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, totalmem } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import type { ControlEvent, ControlLaunch, ControlRun, HarnessControl } from "../contracts/control.js";
+import { resolveHostBudgets } from "../contracts/native-host.js";
 import { DiscoveryInputError } from "../contexts/catalog/domain/discovery.js";
 import { createNativeControl } from "../adapters/control/factory.js";
 import { NATIVE_FRAME_BYTES } from "../infrastructure/control/json-rpc-process.js";
@@ -118,7 +119,9 @@ export async function main(args: readonly string[]): Promise<number> {
     const environment: Record<string, string> = { ...await referencedNativeValues(native, explicitHome ?? null, harness.id, cwd), ...nativeDescriptorValues(native, explicitHome ?? null, selected.command.env),
       PATH: observed.searchPath, OPENCODE_DISABLE_AUTOUPDATE: "true", PWD: cwd };
     const launch: ControlLaunch = { ...selected.command, env: environment, protocol: selected.protocol };
-    const options = { cwd, env: environment, requestTimeoutMs: Math.min(10000, budget), runTimeoutMs: budget, maxFrameBytes: NATIVE_FRAME_BYTES, maxDiagnosticBytes: 64 * 1024, closeGraceMs: 500 };
+    // The close grace is the host budgets' (ADR-056 §4.11).
+    const options = { cwd, env: environment, requestTimeoutMs: Math.min(10000, budget), runTimeoutMs: budget, maxFrameBytes: NATIVE_FRAME_BYTES, maxDiagnosticBytes: 64 * 1024,
+      closeGraceMs: resolveHostBudgets({ physicalMemoryBytes: totalmem() }).closeGraceMs };
     nativeUsage = new NativeInstallationLocks().read(harness.id);
     control = await createNativeControl(harness.id, launch, options);
     process.on("SIGINT", onSignal); process.on("SIGTERM", onSignal);

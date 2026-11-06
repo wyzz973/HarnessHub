@@ -4,18 +4,20 @@ import { RedactedHarnessControl } from "./redacted-control.js";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, mkdtemp, open, realpath, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, totalmem } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { createNativeControl } from "../../adapters/control/factory.js";
 import { NATIVE_FRAME_BYTES } from "../control/json-rpc-process.js";
 import { chooseControl } from "../../contexts/catalog/application/select-control.js";
 import { inventory } from "../catalog/inventory-composition.js";
 import type { CleanupEvidence, ControlLaunch, HarnessControl } from "../../contracts/control.js";
+import { resolveHostBudgets, type HostBudgets } from "../../contracts/native-host.js";
 import { NATIVE_TURN_HARD_CAP_MS, SessionError, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest,
   type SessionBindingFactory, type SessionConfiguration, type SessionId, type WorkspaceLease,
   type WorkspaceLeaseProvider } from "../../contracts/session.js";
-import { MAX_CATALOG_BYTES, type ControlObservation, type InstallationPolicy } from "../../contexts/catalog/domain/catalog.js";
+import { MAX_CATALOG_BYTES, type ControlObservation, type InstallationPolicy, type ResolvedCommand } from "../../contexts/catalog/domain/catalog.js";
 import { captureNativeEnvironment, nativeValues, referencedNativeValues, nativeDescriptorValues, type NativeEnvironment } from "./native-environment.js";
+import { HostTmpdirs, type HostTmpdir, type HostTmpdirIdentity } from "./host-tmpdir.js";
 import type { NativeExtensions, NativeModelCatalog, NativeSessionImport, NativeSessionPage } from "../../contracts/control.js";
 /** Reading a long native history (an ACP agent replays it in full) is bounded separately from Turn budgets. */
 const NATIVE_IMPORT_MS = 120_000;
@@ -64,6 +66,27 @@ async function manifestBytes(path: string): Promise<Buffer> {
   } finally { await handle.close(); }
 }
 function sha256(bytes: Buffer): string { return createHash("sha256").update(bytes).digest("hex"); }
+/** Each file's identity (canonical path, device, inode, size, modification time) or that it is missing; contents are never read. */
+async function fileIdentities(paths: readonly string[]): Promise<readonly unknown[]> {
+  return Promise.all(paths.map(async path => {
+    try { const canonical = await realpath(path), info = await stat(canonical); return [canonical, info.dev, info.ino, info.size, info.mtimeMs]; }
+    catch (error) { if (error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT") return [path, "missing"]; throw error; }
+  }));
+}
+/**
+ * What a host class's TMPDIR is keyed by (ADR-056 §4.3, §4.12), as canonical text: `launch` holds the Harness, its entry,
+ * the workspace and every value it is started with but TMPDIR (with this binding's own private root spelled as one
+ * placeholder, so a generated configuration home does not make every Turn a class of its own); `installation` holds the
+ * identities of the entry's executable and absolute arguments and the managed revision. No driver declares launch-bound
+ * selections yet (ADR-056 §4.2), so the model and options are in neither. The text can hold credentials: it stays in
+ * memory, and the TMPDIRs keep only HMACs of it under their namespace's key.
+ */
+async function hostTmpdirIdentity(selection: HarnessSelection, command: ResolvedCommand, managed: ResolvedManagedControl | null, workspace: string, environment: Readonly<Record<string, string>>, root: string): Promise<HostTmpdirIdentity> {
+  const values = Object.entries(environment).filter(([name]) => name !== "TMPDIR").map(([name, value]) => [name, value.split(root).join("<binding>")] as const)
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
+  return { launch: JSON.stringify({ version: 1, harnessId: selection.harnessId, controlId: selection.controlId, workspace, environment: values }),
+    installation: JSON.stringify({ version: 1, identities: await fileIdentities([command.executable, ...command.args.filter(arg => arg.startsWith("/"))]), managed: managed?.revision ?? null }) };
+}
 async function directories(values: readonly string[], label: string, maximum: number): Promise<readonly string[]> {
   if (!Array.isArray(values) || values.length > maximum) throw new SessionError("INVALID_INPUT", "too many " + label + " directories");
   return Promise.all(values.map(value => directory(value, label)));
@@ -117,10 +140,22 @@ async function privateHome(root: string, configuration: SessionConfiguration): P
 }
 /** Fresh per-Turn control with a real workspace lease; this is public-context rehydration, not native resume. */
 export class DirectorySessionBindingFactory implements SessionBindingFactory {
-  /** `installations` is what this Gateway counts as an installation (ADR-044); its Harness list observes with the same policy. */
+  private readonly budgets: HostBudgets;
+  private readonly tmpdirs: HostTmpdirs | null;
+  /**
+   * `installations` is what this Gateway counts as an installation (ADR-044); its Harness list observes with the same policy.
+   * `hosts` gives the host budgets (the close grace and the TMPDIR limits; resolveHostBudgets' defaults when absent) and the
+   * host classes' TMPDIRs. Without the latter they go to `hosts` in the workspace leases'
+   * directory, which keeps them shared exactly where the leases are, reporting on stderr and with no data directory to
+   * keep apart from; a lease provider without a directory leaves none, and prepare() then refuses with HOST_TMPDIR_FAILED.
+   */
   constructor(private readonly workspaces: WorkspaceLeaseProvider, private readonly assertOwner: () => void, readonly installations: InstallationPolicy, private readonly providers?: LocalProviderService, private readonly management?: ManagedResolver,
-    private readonly nativeEnvironment: NativeEnvironment = captureNativeEnvironment(), private readonly nativeLocks?: NativeInstallationLocks) {
+    private readonly nativeEnvironment: NativeEnvironment = captureNativeEnvironment(), private readonly nativeLocks?: NativeInstallationLocks,
+    hosts?: { readonly budgets?: HostBudgets; readonly tmpdirs?: HostTmpdirs }) {
     if (installations !== "official" && installations !== "any") throw new SessionError("INVALID_INPUT", "installation policy must be official or any");
+    const budgets = this.budgets = hosts?.budgets ?? resolveHostBudgets({ physicalMemoryBytes: totalmem() });
+    this.tmpdirs = hosts?.tmpdirs ?? (workspaces.namespace === undefined ? null : new HostTmpdirs(join(workspaces.namespace, "hosts"), { maxBytes: budgets.hostTmpdirMaxBytes,
+      maxEntries: budgets.hostTmpdirMaxEntries, unusedMs: budgets.hostTmpdirUnusedMs, closeWaitMs: budgets.hostTmpdirCloseWaitMs, report: problem => { process.stderr.write("HarnessGateway: HOST_TMPDIR (" + problem + ")\n"); } }));
   }
   /** Private host observation source; never serialize this into public Session or Web DTOs. */
   get discoveryEnvironment(): NativeEnvironment { return this.nativeEnvironment; }
@@ -145,7 +180,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
   async prepare(selection: HarnessSelection, configuration: SessionConfiguration, session: SessionId, run: string): Promise<PreparedSessionBinding> {
     this.assertOwner();
     const lease = this.workspaces.acquire(configuration.workspace, session, run);
-    let root: string | undefined, control: HarnessControl | undefined, usage: NativeUsageLease | undefined;
+    let root: string | undefined, control: HarnessControl | undefined, usage: NativeUsageLease | undefined, temporary: HostTmpdir | undefined;
     try {
       usage = this.nativeLocks?.read(selection.harnessId);
       root = await realpath(await mkdtemp(join(tmpdir(), "harness-session-binding-")));
@@ -154,7 +189,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
         throw new SessionError("HARNESS_UNAVAILABLE", "the admitted control is no longer available");
       const home = selection.provider === undefined ? configuration.configHome : await privateHome(root, configuration);
       const environment: Record<string, string> = { ...await referencedNativeValues(this.nativeEnvironment, home, selection.harnessId, configuration.workspace), ...nativeDescriptorValues(this.nativeEnvironment, home, observed.selected.command.env), PATH: observed.managed?.command.env.PATH ? observed.managed.command.env.PATH + ":" + observed.searchPath : observed.searchPath,
-        OPENCODE_DISABLE_AUTOUPDATE: "true", TMPDIR: root, PWD: configuration.workspace };
+        OPENCODE_DISABLE_AUTOUPDATE: "true", PWD: configuration.workspace };
       if (selection.provider !== undefined) {
         if (!this.providers) throw new SessionError("PROVIDER_UNAVAILABLE", "Provider management is unavailable");
         if (configuration.configHome !== null) throw new SessionError("INCOMPATIBLE_CONFIGURATION", "managed Provider selection requires a private generated configuration home");
@@ -164,18 +199,27 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       }
       const protocol = observed.selected.protocol;
       if (protocol !== "acp-v1" && protocol !== "codex-app-server" && protocol !== "pi-rpc") throw new SessionError("UNSUPPORTED_CONTROL", "unsupported control protocol");
+      // The host class's own TMPDIR, kept between Turns (ADR-056 §4.12), under the workspace lease this Turn holds; the
+      // binding's private root keeps only what is the Turn's alone (the catalog snapshot, a generated configuration home).
+      if (this.tmpdirs === null) throw new SessionError("HOST_TMPDIR_FAILED", "host temporary directories are unavailable");
+      temporary = await this.tmpdirs.acquire(await hostTmpdirIdentity(selection, observed.selected.command, observed.managed, configuration.workspace, environment, root));
+      environment.TMPDIR = temporary.path;
       const launch: ControlLaunch = { ...observed.selected.command, env: environment, protocol };
-      // The Turn's budgets are the Runtime's (ADR-036); the driver's own timeout only backstops a hung protocol.
+      // The Turn's budgets are the Runtime's (ADR-036); the driver's own timeout only backstops a hung protocol. The close grace
+      // is the host budgets' (ADR-056 §4.11); a Turn's close never waits for what left the program's group.
       const options = { cwd: configuration.workspace, env: environment, requestTimeoutMs: 10000, runTimeoutMs: NATIVE_TURN_HARD_CAP_MS,
-        maxFrameBytes: NATIVE_FRAME_BYTES, maxDiagnosticBytes: 64 * 1024, closeGraceMs: 500, ...(selection.nativeOptions === undefined ? {} : { selectedOptions: selection.nativeOptions }) };
+        maxFrameBytes: NATIVE_FRAME_BYTES, maxDiagnosticBytes: 64 * 1024, closeGraceMs: this.budgets.closeGraceMs,
+        ...(selection.nativeOptions === undefined ? {} : { selectedOptions: selection.nativeOptions }) };
       this.assertOwner(); lease.assertOwned();
       control = await createNativeControl(selection.harnessId, launch, options);
       if (selection.provider !== undefined && this.providers) control = new RedactedHarnessControl(control, text => this.providers!.redact(text), () => this.providers!.createTextRedactor());
-      return new DirectoryPreparedBinding(control, configuration.workspace, lease, root, this.assertOwner, observed.managed === null ? { source: "system" } : { source: "managed", id: observed.managed.installationId, revision: observed.managed.revision, version: observed.managed.version }, usage);
+      return new DirectoryPreparedBinding(control, configuration.workspace, lease, root, temporary, this.assertOwner, observed.managed === null ? { source: "system" } : { source: "managed", id: observed.managed.installationId, revision: observed.managed.revision, version: observed.managed.version }, usage);
     } catch (error) {
       let cleanupError: unknown;
       let quiescent = control === undefined;
       if (control) try { await control.close(); quiescent = true; } catch (failure) { cleanupError = failure; }
+      // A program that may still run keeps its class's TMPDIR held, so nothing empties it under that program.
+      if (quiescent) await temporary?.release();
       try { lease.release(quiescent); } catch (failure) { cleanupError ??= failure; }
       try { usage?.release(quiescent); } catch (failure) { cleanupError ??= failure; }
       if (root && quiescent) try { await rm(root, { recursive: true, force: true }); } catch (failure) { cleanupError ??= failure; }
@@ -188,6 +232,11 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
     this.assertOwner();
     return this.workspaces.releaseAbandoned?.(configuration.workspace, session) ?? false;
   }
+  /**
+   * Ends the background removal of host TMPDIRs moved aside (HostTmpdirs.close(): within its bound, the rest stays for the
+   * next start's sweep). Directories already handed out stay usable. Idempotent; never rejects.
+   */
+  async close(): Promise<void> { await this.tmpdirs?.close(); }
   /**
    * Read-only identity for catalog caches, with the control entry the selection resolves to; execution always makes a fresh
    * observation. File identities only (never contents), and no credentials are returned.
@@ -203,7 +252,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       const hints: Readonly<Record<string, readonly string[]>> = { codex: [join(codex,"config.toml"),join(codex,"auth.json")], claude:[join(claude,"settings.json"),join(claude,".credentials.json")], openclaw:[env.OPENCLAW_CONFIG_PATH ?? join(env.OPENCLAW_STATE_DIR ?? join(home,".openclaw"),"openclaw.json")], cursor:[join(home,".cursor","cli-config.json")], pi:[join(pi,"settings.json"),join(pi,"models.json"),join(pi,"auth.json")], opencode:[join(opencode,"opencode.json"),join(opencode,"opencode.jsonc"),join(home,".local/share/opencode/auth.json")], gemini:[join(gemini,"settings.json"),join(gemini,"oauth_creds.json")],
         hermes:[join(hermes,"config.yaml"),join(hermes,".env"),join(hermes,"auth.json")], dsh:[join(dsh,"settings.yaml"),join(dsh,"cordis.patch.yml"),join(dsh,".credentials.yaml"),join(dsh,"profiles","acp","cordis.patch.yml"),join(dsh,"profiles","acp","package.json")] };
       const files = [command.executable, ...command.args.filter(arg => arg.startsWith("/")), ...(hints[selection.harnessId] ?? []), ...[".codex/config.toml",".claude/settings.json",".claude/settings.local.json",".gemini/settings.json",".pi/settings.json","opencode.json","opencode.jsonc"].map(path=>join(configuration.workspace,path))];
-      const identities = await Promise.all(files.map(async path => { try { const canonical = await realpath(path), info = await stat(canonical); return [canonical,info.dev,info.ino,info.size,info.mtimeMs]; } catch (error) { if (error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT") return [path,"missing"]; throw error; } }));
+      const identities = await fileIdentities(files);
       this.assertOwner(); return { fingerprint: sha256(Buffer.from(JSON.stringify({ command, identities, managed: observed.managed?.revision }))), controlId: observed.selected.id };
     } finally { await rm(root,{recursive:true,force:true}); }
   }
@@ -258,7 +307,9 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       const protocol = observed.selected.protocol;
       if (protocol !== "acp-v1" && protocol !== "codex-app-server" && protocol !== "pi-rpc") throw new SessionError("UNSUPPORTED_CONTROL", "native model discovery is unavailable");
       const launch: ControlLaunch = { ...observed.selected.command, protocol, env };
-      const options = { cwd: configuration.workspace, env, requestTimeoutMs: 10000, runTimeoutMs: 300000, maxFrameBytes: NATIVE_FRAME_BYTES, maxDiagnosticBytes: 64 * 1024, closeGraceMs: 500 };
+      // A probe keeps its own private TMPDIR: it holds no workspace lease, so it never shares a host class's directory.
+      const options = { cwd: configuration.workspace, env, requestTimeoutMs: 10000, runTimeoutMs: 300000, maxFrameBytes: NATIVE_FRAME_BYTES, maxDiagnosticBytes: 64 * 1024,
+        closeGraceMs: this.budgets.closeGraceMs };
       control = await createNativeControl(observed.harnessId, launch, options);
       if (signal.aborted) { abort(); throw new SessionError("CANCELLED", "model discovery was cancelled"); }
       await control.initialize();
@@ -279,7 +330,7 @@ class DirectoryPreparedBinding implements PreparedSessionBinding {
   private closing: Promise<CleanupEvidence> | null = null;
   private closed = false;
   constructor(readonly control: HarnessControl, readonly workspace: string, private readonly lease: WorkspaceLease,
-    private readonly root: string, private readonly owner: () => void, readonly installation: NonNullable<PreparedSessionBinding["installation"]>, private readonly usage?: NativeUsageLease) {}
+    private readonly root: string, private readonly temporary: HostTmpdir, private readonly owner: () => void, readonly installation: NonNullable<PreparedSessionBinding["installation"]>, private readonly usage?: NativeUsageLease) {}
   assertOwned(): void {
     if (this.closed || this.closing !== null) throw new SessionError("BINDING_CLOSED", "binding is closing or closed");
     this.owner(); this.lease.assertOwned(); this.usage?.assertOwned();
@@ -299,6 +350,9 @@ class DirectoryPreparedBinding implements PreparedSessionBinding {
       throw error;
     }
     this.closed = true;
+    // Handed back while the workspace lease still keeps the class to this Turn (an oversized directory is moved aside then);
+    // a close that failed above keeps it held, since its program may still run.
+    await this.temporary.release();
     let releaseError: unknown;
     try { this.lease.release(true); } catch (error) { releaseError = error; }
     try { this.usage?.release(); } catch (error) { releaseError ??= error; }

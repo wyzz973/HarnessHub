@@ -85,6 +85,8 @@ export class SqliteWorkspaceLeaseProvider implements WorkspaceLeaseProvider {
       this.rootIdentity = identity(this.root, true);
     } catch (error) { throw failure(error); }
   }
+  /** The lock root, spelled without links: the providers given it exclude each other. */
+  get namespace(): string { return this.root; }
 
   /**
    * Resolves workspace aliases before deriving the stable key. Never waits for

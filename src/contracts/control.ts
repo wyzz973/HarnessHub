@@ -29,6 +29,12 @@ export interface ControlOptions {
   readonly maxFrameBytes: number;
   readonly maxDiagnosticBytes: number;
   readonly closeGraceMs: number;
+  /**
+   * How long a host's close evidence waits for processes that left the program's process group to exit on their own before
+   * it records them as remaining (ADR-056 §4.11); they are never signalled, and close() itself never waits for them. The
+   * host budgets' default (resolveHostBudgets) when absent.
+   */
+  readonly closeOutsideWaitMs?: number;
   /** Cumulative inbound+outbound bytes for one connection; defaults to the native-turn budget. */
   readonly maxWireBytes?: number;
   /**
@@ -221,10 +227,27 @@ export interface ControlRun {
   /** Receipt is not backend settlement or process cleanup. */
   requestStop(): Promise<StopRequestReceipt>;
 }
-/** One native conversation and active run per connection; all resources are owned by close(). */
+/**
+ * One native conversation and active run per connection, unless the driver has the optional multi-session methods below
+ * (ADR-056; no driver has them yet); all resources are owned by close().
+ */
 export interface HarnessControl {
   initialize(): Promise<ProtocolObservation>;
   open(cwd: string, model?: string, options?: NativeOptions, checkpoint?: string): Promise<NativeConversationId>;
+  /**
+   * Opens one more native session on this connection (new, or the one behind `checkpoint`) and returns its identity, without
+   * changing the session open() opened or any other (ADR-056 §4.2). Declared for multi-session hosts; a driver without it
+   * carries one session per process. Rejects as open() does; a session it opened is closed by closeSession() or close().
+   */
+  openSession?(cwd: string, model?: string, options?: NativeOptions, checkpoint?: string): Promise<NativeConversationId>;
+  /**
+   * Closes one open session in the program and leaves the connection and its other sessions running. Rejects while the
+   * session has an active run; resolves once the program confirmed the close. Whether that returns the session's resources
+   * is the driver's sessionRelease declaration.
+   */
+  closeSession?(id: NativeConversationId): Promise<void>;
+  /** Makes an open session the program's active one, on a connection with one active session at a time; rejects while another session runs. */
+  switchSession?(id: NativeConversationId): Promise<void>;
   /** Private Driver-owned recovery reference, never credentials. Null means the current native interface cannot resume. */
   checkpoint?(): Promise<string | null>;
   models?(): Promise<NativeModelCatalog>;

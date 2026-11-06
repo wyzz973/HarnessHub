@@ -1,6 +1,6 @@
 # 原生宿主与会话租借：会话是数据，进程是可以切换会话的宿主
 
-状态：accepted（2026-11-03 用户按推荐项接受 D1–D7），对应 [ADR-056](../../decisions/0056-native-hosts-and-sessions.md)（2026-11-03）。**未实现、未真机验证**：没有改任何代码，没有运行任何 Harness，没有碰 4317 服务与 `data/`。实测已由另一位成员完成：[实测记录](../../../spikes/native-hosts/README.md)与 `spikes/native-hosts/results.json`（2026-11-03，六家；Pi 在官网策略下起不来，未测）——用正式的 application 与 binding factory、官网安装策略、生产的启动命令、环境与会话参数，不调用模型，配置守护前后无变化。第 5 节的归类与数字、第 4.3 节的预算、第 4.7、4.11、4.12 节的新条目与第 10 节的剩余项都按它改写；仍需模型调用才能验证的项在第 10 节单列。
+状态：accepted（2026-11-03 用户按推荐项接受 D1–D7），对应 [ADR-056](../../decisions/0056-native-hosts-and-sessions.md)（2026-11-03）。实施进展（2026-11-06）：G078 的契约与预算解析器、G085 的关闭链与每类私有 TMPDIR 代码完成、合成测试通过（[契约](../../contracts/native-hosts.md)、[验证记录](../../verification/native-hosts-g078-g085-2026-11-06.md)），第 4.11、4.12 节实现时的取舍见 ADR-056 的“实施记录”；下文其余部分仍是设计，都未真机验证。起草时（2026-11-03）**未实现、未真机验证**：没有改任何代码，没有运行任何 Harness，没有碰 4317 服务与 `data/`。实测已由另一位成员完成：[实测记录](../../../spikes/native-hosts/README.md)与 `spikes/native-hosts/results.json`（2026-11-03，六家；Pi 在官网策略下起不来，未测）——用正式的 application 与 binding factory、官网安装策略、生产的启动命令、环境与会话参数，不调用模型，配置守护前后无变化。第 5 节的归类与数字、第 4.3 节的预算、第 4.7、4.11、4.12 节的新条目与第 10 节的剩余项都按它改写；仍需模型调用才能验证的项在第 10 节单列。
 
 标注：【事实】有代码、契约、验收记录或上游源码出处，代码位置指本工作区（分支 `cc/relay-design`，基点 `e02fa52`）的 `file:line`；【实测】`spikes/native-hosts/` 在本机（Apple M5 Pro，64 GiB，macOS 27.0.1）测得，RSS 是整个进程树之和，Claude 与 Codex 的内存取决于本机用户自己配置的 MCP 服务器；【推断】由事实推出；【建议】本设计的提议。界面文案一律称 Harness。
 

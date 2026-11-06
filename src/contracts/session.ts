@@ -290,8 +290,16 @@ export interface WorkspaceLeaseProvider {
    * gone (ADR-030). A live holder or a record for another Session makes it return false; it never infers the end itself.
    */
   releaseAbandoned?(workspace: string, session: SessionId): boolean;
+  /**
+   * The directory the leases are kept in, when they are kept in one: the providers given one directory exclude each other.
+   * What must be shared exactly where the leases are (the host classes' TMPDIRs, ADR-056 §4.12) is placed by it.
+   */
+  readonly namespace?: string;
 }
-/** Per-Turn owner; close also releases the workspace lease and only its own private directories. */
+/**
+ * Per-Turn owner; close also releases the workspace lease and removes only its own private directories. The TMPDIR its
+ * program was given is its host class's (ADR-056 §4.12): close hands it back, and it outlives the binding.
+ */
 export interface PreparedSessionBinding {
   readonly installation?: { readonly source: "system" } | { readonly source: "managed"; readonly id: string; readonly revision: number; readonly version: string };
   readonly control: HarnessControl;
@@ -306,6 +314,12 @@ export interface SessionBindingFactory {
   readNativeSession?(selection: HarnessSelection, configuration: SessionConfiguration, nativeId: string): Promise<import("./control.js").NativeSessionImport>;
   /** Releases the workspace lease an ended owner left for `session`, after its kept processes were confirmed ended (ADR-030). */
   releaseAbandonedLease?(configuration: SessionConfiguration, session: SessionId): boolean;
+  /**
+   * Ends what the factory still does in the background once no binding of it runs (ADR-056 §4.12: the removal of host
+   * TMPDIRs moved aside, within its bound; what is left stays for the next start). The Runtime awaits it last in its own
+   * close. Idempotent; never rejects.
+   */
+  close?(): Promise<void>;
 }
 /** A Turn's budgets unless configured, and their bounds (ADR-036). */
 export const DEFAULT_EXECUTION_BUDGET_MS = 300_000, MAX_EXECUTION_BUDGET_MS = 60 * 60_000, MIN_EXECUTION_BUDGET_MS = 30_000;

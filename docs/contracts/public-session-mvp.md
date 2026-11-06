@@ -12,7 +12,7 @@ Runtime准入send/switch/cancel/close/permission先查commandId和fingerprint；
 
 switch请求先记录pending/requestedSeq，默认wait_current并遵循FIFO准入：请求前queued保留原选择且先执行；请求后输入记录awaitingSwitchId，只有该切换effective才执行新目标，失败则明确未派发，不自动回退。确认旧结果/cleanup后，用请求前已终结Run限定sourceRunIds，普通目标只验证入口/配置后effective、epoch+1并更新throughSeq，不初始化/open/close原生连接。effective不说明模型认证、额度或网络成功；实际连接留到发送时建立。后来的输入即使被cancel成terminal也不进入旧水位；不同pending冲突。
 
-cancel queued持久tombstone后不启动；preparing在await后核对；active取消仅受理/发送回执。公共cancelled表示用户撤回且资源已收敛，竞态中backend仍可能completed，事实必须同时保留，不能以公共标签声称后端没执行。prompt派发后backend未结算或cleanup未知进入unknown/blocked；初始化/open失败且close确认则本轮failed，Session可继续。已结算后protocolFailure保留backend/cleanup事实并令本轮failed，不宣称完成，也不把已停止资源说成未知。
+cancel queued持久tombstone后不启动；preparing在await后核对；active取消仅受理/发送回执；后端已结算（settling：回复已到、只剩关闭）后到达的取消只记录命令与run.cancel_requested，不设cancelRequested、不提前关闭，回合按后端结果结束（ADR-056实施记录）。公共cancelled表示用户撤回且资源已收敛，竞态中backend仍可能completed，事实必须同时保留，不能以公共标签声称后端没执行。prompt派发后backend未结算或cleanup未知进入unknown/blocked；初始化/open失败且close确认则本轮failed，Session可继续。已结算后protocolFailure保留backend/cleanup事实并令本轮failed，不宣称完成，也不把已停止资源说成未知。
 
 重新打开Store，将preparing/running/settling记unknown/block，queued取消，pending switch失败，不重放。普通Session以同公共ID续接并public_context_rehydrate；closed/blocked不接收普通执行或切换。会话级未知不毒化其他工作区/会话；真实Store/owner/公共发布故障仍停止整个Runtime。CLIEOF/:quit先停止准入，取消未执行队列并关闭active资源后释放owner锁；Session历史仍在。
 
@@ -20,7 +20,7 @@ cancel queued持久tombstone后不启动；preparing在await后核对；active�
 
 v3只允许带已关闭资源及有效交接来源证据的unknown历史在显式恢复后继续open。Store保留既有v1→v2→v3迁移，追加全事务v3→v4→v5→v6→v7→v8→v9→v10升级；nativeModel/nativeOptions与受管provider互斥，保留身份/历史/命令/事件与业务水位；blocked不自动重开。未知版本/损坏失败，不能用删库修复；回退旧程序需先停止服务并恢复升级前备份。
 
-关闭等待在途create/validate（最多16个），验证finally清理完才允许释放Store。CLI stdin在readline之前2MiB原始字节守卫；stdout/每条记录与排队均16MiB限额，slow consumer明确停止而不无限缓存；退出时关闭自有输入handle。CLI consumer退出属于当前入口shutdown，不等于未来HTTP SSE订阅断开策略。
+关闭等待在途create/validate（最多16个），验证finally清理完才允许释放Store；最后结束binding factory的后台工作（宿主TMPDIR的后台删除，最多等hostTmpdirCloseWaitMs，剩下的留给下次启动，ADR-056）。CLI stdin在readline之前2MiB原始字节守卫；stdout/每条记录与排队均16MiB限额，slow consumer明确停止而不无限缓存；退出时关闭自有输入handle。CLI consumer退出属于当前入口shutdown，不等于未来HTTP SSE订阅断开策略。
 
 ADR-010初始切片未包含HTTP/图形UI与Provider；当前它们由ADR-011/012/013/014及[Provider与Web契约](provider-web-mvp.md)另行采纳。原生checkpoint、自动最优路由、任意工具权限覆盖或崩溃未知结果自动修复仍未实现。ADR-019新增原接口实际审批：请求归属当前Run，公开权限ID与原ID分离；决定先提交后回复，命令重试不重复回复，取消/关闭释放待决请求。transport提交不等于原生ACK。原生命令按已发现名称直接派发，不注入公共文本包；取消在命令目录读取后再次核实，不能派发已撤回命令。configHome仅私有目录引用；受管Provider使用固定revision与每轮私有配置。CLI默认控制执行30秒；生产Web原生执行300秒、请求10秒；完整可配置运行预算后续扩展，不把字节预算当模型token窗口证明。
 
