@@ -18,9 +18,9 @@
 
 <br>
 
-<a href="docs/assets/promo.mp4"><img src="docs/assets/promo.webp" alt="HarnessHub in 44 seconds: wire every coding agent to one model, give each its own key, run agents headless through one API, and keep every model call on the record" width="100%"></a>
+<img src="docs/assets/promo.webp" alt="HarnessHub in 44 seconds: wire every coding agent to one model, give each its own key, run agents headless through one API, and keep every model call on the record" width="100%">
 
-<sub>HarnessHub in 44 seconds · <a href="docs/assets/promo.mp4">watch in 1080p</a></sub>
+<sub>HarnessHub in 44 seconds · <a href="docs/assets/promo.mp4?raw=true">download the 1080p MP4</a></sub>
 
 </div>
 

@@ -18,9 +18,9 @@
 
 <br>
 
-<a href="docs/assets/promo.mp4"><img src="docs/assets/promo.webp" alt="44 秒了解 HarnessHub：把所有编码 Agent 接到同一个模型，每个 Agent 一把自己的 Key，通过一套 API 无人值守地运行，每次模型调用都有记录" width="100%"></a>
+<img src="docs/assets/promo.webp" alt="44 秒了解 HarnessHub：把所有编码 Agent 接到同一个模型，每个 Agent 一把自己的 Key，通过一套 API 无人值守地运行，每次模型调用都有记录" width="100%">
 
-<sub>44 秒了解 HarnessHub · <a href="docs/assets/promo.mp4">观看 1080p 版本</a>（片中文字为英文）</sub>
+<sub>44 秒了解 HarnessHub · <a href="docs/assets/promo.mp4?raw=true">下载 1080p MP4</a>（片中文字为英文）</sub>
 
 </div>
 
