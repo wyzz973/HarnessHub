@@ -16,6 +16,12 @@
 
 [快速上手](#快速上手) · [为什么需要它](#为什么需要-harnesshub) · [工作方式](#工作方式) · [文档](docs/README.md) · [路线图](ROADMAP.md) · [English](README.md)
 
+<br>
+
+<a href="docs/assets/promo.mp4"><img src="docs/assets/promo.webp" alt="44 秒了解 HarnessHub：把所有编码 Agent 接到同一个模型，每个 Agent 一把自己的 Key，通过一套 API 无人值守地运行，每次模型调用都有记录" width="100%"></a>
+
+<sub>44 秒了解 HarnessHub · <a href="docs/assets/promo.mp4">观看 1080p 版本</a>（片中文字为英文）</sub>
+
 </div>
 
 > 本文是 [英文 README](README.md) 的译文，两者不一致时以英文为准。

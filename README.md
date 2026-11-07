@@ -16,6 +16,12 @@
 
 [Quickstart](#quickstart) · [Why HarnessHub](#why-harnesshub) · [Architecture](#how-it-works) · [Docs](docs/README.md) · [Roadmap](ROADMAP.md) · [中文](README.zh-CN.md)
 
+<br>
+
+<a href="docs/assets/promo.mp4"><img src="docs/assets/promo.webp" alt="HarnessHub in 44 seconds: wire every coding agent to one model, give each its own key, run agents headless through one API, and keep every model call on the record" width="100%"></a>
+
+<sub>HarnessHub in 44 seconds · <a href="docs/assets/promo.mp4">watch in 1080p</a></sub>
+
 </div>
 
 > [!NOTE]
