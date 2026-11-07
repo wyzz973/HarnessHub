@@ -455,7 +455,7 @@ export class LocalHarnessManagement {
       for (const path of shown.blocked) note("安装程序尝试写入 " + path + "，已被阻止。");
       this.phase(job.id, "verifying");
       const found = await installer.verify(request, context); owned();
-      if (outcome.exitCode !== 0) throw new ManagementError("INSTALL_FAILED", "安装程序没有成功结束" + (shown.blocked.length ? "（它尝试写入 " + shown.blocked.join("、") + "，已被阻止）" : "") + "。没有重试；留下的文件可以在“我的 Agent”里卸载。");
+      if (outcome.exitCode !== 0) throw new ManagementError("INSTALL_FAILED", "安装程序没有成功结束" + (shown.blocked.length ? "（它尝试写入 " + shown.blocked.join("、") + "，已被阻止）" : "") + "。没有重试；留下的文件可以在 Harness 页里卸载。");
       if (found === null) throw new ManagementError("INSTALL_NOT_FOUND", "安装结束了，但没有在官网渠道里找到 " + request.command + "（" + this.shown(request.entry) + "）。没有重试。");
       if (found.version === null) throw new ManagementError("INSTALL_VERSION_UNKNOWN", "已经装好 " + request.command + "，但读不出它的版本。");
       official({ installed: true }, { actualVersion: found.version, configurationPreserved: true });

@@ -91,6 +91,12 @@ test("local web startup authenticates once, restores CSRF, and serves same-origi
   const f = await fixture(t);
   const page = await fetch(f.origin); assert.equal(page.status, 200); assert.match(await page.text(), /HarnessGateway fixture/u);
   assert.equal(page.headers.get("x-frame-options"), "DENY"); assert.match(page.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/u);
+  // The page and its assets come only from this Gateway (ADR-054 §2): no Google Fonts or any other origin is allowed.
+  for (const response of [page, await fetch(f.origin + "/fixture.js")]) {
+    const policy = response.headers.get("content-security-policy") ?? "";
+    assert.equal(policy, "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'");
+    assert.doesNotMatch(policy, /https?:|fonts\.(?:googleapis|gstatic)\.com/u);
+  }
   assert.equal(page.headers.get("access-control-allow-origin"), null);
   const unauthenticated = await call(f, "/api/v1/state"); assert.equal(unauthenticated.status, 401);
   await auth(f);

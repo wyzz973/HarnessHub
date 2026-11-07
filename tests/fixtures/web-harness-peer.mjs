@@ -66,6 +66,23 @@ createInterface({ input: process.stdin }).on("line", line => {
       active.approval = true;
       send({ id: "browser-approval", method: "item/commandExecution/requestApproval", params: { threadId: native, turnId: active.id, itemId: "fixture-command", command: "读取验收工作区", availableDecisions: ["accept", "decline", "cancel"] } }); return;
     }
+    if (text.startsWith("STREAM_BLOCK")) {
+      // A reply that ends with a code block, finished when the stream-control file says so: its end dot stands on a line of its own.
+      const emit = delta => notify("item/agentMessage/delta", { threadId: native, turnId: active.id, itemId: "browser-message", delta });
+      active.watcher = watch(process.cwd(), (_event, filename) => {
+        if (filename !== "stream-control.json" || active === null) return;
+        let command;
+        try { command = JSON.parse(readFileSync(join(process.cwd(), "stream-control.json"), "utf8")); }
+        catch (error) { if (error.code === "ENOENT") return; throw error; }
+        if (command.stage !== "finish") return;
+        active.watcher.close();
+        emit("\n```");
+        notify("turn/completed", { threadId: native, turn: { id: active.id, status: "completed" } }); active = null;
+      });
+      const paragraphs = Array.from({ length: 16 }, (_, index) => `段落 ${index + 1}：这段内容让对话长过一屏，回复写完时页面仍然停在最新的位置。`).join("\n\n");
+      emit(paragraphs + "\n\n最后运行：\n\n```sh\npnpm test");
+      return;
+    }
     if (text.startsWith("STREAM_RENDER") || text.startsWith("STREAM_CANCEL")) {
       const emit = delta => notify("item/agentMessage/delta", { threadId: native, turnId: active.id, itemId: "browser-message", delta });
       let phase = "first";
