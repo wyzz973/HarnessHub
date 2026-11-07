@@ -16,9 +16,9 @@
 
 <br>
 
-<img src="docs/assets/promo.webp" alt="50 秒了解 HarnessHub：已经在用的 Harness 在同一个对话里回答，对话中途可以换 Harness，审批和计划来自各家自己，安装与升级按官网的方式来" width="100%">
+https://github.com/user-attachments/assets/9a2af277-9fa9-48e8-9d26-08b61bc80ca8
 
-<sub>50 秒了解 HarnessHub · <a href="docs/assets/promo.mp4?raw=true">下载 1080p MP4</a>（字幕为英文，界面为中文）</sub>
+<sub>52 秒，带配乐：OpenCode 规划，Claude Code 实现，Codex 审查，DeepSeek Harness 验收，OpenClaw 报告 · <a href="docs/assets/promo.mp4?raw=true">下载 1080p MP4</a>（字幕为英文，界面为中文）</sub>
 
 </div>
 
@@ -153,6 +153,7 @@ HarnessHub 处于预发布阶段。为了说法如实，项目把“已设计”
 | **已设计、部分实现** | 接力，即不同 Harness 之间的上下文交接（[ADR-055](docs/decisions/0055-relay-and-context-scheduling.md)）；用常驻的原生宿主代替每回合一个进程（[ADR-056](docs/decisions/0056-native-hosts-and-sessions.md)） |
 | **不再计划** | Windows 与 Linux（[ADR-044](docs/decisions/0044-macos-official-channels.md)） |
 | **以后** | 统一管理模型 Provider；目前每一家用它已经配置好的模型 |
+| **关于宣传片** | 片中的接力、对话内容和数字都是示意。五棒的分工按各家公认的长处安排；把总结发到手机是 OpenClaw 自己的消息功能，还没有经 HarnessHub 实测 |
 
 ## 文档
 

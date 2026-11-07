@@ -16,9 +16,9 @@
 
 <br>
 
-<img src="docs/assets/promo.webp" alt="HarnessHub in 50 seconds: the harnesses you already use answer in one chat, you switch harness mid-conversation, approvals and plans come from each harness itself, and HarnessHub installs and upgrades them the official way" width="100%">
+https://github.com/user-attachments/assets/9a2af277-9fa9-48e8-9d26-08b61bc80ca8
 
-<sub>HarnessHub in 50 seconds · <a href="docs/assets/promo.mp4?raw=true">download the 1080p MP4</a></sub>
+<sub>HarnessHub in 52 seconds, with sound: OpenCode plans, Claude Code builds, Codex reviews, DeepSeek Harness verifies, OpenClaw reports back · <a href="docs/assets/promo.mp4?raw=true">download the 1080p MP4</a></sub>
 
 </div>
 
@@ -151,6 +151,7 @@ HarnessHub is pre-release. To keep the claims honest, the project separates *des
 | **Designed, partly built** | Relay, the context handoff between harnesses ([ADR-055](docs/decisions/0055-relay-and-context-scheduling.md)); long-lived native hosts instead of one process per turn ([ADR-056](docs/decisions/0056-native-hosts-and-sessions.md)) |
 | **Not planned** | Windows and Linux ([ADR-044](docs/decisions/0044-macos-official-channels.md)) |
 | **Later** | Managing model providers centrally; for now each harness uses the models it is configured with |
+| **About the film** | The relay, the conversation and its numbers are illustrative. The five legs follow what each harness is known for; sending the summary to a phone is OpenClaw's own messaging feature and has not been verified through HarnessHub |
 
 ## Documentation
 
