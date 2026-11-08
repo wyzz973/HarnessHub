@@ -1,5 +1,7 @@
 # 工程文档与阅读顺序
 
+最新（2026-11-09）：[最小可用版本功能清单](product/mvp-2026-11-09.md)，写明每一条的证据等级，以及对外可以说和不要说的。接力的交接单取代了 JSON 信封（[验证记录](verification/relay-mvp-2026-11-09.md)：独立审查三轮，真机两对冒烟，OpenCode → DeepSeek Harness → OpenCode 全程通过）。存储优化见 [G075](verification/relay-g075-2026-11-09.md)：8 MiB 时从受理到派发 p95 281.7 ms。
+
 最新（2026-11-01）：各家升到渠道最新版后的真实重验——[Claude Code 2.1.316 + claude-agent-acp 0.99.1](verification/claude-latest-2026-11-01.md)、[Codex 0.166.0](verification/codex-latest-2026-11-01.md)（含 Hub 的 Homebrew cask 升级缺陷）、[DeepSeek Harness 0.2.1-rc.5](verification/dsh-latest-2026-11-01.md)、[Hermes Agent v0.22.5（网关查看器，ADR-051 A2 预检落地）](verification/hermes-latest-2026-11-01.md)、[OpenCode 2.2.5（换到 OpenCode 2）](verification/opencode-latest-2026-11-01.md)；[OpenClaw 两跳升级的真实运行](verification/openclaw-upgrade-2026-11-01.md)（本机升到 2026.10.9，网关升级后未就绪，复验未做）。
 
 最新（2026-11-01）：[ADR-052](decisions/0052-openclaw-upgrade-route.md)（accepted，实现裁决）——OpenClaw 的 npm 安装在“升级 Harness”里按上游文档的顺序升级：`openclaw gateway stop`、逐跳 npm 安装（`--allow-scripts=openclaw`，7 月前的安装先经 2026.9.5）与 `openclaw doctor --fix --yes`、`openclaw gateway start` 与恢复判定、`openclaw node restart`；确认框显示命令原文并要求先 `openclaw backup create`；每跳的 Node.js 要求都核对；替身测试通过，真机升级由主代理另行执行。

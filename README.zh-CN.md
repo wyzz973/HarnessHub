@@ -52,6 +52,7 @@ HarnessHub 把它们放进**同一个对话**：
 - 公共对话不属于任何一家 Harness
 - 两条消息之间就能换 Harness、模型或思考强度，没有“应用”按钮
 - 换人的地方有一条“从这里起由 X 接手”的分隔线
+- 做到一半换人：下一家收到一份交接单，有你的原话、前面每一家做了什么、改了哪些文件；回到原来那家时，只补它没看到的部分
 - 接续某家自己的会话，或从任一回复分支
 - 回复经 SSE 流式显示，刷新不丢失，也不会重复发送
 
@@ -97,7 +98,7 @@ flowchart LR
     CC & CX & OC & DS & HE & CL -.-> M["它们自己的登录<br/>与模型"]
 ```
 
-对话属于 HarnessHub，每一家在下面保留自己的原生会话。事实先写进数据库再显示，所以刷新会如实重放发生过的事，结果未知的执行也不会被自动重跑。切换时，下一家拿到的是有边界的对话上下文；回到一个它已经有的原生会话时，只补它没见过的部分。厂商 SDK 的类型留在驱动里，其余代码从不按“现在是哪一家”分支。
+对话属于 HarnessHub，每一家在下面保留自己的原生会话。事实先写进数据库再显示，所以刷新会如实重放发生过的事，结果未知的执行也不会被自动重跑。切换时，下一家拿到一份交接单：前面的对话按预算折叠，省略了什么写得清清楚楚。回到一个它已经有的原生会话时，只补它没见过的部分；只用一家时，什么都不加。厂商 SDK 的类型留在驱动里，其余代码从不按“现在是哪一家”分支。
 
 ## 支持的 Harness
 
@@ -148,9 +149,10 @@ HarnessHub 处于预发布阶段。为了说法如实，项目把“已设计”
 
 | | |
 |---|---|
-| **已测试** | `pnpm check`（构建、前端构建、设计、依赖边界与工具检查）、`pnpm test`（941 项通过）与浏览器测试 `pnpm test:web` 在 macOS arm64 上运行 |
+| **已测试** | `pnpm check`（构建、前端构建、设计、依赖边界与工具检查）、`pnpm test`（996 项通过）与浏览器测试 `pnpm test:web` 在 macOS arm64 上运行 |
 | **真实 Harness** | 逐项记录在[能力矩阵](docs/verification/native-capability-matrix.md)与[验证记录](docs/verification/)中；有些功能受测试账号的套餐或额度限制，标为受阻 |
-| **已设计、部分实现** | 接力，即不同 Harness 之间的上下文交接（[ADR-055](docs/decisions/0055-relay-and-context-scheduling.md)）；用常驻的原生宿主代替每回合一个进程（[ADR-056](docs/decisions/0056-native-hosts-and-sessions.md)） |
+| **接力** | 不同 Harness 之间的交接单已在现有存储（v12）上实现，合成测试通过；真机冒烟中，OpenCode → DeepSeek Harness → OpenCode 全程通过，Claude Code → Codex 的交接通过，而回到自己会话的 Claude Code（haiku）读错了一份内容正确的增量。送达记录、校准过的预算和界面上的省略说明随存储 v13 加入（[ADR-055](docs/decisions/0055-relay-and-context-scheduling.md)） |
+| **已设计** | 用常驻的原生宿主代替每回合一个进程（[ADR-056](docs/decisions/0056-native-hosts-and-sessions.md)） |
 | **不再计划** | Windows 与 Linux（[ADR-044](docs/decisions/0044-macos-official-channels.md)） |
 | **以后** | 统一管理模型 Provider；目前每一家用它已经配置好的模型 |
 | **关于宣传片** | 片中的接力、对话内容和数字都是示意。五棒的分工按各家公认的长处安排；把总结发到手机是 OpenClaw 自己的消息功能，还没有经 HarnessHub 实测 |
@@ -160,6 +162,7 @@ HarnessHub 处于预发布阶段。为了说法如实，项目把“已设计”
 | 主题 | 从这里开始 |
 |---|---|
 | 总览与阅读顺序 | [docs/README.md](docs/README.md) · [工程现状](docs/engineering/status.md) |
+| 这一版能做什么 | [最小可用版本功能清单](docs/product/mvp-2026-11-09.md)，含证据与边界 |
 | 决策 | [ADR 索引](docs/decisions/README.md)，共 49 篇 |
 | 契约与不变量 | [契约](docs/contracts/) · [不变量](docs/domain/invariants.md) |
 | 证据 | [能力矩阵](docs/verification/native-capability-matrix.md) · [验证记录](docs/verification/) |

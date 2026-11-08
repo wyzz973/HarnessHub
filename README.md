@@ -50,6 +50,7 @@ Everything stays on your machine. The page is served on `127.0.0.1`, signed in w
 - A public conversation that belongs to no single harness
 - Switch harness, model or thinking level between messages, with no "Apply" button
 - A marker shows where another harness took over
+- Hand off mid-task: the next harness gets a handoff packet with your words, what each harness did and the files it changed; one that comes back gets only what it missed
 - Resume a harness's own sessions, or branch from any reply
 - Replies stream over SSE and survive reloads; nothing is sent twice
 
@@ -95,7 +96,7 @@ flowchart LR
     CC & CX & OC & DS & HE & CL -.-> M["Their own logins<br/>and models"]
 ```
 
-The conversation is HarnessHub's; each harness keeps its own native session underneath. Facts are committed to the database before they are shown, so a reload replays exactly what happened and an unknown outcome is never re-run on its own. When you switch, the next harness is given the conversation so far as bounded context; when a harness returns to a native session it already has, it receives only what it has not seen yet. Vendor SDK types stay inside the drivers; the rest of the code never branches on which harness it is talking to.
+The conversation is HarnessHub's; each harness keeps its own native session underneath. Facts are committed to the database before they are shown, so a reload replays exactly what happened and an unknown outcome is never re-run on its own. When you switch, the next harness is given a handoff packet: the conversation so far, folded to a bounded budget, with what was left out said plainly. A harness that returns to a native session it already has receives only what it has not seen yet, and a conversation with one harness gets nothing added at all. Vendor SDK types stay inside the drivers; the rest of the code never branches on which harness it is talking to.
 
 ## Supported harnesses
 
@@ -146,9 +147,10 @@ HarnessHub is pre-release. To keep the claims honest, the project separates *des
 
 | | |
 |---|---|
-| **Tested** | `pnpm check` (build, web build, design, boundary and tooling checks), `pnpm test` (941 passing) and the browser suite `pnpm test:web` run on macOS arm64 |
+| **Tested** | `pnpm check` (build, web build, design, boundary and tooling checks), `pnpm test` (996 passing) and the browser suite `pnpm test:web` run on macOS arm64 |
 | **Real harnesses** | Recorded per feature in the [capability matrix](docs/verification/native-capability-matrix.md) and the [verification records](docs/verification/); some features are blocked by plan or quota limits on the test account and are marked as such |
-| **Designed, partly built** | Relay, the context handoff between harnesses ([ADR-055](docs/decisions/0055-relay-and-context-scheduling.md)); long-lived native hosts instead of one process per turn ([ADR-056](docs/decisions/0056-native-hosts-and-sessions.md)) |
+| **Relay** | The handoff packet between harnesses runs on the current storage (v12) and passes synthetic tests; in real-harness smoke tests, OpenCode → DeepSeek Harness → OpenCode passed end to end, and Claude Code → Codex passed its handoff, while Claude Code (on haiku), back on its own session, misread a delta that was correct. Delivery records, calibrated budgets and an omission view in the interface come with storage v13 ([ADR-055](docs/decisions/0055-relay-and-context-scheduling.md)) |
+| **Designed** | Long-lived native hosts instead of one process per turn ([ADR-056](docs/decisions/0056-native-hosts-and-sessions.md)) |
 | **Not planned** | Windows and Linux ([ADR-044](docs/decisions/0044-macos-official-channels.md)) |
 | **Later** | Managing model providers centrally; for now each harness uses the models it is configured with |
 | **About the film** | The relay, the conversation and its numbers are illustrative. The five legs follow what each harness is known for; sending the summary to a phone is OpenClaw's own messaging feature and has not been verified through HarnessHub |
@@ -160,6 +162,7 @@ The documentation is in Chinese.
 | Topic | Start here |
 |---|---|
 | Overview and reading order | [docs/README.md](docs/README.md) · [engineering status](docs/engineering/status.md) |
+| What this release can do | [Feature list of the minimum usable version](docs/product/mvp-2026-11-09.md), with its evidence and limits |
 | Decisions | [ADR index](docs/decisions/README.md), 49 records |
 | Contracts and invariants | [contracts](docs/contracts/) · [invariants](docs/domain/invariants.md) |
 | Evidence | [capability matrix](docs/verification/native-capability-matrix.md) · [verification records](docs/verification/) |
