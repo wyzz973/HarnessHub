@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomInt, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,10 +11,11 @@ import { captureNativeEnvironment } from "../../src/infrastructure/session/nativ
 import { describeGuard, evidenceHeader, guardTargets, recheck, snapshot, type EvidenceHeader, type GuardCheck } from "./guard.js";
 
 /**
- * Relay on the user's installed Harnesses (ADR-055, the relay packet on v12): the first Harness answers a number, the second is
- * asked what the first answered and answers a new one, and the first, back on its own native session, is asked what the second
- * answered. The numbers exist only in the conversation, never in the workspace, so the second Harness can know the first answer
- * only from the relay packet, and the first can know the second only from the delta. No tool is needed. HH_REAL_HARNESSES names
+ * Relay on the user's installed Harnesses (ADR-055, the relay packet on v12): the first Harness makes up a five-digit number, the
+ * second is asked for that number plus one, and the first, back on its own native session, is asked what the second answered.
+ * The first number exists only in the first Harness's reply (not in the user's words, not in the workspace), so the second can
+ * know it only from the relay packet, and the first can know the second's answer only from the delta. What each step expects is
+ * computed from the replies actually given, so a model's slip in one step is not taken for a relay failure. No tool is needed. HH_REAL_HARNESSES names
  * the pair (for example "claude,codex") and HH_REAL_MODEL_<ID> a native model; missing prerequisites fail, nothing is a skipped pass. A Turn that runs past five
  * minutes is cancelled and fails the run; one that reports more than 150,000 tokens stops it. Evidence holds statuses, digits,
  * counts and sizes, never checkpoints, environment values, packet text or reply text beyond the digits.
@@ -71,7 +72,6 @@ test("installed Harnesses hand a conversation over and back: the second knows th
     const configuration = await prepareConfiguration({ workspace, ...(process.env.HH_REAL_MANIFEST ? { manifestPath: process.env.HH_REAL_MANIFEST } : {}) });
     header = await evidenceHeader(app, harnesses, { configuration });
     const created = await app.runtime.create(configuration, selection(first), "create-" + randomUUID()), id: SessionId = created.id;
-    const seed = String(randomInt(10_000, 99_999)), reversed = [...seed].reverse().join(""), next = String(Number(reversed) + 1);
     /** Waits for the Session to settle, at most TURN_LIMIT_MS; past that the Turn is cancelled and the run fails. */
     const settle = async (label: string): Promise<void> => {
       let timer: NodeJS.Timeout | undefined;
@@ -96,24 +96,27 @@ test("installed Harnesses hand a conversation over and back: the second knows th
       assert.equal(app.runtime.read(id).selection.harnessId, harnessId, "the switch to " + harnessId + " took effect");
     };
 
-    const one = await ask("请把数字 " + seed + " 的各位倒过来写，只回复倒过来的数字本身，不要调用任何工具，不要别的字。");
+    const one = await ask("请随便想一个五位数（不要用 12345、11111 这类有规律的数），只回复这个数字本身，不要调用任何工具，不要别的字。");
     assert.equal(one.run.status, "completed", "the first Harness's turn completes: " + JSON.stringify(one.run.error));
     assert.equal(one.relay, null, "the first Turn of a new conversation owes nothing and goes as typed");
-    assert.ok(digits(reply(one.state, one.run)).includes(reversed), "the first Harness answers the reversed number");
+    const made = reply(one.state, one.run).match(/\d{5}/gu) ?? [];
+    assert.equal(made.length, 1, "the first Harness answers one five-digit number");
+    const next = Number(made[0]) + 1, says = (text: string) => digits(text).map(Number).includes(next);
 
     await switchTo(second);
-    const two = await ask("上一位 Harness 回复的那个数字加 1 等于多少？只回复结果数字本身，不要调用任何工具，不要别的字。");
+    const two = await ask("上一位 Harness 回复的那个五位数加 1 等于多少？只回复结果数字本身，不要调用任何工具，不要别的字。");
     assert.equal(two.run.status, "completed", "the second Harness's turn completes: " + JSON.stringify(two.run.error));
     assert.ok(two.run.sourceRunIds.length > 0, "the second Harness's turn carried the conversation it had not seen");
     assert.equal(two.relay?.kind, "packet", "a Harness new to the conversation receives the whole relay packet");
-    assert.ok(digits(reply(two.state, two.run)).includes(next), "the second Harness knows the first's answer only from the relay packet");
+    assert.ok(says(reply(two.state, two.run)), "the second Harness knows the first's number only from the relay packet");
 
     await switchTo(first);
     const three = await ask("另一个 Harness 刚才回复了哪个数字？只回复那个数字本身，不要调用任何工具，不要别的字。");
     assert.equal(three.run.status, "completed", "the first Harness's return turn completes: " + JSON.stringify(three.run.error));
     assert.ok(three.run.sourceRunIds.length > 0, "the return turn carried what happened while the first Harness was away");
     assert.equal(three.relay?.kind, "delta", "back on its own native session, the first Harness receives only what it missed");
-    assert.ok(digits(reply(three.state, three.run)).includes(next), "back on its own native session, the first Harness knows the second's answer from the delta");
+    // The second's answer differs from the first's own number, so the first can know it only from the delta.
+    assert.ok(says(reply(three.state, three.run)), "back on its own native session, the first Harness knows the second's answer from the delta");
     assert.ok(three.state.nativeBindings?.some(binding => binding.harnessId === first && binding.status === "ready"), "the first Harness's native binding is ready again");
   } catch (error) { failure = error; }
   finally {
