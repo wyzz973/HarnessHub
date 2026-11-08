@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { access, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -11,6 +12,7 @@ import type { ProviderView } from "../../src/contracts/provider.js";
 import { catalogTarget } from "../../src/infrastructure/catalog/platform.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
+import { readRelayPrompt } from "../fixtures/relay-packet.js";
 import { evidenceHeader, guardTest, snapshot, type SuiteEvidence } from "./guard.js";
 
 const CODEX_MODEL = "fixture-cross-harness-codex";
@@ -58,9 +60,15 @@ function gemini(response: ServerResponse): void {
     usageMetadata: { promptTokenCount: 24, candidatesTokenCount: 8, totalTokenCount: 32 }, modelVersion: GEMINI_MODEL, responseId: "cross-gemini-fixture" };
   response.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" }); response.end("data: " + JSON.stringify(value) + "\n\n");
 }
+/** Every string in a request body, depth first: where the user's text sits differs between the Responses and Gemini bodies. */
+function strings(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(strings);
+  return value !== null && typeof value === "object" ? Object.values(value).flatMap(strings) : [];
+}
 function target(provider: ProviderView) { return { providerId: provider.id, revision: provider.revision, model: provider.defaultModel }; }
 
-/** Public history is rehydrated into fresh real native conversations; no native checkpoint is transferred. */
+/** Public history reaches fresh real native conversations as the relay packet (ADR-055 §5); no native checkpoint is transferred. */
 test("real Codex→Gemini→Codex uses the same public Session with explicit Providers and complete rehydrated history", { timeout: 60000 }, async t => {
   // The Providers are HarnessHub's own; the user's Codex and Gemini configuration is snapshotted first and compared after the cleanup.
   const before = await snapshot(["codex", "gemini"], environment);
@@ -126,10 +134,23 @@ test("real Codex→Gemini→Codex uses the same public Session with explicit Pro
   app.runtime.switch(session.id, { harnessId: "codex", controlId: codexControl.id, provider: target(codexProvider) }, "cross-switch-codex"); await app.runtime.wait(session.id);
   assert.equal(app.runtime.read(session.id).selection.harnessId, "codex"); await send(2);
   assert.deepEqual(errors, []); assert.equal(calls.length, 3); assert.deepEqual(calls.map(call => call.harness), ["codex", "gemini", "codex"]);
+  const persisted = app.store.events(session.id, 0, 100), runs = app.runtime.read(session.id).runs;
   for (let at = 0; at < calls.length; at++) {
-    const serialized = JSON.stringify(calls[at]!.input);
+    const serialized = JSON.stringify(calls[at]!.input), typed = MARKERS[at]! + ": reply briefly and do not use tools";
     for (let prior = 0; prior <= at; prior++) assert.ok(serialized.includes(MARKERS[prior]!), "current and prior public input did not reach the selected model endpoint");
-    assert.ok(serialized.includes("public_context_rehydrate")); assert.ok(!serialized.includes(CODEX_KEY) && !serialized.includes(GEMINI_KEY), "raw credentials entered the rehydrated public history");
+    assert.ok(!serialized.includes(CODEX_KEY) && !serialized.includes(GEMINI_KEY), "raw credentials entered the relay packet");
+    const prepared = persisted.find(event => event.type === "run.context_prepared" && event.data.runId === runs[at]!.id);
+    assert.ok(prepared, "Turn " + at + " recorded what it prepared"); assert.equal(prepared.data.continuity, "public_context_rehydrate");
+    if (at === 0) { assert.ok(!serialized.includes("〔HarnessHub"), "the first Turn carried a relay packet"); assert.equal(prepared.data.relay, undefined); continue; }
+    // A Provider selection resumes no native conversation, so every Turn after a switch hands over the whole history as a packet.
+    const found = strings(calls[at]!.input).filter(text => { const prompt = readRelayPrompt(text); return prompt.packet && prompt.currentInput.text === typed; });
+    assert.equal(found.length, 1, "Turn " + at + " reached the model without exactly one relay packet ending with its input");
+    const packet = readRelayPrompt(found[0]!), relay = object(prepared.data.relay);
+    assert.equal(packet.kind, "packet"); assert.equal(relay.kind, "packet");
+    assert.equal(createHash("sha256").update(found[0]!).digest("hex"), relay.sha256, "the model received exactly the packet the Hub recorded");
+    assert.deepEqual(packet.history.map(entry => entry.user.text), MARKERS.slice(0, at).map(marker => marker + ": reply briefly and do not use tools"));
+    assert.ok(packet.body.includes("CODEX-PUBLIC-ANSWER [redacted]"), "the packet carries Codex's answer with its key redacted");
+    if (at === 2) assert.ok(packet.body.includes("GEMINI-PUBLIC-ANSWER [redacted]"), "the packet carries Gemini's answer with its key redacted");
   }
   assert.ok(JSON.stringify(calls[1]!.input).includes("CODEX-PUBLIC-ANSWER")); assert.ok(JSON.stringify(calls[2]!.input).includes("GEMINI-PUBLIC-ANSWER"));
   const final = app.runtime.read(session.id); assert.equal(final.id, session.id); assert.equal(final.epoch, 3); assert.equal(final.runs.length, 3);

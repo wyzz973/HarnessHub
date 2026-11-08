@@ -28,6 +28,7 @@
     "test:web": "pnpm build && pnpm web:build && node --test dist/tests/browser/web.browser.js",
     "test:real:gemini-provider": "pnpm build && node --test dist/tests/real/gemini-provider.real.js",
     "test:real:switch": "pnpm build && node --test dist/tests/real/harness-provider-switch.real.js",
+    "test:real:relay": "pnpm build && node --test dist/tests/real/relay-conformance.real.js",
     "test:real:install": "pnpm build && node --test dist/tests/real/managed-install.real.js",
     "test:real:stream": "pnpm build && node --test dist/tests/real/live-web-stream.real.js",
     "test:real:native-resume": "pnpm build && node --test dist/tests/real/native-resume.real.js",

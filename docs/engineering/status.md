@@ -160,6 +160,7 @@ pnpm test:real:session
 pnpm test:real:provider
 pnpm test:real:gemini-provider
 pnpm test:real:switch
+pnpm test:real:relay
 pnpm test:real:native-catalog
 pnpm test:real:native-resume
 pnpm test:real:native-activity

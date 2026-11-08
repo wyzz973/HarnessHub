@@ -61,7 +61,7 @@ requested → validated → waiting_boundary/quiescing → preparing_context →
 ADR-055 改动的出发点，都是现有代码：
 
 - 切换只 `validate` 目标的入口与配置（`runtime.ts:1563`），`switch.validated` 仍用 `buildPublicContext` 固定来源 Run（`runtime.ts:1569–1573`），生效时 `epoch+1` 并改 `selection`（`runtime.ts:1603`），不启动控制连接。`switch.requested` 事件已带 `mode: "wait_current"`（`runtime.ts:392`），快照里的切换记录没有这个字段（`state.ts:197`）。
-- 每个 Run 在 open 之前构建 JSON 信封（`runtime.ts:1334–1342`）：来源是全部已终结的更早 Run，不看是否派发过（`context.ts:27–28`）；已有原生绑定时只取 `throughRunId` 之后的来源（`runtime.ts:1337–1339`）；信封超过 `MAX_CONTEXT_BYTES`（1 MiB，`state.ts:16`，文档常量）即 `CONTEXT_TOO_LARGE`（`context.ts:56–58`）。
+- 每个 Run 在 open 之前构建 JSON 信封（`runtime.ts:1334–1342`）：来源是全部已终结的更早 Run，不看是否派发过（`context.ts:27–28`）；已有原生绑定时只取 `throughRunId` 之后的来源（`runtime.ts:1337–1339`）；信封超过 `MAX_CONTEXT_BYTES`（1 MiB，`state.ts:16`，文档常量）即 `CONTEXT_TOO_LARGE`（`context.ts:56–58`）。2026-11-09 起（G070 MVP）信封换成交接单，按需渲染，历史超预算时折叠、不再报错，见[交接内容契约](context-transfer.md) §16；这一条记的是设计时的基线。
 - 命令识别在 `run.authorized` 之后：`run.input.startsWith("/")` 且名字在 `models()` 的目录里（`runtime.ts:1389–1396`），前导空白不认；目录项只有 `name` 与 `description`（`contracts/control.ts:163`）。
 - `BackendResult` 只有 `status`、`reason`、`error`（`contracts/control.ts:100–104`），持久化时只认这三个键（`state.ts:95`）。
 - 未确认的绑定在 open 之前抛 `NATIVE_STATE_UNCONFIRMED`（`runtime.ts:1336`）；绑定写入用 execute 开头读到的 `previousNative`（`runtime.ts:1382–1385`）；结算时只有已派发的 Run 推进 `throughRunId`（`runtime.ts:1496`）。

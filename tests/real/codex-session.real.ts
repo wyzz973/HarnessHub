@@ -8,7 +8,7 @@ import { isAbsolute, join } from "node:path";
 import type { Socket } from "node:net";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { type SessionId } from "../../src/contracts/session.js";
+import { type SessionEvent, type SessionId } from "../../src/contracts/session.js";
 import { SqliteSessionReader } from "../../src/infrastructure/session/sqlite-store.js";
 import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
 import { guardTest, snapshot, standaloneHeader, type SuiteEvidence } from "./guard.js";
@@ -28,6 +28,20 @@ function record(value: unknown, label = "value"): Record<string, unknown> {
 }
 function code(error: unknown): string | undefined { return error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : undefined; }
 function assertProvider(errors: readonly Error[]): void { assert.deepEqual(errors, [], errors.map(error => error.message).join("; ")); }
+/** The user-role texts of one Responses request, in order. */
+function userTexts(input: Record<string, unknown>): string[] {
+  assert.ok(Array.isArray(input.input), "Responses input items are missing");
+  return input.input.flatMap(raw => {
+    const item = record(raw);
+    return item.role === "user" && Array.isArray(item.content) ? item.content.map(content => record(content).text).filter((value): value is string => typeof value === "string") : [];
+  });
+}
+/** What a Turn's own `run.context_prepared` recorded of the relay packet it handed over (ADR-055 §7.6 on v12), or null when it owed nothing. */
+function relayOf(events: readonly SessionEvent[], runId: string): Record<string, unknown> | null {
+  const prepared = events.find(event => event.type === "run.context_prepared" && event.data.runId === runId);
+  assert.ok(prepared, "the Turn recorded what it prepared");
+  return prepared.data.relay === undefined ? null : record(prepared.data.relay, "relay record");
+}
 async function localCodex(): Promise<string> {
   const directories = [...(process.env.PATH ?? "").split(":"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"];
   for (const directory of [...new Set(directories.filter(path => isAbsolute(path)))]) {
@@ -118,7 +132,7 @@ test("real Codex preserves public history across two turns and a new formal chat
   const before = await snapshot(["codex"], environment), outcome = guardTest(t, before, environment, evidencePath, evidence);
   const executable = await localCodex(), root = await mkdtemp(join(tmpdir(), "harness-real-codex-session-"));
   const home = join(root, "home"), workspace = join(root, "workspace"), temporary = join(root, "temporary"), data = join(root, "data"), manifest = join(root, "manifest.json");
-  const sockets = new Set<Socket>(), requests: Record<string, unknown>[] = [], errors: Error[] = [];
+  const sockets = new Set<Socket>(), requests: Record<string, unknown>[] = [], errors: Error[] = [], relays: string[] = [];
   const server = createServer((request, response) => {
     void (async () => {
       assert.equal(request.method, "POST"); assert.equal(request.url, "/v1/responses");
@@ -127,18 +141,8 @@ test("real Codex preserves public history across two turns and a new formal chat
       assert.ok(index < 3, "unexpected retry or extra model request"); assert.equal(input.model, MODEL); assert.equal(input.stream, true);
       assert.ok(Array.isArray(input.input), "Responses input items are missing");
       assert.ok(!input.input.some(raw => ["function_call", "function_call_output", "custom_tool_call", "custom_tool_call_output"].includes(String(record(raw).type))), "text acceptance invoked a tool");
-      const texts = input.input.flatMap(raw => {
-        const item = record(raw);
-        return item.role === "user" && Array.isArray(item.content) ? item.content.map(content => record(content).text).filter((value): value is string => typeof value === "string") : [];
-      });
-      const publicText = texts.find(value => value.startsWith("HarnessGateway public conversation context."));
-      assert.ok(publicText, "real Harness did not send public context to its provider");
-      const context = record(JSON.parse(publicText.slice(publicText.indexOf("\n") + 1)), "public context");
-      assert.equal(context.continuity, "public_context_rehydrate"); assert.equal(record(context.currentInput).text, PROMPTS[index]);
-      assert.ok(Array.isArray(context.history)); assert.equal(context.history.length, index, "public history was truncated or future inputs leaked");
-      for (let prior = 0; prior < index; ++prior) {
-        const entry = record(context.history[prior]); assert.equal(record(entry.user).text, PROMPTS[prior]); assert.equal(record(entry.assistant).text, ANSWERS[prior]); assert.equal(entry.outcome, "completed");
-      }
+      // What the Hub handed over is checked after the run against each Turn's own record; here only that a request names its Turn.
+      assert.ok(userTexts(input).includes(PROMPTS[index]!), "the request does not carry this Turn's input as typed");
       sse(response, index);
     })().catch((error: unknown) => {
       errors.push(error instanceof Error ? error : new Error("local provider failed"));
@@ -183,15 +187,28 @@ test("real Codex preserves public history across two turns and a new formal chat
     try {
       const state = finalReader.get(id);
       assert.equal(state.runs.length, 3); assert.equal(state.messages.at(-1)?.text, ANSWERS[2]);
-      assert.deepEqual(state.runs[2]?.sourceRunIds, state.runs.slice(0, 2).map(run => run.id));
       assert.ok(state.runs.every(run => run.status === "completed" && run.cleanup?.closed));
+      const events = finalReader.events(id, 0, 100);
+      assert.ok(events.length < 100, "the Session's events fit one page");
+      for (let index = 0; index < state.runs.length; index++) {
+        // One Harness that resumes its own thread owes nothing at any Turn, across the process reopen too (ADR-055 §7.6, R3.6):
+        // the Hub hands over nothing but what the user typed, and every earlier Turn reaches the model as Codex's own history.
+        const run = state.runs[index]!, texts = userTexts(requests[index]!);
+        assert.equal(relayOf(events, run.id), null, "Turn " + index + " carried a relay packet although nothing was owed");
+        assert.deepEqual(run.sourceRunIds, [], "Turn " + index + " named sources although nothing was owed");
+        assert.deepEqual(texts.filter(text => (PROMPTS as readonly string[]).includes(text)), PROMPTS.slice(0, index + 1), "Turn " + index + " did not see exactly the user's own inputs so far");
+        assert.ok(!texts.some(text => text.includes("〔HarnessHub")), "Turn " + index + " reached the model with a relay marker");
+        const seen = JSON.stringify(requests[index]!.input);
+        for (let prior = 0; prior < index; prior++) assert.ok(seen.includes(ANSWERS[prior]!), "Turn " + index + " lost the answer of Turn " + prior);
+        relays.push("as typed");
+      }
     } finally { finalReader.close(); }
     assert.equal(requests.length, 3, "acceptance expected exactly one model request per public Turn");
     assert.deepEqual(await readdir(temporary), [], "owned temporary invocation directories remain");
     assert.deepEqual(await readdir(workspace), [], "text-only acceptance changed its workspace");
     t.diagnostic(JSON.stringify({ realHarness: "codex", executable, publicSession: id, turns: 3, processReopen: true,
       provider: "local deterministic HTTP Responses SSE", model: MODEL, requests: requests.length, cleanup: "closed", realModelValidated: false,
-      credentials: "synthetic private key only", continuity: "public_context_rehydrate" }));
+      credentials: "synthetic private key only", relay: relays }));
     outcome.completed = true;
   } finally {
     for (const socket of sockets) socket.destroy();

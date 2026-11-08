@@ -8,7 +8,7 @@
 
 一个数据根一个OS owner，owner锁rollback journal+BEGIN EXCLUSIVE；业务库WAL/FULL。新owner须验证旧owner已不活跃或显式正常释放，不能因TTL过期接管。路径身份变化/事务丢失/generation不匹配fail-closed。workspace锁跨数据根按canonical路径键排他，只有关闭确认后清除held状态；异常遗留held不自动认作可执行。
 
-Runtime准入send/switch/cancel/close/permission先查commandId和fingerprint；同请求返回原身份，不再派发。每turn一个active writer；原生会话按实际Driver恢复能力接续，私有checkpoint不进入Web DTO。没有已验证恢复接口时新native conversation；fresh context包含所有已terminal Turn的public user/assistant及状态，再加本turn输入，排队的其他用户输入不能提前进入prompt。完整历史超预算在启动前拒绝。
+Runtime准入send/switch/cancel/close/permission先查commandId和fingerprint；同请求返回原身份，不再派发。每turn一个active writer；原生会话按实际Driver恢复能力接续，私有checkpoint不进入Web DTO。没有已验证恢复接口时新native conversation。2026-11-09 起（G070 MVP）fresh context 是交接单（[交接内容契约](context-transfer.md) §16）：已派发、已终结的 Turn 的用户原话、状态、工作记录与文件改动，按预算折叠并记下省略，后接本 turn 的原话；排队的其他用户输入不能提前进入prompt。历史再长也只折叠、不拒绝；没有欠交的历史时原样发送，新native conversation的第一条也是。此前是 JSON 信封，完整历史超预算在启动前拒绝。
 
 switch请求先记录pending/requestedSeq，默认wait_current并遵循FIFO准入：请求前queued保留原选择且先执行；请求后输入记录awaitingSwitchId，只有该切换effective才执行新目标，失败则明确未派发，不自动回退。确认旧结果/cleanup后，用请求前已终结Run限定sourceRunIds，普通目标只验证入口/配置后effective、epoch+1并更新throughSeq，不初始化/open/close原生连接。effective不说明模型认证、额度或网络成功；实际连接留到发送时建立。后来的输入即使被cancel成terminal也不进入旧水位；不同pending冲突。
 
