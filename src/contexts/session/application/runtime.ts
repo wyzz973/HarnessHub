@@ -7,7 +7,8 @@ import {
   type SelectionRequest, type SendReceipt, type SessionBindingFactory, type SessionCommit, type SessionConfiguration,
   type SessionId, type SessionEvent, type SessionMutation, type SessionRuntimeOptions, type SessionSnapshot, type SessionStore, type SwitchReceipt,
 } from "../../../contracts/session.js";
-import { buildPublicContext, publicSources, type PublicContext } from "../domain/context.js";
+import { buildPublicContext, publicSources, type PublicContext, type PublicContextOptions } from "../domain/context.js";
+import { parseToolDetail, type RelayToolDetail } from "../domain/relay/narration.js";
 import { advances, commandEffect, commandOutcome, dispatched, type InputOutcome } from "../domain/relay/advance.js";
 import { MAX_COMMANDS, MAX_OUTPUT_BYTES, MAX_PLAN_ENTRIES, MAX_QUEUE, MAX_RUNS, MAX_RUN_ACTIVITIES, MAX_RUN_NOTICES, MAX_RUN_TOOLS, assertInput, carriedNativeConfiguration, parseConfiguration, parseNativeConfiguration, replayCommand, terminal, utf8Bytes } from "../domain/state.js";
 
@@ -1393,8 +1394,9 @@ export class SessionRuntime {
       const through = previousNative?.throughRunId == null ? -1 : current.runs.findIndex(row => row.id === previousNative!.throughRunId);
       due = publicSources(current, run).filter(source => current.runs.findIndex(row => row.id === source) > through);
       origin = this.owesOrigin(current, previousNative);
-      // A content input carries them unless the user chose to send it alone ("只发这条消息"), which leaves them owed.
-      const offered = (previousNative === undefined || due.length > 0 || origin) && !this.sentAlone(current, run);
+      // A content input carries them unless the user chose to send it alone ("只发这条消息"), which leaves them owed. Nothing
+      // owed is nothing carried: the input goes exactly as typed (ADR-055 §0, zero injection), a new native session's first too.
+      const offered = (due.length > 0 || origin) && !this.sentAlone(current, run);
       let context: PublicContext | null = null;
       // A process the conversation kept takes the Turn when it still runs this selection; any other kept process is closed
       // first and the Turn starts the program as usual (ADR-030).
@@ -1426,7 +1428,13 @@ export class SessionRuntime {
       // An input its Harness reads as content without a catalog has what it carries budgeted now, before a started program
       // or a native session exists for it (CONTEXT_TOO_LARGE then leaves no binding behind).
       const kinds = run.attachments?.map(file => file.kind) ?? [], reading = this.classify(control, run.input, null, kinds);
-      if (offered && reading.kind === "content") context = buildPublicContext(current, run, due);
+      // The relay packet (ADR-055 §5): what this binding's program and this Gateway hold as secrets never leaves in it, and an
+      // input read as a possible command never opens it, so the packet cannot become a command's argument.
+      const details = offered ? await this.relayDetails(current, due) : new Map<string, RelayToolDetail>();
+      if (offered) this.continue(execution);
+      const relay: PublicContextOptions = { origin, secrets: execution.binding.secrets ?? [], firstLine: reading.kind === "content", details,
+        ...(this.options.harnessName === undefined ? {} : { names: this.options.harnessName }) };
+      if (offered && reading.kind === "content") context = buildPublicContext(current, run, due, relay);
       if (native === null) {
         const observation = await control.initialize(); this.continue(execution);
         this.commit(id, current => ({ next: current, events: [event("run.protocol", { runId: target, observation })] }));
@@ -1460,13 +1468,15 @@ export class SessionRuntime {
       }
       carried = command === null && offered;
       // An input read as a possible command is budgeted only now; its program has started, and its new session stays bound.
-      if (carried) context ??= buildPublicContext(current, run, due);
+      if (carried) context ??= buildPublicContext(current, run, due, relay);
       const prepared = carried && context !== null ? context : null;
       relayResendOf = prepared !== null && previousNative !== undefined ? this.resendOf(current, previousNative, through, run) : null;
       this.commit(id, latest => ({ next: updatedRun(latest, target, { contextThroughSeq: prepared?.throughSeq ?? current.lastSeq, sourceRunIds: prepared?.sourceRunIds ?? [] }),
         events: [event("run.context_prepared", { runId: target, throughSeq: prepared?.throughSeq ?? current.lastSeq, sourceRunIds: prepared?.sourceRunIds ?? [], continuity: "public_context_rehydrate",
           // The history the Session started from went too, which this binding was owed (only the event says so, for relayResendOf).
-          ...(prepared !== null && origin ? { carriedOrigin: true } : {}) })] }));
+          ...(prepared !== null && origin ? { carriedOrigin: true } : {}),
+          // What identifies the packet (policy, ID, sha256 of the text sent, the facts it carries, how it was folded); never its text.
+          ...(prepared !== null ? { relay: prepared.relay } : {}) })] }));
       this.commit(id, current => ({ next: updatedRun(current, target, { status: "running", ...phase(current, target, "readyAt", this.options.now().getTime()) }), events: [event("run.authorized", { runId: target, epoch: run.epoch })] }));
       this.continue(execution);
       control.enablePermissions?.();
@@ -1714,6 +1724,33 @@ export class SessionRuntime {
     if (state.origin.kind === "import") return false;
     const created = this.store.events(state.id, 0, 1)[0];
     return !(created?.type === "session.created" && created.data.continuity === "native_fork");
+  }
+  /**
+   * What the relay packet may quote of the owed Runs' stored tool details (ADR-055 §6.4), read back within bounds: the
+   * commands, changes, reads and searches of the first owed Run and the 12 latest, ≤32 a Run, ≤128 in all, each ≤256 KiB.
+   * A detail that cannot be read (no store that reads back, gone, changed, not JSON) is left out: the packet then lists
+   * that tool by its title and its ledger says how many were not read.
+   */
+  private async relayDetails(state: SessionSnapshot, sources: readonly PublicRun["id"][]): Promise<ReadonlyMap<string, RelayToolDetail>> {
+    const content = this.options.content, details = new Map<string, RelayToolDetail>();
+    if (content?.readText === undefined) return details;
+    const runs = sources.flatMap(id => state.runs.filter(run => run.id === id));
+    let left = 128;
+    for (const run of [...new Set([...runs.slice(0, 1), ...runs.slice(-12)])]) {
+      let taken = 0;
+      for (const tool of run.tools ?? []) {
+        if (left === 0 || taken === 32) break;
+        if (tool.detail === undefined || tool.parentId !== undefined || !["execute", "edit", "delete", "move", "read", "search"].includes(tool.kind ?? "")) continue;
+        taken++; left--;
+        const text = await content.readText(tool.detail, 256 * 1024);
+        if (text === null) continue;
+        let value: unknown;
+        try { value = JSON.parse(text); } catch { continue; }
+        const detail = parseToolDetail(value);
+        if (detail !== null) details.set(run.id + "/" + tool.id, detail);
+      }
+    }
+    return details;
   }
   /** Whether the user chose to send this input alone (ADR-055 R0a), as its acceptance event records; no record is no choice. */
   private sentAlone(state: SessionSnapshot, run: PublicRun): boolean {

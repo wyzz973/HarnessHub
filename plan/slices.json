@@ -1034,7 +1034,12 @@
       "decision": "docs/decisions/0055-relay-and-context-scheduling.md",
       "allowed_files": [
         "src/contexts/session/domain/relay/advance.ts",
-        "src/infrastructure/session/snapshot-cache.ts"
+        "src/infrastructure/session/snapshot-cache.ts",
+        "src/contexts/session/domain/relay/budget.ts",
+        "src/contexts/session/domain/relay/escape.ts",
+        "src/contexts/session/domain/relay/narration.ts",
+        "src/contexts/session/domain/relay/packet.ts",
+        "src/contexts/session/domain/relay/redaction.ts"
       ],
       "note": "2026-11-03 用户验收，按推荐项接受 D1–D11，切片改为 accepted。allowed_files 暂为空：按终稿第 17 节，任务开工时只登记该任务拥有、且本切片要新增的 src/、web/ 文件。验收时删去了 G028（原依赖 G025）、G047（G045）、G050（G045、G046）、G059（G046），以及计划中的 G048、G049、G057（G046）对已延期任务的依赖：接替任务 G068 与 G072 已经依赖它们，照字面改指会成环。",
       "implementation_state": "in_progress",

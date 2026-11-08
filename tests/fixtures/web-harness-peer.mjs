@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
+import { readRelayPrompt } from "../../dist/tests/fixtures/relay-packet.js";
 let active = null, counter = 0, nativeModel = null;
 let native = "browser-native-" + process.pid;
 const send = value => process.stdout.write(JSON.stringify(value) + "\n");
@@ -25,9 +26,9 @@ createInterface({ input: process.stdin }).on("line", line => {
   if (value.method === "thread/resume") { native = value.params.threadId; nativeModel = value.params.model ?? null; notify("thread/started", { thread: { id: native } }); return reply(value.id, { thread: { id: native } }); }
   if (value.method === "turn/start") {
     const input = value.params.input[0].text;
-    // File pointers follow the public context envelope; they are not part of its JSON.
+    // File pointers follow the user's words, after the relay packet's end line; they are not part of either.
     const envelope = input.replace(/\n\n\[Attached file\][^]*$/u, "");
-    const context = envelope.startsWith("HarnessGateway public conversation context.") ? JSON.parse(envelope.split("\n").slice(1).join("\n")) : { history: [], currentInput: { text: envelope } };
+    const context = readRelayPrompt(envelope);
     const text = context.currentInput.text;
     const config = process.env.HARNESS_GATEWAY_PROVIDER_KEY ? readFileSync(join(process.env.CODEX_HOME, "config.toml"), "utf8") : null;
     const model = nativeModel ?? (config ? JSON.parse(config.match(/^model = (.+)$/mu)[1]) : "native-a");

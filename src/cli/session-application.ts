@@ -17,6 +17,8 @@ import { DirectorySessionBindingFactory } from "../infrastructure/session/bindin
 import type { InstallationPolicy } from "../contexts/catalog/domain/catalog.js";
 import { NativeInstallationLocks } from "../infrastructure/management/native-lock.js";
 import { LocalContentStore } from "../infrastructure/session/content-store.js";
+import { loadBuiltinCatalog } from "../adapters/catalog.js";
+import { catalogTarget } from "../infrastructure/catalog/platform.js";
 
 export function dataRoot(value: string | undefined): string {
   const path = value === undefined ? resolve("data") : resolve(value);
@@ -155,7 +157,14 @@ export function application(root: string, publish: (event: SessionEvent) => void
     content.collect(store.contentReferences());
     // Kept process groups are recognized across restarts on POSIX only; elsewhere a previous owner's kept process stays
     // unconfirmed and its workspace quarantined (ADR-030).
-    const runtime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: hash, publish, content, ...(options.budgets ?? {}),
+    // The relay names a Harness by its catalog name (ADR-055 §5.4); the built-in catalog is read once, at the first packet.
+    // A catalog that cannot be read leaves every Harness named by its id; a name is never worth failing a Turn.
+    let names: ReadonlyMap<string, string> | undefined;
+    const harnessName = (harnessId: string): string | null => {
+      if (names === undefined) { try { names = new Map(loadBuiltinCatalog(catalogTarget()).map(definition => [definition.id, definition.name])); } catch { names = new Map(); } }
+      return names.get(harnessId) ?? null;
+    };
+    const runtime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: hash, publish, content, harnessName, ...(options.budgets ?? {}),
       ...(process.platform === "win32" ? {} : { processes: new PosixProcessGroups() }) });
     // Upgrades see and close this runtime's conversations' processes (ADR-043).
     management.attachProgramUsers({ list: harnessId => runtime.programUsers(harnessId), closeIdle: harnessId => runtime.releaseForUpgrade(harnessId) });

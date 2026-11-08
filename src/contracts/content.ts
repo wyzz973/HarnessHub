@@ -98,4 +98,10 @@ export interface ContentPort {
   storeOutput(input: { readonly workspace: string; readonly name: string; readonly mediaType: string; readonly data: Uint8Array }): Promise<ContentRef>;
   resolve(ids: readonly string[], workspace: string): readonly ContentRef[];
   materialize(refs: readonly ContentRef[]): Promise<readonly ControlAttachment[]>;
+  /**
+   * A stored item's bytes as UTF-8 text when it holds at most `maxBytes` and still is exactly `ref` (size and digest);
+   * null when it is larger, gone, changed or unreadable, which callers treat as not read (ADR-055 §6.4: the relay then
+   * lists the tool by its title and says so). Read-only; absent when the owner cannot read back.
+   */
+  readText?(ref: ContentRef, maxBytes: number): Promise<string | null>;
 }

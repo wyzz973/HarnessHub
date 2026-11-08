@@ -3,6 +3,34 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { createInterface } from "node:readline";
 
+// This peer is copied into fixture installations (web-management.test.ts), so it imports nothing of its own. The Gateway's
+// relay packet (ADR-055 §5.5) read from its layout, the way tests/fixtures/relay-packet.ts reads it: whether the prompt
+// carries one, the user's current words after its end line, the earlier words it quotes by turn, and the history a branch
+// or an import started from. A prompt without a packet is its own current input.
+function readRelayPrompt(prompt) {
+  const title = /^〔HarnessHub (交接单|交接更新|handoff|handoff update) (relay-[0-9a-z]{20})〕$/mu.exec(prompt);
+  if (!title) return { packet: false, currentInput: { text: prompt }, history: [], branchedHistory: [] };
+  const id = title[2], start = title.index + title[0].length;
+  const ends = [`〔记录结束 · ${id}。以下是用户现在的指令（原话）〕`, `〔更新结束 · ${id}。以下是用户现在的指令（原话）〕`, `〔End of record ${id}. The user's current instruction follows, verbatim.〕`, `〔End of update ${id}. The user's current instruction follows, verbatim.〕`];
+  const [end, endLine] = ends.map(line => [prompt.indexOf("\n" + line + "\n", start), line]).filter(([at]) => at >= 0).sort((a, b) => a[0] - b[0])[0] ?? [-1, ""];
+  if (end < 0) return { packet: false, currentInput: { text: prompt }, history: [], branchedHistory: [] };
+  const lines = prompt.slice(start + 1, end).split("\n"), words = new Map(), replies = new Map();
+  const fenced = at => { const open = /^(`{3,})text$/u.exec(lines[at] ?? ""); if (!open) return null; const body = []; for (let index = at + 1; index < lines.length; index++) { if (lines[index] === open[1]) return { text: body.join("\n"), next: index + 1 }; body.push(lines[index]); } return null; };
+  const labels = [/^- (来源)?第 (\d+) 轮(?:（开场请求）)?：$/u, /^- (Source t|T)urn (\d+)(?: \(opening request\))?:$/u, /^- (来源)?第 (\d+) 轮 · .+。用户原话：$/u, /^- (Source t|T)urn (\d+) · .+\. The user's words:$/u];
+  let originTurn = null;
+  for (let index = 0; index < lines.length; index++) {
+    const heading = /^### (来源)?第 (\d+) 轮 · |^### (Source t|T)urn (\d+) · /u.exec(lines[index]);
+    if (heading) { originTurn = heading[1] === "来源" || heading[3] === "Source t" ? Number(heading[2] ?? heading[4]) : null; continue; }
+    const label = labels.map(pattern => pattern.exec(lines[index])).find(match => match !== null), block = fenced(index + 1);
+    if (label && block) { words.set((label[1] === "来源" || label[1] === "Source t" ? "origin:" : "run:") + Number(label[2]), block.text); index = block.next - 1; }
+    else if (originTurn !== null && block && /(?: 的回复(?:（首段与末段）)?：|'s reply(?: \(first and last paragraphs\))?:)$/u.test(lines[index])) { replies.set(originTurn, block.text); index = block.next - 1; }
+  }
+  const turns = [...new Set([...[...words.keys()].filter(key => key.startsWith("origin:")).map(key => Number(key.slice(7))), ...replies.keys()])].sort((a, b) => a - b);
+  return { packet: true, currentInput: { text: prompt.slice(end + endLine.length + 2) },
+    history: [...words.entries()].filter(([key]) => key.startsWith("run:")).map(([key, text]) => ({ turn: Number(key.slice(4)), user: { text } })).sort((a, b) => a.turn - b.turn),
+    branchedHistory: turns.flatMap(turn => [...(words.has("origin:" + turn) ? [{ role: "user", text: words.get("origin:" + turn) }] : []), ...(replies.has(turn) ? [{ role: "assistant", text: replies.get(turn) }] : [])]) };
+}
+
 const protocol = process.argv[2];
 const name = process.argv[3] ?? "peer";
 const scenario = process.argv[4] ?? "basic";
@@ -54,10 +82,10 @@ createInterface({ input: process.stdin }).on("line", line => {
   }
   if (message.method === "session/prompt" || message.method === "turn/start") {
     const prompt = protocol === "acp-v1" ? message.params.prompt[0].text : message.params.input[0].text;
-    const newline = prompt.indexOf("\n");
-    const context = prompt.startsWith("HarnessGateway public conversation context.") ? JSON.parse(prompt.slice(newline + 1)) : { schemaVersion: 1, continuity: "public_context_rehydrate", history: [], currentInput: { text: prompt } };
-    if (context.schemaVersion !== 1 || context.continuity !== "public_context_rehydrate" || !Array.isArray(context.history))
-      throw new Error("gateway did not provide its complete structured public context");
+    // The Gateway's relay packet (ADR-055 §5), read from its layout; a prompt without one is the input as typed.
+    const context = readRelayPrompt(prompt);
+    if (!Array.isArray(context.history) || typeof context.currentInput?.text !== "string")
+      throw new Error("gateway did not provide a readable relay packet");
     const expected = process.env.FIXTURE_EXPECT_HISTORY ? JSON.parse(process.env.FIXTURE_EXPECT_HISTORY) : {};
     const current = context.currentInput.text;
     const prior = [...nativeHistory, ...context.history.map(item => item.user.text)];

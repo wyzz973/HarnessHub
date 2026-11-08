@@ -2,7 +2,7 @@ import type { ResolvedManagedControl } from "../../contracts/management.js";
 import type { LocalProviderService } from "../provider/service.js";
 import { RedactedHarnessControl } from "./redacted-control.js";
 import { createHash } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, existsSync } from "node:fs";
 import { lstat, mkdir, mkdtemp, open, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir, totalmem } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
@@ -16,7 +16,8 @@ import { NATIVE_TURN_HARD_CAP_MS, SessionError, type HarnessSelection, type Prep
   type SessionBindingFactory, type SessionConfiguration, type SessionId, type WorkspaceLease,
   type WorkspaceLeaseProvider } from "../../contracts/session.js";
 import { MAX_CATALOG_BYTES, type ControlObservation, type InstallationPolicy, type ResolvedCommand } from "../../contexts/catalog/domain/catalog.js";
-import { captureNativeEnvironment, nativeValues, referencedNativeValues, nativeDescriptorValues, type NativeEnvironment } from "./native-environment.js";
+import { captureNativeEnvironment, nativeBaseValues, nativeValues, referencedNativeValues, nativeDescriptorValues, type NativeEnvironment } from "./native-environment.js";
+import { credentialValues } from "../../contexts/session/domain/relay/redaction.js";
 import { HostTmpdirs, type HostTmpdir, type HostTmpdirIdentity } from "./host-tmpdir.js";
 import type { NativeExtensions, NativeModelCatalog, NativeSessionImport, NativeSessionPage } from "../../contracts/control.js";
 /** Reading a long native history (an ACP agent replays it in full) is bounded separately from Turn budgets. */
@@ -188,7 +189,8 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       if (observed.harnessId !== selection.harnessId || observed.selected.id !== selection.controlId || observed.selected.command === null)
         throw new SessionError("HARNESS_UNAVAILABLE", "the admitted control is no longer available");
       const home = selection.provider === undefined ? configuration.configHome : await privateHome(root, configuration);
-      const environment: Record<string, string> = { ...await referencedNativeValues(this.nativeEnvironment, home, selection.harnessId, configuration.workspace), ...nativeDescriptorValues(this.nativeEnvironment, home, observed.selected.command.env), PATH: observed.managed?.command.env.PATH ? observed.managed.command.env.PATH + ":" + observed.searchPath : observed.searchPath,
+      const referenced = await referencedNativeValues(this.nativeEnvironment, home, selection.harnessId, configuration.workspace);
+      const environment: Record<string, string> = { ...referenced, ...nativeDescriptorValues(this.nativeEnvironment, home, observed.selected.command.env), PATH: observed.managed?.command.env.PATH ? observed.managed.command.env.PATH + ":" + observed.searchPath : observed.searchPath,
         OPENCODE_DISABLE_AUTOUPDATE: "true", PWD: configuration.workspace };
       if (selection.provider !== undefined) {
         if (!this.providers) throw new SessionError("PROVIDER_UNAVAILABLE", "Provider management is unavailable");
@@ -213,7 +215,11 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       this.assertOwner(); lease.assertOwned();
       control = await createNativeControl(selection.harnessId, launch, options);
       if (selection.provider !== undefined && this.providers) control = new RedactedHarnessControl(control, text => this.providers!.redact(text), () => this.providers!.createTextRedactor());
-      return new DirectoryPreparedBinding(control, configuration.workspace, lease, root, temporary, this.assertOwner, observed.managed === null ? { source: "system" } : { source: "managed", id: observed.managed.installationId, revision: observed.managed.revision, version: observed.managed.version }, usage);
+      // What the relay must never send on (ADR-055 §10.2 (a)–(c)): credential-named values this program was given or this
+      // Gateway's environment holds, and whatever its configuration references by name.
+      const base = nativeBaseValues(this.nativeEnvironment, home, selection.harnessId);
+      const secrets = credentialValues({ environments: [environment, this.nativeEnvironment.values], referenced: Object.entries(referenced).flatMap(([name, value]) => name in base ? [] : [value]) }, existsSync);
+      return new DirectoryPreparedBinding(control, configuration.workspace, lease, root, temporary, this.assertOwner, observed.managed === null ? { source: "system" } : { source: "managed", id: observed.managed.installationId, revision: observed.managed.revision, version: observed.managed.version }, usage, secrets);
     } catch (error) {
       let cleanupError: unknown;
       let quiescent = control === undefined;
@@ -330,7 +336,8 @@ class DirectoryPreparedBinding implements PreparedSessionBinding {
   private closing: Promise<CleanupEvidence> | null = null;
   private closed = false;
   constructor(readonly control: HarnessControl, readonly workspace: string, private readonly lease: WorkspaceLease,
-    private readonly root: string, private readonly temporary: HostTmpdir, private readonly owner: () => void, readonly installation: NonNullable<PreparedSessionBinding["installation"]>, private readonly usage?: NativeUsageLease) {}
+    private readonly root: string, private readonly temporary: HostTmpdir, private readonly owner: () => void, readonly installation: NonNullable<PreparedSessionBinding["installation"]>, private readonly usage?: NativeUsageLease,
+    readonly secrets: readonly string[] = []) {}
   assertOwned(): void {
     if (this.closed || this.closing !== null) throw new SessionError("BINDING_CLOSED", "binding is closing or closed");
     this.owner(); this.lease.assertOwned(); this.usage?.assertOwned();

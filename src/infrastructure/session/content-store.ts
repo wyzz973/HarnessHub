@@ -181,6 +181,21 @@ export class LocalContentStore implements ContentPort {
       return total === item.bytes && hash.digest("hex") === item.sha256;
     } finally { await handle.close(); }
   }
+  /** See ContentPort.readText: the bytes are read only when the record and the blob still match `ref`. */
+  async readText(ref: ContentRef, maxBytes: number): Promise<string | null> {
+    this.owner();
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 0 || ref.bytes > maxBytes) return null;
+    let found: ReturnType<LocalContentStore["read"]>;
+    try { found = this.read(ref.id); } catch (error) { if (error instanceof SessionError) return null; throw error; }
+    if (found.ref.sha256 !== ref.sha256 || found.ref.bytes !== ref.bytes) return null;
+    let data: Buffer;
+    try {
+      const handle = await open(found.path, constants.O_RDONLY | constants.O_NOFOLLOW);
+      try { data = await handle.readFile(); } finally { await handle.close(); }
+    } catch (error) { if (code(error) === "ENOENT") return null; throw error; }
+    if (data.byteLength !== ref.bytes || createHash("sha256").update(data).digest("hex") !== ref.sha256) return null;
+    return data.toString("utf8");
+  }
   /** Owner-local lookup for serving content to the authenticated page. */
   read(value: string): { readonly ref: ContentRef; readonly workspace: string; readonly origin: ContentOrigin; readonly path: string } {
     const id = contentId(value), stored = this.use(db => db.prepare("SELECT * FROM content WHERE id=?").get(id));

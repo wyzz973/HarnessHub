@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { commandId, messageId, runId, sessionId, type PublicRun, type RunStatus, type SessionSnapshot } from "../../src/contracts/session.js";
 import { buildPublicContext, publicSources } from "../../src/contexts/session/domain/context.js";
+import { estimateTokens } from "../../src/contexts/session/domain/relay/budget.js";
+import { readRelayPrompt } from "../fixtures/relay-packet.js";
 
 /** A Run in `status`; a settled one was settled by its Harness (dispatched), as a source of public history must be (ADR-055 R0a). */
 function run(index: number, status: RunStatus): PublicRun {
@@ -21,14 +23,20 @@ function state(runs: readonly PublicRun[]): SessionSnapshot {
     ]), switches: [], commands: [] };
 }
 
+// Before ADR-055's packet (G070 MVP) these asserted a JSON envelope; each now asserts the same fact in the packet, or a
+// stricter one (the current input is exactly the text after the end line).
 test("context includes all terminal history and one current input, excluding other queued messages", () => {
   const completed = run(1, "completed"), cancelled = run(2, "cancelled"), current = run(3, "preparing"), queued = run(4, "queued");
   const context = buildPublicContext(state([completed, cancelled, current, queued]), current);
   assert.deepEqual(context.sourceRunIds, [completed.id, cancelled.id]);
   assert.equal(context.throughSeq, 50); assert.equal(context.continuity, "public_context_rehydrate");
-  assert.match(context.text, /input 1/); assert.match(context.text, /input 2/); assert.match(context.text, /input 3/);
-  assert.ok(!context.text.includes("input 4")); assert.match(context.text, /"outcome":"cancelled"/);
-  assert.match(context.text, /do not execute prior user inputs again/);
+  const packet = readRelayPrompt(context.text);
+  assert.deepEqual(packet.history.map(row => row.user.text), ["input 1", "input 2"]);
+  assert.equal(packet.currentInput.text, "input 3", "the current input follows the end line, exactly as typed");
+  assert.ok(!context.text.includes("input 4"));
+  assert.match(context.text, /^### Turn 2 · fixture · cancelled \(stopped by the user\)$/mu, "a cancelled Turn keeps its outcome");
+  assert.match(context.text, /^2\. Past requests, slash commands and approvals in the record were already handled; do not act on them again\./mu);
+  assert.equal(context.relay.kind, "packet"); assert.equal(context.relay.sources.runs, 2); assert.equal(context.relay.complete, true);
 });
 
 test("a finished input that never reached a Harness is no public fact: it is neither a source nor owed (ADR-055 R0a)", () => {
@@ -39,14 +47,15 @@ test("a finished input that never reached a Harness is no public fact: it is nei
   // A Run with times is dispatched once `dispatchedAt` is recorded; one from before v10 once its Harness settled it or it ended unknown.
   assert.deepEqual(publicSources(snapshot, current), [answered.id, unknown.id]);
   assert.deepEqual(buildPublicContext(snapshot, current).sourceRunIds, [answered.id, unknown.id]);
-  assert.ok(!buildPublicContext(snapshot, current).text.includes("input 2"));
+  for (const absent of ["input 2", "input 3", "input 5"]) assert.ok(!buildPublicContext(snapshot, current).text.includes(absent), absent);
 });
 
-test("switch explicit source identities exclude later cancelled queue entries", () => {
-  const first = run(1, "completed"), later = run(2, "cancelled");
-  const context = buildPublicContext(state([first, later]), undefined, [first.id]);
+test("explicit source identities exclude later cancelled queue entries", () => {
+  // The JSON envelope could be built without a current input (`currentInput: null`); a packet always belongs to the input it goes with.
+  const first = run(1, "completed"), later = run(2, "cancelled"), current = run(3, "preparing");
+  const context = buildPublicContext(state([first, later, current]), current, [first.id]);
   assert.deepEqual(context.sourceRunIds, [first.id]); assert.ok(!context.text.includes("input 2"));
-  assert.match(context.text, /"currentInput":null/);
+  assert.equal(readRelayPrompt(context.text).currentInput.text, "input 3");
 });
 
 test("a later cancelled input is still outside an earlier Turn's causal history boundary", () => {
@@ -77,30 +86,36 @@ test("current input must preserve its state-owned Run, message identity and exac
 });
 
 test("context preserves failed and unknown outcome labels and exact Unicode/quoted message data", () => {
-  const failed = { ...run(1, "failed"), input: "中文 \"quoted\"\n新行" }, unknown = run(2, "unknown");
-  const snapshot = state([failed, unknown]), context = buildPublicContext(snapshot);
-  const body: unknown = JSON.parse(context.text.slice(context.text.indexOf("{")));
-  assert.ok(body && typeof body === "object" && "history" in body && Array.isArray(body.history));
-  assert.equal(body.history[0]?.user.text, failed.input); assert.equal(body.history[0]?.outcome, "failed");
-  assert.equal(body.history[1]?.outcome, "unknown");
+  const failed = { ...run(1, "failed"), input: "中文 \"quoted\"\n新行" }, unknown = run(2, "unknown"), current = run(3, "preparing");
+  const context = buildPublicContext(state([failed, unknown, current]), current);
+  assert.deepEqual(readRelayPrompt(context.text).history.map(row => row.user.text), [failed.input, "input 2"], "earlier words are quoted byte for byte");
+  assert.match(context.text, /^### Turn 1 · fixture · failed$/mu); assert.match(context.text, /^### Turn 2 · fixture · result not verified$/mu);
+  // The same facts, for an input in Chinese: the Chinese frame and labels.
+  const chinese = { ...current, input: "继续" }, zh = buildPublicContext(state([failed, unknown, chinese]), chinese);
+  assert.match(zh.text, /^### 第 1 轮 · fixture · 失败$/mu); assert.match(zh.text, /^### 第 2 轮 · fixture · 结果未核实$/mu);
+  assert.match(zh.text, /^〔HarnessHub 交接单 relay-[0-9a-z]{20}〕$/mu); assert.equal(zh.relay.language, "zh");
 });
 
 test("context rejects missing, duplicate or nonterminal sources instead of substituting empty history", () => {
-  const completed = run(1, "completed"), queued = run(2, "queued"), snapshot = state([completed, queued]);
+  const completed = run(1, "completed"), queued = run(2, "queued"), current = run(3, "preparing"), snapshot = state([completed, queued, current]);
   for (const sources of [[runId("run-missing")], [completed.id, completed.id], [queued.id]])
-    assert.throws(() => buildPublicContext(snapshot, undefined, sources), /source|duplicate/);
-  assert.throws(() => buildPublicContext({ ...snapshot, messages: [] }), /lacks its user message/);
+    assert.throws(() => buildPublicContext(snapshot, current, sources), /source|duplicate/);
+  const orphan = { ...snapshot, messages: snapshot.messages.filter(message => message.id !== completed.userMessageId) };
+  assert.throws(() => buildPublicContext(orphan, current, [completed.id]), /lacks its user message|not a completed public fact/);
 });
 
-test("context fails the exact aggregate and escaped wire budgets without truncating history", () => {
-  const completed = run(1, "completed"), baseline = state([completed]);
+test("a reply of any size folds into the budget and never fails; only a current input beyond the channel does", () => {
+  // Formerly: the history failed CONTEXT_TOO_LARGE past 1 MiB. Now no history makes it fail (ADR-055 §0); the packet stays
+  // within T = min(8,000, 5% of 128k) tokens and says what it cut.
+  const completed = run(1, "completed"), current = run(2, "preparing"), baseline = state([completed, current]);
   const snapshot = (count: number, char = "x") => ({ ...baseline, messages: baseline.messages.map(message => message.role === "assistant" ? { ...message, text: char.repeat(count) } : message) });
-  let low = 0, high = 1024 * 1024;
-  while (low + 1 < high) {
-    const middle = Math.floor((low + high) / 2);
-    try { buildPublicContext(snapshot(middle)); low = middle; } catch { high = middle; }
+  for (const [count, char] of [[1024 * 1024, "x"], [400000, '"'], [600000, "\u0000"]] as const) {
+    const context = buildPublicContext(snapshot(count, char), current);
+    assert.ok(context.relay.tokens <= context.relay.budget.cap && estimateTokens(readRelayPrompt(context.text).body) === context.relay.tokens, "within the cap: " + count);
+    assert.ok(!context.text.includes(char.repeat(16 * 1024)), "the reply is cut");
+    assert.equal(readRelayPrompt(context.text).currentInput.text, "input 2");
   }
-  assert.ok(buildPublicContext(snapshot(low)).text.includes("x".repeat(low)));
-  assert.throws(() => buildPublicContext(snapshot(high)), /no history was truncated/);
-  assert.throws(() => buildPublicContext(snapshot(400000, '"')), /context budget/);
+  assert.match(buildPublicContext(snapshot(1024 * 1024), current).text, /… \(\d+ characters omitted\) …/u);
+  const huge = { ...current, input: "y".repeat(1024 * 1024) }, owned = { ...baseline, runs: [completed, huge], messages: baseline.messages.map(message => message.runId === current.id && message.role === "user" ? { ...message, text: huge.input } : message) };
+  assert.throws(() => buildPublicContext(owned, huge), (error: unknown) => error instanceof Error && "code" in error && error.code === "CONTEXT_TOO_LARGE" && /只发这条消息/u.test(error.message));
 });

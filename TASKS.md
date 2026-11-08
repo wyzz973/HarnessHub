@@ -91,7 +91,7 @@
 | G067 | P0 过渡期修复（v12，不升库） | G004, G006, G007, G028, G032, G034 | G1 | in_progress |
 | G068 | 送达状态机、核对与恢复 | G066, G067 | G1 | planned |
 | G069 | Driver 接力适配 | G066, G067, G007, G032, G034 | G1 | planned |
-| G070 | 内容：摘要、渲染、预算与脱敏 | G066, G006, G010, G026 | G1 | planned |
+| G070 | 内容：摘要、渲染、预算与脱敏 | G066, G006, G010, G026 | G1 | in_progress |
 | G071 | 工作区观测器 | G066, G026 | G1 | planned |
 | G072 | 接力协调器与返回决策 | G068, G069, G070, G071, G059, G075 | G1 | planned |
 | G073 | 界面、API 与用词检查 | G072, G050, G054 | G1 | planned |
@@ -2232,7 +2232,7 @@
 
 ## G070 内容：摘要、渲染、预算与脱敏
 
-范围：ADR-055（终稿第 3.2、5、6.2–6.4、10.2–10.3、17 节）：RunDigest 与索引（已提交事实、SAVEPOINT、`bound()`、命中区间、`size.verbatim` 未知）、叙述化（N1 ANSI、N4 「」映射、HH-DATA 区含错误原文与钉住的助手话）、两遍折叠（只读索引，字段字节预算与收紧次序）、用户原话预算 U 按 token、`MIN_PACKET` / `FRAME_CAP` / `STATE_CAP` 的构建期生成（`relay-policy-constants.mjs` 进 `policyVersion`）、`cliffCheck`、est/2 与冻结计数夹具（`relay-token-fixtures.mjs`）、省略账目、按名定集合与 10 种形式、安装级与会话集合、规则三档与 `SecretScannerPort` 注入、HMAC 密钥与异常语义、钉住按位置、排除、第二段原样、黄金文件；`tests/security/` 目录由本任务首次建立。现有文件：`src/contexts/session/domain/context.ts` 删 `buildPublicContext` 经既有所有者 G006 修改；`src/infrastructure/capabilities/masking.ts` 经既有所有者 G064 修改；`src/web/run-diagnostics.ts` 经既有所有者 G050 修改；`src/infrastructure/session/redacted-control.ts` 与 `tests/unit/session-redaction.test.ts` 经既有所有者 G010 串行修改；`ContentPort` 新增有界只读 `readText(ref, maxBytes)`（懒重建旧 Run 的摘要时读工具详情，终稿第 3.2、6.4 节）：接口 `src/contracts/content.ts:97–101` 经既有所有者 G004 修改；`src/infrastructure/session/content-store.ts`（`LocalContentStore` 的 `readText` 实现与附件物化目录）经既有所有者 G008 修改，附件物化目录所在的 `src/infrastructure/control/attachments.ts` 经既有所有者 G032 修改；依赖旧信封前缀的夹具 `tests/fixtures/session-peer.mjs` 经既有所有者 G059 改写，`tests/fixtures/web-harness-peer.mjs` 与 `tests/real/codex-session.real.ts` 经既有所有者 G060 改写。
+范围：ADR-055（终稿第 3.2、5、6.2–6.4、10.2–10.3、17 节）：RunDigest 与索引（已提交事实、SAVEPOINT、`bound()`、命中区间、`size.verbatim` 未知）、叙述化（N1 ANSI、N4 「」映射、HH-DATA 区含错误原文与钉住的助手话）、两遍折叠（只读索引，字段字节预算与收紧次序）、用户原话预算 U 按 token、`MIN_PACKET` / `FRAME_CAP` / `STATE_CAP` 的构建期生成（`relay-policy-constants.mjs` 进 `policyVersion`）、`cliffCheck`、est/2 与冻结计数夹具（`relay-token-fixtures.mjs`）、省略账目、按名定集合与 10 种形式、安装级与会话集合、规则三档与 `SecretScannerPort` 注入、HMAC 密钥与异常语义、钉住按位置、排除、第二段原样、黄金文件；`tests/security/` 目录由本任务首次建立。现有文件：`src/contexts/session/domain/context.ts` 删 `buildPublicContext` 经既有所有者 G006 修改；`src/infrastructure/capabilities/masking.ts` 经既有所有者 G064 修改；`src/web/run-diagnostics.ts` 经既有所有者 G050 修改；`src/infrastructure/session/redacted-control.ts` 与 `tests/unit/session-redaction.test.ts` 经既有所有者 G010 串行修改；`ContentPort` 新增有界只读 `readText(ref, maxBytes)`（懒重建旧 Run 的摘要时读工具详情，终稿第 3.2、6.4 节）：接口 `src/contracts/content.ts:97–101` 经既有所有者 G004 修改；`src/infrastructure/session/content-store.ts`（`LocalContentStore` 的 `readText` 实现与附件物化目录）经既有所有者 G008 修改，附件物化目录所在的 `src/infrastructure/control/attachments.ts` 经既有所有者 G032 修改；依赖旧信封前缀的夹具 `tests/fixtures/session-peer.mjs` 经既有所有者 G059 改写，`tests/fixtures/web-harness-peer.mjs` 与 `tests/real/codex-session.real.ts` 经既有所有者 G060 改写。MVP 过渡（2026-11-09，用户要求当晚出最小可用版）：先在 v12 上按需渲染确定性交接单，替换 JSON 信封，不建表、不升库；交接单的 sha256、策略版本 `relay/1-mvp` 与来源区间记进 `run.context_prepared` 的事件数据。单段 text；增量带全部 7 条约定；预算 min(8000, 5%·W)；脱敏三种形式，不带 HMAC 标签；估算器一套系数。RunDigest、两段 TurnText、MIN_PACKET、HMAC 标签、10 种形式、工作区观测与 v13 落表随 G066、G068–G072 补齐。MVP 经既有所有者修改的现有文件：`src/contexts/session/domain/context.ts` 与 `tests/unit/session-context.test.ts`（G006），`src/contexts/session/application/runtime.ts`（G028），`src/contracts/session.ts` 与 `src/contracts/content.ts`（G004），`src/infrastructure/session/content-store.ts`（G008），`src/infrastructure/session/binding-factory.ts`、`src/cli/session-application.ts`、`tests/fixtures/session-peer.mjs`（G059），`tests/fixtures/web-harness-peer.mjs`（G060），`tests/integration/relay-p0.test.ts`（G067），`tests/integration/session-runtime.test.ts`（G028）。
 
 依赖：G066, G006, G010, G026。需求：R08, R17, R26。
 
@@ -2257,6 +2257,9 @@
 - tests/performance/relay-render.test.ts
 - tests/fixtures/relay/golden
 - tests/fixtures/relay/tokens
+- tests/integration/relay-mvp.test.ts
+- tests/fixtures/relay-packet.ts
+- tests/fixtures/relay-scenarios.ts
 
 验收：
 - 金样 `tests/fixtures/relay/golden/{s1-packet,s2-delta,anchor}.md` 与终稿 5.6 逐字节一致

@@ -304,6 +304,12 @@ export interface PreparedSessionBinding {
   readonly installation?: { readonly source: "system" } | { readonly source: "managed"; readonly id: string; readonly revision: number; readonly version: string };
   readonly control: HarnessControl;
   readonly workspace: string;
+  /**
+   * The known secrets the relay replaces before any history leaves for a Harness (ADR-055 §10.2): the values this
+   * binding's program was given or the Gateway's own environment holds under credential names, and the values the
+   * Harness's configuration references by name. In memory only: never logged, stored, published or sent. Absent is none.
+   */
+  readonly secrets?: readonly string[];
   assertOwned(): void;
   close(): Promise<CleanupEvidence>;
 }
@@ -387,6 +393,11 @@ export interface SessionRuntimeOptions {
    * (ADR-047). Tests inject one and expire windows themselves; setTimeout, kept from holding the process open, unless set.
    */
   readonly schedule?: (fn: () => void, ms: number) => () => void;
+  /**
+   * A Harness's display name by its id (its catalog name), for the relay packet's sentences (ADR-055 §5.4); the id is
+   * shown when absent or when it returns null. Must be synchronous and side-effect free.
+   */
+  readonly harnessName?: (harnessId: string) => string | null;
 }
 export interface SendReceipt { readonly sessionId: SessionId; readonly runId: RunId; readonly replayed: boolean }
 export interface SwitchReceipt { readonly sessionId: SessionId; readonly switchId: SwitchId; readonly replayed: boolean }

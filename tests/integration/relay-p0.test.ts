@@ -15,6 +15,8 @@ import { SessionError, type HarnessSelection, type PreparedSessionBinding, type 
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { MAX_SESSION_BYTES, utf8Bytes } from "../../src/contexts/session/domain/state.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { readRelayPrompt } from "../fixtures/relay-packet.js";
+import type { RelayRecord } from "../../src/contexts/session/domain/relay/packet.js";
 
 // G067 (ADR-055 §7.6, P0 on Session v12): the native position rule, command reading before authorization, budgeting only
 // what is sent, sending an input alone, stranded switches and the data directory check, through the formal Runtime and a
@@ -22,7 +24,6 @@ import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-stor
 // temporary directory; nothing here runs a Harness.
 
 const clean: CleanupEvidence = { closed: true, exitCode: 0, signal: null, protocolFailure: null };
-const ENVELOPE = "HarnessGateway public conversation context.";
 interface World { readonly root: string; readonly store: SqliteSessionStore; readonly configuration: SessionConfiguration; runtime(factory: SessionBindingFactory, options?: Partial<SessionRuntimeOptions>): SessionRuntime }
 async function world(t: test.TestContext): Promise<World> {
   const root = await mkdtemp(join(tmpdir(), "relay-p0-")), workspace = join(root, "workspace"); await mkdir(workspace);
@@ -51,11 +52,10 @@ function ended(store: SqliteSessionStore, id: SessionId, run: string): Readonly<
   const found = events(store, id).find(row => row.type === "run.ended" && row.data.runId === run);
   assert.ok(found, "run.ended of " + run); return found.data;
 }
-/** The input a prompt carries: the envelope's current input, or the prompt itself when it went as typed. */
-function inputOf(prompt: string): string {
-  if (!prompt.startsWith(ENVELOPE)) return prompt;
-  return (JSON.parse(prompt.slice(prompt.indexOf("\n") + 1)) as { readonly currentInput: { readonly text: string } | null }).currentInput?.text ?? "";
-}
+/** Whether a prompt carries a relay packet (ADR-055 §5), read from its layout by the test's own reader. */
+function isPacket(prompt: string): boolean { return readRelayPrompt(prompt).packet; }
+/** The input a prompt carries: the packet's current words after its end line, or the prompt itself when it went as typed. */
+function inputOf(prompt: string): string { return readRelayPrompt(prompt).currentInput.text; }
 function binding(state: SessionSnapshot, harnessId: string) { return state.nativeBindings?.find(row => row.harnessId === harnessId && row.status !== "archived"); }
 async function sent(app: SessionRuntime, id: SessionId, text: string, key: string, relay?: { readonly attach: "none" }): Promise<PublicRun> {
   const receipt = app.send(id, text, key, [], relay); await app.wait(id);
@@ -128,7 +128,7 @@ test("G067-C01 the native position follows the v12 rule: nothing owed advances, 
   // Carried and recorded: bravo's first Turn owes alpha's two and advances.
   await switched(app, session.id, { harnessId: "bravo" }, "to-b");
   const b1 = await sent(app, session.id, "b1 carried recorded", "b1"), b2 = await sent(app, session.id, "b2 as typed", "b2");
-  assert.ok(fake.to("bravo")[0]!.startsWith(ENVELOPE)); assert.deepEqual(b1.sourceRunIds, [a1.id, a2.id]); assert.equal(fake.to("bravo")[1], "b2 as typed");
+  assert.ok(isPacket(fake.to("bravo")[0]!)); assert.deepEqual(b1.sourceRunIds, [a1.id, a2.id]); assert.equal(fake.to("bravo")[1], "b2 as typed");
   assert.equal(binding(app.read(session.id), "bravo")?.throughRunId, b2.id);
   // Carried with an unknown outcome: alpha does not advance; the next Turn sends the facts again (relayResendOf) and then advances.
   await switched(app, session.id, { harnessId: "alpha" }, "to-a");
@@ -167,7 +167,7 @@ test("G067 acceptance (J1 M1): a command owing facts moves no native position, s
   assert.equal(branch.nativeBindings, undefined, "a1 is not where alpha's native session is");
   // The facts the command did not carry go with the next content input.
   await sent(app, session.id, "what did bravo do?", "a3");
-  assert.ok(fake.to("alpha").at(-1)!.startsWith(ENVELOPE) && fake.to("alpha").at(-1)!.includes("bravo works"));
+  assert.ok(isPacket(fake.to("alpha").at(-1)!) && fake.to("alpha").at(-1)!.includes("bravo works"));
 });
 
 test("G067 acceptance (J1 M1): after a command Turn `/model X` that owed facts, the next content Turn still runs X", async t => {
@@ -228,7 +228,7 @@ test("G067 a branch's first Turn carried only the history it started from: witho
   assert.equal(ended(f.store, branch.id, q2.id).relayResendOf, q1.id, "the history q1 carried is sent again once"); assert.equal(binding(app.read(branch.id), "alpha")?.throughRunId, q2.id);
   await sent(app, branch.id, "q3", "q3");
   const branchPrompts = fake.to("alpha").slice(-3);
-  assert.deepEqual(branchPrompts.map(prompt => prompt.startsWith(ENVELOPE) && prompt.includes("source one")), [true, true, false], "the branch history went twice, then the input as typed");
+  assert.deepEqual(branchPrompts.map(prompt => isPacket(prompt) && prompt.includes("source one")), [true, true, false], "the branch history went twice, then the input as typed");
   assert.equal(branchPrompts[2], "q3");
 });
 
@@ -244,7 +244,7 @@ test("G067 a branch without a native fork owes the history it started from to th
     const opening = await sent(app, branch.id, first, key + "-1", relay);
     assert.equal(fake.to("alpha").at(-1), first, "sent exactly as typed"); assert.equal(binding(app.read(branch.id), "alpha")?.throughRunId, null, key + ": the branch history is still owed");
     const next = await sent(app, branch.id, "now continue", key + "-2"), prompt = fake.to("alpha").at(-1)!;
-    assert.ok(prompt.startsWith(ENVELOPE) && prompt.includes("source two on bravo"), key + ": the branch history goes with the next content input");
+    assert.ok(isPacket(prompt) && prompt.includes("source two on bravo"), key + ": the branch history goes with the next content input");
     assert.deepEqual(next.sourceRunIds, [opening.id]); assert.equal(binding(app.read(branch.id), "alpha")?.throughRunId, next.id);
     await sent(app, branch.id, "and again", key + "-3"); assert.equal(fake.to("alpha").at(-1), "and again", "once carried, nothing is owed");
   }
@@ -369,8 +369,9 @@ test("G067-C02 single-Harness /export, /clear, an unapplied OpenClaw model and a
   assert.equal(ended(f.store, claude.id, cleared.id).contextEffect, "clear", "the hidden /clear runs as Claude Code's own command");
   await sent(app, claude.id, "after clear", "c5");
   const claudePrompts = await real.prompts("claude");
-  // The first Turn of a new native session still carries the (empty) v12 envelope; /export reached nothing.
-  assert.equal(inputOf(claudePrompts[0]!), "first question"); assert.deepEqual(claudePrompts.slice(1), ["after export", "/clear", "after clear"]);
+  // Nothing owed is nothing carried, a new native session's first Turn included (the v12 envelope wrapped it; the packet
+  // never does): every input goes exactly as typed, and /export reached nothing.
+  assert.deepEqual(claudePrompts, ["first question", "after export", "/clear", "after clear"]);
   // OpenClaw: the unapplied model sent nothing (not recorded), and the next input goes as typed.
   const openclaw = await app.create(f.configuration, { harnessId: "openclaw", nativeModel: "vision/large" }, "openclaw");
   await sent(app, openclaw.id, "first question", "o1");
@@ -405,7 +406,7 @@ test("G067-C04 a full-width space before /clear is read as Hermes reads it: a co
   assert.equal(binding(app.read(session.id), "hermes")?.throughRunId, null, "a command owing facts moves no native position");
   // The facts stay owed and go with the next content input.
   const next = await sent(app, session.id, "what now?", "h2");
-  assert.deepEqual(next.sourceRunIds, [first.id, clear.id]); assert.ok((await real.prompts("hermes"))[1]!.startsWith(ENVELOPE));
+  assert.deepEqual(next.sourceRunIds, [first.id, clear.id]); assert.ok(isPacket((await real.prompts("hermes"))[1]!));
   assert.equal(binding(app.read(session.id), "hermes")?.throughRunId, next.id);
 });
 
@@ -428,7 +429,7 @@ test("G067 Hermes refuses a prompt unsent while a lost turn is pending: that Tur
   const next = await sent(app, session.id, "carry on", "h4");
   assert.equal(ended(f.store, session.id, next.id).relayResendOf, lost.id, "the attempt Hermes refused unsent is no attempt"); assert.equal(binding(app.read(session.id), "hermes")?.throughRunId, next.id);
   const prompts = await real.prompts("hermes");
-  assert.deepEqual(prompts.map(prompt => prompt.startsWith(ENVELOPE) ? inputOf(prompt) : "as typed: " + prompt), ["the turn the gateway lost", "a prompt refused unsent", "as typed: /discard adm-7", "carry on"]);
+  assert.deepEqual(prompts.map(prompt => isPacket(prompt) ? inputOf(prompt) : "as typed: " + prompt), ["the turn the gateway lost", "a prompt refused unsent", "as typed: /discard adm-7", "carry on"]);
 });
 
 test("G067 Hermes's no-change answer to /compress ends the command as a no-op: its effect is none, and the result's word for it is stored nowhere", { timeout: 60000 }, async t => {
@@ -480,7 +481,7 @@ for (const [name, count, profile, least] of [
   // A snapshot near the 8 MiB Session limit.
   ["an 8 MiB snapshot", 236, { input: 800, reply: 27 * 1024, thinking: 3 * 1024, tools: 16 }, 7 * 1024 * 1024],
 ] as const) {
-  test("G067-C05 " + name + ": continuing on the same Harness, validating a switch and recovering a blocked conversation never fail on its history; a target owed all of it can still be sent the input alone", { timeout: 240000 }, async t => {
+  test("G067-C05 " + name + ": continuing on the same Harness, validating a switch and recovering a blocked conversation never fail on its history; a target owed all of it gets it folded into one packet, or the input alone", { timeout: 240000 }, async t => {
     const f = await world(t), fake = new FakeHarnesses((_harness, text) => inputOf(text).includes("loses its connection") ? "lost" : recorded);
     const app = f.runtime(fake), session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
     seed(f.store, session.id, count, profile);
@@ -491,43 +492,54 @@ for (const [name, count, profile, least] of [
     // Validating a switch renders nothing.
     await switched(app, session.id, { harnessId: "bravo" }, "to-bravo");
     assert.equal(app.read(session.id).switches.at(-1)?.status, "effective");
-    // bravo is owed every Turn, which is still more than its envelope can hold (until layered packets, G070): the input is
-    // refused before bravo's program starts, and no native session or binding is left behind.
-    const refused = await sent(app, session.id, "从这里接着做", "bravo-1");
-    assert.equal(refused.status, "failed"); assert.equal(refused.error?.code, "CONTEXT_TOO_LARGE"); assert.match(refused.error!.message, /只发这条消息/u);
-    assert.deepEqual(fake.to("bravo"), []); assert.deepEqual(fake.started.filter(harness => harness === "bravo"), []); assert.equal(binding(app.read(session.id), "bravo"), undefined);
     // Sent alone ("只发这条消息"): exactly as typed, and bravo's native position stays where it was (it is still owed everything).
-    const alone = await sent(app, session.id, "从这里接着做", "bravo-2", { attach: "none" });
+    const alone = await sent(app, session.id, "从这里接着做", "bravo-1", { attach: "none" });
     assert.equal(alone.status, "completed"); assert.deepEqual(fake.to("bravo"), ["从这里接着做"]); assert.deepEqual(alone.sourceRunIds, []);
     assert.equal(binding(app.read(session.id), "bravo")?.throughRunId, null);
     assert.ok(events(f.store, session.id).some(row => row.type === "message.accepted" && row.data.runId === alone.id && JSON.stringify(row.data.relay) === '{"attach":"none"}'));
-    assert.throws(() => app.send(session.id, "从这里接着做", "bravo-2"), (error: unknown) => error instanceof SessionError && error.code === "IDEMPOTENCY_CONFLICT", "a key keeps its choice");
+    assert.throws(() => app.send(session.id, "从这里接着做", "bravo-1"), (error: unknown) => error instanceof SessionError && error.code === "IDEMPOTENCY_CONFLICT", "a key keeps its choice");
+    // bravo is owed every Turn, far more than the JSON envelope could hold: the packet folds them to its budget (ADR-055
+    // §6.3) instead of refusing the input (it was CONTEXT_TOO_LARGE before), and accounts for every one of them.
+    const carried = await sent(app, session.id, "接着做下一步", "bravo-2");
+    assert.equal(carried.status, "completed", JSON.stringify(carried.error)); assert.equal(carried.sourceRunIds.length, count + 2, "the seeded Turns, the one continued and the one sent alone");
+    const packet = readRelayPrompt(fake.to("bravo")[1]!), relay = events(f.store, session.id).find(row => row.type === "run.context_prepared" && row.data.runId === carried.id)!.data.relay as RelayRecord;
+    assert.equal(packet.kind, "packet"); assert.equal(packet.currentInput.text, "接着做下一步");
+    assert.ok(relay.tokens <= relay.budget.cap, relay.tokens + " tokens"); assert.equal(relay.complete, false);
+    assert.equal(relay.units.verbatim + relay.units.compact + relay.units.line + relay.units.ranged, count + 2, "every owed Turn is accounted for");
+    assert.equal(binding(app.read(session.id), "bravo")?.throughRunId, carried.id, "carried and recorded, bravo's position moves");
     // A Turn whose outcome is lost blocks the conversation; the recovery switch validates without rendering the history.
     const lost = await sent(app, session.id, "这一轮 loses its connection", "bravo-3", { attach: "none" }).catch(() => null);
     assert.equal(lost, null); assert.equal(app.read(session.id).status, "blocked");
     app.resume(session.id, { harnessId: "alpha" }, "recover", true); await app.wait(session.id);
     assert.equal(app.read(session.id).status, "open"); assert.equal(app.read(session.id).selection.harnessId, "alpha");
-    // Back on alpha, only bravo's two dispatched Turns are owed: a small envelope.
+    // Back on alpha, only bravo's three dispatched Turns are owed, and alpha's native session holds the rest: a delta.
     const back = await sent(app, session.id, "回到 alpha 继续", "alpha-2");
-    assert.equal(back.status, "completed"); assert.equal(back.sourceRunIds.length, 2); assert.ok(fake.to("alpha").at(-1)!.startsWith(ENVELOPE));
+    assert.equal(back.status, "completed"); assert.equal(back.sourceRunIds.length, 3); assert.equal(readRelayPrompt(fake.to("alpha").at(-1)!).kind, "delta");
   });
 }
 
-test("G067 a branch whose history nearly fills the budget: an input read as a command only once its program started fails late, and the history stays owed to the native session it opened", { timeout: 60000 }, async t => {
+test("G067 a branch whose history filled the old budget: sent alone it stays owed; an input read as a command only once its program started carries it folded, without opening the packet", { timeout: 60000 }, async t => {
   const f = await world(t), fake = new FakeHarnesses();
   const app = f.runtime(fake), source = await app.create(f.configuration, { harnessId: "alpha" }, "create");
   seed(f.store, source.id, 30, { input: 800, reply: 33 * 1024, thinking: 0, tools: 0 });
   const branch = app.fork(source.id, "branch", app.read(source.id).runs.at(-2)!.id); await app.wait(branch.id);
   assert.equal(branch.nativeBindings, undefined, "alpha's native session is past the branch point");
-  // No listed command: `/explain …` is a possible command until the catalog is read, so it is budgeted once its program started.
-  const late = await sent(app, branch.id, "/explain the plan", "b1");
-  assert.equal(late.error?.code, "CONTEXT_TOO_LARGE"); assert.deepEqual(fake.to("alpha"), []);
-  assert.equal(binding(app.read(branch.id), "alpha")?.throughRunId, null, "its native session stays bound, at no position");
-  // The next content input still owes the branch history: refused before anything is sent, never sent as typed.
-  const next = await sent(app, branch.id, "继续", "b2");
-  assert.equal(next.error?.code, "CONTEXT_TOO_LARGE"); assert.deepEqual(fake.to("alpha"), []);
-  await sent(app, branch.id, "继续", "b3", { attach: "none" });
+  await sent(app, branch.id, "继续", "b1", { attach: "none" });
   assert.deepEqual(fake.to("alpha"), ["继续"]); assert.equal(binding(app.read(branch.id), "alpha")?.throughRunId, null, "sent alone, the history stays owed");
+  // No listed command: `/explain …` is a possible command until the catalog is read, so its packet is rendered once its
+  // program started (it failed CONTEXT_TOO_LARGE there before); it carries the folded branch history, and since the input
+  // may be a command the packet never starts with it, so the packet cannot become a command's argument.
+  const late = await sent(app, branch.id, "/explain the plan", "b2");
+  assert.equal(late.status, "completed", JSON.stringify(late.error));
+  const prompt = fake.to("alpha")[1]!, packet = readRelayPrompt(prompt);
+  assert.match(prompt, /^〔HarnessHub handoff relay-[0-9a-z]{20}〕\n/u, "no first line before the frame");
+  assert.equal(packet.currentInput.text, "/explain the plan"); assert.ok(packet.branchedHistory.length > 0, "the branch history is quoted");
+  const relay = events(f.store, branch.id).find(row => row.type === "run.context_prepared" && row.data.runId === late.id)!.data.relay as RelayRecord;
+  assert.equal(relay.firstLine, false); assert.equal(relay.sources.origin, true); assert.ok(relay.tokens <= relay.budget.cap);
+  assert.ok(events(f.store, branch.id).some(row => row.type === "run.context_prepared" && row.data.runId === late.id && row.data.carriedOrigin === true));
+  assert.equal(binding(app.read(branch.id), "alpha")?.throughRunId, late.id, "carried and recorded");
+  await sent(app, branch.id, "再继续", "b3");
+  assert.equal(fake.to("alpha").at(-1), "再继续", "nothing is owed any more: exactly as typed");
 });
 
 test("G067-C07 a Turn whose stop is never confirmed fails the switch waiting for it and the inputs waiting for that switch in the same commit; after the grace the conversation can be resumed", { timeout: 30000 }, async t => {

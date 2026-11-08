@@ -15,6 +15,7 @@ import { MAX_OUTPUT_BYTES } from "../../src/contexts/session/domain/state.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
 import { LocalContentStore } from "../../src/infrastructure/session/content-store.js";
 import { SqliteWorkspaceLeaseProvider } from "../../src/infrastructure/session/workspace-lease.js";
+import { readRelayPrompt } from "../fixtures/relay-packet.js";
 
 const peer = fileURLToPath(new URL("../../../tests/fixtures/control-peer.mjs", import.meta.url));
 const clean: CleanupEvidence = { closed: true, exitCode: 0, signal: null, protocolFailure: null };
@@ -621,8 +622,9 @@ test("native bindings survive process owners, A to B to A sends only unseen publ
   app.send(session.id, "third from bravo", "three"); await app.wait(session.id);
   app.switch(session.id, { harnessId: "alpha" }, "to-a"); await app.wait(session.id);
   app.send(session.id, "fourth", "four"); await app.wait(session.id);
-  const delta = JSON.parse((await peers[3]!.started.promise).split("\n").slice(1).join("\n")) as {history:{user:{text:string}}[]};
-  assert.deepEqual(delta.history.map(row => row.user.text), ["third from bravo"]);
+  // Back on alpha, whose native session holds the first two Turns: a delta with only what happened while it was away.
+  const delta = readRelayPrompt(await peers[3]!.started.promise);
+  assert.equal(delta.kind, "delta"); assert.deepEqual(delta.history.map(row => row.user.text), ["third from bravo"]); assert.equal(delta.currentInput.text, "fourth");
   assert.deepEqual(resumes, [undefined, "private-native-alpha", undefined, "private-native-alpha"]);
   const saved = app.read(session.id); assert.equal(saved.nativeBindings?.length, 2);
   await app.close(); f.store.close();
@@ -821,15 +823,17 @@ test("a branch quotes public history, forks the native session at its latest Tur
   const early = app.fork(source.id, "branch-early", runs[0]!.id);
   assert.equal(early.nativeBindings, undefined); assert.deepEqual(early.origin?.history.map(row => row.text), ["first", "synthetic response"]);
   app.send(early.id, "early question", "e-one"); await app.wait(early.id);
-  const context = JSON.parse((await peers[4]!.started.promise).split("\n").slice(1).join("\n")) as { branchedHistory: { role: string; text: string }[]; history: unknown[] };
-  assert.deepEqual(context.branchedHistory.map(row => row.text), ["first", "synthetic response"]); assert.deepEqual(context.history, []);
+  const context = readRelayPrompt(await peers[4]!.started.promise);
+  assert.deepEqual(context.branchedHistory.map(row => [row.role, row.text]), [["user", "first"], ["assistant", "synthetic response"]]); assert.deepEqual(context.history, []);
+  assert.equal(context.currentInput.text, "early question");
   // A refused native fork archives the reference; the branch continues from public history.
   refuse = true;
   const refused = app.fork(source.id, "branch-refused"); await app.wait(refused.id);
   assert.deepEqual(app.read(refused.id).nativeBindings?.map(binding => binding.status), ["archived"]);
   assert.ok(f.store.events(refused.id, 0, 100).some(row => row.type === "native.fork_failed"));
   app.send(refused.id, "after refusal", "r-one"); await app.wait(refused.id);
-  assert.equal(app.read(refused.id).runs[0]?.status, "completed"); assert.match(await peers[6]!.started.promise, /branchedHistory/u);
+  assert.equal(app.read(refused.id).runs[0]?.status, "completed");
+  assert.deepEqual(readRelayPrompt(await peers[6]!.started.promise).branchedHistory.map(row => row.text), ["first", "synthetic response", "second", "synthetic response"], "the whole branch history goes with its first input");
   assert.throws(() => app.fork(source.id, "branch-missing", "run-missing"), (error: unknown) => error instanceof SessionError && error.code === "FORK_UNAVAILABLE");
 });
 
