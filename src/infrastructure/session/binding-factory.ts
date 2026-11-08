@@ -16,7 +16,7 @@ import { NATIVE_TURN_HARD_CAP_MS, SessionError, type HarnessSelection, type Prep
   type SessionBindingFactory, type SessionConfiguration, type SessionId, type WorkspaceLease,
   type WorkspaceLeaseProvider } from "../../contracts/session.js";
 import { MAX_CATALOG_BYTES, type ControlObservation, type InstallationPolicy, type ResolvedCommand } from "../../contexts/catalog/domain/catalog.js";
-import { captureNativeEnvironment, nativeBaseValues, nativeValues, referencedNativeValues, nativeDescriptorValues, type NativeEnvironment } from "./native-environment.js";
+import { captureNativeEnvironment, nativeBaseValues, nativeValues, referencedNativeValues, nativeDescriptorValues, NativeConfigError, type NativeEnvironment } from "./native-environment.js";
 import { credentialValues } from "../../contexts/session/domain/relay/redaction.js";
 import { HostTmpdirs, type HostTmpdir, type HostTmpdirIdentity } from "./host-tmpdir.js";
 import type { NativeExtensions, NativeModelCatalog, NativeSessionImport, NativeSessionPage } from "../../contracts/control.js";
@@ -102,6 +102,17 @@ export async function prepareConfiguration(input: ConfigurationInput): Promise<S
   const searchDirs = await directories(input.searchDirs ?? [], "search", 128);
   if (input.pathOnly !== undefined && typeof input.pathOnly !== "boolean") throw new SessionError("INVALID_INPUT", "pathOnly must be boolean");
   return { workspace, configHome, manifestPath, manifestSha256, packageRoots, searchDirs, pathOnly: input.pathOnly ?? false };
+}
+/**
+ * The relay's refusal when a configuration it reads for the known secrets cannot be read (review N3): which Harness, which
+ * file and why, and what the user can do instead; nothing the file holds.
+ */
+function unreadableConfiguration(harness: string, error: NativeConfigError): SessionError {
+  const why = error.reason === "not_a_file" ? "不是普通文件" : error.reason === "too_large" ? "超过 2 MiB"
+    : error.code === "EACCES" || error.code === "EPERM" ? "没有读取权限" : "读取出错（" + (error.code ?? "原因不明").slice(0, 32) + "）";
+  const plain = (text: string) => text.replace(/[\p{Cc}\p{Cf}]/gu, "?");
+  const name = plain(harness).slice(0, 64), file = plain(error.file.length > 240 ? error.file.slice(0, 80) + "…" + error.file.slice(-159) : error.file);
+  return new SessionError("RELAY_PREPARE_FAILED", "没能准备交接单：读不到 " + name + " 的配置文件 " + file + "（" + why + "）。HarnessHub 要从这个文件里找出交接单必须隐去的凭据，所以这条消息没有发出。修好或缩小这个文件后再发；也可以只发这条消息，不带交接单。");
 }
 interface ManagedResolver { resolveControl(harnessId: string, controlId: string): ResolvedManagedControl | null }
 interface Observation { readonly harnessId: string; readonly selected: ControlObservation; readonly searchPath: string; readonly managed: ResolvedManagedControl | null }
@@ -244,23 +255,27 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
    * The relay's known secrets for a Session's Harnesses (ADR-055 §10.2 (a)–(c) at Session level, review M1): for each of
    * `harnessIds`, the values its configuration references by name beyond its base profile, and the credential-named values
    * of every control env the catalog (built-ins and the Session's manifest) declares for it; with the credential-named
-   * values of this Gateway's own environment. Reads each Harness's configuration files and the catalog as a binding does;
-   * starts nothing and holds no lease. In memory only. Rejects as a binding's preparation would when a configuration file
-   * cannot be read or the manifest changed since admission (a packet is then not sent without them).
+   * values of this Gateway's own environment. Reads the catalog and each Harness's configuration files as a binding does;
+   * starts nothing and holds no lease. In memory only. A configuration file that exists but cannot be read (not a regular
+   * file, over 2 MiB, no permission) rejects with RELAY_PREPARE_FAILED naming the Harness, the file and why, never a value;
+   * the catalog's own refusals (a manifest changed since admission) reject as a binding's preparation would.
    */
   async relaySecrets(configuration: SessionConfiguration, harnessIds: readonly string[]): Promise<readonly string[]> {
     this.assertOwner();
     const wanted = [...new Set(harnessIds)].sort(), referenced: (readonly [string, string])[] = [], environments: Readonly<Record<string, string>>[] = [this.nativeEnvironment.values];
+    const root = await realpath(await mkdtemp(join(tmpdir(), "harness-relay-secrets-")));
+    let definitions: Awaited<ReturnType<typeof observeCatalog>>["definitions"];
+    try { definitions = (await observeCatalog(configuration, root, this.installations, this.management, this.nativeEnvironment)).definitions; }
+    finally { await rm(root, { recursive: true, force: true }); }
     for (const harnessId of wanted) {
-      const values = await referencedNativeValues(this.nativeEnvironment, configuration.configHome, harnessId, configuration.workspace);
+      const definition = definitions.find(item => item.id === harnessId || item.aliases.includes(harnessId));
+      for (const control of definition?.controls ?? []) environments.push(control.env);
+      let values: Readonly<Record<string, string>>;
+      try { values = await referencedNativeValues(this.nativeEnvironment, configuration.configHome, harnessId, configuration.workspace); }
+      catch (error) { if (error instanceof NativeConfigError) throw unreadableConfiguration(definition?.name ?? harnessId, error); throw error; }
       const base = nativeBaseValues(this.nativeEnvironment, configuration.configHome, harnessId);
       for (const entry of Object.entries(values)) if (!(entry[0] in base)) referenced.push(entry);
     }
-    const root = await realpath(await mkdtemp(join(tmpdir(), "harness-relay-secrets-")));
-    try {
-      const observed = await observeCatalog(configuration, root, this.installations, this.management, this.nativeEnvironment);
-      for (const definition of observed.definitions) if (wanted.includes(definition.id) || definition.aliases.some(alias => wanted.includes(alias))) for (const control of definition.controls) environments.push(control.env);
-    } finally { await rm(root, { recursive: true, force: true }); }
     this.assertOwner();
     return credentialValues({ environments, referenced }, existsSync);
   }

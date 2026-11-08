@@ -23,7 +23,21 @@ export function nativeBaseValues(source: NativeEnvironment, explicitHome: string
   return Object.fromEntries(Object.entries(source.values).filter(([name]) => allowed.test(name) || explicitHome === null &&
     (name === "HOME" || name.startsWith("XDG_") || prefixes.some(prefix => name.startsWith(prefix)) || harness === "pi" && piCredentialVariables.has(name))));
 }
-/** Native config may explicitly reference custom credential environment names; only those names are added. */
+/**
+ * A native configuration file that exists but cannot be read within its 2 MiB bound: which file and why, never its contents.
+ * `code` is the file system's own code when reading failed (EACCES and the like), so callers that report codes see it as
+ * they saw the file system's error.
+ */
+export class NativeConfigError extends Error {
+  constructor(readonly file: string, readonly reason: "not_a_file" | "too_large" | "unreadable", readonly code: string | null = null) {
+    super(reason === "not_a_file" ? "native config is not a regular file" : reason === "too_large" ? "native config exceeds its 2 MiB budget" : "native config could not be read" + (code === null ? "" : " (" + code + ")"));
+    this.name = "NativeConfigError";
+  }
+}
+/**
+ * Native config may explicitly reference custom credential environment names; only those names are added. A file that is
+ * missing is skipped; one that is not a regular file, is larger than 2 MiB or cannot be read rejects with NativeConfigError.
+ */
 export async function referencedNativeValues(source: NativeEnvironment, explicitHome: string | null, harness: string, workspace: string): Promise<Readonly<Record<string, string>>> {
   const result = { ...nativeBaseValues(source, explicitHome, harness) };
   if (explicitHome !== null) return result;
@@ -36,9 +50,16 @@ export async function referencedNativeValues(source: NativeEnvironment, explicit
   for (const file of files) {
     let input: string;
     try {
-      const info = await stat(file); if (!info.isFile() || info.size > 2 * 1024 * 1024) throw new Error("native config is not a bounded regular file");
-      input = await readFile(file, "utf8"); if (Buffer.byteLength(input) > 2 * 1024 * 1024) throw new Error("native config grew beyond its budget");
-    } catch (error) { if (error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT") continue; throw error; }
+      const info = await stat(file);
+      if (!info.isFile()) throw new NativeConfigError(file, "not_a_file");
+      if (info.size > 2 * 1024 * 1024) throw new NativeConfigError(file, "too_large");
+      input = await readFile(file, "utf8"); if (Buffer.byteLength(input) > 2 * 1024 * 1024) throw new NativeConfigError(file, "too_large");
+    } catch (error) {
+      if (error instanceof NativeConfigError) throw error;
+      const code = error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : null;
+      if (code === "ENOENT") continue;
+      throw new NativeConfigError(file, "unreadable", code);
+    }
     const patterns = [/\benv_key\s*=\s*["']([A-Za-z_][A-Za-z0-9_]*)["']/gu, /\{env:([A-Za-z_][A-Za-z0-9_]*)\}/gu, harness === "pi" ? /(?<!\$)\$\{([A-Za-z_][A-Za-z0-9_]*)\}/gu : /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/gu, ...(harness === "pi" ? [/(?<!\$)\$([A-Za-z_][A-Za-z0-9_]*)/gu] : [])];
     for (const pattern of patterns) for (const match of input.matchAll(pattern)) {
       const name = match[1]; if (name && source.values[name] !== undefined) result[name] = source.values[name];

@@ -218,9 +218,12 @@ test("G070-MVP M1: the Session's known secrets through the real binding factory:
 /** FakeHarnesses whose factory also answers relaySecrets as the Gateway's does: by the Harnesses a packet carries. */
 class SecretHarnesses extends FakeHarnesses {
   readonly asked: (readonly string[])[] = [];
-  constructor(reply: (harnessId: string, text: string) => string, private readonly referenced: Readonly<Record<string, readonly string[]>>) { super(reply); }
+  /** What the next answers reject with, as a factory that cannot read a configuration would; null answers. */
+  failure: Error | null = null;
+  constructor(reply: (harnessId: string, text: string) => string, private readonly referenced: Readonly<Record<string, readonly string[]>>, commands: readonly NativeCommand[] = []) { super(reply, [], commands); }
   async relaySecrets(_configuration: SessionConfiguration, harnessIds: readonly string[]): Promise<readonly string[]> {
     this.asked.push([...harnessIds]);
+    if (this.failure !== null) throw this.failure;
     return harnessIds.flatMap(id => this.referenced[id] ?? []);
   }
 }
@@ -270,4 +273,62 @@ test("G070-MVP m7: a stored detail whose bytes cannot be read (no permission, a 
     assert.equal(run.status, "completed");
     assert.match(prompt, /^- 修改 `Edit file`。$/mu); assert.match(prompt, /^- 工具详情没有读取：1 个工具调用只按标题列出。$/mu);
   } finally { await chmod(blob, mode); }
+});
+
+// Review of ffc0796: a configuration the relay cannot read fails only the Turn that would carry a packet (N3).
+
+test("G070-MVP N3: a configuration the real factory cannot read is named in RELAY_PREPARE_FAILED (the Harness, the file, why), never with a value; fixed, it is read again", async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "relay-unreadable-"))), home = join(root, "home"), workspace = join(root, "workspace"), file = join(home, ".config", "opencode", "opencode.json");
+  const closing: (() => Promise<void>)[] = [];
+  t.after(async () => { for (const close of closing) await close(); await chmod(file, 0o600).catch(() => {}); await rm(root, { recursive: true, force: true }); });
+  await mkdir(join(home, ".config", "opencode"), { recursive: true }); await mkdir(workspace);
+  const good = JSON.stringify({ provider: { corp: { options: { apiKey: "{env:CORP_LLM}" } } } });
+  const environment = captureNativeEnvironment({ HOME: home, PATH: "/usr/bin:/bin", CORP_LLM: "corp-llm-synthetic-7d1q4x" });
+  const configuration = await prepareConfiguration({ workspace, pathOnly: true });
+  const factory = new DirectorySessionBindingFactory(new SqliteWorkspaceLeaseProvider(join(root, "locks")), () => {}, "any", undefined, undefined, environment);
+  closing.push(() => factory.close());
+  const spoiled: readonly (readonly [string, () => Promise<void>, string])[] = [
+    ["a directory", () => mkdir(file), "不是普通文件"],
+    ["over 2 MiB", () => writeFile(file, good + " ".repeat(2 * 1024 * 1024)), "超过 2 MiB"],
+    ["no permission", async () => { await writeFile(file, good); await chmod(file, 0o000); }, "没有读取权限"],
+  ];
+  for (const [label, spoil, why] of spoiled) {
+    await chmod(file, 0o600).catch(() => {}); await rm(file, { recursive: true, force: true }); await spoil();
+    await assert.rejects(factory.relaySecrets(configuration, ["claude", "opencode"]), (error: unknown) => {
+      assert.ok(error instanceof SessionError && error.code === "RELAY_PREPARE_FAILED", label + ": " + String(error));
+      assert.ok(error.message.startsWith("没能准备交接单：读不到 OpenCode 的配置文件 " + file + "（" + why + "）。"), label + ": " + error.message);
+      assert.ok(error.message.endsWith("修好或缩小这个文件后再发；也可以只发这条消息，不带交接单。"), label);
+      assert.ok(!error.message.includes("corp-llm-synthetic-7d1q4x") && error.message.length <= 512, label);
+      return true;
+    });
+  }
+  await chmod(file, 0o600); await writeFile(file, good);
+  assert.ok((await factory.relaySecrets(configuration, ["claude", "opencode"])).includes("corp-llm-synthetic-7d1q4x"), "fixed, it is read again");
+});
+
+test("G070-MVP N3: secrets are read only for a Turn that builds a packet; when they cannot be read that Turn alone fails with RELAY_PREPARE_FAILED, undispatched, and the next one carries what is still owed", async t => {
+  const f = await world(t), fake = new SecretHarnesses(harnessId => "reply from " + harnessId, {}, [{ name: "review", description: "review", contextEffect: "keep" }]);
+  const app = f.runtime(fake), session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  const a1 = await sent(app, session.id, "first on alpha", "a1");
+  await switched(app, session.id, "bravo", "to-b");
+  // A command owing history goes as typed and reads nothing for a packet, so a configuration it cannot read never fails it.
+  fake.failure = new Error("must not be asked");
+  const command = await sent(app, session.id, "/review the change", "b1");
+  assert.equal(command.status, "completed"); assert.deepEqual(fake.asked, []); assert.deepEqual(fake.to("bravo"), ["/review the change"]);
+  const positions = () => JSON.stringify(app.read(session.id).nativeBindings ?? []), before = positions();
+  // The factory names what it cannot read: that Turn fails with it, is never dispatched, and moves no position.
+  fake.failure = new SessionError("RELAY_PREPARE_FAILED", "没能准备交接单：读不到 Alpha Harness 的配置文件 /tmp/alpha.json（超过 2 MiB）。修好或缩小这个文件后再发；也可以只发这条消息，不带交接单。");
+  const failed = await sent(app, session.id, "now continue", "b2");
+  assert.equal(failed.status, "failed"); assert.equal(failed.error?.code, "RELAY_PREPARE_FAILED"); assert.match(failed.error?.message ?? "", /Alpha Harness 的配置文件 \/tmp\/alpha\.json（超过 2 MiB）/u);
+  assert.deepEqual(fake.to("bravo"), ["/review the change"], "not dispatched"); assert.deepEqual(failed.sourceRunIds, []); assert.equal(positions(), before, "no native position moved");
+  // A failure the factory did not name is the relay's as well, never the target Harness's.
+  fake.failure = Object.assign(new Error("EIO: i/o error, read"), { code: "EIO" });
+  const again = await sent(app, session.id, "now continue", "b3");
+  assert.equal(again.error?.code, "RELAY_PREPARE_FAILED"); assert.match(again.error?.message ?? "", /^没能准备交接单：.*也可以只发这条消息，不带交接单。$/u);
+  assert.ok(!(again.error?.message ?? "").includes("EIO") && !(again.error?.message ?? "").includes("Harness operation failed"));
+  // Fixed: the next content input carries the packet with what is still owed, and the Runtime runs on.
+  fake.failure = null;
+  const carried = await sent(app, session.id, "now continue", "b4"), packet = readRelayPrompt(fake.to("bravo")[1]!);
+  assert.equal(carried.status, "completed"); assert.equal(packet.kind, "packet"); assert.equal(packet.history[0]!.user.text, a1.input); assert.ok(carried.sourceRunIds.includes(a1.id));
+  assert.deepEqual(fake.asked, [["alpha", "bravo"], ["alpha", "bravo"], ["alpha", "bravo"]]);
 });

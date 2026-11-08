@@ -318,7 +318,7 @@ test("G070-MVP credential values: by name (except names that only locate), refer
   assert.deepEqual(values, ["corp-api-key-value", "custom-referenced-secret", "gh-token-value", "hunter2hunter2", "sk-live-value-1"]);
 });
 
-test("G070-MVP m5: names that only locate or configure, and values that are ordinary words, hosts or plain URLs, are no known secrets", () => {
+test("G070-MVP m5: names that only locate or configure, and values that are short ordinary words, numbers or hosts, are no known secrets", () => {
   // Invalid samples: each of these replaced wherever it appears would cut ordinary words out of the record.
   const values = credentialValues({ environments: [{ HOMEBREW_API_DOMAIN: "https://mirrors.example.edu.cn/homebrew-bottles/api", POSTGRES_PASSWORD: "postgres", XXX_API_HOST: "localhost",
     SERVICE_API_ENDPOINT: "https://api.example.com/v1", REDIS_PASSWORD: "10.0.0.12", APP_SECRET_NAME: "billing-signing-secret", OPENCODE_API_PORT: "4096" }],
@@ -450,7 +450,7 @@ test("G070-MVP M2: a command that reads a credential file has its output counted
     assert.match(text, /^- 读取凭据类文件的命令：1 条，输出只计数。$/mu, command);
   }
   // Invalid samples: files meant to be committed and names that only look alike are no credential files.
-  for (const command of ["cat .env.example", "cat src/environment.ts", "cat docs/keys.md", "cat src/keyboard.ts", "cat id_card.txt", "cat credentials.md"]) assert.equal(namesCredentialFile(command), false, command);
+  for (const command of ["cat .env.example", "grep -n KEY .env.local.example", "cat src/environment.ts", "cat docs/keys.md", "cat src/keyboard.ts", "cat id_card.txt", "cat credentials.md"]) assert.equal(namesCredentialFile(command), false, command);
   // Their output goes as output does: credential-named values hidden by the output-only rule, the rest as it was.
   const example = run("cat .env.example");
   assert.ok(example.includes("  NODE_ENV=production\n  SESSION_SECRET=〔已脱敏 · 凭据值〕\n  STRIPE_WEBHOOK_SECRET=〔已脱敏 · Webhook 密钥〕\n"), example);
@@ -640,4 +640,70 @@ test("G070-MVP m8: hundreds of tools with long titles are never rendered whole f
   const short = median(scenario(28)), long = median(scenario(130));
   t.diagnostic("255 turns × 128 tools: titles of 28 characters " + short.toFixed(1) + " ms, of 130 characters " + long.toFixed(1) + " ms (before the fix: about 28 and 120–140 ms)");
   assert.ok(long < 3 * short + 5, "long titles cost what their length does, not a whole first pass: " + long.toFixed(1) + " vs " + short.toFixed(1));
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Review of ffc0796: webhooks and plain passwords as known secrets (N1), ordinary output left whole (N2)
+// ---------------------------------------------------------------------------------------------------------------------
+
+test("G070-MVP N1: a webhook's address and a password of plain letters are known secrets, and leave no packet; mirrors, hosts and short words still are not", () => {
+  const feishu = "https://open.feishu.cn/open-apis/bot/v2/hook/3f9a1c2e-7b4d-4e8a-9c1f-5d6e7a8b9c0d", discord = "https://discord.com/api/webhooks/1234567890/AbCdEfGhIjKlMnOpQrStUvWxYz0123456789";
+  const environment = { FEISHU_BOT_WEBHOOK: feishu, DISCORD_WEBHOOK: discord, TEAM_WEBHOOK_URL: "https://hooks.example.com/notify/7Kq2xV9pL4mN8sR1", DB_PASSWORD: "devsecretpass", REDIS_PASSWORD: "changemeplease",
+    // Invalid samples: a mirror and an endpoint left out by their names, a word of 8 letters, a host.
+    HOMEBREW_API_DOMAIN: "https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api", OAUTH_TOKEN_URL: "https://auth.example.com/oauth/token", POSTGRES_PASSWORD: "postgres", ORDERS_API_HOST: "localhost" };
+  const values = credentialValues({ environments: [environment], referenced: [] });
+  assert.deepEqual(values, ["changemeplease", discord, "devsecretpass", "https://hooks.example.com/notify/7Kq2xV9pL4mN8sR1", feishu].sort());
+  // Through a packet: the webhook a command posted to and the password a reply repeated are hidden; the mirror stays.
+  const command = "curl -X POST " + feishu + " -d '{\"text\":\"部署完成\"}'";
+  const scenario = conversation([{ input: "部署完了通知群里", harnessId: "claude", reply: "已经发到群里；数据库口令 devsecretpass 也配好了，镜像用的是 " + environment.HOMEBREW_API_DOMAIN + "。",
+    tools: [tool("x1", command, "execute", { exitCode: 0 })] }, { input: "继续", harnessId: "codex" }], [], { "run-1/x1": { input: command, output: "{\"code\":0,\"msg\":\"success\"}\n" } });
+  const text = readRelayPrompt(renderRelay(input(scenario, { secrets: values })).text).body;
+  assert.ok(!text.includes("3f9a1c2e") && !text.includes("devsecretpass"), text);
+  assert.ok(text.includes("- 执行 `curl -X POST 〔已脱敏 · 已知凭据〕 -d '{\"text\":\"部署完成\"}'` → 退出码 0。"), "the webhook in the command");
+  assert.ok(text.includes("数据库口令 〔已脱敏 · 已知凭据〕 也配好了，镜像用的是 " + environment.HOMEBREW_API_DOMAIN), "the password hidden, the mirror kept");
+});
+
+/** Ordinary development output, a line each (the review's misdel.mjs): none of it is a credential. */
+const ORDINARY_OUTPUT = [
+  " Test Files  4 passed (4)", "      Tests  17 passed (17)", "   Start at  10:42:13", "   Duration  1.32s (transform 210ms, setup 0ms, collect 380ms, tests 95ms)", "PASS src/auth/session.test.ts",
+  "  ✓ creates a session token for a valid login (12 ms)", "Tests:       1 failed, 41 passed, 42 total", "Snapshots:   0 total", "Time:        3.512 s", "FAIL tests/api/auth.test.ts > rejects an expired token",
+  "AssertionError: expected 401 to be 200", "=== RUN   TestSessionKeyRotation", "--- PASS: TestSessionKeyRotation (0.00s)", "ok  \tgithub.com/acme/api/auth\t0.012s", "test result: ok. 12 passed; 0 failed; 0 ignored",
+  "============================= 3 passed in 0.12s ==============================", "api:build: > tsc -p tsconfig.json", "api:test: PASS src/routes/token.test.ts", "auth:lint: ✔ No ESLint warnings or errors",
+  "web:build: ✓ Compiled successfully in 4.2s", "  \"name\": \"@acme/api\",", "  \"private\": true,", "  \"version\": \"1.4.0\",", "  \"main\": \"dist/index.js\",", "  \"license\": \"MIT\",", "    \"build\": \"tsc -p tsconfig.json\",",
+  "    \"test\": \"vitest run\",", "    \"jsonwebtoken\": \"^9.0.2\",", "    \"cookie-parser\": \"^1.4.6\",", "  \"compilerOptions\": {", "    \"strict\": true,", "    \"noUncheckedIndexedAccess\": true,", "KEY_COUNT=1234",
+  "TOKEN_TTL_SECONDS=3600", "SESSION_STORE=redis", "SESSION_COOKIE_SECURE=true", "AUTH_PROVIDER=github", "API_PREFIX=/api/v1", "API_RATE_LIMIT=100", "PRIVATE_NETWORK=enabled", "JWT_ALGORITHM=RS256", "KEY_ROTATION_DAYS=30",
+  "cookie: sid; Path=/; HttpOnly", "session: created for user 42", "token: expired at 2026-11-08T10:00:00Z", "auth: passed", "api: listening on http://localhost:3000", "Key: Value", "key: users:42:profile", "  session_timeout: 30m",
+  "  auth_mode: oauth", "  token_endpoint: /oauth/token", "  api_version: v2", "  secret_name: app-secrets", "user.signingkey=ABCD1234EF567890", "core.autocrlf=input", "remote.origin.url=git@github.com:acme/api.git",
+  "NAME                 READY   STATUS    RESTARTS   AGE", "api-7d9f8b6c5-x2k4p  1/1     Running   0          3d", "    image: ghcr.io/acme/api:1.4.0", "    env:", "      - name: SESSION_SECRET", "        valueFrom:",
+  "          secretKeyRef:", "            name: app-secrets", "            key: session-secret", "password: ********", "Password: (hidden)",
+];
+/** Ordinary commands (the review's misdel2.mjs): none of them holds a password. */
+const ORDINARY_COMMANDS = ["docker run -u 1000:1000 node:20 npm test", "docker run --user 1000:1000 -v $PWD:/app node:20", "docker exec -u node:node api npm test", "sudo -u postgres psql",
+  "curl -s 'https://api.github.com/search/code?q=token&per_page=100&page=2'", "git log --pretty=format:%h --author=bot", "mysql -h db -P 3306 -p appdb", "docker login --password-stdin ghcr.io",
+  "grep -rn 'Basic auth' docs/", "open 'https://example.com/callback?state=abcdefghijklmnop&code=xyz'", "npm run test -- --grep 'token refresh'", "kubectl -n prod get pods", "pnpm --filter api test"];
+
+test("G070-MVP N2: ordinary development output and commands stay whole; credential assignments in output, and passwords on command lines, are still hidden", () => {
+  const redactor = relayRedactor([]);
+  assert.equal(ORDINARY_OUTPUT.length, 68);
+  // Invalid samples for the output rule: task prefixes, package.json values, settings, log sentences, masks and placeholders.
+  for (const line of ORDINARY_OUTPUT) assert.deepEqual(redactor.redact(line, "output"), { text: line, hits: 0 }, line);
+  assert.deepEqual(redactor.redact(ORDINARY_OUTPUT.join("\n"), "output").hits, 0, "and as one output");
+  for (const command of ORDINARY_COMMANDS) assert.deepEqual(redactor.redact(command), { text: command, hits: 0 }, command);
+  // What is a credential still goes: assignments in output whatever their spelling, and passwords on command lines.
+  const credentials: readonly (readonly [string, string])[] = [
+    ["SESSION_SECRET=6f1d2c3b4a5968778695a4b3c2d1e0f9", "6f1d2c3b"], ["DB_PASSWORD=devsecretpass", "devsecretpass"], ["export AUTH_TOKEN=abc123def456ghi", "abc123def456ghi"],
+    ['  "apiKey": "corp-custom-key-123abc",', "corp-custom-key-123abc"], ["  client_secret: abcd1234efgh5678", "abcd1234efgh5678"], ["password: S3cretPass123", "S3cretPass123"],
+    ["Set-Cookie: session=abc123def456ghi789; Path=/; HttpOnly", "abc123def456ghi789"], ["x-api-key: 9f86d081884c7d659a2feaa0c55ad015", "9f86d081884c7d659a2feaa0c55ad015"],
+    ["  password: cGFzc3dvcmQxMjM=", "cGFzc3dvcmQxMjM="], ["DB_PASSWORD=hunter2hunter2 # local only", "hunter2hunter2"],
+    ["FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/3f9a1c2e-7b4d-4e8a-9c1f-5d6e7a8b9c0d", "3f9a1c2e"],
+  ];
+  for (const [line, secret] of credentials) { const out = redactor.redact(line, "output"); assert.ok(out.hits === 1 && !out.text.includes(secret), line + " → " + JSON.stringify(out.text)); }
+  for (const [command, secret] of [["curl -u admin:S3cretPass123 https://api.internal/x", "S3cretPass123"], ["curl --user deploy:Tr0ub4dor3 https://x.example", "Tr0ub4dor3"], ["wget --user=bot:9x8y7z6w5v https://x.example", "9x8y7z6w5v"]] as const) {
+    const out = redactor.redact(command);
+    assert.ok(out.hits === 1 && !out.text.includes(secret), command + " → " + JSON.stringify(out.text));
+  }
+  // Through a packet: a test run's whole output tail is quoted as it was.
+  const output = ["api:test: PASS src/routes/token.test.ts", "auth: passed", "token: expired at 2026-11-08T10:00:00Z"].join("\n") + "\n";
+  const scenario = conversation([{ input: "跑测试", harnessId: "claude", reply: "都过了。", tools: [tool("x1", "pnpm -r test", "execute", { exitCode: 0 })] }, { input: "继续", harnessId: "codex" }], [], { "run-1/x1": { input: "pnpm -r test", output } });
+  assert.ok(renderRelay(input(scenario)).text.includes("  api:test: PASS src/routes/token.test.ts\n  auth: passed\n  token: expired at 2026-11-08T10:00:00Z\n"));
 });

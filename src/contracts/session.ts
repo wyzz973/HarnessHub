@@ -323,7 +323,9 @@ export interface SessionBindingFactory {
   /**
    * The known secrets of these Harnesses for the relay (ADR-055 §10.2 at Session level): what their configurations
    * reference by name and their catalog controls' credential-named env values, with this Gateway's own credential-named
-   * environment. Starts nothing; in memory only, never logged, stored or sent. Rejects when a configuration cannot be read.
+   * environment. Starts nothing; in memory only, never logged, stored or sent. Asked only for a Turn that builds a packet.
+   * Rejects with RELAY_PREPARE_FAILED when a configuration file it must read cannot be (its message names the Harness, the
+   * file and why, never a value); the Turn then fails undispatched and the history stays owed.
    */
   relaySecrets?(configuration: SessionConfiguration, harnessIds: readonly string[]): Promise<readonly string[]>;
   /**

@@ -8,7 +8,7 @@
  * The policy every packet of this renderer belongs to. A change to a template, an escape or redaction rule, an estimator
  * coefficient, a cap or the Unicode tables of the running Node changes what is rendered and must change this version.
  */
-export const RELAY_POLICY_VERSION = "relay/1-mvp.2";
+export const RELAY_POLICY_VERSION = "relay/1-mvp.3";
 
 /**
  * The standard tier (ADR-055 §0, §5.3, §6.2): its cap T = min(8,000, 5% of the target's context window), the window

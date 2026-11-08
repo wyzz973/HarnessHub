@@ -70,23 +70,50 @@ const SHAPES: readonly (readonly [RegExp, SecretKind, 0 | 1, RegExp])[] = [
   // A token in a URL's query: only these parameter names, and a value of ≥12 characters (examples are shorter).
   [/((?:[?&;]|&amp;)(?:access_token|private_token|refresh_token|id_token|auth_token|token|api_key|apikey|api-key|key|secret|client_secret|password|passwd|pwd|auth|sig|signature)=)[^&#\s'"<>]{12,}/giu, "url_query", 1, /[?&;][A-Za-z_-]+=/u],
   // Passwords on command lines: `-u user:pass` (curl, wget), `--password X`, `mysql -pX`, `docker login -p X`, `sshpass -p X`, PGPASSWORD=X.
-  // (`-u https://host` is a URL, not a user and a password.)
-  [/((?:^|\s)(?:-u|--user)(?:\s+|=)['"]?[^\s:'"@]+:)(?!\/\/)[^\s'"@]+/gmu, "password", 1, /-u|--user/u],
+  // `-u https://host` is a URL; a numeric uid:gid and a container's `-u user:group` are no user and password (N2).
+  [/(?<!\b(?:docker|podman|nerdctl)\b[^\n]*)((?:^|\s)(?:-u|--user)(?:\s+|=)['"]?(?!\d+:\d+(?![^\s'"]))[^\s:'"@]+:)(?!\/\/)[^\s'"@]+/gmu, "password", 1, /-u|--user/u],
   [/(--password(?:=|\s+)['"]?)[^\s'"]+/gu, "password", 1, /--password/u],
   [/(\b(?:mysql|mysqldump|mysqladmin|mariadb)\b[^\n]*?\s-p)[^\s'"-][^\s'"]*/gu, "password", 1, /mysql|mariadb/u],
   [/(\b(?:docker|podman|nerdctl|helm)\s+(?:registry\s+)?login\b[^\n]*?\s-p\s+['"]?)[^\s'"]+/gu, "password", 1, /login/u],
   [/(\bsshpass\s+-p\s*['"]?)[^\s'"]+/gu, "password", 1, /sshpass/u],
   [/(\b(?:PGPASSWORD|MYSQL_PWD|REDISCLI_AUTH)=['"]?)[^\s'"]+/gu, "password", 1, /PGPASSWORD|MYSQL_PWD|REDISCLI_AUTH/u],
 ];
-/** Variable names that read as credentials: one of these words, delimited by the name's ends or underscores, or ending it. */
-const CREDENTIAL_NAME = /(?:^|_)(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PWD|CREDENTIALS?|AUTH|COOKIE|SESSION|PRIVATE|SIGNING|WEBHOOK|DSN|API)(?:_|$)|(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD)$/iu;
-/** Names that only locate or configure something, whatever credential word they hold (m5: a mirror's domain, a host). */
-const LOCATING_NAME = /_(?:MODEL|REGION|PROFILE|DIR|PATH|HOME|URL|URI|HOST|HOSTNAME|DOMAIN|PORT|ENDPOINT|BASE|SERVER|ADDR|ADDRESS|VERSION|TIMEOUT|MODE|USER|USERNAME|NAME|TYPE|FILE|ID)$/iu;
+/** The parts of a variable's or a key's name: split at `_`, `.`, `-` and at case changes (`apiKey`, `APIKey`, `x-api-key`). */
+function nameParts(name: string): readonly string[] {
+  return name.split(/[_.-]+|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])/u).filter(part => part !== "");
+}
+/** Words that name a credential when they are a part of a name. */
+const CREDENTIAL_WORDS = new Set(["KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "PWD", "CREDENTIAL", "CREDENTIALS", "AUTH", "COOKIE", "SESSION", "PRIVATE", "SIGNING", "WEBHOOK", "DSN", "API"]);
+/** Of them, those that as a whole name are ordinary words of logs and configuration (`key: …`, `session: …`, `"private": true`). */
+const ORDINARY_ALONE = new Set(["KEY", "AUTH", "COOKIE", "SESSION", "PRIVATE", "SIGNING", "DSN", "API"]);
 /**
- * Command output only: a credential-named assignment at the start of a line (`NAME=value`, `export NAME=value`, `name:
- * value`, `"name": "value"`) has its value hidden; the name stays. Command text is never rewritten by this rule.
+ * Whether a name reads as a credential's: one of CREDENTIAL_WORDS as one of its parts, or an upper-case part that ends in
+ * KEY, TOKEN, SECRET, PASSWORD or PASSWD (`CORP_APIKEY`); never one of ORDINARY_ALONE as the whole name, nor a lower-case
+ * word that only ends in one (`jsonwebtoken`, `user.signingkey`) (N2).
  */
-const ASSIGNMENT = /^([ \t]*(?:export[ \t]+)?["']?([A-Za-z_][A-Za-z0-9_.-]*)["']?[ \t]*[=:][ \t]*["']?)([^\s"'#,]{4,})/gmu;
+function credentialName(name: string): boolean {
+  const parts = nameParts(name);
+  if (parts.length === 1 && ORDINARY_ALONE.has(parts[0]!.toUpperCase())) return false;
+  return parts.some(part => CREDENTIAL_WORDS.has(part.toUpperCase()) || (part === part.toUpperCase() && /(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD)$/u.test(part)));
+}
+/** The last parts of names that only locate or configure something (m5: a mirror's domain, a host, a model). */
+const LOCATING_WORDS = new Set(["MODEL", "REGION", "PROFILE", "DIR", "PATH", "HOME", "URL", "URI", "HOST", "HOSTNAME", "DOMAIN", "PORT", "ENDPOINT", "BASE", "SERVER", "ADDR", "ADDRESS",
+  "VERSION", "TIMEOUT", "MODE", "USER", "USERNAME", "NAME", "TYPE", "FILE", "ID", "PREFIX", "SUFFIX"]);
+/**
+ * Whether a name only locates or configures, whatever credential word it holds (`HOMEBREW_API_DOMAIN`, `tokenEndpoint`);
+ * never a webhook's, whose address is its secret (`FEISHU_WEBHOOK_URL`, N1).
+ */
+function locating(name: string): boolean {
+  const parts = nameParts(name);
+  return parts.length > 1 && LOCATING_WORDS.has(parts.at(-1)!.toUpperCase()) && !parts.some(part => part.toUpperCase().includes("WEBHOOK"));
+}
+/**
+ * Command output only: a credential-named assignment that makes a whole line (`NAME=value`, `export NAME=value`, `name:
+ * value` with a space after the colon, `"name": "value",`) has its value hidden when it can be a secret (`plausible`); the
+ * name stays. A value followed by more words is a sentence (`token: expired at …`) and `api:build:` a task's prefix (N2).
+ * Command text is never rewritten by this rule.
+ */
+const ASSIGNMENT = /^([ \t]*(?:export[ \t]+)?["']?([A-Za-z_][A-Za-z0-9_.-]*)["']?(?:[ \t]*=[ \t]*|[ \t]*:[ \t]+)["']?)([^\s"'#,;]{4,})(?=["']?[ \t]*(?:[,;#]|$))/gmu;
 
 /** A redactor for one rendering. */
 export interface RelayRedactor {
@@ -99,16 +126,18 @@ export interface RelayRedactor {
 /** Values shorter than this, and plain numbers and booleans, are too common to treat as secrets. */
 export const MIN_SECRET_LENGTH = 6;
 /**
- * Whether a value can be a secret worth replacing everywhere it appears: long enough, and not a number, a boolean, a plain
- * lower-case word (`postgres`), a host or an address (`localhost`, `10.0.0.1`), or a URL without user information or query
- * (a mirror). Replacing such a value would cut ordinary words out of the record (m5).
+ * Whether a value can be a secret worth hiding: long enough, and not a number, a boolean, a short lower-case word (`postgres`,
+ * `redis`: at most 8 letters, N1), a host or an address (`localhost`, `10.0.0.1`), a version (`^9.0.2`), a plain absolute
+ * path (`/api/v1`), a mask (`********`) or a placeholder (`(hidden)`, `<none>`) (N2). Hiding such a value would cut ordinary
+ * words out of the record (m5). A URL can be a secret, a webhook's token being in its path (N1); mirrors and endpoints are
+ * left out by their names instead (`locating`).
  */
 function plausible(value: string): boolean {
   const text = value.trim();
-  if (text.length < MIN_SECRET_LENGTH || /^(?:\d+|true|false|yes|no|on|off|null|none)$/iu.test(text) || /^[a-z]{1,16}$/u.test(text)) return false;
+  if (text.length < MIN_SECRET_LENGTH || /^(?:\d+|true|false|yes|no|on|off|null|none)$/iu.test(text) || /^[a-z]{1,8}$/u.test(text)) return false;
   // A host or an address: lower-case labels ending in a letters-only one, a dotted number, an IPv6 address (with colons).
   if (/^(?:localhost|[0-9.]+|[0-9a-f]{0,4}(?::[0-9a-f]{0,4}){2,7}|[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63})*\.[a-z]{2,24})$/u.test(text)) return false;
-  return !/^[a-z][a-z0-9+.-]*:\/\/[^\s@?#]+$/iu.test(text);
+  return !(/^[\^~<>=v]{0,3}\d+(?:\.\d+){1,3}(?:[-+][0-9A-Za-z.-]+)?$/u.test(text) || /^(?:\/[a-z0-9._-]+)+\/?$/u.test(text) || !/[A-Za-z0-9]/u.test(text) || /^[([{<].*[)\]}>]$/u.test(text));
 }
 /**
  * A redactor that replaces each known secret as it is, JSON-escaped and URL-encoded (longest spelling first, so a value
@@ -132,7 +161,7 @@ export function relayRedactor(secrets: readonly string[]): RelayRedactor {
       if (known !== null) value = value.replace(known, () => { hits++; return mark("known"); });
       for (const [pattern, shape, kept, probe] of rest) if (probe.test(value)) value = value.replace(pattern, (...match: unknown[]) => { hits++; return (kept ? String(match[1]) : "") + mark(shape); });
       if (kind === "output" && /[=:]/u.test(value)) value = value.replace(ASSIGNMENT, (whole: string, before: string, name: string, secret: string) => {
-        if (!CREDENTIAL_NAME.test(name) || LOCATING_NAME.test(name) || secret.includes(MARK)) return whole;
+        if (!credentialName(name) || locating(name) || secret.includes(MARK) || !plausible(secret)) return whole;
         hits++; return before + mark("assignment");
       });
       return { text: value, hits };
@@ -142,20 +171,20 @@ export function relayRedactor(secrets: readonly string[]): RelayRedactor {
 
 /**
  * The values to treat as known secrets (ADR-055 §10.2 (a)–(c)): every value an environment holds under a credential name
- * (see CREDENTIAL_NAME), and every value a Harness's configuration references by name, whatever the name; in both, a name
- * that only locates or configures (LOCATING_NAME) is left out, and so is a value that is no plausible secret (see
+ * (see `credentialName`), and every value a Harness's configuration references by name, whatever the name; in both, a name
+ * that only locates or configures (see `locating`) is left out, and so is a value that is no plausible secret (see
  * `plausible`) or an existing path (`existingPath`, the caller's own check). Sorted, without duplicates.
  */
 export function credentialValues(input: { readonly environments: readonly Readonly<Record<string, string>>[]; readonly referenced: readonly (readonly [string, string])[] }, existingPath: (value: string) => boolean = () => false): readonly string[] {
   const values = new Set<string>();
   const keep = (value: unknown) => { if (typeof value === "string" && plausible(value) && !(value.startsWith("/") && existingPath(value))) values.add(value); };
-  for (const environment of input.environments) for (const [name, value] of Object.entries(environment)) if (CREDENTIAL_NAME.test(name) && !LOCATING_NAME.test(name)) keep(value);
-  for (const [name, value] of input.referenced) if (!LOCATING_NAME.test(name)) keep(value);
+  for (const environment of input.environments) for (const [name, value] of Object.entries(environment)) if (credentialName(name) && !locating(name)) keep(value);
+  for (const [name, value] of input.referenced) if (!locating(name)) keep(value);
   return [...values].sort();
 }
 
-/** File names whose content is a credential (ADR-055 §10.1); examples meant to be committed (.env.example) are not. */
-const CREDENTIAL_FILE = /^(?:\.env(?!\.(?:example|sample|template|dist)$)(?:\..+)?|\.envrc|.+\.(?:pem|key|p12|pfx|jks|keystore|kdbx|tfvars)|id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk)?|id_\*|\.?credentials(?:\.json)?|auth\.json|\.npmrc|\.pypirc|\.netrc|\.git-credentials|\.pgpass|\.my\.cnf|kubeconfig|terraform\.tfstate(?:\.backup)?)$/iu;
+/** File names whose content is a credential (ADR-055 §10.1); examples meant to be committed (.env.example, .env.local.example) are not. */
+const CREDENTIAL_FILE = /^(?:\.env(?!(?:\.[^.]+)*\.(?:example|sample|template|dist)$)(?:\..+)?|\.envrc|.+\.(?:pem|key|p12|pfx|jks|keystore|kdbx|tfvars)|id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk)?|id_\*|\.?credentials(?:\.json)?|auth\.json|\.npmrc|\.pypirc|\.netrc|\.git-credentials|\.pgpass|\.my\.cnf|kubeconfig|terraform\.tfstate(?:\.backup)?)$/iu;
 /**
  * Whether a command names a credential file (ADR-055 §10.1: `.env*`, `*.pem`, `id_*` keys, `*credentials*`, `auth.json`,
  * `.npmrc`, `.netrc`, `.git-credentials`, `kubeconfig`, `*.tfvars`, `terraform.tfstate`, anything under `.ssh/`, `.aws/`,

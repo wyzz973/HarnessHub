@@ -1431,12 +1431,17 @@ export class SessionRuntime {
       // The relay packet (ADR-055 §5): what this binding's program and this Gateway hold as secrets never leaves in it, and an
       // input read as a possible command never opens it, so the packet cannot become a command's argument.
       // The secrets are the whole Session's (M1): the target binding's own, and those of every Harness whose history it carries.
-      const details = offered ? await this.relayDetails(current, due) : new Map<string, RelayToolDetail>();
-      const secrets = offered ? [...(execution.binding.secrets ?? []), ...(await this.factory.relaySecrets?.(current.configuration, this.relayHarnesses(current, run, due, origin)) ?? [])] : [];
-      if (offered) this.continue(execution);
-      const relay: PublicContextOptions = { origin, secrets, firstLine: reading.kind === "content", details,
-        ...(this.options.harnessName === undefined ? {} : { names: this.options.harnessName }) };
-      if (offered && reading.kind === "content") context = buildPublicContext(current, run, due, relay);
+      // They and the tool details are read only for a Turn that builds a packet (N3): a command reads nothing for one, and a
+      // configuration that cannot be read fails only a Turn that would carry history.
+      const binding = execution.binding;
+      let relay: PublicContextOptions | null = null;
+      const relayFor = async (): Promise<PublicContextOptions> => {
+        if (relay !== null) return relay;
+        const details = await this.relayDetails(current, due), secrets = [...(binding.secrets ?? []), ...await this.relaySecretsOf(current, run, due, origin)];
+        this.continue(execution);
+        return relay = { origin, secrets, firstLine: reading.kind === "content", details, ...(this.options.harnessName === undefined ? {} : { names: this.options.harnessName }) };
+      };
+      if (offered && reading.kind === "content") context = buildPublicContext(current, run, due, await relayFor());
       if (native === null) {
         const observation = await control.initialize(); this.continue(execution);
         this.commit(id, current => ({ next: current, events: [event("run.protocol", { runId: target, observation })] }));
@@ -1470,7 +1475,7 @@ export class SessionRuntime {
       }
       carried = command === null && offered;
       // An input read as a possible command is budgeted only now; its program has started, and its new session stays bound.
-      if (carried) context ??= buildPublicContext(current, run, due, relay);
+      if (carried) context ??= buildPublicContext(current, run, due, await relayFor());
       const prepared = carried && context !== null ? context : null;
       relayResendOf = prepared !== null && previousNative !== undefined ? this.resendOf(current, previousNative, through, run) : null;
       this.commit(id, latest => ({ next: updatedRun(latest, target, { contextThroughSeq: prepared?.throughSeq ?? current.lastSeq, sourceRunIds: prepared?.sourceRunIds ?? [] }),
@@ -1726,6 +1731,19 @@ export class SessionRuntime {
     if (state.origin.kind === "import") return false;
     const created = this.store.events(state.id, 0, 1)[0];
     return !(created?.type === "session.created" && created.data.continuity === "native_fork");
+  }
+  /**
+   * The known secrets of the Harnesses a packet carries, from the factory (M1). Its refusals pass on as they are (it names
+   * a configuration it could not read with RELAY_PREPARE_FAILED; ownership and cancellation keep their codes); any other
+   * failure is the relay's too (N3), never the target Harness's: the Turn fails undispatched and what it owes stays owed.
+   */
+  private async relaySecretsOf(state: SessionSnapshot, run: PublicRun, sources: readonly PublicRun["id"][], origin: boolean): Promise<readonly string[]> {
+    if (this.factory.relaySecrets === undefined) return [];
+    try { return await this.factory.relaySecrets(state.configuration, this.relayHarnesses(state, run, sources, origin)); }
+    catch (error) {
+      if (error instanceof SessionError) throw error;
+      throw new SessionError("RELAY_PREPARE_FAILED", "没能准备交接单：读取交接单必须隐去的凭据时出错，这条消息没有发出。修好后再发；也可以只发这条消息，不带交接单。");
+    }
   }
   /**
    * The Harnesses whose history a packet carries (ADR-055 §10.2, review M1): the owed Runs' and, when the Session's own
