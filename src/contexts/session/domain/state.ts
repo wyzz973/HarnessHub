@@ -161,7 +161,20 @@ function runTiming(value: unknown): RunTiming {
   }
   return result;
 }
+/** Runs publicRun built, so validated; parseSession takes one again as it is only when it is also frozen (ADR-055 §11.2). */
+const parsedRuns = new WeakSet<PublicRun>();
+/**
+ * The Run at `index` of `before` when `value` is that very object, it had finished there and it is frozen: publicRun
+ * built it and nothing can have changed it since, so parsing it again would only copy it (ADR-055 §11.2).
+ */
+function settledRun(before: SessionSnapshot | undefined, value: unknown, index: number): PublicRun | undefined {
+  const prior = before?.runs[index];
+  return prior !== undefined && value === prior && terminal(prior.status) && parsedRuns.has(prior) && Object.isFrozen(prior) ? prior : undefined;
+}
 function publicRun(value: unknown): PublicRun {
+  const run = parsePublicRun(value); parsedRuns.add(run); return run;
+}
+function parsePublicRun(value: unknown): PublicRun {
   const item = record(value, "Run");
   keys(item, ["id", "commandId", "input", "userMessageId", "assistantMessageId", "selection", "epoch", "status", "cancelRequested", "contextThroughSeq", "sourceRunIds", "backend", "cleanup", "error", "stopRequested", "awaitingSwitchId", "thinking", "tools", "plan", "usage", "notices", "activities", "outputs", "attachments", "timing", "retained", "reused"], "Run");
   return { id: runId(item.id), commandId: commandId(item.commandId), input: text(item.input, "Run input", MAX_INPUT_BYTES),
@@ -273,8 +286,15 @@ function origin(value: unknown): SessionOrigin {
 function unique(values: readonly string[], label: string): void {
   if (new Set(values).size !== values.length) throw new SessionError("INVALID_DATA", "duplicate " + label);
 }
-/** Single persisted schema boundary. Malformed state never becomes an empty conversation. */
-export function parseSession(value: unknown): SessionSnapshot {
+/**
+ * Single persisted schema boundary. Malformed state never becomes an empty conversation.
+ *
+ * `before`, when given, is the validated and deeply frozen state that `value` is to follow (a Store transaction's current
+ * state): a finished Run of it that `value` holds as the same object at the same position is kept as it is instead of
+ * being parsed again (ADR-055 §11.2). Every other Run, every other part and every relation across Runs, messages, switches
+ * and commands is checked in full; whether the change itself is allowed is assertSessionTransition's to decide.
+ */
+export function parseSession(value: unknown, before?: SessionSnapshot): SessionSnapshot {
   const item = record(value, "Session");
   keys(item, ["schemaVersion", "id", "version", "lastSeq", "epoch", "status", "configuration", "selection", "activeRunId", "pendingSwitchId", "runs", "messages", "switches", "commands", "nativeBindings", "origin", "retainNative", "retained"], "Session");
   if (item.schemaVersion !== 1 && item.schemaVersion !== 2 && item.schemaVersion !== 3 && item.schemaVersion !== 4 && item.schemaVersion !== 5 && item.schemaVersion !== 6 && item.schemaVersion !== 7 && item.schemaVersion !== 8 && item.schemaVersion !== 9 && item.schemaVersion !== 10 && item.schemaVersion !== 11 && item.schemaVersion !== 12) throw new SessionError("INVALID_DATA", "unknown Session schemaVersion");
@@ -282,7 +302,7 @@ export function parseSession(value: unknown): SessionSnapshot {
   const result: SessionSnapshot = { schemaVersion: item.schemaVersion, id: sessionId(item.id), version: number(item.version, "version"), lastSeq: number(item.lastSeq, "lastSeq"),
     epoch: number(item.epoch, "epoch", 1), status: item.status, configuration: parseConfiguration(item.configuration), selection: parseSelection(item.selection),
     activeRunId: item.activeRunId === null ? null : runId(item.activeRunId), pendingSwitchId: item.pendingSwitchId === null ? null : switchId(item.pendingSwitchId),
-    runs: array(item.runs, "runs", MAX_RUNS, publicRun), messages: array(item.messages, "messages", MAX_RUNS * 2, publicMessage),
+    runs: array(item.runs, "runs", MAX_RUNS, value => value).map((run, index) => settledRun(before, run, index) ?? publicRun(run)), messages: array(item.messages, "messages", MAX_RUNS * 2, publicMessage),
     switches: array(item.switches, "switches", MAX_COMMANDS, publicSwitch), commands: array(item.commands, "commands", MAX_COMMANDS, command), ...(item.nativeBindings === undefined ? {} : { nativeBindings: array(item.nativeBindings, "native bindings", MAX_RUNS, nativeBinding) }),
     ...(item.origin === undefined ? {} : { origin: origin(item.origin) }),
     ...(item.retainNative === undefined ? {} : { retainNative: item.retainNative === true ? true : (() => { throw new SessionError("INVALID_DATA", "kept native processes are marked true"); })() }),
@@ -442,6 +462,8 @@ export function assertSessionTransition(before: SessionSnapshot, after: SessionS
   for (let index = 0; index < before.commands.length; index++) if (!same(before.commands[index], after.commands[index])) throw new SessionError("INVALID_TRANSITION", "committed command identity/result cannot be rewritten");
   for (let index = 0; index < before.runs.length; index++) {
     const old = before.runs[index]!, next = after.runs[index]!;
+    // The same object at the same position (a finished Run parseSession kept, ADR-055 §11.2) passes every check below.
+    if (old === next) continue;
     if (terminal(old.status) && !same(old, next)) throw new SessionError("INVALID_TRANSITION", "terminal Run evidence cannot be rewritten");
     if (old.commandId !== next.commandId || old.input !== next.input || old.userMessageId !== next.userMessageId || old.assistantMessageId !== next.assistantMessageId || old.awaitingSwitchId !== next.awaitingSwitchId ||
         JSON.stringify(old.attachments) !== JSON.stringify(next.attachments))

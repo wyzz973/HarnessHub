@@ -813,8 +813,14 @@ export class SessionRuntime {
     if (state.commands.length >= MAX_COMMANDS) throw new SessionError("COMMAND_LIMIT", "Session command budget exhausted");
   }
   private fingerprint(value: unknown): string { return this.options.fingerprint(JSON.stringify(value)); }
+  /**
+   * The version of each Session as this runtime last read or committed it: commit() names it for the Store's
+   * compare-and-swap instead of reading the Session again first (ADR-055 §11.2). A transaction committed past this runtime
+   * makes it stale; the Store then refuses before the mutation runs, and commit() reads the Session first, as it used to.
+   */
+  private readonly versions = new Map<SessionId, number>();
   private load(id: SessionId): SessionSnapshot {
-    try { return this.store.get(id); }
+    try { const state = this.store.get(id); this.versions.set(id, state.version); return state; }
     catch (error) {
       if (!(error instanceof SessionError) || error.code !== "SESSION_NOT_FOUND") this.fail(error, id);
       throw error;
@@ -822,8 +828,17 @@ export class SessionRuntime {
   }
   private commit(id: SessionId, mutate: (state: SessionSnapshot) => SessionMutation): SessionCommit {
     try {
-      this.store.assertOwner(); const state = this.load(id);
-      return this.publish(this.store.transact(id, state.version, mutate));
+      this.store.assertOwner();
+      const known = this.versions.get(id);
+      let ran = false, committed: SessionCommit;
+      const once = (state: SessionSnapshot): SessionMutation => { ran = true; return mutate(state); };
+      try { committed = this.store.transact(id, known ?? this.load(id).version, once); }
+      catch (error) {
+        if (known === undefined || ran || !(error instanceof SessionError && error.code === "VERSION_CONFLICT")) throw error;
+        committed = this.store.transact(id, this.load(id).version, once);
+      }
+      this.versions.set(id, committed.session.version);
+      return this.publish(committed);
     }
     catch (error) { if (!(error instanceof SessionError && ["CONTEXT_TOO_LARGE", "OUTPUT_LIMIT", "QUEUE_FULL", "COMMAND_LIMIT", "RUN_LIMIT", "SESSION_LIMIT", "EVENT_LIMIT"].includes(error.code))) this.fail(error, id); throw error; }
   }
@@ -845,6 +860,7 @@ export class SessionRuntime {
         if (state.status === "open") {
           const committed = this.store.transact(affected, state.version, current => ({ next: { ...current, status: "blocked" },
             events: [event("session.blocked", { error: fault(error), reason: "runtime stopped after a failure" })] }));
+          this.versions.set(affected, committed.session.version);
           this.publish(committed);
         }
       } catch (recordingError) {

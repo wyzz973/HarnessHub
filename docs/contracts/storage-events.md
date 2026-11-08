@@ -76,9 +76,16 @@ SQLite [原子提交](https://www.sqlite.org/atomiccommit.html)与[WAL](https://
 ### R0 现状基线（已实现，【事实】）
 
 - 业务库 `gateway.sqlite` 是 v12：新库直接建成 v12（`sqlite-store.ts:457–467`），owner 只认 v12（`:265`），新会话的快照必须是 v12（`:276`），只读的 Reader 认 1～12（`:656`、`:674`）。
-- `transact` 在一个事务里读快照、做 `assertSessionTransition`、写事件、以 CAS 整份重写快照（`sqlite-store.ts:343–363`）；读取时快照版本须等于库版本、事件条数须等于 `lastSeq`（`:153–157`）。
+- `transact` 在一个事务里读快照、做 `assertSessionTransition`、写事件、以 CAS 整份重写快照（`sqlite-store.ts:343–363`）；读取时快照版本须等于库版本、事件条数须等于 `lastSeq`（`:153–157`）。G075（2026-11-09）起，读取先查快照缓存：只有命中项的 (version, lastSeq) 与行完全一致才使用；未命中，或别的连接提交过（`PRAGMA data_version` 变化，缓存随即清空）时，才做完整读取与这两项核对。
 - 事件类型是开放的：类型名只按 `^[a-z][a-z0-9._:-]{0,127}$` 校验，data 是有界 JSON（`sqlite-store.ts:85–106`）；单条 ≤2 MiB + 4,096 B、每会话 ≤16,384 条、日志 ≤32 MiB（`state.ts:18–20`，文档常量）。
 - 事务里的 SQLite 错误让 Store 进入 failed（`sqlite-store.ts:625–628`）；Runtime 的 `commit` 遇到意外错误一律 `fail()`（`runtime.ts:796`）。
+- **G075 的存储约定（2026-11-09，已实现，不升库）**：
+  - 已校验的快照按 (version, lastSeq) 缓存，LRU，上限 96 MiB（按持久化字节计），只在 COMMIT 成功后放入；存储失败或所有者丢失时清空，迁移与恢复绕过缓存。
+  - Store 返回的快照深冻结，同一版本由所有读者共享。调用方不得原地修改，要改就先复制；原地修改会抛 TypeError。
+  - 同一冻结对象、由 `publicRun` 生成的已终结 Run，不再逐字段重复解析；跨 Run、消息、切换、命令的关系校验仍然全量执行。
+  - 事件日志字节在内存里随提交累计，缓存未命中时用一次 `SUM(octet_length)` 重算；持久的计数列随 G066（v13）加入。
+  - Runtime 记住最后读到的 version 做 CAS；遇到 VERSION_CONFLICT 时先读再提交一次，mutate 最多执行一次。
+
 - 恢复：`claimAndRecover` 在一个 `BEGIN IMMEDIATE` 里迁移并恢复全部会话（`sqlite-store.ts:452`、`:577–590`）。
 - 迁移前备份只对 1～11 做（`sqlite-store.ts:396`），回读核对 `sessions` 与 `events` 的行数（`:136–139`）。
 - 内容回收：启动时 owner 独占且静止，`content.collect(store.contentReferences())`（`src/cli/session-application.ts:69–71`）；`contentReferences()` 收集工具详情、产物、附件与分支来源里的附件（`sqlite-store.ts:326–342`）；未被引用且超过 7 天的内容删除（`content-store.ts:14`、`:197`）。

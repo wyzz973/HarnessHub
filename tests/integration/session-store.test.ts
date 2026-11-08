@@ -306,11 +306,16 @@ test("shape-valid terminal assistant append and committed send fingerprint rewri
   const reader = new SqliteSessionReader(root); assert.deepEqual(reader.get(before.id), before); reader.close(); store.close();
 });
 
-test("read snapshots and event data are independent copies", t => {
+test("read snapshots are deeply frozen and event data are independent copies", t => {
   const root = directory(t), store = new SqliteSessionStore(root);
   const originalData = { value: "original" };
   const created = store.create(initial(root), [{ type: "session.created", data: originalData }]);
-  originalData.value = "changed"; Object.assign(created.session.selection, { harnessId: "modified" });
+  originalData.value = "changed";
+  // Every reader of a version shares one validated snapshot (ADR-055 §11.2), so none of them can change it in place.
+  assert.throws(() => Object.assign(created.session.selection, { harnessId: "modified" }), TypeError);
+  const read = store.get(created.session.id);
+  assert.throws(() => Object.assign(read.selection, { harnessId: "modified" }), TypeError);
+  assert.throws(() => (read.commands as unknown[]).push({}), TypeError);
   Object.assign(created.events[0]?.data ?? {}, { value: "modified" });
   assert.equal(store.get(created.session.id).selection.harnessId, "fixture");
   assert.equal(store.events(created.session.id, 0)[0]?.data.value, "original"); store.close();

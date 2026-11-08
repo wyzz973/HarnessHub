@@ -2380,7 +2380,7 @@
 
 ## G075 存储优化前置片
 
-范围：ADR-055（终稿第 11.2、17 节）：前置片五项——去掉 commit 前的重复 load、按 version 缓存已校验快照（字节上限 ≤96 MiB）、跳过未变的终态 Run 校验、事件字节改用计数列、finalize 复用 prePlan 的快照。现有文件：`src/infrastructure/session/sqlite-store.ts:343–363、:150–158` 经既有所有者 G008 修改；`src/contexts/session/application/runtime.ts:995–1011` 经既有所有者 G028 修改。
+范围：ADR-055（终稿第 11.2、17 节）：前置片五项——去掉 commit 前的重复 load、按 version 缓存已校验快照（字节上限 ≤96 MiB）、跳过未变的终态 Run 校验、事件字节改用计数列、finalize 复用 prePlan 的快照。现有文件：`src/infrastructure/session/sqlite-store.ts:343–363、:150–158` 经既有所有者 G008 修改；`src/contexts/session/application/runtime.ts:995–1011` 经既有所有者 G028 修改。实现时的范围补记（2026-11-09）：`src/infrastructure/session/sqlite-store.ts` 的读取路径、create、close、insertEvents、transaction 与 read 都接上了快照缓存（超出原列行号，仍经 G008）；`src/contexts/session/domain/state.ts` 的 `parseSession(value, before?)` 与 `assertSessionTransition` 对同一冻结对象跳过重复校验，经既有所有者 G004 修改；`tests/integration/session-store.test.ts` 的一条现有测试由“改副本不影响存储”改为“原地修改被拒绝”（更严），经 G008；事件字节的持久计数列并入 G066 的 v13，prePlan→finalize 的快照复用留给 G072。
 
 依赖：G008, G028。需求：R07, R15, R26。
 

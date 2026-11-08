@@ -8,6 +8,7 @@ import {
   type SessionMutation, type SessionSnapshot, type SessionStore,
 } from "../../contracts/session.js";
 import { MAX_EVENT_BYTES, MAX_EVENT_LOG_BYTES, MAX_READ_BYTES, MAX_READ_ITEMS, MAX_SESSION_BYTES, MAX_SESSION_EVENTS, assertSessionTransition, parseSession, recoverSession, utf8Bytes } from "../../contexts/session/domain/state.js";
+import { MAX_SNAPSHOT_CACHE_BYTES, SnapshotCache, type SnapshotCacheStats } from "./snapshot-cache.js";
 
 const activeRoots = new Set<string>();
 interface FileIdentity { readonly dev: string; readonly ino: string }
@@ -141,10 +142,15 @@ function freeze(value: unknown): void {
   if (value === null || typeof value !== "object" || Object.isFrozen(value)) return;
   for (const item of Object.values(value)) freeze(item); Object.freeze(value);
 }
-function readSessionFrom(database: DatabaseSync, id: SessionId): SessionSnapshot {
-  const row = database.prepare("SELECT version,last_seq,length(CAST(snapshot AS BLOB)) AS bytes FROM sessions WHERE id=?").get(id);
+/**
+ * Reads and validates one stored Session with its persisted UTF-8 byte size. `octet_length` gives the same count as
+ * `length(CAST(snapshot AS BLOB))` for this UTF-8 database's TEXT column, without reading the value (SQLite 3.43+).
+ */
+function readStoredSession(database: DatabaseSync, id: SessionId): { readonly state: SessionSnapshot; readonly bytes: number } {
+  const row = database.prepare("SELECT version,last_seq,octet_length(snapshot) AS bytes FROM sessions WHERE id=?").get(id);
   if (!row) throw new SessionError("SESSION_NOT_FOUND", "public Session was not found");
-  if (integer(row.bytes, "Session snapshot bytes") > MAX_SESSION_BYTES) throw new SessionError("INVALID_DATA", "persisted Session byte budget exceeded");
+  const bytes = integer(row.bytes, "Session snapshot bytes");
+  if (bytes > MAX_SESSION_BYTES) throw new SessionError("INVALID_DATA", "persisted Session byte budget exceeded");
   const payload = database.prepare("SELECT snapshot FROM sessions WHERE id=?").get(id);
   const serialized = string(payload?.snapshot, "Session snapshot");
   let value: unknown;
@@ -155,21 +161,23 @@ function readSessionFrom(database: DatabaseSync, id: SessionId): SessionSnapshot
   if (state.id !== id || state.version !== row.version || state.lastSeq !== row.last_seq) throw new SessionError("INVALID_DATA", "persisted Session row and snapshot disagree");
   const log = database.prepare("SELECT COUNT(*) AS count,MIN(seq) AS first,MAX(seq) AS last FROM events WHERE session_id=?").get(id);
   if (log?.count !== state.lastSeq || (state.lastSeq > 0 && (log.first !== 1 || log.last !== state.lastSeq))) throw new SessionError("INVALID_DATA", "persisted Session and event cursor disagree");
-  return state;
+  return { state, bytes };
 }
-function readListFrom(database: DatabaseSync, maximum: number): readonly SessionSnapshot[] {
+function readSessionFrom(database: DatabaseSync, id: SessionId): SessionSnapshot { return readStoredSession(database, id).state; }
+function readListFrom(database: DatabaseSync, maximum: number, read: (id: SessionId) => SessionSnapshot): readonly SessionSnapshot[] {
   const result: SessionSnapshot[] = []; let bytes = 0;
-  for (const row of database.prepare("SELECT id,length(CAST(snapshot AS BLOB)) AS bytes FROM sessions ORDER BY rowid DESC LIMIT ?").iterate(maximum)) {
+  for (const row of database.prepare("SELECT id,octet_length(snapshot) AS bytes FROM sessions ORDER BY rowid DESC LIMIT ?").iterate(maximum)) {
     const size = integer(row.bytes, "Session snapshot bytes");
     if (size > MAX_SESSION_BYTES) throw new SessionError("INVALID_DATA", "persisted Session byte budget exceeded");
     if (bytes + size > MAX_READ_BYTES) throw new SessionError("READ_LIMIT", "Session list exceeds its byte budget; request a smaller explicit limit");
-    const state = readSessionFrom(database, sessionId(row.id));
+    const state = read(sessionId(row.id));
     bytes += size; result.push(state);
   }
   return result;
 }
-function readEventsFrom(database: DatabaseSync, id: SessionId, afterSeq: number, maximum: number): readonly SessionEvent[] {
-  const state = readSessionFrom(database, id);
+/** One page of the events of the Session `state` read in the same operation. */
+function readEventsFrom(database: DatabaseSync, state: SessionSnapshot, afterSeq: number, maximum: number): readonly SessionEvent[] {
+  const id = state.id;
   if (afterSeq > state.lastSeq) throw new SessionError("INVALID_CURSOR", "event cursor is ahead of persistent history");
   const result: SessionEvent[] = []; let bytes = 0;
   for (const row of database.prepare("SELECT seq,owner_generation,length(CAST(event_json AS BLOB)) AS bytes FROM events WHERE session_id=? AND seq>? ORDER BY seq LIMIT ?").iterate(id, afterSeq, maximum)) {
@@ -188,7 +196,10 @@ function readEventsFrom(database: DatabaseSync, id: SessionId, afterSeq: number,
   return result;
 }
 
-/** Owns the data-root OS lock and synchronous aggregate transactions until close(). */
+/**
+ * Owns the data-root OS lock and synchronous aggregate transactions until close(). The snapshots it returns, read or
+ * committed, are validated and deeply frozen: the readers of one version share one object from its cache (ADR-055 §11.2).
+ */
 export class SqliteSessionStore implements SessionStore {
   readonly ownerGeneration: number;
   private readonly root: string;
@@ -203,6 +214,10 @@ export class SqliteSessionStore implements SessionStore {
   private readonly database: DatabaseSync;
   private readonly token = randomUUID();
   private readonly now: () => Date;
+  /** Validated snapshots by version and event log sizes (ADR-055 §11.2); owned here and closed by close(). */
+  private readonly cache: SnapshotCache;
+  /** PRAGMA data_version when the cache was last known to match the database; null before the first read. */
+  private dataVersion: number | null = null;
   private closed = false;
   private failed: SessionError | null = null;
 
@@ -222,10 +237,14 @@ export class SqliteSessionStore implements SessionStore {
    *
    * The backups belong to the user: HarnessHub never reads or restores them, removes only regular files named by its own two
    * patterns (older backups, and `.partial` files a crashed backup left) and leaves everything else in `backups` alone.
+   *
+   * `snapshotCacheBytes` is the byte budget of the snapshot cache this store owns (0 to MAX_SNAPSHOT_CACHE_BYTES, the
+   * default); any other value throws INVALID_INPUT before the root is touched.
    */
-  constructor(root: string, options: { readonly now?: () => Date } = {}) {
+  constructor(root: string, options: { readonly now?: () => Date; readonly snapshotCacheBytes?: number } = {}) {
     if (!isAbsolute(root) || root.includes("\0") || utf8Bytes(root) > 4096) throw new SessionError("INVALID_INPUT", "data root must be a bounded absolute path");
     this.now = options.now ?? (() => new Date());
+    this.cache = new SnapshotCache(options.snapshotCacheBytes ?? MAX_SNAPSHOT_CACHE_BYTES);
     const initialized = initializeRoot(root);
     this.root = initialized.root; this.rootIdentity = pathIdentity(this.root, true);
     this.markerPath = initialized.markerPath; this.markerIdentity = initialized.markerIdentity;
@@ -266,6 +285,8 @@ export class SqliteSessionStore implements SessionStore {
       const metadata = this.readOwner();
       if (!metadata.active || metadata.generation !== this.ownerGeneration || metadata.token !== this.token || metadata.pid !== process.pid) throw new SessionError("OWNER_LOST", "persistent owner generation no longer belongs to this process");
     } catch (error) {
+      // A lost owner keeps no snapshots: nothing reads them again, and their memory goes now rather than at close.
+      this.cache.clear();
       this.failed = error instanceof SessionError && error.code === "OWNER_LOST" ? error : new SessionError("OWNER_LOST", "owner lock, path identity or generation could not be confirmed");
       if (this.failed !== error) this.failed.cause = error; throw this.failed;
     }
@@ -277,36 +298,39 @@ export class SqliteSessionStore implements SessionStore {
     const entries = drafts(events), next = parseSession({ ...snapshot, version: 1, lastSeq: entries.length });
     const create = next.commands.find(entry => entry.kind === "create");
     if (!create) throw new SessionError("INVALID_DATA", "Session create command is missing");
+    let cached: { readonly bytes: number; readonly logBytes: number } | null = null;
     return this.transaction(() => {
       const prior = this.database.prepare("SELECT session_id, fingerprint FROM create_keys WHERE command_id=?").get(create.id);
       if (prior) {
         if (prior.fingerprint !== create.fingerprint) throw new SessionError("IDEMPOTENCY_CONFLICT", "create key already names another request");
-        return { session: this.readSession(sessionId(prior.session_id)), events: [] };
+        return { session: this.session(sessionId(prior.session_id)), events: [] };
       }
       if (this.database.prepare("SELECT id FROM sessions WHERE id=?").get(next.id)) throw new SessionError("SESSION_EXISTS", "Session identity already exists");
-      const committed = this.commitEvents(next.id, 0, entries, this.ownerGeneration);
-      this.database.prepare("INSERT INTO sessions(id,version,last_seq,snapshot) VALUES(?,?,?,?)").run(next.id, next.version, next.lastSeq, JSON.stringify(next));
+      const committed = this.commitEvents(next.id, 0, entries, this.ownerGeneration), serialized = JSON.stringify(next);
+      this.database.prepare("INSERT INTO sessions(id,version,last_seq,snapshot) VALUES(?,?,?,?)").run(next.id, next.version, next.lastSeq, serialized);
       this.database.prepare("INSERT INTO create_keys(command_id,session_id,fingerprint) VALUES(?,?,?)").run(create.id, next.id, create.fingerprint);
-      this.insertEvents(committed);
+      const logBytes = this.insertEvents(next.id, 0, committed);
+      freeze(next); cached = { bytes: Buffer.byteLength(serialized, "utf8"), logBytes };
       return { session: next, events: committed };
-    });
+    }, () => { if (cached !== null) this.cache.put(next, cached.bytes, cached.logBytes); });
   }
 
-  get(id: SessionId): SessionSnapshot { this.assertOwner(); return this.read(() => this.readSession(sessionId(id))); }
+  get(id: SessionId): SessionSnapshot { this.assertOwner(); return this.read(() => this.session(sessionId(id))); }
   findByCreateKey(key: CommandId): SessionSnapshot | null {
     this.assertOwner(); commandId(key);
     return this.read(() => {
       const row = this.database.prepare("SELECT session_id FROM create_keys WHERE command_id=?").get(key);
-      return row ? this.readSession(sessionId(row.session_id)) : null;
+      return row ? this.session(sessionId(row.session_id)) : null;
     });
   }
+  /** Lists use cached snapshots but do not cache what they read, so a long list never pushes out the conversations in use. */
   list(limit?: number): readonly SessionSnapshot[] {
     this.assertOwner(); const maximum = limitValue(limit);
-    return this.read(() => readListFrom(this.database, maximum));
+    return this.read(() => readListFrom(this.database, maximum, id => this.session(id, false)));
   }
   listKept(): readonly SessionSnapshot[] {
     this.assertOwner();
-    return this.read(() => this.database.prepare("SELECT id FROM sessions WHERE json_extract(snapshot,'$.retained') IS NOT NULL ORDER BY rowid").all().map(row => readSessionFrom(this.database, sessionId(String(row.id)))));
+    return this.read(() => this.database.prepare("SELECT id FROM sessions WHERE json_extract(snapshot,'$.retained') IS NOT NULL ORDER BY rowid").all().map(row => this.session(sessionId(String(row.id)), false)));
   }
   /** A pending branch only refers to its source's native session; ready and unconfirmed references hold one. */
   nativeOwners(harnessId: string, controlId: string): ReadonlyMap<string, SessionId> {
@@ -328,7 +352,7 @@ export class SqliteSessionStore implements SessionStore {
     return this.read(() => {
       const referenced = new Set<string>();
       for (const row of this.database.prepare("SELECT id FROM sessions ORDER BY rowid").all()) {
-        const state = this.readSession(sessionId(row.id));
+        const state = this.session(sessionId(row.id), false);
         for (const run of state.runs) {
           for (const tool of run.tools ?? []) if (tool.detail !== undefined) referenced.add(tool.detail.id);
           for (const output of run.outputs ?? []) if (output.kind === "content") referenced.add(output.content.id);
@@ -343,30 +367,35 @@ export class SqliteSessionStore implements SessionStore {
   transact(id: SessionId, expectedVersion: number, mutate: (current: SessionSnapshot) => SessionMutation): SessionCommit {
     this.assertOwner(); sessionId(id);
     if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1 || typeof mutate !== "function") throw new SessionError("INVALID_INPUT", "transaction requires a positive expected version and synchronous mutation");
+    let cached: { readonly next: SessionSnapshot; readonly bytes: number; readonly logBytes: number } | null = null;
     return this.transaction(() => {
-      const current = this.readSession(id);
+      // Deeply frozen: every reader of this version shares it, and the mutation cannot change it.
+      const current = this.session(id);
       if (current.version !== expectedVersion) throw new SessionError("VERSION_CONFLICT", "Session version changed before the mutation");
-      freeze(current);
       const mutation = mutate(current);
       if (mutation === null || typeof mutation !== "object" || "then" in mutation) throw new SessionError("INVALID_DATA", "Session mutation must be synchronous");
       const entries = drafts(mutation.events);
-      const next = parseSession({ ...mutation.next, version: current.version + 1, lastSeq: current.lastSeq + entries.length });
+      // Finished Runs the mutation kept as they were are not validated again (ADR-055 §11.2); every relation still is.
+      const next = parseSession({ ...mutation.next, version: current.version + 1, lastSeq: current.lastSeq + entries.length }, current);
       if (next.id !== current.id) throw new SessionError("INVALID_DATA", "transaction cannot replace Session identity");
       const previousCreate = current.commands.find(entry => entry.kind === "create"), nextCreate = next.commands.find(entry => entry.kind === "create");
       if (!previousCreate || !nextCreate || JSON.stringify(previousCreate) !== JSON.stringify(nextCreate)) throw new SessionError("INVALID_DATA", "transaction cannot replace Session create identity");
       assertSessionTransition(current, next);
-      const committed = this.commitEvents(id, current.lastSeq, entries, this.ownerGeneration);
-      const updated = this.database.prepare("UPDATE sessions SET version=?,last_seq=?,snapshot=? WHERE id=? AND version=?").run(next.version, next.lastSeq, JSON.stringify(next), id, expectedVersion);
+      const committed = this.commitEvents(id, current.lastSeq, entries, this.ownerGeneration), serialized = JSON.stringify(next);
+      const updated = this.database.prepare("UPDATE sessions SET version=?,last_seq=?,snapshot=? WHERE id=? AND version=?").run(next.version, next.lastSeq, serialized, id, expectedVersion);
       if (updated.changes !== 1) throw new SessionError("VERSION_CONFLICT", "Session compare-and-swap failed");
-      this.insertEvents(committed);
+      const logBytes = this.insertEvents(id, current.lastSeq, committed);
+      freeze(next); cached = { next, bytes: Buffer.byteLength(serialized, "utf8"), logBytes };
       return { session: next, events: committed };
-    });
+    }, () => { if (cached !== null) this.cache.put(cached.next, cached.bytes, cached.logBytes); });
   }
   events(id: SessionId, afterSeq: number, limit?: number): readonly SessionEvent[] {
     this.assertOwner(); sessionId(id); const maximum = limitValue(limit);
     if (!Number.isSafeInteger(afterSeq) || afterSeq < 0) throw new SessionError("INVALID_INPUT", "event cursor must be a nonnegative integer");
-    return this.read(() => readEventsFrom(this.database, id, afterSeq, maximum));
+    return this.read(() => readEventsFrom(this.database, this.session(id), afterSeq, maximum));
   }
+  /** How the snapshot cache has been used (ADR-055 §11.2), for diagnostics and tests; reading it changes nothing. */
+  cacheStats(): SnapshotCacheStats { return this.cache.stats(); }
 
   close(): void {
     if (this.closed) return;
@@ -376,6 +405,7 @@ export class SqliteSessionStore implements SessionStore {
       this.transaction(() => { this.database.prepare("UPDATE owner_metadata SET owner_active=0 WHERE singleton=1 AND owner_generation=? AND owner_token=?").run(this.ownerGeneration, this.token); });
     } catch (error) { failure = error; }
     this.closed = true;
+    this.cache.close();
     try { if (this.database.isOpen) this.database.close(); } catch (error) { failure ??= error; }
     try { if (this.owner.isOpen) this.owner.close(); } catch (error) { failure ??= error; }
     if (!this.owner.isOpen) activeRoots.delete(this.root);
@@ -583,53 +613,97 @@ export class SqliteSessionStore implements SessionStore {
         const entries = drafts(recovered.events), next = parseSession({ ...recovered.next, version: state.version + 1, lastSeq: state.lastSeq + entries.length });
         assertSessionTransition(state, next);
         db.prepare("UPDATE sessions SET version=?,last_seq=?,snapshot=? WHERE id=?").run(next.version, next.lastSeq, JSON.stringify(next), next.id);
-        this.insertEvents(this.commitEvents(next.id, state.lastSeq, entries, generation));
+        this.insertEvents(next.id, state.lastSeq, this.commitEvents(next.id, state.lastSeq, entries, generation));
       }
       this.assertPaths(); db.exec("COMMIT"); return generation;
     } catch (error) { if (db.isTransaction) db.exec("ROLLBACK"); throw error; }
   }
+  /** A stored Session read and validated again, bypassing the cache: migration and recovery read what they have just written. */
   private readSession(id: SessionId): SessionSnapshot {
     return readSessionFrom(this.database, id);
+  }
+  /**
+   * The committed snapshot of `id`, deeply frozen: the cached one while it is the stored version and event cursor and no
+   * other connection has committed since (ADR-055 §11.2); otherwise read and validated again, and cached when `keep`.
+   * Inside a write transaction it is called only before that transaction writes the Session, so it caches committed state.
+   */
+  private session(id: SessionId, keep = true): SessionSnapshot {
+    this.observeWriters();
+    const row = this.database.prepare("SELECT version,last_seq FROM sessions WHERE id=?").get(id);
+    if (!row) throw new SessionError("SESSION_NOT_FOUND", "public Session was not found");
+    const cached = this.cache.get(id, integer(row.version, "Session version", 1), integer(row.last_seq, "Session event cursor"));
+    if (cached !== undefined) return cached;
+    const { state, bytes } = readStoredSession(this.database, id);
+    freeze(state);
+    if (keep) this.cache.put(state, bytes);
+    return state;
+  }
+  /**
+   * Drops the cache once another connection committed to the business database since this one last looked; commits of this
+   * connection leave PRAGMA data_version as it is. Only a broken ownership lets another writer in; tests do it on purpose.
+   */
+  private observeWriters(): void {
+    const version = integer(object(this.database.prepare("PRAGMA data_version").get(), "database data version").data_version, "database data version");
+    if (this.dataVersion !== null && this.dataVersion !== version) this.cache.clear();
+    this.dataVersion = version;
   }
   private commitEvents(id: SessionId, previousSeq: number, entries: readonly EventDraft[], generation: number): readonly SessionEvent[] {
     let timestamp: string;
     try { timestamp = this.now().toISOString(); } catch { throw new SessionError("INVALID_INPUT", "clock did not provide a valid Date"); }
     return entries.map((event, index) => ({ ...event, sessionId: id, seq: previousSeq + index + 1, ownerGeneration: generation, timestamp }));
   }
-  private insertEvents(events: readonly SessionEvent[]): void {
+  /**
+   * Appends the events of `id` that follow `previousSeq`, its committed cursor, and returns the byte size of its event log
+   * with them. That size is counted along with each commit (ADR-055 §11.2: the counter column is v13's, G066): the cache
+   * keeps it with the snapshot at that cursor and this store adds what it appends, which is exact because events are only
+   * ever appended, all through here, and every commit of another connection clears the cache. Without a known size the
+   * log is summed once in SQLite.
+   */
+  private insertEvents(id: SessionId, previousSeq: number, events: readonly SessionEvent[]): number {
     const insert = this.database.prepare("INSERT INTO events(session_id,seq,owner_generation,event_json) VALUES(?,?,?,?)");
-    const additions = new Map<SessionId, number>();
+    let added = 0;
     const serialized = events.map(event => {
+      if (event.sessionId !== id) throw new SessionError("INVALID_DATA", "one event batch belongs to one Session");
       const payload = JSON.stringify(event), size = utf8Bytes(payload);
       if (size > MAX_EVENT_BYTES) throw new SessionError("EVENT_LIMIT", "persistent event byte limit reached");
-      additions.set(event.sessionId, (additions.get(event.sessionId) ?? 0) + size); return { event, payload };
+      added += size; return { event, payload };
     });
-    for (const [id, bytes] of additions) {
-      const row = this.database.prepare("SELECT COALESCE(SUM(length(CAST(event_json AS BLOB))),0) AS bytes FROM events WHERE session_id=?").get(id);
-      if (integer(row?.bytes, "Session event log bytes") + bytes > MAX_EVENT_LOG_BYTES) throw new SessionError("EVENT_LIMIT", "Session event log byte limit reached");
-    }
+    const logged = this.cache.logBytes(id, previousSeq)
+      ?? integer(this.database.prepare("SELECT COALESCE(SUM(octet_length(event_json)),0) AS bytes FROM events WHERE session_id=?").get(id)?.bytes, "Session event log bytes");
+    if (logged + added > MAX_EVENT_LOG_BYTES) throw new SessionError("EVENT_LIMIT", "Session event log byte limit reached");
     for (const { event, payload } of serialized) insert.run(event.sessionId, event.seq, event.ownerGeneration, payload);
+    return logged + added;
   }
-  private transaction<T>(mutate: () => T): T {
+  /**
+   * Runs `mutate` in one IMMEDIATE transaction. `committed` runs only once COMMIT succeeded, so the cache never takes what a
+   * rolled-back transaction wrote; a storage failure clears the cache along with disabling the store.
+   */
+  private transaction<T>(mutate: () => T, committed?: () => void): T {
     this.assertOwner();
+    let result: T;
     try {
       this.database.exec("BEGIN IMMEDIATE");
-      const result = mutate();
+      // No other connection commits while this one holds the write lock, so this sees all they committed before.
+      this.observeWriters();
+      result = mutate();
       // Path/lock validation after the callback closes ownership windows without awaiting external work.
       this.assertPaths();
       const metadata = this.readOwner();
       if (metadata.generation !== this.ownerGeneration || metadata.token !== this.token) throw new SessionError("OWNER_LOST", "owner generation changed inside transaction");
-      this.database.exec("COMMIT"); return result;
+      this.database.exec("COMMIT");
     } catch (error) {
       try { if (this.database.isTransaction) this.database.exec("ROLLBACK"); }
       catch (rollbackError) { this.failed = storageFailure(rollbackError); }
       if (sqliteError(error)) this.failed = storageFailure(error);
       if (error instanceof SessionError && error.code === "OWNER_LOST") this.failed = error;
+      if (this.failed) this.cache.clear();
       throw this.failed ?? error;
     }
+    committed?.();
+    return result;
   }
   private read<T>(read: () => T): T {
-    try { return read(); } catch (error) { if (sqliteError(error)) { this.failed = storageFailure(error); throw this.failed; } throw error; }
+    try { return read(); } catch (error) { if (sqliteError(error)) { this.failed = storageFailure(error); this.cache.clear(); throw this.failed; } throw error; }
   }
 }
 
@@ -658,11 +732,11 @@ export class SqliteSessionReader {
     } catch (error) { this.database.close(); throw error instanceof SessionError ? error : storageFailure(error); }
   }
   get(id: SessionId): SessionSnapshot { sessionId(id); return this.read(() => readSessionFrom(this.database, id)); }
-  list(limit?: number): readonly SessionSnapshot[] { const maximum = limitValue(limit); return this.read(() => readListFrom(this.database, maximum)); }
+  list(limit?: number): readonly SessionSnapshot[] { const maximum = limitValue(limit); return this.read(() => readListFrom(this.database, maximum, id => readSessionFrom(this.database, id))); }
   events(id: SessionId, afterSeq: number, limit?: number): readonly SessionEvent[] {
     sessionId(id); const maximum = limitValue(limit);
     if (!Number.isSafeInteger(afterSeq) || afterSeq < 0) throw new SessionError("INVALID_INPUT", "event cursor must be a nonnegative integer");
-    return this.read(() => readEventsFrom(this.database, id, afterSeq, maximum));
+    return this.read(() => readEventsFrom(this.database, readSessionFrom(this.database, id), afterSeq, maximum));
   }
   close(): void { if (this.closed) return; this.closed = true; this.database.close(); }
   private assertReadable(): void {
