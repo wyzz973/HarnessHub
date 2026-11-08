@@ -4863,7 +4863,7 @@
       "title": "存储优化前置片",
       "context": "session",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G008",
@@ -4899,7 +4899,8 @@
         "G075-C01",
         "G075-C02",
         "G075-C03"
-      ]
+      ],
+      "active_slice": "relay"
     },
     {
       "id": "G076",

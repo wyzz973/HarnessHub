@@ -96,7 +96,7 @@
 | G072 | 接力协调器与返回决策 | G068, G069, G070, G071, G059, G075 | G1 | planned |
 | G073 | 界面、API 与用词检查 | G072, G050, G054 | G1 | planned |
 | G074 | 验收设施：RelayConformance、RelayBench 与故障矩阵 | G072, G073, G060 | G1 | planned |
-| G075 | 存储优化前置片 | G008, G028 | G1 | planned |
+| G075 | 存储优化前置片 | G008, G028 | G1 | in_progress |
 | G076 | v1.1 增强通道 | G074 | G1 | deferred |
 | G077 | v1.2 stdio 接力 MCP | G076 | G1 | deferred |
 | G078 | 宿主与会话租借契约 | G004, G007 | G1 | in_progress |
