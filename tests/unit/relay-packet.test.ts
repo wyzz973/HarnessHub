@@ -6,8 +6,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { RELAY_POLICY_VERSION, estimateTokens, resolveRelayBudget } from "../../src/contexts/session/domain/relay/budget.js";
 import { fence, firstLine, longestFenceRun, neutralize, normalize, visible } from "../../src/contexts/session/domain/relay/escape.js";
+import { diffFiles, type RelayToolDetail } from "../../src/contexts/session/domain/relay/narration.js";
 import { languageOf, renderRelay, type RelayRenderInput } from "../../src/contexts/session/domain/relay/packet.js";
-import { credentialValues, relayRedactor } from "../../src/contexts/session/domain/relay/redaction.js";
+import { credentialValues, namesCredentialFile, relayRedactor } from "../../src/contexts/session/domain/relay/redaction.js";
 import { runId, type PublicRun } from "../../src/contracts/session.js";
 import { endLines, fenced, readRelayPrompt, TITLE } from "../fixtures/relay-packet.js";
 import { conversation, longConversation, names, s1, s1Delta, tool, type RunSpec, type Scenario } from "../fixtures/relay-scenarios.js";
@@ -132,9 +133,10 @@ test("G070-MVP the language follows the user's current words: Chinese with any H
 });
 
 test("G070-MVP the budget: T = min(8,000, 5% of the window), the untrusted share and U; a window that is not a positive whole number is assumed", () => {
-  assert.deepEqual(resolveRelayBudget(null), { tier: "standard", cap: 6400, untrusted: 2400, user: 2500, window: 128000, windowSource: "assumed" });
-  assert.deepEqual(resolveRelayBudget(200000), { tier: "standard", cap: 8000, untrusted: 3000, user: 2500, window: 200000, windowSource: "observed" });
-  assert.deepEqual(resolveRelayBudget(32000), { tier: "standard", cap: 1600, untrusted: 600, user: 800, window: 32000, windowSource: "observed" });
+  // Model and tool text may take 0.6 of T (review M3: the design's initial 0.375 kept a reply-heavy handoff near 40% of T).
+  assert.deepEqual(resolveRelayBudget(null), { tier: "standard", cap: 6400, untrusted: 3840, user: 2500, window: 128000, windowSource: "assumed" });
+  assert.deepEqual(resolveRelayBudget(200000), { tier: "standard", cap: 8000, untrusted: 4800, user: 2500, window: 200000, windowSource: "observed" });
+  assert.deepEqual(resolveRelayBudget(32000), { tier: "standard", cap: 1600, untrusted: 960, user: 800, window: 32000, windowSource: "observed" });
   for (const invalid of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) assert.equal(resolveRelayBudget(invalid).windowSource, "assumed", String(invalid));
   assert.equal(estimateTokens(""), 0); assert.equal(estimateTokens("abcd"), 2); assert.equal(estimateTokens("中文"), 3); assert.ok(estimateTokens("a".repeat(100) + "b") <= estimateTokens("a".repeat(100)) + estimateTokens("b"));
 });
@@ -312,8 +314,19 @@ test("G070-MVP shape rules hide sk- keys, GitHub tokens, AWS key ids and private
 test("G070-MVP credential values: by name (except names that only locate), referenced values whatever their name, never paths, numbers or short values", () => {
   const values = credentialValues({ environments: [{ OPENAI_API_KEY: "sk-live-value-1", GITHUB_TOKEN: "gh-token-value", DB_PASSWORD: "hunter2hunter2", ANTHROPIC_MODEL: "claude-opus-5-5",
     AWS_PROFILE: "default-profile", SERVICE_URL: "https://example.com/hook", HOME: "/Users/me", PATH: "/usr/bin", SHORT_TOKEN: "abc", PORT_KEY: "123456", FLAG_SECRET: "true",
-    SSH_AUTH_SOCK: "/private/tmp/agent.sock", CORP_APIKEY: "corp-api-key-value" }], referenced: ["custom-referenced-secret"] }, path => path === "/private/tmp/agent.sock");
+    SSH_AUTH_SOCK: "/private/tmp/agent.sock", CORP_APIKEY: "corp-api-key-value" }], referenced: [["CORP_LLM", "custom-referenced-secret"]] }, path => path === "/private/tmp/agent.sock");
   assert.deepEqual(values, ["corp-api-key-value", "custom-referenced-secret", "gh-token-value", "hunter2hunter2", "sk-live-value-1"]);
+});
+
+test("G070-MVP m5: names that only locate or configure, and values that are ordinary words, hosts or plain URLs, are no known secrets", () => {
+  // Invalid samples: each of these replaced wherever it appears would cut ordinary words out of the record.
+  const values = credentialValues({ environments: [{ HOMEBREW_API_DOMAIN: "https://mirrors.example.edu.cn/homebrew-bottles/api", POSTGRES_PASSWORD: "postgres", XXX_API_HOST: "localhost",
+    SERVICE_API_ENDPOINT: "https://api.example.com/v1", REDIS_PASSWORD: "10.0.0.12", APP_SECRET_NAME: "billing-signing-secret", OPENCODE_API_PORT: "4096" }],
+    referenced: [["OPENCODE_MODEL", "claude-opus-5-5"], ["CORP_LLM_HOST", "llm.internal.example"]] });
+  assert.deepEqual(values, []);
+  // Valid ones next to them still count: hex, dotted keys and mixed values.
+  assert.deepEqual(credentialValues({ environments: [{ JWT_SECRET: "6f1d2c3b4a5968778695a4b3c2d1e0f9", ZHIPUAI_API_KEY: "0123456789abcdef0123456789abcdef.AbCdEfGhIjKlMnOp" }], referenced: [["CORP_LLM", "corp-llm-value-0123456789abcdef"]] }),
+    ["0123456789abcdef0123456789abcdef.AbCdEfGhIjKlMnOp", "6f1d2c3b4a5968778695a4b3c2d1e0f9", "corp-llm-value-0123456789abcdef"]);
 });
 
 test("G070-MVP a reply's inline <think> blocks and the Runs' thinking never leave; the ledger counts them", () => {
@@ -353,4 +366,278 @@ test("G070-MVP every PublicRun field a packet may quote is optional: a bare lega
   const { tools: _tools, timing: _timing, ...bare } = legacy;
   const scenario = s1("en"), rendered = renderRelay({ ...input(scenario), sources: [bare as PublicRun] });
   assert.equal(readRelayPrompt(rendered.text).history.length, 1);
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Review of e0cf7de: redaction before cuts (B1), formats and credential files (M2), the shares (M3), patches over several
+// files (M4), what the ledger says was cut (M5), and m1–m8
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** Whether any `size` consecutive characters of `secret` appear in `text`: part of it leaked. */
+function leaks(text: string, secret: string, size = 12): boolean {
+  for (let at = 0; at + size <= secret.length; at++) if (text.includes(secret.slice(at, at + size))) return true;
+  return false;
+}
+const ELISION = /^(?:…（中间省略 \d+ 字）…|… \(\d+ characters omitted\) …)$/u;
+/** The characters of the block quoted right under the line `heading`, elision lines left out; null without one. */
+function kept(text: string, heading: string): number | null {
+  const lines = text.split("\n"), at = lines.indexOf(heading), block = at < 0 ? null : fenced(lines, at + 1);
+  return block === null ? null : [...block.text.split("\n").filter(line => !ELISION.test(line)).join("")].length;
+}
+/** `size` characters of Chinese prose made of `seed` and full stops. */
+const zhText = (seed: string, size: number) => (seed + "。").repeat(Math.ceil(size / (seed.length + 1))).slice(0, size);
+const KNOWN = "corp-llm-token-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN";
+
+test("G070-MVP B1: a command's output is redacted whole before its end is cut, so a long one-line response never leaks part of a known secret or a token", () => {
+  for (const [value, label] of [[KNOWN, "〔已脱敏 · 已知凭据〕"], ["ghp_" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789", "〔已脱敏 · GitHub 令牌〕"]] as const) {
+    // A minified JSON response on one line (`curl -s …/config`), longer than the 300 bytes a successful command's end keeps.
+    const line = '{"status":"ok","note":"' + "x".repeat(666) + '","token":"' + value + '","pad":"' + "y".repeat(190) + '"}';
+    const scenario = conversation([{ input: "查一下服务配置", harnessId: "claude", reply: "配置已读取。", tools: [tool("x1", "curl -s https://api.internal/config", "execute", { exitCode: 0 })] },
+      { input: "继续", harnessId: "codex" }], [], { "run-1/x1": { input: "curl -s https://api.internal/config", output: line + "\n" } });
+    const rendered = renderRelay(input(scenario, { secrets: [KNOWN] }));
+    assert.ok(!leaks(rendered.text, value), value.slice(0, 8) + " leaked:\n" + rendered.text);
+    assert.ok(rendered.text.includes('"token":"' + label + '","pad":"'), "the label stands where the value was");
+    assert.ok(rendered.record.redactions >= 1);
+    // Invalid sample: the order before the fix (cut through the value, then redact the piece) leaves part of it, and the check sees it.
+    assert.ok(leaks(relayRedactor([KNOWN]).redact(line.slice(line.indexOf(value) + 10), "output").text, value), "the check finds the old order's leak");
+  }
+});
+
+test("G070-MVP B1: a shortened turn's first and last paragraphs are cut after the reply was redacted, never through a secret", () => {
+  const last = "z".repeat(700) + " key " + KNOWN + " " + "w".repeat(560);
+  const specs: RunSpec[] = Array.from({ length: 30 }, (_, index) => ({ input: "step " + index, harnessId: "claude", reply: index === 24 ? "First paragraph of the failure analysis.\n\n" + last : "r".repeat(9000),
+    status: index === 24 ? "failed" as const : "completed" as const, error: index === 24 ? { code: "TOOL_FAILED", message: "exit 1" } : null }));
+  const rendered = renderRelay(input(conversation([...specs, { input: "continue", harnessId: "codex" }]), { secrets: [KNOWN] }));
+  assert.match(rendered.text, /^### Turn 25 · Claude Code · failed \(TOOL_FAILED\)\nClaude Code's reply \(first and last paragraphs\):$/mu, "the failed turn is shortened (G2)");
+  assert.ok(!leaks(rendered.text, KNOWN)); assert.match(rendered.text, / key 〔redacted · known credential〕 w/u);
+  // Invalid sample: cutting the last paragraph to its last 600 characters first leaves part of the secret in the piece.
+  assert.ok(leaks(relayRedactor([KNOWN]).redact(last.slice(-600)).text, KNOWN));
+});
+
+test("G070-MVP B1/m6: private keys go whole, cut before their END, or as the key lines before an END whose BEGIN was cut off; a sentence that names a BEGIN line stays whole", () => {
+  const redactor = relayRedactor([]), begin = "-----BEGIN OPENSSH PRIVATE KEY-----", end = "-----END OPENSSH PRIVATE KEY-----";
+  const keyLines = Array.from({ length: 25 }, (_, index) => ("b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW" + index).slice(0, 70));
+  for (const [label, text, stays] of [
+    ["whole", "Loaded:\n" + begin + "\n" + keyLines.join("\n") + "\n" + end + "\nDone.", ["Loaded:", "Done."]],
+    ["cut before its END", "Loaded:\n" + begin + "\n" + keyLines.slice(0, 10).join("\n"), ["Loaded:"]],
+    ["only its END", keyLines.slice(15).join("\n") + "\n" + end + "\nLoad key: invalid format", ["Load key: invalid format"]],
+  ] as const) {
+    const out = redactor.redact(text, "output");
+    assert.ok(out.hits >= 1, label);
+    for (const line of keyLines) assert.ok(!out.text.includes(line), label + ": " + line);
+    for (const line of stays) assert.ok(out.text.includes(line), label + " keeps " + line);
+  }
+  // Through a packet: the end of a command that printed a key holds none of it (it is not a credential file's name).
+  const scenario = conversation([{ input: "取出部署密钥", harnessId: "claude", reply: "取到了。", tools: [tool("x1", "vault kv get -field=key secret/deploy", "execute", { exitCode: 0 })] }, { input: "继续", harnessId: "codex" }], [],
+    { "run-1/x1": { input: "vault kv get -field=key secret/deploy", output: begin + "\n" + keyLines.join("\n") + "\n" + end + "\n" } });
+  const rendered = renderRelay(input(scenario));
+  for (const line of keyLines) assert.ok(!rendered.text.includes(line), line);
+  assert.match(rendered.text, /〔已脱敏 · 私钥〕/u);
+  // m6, invalid samples: a BEGIN line in a sentence with no key material after it, and base64 with no END line, stay as written.
+  for (const plain of ["The key file must start with -----BEGIN RSA PRIVATE KEY----- and then you run make deploy and check the logs for errors.",
+    "我的私钥开头是 -----BEGIN OPENSSH PRIVATE KEY-----，ssh 报错 invalid format 怎么办？", "aGVsbG8gd29ybGQgdGhpcyBpcyBub3QgYSBrZXk=\nc2Vjb25kIGxpbmUgb2YgYmFzZTY0IGRhdGE="])
+    assert.deepEqual(redactor.redact(plain, "output"), { text: plain, hits: 0 }, plain);
+});
+
+test("G070-MVP M2: a command that reads a credential file has its output counted, never quoted; examples meant to be committed are quoted as any output", () => {
+  const env = "NODE_ENV=production\nSESSION_SECRET=6f1d2c3b4a5968778695a4b3c2d1e0f9\nSTRIPE_WEBHOOK_SECRET=whsec_AbCdEfGhIjKlMnOpQrStUvWxYz012345\n";
+  const run = (command: string) => renderRelay(input(conversation([{ input: "看看配置", harnessId: "claude", reply: "看过了。", tools: [tool("x1", command, "execute", { exitCode: 0 })] }, { input: "继续", harnessId: "codex" }], [],
+    { "run-1/x1": { input: command, output: env } }))).text;
+  for (const command of ["cat .env", "cat ~/.ssh/id_ed25519", "cat ~/.aws/credentials", "head -n 5 config/.env.production", "less secrets/deploy.pem", "cat ~/.docker/config.json", "cat ~/.kube/config", "cat .npmrc"]) {
+    const text = run(command);
+    assert.ok(text.includes("- 执行 `" + command + "` → 退出码 0。它读取凭据类文件，输出没有附上。"), command);
+    assert.ok(!text.includes("6f1d2c3b") && !text.includes("whsec_") && !text.includes("NODE_ENV"), command);
+    assert.match(text, /^- 读取凭据类文件的命令：1 条，输出只计数。$/mu, command);
+  }
+  // Invalid samples: files meant to be committed and names that only look alike are no credential files.
+  for (const command of ["cat .env.example", "cat src/environment.ts", "cat docs/keys.md", "cat src/keyboard.ts", "cat id_card.txt", "cat credentials.md"]) assert.equal(namesCredentialFile(command), false, command);
+  // Their output goes as output does: credential-named values hidden by the output-only rule, the rest as it was.
+  const example = run("cat .env.example");
+  assert.ok(example.includes("  NODE_ENV=production\n  SESSION_SECRET=〔已脱敏 · 凭据值〕\n  STRIPE_WEBHOOK_SECRET=〔已脱敏 · Webhook 密钥〕\n"), example);
+  assert.doesNotMatch(example, /读取凭据类文件/u);
+});
+
+test("G070-MVP M2: shape rules for Basic credentials, -u user:pass, URL query tokens, GitLab, npm, Hugging Face, Slack webhooks, whsec_, AWS secrets, passwords on command lines and Zhipu keys; near misses stay", () => {
+  const redactor = relayRedactor([]);
+  const positives: readonly (readonly [string, string])[] = [
+    ['curl -H "Authorization: Basic dXNlcjpzM2NyZXRQYXNzd29yZA==" https://api.example.com', "dXNlcjpzM2NyZXRQYXNzd29yZA=="], ["wget --header='Basic YWRtaW46aHVudGVyMjIyMg==' https://x.example", "YWRtaW46aHVudGVyMjIyMg=="],
+    ["curl -u admin:S3cretPass123 https://api.internal/x", "S3cretPass123"], ["curl --user=deploy:Tr0ub4dor3 https://api.internal/x", "Tr0ub4dor3"],
+    ["export GITLAB_TOKEN=glpat-AbCdEfGhIjKlMnOpQrSt", "glpat-AbCdEfGhIjKlMnOpQrSt"], ["npm config set //registry.npmjs.org/:_authToken=npm_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789", "npm_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"],
+    ["HF_TOKEN=hf_AbCdEfGhIjKlMnOpQrStUvWxYz012345", "hf_AbCdEfGhIjKlMnOpQrStUvWxYz012345"], ["https://hooks.slack.com/services/" + "T0ABCDEFG/B0ABCDEFG/AbCdEfGhIjKlMnOpQrStUvWx", "T0ABCDEFG/B0ABCDEFG/AbCdEfGhIjKlMnOpQrStUvWx"],
+    ["webhook: whsec_AbCdEfGhIjKlMnOpQrStUvWxYz012345", "whsec_AbCdEfGhIjKlMnOpQrStUvWxYz012345"], ["https://api.example.com/v1/data?access_token=AbCdEfGhIjKlMnOpQrStUvWxYz012345&x=1", "AbCdEfGhIjKlMnOpQrStUvWxYz012345"],
+    ["GET /download?file=a.zip&signature=9f86d081884c7d659a2feaa0c55ad015", "9f86d081884c7d659a2feaa0c55ad015"], ["aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"],
+    ["docker login -u bot -p Zx9vQw3rTy7uIo1p registry.example.com", "Zx9vQw3rTy7uIo1p"], ["mysql -uroot -pS3cretPass123 appdb", "S3cretPass123"], ["sshpass -p 'hunter2hunter2' ssh deploy@host", "hunter2hunter2"],
+    ["psql --password=Pa55w0rd-db -h db", "Pa55w0rd-db"], ["PGPASSWORD=hunter2hunter2 psql -h db -U app", "hunter2hunter2"],
+    ["智谱的 key 是 0123456789abcdef0123456789abcdef.AbCdEfGhIjKlMnOp", "0123456789abcdef0123456789abcdef.AbCdEfGhIjKlMnOp"],
+  ];
+  for (const [text, secret] of positives) { const out = redactor.redact(text); assert.ok(out.hits >= 1 && !out.text.includes(secret), text + " → " + JSON.stringify(out.text)); }
+  // Invalid samples: what only looks like one of them stays as written.
+  for (const plain of ["Basic auth is required for this endpoint", "use Basic authentication", "curl -u admin https://api.internal/x", "curl -u https://x.example", "https://example.com/search?q=AbCdEfGhIjKlMnOpQrSt",
+    "https://example.com/?token=short", "docker login -u bot registry.example.com", "mysql -h db -u app appdb", "mysql -p appdb", "PGPASSWORD is not set", "npm_config_cache=/tmp/npm", "hf_hub_download(repo_id)",
+    "whsec_short", "https://hooks.slack.com/services", "sk-learn-preprocessing-pipeline-scaler", "0123456789abcdef0123456789abcdef.mirror-cdn-host1", "git log --grep=password", "--password-file=/run/secrets/db"])
+    assert.deepEqual(redactor.redact(plain), { text: plain, hits: 0 }, plain);
+  // A credential-named assignment is hidden in command output only; a command's own text is never rewritten by that rule.
+  const assignment = "SESSION_SECRET=6f1d2c3b4a5968778695a4b3c2d1e0f9";
+  assert.ok(!redactor.redact(assignment, "output").text.includes("6f1d2c3b")); assert.deepEqual(redactor.redact(assignment, "text"), { text: assignment, hits: 0 });
+  for (const plain of ["LOG_LEVEL=debug", "API_BASE_URL=https://api.example.com", "MAX_TOKENS=4096", "AUTH_MODE=oauth", "SECRET_NAME=billing-signing", "TOKEN=abc"]) assert.equal(redactor.redact(plain, "output").hits, 0, plain);
+  const command = assignment + " npm start", scenario = conversation([{ input: "启动", harnessId: "claude", reply: "好了。", tools: [tool("x1", command, "execute", { exitCode: 0 })] }, { input: "继续", harnessId: "codex" }], [],
+    { "run-1/x1": { input: command, output: "listening on 3000\n" + assignment + "\n" } });
+  const text = renderRelay(input(scenario)).text;
+  assert.ok(text.includes("- 执行 `" + command + "` → 退出码 0。输出末尾："), "the command as it ran");
+  assert.ok(text.includes("  listening on 3000\n  SESSION_SECRET=〔已脱敏 · 凭据值〕\n"), "its output's assignment hidden");
+});
+
+/** The review's promo chain: OpenCode plans, Claude Code implements (10 files and a test run), Codex reviews; DeepSeek Harness accepts. */
+function promo(sizes: readonly [number, number, number]): Scenario {
+  const edits = Array.from({ length: 10 }, (_, index) => tool("e" + index, "Edit src/cli/file-" + index + ".ts", "edit")), details: Record<string, RelayToolDetail> = {};
+  edits.forEach((edit, index) => { details["run-2/" + edit.id] = { locations: ["src/cli/file-" + index + ".ts"], diff: "--- a/x\n+++ b/x\n+a\n-b\n" }; });
+  details["run-2/x1"] = { input: "pnpm test", output: "Tests 48 passed\n" };
+  return conversation([
+    { input: "帮我规划一下给 CLI 加上 --json 输出的方案，先别写代码。", harnessId: "opencode", reply: zhText("方案第一步在参数解析里加开关，第二步抽象输出层，第三步补测试", sizes[0]) },
+    { input: "按这个方案实现。", harnessId: "claude", reply: zhText("已实现参数开关和输出层，所有测试通过，细节如下", sizes[1]), tools: [...edits, tool("x1", "pnpm test", "execute", { exitCode: 0 })] },
+    { input: "审查一下刚才的改动。", harnessId: "codex", reply: zhText("审查意见：错误分支缺少测试，输出层的空值处理有问题，建议补充", sizes[2]) },
+    { input: "验收：跑一遍测试，确认 --json 可用。", harnessId: "dsh" },
+  ], [], details);
+}
+
+test("G070-MVP M3: the promo chain OpenCode → Claude Code → Codex → DeepSeek Harness hands on every reply in substance, the newest the most, near T and within it", t => {
+  const rendered = renderRelay(input(promo([1200, 1500, 2500]))), record = rendered.record, text = rendered.text;
+  const opencode = kept(text, "OpenCode 的回复：")!, claude = kept(text, "Claude Code 的回复：")!, codex = kept(text, "Codex 的回复：")!;
+  t.diagnostic("promo chain 1,200/1,500/2,500: " + record.tokens + " of " + record.budget.cap + " tokens; kept " + opencode + " / " + claude + " / " + codex + " characters (before the fix: 2,763 tokens; none / none / 938)");
+  assert.ok(record.tokens <= record.budget.cap && record.tokens >= 0.8 * record.budget.cap, record.tokens + " of " + record.budget.cap);
+  assert.deepEqual(record.units, { verbatim: 3, compact: 0, line: 0, ranged: 0 });
+  assert.ok(opencode >= 500 && claude >= 500, "the earlier replies in substance: " + opencode + ", " + claude);
+  assert.ok(codex >= 1500 && codex > opencode && codex > claude, "the newest the most: " + codex);
+  assert.equal(record.complete, false);
+  assert.match(text, /^- 截短的内容：第 1 轮 OpenCode 的回复（省略约 \d+ 字）、第 2 轮 Claude Code 的回复（省略约 \d+ 字）、第 3 轮 Codex 的回复（省略约 \d+ 字）。$/mu);
+  // Shorter replies all go whole, and the packet is then complete.
+  const short = renderRelay(input(promo([400, 600, 800])));
+  assert.deepEqual([kept(short.text, "OpenCode 的回复："), kept(short.text, "Claude Code 的回复："), kept(short.text, "Codex 的回复：")], [400, 600, 800]);
+  assert.equal(short.record.complete, true);
+});
+
+test("G070-MVP M3/m1: back on A after B's 3,000-character reply, the delta quotes a meaningful part of its end and lists the files B changed", t => {
+  const reply = zhText("测试已经全部通过，金额按最小货币单位累加，边界情况也补了测试", 3000);
+  const scenario = conversation([
+    { input: "实现", harnessId: "claude", reply: "ok" },
+    { input: "修好失败的测试", harnessId: "dsh", reply, tools: [tool("d1", "Edit file", "edit"), tool("d2", "Write file", "edit"), tool("d3", "npm test", "execute", { exitCode: 0 })] },
+    { input: "好的，继续", harnessId: "claude" },
+  ], [{ harnessId: "claude", controlId: "claude-acp", checkpoint: "native", throughRunId: runId("run-1"), status: "ready" }],
+  { "run-2/d1": { locations: ["src/export/summary.ts"], diff: "--- a/src/export/summary.ts\n+++ b/src/export/summary.ts\n@@ -1 +1,2 @@\n-a\n+b\n+c\n" },
+    "run-2/d2": { locations: ["tests/rounding.test.ts"], diff: "--- /dev/null\n+++ b/tests/rounding.test.ts\n@@ -0,0 +1,3 @@\n+x\n+y\n+z\n" } });
+  const rendered = renderRelay(input(scenario, { sources: scenario.sources.slice(1) })), text = rendered.text, end = kept(text, "DeepSeek Harness 第 2 轮回复的末尾：");
+  t.diagnostic("delta after a 3,000-character reply: kept " + end + " characters, " + rendered.record.tokens + " tokens (before the fix: 383 characters)");
+  assert.equal(rendered.record.kind, "delta");
+  assert.ok(end !== null && end >= 1000, "a meaningful part of the reply: " + end);
+  assert.ok(text.includes(reply.slice(-300)), "its end, as written");
+  assert.match(text, /^- 期间改动的文件：`src\/export\/summary\.ts`（\+2 −1，第 2 轮）、`tests\/rounding\.test\.ts`（\+3，第 2 轮）。$/mu);
+  assert.match(text, /^- 截短的内容：第 2 轮 DeepSeek Harness 的回复（省略约 \d+ 字）。$/mu);
+  assert.ok(rendered.record.tokens <= rendered.record.budget.cap);
+});
+
+test("G070-MVP M3: what a reply keeps never shrinks as it grows, up to 1 MB, in English and in Chinese: 8 KiB of its own text", t => {
+  for (const language of ["en", "zh"] as const) {
+    let previous = 0;
+    const seen: string[] = [];
+    for (const bytes of [8000, 70_000, 400_000, 1_000_000]) {
+      const reply = language === "en" ? ("Summary line " + "x".repeat(50) + "\n").repeat(Math.ceil(bytes / 64)).slice(0, bytes) : zhText("本轮把金额计算改成了按最小货币单位的整数累加并补充了边界测试", Math.floor(bytes / 3));
+      const scenario = conversation([{ input: language === "en" ? "write the report" : "写报告", harnessId: "claude", reply }, { input: language === "en" ? "now review it" : "审查一下", harnessId: "codex" }]);
+      const rendered = renderRelay(input(scenario)), size = kept(rendered.text, language === "en" ? "Claude Code's reply:" : "Claude Code 的回复：")!;
+      seen.push(bytes + " B → " + size);
+      assert.ok(size >= previous, language + ": " + seen.join(", "));
+      if (bytes > 8192) { assert.ok(size >= (language === "en" ? 8000 : 2600), language + " " + bytes + ": " + size); assert.equal(rendered.record.complete, false); }
+      previous = size;
+    }
+    t.diagnostic(language + " reply kept: " + seen.join(", ") + " characters" + (language === "en" ? " (before the fix: 7,222 at 70 KB, 1,375 at 400 KB, 569 at 1 MB)" : ""));
+  }
+});
+
+test("G070-MVP M3: the file table takes at most 15% of T and counts the rest, so the newest turn keeps its reply", () => {
+  // 20 turns that each changed 6 files (the review's files.mjs).
+  const specs: RunSpec[] = [], details: Record<string, RelayToolDetail> = {};
+  for (let index = 0; index < 20; index++) {
+    const tools = Array.from({ length: 6 }, (_, file) => tool("e" + file, "Edit file", "edit"));
+    tools.forEach((edit, file) => { details["run-" + (index + 1) + "/" + edit.id] = { locations: ["packages/server/src/modules/billing/handlers/invoice-line-" + index + "-" + file + ".ts"], diff: "--- a/x\n+++ b/x\n+a\n+b\n-c\n" }; });
+    specs.push({ input: "第 " + index + " 步：把金额计算改成整数分。", harnessId: index % 2 ? "claude" : "opencode", reply: (index === 19 ? "最后总结：" : "") + "本轮修改了金额计算，并补充了测试，所有测试通过。".repeat(index === 19 ? 40 : 10), tools });
+  }
+  const rendered = renderRelay(input(conversation([...specs, { input: "审查一下这些改动", harnessId: "codex" }], [], details))), text = rendered.text;
+  const from = text.indexOf("## 文件改动"), section = text.slice(from, text.indexOf("\n## ", from + 3));
+  assert.ok(estimateTokens(section) <= 0.15 * rendered.record.budget.cap, estimateTokens(section) + " tokens");
+  assert.match(section, /^另有 \d+ 个文件只计数。$/mu);
+  assert.match(text, /^### 第 20 轮 · Claude Code · 完成$/mu, "the newest turn in full");
+  assert.equal(kept(text.slice(text.indexOf("### 第 20 轮")), "Claude Code 的回复："), 5 + 24 * 40, "with all of its reply");
+});
+
+test("G070-MVP M5: whatever is cut is said, and complete only when nothing is: a 10,000-character opening request, a 1 MB reply", () => {
+  const opening = "需求：" + "把每个币种的合计放在 CSV 末尾，金额保持整数分。".repeat(400);
+  const words = renderRelay(input(conversation([{ input: opening, harnessId: "claude", reply: "ok" }, { input: "下一步", harnessId: "claude", reply: "ok" }, { input: "继续", harnessId: "codex" }])));
+  assert.equal(words.record.userWords.truncated, 1); assert.equal(words.record.complete, false);
+  assert.match(words.text, /^- 2 轮全部照录，没有折叠；用户原话有截短（见下）；没有附件。$/mu);
+  assert.match(words.text, /^- 截短的内容：第 1 轮的用户原话（省略约 \d+ 字）。$/mu);
+  assert.doesNotMatch(words.text, /用户原话没有省略/u);
+  const huge = renderRelay(input(conversation([{ input: "write the report", harnessId: "claude", reply: ("Summary line " + "x".repeat(50) + "\n").repeat(16384) }, { input: "now review it", harnessId: "codex" }])));
+  assert.equal(huge.record.complete, false); assert.equal(huge.record.userWords.truncated, 0);
+  assert.match(huge.text, /^- The one turn is listed, nothing folded, some of it shortened \(see below\); none of the user's words are left out; no attachments\.$/mu);
+  assert.match(huge.text, /^- Shortened: Claude Code's reply in turn 1 \(about \d+ characters left out\)\.$/mu);
+  assert.doesNotMatch(huge.text, /included in full/u);
+  // Invalid sample: S1, where nothing is cut, is complete and says so.
+  const whole = renderRelay(input(s1("zh")));
+  assert.equal(whole.record.complete, true); assert.match(whole.text, /^- 2 轮全部照录，没有折叠；用户原话没有省略；没有附件。$/mu);
+});
+
+test("G070-MVP M4: a patch over several files lists each file with its own operation and counts, in the record and the file table; locations that do not correspond are not guessed at", () => {
+  const diff = "--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-old\n+new\n" + "--- /dev/null\n+++ b/src/b.ts\n@@ -0,0 +1,2 @@\n+y\n+z\n" + "--- a/src/c.ts\n+++ /dev/null\n@@ -1,3 +0,0 @@\n-p\n-q\n-r\n";
+  const patch = (locations: readonly string[]) => renderRelay(input(conversation([{ input: "实现", harnessId: "codex", reply: "改好了。", tools: [tool("p1", "Apply patch", "edit")] }, { input: "审查一下", harnessId: "claude" }], [],
+    { "run-1/p1": { locations, diff } }))).text;
+  const text = patch(["src/a.ts", "src/b.ts", "src/c.ts"]);
+  assert.match(text, /^- 修改 `src\/a\.ts`（\+1 −1）；新建 `src\/b\.ts`（\+2）；删除 `src\/c\.ts`（−3）。$/mu);
+  for (const row of ["| `src/a.ts` | 修改 | +1 −1 | 第 1 轮 |", "| `src/b.ts` | 新增 | +2 | 第 1 轮 |", "| `src/c.ts` | 删除 | −3 | 第 1 轮 |"]) assert.ok(text.includes(row), row);
+  // git's own headers split the same way.
+  assert.deepEqual(diffFiles("diff --git a/src/a.ts b/src/a.ts\nindex 1..2 100644\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-old\n+new\ndiff --git a/src/b.ts b/src/b.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/b.ts\n@@ -0,0 +1,2 @@\n+y\n+z\n"),
+    [{ path: "src/a.ts", op: "edit", added: 1, removed: 1 }, { path: "src/b.ts", op: "create", added: 2, removed: 0 }]);
+  // Invalid sample: two locations for a diff of three other files; the tool is told by its title, never with a wrong file.
+  const mismatch = patch(["src/x.ts", "src/y.ts"]);
+  assert.match(mismatch, /^- 修改 `Apply patch`。$/mu); assert.ok(!mismatch.includes("src/x.ts") && !mismatch.includes("src/a.ts"));
+});
+
+test("G070-MVP m2: the file table says how many changes it could not read paths for", () => {
+  const specs: RunSpec[] = [], details: Record<string, RelayToolDetail> = {};
+  for (let index = 1; index <= 20; index++) {
+    specs.push({ input: "step " + index, harnessId: "claude", reply: "ok", tools: [tool("e", "Edit file", "edit")] });
+    // relayDetails reads the first owed Run's details and the 12 latest: runs 1 and 9–20 of 20.
+    if (index === 1 || index >= 9) details["run-" + index + "/e"] = { locations: ["src/file-" + index + ".ts"], diff: "--- a/x\n+++ b/x\n+a\n" };
+  }
+  const text = renderRelay(input(conversation([...specs, { input: "review", harnessId: "codex" }], [], details))).text;
+  assert.equal(text.split("\n").filter(line => /^\| `src\/file-\d+\.ts` \| modified \| \+1 \| turn \d+ \|$/u.test(line)).length, 13);
+  assert.match(text, /^7 more changes could not be read for their paths; trust the workspace\.$/mu);
+  assert.match(text, /^- Tool details were not read: 7 tool calls are listed by title only\.$/mu);
+});
+
+test("G070-MVP m3: a wait that ran out was the user's decision, in the relay's own words", () => {
+  const text = renderRelay(input(conversation([{ input: "删掉 dist 目录", harnessId: "claude", status: "cancelled", error: { code: "WAIT_EXPIRED", message: "the wait ran out" } }, { input: "继续", harnessId: "codex" }]))).text;
+  assert.match(text, /^### 第 1 轮 · Claude Code · 已取消（等待用户决定超时）$/mu);
+  assert.doesNotMatch(text, /等待你的决定/u, "in a packet “you” is the target");
+});
+
+test("G070-MVP m4: the Hub says only what its record shows: the last command in the record, no tool calls recorded", () => {
+  const text = renderRelay(input(conversation([{ input: "解释一下这段代码", harnessId: "claude", reply: "这段代码按币种累加。" }, { input: "跑一下测试", harnessId: "claude", reply: "好的。", tools: [tool("x1", "npm test", "execute", { exitCode: 0 })] },
+    { input: "继续", harnessId: "codex" }]))).text;
+  assert.match(text, /^这一轮没有记录到 Claude Code 的工具调用。$/mu);
+  assert.match(text, /^- 记录中最后一条命令：第 2 轮 `npm test` → 退出码 0。$/mu);
+  assert.doesNotMatch(text, /之后没有再执行命令|这一轮没有调用工具|最近一次执行的命令/u);
+});
+
+test("G070-MVP m8: hundreds of tools with long titles are never rendered whole first when they cannot fit (reference numbers; the ratio is the gate)", t => {
+  const scenario = (title: number) => conversation([...Array.from({ length: 255 }, (_, index): RunSpec => ({ input: "step " + index, harnessId: index % 2 ? "claude" : "codex", reply: "r".repeat(10),
+    tools: Array.from({ length: 128 }, (_, number) => tool("t" + number, ((number % 3 === 0 ? "npm test -- --grep case-" : "Read src/module-") + number + " ").padEnd(title, "x"), number % 3 === 0 ? "execute" : "read",
+      number % 3 === 0 ? { exitCode: 0 } : {})) })), { input: "review", harnessId: "dsh" }]);
+  const median = (value: Scenario) => {
+    renderRelay(input(value));
+    const times: number[] = [];
+    for (let index = 0; index < 7; index++) { const start = performance.now(); renderRelay(input(value)); times.push(performance.now() - start); }
+    return times.sort((a, b) => a - b)[3]!;
+  };
+  const short = median(scenario(28)), long = median(scenario(130));
+  t.diagnostic("255 turns × 128 tools: titles of 28 characters " + short.toFixed(1) + " ms, of 130 characters " + long.toFixed(1) + " ms (before the fix: about 28 and 120–140 ms)");
+  assert.ok(long < 3 * short + 5, "long titles cost what their length does, not a whole first pass: " + long.toFixed(1) + " vs " + short.toFixed(1));
 });

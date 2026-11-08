@@ -321,6 +321,12 @@ export interface SessionBindingFactory {
   /** Releases the workspace lease an ended owner left for `session`, after its kept processes were confirmed ended (ADR-030). */
   releaseAbandonedLease?(configuration: SessionConfiguration, session: SessionId): boolean;
   /**
+   * The known secrets of these Harnesses for the relay (ADR-055 §10.2 at Session level): what their configurations
+   * reference by name and their catalog controls' credential-named env values, with this Gateway's own credential-named
+   * environment. Starts nothing; in memory only, never logged, stored or sent. Rejects when a configuration cannot be read.
+   */
+  relaySecrets?(configuration: SessionConfiguration, harnessIds: readonly string[]): Promise<readonly string[]>;
+  /**
    * Ends what the factory still does in the background once no binding of it runs (ADR-056 §4.12: the removal of host
    * TMPDIRs moved aside, within its bound; what is left stays for the next start). The Runtime awaits it last in its own
    * close. Idempotent; never rejects.

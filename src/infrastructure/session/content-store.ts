@@ -183,6 +183,9 @@ export class LocalContentStore implements ContentPort {
   }
   /** See ContentPort.readText: the bytes are read only when the record and the blob still match `ref`. */
   async readText(ref: ContentRef, maxBytes: number): Promise<string | null> {
+    // Ownership and the index are checked first and their failures still throw (a record that is gone is null); a blob
+    // that cannot be read, for whatever reason, is "not read" (m7: EACCES, ELOOP, EIO and the like must not fail the Turn
+    // that only wanted to quote a tool's detail).
     this.owner();
     if (!Number.isSafeInteger(maxBytes) || maxBytes < 0 || ref.bytes > maxBytes) return null;
     let found: ReturnType<LocalContentStore["read"]>;
@@ -192,7 +195,7 @@ export class LocalContentStore implements ContentPort {
     try {
       const handle = await open(found.path, constants.O_RDONLY | constants.O_NOFOLLOW);
       try { data = await handle.readFile(); } finally { await handle.close(); }
-    } catch (error) { if (code(error) === "ENOENT") return null; throw error; }
+    } catch { return null; }
     if (data.byteLength !== ref.bytes || createHash("sha256").update(data).digest("hex") !== ref.sha256) return null;
     return data.toString("utf8");
   }

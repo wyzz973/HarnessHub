@@ -79,6 +79,8 @@ const S1_DETAILS: Readonly<Record<string, RelayToolDetail>> = {
   "run-1/x1": { input: "npm test", output: "\n Test Files  4 passed (4)\n      Tests  17 passed (17)\n" },
   "run-2/e6": { locations: ["src/export/summary.ts"], diff: diff("src/export/summary.ts", false, 4, 1) }, "run-2/e7": { locations: ["tests/export.test.ts"], diff: diff("tests/export.test.ts", false, 7, 0) },
   "run-2/x2": { input: "npm test", output: S1_FAILURE },
+  // The A→B→A delta's one change, read for the files the turns away changed (review m1).
+  "run-3/d4": { locations: ["src/export/summary.ts"], diff: diff("src/export/summary.ts", false, 9, 4) },
 };
 function s1Runs(language: "zh" | "en"): RunSpec[] {
   const words = s1Words(language);

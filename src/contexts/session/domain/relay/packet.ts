@@ -3,8 +3,8 @@ import { SessionError, type NativeSessionBinding, type PublicRun, type PublicToo
 import { MAX_CONTEXT_BYTES, utf8Bytes } from "../state.js";
 import { RELAY_BUDGET, RELAY_POLICY_VERSION, estimateTokens, resolveRelayBudget, type RelayBudget } from "./budget.js";
 import { dataRegion, firstLine, type RelayLanguage } from "./escape.js";
-import { Narrator, compactUnit, diffChange, lineUnit, rangeLine, relayUnits, verbatimUnit, withoutThinking, type Piece, type RelayToolDetail, type RelayUnit, type Tally, type UnitOptions } from "./narration.js";
-import { relayRedactor } from "./redaction.js";
+import { Narrator, changesOf, commandSource, compactUnit, kindOf, lineUnit, rangeLine, relayUnits, tally, verbatimUnit, withoutThinking, type Cut, type FileChange, type Piece, type RelayToolDetail, type RelayUnit, type Tally, type UnitOptions } from "./narration.js";
+import { namesCredentialFile, relayRedactor } from "./redaction.js";
 
 /**
  * The relay packet on Session v12 (ADR-055 §5, §6.2–6.3, the MVP of G070): a deterministic handoff rendered on demand from
@@ -49,12 +49,12 @@ export interface RelayRecord {
   /** The packet's estimated tokens (without the user's current words) and the budget it was folded to. */
   readonly tokens: number;
   readonly budget: { readonly cap: number; readonly window: number; readonly windowSource: "observed" | "assumed" };
-  /** Every unit verbatim, nothing folded. */
+  /** Every unit verbatim, nothing folded, and nothing cut: no user words left out or shortened, no reply, output or error shortened. */
   readonly complete: boolean;
   /** How the units were rendered; they add up to the units carried. */
   readonly units: { readonly verbatim: number; readonly compact: number; readonly line: number; readonly ranged: number };
-  /** Earlier user messages quoted verbatim, and left out (counted by turn in the packet). */
-  readonly userWords: { readonly quoted: number; readonly omitted: number };
+  /** Earlier user messages quoted, left out (counted by turn in the packet), and quoted but shortened to their cap. */
+  readonly userWords: { readonly quoted: number; readonly omitted: number; readonly truncated: number };
   readonly redactions: number;
   readonly firstLine: boolean;
 }
@@ -142,8 +142,23 @@ const FRAME = {
   },
 } as const;
 
-/** The most a G1 reply takes: 8 KiB of ASCII (ADR-055 §5.3, level 4). */
-const REPLY_CAP = Math.ceil(8192 / 3.2);
+/** The bytes a G1 reply keeps at most (ADR-055 §5.3 level 4, O1: min(8 KiB, what is left of the untrusted budget)). */
+const REPLY_BYTES = 8192;
+/** The tokens of 8 KiB of ASCII: the least a reply longer than 8 KiB may keep, whatever its script. */
+const REPLY_CAP = Math.ceil(REPLY_BYTES / 3.2);
+/**
+ * The most one reply may take in a G1 rendering, in tokens: unbounded (the shares decide) when the reply is 8 KiB or less,
+ * else the estimate of its first 8 KiB, so a Chinese reply keeps 8 KiB of its own text as an English one does.
+ */
+function replyCapOf(reply: string): number {
+  let bytes = 0, end = 0;
+  for (const char of reply) {
+    const code = char.codePointAt(0)!, size = code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+    if (bytes + size > REPLY_BYTES) return Math.max(REPLY_CAP, estimateTokens(reply.slice(0, end)));
+    bytes += size; end += char.length;
+  }
+  return Number.MAX_SAFE_INTEGER;
+}
 /** What the ledger is assumed to take while the record is folded (ADR-055 §6.3: omissions ≤300). */
 const LEDGER_RESERVE = 300;
 /** The failure states a tool can end in. */
@@ -214,42 +229,50 @@ function plural(count: number, word: string): string { return count + " " + word
 /** A unit's turn written at the start of a line. */
 function capital(text: string): string { return text.slice(0, 1).toUpperCase() + text.slice(1); }
 
-/** The user's earlier words chosen for a packet or a delta: the opening request (packet), then the newest, within U (§5.3). */
-interface Words { readonly entries: ReadonlyMap<string, string>; readonly tokens: number; readonly hits: number; readonly omitted: readonly RelayUnit[] }
+/**
+ * The user's earlier words chosen for a packet or a delta: the opening request (packet), then the newest, within U (§5.3).
+ * `cut` holds, by unit, how many characters a quoted message lost to its cap (M5).
+ */
+interface Words { readonly entries: ReadonlyMap<string, string>; readonly tokens: number; readonly hits: number; readonly omitted: readonly RelayUnit[]; readonly cut: ReadonlyMap<string, number> }
 function chooseWords(n: Narrator, units: readonly RelayUnit[], budget: number, opening: boolean, format: (unit: RelayUnit, opening: boolean, block: string) => string): Words {
-  const entries = new Map<string, string>();
+  const entries = new Map<string, string>(), cut = new Map<string, number>();
   let used = 0, hits = 0, stopped = false;
   const take = (unit: RelayUnit, cap: number, isOpening: boolean): void => {
     if (stopped || unit.user.trim() === "") return;
     const left = budget - used;
     if (left < 48) { stopped = true; return; }
-    const tally: Tally = { hits: 0, untrusted: 0 }, block = n.block(unit.user, { kind: "text", capTokens: Math.min(cap, left - 16), headShare: 0.8, untrusted: false }, tally);
+    const counted = tally(), block = n.block(unit.user, { kind: "text", capTokens: Math.min(cap, left - 16), headShare: 0.8, untrusted: false, what: "words" }, counted);
     if (block === null) return;
     const entry = format(unit, isOpening, block), tokens = estimateTokens(entry) + 1;
     if (tokens > left) { stopped = true; return; }
-    entries.set(unit.key, entry); used += tokens; hits += tally.hits;
+    entries.set(unit.key, entry); used += tokens; hits += counted.hits;
+    const lost = counted.cuts.reduce((sum, item) => sum + item.omitted, 0);
+    if (lost > 0) cut.set(unit.key, lost);
   };
   const first = opening ? units[0] : undefined;
   if (first !== undefined) take(first, Math.floor(0.4 * budget), true);
   for (let index = units.length - 1; index >= (first === undefined ? 0 : 1); index--) take(units[index]!, Math.min(Math.floor(0.5 * budget), 1600), false);
-  return { entries, tokens: used, hits, omitted: units.filter(unit => unit.user.trim() !== "" && !entries.has(unit.key)) };
+  return { entries, tokens: used, hits, omitted: units.filter(unit => unit.user.trim() !== "" && !entries.has(unit.key)), cut };
 }
 
-/** The command a tool ran, as quoted: its detail's input when read, else its title without one wrapping pair of backticks. */
-function commandOf(n: Narrator, unit: RelayUnit, tool: PublicTool, tally: Tally): string {
-  const input = unit.details.get(tool.id)?.input;
+/** “第 2 轮 `npm test` → 退出码 1”: a command as the record holds it, with its exit code. */
+function commandOf(n: Narrator, unit: RelayUnit, tool: PublicTool, counted: Tally): string {
   const exit = tool.exitCode === undefined ? (n.zh ? " → 没有报告退出码" : " → no exit code reported") : (n.zh ? " → 退出码 " + tool.exitCode : " → exit code " + tool.exitCode);
-  return n.turnOf(unit) + " " + n.code(typeof input === "string" && input.trim() !== "" ? input : /^`[^`]+`$/u.test(tool.title) ? tool.title.slice(1, -1) : tool.title, 400, tally) + exit;
+  return n.turnOf(unit) + " " + n.code(commandSource(unit, tool), 400, counted) + exit;
 }
-/** The status section's lines (ADR-055 §5.1): the latest unit's outcome, the last command, unverified turns, open tools. */
-function statusLines(n: Narrator, units: readonly RelayUnit[], tally: Tally): readonly string[] {
+/**
+ * The status section's lines (ADR-055 §5.1): the latest unit's outcome, the last command the record holds (a Turn's tools
+ * beyond its bound and a sub-agent's own are not in it, so nothing is said of what came after, m4), unverified turns and
+ * tools the latest left open.
+ */
+function statusLines(n: Narrator, units: readonly RelayUnit[], counted: Tally): readonly string[] {
   const zh = n.zh, latest = units.at(-1);
   if (latest === undefined) return [];
-  const where = n.turnOf(latest) + (zh ? "，" : ", ") + n.name(latest.harnessId), lines: string[] = [], result = n.result(latest, tally);
+  const where = n.turnOf(latest) + (zh ? "，" : ", ") + n.name(latest.harnessId), lines: string[] = [], result = n.result(latest, counted);
   switch (latest.status) {
     case "completed": lines.push(zh ? "- 最近一个回合（" + where + "）已完成；没有正在运行的工具，也没有等待中的审批。" : "- The latest turn (" + where + ") completed; no tool is running and no approval is waiting."); break;
     case "failed": {
-      const error = latest.error === null ? null : n.block(latest.error.message, { kind: "text", capTokens: estimateTokens("x".repeat(400)), headShare: 1 }, tally);
+      const error = latest.error === null ? null : n.block(latest.error.message, { kind: "text", capTokens: estimateTokens("x".repeat(400)), headShare: 1, what: "error" }, counted);
       lines.push((zh ? "- 最近一个回合（" + where + "）" + result + "。" : "- The latest turn (" + where + ") " + result + ".") + (error === null ? "" : (zh ? "错误原文：" : " The error as reported:") + "\n" + dataRegion(error)));
       break;
     }
@@ -259,7 +282,7 @@ function statusLines(n: Narrator, units: readonly RelayUnit[], tally: Tally): re
   for (let index = units.length - 1; index >= 0; index--) {
     const unit = units[index]!, command = [...unit.tools].reverse().find(tool => tool.parentId === undefined && tool.kind === "execute");
     if (command === undefined) continue;
-    lines.push(zh ? "- 最近一次执行的命令：" + commandOf(n, unit, command, tally) + "；之后没有再执行命令。" : "- Last command run: " + commandOf(n, unit, command, tally) + "; no command ran after it.");
+    lines.push(zh ? "- 记录中最后一条命令：" + commandOf(n, unit, command, counted) + "。" : "- The last command in the record: " + commandOf(n, unit, command, counted) + ".");
     break;
   }
   const unverified = units.slice(0, -1).filter(unit => unit.status === "unknown");
@@ -270,27 +293,42 @@ function statusLines(n: Narrator, units: readonly RelayUnit[], tally: Tally): re
   return lines;
 }
 
-/** File rows from the change tools whose details were read: path, how it changed, line counts, the last turn that changed it. */
-function fileSection(n: Narrator, units: readonly RelayUnit[], tally: Tally): string | null {
-  type Op = "create" | "delete" | "edit" | "move";
-  const rows = new Map<string, { first: Op; last: Op; added: number; removed: number; unit: RelayUnit }>();
+/** The files the units' change tools made, merged by path (first and last operation, line counts, the last turn), and how many changes were not read. */
+function fileRows(units: readonly RelayUnit[]) {
+  type Op = FileChange["op"];
+  const rows = new Map<string, { first: Op; last: Op; added: number | null; removed: number | null; unit: RelayUnit }>();
+  let unread = 0;
   for (const unit of units) for (const tool of unit.tools) {
-    if (tool.parentId !== undefined || !["edit", "delete", "move"].includes(tool.kind ?? "")) continue;
-    const detail = unit.details.get(tool.id), path = detail?.locations?.[0]?.replace(/:\d+$/u, "");
-    if (path === undefined || path === "") continue;
-    const change = detail?.diff === undefined ? null : diffChange(detail.diff);
-    const op: Op = tool.kind === "delete" ? "delete" : tool.kind === "move" ? "move" : change?.op ?? "edit", row = rows.get(path);
-    if (row === undefined) rows.set(path, { first: op, last: op, added: change?.added ?? 0, removed: change?.removed ?? 0, unit });
-    else { row.last = op; row.added += change?.added ?? 0; row.removed += change?.removed ?? 0; row.unit = unit; }
+    if (tool.parentId !== undefined || kindOf(tool) !== "change") continue;
+    const files = changesOf(unit, tool);
+    if (files === null) { unread++; continue; }
+    for (const file of files) {
+      const row = rows.get(file.path), add = (a: number | null, b: number | null) => a === null || b === null ? null : a + b;
+      if (row === undefined) rows.set(file.path, { first: file.op, last: file.op, added: file.added, removed: file.removed, unit });
+      else { row.last = file.op; row.added = add(row.added, file.added); row.removed = add(row.removed, file.removed); row.unit = unit; }
+    }
   }
+  return { rows, unread };
+}
+/**
+ * The file table (from the change tools whose details were read, a patch over several files split by file, M4): path, how
+ * it changed, line counts, the last turn that changed it; rows while they fit `maxTokens` (≤15% of T, M3), the rest only
+ * counted, and how many changes were not read at all (m2).
+ */
+function fileSection(n: Narrator, units: readonly RelayUnit[], counted: Tally, maxTokens: number): string | null {
+  const { rows, unread } = fileRows(units);
   if (rows.size === 0) return null;
-  const zh = n.zh, status = (row: { first: Op; last: Op }) => row.last === "delete" ? (zh ? "删除" : "deleted") : row.first === "create" ? (zh ? "新增" : "added") : row.last === "move" ? (zh ? "移动" : "moved") : (zh ? "修改" : "modified");
+  const zh = n.zh, status = (row: { first: string; last: string }) => row.last === "delete" ? (zh ? "删除" : "deleted") : row.first === "create" ? (zh ? "新增" : "added") : row.last === "move" ? (zh ? "移动" : "moved") : (zh ? "修改" : "modified");
   const lines = [zh ? "| 文件 | 状态 | 行数 | 最后修改 |" : "| File | Status | Lines | Last changed |", "|---|---|---|---|"];
-  for (const [path, row] of [...rows.entries()].slice(0, 64)) {
-    const counts = [row.added ? "+" + row.added : "", row.removed ? "−" + row.removed : ""].filter(Boolean).join(" ") || "0";
-    lines.push("| " + n.code(path, 200, tally, false) + " | " + status(row) + " | " + counts + " | " + n.turnOf(row.unit) + " |");
+  let used = estimateTokens(lines.join("\n")) + 60, shown = 0;
+  for (const [path, row] of rows) {
+    const counts = row.added === null || row.removed === null ? (zh ? "未知" : "unknown") : [row.added ? "+" + row.added : "", row.removed ? "−" + row.removed : ""].filter(Boolean).join(" ") || "0";
+    const line = "| " + n.code(path, 200, tally(), false) + " | " + status(row) + " | " + counts + " | " + n.turnOf(row.unit) + " |", tokens = estimateTokens(line) + 1;
+    if (shown >= 64 || used + tokens > maxTokens) break;
+    n.code(path, 200, counted, false); lines.push(line); used += tokens; shown++;
   }
-  if (rows.size > 64) lines.push(zh ? "另有 " + (rows.size - 64) + " 个文件只计数。" : (rows.size - 64) + " more files are only counted.");
+  if (rows.size > shown) lines.push(zh ? "另有 " + (rows.size - shown) + " 个文件只计数。" : (rows.size - shown) + " more files are only counted.");
+  if (unread) lines.push(zh ? "另有 " + unread + " 处改动没有读到路径，以工作区为准。" : plural(unread, "more change") + " could not be read for their paths; trust the workspace.");
   lines.push(zh ? "差异正文没有放进来，请在工作区查看（例如 `git diff`）。" : "Diffs are not included; look in the workspace (for example `git diff`).");
   return lines.join("\n");
 }
@@ -298,14 +336,19 @@ function fileSection(n: Narrator, units: readonly RelayUnit[], tally: Tally): st
 /** What the fold produced: the record's pieces, how each unit was rendered, and what they cost. */
 interface Folded { readonly placed: readonly Placed[]; readonly grades: readonly Rendered[]; readonly tokens: number; readonly untrusted: number; readonly hits: number }
 function placedTokens(placed: readonly Placed[]): number { return placed.reduce((sum, item) => sum + item.piece.tokens + 1, 0); }
+/** Below this, a cut reply says too little: the unit goes compact instead. */
+const MIN_REPLY = 120;
 
 /**
- * The two-pass fold (ADR-055 §6.3): everything verbatim when it fits `available` tokens and `untrusted` model text; else
- * the newest units verbatim within 0.6 of the room (the latest one always, its reply cut to fit), the first within 0.15,
- * failed or unverified units among the last 20 compact (≤8), and every other unit one line; while that is still too long,
- * consecutive one-line units merge into range lines of 8, 16, … turns (a unit of another grade breaks a range), then the
- * anchors, the first unit and the older verbatim units give way, and the latest unit goes compact, then one line. Never
- * fails: what cannot be made smaller is the minimum.
+ * The two-pass fold (ADR-055 §6.3, with the shares of M3): everything verbatim when it fits `available` tokens and
+ * `untrusted` model text. Else the newest units first: the latest may take the untrusted share less what the earlier units
+ * would take whole (at most 45% of it is held back for them), each earlier one an even split of what is left among it and
+ * up to three before it; a G1 reply keeps at most 8 KiB of its own text (O1); a unit whose whole G1 does not fit is
+ * tried with its reply cut to its share, then compact, and the first that fits none ends the walk. Then the first unit
+ * within 0.15 of the room, failed or unverified units among the last 20 compact (≤8), every other unit one line. While that
+ * is still too long, consecutive one-line units merge into range lines of 8, 16, … turns (a unit of another grade breaks a
+ * range), then the anchors, the first unit and the older walked units give way, and the latest goes compact, then one
+ * line. Never fails: what cannot be made smaller is the minimum.
  */
 function fold(n: Narrator, units: readonly RelayUnit[], options: (index: number, replyCap: number) => UnitOptions, available: number, untrusted: number): Folded {
   const count = units.length, cache = new Map<string, Piece>();
@@ -314,7 +357,8 @@ function fold(n: Narrator, units: readonly RelayUnit[], options: (index: number,
     for (const item of items) for (let index = item.from; index <= item.to; index++) grades[index] = item.grade;
     return { placed: items, grades, tokens: placedTokens(items), untrusted: items.reduce((sum, item) => sum + item.piece.untrusted, 0), hits: items.reduce((sum, item) => sum + item.piece.hits, 0) };
   };
-  const render = (index: number, grade: Grade, replyCap = REPLY_CAP): Piece => {
+  const limits = units.map(unit => replyCapOf(unit.reply));
+  const render = (index: number, grade: Grade, replyCap = limits[index]!): Piece => {
     const key = index + ":" + grade + ":" + (grade === "verbatim" ? replyCap : 0);
     let piece = cache.get(key);
     if (piece === undefined) {
@@ -325,35 +369,50 @@ function fold(n: Narrator, units: readonly RelayUnit[], options: (index: number,
     return piece;
   };
   if (count === 0) return finish([]);
-  // First pass: the whole record verbatim, tried only when the replies' lengths alone leave room for it.
-  if (units.reduce((total, unit) => total + Math.min(unit.reply.length, 8192) / 4, 0) <= available) {
+  // First pass: the whole record verbatim, tried only when the replies' and the tool titles' lengths alone leave room for it
+  // (m8: rendering hundreds of tools that cannot fit costs more than the fold).
+  const bound = units.reduce((total, unit) => total + Math.min(unit.reply.length, 8192) / 4 + 8 + unit.tools.reduce((sum, tool) => sum + Math.min(tool.title.length, 400) / 4 + 2, 0), 0);
+  if (bound <= available) {
     const whole = units.map((_unit, index): Placed => ({ piece: render(index, "verbatim"), from: index, to: index, grade: "verbatim" }));
     if (placedTokens(whole) <= available && whole.reduce((sum, item) => sum + item.piece.untrusted, 0) <= untrusted) return finish(whole);
   }
   // Second pass: layers.
-  const grades: Grade[] = units.map(() => "line"), caps: number[] = units.map(() => REPLY_CAP), mergeable: boolean[] = units.map(() => false);
-  const tailRoom = 0.6 * available, headRoom = 0.15 * available;
-  let tailUsed = 0, untrustedUsed = 0, firstTail = count - 1;
-  for (let cap = Math.min(REPLY_CAP, Math.max(64, untrusted)); ; cap = Math.floor(cap / 2)) {
-    const piece = render(count - 1, "verbatim", cap);
-    if (piece.tokens <= tailRoom && piece.untrusted <= untrusted) { grades[count - 1] = "verbatim"; caps[count - 1] = cap; tailUsed = piece.tokens + 1; untrustedUsed = piece.untrusted; break; }
-    if (cap <= 64) {
-      const compact = render(count - 1, "compact");
-      if (compact.tokens <= tailRoom && compact.untrusted <= untrusted) { grades[count - 1] = "compact"; tailUsed = compact.tokens + 1; untrustedUsed = compact.untrusted; }
-      break;
+  const grades: Grade[] = units.map(() => "line"), caps: number[] = [...limits], mergeable: boolean[] = units.map(() => false);
+  // What the units older than `index` take at the least (one line each, or a few range lines once there are many).
+  const reserve = (index: number) => { let sum = 0; for (let older = 0; older < index && sum < 240; older++) sum += render(older, "line").tokens + 1; return Math.min(sum, 240); };
+  // The newest turn's share: the untrusted budget less what the earlier turns would take whole, and that at most 45% of it,
+  // so a lone or a long newest reply is not cut for turns that are short or absent.
+  const kept = Math.floor(0.45 * untrusted);
+  let earlier = 0;
+  for (let older = count - 2; older >= 0 && earlier < kept; older--) earlier += render(older, "verbatim").untrusted;
+  const newest = untrusted - Math.min(earlier, kept);
+  let used = 0, untrustedUsed = 0, firstWalked = count;
+  for (let index = count - 1; index >= 0; index--) {
+    const left = untrusted - untrustedUsed, room = available - used - reserve(index);
+    const share = index === count - 1 ? newest : Math.floor(left / Math.min(index + 1, 4));
+    const fits = (candidate: Piece, limit: number) => candidate.tokens + 1 <= room && candidate.untrusted <= limit;
+    let chosen: { readonly grade: Grade; readonly cap: number; readonly piece: Piece } | null = null;
+    const whole = render(index, "verbatim");
+    if (fits(whole, Math.min(left, Math.max(share, whole.untrusted <= share ? share : 0)))) chosen = { grade: "verbatim", cap: limits[index]!, piece: whole };
+    if (chosen === null) {
+      // The reply cut to what is left of the share and of the room once the rest of the unit is written.
+      const base = render(index, "verbatim", 0);
+      for (let cap = Math.min(limits[index]!, share - base.untrusted, room - base.tokens) - 8; cap >= MIN_REPLY; cap = Math.floor(cap * 0.85)) {
+        const cut = render(index, "verbatim", cap);
+        if (fits(cut, Math.min(left, share))) { chosen = { grade: "verbatim", cap, piece: cut }; break; }
+      }
     }
+    if (chosen === null) { const compact = render(index, "compact"); if (fits(compact, left)) chosen = { grade: "compact", cap: limits[index]!, piece: compact }; }
+    if (chosen === null) break;
+    grades[index] = chosen.grade; caps[index] = chosen.cap; used += chosen.piece.tokens + 1; untrustedUsed += chosen.piece.untrusted; firstWalked = index;
   }
-  if (grades[count - 1] === "verbatim") for (let index = count - 2; index >= 0; index--) {
-    const piece = render(index, "verbatim");
-    if (tailUsed + piece.tokens + 1 > tailRoom || untrustedUsed + piece.untrusted > untrusted) break;
-    grades[index] = "verbatim"; tailUsed += piece.tokens + 1; untrustedUsed += piece.untrusted; firstTail = index;
-  }
-  if (count > 1 && grades[0] === "line") for (const grade of ["verbatim", "compact"] as const) {
+  const headRoom = 0.15 * available;
+  if (count > 1 && firstWalked > 0 && grades[0] === "line") for (const grade of ["verbatim", "compact"] as const) {
     const piece = render(0, grade);
     if (piece.tokens <= headRoom && untrustedUsed + piece.untrusted <= untrusted) { grades[0] = grade; untrustedUsed += piece.untrusted; break; }
   }
   const anchors: number[] = [];
-  for (let index = firstTail - 1; index >= Math.max(1, count - 20) && anchors.length < 8; index--) {
+  for (let index = firstWalked - 1; index >= Math.max(1, count - 20) && anchors.length < 8; index--) {
     if (units[index]!.status === "completed" || grades[index] !== "line") continue;
     const piece = render(index, "compact");
     if (untrustedUsed + piece.untrusted > untrusted) continue;
@@ -376,8 +435,8 @@ function fold(n: Narrator, units: readonly RelayUnit[], options: (index: number,
   const steps: (() => void)[] = [];
   for (let size = 8; size < count * 2; size *= 2) { const at = size; steps.push(() => { middle(); segment = at; }); }
   steps.push(() => { for (const index of anchors) grades[index] = "line"; middle(); segment = count; });
-  steps.push(() => { if (count > 1 && firstTail > 0) grades[0] = "line"; middle(); segment = count; });
-  for (let index = firstTail; index < count - 1; index++) { const at = index; steps.push(() => { grades[at] = "line"; middle(); segment = count; }); }
+  steps.push(() => { if (count > 1 && firstWalked > 0) grades[0] = "line"; middle(); segment = count; });
+  for (let index = Math.min(firstWalked, count - 1); index < count - 1; index++) { const at = index; steps.push(() => { grades[at] = "line"; middle(); segment = count; }); }
   steps.push(() => { if (grades[count - 1] === "verbatim") grades[count - 1] = "compact"; });
   steps.push(() => { grades[count - 1] = "line"; });
   let placed = layout();
@@ -387,7 +446,7 @@ function fold(n: Narrator, units: readonly RelayUnit[], options: (index: number,
 
 /** The tool accounting of the units: what the ledger says was not attached. */
 function toolLedger(units: readonly RelayUnit[], grades: readonly Rendered[]) {
-  let tools = 0, tails = 0, changes = 0, inner = 0, thinking = 0, withoutDetail = 0, attachments = 0;
+  let tools = 0, tails = 0, changes = 0, inner = 0, thinking = 0, withoutDetail = 0, attachments = 0, secretFiles = 0;
   units.forEach((unit, index) => {
     attachments += unit.attachments.length;
     if (unit.thinking) thinking++;
@@ -397,13 +456,14 @@ function toolLedger(units: readonly RelayUnit[], grades: readonly Rendered[]) {
       if (tool.parentId !== undefined) { inner++; continue; }
       if (tool.kind === "think") { thinking++; continue; }
       tools++;
-      if (["edit", "delete", "move"].includes(tool.kind ?? "")) changes++;
+      if (kindOf(tool) === "change") changes++;
       const detail = unit.details.get(tool.id);
       if (detail === undefined) withoutDetail++;
+      if (tool.kind === "execute" && namesCredentialFile(commandSource(unit, tool))) { secretFiles++; continue; }
       if (grades[index] === "verbatim" && tool.kind === "execute" && typeof detail?.output === "string" && detail.output.trim() !== "") tails++;
     }
   });
-  return { tools, tails, changes, inner, thinking, withoutDetail, attachments };
+  return { tools, tails, changes, inner, thinking, withoutDetail, attachments, secretFiles };
 }
 /** The user's words the ledger counts as left out. */
 function omittedWords(n: Narrator, omitted: readonly RelayUnit[]): string | null {
@@ -411,6 +471,18 @@ function omittedWords(n: Narrator, omitted: readonly RelayUnit[]): string | null
   const size = omitted.reduce((sum, unit) => sum + unit.user.length, 0);
   return n.zh ? "- 用户原话：" + turnList(n, omitted) + "的 " + omitted.length + " 条没有逐字附上（约 " + size + " 字）。"
     : "- The user's words: " + plural(omitted.length, "message") + " from " + turnList(n, omitted) + (omitted.length === 1 ? " is" : " are") + " not quoted verbatim (about " + size + " characters).";
+}
+/** One cut of a unit, as the ledger lists it (M5): what lost how many characters, and in which turn. */
+interface Shortened { readonly unit: RelayUnit; readonly what: Cut["what"]; readonly omitted: number }
+function shortenedLine(n: Narrator, cuts: readonly Shortened[]): string | null {
+  if (!cuts.length) return null;
+  const zh = n.zh, item = (cut: Shortened) => {
+    const turn = n.turnOf(cut.unit), name = n.name(cut.unit.harnessId);
+    if (zh) return (cut.what === "words" ? turn + "的用户原话" : cut.what === "reply" ? turn + " " + name + " 的回复" : cut.what === "output" ? turn + "的命令输出" : turn + "的错误原文") + "（省略约 " + cut.omitted + " 字）";
+    return (cut.what === "words" ? "the user's words of " + turn : cut.what === "reply" ? name + "'s reply in " + turn : cut.what === "output" ? "a command's output in " + turn : "the error of " + turn) + " (about " + cut.omitted + " characters left out)";
+  };
+  const shown = cuts.slice(0, 8).map(item).join(zh ? "、" : ", "), more = cuts.length > 8 ? (zh ? " 等 " + cuts.length + " 处" : " and " + (cuts.length - 8) + " more") : "";
+  return zh ? "- 截短的内容：" + shown + more + "。" : "- Shortened: " + shown + more + ".";
 }
 
 /** What a rendering produced besides its text: the ID slots split it into head, body and tail. */
@@ -421,14 +493,14 @@ interface Draft {
 
 /** Renders a full packet: frame, user's words, conventions, status, record, files, ledger, end line. */
 function renderPacket(n: Narrator, units: readonly RelayUnit[], budget: RelayBudget, first: { readonly line: string; readonly blank: boolean } | null, targetHarness: string, state: SessionSnapshot): Draft {
-  const frame = FRAME[n.language], zh = n.zh, fixed: Tally = { hits: 0, untrusted: 0 };
+  const frame = FRAME[n.language], zh = n.zh, fixed = tally();
   const head = (first === null ? "" : first.line + "\n" + (first.blank ? "\n" : "")) + frame.title(false);
   const words = chooseWords(n, units, budget.user, true, (unit, opening, block) => {
     const turn = n.turnOf(unit);
     return (zh ? "- " + turn + (opening ? "（开场请求）" : "") + "：" : "- " + capital(turn) + (opening ? " (opening request)" : "") + ":") + "\n" + block;
   });
   const quoted = units.filter(unit => words.entries.has(unit.key)).map(unit => words.entries.get(unit.key)!);
-  const status = statusLines(n, units, fixed), files = fileSection(n, units, fixed);
+  const status = statusLines(n, units, fixed), files = fileSection(n, units, fixed, Math.floor(0.15 * budget.cap));
   const latest = units.at(-1), newestPlan = [...units].reverse().find(unit => unit.plan !== null)?.key ?? null;
   const front = ["〕", frame.intro(sourceSentence(n, units, targetHarness)), ...(quoted.length ? ["", frame.words, ...quoted] : []), "", ...frame.conventions(false), ...(status.length ? ["", frame.state, ...status] : [])].join("\n");
   const heading = recordHeading(n, units);
@@ -437,10 +509,21 @@ function renderPacket(n: Narrator, units: readonly RelayUnit[], budget: RelayBud
     errorShown: units[index] === latest && latest?.status === "failed", replyCap }), Math.max(0, budget.cap - fixedTokens), Math.max(0, budget.untrusted - fixed.untrusted));
   const counts = { verbatim: 0, compact: 0, line: 0, ranged: 0 };
   for (const grade of folded.grades) counts[grade]++;
-  const tools = toolLedger(units, folded.grades), complete = units.length > 0 && counts.verbatim === units.length;
+  // Every cut that reaches the packet, by unit (M5): the user's words, the shown pieces, the latest error in the status.
+  const cuts: Shortened[] = [];
+  for (const unit of units) { const lost = words.cut.get(unit.key); if (lost !== undefined) cuts.push({ unit, what: "words", omitted: lost }); }
+  for (const item of folded.placed) if (item.from === item.to) for (const cut of item.piece.cuts) cuts.push({ unit: units[item.from]!, what: cut.what, omitted: cut.omitted });
+  if (latest !== undefined) for (const cut of fixed.cuts) cuts.push({ unit: latest, what: cut.what, omitted: cut.omitted });
+  cuts.sort((a, b) => units.indexOf(a.unit) - units.indexOf(b.unit));
+  const tools = toolLedger(units, folded.grades), verbatim = units.length > 0 && counts.verbatim === units.length;
+  const complete = verbatim && cuts.length === 0 && words.omitted.length === 0;
   const ledger: string[] = [frame.ledger];
-  if (complete) ledger.push(zh ? "- " + units.length + " 轮全部照录，没有折叠；" + (words.omitted.length ? "用户原话有省略（见下一条）" : "用户原话没有省略") + "；" + (tools.attachments ? "附件只列了名称" : "没有附件") + "。"
-    : (units.length === 1 ? "- The one turn is" : "- All " + units.length + " turns are") + " included in full, nothing folded; " + (words.omitted.length ? "some of the user's words are left out (see below)" : "none of the user's words are left out") + "; " + (tools.attachments ? "attachments are listed by name only" : "no attachments") + ".");
+  const wordsState = zh ? (words.omitted.length ? "用户原话有省略（见下）" : words.cut.size ? "用户原话有截短（见下）" : "用户原话没有省略")
+    : (words.omitted.length ? "some of the user's words are left out (see below)" : words.cut.size ? "some of the user's words are shortened (see below)" : "none of the user's words are left out");
+  // The user's words have their own state; what the turns' records lost is said of the turns.
+  const recordCut = cuts.some(cut => cut.what !== "words");
+  if (verbatim) ledger.push(zh ? "- " + units.length + " 轮" + (recordCut ? "逐轮列出，没有折叠，部分内容有截短（见下）" : "全部照录，没有折叠") + "；" + wordsState + "；" + (tools.attachments ? "附件只列了名称" : "没有附件") + "。"
+    : "- " + (units.length === 1 ? "The one turn is " + (recordCut ? "listed" : "included in full") : "All " + units.length + " turns are " + (recordCut ? "listed" : "included in full")) + ", nothing folded" + (recordCut ? ", some of it shortened (see below)" : "") + "; " + wordsState + "; " + (tools.attachments ? "attachments are listed by name only" : "no attachments") + ".");
   else if (units.length) {
     const parts = zh ? [counts.verbatim ? "照录 " + counts.verbatim + " 轮" : "", counts.compact ? "精简 " + counts.compact + " 轮" : "", counts.line ? "单行 " + counts.line + " 轮" : "", counts.ranged ? "按区间合并 " + counts.ranged + " 轮" : ""]
       : [counts.verbatim ? counts.verbatim + " in full" : "", counts.compact ? counts.compact + " shortened" : "", counts.line ? counts.line + " as single lines" : "", counts.ranged ? counts.ranged + " merged into ranges" : ""];
@@ -448,9 +531,11 @@ function renderPacket(n: Narrator, units: readonly RelayUnit[], budget: RelayBud
       : "- " + units.length + " turns in all, folded to fit: " + parts.filter(Boolean).join(", ") + "; " + (tools.attachments ? "attachments are listed by name only" : "no attachments") + ".");
   }
   const omitted = omittedWords(n, words.omitted); if (omitted !== null) ledger.push(omitted);
+  const shortened = shortenedLine(n, cuts); if (shortened !== null) ledger.push(shortened);
   // A change's output is its diff, counted on its own; every other tool's output is attached only as a command's tail.
   if (tools.tools || tools.thinking) ledger.push(zh ? "- 未附的工具输出：" + (tools.tools - tools.changes - tools.tails) + " 条；未附的 diff 正文：" + tools.changes + " 处（以工作区为准）；思考过程 " + tools.thinking + " 段。"
     : "- Tool output not included: " + (tools.tools - tools.changes - tools.tails) + "; diffs not included: " + tools.changes + " (trust the workspace); thinking: " + plural(tools.thinking, "passage") + ".");
+  if (tools.secretFiles) ledger.push(zh ? "- 读取凭据类文件的命令：" + tools.secretFiles + " 条，输出只计数。" : "- Commands that read credential files: " + tools.secretFiles + "; their output is only counted.");
   if (tools.withoutDetail) ledger.push(zh ? "- 工具详情没有读取：" + tools.withoutDetail + " 个工具调用只按标题列出。" : "- Tool details were not read: " + plural(tools.withoutDetail, "tool call") + (tools.withoutDetail === 1 ? " is" : " are") + " listed by title only.");
   if (tools.inner) ledger.push(zh ? "- 子 Agent 内部的 " + tools.inner + " 个操作只计数。" : "- " + plural(tools.inner, "operation") + " inside sub-agents " + (tools.inner === 1 ? "is" : "are") + " only counted.");
   if (files === null) ledger.push(zh ? "- 交接时没有观测工作区；文件改动以工作区为准。" : "- The workspace was not observed at handoff; trust the workspace for file changes.");
@@ -469,11 +554,12 @@ function renderPacket(n: Narrator, units: readonly RelayUnit[], budget: RelayBud
 /**
  * Renders a delta (ADR-055 §5.4): the update frame with all seven conventions (no base packet is assumed), then what
  * happened while the target was away: who did how many turns, each turn's heading with the user's words newest first
- * within 1,000 tokens (older turns merged into range lines when too many), the last command and failed ones, and the
- * end of the latest reply; the actions are only counted.
+ * within 1,000 tokens (older turns merged into range lines when too many), the files those turns changed (m1), the last
+ * command and failed ones, and the end of the latest reply, which has a budget of its own beyond the frame and the turns
+ * (M3: the seven conventions alone take most of a 1,500-token delta); the actions are only counted.
  */
 function renderDelta(n: Narrator, units: readonly RelayUnit[], budget: RelayBudget, first: { readonly line: string; readonly blank: boolean } | null, binding: NativeSessionBinding, state: SessionSnapshot, targetHarness: string): Draft {
-  const frame = FRAME[n.language], zh = n.zh, count = units.length, tally: Tally = { hits: 0, untrusted: 0 };
+  const frame = FRAME[n.language], zh = n.zh, count = units.length, counted = tally();
   const head = (first === null ? "" : first.line + "\n" + (first.blank ? "\n" : "")) + frame.title(true);
   const at = binding.throughRunId === null ? -1 : state.runs.findIndex(run => run.id === binding.throughRunId);
   const who = executors(units), target = n.name(targetHarness);
@@ -483,18 +569,25 @@ function renderDelta(n: Narrator, units: readonly RelayUnit[], budget: RelayBudg
   const departure = zh ? (at >= 0 ? "你（" + target + "）在第 " + (at + 1) + " 轮之后离开，这段对话随后由 " + doers + did : "你（" + target + "）上次参与之后，这段对话由 " + doers + did)
     : (at >= 0 ? "You (" + target + ") left after turn " + (at + 1) + "; since then " + doers + " did " + count + (count === 1 ? " turn." : " turns.") : "Since you (" + target + ") last took part, " + doers + " did " + count + (count === 1 ? " turn." : " turns."));
   const front = ["〕", frame.deltaIntro, "", ...frame.conventions(true), "", frame.away, departure].join("\n");
-  const headings = new Map(units.map(unit => [unit.key, "- " + capital(n.turnOf(unit)) + " · " + n.name(unit.harnessId) + " · " + n.result(unit, tally)]));
+  const headings = new Map(units.map(unit => [unit.key, "- " + capital(n.turnOf(unit)) + " · " + n.name(unit.harnessId) + " · " + n.result(unit, counted)]));
   const words = chooseWords(n, units, RELAY_BUDGET.deltaUserCap, false, (unit, _opening, block) => headings.get(unit.key)! + (zh ? "。用户原话：" : ". The user's words:") + "\n" + block);
-  const fixedTokens = estimateTokens(head) + estimateTokens(front) + 24 + 150;
-  let cap = Math.min(RELAY_BUDGET.deltaCap, budget.cap);
-  if (fixedTokens + words.tokens > cap) cap = Math.min(RELAY_BUDGET.deltaUserExtension + fixedTokens, budget.cap);
+  const frameTokens = estimateTokens(head) + estimateTokens(front) + 24 + 150;
+  // The turns, files and commands take up to DELTA_CAP beyond the frame (DELTA_USER_EXT when the words need it).
+  const contentCap = Math.max(RELAY_BUDGET.deltaCap, Math.min(RELAY_BUDGET.deltaUserExtension, words.tokens + 300));
   const plain = (unit: RelayUnit) => headings.get(unit.key)! + (zh ? "。" : ".");
-  // The commands: the last one, and failed ones before it (≤3).
+  // The files the delta's turns changed (m1), from what their details told.
+  const changed = fileRows(units), fileLines: string[] = [];
+  if (changed.rows.size) {
+    const items = [...changed.rows.entries()].slice(0, 16).map(([path, row]) => n.code(path, 200, counted, false) + (zh ? "（" : " (") + (row.added === null || row.removed === null ? "" : [row.added ? "+" + row.added : "", row.removed ? "−" + row.removed : ""].filter(Boolean).join(" ") + (zh ? "，" : ", ")) + n.turnOf(row.unit) + (zh ? "）" : ")"));
+    fileLines.push((zh ? "- 期间改动的文件：" : "- Files changed meanwhile: ") + items.join(zh ? "、" : ", ") + (changed.rows.size > 16 ? (zh ? " 等 " + changed.rows.size + " 个" : " and " + (changed.rows.size - 16) + " more") : "")
+      + (changed.unread ? (zh ? "；另有 " + changed.unread + " 处改动没有读到路径" : "; " + plural(changed.unread, "more change") + " could not be read for their paths") : "") + (zh ? "。" : "."));
+  } else if (changed.unread) fileLines.push(zh ? "- 期间有 " + changed.unread + " 处改动，没有读到路径，以工作区为准。" : "- " + plural(changed.unread, "change") + " were made meanwhile; their paths could not be read; trust the workspace.");
+  // The commands: the last one in the record, and failed ones before it (≤3).
   const commands = units.flatMap(unit => unit.tools.filter(tool => tool.parentId === undefined && tool.kind === "execute").map(tool => ({ unit, tool }))), commandLines: string[] = [];
   const lastCommand = commands.at(-1);
-  if (lastCommand !== undefined) commandLines.push((zh ? "- 最近一次执行的命令：" : "- Last command run: ") + commandOf(n, lastCommand.unit, lastCommand.tool, tally) + (zh ? "。" : "."));
+  if (lastCommand !== undefined) commandLines.push((zh ? "- 记录中最后一条命令：" : "- The last command in the record: ") + commandOf(n, lastCommand.unit, lastCommand.tool, counted) + (zh ? "。" : "."));
   const failed = commands.slice(0, -1).filter(item => (item.tool.exitCode !== undefined && item.tool.exitCode !== 0) || FAILED_TOOL.includes(item.tool.status)).slice(-3);
-  if (failed.length) commandLines.push((zh ? "- 失败的命令：" : "- Failed commands: ") + failed.map(item => commandOf(n, item.unit, item.tool, tally)).join(zh ? "；" : "; ") + (zh ? "。" : "."));
+  if (failed.length) commandLines.push((zh ? "- 失败的命令：" : "- Failed commands: ") + failed.map(item => commandOf(n, item.unit, item.tool, counted)).join(zh ? "；" : "; ") + (zh ? "。" : "."));
   // Entries: quoted turns with their words, the others as headings, merged into ranges while too long.
   const layout = (merge: number): { readonly lines: readonly string[]; readonly ranged: number } => {
     const lines: string[] = []; let ranged = 0;
@@ -509,19 +602,22 @@ function renderDelta(n: Narrator, units: readonly RelayUnit[], budget: RelayBudg
     return { lines, ranged };
   };
   let merge = 1, entries = layout(merge);
-  const size = () => estimateTokens(entries.lines.join("\n")) + estimateTokens(commandLines.join("\n"));
-  while (fixedTokens + size() > cap && merge < count) { merge = merge === 1 ? 8 : merge * 2; entries = layout(merge); }
-  // The latest reply, its end, with what is left of the room and the untrusted share.
-  const latest = units.at(-1), room = Math.min(cap - fixedTokens - size(), Math.floor(RELAY_BUDGET.untrustedRatio * cap));
+  const size = () => estimateTokens(entries.lines.join("\n")) + estimateTokens(fileLines.join("\n")) + estimateTokens(commandLines.join("\n"));
+  while (size() > contentCap && merge < count) { merge = merge === 1 ? 8 : merge * 2; entries = layout(merge); }
+  // The latest reply, its end, within its own budget, the untrusted share and what is left of T.
+  const latest = units.at(-1), room = Math.min(RELAY_BUDGET.deltaReplyCap, budget.untrusted, budget.cap - frameTokens - size());
   let reply: string | null = null;
   if (latest !== undefined && room >= 40) {
-    const text = withoutThinking(latest.reply).text, cut = estimateTokens(text) > room - 24;
-    const quoted = n.block(text, { kind: "text", capTokens: room - 24, headShare: 0 }, tally);
-    if (quoted !== null) reply = dataRegion((zh ? n.name(latest.harnessId) + " " + n.turnOf(latest) + (cut ? "回复的末尾：" : "的回复：") : (cut ? "The end of " : "") + n.name(latest.harnessId) + "'s reply in " + n.turnOf(latest) + ":") + "\n" + quoted);
+    const replyTally = tally(), quoted = n.block(withoutThinking(latest.reply).text, { kind: "text", capTokens: room - 24, headShare: 0, what: "reply" }, replyTally);
+    if (quoted !== null) {
+      const cut = replyTally.cuts.length > 0;
+      counted.hits += replyTally.hits; counted.cuts.push(...replyTally.cuts);
+      reply = dataRegion((zh ? n.name(latest.harnessId) + " " + n.turnOf(latest) + (cut ? "回复的末尾：" : "的回复：") : (cut ? "The end of " : "") + n.name(latest.harnessId) + "'s reply in " + n.turnOf(latest) + ":") + "\n" + quoted);
+    }
   }
-  const counted = toolLedger(units, units.map((unit): Rendered => unit === latest && reply !== null ? "verbatim" : "line"));
+  const counted2 = toolLedger(units, units.map((unit): Rendered => unit === latest && reply !== null ? "verbatim" : "line"));
   const kinds = (test: (tool: PublicTool) => boolean) => units.reduce((sum, unit) => sum + unit.tools.filter(tool => tool.parentId === undefined && test(tool)).length, 0);
-  const actions = [[kinds(tool => tool.kind === "read"), "读取 # 次", "read #"], [kinds(tool => ["edit", "delete", "move"].includes(tool.kind ?? "")), "改动 # 次", "changed #"], [kinds(tool => tool.kind === "execute"), "执行 # 次", "ran #"]] as const;
+  const actions = [[kinds(tool => tool.kind === "read"), "读取 # 次", "read #"], [kinds(tool => kindOf(tool) === "change"), "改动 # 次", "changed #"], [kinds(tool => tool.kind === "execute"), "执行 # 次", "ran #"]] as const;
   const actionCounts = actions.filter(([value]) => value > 0).map(([value, chinese, english]) => (zh ? chinese : english).replace("#", String(value))).join(zh ? "、" : ", ");
   const earlierReplies = units.filter(unit => unit !== latest && withoutThinking(unit.reply).text.trim() !== "");
   const replySize = earlierReplies.reduce((sum, unit) => sum + unit.reply.length, 0), latestLeft = reply === null && latest !== undefined && withoutThinking(latest.reply).text.trim() !== "";
@@ -529,11 +625,15 @@ function renderDelta(n: Narrator, units: readonly RelayUnit[], budget: RelayBudg
     ? "- 这 " + count + " 轮的操作记录" + (actionCounts ? "（" + actionCounts + "）" : "") + "只计数" + (earlierReplies.length ? "；" + turnList(n, earlierReplies) + "的回复没有附上（约 " + replySize + " 字）" : "") + (latestLeft ? "；" + n.turnOf(latest!) + "的回复没有附上" : "") + "。"
     : "- The actions of " + (count === 1 ? "this turn" : "these " + count + " turns") + (actionCounts ? " (" + actionCounts + ")" : "") + " are only counted" + (earlierReplies.length ? (earlierReplies.length === 1 ? "; the reply of " : "; the replies of ") + turnList(n, earlierReplies) + (earlierReplies.length === 1 ? " is" : " are") + " not included (about " + replySize + " characters)" : "") + (latestLeft ? "; the reply of " + n.turnOf(latest!) + " is not included" : "") + "."];
   const omitted = omittedWords(n, words.omitted); if (omitted !== null) ledger.push(omitted);
-  if (counted.thinking) ledger.push(zh ? "- 思考过程 " + counted.thinking + " 段没有附上。" : "- " + plural(counted.thinking, "thinking passage") + (counted.thinking === 1 ? " is" : " are") + " not included.");
-  const hits = words.hits + tally.hits;
+  const cuts: Shortened[] = [...units.flatMap(unit => { const lost = words.cut.get(unit.key); return lost === undefined ? [] : [{ unit, what: "words" as const, omitted: lost }]; }),
+    ...(latest === undefined ? [] : counted.cuts.map(cut => ({ unit: latest, what: cut.what, omitted: cut.omitted })))];
+  const shortened = shortenedLine(n, cuts); if (shortened !== null) ledger.push(shortened);
+  if (counted2.secretFiles) ledger.push(zh ? "- 读取凭据类文件的命令：" + counted2.secretFiles + " 条，输出只计数。" : "- Commands that read credential files: " + counted2.secretFiles + "; their output is only counted.");
+  if (counted2.thinking) ledger.push(zh ? "- 思考过程 " + counted2.thinking + " 段没有附上。" : "- " + plural(counted2.thinking, "thinking passage") + (counted2.thinking === 1 ? " is" : " are") + " not included.");
+  const hits = words.hits + counted.hits;
   ledger.push((zh ? "- 隐去的疑似密钥：" + hits + " 处。" : "- Suspected secrets removed: " + hits + ". ") + frame.closing);
   const end = frame.end(true);
-  const body = [front, ...entries.lines, ...commandLines, ...(reply === null ? [] : [reply]), "", ...ledger, end[0]].join("\n");
+  const body = [front, ...entries.lines, ...fileLines, ...commandLines, ...(reply === null ? [] : [reply]), "", ...ledger, end[0]].join("\n");
   return { head, body, tail: end[1], counts: { verbatim: 0, compact: 0, line: count - entries.ranged, ranged: entries.ranged }, complete: false, words, hits };
 }
 
@@ -560,5 +660,5 @@ export function renderRelay(input: RelayRenderInput): RelayRendering {
   return { text, packetId, record: { policyVersion: RELAY_POLICY_VERSION, packetId, kind: delta ? "delta" : "packet", language, sha256: createHash("sha256").update(text, "utf8").digest("hex"),
     sources: { runs: sources.length, fromRunId: sources[0]?.id ?? null, throughRunId: sources.at(-1)?.id ?? null, origin: input.origin },
     tokens: estimateTokens(packet), budget: { cap: budget.cap, window: budget.window, windowSource: budget.windowSource }, complete: draft.complete, units: draft.counts,
-    userWords: { quoted: draft.words.entries.size, omitted: draft.words.omitted.length }, redactions: draft.hits, firstLine: first !== null } };
+    userWords: { quoted: draft.words.entries.size, omitted: draft.words.omitted.length, truncated: draft.words.cut.size }, redactions: draft.hits, firstLine: first !== null } };
 }

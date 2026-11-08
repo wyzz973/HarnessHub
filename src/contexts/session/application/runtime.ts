@@ -1430,9 +1430,11 @@ export class SessionRuntime {
       const kinds = run.attachments?.map(file => file.kind) ?? [], reading = this.classify(control, run.input, null, kinds);
       // The relay packet (ADR-055 §5): what this binding's program and this Gateway hold as secrets never leaves in it, and an
       // input read as a possible command never opens it, so the packet cannot become a command's argument.
+      // The secrets are the whole Session's (M1): the target binding's own, and those of every Harness whose history it carries.
       const details = offered ? await this.relayDetails(current, due) : new Map<string, RelayToolDetail>();
+      const secrets = offered ? [...(execution.binding.secrets ?? []), ...(await this.factory.relaySecrets?.(current.configuration, this.relayHarnesses(current, run, due, origin)) ?? [])] : [];
       if (offered) this.continue(execution);
-      const relay: PublicContextOptions = { origin, secrets: execution.binding.secrets ?? [], firstLine: reading.kind === "content", details,
+      const relay: PublicContextOptions = { origin, secrets, firstLine: reading.kind === "content", details,
         ...(this.options.harnessName === undefined ? {} : { names: this.options.harnessName }) };
       if (offered && reading.kind === "content") context = buildPublicContext(current, run, due, relay);
       if (native === null) {
@@ -1724,6 +1726,19 @@ export class SessionRuntime {
     if (state.origin.kind === "import") return false;
     const created = this.store.events(state.id, 0, 1)[0];
     return !(created?.type === "session.created" && created.data.continuity === "native_fork");
+  }
+  /**
+   * The Harnesses whose history a packet carries (ADR-055 §10.2, review M1): the owed Runs' and, when the Session's own
+   * starting history is owed, its messages' (an import's Harness included), with the target's own.
+   */
+  private relayHarnesses(state: SessionSnapshot, run: PublicRun, sources: readonly PublicRun["id"][], origin: boolean): readonly string[] {
+    const ids = new Set<string>([run.selection.harnessId]);
+    for (const source of state.runs) if (sources.includes(source.id)) ids.add(source.selection.harnessId);
+    if (origin && state.origin !== undefined) {
+      if (state.origin.kind === "import") ids.add(state.origin.harnessId);
+      for (const message of state.origin.history) if (message.harnessId !== undefined) ids.add(message.harnessId);
+    }
+    return [...ids].sort();
   }
   /**
    * What the relay packet may quote of the owed Runs' stored tool details (ADR-055 §6.4), read back within bounds: the

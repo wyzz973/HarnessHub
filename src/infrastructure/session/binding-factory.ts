@@ -106,6 +106,23 @@ export async function prepareConfiguration(input: ConfigurationInput): Promise<S
 interface ManagedResolver { resolveControl(harnessId: string, controlId: string): ResolvedManagedControl | null }
 interface Observation { readonly harnessId: string; readonly selected: ControlObservation; readonly searchPath: string; readonly managed: ResolvedManagedControl | null }
 async function observe(request: SelectionRequest, configuration: SessionConfiguration, root: string, installations: InstallationPolicy, managedResolver?: ManagedResolver, source?: NativeEnvironment): Promise<Observation> {
+  const observed = await observeCatalog(configuration, root, installations, managedResolver, source);
+  const harness = observed.report.harnesses.find(item => item.id === request.harnessId || item.aliases.includes(request.harnessId));
+  if (!harness) throw new SessionError("HARNESS_UNAVAILABLE", "unknown Harness: " + request.harnessId);
+  // A published managed default is an explicit installation choice for this Harness.
+  // An admitted/requested control still remains exclusive across future observations.
+  const managedChoices = harness.controls.filter(control => observed.managedBindings.has(control.id));
+  const preferred = request.controlId ?? (managedChoices.length === 1 ? managedChoices[0]!.id : undefined);
+  const selected = chooseControl(harness.controls, preferred);
+  if (selected.protocol !== "acp-v1" && selected.protocol !== "codex-app-server" && selected.protocol !== "pi-rpc")
+    throw new SessionError("UNSUPPORTED_CONTROL", "this control Driver is not implemented: " + selected.protocol);
+  return { harnessId: harness.id, selected, searchPath: observed.searchPath, managed: observed.managedBindings.get(selected.id) ?? null };
+}
+/**
+ * The catalog a configuration resolves controls from, observed once: the built-ins and the Session's manifest (checked
+ * against its admitted fingerprint, copied into `root`), with what this Gateway counts as installed.
+ */
+async function observeCatalog(configuration: SessionConfiguration, root: string, installations: InstallationPolicy, managedResolver?: ManagedResolver, source?: NativeEnvironment): Promise<Awaited<ReturnType<typeof inventory>>> {
   await pinnedDirectory(configuration.workspace, "workspace");
   if (configuration.configHome !== null) await pinnedDirectory(configuration.configHome, "configuration home");
   for (const path of configuration.packageRoots) await pinnedDirectory(path, "package root");
@@ -117,19 +134,9 @@ async function observe(request: SelectionRequest, configuration: SessionConfigur
     snapshot = join(root, "catalog-snapshot.json");
     await writeFile(snapshot, bytes, { flag: "wx", mode: 0o600 });
   } else if (configuration.manifestSha256 !== null) throw new SessionError("INVALID_INPUT", "manifest fingerprint requires a manifest reference");
-  const observed = await inventory({ ...(snapshot === undefined ? {} : { manifest: snapshot }),
+  return inventory({ ...(snapshot === undefined ? {} : { manifest: snapshot }),
     ...(source === undefined ? {} : { environment: source.values, home: source.home }),
     packageRoots: configuration.packageRoots, searchDirs: configuration.searchDirs, pathOnly: configuration.pathOnly, installations, ...(managedResolver === undefined ? {} : { managedResolver }) });
-  const harness = observed.report.harnesses.find(item => item.id === request.harnessId || item.aliases.includes(request.harnessId));
-  if (!harness) throw new SessionError("HARNESS_UNAVAILABLE", "unknown Harness: " + request.harnessId);
-  // A published managed default is an explicit installation choice for this Harness.
-  // An admitted/requested control still remains exclusive across future observations.
-  const managedChoices = harness.controls.filter(control => observed.managedBindings.has(control.id));
-  const preferred = request.controlId ?? (managedChoices.length === 1 ? managedChoices[0]!.id : undefined);
-  const selected = chooseControl(harness.controls, preferred);
-  if (selected.protocol !== "acp-v1" && selected.protocol !== "codex-app-server" && selected.protocol !== "pi-rpc")
-    throw new SessionError("UNSUPPORTED_CONTROL", "this control Driver is not implemented: " + selected.protocol);
-  return { harnessId: harness.id, selected, searchPath: observed.searchPath, managed: observed.managedBindings.get(selected.id) ?? null };
 }
 async function privateHome(root: string, configuration: SessionConfiguration): Promise<string> {
   if (configuration.configHome !== null) return configuration.configHome;
@@ -218,7 +225,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       // What the relay must never send on (ADR-055 §10.2 (a)–(c)): credential-named values this program was given or this
       // Gateway's environment holds, and whatever its configuration references by name.
       const base = nativeBaseValues(this.nativeEnvironment, home, selection.harnessId);
-      const secrets = credentialValues({ environments: [environment, this.nativeEnvironment.values], referenced: Object.entries(referenced).flatMap(([name, value]) => name in base ? [] : [value]) }, existsSync);
+      const secrets = credentialValues({ environments: [environment, this.nativeEnvironment.values], referenced: Object.entries(referenced).filter(([name]) => !(name in base)) }, existsSync);
       return new DirectoryPreparedBinding(control, configuration.workspace, lease, root, temporary, this.assertOwner, observed.managed === null ? { source: "system" } : { source: "managed", id: observed.managed.installationId, revision: observed.managed.revision, version: observed.managed.version }, usage, secrets);
     } catch (error) {
       let cleanupError: unknown;
@@ -232,6 +239,30 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       if (cleanupError) throw new SessionError("BINDING_CLEANUP_FAILED", "binding preparation failed and cleanup could not be confirmed");
       throw error;
     }
+  }
+  /**
+   * The relay's known secrets for a Session's Harnesses (ADR-055 §10.2 (a)–(c) at Session level, review M1): for each of
+   * `harnessIds`, the values its configuration references by name beyond its base profile, and the credential-named values
+   * of every control env the catalog (built-ins and the Session's manifest) declares for it; with the credential-named
+   * values of this Gateway's own environment. Reads each Harness's configuration files and the catalog as a binding does;
+   * starts nothing and holds no lease. In memory only. Rejects as a binding's preparation would when a configuration file
+   * cannot be read or the manifest changed since admission (a packet is then not sent without them).
+   */
+  async relaySecrets(configuration: SessionConfiguration, harnessIds: readonly string[]): Promise<readonly string[]> {
+    this.assertOwner();
+    const wanted = [...new Set(harnessIds)].sort(), referenced: (readonly [string, string])[] = [], environments: Readonly<Record<string, string>>[] = [this.nativeEnvironment.values];
+    for (const harnessId of wanted) {
+      const values = await referencedNativeValues(this.nativeEnvironment, configuration.configHome, harnessId, configuration.workspace);
+      const base = nativeBaseValues(this.nativeEnvironment, configuration.configHome, harnessId);
+      for (const entry of Object.entries(values)) if (!(entry[0] in base)) referenced.push(entry);
+    }
+    const root = await realpath(await mkdtemp(join(tmpdir(), "harness-relay-secrets-")));
+    try {
+      const observed = await observeCatalog(configuration, root, this.installations, this.management, this.nativeEnvironment);
+      for (const definition of observed.definitions) if (wanted.includes(definition.id) || definition.aliases.some(alias => wanted.includes(alias))) for (const control of definition.controls) environments.push(control.env);
+    } finally { await rm(root, { recursive: true, force: true }); }
+    this.assertOwner();
+    return credentialValues({ environments, referenced }, existsSync);
   }
   /** Releases the workspace lease an ended owner left for `session` once its kept processes were confirmed ended (ADR-030). */
   releaseAbandonedLease(configuration: SessionConfiguration, session: SessionId): boolean {

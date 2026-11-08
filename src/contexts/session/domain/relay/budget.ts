@@ -8,22 +8,25 @@
  * The policy every packet of this renderer belongs to. A change to a template, an escape or redaction rule, an estimator
  * coefficient, a cap or the Unicode tables of the running Node changes what is rendered and must change this version.
  */
-export const RELAY_POLICY_VERSION = "relay/1-mvp";
+export const RELAY_POLICY_VERSION = "relay/1-mvp.2";
 
 /**
  * The standard tier (ADR-055 §0, §5.3, §6.2): its cap T = min(8,000, 5% of the target's context window), the window
  * assumed when the target never reported one, the share of T that model and tool text may take, the user's-words budget
- * U, and the delta's own caps. Initial values of the design, not calibrated by a benchmark yet.
+ * U, and the delta's own caps. Initial values of the design except two, not calibrated by a benchmark yet: model and tool
+ * text may take 0.6 of T (the design's standard tier says 0.375, which kept a reply-heavy handoff near 40% of T and cut
+ * every earlier reply, review M3), and a delta's latest reply has a budget of its own beyond the turns and files.
  */
 export const RELAY_BUDGET = Object.freeze({
   standardCap: 8000,
   windowShare: 0.05,
   assumedWindow: 128_000,
-  untrustedRatio: 0.375,
+  untrustedRatio: 0.6,
   userCap: 2500,
   deltaCap: 1500,
   deltaUserCap: 1000,
   deltaUserExtension: 2000,
+  deltaReplyCap: 1500,
 });
 
 /** A Han, kana, Hangul, CJK punctuation or full-width code point: what the estimate and the language choice count apart. */

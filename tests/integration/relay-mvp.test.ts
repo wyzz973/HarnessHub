@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { nativeConversationId, type BackendResult, type CleanupEvidence, type ControlEvent, type HarnessControl, type NativeCommand } from "../../src/contracts/control.js";
+import { DirectorySessionBindingFactory, prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { LocalContentStore } from "../../src/infrastructure/session/content-store.js";
+import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
+import { SqliteWorkspaceLeaseProvider } from "../../src/infrastructure/session/workspace-lease.js";
 import { SessionError, type HarnessSelection, type PreparedSessionBinding, type PublicRun, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId, type SessionRuntimeOptions } from "../../src/contracts/session.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { RELAY_POLICY_VERSION } from "../../src/contexts/session/domain/relay/budget.js";
@@ -182,4 +185,89 @@ test("G070-MVP stored tool details are read back for the packet: the command and
       assert.match(prompt, /^- 交接时没有观测工作区；文件改动以工作区为准。$/mu);
     }
   }
+});
+
+// Review of e0cf7de: the Session's known secrets (M1) and details that cannot be read (m7).
+
+test("G070-MVP M1: the Session's known secrets through the real binding factory: what each carried Harness's configuration references and its catalog controls' credentials, with the Gateway's own", async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "relay-secrets-"))), home = join(root, "home"), workspace = join(root, "workspace"), manifest = join(root, "catalog.json");
+  const closing: (() => Promise<void>)[] = [];
+  t.after(async () => { for (const close of closing) await close(); await rm(root, { recursive: true, force: true }); });
+  await mkdir(join(home, ".config", "opencode"), { recursive: true }); await mkdir(join(home, ".codex"), { recursive: true }); await mkdir(workspace);
+  // OpenCode and Codex reference credentials by names that hold no credential word (the design's CORP_LLM); a custom catalog
+  // control carries one in its env.
+  await writeFile(join(home, ".config", "opencode", "opencode.json"), JSON.stringify({ provider: { corp: { options: { apiKey: "{env:CORP_LLM}", baseURL: "https://{env:CORP_LLM_HOST}/v1" } } } }));
+  await writeFile(join(home, ".codex", "config.toml"), '[model_providers.corp]\nname = "corp"\nenv_key = "CORP_GATEWAY"\n');
+  const source = { repository: "fixture", revision: "relay", upstreamId: "relay", url: "https://example.invalid/relay" };
+  await writeFile(manifest, JSON.stringify({ version: 2, definitions: [{ id: "corp-agent", name: "Corp Agent", aliases: [], binaryNames: [], configHints: [], controls: [{ id: "corp-agent-acp", protocol: "acp-v1",
+    executableNames: ["corp-agent"], args: [], env: { CORP_AGENT_API_KEY: "manifest-control-key-5h2k9q", CORP_AGENT_REGION: "cn-north-1" }, package: null, distribution: null, requiredExecutables: [], source }] }] }));
+  const environment = captureNativeEnvironment({ HOME: home, PATH: "/usr/bin:/bin", CORP_LLM: "corp-llm-synthetic-7d1q4x", CORP_LLM_HOST: "llm.corp.example", CORP_GATEWAY: "corp-gateway-synthetic-3m8z",
+    UNRELATED_VALUE: "unrelated-synthetic-value", GATEWAY_API_TOKEN: "gateway-own-token-9x2" });
+  const configuration = await prepareConfiguration({ workspace, manifestPath: manifest, pathOnly: true });
+  const factory = new DirectorySessionBindingFactory(new SqliteWorkspaceLeaseProvider(join(root, "locks")), () => {}, "any", undefined, undefined, environment);
+  closing.push(() => factory.close());
+  const secrets = await factory.relaySecrets(configuration, ["claude", "opencode", "codex", "corp-agent"]);
+  for (const value of ["corp-llm-synthetic-7d1q4x", "corp-gateway-synthetic-3m8z", "manifest-control-key-5h2k9q", "gateway-own-token-9x2"]) assert.ok(secrets.includes(value), value);
+  for (const value of ["llm.corp.example", "cn-north-1", "unrelated-synthetic-value", home, "/usr/bin:/bin"]) assert.ok(!secrets.includes(value), "no secret: " + value);
+  // Invalid sample: the target alone (Claude Code, which references none of them) misses what the others reference and hold.
+  const alone = await factory.relaySecrets(configuration, ["claude"]);
+  for (const value of ["corp-llm-synthetic-7d1q4x", "corp-gateway-synthetic-3m8z", "manifest-control-key-5h2k9q"]) assert.ok(!alone.includes(value), value);
+  assert.ok(alone.includes("gateway-own-token-9x2"), "the Gateway's own environment counts for every Harness");
+});
+
+/** FakeHarnesses whose factory also answers relaySecrets as the Gateway's does: by the Harnesses a packet carries. */
+class SecretHarnesses extends FakeHarnesses {
+  readonly asked: (readonly string[])[] = [];
+  constructor(reply: (harnessId: string, text: string) => string, private readonly referenced: Readonly<Record<string, readonly string[]>>) { super(reply); }
+  async relaySecrets(_configuration: SessionConfiguration, harnessIds: readonly string[]): Promise<readonly string[]> {
+    this.asked.push([...harnessIds]);
+    return harnessIds.flatMap(id => this.referenced[id] ?? []);
+  }
+}
+
+test("G070-MVP M1: the Runtime redacts with the known secrets of every Harness its packet carries, and asks for them only when a packet goes", async t => {
+  const ALPHA = "alpha-only-referenced-value-6f2k8w", reply = (harnessId: string, text: string) => harnessId === "alpha" ? "我用 " + ALPHA + " 调用了内部服务：" + text : "ok";
+  for (const answers of [true, false]) {
+    const f = await world(t), fake = answers ? new SecretHarnesses(reply, { alpha: [ALPHA] }) : new FakeHarnesses(reply);
+    const app = f.runtime(fake), session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+    await sent(app, session.id, "调用内部服务", "a1"); await sent(app, session.id, "再调一次", "a2");
+    if (fake instanceof SecretHarnesses) assert.deepEqual(fake.asked, [], "a single Harness's Turns send no packet and read nothing for one");
+    await switched(app, session.id, "bravo", "to-b");
+    await sent(app, session.id, "接着做", "b1"); await sent(app, session.id, "再来", "b2");
+    const packet = readRelayPrompt(fake.to("bravo")[0]!);
+    assert.equal(packet.kind, "packet"); assert.equal(fake.to("bravo")[1], "再来");
+    if (fake instanceof SecretHarnesses) {
+      assert.deepEqual(fake.asked, [["alpha", "bravo"]], "once, for the target and the Harness whose turns it carries");
+      assert.ok(!packet.body.includes(ALPHA)); assert.match(packet.body, /〔已脱敏 · 已知凭据〕/u);
+    } else assert.ok(packet.body.includes(ALPHA), "invalid sample: with the target binding's own secrets alone, alpha's value leaves");
+  }
+});
+
+test("G070-MVP m7: a stored detail whose bytes cannot be read (no permission, a link, a directory) is not read: readText answers null and the Turn goes on with the tool's title", async t => {
+  const tools = (harnessId: string): readonly ControlEvent[] => harnessId !== "alpha" ? [] : [
+    { type: "tool", id: "edit-1", title: "Edit file", status: "completed", detail: { kind: "edit", diff: "--- a/src/a.ts\n+++ b/src/a.ts\n+x\n", locations: ["src/a.ts"] } }];
+  const f = await world(t), fake = new FakeHarnesses(undefined, [], [], tools), app = f.runtime(fake, { content: f.content }), session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  await sent(app, session.id, "改一下 a.ts", "a1");
+  const ref = app.read(session.id).runs[0]!.tools?.[0]?.detail;
+  assert.ok(ref !== undefined, "the detail was stored");
+  const blob = f.content.read(ref.id).path, aside = blob + ".aside", mode = (await stat(blob)).mode & 0o777;
+  assert.notEqual(await f.content.readText(ref, 256 * 1024), null, "readable as stored");
+  const spoiled: readonly (readonly [string, () => Promise<void>, () => Promise<void>])[] = [
+    ["no permission (EACCES)", () => chmod(blob, 0o000), () => chmod(blob, mode)],
+    ["a link (ELOOP)", async () => { await rename(blob, aside); await symlink(aside, blob); }, async () => { await rm(blob); await rename(aside, blob); }],
+    ["a directory (EISDIR)", async () => { await rename(blob, aside); await mkdir(blob); }, async () => { await rm(blob, { recursive: true }); await rename(aside, blob); }],
+  ];
+  for (const [label, spoil, restore] of spoiled) {
+    await spoil();
+    try { assert.equal(await f.content.readText(ref, 256 * 1024), null, label); } finally { await restore(); }
+  }
+  assert.notEqual(await f.content.readText(ref, 256 * 1024), null, "readable again");
+  // Through the Runtime: the Turn that would quote it goes on and lists the tool by its title.
+  await chmod(blob, 0o000);
+  try {
+    await switched(app, session.id, "bravo", "to-b");
+    const run = await sent(app, session.id, "看看改了什么", "b1"), prompt = fake.to("bravo")[0]!;
+    assert.equal(run.status, "completed");
+    assert.match(prompt, /^- 修改 `Edit file`。$/mu); assert.match(prompt, /^- 工具详情没有读取：1 个工具调用只按标题列出。$/mu);
+  } finally { await chmod(blob, mode); }
 });
