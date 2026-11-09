@@ -370,8 +370,12 @@ export type SyncPrior =
   | { readonly kind: "fresh"; readonly basis: typeof FRESH_BASES[number] }
   | { readonly kind: "synced"; readonly mark: DeliveredMark }
   | { readonly kind: "suspect"; readonly mark: DeliveredMark | null; readonly cause: SuspectCause; readonly floorCandidate: number | null;
-      /** Only with a cause of CARRIED_CAUSES: the packet `packetId` that was pending when the binding became suspect, and the prior it was built on. */
-      readonly carried: { readonly prior: SyncPrior; readonly packetId: RelayPacketId; readonly range: SourceRange } | null;
+      /**
+       * Only with a cause of CARRIED_CAUSES: the packet `packetId` that was pending when the binding became suspect, the prior it
+       * was built on, and the pending sync's one-time attach, which a return to pending gives back (VF1-07; kept since the
+       * review of 2026-11-10).
+       */
+      readonly carried: { readonly prior: SyncPrior; readonly packetId: RelayPacketId; readonly range: SourceRange; readonly attachOverride: boolean } | null;
       /**
        * True only with cause clear_unconfirmed: this unconfirmed clear met a rewind-like suspicion (rewind, unknown_command,
        * marker_absent) not yet checked, in either order, so a marker missing from the chain cannot be put down to the clear
@@ -658,8 +662,8 @@ function syncPrior(value: unknown, nested: boolean): SyncPrior {
       const cause = choice(item.cause, SUSPECT_CAUSES, "suspect cause");
       const carried = nullable(item.carried, raw => {
         if (nested) throw new SessionError("INVALID_DATA", "a nested prior carries no packet");
-        const row = object(raw, "carried packet"); only(row, ["prior", "packetId", "range"], "carried packet");
-        return { prior: syncPrior(row.prior, true), packetId: relayPacketId(row.packetId), range: parseSourceRange(row.range) };
+        const row = object(raw, "carried packet"); only(row, ["prior", "packetId", "range", "attachOverride"], "carried packet");
+        return { prior: syncPrior(row.prior, true), packetId: relayPacketId(row.packetId), range: parseSourceRange(row.range), attachOverride: flag(row.attachOverride, "carried attach override") };
       });
       if (carried !== null && !(CARRIED_CAUSES as readonly string[]).includes(cause)) throw new SessionError("INVALID_DATA", "a suspect state of this cause carries no packet");
       const rewound = flag(item.rewound, "suspect rewound");

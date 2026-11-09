@@ -9,7 +9,7 @@ import {
 } from "../../src/contracts/relay.js";
 import { runId, type NativeSessionBinding, type RunId } from "../../src/contracts/session.js";
 import {
-  foreignTo, owed, pendingResend, planReturnVerify, resolvesWithoutCheck, restorable, retreatedPrior, step,
+  foreignTo, owed, pendingResend, planReturnVerify, admitsWithoutChoice, restorable, retreatedPrior, step,
   type BindingDelivery, type Cursor, type DecidedOutcome, type PlannedMarker, type RelayEvent, type RelayFact, type RelayStep, type VerifyPlan,
 } from "../../src/contexts/session/domain/relay/delivery.js";
 import { initialBindingRelay } from "../../src/contexts/session/domain/relay/migrate.js";
@@ -106,9 +106,11 @@ class Simulation {
   /** Counters the cases assert on, so a case that never reaches a path is visible. */
   readonly seen = { recorded: 0, retreats: 0, oldPresent: 0, resends: 0, choices: 0, clears: 0, resets: 0, d6: 0, plain: 0, checks: 0,
     epochRises: 0, emptyHistoryClears: 0, restoredWithoutChain: 0, skipChecks: 0, nativeTurns: 0, reusedIds: 0, clearChecks: 0, carriedChecks: 0, supersededBack: 0,
-    foldedCarried: 0, carriedPresent: 0, carriedCompacted: 0, pendingCompacted: 0, rewoundChecks: 0, revertedPending: 0 };
-  /** The fate the next packet takes, when a directed case sets it (otherwise drawn). */
+    foldedCarried: 0, carriedPresent: 0, carriedCompacted: 0, pendingCompacted: 0, rewoundChecks: 0, revertedPending: 0, unknownTurnsSettled: 0, afterTurnUnknownSettled: 0 };
+  /** The fate the next packet (or plain input: lost, silent) takes, when a directed case sets it (otherwise drawn). */
   forcedFate: "e1" | "e3" | "silent" | "refused" | "lost" | "late" | null = null;
+  /** A directed case: a late packet is written before an after_turn Driver's settlement check. */
+  landBeforeCheck = false;
   constructor(private readonly peer: Peer, readonly rand: () => number, readonly caps: Caps, readonly label: string) {
     this.bindings = [this.binding("ready")];
   }
@@ -235,6 +237,13 @@ class Simulation {
     }
     // Rows a check decided recorded with the binding on them keep the mark they made.
     if (this.relay.sync.kind === "synced" && before.sync.kind !== "synced") this.markRow();
+    // An unknown Turn never outlives an open, whatever the Driver: its check, or the table of unchecked suspicion, settles it
+    // (2026-11-10; an after_turn Driver checks a suspect binding at the open, since D6 happens outside any Turn).
+    if (moment === "open" && this.relay.sync.kind === "suspect" && this.relay.sync.cause === "unknown_turn") this.fail("an unknown Turn is still suspect after an open");
+    if (moment === "open" && before.sync.kind === "suspect" && before.sync.cause === "unknown_turn") {
+      this.seen.unknownTurnsSettled++;
+      if (this.caps.verify === "after_turn") this.seen.afterTurnUnknownSettled++;
+    }
   }
   /**
    * The end of a case: one more open, and then no suspect binding that needs no check is left waiting (F2, and the table of
@@ -243,8 +252,10 @@ class Simulation {
    */
   async settle(): Promise<void> {
     await this.check("open");
-    if (resolvesWithoutCheck(this.relay, this.caps.verify)) this.fail("a suspect binding that needs no check is still waiting after an open (F2)");
     const sync = this.relay.sync;
+    // What admission let through without a choice and no check could still change must have been settled by the open's k.
+    const independent = sync.kind === "suspect" && (this.caps.verify === "none" || sync.carried === null && sync.mark?.lastPacketId == null);
+    if (independent && admitsWithoutChoice(this.relay, this.caps.verify)) this.fail("a suspect binding that needs no check is still waiting after an open (F2)");
     if (this.caps.verify === "none" && sync.kind === "suspect" && sync.carried === null && (sync.cause === "unknown_turn" || sync.cause === "clear_unconfirmed" && restorable(sync.mark)))
       this.fail("a Driver that cannot check is left with " + sync.cause + " on a mark that claims nothing");
   }
@@ -335,12 +346,15 @@ class Simulation {
   private async plain(outcome: RelayStep): Promise<void> {
     this.seen.plain++;
     await this.apply(outcome, "b");
-    const id = this.nextRun(), position = await this.position(), fate = this.rand();
+    const id = this.nextRun(), position = await this.position(), drawn = this.rand();
+    // A directed case's lost input never arrives; a silent one arrives without evidence and without output.
+    const fate = this.forcedFate === "lost" ? 0.95 : this.forcedFate === "silent" ? 0.7 : drawn;
     const inserted = fate < 0.8, input = fate < 0.6 ? "recorded" as const : fate < 0.8 ? "unknown" as const : fate < 0.9 ? "not_recorded" as const : "unknown" as const;
     await this.peer.call("send", { session: this.session, runId: id, insert: inserted ? "now" : "never" });
     const at = this.commit();
     this.facts.push({ runId: id, seq: at.seq, executedOn: { ...X, nativeEpoch: this.relay.nativeEpoch } });
-    await this.apply(step(this.relay, { kind: "plain_settled", input, agentOutput: inserted && this.rand() < 0.5, contextThroughSeq: at.seq - 1 }), "j(" + input + ")");
+    const output = inserted && this.rand() < 0.5 && this.forcedFate !== "silent";
+    await this.apply(step(this.relay, { kind: "plain_settled", input, agentOutput: output, contextThroughSeq: at.seq - 1 }), "j(" + input + ")");
     this.unknownTurn = input === "unknown" ? { runId: id, position } : null;
   }
   /** n: the input alone while facts are owed (the user chose attach:"none"); no evidence, nothing changes. */
@@ -406,6 +420,7 @@ class Simulation {
     this.facts.push({ runId: id, seq: at.seq, executedOn: { ...X, nativeEpoch: this.relay.nativeEpoch } });
     this.unknownTurn = decided.kind === "unknown" ? { runId: id, position } : null;
     this.lastRefused = kind === "refused" ? { packetId, facts: facts.join(), body } : this.lastRefused;
+    if (kind === "late" && this.landBeforeCheck) await this.peer.call("flushLate", { session: this.session });
     if (this.caps.verify === "after_turn") await this.check("settled");
   }
 
@@ -575,6 +590,36 @@ test("G068-P01 a packet pending when an unchecked command comes is still checked
   }
   t.diagnostic("carried packets found " + found + ", gone " + gone);
   assert.ok(found >= 5 && gone >= 3, "both outcomes were reached");
+});
+
+test("G068-P01 the reviewer's shortest dead corner Ilost Isil E Ilate X Ie1 (after_turn, no compaction evidence, no whole history): the open settles the unknown Turn and the input goes out", async t => {
+  const peer = await startPeer(t);
+  for (const live of [true, false]) {
+    await peer.call("reset");
+    const label = "dead corner, E1 " + (live ? "live" : "not live");
+    const simulation = new Simulation(peer, generator(0x6805), { verify: "after_turn", lateDelivery: true, compaction: false, window: 200, flaky: 0, wholeHistory: false, live }, label);
+    const as = async (fate: NonNullable<Simulation["forcedFate"]>, run: () => Promise<void>) => { simulation.forcedFate = fate; try { await run(); } finally { simulation.forcedFate = null; } };
+    // Ilost, Isil: two inputs while nothing is owed, one lost, one arriving without evidence. E: another Harness's Turn.
+    await as("lost", () => simulation.contentTurn()); await as("silent", () => simulation.contentTurn());
+    await simulation.foreignTurn();
+    // Ilate: the packet of E's fact, written late but before the after_turn settlement check, so the check finds it and the
+    // binding is synced on it while the Turn's own result stays unknown.
+    simulation.landBeforeCheck = true;
+    try { await simulation.carryNow("late"); } finally { simulation.landBeforeCheck = false; }
+    const synced = simulation.relay.sync;
+    assert.ok(synced.kind === "synced" && synced.mark.lastPacketId !== null, label + ": synced on the late packet: " + JSON.stringify(synced));
+    // X: the user continues the native session (D6) outside any Turn: suspect{unknown_turn}, nothing carried, nothing owed.
+    await simulation.continueUnknown();
+    const continued = simulation.relay.sync;
+    assert.ok(continued.kind === "suspect" && continued.cause === "unknown_turn" && continued.carried === null, label + ": " + JSON.stringify(continued));
+    assert.equal(admitsWithoutChoice(simulation.relay, "after_turn"), true, label + ": admission asks nothing");
+    // Ie1: the next input. Its open checks the unknown Turn (after_turn checks a suspect binding at the open) and it goes out as typed.
+    const plainBefore = simulation.seen.plain;
+    await as("e1", () => simulation.contentTurn());
+    assert.equal(simulation.relay.sync.kind, "synced", label + ": " + simulation.log.slice(-6).join(" | "));
+    assert.equal(simulation.seen.plain, plainBefore + 1, label + ": the input went out alone, nothing owed, no choice");
+    await run(simulation, 20);
+  }
 });
 
 test("G068-P01 an old packet present never moves a pending packet, whatever else the check reports (VF1-01)", async t => {

@@ -62,7 +62,7 @@ test("G066-C08 the longest legal relay state of a binding and of a Run, committe
     const longest = parseBindingRelayState({ nativeEpoch: RELAY_MAX_SEQ + 1, epochFloor: RELAY_MAX_SEQ, packetsInEpoch: 256, reanchor: false, originIncluded: false,
       // Since G068 the longest sync is a suspect state of the longest cause carrying a packet (a pending sync's prior carries none).
       sync: { kind: "suspect", mark: mark(2), cause: "clear_unconfirmed", floorCandidate: RELAY_MAX_SEQ,
-        carried: { prior: { kind: "suspect", mark: mark(0), cause: "clear_unconfirmed", floorCandidate: RELAY_MAX_SEQ, carried: null, rewound: false }, packetId: packets[1]!.packet.id, range }, rewound: false },
+        carried: { prior: { kind: "suspect", mark: mark(0), cause: "clear_unconfirmed", floorCandidate: RELAY_MAX_SEQ, carried: null, rewound: false }, packetId: packets[1]!.packet.id, range, attachOverride: false }, rewound: false },
       compactionSeen: { count: 2_147_483_647, digest: hex("e") }, consentKey: "gateway:" + "h".repeat(253),
       vendorObserved: { model: "m".repeat(96), modelKey: "k".repeat(96), authKind: "a".repeat(16), endpoint: { host: "h".repeat(253), layer: "harness_default" }, loopback: false },
       cache: { lastRequestStartedAt: 8.64e15, contextUsed: 2_147_483_647, contextSize: 2_147_483_647 } });
