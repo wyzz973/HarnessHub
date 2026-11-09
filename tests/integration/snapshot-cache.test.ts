@@ -35,7 +35,7 @@ function code(expected: string): (error: unknown) => boolean { return error => e
 function draft(type = "session.created", data: Readonly<Record<string, unknown>> = {}): readonly EventDraft[] { return [{ type, data }]; }
 function initial(root: string, suffix = "one"): SessionSnapshot {
   const id = sessionId("session-" + suffix);
-  return { schemaVersion: 12, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
+  return { schemaVersion: 13, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
     configuration: { workspace: root, manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: false },
     selection: { harnessId: "fixture", controlId: "fixture-acp" }, activeRunId: null, pendingSwitchId: null,
     runs: [], messages: [], switches: [], commands: [{ id: commandId("create-" + suffix), kind: "create", fingerprint: "a".repeat(64), resultId: id }] };

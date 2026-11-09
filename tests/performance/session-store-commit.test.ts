@@ -9,6 +9,7 @@ import { nativeConversationId, type CleanupEvidence, type HarnessControl } from 
 import type { CommandId, EventDraft, HarnessSelection, PreparedSessionBinding, PublicRun, SelectionRequest, SessionBindingFactory, SessionCommit, SessionConfiguration, SessionId, SessionMutation, SessionSnapshot, SessionStore } from "../../src/contracts/session.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { MAX_SESSION_BYTES, utf8Bytes } from "../../src/contexts/session/domain/state.js";
+import { initialBindingRelay } from "../../src/contexts/session/domain/relay/migrate.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
 
 // G075-C01 (ADR-055 §11.2): from acceptance to dispatch on an 8 MiB snapshot, through the formal SessionRuntime and a real
@@ -107,7 +108,8 @@ function seed(store: SqliteSessionStore, id: SessionId, count: number, target: n
       commands.push({ id: runs[index]!.commandId, kind: "send", fingerprint: "a".repeat(64), resultId: run });
     }
     return { ...state, activeRunId: runs.at(-1)!.id, runs, messages, commands: [...state.commands, ...commands],
-      nativeBindings: [{ harnessId: "alpha", controlId: "alpha-acp", checkpoint: "private-native-alpha", throughRunId: null, status: "unconfirmed" as const }] };
+      // A v13 binding carries its relay state (G066); this seed starts alpha's first native session.
+      nativeBindings: [{ harnessId: "alpha", controlId: "alpha-acp", checkpoint: "private-native-alpha", throughRunId: null, status: "unconfirmed" as const, relay: initialBindingRelay([], "alpha", "alpha-acp", "new") }] };
   };
   const state = store.get(id), trial = 24 * 1024, size = utf8Bytes(JSON.stringify({ ...history(state, trial), version: 3, lastSeq: state.lastSeq + 2 * count + 1 }));
   const written = history(state, Math.floor(trial + (target - size) / count)), last = written.runs.at(-1)!;
@@ -116,7 +118,7 @@ function seed(store: SqliteSessionStore, id: SessionId, count: number, target: n
   store.transact(id, seeded.version, current => ({ next: { ...current, activeRunId: null,
     runs: current.runs.map(run => run.id === last.id ? { ...run, status: "completed" as const, cleanup: clean, timing: { ...run.timing!, endedAt: at + count * 10 } } : run),
     messages: current.messages.map(message => message.runId === last.id ? { ...message, status: "completed" as const } : message),
-    nativeBindings: [{ harnessId: "alpha", controlId: "alpha-acp", checkpoint: "private-native-alpha", throughRunId: last.id, status: "ready" }] },
+    nativeBindings: [{ harnessId: "alpha", controlId: "alpha-acp", checkpoint: "private-native-alpha", throughRunId: last.id, status: "ready", relay: current.nativeBindings![0]!.relay! }] },
     events: [{ type: "run.ended", data: { runId: last.id, status: "completed" } }] }));
 }
 function percentile(values: readonly number[], p: number): number {

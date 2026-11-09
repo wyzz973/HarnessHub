@@ -14,6 +14,7 @@ import { listedCommand, nativeConversationId, type BackendResult, type CleanupEv
 import { SessionError, type HarnessSelection, type PreparedSessionBinding, type PublicRun, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId, type SessionRuntimeOptions, type SessionSnapshot } from "../../src/contracts/session.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { MAX_SESSION_BYTES, utf8Bytes } from "../../src/contexts/session/domain/state.js";
+import { initialBindingRelay } from "../../src/contexts/session/domain/relay/migrate.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
 import { readRelayPrompt } from "../fixtures/relay-packet.js";
 import type { RelayRecord } from "../../src/contexts/session/domain/relay/packet.js";
@@ -465,13 +466,14 @@ function seed(store: SqliteSessionStore, id: SessionId, count: number, profile: 
   }
   const last = runs.at(-1)!;
   store.transact(id, state.version, current => ({ next: { ...current, activeRunId: last.id, runs, messages, commands: [...current.commands, ...commands],
-    nativeBindings: [{ harnessId: "alpha", controlId: "alpha-acp", checkpoint: "private-native-alpha", throughRunId: null, status: "unconfirmed" }] },
+    // A v13 binding carries its relay state (G066); this seed starts alpha's first native session.
+    nativeBindings: [{ harnessId: "alpha", controlId: "alpha-acp", checkpoint: "private-native-alpha", throughRunId: null, status: "unconfirmed", relay: initialBindingRelay([], "alpha", "alpha-acp", "new") }] },
     events: runs.flatMap(run => [{ type: "message.accepted", data: { runId: run.id } }, { type: "run.seeded", data: { runId: run.id } }]) }));
   const seeded = store.get(id);
   store.transact(id, seeded.version, current => ({ next: { ...current, activeRunId: null,
     runs: current.runs.map(run => run.id === last.id ? { ...run, status: "completed" as const, cleanup: clean, timing: { ...run.timing!, endedAt: at + count * 10 } } : run),
     messages: current.messages.map(message => message.runId === last.id ? { ...message, status: "completed" as const } : message),
-    nativeBindings: [{ harnessId: "alpha", controlId: "alpha-acp", checkpoint: "private-native-alpha", throughRunId: last.id, status: "ready" }] },
+    nativeBindings: [{ harnessId: "alpha", controlId: "alpha-acp", checkpoint: "private-native-alpha", throughRunId: last.id, status: "ready", relay: current.nativeBindings![0]!.relay! }] },
     events: [{ type: "run.ended", data: { runId: last.id, status: "completed" } }] }));
 }
 

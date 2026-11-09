@@ -12,6 +12,7 @@ import { nativeConversationId, type BackendResult, type CleanupEvidence, type Co
 import { SessionError, STREAM_WINDOW_MS, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId } from "../../src/contracts/session.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { MAX_OUTPUT_BYTES } from "../../src/contexts/session/domain/state.js";
+import { initialBindingRelay } from "../../src/contexts/session/domain/relay/migrate.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
 import { LocalContentStore } from "../../src/infrastructure/session/content-store.js";
 import { SqliteWorkspaceLeaseProvider } from "../../src/infrastructure/session/workspace-lease.js";
@@ -882,7 +883,7 @@ test("a native session continues as a new conversation that quotes its recent hi
   // The newest 200 messages are quoted; the five older ones join the four the Harness already left out.
   assert.equal(origin.title, "Earlier work"); assert.equal(origin.history.length, 200); assert.equal(origin.omitted, 9); assert.equal(origin.complete, false);
   assert.deepEqual([origin.history[0]!.text, origin.history.at(-1)!.text, origin.history.at(-2)!.harnessId], ["message 5", "message 204", "alpha"]);
-  assert.deepEqual(imported.nativeBindings, [{ harnessId: "alpha", controlId: "alpha-acp", checkpoint: "private-native-a", throughRunId: null, status: "ready" }]);
+  assert.deepEqual(imported.nativeBindings, [{ harnessId: "alpha", controlId: "alpha-acp", checkpoint: "private-native-a", throughRunId: null, status: "ready", relay: initialBindingRelay([], "alpha", "alpha-acp", "import") }]);
   assert.equal((await app.importNative(f.configuration, { harnessId: "alpha" }, "native-a", "import-one")).id, imported.id); assert.equal(reads.length, 1, "a replayed command reads nothing");
   await assert.rejects(app.importNative(f.configuration, { harnessId: "alpha" }, "native-b", "import-one"), (error: unknown) => error instanceof SessionError && error.code === "IDEMPOTENCY_CONFLICT");
   await assert.rejects(app.importNative(f.configuration, { harnessId: "alpha" }, "native-a", "import-two"), (error: unknown) => error instanceof SessionError && error.code === "NATIVE_SESSION_CONFLICT", "one native session has one conversation");

@@ -10,6 +10,7 @@ import {
 import { buildPublicContext, publicSources, type PublicContext, type PublicContextOptions } from "../domain/context.js";
 import { parseToolDetail, type RelayToolDetail } from "../domain/relay/narration.js";
 import { advances, commandEffect, commandOutcome, dispatched, type InputOutcome } from "../domain/relay/advance.js";
+import { initialBindingRelay } from "../domain/relay/migrate.js";
 import { MAX_COMMANDS, MAX_OUTPUT_BYTES, MAX_PLAN_ENTRIES, MAX_QUEUE, MAX_RUNS, MAX_RUN_ACTIVITIES, MAX_RUN_NOTICES, MAX_RUN_TOOLS, assertInput, carriedNativeConfiguration, parseConfiguration, parseNativeConfiguration, replayCommand, terminal, utf8Bytes } from "../domain/state.js";
 
 interface ActiveExecution {
@@ -277,7 +278,7 @@ export class SessionRuntime {
     const concurrent = this.store.findByCreateKey(command);
     if (concurrent) { replayCommand(concurrent, command, "create", fingerprint); return concurrent; }
     const id = sessionId("session-" + this.options.id());
-    const state: SessionSnapshot = { schemaVersion: 12, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
+    const state: SessionSnapshot = { schemaVersion: 13, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
       configuration: config, selection: validated, activeRunId: null, pendingSwitchId: null,
       runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }] };
     try {
@@ -337,10 +338,10 @@ export class SessionRuntime {
     }
     const title = typeof read.title === "string" && read.title.trim() ? read.title.replace(/[\0-\x1f\x7f]+/gu, " ").trim().slice(0, 200) : null;
     const id = sessionId("session-" + this.options.id());
-    const state: SessionSnapshot = { schemaVersion: 12, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration: config, selection: validated,
+    const state: SessionSnapshot = { schemaVersion: 13, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration: config, selection: validated,
       activeRunId: null, pendingSwitchId: null, runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }],
       origin: { kind: "import", harnessId: validated.harnessId, title, omitted, complete: read.historyRead === true && read.complete === true, historyRead: read.historyRead === true, history: quoted },
-      nativeBindings: [{ harnessId: validated.harnessId, controlId: validated.controlId, checkpoint, throughRunId: null, status: "ready" }] };
+      nativeBindings: [{ harnessId: validated.harnessId, controlId: validated.controlId, checkpoint, throughRunId: null, status: "ready", relay: initialBindingRelay([], validated.harnessId, validated.controlId, "import") }] };
     try {
       const committed = this.store.create(state, [event("session.created", { selection: validated, continuity: "native_import",
         origin: { harnessId: validated.harnessId, messages: quoted.length, omitted, historyRead: read.historyRead === true } })]);
@@ -462,10 +463,11 @@ export class SessionRuntime {
     const nativeFork = native !== undefined && native.throughRunId === through.id && !source.runs.slice(last + 1).some(run =>
       run.selection.provider === undefined && run.selection.harnessId === native.harnessId && run.selection.controlId === native.controlId && dispatched(run));
     const id = sessionId("session-" + this.options.id());
-    const state: SessionSnapshot = { schemaVersion: 12, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration: source.configuration, selection: source.selection,
+    const state: SessionSnapshot = { schemaVersion: 13, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration: source.configuration, selection: source.selection,
       activeRunId: null, pendingSwitchId: null, runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }],
       origin: { kind: "fork", sessionId: sourceId, throughRunId: through.id, history },
-      ...(nativeFork ? { nativeBindings: [{ harnessId: native.harnessId, controlId: native.controlId, checkpoint: native.checkpoint, throughRunId: null, status: "fork-pending" as const }] } : {}) };
+      ...(nativeFork ? { nativeBindings: [{ harnessId: native.harnessId, controlId: native.controlId, checkpoint: native.checkpoint, throughRunId: null, status: "fork-pending" as const,
+        relay: initialBindingRelay([], native.harnessId, native.controlId, "fork") }] } : {}) };
     try {
       const committed = this.store.create(state, [event("session.created", { selection: state.selection, continuity: nativeFork ? "native_fork" : "public_context_rehydrate", origin: { sessionId: sourceId, throughRunId: through.id, messages: history.length, nativeFork } })]);
       this.managedSessions.add(id); this.publish(committed);
@@ -1459,8 +1461,12 @@ export class SessionRuntime {
         if (checkpoint !== null) {
           const reference: NativeSessionBinding = { harnessId: run.selection.harnessId, controlId: run.selection.controlId, checkpoint, throughRunId: previousNative?.throughRunId ?? null, status: "unconfirmed",
             ...(previousNative?.observed === undefined ? {} : { observed: previousNative.observed }) };
-          this.commit(id, current => ({ next: { ...current, nativeBindings: previousNative === undefined ? [...(current.nativeBindings ?? []), reference] : current.nativeBindings?.map(binding => binding.harnessId === reference.harnessId && binding.controlId === reference.controlId && binding.status !== "archived" ? reference : binding) ?? [reference] },
-            events: [event("native.binding_prepared", { runId: target, harnessId: reference.harnessId, controlId: reference.controlId, resumed: previousNative !== undefined })] }));
+          this.commit(id, current => {
+            // Every v13 binding carries its relay state: a resumed one keeps its own; a new one starts as its lineage says (ADR-055 §7.5).
+            const bound: NativeSessionBinding = { ...reference, relay: previousNative?.relay ?? initialBindingRelay(current.nativeBindings ?? [], reference.harnessId, reference.controlId, "new") };
+            return { next: { ...current, nativeBindings: previousNative === undefined ? [...(current.nativeBindings ?? []), bound] : current.nativeBindings?.map(binding => binding.harnessId === bound.harnessId && binding.controlId === bound.controlId && binding.status !== "archived" ? bound : binding) ?? [bound] },
+              events: [event("native.binding_prepared", { runId: target, harnessId: reference.harnessId, controlId: reference.controlId, resumed: previousNative !== undefined })] };
+          });
           checkpointStored = true;
         }
       }

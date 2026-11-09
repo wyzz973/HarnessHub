@@ -7,10 +7,20 @@ import {
   type CommandId, type EventDraft, type SessionCommit, type SessionEvent, type SessionId,
   type SessionMutation, type SessionSnapshot, type SessionStore,
 } from "../../contracts/session.js";
+import type { ConsentAppend, ConsentRecord, DeliveryRecord, RecoverRelay, RelayCommitResult, RelayLogPort, RelayPrefKey, RelayStorePort, RelayWindow, RelayWriteResult, RelayWriteRows } from "../../contracts/relay.js";
 import { MAX_EVENT_BYTES, MAX_EVENT_LOG_BYTES, MAX_READ_BYTES, MAX_READ_ITEMS, MAX_SESSION_BYTES, MAX_SESSION_EVENTS, assertSessionTransition, parseSession, recoverSession, utf8Bytes } from "../../contexts/session/domain/state.js";
+import { migrateSession, type MigrationEvent } from "../../contexts/session/domain/relay/migrate.js";
 import { MAX_SNAPSHOT_CACHE_BYTES, SnapshotCache, type SnapshotCacheStats } from "./snapshot-cache.js";
+import { RELAY_DDL, checkPacketReferences, checkRelayRows, checkRelayWrite, deleteRelayRows, diagnosticOf, pruneRelayWindows, readDeliveries, relayRowCounts, upsertRelayWindow, writeBehindIndexes, writeDerivedRows, writeRelayRows, writeRelayWrite } from "./relay-tables.js";
+import { appendConsent, currentConsents, readPrefs, writePref } from "./relay-log.js";
 
 const activeRoots = new Set<string>();
+/** The business database version this build owns (Session v13, ADR-055 §14.4); 1–12 are migrated to it. */
+const CURRENT_VERSION = 13;
+/** The relay part of recovery until G068 provides it: nothing to recover (no Turn writes relay rows before G068). */
+const NO_RELAY_RECOVERY: RecoverRelay = () => null;
+/** How many relayWrite failures the Store keeps for diagnostics. */
+const RELAY_DIAGNOSTICS = 32;
 interface FileIdentity { readonly dev: string; readonly ino: string }
 interface OwnerRow { readonly generation: number; readonly pid: number; readonly token: string; readonly active: boolean }
 function sameFile(left: FileIdentity, right: FileIdentity): boolean { return left.dev === right.dev && left.ino === right.ino; }
@@ -134,10 +144,13 @@ function syncPath(path: string): void {
   const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
 }
-function rowCounts(database: DatabaseSync): { readonly sessions: number; readonly events: number } {
+/** Row counts a backup is read back against: sessions and events, and from v13 on the relay tables too (ADR-049). */
+function rowCounts(database: DatabaseSync, version: number): Readonly<Record<string, number>> {
   const row = object(database.prepare("SELECT (SELECT count(*) FROM sessions) AS sessions,(SELECT count(*) FROM events) AS events").get(), "business row counts");
-  return { sessions: integer(row.sessions, "Session row count"), events: integer(row.events, "event row count") };
+  return { sessions: integer(row.sessions, "Session row count"), events: integer(row.events, "event row count"), ...(version >= 13 ? relayRowCounts(database) : {}) };
 }
+/** The event types the v13 migration reads (ADR-055 §14.4); the others (outputs, tools, permissions) are skipped in SQLite. */
+const MIGRATION_EVENTS = ["session.created", "session.recovered", "message.accepted", "run.context_prepared", "run.native_command", "run.ended", "native.binding_prepared", "native.branch_requested", "native.fork_failed"] as const;
 function freeze(value: unknown): void {
   if (value === null || typeof value !== "object" || Object.isFrozen(value)) return;
   for (const item of Object.values(value)) freeze(item); Object.freeze(value);
@@ -200,7 +213,7 @@ function readEventsFrom(database: DatabaseSync, state: SessionSnapshot, afterSeq
  * Owns the data-root OS lock and synchronous aggregate transactions until close(). The snapshots it returns, read or
  * committed, are validated and deeply frozen: the readers of one version share one object from its cache (ADR-055 §11.2).
  */
-export class SqliteSessionStore implements SessionStore {
+export class SqliteSessionStore implements SessionStore, RelayStorePort, RelayLogPort {
   readonly ownerGeneration: number;
   private readonly root: string;
   private readonly rootIdentity: FileIdentity;
@@ -220,17 +233,24 @@ export class SqliteSessionStore implements SessionStore {
   private dataVersion: number | null = null;
   private closed = false;
   private failed: SessionError | null = null;
+  /** The relay part of recovery, called per Session inside claimAndRecover's transaction (ADR-055 §9 S15). */
+  private readonly recoverRelay: RecoverRelay;
+  /** The latest relayWrite failures, newest last (ADR-055 §6.4: a derived row that cannot be written waits for next time). */
+  private readonly relayFailures: string[] = [];
 
   /**
-   * Opens `root` as its single owner: takes the OS lock (`owner.sqlite`), then in one transaction migrates a v1–v11 business
-   * database to v12, advances the owner generation and recovers unfinished executions.
+   * Opens `root` as its single owner: takes the OS lock (`owner.sqlite`), then in one transaction migrates a v1–v12 business
+   * database to v13, advances the owner generation and recovers unfinished executions. A new database is made as v13. The
+   * v12 → v13 step makes the relay tables, gives every native binding its relay state as its Session's events show it
+   * (migrateSession, ADR-055 §14.4) and writes a behind digest index row for every finished dispatched Run; any failure rolls
+   * the whole transaction back and leaves the database at its version, with the backup kept.
    *
    * Before such a migration, with the lock already held and before that transaction begins, the business database is copied
    * with VACUUM INTO to `backups/gateway-v<from>-<UTC yyyymmddThhmmssZ>-<8 hex>.sqlite` under the root (directory 0700, file
    * 0600, time from `now`). The copy is written as `<name>.partial`, read back (same user_version, as many sessions and events
-   * rows, quick_check ok) and synced before it takes its name. Just before writing, every backup but the newest by the time in
-   * its name is removed, so two remain. A new (v0) or current (v12) database is not copied, nor is one opened by
-   * SqliteSessionReader.
+   * rows and, from a v13 source on, as many rows in each relay table; quick_check ok) and synced before it takes its name.
+   * Just before writing, every backup but the newest by the time in its name is removed, so two remain. A new (v0) or current
+   * (v13) database is not copied, nor is one opened by SqliteSessionReader.
    *
    * Throws STORAGE_BACKUP_FAILED, with the cause kept, when any of that fails: nothing was migrated or claimed, the business
    * database's rows and version are as they were, the files this attempt wrote are removed and the lock is released.
@@ -240,10 +260,16 @@ export class SqliteSessionStore implements SessionStore {
    *
    * `snapshotCacheBytes` is the byte budget of the snapshot cache this store owns (0 to MAX_SNAPSHOT_CACHE_BYTES, the
    * default); any other value throws INVALID_INPUT before the root is touched.
+   *
+   * `recoverRelay` is the relay part of recovery (G068's domain function; none by default): claimAndRecover calls it for
+   * each Session recoverSession changes, inside a SAVEPOINT of that Session's own, and writes its delivery outcomes. When it
+   * or those writes fail, only that Session's relay rows roll back: its recovery is committed without them, with
+   * `relayRecoveryFailed` set to its `session.recovered` seq and `relay: { failed: true }` in that event.
    */
-  constructor(root: string, options: { readonly now?: () => Date; readonly snapshotCacheBytes?: number } = {}) {
+  constructor(root: string, options: { readonly now?: () => Date; readonly snapshotCacheBytes?: number; readonly recoverRelay?: RecoverRelay } = {}) {
     if (!isAbsolute(root) || root.includes("\0") || utf8Bytes(root) > 4096) throw new SessionError("INVALID_INPUT", "data root must be a bounded absolute path");
     this.now = options.now ?? (() => new Date());
+    this.recoverRelay = options.recoverRelay ?? NO_RELAY_RECOVERY;
     this.cache = new SnapshotCache(options.snapshotCacheBytes ?? MAX_SNAPSHOT_CACHE_BYTES);
     const initialized = initializeRoot(root);
     this.root = initialized.root; this.rootIdentity = pathIdentity(this.root, true);
@@ -281,7 +307,7 @@ export class SqliteSessionStore implements SessionStore {
     try {
       this.assertPaths();
       const version = this.database.prepare("PRAGMA user_version").get();
-      if (!version || version.user_version !== 12) throw new SessionError("OWNER_LOST", "business database schema no longer matches this owner");
+      if (!version || version.user_version !== CURRENT_VERSION) throw new SessionError("OWNER_LOST", "business database schema no longer matches this owner");
       const metadata = this.readOwner();
       if (!metadata.active || metadata.generation !== this.ownerGeneration || metadata.token !== this.token || metadata.pid !== process.pid) throw new SessionError("OWNER_LOST", "persistent owner generation no longer belongs to this process");
     } catch (error) {
@@ -294,7 +320,7 @@ export class SqliteSessionStore implements SessionStore {
 
   create(snapshot: SessionSnapshot, events: readonly EventDraft[]): SessionCommit {
     this.assertOwner();
-    if (snapshot.schemaVersion !== 12 || snapshot.version !== 0 || snapshot.lastSeq !== 0) throw new SessionError("INVALID_INPUT", "new Session must use schema v12 and start at version and cursor zero");
+    if (snapshot.schemaVersion !== CURRENT_VERSION || snapshot.version !== 0 || snapshot.lastSeq !== 0) throw new SessionError("INVALID_INPUT", "new Session must use schema v13 and start at version and cursor zero");
     const entries = drafts(events), next = parseSession({ ...snapshot, version: 1, lastSeq: entries.length });
     const create = next.commands.find(entry => entry.kind === "create");
     if (!create) throw new SessionError("INVALID_DATA", "Session create command is missing");
@@ -364,6 +390,12 @@ export class SqliteSessionStore implements SessionStore {
       return referenced;
     });
   }
+  /**
+   * One aggregate transaction. With `relay` rows (v13) the same transaction writes them: authoritative rows are checked in
+   * full before anything is written, so an expected relay failure throws a RelayError (RELAY_PREPARE_FAILED) and writes
+   * nothing, never disabling the Store (INV-35); derived rows go into a SAVEPOINT and only report `behind` when they fail.
+   * Every packet the next relay state names must be kept for the Session (INVALID_DATA otherwise).
+   */
   transact(id: SessionId, expectedVersion: number, mutate: (current: SessionSnapshot) => SessionMutation): SessionCommit {
     this.assertOwner(); sessionId(id);
     if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1 || typeof mutate !== "function") throw new SessionError("INVALID_INPUT", "transaction requires a positive expected version and synchronous mutation");
@@ -374,19 +406,25 @@ export class SqliteSessionStore implements SessionStore {
       if (current.version !== expectedVersion) throw new SessionError("VERSION_CONFLICT", "Session version changed before the mutation");
       const mutation = mutate(current);
       if (mutation === null || typeof mutation !== "object" || "then" in mutation) throw new SessionError("INVALID_DATA", "Session mutation must be synchronous");
+      if (mutation.relay !== undefined && (mutation.relay === null || typeof mutation.relay !== "object" || Array.isArray(mutation.relay))) throw new SessionError("INVALID_DATA", "relay rows must be an object");
       const entries = drafts(mutation.events);
       // Finished Runs the mutation kept as they were are not validated again (ADR-055 §11.2); every relation still is.
       const next = parseSession({ ...mutation.next, version: current.version + 1, lastSeq: current.lastSeq + entries.length }, current);
       if (next.id !== current.id) throw new SessionError("INVALID_DATA", "transaction cannot replace Session identity");
       const previousCreate = current.commands.find(entry => entry.kind === "create"), nextCreate = next.commands.find(entry => entry.kind === "create");
       if (!previousCreate || !nextCreate || JSON.stringify(previousCreate) !== JSON.stringify(nextCreate)) throw new SessionError("INVALID_DATA", "transaction cannot replace Session create identity");
-      assertSessionTransition(current, next);
+      assertSessionTransition(current, next, entries);
+      // Every relay check runs before the first statement that writes (INV-35).
+      const relay = checkRelayRows(this.database, id, next, mutation.relay);
       const committed = this.commitEvents(id, current.lastSeq, entries, this.ownerGeneration), serialized = JSON.stringify(next);
+      writeRelayRows(this.database, id, relay);
+      checkPacketReferences(this.database, id, current, next);
       const updated = this.database.prepare("UPDATE sessions SET version=?,last_seq=?,snapshot=? WHERE id=? AND version=?").run(next.version, next.lastSeq, serialized, id, expectedVersion);
       if (updated.changes !== 1) throw new SessionError("VERSION_CONFLICT", "Session compare-and-swap failed");
       const logBytes = this.insertEvents(id, current.lastSeq, committed);
+      const derived: RelayCommitResult | undefined = mutation.relay === undefined ? undefined : writeDerivedRows(this.database, id, next, mutation.relay.derived);
       freeze(next); cached = { next, bytes: Buffer.byteLength(serialized, "utf8"), logBytes };
-      return { session: next, events: committed };
+      return { session: next, events: committed, ...(derived === undefined ? {} : { relay: derived }) };
     }, () => { if (cached !== null) this.cache.put(cached.next, cached.bytes, cached.logBytes); });
   }
   events(id: SessionId, afterSeq: number, limit?: number): readonly SessionEvent[] {
@@ -396,6 +434,65 @@ export class SqliteSessionStore implements SessionStore {
   }
   /** How the snapshot cache has been used (ADR-055 §11.2), for diagnostics and tests; reading it changes nothing. */
   cacheStats(): SnapshotCacheStats { return this.cache.stats(); }
+
+  relayWrite(id: SessionId, rows: RelayWriteRows): RelayWriteResult {
+    this.assertOwner(); sessionId(id);
+    if (rows === null || typeof rows !== "object" || Array.isArray(rows)) throw new SessionError("INVALID_INPUT", "relay rows must be an object");
+    let checked: ReturnType<typeof checkRelayWrite>;
+    try {
+      this.database.exec("BEGIN IMMEDIATE");
+      this.observeWriters();
+      checked = checkRelayWrite(this.database, id, this.session(id), rows);
+    } catch (error) { this.abandon(error); throw this.failed ?? error; }
+    try { writeRelayWrite(this.database, id, checked); }
+    catch (error) {
+      if (!sqliteError(error)) { this.abandon(error); throw this.failed ?? error; }
+      // A derived row that cannot be written now is left for the next time; the Store keeps serving (ADR-055 §6.4, F07).
+      const diagnostic = diagnosticOf(error);
+      this.abandon(null);
+      if (this.failed) throw this.failed;
+      this.relayFailures.push(diagnostic); if (this.relayFailures.length > RELAY_DIAGNOSTICS) this.relayFailures.shift();
+      return { written: false, diagnostic };
+    }
+    try {
+      this.assertPaths();
+      const metadata = this.readOwner();
+      if (metadata.generation !== this.ownerGeneration || metadata.token !== this.token) throw new SessionError("OWNER_LOST", "owner generation changed inside transaction");
+      this.database.exec("COMMIT");
+    } catch (error) { this.abandon(error); throw this.failed ?? error; }
+    return { written: true };
+  }
+  /** The latest relayWrite failures this Store kept (at most RELAY_DIAGNOSTICS), oldest first; reading them changes nothing. */
+  relayDiagnostics(): readonly string[] { return [...this.relayFailures]; }
+  deleteSession(id: SessionId): void {
+    this.assertOwner(); sessionId(id);
+    this.transaction(() => {
+      const state = this.session(id, false);
+      if (state.status !== "closed" || state.retained !== undefined) throw new SessionError("SESSION_BUSY", "only a closed conversation that keeps no native process is deleted");
+      deleteRelayRows(this.database, id);
+      this.database.prepare("DELETE FROM events WHERE session_id=?").run(id);
+      this.database.prepare("DELETE FROM create_keys WHERE session_id=?").run(id);
+      this.database.prepare("DELETE FROM sessions WHERE id=?").run(id);
+    }, () => { this.cache.clear(); });
+  }
+  relayDeliveries(id: SessionId): readonly DeliveryRecord[] {
+    this.assertOwner(); sessionId(id);
+    return this.read(() => readDeliveries(this.database, id, this.session(id)));
+  }
+  appendRelayLog(record: ConsentAppend): ConsentRecord {
+    this.assertOwner();
+    return this.transaction(() => appendConsent(this.database, record, this.time()));
+  }
+  upsertWindow(window: RelayWindow): void {
+    this.assertOwner();
+    this.transaction(() => { upsertRelayWindow(this.database, window); });
+  }
+  setPref(key: RelayPrefKey, value: string): void {
+    this.assertOwner();
+    this.transaction(() => { writePref(this.database, key, value, this.time()); });
+  }
+  relayPrefs(): Readonly<Partial<Record<RelayPrefKey, string>>> { this.assertOwner(); return this.read(() => readPrefs(this.database)); }
+  relayConsents(): readonly ConsentRecord[] { this.assertOwner(); return this.read(() => currentConsents(this.database)); }
 
   close(): void {
     if (this.closed) return;
@@ -412,18 +509,29 @@ export class SqliteSessionStore implements SessionStore {
     if (failure !== null) throw failure;
   }
 
+  /** Rolls back a write of relayWrite: a SQLite `cause` or a failed rollback disables the Store, ownership loss as always. */
+  private abandon(cause: unknown): void {
+    try { if (this.database.isTransaction) this.database.exec("ROLLBACK"); }
+    catch (rollbackError) { this.failed = storageFailure(rollbackError); }
+    if (cause !== null && sqliteError(cause)) this.failed = storageFailure(cause);
+    if (cause instanceof SessionError && cause.code === "OWNER_LOST") this.failed = cause;
+    if (this.failed) this.cache.clear();
+  }
+  private time(): number {
+    try { return this.now().getTime(); } catch { throw new SessionError("INVALID_INPUT", "clock did not provide a valid Date"); }
+  }
   private assertPaths(): void {
     if (!this.owner.isOpen || !this.owner.isTransaction || !this.database.isOpen || !sameFile(this.rootIdentity, pathIdentity(this.root, true)) || !sameFile(this.markerIdentity, pathIdentity(this.markerPath)) || !sameFile(this.ownerIdentity, pathIdentity(this.ownerPath)) || !sameFile(this.databaseIdentity, pathIdentity(this.databasePath))) throw new SessionError("OWNER_LOST", "owner lock transaction or storage path identity was lost");
   }
   private readOwner(): OwnerRow { return ownerRow(this.database.prepare("SELECT owner_generation,owner_pid,owner_token,owner_active FROM owner_metadata WHERE singleton=1").get()); }
   /**
-   * Copies a v1–v11 business database to `<root>/backups` before claimAndRecover migrates it (ADR-049). It runs with the owner
+   * Copies a v1–v12 business database to `<root>/backups` before claimAndRecover migrates it (ADR-049). It runs with the owner
    * lock held and outside any transaction, as VACUUM INTO requires, and only reads the business database.
    */
   private backupBeforeMigration(): void {
     const from = integer(object(this.database.prepare("PRAGMA user_version").get(), "database schema version").user_version, "database schema version");
-    // v0 is created directly as v12 and v12 is current; claimAndRecover refuses any other version without migrating.
-    if (from < 1 || from > 11) return;
+    // v0 is created directly as v13 and v13 is current; claimAndRecover refuses any other version without migrating.
+    if (from < 1 || from >= CURRENT_VERSION) return;
     const folder = join(this.root, "backups");
     let step = "prepare the backups directory", created = false, partial: string | null = null, published: string | null = null;
     try {
@@ -452,11 +560,12 @@ export class SqliteSessionStore implements SessionStore {
       try { fchmodSync(descriptor, 0o600); } finally { closeSync(descriptor); }
       this.database.prepare("VACUUM INTO ?").run(path);
       step = "verify the backup";
-      const written = lstatSync(path), source = rowCounts(this.database), copy = new DatabaseSync(path, { readOnly: true, timeout: 0, allowExtension: false });
+      // A source before v13 has no relay tables; from v13 on they are counted too (ADR-049, ADR-055 §14.1).
+      const written = lstatSync(path), source = rowCounts(this.database, from), copy = new DatabaseSync(path, { readOnly: true, timeout: 0, allowExtension: false });
       try {
-        const counts = rowCounts(copy), check = copy.prepare("PRAGMA quick_check").all();
+        const counts = rowCounts(copy, from), check = copy.prepare("PRAGMA quick_check").all();
         if (!written.isFile() || written.nlink !== 1 || (written.mode & 0o777) !== 0o600 || copy.prepare("PRAGMA user_version").get()?.user_version !== from ||
-            counts.sessions !== source.sessions || counts.events !== source.events || check.length !== 1 || check[0]?.quick_check !== "ok")
+            JSON.stringify(counts) !== JSON.stringify(source) || check.length !== 1 || check[0]?.quick_check !== "ok")
           throw new SessionError("INVALID_DATA", "the backup does not read back as the business database it copies");
       } finally { copy.close(); }
       step = "publish the backup";
@@ -483,7 +592,7 @@ export class SqliteSessionStore implements SessionStore {
     try {
       const versionRow = object(db.prepare("PRAGMA user_version").get(), "database schema version");
       const version = integer(versionRow.user_version, "database schema version");
-      if (version !== 0 && version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 6 && version !== 7 && version !== 8 && version !== 9 && version !== 10 && version !== 11 && version !== 12) throw new SessionError("INVALID_DATA", "unknown business database schema version");
+      if (!Number.isSafeInteger(version) || version < 0 || version > CURRENT_VERSION) throw new SessionError("INVALID_DATA", "unknown business database schema version");
       if (version === 0) {
         const tables = db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
         if (tables.length !== 0) throw new SessionError("INVALID_DATA", "unversioned business database already contains data");
@@ -493,8 +602,9 @@ export class SqliteSessionStore implements SessionStore {
           CREATE TABLE sessions(id TEXT PRIMARY KEY,version INTEGER NOT NULL CHECK(version>=1),last_seq INTEGER NOT NULL CHECK(last_seq>=0),snapshot TEXT NOT NULL CHECK(json_valid(snapshot))) STRICT;
           CREATE TABLE create_keys(command_id TEXT PRIMARY KEY,session_id TEXT NOT NULL UNIQUE REFERENCES sessions(id),fingerprint TEXT NOT NULL) STRICT;
           CREATE TABLE events(session_id TEXT NOT NULL REFERENCES sessions(id),seq INTEGER NOT NULL CHECK(seq>=1),owner_generation INTEGER NOT NULL CHECK(owner_generation>=1),event_json TEXT NOT NULL CHECK(json_valid(event_json)),PRIMARY KEY(session_id,seq)) STRICT;
-          PRAGMA user_version=12;
         `);
+        // A new database is made at the current version, with the relay tables (ADR-055 §14.1).
+        db.exec(RELAY_DDL); db.exec("PRAGMA user_version=" + CURRENT_VERSION);
       }
       const prior = this.readOwner();
       if (prior.active && processMayBeAlive(prior.pid)) throw new SessionError("OWNER_UNCONFIRMED", "previous owner may still be alive; automatic takeover is refused");
@@ -602,21 +712,78 @@ export class SqliteSessionStore implements SessionStore {
         }
         db.exec("PRAGMA user_version=12");
       }
+      // v13 adds the relay tables and each native binding's relay state, inferred from its Session's events (ADR-055 §14.4).
+      if (version >= 1 && version <= 12) {
+        db.exec(RELAY_DDL);
+        for (const row of db.prepare("SELECT id FROM sessions ORDER BY rowid").all()) {
+          const state = this.readSession(sessionId(row.id));
+          if (state.schemaVersion !== 12) throw new SessionError("INVALID_DATA", "database v12 contains a non-v12 Session");
+          const migrated = migrateSession(state, this.migrationEvents(state));
+          const next = parseSession({ ...state, schemaVersion: 13, ...(state.nativeBindings === undefined ? {} : { nativeBindings: state.nativeBindings.map((binding, index) => ({ ...binding, relay: migrated.bindings[index]! })) }) });
+          db.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify(next), state.id);
+          writeBehindIndexes(db, state.id, migrated.runs);
+        }
+        db.exec("PRAGMA user_version=13");
+      }
       const generation = prior.generation + 1;
       if (!Number.isSafeInteger(generation)) throw new SessionError("INVALID_DATA", "owner generation exhausted");
       db.prepare("UPDATE owner_metadata SET owner_generation=?,owner_pid=?,owner_token=?,owner_active=1 WHERE singleton=1").run(generation, process.pid, this.token);
+      // Windows nobody observed for 30 days are not read any more (ADR-055 §14.1).
+      pruneRelayWindows(db, this.time());
       for (const row of db.prepare("SELECT id FROM sessions ORDER BY rowid").all()) {
         const state = this.readSession(sessionId(row.id)), recovered = recoverSession(state);
         const budget = db.prepare("SELECT COALESCE(SUM(length(CAST(event_json AS BLOB))),0) AS bytes,COALESCE(MAX(length(CAST(event_json AS BLOB))),0) AS maximum,COALESCE(MAX(owner_generation),0) AS generation FROM events WHERE session_id=?").get(state.id);
         if (integer(budget?.bytes, "persisted log bytes") > MAX_EVENT_LOG_BYTES || integer(budget?.maximum, "persisted event bytes") > MAX_EVENT_BYTES || integer(budget?.generation, "persisted event generation") > prior.generation) throw new SessionError("INVALID_DATA", "persisted event log exceeds its budget or owner generation");
         if (!recovered) continue;
-        const entries = drafts(recovered.events), next = parseSession({ ...recovered.next, version: state.version + 1, lastSeq: state.lastSeq + entries.length });
-        assertSessionTransition(state, next);
-        db.prepare("UPDATE sessions SET version=?,last_seq=?,snapshot=? WHERE id=?").run(next.version, next.lastSeq, JSON.stringify(next), next.id);
-        this.insertEvents(next.id, state.lastSeq, this.commitEvents(next.id, state.lastSeq, entries, generation));
+        const next = this.recoverWithRelay(state, recovered);
+        db.prepare("UPDATE sessions SET version=?,last_seq=?,snapshot=? WHERE id=?").run(next.next.version, next.next.lastSeq, JSON.stringify(next.next), next.next.id);
+        this.insertEvents(next.next.id, state.lastSeq, this.commitEvents(next.next.id, state.lastSeq, next.entries, generation));
       }
       this.assertPaths(); db.exec("COMMIT"); return generation;
     } catch (error) { if (db.isTransaction) db.exec("ROLLBACK"); throw error; }
+  }
+  /**
+   * Recovery of one Session with its relay part (ADR-055 §9 S15): the relay recovery's Session and delivery outcomes are
+   * checked and written inside a SAVEPOINT of the Session's own; when anything of it fails, that SAVEPOINT is rolled back and
+   * the Session is recovered without it, marked `relayRecoveryFailed` with `relay: { failed: true }` in its
+   * `session.recovered`. A failure that ended the whole transaction is not contained.
+   */
+  private recoverWithRelay(state: SessionSnapshot, recovered: SessionMutation): { readonly next: SessionSnapshot; readonly entries: readonly EventDraft[] } {
+    const db = this.database, at = (next: SessionSnapshot, events: readonly EventDraft[]) => {
+      const entries = drafts(events), parsed = parseSession({ ...next, version: state.version + 1, lastSeq: state.lastSeq + entries.length });
+      assertSessionTransition(state, parsed, entries);
+      return { next: parsed, entries };
+    };
+    const withRelay = (relay: Readonly<Record<string, unknown>>) => recovered.events.map(event => event.type === "session.recovered" ? { type: event.type, data: { ...event.data, relay } } : event);
+    db.exec("SAVEPOINT relay_recovery");
+    try {
+      const relay = this.recoverRelay(recovered.next, readDeliveries(db, state.id, state));
+      if (relay === null) { db.exec("RELEASE relay_recovery"); return at(recovered.next, recovered.events); }
+      const result = at(relay.next, withRelay({ failed: false, deliveries: relay.deliveries.map(row => ({ runId: row.runId, outcome: row.outcome.kind })),
+        bindings: (relay.next.nativeBindings ?? []).flatMap(binding => binding.relay === undefined ? [] : [{ harnessId: binding.harnessId, controlId: binding.controlId, sync: binding.relay.sync.kind }]) }));
+      writeRelayRows(db, state.id, checkRelayRows(db, state.id, result.next, { deliveries: relay.deliveries.map(row => ({ kind: "outcome" as const, runId: row.runId, outcome: row.outcome })) }));
+      checkPacketReferences(db, state.id, state, result.next);
+      db.exec("RELEASE relay_recovery");
+      return result;
+    } catch (error) {
+      if (!db.isTransaction) throw error;
+      db.exec("ROLLBACK TO relay_recovery"); db.exec("RELEASE relay_recovery");
+      return at({ ...recovered.next, relayRecoveryFailed: state.lastSeq + 1 }, withRelay({ failed: true }));
+    }
+  }
+  /**
+   * The events the v13 migration reads (MIGRATION_EVENTS), in seq order, scanned from the events table directly rather than
+   * page by page with the snapshot read again for each page (ADR-055 §14.4, RT1-m7); each is validated as a stored event.
+   */
+  private migrationEvents(state: SessionSnapshot): readonly MigrationEvent[] {
+    const types = MIGRATION_EVENTS.map(() => "?").join(",");
+    return this.database.prepare("SELECT seq,event_json FROM events WHERE session_id=? AND json_extract(event_json,'$.type') IN (" + types + ") ORDER BY seq").all(state.id, ...MIGRATION_EVENTS).map(row => {
+      let value: unknown;
+      try { value = JSON.parse(string(row.event_json, "event JSON")); } catch { throw new SessionError("INVALID_DATA", "persisted event is not valid JSON"); }
+      const event = parseStoredEvent(value, state.id);
+      if (event.seq !== row.seq || event.seq > state.lastSeq) throw new SessionError("INVALID_DATA", "persistent event sequence is inconsistent");
+      return { seq: event.seq, type: event.type, data: event.data };
+    });
   }
   /** A stored Session read and validated again, bypassing the cache: migration and recovery read what they have just written. */
   private readSession(id: SessionId): SessionSnapshot {
@@ -727,7 +894,7 @@ export class SqliteSessionReader {
     this.database = new DatabaseSync(this.databasePath, { readOnly: true, timeout: 0, allowExtension: false, enableForeignKeyConstraints: true });
     try {
       const version = this.database.prepare("PRAGMA user_version").get();
-      if (!version || (version.user_version !== 1 && version.user_version !== 2 && version.user_version !== 3 && version.user_version !== 4 && version.user_version !== 5 && version.user_version !== 6 && version.user_version !== 7 && version.user_version !== 8 && version.user_version !== 9 && version.user_version !== 10 && version.user_version !== 11 && version.user_version !== 12)) throw new SessionError("INVALID_DATA", "unknown business database schema version");
+      if (!version || typeof version.user_version !== "number" || !Number.isSafeInteger(version.user_version) || version.user_version < 1 || version.user_version > CURRENT_VERSION) throw new SessionError("INVALID_DATA", "unknown business database schema version");
       this.assertReadable();
     } catch (error) { this.database.close(); throw error instanceof SessionError ? error : storageFailure(error); }
   }
@@ -745,7 +912,7 @@ export class SqliteSessionReader {
     try {
       if (!this.database.isOpen || !sameFile(this.rootIdentity, pathIdentity(this.root, true)) || !sameFile(this.markerIdentity, pathIdentity(this.markerPath)) || !sameFile(this.databaseIdentity, pathIdentity(this.databasePath))) throw new SessionError("STORAGE_CHANGED", "read-only storage path identity changed");
       const version = this.database.prepare("PRAGMA user_version").get();
-      if (!version || (version.user_version !== 1 && version.user_version !== 2 && version.user_version !== 3 && version.user_version !== 4 && version.user_version !== 5 && version.user_version !== 6 && version.user_version !== 7 && version.user_version !== 8 && version.user_version !== 9 && version.user_version !== 10 && version.user_version !== 11 && version.user_version !== 12)) throw new SessionError("INVALID_DATA", "unknown business database schema version");
+      if (!version || typeof version.user_version !== "number" || !Number.isSafeInteger(version.user_version) || version.user_version < 1 || version.user_version > CURRENT_VERSION) throw new SessionError("INVALID_DATA", "unknown business database schema version");
     } catch (error) { this.failed = error instanceof SessionError ? error : storageFailure(error); throw this.failed; }
   }
   private read<T>(read: () => T): T {
