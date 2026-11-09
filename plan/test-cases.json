@@ -11426,6 +11426,75 @@
       "planned_file": "tests/protocol/relay-capabilities.test.ts"
     },
     {
+      "id": "G069-D01",
+      "task": "G069",
+      "requirements": [
+        "R12",
+        "R25"
+      ],
+      "invariants": [
+        "INV-09",
+        "INV-16"
+      ],
+      "layer": "protocol",
+      "scenario": "六家的静态 `relayCapabilities` 声明与第 8.1 节表逐格比较（表以显式数据写进测试），推断或取默认的格列在 ADR 清单里且测试读该清单核对",
+      "expected": "声明逐格等于 8.1 节；推断格都在清单里；`probed` 恒为 false；改一格或少列一格测试必须失败",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/relay-capabilities.test.ts"
+    },
+    {
+      "id": "G069-D02",
+      "task": "G069",
+      "requirements": [
+        "R12",
+        "R25"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "protocol",
+      "scenario": "声明逐层冻结；工厂静态读取返回的声明与实例所带的是同一对象",
+      "expected": "声明不可被改写；`relayCapabilities(harnessId, protocol)` 与实例带的声明相同，与 `createNativeControl` 的选择同步",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/relay-capabilities.test.ts"
+    },
+    {
+      "id": "G069-D03",
+      "task": "G069",
+      "requirements": [
+        "R12",
+        "R25"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "protocol",
+      "scenario": "原生目录经缓存文件往返后保留并校验命令的 `contextEffect`；Claude、OpenClaw、Hermes、OpenCode 在目录不带效果时，声明读法（经缓存往返的目录）与 Runtime 读法（`models()` 现取的目录）逐输入一致",
+      "expected": "读法一致；缓存只接受契约里的效果值（无效样例被拒）；旧缓存文件（没有该字段）仍可读",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/relay-capabilities.test.ts"
+    },
+    {
+      "id": "G069-D04",
+      "task": "G069",
+      "requirements": [
+        "R12",
+        "R25"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "protocol",
+      "scenario": "正式 Runtime 加真实 SQLite 加真 ACP 对端进程：dsh 持有注入声明时 `/clear` 原样作为内容发出；没有声明的通用 ACP 对同样输入仍记为命令",
+      "expected": "dsh：对端恰好收到一条 `session/prompt` 文本 `/clear`、`run.ended.input` 为 recorded、没有 `run.native_command`；无声明的通用 ACP：记命令，结算为 unknown",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/relay-capabilities.test.ts"
+    },
+    {
       "id": "G070-C01",
       "task": "G070",
       "requirements": [

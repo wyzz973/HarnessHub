@@ -2,7 +2,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readSync, rmSync } from "node:fs";
 import { open, rename, rm } from "node:fs/promises";
 import { join, relative } from "node:path";
-import type { NativeInputs, NativeModelCatalog, NativeOption } from "../contracts/control.js";
+import type { ContextEffect, NativeCommand, NativeInputs, NativeModelCatalog, NativeOption } from "../contracts/control.js";
+import { CONTEXT_EFFECTS } from "../contracts/relay.js";
 
 const FILE = "native-catalogs.json";
 const APPLICATION = "harness-native-catalogs";
@@ -215,19 +216,30 @@ function code(value: unknown): string { return typeof value === "string" && /^[A
 function time(value: unknown): number { return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : fail("time"); }
 function flag(value: unknown): boolean { return typeof value === "boolean" ? value : fail("flag"); }
 function inputs(value: unknown): NativeInputs { const row = record(value, ["image", "audio", "file"]); return { image: flag(row.image), audio: flag(row.audio), file: flag(row.file) }; }
+/** A command's declared effect, one of the contract's (ADR-055 R0d); a cached command keeps what its Driver declared. */
+function effect(value: unknown): ContextEffect { return typeof value === "string" && (CONTEXT_EFFECTS as readonly string[]).includes(value) ? value as ContextEffect : fail("context effect"); }
+function command(value: unknown): NativeCommand {
+  const row = record(value, ["name", "description", "contextEffect"]);
+  return { name: line(row.name, 1024), description: prose(row.description, 8192), ...(row.contextEffect === undefined ? {} : { contextEffect: effect(row.contextEffect) }) };
+}
 function option(value: unknown): NativeOption {
   const row = record(value, ["id", "name", "category", "currentValue", "values"]);
   const values = bounded(row.values, 4096).map(value => { const item = record(value, ["value", "name"]); return { value: line(item.value, 1024), name: line(item.name, 1024) }; });
   if (!values.length || new Set(values.map(item => item.value)).size !== values.length) return fail("option values");
   return { id: line(row.id, 128), name: line(row.name, 1024), category: line(row.category, 128), currentValue: line(row.currentValue, 1024), values };
 }
-/** The contract's fields of a catalog as plain data; optional fields that are absent stay absent. */
+/**
+ * The contract's fields of a catalog as plain data; optional fields that are absent stay absent. A command keeps its
+ * declared contextEffect, so that a reading of the cached catalog (the relay's, at admission) and of the catalog models()
+ * returns (the Runtime's) are the same reading (ADR-055 G069). An older build that does not know the field leaves a file
+ * with it untouched and keeps its observations in memory, as for any file it cannot read.
+ */
 function project(catalog: NativeModelCatalog): unknown {
   const options = (values: readonly NativeOption[] | undefined) => values?.map(item => ({ id: item.id, name: item.name, category: item.category, currentValue: item.currentValue, values: item.values.map(value => ({ value: value.value, name: value.name })) }));
   const accepted = (value: NativeInputs | undefined) => value === undefined ? undefined : { image: value.image, audio: value.audio, file: value.file };
   return JSON.parse(JSON.stringify({ models: catalog.models.map(model => ({ id: model.id, name: model.name, options: options(model.options), inputs: accepted(model.inputs) })),
     inputs: accepted(catalog.inputs), defaultModel: catalog.defaultModel, selectionError: catalog.selectionError === undefined ? undefined : { code: catalog.selectionError.code, message: catalog.selectionError.message },
-    authentication: catalog.authentication, canSelect: catalog.canSelect, options: options(catalog.options), commands: catalog.commands?.map(command => ({ name: command.name, description: command.description })) })) as unknown;
+    authentication: catalog.authentication, canSelect: catalog.canSelect, options: options(catalog.options), commands: catalog.commands?.map(command => ({ name: command.name, description: command.description, contextEffect: command.contextEffect })) })) as unknown;
 }
 /** A cached catalog, validated like any other input before it is served again. */
 function parseCatalog(value: unknown): NativeModelCatalog {
@@ -242,5 +254,5 @@ function parseCatalog(value: unknown): NativeModelCatalog {
     ...(row.inputs === undefined ? {} : { inputs: inputs(row.inputs) }),
     ...(row.selectionError === undefined ? {} : { selectionError: (error => ({ code: code(error.code), message: prose(error.message, 1024) }))(record(row.selectionError, ["code", "message"])) }),
     ...(row.options === undefined ? {} : { options: bounded(row.options, 128).map(option) }),
-    ...(row.commands === undefined ? {} : { commands: bounded(row.commands, 2048).map(value => { const command = record(value, ["name", "description"]); return { name: line(command.name, 1024), description: prose(command.description, 8192) }; }) }) };
+    ...(row.commands === undefined ? {} : { commands: bounded(row.commands, 2048).map(command) }) };
 }

@@ -1,6 +1,7 @@
 import type { ControlProtocol } from "../contexts/catalog/domain/discovery.js";
 import type { ResolvedCommand } from "../contexts/catalog/domain/catalog.js";
 import type { ContentKind, ContentRef, ControlAttachment } from "./content.js";
+import type { RelayCapabilities } from "./relay.js";
 
 declare const nativeConversationBrand: unique symbol;
 export type NativeConversationId = string & { readonly [nativeConversationBrand]: true };
@@ -182,23 +183,45 @@ export interface NativeCommand { readonly name: string; readonly description: st
  * How the native side reads one input, as its driver reproduces the native parsing (leading whitespace, names, aliases,
  * paths): a command with its effect for these arguments, content, or a possible command whose name only the catalog can
  * settle (read without a catalog).
+ *
+ * `acceptsRelay` is true only for a command whose arguments the native side submits as a prompt, which may then carry relay
+ * content (ADR-055 §7.4: Codex `/skill:…`, Hermes `/queue` and `/steer`); absent means it does not. Only a Driver's relay
+ * declaration (RelayCapabilities.commands.classify) sets it; HarnessControl.classify leaves it out.
  */
 export type CommandClass =
-  | { readonly kind: "command"; readonly name: string; readonly args: string; readonly effect: ContextEffect }
+  | { readonly kind: "command"; readonly name: string; readonly args: string; readonly effect: ContextEffect; readonly acceptsRelay?: true }
   | { readonly kind: "content" }
   | { readonly kind: "possible_command"; readonly name: string };
 /**
- * The reading every native interface shares unless its driver knows better: an input that starts with "/" names a command
- * by its first word, which is a command when the catalog lists it (its declared effect) and content otherwise. Without a
- * catalog such an input is a possible command.
+ * What a catalog says of one command name, consulted by a reading: undefined when it does not list the name, otherwise the
+ * effect it declares for these arguments (absent when it declares none, which each reading settles its own way) and
+ * whether the command takes relay content. Pure and synchronous.
  */
-export function listedCommand(text: string, catalog: NativeModelCatalog | null): CommandClass {
+export type CommandLookup = (name: string, args: string) => { readonly effect?: ContextEffect; readonly acceptsRelay?: true } | undefined;
+/** A native catalog's commands as a lookup: the first listed command of a name, with its declared contextEffect. */
+export function catalogCommands(catalog: NativeModelCatalog): CommandLookup {
+  return name => {
+    const listed = catalog.commands?.find(command => command.name === name);
+    return listed === undefined ? undefined : listed.contextEffect === undefined ? {} : { effect: listed.contextEffect };
+  };
+}
+/**
+ * The reading every native interface shares unless its driver knows better, over any lookup (a native catalog, or a relay
+ * declaration's catalog): an input that starts with "/" names a command by its first word, which is a command when the
+ * lookup lists it (its declared effect, unknown when it declares none) and content otherwise. Without a lookup such an
+ * input is a possible command.
+ */
+export function sharedReading(text: string, commands: CommandLookup | null): CommandClass {
   if (!text.startsWith("/")) return { kind: "content" };
   const name = text.slice(1).split(/\s/u)[0]!;
   if (!name) return { kind: "content" };
-  if (catalog === null) return { kind: "possible_command", name };
-  const listed = catalog.commands?.find(command => command.name === name);
-  return listed === undefined ? { kind: "content" } : { kind: "command", name, args: text.slice(1 + name.length).trim(), effect: listed.contextEffect ?? "unknown" };
+  if (commands === null) return { kind: "possible_command", name };
+  const args = text.slice(1 + name.length).trim(), listed = commands(name, args);
+  return listed === undefined ? { kind: "content" } : { kind: "command", name, args, effect: listed.effect ?? "unknown", ...(listed.acceptsRelay ? { acceptsRelay: true } : {}) };
+}
+/** The shared reading (sharedReading) against a native catalog; without a catalog a slash word is a possible command. */
+export function listedCommand(text: string, catalog: NativeModelCatalog | null): CommandClass {
+  return sharedReading(text, catalog === null ? null : catalogCommands(catalog));
 }
 export interface NativeModelCatalog {
   readonly models: readonly { readonly id: string; readonly name: string; readonly options?: readonly NativeOption[]; readonly inputs?: NativeInputs }[];
@@ -232,6 +255,12 @@ export interface ControlRun {
  * (ADR-056; no driver has them yet); all resources are owned by close().
  */
 export interface HarnessControl {
+  /**
+   * The Driver's static relay declaration (ADR-055 §3.2, §8.1): the same module-level object its factory returns for the
+   * harness without an instance (relayCapabilities in adapters/control/factory.ts), never changed by the connection.
+   * Absent for a Driver that declares none, which the relay treats as the most conservative declaration (INV-16).
+   */
+  readonly relayCapabilities?: RelayCapabilities;
   initialize(): Promise<ProtocolObservation>;
   open(cwd: string, model?: string, options?: NativeOptions, checkpoint?: string): Promise<NativeConversationId>;
   /**

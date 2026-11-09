@@ -8,6 +8,9 @@ import { unifiedDiff } from "../../infrastructure/control/unified-diff.js";
 import { MAX_NATIVE_SESSIONS, type NativeOutput, type NativeSessionImport, type NativeSessionPage, type NativeToolDetail, type NativeUsage } from "../../contracts/control.js";
 import { MAX_CONTENT_BYTES, textual, type ContentKind, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
 import { checkInputs, fileMentions, readAttachment } from "../../infrastructure/control/attachments.js";
+import type { RelayCapabilities } from "../../contracts/relay.js";
+import { nativeReading, relayDeclaration, relayEntries, textClassify } from "./relay-classify.js";
+import { dshVendor, slashModelKey } from "./relay-vendor.js";
 
 interface ActivePrompt {
   readonly event: (event: ControlEvent) => void;
@@ -120,8 +123,43 @@ function loaded(value: unknown): Record<string, unknown> {
   return object(value, "native session load result");
 }
 
+/**
+ * DeepSeek Harness's relay declaration (ADR-055 §8.1, DeepSeek Harness row). dsh runs on this generic driver, which the
+ * factory hands this declaration: two text blocks (dsh joins them into one user message); its first message, thought or
+ * tool call is weak live evidence, there is no check, and a completed turn proves nothing by itself; dsh has no commands,
+ * so every input, a slash one included, is text; no compaction evidence; one process per connection; the vendor by the
+ * endpoint the layers read here resolve (the inherited DEEPSEEK_BASE_URL, then the two `.env` files), otherwise DeepSeek;
+ * the window from its usage reports; no native title entry (not guaranteed before P13). Not probed.
+ *
+ * The vendor key is exact only for the layers read: the plugin configuration's `baseURL` (dsh-llm-deepseek's highest layer)
+ * and the routes of its other providers (dsh-llm-pi-ai) are not read, so a profile that sets either is keyed wrongly. The
+ * probe gate covers it: with probed=false a relay to dsh is refused (RELAY_TARGET_UNVERIFIED), and P14 must cover the
+ * profile and plugin configuration layers before this flips.
+ */
+export const dshRelayCapabilities: RelayCapabilities = relayDeclaration({
+  probed: false,
+  delivery: { live: "agent_output", verify: "none", successProvesRecorded: false, lateDelivery: false },
+  execution: "process",
+  commands: { unlistedSlash: "text", hidden: [], classify: textClassify },
+  placement: { parts: "multiple", maxInput: null, pointersAfterUser: false },
+  window: "session_report",
+  fixedPrefix: null,
+  cacheTtl: "hours",
+  compactionEvidence: "none",
+  resolveVendor: dshVendor,
+  normalizeModel: slashModelKey,
+  title: "none",
+  hostPathRead: "none",
+  sessionTools: null,
+});
+
 /** ACP v1 anti-corruption layer. Client filesystem and terminal capabilities are not advertised. */
 export class AcpControl implements HarnessControl {
+  /**
+   * The relay declaration this connection's Driver makes (ADR-055 §8.1): a subclass's own, or the one its factory hands
+   * the generic driver for a Harness that runs on it (dsh); none for any other Harness on the generic driver.
+   */
+  readonly relayCapabilities?: RelayCapabilities;
   private readonly rpc: JsonRpcProcess;
   private initializing: Promise<ProtocolObservation> | null = null;
   private initialized = false;
@@ -161,8 +199,9 @@ export class AcpControl implements HarnessControl {
   diagnosticMark(): number { return this.rpc.stderrMark; }
   diagnosticsSince(mark: number): string { return this.rpc.stderrSince(mark); }
 
-  constructor(launch: ControlLaunch, private readonly options: ControlOptions) {
+  constructor(launch: ControlLaunch, private readonly options: ControlOptions, relayCapabilities?: RelayCapabilities) {
     if (launch.protocol !== "acp-v1") throw new ControlError("INVALID_INPUT", "ACP control requires an ACP launch");
+    if (relayCapabilities !== undefined) this.relayCapabilities = relayCapabilities;
     this.rpc = new JsonRpcProcess(launch, options, {
       notification: (method, params) => this.notification(method, params),
       request: request => this.serverRequest(request),
@@ -432,8 +471,15 @@ export class AcpControl implements HarnessControl {
    * of failures after insertion. The default proves nothing by stop reason alone; an answer to the prompt still does.
    */
   protected promptRecorded(_reason: string): boolean { return false; }
-  /** The shared reading of an input (listedCommand); a driver whose agent parses commands otherwise reproduces that here. */
-  classify(text: string, catalog: NativeModelCatalog | null, _attachments: readonly ContentKind[] = []): CommandClass { return listedCommand(text, catalog); }
+  /**
+   * How the native side reads an input: the relay declaration's reading when the factory handed this generic driver one
+   * (dsh: one reading for the Runtime and the relay, VF1-06), otherwise the shared one (listedCommand). A driver whose agent
+   * parses commands otherwise reproduces that here.
+   */
+  classify(text: string, catalog: NativeModelCatalog | null, attachments: readonly ContentKind[] = []): CommandClass {
+    const declared = this.relayCapabilities;
+    return declared === undefined ? listedCommand(text, catalog) : nativeReading(declared.commands.classify(text, catalog === null ? null : relayEntries(catalog.commands ?? []), attachments));
+  }
   /**
    * Whether the agent's answer or stop reason can prove this prompt recorded as content: it reads the prompt as content,
    * against the commands it announced to this connection so far. A driver narrows it where its reading may be out of date.

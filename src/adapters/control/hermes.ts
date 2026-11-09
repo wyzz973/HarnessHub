@@ -1,83 +1,44 @@
-import type { BackendResult, CleanupEvidence, CommandClass, ContextEffect, ControlEvent, ControlLaunch, ControlOptions, ControlRun, NativeCommand, NativeConversationId, NativeModelCatalog, NativeToolDetail } from "../../contracts/control.js";
+import type { BackendResult, CleanupEvidence, CommandClass, ControlEvent, ControlLaunch, ControlOptions, ControlRun, NativeConversationId, NativeModelCatalog, NativeToolDetail } from "../../contracts/control.js";
+import type { RelayCapabilities } from "../../contracts/relay.js";
 import { ControlError, classifyRemoteFailure } from "../../infrastructure/control/json-rpc-process.js";
 import { nativeCommand } from "../../infrastructure/control/native-command.js";
 import type { ContentKind, ControlAttachment } from "../../contracts/content.js";
 import { AcpControl } from "./acp.js";
 import { gatewayRefusalMessage, hermesGatewayPreflight, type HermesGatewayPreflight } from "./hermes-gateway.js";
+import { HERMES_COMMAND_WORD as COMMAND_WORD, HERMES_EFFECTS as EFFECTS, HERMES_HIDDEN as HIDDEN, HERMES_LEADING_SPACE as LEADING_SPACE, HERMES_REGISTRY as REGISTRY,
+  hermesClassify, hermesCommand as commandOf, hermesNativeClassify, hermesReadsSlash as readsSlash, relayDeclaration, relayEntries } from "./relay-classify.js";
+import { hermesModelKey, hermesVendor } from "./relay-vendor.js";
 
+/**
+ * Hermes's relay declaration (ADR-055 §8.1, Hermes Agent row): two text blocks with attachment pointers after the user's
+ * words; no live evidence, a check on the next open (every open replays the session), and a content prompt that ended
+ * proves it recorded; commands as the viewer reads them (lstrip, the registry's names and aliases), `/new` and `/clear`
+ * run although unannounced; compaction told by markers in the replay; the gateway runs the session (a viewer that exits is
+ * no quiescence); the vendor only by an endpoint it resolves; a native title by `/title` before the first relayed turn.
+ * Not probed.
+ */
+export const hermesRelayCapabilities: RelayCapabilities = relayDeclaration({
+  probed: false,
+  delivery: { live: "none", verify: "on_next_open", successProvesRecorded: true, lateDelivery: false },
+  execution: "gateway",
+  commands: { unlistedSlash: "executed", hidden: relayEntries(HIDDEN), classify: hermesClassify },
+  placement: { parts: "multiple", maxInput: null, pointersAfterUser: true },
+  window: "session_report",
+  fixedPrefix: null,
+  cacheTtl: "unknown",
+  compactionEvidence: "replay_marker",
+  resolveVendor: hermesVendor,
+  normalizeModel: hermesModelKey,
+  title: "set",
+  hostPathRead: "none",
+  sessionTools: null,
+});
 const EXPORT = { name: "export", description: "导出原生会话记录（Hermes 会话 JSONL）", contextEffect: "none" } as const;
-/**
- * What Python's `str.isspace()` accepts (Unicode 15): Hermes's viewer strips an input with `lstrip()` and splits its first
- * word off with `split()` (acp_adapter/gateway_server.py), so a full-width or no-break space before `/clear` still runs it.
- */
-const PYTHON_SPACE = "\\t\\n\\v\\f\\r\\u001c-\\u001f \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000";
-const LEADING_SPACE = new RegExp("^[" + PYTHON_SPACE + "]+", "u"), SPACE = new RegExp("^[" + PYTHON_SPACE + "]$", "u"), SPACES = new RegExp("[" + PYTHON_SPACE + "]+", "u");
-/** Python's `strip()`, one character at a time from each end (a trailing-space pattern would be quadratic on a 64 KiB input). */
-function pythonStrip(text: string): string {
-  let start = 0, end = text.length;
-  while (start < end && SPACE.test(text[start]!)) start++;
-  while (end > start && SPACE.test(text[end - 1]!)) end--;
-  return text.slice(start, end);
-}
-/**
- * Hermes's command registry, each name followed by its aliases: a copy checked against v0.22.5, from hermes_cli/commands.py
- * COMMAND_REGISTRY (ADR-053). The viewer resolves a slash word through it lower-cased (`resolve_command`), and only a word it
- * resolves is a command (gateway_server.py `_slash_command`): the names ROUTES answers itself are all among them, and the
- * gateway's slash.exec answers the rest. Any other slash word, and a path, is prompt text for the model. A later Hermes can
- * add names, so a word that reads like one is never taken for recorded content (readsAsContent).
- */
-const REGISTRY: ReadonlyMap<string, string> = new Map(("start new,reset topic clear redraw history save retry prompt,compose undo title handoff branch,fork worktree compress,compact rollback " +
-  "snapshot,snap export import stop discard pause approve deny bg btw agents,tasks journey,learning,memory-graph queue,q steer,s goal " +
-  "heartbeat,hb refine review loop,proactive plan moa subgoal status egress context,ctx whoami profile sethome,set-home resume sessions config " +
-  "model codex-runtime,codex_runtime personality statusbar,sb battery timestamps,ts diff verbose focus footer yolo approvals reasoning fast " +
-  "skin indicator voice wake busy autoprune tools toolsets skills memory bundles pet hatch,generate-pet learn init cron suggestions,suggest " +
-  "blueprint,bp curator kanban reload reload-mcp,reload_mcp reload-skills,reload_skills browser plugins commands help palette restart usage " +
-  "subscription,upgrade login topup insights platforms,gateway platform copy paste image update version,v debug quit,exit").split(" ").flatMap(entry => {
-  const [name, ...aliases] = entry.split(",") as [string, ...string[]];
-  return [name, ...aliases].map(key => [key, name] as const);
-}));
-/**
- * What Hermes's own commands do to its session, by registry name (gateway_commands.py ROUTES, v0.22.5): new and clear
- * clear it; compress compacts it; undo and retry rewind it; steer and queue submit their text as a prompt; the others named
- * here report or set something and leave the history alone. Any other registry command is answered by the gateway's
- * slash.exec, which may report, refuse or submit a turn: unknown.
- */
-const EFFECTS: Readonly<Record<string, ContextEffect>> = { new: "clear", clear: "clear", compress: "compact", undo: "rewind", retry: "rewind", steer: "keep", queue: "keep",
-  help: "none", model: "none", tools: "none", context: "none", usage: "none", status: "none", version: "none", title: "none", discard: "none", branch: "none", export: "none" };
-/**
- * `/compress` flags that leave the session as it is, in any case (hermes_cli/partial_compress.py `extract_compress_flags`):
- * a preview only reports, and `--aggressive` is refused before anything reaches the gateway.
- */
-const UNCHANGING_FLAGS: ReadonlySet<string> = new Set(["--preview", "--dry-run", "--dryrun", "--aggressive"]);
 /**
  * The viewer's answer to a `/compress` that removed nothing (gateway_commands.py `_UNCHANGED['noop']`): the headline of the
  * owner's report (agent/manual_compression_feedback.py), or its fixed fallback.
  */
 const COMPRESS_NOOP = /^(?:No changes from compression[.:]|Compression refused \(summary would grow the conversation\):|Compression aborted:)/u;
-/** A slash word that reads like a registry name (lower-case letters, digits, `-` and `_`, in any case). */
-const COMMAND_WORD = /^[a-z0-9][a-z0-9_-]*$/iu;
-/** Commands Hermes routes but does not announce (gateway_session_meta.py lists reset, not new or clear). */
-const HIDDEN: readonly NativeCommand[] = ["new", "clear"].map(name => ({ name, description: "清空 Hermes 的会话历史", contextEffect: "clear" as const }));
-/** A registry command's effect for these arguments: `/compress` with a flag that leaves the session alone changes nothing. */
-function effectOf(name: string, args: string): ContextEffect {
-  if (name === "compress" && args.split(SPACES).some(flag => UNCHANGING_FLAGS.has(flag.toLowerCase()))) return "none";
-  return Object.hasOwn(EFFECTS, name) ? EFFECTS[name]! : "unknown";
-}
-/** An input's slash word and arguments as the viewer splits them (`_slash_command`, `_run_slash`), or null for prompt text. */
-function commandOf(text: string): { readonly word: string; readonly args: string } | null {
-  const stripped = text.replace(LEADING_SPACE, "");
-  if (!stripped.startsWith("/")) return null;
-  const word = stripped.slice(1).split(SPACES)[0]!;
-  // A lone slash, a slash before a space and a path (`/etc/hosts …`) are prompt text.
-  if (!word || word.includes("/")) return null;
-  return { word, args: pythonStrip(stripped.slice(1 + word.length)) };
-}
-/**
- * Whether the viewer looks for a slash command in a prompt with these attachments: not when it carries an image, which it
- * stages as an attachment (`_run_slash` runs only without one); a file goes as a text pointer here and an audio block is
- * dropped by its converter (acp_adapter/content.py), which leave the prompt text alone.
- */
-function readsSlash(attachments: readonly ContentKind[]): boolean { return !attachments.includes("image"); }
 /** One session's export is small and quick; one that is larger or slower fails rather than being cut short (E). */
 const EXPORT_BYTES = 8 * 1024 * 1024, EXPORT_DEADLINE_MS = 5000;
 /** Without --session-id Hermes exports every session it holds, its messaging gateway's too: the identifier must be a plain one. */
@@ -167,6 +128,7 @@ const OPTION_NOTES: Readonly<Record<string, (name: string) => string>> = {
  * one whose outcome the gateway lost may have run (unknown, and never sent again here).
  */
 export class HermesControl extends AcpControl {
+  override readonly relayCapabilities: RelayCapabilities = hermesRelayCapabilities;
   private hubExport = false;
   private readonly exports = new AbortController();
   /** `preflight` judges the user's gateway before `hermes acp` is started (ADR-051 A2); tests inject a judgement, the factory keeps the real reader. */
@@ -232,16 +194,7 @@ export class HermesControl extends AcpControl {
     const named = readsSlash(attachments) ? commandOf(prompt) : null;
     return named === null || !COMMAND_WORD.test(named.word);
   }
-  override classify(text: string, catalog: NativeModelCatalog | null, attachments: readonly ContentKind[] = []): CommandClass {
-    const named = readsSlash(attachments) ? commandOf(text) : null;
-    if (named === null) return { kind: "content" };
-    const name = REGISTRY.get(named.word.toLowerCase());
-    if (name !== undefined) return { kind: "command", name, args: named.args, effect: effectOf(name, named.args) };
-    // A word outside the registry is a command only when this Hermes announced it.
-    if (catalog === null) return { kind: "possible_command", name: named.word };
-    const listed = catalog.commands?.find(command => command.name === named.word);
-    return listed === undefined ? { kind: "content" } : { kind: "command", name: listed.name, args: named.args, effect: listed.contextEffect ?? "unknown" };
-  }
+  override classify(text: string, catalog: NativeModelCatalog | null, attachments: readonly ContentKind[] = []): CommandClass { return hermesNativeClassify(text, catalog, attachments); }
   override async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
     // The same reading as classify(): a registry command by its name and arguments, and none with an image.
     const named = readsSlash(attachments.map(file => file.kind)) ? commandOf(prompt) : null, command = named === null ? undefined : REGISTRY.get(named.word.toLowerCase());

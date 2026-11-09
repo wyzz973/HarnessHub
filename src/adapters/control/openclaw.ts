@@ -3,8 +3,11 @@ import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import JSON5 from "json5";
-import { MAX_NATIVE_EXTENSIONS, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, listedCommand, type NativeExtensions, type NativeSessionImport, type NativeSessionPage, type BackendResult, type CommandClass, type ContextEffect, type ControlEvent, type ControlRun, type ControlLaunch, type ControlOptions, type NativeConversationId, type NativeInputs, type NativeModelCatalog, type NativeOption, type NativeOptions, type NativeToolDetail, type CleanupEvidence } from "../../contracts/control.js";
+import { MAX_NATIVE_EXTENSIONS, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type NativeExtensions, type NativeSessionImport, type NativeSessionPage, type BackendResult, type CommandClass, type ControlEvent, type ControlRun, type ControlLaunch, type ControlOptions, type NativeConversationId, type NativeInputs, type NativeModelCatalog, type NativeOption, type NativeOptions, type NativeToolDetail, type CleanupEvidence } from "../../contracts/control.js";
+import type { RelayCapabilities } from "../../contracts/relay.js";
 import { AcpControl } from "./acp.js";
+import { openClawClassify, openClawCommandEffect, openClawNativeClassify, relayDeclaration } from "./relay-classify.js";
+import { openClawVendor, slashModelKey } from "./relay-vendor.js";
 import { classifyRemoteFailure, ControlError, object } from "../../infrastructure/control/json-rpc-process.js";
 import { nativeCommand } from "../../infrastructure/control/native-command.js";
 import { string } from "../../infrastructure/control/json-rpc-process.js";
@@ -91,16 +94,6 @@ function repeatsThinking(options: readonly NativeOption[] | undefined): boolean 
 function notSent(error: ControlError): ControlRun {
   return { result: Promise.resolve({ status: "failed", reason: "model_not_applied", error: { code: error.code, message: "OpenClaw 没有确认所选模型，这条消息没有发出。" }, input: "not_recorded" }),
     requestStop: () => Promise.reject(new ControlError("INVALID_STATE", "this Turn ended before its prompt was sent")) };
-}
-/**
- * What OpenClaw's own slash commands do to its session (docs/tools/slash-commands.md, v2026.10.9): `/new` archives it and
- * starts another, `/reset` resets it in place (`/reset soft` keeps the transcript), `/compact` compacts it, `/stop` stops
- * the run; the settings commands change no history; `/restart` and `/bash` act outside the session (unknown effect).
- */
-const COMMAND_EFFECTS: Readonly<Record<string, ContextEffect>> = { new: "clear", reset: "clear", compact: "compact", stop: "none", restart: "unknown", bash: "unknown",
-  think: "none", verbose: "none", trace: "none", reasoning: "none", elevated: "none", model: "none", queue: "none", usage: "none", fast: "none" };
-function commandEffect(name: string, args: string): ContextEffect {
-  return name === "reset" && args.split(/\s+/u)[0] === "soft" ? "compact" : COMMAND_EFFECTS[name] ?? "unknown";
 }
 /** A Gateway session row's model in the catalog's provider/model form. */
 function rowModel(row: Record<string, unknown>): string | null {
@@ -197,7 +190,32 @@ function unavailability(row: Readonly<Record<string, unknown>>): string {
  * forks follow the generic declaration check: neither 2026.3.23-2's bridge nor 2026.10.5's declares session/fork, so a
  * branch is refused with NATIVE_FORK_UNAVAILABLE by the program's own report rather than by this driver.
  */
+/**
+ * OpenClaw's relay declaration (ADR-055 §8.1, OpenClaw row): one text (the bridge adds a working-directory prefix), at most
+ * 2,097,152 bytes; no live evidence, a check after the turn against the transcript from the position before dispatch, a
+ * completed turn proves nothing by itself, and a cancelled prompt's input may still arrive later (lateDelivery); the
+ * bridge's listed commands, with effects by arguments; compaction evidence not verified (none); the Gateway runs the
+ * session; the vendor by the `provider/model` prefix and that provider's `baseUrl`, a `*-cloud` model never local; the
+ * window from `sessions.describe`; no native title until `_meta.sessionLabel` is probed. Not probed.
+ */
+export const openClawRelayCapabilities: RelayCapabilities = relayDeclaration({
+  probed: false,
+  delivery: { live: "none", verify: "after_turn", successProvesRecorded: false, lateDelivery: true },
+  execution: "gateway",
+  commands: { unlistedSlash: "text", hidden: [], classify: openClawClassify },
+  placement: { parts: "single", maxInput: { unit: "bytes", limit: 2_097_152 }, pointersAfterUser: false },
+  window: "session_report",
+  fixedPrefix: null,
+  cacheTtl: "5m",
+  compactionEvidence: "none",
+  resolveVendor: openClawVendor,
+  normalizeModel: slashModelKey,
+  title: "none",
+  hostPathRead: "none",
+  sessionTools: null,
+});
 export class OpenClawControl extends AcpControl {
+  override readonly relayCapabilities: RelayCapabilities = openClawRelayCapabilities;
   private configuredModel: string | null = null;
   /** The model chosen at open(), found in the original catalog; the session runs it from its first prompt on. */
   private selectedModel: string | undefined;
@@ -464,12 +482,9 @@ export class OpenClawControl extends AcpControl {
     });
     return { result, requestStop: run.requestStop };
   }
-  /** The bridge's listed commands, read with what each does to the session (COMMAND_EFFECTS); any other input is a prompt. */
-  override classify(text: string, catalog: NativeModelCatalog | null): CommandClass {
-    const reading = listedCommand(text, catalog);
-    // The effect of a command OpenClaw names here depends on its arguments (`/reset soft`), whatever the catalog declares.
-    return reading.kind === "command" && Object.hasOwn(COMMAND_EFFECTS, reading.name) ? { ...reading, effect: commandEffect(reading.name, reading.args) } : reading;
-  }
+  /** The bridge's listed commands, read with what each does to the session (OPENCLAW_COMMAND_EFFECTS); any other input is a prompt. */
+  // The effect of a command OpenClaw names here depends on its arguments (`/reset soft`), whatever the catalog declares.
+  override classify(text: string, catalog: NativeModelCatalog | null): CommandClass { return openClawNativeClassify(text, catalog); }
   /**
    * What the Gateway holds for this session after the Turn: its model and each setting the bridge offers that the row (and
    * chat.history, for fast mode) has a value for, in the bridge's own option values; a setting the row leaves unset is
@@ -515,7 +530,7 @@ export class OpenClawControl extends AcpControl {
     const catalog = await super.models();
     const models = (await this.readNativeModels()).flatMap(({ unavailable, ...row }) => unavailable === null ? [row] : []);
     const options = catalog.options !== undefined && repeatsThinking(catalog.options) ? catalog.options.filter(option => option.id !== "__mode") : catalog.options;
-    const commands = catalog.commands?.map(command => ({ ...command, contextEffect: command.contextEffect ?? COMMAND_EFFECTS[command.name] ?? "unknown" }));
+    const commands = catalog.commands?.map(command => ({ ...command, contextEffect: command.contextEffect ?? openClawCommandEffect(command.name) ?? "unknown" }));
     return { ...catalog, ...(options === undefined ? {} : { options }), ...(commands === undefined ? {} : { commands }), defaultModel: this.configuredModel, models, canSelect: models.length > 0 };
   }
   override async close(): Promise<CleanupEvidence> { this.abort.abort(); const commands = [...this.commands]; const results = await Promise.allSettled(commands); const cleanup = await super.close(); const failed = results.find(result => result.status === "rejected" && result.reason instanceof ControlError && result.reason.code === "CLEANUP_FAILED"); if (failed?.status === "rejected") throw failed.reason; return cleanup; }

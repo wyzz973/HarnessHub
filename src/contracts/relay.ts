@@ -1,3 +1,4 @@
+import type { ContentKind } from "./content.js";
 import type { CommandClass, ContextEffect } from "./control.js";
 import { SessionError, messageId, runId, sessionId, type MessageId, type RunId, type RunStatus, type SessionId, type SessionSnapshot } from "./session.js";
 
@@ -224,7 +225,7 @@ export const PRE_APPROVAL = ["session_allow_list", "read_only_auto", "unknown"] 
 /**
  * A Driver's static relay declaration (relay-architecture §3.2, §8): only mechanisms, never product names; a missing item
  * is the most conservative value (INV-16). A module-level constant, read at admission without a control instance (F10).
- * The type only: Drivers declare it in G069.
+ * Drivers declare it (G069: each Driver module's relayCapabilities, also HarnessControl.relayCapabilities).
  */
 export interface RelayCapabilities {
   readonly probed: boolean;
@@ -233,7 +234,12 @@ export interface RelayCapabilities {
   readonly commands: {
     readonly unlistedSlash: typeof UNLISTED_SLASH[number];
     readonly hidden: readonly { readonly name: string; readonly effect: ContextEffectRule; readonly acceptsRelay?: boolean }[];
-    readonly classify: (text: string, catalog: readonly { readonly name: string; readonly effect: ContextEffectRule; readonly acceptsRelay?: boolean }[] | null) => CommandClass;
+    /**
+     * The native side's reading of an input (VF1-06): the same reading as the Driver's HarnessControl.classify, over a
+     * catalog of this shape (null before one is read) and the kinds of the input's attachments, which some native sides read
+     * by (an image makes Hermes run no command; any attachment makes Codex's thread operations text). Pure and synchronous.
+     */
+    readonly classify: (text: string, catalog: readonly { readonly name: string; readonly effect: ContextEffectRule; readonly acceptsRelay?: boolean }[] | null, attachments: readonly ContentKind[]) => CommandClass;
   };
   readonly placement: { readonly parts: typeof PLACEMENT_PARTS[number]; readonly maxInput: { readonly unit: "chars" | "bytes"; readonly limit: number } | null; readonly pointersAfterUser: boolean };
   readonly window: typeof WINDOW_REPORTS[number];

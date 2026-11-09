@@ -2,10 +2,35 @@ import type { ContentKind, ContentRef, ControlAttachment } from "../../contracts
 import type { BackendResult, CleanupEvidence, CommandClass, ControlEvent, ControlLaunch, ControlOptions, ControlRun, NativeConversationId, NativeInputs, NativeModelCatalog, NativeOptions } from "../../contracts/control.js";
 import { checkInputs } from "../../infrastructure/control/attachments.js";
 import type { ControlError } from "../../infrastructure/control/json-rpc-process.js";
+import type { RelayCapabilities } from "../../contracts/relay.js";
 import { nativeCommand } from "../../infrastructure/control/native-command.js";
 import { AcpControl } from "./acp.js";
+import { OPENCODE_COMPACT as COMPACT, openCodeClassify, openCodeCommand as commandOf, openCodeNativeClassify, relayDeclaration } from "./relay-classify.js";
+import { openCodeVendor, slashModelKey } from "./relay-vendor.js";
 
-const COMPACT = { name: "compact", description: "压缩上下文（OpenCode 的 /compact；原程序的 ACP 目录没有列出，由 HarnessHub 补入）", contextEffect: "compact" } as const;
+/**
+ * OpenCode's relay declaration (ADR-055 §8.1, OpenCode 2 row): two text blocks; no live evidence and no check (a second
+ * connection cannot hold the workspace lease inside finalize), a content prompt that ended proves it recorded, and a
+ * cancelled prompt's input may still arrive later (lateDelivery); `/compact` and listed commands, any other slash input
+ * text; compaction events; one process per connection; the vendor by the `provider/model` prefix and that provider's
+ * `baseURL`; no native title entry (not guaranteed before P13). Not probed.
+ */
+export const openCodeRelayCapabilities: RelayCapabilities = relayDeclaration({
+  probed: false,
+  delivery: { live: "none", verify: "none", successProvesRecorded: true, lateDelivery: true },
+  execution: "process",
+  commands: { unlistedSlash: "text", hidden: [], classify: openCodeClassify },
+  placement: { parts: "multiple", maxInput: null, pointersAfterUser: false },
+  window: "session_report",
+  fixedPrefix: null,
+  cacheTtl: "unknown",
+  compactionEvidence: "event",
+  resolveVendor: openCodeVendor,
+  normalizeModel: slashModelKey,
+  title: "none",
+  hostPathRead: "none",
+  sessionTools: null,
+});
 /** A `/compact` that OpenCode answered with nothing at all: its ACP dropped the command instead of compacting. */
 const COMPACT_IGNORED: BackendResult = { status: "failed", reason: "native_error",
   error: { code: "NATIVE_COMMAND_IGNORED", message: "OpenCode 没有执行 /compact：这个版本的 ACP 没有处理这条命令，也没有返回任何内容。" }, input: "not_recorded" };
@@ -22,13 +47,6 @@ const RECORDED_STOPS: ReadonlySet<string> = new Set(["end_turn", "max_tokens", "
  */
 const PROVIDER_AUTH = "Authentication required: provider authentication required", BUSY = "Internal error: Session already has an active ACP prompt: ";
 const REFUSED_FIELDS: ReadonlySet<string> = new Set(["prompt", "files", "skills"]);
-/** The command an input names as OpenCode's ACP reads one (`Iuf`): the trimmed input's first word after its slash; null for text. */
-function commandOf(text: string): { readonly name: string; readonly args: string } | null {
-  const trimmed = text.trim();
-  if (!trimmed.startsWith("/")) return null;
-  const [name, ...rest] = trimmed.slice(1).split(/\s+/u);
-  return name ? { name, args: rest.join(" ").trim() } : null;
-}
 
 /**
  * Model input kinds from OpenCode 1's `opencode models --verbose`: a `provider/id` line followed by that model's
@@ -84,6 +102,7 @@ export function parseOpenCodeModels(output: string): ReadonlyMap<string, { reado
  * input can still be delivered later; one refused before delivery, and an ignored `/compact`, reached nothing (not recorded).
  */
 export class OpenCodeControl extends AcpControl {
+  override readonly relayCapabilities: RelayCapabilities = openCodeRelayCapabilities;
   private modelInputs: Promise<ReadonlyMap<string, { readonly image: boolean; readonly audio: boolean }> | null> | null = null;
   private openedModel: string | undefined;
   private readonly abort = new AbortController();
@@ -95,14 +114,7 @@ export class OpenCodeControl extends AcpControl {
     if (error.remoteCode === -32602 && (REFUSED_FIELDS.has(fields?.field ?? "") || fields?.sessionId !== undefined)) return "not_recorded";
     return error.remoteCode === -32603 && (error.remoteMessage?.startsWith(BUSY) === true || fields?.errorName === "CatalogNotReady") ? "not_recorded" : null;
   }
-  override classify(text: string, catalog: NativeModelCatalog | null, _attachments: readonly ContentKind[] = []): CommandClass {
-    const named = commandOf(text);
-    if (named === null) return { kind: "content" };
-    if (named.name === COMPACT.name) return { kind: "command", name: COMPACT.name, args: named.args, effect: COMPACT.contextEffect };
-    if (catalog === null) return { kind: "possible_command", name: named.name };
-    const listed = catalog.commands?.find(command => command.name === named.name);
-    return listed === undefined ? { kind: "content" } : { kind: "command", name: named.name, args: named.args, effect: listed.contextEffect === undefined || listed.contextEffect === "unknown" ? "keep" : listed.contextEffect };
-  }
+  override classify(text: string, catalog: NativeModelCatalog | null, _attachments: readonly ContentKind[] = []): CommandClass { return openCodeNativeClassify(text, catalog); }
   /**
    * The per-model input kinds of the original CLI catalog, read once per control: null when the command is refused
    * (OpenCode 2 has no `models --verbose`), fails or prints no capabilities. Unavailable metadata only removes the

@@ -2,23 +2,36 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { MAX_CONTENT_BYTES, type ContentKind, type ControlAttachment } from "../../contracts/content.js";
-import type { BackendResult, CommandClass, ContextEffect, ControlEvent, ControlLaunch, ControlOptions, ControlRun, NativeCommand, NativeConversationId, NativeModelCatalog } from "../../contracts/control.js";
+import type { BackendResult, CommandClass, ControlEvent, ControlLaunch, ControlOptions, ControlRun, NativeConversationId, NativeModelCatalog } from "../../contracts/control.js";
+import type { RelayCapabilities } from "../../contracts/relay.js";
 import { ControlError } from "../../infrastructure/control/json-rpc-process.js";
 import { AcpControl } from "./acp.js";
+import { CLAUDE_EXPORT as EXPORT, CLAUDE_HIDDEN as HIDDEN, claudeClassify, claudeListedEffect, claudeCommand as commandOf, claudeNativeClassify, relayDeclaration, relayEntries } from "./relay-classify.js";
+import { claudeVendor, slashModelKey } from "./relay-vendor.js";
 
-const EXPORT = { name: "export", description: "导出原生会话记录（Claude Code 转录 JSONL）", contextEffect: "none" } as const;
-/** A command name as Claude Code reads one after a leading slash (its CLI strings); a path such as `/Users/…` names none. */
-const COMMAND_NAME = /^[a-zA-Z0-9_][a-zA-Z0-9:_-]*$/u;
 /**
- * Commands Claude Code runs although claude-agent-acp does not list them (ADR-055 R0d): `/clear` and its aliases start a
- * new native conversation, and the adapter's `/remote-control`, which this driver refuses, changes nothing.
+ * Claude Code's relay declaration (ADR-055 §8.1, Claude Code row): two text blocks; no live evidence, a check after the
+ * turn, and a prompt that ended or failed after insertion proves it recorded; commands as Claude Code reads them, with
+ * `/clear`, `/reset`, `/new` and `/remote-control` run although unlisted; compaction events; one process per connection;
+ * the vendor by the endpoint its settings resolve; the window from its usage reports; a native title before the first
+ * prompt. Not probed (P2, P3, P6, P11 have not run on the latest release).
  */
-const HIDDEN: readonly NativeCommand[] = [
-  ...["clear", "reset", "new"].map(name => ({ name, description: "清空 Claude Code 的会话上下文", contextEffect: "clear" as const })),
-  { name: "remote-control", description: "Claude Code 的 Remote Control（HarnessHub 不发送）", contextEffect: "none" },
-];
-/** Listed commands that are no prompt: compaction, and the CLI's local reports, which leave the context as it is; any other listed command (a skill, a custom command) enters it like a message. */
-const LISTED_EFFECTS: Readonly<Record<string, ContextEffect>> = { compact: "compact", model: "none", status: "none", usage: "none", context: "none", mcp: "none", cost: "none", export: "none" };
+export const claudeRelayCapabilities: RelayCapabilities = relayDeclaration({
+  probed: false,
+  delivery: { live: "none", verify: "after_turn", successProvesRecorded: true, lateDelivery: false },
+  execution: "process",
+  commands: { unlistedSlash: "executed", hidden: relayEntries(HIDDEN), classify: claudeClassify },
+  placement: { parts: "multiple", maxInput: null, pointersAfterUser: false },
+  window: "session_report",
+  fixedPrefix: null,
+  cacheTtl: "auth_dependent",
+  compactionEvidence: "event",
+  resolveVendor: claudeVendor,
+  normalizeModel: slashModelKey,
+  title: "set",
+  hostPathRead: "none",
+  sessionTools: null,
+});
 /** Project directories searched for a transcript, as claude-agent-acp itself searches them. */
 const MAX_PROJECT_DIRECTORIES = 4096;
 /** claude-agent-acp's connection-level report of the sign-in it uses (auth-status.js, the same report in 0.89.1 and 0.94.0). */
@@ -53,13 +66,6 @@ const MODEL_FAILURES: ReadonlySet<string> = new Set(["account_on_hold", "verific
 const SESSION_ENDED = "Internal error: The Claude Agent session has ended. Please start a new session.";
 /** ACP's resource-not-found code, with which claude-agent-acp refuses a prompt for a session it does not have (`sessionNotFound`). */
 const SESSION_NOT_FOUND = -32002;
-/** The command an input names as Claude Code reads one: after leading whitespace, a slash and a command name; null for content. */
-function commandOf(text: string): { readonly name: string; readonly args: string } | null {
-  const trimmed = text.trimStart();
-  if (!trimmed.startsWith("/")) return null;
-  const name = trimmed.slice(1).split(/\s/u)[0]!;
-  return COMMAND_NAME.test(name) ? { name, args: trimmed.slice(1 + name.length).trim() } : null;
-}
 
 /**
  * Claude Code over claude-agent-acp, with the latest adapter (0.94.0, with CLI 2.1.307) as the baseline; 0.89.1 (with CLI
@@ -96,6 +102,7 @@ function commandOf(text: string): { readonly name: string; readonly args: string
  * and what this driver refuses or exports itself, never reached Claude (not recorded).
  */
 export class ClaudeControl extends AcpControl {
+  override readonly relayCapabilities: RelayCapabilities = claudeRelayCapabilities;
   private hubExport = false;
   constructor(private readonly claudeLaunch: ControlLaunch, options: ControlOptions) { super(claudeLaunch, options); }
   protected override promptRecorded(reason: string): boolean { return RECORDED_STOPS.has(reason); }
@@ -103,16 +110,8 @@ export class ClaudeControl extends AcpControl {
     if (error.remoteCode === SESSION_NOT_FOUND || error.remoteCode === -32603 && error.remoteMessage === SESSION_ENDED && error.remoteFields === undefined) return "not_recorded";
     return error.remoteCode === -32603 && MODEL_FAILURES.has(error.remoteFields?.errorKind ?? "") ? "recorded" : null;
   }
-  override classify(text: string, catalog: NativeModelCatalog | null, attachments: readonly ContentKind[] = []): CommandClass {
-    const named = commandOf(text);
-    if (named === null) return { kind: "content" };
-    const { name, args } = named, hidden = HIDDEN.find(command => command.name === name);
-    if (hidden !== undefined) return { kind: "command", name, args, effect: hidden.contextEffect ?? "unknown" };
-    if (catalog === null) return { kind: "possible_command", name };
-    // With attachments `/export` is not the Hub's export (startText sends it to Claude Code), whatever the catalog lists.
-    const listed = attachments.length && this.hubExport && name === EXPORT.name ? undefined : catalog.commands?.find(command => command.name === name);
-    return { kind: "command", name, args, effect: listed === undefined ? "unknown" : listed.contextEffect ?? LISTED_EFFECTS[name] ?? "keep" };
-  }
+  // With attachments `/export` is not the Hub's export (startText sends it to Claude Code), whatever the catalog lists.
+  override classify(text: string, catalog: NativeModelCatalog | null, attachments: readonly ContentKind[] = []): CommandClass { return claudeNativeClassify(text, catalog, attachments, this.hubExport); }
   protected override get sessionMeta(): Readonly<Record<string, unknown>> { return SESSION_META; }
   protected override extensionNotification(method: string, params: Readonly<Record<string, unknown>>): boolean {
     if (method !== AUTH_STATUS) return false;
@@ -123,7 +122,7 @@ export class ClaudeControl extends AcpControl {
   override async models(): Promise<NativeModelCatalog> {
     const catalog = await super.models(), commands = (catalog.commands ?? []).filter(command => command.name !== REMOTE_CONTROL);
     this.hubExport = !commands.some(command => command.name === EXPORT.name);
-    return { ...catalog, commands: (this.hubExport ? [...commands, EXPORT] : commands).map(command => ({ ...command, contextEffect: command.contextEffect ?? LISTED_EFFECTS[command.name] ?? "keep" })), hiddenCommands: HIDDEN };
+    return { ...catalog, commands: (this.hubExport ? [...commands, EXPORT] : commands).map(command => ({ ...command, contextEffect: command.contextEffect ?? claudeListedEffect(command.name) ?? "keep" })), hiddenCommands: HIDDEN };
   }
   override async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
     // The same reading as classify(): the command name and arguments after leading whitespace.

@@ -4483,7 +4483,7 @@
       "title": "Driver 接力适配",
       "context": "session",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G066",
@@ -4532,8 +4532,13 @@
         "G069-C06",
         "G069-C07",
         "G069-C08",
-        "G069-C09"
-      ]
+        "G069-C09",
+        "G069-D01",
+        "G069-D02",
+        "G069-D03",
+        "G069-D04"
+      ],
+      "active_slice": "relay"
     },
     {
       "id": "G070",

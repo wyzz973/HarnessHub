@@ -355,3 +355,63 @@ G068 阶段一的独立审查提出 F1–F13 与一个 packetId 重合的疑问�
 - **D6**：Hub 确认进程组已结束（P16）之后，在把绑定改回 ready 的那次提交里调用；carried=null 的核对需要给不带包的回合也记下位置，或用客户端 ID（推迟）。
 - **输入数据**：`BindingDelivery` 由送达行与交接单清单（range、body.sha256、reanchor、target.nativeEpoch）拼成，并带上记录它的那次提交写下的水位（`run.ended.binding` 的 sync 后值，或 `relay.input_recorded` 同事务的绑定）——清空核对的链回溯靠它。同 ID 的行只取最新一行；结算事件按 runId 对应 pending 的那次 Run。`owed` 的事实列表来自 `relay_digests` 的索引（seq、executedOn），被恢复终结的 Run 取 `session.recovered` 的 seq。
 - **组合根**：生产里用 `new SqliteSessionStore(root, { recoverRelay })` 接入，留给阶段二。
+
+### G069（阶段一）：Driver 的接力声明、命令解析与厂商键（2026-11-09）
+
+范围只有静态声明与纯函数（终稿第 3.2、7.4、8.1、10.4 节）：六家的 `RelayCapabilities`（`probed=false`）、命令解析收敛到一个来源、端点层解析与厂商键、模型键。`TurnText` 放置与首行省略、`deliveryPosition`、`verifyDelivered`、`input_recorded`、`BackendResult.native`、`userTextOf`、`setTitle`、`NativeUsage.requests` 留给阶段二。独立审查之后做了一轮修正（下文“审查后的修正”），其中三处是有意的行为变化。证据见[验证记录](../verification/relay-g069-2026-11-09.md)。
+
+**做法**：
+- **命令解析一个来源**（`src/adapters/control/relay-classify.ts`）：各家的解析规则（Claude Code 去前导空白后的命令名与隐藏命令、Codex 精确的 `/export`、`/compact` 与 `/skill:`、OpenCode 去两端空白、Hermes 的 Python `lstrip()` 与注册表名字和别名、OpenClaw 按参数定效果、dsh 恒为内容）都在这里，按 `CommandLookup` 读目录。`HarnessControl.classify` 与声明里的 `commands.classify` 是同一个解析，差别只在声明另外标出把参数当提示提交的命令（`acceptsRelay`：Codex `/skill:`、Hermes `/queue`、`/steer`），`nativeReading()` 把它去掉。`control.ts` 增加 `CommandLookup`、`catalogCommands`、`sharedReading`，`listedCommand` 改为委托给它们。首次收敛零行为变化：8 个解析者 × 1,008 个输入 × 7 种目录 × 6 种附件组合，共 338,688 个结果，前后逐字节相同。
+- **厂商键**（`src/adapters/control/relay-vendor.ts`）：`endpointLayers` 只列端点键（Claude Code 的 `env.ANTHROPIC_BASE_URL`、`CLAUDE_CODE_USE_BEDROCK`、`CLAUDE_CODE_USE_VERTEX`；Codex 的 `openai_base_url` 与 `OPENAI_BASE_URL`；dsh 的 `DEEPSEEK_BASE_URL`；OpenCode 的 `provider.<p>.options.baseURL`；OpenClaw 的 `models.providers.<p>.baseUrl`），路径经 `harnessDirectories` 与原配置路径解析；`readEndpoint` 按层次从高到低取第一个给出端点的层，值当场只留主机名；失败只说哪一层、为什么（`not_a_file`、`too_large`、`unreadable`、`unparseable`、`invalid_endpoint`），状态里的来源是 `<层>:<该层的固定标签>`（如 `user_config:claude/settings.json`、`workspace_file:<workspace>/.env`、`environment:OPENAI_BASE_URL`），不带值、不带路径，解析器自己的报错文本也不保留；环境不枚举，dotenv 只取端点变量那一行；文件以不阻塞方式打开，在同一个描述符上 `fstat` 判常规文件后有界读取，检查与读取之间没有窗口。`vendorObservation` 对读不出的端点返回 null，`observedVendor` 因而给 `unknown:<harness>`。
+- **声明**：Claude Code、Codex、OpenCode、Hermes、OpenClaw 的声明在各自 Driver 模块里，dsh 的在 `acp.ts`（dsh 跑在通用 ACP Driver 上，由工厂在建实例时交给它，此后该实例的 `classify` 就是声明的解析）；都是冻结的模块常量。`HarnessControl.relayCapabilities?` 指向同一对象；工厂另有不建实例的 `relayCapabilities(harnessId, protocol)`，Pi、Cursor 与通用 ACP 上的其他 Harness 为 null（按最保守声明对待）。
+- **目录缓存**（`src/web/native-catalog-cache.ts`，经 G050）：命令项保留并校验 `contextEffect`（只接受契约的 `CONTEXT_EFFECTS`），缓存往返后的目录与 `models()` 现取的目录读法相同。文件仍是 v2，多一个可选字段；不认识它的旧构建会把整个文件当作读不了，报告一次、保持原样、观察只留在内存里（与 ADR-033 写的“更旧的 Hub 读到 v2 文件”同一处理）；目录本来就只给读它的那个构建复用。
+
+**审查后的修正**（独立审查无阻断项，下列为重要与次要项的处置）：
+- **dsh 的端点层**（按本机 `@deepseek-ai/dsh` 0.2.1-rc.5 的安装包源码只读核对）：dsh-llm-deepseek 取 `config.baseURL ?? environment.get("DEEPSEEK_BASE_URL") ?? 默认`，`environment` 是启动环境（dsh-launch-environment 的 process > project-env > user-env），不经凭据存储。所以层序是继承的环境 → 工作区 `.env` → `$DSH_HOME/.env`；`$DSH_HOME/.credentials.yaml` 不是端点层，删掉：它的 `refs`（CredentialRef → 字符串）与 `records` 由凭据服务解析 API key 之类的凭据引用，dsh 从不经它读基础地址，顶层键更是“保留但不解析”。审查报告按 credentials-local 的注释把它排在最前，那是凭据引用的优先级，不是基础地址的。另外 rc.5 的命令行（`--profile`，Hub 就这样启动它）把 `DEEPSEEK_BASE_URL` 列为只能由启动环境设置的变量（dsh-app-boot 的 `BOOTSTRAP_NAMES`），两个 `.env` 里写了它 dsh 会拒绝启动；这两层仍然读、仍按 `gateway:<host>` 记，是为了别的启动方式或别的版本接受它们时不被判成 `deepseek`——宁可多问一次。插件配置的 `baseURL`（最高一层）与 dsh-llm-pi-ai 的其他 Provider 路由都不读：**dsh 的厂商键只在已读的层里准确**，设了这两者的 profile 会被判错；保险是 G072 的探针门控（`probed=false` 时 `RELAY_TARGET_UNVERIFIED`），P14 必须覆盖 dsh 的 profile 与插件配置层之后才能翻转。上一稿“dsh 的 `DSH_*` 端点变量没有读”的说法不对：rc.5 源码里出现的 `DSH_*` 变量（`DSH_HOME`、`DSH_AGENTS_HOME`、`DSH_WEB_URL` 等）没有一个是模型端点，这一前缀也是只能由启动环境设置的引导变量。
+- **目录缓存剥掉 `contextEffect`**：见上；对照用例覆盖 Claude、OpenClaw、Hermes、OpenCode。
+- **有意的行为变化一（原型链下标）**：`CLAUDE_LISTED_EFFECTS[name]`（解析与 Claude 的 `models()`）与 OpenClaw `models()` 的 `COMMAND_EFFECTS[...]` 改用 `Object.hasOwn`。目录里名叫 `constructor`、`toString`、`valueOf`、`hasOwnProperty`、`__proto__` 的命令从前拿到 `Object.prototype` 上的函数或对象作“效果”，现在 Claude 是 keep、OpenClaw 是目录给的效果（没有就是 unknown）。差分核对里只有这几个名字的结果变了，新结果都是契约里的效果值。
+- **有意的行为变化二（dsh 的读法）**：持有注入声明的通用 ACP 实例委托给声明的 `commands.classify`，dsh 上任何输入都是内容；从前没有目录时 `/x` 是疑似命令（Runtime 因而先取一次目录），目录列出命令时是命令。没有注入声明的通用 ACP（Pi、Cursor 走各自的 Driver，Gemini 等走通用 Driver）读法不变。Runtime 路径有用例。
+- **收紧一（Claude 的云后端开关加端点）**：`CLAUDE_CODE_USE_BEDROCK`、`CLAUDE_CODE_USE_VERTEX` 与 `ANTHROPIC_BASE_URL` 同时出现即歧义，一律 `unknown:claude`；只有开关没有端点时仍是 `aws-bedrock`、`google-vertex`。这是对第 8.1 节字面顺序（先看端点）的收紧，依据是推断：Bedrock、Vertex 模式下该变量多半不被使用。
+- **收紧二（Codex 的端点只属于 openai）**：`OPENAI_BASE_URL`、`openai_base_url` 只在 Provider 缺省或为 `openai` 时应用，其他 Provider 一律不看。随之第 8.1 节的“ollama 且回环 → local”在阶段一走不到（ollama 自己的端点不读），Codex 的 ollama 记 `provider:ollama`。
+- **类型（G066 的契约文件 `src/contracts/relay.ts`）**：`RelayCapabilities.commands.classify` 加第三个参数 `attachments: readonly ContentKind[]`，只是类型，不影响持久格式；`docs/contracts/switching.md` 的同一签名一并更新。另外，`relay.ts` 从 `control.ts` 再导出 `CommandClass`，阶段一给它加的可选 `acceptsRelay?: true` 也就间接改了 G066 的契约类型（只加可选字段，解析器不涉及）。
+- **其余**：状态里的来源改为按层的固定标签（家目录在工作区里时用户层仍记 `user_config`，`CLAUDE_CONFIG_DIR` 在两者之外时状态里也没有绝对路径）；读文件改为 `open`（`O_NONBLOCK`）→ `fstat` → 有界读取；`inferred` 清单补齐并与下表机器核对。
+
+**偏离终稿或简报之处**：
+- 成员名按简报叫 `HarnessControl.relayCapabilities`（终稿第 3.2 节写 `HarnessControl.relay`）；工厂的静态读取多一个 `protocol` 参数（终稿 `factory.relayCapabilities(harnessId)`）：目录会并入上游的控制入口，同一个 Harness 可能经通用 ACP Driver 接入，Codex 又是按协议选 Driver 的。
+- `CommandClass.acceptsRelay` 是可选的 `true`（终稿第 4 节是必有的布尔值），这样 `HarnessControl.classify` 的结果不变；经 `relay.ts` 的再导出，它也是 G066 契约类型的一部分（见上）。
+- `VendorObservation` 没有 Provider 字段：Codex 的观测约定把线程的 `modelProvider` 写成模型的 `provider/` 前缀（`openai/gpt-5.5`），模型键照样去掉前缀。
+- 回环端点除 Ollama、LM Studio 之外一律 `unknown:<harness>`：第 8.1 节在“非回环 → gateway”之后直接落到原厂键，照字面会把本机代理当成原厂；这里按第 10.4 节“判定不了 → unknown”。Claude Code 的 `external`、`gateway` 等其他登录种类同样是 `unknown:claude`。
+- 工作区里的 Harness 设置文件记 `workspace_file`，`project_config` 没有用到。Ollama `*-cloud`（以及 `:cloud`）经回环端点时记 `gateway:<观测到的回环主机>`。
+- 模型键：去 `provider/` 前缀（Hermes 是 `<provider>:` 前缀）、Bedrock 的地区与 `anthropic.` 前缀及 `-vN:M` 后缀、Vertex 的 `@日期`、日期快照与 `-latest`；`opus`、`sonnet` 这类别名保持为它自己的键。
+- Claude 的声明按“Hub 提供自己的 `/export`”读目录：带附件的 `/export` 效果记 unknown；实例按 `models()` 当时的判断读，二者只在这一处可能不同。
+
+**声明里不是第 8.1 节原文的格（待探针验证）**：第 8.1 节的各行没有标【推断】【假设】的格，但有些格写成“待探针”“未核实”“按模型族”，有些字段没写；这些格如实声明为最保守值或现码的读法，`probed` 全部为 false。下表与声明一致性测试（`tests/protocol/relay-capabilities.test.ts` 的 `inferred`）逐项相同，测试读本节核对：
+
+| Harness | 待探针的格 |
+|---|---|
+| claude | `fixedPrefix` `hostPathRead` `sessionTools` `window` `delivery.lateDelivery` `placement.maxInput` `placement.pointersAfterUser` `vendor.loopback` `vendor.signin` `vendor.backendWithEndpoint` |
+| codex | `fixedPrefix` `hostPathRead` `sessionTools` `window` `delivery.lateDelivery` `placement.pointersAfterUser` `commands.unlistedSlash` `vendor.provider` `vendor.loopback` `vendor.endpointProvider` |
+| opencode | `fixedPrefix` `hostPathRead` `sessionTools` `window` `delivery.successProvesRecorded` `commands.unlistedSlash` `placement.maxInput` `placement.pointersAfterUser` `cacheTtl` `title` `vendor.loopback` `vendor.otherProvider` |
+| dsh | `fixedPrefix` `hostPathRead` `sessionTools` `window` `delivery.lateDelivery` `placement.maxInput` `placement.pointersAfterUser` `title` `vendor.loopback` `vendor.layers` |
+| hermes | `fixedPrefix` `hostPathRead` `sessionTools` `window` `delivery.successProvesRecorded` `delivery.lateDelivery` `commands.hidden` `placement.maxInput` `cacheTtl` `vendor.noEndpoint` |
+| openclaw | `fixedPrefix` `hostPathRead` `sessionTools` `window` `commands.unlistedSlash` `compactionEvidence` `title` `placement.pointersAfterUser` `vendor.loopback` `vendor.otherProvider` |
+
+各格的含义：`fixedPrefix: null`、`hostPathRead: "none"`（v1.1 未启用）、`sessionTools: null`（v1.2）六家都不是原文；`window` 由“usage.size”“sessions.describe”译为 `session_report`、由 Codex 每回合的 `modelContextWindow` 译为 `turn_report`；`placement.maxInput: null` 是没写输入上限的四家；`placement.pointersAfterUser: false` 是 Hermes 以外的五家（只有 Hermes 写了附件指针在原话之后）；`delivery.lateDelivery: false` 是没写它的四家；`delivery.successProvesRecorded: true` 由 OpenCode、Hermes 的 E3 一格推出；`commands.unlistedSlash: "text"` 是 Codex、OpenCode、OpenClaw 按现码的解析（OpenClaw 属 Q10）；`commands.hidden` 是 Hermes 按现码的 `new`、`clear`；`cacheTtl: "unknown"` 是原文“按模型族”；`compactionEvidence: "none"` 是 OpenClaw 的“未核实”；`title: "none"` 是 OpenClaw 的“待探针”与 OpenCode、dsh 的“未保证”。厂商键一列：`vendor.loopback`（回环端点记 unknown）、`vendor.signin`（Claude 的其他登录种类记 unknown）、`vendor.backendWithEndpoint`（Claude 开关加端点记 unknown）、`vendor.provider`（Codex 的 Provider 写在模型前缀里）、`vendor.endpointProvider`（Codex 的端点只属于 openai）、`vendor.otherProvider`（OpenCode、OpenClaw 未点名的 Provider 记 `provider:<name>`）、`vendor.layers`（dsh 只读三层，插件配置与 pi-ai 路由不读）、`vendor.noEndpoint`（Hermes 没有端点即 unknown）。
+
+端点层的顺序（Q24）：Claude Code 工作区 `settings.local.json` → `settings.json` → 用户 `settings.json` → 进程环境；Codex 工作区 → 用户 `config.toml` → `OPENAI_BASE_URL`；dsh 继承的环境 → 工作区 `.env` → `$DSH_HOME/.env`（rc.5 源码核对过，见上）；OpenCode 工作区 `opencode.jsonc` → `opencode.json` → 用户的两个。Claude Code 的开关按 1、true、yes、on 判真（设置里写成 JSON 数字或布尔值的按它在环境里的文本）。已知读不到的层：Hermes 的 Provider 端点键第 8.1 节没有点名，Hermes 的厂商键阶段一恒为 `unknown:hermes`；dsh 的插件配置 `baseURL` 与 pi-ai 路由、Claude Code 的组织管理设置、Codex 的 `model_providers.*.base_url` 与 OSS 端点、OpenCode 的 `OPENCODE_CONFIG` 自定义路径都没有读。
+
+**已裁定与推迟**（2026-11-09 主负责人裁定）：
+- 回环端点记 `unknown:<harness>`：接受；应回写终稿第 8.1、10.4 节的文字（本补记不改终稿原文）。
+- 工作区内的设置文件记 `workspace_file`：保留；`project_config` 目前没有使用，枚举里保留（不动持久格式），删不删待 G072 决定。
+- dsh 的读法：已改为委托声明（见上），不另建子类。
+- 待 G072、G073：
+  - `VendorObservation` 加 Provider 与端点状态，会改变绑定里缓存的 `vendorObserved` 的持久格式（G066 契约与 `MAX_BINDING_RELAY_BYTES`），等 G072 做协调器时一并决定。建议形状一：`provider: string | null`（≤128 B，Driver 报告的 Provider 名，Codex 的 `modelProvider`、OpenCode 与 OpenClaw 的前缀），理由是厂商键不该靠解析模型名；建议形状二：`endpoint` 改为 `{ kind: "known"; host; layer } | { kind: "default" } | { kind: "unknown"; layer; problem }`，理由是“读不出”与“没有端点”必须在缓存里也分得开，否则受理时会按 `endpoint: null` 判成原厂。
+  - Ollama `*-cloud` 的键名：`gateway:127.0.0.1` 在同意文案里读不懂，审查者建议 `provider:ollama-cloud`，留给 G073 定文案。
+  - 主机名判定偏保守的几处（`localhost.` 尾点与含 `_` 的主机判为无效端点即 unknown，`0.0.0.0` 不算回环而记 `gateway:0.0.0.0`）：只记一笔，不改。
+
+**给阶段二的接缝**：
+- Driver 在 `open()` 之后用 `readEndpoint(harness, {home, values: 交给 Harness 的环境, workspace}, provider)` 读端点，用 `vendorObservation(reading, model, authKind, declaration.normalizeModel)` 组观测；Claude 的 `authKind` 取 `_auth/status_update` 的 kind（现在只用来判就绪），Codex 的 `modelProvider` 写进模型前缀。
+- 首行省略与命令跳过读声明的 `commands.classify`（传入附件种类；`possible_command` 按命令对待），`acceptsRelay` 的命令可以捎带；`placement` 的 `parts`、`pointersAfterUser`、`maxInput` 决定 `TurnText` 的拼法与越限降档。
+- 受理时（G072）按 `relayCapabilities(harnessId, protocol)` 读声明，目录取自缓存时经 `relayEntries()` 变成声明的目录。缓存现在保留每个命令的 `contextEffect`，读法与 `models()` 现取的目录相同；上一稿“各 Driver 的 `models()` 本来就补齐了效果”对缓存不成立（缓存当时剥掉了它），已修。缓存不存 `hiddenCommands`，各家的隐藏命令在解析规则里，不依赖目录。
+
+**经既有所有者修改的文件**：`src/contracts/control.ts`（G007）；`src/contracts/relay.ts`（G066，只改 `classify` 的类型）；`src/adapters/control/acp.ts`、`claude.ts`、`opencode.ts`、`hermes.ts`、`openclaw.ts`、`factory.ts`（G032）；`src/adapters/control/codex.ts`（G034）；`src/web/native-catalog-cache.ts`（G050）；`docs/contracts/switching.md`（C006，`classify` 签名与成员名）；ADR-033 的“影响”补一行。`hermes-gateway.ts`、`binding-factory.ts` 没有动。两个新源文件属 G069 的 `owns`，但 `plan/slices.json` 的 relay 切片 `allowed_files` 还没有列它们，`python3 tools/check_design.py` 因此报“application source outside approved slice”两行，由主负责人集成时登记；`plan/` 下 G069 的用例状态仍是 planned，声明一致性与对照用例 G069-D01–D04 没有计划条目。

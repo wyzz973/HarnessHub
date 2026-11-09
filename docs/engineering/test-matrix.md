@@ -631,6 +631,10 @@
 | G069-C07 | G069 | protocol | 因交接新建的会话回写原生标题：Codex `thread/name/set`、Claude `_session/rename`、Hermes `/title`；公共标题含疑似密钥 | 标题在 `session/new`（Codex `thread/start`）之后、首个提示之前回写；标题先经出境脱敏，有命中用“新对话”；Hermes `/title` 吞回执、不产生回合 | planned |
 | G069-C08 | G069 | unit | `normalizeModel` 输入 `provider/model`、`<provider>:<model>`、别名与 null | 归一为去掉 provider 前缀与别名的模型键；null 得空串 | planned |
 | G069-C09 | G069 | protocol | Driver 上报逐请求用量 `NativeUsage.requests`：正常、超过 64 条、不上报 | 有界上报（≤64 条）；不上报时记“未上报”，不算通过 | planned |
+| G069-D01 | G069 | protocol | 六家的静态 `relayCapabilities` 声明与第 8.1 节表逐格比较（表以显式数据写进测试），推断或取默认的格列在 ADR 清单里且测试读该清单核对 | 声明逐格等于 8.1 节；推断格都在清单里；`probed` 恒为 false；改一格或少列一格测试必须失败 | planned |
+| G069-D02 | G069 | protocol | 声明逐层冻结；工厂静态读取返回的声明与实例所带的是同一对象 | 声明不可被改写；`relayCapabilities(harnessId, protocol)` 与实例带的声明相同，与 `createNativeControl` 的选择同步 | planned |
+| G069-D03 | G069 | protocol | 原生目录经缓存文件往返后保留并校验命令的 `contextEffect`；Claude、OpenClaw、Hermes、OpenCode 在目录不带效果时，声明读法（经缓存往返的目录）与 Runtime 读法（`models()` 现取的目录）逐输入一致 | 读法一致；缓存只接受契约里的效果值（无效样例被拒）；旧缓存文件（没有该字段）仍可读 | planned |
+| G069-D04 | G069 | protocol | 正式 Runtime 加真实 SQLite 加真 ACP 对端进程：dsh 持有注入声明时 `/clear` 原样作为内容发出；没有声明的通用 ACP 对同样输入仍记为命令 | dsh：对端恰好收到一条 `session/prompt` 文本 `/clear`、`run.ended.input` 为 recorded、没有 `run.native_command`；无声明的通用 ACP：记命令，结算为 unknown | planned |
 | G070-C01 | G070 | unit | 同一输入重渲染 100 次；不同 TZ / LANG 的子进程渲染 | 只得到 1 个 sha256；跨 TZ/LANG 字节相同 | planned |
 | G070-C02 | G070 | unit | S1 交接单、A→B→A 增量、要点包三个样例场景渲染 | 与金样 `tests/fixtures/relay/golden/{s1-packet,s2-delta,anchor}.md`（终稿 5.6）逐字节一致 | planned |
 | G070-P01 | G070 | property | 随机会话、档位与包类型下渲染交接单；请求带 `attach:"none"` | 每类事实 已渲染 + 已省略 + 未统计 = 全部；verbatim + compact + line + ranged + excluded = \|need\|；`attach:"none"` 不调用 `chooseBudget` | planned |

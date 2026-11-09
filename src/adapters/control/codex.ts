@@ -10,6 +10,35 @@ import { basename } from "node:path";
 import { MAX_CONTENT_BYTES, type ContentKind, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
 import { MAX_NATIVE_EXTENSIONS, MAX_NATIVE_SESSIONS, type NativeExtensions, type NativeSessionImport, type NativeSessionPage } from "../../contracts/control.js";
 import { checkInputs, fileMentions } from "../../infrastructure/control/attachments.js";
+import type { RelayCapabilities } from "../../contracts/relay.js";
+import { CODEX_SKILL_INPUT as SKILL_INPUT, CODEX_THREAD_COMMANDS as THREAD_COMMANDS, codexClassify, codexNativeClassify, codexThreadOperation as threadOperation, relayDeclaration } from "./relay-classify.js";
+import { codexVendor, slashModelKey } from "./relay-vendor.js";
+
+/**
+ * Codex's relay declaration (ADR-055 §8.1, Codex row): one text (packet, a line break, then the user's words), at most
+ * 1,048,576 characters; live evidence from the user message carrying the Run's client identity, a check after the turn by
+ * that identity, and a completed turn proves nothing by itself (a hook can complete a turn without its user message); the
+ * driver's own `/export` and `/compact` and listed `/skill:` inputs, which submit their text (acceptsRelay), everything
+ * else text; compaction events; one process per connection; the vendor by the model provider and the endpoint its
+ * `OPENAI_BASE_URL` / `openai_base_url` resolve (the observation names the provider as the model's `provider/` prefix);
+ * the window from each turn's token usage; a native title by `thread/name/set` before the first turn. Not probed.
+ */
+export const codexRelayCapabilities: RelayCapabilities = relayDeclaration({
+  probed: false,
+  delivery: { live: "recorded_event", verify: "after_turn", successProvesRecorded: false, lateDelivery: false },
+  execution: "process",
+  commands: { unlistedSlash: "text", hidden: [], classify: codexClassify },
+  placement: { parts: "single", maxInput: { unit: "chars", limit: 1_048_576 }, pointersAfterUser: false },
+  window: "turn_report",
+  fixedPrefix: null,
+  cacheTtl: "30m",
+  compactionEvidence: "event",
+  resolveVendor: codexVendor,
+  normalizeModel: slashModelKey,
+  title: "set",
+  hostPathRead: "none",
+  sessionTools: null,
+});
 
 interface ActiveTurn {
   readonly event: (event: ControlEvent) => void;
@@ -103,13 +132,6 @@ function collaborationUnavailable(error: ControlError): ControlError {
   const reason = error.remoteCode === -32601 ? "它没有 collaborationMode/list 方法（-32601）" : "它拒绝了 collaborationMode/list" + (error.remoteCode === undefined ? "" : "（" + error.remoteCode + "）");
   return new ControlError("NATIVE_OPTION_UNAVAILABLE", "这个 Codex 不提供协作模式：" + reason + "。" + (error.remoteFailure?.message ?? ""));
 }
-const THREAD_COMMANDS = [{ name: "compact", description: "压缩当前会话上下文（原生 thread/compact/start）", contextEffect: "compact" }, { name: "export", description: "导出原生会话记录（Codex rollout JSONL）", contextEffect: "none" }] as const;
-/** The inputs this driver turns into thread operations or skill inputs (startText); every other input is text to Codex. */
-const EXPORT_INPUT = /^\/export\s*$/u, COMPACT_INPUT = /^\/compact\s*$/u, SKILL_INPUT = /^\/skill:([A-Za-z0-9][A-Za-z0-9._:-]{0,255})(?:\s+([\s\S]*))?$/u;
-/** The driver's own thread operation an input asks for, read once for classify() and startText(): with attachments, none. */
-function threadOperation(text: string, attached: boolean): "export" | "compact" | null {
-  return attached ? null : EXPORT_INPUT.test(text) ? "export" : COMPACT_INPUT.test(text) ? "compact" : null;
-}
 /** A result this driver writes itself when nothing reached Codex (an export, or a request it refused before inserting it). */
 const NOT_RECORDED = { input: "not_recorded" } as const;
 const SANDBOX_TYPES: Readonly<Record<string, string>> = { readOnly: "read-only", workspaceWrite: "workspace-write", dangerFullAccess: "danger-full-access" };
@@ -178,6 +200,7 @@ function turnFailure(error: Record<string, unknown>): { readonly code: string; r
 }
 /** Codex app-server anti-corruption layer; native thread and turn IDs never become public Session IDs. */
 export class CodexControl implements HarnessControl {
+  readonly relayCapabilities: RelayCapabilities = codexRelayCapabilities;
   private readonly rpc: JsonRpcProcess;
   private initializing: Promise<ProtocolObservation> | null = null;
   private initialized = false;
@@ -266,17 +289,7 @@ export class CodexControl implements HarnessControl {
    * operations, and `/skill:<name> …` is an input with that skill when the catalog lists it (only the catalog settles the
    * name), as startText sends them. Anything else, leading whitespace included, is text for Codex.
    */
-  classify(text: string, catalog: NativeModelCatalog | null, attachments: readonly ContentKind[] = []): CommandClass {
-    const operation = threadOperation(text, attachments.length > 0);
-    if (operation === "export") return { kind: "command", name: "export", args: "", effect: "none" };
-    if (operation === "compact") return { kind: "command", name: "compact", args: "", effect: "compact" };
-    const invoked = SKILL_INPUT.exec(text);
-    if (invoked === null) return { kind: "content" };
-    const name = "skill:" + invoked[1]!;
-    if (catalog === null) return { kind: "possible_command", name };
-    const listed = catalog.commands?.find(command => command.name === name);
-    return listed === undefined ? { kind: "content" } : { kind: "command", name, args: invoked[2]?.trim() ?? "", effect: listed.contextEffect ?? "keep" };
-  }
+  classify(text: string, catalog: NativeModelCatalog | null, attachments: readonly ContentKind[] = []): CommandClass { return codexNativeClassify(text, catalog, attachments); }
   /** The configured and listed models with the native options; opening a thread validates against this without account or skill reads. */
   private async nativeCatalog(): Promise<{ readonly models: NativeModelCatalog["models"]; readonly defaultModel: string | null; readonly options: readonly NativeOption[] }> {
     const config = object(await this.rpc.request("config/read", { includeLayers: false, cwd: this.options.cwd }), "native configuration");
