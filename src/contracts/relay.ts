@@ -343,12 +343,21 @@ export interface DeliveredMark { readonly throughSeq: number; readonly chain: Fi
 export const FRESH_BASES = ["new", "user_cleared", "reset"] as const;
 export const SUSPECT_CAUSES = ["rewind", "unknown_command", "legacy", "marker_absent", "clear_unconfirmed", "unknown_turn"] as const;
 export type SuspectCause = typeof SUSPECT_CAUSES[number];
-/** A sync state a pending sync can return to; the prior nested in `carried` carries nothing itself. */
+/**
+ * The causes a suspect state may keep a packet for (`carried`): a packet still unconfirmed when the binding became suspect —
+ * a pending packet under a rewind, an unknown command or an unconfirmed clear, and an unknown Turn's packet (D6). legacy and
+ * marker_absent never arise from a pending binding (ADR-055 implementation notes, the approval agent's decisions of 2026-11-09).
+ */
+export const CARRIED_CAUSES = ["rewind", "unknown_command", "clear_unconfirmed", "unknown_turn"] as const satisfies readonly SuspectCause[];
+/**
+ * A sync state a pending sync can return to. Neither the prior nested in `carried` nor a pending sync's prior carries a
+ * packet itself: a packet is built only on a state that carries none (a suspect binding moves back first, retreatedPrior).
+ */
 export type SyncPrior =
   | { readonly kind: "fresh"; readonly basis: typeof FRESH_BASES[number] }
   | { readonly kind: "synced"; readonly mark: DeliveredMark }
   | { readonly kind: "suspect"; readonly mark: DeliveredMark | null; readonly cause: SuspectCause; readonly floorCandidate: number | null;
-      /** Only with cause unknown_turn and an unknown Turn that carried packet `packetId` (D6). */
+      /** Only with a cause of CARRIED_CAUSES: the packet `packetId` that was pending when the binding became suspect, and the prior it was built on. */
       readonly carried: { readonly prior: SyncPrior; readonly packetId: RelayPacketId; readonly range: SourceRange } | null };
 export const SYNC_KINDS = ["fresh", "synced", "pending", "suspect"] as const;
 export type BindingSync =
@@ -633,7 +642,7 @@ function syncPrior(value: unknown, nested: boolean): SyncPrior {
         const row = object(raw, "carried packet"); only(row, ["prior", "packetId", "range"], "carried packet");
         return { prior: syncPrior(row.prior, true), packetId: relayPacketId(row.packetId), range: parseSourceRange(row.range) };
       });
-      if (carried !== null && cause !== "unknown_turn") throw new SessionError("INVALID_DATA", "only an unknown Turn's suspect state carries a packet");
+      if (carried !== null && !(CARRIED_CAUSES as readonly string[]).includes(cause)) throw new SessionError("INVALID_DATA", "a suspect state of this cause carries no packet");
       return { kind: "suspect", mark: nullable(item.mark, parseDeliveredMark), cause, floorCandidate: nullable(item.floorCandidate, raw => integer(raw, "floor candidate", 1, RELAY_MAX_SEQ)), carried };
     }
   }
@@ -644,7 +653,8 @@ export function parseBindingSync(value: unknown): BindingSync {
   if (item.kind !== "pending") return syncPrior(item, false);
   only(item, ["kind", "prior", "packetId", "range", "autoResends", "manualResends", "attachOverride"], "pending sync");
   const autoResends = integer(item.autoResends, "automatic resends", 0, 1) as 0 | 1;
-  return { kind: "pending", prior: syncPrior(item.prior, false), packetId: relayPacketId(item.packetId), range: parseSourceRange(item.range), autoResends,
+  // A pending sync's prior carries no packet: a packet is built on a state that carries none.
+  return { kind: "pending", prior: syncPrior(item.prior, true), packetId: relayPacketId(item.packetId), range: parseSourceRange(item.range), autoResends,
     manualResends: integer(item.manualResends, "manual resends", 0, RELAY_MAX_RUNS), attachOverride: flag(item.attachOverride, "attach override") };
 }
 /** NativeSessionBinding.relay (v13), checked field by field and then against MAX_BINDING_RELAY_BYTES. */

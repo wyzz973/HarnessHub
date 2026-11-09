@@ -26,6 +26,8 @@ class NativeSession {
     this.summary = null;
     /** Inputs a cancelled Turn will still write (lateDelivery). */
     this.late = [];
+    /** How many clears ran on this session: the ground truth a confirmed clear (a new native epoch) must stand on. */
+    this.clears = 0;
   }
   append(entry) { this.entries.push({ ...entry, serial: ++this.serial }); }
   users() { return this.entries.filter(entry => entry.kind === "user"); }
@@ -78,8 +80,17 @@ export class NativeHistories {
   /** The history is emptied (a clear); the cursor stays, late inputs still come. */
   clear({ session }) {
     const native = this.session(session);
-    native.entries = []; native.summary = null;
-    return { historyEmpty: true };
+    native.entries = []; native.summary = null; native.clears += 1;
+    return { historyEmpty: true, clears: native.clears };
+  }
+  /**
+   * The user types in the original program itself: a user entry and a reply that are no Hub Turn (no run id, no packet, no
+   * fact). After a clear this is what makes a replay non-empty although the clear happened.
+   */
+  nativeTurn({ session }) {
+    const native = this.session(session);
+    native.append({ kind: "user", runId: null, packetId: null, facts: [], origin: false }); native.append({ kind: "reply", runId: null });
+    return { entries: native.entries.length };
   }
   /** The last `n` user entries and what followed them are removed (an undo). */
   rewind({ session, n = 1 }) {
@@ -122,13 +133,14 @@ export class NativeHistories {
     const native = this.session(session), facts = new Set(native.summary?.facts ?? []), packets = new Set(native.summary?.packets ?? []), runs = new Set(native.summary?.runs ?? []);
     let origin = native.summary?.origin ?? false;
     for (const entry of native.users()) { for (const fact of entry.facts) facts.add(fact); if (entry.packetId !== null) packets.add(entry.packetId); runs.add(entry.runId); origin ||= entry.origin; }
-    return { facts: [...facts].sort(), packets: [...packets].sort(), runs: [...runs].sort(), origin, entries: native.entries.length, cursor: native.cursor, late: native.late.length };
+    runs.delete(null);
+    return { facts: [...facts].sort(), packets: [...packets].sort(), runs: [...runs].sort(), origin, entries: native.entries.length, cursor: native.cursor, late: native.late.length, clears: native.clears };
   }
   /** Forgets every session (between property cases). */
   reset() { this.sessions.clear(); return { sessions: 0 }; }
 }
 
-const OPS = ["position", "send", "flushLate", "compact", "clear", "rewind", "verify", "entry", "held", "reset"];
+const OPS = ["position", "send", "flushLate", "compact", "clear", "nativeTurn", "rewind", "verify", "entry", "held", "reset"];
 function run(model, op, args) {
   if (op === "batch") return args.ops.map(item => run(model, item.op, item.args ?? {}));
   if (!OPS.includes(op)) throw new Error("unknown operation " + op);

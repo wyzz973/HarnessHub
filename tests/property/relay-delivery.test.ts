@@ -9,8 +9,8 @@ import {
 } from "../../src/contracts/relay.js";
 import { runId, type NativeSessionBinding, type RunId } from "../../src/contracts/session.js";
 import {
-  foreignTo, owed, pendingResend, planReturnVerify, retreatedPrior, step,
-  type BindingDelivery, type Cursor, type DecidedOutcome, type RelayEvent, type RelayFact, type RelayStep, type VerifyPlan,
+  foreignTo, owed, pendingResend, planReturnVerify, resolvesWithoutCheck, retreatedPrior, step,
+  type BindingDelivery, type Cursor, type DecidedOutcome, type PlannedMarker, type RelayEvent, type RelayFact, type RelayStep, type VerifyPlan,
 } from "../../src/contexts/session/domain/relay/delivery.js";
 import { initialBindingRelay } from "../../src/contexts/session/domain/relay/migrate.js";
 
@@ -60,7 +60,22 @@ class Peer {
 }
 async function startPeer(t: TestContext): Promise<Peer> { const peer = new Peer(); await peer.ready; t.after(() => peer.close()); return peer; }
 
-interface Held { readonly facts: readonly string[]; readonly packets: readonly string[]; readonly cursor: Cursor; readonly late: number }
+interface Held { readonly facts: readonly string[]; readonly packets: readonly string[]; readonly cursor: Cursor; readonly late: number; readonly entries: number; readonly clears: number }
+/** The markers a plan asks the Driver about, the carried packet included. */
+function asked(plan: VerifyPlan): readonly PlannedMarker[] {
+  switch (plan.kind) {
+    case "skip": return [];
+    case "pending": return [plan.marker, ...plan.earlier];
+    case "synced": return [plan.marker];
+    case "unknown_turn": return plan.marker === null ? [] : [plan.marker];
+    case "clear": return [...plan.chain, ...(plan.carried === null ? [] : [plan.carried])];
+    case "suspect": return [...plan.markers, ...(plan.carried === null ? [] : [plan.carried])];
+  }
+}
+/** Whether a plan has nothing to look for besides the history being empty: the M=∅ cases a restorable mark comes back from. */
+function noChain(plan: VerifyPlan): boolean {
+  return plan.kind === "skip" || plan.kind === "clear" && plan.chain.length === 0 || plan.kind === "suspect" && plan.markers.length === 0;
+}
 interface Caps { readonly verify: "on_next_open" | "after_turn" | "none"; readonly lateDelivery: boolean; readonly compaction: boolean; readonly window: number; readonly flaky: number; readonly wholeHistory: boolean; readonly live: boolean }
 /** A delivery row as the simulated Hub keeps it, with the packet's facts (what it covered) for the checks. */
 interface Row { record: DeliveryRecord; readonly nativeEpoch: number; readonly range: SourceRange; readonly bodySha256: Fingerprint; readonly reanchor: boolean; mark: DeliveredMark | null; readonly facts: readonly string[]; readonly session: string }
@@ -82,9 +97,15 @@ class Simulation {
   readonly rows: Row[] = [];
   /** The last content Turn on the binding, when it ended unknown (D6 may continue it). */
   private unknownTurn: { readonly runId: RunId; readonly position: number } | null = null;
+  /** The reference model's clear count when this binding's epoch last rose (P-F1), and at its last check (P-F2). */
+  private clearsAtEpochRise = 0;
+  private clearsAtLastCheck = 0;
+  /** The last packet refused before insertion: an identical need renders the identical text, so the same identity (INV-13). */
+  private lastRefused: { readonly packetId: RelayPacketId; readonly facts: string; readonly body: Fingerprint } | null = null;
   readonly log: string[] = [];
   /** Counters the cases assert on, so a case that never reaches a path is visible. */
-  readonly seen = { recorded: 0, retreats: 0, oldPresent: 0, resends: 0, choices: 0, clears: 0, resets: 0, d6: 0, plain: 0, checks: 0 };
+  readonly seen = { recorded: 0, retreats: 0, oldPresent: 0, resends: 0, choices: 0, clears: 0, resets: 0, d6: 0, plain: 0, checks: 0,
+    epochRises: 0, emptyHistoryClears: 0, restoredWithoutChain: 0, skipChecks: 0, nativeTurns: 0, reusedIds: 0, clearChecks: 0, carriedChecks: 0 };
   constructor(private readonly peer: Peer, readonly rand: () => number, readonly caps: Caps, readonly label: string) {
     this.bindings = [this.binding("ready")];
   }
@@ -100,8 +121,12 @@ class Simulation {
   private deliveries(): readonly BindingDelivery[] { return this.rows.filter(row => row.session === this.session); }
   private need(attachOverride = false) { return owed(this.relay, X.harnessId, X.controlId, this.facts, { originHistory: false, attachOverride }); }
 
-  /** Applies a step that must not be refused, checks its delivery changes against the rows and the properties. */
-  private async apply(outcome: RelayStep, what: string): Promise<void> {
+  /**
+   * Applies a step that must not be refused, checks its delivery changes against the rows and the properties. P-F1: a native
+   * epoch rises on this native session (e, k confirming a clear) only after the reference model ran a clear since the last rise;
+   * `emptyHistory` is the one exception, a check that found the history empty (a clear of nothing is a clear).
+   */
+  private async apply(outcome: RelayStep, what: string, emptyHistory = false): Promise<void> {
     if (outcome.kind === "refused") this.fail(what + " was refused: " + JSON.stringify(outcome.refusal));
     const before = this.relay;
     for (const change of outcome.deliveries) {
@@ -114,8 +139,18 @@ class Simulation {
       if (!(outcome.relay.nativeEpoch > before.nativeEpoch && outcome.relay.epochFloor >= before.epochFloor)) this.fail(what + ": a new native session takes a later epoch and keeps the floor");
       this.bindings = [...this.bindings.slice(0, -1), { ...this.bindings.at(-1)!, status: "archived", relay: before }];
       this.relay = outcome.relay; this.session = "native-" + ++this.sessions; this.bindings.push(this.binding("ready"));
+      this.clearsAtEpochRise = 0;
     } else {
       this.monotone(before, outcome.relay, what);
+      if (outcome.relay.nativeEpoch > before.nativeEpoch) {
+        const clears = (await this.peer.call<Held>("held", { session: this.session })).clears;
+        this.seen.epochRises++;
+        if (clears <= this.clearsAtEpochRise) {
+          if (!emptyHistory) this.fail(what + ": the native epoch rose without a clear in the native session (P-F1)");
+          this.seen.emptyHistoryClears++;
+        }
+        this.clearsAtEpochRise = clears;
+      }
       this.relay = outcome.relay; this.bindings = [...this.bindings.slice(0, -1), { ...this.bindings.at(-1)!, relay: this.relay }];
     }
     this.log.push(what + " → " + this.relay.sync.kind + (this.relay.sync.kind === "suspect" ? ":" + this.relay.sync.cause : "") + " mark " + (markOf(this.relay.sync)?.throughSeq ?? "-") + " e" + this.relay.nativeEpoch + " f" + this.relay.epochFloor);
@@ -149,24 +184,37 @@ class Simulation {
     }
   }
 
-  /** The check a Driver of these declarations runs at `moment`, applied as k. */
+  /**
+   * The check a Driver of these declarations runs at `moment`, applied as k for every plan, a skipped one included (the
+   * coordinator's rule: a Driver that cannot check still gets a k, which settles a suspect binding that needs no check).
+   * P-F2: a check that restores or keeps a mark finds no clear in the reference model since the previous check, unless it had
+   * nothing to look for but an empty history (M=∅ with a restorable mark, counted).
+   */
   private async check(moment: "open" | "settled"): Promise<void> {
     const plan = planReturnVerify(this.relay, { verify: this.caps.verify, moment, deliveries: this.deliveries() });
-    if (plan.kind === "skip") return;
-    this.seen.checks++;
-    const readable = this.rand() >= this.caps.flaky;
-    const markers = plan.kind === "pending" ? [plan.marker, ...plan.earlier] : plan.kind === "synced" ? [plan.marker] : plan.kind === "unknown_turn" ? (plan.marker === null ? [] : [plan.marker]) : plan.markers;
+    const readable = this.rand() >= this.caps.flaky, markers = asked(plan);
+    if (plan.kind === "skip") this.seen.skipChecks++; else this.seen.checks++;
+    if (plan.kind === "clear") this.seen.clearChecks++;
+    if ((plan.kind === "clear" || plan.kind === "suspect") && plan.carried !== null) this.seen.carriedChecks++;
     // The prior's last packet is asked about too: a Driver may answer for it, and an old packet present must not move a pending one.
     const prior = this.relay.sync.kind === "pending" ? markOf(this.relay.sync.prior)?.lastPacketId ?? null : null;
-    const asked = [...markers.map(marker => ({ packetId: marker.packetId, after: marker.position.kind === "seq" ? marker.position.before : 0 })),
-      ...(prior === null ? [] : [{ packetId: prior, after: this.rows.find(row => row.record.packetId === prior)?.record.position.kind === "seq" ? (this.rows.find(row => row.record.packetId === prior)!.record.position as { readonly before: number }).before : 0 }])];
-    const result = await this.peer.call<VerifyResult>("verify", { session: this.session, markers: asked, window: this.caps.window, compaction: this.caps.compaction, readable, wholeHistory: this.caps.wholeHistory });
+    const positionOf = (packetId: string) => { const row = this.rows.findLast(item => item.record.packetId === packetId); return row?.record.position.kind === "seq" ? row.record.position.before : 0; };
+    const questions = [...markers.map(marker => ({ packetId: marker.packetId, after: marker.position.kind === "seq" ? marker.position.before : 0 })), ...(prior === null ? [] : [{ packetId: prior, after: positionOf(prior) }])];
+    const result: VerifyResult = plan.kind === "skip" ? { markers: [], historyEmpty: null, compaction: null, foreignAfterLast: null, verifyMs: 0 }
+      : await this.peer.call<VerifyResult>("verify", { session: this.session, markers: questions, window: this.caps.window, compaction: this.caps.compaction, readable, wholeHistory: this.caps.wholeHistory });
     let turnEntry: MarkerResult | undefined;
     if (plan.kind === "unknown_turn" && plan.marker === null && this.unknownTurn !== null)
       turnEntry = (await this.peer.call<{ readonly result: MarkerResult }>("entry", { session: this.session, runId: this.unknownTurn.runId, after: this.unknownTurn.position, readable })).result;
+    const held = await this.peer.call<Held>("held", { session: this.session });
     const at = this.commit(), before = this.relay;
     const outcome = step(this.relay, { kind: "verified", plan, result, ...(turnEntry === undefined ? {} : { turnEntry }), inRunId: null, at });
-    await this.apply(outcome, "k(" + plan.kind + ":" + result.markers.map(item => item.result).join("/") + (turnEntry === undefined ? "" : "+" + turnEntry) + ")");
+    await this.apply(outcome, "k(" + plan.kind + (plan.kind === "skip" ? ":" + plan.reason : ":" + result.markers.map(item => item.result).join("/")) + (turnEntry === undefined ? "" : "+" + turnEntry) + ")",
+      result.historyEmpty === true && held.entries === 0);
+    if (outcome.kind === "applied" && (outcome.note.verified === "restored" || outcome.note.verified === "kept") && held.clears > this.clearsAtLastCheck) {
+      if (!noChain(plan)) this.fail("a check restored or kept a mark after a clear ran in the native session (P-F2)");
+      this.seen.restoredWithoutChain++;
+    }
+    this.clearsAtLastCheck = held.clears;
     if (plan.kind === "pending") {
       const own = result.markers.find(item => item.packetId === plan.marker.packetId)?.result;
       if (own !== "present") {
@@ -178,10 +226,15 @@ class Simulation {
     // Rows a check decided recorded with the binding on them keep the mark they made.
     if (this.relay.sync.kind === "synced" && before.sync.kind !== "synced") this.markRow();
   }
+  /** The end of a case: one more open, and then no suspect binding that needs no check is left waiting (F2). */
+  async settle(): Promise<void> {
+    await this.check("open");
+    if (resolvesWithoutCheck(this.relay)) this.fail("a suspect binding that needs no check is still waiting after an open (F2)");
+  }
   /** After a packet is recorded, nothing it delivered is owed again (§7.2 property). */
   private recordedNeed(packetId: RelayPacketId): void {
     this.seen.recorded++;
-    const row = this.rows.find(item => item.record.packetId === packetId)!, need = new Set(this.need().facts.map(fact => fact.runId as string));
+    const row = this.rows.findLast(item => item.record.packetId === packetId)!, need = new Set(this.need().facts.map(fact => fact.runId as string));
     for (const fact of row.facts) if (need.has(fact)) this.fail("need still holds " + fact + ", which packet " + packetId + " delivered");
   }
   private markRow(): void {
@@ -199,7 +252,7 @@ class Simulation {
 
   /** A content input on the binding: the open's check, then b, n or a as the state and the user decide. */
   async contentTurn(): Promise<void> {
-    if (this.caps.verify === "on_next_open") await this.check("open");
+    await this.check("open");
     const attach = this.relay.sync.kind === "fresh" && this.relay.sync.basis === "user_cleared" && this.rand() < 0.3;
     let need = this.need(attach);
     const sync = this.relay.sync, foreign = this.facts.some(fact => this.foreign(fact));
@@ -260,7 +313,12 @@ class Simulation {
   /** a: a packet covering `need`, then its fate in the native history and the evidence a truthful Driver gives of it. */
   private async carry(need: ReturnType<typeof owed>, attachOverride: boolean, resend: { readonly by: "auto" | "user"; readonly of: RunId } | null, retreatFrom?: number | null): Promise<void> {
     if (need.facts.length === 0) return this.alone();
-    const id = this.nextRun(), packetId = this.nextPacket(), facts = need.facts.map(fact => fact.runId as string);
+    const id = this.nextRun(), facts = need.facts.map(fact => fact.runId as string);
+    // The same need rendered again (not a resend, whose template differs) gives the same text and so the same identity as the
+    // packet refused before: half the time the case takes that, so identities shared by two Runs are covered (INV-13).
+    const reuse = resend === null && this.lastRefused !== null && this.lastRefused.facts === facts.join() && this.rand() < 0.5;
+    const packetId = reuse ? this.lastRefused!.packetId : this.nextPacket();
+    if (reuse) this.seen.reusedIds++;
     const range: SourceRange = { fromSeq: need.facts[0]!.seq, throughSeq: need.facts.at(-1)!.seq, fromRun: 0, throughRun: 0 };
     const body = createHash("sha256").update(packetId).digest("hex") as Fingerprint, position = await this.position();
     const cursor = this.caps.compaction ? (await this.peer.call<Held>("held", { session: this.session })).cursor : null;
@@ -298,11 +356,14 @@ class Simulation {
     }
     this.facts.push({ runId: id, seq: at.seq, executedOn: { ...X, nativeEpoch: this.relay.nativeEpoch } });
     this.unknownTurn = decided.kind === "unknown" ? { runId: id, position } : null;
+    this.lastRefused = kind === "refused" ? { packetId, facts: facts.join(), body } : this.lastRefused;
     if (this.caps.verify === "after_turn") await this.check("settled");
   }
 
   /** A command Turn: what it does in the native history, and the event its settlement gives (§7.4). */
   async command(): Promise<void> {
+    // A command Turn opens the native session too; half the cases check there, the others leave it to the next content input.
+    if (this.rand() < 0.5) await this.check("open");
     const kind = this.rand(), at = this.commit();
     let event: RelayEvent;
     if (kind < 0.25) event = { kind: "command_kept" };
@@ -335,6 +396,8 @@ class Simulation {
     if (this.caps.compaction && done.folded > 0) await this.apply(step(this.relay, { kind: "compaction", cursor: done.cursor }), "d(auto)");
   }
   async lateWrites(): Promise<void> { await this.peer.call("flushLate", { session: this.session }); await this.sound("late writes"); }
+  /** The user types in the original program: no Hub Turn, no fact, but the history is no longer empty after a clear. */
+  async nativeTurn(): Promise<void> { this.seen.nativeTurns++; await this.peer.call("nativeTurn", { session: this.session }); await this.sound("native turn"); }
   /** l: the user starts a new native session of the same Harness control. */
   async reset(): Promise<void> {
     this.seen.resets++;
@@ -360,26 +423,28 @@ async function run(simulation: Simulation, steps: number): Promise<void> {
     else if (choice < 0.6) await simulation.contentTurn();
     else if (choice < 0.8) await simulation.command();
     else if (choice < 0.85) await simulation.autoCompaction();
-    else if (choice < 0.9) await simulation.lateWrites();
+    else if (choice < 0.88) await simulation.lateWrites();
+    else if (choice < 0.9) await simulation.nativeTurn();
     else if (choice < 0.93) await simulation.reset();
     else await simulation.continueUnknown();
   }
+  await simulation.settle();
 }
 
 const SEEDS = Array.from({ length: 160 }, (_, index) => 0x6806_0000 + index * 7919);
 
-test("G068-P01 under any evidence sequence a trusted mark never exceeds what the native session holds, goes down only when suspect, never below the floor; need covers what is missing", async t => {
+test("G068-P01 under any evidence sequence a trusted mark never exceeds what the native session holds, goes down only when suspect, never below the floor; need covers what is missing; epochs rise only on a clear (P-F1); no mark is restored over a clear (P-F2); nothing that needs no check is left waiting", async t => {
   const peer = await startPeer(t);
-  const totals = { recorded: 0, retreats: 0, oldPresent: 0, resends: 0, choices: 0, clears: 0, resets: 0, d6: 0, plain: 0, checks: 0 };
+  const totals: Record<string, number> = {};
   for (const seed of SEEDS) {
     await peer.call("reset");
     const rand = generator(seed), simulation = new Simulation(peer, rand, capsOf(rand), "seed 0x" + seed.toString(16));
     await run(simulation, 70);
-    for (const key of Object.keys(totals) as (keyof typeof totals)[]) totals[key] += simulation.seen[key];
+    for (const [key, count] of Object.entries(simulation.seen)) totals[key] = (totals[key] ?? 0) + count;
   }
   t.diagnostic("seeds 0x" + SEEDS[0]!.toString(16) + "… (" + SEEDS.length + " cases × 70 steps): " + JSON.stringify(totals));
-  // Every path the properties are about was taken somewhere.
-  for (const [key, count] of Object.entries(totals)) assert.ok(count > 0, key + " never happened");
+  // Every path the properties are about was taken somewhere (the two exception counters may stay at zero).
+  for (const [key, count] of Object.entries(totals)) if (key !== "emptyHistoryClears" && key !== "restoredWithoutChain") assert.ok(count > 0, key + " never happened");
 });
 
 test("G068-P01 an old packet present never moves a pending packet, whatever else the check reports (VF1-01)", async t => {
@@ -442,7 +507,7 @@ test("G068-P01 after a packet was received, a /clear and 20 more inputs all go o
     simulation.relay = first.relay;
     if (unconfirmed) {
       const plan: VerifyPlan = planReturnVerify(simulation.relay, { verify: "on_next_open", moment: "open", deliveries: simulation.rows.filter(row => row.session === simulation.session) });
-      const markers = plan.kind === "clear" ? plan.markers.map(marker => ({ packetId: marker.packetId, after: marker.position.kind === "seq" ? marker.position.before : 0 })) : [];
+      const markers = asked(plan).map(marker => ({ packetId: marker.packetId, after: marker.position.kind === "seq" ? marker.position.before : 0 }));
       const result = await peer.call<VerifyResult>("verify", { session: simulation.session, markers, window: caps.window, compaction: caps.compaction, readable: true, wholeHistory: true });
       const confirmed = step(simulation.relay, { kind: "verified", plan, result, inRunId: null, at: { seq: at + 1, time: 0 } });
       assert.equal(confirmed.kind === "applied" && confirmed.relay.sync.kind, "fresh", label + ": the replay shows the clear");

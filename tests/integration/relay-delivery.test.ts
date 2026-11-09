@@ -285,13 +285,13 @@ class Hub {
   need(attachOverride = false) { return owed(this.relay, this.self.harnessId, this.self.controlId, this.facts, { originHistory: false, attachOverride }); }
   /** A Turn of another Harness: a foreign fact. */
   other(harnessId: string): RunId { const at = this.at(), id = runId("run-" + harnessId + "-" + ++this.runs); this.facts.push({ runId: id, seq: at.seq, executedOn: { harnessId, controlId: harnessId + "-acp", nativeEpoch: 1 } }); return id; }
-  /** The check of the Driver at the open, applied as k; returns the plan's kind. */
+  /** The check of the Driver at the open, applied as k for every plan, a skipped one included; returns the plan's kind. */
   async open(readable = true): Promise<string> {
-    if (this.verify !== "on_next_open") return "skip";
     const plan = planReturnVerify(this.relay, { verify: this.verify, moment: "open", deliveries: this.rows });
-    if (plan.kind === "skip") return "skip";
-    const markers = plan.kind === "pending" ? [plan.marker, ...plan.earlier] : plan.kind === "synced" ? [plan.marker] : plan.kind === "unknown_turn" ? (plan.marker === null ? [] : [plan.marker]) : plan.markers;
-    const result = await this.peer.call<VerifyResult>("verify", { session: this.session, markers: markers.map(marker => ({ packetId: marker.packetId, after: (marker.position as { readonly before: number }).before })), compaction: this.caps.compaction, readable });
+    const markers = plan.kind === "skip" ? [] : plan.kind === "pending" ? [plan.marker, ...plan.earlier] : plan.kind === "synced" ? [plan.marker] : plan.kind === "unknown_turn" ? (plan.marker === null ? [] : [plan.marker])
+      : [...(plan.kind === "clear" ? plan.chain : plan.markers), ...(plan.carried === null ? [] : [plan.carried])];
+    const result: VerifyResult = plan.kind === "skip" ? { markers: [], historyEmpty: null, compaction: null, foreignAfterLast: null, verifyMs: 0 }
+      : await this.peer.call<VerifyResult>("verify", { session: this.session, markers: markers.map(marker => ({ packetId: marker.packetId, after: (marker.position as { readonly before: number }).before })), compaction: this.caps.compaction, readable });
     let turnEntry: MarkerResult | undefined;
     if (plan.kind === "unknown_turn" && plan.marker === null && this.lastUnknown !== null) turnEntry = (await this.peer.call<{ readonly result: MarkerResult }>("entry", { session: this.session, runId: this.lastUnknown.runId, after: this.lastUnknown.position, readable })).result;
     this.apply(step(this.relay, { kind: "verified", plan, result, ...(turnEntry === undefined ? {} : { turnEntry }), inRunId: null, at: this.at() }));

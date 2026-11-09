@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import {
-  DELIVERY_TRANSITIONS, EMPTY_CHAIN, RELAY_MAX_RUNS, markOf, parseBindingRelayState,
+  CARRIED_CAUSES, DELIVERY_TRANSITIONS, EMPTY_CHAIN, RELAY_MAX_RUNS, markOf, parseBindingRelayState,
   type BindingRelayState, type BindingSync, type ContextEffect, type DeliveredMark, type DeliveryOutcome, type DeliveryPosition, type DeliveryRecord, type DeliveryStatus,
   type EvidenceClass, type ExecutedOn, type Fingerprint, type MarkerResult, type RelayPacketId, type SourceRange, type SuspectCause, type SyncPrior, type VerifyResult,
 } from "../../../../contracts/relay.js";
@@ -173,6 +173,23 @@ function standing(relay: BindingRelayState, mark: DeliveredMark | null): SyncPri
   return mark === null ? { kind: "fresh", basis: freshBasis(relay) } : { kind: "synced", mark };
 }
 /**
+ * A mark that claims no foreign fact a check could find missing, so it comes back without one: none at all; a native mark
+ * (only fresh + b + j make it, while nothing was owed, so no foreign fact lies in (epochFloor, mark]); an origin mark (the
+ * history the session started from, which the binding has no other way to get again); and an epoch base (an evidence mark
+ * without a packet, whose claim is its first packet's prior's). A legacy mark (v12 envelopes have no marker to look for)
+ * and a mark of a packet are not.
+ */
+export function restorable(mark: DeliveredMark | null): boolean {
+  return mark === null || mark.lastPacketId === null && (mark.basis === "native" || mark.basis === "origin" || mark.basis === "evidence");
+}
+/**
+ * Whether a suspect binding is settled by the next open whatever its Driver can check (F2): a rewind or an unknown command on a
+ * restorable mark. Admission does not ask the user about such a binding (no 409 verify_required); the open's k restores it.
+ */
+export function resolvesWithoutCheck(relay: BindingRelayState): boolean {
+  return relay.sync.kind === "suspect" && (relay.sync.cause === "rewind" || relay.sync.cause === "unknown_command") && restorable(relay.sync.mark);
+}
+/**
  * The mark of a binding none of whose packets of this epoch is in its native history any more (§7.2 suspect k, VF1-07):
  * max(first packet of the epoch's fromSeq − 1, epochFloor). It claims nothing a packet brought; the foreign facts at or
  * below it are those the first packet was built above. The E2 check is what established it. Null below 0.
@@ -191,7 +208,23 @@ function packetMark(relay: BindingRelayState, prior: SyncPrior, range: SourceRan
 }
 /** A prior saved inside `carried`, which carries nothing itself (§4). */
 function bare(prior: SyncPrior): SyncPrior { return prior.kind === "suspect" && prior.carried !== null ? { ...prior, carried: null } : prior; }
-function suspect(mark: DeliveredMark | null, cause: SuspectCause, floorCandidate: number | null): SyncPrior { return { kind: "suspect", mark, cause, floorCandidate, carried: null }; }
+function suspect(mark: DeliveredMark | null, cause: SuspectCause, floorCandidate: number | null, carried: Extract<SyncPrior, { kind: "suspect" }>["carried"] = null): SyncPrior {
+  return { kind: "suspect", mark, cause, floorCandidate, carried: carried !== null && (CARRIED_CAUSES as readonly string[]).includes(cause) ? carried : null };
+}
+/** Causes under which markers may be missing for a reason other than a clear: a rewind, an unknown command, a marker found absent. */
+const REWOUND: ReadonlySet<SuspectCause> = new Set(["rewind", "unknown_command", "marker_absent"]);
+/**
+ * An unconfirmed clear folded with a rewind-like suspicion before either was checked (e′ on suspect{rewind | unknown_command |
+ * marker_absent}, or f on an unconfirmed clear). A marker missing afterwards may be the clear's doing or the rewind's, so the
+ * chain proves nothing either way (rule 4 would confirm a clear that never ran, the property test's counterexample) and a carried
+ * packet's older markers cannot be trusted either: only the clear's seq is kept. An empty history still confirms the clear;
+ * anything else makes the binding fresh, and everything above its floor is owed again (sound, at the cost of repeats).
+ */
+function folded(floorCandidate: number | null): SyncPrior { return suspect(null, "clear_unconfirmed", floorCandidate); }
+/** The packet a pending binding keeps when it becomes suspect (F8): its prior and the pending packet, still to be checked. */
+function carriedOf(sync: Extract<BindingSync, { kind: "pending" }>): NonNullable<Extract<SyncPrior, { kind: "suspect" }>["carried"]> {
+  return { prior: bare(sync.prior), packetId: sync.packetId, range: sync.range };
+}
 const recorded = (evidence: EvidenceClass, at: RelayAt, inRun: RunId | null): DecidedOutcome => ({ kind: "recorded", evidence, decidedSeq: at.seq, decidedAt: at.time, verifiedInRun: inRun });
 const unknownOutcome = (reason: Extract<DecidedOutcome, { kind: "unknown" }>["reason"], at: RelayAt): DecidedOutcome => ({ kind: "unknown", reason, decidedSeq: at.seq, decidedAt: at.time });
 /** The unknown reason a marker result gives a still-unconfirmed delivery. */
@@ -317,10 +350,16 @@ export type VerifyPlan =
   | { readonly kind: "skip"; readonly reason: "fresh" | "no_marker" | "not_now" | "unavailable" }
   /** Only the pending packet's own title line (VF1-01); `earlier` are the packets it superseded, a late write may show them. */
   | { readonly kind: "pending"; readonly marker: PlannedMarker; readonly earlier: readonly PlannedMarker[] }
-  /** An unconfirmed clear: whether the history is empty, and which of the epoch's recorded packets are still there. */
-  | { readonly kind: "clear"; readonly markers: readonly PlannedMarker[]; readonly firstFromSeq: number | null }
-  /** The epoch's last ≤ SUSPECT_MARKERS recorded packets, oldest first. */
-  | { readonly kind: "suspect"; readonly markers: readonly PlannedMarker[]; readonly firstFromSeq: number | null }
+  /**
+   * An unconfirmed clear (F1): whether the history is empty; the chain the mark stands on (from its last packet back along the
+   * delivery rows' chains, ≤ SUSPECT_MARKERS, oldest first; empty for a mark without a packet); and the packet it carries.
+   */
+  | { readonly kind: "clear"; readonly chain: readonly PlannedMarker[]; readonly carried: PlannedMarker | null; readonly firstFromSeq: number | null }
+  /**
+   * Another suspect binding: the epoch's last ≤ SUSPECT_MARKERS recorded packets, oldest first, when its mark stands on a packet
+   * (none otherwise); and the packet it carries (F8).
+   */
+  | { readonly kind: "suspect"; readonly markers: readonly PlannedMarker[]; readonly carried: PlannedMarker | null; readonly firstFromSeq: number | null }
   /** D6: the unknown Turn's user entry: its carried packet's title line, or (`marker` null) its own entry. */
   | { readonly kind: "unknown_turn"; readonly marker: PlannedMarker | null }
   /** The last marker of a synced binding. */
@@ -340,11 +379,13 @@ function planned(row: BindingDelivery): PlannedMarker {
 /**
  * What to check before a binding's next input or after its Turn (the check part of §7.3's planReturn): a pending binding
  * checks only its pending packet's own title line, the first packet of an epoch included (VF1-01); an unconfirmed clear checks
- * whether the history is empty and which recorded packets are still there; an unknown Turn continued (D6) checks its own
- * user entry; another suspect binding with a packet mark checks the epoch's last ≤4 recorded packets; a synced binding with a
- * packet mark checks its last one; everything else is skipped (a mark of the origin, legacy or native has no marker,
- * RT1-M11). A Driver checks at the open (`on_next_open`) or at the settlement (`after_turn`), never at the other moment;
- * `none` never checks. Costs and the choice between continuing and a new native session are not here (return-policy, G072).
+ * whether the history is empty, the chain its mark stands on (F1) and the packet it carries; an unknown Turn continued (D6)
+ * checks its own user entry; another suspect binding checks the epoch's last ≤4 recorded packets when its mark stands on a
+ * packet, and the packet it carries (F8); a synced binding with a packet mark checks its last one; everything else is
+ * skipped (a mark of the origin, legacy or native has no marker, RT1-M11). A Driver checks at the open (`on_next_open`) or at
+ * the settlement (`after_turn`), never at the other moment; `none` never checks. Every plan, a skipped one included, is meant
+ * to reach `step` as k: a suspect binding that needs no check is settled there (F2). Costs and the choice between continuing
+ * and a new native session are not here (return-policy, G072).
  */
 export function planReturnVerify(relay: BindingRelayState, context: PlanContext): VerifyPlan {
   const sync = relay.sync;
@@ -357,6 +398,7 @@ export function planReturnVerify(relay: BindingRelayState, context: PlanContext)
   const recordedRows = epochRows.filter(row => row.record.outcome.kind === "recorded" && row.mark !== null);
   const lastRecorded = recordedRows.slice(-SUSPECT_MARKERS).map(planned);
   const firstFromSeq = epochRows[0]?.range.fromSeq ?? null;
+  const carriedMarker = (packetId: RelayPacketId | undefined): PlannedMarker | null => { const row = packetId === undefined ? undefined : latest(packetId); return row === undefined ? null : planned(row); };
   switch (sync.kind) {
     case "pending": {
       const own = latest(sync.packetId);
@@ -371,14 +413,15 @@ export function planReturnVerify(relay: BindingRelayState, context: PlanContext)
       return { kind: "pending", marker: planned(own), earlier: earlier.reverse() };
     }
     case "suspect": {
-      if (sync.cause === "clear_unconfirmed") return { kind: "clear", markers: lastRecorded, firstFromSeq };
+      const carried = carriedMarker(sync.carried?.packetId);
+      if (sync.cause === "clear_unconfirmed") return { kind: "clear", chain: chainOf(sync.mark, epochRows).map(planned), carried, firstFromSeq };
       if (sync.cause === "unknown_turn") {
         if (sync.carried === null) return { kind: "unknown_turn", marker: null };
-        const carried = latest(sync.carried.packetId);
-        return carried === undefined ? { kind: "skip", reason: "no_marker" } : { kind: "unknown_turn", marker: planned(carried) };
+        return carried === null ? { kind: "skip", reason: "no_marker" } : { kind: "unknown_turn", marker: carried };
       }
-      if (sync.mark?.lastPacketId == null || lastRecorded.length === 0) return { kind: "skip", reason: "no_marker" };
-      return { kind: "suspect", markers: lastRecorded, firstFromSeq };
+      const markers = sync.mark?.lastPacketId == null ? [] : lastRecorded;
+      if (markers.length === 0 && carried === null) return { kind: "skip", reason: "no_marker" };
+      return { kind: "suspect", markers, carried, firstFromSeq };
     }
     case "synced": {
       if (sync.mark.lastPacketId === null) return { kind: "skip", reason: "no_marker" };
@@ -386,6 +429,29 @@ export function planReturnVerify(relay: BindingRelayState, context: PlanContext)
       return last === undefined ? { kind: "skip", reason: "no_marker" } : { kind: "synced", marker: planned(last) };
     }
   }
+}
+
+/**
+ * The recorded rows a mark stands on (F1): the newest row of its last packet whose recording made this very chain, then back
+ * along the rows whose mark the next one's chain was built on (chainAfter(prev.mark.chain, row.body) = row.mark.chain), until
+ * the head of the chain (built on EMPTY_CHAIN) or SUSPECT_MARKERS rows. Rows a retreat left behind are on no chain the mark
+ * stands on, so they are not included. Empty for a mark without a packet, or one whose row is missing.
+ */
+function chainOf(mark: DeliveredMark | null, rows: readonly BindingDelivery[]): readonly BindingDelivery[] {
+  if (mark === null || mark.lastPacketId === null) return [];
+  const usable = (row: BindingDelivery) => row.record.outcome.kind === "recorded" && row.mark !== null;
+  let index = rows.findLastIndex(row => usable(row) && row.record.packetId === mark.lastPacketId && row.mark!.chain === mark.chain);
+  if (index < 0) index = rows.findLastIndex(row => usable(row) && row.record.packetId === mark.lastPacketId);
+  if (index < 0) return [];
+  const chain: BindingDelivery[] = [rows[index]!];
+  while (chain.length < SUSPECT_MARKERS) {
+    const current = chain[0]!;
+    if (chainAfter(null, current.bodySha256) === current.mark!.chain) break;
+    const previous = rows.slice(0, index).findLastIndex(row => usable(row) && chainAfter(row.mark!.chain, current.bodySha256) === current.mark!.chain);
+    if (previous < 0) break;
+    chain.unshift(rows[previous]!); index = previous;
+  }
+  return chain;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -440,11 +506,23 @@ export function step(relay: BindingRelayState, event: RelayEvent): RelayStep {
     case "clear_unconfirmed": {
       const floorCandidate = event.seq;
       if (floorCandidate <= relay.epochFloor) return refuse({ code: "invalid", why: "a clear's seq lies at or below the binding's clear floor" });
-      return applied(relay, withSync(relay, suspect(markOf(sync), "clear_unconfirmed", floorCandidate)));
+      // F8: a pending packet stays to be checked (carried); a suspect binding keeps the packet it carries.
+      if (sync.kind === "pending") return applied(relay, withSync(relay, suspect(markOf(sync.prior), "clear_unconfirmed", floorCandidate, carriedOf(sync))));
+      if (sync.kind === "suspect" && REWOUND.has(sync.cause)) return applied(relay, withSync(relay, folded(floorCandidate)));
+      return applied(relay, withSync(relay, suspect(markOf(sync), "clear_unconfirmed", floorCandidate, sync.kind === "suspect" ? sync.carried : null)));
     }
     case "rewound": {
-      const kept = sync.kind === "suspect" ? sync.floorCandidate : sync.kind === "pending" && sync.prior.kind === "suspect" ? sync.prior.floorCandidate : null;
-      return applied(relay, withSync(relay, suspect(markOf(sync), event.cause, kept)));
+      // An unconfirmed clear is never replaced by f: its check also finds what a rewind removed, and it holds the clear's seq.
+      // Other causes take the latest; a pending packet is carried, a carried one kept (F8).
+      if (sync.kind === "pending") {
+        // A pending prior built on an unconfirmed clear stands on no packet (the user's retreat moved it to the epoch base), so
+        // its chain is empty and rule 4 cannot misread a rewind; the clear's cause and the pending packet are kept.
+        const prior = sync.prior, sticky = prior.kind === "suspect" && prior.cause === "clear_unconfirmed";
+        return applied(relay, withSync(relay, suspect(markOf(prior), sticky ? "clear_unconfirmed" : event.cause, prior.kind === "suspect" ? prior.floorCandidate : null, carriedOf(sync))));
+      }
+      if (sync.kind === "suspect" && sync.cause === "clear_unconfirmed") return applied(relay, withSync(relay, folded(sync.floorCandidate)));
+      if (sync.kind === "suspect") return applied(relay, withSync(relay, suspect(sync.mark, event.cause, sync.floorCandidate, sync.carried)));
+      return applied(relay, withSync(relay, suspect(markOf(sync), event.cause, null)));
     }
     case "carry_settled": return carrySettled(relay, event);
     case "plain_settled": {
@@ -463,9 +541,11 @@ export function step(relay: BindingRelayState, event: RelayEvent): RelayStep {
       return { kind: "replaced", archived: relay, relay: parseBindingRelayState(next), deliveries: [], note: NOTHING };
     }
     case "unknown_turn_continued": {
-      if (sync.kind === "pending")
-        return applied(relay, withSync(relay, { kind: "suspect", mark: markOf(sync.prior), cause: "unknown_turn", floorCandidate: sync.prior.kind === "suspect" ? sync.prior.floorCandidate : null,
-          carried: { prior: bare(sync.prior), packetId: sync.packetId, range: sync.range } }));
+      if (sync.kind === "pending") {
+        // A packet built on an unconfirmed clear keeps the clear's check (it also checks the carried packet).
+        const prior = sync.prior, sticky = prior.kind === "suspect" && prior.cause === "clear_unconfirmed";
+        return applied(relay, withSync(relay, suspect(markOf(prior), sticky ? "clear_unconfirmed" : "unknown_turn", prior.kind === "suspect" ? prior.floorCandidate : null, carriedOf(sync))));
+      }
       // A binding already suspect keeps its cause: its own check is the stronger one, and an unknown Turn without a packet
       // finding its entry would otherwise make an untrusted mark synced.
       if (sync.kind === "suspect") return unchanged(relay);
@@ -508,7 +588,8 @@ export function retreatedPrior(relay: BindingRelayState, firstFromSeq: number | 
   const sync = relay.sync;
   if (sync.kind !== "suspect") return null;
   const base = epochBase(relay, firstFromSeq);
-  const mark = sync.mark === null || base === null ? null : base.throughSeq < sync.mark.throughSeq ? base : sync.mark;
+  // On a tie the base wins, so the prior never stands on a packet (an unconfirmed clear's chain built on it is then empty).
+  const mark = sync.mark === null || base === null ? null : base.throughSeq <= sync.mark.throughSeq ? base : sync.mark;
   return { ...sync, mark, carried: null };
 }
 
@@ -541,20 +622,34 @@ function verified(relay: BindingRelayState, event: Extract<RelayEvent, { kind: "
   const cursor: Cursor = event.result.compaction ?? relay.compactionSeen;
   const base: BindingRelayState = event.result.compaction === null ? relay : { ...relay, compactionSeen: event.result.compaction };
   const moved = (marker: PlannedMarker) => marker.compactionAtDelivery !== null && !sameCursor(marker.compactionAtDelivery, cursor);
+  /** F3: a marker absent after the cursor moved since its delivery is classified as compacted (§7.4 ①). */
+  const classified = (marker: PlannedMarker): MarkerResult => { const result = resultOf(marker); return result === "absent" && moved(marker) ? "compacted" : result; };
   /** Positive evidence (E2) decides a row recorded, or corrects an unknown or not-recorded one (RT2-09); a recorded row stays. */
   const recordedRow = (marker: PlannedMarker): DeliveryChange[] => marker.row === "recorded" ? [] : [{ kind: "outcome", runId: marker.runId, from: marker.row, outcome: recorded("E2", at, event.inRunId) }];
   /** A row left unknown with the check's reason (a same-value write that refines the reason, VF1-12). */
   const refine = (marker: PlannedMarker, result: MarkerResult): DeliveryChange[] => [{ kind: "outcome", runId: marker.runId, from: marker.row, outcome: unknownOutcome(unknownReason(result), at) }];
-  if (plan.kind === "skip") return unchanged(base, { verified: "skipped" });
+  const undecided = () => applied(relay, base, [], { verified: "undecided", choice: "verify_required" });
+  /** g on a carried packet found: synced through it, chained on its prior, counted in the epoch. */
+  const advance = (carried: NonNullable<Extract<SyncPrior, { kind: "suspect" }>["carried"]>, marker: PlannedMarker, reanchor: boolean, verified: VerifiedOutcome) =>
+    applied(relay, { ...withSync(base, { kind: "synced", mark: packetMark(base, carried.prior, carried.range, carried.packetId, marker.bodySha256, "E2") }), packetsInEpoch: relay.packetsInEpoch + 1,
+      reanchor: base.reanchor && !marker.reanchor || reanchor }, recordedRow(marker), { verified });
+  if (plan.kind === "skip") {
+    // F2: nothing to check. A rewind or an unknown command on a mark that claims no foreign fact a check could find missing
+    // comes back to that mark; any other mark waits for the user (verify_required). A plan skipped for its moment, or a fresh
+    // binding, decides nothing.
+    if (sync.kind === "suspect" && (sync.cause === "rewind" || sync.cause === "unknown_command") && (plan.reason === "no_marker" || plan.reason === "unavailable"))
+      return restorable(sync.mark) ? applied(relay, withSync(base, standing(base, sync.mark)), [], { verified: "restored" }) : undecided();
+    return applied(relay, base, [], { verified: "skipped" });
+  }
   switch (sync.kind) {
-    case "fresh": return unchanged(base, { verified: "skipped" });
+    case "fresh": return applied(relay, base, [], { verified: "skipped" });
     case "pending": {
       if (plan.kind !== "pending" || plan.marker.packetId !== sync.packetId) return refuse({ code: "invalid", why: "a pending binding is checked only against its own packet" });
       // A late write: the packets it superseded may show up after their positions; their rows are corrected, the binding is not moved.
       const late = plan.earlier.flatMap(marker => resultOf(marker) === "present" ? recordedRow(marker) : []);
-      const result = resultOf(plan.marker);
+      const result = classified(plan.marker);
       if (result === "present") {
-        const mark = packetMark(relay, sync.prior, sync.range, sync.packetId, plan.marker.bodySha256, "E2");
+        const mark = packetMark(base, sync.prior, sync.range, sync.packetId, plan.marker.bodySha256, "E2");
         return applied(relay, { ...withSync(base, { kind: "synced", mark }), packetsInEpoch: relay.packetsInEpoch + 1, reanchor: base.reanchor && !plan.marker.reanchor },
           [...late, ...recordedRow(plan.marker)], { verified: "recorded" });
       }
@@ -572,44 +667,83 @@ function verified(relay: BindingRelayState, event: Extract<RelayEvent, { kind: "
       if (sync.cause === "unknown_turn") {
         if (plan.kind !== "unknown_turn" || (plan.marker?.packetId ?? null) !== (sync.carried?.packetId ?? null)) return refuse({ code: "invalid", why: "an unknown Turn is checked against its own entry" });
         if (sync.carried !== null && plan.marker !== null) {
-          const carried = sync.carried, result = resultOf(plan.marker);
-          if (result === "present") {
-            const mark = packetMark(relay, carried.prior, carried.range, carried.packetId, plan.marker.bodySha256, "E2");
-            return applied(relay, { ...withSync(base, { kind: "synced", mark }), packetsInEpoch: relay.packetsInEpoch + 1, reanchor: base.reanchor && !plan.marker.reanchor },
-              recordedRow(plan.marker), { verified: "recorded" });
-          }
+          const result = classified(plan.marker);
+          if (result === "present") return advance(sync.carried, plan.marker, false, "recorded");
           // Absent (or compacted away, which proves no more) goes back to the state before the packet; the next input owes it again.
           if (result === "absent" || result === "compacted")
-            return applied(relay, { ...withSync(base, carried.prior), reanchor: base.reanchor || result === "compacted" }, refine(plan.marker, result), { verified: "retreated" });
-          return applied(relay, base, [], { verified: "undecided", choice: "verify_required" });
+            return applied(relay, { ...withSync(base, sync.carried.prior), reanchor: base.reanchor || result === "compacted" }, refine(plan.marker, result), { verified: "retreated" });
+          return undecided();
         }
+        // The Turn carried no packet, so it did not change what the binding knows: whether its entry is there or not, the mark
+        // stands (point 4 of the approval); its result stays unknown and is never re-run. A compaction re-anchors.
         const result = event.turnEntry ?? "unavailable";
-        if (result === "present" || result === "compacted") return applied(relay, { ...withSync(base, standing(base, sync.mark)), reanchor: base.reanchor || result === "compacted" }, [], { verified: "kept" });
-        if (result === "absent") return applied(relay, base, [], { verified: "undecided" });
-        return applied(relay, base, [], { verified: "undecided", choice: "verify_required" });
+        if (result === "present" || result === "compacted" || result === "absent")
+          return applied(relay, { ...withSync(base, standing(base, sync.mark)), reanchor: base.reanchor || result === "compacted" }, [], { verified: "kept" });
+        return undecided();
       }
       if (sync.cause === "clear_unconfirmed") {
-        if (plan.kind !== "clear") return refuse({ code: "invalid", why: "an unconfirmed clear is checked for an empty history and its markers" });
-        if (sync.floorCandidate === null) return refuse({ code: "invalid", why: "an unconfirmed clear keeps the seq of its clear" });
-        const results = plan.markers.map(resultOf);
-        const allGone = plan.markers.length > 0 && results.every(result => result === "absent") && !plan.markers.some(moved);
-        if (event.result.historyEmpty === true || allGone) {
-          if (sync.floorCandidate <= relay.epochFloor) return refuse({ code: "invalid", why: "a clear's seq lies at or below the binding's clear floor" });
-          return applied(relay, clearedState(base, sync.floorCandidate), [], { verified: "cleared" });
-        }
-        // The clear did not happen: the binding is what it was before it, as far as the markers still show (§7.4).
-        if (results.includes("present")) return markers(relay, base, sync.mark, plan.markers, results, plan.firstFromSeq, moved, "restored");
-        // No packet of this epoch to look for, and the history is not empty: no clear happened. The mark comes back only where it
-        // claims nothing a check could have missed (none, or a native one); a mark of another basis may stand on a suspicion
-        // from before the clear that the suspect state no longer names.
-        if (plan.markers.length === 0 && event.result.historyEmpty === false && (sync.mark === null || sync.mark.basis === "native"))
-          return applied(relay, withSync(base, standing(base, sync.mark)), [], { verified: "restored" });
-        return applied(relay, base, [], { verified: "undecided", choice: "verify_required" });
+        if (plan.kind !== "clear") return refuse({ code: "invalid", why: "an unconfirmed clear is checked for an empty history and its chain" });
+        return clearChecked(relay, base, sync, plan, event, { resultOf, classified, moved, recordedRow, refine, undecided, advance });
       }
       if (plan.kind !== "suspect") return refuse({ code: "invalid", why: "a suspect binding is checked against its epoch's recorded packets" });
-      return markers(relay, base, sync.mark, plan.markers, plan.markers.map(resultOf), plan.firstFromSeq, moved, null);
+      const results = plan.markers.map(resultOf);
+      const unexplained = plan.markers.some((marker, index) => results[index] === "absent" && !moved(marker));
+      const compaction = plan.markers.some((marker, index) => results[index] === "compacted" || results[index] === "absent" && moved(marker));
+      if (sync.carried !== null && plan.carried !== null) {
+        const result = classified(plan.carried);
+        // F8: the carried packet is there and nothing older is missing without a compaction to explain it: g on it.
+        if (result === "present") return unexplained ? undecided() : advance(sync.carried, plan.carried, compaction, "recorded");
+        const rows = refine(plan.carried, result);
+        if (plan.markers.length === 0) return restorable(sync.mark) ? applied(relay, withSync(base, standing(base, sync.mark)), rows, { verified: "restored" }) : undecided();
+        return markers(relay, base, sync.mark, plan.markers, results, plan.firstFromSeq, moved, null, rows);
+      }
+      if (plan.markers.length === 0) return restorable(sync.mark) ? applied(relay, withSync(base, standing(base, sync.mark)), [], { verified: "restored" }) : undecided();
+      return markers(relay, base, sync.mark, plan.markers, results, plan.firstFromSeq, moved, null);
     }
   }
+}
+
+interface CheckTools {
+  readonly resultOf: (marker: PlannedMarker) => MarkerResult;
+  readonly classified: (marker: PlannedMarker) => MarkerResult;
+  readonly moved: (marker: PlannedMarker) => boolean;
+  readonly recordedRow: (marker: PlannedMarker) => DeliveryChange[];
+  readonly refine: (marker: PlannedMarker, result: MarkerResult) => DeliveryChange[];
+  readonly undecided: () => RelayStep;
+  readonly advance: (carried: NonNullable<Extract<SyncPrior, { kind: "suspect" }>["carried"]>, marker: PlannedMarker, reanchor: boolean, verified: VerifiedOutcome) => RelayStep;
+}
+/**
+ * The check of an unconfirmed clear (F1, the approval agent's decision): only the chain the mark stands on (M) and the carried
+ * packet count, never the epoch's other recorded packets. In order:
+ * 1. an empty history → cleared;
+ * 2. the carried packet there: with no marker of M missing unexplained (absent while the cursor did not move) the clear did not
+ *    happen and the packet arrived (g on it, restored); otherwise the two disagree (a late write after the clear) → verify_required;
+ * 3. a marker of M there (present or compacted) → the clear did not happen: restore or move back as the markers show;
+ * 4. M all absent, and for each marker a compaction is ruled out (its row kept the cursor at delivery and the cursor has not
+ *    moved since) → cleared; an empty history is not required, the user may have typed in the original program since;
+ * 5. M all absent where a compaction may explain a marker (the cursor moved, or the Driver keeps no cursor to tell) → verify_required;
+ * 6. no chain (a mark without a packet): a restorable mark comes back, any other waits → verify_required;
+ * 7. anything else (only unavailable or outside_window) → verify_required.
+ * The floor rises only on 1 and 4; a mark comes back only to a chain node still there or to a restorable mark.
+ */
+function clearChecked(relay: BindingRelayState, base: BindingRelayState, sync: Extract<SyncPrior, { kind: "suspect" }>, plan: Extract<VerifyPlan, { kind: "clear" }>,
+    event: Extract<RelayEvent, { kind: "verified" }>, tools: CheckTools): RelayStep {
+  if (sync.floorCandidate === null) return refuse({ code: "invalid", why: "an unconfirmed clear keeps the seq of its clear" });
+  const floor = sync.floorCandidate;
+  const cleared = () => floor <= relay.epochFloor ? refuse({ code: "invalid", why: "a clear's seq lies at or below the binding's clear floor" }) : applied(relay, clearedState(base, floor), [], { verified: "cleared" });
+  const chain = plan.chain, results = chain.map(tools.resultOf);
+  const unexplained = chain.some((marker, index) => results[index] === "absent" && !tools.moved(marker));
+  const compaction = chain.some((marker, index) => results[index] === "compacted" || results[index] === "absent" && tools.moved(marker));
+  if (event.result.historyEmpty === true) return cleared();
+  const carried = sync.carried !== null && plan.carried !== null ? tools.classified(plan.carried) : null;
+  if (carried === "present") return unexplained ? tools.undecided() : tools.advance(sync.carried!, plan.carried!, compaction, "restored");
+  const rows = carried === null ? [] : tools.refine(plan.carried!, carried);
+  if (chain.length > 0 && results.some(result => result === "present" || result === "compacted")) return markers(relay, base, sync.mark, chain, results, plan.firstFromSeq, tools.moved, "restored", rows);
+  // Rule 4 needs a compaction ruled out marker by marker: a Driver without compaction evidence cannot tell a marker folded into
+  // a summary from one cleared away (the property test's counterexample: a clear that never ran, then /compact).
+  if (chain.length > 0 && results.every(result => result === "absent")) return chain.every(marker => marker.compactionAtDelivery !== null && !tools.moved(marker)) ? cleared() : tools.undecided();
+  if (chain.length === 0) return restorable(sync.mark) ? applied(relay, withSync(base, standing(base, sync.mark)), rows, { verified: "restored" }) : tools.undecided();
+  return tools.undecided();
 }
 
 /**
@@ -617,20 +751,21 @@ function verified(relay: BindingRelayState, event: Extract<RelayEvent, { kind: "
  * marker's mark ("最后一个仍在的标记"), the packets after it owed again; none present and every one absent or compacted →
  * the epoch base (max(first packet's fromSeq − 1, epochFloor)); a compacted marker or a cursor moved since an absent one's
  * delivery also sets reanchor. Markers that only answer outside_window or unavailable decide nothing: with none present the
- * binding stays suspect and the next content input needs the user's choice (verify_required).
+ * binding stays suspect and the next content input needs the user's choice (verify_required). `extra` are delivery changes
+ * of the same check (a carried packet's row).
  */
 function markers(relay: BindingRelayState, base: BindingRelayState, mark: DeliveredMark | null, checked: readonly PlannedMarker[], results: readonly MarkerResult[],
-    firstFromSeq: number | null, moved: (marker: PlannedMarker) => boolean, restored: "restored" | null): RelayStep {
+    firstFromSeq: number | null, moved: (marker: PlannedMarker) => boolean, restored: "restored" | null, extra: readonly DeliveryChange[] = []): RelayStep {
   const reanchor = base.reanchor || results.some((result, index) => result === "compacted" || result === "absent" && moved(checked[index]!));
-  if (checked.length > 0 && results.every(result => result === "present")) return applied(relay, { ...withSync(base, standing(base, mark)), reanchor }, [], { verified: restored ?? "kept" });
+  if (checked.length > 0 && results.every(result => result === "present")) return applied(relay, { ...withSync(base, standing(base, mark)), reanchor }, extra, { verified: restored ?? "kept" });
   const newest = results.lastIndexOf("present");
   if (newest >= 0) {
     const kept = checked[newest]!.mark;
     if (kept === null) return refuse({ code: "invalid", why: "a recorded marker keeps the mark its recording made" });
     const back = mark !== null && kept.throughSeq > mark.throughSeq ? mark : kept;
-    return applied(relay, { ...withSync(base, standing(base, back)), reanchor }, [], { verified: restored ?? "retreated" });
+    return applied(relay, { ...withSync(base, standing(base, back)), reanchor }, extra, { verified: restored ?? "retreated" });
   }
   if (checked.length > 0 && results.every(result => result === "absent" || result === "compacted"))
-    return applied(relay, { ...withSync(base, standing(base, epochBase(base, firstFromSeq))), reanchor }, [], { verified: restored ?? "retreated" });
+    return applied(relay, { ...withSync(base, standing(base, epochBase(base, firstFromSeq))), reanchor }, extra, { verified: restored ?? "retreated" });
   return applied(relay, base, [], { verified: "undecided", choice: "verify_required" });
 }
