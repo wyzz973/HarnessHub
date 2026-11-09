@@ -1,0 +1,1371 @@
+{
+ "fixture": "dispatch-failed",
+ "describe": "A→B→A, and the first input back on alpha carries bravo's Turns but fails before dispatch (its attachment is refused)",
+ "generator": "tests/fixtures/relay/v12/generate.mjs",
+ "userVersion": 12,
+ "ownerGeneration": 1,
+ "sessions": [
+  {
+   "id": "session-1",
+   "version": 58,
+   "lastSeq": 58,
+   "snapshot": {
+    "schemaVersion": 12,
+    "id": "session-1",
+    "version": 58,
+    "lastSeq": 58,
+    "epoch": 3,
+    "status": "open",
+    "configuration": {
+     "workspace": "/fixtures/g066/workspace",
+     "manifestPath": null,
+     "manifestSha256": null,
+     "configHome": null,
+     "packageRoots": [],
+     "searchDirs": [],
+     "pathOnly": true
+    },
+    "selection": {
+     "harnessId": "alpha",
+     "controlId": "alpha-acp"
+    },
+    "activeRunId": null,
+    "pendingSwitchId": null,
+    "runs": [
+     {
+      "id": "run-2",
+      "commandId": "a1",
+      "input": "a1 on alpha",
+      "userMessageId": "message-3",
+      "assistantMessageId": "message-4",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "epoch": 1,
+      "status": "completed",
+      "cancelRequested": false,
+      "contextThroughSeq": 3,
+      "sourceRunIds": [],
+      "backend": {
+       "status": "completed",
+       "reason": "fake"
+      },
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": null,
+      "stopRequested": false,
+      "timing": {
+       "acceptedAt": 1794182401000,
+       "preparingAt": 1794182403000,
+       "readyAt": 1794182408000,
+       "dispatchedAt": 1794182410000,
+       "firstOutputAt": 1794182412000,
+       "endedAt": 1794182416000
+      },
+      "awaitingSwitchId": null
+     },
+     {
+      "id": "run-5",
+      "commandId": "a2",
+      "input": "a2 on alpha",
+      "userMessageId": "message-6",
+      "assistantMessageId": "message-7",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "epoch": 1,
+      "status": "completed",
+      "cancelRequested": false,
+      "contextThroughSeq": 14,
+      "sourceRunIds": [],
+      "backend": {
+       "status": "completed",
+       "reason": "fake"
+      },
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": null,
+      "stopRequested": false,
+      "timing": {
+       "acceptedAt": 1794182418000,
+       "preparingAt": 1794182420000,
+       "readyAt": 1794182425000,
+       "dispatchedAt": 1794182427000,
+       "firstOutputAt": 1794182429000,
+       "endedAt": 1794182433000
+      },
+      "awaitingSwitchId": null
+     },
+     {
+      "id": "run-9",
+      "commandId": "b1",
+      "input": "b1 on bravo",
+      "userMessageId": "message-10",
+      "assistantMessageId": "message-11",
+      "selection": {
+       "harnessId": "bravo",
+       "controlId": "bravo-acp"
+      },
+      "epoch": 2,
+      "status": "completed",
+      "cancelRequested": false,
+      "contextThroughSeq": 28,
+      "sourceRunIds": [
+       "run-2",
+       "run-5"
+      ],
+      "backend": {
+       "status": "completed",
+       "reason": "fake"
+      },
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": null,
+      "stopRequested": false,
+      "timing": {
+       "acceptedAt": 1794182438000,
+       "preparingAt": 1794182440000,
+       "readyAt": 1794182445000,
+       "dispatchedAt": 1794182447000,
+       "firstOutputAt": 1794182449000,
+       "endedAt": 1794182453000
+      },
+      "awaitingSwitchId": null
+     },
+     {
+      "id": "run-12",
+      "commandId": "b2",
+      "input": "b2 on bravo",
+      "userMessageId": "message-13",
+      "assistantMessageId": "message-14",
+      "selection": {
+       "harnessId": "bravo",
+       "controlId": "bravo-acp"
+      },
+      "epoch": 2,
+      "status": "completed",
+      "cancelRequested": false,
+      "contextThroughSeq": 39,
+      "sourceRunIds": [],
+      "backend": {
+       "status": "completed",
+       "reason": "fake"
+      },
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": null,
+      "stopRequested": false,
+      "timing": {
+       "acceptedAt": 1794182455000,
+       "preparingAt": 1794182457000,
+       "readyAt": 1794182462000,
+       "dispatchedAt": 1794182464000,
+       "firstOutputAt": 1794182466000,
+       "endedAt": 1794182470000
+      },
+      "awaitingSwitchId": null
+     },
+     {
+      "id": "run-16",
+      "commandId": "a3",
+      "input": "a3 with an attachment",
+      "userMessageId": "message-17",
+      "assistantMessageId": "message-18",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "epoch": 3,
+      "status": "failed",
+      "cancelRequested": false,
+      "contextThroughSeq": 53,
+      "sourceRunIds": [
+       "run-9",
+       "run-12"
+      ],
+      "backend": null,
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": {
+       "code": "ATTACHMENT_UNSUPPORTED",
+       "message": "this Harness interface does not accept attachments"
+      },
+      "stopRequested": false,
+      "attachments": [
+       {
+        "id": "content-photo",
+        "name": "photo.png",
+        "mediaType": "image/png",
+        "kind": "image",
+        "bytes": 8,
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+       }
+      ],
+      "timing": {
+       "acceptedAt": 1794182475000,
+       "preparingAt": 1794182477000,
+       "readyAt": 1794182482000,
+       "endedAt": 1794182484000
+      },
+      "awaitingSwitchId": null
+     }
+    ],
+    "messages": [
+     {
+      "id": "message-3",
+      "runId": "run-2",
+      "role": "user",
+      "text": "a1 on alpha",
+      "seq": 2,
+      "status": "completed"
+     },
+     {
+      "id": "message-4",
+      "runId": "run-2",
+      "role": "assistant",
+      "text": "reply from alpha",
+      "seq": 10,
+      "status": "completed"
+     },
+     {
+      "id": "message-6",
+      "runId": "run-5",
+      "role": "user",
+      "text": "a2 on alpha",
+      "seq": 13,
+      "status": "completed"
+     },
+     {
+      "id": "message-7",
+      "runId": "run-5",
+      "role": "assistant",
+      "text": "reply from alpha",
+      "seq": 21,
+      "status": "completed"
+     },
+     {
+      "id": "message-10",
+      "runId": "run-9",
+      "role": "user",
+      "text": "b1 on bravo",
+      "seq": 27,
+      "status": "completed"
+     },
+     {
+      "id": "message-11",
+      "runId": "run-9",
+      "role": "assistant",
+      "text": "reply from bravo",
+      "seq": 35,
+      "status": "completed"
+     },
+     {
+      "id": "message-13",
+      "runId": "run-12",
+      "role": "user",
+      "text": "b2 on bravo",
+      "seq": 38,
+      "status": "completed"
+     },
+     {
+      "id": "message-14",
+      "runId": "run-12",
+      "role": "assistant",
+      "text": "reply from bravo",
+      "seq": 46,
+      "status": "completed"
+     },
+     {
+      "id": "message-17",
+      "runId": "run-16",
+      "role": "user",
+      "text": "a3 with an attachment",
+      "seq": 52,
+      "status": "failed"
+     }
+    ],
+    "switches": [
+     {
+      "id": "switch-8",
+      "commandId": "to-bravo",
+      "requested": {
+       "harnessId": "bravo"
+      },
+      "requestedSeq": 24,
+      "target": {
+       "harnessId": "bravo",
+       "controlId": "bravo-acp"
+      },
+      "status": "effective",
+      "throughSeq": 25,
+      "sourceRunIds": [
+       "run-2",
+       "run-5"
+      ],
+      "error": null
+     },
+     {
+      "id": "switch-15",
+      "commandId": "to-alpha",
+      "requested": {
+       "harnessId": "alpha"
+      },
+      "requestedSeq": 49,
+      "target": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "status": "effective",
+      "throughSeq": 50,
+      "sourceRunIds": [
+       "run-2",
+       "run-5",
+       "run-9",
+       "run-12"
+      ],
+      "error": null
+     }
+    ],
+    "commands": [
+     {
+      "id": "create",
+      "kind": "create",
+      "fingerprint": "4498629394e003bcd97d386a36e765be96b5963c154c74e25bf0ba0d1d660dc0",
+      "resultId": "session-1"
+     },
+     {
+      "id": "a1",
+      "kind": "send",
+      "fingerprint": "b6fc8052f4c700f5e4221002ecee10e6709de765a419e7f5601cbb796f84143b",
+      "resultId": "run-2"
+     },
+     {
+      "id": "a2",
+      "kind": "send",
+      "fingerprint": "cc9b5e2917989a96155e6c5c08f9d609f13e43c0fd38c0072492b69d8e48b48e",
+      "resultId": "run-5"
+     },
+     {
+      "id": "to-bravo",
+      "kind": "switch",
+      "fingerprint": "7649798857cc197a3f1e95277a79bdf04e44f286535c0b216239bff0cc6aa634",
+      "resultId": "switch-8"
+     },
+     {
+      "id": "b1",
+      "kind": "send",
+      "fingerprint": "5a7e87869928276242a82563e3d0e45d701ac987d4e8f738159715a27351545b",
+      "resultId": "run-9"
+     },
+     {
+      "id": "b2",
+      "kind": "send",
+      "fingerprint": "c6ce4b51a48f8702a5f5ef6a7cc8860b75738868015db77abe68e824bc85be7c",
+      "resultId": "run-12"
+     },
+     {
+      "id": "to-alpha",
+      "kind": "switch",
+      "fingerprint": "3a55ebe36d298f6f4f11f1aaa6d6bf6733a6ff04b7c1cc6d7c50c7c3196e69ae",
+      "resultId": "switch-15"
+     },
+     {
+      "id": "a3",
+      "kind": "send",
+      "fingerprint": "ef59226a573d8d6fbd9e0a44d8b95635861e584fa870ad9266f9bfe24e41fd88",
+      "resultId": "run-16"
+     }
+    ],
+    "nativeBindings": [
+     {
+      "harnessId": "alpha",
+      "controlId": "alpha-acp",
+      "checkpoint": "native-alpha-1",
+      "throughRunId": "run-5",
+      "status": "ready",
+      "observed": {
+       "model": "model-a",
+       "options": {}
+      }
+     },
+     {
+      "harnessId": "bravo",
+      "controlId": "bravo-acp",
+      "checkpoint": "native-bravo-2",
+      "throughRunId": "run-12",
+      "status": "ready",
+      "observed": {
+       "model": "model-a",
+       "options": {}
+      }
+     }
+    ]
+   },
+   "events": [
+    {
+     "type": "session.created",
+     "data": {
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "continuity": "public_context_rehydrate"
+     },
+     "sessionId": "session-1",
+     "seq": 1,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:00.000Z"
+    },
+    {
+     "type": "message.accepted",
+     "data": {
+      "runId": "run-2",
+      "messageId": "message-3",
+      "role": "user",
+      "text": "a1 on alpha"
+     },
+     "sessionId": "session-1",
+     "seq": 2,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:02.000Z"
+    },
+    {
+     "type": "run.preparing",
+     "data": {
+      "runId": "run-2",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "epoch": 1
+     },
+     "sessionId": "session-1",
+     "seq": 3,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:04.000Z"
+    },
+    {
+     "type": "run.protocol",
+     "data": {
+      "runId": "run-2",
+      "observation": {
+       "protocol": "acp-v1",
+       "protocolVersion": 1,
+       "agentName": "fake",
+       "agentVersion": "1",
+       "authenticationMethods": [],
+       "capabilities": {}
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 4,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:05.000Z"
+    },
+    {
+     "type": "native.binding_prepared",
+     "data": {
+      "runId": "run-2",
+      "harnessId": "alpha",
+      "controlId": "alpha-acp",
+      "resumed": false
+     },
+     "sessionId": "session-1",
+     "seq": 5,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:06.000Z"
+    },
+    {
+     "type": "run.context_prepared",
+     "data": {
+      "runId": "run-2",
+      "throughSeq": 3,
+      "sourceRunIds": [],
+      "continuity": "public_context_rehydrate"
+     },
+     "sessionId": "session-1",
+     "seq": 6,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:07.000Z"
+    },
+    {
+     "type": "run.authorized",
+     "data": {
+      "runId": "run-2",
+      "epoch": 1
+     },
+     "sessionId": "session-1",
+     "seq": 7,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:09.000Z"
+    },
+    {
+     "type": "run.dispatched",
+     "data": {
+      "runId": "run-2"
+     },
+     "sessionId": "session-1",
+     "seq": 8,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:11.000Z"
+    },
+    {
+     "type": "run.first_output",
+     "data": {
+      "runId": "run-2"
+     },
+     "sessionId": "session-1",
+     "seq": 9,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:13.000Z"
+    },
+    {
+     "type": "run.output",
+     "data": {
+      "runId": "run-2",
+      "event": {
+       "type": "text",
+       "text": "reply from alpha"
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 10,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:14.000Z"
+    },
+    {
+     "type": "run.backend_settled",
+     "data": {
+      "runId": "run-2",
+      "backend": {
+       "status": "completed",
+       "reason": "fake"
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 11,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:15.000Z"
+    },
+    {
+     "type": "run.ended",
+     "data": {
+      "runId": "run-2",
+      "status": "completed",
+      "backend": {
+       "status": "completed",
+       "reason": "fake"
+      },
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": null,
+      "input": "recorded"
+     },
+     "sessionId": "session-1",
+     "seq": 12,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:17.000Z"
+    },
+    {
+     "type": "message.accepted",
+     "data": {
+      "runId": "run-5",
+      "messageId": "message-6",
+      "role": "user",
+      "text": "a2 on alpha"
+     },
+     "sessionId": "session-1",
+     "seq": 13,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:19.000Z"
+    },
+    {
+     "type": "run.preparing",
+     "data": {
+      "runId": "run-5",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "epoch": 1
+     },
+     "sessionId": "session-1",
+     "seq": 14,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:21.000Z"
+    },
+    {
+     "type": "run.protocol",
+     "data": {
+      "runId": "run-5",
+      "observation": {
+       "protocol": "acp-v1",
+       "protocolVersion": 1,
+       "agentName": "fake",
+       "agentVersion": "1",
+       "authenticationMethods": [],
+       "capabilities": {}
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 15,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:22.000Z"
+    },
+    {
+     "type": "native.binding_prepared",
+     "data": {
+      "runId": "run-5",
+      "harnessId": "alpha",
+      "controlId": "alpha-acp",
+      "resumed": true
+     },
+     "sessionId": "session-1",
+     "seq": 16,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:23.000Z"
+    },
+    {
+     "type": "run.context_prepared",
+     "data": {
+      "runId": "run-5",
+      "throughSeq": 14,
+      "sourceRunIds": [],
+      "continuity": "public_context_rehydrate"
+     },
+     "sessionId": "session-1",
+     "seq": 17,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:24.000Z"
+    },
+    {
+     "type": "run.authorized",
+     "data": {
+      "runId": "run-5",
+      "epoch": 1
+     },
+     "sessionId": "session-1",
+     "seq": 18,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:26.000Z"
+    },
+    {
+     "type": "run.dispatched",
+     "data": {
+      "runId": "run-5"
+     },
+     "sessionId": "session-1",
+     "seq": 19,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:28.000Z"
+    },
+    {
+     "type": "run.first_output",
+     "data": {
+      "runId": "run-5"
+     },
+     "sessionId": "session-1",
+     "seq": 20,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:30.000Z"
+    },
+    {
+     "type": "run.output",
+     "data": {
+      "runId": "run-5",
+      "event": {
+       "type": "text",
+       "text": "reply from alpha"
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 21,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:31.000Z"
+    },
+    {
+     "type": "run.backend_settled",
+     "data": {
+      "runId": "run-5",
+      "backend": {
+       "status": "completed",
+       "reason": "fake"
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 22,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:32.000Z"
+    },
+    {
+     "type": "run.ended",
+     "data": {
+      "runId": "run-5",
+      "status": "completed",
+      "backend": {
+       "status": "completed",
+       "reason": "fake"
+      },
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": null,
+      "input": "recorded"
+     },
+     "sessionId": "session-1",
+     "seq": 23,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:34.000Z"
+    },
+    {
+     "type": "switch.requested",
+     "data": {
+      "switchId": "switch-8",
+      "requested": {
+       "harnessId": "bravo"
+      },
+      "mode": "wait_current"
+     },
+     "sessionId": "session-1",
+     "seq": 24,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:35.000Z"
+    },
+    {
+     "type": "switch.validated",
+     "data": {
+      "switchId": "switch-8",
+      "target": {
+       "harnessId": "bravo",
+       "controlId": "bravo-acp"
+      },
+      "throughSeq": 24,
+      "sourceRunIds": [
+       "run-2",
+       "run-5"
+      ],
+      "continuity": "public_context_rehydrate"
+     },
+     "sessionId": "session-1",
+     "seq": 25,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:36.000Z"
+    },
+    {
+     "type": "switch.effective",
+     "data": {
+      "switchId": "switch-8",
+      "target": {
+       "harnessId": "bravo",
+       "controlId": "bravo-acp"
+      },
+      "epoch": 2,
+      "throughSeq": 25,
+      "sourceRunIds": [
+       "run-2",
+       "run-5"
+      ],
+      "cleanup": null,
+      "continuity": "public_context_rehydrate"
+     },
+     "sessionId": "session-1",
+     "seq": 26,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:37.000Z"
+    },
+    {
+     "type": "message.accepted",
+     "data": {
+      "runId": "run-9",
+      "messageId": "message-10",
+      "role": "user",
+      "text": "b1 on bravo"
+     },
+     "sessionId": "session-1",
+     "seq": 27,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:39.000Z"
+    },
+    {
+     "type": "run.preparing",
+     "data": {
+      "runId": "run-9",
+      "selection": {
+       "harnessId": "bravo",
+       "controlId": "bravo-acp"
+      },
+      "epoch": 2
+     },
+     "sessionId": "session-1",
+     "seq": 28,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:41.000Z"
+    },
+    {
+     "type": "run.protocol",
+     "data": {
+      "runId": "run-9",
+      "observation": {
+       "protocol": "acp-v1",
+       "protocolVersion": 1,
+       "agentName": "fake",
+       "agentVersion": "1",
+       "authenticationMethods": [],
+       "capabilities": {}
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 29,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:42.000Z"
+    },
+    {
+     "type": "native.binding_prepared",
+     "data": {
+      "runId": "run-9",
+      "harnessId": "bravo",
+      "controlId": "bravo-acp",
+      "resumed": false
+     },
+     "sessionId": "session-1",
+     "seq": 30,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:43.000Z"
+    },
+    {
+     "type": "run.context_prepared",
+     "data": {
+      "runId": "run-9",
+      "throughSeq": 28,
+      "sourceRunIds": [
+       "run-2",
+       "run-5"
+      ],
+      "continuity": "public_context_rehydrate",
+      "relay": {
+       "policyVersion": "relay/1-mvp.3",
+       "packetId": "relay-y0bfn4s7ps8sw0b3zc7h",
+       "kind": "packet",
+       "language": "en",
+       "sha256": "d732db28b96bc4306fd838826aa2cf0ddeb7c407f06057f0c06d63389743f129",
+       "sources": {
+        "runs": 2,
+        "fromRunId": "run-2",
+        "throughRunId": "run-5",
+        "origin": false
+       },
+       "tokens": 895,
+       "budget": {
+        "cap": 6400,
+        "window": 128000,
+        "windowSource": "assumed"
+       },
+       "complete": true,
+       "units": {
+        "verbatim": 2,
+        "compact": 0,
+        "line": 0,
+        "ranged": 0
+       },
+       "userWords": {
+        "quoted": 2,
+        "omitted": 0,
+        "truncated": 0
+       },
+       "redactions": 0,
+       "firstLine": true
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 31,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:44.000Z"
+    },
+    {
+     "type": "run.authorized",
+     "data": {
+      "runId": "run-9",
+      "epoch": 2
+     },
+     "sessionId": "session-1",
+     "seq": 32,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:46.000Z"
+    },
+    {
+     "type": "run.dispatched",
+     "data": {
+      "runId": "run-9"
+     },
+     "sessionId": "session-1",
+     "seq": 33,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:48.000Z"
+    },
+    {
+     "type": "run.first_output",
+     "data": {
+      "runId": "run-9"
+     },
+     "sessionId": "session-1",
+     "seq": 34,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:50.000Z"
+    },
+    {
+     "type": "run.output",
+     "data": {
+      "runId": "run-9",
+      "event": {
+       "type": "text",
+       "text": "reply from bravo"
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 35,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:51.000Z"
+    },
+    {
+     "type": "run.backend_settled",
+     "data": {
+      "runId": "run-9",
+      "backend": {
+       "status": "completed",
+       "reason": "fake"
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 36,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:52.000Z"
+    },
+    {
+     "type": "run.ended",
+     "data": {
+      "runId": "run-9",
+      "status": "completed",
+      "backend": {
+       "status": "completed",
+       "reason": "fake"
+      },
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": null,
+      "input": "recorded"
+     },
+     "sessionId": "session-1",
+     "seq": 37,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:54.000Z"
+    },
+    {
+     "type": "message.accepted",
+     "data": {
+      "runId": "run-12",
+      "messageId": "message-13",
+      "role": "user",
+      "text": "b2 on bravo"
+     },
+     "sessionId": "session-1",
+     "seq": 38,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:56.000Z"
+    },
+    {
+     "type": "run.preparing",
+     "data": {
+      "runId": "run-12",
+      "selection": {
+       "harnessId": "bravo",
+       "controlId": "bravo-acp"
+      },
+      "epoch": 2
+     },
+     "sessionId": "session-1",
+     "seq": 39,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:58.000Z"
+    },
+    {
+     "type": "run.protocol",
+     "data": {
+      "runId": "run-12",
+      "observation": {
+       "protocol": "acp-v1",
+       "protocolVersion": 1,
+       "agentName": "fake",
+       "agentVersion": "1",
+       "authenticationMethods": [],
+       "capabilities": {}
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 40,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:59.000Z"
+    },
+    {
+     "type": "native.binding_prepared",
+     "data": {
+      "runId": "run-12",
+      "harnessId": "bravo",
+      "controlId": "bravo-acp",
+      "resumed": true
+     },
+     "sessionId": "session-1",
+     "seq": 41,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:01:00.000Z"
+    },
+    {
+     "type": "run.context_prepared",
+     "data": {
+      "runId": "run-12",
+      "throughSeq": 39,
+      "sourceRunIds": [],
+      "continuity": "public_context_rehydrate"
+     },
+     "sessionId": "session-1",
+     "seq": 42,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:01:01.000Z"
+    },
+    {
+     "type": "run.authorized",
+     "data": {
+      "runId": "run-12",
+      "epoch": 2
+     },
+     "sessionId": "session-1",
+     "seq": 43,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:01:03.000Z"
+    },
+    {
+     "type": "run.dispatched",
+     "data": {
+      "runId": "run-12"
+     },
+     "sessionId": "session-1",
+     "seq": 44,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:01:05.000Z"
+    },
+    {
+     "type": "run.first_output",
+     "data": {
+      "runId": "run-12"
+     },
+     "sessionId": "session-1",
+     "seq": 45,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:01:07.000Z"
+    },
+    {
+     "type": "run.output",
+     "data": {
+      "runId": "run-12",
+      "event": {
+       "type": "text",
+       "text": "reply from bravo"
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 46,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:01:08.000Z"
+    },
+    {
+     "type": "run.backend_settled",
+     "data": {
+      "runId": "run-12",
+      "backend": {
+       "status": "completed",
+       "reason": "fake"
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 47,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:01:09.000Z"
+    },
+    {
+     "type": "run.ended",
+     "data": {
+      "runId": "run-12",
+      "status": "completed",
+      "backend": {
+       "status": "completed",
+       "reason": "fake"
+      },
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": null,
+      "input": "recorded"
+     },
+     "sessionId": "session-1",
+     "seq": 48,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:01:11.000Z"
+    },
+    {
+     "type": "switch.requested",
+     "data": {
+      "switchId": "switch-15",
+      "requested": {
+       "harnessId": "alpha"
+      },
+      "mode": "wait_current"
+     },
+     "sessionId": "session-1",
+     "seq": 49,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:01:12.000Z"
+    },
+    {
+     "type": "switch.validated",
+     "data": {
+      "switchId": "switch-15",
+      "target": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "throughSeq": 49,
+      "sourceRunIds": [
+       "run-2",
+       "run-5",
+       "run-9",
+       "run-12"
+      ],
+      "continuity": "public_context_rehydrate"
+     },
+     "sessionId": "session-1",
+     "seq": 50,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:01:13.000Z"
+    },
+    {
+     "type": "switch.effective",
+     "data": {
+      "switchId": "switch-15",
+      "target": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "epoch": 3,
+      "throughSeq": 50,
+      "sourceRunIds": [
+       "run-2",
+       "run-5",
+       "run-9",
+       "run-12"
+      ],
+      "cleanup": null,
+      "continuity": "public_context_rehydrate"
+     },
+     "sessionId": "session-1",
+     "seq": 51,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:01:14.000Z"
+    },
+    {
+     "type": "message.accepted",
+     "data": {
+      "runId": "run-16",
+      "messageId": "message-17",
+      "role": "user",
+      "text": "a3 with an attachment",
+      "attachments": [
+       {
+        "id": "content-photo",
+        "name": "photo.png",
+        "mediaType": "image/png",
+        "kind": "image",
+        "bytes": 8,
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+       }
+      ]
+     },
+     "sessionId": "session-1",
+     "seq": 52,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:01:16.000Z"
+    },
+    {
+     "type": "run.preparing",
+     "data": {
+      "runId": "run-16",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "epoch": 3
+     },
+     "sessionId": "session-1",
+     "seq": 53,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:01:18.000Z"
+    },
+    {
+     "type": "run.protocol",
+     "data": {
+      "runId": "run-16",
+      "observation": {
+       "protocol": "acp-v1",
+       "protocolVersion": 1,
+       "agentName": "fake",
+       "agentVersion": "1",
+       "authenticationMethods": [],
+       "capabilities": {}
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 54,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:01:19.000Z"
+    },
+    {
+     "type": "native.binding_prepared",
+     "data": {
+      "runId": "run-16",
+      "harnessId": "alpha",
+      "controlId": "alpha-acp",
+      "resumed": true
+     },
+     "sessionId": "session-1",
+     "seq": 55,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:01:20.000Z"
+    },
+    {
+     "type": "run.context_prepared",
+     "data": {
+      "runId": "run-16",
+      "throughSeq": 53,
+      "sourceRunIds": [
+       "run-9",
+       "run-12"
+      ],
+      "continuity": "public_context_rehydrate",
+      "relay": {
+       "policyVersion": "relay/1-mvp.3",
+       "packetId": "relay-qppjpqxeg5j22kdne7zz",
+       "kind": "delta",
+       "language": "en",
+       "sha256": "3b822c63cec2f141608f02cf6471bb8594fa0c4671e6c2bb4fac550ccbe12380",
+       "sources": {
+        "runs": 2,
+        "fromRunId": "run-9",
+        "throughRunId": "run-12",
+        "origin": false
+       },
+       "tokens": 774,
+       "budget": {
+        "cap": 6400,
+        "window": 128000,
+        "windowSource": "assumed"
+       },
+       "complete": false,
+       "units": {
+        "verbatim": 0,
+        "compact": 0,
+        "line": 2,
+        "ranged": 0
+       },
+       "userWords": {
+        "quoted": 2,
+        "omitted": 0,
+        "truncated": 0
+       },
+       "redactions": 0,
+       "firstLine": true
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 56,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:01:21.000Z"
+    },
+    {
+     "type": "run.authorized",
+     "data": {
+      "runId": "run-16",
+      "epoch": 3
+     },
+     "sessionId": "session-1",
+     "seq": 57,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:01:23.000Z"
+    },
+    {
+     "type": "run.ended",
+     "data": {
+      "runId": "run-16",
+      "status": "failed",
+      "backend": null,
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": {
+       "code": "ATTACHMENT_UNSUPPORTED",
+       "message": "this Harness interface does not accept attachments"
+      },
+      "input": "not_recorded"
+     },
+     "sessionId": "session-1",
+     "seq": 58,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:01:25.000Z"
+    }
+   ]
+  }
+ ],
+ "createKeys": [
+  {
+   "commandId": "create",
+   "sessionId": "session-1",
+   "fingerprint": "4498629394e003bcd97d386a36e765be96b5963c154c74e25bf0ba0d1d660dc0"
+  }
+ ]
+}
