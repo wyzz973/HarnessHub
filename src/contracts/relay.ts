@@ -371,7 +371,13 @@ export type SyncPrior =
   | { readonly kind: "synced"; readonly mark: DeliveredMark }
   | { readonly kind: "suspect"; readonly mark: DeliveredMark | null; readonly cause: SuspectCause; readonly floorCandidate: number | null;
       /** Only with a cause of CARRIED_CAUSES: the packet `packetId` that was pending when the binding became suspect, and the prior it was built on. */
-      readonly carried: { readonly prior: SyncPrior; readonly packetId: RelayPacketId; readonly range: SourceRange } | null };
+      readonly carried: { readonly prior: SyncPrior; readonly packetId: RelayPacketId; readonly range: SourceRange } | null;
+      /**
+       * True only with cause clear_unconfirmed: this unconfirmed clear met a rewind-like suspicion (rewind, unknown_command,
+       * marker_absent) not yet checked, in either order, so a marker missing from the chain cannot be put down to the clear
+       * (the clear check's rule 4 does not apply). False otherwise (the approval agent's decision of 2026-11-10).
+       */
+      readonly rewound: boolean };
 export const SYNC_KINDS = ["fresh", "synced", "pending", "suspect"] as const;
 export type BindingSync =
   | SyncPrior
@@ -648,7 +654,7 @@ function syncPrior(value: unknown, nested: boolean): SyncPrior {
     case "fresh": only(item, ["kind", "basis"], "fresh sync"); return { kind: "fresh", basis: choice(item.basis, FRESH_BASES, "fresh basis") };
     case "synced": only(item, ["kind", "mark"], "synced sync"); return { kind: "synced", mark: parseDeliveredMark(item.mark) };
     case "suspect": {
-      only(item, ["kind", "mark", "cause", "floorCandidate", "carried"], "suspect sync");
+      only(item, ["kind", "mark", "cause", "floorCandidate", "carried", "rewound"], "suspect sync");
       const cause = choice(item.cause, SUSPECT_CAUSES, "suspect cause");
       const carried = nullable(item.carried, raw => {
         if (nested) throw new SessionError("INVALID_DATA", "a nested prior carries no packet");
@@ -656,7 +662,9 @@ function syncPrior(value: unknown, nested: boolean): SyncPrior {
         return { prior: syncPrior(row.prior, true), packetId: relayPacketId(row.packetId), range: parseSourceRange(row.range) };
       });
       if (carried !== null && !(CARRIED_CAUSES as readonly string[]).includes(cause)) throw new SessionError("INVALID_DATA", "a suspect state of this cause carries no packet");
-      return { kind: "suspect", mark: nullable(item.mark, parseDeliveredMark), cause, floorCandidate: nullable(item.floorCandidate, raw => integer(raw, "floor candidate", 1, RELAY_MAX_SEQ)), carried };
+      const rewound = flag(item.rewound, "suspect rewound");
+      if (rewound && cause !== "clear_unconfirmed") throw new SessionError("INVALID_DATA", "only an unconfirmed clear is marked rewound");
+      return { kind: "suspect", mark: nullable(item.mark, parseDeliveredMark), cause, floorCandidate: nullable(item.floorCandidate, raw => integer(raw, "floor candidate", 1, RELAY_MAX_SEQ)), carried, rewound };
     }
   }
   throw new SessionError("INVALID_DATA", "unknown sync state kind");

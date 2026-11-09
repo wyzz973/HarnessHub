@@ -9,7 +9,7 @@ import {
 } from "../../src/contracts/relay.js";
 import { runId, type NativeSessionBinding, type RunId } from "../../src/contracts/session.js";
 import {
-  foreignTo, owed, pendingResend, planReturnVerify, resolvesWithoutCheck, retreatedPrior, step,
+  foreignTo, owed, pendingResend, planReturnVerify, resolvesWithoutCheck, restorable, retreatedPrior, step,
   type BindingDelivery, type Cursor, type DecidedOutcome, type PlannedMarker, type RelayEvent, type RelayFact, type RelayStep, type VerifyPlan,
 } from "../../src/contexts/session/domain/relay/delivery.js";
 import { initialBindingRelay } from "../../src/contexts/session/domain/relay/migrate.js";
@@ -105,7 +105,10 @@ class Simulation {
   readonly log: string[] = [];
   /** Counters the cases assert on, so a case that never reaches a path is visible. */
   readonly seen = { recorded: 0, retreats: 0, oldPresent: 0, resends: 0, choices: 0, clears: 0, resets: 0, d6: 0, plain: 0, checks: 0,
-    epochRises: 0, emptyHistoryClears: 0, restoredWithoutChain: 0, skipChecks: 0, nativeTurns: 0, reusedIds: 0, clearChecks: 0, carriedChecks: 0, supersededBack: 0 };
+    epochRises: 0, emptyHistoryClears: 0, restoredWithoutChain: 0, skipChecks: 0, nativeTurns: 0, reusedIds: 0, clearChecks: 0, carriedChecks: 0, supersededBack: 0,
+    foldedCarried: 0, carriedPresent: 0, carriedCompacted: 0, pendingCompacted: 0, rewoundChecks: 0, revertedPending: 0 };
+  /** The fate the next packet takes, when a directed case sets it (otherwise drawn). */
+  forcedFate: "e1" | "e3" | "silent" | "refused" | "lost" | "late" | null = null;
   constructor(private readonly peer: Peer, readonly rand: () => number, readonly caps: Caps, readonly label: string) {
     this.bindings = [this.binding("ready")];
   }
@@ -196,6 +199,7 @@ class Simulation {
     if (plan.kind === "skip") this.seen.skipChecks++; else this.seen.checks++;
     if (plan.kind === "clear") this.seen.clearChecks++;
     if ((plan.kind === "clear" || plan.kind === "suspect") && plan.carried !== null) this.seen.carriedChecks++;
+    if (this.relay.sync.kind === "suspect" && this.relay.sync.rewound && plan.kind !== "skip") this.seen.rewoundChecks++;
     // The prior's last packet is asked about too: a Driver may answer for it, and an old packet present must not move a pending one.
     const prior = this.relay.sync.kind === "pending" ? markOf(this.relay.sync.prior)?.lastPacketId ?? null : null;
     const positionOf = (packetId: string) => { const row = this.rows.findLast(item => item.record.packetId === packetId); return row?.record.position.kind === "seq" ? row.record.position.before : 0; };
@@ -207,7 +211,13 @@ class Simulation {
       turnEntry = (await this.peer.call<{ readonly result: MarkerResult }>("entry", { session: this.session, runId: this.unknownTurn.runId, after: this.unknownTurn.position, readable })).result;
     const held = await this.peer.call<Held>("held", { session: this.session });
     const at = this.commit(), before = this.relay;
+    const answer = (marker: PlannedMarker | null | undefined) => marker == null ? undefined : result.markers.find(item => item.packetId === marker.packetId)?.result;
+    const carried = plan.kind === "clear" || plan.kind === "suspect" ? answer(plan.carried) : plan.kind === "unknown_turn" ? answer(plan.marker) : undefined;
+    if (carried === "present") this.seen.carriedPresent++;
+    if (carried === "compacted") this.seen.carriedCompacted++;
+    if (plan.kind === "pending" && answer(plan.marker) === "compacted") this.seen.pendingCompacted++;
     const outcome = step(this.relay, { kind: "verified", plan, result, ...(turnEntry === undefined ? {} : { turnEntry }), inRunId: null, at });
+    if (outcome.kind === "applied" && before.sync.kind === "suspect" && outcome.relay.sync.kind === "pending") this.seen.revertedPending++;
     await this.apply(outcome, "k(" + plan.kind + (plan.kind === "skip" ? ":" + plan.reason : ":" + result.markers.map(item => item.result).join("/")) + (turnEntry === undefined ? "" : "+" + turnEntry) + ")",
       result.historyEmpty === true && held.entries === 0);
     if (outcome.kind === "applied" && (outcome.note.verified === "restored" || outcome.note.verified === "kept") && held.clears > this.clearsAtLastCheck) {
@@ -226,10 +236,42 @@ class Simulation {
     // Rows a check decided recorded with the binding on them keep the mark they made.
     if (this.relay.sync.kind === "synced" && before.sync.kind !== "synced") this.markRow();
   }
-  /** The end of a case: one more open, and then no suspect binding that needs no check is left waiting (F2). */
+  /**
+   * The end of a case: one more open, and then no suspect binding that needs no check is left waiting (F2, and the table of
+   * 2026-11-10). A Driver that cannot check is never left with an unknown Turn without a packet, nor with an unconfirmed clear
+   * on a mark that claims no foreign fact: both would ask the user at every input.
+   */
   async settle(): Promise<void> {
     await this.check("open");
-    if (resolvesWithoutCheck(this.relay)) this.fail("a suspect binding that needs no check is still waiting after an open (F2)");
+    if (resolvesWithoutCheck(this.relay, this.caps.verify)) this.fail("a suspect binding that needs no check is still waiting after an open (F2)");
+    const sync = this.relay.sync;
+    if (this.caps.verify === "none" && sync.kind === "suspect" && sync.carried === null && (sync.cause === "unknown_turn" || sync.cause === "clear_unconfirmed" && restorable(sync.mark)))
+      this.fail("a Driver that cannot check is left with " + sync.cause + " on a mark that claims nothing");
+  }
+  /** One open's check, for directed cases. */
+  async open(): Promise<void> { await this.check("open"); }
+  /** What the native session holds and what the binding owes, for directed cases. */
+  async truth(): Promise<{ readonly held: ReadonlySet<string>; readonly need: readonly string[] }> {
+    return { held: new Set((await this.peer.call<Held>("held", { session: this.session })).facts), need: this.need().facts.map(fact => fact.runId as string) };
+  }
+  /** A packet of what is owed, with the fate `fate` (a directed case). */
+  async carryNow(fate: NonNullable<Simulation["forcedFate"]>): Promise<void> {
+    this.forcedFate = fate;
+    try { await this.carry(this.need(), false, null); } finally { this.forcedFate = null; }
+  }
+  /** f: an undo of the last `n` user entries (none for an unknown command without effect), with no check at its open. */
+  async injectRewind(n: number, cause: "rewind" | "unknown_command" = "rewind"): Promise<void> {
+    const at = this.commit();
+    if (n > 0) await this.peer.call("rewind", { session: this.session, n });
+    await this.apply(step(this.relay, { kind: "rewound", cause }), "f(" + cause + " " + n + ")@" + at.seq);
+    this.unknownTurn = null;
+  }
+  /** e′: a clear that did not run, settled unconfirmed (no check at its open). */
+  async injectUnconfirmedClear(): Promise<void> {
+    const at = this.commit();
+    this.seen.clears++;
+    await this.apply(step(this.relay, { kind: "clear_unconfirmed", seq: at.seq }), "e′(not run)@" + at.seq);
+    this.unknownTurn = null;
   }
   /** After a packet is recorded, nothing it delivered is owed again (§7.2 property). */
   private recordedNeed(packetId: RelayPacketId): void {
@@ -333,7 +375,7 @@ class Simulation {
     await this.apply(outcome, "a(" + packetId.slice(-4) + (resend === null ? "" : " resend " + resend.by) + (retreatFrom === undefined ? "" : " retreat") + ") @" + prepared.seq);
     // The packet's fate: inserted with E1 or E3, inserted without evidence, refused before insertion, lost, or written late.
     const fate = this.rand();
-    const kind = fate < 0.3 ? "e1" : fate < 0.45 ? "e3" : fate < 0.6 ? "silent" : fate < 0.72 ? "refused" : fate < 0.86 ? "lost" : this.caps.lateDelivery ? "late" : "lost";
+    const kind = this.forcedFate ?? (fate < 0.3 ? "e1" : fate < 0.45 ? "e3" : fate < 0.6 ? "silent" : fate < 0.72 ? "refused" : fate < 0.86 ? "lost" : this.caps.lateDelivery ? "late" : "lost");
     const insert = kind === "e1" || kind === "e3" || kind === "silent" ? "now" : kind === "late" ? "late" : "never";
     await this.peer.call("send", { session: this.session, runId: id, packetId, facts, insert });
     if (kind === "e1" && this.caps.live) {
@@ -402,6 +444,17 @@ class Simulation {
     const done = await this.peer.call<{ readonly cursor: Cursor; readonly folded: number }>("compact", { session: this.session, keep: 2 });
     if (this.caps.compaction && done.folded > 0) await this.apply(step(this.relay, { kind: "compaction", cursor: done.cursor, ran: false }), "d(auto)");
   }
+  /**
+   * A packet still to be decided (pending, or carried by a suspect binding) folded away: the user types once in the original
+   * program and the Harness compacts all but that last entry, so the next check answers compacted for the packet (or absent
+   * after the cursor moved, for a Driver without compaction evidence).
+   */
+  async foldCarried(): Promise<void> {
+    this.seen.foldedCarried++;
+    await this.nativeTurn();
+    const done = await this.peer.call<{ readonly cursor: Cursor; readonly folded: number }>("compact", { session: this.session, keep: 1 });
+    if (this.caps.compaction && done.folded > 0) await this.apply(step(this.relay, { kind: "compaction", cursor: done.cursor, ran: false }), "d(auto, folding)");
+  }
   async lateWrites(): Promise<void> { await this.peer.call("flushLate", { session: this.session }); await this.sound("late writes"); }
   /** The user types in the original program: no Hub Turn, no fact, but the history is no longer empty after a clear. */
   async nativeTurn(): Promise<void> { this.seen.nativeTurns++; await this.peer.call("nativeTurn", { session: this.session }); await this.sound("native turn"); }
@@ -425,7 +478,9 @@ function capsOf(rand: () => number): Caps {
 }
 async function run(simulation: Simulation, steps: number): Promise<void> {
   for (let index = 0; index < steps; index++) {
-    const choice = simulation.rand();
+    const choice = simulation.rand(), sync = simulation.relay.sync;
+    // A packet still to be decided is folded away more often, so its compacted answers are reached (the review's hit counts).
+    if ((sync.kind === "pending" || sync.kind === "suspect" && sync.carried !== null) && simulation.rand() < 0.15) { await simulation.foldCarried(); continue; }
     if (choice < 0.24) await simulation.foreignTurn();
     else if (choice < 0.6) await simulation.contentTurn();
     else if (choice < 0.8) await simulation.command();
@@ -452,6 +507,74 @@ test("G068-P01 under any evidence sequence a trusted mark never exceeds what the
   t.diagnostic("seeds 0x" + SEEDS[0]!.toString(16) + "… (" + SEEDS.length + " cases × 70 steps): " + JSON.stringify(totals));
   // Every path the properties are about was taken somewhere (the two exception counters may stay at zero).
   for (const [key, count] of Object.entries(totals)) if (key !== "emptyHistoryClears" && key !== "restoredWithoutChain") assert.ok(count > 0, key + " never happened");
+});
+
+test("G068-P01 an unchecked rewind and a clear that never ran, in either order: no epoch rises without a clear, and a mark restored repeats nothing the history holds (rewound)", async t => {
+  const peer = await startPeer(t);
+  const shapes: Record<string, number> = {}, totals: Record<string, number> = {};
+  let restored = 0;
+  for (const seed of SEEDS.slice(0, 40)) {
+    await peer.call("reset");
+    const rand = generator(seed ^ 0x7e57), label = "rewound seed 0x" + seed.toString(16);
+    const caps: Caps = { verify: "on_next_open", lateDelivery: rand() < 0.5, compaction: rand() < 0.7, window: 200, flaky: 0, wholeHistory: rand() < 0.5, live: rand() < 0.5 };
+    const simulation = new Simulation(peer, rand, caps, label);
+    // Synced on two packets of the epoch, P1 then P2.
+    for (let index = 0; index < 2; index++) { await simulation.foreignTurn(); await simulation.carryNow("e3"); }
+    const sync = simulation.relay.sync;
+    assert.ok(sync.kind === "synced" && sync.mark.lastPacketId !== null && simulation.relay.packetsInEpoch === 2, label + ": synced on two packets");
+    // Sometimes a third packet still pending (inserted without evidence, or to be written late), sometimes the user's own entry last.
+    const drawn = (["none", "silent", "late"] as const)[Math.floor(rand() * 3)]!, pending = drawn === "late" && !caps.lateDelivery ? "none" : drawn;
+    if (pending !== "none") { await simulation.foreignTurn(); await simulation.carryNow(pending); }
+    const own = rand() < 0.3;
+    if (own) await simulation.nativeTurn();
+    const n = rand() < 0.5 ? 1 : 2, order = rand() < 0.5 ? ["f", "e′"] as const : ["e′", "f"] as const;
+    for (const event of order) if (event === "f") await simulation.injectRewind(n); else await simulation.injectUnconfirmedClear();
+    const marked = simulation.relay.sync;
+    assert.ok(marked.kind === "suspect" && marked.cause === "clear_unconfirmed" && marked.rewound, label + ": " + JSON.stringify(marked));
+    await simulation.lateWrites();
+    await simulation.open();
+    const after = simulation.relay.sync, shape = order.join("") + " undo " + n + (pending === "none" ? "" : " +" + pending) + (own ? " +own" : "") + " → " + after.kind;
+    shapes[shape] = (shapes[shape] ?? 0) + 1;
+    if (after.kind === "synced") {
+      // (a): the mark came back to a chain node still there; what is owed again is only what the history lost.
+      const { held, need } = await simulation.truth();
+      for (const fact of need) if (held.has(fact)) assert.fail(label + " (" + shape + "): need repeats " + fact + ", which the native session still holds\n" + simulation.log.slice(-12).join("\n"));
+      restored++;
+    }
+    await run(simulation, 10);
+    for (const [key, count] of Object.entries(simulation.seen)) totals[key] = (totals[key] ?? 0) + count;
+  }
+  t.diagnostic("shapes: " + JSON.stringify(shapes) + "; counters: " + JSON.stringify(totals));
+  assert.ok(restored >= 5, "enough cases came back to a chain node (" + restored + ")");
+  assert.ok(Object.keys(shapes).some(key => key.endsWith("→ suspect")), "some cases were left to the user");
+});
+
+test("G068-P01 a packet pending when an unchecked command comes is still checked: found, it advances; gone, its facts are owed again (F8)", async t => {
+  const peer = await startPeer(t);
+  let found = 0, gone = 0;
+  for (const seed of SEEDS.slice(0, 30)) {
+    await peer.call("reset");
+    const rand = generator(seed ^ 0x0c0c), label = "carried seed 0x" + seed.toString(16);
+    const simulation = new Simulation(peer, rand, { verify: "on_next_open", lateDelivery: false, compaction: rand() < 0.7, window: 200, flaky: 0, wholeHistory: rand() < 0.5, live: false }, label);
+    await simulation.foreignTurn(); await simulation.carryNow("e3");
+    await simulation.foreignTurn(); await simulation.carryNow("silent");
+    const pending = simulation.relay.sync;
+    assert.ok(pending.kind === "pending", label + ": the second packet is pending");
+    if (pending.kind !== "pending") continue;
+    // The user's own entry after the packet, sometimes; then an unknown command without effect, or an undo of the last entry
+    // (the user's own one, or else the packet).
+    if (rand() < 0.5) await simulation.nativeTurn();
+    if (rand() < 0.4) await simulation.injectRewind(0, "unknown_command"); else await simulation.injectRewind(1);
+    const carrying = simulation.relay.sync;
+    assert.ok(carrying.kind === "suspect" && carrying.carried?.packetId === pending.packetId, label + ": the packet is carried");
+    await simulation.open();
+    const sync = simulation.relay.sync, { held, need } = await simulation.truth();
+    if (sync.kind === "synced" && sync.mark.lastPacketId === pending.packetId) found++; else gone++;
+    for (const fact of need) if (held.has(fact)) assert.fail(label + ": need repeats " + fact + ", which the native session still holds\n" + simulation.log.slice(-12).join("\n"));
+    await run(simulation, 10);
+  }
+  t.diagnostic("carried packets found " + found + ", gone " + gone);
+  assert.ok(found >= 5 && gone >= 3, "both outcomes were reached");
 });
 
 test("G068-P01 an old packet present never moves a pending packet, whatever else the check reports (VF1-01)", async t => {

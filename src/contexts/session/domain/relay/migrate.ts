@@ -228,9 +228,9 @@ export function migrateSession(state12: SessionSnapshot, events: readonly Migrat
     const need = owed(Math.max(mark ?? -1, floor), asOf, finalEpoch), owing = need.origin || need.facts.length > 0;
     // Without any evidence of what it holds a binding is fresh, or suspect when a command or a refusal may have changed it
     // while facts are owed (the D1 shape, RT1-B1).
-    if (mark === null) return withSync(suspicious && owing ? { kind: "suspect", mark: null, cause: "legacy", floorCandidate: null, carried: null }
+    if (mark === null) return withSync(suspicious && owing ? { kind: "suspect", mark: null, cause: "legacy", floorCandidate: null, carried: null, rewound: false }
       : { kind: "fresh", basis: made.slice(0, index).some(row => row.harnessId === binding.harnessId && row.controlId === binding.controlId) ? "reset" : "new" });
-    return withSync(owing && suspicious ? { kind: "suspect", mark: legacyMark(mark), cause: "legacy", floorCandidate: null, carried: null } : { kind: "synced", mark: legacyMark(mark) });
+    return withSync(owing && suspicious ? { kind: "suspect", mark: legacyMark(mark), cause: "legacy", floorCandidate: null, carried: null, rewound: false } : { kind: "synced", mark: legacyMark(mark) });
   });
   const indexes = runs.flatMap((run, index): RelayBehindIndex[] => {
     const seq = factSeq(run);

@@ -39,7 +39,7 @@ function relay(sync: BindingSync, extra: Partial<BindingRelayState> = {}): Bindi
 const FRESH = relay({ kind: "fresh", basis: "reset" }, { packetsInEpoch: 0 });
 const SYNCED = relay({ kind: "synced", mark: MARK1 });
 const PENDING = relay({ kind: "pending", prior: { kind: "synced", mark: MARK1 }, packetId: P2, range: RANGE2, autoResends: 0, manualResends: 0, attachOverride: false });
-const SUSPECT = relay({ kind: "suspect", mark: MARK1, cause: "rewind", floorCandidate: null, carried: null });
+const SUSPECT = relay({ kind: "suspect", mark: MARK1, cause: "rewind", floorCandidate: null, carried: null, rewound: false });
 const STATES = { fresh: FRESH, synced: SYNCED, pending: PENDING, suspect: SUSPECT } as const;
 type StateName = keyof typeof STATES;
 
@@ -84,6 +84,9 @@ const BASE_MARK: DeliveredMark = { throughSeq: 2, chain: EMPTY_CHAIN, lastPacket
 const CHOSEN_BASE: DeliveredMark = { ...BASE_MARK, evidence: "choice" };
 /** PENDING's packet as a suspect state keeps it (F8): the prior it was built on, the packet and its range. */
 const CARRIED2 = { prior: { kind: "synced" as const, mark: MARK1 }, packetId: P2, range: RANGE2 };
+/** A native mark (restorable), and P2 carried on a prior standing on it. */
+const NATIVE: DeliveredMark = { throughSeq: 8, chain: EMPTY_CHAIN, lastPacketId: null, evidence: "native", basis: "native" };
+const CARRIED_NATIVE = { prior: { kind: "synced" as const, mark: NATIVE }, packetId: P2, range: RANGE2 };
 
 const TABLE: Readonly<Record<StateName, Readonly<Record<RelayEventLetter, Cell>>>> = {
   fresh: {
@@ -93,8 +96,8 @@ const TABLE: Readonly<Record<StateName, Readonly<Record<RelayEventLetter, Cell>>
     c: { event: { kind: "command_kept" }, expect: { kind: "applied", relay: {} } },
     d: { event: { kind: "compaction", cursor: CURSOR, ran: false }, expect: { kind: "applied", relay: { compactionSeen: CURSOR } } },
     e: { event: { kind: "cleared", seq: 15 }, expect: { kind: "applied", relay: cleared(FRESH) } },
-    "e′": { event: { kind: "clear_unconfirmed", seq: 15 }, expect: { kind: "applied", relay: { sync: { kind: "suspect", mark: null, cause: "clear_unconfirmed", floorCandidate: 15, carried: null } } } },
-    f: { event: { kind: "rewound", cause: "unknown_command" }, expect: { kind: "applied", relay: { sync: { kind: "suspect", mark: null, cause: "unknown_command", floorCandidate: null, carried: null } } } },
+    "e′": { event: { kind: "clear_unconfirmed", seq: 15 }, expect: { kind: "applied", relay: { sync: { kind: "suspect", mark: null, cause: "clear_unconfirmed", floorCandidate: 15, carried: null, rewound: false } } } },
+    f: { event: { kind: "rewound", cause: "unknown_command" }, expect: { kind: "applied", relay: { sync: { kind: "suspect", mark: null, cause: "unknown_command", floorCandidate: null, carried: null, rewound: false } } } },
     g: { event: settle("recorded"), expect: { kind: "refused", refusal: notApplicable } },
     h: { event: settle("not_recorded"), expect: { kind: "refused", refusal: notApplicable } },
     i: { event: settle("unknown"), expect: { kind: "refused", refusal: notApplicable } },
@@ -109,8 +112,8 @@ const TABLE: Readonly<Record<StateName, Readonly<Record<RelayEventLetter, Cell>>
     c: { event: { kind: "command_kept" }, expect: { kind: "applied", relay: {} } },
     d: { event: { kind: "compaction", cursor: CURSOR, ran: false }, expect: { kind: "applied", relay: { compactionSeen: CURSOR, reanchor: true } } },
     e: { event: { kind: "cleared", seq: 15 }, expect: { kind: "applied", relay: cleared(SYNCED) } },
-    "e′": { event: { kind: "clear_unconfirmed", seq: 15 }, expect: { kind: "applied", relay: { sync: { kind: "suspect", mark: MARK1, cause: "clear_unconfirmed", floorCandidate: 15, carried: null } } } },
-    f: { event: { kind: "rewound", cause: "rewind" }, expect: { kind: "applied", relay: { sync: { kind: "suspect", mark: MARK1, cause: "rewind", floorCandidate: null, carried: null } } } },
+    "e′": { event: { kind: "clear_unconfirmed", seq: 15 }, expect: { kind: "applied", relay: { sync: { kind: "suspect", mark: MARK1, cause: "clear_unconfirmed", floorCandidate: 15, carried: null, rewound: false } } } },
+    f: { event: { kind: "rewound", cause: "rewind" }, expect: { kind: "applied", relay: { sync: { kind: "suspect", mark: MARK1, cause: "rewind", floorCandidate: null, carried: null, rewound: false } } } },
     g: { event: settle("recorded"), expect: { kind: "refused", refusal: notApplicable } },
     h: { event: settle("not_recorded"), expect: { kind: "refused", refusal: notApplicable } },
     i: { event: settle("unknown"), expect: { kind: "refused", refusal: notApplicable } },
@@ -125,8 +128,8 @@ const TABLE: Readonly<Record<StateName, Readonly<Record<RelayEventLetter, Cell>>
     c: { event: { kind: "command_kept" }, expect: { kind: "applied", relay: {} } },
     d: { event: { kind: "compaction", cursor: CURSOR, ran: false }, expect: { kind: "applied", relay: { compactionSeen: CURSOR, reanchor: true } } },
     e: { event: { kind: "cleared", seq: 15 }, expect: { kind: "applied", relay: cleared(PENDING) } },
-    "e′": { event: { kind: "clear_unconfirmed", seq: 15 }, expect: { kind: "applied", relay: { sync: { kind: "suspect", mark: MARK1, cause: "clear_unconfirmed", floorCandidate: 15, carried: CARRIED2 } } } },
-    f: { event: { kind: "rewound", cause: "rewind" }, expect: { kind: "applied", relay: { sync: { kind: "suspect", mark: MARK1, cause: "rewind", floorCandidate: null, carried: CARRIED2 } } } },
+    "e′": { event: { kind: "clear_unconfirmed", seq: 15 }, expect: { kind: "applied", relay: { sync: { kind: "suspect", mark: MARK1, cause: "clear_unconfirmed", floorCandidate: 15, carried: CARRIED2, rewound: false } } } },
+    f: { event: { kind: "rewound", cause: "rewind" }, expect: { kind: "applied", relay: { sync: { kind: "suspect", mark: MARK1, cause: "rewind", floorCandidate: null, carried: CARRIED2, rewound: false } } } },
     g: { event: settle("recorded"), expect: { kind: "applied", relay: { sync: { kind: "synced", mark: MARK2 }, packetsInEpoch: 2 }, deliveries: [settledRow("recorded")] } },
     h: { event: settle("not_recorded"), expect: { kind: "applied", relay: { sync: { kind: "synced", mark: MARK1 } }, deliveries: [settledRow("not_recorded")] } },
     i: { event: settle("unknown"), expect: { kind: "applied", relay: {}, deliveries: [settledRow("unknown")] } },
@@ -136,15 +139,15 @@ const TABLE: Readonly<Record<StateName, Readonly<Record<RelayEventLetter, Cell>>
     l: { event: resetOf(PENDING), expect: { kind: "replaced", relay: resetRelay } },
   },
   suspect: {
-    a: { event: { ...carryEvent, retreat: { firstFromSeq: 3 } } as RelayEvent, expect: { kind: "applied", relay: { sync: { kind: "pending", prior: { kind: "suspect", mark: CHOSEN_BASE, cause: "rewind", floorCandidate: null, carried: null }, packetId: P3, range: RANGE3, autoResends: 0, manualResends: 0, attachOverride: false } }, deliveries: [insertP3()] } },
+    a: { event: { ...carryEvent, retreat: { firstFromSeq: 3 } } as RelayEvent, expect: { kind: "applied", relay: { sync: { kind: "pending", prior: { kind: "suspect", mark: CHOSEN_BASE, cause: "rewind", floorCandidate: null, carried: null, rewound: false }, packetId: P3, range: RANGE3, autoResends: 0, manualResends: 0, attachOverride: false } }, deliveries: [insertP3()] } },
     b: { event: { kind: "plain", foreign: true }, expect: { kind: "refused", refusal: { code: "verify_first", cause: "rewind" } } },
     n: { event: { kind: "alone" }, expect: { kind: "applied", relay: {} } },
     c: { event: { kind: "command_kept" }, expect: { kind: "applied", relay: {} } },
     d: { event: { kind: "compaction", cursor: CURSOR, ran: false }, expect: { kind: "applied", relay: { compactionSeen: CURSOR, reanchor: true } } },
     e: { event: { kind: "cleared", seq: 15 }, expect: { kind: "applied", relay: cleared(SUSPECT) } },
-    // An unconfirmed clear on an unchecked rewind folds: no mark, nothing carried, only the clear's seq (see the fold test).
-    "e′": { event: { kind: "clear_unconfirmed", seq: 15 }, expect: { kind: "applied", relay: { sync: { kind: "suspect", mark: null, cause: "clear_unconfirmed", floorCandidate: 15, carried: null } } } },
-    f: { event: { kind: "rewound", cause: "unknown_command" }, expect: { kind: "applied", relay: { sync: { kind: "suspect", mark: MARK1, cause: "unknown_command", floorCandidate: null, carried: null } } } },
+    // An unconfirmed clear on an unchecked rewind keeps the mark and is marked rewound (see the rewound tests).
+    "e′": { event: { kind: "clear_unconfirmed", seq: 15 }, expect: { kind: "applied", relay: { sync: { kind: "suspect", mark: MARK1, cause: "clear_unconfirmed", floorCandidate: 15, carried: null, rewound: true } } } },
+    f: { event: { kind: "rewound", cause: "unknown_command" }, expect: { kind: "applied", relay: { sync: { kind: "suspect", mark: MARK1, cause: "unknown_command", floorCandidate: null, carried: null, rewound: false } } } },
     g: { event: settle("recorded"), expect: { kind: "refused", refusal: notApplicable } },
     h: { event: settle("not_recorded"), expect: { kind: "refused", refusal: notApplicable } },
     i: { event: settle("unknown"), expect: { kind: "refused", refusal: notApplicable } },
@@ -231,13 +234,13 @@ test("G068 every rule refuses its invalid sample instead of passing it silently"
   refused(step(PENDING, verifiedEvent(PENDING, { [P2]: "absent" }, {}, [ROW1, { ...ROW2, record: record(R2, P2, "recorded") }])), { code: "invalid" }, "a recorded row never goes back to unknown");
   refused(step(SYNCED, { kind: "reset", bindings: [ARCHIVED], harnessId: "xray", controlId: "xray-acp" }), { code: "invalid" }, "a reset names its own binding");
   refused(step(relay(SYNCED.sync, { nativeEpoch: 16_385 }), { kind: "cleared", seq: 15 }), { code: "invalid" }, "an epoch beyond its bound");
-  const noFloor = relay({ kind: "suspect", mark: MARK1, cause: "clear_unconfirmed", floorCandidate: null, carried: null });
+  const noFloor = relay({ kind: "suspect", mark: MARK1, cause: "clear_unconfirmed", floorCandidate: null, carried: null, rewound: false });
   refused(step(noFloor, { kind: "verified", plan: plan(noFloor), result: result({ [P1]: "absent" }, { historyEmpty: true }), inRunId: null, at: AT }), { code: "invalid" }, "an unconfirmed clear keeps its seq");
   // And what the same rules let through.
   assert.equal(step(exhausted, { ...carryEvent, resend: { by: "user", of: R2 } }).kind, "applied", "the user may send it again");
   assert.equal(step(SUSPECT, { kind: "plain", foreign: false }).kind, "applied", "a single-Harness conversation never checks");
   for (const cause of ["legacy", "marker_absent"] as const) {
-    const outcome = step(relay({ kind: "suspect", mark: MARK1, cause, floorCandidate: null, carried: null }), { kind: "plain", foreign: true });
+    const outcome = step(relay({ kind: "suspect", mark: MARK1, cause, floorCandidate: null, carried: null, rewound: false }), { kind: "plain", foreign: true });
     assert.equal(outcome.kind === "applied" && outcome.note.verified, "nothing_owed", cause + " passes with nothing owed");
   }
   assert.equal(step(SYNCED, { ...(settle("recorded") as Extract<RelayEvent, { kind: "carry_settled" }>), packetId: P1, row: "recorded" }).kind, "applied", "E1 decided it before the settlement");
@@ -273,7 +276,7 @@ test("G068 k on a pending binding checks only its own packet: an old packet pres
 test("G068 k on a synced binding: present keeps it, outside the window or unavailable only records the check, absent is marker_absent, compaction re-anchors", () => {
   assert.equal(applied(step(SYNCED, verifiedEvent(SYNCED, { [P1]: "outside_window" }))).note.verified, "undecided");
   assert.equal(applied(step(SYNCED, verifiedEvent(SYNCED, { [P1]: "unavailable" }))).changed, false);
-  assert.deepEqual(applied(step(SYNCED, verifiedEvent(SYNCED, { [P1]: "absent" }))).relay.sync, { kind: "suspect", mark: MARK1, cause: "marker_absent", floorCandidate: null, carried: null });
+  assert.deepEqual(applied(step(SYNCED, verifiedEvent(SYNCED, { [P1]: "absent" }))).relay.sync, { kind: "suspect", mark: MARK1, cause: "marker_absent", floorCandidate: null, carried: null, rewound: false });
   assert.equal(applied(step(SYNCED, verifiedEvent(SYNCED, { [P1]: "compacted" }))).relay.reanchor, true);
   // Absent after the cursor moved since delivery is a compaction, not a missing marker (VF1-08).
   const delivered = [{ ...ROW1, record: record(R1, P1, "recorded", { compactionAtDelivery: { count: 0, digest: null } }) }];
@@ -291,7 +294,7 @@ test("G068 k on a suspect binding: all present, the newest present, none present
   const rows: readonly BindingDelivery[] = [
     { record: record(R0, P0, "recorded"), nativeEpoch: 1, range: { fromSeq: 1, throughSeq: 2, fromRun: 0, throughRun: 0 }, bodySha256: SHA3, reanchor: false, mark: MARK0 },
     ROW1, { ...ROW2, record: record(R2, P2, "recorded"), mark: MARK_B }];
-  const state = relay({ kind: "suspect", mark: MARK_B, cause: "rewind", floorCandidate: null, carried: null }, { packetsInEpoch: 2 });
+  const state = relay({ kind: "suspect", mark: MARK_B, cause: "rewind", floorCandidate: null, carried: null, rewound: false }, { packetsInEpoch: 2 });
   const checked = plan(state, rows);
   assert.equal(checked.kind === "suspect" && checked.markers.map(marker => marker.packetId).join(), [P1, P2].join(), "only this epoch's recorded packets");
   const at = (markers: Readonly<Record<string, MarkerResult>>, extra: Partial<VerifyResult> = {}) => applied(step(state, { kind: "verified", plan: checked, result: result(markers, extra), inRunId: R3, at: AT }));
@@ -312,13 +315,13 @@ test("G068 k on a suspect binding: all present, the newest present, none present
   const undecided = at({ [P1]: "unavailable", [P2]: "outside_window" });
   assert.equal(undecided.relay.sync.kind, "suspect"); assert.equal(undecided.note.choice, "verify_required");
   // The floor bounds the retreat: with a floor above the first packet's fromSeq − 1, the mark stops at the floor.
-  const floored = relay({ kind: "suspect", mark: MARK_B, cause: "rewind", floorCandidate: null, carried: null }, { epochFloor: 5 });
+  const floored = relay({ kind: "suspect", mark: MARK_B, cause: "rewind", floorCandidate: null, carried: null, rewound: false }, { epochFloor: 5 });
   const back = applied(step(floored, { kind: "verified", plan: plan(floored, rows), result: result({ [P1]: "absent", [P2]: "absent" }), inRunId: null, at: AT }));
   assert.equal(back.relay.sync.kind === "synced" && back.relay.sync.mark.throughSeq, 5);
 });
 
 test("G068 k on an unconfirmed clear: an empty history or every marker gone confirms it; a marker still there restores the state before it", () => {
-  const unconfirmed = relay({ kind: "suspect", mark: MARK1, cause: "clear_unconfirmed", floorCandidate: 15, carried: null });
+  const unconfirmed = relay({ kind: "suspect", mark: MARK1, cause: "clear_unconfirmed", floorCandidate: 15, carried: null, rewound: false });
   const at = (markers: Readonly<Record<string, MarkerResult>>, extra: Partial<VerifyResult> = {}, rows: readonly BindingDelivery[] = [ROW1]) =>
     applied(step(unconfirmed, { kind: "verified", plan: plan(unconfirmed, rows), result: result(markers, extra), inRunId: null, at: AT }));
   const known: readonly BindingDelivery[] = [{ ...ROW1, record: record(R1, P1, "recorded", { compactionAtDelivery: { count: 0, digest: null } }) }];
@@ -330,7 +333,7 @@ test("G068 k on an unconfirmed clear: an empty history or every marker gone conf
   // No marker to look for and the history not empty: the clear did not happen, but only a mark that claims nothing comes back.
   assert.equal(at({}, { historyEmpty: false }, []).note.choice, "verify_required", "a packet mark without its marker stays suspect");
   const native: DeliveredMark = { throughSeq: 8, chain: EMPTY_CHAIN, lastPacketId: null, evidence: "native", basis: "native" };
-  const plain = relay({ kind: "suspect", mark: native, cause: "clear_unconfirmed", floorCandidate: 15, carried: null });
+  const plain = relay({ kind: "suspect", mark: native, cause: "clear_unconfirmed", floorCandidate: 15, carried: null, rewound: false });
   assert.deepEqual(applied(step(plain, { kind: "verified", plan: plan(plain, []), result: result({}, { historyEmpty: false }), inRunId: null, at: AT })).relay.sync, { kind: "synced", mark: native }, "a native mark is restored");
   assert.equal(at({ [P1]: "absent" }, { compaction: CURSOR }, [{ ...ROW1, record: record(R1, P1, "recorded", { compactionAtDelivery: { count: 0, digest: null } }) }]).note.choice, "verify_required", "gone after a compaction proves no clear");
   assert.equal(at({ [P1]: "unavailable" }).note.choice, "verify_required");
@@ -340,7 +343,7 @@ test("G068 k on an unconfirmed clear: an empty history or every marker gone conf
 
 test("G068 D6: an unknown Turn continued is suspect{unknown_turn}; its entry found advances by its carried packet (E2), not found returns to the prior", () => {
   const carried = applied(step(PENDING, { kind: "unknown_turn_continued" })).relay;
-  assert.deepEqual(carried.sync, { kind: "suspect", mark: MARK1, cause: "unknown_turn", floorCandidate: null, carried: { prior: { kind: "synced", mark: MARK1 }, packetId: P2, range: RANGE2 } });
+  assert.deepEqual(carried.sync, { kind: "suspect", mark: MARK1, cause: "unknown_turn", floorCandidate: null, carried: { prior: { kind: "synced", mark: MARK1 }, packetId: P2, range: RANGE2 }, rewound: false });
   const at = (value: MarkerResult) => applied(step(carried, verifiedEvent(carried, { [P2]: value })));
   const present = at("present");
   assert.deepEqual(present.relay.sync, { kind: "synced", mark: { ...MARK2, evidence: "E2" } }); assert.equal(present.relay.packetsInEpoch, 2);
@@ -356,12 +359,18 @@ test("G068 D6: an unknown Turn continued is suspect{unknown_turn}; its entry fou
   assert.deepEqual(entry("present").relay.sync, { kind: "synced", mark: MARK1 });
   assert.deepEqual(entry("absent").relay.sync, { kind: "synced", mark: MARK1 }, "carried=null and not there: the mark stands (approval, point 4)");
   assert.deepEqual(entry("compacted").relay.reanchor, true);
+  // An entry the check cannot see changes nothing either (2026-11-10): the mark stands, undecided, with no choice to make.
+  for (const value of ["unavailable", "outside_window"] as const) {
+    const unseen = entry(value);
+    assert.deepEqual(unseen.relay.sync, { kind: "synced", mark: MARK1 }, value); assert.equal(unseen.note.verified, "undecided"); assert.equal(unseen.note.choice, undefined, value);
+  }
+  assert.deepEqual(applied(step(plain, { kind: "verified", plan: plan(plain), result: result({}), inRunId: null, at: AT })).relay.sync, { kind: "synced", mark: MARK1 }, "no turnEntry reported is unavailable");
   // Already suspect: the stronger cause stays.
   assert.equal(applied(step(SUSPECT, { kind: "unknown_turn_continued" })).changed, false);
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
-// After the review: F1, F2, F3, F5, F8, F9 and the fold
+// After the review: F1, F2, F3, F5, F8, F9, rewound, the unchecked table, Z2 and Z4
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** Delivery rows of epoch `epoch` whose recordings kept the cursor {0, null}: a Driver with compaction evidence. */
@@ -388,7 +397,7 @@ test("G068 F1 an unconfirmed clear checks only the chain its mark stands on and 
   assert.deepEqual(owed(restored.relay, "xray", "xray-acp", facts, { originHistory: false }).facts.map(fact => fact.seq), [3, 6, 7, 9], "everything the undo removed is owed again");
   // The user undid P2 in the original program (the Hub never saw it) and then cleared through the Hub without effect: P1 is
   // still there, so the clear did not happen and the mark goes back to P1. Only P2 absent would have read as cleared.
-  const both = relay({ kind: "suspect", mark: MARK2, cause: "clear_unconfirmed", floorCandidate: 12, carried: null }, { nativeEpoch: 1, epochFloor: -1 });
+  const both = relay({ kind: "suspect", mark: MARK2, cause: "clear_unconfirmed", floorCandidate: 12, carried: null, rewound: false }, { nativeEpoch: 1, epochFloor: -1 });
   const chain = plan(both, rows);
   assert.equal(chain.kind === "clear" && chain.chain.map(marker => marker.packetId).join(), [P1, P2].join());
   const undone = applied(checked(both, rows, { [P1]: "present", [P2]: "absent" }, { historyEmpty: false }));
@@ -398,7 +407,7 @@ test("G068 F1 an unconfirmed clear checks only the chain its mark stands on and 
   // A row a retreat left behind is on no chain: P3 was built on P1 after P2 was found missing.
   const MARK3 = { throughSeq: 12, chain: chainAfter(MARK1.chain, SHA3), lastPacketId: P3, evidence: "E3" as const, basis: "evidence" as const };
   const retreated = [...rows, rowOf(R3, P3, "recorded", RANGE3, SHA3, MARK3, 1)];
-  const onP3 = relay({ kind: "suspect", mark: MARK3, cause: "clear_unconfirmed", floorCandidate: 14, carried: null }, { nativeEpoch: 1, epochFloor: -1 });
+  const onP3 = relay({ kind: "suspect", mark: MARK3, cause: "clear_unconfirmed", floorCandidate: 14, carried: null, rewound: false }, { nativeEpoch: 1, epochFloor: -1 });
   const chain3 = plan(onP3, retreated);
   assert.equal(chain3.kind === "clear" && chain3.chain.map(marker => marker.packetId).join(), [P1, P3].join(), "P2 is not on P3's chain");
   // Rule 2: the carried packet there and the chain intact → the clear did not happen and the packet arrived; the carried packet
@@ -421,7 +430,7 @@ test("G068 F2 a rewind or an unknown command with nothing to check is settled at
     step(state, { kind: "verified", plan: planReturnVerify(state, { verify, moment: "open", deliveries: [] }), result: result({}), inRunId: null, at: AT });
   // The reviewer's (3): fresh{user_cleared} → /undo; (3b) synced{native} → an unknown command.
   const cleared = applied(step(relay({ kind: "fresh", basis: "user_cleared" }, { packetsInEpoch: 0, epochFloor: 10 }), { kind: "rewound", cause: "rewind" })).relay;
-  assert.equal(resolvesWithoutCheck(cleared), true);
+  assert.equal(resolvesWithoutCheck(cleared, "on_next_open"), true); assert.equal(resolvesWithoutCheck(cleared, "none"), true);
   const back = applied(skipK(cleared));
   assert.deepEqual(back.relay.sync, { kind: "fresh", basis: "user_cleared" }); assert.equal(back.note.verified, "restored");
   assert.equal(step(back.relay, { kind: "plain", foreign: true }).kind, "applied", "the next input goes out as typed");
@@ -433,13 +442,13 @@ test("G068 F2 a rewind or an unknown command with nothing to check is settled at
   // A legacy mark and a packet mark without its row are not restorable: the user decides.
   const legacy: DeliveredMark = { throughSeq: 6, chain: EMPTY_CHAIN, lastPacketId: null, evidence: "legacy", basis: "legacy" };
   const legacyRewound = applied(step(relay({ kind: "synced", mark: legacy }), { kind: "rewound", cause: "rewind" })).relay;
-  assert.equal(resolvesWithoutCheck(legacyRewound), false);
+  assert.equal(resolvesWithoutCheck(legacyRewound, "none"), false);
   assert.equal(applied(skipK(legacyRewound)).note.choice, "verify_required");
   assert.equal(applied(skipK(SUSPECT)).note.choice, "verify_required", "a packet mark with no row to check");
-  assert.equal(resolvesWithoutCheck(SUSPECT), false);
-  // A plan skipped for its moment, and the other causes, decide nothing.
+  assert.equal(resolvesWithoutCheck(SUSPECT, "none"), false);
+  // A plan skipped for its moment decides nothing; legacy and marker_absent are never settled without the user.
   assert.equal(applied(step(cleared, { kind: "verified", plan: { kind: "skip", reason: "not_now" }, result: result({}), inRunId: null, at: AT })).relay.sync.kind, "suspect");
-  for (const cause of ["legacy", "marker_absent", "clear_unconfirmed", "unknown_turn"] as const) assert.equal(resolvesWithoutCheck(relay({ kind: "suspect", mark: null, cause, floorCandidate: cause === "clear_unconfirmed" ? 15 : null, carried: null })), false, cause);
+  for (const cause of ["legacy", "marker_absent"] as const) assert.equal(resolvesWithoutCheck(relay({ kind: "suspect", mark: null, cause, floorCandidate: null, carried: null, rewound: false }), "none"), false, cause);
 });
 
 test("G068 F3 a pending or carried packet absent after the cursor moved since its delivery is compacted: reanchor, unknown{compacted}", () => {
@@ -458,20 +467,20 @@ test("G068 F5 three markers: the newest present one decides, and a row a retreat
   const MARK2 = { throughSeq: 9, chain: chainAfter(MARK1.chain, SHA2), lastPacketId: P2, evidence: "E3" as const, basis: "evidence" as const };
   const MARK3 = { throughSeq: 12, chain: chainAfter(MARK2.chain, SHA3), lastPacketId: P3, evidence: "E3" as const, basis: "evidence" as const };
   const rows = [rowOf(R1, P1, "recorded", RANGE1, SHA1, MARK1), rowOf(R2, P2, "recorded", RANGE2, SHA2, MARK2), rowOf(R3, P3, "recorded", RANGE3, SHA3, MARK3)];
-  const onP3 = relay({ kind: "suspect", mark: MARK3, cause: "rewind", floorCandidate: null, carried: null }, { packetsInEpoch: 3 });
+  const onP3 = relay({ kind: "suspect", mark: MARK3, cause: "rewind", floorCandidate: null, carried: null, rewound: false }, { packetsInEpoch: 3 });
   assert.deepEqual(applied(checked(onP3, rows, { [P1]: "present", [P2]: "absent", [P3]: "present" })).relay.sync, { kind: "synced", mark: MARK3 }, "P3, the newest, is there");
   assert.deepEqual(applied(checked(onP3, rows, { [P1]: "present", [P2]: "absent", [P3]: "absent" })).relay.sync, { kind: "synced", mark: MARK1 });
   // P3 built on P1 after a retreat past P2: the suspect plan still checks P2 (the epoch's last recorded rows), unlike a clear's chain.
   const MARK3B = { throughSeq: 12, chain: chainAfter(MARK1.chain, SHA3), lastPacketId: P3, evidence: "E3" as const, basis: "evidence" as const };
   const afterRetreat = [rows[0]!, rows[1]!, rowOf(R3, P3, "recorded", RANGE3, SHA3, MARK3B)];
-  const suspectPlan = plan(relay({ kind: "suspect", mark: MARK3B, cause: "rewind", floorCandidate: null, carried: null }), afterRetreat);
+  const suspectPlan = plan(relay({ kind: "suspect", mark: MARK3B, cause: "rewind", floorCandidate: null, carried: null, rewound: false }), afterRetreat);
   assert.equal(suspectPlan.kind === "suspect" && suspectPlan.markers.map(marker => marker.packetId).join(), [P1, P2, P3].join());
 });
 
 test("G068 F8 a pending packet stays to be checked through e′ and f (carried); an unconfirmed clear is not replaced by f", () => {
   // The reviewer's (6): suspect{unknown_turn, carried} + f keeps the packet.
   const d6 = applied(step(PENDING, { kind: "unknown_turn_continued" })).relay;
-  assert.deepEqual(applied(step(d6, { kind: "rewound", cause: "rewind" })).relay.sync, { kind: "suspect", mark: MARK1, cause: "rewind", floorCandidate: null, carried: CARRIED2 });
+  assert.deepEqual(applied(step(d6, { kind: "rewound", cause: "rewind" })).relay.sync, { kind: "suspect", mark: MARK1, cause: "rewind", floorCandidate: null, carried: CARRIED2, rewound: false });
   // A pending packet under a rewind: found with nothing older missing → g on it; found while an older marker is missing → undecided;
   // not found → the older markers decide.
   const rewound = applied(step(PENDING, { kind: "rewound", cause: "rewind" })).relay;
@@ -482,34 +491,183 @@ test("G068 F8 a pending packet stays to be checked through e′ and f (carried);
   assert.equal(applied(checked(rewound, rows, { [P1]: "absent", [P2]: "present" })).note.choice, "verify_required");
   const gone = applied(checked(rewound, rows, { [P1]: "present", [P2]: "absent" }));
   assert.deepEqual(gone.relay.sync, { kind: "synced", mark: MARK1 }); assert.equal(gone.deliveries.length, 1, "the carried packet's row is refined");
-  // A packet built on an unconfirmed clear (after the user's retreat) keeps the clear's cause under f and D6.
-  const onClear = relay({ kind: "pending", prior: { kind: "suspect", mark: BASE_MARK, cause: "clear_unconfirmed", floorCandidate: 15, carried: null }, packetId: P3, range: RANGE3, autoResends: 0, manualResends: 0, attachOverride: false });
-  for (const event of [{ kind: "rewound", cause: "rewind" }, { kind: "unknown_turn_continued" }] as const) {
+  // A packet built on an unconfirmed clear (after the user's retreat) keeps the clear's cause under f and D6; f marks it
+  // rewound, D6 keeps what the prior had.
+  const onClear = relay({ kind: "pending", prior: { kind: "suspect", mark: BASE_MARK, cause: "clear_unconfirmed", floorCandidate: 15, carried: null, rewound: false }, packetId: P3, range: RANGE3, autoResends: 0, manualResends: 0, attachOverride: false });
+  for (const [event, rewound] of [[{ kind: "rewound", cause: "rewind" }, true], [{ kind: "unknown_turn_continued" }, false]] as const) {
     const next = applied(step(onClear, event)).relay.sync;
-    assert.equal(next.kind === "suspect" && next.cause + ":" + next.floorCandidate + ":" + next.carried?.packetId, "clear_unconfirmed:15:" + P3, event.kind);
+    assert.equal(next.kind === "suspect" && next.cause + ":" + next.floorCandidate + ":" + next.carried?.packetId + ":" + next.rewound, "clear_unconfirmed:15:" + P3 + ":" + rewound, event.kind);
   }
   // The contract: only CARRIED_CAUSES carry, and a pending sync's prior never does.
-  for (const cause of ["rewind", "unknown_command", "clear_unconfirmed", "unknown_turn"] as const) assert.doesNotThrow(() => relay({ kind: "suspect", mark: MARK1, cause, floorCandidate: null, carried: CARRIED2 }), cause);
-  for (const cause of ["legacy", "marker_absent"] as const) assert.throws(() => relay({ kind: "suspect", mark: MARK1, cause, floorCandidate: null, carried: CARRIED2 }), /carries no packet/u, cause);
-  assert.throws(() => relay({ ...(PENDING.sync as Extract<BindingSync, { kind: "pending" }>), prior: { kind: "suspect", mark: MARK1, cause: "rewind", floorCandidate: null, carried: CARRIED2 } }), /carries no packet/u);
+  for (const cause of ["rewind", "unknown_command", "clear_unconfirmed", "unknown_turn"] as const) assert.doesNotThrow(() => relay({ kind: "suspect", mark: MARK1, cause, floorCandidate: null, carried: CARRIED2, rewound: false }), cause);
+  for (const cause of ["legacy", "marker_absent"] as const) assert.throws(() => relay({ kind: "suspect", mark: MARK1, cause, floorCandidate: null, carried: CARRIED2, rewound: false }), /carries no packet/u, cause);
+  assert.throws(() => relay({ ...(PENDING.sync as Extract<BindingSync, { kind: "pending" }>), prior: { kind: "suspect", mark: MARK1, cause: "rewind", floorCandidate: null, carried: CARRIED2, rewound: false } }), /carries no packet/u);
 });
 
-test("G068 a rewind and an unconfirmed clear folded before any check prove no clear: only the clear's seq is kept, an empty history still confirms it", () => {
-  const MARK2 = { throughSeq: 9, chain: chainAfter(MARK1.chain, SHA2), lastPacketId: P2, evidence: "E3" as const, basis: "evidence" as const };
-  const rows = [rowOf(R1, P1, "recorded", RANGE1, SHA1, MARK1), rowOf(R2, P2, "recorded", RANGE2, SHA2, MARK2)];
-  const synced = relay({ kind: "synced", mark: MARK2 }, { packetsInEpoch: 2 });
+/** Foreign facts at 3, 6 (P1's range) and 7, 9 (P2's), and what a binding owes of them. */
+const FOREIGN = [3, 6, 7, 9].map(seq => ({ runId: runId("run-y" + seq), seq, executedOn: { harnessId: "yankee", controlId: "yankee-acp", nativeEpoch: 1 } }));
+const owedSeqs = (state: BindingRelayState, facts = FOREIGN) => owed(state, "xray", "xray-acp", facts, { originHistory: false }).facts.map(fact => fact.seq);
+const MARK2_ON1: DeliveredMark = { throughSeq: 9, chain: chainAfter(MARK1.chain, SHA2), lastPacketId: P2, evidence: "E3", basis: "evidence" };
+
+test("G068 rewound: an unchecked rewind and an unconfirmed clear, in either order, keep mark, seq and carried; rule 4 does not apply (2026-11-10)", () => {
+  const rows = [rowOf(R1, P1, "recorded", RANGE1, SHA1, MARK1), rowOf(R2, P2, "recorded", RANGE2, SHA2, MARK2_ON1)];
+  const synced = relay({ kind: "synced", mark: MARK2_ON1 }, { packetsInEpoch: 2 });
   for (const order of [["rewound", "clear_unconfirmed"], ["clear_unconfirmed", "rewound"]] as const) {
     let state = synced;
     for (const kind of order) state = applied(step(state, kind === "rewound" ? { kind, cause: "rewind" } : { kind, seq: 15 })).relay;
-    assert.deepEqual(state.sync, { kind: "suspect", mark: null, cause: "clear_unconfirmed", floorCandidate: 15, carried: null }, order.join(" then "));
-    // The /undo removed both packets, the /clear never ran: no marker can be read as the clear's doing.
-    const restored = applied(checked(state, rows, { [P1]: "absent", [P2]: "absent" }, { historyEmpty: false }));
-    // Nothing is known any more (fresh; its basis says the lineage was cleared before, floor 1), and the floor stays.
-    assert.deepEqual(restored.relay.sync, { kind: "fresh", basis: "user_cleared" }); assert.equal(restored.relay.epochFloor, 1); assert.equal(restored.relay.nativeEpoch, 2);
-    assert.equal(applied(checked(state, rows, {}, { historyEmpty: true })).note.verified, "cleared");
+    const label = order.join(" then ");
+    assert.deepEqual(state.sync, { kind: "suspect", mark: MARK2_ON1, cause: "clear_unconfirmed", floorCandidate: 15, carried: null, rewound: true }, label);
+    // (a) The /undo removed only P2, the /clear never ran: P1 is there, so the mark goes back to P1 (rule 3) and only P2's facts
+    // are owed again; the model still holds 3 and 6, nothing repeats.
+    const shallow = applied(checked(state, rows, { [P1]: "present", [P2]: "absent" }, { historyEmpty: false }));
+    assert.deepEqual(shallow.relay.sync, { kind: "synced", mark: MARK1 }, label); assert.equal(shallow.note.verified, "restored");
+    assert.deepEqual(owedSeqs(shallow.relay), [7, 9], label);
+    // (b) The /undo removed both, the /clear never ran; (c) the /clear ran and the Driver cannot tell an empty history: the
+    // chain all gone may be either's doing, so the user decides (rule 5), the floor stays.
+    for (const historyEmpty of [false, null]) {
+      const deep = applied(checked(state, rows, { [P1]: "absent", [P2]: "absent" }, { historyEmpty }));
+      assert.equal(deep.relay.sync.kind, "suspect"); assert.equal(deep.note.choice, "verify_required", label + ", historyEmpty " + historyEmpty);
+      assert.equal(deep.relay.epochFloor, 1); assert.equal(deep.relay.nativeEpoch, 2);
+    }
+    // The user chooses the complete packet again: the epoch base, everything above it owed again; the prior keeps rewound.
+    const resent = applied(step(state, { ...carryEvent, retreat: { firstFromSeq: 3 } }));
+    assert.deepEqual(resent.relay.sync.kind === "pending" && resent.relay.sync.prior, { kind: "suspect", mark: CHOSEN_BASE, cause: "clear_unconfirmed", floorCandidate: 15, carried: null, rewound: true }, label);
+    assert.deepEqual(owedSeqs(resent.relay), [3, 6, 7, 9], label);
+    // (d) An empty history confirms the clear (rule 1).
+    assert.equal(applied(checked(state, rows, {}, { historyEmpty: true })).note.verified, "cleared", label);
   }
-  const markerAbsent = applied(step(relay({ kind: "suspect", mark: MARK2, cause: "marker_absent", floorCandidate: null, carried: null }), { kind: "clear_unconfirmed", seq: 15 })).relay;
-  assert.equal(markOf(markerAbsent.sync), null, "a marker already found missing folds too");
+  // The other rewind-like causes meet a clear the same way; an unknown Turn is no rewind, its carried packet is kept.
+  for (const cause of ["marker_absent", "unknown_command"] as const)
+    assert.deepEqual(applied(step(relay({ kind: "suspect", mark: MARK2_ON1, cause, floorCandidate: null, carried: null, rewound: false }), { kind: "clear_unconfirmed", seq: 15 })).relay.sync,
+      { kind: "suspect", mark: MARK2_ON1, cause: "clear_unconfirmed", floorCandidate: 15, carried: null, rewound: true }, cause);
+  assert.deepEqual(applied(step(relay({ kind: "suspect", mark: MARK1, cause: "unknown_turn", floorCandidate: null, carried: CARRIED2, rewound: false }), { kind: "clear_unconfirmed", seq: 15 })).relay.sync,
+    { kind: "suspect", mark: MARK1, cause: "clear_unconfirmed", floorCandidate: 15, carried: CARRIED2, rewound: false });
+  // f on an unconfirmed clear changes only the flag (its carried packet kept); a later clear takes the latest seq, flag kept.
+  const carryingClear = relay({ kind: "suspect", mark: MARK1, cause: "clear_unconfirmed", floorCandidate: 15, carried: CARRIED2, rewound: false });
+  assert.deepEqual(applied(step(carryingClear, { kind: "rewound", cause: "unknown_command" })).relay.sync, { ...(carryingClear.sync as Extract<BindingSync, { kind: "suspect" }>), rewound: true });
+  const rewoundClear = relay({ kind: "suspect", mark: MARK2_ON1, cause: "clear_unconfirmed", floorCandidate: 15, carried: null, rewound: true });
+  assert.deepEqual(applied(step(rewoundClear, { kind: "clear_unconfirmed", seq: 18 })).relay.sync, { kind: "suspect", mark: MARK2_ON1, cause: "clear_unconfirmed", floorCandidate: 18, carried: null, rewound: true });
+  // e′ on a pending packet: rewound when its prior holds an unchecked rewind (its own cause, or a rewound clear kept by a retreat).
+  const pendingOn = (prior: Extract<BindingSync, { kind: "suspect" }>) => relay({ kind: "pending", prior, packetId: P3, range: RANGE3, autoResends: 0, manualResends: 0, attachOverride: false });
+  for (const [prior, rewound] of [[{ kind: "suspect", mark: CHOSEN_BASE, cause: "rewind", floorCandidate: null, carried: null, rewound: false }, true],
+    [{ kind: "suspect", mark: CHOSEN_BASE, cause: "clear_unconfirmed", floorCandidate: 12, carried: null, rewound: true }, true],
+    [{ kind: "suspect", mark: CHOSEN_BASE, cause: "clear_unconfirmed", floorCandidate: 12, carried: null, rewound: false }, false],
+    [{ kind: "suspect", mark: CHOSEN_BASE, cause: "unknown_turn", floorCandidate: null, carried: null, rewound: false }, false]] as const) {
+    const next = applied(step(pendingOn(prior), { kind: "clear_unconfirmed", seq: 18 })).relay.sync;
+    assert.deepEqual(next, { kind: "suspect", mark: CHOSEN_BASE, cause: "clear_unconfirmed", floorCandidate: 18, carried: { prior, packetId: P3, range: RANGE3 }, rewound }, prior.cause + " " + prior.rewound);
+  }
+  // The contract: only an unconfirmed clear is marked rewound, and the flag is required.
+  assert.throws(() => relay({ kind: "suspect", mark: MARK1, cause: "rewind", floorCandidate: null, carried: null, rewound: true }), /only an unconfirmed clear is marked rewound/u);
+  const { rewound: _dropped, ...unflagged } = rewoundClear.sync as Extract<BindingSync, { kind: "suspect" }>;
+  assert.throws(() => relay(unflagged as never), /rewound/u);
+});
+
+test("G068 rewound (e): a late write after an unchecked rewind and a clear that never ran disagrees with the chain, so the user decides", () => {
+  const rows = [rowOf(R1, P1, "recorded", RANGE1, SHA1, MARK1), rowOf(R2, P2, "unknown", RANGE2, SHA2, null)];
+  let state = relay({ kind: "synced", mark: MARK1 });
+  state = applied(step(state, { kind: "carry", runId: R2, packet: { id: P2, range: RANGE2 }, attachOverride: false, lateDelivery: true, resend: null })).relay;
+  state = applied(step(state, { kind: "rewound", cause: "rewind" })).relay;
+  state = applied(step(state, { kind: "clear_unconfirmed", seq: 15 })).relay;
+  assert.deepEqual(state.sync, { kind: "suspect", mark: MARK1, cause: "clear_unconfirmed", floorCandidate: 15, carried: CARRIED2, rewound: true });
+  // The /undo removed P1, the /clear never ran, then P2 landed late: the carried packet is there while P1 is gone with the cursor
+  // unmoved (rule 2).
+  const late = applied(checked(state, rows, { [P1]: "absent", [P2]: "present" }, { historyEmpty: false }));
+  assert.equal(late.relay.sync.kind, "suspect"); assert.equal(late.note.choice, "verify_required"); assert.deepEqual(late.deliveries, []);
+});
+
+test("G068 the user's ［确认已清空］ is e at floorCandidate; a candidate at or below the floor is refused; a retreat drops the carried packet, its row untouched", () => {
+  const unconfirmed = relay({ kind: "suspect", mark: MARK1, cause: "clear_unconfirmed", floorCandidate: 15, carried: CARRIED2, rewound: true });
+  const confirmed = applied(step(unconfirmed, { kind: "cleared", seq: 15 }));
+  assert.deepEqual(confirmed.relay, parseBindingRelayState({ ...unconfirmed, ...cleared(unconfirmed) })); assert.deepEqual(confirmed.deliveries, []);
+  const low = relay({ kind: "suspect", mark: MARK1, cause: "clear_unconfirmed", floorCandidate: 3, carried: null, rewound: false }, { epochFloor: 3 });
+  for (const outcome of [step(low, { kind: "cleared", seq: 3 }), step(low, { kind: "verified", plan: plan(low, []), result: result({}, { historyEmpty: true }), inRunId: null, at: AT })])
+    assert.equal(outcome.kind === "refused" && outcome.refusal.code, "invalid", JSON.stringify(outcome));
+  // The user's complete packet again from a binding carrying P2: P2 is no longer checked, its row stays unknown, and the complete
+  // packet covers its facts (7, 9) again, at the risk of a repeat the user chose.
+  const carrying = relay({ kind: "suspect", mark: MARK1, cause: "rewind", floorCandidate: null, carried: CARRIED2, rewound: false });
+  assert.deepEqual(retreatedPrior(carrying, 3), { kind: "suspect", mark: CHOSEN_BASE, cause: "rewind", floorCandidate: null, carried: null, rewound: false });
+  const resent = applied(step(carrying, { ...carryEvent, retreat: { firstFromSeq: 3 } }));
+  assert.deepEqual(resent.deliveries, [insertP3()]); assert.deepEqual(owedSeqs(resent.relay), [3, 6, 7, 9]);
+});
+
+test("G068 a suspect binding with nothing to check is settled by the table of 2026-11-10, row by row", () => {
+  const skipK = (state: BindingRelayState, reason: "no_marker" | "unavailable" | "not_now") => step(state, { kind: "verified", plan: { kind: "skip", reason }, result: result({}), inRunId: null, at: AT });
+  const suspectOf = (cause: SuspectCause, mark: DeliveredMark | null, carried: typeof CARRIED2 | null = null, rewound = false) =>
+    relay({ kind: "suspect", mark, cause, floorCandidate: cause === "clear_unconfirmed" ? 15 : null, carried, rewound });
+  const stays = (state: BindingRelayState, reason: "no_marker" | "unavailable", label: string) => {
+    const outcome = applied(skipK(state, reason));
+    assert.equal(outcome.changed, false, label); assert.equal(outcome.note.choice, "verify_required", label);
+  };
+  for (const reason of ["no_marker", "unavailable"] as const) {
+    for (const cause of ["rewind", "unknown_command"] as const) {
+      const back = applied(skipK(suspectOf(cause, NATIVE), reason));
+      assert.deepEqual(back.relay.sync, { kind: "synced", mark: NATIVE }, cause); assert.equal(back.note.verified, "restored");
+      stays(suspectOf(cause, MARK1), reason, cause + " on a packet mark");
+    }
+    for (const cause of ["rewind", "unknown_command", "clear_unconfirmed", "unknown_turn"] as const) for (const rewound of cause === "clear_unconfirmed" ? [false, true] : [false]) {
+      const label = cause + (rewound ? " rewound" : "") + " carrying, " + reason;
+      const back = applied(skipK(suspectOf(cause, NATIVE, CARRIED_NATIVE, rewound), reason));
+      assert.deepEqual(back.relay.sync, { kind: "pending", prior: CARRIED_NATIVE.prior, packetId: P2, range: RANGE2, autoResends: 1, manualResends: 0, attachOverride: false }, label);
+      assert.equal(back.note.verified, "restored"); assert.deepEqual(back.deliveries, []); assert.equal(back.relay.epochFloor, 1);
+      assert.equal(pendingResend(back.relay.sync, false), "choice", label + ": the next input asks (delivery_unconfirmed)");
+      stays(suspectOf(cause, MARK1, CARRIED2, rewound), reason, label + " on a packet prior");
+    }
+    for (const rewound of [false, true]) {
+      const back = applied(skipK(suspectOf("clear_unconfirmed", NATIVE, null, rewound), reason));
+      assert.deepEqual(back.relay.sync, { kind: "synced", mark: NATIVE }); assert.equal(back.note.verified, "restored");
+      assert.equal(back.relay.epochFloor, 1, "the floor does not rise"); assert.equal(back.relay.nativeEpoch, 2, "nor the epoch");
+      stays(suspectOf("clear_unconfirmed", MARK1, null, rewound), reason, "clear on a packet mark");
+    }
+    for (const mark of [NATIVE, MARK1, null]) {
+      const kept = applied(skipK(suspectOf("unknown_turn", mark), reason));
+      assert.deepEqual(kept.relay.sync, mark === null ? { kind: "fresh", basis: "user_cleared" } : { kind: "synced", mark }); assert.equal(kept.note.verified, "undecided"); assert.equal(kept.note.choice, undefined);
+    }
+    for (const cause of ["legacy", "marker_absent"] as const) {
+      const same = applied(skipK(suspectOf(cause, MARK1), reason));
+      assert.equal(same.changed, false, cause); assert.equal(same.note.choice, undefined, cause);
+    }
+  }
+  assert.equal(applied(skipK(suspectOf("clear_unconfirmed", NATIVE), "not_now")).changed, false, "a plan skipped for its moment decides nothing");
+  // The approval's counterexample: the clear really ran, the Hub cannot tell (verify none). Floor 10, Y's facts 12 and 14 never
+  // received: the floor stays 10 and the next input still owes 12 and 14 (shown on its handoff card); nothing lost, nothing repeated.
+  const afterClear = relay({ kind: "fresh", basis: "user_cleared" }, { epochFloor: 10, packetsInEpoch: 0 });
+  const unconfirmed = applied(step(afterClear, { kind: "clear_unconfirmed", seq: 16 })).relay;
+  const back = applied(step(unconfirmed, { kind: "verified", plan: planReturnVerify(unconfirmed, { verify: "none", moment: "open", deliveries: [] }), result: result({}), inRunId: null, at: AT }));
+  assert.deepEqual(back.relay.sync, { kind: "fresh", basis: "user_cleared" }); assert.equal(back.relay.epochFloor, 10);
+  const facts = [12, 14].map(seq => ({ runId: runId("run-y" + seq), seq, executedOn: { harnessId: "yankee", controlId: "yankee-acp", nativeEpoch: 1 } }));
+  assert.deepEqual(owedSeqs(back.relay, facts), [12, 14]);
+  // resolvesWithoutCheck names exactly the rows that leave suspect at the open; a Driver that checks decides a carried packet by
+  // its check, and an after_turn Driver's open checks nothing.
+  const leaves: readonly [BindingRelayState, boolean, boolean][] = [
+    [suspectOf("rewind", NATIVE), true, true], [suspectOf("unknown_command", null), true, true], [suspectOf("rewind", MARK1), false, false],
+    [suspectOf("clear_unconfirmed", NATIVE, null, true), true, true], [suspectOf("clear_unconfirmed", MARK1), false, false],
+    [suspectOf("unknown_turn", MARK1), true, true], [suspectOf("unknown_turn", NATIVE, CARRIED_NATIVE), true, false], [suspectOf("rewind", MARK1, CARRIED2), false, false],
+    [suspectOf("legacy", null), false, false], [suspectOf("marker_absent", MARK1), false, false]];
+  for (const [state, none, checks] of leaves) {
+    assert.equal(resolvesWithoutCheck(state, "none"), none, JSON.stringify(state.sync)); assert.equal(resolvesWithoutCheck(state, "on_next_open"), checks, JSON.stringify(state.sync));
+    assert.equal(resolvesWithoutCheck(state, "after_turn"), false, "an after_turn Driver's open checks nothing");
+    if (none) assert.notEqual(applied(skipK(state, "unavailable")).relay.sync.kind, "suspect");
+  }
+  // The parser refuses a reverted pending whose prior carries a packet.
+  assert.throws(() => relay({ kind: "pending", prior: { kind: "suspect", mark: NATIVE, cause: "rewind", floorCandidate: null, carried: CARRIED_NATIVE, rewound: false }, packetId: P2, range: RANGE2, autoResends: 1, manualResends: 0, attachOverride: false }), /carries no packet/u);
+});
+
+test("G068 Z2 a clear's chain starts at the row whose recording made the mark's own chain, not at the newest row of the same packet", () => {
+  // P2 recorded on P1 (the mark), then the same packet recorded again on no packet (another chain).
+  const again: DeliveredMark = { throughSeq: 9, chain: chainAfter(null, SHA2), lastPacketId: P2, evidence: "E3", basis: "evidence" };
+  const rows = [rowOf(R1, P1, "recorded", RANGE1, SHA1, MARK1), rowOf(R2, P2, "recorded", RANGE2, SHA2, MARK2_ON1), rowOf(R3, P2, "recorded", RANGE2, SHA2, again)];
+  const state = relay({ kind: "suspect", mark: MARK2_ON1, cause: "clear_unconfirmed", floorCandidate: 15, carried: null, rewound: false }, { packetsInEpoch: 3 });
+  const chain = plan(state, rows);
+  assert.equal(chain.kind === "clear" && chain.chain.map(marker => marker.runId).join(), [R1, R2].join());
+  // P1 still there: the clear did not happen. The newer row's chain alone (P2, all absent) would have confirmed it.
+  assert.deepEqual(applied(checked(state, rows, { [P1]: "present", [P2]: "absent" }, { historyEmpty: false })).relay.sync, { kind: "synced", mark: MARK1 });
+});
+
+test("G068 Z4 a compact that ran re-anchors a suspect binding whose only packet of the epoch is the one it carries (F4)", () => {
+  const carrying = relay({ kind: "suspect", mark: NATIVE, cause: "rewind", floorCandidate: null, carried: CARRIED_NATIVE, rewound: false }, { packetsInEpoch: 0 });
+  assert.equal(applied(step(carrying, { kind: "compaction", cursor: null, ran: true })).relay.reanchor, true);
+  const bare = relay({ kind: "suspect", mark: NATIVE, cause: "rewind", floorCandidate: null, carried: null, rewound: false }, { packetsInEpoch: 0 });
+  assert.equal(applied(step(bare, { kind: "compaction", cursor: null, ran: true })).relay.reanchor, false, "nothing carried, no packet in the epoch");
 });
 
 test("G068 F9 a check that only moves the cursor reports a change", () => {
@@ -567,7 +725,7 @@ test("G068 planReturnVerify checks at the open for on_next_open, at the settleme
   assert.equal(planReturnVerify(SUSPECT, { verify: "after_turn", moment: "settled", deliveries: [ROW1, ROW2] }).kind, "suspect");
   assert.deepEqual(plan(FRESH), { kind: "skip", reason: "fresh" });
   assert.equal(plan(SYNCED).kind, "synced"); assert.equal(plan(SUSPECT).kind, "suspect");
-  assert.equal(plan(relay({ kind: "suspect", mark: MARK1, cause: "clear_unconfirmed", floorCandidate: 15, carried: null })).kind, "clear");
+  assert.equal(plan(relay({ kind: "suspect", mark: MARK1, cause: "clear_unconfirmed", floorCandidate: 15, carried: null, rewound: false })).kind, "clear");
   const pending = plan(PENDING);
   assert.equal(pending.kind === "pending" && pending.marker.packetId, P2, "the pending packet itself, not the prior's last packet (VF1-01)");
   const many: BindingDelivery[] = Array.from({ length: 6 }, (_, index) => ({ ...ROW1, record: record(runId("run-m" + index), packet(String(index + 4)), "recorded"), mark: { ...MARK1, lastPacketId: packet(String(index + 4)) } }));
@@ -658,8 +816,8 @@ test("G068 chain, the next input of a pending binding, and kept processes (§7.2
   assert.equal(pendingResend({ ...(PENDING.sync as Extract<BindingSync, { kind: "pending" }>), autoResends: 1 }, false), "choice"); assert.equal(pendingResend(SYNCED.sync, false), null);
   assert.equal(mayReuseKept(PENDING, "on_next_open"), false); assert.equal(mayReuseKept(SUSPECT, "on_next_open"), false);
   assert.equal(mayReuseKept(SYNCED, "on_next_open"), true); assert.equal(mayReuseKept(PENDING, "after_turn"), true);
-  assert.equal(mayReuseKept(relay({ kind: "suspect", mark: MARK1, cause: "clear_unconfirmed", floorCandidate: 15, carried: null }), "after_turn"), false);
-  assert.deepEqual(retreatedPrior(SUSPECT, 3), { kind: "suspect", mark: CHOSEN_BASE, cause: "rewind", floorCandidate: null, carried: null });
+  assert.equal(mayReuseKept(relay({ kind: "suspect", mark: MARK1, cause: "clear_unconfirmed", floorCandidate: 15, carried: null, rewound: false }), "after_turn"), false);
+  assert.deepEqual(retreatedPrior(SUSPECT, 3), { kind: "suspect", mark: CHOSEN_BASE, cause: "rewind", floorCandidate: null, carried: null, rewound: false });
   assert.equal(retreatedPrior(SYNCED, 3), null);
 });
 

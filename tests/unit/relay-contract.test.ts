@@ -66,16 +66,17 @@ test("G066 the relay contract's closed enums and bounds agree with the Session d
 });
 
 test("G066 binding relay states parse field by field and reject what the contract does not allow", () => {
-  // Since G068 (ADR-055, the approval agent's decisions of 2026-11-09): a suspect state of a CARRIED_CAUSES cause may keep the
-  // packet that was pending, and a pending sync's prior carries none.
+  // Since G068 (ADR-055, the approval agent's decisions of 2026-11-09 and 2026-11-10): a suspect state of a CARRIED_CAUSES cause
+  // may keep the packet that was pending, a pending sync's prior carries none, and only an unconfirmed clear is marked rewound.
   const carrying = { kind: "suspect", mark: mark(5), cause: "unknown_turn", floorCandidate: null,
-    carried: { prior: { kind: "fresh", basis: "new" }, packetId: packet("a"), range: { fromSeq: 0, throughSeq: 5, fromRun: 0, throughRun: 2 } } };
-  const pending = { kind: "pending", prior: { kind: "suspect", mark: mark(5), cause: "rewind", floorCandidate: null, carried: null },
+    carried: { prior: { kind: "fresh", basis: "new" }, packetId: packet("a"), range: { fromSeq: 0, throughSeq: 5, fromRun: 0, throughRun: 2 } }, rewound: false };
+  const pending = { kind: "pending", prior: { kind: "suspect", mark: mark(5), cause: "rewind", floorCandidate: null, carried: null, rewound: false },
     packetId: packet("b"), range: { fromSeq: 6, throughSeq: 9, fromRun: 3, throughRun: 4 }, autoResends: 1, manualResends: 0, attachOverride: false };
   const state = parseBindingRelayState(relay({ sync: pending, consentKey: "gateway:relay.example.com" }));
   assert.equal(markOf(state.sync)?.throughSeq, 5); assert.deepEqual(packetsOf(state.sync), [packet("b")]);
   assert.deepEqual(packetsOf(parseBindingRelayState(relay({ sync: carrying })).sync), [packet("a")]);
   for (const cause of ["rewind", "unknown_command", "clear_unconfirmed"]) assert.doesNotThrow(() => parseBindingRelayState(relay({ sync: { ...carrying, cause } })), cause);
+  assert.equal(parseBindingRelayState(relay({ sync: { ...carrying, cause: "clear_unconfirmed", floorCandidate: 9, rewound: true } })).sync.kind, "suspect");
   assert.equal(markOf(parseBindingRelayState(relay({ sync: { kind: "fresh", basis: "user_cleared" } })).sync), null);
   for (const [label, value] of [
     ["unknown field", relay({ extra: 1 })], ["epoch 0", relay({ nativeEpoch: 0 })], ["floor below -1", relay({ epochFloor: -2 })],
@@ -85,6 +86,8 @@ test("G066 binding relay states parse field by field and reject what the contrac
     ["carried by a cause that carries none", relay({ sync: { ...carrying, cause: "legacy" } })], ["carried by marker_absent", relay({ sync: { ...carrying, cause: "marker_absent" } })],
     ["carried inside carried", relay({ sync: { ...carrying, carried: { ...carrying.carried, prior: carrying } } })],
     ["a pending prior that carries", relay({ sync: { ...pending, prior: carrying } })],
+    ["rewound with a cause other than an unconfirmed clear", relay({ sync: { ...carrying, rewound: true } })],
+    ["a suspect state without rewound", relay({ sync: { ...carrying, rewound: undefined } })], ["rewound not a boolean", relay({ sync: { ...carrying, cause: "clear_unconfirmed", rewound: 1 } })],
     ["unknown sync kind", relay({ sync: { kind: "lost" } })], ["vendor key", relay({ consentKey: "gateway:Upper.Example" })],
     ["host too long", relay({ consentKey: "gateway:" + "h".repeat(254) })], ["model too long", relay({ vendorObserved: { model: "m".repeat(97), modelKey: "", authKind: null, endpoint: null, loopback: false } })],
     ["endpoint layer", relay({ vendorObserved: { model: null, modelKey: "", authKind: null, endpoint: { host: "a.example", layer: "elsewhere" }, loopback: false } })],
@@ -187,7 +190,7 @@ test("G066-C06 native epochs, clear floors and marks only move forward, except a
   rejects(busy, withRelay(busy, 0, { sync: { kind: "fresh", basis: "new" } }), /goes back within an epoch/u);
   rejects(busy, withRelay(busy, 0, { epochFloor: 4, sync: { kind: "synced", mark: mark(3) } }), /below the clear floor/u);
   // A suspect binding's check moves its mark back, not below the floor.
-  const suspect = withRelay(busy, 0, { sync: { kind: "suspect", mark: mark(3), cause: "rewind", floorCandidate: null, carried: null } });
+  const suspect = withRelay(busy, 0, { sync: { kind: "suspect", mark: mark(3), cause: "rewind", floorCandidate: null, carried: null, rewound: false } });
   accepts(suspect, withRelay(busy, 0, { sync: { kind: "synced", mark: mark(1) } }));
   rejects(withRelay(suspect, 0, { epochFloor: 2 }), withRelay(busy, 0, { epochFloor: 2, sync: { kind: "synced", mark: mark(1) } }), /below the clear floor/u);
   // A confirmed clear starts a new epoch with a floor and no mark.
@@ -245,11 +248,12 @@ test("G066-C08 the longest legal relay state of a binding and of a Run stays wit
   // rather than "true", a 253-byte gateway host twice, 96-byte models and the largest numbers. Since G068 a pending sync's
   // prior carries no packet and any of CARRIED_CAUSES may carry one, so the longest sync is a suspect state of the longest
   // cause (clear_unconfirmed) carrying a packet whose prior is a suspect state of that cause too (1,847 B, against 2,044 B
-  // for the earlier pending shape, which widening the causes alone would have pushed to 2,049 B).
+  // for the earlier pending shape, which widening the causes alone would have pushed to 2,049 B); the `rewound` flag of
+  // 2026-11-10 adds `,"rewound":false` to both suspect layers (16 B each): 1,879 B.
   const longMark = (char: string) => mark(RELAY_MAX_SEQ, { lastPacketId: packet(char), evidence: "legacy", basis: "evidence" });
   const range = { fromSeq: RELAY_MAX_SEQ, throughSeq: RELAY_MAX_SEQ, fromRun: 255, throughRun: 255 };
-  const inner = { kind: "suspect", mark: longMark("a"), cause: "clear_unconfirmed", floorCandidate: RELAY_MAX_SEQ, carried: null };
-  const carrying = { kind: "suspect", mark: longMark("c"), cause: "clear_unconfirmed", floorCandidate: RELAY_MAX_SEQ, carried: { prior: inner, packetId: packet("b"), range } };
+  const inner = { kind: "suspect", mark: longMark("a"), cause: "clear_unconfirmed", floorCandidate: RELAY_MAX_SEQ, carried: null, rewound: false };
+  const carrying = { kind: "suspect", mark: longMark("c"), cause: "clear_unconfirmed", floorCandidate: RELAY_MAX_SEQ, carried: { prior: inner, packetId: packet("b"), range }, rewound: false };
   const pendingShape = { kind: "pending", prior: { ...inner, mark: longMark("c") }, packetId: packet("d"), range, autoResends: 1, manualResends: 256, attachOverride: false };
   const fields = { nativeEpoch: RELAY_MAX_SEQ + 1, epochFloor: RELAY_MAX_SEQ, packetsInEpoch: 256, reanchor: false, originIncluded: false };
   assert.ok(Buffer.byteLength(JSON.stringify(parseBindingRelayState(relay({ ...fields, sync: pendingShape })))) < Buffer.byteLength(JSON.stringify(parseBindingRelayState(relay({ ...fields, sync: carrying })))), "the carrying suspect is the longer shape");
@@ -259,7 +263,8 @@ test("G066-C08 the longest legal relay state of a binding and of a Run stays wit
     vendorObserved: { model: "m".repeat(96), modelKey: "k".repeat(96), authKind: "a".repeat(16), endpoint: { host: "h".repeat(253), layer: "harness_default" }, loopback: false },
     cache: { lastRequestStartedAt: 8.64e15, contextUsed: 2_147_483_647, contextSize: 2_147_483_647 } });
   const bytes = Buffer.byteLength(JSON.stringify(parseBindingRelayState(longest)));
-  assert.ok(bytes <= MAX_BINDING_RELAY_BYTES, bytes + " B"); assert.equal(bytes, 1847, "the longest value since G068's contract change");
+  assert.ok(bytes <= MAX_BINDING_RELAY_BYTES, bytes + " B"); assert.equal(bytes, 1879, "the longest value since G068's contract change");
+  assert.ok(bytes < 2048, "below 2,048 B");
   const id = "a" + "b".repeat(95);
   // The longest continuity level is a delta of the most Runs at a long tier name; "resend" is the longest packet kind.
   const runRelay = { packetId: packet("f"), kind: "resend", continuity: { kind: "native_resume_delta", tier: "fidelity", runs: 256 }, executedOn: { harnessId: id, controlId: id, nativeEpoch: RELAY_MAX_SEQ + 1 } };
