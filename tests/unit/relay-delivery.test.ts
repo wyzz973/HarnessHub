@@ -313,7 +313,11 @@ test("G068 k on an unconfirmed clear: an empty history or every marker gone conf
     assert.equal(confirmed.relay.epochFloor, 15); assert.equal(confirmed.relay.nativeEpoch, 3); assert.equal(confirmed.note.verified, "cleared");
   }
   assert.deepEqual(at({ [P1]: "present" }).relay.sync, { kind: "synced", mark: MARK1 }, "the clear did not happen");
-  assert.deepEqual(at({}, { historyEmpty: false }, []).relay.sync, { kind: "synced", mark: MARK1 }, "no marker, history not empty");
+  // No marker to look for and the history not empty: the clear did not happen, but only a mark that claims nothing comes back.
+  assert.equal(at({}, { historyEmpty: false }, []).note.choice, "verify_required", "a packet mark without its marker stays suspect");
+  const native: DeliveredMark = { throughSeq: 8, chain: EMPTY_CHAIN, lastPacketId: null, evidence: "native", basis: "native" };
+  const plain = relay({ kind: "suspect", mark: native, cause: "clear_unconfirmed", floorCandidate: 15, carried: null });
+  assert.deepEqual(applied(step(plain, { kind: "verified", plan: plan(plain, []), result: result({}, { historyEmpty: false }), inRunId: null, at: AT })).relay.sync, { kind: "synced", mark: native }, "a native mark is restored");
   assert.equal(at({ [P1]: "absent" }, { compaction: CURSOR }, [{ ...ROW1, record: record(R1, P1, "recorded", { compactionAtDelivery: { count: 0, digest: null } }) }]).note.choice, "verify_required", "gone after a compaction proves no clear");
   assert.equal(at({ [P1]: "unavailable" }).note.choice, "verify_required");
 });
