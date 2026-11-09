@@ -12,7 +12,7 @@ import { createWorkspaceObserver, type WorkspaceObservation, type WorkspaceObser
 // trips the marker, lists `../`, leaks the variable or misses the spelling, so a 0 or a refusal here is never vacuous.
 
 const darwinOnly = { skip: process.platform === "darwin" ? false : "the observer is verified on macOS only (ADR-044)" };
-const SETUP = ["-c", "user.email=g071@example.invalid", "-c", "user.name=g071", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"];
+const SETUP = ["-c", "user.email=g071@example.invalid", "-c", "user.name=g071", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", "-c", "core.hooksPath=/dev/null", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "core.fsmonitor=false"];
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 /**
  * The cap these cases give their observers: they check what an observation finds, not when, and with about 120 test files

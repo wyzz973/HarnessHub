@@ -16,7 +16,7 @@ import { MAX_LISTED_FILES, MAX_OBSERVE_TIMEOUT_MS, MAX_PARALLEL_OBSERVATIONS, MA
 // hang from a result.
 
 const darwinOnly = { skip: process.platform === "darwin" ? false : "the observer is verified on macOS only (ADR-044)" };
-const SETUP = ["-c", "user.email=g071@example.invalid", "-c", "user.name=g071", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"];
+const SETUP = ["-c", "user.email=g071@example.invalid", "-c", "user.name=g071", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", "-c", "core.hooksPath=/dev/null", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "core.fsmonitor=false"];
 /**
  * The cap most cases give their observers: they check what an observation finds or how it is bounded, not when, and with
  * about 120 test files running at once a busy machine can push a small observation past 250 ms. The 250 ms default is

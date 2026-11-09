@@ -465,7 +465,7 @@ export type CommandClass = { kind: "command"; name: string; args: string; effect
 
 - **Claude 的合成清空**（F04、VF1-10）：Driver 结束原生会话并 `session/new`，在 `BackendResult.native.replaced.checkpoint` 回报新会话；Runtime 在 `run.ended` 事务里归档旧绑定（`assertSessionTransition` 新增一条：写者 Run 的 `run.ended` 带 `native.cleared` 时允许“归档 + 新建同 harness/control 绑定”，不要求 native-reset 命令，`state.ts:418–424`【事实】只放行带 native-reset 的归档）；新绑定 `fresh{user_cleared}`、`epochFloor=本 Run seq`、`nativeEpoch=max+1`、`originIncluded=false`，并**继承旧绑定的 `observed`**，Driver 用观测模型打开（否则先 `/model X` 再 `/clear` 会被悄悄换回 selection 的模型，即 RT1-m4 要避免的 K14 回归）；配置承接（ADR-028）改为读同一 (harnessId, controlId) 在当前选择纪元内最后一个已派发且 `input ≠ not_recorded` 的 Run，跨因清空归档的绑定（顺带修掉 OpenClaw `model_not_applied` 之后承接旧模型的既有问题，`state.ts:391–394`【事实】）；保留进程的 `kept.conversation` 在 checkpoint 变化时更新（否则下一回合被 `acp.ts:525` 以 IDENTITY_MISMATCH 拒绝【推断】）。【假设】Claude CLI 的 `/clear` 保留当前模型，列入 P6（Q22）。
 
-- **回退**：Hermes `/undo N`、`/retry` → suspect{cause: rewind}；下一回合 open 时回放给出仍在的标记，mark 回退（不低于 `epochFloor`）、欠交区间变大，在同一会话补发。保留原生进程时命令回合也会被保留（`keepable` 只看 completed 与清理，`runtime.ts:635–641`【事实】），复用时不 open、没有回放（`runtime.ts:1345–1354`【事实】）：所以 `verify=on_next_open` 的 Driver 在绑定为 suspect 或 pending 时不复用保留进程，先关闭再 open 回放核对（VF1-09）。
+- **回退**：Hermes `/undo N`、`/retry` → suspect{cause: rewind}；下一回合 open 时回放给出仍在的标记，mark 回退（不低于 `epochFloor`）、欠交区间变大，在同一会话补发。保留原生进程时命令回合也会被保留（`keepable` 只看 completed 与清理，`runtime.ts:635–641`【事实】），复用时不 open、没有回放（`runtime.ts:1345–1354`【事实】）：所以 `verify=on_next_open` 的 Driver 在绑定为 suspect 或 pending 时、`verify=after_turn` 的 Driver 在绑定为 suspect 时不复用保留进程，先关闭再 open 回放核对（VF1-09）。
 
 - **压缩**：Hub 不为交接触发压缩；压缩只是用户可见的可选步骤。压缩证据是一个**游标**而不是一个标志（VF1-08）：绑定存 `compactionSeen{count, digest}`——`compactionEvidence=event` 的 Driver 每个事件加 1；`replay_marker` 的 Driver（Hermes）从回放里数带 `_meta.hermes.compactionSummary` / `containsCompactionSummary` 或以 `[CONTEXT COMPACTION — REFERENCE ONLY]` / `[CONTEXT SUMMARY]:` 开头的条目（`hermes-agent/acp_adapter/server.py:83–98`、`agent/context_compressor.py:261、295`【事实，VF1】；摘要作为普通消息持久，此后每次回放都在），取计数与最后一条的指纹；`usage_drop` 的 Driver 用“相邻两回合 `usage_update.used` 下降 ≥30%【建议值】”加 1，但 `commandEffect ∈ {clear, rewind}` 的回合与 `clear_unconfirmed` 期间不计（清空后网关推送 `context_tokens=0`，`gateway_commands.py:226–236`【事实，VF1】）。只有游标**变化**才算“观察到压缩”：本纪元收到过交接单的绑定（`packetsInEpoch > 0`，只在事件 g 时加 1）在游标变化时置 `reanchor`，下一条内容输入附要点（单独的 `anchor` 包，或 delta 里的要点小节），每次压缩至多一次（R3 I-7）；从未收到交接单的绑定不置位（J3 M1）。送达行记录送达时的游标 `compactionAtDelivery`，标记缺失的分类据此判断“送达后压缩过”（7.4）。pending 期间观察到压缩：先按 7.4 的压缩分类，再判核对结果（RT2-24、RT1-M3）。返回 A 时 `contextUsed/contextSize ≥ 0.85` → 选择器提示“先压缩再续接”或“新开并附交接单”。
 
@@ -545,7 +545,7 @@ planReturn(A, now):                                        // 在 open 之后、
 | 同意在 finalize 之后被撤回 | `run.dispatched` 的事务里再读一次同意，已撤回就不派发；撤回时一并作废待发的重发与 LRU 缓存 | 终稿第 10.4 节，RT2-18 |
 | open 后观测到的厂商键与受理时预判或 `consentKey` 不同 | `RELAY_CONSENT_REQUIRED{reason:"vendor_changed"}`，不派发；本纪元收过包的绑定记 `relay.vendor_changed` | 终稿第 10.4 节，RT4 M9 |
 | E1 与流式文字窗口 | 先冲刷窗口，再提交 E1，保持 ADR-047 的到达顺序 | 终稿第 14.2 节，RT2-21 |
-| 保留进程与待核的绑定 | `verify=on_next_open` 的 Driver 在绑定为 suspect 或 pending 时不复用保留进程，先关闭再 open 回放核对 | 终稿第 7.4 节，VF1-09 |
+| 保留进程与待核的绑定 | `verify=on_next_open` 的 Driver 在绑定为 suspect 或 pending 时、`verify=after_turn` 的 Driver 在绑定为 suspect 时不复用保留进程，先关闭再 open 回放核对 | 终稿第 7.4 节，VF1-09 |
 | 迟到写入（取消的输入晚到） | 在位置之后的用户条目里按本包标题行查找，查到的上一包顺带改记 recorded；`lateDelivery` 的 Driver 不自动重发 | 终稿第 7.1 节、第 7.4 节，VF1-13 |
 | 回合外的 `usage_update` | 没有写者 Run，只写 `relay_windows`，不改绑定 | 终稿第 14.3 节（`acp.ts:634`【事实】） |
 | 停止并切换时停止未确认 | 同一事务里待决切换 failed、排队 Run `SWITCH_NOT_EFFECTIVE`，之后走恢复切换 | R1.1 |

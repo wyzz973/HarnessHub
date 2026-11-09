@@ -13,7 +13,7 @@ import { canonicalDirectory, createWorkspaceObserver } from "../../src/infrastru
 // invalid samples are Node's own two realpaths, each of which keeps some of those spellings apart (VF3 measured the same).
 
 const darwinOnly = { skip: process.platform === "darwin" ? false : "APFS spellings and firmlinks are macOS only (ADR-044)" };
-const SETUP = ["-c", "user.email=g071@example.invalid", "-c", "user.name=g071", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", "-c", "core.hooksPath=/dev/null"];
+const SETUP = ["-c", "user.email=g071@example.invalid", "-c", "user.name=g071", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", "-c", "core.hooksPath=/dev/null", "-c", "gc.auto=0", "-c", "maintenance.auto=false"];
 /**
  * The cap these cases give their observers: they check what an observation finds, not when, and with about 120 test files
  * running at once a busy machine can push a small observation past 250 ms. The cap itself is tested at its default (C02).

@@ -19,7 +19,7 @@ import { OBSERVE_TIMEOUT_MS, createWorkspaceObserver, type WorkspaceObservation,
 // cannot turn a sample into a timeout and leave the counts unchecked.
 
 const darwinOnly = { skip: process.platform === "darwin" ? false : "the observer and the cold-cache disk image are macOS only (ADR-044)" };
-const SETUP = ["-c", "user.email=g071@example.invalid", "-c", "user.name=g071", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"];
+const SETUP = ["-c", "user.email=g071@example.invalid", "-c", "user.name=g071", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", "-c", "core.hooksPath=/dev/null", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "core.fsmonitor=false"];
 const CHANGED = 40, UNTRACKED = 10, DRIVERS = ["first", "second.dotted", "third"] as const;
 
 /** The cap in the CI run; the reference measurement uses the observer's default. */

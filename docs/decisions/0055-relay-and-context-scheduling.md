@@ -214,7 +214,7 @@ proposed 期间不改下列 ADR 的正文；接受后，对应切片实施时在
 | [ADR-027](0027-openclaw-transcript-reconciliation.md) | OpenClaw 的核对位置用派发前的 `transcriptSeq()`，在其后的客户端 user 行里按标题行查找；200 条窗口没覆盖到位置记 `outside_window` |
 | [ADR-028](0028-native-configuration-sync.md) | 配置承接不再依赖 `throughRunId`，改读同一 (harnessId, controlId) 当前选择纪元内最后一个已派发且 `input ≠ not_recorded` 的 Run，跨因清空归档的绑定；v12 过渡期先把 `state.ts:392` 改为取该绑定最后一个已派发的 Run |
 | [ADR-029](0029-continue-native-sessions.md) | 接续本机会话的绑定记 origin 基准；回放先经 `userTextOf` 剥原生包装，交接单按“标题行 ID + 正文一致”识别；交给他人时写明读到与未读的条数 |
-| [ADR-030](0030-retained-native-processes.md) | `verify=on_next_open` 的 Driver 在绑定为 suspect 或 pending 时不复用保留进程，先关闭再 open 回放核对；D6 用它的进程组记录确认在途回合已结束（它只记录保留的进程，可行性待 Q23 与 P16）；Claude 合成清空时更新 `kept.conversation` |
+| [ADR-030](0030-retained-native-processes.md) | `verify=on_next_open` 的 Driver 在绑定为 suspect 或 pending 时、`verify=after_turn` 的 Driver 在绑定为 suspect 时不复用保留进程，先关闭再 open 回放核对；D6 用它的进程组记录确认在途回合已结束（它只记录保留的进程，可行性待 Q23 与 P16）；Claude 合成清空时更新 `kept.conversation` |
 | [ADR-033](0033-native-catalog-cache-and-readiness.md) | 受理时的命令预分类读目录缓存与 Driver 静态声明，不建立 control 实例 |
 | [ADR-036](0036-approval-wait-budget.md)、[ADR-037](0037-run-diagnostics.md) | 未归属改动按其他对话的回合时间窗归属为“另一个 HarnessHub 对话”；诊断隐去含交接单 ID 或本回合正文的行，诊断视图按 Run 显示准备耗时、证据级别与时延 |
 | [ADR-039](0039-continue-in-the-original-program.md) | 交接单作为用户消息留在目标的原生转录里，用户在原程序里续接会看到它（本版接受）；原生会话里 Hub 之外的回合只计数（`foreignAfterLast`） |
@@ -374,13 +374,14 @@ G068 阶段一的独立审查提出 F1–F13 与一个 packetId 重合的疑问�
 - 契约 `src/contracts/relay.ts` 改了四处（`CARRIED_CAUSES` 与 pending prior 不带 carried，`EVIDENCE_CLASSES` 加 `choice` 与 `DELIVERY_EVIDENCE`，2026-11-10 的 `suspect.rewound`），`migrate.ts` 的两处 legacy suspect 写 `rewound: false`；G066 的 `tests/unit/relay-contract.test.ts` 与 `tests/performance/relay-store.test.ts` 的最长合法值（1,879 B）与有效 / 无效样例随之更新（合法行为变更）。
 
 **给阶段二的接缝建议**（结算处调用什么、哪些事件由谁在哪里产生）：
-- **finalize**（open 之后、authorized 之前）：on_next_open 的 Driver 先调 `mayReuseKept`，为 false 就不复用保留进程。open 之后 `planReturnVerify(moment: "open")`，计划不是 skip 时交给 Driver 的 `verifyDelivered`；**无论计划是什么都调一次** `step({kind: "verified"})`（F2），结果与 `relay.verified` 一起并入 `run.context_prepared` 的事务，准备失败时并入 `run.ended`。随后按 `owed` 与请求选择：need=∅ 用 `plain`；附包用 `carry`，pending 时带 `resend`（由 `pendingResend` 判自动还是 409），suspect 时只在用户选择后带 `retreat`（need 用 `retreatedPrior` 算）；用户选“只发这条消息”用 `alone`。`carry` 的状态与送达行插入、交接单行、`run.relay` 都写进 `run.context_prepared` 与 `run.authorized` 的同一事务。
+- **finalize**（open 之后、authorized 之前）：on_next_open 的 Driver，以及绑定为 suspect 时的 after_turn 的 Driver，先调 `mayReuseKept`，为 false 就不复用保留进程。open 之后 `planReturnVerify(moment: "open")`，计划不是 skip 时交给 Driver 的 `verifyDelivered`；**无论计划是什么都调一次** `step({kind: "verified"})`（F2），结果与 `relay.verified` 一起并入 `run.context_prepared` 的事务，准备失败时并入 `run.ended`。随后按 `owed` 与请求选择：need=∅ 用 `plain`；附包用 `carry`，pending 时带 `resend`（由 `pendingResend` 判自动还是 409），suspect 时只在用户选择后带 `retreat`（need 用 `retreatedPrior` 算）；用户选“只发这条消息”用 `alone`。`carry` 的状态与送达行插入、交接单行、`run.relay` 都写进 `run.context_prepared` 与 `run.authorized` 的同一事务。
 - **E1**（`relay.input_recorded`）：`step({kind: "carry_settled", outcome: recorded E1, row: "in_flight"})`，与 `run.first_output` 或本回合下一次既有提交同事务；结算时该行已是 recorded，再调一次是 no-op。
 - **`run.ended`**：携带包的回合用 `settledOutcome(...)` 加 `carry_settled`，重发回合带 `superseded`（从 `resendOf` 的送达行与清单取）；b 回合用 `plain_settled`；命令回合用 `commandTurnEvent(declared, commandOutcome(...), {cleared: BackendResult.native.cleared, seq, cursor})`（执行了的 compact 带 `ran: true`；自动压缩的 d 为 `ran: false`），Claude 的合成清空用 `cleared{replaced: true}`，新绑定继承 `observed`；after_turn 的 Driver 再调 `planReturnVerify(moment: "settled")` 加 k（synced 得 `skip{decided}`）。这些都与 `run.ended` 同一事务。
 - **受理**（admit）：k 的 `note.choice`、`step` 的 `RELAY_CHOICE_REQUIRED`、`verify_first{cause}` 对应第 9 节的三种 cause（F11：marker_absent → marker_absent，其余含 legacy → verify_required）；`on_next_open` 的 Driver 不在受理时为 `verify_first` 返回 409；`admitsWithoutChoice(relay, verify)` 为真时不返回 409（只对任何核对都改变不了结论的待核绑定返回）；`verify_required` 的选项按 counts 显示。
 - **D6**：Hub 确认进程组已结束（P16）之后，在把绑定改回 ready 的那次提交里调用；carried=null 的核对需要给不带包的回合也记下位置，或用客户端 ID（推迟）。
 - **输入数据**：`BindingDelivery` 由送达行与交接单清单（range、body.sha256、reanchor、target.nativeEpoch）拼成，并带上记录它的那次提交写下的水位（`run.ended.binding` 的 sync 后值，或 `relay.input_recorded` 同事务的绑定）——清空核对的链回溯靠它。同 ID 的行只取最新一行；结算事件按 runId 对应 pending 的那次 Run。`owed` 的事实列表来自 `relay_digests` 的索引（seq、executedOn），被恢复终结的 Run 取 `session.recovered` 的 seq。
 - **组合根**：生产里用 `new SqliteSessionStore(root, { recoverRelay })` 接入，留给阶段二。
+- **送达行找不到的 carried**（第 5 批复核，2026-11-10）：按 Store 的规则，carried 的包必有 `relay_packets` 行与同一事务写入的送达行，所以"计划里找不到它的送达行"只会来自调用方传入不完整的 `deliveries` 或数据损坏。阶段一把它算作"核不了"，与 `carriedUnseen` 同一处理，复核判为健全（不推进水位，退回 pending 只在同水位时发生）。阶段二要做两件事：k 的 `note` 与 `relay.verified` 事件标出这一情形（如 `rowMissing: true`），不要让它被当成普通的"核不了"悄悄过去；规定这种 pending 的 `resend.of` 如何取（没有送达行就取不到它的 Run）。
 
 ### G069（阶段一）：Driver 的接力声明、命令解析与厂商键（2026-11-09）
 
