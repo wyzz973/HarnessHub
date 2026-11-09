@@ -73,6 +73,7 @@
 - 说明：
   - “待核”指 `pending` 与 `suspect` 两种同步状态（第 7.2 节）。need=∅ 时只对 `legacy`、`marker_absent` 两种 cause 放行；`rewind`、`unknown_command`、`clear_unconfirmed`、`unknown_turn` 在存在外来事实时先核对，无法核对时由用户选择（`RELAY_CHOICE_REQUIRED{cause:"verify_required"}`）；没有外来事实的单 Harness 对话不核对也不阻挡；`SuspectCause` 共 6 种，每种都由第 7.2 节的某个转换产生；`verify=on_next_open` 的 Driver 在绑定为 suspect 或 pending 时不复用保留进程（第 7.2、7.4 节）。
   - need 的下界恒为 max(mark, epochFloor)；只有用户一次性选择“附上交接单”（`relay.attach:"full"`）时忽略下限（第 6.3、7.4 节）。
+  - 清空下限只在核对确知清空时抬高：回放为空，或水位所站的链全部不在且每个标记都排除了压缩（送达行记有游标且未变）；回退与未确认的清空在核对前叠加时只保留清空的 seq。水位恢复只恢复到仍有标记在场的链节点，或不声称任何外来事实的水位（无水位、native、origin、无包 ID 的回退水位）；legacy 水位不恢复（ADR-055 G068 补记，审批代理 2026-11-09 的决定）。
   - pending 不能自动重发（`autoResends=1` 或 `lateDelivery`）时，下一条内容输入在受理时同步 `409 RELAY_CHOICE_REQUIRED{cause:"delivery_unconfirmed"}`（D1 推荐项 (a)，第 7.4 节）。“未知回合”是 process 型 Driver 在 unknown 回合之后继续原会话的 `suspect{unknown_turn}`（D6 推荐项 (a)，由探针 P16 门控，第 9 节）。
   - v12 过渡期（G067）只落实第 7.6 节的推进规则 `advance ⇔ dispatched ∧ (due = ∅ ∨ carried ∧ (input = recorded ∨ input = unknown ∧ 已重发一次))`；那时没有纪元与清空下限，清空、回退与效果未知的命令只记 `contextEffect`、不改水位，配置承接取该绑定最后一个已派发的 Run。第 7.6 节把这些列为已知局限，v13 关闭。
 
