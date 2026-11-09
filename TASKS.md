@@ -92,7 +92,7 @@
 | G068 | 送达状态机、核对与恢复 | G066, G067 | G1 | planned |
 | G069 | Driver 接力适配 | G066, G067, G007, G032, G034 | G1 | planned |
 | G070 | 内容：摘要、渲染、预算与脱敏 | G066, G006, G010, G026 | G1 | in_progress |
-| G071 | 工作区观测器 | G066, G026 | G1 | planned |
+| G071 | 工作区观测器 | G066, G026 | G1 | in_progress |
 | G072 | 接力协调器与返回决策 | G068, G069, G070, G071, G059, G075 | G1 | planned |
 | G073 | 界面、API 与用词检查 | G072, G050, G054 | G1 | planned |
 | G074 | 验收设施：RelayConformance、RelayBench 与故障矩阵 | G072, G073, G060 | G1 | in_progress |
@@ -2278,7 +2278,7 @@
 
 ## G071 工作区观测器
 
-范围：ADR-055（终稿第 10.6、17 节）：git / 非 git 有界观测、git 可执行文件的启动解析、白名单环境、`GIT_CONFIG_COUNT/KEY/VALUE` 中和、驱动名正则与 tree 回退、toplevel / gitdir 检查、根目录与 HOME 不扫描、`.git/index` mtime 不变、LFS 未核验、数据根与 `.tmp/` 排除、250 ms 超时 SIGKILL 进程组、并发 ≤4、复用规则、`rev-parse` 与 `config --list` 并行与驱动名缓存。现有文件：`src/infrastructure/control/process-group.ts` 只读复用、不修改（所有者 G031）。
+范围：ADR-055（终稿第 10.6、17 节）：git / 非 git 有界观测、git 可执行文件的启动解析、白名单环境、`GIT_CONFIG_COUNT/KEY/VALUE` 中和、驱动名正则与 tree 回退、toplevel / gitdir 检查、根目录与 HOME 不扫描、`.git/index` mtime 不变、LFS 未核验、数据根与 `.tmp/` 排除、250 ms 超时 SIGKILL 进程组、并发 ≤4、复用规则、`rev-parse` 与 `config --list` 并行与驱动名缓存。现有文件：`src/infrastructure/control/process-group.ts` 只读复用、不修改（所有者 G031）。实现补记（2026-11-09）：观测器与四个测试文件已提交，证据见 `docs/verification/relay-g071-2026-11-09.md`；unavailable 的原因码定为 `data_root_in_workspace`（终稿第 4 节写作 `data_root_inside`），与 409、INV-36 和 G071-S01 同名；新源文件按切片说明登记进 `plan/slices.json` 的 relay `allowed_files`；未接进运行时（G072）。
 
 依赖：G066, G026。需求：R18, R26。
 
