@@ -242,3 +242,45 @@ proposed 期间不改下列 ADR 的正文；接受后，对应切片实施时在
 - **已知秘密**：在会话范围内收集，覆盖目标与交接单里出现过的每个 Harness，只在要发交接单时收集。收集失败时，这一回合以 `RELAY_PREPARE_FAILED` 失败，不在缺少已知秘密的情况下发送。读取凭据类路径的命令不附输出。
 - **真机**：两对数字接力冒烟。OpenCode → DeepSeek Harness → OpenCode 全程通过；Claude Code → Codex 的交接单一步通过。回到 Claude Code（haiku）时，增量里写着 Codex 的回答，模型却答成了自己的数。原因可能是题目措辞，也可能是阅读约定第 1 条“可能已经过时”让较弱的模型更信自己的原生历史，由 G074 用对照实验确认；确认之前，不改第 5.4 节的约定。
 - **独立审查**：共三轮。第一轮否决原样发布：先截断、后脱敏会带出私钥片段，中文场景下交接内容也过少。第二轮确认这些问题已消除，结论是可以发布，另提出筛选过宽、误删普通输出、错误码不对三个新问题，第三轮修正。经过见验证记录。
+
+### G066：v13 接力存储、契约类型与迁移（2026-11-09）
+
+范围按终稿第 4、14 节：`src/contracts/relay.ts`（类型、封闭枚举的 `as const` 数组、解析器、端口）、Session v13 的快照字段与转换规则、业务库 v13（11 张表与 4 个触发器、`transact` 的 relay 行、`relayWrite`、`deleteSession`、安装级同意日志、窗口与偏好）、`migrate.ts`（v12 推断与新绑定的初值）、`claimAndRecover` 的 `recoverRelay` 接入点。运行时只改两类地方：新会话写 `schemaVersion: 13`，每个新建绑定（导入、分支、新原生会话，含 native-reset 之后的）用 `initialBindingRelay` 填 `relay`，续接的绑定沿用原来的 `relay`；交接单的渲染与发送、推进规则、`sourceRunIds` 的写法都没有变，也还没有代码写 relay 行。证据见[验证记录](../verification/relay-g066-2026-11-09.md)。
+
+**偏离终稿的数字**：
+- **每绑定 ≤1,024 B、每 Run ≤320 B 做不到。** 按第 4 节的形状取最长合法值（pending 的 prior 是带 `carried` 的 suspect、`carried.prior` 也是 suspect，四个包 ID、两份 64 位链、两个 253 字节的主机名分别在 `consentKey` 与 `vendorObserved.endpoint`），绑定的 `relay` 是 2,044 B；去掉厂商两项也有 1,222 B。Run 的 `relay` 与 `relayRequest` 在 96 字节的 Harness 与 control 标识下是 563 B，快照还要加两个时间字段。终稿与 VF2-14 的估算没有算进第三版加的 `carried`、`vendorObserved`、`compactionSeen` 与 `executedOn` 里的长标识。本实现按逐字段上限定了解析器的总上限 `MAX_BINDING_RELAY_BYTES = 2048`、`MAX_RUN_RELAY_BYTES = 576`，保证所有合法值都放得下（否则 G068 会在合法状态上撞到 INVALID_DATA），G066-C08 断言的是这两个数，并报告实测值。要回到 1,024 / 320 B 只能改第 4 节的形状（例如快照只存厂商键、不存观测到的主机名，`executedOn` 不重复 Run 自己的 harness/control），属于设计变更，留待主负责人决定。
+- 字段上限（终稿未写的部分由本实现定）：模型与模型键 ≤96 B、`authKind` ≤16 B、主机名 ≤253 B、路由与 Provider 名 ≤128 B、计数 ≤2^31−1、seq ≤16,384、纪元 ≤16,385、Run 序号 ≤255、`manualResends` ≤256。
+
+**实现方式上的取舍**：
+- **`assertSessionTransition(before, after, events?)`**：为“写者 Run 的 `run.ended` 带 `native.cleared` 时放行归档加新建同 harness/control 绑定”，在现有接口上加了可选的第三个参数，Store 的 `transact` 与恢复传入本次提交的事件草稿；不传就是空数组，现有调用不受影响。顺带收紧：写者 Run 归档自己的绑定，现在只有本次提交里它的 `run.ended` 带 `native.cleared` 时才放行（此前现码允许写者直接归档，但没有任何代码路径这样做）；native-reset 与分支失败的归档照旧，三种归档都要求 `relay` 不变（归档即冻结）。
+- **接力字段的转换规则**按第 14.3 节逐条实现，各有无效样例（G066-C06）；另加三条配套规则：用户的接力命令（`relay-*`）可以只改 `relay`、不需要写者 Run；新切换带 `acknowledgedUnknown` 时，提交之前会话必须是 blocked（只能出现在恢复切换上，RT1-m10）；`relayRecoveryFailed` 只能由本次提交里的 `session.recovered` 设置，只能由 native-reset 或新绑定清除。沿一个 Harness/control 的绑定纪元严格递增、清空下限不减，作为快照本身的不变量放在解析器里。
+- **`PublicSwitch` 的 `mode`、`timing`、`acknowledgedUnknown` 是可选字段**：运行时这次不写它们（G072 才改切换的写法），v13 快照照样合法。`timing` 采用第一版写明的形状 `{requestedAt, validatedAt?, effectiveAt?}`（终稿只写了字段名）。`RunTiming` 另加 `recordedAt`（E1 时刻），只要求在 `dispatchedAt` 与 `endedAt` 之间。
+- **接力命令的结果**：`relay-*` 命令的 `resultId` 是一个标识（钉住、排除或同意记录在 relay 行里），快照里不核对它指向什么，由写 relay 行时核对。
+- **`SessionSnapshot.relayRecoveryFailed`**（第 9 节 S15）随 `recoverRelay` 的接入点一起加入。`recoverRelay` 是 Store 的构造选项，默认什么都不做（G068 提供领域函数）；它只对 `recoverSession` 有变更的会话调用，在该会话自己的 SAVEPOINT 里校验并写入；它抛错、给出的状态不合法或写送达行失败，都只回滚这个保存点，该会话照常恢复并记 `relayRecoveryFailed` 与事件里的 `relay: { failed: true }`。整个事务被 SQLite 中止时不吞。
+- **“进入事务前校验”的做法**：relay 行的全部检查（序列化字节、fold、正文摘要、同 ID 不同正文、64 MiB 配额、送达转换、钉住上限、跨存储引用）都在 `transact` 写第一条语句之前完成；它们要读库里已有的行，所以放在事务开始之后、`mutate` 返回之后，而不是 BEGIN 之前。预期内的失败抛 `RelayError`（`RELAY_PREPARE_FAILED{render | render_mismatch | storage | storage_quota}`）或 INVALID_TRANSITION / INVALID_INPUT / `RELAY_PIN_LIMIT`，事务回滚、Store 不进入 failed。另导出 `checkFold` 供调用方事先检查。
+- **派生行**：`SessionMutation.relay.derived` 是一个函数，在保存点内调用，这样扫描器在生成摘要时抛错也只让派生行回滚（G066-C05）；结果经 `SessionCommit.relay.derived` 告诉调用方是 `written` 还是 `behind`（带诊断）。失败时不另写 behind 行：没有当前策略版本的 current 行即视为 behind。
+- **送达行**：插入只能是 in_flight；每个 Run 至多一行；结论转换先按第 4 节的表在 TypeScript 里校验，`UPDATE` 只在结论变化时把 `outcome` 写进 SET（用一个“同值即拒绝”的测试触发器证明同值写不会碰到它）。`DeliveryRecord` 多了 `verifyMs`，对应 DDL 已有的 `verify_ms` 列。
+- **`relayWrite`**：单独事务，不碰 `sessions` 行；对同一 Run 与策略版本，事务写下的 current 行保留，已结算的 `realized` 保留，`outcome` 从不写。SQLite 拒绝它的语句时回滚、返回诊断并记入 `relayDiagnostics()`（最多 32 条），Store 照常服务；行本身不合法则抛错（调用方的错误）。
+- **`deleteSession`** 只删已关闭且没有保留进程的会话，同一事务删 7 张会话级接力表的行、事件、创建键与会话行；安装级的同意日志不删（审计记录）。现在还没有调用方。
+- **钉住**：`offset` 与 `length` 按消息文本的 UTF-8 字节计，写入时核对消息属于本会话、作者与消息角色一致、区间在消息内；≤24 个、每个 ≤2,048 B、合计 ≤12,288 B（`RELAY_PIN_LIMIT`）。
+- **窗口**：`upsertWindow` 最后写入者胜；每次启动在 `claimAndRecover` 里删掉 `observed_at` 早于 30 天的行。
+- **偏好**：四个键的取值按 public-api.md 定为封闭集合（`relay.crossVendor`：ask、allow、goal_only；`relay.returnPreference`：continue、new_when_cold、ask；另两个：true、false），值 ≤64 字节；表上的 CHECK 只作断言。
+- **同意日志**：同一命令 ID 再追加时，内容相同返回原记录（含已轮转进归档的），不同则 IDEMPOTENCY_CONFLICT；到 65,536 行时同一事务轮转，归档将超过 1,048,576 行或轮转后仍满都在写入前报 `RELAY_UNAVAILABLE{consent_log_full}`。
+- **迁移写的索引行**：每个已终结的已派发 Run 一行，`status='behind'`、`policy_version='relay/0'`（没有任何策略渲染过它）、`digest_json='{}'`、`sha256` 取 `sha256("{}")`、`secret_set_hmac` 为空串；`index_json` 是 `RelayBehindIndex`：`runId`、序号、事实 seq（`run.ended` 的 seq，或终结它的 `session.recovered` 的 seq）、`executedOn`（纪元按谱系）、`dispatched`、状态、`input`（G067 之前的事件记 unknown）与命令效果。迁移时尚未终结的已派发 Run（上一个 owner 中途退出）不写，留给 G068 的恢复与 G070 的懒重建。
+- **迁移读事件**：按 seq 直接扫 events 表，并在 SQLite 里按 `json_extract(event_json,'$.type')` 只取推断要用的 9 种事件，再逐条按存储事件校验；不走分页读事件时每页整份解析快照的路径。
+
+**迁移推断里有歧义时的选择**（一律只降不升）：
+- **携带回合**：除终稿的六个条件外，输入必须有送达证据——G067 起的事件要 `input: "recorded"`，更早的事件（没有 `input`）要状态为 completed；`input` 为 unknown、状态 unknown 或 cancelled 的携带回合不计，并使绑定 suspect（RT1-B1 写明这两种记 suspect）。
+- **水位不取来源的最大 seq，而取连续覆盖到的最大 seq**：从当前水位往上，按 seq 逐个看本绑定欠的外来事实，遇到第一个不在这次来源里的就停。终稿的写法在 G067 之前的数据上不成立：那时命令回合（D1）把原生位置推过了没送达的事实，之后一份交接单只带位置之后的来源，取最大值会把跳过的事实算成已送达。属性测试里有这个形状的专门用例。
+- **本绑定自己的内容回合按 native 推进**，但只在它的上下文之前没有欠交（`need=∅`）、没有选“只发这条消息”、且不晚于 v12 位置时，推进到它的 `contextThroughSeq`。
+- **“之后出现过原生命令、request_rejected、model_not_applied”**：命令只算已派发的（没派发的命令改不了原生上下文），任何效果的命令都算（终稿原文如此，G067 之前也不知道效果）。
+- **没有任何送达或亲历证据的绑定**（水位为空）：欠交时若有上一条的可疑项则 `suspect{legacy, mark: null}`（reset + D1 即此），否则 `fresh`（之前有同 harness/control 的绑定为 `reset`，否则 `new`）；终稿的“need=∅ 为 synced”对有水位的绑定成立，空水位不造一个 0 出来（0 会把来源历史算作已送达）。
+- **导入与分支绑定**按终稿原样为 `synced{0, origin}`、纪元按谱系，之后的回合不再推进它（偏保守，切走再切回时可能重复补交一次）；只有确认过的清空让它变成 `fresh{user_cleared}`，并把 `originIncluded` 置为 false（原生会话已经不含来源历史）。
+- **清空**：只认 G067 起 `run.ended.contextEffect=clear`（已执行）；更早的事件没有记效果，“按 Driver 目录的命令名回推”需要 Driver 的目录，而迁移在打开存储时运行、没有 Driver，也不读界面层的目录缓存——这类命令按效果未知处理：不加纪元、不写下限、使绑定 suspect。`migrateSession` 留了 `commandEffect` 回推入口，Store 不接。
+- **G067 之前的来源历史**：G067 之前每份信封都带 `branchedHistory`（`e02fa52^` 的 `context.ts`），所以那时带了来源 Run 的携带回合按“来源历史也送达了”计；只带来源历史、没有来源 Run 的回合按未携带计（终稿原文）。
+- **archived 绑定**按它归档那一刻的事实分类；`vendorObserved` 取绑定的 `observed`（模型超过 96 B 则记 null，模型键为空串，端点 null），`cache` 取该绑定最后一个已派发 Run 的上下文用量，`consentKey` 为 null，压缩游标 `{0, null}`。
+- 快照里的绑定与事件造出的绑定对不上（v12 运行时不会写出）时整笔迁移以 INVALID_DATA 失败，库留在原版本、备份保留。
+
+**与简报的差异**：新绑定的初值不是一律 `fresh{new}`：同一 harness/control 之前已有绑定（native-reset 之后）时是 `fresh{reset}`，按第 7.5 节；纪元与下限按谱系。
+
+**经既有所有者修改的文件**：`src/contracts/session.ts`、`src/contexts/session/domain/state.ts`、`tests/unit/session-state.test.ts`（G004）；`src/infrastructure/session/sqlite-store.ts`、`tests/integration/session-store.test.ts`、`tests/fixtures/session-store-peer.mjs`（G008）；`src/contexts/session/application/runtime.ts`、`tests/integration/session-runtime.test.ts`（G028）；另有几份测试因持久格式变化同步改了建会话或建绑定的地方（v12 → v13、补 `relay`）：`tests/integration/session-io.test.ts`（G059）、`tests/integration/snapshot-cache.test.ts` 与 `tests/performance/session-store-commit.test.ts`（G075）、`tests/integration/relay-p0.test.ts`（G067）。MVP 渲染模块 `escape.ts`、`packet.ts`（G070）只把语言、包的种类与等级的类型改成从契约导入，行为不变。`plan/` 下的用例状态仍是 planned（设计检查只允许 planned 与 deferred、证据必须为 null），实际结果写在验证记录。G066-C10 保持 planned：C006 的 JSON Schema（`contracts/context.schema.json`）还没有建立。

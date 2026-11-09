@@ -151,7 +151,7 @@ HarnessHub 处于预发布阶段。为了说法如实，项目把“已设计”
 |---|---|
 | **已测试** | `pnpm check`（构建、前端构建、设计、依赖边界与工具检查）、`pnpm test`（996 项通过）与浏览器测试 `pnpm test:web` 在 macOS arm64 上运行 |
 | **真实 Harness** | 逐项记录在[能力矩阵](docs/verification/native-capability-matrix.md)与[验证记录](docs/verification/)中；有些功能受测试账号的套餐或额度限制，标为受阻 |
-| **接力** | 不同 Harness 之间的交接单已在现有存储（v12）上实现，合成测试通过；真机冒烟中，OpenCode → DeepSeek Harness → OpenCode 全程通过，Claude Code → Codex 的交接通过，而回到自己会话的 Claude Code（haiku）读错了一份内容正确的增量。送达记录、校准过的预算和界面上的省略说明随存储 v13 加入（[ADR-055](docs/decisions/0055-relay-and-context-scheduling.md)） |
+| **接力** | 不同 Harness 之间的交接单已实现，合成测试通过；真机冒烟（存储 v12）中，OpenCode → DeepSeek Harness → OpenCode 全程通过，Claude Code → Codex 的交接通过，而回到自己会话的 Claude Code（haiku）读错了一份内容正确的增量。业务库已升到 v13：会迁移 v12 的数据，接力表已建好，但还没有代码写入。送达记录、校准过的预算和界面上的省略说明在此基础上加入（[ADR-055](docs/decisions/0055-relay-and-context-scheduling.md)） |
 | **已设计** | 用常驻的原生宿主代替每回合一个进程（[ADR-056](docs/decisions/0056-native-hosts-and-sessions.md)） |
 | **不再计划** | Windows 与 Linux（[ADR-044](docs/decisions/0044-macos-official-channels.md)） |
 | **以后** | 统一管理模型 Provider；目前每一家用它已经配置好的模型 |

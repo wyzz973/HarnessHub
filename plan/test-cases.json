@@ -10964,7 +10964,8 @@
       "expected": "类型与 Schema 等价、枚举一致；不一致即不通过",
       "status": "planned",
       "evidence": null,
-      "planned_file": "src/contracts/relay.ts"
+      "planned_file": "src/contracts/relay.ts",
+      "note": "保持 planned（2026-11-09）：C006 的 JSON Schema `contracts/context.schema.json` 从未建立，C 层契约任务仍是 planned，没有可对照的 Schema；`src/contracts/relay.ts` 已把全部封闭枚举导出为 `as const` 数组，C006 建 Schema 时与它逐项对照"
     },
     {
       "id": "G067-C01",

@@ -2,7 +2,7 @@
 
 状态：proposed。第一版采用事务存储加 append-only 事实日志与 outbox；不宣称采用完整 Event Sourcing，也不建立两份业务权威。
 
-**接力存储（已接受（ADR-055））**：凡标注“已接受（ADR-055）”的段落，以及“接力存储与事件”一章，来自[接力系统终稿](../proposals/relay/relay-architecture.md)（[ADR-055](../decisions/0055-relay-and-context-scheduling.md) 的设计正文，下称“终稿”）。它们已于 2026-11-03 验收（ADR-055 accepted），**尚未实现**：业务库仍是 v12，v13 的表、事件与迁移都没有写进代码。未标注的段落是 ADR-055 之前的契约原文，其中“业务库迁移前备份”一节已按 ADR-049 实现。切换、送达证据、水位与同步状态的语义见[切换契约](switching.md)的“接力”一章（下称“切换契约”）。标注约定与终稿相同：【事实】有代码或文档出处（代码位置都指基点 `07a0825` 的实际代码，本工作树的 `src/` 与之相同）；【实测】是原型或评审在本机测得的；【推断】由事实推出；【建议】是 ADR-055 的决定；【推算】是未经实测的数字。
+**接力存储（已接受（ADR-055））**：凡标注“已接受（ADR-055）”的段落，以及“接力存储与事件”一章，来自[接力系统终稿](../proposals/relay/relay-architecture.md)（[ADR-055](../decisions/0055-relay-and-context-scheduling.md) 的设计正文，下称“终稿”）。它们已于 2026-11-03 验收（ADR-055 accepted），**G066（2026-11-09）实现了其中的存储部分**：业务库升到 v13，新库直接建成 v13；v1–v12 在同一个迁移事务里升级（v12→v13 建 11 张表与 4 个触发器、为每个绑定推断 `relay`、为每个已终结的已派发 Run 写 behind 索引行）；快照的 v13 字段、解析器与转换规则，`transact` 的 relay 行写入，`relayWrite`、`deleteSession`、安装级同意日志、窗口与偏好的写入接口，以及 `claimAndRecover` 里按会话 SAVEPOINT 的 `recoverRelay` 接入点都已实现，合成测试通过（[验证记录](../verification/relay-g066-2026-11-09.md)）。送达判定与状态机（G068）、渲染与摘要（G070）、协调器（G072）还没有实现，现有运行时仍按 v12 的规则推进、不写任何 relay 行；实现时的取舍与偏离见 ADR-055“实施补记”的 G066 一节。未标注的段落是 ADR-055 之前的契约原文，其中“业务库迁移前备份”一节已按 ADR-049 实现。切换、送达证据、水位与同步状态的语义见[切换契约](switching.md)的“接力”一章（下称“切换契约”）。标注约定与终稿相同：【事实】有代码或文档出处（代码位置都指基点 `07a0825` 的实际代码，本工作树的 `src/` 与之相同）；【实测】是原型或评审在本机测得的；【推断】由事实推出；【建议】是 ADR-055 的决定；【推算】是未经实测的数字。
 
 ## 写入与一致性
 
@@ -56,18 +56,20 @@ SQLite [原子提交](https://www.sqlite.org/atomiccommit.html)与[WAL](https://
 
 业务库 `gateway.sqlite` 的编号迁移只进不退，没有降级脚本；每次存储版本提升之前由 Store 自动备份一次，供手动回退旧构建。它只在版本提升时发生，不是上文所说的独立备份命令。
 
-- **时机与范围**：Store owner 取得数据根排他锁之后、迁移与接管事务开始之前，在没有事务的状态下读 `user_version`；只有 1～11（将被迁移到 12）才备份。新库（v0）、当前版本（v12）、未知版本（随后以 `INVALID_DATA` 拒绝）与只读的 `SqliteSessionReader` 都不备份。只覆盖业务库：内容存储、Provider、管理库与能力库不在其中，管理库与能力库在 M2 随 OwnerScopedStore 补上。
+- **时机与范围**：Store owner 取得数据根排他锁之后、迁移与接管事务开始之前，在没有事务的状态下读 `user_version`；只有 1～12（将被迁移到 13）才备份。新库（v0）、当前版本（v13）、未知版本（随后以 `INVALID_DATA` 拒绝）与只读的 `SqliteSessionReader` 都不备份。只覆盖业务库：内容存储、Provider、管理库与能力库不在其中，管理库与能力库在 M2 随 OwnerScopedStore 补上。
 - **位置与命名**：`<数据根>/backups/gateway-v<原版本>-<UTC yyyymmddThhmmssZ>-<8 位随机十六进制>.sqlite`，例如 `gateway-v11-20261022T080910Z-3fa9c2d1.sqlite`。目录不存在时以 0700 新建；已存在时必须是当前用户所有、不对组和其他用户开放的真实目录（不是链接）。文件 0600。
-- **写出与核对**：`VACUUM INTO` 先写到 `<正式名>.partial`，以只读连接回读：`user_version` 等于原版本，`sessions` 与 `events` 行数等于原库，`quick_check` 为 ok；fsync 后才取得正式名字（不覆盖同名文件），再 fsync 目录。正式名字只属于完整且核对过的副本。
+- **写出与核对**：`VACUUM INTO` 先写到 `<正式名>.partial`，以只读连接回读：`user_version` 等于原版本，`sessions` 与 `events` 行数等于原库（来源 ≥13 时 11 张接力表的行数也要相等），`quick_check` 为 ok；fsync 后才取得正式名字（不覆盖同名文件），再 fsync 目录。正式名字只属于完整且核对过的副本。
 - **保留**：最近 2 份。写新副本之前，按文件名中的时间只留最新的 1 份、删除其余，写完正好 2 份；先前崩溃留下的 `.partial` 文件同时删除。HarnessHub 只删除符合这两种命名的普通文件，`backups` 里的其他文件、目录与链接原样保留。备份归用户所有，HarnessHub 不读取、不自动恢复。
 - **失败**：任一步失败（目录不合要求、空间不足、源库损坏、回读不一致）时，Store 构造以 `STORAGE_BACKUP_FAILED` 失败，消息写明失败的步骤和不含路径的原因，原错误保留为 cause。此时只删除本次写出的文件；迁移事务没有开始，owner 没有接管（`owner_metadata` 不变），业务库的行与 `user_version` 不变，排他锁释放。修好原因后重新启动，即重新备份并迁移。备份成功而迁移本身失败（例如 `INVALID_DATA` 整笔回滚）时，这份备份保留。
 - **手动恢复**：1. 停止服务，等它退出；2. 用一份备份替换数据根中的 `gateway.sqlite`（复制过去，备份本身留在 `backups`）；3. 删除同目录的 `gateway.sqlite-wal` 与 `gateway.sqlite-shm`，它们属于被替换的库，留着会损坏恢复后的库；4. 用能读文件名中那个版本的旧构建启动。若用当前构建启动，它会再次备份并迁移。
 
 **已接受（ADR-055）**：v13 落地时这一节只改三处：备份条件从 1～11 改为 1～12（将被迁移到 13），owner 认的当前版本改为 13（现在的两处是 `sqlite-store.ts:396` 与 `:265`【事实】），回读核对的行数从 `sessions`、`events` 扩到 11 张接力表（`sqlite-store.ts:136–139`）。v12 的源库还没有接力表，扩展的行数核对只对 v13 及以后的源库有意义【推断】。位置、命名、写出、保留、失败与手动恢复都不变；HMAC 密钥 `relay-key` 在数据根之外，不进备份。降级与恢复备份的后果见 R5。
 
+**实现状态（G066，2026-11-09）**：上面三处已改（备份条件 1～12、owner 认 13、来源 ≥13 时回读接力表）。v12→v13 迁移需要约两倍库大小的空闲空间（库加备份；迁移本身只写快照与索引行，WAL 很小），1.16 GB 合成库实测打开共 2.4 s，其中备份约 1.2 s，见 [ADR-049](../decisions/0049-business-store-backup-before-migration.md) 的补充与[验证记录](../verification/relay-g066-2026-11-09.md)。
+
 ## 接力存储与事件（已接受（ADR-055），业务库 v13）
 
-本章是 ADR-055 的设计（【建议】），全部未实现。读法与切换契约相同：
+本章是 ADR-055 的设计（【建议】）。实现状态：R2 的表与触发器、R4 的迁移、R5 的备份条件与 R6 的断言由 G066 实现（2026-11-09，合成测试）；R1 的写入路径只有存储一侧（`transact` 的 relay 行、`relayWrite`、同意日志与偏好），还没有调用方；R3 的事件仍未实现。读法与切换契约相同：
 
 - 小节用 R 编号。直接取自终稿的段落、表格与 DDL（下称“引文”）保留终稿原文，其中的“第 n 节”“n.m”“§n”都指**终稿**的节号；引文里个别改过的地方，都在原处写明。
 - 代码位置的简写：`sqlite-store.ts` 指 `src/infrastructure/session/sqlite-store.ts`，`content-store.ts` 指 `src/infrastructure/session/content-store.ts`，`state.ts` 指 `src/contexts/session/domain/state.ts`，`runtime.ts` 指 `src/contexts/session/application/runtime.ts`。
@@ -83,11 +85,11 @@ SQLite [原子提交](https://www.sqlite.org/atomiccommit.html)与[WAL](https://
   - 已校验的快照按 (version, lastSeq) 缓存，LRU，上限 96 MiB（按持久化字节计），只在 COMMIT 成功后放入；存储失败或所有者丢失时清空，迁移与恢复绕过缓存。
   - Store 返回的快照深冻结，同一版本由所有读者共享。调用方不得原地修改，要改就先复制；原地修改会抛 TypeError。
   - 同一冻结对象、由 `publicRun` 生成的已终结 Run，不再逐字段重复解析；跨 Run、消息、切换、命令的关系校验仍然全量执行。
-  - 事件日志字节在内存里随提交累计，缓存未命中时用一次 `SUM(octet_length)` 重算；持久的计数列随 G066（v13）加入。
+  - 事件日志字节在内存里随提交累计，缓存未命中时用一次 `SUM(octet_length)` 重算；持久的计数列原定“若需 DDL 并入 G066 的 v13”，G066 没有加（v13 只加终稿第 14.1 节的 11 张表），仍按内存计数加 `SUM` 回退。
   - Runtime 记住最后读到的 version 做 CAS；遇到 VERSION_CONFLICT 时先读再提交一次，mutate 最多执行一次。
 
 - 恢复：`claimAndRecover` 在一个 `BEGIN IMMEDIATE` 里迁移并恢复全部会话（`sqlite-store.ts:452`、`:577–590`）。
-- 迁移前备份只对 1～11 做（`sqlite-store.ts:396`），回读核对 `sessions` 与 `events` 的行数（`:136–139`）。
+- 迁移前备份只对 1～11 做（`sqlite-store.ts:396`），回读核对 `sessions` 与 `events` 的行数（`:136–139`）。G066 起是 1～12，来源 ≥13 时回读还核对 11 张接力表的行数（见“业务库迁移前备份”）。
 - 内容回收：启动时 owner 独占且静止，`content.collect(store.contentReferences())`（`src/cli/session-application.ts:69–71`）；`contentReferences()` 收集工具详情、产物、附件与分支来源里的附件（`sqlite-store.ts:326–342`）；未被引用且超过 7 天的内容删除（`content-store.ts:14`、`:197`）。
 - 附件物化为数据根下 `content/files/<id>/<name>` 的稳定只读副本，注释写明是为了让原生会话在以后的回合再读（`content-store.ts:147–172`）。
 - 没有删除会话的路径（`src/` 中没有 `DELETE FROM sessions`）；`ContentPort` 没有读接口（`src/contracts/content.ts:97–101`）。
