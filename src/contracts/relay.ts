@@ -139,8 +139,15 @@ export interface VendorObservation {
   readonly loopback: boolean;
 }
 
-export const EVIDENCE_CLASSES = ["E1", "E2", "E3", "legacy", "origin", "native"] as const;
+/**
+ * What a mark stands on: E1, E2, E3 (evidence of a packet), legacy (the v13 migration), origin (the history a session started
+ * from), native (the binding's own Turn while nothing was owed), choice (the epoch base the user chose to send the complete
+ * packet again from, F13). A delivery row is decided only by E1, E2 or E3 (DELIVERY_EVIDENCE).
+ */
+export const EVIDENCE_CLASSES = ["E1", "E2", "E3", "legacy", "origin", "native", "choice"] as const;
 export type EvidenceClass = typeof EVIDENCE_CLASSES[number];
+export const DELIVERY_EVIDENCE = ["E1", "E2", "E3"] as const satisfies readonly EvidenceClass[];
+export type DeliveryEvidence = typeof DELIVERY_EVIDENCE[number];
 export const NOT_RECORDED_REASONS = ["rejected_before_insert", "driver_synthesized", "cancelled_before_insert", "never_dispatched", "gateway_refused"] as const;
 export const UNKNOWN_REASONS = ["no_evidence", "owner_ended", "verify_timeout", "verify_unavailable", "absent", "outside_window", "compacted", "late_delivery"] as const;
 export const DELIVERY_STATUSES = ["in_flight", "recorded", "not_recorded", "unknown"] as const;
@@ -148,7 +155,7 @@ export type DeliveryStatus = typeof DELIVERY_STATUSES[number];
 /** What is known of one Run's packet reaching its binding's native history (R8): no evidence is unknown, never not recorded. */
 export type DeliveryOutcome =
   | { readonly kind: "in_flight" }
-  | { readonly kind: "recorded"; readonly evidence: EvidenceClass; readonly decidedSeq: number; readonly decidedAt: number; readonly verifiedInRun: RunId | null }
+  | { readonly kind: "recorded"; readonly evidence: DeliveryEvidence; readonly decidedSeq: number; readonly decidedAt: number; readonly verifiedInRun: RunId | null }
   | { readonly kind: "not_recorded"; readonly reason: typeof NOT_RECORDED_REASONS[number]; readonly decidedSeq: number; readonly decidedAt: number }
   | { readonly kind: "unknown"; readonly reason: typeof UNKNOWN_REASONS[number]; readonly decidedSeq: number; readonly decidedAt: number };
 /**
@@ -755,7 +762,7 @@ export function parseDeliveryOutcome(value: unknown): DeliveryOutcome {
   switch (item.kind) {
     case "in_flight": only(item, ["kind"], "delivery outcome"); return { kind: "in_flight" };
     case "recorded": only(item, ["kind", "evidence", "decidedSeq", "decidedAt", "verifiedInRun"], "delivery outcome");
-      return { kind: "recorded", evidence: choice(item.evidence, EVIDENCE_CLASSES, "delivery evidence"), decidedSeq: integer(item.decidedSeq, "decided seq", 1, RELAY_MAX_SEQ), decidedAt: time(item.decidedAt, "decided at"), verifiedInRun: nullable(item.verifiedInRun, runId) };
+      return { kind: "recorded", evidence: choice(item.evidence, DELIVERY_EVIDENCE, "delivery evidence"), decidedSeq: integer(item.decidedSeq, "decided seq", 1, RELAY_MAX_SEQ), decidedAt: time(item.decidedAt, "decided at"), verifiedInRun: nullable(item.verifiedInRun, runId) };
     case "not_recorded": only(item, ["kind", "reason", "decidedSeq", "decidedAt"], "delivery outcome");
       return { kind: "not_recorded", reason: choice(item.reason, NOT_RECORDED_REASONS, "not recorded reason"), decidedSeq: integer(item.decidedSeq, "decided seq", 1, RELAY_MAX_SEQ), decidedAt: time(item.decidedAt, "decided at") };
     case "unknown": only(item, ["kind", "reason", "decidedSeq", "decidedAt"], "delivery outcome");

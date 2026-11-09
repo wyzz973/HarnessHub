@@ -343,7 +343,9 @@ class Hub {
     const decided = fate === "recorded" ? { kind: "recorded" as const, evidence: "E3" as const, decidedSeq: at.seq, decidedAt: at.time, verifiedInRun: null }
       : fate === "refused" ? { kind: "not_recorded" as const, reason: "rejected_before_insert" as const, decidedSeq: at.seq, decidedAt: at.time }
       : { kind: "unknown" as const, reason: fate === "late" ? "late_delivery" as const : "no_evidence" as const, decidedSeq: at.seq, decidedAt: at.time };
-    this.apply(step(this.relay, { kind: "carry_settled", runId: id, packetId, bodySha256: body, reanchored: false, row: "in_flight", outcome: decided }));
+    const supersededRow = resend === null ? undefined : this.rows.find(row => row.record.runId === resend!.of);
+    this.apply(step(this.relay, { kind: "carry_settled", runId: id, packetId, bodySha256: body, reanchored: false, row: "in_flight", outcome: decided,
+      ...(supersededRow === undefined ? {} : { superseded: { packetId: supersededRow.record.packetId, range: supersededRow.range } }) }));
     this.facts.push({ runId: id, seq: at.seq, executedOn: { ...this.self, nativeEpoch: this.relay.nativeEpoch } });
     this.lastUnknown = decided.kind === "unknown" ? { runId: id, position } : null;
     return { kind: resend === null ? "a" : "resend:" + resend.by };
@@ -351,7 +353,7 @@ class Hub {
   /** A command Turn: its native effect in the reference model and its settlement event. */
   async command(kind: "keep" | "export" | "compact" | "clear" | "clear_unconfirmed" | "undo"): Promise<void> {
     const at = this.at();
-    if (kind === "compact") { const done = await this.peer.call<{ readonly cursor: Cursor }>("compact", { session: this.session, keep: 1 }); this.apply(step(this.relay, { kind: "compaction", cursor: this.caps.compaction ? done.cursor : null })); }
+    if (kind === "compact") { const done = await this.peer.call<{ readonly cursor: Cursor }>("compact", { session: this.session, keep: 1 }); this.apply(step(this.relay, { kind: "compaction", cursor: this.caps.compaction ? done.cursor : null, ran: true })); }
     else if (kind === "clear" || kind === "clear_unconfirmed") { await this.peer.call("clear", { session: this.session }); this.apply(step(this.relay, kind === "clear" ? { kind: "cleared", seq: at.seq } : { kind: "clear_unconfirmed", seq: at.seq })); }
     else if (kind === "undo") { await this.peer.call("rewind", { session: this.session, n: 1 }); this.apply(step(this.relay, { kind: "rewound", cause: "rewind" })); }
     else this.apply(step(this.relay, { kind: "command_kept" }));
@@ -438,12 +440,12 @@ test("G068-C03 (domain part) Hermes /clear: the fixed receipt confirms it; witho
 test("G068-C04 (domain part) a compaction cursor that moves after a delivery sets reanchor once; one that does not move sets nothing", async t => {
   const peer = await startPeer(t), hub = new Hub(peer, ALPHA);
   hub.other("bravo"); await hub.send("recorded"); await hub.send("recorded");
-  hub.relay = applied(step(hub.relay, { kind: "compaction", cursor: hub.relay.compactionSeen })).relay;
+  hub.relay = applied(step(hub.relay, { kind: "compaction", cursor: hub.relay.compactionSeen, ran: false })).relay;
   assert.equal(hub.relay.reanchor, false, "the same cursor is no compaction");
   await hub.command("compact");
   assert.equal(hub.relay.reanchor, true, "a moved cursor after a delivery");
   const cursor = hub.relay.compactionSeen;
-  assert.equal(applied(step(hub.relay, { kind: "compaction", cursor })).changed, false, "seen once: the same cursor again changes nothing");
+  assert.equal(applied(step(hub.relay, { kind: "compaction", cursor, ran: false })).changed, false, "seen once: the same cursor again changes nothing");
   // A packet carrying the anchor clears the flag when it is recorded.
   hub.other("bravo");
   const pending = applied(step(hub.relay, { kind: "carry", runId: runId("run-anchor"), packet: { id: packetIdOf("anchor"), range: { fromSeq: hub.seq, throughSeq: hub.seq, fromRun: 0, throughRun: 0 } }, attachOverride: false, lateDelivery: false, resend: null })).relay;
@@ -451,7 +453,7 @@ test("G068-C04 (domain part) a compaction cursor that moves after a delivery set
   assert.equal(settled.relay.reanchor, false);
   // A fresh binding (no packet in its epoch) never sets it.
   const fresh = initialBindingRelay([], "fresh", "fresh-acp", "new");
-  assert.equal(applied(step(fresh, { kind: "compaction", cursor: { count: 3, digest: sha("moved") } })).relay.reanchor, false);
+  assert.equal(applied(step(fresh, { kind: "compaction", cursor: { count: 3, digest: sha("moved") }, ran: true })).relay.reanchor, false);
 });
 
 test("G068-C05 (domain part) after a clear 20 inputs go out as typed; attach once brings the earlier history for that input only; its resend inherits attachOverride", async t => {

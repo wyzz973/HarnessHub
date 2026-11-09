@@ -80,6 +80,8 @@ const resetRelay: Partial<BindingRelayState> = { nativeEpoch: 3, sync: { kind: "
 const notApplicable = { code: "not_applicable" };
 const MARK2: DeliveredMark = { throughSeq: 9, chain: chainAfter(MARK1.chain, SHA2), lastPacketId: P2, evidence: "E3", basis: "evidence" };
 const BASE_MARK: DeliveredMark = { throughSeq: 2, chain: EMPTY_CHAIN, lastPacketId: null, evidence: "E2", basis: "evidence" };
+/** The same epoch base when the user chose to send the complete packet again (F13). */
+const CHOSEN_BASE: DeliveredMark = { ...BASE_MARK, evidence: "choice" };
 /** PENDING's packet as a suspect state keeps it (F8): the prior it was built on, the packet and its range. */
 const CARRIED2 = { prior: { kind: "synced" as const, mark: MARK1 }, packetId: P2, range: RANGE2 };
 
@@ -89,7 +91,7 @@ const TABLE: Readonly<Record<StateName, Readonly<Record<RelayEventLetter, Cell>>
     b: { event: { kind: "plain", foreign: true }, expect: { kind: "applied", relay: {} } },
     n: { event: { kind: "alone" }, expect: { kind: "applied", relay: {} } },
     c: { event: { kind: "command_kept" }, expect: { kind: "applied", relay: {} } },
-    d: { event: { kind: "compaction", cursor: CURSOR }, expect: { kind: "applied", relay: { compactionSeen: CURSOR } } },
+    d: { event: { kind: "compaction", cursor: CURSOR, ran: false }, expect: { kind: "applied", relay: { compactionSeen: CURSOR } } },
     e: { event: { kind: "cleared", seq: 15 }, expect: { kind: "applied", relay: cleared(FRESH) } },
     "e′": { event: { kind: "clear_unconfirmed", seq: 15 }, expect: { kind: "applied", relay: { sync: { kind: "suspect", mark: null, cause: "clear_unconfirmed", floorCandidate: 15, carried: null } } } },
     f: { event: { kind: "rewound", cause: "unknown_command" }, expect: { kind: "applied", relay: { sync: { kind: "suspect", mark: null, cause: "unknown_command", floorCandidate: null, carried: null } } } },
@@ -105,7 +107,7 @@ const TABLE: Readonly<Record<StateName, Readonly<Record<RelayEventLetter, Cell>>
     b: { event: { kind: "plain", foreign: true }, expect: { kind: "applied", relay: {} } },
     n: { event: { kind: "alone" }, expect: { kind: "applied", relay: {} } },
     c: { event: { kind: "command_kept" }, expect: { kind: "applied", relay: {} } },
-    d: { event: { kind: "compaction", cursor: CURSOR }, expect: { kind: "applied", relay: { compactionSeen: CURSOR, reanchor: true } } },
+    d: { event: { kind: "compaction", cursor: CURSOR, ran: false }, expect: { kind: "applied", relay: { compactionSeen: CURSOR, reanchor: true } } },
     e: { event: { kind: "cleared", seq: 15 }, expect: { kind: "applied", relay: cleared(SYNCED) } },
     "e′": { event: { kind: "clear_unconfirmed", seq: 15 }, expect: { kind: "applied", relay: { sync: { kind: "suspect", mark: MARK1, cause: "clear_unconfirmed", floorCandidate: 15, carried: null } } } },
     f: { event: { kind: "rewound", cause: "rewind" }, expect: { kind: "applied", relay: { sync: { kind: "suspect", mark: MARK1, cause: "rewind", floorCandidate: null, carried: null } } } },
@@ -121,7 +123,7 @@ const TABLE: Readonly<Record<StateName, Readonly<Record<RelayEventLetter, Cell>>
     b: { event: { kind: "plain", foreign: true }, expect: { kind: "refused", refusal: notApplicable } },
     n: { event: { kind: "alone" }, expect: { kind: "applied", relay: {} } },
     c: { event: { kind: "command_kept" }, expect: { kind: "applied", relay: {} } },
-    d: { event: { kind: "compaction", cursor: CURSOR }, expect: { kind: "applied", relay: { compactionSeen: CURSOR } } },
+    d: { event: { kind: "compaction", cursor: CURSOR, ran: false }, expect: { kind: "applied", relay: { compactionSeen: CURSOR, reanchor: true } } },
     e: { event: { kind: "cleared", seq: 15 }, expect: { kind: "applied", relay: cleared(PENDING) } },
     "e′": { event: { kind: "clear_unconfirmed", seq: 15 }, expect: { kind: "applied", relay: { sync: { kind: "suspect", mark: MARK1, cause: "clear_unconfirmed", floorCandidate: 15, carried: CARRIED2 } } } },
     f: { event: { kind: "rewound", cause: "rewind" }, expect: { kind: "applied", relay: { sync: { kind: "suspect", mark: MARK1, cause: "rewind", floorCandidate: null, carried: CARRIED2 } } } },
@@ -134,11 +136,11 @@ const TABLE: Readonly<Record<StateName, Readonly<Record<RelayEventLetter, Cell>>
     l: { event: resetOf(PENDING), expect: { kind: "replaced", relay: resetRelay } },
   },
   suspect: {
-    a: { event: { ...carryEvent, retreat: { firstFromSeq: 3 } } as RelayEvent, expect: { kind: "applied", relay: { sync: { kind: "pending", prior: { kind: "suspect", mark: BASE_MARK, cause: "rewind", floorCandidate: null, carried: null }, packetId: P3, range: RANGE3, autoResends: 0, manualResends: 0, attachOverride: false } }, deliveries: [insertP3()] } },
+    a: { event: { ...carryEvent, retreat: { firstFromSeq: 3 } } as RelayEvent, expect: { kind: "applied", relay: { sync: { kind: "pending", prior: { kind: "suspect", mark: CHOSEN_BASE, cause: "rewind", floorCandidate: null, carried: null }, packetId: P3, range: RANGE3, autoResends: 0, manualResends: 0, attachOverride: false } }, deliveries: [insertP3()] } },
     b: { event: { kind: "plain", foreign: true }, expect: { kind: "refused", refusal: { code: "verify_first", cause: "rewind" } } },
     n: { event: { kind: "alone" }, expect: { kind: "applied", relay: {} } },
     c: { event: { kind: "command_kept" }, expect: { kind: "applied", relay: {} } },
-    d: { event: { kind: "compaction", cursor: CURSOR }, expect: { kind: "applied", relay: { compactionSeen: CURSOR } } },
+    d: { event: { kind: "compaction", cursor: CURSOR, ran: false }, expect: { kind: "applied", relay: { compactionSeen: CURSOR, reanchor: true } } },
     e: { event: { kind: "cleared", seq: 15 }, expect: { kind: "applied", relay: cleared(SUSPECT) } },
     // An unconfirmed clear on an unchecked rewind folds: no mark, nothing carried, only the clear's seq (see the fold test).
     "e′": { event: { kind: "clear_unconfirmed", seq: 15 }, expect: { kind: "applied", relay: { sync: { kind: "suspect", mark: null, cause: "clear_unconfirmed", floorCandidate: 15, carried: null } } } },
@@ -299,6 +301,14 @@ test("G068 k on a suspect binding: all present, the newest present, none present
   assert.deepEqual(none.relay.sync, { kind: "synced", mark: BASE_MARK }, "max(first packet's fromSeq − 1, epochFloor)"); assert.equal(none.relay.reanchor, false);
   const compacted = at({ [P1]: "compacted", [P2]: "present" });
   assert.deepEqual(compacted.relay.sync, { kind: "synced", mark: MARK_B }); assert.equal(compacted.relay.reanchor, true);
+  // F7: a compacted marker counts as still there — all compacted, or the newest compacted, keeps the mark (an anchor follows);
+  // an older one compacted with the newer absent goes back to the older one.
+  for (const markers of [{ [P1]: "compacted", [P2]: "compacted" }, { [P1]: "present", [P2]: "compacted" }] as const) {
+    const kept = at(markers);
+    assert.deepEqual(kept.relay.sync, { kind: "synced", mark: MARK_B }, JSON.stringify(markers)); assert.equal(kept.relay.reanchor, true);
+  }
+  const older = at({ [P1]: "compacted", [P2]: "absent" });
+  assert.deepEqual(older.relay.sync, { kind: "synced", mark: MARK1 }); assert.equal(older.relay.reanchor, true);
   const undecided = at({ [P1]: "unavailable", [P2]: "outside_window" });
   assert.equal(undecided.relay.sync.kind, "suspect"); assert.equal(undecided.note.choice, "verify_required");
   // The floor bounds the retreat: with a floor above the first packet's fromSeq − 1, the mark stops at the floor.
@@ -509,6 +519,41 @@ test("G068 F9 a check that only moves the cursor reports a change", () => {
   assert.equal(applied(step(FRESH, verifiedEvent(FRESH, {}))).changed, false);
 });
 
+test("G068 F4 a compact that ran re-anchors a binding with a packet in the epoch even without a cursor; a fresh binding without one never", () => {
+  const ran = (state: BindingRelayState, cursor: typeof CURSOR | null = null) => applied(step(state, { kind: "compaction", cursor, ran: true }));
+  // The reviewer's (2): synced with a packet in the epoch, the command ran, the Driver reports no cursor.
+  const synced = ran(SYNCED);
+  assert.equal(synced.relay.reanchor, true); assert.equal(synced.changed, true); assert.deepEqual(synced.relay.compactionSeen, SYNCED.compactionSeen, "no cursor reported: the binding's stays");
+  assert.equal(ran(PENDING).relay.reanchor, true, "a pending packet may have been folded");
+  assert.equal(ran(FRESH).relay.reanchor, false, "fresh with no packet in its epoch");
+  assert.equal(applied(step(SYNCED, { kind: "compaction", cursor: SYNCED.compactionSeen, ran: false })).changed, false, "an automatic compaction reported with the same cursor is none");
+  assert.deepEqual(commandTurnEvent("compact", "executed", { cleared: false, seq: 30, cursor: null }), { kind: "compaction", cursor: null, ran: true });
+});
+
+test("G068 point 2 a resend refused before insertion goes back to waiting for the packet it superseded, its counts kept", () => {
+  const resent = applied(step(PENDING, { ...carryEvent, resend: { by: "auto", of: R2 } })).relay;
+  const settled = (superseded?: { readonly packetId: RelayPacketId; readonly range: SourceRange }) => step(resent, { kind: "carry_settled", runId: R3, packetId: P3, bodySha256: SHA3, reanchored: false, row: "in_flight",
+    outcome: { kind: "not_recorded", reason: "rejected_before_insert", decidedSeq: AT.seq, decidedAt: AT.time }, ...(superseded === undefined ? {} : { superseded }) });
+  const back = applied(settled({ packetId: P2, range: RANGE2 }));
+  assert.deepEqual(back.relay.sync, { ...(PENDING.sync as Extract<BindingSync, { kind: "pending" }>), autoResends: 1 }, "pending on P2 again, the automatic resend spent");
+  assert.equal(back.deliveries[0]?.kind === "outcome" && back.deliveries[0].runId + ":" + back.deliveries[0].outcome.kind, R3 + ":not_recorded");
+  assert.equal(pendingResend(back.relay.sync, false), "choice", "the next input checks P2, then asks");
+  const refused = settled();
+  assert.equal(refused.kind === "refused" && refused.refusal.code, "invalid", "a refused resend must name what it superseded");
+  const first = step(PENDING, { kind: "carry_settled", runId: R2, packetId: P2, bodySha256: SHA2, reanchored: false, row: "in_flight", outcome: { kind: "not_recorded", reason: "rejected_before_insert", decidedSeq: AT.seq, decidedAt: AT.time }, superseded: { packetId: P1, range: RANGE1 } });
+  assert.equal(first.kind === "refused" && first.refusal.code, "invalid", "a first packet supersedes nothing");
+  // Then the next open checks P2 itself.
+  const rows = [rowOf(R1, P1, "recorded", RANGE1, SHA1, MARK1), rowOf(R2, P2, "unknown", RANGE2, SHA2, null), { ...rowOf(R3, P3, "not_recorded", RANGE3, SHA3, null), record: record(R3, P3, "not_recorded", { resendOf: R2, compactionAtDelivery: UNMOVED }) }];
+  const again = plan(back.relay, rows);
+  assert.equal(again.kind === "pending" && again.marker.packetId, P2);
+});
+
+test("G068 F10 a native reset finds its binding whatever key order the caller built the relay state in", () => {
+  const reordered = JSON.parse(JSON.stringify({ sync: SYNCED.sync, nativeEpoch: SYNCED.nativeEpoch, originIncluded: false, reanchor: false, packetsInEpoch: 1, epochFloor: 1, compactionSeen: { count: 0, digest: null }, consentKey: null, vendorObserved: null, cache: SYNCED.cache })) as BindingRelayState;
+  const outcome = step(SYNCED, { kind: "reset", bindings: [{ harnessId: "xray", controlId: "xray-acp", checkpoint: "c", throughRunId: null, status: "ready", relay: reordered }], harnessId: "xray", controlId: "xray-acp" });
+  assert.equal(outcome.kind, "replaced");
+});
+
 // ---------------------------------------------------------------------------------------------------------------------
 // The check plan (§7.3) and the small rules
 // ---------------------------------------------------------------------------------------------------------------------
@@ -517,6 +562,9 @@ test("G068 planReturnVerify checks at the open for on_next_open, at the settleme
   for (const [verify, moment, kind] of [["on_next_open", "open", "pending"], ["on_next_open", "settled", "skip"], ["after_turn", "settled", "pending"], ["after_turn", "open", "skip"], ["none", "open", "skip"]] as const)
     assert.equal(planReturnVerify(PENDING, { verify, moment, deliveries: [ROW1, ROW2] }).kind, kind, verify + " at " + moment);
   assert.deepEqual(planReturnVerify(PENDING, { verify: "none", moment: "open", deliveries: [] }), { kind: "skip", reason: "unavailable" });
+  // F12: after_turn checks at a settlement only what is still undecided; a synced binding is decided.
+  assert.deepEqual(planReturnVerify(SYNCED, { verify: "after_turn", moment: "settled", deliveries: [ROW1, ROW2] }), { kind: "skip", reason: "decided" });
+  assert.equal(planReturnVerify(SUSPECT, { verify: "after_turn", moment: "settled", deliveries: [ROW1, ROW2] }).kind, "suspect");
   assert.deepEqual(plan(FRESH), { kind: "skip", reason: "fresh" });
   assert.equal(plan(SYNCED).kind, "synced"); assert.equal(plan(SUSPECT).kind, "suspect");
   assert.equal(plan(relay({ kind: "suspect", mark: MARK1, cause: "clear_unconfirmed", floorCandidate: 15, carried: null })).kind, "clear");
@@ -603,12 +651,15 @@ test("G068 need: foreign facts above max(mark, floor); the one-time attach ignor
 
 test("G068 chain, the next input of a pending binding, and kept processes (§7.2, §7.4, VF1-09)", () => {
   assert.equal(chainAfter(null, SHA1), sha(EMPTY_CHAIN + SHA1)); assert.equal(chainAfter(MARK1.chain, SHA2), sha(MARK1.chain + SHA2));
+  // A vector computed outside Node (printf '%s%s' "$(printf '' | shasum -a 256)" "$(printf 'packet one' | shasum -a 256)" | shasum -a 256):
+  // the prior's chain first, then the packet text's digest (the reverse order gives b0628837…).
+  assert.equal(chainAfter(null, fingerprint("2563192958eb20cd51510fc184bc436e218dade28f6e6d38a425348624622a82")), "2dd340ace394e80b686c71244c1eb87012c51996aa78b88b2a3b61fb84dd0614");
   assert.equal(pendingResend(PENDING.sync, false), "auto"); assert.equal(pendingResend(PENDING.sync, true), "choice");
   assert.equal(pendingResend({ ...(PENDING.sync as Extract<BindingSync, { kind: "pending" }>), autoResends: 1 }, false), "choice"); assert.equal(pendingResend(SYNCED.sync, false), null);
   assert.equal(mayReuseKept(PENDING, "on_next_open"), false); assert.equal(mayReuseKept(SUSPECT, "on_next_open"), false);
   assert.equal(mayReuseKept(SYNCED, "on_next_open"), true); assert.equal(mayReuseKept(PENDING, "after_turn"), true);
   assert.equal(mayReuseKept(relay({ kind: "suspect", mark: MARK1, cause: "clear_unconfirmed", floorCandidate: 15, carried: null }), "after_turn"), false);
-  assert.deepEqual(retreatedPrior(SUSPECT, 3), { kind: "suspect", mark: BASE_MARK, cause: "rewind", floorCandidate: null, carried: null });
+  assert.deepEqual(retreatedPrior(SUSPECT, 3), { kind: "suspect", mark: CHOSEN_BASE, cause: "rewind", floorCandidate: null, carried: null });
   assert.equal(retreatedPrior(SYNCED, 3), null);
 });
 

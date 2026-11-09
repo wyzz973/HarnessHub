@@ -105,7 +105,7 @@ class Simulation {
   readonly log: string[] = [];
   /** Counters the cases assert on, so a case that never reaches a path is visible. */
   readonly seen = { recorded: 0, retreats: 0, oldPresent: 0, resends: 0, choices: 0, clears: 0, resets: 0, d6: 0, plain: 0, checks: 0,
-    epochRises: 0, emptyHistoryClears: 0, restoredWithoutChain: 0, skipChecks: 0, nativeTurns: 0, reusedIds: 0, clearChecks: 0, carriedChecks: 0 };
+    epochRises: 0, emptyHistoryClears: 0, restoredWithoutChain: 0, skipChecks: 0, nativeTurns: 0, reusedIds: 0, clearChecks: 0, carriedChecks: 0, supersededBack: 0 };
   constructor(private readonly peer: Peer, readonly rand: () => number, readonly caps: Caps, readonly label: string) {
     this.bindings = [this.binding("ready")];
   }
@@ -346,9 +346,16 @@ class Simulation {
       : kind === "refused" ? { kind: "not_recorded", reason: "rejected_before_insert", decidedSeq: at.seq, decidedAt: at.time }
       : { kind: "unknown", reason: kind === "late" ? "late_delivery" : "no_evidence", decidedSeq: at.seq, decidedAt: at.time };
     const row = this.rows.find(item => item.record.runId === id)!;
+    // A resend's settlement names the packet it superseded (its resendOf row): a refused resend goes back to waiting for it.
+    const supersededRow = resend === null ? undefined : this.rows.find(item => item.record.runId === resend.of);
+    const superseded = supersededRow === undefined ? {} : { superseded: { packetId: supersededRow.record.packetId, range: supersededRow.range } };
     if (!(kind === "e1" && this.caps.live)) {
-      await this.apply(step(this.relay, { kind: "carry_settled", runId: id, packetId, bodySha256: body, reanchored: false, row: row.record.outcome.kind, outcome: decided }), (decided.kind === "recorded" ? "g" : decided.kind === "not_recorded" ? "h" : "i") + "(" + kind + ")");
+      await this.apply(step(this.relay, { kind: "carry_settled", runId: id, packetId, bodySha256: body, reanchored: false, row: row.record.outcome.kind, outcome: decided, ...superseded }), (decided.kind === "recorded" ? "g" : decided.kind === "not_recorded" ? "h" : "i") + "(" + kind + ")");
       if (decided.kind === "recorded") { this.markRow(); this.recordedNeed(packetId); }
+      if (decided.kind === "not_recorded" && resend !== null) {
+        this.seen.supersededBack++;
+        if (this.relay.sync.kind !== "pending" || this.relay.sync.packetId !== supersededRow!.record.packetId) this.fail("a refused resend did not go back to the packet it superseded");
+      }
     } else {
       // The settlement finds E1's row recorded and the binding synced on it: nothing changes.
       const again = step(this.relay, { kind: "carry_settled", runId: id, packetId, bodySha256: body, reanchored: false, row: "recorded", outcome: { kind: "recorded", evidence: "E3", decidedSeq: at.seq, decidedAt: at.time, verifiedInRun: null } });
@@ -369,7 +376,7 @@ class Simulation {
     if (kind < 0.25) event = { kind: "command_kept" };
     else if (kind < 0.45) {
       const done = await this.peer.call<{ readonly cursor: Cursor }>("compact", { session: this.session, keep: 1 });
-      event = { kind: "compaction", cursor: this.caps.compaction ? done.cursor : null };
+      event = { kind: "compaction", cursor: this.caps.compaction ? done.cursor : null, ran: true };
     } else if (kind < 0.65) {
       this.seen.clears++;
       const ran = this.rand() < 0.8;
@@ -393,7 +400,7 @@ class Simulation {
   /** The Harness compacts by itself; a Driver with compaction evidence reports the cursor (d), another one says nothing. */
   async autoCompaction(): Promise<void> {
     const done = await this.peer.call<{ readonly cursor: Cursor; readonly folded: number }>("compact", { session: this.session, keep: 2 });
-    if (this.caps.compaction && done.folded > 0) await this.apply(step(this.relay, { kind: "compaction", cursor: done.cursor }), "d(auto)");
+    if (this.caps.compaction && done.folded > 0) await this.apply(step(this.relay, { kind: "compaction", cursor: done.cursor, ran: false }), "d(auto)");
   }
   async lateWrites(): Promise<void> { await this.peer.call("flushLate", { session: this.session }); await this.sound("late writes"); }
   /** The user types in the original program: no Hub Turn, no fact, but the history is no longer empty after a clear. */
@@ -472,7 +479,7 @@ test("G068-P01 on a fresh binding no sequence of commands changes need, except t
     let seq = 40;
     for (let index = 0; index < 12; index++) {
       const choice = rand(); seq += 1;
-      const event: RelayEvent = choice < 0.25 ? { kind: "command_kept" } : choice < 0.45 ? { kind: "compaction", cursor: { count: index + 1, digest: null } } : choice < 0.65 ? { kind: "clear_unconfirmed", seq }
+      const event: RelayEvent = choice < 0.25 ? { kind: "command_kept" } : choice < 0.45 ? { kind: "compaction", cursor: { count: index + 1, digest: null }, ran: rand() < 0.5 } : choice < 0.65 ? { kind: "clear_unconfirmed", seq }
         : choice < 0.85 ? { kind: "rewound", cause: rand() < 0.5 ? "rewind" : "unknown_command" } : { kind: "cleared", seq };
       const outcome = step(relay, event);
       assert.notEqual(outcome.kind, "refused", "seed 0x" + seed.toString(16) + ": " + JSON.stringify(outcome));
