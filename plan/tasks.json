@@ -4424,7 +4424,7 @@
       "title": "送达状态机、核对与恢复",
       "context": "session",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G066",
@@ -4475,7 +4475,8 @@
         "G068-C08",
         "G068-C09",
         "G068-C10"
-      ]
+      ],
+      "active_slice": "relay"
     },
     {
       "id": "G069",

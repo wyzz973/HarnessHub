@@ -89,7 +89,7 @@
 | G065 | 焦点 Harness 工程加固（ADR-046） | 无 | G1 | in_progress |
 | G066 | v13 接力存储、契约类型与迁移 | C006, G004, G008, G028, G067 | G1 | in_progress |
 | G067 | P0 过渡期修复（v12，不升库） | G004, G006, G007, G028, G032, G034 | G1 | in_progress |
-| G068 | 送达状态机、核对与恢复 | G066, G067 | G1 | planned |
+| G068 | 送达状态机、核对与恢复 | G066, G067 | G1 | in_progress |
 | G069 | Driver 接力适配 | G066, G067, G007, G032, G034 | G1 | planned |
 | G070 | 内容：摘要、渲染、预算与脱敏 | G066, G006, G010, G026 | G1 | in_progress |
 | G071 | 工作区观测器 | G066, G026 | G1 | in_progress |
