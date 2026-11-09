@@ -4303,7 +4303,7 @@
       "title": "v13 接力存储、契约类型与迁移",
       "context": "session",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "C006",
@@ -4361,7 +4361,8 @@
         "G066-C08",
         "G066-C09",
         "G066-C10"
-      ]
+      ],
+      "active_slice": "relay"
     },
     {
       "id": "G067",

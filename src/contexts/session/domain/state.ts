@@ -7,6 +7,8 @@ import {
 } from "../../../contracts/session.js";
 import type { BackendResult, CleanupEvidence, NativeOptions, NativeUsage } from "../../../contracts/control.js";
 import { MAX_RUN_OUTPUTS, parseAttachmentRefs, parseContentRef } from "../../../contracts/content.js";
+import { RELAY_COMMAND_KINDS, type EventDraft } from "../../../contracts/session.js";
+import { assertRunRelayBytes, markOf, parseBindingRelayState, parseRunRelay, parseRunRelayRequest, parseSwitchTiming, type BindingRelayState } from "../../../contracts/relay.js";
 import { dispatched } from "./relay/advance.js";
 
 export const MAX_RUNS = 256;
@@ -91,12 +93,14 @@ function fault(value: unknown): PublicRun["error"] {
   const item = record(value, "fault"); keys(item, ["code", "message"], "fault");
   return { code: text(item.code, "fault code", 128), message: text(item.message, "fault message", 4096, true) };
 }
+/** A settled backend result; `input` (what the driver knew of the prompt reaching the native history) is kept from v13 on. */
 function backend(value: unknown): BackendResult | null {
   if (value === null) return null;
-  const item = record(value, "backend"); keys(item, ["status", "reason", "error"], "backend");
+  const item = record(value, "backend"); keys(item, ["status", "reason", "error", "input"], "backend");
   if (item.status !== "completed" && item.status !== "cancelled" && item.status !== "failed") throw new SessionError("INVALID_DATA", "unknown backend status");
   const error = item.error === undefined ? null : fault(item.error);
-  return { status: item.status, reason: text(item.reason, "backend reason", 4096), ...(error === null ? {} : { error }) };
+  return { status: item.status, reason: text(item.reason, "backend reason", 4096), ...(error === null ? {} : { error }),
+    ...(item.input === undefined ? {} : { input: choiceOf(item.input, ["recorded", "not_recorded"], "backend input") }) };
 }
 function cleanup(value: unknown): CleanupEvidence | null {
   if (value === null) return null;
@@ -146,10 +150,14 @@ function publicOutput(value: unknown): NonNullable<PublicRun["outputs"]>[number]
   if (!/^(https?|file):\/\//iu.test(uri) || /[\r\n]/u.test(uri)) throw new SessionError("INVALID_DATA", "native link must be an http(s) or file URI");
   return { kind: "link", uri, name: text(row.name, "native link name", 1024), ...(row.title === undefined ? {} : { title: text(row.title, "native link title", 1024) }), ...(row.mediaType === undefined ? {} : { mediaType: text(row.mediaType, "native link type", 255) }) };
 }
-const TIMING_PHASES = ["preparingAt", "readyAt", "dispatchedAt", "firstOutputAt", "endedAt"] as const;
-/** Phase times are bounded epoch milliseconds, none before acceptance; later phases may be absent but never precede earlier ones. */
+/** The phases in the order they happen; contextReadyAt exists from v13. */
+const TIMING_PHASES = ["preparingAt", "contextReadyAt", "readyAt", "dispatchedAt", "firstOutputAt", "endedAt"] as const;
+/**
+ * Phase times are bounded epoch milliseconds, none before acceptance; later phases may be absent but never precede earlier
+ * ones. recordedAt (v13, E1) is not a phase: it only lies between dispatchedAt, which it needs, and endedAt (RT2-21).
+ */
 function runTiming(value: unknown): RunTiming {
-  const item = record(value, "Run timing"); keys(item, ["acceptedAt", ...TIMING_PHASES], "Run timing");
+  const item = record(value, "Run timing"); keys(item, ["acceptedAt", ...TIMING_PHASES, "recordedAt"], "Run timing");
   const at = (raw: unknown, field: string): number => { const time = number(raw, field); if (time > 8.64e15) throw new SessionError("INVALID_DATA", field + " is out of range"); return time; };
   const result: { -readonly [K in keyof RunTiming]: RunTiming[K] } = { acceptedAt: at(item.acceptedAt, "Run acceptedAt") };
   let previous = result.acceptedAt;
@@ -158,6 +166,11 @@ function runTiming(value: unknown): RunTiming {
     const time = at(item[phase], "Run " + phase);
     if (time < previous) throw new SessionError("INVALID_DATA", "Run phases must not go back in time");
     result[phase] = time; previous = time;
+  }
+  if (item.recordedAt !== undefined) {
+    const recorded = at(item.recordedAt, "Run recordedAt");
+    if (result.dispatchedAt === undefined || recorded < result.dispatchedAt || (result.endedAt !== undefined && recorded > result.endedAt)) throw new SessionError("INVALID_DATA", "Run input was recorded outside its dispatch and end");
+    result.recordedAt = recorded;
   }
   return result;
 }
@@ -176,9 +189,14 @@ function publicRun(value: unknown): PublicRun {
 }
 function parsePublicRun(value: unknown): PublicRun {
   const item = record(value, "Run");
-  keys(item, ["id", "commandId", "input", "userMessageId", "assistantMessageId", "selection", "epoch", "status", "cancelRequested", "contextThroughSeq", "sourceRunIds", "backend", "cleanup", "error", "stopRequested", "awaitingSwitchId", "thinking", "tools", "plan", "usage", "notices", "activities", "outputs", "attachments", "timing", "retained", "reused"], "Run");
+  keys(item, ["id", "commandId", "input", "userMessageId", "assistantMessageId", "selection", "epoch", "status", "cancelRequested", "contextThroughSeq", "sourceRunIds", "backend", "cleanup", "error", "stopRequested", "awaitingSwitchId", "thinking", "tools", "plan", "usage", "notices", "activities", "outputs", "attachments", "timing", "retained", "reused", "relay", "relayRequest"], "Run");
+  const selection = parseSelection(item.selection);
+  const relay = item.relay === undefined ? undefined : parseRunRelay(item.relay), relayRequest = item.relayRequest === undefined ? undefined : parseRunRelayRequest(item.relayRequest);
+  // Where a Run ran is its own selection's native session; a managed Provider's Run has none (ADR-055 §4).
+  if (relay?.executedOn != null && (selection.provider !== undefined || relay.executedOn.harnessId !== selection.harnessId || relay.executedOn.controlId !== selection.controlId)) throw new SessionError("INVALID_DATA", "a Run ran on its own selection's native session");
+  assertRunRelayBytes(relay, relayRequest);
   return { id: runId(item.id), commandId: commandId(item.commandId), input: text(item.input, "Run input", MAX_INPUT_BYTES),
-    userMessageId: messageId(item.userMessageId), assistantMessageId: messageId(item.assistantMessageId), selection: parseSelection(item.selection),
+    userMessageId: messageId(item.userMessageId), assistantMessageId: messageId(item.assistantMessageId), selection,
     epoch: number(item.epoch, "Run epoch", 1), status: status(item.status), cancelRequested: boolean(item.cancelRequested, "cancelRequested"),
     contextThroughSeq: number(item.contextThroughSeq, "contextThroughSeq"), sourceRunIds: array(item.sourceRunIds, "sourceRunIds", MAX_RUNS, runId),
     backend: backend(item.backend), cleanup: cleanup(item.cleanup), error: fault(item.error), stopRequested: boolean(item.stopRequested, "stopRequested"),
@@ -199,6 +217,7 @@ function parsePublicRun(value: unknown): PublicRun {
     ...(item.timing === undefined ? {} : { timing: runTiming(item.timing) }),
     ...(item.retained === undefined ? {} : { retained: item.retained === true ? true : (() => { throw new SessionError("INVALID_DATA", "a retained Run is marked true"); })() }),
     ...(item.reused === undefined ? {} : { reused: item.reused === true ? true : (() => { throw new SessionError("INVALID_DATA", "a reusing Run is marked true"); })() }),
+    ...(relay === undefined ? {} : { relay }), ...(relayRequest === undefined ? {} : { relayRequest }),
     awaitingSwitchId: item.awaitingSwitchId === null ? null : switchId(item.awaitingSwitchId) };
 }
 function publicMessage(value: unknown): PublicMessage {
@@ -208,7 +227,7 @@ function publicMessage(value: unknown): PublicMessage {
     text: text(item.text, "message text", item.role === "user" ? MAX_INPUT_BYTES : MAX_OUTPUT_BYTES, item.role === "assistant"), seq: number(item.seq, "message seq", 1), status: status(item.status) };
 }
 function publicSwitch(value: unknown): PublicSwitch {
-  const item = record(value, "switch"); keys(item, ["id", "commandId", "requested", "requestedSeq", "target", "status", "throughSeq", "sourceRunIds", "error"], "switch");
+  const item = record(value, "switch"); keys(item, ["id", "commandId", "requested", "requestedSeq", "target", "status", "throughSeq", "sourceRunIds", "error", "mode", "timing", "acknowledgedUnknown"], "switch");
   const requested = record(item.requested, "requested selection"); keys(requested, ["harnessId", "controlId", "provider", "nativeModel", "nativeOptions"], "requested selection");
   const harnessId = text(requested.harnessId, "requested harness", 96);
   const controlId = requested.controlId === undefined ? undefined : text(requested.controlId, "requested control", 96);
@@ -218,15 +237,23 @@ function publicSwitch(value: unknown): PublicSwitch {
       ...(requested.provider === undefined ? {} : { provider: requested.provider === null ? null : providerTarget(requested.provider) }),
       ...(requested.nativeModel === undefined ? {} : { nativeModel: text(requested.nativeModel, "requested native model", 1024) }), ...(requested.nativeOptions === undefined ? {} : { nativeOptions: nativeOptions(requested.nativeOptions) }) },
     requestedSeq: number(item.requestedSeq, "switch requestedSeq", 1), target: item.target === null ? null : parseSelection(item.target), status: item.status,
-    throughSeq: number(item.throughSeq, "switch throughSeq"), sourceRunIds: array(item.sourceRunIds, "switch sourceRunIds", MAX_RUNS, runId), error: fault(item.error) };
+    throughSeq: number(item.throughSeq, "switch throughSeq"), sourceRunIds: array(item.sourceRunIds, "switch sourceRunIds", MAX_RUNS, runId), error: fault(item.error),
+    ...(item.mode === undefined ? {} : { mode: choiceOf(item.mode, ["wait_current", "cancel_current"], "switch mode") }),
+    ...(item.timing === undefined ? {} : { timing: parseSwitchTiming(item.timing) }),
+    ...(item.acknowledgedUnknown === undefined ? {} : { acknowledgedUnknown: array(item.acknowledgedUnknown, "acknowledged unknown Runs", MAX_RUNS, runId) }) };
 }
+const COMMAND_KINDS: readonly CommandRecord["kind"][] = ["create", "send", "switch", "cancel", "close", "permission", "native-reset", "retention", "native-close", ...RELAY_COMMAND_KINDS];
 function command(value: unknown): CommandRecord {
   const item = record(value, "command"); keys(item, ["id", "kind", "fingerprint", "resultId"], "command");
-  if (item.kind !== "create" && item.kind !== "send" && item.kind !== "switch" && item.kind !== "cancel" && item.kind !== "close" && item.kind !== "permission" && item.kind !== "native-reset" && item.kind !== "retention" && item.kind !== "native-close") throw new SessionError("INVALID_DATA", "unknown command kind");
+  const kind = choiceOf(item.kind, COMMAND_KINDS, "command kind");
   const fingerprint = text(item.fingerprint, "command fingerprint", 64);
   if (!/^[a-f0-9]{64}$/u.test(fingerprint)) throw new SessionError("INVALID_DATA", "invalid command fingerprint");
-  return { id: commandId(item.id), kind: item.kind, fingerprint, resultId: text(item.resultId, "command resultId", 128) };
+  const resultId = text(item.resultId, "command resultId", 128);
+  // A relay command's result is a relay row (a pin, an exclusion, a consent record): an identity, not part of the snapshot.
+  if (relayCommand(kind) && !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(resultId)) throw new SessionError("INVALID_DATA", "invalid relay command result");
+  return { id: commandId(item.id), kind, fingerprint, resultId };
 }
+function relayCommand(kind: CommandRecord["kind"]): boolean { return (RELAY_COMMAND_KINDS as readonly string[]).includes(kind); }
 function retainedProcess(value: unknown): RetainedProcess {
   const item = record(value, "kept native process"); keys(item, ["harnessId", "controlId", "runId", "since", "process"], "kept native process");
   const harnessId = text(item.harnessId, "kept native Harness", 96), controlId = text(item.controlId, "kept native control", 96);
@@ -239,13 +266,13 @@ function retainedProcess(value: unknown): RetainedProcess {
 }
 function nativeBinding(value: unknown): NativeSessionBinding {
   const item = record(value, "native binding");
-  keys(item, ["harnessId", "controlId", "checkpoint", "throughRunId", "status", "observed"], "native binding");
+  keys(item, ["harnessId", "controlId", "checkpoint", "throughRunId", "status", "observed", "relay"], "native binding");
   const harnessId = text(item.harnessId, "native Harness", 96), controlId = text(item.controlId, "native control", 96);
   if (![harnessId, controlId].every(id => /^[a-z][a-z0-9-]*$/u.test(id)) || !["ready", "unconfirmed", "archived", "fork-pending", "forking"].includes(String(item.status))) throw new SessionError("INVALID_DATA", "invalid native binding identity or state");
   const checkpoint = text(item.checkpoint, "native checkpoint", 8192);
   if (/[\r\n]/u.test(checkpoint)) throw new SessionError("INVALID_DATA", "invalid native checkpoint");
   return { harnessId, controlId, checkpoint, throughRunId: item.throughRunId === null ? null : runId(item.throughRunId), status: item.status as NativeSessionBinding["status"],
-    ...(item.observed === undefined ? {} : { observed: parseNativeConfiguration(item.observed) }) };
+    ...(item.observed === undefined ? {} : { observed: parseNativeConfiguration(item.observed) }), ...(item.relay === undefined ? {} : { relay: parseBindingRelayState(item.relay) }) };
 }
 /** A reported native configuration: a bounded model identity (or null) and options shaped like requested native options. */
 export function parseNativeConfiguration(value: unknown): NativeConfiguration {
@@ -287,6 +314,31 @@ function unique(values: readonly string[], label: string): void {
   if (new Set(values).size !== values.length) throw new SessionError("INVALID_DATA", "duplicate " + label);
 }
 /**
+ * The relay fields (v13, ADR-055 §4): every binding of a v13 Session has its relay state, and none does before v13; along
+ * the bindings of one Harness control, in the order they were made, native epochs strictly increase and clear floors never
+ * go down (the binding lineage, §7.5, §14.4). The other v13 fields of Runs, switches, commands and the Session appear only
+ * from v13.
+ */
+function relayFields(result: SessionSnapshot): void {
+  const bindings = result.nativeBindings ?? [];
+  if (result.schemaVersion < 13) {
+    if (bindings.some(binding => binding.relay !== undefined) || result.relayRecoveryFailed !== undefined || result.commands.some(entry => relayCommand(entry.kind)) ||
+        result.runs.some(run => run.relay !== undefined || run.relayRequest !== undefined || run.backend?.input !== undefined || run.timing?.contextReadyAt !== undefined || run.timing?.recordedAt !== undefined) ||
+        result.switches.some(entry => entry.mode !== undefined || entry.timing !== undefined || entry.acknowledgedUnknown !== undefined))
+      throw new SessionError("INVALID_DATA", "relay fields require Session v13");
+    return;
+  }
+  const lineage = new Map<string, BindingRelayState>();
+  for (const binding of bindings) {
+    if (binding.relay === undefined) throw new SessionError("INVALID_DATA", "every v13 native binding has its relay state");
+    const key = binding.harnessId + ":" + binding.controlId, earlier = lineage.get(key);
+    if (earlier !== undefined && (binding.relay.nativeEpoch <= earlier.nativeEpoch || binding.relay.epochFloor < earlier.epochFloor))
+      throw new SessionError("INVALID_DATA", "the native epochs and clear floors of one Harness control go forward along its bindings");
+    lineage.set(key, binding.relay);
+  }
+  if (result.relayRecoveryFailed !== undefined && result.relayRecoveryFailed > result.lastSeq) throw new SessionError("INVALID_DATA", "relay recovery failure is after the Session's events");
+}
+/**
  * Single persisted schema boundary. Malformed state never becomes an empty conversation.
  *
  * `before`, when given, is the validated and deeply frozen state that `value` is to follow (a Store transaction's current
@@ -296,8 +348,8 @@ function unique(values: readonly string[], label: string): void {
  */
 export function parseSession(value: unknown, before?: SessionSnapshot): SessionSnapshot {
   const item = record(value, "Session");
-  keys(item, ["schemaVersion", "id", "version", "lastSeq", "epoch", "status", "configuration", "selection", "activeRunId", "pendingSwitchId", "runs", "messages", "switches", "commands", "nativeBindings", "origin", "retainNative", "retained"], "Session");
-  if (item.schemaVersion !== 1 && item.schemaVersion !== 2 && item.schemaVersion !== 3 && item.schemaVersion !== 4 && item.schemaVersion !== 5 && item.schemaVersion !== 6 && item.schemaVersion !== 7 && item.schemaVersion !== 8 && item.schemaVersion !== 9 && item.schemaVersion !== 10 && item.schemaVersion !== 11 && item.schemaVersion !== 12) throw new SessionError("INVALID_DATA", "unknown Session schemaVersion");
+  keys(item, ["schemaVersion", "id", "version", "lastSeq", "epoch", "status", "configuration", "selection", "activeRunId", "pendingSwitchId", "runs", "messages", "switches", "commands", "nativeBindings", "origin", "retainNative", "retained", "relayRecoveryFailed"], "Session");
+  if (item.schemaVersion !== 1 && item.schemaVersion !== 2 && item.schemaVersion !== 3 && item.schemaVersion !== 4 && item.schemaVersion !== 5 && item.schemaVersion !== 6 && item.schemaVersion !== 7 && item.schemaVersion !== 8 && item.schemaVersion !== 9 && item.schemaVersion !== 10 && item.schemaVersion !== 11 && item.schemaVersion !== 12 && item.schemaVersion !== 13) throw new SessionError("INVALID_DATA", "unknown Session schemaVersion");
   if (item.status !== "open" && item.status !== "closed" && item.status !== "blocked") throw new SessionError("INVALID_DATA", "unknown Session status");
   const result: SessionSnapshot = { schemaVersion: item.schemaVersion, id: sessionId(item.id), version: number(item.version, "version"), lastSeq: number(item.lastSeq, "lastSeq"),
     epoch: number(item.epoch, "epoch", 1), status: item.status, configuration: parseConfiguration(item.configuration), selection: parseSelection(item.selection),
@@ -306,7 +358,8 @@ export function parseSession(value: unknown, before?: SessionSnapshot): SessionS
     switches: array(item.switches, "switches", MAX_COMMANDS, publicSwitch), commands: array(item.commands, "commands", MAX_COMMANDS, command), ...(item.nativeBindings === undefined ? {} : { nativeBindings: array(item.nativeBindings, "native bindings", MAX_RUNS, nativeBinding) }),
     ...(item.origin === undefined ? {} : { origin: origin(item.origin) }),
     ...(item.retainNative === undefined ? {} : { retainNative: item.retainNative === true ? true : (() => { throw new SessionError("INVALID_DATA", "kept native processes are marked true"); })() }),
-    ...(item.retained === undefined ? {} : { retained: retainedProcess(item.retained) }) };
+    ...(item.retained === undefined ? {} : { retained: retainedProcess(item.retained) }),
+    ...(item.relayRecoveryFailed === undefined ? {} : { relayRecoveryFailed: number(item.relayRecoveryFailed, "relay recovery failure seq", 1) }) };
   // Branches and their pending native forks exist only from v8; a fork reference always belongs to a branched Session.
   if (result.schemaVersion < 8 && (result.origin !== undefined || result.nativeBindings?.some(binding => binding.status === "fork-pending" || binding.status === "forking"))) throw new SessionError("INVALID_DATA", "branched Sessions require Session v8");
   if (result.nativeBindings?.some(binding => (binding.status === "fork-pending" || binding.status === "forking") && (result.origin?.kind !== "fork" || binding.throughRunId !== null))) throw new SessionError("INVALID_DATA", "a native fork reference needs its branch origin");
@@ -321,6 +374,7 @@ export function parseSession(value: unknown, before?: SessionSnapshot): SessionS
     throw new SessionError("INVALID_DATA", "kept native processes require Session v11");
   // The identity that lets a later owner end a kept process group exists only from v12 (ADR-030).
   if (result.schemaVersion < 12 && result.retained?.process !== undefined) throw new SessionError("INVALID_DATA", "a kept process group identity requires Session v12");
+  relayFields(result);
   if (result.runs.some(run => run.retained === true && (run.status !== "completed" || run.cleanup !== null || run.backend === null))) throw new SessionError("INVALID_DATA", "only a completed Run without its own cleanup hands its process over");
   if (result.runs.some(run => run.reused === true && (run.status === "queued" || run.selection.provider !== undefined))) throw new SessionError("INVALID_DATA", "only a started native Run reuses a kept process");
   if (result.retained !== undefined) {
@@ -358,8 +412,10 @@ export function parseSession(value: unknown, before?: SessionSnapshot): SessionS
   if (active.length > 1 || (result.activeRunId === null ? active.length !== 0 : active.length !== 1 || active[0]?.id !== result.activeRunId)) throw new SessionError("INVALID_DATA", "active Run ownership is inconsistent");
   if (result.runs.filter(run => run.status === "queued").length > MAX_QUEUE) throw new SessionError("QUEUE_FULL", "Session queued input limit reached");
   if (result.status === "closed" && (result.activeRunId !== null || result.pendingSwitchId !== null || result.runs.some(run => run.status === "queued"))) throw new SessionError("INVALID_DATA", "closed Session still admits work");
+  // An unknown Run in an open Session was acknowledged by an effective recovery switch: by its sources before v13 (K19) or by
+  // its acknowledgedUnknown, which v13 switches write; both are read.
   if (result.status === "open" && result.runs.some(run => run.status === "unknown" && (result.schemaVersion < 3 || run.cleanup?.closed !== true ||
-      !result.switches.some(sw => sw.status === "effective" && sw.sourceRunIds.includes(run.id)))))
+      !result.switches.some(sw => sw.status === "effective" && (sw.sourceRunIds.includes(run.id) || sw.acknowledgedUnknown?.includes(run.id) === true)))))
     throw new SessionError("INVALID_DATA", "unknown execution requires a blocked Session or explicit quiescent recovery");
   const pending = result.switches.filter(entry => entry.status === "requested" || entry.status === "validated");
   if (pending.length > 1 || (result.pendingSwitchId === null ? pending.length !== 0 : pending.length !== 1 || pending[0]?.id !== result.pendingSwitchId)) throw new SessionError("INVALID_DATA", "pending switch ownership is inconsistent");
@@ -392,13 +448,21 @@ export function parseSession(value: unknown, before?: SessionSnapshot): SessionS
       (terminal(run.status) || (preparingSwitch && run.id === result.activeRunId))))) throw new SessionError("INVALID_DATA", "switch watermark/sources are inconsistent");
     if (entry.status === "effective" && entry.target === null) throw new SessionError("INVALID_DATA", "effective switch lacks target");
     if (entry.sourceRunIds.some(id => !result.messages.some(message => message.runId === id && message.role === "user" && message.seq < entry.requestedSeq))) throw new SessionError("INVALID_DATA", "switch source input is after its request");
+    // RT1-m10: each acknowledged Run ended unknown, closed its resources and was accepted before the request.
+    if (entry.acknowledgedUnknown !== undefined) {
+      unique(entry.acknowledgedUnknown, "acknowledged unknown Run");
+      if (entry.acknowledgedUnknown.some(id => { const run = result.runs.find(row => row.id === id); return run === undefined || run.status !== "unknown" || run.cleanup?.closed !== true ||
+          !result.messages.some(message => message.id === run.userMessageId && message.seq < entry.requestedSeq); })) throw new SessionError("INVALID_DATA", "an acknowledged Run is not an earlier unknown Run with closed resources");
+    }
   }
   const effective = result.switches.filter(entry => entry.status === "effective");
   if (result.epoch !== effective.length + 1) throw new SessionError("INVALID_DATA", "epoch does not match effective switch facts");
   const last = effective.at(-1);
   if (last?.target !== undefined && last.target !== null && !same(last.target, result.selection)) throw new SessionError("INVALID_DATA", "selection does not match last effective switch");
   if (result.commands.filter(entry => entry.kind === "create").length !== 1 || !result.commands.every(entry =>
-    entry.kind === "send" ? result.runs.some(run => run.id === entry.resultId) : entry.kind === "switch" ? result.switches.some(sw => sw.id === entry.resultId) : entry.kind === "cancel" ? entry.resultId === "none" || result.runs.some(run => run.id === entry.resultId) : entry.kind === "permission" ? result.runs.some(run => run.id === entry.resultId) : entry.resultId === result.id)) throw new SessionError("INVALID_DATA", "command relation is inconsistent");
+    entry.kind === "send" ? result.runs.some(run => run.id === entry.resultId) : entry.kind === "switch" ? result.switches.some(sw => sw.id === entry.resultId) : entry.kind === "cancel" ? entry.resultId === "none" || result.runs.some(run => run.id === entry.resultId) : entry.kind === "permission" ? result.runs.some(run => run.id === entry.resultId)
+      // A relay command's result is a relay row, checked where that row is written.
+      : relayCommand(entry.kind) || entry.resultId === result.id)) throw new SessionError("INVALID_DATA", "command relation is inconsistent");
   if (utf8Bytes(JSON.stringify(result)) > MAX_SESSION_BYTES) throw new SessionError("SESSION_LIMIT", "Session aggregate byte limit reached");
   return result;
 }
@@ -430,22 +494,63 @@ export function replayCommand(state: SessionSnapshot, id: CommandRecord["id"], k
   return prior ?? null;
 }
 function same(left: unknown, right: unknown): boolean { return JSON.stringify(left) === JSON.stringify(right); }
-/** Persisted history is append-only; an application bug cannot silently erase prior public facts. */
-export function assertSessionTransition(before: SessionSnapshot, after: SessionSnapshot): void {
+/** Whether a `run.ended` event's `native` says its Driver cleared the native history (ADR-055 §7.5, F04). */
+function clearedNative(value: unknown): boolean {
+  return value !== null && typeof value === "object" && !Array.isArray(value) && (value as Readonly<Record<string, unknown>>).cleared === true;
+}
+/**
+ * One binding's relay state moving on (ADR-055 §14.3): its native epoch never goes back and its clear floor never goes down;
+ * within one epoch its mark goes down (or away) only when it was suspect, the one state whose check may move it back; and no
+ * mark lies below the clear floor. A confirmed clear starts a new epoch, so the mark it drops is no decrease within one.
+ */
+function relayStep(old: BindingRelayState | undefined, next: BindingRelayState | undefined): void {
+  if (next === undefined) { if (old !== undefined) throw new SessionError("INVALID_TRANSITION", "a binding's relay state cannot be dropped"); return; }
+  const mark = markOf(next.sync);
+  if (mark !== null && mark.throughSeq < next.epochFloor) throw new SessionError("INVALID_TRANSITION", "a delivered mark cannot lie below the clear floor");
+  if (old === undefined) return;
+  if (next.nativeEpoch < old.nativeEpoch) throw new SessionError("INVALID_TRANSITION", "a binding's native epoch cannot go back");
+  if (next.epochFloor < old.epochFloor) throw new SessionError("INVALID_TRANSITION", "a binding's clear floor cannot go down");
+  const prior = markOf(old.sync);
+  if (next.nativeEpoch === old.nativeEpoch && prior !== null && (mark === null || mark.throughSeq < prior.throughSeq) && old.sync.kind !== "suspect")
+    throw new SessionError("INVALID_TRANSITION", "a delivered mark goes back within an epoch only when a suspect binding is checked");
+}
+/**
+ * Persisted history is append-only; an application bug cannot silently erase prior public facts.
+ *
+ * `events` are the drafts committed with `after`, empty unless given: they let a writer Run's `run.ended` reporting that its
+ * Driver replaced the cleared native session (`native.cleared`, ADR-055 §7.5) archive its binding without a native-reset
+ * command, and a `session.recovered` record a relay recovery failure.
+ */
+export function assertSessionTransition(before: SessionSnapshot, after: SessionSnapshot, events: readonly EventDraft[] = []): void {
   if (before.schemaVersion !== after.schemaVersion || before.id !== after.id || !same(before.configuration, after.configuration)) throw new SessionError("INVALID_TRANSITION", "Session identity/configuration reference is immutable");
   if (!same(before.origin, after.origin)) throw new SessionError("INVALID_TRANSITION", "branch origin is immutable");
   const oldBindings = before.nativeBindings ?? [], newBindings = after.nativeBindings ?? [];
   if (newBindings.length < oldBindings.length) throw new SessionError("INVALID_TRANSITION", "native state references cannot be silently erased");
+  const added = after.commands.slice(before.commands.length), writer = after.runs.find(run => run.id === (before.activeRunId ?? after.activeRunId));
+  // The user's relay commands change a binding's relay state without a Run (ADR-055 §14.3); nothing else of it.
+  const relayCommandAdded = added.some(entry => relayCommand(entry.kind));
+  const nativeCleared = writer !== undefined && events.some(event => event.type === "run.ended" && event.data.runId === writer.id && clearedNative(event.data.native));
   for (let index = 0; index < newBindings.length; index++) {
     const old = oldBindings[index], next = newBindings[index]!;
     if (old !== undefined && same(old, next)) continue;
     if (old?.status === "archived" || old !== undefined && (old.harnessId !== next.harnessId || old.controlId !== next.controlId)) throw new SessionError("INVALID_TRANSITION", "native state ownership or archived state changed");
-    const writer = after.runs.find(run => run.id === (before.activeRunId ?? after.activeRunId));
-    const reset = old !== undefined && next.status === "archived" && next.checkpoint === old.checkpoint && next.throughRunId === old.throughRunId && after.selection.harnessId === next.harnessId && after.selection.controlId === next.controlId && after.commands.slice(before.commands.length).some(command => command.kind === "native-reset");
+    // An archived binding keeps the relay state it had: archiving freezes it (ADR-055 §4).
+    const frozen = old !== undefined && same(old.relay, next.relay);
+    const reset = old !== undefined && frozen && next.status === "archived" && next.checkpoint === old.checkpoint && next.throughRunId === old.throughRunId && after.selection.harnessId === next.harnessId && after.selection.controlId === next.controlId && added.some(command => command.kind === "native-reset");
     // A branch's native fork advances without a Run: pending → dispatched → ready with the new reference, or archived unchanged.
-    const forked = old !== undefined && next.throughRunId === null && (old.status === "fork-pending" && next.status === "forking" && next.checkpoint === old.checkpoint
+    const forked = old !== undefined && frozen && next.throughRunId === null && (old.status === "fork-pending" && next.status === "forking" && next.checkpoint === old.checkpoint
       || old.status === "forking" && next.status === "ready" || (old.status === "fork-pending" || old.status === "forking") && next.status === "archived" && next.checkpoint === old.checkpoint);
-    if (!reset && !forked && (!writer || writer.selection.provider !== undefined || writer.selection.harnessId !== next.harnessId || writer.selection.controlId !== next.controlId || next.throughRunId !== null && next.throughRunId !== old?.throughRunId && next.throughRunId !== writer.id)) throw new SessionError("INVALID_TRANSITION", "native state changed without its original Run owner");
+    const relayOnly = old !== undefined && relayCommandAdded && same({ ...old, relay: undefined }, { ...next, relay: undefined });
+    if (!reset && !forked && !relayOnly && (!writer || writer.selection.provider !== undefined || writer.selection.harnessId !== next.harnessId || writer.selection.controlId !== next.controlId || next.throughRunId !== null && next.throughRunId !== old?.throughRunId && next.throughRunId !== writer.id)) throw new SessionError("INVALID_TRANSITION", "native state changed without its original Run owner");
+    // A Run archives its own binding only when its end reports the Driver replaced the cleared native session; it may then add
+    // the new binding of the same Harness control (Claude's synthesized clear, F04).
+    if (!reset && !forked && old !== undefined && next.status === "archived" && (!nativeCleared || !frozen)) throw new SessionError("INVALID_TRANSITION", "a native binding is archived only by a native reset, a failed branch or a confirmed native clear");
+    relayStep(old?.relay, next.relay);
+  }
+  if (before.relayRecoveryFailed !== after.relayRecoveryFailed) {
+    const recorded = after.relayRecoveryFailed !== undefined && events.some((event, index) => event.type === "session.recovered" && before.lastSeq + index + 1 === after.relayRecoveryFailed);
+    const renewed = added.some(entry => entry.kind === "native-reset") || newBindings.length > oldBindings.length;
+    if (after.relayRecoveryFailed !== undefined ? !recorded : !renewed) throw new SessionError("INVALID_TRANSITION", "a relay recovery failure is recorded by recovery and cleared by a new native session");
   }
   if ((before.status === "closed" && after.status !== "closed") || (before.status === "blocked" && after.status === "open" &&
       (after.epoch !== before.epoch + 1 || !after.switches.some(sw => sw.id === before.pendingSwitchId && sw.status === "effective") ||
@@ -466,12 +571,14 @@ export function assertSessionTransition(before: SessionSnapshot, after: SessionS
     if (old === next) continue;
     if (terminal(old.status) && !same(old, next)) throw new SessionError("INVALID_TRANSITION", "terminal Run evidence cannot be rewritten");
     if (old.commandId !== next.commandId || old.input !== next.input || old.userMessageId !== next.userMessageId || old.assistantMessageId !== next.assistantMessageId || old.awaitingSwitchId !== next.awaitingSwitchId ||
-        JSON.stringify(old.attachments) !== JSON.stringify(next.attachments))
+        JSON.stringify(old.attachments) !== JSON.stringify(next.attachments) || !same(old.relayRequest, next.relayRequest))
       throw new SessionError("INVALID_TRANSITION", "accepted Run input and identities are immutable");
     if ((old.cancelRequested && !next.cancelRequested) || (old.stopRequested && !next.stopRequested)) throw new SessionError("INVALID_TRANSITION", "cancel/stop tombstones cannot be undone");
     if ((old.backend !== null && !same(old.backend, next.backend)) || (old.cleanup !== null && !same(old.cleanup, next.cleanup))) throw new SessionError("INVALID_TRANSITION", "backend/cleanup facts cannot be overwritten");
     if (old.status !== "queued" && (!same(old.selection, next.selection) || old.epoch !== next.epoch)) throw new SessionError("INVALID_TRANSITION", "dispatched Run selection is immutable");
-    if (["running", "settling"].includes(old.status) && (old.contextThroughSeq !== next.contextThroughSeq || !same(old.sourceRunIds, next.sourceRunIds))) throw new SessionError("INVALID_TRANSITION", "dispatched context cannot change");
+    // What a Turn prepared to send, its relay packet and when it was ready included (v13), is fixed once it runs.
+    if (["running", "settling"].includes(old.status) && (old.contextThroughSeq !== next.contextThroughSeq || !same(old.sourceRunIds, next.sourceRunIds) || !same(old.relay, next.relay) ||
+        old.timing?.contextReadyAt !== next.timing?.contextReadyAt)) throw new SessionError("INVALID_TRANSITION", "dispatched context cannot change");
   }
   for (let index = 0; index < before.messages.length; index++) {
     const old = before.messages[index]!, next = after.messages[index]!;
@@ -485,8 +592,12 @@ export function assertSessionTransition(before: SessionSnapshot, after: SessionS
     if (old.status === "effective" || old.status === "failed") {
       if (!same(old, next)) throw new SessionError("INVALID_TRANSITION", "terminal switch evidence cannot be rewritten");
     } else if (old.commandId !== next.commandId || old.requestedSeq !== next.requestedSeq || !same(old.requested, next.requested) ||
-        next.throughSeq < old.throughSeq || (old.target !== null && !same(old.target, next.target))) throw new SessionError("INVALID_TRANSITION", "switch request or validated target cannot change");
+        next.throughSeq < old.throughSeq || (old.target !== null && !same(old.target, next.target)) || old.mode !== next.mode || !same(old.acknowledgedUnknown, next.acknowledgedUnknown) ||
+        (old.timing !== undefined && (next.timing?.requestedAt !== old.timing.requestedAt || old.timing.validatedAt !== undefined && next.timing.validatedAt !== old.timing.validatedAt || old.timing.effectiveAt !== undefined && next.timing.effectiveAt !== old.timing.effectiveAt)))
+      throw new SessionError("INVALID_TRANSITION", "switch request or validated target cannot change");
   }
+  // Only a recovery switch acknowledges unknown Runs, and only a blocked Session takes one (RT1-m10).
+  if (after.switches.slice(before.switches.length).some(entry => entry.acknowledgedUnknown?.length && before.status !== "blocked")) throw new SessionError("INVALID_TRANSITION", "unknown Runs are acknowledged only by a recovery switch");
 }
 /** Recovery creates public unknown facts; it never reconstructs a dispatch or kills a PID. */
 export function recoverSession(state: SessionSnapshot): SessionMutation | null {

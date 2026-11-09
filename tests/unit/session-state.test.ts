@@ -41,7 +41,7 @@ test("Run timing is bounded, ordered and exists only from Session v10", () => {
 test("unknown schemas, properties and inconsistent public ownership are rejected", () => {
   const state = seed();
   assert.equal(parseSession({ ...state, schemaVersion: 3 }).schemaVersion, 3);
-  for (const value of [null, {}, { ...state, schemaVersion: 13 }, { ...state, secret: "not-a-field" },
+  for (const value of [null, {}, { ...state, schemaVersion: 14 }, { ...state, secret: "not-a-field" },
     { ...state, activeRunId: "run-one" }, { ...state, lastSeq: 3 }, { ...state, status: "unknown" },
     { ...state, configuration: { ...state.configuration, workspace: "relative" } }]) assert.throws(() => parseSession(value), SessionError);
 });

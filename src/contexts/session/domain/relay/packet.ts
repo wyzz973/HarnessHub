@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { Grade as RelayGrade, RelayPacketKind } from "../../../../contracts/relay.js";
 import { SessionError, type NativeSessionBinding, type PublicRun, type PublicTool, type RunId, type SessionSnapshot } from "../../../../contracts/session.js";
 import { MAX_CONTEXT_BYTES, utf8Bytes } from "../state.js";
 import { RELAY_BUDGET, RELAY_POLICY_VERSION, estimateTokens, resolveRelayBudget, type RelayBudget } from "./budget.js";
@@ -40,7 +41,8 @@ export interface RelayRenderInput {
 export interface RelayRecord {
   readonly policyVersion: string;
   readonly packetId: string;
-  readonly kind: "packet" | "delta";
+  /** The two of the contract's packet kinds this renderer makes. */
+  readonly kind: Extract<RelayPacketKind, "packet" | "delta">;
   readonly language: RelayLanguage;
   /** The sha256 of the whole text handed to the Harness (packet, LF, the user's current words). */
   readonly sha256: string;
@@ -164,7 +166,8 @@ const LEDGER_RESERVE = 300;
 /** The failure states a tool can end in. */
 const FAILED_TOOL = ["failed", "error", "declined", "rejected", "cancelled"];
 
-type Grade = "verbatim" | "compact" | "line";
+/** The contract's grades of one unit; a run of units folded into one line is "ranged" here, the contract's "range". */
+type Grade = Exclude<RelayGrade, "range">;
 type Rendered = Grade | "ranged";
 /** A rendered unit, or a range line over consecutive units. */
 interface Placed { readonly piece: Piece; readonly from: number; readonly to: number; readonly grade: Rendered }

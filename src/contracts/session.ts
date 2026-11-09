@@ -1,6 +1,7 @@
 import type { ProviderTarget } from "./provider.js";
 import type { BackendResult, CleanupEvidence, ControlEvent, HarnessControl, NativeOptions, NativePlanEntry, NativeUsage } from "./control.js";
 import type { ContentPort, ContentRef } from "./content.js";
+import type { BindingRelayState, RelayCommitResult, RelayRows, RunRelay, RunRelayRequest, SwitchMode, SwitchTiming } from "./relay.js";
 
 declare const sessionBrand: unique symbol;
 declare const runBrand: unique symbol;
@@ -73,13 +74,17 @@ export type PublicOutput =
   | { readonly kind: "link"; readonly uri: string; readonly name: string; readonly title?: string; readonly mediaType?: string };
 /**
  * When a Run reached each phase, in epoch milliseconds from the Runtime's clock (Session v10). A phase the Run did not reach
- * is absent; the Harness never supplies these values.
+ * is absent; the Harness never supplies these values. The phases never go back in time, in this order: acceptedAt,
+ * preparingAt, contextReadyAt, readyAt, dispatchedAt, firstOutputAt, endedAt; recordedAt lies between dispatchedAt and
+ * endedAt without being one of them (ADR-055 §4, RT2-21).
  */
 export interface RunTiming {
   /** The input was accepted and queued. */
   readonly acceptedAt: number;
   /** Preparation began: the original program is being started for this Run. */
   readonly preparingAt?: number;
+  /** v13: what the Turn sends was prepared (its relay packet rendered and checked, or none needed); fixed once dispatched. */
+  readonly contextReadyAt?: number;
   /** The program answered its handshake and its native session (new or restored) is open. */
   readonly readyAt?: number;
   /** The input was handed to the program. */
@@ -88,6 +93,8 @@ export interface RunTiming {
   readonly firstOutputAt?: number;
   /** The Run reached its final status. */
   readonly endedAt?: number;
+  /** v13: the native side recorded the input (E1, `relay.input_recorded`); it does not set firstOutputAt. */
+  readonly recordedAt?: number;
 }
 export interface PublicRun {
   readonly id: RunId;
@@ -121,6 +128,13 @@ export interface PublicRun {
   readonly retained?: true;
   /** The Run ran on the process its conversation kept, without starting the program again (ADR-030, v11). */
   readonly reused?: true;
+  /**
+   * v13: the packet this Run carries (or none), how it continued its context and where it ran (ADR-055 §4); fixed once the
+   * Run is running. New Runs leave `sourceRunIds` empty; the relay packet's fold names its sources instead.
+   */
+  readonly relay?: RunRelay;
+  /** v13: the relay choices its request made, with their HMAC; notes, reveals and exclusions stay in relay rows. Fixed at acceptance. */
+  readonly relayRequest?: RunRelayRequest;
   readonly stopRequested: boolean;
   readonly awaitingSwitchId: SwitchId | null;
 }
@@ -132,12 +146,24 @@ export interface PublicSwitch {
   readonly target: HarnessSelection | null;
   readonly status: "requested" | "validated" | "effective" | "failed";
   readonly throughSeq: number;
+  /** The Runs before the request; on a recovery switch they cover its unknown Runs. New switches write acknowledgedUnknown instead (v13). */
   readonly sourceRunIds: readonly RunId[];
   readonly error: { readonly code: string; readonly message: string } | null;
+  /** v13: whether the switch waits for the current Turn or stops it. */
+  readonly mode?: SwitchMode;
+  /** v13: when it was requested, validated and became effective. */
+  readonly timing?: SwitchTiming;
+  /**
+   * v13, recovery switches only: the unknown Runs the user acknowledged keeping as they are; each ended unknown, closed its
+   * resources and came before the request.
+   */
+  readonly acknowledgedUnknown?: readonly RunId[];
 }
+/** The relay's user commands (v13), whose results live in relay rows. */
+export const RELAY_COMMAND_KINDS = ["relay-pin", "relay-unpin", "relay-exclude", "relay-include", "relay-consent", "relay-consent-revoke", "relay-redaction-override", "relay-title"] as const;
 export interface CommandRecord {
   readonly id: CommandId;
-  readonly kind: "create" | "send" | "switch" | "cancel" | "close" | "permission" | "native-reset" | "retention" | "native-close";
+  readonly kind: "create" | "send" | "switch" | "cancel" | "close" | "permission" | "native-reset" | "retention" | "native-close" | typeof RELAY_COMMAND_KINDS[number];
   readonly fingerprint: string;
   readonly resultId: string;
 }
@@ -157,6 +183,11 @@ export interface NativeSessionBinding {
    * made by its own commands. Absent when the interface cannot report them or the last report was unreadable.
    */
   readonly observed?: NativeConfiguration;
+  /**
+   * v13, present on every binding: its native epoch, delivery watermark and sync state (ADR-055 §4). `throughRunId` stays its
+   * native position, a different fact. Frozen once the binding is archived.
+   */
+  readonly relay?: BindingRelayState;
 }
 /** A native session's model and option values as one side saw them; option keys are the Harness's own option ids. */
 export interface NativeConfiguration { readonly model: string | null; readonly options: NativeOptions }
@@ -235,7 +266,7 @@ export interface RetainedProcess {
   readonly process?: KeptProcessIdentity;
 }
 export interface SessionSnapshot {
-  readonly schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
+  readonly schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13;
   readonly id: SessionId;
   readonly version: number;
   readonly lastSeq: number;
@@ -256,6 +287,11 @@ export interface SessionSnapshot {
   readonly retainNative?: true;
   /** v11: the native process this conversation holds now; cleared when it is closed. */
   readonly retained?: RetainedProcess;
+  /**
+   * v13: the seq of the `session.recovered` event whose relay rows could not be written (ADR-055 §9 S15); a Turn that would
+   * carry relay content is then refused until the user starts a new native session.
+   */
+  readonly relayRecoveryFailed?: number;
 }
 export interface EventDraft { readonly type: string; readonly data: Readonly<Record<string, unknown>> }
 export interface SessionEvent extends EventDraft {
@@ -264,8 +300,10 @@ export interface SessionEvent extends EventDraft {
   readonly ownerGeneration: number;
   readonly timestamp: string;
 }
-export interface SessionMutation { readonly next: SessionSnapshot; readonly events: readonly EventDraft[] }
-export interface SessionCommit { readonly session: SessionSnapshot; readonly events: readonly SessionEvent[] }
+/** A transaction's result: the next snapshot, its events and (v13) the relay rows to write with them. */
+export interface SessionMutation { readonly next: SessionSnapshot; readonly events: readonly EventDraft[]; readonly relay?: RelayRows }
+/** A committed transaction; `relay` says how the relay rows it was given went. */
+export interface SessionCommit { readonly session: SessionSnapshot; readonly events: readonly SessionEvent[]; readonly relay?: RelayCommitResult }
 /** Aggregate-scoped synchronous transaction boundary. Callbacks cannot return promises. */
 export interface SessionStore {
   readonly ownerGeneration: number;

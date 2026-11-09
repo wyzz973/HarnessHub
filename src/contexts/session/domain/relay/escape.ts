@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { Language } from "../../../../contracts/relay.js";
 
 /**
  * The relay's escapes (ADR-055 §5.2 N1–N4, §5.5, §10.3), shared by every text a packet quotes: total functions, defined for
@@ -8,7 +9,8 @@ import { createHash } from "node:crypto";
  * truncation (never inside a mark) → `visible` (N2) → `neutralize` (N4) → the labels restored → `fence` or an inline slot (N3).
  */
 
-export type RelayLanguage = "zh" | "en";
+/** A packet's language: the relay contract's (ADR-055 §4), named as this renderer has always named it. */
+export type RelayLanguage = Language;
 
 /**
  * The control character the redactor writes around a label's key (`MARK` + one letter + `MARK`). `normalize` removes every

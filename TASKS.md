@@ -87,7 +87,7 @@
 | G063 | 建立依赖与公共类型边界检查 | G001, C008 | G1 | in_progress |
 | G064 | 统一管理各 Harness 的能力 | G012, G054 | G1 | in_progress |
 | G065 | 焦点 Harness 工程加固（ADR-046） | 无 | G1 | in_progress |
-| G066 | v13 接力存储、契约类型与迁移 | C006, G004, G008, G028, G067 | G1 | planned |
+| G066 | v13 接力存储、契约类型与迁移 | C006, G004, G008, G028, G067 | G1 | in_progress |
 | G067 | P0 过渡期修复（v12，不升库） | G004, G006, G007, G028, G032, G034 | G1 | in_progress |
 | G068 | 送达状态机、核对与恢复 | G066, G067 | G1 | planned |
 | G069 | Driver 接力适配 | G066, G067, G007, G032, G034 | G1 | planned |
