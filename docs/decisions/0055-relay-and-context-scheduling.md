@@ -284,3 +284,52 @@ proposed 期间不改下列 ADR 的正文；接受后，对应切片实施时在
 **与简报的差异**：新绑定的初值不是一律 `fresh{new}`：同一 harness/control 之前已有绑定（native-reset 之后）时是 `fresh{reset}`，按第 7.5 节；纪元与下限按谱系。
 
 **经既有所有者修改的文件**：`src/contracts/session.ts`、`src/contexts/session/domain/state.ts`、`tests/unit/session-state.test.ts`（G004）；`src/infrastructure/session/sqlite-store.ts`、`tests/integration/session-store.test.ts`、`tests/fixtures/session-store-peer.mjs`（G008）；`src/contexts/session/application/runtime.ts`、`tests/integration/session-runtime.test.ts`（G028）；另有几份测试因持久格式变化同步改了建会话或建绑定的地方（v12 → v13、补 `relay`）：`tests/integration/session-io.test.ts`（G059）、`tests/integration/snapshot-cache.test.ts` 与 `tests/performance/session-store-commit.test.ts`（G075）、`tests/integration/relay-p0.test.ts`（G067）。MVP 渲染模块 `escape.ts`、`packet.ts`（G070）只把语言、包的种类与等级的类型改成从契约导入，行为不变。`plan/` 下的用例状态仍是 planned（设计检查只允许 planned 与 deferred、证据必须为 null），实际结果写在验证记录。G066-C10 保持 planned：C006 的 JSON Schema（`contracts/context.schema.json`）还没有建立。
+
+### G068（阶段一）：送达状态机、核对计划与恢复（2026-11-09）
+
+范围按简报的阶段一：只有纯领域函数、恢复、参考模型与测试，不接运行时。`src/contexts/session/domain/relay/delivery.ts` 是第 7.2 节状态 × 事件全表的全函数 `step(relay, event)`、第 7.3 节 planReturn 的核对部分 `planReturnVerify`，以及几条结算规则；`recover.ts` 是 Store 构造选项 `recoverRelay` 的实现；`tests/fixtures/relay-harness-peer.mjs` 是原生历史的参考模型。`state.ts`、`sqlite-store.ts`、`runtime.ts`、`session-application.ts` 都没有改，`recoverRelay` 也没有接进生产组合根。证据见[验证记录](../verification/relay-g068-2026-11-09.md)。
+
+**接口的形状**：
+- `step` 对每个（状态，事件）都给出结果：`applied`（新状态，可能不变，加上要在同一事务里写的送达行变更）、`replaced`（l 与 Claude 的合成清空：旧绑定按原样冻结，新绑定的状态另给）或 `refused`。表里标“—”的格与前提不满足的事件一律 `refused` 并写明原因，不静默放过：`not_applicable`（不发生的格）、`RELAY_CHOICE_REQUIRED{delivery_unconfirmed}`（自动重发已用尽或 `lateDelivery`）、`verify_first`（suspect 先核对）、`invalid`（数据或上限不对）。每次返回的状态都过一遍 v13 解析器（含字节上限），每条送达行变更都按 `DELIVERY_TRANSITIONS` 校验，变更带上它的起点，调用方可以和送达表的现值对照。
+- 送达行的插入只给由状态机决定的字段（Run、包、`attachOverride`、`resendOf`）；位置、同意 seq、输入 HMAC、脱敏上下文与送达时的压缩游标由协调器在同一事务里补齐。
+- 结论的 seq 与时间随事件传入，领域里不读时钟。
+- 另外导出几条阶段二要用的纯规则：`settledOutcome`（E3 与 not_recorded 的判定）、`commandTurnEvent`（命令效果 = 声明效果 ∧ 实际执行）、`owed`（need）、`pendingResend`（下一条是自动重发还是 409）、`mayReuseKept`（suspect / pending 不复用保留进程）、`retreatedPrior`（用户选“补发完整交接单”后的 prior）、`chainAfter`。
+
+**表外的两个事件**：第 7.2 节的行里引用了两个不在 14 列里的转换，这里各给一个事件。其一是 D6 的 `unknown_turn_continued`：pending 时把 `pending.prior` 与包存进 `suspect.carried`；它是 `unknown_turn` 唯一的来源，契约 R4 的表外说明已写明这一点。其二是第 9 节“需要用户选择”里的“补发完整交接单”：按事件 a 处理，带 `retreat`，先把水位退到 max(本纪元第一份包 fromSeq − 1, epochFloor)。`legacy` 来自迁移 m，单元测试用 G066 的 d1 夹具核对。
+
+**比终稿更严的地方**（取最保守的读法，都写成了无效样例或属性）：
+- **suspect 上的事件 a 必须带 `retreat`**，否则拒绝为 `verify_first`。终稿只写“只在核对后或用户选择后”：核对一旦有结论，状态就不再是 suspect，所以 suspect 上的 a 只剩用户选择这一种来源。不带退回就组包，g 时会把一个未经核对的水位变成 synced，也就是 RT2-07 说的“洗白”。代价是 `suspect{legacy}` 且 need≠∅ 时没有标记可核对，第 9 节也没有为它列 409 的 cause；协调器在这里会拿到 `verify_first`（见“需裁定”）。
+- **D6 作用在已经 suspect 的绑定上时不变**，保留原来的 cause，不按“cause 取最新”。否则不带包的未知回合核对到“条目在”时，会把一个陈旧的水位当成 synced。
+- **交接单造成的水位不低于清空下限**：g，以及 k 里的 present 与 D6 present，都取 max(range.throughSeq, epochFloor)。这一条是属性测试发现的：清空后用户点“附上”，附上的包可能只含下限之前的事实，水位于是落到下限之下，`assertSessionTransition` 会拒绝它。取下限之后，这个水位什么都不多声称（need 本来就从 max(水位, 下限) 之后算起）。j 的 native 水位按同一规则取。
+- **clear_unconfirmed 的“回到清空前的状态”**：有标记仍在时，按 suspect 的标记规则恢复。没有可核对的标记、且回放显示历史不空时，只恢复空水位或 native 水位；其他水位继续 suspect，并给出 `verify_required`。原因是 suspect 状态不记清空之前的 cause：清空之前若已因回退而 suspect，原样恢复会把回退吞掉。
+
+**终稿没写、由本实现定的地方**：
+- **链**：`chainAfter(prior, body)` = sha256(prior.chain 的十六进制串 ‖ body.sha256 的十六进制串)，按 ASCII 直接拼接；没有水位时从 `EMPTY_CHAIN`（sha256("")）起算。
+- **suspect 的 k**：“部分在 → 退到最后一个仍在的标记”取最新的一个 present，与原文一致。所有标记都只回答 outside_window 或 unavailable 时，不得出任何结论，状态保持 suspect，`note.choice = verify_required`。都不在时退到的水位记作 `{throughSeq: max(fromSeq − 1, epochFloor), chain: EMPTY_CHAIN, lastPacketId: null, evidence: E2, basis: evidence}`；它小于 0 时转为 fresh，basis 有下限时取 user_cleared，纪元 > 1 时取 reset，否则取 new。
+- **D6 的 k**：carried=null 时按标记找不到回合自己的条目，所以 k 事件另带 `turnEntry`，由 Driver 回答该回合的用户条目是否在它的位置之后；这需要阶段二给不带包的回合也记下核对位置，或者用 Codex 那样的客户端 ID。结果为 compacted 时，carried≠null 的按“不在”回到 prior 并置 reanchor，carried=null 的按“在”处理并置 reanchor。终稿没有写 compacted 这一格。
+- **e，以及 k 确认的清空**：同时把 `consentKey` 清空，因为它是“本纪元首次送达时的厂商键”；`originIncluded` 置为 false。
+- **pending 的 k 与迟到写入**：计划里带上被这份包取代的前几份（`resendOf` 链上尚未 recorded 的）；核对查到它们时把送达行改记 recorded(E2)，绑定不动。
+- **pending 仍未知时**：每次核对都写一次 unknown→unknown，用来细化原因（同值写，VF1-12）。
+- **recoverRelay**：结论的 seq 取 `state.lastSeq + 1`，因为 recoverSession 只追加一条 `session.recovered`。`RecoverRelay` 没有时钟，`decidedAt` 取该 Run 自己记下的最后一个时刻，作为“owner 结束时刻”的下界。只处理 in_flight 的行；已 recorded 的行不动。E1 已提交而绑定仍是 pending 的组合按设计不会出现（E1 在同一事务里写两者），万一出现也修不了，因为恢复手里没有包正文的 sha256。
+
+**需要主负责人裁定的点**：
+1. `suspect{legacy}` 且 need≠∅、没有可核对的标记时，用哪个 409 cause。建议 `verify_required`（三个选项照旧），或者把 legacy 也算进 marker_absent 的选项。
+2. 重发的包 P′ 被判 not_recorded（h）时，按 RT2-07 原文回到 prior。这样会丢掉“被取代的 P 仍然未知”这一事实，下一份包又从 autoResends=0 开始。另一种写法是回到 pending P，但这需要 P 的 range，可以从送达行的 `resendOf` 查到，状态里没有。
+3. VF1-15 建议恢复时遇到 `backend.input = recorded`（K12，已结算但 `run.ended` 没提交）记 E3。终稿第 9 节 S15 没有采纳，本实现按 S15 记 `unknown{owner_ended}`。
+4. D6 carried=null 且“不在”时按原文不变：每条内容输入都会先撞上 verify_required，直到用户选择。另一种读法是这时也转为 synced{mark}。
+5. 上面“比终稿更严”的四条是否写回第 7.2 节与契约 R4。契约 R4 已加一段实现说明，指向这里。
+
+**与计划和简报的出入**：
+- `plan/tasks.json` 的验收写“4 × 13 格”，终稿第 7.2 节的属性写“4 种状态 × 14 种事件”，本实现按 14 种（g、h、i 分开）。
+- 崩溃注入的 K 表在 RT2 第 2 节，不在终稿第 16 节。
+- C10 的“配置承接读 input≠not_recorded 的最后一个已派发 Run”属于 `state.ts` 的 `carriedNativeConfiguration`（G004）。现在的实现不看 input；C10 这次只证实合成清空后模型能承接，没有改它。
+- `plan/slices.json` 的 relay 切片还没有列 `delivery.ts`、`recover.ts`，所以本工作树上 `pnpm check:design` 失败，只报这两行；在临时副本里把这两个文件补进 `allowed_files` 后检查通过。计划文件按简报不由本任务改。
+
+**给阶段二的接缝建议**（结算处调用什么、哪些事件由谁在哪里产生）：
+- **finalize**（open 之后、`run.authorized` 之前）：on_next_open 的 Driver 先调 `mayReuseKept`，为 false 就不复用保留进程。open 之后 `planReturnVerify(moment: "open")` → `Driver.verifyDelivered` → `step({kind: "verified"})`，它的结果与 `relay.verified` 一起并入 `run.context_prepared` 的事务；准备失败时并入 `run.ended`。随后按 `owed` 与请求选择：need=∅ 用 `plain`；附包用 `carry`，pending 时带 `resend`（由 `pendingResend` 判自动还是 409），suspect 时带 `retreat`；用户选“只发这条消息”用 `alone`。`carry` 的状态与送达行插入、交接单行、`run.relay` 都写进 `run.context_prepared` 与 `run.authorized` 的同一事务。
+- **E1**（`relay.input_recorded`）：`step({kind: "carry_settled", outcome: recorded E1, row: "in_flight"})`，与 `run.first_output` 或本回合下一次既有提交同事务；结算时该行已是 recorded，再调一次是 no-op。
+- **`run.ended`**：携带包的回合用 `settledOutcome(...)` 加 `carry_settled`；b 回合用 `plain_settled`；命令回合用 `commandTurnEvent(declared, commandOutcome(...), {cleared: BackendResult.native.cleared, seq, cursor})`，Claude 的合成清空用 `cleared{replaced: true}`，新绑定继承 `observed`；after_turn 的 Driver 再调 `planReturnVerify(moment: "settled")` 加 k。这些都与 `run.ended` 同一事务。
+- **受理**（admit）：k 的 `note.choice`、`step` 的 `RELAY_CHOICE_REQUIRED` 与 `verify_first` 分别对应第 9 节的三种 cause。`verify_first` 在受理前核对不了时报 `verify_required`。
+- **D6**：Hub 确认进程组已结束（P16）之后，在把绑定改回 ready 的那次提交里调 `unknown_turn_continued`。
+- **输入数据**：`planReturnVerify` 的 `BindingDelivery` 由送达行与交接单清单（range、body.sha256、reanchor、target.nativeEpoch）拼成，并带上记录它的那次提交写下的水位（`run.ended.binding` 的 sync 后值，或 `relay.input_recorded` 同事务的绑定）。`owed` 的事实列表来自 `relay_digests` 的索引（seq、executedOn），被恢复终结的 Run 取 `session.recovered` 的 seq。
+- **组合根**：生产的 `new SqliteSessionStore(root, { recoverRelay })` 留给阶段二接入。

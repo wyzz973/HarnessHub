@@ -395,6 +395,11 @@ v12 只有 `throughRunId` 一个字段，它继续表示原生位置，推进规
 - 事件 m（迁移）不是从某个状态出发的转换，而是为每个绑定给出初始的 `relay`，规则见存储契约 R4；属性测试枚举“4 种状态 × 表中全部 14 种事件”（a、b、n、c、d、e、e′、f、g、h、i、j、k、l），m 单独在迁移的属性测试里覆盖。
 - “—”表示该事件不会在该状态下发生（例如 pending 下不发生 b）。
 - `SuspectCause` 共 6 种（R3.1）。need=∅ 时只有 legacy、marker_absent 两种放行；rewind、unknown_command、clear_unconfirmed、unknown_turn 在存在外来事实（F≠∅）时必须先核对，没有外来事实的单 Harness 对话不核对也不阻挡（第 19 节 O12）。表中进入 suspect 的事件产生 rewind、unknown_command（f）、clear_unconfirmed（e′）、marker_absent（k）、unknown_turn（R10 的 D6 路径）与 legacy（迁移）——每个取值都有进入转换；原先的 verify_unavailable 与 vendor_changed 没有进入转换，已从类型删除（写入阶段处置）。
+- 实现说明（G068 阶段一，`src/contexts/session/domain/relay/delivery.ts` 的 `step` 与 `planReturnVerify`，`recover.ts` 的 `recoverRelay`；取舍见 [ADR-055 实施补记](../decisions/0055-relay-and-context-scheduling.md#g068阶段一送达状态机核对计划与恢复2026-11-09)）：
+  - 每一格都有结果，“—”与前提不满足的事件返回带原因的拒绝。
+  - D6 与“补发完整交接单”分别是事件 `unknown_turn_continued` 与带 `retreat` 的 a。
+  - 有四处比上表更严：suspect 上的 a 只在用户选了“补发完整交接单”（`retreat`）之后发生；D6 作用于已 suspect 的绑定时不改它的 cause；交接单造成的水位不低于 `epochFloor`；clear_unconfirmed 在没有标记可核对时，只恢复空水位或 native 水位。
+  - 在接入运行时之前，上表仍是规范，实现与它的差异以实施补记为准。
 
 属性（J1 M3，写成属性测试，以假 Harness 的真实原生历史为参考模型，RT1-M3）：任意证据序列下 `mark.throughSeq` 不超过实际送达或亲历；同一纪元内只在 suspect 回退时变小且不低于 `epochFloor`（确认的清空进入新纪元，INV-30）；recorded 之后 need 与已送达部分无交集；外来事实为空的纪元里、以及 `attach:"none"` 的回合里 `dispatched === input`；fresh 上任意命令序列之后 need 不变（VF1-04）；旧包 present 不推进 pending 包（VF1-01）；任意 reset/clear 序列后，新绑定的 need 覆盖其原生会话缺少的全部回合且不含 `epochFloor` 之前的回合（RT2-01、VF1-07）；收过包后 `/clear` 再发 20 条，`dispatched === input`（VF1-03）；枚举 4 种状态 × 14 种事件，没有未定义的组合，且每个 `SuspectCause` 取值都由某个转换产生（VF1-02）。送达结论存独立表，不写进已终结的 Run（`state.ts:441`【事实】）。
 
