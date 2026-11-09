@@ -181,6 +181,14 @@ function epochBase(relay: BindingRelayState, firstFromSeq: number | null): Deliv
   const seq = Math.max(firstFromSeq === null ? -1 : firstFromSeq - 1, relay.epochFloor);
   return seq < 0 ? null : { throughSeq: seq, chain: EMPTY_CHAIN, lastPacketId: null, evidence: "E2", basis: "evidence" };
 }
+/**
+ * The mark a recorded packet makes (§7.2 g): through its range, chained on its prior's mark, with the evidence that
+ * recorded it. A packet the user attached once after a clear may cover only facts at or below the floor; its mark is then
+ * the floor, which claims nothing more (need starts above max(mark, epochFloor)) and keeps every mark at or above the floor.
+ */
+function packetMark(relay: BindingRelayState, prior: SyncPrior, range: SourceRange, packetId: RelayPacketId, bodySha256: Fingerprint, evidence: EvidenceClass): DeliveredMark {
+  return { throughSeq: Math.max(range.throughSeq, relay.epochFloor, 0), chain: chainAfter(markOf(prior)?.chain ?? null, bodySha256), lastPacketId: packetId, evidence, basis: "evidence" };
+}
 /** A prior saved inside `carried`, which carries nothing itself (§4). */
 function bare(prior: SyncPrior): SyncPrior { return prior.kind === "suspect" && prior.carried !== null ? { ...prior, carried: null } : prior; }
 function suspect(mark: DeliveredMark | null, cause: SuspectCause, floorCandidate: number | null): SyncPrior { return { kind: "suspect", mark, cause, floorCandidate, carried: null }; }
@@ -516,7 +524,7 @@ function carrySettled(relay: BindingRelayState, event: Extract<RelayEvent, { kin
   const change: DeliveryChange = { kind: "outcome", runId: event.runId, from: event.row, outcome: event.outcome };
   switch (event.outcome.kind) {
     case "recorded": {
-      const mark: DeliveredMark = { throughSeq: sync.range.throughSeq, chain: chainAfter(markOf(sync.prior)?.chain ?? null, event.bodySha256), lastPacketId: sync.packetId, evidence: event.outcome.evidence, basis: "evidence" };
+      const mark = packetMark(relay, sync.prior, sync.range, sync.packetId, event.bodySha256, event.outcome.evidence);
       return applied(relay, { ...withSync(relay, { kind: "synced", mark }), packetsInEpoch: relay.packetsInEpoch + 1, reanchor: relay.reanchor && !event.reanchored }, [change]);
     }
     // RT2-07: a packet known not to be there goes back to the state before it; its facts are owed again.
@@ -546,7 +554,7 @@ function verified(relay: BindingRelayState, event: Extract<RelayEvent, { kind: "
       const late = plan.earlier.flatMap(marker => resultOf(marker) === "present" ? recordedRow(marker) : []);
       const result = resultOf(plan.marker);
       if (result === "present") {
-        const mark: DeliveredMark = { throughSeq: sync.range.throughSeq, chain: chainAfter(markOf(sync.prior)?.chain ?? null, plan.marker.bodySha256), lastPacketId: sync.packetId, evidence: "E2", basis: "evidence" };
+        const mark = packetMark(relay, sync.prior, sync.range, sync.packetId, plan.marker.bodySha256, "E2");
         return applied(relay, { ...withSync(base, { kind: "synced", mark }), packetsInEpoch: relay.packetsInEpoch + 1, reanchor: base.reanchor && !plan.marker.reanchor },
           [...late, ...recordedRow(plan.marker)], { verified: "recorded" });
       }
@@ -566,7 +574,7 @@ function verified(relay: BindingRelayState, event: Extract<RelayEvent, { kind: "
         if (sync.carried !== null && plan.marker !== null) {
           const carried = sync.carried, result = resultOf(plan.marker);
           if (result === "present") {
-            const mark: DeliveredMark = { throughSeq: carried.range.throughSeq, chain: chainAfter(markOf(carried.prior)?.chain ?? null, plan.marker.bodySha256), lastPacketId: carried.packetId, evidence: "E2", basis: "evidence" };
+            const mark = packetMark(relay, carried.prior, carried.range, carried.packetId, plan.marker.bodySha256, "E2");
             return applied(relay, { ...withSync(base, { kind: "synced", mark }), packetsInEpoch: relay.packetsInEpoch + 1, reanchor: base.reanchor && !plan.marker.reanchor },
               recordedRow(plan.marker), { verified: "recorded" });
           }
@@ -591,7 +599,11 @@ function verified(relay: BindingRelayState, event: Extract<RelayEvent, { kind: "
         }
         // The clear did not happen: the binding is what it was before it, as far as the markers still show (§7.4).
         if (results.includes("present")) return markers(relay, base, sync.mark, plan.markers, results, plan.firstFromSeq, moved, "restored");
-        if (plan.markers.length === 0 && event.result.historyEmpty === false) return applied(relay, withSync(base, standing(base, sync.mark)), [], { verified: "restored" });
+        // No packet of this epoch to look for, and the history is not empty: no clear happened. The mark comes back only where it
+        // claims nothing a check could have missed (none, or a native one); a mark of another basis may stand on a suspicion
+        // from before the clear that the suspect state no longer names.
+        if (plan.markers.length === 0 && event.result.historyEmpty === false && (sync.mark === null || sync.mark.basis === "native"))
+          return applied(relay, withSync(base, standing(base, sync.mark)), [], { verified: "restored" });
         return applied(relay, base, [], { verified: "undecided", choice: "verify_required" });
       }
       if (plan.kind !== "suspect") return refuse({ code: "invalid", why: "a suspect binding is checked against its epoch's recorded packets" });
