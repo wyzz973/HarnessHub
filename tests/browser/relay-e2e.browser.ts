@@ -60,9 +60,12 @@ async function launch(): Promise<Fixture> {
     `child.on("exit", code => chain.then(() => process.exit(code ?? 0)));`, ""].join("\n"), { mode: 0o700 });
   const manifest = join(root, "catalog.json");
   await writeFile(manifest, JSON.stringify({ version: 2, definitions: [], overrides: { "claude-acp-npm": { executable: claudeShim }, "codex-native": { executable: codexShim } } }));
-  const gateway = await startWebServer({ root: join(root, "data"), configuration: await prepareConfiguration({ workspace, manifestPath: manifest, pathOnly: true }), port: 0, providerManagement: false,
-    // The Harnesses are manifest entries, which only a development Gateway reads (ADR-044); their home is the private one.
-    application: (data, publish) => application(data, publish, { installations: "any", nativeEnvironment: { home: root, values: { HOME: root, PATH: dirname(process.execPath) + ":/usr/bin:/bin" } }, workspaceLockRoot: join(root, "locks") }) });
+  let gateway: WebServer;
+  try {
+    gateway = await startWebServer({ root: join(root, "data"), configuration: await prepareConfiguration({ workspace, manifestPath: manifest, pathOnly: true }), port: 0, providerManagement: false,
+      // The Harnesses are manifest entries, which only a development Gateway reads (ADR-044); their home is the private one.
+      application: (data, publish) => application(data, publish, { installations: "any", nativeEnvironment: { home: root, values: { HOME: root, PATH: dirname(process.execPath) + ":/usr/bin:/bin" } }, workspaceLockRoot: join(root, "locks") }) });
+  } catch (error) { await rm(root, { recursive: true, force: true }); throw error; }
   return { root, gateway, mode: async value => { await writeFile(modeFile, JSON.stringify(value)); }, close: async () => { try { await gateway.close(); } finally { await rm(root, { recursive: true, force: true }); } } };
 }
 
