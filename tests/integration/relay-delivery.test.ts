@@ -858,7 +858,8 @@ function isPacketText(text: string): boolean { return readRelayPrompt(text).pack
 
 test("G068-C03/C05 (Runtime) a clear: confirmed by the Driver (native.cleared) starts a new epoch and the next inputs go as typed, attach full once brings the history back; unconfirmed, the next open's replay decides; a check that cannot decide is settled by the user's ［确认已清空］", async t => {
   const w = await runtimeWorld(t);
-  const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "on_next_open", successProvesRecorded: true }), bravo: declared() });
+  // Probed: a clear the Driver concludes from the native side's own signal counts only for a Driver whose probes proved it (G072 review I2).
+  const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "on_next_open", successProvesRecorded: true, probed: true }), bravo: declared() });
   fake.script = (_harnessId, input) => input === "/clear" && confirming ? { native: { cleared: true, replaced: null } } : {};
   let confirming = true;
   const app = w.runtime(fake), session = await app.create(w.configuration, { harnessId: "bravo" }, "create"), id = session.id;
@@ -1317,7 +1318,7 @@ test("G068 fix R4 (Runtime) Claude's synthesized clear without a session opened 
 test("G068 fix R5 (Runtime) a suspect binding whose retreated prior owes nothing: the user's complete packet (attach full, or resend) goes as typed, the binding stands on that prior, and the next input goes too", async t => {
   for (const choice of [{ attach: "full" as const }, { resend: true as const }]) {
     const w = await runtimeWorld(t);
-    const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "none", successProvesRecorded: true }) });
+    const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "none", successProvesRecorded: true, probed: true }) });
     fake.enableAdmission();
     fake.script = (_harnessId, input) => input === "/clear" ? { native: { cleared: true, replaced: null } } : {};
     const app = w.runtime(fake), session = await app.create(w.configuration, { harnessId: "alpha" }, "create"), id = session.id;
@@ -1430,7 +1431,7 @@ test("G068 fix R9a/R9b (Runtime) a carried packet the table sends back to pendin
 /** A single Harness alpha (no check, success proves recorded) whose `content clears…` and `/clear` its Driver reports cleared. */
 async function singleClearing(t: TestContext) {
   const w = await runtimeWorld(t);
-  const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "none", successProvesRecorded: true }) });
+  const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "none", successProvesRecorded: true, probed: true }) });
   fake.script = (_harnessId, input) => input.startsWith("content clears") ? { native: { cleared: true, replaced: null } }
     : input === "/clear" ? { native: { cleared: true, replaced: null }, result: { status: "failed", reason: "fake", error: { code: "NATIVE_FAILED", message: "after the clear" } } } : {};
   const app = w.runtime(fake), session = await app.create(w.configuration, { harnessId: "alpha" }, "create"), id = session.id;

@@ -2323,6 +2323,7 @@
 - tests/fixtures/relay-fakes.ts
 - tests/fixtures/relay-settings.ts
 - tests/integration/relay-permissive.test.ts
+- tests/integration/relay-review-fixes.test.ts
 
 验收：
 - 派发路径 −1 提交、ABBA 成对差 p95 ≤15 ms、复用 ≤ 观测 p95 + 15 ms、事件 ≤3 + 同意镜像
@@ -2331,7 +2332,7 @@
 - A→B→A 夹具
 - CS-01–CS-04
 
-场景：G072-C01, G072-C02, G072-C03, G072-C04, G072-C05, G072-C06, G072-C07, G072-C08, G072-P01, G072-S01, G072-C09, G072-C10, G072-C11。
+场景：G072-C01, G072-C02, G072-C03, G072-C04, G072-C05, G072-C06, G072-C07, G072-C08, G072-P01, G072-S01, G072-C09, G072-C10, G072-C11, G072-C12。
 
 禁止范围：不做渲染与脱敏算法、Driver 内部、界面；现有文件只经其既有所有者修改，不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 

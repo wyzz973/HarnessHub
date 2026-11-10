@@ -72,6 +72,8 @@ interface ActiveExecution {
 /** What G072's checks at the open found for a carrying Turn (Runtime.openGates). */
 interface OpenGate {
   readonly vendor: VendorKey;
+  /** The Driver was asked for its vendor and could not tell: the packet is recorded for the honest unknown key, and the epoch's consent key is left as it was. */
+  readonly unseen: boolean;
   readonly window: ResolvedWindow;
   readonly budget: RelayBudget;
   readonly clamped: readonly ("window" | "input_limit")[];
@@ -128,6 +130,8 @@ interface TurnRelay {
   readonly endEvents: EventDraft[];
   /** The consent a carrying Turn's dispatch rests on, read again before dispatch (§10.4: withdrawn → not dispatched). */
   consent: { readonly vendor: VendorKey; readonly layer: EndpointLayer | null; readonly target: HarnessSelection;
+    /** The other keys the Harness control is known by when its vendor could not be read (openGates knownKeys): a withdrawal of any of them stops the dispatch too. */
+    readonly also: readonly VendorKey[];
     /** The log seq of the consent this request itself gave and the dispatch rests on; null when it rests on another record. */
     readonly requestSeq: number | null } | null;
 }
@@ -224,6 +228,19 @@ function notReached(): RelayError {
 /** A commit's failure that fails only what asked for it (INV-35: a relay error; a bound), never the Runtime. */
 function expectedFailure(error: unknown): boolean {
   return error instanceof RelayError || error instanceof SessionError && ["CONTEXT_TOO_LARGE", "OUTPUT_LIMIT", "QUEUE_FULL", "COMMAND_LIMIT", "RUN_LIMIT", "SESSION_LIMIT", "EVENT_LIMIT"].includes(error.code);
+}
+/**
+ * What a Driver's report of a clear (BackendResult.native) is to the relay (ADR-055 §7.4, B7; G072 review I2). A clear that replaced
+ * the native session is the Hub's own Driver giving the session up (Claude Code's synthesized clear): certain once the Turn's native
+ * state is confirmed, and not looked at otherwise. A clear the Driver concluded from the native side's own signal (`replaced` null:
+ * Hermes' fixed receipt, OpenClaw's lifecycleRevision) is certain only for a Driver whose probes proved that signal; an unprobed
+ * Driver's report is a clear the relay cannot confirm (e′), which the next open's check or the user's [确认已清空] settles — a floor
+ * and an epoch are raised by evidence, not by a report nothing has verified. Null when nothing was reported or it cannot count.
+ */
+export function clearReportOf(cleared: { readonly replaced: unknown } | undefined, probed: boolean, confirmed: boolean): { readonly replaced: boolean; readonly confirmed: boolean } | null {
+  if (cleared === undefined) return null;
+  if (cleared.replaced === null) return { replaced: false, confirmed: probed };
+  return confirmed ? { replaced: true, confirmed: true } : null;
 }
 /** Why a switch fails when the Turn it waited for ended without confirmed settlement (ADR-055 §9, RT2-04). */
 const STRANDED_SWITCH = { code: "SWITCH_SOURCE_UNKNOWN", message: "the Turn this switch waited for ended without confirmed settlement; the switch was not applied" } as const;
@@ -2033,7 +2050,8 @@ export class SessionRuntime {
             }
             // The epoch's vendor key (§4 consentKey): the one the first packet went to, or the one the user consented to anew
             // (or the preference let the history go to, with the change recorded).
-            if (gate !== null) relay = { ...relay, consentKey: gate.vendor };
+            // A vendor nobody saw (the read told nothing) is not the epoch's key: it neither sets one nor replaces the one the epoch has.
+            if (gate !== null && !gate.unseen) relay = { ...relay, consentKey: gate.vendor };
             if (gate !== null && gate.changedFrom !== null) events.push(event("relay.vendor_changed", { harnessId: h, controlId: c, from: gate.changedFrom, to: gate.vendor, observedInRun: run.id, allowed: true }));
           }
         } else if (relay !== null && decision?.kind === "plain" && decision.owedNothing === true) {
@@ -2050,8 +2068,10 @@ export class SessionRuntime {
           // The user's complete packet had nothing to carry: the binding stands on the prior it moved back to (R5), recorded as a check would be.
           if (decision.retreat !== undefined) events.push(retreatEvent(relay, run.id));
         }
-        // The vendor the open session runs on, cached for the next admission (§10.4, F10).
-        if (relay !== null && execution.relay.observed !== undefined) relay = { ...relay, vendorObserved: execution.relay.observed };
+        // The vendor the open session runs on, cached for the next admission (§10.4, F10). A read that told nothing (null: it failed,
+        // came late or the Driver could not tell) leaves what the binding last saw where it was (G072 review I1): the withdrawal
+        // checks of the next admission and open stand on it.
+        if (relay !== null && execution.relay.observed != null) relay = { ...relay, vendorObserved: execution.relay.observed };
         if (titled !== null) events.push(event("relay.title_set", { runId: target, harnessId: h, controlId: c, result: titled }));
         const executedOn = bound !== undefined && relay !== null ? { harnessId: h, controlId: c, nativeEpoch: relay.nativeEpoch } : null;
         const sources = packet?.runs ?? [];
@@ -2137,6 +2157,8 @@ export class SessionRuntime {
         const withdrawn = asked.requestSeq !== null ? view.records.some(record => record.vendor === asked.vendor && record.logSeq > asked.requestSeq! && record.decision === "revoked"
           && (record.scope.kind === "global" || record.scope.sessionId === view.session)) : consentStanding(asked.vendor, asked.layer, view).kind === "missing";
         if (withdrawn) throw consentRequired("revoked", asked.vendor, asked.target);
+        // Nor does a vendor the open could not read go on once one of the keys it is known by was withdrawn (G072 review I1).
+        for (const key of asked.also) { const standing = consentStanding(key, null, view); if (standing.kind === "missing" && standing.revoked) throw consentRequired("revoked", key, asked.target); }
       }
       this.commit(id, current => ({ next: updatedRun(current, target, phase(current, target, "dispatchedAt", this.options.now().getTime())), events: [event("run.dispatched", { runId: target })] }));
       execution.dispatched = true;
@@ -2175,7 +2197,7 @@ export class SessionRuntime {
         const latest = this.owned(execution), relayNow = latest.nativeBindings?.find(row => row.harnessId === h && row.controlId === c && row.status !== "archived")?.relay;
         if (relayNow !== undefined) {
           const provisional = settleTurn({ relay: relayNow, runId: target, openCheck: null, turn: this.settledTurn(execution, latest), dispatched: true, status: backend.status, input: evidence ?? undefined, noop,
-            cleared: nativeCleared === undefined ? null : { replaced: nativeCleared.replaced !== null }, declaration, settledCheck: null, unknownTurn: false, endedSeq: latest.lastSeq + 1, time: now() });
+            cleared: clearReportOf(nativeCleared, declaration.probed, true), declaration, settledCheck: null, unknownTurn: false, endedSeq: latest.lastSeq + 1, time: now() });
           if (!provisional.replaced) {
             // Only a packet still pending or a binding in doubt is looked for; a synced or fresh one reads no row (F12, R8).
             const pendingOrSuspect = provisional.relay.sync.kind === "pending" || provisional.relay.sync.kind === "suspect";
@@ -2258,12 +2280,12 @@ export class SessionRuntime {
         const confirmed = checkpointStored && checkpoint !== null && (keep.keep || closed?.closed === true && closed.protocolFailure === null) && (!execution.dispatched || nativeConfirmed && backend !== null);
         const continued = unsafe && checkpointStored && execution.dispatched && backend === null && cleanup?.closed === true && cleanup.protocolFailure === null && this.fatal === null && !this.unknownOwnership(problem)
           && execution.relay.declaration.execution === "process" && execution.relay.declaration.probed;
-        // A clear the Driver confirmed counts (e) unless it replaced a native session whose end is not confirmed.
-        const clearConfirmed = nativeCleared !== undefined && (confirmed || nativeCleared.replaced === null);
+        // What the Driver reported of a clear, as the relay may take it (clearReportOf; ADR-055 B7, G072 review I2).
+        const clearReport = clearReportOf(nativeCleared, execution.relay.declaration.probed, confirmed);
         // A command's effect counts only when it ran; it goes into the Turn's end event with what the driver knew of the input. A
         // clear its Driver confirmed is a clear, as the binding records it, whatever the Turn's status (R9e).
         const input: InputOutcome = !execution.dispatched ? "not_recorded" : evidence ?? "unknown";
-        const effect = command === null ? null : clearConfirmed ? "clear" as const : commandEffect(command.effect, commandOutcome(execution.dispatched, backend?.status ?? null, input, noop));
+        const effect = command === null ? null : clearReport !== null ? "clear" as const : commandEffect(command.effect, commandOutcome(execution.dispatched, backend?.status ?? null, input, noop));
         // Claude's synthesized clear (§7.5): the session the next Turn continues, or none (null) when it opens a new one (R4).
         const replaced = confirmed && nativeCleared?.replaced != null ? nativeCleared.replaced : null;
         const replacement = replaced !== null && typeof replaced.checkpoint === "string" && replaced.checkpoint !== "" && Buffer.byteLength(replaced.checkpoint) <= 8192 && !/[\0\r\n]/u.test(replaced.checkpoint)
@@ -2282,7 +2304,7 @@ export class SessionRuntime {
           // check and D6, on the binding's relay state as committed now; the delivery rows decided with it.
           const own = next.nativeBindings?.find(row => row.harnessId === pinned.harnessId && row.controlId === pinned.controlId && row.status !== "archived");
           const settled = withRelay && checkpointStored && own?.relay !== undefined ? settleTurn({ relay: own.relay, runId: target, openCheck: execution.relay.openCheck, turn: this.settledTurn(execution, next),
-            dispatched: execution.dispatched, status: backend?.status ?? null, input: evidence ?? undefined, noop, cleared: clearConfirmed ? { replaced: replaced !== null } : null,
+            dispatched: execution.dispatched, status: backend?.status ?? null, input: evidence ?? undefined, noop, cleared: clearReport,
             declaration: execution.relay.declaration, settledCheck: execution.relay.settledCheck, unknownTurn: continued, endedSeq: current.lastSeq + 1, time: endedAt }) : null;
           // G072: the binding keeps what the Turn taught the next admission — the vendor its Driver observed (a Turn refused for its
           // consent included) and the context its usage reported (the window's first source, the return's warmth); a replaced
@@ -2540,8 +2562,15 @@ export class SessionRuntime {
     const sources = sourceVendors(state, decision.need.facts, decision.need.origin, selection => this.declarationOf(selection) ?? (selection.harnessId === h && selection.controlId === c ? declaration.capabilities : undefined));
     const cross = crossHarness && crossVendor(vendor, sources), exposed = cross && !this.isolated(state.configuration.workspace);
     if (exposed && settings.dataRootInWorkspace === "block") throw dataRootInWorkspace(target);
+    const view = this.consentView(state, prefs, this.withRecordedConsent(state, run, choices));
+    // A Driver that was asked and could not tell (a read that failed, came late or answered nothing) has not changed its vendor: it is
+    // unseen, not another. Its packet is recorded for the honest unknown:<harness>, no change of vendor is made of it, and every key the
+    // relay knew it by — the epoch's consent key, what the binding last saw, what its lineage last saw — still holds the user's
+    // withdrawal: the history does not go to a vendor the user withdrew because a read failed (INV-33, G072 review I1).
+    const unseen = execution.relay.observed === null, also = unseen ? this.knownKeys(state, target, bound, relay, declaration, vendor) : [];
+    if (cross) for (const key of also) { const standing = consentStanding(key, null, view); if (standing.kind === "missing" && standing.revoked) throw consentRequired("revoked", key, target); }
     let outcome: ReturnType<typeof consentGate>;
-    try { outcome = consentGate({ relay, vendor, layer, cross, consent: this.consentView(state, prefs, this.withRecordedConsent(state, run, choices)), target, predicted }); }
+    try { outcome = consentGate({ relay: unseen ? { ...relay, consentKey: null } : relay, vendor, layer, cross, consent: view, target, predicted }); }
     catch (error) {
       if (error instanceof RelayError && error.reason === "vendor_changed")
         execution.relay.endEvents.push(event("relay.vendor_changed", { harnessId: h, controlId: c, from: relay.consentKey ?? predicted, to: vendor, observedInRun: run.id }));
@@ -2551,7 +2580,7 @@ export class SessionRuntime {
     // The consent a request gave was recorded at its acceptance: the delivery row names that record.
     const recorded = standing?.kind === "given" && standing.via === "request" ? this.relayLog()?.relayConsents?.().filter(record => record.commandId === consentCommandOf(state.id, run.commandId)).at(-1)?.logSeq ?? null : null;
     const consentLogSeq = standing?.kind === "given" ? standing.logSeq ?? recorded : null;
-    execution.relay.consent = cross ? { vendor, layer, target, requestSeq: standing?.kind === "given" && standing.via === "request" ? recorded : null } : null;
+    execution.relay.consent = cross ? { vendor, layer, target, also, requestSeq: standing?.kind === "given" && standing.via === "request" ? recorded : null } : null;
     const window = resolveWindow({ relay, report: declaration.capabilities?.window ?? "none", stored: this.relayWindowOf(h, c, observed?.modelKey ?? ""), vendor, fixedPrefix: declaration.capabilities?.fixedPrefix ?? null, now: this.options.now().getTime() });
     const limit = declaration.capabilities?.placement.maxInput ?? null, size = declaration.capabilities?.placement.measure(run.input, kinds) ?? [...run.input].length;
     const cap = hardCap(window, estimateTokens(run.input), limit, size);
@@ -2562,9 +2591,20 @@ export class SessionRuntime {
     // A return (§7.3): the binding stood on a mark of its own native session; what the request chose of it, and the pref's default.
     const returning = markOf(relay.sync) === null ? null : returnChoice({ warm: cacheWarm(relay.cache, declaration.capabilities?.cacheTtl ?? "unknown", observed?.authKind ?? null, this.options.now().getTime()), sideBySide: false },
       settings.returnPreference, choices.native).choice;
-    return { vendor, window, budget, clamped, consentLogSeq, returning, layer,
+    return { vendor, unseen, window, budget, clamped, consentLogSeq, returning, layer,
       trace: standing?.kind === "given" && standing.via === "default" ? { vendor, authKind: observed?.authKind ?? null } : null, changedFrom: outcome.changedFrom,
       consentVia: standing === null ? null : standing.kind === "given" ? standing.via : "exempt", exposed };
+  }
+  /**
+   * The vendor keys a Harness control is known by besides the one a failed read leaves (unknown:<harness>): the epoch's consent
+   * key and the vendors its binding and its lineage last saw it run on. A withdrawal of any of them stands for a read that told nothing.
+   */
+  private knownKeys(state: SessionSnapshot, target: HarnessSelection, bound: NativeSessionBinding | undefined, relay: BindingRelayState, declaration: RelayDeclaration, except: VendorKey): readonly VendorKey[] {
+    const keys = new Set<VendorKey>();
+    for (const observation of [bound?.relay?.vendorObserved, relay.vendorObserved, this.lineageVendor(state, target)]) if (observation != null) keys.add(vendorKeyOf(declaration.capabilities, target.harnessId, observation));
+    if (relay.consentKey !== null) keys.add(relay.consentKey);
+    keys.delete(except);
+    return [...keys];
   }
   /**
    * The open's check committed on its own (a transaction of its own, as the main one would have): its `relay.verified`, the
@@ -2616,7 +2656,7 @@ export class SessionRuntime {
    * the context its usage reported (windows.ts cacheAfter; a Turn that reported no usage leaves it as it was).
    */
   private relayAfterTurn(relay: BindingRelayState, execution: ActiveExecution, run: PublicRun): BindingRelayState {
-    let next = execution.relay.observed === undefined ? relay : { ...relay, vendorObserved: execution.relay.observed };
+    let next = execution.relay.observed == null ? relay : { ...relay, vendorObserved: execution.relay.observed };
     if (run.usage !== undefined && execution.dispatched) next = { ...next, cache: cacheAfter(next.cache, run.usage, run.timing?.dispatchedAt ?? null) };
     return next;
   }

@@ -56,8 +56,11 @@ export interface Script {
   readonly result?: "recorded" | "unrecorded" | "not_recorded" | "lost" | "hold";
   /** false: the native side does not write the prompt (a lost Turn that never arrived). */
   readonly insert?: boolean;
-  /** true: the Driver confirms the clear (`native.cleared`), as Hermes' fixed receipt does. */
-  readonly cleared?: boolean;
+  /**
+   * true: the Driver confirms the clear (`native.cleared`) from the native side's own signal, as Hermes' fixed receipt does
+   * (`replaced` null). `{ replaced }`: the Driver gave the native session up and opens a new one, as Claude Code's synthesized clear does.
+   */
+  readonly cleared?: boolean | { readonly replaced: { readonly checkpoint: string | null } };
 }
 /**
  * In-process fake Harnesses. `declarations[harnessId]` is the Driver's static declaration (null: declares none); `observed` what
@@ -69,6 +72,8 @@ export class Fakes implements SessionBindingFactory {
   readonly titles: { readonly harnessId: string; readonly title: string }[] = [];
   readonly opens: { readonly harnessId: string; readonly checkpoint: string | undefined }[] = [];
   readonly observed: Record<string, VendorObservation | null> = {};
+  /** Harnesses whose vendor read fails (their Driver's relayVendor rejects), as a read that failed or came late does: the Hub learns nothing at the open. */
+  readonly observeFails = new Set<string>();
   readonly usage: Record<string, NativeUsage> = {};
   /** The user entries each native session holds. */
   readonly history = new Map<string, string[]>();
@@ -103,7 +108,7 @@ export class Fakes implements SessionBindingFactory {
       open: async (_cwd, _model, _options, checkpoint) => { this.opens.push({ harnessId, checkpoint }); session = checkpoint ?? "native-" + harnessId + "-" + ++this.opened; return nativeConversationId(session); },
       checkpoint: async () => session, healthy: () => true,
       models: async () => ({ models: [{ id: "model-a", name: "A" }], defaultModel: "model-a", authentication: "ready", canSelect: true, commands: COMMANDS }),
-      ...(harnessId in this.observed ? { relayVendor: async () => this.observed[harnessId] ?? null } : {}),
+      ...(harnessId in this.observed ? { relayVendor: async () => { if (this.observeFails.has(harnessId)) throw new SessionError("CONTROL_FAILED", "the vendor read failed"); return this.observed[harnessId] ?? null; } } : {}),
       setTitle: async (_id, title) => { this.titles.push({ harnessId, title }); },
       enablePermissions: () => { this.onAuthorized?.(harnessId); },
       deliveryPosition: async (): Promise<DeliveryPosition> => ({ kind: "seq", before: entries().length }),
@@ -120,7 +125,7 @@ export class Fakes implements SessionBindingFactory {
         if (name === "undo") rows.pop(); else if (name === "clear") rows.length = 0; else if (plan.insert !== false) rows.push(singleText(turn));
         output({ type: "text", text: "reply from " + harnessId });
         if (this.usage[harnessId] !== undefined) output({ type: "usage", usage: this.usage[harnessId]! });
-        const extra: Partial<BackendResult> = plan.cleared === true ? { native: { cleared: true, replaced: null } } : {};
+        const extra: Partial<BackendResult> = plan.cleared === true ? { native: { cleared: true, replaced: null } } : plan.cleared ? { native: { cleared: true, replaced: plan.cleared.replaced } } : {};
         let result: Promise<BackendResult>;
         switch (plan.result ?? "recorded") {
           case "recorded": result = Promise.resolve({ status: "completed", reason: "fake", input: "recorded", ...extra }); break;

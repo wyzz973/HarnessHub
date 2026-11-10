@@ -192,16 +192,26 @@ test("G068 fix R7 settleTurn: g/h/i by evidence alone, j for b, n changes nothin
   // Commands: the declared effect only when it ran; a clear the Driver confirmed is e, one it could not is e′.
   assert.equal(settle(SYNCED, { kind: "command", declared: "clear" }).relay.sync.kind, "suspect");
   assert.equal(settle(SYNCED, { kind: "command", declared: "clear" }, { input: "not_recorded" }).relay.sync.kind, "synced", "it never ran");
-  const confirmed = settle(SYNCED, { kind: "command", declared: "clear" }, { status: "failed", cleared: { replaced: false } });
+  const confirmed = settle(SYNCED, { kind: "command", declared: "clear" }, { status: "failed", cleared: { replaced: false, confirmed: true } });
   assert.deepEqual(confirmed.relay.sync, { kind: "fresh", basis: "user_cleared" }); assert.equal(confirmed.relay.epochFloor, 30);
-  const replaced = settle(SYNCED, { kind: "command", declared: "clear" }, { cleared: { replaced: true }, input: "not_recorded" });
+  const replaced = settle(SYNCED, { kind: "command", declared: "clear" }, { cleared: { replaced: true, confirmed: true }, input: "not_recorded" });
   assert.equal(replaced.replaced, true); assert.equal(replaced.relay.nativeEpoch, 2); assert.deepEqual(replaced.binding, { before: "synced", after: "fresh", nativeEpoch: 2, epochFloor: 30, packetsInEpoch: 0, replaced: true });
   // R10d: a content Turn the Driver reports cleared, a carrying one included (on pending: the packet's delivery is no longer pursued).
-  const plainCleared = settle(SYNCED, { kind: "plain", contextThroughSeq: 18, agentOutput: true, recorded: false }, { cleared: { replaced: false } });
+  const plainCleared = settle(SYNCED, { kind: "plain", contextThroughSeq: 18, agentOutput: true, recorded: false }, { cleared: { replaced: false, confirmed: true } });
   assert.deepEqual(plainCleared.relay.sync, { kind: "fresh", basis: "user_cleared" }); assert.equal(plainCleared.relay.nativeEpoch, 2);
-  const carryCleared = settle(onP2.relay, carried(), { cleared: { replaced: false } });
+  const carryCleared = settle(onP2.relay, carried(), { cleared: { replaced: false, confirmed: true } });
   assert.deepEqual(carryCleared.relay.sync, { kind: "fresh", basis: "user_cleared" }); assert.equal(carryCleared.delivery?.outcome, "unknown", "its row is decided first");
-  assert.equal(settle(onP2.relay, carried(), { cleared: { replaced: false }, dispatched: false }).relay.sync.kind, "synced", "nothing dispatched clears nothing");
+  assert.equal(settle(onP2.relay, carried(), { cleared: { replaced: false, confirmed: true }, dispatched: false }).relay.sync.kind, "synced", "nothing dispatched clears nothing");
+  // G072 review I2: a clear the Driver reported that the relay may not confirm (an unprobed Driver's own reading of the native side) is
+  // e′ — for a command whatever it was declared to do, for a content Turn too — and raises neither the floor nor the epoch.
+  for (const declared of ["clear", "keep", "none", "unknown"] as const) {
+    const doubted = settle(SYNCED, { kind: "command", declared }, { cleared: { replaced: false, confirmed: false } });
+    assert.ok(doubted.relay.sync.kind === "suspect" && doubted.relay.sync.cause === "clear_unconfirmed" && doubted.relay.sync.floorCandidate === 30, "declared " + declared);
+    assert.equal(doubted.relay.nativeEpoch, SYNCED.nativeEpoch); assert.equal(doubted.relay.epochFloor, SYNCED.epochFloor);
+  }
+  const doubtedContent = settle(SYNCED, { kind: "plain", contextThroughSeq: 18, agentOutput: true, recorded: false }, { cleared: { replaced: false, confirmed: false } });
+  assert.ok(doubtedContent.relay.sync.kind === "suspect" && doubtedContent.relay.sync.cause === "clear_unconfirmed"); assert.equal(doubtedContent.relay.epochFloor, SYNCED.epochFloor);
+  assert.equal(settle(SYNCED, { kind: "command", declared: "clear" }, { cleared: { replaced: false, confirmed: false }, dispatched: false, input: "not_recorded" }).relay.sync.kind, "synced", "a clear on a Turn never dispatched is nothing");
   // A check that was not committed before the Turn failed, and after_turn's, go with the end; their seqs follow run.ended's.
   const rows: readonly BindingDelivery[] = [{ record: deliveryRecord(R3, P2, "unknown"), nativeEpoch: 1, range: RANGE2, bodySha256: SHA2, reanchor: false, mark: null }];
   const plan = planReturnVerify(unknown.relay, { verify: "after_turn", moment: "settled", deliveries: rows });

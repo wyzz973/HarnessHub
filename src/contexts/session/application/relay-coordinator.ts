@@ -1214,8 +1214,12 @@ export interface SettleInput {
   /** What the Driver knew of the input reaching the native history (BackendResult.input). */
   readonly input: "recorded" | "not_recorded" | undefined;
   readonly noop: boolean;
-  /** BackendResult.native: the Driver confirmed this Turn cleared the native history, and whether it replaced the session. */
-  readonly cleared: { readonly replaced: boolean } | null;
+  /**
+   * BackendResult.native: the Driver reported this Turn cleared the native history, whether it replaced the session, and whether the
+   * relay may take the report as a confirmed clear (`confirmed`): not when an unprobed Driver concluded it from the native side's
+   * own signal (clearReportOf) — then it is a clear the relay cannot confirm (e′), settled by the next open's check or the user.
+   */
+  readonly cleared: { readonly replaced: boolean; readonly confirmed: boolean } | null;
   readonly declaration: RelayDeclaration;
   /** after_turn's check at the settlement, planned on the provisional settlement (null when none ran). */
   readonly settledCheck: Check | null;
@@ -1289,16 +1293,19 @@ export function settleTurn(input: SettleInput): Settled {
       break;
     }
     case "command": {
-      // A clear the Driver confirmed is e whatever else is known (commandTurnEvent reads `cleared` first).
+      // A clear the Driver confirmed is e whatever else is known (commandTurnEvent reads `cleared` first). One it reported that the
+      // relay may not confirm is e′ whatever the command was declared to do: the Driver says the history may be gone.
       const outcomeOf = commandOutcome(input.dispatched, input.status, !input.dispatched ? "not_recorded" : input.input ?? "unknown", input.noop);
-      const event: RelayEvent = commandTurnEvent(turn.declared, outcomeOf, { cleared: input.cleared !== null, seq: input.endedSeq, cursor: null });
+      const read: RelayEvent = commandTurnEvent(turn.declared, outcomeOf, { cleared: input.cleared?.confirmed === true, seq: input.endedSeq, cursor: null });
+      const event: RelayEvent = input.cleared !== null && !input.cleared.confirmed && input.dispatched && read.kind !== "clear_unconfirmed" ? { kind: "clear_unconfirmed", seq: input.endedSeq } : read;
       apply(event.kind === "cleared" && input.cleared?.replaced === true ? step(relay, { ...event, replaced: true }) : step(relay, event));
       break;
     }
   }
-  // A clear the Driver confirmed is e whatever the Turn was (A18, R10d): on a pending packet its delivery is no longer pursued.
+  // A clear the Driver confirmed is e whatever the Turn was (A18, R10d): on a pending packet its delivery is no longer pursued. One
+  // it reported that the relay may not confirm is e′ (the binding is in doubt about its history, nothing is raised).
   if (turn.kind !== "command" && input.cleared !== null && input.dispatched && !replaced)
-    apply(step(relay, { kind: "cleared", seq: input.endedSeq, ...(input.cleared.replaced ? { replaced: true } : {}) }));
+    apply(step(relay, input.cleared.confirmed ? { kind: "cleared", seq: input.endedSeq, ...(input.cleared.replaced ? { replaced: true } : {}) } : { kind: "clear_unconfirmed", seq: input.endedSeq }));
   if (input.settledCheck !== null && !replaced) runCheck(input.settledCheck);
   if (input.unknownTurn && !replaced) apply(step(relay, { kind: "unknown_turn_continued" }));
   return { relay, replaced, deliveries, events, delivery, shown,

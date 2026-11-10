@@ -4717,7 +4717,8 @@
         "tests/performance/relay-dispatch.test.ts",
         "tests/fixtures/relay-fakes.ts",
         "tests/fixtures/relay-settings.ts",
-        "tests/integration/relay-permissive.test.ts"
+        "tests/integration/relay-permissive.test.ts",
+        "tests/integration/relay-review-fixes.test.ts"
       ],
       "requirements": [
         "R07",
@@ -4760,7 +4761,8 @@
         "G072-S01",
         "G072-C09",
         "G072-C10",
-        "G072-C11"
+        "G072-C11",
+        "G072-C12"
       ],
       "active_slice": "relay"
     },

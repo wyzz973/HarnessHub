@@ -13315,6 +13315,24 @@
       "expected": "1440、390、320 像素宽度下各页面没有横向滚动，浅色与深色都可读；侧栏在窄屏改为抽屉；减少动态效果下所有页面仍可完整操作；截图按验证记录中的设计语言 2.0 验收清单逐项对照",
       "status": "planned",
       "evidence": null
+    },
+    {
+      "id": "G072-C12",
+      "task": "G072",
+      "requirements": [
+        "R07",
+        "R09"
+      ],
+      "invariants": [
+        "INV-14",
+        "INV-33"
+      ],
+      "layer": "integration",
+      "scenario": "独立审查（对 072075f）的重要项在正式 Runtime 与真实存储上逐条复现：I1 厂商读取失败时撤回仍有效、不覆盖缓存、不记厂商变化；I2 未探针 Driver 靠原生信号自述的清空不算确认（e′），探针后与合成清空照常确认；I6 D6 续接要求 probed、未探针不写常量压缩游标",
+      "expected": "撤回的厂商拿不到历史（策略单发 consent_revoked，显式附上被拒）；未确认的清空不抬下限与纪元，由核对或［确认已清空］确认；未探针的 unknown 回合不续接原会话；未探针的 Driver 不写常量游标，规则 4 不能据此确认清空",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/relay-review-fixes.test.ts"
     }
   ]
 }
