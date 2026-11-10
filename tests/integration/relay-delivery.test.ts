@@ -113,7 +113,7 @@ function seed(store: SqliteSessionStore, workspace: string, name: string, stage:
   if (stage === "dispatched") return { state, packet, two: two.id };
   // E1: relay.input_recorded with the row recorded and the binding synced, in the same transaction (§14.2).
   const at = { seq: state.lastSeq + 1, time: 25 };
-  const recorded = applied(step(carry.relay, { kind: "carry_settled", runId: two.id, packetId: packet.id, bodySha256: packet.body.sha256, reanchored: false, row: "in_flight", outcome: { kind: "recorded", evidence: "E1", decidedSeq: at.seq, decidedAt: at.time, verifiedInRun: null } }));
+  const recorded = applied(step(carry.relay, { kind: "carry_settled", runId: two.id, packetId: packet.id, bodySha256: packet.body.sha256, reanchored: false, resent: false, row: "in_flight", outcome: { kind: "recorded", evidence: "E1", decidedSeq: at.seq, decidedAt: at.time, verifiedInRun: null } }));
   tx(current => ({ ...current, nativeBindings: withRelay(current, recorded.relay), runs: current.runs.map(row => row.id === two.id ? { ...row, timing: { ...row.timing!, recordedAt: 25 } } : row) }),
     "relay.input_recorded", { deliveries: writes(recorded.deliveries, 7) });
   return { state, packet, two: two.id };
@@ -194,7 +194,7 @@ test("G068 a Turn that ended unknown is checked at the next open: recorded (E2) 
   // Run two ends unknown (Hermes unknown_execution): i — the row unknown, the binding still pending, both in run.ended's transaction.
   let state = store.get(id);
   const relay0 = state.nativeBindings![0]!.relay!, at = { seq: state.lastSeq + 1, time: 30 };
-  const unknown = applied(step(relay0, { kind: "carry_settled", runId: two, packetId: packet.id, bodySha256: packet.body.sha256, reanchored: false, row: "in_flight", outcome: { kind: "unknown", reason: "no_evidence", decidedSeq: at.seq, decidedAt: at.time } }));
+  const unknown = applied(step(relay0, { kind: "carry_settled", runId: two, packetId: packet.id, bodySha256: packet.body.sha256, reanchored: false, resent: false, row: "in_flight", outcome: { kind: "unknown", reason: "no_evidence", decidedSeq: at.seq, decidedAt: at.time } }));
   state = store.transact(id, state.version, current => ({ next: { ...current, activeRunId: null, nativeBindings: withRelay(current, unknown.relay, { status: "ready", throughRunId: two }),
     runs: current.runs.map(row => row.id === two ? { ...row, status: "failed" as const, backend: { status: "failed" as const, reason: "unknown_execution" }, cleanup: clean, timing: { ...row.timing!, endedAt: 30 } } : row),
     messages: [...current.messages.map(message => message.runId === two ? { ...message, status: "failed" as const } : message), { id: messageId("message-hermes-two-reply"), runId: two, role: "assistant" as const, text: "", seq: current.lastSeq + 1, status: "failed" as const }] },
@@ -352,7 +352,7 @@ class Hub {
       : fate === "refused" ? { kind: "not_recorded" as const, reason: "rejected_before_insert" as const, decidedSeq: at.seq, decidedAt: at.time }
       : { kind: "unknown" as const, reason: fate === "late" ? "late_delivery" as const : "no_evidence" as const, decidedSeq: at.seq, decidedAt: at.time };
     const supersededRow = resend === null ? undefined : this.rows.find(row => row.record.runId === resend!.of);
-    this.apply(step(this.relay, { kind: "carry_settled", runId: id, packetId, bodySha256: body, reanchored: false, row: "in_flight", outcome: decided,
+    this.apply(step(this.relay, { kind: "carry_settled", runId: id, packetId, bodySha256: body, reanchored: false, resent: resend !== null, row: "in_flight", outcome: decided,
       ...(supersededRow === undefined ? {} : { superseded: { packetId: supersededRow.record.packetId, range: supersededRow.range } }) }));
     this.facts.push({ runId: id, seq: at.seq, executedOn: { ...this.self, nativeEpoch: this.relay.nativeEpoch } });
     this.lastUnknown = decided.kind === "unknown" ? { runId: id, position } : null;
@@ -457,7 +457,7 @@ test("G068-C04 (domain part) a compaction cursor that moves after a delivery set
   // A packet carrying the anchor clears the flag when it is recorded.
   hub.other("bravo");
   const pending = applied(step(hub.relay, { kind: "carry", runId: runId("run-anchor"), packet: { id: packetIdOf("anchor"), range: { fromSeq: hub.seq, throughSeq: hub.seq, fromRun: 0, throughRun: 0 } }, attachOverride: false, lateDelivery: false, resend: null })).relay;
-  const settled = applied(step(pending, { kind: "carry_settled", runId: runId("run-anchor"), packetId: packetIdOf("anchor"), bodySha256: sha("anchor"), reanchored: true, row: "in_flight", outcome: { kind: "recorded", evidence: "E3", decidedSeq: hub.seq + 1, decidedAt: 1, verifiedInRun: null } }));
+  const settled = applied(step(pending, { kind: "carry_settled", runId: runId("run-anchor"), packetId: packetIdOf("anchor"), bodySha256: sha("anchor"), reanchored: true, resent: false, row: "in_flight", outcome: { kind: "recorded", evidence: "E3", decidedSeq: hub.seq + 1, decidedAt: 1, verifiedInRun: null } }));
   assert.equal(settled.relay.reanchor, false);
   // A fresh binding (no packet in its epoch) never sets it.
   const fresh = initialBindingRelay([], "fresh", "fresh-acp", "new");
@@ -1484,7 +1484,7 @@ test("G068 fix R9g (Store) a resend never dispatched when its owner ended goes b
   let state = store.get(id);
   // Run two ends unknown (i): its row unknown, the binding still pending on its packet.
   const relay0 = state.nativeBindings![0]!.relay!;
-  const unknown = applied(step(relay0, { kind: "carry_settled", runId: two, packetId: packet.id, bodySha256: packet.body.sha256, reanchored: false, row: "in_flight",
+  const unknown = applied(step(relay0, { kind: "carry_settled", runId: two, packetId: packet.id, bodySha256: packet.body.sha256, reanchored: false, resent: false, row: "in_flight",
     outcome: { kind: "unknown", reason: "no_evidence", decidedSeq: state.lastSeq + 1, decidedAt: 30 } }));
   state = store.transact(id, state.version, current => ({ next: { ...current, activeRunId: null, nativeBindings: withRelay(current, unknown.relay, { status: "ready", throughRunId: two }),
     runs: current.runs.map(row => row.id === two ? { ...row, status: "completed" as const, backend: { status: "completed" as const, reason: "fake" }, cleanup: clean, timing: { ...row.timing!, endedAt: 30 } } : row),

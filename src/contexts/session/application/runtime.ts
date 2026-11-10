@@ -27,8 +27,8 @@ const RELAY_READ_MS = 2000;
 import {
   CONSENT_CATEGORIES, RelayLedger, UnkeptRelayKeys, attentionOf, crossHarnessFacts, acceptedChoices, admitCarrying, bindingDeliveries, carriesWithReading, checkStep, checkWorthAnEvent, checkedResult, clearNotConfirmed, consentCommandOf, consentGate, consentRequired, consentStanding, continuityOf, crossVendor,
   dataRootInWorkspace, decideTurn, decisionRecord, defaultAllowAppend, deliveryRow, explicitChoice, heldSinceIn, holdsNothing, inputLimit, markIn, nativeExactAt, needRuns, outcomeWrites, packetManifest, parseRelayChoices, policyAloneOf, probeGate, rangeOf, recordedStep, relayAdmission, relayDeclaration,
-  relaySettings, renderView, retreatEvent, runRelayOf, runRelayRequest, settleTurn, sourceVendors, unavailableResult, vendorKeyOf, verifiedEvent, verifyRequestOf,
-  type AdmitGates, type AdmitInput, type CarriedTurn, type Carrying, type Check, type ConsentStanding, type ConsentView, type DecisionCause, type RelayChoices, type RelayDeclaration, type RelaySettings, type SettledTurn, type TurnDecision,
+  relaySettings, renderView, retreatEvent, runRelayOf, runRelayRequest, settleTurn, sourceVendors, undeclaredReading, unavailableResult, vendorKeyOf, verifiedEvent, verifyRequestOf,
+  type AdmitGates, type AdmitInput, type AttentionInput, type CarriedTurn, type Carrying, type Check, type ConsentStanding, type ConsentView, type DecisionCause, type RelayChoices, type RelayDeclaration, type RelaySettings, type SettledTurn, type TurnDecision,
 } from "./relay-coordinator.js";
 import { MAX_COMMANDS, MAX_OUTPUT_BYTES, MAX_PLAN_ENTRIES, MAX_QUEUE, MAX_RUNS, MAX_RUN_ACTIVITIES, MAX_RUN_NOTICES, MAX_RUN_TOOLS, assertInput, carriedNativeConfiguration, parseConfiguration, parseNativeConfiguration, replayCommand, terminal, utf8Bytes } from "../domain/state.js";
 
@@ -700,32 +700,40 @@ export class SessionRuntime {
   read(id: SessionId): SessionSnapshot { return this.load(id); }
   /**
    * What each of the conversation's native bindings asks the user to look at now (permissive-defaults §2.6; the read behind the
-   * `attention` of `GET …/relay`): from its relay state, the Turns it still owes and what its latest Turn was sent alone for,
-   * and whether its Driver's relay mechanisms are probed. Read-only; a binding that needs nothing has `attention` null. Never a
-   * block — the next input goes whatever this says.
+   * `attention` of `GET …/relay`): worked out from the state the conversation is in at this moment — the binding's relay state, the
+   * Turns and starting history it owes, the consent of its vendor in the installation's log, the window it is known to have — and
+   * not from what its latest Turn happened to decide, so a banner stays while its cause does and goes when it ends, whatever
+   * Turns came between (G072 review I5). Also whether its Driver's relay mechanisms are probed. Read-only; a binding that needs
+   * nothing has `attention` null. Never a block — the next input goes whatever this says.
    */
   relayAttention(id: SessionId): readonly { readonly harnessId: string; readonly controlId: string; readonly probed: boolean | null; readonly attention: RelayAttention | null }[] {
-    const state = this.load(id), originHistory = (state.origin?.history.length ?? 0) > 0;
+    const state = this.load(id), originHistory = (state.origin?.history.length ?? 0) > 0, prefs = this.relayPrefs(), settings = relaySettings(prefs), now = this.options.now().getTime();
+    const originTurns = Math.max(1, (state.origin?.history ?? []).filter(row => row.role === "user").length);
     return (state.nativeBindings ?? []).filter(binding => binding.status !== "archived" && binding.relay !== undefined).map(binding => {
-      const relay = binding.relay!, h = binding.harnessId, c = binding.controlId;
-      const owedRuns = owed(relay, h, c, this.relayFacts(state, { harnessId: h, controlId: c, nativeEpoch: relay.nativeEpoch }), { originHistory, heldSince: heldSinceIn(state, h, c, relay) }).facts.length;
-      const last = state.runs.findLast(run => run.relay?.executedOn?.harnessId === h && run.relay.executedOn.controlId === c);
-      // Whether its probes proved the Driver's relay mechanisms (the card says "未经真机验证" otherwise): false for a Driver that declares none, null when the factory cannot tell.
-      const declared = this.declarationOf({ harnessId: h, controlId: c }), probed = declared === undefined ? null : declared !== null && declared.probed;
-      return { harnessId: h, controlId: c, probed, attention: attentionOf({ relay, recoveryFailed: state.relayRecoveryFailed !== undefined, latest: last === undefined ? null : this.decisionOfRun(state, last), owedRuns }) };
+      const relay = binding.relay!, h = binding.harnessId, c = binding.controlId, target: HarnessSelection = { harnessId: h, controlId: c };
+      const need = owed(relay, h, c, this.relayFacts(state, { harnessId: h, controlId: c, nativeEpoch: relay.nativeEpoch }), { originHistory, heldSince: heldSinceIn(state, h, c, relay) });
+      const owedRuns = need.facts.length + (need.origin ? originTurns : 0);
+      // Whether its Driver's relay mechanisms were proved by a real Harness (the card says "未经真机验证" otherwise): false for a Driver that declares none, null when the factory cannot tell.
+      const declared = this.declarationOf(target), probed = declared === undefined ? null : declared !== null && declared.probed;
+      let consent: AttentionInput["consent"] = null, fits = true;
+      // Only what is owed from another Harness meets the destination's consent and window (the same reading as the open's gates).
+      if (owedRuns > 0 && crossHarnessFacts(state, need.facts, need.origin, target)) {
+        const observed = relay.vendorObserved ?? this.lineageVendor(state, target), vendor = vendorKeyOf(declared, h, observed), layer = observed?.endpoint?.layer ?? null;
+        const sources = sourceVendors(state, need.facts, need.origin, selection => this.declarationOf(selection));
+        if (crossVendor(vendor, sources) && settings.crossVendor !== "ask") {
+          const view = this.consentView(state, prefs, {});
+          try { consentGate({ relay, vendor, layer, cross: true, consent: view, target, predicted: null }); }
+          catch (error) {
+            if (!(error instanceof RelayError) || error.code !== "RELAY_CONSENT_REQUIRED") throw error;
+            const records = view.records.filter(record => record.vendor === vendor && (record.scope.kind === "global" || record.scope.sessionId === state.id));
+            consent = { cause: error.reason === "revoked" ? "revoked" : "goal_only", episode: vendor + "@" + Math.max(0, ...records.map(record => record.logSeq)) };
+          }
+        }
+        const window = resolveWindow({ relay, report: declared?.window ?? "none", stored: this.relayWindowOf(h, c, observed?.modelKey ?? ""), vendor, fixedPrefix: declared?.fixedPrefix ?? null, now });
+        fits = fitsMinPacket(hardCap(window, 0, declared?.placement.maxInput ?? null, 0), packetFamily(vendor, observed?.modelKey ?? ""));
+      }
+      return { harnessId: h, controlId: c, probed, attention: attentionOf({ relay, recoveryFailed: state.relayRecoveryFailed !== undefined, owedRuns, consent, fits }) };
     });
-  }
-  /** The decision a Run's `run.context_prepared` recorded (relayDecisionOf); null when it recorded none. Reads the events after its input's. */
-  private decisionOfRun(state: SessionSnapshot, run: PublicRun): RelayDecision | null {
-    const message = state.messages.find(row => row.id === run.userMessageId);
-    if (message === undefined) return null;
-    for (let after = message.seq - 1, scanned = 0; scanned < 400;) {
-      const page = this.store.events(state.id, after, 50);
-      if (!page.length) return null;
-      for (const item of page) if (item.type === "run.context_prepared" && item.data.runId === run.id) return relayDecisionOf(item.data);
-      scanned += page.length; after = page.at(-1)!.seq;
-    }
-    return null;
   }
   /**
    * Whether the data directory (or the relay key) is within reach of this conversation's workspace (ADR-055 INV-36): what the
@@ -1873,6 +1881,9 @@ export class SessionRuntime {
       // (its effect, and the commands the driver itself offers there).
       let classified = reading;
       if (classified.kind !== "content" && control.models) { const catalog = await control.models(); this.continue(execution); classified = this.classify(control, run.input, catalog, kinds); }
+      // A Driver that declares nothing and reads nothing of its own cannot say what its native side takes for a command: a slash
+      // first is one of unknown effect, whatever its catalog lists or whether it has one (G072 review I3).
+      if (classified.kind !== "command" && control.relayCapabilities === undefined && control.classify === undefined && run.selection.provider === undefined) classified = undeclaredReading(run.input) ?? classified;
       // C7 (G072): admission read the input by the target's static declaration without a catalog; a definite command it asked
       // nothing for that now reads as content (or a command whose arguments the native side submits), or content it checked
       // that now reads as a command, fails before dispatch (classification_changed). A word only the catalog settles was asked
@@ -1933,7 +1944,7 @@ export class SessionRuntime {
       // when the user chose so, or with a packet of what is owed (a pending packet resent, a suspect one only on the user's choice).
       let decision: TurnDecision | null = null, working: BindingRelayState | null = checked, clearFloor: number | null = null;
       // G072: what the open's gates found (vendor key, consent, window and budget), the secrets the packet was redacted with, and the native title.
-      let gate: OpenGate | null = null, packetSecrets: readonly string[] = [], titled: "set" | "refused" | "unavailable" | null = null;
+      let gate: OpenGate | null = null, packetSecrets: readonly string[] = [];
       // Sends the Turn as typed instead of with its packet, for a reason that concerns the packet only (set where the decision is made).
       let aloneInstead: ((found: NonNullable<ReturnType<typeof policyAloneOf>>) => void) | null = null;
       let turnText: TurnText = run.input, packet: { readonly manifest: RelayPacket; readonly body: string; readonly record: PublicContext["relay"]; readonly runs: readonly PublicRun["id"][]; readonly origin: boolean } | null = null;
@@ -1973,7 +1984,7 @@ export class SessionRuntime {
         // What the preparation of the packet found that concerns the packet only: the input goes as typed (permissive-defaults §0).
         const asAlone = (found: NonNullable<ReturnType<typeof policyAloneOf>>): void => {
           decision = { kind: "alone", by: "policy", cause: found.cause, ...(found.reason === undefined ? {} : { reason: found.reason }) };
-          gate = null; packet = null; turnText = run.input; titled = null; packetSecrets = []; execution.relay.consent = null;
+          gate = null; packet = null; turnText = run.input; packetSecrets = []; execution.relay.consent = null;
         };
         aloneInstead = asAlone;
         if (decision.kind === "carry") {
@@ -1998,8 +2009,6 @@ export class SessionRuntime {
             // the Driver's own refusal (INPUT_LIMIT_REFUSED) staying the backstop.
             const limit = declaration.capabilities?.placement.maxInput ?? null;
             if (gate !== null && limit !== null && declaration.capabilities!.placement.measure(turnText, kinds) > limit.limit) throw inputLimit("input_limit", run.selection);
-            // A native session this handoff opened is named before its first prompt (§8.1, VF3-12): its Driver's declaration says so.
-            if (openedNew && declaration.capabilities?.title === "set" && control.setTitle !== undefined) titled = await this.titleFor(control, native, prepared, execution.binding?.secrets ?? []);
           } catch (error) {
             const found = policyAloneOf(error, settingsNow(), requested);
             if (found === null) throw error;
@@ -2072,7 +2081,6 @@ export class SessionRuntime {
         // came late or the Driver could not tell) leaves what the binding last saw where it was (G072 review I1): the withdrawal
         // checks of the next admission and open stand on it.
         if (relay !== null && execution.relay.observed != null) relay = { ...relay, vendorObserved: execution.relay.observed };
-        if (titled !== null) events.push(event("relay.title_set", { runId: target, harnessId: h, controlId: c, result: titled }));
         const executedOn = bound !== undefined && relay !== null ? { harnessId: h, controlId: c, nativeEpoch: relay.nativeEpoch } : null;
         const sources = packet?.runs ?? [];
         let next = updatedRun(latest, target, { contextThroughSeq: factsSeq, sourceRunIds: sources, relay: runRelayOf(packet?.manifest ?? null, continuityOf(decision, packet?.record ?? null, sources.length), executedOn) });
@@ -2128,6 +2136,13 @@ export class SessionRuntime {
         else execution.relay.turn = { kind: "plain", contextThroughSeq: factsSeq, agentOutput: false, recorded: false };
       }
       this.continue(execution);
+      // A native session this handoff opened is named before its first prompt (ADR-055 §8.1, VF3-12; its Driver's declaration says so):
+      // once the Turn that carries the packet is committed — a Turn that goes alone after all names nothing — and before it is
+      // dispatched, with a name that hides what the packet hid, the known secrets of every Harness of the conversation (G072 review I7).
+      if (decision?.kind === "carry" && packet !== null && openedNew && declaration.capabilities?.title === "set" && control.setTitle !== undefined) {
+        const result = await this.titleFor(control, native, prepared, packetSecrets); this.continue(execution);
+        this.commit(id, current => ({ next: current, events: [event("relay.title_set", { runId: target, harnessId: h, controlId: c, result })] }));
+      }
       control.enablePermissions?.();
       // Attachments are checked against the opened agent/model and copied before dispatch, so a refusal fails this input cleanly.
       let files: readonly ControlAttachment[] = [];

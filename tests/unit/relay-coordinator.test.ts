@@ -181,7 +181,7 @@ test("G068 fix R7 settleTurn: g/h/i by evidence alone, j for b, n changes nothin
   const back = settle(resent.relay, carried({ runId: R1, packetId: P1, range: RANGE1, bodySha256: SHA1, resent: true, superseded: { packetId: P2, range: RANGE2 } }), { runId: R1, input: "not_recorded" });
   assert.ok(back.relay.sync.kind === "pending" && back.relay.sync.packetId === P2 && back.relay.sync.autoResends === 1, "back to waiting for the packet it superseded");
   // E1 decided it before the end: the settlement finds it recorded and changes nothing.
-  const e1 = step(onP2.relay, { kind: "carry_settled", runId: R3, packetId: P2, bodySha256: SHA2, reanchored: false, row: "in_flight", outcome: { kind: "recorded", evidence: "E1", decidedSeq: 25, decidedAt: 250, verifiedInRun: null } });
+  const e1 = step(onP2.relay, { kind: "carry_settled", runId: R3, packetId: P2, bodySha256: SHA2, reanchored: false, resent: false, row: "in_flight", outcome: { kind: "recorded", evidence: "E1", decidedSeq: 25, decidedAt: 250, verifiedInRun: null } });
   assert.ok(e1.kind === "applied");
   const after = settle(e1.relay, carried({ recorded: true }));
   assert.deepEqual(after.relay, e1.relay); assert.deepEqual(after.deliveries, []); assert.deepEqual(after.delivery, { packetId: P2, outcome: "recorded", evidence: "E1", mark: null });
@@ -415,6 +415,14 @@ test("permissive §2.1 decideTurn: a pending packet is sent again once by itself
   // Without the Run that carried it a resend cannot name what it supersedes: alone by the policy, the user's choice fails.
   assert.deepEqual(auto(pending(0), {}, { pendingRun: null }), { kind: "alone", by: "policy", cause: "delivery_unconfirmed" });
   assert.equal(auto(pending(0), { resend: true }, { pendingRun: null }), "RELAY_CHOICE_REQUIRED{delivery_unconfirmed}");
+  // G072 review m9: a packet for newer facts still goes (it renders everything owed from the prior, the missing packet's facts with the
+  // new ones), linking no Run, automatic count or spent — the binding is not left alone for good; the strict design and the user's own resend are as before.
+  for (const sent of [0, 1] as const) {
+    const lost = auto(pending(sent), {}, { pendingRun: null, facts: NEWER });
+    assert.ok(typeof lost === "object" && lost.kind === "carry" && lost.resend?.by === "grown" && lost.resend.of === null && lost.by === "policy" && lost.cause === "delivery_unconfirmed" && lost.need.facts.map(fact => fact.seq).join() === "7,9,11", "pending(" + sent + ")");
+  }
+  assert.equal(refused(() => decide(pending(1), {}, { pendingRun: null, facts: NEWER })), "RELAY_CHOICE_REQUIRED{delivery_unconfirmed}", "strict");
+  assert.equal(auto(pending(1), { resend: true }, { pendingRun: null, facts: NEWER }), "RELAY_CHOICE_REQUIRED{delivery_unconfirmed}", "the user's resend needs the Run it supersedes");
   // The user's own: alone is theirs, by "user".
   assert.deepEqual(auto(pending(1), { attach: "none" }), { kind: "alone", by: "user" });
 });
@@ -469,7 +477,8 @@ test("permissive §2.6 decisionRecord and attention: what the Turn records of it
   assert.deepEqual(decisionRecord({ kind: "alone", by: "policy", cause: "prepare_failed", reason: "storage_quota" }), { kind: "alone", by: "policy", cause: "prepare_failed", reason: "storage_quota" });
   assert.deepEqual(relayDecisionOf({ relay: { decision: { kind: "alone", by: "policy", cause: "input_limit", reason: "min_packet" } } }), { kind: "alone", by: "policy", cause: "input_limit", reason: "min_packet" });
   assert.equal(relayDecisionOf({ relay: { decision: { kind: "nope", by: "policy" } } }), null); assert.equal(relayDecisionOf({}), null);
-  const owedTwo = { owedRuns: 2, recoveryFailed: false, latest: null };
+  // G072 review I5: attention is the state as it is now — the binding's sync state, what it owes, its vendor's consent, its window.
+  const owedTwo = { owedRuns: 2, recoveryFailed: false, consent: null, fits: true };
   assert.deepEqual(attentionOf({ ...owedTwo, relay: pending(1) }), { cause: "delivery_unconfirmed", options: ["attach_full", "new_native"], counts: { runs: 2, packets: 2 }, key: "delivery_unconfirmed:" + P2 });
   assert.equal(attentionOf({ ...owedTwo, relay: doubted("rewind") })?.cause, "verify_required");
   assert.equal(attentionOf({ ...owedTwo, relay: doubted("marker_absent") })?.cause, "marker_absent");
@@ -478,11 +487,14 @@ test("permissive §2.6 decisionRecord and attention: what the Turn records of it
   assert.equal(clear.cause, "clear_unconfirmed"); assert.deepEqual(clear.options, ["attach_full", "new_native", "clear_confirmed"]);
   assert.deepEqual(attentionOf({ ...owedTwo, relay: SYNCED, recoveryFailed: true }), { cause: "recovery_failed", options: ["new_native"], counts: { runs: 2, packets: 0 }, key: "recovery_failed:1" });
   assert.equal(attentionOf({ ...owedTwo, relay: SYNCED }), null, "a binding that needs nothing");
-  const sentAlone = (cause: NonNullable<ReturnType<typeof decisionRecord>>["cause"]) => attentionOf({ ...owedTwo, relay: SYNCED, latest: { kind: "alone", by: "policy", ...(cause === undefined ? {} : { cause }) } });
-  assert.deepEqual(sentAlone("input_limit"), { cause: "input_limit", options: [], counts: { runs: 2, packets: 0 }, key: "input_limit:1" });
-  assert.deepEqual(sentAlone("consent_revoked")?.options, ["acknowledge"]); assert.equal(sentAlone("consent_goal_only")?.cause, "consent_goal_only");
-  assert.equal(sentAlone("prepare_failed"), null, "a failed preparation is told with the Turn, it is no standing banner");
-  assert.equal(attentionOf({ ...owedTwo, owedRuns: 0, relay: SYNCED, latest: { kind: "alone", by: "policy", cause: "input_limit" } }), null, "nothing owed: nothing to say");
+  assert.deepEqual(attentionOf({ ...owedTwo, relay: SYNCED, fits: false }), { cause: "input_limit", options: [], counts: { runs: 2, packets: 0 }, key: "input_limit:1" });
+  const revoked = attentionOf({ ...owedTwo, relay: SYNCED, consent: { cause: "revoked", episode: "openai@7" } })!;
+  assert.equal(revoked.cause, "consent_revoked"); assert.deepEqual(revoked.options, ["acknowledge"]); assert.equal(revoked.key, "consent_revoked:1:openai@7");
+  assert.notEqual(attentionOf({ ...owedTwo, relay: SYNCED, consent: { cause: "revoked", episode: "openai@9" } })!.key, revoked.key, "a withdrawal made later is another episode, its banner shows again");
+  assert.equal(attentionOf({ ...owedTwo, relay: SYNCED, consent: { cause: "goal_only", episode: "openai@0" } })?.cause, "consent_goal_only");
+  assert.equal(attentionOf({ ...owedTwo, relay: SYNCED, fits: false, consent: { cause: "revoked", episode: "x@1" } })?.cause, "input_limit", "the window first: no consent makes a packet fit");
+  assert.equal(attentionOf({ ...owedTwo, owedRuns: 0, relay: SYNCED, fits: false, consent: { cause: "revoked", episode: "x@1" } }), null, "nothing owed: nothing to say");
+  assert.equal(attentionOf({ ...owedTwo, relay: pending(0), consent: { cause: "revoked", episode: "x@1" } })?.cause, "delivery_unconfirmed", "a packet sent and not confirmed is the first thing to say");
   // One episode, one key: the same pending packet keeps its key whatever the counts; a new packet is a new episode.
   assert.equal(attentionOf({ ...owedTwo, relay: pending(0) })!.key, attentionOf({ ...owedTwo, relay: pending(1) })!.key);
 });

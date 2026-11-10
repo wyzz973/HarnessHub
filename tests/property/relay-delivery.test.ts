@@ -117,7 +117,7 @@ class Simulation {
   /** Doubts raised so far (see policyRows). */
   doubts = 0;
   /** What the policy did, counted (the cases assert that every kind of decision was reached). */
-  readonly policySeen = { turns: 0, plain: 0, alone: 0, auto: 0, grown: 0, retreat: 0, first: 0, ownedNothing: 0 };
+  readonly policySeen = { turns: 0, plain: 0, alone: 0, auto: 0, grown: 0, retreat: 0, first: 0, ownedNothing: 0, grownUnlinked: 0 };
   /** Counters the cases assert on, so a case that never reaches a path is visible. */
   readonly seen = { recorded: 0, retreats: 0, oldPresent: 0, resends: 0, choices: 0, clears: 0, resets: 0, d6: 0, plain: 0, checks: 0,
     epochRises: 0, emptyHistoryClears: 0, restoredWithoutChain: 0, skipChecks: 0, nativeTurns: 0, reusedIds: 0, clearChecks: 0, carriedChecks: 0, supersededBack: 0,
@@ -508,7 +508,7 @@ class Simulation {
     this.unknownTurn = null;
   }
   /** a: a packet covering `need`, then its fate in the native history and the evidence a truthful Driver gives of it. */
-  private async carry(need: ReturnType<typeof owed>, attachOverride: boolean, resend: { readonly by: "auto" | "user" | "grown"; readonly of: RunId } | null, retreatFrom?: number | null): Promise<void> {
+  private async carry(need: ReturnType<typeof owed>, attachOverride: boolean, resend: { readonly by: "auto" | "user" | "grown"; readonly of: RunId | null } | null, retreatFrom?: number | null): Promise<void> {
     if (need.facts.length === 0) return this.alone();
     // What no user chose may repeat nothing the native session holds, beyond the one automatic resend (R1, R9c). A need reckoned
     // on a mark the user's choice of the complete packet made (evidence "choice") is that choice's still: it may repeat (R9).
@@ -523,6 +523,8 @@ class Simulation {
     const body = createHash("sha256").update(packetId).digest("hex") as Fingerprint, position = await this.position();
     const cursor = this.caps.compaction ? (await this.peer.call<Held>("held", { session: this.session })).cursor : null;
     const prepared = this.commit();
+    // The packet a resend supersedes is the binding's pending one, as the Runtime names it (its sync, not the Run's row: a row can be gone).
+    const pendingBefore = this.relay.sync.kind === "pending" ? this.relay.sync : null;
     const event: RelayEvent = { kind: "carry", runId: id, packet: { id: packetId, range }, attachOverride, lateDelivery: this.policyMode ? false : this.caps.lateDelivery, resend, ...(retreatFrom === undefined ? {} : { retreat: { firstFromSeq: retreatFrom } }) };
     const outcome = step(this.relay, event);
     if (outcome.kind === "applied") for (const change of outcome.deliveries) if (change.kind === "insert")
@@ -543,7 +545,7 @@ class Simulation {
     await this.peer.call("send", { session: this.session, runId: id, packetId, facts, insert });
     if (kind === "e1" && this.caps.live) {
       const at = this.commit();
-      await this.apply(step(this.relay, { kind: "carry_settled", runId: id, packetId, bodySha256: body, reanchored: false, row: "in_flight", outcome: { kind: "recorded", evidence: "E1", decidedSeq: at.seq, decidedAt: at.time, verifiedInRun: null } }), "E1");
+      await this.apply(step(this.relay, { kind: "carry_settled", runId: id, packetId, bodySha256: body, reanchored: false, resent: resend !== null, row: "in_flight", outcome: { kind: "recorded", evidence: "E1", decidedSeq: at.seq, decidedAt: at.time, verifiedInRun: null } }), "E1");
       this.markRow(); this.recordedNeed(packetId);
     }
     const at = this.commit();
@@ -551,19 +553,18 @@ class Simulation {
       : kind === "refused" ? { kind: "not_recorded", reason: "rejected_before_insert", decidedSeq: at.seq, decidedAt: at.time }
       : { kind: "unknown", reason: kind === "late" ? "late_delivery" : "no_evidence", decidedSeq: at.seq, decidedAt: at.time };
     const row = this.rows.find(item => item.record.runId === id)!;
-    // A resend's settlement names the packet it superseded (its resendOf row): a refused resend goes back to waiting for it.
-    const supersededRow = resend === null ? undefined : this.rows.find(item => item.record.runId === resend.of);
-    const superseded = supersededRow === undefined ? {} : { superseded: { packetId: supersededRow.record.packetId, range: supersededRow.range } };
+    // A resend's settlement names the packet it superseded (the pending one it replaced): a refused resend goes back to waiting for it.
+    const superseded = resend === null || pendingBefore === null ? {} : { superseded: { packetId: pendingBefore.packetId, range: pendingBefore.range } };
     if (!(kind === "e1" && this.caps.live)) {
-      await this.apply(step(this.relay, { kind: "carry_settled", runId: id, packetId, bodySha256: body, reanchored: false, row: row.record.outcome.kind, outcome: decided, ...superseded }), (decided.kind === "recorded" ? "g" : decided.kind === "not_recorded" ? "h" : "i") + "(" + kind + ")");
+      await this.apply(step(this.relay, { kind: "carry_settled", runId: id, packetId, bodySha256: body, reanchored: false, resent: resend !== null, row: row.record.outcome.kind, outcome: decided, ...superseded }), (decided.kind === "recorded" ? "g" : decided.kind === "not_recorded" ? "h" : "i") + "(" + kind + ")");
       if (decided.kind === "recorded") { this.markRow(); this.recordedNeed(packetId); }
       if (decided.kind === "not_recorded" && resend !== null) {
         this.seen.supersededBack++;
-        if (this.relay.sync.kind !== "pending" || this.relay.sync.packetId !== supersededRow!.record.packetId) this.fail("a refused resend did not go back to the packet it superseded");
+        if (this.relay.sync.kind !== "pending" || this.relay.sync.packetId !== pendingBefore!.packetId) this.fail("a refused resend did not go back to the packet it superseded");
       }
     } else {
       // The settlement finds E1's row recorded and the binding synced on it: nothing changes.
-      const again = step(this.relay, { kind: "carry_settled", runId: id, packetId, bodySha256: body, reanchored: false, row: "recorded", outcome: { kind: "recorded", evidence: "E3", decidedSeq: at.seq, decidedAt: at.time, verifiedInRun: null } });
+      const again = step(this.relay, { kind: "carry_settled", runId: id, packetId, bodySha256: body, reanchored: false, resent: resend !== null, row: "recorded", outcome: { kind: "recorded", evidence: "E3", decidedSeq: at.seq, decidedAt: at.time, verifiedInRun: null } });
       if (again.kind !== "applied" || again.changed) this.fail("a settlement after E1 changed the binding");
     }
     this.facts.push({ runId: id, seq: at.seq, executedOn: { ...X, nativeEpoch: this.relay.nativeEpoch } });
@@ -657,7 +658,9 @@ class Simulation {
     const declaration = { declared: true, probed: true, verify: this.caps.verify, successProvesRecorded: evidence, lateDelivery: this.caps.lateDelivery, evidence, execution: "process" as const,
       compactionEvidence: this.caps.compaction ? "event" as const : "none" as const, channel: "text_block" as const, capabilities: null };
     const input: DecideInput = { relay: this.relay, harnessId: X.harnessId, controlId: X.controlId, facts: this.facts, originHistory: false, choices: {}, declaration, firstFromSeq: first,
-      pendingRun: sync.kind === "pending" ? this.pendingRun() : null, recoveryFailed: false, heldSince: this.since(), whenUnsure: "auto" };
+      // One time in five the Run that carried the pending packet is not known (its row is gone: damaged data, G072 review m9): then only a
+      // packet for newer facts is sent again, and it links no Run.
+      pendingRun: sync.kind === "pending" && this.rand() >= 0.2 ? this.pendingRun() : null, recoveryFailed: false, heldSince: this.since(), whenUnsure: "auto" };
     let decision: TurnDecision;
     try { decision = decideTurn(input); }
     catch (error) { return this.fail("P1: the policy asked the user in " + sync.kind + (sync.kind === "suspect" ? ":" + sync.cause : "") + " (" + (error instanceof RelayError ? error.code + "{" + error.reason + "}" : String(error)) + ")"); }
@@ -683,6 +686,7 @@ class Simulation {
         return;
       case "carry":
         if (decision.retreat !== undefined) this.policySeen.retreat++; else if (decision.resend === null || decision.resend.by === "user") this.policySeen.first++; else this.policySeen[decision.resend.by]++;
+        if (decision.resend !== null && decision.resend.of === null) this.policySeen.grownUnlinked++;
         return this.carry(decision.need, decision.attachOverride, decision.resend, decision.retreat === undefined ? undefined : decision.retreat.firstFromSeq);
     }
   }
@@ -1110,7 +1114,7 @@ test("G072-PP01 (P1, P2, P3, P4, P5, P9) policy walks: the policy decides every 
   }
   t.diagnostic("policy decisions: " + JSON.stringify(kinds) + "; counters: " + JSON.stringify(totals));
   // Every kind of the policy's decisions was reached somewhere (the owed-nothing one may be rare).
-  for (const key of ["plain", "alone", "auto", "grown", "retreat", "first"] as const) assert.ok(kinds[key]! > 0, "the policy never decided " + key);
+  for (const key of ["plain", "alone", "auto", "grown", "retreat", "first", "grownUnlinked"] as const) assert.ok(kinds[key]! > 0, "the policy never decided " + key);
 });
 
 test("G072-PP01 P6 twenty content inputs in a row, nothing else happening, every result unknown and every check unavailable: from any reachable state the policy sends at most two packets", async t => {

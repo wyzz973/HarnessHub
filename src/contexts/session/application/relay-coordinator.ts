@@ -477,6 +477,8 @@ export function relayAdmission(input: AdmitInput): Carrying | null {
   const { state, binding, target, capabilities, choices } = input;
   if (target.provider !== undefined || choices.attach === "none" || capabilities === undefined) return null;
   const declaration = relayDeclaration(capabilities);
+  // A Driver that declares nothing reads a slash first as a command (undeclaredReading): nothing is asked of it.
+  if (capabilities === null && undeclaredReading(input.text) !== null) return null;
   // A command carries nothing and is never stopped by the relay (VF1-05); one whose arguments the native side submits as a
   // prompt (acceptsRelay) may carry, and so may a word only the catalog settles.
   if (capabilities !== null && !carriesWithReading(capabilities.commands.classify(input.text, null, input.attachments))) return null;
@@ -491,6 +493,18 @@ export function relayAdmission(input: AdmitInput): Carrying | null {
   if (!owes && !doubt && sync.kind !== "pending" && choices.attach !== "full" && choices.clearConfirmed !== true) return null;
   const crossHarness = crossHarnessFacts(state, owes ? need.facts : facts, need.origin || doubt && originHistory && !relay.originIncluded, target);
   return { relay, declaration, facts, need, owes, doubt, originHistory, heldSince: since, crossHarness };
+}
+/**
+ * How a Driver that declares nothing (WorkBuddy, Pi: `relayCapabilities` absent) is taken to read an input: it cannot say what its
+ * native side reads as a command — its catalog, when it has one, may not list a command the native side runs — so a first
+ * character that is a slash makes a command of unknown effect, whatever the catalog says: the input goes as typed and carries
+ * nothing (a packet put before it would turn the command into words), and what is owed waits for the next ordinary message
+ * (G072 review I3, B9). Null for any other input.
+ */
+export function undeclaredReading(text: string): Extract<CommandClass, { kind: "command" }> | null {
+  if (!text.startsWith("/")) return null;
+  const name = text.slice(1).split(/\s/u)[0]!;
+  return name === "" ? null : { kind: "command", name, args: text.slice(1 + name.length).trim(), effect: "unknown" };
 }
 /**
  * Whether a reading may carry relay content: content, or a command that submits its arguments as a prompt (acceptsRelay). A
@@ -883,7 +897,7 @@ export type TurnDecision =
    * `lateDelivery` is what the state machine is told (the Driver's declaration, but never in auto mode: a late write lands once
    * more at most).
    */
-  | { readonly kind: "carry"; readonly need: Owed; readonly attachOverride: boolean; readonly resend: { readonly by: "auto" | "user" | "grown"; readonly of: RunId } | null; readonly retreat?: { readonly firstFromSeq: number | null };
+  | { readonly kind: "carry"; readonly need: Owed; readonly attachOverride: boolean; readonly resend: { readonly by: "auto" | "user" | "grown"; readonly of: RunId | null } | null; readonly retreat?: { readonly firstFromSeq: number | null };
       /** The binding state `need` was reckoned on: a retreat's prior (retreatedPrior), else the binding as it is. */
       readonly on: BindingRelayState; readonly by: "need" | "policy" | "user"; readonly cause?: DecisionCause; readonly lateDelivery: boolean };
 /** The causes a decision of the policy answers (contracts/relay.ts DECISION_CAUSES). */
@@ -966,12 +980,17 @@ export function decideTurn(input: DecideInput): TurnDecision {
     if (input.recoveryFailed) return unrecovered();
     // On a pending packet `attach:"full"` is the user's resend too (R9b). The automatic resend is for a Driver that can show
     // delivery, once; newer facts than the pending packet's are sent again with it (permissive-defaults §2.1).
-    const plan = pendingResend(sync, { lateDelivery: declaration.lateDelivery, evidence: declaration.evidence }, mode(), topOf(need) > sync.range.throughSeq) as ResendPlan;
-    const by = plan === "auto" ? "auto" as const : requested ? "user" as const : plan === "grown" ? "grown" as const : null;
+    const grown = topOf(need) > sync.range.throughSeq, plan = pendingResend(sync, { lateDelivery: declaration.lateDelivery, evidence: declaration.evidence }, mode(), grown) as ResendPlan;
+    let by = plan === "auto" ? "auto" as const : requested ? "user" as const : plan === "grown" ? "grown" as const : null;
     if (by === null) { if (plan === "alone") return alone("delivery_unconfirmed"); throw choiceRequired("delivery_unconfirmed"); }
-    // Without the Run that carried it, a resend could not name what it supersedes (G068 phase two): the policy sends alone, a
-    // request that asked for it fails, and the strict design lets the user decide.
-    if (input.pendingRun === null) { if (lenient()) return alone("delivery_unconfirmed"); throw choiceRequired("delivery_unconfirmed"); }
+    // Without the Run that carried it (its delivery row is gone: damaged data), a resend cannot link its row to what it supersedes
+    // (G068 phase two). A packet of newer facts still goes — it renders everything owed from the prior, so it covers the missing
+    // packet's facts as well as the new ones, and its own row is there to be checked — instead of leaving the binding alone for good
+    // (G072 review m9); any other resend the policy sends alone, a request that asked for it fails, and the strict design lets the user decide.
+    if (input.pendingRun === null) {
+      if (grown && by === "auto" && lenient()) by = "grown";
+      if (by !== "grown") { if (lenient()) return alone("delivery_unconfirmed"); throw choiceRequired("delivery_unconfirmed"); }
+    }
     const resend = { by, of: input.pendingRun };
     const refused = refusedBy(step(relay, { kind: "carry", runId: PROBE_RUN, packet: { id: PROBE_PACKET, range: by === "grown" ? { ...PROBE_RANGE, throughSeq: topOf(need) } : PROBE_RANGE }, attachOverride, lateDelivery: lateDelivery(), resend }));
     if (refused !== null) return refused;
@@ -1052,18 +1071,28 @@ export interface AttentionInput {
   readonly relay: BindingRelayState;
   /** The Session's relay record could not be recovered after a restart (SessionSnapshot.relayRecoveryFailed). */
   readonly recoveryFailed: boolean;
-  /** The decision of the latest Turn that ran on the binding, when it has one (decisionRecord). */
-  readonly latest: RelayDecision | null;
-  /** How many of the conversation's Turns the binding still owes (owed()). */
+  /**
+   * How many of the conversation's Turns the binding owes now (owed()): the foreign facts above its mark and floor, and the Turns of
+   * the history the Session started from when that is owed too (a branch's quoted history counts, G072 review I5).
+   */
   readonly owedRuns: number;
+  /**
+   * What the consent of the binding's destination vendor says of what it owes, read now (consentGate on the binding's vendor key
+   * as it was last seen): withdrawn by the user, or for the goal only, which the MVP cannot render. Null when nothing stands in the
+   * way. `episode` names the record that says it, so a withdrawal made later is another episode (its banner shows again).
+   */
+  readonly consent: { readonly cause: "revoked" | "goal_only"; readonly episode: string } | null;
+  /** Whether the smallest packet fits the target's window and channel now (windows.ts hardCap and MIN_PACKET). */
+  readonly fits: boolean;
 }
 /**
- * What a binding asks the user to look at (permissive-defaults §2.6; `GET …/relay` gives it per binding): from its sync state —
- * a packet sent and not confirmed, a mark in doubt, a clear not confirmed, a record that could not be recovered — and from what
- * its latest Turn was sent alone for when that outlasts the Turn (a window too small for the smallest packet, a consent withdrawn
- * or for the goal only). Never a block: every option is a way the user may settle it, the next input goes anyway. Null when the
- * binding needs nothing. `key` names the episode: the same cause within one wait for a check is the same key, so a banner shown
- * once and closed does not come back.
+ * What a binding asks the user to look at (permissive-defaults §2.6; `GET …/relay` gives it per binding), from the state of the
+ * conversation as it is now and not from what its latest Turn happened to do (G072 review I5): a packet sent and not confirmed, a
+ * mark in doubt, a clear not confirmed, a record that could not be recovered — and, for a binding that owes something, a window too
+ * small for the smallest packet, a vendor whose consent the user withdrew or gave for the goal only. A banner stays while its cause
+ * does and goes the moment it ends (the user allows the vendor again, the window grows), whatever the Turns between were. Never a
+ * block: every option is a way the user may settle it, the next input goes anyway. Null when the binding needs nothing. `key` names
+ * the episode: the same cause within one wait for a check is the same key, so a banner shown once and closed does not come back.
  */
 export function attentionOf(input: AttentionInput): RelayAttention | null {
   const { relay } = input, sync = relay.sync, counts = (packets: number) => ({ runs: input.owedRuns, packets });
@@ -1075,10 +1104,12 @@ export function attentionOf(input: AttentionInput): RelayAttention | null {
     return { cause, options: ["attach_full", "new_native", ...(confirmable ? ["clear_confirmed" as const] : [])], counts: counts(sync.carried === null ? 0 : 1),
       key: cause + ":" + relay.nativeEpoch + ":" + (sync.floorCandidate ?? markOf(sync)?.throughSeq ?? "none") + (sync.carried === null ? "" : ":" + sync.carried.packetId) };
   }
-  const latest = input.latest;
-  if (input.owedRuns > 0 && latest?.kind === "alone" && latest.by === "policy") {
-    if (latest.cause === "input_limit") return { cause: "input_limit", options: [], counts: counts(0), key: "input_limit:" + relay.nativeEpoch };
-    if (latest.cause === "consent_revoked" || latest.cause === "consent_goal_only") return { cause: latest.cause, options: ["acknowledge"], counts: counts(0), key: latest.cause + ":" + relay.nativeEpoch };
+  if (input.owedRuns > 0) {
+    if (!input.fits) return { cause: "input_limit", options: [], counts: counts(0), key: "input_limit:" + relay.nativeEpoch };
+    if (input.consent !== null) {
+      const cause = input.consent.cause === "revoked" ? "consent_revoked" as const : "consent_goal_only" as const;
+      return { cause, options: ["acknowledge"], counts: counts(0), key: cause + ":" + relay.nativeEpoch + ":" + input.consent.episode };
+    }
   }
   return null;
 }
@@ -1189,17 +1220,21 @@ export function deliveryRow(input: { readonly change: Extract<DeliveryChange, { 
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** The packet a carrying Turn sent, as its settlement needs it. */
-export interface CarriedTurn { readonly runId: RunId; readonly packetId: RelayPacketId; readonly range: SourceRange; readonly bodySha256: Fingerprint; readonly reanchored: boolean }
+export interface CarriedTurn {
+  readonly runId: RunId; readonly packetId: RelayPacketId; readonly range: SourceRange; readonly bodySha256: Fingerprint; readonly reanchored: boolean;
+  /** The packet was sent as a resend of the binding's pending packet (CarryResend; for every outcome, E1 included). */
+  readonly resent: boolean;
+}
 /** E1 (§7.1): the native side recorded the Turn's input; g on the pending packet, its row in flight. */
 export function recordedStep(relay: BindingRelayState, turn: CarriedTurn, at: RelayAt): Extract<RelayStep, { kind: "applied" }> | null {
-  const outcome = step(relay, { kind: "carry_settled", runId: turn.runId, packetId: turn.packetId, bodySha256: turn.bodySha256, reanchored: turn.reanchored, row: "in_flight",
+  const outcome = step(relay, { kind: "carry_settled", runId: turn.runId, packetId: turn.packetId, bodySha256: turn.bodySha256, reanchored: turn.reanchored, resent: turn.resent, row: "in_flight",
     outcome: { kind: "recorded", evidence: "E1", decidedSeq: at.seq, decidedAt: at.time, verifiedInRun: null } });
   return outcome.kind === "applied" && outcome.changed ? outcome : null;
 }
 /** What a Turn was authorized to do, as its settlement reads it. */
 export type SettledTurn =
   | { readonly kind: "none" }
-  | ({ readonly kind: "carry"; readonly recorded: boolean; readonly superseded: { readonly packetId: RelayPacketId; readonly range: SourceRange } | null; readonly resent: boolean } & CarriedTurn)
+  | ({ readonly kind: "carry"; readonly recorded: boolean; readonly superseded: { readonly packetId: RelayPacketId; readonly range: SourceRange } | null } & CarriedTurn)
   | { readonly kind: "plain"; readonly contextThroughSeq: number; readonly agentOutput: boolean; readonly recorded: boolean }
   | { readonly kind: "alone" }
   | { readonly kind: "command"; readonly declared: ContextEffect };
@@ -1270,7 +1305,7 @@ export function settleTurn(input: SettleInput): Settled {
     case "carry": {
       if (turn.recorded) {
         // E1 decided it before the Turn ended: the settlement finds the row recorded and the binding synced on it (no-op).
-        apply(step(relay, { kind: "carry_settled", runId: turn.runId, packetId: turn.packetId, bodySha256: turn.bodySha256, reanchored: turn.reanchored, row: "recorded",
+        apply(step(relay, { kind: "carry_settled", runId: turn.runId, packetId: turn.packetId, bodySha256: turn.bodySha256, reanchored: turn.reanchored, resent: turn.resent, row: "recorded",
           outcome: { kind: "recorded", evidence: "E1", decidedSeq: input.endedSeq, decidedAt: input.time, verifiedInRun: null } }));
         delivery = { packetId: turn.packetId, outcome: "recorded", evidence: "E1", mark: null };
         break;
@@ -1278,7 +1313,7 @@ export function settleTurn(input: SettleInput): Settled {
       const outcome = settledOutcome({ dispatched: input.dispatched, status: input.status, input: input.input, successProvesRecorded: input.declaration.successProvesRecorded, lateDelivery: input.declaration.lateDelivery }, at(input.endedSeq));
       // A refused resend names the packet it superseded; without it (no row to read it from) its outcome stays unknown, never not recorded.
       const decided = outcome.kind === "not_recorded" && turn.resent && turn.superseded === null ? { kind: "unknown" as const, reason: "no_evidence" as const, decidedSeq: input.endedSeq, decidedAt: input.time } : outcome;
-      const settled = apply(step(relay, { kind: "carry_settled", runId: turn.runId, packetId: turn.packetId, bodySha256: turn.bodySha256, reanchored: turn.reanchored, row: "in_flight",
+      const settled = apply(step(relay, { kind: "carry_settled", runId: turn.runId, packetId: turn.packetId, bodySha256: turn.bodySha256, reanchored: turn.reanchored, resent: turn.resent, row: "in_flight",
         outcome: decided, ...(turn.resent && turn.superseded !== null ? { superseded: turn.superseded } : {}) }));
       const sync = relay.sync;
       delivery = { packetId: turn.packetId, outcome: decided.kind, ...(decided.kind === "recorded" ? { evidence: decided.evidence } : { reason: decided.reason }),

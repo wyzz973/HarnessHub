@@ -44,7 +44,10 @@ export const recoverRelay: RecoverRelay = (state: SessionSnapshot, deliveries: r
       if (relay === undefined || binding.status === "archived" || binding.harnessId !== run.selection.harnessId || binding.controlId !== run.selection.controlId) return binding;
       if (relay.sync.kind !== "pending" || relay.sync.packetId !== record.packetId) return binding;
       const sync = relay.sync;
-      if (sync.autoResends + sync.manualResends === 0) return { ...binding, relay: { ...relay, sync: sync.prior } };
+      // The row says whether the packet was a resend (`resendOf`), not the binding's counts: a packet sent again for newer facts
+      // starts them at 0 (G072 review I4). One that links no Run (a first packet, or a resend whose predecessor's row is gone) goes
+      // back to the prior.
+      if (record.resendOf === null) return { ...binding, relay: { ...relay, sync: sync.prior } };
       const superseded = deliveries.find(row => row.runId === record.resendOf), manifest = superseded === undefined ? undefined : packets.findLast(packet => packet.id === superseded.packetId);
       if (manifest === undefined) return { ...binding, relay: { ...relay, sync: sync.prior } };
       const back: BindingSync = { ...sync, packetId: manifest.id, range: manifest.range };

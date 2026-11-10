@@ -59,7 +59,12 @@ export type RelayEvent =
    * `attachOverride` is the request's `relay.attach:"full"`.
    */
   | { readonly kind: "carry"; readonly runId: RunId; readonly packet: CarriedPacket; readonly attachOverride: boolean; readonly lateDelivery: boolean;
-      readonly resend: { readonly by: "auto" | "user" | "grown"; readonly of: RunId } | null; readonly retreat?: { readonly firstFromSeq: number | null } }
+      /**
+       * `of` is the Run that carried the packet it supersedes (its delivery row's `resendOf` links to it); null only for a packet of
+       * newer facts (`grown`) whose predecessor's Run cannot be told (its row is gone: damaged data) — it renders everything owed
+       * from the prior, so it covers the missing packet's facts as well.
+       */
+      readonly resend: { readonly by: "auto" | "user" | "grown"; readonly of: RunId | null } | null; readonly retreat?: { readonly firstFromSeq: number | null } }
   /**
    * b: a content Turn without a packet while nothing is owed (need=∅); `foreign` is F≠∅ (the Session has foreign facts at all).
    * With `retreat`, only on a suspect binding: the user chose the complete packet again (补发完整交接单) and on the prior that
@@ -97,8 +102,16 @@ export type RelayEvent =
    */
   | { readonly kind: "carry_settled"; readonly runId: RunId; readonly packetId: RelayPacketId; readonly bodySha256: Fingerprint; readonly reanchored: boolean; readonly row: DeliveryStatus; readonly outcome: DecidedOutcome;
       /**
-       * A resend's settlement names the packet it superseded (from its `resendOf` row and that packet's manifest): a resend
-       * refused before insertion (h) goes back to waiting for that packet, not to the prior (point 2 of the approval).
+       * Whether the packet was sent as a resend of the binding's pending packet (a `carry` with `resend`, whatever its kind): the
+       * caller says it, since the binding's counts cannot — a packet sent again for newer facts (`grown`) starts them at 0. The counts
+       * never contradict it (a binding with a resend counted is settled as one); a refused resend (h) is settled with the packet it
+       * superseded and a refused first packet without (G072 review I4).
+       */
+      readonly resent: boolean;
+      /**
+       * A resend's settlement names the packet it superseded (from the binding's pending packet it replaced, or its `resendOf` row
+       * and that packet's manifest): a resend refused before insertion (h) goes back to waiting for that packet, not to the prior
+       * (point 2 of the approval).
        */
       readonly superseded?: { readonly packetId: RelayPacketId; readonly range: SourceRange } }
   /** j: b's settlement. `input` is what is known of its input reaching the native history; `agentOutput` an agent output seen. */
@@ -700,6 +713,7 @@ function carry(relay: BindingRelayState, event: Extract<RelayEvent, { kind: "car
   if (sync.kind === "pending") {
     if (event.resend === null) return notApplicable("a pending binding carries a packet only as a resend of its pending packet");
     if (event.retreat !== undefined) return refuse({ code: "invalid", why: "only a suspect binding moves its mark back before a complete packet" });
+    if (event.resend.of === null && event.resend.by !== "grown") return refuse({ code: "invalid", why: "a resend names the Run that carried the packet it supersedes, unless it is sent for newer facts" });
     if (event.resend.by === "auto" && (sync.autoResends !== 0 || event.lateDelivery)) return refuse({ code: "RELAY_CHOICE_REQUIRED", cause: "delivery_unconfirmed" });
     if (event.resend.by === "user" && sync.manualResends >= RELAY_MAX_RUNS) return refuse({ code: "invalid", why: "a packet is sent again at most " + RELAY_MAX_RUNS + " times" });
     // The packet of newer facts: it must reach past the pending one's through seq, or there is nothing new to send again (the
@@ -748,6 +762,9 @@ function carrySettled(relay: BindingRelayState, event: Extract<RelayEvent, { kin
   }
   if (sync.packetId !== event.packetId) return refuse({ code: "invalid", why: "the settled packet is not the binding's pending packet" });
   if (event.row === "recorded") return refuse({ code: "invalid", why: "a recorded delivery leaves its binding pending only by a bug" });
+  // The counts never contradict the caller: a binding that counts a resend (automatic or the user's) settles one (a packet sent again
+  // for newer facts counts none, and only the caller can say it was one).
+  if (sync.autoResends + sync.manualResends > 0 && !event.resent) return refuse({ code: "invalid", why: "a packet sent again is settled as a resend" });
   const change: DeliveryChange = { kind: "outcome", runId: event.runId, from: event.row, outcome: event.outcome };
   switch (event.outcome.kind) {
     case "recorded": {
@@ -757,11 +774,10 @@ function carrySettled(relay: BindingRelayState, event: Extract<RelayEvent, { kin
     // RT2-07: a first packet known not to be there goes back to the state before it; its facts are owed again. A resend known
     // not to be there goes back to waiting for the packet it superseded, its counts kept (point 2 of the approval).
     case "not_recorded": {
-      // A resend that counts say was made (an automatic or the user's) must name what it superseded; a packet sent again for newer
-      // facts (`grown`) has its counts at 0 as a first packet has, so the counts cannot say it: the caller, who knows the Turn's
-      // `resendOf`, names the packet, and it is waited for again. Nothing named is a first packet, back to the prior.
-      const resent = sync.autoResends + sync.manualResends > 0;
-      if (resent && event.superseded === undefined) return refuse({ code: "invalid", why: "a refused resend names the packet it superseded" });
+      // A resend names the packet it superseded and a first packet names none (`resent` says which; the counts cannot, a packet sent
+      // again for newer facts has them at 0): a refused resend goes back to waiting for what it superseded, a first packet back to
+      // the prior. A caller that says one and gives the other is a bug, refused rather than settled to a guess.
+      if (event.resent !== (event.superseded !== undefined)) return refuse({ code: "invalid", why: "a refused resend names the packet it superseded, and a first packet names none" });
       if (event.superseded !== undefined) return applied(relay, withSync(relay, { ...sync, packetId: event.superseded.packetId, range: event.superseded.range }), [change]);
       return applied(relay, withSync(relay, sync.prior), [change]);
     }

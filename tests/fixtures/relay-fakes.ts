@@ -86,12 +86,14 @@ export class Fakes implements SessionBindingFactory {
   constructor(readonly declarations: Readonly<Record<string, RelayCapabilities | null>>) {}
   /** true: the Hub cannot read the known secrets a packet must hide (RELAY_PREPARE_FAILED, as the factory reports it). */
   secretsFail = false;
+  /** The known secrets of the conversation's Harnesses, as the factory reports them (relaySecrets): what a packet and a native title must hide. */
+  readonly secrets: string[] = [];
   /** Runs when the Runtime enables permissions: after the Turn's authorization, right before its dispatch. */
   onAuthorized: ((harnessId: string) => void) | null = null;
   relayCapabilities(selection: HarnessSelection): RelayCapabilities | null { return this.declarations[selection.harnessId] ?? null; }
   async relaySecrets(): Promise<readonly string[]> {
     if (this.secretsFail) throw new SessionError("RELAY_PREPARE_FAILED", "没能准备交接单：读取交接单必须隐去的凭据时出错，这条消息没有发出。");
-    return [];
+    return this.secrets;
   }
   async validate(request: SelectionRequest): Promise<HarnessSelection> {
     if (!(request.harnessId in this.declarations)) throw new SessionError("HARNESS_UNAVAILABLE", "fixture target is unavailable");

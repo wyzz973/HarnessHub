@@ -76,6 +76,7 @@
   - need 的下界恒为 max(mark, epochFloor)；只有用户一次性选择“附上交接单”（`relay.attach:"full"`）时忽略下限（第 6.3、7.4 节）。
   - 清空下限只在核对确知清空时抬高：回放为空，或水位所站的链全部不在且每个标记都排除了压缩（送达行记有游标且未变）；回退类待核与未确认的清空在核对前叠加时保留水位、清空的 seq 与 carried，并标 `rewound`，链全部不在不再视同清空、由用户选择。回放为空即按清空处理，不区分是清空还是回退清空的（`/undo` 撤空唯一一轮后再一次没执行的 `/clear` 也抬起下限：原生上下文确实为空，下限之前的外来事实照清空后的规则可用“附上”取回，N7）。水位恢复只恢复到仍有标记在场的链节点，或不声称任何外来事实的水位（无水位、native、origin、无包 ID 的回退水位）；legacy 水位不恢复；Driver 不能核对时，未确认的清空在这样的水位上按“没有发生”处理，下限不抬（ADR-055 G068 补记，审批代理 2026-11-09、2026-11-10 的决定）。
   - Driver 自述的清空（`BackendResult.native.cleared`）怎么算（独立审查 I2，ADR-055 B7）：放弃了原生会话的（`replaced` 非空，Claude Code 的合成清空是 Hub 自己的 Driver 所为）在该回合的原生状态确认后即确认；靠原生侧自己的信号得出的（`replaced` 为空：Hermes 的固定回执、OpenClaw 的 `lifecycleRevision`）只对探针已证明该信号的 Driver（`declaration.probed`）算确认，未探针时是未确认的清空（事件 e′，命令按声明的效果、内容回合同样）：下限与纪元不动，由下一次打开或回合结算的核对（回放为空、链全部不在且排除了压缩）或用户的［确认已清空］确认——清空只由用户的操作或确凿证据确认，Driver 未经验证的自述不是。
+  - 送达结算说明自己是不是重发（独立审查 I4）：状态机的 `carry_settled` 带 `resent`，由调用方（运行时、恢复）说，因为计数说不了——为新事实再发的包（`grown`）把自动计数归零；`resent` 与“被取代的包”必须一致（重发的结算点名它取代的包，首发的不点名），绑定计了重发而 `resent` 为假一律拒绝。没发出去的重发（派发前结束）因此在结算与恢复两条路上都回到“等它取代的那份包”：恢复读送达行的 `resendOf`（不读计数）；`resendOf` 为空（首发，或为新事实再发而前一份包的 Run 已不可知）回到 prior。前一份包的 Run 读不到时（送达行缺失：数据损坏），只有为新事实再发的包仍然发出（`resend.of` 为空，它从 prior 起渲染全部欠交，已包含读不到的那份的事实），其余自动补发改为策略单发——不再永久单发。
   - pending 不能自动重发（`autoResends=1` 或 `lateDelivery`）时，`relay.whenUnsure=ask` 下下一条内容输入在受理时同步 `409 RELAY_CHOICE_REQUIRED{cause:"delivery_unconfirmed"}`（D1 推荐项 (a)，第 7.4 节）；默认（`auto`）不问：能给出证据的 Driver 每包自动补发一次（`lateDelivery` 的也是一次，重发模板自带去重行），之后原样单发、绑定不变，更新的外来事实（新包的 through seq 严格大于待核包的）到来才再发一次（`resend.by:"grown"`，自动计数归零），不能给出证据的 Driver（未声明的）从不自动补发；待核的 suspect 在没有新欠交时原样单发并保持待核，有新欠交（水位之上还有外来事实）时退到纪元基准后补发完整交接单，未确认的清空一律按“没清空”处理（下限不抬、纪元不加）。每包的自动发送至多两次（首发加一次补发），除非更新的外来事实或新的待核判定出现（P5、P6）。“未知回合”是 process 型 Driver 在 unknown 回合之后继续原会话的 `suspect{unknown_turn}`（D6 推荐项 (a)，由探针 P16 门控，第 9 节）。
   - v12 过渡期（G067）只落实第 7.6 节的推进规则 `advance ⇔ dispatched ∧ (due = ∅ ∨ carried ∧ (input = recorded ∨ input = unknown ∧ 已重发一次))`；那时没有纪元与清空下限，清空、回退与效果未知的命令只记 `contextEffect`、不改水位，配置承接取该绑定最后一个已派发的 Run。第 7.6 节把这些列为已知局限，v13 关闭。
 
@@ -87,6 +88,7 @@
 - 状态：已接受（ADR-055）。
 - 说明：错误按阶段归属（第 9 节）：受理时能判定的同步 409，不建 Run、没有进程；启动前（`prePlan`）失败的 Run 没有进程、绑定不变；open 之后（finalize、同意复检、分类复核、精化窗口）失败的 Run 未派发，原生会话与绑定保留（新建的空原生会话下一次按它 resume，不再新建），relay 状态不变，错误经 `run.ended` 与 SSE 到达。停止未确认时，unsafe 的 `run.ended` 在同一事务里把待决切换记为 `failed{SWITCH_SOURCE_UNKNOWN}`、等待它的排队 Run 记为 `SWITCH_NOT_EFFECTIVE`（第 9 节）。
   - 默认放行（`relay.whenUnsure=auto`，2026-11-10）：只关乎交接单的准备失败——渲染（`render`、`render_mismatch`）、脱敏读不到密钥或扫描出错（`redaction_failed`）、交接单行被 Store 拒绝（`storage`、`storage_quota`）、同意日志写不进（`consent_log_full`）、窗口放不下最小交接单（`RELAY_INPUT_LIMIT`）、relay 记录没能恢复（`recovery_failed`）、同意被撤回——不让 Run 失败：这条消息原样发出，relay 状态不变（不建交接单行、送达行与 pending），原因记入 `run.context_prepared.data.relay.decision`，下一条会再试。用户明确要求附上（`attach:"full"`、`resend`、`clearConfirmed`、`native:"new"`）时不改写：仍让 Run 失败、草稿保留。`target_start`（目标启动失败）与 Driver 的整回合拒绝（B4b）仍使 Run 失败，什么都没发。
+  - 原生标题（第 8.1 节，VF3-12）只给交接新开的原生会话取一次，且只在携带交接单的 Turn 提交之后、派发之前设置：同一原生会话的再次交接、会话自己的第一个 Turn、以及提交时转为策略单发的 Turn（同意日志写不进、厂商被撤回、行被 Store 拒绝）都不设；标题（会话的第一句话）用整个会话已知的凭据脱敏，命中则写“新对话”（独立审查 I7）。
 
 ### INV-22（改写）
 
@@ -116,6 +118,7 @@
   - `attach:"none"` 即“只发这条消息”：原样发送，本回合不产生送达证据，sync、水位与 pending 都不变（事件 n，第 6.3、7.2 节）；pending 下它只在用户回应 `409 RELAY_CHOICE_REQUIRED{cause:"delivery_unconfirmed"}` 之后出现（D1 推荐项 (a)）。WorkBuddy 与未经探针（`probed=false`）的 Driver 作目标时只提供这一条（第 8.1 节；生产只对已探针的 Driver 开放接力，D11 推荐项 (a)）——默认放行后不再如此：`relay.allowUnprobed` 默认 `true`，未经探针与未声明的 Driver 也接收接力、卡片标“未经真机验证”，设为 `false` 才恢复这一条（`compactionEvidence:"none"` 的常量游标、OpenClaw 的 `lifecycleRevision` 确认、Hermes 的 `setTitle` 与 D6 的 `probed` 要求不因此放开）。
   - 策略单发（默认放行，事件 n 带 `by:"policy"`）与用户的单发同为逐字节原样、绑定不变；区别只在谁决定：`run.context_prepared.data.relay.decision = {kind:"alone", by:"policy", cause}`，界面据此提示“这条只发了原话”，不出现“已接手”。待核时的策略补发（退到纪元基准后的完整交接单）每次待核至多一份：补发后状态是 pending，不再是 suspect，要再退一次必须有新的回退类判定。
   - “携带包时第二段等于原话”依据 D4 推荐项 (a)（第 5.5 节）。
+  - 未声明接力机制的 Driver（`relayCapabilities` 缺席：WorkBuddy、Pi）无从告诉 Hub 它的原生侧把什么读作命令，它的目录也未必列全：第一个字符是 `/` 的输入（`/` 之后有名字）一律读作效果未知的命令，目录里有没有、有没有目录都一样——原样发送、不带交接单，交接单留给下一条普通消息；受理时不问任何接力问题；回合结束按“效果未知的命令”记（独立审查 I3，B9）。
   - “同一纪元内 mark 只在 suspect 回退时变小；清空进入新纪元”：确认的清空（事件 e）进入新纪元，清空前的回合因纪元变化成为外来事实（第 7.2、7.4 节）；第 7.2 节的属性与下文 `assertSessionTransition` 的规则在写入阶段统一为同一措辞。
   - “ON CONFLICT DO NOTHING 计数”指交接单以 `INSERT … ON CONFLICT(session_id, packet_id) DO NOTHING` 入库（第 14.1 节）。
 
