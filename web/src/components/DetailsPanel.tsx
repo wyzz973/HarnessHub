@@ -15,8 +15,10 @@ import { ACTIVITY_KIND, ACTIVITY_STATUS, DiffLines, PlanView, ToolList, usageFac
 import { dockedRequest } from "./Approval.js";
 import { BrandIcon } from "./BrandIcon.js";
 import { NativeResume } from "./NativeResume.js";
+import { RelayDetails } from "./RelayDetails.js";
+import type { RelayView } from "../relay.js";
 
-export type PanelTab = "changes" | "process" | "plan" | "background" | "run";
+export type PanelTab = "changes" | "process" | "plan" | "background" | "run" | "relay";
 
 /** One changed file of the conversation, merged over every edit that touched it, with the Turns and Agents that did. */
 export interface ChangedFile {
@@ -111,6 +113,8 @@ interface PanelProps {
   readonly loadDiagnostics?: ((runId: string, includeContent: boolean) => Promise<string>) | undefined;
   readonly loadNativeResume?: ((signal: AbortSignal) => Promise<NativeResumeView | null>) | undefined;
   readonly onEndProcess?: (() => void) | undefined; readonly busy: boolean; readonly onClose?: (() => void) | undefined;
+  /** The conversation's relay state, when the Gateway gives one: it adds the "接续" tab (relay-architecture §12.1). */
+  readonly relay?: { readonly view: RelayView; readonly onViewPacket: (packetId: string) => void } | undefined;
 }
 /**
  * The conversation's details beside it (ADR-054 §5): its changed files (this Turn or the whole conversation), the plan,
@@ -137,6 +141,7 @@ export function DetailsPanel(props: PanelProps) {
     { id: "changes" as const, label: "改动", count: total || null },
     { id: "plan" as const, label: "计划" }, { id: "process" as const, label: "过程" },
     { id: "background" as const, label: "后台", count: running || null }, { id: "run" as const, label: "执行" },
+    ...(props.relay ? [{ id: "relay" as const, label: "接续", count: props.relay.view.packets.length || null }] : []),
   ];
   return <div className="details-panel flex h-full min-h-0 w-full min-w-0 flex-col bg-app">
     <div className="flex h-[54px] flex-none items-stretch gap-2 pr-3 pl-[18px] hairline-b">
@@ -148,6 +153,7 @@ export function DetailsPanel(props: PanelProps) {
         : tab === "process" ? selected ? <Process run={selected} runs={runs} onRun={props.onRun} describe={props.describe} loadToolDetail={props.loadToolDetail} name={name} asking={asking} waiting={run => waitingWords(session, run)}/> : <Empty>这个对话还没有执行记录。</Empty>
         : tab === "plan" ? plan ? <div className="px-4 pt-3 pb-4"><PlanView plan={plan} owner={name(planRun?.selection.harnessId)}/></div> : <EmptyState icon={<ListChecks size={22}/>} title="还没有计划">Harness 报告计划后会显示在这里。</EmptyState>
         : tab === "background" ? <Background session={session} kept={kept} items={background} busy={props.busy} onEndProcess={props.onEndProcess} name={name}/>
+        : tab === "relay" && props.relay ? <RelayDetails view={props.relay.view} name={id => name(id)} onViewPacket={props.relay.onViewPacket}/>
         : selected ? <RunFacts {...props} run={selected} runs={runs}/> : <Empty>发出第一条消息后，这里会显示执行者、阶段耗时与用量。</Empty>}
     </div>
   </div>;

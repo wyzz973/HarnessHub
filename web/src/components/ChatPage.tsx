@@ -10,6 +10,9 @@ import { failureMessage, runStatusLabel } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { clock, compact, duration, elapsed, folderName, shortTitle } from "../lib/format.js";
 import { useMedia, useNow, type Preferences } from "../lib/prefs.js";
+import { choiceApplies, choiceView, handoverOf, relayLine, relayRequestFor, userSequences } from "../lib/relay-state.js";
+import { useRelayIntro } from "../lib/use-relay.js";
+import { runRelayInfo, type RelayApi, type RelayChoice, type RelayOption, type RelayRequest, type RelayView } from "../relay.js";
 import { cancelledWords, changeCount, finished, toolTree, TOOL_PENDING, type QueueNotice } from "../lib/turn.js";
 import { Collapsible, motionStyle, usePresence } from "../ui/motion.js";
 import { Dialog, Menu, useToast } from "../ui/overlay.js";
@@ -20,6 +23,9 @@ import type { AttachmentDraft } from "./Attachments.js";
 import { BranchOrigin } from "./BranchOrigin.js";
 import { Composer, OPTION_NAMES, THINKING_NAMES, type DockedApproval } from "./Composer.js";
 import { DetailsPanel, type PanelTab } from "./DetailsPanel.js";
+import { RelayPacketDialog, type PacketTarget } from "./RelayDetails.js";
+import { RelayCard, type RelayNext } from "./RelayCard.js";
+import { RelayDivider } from "./RelayDivider.js";
 import { AssistantTurn, SwitchDivider, UserMessage } from "./Turn.js";
 import { Welcome } from "./Welcome.js";
 
@@ -53,6 +59,20 @@ export function effectiveProviderProblem(selection: HarnessSelection, providers:
 }
 function draftMatches(draft: SelectionDraft, selection: HarnessSelection): boolean { return JSON.stringify(draft) === JSON.stringify(selectionDraft(selection)); }
 
+/**
+ * What the page knows and does about the relay: its data layer, the conversation's relay state (null when the Gateway has
+ * none to give, and then nothing of the relay is drawn), a refused send waiting for the user's choice, and what the user
+ * chose for the next message alone.
+ */
+export interface ChatRelay {
+  readonly api: RelayApi;
+  readonly view: RelayView | null;
+  readonly choice: RelayChoice | null;
+  readonly next: RelayNext;
+  readonly onNext: (next: RelayNext) => void;
+  readonly onDismissChoice: () => void;
+}
+
 /** A message the user wrote while a reply ran, held by this page until that Turn ends (ADR-042). */
 export interface QueuedMessage {
   readonly text: string; readonly attachments: readonly ContentRef[]; readonly afterRunId: string;
@@ -74,7 +94,9 @@ export interface ChatProps {
   rememberedChoice?: (harnessId: string) => { readonly controlId: string; readonly nativeModel?: string; readonly nativeOptions?: Readonly<Record<string, string>> } | null;
   workspace: string; mutation: string | null; error: string | null; connectionError: string | null;
   messageDraft: string; onMessageDraft: Dispatch<SetStateAction<string>>;
-  onDraft: (draft: SelectionDraft) => void; onWorkspace: (workspace: string) => void; onSend: (text: string, retryAttachments?: readonly ContentRef[]) => Promise<void>;
+  onDraft: (draft: SelectionDraft) => void; onWorkspace: (workspace: string) => void;
+  /** Sends the message; `relay` is what the user chose about the history for this one message (a way forward from a refusal). */
+  onSend: (text: string, retryAttachments?: readonly ContentRef[], relay?: RelayRequest) => Promise<void>;
   onApply: () => void; onCancel: () => void; onClose: () => void; onDismissError: () => void; onProviders: () => void; onNew: () => void; onMenu: () => void;
   onPermission?: (id: string, option: string, input?: string) => void;
   onNativeBranch?: () => void;
@@ -130,6 +152,8 @@ export interface ChatProps {
   sidebarHidden: boolean; onExpandSidebar: () => void; onHarnesses: () => void;
   /** How many conversations exist; none means this is the first use and the welcome says what was found. */
   conversations: number; onSettings: () => void; onRescan: () => void; scanning: boolean;
+  /** The relay (relay-architecture §12): omitted when the page has no relay data layer. */
+  relay?: ChatRelay;
   /** Filled by the page for the composer. */
   contextUsage?: number | null; onShowResume?: (() => void) | undefined; onSendDraft?: (text: string) => Promise<void>;
 }
@@ -151,6 +175,8 @@ export function ChatPage(props: ChatProps) {
   const [overlay, setOverlay] = useState(false);
   const [agentPicker, setAgentPicker] = useState(false);
   const [decisions, setDecisions] = useState<ReadonlyMap<string, DecisionRecord>>(() => new Map());
+  // The packet whose text is open, by its identity (relay-architecture §12.1 T3).
+  const [viewing, setViewing] = useState<string | null>(null);
   const wide = useMedia("(min-width: 1200px)"), narrow = useMedia("(max-width: 759px)");
   const following = useRef(true);
   const mounted = useRef(true);
@@ -226,7 +252,7 @@ export function ChatPage(props: ChatProps) {
   }, []);
   const resumeFollowing = useCallback(() => { following.current = true; setFollowBottom(true); scrollToLatest(); }, [scrollToLatest]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  useLayoutEffect(() => { following.current = true; setFollowBottom(true); if (session) scrollToLatest(); else scroll.current?.scrollTo({ top: 0 }); setTab(null); setPanelRun(null); setOverlay(false); setDecisions(new Map()); }, [session?.id, scrollToLatest]);
+  useLayoutEffect(() => { following.current = true; setFollowBottom(true); if (session) scrollToLatest(); else scroll.current?.scrollTo({ top: 0 }); setTab(null); setPanelRun(null); setOverlay(false); setDecisions(new Map()); setViewing(null); }, [session?.id, scrollToLatest]);
   useLayoutEffect(() => { if (following.current && session) scrollToLatest(); }, [session?.version, followBottom, scrollToLatest, props.queued]);
   useEffect(() => {
     const element = scroll.current, content = transcript.current;
@@ -279,14 +305,39 @@ export function ChatPage(props: ChatProps) {
     else if (firstSend.id === null) setFirstSend({ id: session.id });
   }, [firstSend, session?.id, session?.messages.length]);
   // A retry resends the original input with the attachments it was sent with; a new message takes the composer's.
-  const send = async (text: string, retryAttachments?: readonly ContentRef[]) => {
+  const send = async (text: string, retryAttachments?: readonly ContentRef[], relayChoice?: RelayRequest) => {
     // The first message moves the composer from the welcome to the foot of the new conversation; the focus goes with it.
     if (session === null && document.activeElement === textarea.current) refocus.current = true;
     const first = session === null || session.messages.length === 0;
     if (first) setFirstSend({ id: session?.id ?? null });
-    try { await props.onSend(text, retryAttachments); }
+    try { await props.onSend(text, retryAttachments, relayChoice); }
     catch (failure: unknown) { if (first && mounted.current) setFirstSend(null); throw failure; }
     if (mounted.current) { props.onMessageDraft(value => value === text ? "" : value); resumeFollowing(); }
+  };
+  // The relay (relay-architecture §12): the packet each Turn went out with, for the strip under its message; what the line above
+  // the box says; and how a refused send goes on, which sends the draft again with the way the user chose.
+  const relay = props.relay;
+  const introduction = useRelayIntro();
+  const userSeq = useMemo(() => userSequences(session?.messages ?? []), [session?.messages]);
+  const packetOfRun = useMemo(() => {
+    const result = new Map<string, { readonly packetId: string; readonly number: number | null }>();
+    const view = relay?.view;
+    if (!view) return result;
+    for (const run of session?.runs ?? []) {
+      const packetId = runRelayInfo(run)?.packetId;
+      if (packetId) result.set(run.id, { packetId, number: view.packets.find(item => item.packetId === packetId)?.number ?? null });
+    }
+    return result;
+  }, [session?.runs, relay?.view]);
+  const viewPacket = useCallback((packetId: string) => setViewing(packetId), []);
+  const relayNow = useMemo(() => session && relay ? relayLine(session, relay.view) : null, [session, relay?.view]);
+  // A choice for the next message alone is only meaningful where its line is shown: with that line gone (another Harness, nothing
+  // owed any more) it is put away, so a message never goes out under a choice the user can no longer see.
+  const nextFits = relay === undefined || relay.next === null || relay.next === "none" && relayNow?.kind === "owed" || relay.next === "full" && relayNow?.kind === "cleared";
+  useEffect(() => { if (!nextFits) relay?.onNext(null); }, [nextFits]);
+  const chooseRelay = (option: RelayOption) => {
+    const choice = relay?.choice, request = choice ? relayRequestFor(option, choice) : null;
+    if (request !== null) void send(props.messageDraft, undefined, request).catch(() => {});
   };
   // The latest message was refused because another conversation's kept process holds this workspace (ADR-030, option C).
   const refused = session?.runs.at(-1)?.status === "failed" && session.runs.at(-1)?.error?.code === "WORKSPACE_KEPT" ? session.runs.at(-1)! : null;
@@ -381,6 +432,20 @@ export function ChatPage(props: ChatProps) {
   const orphanCards = (session?.permissions ?? []).filter(request => !runs.has(request.runId as never) && !dockedRequest(request))
     .map(request => <PermissionCard key={request.id} request={request} harness={requestHarness(request)} busy={mutation !== null} onDecision={(option, input) => decide(request, option, input)}/>);
   /**
+   * Where another Harness took over. Within one Harness, or when the Gateway has no relay information, it is the line the page
+   * always drew; otherwise it says only what is known (relay-architecture §12.1 T5): that the conversation was handed over,
+   * and "taken over" once the packet is in the original program's history. Nothing is drawn before anything was sent to it.
+   */
+  const handover = (current: SessionView, divider: Divider): ReactNode => {
+    const target = divider.change.target;
+    if (target === null) return null;
+    const revert = divider === lastDivider && revertTo && current.status === "open" ? { onRevert: () => props.onDraft(selectionDraft(revertTo)), revertDisabled: mutation !== null || pending || active !== null } : {};
+    const state = handoverOf({ runs: current.runs, userSeq, throughSeq: divider.change.throughSeq, from: divider.from.harnessId, to: target.harnessId, view: relay?.view ?? null });
+    if (state.kind === "none") return null;
+    if (state.kind === "legacy") return <SwitchDivider key={"switch:" + divider.change.id} change={divider.change} from={divider.from} detail={describeSelection(target)} harnesses={harnesses} {...revert}/>;
+    return <RelayDivider key={"switch:" + divider.change.id} state={state} from={divider.from.harnessId} to={target.harnessId} name={harnessName} onView={relay ? viewPacket : undefined} {...revert}/>;
+  };
+  /**
    * The transcript, one flat list of keyed parts: each message of yours, then its Turn, drawn once and keyed by its Run. The
    * Runtime creates the reply's message when its first text is committed; that message joins the Turn already drawn instead
    * of having it drawn anew in another place, so the Turn never remounts as its reply starts: its status, timer and arc carry
@@ -399,12 +464,11 @@ export function ChatPage(props: ChatProps) {
     };
     for (const message of current.messages) {
       const run = runs.get(message.runId);
-      if (message.role === "user") items.push(known.current.messages.has(message.id) ? <UserMessage key={message.id} message={message} run={run} onEdit={fillDraft}/>
-        : <div key={message.id} className="motion-message-in"><UserMessage message={message} run={run} onEdit={fillDraft}/></div>);
+      if (message.role === "user") items.push(known.current.messages.has(message.id) ? <UserMessage key={message.id} message={message} run={run} onEdit={fillDraft} packet={packetOfRun.get(message.runId)} onViewPacket={viewPacket}/>
+        : <div key={message.id} className="motion-message-in"><UserMessage message={message} run={run} onEdit={fillDraft} packet={packetOfRun.get(message.runId)} onViewPacket={viewPacket}/></div>);
       if (!drawn.has(message.runId) && (run !== undefined || message.role === "assistant")) { drawn.add(message.runId); items.push(turn(message.runId)); }
       const divider = dividerAfter.get(message.id);
-      if (divider) items.push(<SwitchDivider key={"switch:" + divider.change.id} change={divider.change} from={divider.from} detail={divider.change.target ? describeSelection(divider.change.target) : undefined} harnesses={harnesses}
-        {...(divider === lastDivider && revertTo && current.status === "open" ? { onRevert: () => props.onDraft(selectionDraft(revertTo)), revertDisabled: mutation !== null || pending || active !== null } : {})}/>);
+      if (divider) items.push(handover(current, divider));
     }
     return items;
   };
@@ -447,6 +511,9 @@ export function ChatPage(props: ChatProps) {
   const composer = <Composer {...props} onSendDraft={text => send(text)} active={active} dirty={dirty} pending={pending} problem={problem} blocked={blocked} inputRef={textarea}
     onShowResume={session ? showResume : undefined} approval={approval} agentPickerOpen={agentPicker} onAgentPickerOpen={setAgentPicker} onEditLast={editLast} onReplaceDraft={fillDraft}
     above={session ? <>
+      {relay ? <RelayCard line={relayNow} choice={relay.choice && choiceApplies(relay.choice, session.selection) ? choiceView(relay.choice, harnessName, session.selection.harnessId) : null} target={harnessName(session.selection.harnessId)}
+        next={relay.next} onNext={relay.onNext} onChoose={chooseRelay} onDismissChoice={relay.onDismissChoice} busy={mutation !== null} canSend={props.messageDraft.trim() !== ""}
+        intro={relayNow?.kind === "owed" && relayNow.first && !introduction.seen ? introduction.dismiss : null}/> : null}
       {props.queued ? <div className="queued-message motion-fade-in flex items-center gap-2.5 rounded-block bg-subtle py-1.5 pr-1.5 pl-3 text-ui-sm" role="status">
         <CircleDashed size={15} className="flex-none text-fg-3" aria-hidden="true"/>
         <span className="flex-none text-caption text-fg-3">将在本轮结束后发送</span><span className="min-w-0 flex-1 truncate" title={props.queued.text}>{props.queued.text}</span>
@@ -465,11 +532,14 @@ export function ChatPage(props: ChatProps) {
   const status = props.loading ? "正在读取对话" : props.sessionError ? "对话读取失败" : session?.status === "blocked" ? "执行暂时暂停，可以编辑草稿和检查恢复连接" : session?.status === "closed" ? "对话已关闭，可查看历史"
     : currentState ?? (pending ? "等待选择切换生效" : session ? "可以继续对话" : "选择执行者后开始新对话");
   const panel = session ? <DetailsPanel session={session} harnesses={harnesses} providers={providers} tab={panelTab} onTab={setTab} runId={panelRun} onRun={setPanelRun} describe={describe}
-    loadToolDetail={props.onToolDetail} loadDiagnostics={props.onDiagnostics} loadNativeResume={props.onLoadNativeResume} onEndProcess={props.onEndProcess} busy={mutation !== null} onClose={() => setPanel(false)}/> : null;
+    loadToolDetail={props.onToolDetail} loadDiagnostics={props.onDiagnostics} loadNativeResume={props.onLoadNativeResume} onEndProcess={props.onEndProcess} busy={mutation !== null} onClose={() => setPanel(false)}
+    relay={relay?.view ? { view: relay.view, onViewPacket: viewPacket } : undefined}/> : null;
   // #23: the panel opens by widening (300 ms) and pushes the conversation aside; its content follows 60 ms later from 24 px to
   // the right; it closes in 200 ms. From the keyboard (⌘\) it opens and closes at once.
   const asidePresence = usePresence(inline && panelOpen, 300, 200);
   const exportBase = session ? `/api/v1/sessions/${encodeURIComponent(session.id)}/export?format=` : "";
+  const viewedFacts = viewing === null ? null : relay?.view?.packets.find(item => item.packetId === viewing) ?? null;
+  const viewedPacket: PacketTarget | null = viewing === null ? null : { packetId: viewing, number: viewedFacts?.number ?? null, facts: viewedFacts };
 
   return <section className="chat-page flex h-full min-h-0 min-w-0 flex-1 flex-col" aria-labelledby="chat-title">
     {/* The header of the Conversation board: 54 px on a hairline, its parts 10 px apart (closer on a phone). */}
@@ -562,6 +632,7 @@ export function ChatPage(props: ChatProps) {
     </div>
     {!inline && session ? <Dialog open={overlay} onOpenChange={setOverlay} title="详情栏" kind={narrow ? "sheet" : "drawer"} className={narrow ? "h-[80dvh]" : ""}><aside className="flex min-h-0 flex-1 flex-col" aria-label="详情栏">{panel}</aside></Dialog> : null}
     <div className="sr-only" role="status" aria-live="polite">{status}</div>
+    {session && relay ? <RelayPacketDialog api={relay.api} sessionId={session.id} packet={viewedPacket} onClose={() => setViewing(null)} name={harnessName}/> : null}
     <Dialog open={confirmClose} onOpenChange={setConfirmClose} title="结束这次会话？" description="历史会保留。这次会话将不再接收新消息；之后可以新建对话。">
       <div className="flex flex-col gap-4 px-5 pt-2 pb-5">
         {active || pending ? <p className="m-0 text-ui-sm text-fg-2">当前执行或待生效的选择会停止，已经产生的内容与文件会保留。</p> : null}

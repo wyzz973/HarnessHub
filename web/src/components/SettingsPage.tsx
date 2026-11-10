@@ -6,9 +6,11 @@ import { errorMessage, GatewayApi } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { useNotificationChoice } from "../lib/notify.js";
 import { DEFAULT_PREFERENCES, type Preferences } from "../lib/prefs.js";
+import { useRelayPrefs } from "../lib/use-relay.js";
 import { Segmented, Spinner, Switch } from "../ui/primitives.js";
 import { ShortcutList } from "./CommandPalette.js";
 import { Card, PageShell, Section } from "./PageShell.js";
+import { CrossVendorControl } from "./RelayConsent.js";
 
 /** One setting: what it is and what it does on the left, its control on the right; wraps under the words when narrow. */
 function Row({ title, children, control, className }: { readonly title: ReactNode; readonly children?: ReactNode; readonly control?: ReactNode; readonly className?: string }) {
@@ -48,11 +50,13 @@ const FROZEN_LABEL = "显示冻结的 Harness（Cursor、Gemini CLI、Pi）";
  * Settings (ADR-042 §5, ADR-054): appearance and process display of this browser, notifications, discovery on this
  * computer, every shortcut, and where data lives. Theme and display choices apply at once and stay after a reload.
  */
-export function SettingsPage({ api, preferences, onPreference, onRescan, scanning, onMenu, sidebarHidden, onExpandSidebar, onChat }: {
-  readonly api: GatewayApi; readonly preferences: Preferences; readonly onPreference: <K extends keyof Preferences>(key: K, value: Preferences[K]) => void; readonly onRescan: () => void; readonly scanning: boolean;
+export function SettingsPage({ api, relayKnown, preferences, onPreference, onRescan, scanning, onMenu, sidebarHidden, onExpandSidebar, onChat }: {
+  readonly api: GatewayApi; readonly relayKnown: boolean; readonly preferences: Preferences; readonly onPreference: <K extends keyof Preferences>(key: K, value: Preferences[K]) => void; readonly onRescan: () => void; readonly scanning: boolean;
   readonly onMenu: () => void; readonly sidebarHidden: boolean; readonly onExpandSidebar: () => void; readonly onChat: () => void;
 }) {
   const notify = useNotificationChoice();
+  // The cross-vendor hand-over setting is the Gateway's (it applies to every browser): offered only when the Gateway has it.
+  const relay = useRelayPrefs(api.relay, relayKnown);
   return <PageShell title="设置" titleId="settings-title" onMenu={onMenu} sidebarHidden={sidebarHidden} onExpandSidebar={onExpandSidebar} onBack={onChat}
     description="外观和通知只影响这个浏览器；发现用的目录由本机服务保存。">
     <Section title="外观">
@@ -66,6 +70,9 @@ export function SettingsPage({ api, preferences, onPreference, onRescan, scannin
       <Card className={ROWS}>
         <Row title="过程显示" control={<Segmented label="默认过程显示" value={preferences.density} onChange={value => onPreference("density", value)} options={[{ value: "compact", label: "简洁" }, { value: "detailed", label: "详细" }]}/>}>
           简洁：每轮的工具与思考收成一行摘要，失败和未完成的步骤仍写在摘要里。详细：全部展开。</Row>
+        {relay.prefs === null ? null : <Row title="跨厂商交接" control={<CrossVendorControl value={relay.prefs.crossVendor} disabled={relay.saving} onChange={relay.change}/>}>
+          把对话交给用另一家模型服务的 Harness 时，是否先问你。允许：直接交接，只在第一次说明一句。每次询问：每次交接前都说明将交出什么，由你确认。这项设置属于本机网关，对所有浏览器生效。
+          {relay.problem ? <span className="mt-1 block text-red" role="status">{relay.problem}</span> : null}</Row>}
       </Card>
     </Section>
     <Section title="通知">

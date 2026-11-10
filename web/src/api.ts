@@ -1,5 +1,6 @@
 import { consumeSessionEventStream, SessionStreamError } from "./session-stream.js";
 import { readSseBlocks } from "./attention.js";
+import { createRelayApi, decodeRelayErrorBody, decodeRelayFrame, decodeRunRelay, relayBody, type RelayApi, type RelayErrorBody, type RelayEvent, type RelayReply, type RelayRequest, type RelayTransport } from "./relay.js";
 import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
 import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, LoginShellView, MaintenanceView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, UninstallCheckView, InstallCheckView, InstallationUpgradeCheckView, WebState } from "../../src/contracts/web.js";
 import { HARNESS_TIERS } from "../../src/contracts/web.js";
@@ -18,7 +19,11 @@ export interface ToolDetailView { readonly kind?: string; readonly name?: string
 /** Same-origin URL of stored native content for img/download use; the page cookie authorizes it. */
 export function contentUrl(content: ContentRef, download = false): string { return "/api/v1/content/" + encodeURIComponent(content.id) + (download ? "?download=1" : ""); }
 export class ApiError extends Error {
-  constructor(readonly code: string, message: string) { super(message); this.name = "ApiError"; }
+  /**
+   * `status` is the HTTP status of a refusal and `relay` the relay member of its body (the choices a refused send offers,
+   * relay-architecture §12.4); both are absent for a failure that never reached the Gateway.
+   */
+  constructor(readonly code: string, message: string, readonly status?: number, readonly relay?: RelayErrorBody) { super(message); this.name = "ApiError"; }
 }
 function invalid(): never { throw new ApiError("INVALID_RESPONSE", "网关返回了无法识别的数据，请重新载入。"); }
 function record(value: unknown): Record<string, unknown> {
@@ -391,7 +396,16 @@ function decodeRun(value: unknown): PublicRun {
     error: publicError(row.error), ...(row.thinking === undefined ? {} : { thinking: text(row.thinking) }), ...(row.tools === undefined ? {} : { tools: list(row.tools, decodeTool, 128) }), ...decodeActivityFields(row),
     ...(row.attachments === undefined ? {} : { attachments: list(row.attachments, contentRef, 8) }), ...(row.timing === undefined ? {} : { timing: decodeTiming(row.timing) }),
     ...(row.retained === undefined ? {} : { retained: row.retained === true ? true as const : invalid() }), ...(row.reused === undefined ? {} : { reused: row.reused === true ? true as const : invalid() }),
-    stopRequested: bool(row.stopRequested), awaitingSwitchId: row.awaitingSwitchId === null ? null : switchId(row.awaitingSwitchId) };
+    ...relayField(row.relay), stopRequested: bool(row.stopRequested), awaitingSwitchId: row.awaitingSwitchId === null ? null : switchId(row.awaitingSwitchId) };
+}
+/**
+ * The relay facts a Turn carries (which packet, how its context continued, where it ran, and the delivery a newer Gateway
+ * adds). They are read leniently: a Gateway without them, or with a member this page does not know, gives a Turn without
+ * relay facts, never an invalid response (the page then shows no relay information for that Turn).
+ */
+function relayField(value: unknown): Pick<PublicRun, "relay"> {
+  const relay = value === undefined ? null : decodeRunRelay(value);
+  return relay === null ? {} : { relay };
 }
 function decodeSwitch(value: unknown): PublicSwitch {
   const row = record(value);
@@ -492,8 +506,41 @@ export class GatewayApi {
   private csrfToken: string | null = null;
   private bootstrapToken: string | null = null;
   private authentication: Promise<void> | null = null;
+  /** The relay's data layer (web/src/relay.ts): what a conversation's relay is, the text of its packets, the relay preferences. */
+  readonly relay: RelayApi;
+  /** Whether the Gateway's last state said it has the relay API (`relay: true`, an optional member of its state; see lib/use-relay.ts). */
+  relayAdvertised = false;
   constructor() {
     this.bootstrapToken = bootstrapToken();
+    this.relay = createRelayApi(this.relayTransport());
+  }
+  /**
+   * The relay data layer's one door to the Gateway: the page's credentials, the same deadline as every request, a bounded
+   * body, and an answer for every HTTP status, since a missing relay endpoint is an answer the page copes with.
+   */
+  private relayTransport(): RelayTransport {
+    return { send: async ({ method, path, body, as, signal }): Promise<RelayReply> => {
+      const deadline = new AbortController();
+      const timeout = setTimeout(() => deadline.abort(new DOMException("Request deadline exceeded", "TimeoutError")), 15_000);
+      const attempt = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
+      try {
+        const response = await fetch("/api/v1" + path, { method, credentials: "same-origin", signal: attempt,
+          headers: { Accept: as === "text" ? "text/plain" : "application/json", ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+            ...(this.csrfToken === null || method === "GET" ? {} : { "X-CSRF-Token": this.csrfToken }) },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+        const read = await readBoundedText(response, as === "text" ? RELAY_TEXT_BYTES : 4 * 1024 * 1024);
+        const etag = response.headers.get("ETag")?.replace(/^W\//u, "").replace(/^"|"$/gu, "") || null;
+        // A packet's text is plain text: a page of any other type (an answer in place of a missing route) is not a packet.
+        if (as === "text") return { status: response.status, body: response.headers.get("Content-Type")?.toLowerCase().startsWith("text/plain") ? read ?? undefined : undefined, etag };
+        let parsed: unknown;
+        try { parsed = read === null || read === "" ? undefined : JSON.parse(read); } catch { parsed = undefined; }
+        return { status: response.status, body: parsed, etag };
+      } catch (error: unknown) {
+        if (signal?.aborted) throw error;
+        if (deadline.signal.aborted) throw new ApiError("REQUEST_TIMEOUT", "请求响应超时，请确认已接收的结果后重试。");
+        throw new ApiError("NETWORK_ERROR", "暂时无法连接本机网关。请确认服务仍在运行，再试一次。");
+      } finally { clearTimeout(timeout); }
+    } };
   }
   async authenticate(signal?: AbortSignal): Promise<void> {
     if (this.csrfToken !== null) return;
@@ -516,7 +563,9 @@ export class GatewayApi {
     this.bootstrapToken = null;
     pageBootstrapToken = null;
   }
-  state(signal?: AbortSignal): Promise<WebState> { return this.request("/state", "GET", undefined, decodeState, signal); }
+  state(signal?: AbortSignal): Promise<WebState> {
+    return this.request("/state", "GET", undefined, value => { this.relayAdvertised = typeof value === "object" && value !== null && (value as Record<string, unknown>).relay === true; return decodeState(value); }, signal);
+  }
   /** What the latest catalog reads and Runs showed of each Harness entry; reading it starts nothing. */
   readiness(signal?: AbortSignal): Promise<readonly HarnessReadinessView[]> { return this.request("/harnesses/readiness", "GET", undefined, value => list(record(value).readiness, decodeReadiness, 512), signal); }
   nativeModels(harness: string, control: string, workspace: string, signal: AbortSignal, refresh = false, nativeModel?: string): Promise<NativeModelCatalog> {
@@ -654,7 +703,7 @@ export class GatewayApi {
     }, signal);
   }
   /** Owns one cancellable fact stream; reconnecting never submits a conversation command. */
-  async streamSession(id: string, afterSeq: number, signal: AbortSignal, onFrame: (frame: SessionStreamFrame) => void, onAttention?: (frame: AttentionFrame) => void): Promise<void> {
+  async streamSession(id: string, afterSeq: number, signal: AbortSignal, onFrame: (frame: SessionStreamFrame) => void, onAttention?: (frame: AttentionFrame) => void, onRelay?: (event: RelayEvent) => void): Promise<void> {
     const deadline = new AbortController();
     const timeout = setTimeout(() => deadline.abort(new DOMException("Session stream deadline exceeded", "TimeoutError")), 75_000);
     const attempt = AbortSignal.any([signal, deadline.signal]);
@@ -676,8 +725,10 @@ export class GatewayApi {
         await response.body?.cancel(); return invalid();
       }
       let opened = false;
+      // Relay events say only that the relay changed; one that cannot be read is dropped, and never ends the stream.
       await consumeSessionEventStream(response.body, { signal: attempt, decode: decodeSessionStreamFrame, maxFrameBytes: 8 * 1024 * 1024,
-        ...(onAttention === undefined ? {} : { onAttention: (value: unknown) => onAttention(decodeAttentionFrame(value)) }), onFrame: frame => {
+        ...(onAttention === undefined ? {} : { onAttention: (value: unknown) => onAttention(decodeAttentionFrame(value)) }),
+        ...(onRelay === undefined ? {} : { onRelay: (value: unknown) => { const event = decodeRelayFrame(value); if (event !== null) onRelay(event); } }), onFrame: frame => {
         if (!opened && frame.type !== "snapshot") throw new ApiError("STREAM_PROTOCOL", "实时连接缺少起始会话事实。");
         opened = true; onFrame(frame);
       } });
@@ -720,8 +771,13 @@ export class GatewayApi {
   createSession(workspace: string, selection: SelectionRequest, key: string): Promise<SessionView> {
     return this.request("/sessions", "POST", { workspace, selection, commandId: key }, decodeSession);
   }
-  async send(id: string, value: string, key: string, attachments: readonly string[] = []): Promise<void> {
-    await this.request(`/sessions/${encodeURIComponent(id)}/messages`, "POST", { text: value, commandId: key, ...(attachments.length ? { attachments } : {}) }, value => acknowledge(value, id, "runId"));
+  /**
+   * Sends one message. `relay` is what the user chose about the history for this message (stage3 §3); a message that
+   * chose nothing sends nothing of it, so a Gateway without the relay API sees the body it always did.
+   */
+  async send(id: string, value: string, key: string, attachments: readonly string[] = [], relay?: RelayRequest): Promise<void> {
+    const choices = relayBody(relay);
+    await this.request(`/sessions/${encodeURIComponent(id)}/messages`, "POST", { text: value, commandId: key, ...(attachments.length ? { attachments } : {}), ...(choices === null ? {} : { relay: choices }) }, value => acknowledge(value, id, "runId"));
   }
   /** Branches a conversation after a finished reply; the server answers with the new conversation. */
   forkSession(id: string, key: string, throughRunId?: string): Promise<SessionView> {
@@ -801,7 +857,9 @@ export class GatewayApi {
       const payload = await readBoundedJson(response);
       if (!response.ok) {
         const error = publicError(payload);
-        throw new ApiError(error?.code ?? "REQUEST_FAILED", error?.message ?? "请求未能完成。");
+        // A refused send may carry the ways forward (relay-architecture §12.4); the body is read for them, whatever the status.
+        const relay = payload !== null && typeof payload === "object" && !Array.isArray(payload) ? decodeRelayErrorBody((payload as Record<string, unknown>).relay) : null;
+        throw new ApiError(error?.code ?? "REQUEST_FAILED", error?.message ?? "请求未能完成。", response.status, relay ?? undefined);
       }
       return decode(payload);
     } catch (error: unknown) {
@@ -810,6 +868,26 @@ export class GatewayApi {
       throw new ApiError("NETWORK_ERROR", "暂时无法连接本机网关。请确认服务仍在运行，再试一次。");
     } finally { clearTimeout(timeout); }
   }
+}
+/** The most a packet's text read takes: the Gateway stores a packet in at most 256 KiB, and this leaves room for its escapes. */
+const RELAY_TEXT_BYTES = 1024 * 1024;
+/** The body as UTF-8 text; null when it is longer than `limit` or is not valid UTF-8, "" when there is none. */
+async function readBoundedText(response: Response, limit: number): Promise<string | null> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    for (;;) {
+      const part = await reader.read(); if (part.done) break;
+      length += part.value.byteLength;
+      if (length > limit) { await reader.cancel(); return null; }
+      chunks.push(part.value);
+    }
+  } finally { reader.releaseLock(); }
+  const bytes = new Uint8Array(length);
+  let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { return null; }
 }
 async function readBoundedJson(response: Response): Promise<unknown> {
   if (!response.body) return invalid();
@@ -886,6 +964,12 @@ export function failureMessage(failure: { readonly code: string; readonly messag
     NATIVE_STATE_UNCONFIRMED: "原生会话的状态尚未确认。可以换一个 Harness，或明确建立新的原生分支；公共历史会保留。",
     SESSION_BLOCKED: "这段对话还有执行结果尚未核实，已暂停接收新消息。请在对话顶部核实后恢复；不会自动重新执行。",
     RUN_TIMEOUT: "本回合超过了 HarnessHub 的执行期限（不含等待你的时间），原程序没有按时结束，已被强制结束。结果尚待核实，不会自动重新执行。",
+    RELAY_INPUT_LIMIT: "这段对话的交接单放不进目标 Harness 的上下文窗口，这条消息没有发出。可以只发这条消息，或新开一个原生会话。",
+    RELAY_CHOICE_REQUIRED: "发送前需要你选一个办法：补发交接单、只发这条消息，或新开原生会话。这条消息没有发出，草稿已保留。",
+    RELAY_CONSENT_REQUIRED: "把对话交给这个 Harness 之前，需要你先确认。这条消息没有发出，草稿已保留。",
+    RELAY_TARGET_UNVERIFIED: "这个 Harness 的接力还没有经过真机验证，HarnessHub 不能保证它接得上之前的对话。这条消息没有发出，草稿已保留。",
+    RELAY_UNAVAILABLE: "现在不能交接这段对话。这条消息没有发出，草稿已保留；可以只发这条消息。",
+    RELAY_PREPARE_FAILED: "已切换，但没能交接：交接单没有准备好。这条消息没有发出，草稿已保留；可以重试，或选“只发这条消息”。",
     LOGIN_SHELL_UNAVAILABLE: "HarnessHub 没有运行你的登录 shell：它必须是列在 /etc/shells 中的绝对路径。用 Homebrew 等方式安装、没有加入这个文件的 shell 常见这种情况。搜索目录没有变化。",
     LOGIN_SHELL_FAILED: "没有读到登录 shell 的 PATH：登录配置超过 3 秒、输出超过 64 KiB、以错误退出，或没有打印 PATH。搜索目录没有变化。",
   };

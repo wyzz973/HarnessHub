@@ -19,6 +19,12 @@ export interface SessionEventStreamOptions {
   readonly maxFrameBytes?: number;
   /** Waiting approvals and questions the stream carries alongside (`event: attention`, no event id; ADR-035); ignored when absent. */
   readonly onAttention?: (value: unknown) => void;
+  /**
+   * Relay events the stream carries alongside (`{ type: "relay", event }`, relay-architecture §12.4), as `event: relay` (with or
+   * without an id) or as a session event: they say the relay's state changed, never move the conversation's cursor, and are
+   * ignored when this is absent.
+   */
+  readonly onRelay?: (value: unknown) => void;
 }
 function invalid(message: string): never { throw new SessionStreamError("STREAM_INVALID_FRAME", message); }
 function stateError(message: string): never { throw new SessionStreamError("STREAM_STATE", message); }
@@ -28,6 +34,8 @@ function identity(value: string, kind: keyof typeof identities): void {
 function watermark(value: number): void {
   if (!Number.isSafeInteger(value) || value < 0) invalid("Invalid stream watermark");
 }
+/** Whether a stream value is a relay event (`{ type: "relay", event }`) rather than a fact of the conversation. */
+function isRelayEvent(value: unknown): boolean { return value !== null && typeof value === "object" && (value as { type?: unknown }).type === "relay"; }
 function envelope(frame: SessionStreamFrame): { id: string; version: number; lastSeq: number } {
   if (frame === null || typeof frame !== "object") invalid("Invalid stream frame");
   if (frame.type !== "snapshot" && frame.type !== "message" && frame.type !== "run") invalid("Unknown stream frame type");
@@ -48,7 +56,7 @@ export async function consumeSessionEventStream(body: ReadableStream<Uint8Array>
   const reader = body.getReader();
   let consumerAbort: (() => void) | null = null;
   const aborted = (): DOMException => new DOMException("Session stream was aborted", "AbortError");
-  const parser = new SessionSseParser(maxFrameBytes, options.decode, options.onAttention, async frame => {
+  const parser = new SessionSseParser(maxFrameBytes, options.decode, options.onAttention, options.onRelay, async frame => {
     if (options.signal.aborted) throw aborted();
     // One current consumer slot avoids retaining one abort-promise reaction for every emitted frame.
     await new Promise<void>((resolve, reject) => {
@@ -106,7 +114,7 @@ class SessionSseParser {
   private hasFields = false;
   private readonly decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
   constructor(private readonly maxBytes: number, private readonly decode: SessionEventStreamOptions["decode"],
-    private readonly attention: SessionEventStreamOptions["onAttention"], private readonly consume: SessionEventStreamOptions["onFrame"]) {}
+    private readonly attention: SessionEventStreamOptions["onAttention"], private readonly relay: SessionEventStreamOptions["onRelay"], private readonly consume: SessionEventStreamOptions["onFrame"]) {}
   private budget(bytes: number): void {
     this.frameBytes += bytes;
     if (this.frameBytes > this.maxBytes) throw new SessionStreamError("STREAM_LIMIT", "Session stream frame exceeds its byte budget");
@@ -152,11 +160,24 @@ class SessionSseParser {
         this.frameBytes = 0; this.event = ""; this.id = null; this.data = []; this.hasFields = false;
         this.attention?.(value); return;
       }
+      if (this.data.length && this.event === "relay") {
+        // Relay events are carried the same way: no cursor, and one that is not valid JSON is dropped rather than ending the stream.
+        let value: unknown;
+        try { value = JSON.parse(this.data.join("\n")); } catch { value = undefined; }
+        this.frameBytes = 0; this.event = ""; this.id = null; this.data = []; this.hasFields = false;
+        if (value !== undefined) this.relay?.(value);
+        return;
+      }
       if (this.data.length) {
         if (this.event !== "session" || this.id === null || !/^(0|[1-9][0-9]*)$/u.test(this.id)) invalid("Invalid session SSE event or identity");
         const id = Number(this.id); watermark(id);
         let value: unknown;
         try { value = JSON.parse(this.data.join("\n")); } catch { invalid("Session SSE event contains invalid JSON"); }
+        if (isRelayEvent(value)) {
+          // A relay event sent as a session event has no facts of the conversation: it is handed on and leaves the cursor where it is.
+          this.frameBytes = 0; this.event = ""; this.id = null; this.data = []; this.hasFields = false;
+          this.relay?.(value); return;
+        }
         frame = this.decode(value);
         if (envelope(frame).lastSeq !== id) invalid("Session SSE identity disagrees with its facts watermark");
       }

@@ -27,6 +27,9 @@ import { CapabilitiesPage } from "./components/CapabilitiesPage.js";
 import { CommandPalette, ShortcutsDialog, type PaletteCommand } from "./components/CommandPalette.js";
 import { BrandIcon } from "./components/BrandIcon.js";
 import { attachmentKind, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, MAX_MESSAGE_ATTACHMENT_BYTES, type AttachmentDraft } from "./components/Attachments.js";
+import type { RelayNext } from "./components/RelayCard.js";
+import { relayBody, runRelayInfo, type RelayChoice, type RelayRequest } from "./relay.js";
+import { useRelayPresence, useRelayView } from "./lib/use-relay.js";
 import { parseContentRef, type ContentRef } from "../../src/contracts/content.js";
 import { hiddenHarnesses, useMedia, useNow, usePreferences } from "./lib/prefs.js";
 import { finished, stoppedByUser } from "./lib/turn.js";
@@ -36,6 +39,8 @@ import { useToast } from "./ui/overlay.js";
 import { LogoMark, Notice, Spinner, TipProvider } from "./ui/primitives.js";
 
 interface PendingMessage { text: string; attachments: readonly string[]; createKey: string; sessionId: string | null; sendKey: string; committed: boolean;
+  /** What the user chose about the history for this message (its relay body, as JSON): a send with another choice is another request. */
+  relay?: string;
   /** A new conversation chosen to keep its native process records that before its first message is sent (ADR-030). */
   retain?: { readonly key: string; applied: boolean } }
 interface PendingSelection { sessionId: string; selection: SelectionRequest; key: string; recovery: boolean; acknowledgeUnknown: boolean }
@@ -89,11 +94,12 @@ function savedChatDraft(workspace: string, id: string): ChatDraft | null {
       if (input === null) return null;
       if (typeof input !== "object" || Array.isArray(input)) throw new Error("invalid stored message intent");
       const item = input as Record<string, unknown>;
-      if (Object.keys(item).some(key => !["text", "attachments", "createKey", "sessionId", "sendKey", "committed"].includes(key)) || typeof item.text !== "string" || typeof item.committed !== "boolean" ||
+      if (Object.keys(item).some(key => !["text", "attachments", "createKey", "sessionId", "sendKey", "committed", "relay"].includes(key)) || typeof item.text !== "string" || typeof item.committed !== "boolean" ||
+          !(item.relay === undefined || typeof item.relay === "string" && item.relay.length <= 1024) ||
           !(item.attachments === undefined || Array.isArray(item.attachments) && item.attachments.length <= 8 && item.attachments.every(value => typeof value === "string" && /^content-[a-zA-Z0-9-]{1,96}$/u.test(value))) ||
           ![item.createKey, item.sendKey].every(key => typeof key === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(key)) ||
           !(item.sessionId === null || typeof item.sessionId === "string" && item.sessionId === id)) throw new Error("invalid stored message intent");
-      return { text: item.text, attachments: (item.attachments ?? []) as string[], createKey: String(item.createKey), sessionId: item.sessionId, sendKey: String(item.sendKey), committed: false };
+      return { text: item.text, attachments: (item.attachments ?? []) as string[], createKey: String(item.createKey), sessionId: item.sessionId, sendKey: String(item.sendKey), committed: false, ...(typeof item.relay === "string" ? { relay: item.relay } : {}) };
     };
     // A saved receipt is never authoritative; canonical Session facts confirm it after reload.
     let selectionIntent: PendingSelection | null = null;
@@ -252,6 +258,11 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [streamAttempt, setStreamAttempt] = useState(0);
+  // The relay (relay-architecture §12): a send the Gateway refused and offered ways forward for, what the user chose for the next
+  // message alone, and a count of the Gateway's announcements that the relay changed, which make the page read its state again.
+  const [relayChoice, setRelayChoice] = useState<RelayChoice | null>(null);
+  const [relayNext, setRelayNext] = useState<RelayNext>(null);
+  const [relayPushed, setRelayPushed] = useState(0);
   const [nativeCatalog, setNativeCatalog] = useState<NativeModelCatalog | null>(null);
   const [nativeLoading, setNativeLoading] = useState(false);
   const [nativeError, setNativeError] = useState<string | null>(null);
@@ -393,7 +404,7 @@ export function App() {
             const base = liveSession.current?.id === sessionId ? liveSession.current : null;
             const next = applySessionStreamFrame(base, frame, sessionId);
             setConnectionError(null); stage(next); watchTurn.current(next);
-          }, frame => { if (!stopped) acceptAttention(frame); });
+          }, frame => { if (!stopped) acceptAttention(frame); }, () => { if (!stopped) { setRelayPushed(value => value + 1); learnRelay(); } });
           if (!stopped) {
             if (performance.now() - started < 45_000) throw new ApiError("STREAM_EARLY_EOF", "实时连接提前结束。");
             failures = 0; await wait(250);
@@ -499,6 +510,16 @@ export function App() {
     // A conversation's own stream takes over, and reports its own state.
     return () => { stopped = true; controller.abort(); setAttentionDown(false); };
   }, [api, state !== null, sessionId === null, acceptAttention]);
+  // A refusal and a one-message choice belong to the conversation they were made in.
+  useEffect(() => { setRelayChoice(null); setRelayNext(null); }, [sessionId]);
+  // The relay is drawn only for a Gateway known to have it (lib/use-relay.ts): it says so in its state, a Turn carries a delivery, it
+  // pushes a relay event or a refused send offers ways forward. A Gateway without it sees no relay request and no relay line.
+  const relayPresence = useRelayPresence();
+  const learnRelay = relayPresence.learn;
+  useEffect(() => { if (!relayPresence.known && state !== null && api.relayAdvertised) learnRelay(); }, [state, relayPresence.known, api, learnRelay]);
+  const turns = session?.runs;
+  useEffect(() => { if (!relayPresence.known && turns !== undefined && turns.some(run => runRelayInfo(run)?.delivery != null)) learnRelay(); }, [turns, relayPresence.known, learnRelay]);
+  const relayView = useRelayView(api.relay, session, relayPushed, relayPresence.known, relayPresence.forget);
   const leave = (action: () => void) => {
     if (operation.current) return;
     const finish = () => { pendingProviderWrite.current = null; action(); };
@@ -624,7 +645,7 @@ export function App() {
     // The decision is in; the view follows on the conversation's stream as well, so a failed read here changes nothing.
     void api.session(item.sessionId, AbortSignal.timeout(15_000)).then(acceptSession, () => undefined);
   };
-  const send = async (value: string, retryAttachments?: readonly ContentRef[]) => {
+  const send = async (value: string, retryAttachments?: readonly ContentRef[], relayChoiceRequest?: RelayRequest) => {
     if (!state) throw new ApiError("NOT_READY", "工作空间尚未连接。");
     if (!startOperation("sending")) throw new ApiError("OPERATION_PENDING", "正在处理当前选择，请稍候；草稿已保留。");
     const sent = retryAttachments ?? readyAttachments(attachments), ids = sent.map(item => item.id);
@@ -634,10 +655,13 @@ export function App() {
         throw new ApiError("SELECTION_PENDING", "正在切换到所选 Harness 或模型，请稍候；草稿已保留。");
       const isEffective = session !== null && JSON.stringify(draft) === JSON.stringify(selectionDraft(session.selection));
       const problem = (isEffective && session ? effectiveProviderProblem(session.selection, state.providers) : null) ?? selectionProblem(draft, state.harnesses, state.providers); if (problem) throw new ApiError("INVALID_SELECTION", problem);
-      const previous = pendingMessage.current, same = previous !== null && previous.text === value && previous.attachments.join() === ids.join();
+      // What the user chose about the history for this message: a way forward from a refusal, else the one-message choice of the line above the box.
+      const relayRequest: RelayRequest | undefined = relayChoiceRequest ?? (relayNext === null ? undefined : { attach: relayNext });
+      const relayChosen = relayBody(relayRequest), relayKey = relayChosen === null ? undefined : JSON.stringify(relayChosen);
+      const previous = pendingMessage.current, same = previous !== null && previous.text === value && previous.attachments.join() === ids.join() && previous.relay === relayKey;
       if (previous && !previous.committed && !same) throw new ApiError("UNCONFIRMED_REQUEST", "上一条消息的接收结果还未确认。请保留原消息重试，或等待历史更新后再发送新内容。");
       const request: PendingMessage = same ? previous : { text: value, attachments: ids, createKey: requestKey(), sessionId: sessionIdRef.current, sendKey: requestKey(), committed: false,
-        ...(sessionIdRef.current === null && keepNew ? { retain: { key: requestKey(), applied: false } } : {}) };
+        ...(relayKey === undefined ? {} : { relay: relayKey }), ...(sessionIdRef.current === null && keepNew ? { retain: { key: requestKey(), applied: false } } : {}) };
       pendingMessage.current = request;
       saveChatDraft();
       let id = request.sessionId;
@@ -649,8 +673,10 @@ export function App() {
       }
       // Recorded before the first message, so the first Turn's process is already kept.
       if (request.retain && !request.retain.applied) { acceptSession(await api.setRetention(id, true, request.retain.key)); request.retain.applied = true; setKeepNew(false); }
-      if (!request.committed) { await api.send(id, value, request.sendKey, request.attachments); request.committed = true; rememberChoice(draft, nativeCatalog); }
+      if (!request.committed) { await api.send(id, value, request.sendKey, request.attachments, relayRequest); request.committed = true; rememberChoice(draft, nativeCatalog); }
       pendingMessage.current = null;
+      // The message went out: a refusal it answered and a choice it used are spent.
+      if (mounted.current) { setRelayChoice(null); setRelayNext(null); }
       // Sent attachments now belong to the message; the composer keeps only what was added meanwhile.
       if (retryAttachments === undefined && mounted.current) setAttachments(current => current.filter(item => item.ref === undefined || !ids.includes(item.ref.id)));
       // The command ACK releases the draft. Durable facts arrive on the independently owned stream.
@@ -664,7 +690,13 @@ export function App() {
         pendingMessage.current = null; setError(null); return;
       }
       if (failure instanceof ApiError && !["NETWORK_ERROR", "INVALID_RESPONSE", "REQUEST_TIMEOUT", "UNCONFIRMED_REQUEST"].includes(failure.code) && !pendingMessage.current?.committed) pendingMessage.current = null;
-      if (mounted.current) setError(errorMessage(failure)); throw failure;
+      // A refusal that offers ways forward (relay-architecture §12.4) is shown above the box with a button for each, not as an error:
+      // the draft stays, and the button sends it again with the way the user chose.
+      if (mounted.current) {
+        if (failure instanceof ApiError && failure.relay !== undefined && failure.relay.options.length > 0) { setRelayChoice({ code: failure.code, body: failure.relay }); learnRelay(); }
+        else setError(errorMessage(failure));
+      }
+      throw failure;
     } finally { endOperation(); }
   };
   /**
@@ -982,7 +1014,7 @@ export function App() {
       ...state.sessions.slice(0, 200).map(item => ({ id: "session:" + item.id, group: "对话", label: item.title || "新对话", hint: harnessName(item.selection.harnessId), keywords: item.workspace, icon: <BrandIcon brand={item.selection.harnessId} name={harnessName(item.selection.harnessId)} size={16}/>, run: () => selectSession(item.id) })),
       ...state.harnesses.filter(harness => !hidden.has(harness.id) && harness.controls.some(control => control.available)).map(harness => ({ id: "start:" + harness.id, group: "用 Harness 开始新对话", label: "用 " + harness.name + " 开始新对话", keywords: harness.id, icon: <BrandIcon brand={harness.id} name={harness.name} size={16}/>, run: () => chooseHarness(harness) })),
       // This page was called "我的 Agent" before ADR-054 and "Agent" until the user's decision of 2026-11-02 ("改成harness");
-      // both old names still find it.
+      // both old names still find it. Search words are never shown, so the wording check (tools/check-ui-wording.mjs) does not read them.
       { id: "harnesses", group: "前往", label: "Harness", keywords: "我的 Agent 安装 升级 更新 卸载", icon: <Bot size={16}/>, run: go("harnesses") },
       { id: "capabilities", group: "前往", label: "能力", keywords: "技能 MCP 指令 子 Agent 插件 Hooks", icon: <Blocks size={16}/>, run: () => { setCapabilityHarness(null); go("capabilities")(); } },
       { id: "settings", group: "前往", label: "设置", keywords: "主题 通知 发现 快捷键", icon: <Settings size={16}/>, run: go("settings") },
@@ -1034,11 +1066,12 @@ export function App() {
         onLoadExtensions={signal => api.nativeExtensions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, signal)} onLoadNativeSessions={(cursor, signal, probes) => api.nativeSessions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, cursor, signal, probes)}
         onImportNative={importNative} focusOnOpen={sessionId !== null && openedFromPage === sessionId} onOpenFocused={() => setOpenedFromPage(null)} onApply={() => { lastAutoSelection.current = null; void applySelection(); }} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }}
         onProviders={() => navigate("providers")} onNew={newChat} onMenu={shell.onMenu}
+        {...(relayPresence.known || relayChoice !== null ? { relay: { api: api.relay, view: relayView, choice: relayChoice, next: relayNext, onNext: setRelayNext, onDismissChoice: () => setRelayChoice(null) } } : {})}
         queued={queued} onQueue={queueMessage} onEditQueued={() => { if (queued) returnQueued(queued, null); }} onWithdrawQueued={withdrawQueued} queueNotice={queueNotice} onDismissQueueNotice={() => setQueueNotice(null)}
         preferences={preferences} onPreference={setPreference} conversations={state.sessions.length} sidebarHidden={!narrow && !preferences.sidebar} onExpandSidebar={shell.onExpandSidebar} onHarnesses={() => navigate("harnesses")} onSettings={() => navigate("settings")} onRescan={() => void rescan()} scanning={mutation === "scanning"}/>
         : shown === "providers" ? <ProvidersPage providers={state.providers} editor={editor} saving={mutation === "saving"} probes={probes} error={error} onEdit={provider => { setEditor(provider); setError(null); }} onBack={() => leave(() => { setEditor(null); setEditorDirty(false); setError(null); })} onSave={saveProvider} onProbe={provider => void probeProvider(provider)} onDirty={dirtyChanged} onDismissError={() => setError(null)} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
         : shown === "capabilities" ? <CapabilitiesPage api={api} initialHarness={capabilityHarness} hidden={hidden} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
-        : shown === "settings" ? <SettingsPage api={api} preferences={preferences} onPreference={setPreference} onRescan={() => void rescan()} scanning={mutation === "scanning"} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
+        : shown === "settings" ? <SettingsPage api={api} relayKnown={relayPresence.known} preferences={preferences} onPreference={setPreference} onRescan={() => void rescan()} scanning={mutation === "scanning"} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
         : <HarnessesPage api={api} harnesses={state.harnesses} hidden={hidden} onSettings={() => navigate("settings")} installationPolicy={state.installationPolicy} onUninstall={uninstall} onInstallOfficial={installOfficial} onUpgradeInstallation={upgradeInstallation} jobs={state.jobs} scanning={mutation === "scanning"} checking={checkingUpdates} submitting={submittingInstallations} cancelling={cancellingInstallations} unconfirmed={unconfirmedInstallations} error={error} connectionError={managementConnectionError} onRescan={() => void rescan()} onCheckUpdates={ids => void checkUpdates(ids)} onInstall={install} onOpenSession={openFromPage} onConfirm={confirmInstallation} onCancelJob={job => void cancelInstallation(job)} onDismissError={() => setError(null)} onChoose={chooseHarness} onCapabilities={id => { setCapabilityHarness(id); navigate("capabilities"); }}
           readiness={state.readiness} sessions={state.sessions} onMenu={shell.onMenu} onExpandSidebar={shell.onExpandSidebar} sidebarHidden={!narrow && !preferences.sidebar}/>}
     </main>
