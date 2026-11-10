@@ -189,7 +189,7 @@ function mayHaveDecisions(snapshot: SessionSnapshot): boolean {
   return false;
 }
 /**
- * The relay decision each Run's `run.context_prepared` recorded (`relayDecisionOf`), by Run. Events are append-only, so each
+ * The relay decision each Run's `run.context_prepared` recorded (`relayDecisionOf`), by Run — or the one a `relay.withheld` took back to. Events are append-only, so each
  * Session's are read once, from where the last read stopped; a Session the process has not seen is read from its start. Bounded:
  * the least recently read Sessions are forgotten.
  */
@@ -207,7 +207,8 @@ class DecisionLedger {
       if (!page.length) break;
       for (const item of page) {
         const run = item.data.runId;
-        if (item.type !== "run.context_prepared" || typeof run !== "string") continue;
+        // The last word wins: a packet withheld at the last moment (`relay.withheld`) takes back what `run.context_prepared` decided.
+        if (item.type !== "run.context_prepared" && item.type !== "relay.withheld" || typeof run !== "string") continue;
         const decision = relayDecisionOf(item.data);
         if (decision !== null) known.byRun.set(run, decision);
       }

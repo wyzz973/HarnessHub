@@ -738,6 +738,8 @@ export interface RelayLogPort {
   relayPrefs(): Readonly<Partial<Record<RelayPrefKey, string>>>;
   /** The current consent view: the latest record of each vendor and scope. */
   relayConsents(): readonly ConsentRecord[];
+  /** Whether any delivery row of any Session names the log row `logSeq` (its `consentLogSeq`): the row has been used by a handoff. */
+  consentUsed(logSeq: number): boolean;
 }
 
 /**

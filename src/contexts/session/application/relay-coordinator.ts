@@ -1064,6 +1064,9 @@ export function policyAloneOf(error: unknown, settings: RelaySettings, choices: 
   }
   // The known secrets could not be read (relaySecretsOf): no packet can be redacted, so none is sent (INV-29, fail closed).
   if (error instanceof SessionError && error.code === "RELAY_PREPARE_FAILED") return { cause: "prepare_failed", reason: "redaction_failed" };
+  // The frame of a packet and the input together would pass what one message carries (renderRelay): no packet fits, the input goes alone
+  // (G072 review m8). The input alone, if it passes the channel too, is the Driver's refusal, which fails the Run as it always did.
+  if (error instanceof SessionError && error.code === "CONTEXT_TOO_LARGE") return { cause: "input_limit", reason: "context_too_large" };
   return null;
 }
 /** What `attentionOf` reads of one binding. */
@@ -1168,7 +1171,9 @@ export function packetManifest(input: { readonly state: SessionSnapshot; readonl
     inputs: { attachOverride: input.attachOverride, digestBehind: [], detailsMissing: [], noteIncluded: false, firstLineOmitted: input.firstLineOmitted ? "slash" : null },
     redaction: { profile: "egress", count: record.redactions, byClass: {}, overridden: 0, unscanned: 0 },
     body: { sha256: sha(input.body), bytes: Buffer.byteLength(input.body, "utf8"), estTokens: record.tokens, estimator: "est/2", family: packetFamily(vendor, input.relay.vendorObserved?.modelKey ?? ""), untrustedTokens: 0, userTokens: 0 },
-    budget: { capTokens: record.budget.cap, userCap, untrustedCap, window: record.budget.window, fixedPrefix: window?.fixedPrefix ?? 0,
+    // `window` is the number the budget was judged against: the resolved window's (its source says where it came from), not the
+    // renderer's own assumption, which a target that reported nothing is rendered by (G072 review m7).
+    budget: { capTokens: record.budget.cap, userCap, untrustedCap, window: window?.size ?? record.budget.window, fixedPrefix: window?.fixedPrefix ?? 0,
       windowSource: window?.source ?? (record.budget.windowSource === "observed" ? "session_report" : "assumed_cloud"), clampedBy: [...new Set(input.clamped ?? [])] },
     sections: [], fold: indexes.slice(0, RELAY_MAX_RUNS).map(runIndex => ({ kind: "unit" as const, runIndex, grade: record.complete ? "verbatim" as const : "compact" as const, why: "tail" as const })),
     omissions: [], userEdits: [],
@@ -1235,6 +1240,11 @@ export function recordedStep(relay: BindingRelayState, turn: CarriedTurn, at: Re
 export type SettledTurn =
   | { readonly kind: "none" }
   | ({ readonly kind: "carry"; readonly recorded: boolean; readonly superseded: { readonly packetId: RelayPacketId; readonly range: SourceRange } | null } & CarriedTurn)
+  /**
+   * A Turn authorized with a packet whose consent was withdrawn before its dispatch (G072 review m1): the packet was prepared and its
+   * row inserted, but the input went as typed. Its delivery is not recorded (never dispatched) whatever became of the Turn.
+   */
+  | ({ readonly kind: "withheld"; readonly superseded: { readonly packetId: RelayPacketId; readonly range: SourceRange } | null } & CarriedTurn)
   | { readonly kind: "plain"; readonly contextThroughSeq: number; readonly agentOutput: boolean; readonly recorded: boolean }
   | { readonly kind: "alone" }
   | { readonly kind: "command"; readonly declared: ContextEffect };
@@ -1302,15 +1312,16 @@ export function settleTurn(input: SettleInput): Settled {
   const turn = input.turn;
   switch (turn.kind) {
     case "none": case "alone": break;
-    case "carry": {
-      if (turn.recorded) {
+    case "withheld": case "carry": {
+      if (turn.kind === "carry" && turn.recorded) {
         // E1 decided it before the Turn ended: the settlement finds the row recorded and the binding synced on it (no-op).
         apply(step(relay, { kind: "carry_settled", runId: turn.runId, packetId: turn.packetId, bodySha256: turn.bodySha256, reanchored: turn.reanchored, resent: turn.resent, row: "recorded",
           outcome: { kind: "recorded", evidence: "E1", decidedSeq: input.endedSeq, decidedAt: input.time, verifiedInRun: null } }));
         delivery = { packetId: turn.packetId, outcome: "recorded", evidence: "E1", mark: null };
         break;
       }
-      const outcome = settledOutcome({ dispatched: input.dispatched, status: input.status, input: input.input, successProvesRecorded: input.declaration.successProvesRecorded, lateDelivery: input.declaration.lateDelivery }, at(input.endedSeq));
+      const outcome = turn.kind === "withheld" ? { kind: "not_recorded" as const, reason: "never_dispatched" as const, decidedSeq: input.endedSeq, decidedAt: input.time }
+        : settledOutcome({ dispatched: input.dispatched, status: input.status, input: input.input, successProvesRecorded: input.declaration.successProvesRecorded, lateDelivery: input.declaration.lateDelivery }, at(input.endedSeq));
       // A refused resend names the packet it superseded; without it (no row to read it from) its outcome stays unknown, never not recorded.
       const decided = outcome.kind === "not_recorded" && turn.resent && turn.superseded === null ? { kind: "unknown" as const, reason: "no_evidence" as const, decidedSeq: input.endedSeq, decidedAt: input.time } : outcome;
       const settled = apply(step(relay, { kind: "carry_settled", runId: turn.runId, packetId: turn.packetId, bodySha256: turn.bodySha256, reanchored: turn.reanchored, resent: turn.resent, row: "in_flight",

@@ -586,8 +586,12 @@ export function assertSessionTransition(before: SessionSnapshot, after: SessionS
     if ((old.cancelRequested && !next.cancelRequested) || (old.stopRequested && !next.stopRequested)) throw new SessionError("INVALID_TRANSITION", "cancel/stop tombstones cannot be undone");
     if ((old.backend !== null && !same(old.backend, next.backend)) || (old.cleanup !== null && !same(old.cleanup, next.cleanup))) throw new SessionError("INVALID_TRANSITION", "backend/cleanup facts cannot be overwritten");
     if (old.status !== "queued" && (!same(old.selection, next.selection) || old.epoch !== next.epoch)) throw new SessionError("INVALID_TRANSITION", "dispatched Run selection is immutable");
-    // What a Turn prepared to send, its relay packet and when it was ready included (v13), is fixed once it runs.
-    if (["running", "settling"].includes(old.status) && (old.contextThroughSeq !== next.contextThroughSeq || !same(old.sourceRunIds, next.sourceRunIds) || !same(old.relay, next.relay) ||
+    // What a Turn prepared to send, its relay packet and when it was ready included (v13), is fixed once it runs. One exception, a
+    // way out and never a way in: a Turn not yet dispatched whose packet was withheld at the last moment (its consent was withdrawn,
+    // G072 review m1) loses the packet it prepared — its `relay.withheld` event names it — and goes as typed, keeping where it ran.
+    const withheld = old.timing?.dispatchedAt === undefined && old.relay?.packetId != null && next.relay !== undefined && next.relay.packetId === null && next.relay.kind === null && next.sourceRunIds.length === 0
+      && same(old.relay.executedOn, next.relay.executedOn) && events.some(event => event.type === "relay.withheld" && event.data.runId === old.id && event.data.packetId === old.relay!.packetId);
+    if (["running", "settling"].includes(old.status) && (old.contextThroughSeq !== next.contextThroughSeq || !withheld && (!same(old.sourceRunIds, next.sourceRunIds) || !same(old.relay, next.relay)) ||
         old.timing?.contextReadyAt !== next.timing?.contextReadyAt)) throw new SessionError("INVALID_TRANSITION", "dispatched context cannot change");
   }
   for (let index = 0; index < before.messages.length; index++) {

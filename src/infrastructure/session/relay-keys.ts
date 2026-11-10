@@ -15,9 +15,13 @@ import type { SessionId } from "../../contracts/session.js";
  * What is found on opening (§10.2 "异常语义", VF3-17):
  * - a regular file of this user with 32 bytes: used; a mode other than 0600 is set back to 0600 and reported;
  * - a regular file of this user with another length: refused (the relay then fails every Turn that would carry relay content
- *   with RELAY_PREPARE_FAILED{redaction_failed} and says why), never overwritten, since it may be a key being written;
- * - a file of another user, or anything that is not a regular file (a link, a directory, a FIFO): rotated — a new key is written
- *   beside it and renamed over it, with a new identity; rows keyed by the old identity can no longer be checked (不可复核).
+ *   with RELAY_PREPARE_FAILED{redaction_failed} and says why), never overwritten, since it may be a key being written — except
+ *   an empty one that has stood for more than EMPTY_KEY_MS: a key is written at once, so that is one whose creation was cut short
+ *   (a crash between creating the file and writing it), and it is rotated like the files below (G072 review m5);
+ * - a file of another user, or a link or a FIFO (anything that is not a regular file and not a directory): rotated — a new key is
+ *   written beside it and renamed over it, with a new identity; rows keyed by the old identity can no longer be checked (不可复核);
+ * - a directory: refused and left as it is — its contents are not the relay's to replace, and a file cannot be renamed over one;
+ *   the relay says so and the user moves it or sets another key path (G072 review m5).
  *
  * The key identity (`keyId`) is derived from the key and never EPHEMERAL_KEY_ID ("ephemeral" is reserved, A17).
  */
@@ -27,6 +31,8 @@ export function defaultRelayKeyPath(home: string = homedir()): string {
   return join(home, "Library", "Application Support", "HarnessHub", "relay-key");
 }
 const KEY_BYTES = 32;
+/** How long an empty key file must have stood before it counts as a creation that was cut short and not one being written. */
+const EMPTY_KEY_MS = 10_000;
 function keyIdOf(key: Buffer): string {
   const id = "k" + createHmac("sha256", key).update("relay-key-id/1", "utf8").digest("hex").slice(0, 23);
   if (id === EPHEMERAL_KEY_ID) throw new Error("unreachable: a key identity never spells the reserved one");
@@ -51,7 +57,7 @@ function create(path: string): Buffer {
 export interface RelayKeyOpening {
   readonly keys: RelayKeys;
   /** What opening found and did, for the service log (never the key, never its digest). */
-  readonly notes: readonly ("created" | "mode_repaired" | "rotated_foreign_owner" | "rotated_not_regular" | "refused_length")[];
+  readonly notes: readonly ("created" | "mode_repaired" | "rotated_foreign_owner" | "rotated_not_regular" | "rotated_empty" | "refused_length" | "refused_directory")[];
 }
 export class RelayKeys implements RelayKeyPort {
   readonly keyId: string;
@@ -86,8 +92,11 @@ export class RelayKeys implements RelayKeyPort {
       }
       try {
         const info = fstatSync(descriptor), uid = process.getuid?.();
+        if (info.isDirectory()) { notes.push("refused_directory"); return { keys: new RelayKeys(path, null, "这个路径是一个目录，HarnessHub 不会替换它；请把它移走，或另指一个密钥文件路径"), notes }; }
         if (!info.isFile()) { notes.push("rotated_not_regular"); return { keys: RelayKeys.rotate(path), notes }; }
         if (uid !== undefined && info.uid !== uid) { notes.push("rotated_foreign_owner"); return { keys: RelayKeys.rotate(path), notes }; }
+        // An empty file that has stood a while is a creation cut short (a key is written at once); a young one may be being written.
+        if (info.size === 0 && Date.now() - info.mtimeMs > EMPTY_KEY_MS) { notes.push("rotated_empty"); return { keys: RelayKeys.rotate(path), notes }; }
         if (info.size !== KEY_BYTES) { notes.push("refused_length"); return { keys: new RelayKeys(path, null, "长度是 " + info.size + " 字节，应为 32 字节"), notes }; }
         if ((info.mode & 0o777) !== 0o600) { fchmodSync(descriptor, 0o600); notes.push("mode_repaired"); }
         const key = Buffer.alloc(KEY_BYTES);

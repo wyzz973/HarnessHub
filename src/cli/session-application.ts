@@ -93,15 +93,17 @@ export function dataRootPlacement(root: string, workspace: string): DataRootPlac
  * and inode (each call: a few stats), no data directory's marker is in the workspace (the bounded search, only at a
  * workspace's first check and again when its own directory's mtime changed, cached for 64 workspaces), and the relay key file
  * is neither in the workspace nor beside it. What cannot be read is not isolated: the handoff is refused rather than risked.
+ * The cache is a convenience for the notice: a marker made deeper in the workspace does not move its own directory's mtime, so
+ * the answer that decides whether a handoff goes (`fresh`, asked while `relay.dataRootInWorkspace` is "block") searches again.
  */
-export function relayIsolation(root: string, keyFile: string | null): (workspace: string) => boolean {
+export function relayIsolation(root: string, keyFile: string | null): (workspace: string, fresh?: boolean) => boolean {
   const searched = new Map<string, { readonly mtimeMs: number; readonly markers: number }>();
-  return workspace => {
+  return (workspace, fresh = false) => {
     let mtimeMs: number;
     try { mtimeMs = statSync(workspace).mtimeMs; } catch { return false; }
     const contained = dataRootContainment(root, workspace);
     if (contained === null || contained.containment !== "separate") return false;
-    let known = searched.get(workspace);
+    let known = fresh ? undefined : searched.get(workspace);
     if (known === undefined || known.mtimeMs !== mtimeMs) {
       known = { mtimeMs, markers: dataRootPlacement(root, workspace).markers.length };
       if (searched.size >= 64 && !searched.has(workspace)) searched.delete(searched.keys().next().value!);

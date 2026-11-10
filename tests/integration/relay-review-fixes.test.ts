@@ -1,9 +1,16 @@
 import assert from "node:assert/strict";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { consentSourceOf, relayDecisionOf, type RelayDecision, type VendorKey } from "../../src/contracts/relay.js";
 import type { PublicRun, SessionId } from "../../src/contracts/session.js";
 import type { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
-import type { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { relayIsolation } from "../../src/cli/session-application.js";
+import { recoverRelay } from "../../src/contexts/session/domain/relay/recover.js";
+import { RelayKeys } from "../../src/infrastructure/session/relay-keys.js";
+import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
 import { RelayError } from "../../src/contracts/relay.js";
 import { CHECKING, Fakes, declared, eventOf, events, fromAlpha, refusedAt, relayOf, seen, to, turn, world } from "../fixtures/relay-fakes.js";
 
@@ -11,9 +18,10 @@ import { CHECKING, Fakes, declared, eventOf, events, fromAlpha, refusedAt, relay
 // of 072075f): each test is one finding reproduced on the formal SessionRuntime, a real SqliteSessionStore and fixture Harnesses
 // (tests/fixtures/relay-fakes.ts), written to fail before its fix. Nothing here runs a Harness.
 
+/** What the relay decided for a Run: its last word, `run.context_prepared` or, for a packet withheld at the last moment, `relay.withheld`. */
 function decisionOf(store: SqliteSessionStore, id: SessionId, run: PublicRun): RelayDecision | null {
-  const prepared = eventOf(store, id, "run.context_prepared", run.id);
-  return prepared === undefined ? null : relayDecisionOf(prepared.data);
+  const said = events(store, id).filter(row => (row.type === "run.context_prepared" || row.type === "relay.withheld") && row.data.runId === run.id).at(-1);
+  return said === undefined ? null : relayDecisionOf(said.data);
 }
 const syncOf = (app: SessionRuntime, id: SessionId, harnessId: string) => relayOf(app.read(id), harnessId).sync;
 /** A send the relay must not stop: its Run completes. */
@@ -353,4 +361,184 @@ test("G072-RV08 (review I5, M26) what a binding asks is worked out from the stat
   held.w.store.appendRelayLog(global("openai", "revoked", "user-revoke-1"));
   const waiting = banner(held.app, held.id)!;
   assert.equal(waiting.cause, "consent_revoked"); assert.equal(waiting.counts.runs, 1, "only a2 is owed: b2 and b3 ran on this native session in the epoch the clear ended, they are held (" + JSON.stringify(waiting.counts) + ")");
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// m1 — a consent withdrawn after the Turn was authorized
+// ---------------------------------------------------------------------------------------------------------------------
+
+test("G072-RV09 (review m1) a consent withdrawn between the Turn's authorization and its dispatch does not fail the Run under the defaults: the packet is settled as never dispatched, the binding goes back to where it was, the input goes as typed and the Run says it went alone; an explicit attach and the strict setting still fail", async t => {
+  for (const reading of ["read", "unseen"] as const) {
+    const { w, fakes, app, id, a1 } = await fromAlpha(t, { bravo: declared() }, "bravo");
+    fakes.observed.bravo = seen("openai");
+    await accepted(app, id, "b0 as typed", "b0", { attach: "none" });   // the vendor is read once: what the binding knows it by
+    const before = relayOf(app.read(id), "bravo");
+    if (reading === "unseen") fakes.observeFails.add("bravo");          // and the read fails at the Turn: the withdrawal is of a key it is known by
+    fakes.onAuthorized = () => { w.store.appendRelayLog(global("openai", "revoked", "late-revoke")); fakes.onAuthorized = null; };
+    const b1 = await turn(app, id, "b1 would carry a1", "b1");
+    assert.equal(b1.status, "completed", reading + ": " + (b1.error?.code ?? "")); assert.ok(asTyped(fakes, "bravo", "b1 would carry a1"), reading + ": as typed");
+    assert.deepEqual(decisionOf(w.store, id, b1), { kind: "alone", by: "policy", cause: "consent_revoked" });
+    assert.equal(b1.relay?.packetId, null, "the Run does not claim a packet that never left"); assert.deepEqual(b1.relay?.continuity, { kind: "native_resume" }); assert.deepEqual(b1.sourceRunIds, []);
+    const row = w.store.relayDeliveries(id).find(item => item.runId === b1.id)!;
+    assert.ok(row.outcome.kind === "not_recorded" && row.outcome.reason === "never_dispatched", "the packet's row: " + JSON.stringify(row.outcome));
+    assert.deepEqual(relayOf(app.read(id), "bravo").sync, before.sync, "back to where it was");
+    assert.equal(eventOf(w.store, id, "relay.input_recorded", b1.id), undefined, "no evidence of a delivery");
+    assert.equal(banner(app, id)?.cause, "consent_revoked");
+    // Allowed again, the next input carries what is still owed.
+    w.store.appendRelayLog(global("openai", "acknowledged", "allow-again"));
+    const b2 = await accepted(app, id, "b2 carries a1", "b2");
+    assert.equal(typeof fakes.to("bravo").at(-1)!.turn, "object"); assert.ok(b2.sourceRunIds.includes(a1.id));
+    assert.equal(syncOf(app, id, "bravo").kind, "synced");
+  }
+  // The user's own choice is not rewritten: an explicit attach fails the Run before dispatch, nothing is sent.
+  const explicit = await fromAlpha(t, { bravo: declared() }, "bravo");
+  explicit.fakes.observed.bravo = seen("openai");
+  explicit.fakes.onAuthorized = () => { explicit.w.store.appendRelayLog(global("openai", "revoked", "late-revoke")); explicit.fakes.onAuthorized = null; };
+  const sent = explicit.fakes.to("bravo").length;
+  const failed = await turn(explicit.app, explicit.id, "b1 attaches", "b1", { attach: "full" });
+  assert.equal(failed.status, "failed"); assert.equal(failed.error?.code, "RELAY_CONSENT_REQUIRED"); assert.equal(failed.timing?.dispatchedAt, undefined); assert.equal(explicit.fakes.to("bravo").length, sent);
+  assert.equal(syncOf(explicit.app, explicit.id, "bravo").kind, "fresh", "refused before dispatch, the binding is as it was");
+  // The strict design asks for consent at every vendor, and fails the Run in the same race.
+  const strict = await fromAlpha(t, { bravo: declared() }, "bravo", { strict: true });
+  strict.fakes.observed.bravo = seen("openai");
+  await accepted(strict.app, strict.id, "b0 as typed, the vendor is read", "b0", { attach: "none" });
+  strict.fakes.onAuthorized = () => { strict.w.store.appendRelayLog(global("openai", "revoked", "late-revoke")); strict.fakes.onAuthorized = null; };
+  const strictRun = await turn(strict.app, strict.id, "b1 carries a1", "b1", { consent: { vendor: "openai", decision: "acknowledged", scope: "session" } });
+  assert.equal(strictRun.status, "failed"); assert.equal(strictRun.error?.code, "RELAY_CONSENT_REQUIRED");
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// m2, m7, m12 — the first use's notice, the manifest's window, the word for a Turn that went alone
+// ---------------------------------------------------------------------------------------------------------------------
+
+test("G072-RV10 (review m2, m7, m12) the first use of a vendor is told until a handoff has rested on its row — a Turn that wrote the row and went alone after all has told no one; a Turn sent alone continues its native session in its record and not by rehydration; a packet's manifest names the window it was judged against", async t => {
+  const first = await fromAlpha(t, { bravo: declared() }, "bravo");
+  first.fakes.observed.bravo = seen("openai");
+  const real = first.w.store.transact.bind(first.w.store);
+  first.w.store.transact = (id, version, mutate) => real(id, version, state => { const next = mutate(state); if (next.relay?.packets?.length) throw new RelayError({ code: "RELAY_PREPARE_FAILED", reason: "storage_quota" }, "quota"); return next; });
+  const b1 = await accepted(first.app, first.id, "b1 would carry a1", "b1");
+  first.w.store.transact = real;
+  assert.deepEqual(decisionOf(first.w.store, first.id, b1), { kind: "alone", by: "policy", cause: "prepare_failed", reason: "storage_quota" });
+  const rows = defaults(first.w.store);
+  assert.equal(rows.length, 1, "the first use wrote its row before the Turn was committed, and the Turn went alone after all");
+  assert.equal(eventOf(first.w.store, first.id, "run.context_prepared", b1.id)!.data.continuity, "native_resume", "m12: it carried nothing of the history");
+  const b2 = await accepted(first.app, first.id, "b2 carries a1", "b2");
+  assert.equal(eventOf(first.w.store, first.id, "run.context_prepared", b2.id)!.data.continuity, "public_context_rehydrate");
+  assert.deepEqual(eventOf(first.w.store, first.id, "run.context_prepared", b2.id)!.data.consent, { via: "global", logSeq: rows[0]!.logSeq, first: true }, "no handoff had rested on the row: still the first use");
+  await to(first.app, first.id, "alpha", "to-a"); await accepted(first.app, first.id, "a2 newer", "a2", { attach: "none" }); await to(first.app, first.id, "bravo", "to-b2");
+  const b3 = await accepted(first.app, first.id, "b3 carries a2", "b3");
+  assert.deepEqual(eventOf(first.w.store, first.id, "run.context_prepared", b3.id)!.data.consent, { via: "global", logSeq: rows[0]!.logSeq }, "a handoff rested on the row: told once");
+  // m7: the number the manifest gives is the window the budget was judged against, with its source.
+  const windows: readonly (readonly [string, ReturnType<typeof seen>, number, string])[] = [["a cloud vendor", seen("openai"), 128_000, "assumed_cloud"], ["a local one", seen("local"), 32_000, "assumed_local"]];
+  for (const [label, observation, size, source] of windows) {
+    const one = await fromAlpha(t, { bravo: declared() }, "bravo");
+    one.fakes.observed.bravo = observation;
+    await accepted(one.app, one.id, "b1 carries a1", "b1");
+    const budget = one.w.store.relayPackets(one.id)[0]!.budget;
+    assert.deepEqual([budget.window, budget.windowSource], [size, source], label);
+  }
+  const gateway = await fromAlpha(t, { bravo: declared() }, "bravo");
+  gateway.fakes.observed.bravo = { model: null, modelKey: "", authKind: null, endpoint: { host: "api.example.com", layer: "user_config" }, loopback: false };
+  await accepted(gateway.app, gateway.id, "b1 carries a1", "b1");
+  assert.deepEqual([gateway.w.store.relayPackets(gateway.id)[0]!.budget.window, gateway.w.store.relayPackets(gateway.id)[0]!.budget.windowSource], [32_000, "assumed_gateway"], "a gateway's window is assumed smaller: the manifest says so, not 128k");
+  const reported = await fromAlpha(t, { bravo: declared() }, "bravo");
+  reported.fakes.observed.bravo = seen("openai"); reported.fakes.usage.bravo = { context: { used: 2000, size: 400_000 } };
+  await accepted(reported.app, reported.id, "b0 alone, the window is reported", "b0", { attach: "none" }); await accepted(reported.app, reported.id, "b1 carries a1", "b1");
+  assert.deepEqual([reported.w.store.relayPackets(reported.id)[0]!.budget.window, reported.w.store.relayPackets(reported.id)[0]!.budget.windowSource], [400_000, "session_report"]);
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// m4 — a database made while the contract listed fewer preferences
+// ---------------------------------------------------------------------------------------------------------------------
+
+test("G072-RV11 (review m4) a v13 database whose preferences table lists the four keys G072 made it with is rebuilt when opened, keeping its preferences; a preference the table still would not admit is refused as INVALID_INPUT and does not stop the Store", t => {
+  const root = mkdtempSync(join(tmpdir(), "relay-prefs-")), data = join(root, "data");
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const first = new SqliteSessionStore(data, { recoverRelay });
+  first.setPref("relay.crossVendor", "ask"); first.setPref("relay.returnPreference", "new_when_cold"); first.close();
+  const downgrade = () => {
+    const db = new DatabaseSync(join(data, "gateway.sqlite"));
+    try {
+      db.exec("ALTER TABLE relay_prefs RENAME TO relay_prefs_all; CREATE TABLE relay_prefs(key TEXT PRIMARY KEY CHECK(key IN('relay.crossVendor','relay.returnPreference','relay.allowUnprobed','relay.localModelsOffline')), "
+        + "value TEXT NOT NULL CHECK(length(value)<=64), updated_at INTEGER NOT NULL) STRICT; INSERT INTO relay_prefs SELECT key,value,updated_at FROM relay_prefs_all WHERE key IN('relay.crossVendor','relay.returnPreference'); DROP TABLE relay_prefs_all;");
+    } finally { db.close(); }
+  };
+  downgrade();
+  const store = new SqliteSessionStore(data, { recoverRelay });
+  try {
+    assert.deepEqual(store.relayPrefs(), { "relay.crossVendor": "ask", "relay.returnPreference": "new_when_cold" }, "the preferences it held are kept");
+    for (const [key, value] of [["relay.whenUnsure", "ask"], ["relay.dataRootInWorkspace", "block"], ["relay.allowUnprobed", "false"]] as const) store.setPref(key, value);
+    assert.deepEqual(store.relayPrefs(), { "relay.crossVendor": "ask", "relay.returnPreference": "new_when_cold", "relay.whenUnsure": "ask", "relay.dataRootInWorkspace": "block", "relay.allowUnprobed": "false" });
+    // The table is narrowed again under the open Store (something else wrote its schema): the write is refused, nothing else is.
+    const db = new DatabaseSync(join(data, "gateway.sqlite"));
+    try { db.exec("ALTER TABLE relay_prefs RENAME TO relay_prefs_all; CREATE TABLE relay_prefs(key TEXT PRIMARY KEY CHECK(key IN('relay.crossVendor')), value TEXT NOT NULL, updated_at INTEGER NOT NULL) STRICT; INSERT INTO relay_prefs SELECT key,value,updated_at FROM relay_prefs_all WHERE key='relay.crossVendor'; DROP TABLE relay_prefs_all;"); }
+    finally { db.close(); }
+    assert.throws(() => store.setPref("relay.whenUnsure", "auto"), (error: unknown) => error instanceof Error && "code" in error && error.code === "INVALID_INPUT");
+    store.setPref("relay.crossVendor", "allow");
+    assert.deepEqual(store.relayPrefs(), { "relay.crossVendor": "allow" }, "the Store went on");
+  } finally { store.close(); }
+  // Opened again, the table is rebuilt once more and holds all six.
+  const again = new SqliteSessionStore(data, { recoverRelay });
+  try { again.setPref("relay.localModelsOffline", "true"); assert.equal(again.relayPrefs()["relay.localModelsOffline"], "true"); } finally { again.close(); }
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// m5 and m6 — the relay key file, the data directory's isolation
+// ---------------------------------------------------------------------------------------------------------------------
+
+test("G072-RV12 (review m5) a relay key file that is empty and has stood for a while is a creation cut short and is replaced; a young empty one, a file of another length and a directory are refused and left as they are; a link is replaced without touching its target", t => {
+  const root = mkdtempSync(join(tmpdir(), "relay-keys-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const at = (name: string) => { const dir = join(root, name); mkdirSync(dir); return join(dir, "relay-key"); };
+  const usable = (keys: RelayKeys): boolean => { try { keys.inputHmac("session-a" as never, "words"); return true; } catch { return false; } };
+  // Empty and old: a key is written at once, so this is a crash between creating the file and writing it.
+  const stale = at("stale"); writeFileSync(stale, Buffer.alloc(0), { mode: 0o600 }); const old = new Date(Date.now() - 60_000); utimesSync(stale, old, old);
+  const rebuilt = RelayKeys.open(stale);
+  assert.ok(rebuilt.notes.includes("rotated_empty") && usable(rebuilt.keys), JSON.stringify(rebuilt.notes)); assert.equal(statSync(stale).size, 32); assert.equal(statSync(stale).mode & 0o777, 0o600);
+  assert.equal(RelayKeys.open(stale).keys.keyId, rebuilt.keys.keyId, "and the key it made is kept from then on");
+  // Empty and young: it may be being written.
+  const young = at("young"); writeFileSync(young, Buffer.alloc(0), { mode: 0o600 });
+  const waiting = RelayKeys.open(young);
+  assert.ok(waiting.notes.includes("refused_length") && !usable(waiting.keys)); assert.equal(statSync(young).size, 0, "left as it was");
+  // Another length: refused, never overwritten.
+  const odd = at("odd"); writeFileSync(odd, Buffer.alloc(33, 7), { mode: 0o600 }); utimesSync(odd, old, old);
+  assert.ok(RelayKeys.open(odd).notes.includes("refused_length")); assert.equal(statSync(odd).size, 33);
+  // A directory: refused with its reason, and left alone; the keys say why they cannot be used.
+  const dir = at("dir"); mkdirSync(dir); writeFileSync(join(dir, "mine"), "the user's file");
+  const refused = RelayKeys.open(dir);
+  assert.deepEqual(refused.notes, ["refused_directory"]); assert.ok(lstatSync(dir).isDirectory()); assert.equal(readFileSync(join(dir, "mine"), "utf8"), "the user's file");
+  assert.throws(() => refused.keys.inputHmac("session-a" as never, "words"), (error: unknown) => error instanceof Error && "reason" in error && error.reason === "redaction_failed" && /目录/u.test(error.message));
+  // A link is no key file of this user: replaced, its target untouched.
+  const link = at("link"), target = join(root, "target"); writeFileSync(target, Buffer.alloc(32, 9)); symlinkSync(target, link);
+  const replaced = RelayKeys.open(link);
+  assert.ok(replaced.notes.includes("rotated_not_regular") && usable(replaced.keys) && lstatSync(link).isFile()); assert.ok(readFileSync(target).equals(Buffer.alloc(32, 9)));
+  chmodSync(stale, 0o600);
+});
+
+test("G072-RV13 (review m6) the data directory's isolation is asked afresh where its answer decides whether a handoff goes (relay.dataRootInWorkspace=block) and may come from the cache where it is only a notice (warn): a marker made deeper in the workspace moves no mtime of the workspace itself", async t => {
+  // The composition's check: a cache that the workspace's own directory time invalidates.
+  const root = mkdtempSync(join(tmpdir(), "relay-isolation-")), workspace = join(root, "workspace"), data = join(root, "data");
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(workspace, "deep", "copy"), { recursive: true });
+  const store = new SqliteSessionStore(data, { recoverRelay }); store.close();
+  const isolated = relayIsolation(data, null);
+  assert.equal(isolated(workspace), true);
+  const marker = ".harness-gateway.json", before = statSync(workspace).mtimeMs;
+  writeFileSync(join(workspace, "deep", "copy", marker), readFileSync(join(data, marker)));
+  assert.equal(statSync(workspace).mtimeMs, before, "the workspace's own directory did not change");
+  assert.equal(isolated(workspace), true, "cached: the notice may be a little behind");
+  assert.equal(isolated(workspace, true), false, "asked afresh: found");
+  // Through the Runtime: the answer that decides is asked afresh, the notice's is not.
+  const asked: (boolean | undefined)[] = [];
+  const { w, app, id } = await fromAlpha(t, { bravo: declared() }, "bravo", { isolation: (_workspace, fresh) => { asked.push(fresh); return true; } });
+  w.store.appendRelayLog(global("openai", "acknowledged", "allow-openai"));
+  asked.length = 0;
+  await accepted(app, id, "b1 carries a1", "b1");
+  assert.ok(asked.length > 0 && asked.every((fresh): boolean => fresh === false), "warn: " + JSON.stringify(asked));
+  w.store.setPref("relay.dataRootInWorkspace", "block");
+  await to(app, id, "alpha", "to-a"); await accepted(app, id, "a2 newer", "a2", { attach: "none" }); await to(app, id, "bravo", "to-b2");
+  asked.length = 0;
+  await accepted(app, id, "b2 carries a2", "b2");
+  assert.ok(asked.length > 0 && asked.every((fresh): boolean => fresh === true), "block: " + JSON.stringify(asked));
+  assert.equal(existsSync(data), true);
 });

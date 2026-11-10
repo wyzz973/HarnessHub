@@ -149,7 +149,8 @@ export class Fakes implements SessionBindingFactory {
   release(): void { for (const release of this.held.splice(0)) release(); }
 }
 
-export interface World { readonly data: string; store: SqliteSessionStore; readonly configuration: SessionConfiguration; runtime(factory: SessionBindingFactory, options?: { readonly isolated?: boolean; readonly keys?: RelayKeyPort }): SessionRuntime }
+export interface World { readonly data: string; store: SqliteSessionStore; readonly configuration: SessionConfiguration; runtime(factory: SessionBindingFactory, options?: { readonly isolated?: boolean; readonly keys?: RelayKeyPort;
+  /** The composition's own check instead of a constant (relayIsolation): it is asked `(workspace, fresh)` as the Runtime asks it. */ readonly isolation?: (workspace: string, fresh?: boolean) => boolean }): SessionRuntime }
 /** A world of real parts on a temporary data root. `strict` turns every strict preference on (P9); the default world is the installation's own defaults. */
 export function world(t: TestContext, strict = false, prefix = "relay-perm-"): World {
   const root = temporary(t, prefix), workspace = join(root, "workspace"), data = join(root, "data");
@@ -160,7 +161,7 @@ export function world(t: TestContext, strict = false, prefix = "relay-perm-"): W
     runtime(factory, options = {}) {
       let next = 0;
       const app = new SessionRuntime(w.store, factory, { id: () => "perm-" + ++next + "-" + runtimes.length, now: () => new Date(NOW), publish: () => {},
-        fingerprint: value => createHash("sha256").update(value).digest("hex"), relayIsolated: () => options.isolated ?? true, ...(options.keys === undefined ? {} : { relayKeys: options.keys }) });
+        fingerprint: value => createHash("sha256").update(value).digest("hex"), relayIsolated: options.isolation ?? (() => options.isolated ?? true), ...(options.keys === undefined ? {} : { relayKeys: options.keys }) });
       runtimes.push(app); return app;
     } };
   if (strict) strictRelay(w.store);
@@ -203,10 +204,11 @@ export function refusedAt(app: SessionRuntime, fakes: Fakes, id: SessionId, text
  * alpha (anthropic, can show nothing but a recorded input) with one Turn, a1; then the conversation switched to `target`, which
  * is now owed a1. `declarations` adds the targets; `observed` the vendors they run on.
  */
-export async function fromAlpha(t: TestContext, declarations: Readonly<Record<string, RelayCapabilities | null>>, target: string, options: { readonly strict?: boolean; readonly isolated?: boolean; readonly alpha?: RelayCapabilities } = {}) {
+export async function fromAlpha(t: TestContext, declarations: Readonly<Record<string, RelayCapabilities | null>>, target: string, options: { readonly strict?: boolean; readonly isolated?: boolean; readonly alpha?: RelayCapabilities;
+    readonly isolation?: (workspace: string, fresh?: boolean) => boolean } = {}) {
   const w = world(t, options.strict ?? false), fakes = new Fakes({ alpha: options.alpha ?? declared(), ...declarations });
   fakes.observed.alpha = seen("anthropic");
-  const app = w.runtime(fakes, options.isolated === undefined ? {} : { isolated: options.isolated }), id = (await app.create(w.configuration, { harnessId: "alpha" }, "create")).id;
+  const app = w.runtime(fakes, { ...(options.isolated === undefined ? {} : { isolated: options.isolated }), ...(options.isolation === undefined ? {} : { isolation: options.isolation }) }), id = (await app.create(w.configuration, { harnessId: "alpha" }, "create")).id;
   const a1 = await turn(app, id, "a1 a fact on alpha", "a1");
   await to(app, id, target, "to-" + target);
   return { w, fakes, app, id, a1 };

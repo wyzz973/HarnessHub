@@ -218,6 +218,18 @@ test("G066-C06 a Run's relay fields are fixed once it runs, and its relay reques
   accepts(preparing, running);
   rejects(running, state({ busy: true, runs: runs({ ...executed, continuity: { kind: "rehydrate", tier: "standard", complete: true } }, { acceptedAt: 10, preparingAt: 11, contextReadyAt: 12, readyAt: 13 }) }), /dispatched context cannot change/u);
   rejects(running, state({ busy: true, runs: runs(executed, { acceptedAt: 10, preparingAt: 11, contextReadyAt: 13, readyAt: 13 }) }), /dispatched context cannot change/u);
+  // G072 review m1: a Turn not yet dispatched may lose the packet it prepared — a way out, never a way in — and only with the event that names it.
+  const packetOf = packet("c"), carrying = { packetId: packetOf, kind: "packet", continuity: { kind: "rehydrate", tier: "standard", complete: true }, executedOn: { ...alpha, nativeEpoch: 1 } };
+  const prepared = (relayField: Plain, sources: string[], timing: Plain = { acceptedAt: 10, preparingAt: 11, contextReadyAt: 12, readyAt: 13 }) =>
+    state({ busy: true, runs: [run("one", 2), run("two", 4, alpha, { status: "running", backend: null, cleanup: null, timing, relay: relayField, sourceRunIds: sources })] });
+  const holding = prepared(carrying, ["run-one"]), alone = prepared(executed, []), withheld = [{ type: "relay.withheld", data: { runId: "run-two", packetId: packetOf } }];
+  accepts(holding, alone, withheld);
+  rejects(holding, alone, /dispatched context cannot change/u);
+  rejects(holding, alone, /dispatched context cannot change/u, [{ type: "relay.withheld", data: { runId: "run-two", packetId: packet("d") } }]);
+  rejects(holding, alone, /dispatched context cannot change/u, [{ type: "relay.withheld", data: { runId: "run-one", packetId: packetOf } }]);
+  rejects(prepared(carrying, ["run-one"], { acceptedAt: 10, preparingAt: 11, contextReadyAt: 12, readyAt: 13, dispatchedAt: 14 }), prepared(executed, [], { acceptedAt: 10, preparingAt: 11, contextReadyAt: 12, readyAt: 13, dispatchedAt: 14 }), /dispatched context cannot change/u, withheld);
+  rejects(alone, holding, /dispatched context cannot change/u, withheld);
+  rejects(holding, prepared({ ...executed, executedOn: { ...alpha, nativeEpoch: 2 } }, []), /dispatched context cannot change/u, withheld);
   const request = { attach: "none", fingerprint: hex("c") };
   const queued = (relayRequest: Plain) => state({ runs: [run("one", 2), run("two", 4, alpha, { status: "queued", backend: null, cleanup: null, contextThroughSeq: 0, timing: { acceptedAt: 10 }, relayRequest })],
     bindings: [{ ...alpha, checkpoint: "native-alpha", throughRunId: "run-one", status: "ready", relay: relay() }] });

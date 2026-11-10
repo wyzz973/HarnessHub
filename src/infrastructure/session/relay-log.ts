@@ -67,6 +67,10 @@ export function appendConsent(database: DatabaseSync, record: ConsentAppend, now
     .run(append.commandId, append.decision === "revoked" ? "revoke" : "consent", append.vendor, scope, sessionId, append.decision, JSON.stringify(append.categories), append.policyVersion, append.authKind, append.decidedAt);
   return { ...append, logSeq: Number(inserted.lastInsertRowid) };
 }
+/** Whether any delivery row names the log row `logSeq` as the consent it rests on (a default allowance is "used" once a handoff rested on it). */
+export function consentNamed(database: DatabaseSync, logSeq: number): boolean {
+  return database.prepare("SELECT 1 AS found FROM relay_deliveries WHERE consent_log_seq=? LIMIT 1").get(logSeq) !== undefined;
+}
 /** The current consent view: the latest record of each vendor, scope and Session, oldest first. */
 export function currentConsents(database: DatabaseSync): readonly ConsentRecord[] {
   return database.prepare("SELECT * FROM relay_log WHERE seq IN (SELECT MAX(seq) FROM relay_log GROUP BY vendor, scope, session_id) ORDER BY seq").all().map(recordOf);
@@ -74,7 +78,14 @@ export function currentConsents(database: DatabaseSync): readonly ConsentRecord[
 /** Sets one installation preference (the last writer wins); its key and value are checked first (RELAY_PREF_VALUES). */
 export function writePref(database: DatabaseSync, key: RelayPrefKey, value: string, now: number): void {
   const pref = parseRelayPref(key, value);
-  database.prepare("INSERT INTO relay_prefs(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at").run(pref.key, pref.value, now);
+  try { database.prepare("INSERT INTO relay_prefs(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at").run(pref.key, pref.value, now); }
+  catch (error) {
+    // A constraint of the table that does not admit a preference the contract does (a database made with fewer keys, which opening repairs) is a
+    // refusal of this write; it is not a failure of the storage, and does not stop the Store (G072 review m4).
+    if (error !== null && typeof error === "object" && "errcode" in error && (error.errcode === 19 || (typeof error.errcode === "number" && (error.errcode & 0xff) === 19)))
+      throw new SessionError("INVALID_INPUT", "this installation's database does not accept the preference " + pref.key);
+    throw error;
+  }
 }
 export function readPrefs(database: DatabaseSync): Readonly<Partial<Record<RelayPrefKey, string>>> {
   const prefs: Partial<Record<RelayPrefKey, string>> = {};

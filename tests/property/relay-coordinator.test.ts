@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { nativeConversationId, type BackendResult, type HarnessControl } from "../../src/contracts/control.js";
-import { EMPTY_CHAIN, RelayError, consentSourceOf, markOf, parseBindingRelayState, parseVendorKey, relayPacketId, type BindingRelayState, type BindingSync, type DeliveredMark, type RelayCapabilities, type SyncPrior, type VendorKey } from "../../src/contracts/relay.js";
+import { EMPTY_CHAIN, RelayError, consentSourceOf, markOf, parseBindingRelayState, parseVendorKey, relayPacketId, type BindingRelayState, type BindingSync, type ConsentRecord, type DeliveredMark, type RelayCapabilities, type SyncPrior, type VendorKey } from "../../src/contracts/relay.js";
 import { SessionError, runId, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId } from "../../src/contracts/session.js";
 import { dshRelayCapabilities } from "../../src/adapters/control/acp.js";
 import { sharedClassify } from "../../src/adapters/control/relay-classify.js";
@@ -50,6 +50,14 @@ class Fakes implements SessionBindingFactory {
   readonly violations: string[] = [];
   packets = 0;
   consented: (harnessId: string, input: string) => boolean = () => true;
+  /** Harnesses whose vendor read fails while they are in it (their Driver cannot tell its vendor at the open: a timeout, a refusal). */
+  readonly unread = new Set<string>();
+  /** The harnesses whose vendor was read at least once, and how many vendor reads failed: a Hub cannot know a vendor it never saw. */
+  readonly known = new Set<string>(); failedReads = 0;
+  /** The test's own word on whether the vendor's latest record, for this conversation, is a withdrawal (independent of the code under test). */
+  withdrawn: (vendor: VendorKey) => boolean = () => false;
+  /** Runs when the Runtime enables permissions: after the Turn's authorization, right before its dispatch (a withdrawal made in that gap). */
+  onAuthorized: (() => void) | null = null;
   private opened = 0;
   relayCapabilities(): RelayCapabilities { return DECLARED; }
   async validate(request: SelectionRequest): Promise<HarnessSelection> {
@@ -62,15 +70,33 @@ class Fakes implements SessionBindingFactory {
       initialize: async () => ({ protocol: "acp-v1", protocolVersion: 1, agentName: "fake", agentVersion: "1", authenticationMethods: [], capabilities: {} }),
       open: async (_cwd, _model, _options, checkpoint) => { session = checkpoint ?? "native-" + harnessId + "-" + ++this.opened; return nativeConversationId(session); },
       checkpoint: async () => session, healthy: () => true,
-      relayVendor: async () => ({ model: null, modelKey: "", authKind: VENDORS[harnessId]!, endpoint: null, loopback: false }),
+      enablePermissions: () => { const hook = this.onAuthorized; this.onAuthorized = null; hook?.(); },
+      relayVendor: async () => {
+        if (this.unread.has(harnessId) && this.known.has(harnessId)) { this.failedReads += 1; throw new SessionError("CONTROL_FAILED", "the vendor read failed"); }
+        this.known.add(harnessId); return { model: null, modelKey: "", authKind: VENDORS[harnessId]!, endpoint: null, loopback: false };
+      },
       startText: async (_id, turn, output) => {
-        if (typeof turn !== "string") { this.packets += 1; if (!this.consented(harnessId, turn.user)) this.violations.push(harnessId + ": " + turn.user); }
+        if (typeof turn !== "string") {
+          this.packets += 1; if (!this.consented(harnessId, turn.user)) this.violations.push(harnessId + ": " + turn.user);
+          // However the Hub came to send it, the history reached a vendor whose latest word for this conversation is a withdrawal.
+          if (this.withdrawn(VENDORS[harnessId]!)) this.violations.push(harnessId + " (" + VENDORS[harnessId] + " withdrawn): " + turn.user);
+        }
         output({ type: "text", text: "reply from " + harnessId });
         return { result: Promise.resolve<BackendResult>({ status: "completed", reason: "fake", input: "recorded" }), requestStop: async () => ({ requested: true }) };
       },
       close: async () => ({ closed: true, exitCode: 0, signal: null, protocolFailure: null }) };
     return { control, workspace: configuration.workspace, assertOwned: () => {}, close: () => control.close() };
   }
+}
+
+/**
+ * Whether the log's latest word for `vendor` in a conversation is a withdrawal, read from the rows alone (not through the code under
+ * test): the conversation's own latest record for the vendor decides, and with none the latest global one (relay-architecture §10.4).
+ */
+function withdrawnIn(records: readonly ConsentRecord[], vendor: VendorKey, session: SessionId): boolean {
+  const latest = (rows: readonly ConsentRecord[]) => rows.reduce<ConsentRecord | null>((last, row) => last === null || row.logSeq > last.logSeq ? row : last, null);
+  const own = latest(records.filter(row => row.vendor === vendor && row.scope.kind === "session" && row.scope.sessionId === session));
+  return own !== null ? own.decision === "revoked" : latest(records.filter(row => row.vendor === vendor && row.scope.kind === "global"))?.decision === "revoked";
 }
 
 test("G072-P01 switches, messages, consents and withdrawals in any interleaving: one Session identity, at most one active Turn, the epoch the effective switches make, no Run for a refused input, and no packet without a consent to its target's vendor", { timeout: 240_000 }, async () => {
@@ -213,8 +239,8 @@ test("G072 the return decision (§7.3, D9): without the request's relay.native i
 // ---------------------------------------------------------------------------------------------------------------------
 
 test("G072-PP02 (P1, P8) switches, messages, withdrawals and re-allowing in any interleaving under the defaults: no input is refused, every Run completes, every cross-vendor packet rests on a row of the installation's log written before its Turn was committed, and none goes to a vendor whose latest row is a withdrawal", { timeout: 240_000 }, async () => {
-  const sequences = 24, steps = 24;
-  let packets = 0, revokedAlone = 0, defaults = 0;
+  const sequences = 40, steps = 36;
+  let packets = 0, revokedAlone = 0, defaults = 0, blind = 0, lateWithdrawals = 0, withheld = 0;
   for (let index = 0; index < sequences; index++) {
     const seed = 0x72_0200 + index, next = random(seed), root = mkdtempSync(join(tmpdir(), "g072-pp02-"));
     const workspace = join(root, "workspace"); mkdirSync(workspace);
@@ -236,9 +262,8 @@ test("G072-PP02 (P1, P8) switches, messages, withdrawals and re-allowing in any 
           const seq = delivery.record.consentLogSeq;
           if (seq === null) stands.push(run.selection.harnessId + ": a cross-vendor packet whose delivery row names no log row");
           else if (seq > logged) stands.push(run.selection.harnessId + ": the row " + seq + " was written after the Turn was committed (log at " + logged + ")");
-          const view = { session: current.id, records: store.relayConsents(), crossVendor: "allow" as const, localModelsOffline: false, request: null };
-          const standing = consentStanding(vendor, null, view);
-          if (standing.kind === "missing") stands.push(run.selection.harnessId + ": a packet to " + vendor + ", whose latest row is a withdrawal");
+          // The independent reading of the log (withdrawnIn), not the code's own consentStanding.
+          if (withdrawnIn(store.relayConsents(), vendor, current.id)) stands.push(run.selection.harnessId + ": a packet to " + vendor + ", whose latest row is a withdrawal");
         }
       }
       return mutation;
@@ -250,10 +275,14 @@ test("G072-PP02 (P1, P8) switches, messages, withdrawals and re-allowing in any 
     try {
       const configuration: SessionConfiguration = { workspace, manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: true };
       const id = (await app.create(configuration, { harnessId: pick(next, Object.keys(VENDORS)) }, "create")).id as SessionId;
+      fakes.withdrawn = vendor => withdrawnIn(store.relayConsents(), vendor, id);
       for (let at = 0; at < steps; at++) {
-        const action = pick(next, ["send", "send", "send", "send", "switch", "revoke", "allow"] as const), before = app.read(id);
+        // The vendor read of a Harness fails now and then, and works again: a Hub that cannot read a vendor it has seen must not forget a withdrawal of it.
+        const action = pick(next, ["send", "send", "send", "send", "switch", "revoke", "allow", "unread", "read"] as const), before = app.read(id);
         if (action === "send") {
           const text = "m" + at + " " + seed, alone = next() < 0.15;
+          // Now and then the target's vendor is withdrawn after the Turn is authorized and before it is dispatched (G072 review m1): the packet must not follow.
+          if (next() < 0.3) { const late = VENDORS[before.selection.harnessId]!; fakes.onAuthorized = () => { store.appendRelayLog({ commandId: "late" + seed + "-" + ++keys, vendor: late, scope: { kind: "global" }, decision: "revoked", categories: ["user_text"], policyVersion: "relay/1", authKind: null, decidedAt: 1 }); lateWithdrawals++; }; }
           // P1: the defaults refuse nothing a user typed (an input sent alone is the user's own choice and goes too).
           let receipt;
           try { receipt = app.send(id, text, "k" + ++keys, [], alone ? { attach: "none" } : undefined); }
@@ -265,7 +294,9 @@ test("G072-PP02 (P1, P8) switches, messages, withdrawals and re-allowing in any 
         } else if (action === "switch") {
           app.switch(id, { harnessId: pick(next, Object.keys(VENDORS).filter(harness => harness !== before.selection.harnessId)) }, "k" + ++keys);
           await app.wait(id);
-        } else {
+        } else if (action === "unread") fakes.unread.add(pick(next, Object.keys(VENDORS)));
+        else if (action === "read") fakes.unread.clear();
+        else {
           const vendor = pick(next, Object.values(VENDORS));
           store.appendRelayLog({ commandId: "u" + seed + "-" + ++keys, vendor, scope: next() < 0.5 ? { kind: "session" as const, sessionId: id } : { kind: "global" as const },
             decision: action === "allow" ? "acknowledged" : "revoked", categories: ["user_text"], policyVersion: "relay/1", authKind: null, decidedAt: 1 });
@@ -273,9 +304,12 @@ test("G072-PP02 (P1, P8) switches, messages, withdrawals and re-allowing in any 
         }
         assert.deepEqual(stands, [], where("P8"));
       }
-      packets += packetCommits;
+      packets += packetCommits; blind += fakes.failedReads; withheld += events(store, id).filter(row => row.type === "relay.withheld").length;
       defaults += store.relayConsents().filter(row => consentSourceOf(row) === "default").length;
+      assert.deepEqual(fakes.violations, [], where("a packet reached a vendor whose latest word is a withdrawal"));
     } finally { await app.close(); store.close(); rmSync(root, { recursive: true, force: true }); }
   }
   assert.ok(packets >= 20, "packets went: " + packets); assert.ok(defaults >= 10, "first uses were traced: " + defaults); assert.ok(revokedAlone >= 5, "withdrawals were made: " + revokedAlone);
+  assert.ok(blind >= 10, "vendor reads failed on Harnesses whose vendor had been seen: " + blind); assert.ok(lateWithdrawals >= 5, "withdrawals were made after authorization: " + lateWithdrawals);
+  assert.ok(withheld >= 1, "a packet was withheld at the last moment: " + withheld + " of " + lateWithdrawals + " late withdrawals");
 });

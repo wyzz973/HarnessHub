@@ -481,9 +481,11 @@ export interface SessionRuntimeOptions {
    * the workspace nor holding it, compared by device and inode, and no data directory's marker found in it. A cross-vendor
    * handoff into a workspace that is not is refused (RELAY_UNAVAILABLE{data_root_in_workspace}) while `relay.dataRootInWorkspace`
    * is "block", and goes on, flagged for the workspace's notice, with its default "warn". Synchronous and cheap: the
-   * marker search is the composition's, cached. Absent: nothing can be told, and the check is the composition's to wire.
+   * marker search is the composition's, cached. `fresh` asks for the search to be made again, ignoring what was cached: the
+   * Runtime asks it where the answer decides whether a handoff goes ("block"), and not for the notice ("warn"). Absent: nothing
+   * can be told, and the check is the composition's to wire.
    */
-  readonly relayIsolated?: (workspace: string) => boolean;
+  readonly relayIsolated?: (workspace: string, fresh?: boolean) => boolean;
 }
 export interface SendReceipt { readonly sessionId: SessionId; readonly runId: RunId; readonly replayed: boolean }
 export interface SwitchReceipt { readonly sessionId: SessionId; readonly switchId: SwitchId; readonly replayed: boolean }

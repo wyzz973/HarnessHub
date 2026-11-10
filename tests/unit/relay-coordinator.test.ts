@@ -508,6 +508,8 @@ test("permissive §2 policyAloneOf: which failures concern the packet only — s
     [e("RELAY_PREPARE_FAILED", "render"), { cause: "prepare_failed", reason: "render" }], [e("RELAY_PREPARE_FAILED", "storage_quota"), { cause: "prepare_failed", reason: "storage_quota" }],
     [e("RELAY_PREPARE_FAILED", "redaction_failed"), { cause: "prepare_failed", reason: "redaction_failed" }], [e("RELAY_PREPARE_FAILED", "render_mismatch"), { cause: "prepare_failed", reason: "render_mismatch" }],
     [e("RELAY_CHOICE_REQUIRED", "verify_required"), { cause: "verify_required" }], [new SessionError("RELAY_PREPARE_FAILED", "secrets"), { cause: "prepare_failed", reason: "redaction_failed" }],
+    // G072 review m8: the frame and the input together pass what one message carries: no packet fits, the input goes alone.
+    [new SessionError("CONTEXT_TOO_LARGE", "too large"), { cause: "input_limit", reason: "context_too_large" }],
   ];
   for (const [error, expected] of hits) assert.deepEqual(policyAloneOf(error, DEFAULT_SETTINGS, {}), expected, error.message + " " + (error as RelayError).reason);
   for (const error of [e("RELAY_PREPARE_FAILED", "target_start"), e("RELAY_PREPARE_FAILED", "classification_changed"), e("RELAY_TARGET_UNVERIFIED", "unprobed"), e("RELAY_UNAVAILABLE", "data_root_in_workspace"), new SessionError("CANCELLED", "x"), new Error("boom")])

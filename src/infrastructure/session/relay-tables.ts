@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import {
-  DELIVERY_TRANSITIONS, RELAY_BODY_BYTES, RELAY_DIGEST_BYTES, RELAY_INDEX_BYTES, RELAY_PINS, RELAY_PINS_BYTES, RELAY_SESSION_BODY_BYTES, RELAY_WINDOW_RETENTION_MS, RELAY_WORKSPACE_BYTES,
+  DELIVERY_TRANSITIONS, RELAY_PREF_KEYS, RELAY_BODY_BYTES, RELAY_DIGEST_BYTES, RELAY_INDEX_BYTES, RELAY_PINS, RELAY_PINS_BYTES, RELAY_SESSION_BODY_BYTES, RELAY_WINDOW_RETENTION_MS, RELAY_WORKSPACE_BYTES,
   RelayError, packetsOf, parseDeliveryOutcome, parseDeliveryRecord, parseRelayExclusion, parseRelayPacket, parseRelayPin, parseRelayWindow, parseWorkspaceObservation, policyVersion,
   redactionTag, type DeliveryOutcome, type DeliveryRecord, type DeliveryStatus, type RelayBehindIndex, type RelayCommitResult, type RelayDerivedRows, type RelayDigestWrite,
   type RelayExclusion, type RelayIndexRow, type RelayPacket, type RelayPin, type RelayRows, type RelayWindow, type RelayWorkspaceWrite, type RelayWriteRows, type RunRelay,
@@ -15,6 +15,12 @@ import { SessionError, runId, type PublicRun, type RunId, type SessionId, type S
  * SqliteSessionStore, inside its transactions.
  */
 
+/**
+ * The installation's preferences table: its key list is RELAY_PREF_KEYS, so a key added to the contract is in the DDL a new database
+ * is made with, and repairRelayPrefs brings a database made with a shorter list up to it.
+ */
+export const RELAY_PREFS_DDL = "CREATE TABLE relay_prefs(key TEXT PRIMARY KEY CHECK(key IN(" + RELAY_PREF_KEYS.map(key => "'" + key + "'").join(",") + ")),\n"
+  + "  value TEXT NOT NULL CHECK(length(value)<=64), updated_at INTEGER NOT NULL) STRICT;";
 /**
  * The 11 tables and 4 triggers of relay-architecture §14.1, verbatim with their comments; its closing
  * `PRAGMA user_version=13` is the migration's, which sets it once every Session is converted.
@@ -64,8 +70,7 @@ CREATE TABLE relay_log(seq INTEGER PRIMARY KEY AUTOINCREMENT, command_id TEXT NO
   policy_version TEXT NOT NULL, auth_kind TEXT, decided_at INTEGER NOT NULL) STRICT;                                                          -- 安装级、只追加（RT1-M9）
 CREATE TABLE relay_log_archive(seq INTEGER PRIMARY KEY, command_id TEXT NOT NULL UNIQUE, kind TEXT NOT NULL, vendor TEXT NOT NULL, scope TEXT NOT NULL, session_id TEXT NOT NULL,
   decision TEXT NOT NULL, categories_json TEXT NOT NULL, policy_version TEXT NOT NULL, auth_kind TEXT, decided_at INTEGER NOT NULL, archived_at INTEGER NOT NULL) STRICT;   -- 触顶轮转（F21）
-CREATE TABLE relay_prefs(key TEXT PRIMARY KEY CHECK(key IN('relay.crossVendor','relay.returnPreference','relay.allowUnprobed','relay.localModelsOffline','relay.whenUnsure','relay.dataRootInWorkspace')),
-  value TEXT NOT NULL CHECK(length(value)<=64), updated_at INTEGER NOT NULL) STRICT;                                                          -- 安装级偏好（F07）
+${RELAY_PREFS_DDL}                                                          -- 安装级偏好（F07）
 CREATE TRIGGER relay_bodies_immutable BEFORE UPDATE ON relay_bodies BEGIN SELECT RAISE(ABORT,'relay body is immutable'); END;
 CREATE TRIGGER relay_packets_immutable BEFORE UPDATE ON relay_packets BEGIN SELECT RAISE(ABORT,'relay packet is immutable'); END;
 CREATE TRIGGER relay_log_immutable BEFORE UPDATE ON relay_log BEGIN SELECT RAISE(ABORT,'relay log is append-only'); END;
@@ -74,6 +79,22 @@ CREATE TRIGGER relay_deliveries_transition BEFORE UPDATE OF outcome ON relay_del
             OR (OLD.outcome='not_recorded' AND NEW.outcome='recorded') OR (OLD.outcome='recorded' AND NEW.outcome='recorded'))
   BEGIN SELECT RAISE(ABORT,'illegal delivery transition'); END;                                                                               -- 同值写放行：reason 细化与 realized 结算（VF1-12）
 `;
+/**
+ * Brings the preferences table of a database made when the contract had fewer keys (the CHECK of a v13 made by G072 listed four) up
+ * to the contract's: the table is rebuilt with its rows (renamed, recreated, copied, dropped), inside the caller's transaction. A
+ * database that already lists every key is left alone; one without the table is not a v13 one. Returns whether it rebuilt it.
+ */
+export function repairRelayPrefs(database: DatabaseSync): boolean {
+  const row = database.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='relay_prefs'").get();
+  if (row === undefined) return false;
+  const definition = String(row.sql);
+  if (RELAY_PREF_KEYS.every(key => definition.includes("'" + key + "'"))) return false;
+  database.exec("ALTER TABLE relay_prefs RENAME TO relay_prefs_old");
+  database.exec(RELAY_PREFS_DDL);
+  database.exec("INSERT INTO relay_prefs(key,value,updated_at) SELECT key,value,updated_at FROM relay_prefs_old");
+  database.exec("DROP TABLE relay_prefs_old");
+  return true;
+}
 /** The relay tables, the order deleteSession empties a Session's (references before what they reference). */
 export const RELAY_TABLES = ["relay_deliveries", "relay_packets", "relay_bodies", "relay_digests", "relay_workspace", "relay_pins", "relay_exclusions", "relay_windows", "relay_log", "relay_log_archive", "relay_prefs"] as const;
 const SESSION_TABLES = RELAY_TABLES.slice(0, 7);

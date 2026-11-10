@@ -11,8 +11,8 @@ import type { ConsentAppend, ConsentRecord, DeliveryRecord, RecoverRelay, RelayC
 import { MAX_EVENT_BYTES, MAX_EVENT_LOG_BYTES, MAX_READ_BYTES, MAX_READ_ITEMS, MAX_SESSION_BYTES, MAX_SESSION_EVENTS, assertSessionTransition, parseSession, recoverSession, utf8Bytes } from "../../contexts/session/domain/state.js";
 import { migrateSession, type MigrationEvent } from "../../contexts/session/domain/relay/migrate.js";
 import { MAX_SNAPSHOT_CACHE_BYTES, SnapshotCache, type SnapshotCacheStats } from "./snapshot-cache.js";
-import { RELAY_DDL, checkPacketReferences, checkRelayRows, checkRelayWrite, deleteRelayRows, diagnosticOf, pruneRelayWindows, readDeliveries, readIndexRows, readPacket, readPacketBody, readPackets, readRelayWindow, relayRowCounts, upsertRelayWindow, writeBehindIndexes, writeDerivedRows, writeRelayRows, writeRelayWrite } from "./relay-tables.js";
-import { appendConsent, currentConsents, readPrefs, writePref } from "./relay-log.js";
+import { RELAY_DDL, repairRelayPrefs, checkPacketReferences, checkRelayRows, checkRelayWrite, deleteRelayRows, diagnosticOf, pruneRelayWindows, readDeliveries, readIndexRows, readPacket, readPacketBody, readPackets, readRelayWindow, relayRowCounts, upsertRelayWindow, writeBehindIndexes, writeDerivedRows, writeRelayRows, writeRelayWrite } from "./relay-tables.js";
+import { appendConsent, consentNamed, currentConsents, readPrefs, writePref } from "./relay-log.js";
 
 const activeRoots = new Set<string>();
 /** The business database version this build owns (Session v13, ADR-055 §14.4); 1–12 are migrated to it. */
@@ -517,6 +517,7 @@ export class SqliteSessionStore implements SessionStore, RelayStorePort, RelayLo
   }
   relayPrefs(): Readonly<Partial<Record<RelayPrefKey, string>>> { this.assertOwner(); return this.read(() => readPrefs(this.database)); }
   relayConsents(): readonly ConsentRecord[] { this.assertOwner(); return this.read(() => currentConsents(this.database)); }
+  consentUsed(logSeq: number): boolean { this.assertOwner(); return this.read(() => consentNamed(this.database, logSeq)); }
 
   close(): void {
     if (this.closed) return;
@@ -749,6 +750,8 @@ export class SqliteSessionStore implements SessionStore, RelayStorePort, RelayLo
         }
         db.exec("PRAGMA user_version=13");
       }
+      // A v13 database made while the contract listed fewer preference keys keeps its preferences under the current list (G072 review m4).
+      repairRelayPrefs(db);
       const generation = prior.generation + 1;
       if (!Number.isSafeInteger(generation)) throw new SessionError("INVALID_DATA", "owner generation exhausted");
       db.prepare("UPDATE owner_metadata SET owner_generation=?,owner_pid=?,owner_token=?,owner_active=1 WHERE singleton=1").run(generation, process.pid, this.token);

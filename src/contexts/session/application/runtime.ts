@@ -12,7 +12,7 @@ import { buildPublicContext, type PublicContext, type PublicContextOptions } fro
 import { parseToolDetail, type RelayToolDetail } from "../domain/relay/narration.js";
 import { commandEffect, commandOutcome, dispatched, type InputOutcome } from "../domain/relay/advance.js";
 import { initialBindingRelay } from "../domain/relay/migrate.js";
-import { BLOCKED_CODES, RelayError, markOf, relayDecisionOf, type RelayAttention, type RelayDecision, type BindingRelayState, type ConsentAppend, type ConsentRecord, type DeliveryPosition, type EndpointLayer, type RelayCapabilities, type RelayDeliveryWrite, type RelayIndexRow, type RelayKeyPort, type RelayLogPort, type RelayPacket, type RelayPrefKey, type RelayStorePort, type RelayWindow, type VendorKey, type VendorObservation, type VerifyResult, parseVendorObservation } from "../../../contracts/relay.js";
+import { BLOCKED_CODES, RelayError, consentSourceOf, markOf, relayDecisionOf, type RelayAttention, type RelayDecision, type BindingRelayState, type ConsentAppend, type ConsentRecord, type DeliveryPosition, type EndpointLayer, type RelayCapabilities, type RelayDeliveryWrite, type RelayIndexRow, type RelayKeyPort, type RelayLogPort, type RelayPacket, type RelayPrefKey, type RelayStorePort, type RelayWindow, type VendorKey, type VendorObservation, type VerifyResult, parseVendorObservation } from "../../../contracts/relay.js";
 import { relayRedactor } from "../domain/relay/redaction.js";
 import { cacheAfter, hardCap, observedWindow, packetBudget, packetFamily, resolveWindow, windowRow, fitsMinPacket, type ResolvedWindow } from "../domain/relay/windows.js";
 import { estimateTokens, type RelayBudget } from "../domain/relay/budget.js";
@@ -91,6 +91,12 @@ interface OpenGate {
   readonly consentVia: Extract<ConsentStanding, { kind: "given" }>["via"] | "exempt" | null;
   /** The vendor's endpoint layer (a workspace file's, a user setting's…), shown with the first use of a key the user never named. */
   readonly layer: EndpointLayer | null;
+  /**
+   * This is the vendor's first use as a default allowance: the Turn that writes its row (`trace`), or a later one while no delivery
+   * row of the installation names the row yet — the Turn that wrote it may have gone alone after all, having told no one anything.
+   * The Turn's record says `first` and the page gives its one-line notice with it (G072 review m2).
+   */
+  readonly first: boolean;
   /** A cross-vendor handoff into a workspace the data directory is in reach of, which the setting only warns about (permissive-defaults §2.4). */
   readonly exposed: boolean;
 }
@@ -647,8 +653,8 @@ export class SessionRuntime {
   private lineageVendor(state: SessionSnapshot, target: HarnessSelection): VendorObservation | null {
     return (state.nativeBindings ?? []).filter(row => row.harnessId === target.harnessId && row.controlId === target.controlId && row.relay?.vendorObserved != null).at(-1)?.relay?.vendorObserved ?? null;
   }
-  private isolated(workspace: string): boolean {
-    try { return this.options.relayIsolated?.(workspace) ?? true; } catch { return false; }
+  private isolated(workspace: string, fresh = false): boolean {
+    try { return this.options.relayIsolated?.(workspace, fresh) ?? true; } catch { return false; }
   }
   /**
    * What admission's G072 checks read for an input that would carry relay content (relay-coordinator AdmitGates): the target's
@@ -658,7 +664,8 @@ export class SessionRuntime {
   private relayGates(state: SessionSnapshot, target: HarnessSelection, binding: NativeSessionBinding | undefined, carrying: Carrying, capabilities: RelayCapabilities | null, choices: RelayChoices): AdmitGates {
     const prefs = this.relayPrefs(), observed = binding?.relay?.vendorObserved ?? this.lineageVendor(state, target);
     const facts = carrying.owes ? carrying.need.facts : carrying.facts;
-    return { allowUnprobed: relaySettings(prefs).allowUnprobed, isolated: this.isolated(state.configuration.workspace),
+    // Where the answer decides whether the handoff goes ("block") the marker search is made again, not read from its cache (G072 review m6).
+    return { allowUnprobed: relaySettings(prefs).allowUnprobed, isolated: this.isolated(state.configuration.workspace, relaySettings(prefs).dataRootInWorkspace === "block"),
       target: { vendor: vendorKeyOf(capabilities, target.harnessId, observed), layer: observed?.endpoint?.layer ?? null },
       sources: sourceVendors(state, facts, carrying.need.origin || carrying.doubt && carrying.originHistory && !carrying.relay.originIncluded, selection => this.declarationOf(selection)),
       consent: this.consentView(state, prefs, choices), window: this.relayWindowOf(target.harnessId, target.controlId, observed?.modelKey ?? ""), now: this.options.now().getTime() };
@@ -2090,7 +2097,9 @@ export class SessionRuntime {
         // What the relay decided for the Turn and why (permissive-defaults §2.6): with the packet's record when one goes, alone otherwise;
         // an ordinary Turn that owes nothing records none. A command read differently at the open than at admission says so.
         const recorded = decisionRecord(decision) ?? reclassified, relayData = packet !== null ? { ...packet.record, ...(recorded === null ? {} : { decision: recorded }) } : recorded === null ? undefined : { decision: recorded };
-        events.push(event("run.context_prepared", { runId: target, throughSeq: factsSeq, sourceRunIds: sources, continuity: "public_context_rehydrate",
+        // `continuity` is the legacy word for how the Turn continued its context: a Turn the policy sent alone carried nothing of the
+        // history, so it continued its native session (G072 review m12); any other keeps the word it always had.
+        events.push(event("run.context_prepared", { runId: target, throughSeq: factsSeq, sourceRunIds: sources, continuity: decision?.kind === "alone" ? "native_resume" : "public_context_rehydrate",
           // The history the Session started from went too, which this binding was owed.
           ...(packet !== null && packet.origin ? { carriedOrigin: true } : {}),
           // What identifies the packet (policy, ID, sha256 of the text, the facts it carries, how it was folded); never its text.
@@ -2104,7 +2113,7 @@ export class SessionRuntime {
           ...(gate === null ? {} : { vendor: gate.vendor, window: { size: gate.window.size, source: gate.window.source }, ...(gate.returning === null ? {} : { returnChoice: gate.returning }) }),
           // The consent the handoff rests on (permissive-defaults §2.4): what stood for the vendor, the log row it names, whether this first
           // use wrote it, and the layer the endpoint came from; and that the data directory is in the workspace's reach (a warning only).
-          ...(gate === null || gate.consentVia === null ? {} : { consent: { via: gate.consentVia, logSeq: gate.consentLogSeq, ...(gate.trace === null ? {} : { first: true }), ...(gate.layer === null ? {} : { layer: gate.layer }) } }),
+          ...(gate === null || gate.consentVia === null ? {} : { consent: { via: gate.consentVia, logSeq: gate.consentLogSeq, ...(gate.first ? { first: true } : {}), ...(gate.layer === null ? {} : { layer: gate.layer }) } }),
           ...(gate !== null && gate.exposed ? { dataRootInWorkspace: true } : {}) }),
           event("run.authorized", { runId: target, epoch: run.epoch }));
         return { next, events, ...(packets.length || deliveries.length ? { relay: { ...(packets.length ? { packets } : {}), ...(deliveries.length ? { deliveries } : {}) } } : {}) };
@@ -2165,15 +2174,25 @@ export class SessionRuntime {
       // was dispatched, so the binding is ready again (G068 fix batch 2, M-2).
       if (execution.relay.io.asked && control.healthy?.() === false) { execution.relay.io.broke = execution.relay.io.healthy !== false; throw notReached(); }
       // The consent a carrying Turn rests on, read once more right before dispatch (§6.1, RT2-18): one withdrawn since the Turn
-      // was prepared stops it, nothing sent (RELAY_CONSENT_REQUIRED{revoked}).
+      // was prepared stops its packet (RELAY_CONSENT_REQUIRED{revoked}) — and with it every key the Harness control is known by
+      // when its vendor could not be read (openGates knownKeys). Nothing of the history is sent. What the policy settles it does
+      // as it settles the same withdrawal at the open: the input goes as typed (G072 review m1); the user's own choice and the
+      // strict design fail the Run, as before.
       if (execution.relay.consent !== null) {
         const asked = execution.relay.consent, view = this.consentView(this.owned(execution), this.relayPrefs(), {});
         // A consent the request gave stands until a withdrawal of its vendor is logged after it (in this conversation or for all).
         const withdrawn = asked.requestSeq !== null ? view.records.some(record => record.vendor === asked.vendor && record.logSeq > asked.requestSeq! && record.decision === "revoked"
           && (record.scope.kind === "global" || record.scope.sessionId === view.session)) : consentStanding(asked.vendor, asked.layer, view).kind === "missing";
-        if (withdrawn) throw consentRequired("revoked", asked.vendor, asked.target);
-        // Nor does a vendor the open could not read go on once one of the keys it is known by was withdrawn (G072 review I1).
-        for (const key of asked.also) { const standing = consentStanding(key, null, view); if (standing.kind === "missing" && standing.revoked) throw consentRequired("revoked", key, asked.target); }
+        const revoked: VendorKey | null = withdrawn ? asked.vendor : asked.also.find(key => { const standing = consentStanding(key, null, view); return standing.kind === "missing" && standing.revoked; }) ?? null;
+        if (revoked !== null) {
+          const refusal = consentRequired("revoked", revoked, asked.target), found = policyAloneOf(refusal, settingsNow(), requested);
+          const carried = execution.relay.turn;
+          if (found === null || carried.kind !== "carry" || packet === null) throw refusal;
+          execution.relay.consent = null; execution.relay.turn = { ...carried, kind: "withheld" }; turnText = run.input;
+          const withheld = packet.manifest.id;
+          this.commit(id, current => ({ next: updatedRun(current, target, { sourceRunIds: [], relay: runRelayOf(null, { kind: "native_resume" }, current.runs.find(row => row.id === target)?.relay?.executedOn ?? null) }),
+            events: [event("relay.withheld", { runId: target, packetId: withheld, relay: { decision: { kind: "alone", by: "policy", cause: found.cause } } })] }));
+        }
       }
       this.commit(id, current => ({ next: updatedRun(current, target, phase(current, target, "dispatchedAt", this.options.now().getTime())), events: [event("run.dispatched", { runId: target })] }));
       execution.dispatched = true;
@@ -2575,7 +2594,7 @@ export class SessionRuntime {
     const cached = bound?.relay?.vendorObserved ?? relay.vendorObserved ?? this.lineageVendor(state, target), observed = execution.relay.observed === undefined ? cached : execution.relay.observed;
     const predicted = vendorKeyOf(declaration.capabilities, h, cached), vendor = vendorKeyOf(declaration.capabilities, h, observed), layer = observed?.endpoint?.layer ?? null;
     const sources = sourceVendors(state, decision.need.facts, decision.need.origin, selection => this.declarationOf(selection) ?? (selection.harnessId === h && selection.controlId === c ? declaration.capabilities : undefined));
-    const cross = crossHarness && crossVendor(vendor, sources), exposed = cross && !this.isolated(state.configuration.workspace);
+    const cross = crossHarness && crossVendor(vendor, sources), exposed = cross && !this.isolated(state.configuration.workspace, settings.dataRootInWorkspace === "block");
     if (exposed && settings.dataRootInWorkspace === "block") throw dataRootInWorkspace(target);
     const view = this.consentView(state, prefs, this.withRecordedConsent(state, run, choices));
     // A Driver that was asked and could not tell (a read that failed, came late or answered nothing) has not changed its vendor: it is
@@ -2606,7 +2625,10 @@ export class SessionRuntime {
     // A return (§7.3): the binding stood on a mark of its own native session; what the request chose of it, and the pref's default.
     const returning = markOf(relay.sync) === null ? null : returnChoice({ warm: cacheWarm(relay.cache, declaration.capabilities?.cacheTtl ?? "unknown", observed?.authKind ?? null, this.options.now().getTime()), sideBySide: false },
       settings.returnPreference, choices.native).choice;
-    return { vendor, unseen, window, budget, clamped, consentLogSeq, returning, layer,
+    // A row the default wrote that no delivery names yet is still the vendor's first use.
+    const viaRow = standing?.kind === "given" && standing.logSeq !== null ? view.records.find(record => record.logSeq === standing.logSeq) : undefined;
+    const first = standing?.kind === "given" && (standing.via === "default" || viaRow !== undefined && consentSourceOf(viaRow) === "default" && this.relayLog()?.consentUsed?.(viaRow.logSeq) === false);
+    return { vendor, unseen, window, budget, clamped, consentLogSeq, returning, layer, first,
       trace: standing?.kind === "given" && standing.via === "default" ? { vendor, authKind: observed?.authKind ?? null } : null, changedFrom: outcome.changedFrom,
       consentVia: standing === null ? null : standing.kind === "given" ? standing.via : "exempt", exposed };
   }
