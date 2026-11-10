@@ -142,6 +142,12 @@ export interface StepNote {
   readonly shown?: "not_sent" | "unconfirmed";
   readonly verified?: VerifiedOutcome;
   readonly choice?: ChoiceCause;
+  /**
+   * k only: the packet the binding waits for or carries (a pending packet, a suspect's `carried`) has no delivery row in the
+   * check's rows, so the check could not look for it and counted it as not seen (G068 phase two, ADR-055's stage-two seam).
+   * The Store keeps a packet's row with it, so this names incomplete rows or damaged data; it is never a plain "not seen".
+   */
+  readonly rowMissing?: true;
 }
 /** Why a step is refused: a cell of the table that does not happen, a precondition not met, or a bound. */
 export type Refusal =
@@ -577,7 +583,7 @@ export function step(relay: BindingRelayState, event: RelayEvent): RelayStep {
       const throughSeq = Math.max(event.contextThroughSeq, relay.epochFloor, 0);
       return applied(relay, withSync(relay, { kind: "synced", mark: { throughSeq, chain: EMPTY_CHAIN, lastPacketId: null, evidence: "native", basis: "native" } }));
     }
-    case "verified": return verified(relay, event);
+    case "verified": return rowMissing(relay, event.plan) ? flagRowMissing(verified(relay, event)) : verified(relay, event);
     case "reset": {
       const lineage = event.bindings.filter(binding => binding.harnessId === event.harnessId && binding.controlId === event.controlId);
       // Compared as the parser writes them, so the key order a caller built them in does not matter (F10).
@@ -673,6 +679,22 @@ function carrySettled(relay: BindingRelayState, event: Extract<RelayEvent, { kin
   }
 }
 
+/**
+ * Whether a check's plan could not look for the packet the binding waits for or carries because its delivery row is not
+ * among the rows it was planned from: a pending binding planned skip{no_marker}, or a suspect one carrying a packet whose
+ * plan has no marker for it (skip{no_marker}, or a clear or suspect plan without `carried`). A plan skipped for the Driver
+ * (`unavailable`), the moment or a fresh binding looked for nothing and is not this.
+ */
+export function rowMissing(relay: BindingRelayState, plan: VerifyPlan): boolean {
+  const sync = relay.sync;
+  if (sync.kind === "pending") return plan.kind === "skip" && plan.reason === "no_marker";
+  if (sync.kind !== "suspect" || sync.carried === null) return false;
+  if (plan.kind === "skip") return plan.reason === "no_marker";
+  return (plan.kind === "clear" || plan.kind === "suspect") && plan.carried === null || plan.kind === "unknown_turn" && plan.marker === null;
+}
+function flagRowMissing(outcome: RelayStep): RelayStep {
+  return outcome.kind === "refused" ? outcome : { ...outcome, note: { ...outcome.note, rowMissing: true } };
+}
 function verified(relay: BindingRelayState, event: Extract<RelayEvent, { kind: "verified" }>): RelayStep {
   const sync = relay.sync, plan = event.plan, at = event.at;
   const resultOf = (marker: PlannedMarker): MarkerResult => event.result.markers.find(item => item.packetId === marker.packetId)?.result ?? "unavailable";

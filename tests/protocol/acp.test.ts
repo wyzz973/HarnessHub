@@ -679,7 +679,9 @@ test("OpenClaw reconciles each turn from its own transcript: tools, reasoning, u
       const tool = events.find(event => event.type === "tool");
       assert.deepEqual(tool, { type: "tool", id: "call-1", title: "exec: echo HH", status: "completed", detail: { kind: "execute", name: "exec", input: "{\n  \"command\": \"echo HH\"\n}", output: "HH" } });
       assert.deepEqual(events.filter(event => event.type === "thinking").map(event => event.type === "thinking" ? event.text : ""), ["plan the command\n"]);
-      assert.deepEqual(events.find(event => event.type === "usage"), { type: "usage", usage: { turn: { input: 250, output: 25, cachedInput: 10, cacheWrite: 0, total: 285 }, cost: { amount: 0.003, currency: "USD", scope: "turn" } } }, "only this turn's calls are counted");
+      assert.deepEqual(events.find(event => event.type === "usage"), { type: "usage", usage: { turn: { input: 250, output: 25, cachedInput: 10, cacheWrite: 0, total: 285 }, cost: { amount: 0.003, currency: "USD", scope: "turn" },
+        // G069 phase two (ADR-055 VF2-09): each of this turn's assistant rows is one model request.
+        requests: [{ input: 100, cachedInput: 10, cacheWrite: 0 }, { input: 150, cachedInput: 0, cacheWrite: 0 }] } }, "only this turn's calls are counted");
     } finally { await driver.close(); }
   }
 });

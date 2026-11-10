@@ -4,9 +4,9 @@ import {
   DELIVERY_TRANSITIONS, RELAY_BODY_BYTES, RELAY_DIGEST_BYTES, RELAY_INDEX_BYTES, RELAY_PINS, RELAY_PINS_BYTES, RELAY_SESSION_BODY_BYTES, RELAY_WINDOW_RETENTION_MS, RELAY_WORKSPACE_BYTES,
   RelayError, packetsOf, parseDeliveryOutcome, parseDeliveryRecord, parseRelayExclusion, parseRelayPacket, parseRelayPin, parseRelayWindow, parseWorkspaceObservation, policyVersion,
   redactionTag, type DeliveryOutcome, type DeliveryRecord, type DeliveryStatus, type RelayBehindIndex, type RelayCommitResult, type RelayDerivedRows, type RelayDigestWrite,
-  type RelayExclusion, type RelayPacket, type RelayPin, type RelayRows, type RelayWindow, type RelayWorkspaceWrite, type RelayWriteRows, type RunRelay,
+  type RelayExclusion, type RelayIndexRow, type RelayPacket, type RelayPin, type RelayRows, type RelayWindow, type RelayWorkspaceWrite, type RelayWriteRows, type RunRelay,
 } from "../../contracts/relay.js";
-import { SessionError, type PublicRun, type RunId, type SessionId, type SessionSnapshot } from "../../contracts/session.js";
+import { SessionError, runId, type PublicRun, type RunId, type SessionId, type SessionSnapshot } from "../../contracts/session.js";
 
 /**
  * The v13 relay tables (ADR-055 §14.1) in the business database: their DDL, and the checks and statements that write
@@ -367,6 +367,20 @@ export function readDeliveries(database: DatabaseSync, id: SessionId, state: Ses
       : { kind: row.outcome, reason: row.reason, decidedSeq: row.decided_seq, decidedAt: row.decided_at },
   }));
   return rows.sort((a, b) => (order.get(a.runId) ?? 0) - (order.get(b.runId) ?? 0));
+}
+/** The manifests of the packets a Session keeps, in the order they were first written (G068 phase two). */
+export function readPackets(database: DatabaseSync, id: SessionId): readonly RelayPacket[] {
+  return database.prepare("SELECT manifest_json FROM relay_packets WHERE session_id=? ORDER BY rowid").all(id).map(row => parseRelayPacket(JSON.parse(String(row.manifest_json))));
+}
+/** A Session's digest index rows (every policy version) as plain objects, in Run order (G068 phase two reads the facts from them). */
+export function readIndexRows(database: DatabaseSync, id: SessionId): readonly RelayIndexRow[] {
+  return database.prepare("SELECT run_id,policy_version,status,index_json FROM relay_digests WHERE session_id=? ORDER BY run_index, policy_version").all(id).map(row => {
+    const index: unknown = JSON.parse(String(row.index_json));
+    if (index === null || typeof index !== "object" || Array.isArray(index)) throw new SessionError("INVALID_DATA", "a relay digest index is not an object");
+    const status = String(row.status);
+    if (status !== "current" && status !== "behind") throw new SessionError("INVALID_DATA", "a relay digest status is invalid");
+    return { runId: runId(row.run_id), policyVersion: policyVersion(row.policy_version), status, index: index as Readonly<Record<string, unknown>> };
+  });
 }
 /** The behind index rows a v13 migration writes for a Session's finished dispatched Runs (§14.4; the digest is "{}"). */
 export function writeBehindIndexes(database: DatabaseSync, id: SessionId, runs: readonly RelayBehindIndex[]): void {

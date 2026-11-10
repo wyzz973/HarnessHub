@@ -202,7 +202,9 @@ test("Codex maps item details, streamed output, plan, turn usage, notices and ac
     assert.equal(final("patch-1")?.detail?.diff, "--- a/w/a.txt\n+++ b/w/a.txt\n@@ -1 +1 @@\n-old\n+new\n");
     assert.deepEqual(final("mcp-1")?.detail, { kind: "mcp", name: "docs/search", input: "{\n  \"q\": \"acp\"\n}", output: "found" });
     assert.deepEqual(events.find(event => event.type === "plan"), { type: "plan", entries: [{ content: "Inspect", status: "completed" }, { content: "Patch", status: "in_progress" }], explanation: "two steps" });
-    assert.deepEqual(events.filter(event => event.type === "usage").map(event => event.type === "usage" ? event.usage : null), [{ turn: { input: 400, output: 200, cachedInput: 200, cacheWrite: 0, reasoning: 50, total: 600 }, context: { used: 600, size: 100000 } }]);
+    assert.deepEqual(events.filter(event => event.type === "usage").map(event => event.type === "usage" ? event.usage : null), [{ turn: { input: 400, output: 200, cachedInput: 200, cacheWrite: 0, reasoning: 50, total: 600 }, context: { used: 600, size: 100000 },
+      // G069 phase two (ADR-055 VF2-09): the report's own request, from its `last` counts.
+      requests: [{ input: 400, cachedInput: 200 }] }]);
     assert.deepEqual(events.filter(event => event.type === "activity").map(event => event.type === "activity" ? [event.kind, event.status] : null), [["compaction", "running"], ["subagent", "completed"], ["retry", "running"]]);
     assert.deepEqual(events.filter(event => event.type === "notice").map(event => event.type === "notice" ? event.title : null), ["模型已由服务端改路由"]);
     const image = events.find(event => event.type === "output");

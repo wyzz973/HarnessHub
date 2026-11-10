@@ -345,6 +345,8 @@ lines.on("line", line => {
     if (message.params.cursor === "older") { answer(message.id, { data: [turnOf(1, [{ type: "text", text: "question 1" }])], nextCursor: null }); return; }
     answer(message.id, { data: [turnOf(3, [{ type: "text", text: "question 3" }]), turnOf(2, [{ type: "text", text: "question 2" }, { type: "localImage", path: "/tmp/shot.png" }])], nextCursor: "older" }); return;
   }
+  // Outside the "threads" scenario the turn listing is refused, as a server without it refuses; unanswered it would time out.
+  if (message.method === "thread/turns/list") { emit({ id: message.id, error: { code: -32601, message: "Method not found" } }); return; }
   if (message.method === "thread/start" || message.method === "thread/resume") {
     resumedThread = message.method === "thread/resume";
     if (!initialized) { emit({ id: message.id, error: { code: -32600, message: "Not initialized" } }); return; }

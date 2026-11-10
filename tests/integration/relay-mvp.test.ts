@@ -4,7 +4,7 @@ import { chmod, mkdir, mkdtemp, realpath, rename, rm, stat, symlink, writeFile }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { nativeConversationId, type BackendResult, type CleanupEvidence, type ControlEvent, type HarnessControl, type NativeCommand } from "../../src/contracts/control.js";
+import { nativeConversationId, singleText, type BackendResult, type CleanupEvidence, type ControlEvent, type HarnessControl, type NativeCommand } from "../../src/contracts/control.js";
 import { DirectorySessionBindingFactory, prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { LocalContentStore } from "../../src/infrastructure/session/content-store.js";
 import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
@@ -73,7 +73,9 @@ class FakeHarnesses implements SessionBindingFactory {
       open: async () => { opened = true; return nativeConversationId("native-" + harnessId); },
       checkpoint: async () => opened ? "private-native-" + harnessId : null,
       models: async () => ({ models: [{ id: "model-a", name: "A" }], defaultModel: "model-a", authentication: "ready", canSelect: true, commands: this.commands }),
-      startText: async (_id, text: string, output) => {
+      // A Driver without a placement of its own flattens what it is handed (singleText, G068 phase two).
+      startText: async (_id, turn, output) => {
+        const text = singleText(turn);
         this.prompts.push({ harnessId, text });
         for (const event of this.tools(harnessId, this.prompts.length)) output(event);
         output({ type: "text", text: this.reply(harnessId, readRelayPrompt(text).currentInput.text) });
@@ -119,14 +121,17 @@ test("G070-MVP A→B→A through the Runtime: bravo gets a packet of alpha's tur
   for (const [run, prompt, kind, sources] of [[b3, fake.to("bravo")[0]!, "packet", [a1, a2]], [a5, fake.to("alpha")[2]!, "delta", [b3, b4]]] as const) {
     const data = prepared(f.store, session.id, run.id), relay = data.relay as RelayRecord;
     assert.equal(relay.policyVersion, RELAY_POLICY_VERSION); assert.equal(relay.kind, kind); assert.equal(relay.packetId, readRelayPrompt(prompt).packetId);
-    assert.equal(relay.sha256, createHash("sha256").update(prompt, "utf8").digest("hex"), "the sha256 of exactly what was sent");
+    // The record's sha256 is of the renderer's text (packet, LF, the words); a Driver flattening the TurnText puts a blank line between.
+    assert.equal(relay.sha256, createHash("sha256").update(readRelayPrompt(prompt).body + "\n" + run.input, "utf8").digest("hex"), "the sha256 of the packet and the words as rendered");
+    assert.ok(prompt.endsWith("〕\n\n" + run.input), "the Driver's default placement: the packet, a blank line and the words");
     assert.deepEqual(relay.sources, { runs: 2, fromRunId: sources[0].id, throughRunId: sources[1].id, origin: false });
     assert.equal(relay.firstLine, true); assert.ok(relay.tokens > 0 && relay.tokens <= relay.budget.cap);
     assert.ok(!JSON.stringify(data).includes(run.input) && !JSON.stringify(data).includes(sources[0].input), "no text of the packet in the event");
   }
-  // The snapshot grew no field: the packet lives only in what was sent and in the event's record.
+  // The snapshot keeps no text of a packet: only its identity in the Run's and the binding's relay state (Session v13, G068 phase two).
   const snapshot = JSON.stringify(app.read(session.id));
-  assert.ok(!/relay-[0-9a-z]{20}/u.test(snapshot) && !snapshot.includes("packetId") && !snapshot.includes("policyVersion"));
+  assert.ok(!snapshot.includes("这段对话前面的部分不在你的上下文里") && !snapshot.includes("policyVersion"));
+  assert.equal(app.read(session.id).runs.find(row => row.id === b3.id)?.relay?.packetId, readRelayPrompt(fake.to("bravo")[0]!).packetId);
 });
 
 test("G070-MVP the binding's known secrets never leave in a packet, in any of their three spellings; the user's current words still go as typed", async t => {

@@ -1,24 +1,29 @@
 import assert from "node:assert/strict";
 import { fork, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { test, type TestContext } from "node:test";
-import type { CleanupEvidence } from "../../src/contracts/control.js";
+import { listedCommand, nativeConversationId, singleText, type BackendResult, type CleanupEvidence, type HarnessControl, type NativeCommand, type TurnText } from "../../src/contracts/control.js";
+import { contentId, type ContentPort } from "../../src/contracts/content.js";
+import { dshRelayCapabilities } from "../../src/adapters/control/acp.js";
+import { SessionRuntime, type RelayChoice } from "../../src/contexts/session/application/runtime.js";
+import { readRelayPrompt } from "../fixtures/relay-packet.js";
 import {
-  markOf, parseRelayPacket, relayPacketId,
-  type BindingRelayState, type DeliveryRecord, type Fingerprint, type MarkerResult, type RelayDeliveryWrite, type RelayPacket, type RelayPacketId, type RelayRows, type SourceRange, type VerifyResult,
+  RelayError, markOf, parseRelayPacket, relayPacketId,
+  type BindingRelayState, type DeliveredMark, type DeliveryPosition, type DeliveryRecord, type Fingerprint, type MarkerResult, type RelayCapabilities, type RelayDeliveryWrite, type RelayPacket, type RelayPacketId, type RelayRows, type SourceRange, type VerifyResult,
 } from "../../src/contracts/relay.js";
-import { SessionError, commandId, messageId, runId, sessionId, type NativeSessionBinding, type PublicRun, type RunId, type SessionId, type SessionSnapshot } from "../../src/contracts/session.js";
+import { SessionError, commandId, messageId, runId, sessionId, type HarnessSelection, type NativeSessionBinding, type PreparedSessionBinding, type PublicRun, type RunId, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId, type SessionRuntimeOptions, type SessionSnapshot } from "../../src/contracts/session.js";
 import {
   mayReuseKept, owed, pendingResend, planReturnVerify, retreatedPrior, step,
   type BindingDelivery, type Cursor, type DeliveryChange, type RelayEvent, type RelayFact, type RelayStep,
 } from "../../src/contexts/session/domain/relay/delivery.js";
 import { initialBindingRelay } from "../../src/contexts/session/domain/relay/migrate.js";
 import { recoverRelay } from "../../src/contexts/session/domain/relay/recover.js";
+import { RedactedHarnessControl } from "../../src/infrastructure/session/redacted-control.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
 
 // G068 (ADR-055 §7, §9 S15): the delivery state machine with real storage and a real native-history reference model.
@@ -528,4 +533,499 @@ test("G068-C09 (domain part) D6: an unknown Turn continued in its native session
   assert.deepEqual(lost.relay.sync, { kind: "fresh", basis: "new" }, "back to the state before the packet");
   assert.equal(lost.rows[0]!.record.outcome.kind === "unknown" && (lost.rows[0]!.record.outcome as { readonly reason: string }).reason, "absent");
   assert.equal((await lost.send("recorded")).kind, "a", "the next input owes the facts again");
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Phase two: the state machine wired into the formal Runtime (relay-coordinator.ts)
+// ---------------------------------------------------------------------------------------------------------------------
+//
+// The cases below run through the formal SessionRuntime and a real SqliteSessionStore (with recoverRelay, as the composition
+// root builds it) on temporary data roots. The Harness is an in-process fake control whose native history is the reference
+// model of relay-harness-peer.mjs, reached over its real IPC channel: every input it is handed becomes a user entry there (or
+// not, or late), and the Driver's check (verifyDelivered) and position (deliveryPosition) are the model's answers. What the
+// Hub concludes is read back from the Store; what the native session holds is read from the model.
+
+/** The fakes' relay declaration: the generic ACP Driver's, with one text per prompt and the shared reading of slash words. */
+const BASE_RELAY: RelayCapabilities = { ...dshRelayCapabilities, placement: { ...dshRelayCapabilities.placement, parts: "single" },
+  commands: { ...dshRelayCapabilities.commands, unlistedSlash: "executed", classify: text => listedCommand(text, null) } };
+function declared(overrides: { readonly verify?: RelayCapabilities["delivery"]["verify"]; readonly live?: RelayCapabilities["delivery"]["live"]; readonly lateDelivery?: boolean;
+    readonly successProvesRecorded?: boolean; readonly execution?: RelayCapabilities["execution"]; readonly probed?: boolean; readonly compactionEvidence?: RelayCapabilities["compactionEvidence"] } = {}): RelayCapabilities {
+  return { ...BASE_RELAY, probed: overrides.probed ?? false, execution: overrides.execution ?? "process", compactionEvidence: overrides.compactionEvidence ?? "event",
+    delivery: { live: overrides.live ?? "none", verify: overrides.verify ?? "none", successProvesRecorded: overrides.successProvesRecorded ?? false, lateDelivery: overrides.lateDelivery ?? false } };
+}
+const NATIVE_COMMANDS: readonly NativeCommand[] = [{ name: "compact", description: "compact", contextEffect: "compact" }, { name: "clear", description: "clear", contextEffect: "clear" },
+  { name: "undo", description: "undo", contextEffect: "rewind" }, { name: "review", description: "review", contextEffect: "keep" }];
+const RECORDED: BackendResult = { status: "completed", reason: "fake", input: "recorded" };
+const NO_EVIDENCE: BackendResult = { status: "completed", reason: "fake" };
+/** How one prompt goes: whether the native side writes its entry (now, late, never), how the Turn ends, and E1. */
+interface Script { readonly insert?: "now" | "late" | "never"; readonly result?: BackendResult | "hold" | "lost"; readonly e1?: RelayPacketId | "own" | null; readonly native?: BackendResult["native"] }
+/**
+ * In-process fake controls over the reference model: a native session per open without a checkpoint, resumed by its
+ * checkpoint; commands act on the model (/compact folds, /clear empties, /undo removes the last user entry). `script` says
+ * how each input goes. With `admission` the factory also answers the static declarations (the 409 at send); `readable`
+ * false makes every check answer unavailable.
+ */
+class ModelHarnesses implements SessionBindingFactory {
+  readonly prompts: { readonly harnessId: string; readonly text: string; readonly turn: TurnText; readonly session: string }[] = [];
+  readonly holds: { readonly resolve: (result: BackendResult) => void; readonly reject: (error: Error) => void }[] = [];
+  readable = true;
+  attachmentsHeld: Promise<void> | null = null;
+  script: (harnessId: string, input: string) => Script = () => ({});
+  private opened = 0;
+  constructor(private readonly peer: Peer, private readonly declarations: Readonly<Record<string, RelayCapabilities>>, private readonly admission = false) {}
+  relayCapabilities?(selection: HarnessSelection): RelayCapabilities | null;
+  enableAdmission(): void { this.relayCapabilities = selection => this.declarations[selection.harnessId] ?? null; }
+  async validate(request: SelectionRequest): Promise<HarnessSelection> {
+    if (this.declarations[request.harnessId] === undefined) throw new SessionError("HARNESS_UNAVAILABLE", "fixture target is unavailable");
+    return { harnessId: request.harnessId, controlId: request.harnessId + "-acp" };
+  }
+  async prepare(selected: HarnessSelection, configuration: SessionConfiguration): Promise<PreparedSessionBinding> {
+    const harnessId = selected.harnessId, peer = this.peer;
+    let session: string | null = null;
+    const held: { readonly resolve: (result: BackendResult) => void; readonly reject: (error: Error) => void }[] = [];
+    const control: HarnessControl = {
+      relayCapabilities: this.declarations[harnessId]!,
+      initialize: async () => ({ protocol: "acp-v1", protocolVersion: 1, agentName: "model", agentVersion: "1", authenticationMethods: [], capabilities: {} }),
+      open: async (_cwd, _model, _options, checkpoint) => { session = checkpoint ?? "native-" + harnessId + "-" + ++this.opened; return nativeConversationId(session); },
+      checkpoint: async () => session,
+      healthy: () => true,
+      models: async () => ({ models: [{ id: "model-a", name: "A" }], defaultModel: "model-a", authentication: "ready", canSelect: true, commands: NATIVE_COMMANDS }),
+      classify: (text, catalog) => listedCommand(text, catalog),
+      checkAttachments: async () => { if (this.attachmentsHeld !== null) await this.attachmentsHeld; },
+      deliveryPosition: async () => peer.call<DeliveryPosition>("position", { session }),
+      verifyDelivered: async (_id, request) => peer.call<VerifyResult>("verify", { session, readable: this.readable,
+        markers: request.markers.map(marker => ({ packetId: marker.packetId, after: marker.position.kind === "seq" ? marker.position.before : 0 })) }),
+      startText: async (_id, turn, output) => {
+        const text = singleText(turn), input = typeof turn === "string" ? turn : turn.user, packetId = typeof turn === "string" ? null : turn.relay.packetId;
+        this.prompts.push({ harnessId, text, turn, session: session! });
+        const plan = this.script(harnessId, input), name = /^\/(\S+)/u.exec(input)?.[1];
+        if (name === "compact") await peer.call("compact", { session, keep: 1 });
+        else if (name === "clear") await peer.call("clear", { session });
+        else if (name === "undo") await peer.call("rewind", { session, n: 1 });
+        else await peer.call("send", { session, runId: "entry-" + this.prompts.length, packetId, facts: [], insert: plan.insert ?? "now" });
+        if (plan.e1 !== undefined && plan.e1 !== null) output({ type: "input_recorded", ...(plan.e1 === "own" ? (packetId === null ? {} : { packetId }) : { packetId: plan.e1 }) });
+        if (plan.result !== "lost") output({ type: "text", text: "reply from " + harnessId });
+        const ending = plan.result ?? RECORDED;
+        const result = ending === "hold" ? new Promise<BackendResult>((resolve, reject) => { const hold = { resolve, reject }; held.push(hold); this.holds.push(hold); })
+          : ending === "lost" ? new Promise<BackendResult>((_resolve, reject) => { setImmediate(() => reject(new SessionError("CONTROL_FAILED", "the connection ended without a result"))); })
+          : Promise.resolve({ ...ending, ...(plan.native === undefined ? {} : { native: plan.native }) });
+        return { result, requestStop: async () => { for (const hold of held.splice(0)) hold.resolve({ status: "cancelled", reason: "stopped" }); return { requested: true }; } };
+      },
+      close: async () => { for (const hold of held.splice(0)) hold.reject(new SessionError("CLOSED", "the program was ended")); return clean; },
+    };
+    return { control, workspace: configuration.workspace, assertOwned: () => {}, close: () => control.close() };
+  }
+  /** What reached `harnessId`, flattened as the Driver sent it. */
+  to(harnessId: string): readonly string[] { return this.prompts.filter(row => row.harnessId === harnessId).map(row => row.text); }
+  last(harnessId: string): { readonly text: string; readonly turn: TurnText; readonly session: string } { return this.prompts.filter(row => row.harnessId === harnessId).at(-1)!; }
+}
+interface RuntimeWorld { readonly data: string; store: SqliteSessionStore; readonly configuration: SessionConfiguration; readonly peer: Peer; runtime(factory: SessionBindingFactory, options?: Partial<SessionRuntimeOptions>): SessionRuntime }
+async function runtimeWorld(t: TestContext): Promise<RuntimeWorld> {
+  const root = temporary(t), workspace = join(root, "workspace"), data = join(root, "data");
+  mkdirSync(workspace);
+  const peer = await startPeer(t), runtimes: SessionRuntime[] = [];
+  const world: RuntimeWorld = { data, store: new SqliteSessionStore(data, { recoverRelay }), peer,
+    configuration: { workspace, manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: true },
+    runtime(factory, options = {}) {
+      let next = 0;
+      const app = new SessionRuntime(world.store, factory, { id: () => "g068-" + ++next + "-" + runtimes.length, now: () => new Date(Date.UTC(2026, 10, 10, 12)), publish: () => {},
+        fingerprint: value => createHash("sha256").update(value).digest("hex"), ...options });
+      runtimes.push(app); return app;
+    } };
+  t.after(async () => {
+    for (const app of runtimes) { try { await app.close(); } catch { /* a runtime whose store was closed under it (a crash) ends failed */ } }
+    try { world.store.close(); } catch { /* closed by the test */ }
+  });
+  return world;
+}
+function allEvents(store: SqliteSessionStore, id: SessionId): readonly SessionEvent[] {
+  const all: SessionEvent[] = [];
+  for (let after = 0; ;) { const page = store.events(id, after, 100); if (!page.length) return all; all.push(...page); after = page.at(-1)!.seq; }
+}
+/** The latest event of `type` of a Run: its own (`runId`), or for relay.verified the check made in it (`inRunId`). */
+function eventOf(store: SqliteSessionStore, id: SessionId, type: string, run: string): SessionEvent | undefined {
+  return allEvents(store, id).findLast(row => row.type === type && (type === "relay.verified" ? row.data.inRunId : row.data.runId) === run);
+}
+async function turn(app: SessionRuntime, id: SessionId, text: string, key: string, relay?: RelayChoice): Promise<PublicRun> {
+  const receipt = app.send(id, text, key, [], relay);
+  await app.wait(id).catch((error: unknown) => { if (!(error instanceof SessionError && error.code === "SESSION_BLOCKED")) throw error; });
+  return app.read(id).runs.find(row => row.id === receipt.runId)!;
+}
+async function to(app: SessionRuntime, id: SessionId, harnessId: string, key: string): Promise<void> { app.switch(id, { harnessId }, key); await app.wait(id); assert.equal(app.read(id).selection.harnessId, harnessId); }
+function bindingRelay(state: SessionSnapshot, harnessId: string): BindingRelayState { return state.nativeBindings!.find(row => row.harnessId === harnessId && row.status !== "archived")!.relay!; }
+function rowOf(store: SqliteSessionStore, id: SessionId, run: string): DeliveryRecord | undefined { return store.relayDeliveries(id).find(row => row.runId === run); }
+function packetIdIn(turn: TurnText): RelayPacketId | null { return typeof turn === "string" ? null : turn.relay.packetId; }
+const relayError = (code: string, reason?: string) => (error: unknown) => error instanceof RelayError && error.code === code && (reason === undefined || error.reason === reason);
+
+test("G068-C06 (Runtime) A→B→A through the formal Runtime and the reference model: bravo gets a packet recorded by E1; back on alpha only bravo's Turns go, unconfirmed and then found at the next open (E2); every other input goes as typed", async t => {
+  const w = await runtimeWorld(t);
+  const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "on_next_open" }), bravo: declared({ live: "recorded_event", verify: "after_turn" }) });
+  fake.script = (harnessId, input) => harnessId === "bravo" ? { e1: "own" } : input === "a3 carries bravo's turns" ? { result: NO_EVIDENCE } : {};
+  const app = w.runtime(fake), session = await app.create(w.configuration, { harnessId: "alpha" }, "create"), id = session.id;
+  const a1 = await turn(app, id, "a1 on alpha", "a1"), a2 = await turn(app, id, "a2 on alpha", "a2");
+  assert.deepEqual(fake.to("alpha"), ["a1 on alpha", "a2 on alpha"], "a single Harness is never injected");
+  await to(app, id, "bravo", "to-b");
+  const b1 = await turn(app, id, "b1 on bravo", "b1"), b2 = await turn(app, id, "b2 on bravo", "b2");
+  const toBravo = fake.prompts.find(row => row.harnessId === "bravo")!;
+  assert.equal(typeof toBravo.turn, "object", "the Driver is handed the packet and the words apart (TurnText)");
+  assert.deepEqual(readRelayPrompt(toBravo.text).history.map(row => row.user.text), [a1.input, a2.input]); assert.equal(readRelayPrompt(toBravo.text).currentInput.text, b1.input);
+  assert.equal(fake.to("bravo")[1], b2.input, "once recorded, nothing is owed");
+  // E1: the delivery recorded by the live event, committed before the Turn's end, the binding synced on the packet.
+  const p1 = packetIdIn(toBravo.turn)!, e1 = eventOf(w.store, id, "relay.input_recorded", b1.id)!, ended = eventOf(w.store, id, "run.ended", b1.id)!;
+  assert.equal(rowOf(w.store, id, b1.id)?.outcome.kind === "recorded" && (rowOf(w.store, id, b1.id)!.outcome as { readonly evidence: string }).evidence, "E1");
+  assert.ok(e1.seq < ended.seq, "E1 before the settlement"); assert.equal((e1.data.mark as DeliveredMark).lastPacketId, p1);
+  assert.deepEqual(ended.data.delivery, { packetId: p1, outcome: "recorded", evidence: "E1", mark: null }, "the settlement found it recorded already");
+  assert.equal(markOf(bindingRelay(app.read(id), "bravo").sync)?.lastPacketId, p1);
+  assert.ok((await w.peer.call<{ readonly packets: readonly string[] }>("held", { session: toBravo.session })).packets.includes(p1), "the reference model holds it");
+  // Back on alpha: only bravo's two Turns (alpha's own are no foreign facts to it), as a delta; no evidence → pending.
+  await to(app, id, "alpha", "to-a");
+  const a3 = await turn(app, id, "a3 carries bravo's turns", "a3"), toAlpha = fake.last("alpha");
+  assert.deepEqual(a3.sourceRunIds, [b1.id, b2.id]); assert.equal(readRelayPrompt(toAlpha.text).kind, "delta");
+  assert.equal(bindingRelay(app.read(id), "alpha").sync.kind, "pending"); assert.equal(rowOf(w.store, id, a3.id)?.outcome.kind, "unknown");
+  assert.equal(rowOf(w.store, id, a3.id)?.position.kind, "seq", "the position read before dispatch is kept with the row");
+  // The next open checks the pending packet's own title line: found (E2), committed with the preparation; the input goes as typed.
+  const a4 = await turn(app, id, "a4 as typed", "a4");
+  assert.equal(fake.to("alpha").at(-1), a4.input);
+  const p2 = packetIdIn(toAlpha.turn)!, verified = eventOf(w.store, id, "relay.verified", a4.id)!, row = rowOf(w.store, id, a3.id)!;
+  assert.deepEqual(row.outcome, { kind: "recorded", evidence: "E2", decidedSeq: verified.seq, decidedAt: row.outcome.kind === "recorded" ? row.outcome.decidedAt : 0, verifiedInRun: a4.id });
+  assert.equal(verified.data.result, "recorded"); assert.equal(verified.data.plan, "pending");
+  assert.ok(verified.seq < eventOf(w.store, id, "run.context_prepared", a4.id)!.seq, "the check is committed with the preparation, before the authorization");
+  assert.equal(markOf(bindingRelay(app.read(id), "alpha").sync)?.lastPacketId, p2);
+  // The read path finds that mark again from its event: the next open checks the synced binding's last packet and keeps it.
+  const a5 = await turn(app, id, "a5 as typed", "a5");
+  assert.equal(fake.to("alpha").at(-1), a5.input); assert.equal(eventOf(w.store, id, "relay.verified", a5.id)?.data.result, "kept");
+  assert.deepEqual(app.read(id).runs.find(row2 => row2.id === a5.id)?.relay?.executedOn, { harnessId: "alpha", controlId: "alpha-acp", nativeEpoch: 1 });
+});
+
+test("G068-C02 (Runtime) a pending packet: one automatic resend, then admission's synchronous 409 (no Run made); attach none goes alone and keeps it pending; the user's resend is recorded; lateDelivery never resends by itself", async t => {
+  const w = await runtimeWorld(t);
+  const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "none" }), bravo: declared(), late: declared({ verify: "none", lateDelivery: true }) });
+  fake.enableAdmission();
+  fake.script = (_harnessId, input) => input.startsWith("lost") ? { insert: "never", result: NO_EVIDENCE } : {};
+  const app = w.runtime(fake), session = await app.create(w.configuration, { harnessId: "bravo" }, "create"), id = session.id;
+  await turn(app, id, "b1 a fact", "b1");
+  await to(app, id, "alpha", "to-a");
+  const a1 = await turn(app, id, "lost first packet", "a1");
+  assert.equal(bindingRelay(app.read(id), "alpha").sync.kind, "pending");
+  const a2 = await turn(app, id, "lost resend", "a2");
+  assert.equal(rowOf(w.store, id, a2.id)?.resendOf, a1.id, "sent again once, automatically");
+  const sync = bindingRelay(app.read(id), "alpha").sync;
+  assert.equal(sync.kind === "pending" && sync.autoResends, 1);
+  const runs = app.read(id).runs.length;
+  assert.throws(() => app.send(id, "needs a choice", "a3"), relayError("RELAY_CHOICE_REQUIRED", "delivery_unconfirmed"), "admission asks the user (409)");
+  assert.equal(app.read(id).runs.length, runs, "no Run was made");
+  const before = JSON.stringify(bindingRelay(app.read(id), "alpha"));
+  const alone = await turn(app, id, "only this", "a4", { attach: "none" });
+  assert.equal(fake.to("alpha").at(-1), alone.input, "alone: exactly as typed"); assert.equal(JSON.stringify(bindingRelay(app.read(id), "alpha")), before, "n changes nothing");
+  assert.equal(rowOf(w.store, id, alone.id), undefined, "no delivery row");
+  const again = await turn(app, id, "send it again", "a5", { resend: true });
+  assert.equal(again.status, "completed"); assert.equal(rowOf(w.store, id, again.id)?.resendOf, a2.id);
+  assert.equal(bindingRelay(app.read(id), "alpha").sync.kind, "synced");
+  // lateDelivery: the first unknown is never resent by itself.
+  await to(app, id, "late", "to-late");
+  await turn(app, id, "lost on late", "l1");
+  assert.equal(bindingRelay(app.read(id), "late").sync.kind, "pending");
+  assert.throws(() => app.send(id, "next on late", "l2"), relayError("RELAY_CHOICE_REQUIRED", "delivery_unconfirmed"));
+});
+
+test("G068 (Runtime) a Driver that checks at the open is let through admission; a pending packet its check cannot see, already resent once, fails that Run before dispatch with RELAY_CHOICE_REQUIRED, and the native session is kept", async t => {
+  const w = await runtimeWorld(t);
+  const fake = new ModelHarnesses(w.peer, { hermes: declared({ verify: "on_next_open" }), bravo: declared() });
+  fake.enableAdmission();
+  fake.script = (_harnessId, input) => input.startsWith("lost") ? { insert: "never", result: NO_EVIDENCE } : {};
+  const app = w.runtime(fake), session = await app.create(w.configuration, { harnessId: "bravo" }, "create"), id = session.id;
+  await turn(app, id, "b1 a fact", "b1"); await to(app, id, "hermes", "to-h");
+  await turn(app, id, "lost first", "h1"); await turn(app, id, "lost resend", "h2");
+  fake.readable = false;
+  const sent = fake.prompts.length, asked = await turn(app, id, "check cannot see it", "h3");
+  assert.equal(asked.status, "failed"); assert.equal(asked.error?.code, "RELAY_CHOICE_REQUIRED");
+  assert.deepEqual(eventOf(w.store, id, "run.ended", asked.id)?.data.relay, { reason: "delivery_unconfirmed" });
+  assert.deepEqual(asked.relay?.continuity, { kind: "blocked", code: "RELAY_CHOICE_REQUIRED" });
+  assert.equal(fake.prompts.length, sent, "not dispatched");
+  assert.equal(eventOf(w.store, id, "relay.verified", asked.id)?.data.result, "unconfirmed", "the open's check is a fact, committed with the Run's end");
+  assert.equal(app.read(id).nativeBindings!.find(row => row.harnessId === "hermes")!.status, "ready", "the native session stays for the next Turn");
+});
+
+test("G068 (Runtime) the three causes: verify_required at admission for a suspect binding no check can settle, marker_absent found at the open; the complete packet on the user's choice (attach full) moves the mark back and sends what is owed", async t => {
+  const w = await runtimeWorld(t);
+  const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "none", successProvesRecorded: true }), hermes: declared({ verify: "on_next_open", successProvesRecorded: true }), bravo: declared() });
+  fake.enableAdmission();
+  const app = w.runtime(fake), session = await app.create(w.configuration, { harnessId: "bravo" }, "create"), id = session.id;
+  const b1 = await turn(app, id, "b1 a fact", "b1");
+  // verify_required: alpha (no check) synced on a packet, then /undo (rewind): suspect with a mark on a packet nothing can check.
+  await to(app, id, "alpha", "to-a");
+  await turn(app, id, "a1 carries b1", "a1");
+  assert.equal(bindingRelay(app.read(id), "alpha").sync.kind, "synced");
+  await turn(app, id, "/undo", "undo");
+  assert.equal(bindingRelay(app.read(id), "alpha").sync.kind, "suspect");
+  await to(app, id, "bravo", "to-b"); const b2 = await turn(app, id, "b2 another fact", "b2"); await to(app, id, "alpha", "to-a2");
+  assert.throws(() => app.send(id, "carry on", "a2"), relayError("RELAY_CHOICE_REQUIRED", "verify_required"));
+  const full = await turn(app, id, "carry on", "a3", { attach: "full" });
+  assert.equal(full.status, "completed"); assert.deepEqual(full.sourceRunIds, [b1.id, b2.id], "the complete packet again, from the epoch's base");
+  assert.equal(bindingRelay(app.read(id), "alpha").sync.kind, "synced");
+  assert.equal(eventOf(w.store, id, "run.context_prepared", full.id)?.data.retreat, true);
+  // marker_absent: hermes synced on its packet, which the user then removes in the original program; the open's check finds it absent.
+  await to(app, id, "hermes", "to-h");
+  await turn(app, id, "h1 carries", "h1");
+  const hermesSession = fake.last("hermes").session;
+  assert.equal(bindingRelay(app.read(id), "hermes").sync.kind, "synced");
+  await w.peer.call("rewind", { session: hermesSession, n: 1 });
+  await to(app, id, "bravo", "to-b2"); await turn(app, id, "b3 a third fact", "b3"); await to(app, id, "hermes", "to-h2");
+  const absent = await turn(app, id, "what now", "h2");
+  assert.equal(absent.error?.code, "RELAY_CHOICE_REQUIRED"); assert.deepEqual(eventOf(w.store, id, "run.ended", absent.id)?.data.relay, { reason: "marker_absent" });
+  assert.equal(bindingRelay(app.read(id), "hermes").sync.kind === "suspect" && (bindingRelay(app.read(id), "hermes").sync as { readonly cause: string }).cause, "marker_absent");
+  assert.throws(() => app.send(id, "what now", "h3"), relayError("RELAY_CHOICE_REQUIRED", "marker_absent"), "now admission knows it");
+  const resent = await turn(app, id, "what now", "h4", { attach: "full" });
+  assert.equal(resent.status, "completed"); assert.ok(isPacketText(fake.last("hermes").text));
+});
+function isPacketText(text: string): boolean { return readRelayPrompt(text).packet; }
+
+test("G068-C03/C05 (Runtime) a clear: confirmed by the Driver (native.cleared) starts a new epoch and the next inputs go as typed, attach full once brings the history back; unconfirmed, the next open's replay decides; a check that cannot decide is settled by the user's ［确认已清空］", async t => {
+  const w = await runtimeWorld(t);
+  const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "on_next_open", successProvesRecorded: true }), bravo: declared() });
+  fake.script = (_harnessId, input) => input === "/clear" && confirming ? { native: { cleared: true, replaced: null } } : {};
+  let confirming = true;
+  const app = w.runtime(fake), session = await app.create(w.configuration, { harnessId: "bravo" }, "create"), id = session.id;
+  const b1 = await turn(app, id, "b1 a fact", "b1"); await to(app, id, "alpha", "to-a");
+  const a1 = await turn(app, id, "a1 carries b1", "a1");
+  const clear = await turn(app, id, "/clear", "clear");
+  const cleared = bindingRelay(app.read(id), "alpha");
+  assert.deepEqual(cleared.sync, { kind: "fresh", basis: "user_cleared" }); assert.equal(cleared.nativeEpoch, 2); assert.equal(cleared.epochFloor, eventOf(w.store, id, "run.ended", clear.id)!.seq);
+  // "附上交接单" right after the clear: the one-time attach ignores the floor (alpha's own epoch-1 Turn is foreign to epoch 2 now).
+  const attached = await turn(app, id, "bring the history", "attach", { attach: "full" });
+  assert.deepEqual(attached.sourceRunIds, [b1.id, a1.id]); assert.equal(rowOf(w.store, id, attached.id)?.attachOverride, true);
+  for (let index = 0; index < 20; index++) { const input = await turn(app, id, "after clear " + index, "c" + index); assert.equal(fake.to("alpha").at(-1), input.input, "as typed"); }
+  // Unconfirmed: suspect{clear_unconfirmed}; the next open replays an empty history and confirms it.
+  confirming = false;
+  await to(app, id, "bravo", "to-b"); await turn(app, id, "b2", "b2"); await to(app, id, "alpha", "to-a2");
+  await turn(app, id, "carry b2", "carry");
+  const unconfirmed = await turn(app, id, "/clear", "clear2");
+  assert.equal(bindingRelay(app.read(id), "alpha").sync.kind, "suspect");
+  const replayed = await turn(app, id, "after the second clear", "after2");
+  assert.equal(eventOf(w.store, id, "relay.verified", replayed.id)?.data.result, "cleared");
+  assert.equal(bindingRelay(app.read(id), "alpha").epochFloor, eventOf(w.store, id, "run.ended", unconfirmed.id)!.seq); assert.equal(fake.to("alpha").at(-1), replayed.input);
+  // A check that cannot decide (unavailable): the user confirms the clear; e at its floor candidate, as typed.
+  await to(app, id, "bravo", "to-b3"); await turn(app, id, "b3", "b3"); await to(app, id, "alpha", "to-a3");
+  await turn(app, id, "carry b3", "carry3");
+  const third = await turn(app, id, "/clear", "clear3");
+  fake.readable = false;
+  await to(app, id, "bravo", "to-b4"); const b4 = await turn(app, id, "b4", "b4"); await to(app, id, "alpha", "to-a4");
+  const stuck = await turn(app, id, "after the third clear", "after3");
+  assert.equal(stuck.error?.code, "RELAY_CHOICE_REQUIRED", "the check cannot see the chain: the user decides");
+  const confirmed = await turn(app, id, "after the third clear", "after3-confirmed", { clearConfirmed: true });
+  assert.equal(confirmed.status, "completed");
+  assert.ok(eventOf(w.store, id, "relay.clear_confirmed", confirmed.id), "the user's confirmation is recorded");
+  assert.equal(bindingRelay(app.read(id), "alpha").epochFloor, eventOf(w.store, id, "run.ended", third.id)!.seq);
+  assert.deepEqual(confirmed.sourceRunIds, [b4.id], "a confirmed clear owes nothing before it: only what came after it");
+});
+
+test("G068 (Runtime) command Turns: /compact on a binding with a packet in its epoch re-anchors it; Claude's synthesized clear archives the binding with its relay state and opens the next epoch in a new binding with the replacement session", async t => {
+  const w = await runtimeWorld(t);
+  const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "after_turn", successProvesRecorded: true }), bravo: declared() });
+  fake.script = (_harnessId, input) => input === "/clear" ? { native: { cleared: true, replaced: { checkpoint: "native-alpha-replacement" } } } : {};
+  const app = w.runtime(fake), session = await app.create(w.configuration, { harnessId: "bravo" }, "create"), id = session.id;
+  await turn(app, id, "b1", "b1"); await to(app, id, "alpha", "to-a"); await turn(app, id, "a1 carries b1", "a1");
+  assert.equal(bindingRelay(app.read(id), "alpha").reanchor, false);
+  const compact = await turn(app, id, "/compact", "compact");
+  assert.equal(eventOf(w.store, id, "run.ended", compact.id)?.data.contextEffect, "compact");
+  assert.equal(bindingRelay(app.read(id), "alpha").reanchor, true, "a compaction that ran re-anchors a binding with a packet in its epoch (F4)");
+  const before = bindingRelay(app.read(id), "alpha");
+  const clear = await turn(app, id, "/clear", "clear");
+  const bindings = app.read(id).nativeBindings!.filter(row => row.harnessId === "alpha");
+  assert.equal(bindings.length, 2); assert.equal(bindings[0]!.status, "archived"); assert.deepEqual(bindings[0]!.relay, before, "archiving freezes the relay state");
+  assert.equal(bindings[1]!.checkpoint, "native-alpha-replacement"); assert.deepEqual(bindings[1]!.relay!.sync, { kind: "fresh", basis: "user_cleared" });
+  assert.equal(bindings[1]!.relay!.nativeEpoch, before.nativeEpoch + 1); assert.equal(bindings[1]!.relay!.epochFloor, eventOf(w.store, id, "run.ended", clear.id)!.seq);
+  const after = await turn(app, id, "after the clear", "after");
+  assert.equal(fake.last("alpha").session, "native-alpha-replacement", "the next Turn opens the replacement session"); assert.equal(fake.to("alpha").at(-1), after.input);
+});
+
+test("G068-C09 (Runtime) D6: a probed process Driver's Turn that ended unknown after its program was seen to end continues the original session: the binding is ready and suspect{unknown_turn}, and the next open's check moves it (there → E2, not there → the prior); an unprobed one stays unconfirmed", async t => {
+  const w = await runtimeWorld(t);
+  const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "on_next_open", probed: true }), gateway: declared({ verify: "on_next_open", execution: "gateway" }), bravo: declared() });
+  fake.script = (_harnessId, input) => input === "lost but written" ? { insert: "now", result: "lost" } : input === "lost unwritten" ? { insert: "never", result: "lost" } : {};
+  const app = w.runtime(fake), session = await app.create(w.configuration, { harnessId: "bravo" }, "create"), id = session.id;
+  await turn(app, id, "b1", "b1"); await to(app, id, "alpha", "to-a");
+  const lost = await turn(app, id, "lost but written", "a1");
+  assert.equal(lost.status, "unknown"); assert.equal(app.read(id).status, "blocked");
+  const binding = app.read(id).nativeBindings!.find(row => row.harnessId === "alpha")!;
+  assert.equal(binding.status, "ready", "the Hub saw the program end: the original session may be continued");
+  assert.equal(binding.relay!.sync.kind === "suspect" && binding.relay!.sync.cause, "unknown_turn");
+  assert.equal(binding.relay!.sync.kind === "suspect" && binding.relay!.sync.carried?.packetId, packetIdIn(fake.last("alpha").turn));
+  assert.equal(eventOf(w.store, id, "run.ended", lost.id)?.data.continued, true);
+  assert.equal(rowOf(w.store, id, lost.id)?.outcome.kind, "unknown");
+  app.resume(id, { harnessId: "alpha" }, "recover", true); await app.wait(id);
+  const next = await turn(app, id, "continue the original", "a2");
+  assert.equal(next.status, "completed"); assert.equal(fake.last("alpha").session, fake.prompts.find(row => row.harnessId === "alpha")!.session, "the original native session, resumed");
+  assert.equal(rowOf(w.store, id, lost.id)?.outcome.kind === "recorded" && (rowOf(w.store, id, lost.id)!.outcome as { readonly evidence: string }).evidence, "E2");
+  assert.equal(fake.to("alpha").at(-1), next.input, "its packet was there: nothing is owed, never re-run");
+  // Not written: back to the prior, and the next input owes the facts again.
+  await to(app, id, "bravo", "to-b2"); await turn(app, id, "b2", "b2"); await to(app, id, "alpha", "to-a2");
+  await turn(app, id, "lost unwritten", "a3");
+  app.resume(id, { harnessId: "alpha" }, "recover2", true); await app.wait(id);
+  const owedAgain = await turn(app, id, "after the lost one", "a4");
+  assert.equal(eventOf(w.store, id, "relay.verified", owedAgain.id)?.data.result, "retreated");
+  assert.ok(isPacketText(fake.last("alpha").text), "the facts go again");
+  // A gateway Driver's viewer leaving is no evidence of an end (INV-12): the binding stays unconfirmed.
+  await to(app, id, "gateway", "to-g");
+  fake.script = () => ({ insert: "now", result: "lost" });
+  await turn(app, id, "lost on the gateway", "g1");
+  assert.equal(app.read(id).nativeBindings!.find(row => row.harnessId === "gateway")!.status, "unconfirmed");
+});
+
+test("G068-C08 (Runtime) crash injection with the composition root's recoverRelay: dispatched and held → unknown{owner_ended}, still pending; E1 committed before the crash stays recorded", async t => {
+  const w = await runtimeWorld(t);
+  const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "on_next_open", live: "recorded_event" }), bravo: declared() });
+  // Two conversations in two workspaces, so both Turns run at once (one workspace takes one Turn at a time, ADR-036).
+  const other = join(w.configuration.workspace, "..", "workspace-2"); mkdirSync(other);
+  const app = w.runtime(fake), first = await app.create(w.configuration, { harnessId: "bravo" }, "first"), second = await app.create({ ...w.configuration, workspace: other }, { harnessId: "bravo" }, "second");
+  for (const [session, key] of [[first, "k9"], [second, "k11"]] as const) { await turn(app, session.id, "b1 " + key, key + "-b1"); await to(app, session.id, "alpha", key + "-to-a"); }
+  fake.script = (_harnessId, input) => input === "held k9" ? { result: "hold" } : input === "held k11" ? { result: "hold", e1: "own" } : {};
+  for (const [session, key] of [[first, "k9"], [second, "k11"]] as const) {
+    app.send(session.id, "held " + key, key + "-held");
+    for (const deadline = Date.now() + 5000; fake.holds.length < (key === "k9" ? 1 : 2);) { assert.ok(Date.now() < deadline, "dispatched"); await new Promise(resolve => setTimeout(resolve, 5)); }
+  }
+  for (const deadline = Date.now() + 5000; !allEvents(w.store, second.id).some(row => row.type === "relay.input_recorded");) { assert.ok(Date.now() < deadline, "E1 committed"); await new Promise(resolve => setTimeout(resolve, 5)); }
+  // The owner ends without settling anything: its Store goes away under the Runtime, and the next owner recovers.
+  w.store.close();
+  w.store = new SqliteSessionStore(w.data, { recoverRelay });
+  const k9 = w.store.get(first.id), k9run = k9.runs.at(-1)!;
+  assert.equal(k9run.status, "unknown");
+  assert.equal(w.store.relayDeliveries(first.id).find(row => row.runId === k9run.id)?.outcome.kind === "unknown" && (w.store.relayDeliveries(first.id).find(row => row.runId === k9run.id)!.outcome as { readonly reason: string }).reason, "owner_ended");
+  assert.equal(bindingRelay(k9, "alpha").sync.kind, "pending", "checked at the next open, never re-run");
+  const k11 = w.store.get(second.id), k11run = k11.runs.at(-1)!;
+  assert.equal(w.store.relayDeliveries(second.id).find(row => row.runId === k11run.id)?.outcome.kind, "recorded", "E1 committed before the owner ended stays");
+  assert.equal(bindingRelay(k11, "alpha").sync.kind, "synced");
+  for (const hold of fake.holds) hold.reject(new SessionError("CLOSED", "owner gone"));
+});
+
+test("G068 (Runtime) a delivery row that is gone (damaged data): the open's check marks it rowMissing in relay.verified, and the resend names the Run whose relay carried the packet", async t => {
+  const w = await runtimeWorld(t);
+  const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "on_next_open" }), bravo: declared() });
+  fake.script = (_harnessId, input) => input === "lost" ? { insert: "never", result: NO_EVIDENCE } : {};
+  const app = w.runtime(fake), session = await app.create(w.configuration, { harnessId: "bravo" }, "create"), id = session.id;
+  await turn(app, id, "b1", "b1"); await to(app, id, "alpha", "to-a");
+  const lost = await turn(app, id, "lost", "a1");
+  assert.equal(bindingRelay(app.read(id), "alpha").sync.kind, "pending");
+  const db = new DatabaseSync(join(w.data, "gateway.sqlite"));
+  try { db.prepare("DELETE FROM relay_deliveries WHERE run_id=?").run(lost.id); } finally { db.close(); }
+  const next = await turn(app, id, "next", "a2");
+  const verified = eventOf(w.store, id, "relay.verified", next.id)!;
+  assert.equal(verified.data.rowMissing, true); assert.equal(verified.data.plan, "skip:no_marker");
+  assert.equal(rowOf(w.store, id, next.id)?.resendOf, lost.id, "resend.of from the Run whose relay names the packet");
+});
+
+test("G068 (Runtime) E1 and E3: a live event for another packet decides nothing and the settlement's E3 does; E1 for its own packet is committed before the end and the settlement then changes nothing", async t => {
+  const w = await runtimeWorld(t);
+  const fake = new ModelHarnesses(w.peer, { alpha: declared({ live: "recorded_event", verify: "none" }), bravo: declared() });
+  fake.script = (_harnessId, input) => input === "foreign e1" ? { e1: relayPacketId("relay-" + "a".repeat(20)) } : input === "own e1" ? { e1: "own", result: NO_EVIDENCE } : {};
+  const app = w.runtime(fake), session = await app.create(w.configuration, { harnessId: "bravo" }, "create"), id = session.id;
+  await turn(app, id, "b1", "b1"); await to(app, id, "alpha", "to-a");
+  const foreign = await turn(app, id, "foreign e1", "a1");
+  assert.equal(eventOf(w.store, id, "relay.input_recorded", foreign.id), undefined);
+  assert.equal((rowOf(w.store, id, foreign.id)!.outcome as { readonly evidence: string }).evidence, "E3");
+  await to(app, id, "bravo", "to-b"); await turn(app, id, "b2", "b2"); await to(app, id, "alpha", "to-a2");
+  const own = await turn(app, id, "own e1", "a2");
+  const e1 = eventOf(w.store, id, "relay.input_recorded", own.id)!, ended = eventOf(w.store, id, "run.ended", own.id)!;
+  assert.ok(e1.seq < ended.seq); assert.equal((rowOf(w.store, id, own.id)!.outcome as { readonly evidence: string }).evidence, "E1");
+  assert.ok(own.timing?.recordedAt !== undefined && own.timing.recordedAt >= own.timing.dispatchedAt!, "recordedAt between dispatch and end");
+  assert.equal(bindingRelay(app.read(id), "alpha").sync.kind, "synced", "an end without evidence does not undo E1");
+});
+
+test("G068 (Runtime) cancel and late delivery: a Turn stopped after dispatch on a lateDelivery Driver is unknown{late_delivery} and never resent by itself; its late write is found at the next open (E2); a Turn stopped before dispatch leaves its packet not recorded and the binding as it was", async t => {
+  const w = await runtimeWorld(t);
+  const fake = new ModelHarnesses(w.peer, { late: declared({ verify: "on_next_open", lateDelivery: true }), bravo: declared() });
+  fake.script = (_harnessId, input) => input === "stopped late" ? { insert: "late", result: "hold" } : {};
+  const content: ContentPort = { storeOutput: async () => { throw new Error("no outputs"); }, materialize: async refs => refs.map(ref => ({ ...ref, path: "/dev/null" })),
+    resolve: ids => ids.map(item => ({ id: contentId(item), name: "note.txt", mediaType: "text/plain", kind: "file" as const, bytes: 4, sha256: "0".repeat(64) })) };
+  const app = w.runtime(fake, { content }), session = await app.create(w.configuration, { harnessId: "bravo" }, "create"), id = session.id;
+  await turn(app, id, "b1", "b1"); await to(app, id, "late", "to-late");
+  const stopped = app.send(id, "stopped late", "l1");
+  for (const deadline = Date.now() + 5000; fake.holds.length < 1;) { assert.ok(Date.now() < deadline, "dispatched"); await new Promise(resolve => setTimeout(resolve, 5)); }
+  app.cancel(id, "stop", stopped.runId); await app.wait(id);
+  const run = app.read(id).runs.find(row => row.id === stopped.runId)!;
+  assert.equal(run.status, "cancelled"); assert.equal((rowOf(w.store, id, run.id)!.outcome as { readonly reason: string }).reason, "late_delivery");
+  await w.peer.call("flushLate", { session: fake.last("late").session });
+  const found = await turn(app, id, "after the late write", "l2");
+  assert.equal((rowOf(w.store, id, run.id)!.outcome as { readonly evidence: string }).evidence, "E2", "found after its position");
+  assert.equal(fake.to("late").at(-1), found.input);
+  // Stopped before dispatch (its attachments still being checked): the packet never left.
+  await to(app, id, "bravo", "to-b"); await turn(app, id, "b2", "b2"); await to(app, id, "late", "to-late2");
+  let release: () => void = () => {};
+  fake.attachmentsHeld = new Promise<void>(resolve => { release = resolve; });
+  const before = JSON.stringify(bindingRelay(app.read(id), "late"));
+  const held = app.send(id, "with a file", "l3", ["content-note"]);
+  for (const deadline = Date.now() + 5000; rowOf(w.store, id, held.runId) === undefined;) { assert.ok(Date.now() < deadline, "authorized"); await new Promise(resolve => setTimeout(resolve, 5)); }
+  app.cancel(id, "stop-before", held.runId); release(); await app.wait(id);
+  assert.equal((rowOf(w.store, id, held.runId)!.outcome as { readonly reason: string }).reason, "never_dispatched");
+  assert.equal(JSON.stringify(bindingRelay(app.read(id), "late")), before, "back to the state before the packet");
+});
+
+test("G068-C07 (Runtime) a kept process is not reused while a Driver that checks at the open has its binding pending: it is closed (relay_check), the next Turn opens again, and the open's check finds the packet", async t => {
+  const w = await runtimeWorld(t);
+  const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "on_next_open" }), bravo: declared() });
+  fake.script = (_harnessId, input) => input === "carried, no evidence" ? { result: NO_EVIDENCE } : {};
+  let prepared = 0;
+  const prepare = fake.prepare.bind(fake);
+  fake.prepare = async (...args) => { prepared += 1; return prepare(...args); };
+  const app = w.runtime(fake), session = await app.create(w.configuration, { harnessId: "bravo" }, "create"), id = session.id;
+  app.setRetention(id, true, "keep");
+  await turn(app, id, "b1", "b1"); await to(app, id, "alpha", "to-a");
+  const plain = await turn(app, id, "carried, no evidence", "a1");
+  assert.equal(bindingRelay(app.read(id), "alpha").sync.kind, "pending"); assert.equal(app.keptProcess(id)?.harnessId, "alpha", "the process was kept");
+  const before = prepared;
+  const next = await turn(app, id, "next on alpha", "a2");
+  assert.equal(prepared, before + 1, "the kept process was not reused: the program started again and opened the session");
+  assert.ok(allEvents(w.store, id).some(row => row.type === "native.process_closed" && row.data.reason === "relay_check"));
+  assert.equal(next.reused, undefined);
+  assert.equal(rowOf(w.store, id, plain.id)?.outcome.kind, "recorded", "the open's check found it (E2)");
+  assert.equal(fake.to("alpha").at(-1), next.input);
+  // Synced again, the next Turn reuses the kept process (nothing to check at an open).
+  const third = await turn(app, id, "and again", "a3");
+  assert.equal(third.reused, true);
+});
+
+test("G068 (Runtime) a relay recovery that could not be written (the Session marked relayRecoveryFailed): an input that would carry relay content is refused synchronously with RELAY_UNAVAILABLE{recovery_failed}, an input that owes nothing or goes alone is not; a native reset clears it", async t => {
+  const w = await runtimeWorld(t);
+  const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "none" }), bravo: declared() });
+  fake.enableAdmission();
+  const app = w.runtime(fake), session = await app.create(w.configuration, { harnessId: "bravo" }, "create"), id = session.id;
+  await turn(app, id, "b1", "b1"); await to(app, id, "alpha", "to-a"); await turn(app, id, "a1 carries b1", "a1"); await to(app, id, "bravo", "to-b");
+  await app.close(); w.store.close();
+  // The mark claimRecovery leaves when a Session's relay rows could not be written (ADR-055 §9 S15), set on an open Session:
+  // in this Runtime a failed relay recovery leaves its conversation blocked on an unknown Turn without cleanup evidence
+  // (RECOVERY_UNSAFE), so the admission check is reached only once such a conversation is open again (data repair).
+  const db = new DatabaseSync(join(w.data, "gateway.sqlite"));
+  try {
+    const stored = JSON.parse(String(db.prepare("SELECT snapshot FROM sessions WHERE id=?").get(id)!.snapshot)) as SessionSnapshot;
+    db.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify({ ...stored, relayRecoveryFailed: stored.lastSeq }), id);
+  } finally { db.close(); }
+  w.store = new SqliteSessionStore(w.data, { recoverRelay });
+  const next = w.runtime(fake);
+  assert.equal(next.read(id).relayRecoveryFailed !== undefined, true);
+  assert.throws(() => next.send(id, "to bravo", "b2"), relayError("RELAY_UNAVAILABLE", "recovery_failed"), "bravo is owed alpha's Turn: carrying is refused");
+  const alone = await turn(next, id, "to bravo, alone", "b3", { attach: "none" });
+  assert.equal(alone.status, "completed", "an input sent alone is never stopped by the relay");
+  next.resetNative(id, "reset", next.read(id).epoch);
+  assert.equal(next.read(id).relayRecoveryFailed, undefined, "a native reset clears it");
+  const after = await turn(next, id, "to bravo after the reset", "b4");
+  assert.equal(after.status, "completed"); assert.ok(isPacketText(fake.last("bravo").text));
+});
+
+test("G068 the redacting wrapper passes the relay's optional members through as the inner Driver has them, and hands the TurnText on unchanged", async () => {
+  const seen: TurnText[] = [];
+  const inner: HarnessControl = { relayCapabilities: BASE_RELAY,
+    initialize: async () => ({ protocol: "acp-v1", protocolVersion: 1, agentName: "inner", agentVersion: "1", authenticationMethods: [], capabilities: {} }),
+    open: async () => nativeConversationId("inner"), close: async () => clean,
+    deliveryPosition: async () => ({ kind: "seq", before: 7 }),
+    verifyDelivered: async (_id, request) => ({ markers: request.markers.map(marker => ({ packetId: marker.packetId, result: "present" as const })), historyEmpty: false, compaction: null, foreignAfterLast: 0, verifyMs: 1 }),
+    startText: async (_id, turn) => { seen.push(turn); return { result: Promise.resolve(RECORDED), requestStop: async () => ({ requested: true }) }; } };
+  const wrapped = new RedactedHarnessControl(inner, text => text.replaceAll("secret", "[redacted]"), () => ({ push: text => text, flush: () => "" }));
+  assert.equal(wrapped.relayCapabilities, BASE_RELAY, "the same declaration object");
+  assert.deepEqual(await wrapped.deliveryPosition!(nativeConversationId("inner")), { kind: "seq", before: 7 });
+  const packetId = relayPacketId("relay-" + "b".repeat(20));
+  assert.deepEqual((await wrapped.verifyDelivered!(nativeConversationId("inner"), { markers: [{ packetId, position: { kind: "seq", before: 7 } }], historyEmpty: false })).markers, [{ packetId, result: "present" }]);
+  assert.equal(wrapped.relayVendor, undefined, "absent stays absent"); assert.equal(wrapped.setTitle, undefined); assert.equal(wrapped.userTextOf, undefined);
+  const turn: TurnText = { user: "the words", relay: { packetId, body: "〔packet〕", firstLine: true } };
+  await (await wrapped.startText(nativeConversationId("inner"), turn, () => {})).result;
+  assert.equal(seen[0], turn, "the TurnText object is handed on as it is");
 });

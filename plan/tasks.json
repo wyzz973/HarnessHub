@@ -4498,7 +4498,11 @@
         "tests/protocol/relay-capabilities.test.ts",
         "tests/unit/relay-vendor.test.ts",
         "tests/unit/relay-classify.test.ts",
-        "tests/fixtures/relay-control-peer.mjs"
+        "tests/fixtures/relay-control-peer.mjs",
+        "src/adapters/control/relay-turn.ts",
+        "tests/fixtures/relay-drivers.ts",
+        "tests/protocol/relay-driver-placement.test.ts",
+        "tests/protocol/relay-driver-verify.test.ts"
       ],
       "requirements": [
         "R10",
@@ -4688,7 +4692,7 @@
       "title": "接力协调器与返回决策",
       "context": "session",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G068",
@@ -4751,7 +4755,8 @@
         "G072-C09",
         "G072-C10",
         "G072-C11"
-      ]
+      ],
+      "active_slice": "relay"
     },
     {
       "id": "G073",

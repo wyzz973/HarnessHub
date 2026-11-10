@@ -367,6 +367,12 @@ export interface SessionBindingFactory {
    */
   relaySecrets?(configuration: SessionConfiguration, harnessIds: readonly string[]): Promise<readonly string[]>;
   /**
+   * The static relay declaration of the Driver that serves `selection` (ADR-055 §3.2, F10), read at admission without
+   * starting anything or building a control; null when it declares none. Absent: admission cannot tell, so it leaves every
+   * relay question to the check after the open (G068 phase two; G072 wires the real factory).
+   */
+  relayCapabilities?(selection: HarnessSelection): import("./relay.js").RelayCapabilities | null;
+  /**
    * Ends what the factory still does in the background once no binding of it runs (ADR-056 §4.12: the removal of host
    * TMPDIRs moved aside, within its bound; what is left stays for the next start). The Runtime awaits it last in its own
    * close. Idempotent; never rejects.

@@ -148,7 +148,7 @@ test("OpenClaw does not emit a tool call the bridge streamed live again from the
     const tool = events.flatMap(event => event.type === "tool" ? [event] : []);
     assert.deepEqual(tool.map(event => [event.id, event.title, event.status]), expected, String(tools) + (failed ? " failed" : ""));
     if (tools === "open") assert.equal(tool.filter(event => event.id === "call-x").at(-1)?.detail, undefined, "the outcome is a status update only");
-    assert.deepEqual(events.find(event => event.type === "usage"), { type: "usage", usage: { turn: { input: 30, output: 5, cachedInput: 0, cacheWrite: 0, total: 35 } } }, "usage still comes from the transcript");
+    assert.deepEqual(events.find(event => event.type === "usage"), { type: "usage", usage: { turn: { input: 30, output: 5, cachedInput: 0, cacheWrite: 0, total: 35 }, requests: [{ input: 10 }, { input: 20 }] } }, "usage still comes from the transcript, request by request (G069 phase two)");
   }
 });
 

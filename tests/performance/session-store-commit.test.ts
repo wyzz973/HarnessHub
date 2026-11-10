@@ -10,6 +10,7 @@ import type { CommandId, EventDraft, HarnessSelection, PreparedSessionBinding, P
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { MAX_SESSION_BYTES, utf8Bytes } from "../../src/contexts/session/domain/state.js";
 import { initialBindingRelay } from "../../src/contexts/session/domain/relay/migrate.js";
+import { EMPTY_CHAIN } from "../../src/contracts/relay.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
 
 // G075-C01 (ADR-055 §11.2): from acceptance to dispatch on an 8 MiB snapshot, through the formal SessionRuntime and a real
@@ -24,9 +25,11 @@ import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-stor
  * made 7 and 11 commits and 20 and 34 loads, each load and each commit reading and validating the whole snapshot again.
  * A change to the Runtime's flow that adds a commit or a load changes these on purpose, with its reason.
  */
+// G068 phase two (ADR-055 §6.1): run.context_prepared and run.authorized are one transaction, one commit fewer per Turn;
+// an ordinary Turn (nothing owed, the binding synced) reads no event and no Session more for the relay.
 const BASELINE = {
-  beforeDispatch: { commits: 7, loads: 13, parses: 0 },
-  turn: { commits: 11, loads: 23, parses: 0, events: 11, eventReads: 0 },
+  beforeDispatch: { commits: 6, loads: 13, parses: 0 },
+  turn: { commits: 10, loads: 23, parses: 0, events: 11, eventReads: 0 },
 } as const;
 /**
  * The reference target for the p95 from acceptance to dispatch (ADR-055 §11.2). CI asserts only the counts above (§11.1);
@@ -102,7 +105,9 @@ function seed(store: SqliteSessionStore, id: SessionId, count: number, target: n
         selection: state.selection, epoch: 1, status: last ? "settling" : "completed", cancelRequested: false, contextThroughSeq: user - 1, sourceRunIds: [],
         backend: { status: "completed", reason: "seed" }, cleanup: last ? null : clean, error: null, stopRequested: false, awaitingSwitchId: null, thinking: "思".repeat(1024),
         tools: Array.from({ length: 16 }, (_, tool) => ({ id: "tool-" + index + "-" + tool, title: "Read src/module-" + tool + ".ts", status: "completed" })),
-        timing: { acceptedAt: at + index * 10, preparingAt: at + index * 10 + 1, readyAt: at + index * 10 + 2, dispatchedAt: at + index * 10 + 3, firstOutputAt: at + index * 10 + 4, ...(last ? {} : { endedAt: at + index * 10 + 5 }) } });
+        timing: { acceptedAt: at + index * 10, preparingAt: at + index * 10 + 1, readyAt: at + index * 10 + 2, dispatchedAt: at + index * 10 + 3, firstOutputAt: at + index * 10 + 4, ...(last ? {} : { endedAt: at + index * 10 + 5 }) },
+        // v13 (G068 phase two): where each Turn ran, as the Runtime records it at its authorization.
+        relay: { packetId: null, kind: null, continuity: { kind: "native_resume" }, executedOn: { harnessId: "alpha", controlId: "alpha-acp", nativeEpoch: 1 } } });
       messages.push({ id: runs[index]!.userMessageId, runId: run, role: "user", text: runs[index]!.input, seq: user, status: runs[index]!.status },
         { id: runs[index]!.assistantMessageId, runId: run, role: "assistant", text: "```ts\n" + code.repeat(Math.ceil(reply / code.length)).slice(0, reply) + "\n```", seq: user + 1, status: runs[index]!.status });
       commands.push({ id: runs[index]!.commandId, kind: "send", fingerprint: "a".repeat(64), resultId: run });
@@ -118,7 +123,9 @@ function seed(store: SqliteSessionStore, id: SessionId, count: number, target: n
   store.transact(id, seeded.version, current => ({ next: { ...current, activeRunId: null,
     runs: current.runs.map(run => run.id === last.id ? { ...run, status: "completed" as const, cleanup: clean, timing: { ...run.timing!, endedAt: at + count * 10 } } : run),
     messages: current.messages.map(message => message.runId === last.id ? { ...message, status: "completed" as const } : message),
-    nativeBindings: [{ harnessId: "alpha", controlId: "alpha-acp", checkpoint: "private-native-alpha", throughRunId: last.id, status: "ready", relay: current.nativeBindings![0]!.relay! }] },
+    // Its own Turns, recorded while nothing was owed, made its native mark (ADR-055 §7.2 b + j), as the v13 Runtime leaves it.
+    nativeBindings: [{ harnessId: "alpha", controlId: "alpha-acp", checkpoint: "private-native-alpha", throughRunId: last.id, status: "ready",
+      relay: { ...current.nativeBindings![0]!.relay!, sync: { kind: "synced", mark: { throughSeq: last.contextThroughSeq, chain: EMPTY_CHAIN, lastPacketId: null, evidence: "native", basis: "native" } } } }] },
     events: [{ type: "run.ended", data: { runId: last.id, status: "completed" } }] }));
 }
 function percentile(values: readonly number[], p: number): number {

@@ -46,14 +46,15 @@ const TABLE: Readonly<Record<Harness, Cells>> = {
   claude: {
     plain: { ...unprobed, delivery: { live: "none", verify: "after_turn", successProvesRecorded: true, lateDelivery: false }, execution: "process",
       commands: { unlistedSlash: "executed", hidden: [["clear", "clear"], ["reset", "clear"], ["new", "clear"], ["remote-control", "none"]] },
-      placement: { parts: "multiple", maxInput: null, pointersAfterUser: false }, window: "session_report", cacheTtl: "auth_dependent", compactionEvidence: "event", title: "set" },
+      // title: §8.1 writes "set" (`_session/rename`); claude-agent-acp 0.99.1 routes it only for a JetBrains AIR client (G069 phase two).
+      placement: { parts: "multiple", maxInput: null, pointersAfterUser: false }, window: "session_report", cacheTtl: "auth_dependent", compactionEvidence: "event", title: "none" },
     normalizeModel: slashModelKey,
     classify: [["  /clear", null, ["command", "clear", "clear", ""]], ["/reset", null, ["command", "reset", "clear", ""]], ["/remote-control", null, ["command", "remote-control", "none", ""]],
       ["/Users/me/notes.md", null, ["content"]], ["/my-skill", listed(["compact", "compact"]), ["command", "my-skill", "unknown", ""]], ["/compact", listed(["compact", "compact"]), ["command", "compact", "compact", ""]],
       ["/review", listed(["review", "keep"]), ["command", "review", "keep", ""]]],
     vendor: [["claude-opus-5-5", "api_key", ENDPOINT, "gateway:api.deepseek.com"], [null, "bedrock", null, "aws-bedrock"], [null, "vertex", null, "google-vertex"],
       [null, "account", null, "anthropic"], [null, "api_key", null, "anthropic"], [null, "bedrock", ENDPOINT, "unknown:claude"]],
-    inferred: [...COMMON, "delivery.lateDelivery", "placement.maxInput", "placement.pointersAfterUser", "vendor.loopback", "vendor.signin", "vendor.backendWithEndpoint"],
+    inferred: [...COMMON, "delivery.lateDelivery", "placement.maxInput", "placement.pointersAfterUser", "title", "vendor.loopback", "vendor.signin", "vendor.backendWithEndpoint"],
   },
   codex: {
     plain: { ...unprobed, delivery: { live: "recorded_event", verify: "after_turn", successProvesRecorded: false, lateDelivery: false }, execution: "process",

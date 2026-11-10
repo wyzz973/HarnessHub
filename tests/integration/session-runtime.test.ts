@@ -8,7 +8,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { AcpControl } from "../../src/adapters/control/acp.js";
 import { CodexControl } from "../../src/adapters/control/codex.js";
-import { nativeConversationId, type BackendResult, type CleanupEvidence, type ControlEvent, type ControlRun, type HarnessControl, type NativeConversationId, type ProtocolObservation } from "../../src/contracts/control.js";
+import { nativeConversationId, singleText, type BackendResult, type CleanupEvidence, type ControlEvent, type ControlRun, type HarnessControl, type NativeConversationId, type ProtocolObservation, type TurnText } from "../../src/contracts/control.js";
 import { SessionError, STREAM_WINDOW_MS, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId } from "../../src/contracts/session.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { MAX_OUTPUT_BYTES } from "../../src/contexts/session/domain/state.js";
@@ -107,8 +107,9 @@ class ControlledFactory implements SessionBindingFactory {
     const control: HarnessControl = {
       initialize: async () => { fixture.initialized.resolve(); if (fixture.initialize) await fixture.initialize.promise; return { protocol: "acp-v1", protocolVersion: 1, agentName: "controlled-fixture", agentVersion: "1", authenticationMethods: [], capabilities: {} } satisfies ProtocolObservation; },
       open: async () => { opened = true; return nativeConversationId("external-fixture"); },
-      startText: async (_id: NativeConversationId, text: string, output: (event: ControlEvent) => void): Promise<ControlRun> => {
-        assert.equal(opened, true); fixture.started.resolve(text); output({ type: "text", text: fixture.output });
+      // A Driver without a placement of its own flattens what it is handed (singleText, G068 phase two).
+      startText: async (_id: NativeConversationId, text: TurnText, output: (event: ControlEvent) => void): Promise<ControlRun> => {
+        assert.equal(opened, true); fixture.started.resolve(singleText(text)); output({ type: "text", text: fixture.output });
         // It answered the prompt, so like a driver it reports the prompt recorded (ADR-055 §7.1); no evidence would be resent once.
         if (!fixture.holdResult) fixture.result.resolve({ status: "completed", reason: "fixture", input: "recorded" });
         return { result: fixture.result.promise, requestStop: async () => { fixture.stopCount += 1; return { requested: true }; } };
@@ -668,7 +669,7 @@ test("a question the Harness withdraws closes its public request and refuses a l
   factory.prepare = async (...args) => {
     const binding = await prepare(...args);
     return { ...binding, control: { ...binding.control, enablePermissions: () => {}, decidePermission: async () => { throw new SessionError("PERMISSION_UNAVAILABLE", "withdrawn"); },
-      startText: async (id: NativeConversationId, text: string, output: (event: ControlEvent) => void) => { emit = output; const run = await binding.control.startText(id, text, output); output({ type: "permission_requested", id: "native-ui", title: "Timed native dialog", options: [{ id: "yes", name: "Yes" }] }); asked.resolve(); return run; } } };
+      startText: async (id: NativeConversationId, text: TurnText, output: (event: ControlEvent) => void) => { emit = output; const run = await binding.control.startText(id, text, output); output({ type: "permission_requested", id: "native-ui", title: "Timed native dialog", options: [{ id: "yes", name: "Yes" }] }); asked.resolve(); return run; } } };
   };
   const events: SessionEvent[] = [], app = runtime(f, factory, event => { events.push(event); if (event.type === "permission.closed") withdrawn.resolve(); });
   const session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
@@ -686,7 +687,7 @@ test("a long native turn beyond the public tool budget completes without blockin
   const f = await fixture(t), peer = controlled(), factory = new ControlledFactory([peer]), prepare = factory.prepare.bind(factory);
   factory.prepare = async (...args) => {
     const binding = await prepare(...args);
-    return { ...binding, control: { ...binding.control, startText: async (id: NativeConversationId, text: string, output: (event: ControlEvent) => void) => {
+    return { ...binding, control: { ...binding.control, startText: async (id: NativeConversationId, text: TurnText, output: (event: ControlEvent) => void) => {
       for (let index = 0; index < 140; index++) output({ type: "tool", id: "tool-" + index, title: "step " + index, status: "completed" });
       return binding.control.startText(id, text, output);
     } } };
@@ -704,7 +705,7 @@ test("native activity becomes bounded public facts and tool detail content befor
   let emit: ((event: ControlEvent) => void) | null = null;
   factory.prepare = async (...args) => {
     const binding = await prepare(...args);
-    return { ...binding, control: { ...binding.control, startText: async (id: NativeConversationId, text: string, output: (event: ControlEvent) => void) => { emit = output; return binding.control.startText(id, text, output); } } };
+    return { ...binding, control: { ...binding.control, startText: async (id: NativeConversationId, text: TurnText, output: (event: ControlEvent) => void) => { emit = output; return binding.control.startText(id, text, output); } } };
   };
   let id = 0;
   const app = new SessionRuntime(f.store, factory, { id: () => String(++id), now: () => new Date("2026-10-11T00:00:00Z"), publish: () => {}, fingerprint: value => createHash("sha256").update(value).digest("hex"), content });
@@ -762,7 +763,7 @@ test("attachments are admitted with the input, checked and copied before dispatc
     const binding = await prepare(...args), seen = { checked: [] as string[], files: [] as { name: string; path: string }[] }; received.push(seen);
     return { ...binding, control: { ...binding.control,
       checkAttachments: async refs => { seen.checked.push(...refs.map(ref => ref.id)); if (refuse) throw Object.assign(new Error("当前 Harness 或模型不接受图片附件：shot.png"), { code: "ATTACHMENT_UNSUPPORTED" }); },
-      startText: (id: NativeConversationId, text: string, output: (event: ControlEvent) => void, files?: readonly { name: string; path: string }[]) => { seen.files.push(...(files ?? []).map(file => ({ name: file.name, path: file.path }))); return binding.control.startText(id, text, output); } } };
+      startText: (id: NativeConversationId, text: TurnText, output: (event: ControlEvent) => void, files?: readonly { name: string; path: string }[]) => { seen.files.push(...(files ?? []).map(file => ({ name: file.name, path: file.path }))); return binding.control.startText(id, text, output); } } };
   };
   let next = 0;
   const app = new SessionRuntime(f.store, factory, { id: () => String(++next), now: () => new Date("2026-10-11T00:00:00Z"), publish: () => {}, fingerprint: value => createHash("sha256").update(value).digest("hex"), content });

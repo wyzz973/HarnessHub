@@ -416,7 +416,7 @@ G068 阶段一的独立审查提出 F1–F13 与一个 packetId 重合的疑问�
 
 | Harness | 待探针的格 |
 |---|---|
-| claude | `fixedPrefix` `hostPathRead` `sessionTools` `window` `delivery.lateDelivery` `placement.maxInput` `placement.pointersAfterUser` `vendor.loopback` `vendor.signin` `vendor.backendWithEndpoint` |
+| claude | `fixedPrefix` `hostPathRead` `sessionTools` `window` `delivery.lateDelivery` `placement.maxInput` `placement.pointersAfterUser` `title` `vendor.loopback` `vendor.signin` `vendor.backendWithEndpoint` |
 | codex | `fixedPrefix` `hostPathRead` `sessionTools` `window` `delivery.lateDelivery` `placement.pointersAfterUser` `commands.unlistedSlash` `vendor.provider` `vendor.loopback` `vendor.endpointProvider` |
 | opencode | `fixedPrefix` `hostPathRead` `sessionTools` `window` `delivery.successProvesRecorded` `commands.unlistedSlash` `placement.maxInput` `placement.pointersAfterUser` `cacheTtl` `title` `vendor.loopback` `vendor.otherProvider` |
 | dsh | `fixedPrefix` `hostPathRead` `sessionTools` `window` `delivery.lateDelivery` `placement.maxInput` `placement.pointersAfterUser` `title` `vendor.loopback` `vendor.layers` |

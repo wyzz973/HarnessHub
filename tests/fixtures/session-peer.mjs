@@ -26,7 +26,9 @@ function readRelayPrompt(prompt) {
     else if (originTurn !== null && block && /(?: 的回复(?:（首段与末段）)?：|'s reply(?: \(first and last paragraphs\))?:)$/u.test(lines[index])) { replies.set(originTurn, block.text); index = block.next - 1; }
   }
   const turns = [...new Set([...[...words.keys()].filter(key => key.startsWith("origin:")).map(key => Number(key.slice(7))), ...replies.keys()])].sort((a, b) => a - b);
-  return { packet: true, currentInput: { text: prompt.slice(end + endLine.length + 2) },
+  // The words follow the end line after one LF (the renderer's text) or a blank line (a Driver's singleText, G068 phase two).
+  const after = end + endLine.length + 2;
+  return { packet: true, currentInput: { text: prompt.slice(prompt.startsWith("\n", after) ? after + 1 : after) },
     history: [...words.entries()].filter(([key]) => key.startsWith("run:")).map(([key, text]) => ({ turn: Number(key.slice(4)), user: { text } })).sort((a, b) => a.turn - b.turn),
     branchedHistory: turns.flatMap(turn => [...(words.has("origin:" + turn) ? [{ role: "user", text: words.get("origin:" + turn) }] : []), ...(replies.has(turn) ? [{ role: "assistant", text: replies.get(turn) }] : [])]) };
 }
@@ -107,5 +109,8 @@ createInterface({ input: process.stdin }).on("line", line => {
   if (message.method === "session/cancel" || message.method === "turn/interrupt") {
     if (message.method === "turn/interrupt") response(message.id, {});
     if (active) finish(true);
+    return;
   }
+  // A method this peer does not know is refused, as a real server refuses it; a request left unanswered would time out.
+  if (message.id !== undefined && typeof message.method === "string") process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "method not found" } }) + "\n");
 });

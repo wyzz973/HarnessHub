@@ -10,7 +10,9 @@ import { HermesControl } from "../../src/adapters/control/hermes.js";
 import type { HermesGatewayPreflight } from "../../src/adapters/control/hermes-gateway.js";
 import { OpenClawControl } from "../../src/adapters/control/openclaw.js";
 import { dataRootPlacement, dataRootWarning } from "../../src/cli/session-application.js";
-import { listedCommand, nativeConversationId, type BackendResult, type CleanupEvidence, type ControlLaunch, type ControlOptions, type HarnessControl, type NativeCommand } from "../../src/contracts/control.js";
+import { listedCommand, nativeConversationId, singleText, type BackendResult, type CleanupEvidence, type ControlLaunch, type ControlOptions, type HarnessControl, type NativeCommand } from "../../src/contracts/control.js";
+import { dshRelayCapabilities } from "../../src/adapters/control/acp.js";
+import type { RelayCapabilities } from "../../src/contracts/relay.js";
 import { SessionError, type HarnessSelection, type PreparedSessionBinding, type PublicRun, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId, type SessionRuntimeOptions, type SessionSnapshot } from "../../src/contracts/session.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { MAX_SESSION_BYTES, utf8Bytes } from "../../src/contexts/session/domain/state.js";
@@ -58,7 +60,11 @@ function isPacket(prompt: string): boolean { return readRelayPrompt(prompt).pack
 /** The input a prompt carries: the packet's current words after its end line, or the prompt itself when it went as typed. */
 function inputOf(prompt: string): string { return readRelayPrompt(prompt).currentInput.text; }
 function binding(state: SessionSnapshot, harnessId: string) { return state.nativeBindings?.find(row => row.harnessId === harnessId && row.status !== "archived"); }
-async function sent(app: SessionRuntime, id: SessionId, text: string, key: string, relay?: { readonly attach: "none" }): Promise<PublicRun> {
+/** The sync state of a Harness's binding (Session v13, ADR-055 §4). */
+function syncOf(state: SessionSnapshot, harnessId: string): string | undefined { return binding(state, harnessId)?.relay?.sync.kind; }
+/** A Turn's delivery row (G068 phase two): its outcome and the Run it resent. */
+function delivery(store: SqliteSessionStore, id: SessionId, run: string) { return store.relayDeliveries(id).find(row => row.runId === run); }
+async function sent(app: SessionRuntime, id: SessionId, text: string, key: string, relay?: { readonly attach?: "none" | "full"; readonly resend?: true }): Promise<PublicRun> {
   const receipt = app.send(id, text, key, [], relay); await app.wait(id);
   return app.read(id).runs.find(row => row.id === receipt.runId)!;
 }
@@ -66,6 +72,13 @@ async function switched(app: SessionRuntime, id: SessionId, selection: Selection
   app.switch(id, selection, key); await app.wait(id); assert.equal(app.read(id).selection.harnessId, selection.harnessId);
 }
 
+/**
+ * The fakes' relay declaration (ADR-055 §3.2): a process Driver with no check that may resend a packet once by itself and
+ * whose success proves nothing (the generic ACP Driver's delivery, which G068 phase two reads), with the shared reading of
+ * slash words. Not probed.
+ */
+const FAKE_RELAY: RelayCapabilities = { ...dshRelayCapabilities, placement: { ...dshRelayCapabilities.placement, parts: "single" },
+  commands: { ...dshRelayCapabilities.commands, unlistedSlash: "executed", classify: text => listedCommand(text, null) } };
 /** How a fake Harness ends one prompt: completed and recorded unless said otherwise; held until its program is ended; or lost. */
 type Ending = BackendResult | "hold" | "lost";
 /**
@@ -86,6 +99,7 @@ class FakeHarnesses implements SessionBindingFactory {
   async prepare(selected: HarnessSelection, configuration: SessionConfiguration): Promise<PreparedSessionBinding> {
     const harnessId = selected.harnessId; let opened = false, lose: ((error: Error) => void) | null = null;
     const control: HarnessControl = {
+      relayCapabilities: FAKE_RELAY,
       initialize: async () => { this.started.push(harnessId); return { protocol: "acp-v1", protocolVersion: 1, agentName: "fake", agentVersion: "1", authenticationMethods: [], capabilities: {} }; },
       open: async (_cwd, model, _options, checkpoint) => {
         opened = true; this.opened.push({ harnessId, model, checkpoint }); if (model !== undefined) this.models.set(harnessId, model);
@@ -95,7 +109,9 @@ class FakeHarnesses implements SessionBindingFactory {
       fork: async checkpoint => checkpoint + "-branch",
       models: async () => ({ models: [{ id: "model-a", name: "A" }, { id: "model-x", name: "X" }], defaultModel: "model-a", authentication: "ready", canSelect: true, commands: this.commands }),
       nativeConfig: async () => ({ model: this.models.get(harnessId) ?? null, options: {} }),
-      startText: async (_id, text: string, output) => {
+      // A Driver without a placement of its own flattens what it is handed (singleText, G068 phase two).
+      startText: async (_id, turn, output) => {
+        const text = singleText(turn);
         this.prompts.push({ harnessId, text });
         const model = /^\/model\s+(\S+)/u.exec(text); if (model) this.models.set(harnessId, model[1]!);
         const ending = this.ending(harnessId, text);
@@ -116,37 +132,47 @@ const recorded = { status: "completed", reason: "fake", input: "recorded" } as c
 const unknownEnd = { status: "completed", reason: "fake" } as const;
 const notRecorded = { status: "failed", reason: "fake", error: { code: "FAKE_REFUSED", message: "refused before insertion" }, input: "not_recorded" } as const;
 
-test("G067-C01 the native position follows the v12 rule: nothing owed advances, carried recorded advances, carried unknown advances only once resent, carried not recorded never", async t => {
+// G068 phase two replaced G067's v12 rule (ADR-055 §7.6) with the v13 state machine: the native position follows dispatch,
+// and what a binding is owed follows its delivery watermark, which moves only on evidence (§7.1, §7.2).
+test("G067-C01 (v13) the native position follows dispatch; the watermark follows evidence: nothing owed goes as typed, carried recorded is known, carried unknown is resent once by itself and then only on the user's choice, carried not recorded is owed again", async t => {
   const f = await world(t), endings = new Map<string, Ending>([["a1 nothing owed, not recorded", notRecorded], ["a3 carried unknown", unknownEnd], ["a4 resent unknown", unknownEnd], ["b3 carried not recorded", notRecorded]]);
   const fake = new FakeHarnesses((_harness, text) => endings.get(inputOf(text)) ?? recorded);
   const app = f.runtime(fake), session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
-  // Nothing owed: the Turn advances even though the native side never took its input, so the next one goes as typed.
+  // Nothing owed: the Turn's input reached alpha's native session (dispatched), though the native side never took it.
   const a1 = await sent(app, session.id, "a1 nothing owed, not recorded", "a1");
   assert.equal(binding(app.read(session.id), "alpha")?.throughRunId, a1.id); assert.equal(ended(f.store, session.id, a1.id).input, "not_recorded");
+  assert.equal(syncOf(app.read(session.id), "alpha"), "fresh", "not recorded: the binding knows nothing more (j, \"没有发出\")");
   const a2 = await sent(app, session.id, "a2 as typed", "a2");
   assert.equal(inputOf(fake.to("alpha")[0]!), "a1 nothing owed, not recorded"); assert.equal(fake.to("alpha")[1], "a2 as typed");
-  assert.equal(binding(app.read(session.id), "alpha")?.throughRunId, a2.id);
-  // Carried and recorded: bravo's first Turn owes alpha's two and advances.
+  assert.equal(binding(app.read(session.id), "alpha")?.throughRunId, a2.id); assert.equal(syncOf(app.read(session.id), "alpha"), "synced", "its own Turn recorded (native)");
+  // Carried and recorded: bravo's first Turn owes alpha's two; recorded by the settlement (E3), bravo is synced on the packet.
   await switched(app, session.id, { harnessId: "bravo" }, "to-b");
   const b1 = await sent(app, session.id, "b1 carried recorded", "b1"), b2 = await sent(app, session.id, "b2 as typed", "b2");
   assert.ok(isPacket(fake.to("bravo")[0]!)); assert.deepEqual(b1.sourceRunIds, [a1.id, a2.id]); assert.equal(fake.to("bravo")[1], "b2 as typed");
-  assert.equal(binding(app.read(session.id), "bravo")?.throughRunId, b2.id);
-  // Carried with an unknown outcome: alpha does not advance; the next Turn sends the facts again (relayResendOf) and then advances.
+  assert.equal(binding(app.read(session.id), "bravo")?.throughRunId, b2.id); assert.equal(delivery(f.store, session.id, b1.id)?.outcome.kind, "recorded");
+  // Carried with an unknown outcome: alpha is pending on the packet (its position moved: the input was dispatched there).
   await switched(app, session.id, { harnessId: "alpha" }, "to-a");
   const a3 = await sent(app, session.id, "a3 carried unknown", "a3");
-  assert.deepEqual(a3.sourceRunIds, [b1.id, b2.id]); assert.equal(binding(app.read(session.id), "alpha")?.throughRunId, a2.id);
-  assert.equal(ended(f.store, session.id, a3.id).input, "unknown"); assert.equal(ended(f.store, session.id, a3.id).relayResendOf, undefined);
+  assert.deepEqual(a3.sourceRunIds, [b1.id, b2.id]); assert.equal(binding(app.read(session.id), "alpha")?.throughRunId, a3.id); assert.equal(syncOf(app.read(session.id), "alpha"), "pending");
+  assert.equal(ended(f.store, session.id, a3.id).input, "unknown"); assert.equal(delivery(f.store, session.id, a3.id)?.outcome.kind, "unknown");
+  // The next content input resends it once by itself (alpha's own a3 is no foreign fact to alpha), and stays pending.
   const a4 = await sent(app, session.id, "a4 resent unknown", "a4");
-  assert.deepEqual(a4.sourceRunIds, [b1.id, b2.id, a3.id]); assert.equal(ended(f.store, session.id, a4.id).relayResendOf, a3.id);
-  assert.equal(binding(app.read(session.id), "alpha")?.throughRunId, a4.id, "the facts were sent twice; the position moves after the one resend");
-  const a5 = await sent(app, session.id, "a5 as typed", "a5");
-  assert.equal(fake.to("alpha").at(-1), "a5 as typed"); assert.equal(binding(app.read(session.id), "alpha")?.throughRunId, a5.id);
-  // Carried and not recorded: bravo does not advance, and the next Turn is no resend (nothing reached bravo).
+  assert.deepEqual(a4.sourceRunIds, [b1.id, b2.id]); assert.equal(delivery(f.store, session.id, a4.id)?.resendOf, a3.id); assert.equal(syncOf(app.read(session.id), "alpha"), "pending");
+  // Once resent, the next one needs the user's choice: it fails before dispatch with RELAY_CHOICE_REQUIRED{delivery_unconfirmed}.
+  const a5 = await sent(app, session.id, "a5 needs a choice", "a5");
+  assert.equal(a5.status, "failed"); assert.equal(a5.error?.code, "RELAY_CHOICE_REQUIRED"); assert.deepEqual(ended(f.store, session.id, a5.id).relay, { reason: "delivery_unconfirmed" });
+  assert.ok(!fake.to("alpha").some(prompt => inputOf(prompt) === "a5 needs a choice"), "not dispatched");
+  // The user chooses to send it again (再附一次): a manual resend, recorded this time; then nothing is owed.
+  const a6 = await sent(app, session.id, "a6 sent again", "a6", { resend: true });
+  assert.equal(a6.status, "completed"); assert.equal(delivery(f.store, session.id, a6.id)?.resendOf, a4.id); assert.equal(syncOf(app.read(session.id), "alpha"), "synced");
+  const a7 = await sent(app, session.id, "a7 as typed", "a7");
+  assert.equal(fake.to("alpha").at(-1), "a7 as typed"); assert.equal(binding(app.read(session.id), "alpha")?.throughRunId, a7.id);
+  // Carried and not recorded: bravo returns to what it knew before the packet, and the next Turn owes the same facts again.
   await switched(app, session.id, { harnessId: "bravo" }, "to-b-again");
   const b3 = await sent(app, session.id, "b3 carried not recorded", "b3");
-  assert.equal(binding(app.read(session.id), "bravo")?.throughRunId, b2.id); assert.equal(ended(f.store, session.id, b3.id).input, "not_recorded");
+  assert.equal(ended(f.store, session.id, b3.id).input, "not_recorded"); assert.equal(delivery(f.store, session.id, b3.id)?.outcome.kind, "not_recorded"); assert.equal(syncOf(app.read(session.id), "bravo"), "synced");
   const b4 = await sent(app, session.id, "b4 carried again", "b4");
-  assert.deepEqual(b4.sourceRunIds, [a3.id, a4.id, a5.id, b3.id]); assert.equal(ended(f.store, session.id, b4.id).relayResendOf, undefined);
+  assert.deepEqual(b4.sourceRunIds, [a3.id, a4.id, a6.id, a7.id], "alpha's dispatched Turns (a5 never was); bravo's own b3 is not foreign to it"); assert.equal(delivery(f.store, session.id, b4.id)?.resendOf, null);
   assert.equal(binding(app.read(session.id), "bravo")?.throughRunId, b4.id);
   // The snapshot never stores the driver's evidence: only the end event keeps it.
   assert.ok(app.read(session.id).runs.every(row => row.backend === null || !("input" in row.backend)));
@@ -160,7 +186,8 @@ test("G067 acceptance (J1 M1): a command owing facts moves no native position, s
   await switched(app, session.id, { harnessId: "alpha" }, "to-a");
   const review = await sent(app, session.id, "/review the change", "review");
   assert.equal(fake.to("alpha").at(-1), "/review the change", "a command goes as typed and carries nothing"); assert.deepEqual(review.sourceRunIds, []);
-  assert.equal(binding(app.read(session.id), "alpha")?.throughRunId, a1.id);
+  // v13 (G068 phase two): the command reached alpha's native session, so its position moves; what alpha is owed does not.
+  assert.equal(binding(app.read(session.id), "alpha")?.throughRunId, review.id); assert.equal(syncOf(app.read(session.id), "alpha"), "synced");
   assert.equal(ended(f.store, session.id, review.id).contextEffect, "keep");
   assert.ok(events(f.store, session.id).some(row => row.type === "run.native_command" && row.data.runId === review.id && row.data.contextEffect === "keep"));
   // alpha's native session ran the command after a1: it is no longer exactly at a1.
@@ -178,7 +205,8 @@ test("G067 acceptance (J1 M1): after a command Turn `/model X` that owed facts, 
   await switched(app, session.id, { harnessId: "bravo" }, "to-b"); await sent(app, session.id, "bravo works", "b1");
   await switched(app, session.id, { harnessId: "alpha", nativeModel: "model-a" }, "to-a");
   const command = await sent(app, session.id, "/model model-x", "model");
-  assert.equal(binding(app.read(session.id), "alpha")?.observed?.model, "model-x"); assert.notEqual(binding(app.read(session.id), "alpha")?.throughRunId, command.id);
+  // v13 (G068 phase two): the command's input reached the native session, so its position moves; the facts stay owed.
+  assert.equal(binding(app.read(session.id), "alpha")?.observed?.model, "model-x"); assert.equal(binding(app.read(session.id), "alpha")?.throughRunId, command.id);
   await sent(app, session.id, "keep going", "a3");
   assert.equal(fake.opened.at(-1)?.model, "model-x", "the model the native session switched to is carried, not reverted");
   assert.ok(events(f.store, session.id).some(row => row.type === "native.config_carried" && row.data.model === "model-x"));
@@ -206,16 +234,18 @@ test("G067 after a native reset the first carried Turn on the new native session
   app.resetNative(session.id, "reset", app.read(session.id).epoch);
   // A command opens the new native session; it carries nothing, so the facts stay owed.
   const command = await sent(app, session.id, "/model model-x", "command");
-  assert.deepEqual(command.sourceRunIds, []); assert.equal(binding(app.read(session.id), "alpha")?.throughRunId, null);
-  // The first carried attempt in the new native session: `old` carried its facts to the archived one.
+  assert.deepEqual(command.sourceRunIds, []); assert.equal(binding(app.read(session.id), "alpha")?.throughRunId, command.id); assert.equal(syncOf(app.read(session.id), "alpha"), "fresh");
+  // The first carried attempt in the new native session (a new epoch: alpha's own earlier Turns are foreign to it now) is no
+  // resend: `old` carried its facts to the archived one, whose relay state stays as it was.
   const fresh = await sent(app, session.id, "new lost", "new");
-  assert.equal(ended(f.store, session.id, fresh.id).relayResendOf, undefined); assert.equal(ended(f.store, session.id, fresh.id).input, "unknown");
-  assert.equal(binding(app.read(session.id), "alpha")?.throughRunId, null, "an unknown first attempt moves nothing");
+  assert.equal(delivery(f.store, session.id, fresh.id)?.resendOf, null); assert.equal(ended(f.store, session.id, fresh.id).input, "unknown");
+  assert.equal(syncOf(app.read(session.id), "alpha"), "pending", "an unknown first attempt is pending, never known");
+  assert.equal(app.read(session.id).nativeBindings?.find(row => row.status === "archived")?.relay?.sync.kind, "pending", "the archived binding is frozen");
   const again = await sent(app, session.id, "again lost", "again");
-  assert.equal(ended(f.store, session.id, again.id).relayResendOf, fresh.id); assert.equal(binding(app.read(session.id), "alpha")?.throughRunId, again.id);
+  assert.equal(delivery(f.store, session.id, again.id)?.resendOf, fresh.id); assert.equal(binding(app.read(session.id), "alpha")?.throughRunId, again.id);
 });
 
-test("G067 a branch's first Turn carried only the history it started from: without evidence either way the next Turn is its resend, so the history goes twice and the position then moves", async t => {
+test("G067 (v13) a branch's first Turn carried only the history it started from: without evidence either way it is resent once by itself, then only on the user's choice; recorded, nothing is owed", async t => {
   const f = await world(t), fake = new FakeHarnesses((_harness, text) => /^q\d$/u.test(inputOf(text)) ? unknownEnd : recorded);
   const app = f.runtime(fake), source = await app.create(f.configuration, { harnessId: "alpha" }, "source");
   const first = await sent(app, source.id, "source one", "s1"); await sent(app, source.id, "source two", "s2");
@@ -224,13 +254,17 @@ test("G067 a branch's first Turn carried only the history it started from: witho
   const q1 = await sent(app, branch.id, "q1", "q1");
   assert.deepEqual(q1.sourceRunIds, [], "only the branch history was owed");
   assert.ok(events(f.store, branch.id).some(row => row.type === "run.context_prepared" && row.data.runId === q1.id && row.data.carriedOrigin === true));
-  assert.equal(binding(app.read(branch.id), "alpha")?.throughRunId, null);
+  assert.equal(syncOf(app.read(branch.id), "alpha"), "pending");
   const q2 = await sent(app, branch.id, "q2", "q2");
-  assert.equal(ended(f.store, branch.id, q2.id).relayResendOf, q1.id, "the history q1 carried is sent again once"); assert.equal(binding(app.read(branch.id), "alpha")?.throughRunId, q2.id);
-  await sent(app, branch.id, "q3", "q3");
-  const branchPrompts = fake.to("alpha").slice(-3);
-  assert.deepEqual(branchPrompts.map(prompt => isPacket(prompt) && prompt.includes("source one")), [true, true, false], "the branch history went twice, then the input as typed");
-  assert.equal(branchPrompts[2], "q3");
+  assert.equal(delivery(f.store, branch.id, q2.id)?.resendOf, q1.id, "the history q1 carried is sent again once");
+  const q3 = await sent(app, branch.id, "q3", "q3");
+  assert.equal(q3.error?.code, "RELAY_CHOICE_REQUIRED", "after one resend, the user decides");
+  const again = await sent(app, branch.id, "q3 again", "q3-again", { resend: true });
+  assert.equal(again.status, "completed"); assert.equal(syncOf(app.read(branch.id), "alpha"), "synced");
+  await sent(app, branch.id, "q4", "q4");
+  const branchPrompts = fake.to("alpha").slice(-4);
+  assert.deepEqual(branchPrompts.map(prompt => isPacket(prompt) && prompt.includes("source one")), [true, true, true, false], "the branch history went three times (q3 was never sent), then the input as typed");
+  assert.equal(branchPrompts[3], "q4");
 });
 
 test("G067 a branch without a native fork owes the history it started from to the native session its first Turn opens until a Turn carried it there, whatever that first Turn was; an exact native fork holds it already", async t => {
@@ -243,10 +277,12 @@ test("G067 a branch without a native fork owes the history it started from to th
     const branch = app.fork(source.id, "fork-" + key, last.id); await app.wait(branch.id);
     assert.equal(branch.nativeBindings, undefined, "alpha's native session is not at the branch point");
     const opening = await sent(app, branch.id, first, key + "-1", relay);
-    assert.equal(fake.to("alpha").at(-1), first, "sent exactly as typed"); assert.equal(binding(app.read(branch.id), "alpha")?.throughRunId, null, key + ": the branch history is still owed");
+    assert.equal(fake.to("alpha").at(-1), first, "sent exactly as typed"); assert.equal(syncOf(app.read(branch.id), "alpha"), "fresh", key + ": the branch history is still owed");
+    assert.equal(binding(app.read(branch.id), "alpha")?.throughRunId, opening.id, key + ": v13, the position follows dispatch");
     const next = await sent(app, branch.id, "now continue", key + "-2"), prompt = fake.to("alpha").at(-1)!;
     assert.ok(isPacket(prompt) && prompt.includes("source two on bravo"), key + ": the branch history goes with the next content input");
-    assert.deepEqual(next.sourceRunIds, [opening.id]); assert.equal(binding(app.read(branch.id), "alpha")?.throughRunId, next.id);
+    // v13: the opening Turn ran on this binding in its epoch, so it is no foreign fact to it; only the branch history is owed.
+    assert.deepEqual(next.sourceRunIds, []); assert.equal(binding(app.read(branch.id), "alpha")?.throughRunId, next.id);
     await sent(app, branch.id, "and again", key + "-3"); assert.equal(fake.to("alpha").at(-1), "and again", "once carried, nothing is owed");
   }
   // alpha's native session at the source's last Turn: the branch is its exact native fork, which already holds the history.
@@ -337,7 +373,7 @@ class RealDrivers implements SessionBindingFactory {
     let text: string;
     try { text = await readFile(this.trace(harnessId), "utf8"); } catch (error) { if (error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT") return []; throw error; }
     return text.trim().split("\n").map(line => JSON.parse(line) as { method?: string; params?: { prompt?: { text?: string }[]; input?: { text?: string }[] } })
-      .flatMap(row => row.method === "session/prompt" ? [row.params?.prompt?.[0]?.text ?? ""] : row.method === "turn/start" ? [row.params?.input?.[0]?.text ?? ""] : []);
+      .flatMap(row => row.method === "session/prompt" ? [(row.params?.prompt ?? []).map(part => part.text ?? "").join("")] : row.method === "turn/start" ? [(row.params?.input ?? []).map(part => part.text ?? "").join("")] : []);
   }
 }
 async function drivers(f: World, behaviour: (harnessId: string, n: number) => Readonly<Record<string, string>>, gateway?: (n: number) => (method: string, params: Readonly<Record<string, unknown>>) => Promise<unknown>): Promise<RealDrivers> {
@@ -372,7 +408,8 @@ test("G067-C02 single-Harness /export, /clear, an unapplied OpenClaw model and a
   const claudePrompts = await real.prompts("claude");
   // Nothing owed is nothing carried, a new native session's first Turn included (the v12 envelope wrapped it; the packet
   // never does): every input goes exactly as typed, and /export reached nothing.
-  assert.deepEqual(claudePrompts, ["first question", "after export", "/clear", "after clear"]);
+  // The hidden /clear is the Driver's own: it replaces the native session and sends Claude Code nothing (G069 stage two).
+  assert.deepEqual(claudePrompts, ["first question", "after export", "after clear"]);
   // OpenClaw: the unapplied model sent nothing (not recorded), and the next input goes as typed.
   const openclaw = await app.create(f.configuration, { harnessId: "openclaw", nativeModel: "vision/large" }, "openclaw");
   await sent(app, openclaw.id, "first question", "o1");
@@ -404,11 +441,18 @@ test("G067-C04 a full-width space before /clear is read as Hermes reads it: a co
   const end = ended(f.store, session.id, clear.id);
   assert.equal(end.input, "unknown", "the command's end_turn and reply are no evidence that content was recorded");
   assert.equal(end.contextEffect, "clear");
-  assert.equal(binding(app.read(session.id), "hermes")?.throughRunId, null, "a command owing facts moves no native position");
-  // The facts stay owed and go with the next content input.
-  const next = await sent(app, session.id, "what now?", "h2");
-  assert.deepEqual(next.sourceRunIds, [first.id, clear.id]); assert.ok(isPacket((await real.prompts("hermes"))[1]!));
-  assert.equal(binding(app.read(session.id), "hermes")?.throughRunId, next.id);
+  // v13 (G068 phase two): the command reached the native session (its position moves); an unconfirmed clear makes the
+  // binding suspect, never fresh, and the next open's check decides.
+  assert.equal(binding(app.read(session.id), "hermes")?.throughRunId, clear.id); assert.equal(syncOf(app.read(session.id), "hermes"), "suspect");
+  const next = await sent(app, session.id, "what now?", "h2"), hermes = binding(app.read(session.id), "hermes")!;
+  if (hermes.relay!.epochFloor >= 0) {
+    // The check confirmed the clear (an empty history): what came before it is not sent by default (§7.4).
+    assert.deepEqual(next.sourceRunIds, []); assert.equal((await real.prompts("hermes"))[1], "what now?");
+  } else {
+    // The check could not confirm it: the clear is taken as not having happened and the facts owed go with the input.
+    assert.deepEqual(next.sourceRunIds, [first.id], "a command Turn is no fact"); assert.ok(isPacket((await real.prompts("hermes"))[1]!));
+  }
+  assert.equal(hermes.throughRunId, next.id);
 });
 
 test("G067 Hermes refuses a prompt unsent while a lost turn is pending: that Turn is not recorded and moves nothing; after `/discard` the next Turn sends the lost one's facts again", { timeout: 60000 }, async t => {
@@ -423,12 +467,15 @@ test("G067 Hermes refuses a prompt unsent while a lost turn is pending: that Tur
   assert.equal(ended(f.store, session.id, lost.id).input, "unknown"); assert.deepEqual(lost.sourceRunIds, [first.id]);
   const refused = await sent(app, session.id, "a prompt refused unsent", "h2");
   assert.equal(refused.status, "failed"); assert.equal(ended(f.store, session.id, refused.id).input, "not_recorded");
-  assert.equal(ended(f.store, session.id, refused.id).relayResendOf, lost.id, "it carried the lost Turn's facts again, and Hermes took none of it");
-  assert.equal(binding(app.read(session.id), "hermes")?.throughRunId, null, "a refusal before admission moves nothing");
+  assert.equal(delivery(f.store, session.id, refused.id)?.resendOf, lost.id, "it carried the lost Turn's facts again, and Hermes took none of it");
+  assert.equal(delivery(f.store, session.id, refused.id)?.outcome.kind, "not_recorded"); assert.equal(syncOf(app.read(session.id), "hermes"), "pending", "a refused resend waits for the packet it superseded");
   const discard = await sent(app, session.id, "/discard adm-7", "h3");
-  assert.deepEqual(discard.sourceRunIds, []); assert.equal(binding(app.read(session.id), "hermes")?.throughRunId, null);
-  const next = await sent(app, session.id, "carry on", "h4");
-  assert.equal(ended(f.store, session.id, next.id).relayResendOf, lost.id, "the attempt Hermes refused unsent is no attempt"); assert.equal(binding(app.read(session.id), "hermes")?.throughRunId, next.id);
+  assert.deepEqual(discard.sourceRunIds, []); assert.equal(syncOf(app.read(session.id), "hermes"), "pending");
+  // The one automatic resend is spent (h keeps the counts): the next content input needs the user's choice.
+  const asked = await sent(app, session.id, "carry on", "h4");
+  assert.equal(asked.error?.code, "RELAY_CHOICE_REQUIRED");
+  const next = await sent(app, session.id, "carry on", "h4-again", { resend: true });
+  assert.equal(delivery(f.store, session.id, next.id)?.resendOf, lost.id, "the attempt Hermes refused unsent is no attempt"); assert.equal(binding(app.read(session.id), "hermes")?.throughRunId, next.id);
   const prompts = await real.prompts("hermes");
   assert.deepEqual(prompts.map(prompt => isPacket(prompt) ? inputOf(prompt) : "as typed: " + prompt), ["the turn the gateway lost", "a prompt refused unsent", "as typed: /discard adm-7", "carry on"]);
 });
@@ -459,7 +506,9 @@ function seed(store: SqliteSessionStore, id: SessionId, count: number, profile: 
       selection: state.selection, epoch: 1, status: index === count - 1 ? "settling" : "completed", cancelRequested: false, contextThroughSeq: user - 1, sourceRunIds: [],
       backend: { status: "completed", reason: "seed" }, cleanup: index === count - 1 ? null : clean, error: null, stopRequested: false, awaitingSwitchId: null,
       thinking: "思".repeat(Math.floor(profile.thinking / 3)), tools: Array.from({ length: profile.tools }, (_, tool) => ({ id: "tool-" + index + "-" + tool, title: "Read src/module-" + tool + ".ts", status: "completed" })),
-      timing: { acceptedAt: at + index * 10, preparingAt: at + index * 10 + 1, readyAt: at + index * 10 + 2, dispatchedAt: at + index * 10 + 3, firstOutputAt: at + index * 10 + 4, ...(index === count - 1 ? {} : { endedAt: at + index * 10 + 5 }) } });
+      timing: { acceptedAt: at + index * 10, preparingAt: at + index * 10 + 1, readyAt: at + index * 10 + 2, dispatchedAt: at + index * 10 + 3, firstOutputAt: at + index * 10 + 4, ...(index === count - 1 ? {} : { endedAt: at + index * 10 + 5 }) },
+      // v13 (G068 phase two): where each Turn ran, as the Runtime records it at its authorization.
+      relay: { packetId: null, kind: null, continuity: { kind: "native_resume" }, executedOn: { harnessId: "alpha", controlId: "alpha-acp", nativeEpoch: 1 } } });
     messages.push({ id: runs[index]!.userMessageId, runId: runs[index]!.id, role: "user", text: runs[index]!.input, seq: user, status: runs[index]!.status },
       { id: runs[index]!.assistantMessageId, runId: runs[index]!.id, role: "assistant", text: "```ts\n" + code.repeat(Math.ceil(profile.reply / code.length)).slice(0, profile.reply) + "\n```", seq: user + 1, status: runs[index]!.status });
     commands.push({ id: runs[index]!.commandId, kind: "send", fingerprint: "a".repeat(64), resultId: run });
@@ -497,17 +546,18 @@ for (const [name, count, profile, least] of [
     // Sent alone ("只发这条消息"): exactly as typed, and bravo's native position stays where it was (it is still owed everything).
     const alone = await sent(app, session.id, "从这里接着做", "bravo-1", { attach: "none" });
     assert.equal(alone.status, "completed"); assert.deepEqual(fake.to("bravo"), ["从这里接着做"]); assert.deepEqual(alone.sourceRunIds, []);
-    assert.equal(binding(app.read(session.id), "bravo")?.throughRunId, null);
+    assert.equal(syncOf(app.read(session.id), "bravo"), "fresh", "it knows nothing more (v13: n changes no watermark)");
     assert.ok(events(f.store, session.id).some(row => row.type === "message.accepted" && row.data.runId === alone.id && JSON.stringify(row.data.relay) === '{"attach":"none"}'));
     assert.throws(() => app.send(session.id, "从这里接着做", "bravo-1"), (error: unknown) => error instanceof SessionError && error.code === "IDEMPOTENCY_CONFLICT", "a key keeps its choice");
     // bravo is owed every Turn, far more than the JSON envelope could hold: the packet folds them to its budget (ADR-055
     // §6.3) instead of refusing the input (it was CONTEXT_TOO_LARGE before), and accounts for every one of them.
     const carried = await sent(app, session.id, "接着做下一步", "bravo-2");
-    assert.equal(carried.status, "completed", JSON.stringify(carried.error)); assert.equal(carried.sourceRunIds.length, count + 2, "the seeded Turns, the one continued and the one sent alone");
+    // v13: the input sent alone ran on bravo itself, so it is no foreign fact to bravo.
+    assert.equal(carried.status, "completed", JSON.stringify(carried.error)); assert.equal(carried.sourceRunIds.length, count + 1, "the seeded Turns and the one continued");
     const packet = readRelayPrompt(fake.to("bravo")[1]!), relay = events(f.store, session.id).find(row => row.type === "run.context_prepared" && row.data.runId === carried.id)!.data.relay as RelayRecord;
     assert.equal(packet.kind, "packet"); assert.equal(packet.currentInput.text, "接着做下一步");
     assert.ok(relay.tokens <= relay.budget.cap, relay.tokens + " tokens"); assert.equal(relay.complete, false);
-    assert.equal(relay.units.verbatim + relay.units.compact + relay.units.line + relay.units.ranged, count + 2, "every owed Turn is accounted for");
+    assert.equal(relay.units.verbatim + relay.units.compact + relay.units.line + relay.units.ranged, count + 1, "every owed Turn is accounted for");
     assert.equal(binding(app.read(session.id), "bravo")?.throughRunId, carried.id, "carried and recorded, bravo's position moves");
     // A Turn whose outcome is lost blocks the conversation; the recovery switch validates without rendering the history.
     const lost = await sent(app, session.id, "这一轮 loses its connection", "bravo-3", { attach: "none" }).catch(() => null);
@@ -527,7 +577,7 @@ test("G067 a branch whose history filled the old budget: sent alone it stays owe
   const branch = app.fork(source.id, "branch", app.read(source.id).runs.at(-2)!.id); await app.wait(branch.id);
   assert.equal(branch.nativeBindings, undefined, "alpha's native session is past the branch point");
   await sent(app, branch.id, "继续", "b1", { attach: "none" });
-  assert.deepEqual(fake.to("alpha"), ["继续"]); assert.equal(binding(app.read(branch.id), "alpha")?.throughRunId, null, "sent alone, the history stays owed");
+  assert.deepEqual(fake.to("alpha"), ["继续"]); assert.equal(syncOf(app.read(branch.id), "alpha"), "fresh", "sent alone, the history stays owed");
   // No listed command: `/explain …` is a possible command until the catalog is read, so its packet is rendered once its
   // program started (it failed CONTEXT_TOO_LARGE there before); it carries the folded branch history, and since the input
   // may be a command the packet never starts with it, so the packet cannot become a command's argument.

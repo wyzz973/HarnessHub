@@ -263,7 +263,7 @@ function publicFailure(error: unknown, homes: readonly string[]): { readonly sta
   if (error instanceof SessionError || error instanceof ProviderError || error instanceof ManagementError || error instanceof CapabilityError) {
     const code = error.code;
     const status = code.includes("NOT_FOUND") ? 404 : code === "INVALID_INPUT" ? 400 : code.includes("LIMIT") || code === "QUEUE_FULL" ? 429
-      : code.startsWith("RECOVERY_") || code.includes("UNAVAILABLE") || code.includes("CLOSED") || code.includes("BLOCKED") || code.includes("CONFLICT") || code.includes("PENDING") || code.includes("REVISION") || code.includes("UNSUPPORTED") || code.includes("BUSY") || code.includes("ACTIVE") || code === "STALE_DEFAULT" || code.endsWith("_CHANGED") || code.includes("REFUSED") || code.endsWith("_EXPIRED") || code.includes("INCOMPATIBLE") || code.endsWith("_REQUIRED") ? 409 : 502;
+      : code.startsWith("RECOVERY_") || code.includes("UNAVAILABLE") || code.includes("CLOSED") || code.includes("BLOCKED") || code.includes("CONFLICT") || code.includes("PENDING") || code.includes("REVISION") || code.includes("UNSUPPORTED") || code.includes("BUSY") || code.includes("ACTIVE") || code === "STALE_DEFAULT" || code.endsWith("_CHANGED") || code.includes("REFUSED") || code.endsWith("_EXPIRED") || code.includes("INCOMPATIBLE") || code.endsWith("_REQUIRED") || code === "RELAY_TARGET_UNVERIFIED" ? 409 : 502;
     // Write ~ before cutting: every whole spelling of the home is replaced first, so a home that crosses the 512th
     // character can no longer leave its first half in the answer; the cut then only shortens text that already says ~.
     return { status, code, message: homeText(homes)(error.message).slice(0, 512) };

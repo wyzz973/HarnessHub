@@ -11,6 +11,7 @@ import { SessionError, type SelectionRequest, type SessionEvent } from "../contr
 import { HostTmpdirs, defaultHostTmpdirRoot } from "../infrastructure/session/host-tmpdir.js";
 import { SessionRuntime } from "../contexts/session/application/runtime.js";
 import { SqliteSessionStore } from "../infrastructure/session/sqlite-store.js";
+import { recoverRelay } from "../contexts/session/domain/relay/recover.js";
 import { SqliteWorkspaceLeaseProvider } from "../infrastructure/session/workspace-lease.js";
 import { PosixProcessGroups } from "../infrastructure/control/process-group.js";
 import { DirectorySessionBindingFactory } from "../infrastructure/session/binding-factory.js";
@@ -133,7 +134,8 @@ export function application(root: string, publish: (event: SessionEvent) => void
   readonly workspaceLockRoot?: string;
   /** What counts as an installation (ADR-044): only official channels unless development explicitly allows any entry. */
   readonly installations?: InstallationPolicy } = {}): { readonly management: LocalHarnessManagement; readonly providers: LocalProviderService; readonly store: SqliteSessionStore; readonly content: LocalContentStore; readonly factory: DirectorySessionBindingFactory; readonly runtime: SessionRuntime } {
-  const store = new SqliteSessionStore(root);
+  // Recovery decides the relay deliveries a previous owner left in flight, per Session in its own SAVEPOINT (ADR-055 §9 S15).
+  const store = new SqliteSessionStore(root, { recoverRelay });
   let providers: LocalProviderService | undefined;
   let management: LocalHarnessManagement | undefined;
   try {

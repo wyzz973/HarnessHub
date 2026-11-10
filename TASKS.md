@@ -93,7 +93,7 @@
 | G069 | Driver 接力适配 | G066, G067, G007, G032, G034 | G1 | in_progress |
 | G070 | 内容：摘要、渲染、预算与脱敏 | G066, G006, G010, G026 | G1 | in_progress |
 | G071 | 工作区观测器 | G066, G026 | G1 | in_progress |
-| G072 | 接力协调器与返回决策 | G068, G069, G070, G071, G059, G075 | G1 | planned |
+| G072 | 接力协调器与返回决策 | G068, G069, G070, G071, G059, G075 | G1 | in_progress |
 | G073 | 界面、API 与用词检查 | G072, G050, G054 | G1 | planned |
 | G074 | 验收设施：RelayConformance、RelayBench 与故障矩阵 | G072, G073, G060 | G1 | in_progress |
 | G075 | 存储优化前置片 | G008, G028 | G1 | in_progress |
@@ -2220,6 +2220,10 @@
 - tests/unit/relay-vendor.test.ts
 - tests/unit/relay-classify.test.ts
 - tests/fixtures/relay-control-peer.mjs
+- src/adapters/control/relay-turn.ts
+- tests/fixtures/relay-drivers.ts
+- tests/protocol/relay-driver-placement.test.ts
+- tests/protocol/relay-driver-verify.test.ts
 
 验收：
 - 每家的声明与第 8.1 节逐格一致

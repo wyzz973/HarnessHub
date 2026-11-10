@@ -8,10 +8,12 @@ import { unifiedDiff } from "../../infrastructure/control/unified-diff.js";
 import { MAX_NATIVE_SESSIONS, type NativeOutput, type NativeSessionImport, type NativeSessionPage, type NativeToolDetail, type NativeUsage } from "../../contracts/control.js";
 import { MAX_CONTENT_BYTES, textual, type ContentKind, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
 import { checkInputs, fileMentions, readAttachment } from "../../infrastructure/control/attachments.js";
-import type { RelayCapabilities } from "../../contracts/relay.js";
+import { homedir } from "node:os";
+import type { DataClass, RelayCapabilities, VendorObservation } from "../../contracts/relay.js";
 import { nativeReading, relayDeclaration, relayEntries, textClassify } from "./relay-classify.js";
-import { dshVendor, slashModelKey } from "./relay-vendor.js";
-import { singleText, type TurnText } from "../../contracts/control.js";
+import { dshVendor, readEndpoint, slashModelKey, vendorObservation } from "./relay-vendor.js";
+import { type TurnText } from "../../contracts/control.js";
+import { exceedsInput, INPUT_LIMIT_REFUSED, placeTurn, userWords, type RelayTurn, type Stripped, type UserText } from "./relay-turn.js";
 
 interface ActivePrompt {
   readonly event: (event: ControlEvent) => void;
@@ -118,6 +120,10 @@ function outputOf(content: Record<string, unknown>): NativeOutput | null {
   return null;
 }
 function count(value: unknown): number | undefined { return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined; }
+/** A Turn this driver settles itself without sending anything to the agent. */
+export function refusedRun(result: BackendResult): ControlRun {
+  return { result: Promise.resolve(result), requestStop: () => Promise.reject(new ControlError("INVALID_STATE", "nothing was sent, so there is no native turn to stop")) };
+}
 /** A session/load result. An agent that answers an identity it does not have with null (Hermes 0.12) has no such session. */
 function loaded(value: unknown): Record<string, unknown> {
   if (value === null) throw new ControlError("NATIVE_SESSION_NOT_FOUND", "the Harness has no session with this identity");
@@ -162,6 +168,7 @@ export class AcpControl implements HarnessControl {
    */
   readonly relayCapabilities?: RelayCapabilities;
   private readonly rpc: JsonRpcProcess;
+  private readonly launchEnv: Readonly<Record<string, string>>;
   private initializing: Promise<ProtocolObservation> | null = null;
   private initialized = false;
   private version: string | null = null;
@@ -184,6 +191,9 @@ export class AcpControl implements HarnessControl {
    */
   private readonly permissions = new Map<string, { readonly request: string; readonly options: readonly string[]; readonly resolve: (value: unknown) => void; readonly reply?: (option: string, input?: string) => unknown; readonly dispose?: () => void }>();
   private configuredDefault: string | null = null;
+  /** The workspace the conversation was opened in, and how: a new session, or one restored by load or resume. */
+  private openedCwd: string | null = null;
+  private openMethod: "new" | "load" | "resume" | null = null;
   private modelConfigId: string | null = null;
   private legacyModels = false;
   private readonly openingMetadata: Record<string, unknown>[] = [];
@@ -203,6 +213,7 @@ export class AcpControl implements HarnessControl {
   constructor(launch: ControlLaunch, private readonly options: ControlOptions, relayCapabilities?: RelayCapabilities) {
     if (launch.protocol !== "acp-v1") throw new ControlError("INVALID_INPUT", "ACP control requires an ACP launch");
     if (relayCapabilities !== undefined) this.relayCapabilities = relayCapabilities;
+    this.launchEnv = launch.env;
     this.rpc = new JsonRpcProcess(launch, options, {
       notification: (method, params) => this.notification(method, params),
       request: request => this.serverRequest(request),
@@ -535,6 +546,59 @@ export class AcpControl implements HarnessControl {
     if (!this.catalog.canSelect || !id || id.length > 1024 || /[\0\r\n]/u.test(id)) return;
     this.catalog = { ...this.catalog, models: this.catalog.models.some(row => row.id === id) ? this.catalog.models : [...this.catalog.models, { id, name: id }], defaultModel: id };
   }
+  /**
+   * One update the agent replayed while open() restored the conversation (session/load), in stream order and before the
+   * open resolves; replays read for continuing a session (importSession) are not passed. The hook must return without
+   * waiting and must not keep the update's content beyond its own bounds. The default keeps nothing.
+   */
+  protected replayed(_kind: string, _update: Readonly<Record<string, unknown>>): void {}
+  /** Rejects an identity that is not the conversation this connection owns now (a replacement after a clear included). */
+  protected assertOwned(id: NativeConversationId): void {
+    this.assertInitialized();
+    if (this.conversation === null || id !== this.conversation || this.opening) throw new ControlError("IDENTITY_MISMATCH", "conversation is not owned by this connection");
+  }
+  /** Whether a prompt of this connection is still running. */
+  protected get promptActive(): boolean { return this.active !== null; }
+  /**
+   * The commands the agent announced to this connection, as a relay catalog reads them; null before it announced any, when
+   * a slash word that only a catalog settles is a possible command (and so carries no packet).
+   */
+  protected get announced(): ReturnType<typeof relayEntries> | null { return this.catalog.commands === undefined ? null : relayEntries(this.catalog.commands); }
+  /** How the open conversation was established: a new session, or restored by session/load or session/resume; null before open. */
+  protected get opened(): { readonly cwd: string; readonly method: "new" | "load" | "resume" } | null {
+    return this.openedCwd === null || this.openMethod === null || this.conversation === null ? null : { cwd: this.openedCwd, method: this.openMethod };
+  }
+  /** The environment the agent's process runs with (the options' and the launch's, as the process gets them). */
+  protected get processEnvironment(): Readonly<Record<string, string>> { return { ...this.options.env, ...this.launchEnv }; }
+  /** Which Harness's endpoint layers this Driver reads for its vendor (relay-vendor.ts); null for none (a Harness that declares nothing). */
+  protected get vendorHarness(): Parameters<typeof readEndpoint>[0] | null { return this.relayCapabilities !== undefined && this.relayCapabilities === dshRelayCapabilities ? "dsh" : null; }
+  /** The model the open conversation runs, as the agent reports it; null when the agent cannot tell. */
+  protected vendorModel(): string | null { return this.catalog.canSelect ? this.catalog.defaultModel : null; }
+  /** The authentication kind the agent reported (Claude's `_auth/status_update` kind); null when it reports none. */
+  protected vendorAuthKind(): string | null { return null; }
+  /**
+   * The endpoint and model this conversation runs on (ADR-055 §10.4): the Harness's own endpoint layers as it resolves them
+   * (readEndpoint, only the endpoint keys), with the model and sign-in the agent reported. Null before open(), for a Driver
+   * without a declaration, and when an endpoint layer cannot be read (an endpoint that cannot be known is never none).
+   */
+  async relayVendor(): Promise<VendorObservation | null> {
+    const declared = this.relayCapabilities, harness = this.vendorHarness, opened = this.opened;
+    if (declared === undefined || harness === null || opened === null) return null;
+    const model = this.vendorModel(), env = this.processEnvironment, separator = harness === "hermes" ? ":" : "/";
+    const index = model?.indexOf(separator) ?? -1, provider = model !== null && index > 0 ? model.slice(0, index).trim().toLowerCase() : null;
+    const reading = await readEndpoint(harness, { home: env.HOME || homedir(), values: env, workspace: opened.cwd }, provider);
+    return vendorObservation(reading, model, this.vendorAuthKind(), declared.normalizeModel);
+  }
+  /**
+   * The native wrapping a Driver's agent puts around a user entry, stripped before the packet is (a prefix such as OpenClaw's
+   * working directory, tags the agent injects); the default strips nothing.
+   */
+  protected nativeWrapping(replayed: string): UserText { return { user: replayed, stripped: [] }; }
+  /** The user's own words of a replayed native user entry (ADR-055 VF3-09): native wrapping, the relay packet and Hub's file pointers go. */
+  userTextOf(replayed: string): { readonly user: string; readonly stripped: readonly { readonly kind: DataClass; readonly bytes: number }[] } {
+    const native = this.nativeWrapping(replayed);
+    return userWords(native.user, native.stripped as readonly Stripped[]);
+  }
   /** Waits for history replayed around a session/load response to go quiet; the window starts at the response. */
   private async replaySettled(): Promise<void> {
     this.lastReplay = Date.now();
@@ -549,6 +613,32 @@ export class AcpControl implements HarnessControl {
     if (this.catalog.authentication === "missing") throw new ControlError("NATIVE_AUTH_REQUIRED", "the Harness reported no usable sign-in or provider configuration");
     if (!isAbsolute(cwd)) throw new ControlError("INVALID_INPUT", "conversation cwd must be absolute");
     if (this.conversation !== null || this.opening || this.forking) throw new ControlError("INVALID_STATE", "this connection already owns a conversation");
+    return this.establish(cwd, model, options, checkpoint);
+  }
+  /**
+   * Opens a new native session in place of the one this connection owns (Claude's clear, ADR-055 §8.1: the Driver ends the
+   * conversation and starts another): session/new in the same workspace, with the model and option values the old session
+   * runs now, so nothing changes but the history. The connection owns the new session from then on and refuses the old
+   * identity. When the new session cannot be set up, the connection keeps the old one (a failed request that left the
+   * connection healthy) or fails as open() fails. Rejects while a prompt runs.
+   */
+  protected async replaceConversation(): Promise<NativeConversationId> {
+    this.assertInitialized();
+    if (this.active !== null || this.opening || this.forking || this.conversation === null || this.openedCwd === null) throw new ControlError("INVALID_STATE", "no idle conversation to replace");
+    const previous = this.conversation, cwd = this.openedCwd;
+    const model = this.catalog.canSelect && this.catalog.defaultModel !== null ? this.catalog.defaultModel : undefined;
+    const options = Object.fromEntries((this.catalog.options ?? []).map(option => [option.id, option.currentValue]));
+    // The new session's own updates arrive before its identity; they are kept for it, never scoped to the old one. The old
+    // session's late updates (its commands announced after its own open) are counted and dropped meanwhile.
+    this.conversation = null; this.replacing = previous;
+    try { return await this.establish(cwd, model, options, undefined); }
+    // A new session whose model or options could not be applied is not the replacement: the old one stays this connection's.
+    catch (error) { this.conversation = previous; throw error; }
+    finally { this.replacing = null; }
+  }
+  /** The session replaceConversation is replacing, while it does. */
+  private replacing: NativeConversationId | null = null;
+  private async establish(cwd: string, model: string | undefined, options: NativeOptions | undefined, checkpoint: string | undefined): Promise<NativeConversationId> {
     this.opening = true;
     try {
       let method = "session/new";
@@ -567,6 +657,7 @@ export class AcpControl implements HarnessControl {
       if (this.conversation === null) throw new ControlError("IDENTITY_MISMATCH", "native setup did not establish an owned conversation");
       if (method === "session/load") await this.replaySettled();
       this.replaying = false;
+      this.openedCwd = cwd; this.openMethod = method === "session/load" ? "load" : method === "session/resume" ? "resume" : "new";
       this.readModels(response); this.configuredDefault=this.catalog.defaultModel;
       for (const params of this.openingMetadata.splice(0)) this.notification("session/update", params);
       // A value the session already runs is not requested again (Hermes's set_model can reroute an unchanged model).
@@ -594,20 +685,45 @@ export class AcpControl implements HarnessControl {
     } catch (error) { const failure = this.nativeFailure(error); if (!(failure instanceof ControlError && ["MODEL_UNAVAILABLE","NATIVE_OPTION_UNAVAILABLE"].includes(failure.code))) this.rpc.abort(failure); throw failure; }
     finally { this.opening = false; this.replaying = false; this.openingMetadata.length = 0; }
   }
+  /**
+   * A relay Turn's text parts as this Driver sends them (ADR-055 §5.5, §7.4): by the declaration's placement, or null when
+   * the packet does not go (the user's words alone are sent): the native side reads the words as a command, or this Driver
+   * has no way to put a packet into a command's arguments. A Driver whose native side submits a command's arguments as a
+   * prompt (acceptsRelay) places the packet there itself. Without a declaration, the default placement (singleText).
+   */
+  protected relayParts(turn: RelayTurn, attachments: readonly ContentKind[]): readonly string[] | null {
+    const declared = this.relayCapabilities;
+    if (declared === undefined) return placeTurn(turn, undefined);
+    const reading = declared.commands.classify(turn.user, this.announced, attachments);
+    // A command, a possible command and a command whose arguments become a prompt (unless placed by its Driver) carry none.
+    return reading.kind === "content" ? placeTurn(turn, declared.placement) : null;
+  }
+  /** What the native side adds to the text before it counts against maxInput (OpenClaw's working-directory prefix), in its unit. */
+  protected inputOverhead(_unit: "chars" | "bytes"): number { return 0; }
   async startText(id: NativeConversationId, turn: TurnText, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
-    const prompt = singleText(turn);
+    // The words the native side reads first: what decides a command, and whether its answer can prove the input recorded.
+    const prompt = typeof turn === "string" ? turn : turn.user;
     this.assertInitialized();
     if (!this.conversation || id !== this.conversation) throw new ControlError("IDENTITY_MISMATCH", "conversation is not owned by this connection");
     if (this.active !== null) throw new ControlError("INVALID_STATE", "a prompt is already active");
     if (typeof prompt !== "string" || prompt.length === 0) throw new ControlError("INVALID_INPUT", "prompt must contain text");
+    const kinds = attachments.map(file => file.kind);
+    const placed = typeof turn === "string" ? [prompt] : this.relayParts(turn, kinds), parts = placed ?? [prompt];
+    // A packet over the input bound is never cut by the native side: nothing is sent (§8.1, the coordinator chooses a lower tier).
+    if (placed !== null && typeof turn !== "string") {
+      const limit = this.relayCapabilities?.placement.maxInput;
+      if (limit != null && exceedsInput(parts, this.relayCapabilities!.placement, this.inputOverhead(limit.unit))) return refusedRun(INPUT_LIMIT_REFUSED);
+    }
     const pointers = this.fileBlocks ? [] : attachments.filter(file => file.kind === "file");
-    const blocks: Record<string, unknown>[] = [{ type: "text", text: prompt + fileMentions(pointers) }];
+    // Hub's text pointers go after the user's words, the last part (pointersAfterUser).
+    const blocks: Record<string, unknown>[] = parts.map((text, index) => ({ type: "text", text: index === parts.length - 1 ? text + fileMentions(pointers) : text }));
     for (const file of attachments) if (!pointers.includes(file)) blocks.push(await this.promptBlock(file));
     if (this.active !== null) throw new ControlError("INVALID_STATE", "a prompt is already active");
     const active: ActivePrompt = { event: onEvent, lastUpdate: 0, answered: false, tools: new Map(), compaction: new Map(), stopping: false, settled: false, stop: null, deadline: Date.now() + this.options.runTimeoutMs };
     this.active = active;
+    if (placed === null) onEvent({ type: "diagnostic", message: "交接单没有随这条输入发出：原程序把它读作命令，命令回合不附交接内容。" });
     // Evidence of the prompt reaching the history is about content: a command's answer (a local reply) proves no such thing.
-    const content = this.readsAsContent(prompt, attachments.map(file => file.kind));
+    const content = (typeof turn === "string" || placed !== null) && this.readsAsContent(prompt, kinds);
     const recorded = (reason: string | null): { readonly input?: "recorded" } => content && (active.answered || reason !== null && this.promptRecorded(reason)) ? { input: "recorded" } : {};
     const result = this.rpc.request("session/prompt", { sessionId: id, prompt: blocks }, this.options.runTimeoutMs)
       .then(value => {
@@ -690,6 +806,7 @@ export class AcpControl implements HarnessControl {
     const params = object(raw, "ACP notification params");
     const update = object(params.update, "ACP session update");
     const kind = string(update.sessionUpdate, "ACP update kind");
+    if (this.replacing !== null && params.sessionId === this.replacing) { this.unattributed++; return; }
     if (this.opening && this.conversation === null && metadataUpdates.has(kind)) {
       string(params.sessionId, "ACP session identity");
       if (this.openingMetadata.length >= 128) throw new ControlError("WIRE_LIMIT", "ACP opening metadata exceeds its budget");
@@ -700,6 +817,7 @@ export class AcpControl implements HarnessControl {
       this.lastReplay = Date.now();
       this.replayBytes += Buffer.byteLength(JSON.stringify(params));
       if (this.replayBytes > 64 * 1024 * 1024) throw new ControlError("REPLAY_LIMIT", "native history replay exceeded its budget");
+      if (this.collected === null) this.replayed(kind, update);
       if (this.collected && (kind === "user_message_chunk" || kind === "agent_message_chunk")) { this.collect(kind === "user_message_chunk" ? "user" : "assistant", update.content); return; }
       if (!metadataUpdates.has(kind)) return;
     }

@@ -65,6 +65,9 @@ export function readRelayPrompt(prompt: string): RelayPrompt {
   const turns = new Set([...[...words.keys()].filter(key => key.startsWith("origin:")).map(key => Number(key.slice(7))), ...origin.keys()]);
   const branchedHistory = [...turns].sort((a, b) => a - b).flatMap(turn => [...(words.has("origin:" + turn) ? [{ role: "user" as const, text: words.get("origin:" + turn)! }] : []),
     ...(origin.has(turn) ? [{ role: "assistant" as const, text: origin.get(turn)! }] : [])]);
-  return { packet: true, kind: title[1] === "交接更新" || title[1] === "handoff update" ? "delta" : "packet", packetId: id, currentInput: { text: prompt.slice(end + endLine.length + 2) },
+  // The user's words follow the end line: after one LF in the renderer's text, after a blank line where a Driver flattened a
+  // TurnText with singleText (G068 phase two hands Drivers the packet and the words apart).
+  const after = end + endLine.length + 2, words0 = prompt.startsWith("\n", after) ? after + 1 : after;
+  return { packet: true, kind: title[1] === "交接更新" || title[1] === "handoff update" ? "delta" : "packet", packetId: id, currentInput: { text: prompt.slice(words0) },
     history, branchedHistory, body: prompt.slice(0, end + endLine.length + 1) };
 }

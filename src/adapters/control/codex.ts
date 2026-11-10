@@ -8,12 +8,15 @@ import type { NativeToolDetail, NativeUsage } from "../../contracts/control.js";
 import { readFile, stat } from "node:fs/promises";
 import { basename } from "node:path";
 import { MAX_CONTENT_BYTES, type ContentKind, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
-import { MAX_NATIVE_EXTENSIONS, MAX_NATIVE_SESSIONS, type NativeExtensions, type NativeSessionImport, type NativeSessionPage } from "../../contracts/control.js";
+import { MAX_NATIVE_EXTENSIONS, MAX_NATIVE_SESSIONS, MAX_USAGE_REQUESTS, type NativeExtensions, type NativeSessionImport, type NativeSessionPage } from "../../contracts/control.js";
 import { checkInputs, fileMentions } from "../../infrastructure/control/attachments.js";
-import type { RelayCapabilities } from "../../contracts/relay.js";
-import { CODEX_SKILL_INPUT as SKILL_INPUT, CODEX_THREAD_COMMANDS as THREAD_COMMANDS, codexClassify, codexNativeClassify, codexThreadOperation as threadOperation, relayDeclaration } from "./relay-classify.js";
-import { codexVendor, slashModelKey } from "./relay-vendor.js";
-import { singleText, type TurnText } from "../../contracts/control.js";
+import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
+import type { DataClass, DeliveryPosition, MarkerResult, RelayCapabilities, RelayPacketId, VendorObservation, VerifyResult } from "../../contracts/relay.js";
+import { CODEX_SKILL_INPUT as SKILL_INPUT, CODEX_THREAD_COMMANDS as THREAD_COMMANDS, codexClassify, codexNativeClassify, codexThreadOperation as threadOperation, relayDeclaration, relayEntries } from "./relay-classify.js";
+import { codexVendor, readEndpoint, slashModelKey, vendorObservation } from "./relay-vendor.js";
+import { singleText, type TurnText, type VerifyRequest } from "../../contracts/control.js";
+import { bodyWithoutFirstLine, boundedRequests, carriesPacket, exceedsInput, INPUT_LIMIT_REFUSED, unavailable, usageRequest, userWords, verifyResult } from "./relay-turn.js";
 
 /**
  * Codex's relay declaration (ADR-055 §8.1, Codex row): one text (packet, a line break, then the user's words), at most
@@ -62,6 +65,11 @@ interface ActiveTurn {
   baseline: Tokens | null;
   /** Codex reported this turn's user input as an item of the thread (userMessage), which it does once the input is recorded. */
   inputRecorded: boolean;
+  /** The client identity this turn's user message was sent with (clientUserMessageId), and the packet it carries. */
+  readonly clientId: string | null;
+  readonly packetId: RelayPacketId | null;
+  /** This turn's model requests one by one, from each token usage report's `last` (ADR-055 VF2-09). */
+  readonly requests: NonNullable<NativeUsage["requests"]>[number][];
   turnId: string | null;
   settled: boolean;
   stopping: boolean;
@@ -69,6 +77,8 @@ interface ActiveTurn {
 }
 interface Tokens { readonly totalTokens: number; readonly inputTokens: number; readonly cachedInputTokens: number; readonly cacheWriteInputTokens: number; readonly outputTokens: number; readonly reasoningOutputTokens: number }
 const STREAM_MS = 300, ITEM_OUTPUT_BYTES = 128 * 1024;
+/** How much of a thread a check reads, newest first: the turn it looks for is usually the last one. */
+const VERIFY_TURN_PAGES = 8, VERIFY_TURNS_PER_PAGE = 50;
 function tokens(value: unknown): Tokens | null {
   if (value === null || typeof value !== "object") return null;
   const row = value as Record<string, unknown>, read = (key: string) => typeof row[key] === "number" && Number.isSafeInteger(row[key]) && (row[key] as number) >= 0 ? row[key] as number : 0;
@@ -240,13 +250,18 @@ export class CodexControl implements HarnessControl {
   private lastTotal: Tokens | null = null;
   /** Notifications that arrived outside any turn of this connection. */
   private unattributed = 0;
+  /** The workspace the thread was opened in, and the model and provider its thread/start or thread/resume response named. */
+  private openedCwd: string | null = null;
+  private threadModel: { readonly model: string | null; readonly provider: string | null } = { model: null, provider: null };
+  /** The client identity the next turn's user message is sent with: the one the last deliveryPosition recorded. */
+  private pendingClientId: string | null = null;
   get unattributedUpdates(): number { return this.unattributed; }
   healthy(): boolean { return this.initialized && this.failure === null && this.rpc.failure === null; }
   processGroup(): number | null { return this.rpc.processGroup; }
   diagnosticMark(): number { return this.rpc.stderrMark; }
   diagnosticsSince(mark: number): string { return this.rpc.stderrSince(mark); }
 
-  constructor(launch: ControlLaunch, private readonly options: ControlOptions) {
+  constructor(private readonly launch: ControlLaunch, private readonly options: ControlOptions) {
     if (launch.protocol !== "codex-app-server") throw new ControlError("INVALID_INPUT", "Codex control requires an app-server launch");
     this.rpc = new JsonRpcProcess(launch, options, {
       notification: (method, params) => this.notification(method, params), request: request => this.serverRequest(request),
@@ -329,6 +344,93 @@ export class CodexControl implements HarnessControl {
     return { models, defaultModel, options };
   }
   async checkpoint(): Promise<string | null> { return this.conversation; }
+  private assertOwned(id: NativeConversationId): void {
+    this.assertInitialized();
+    if (!this.conversation || id !== this.conversation || this.opening) throw new ControlError("IDENTITY_MISMATCH", "thread is not owned by this connection");
+  }
+  /**
+   * The client identity the next turn's user message is sent with (ADR-055 §8.1, `turn/start.clientUserMessageId`): a new
+   * one each time, kept for the next startText only. Nothing is read or sent here.
+   */
+  async deliveryPosition(id: NativeConversationId): Promise<DeliveryPosition> {
+    this.assertOwned(id);
+    this.pendingClientId = randomUUID();
+    return { kind: "client_id", id: this.pendingClientId };
+  }
+  /**
+   * Looks for each packet in the user message Codex recorded with its client identity, reading the thread's turns newest
+   * first (thread/turns/list, at most VERIFY_TURN_PAGES pages): present when that message carries the packet's title line,
+   * compacted when a context compaction came after it, absent when it does not carry it, or when the whole thread was read
+   * and Codex echoes identities but none is this one; outside_window when the pages ran out first; unavailable when the
+   * position is not a client identity, Codex refuses the listing, or it echoes no identity at all (nothing to look for).
+   * historyEmpty and the compaction cursor are given only after the whole thread was read. Reads only.
+   */
+  async verifyDelivered(id: NativeConversationId, request: VerifyRequest): Promise<VerifyResult> {
+    const started = Date.now();
+    this.assertOwned(id);
+    const wanted = new Map<string, number[]>();
+    request.markers.forEach((marker, index) => { if (marker.position.kind === "client_id") wanted.set(marker.position.id, [...(wanted.get(marker.position.id) ?? []), index]); });
+    const results: (MarkerResult | null)[] = request.markers.map(marker => marker.position.kind === "client_id" ? null : "unavailable");
+    let users = 0, compactions = 0, echoes = false, complete = false, cursor: string | undefined, foreign: number | null = null;
+    try {
+      for (let page = 0; page < VERIFY_TURN_PAGES && results.includes(null) || page === 0; page++) {
+        const response = object(await this.rpc.request("thread/turns/list", { threadId: id, limit: VERIFY_TURNS_PER_PAGE, sortDirection: "desc", itemsView: "full", ...(cursor === undefined ? {} : { cursor }) }), "Codex turns");
+        if (!Array.isArray(response.data) || response.data.length > VERIFY_TURNS_PER_PAGE) throw new ControlError("INVALID_PROTOCOL", "invalid Codex turn page");
+        for (const value of response.data) {
+          const items = object(value, "Codex turn").items;
+          // Newest first throughout: a turn's items in reverse.
+          for (const raw of [...(Array.isArray(items) ? items : [])].reverse()) {
+            const item = object(raw, "Codex turn item");
+            if (item.type === "contextCompaction") { compactions++; continue; }
+            if (item.type !== "userMessage") continue;
+            const echoed = typeof item.clientUserMessageId === "string" ? item.clientUserMessageId : typeof item.clientId === "string" ? item.clientId : null;
+            if (echoed !== null) echoes = true;
+            for (const index of echoed === null ? [] : wanted.get(echoed) ?? []) {
+              if (results[index] !== null) continue;
+              const said = Array.isArray(item.content) ? item.content.map(inputText).join("\n") : "";
+              results[index] = !carriesPacket(said, request.markers[index]!.packetId) ? "absent" : compactions > 0 ? "compacted" : "present";
+              if (index === request.markers.length - 1) foreign = users;
+            }
+            users++;
+          }
+        }
+        if (response.nextCursor == null) { complete = true; break; }
+        cursor = string(response.nextCursor, "Codex turn cursor", 1024);
+      }
+    } catch (error) {
+      // A refusal (no user message yet, an ephemeral thread) leaves nothing to look at; a broken connection is the caller's.
+      if (error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null) return unavailable(request, started);
+      if (error instanceof ControlError && error.code === "INVALID_PROTOCOL" && this.rpc.failure === null) return unavailable(request, started);
+      throw error;
+    }
+    const settled = results.map(result => result ?? (!complete ? "outside_window" : echoes ? "absent" : "unavailable"));
+    return verifyResult(request, settled, started, complete ? { historyEmpty: request.historyEmpty ? users === 0 : null, compaction: { count: compactions, digest: null }, foreignAfterLast: foreign } : { foreignAfterLast: foreign });
+  }
+  /**
+   * Names the thread on Codex's side before its first turn (ADR-055 §8.1, `thread/name/set {threadId, name}`): one line of
+   * at most 200 characters; an empty title is not sent. A refusal rejects with NATIVE_TITLE_UNAVAILABLE and leaves the
+   * connection as it was.
+   */
+  async setTitle(id: NativeConversationId, title: string): Promise<void> {
+    this.assertOwned(id);
+    const name = [...title.replace(/[\0-\x1f\x7f\u2028\u2029\u0085]+/gu, " ").trim()].slice(0, 200).join("").trim();
+    if (!name) return;
+    try { await this.rpc.request("thread/name/set", { threadId: id, name }); }
+    catch (error) { if (error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null) throw new ControlError("NATIVE_TITLE_UNAVAILABLE", "Codex did not name the thread"); throw error; }
+  }
+  /**
+   * The endpoint and model this thread runs on (ADR-055 §10.4): the thread's model with its provider as the model's
+   * `provider/` prefix, and OPENAI_BASE_URL / `openai_base_url` as Codex's own layers resolve them (readEndpoint).
+   */
+  async relayVendor(): Promise<VendorObservation | null> {
+    if (this.conversation === null || this.openedCwd === null) return null;
+    const env = { ...this.options.env, ...this.launch.env }, { model, provider } = this.threadModel;
+    const named = model === null ? null : provider === null || model.startsWith(provider + "/") ? model : provider + "/" + model;
+    const reading = await readEndpoint("codex", { home: env.HOME || homedir(), values: env, workspace: this.openedCwd });
+    return vendorObservation(reading, named, null, codexRelayCapabilities.normalizeModel);
+  }
+  /** The user's words of a replayed user message: the relay packet and Hub's file pointers go (Codex adds no wrapping of its own). */
+  userTextOf(replayed: string): { readonly user: string; readonly stripped: readonly { readonly kind: DataClass; readonly bytes: number }[] } { return userWords(replayed); }
   /**
    * The thread's settings as Codex reported them: the approval policy and sandbox in its thread/start or thread/resume
    * response, and its collaboration mode, which is the one a turn of this connection set and Codex accepted or, for a
@@ -403,6 +505,10 @@ export class CodexControl implements HarnessControl {
       // What the thread says it runs with is kept for nativeConfig, value by value; nothing is assumed for what it leaves out.
       const report = threadReport(response);
       this.threadSettings = report.settings; this.threadMode = report.mode; this.resumed = checkpoint !== undefined;
+      // The thread's model and provider as Codex names them (v2 ThreadStartResponse `model`, `modelProvider`; the Thread's own).
+      const named = (value: unknown) => typeof value === "string" && value && value.length <= 1024 && !/[\0\r\n]/u.test(value) ? value : null;
+      this.threadModel = { model: named(response.model) ?? model ?? null, provider: named(response.modelProvider) ?? named(thread.modelProvider) };
+      this.openedCwd = cwd;
       return received;
     } catch (error) { this.rpc.abort(errorFrom(error)); throw error; }
     finally { this.opening = false; }
@@ -523,11 +629,30 @@ export class CodexControl implements HarnessControl {
     checkInputs(attachments, selected?.inputs ?? { image: true, audio: false, file: true });
   }
   async startText(id: NativeConversationId, turn: TurnText, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
-    const prompt = singleText(turn);
+    // The words Codex reads: what decides a thread operation or a skill input; a packet goes with them only as placed below.
+    const prompt = typeof turn === "string" ? turn : turn.user;
     this.assertInitialized();
     if (!this.conversation || id !== this.conversation) throw new ControlError("IDENTITY_MISMATCH", "thread is not owned by this connection");
     if (this.active) throw new ControlError("INVALID_STATE", "a turn is already active");
     if (typeof prompt !== "string" || prompt.length === 0) throw new ControlError("INVALID_INPUT", "prompt must contain text");
+    // The identity deliveryPosition recorded belongs to this turn only.
+    const clientId = this.pendingClientId; this.pendingClientId = null;
+    // `/skill:<name> …` sends Codex's own skill input next to the remaining text, as its TUI does for a skill mention.
+    const invoked = SKILL_INPUT.exec(prompt), skill = invoked ? this.skills.get(invoked[1]!) : undefined;
+    const words = skill ? invoked![2]?.trim() || "$" + skill.name : prompt, mentions = fileMentions(attachments.filter(file => file.kind === "file"));
+    // ADR-055 §5.5, §8.1: one text, the packet, a blank line and the words; for a skill input the skill item, then the packet
+    // without the copy of the first line and the rest of the words (RT5-18). A thread operation or any other command goes alone.
+    let text = words, packetId: RelayPacketId | null = null;
+    if (typeof turn !== "string") {
+      const entries = relayEntries([...THREAD_COMMANDS, ...[...this.skills.keys()].map(name => ({ name: "skill:" + name, description: "", contextEffect: "keep" as const }))]);
+      const reading = codexClassify(prompt, entries, attachments.map(file => file.kind));
+      // Content, or a listed skill input whose text Codex submits (acceptsRelay); a thread operation never.
+      if (threadOperation(prompt, attachments.length > 0) === null && (reading.kind === "content" || reading.kind === "command" && reading.acceptsRelay === true && skill !== undefined)) {
+        text = reading.kind === "content" ? singleText(turn) : bodyWithoutFirstLine(turn) + "\n\n" + words;
+        packetId = turn.relay.packetId;
+        if (exceedsInput([text + mentions], codexRelayCapabilities.placement)) { onEvent({ type: "diagnostic", message: "交接单没有发出：超过 Codex 的输入上限" }); return { result: Promise.resolve(INPUT_LIMIT_REFUSED), requestStop: () => Promise.reject(new ControlError("INVALID_STATE", "nothing was sent, so there is no native turn to stop")) }; }
+      } else onEvent({ type: "diagnostic", message: "交接单没有随这条输入发出：Codex 把它读作命令，命令回合不附交接内容。" });
+    }
     let resolve!: (value: BackendResult) => void, reject!: (error: Error) => void;
     const result = new Promise<BackendResult>((res, rej) => { resolve = res; reject = rej; });
     let signalStarted!: () => void, rejectStarted!: (error: Error) => void;
@@ -536,13 +661,11 @@ export class CodexControl implements HarnessControl {
     void started.catch(() => {});
     const active: ActiveTurn = { event: onEvent, resolve, reject, deadline: Date.now() + this.options.runTimeoutMs,
       timer: setTimeout(() => this.rpc.abort(new ControlError("RUN_TIMEOUT", "Codex turn exceeded its deadline")), this.options.runTimeoutMs),
-      started, signalStarted, rejectStarted, turnId: null, settled: false, stopping: false, stop: null, deltaItems: new Set(), items: new Map(), agents: new Map(), reads: new Set(), baseline: this.lastTotal, inputRecorded: false };
+      started, signalStarted, rejectStarted, turnId: null, settled: false, stopping: false, stop: null, deltaItems: new Set(), items: new Map(), agents: new Map(), reads: new Set(), baseline: this.lastTotal, inputRecorded: false,
+      clientId, packetId, requests: [] };
     this.active = active;
-    // `/skill:<name> …` sends Codex's own skill input next to the remaining text, as its TUI does for a skill mention.
-    const invoked = SKILL_INPUT.exec(prompt), skill = invoked ? this.skills.get(invoked[1]!) : undefined;
-    const text = skill ? invoked![2]?.trim() || "$" + skill.name : prompt;
     // Images and audio are read by Codex from the private copies; files have no input type and are named by path.
-    const input = [{ type: "text", text: text + fileMentions(attachments.filter(file => file.kind === "file")), text_elements: [] }, ...(skill ? [{ type: "skill", name: skill.name, path: skill.path }] : []),
+    const input = [{ type: "text", text: text + mentions, text_elements: [] }, ...(skill ? [{ type: "skill", name: skill.name, path: skill.path }] : []),
       ...attachments.flatMap(file => file.kind === "image" ? [{ type: "localImage", path: file.path }] : file.kind === "audio" ? [{ type: "localAudio", path: file.path }] : [])];
     // `/export` copies Codex's own rollout record; nothing is sent to the model.
     const operation = threadOperation(prompt, attachments.length > 0);
@@ -555,7 +678,7 @@ export class CodexControl implements HarnessControl {
         if (error instanceof ControlError && error.code === "REMOTE_ERROR" && active.turnId === null && this.rpc.failure === null) { this.settleTurn(active); active.resolve({ status: "failed", reason: "request_rejected", ...NOT_RECORDED }); }
         else this.rpc.abort(errorFrom(error));
       });
-    } else void this.rpc.request("turn/start", { threadId: id, input, ...(this.effort === undefined ? {} : { effort: this.effort }),
+    } else void this.rpc.request("turn/start", { threadId: id, input, ...(clientId === null ? {} : { clientUserMessageId: clientId }), ...(this.effort === undefined ? {} : { effort: this.effort }),
       // A null developer_instructions keeps the mode's built-in instructions.
       ...(this.collaboration === null ? {} : { collaborationMode: { mode: this.collaboration.mode, settings: { model: this.collaboration.model, reasoning_effort: this.collaboration.effort, developer_instructions: null } } }) }).then(value => {
       try {
@@ -751,7 +874,19 @@ export class CodexControl implements HarnessControl {
       }
       // Plan mode answers with a proposed plan; the completed item is authoritative over its deltas.
       if (type === "plan") { if (method === "item/completed") active.event({ type: "text", text: text(item.text, "proposed plan") }); return; }
-      if (type === "userMessage") { active.inputRecorded = true; return; }
+      if (type === "userMessage") {
+        // A user message of this turn with another client's identity is not this turn's input (Codex echoes the identity a
+        // turn was started with, as `clientUserMessageId` or `clientId`; an item without one is this turn's by its turn id).
+        const echoed = typeof item.clientUserMessageId === "string" ? item.clientUserMessageId : typeof item.clientId === "string" ? item.clientId : null;
+        if (active.clientId !== null && echoed !== null && echoed !== active.clientId) return;
+        // E1 (ADR-055 §7.1): Codex reports the input as a thread item once it recorded it; said once, with the packet it carries.
+        if (!active.inputRecorded) {
+          active.inputRecorded = true;
+          const said = Array.isArray(item.content) ? item.content.map(inputText).join("\n") : "";
+          active.event({ type: "input_recorded", ...(active.packetId !== null && carriesPacket(said, active.packetId) ? { packetId: active.packetId } : {}) });
+        }
+        return;
+      }
       if (["reasoning", "hookPrompt", "functionCallOutput"].includes(type)) return;
       const started = method === "item/started";
       // Codex reports a spawned sub-agent here (and in collaboration calls), not with thread/started: the child thread's own
@@ -809,8 +944,12 @@ export class CodexControl implements HarnessControl {
       if (params.turnId !== active.turnId) { active.baseline = total; return; }
       const base = active.baseline, minus = (key: keyof Tokens) => Math.max(0, total[key] - (base?.[key] ?? 0));
       const window = typeof usage.modelContextWindow === "number" && Number.isSafeInteger(usage.modelContextWindow) && usage.modelContextWindow > 0 ? usage.modelContextWindow : undefined;
+      // Each report of this turn follows one model request, whose own counts are `last` (inferred from the protocol's shape).
+      const raw = usage.last !== null && typeof usage.last === "object" ? usage.last as Record<string, unknown> : null;
+      const request = raw === null ? null : usageRequest(raw.inputTokens, raw.cachedInputTokens, raw.cacheWriteInputTokens);
+      if (request !== null) { active.requests.push(request); if (active.requests.length > MAX_USAGE_REQUESTS) active.requests.shift(); }
       const value: NativeUsage = { turn: { input: minus("inputTokens"), output: minus("outputTokens"), cachedInput: minus("cachedInputTokens"), cacheWrite: minus("cacheWriteInputTokens"), reasoning: minus("reasoningOutputTokens"), total: minus("totalTokens") },
-        ...(last !== null ? { context: { used: last.totalTokens, ...(window ? { size: window } : {}) } } : {}) };
+        ...(last !== null ? { context: { used: last.totalTokens, ...(window ? { size: window } : {}) } } : {}), ...(active.requests.length ? { requests: boundedRequests(active.requests) } : {}) };
       active.event({ type: "usage", usage: value }); return;
     }
     if (method === "error" || method === "warning" || method === "configWarning" || method === "deprecationNotice" || method === "guardianWarning" || method === "model/rerouted") {

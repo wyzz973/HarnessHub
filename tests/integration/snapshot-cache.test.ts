@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test, { type TestContext } from "node:test";
-import { nativeConversationId, type BackendResult, type CleanupEvidence, type HarnessControl } from "../../src/contracts/control.js";
+import { nativeConversationId, singleText, type BackendResult, type CleanupEvidence, type HarnessControl } from "../../src/contracts/control.js";
 import { SessionError, commandId, messageId, runId, sessionId, type EventDraft, type HarnessSelection, type PreparedSessionBinding, type PublicRun, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionSnapshot } from "../../src/contracts/session.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { MAX_EVENT_LOG_BYTES, parseSession, utf8Bytes } from "../../src/contexts/session/domain/state.js";
@@ -158,7 +158,8 @@ class HeldHarness implements SessionBindingFactory {
       initialize: async () => ({ protocol: "acp-v1", protocolVersion: 1, agentName: "held", agentVersion: "1", authenticationMethods: [], capabilities: {} }),
       open: async () => { opened = true; return nativeConversationId("native-" + selected.harnessId); },
       checkpoint: async () => opened ? "private-native-" + selected.harnessId : null,
-      startText: async (_id, text: string, output) => {
+      startText: async (_id, turn, output) => {
+        const text = singleText(turn);
         this.prompts.push(text); output({ type: "text", text: "reply to " + text });
         const result = new Promise<BackendResult>(resolve => { this.waiting.push(resolve); }); this.notify?.();
         return { result, requestStop: async () => ({ requested: true }) };
@@ -187,9 +188,10 @@ test("G075-C02 the Runtime's concurrent commits and a commit made past it throug
   const store = open(t, data), harness = new HeldHarness();
   let next = 0, outside = 0;
   const app = new SessionRuntime(store, harness, { id: () => String(++next), now: () => new Date(NOW), fingerprint: value => createHash("sha256").update(value).digest("hex"),
-    // Right after run.context_prepared is committed and before run.authorized, a commit goes past the Runtime (ADR-055 §11.2):
-    // the Runtime's next commit then names a version that is no longer current, and must read the Session again.
-    publish: event => { if (event.type === "run.context_prepared") { outside += 1; touch(store, event.sessionId, "test.outside"); } } });
+    // Right after run.authorized is committed and before run.dispatched, a commit goes past the Runtime (ADR-055 §11.2): the
+    // Runtime's next commit then names a version that is no longer current, and must read the Session again. (run.context_prepared
+    // and run.authorized are one transaction since G068 phase two, ADR-055 §6.1, so nothing can come between them.)
+    publish: event => { if (event.type === "run.authorized") { outside += 1; touch(store, event.sessionId, "test.outside"); } } });
   later(t, () => app.close());
   const configuration: SessionConfiguration = { workspace, manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: true };
   const session = await app.create(configuration, { harnessId: "alpha" }, "create");
@@ -206,7 +208,7 @@ test("G075-C02 the Runtime's concurrent commits and a commit made past it throug
   assert.deepEqual(log.map(row => row.seq), log.map((_, index) => index + 1)); assert.equal(state.lastSeq, log.length);
   for (const run of [first.runId, second.runId]) {
     const order = log.filter(row => row.data.runId === run || row.type === "test.outside").map(row => row.type), prepared = order.indexOf("run.context_prepared");
-    assert.deepEqual(order.slice(prepared, prepared + 3), ["run.context_prepared", "test.outside", "run.authorized"], "the Runtime committed after the outside commit, on top of it");
+    assert.deepEqual(order.slice(prepared, prepared + 4), ["run.context_prepared", "run.authorized", "test.outside", "run.dispatched"], "the Runtime committed after the outside commit, on top of it");
   }
   // What the Store serves is what is stored: a reader without a cache reads the same snapshot and events.
   assert.ok(log.length < 100);

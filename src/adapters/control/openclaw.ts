@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import JSON5 from "json5";
 import { MAX_NATIVE_EXTENSIONS, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type NativeExtensions, type NativeSessionImport, type NativeSessionPage, type BackendResult, type CommandClass, type ControlEvent, type ControlRun, type ControlLaunch, type ControlOptions, type NativeConversationId, type NativeInputs, type NativeModelCatalog, type NativeOption, type NativeOptions, type NativeToolDetail, type CleanupEvidence } from "../../contracts/control.js";
-import type { RelayCapabilities } from "../../contracts/relay.js";
+import type { DeliveryPosition, MarkerResult, RelayCapabilities, VerifyResult } from "../../contracts/relay.js";
 import { AcpControl } from "./acp.js";
 import { openClawClassify, openClawCommandEffect, openClawNativeClassify, relayDeclaration } from "./relay-classify.js";
 import { openClawVendor, slashModelKey } from "./relay-vendor.js";
@@ -13,9 +13,12 @@ import { nativeCommand } from "../../infrastructure/control/native-command.js";
 import { string } from "../../infrastructure/control/json-rpc-process.js";
 import { checkInputs } from "../../infrastructure/control/attachments.js";
 import type { ContentRef, ControlAttachment } from "../../contracts/content.js";
-import { singleText, type TurnText } from "../../contracts/control.js";
+import { type TurnText, type VerifyRequest } from "../../contracts/control.js";
+import { boundedRequests, carriesPacket, strip, unavailable, usageRequest, verifyResult, type UserText } from "./relay-turn.js";
 
-type OpenClawMethod = "agents.list" | "models.list" | "sessions.patch" | "sessions.get" | "sessions.list" | "chat.history" | "skills.status" | "tools.catalog";
+type OpenClawMethod = "agents.list" | "models.list" | "sessions.patch" | "sessions.get" | "sessions.list" | "sessions.describe" | "chat.history" | "skills.status" | "tools.catalog";
+/** The bridge's working-directory prefix on every prompt it sends (src/acp translator, `[Working directory: ${displayCwd}]\n\n`, v2026.10.9). */
+const CWD_PREFIX = /^\[Working directory: [^\n]*\]\n\n/u;
 /** The Hub's own Gateway session keys; no other key is patched or continued. */
 const HUB_KEY = /^agent:[a-z0-9_-]+:harnesshub:[a-f0-9-]+$/u;
 /** Transcript entries read back after a Turn (ADR-027); a longer Turn's earliest entries fall outside this window. */
@@ -140,6 +143,9 @@ function reconcileTurn(entries: readonly unknown[], backend: BackendResult, emit
     if (row.role === "toolResult" && typeof row.toolCallId === "string") results.set(row.toolCallId, { output: textOf(row), failed: row.isError === true });
   }
   const usage = { input: 0, output: 0, cachedInput: 0, cacheWrite: 0, total: 0 }, cost = { amount: 0 };
+  // The embedded runtime writes one assistant row per model request (agent-core streamAgentResponse, v2026.10.9); a turn of an
+  // external CLI harness writes one per turn, with `contextUsage`, so its rows are no per-request report.
+  const requests: NonNullable<ReturnType<typeof usageRequest>>[] = [], harnessTurn = entries.some(entry => (entry as Record<string, unknown>).role === "assistant" && (entry as Record<string, unknown>).contextUsage !== undefined);
   let counted = false, last: Record<string, unknown> | undefined;
   for (const entry of entries) {
     const row = entry as Record<string, unknown>;
@@ -164,11 +170,13 @@ function reconcileTurn(entries: readonly unknown[], backend: BackendResult, emit
       counted = true;
       const add = (key: keyof typeof usage, value: unknown) => { if (typeof value === "number" && Number.isFinite(value) && value >= 0) usage[key] += value; };
       add("input", call.input); add("output", call.output); add("cachedInput", call.cacheRead); add("cacheWrite", call.cacheWrite); add("total", call.totalTokens);
+      const request = harnessTurn ? null : usageRequest(call.input, call.cacheRead, call.cacheWrite);
+      if (request !== null) requests.push(request);
       const spent = call.cost !== null && typeof call.cost === "object" ? (call.cost as { total?: unknown }).total : undefined;
       if (typeof spent === "number" && Number.isFinite(spent) && spent > 0) cost.amount += spent;
     }
   }
-  if (counted) emit({ type: "usage", usage: { turn: usage, ...(cost.amount > 0 ? { cost: { amount: cost.amount, currency: "USD", scope: "turn" } } : {}) } });
+  if (counted) emit({ type: "usage", usage: { turn: usage, ...(cost.amount > 0 ? { cost: { amount: cost.amount, currency: "USD", scope: "turn" } } : {}), ...(requests.length ? { requests: boundedRequests(requests) } : {}) } });
   // The bridge turns a model or provider error into end_turn; the transcript keeps the real stop reason.
   if (backend.status === "completed" && last?.stopReason === "error") {
     const classified = typeof last.errorMessage === "string" ? classifyRemoteFailure(last.errorMessage) : undefined;
@@ -233,6 +241,74 @@ export class OpenClawControl extends AcpControl {
   private sessionSettings: Promise<{ readonly model: string | null; readonly values: Readonly<Record<string, string>> }> | null = null;
   constructor(private readonly nativeLaunch: ControlLaunch, private readonly nativeOptions: ControlOptions,
     private readonly nativeRequest?: (method: OpenClawMethod, params: Readonly<Record<string, unknown>>) => Promise<unknown>) { super(nativeLaunch, nativeOptions); }
+  protected override get vendorHarness(): "openclaw" { return "openclaw"; }
+  /** The model the session runs: the selection once applied or about to be, else the agent's configured model. */
+  protected override vendorModel(): string | null { return this.appliedModel ?? this.selectedModel ?? this.configuredModel; }
+  /** The bridge puts `[Working directory: <cwd>]` and a blank line before every prompt; the home directory shortens it, so this is the most. */
+  protected override inputOverhead(unit: "chars" | "bytes"): number {
+    const prefix = "[Working directory: " + (this.opened?.cwd ?? "") + "]\n\n";
+    return unit === "bytes" ? Buffer.byteLength(prefix, "utf8") : [...prefix].length;
+  }
+  /** The bridge's working-directory prefix is workspace metadata, not the user's words. */
+  protected override nativeWrapping(replayed: string): UserText {
+    const prefix = CWD_PREFIX.exec(replayed)?.[0];
+    return prefix === undefined ? { user: replayed, stripped: [] } : { user: replayed.slice(prefix.length), stripped: strip([], "workspace_meta", prefix) };
+  }
+  /**
+   * Where this session's transcript stands before a Turn's input (ADR-055 §8.1): its highest sequence number (sessions.get),
+   * read without changing anything; `none` when it cannot be read. Sequence numbers start again after a reset (reset-relative
+   * ordinals, v2026.10.9), which a check recognizes by the reset marker.
+   */
+  async deliveryPosition(id: NativeConversationId): Promise<DeliveryPosition> {
+    this.assertOwned(id);
+    const seq = await this.transcriptSeq();
+    return seq === null ? { kind: "none" } : { kind: "seq", before: seq };
+  }
+  /**
+   * Looks for each packet's title line in the user rows of this session's transcript after its position (sessions.get, the
+   * latest TRANSCRIPT_WINDOW entries), the bridge's working-directory prefix allowed before it: present when one carries it
+   * (a late write after a cancelled prompt counts: the first rows after the position need not be it), compacted when a
+   * compaction marker follows it; absent when the window covers the position and none does; outside_window when a full window
+   * starts after it. After a reset the transcript shows only what followed it and numbers rows anew, so every user row is
+   * searched and an earlier packet is absent. unavailable when the transcript cannot be read. historyEmpty only from a window
+   * that holds the whole transcript; no compaction cursor (OpenClaw's compaction evidence is not verified).
+   */
+  async verifyDelivered(id: NativeConversationId, request: VerifyRequest): Promise<VerifyResult> {
+    const started = Date.now();
+    this.assertOwned(id);
+    if (this.sessionKey === null) return unavailable(request, started);
+    let messages: unknown;
+    try { messages = object(await this.call("sessions.get", { key: this.sessionKey, limit: TRANSCRIPT_WINDOW }), "OpenClaw transcript").messages; } catch { return unavailable(request, started); }
+    if (!Array.isArray(messages)) return unavailable(request, started);
+    const rows = messages.flatMap(value => {
+      const seq = transcriptSeq(value);
+      if (seq === null || value === null || typeof value !== "object") return [];
+      const row = value as Record<string, unknown>, meta = row.__openclaw !== null && typeof row.__openclaw === "object" ? row.__openclaw as Record<string, unknown> : {};
+      return [{ seq, role: row.role, kind: meta.kind, text: typeof row.content === "string" ? row.content : textOf(row) }];
+    }).sort((left, right) => left.seq - right.seq);
+    const reset = rows.some(row => row.role === "system" && row.kind === "reset"), complete = messages.length < TRANSCRIPT_WINDOW, lowest = rows[0]?.seq ?? null;
+    let foreign: number | null = null;
+    const results = request.markers.map((marker, index): MarkerResult => {
+      if (marker.position.kind !== "seq") return "unavailable";
+      const before = marker.position.before, users = rows.filter(row => row.role === "user" && (reset || row.seq > before));
+      const found = users.find(row => carriesPacket(row.text, marker.packetId));
+      if (found !== undefined) {
+        if (index === request.markers.length - 1) foreign = users.filter(row => row.seq > found.seq).length;
+        return rows.some(row => row.kind === "compaction" && row.seq > found.seq) ? "compacted" : "present";
+      }
+      return !complete && (reset || lowest === null || lowest > before + 1) ? "outside_window" : "absent";
+    });
+    return verifyResult(request, results, started, { historyEmpty: request.historyEmpty && complete ? !rows.some(row => row.role === "user" || row.role === "assistant") : null, foreignAfterLast: foreign });
+  }
+  /** The session row's incarnation (sessions.describe `lifecycleRevision`, renewed by every reset); null when it cannot be read. */
+  private async lifecycleRevision(): Promise<string | null> {
+    if (this.sessionKey === null) return null;
+    try {
+      const row = object(await this.call("sessions.describe", { key: this.sessionKey }), "OpenClaw session").session;
+      const revision = row !== null && typeof row === "object" ? (row as Record<string, unknown>).lifecycleRevision : undefined;
+      return typeof revision === "string" && revision && revision.length <= 128 ? revision : null;
+    } catch { return null; }
+  }
   /**
    * The Hub's session key and the configured model. A restored session keeps its own key and so its agent. A new one runs
    * as OpenClaw's own default agent: with a legacy `agents.list` array the file decides (only Gateways that predate keyed
@@ -447,7 +523,8 @@ export class OpenClawControl extends AcpControl {
    * first entry is reported as a diagnostic, and the entries it holds are still reconciled.
    */
   override async startText(id: NativeConversationId, turn: TurnText, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
-    const prompt = singleText(turn);
+    // The words the bridge passes on; a relay Turn's packet is placed by the base driver (one text).
+    const prompt = typeof turn === "string" ? turn : turn.user;
     // Nothing was sent, so this is the Turn's own failure rather than a dispatch with an unknown outcome.
     try { await this.applySelectedModel(); }
     catch (error) { if (error instanceof ControlError) return notSent(error); throw error; }
@@ -457,10 +534,14 @@ export class OpenClawControl extends AcpControl {
       this.unreported = [];
     }
     const before = await this.transcriptSeq();
+    // A `/new` or `/reset` (not soft) is confirmed only by the session's incarnation changing across the Turn (ADR-055 §8.1:
+    // the transcript shows a new session; its sessionId stays, its lifecycleRevision is renewed, v2026.10.9).
+    const reading = attachments.length ? null : openClawRelayCapabilities.commands.classify(prompt, this.announced, []);
+    const clearing = reading?.kind === "command" && reading.effect === "clear", revision = clearing ? await this.lifecycleRevision() : null;
     // What the bridge showed live in this Turn: any reasoning, and each tool call by id as last shown.
     let thought = false;
     const live = new Map<string, ShownTool>();
-    const run = await super.startText(id, prompt, event => {
+    const run = await super.startText(id, turn, event => {
       if (event.type === "thinking") thought = true;
       if (event.type === "tool") live.set(event.id, { title: event.title, status: event.status });
       onEvent(event);
@@ -476,11 +557,15 @@ export class OpenClawControl extends AcpControl {
       const first = messages.reduce<number | null>((lowest, value) => { const seq = transcriptSeq(value); return seq !== null && (lowest === null || seq < lowest) ? seq : lowest; }, null);
       if (messages.length >= TRANSCRIPT_WINDOW && first !== null && first > before + 1)
         onEvent({ type: "diagnostic", message: `OpenClaw transcript window held ${messages.length} entries; ${first - before - 1} earlier entries of this turn were not reconciled` });
-      const turn = messages.filter(value => (transcriptSeq(value) ?? 0) > before), reconciled = reconcileTurn(turn, backend, onEvent, !thought, live);
+      const rows = messages.filter(value => (transcriptSeq(value) ?? 0) > before), reconciled = reconcileTurn(rows, backend, onEvent, !thought, live);
       // The Gateway commits the user turn to this session's transcript (only the Hub writes it) before the model sees it: a
       // user row after the turn began is the input recorded, whatever the turn's outcome. None found leaves it unknown.
-      const recorded = content && turn.some(value => value !== null && typeof value === "object" && (value as { readonly role?: unknown }).role === "user");
+      const recorded = content && rows.some(value => value !== null && typeof value === "object" && (value as { readonly role?: unknown }).role === "user");
       return recorded ? { ...reconciled, input: "recorded" } : backend.input === undefined ? reconciled : { ...reconciled, input: backend.input };
+    }).then(async (settled): Promise<BackendResult> => {
+      if (!clearing || revision === null || settled.status !== "completed") return settled;
+      const after = await this.lifecycleRevision();
+      return after !== null && after !== revision ? { ...settled, native: { cleared: true, replaced: null } } : settled;
     });
     return { result, requestStop: run.requestStop };
   }

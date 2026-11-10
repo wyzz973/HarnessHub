@@ -433,6 +433,11 @@ export interface RelayRequest {
   readonly excludeRuns?: readonly number[]; readonly excludeSections?: readonly SectionId[]; readonly note?: string;
   readonly reveal?: readonly { readonly runId: RunId; readonly ref: string; readonly offset: number; readonly length: number; readonly tag: RedactionTag }[];
   readonly consent?: { readonly vendor: VendorKey; readonly decision: "acknowledged" | "goal_only"; readonly scope: "session" | "global" };
+  /**
+   * The user's ［确认已清空］ on a binding whose clear is unconfirmed (relay-architecture §9, the approval agent's decision of
+   * 2026-11-10): the clear is taken as confirmed (event e at its floor candidate). Only the user's own choice in the chat sets it.
+   */
+  readonly clearConfirmed?: true;
 }
 export const SWITCH_MODES = ["wait_current", "cancel_current"] as const;
 export type SwitchMode = typeof SWITCH_MODES[number];
@@ -478,9 +483,12 @@ export const RELAY_PREF_VALUES: Readonly<Record<RelayPrefKey, readonly string[]>
 
 export const RELAY_PREPARE_REASONS = ["render", "render_mismatch", "redaction_failed", "storage", "storage_quota", "target_start", "classification_changed"] as const;
 export const RELAY_UNAVAILABLE_REASONS = ["data_root_in_workspace", "consent_log_full", "recovery_failed"] as const;
+/** Why the next content input needs the user's choice (relay-architecture §9 "需要用户选择"), the cause of RELAY_CHOICE_REQUIRED. */
+export const RELAY_CHOICE_CAUSES = ["delivery_unconfirmed", "verify_required", "marker_absent"] as const;
 export type RelayErrorReason =
   | { readonly code: "RELAY_PREPARE_FAILED"; readonly reason: typeof RELAY_PREPARE_REASONS[number] }
-  | { readonly code: "RELAY_UNAVAILABLE"; readonly reason: typeof RELAY_UNAVAILABLE_REASONS[number] };
+  | { readonly code: "RELAY_UNAVAILABLE"; readonly reason: typeof RELAY_UNAVAILABLE_REASONS[number] }
+  | { readonly code: "RELAY_CHOICE_REQUIRED"; readonly reason: typeof RELAY_CHOICE_CAUSES[number] };
 /**
  * An expected relay failure (INV-35): it fails one Run or one consent command and nothing else. The Store throws it before
  * any statement of the failing write runs, so it never disables the Store; `reason` is the code's closed reason.
@@ -557,7 +565,13 @@ export interface RelayStorePort {
   deleteSession(id: SessionId): void;
   /** The Session's delivery rows in Run order. */
   relayDeliveries(id: SessionId): readonly DeliveryRecord[];
+  /** The manifests of the packets the Session keeps (G068 phase two: the range, text digest and epoch a check reads). */
+  relayPackets(id: SessionId): readonly RelayPacket[];
+  /** The Session's digest index rows (every policy version), as plain objects; the migration's are RelayBehindIndex. */
+  relayIndex(id: SessionId): readonly RelayIndexRow[];
 }
+/** One row of relay_digests' narrow index (relay-architecture §14.1): which Run, under which policy, and its index object. */
+export interface RelayIndexRow { readonly runId: RunId; readonly policyVersion: PolicyVersion; readonly status: typeof DIGEST_STATUSES[number]; readonly index: Readonly<Record<string, unknown>> }
 /** The installation's relay log, windows and preferences (relay-architecture §3.1, §14.1). */
 export interface RelayLogPort {
   /**

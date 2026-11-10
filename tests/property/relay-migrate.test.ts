@@ -136,7 +136,13 @@ async function play(w: World, id: SessionId, random: () => number, steps: number
 }
 /** The v12 snapshot a v12 build would hold: the v13 relay state taken away. */
 function v12(state: SessionSnapshot): SessionSnapshot {
-  return parseSession({ ...state, schemaVersion: 12, ...(state.nativeBindings === undefined ? {} : { nativeBindings: state.nativeBindings.map(({ relay: _relay, ...binding }) => binding) }) });
+  // Since G068 phase two the Runtime also writes each Run's relay and its v13 phases (contextReadyAt, recordedAt); v12 has none.
+  const { relayRecoveryFailed: _failed, ...rest } = state;
+  return parseSession({ ...rest, schemaVersion: 12, runs: state.runs.map(({ relay: _relay, relayRequest: _request, ...run }) => {
+    if (run.timing === undefined) return run;
+    const { contextReadyAt: _ready, recordedAt: _recorded, ...timing } = run.timing;
+    return { ...run, timing };
+  }), ...(state.nativeBindings === undefined ? {} : { nativeBindings: state.nativeBindings.map(({ relay: _relay, ...binding }) => binding) }) });
 }
 /** The event data G067 added (2026-11-03), taken away: what an older v12 build wrote. */
 function older(event: MigrationEvent): MigrationEvent {
@@ -283,10 +289,13 @@ test("G066-C02 before G067 a command moved the position past what it owed: the n
   db.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify({ ...stored, nativeBindings: stored.nativeBindings!.map(binding => binding.harnessId === "alpha" ? { ...binding, throughRunId: command.id } : binding) }), id);
   db.close();
   await to("bravo", "to-b2"); await send("b3", "b3"); await to("alpha", "to-a2"); await send("a4", "a4");
-  const state = v12(w.store.get(id)), runs = state.runs, a4 = runs.at(-1)!;
-  assert.deepEqual(a4.sourceRunIds, [runs.find(run => run.input === "b3")!.id], "the packet carried only what came after the command");
+  const state = v12(w.store.get(id)), runs = state.runs, a4 = runs.at(-1)!, b3 = runs.find(run => run.input === "b3")!.id;
+  // The v13 Runtime (G068 phase two) owes by the watermark, not the position, so its a4 carried bravo's three Turns; the build
+  // before G067 carried only what came after the command, which its events say: a4's run.context_prepared is written as it was.
+  assert.deepEqual(a4.sourceRunIds, ["b1", "b2", "b3"].map(input => runs.find(run => run.input === input)!.id), "v13 carries what alpha is owed");
   await app.close();
-  const events = all(w.store, id).map(event => ({ seq: event.seq, type: event.type, data: event.data }));
+  const events = all(w.store, id).map(event => ({ seq: event.seq, type: event.type,
+    data: event.type === "run.context_prepared" && event.data.runId === a4.id ? { ...event.data, sourceRunIds: [b3] } : event.data }));
   for (const legacy of [false, true]) {
     const migrated = migrateSession(state, legacy ? events.map(older) : events);
     check("D1 before G067" + (legacy ? " (pre-G067 events)" : ""), state, migrated.bindings, migrated.runs, w.harness.truth);
