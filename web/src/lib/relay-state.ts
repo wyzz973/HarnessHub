@@ -263,8 +263,9 @@ export type RelayLine =
 /**
  * What the message box's line says about the next message. Nothing while a Turn runs or a change waits (what is owed is
  * being settled), nothing when there is nothing to hand over. After a confirmed clear it offers the history back once, and
- * stays until the next message is sent. What is owed is the Gateway's count when it gives one (a Harness with a native session here
- * has it), and the page's own count of the Turns the Harness is not known to hold when it gives none (the first hand-over to it).
+ * stays until the next message is sent. What is owed is the Gateway's count when it keeps a native session for the Harness here (absent
+ * means nothing: its floors and its clears are the Gateway's to know), and the page's own count of the Turns the Harness is not known to
+ * hold when it keeps none (the first hand-over to a Harness that never ran in this conversation).
  */
 export function relayLine(session: SessionView, view: RelayView | null): RelayLine | null {
   if (view === null || session.status !== "open" || session.activeRunId !== null || session.pendingSwitchId !== null || session.runs.length === 0) return null;
@@ -272,7 +273,8 @@ export function relayLine(session: SessionView, view: RelayView | null): RelayLi
   const target = { harnessId: session.selection.harnessId, controlId: session.selection.controlId };
   const binding = view.bindings.find(item => item.harnessId === target.harnessId && item.controlId === target.controlId);
   if (binding !== undefined && binding.sync === "fresh" && binding.cleared > 0 && session.runs.some(dispatched)) return { kind: "cleared" };
-  const runs = binding?.owed?.runs ?? owedRuns(session.runs, target, binding).length;
+  // The Gateway keeps a native session for the Harness: what it says is owed is the word (its floors and clears are not the page's to know).
+  const runs = binding !== undefined ? binding.owed?.runs ?? 0 : owedRuns(session.runs, target, binding).length;
   if (runs === 0) return null;
   return { kind: "owed", runs, tokens: binding?.owed?.estTokens ?? null, unverified: binding !== undefined && !binding.probed, service: binding?.vendor ?? null };
 }

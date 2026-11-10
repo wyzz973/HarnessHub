@@ -96,6 +96,9 @@ function relayView(overrides: { readonly packets?: readonly Record<string, unkno
   ], packets: overrides.packets ?? [] };
 }
 interface RelayWire { bindings: readonly Record<string, unknown>[]; packets: readonly Record<string, unknown>[]; dataRootExposed?: true }
+/** Claude Code's binding, which holds everything it ran itself; with no binding of Codex's, a conversation that was switched to Codex and sent nothing to it. */
+const CLAUDE_BOUND = { harnessId: "claude", controlId: "claude-native", nativeEpoch: 1, sync: "synced", throughRun: 0, evidence: "native", cleared: 0, probed: true };
+const NO_CODEX = (): RelayWire => relayView({ bindings: [CLAUDE_BOUND] });
 const packetRow = (delivery: string, evidence: string | null, extra: Record<string, unknown> = {}) => ({ packetId: PACKET, runId: "run-2", runIndex: 1, number: 1, kind: "packet", tier: "standard", target: { harnessId: "codex", model: "gpt-6.1-sol" },
   estTokens: 1700, omissions: 3, redactions: 1, delivery, evidence, ...extra });
 
@@ -570,10 +573,11 @@ test("G073 consent, an unverified Harness, a missing room and an unavailable rel
 
 test("G073 the line above the box says what will be handed over and asks for nothing; the first hand-over to a Harness says where the history goes in the same line", async t => {
   // The conversation went to Codex; nothing was sent to it yet, so the Turn Claude Code ran is owed to it.
-  const { gateway, page, errors, log, composer } = await open(t, conversation("none"));
+  const { gateway, page, errors, log, composer } = await open(t, conversation("none"), { view: NO_CODEX() });
   const card = page.locator(".relay-card");
-  // The first hand-over to this Harness: one line, nothing to press but the choice not to hand the history over, and no card.
-  await expect(card).toHaveText("这条消息会附上之前的对话记录交给 Codex · 可在设置里改为每次询问未经真机验证只发这条消息");
+  // The first hand-over to this Harness (the Gateway keeps no session of Codex's here yet, so it is the page that counts the Turns):
+  // one line, nothing to press but the choice not to hand the history over, and no card.
+  await expect(card).toHaveText("这条消息会附上之前的对话记录交给 Codex · 可在设置里改为每次询问只发这条消息");
   await expect(card).toHaveAttribute("data-relay", "intro");
   await expect(page.locator(".relay-intro")).toHaveCount(0);
   await expect(card.getByRole("button")).toHaveText(["只发这条消息"]);
@@ -586,11 +590,11 @@ test("G073 the line above the box says what will be handed over and asks for not
   await composer.press("Enter");
   await expect.poll(() => gateway.posted.length).toBe(1);
   assert.equal("relay" in gateway.posted[0]!, false);
-  await expect(card).toHaveText("将交给 Codex：1 轮未经真机验证只发这条消息");
+  await expect(card).toHaveText("将交给 Codex：1 轮只发这条消息");
   await expect(card).toHaveAttribute("data-relay", "owed");
   // Remembered by this browser: Codex is not told of again after a reload, while the line itself stays.
   await page.reload();
-  await expect(card).toHaveText("将交给 Codex：1 轮未经真机验证只发这条消息");
+  await expect(card).toHaveText("将交给 Codex：1 轮只发这条消息");
   await shoot(page, "owed-line");
 
   // The Gateway's own estimate, when it gives one, is shown as an estimate; otherwise nothing is made up.
@@ -605,8 +609,8 @@ test("G073 the line above the box says what will be handed over and asks for not
     { harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "synced", throughRun: 0, evidence: "E1", cleared: 0, probed: true }] });
   gateway.announce();
   await expect(card).toHaveCount(0);
-  gateway.view = relayView(); gateway.announce();
-  await expect(card).toHaveText("将交给 Codex：1 轮未经真机验证只发这条消息");
+  gateway.view = NO_CODEX(); gateway.announce();
+  await expect(card).toHaveText("将交给 Codex：1 轮只发这条消息");
 
   // "只发这条消息" is a choice for the next message only: it says what it costs, and the next send goes without the history.
   const alone = card.getByRole("button", { name: "只发这条消息", exact: true });
@@ -629,8 +633,8 @@ test("G073 the line above the box says what will be handed over and asks for not
 
 test("G073 the first hand-over says where the history goes only while hand-overs are allowed, and names the service when the Gateway knows it", async t => {
   // Asking each time is the setting: a refusal will say it, not this line.
-  const asking = await open(t, conversation("none"), { prefs: "ask" });
-  await expect(asking.page.locator(".relay-card")).toHaveText("将交给 Codex：1 轮未经真机验证只发这条消息");
+  const asking = await open(t, conversation("none"), { prefs: "ask", view: NO_CODEX() });
+  await expect(asking.page.locator(".relay-card")).toHaveText("将交给 Codex：1 轮只发这条消息");
   assert.deepEqual(asking.errors, []);
   // The service the Harness was last seen on, when it is a named one.
   const named = await open(t, conversation("none"), { view: relayView({ bindings: [
@@ -1236,7 +1240,9 @@ test("G073 the hand-over line follows the evidence: every state, and what each s
 test("G073 what is owed to the Harness the conversation is on, and what a clear leaves", () => {
   const line = (session: FakeSession, wire: RelayWire | null) => relayLine(typed(session), viewOf(wire));
   // Claude Code's Turn is owed to Codex, which has no session here yet: its Turns are counted by the page.
-  assert.deepEqual(line(conversation("none"), relayView()), { kind: "owed", runs: 1, tokens: null, unverified: true, service: null });
+  assert.deepEqual(line(conversation("none"), NO_CODEX()), { kind: "owed", runs: 1, tokens: null, unverified: false, service: null });
+  // The Gateway keeps a session of Codex's and says nothing is owed to it: that is the word (its floors and clears are its to know), not the page's count.
+  assert.equal(line(conversation("none"), relayView()), null);
   // Once the Harness has a session here the Gateway's count and estimate are the ones shown, and the service it runs on when it is named.
   const estimated = relayView({ bindings: [{ harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "fresh", throughRun: null, evidence: null, cleared: 0, probed: true, vendor: "openai", owed: { runs: 3, estTokens: 1700 } }] });
   assert.deepEqual(line(conversation("none"), estimated), { kind: "owed", runs: 3, tokens: 1700, unverified: false, service: "openai" });

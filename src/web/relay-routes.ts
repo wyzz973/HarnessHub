@@ -323,8 +323,12 @@ export class RelayApi {
       const vendor = asked.options.includes("acknowledge") ? vendorKeyOf(declared, binding.harnessId, relay.vendorObserved ?? null) : undefined;
       attention = { cause: asked.cause, options: asked.options, counts: asked.counts, key: asked.key, ...(packet === undefined ? {} : { packet }), ...(vendor === undefined ? {} : { vendor }) };
     }
+    // A clear raises the epoch within the native session it cleared; one that replaced the native session (Claude Code's, which gives up the
+    // old one) raises none in the new one, and the fresh state it left says it was a clear.
+    const clears = Math.max(0, relay.nativeEpoch - heldSince(relay, snapshot.nativeBindings ?? [], binding.harnessId, binding.controlId));
+    const cleared = clears === 0 && relay.sync.kind === "fresh" && relay.sync.basis === "user_cleared" ? 1 : clears;
     return { harnessId: binding.harnessId, controlId: binding.controlId, nativeEpoch: relay.nativeEpoch, sync: relay.sync.kind, throughRun: this.throughRun(snapshot, mark),
-      evidence: mark?.evidence ?? null, cleared: Math.max(0, relay.nativeEpoch - heldSince(relay, snapshot.nativeBindings ?? [], binding.harnessId, binding.controlId)), probed,
+      evidence: mark?.evidence ?? null, cleared, probed,
       ...(canConfirm === undefined ? {} : { canConfirm }), ...(named === undefined ? {} : { vendor: named }),
       ...(need === undefined || need.runIds.length === 0 ? {} : { owed: { runs: need.runIds.length, estTokens: this.estimate(snapshot, need) } }),
       ...(attention === undefined ? {} : { attention }) };

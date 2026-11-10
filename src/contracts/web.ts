@@ -311,7 +311,10 @@ export interface RelayBindingView {
   readonly throughRun: number | null;
   /** What the mark stands on (E1, E2, E3, legacy, origin, native, choice); null when there is no mark. */
   readonly evidence: EvidenceClass | null;
-  /** How many times this native session was cleared (a confirmed clear raises the epoch in place). */
+  /**
+   * How many times this native session was cleared (a confirmed clear raises the epoch in place); a fresh native session that a clear
+   * left, because the Harness gave up the one it cleared (Claude Code), counts the clear that made it.
+   */
   readonly cleared: number;
   /** Whether the Driver's relay mechanisms were proved on a real Harness; false also when the Driver declares none. */
   readonly probed: boolean;

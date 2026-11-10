@@ -810,6 +810,9 @@ test("the read model over rows made by hand: every sync state, each delivery out
       binding("charlie", relayState(1, { kind: "fresh", basis: "new" })),
       binding("delta", relayState(2, { kind: "suspect", mark: mark(21, "native", null), cause: "rewind", floorCandidate: null, carried: null, rewound: false }), "unconfirmed"),
       binding("echo", relayState(1, { kind: "synced", mark: { throughSeq: 0, chain: hex("e"), lastPacketId: null, evidence: "origin", basis: "origin" } })),
+      // A native session the Harness gave up when it cleared it (Claude Code's synthesized clear): the new one is in the next epoch and fresh.
+      binding("foxtrot", relayState(1, { kind: "synced", mark: mark(10, "native", null) }), "archived"),
+      binding("foxtrot", relayState(2, { kind: "fresh", basis: "user_cleared" }), "ready"),
     ] };
   const ends = [10, 20, 30, 40, 50].map((seq, index) => sessionEvent(id, seq, "run.ended", { runId: runs[index]!.id }));
   const events = [...ends, sessionEvent(id, 51, "run.native_command", { runId: runs[4]!.id })];
@@ -821,7 +824,7 @@ test("the read model over rows made by hand: every sync state, each delivery out
     http: { json: () => { throw new Error("no HTTP here"); }, headers: () => {}, queries: () => {}, body: async () => { throw new Error("no HTTP here"); } } });
   const model = api.view(snapshot);
   const bindings = new Map<string, RelayBindingView[]>(); for (const item of model.bindings) bindings.set(item.harnessId, [...bindings.get(item.harnessId) ?? [], item]);
-  assert.deepEqual(model.bindings.map(item => item.harnessId), ["alpha", "bravo", "charlie", "delta", "echo"], "an archived binding is not listed");
+  assert.deepEqual(model.bindings.map(item => item.harnessId), ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"], "an archived binding is not listed");
   // `canConfirm` follows the Driver's declaration (the Codex Driver records and can be asked; none declared cannot confirm); nothing is owed here
   // that the marks do not leave out, so only the bindings whose marks fall behind the Runs of other Harnesses are owed anything.
   const plainView = (item: RelayBindingView) => { const { owed: _owed, attention: _attention, ...rest } = item; return rest; };
@@ -831,6 +834,8 @@ test("the read model over rows made by hand: every sync state, each delivery out
   assert.deepEqual(bindings.get("charlie")!.map(plainView), [{ harnessId: "charlie", controlId: "charlie-acp", nativeEpoch: 1, sync: "fresh", throughRun: null, evidence: null, cleared: 0, probed: false, canConfirm: false }], "a Driver that declares none is not probed, and nothing it does can confirm a delivery");
   assert.deepEqual(bindings.get("delta")!.map(plainView), [{ harnessId: "delta", controlId: "delta-acp", nativeEpoch: 2, sync: "suspect", throughRun: 1, evidence: "native", cleared: 1, probed: false, canConfirm: false }], "a suspect binding still says where it last stood");
   assert.deepEqual(bindings.get("echo")!.map(plainView), [{ harnessId: "echo", controlId: "echo-acp", nativeEpoch: 1, sync: "synced", throughRun: null, evidence: "origin", cleared: 0, probed: false, canConfirm: false }], "the history a Session started from covers no Run");
+  assert.deepEqual(bindings.get("foxtrot")!.map(plainView), [{ harnessId: "foxtrot", controlId: "foxtrot-acp", nativeEpoch: 2, sync: "fresh", throughRun: null, evidence: null, cleared: 1, probed: false, canConfirm: false }],
+    "a native session a clear left is fresh and counts the clear that made it, though no epoch was raised within it");
   for (const item of model.bindings) assert.equal(item.attention, undefined, "the Runtime was not asked, and says nothing of what a binding asks");
   assert.equal(bindings.get("alpha")![0]!.owed, undefined, "alpha holds everything of the Runs that ended before its mark");
   // One entry per Run that carried a packet whose text is kept, numbered by the Runs that carried one; an untracked packet is unknown.

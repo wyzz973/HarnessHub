@@ -89,6 +89,7 @@ RUN node dist/tests/real/guard.js compare "$EVIDENCE/guard-before.json" "$EVIDEN
 - **目录快照**只记顶层条目的名称、类型（文件、目录、链接、其他）与链接目标，以及链接数；不进入子目录，不读内容。Finder 的 `.DS_Store` 不计。
 - **不在守护范围内的：** 会话、转录、日志、缓存、遥测、备份目录（运行 Harness 时它们本来就会写这些）；技能目录里的内容；Hermes 的 `active_profile` 本身（只用来定位 Hermes 的家目录）。
 - 配置文件本身是符号链接时，快照记链接目标，并比较它指向的内容；文件被替换成指向同样内容的链接，或链接改指别处，都算改动。
+- **不要在私有工作区里写 `.codex/config.toml`。** Codex 会把含有这个文件的目录登记进用户的 `~/.codex/config.toml`（一个以该目录为名的 `[projects]` 条目，`trust_level = "trusted"`），而这正是守护要求不许改的文件。2026-11-10 的接力探针（P14 的夹具）因此在该文件第 175 行起留下了两行指向已删除临时目录的条目，按本手册没有自行恢复，留给用户处理（[记录](../verification/relay-conformance.md)）。需要给 Codex 放项目配置的夹具，把它放进 `CODEX_HOME` 指向的私有目录，不要写进工作区。
 
 ### 2.4 凭据拒绝
 
