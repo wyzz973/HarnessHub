@@ -358,6 +358,25 @@ export function slashModelKey(model: string | null): string {
   const last = model.trim().split("/").at(-1) ?? "";
   return bounded(undecorated(last));
 }
+/** A JSON array text longer than this is not parsed: a model the observation keeps is far shorter (MAX_RELAY_MODEL_BYTES). */
+const MODEL_ARRAY_BYTES = 1024;
+/**
+ * DeepSeek Harness's model key. dsh reports its model as a JSON array text of the provider and the model, such as
+ * `["deepseek-official","deepseek-v4-flash"]`, and the model that runs is the array's last item (probe record 2026-11-10, F8:
+ * the key was that whole text). The last item goes through slashModelKey; an array whose last item is no string (an empty array,
+ * a number, null, an object or a nested array) names no model: "". Any other text, invalid JSON and a non-array included, is
+ * read as slashModelKey reads it.
+ */
+export function dshModelKey(model: string | null): string {
+  if (model === null) return "";
+  const text = model.trim();
+  if (text.startsWith("[") && text.endsWith("]") && Buffer.byteLength(text) <= MODEL_ARRAY_BYTES) {
+    let parsed: unknown;
+    try { parsed = JSON.parse(text); } catch { return slashModelKey(model); }
+    if (Array.isArray(parsed)) { const last = parsed.at(-1); return typeof last === "string" ? slashModelKey(last) : ""; }
+  }
+  return slashModelKey(model);
+}
 /**
  * Hermes's model key: its models are `<provider>:<model>` (server.py `_encode_model_choice`), so the provider before the
  * first colon goes, then any `/` path, then the decorations; "" for null, an empty result or one over 96 bytes.

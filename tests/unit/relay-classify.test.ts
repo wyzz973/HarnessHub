@@ -64,18 +64,35 @@ test("G069-C03 Hermes: lstrip() of Python whitespace (half-width, U+3000, U+00A0
   ]);
 });
 
-test("G069-C03 Claude Code: leading whitespace stripped, any command name runs listed or not (unlistedSlash executed), hidden /clear aliases; a slash path is content", () => {
+test("G069-C03 Claude Code: a command only with the slash as the first character (the CLI strips nothing), a word outside the catalog is words (unlistedSlash text) except the hidden /clear aliases; a slash path is content", () => {
   const classify = claudeRelayCapabilities.commands.classify, catalog = entries(["compact", "compact"], ["export", "none"], ["review", "keep"]);
   check(classify, [
-    { rule: "leading whitespace, half-width and full-width", read: [["  /clear", null, [], ["command", "clear", "clear", ""]], ["　/clear", null, [], ["command", "clear", "clear", ""]],
-      ["\n/reset", null, [], ["command", "reset", "clear", ""]]], not: ["​/clear", null, [], ["content"]] },
+    // G074-F1 (probe record 2026-11-10, Claude Code 2.1.316 behind claude-agent-acp 0.99.1): the CLI ran no command for " /context"
+    // or "　/context" but called the model with the text, so nothing before the slash is stripped. The driver abandons the native
+    // session for a /clear it reads, so a misread would lose the user's context.
+    { rule: "leading whitespace makes the whole input words: half-width, full-width, tab, line break", read: [[" /clear", null, [], ["content"]], ["  /clear", null, [], ["content"]], ["　/clear", null, [], ["content"]],
+      ["\t/clear", null, [], ["content"]], ["\n/reset", null, [], ["content"]], ["\r\n/new", null, [], ["content"]], [" /compact", catalog, [], ["content"]], ["　/remote-control", null, [], ["content"]]],
+      not: ["/clear", null, [], ["command", "clear", "clear", ""]] },
+    // The four whitespace kinds the brief names (and two mixes) against /clear, /reset, /new and /compact: all words, none a command.
+    { rule: "every whitespace kind before every clear alias and /compact is words", read: [" ", "  ", "　", "\t", "\n", "\r\n", " \t　", "\u00a0"].flatMap(space => ["/clear", "/reset", "/new", "/compact"]
+      .map((word): [string, RelayCatalog, readonly ContentKind[], Reading] => [space + word, catalog, [], ["content"]])), not: ["/compact", catalog, [], ["command", "compact", "compact", ""]] },
+    // A zero-width space or a byte-order mark is no slash either (the old trimStart() stripped the mark, and ran the clear).
+    { rule: "a zero-width space or a byte-order mark first is words", read: [["\u200b/clear", null, [], ["content"]], ["\ufeff/clear", null, [], ["content"]]], not: ["/clear", null, [], ["command", "clear", "clear", ""]] },
+    { rule: "with the slash first, trailing whitespace and arguments belong to the command", read: [["/clear", null, [], ["command", "clear", "clear", ""]], ["/clear   ", null, [], ["command", "clear", "clear", ""]],
+      ["/clear foo", null, [], ["command", "clear", "clear", "foo"]], ["/reset\n", null, [], ["command", "reset", "clear", ""]], ["/new\tnow ", null, [], ["command", "new", "clear", "now"]]],
+      not: [" /clear foo", null, [], ["content"]] },
     { rule: "hidden commands", read: [["/new", null, [], ["command", "new", "clear", ""]], ["/remote-control now", catalog, [], ["command", "remote-control", "none", "now"]]],
       not: ["/newer", null, [], ["possible_command", "newer"]] },
     { rule: "a path is content", read: [["/Users/me/notes.md 看看这个", null, [], ["content"]], ["/etc/hosts", catalog, [], ["content"]]], not: ["/Users", null, [], ["possible_command", "Users"]] },
-    { rule: "unlisted names run (unknown effect); listed ones have theirs", read: [["/my-command", catalog, [], ["command", "my-command", "unknown", ""]],
+    // G074-F3 (probe record 2026-11-10): "/zzprobe-unlisted hello" called the model, so a word the catalog does not list is words
+    // (unlistedSlash text); the commands the CLI runs although the adapter lists none are the hidden ones above. Without a
+    // catalog a slash word may still be a command the catalog lists (possible_command), so it carries no packet yet (B9).
+    { rule: "a word outside the catalog is words; a listed one has its effect", read: [["/my-command", catalog, [], ["content"]], ["/zzprobe-unlisted hello", catalog, [], ["content"]],
       ["/compact keep the plan", catalog, [], ["command", "compact", "compact", "keep the plan"]]], not: ["/review now", catalog, [], ["command", "review", "keep", "now"]] },
+    { rule: "without a catalog a slash word is a possible command, a hidden one is a command", read: [["/my-command", null, [], ["possible_command", "my-command"]], ["/clear", null, [], ["command", "clear", "clear", ""]]],
+      not: ["/my-command", catalog, [], ["content"]] },
     // The CLI looks for a command only in the last block, an attachment's when there is one (G069 fix batch, review I6).
-    { rule: "with an image or a file every input is content", read: [["/export", catalog, ["file"], ["content"]], ["/clear", null, ["image"], ["content"]], ["  /remote-control", catalog, ["file", "image"], ["content"]],
+    { rule: "with an image or a file every input is content", read: [["/export", catalog, ["file"], ["content"]], ["/clear", null, ["image"], ["content"]], ["/remote-control", catalog, ["file", "image"], ["content"]],
       ["/clear", null, ["audio", "file"], ["content"]], ["/clear", null, ["image", "audio"], ["content"]]],
       not: ["/export", catalog, [], ["command", "export", "none", ""]] },
     // claude-agent-acp drops audio blocks (0.99.1 promptToClaude, acp-agent.js:10384-10386), so the words are the last block
@@ -83,6 +100,9 @@ test("G069-C03 Claude Code: leading whitespace stripped, any command name runs l
     { rule: "audio alone leaves the input as it reads without attachments", read: [["/clear", null, ["audio"], ["command", "clear", "clear", ""]], ["/export", catalog, ["audio", "audio"], ["command", "export", "none", ""]],
       ["/review", null, ["audio"], ["possible_command", "review"]]], not: ["/clear", null, ["audio", "image"], ["content"]] },
   ]);
+  // The declaration says what the reading does: a word outside the catalog is text, and the four the CLI runs unlisted are hidden.
+  assert.equal(claudeRelayCapabilities.commands.unlistedSlash, "text");
+  assert.deepEqual(claudeRelayCapabilities.commands.hidden.map(entry => [entry.name, entry.effect]), [["clear", "clear"], ["reset", "clear"], ["new", "clear"], ["remote-control", "none"]]);
 });
 
 test("G069-C03 Codex: exactly /export, /compact and a listed /skill: (which takes relay content); no lstrip, every other slash input is text (unlistedSlash text)", () => {

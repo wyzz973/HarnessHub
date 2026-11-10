@@ -121,11 +121,15 @@ function diagnostics(events: readonly ControlEvent[]): readonly string[] { retur
 
 test("G067-C03 Claude Code: its own refusal is not recorded, a prompt it stopped after writing it is recorded, a lost outcome is unknown and sent once", async t => {
   const f = await peers(t);
-  // /remote-control is refused by the driver itself (leading whitespace included, as Claude Code reads it): nothing is sent.
+  // /remote-control is refused by the driver itself where Claude Code reads it as a command, the slash as the first character: nothing is sent.
   const refused = f.launch("acp-v1", { RELAY_PROMPT: "answer" });
-  const remote = await turn(new ClaudeControl(refused.launch, options), "  /remote-control");
+  const remote = await turn(new ClaudeControl(refused.launch, options), "/remote-control");
   assert.equal(remote.result.input, "not_recorded"); assert.equal(remote.result.error?.code, "NATIVE_COMMAND_UNAVAILABLE");
   assert.equal(await refused.received("session/prompt"), 0);
+  // Behind a space it is words (the CLI strips nothing, G074-F1): sent as typed, and its answer proves it recorded.
+  const spaced = f.launch("acp-v1", { RELAY_PROMPT: "answer" });
+  const words = await turn(new ClaudeControl(spaced.launch, options), "  /remote-control");
+  assert.deepEqual([words.result.status, words.result.input], ["completed", "recorded"]); assert.deepEqual(await spaced.prompts(), ["  /remote-control"]);
   // The Hub's own /export reads Claude Code's record and sends nothing either.
   const exporting = f.launch("acp-v1", { RELAY_PROMPT: "answer", CLAUDE_CONFIG_DIR: join(f.root, "no-claude-config") });
   const exported = await turn(new ClaudeControl(exporting.launch, options), "/export", undefined, true);
@@ -320,10 +324,14 @@ test("G067 Hermes: a slash word in neither its registry copy nor its catalog is 
 
 test("G067 R0d each driver's own handling of an input follows its reading: leading whitespace and attachments decide the Hub's /export, Codex's thread operations and OpenCode's /compact alike", async t => {
   const f = await peers(t), file = await attachment(f.root, "notes.txt");
-  // Claude Code reads `  /export` as /export, so the Hub's export runs and nothing is sent; with an attachment it goes to Claude
-  // Code, which reads it as content (the CLI looks for a command only in the last block, the attachment's).
+  // Claude Code reads `/export` as /export, so the Hub's export runs and nothing is sent; behind a space it is words and goes to
+  // Claude Code (the CLI strips nothing, G074-F1); with an attachment it goes to Claude Code too, which reads it as content (the
+  // CLI looks for a command only in the last block, the attachment's).
   const claudeExport = f.launch("acp-v1", { RELAY_PROMPT: "answer", CLAUDE_CONFIG_DIR: join(f.root, "no-claude-config") });
-  assert.equal((await turn(new ClaudeControl(claudeExport.launch, options), "  /export", undefined, true)).result.input, "not_recorded"); assert.equal(await claudeExport.received("session/prompt"), 0);
+  assert.equal((await turn(new ClaudeControl(claudeExport.launch, options), "/export", undefined, true)).result.input, "not_recorded"); assert.equal(await claudeExport.received("session/prompt"), 0);
+  const claudeSpaced = f.launch("acp-v1", { RELAY_PROMPT: "answer", CLAUDE_CONFIG_DIR: join(f.root, "no-claude-config") });
+  const spacedExport = await turn(new ClaudeControl(claudeSpaced.launch, options), "  /export", undefined, true);
+  assert.deepEqual([spacedExport.result.status, spacedExport.result.input], ["completed", "recorded"]); assert.deepEqual(await claudeSpaced.prompts(), ["  /export"]);
   const claudeAttached = f.launch("acp-v1", { RELAY_PROMPT: "answer" }), claude = new ClaudeControl(claudeAttached.launch, options);
   try {
     await claude.initialize(); const id = await claude.open(process.cwd()), catalog = await claude.models();
@@ -356,14 +364,17 @@ test("G067 R0d each driver reads an input as its native side parses it: whitespa
   const listed = (...commands: readonly [string, ContextEffect][]): NativeModelCatalog => ({ models: [], defaultModel: null, authentication: "ready", canSelect: false,
     commands: commands.map(([name, contextEffect]) => ({ name, description: name, contextEffect })) });
   const read = (driver: HarnessControl, text: string, catalog: NativeModelCatalog | null = null, attachments: readonly ContentKind[] = []) => { const value = driver.classify!(text, catalog, attachments); return value.kind === "command" ? [value.kind, value.name, value.effect, value.args] : value.kind === "possible_command" ? [value.kind, value.name] : [value.kind]; };
-  // Claude Code: leading whitespace is stripped, a command name is a command listed or not (it runs /clear unlisted), a path is content.
+  // Claude Code: a command only with the slash as the first character (nothing is stripped, G074-F1), a name the catalog lists is a
+  // command and one it does not is words, except the hidden ones (it runs /clear unlisted, G074-F3), a path is content.
   const claude = new ClaudeControl(launch, options);
-  assert.deepEqual(read(claude, "  /clear"), ["command", "clear", "clear", ""]);
+  assert.deepEqual(read(claude, "/clear"), ["command", "clear", "clear", ""]);
+  assert.deepEqual(read(claude, "  /clear"), ["content"]); assert.deepEqual(read(claude, "　/clear"), ["content"]); assert.deepEqual(read(claude, "\n/clear"), ["content"]);
   assert.deepEqual(read(claude, "/remote-control now"), ["command", "remote-control", "none", "now"]);
   assert.deepEqual(read(claude, "/Users/me/notes.md 看看这个"), ["content"]);
   assert.deepEqual(read(claude, "/compact"), ["possible_command", "compact"]);
   assert.deepEqual(read(claude, "/compact keep the plan", listed(["compact", "compact"])), ["command", "compact", "compact", "keep the plan"]);
-  assert.deepEqual(read(claude, "/my-command", listed(["compact", "compact"])), ["command", "my-command", "unknown", ""]);
+  assert.deepEqual(read(claude, "/my-command", listed(["compact", "compact"])), ["content"], "a word outside the catalog is words (G074-F3)");
+  assert.deepEqual(read(claude, "/my-command"), ["possible_command", "my-command"], "without a catalog it waits for one");
   // Codex: exactly the driver's own thread operations, and a skill the catalog lists; leading whitespace is text for Codex.
   const codex = new CodexControl(codexLaunch, options);
   assert.deepEqual(read(codex, "/compact"), ["command", "compact", "compact", ""]); assert.deepEqual(read(codex, " /compact"), ["content"]);

@@ -51,6 +51,58 @@ test("Codex interrupt acknowledgement is separate from cancelled settlement", as
     assert.deepEqual(messages.find(message => message.method === "turn/interrupt").params, { threadId: "thread-fixture", turnId: "turn-1" });
   } finally { await driver.close(); await rm(directory, { recursive: true, force: true }); }
 });
+// G074-F4 (probe record 2026-11-10, Codex 0.166.0): Codex answers turn/start at once, but takes an interrupt only after the user's
+// hooks ran and it reported the turn (turn/started); before that turn/interrupt is refused with -32600 "no active turn to interrupt".
+// The driver used to take that refusal for a protocol failure: the connection broke and the turn's result was lost. It is the
+// answer of a turn that has not begun, not a failure: the stop waits for the turn to begin and interrupts then.
+test("G074-F4 Codex a stop requested before the turn has begun waits for it and interrupts then: the first interrupt is refused (-32600 no active turn), the receipt is the second one's acknowledgement, the result is cancelled, and the connection runs the next turn", { timeout: 30000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-codex-early-stop-")), trace = join(directory, "trace");
+  const driver = control("hooks", { FIXTURE_TRACE: trace });
+  try {
+    const id = await ready(driver), run = await driver.startText(id, "hello hooks", () => {});
+    let settled = false; void run.result.then(() => { settled = true; });
+    const stop = run.requestStop(); assert.equal(run.requestStop(), stop);
+    assert.deepEqual(await stop, { requested: true }); assert.equal(settled, false, "the receipt acknowledges the interrupt; the turn's end is separate");
+    assert.deepEqual(await run.result, { status: "cancelled", reason: "interrupted" });
+    assert.equal(driver.healthy(), true, "the refusal did not break the connection");
+    const interrupts = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line)).filter(message => message.method === "turn/interrupt");
+    assert.ok(interrupts.length >= 2, "refused before the turn began, asked again after: " + interrupts.length);
+    for (const message of interrupts) assert.deepEqual(message.params, { threadId: "thread-fixture", turnId: "turn-1" });
+    // The connection is still the turn's owner: the next turn runs on it.
+    assert.deepEqual(await (await driver.startText(id, "finish this one", () => {})).result, { status: "completed", reason: "completed" });
+    assert.equal((await driver.close()).protocolFailure, null);
+  } finally { await driver.close(); await rm(directory, { recursive: true, force: true }); }
+});
+test("G074-F4 Codex a stop requested before the turn began, for a turn that then ends by itself, ends as \"turn ended before interruption was requested\" and leaves the connection usable", { timeout: 30000 }, async () => {
+  const driver = control("hooks");
+  try {
+    const id = await ready(driver), run = await driver.startText(id, "finish by itself", () => {});
+    await assert.rejects(run.requestStop(), (error: unknown) => error instanceof ControlError && error.code === "INVALID_STATE" && /ended before interruption/.test(error.message));
+    assert.deepEqual(await run.result, { status: "completed", reason: "completed" });
+    assert.equal(driver.healthy(), true);
+    assert.equal((await driver.close()).protocolFailure, null);
+  } finally { await driver.close(); }
+});
+// The invalid samples: only that refusal is the answer of a turn that has not begun; and the wait has an end.
+test("G074-F4 Codex an interrupt refused in other words is still a protocol failure, and a turn Codex never begins is not retried without end: the Run's own deadline ends the wait", { timeout: 30000 }, async () => {
+  const other = control("hooks", { FIXTURE_INTERRUPT_REFUSAL: "turn cannot be interrupted" });
+  try {
+    const id = await ready(other), run = await other.startText(id, "hello hooks", () => {});
+    const lost = assert.rejects(run.result, (error: unknown) => error instanceof ControlError && error.code === "REMOTE_ERROR");
+    await assert.rejects(run.requestStop(), (error: unknown) => error instanceof ControlError && error.code === "REMOTE_ERROR" && error.remoteCode === -32600);
+    await lost; assert.equal(other.healthy(), false);
+  } finally { assert.equal((await other.close()).protocolFailure?.code, "REMOTE_ERROR"); }
+  const directory = await mkdtemp(join(tmpdir(), "gateway-codex-never-begins-")), trace = join(directory, "trace");
+  const never = control("hooks", { FIXTURE_START_MS: "60000", FIXTURE_TRACE: trace }, { runTimeoutMs: 700 });
+  try {
+    const id = await ready(never), run = await never.startText(id, "hello hooks", () => {});
+    const ended = assert.rejects(run.result, /deadline/);
+    await assert.rejects(run.requestStop(), /deadline/);
+    await ended;
+    const interrupts = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line)).filter(message => message.method === "turn/interrupt").length;
+    assert.ok(interrupts >= 2 && interrupts <= 8, "asked again while it waited, not without end: " + interrupts);
+  } finally { assert.equal((await never.close()).closed, true); await rm(directory, { recursive: true, force: true }); }
+});
 test("Codex approvals default to decline and expose permission evidence", async () => {
   const directory = await mkdtemp(join(tmpdir(), "gateway-codex-permission-")), trace = join(directory, "trace");
   const driver = control("permission", { FIXTURE_TRACE: trace });

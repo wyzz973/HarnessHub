@@ -15,7 +15,7 @@ import { recoverRelay } from "../../src/contexts/session/domain/relay/recover.js
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
 import { RelayKeys } from "../../src/infrastructure/session/relay-keys.js";
 import { ControlError } from "../../src/infrastructure/control/json-rpc-process.js";
-import { driver, peerRoot } from "../fixtures/relay-drivers.js";
+import { driver, peerRoot, run } from "../fixtures/relay-drivers.js";
 import { strictRelay } from "../fixtures/relay-settings.js";
 import { claudeRelayCapabilities } from "../../src/adapters/control/claude.js";
 import { codexRelayCapabilities } from "../../src/adapters/control/codex.js";
@@ -491,6 +491,28 @@ test("G072 the Claude Driver maps claude-agent-acp's \"no such session\" (-32002
   await first.close();
   const second = driver(t, "claude", garbage); await second.initialize();
   await assert.rejects(second.open(garbage.workspace, undefined, undefined, id), (error: unknown) => error instanceof ControlError && error.code !== "NATIVE_SESSION_NOT_FOUND");
+});
+
+// G074-F2 (probe record 2026-11-10, EMPTY): the real claude-agent-acp 0.99.1 declares session/resume, and refuses the resume of a
+// session never prompted with -32002 on that method (the test above plays the same refusal on session/load). The mapping is
+// ClaudeControl.open's, around AcpControl.open, whichever of the two the open uses.
+test("G074-F2 the Claude Driver maps \"no such session\" (-32002) on session/resume — the call the real adapter gets — to NATIVE_SESSION_NOT_FOUND as it does on session/load; a prompted session resumes, and another refusal of the call keeps its own code", { timeout: 60000 }, async t => {
+  const peer = await peerRoot(t, { RELAY_RESUME: "1", RELAY_UNPROMPTED_RESUME: "1" });
+  const ahead = driver(t, "claude", peer); await ahead.initialize();
+  const unprompted = await ahead.open(peer.workspace); await ahead.close();
+  const other = driver(t, "claude", peer); await other.initialize();
+  await assert.rejects(other.open(peer.workspace, undefined, undefined, unprompted), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_SESSION_NOT_FOUND");
+  const restoring = (await peer.sent()).flatMap(line => line.method === "session/resume" || line.method === "session/load" ? [line.method] : []);
+  assert.deepEqual(restoring, ["session/resume"], "the open restored by session/resume, the method the adapter declares, and the refusal came on it");
+  // A session the native side has (prompted) resumes through the same call, unmapped and whole.
+  const first = driver(t, "claude", peer); await first.initialize(); const id = await first.open(peer.workspace);
+  assert.equal((await run(first, id, "先说一句")).result.status, "completed"); await first.close();
+  const second = driver(t, "claude", peer); await second.initialize();
+  assert.equal(await second.open(peer.workspace, undefined, undefined, id), id);
+  // Another refusal of session/resume keeps its own code, and an open without a checkpoint is never mapped.
+  const faulty = await peerRoot(t, { RELAY_RESUME: "1", RELAY_RESUME_FAULT: "internal" });
+  const broken = driver(t, "claude", faulty); await broken.initialize();
+  await assert.rejects(broken.open(faulty.workspace, undefined, undefined, "relay-session"), (error: unknown) => error instanceof ControlError && error.code === "REMOTE_ERROR" && error.remoteCode === -32603);
 });
 
 test("G072 step one (A8): the Gateway's own binding factory answers each selection's static declaration synchronously, without starting anything — by the built-in catalog's protocol of the control — and null for a Driver that declares none, a control it cannot place and a managed Provider", t => {

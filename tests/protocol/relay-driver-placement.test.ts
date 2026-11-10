@@ -94,8 +94,10 @@ test("G069-C01 a relay Turn read as a command is refused whole (G069-F1, relay-d
     const { result, events } = await run(control, id, relayTurn(ID_A, words, false));
     return { peer, result, events };
   };
-  for (const [harness, words] of [["claude", "/compact keep the tests"], ["hermes", "　/compress"], ["opencode", "/compact"]] as const) {
-    const { peer, result, events } = await relayed(harness, words);
+  // Claude Code's catalog lists /compact, as the real adapter's does: a word outside the catalog is words for it (G074-F3).
+  const compactListed = { RELAY_COMMANDS: JSON.stringify([{ name: "compact", description: "compact the conversation" }]) };
+  for (const [harness, words, settings] of [["claude", "/compact keep the tests", compactListed], ["hermes", "　/compress", {}], ["opencode", "/compact", {}]] as const) {
+    const { peer, result, events } = await relayed(harness, words, settings);
     assert.deepEqual([result.error?.code, result.input, await prompts(peer), events], ["RELAY_PREPARE_FAILED", "not_recorded", [], []], harness + ": refused, nothing sent");
   }
   // The invalid sample: dsh has no commands, so its `/clear` is text and carries the packet.
@@ -246,6 +248,9 @@ test("G069 relayVendor: each Driver's observation from its own endpoint layers a
   const dsh = await observe("dsh", {}, async (_root, workspace) => { await writeFile(join(workspace, ".env"), "OTHER=1\nDEEPSEEK_BASE_URL=https://g069-relay.example\n"); });
   assert.deepEqual(dsh.observed?.endpoint, { host: "g069-relay.example", layer: "workspace_file" });
   assert.equal(dshRelayCapabilities.resolveVendor(dsh.observed!), "gateway:g069-relay.example");
+  // G074-F8: dsh reports its model as a JSON array text of the provider and the model; the observation keeps the text and keys the model.
+  const array = '["deepseek-official","deepseek-v4-flash"]', dshModel = await observe("dsh", { RELAY_ACP_MODEL: array });
+  assert.deepEqual([dshModel.observed?.model, dshModel.observed?.modelKey, dshRelayCapabilities.resolveVendor(dshModel.observed!)], [array, "deepseek-v4-flash", "deepseek"]);
   // OpenCode keys its endpoint by the model's provider, which this agent does not name: no endpoint, an unknown vendor.
   const opencode = await observe("opencode", {});
   assert.equal(opencode.declaration.resolveVendor(opencode.observed!), "unknown:opencode");

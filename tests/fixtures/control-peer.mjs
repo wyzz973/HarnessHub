@@ -61,6 +61,8 @@ let sessionCwd = null;
 // STEP_APPROVAL_FAILS: once its step is refused, the Turn fails (Hermes answers the prompt with an error) instead of ending.
 let stepFails = false;
 let resumedThread = false;
+// The Codex `hooks` scenario: the turn that has been reported (turn/started) and the one that has ended (completed or interrupted).
+let hooksStarted = 0, hooksEnded = 0;
 // Codex app-server gates experimental methods and fields per connection on initialize.capabilities.experimentalApi.
 let experimental = false;
 let selectedModel = "native-model-a", thinking = "low", fast = "off";
@@ -424,6 +426,21 @@ lines.on("line", line => {
       emit({ id: "unsupported", method: "fixture/unsupported", params: {} });
       pendingPermission = true;
     }
+    // Codex 0.166.0 answers turn/start at once and runs the user's hooks before it reports the turn (turn/started) and takes an
+    // interrupt: until then turn/interrupt is refused with -32600 "no active turn to interrupt" (relay-conformance.md F4).
+    // FIXTURE_START_MS is how long that takes (default 120 ms); a prompt with "finish" in it ends by itself once started, any other
+    // waits for an interrupt (FIXTURE_INTERRUPT_REFUSAL: the words of the refusal, "no active turn to interrupt" by default).
+    if (protocol === "codex-app-server" && scenario === "hooks") {
+      const current = turn;
+      answer(message.id, { turn: { id: `turn-${current}`, status: "inProgress" } });
+      setTimeout(() => {
+        hooksStarted = current;
+        notification("turn/started", { threadId: "thread-fixture", turn: { id: `turn-${current}`, status: "inProgress" } });
+        codexOutput(`turn-${current}`);
+        if (JSON.stringify(message.params.input).includes("finish")) { hooksEnded = current; finish(); }
+      }, Number(process.env.FIXTURE_START_MS ?? 120));
+      return;
+    }
     if (protocol === "codex-app-server") {
       if (resumedThread) notification("thread/tokenUsage/updated", { threadId: "thread-fixture", turnId: "previous-native-turn", tokenUsage: {} });
       notification("turn/started", { threadId: "thread-fixture", turn: { id: `turn-${turn}`, status: "inProgress" } });
@@ -628,6 +645,11 @@ lines.on("line", line => {
     return;
   }
   if (message.method === "session/cancel" || message.method === "turn/interrupt") {
+    // hooks: before the turn is reported, and once it has ended, there is no active turn to interrupt.
+    if (scenario === "hooks" && message.method === "turn/interrupt") {
+      if (hooksStarted !== turn || hooksEnded === turn) { emit({ id: message.id, error: { code: -32600, message: process.env.FIXTURE_INTERRUPT_REFUSAL ?? "no active turn to interrupt" } }); return; }
+      hooksEnded = turn;
+    }
     if (message.method === "turn/interrupt") answer(message.id, {});
     // A program that never settles its turn after a stop request: only ending its process ends the turn.
     if (scenario === "ignore-cancel") return;

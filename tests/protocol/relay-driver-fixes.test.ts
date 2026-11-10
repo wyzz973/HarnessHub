@@ -40,6 +40,8 @@ function refused(result: BackendResult, label: string): void {
     { status: "failed", reason: "classification_changed", input: "not_recorded", error: { code: "RELAY_PREPARE_FAILED" } }, label);
   assert.ok((result.error?.message.length ?? 0) > 0, label + ": says why");
 }
+/** The peer announces `/compact`, as claude-agent-acp lists it. */
+const COMPACT_LISTED = { RELAY_COMMANDS: JSON.stringify([{ name: "compact", description: "compact the conversation" }]) };
 const fileIn = async (peer: Peer, name = "notes.txt"): Promise<ControlAttachment> => {
   const path = join(peer.root, name); await writeFile(path, "notes");
   return { id: contentId("content-g069fix" + name.replace(/[^a-z]/gu, "")), name, mediaType: "text/plain", kind: "file", bytes: 5, sha256: "0".repeat(64), path };
@@ -51,7 +53,8 @@ const fileIn = async (peer: Peer, name = "notes.txt"): Promise<ControlAttachment
 
 test("G069-F1 a relay Turn whose words the native side reads as a command is refused whole: failed, not_recorded, RELAY_PREPARE_FAILED (classification_changed), nothing sent and nothing said; dsh has no commands and carries it", { timeout: 90000 }, async t => {
   const cases: readonly (readonly [Harness, string, Record<string, string>])[] = [
-    ["claude", "/compact keep the tests", {}], ["claude", "/clear", {}], ["claude", "  /remote-control", {}],
+    // Claude Code's catalog lists /compact, as the real adapter's does: a word outside the catalog is words for it (G074-F3).
+    ["claude", "/compact keep the tests", COMPACT_LISTED], ["claude", "/clear", {}], ["claude", "/remote-control", {}],
     ["hermes", "　/compress", {}], ["hermes", "/export", {}],
     ["opencode", "/compact", {}],
     ["openclaw", "/new", { RELAY_OPENCLAW: "1", RELAY_COMMANDS: JSON.stringify([{ name: "new", description: "new" }]) }],
@@ -75,6 +78,78 @@ test("G069-F1 a relay Turn whose words the native side reads as a command is ref
   const dsh = await peerRoot(t, { RELAY_JOIN: "" }), plain = await opened(t, "dsh", dsh);
   assert.equal((await run(plain.control, plain.id, relayTurn(ID_A, "/clear", false))).result.status, "completed");
   assert.equal((await prompts(dsh))[0]!.length, 2, "dsh: the packet and the words");
+});
+
+// G074-F1: a Turn whose words have whitespace before a slash word was refused whole as a command (and, as `/clear`, would have been
+// run as the clear), although Claude Code takes it as words (probe record 2026-11-10): it carries the packet like any other words.
+test("G074-F1 a relay Turn whose words have whitespace before a slash word is words for Claude Code and carries the packet, nothing cleared; with the slash first the same words are refused whole", { timeout: 60000 }, async t => {
+  for (const words of [" /clear", "　/compact keep the tests", "\n/remote-control", "\t/reset"]) {
+    const peer = await peerRoot(t), { control, id } = await opened(t, "claude", peer), label = JSON.stringify(words);
+    const { result } = await run(control, id, relayTurn(ID_A, words, false));
+    assert.deepEqual([result.status, result.input, result.native], ["completed", "recorded", undefined], label);
+    const [parts] = await prompts(peer);
+    assert.equal(parts!.length, 2, label + ": the packet and the words, two blocks");
+    assert.equal(titledPacket(parts![0]!), ID_A, label + ": the packet goes first");
+    assert.equal(parts![1], words, label + ": the words as typed, last");
+    assert.equal(await control.checkpoint!(), id, label + ": nothing was cleared");
+  }
+  // The invalid samples: with the slash first the same words are the native side's command, and the Turn is refused whole.
+  for (const words of ["/clear", "/compact keep the tests", "/remote-control", "/reset"]) {
+    const peer = await peerRoot(t, COMPACT_LISTED), { control, id } = await opened(t, "claude", peer);
+    refused((await run(control, id, relayTurn(ID_A, words, false))).result, "slash first " + JSON.stringify(words));
+    assert.deepEqual(await prompts(peer), [], "nothing sent");
+  }
+});
+
+// G074-F3 (probe record 2026-11-10, F3): "/zzprobe-unlisted hello" was sent to the model as text by Claude Code, so the declaration's
+// unlistedSlash is "text" and a word outside the catalog is words: a Turn with it carries a packet, and its answer proves it recorded.
+test("G074-F3 Claude Code: a slash word its catalog does not list is words — recorded by the answer, and a relay Turn carries the packet with it; a listed command, a hidden one and (no catalog yet) a possible command still stop it", { timeout: 60000 }, async t => {
+  const peer = await peerRoot(t, { RELAY_COMMANDS: JSON.stringify([{ name: "compact", description: "compact" }, { name: "review", description: "review" }]) });
+  const { control, id } = await opened(t, "claude", peer);
+  await control.models!();
+  const plain = await run(control, id, "/zzprobe-unlisted hello");
+  assert.deepEqual([plain.result.status, plain.result.input], ["completed", "recorded"], "words: its answer proves the input recorded");
+  for (const words of ["/zzprobe-unlisted hello", "/my-skill"]) {
+    const { result } = await run(control, id, relayTurn(ID_A, words, false));
+    assert.deepEqual([result.status, result.input, result.native], ["completed", "recorded", undefined], words);
+    const [parts] = (await prompts(peer)).slice(-1);
+    assert.deepEqual([parts!.length, titledPacket(parts![0]!), parts![1]], [2, ID_A, words], words + ": the packet first, the words as typed last");
+  }
+  // The invalid samples: what the catalog lists, and what the CLI runs although it lists none, is the native side's command.
+  const before = (await prompts(peer)).length;
+  for (const words of ["/review now", "/compact keep the tests", "/clear", "/remote-control"]) refused((await run(control, id, relayTurn(ID_A, words, false))).result, words);
+  assert.equal((await prompts(peer)).length, before, "nothing was sent for them");
+  // Before any catalog is announced a slash word may be one the catalog lists: it waits (B9), as for the other Drivers.
+  const quiet = await peerRoot(t, { RELAY_NO_COMMANDS: "1" }), waiting = await opened(t, "claude", quiet);
+  refused((await run(waiting.control, waiting.id, relayTurn(ID_A, "/zzprobe-unlisted hello", false))).result, "no catalog yet");
+  assert.deepEqual(await prompts(quiet), []);
+});
+
+// Before the agent has announced a catalog a slash word may be one the catalog lists, and a command's answer proves nothing about the
+// history: it is not taken for content yet, as the relay's reading (possible_command) has it. Once the catalog is known, a word outside
+// it is words, and its answer proves it recorded.
+test("G074-F3 Claude Code: before the agent announced any command a slash word's answer proves nothing (it may be a listed command); once the catalog is known, a word outside it is recorded by its answer", { timeout: 60000 }, async t => {
+  const quiet = await peerRoot(t, { RELAY_NO_COMMANDS: "1" }), { control, id } = await opened(t, "claude", quiet);
+  const unsettled = await run(control, id, "/zzprobe-unlisted hello");
+  assert.deepEqual([unsettled.result.status, unsettled.result.input], ["completed", undefined], "no catalog yet: its answer proves nothing");
+  assert.equal((await run(control, id, "没有斜杠的话")).result.input, "recorded", "words without a slash are recorded by the answer");
+  await control.models!();
+  const settled = await run(control, id, "/zzprobe-unlisted hello");
+  assert.deepEqual([settled.result.status, settled.result.input], ["completed", "recorded"], "the catalog is known and lists no such word: words");
+});
+
+// The Hub offers its own /export when the agent lists none (models()); a relay Turn with those words must still be refused whole, not
+// run as the export with the packet dropped — the Driver's own check reads the catalog it offers, not only the agent's.
+test("G074-F3 a relay Turn whose words are the Hub's own /export (offered when Claude Code lists none) is refused whole, the export not run", { timeout: 60000 }, async t => {
+  const peer = await peerRoot(t), { control, id } = await opened(t, "claude", peer);
+  const catalog = await control.models!();
+  assert.ok(catalog.commands?.some(command => command.name === "export"), "the Hub offers its own /export");
+  const { result, events } = await run(control, id, relayTurn(ID_A, "/export", false));
+  refused(result, "claude /export");
+  assert.deepEqual([events, await prompts(peer)], [[], []], "no export output, nothing sent");
+  // The invalid sample: the same words alone are the Hub's export, which sends nothing to Claude either.
+  const alone = await run(control, id, "/export");
+  assert.equal(alone.result.input, "not_recorded"); assert.deepEqual(await prompts(peer), []);
 });
 
 test("G069-F1 a possible command (no catalog yet) is refused the same; a bare /queue submits nothing, so it takes no packet and is no relay command; /queue with words still carries it", { timeout: 60000 }, async t => {

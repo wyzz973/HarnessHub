@@ -13,8 +13,10 @@ import { authKind, entryCarries, packetEntry, strip, VERIFY_BUDGET_MS, verifyRes
 
 /**
  * Claude Code's relay declaration (ADR-055 §8.1, Claude Code row): two text blocks; no live evidence, a check after the
- * turn, and a prompt that ended or failed after insertion proves it recorded; commands as Claude Code reads them, with
- * `/clear`, `/reset`, `/new` and `/remote-control` run although unlisted; compaction events; one process per connection;
+ * turn, and a prompt that ended or failed after insertion proves it recorded; commands as Claude Code reads them: a slash as
+ * the first character and a name its catalog lists, while any other slash word is text (unlistedSlash `text`, which differs
+ * from §8.1's `executed`: the probe of 2026-11-10, F3, sent an unlisted word to the model) except `/clear`, `/reset`, `/new`
+ * and `/remote-control`, which the CLI runs although the adapter lists none; compaction events; one process per connection;
  * the vendor by the endpoint its settings resolve; the window from its usage reports. Not probed (P2, P3, P6, P11 have not
  * run on the latest release).
  *
@@ -28,7 +30,9 @@ export const claudeRelayCapabilities: RelayCapabilities = relayDeclaration({
   probed: false,
   delivery: { live: "none", verify: "after_turn", successProvesRecorded: true, lateDelivery: false },
   execution: "process",
-  commands: { unlistedSlash: "executed", hidden: relayEntries(HIDDEN), classify: claudeClassify },
+  // text: "/zzprobe-unlisted hello" called the model and the transcript holds the text (relay-conformance.md F3); only the hidden
+  // four run without being listed, and claudeReading reads a word outside the catalog the same way (content).
+  commands: { unlistedSlash: "text", hidden: relayEntries(HIDDEN), classify: claudeClassify },
   // Attachments go as ACP blocks after the two text blocks (G069 phase two, approval B8; to be probed).
   placement: { parts: "multiple", maxInput: null, pointersAfterUser: true, measure: measureBy("multiple", "chars", ["file"]) },
   window: "session_report",
@@ -176,14 +180,16 @@ const SESSION_NOT_FOUND = -32002;
  * the Hub closes the adapter process when a Turn ends, which disconnects Remote Control, and turns sent from claude.ai while
  * a process is kept belong to no Run here (ADR-053).
  *
- * Inputs are read as Claude Code reads them (ADR-055 R0d): after leading whitespace, a slash and a command name is a
- * command, listed or not, since Claude Code runs commands its adapter does not list (`/clear`, `/reset` and `/new` clear the
- * native conversation); a slash path is content; with an image or a file attached every input is content, since the CLI
- * looks for a command only in the last block, which is then the attachment's (ADR-055, review I6), while audio, which the
- * adapter drops, leaves the input as it reads without attachments. The Hub's own `/export` is that command alone. A
- * content prompt that ended with end_turn, max_tokens or max_turn_requests, or failed with a model failure's errorKind, was
- * written to the transcript; a prompt refused because the session's stream had ended or the session is unknown (R8 C4),
- * and what this driver refuses or exports itself, never reached Claude (not recorded).
+ * Inputs are read as Claude Code reads them (ADR-055 R0d): a slash as the first character and a command name the catalog lists
+ * is a command, and so are `/clear`, `/reset`, `/new` and `/remote-control`, which Claude Code runs although its adapter does
+ * not list them (the first three clear the native conversation); any other slash word is words for the model (probe record
+ * 2026-11-10, F3: an unlisted word called the model); whitespace or anything else before the slash makes the input words, since
+ * the CLI strips nothing (F1: `" /context"` called the model); a slash path is content; with an image or a file attached every
+ * input is content, since the CLI looks for a command only in the last block, which is then the attachment's (ADR-055, review
+ * I6), while audio, which the adapter drops, leaves the input as it reads without attachments. The Hub's own `/export` is that
+ * command alone. A content prompt that ended with end_turn, max_tokens or max_turn_requests, or failed with a model failure's
+ * errorKind, was written to the transcript; a prompt refused because the session's stream had ended or the session is unknown
+ * (R8 C4), and what this driver refuses or exports itself, never reached Claude (not recorded).
  */
 export class ClaudeControl extends AcpControl {
   override readonly relayCapabilities: RelayCapabilities = claudeRelayCapabilities;
@@ -210,6 +216,24 @@ export class ClaudeControl extends AcpControl {
     }
   }
   protected override vendorAuthKind(): string | null { return this.signedIn; }
+  /**
+   * The commands a relay Turn's words are read against (relayParts): the agent's, and the Hub's own `/export` once models()
+   * offered it (hubExport), which startText runs itself. A word outside the catalog is words for Claude Code (G074-F3), so
+   * without the Hub's export here a relay Turn of `/export` would read as words and be run as the export, its packet dropped.
+   */
+  protected override get announced(): ReturnType<typeof relayEntries> | null {
+    const agent = super.announced;
+    return agent === null || !this.hubExport ? agent : [...agent, ...relayEntries([EXPORT])];
+  }
+  /**
+   * Whether the agent's answer can prove this prompt recorded: it reads as content. Before the agent has announced any command
+   * a slash word may be one it lists, and a command's answer proves nothing: as in the relay's reading (possible_command), it
+   * is not taken for content until the catalog is known (G074-F3; a word outside a known catalog is words for Claude Code).
+   */
+  protected override readsAsContent(prompt: string, attachments: readonly ContentKind[]): boolean {
+    if (this.announced === null && readsSlash(attachments) && commandOf(prompt) !== null) return false;
+    return super.readsAsContent(prompt, attachments);
+  }
   /** Claude Code's configuration directory for this process: CLAUDE_CONFIG_DIR, else `~/.claude` (claude-agent-acp paths.js). */
   private get configDir(): string { const env = { ...this.claudeOptions.env, ...this.claudeLaunch.env }; return env.CLAUDE_CONFIG_DIR || join(env.HOME || homedir(), ".claude"); }
   protected override promptRecorded(reason: string): boolean { return RECORDED_STOPS.has(reason); }
@@ -353,9 +377,10 @@ export class ClaudeControl extends AcpControl {
     // A relay Turn whose words read as a command is refused before anything below runs (the clear and the export included).
     const refusal = this.relayRefused(turn, attachments.map(file => file.kind));
     if (refusal !== null) return refusal;
-    // The same reading as classify(): the command name and arguments of the user's words after leading whitespace, and none
-    // with an image or a file: the input is then sent as it is, since the CLI looks for a command only in the last block (CLI
-    // 2.1.312 `Aj`), an attachment's. Audio alone is dropped by the adapter, so `/clear` with it is the clear (readsSlash).
+    // The same reading as classify() (claudeCommand, the one parse): the command name and arguments of the user's words when the
+    // slash is their first character, and none with an image or a file: the input is then sent as it is, since the CLI looks for
+    // a command only in the last block (CLI 2.1.312 `Aj`), an attachment's. Audio alone is dropped by the adapter, so `/clear`
+    // with it is the clear (readsSlash).
     const named = readsSlash(attachments.map(file => file.kind)) ? commandOf(typeof turn === "string" ? turn : turn.user) : null;
     if (named?.name === REMOTE_CONTROL) return refusedRun(REMOTE_CONTROL_REFUSED);
     if (this.hubExport && named?.name === EXPORT.name && named.args === "") {

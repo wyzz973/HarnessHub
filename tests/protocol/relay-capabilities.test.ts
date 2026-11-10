@@ -16,7 +16,7 @@ import type { HermesGatewayPreflight } from "../../src/adapters/control/hermes-g
 import { OpenClawControl, openClawRelayCapabilities } from "../../src/adapters/control/openclaw.js";
 import { OpenCodeControl, openCodeRelayCapabilities } from "../../src/adapters/control/opencode.js";
 import { nativeReading, relayEntries, type RelayCatalog } from "../../src/adapters/control/relay-classify.js";
-import { hermesModelKey, slashModelKey } from "../../src/adapters/control/relay-vendor.js";
+import { dshModelKey, hermesModelKey, slashModelKey } from "../../src/adapters/control/relay-vendor.js";
 
 // G069-D01, G069-D02: the declaration check (ADR-055 §8.1, INV-16): the six Drivers' static relay declarations, cell by cell, against the
 // §8.1 table written out below as data. Plain cells are compared whole; the command and vendor cells, which are
@@ -51,12 +51,15 @@ const COMMON = ["fixedPrefix", "hostPathRead", "sessionTools", "window"] as cons
 const TABLE: Readonly<Record<Harness, Cells>> = {
   claude: {
     plain: { ...unprobed, delivery: { live: "none", verify: "after_turn", successProvesRecorded: true, lateDelivery: false }, execution: "process",
-      commands: { unlistedSlash: "executed", hidden: [["clear", "clear"], ["reset", "clear"], ["new", "clear"], ["remote-control", "none"]] },
+      // unlistedSlash: §8.1 writes "executed"; the 2026-11-10 probe (relay-conformance.md F3) called the model with an unlisted word,
+      // so it is "text" (G074-F3); the four the CLI does run unlisted are the hidden ones.
+      commands: { unlistedSlash: "text", hidden: [["clear", "clear"], ["reset", "clear"], ["new", "clear"], ["remote-control", "none"]] },
       // title: §8.1 writes "set" (`_session/rename`); claude-agent-acp 0.99.1 routes it only for a JetBrains AIR client (G069 phase two).
       placement: { parts: "multiple", maxInput: null, pointersAfterUser: true }, window: "session_report", cacheTtl: "auth_dependent", compactionEvidence: "event", title: "none" },
     normalizeModel: slashModelKey,
-    classify: [["  /clear", null, ["command", "clear", "clear", ""]], ["/reset", null, ["command", "reset", "clear", ""]], ["/remote-control", null, ["command", "remote-control", "none", ""]],
-      ["/Users/me/notes.md", null, ["content"]], ["/my-skill", listed(["compact", "compact"]), ["command", "my-skill", "unknown", ""]], ["/compact", listed(["compact", "compact"]), ["command", "compact", "compact", ""]],
+    // G074-F1: the slash as the first character; the CLI strips nothing, so a space or U+3000 before it makes the input words.
+    classify: [["/clear", null, ["command", "clear", "clear", ""]], ["  /clear", null, ["content"]], ["　/clear", null, ["content"]], ["/reset", null, ["command", "reset", "clear", ""]], ["/remote-control", null, ["command", "remote-control", "none", ""]],
+      ["/Users/me/notes.md", null, ["content"]], ["/my-skill", listed(["compact", "compact"]), ["content"]], ["/my-skill", null, ["possible_command", "my-skill"]], ["/compact", listed(["compact", "compact"]), ["command", "compact", "compact", ""]],
       ["/review", listed(["review", "keep"]), ["command", "review", "keep", ""]]],
     vendor: [["claude-opus-5-5", "api_key", ENDPOINT, "gateway:api.deepseek.com"], [null, "bedrock", null, "aws-bedrock"], [null, "vertex", null, "google-vertex"],
       [null, "account", null, "anthropic"], [null, "api_key", null, "anthropic"], [null, "bedrock", ENDPOINT, "unknown:claude"]],
@@ -89,9 +92,11 @@ const TABLE: Readonly<Record<Harness, Cells>> = {
     plain: { ...unprobed, delivery: { live: "agent_output", verify: "none", successProvesRecorded: false, lateDelivery: false }, execution: "process",
       commands: { unlistedSlash: "text", hidden: [] }, placement: { parts: "multiple", maxInput: null, pointersAfterUser: true },
       window: "session_report", cacheTtl: "hours", compactionEvidence: "none", title: "none" },
-    normalizeModel: slashModelKey,
+    // normalizeModel: dsh reports its model as a JSON array text of the provider and the model; the key is the last item (G074-F8).
+    normalizeModel: dshModelKey,
     classify: [["/clear", null, ["content"]], ["/compact", listed(["compact", "compact"]), ["content"]], ["　/clear", null, ["content"]]],
-    vendor: [["deepseek-v4-flash", null, ["g069-relay.example", "workspace_file", false], "gateway:g069-relay.example"], ["deepseek-v4-flash", null, null, "deepseek"]],
+    vendor: [["deepseek-v4-flash", null, ["g069-relay.example", "workspace_file", false], "gateway:g069-relay.example"], ["deepseek-v4-flash", null, null, "deepseek"],
+      ['["deepseek-official","deepseek-v4-flash"]', null, null, "deepseek"]],
     inferred: [...COMMON, "delivery.lateDelivery", "placement.maxInput", "placement.pointersAfterUser", "title", "vendor.loopback", "vendor.layers"],
   },
   hermes: {

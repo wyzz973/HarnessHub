@@ -84,7 +84,9 @@ test("G069-R2 Claude Code reads an input with audio alone as it reads one withou
   const catalog = await control.models!();
   const voice = await attachment(peer, "voice.wav", "audio");
   assert.deepEqual(control.classify!("/clear", catalog, ["audio"]), { kind: "command", name: "clear", args: "", effect: "clear" });
-  assert.deepEqual(claudeRelayCapabilities.commands.classify("  /compact now", null, ["audio", "audio"]), { kind: "possible_command", name: "compact" });
+  assert.deepEqual(claudeRelayCapabilities.commands.classify("/compact now", null, ["audio", "audio"]), { kind: "possible_command", name: "compact" });
+  // Behind a space it is words with or without audio: the CLI strips nothing (G074-F1).
+  assert.deepEqual(claudeRelayCapabilities.commands.classify("  /compact now", null, ["audio", "audio"]), { kind: "content" });
   for (const kinds of [["audio", "image"], ["file", "audio"], ["image"], ["file"]] as const) assert.deepEqual(control.classify!("/clear", catalog, kinds), { kind: "content" }, kinds.join("+"));
   refused(await run(control, id, relayTurn(ID_A, "/clear", false), [voice]), "a relay Turn whose words are the clear, with audio");
   assert.deepEqual(await prompts(peer), [], "nothing sent for it");

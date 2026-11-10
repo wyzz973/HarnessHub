@@ -85,12 +85,18 @@ export const CLAUDE_LISTED_EFFECTS: Readonly<Record<string, ContextEffect>> = { 
  * an Object member (`constructor`, `toString`, `__proto__`…) gets no function or object for an effect.
  */
 export function claudeListedEffect(name: string): ContextEffect | undefined { return Object.hasOwn(CLAUDE_LISTED_EFFECTS, name) ? CLAUDE_LISTED_EFFECTS[name] : undefined; }
-/** The command an input names as Claude Code reads one: after leading whitespace, a slash and a command name; null for content. */
+/**
+ * The command an input names as Claude Code reads one: a slash as the input's very first character and a command name; null
+ * for content. Nothing is stripped before the slash: the real CLI (2.1.316 behind claude-agent-acp 0.99.1) ran no command for
+ * `" /context"` or the same with U+3000 first but called the model with the text (probe record 2026-11-10, F1), so a space, a
+ * tab, a line break or U+3000 first makes the whole input words. This is the one parse of Claude's commands: the Driver's own
+ * clear, export and refusal (claude.ts) and every classify below go by it, since the Driver abandons the native session for
+ * `/clear`.
+ */
 export function claudeCommand(text: string): { readonly name: string; readonly args: string } | null {
-  const trimmed = text.trimStart();
-  if (!trimmed.startsWith("/")) return null;
-  const name = trimmed.slice(1).split(/\s/u)[0]!;
-  return CLAUDE_COMMAND_NAME.test(name) ? { name, args: trimmed.slice(1 + name.length).trim() } : null;
+  if (!text.startsWith("/")) return null;
+  const name = text.slice(1).split(/\s/u)[0]!;
+  return CLAUDE_COMMAND_NAME.test(name) ? { name, args: text.slice(1 + name.length).trim() } : null;
 }
 /**
  * Whether Claude Code looks for a command in a prompt with these attachments: not when one of them is an image or a file,
@@ -100,13 +106,16 @@ export function claudeCommand(text: string): { readonly name: string; readonly a
  */
 export function claudeReadsSlash(attachments: readonly ContentKind[]): boolean { return !attachments.some(kind => kind === "image" || kind === "file"); }
 /**
- * Claude Code's reading: after leading whitespace, a slash and a command name is a command, listed or not, since Claude
- * Code runs commands its adapter does not list (an unlisted one has an unknown effect); a slash path is content. With an
- * image or a file attached every input is content: the prompt's blocks go to the CLI in order (claude-agent-acp 0.99.1
- * promptToClaude, acp-agent.js:10316, a file as a link text or the file's context after the words, an image as an image
- * block), and the CLI looks for a command only in the last block (CLI 2.1.312 `Aj`), which is then the attachment's; audio
- * alone changes nothing (claudeReadsSlash). The adapter's own `/remote-control` reads a prompt of one text block only
- * (acp-agent.js:191-205).
+ * Claude Code's reading: a slash as the first character and a command name is a command when the catalog lists it, with the
+ * effect it declares; `/clear`, `/reset`, `/new` and `/remote-control` are commands although unlisted, since Claude Code runs
+ * them and its adapter does not list them (CLAUDE_HIDDEN). Any other word is words (unlistedSlash `text`: the real CLI called
+ * the model with "/zzprobe-unlisted hello", probe record 2026-11-10, F3), and without a catalog yet it may be a listed command
+ * (possible_command). Anything before the slash, whitespace included, makes the input words (claudeCommand), and so does a
+ * slash path. With an image or a file attached every input is content: the prompt's blocks go to the CLI in order
+ * (claude-agent-acp 0.99.1 promptToClaude, acp-agent.js:10316, a file as a link text or the file's context after the words, an
+ * image as an image block), and the CLI looks for a command only in the last block (CLI 2.1.312 `Aj`), which is then the
+ * attachment's; audio alone changes nothing (claudeReadsSlash). The adapter's own `/remote-control` reads a prompt of one text
+ * block only (acp-agent.js:191-205).
  */
 export function claudeReading(text: string, commands: CommandLookup | null, attachments: readonly ContentKind[]): CommandClass {
   const named = claudeReadsSlash(attachments) ? claudeCommand(text) : null;
@@ -115,7 +124,8 @@ export function claudeReading(text: string, commands: CommandLookup | null, atta
   if (hidden !== undefined) return { kind: "command", name, args, effect: hidden.contextEffect ?? "unknown" };
   if (commands === null) return { kind: "possible_command", name };
   const listed = commands(name, args);
-  return { kind: "command", name, args, effect: listed === undefined ? "unknown" : listed.effect ?? claudeListedEffect(name) ?? "keep", ...accepts(listed) };
+  if (listed === undefined) return { kind: "content" };
+  return { kind: "command", name, args, effect: listed.effect ?? claudeListedEffect(name) ?? "keep", ...accepts(listed) };
 }
 export const claudeClassify: RelayClassify = (text, catalog, attachments = []) => claudeReading(text, catalog === null ? null : relayCommands(catalog), attachments);
 /** HarnessControl.classify of the Claude driver. */

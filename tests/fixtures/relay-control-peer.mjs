@@ -23,9 +23,15 @@
 //     the client gave up).
 //   RELAY_AUTH_KIND: claude-agent-acp's `_auth/status_update` with this kind, after initialize.
 //   RELAY_NO_COMMANDS "1": no available_commands_update at all (a catalog that is never announced).
+//   RELAY_ACP_MODEL: session/new reports this text as the session's only model and its current one (ACP `models`), as dsh reports
+//     its model: a JSON array text of the provider and the model.
 //   RELAY_UNPROMPTED_LOAD "1": session/load of a session that was never prompted is refused with -32002 (claude-agent-acp
 //     0.99.1 in a new process: the CLI writes a conversation at its first prompt, so resuming one never prompted fails with
 //     sessionNotFound, acp-agent.js:2491-2499, 8774-8779, 9255-9262).
+//   RELAY_RESUME "1": session/resume is declared (sessionCapabilities.resume, as claude-agent-acp 0.99.1 does) and answered {} for a
+//     session the shared state holds, without a replay; a Driver then restores by it, not by session/load. RELAY_UNPROMPTED_RESUME "1":
+//     session/resume of a session that was never prompted is refused with -32002, which is what the probe of 2026-11-10 met on the real
+//     adapter; RELAY_RESUME_FAULT "internal": every session/resume is refused with -32603.
 //   RELAY_CLOSE "1" | "refuse" | "hang": session/close is declared (sessionCapabilities.close) and answered {}, refused
 //     (-32603), or never answered.
 //   RELAY_LATE_MS: that long after each prompt's answer, an agent message and a permission request of that session (an
@@ -38,8 +44,10 @@
 //   compaction after the user message. thread/turns/list pages the stored turns (RELAY_TURNS_FAULT "refuse" or "garbage");
 //   thread/name/set stores the name (RELAY_NAME_FAULT "refuse", or "hang": never answered); RELAY_TURNS_FAULT "hang" never
 //   answers the listing, and RELAY_TURNS_DELAY_MS answers it that late.
-//   RELAY_ECHO_VALUE echoes this identity instead of the one the turn was started with. RELAY_SKILL names one enabled skill
-//   the catalog reads (config/read, model/list, account/read and skills/list answer as an empty, signed-in Codex).
+//   RELAY_ECHO_VALUE echoes this identity instead of the one the turn was started with. RELAY_ECHO_EXTRA (a JSON object) adds
+//   fields to the user message, "$clientUserMessageId" in it standing for the identity the turn was started with (the installed
+//   Codex 0.166.0 echoes it as `clientId` only; a Codex that sent both names is played with this). RELAY_SKILL names one enabled
+//   skill the catalog reads (config/read, model/list, account/read and skills/list answer as an empty, signed-in Codex).
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -60,7 +68,8 @@ function acp(message) {
   // The client's answers to this peer's own requests (permission requests) need no reply.
   if (message.method === undefined) return;
   if (message.method === "initialize") {
-    send({ id: message.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true, ...(env.RELAY_CLOSE ? { sessionCapabilities: { close: {} } } : {}) }, authMethods: [{ id: "provider", name: "Provider" }], agentInfo: { name: "relay-control-peer", version: "1.0.0" } } });
+    const sessionCapabilities = { ...(env.RELAY_CLOSE ? { close: {} } : {}), ...(env.RELAY_RESUME ? { resume: {} } : {}) };
+    send({ id: message.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true, ...(Object.keys(sessionCapabilities).length ? { sessionCapabilities } : {}) }, authMethods: [{ id: "provider", name: "Provider" }], agentInfo: { name: "relay-control-peer", version: "1.0.0" } } });
     if (env.RELAY_AUTH_KIND) notify("_auth/status_update", { authStatus: { kind: env.RELAY_AUTH_KIND, label: "a label naming the user" } });
     return;
   }
@@ -69,14 +78,15 @@ function acp(message) {
     send(env.RELAY_CLOSE === "refuse" ? { id: message.id, error: { code: -32603, message: "Internal error" } } : { id: message.id, result: {} });
     return;
   }
-  if (message.method === "session/new" || message.method === "session/load") {
+  if (message.method === "session/new" || message.method === "session/load" || message.method === "session/resume") {
+    if (message.method === "session/resume" && env.RELAY_RESUME_FAULT === "internal") { send({ id: message.id, error: { code: -32603, message: "Internal error" } }); return; }
     if (message.method === "session/new" && env.RELAY_NEW_FAULT === "second" && sessions >= 1) { send({ id: message.id, error: { code: -32603, message: "Internal error" } }); return; }
     state = load();
     // A new session takes the first name no session of the shared state has (each process counts from "relay-session").
     let sessionId = params.sessionId;
     if (message.method === "session/new" && env.RELAY_SAME_SESSION === "1") sessionId = "relay-session";
     else if (message.method === "session/new") do sessionId = ++sessions === 1 ? "relay-session" : "relay-session-" + sessions; while (state.sessions[sessionId] !== undefined);
-    if (message.method === "session/load" && env.RELAY_UNPROMPTED_LOAD === "1" && state.sessions[sessionId]?.prompted !== true) {
+    if ((message.method === "session/load" && env.RELAY_UNPROMPTED_LOAD === "1" || message.method === "session/resume" && env.RELAY_UNPROMPTED_RESUME === "1") && state.sessions[sessionId]?.prompted !== true) {
       send({ id: message.id, error: { code: -32002, message: "Resource not found", data: { sessionId } } }); return;
     }
     const owned = session(sessionId);
@@ -88,7 +98,7 @@ function acp(message) {
         update(sessionId, { sessionUpdate: entry.role === "user" ? "user_message_chunk" : "agent_message_chunk", content: { type: "text", text: entry.text }, ...(entry.summary ? { _meta: { hermes: { compactionSummary: true } } } : {}) });
       }
     }
-    send({ id: message.id, result: message.method === "session/load" ? {} : { sessionId } });
+    send({ id: message.id, result: message.method !== "session/new" ? {} : { sessionId, ...(env.RELAY_ACP_MODEL ? { models: { currentModelId: env.RELAY_ACP_MODEL, availableModels: [{ modelId: env.RELAY_ACP_MODEL, name: env.RELAY_ACP_MODEL }] } } : {}) } });
     if (env.RELAY_NO_COMMANDS !== "1") update(sessionId, { sessionUpdate: "available_commands_update", availableCommands: commands });
     return;
   }
@@ -153,7 +163,8 @@ function codex(message) {
     state = load();
     const turnId = "turn-" + process.pid + "-" + ++turns, field = env.RELAY_ECHO_FIELD ?? "clientUserMessageId";
     const echoed = env.RELAY_ECHO_VALUE ?? params.clientUserMessageId;
-    const user = { type: "userMessage", id: "user-" + turnId, content: params.input.filter(item => item.type === "text"), ...(field === "none" || echoed === undefined ? {} : { [field]: echoed }) };
+    const extra = env.RELAY_ECHO_EXTRA ? JSON.parse(env.RELAY_ECHO_EXTRA.replaceAll("$clientUserMessageId", params.clientUserMessageId ?? "")) : {};
+    const user = { type: "userMessage", id: "user-" + turnId, content: params.input.filter(item => item.type === "text"), ...(field === "none" || echoed === undefined ? {} : { [field]: echoed }), ...extra };
     const items = env.RELAY_HOOK === "1" ? [] : [user, ...(env.RELAY_COMPACT === "1" ? [{ type: "contextCompaction", id: "compact-" + turnId }] : [])];
     items.push({ type: "agentMessage", id: "agent-" + turnId, text: env.RELAY_REPLY ?? "ok" });
     thread().turns.push({ id: turnId, status: "completed", items }); save(state);

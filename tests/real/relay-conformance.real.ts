@@ -876,11 +876,12 @@ async function probeSlash(h: Rig): Promise<void> {
     h.find("SLASH", "claudeReadsSlash(attachments)", controlCalled === false && fileCalled === true ? "confirmed" : controlCalled === null || fileCalled === null ? "unverified" : "refuted",
       "the command alone is consumed without the model (a valid control), and the same words with a file attached are sent to the model as content",
       { command: local, aloneModelCalled: controlCalled, withFileModelCalled: fileCalled, aloneReplyChars: [...control.reply].length, withFileReplyChars: [...withFile.reply].length, entriesNamingTheCommand: typed.map(entry => entry.kinds), driverReadsContentWithFile: caps.commands.classify("/" + local, relayEntries(open.catalog?.commands ?? []), ["file"]).kind === "content" });
-    // The same command after a leading space and after a leading U+3000: the Driver reads both as the command (a JavaScript trim); does the CLI?
+    // The same command after a leading space and after a leading U+3000: the Driver reads both as words (claudeCommand: the slash must
+    // be the first character, since the probe of 2026-11-10, F1, found the CLI runs no command after either and asks the model).
     const lead: Record<string, boolean | null> = {};
     for (const [label, prefix] of [["a leading space", " "], ["a leading U+3000", "\u3000"]] as const) lead[label] = modelCalled(await turn(h, open, prefix + "/" + local, "SLASH: the command after " + label));
-    h.find("SLASH", "leading whitespace before a slash command (VF1-06)", Object.values(lead).every(called => called === false) ? "confirmed" : Object.values(lead).some(called => called === null) ? "unverified" : "refuted",
-      "the CLI runs the command after a leading space and after U+3000 without asking the model, as the Driver's reading says (a control: the same command alone is consumed without the model)", { command: local, modelCalledAfter: lead, aloneModelCalled: controlCalled,
+    h.find("SLASH", "leading whitespace before a slash command (VF1-06)", controlCalled !== false || Object.values(lead).some(called => called === null) ? "unverified" : Object.values(lead).every(called => called === true) ? "confirmed" : "refuted",
+      "the CLI runs no command after a leading space or U+3000 and asks the model with the text, as the Driver's reading says (a valid control: the same command alone is consumed without the model)", { command: local, modelCalledAfter: lead, aloneModelCalled: controlCalled,
       driverReads: ["", " ", "\u3000"].map(prefix => brief(caps.commands.classify(prefix + "/" + local, relayEntries(open.catalog?.commands ?? []), []))) });
   } finally { await finish(open); }
 }

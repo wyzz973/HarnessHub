@@ -11,7 +11,7 @@ import { codexRelayCapabilities } from "../../src/adapters/control/codex.js";
 import { hermesRelayCapabilities } from "../../src/adapters/control/hermes.js";
 import { openClawRelayCapabilities } from "../../src/adapters/control/openclaw.js";
 import { openCodeRelayCapabilities } from "../../src/adapters/control/opencode.js";
-import { endpointHost, endpointLayers, hermesModelKey, observedVendor, readEndpoint, slashModelKey, vendorObservation, type EndpointReading, type EndpointSources } from "../../src/adapters/control/relay-vendor.js";
+import { dshModelKey, endpointHost, endpointLayers, hermesModelKey, observedVendor, readEndpoint, slashModelKey, vendorObservation, type EndpointReading, type EndpointSources } from "../../src/adapters/control/relay-vendor.js";
 
 // G069-C04 and G069-C08 (ADR-055 §8.1 vendor column, §10.4, INV-33): the endpoint each Driver resolves from its Harness's
 // own configuration layers, the vendor key its declaration gives, and its model key. Every directory here is a synthetic
@@ -320,6 +320,36 @@ test("G069-C04 only endpoint keys are read: the environment is never enumerated 
   assert.equal(reading.kind === "read" ? reading.endpoint?.host : null, "g069-dotenv.example");
 });
 
+// G074-F8 (probe record 2026-11-10, DeepSeek Harness 0.2.1-rc.5): dsh reports its model as a JSON array text of the provider and the
+// model, `["deepseek-official","deepseek-v4-flash"]`, and the key was that whole text. The last item is the model that runs.
+test("G074-F8 DeepSeek Harness's model key is the last item of the JSON array text it reports; any other text is read as before; an array whose last item is no string names no model", () => {
+  const key = dshRelayCapabilities.normalizeModel;
+  assert.equal(key, dshModelKey, "the declaration's model key is this one");
+  const cases: readonly [string | null, string][] = [
+    // The array text as dsh reports it, one item, whitespace around it and inside, and the last item's own decorations.
+    ['["deepseek-official","deepseek-v4-flash"]', "deepseek-v4-flash"], ['["deepseek-v4-flash"]', "deepseek-v4-flash"], [' [ "deepseek-official" , "deepseek-v4-flash" ]\n', "deepseek-v4-flash"],
+    ['["a","b","Deepseek/DeepSeek-V4-Flash-20260101"]', "deepseek-v4-flash"], ['["deepseek-official","deepseek-v4-flash","deepseek-v4-pro"]', "deepseek-v4-pro"],
+    // A single string is read as for the other Drivers: its last `/` segment without decorations.
+    ["deepseek-v4-flash", "deepseek-v4-flash"], ["deepseek/deepseek-v4-flash", "deepseek-v4-flash"], ["DeepSeek-V4-Flash", "deepseek-v4-flash"],
+    // An empty array, an array whose last item is no string, and an empty or over-long last item name no model.
+    ["[]", ""], ['["deepseek-official",1]', ""], ['["deepseek-official",["deepseek-v4-flash"]]', ""], ['["deepseek-official",null]', ""], ['["deepseek-official",{"model":"deepseek-v4-flash"}]', ""],
+    ['["deepseek-official",true]', ""], ['["deepseek-official",""]', ""], ['["deepseek-official","' + "m".repeat(97) + '"]', ""],
+    // A non-string item before the last one does not matter.
+    ['[1,"deepseek-v4-flash"]', "deepseek-v4-flash"], ['[["deepseek-official"],"deepseek-v4-flash"]', "deepseek-v4-flash"],
+    // Text that is no JSON array is read as before, invalid JSON included: nothing is guessed from it.
+    ['["deepseek-official","deepseek-v4-flash"', slashModelKey('["deepseek-official","deepseek-v4-flash"')], ["[deepseek-v4-flash]", slashModelKey("[deepseek-v4-flash]")],
+    ['{"model":"deepseek-v4-flash"}', slashModelKey('{"model":"deepseek-v4-flash"}')],
+    [null, ""], ["", ""], ["   ", ""],
+  ];
+  for (const [model, expected] of cases) assert.equal(key(model), expected, JSON.stringify(model));
+  // Through the observation the Driver gives: the raw text is kept as the model, its key is the model's, the vendor stays deepseek.
+  const array = '["deepseek-official","deepseek-v4-flash"]', observed = observe({ kind: "read", endpoint: null, backend: null }, array, null, key);
+  assert.deepEqual([observed.model, observed.modelKey, dshRelayCapabilities.resolveVendor(observed)], [array, "deepseek-v4-flash", "deepseek"]);
+  // The invalid sample: the key every other Driver uses is the defect the probe found, the whole text.
+  assert.equal(slashModelKey(array), array);
+  assert.notEqual(slashModelKey(array), "deepseek-v4-flash");
+});
+
 test("G069-C08 normalizeModel: provider/model and <provider>:<model> lose the provider, version decorations go, aliases stay their own key, null and over-long models are empty", () => {
   const cases: readonly [(model: string | null) => string, string | null, string][] = [
     [slashModelKey, null, ""], [slashModelKey, "", ""], [slashModelKey, "   ", ""],
@@ -337,7 +367,8 @@ test("G069-C08 normalizeModel: provider/model and <provider>:<model> lose the pr
   for (const [normalize, model, expected] of cases) assert.equal(normalize(model), expected, JSON.stringify(model));
   // Each declaration's normalizeModel is one of these, and the model key an observation carries is it.
   assert.equal(hermesRelayCapabilities.normalizeModel, hermesModelKey);
-  for (const declaration of [claudeRelayCapabilities, codexRelayCapabilities, openCodeRelayCapabilities, openClawRelayCapabilities, dshRelayCapabilities]) assert.equal(declaration.normalizeModel, slashModelKey);
+  for (const declaration of [claudeRelayCapabilities, codexRelayCapabilities, openCodeRelayCapabilities, openClawRelayCapabilities]) assert.equal(declaration.normalizeModel, slashModelKey);
+  assert.equal(dshRelayCapabilities.normalizeModel, dshModelKey, "dsh's models are a JSON array text (G074-F8)");
   assert.equal(vendorObservation({ kind: "read", endpoint: null, backend: null }, "openai/gpt-5.5-2026-01-01", null, slashModelKey)?.modelKey, "gpt-5.5");
   assert.deepEqual(vendorObservation({ kind: "read", endpoint: null, backend: null }, "m".repeat(97), "k".repeat(17), slashModelKey), { model: null, modelKey: "", authKind: null, endpoint: null, loopback: false });
   // Invalid sample: Hermes's provider rule does not apply to slash models, whose colon is a tag.

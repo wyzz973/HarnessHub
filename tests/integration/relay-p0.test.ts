@@ -688,3 +688,25 @@ test("G067 R0e a link in the workspace that leads to the data directory puts it 
   assert.equal(placement.containment, "separate"); assert.ok(found.length >= 1 && found.length <= 1998, `markers found in the large directory: ${found.length}`);
   assert.deepEqual(placement.markers.filter(path => !path.startsWith("many/")), ["data"]);
 });
+
+// G074-F3 through the Runtime (the Runtime and the coordinator read a Driver's commands.classify only, never its unlistedSlash
+// cell): after a handoff to the real Claude Driver, a slash word its catalog does not list is words — the Turn is a content Turn
+// that carries the facts owed as a packet, and its end proves it recorded — while one the catalog lists is a command that is
+// sent as typed and carries nothing. Before the catalog is read, such a word is only a possible command (B9), which the open settles.
+test("G074-F3 after a handoff to Claude Code a slash word its catalog does not list carries the packet and is recorded by its end; a word it lists goes as typed and carries nothing", { timeout: 60000 }, async t => {
+  const f = await world(t), commands = JSON.stringify([{ name: "compact", description: "compact the conversation" }]);
+  const real = await drivers(f, harnessId => harnessId === "claude" ? { RELAY_PROMPT: "answer", RELAY_COMMANDS: commands } : { RELAY_PROMPT: "answer" }), app = f.runtime(real);
+  const session = await app.create(f.configuration, { harnessId: "hermes" }, "create");
+  const first = await sent(app, session.id, "first question", "h1");
+  await switched(app, session.id, { harnessId: "claude" }, "to-claude");
+  const words = await sent(app, session.id, "/zzprobe-unlisted hello", "c1");
+  const [carried] = await real.prompts("claude");
+  assert.ok(isPacket(carried!), "the facts owed went with the words as a packet"); assert.equal(inputOf(carried!), "/zzprobe-unlisted hello");
+  assert.deepEqual(words.sourceRunIds, [first.id]);
+  assert.equal(ended(f.store, session.id, words.id).input, "recorded", "words: the end of the Turn proves the input recorded");
+  assert.ok(!events(f.store, session.id).some(row => row.type === "run.native_command" && row.data.runId === words.id), "no native command ran");
+  // The invalid sample: the command its catalog lists is the native side's, sent as typed, and carries nothing.
+  const compact = await sent(app, session.id, "/compact", "c2");
+  assert.equal((await real.prompts("claude")).at(-1), "/compact"); assert.deepEqual(compact.sourceRunIds, []);
+  assert.ok(events(f.store, session.id).some(row => row.type === "run.native_command" && row.data.runId === compact.id && row.data.name === "compact"));
+});

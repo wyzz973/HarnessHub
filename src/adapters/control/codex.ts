@@ -79,9 +79,21 @@ interface ActiveTurn {
   settled: boolean;
   stopping: boolean;
   stop: Promise<StopRequestReceipt> | null;
+  /** Codex has reported this turn (turn/started, or any item, delta or request that belongs to it); it takes an interrupt from then on. */
+  begun: boolean;
+  /** Wakes a stop that waits for the turn to begin (or to end); set only while one waits. */
+  wake: (() => void) | null;
 }
 interface Tokens { readonly totalTokens: number; readonly inputTokens: number; readonly cachedInputTokens: number; readonly cacheWriteInputTokens: number; readonly outputTokens: number; readonly reasoningOutputTokens: number }
 const STREAM_MS = 300, ITEM_OUTPUT_BYTES = 128 * 1024;
+/**
+ * Codex's refusal of turn/interrupt for a thread that has no active turn (JSON-RPC invalid request, -32600): the answer of a
+ * turn it has not begun yet, or one that has already ended. Codex 0.166.0 answers turn/start at once and runs the user's hooks
+ * before it reports the turn, so a stop in the first seconds meets it (probe record 2026-11-10, F4, 38 ms after the response).
+ */
+const NO_ACTIVE_TURN_CODE = -32600, NO_ACTIVE_TURN = "no active turn to interrupt";
+/** How soon a stop asks again after that refusal when nothing of the turn arrives to wake it: the Run's deadline bounds the asking. */
+const INTERRUPT_RETRY_MS = 250;
 /**
  * How much of a thread a check reads, newest first: the latest VERIFY_FIRST_PAGE turns (the one it looks for is usually the
  * last), then pages of VERIFY_TURNS_PER_PAGE, at most VERIFY_TURNS in all; full item views, so small pages keep each answer far
@@ -122,6 +134,14 @@ function threadTitle(thread: Record<string, unknown>): string | null {
 function threadSource(value: unknown): string | undefined {
   if (typeof value === "string") return value.slice(0, 64);
   return value !== null && typeof value === "object" && !Array.isArray(value) ? Object.keys(value)[0]?.slice(0, 64) : undefined;
+}
+/**
+ * The client identity a userMessage item echoes. Codex 0.166.0 echoes the `clientUserMessageId` a turn was started with under
+ * `clientId` (probe record 2026-11-10, E1: the item's keys are clientId, completedAtMs, content, id, startedAtMs, type), so that
+ * name is read first; `clientUserMessageId`, the name of the request's field, is the second reading for a Codex that echoes it so.
+ */
+function echoedClientId(item: Record<string, unknown>): string | null {
+  return typeof item.clientId === "string" ? item.clientId : typeof item.clientUserMessageId === "string" ? item.clientUserMessageId : null;
 }
 /** The text a user sees for one native user input item; non-text inputs are named, never inlined. */
 function inputText(value: unknown): string {
@@ -402,7 +422,7 @@ export class CodexControl implements HarnessControl {
             items++;
             if (item.type === "contextCompaction") { compactions++; continue; }
             if (item.type !== "userMessage") continue;
-            const echoed = typeof item.clientUserMessageId === "string" ? item.clientUserMessageId : typeof item.clientId === "string" ? item.clientId : null;
+            const echoed = echoedClientId(item);
             for (const index of echoed === null ? [] : wanted.get(echoed) ?? []) {
               if (results[index] !== null) continue;
               const said = Array.isArray(item.content) ? item.content.map(inputText).join("\n") : "";
@@ -682,7 +702,7 @@ export class CodexControl implements HarnessControl {
     const active: ActiveTurn = { event: onEvent, resolve, reject, deadline: Date.now() + this.options.runTimeoutMs,
       timer: setTimeout(() => this.rpc.abort(new ControlError("RUN_TIMEOUT", "Codex turn exceeded its deadline")), this.options.runTimeoutMs),
       started, signalStarted, rejectStarted, turnId: null, settled: false, stopping: false, stop: null, deltaItems: new Set(), items: new Map(), agents: new Map(), reads: new Set(), baseline: this.lastTotal, inputRecorded: false,
-      clientId, packetId, requests: [] };
+      clientId, packetId, requests: [], begun: false, wake: null };
     this.active = active;
     // Images and audio are read by Codex from the private copies; files have no input type and are named by path.
     const input = [{ type: "text", text: text + mentions, text_elements: [] }, ...(skill ? [{ type: "skill", name: skill.name, path: skill.path }] : []),
@@ -740,14 +760,33 @@ export class CodexControl implements HarnessControl {
     if (this.active === active && !active.settled) { this.settleTurn(active); active.resolve(result); }
   }
   close(): Promise<CleanupEvidence> { this.cancelPermissions(); return this.rpc.close(); }
+  /**
+   * Interrupts the turn. The receipt is Codex's acknowledgement of turn/interrupt, never the turn's end. Codex refuses an
+   * interrupt with -32600 "no active turn to interrupt" while it has not begun the turn (its hooks run first) and after the
+   * turn ended: that refusal is no protocol failure and breaks nothing. The turn that ended is the stop's INVALID_STATE as for
+   * any turn that is over; one that has not begun is asked again when Codex reports it (or a moment later), until it takes the
+   * interrupt, ends, or the Run's deadline fails the connection, so that the stop is applied as soon as Codex allows it and
+   * nothing is said to be stopped that was not. Any other failure of the request still fails the connection.
+   */
   private async stopTurn(active: ActiveTurn, id: NativeConversationId): Promise<StopRequestReceipt> {
     await active.started;
-    if (active.settled || !active.turnId) throw new ControlError("INVALID_STATE", "turn ended before interruption was requested");
-    try {
-      const response = object(await this.rpc.request("turn/interrupt", { threadId: id, turnId: active.turnId }), "turn/interrupt result");
-      if (Object.keys(response).length !== 0) throw new ControlError("INVALID_PROTOCOL", "interrupt receipt must be empty");
-      return { requested: true };
-    } catch (error) { this.rpc.abort(errorFrom(error)); throw error; }
+    for (;;) {
+      if (active.settled || !active.turnId) throw new ControlError("INVALID_STATE", "turn ended before interruption was requested");
+      try {
+        const response = object(await this.rpc.request("turn/interrupt", { threadId: id, turnId: active.turnId }), "turn/interrupt result");
+        if (Object.keys(response).length !== 0) throw new ControlError("INVALID_PROTOCOL", "interrupt receipt must be empty");
+        return { requested: true };
+      } catch (error) {
+        if (!(error instanceof ControlError && error.code === "REMOTE_ERROR" && error.remoteCode === NO_ACTIVE_TURN_CODE && error.remoteMessage === NO_ACTIVE_TURN) || this.rpc.failure !== null) { this.rpc.abort(errorFrom(error)); throw error; }
+        if (active.settled) throw new ControlError("INVALID_STATE", "turn ended before interruption was requested");
+      }
+      await new Promise<void>(resolve => {
+        const done = () => { clearTimeout(timer); active.wake = null; resolve(); }, timer = setTimeout(done, INTERRUPT_RETRY_MS);
+        active.wake = done;
+      });
+      // The connection failed while the stop waited (the Run's deadline, a close): that failure is the stop's.
+      if (this.failure) throw this.failure;
+    }
   }
   private assertInitialized(): void {
     if (this.failure) throw this.failure;
@@ -771,6 +810,8 @@ export class CodexControl implements HarnessControl {
       const active = this.active;
       if (!active || active.settled) throw new ControlError("INVALID_STATE", "Codex output arrived without an active turn");
       this.bindTurn(active, string(params.turnId, "Codex turn identity"));
+      // Codex reports the turn: it takes an interrupt from now on, so a stop that waited for that asks again (F4).
+      if (!active.begun) { active.begun = true; active.wake?.(); }
       return active;
     }
     if (params.turnId !== undefined) string(params.turnId, "Codex metadata turn identity");
@@ -896,8 +937,8 @@ export class CodexControl implements HarnessControl {
       if (type === "plan") { if (method === "item/completed") active.event({ type: "text", text: text(item.text, "proposed plan") }); return; }
       if (type === "userMessage") {
         // A user message of this turn with another client's identity is not this turn's input (Codex echoes the identity a
-        // turn was started with, as `clientUserMessageId` or `clientId`; an item without one is this turn's by its turn id).
-        const echoed = typeof item.clientUserMessageId === "string" ? item.clientUserMessageId : typeof item.clientId === "string" ? item.clientId : null;
+        // turn was started with, as `clientId` or `clientUserMessageId`; an item without one is this turn's by its turn id).
+        const echoed = echoedClientId(item);
         if (active.clientId !== null && echoed !== null && echoed !== active.clientId) return;
         // E1 (ADR-055 §7.1): Codex reports the input as a thread item once it recorded it; said once, with the packet it carries.
         if (!active.inputRecorded) {
@@ -1066,13 +1107,13 @@ export class CodexControl implements HarnessControl {
     // Streamed output still waiting for its throttle window is delivered before the turn ends.
     for (const [id, entry] of active.items) if (entry.timer) { clearTimeout(entry.timer); entry.timer = null; active.event({ type: "tool", id, title: entry.title, status: entry.status, detail: entry.detail }); }
     this.cancelPermissions();
-    clearTimeout(active.timer); active.settled = true; active.signalStarted();
+    clearTimeout(active.timer); active.settled = true; active.signalStarted(); active.wake?.();
     if (this.active === active) this.active = null;
   }
   private failTurn(active: ActiveTurn, error: Error): void {
     if (active.settled) return;
     for (const entry of active.items.values()) if (entry.timer) { clearTimeout(entry.timer); entry.timer = null; }
-    clearTimeout(active.timer); active.settled = true; active.rejectStarted(error); active.reject(error);
+    clearTimeout(active.timer); active.settled = true; active.rejectStarted(error); active.reject(error); active.wake?.();
     if (this.active === active) this.active = null;
   }
 }

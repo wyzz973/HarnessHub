@@ -105,7 +105,7 @@ test("G069-C02 Claude Code: an entry still in the CLI's write queue is found by 
 test("G069-C05 Claude Code's /clear is the driver's: the session is given up and the clear reported with no checkpoint (the next Turn opens a session, none is opened ahead); nothing reaches Claude; with an attachment it is sent as content", { timeout: 60000 }, async t => {
   const peer = await peerRoot(t), { control, id } = await opened(t, "claude", peer);
   let current = id;
-  for (const words of ["/clear", "  /reset", "/new"]) {
+  for (const words of ["/clear", "/reset", "/new"]) {
     const { result } = await run(control, current, words);
     assert.deepEqual(result, { status: "completed", reason: "cleared", input: "not_recorded", native: { cleared: true, replaced: { checkpoint: null } } }, words);
     assert.equal(await control.checkpoint!(), null, words + ": no session left to resume");
@@ -121,6 +121,33 @@ test("G069-C05 Claude Code's /clear is the driver's: the session is given up and
   const attached = await run(control, current, "/clear", [{ id: contentId("content-g069a"), name: "a.txt", mediaType: "text/plain", kind: "file", bytes: 1, sha256: "0".repeat(64), path: attachment }]);
   assert.deepEqual((await prompts(peer)).at(-1), ["/clear"], "with an attachment the CLI reads no command, so it is sent as it is");
   assert.deepEqual([attached.result.input, attached.result.native], ["recorded", undefined], "content, no clear");
+});
+
+// G074-F1 (probe record 2026-11-10, Claude Code 2.1.316 behind claude-agent-acp 0.99.1): the CLI ran no command for " /context" or
+// "　/context" but called the model with the text. The driver gives the native session up for a /clear it reads, so reading
+// whitespace plus a slash word as a command would drop the user's context for what Claude Code takes as words.
+test("G074-F1 Claude Code runs a command only when the slash is the input's first character: ' /clear', U+3000, a tab or a line break first are words, sent as typed with no clear and the native session kept; '/clear', '/clear   ' and '/clear foo' are the driver's clear", { timeout: 60000 }, async t => {
+  const peer = await peerRoot(t), { control, id } = await opened(t, "claude", peer);
+  // A space, U+3000, a tab, a line break and a no-break space before each clear alias and /compact, with arguments or none, then the
+  // zero-width space and the byte-order mark (which the old trimStart() stripped) before one.
+  const typed = [" ", "　", "\t", "\n", "\u00a0"].flatMap(space => ["/clear", "/reset", "/new", "/compact", "/clear foo"].map(word => space + word))
+    .concat(["\u200b/clear", "\ufeff/reset", "  \t/new  "]);
+  for (const words of typed) {
+    const { result } = await run(control, id, words);
+    assert.deepEqual([result.status, result.reason, result.input, result.native], ["completed", "end_turn", "recorded", undefined], JSON.stringify(words) + ": words, recorded by Claude's answer, nothing cleared");
+    assert.equal(await control.checkpoint!(), id, JSON.stringify(words) + ": the native session is still this connection's");
+  }
+  assert.deepEqual(await prompts(peer), typed.map(words => [words]), "every one was sent to Claude exactly as typed");
+  assert.equal((await peer.sent()).filter(line => line.method === "session/new").length, 1, "no new session: none was given up");
+  // The invalid samples: with the slash first they are the clear, however the line goes on; nothing more reaches Claude.
+  let current = id;
+  for (const words of ["/clear", "/clear   ", "/clear foo", "/reset\n"]) {
+    const { result } = await run(control, current, words);
+    assert.deepEqual(result, { status: "completed", reason: "cleared", input: "not_recorded", native: { cleared: true, replaced: { checkpoint: null } } }, JSON.stringify(words));
+    assert.equal(await control.checkpoint!(), null, JSON.stringify(words) + ": the session was given up");
+    current = await control.open(peer.workspace);
+  }
+  assert.equal((await prompts(peer)).length, typed.length, "no prompt was sent for a clear");
 });
 
 test("G069-C02 Codex: the position is a fresh client identity the next turn is sent with; the check finds the user message by it; E1 once, before the result, with the packet, never from the reply", { timeout: 60000 }, async t => {
@@ -158,6 +185,24 @@ test("G069-C02 Codex: the position is a fresh client identity the next turn is s
   const named = await peerRoot(t, { RELAY_ECHO_FIELD: "clientId" }), echo = await opened(t, "codex", named), mark = await echo.control.deliveryPosition!(echo.id);
   assert.deepEqual((await run(echo.control, echo.id, relayTurn(ID_A, WORDS))).events.filter(event => event.type === "input_recorded"), [{ type: "input_recorded", packetId: ID_A }]);
   assert.deepEqual(results(await echo.control.verifyDelivered!(echo.id, ask([[ID_A, mark]]))), ["present"]);
+});
+
+// G074 (probe record 2026-11-10, E1): Codex 0.166.0 echoes the identity turn/start was given as `clientUserMessageId` under `clientId`
+// (the user message's keys: clientId, completedAtMs, content, id, startedAtMs, type). `clientId` is read first; `clientUserMessageId`
+// is the name the request used, kept as the second reading.
+test("G074-F4 Codex: the user message's `clientId` is the echo the driver reads first, in the live evidence and in the check; `clientUserMessageId` only when there is no `clientId`", { timeout: 60000 }, async t => {
+  const recorded = async (settings: Record<string, string>) => {
+    const peer = await peerRoot(t, settings), { control, id } = await opened(t, "codex", peer), mark = await control.deliveryPosition!(id);
+    const { events } = await run(control, id, relayTurn(ID_A, WORDS));
+    return { live: events.filter(event => event.type === "input_recorded").length, checked: results(await control.verifyDelivered!(id, ask([[ID_A, mark]]))) };
+  };
+  // As the installed Codex sends it: `clientId` alone (and, as before, `clientUserMessageId` alone).
+  assert.deepEqual(await recorded({ RELAY_ECHO_FIELD: "clientId" }), { live: 1, checked: ["present"] });
+  assert.deepEqual(await recorded({}), { live: 1, checked: ["present"] });
+  // Both names on one message: `clientId` decides. This turn's identity under `clientId` is this turn's whatever the other says...
+  assert.deepEqual(await recorded({ RELAY_ECHO_FIELD: "clientId", RELAY_ECHO_EXTRA: JSON.stringify({ clientUserMessageId: "someone-else" }) }), { live: 1, checked: ["present"] });
+  // ...and another client's identity under `clientId` is not this turn's, whatever the other says (invalid sample: the old order took this one).
+  assert.deepEqual(await recorded({ RELAY_ECHO_FIELD: "clientId", RELAY_ECHO_VALUE: "someone-else", RELAY_ECHO_EXTRA: JSON.stringify({ clientUserMessageId: "$clientUserMessageId" }) }), { live: 0, checked: ["unavailable"] });
 });
 
 test("G069-C02 Codex: outside_window past the turns a check reads, compacted after a context compaction, unavailable without echoes or when Codex refuses or answers garbage, historyEmpty from a whole thread; a listing that never answers is unavailable and the next turn runs (C6)", { timeout: 90000 }, async t => {

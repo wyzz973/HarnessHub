@@ -11,7 +11,7 @@ import { checkInputs, fileMentions, readAttachment } from "../../infrastructure/
 import { homedir } from "node:os";
 import type { DataClass, RelayCapabilities, VendorObservation } from "../../contracts/relay.js";
 import { nativeReading, relayDeclaration, relayEntries, textClassify } from "./relay-classify.js";
-import { dshVendor, readEndpoint, slashModelKey, vendorObservation } from "./relay-vendor.js";
+import { dshModelKey, dshVendor, readEndpoint, vendorObservation } from "./relay-vendor.js";
 import { type TurnText } from "../../contracts/control.js";
 import { bodyWithoutFirstLine, COMMAND_REFUSED, exceedsInput, INPUT_LIMIT_REFUSED, placeTurn, userWords, type RelayTurn, type Stripped, type UserText, measureBy } from "./relay-turn.js";
 
@@ -161,7 +161,8 @@ export const dshRelayCapabilities: RelayCapabilities = relayDeclaration({
   cacheTtl: "hours",
   compactionEvidence: "none",
   resolveVendor: dshVendor,
-  normalizeModel: slashModelKey,
+  // dsh reports its model as a JSON array text of the provider and the model; the key is the last item (relay-conformance.md F8).
+  normalizeModel: dshModelKey,
   title: "none",
   hostPathRead: "none",
   sessionTools: null,
