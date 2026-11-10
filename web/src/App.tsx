@@ -29,7 +29,7 @@ import { BrandIcon } from "./components/BrandIcon.js";
 import { attachmentKind, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, MAX_MESSAGE_ATTACHMENT_BYTES, type AttachmentDraft } from "./components/Attachments.js";
 import type { RelayNext } from "./components/RelayCard.js";
 import { relayBody, runRelayInfo, type RelayChoice, type RelayRequest } from "./relay.js";
-import { useRelayPresence, useRelayView } from "./lib/use-relay.js";
+import { useRelayPrefs, useRelayPresence, useRelayView } from "./lib/use-relay.js";
 import { parseContentRef, type ContentRef } from "../../src/contracts/content.js";
 import { hiddenHarnesses, useMedia, useNow, usePreferences } from "./lib/prefs.js";
 import { finished, stoppedByUser } from "./lib/turn.js";
@@ -261,7 +261,7 @@ export function App() {
   // The relay (relay-architecture §12): a send the Gateway refused and offered ways forward for, what the user chose for the next
   // message alone, and a count of the Gateway's announcements that the relay changed, which make the page read its state again.
   const [relayChoice, setRelayChoice] = useState<RelayChoice | null>(null);
-  const [relayNext, setRelayNext] = useState<RelayNext>(null);
+  const [relayNext, setRelayNext] = useState<RelayNext | null>(null);
   const [relayPushed, setRelayPushed] = useState(0);
   const [nativeCatalog, setNativeCatalog] = useState<NativeModelCatalog | null>(null);
   const [nativeLoading, setNativeLoading] = useState(false);
@@ -522,6 +522,8 @@ export function App() {
   const turns = session?.runs;
   useEffect(() => { if (!relayPresence.known && turns !== undefined && turns.some(run => runRelayInfo(run)?.delivery != null)) learnRelay(); }, [turns, relayPresence.known, learnRelay]);
   const relayView = useRelayView(api.relay, session, relayPushed, relayPresence.known, relayPresence.forget);
+  // The Gateway's relay settings (they apply to every browser): the settings page changes them, the line above the message box reads them.
+  const relayPrefs = useRelayPrefs(api.relay, relayPresence.known);
   const leave = (action: () => void) => {
     if (operation.current) return;
     const finish = () => { pendingProviderWrite.current = null; action(); };
@@ -658,7 +660,7 @@ export function App() {
       const isEffective = session !== null && JSON.stringify(draft) === JSON.stringify(selectionDraft(session.selection));
       const problem = (isEffective && session ? effectiveProviderProblem(session.selection, state.providers) : null) ?? selectionProblem(draft, state.harnesses, state.providers); if (problem) throw new ApiError("INVALID_SELECTION", problem);
       // What the user chose about the history for this message: a way forward from a refusal, else the one-message choice of the line above the box.
-      const relayRequest: RelayRequest | undefined = relayChoiceRequest ?? (relayNext === null ? undefined : { attach: relayNext });
+      const relayRequest: RelayRequest | undefined = relayChoiceRequest ?? relayNext?.request;
       const relayChosen = relayBody(relayRequest), relayKey = relayChosen === null ? undefined : JSON.stringify(relayChosen);
       const previous = pendingMessage.current, same = previous !== null && previous.text === value && previous.attachments.join() === ids.join() && previous.relay === relayKey;
       if (previous && !previous.committed && !same) throw new ApiError("UNCONFIRMED_REQUEST", "上一条消息的接收结果还未确认。请保留原消息重试，或等待历史更新后再发送新内容。");
@@ -1068,12 +1070,12 @@ export function App() {
         onLoadExtensions={signal => api.nativeExtensions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, signal)} onLoadNativeSessions={(cursor, signal, probes) => api.nativeSessions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, cursor, signal, probes)}
         onImportNative={importNative} focusOnOpen={sessionId !== null && openedFromPage === sessionId} onOpenFocused={() => setOpenedFromPage(null)} onApply={() => { lastAutoSelection.current = null; void applySelection(); }} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }}
         onProviders={() => navigate("providers")} onNew={newChat} onMenu={shell.onMenu}
-        {...(relayPresence.known || relayChoice !== null ? { relay: { api: api.relay, view: relayView, choice: relayChoice, next: relayNext, onNext: setRelayNext, onDismissChoice: () => setRelayChoice(null) } } : {})}
+        {...(relayPresence.known || relayChoice !== null ? { relay: { api: api.relay, view: relayView, prefs: relayPrefs.prefs, choice: relayChoice, next: relayNext, onNext: setRelayNext, onDismissChoice: () => setRelayChoice(null) } } : {})}
         queued={queued} onQueue={queueMessage} onEditQueued={() => { if (queued) returnQueued(queued, null); }} onWithdrawQueued={withdrawQueued} queueNotice={queueNotice} onDismissQueueNotice={() => setQueueNotice(null)}
         preferences={preferences} onPreference={setPreference} conversations={state.sessions.length} sidebarHidden={!narrow && !preferences.sidebar} onExpandSidebar={shell.onExpandSidebar} onHarnesses={() => navigate("harnesses")} onSettings={() => navigate("settings")} onRescan={() => void rescan()} scanning={mutation === "scanning"}/>
         : shown === "providers" ? <ProvidersPage providers={state.providers} editor={editor} saving={mutation === "saving"} probes={probes} error={error} onEdit={provider => { setEditor(provider); setError(null); }} onBack={() => leave(() => { setEditor(null); setEditorDirty(false); setError(null); })} onSave={saveProvider} onProbe={provider => void probeProvider(provider)} onDirty={dirtyChanged} onDismissError={() => setError(null)} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
         : shown === "capabilities" ? <CapabilitiesPage api={api} initialHarness={capabilityHarness} hidden={hidden} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
-        : shown === "settings" ? <SettingsPage api={api} relayKnown={relayPresence.known} preferences={preferences} onPreference={setPreference} onRescan={() => void rescan()} scanning={mutation === "scanning"} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
+        : shown === "settings" ? <SettingsPage api={api} relay={relayPrefs} preferences={preferences} onPreference={setPreference} onRescan={() => void rescan()} scanning={mutation === "scanning"} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
         : <HarnessesPage api={api} harnesses={state.harnesses} hidden={hidden} onSettings={() => navigate("settings")} installationPolicy={state.installationPolicy} onUninstall={uninstall} onInstallOfficial={installOfficial} onUpgradeInstallation={upgradeInstallation} jobs={state.jobs} scanning={mutation === "scanning"} checking={checkingUpdates} submitting={submittingInstallations} cancelling={cancellingInstallations} unconfirmed={unconfirmedInstallations} error={error} connectionError={managementConnectionError} onRescan={() => void rescan()} onCheckUpdates={ids => void checkUpdates(ids)} onInstall={install} onOpenSession={openFromPage} onConfirm={confirmInstallation} onCancelJob={job => void cancelInstallation(job)} onDismissError={() => setError(null)} onChoose={chooseHarness} onCapabilities={id => { setCapabilityHarness(id); navigate("capabilities"); }}
           readiness={state.readiness} sessions={state.sessions} onMenu={shell.onMenu} onExpandSidebar={shell.onExpandSidebar} sidebarHidden={!narrow && !preferences.sidebar}/>}
     </main>

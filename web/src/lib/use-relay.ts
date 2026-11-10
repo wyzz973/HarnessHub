@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SessionView } from "../../../src/contracts/web.js";
-import type { RelayApi, RelayCrossVendor, RelayPrefs, RelayView } from "../relay.js";
+import type { RelayApi, RelayPrefs, RelayView } from "../relay.js";
 import { relaySignature } from "./relay-state.js";
 
 /** A look at the relay again soon after the last, while a hand-over is still on its way, in case no event announces it. */
@@ -60,23 +60,43 @@ export function useRelayView(api: RelayApi, session: SessionView | null, pushed:
   return known && read !== null && read.sessionId === id && turns > 0 ? read.view : null;
 }
 
-const INTRO_KEY = "harnesshub:relay-intro";
 /**
- * Whether the page has told the user, once, what a hand-over to another Harness sends (10.4). Remembered by this browser; a
- * browser that cannot remember asks again each visit, and the note never blocks anything.
+ * A set of words this browser remembers from one visit to the next (which hand-overs it explained, which banners the user closed),
+ * under one storage key: a JSON list of at most `limit` words, the oldest dropped first. A browser that cannot remember asks again
+ * each visit, and nothing here ever blocks anything: it is a convenience, so every read and write is allowed to fail.
  */
-export function useRelayIntro(): { readonly seen: boolean; readonly dismiss: () => void } {
-  const [seen, setSeen] = useState(() => { try { return localStorage.getItem(INTRO_KEY) === "1"; } catch { return false; } });
-  const dismiss = useCallback(() => { setSeen(true); try { localStorage.setItem(INTRO_KEY, "1"); } catch { /* A convenience only: without storage the note is shown again next time. */ } }, []);
-  return { seen, dismiss };
+export function useRememberedKeys(storageKey: string, limit: number): { readonly has: (key: string) => boolean; readonly add: (key: string) => void } {
+  const [keys, setKeys] = useState<readonly string[]>(() => {
+    try {
+      const stored: unknown = JSON.parse(localStorage.getItem(storageKey) ?? "[]");
+      return Array.isArray(stored) ? stored.filter((item): item is string => typeof item === "string" && item.length <= 512).slice(-limit) : [];
+    } catch { return []; }
+  });
+  const has = useCallback((key: string) => keys.includes(key), [keys]);
+  const add = useCallback((key: string) => {
+    setKeys(current => {
+      if (current.includes(key)) return current;
+      const next = [...current, key].slice(-limit);
+      try { localStorage.setItem(storageKey, JSON.stringify(next)); } catch { /* A convenience only: without storage it is shown again next time. */ }
+      return next;
+    });
+  }, [storageKey, limit]);
+  return { has, add };
 }
+/** The hand-overs this browser has explained once (10.4): one line, the first time the conversation goes to a Harness that has not been told of, then no more. */
+export const INTRO_KEY = "harnesshub:relay-intro-seen";
+export function useRelayIntro() { return useRememberedKeys(INTRO_KEY, 200); }
+/** The banners the user closed (the key of an `attention` with the conversation and the Harness it was about) and the workspace warnings closed. */
+export const CLOSED_KEY = "harnesshub:relay-closed";
+export function useClosedNotices() { return useRememberedKeys(CLOSED_KEY, 400); }
 
 /**
- * The installation's relay preferences for the settings page, read only when the Gateway is known to have the relay. `prefs`
- * is null while they are read and when the Gateway has none to give (the page then offers no setting); `change` saves
- * optimistically, returns the old value on failure and says why.
+ * The installation's relay preferences for the page, read only when the Gateway is known to have the relay. `prefs` is null while
+ * they are read and when the Gateway has none to give (the page then offers no setting); `change` saves optimistically, returns the
+ * old value on failure and says why.
  */
-export function useRelayPrefs(api: RelayApi, known: boolean): { readonly prefs: RelayPrefs | null; readonly problem: string | null; readonly saving: boolean; readonly change: (value: RelayCrossVendor) => void } {
+export interface RelayPrefsState { readonly prefs: RelayPrefs | null; readonly problem: string | null; readonly saving: boolean; readonly change: <K extends keyof RelayPrefs>(name: K, value: RelayPrefs[K]) => void }
+export function useRelayPrefs(api: RelayApi, known: boolean): RelayPrefsState {
   const [prefs, setPrefs] = useState<RelayPrefs | null>(null);
   const [problem, setProblem] = useState<string | null>(null), [saving, setSaving] = useState(false);
   useEffect(() => {
@@ -85,11 +105,11 @@ export function useRelayPrefs(api: RelayApi, known: boolean): { readonly prefs: 
     void api.prefs(controller.signal).then(read => { if (!controller.signal.aborted) setPrefs(read); });
     return () => controller.abort();
   }, [api, known]);
-  const change = useCallback((value: RelayCrossVendor) => {
+  const change = useCallback(<K extends keyof RelayPrefs>(name: K, value: RelayPrefs[K]) => {
     const before = prefs;
-    if (before === null || saving || before.crossVendor === value) return;
-    setSaving(true); setProblem(null); setPrefs({ crossVendor: value });
-    api.setCrossVendor(value).catch((failure: unknown) => {
+    if (before === null || saving || before[name] === value) return;
+    setSaving(true); setProblem(null); setPrefs({ ...before, [name]: value });
+    api.setPref(name, value).catch((failure: unknown) => {
       setPrefs(before);
       setProblem(failure instanceof Error ? failure.message : "这项设置没有保存。");
     }).finally(() => setSaving(false));

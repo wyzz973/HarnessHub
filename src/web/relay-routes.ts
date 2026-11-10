@@ -167,6 +167,8 @@ function matches(header: string | undefined, etag: string): boolean {
   return header.split(",").some(part => { const tag = part.trim(); return (tag.startsWith("W/") ? tag.slice(2) : tag) === etag; });
 }
 const LIST = /^\/api\/v1\/sessions\/([^/]+)\/relay$/u, PACKET = /^\/api\/v1\/sessions\/([^/]+)\/relay\/(relay-[0-9a-hjkmnp-tv-z]{20})$/u;
+/** A vendor key that names a service by a fixed word (`openai`); a key with a colon carries a host, a provider id or an unknown Harness. */
+const NAMED_VENDOR = /^[a-z][a-z0-9-]{0,31}$/u;
 /** The Sessions whose decisions are kept at most (the least recently read go first). */
 const DECISION_SESSIONS = 64;
 
@@ -308,6 +310,9 @@ export class RelayApi {
     try { declared = this.options.declaration({ harnessId: binding.harnessId, controlId: binding.controlId }); } catch { declared = undefined; }
     const known = attended.get(binding.harnessId + "\0" + binding.controlId);
     const probed = known?.probed ?? (declared?.probed === true);
+    // The named service the Harness runs on (a fixed word), never a host or a provider id of the user's own.
+    const service = relay.vendorObserved == null ? undefined : vendorKeyOf(declared, binding.harnessId, relay.vendorObserved);
+    const named = service !== undefined && NAMED_VENDOR.test(service) ? service : undefined;
     const canConfirm = declared === undefined ? undefined : declared !== null && (declared.delivery.live !== "none" || declared.delivery.verify !== "none" || declared.delivery.successProvesRecorded);
     const need = this.owedNow(snapshot, binding);
     const asked = known?.attention ?? null;
@@ -320,7 +325,7 @@ export class RelayApi {
     }
     return { harnessId: binding.harnessId, controlId: binding.controlId, nativeEpoch: relay.nativeEpoch, sync: relay.sync.kind, throughRun: this.throughRun(snapshot, mark),
       evidence: mark?.evidence ?? null, cleared: Math.max(0, relay.nativeEpoch - heldSince(relay, snapshot.nativeBindings ?? [], binding.harnessId, binding.controlId)), probed,
-      ...(canConfirm === undefined ? {} : { canConfirm }),
+      ...(canConfirm === undefined ? {} : { canConfirm }), ...(named === undefined ? {} : { vendor: named }),
       ...(need === undefined || need.runIds.length === 0 ? {} : { owed: { runs: need.runIds.length, estTokens: this.estimate(snapshot, need) } }),
       ...(attention === undefined ? {} : { attention }) };
   }

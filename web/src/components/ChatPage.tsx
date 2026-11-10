@@ -10,9 +10,9 @@ import { failureMessage, runStatusLabel } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { clock, compact, duration, elapsed, folderName, shortTitle } from "../lib/format.js";
 import { useMedia, useNow, type Preferences } from "../lib/prefs.js";
-import { choiceApplies, choiceView, handoverOf, relayLine, relayRequestFor, userSequences } from "../lib/relay-state.js";
-import { useRelayIntro } from "../lib/use-relay.js";
-import { runRelayInfo, type RelayApi, type RelayChoice, type RelayOption, type RelayRequest, type RelayView } from "../relay.js";
+import { bannerOf, choiceApplies, choiceView, handoverOf, relayLine, relayRequestFor, runNotes, userSequences } from "../lib/relay-state.js";
+import { useClosedNotices, useRelayIntro } from "../lib/use-relay.js";
+import { runRelayInfo, type RelayApi, type RelayChoice, type RelayOption, type RelayPrefs, type RelayRequest, type RelayView } from "../relay.js";
 import { cancelledWords, changeCount, finished, toolTree, TOOL_PENDING, type QueueNotice } from "../lib/turn.js";
 import { Collapsible, motionStyle, usePresence } from "../ui/motion.js";
 import { Dialog, Menu, useToast } from "../ui/overlay.js";
@@ -24,7 +24,7 @@ import { BranchOrigin } from "./BranchOrigin.js";
 import { Composer, OPTION_NAMES, THINKING_NAMES, type DockedApproval } from "./Composer.js";
 import { DetailsPanel, type PanelTab } from "./DetailsPanel.js";
 import { RelayPacketDialog, type PacketTarget } from "./RelayDetails.js";
-import { RelayCard, type RelayNext } from "./RelayCard.js";
+import { RelayCard, RelayDataRoot, type RelayNext } from "./RelayCard.js";
 import { RelayDivider } from "./RelayDivider.js";
 import { AssistantTurn, SwitchDivider, UserMessage } from "./Turn.js";
 import { Welcome } from "./Welcome.js";
@@ -67,9 +67,11 @@ function draftMatches(draft: SelectionDraft, selection: HarnessSelection): boole
 export interface ChatRelay {
   readonly api: RelayApi;
   readonly view: RelayView | null;
+  /** The Gateway's relay settings, when it gave them: the first hand-over to a Harness says where the history goes only while hand-overs are allowed. */
+  readonly prefs: RelayPrefs | null;
   readonly choice: RelayChoice | null;
-  readonly next: RelayNext;
-  readonly onNext: (next: RelayNext) => void;
+  readonly next: RelayNext | null;
+  readonly onNext: (next: RelayNext | null) => void;
   readonly onDismissChoice: () => void;
 }
 
@@ -310,14 +312,17 @@ export function ChatPage(props: ChatProps) {
     if (session === null && document.activeElement === textarea.current) refocus.current = true;
     const first = session === null || session.messages.length === 0;
     if (first) setFirstSend({ id: session?.id ?? null });
+    // The line above the box explained where the history goes (the first hand-over to this Harness); the message sent under it is the end of that.
+    const explained = introKey;
     try { await props.onSend(text, retryAttachments, relayChoice); }
     catch (failure: unknown) { if (first && mounted.current) setFirstSend(null); throw failure; }
+    if (explained !== null) introduction.add(explained);
     if (mounted.current) { props.onMessageDraft(value => value === text ? "" : value); resumeFollowing(); }
   };
   // The relay (relay-architecture §12): the packet each Turn went out with, for the strip under its message; what the line above
   // the box says; and how a refused send goes on, which sends the draft again with the way the user chose.
   const relay = props.relay;
-  const introduction = useRelayIntro();
+  const introduction = useRelayIntro(), closed = useClosedNotices();
   const userSeq = useMemo(() => userSequences(session?.messages ?? []), [session?.messages]);
   const packetOfRun = useMemo(() => {
     const result = new Map<string, { readonly packetId: string; readonly number: number | null }>();
@@ -329,11 +334,25 @@ export function ChatPage(props: ChatProps) {
     }
     return result;
   }, [session?.runs, relay?.view]);
+  // What the relay did with a Turn's history when that is worth saying (a resend, words sent alone and why), under its message.
+  const notes = useMemo(() => relay?.view ? runNotes({ runs: session?.runs ?? [], view: relay.view, name: harnessName }) : new Map<string, string>(), [session?.runs, relay?.view, harnesses]);
   const viewPacket = useCallback((packetId: string) => setViewing(packetId), []);
   const relayNow = useMemo(() => session && relay ? relayLine(session, relay.view) : null, [session, relay?.view]);
-  // A choice for the next message alone is only meaningful where its line is shown: with that line gone (another Harness, nothing
-  // owed any more) it is put away, so a message never goes out under a choice the user can no longer see.
-  const nextFits = relay === undefined || relay.next === null || relay.next === "none" && relayNow?.kind === "owed" || relay.next === "full" && relayNow?.kind === "cleared";
+  // What a binding asks the user to look at, for the Harness the conversation is on, once the conversation is idle: said once, and a closed one
+  // of the same episode (its key, with the conversation and the Harness) does not come back.
+  const idle = session !== null && session.status === "open" && session.activeRunId === null && session.pendingSwitchId === null && session.runs.length > 0 && session.runs.every(run => finished(run.status));
+  const onBinding = session && relay?.view ? relay.view.bindings.find(item => item.harnessId === session.selection.harnessId && item.controlId === session.selection.controlId) : undefined;
+  const closedKey = (key: string) => `${session?.id ?? ""}|${session?.selection.harnessId ?? ""}|${key}`;
+  const banner = useMemo(() => idle && session ? bannerOf(onBinding, harnessName(session.selection.harnessId), key => closed.has(closedKey(key))) : null,
+    [idle, onBinding, session?.id, session?.selection.harnessId, closed.has, harnesses]);
+  // The first hand-over to a Harness says where the history goes, in the line above the box, while hand-overs are allowed (the default); that
+  // it was said is remembered per service (or per Harness while its service is not known), and a message sent under it ends it.
+  const introKey = relayNow?.kind === "owed" && banner === null && session ? relayNow.service ?? "harness:" + session.selection.harnessId : null;
+  const showIntro = introKey !== null && !introduction.has(introKey) && relay?.prefs?.crossVendor !== "ask" && relay?.prefs?.crossVendor !== "goal_only";
+  // A choice for the next message alone is only meaningful where its words are shown: with them gone (another Harness, nothing owed any
+  // more, the banner closed) it is put away, so a message never goes out under a choice the user can no longer see.
+  const offered = banner?.key ?? relayNow?.kind ?? null;
+  const nextFits = relay === undefined || relay.next === null || relay.next.for === offered;
   useEffect(() => { if (!nextFits) relay?.onNext(null); }, [nextFits]);
   const chooseRelay = (option: RelayOption) => {
     const choice = relay?.choice, request = choice ? relayRequestFor(option, choice) : null;
@@ -436,12 +455,15 @@ export function ChatPage(props: ChatProps) {
    * always drew; otherwise it says only what is known (relay-architecture §12.1 T5): that the conversation was handed over,
    * and "taken over" once the packet is in the original program's history. Nothing is drawn before anything was sent to it.
    */
+  const covered = useRef(new Set<string>()).current;
   const handover = (current: SessionView, divider: Divider): ReactNode => {
     const target = divider.change.target;
     if (target === null) return null;
     const revert = divider === lastDivider && revertTo && current.status === "open" ? { onRevert: () => props.onDraft(selectionDraft(revertTo)), revertDisabled: mutation !== null || pending || active !== null } : {};
-    const state = handoverOf({ runs: current.runs, userSeq, throughSeq: divider.change.throughSeq, from: divider.from.harnessId, to: target.harnessId, view: relay?.view ?? null });
+    const state = handoverOf({ runs: current.runs, userSeq, throughSeq: divider.change.throughSeq, from: divider.from.harnessId, to: target.harnessId, view: relay?.view ?? null, name: harnessName });
     if (state.kind === "none") return null;
+    // The line already says what the relay did with this Turn's history: its message does not say it again.
+    if (state.kind === "alone") covered.add(state.runId);
     if (state.kind === "legacy") return <SwitchDivider key={"switch:" + divider.change.id} change={divider.change} from={divider.from} detail={describeSelection(target)} harnesses={harnesses} {...revert}/>;
     return <RelayDivider key={"switch:" + divider.change.id} state={state} from={divider.from.harnessId} to={target.harnessId} name={harnessName} onView={relay ? viewPacket : undefined} {...revert}/>;
   };
@@ -454,6 +476,7 @@ export function ChatPage(props: ChatProps) {
   const transcriptItems = (current: SessionView): ReactNode[] => {
     const replies = new Map(current.messages.filter(message => message.role === "assistant").map(message => [message.runId, message] as const));
     const drawn = new Set<string>(), items: ReactNode[] = [];
+    covered.clear();
     const turn = (runId: PublicRun["id"]) => {
       const run = runs.get(runId), open = (current.permissions ?? []).filter(request => request.runId === runId && !request.decided);
       return <AssistantTurn key={"turn:" + runId} message={replies.get(runId)} run={run} harnesses={harnesses} providers={providers} describe={describe} detailed={detailed}
@@ -464,8 +487,11 @@ export function ChatPage(props: ChatProps) {
     };
     for (const message of current.messages) {
       const run = runs.get(message.runId);
-      if (message.role === "user") items.push(known.current.messages.has(message.id) ? <UserMessage key={message.id} message={message} run={run} onEdit={fillDraft} packet={packetOfRun.get(message.runId)} onViewPacket={viewPacket}/>
-        : <div key={message.id} className="motion-message-in"><UserMessage message={message} run={run} onEdit={fillDraft} packet={packetOfRun.get(message.runId)} onViewPacket={viewPacket}/></div>);
+      if (message.role === "user") {
+        const note = covered.has(message.runId) ? undefined : notes.get(message.runId);
+        items.push(known.current.messages.has(message.id) ? <UserMessage key={message.id} message={message} run={run} onEdit={fillDraft} packet={packetOfRun.get(message.runId)} onViewPacket={viewPacket} note={note}/>
+          : <div key={message.id} className="motion-message-in"><UserMessage message={message} run={run} onEdit={fillDraft} packet={packetOfRun.get(message.runId)} onViewPacket={viewPacket} note={note}/></div>);
+      }
       if (!drawn.has(message.runId) && (run !== undefined || message.role === "assistant")) { drawn.add(message.runId); items.push(turn(message.runId)); }
       const divider = dividerAfter.get(message.id);
       if (divider) items.push(handover(current, divider));
@@ -511,9 +537,9 @@ export function ChatPage(props: ChatProps) {
   const composer = <Composer {...props} onSendDraft={text => send(text)} active={active} dirty={dirty} pending={pending} problem={problem} blocked={blocked} inputRef={textarea}
     onShowResume={session ? showResume : undefined} approval={approval} agentPickerOpen={agentPicker} onAgentPickerOpen={setAgentPicker} onEditLast={editLast} onReplaceDraft={fillDraft}
     above={session ? <>
-      {relay ? <RelayCard line={relayNow} choice={relay.choice && choiceApplies(relay.choice, session.selection) ? choiceView(relay.choice, harnessName, session.selection.harnessId) : null} target={harnessName(session.selection.harnessId)}
-        next={relay.next} onNext={relay.onNext} onChoose={chooseRelay} onDismissChoice={relay.onDismissChoice} busy={mutation !== null} canSend={props.messageDraft.trim() !== ""}
-        intro={relayNow?.kind === "owed" && relayNow.first && !introduction.seen ? introduction.dismiss : null}/> : null}
+      {relay ? <RelayCard line={relayNow} banner={banner} choice={relay.choice && choiceApplies(relay.choice, session.selection) ? choiceView(relay.choice, harnessName, session.selection.harnessId) : null} target={harnessName(session.selection.harnessId)}
+        next={relay.next} onNext={relay.onNext} onChoose={chooseRelay} onDismissChoice={relay.onDismissChoice} onDismissBanner={() => { if (banner !== null) closed.add(closedKey(banner.key)); }}
+        busy={mutation !== null} canSend={props.messageDraft.trim() !== ""} intro={showIntro}/> : null}
       {props.queued ? <div className="queued-message motion-fade-in flex items-center gap-2.5 rounded-block bg-subtle py-1.5 pr-1.5 pl-3 text-ui-sm" role="status">
         <CircleDashed size={15} className="flex-none text-fg-3" aria-hidden="true"/>
         <span className="flex-none text-caption text-fg-3">将在本轮结束后发送</span><span className="min-w-0 flex-1 truncate" title={props.queued.text}>{props.queued.text}</span>
@@ -579,6 +605,7 @@ export function ChatPage(props: ChatProps) {
     <div className="flex flex-col gap-2 empty:hidden">
       {error ? <div className="chat-error px-4 pt-3 sm:px-8"><Notice tone="red" onDismiss={props.onDismissError} className="mx-auto max-w-reading">{error}</Notice></div> : null}
       {props.connectionError ? <div className="px-4 pt-3 sm:px-8"><Notice tone="amber" className="connection-notice mx-auto max-w-reading" action={props.onRetryConnection ? <button type="button" className="btn btn-sm" onClick={props.onRetryConnection}>重新连接</button> : undefined}>{props.connectionError}</Notice></div> : null}
+      {session && relay?.view?.dataRootExposed && !closed.has("dataroot|" + session.workspace) ? <div className="px-4 pt-3 sm:px-8"><RelayDataRoot onDismiss={() => closed.add("dataroot|" + session.workspace)}/></div> : null}
       {failedSwitch && session?.status === "open" ? <div className="px-4 pt-3 sm:px-8"><Notice tone="red" className="selection-failure mx-auto max-w-reading" title={`未能切换到 ${harnessName(failedSwitch.requested.harnessId)}`}
         action={<button className="btn btn-sm" type="button" disabled={mutation !== null || pending} onClick={() => { props.onDraft(selectionDraft(session.selection)); setDismissedSwitch(failedSwitch.id); }}>继续使用当前选择</button>}>
         {failedSwitch.error ? failureMessage(failedSwitch.error) : "目标连接没有通过验证。"} 当前选择仍是 {harnessName(session.selection.harnessId)}。</Notice></div> : null}

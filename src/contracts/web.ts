@@ -322,6 +322,12 @@ export interface RelayBindingView {
    */
   readonly canConfirm?: boolean;
   /**
+   * The model service this binding's Harness was last seen running on, when it is a named one (`openai`, `anthropic`, `deepseek`…):
+   * what the page tells the user a handoff goes to. A gateway, router or provider of the user's own is named by a host or an id
+   * and is not given here (only an acknowledge names one, in `attention.vendor`); absent while the Harness has not run.
+   */
+  readonly vendor?: string;
+  /**
    * What a handoff to this binding would carry now: the finished Runs of other Harnesses (or its earlier native epochs) it does not
    * hold, and an estimate of their tokens. The estimate errs high and is not the packet's size (the packet folds to its budget).
    * Absent when nothing is owed.

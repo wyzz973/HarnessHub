@@ -8,16 +8,21 @@ import { useEntrance } from "./Turn.js";
 
 /** The sentence of a hand-over in three parts, the Harness's name between the other two so that it can be set in bold. */
 function sentence(state: ShownHandover, target: string): readonly [string, string, string] {
-  const packet = state.kind === "unknown" || state.kind === "not_recorded" ? "" : state.number === null ? "交接单" : `交接单 #${state.number}`;
+  const packet = state.kind === "unknown" || state.kind === "not_recorded" || state.kind === "alone" ? "" : state.number === null ? "交接单" : `交接单 #${state.number}`;
   switch (state.kind) {
     case "taken": return ["从这里起由 ", target, ` 接手 · ${state.how}`];
     case "pending": return ["交给 ", target, ` · ${packet} · 送达中`];
     case "started": return ["交给 ", target, ` · ${packet} · 已开始回复，送达待确认`];
-    case "unknown": return state.replied ? ["", target, " 已回复，但没有确认收到交接单；下一条消息会再附上一次"] : ["没有确认 ", target, " 收到交接单；下一条消息会再附上一次"];
+    // A Harness whose Driver has no way to learn that a handoff arrived: said once, as what it is, not as a fault.
+    case "unknown":
+      if (state.cannotConfirm) return ["已发给 ", target, "，这个 Harness 无法确认是否收到交接单"];
+      return state.replied ? ["", target, " 已回复，但没有确认收到交接单；下一条消息会再附上一次"] : ["没有确认 ", target, " 收到交接单；下一条消息会再附上一次"];
     case "not_recorded": return ["交接单没有送达 ", target, "（它在收到前拒绝了这条消息），下一条消息会补上"];
+    // The words went alone: the conversation is with this Harness now, and it has not been given what came before. Never "taken over".
+    case "alone": return ["交给 ", target, ` · ${state.note}`];
   }
 }
-const DOT = { pending: "run", started: "run", unknown: "idle", not_recorded: "fail" } as const;
+const DOT = { pending: "run", started: "run", unknown: "idle", not_recorded: "fail", alone: "idle" } as const;
 /** The longest piece of a sentence that is kept whole when it wraps (a name, "交接单（标准）", "#1"); a longer one wraps as text does. */
 const WHOLE = 24;
 /**

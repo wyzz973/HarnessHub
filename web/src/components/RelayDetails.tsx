@@ -1,4 +1,4 @@
-import { Paperclip } from "lucide-react";
+import { Info, Paperclip } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { deliveryWords, evidenceWords, packetFacts, syncWords } from "../lib/relay-state.js";
 import type { RelayApi, RelayPacket, RelayView } from "../relay.js";
@@ -15,6 +15,15 @@ export function RelayAttachment({ number, onOpen }: { readonly number: number | 
     title="查看这条消息附带的交接单原文" onClick={onOpen}>
     <Paperclip size={13} className="flex-none text-fg-3" aria-hidden="true"/><span className="min-w-0 truncate">附交接单{number === null ? "" : ` #${number}`}</span>
   </button>;
+}
+
+/**
+ * What the relay did with a message's history when that was more than handing it over as owed (permissive-defaults §1): it sent the
+ * packet again because the last one was not confirmed, sent the words alone and why, or cut the packet down for a small window. It is
+ * said under the message, once and in plain words, and it never says the Harness took over.
+ */
+export function RelayNote({ text }: { readonly text: string }) {
+  return <p className="relay-note m-0 flex max-w-[82%] items-start gap-1.5 text-caption text-fg-3"><Info size={12} className="mt-[3px] flex-none" aria-hidden="true"/><span className="min-w-0">{text}</span></p>;
 }
 
 /** A packet's text as it was stored when it was sent: nothing is processed again when it is read (relay-architecture §10.2). */

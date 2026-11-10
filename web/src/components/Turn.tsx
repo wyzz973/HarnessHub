@@ -14,7 +14,7 @@ import { Spinner, StatusDot, Tip } from "../ui/primitives.js";
 import { ActivityList, NoticeList, OutputList, ToolList, usageParts, type SeenSteps, type ToolDetailLoader } from "./Activity.js";
 import { MessageAttachments } from "./Attachments.js";
 import { BrandIcon } from "./BrandIcon.js";
-import { RelayAttachment } from "./RelayDetails.js";
+import { RelayAttachment, RelayNote } from "./RelayDetails.js";
 import { StreamingMarkdown } from "./StreamingMarkdown.js";
 
 /** First-output and total time of a finished Run, measured from when its input was accepted. */
@@ -199,10 +199,12 @@ function ActionButton({ label, onClick, children, pressed }: { readonly label: s
 }
 
 /** Your message: a light grey bubble on the right of the reading column (Conversation board), with the way to edit it again. */
-export const UserMessage = memo(function UserMessage({ message, run, onEdit, packet, onViewPacket }: {
+export const UserMessage = memo(function UserMessage({ message, run, onEdit, packet, onViewPacket, note }: {
   readonly message: PublicMessage; readonly run: PublicRun | undefined; readonly onEdit: (text: string) => void;
   /** The packet this message went out with, when the Gateway tells (relay-architecture §12.1 T3): its identity and its number in the conversation. */
   readonly packet?: { readonly packetId: string; readonly number: number | null } | undefined; readonly onViewPacket?: ((packetId: string) => void) | undefined;
+  /** What the relay did with this message's history, when that is worth saying (an automatic resend, words sent alone and why). */
+  readonly note?: string | undefined;
 }) {
   // Whether it rises into place (Motion board #15) is the conversation's call: ChatPage wraps a message that arrived after
   // the conversation opened, so a message never rises twice and history never moves.
@@ -215,6 +217,7 @@ export const UserMessage = memo(function UserMessage({ message, run, onEdit, pac
       <div className="max-w-[82%] min-w-0 rounded-[18px] bg-subtle px-[15px] py-2.5 text-reading leading-6 whitespace-pre-wrap break-words text-fg"><span className="sr-only">你：</span>{message.text}</div>
     </div>
     {packet && onViewPacket ? <RelayAttachment number={packet.number} onOpen={() => onViewPacket(packet.packetId)}/> : null}
+    {note ? <RelayNote text={note}/> : null}
   </article>;
 });
 

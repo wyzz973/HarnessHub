@@ -1,4 +1,4 @@
-import type { ContinuityLevel, DeliveryEvidence, DeliveryStatus, RelayPrefKey, RunRelay, Tier } from "../../src/contracts/relay.js";
+import type { ContinuityLevel, DeliveryEvidence, DeliveryStatus, RelayAttention, RelayDecision, RelayPrefKey, RunRelay, Tier } from "../../src/contracts/relay.js";
 import type { RelayStreamEvent, RelayStreamEventType } from "../../src/contracts/web.js";
 
 /*
@@ -39,6 +39,23 @@ export type RelayOption = typeof RELAY_OPTIONS[number];
 export const RELAY_CROSS_VENDOR = ["ask", "allow", "goal_only"] as const;
 export type RelayCrossVendor = typeof RELAY_CROSS_VENDOR[number];
 export const RELAY_PREF_CROSS_VENDOR = "relay.crossVendor" satisfies RelayPrefKey;
+/** What the relay does when it is unsure (a delivery nothing confirmed, a history it could not check): settle it itself, or ask. */
+export const RELAY_WHEN_UNSURE = ["auto", "ask"] as const;
+export type RelayWhenUnsure = typeof RELAY_WHEN_UNSURE[number];
+export const RELAY_PREF_WHEN_UNSURE = "relay.whenUnsure" satisfies RelayPrefKey;
+/** Why a binding asks the user to look at it (`attention.cause`), and what the relay decided for a Turn (`decision`): the words of the wire. */
+export const RELAY_ATTENTION_CAUSES = ["delivery_unconfirmed", "verify_required", "marker_absent", "clear_unconfirmed", "recovery_failed", "input_limit", "consent_revoked", "consent_goal_only"] as const;
+export type RelayAttentionCause = typeof RELAY_ATTENTION_CAUSES[number];
+export type RelayAttentionCausesAreListed = Holds<Exact<RelayAttentionCause, RelayAttention["cause"]>>;
+export const RELAY_DECISION_KINDS = ["carry", "alone", "plain"] as const;
+export type RelayDecisionKind = typeof RELAY_DECISION_KINDS[number];
+export type RelayDecisionKindsAreListed = Holds<Exact<RelayDecisionKind, RelayDecision["kind"]>>;
+export const RELAY_DECISION_BY = ["need", "policy", "user"] as const;
+export type RelayDecisionBy = typeof RELAY_DECISION_BY[number];
+export type RelayDecisionByIsListed = Holds<Exact<RelayDecisionBy, RelayDecision["by"]>>;
+export const RELAY_DECISION_CAUSES = ["delivery_unconfirmed", "verify_required", "marker_absent", "input_limit", "recovery_failed", "consent_revoked", "consent_goal_only", "prepare_failed", "classification_changed"] as const;
+export type RelayDecisionCause = typeof RELAY_DECISION_CAUSES[number];
+export type RelayDecisionCausesAreListed = Holds<Exact<RelayDecisionCause, NonNullable<RelayDecision["cause"]>>>;
 
 // ---------------------------------------------------------------------------------------------------------------------
 // What the Gateway tells
@@ -57,12 +74,28 @@ export interface RelayBinding {
   readonly evidence: string | null;
   /** How many times the native context was cleared. */
   readonly cleared: number;
-  /** Whether a real run of this Harness has proved the relay; until then the card says so. */
+  /** Whether a real run of this Harness has proved the relay; until then the card says so (and nothing is held back for it). */
   readonly probed: boolean;
-  /** Optional, from a Gateway that says why a binding needs checking: `clear_unconfirmed`, `rewind`... */
-  readonly cause: string | null;
-  /** Optional, from a Gateway that estimates what is owed: Turns and tokens. */
+  /** Whether anything this Harness does can tell the Gateway that a handoff arrived; null when the Gateway does not say. */
+  readonly canConfirm: boolean | null;
+  /** The named service this Harness was last seen running on (`openai`); null while unknown or when it is not a named one. */
+  readonly vendor: string | null;
+  /** What a handoff to it would carry now: Turns and an estimate of their tokens (which errs high). Null when nothing is owed or the Gateway does not say. */
   readonly owed: { readonly runs: number; readonly estTokens: number | null } | null;
+  /** What the binding asks the user to look at, when it does: never a block, the next message goes anyway. */
+  readonly attention: RelayAttentionInfo | null;
+}
+/** `attention` of a binding (permissive-defaults §2.6): why, the ways to settle it, how much is at stake, and the name of the episode. */
+export interface RelayAttentionInfo {
+  readonly cause: RelayAttentionCause;
+  readonly options: readonly RelayOption[];
+  readonly counts: { readonly runs: number; readonly packets: number };
+  /** One episode: a closed banner of the same key does not come back. */
+  readonly key: string;
+  /** For `delivery_unconfirmed`: the "交接单 #n" the wait is about. */
+  readonly packet: number | null;
+  /** For an `acknowledge`: the vendor key the allowance would be for. */
+  readonly vendor: string | null;
 }
 /** One packet the Gateway built and sent. */
 export interface RelayPacket {
@@ -82,7 +115,11 @@ export interface RelayPacket {
   readonly delivery: RelayDeliveryState | null;
   readonly evidence: RelayEvidence | null;
 }
-export interface RelayView { readonly bindings: readonly RelayBinding[]; readonly packets: readonly RelayPacket[] }
+export interface RelayView {
+  readonly bindings: readonly RelayBinding[]; readonly packets: readonly RelayPacket[];
+  /** The data directory is within reach of this conversation's workspace: a warning for the workspace, never a block. */
+  readonly dataRootExposed: boolean;
+}
 
 /** The relay facts a Turn carries, as the page reads them from the conversation view. */
 export interface RunRelayInfo {
@@ -92,12 +129,21 @@ export interface RunRelayInfo {
   readonly executedOn: { readonly harnessId: string; readonly controlId: string; readonly nativeEpoch: number } | null;
   /** Present when the Gateway tells the delivery in the conversation view; a state is null when it used a word this page does not know. */
   readonly delivery: { readonly state: RelayDeliveryState | null; readonly evidence: RelayEvidence | null } | null;
+  /** What the relay decided for the Turn and why, when it recorded a decision (an ordinary Turn that owes nothing records none). */
+  readonly decision: RelayDecisionInfo | null;
 }
-/** A Turn's relay member with the delivery a newer Gateway may attach to it (the contract's type does not have it yet). */
-export type ClientRunRelay = RunRelay & { readonly delivery?: { readonly state?: unknown; readonly evidence?: unknown } };
+/** `decision` of a Turn: what the relay did with its history (carried it, sent the words alone, sent them as typed), who decided, and the situation. */
+export interface RelayDecisionInfo {
+  readonly kind: RelayDecisionKind;
+  readonly by: RelayDecisionBy;
+  readonly cause: RelayDecisionCause | null;
+  readonly reason: string | null;
+}
+/** A Turn's relay member with the delivery and the decision a Gateway attaches to it (the contract's RunRelay does not have them). */
+export type ClientRunRelay = RunRelay & { readonly delivery?: { readonly state?: unknown; readonly evidence?: unknown }; readonly decision?: { readonly kind?: unknown; readonly by?: unknown; readonly cause?: unknown; readonly reason?: unknown } };
 
-/** The installation's relay preferences. */
-export interface RelayPrefs { readonly crossVendor: RelayCrossVendor }
+/** The installation's relay preferences the page lets the user change (the Gateway has more, which only the API sets). */
+export interface RelayPrefs { readonly crossVendor: RelayCrossVendor; readonly whenUnsure: RelayWhenUnsure }
 /** The stored text of one packet, as it was sent. */
 export interface RelayPacketText {
   readonly text: string;
@@ -155,14 +201,23 @@ function word(value: unknown, limit = 256): string | null { return typeof value 
 function whole(value: unknown): number | null { return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null; }
 function oneOf<const T extends readonly string[]>(value: unknown, choices: T): T[number] | null { return typeof value === "string" && (choices as readonly string[]).includes(value) ? value as T[number] : null; }
 
+/** The attention of a binding; null for none, and for one whose cause this page does not know (it is not shown as another). */
+function decodeAttention(value: unknown): RelayAttentionInfo | null {
+  if (!isRecord(value)) return null;
+  const cause = oneOf(value.cause, RELAY_ATTENTION_CAUSES), key = word(value.key, 256), counts = isRecord(value.counts) ? value.counts : {};
+  if (cause === null || key === null) return null;
+  return { cause, options: Array.isArray(value.options) ? [...new Set(value.options.flatMap(item => oneOf(item, RELAY_OPTIONS) ?? []))] : [], key,
+    counts: { runs: whole(counts.runs) ?? 0, packets: whole(counts.packets) ?? 0 }, packet: whole(value.packet), vendor: word(value.vendor, 253) };
+}
 function decodeBinding(value: unknown): RelayBinding | null {
   if (!isRecord(value)) return null;
   const harnessId = word(value.harnessId, 96), controlId = word(value.controlId, 96);
   if (harnessId === null || controlId === null) return null;
   const runs = isRecord(value.owed) ? whole(value.owed.runs) : null;
   return { harnessId, controlId, nativeEpoch: whole(value.nativeEpoch) ?? 1, sync: oneOf(value.sync, RELAY_SYNC_STATES) ?? "unknown",
-    throughRun: whole(value.throughRun), evidence: word(value.evidence, 32), cleared: whole(value.cleared) ?? 0, probed: value.probed === true, cause: word(value.cause, 64),
-    owed: runs === null || !isRecord(value.owed) ? null : { runs, estTokens: whole(value.owed.estTokens) } };
+    throughRun: whole(value.throughRun), evidence: word(value.evidence, 32), cleared: whole(value.cleared) ?? 0, probed: value.probed === true,
+    canConfirm: typeof value.canConfirm === "boolean" ? value.canConfirm : null, vendor: word(value.vendor, 32),
+    owed: runs === null || !isRecord(value.owed) || runs === 0 ? null : { runs, estTokens: whole(value.owed.estTokens) }, attention: decodeAttention(value.attention) };
 }
 function decodePacket(value: unknown): RelayPacket | null {
   if (!isRecord(value)) return null;
@@ -176,7 +231,7 @@ function decodePacket(value: unknown): RelayPacket | null {
 /** The conversation's relay state; null when the answer is not the relay view (an older Gateway, another shape). */
 export function decodeRelayView(value: unknown): RelayView | null {
   if (!isRecord(value) || !Array.isArray(value.bindings) || !Array.isArray(value.packets)) return null;
-  return { bindings: value.bindings.slice(0, 64).flatMap(row => decodeBinding(row) ?? []), packets: value.packets.slice(0, 512).flatMap(row => decodePacket(row) ?? []) };
+  return { bindings: value.bindings.slice(0, 64).flatMap(row => decodeBinding(row) ?? []), packets: value.packets.slice(0, 512).flatMap(row => decodePacket(row) ?? []), dataRootExposed: value.dataRootExposed === true };
 }
 /** The `relay` member of an error body; null when there is none. A member that offers nothing has no options. */
 export function decodeRelayErrorBody(value: unknown): RelayErrorBody | null {
@@ -209,8 +264,9 @@ export function decodeRunRelay(value: unknown): ClientRunRelay | null {
   const packetId = value.packetId == null ? null : word(value.packetId, 128), kind = value.kind == null ? null : word(value.kind, 32), continuity = decodeContinuity(value.continuity);
   if (continuity === null || (value.packetId != null && packetId === null) || (value.kind != null && kind === null)) return null;
   const delivery = isRecord(value.delivery) ? { state: word(value.delivery.state, 32), evidence: word(value.delivery.evidence, 8) } : undefined;
+  const decision = isRecord(value.decision) ? { kind: word(value.decision.kind, 16), by: word(value.decision.by, 16), cause: word(value.decision.cause, 48), reason: word(value.decision.reason, 64) } : undefined;
   // The contract types brand the identity and close the words; the page keeps what it read and checks the words where it uses them.
-  return { packetId, kind, continuity, executedOn: decodeExecutedOn(value.executedOn), ...(delivery === undefined ? {} : { delivery }) } as unknown as ClientRunRelay;
+  return { packetId, kind, continuity, executedOn: decodeExecutedOn(value.executedOn), ...(delivery === undefined ? {} : { delivery }), ...(decision === undefined ? {} : { decision }) } as unknown as ClientRunRelay;
 }
 /** What a Turn's relay member says, normalised; null when the Turn carries none. */
 export function runRelayInfo(run: { readonly relay?: RunRelay | undefined }): RunRelayInfo | null {
@@ -219,18 +275,27 @@ export function runRelayInfo(run: { readonly relay?: RunRelay | undefined }): Ru
   const continuity = decodeContinuity(raw.continuity);
   if (continuity === null) return null;
   return { packetId: word(raw.packetId, 128), kind: word(raw.kind, 32), continuity, executedOn: decodeExecutedOn(raw.executedOn),
-    delivery: isRecord(raw.delivery) ? { state: oneOf(raw.delivery.state, RELAY_DELIVERY_STATES), evidence: oneOf(raw.delivery.evidence, RELAY_EVIDENCE) } : null };
+    delivery: isRecord(raw.delivery) ? { state: oneOf(raw.delivery.state, RELAY_DELIVERY_STATES), evidence: oneOf(raw.delivery.evidence, RELAY_EVIDENCE) } : null,
+    decision: decodeDecision(raw.decision) };
 }
-/** The preferences, from the shapes a Gateway may answer with; null when none is recognised. */
+/** A Turn's decision; null for none, and for one whose kind or author this page does not know (an unknown cause is only left out). */
+function decodeDecision(value: unknown): RelayDecisionInfo | null {
+  if (!isRecord(value)) return null;
+  const kind = oneOf(value.kind, RELAY_DECISION_KINDS), by = oneOf(value.by, RELAY_DECISION_BY);
+  return kind === null || by === null ? null : { kind, by, cause: oneOf(value.cause, RELAY_DECISION_CAUSES), reason: word(value.reason, 64) };
+}
+/**
+ * The preferences, from the shapes a Gateway may answer with (`{ prefs: { "relay.crossVendor": … } }`, the same without the wrapper,
+ * or a list of key and value); null when none is recognised. A key the Gateway does not name has its default.
+ */
 export function decodeRelayPrefs(value: unknown): RelayPrefs | null {
   const rows = Array.isArray(value) ? Object.fromEntries(value.flatMap(item => isRecord(item) && typeof item.key === "string" ? [[item.key, item.value]] : []))
     : isRecord(value) ? isRecord(value.prefs) ? value.prefs : value : null;
   if (rows === null) return null;
-  // A Gateway that says nothing has the default: hand-overs are allowed. A value this page cannot read is not shown as another.
-  const named = rows[RELAY_PREF_CROSS_VENDOR] ?? rows.crossVendor;
-  if (named === undefined) return { crossVendor: "allow" };
-  const crossVendor = oneOf(named, RELAY_CROSS_VENDOR);
-  return crossVendor === null ? null : { crossVendor };
+  // A value this page cannot read is not shown as another: the whole answer is then no answer.
+  const cross = rows[RELAY_PREF_CROSS_VENDOR] ?? rows.crossVendor, unsure = rows[RELAY_PREF_WHEN_UNSURE] ?? rows.whenUnsure;
+  const crossVendor = cross === undefined ? "allow" : oneOf(cross, RELAY_CROSS_VENDOR), whenUnsure = unsure === undefined ? "auto" : oneOf(unsure, RELAY_WHEN_UNSURE);
+  return crossVendor === null || whenUnsure === null ? null : { crossVendor, whenUnsure };
 }
 /** One event the Gateway pushes about the relay. The page needs to know only that the relay state changed, and of what. */
 export interface RelayEvent { readonly type: string; readonly sessionId: string | null; readonly runId: string | null; readonly packetId: string | null }
@@ -276,9 +341,10 @@ export interface RelayApi {
   packetText(sessionId: string, packetId: string, signal?: AbortSignal): Promise<RelayPacketText>;
   /** The installation's relay preferences; null when the Gateway has none to give. Never rejects. */
   prefs(signal?: AbortSignal): Promise<RelayPrefs | null>;
-  /** Sets the cross-vendor preference; rejects with a `RelayReadError` when the Gateway refuses it. */
-  setCrossVendor(value: RelayCrossVendor): Promise<void>;
+  /** Sets one preference; rejects with a `RelayReadError` when the Gateway refuses it. */
+  setPref<K extends keyof RelayPrefs>(name: K, value: RelayPrefs[K]): Promise<void>;
 }
+const PREF_KEYS: Readonly<Record<keyof RelayPrefs, RelayPrefKey>> = { crossVendor: RELAY_PREF_CROSS_VENDOR, whenUnsure: RELAY_PREF_WHEN_UNSURE };
 export function createRelayApi(transport: RelayTransport): RelayApi {
   const id = encodeURIComponent;
   return {
@@ -302,8 +368,8 @@ export function createRelayApi(transport: RelayTransport): RelayApi {
         return reply.status === 200 ? decodeRelayPrefs(reply.body) : null;
       } catch { return null; }
     },
-    async setCrossVendor(value) {
-      const reply = await transport.send({ method: "PUT", path: "/relay/prefs", as: "json", body: { key: RELAY_PREF_CROSS_VENDOR, value } });
+    async setPref(name, value) {
+      const reply = await transport.send({ method: "PUT", path: "/relay/prefs", as: "json", body: { key: PREF_KEYS[name], value } });
       if (reply.status < 200 || reply.status >= 300) throw new RelayReadError(reply.status, `这项设置没有保存（网关返回 ${reply.status}）。`);
     },
   };

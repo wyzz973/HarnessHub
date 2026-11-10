@@ -5,8 +5,9 @@ import { extname, join, resolve, sep } from "node:path";
 import test, { after, before } from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium, expect, type Browser, type BrowserContext, type Locator, type Page } from "@playwright/test";
+import { decodeSessionStreamFrame } from "../../web/src/api.js";
 import { createRelayApi, decodeRelayErrorBody, decodeRelayFrame, decodeRelayPrefs, decodeRelayView, decodeRunRelay, relayBody, RelayReadError, runRelayInfo, type RelayChoice, type RelayReply, type RelayTransport, type RelayView } from "../../web/src/relay.js";
-import { choiceView, handoverOf, relayLine, relayRequestFor, userSequences, vendorWords, type Handover } from "../../web/src/lib/relay-state.js";
+import { bannerOf, choiceView, decisionNote, handoverOf, relayLine, relayRequestFor, runNotes, userSequences, vendorWords, type Handover, type NoteContext } from "../../web/src/lib/relay-state.js";
 import { consumeSessionEventStream, SessionStreamError } from "../../web/src/session-stream.js";
 import type { PublicRun } from "../../src/contracts/session.js";
 import type { SessionView } from "../../src/contracts/web.js";
@@ -88,13 +89,13 @@ function conversation(second: "none" | "preparing" | "running" | "completed" | "
     messages: all, runs, switches: [{ id: "switch-1", commandId: "cmd-switch-1", requested: CODEX, requestedSeq: through + 1, target: CODEX, status: "effective", throughSeq: through, sourceRunIds: ["run-1"], error: null }] };
 }
 /** What the fake says of the relay (stage3 §3): the bindings and the packets. */
-function relayView(overrides: { readonly packets?: readonly Record<string, unknown>[]; readonly bindings?: readonly Record<string, unknown>[] } = {}): RelayWire {
-  return { bindings: overrides.bindings ?? [
+function relayView(overrides: { readonly packets?: readonly Record<string, unknown>[]; readonly bindings?: readonly Record<string, unknown>[]; readonly dataRootExposed?: boolean } = {}): RelayWire {
+  return { ...(overrides.dataRootExposed === true ? { dataRootExposed: true } : {}), bindings: overrides.bindings ?? [
     { harnessId: "claude", controlId: "claude-native", nativeEpoch: 1, sync: "synced", throughRun: 0, evidence: "native", cleared: 0, probed: true },
     { harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "fresh", throughRun: null, evidence: null, cleared: 0, probed: false },
   ], packets: overrides.packets ?? [] };
 }
-interface RelayWire { bindings: readonly Record<string, unknown>[]; packets: readonly Record<string, unknown>[] }
+interface RelayWire { bindings: readonly Record<string, unknown>[]; packets: readonly Record<string, unknown>[]; dataRootExposed?: true }
 const packetRow = (delivery: string, evidence: string | null, extra: Record<string, unknown> = {}) => ({ packetId: PACKET, runId: "run-2", runIndex: 1, number: 1, kind: "packet", tier: "standard", target: { harnessId: "codex", model: "gpt-6.1-sol" },
   estTokens: 1700, omissions: 3, redactions: 1, delivery, evidence, ...extra });
 
@@ -117,7 +118,7 @@ function harness(id: string, name: string, control: string): Record<string, unkn
 interface Posted { readonly text: string; readonly commandId: string; readonly relay?: Record<string, unknown>; readonly attachments?: readonly string[] }
 interface Refusal { readonly status: number; readonly body: Record<string, unknown> }
 interface FakeOptions {
-  readonly relayRoutes?: boolean; readonly prefs?: "allow" | "ask" | "goal_only" | null;
+  readonly relayRoutes?: boolean; readonly prefs?: "allow" | "ask" | "goal_only" | "sometimes" | null;
   /** Whether the Gateway's state says it has the relay API (`relay: true`); the first sign the page looks for. On by default. */
   readonly advertise?: boolean;
   /** What the relay view says from the start, for a test whose page must see it on its first read. */
@@ -129,7 +130,9 @@ class FakeGateway {
   readonly session: FakeSession;
   /** The relay view the fake answers with; null answers 404, as a Gateway without the relay API does. */
   view: RelayWire | null;
+  /** The cross-vendor preference (null: the Gateway has no relay preferences at all) and the preference for what is unsure. */
   prefs: string | null;
+  unsure = "auto";
   texts = new Map<string, string>([[PACKET, PACKET_TEXT], [SECOND_PACKET, SECOND_TEXT]]);
   /** The messages sent, with the relay choices they carried. */
   readonly posted: Posted[] = [];
@@ -170,10 +173,18 @@ class FakeGateway {
     this.session.version += 1; this.session.lastSeq += 1;
     for (const client of this.clients) client.write(this.frame());
   }
-  /** The Gateway announces that the relay changed (the SSE frame of the seam), which carries no state of its own. */
-  announce(type = "relay.verified", extra: Record<string, unknown> = {}): void {
-    const frame = `event: relay\ndata: ${JSON.stringify({ type: "relay", event: { type, sessionId: this.session.id, at: Date.now(), ...extra } })}\n\n`;
+  /**
+   * The Gateway announces that the relay changed (the SSE frame of the seam), which carries no state of its own: a frame of the stream
+   * under the watermark of the facts it follows, as the Gateway sends it. `named` sends the form of an event of its own name instead.
+   */
+  announce(type = "relay.verified", extra: Record<string, unknown> = {}, named = false): void {
+    const event = { type, sessionId: this.session.id, at: Date.now(), ...extra };
+    const frame = named ? `event: relay\ndata: ${JSON.stringify({ type: "relay", event })}\n\n`
+      : `event: session\nid: ${this.session.lastSeq}\ndata: ${JSON.stringify({ type: "relay", sessionId: this.session.id, version: this.session.version, lastSeq: this.session.lastSeq, event })}\n\n`;
     for (const client of this.clients) client.write(frame);
+  }
+  private prefsBody(): unknown {
+    return { prefs: { "relay.crossVendor": this.prefs, "relay.returnPreference": "continue", "relay.allowUnprobed": "true", "relay.localModelsOffline": "false", "relay.whenUnsure": this.unsure, "relay.dataRootInWorkspace": "warn" } };
   }
   private json(response: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
     response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...headers }); response.end(JSON.stringify(body));
@@ -210,11 +221,12 @@ class FakeGateway {
       this.reads.prefs += 1;
       if (this.prefs === null) return this.missing(response);
       if (method === "PUT") {
-        const input = await this.body(request); this.putPrefs.push(input);
+        const input = await this.body(request) as { key: string; value: string }; this.putPrefs.push(input);
         if (this.prefsFailure !== null) return this.json(response, this.prefsFailure, { code: "GATEWAY_FAILED", message: "Gateway operation failed" });
-        this.prefs = (input as { value: string }).value; return this.json(response, 200, { "relay.crossVendor": this.prefs });
+        if (input.key === "relay.crossVendor") this.prefs = input.value; else if (input.key === "relay.whenUnsure") this.unsure = input.value;
+        return this.json(response, 200, this.prefsBody());
       }
-      return this.json(response, 200, { "relay.crossVendor": this.prefs });
+      return this.json(response, 200, this.prefsBody());
     }
     const match = /^\/sessions\/([^/]+)(?:\/(.*))?$/u.exec(api);
     if (match === null || match[1] !== this.session.id) return this.missing(response);
@@ -556,29 +568,30 @@ test("G073 consent, an unverified Harness, a missing room and an unavailable rel
 // T2: the line above the box says what is handed over, asks for nothing, and "只发这条消息" is one message's choice
 // ---------------------------------------------------------------------------------------------------------------------
 
-test("G073 the line above the box says what will be handed over and asks for nothing; sending without it is one message's choice", async t => {
+test("G073 the line above the box says what will be handed over and asks for nothing; the first hand-over to a Harness says where the history goes in the same line", async t => {
   // The conversation went to Codex; nothing was sent to it yet, so the Turn Claude Code ran is owed to it.
   const { gateway, page, errors, log, composer } = await open(t, conversation("none"));
   const card = page.locator(".relay-card");
-  await expect(card).toHaveText("将交给 Codex：1 轮未经真机验证只发这条消息");
-  await expect(card).toHaveAttribute("data-relay", "owed");
+  // The first hand-over to this Harness: one line, nothing to press but the choice not to hand the history over, and no card.
+  await expect(card).toHaveText("这条消息会附上之前的对话记录交给 Codex · 可在设置里改为每次询问未经真机验证只发这条消息");
+  await expect(card).toHaveAttribute("data-relay", "intro");
+  await expect(page.locator(".relay-intro")).toHaveCount(0);
+  await expect(card.getByRole("button")).toHaveText(["只发这条消息"]);
   // Nothing is drawn where the change happened until something went to the new Harness: that is the line's own business.
   await expect(log.getByRole("separator")).toHaveCount(0);
-  // The first hand-over is explained once, without asking anything or blocking anything.
-  const intro = page.locator(".relay-intro");
-  await expect(intro).toContainText("第一次把对话交给另一个 Harness");
-  await expect(intro).toContainText("发出后不能收回");
-  await expect(intro).toContainText("在设置里把“跨厂商交接”改为“每次询问”");
-  await shoot(page, "owed-line");
+  await shoot(page, "owed-line-first");
   await expect(composer).toBeEnabled();
   await composer.fill("先看第一步"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled();
-  await intro.getByRole("button", { name: "知道了", exact: true }).click();
-  await expect(intro).toHaveCount(0);
-  await expect(card).toBeVisible();
-  // Remembered by this browser: not shown again after a reload, while the line itself stays.
+  // Sending the message ends it: nothing was asked, nothing blocked, and the message carries no relay field.
+  await composer.press("Enter");
+  await expect.poll(() => gateway.posted.length).toBe(1);
+  assert.equal("relay" in gateway.posted[0]!, false);
+  await expect(card).toHaveText("将交给 Codex：1 轮未经真机验证只发这条消息");
+  await expect(card).toHaveAttribute("data-relay", "owed");
+  // Remembered by this browser: Codex is not told of again after a reload, while the line itself stays.
   await page.reload();
-  await expect(card).toBeVisible(); await expect(page.locator(".relay-intro")).toHaveCount(0);
-  await expect(page.locator(".relay-intro")).toHaveCount(0);
+  await expect(card).toHaveText("将交给 Codex：1 轮未经真机验证只发这条消息");
+  await shoot(page, "owed-line");
 
   // The Gateway's own estimate, when it gives one, is shown as an estimate; otherwise nothing is made up.
   gateway.view = relayView({ bindings: [
@@ -586,6 +599,12 @@ test("G073 the line above the box says what will be handed over and asks for not
     { harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "fresh", throughRun: null, evidence: null, cleared: 0, probed: true, owed: { runs: 3, estTokens: 1700 } }] });
   gateway.announce();
   await expect(card).toHaveText("将交给 Codex：3 轮 · 约 1.7k tokens只发这条消息");
+  // The Gateway says nothing is owed to a Harness it keeps a session for: nothing is shown.
+  gateway.view = relayView({ bindings: [
+    { harnessId: "claude", controlId: "claude-native", nativeEpoch: 1, sync: "synced", throughRun: 0, evidence: "native", cleared: 0, probed: true },
+    { harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "synced", throughRun: 0, evidence: "E1", cleared: 0, probed: true }] });
+  gateway.announce();
+  await expect(card).toHaveCount(0);
   gateway.view = relayView(); gateway.announce();
   await expect(card).toHaveText("将交给 Codex：1 轮未经真机验证只发这条消息");
 
@@ -597,15 +616,34 @@ test("G073 the line above the box says what will be handed over and asks for not
   await expect(card).toContainText("这条消息不附交接单，Codex 看不到之前的 1 轮");
   await shoot(page, "owed-alone");
   await composer.fill("先看第一步"); await composer.press("Enter");
-  await expect.poll(() => gateway.posted.length).toBe(1);
-  assert.deepEqual(gateway.posted[0]?.relay, { attach: "none" });
-  assert.equal(gateway.posted[0]?.text, "先看第一步");
+  await expect.poll(() => gateway.posted.length).toBe(2);
+  assert.deepEqual(gateway.posted[1]?.relay, { attach: "none" });
+  assert.equal(gateway.posted[1]?.text, "先看第一步");
   // Spent: the line is as it was before the choice, and an ordinary message after it carries no relay field at all.
   await expect(alone).toHaveAttribute("aria-pressed", "false"); await expect(card).toContainText("将交给 Codex：1 轮");
   await composer.fill("再来一条"); await composer.press("Enter");
-  await expect.poll(() => gateway.posted.length).toBe(2);
-  assert.equal("relay" in gateway.posted[1]!, false, "a message that chose nothing says nothing of the relay");
+  await expect.poll(() => gateway.posted.length).toBe(3);
+  assert.equal("relay" in gateway.posted[2]!, false, "a message that chose nothing says nothing of the relay");
   assert.deepEqual(errors, []);
+});
+
+test("G073 the first hand-over says where the history goes only while hand-overs are allowed, and names the service when the Gateway knows it", async t => {
+  // Asking each time is the setting: a refusal will say it, not this line.
+  const asking = await open(t, conversation("none"), { prefs: "ask" });
+  await expect(asking.page.locator(".relay-card")).toHaveText("将交给 Codex：1 轮未经真机验证只发这条消息");
+  assert.deepEqual(asking.errors, []);
+  // The service the Harness was last seen on, when it is a named one.
+  const named = await open(t, conversation("none"), { view: relayView({ bindings: [
+    { harnessId: "claude", controlId: "claude-native", nativeEpoch: 1, sync: "synced", throughRun: 0, evidence: "native", cleared: 0, probed: true },
+    { harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "fresh", throughRun: null, evidence: null, cleared: 0, probed: true, vendor: "openai", owed: { runs: 1, estTokens: 800 } }] }) });
+  await expect(named.page.locator(".relay-card")).toHaveText("这条消息会附上之前的对话记录交给 Codex（OpenAI） · 可在设置里改为每次询问只发这条消息");
+  await shoot(named.page, "owed-line-first-vendor");
+  // A browser that already explained it to this service does not say it again.
+  const told = await open(t, conversation("none"), { storage: { "harnesshub:relay-intro-seen": JSON.stringify(["openai"]) }, view: relayView({ bindings: [
+    { harnessId: "claude", controlId: "claude-native", nativeEpoch: 1, sync: "synced", throughRun: 0, evidence: "native", cleared: 0, probed: true },
+    { harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "fresh", throughRun: null, evidence: null, cleared: 0, probed: true, vendor: "openai", owed: { runs: 1, estTokens: 800 } }] }) });
+  await expect(told.page.locator(".relay-card")).toHaveText("将交给 Codex：1 轮 · 约 800 tokens只发这条消息");
+  assert.deepEqual([named.errors, told.errors], [[], []]);
 });
 
 test("G073 after the context was cleared the line says the next message carries no history, and offers it back for that message only", async t => {
@@ -633,13 +671,21 @@ test("G073 after the context was cleared the line says the next message carries 
   assert.deepEqual(gateway.posted[0]?.relay, { attach: "full" });
   await expect(attach).toHaveAttribute("aria-pressed", "false");
 
-  // A clear the Gateway could not confirm is said so, and that it will be checked before the next message goes.
+  // A clear the Gateway could not confirm is said so, with what happens if it stays unconfirmed, and the way to confirm it.
   gateway.view = relayView({ bindings: [
     { harnessId: "claude", controlId: "claude-native", nativeEpoch: 1, sync: "synced", throughRun: 0, evidence: "native", cleared: 0, probed: true },
-    { harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "suspect", throughRun: 1, evidence: "E1", cleared: 0, probed: true, cause: "clear_unconfirmed" }] });
+    { harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "suspect", throughRun: 1, evidence: "E1", cleared: 0, probed: true,
+      attention: { cause: "clear_unconfirmed", options: ["attach_full", "new_native", "clear_confirmed"], counts: { runs: 0, packets: 0 }, key: "clear_unconfirmed:1:7" } }] });
   gateway.announce();
-  await expect(card).toHaveText("Codex 的上下文清空待确认 · 下一条消息发出前会核对");
-  await expect(card.getByRole("button")).toHaveCount(0);
+  const banner = page.locator("[data-relay=attention]");
+  await expect(banner).toHaveText("清空待确认 · 不确认的话，下次补交会带上清空前的记录补发完整交接单新开原生会话确认已清空");
+  await expect(banner).toHaveAttribute("data-cause", "clear_unconfirmed");
+  await shoot(page, "banner-clear-unconfirmed");
+  await banner.getByRole("button", { name: "确认已清空", exact: true }).click();
+  await expect(banner).toContainText("下一条消息会按“已清空”处理");
+  await composer.fill("按已清空算"); await composer.press("Enter");
+  await expect.poll(() => gateway.posted.length).toBe(2);
+  assert.deepEqual(gateway.posted[1]?.relay, { clearConfirmed: true });
   assert.deepEqual(errors, []);
 });
 
@@ -679,48 +725,56 @@ test("G073 the details panel's 接续 tab lists where each Harness stands and th
 // The setting
 // ---------------------------------------------------------------------------------------------------------------------
 
-test("G073 the settings page offers the cross-vendor hand-over choice when the Gateway has it, saves it, and says when it could not", async t => {
+test("G073 the settings page offers the two relay choices when the Gateway has them, saves each, and says when it could not", async t => {
   const { gateway, page, errors } = await open(t, conversation("completed", packetRelay(CODEX)), { prefs: "allow" }, [/502/u]);
   const settings = page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "设置", exact: true });
   await settings.click();
-  const group = page.getByRole("radiogroup", { name: "跨厂商交接", exact: true });
-  await expect(group).toBeVisible();
-  // Allowed is the default, and the way to be asked is the other choice; nothing else is offered here.
-  await expect(group.getByRole("radio")).toHaveText(["允许（默认）", "每次询问"]);
+  const group = page.getByRole("radiogroup", { name: "跨厂商交接", exact: true }), unsure = page.getByRole("radiogroup", { name: "送达拿不准时", exact: true });
+  await expect(group).toBeVisible(); await expect(unsure).toBeVisible();
+  // Allowed is the default, then asking each time, then the goal only; and what the relay does when it is unsure settles itself unless asked not to.
+  await expect(group.getByRole("radio")).toHaveText(["允许（默认）", "每次询问", "只交目标"]);
   await expect(group.getByRole("radio", { name: "允许（默认）" })).toHaveAttribute("aria-checked", "true");
+  await expect(unsure.getByRole("radio")).toHaveText(["自动处理（默认）", "每次问我"]);
+  await expect(unsure.getByRole("radio", { name: "自动处理（默认）" })).toHaveAttribute("aria-checked", "true");
   await expect(page.getByText("把对话交给用另一家模型服务的 Harness 时，是否先问你。")).toBeVisible();
+  await expect(page.getByText("交接单没有确认送达、或没能核对目标里的对话记录时怎么办。")).toBeVisible();
   await shoot(page, "settings-relay");
   await group.getByRole("radio", { name: "每次询问" }).click();
   await expect(group.getByRole("radio", { name: "每次询问" })).toHaveAttribute("aria-checked", "true");
   await expect.poll(() => gateway.putPrefs).toEqual([{ key: "relay.crossVendor", value: "ask" }]);
-  // It is the Gateway's: a new page reads it back.
+  await unsure.getByRole("radio", { name: "每次问我" }).click();
+  await expect(unsure.getByRole("radio", { name: "每次问我" })).toHaveAttribute("aria-checked", "true");
+  await expect.poll(() => gateway.putPrefs).toEqual([{ key: "relay.crossVendor", value: "ask" }, { key: "relay.whenUnsure", value: "ask" }]);
+  await group.getByRole("radio", { name: "只交目标" }).click();
+  await expect(group.getByRole("radio", { name: "只交目标" })).toHaveAttribute("aria-checked", "true");
+  await expect.poll(() => gateway.prefs).toBe("goal_only");
+  // They are the Gateway's: a new page reads them back.
   await page.reload();
   await settings.click();
-  await expect(page.getByRole("radiogroup", { name: "跨厂商交接", exact: true }).getByRole("radio", { name: "每次询问" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("radiogroup", { name: "跨厂商交接", exact: true }).getByRole("radio", { name: "只交目标" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("radiogroup", { name: "送达拿不准时", exact: true }).getByRole("radio", { name: "每次问我" })).toHaveAttribute("aria-checked", "true");
 
   // A write the Gateway refuses puts the choice back and says so; nothing is left looking saved.
   gateway.prefsFailure = 502;
   await group.getByRole("radio", { name: "允许（默认）" }).click();
   await expect(page.getByText("这项设置没有保存（网关返回 502）。")).toBeVisible();
-  await expect(group.getByRole("radio", { name: "每次询问" })).toHaveAttribute("aria-checked", "true");
+  await expect(group.getByRole("radio", { name: "只交目标" })).toHaveAttribute("aria-checked", "true");
   assert.deepEqual(errors, []);
 });
 
-test("G073 a value of the cross-vendor setting made elsewhere is shown as it is, and a Gateway without the setting shows none", async t => {
-  const goalOnly = await open(t, conversation("completed", packetRelay(CODEX)), { prefs: "goal_only" });
-  await goalOnly.page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "设置", exact: true }).click();
-  const group = goalOnly.page.getByRole("radiogroup", { name: "跨厂商交接", exact: true });
-  await expect(group.getByRole("radio", { name: "只交目标" })).toHaveAttribute("aria-checked", "true");
-  await expect(group.getByRole("radio", { name: "只交目标" })).toBeDisabled();
-  assert.deepEqual(goalOnly.errors, []);
-
+test("G073 a Gateway without the relay settings shows none, and a value the page cannot read is not shown as another", async t => {
   const none = await open(t, conversation("completed", packetRelay(CODEX)), { prefs: null }, [/404/u]);
   await none.page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "设置", exact: true }).click();
   await expect(none.page.getByRole("heading", { name: "设置", exact: true })).toBeVisible();
   await expect(none.page.getByRole("heading", { name: "对话", exact: true, level: 2 })).toBeVisible();
-  await expect(none.page.getByRole("radiogroup", { name: "跨厂商交接" })).toHaveCount(0);
+  await expect(none.page.getByRole("radiogroup", { name: "跨厂商交接" })).toHaveCount(0); await expect(none.page.getByRole("radiogroup", { name: "送达拿不准时" })).toHaveCount(0);
   assert.ok(none.gateway.reads.prefs >= 1, "the page asked, and was told there is no such setting");
   assert.deepEqual(none.errors, []);
+  const odd = await open(t, conversation("completed", packetRelay(CODEX)), { prefs: "sometimes" });
+  await odd.page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "设置", exact: true }).click();
+  await expect(odd.page.getByRole("heading", { name: "设置", exact: true })).toBeVisible();
+  await expect(odd.page.getByRole("radiogroup", { name: "跨厂商交接" })).toHaveCount(0);
+  assert.deepEqual(odd.errors, []);
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -820,6 +874,168 @@ test("G073 each sign that the Gateway has the relay API makes the page use it, a
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
+// What a binding asks the user to look at (permissive-defaults §2.6): a banner, said once, never a block
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** The relay state of a conversation whose Codex binding asks `attention` (and whose Claude Code binding asks nothing). */
+const asking = (attention: Record<string, unknown> | null, extra: Record<string, unknown> = {}, packets: readonly Record<string, unknown>[] = [packetRow("unknown", null)]) => relayView({ packets, bindings: [
+  { harnessId: "claude", controlId: "claude-native", nativeEpoch: 1, sync: "synced", throughRun: 0, evidence: "native", cleared: 0, probed: true },
+  { harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "pending", throughRun: null, evidence: null, cleared: 0, probed: true, canConfirm: true, ...(attention === null ? {} : { attention }), ...extra }] });
+const UNCONFIRMED = { cause: "delivery_unconfirmed", options: ["attach_full", "new_native"], counts: { runs: 2, packets: 2 }, key: "delivery_unconfirmed:relay-b", packet: 2 };
+
+test("G073 a binding that asks the user to look at something is said once above the box, nothing waits for it, and a choice made on it is the next message's alone", async t => {
+  const { gateway, page, errors, log, composer } = await open(t, conversation("completed", packetRelay(CODEX)));
+  gateway.view = asking(UNCONFIRMED); gateway.announce();
+  const banner = page.locator("[data-relay=attention]");
+  await expect(banner).toContainText("交接单 #2 发了两次仍未确认送达 Codex · 之后的消息只发原话，有新内容再附 · 还有 2 轮待交接");
+  await expect(banner).toHaveAttribute("data-cause", "delivery_unconfirmed");
+  await expect(banner.locator("button[data-option]")).toHaveText(["再附一次", "新开原生会话"]);
+  // One line: the owed line is not drawn next to it, and no card, no 409 and no error.
+  await expect(page.locator("[data-relay=owed], [data-relay=intro]")).toHaveCount(0); await expect(page.locator(".relay-choice, .chat-error")).toHaveCount(0);
+  await shoot(page, "banner-delivery-unconfirmed");
+  // Nothing waits for it: an ordinary message goes, with no relay field.
+  await composer.fill("照常发"); await composer.press("Enter");
+  await expect.poll(() => gateway.posted.length).toBe(1);
+  assert.equal("relay" in gateway.posted[0]!, false);
+  // A way to settle it is chosen for the next message: the banner says what the next message will do, and choosing again lets go.
+  const again = banner.getByRole("button", { name: "再附一次", exact: true });
+  await expect(again).toHaveAttribute("aria-pressed", "false");
+  await again.click();
+  await expect(again).toHaveAttribute("aria-pressed", "true"); await expect(banner).toContainText("下一条消息会再附一次交接单");
+  await shoot(page, "banner-chosen");
+  await again.click();
+  await expect(again).toHaveAttribute("aria-pressed", "false"); await expect(banner).toContainText("交接单 #2 发了两次仍未确认送达 Codex");
+  await again.click();
+  await composer.fill("再附一次吧"); await composer.press("Enter");
+  await expect.poll(() => gateway.posted.length).toBe(2);
+  assert.deepEqual(gateway.posted[1]?.relay, { resend: true });
+  // Spent with the message; the other way is a new native session, and it is sent as that field.
+  await expect(again).toHaveAttribute("aria-pressed", "false");
+  await banner.getByRole("button", { name: "新开原生会话", exact: true }).click();
+  await expect(banner).toContainText("下一条消息会新开 Codex 的原生会话，并附上交接单");
+  await composer.fill("开个新的"); await composer.press("Enter");
+  await expect.poll(() => gateway.posted.length).toBe(3);
+  assert.deepEqual(gateway.posted[2]?.relay, { native: "new" });
+
+  // A choice does not outlive the words it was made on: with the banner gone, the next message goes as any other.
+  await again.click();
+  gateway.view = asking(null); gateway.announce();
+  await expect(banner).toHaveCount(0);
+  await composer.fill("已经没事了"); await composer.press("Enter");
+  await expect.poll(() => gateway.posted.length).toBe(4);
+  assert.equal("relay" in gateway.posted[3]!, false);
+
+  // Closed, it does not come back: not on the next read, not after a reload; a new episode (another key) is said again.
+  gateway.view = asking(UNCONFIRMED); gateway.announce();
+  await expect(banner).toBeVisible();
+  await banner.getByRole("button", { name: "关闭提示", exact: true }).click();
+  await expect(banner).toHaveCount(0);
+  gateway.announce(); await page.waitForTimeout(300); await expect(banner).toHaveCount(0);
+  await page.reload();
+  await expect(composer).toBeEnabled(); await page.waitForTimeout(300); await expect(banner).toHaveCount(0);
+  gateway.view = asking({ ...UNCONFIRMED, key: "delivery_unconfirmed:relay-c", packet: 3 }); gateway.announce();
+  await expect(banner).toContainText("交接单 #3 发了两次仍未确认送达 Codex");
+  void log;
+  assert.deepEqual(errors, []);
+});
+
+test("G073 each cause a binding asks about is said in its own words with only the ways the Gateway gave, and a Harness that cannot confirm a delivery is not asked about it", async t => {
+  const { gateway, page, errors, log } = await open(t, conversation("completed", packetRelay(CODEX)));
+  const banner = page.locator("[data-relay=attention]");
+  const cases: readonly [Record<string, unknown>, string, readonly string[]][] = [
+    [{ cause: "verify_required", options: ["attach_full", "new_native"], counts: { runs: 1, packets: 0 }, key: "v:1" }, "未能核对 Codex 原生会话里的交接内容 · 还有 1 轮待交接", ["补发完整交接单", "新开原生会话"]],
+    [{ cause: "marker_absent", options: ["attach_full", "new_native"], counts: { runs: 0, packets: 1 }, key: "m:1" }, "Codex 的原生会话里找不到之前的交接单", ["补发完整交接单", "新开原生会话"]],
+    [{ cause: "recovery_failed", options: ["new_native"], counts: { runs: 0, packets: 0 }, key: "r:1" }, "服务重启后没能恢复这个对话的交接记录 · 下一条消息只发原话", ["新开原生会话"]],
+    [{ cause: "input_limit", options: [], counts: { runs: 2, packets: 0 }, key: "i:1" }, "Codex 的上下文窗口放不下交接单 · 消息只发原话", []],
+    [{ cause: "consent_revoked", options: ["acknowledge"], counts: { runs: 2, packets: 0 }, key: "x:1", vendor: "openai" }, "你已撤回对 OpenAI 的允许 · 消息只发原话 · 还有 2 轮待交接", ["重新允许"]],
+  ];
+  for (const [attention, words, buttons] of cases) {
+    gateway.view = asking(attention); gateway.announce();
+    await expect(banner).toContainText(words);
+    await expect(banner.locator("button[data-option]")).toHaveText(buttons);
+    await expect(banner.getByRole("button", { name: "关闭提示", exact: true })).toBeVisible();
+  }
+  await shoot(page, "banner-consent-revoked");
+  // The consent: re-allowing is a field of the next message, with the vendor the Gateway named.
+  await banner.getByRole("button", { name: "重新允许", exact: true }).click();
+  await expect(banner).toContainText("下一条消息会重新允许交接给 OpenAI");
+  await page.getByRole("textbox", { name: "发送消息", exact: true }).fill("允许吧"); await page.getByRole("textbox", { name: "发送消息", exact: true }).press("Enter");
+  await expect.poll(() => gateway.posted.length).toBe(1);
+  assert.deepEqual(gateway.posted[0]?.relay, { consent: { vendor: "openai", decision: "acknowledged", scope: "session" } });
+
+  // A Harness nothing can confirm a delivery to stays unconfirmed whatever is done: said once at the hand-over, not on every message.
+  gateway.view = asking(UNCONFIRMED, { canConfirm: false, probed: false }, [packetRow("unknown", null)]); gateway.announce();
+  await expect(banner).toHaveCount(0);
+  await expect(separator(log, "已发给 Codex，这个 Harness 无法确认是否收到交接单")).toBeVisible();
+  await expect(log.getByRole("separator", { name: /接手/u })).toHaveCount(0);
+  await shoot(page, "divider-cannot-confirm");
+  assert.deepEqual(errors, []);
+});
+
+/** A third Turn on Codex after `session`'s second, carrying `relay`, with its words and reply. */
+function third(session: FakeSession, relay: Record<string, unknown>): FakeSession {
+  const next = run(3, CODEX, "再补一条", "completed", { relay, epoch: 2, timing: { acceptedAt: NOW - 5_000, preparingAt: NOW - 4_900, readyAt: NOW - 4_800, dispatchedAt: NOW - 4_700, firstOutputAt: NOW - 4_000, endedAt: NOW - 3_000 } });
+  const seq = session.lastSeq;
+  session.runs.push(next);
+  session.messages.push({ id: next.userMessageId, runId: next.id, role: "user", text: next.input, seq: seq + 1, status: "completed" }, { id: next.assistantMessageId, runId: next.id, role: "assistant", text: "好的。", seq: seq + 2, status: "completed" });
+  session.lastSeq = seq + 2; session.version = session.lastSeq - 1;
+  return session;
+}
+
+test("G073 what the relay did with a Turn's history is said under its message in plain words, and a Turn sent alone never reads as a Harness taking over", async t => {
+  // The first Turn on Codex went alone (its window cannot hold the smallest packet): the line where the conversation changed hands says so.
+  const first = await open(t, conversation("completed", { ...own(CODEX), decision: { kind: "alone", by: "policy", cause: "input_limit", reason: "min_packet" } }));
+  const line = separator(first.log, "交给 Codex · Codex 的上下文窗口放不下交接单 · 这条只发了原话");
+  await expect(line).toBeVisible(); await expect(line.locator("..")).toHaveAttribute("data-handover", "alone");
+  await expect(first.log.getByRole("separator", { name: /接手/u })).toHaveCount(0);
+  // The message does not say it again; and what the user chose is the user's: not "taken over" either.
+  await expect(first.log.locator(".relay-note")).toHaveCount(0);
+  await shoot(first.page, "divider-alone");
+  assert.deepEqual(first.errors, []);
+
+  // The packet went and nothing confirmed it; the next messages: sent again once, then alone. Each says what it was.
+  const unconfirmed = third(conversation("completed", packetRelay(CODEX)), packetRelay(CODEX, { packetId: SECOND_PACKET, continuity: { kind: "rehydrate", tier: "standard", runs: 2 }, decision: { kind: "carry", by: "policy", cause: "delivery_unconfirmed" } }));
+  const resent = await open(t, unconfirmed, { view: relayView({ packets: [packetRow("unknown", null), packetRow("unknown", null, { packetId: SECOND_PACKET, number: 2, runId: "run-3", runIndex: 2 })] }) });
+  await expect(resent.log.locator(".relay-note")).toHaveText("上一份交接单没有确认送达，这条消息已再附一次（交接单 #2 · 补交 2 轮）");
+  await expect(resent.log.getByRole("button", { name: "附交接单 #2", exact: true })).toBeVisible();
+  await shoot(resent.page, "note-resent");
+  const aloneTwice = third(conversation("completed", packetRelay(CODEX)), { ...own(CODEX), decision: { kind: "alone", by: "policy", cause: "delivery_unconfirmed" } });
+  const alone = await open(t, aloneTwice, { view: relayView({ packets: [packetRow("unknown", null)] }) });
+  await expect(alone.log.locator(".relay-note")).toHaveText("交接单 #1 发了两次仍未确认送达 · 这条只发了原话");
+  await expect(alone.log.locator(".relay-note")).toHaveCount(1);
+  await shoot(alone.page, "note-alone");
+  // A packet cut down for a small window says so; an ordinary hand-over, or a Turn with no relay facts, says nothing.
+  const cut = third(conversation("completed", packetRelay(CODEX)), packetRelay(CODEX, { packetId: SECOND_PACKET, continuity: { kind: "rehydrate", tier: "brief" }, decision: { kind: "carry", by: "need" } }));
+  const small = await open(t, cut, { view: relayView({ packets: [packetRow("recorded", "E1"), packetRow("recorded", "E1", { packetId: SECOND_PACKET, number: 2, runId: "run-3", runIndex: 2 })] }) });
+  await expect(small.log.locator(".relay-note")).toHaveText("Codex 的窗口较小，交接单已缩为精简");
+  const plain = await open(t, third(conversation("completed", packetRelay(CODEX)), own(CODEX)), { view: relayView({ packets: [packetRow("recorded", "E1")] }) });
+  await expect(plain.log.locator(".user-message").nth(2)).toBeVisible(); await expect(plain.log.locator(".relay-note")).toHaveCount(0);
+  assert.deepEqual([resent.errors, alone.errors, small.errors, plain.errors], [[], [], [], []]);
+});
+
+test("G073 a data directory within reach of the workspace is a warning for the workspace that can be closed, and nothing waits for it", async t => {
+  const { gateway, page, errors, composer } = await open(t, conversation("completed", packetRelay(CODEX)), { view: relayView({ dataRootExposed: true }) });
+  const notice = page.locator(".relay-data-root");
+  await expect(notice).toContainText("HarnessHub 的数据目录在这个工作区里，目标 Harness 能直接读到全部对话记录；建议用 --data-dir 把它移到工作区外。");
+  await shoot(page, "data-root-warning");
+  // The relay goes on: the message is sent as any other.
+  await expect(composer).toBeEnabled();
+  await composer.fill("照常发"); await composer.press("Enter");
+  await expect.poll(() => gateway.posted.length).toBe(1);
+  assert.equal("relay" in gateway.posted[0]!, false);
+  // Closed for the workspace, and remembered by this browser.
+  await notice.getByRole("button", { name: "关闭提示", exact: true }).click();
+  await expect(notice).toHaveCount(0);
+  await page.reload(); await expect(composer).toBeEnabled(); await page.waitForTimeout(300);
+  await expect(page.locator(".relay-data-root")).toHaveCount(0);
+  // A workspace that is out of reach of the data directory has nothing to warn of.
+  const clear = await open(t, conversation("completed", packetRelay(CODEX)), { view: relayView() });
+  await expect(clear.composer).toBeEnabled(); await clear.page.waitForTimeout(300);
+  await expect(clear.page.locator(".relay-data-root")).toHaveCount(0);
+  assert.deepEqual([errors, clear.errors], [[], []]);
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
 // Narrow screens
 // ---------------------------------------------------------------------------------------------------------------------
 
@@ -854,27 +1070,36 @@ test("G073 every relay line wraps on a narrow screen and nothing runs off it", a
 // The page's reading of the relay, without a page
 // ---------------------------------------------------------------------------------------------------------------------
 
+const harnessNames = (id: string): string => ({ codex: "Codex", claude: "Claude Code" })[id] ?? id;
 const typed = (session: FakeSession): SessionView => session as unknown as SessionView;
 const runsOf = (session: FakeSession): readonly PublicRun[] => typed(session).runs;
 const viewOf = (wire: RelayWire | null): RelayView | null => wire === null ? null : decodeRelayView(wire);
 /** What the line where the conversation went from Claude Code to Codex says, for `session` and the relay state `wire`. */
 function handover(session: FakeSession, wire: RelayWire | null, extra: { readonly from?: string; readonly to?: string; readonly now?: number } = {}): Handover {
   const view = typed(session);
-  return handoverOf({ runs: view.runs, userSeq: userSequences(view.messages), throughSeq: (session.switches[0] as { throughSeq: number }).throughSeq, from: extra.from ?? "claude", to: extra.to ?? "codex", view: viewOf(wire), now: extra.now ?? NOW });
+  return handoverOf({ runs: view.runs, userSeq: userSequences(view.messages), throughSeq: (session.switches[0] as { throughSeq: number }).throughSeq, from: extra.from ?? "claude", to: extra.to ?? "codex", view: viewOf(wire), name: harnessNames, now: extra.now ?? NOW });
 }
 const kinds = (state: Handover): string => state.kind + ("number" in state && state.number !== null ? "#" + state.number : "");
 
 test("G073 the reading of the relay never takes an unknown word for a good one, and drops what it cannot read", () => {
   assert.equal(decodeRelayView(null), null); assert.equal(decodeRelayView({}), null); assert.equal(decodeRelayView({ bindings: "x", packets: [] }), null);
   const view = decodeRelayView({
-    bindings: [{ harnessId: "codex", controlId: "codex-native", nativeEpoch: 2, sync: "synced", throughRun: 3, evidence: "E1", cleared: 1, probed: true, cause: "rewind" }, { harnessId: "no-control" }, 7, null,
-      { harnessId: "hermes", controlId: "hermes-native", sync: "mystery", throughRun: -1, cleared: "many", probed: "yes", owed: { runs: 2, estTokens: 900 } }],
-    packets: [packetRow("recorded", "E2"), packetRow("delivered-ish", "E9"), { packetId: "relay-only-an-id" }, { ...packetRow("in_flight", null), runIndex: -1 }, "x"] });
+    bindings: [{ harnessId: "codex", controlId: "codex-native", nativeEpoch: 2, sync: "synced", throughRun: 3, evidence: "E1", cleared: 1, probed: true, canConfirm: true, vendor: "openai" }, { harnessId: "no-control" }, 7, null,
+      { harnessId: "hermes", controlId: "hermes-native", sync: "mystery", throughRun: -1, cleared: "many", probed: "yes", canConfirm: "maybe", owed: { runs: 2, estTokens: 900 },
+        attention: { cause: "delivery_unconfirmed", options: ["attach_full", "teleport", "attach_full", "new_native"], counts: { runs: 2, packets: 1 }, key: "delivery_unconfirmed:relay-0", packet: 4, vendor: "openai" } },
+      { harnessId: "opencode", controlId: "opencode-native", owed: { runs: 0, estTokens: 5 }, attention: { cause: "something-new", options: ["attach_full"], counts: {}, key: "x" } },
+      { harnessId: "openclaw", controlId: "openclaw-native", attention: { cause: "input_limit", options: [], counts: { runs: 1 } } }],
+    packets: [packetRow("recorded", "E2"), packetRow("delivered-ish", "E9"), { packetId: "relay-only-an-id" }, { ...packetRow("in_flight", null), runIndex: -1 }, "x"], dataRootExposed: true });
   assert.ok(view !== null);
-  assert.deepEqual(view.bindings.map(item => item.harnessId), ["codex", "hermes"]);
-  assert.deepEqual(view.bindings[0], { harnessId: "codex", controlId: "codex-native", nativeEpoch: 2, sync: "synced", throughRun: 3, evidence: "E1", cleared: 1, probed: true, cause: "rewind", owed: null });
+  assert.deepEqual(view.bindings.map(item => item.harnessId), ["codex", "hermes", "opencode", "openclaw"]);
+  assert.deepEqual(view.bindings[0], { harnessId: "codex", controlId: "codex-native", nativeEpoch: 2, sync: "synced", throughRun: 3, evidence: "E1", cleared: 1, probed: true, canConfirm: true, vendor: "openai", owed: null, attention: null });
   // A word the page does not know is "unknown", a number it cannot read is nothing, and a flag that is not true is false.
-  assert.deepEqual(view.bindings[1], { harnessId: "hermes", controlId: "hermes-native", nativeEpoch: 1, sync: "unknown", throughRun: null, evidence: null, cleared: 0, probed: false, cause: null, owed: { runs: 2, estTokens: 900 } });
+  assert.deepEqual(view.bindings[1], { harnessId: "hermes", controlId: "hermes-native", nativeEpoch: 1, sync: "unknown", throughRun: null, evidence: null, cleared: 0, probed: false, canConfirm: null, vendor: null, owed: { runs: 2, estTokens: 900 },
+    attention: { cause: "delivery_unconfirmed", options: ["attach_full", "new_native"], counts: { runs: 2, packets: 1 }, key: "delivery_unconfirmed:relay-0", packet: 4, vendor: "openai" } });
+  // Nothing owed is no `owed`; a cause the page does not know asks nothing of the user (it is not shown as another); a banner needs its key.
+  assert.deepEqual([view.bindings[2]!.owed, view.bindings[2]!.attention], [null, null]);
+  assert.equal(view.bindings[3]!.attention, null, "no key, no banner");
+  assert.equal(view.dataRootExposed, true); assert.equal(decodeRelayView({ bindings: [], packets: [], dataRootExposed: "yes" })?.dataRootExposed, false);
   assert.deepEqual(view.packets.map(item => [item.delivery, item.evidence]), [["recorded", "E2"], [null, null]]);
 
   // A Turn's relay member: unknown levels are no relay facts at all; an unknown delivery word is no delivery state.
@@ -883,7 +1108,13 @@ test("G073 the reading of the relay never takes an unknown word for a good one, 
   assert.equal(decodeRunRelay("native_resume"), null);
   const decoded = decodeRunRelay({ packetId: PACKET, kind: "packet", continuity: { kind: "rehydrate", tier: "standard", complete: false }, executedOn: { harnessId: "codex", controlId: "codex-native", nativeEpoch: 1 }, delivery: { state: "yes!", evidence: "E1" } });
   assert.ok(decoded !== null);
-  assert.deepEqual(runRelayInfo({ relay: decoded }), { packetId: PACKET, kind: "packet", continuity: { kind: "rehydrate", tier: "standard", complete: false }, executedOn: { harnessId: "codex", controlId: "codex-native", nativeEpoch: 1 }, delivery: { state: null, evidence: "E1" } });
+  assert.deepEqual(runRelayInfo({ relay: decoded }), { packetId: PACKET, kind: "packet", continuity: { kind: "rehydrate", tier: "standard", complete: false }, executedOn: { harnessId: "codex", controlId: "codex-native", nativeEpoch: 1 }, delivery: { state: null, evidence: "E1" }, decision: null });
+  // What the relay decided for a Turn: kinds and authors it knows, an unknown cause only left out, an unknown kind no decision at all.
+  const decided = (decision: unknown) => runRelayInfo({ relay: decodeRunRelay({ packetId: null, kind: null, continuity: { kind: "native_resume" }, executedOn: null, decision })! })?.decision;
+  assert.deepEqual(decided({ kind: "alone", by: "policy", cause: "delivery_unconfirmed" }), { kind: "alone", by: "policy", cause: "delivery_unconfirmed", reason: null });
+  assert.deepEqual(decided({ kind: "alone", by: "policy", cause: "prepare_failed", reason: "storage_quota" }), { kind: "alone", by: "policy", cause: "prepare_failed", reason: "storage_quota" });
+  assert.deepEqual(decided({ kind: "carry", by: "need", cause: "something-new" }), { kind: "carry", by: "need", cause: null, reason: null });
+  for (const odd of [{ kind: "teleport", by: "policy" }, { kind: "alone", by: "robot" }, { kind: "alone" }, "alone", 7, null]) assert.equal(decided(odd) ?? null, null, JSON.stringify(odd));
   assert.equal(runRelayInfo({}), null);
   assert.deepEqual(runRelayInfo({ relay: decodeRunRelay({ packetId: null, kind: null, continuity: "native_fork", executedOn: null })! })?.continuity, { kind: "native_fork" });
 
@@ -900,11 +1131,11 @@ test("G073 the reading of the relay never takes an unknown word for a good one, 
     { attach: "full", resend: true, clearConfirmed: true, native: "new", tier: "brief", note: "x", consent: { vendor: "openai", decision: "goal_only", scope: "global" } });
 
   // The preferences, from any of the shapes a Gateway may answer with; a value that cannot be read is not shown as another.
-  assert.deepEqual(decodeRelayPrefs({ "relay.crossVendor": "ask" }), { crossVendor: "ask" });
-  assert.deepEqual(decodeRelayPrefs({ prefs: { "relay.crossVendor": "goal_only" } }), { crossVendor: "goal_only" });
-  assert.deepEqual(decodeRelayPrefs([{ key: "relay.crossVendor", value: "ask" }, { key: "relay.allowUnprobed", value: "true" }]), { crossVendor: "ask" });
-  assert.deepEqual(decodeRelayPrefs({}), { crossVendor: "allow" });
-  assert.equal(decodeRelayPrefs({ "relay.crossVendor": "sometimes" }), null); assert.equal(decodeRelayPrefs("x"), null); assert.equal(decodeRelayPrefs(null), null);
+  assert.deepEqual(decodeRelayPrefs({ "relay.crossVendor": "ask" }), { crossVendor: "ask", whenUnsure: "auto" });
+  assert.deepEqual(decodeRelayPrefs({ prefs: { "relay.crossVendor": "goal_only", "relay.whenUnsure": "ask", "relay.dataRootInWorkspace": "warn" } }), { crossVendor: "goal_only", whenUnsure: "ask" });
+  assert.deepEqual(decodeRelayPrefs([{ key: "relay.crossVendor", value: "ask" }, { key: "relay.allowUnprobed", value: "true" }]), { crossVendor: "ask", whenUnsure: "auto" });
+  assert.deepEqual(decodeRelayPrefs({}), { crossVendor: "allow", whenUnsure: "auto" }, "what the Gateway does not name is at its default: permissive");
+  assert.equal(decodeRelayPrefs({ "relay.crossVendor": "sometimes" }), null); assert.equal(decodeRelayPrefs({ "relay.whenUnsure": "maybe" }), null); assert.equal(decodeRelayPrefs("x"), null); assert.equal(decodeRelayPrefs(null), null);
   assert.deepEqual(decodeRelayFrame({ type: "relay", event: { type: "relay.verified", sessionId: SESSION, runId: "run-2", at: 5 } }), { type: "relay.verified", sessionId: SESSION, runId: "run-2", packetId: null });
   assert.equal(decodeRelayFrame({ type: "run", event: {} }), null); assert.equal(decodeRelayFrame({ type: "relay" }), null); assert.equal(decodeRelayFrame({ type: "relay", event: {} }), null);
 });
@@ -930,7 +1161,9 @@ test("G073 the relay's data layer answers 'no relay information' for a Gateway w
   assert.deepEqual((await read(reply(200, relayView({ packets: [packetRow("recorded", "E1")] })))).view?.packets.map(item => item.packetId), [PACKET]);
   assert.equal(seen[0]?.path, "/sessions/session-a%20b/relay"); assert.equal(seen[0]?.as, "json");
   assert.equal(await createRelayApi(make(() => reply(404))).prefs(), null); assert.equal(await createRelayApi(make(() => new Error("network"))).prefs(), null);
-  assert.deepEqual(await createRelayApi(make(() => reply(200, { "relay.crossVendor": "ask" }))).prefs(), { crossVendor: "ask" });
+  assert.deepEqual(await createRelayApi(make(() => reply(200, { prefs: { "relay.crossVendor": "ask", "relay.whenUnsure": "auto" } }))).prefs(), { crossVendor: "ask", whenUnsure: "auto" });
+  // A packet that is not there is not a relay that is not there: its own code (and a conversation's) leave the Gateway known to have the relay.
+  assert.deepEqual(await read(reply(404, { code: "RELAY_PACKET_NOT_FOUND", message: "this conversation has no such handoff packet" })), { view: null, absent: false });
   // A packet's text: the text and its ETag, or a reason in the page's words.
   const text = await createRelayApi(make(() => reply(200, PACKET_TEXT, "abc"))).packetText("session-1", PACKET);
   assert.deepEqual(text, { text: PACKET_TEXT, etag: "abc" });
@@ -939,10 +1172,11 @@ test("G073 the relay's data layer answers 'no relay information' for a Gateway w
   await assert.rejects(createRelayApi(make(() => reply(200, { not: "text" }))).packetText("session-1", PACKET), (error: unknown) => error instanceof RelayReadError && error.message === "这份交接单没有读到（网关返回 200）。");
   await assert.rejects(createRelayApi(make(() => reply(500))).packetText("session-1", PACKET), /网关返回 500/u);
   // The one write: the preference, as the key and the value.
-  await createRelayApi(make(() => reply(200, {}))).setCrossVendor("ask");
+  await createRelayApi(make(() => reply(200, {}))).setPref("crossVendor", "ask");
   assert.deepEqual(seen.at(-1), { method: "PUT", path: "/relay/prefs", as: "json", body: { key: "relay.crossVendor", value: "ask" } });
-  await createRelayApi(make(() => reply(204))).setCrossVendor("allow");
-  await assert.rejects(createRelayApi(make(() => reply(502))).setCrossVendor("ask"), (error: unknown) => error instanceof RelayReadError && error.message === "这项设置没有保存（网关返回 502）。");
+  await createRelayApi(make(() => reply(204))).setPref("whenUnsure", "ask");
+  assert.deepEqual(seen.at(-1), { method: "PUT", path: "/relay/prefs", as: "json", body: { key: "relay.whenUnsure", value: "ask" } });
+  await assert.rejects(createRelayApi(make(() => reply(502))).setPref("crossVendor", "ask"), (error: unknown) => error instanceof RelayReadError && error.message === "这项设置没有保存（网关返回 502）。");
 });
 
 test("G073 the hand-over line follows the evidence: every state, and what each says before it may say taken over", () => {
@@ -960,20 +1194,31 @@ test("G073 the hand-over line follows the evidence: every state, and what each s
   // Evidence: taken over, with how and the proof; the view is read before the Turn's own word, which may be older.
   const over = conversation("completed", packetRelay(CODEX));
   const taken = handover(over, wire(packetRow("recorded", "E2")));
-  assert.deepEqual(taken, { kind: "taken", how: "新会话 · 交接单（标准） · #1", number: 1, packetId: PACKET, evidence: "E2", fresh: false });
+  assert.deepEqual(taken, { kind: "taken", runId: "run-2", how: "新会话 · 交接单（标准） · #1", number: 1, packetId: PACKET, evidence: "E2", fresh: false });
   const fromTurn = conversation("completed", packetRelay(CODEX, { delivery: { state: "unknown", evidence: null } }));
   assert.equal(handover(fromTurn, null).kind, "unknown", "a Turn that carries its delivery makes the Gateway a relay Gateway without a view");
   assert.equal(kinds(handover(fromTurn, wire(packetRow("recorded", "E1")))), "taken#1", "a delivery decided later wins over the Turn's older word");
   // Not confirmed, not arrived, and a word the page does not know: never taken over, said as what is known.
-  assert.deepEqual(handover(over, wire(packetRow("unknown", null))), { kind: "unknown", replied: true, number: 1, packetId: PACKET, fresh: false });
+  assert.deepEqual(handover(over, wire(packetRow("unknown", null))), { kind: "unknown", runId: "run-2", replied: true, cannotConfirm: false, number: 1, packetId: PACKET, fresh: false });
   assert.equal(kinds(handover(over, wire(packetRow("not_recorded", null)))), "not_recorded#1");
   assert.equal(handover(over, wire(packetRow("delivered-ish", "E1"))).kind, "unknown");
   assert.equal(handover(over, relayView()).kind, "unknown", "over, and the Gateway lists no delivery: not confirmed");
   const silent = conversation("failed", packetRelay(CODEX)); delete silent.runs[1]!.timing!.firstOutputAt;
-  assert.deepEqual(handover(silent, wire(packetRow("unknown", null))), { kind: "unknown", replied: false, number: 1, packetId: PACKET, fresh: false });
+  assert.deepEqual(handover(silent, wire(packetRow("unknown", null))), { kind: "unknown", runId: "run-2", replied: false, cannotConfirm: false, number: 1, packetId: PACKET, fresh: false });
+  // A Harness whose Driver has no way to learn that a handoff arrived: said as what it is, once.
+  const unable = relayView({ packets: [packetRow("unknown", null)], bindings: [{ harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "pending", throughRun: null, evidence: null, cleared: 0, probed: false, canConfirm: false }] });
+  assert.deepEqual(handover(over, unable), { kind: "unknown", runId: "run-2", replied: true, cannotConfirm: true, number: 1, packetId: PACKET, fresh: false });
   // The Turn's own continuation, with no packet owed: the original session goes on, and it took over once the Turn was handed to it.
   const resume = conversation("completed", own(CODEX));
-  assert.deepEqual(handover(resume, relayView()), { kind: "taken", how: "继续原会话", number: null, packetId: null, evidence: null, fresh: false });
+  assert.deepEqual(handover(resume, relayView()), { kind: "taken", runId: "run-2", how: "继续原会话", number: null, packetId: null, evidence: null, fresh: false });
+  // Words sent alone, by the relay's policy or the user's choice, did not hand the conversation over: never "taken", and the line says why.
+  const aloneBy = (decision: Record<string, unknown>) => handover(conversation("completed", { ...own(CODEX), decision }), relayView());
+  assert.deepEqual(aloneBy({ kind: "alone", by: "policy", cause: "input_limit", reason: "min_packet" }), { kind: "alone", runId: "run-2", note: "Codex 的上下文窗口放不下交接单 · 这条只发了原话", number: null, packetId: null, fresh: false });
+  assert.equal((aloneBy({ kind: "alone", by: "user" }) as { note: string }).note, "这条消息按你的选择只发了原话");
+  assert.equal((aloneBy({ kind: "alone", by: "policy", cause: "consent_revoked" }) as { note: string }).note, "你已撤回对该服务的允许 · 这条只发了原话");
+  assert.equal(aloneBy({ kind: "plain", by: "need" }).kind, "taken", "a Turn that owed nothing any more went as typed, and the Harness took the conversation over");
+  assert.equal(handover(conversation("running", { ...own(CODEX), decision: { kind: "alone", by: "policy", cause: "input_limit" } }), relayView()).kind, "alone", "handed to the Harness, and said so at once");
+  assert.equal(handover(conversation("preparing", { ...own(CODEX), decision: { kind: "alone", by: "policy", cause: "input_limit" } }), relayView()).kind, "none");
   const early = conversation("preparing", own(CODEX)); assert.equal(handover(early, relayView()).kind, "none");
   assert.equal(handover(conversation("failed", { ...own(CODEX), continuity: { kind: "blocked", code: "RELAY_INPUT_LIMIT" } }), relayView()).kind, "none");
   const delta = conversation("completed", { packetId: PACKET, kind: "delta", continuity: { kind: "native_resume_delta", tier: "brief", runs: 2 }, executedOn: { ...CODEX, nativeEpoch: 1 } });
@@ -990,11 +1235,11 @@ test("G073 the hand-over line follows the evidence: every state, and what each s
 
 test("G073 what is owed to the Harness the conversation is on, and what a clear leaves", () => {
   const line = (session: FakeSession, wire: RelayWire | null) => relayLine(typed(session), viewOf(wire));
-  // Claude Code's Turn is owed to Codex, which holds nothing: its Turns are counted, the Gateway's own estimate is used when given.
-  assert.deepEqual(line(conversation("none"), relayView()), { kind: "owed", runs: 1, tokens: null, unverified: true, first: true });
-  const estimated = relayView({ bindings: [{ harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "fresh", throughRun: null, evidence: null, cleared: 0, probed: true, owed: { runs: 3, estTokens: 1700 } }] });
-  assert.deepEqual(line(conversation("none"), estimated), { kind: "owed", runs: 3, tokens: 1700, unverified: false, first: true });
-  assert.equal((line(conversation("completed", packetRelay(CODEX)), relayView({ packets: [packetRow("unknown", null)] })) as { first: boolean }).first, false);
+  // Claude Code's Turn is owed to Codex, which has no session here yet: its Turns are counted by the page.
+  assert.deepEqual(line(conversation("none"), relayView()), { kind: "owed", runs: 1, tokens: null, unverified: true, service: null });
+  // Once the Harness has a session here the Gateway's count and estimate are the ones shown, and the service it runs on when it is named.
+  const estimated = relayView({ bindings: [{ harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "fresh", throughRun: null, evidence: null, cleared: 0, probed: true, vendor: "openai", owed: { runs: 3, estTokens: 1700 } }] });
+  assert.deepEqual(line(conversation("none"), estimated), { kind: "owed", runs: 3, tokens: 1700, unverified: false, service: "openai" });
   // Nothing is owed when the Gateway says Codex holds the Turn, when there is no relay state, or while something runs or waits.
   assert.equal(line(conversation("none"), relayView({ bindings: [{ harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "synced", throughRun: 0, evidence: "E1", cleared: 0, probed: true }] })), null);
   assert.equal(line(conversation("none"), null), null);
@@ -1003,13 +1248,82 @@ test("G073 what is owed to the Harness the conversation is on, and what a clear 
   const closed = conversation("none"); closed.status = "closed"; assert.equal(line(closed, relayView()), null);
   // A Turn that never reached its Harness is nothing to hand over.
   const unsent = conversation("none"); delete unsent.runs[0]!.timing!.dispatchedAt; assert.equal(line(unsent, relayView()), null);
-  // After a confirmed clear the history is offered back, once; an unconfirmed clear says it will be checked.
+  // After a confirmed clear the history is offered back, once.
   const cleared = relayView({ bindings: [{ harnessId: "codex", controlId: "codex-native", nativeEpoch: 2, sync: "fresh", throughRun: null, evidence: null, cleared: 1, probed: true }] });
   assert.deepEqual(line(conversation("completed", packetRelay(CODEX)), cleared), { kind: "cleared" });
-  const unconfirmed = relayView({ bindings: [{ harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "suspect", throughRun: 1, evidence: "E1", cleared: 0, probed: true, cause: "clear_unconfirmed" }] });
-  assert.deepEqual(line(conversation("completed", packetRelay(CODEX)), unconfirmed), { kind: "clear_pending" });
-  const suspect = relayView({ bindings: [{ harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "suspect", throughRun: 1, evidence: "E1", cleared: 0, probed: true, cause: "rewind" }] });
-  assert.equal(line(conversation("completed", packetRelay(CODEX)), suspect), null, "only an unconfirmed clear is said above the box; other doubts are the details'");
+  // A clear not confirmed, and every other doubt, is a banner (bannerOf), not this line.
+  const unconfirmed = relayView({ bindings: [{ harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "suspect", throughRun: 1, evidence: "E1", cleared: 0, probed: true }] });
+  assert.equal(line(conversation("completed", packetRelay(CODEX)), unconfirmed), null);
+});
+
+test("G073 a banner says what a binding asks once, each way to settle it is a field of the next message, and nothing stops the message", () => {
+  const binding = (attention: Record<string, unknown>, extra: Record<string, unknown> = {}) => viewOf(relayView({ bindings: [{ harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "pending", throughRun: null, evidence: null, cleared: 0, probed: true, attention, ...extra }] }))!.bindings[0];
+  const never = () => false;
+  const view = (attention: Record<string, unknown>, extra: Record<string, unknown> = {}) => bannerOf(binding(attention, extra), "Codex", never);
+  const sends = (banner: ReturnType<typeof view>) => banner?.actions.map(action => [action.label, action.request]);
+  // A delivery nothing confirmed: not yet sent again, then sent twice (and the messages go alone from there); the packet's number is the Gateway's.
+  const once = view({ cause: "delivery_unconfirmed", options: ["attach_full", "new_native"], counts: { runs: 2, packets: 1 }, key: "delivery_unconfirmed:relay-a", packet: 3 });
+  assert.equal(once?.text, "交接单 #3 还没有确认送达 Codex · 还有 2 轮待交接");
+  assert.deepEqual(sends(once), [["再附一次", { resend: true }], ["新开原生会话", { native: "new" }]]);
+  const twice = view({ cause: "delivery_unconfirmed", options: ["attach_full", "new_native"], counts: { runs: 0, packets: 2 }, key: "delivery_unconfirmed:relay-b", packet: 4 });
+  assert.equal(twice?.text, "交接单 #4 发了两次仍未确认送达 Codex · 之后的消息只发原话，有新内容再附");
+  assert.equal(view({ cause: "delivery_unconfirmed", options: ["attach_full"], counts: { runs: 0, packets: 3 }, key: "k" })?.text, "上一份交接单发了3次仍未确认送达 Codex · 之后的消息只发原话，有新内容再附");
+  // A history that could not be checked, a packet that is gone, a clear not confirmed: the whole packet again is the way, or the clear taken as done.
+  assert.equal(view({ cause: "verify_required", options: ["attach_full", "new_native"], counts: { runs: 1, packets: 0 }, key: "v" })?.text, "未能核对 Codex 原生会话里的交接内容 · 还有 1 轮待交接");
+  assert.deepEqual(sends(view({ cause: "verify_required", options: ["attach_full", "new_native"], counts: { runs: 1, packets: 0 }, key: "v" })), [["补发完整交接单", { attach: "full" }], ["新开原生会话", { native: "new" }]]);
+  assert.equal(view({ cause: "marker_absent", options: ["attach_full", "new_native"], counts: { runs: 0, packets: 1 }, key: "m" })?.text, "Codex 的原生会话里找不到之前的交接单");
+  const clear = view({ cause: "clear_unconfirmed", options: ["attach_full", "new_native", "clear_confirmed"], counts: { runs: 2, packets: 0 }, key: "c" }, { sync: "suspect" });
+  assert.equal(clear?.text, "清空待确认 · 不确认的话，下次补交会带上清空前的记录");
+  assert.deepEqual(sends(clear)?.map(item => item[1]), [{ attach: "full" }, { native: "new" }, { clearConfirmed: true }]);
+  // A record that could not be recovered, a window too small, a withdrawn allowance: said, and sending alone is what the next message does by itself.
+  assert.equal(view({ cause: "recovery_failed", options: ["new_native"], counts: { runs: 0, packets: 0 }, key: "r" })?.text, "服务重启后没能恢复这个对话的交接记录 · 下一条消息只发原话");
+  const limit = view({ cause: "input_limit", options: [], counts: { runs: 3, packets: 0 }, key: "i" });
+  assert.equal(limit?.text, "Codex 的上下文窗口放不下交接单 · 消息只发原话"); assert.deepEqual(limit?.actions, []);
+  const revoked = view({ cause: "consent_revoked", options: ["acknowledge"], counts: { runs: 1, packets: 0 }, key: "x", vendor: "openai" });
+  assert.equal(revoked?.text, "你已撤回对 OpenAI 的允许 · 消息只发原话 · 还有 1 轮待交接");
+  assert.deepEqual(sends(revoked), [["重新允许", { consent: { vendor: "openai", decision: "acknowledged", scope: "session" } }]]);
+  assert.deepEqual(view({ cause: "consent_revoked", options: ["acknowledge"], counts: { runs: 0, packets: 0 }, key: "x" })?.actions, [], "an allowance for a vendor nobody named cannot be made");
+  assert.match(view({ cause: "consent_goal_only", options: ["acknowledge"], counts: { runs: 0, packets: 0 }, key: "g", vendor: "gateway:llm.example.test" })?.text ?? "", /^跨厂商交接设为“只交目标”，目前只能发原话/u);
+  // "只发这条消息" is never a button of a banner; what the user closed does not come back; a Harness that cannot confirm is not nagged about its delivery.
+  assert.deepEqual(view({ cause: "verify_required", options: ["send_alone", "attach_full"], counts: { runs: 0, packets: 0 }, key: "v" })?.actions.map(action => action.option), ["attach_full"]);
+  assert.equal(bannerOf(binding({ cause: "verify_required", options: ["attach_full"], counts: { runs: 0, packets: 0 }, key: "v" }), "Codex", key => key === "v"), null);
+  assert.equal(bannerOf(binding({ cause: "delivery_unconfirmed", options: ["attach_full"], counts: { runs: 1, packets: 1 }, key: "d" }, { canConfirm: false }), "Codex", never), null);
+  assert.notEqual(bannerOf(binding({ cause: "verify_required", options: ["attach_full"], counts: { runs: 0, packets: 0 }, key: "v" }, { canConfirm: false }), "Codex", never), null, "only a delivery nothing can confirm is left unsaid");
+  assert.equal(bannerOf(undefined, "Codex", never), null); assert.equal(bannerOf({ ...binding({ cause: "verify_required", options: [], counts: { runs: 0, packets: 0 }, key: "v" })!, attention: null }, "Codex", never), null);
+});
+
+test("G073 what the relay did with a Turn's history is said in the words of the decision, and never as a Harness taking over", () => {
+  const info = (decision: Record<string, unknown> | null, relay: Record<string, unknown> = {}) => runRelayInfo({ relay: decodeRunRelay({ packetId: null, kind: null, continuity: { kind: "native_resume" }, executedOn: { ...CODEX, nativeEpoch: 1 }, ...(decision === null ? {} : { decision }), ...relay })! })!;
+  const ctx: NoteContext = { target: "Codex", number: 3, pending: 2, service: "openai", cannotConfirm: false };
+  const say = (decision: Record<string, unknown> | null, relay: Record<string, unknown> = {}, context = ctx) => decisionNote(info(decision, relay), context);
+  // The history went as it was owed: nothing to say. Or it went alone, and the words say why.
+  assert.equal(say(null), null); assert.equal(say({ kind: "carry", by: "need" }, { packetId: PACKET }), null); assert.equal(say({ kind: "plain", by: "need" }), null);
+  assert.equal(say({ kind: "plain", by: "user" }), "没有可附的交接内容，这条消息按原样发出");
+  assert.equal(say({ kind: "alone", by: "user" }), "这条消息按你的选择只发了原话");
+  assert.equal(say({ kind: "alone", by: "policy", cause: "delivery_unconfirmed" }), "交接单 #2 发了两次仍未确认送达 · 这条只发了原话");
+  assert.equal(say({ kind: "alone", by: "policy", cause: "delivery_unconfirmed" }, {}, { ...ctx, cannotConfirm: true }), "交接单 #2 已发出，Codex 无法确认是否收到 · 这条只发了原话");
+  assert.equal(say({ kind: "alone", by: "policy", cause: "delivery_unconfirmed" }, {}, { ...ctx, pending: null }), "上一份交接单发了两次仍未确认送达 · 这条只发了原话");
+  assert.equal(say({ kind: "alone", by: "policy", cause: "verify_required" }), "未能核对 Codex 原生会话里的交接内容 · 这条按原样发出");
+  assert.equal(say({ kind: "alone", by: "policy", cause: "input_limit", reason: "min_packet" }), "Codex 的上下文窗口放不下交接单 · 这条只发了原话");
+  assert.equal(say({ kind: "alone", by: "policy", cause: "input_limit", reason: "input_limit" }), "这条消息已接近 Codex 的输入上限，放不下交接单 · 这条只发了原话");
+  assert.equal(say({ kind: "alone", by: "policy", cause: "recovery_failed" }), "服务重启后没能恢复这个对话的交接记录 · 这条只发了原话");
+  assert.equal(say({ kind: "alone", by: "policy", cause: "consent_revoked" }), "你已撤回对 OpenAI 的允许 · 这条只发了原话");
+  assert.equal(say({ kind: "alone", by: "policy", cause: "consent_goal_only" }), "跨厂商交接设为“只交目标” · 这条只发了原话");
+  assert.equal(say({ kind: "alone", by: "policy", cause: "prepare_failed", reason: "storage_quota" }), "这次没能准备交接单（存储空间不足） · 这条只发了原话，下一条会再试");
+  assert.equal(say({ kind: "alone", by: "policy", cause: "prepare_failed", reason: "unheard-of" }), "这次没能准备交接单 · 这条只发了原话，下一条会再试");
+  assert.equal(say({ kind: "alone", by: "policy", cause: "classification_changed" }), "这是 Codex 的命令，不会附上交接单；交接单会随下一条普通消息发出");
+  // The packet went again, or went whole again, or was cut down to a small window.
+  const carried = { packetId: PACKET, kind: "packet", continuity: { kind: "rehydrate", tier: "standard", runs: 2 } };
+  assert.equal(say({ kind: "carry", by: "policy", cause: "delivery_unconfirmed" }, carried), "上一份交接单没有确认送达，这条消息已再附一次（交接单 #3 · 补交 2 轮）");
+  assert.equal(say({ kind: "carry", by: "policy", cause: "verify_required" }, carried), "未能核对 Codex 的原生会话，已补发完整交接单（可能与已有内容重复）");
+  assert.equal(say({ kind: "carry", by: "policy", cause: "marker_absent" }, carried), "Codex 的原生会话里找不到之前的交接单，已在同一会话补发");
+  assert.equal(say({ kind: "carry", by: "need" }, { ...carried, continuity: { kind: "rehydrate", tier: "brief" } }), "Codex 的窗口较小，交接单已缩为精简");
+  assert.equal(say(null, { ...carried, continuity: { kind: "rehydrate", tier: "brief" } }), "Codex 的窗口较小，交接单已缩为精简");
+  assert.equal(say({ kind: "carry", by: "user" }, carried), null);
+  // Notes by Turn: from the Turns' own words and the packets the view lists.
+  const session = conversation("completed", packetRelay(CODEX, { decision: { kind: "carry", by: "policy", cause: "delivery_unconfirmed" } }));
+  const notes = runNotes({ runs: runsOf(session), view: viewOf(relayView({ packets: [packetRow("unknown", null)] })), name: harnessNames });
+  assert.deepEqual([...notes], [["run-2", "上一份交接单没有确认送达，这条消息已再附一次（交接单 #1）"]]);
 });
 
 test("G073 each refusal says what it is and each way forward sends what its words say", () => {
@@ -1047,26 +1361,30 @@ test("G073 each refusal says what it is and each way forward sends what its word
   assert.equal(choiceView(choice("RELAY_UNAVAILABLE", { cause: "something-new", options: ["send_alone"] }), name, "codex").text, "这条消息还没有发出，草稿已保留。");
 });
 
-test("G073 the conversation stream hands relay events on without moving its cursor, and one that cannot be read never ends it", async () => {
-  const encoder = new TextEncoder(), relayEvents: unknown[] = [], facts: unknown[] = [];
-  const event = (type: string, at: number) => JSON.stringify({ type: "relay", event: { type, sessionId: SESSION, at } });
+test("G073 the conversation stream carries a relay notice as a frame under the watermark of the facts it follows, and an event of its own name without moving the cursor", async () => {
+  const encoder = new TextEncoder(), relayEvents: unknown[] = [], frames: { readonly type: string }[] = [];
+  const event = (type: string, at: number) => ({ type, sessionId: SESSION, at });
   const body = [
-    "event: relay\ndata: " + event("relay.verified", 1) + "\n\n",
+    // An event of its own name: handed on, no cursor; one that is not JSON is dropped and does not end the stream.
+    "event: relay\ndata: " + JSON.stringify({ type: "relay", event: event("relay.verified", 1) }) + "\n\n",
     "event: relay\ndata: {not json\n\n",
-    // As a session event with a cursor: still not a fact of the conversation.
-    "event: session\nid: 7\ndata: " + event("relay.vendor_changed", 2) + "\n\n",
     ": heartbeat\n\n",
     "event: session\nid: 9\ndata: " + JSON.stringify({ type: "snapshot", session: { id: SESSION, version: 8, lastSeq: 9 } }) + "\n\n",
+    // The notice the Gateway sends: a frame, under the watermark of the snapshot before it.
+    "event: session\nid: 9\ndata: " + JSON.stringify({ type: "relay", sessionId: SESSION, version: 8, lastSeq: 9, event: event("relay.vendor_changed", 2) }) + "\n\n",
   ].join("");
-  const decode = (value: unknown) => ({ type: "snapshot" as const, session: (value as { session: SessionView }).session });
+  const decode = (value: unknown) => (value as { type?: unknown }).type === "relay" ? decodeSessionStreamFrame(value) : ({ type: "snapshot" as const, session: (value as { session: SessionView }).session });
   const stream = (text: string) => new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(encoder.encode(text)); controller.close(); } });
-  await consumeSessionEventStream(stream(body), { signal: new AbortController().signal, decode, onFrame: frame => { facts.push(frame); }, onRelay: value => { relayEvents.push(value); } });
-  assert.deepEqual(relayEvents.map(value => decodeRelayFrame(value)?.type), ["relay.verified", "relay.vendor_changed"]);
-  assert.equal(facts.length, 1, "only the snapshot is a fact of the conversation");
-  // Without a listener they are ignored; the stream still delivers the facts.
+  await consumeSessionEventStream(stream(body), { signal: new AbortController().signal, decode, onFrame: frame => { frames.push(frame); }, onRelay: value => { relayEvents.push(value); } });
+  assert.deepEqual(relayEvents.map(value => decodeRelayFrame(value)?.type), ["relay.verified"]);
+  assert.deepEqual(frames.map(frame => frame.type), ["snapshot", "relay"], "the notice is a frame of the stream, read for its event by whoever takes the frames");
+  // Without a listener for the named event it is ignored; the stream still delivers the frames.
   const ignored: unknown[] = [];
   await consumeSessionEventStream(stream(body), { signal: new AbortController().signal, decode, onFrame: frame => { ignored.push(frame); } });
-  assert.equal(ignored.length, 1);
+  assert.equal(ignored.length, 2);
+  // The notice keeps the rules every frame has: its identity on the wire is its facts' watermark.
+  await assert.rejects(consumeSessionEventStream(stream("event: session\nid: 7\ndata: " + JSON.stringify({ type: "relay", sessionId: SESSION, version: 8, lastSeq: 9, event: event("relay.verified", 1) }) + "\n\n"),
+    { signal: new AbortController().signal, decode, onFrame: () => {} }), (error: unknown) => error instanceof SessionStreamError && error.code === "STREAM_INVALID_FRAME");
   // What is not a relay event keeps the rules it always had: a session event without a cursor ends the stream.
   await assert.rejects(consumeSessionEventStream(stream("event: session\ndata: " + JSON.stringify({ type: "snapshot", session: {} }) + "\n\n"), { signal: new AbortController().signal, decode, onFrame: () => {} }),
     (error: unknown) => error instanceof SessionStreamError && error.code === "STREAM_INVALID_FRAME");
