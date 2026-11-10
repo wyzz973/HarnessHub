@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { RELAY_WINDOW_RETENTION_MS, type BindingRelayState, type RelayWindow } from "../../src/contracts/relay.js";
-import { RELAY_BUDGET, resolveRelayBudget } from "../../src/contexts/session/domain/relay/budget.js";
+import { BUDGET_DEMOTIONS, RELAY_BUDGET, resolveRelayBudget } from "../../src/contexts/session/domain/relay/budget.js";
 import {
   ASSUMED_PREFILL, RETURN_PRIOR, RETURN_THRESHOLDS, cacheLifeMs, estimateReturn, packetCost, returnChoice, returnPreference, survivalEstimate, warm, type ReturnInput,
 } from "../../src/contexts/session/domain/relay/return-policy.js";
@@ -134,4 +134,17 @@ test("G072 windows.ts: the packet's budget — the renderer's own for an assumed
   assert.deepEqual(windowRow("alpha", "alpha-acp", "m", { context: { used: 9000, size: 200_000 } }, true, NOW), { harnessId: "alpha", controlId: "alpha-acp", modelKey: "m", size: 200_000, firstTurnUsed: 9000, observedAt: NOW });
   assert.equal(windowRow("alpha", "alpha-acp", "m", { context: { used: 9000, size: 200_000 } }, false, NOW)?.firstTurnUsed, null, "only a native session's first Turn tells the fixed prefix");
   assert.equal(windowRow("alpha", "alpha-acp", "m", { turn: { input: 1 } }, true, NOW), null, "no size, no row");
+});
+
+test("permissive §2.4 budget: only the window and the channel — physical limits — lower a packet; cost, latency and the price cliff are shown and decide nothing, however large", () => {
+  assert.deepEqual({ ...BUDGET_DEMOTIONS }, { window: true, channel: true, cost: false, latency: false, cliff: false });
+  // A packet's budget is a function of the window and the hard cap alone: nothing about money or time reaches packetBudget.
+  assert.equal(packetBudget.length, 2);
+  const window = { size: 200_000, source: "session_report" as const, fixedPrefix: 8000 };
+  assert.deepEqual(packetBudget(window, hardCap(window, 100, null, 100)), resolveRelayBudget(200_000));
+  // The return's estimate may be as large as it likes: it changes the card ("shown beside"), never the choice or the budget.
+  const costly = estimateReturn({ cache: { lastRequestStartedAt: null, contextUsed: 900_000, contextSize: 1_000_000 }, cacheTtl: "5m", authKind: "api_key", now: 1, delta: 4000, packet: 8000, input: 500, fixedPrefix: 8000,
+    window: 1_000_000, price: { write: 1e-3, read: 1e-4 }, prefill: 8000, requests: { requests: 300, misses: 15 } });
+  assert.equal(costly.sideBySide, true);
+  assert.equal(returnChoice(costly, "continue", undefined).choice, "continue"); assert.equal(returnChoice(costly, "continue", undefined).by, "default");
 });

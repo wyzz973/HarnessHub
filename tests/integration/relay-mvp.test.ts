@@ -14,6 +14,7 @@ import { SessionRuntime } from "../../src/contexts/session/application/runtime.j
 import { RELAY_POLICY_VERSION } from "../../src/contexts/session/domain/relay/budget.js";
 import type { RelayRecord } from "../../src/contexts/session/domain/relay/packet.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { askWhenUnsure } from "../fixtures/relay-settings.js";
 import { readRelayPrompt } from "../fixtures/relay-packet.js";
 
 // G070 MVP through the formal Runtime and a real SqliteSessionStore (ADR-055 §5, §7.6 on Session v12): the packet a Turn
@@ -26,6 +27,8 @@ interface World { readonly store: SqliteSessionStore; readonly content: LocalCon
 async function world(t: test.TestContext): Promise<World> {
   const root = await mkdtemp(join(tmpdir(), "relay-mvp-")), workspace = join(root, "workspace"); await mkdir(workspace);
   const store = new SqliteSessionStore(join(root, "data")), content = new LocalContentStore(join(root, "data"), () => store.assertOwner()), runtimes: SessionRuntime[] = [];
+  // These cases are the delivery rules of the strict design (the user is asked where the policy would settle it); the policy's own are relay-permissive.test.ts's.
+  askWhenUnsure(store);
   t.after(async () => {
     for (const app of runtimes) await app.close();
     try { store.close(); } finally { await rm(root, { recursive: true, force: true }); }

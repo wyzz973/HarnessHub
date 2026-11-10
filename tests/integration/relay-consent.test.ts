@@ -14,6 +14,7 @@ import { SessionRuntime, type RelayChoice } from "../../src/contexts/session/app
 import { consentStanding, type ConsentView } from "../../src/contexts/session/application/relay-coordinator.js";
 import { recoverRelay } from "../../src/contexts/session/domain/relay/recover.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { strictRelay } from "../fixtures/relay-settings.js";
 
 // G072-C06, G072-C08 (ADR-055 §10.4, INV-33; relay-architecture §17, CS-01–CS-04): consent by the target's vendor key through
 // the formal SessionRuntime and a real SqliteSessionStore whose installation log (relay_log) is the consent's authority. The
@@ -63,6 +64,8 @@ class Fakes implements SessionBindingFactory {
 async function setup(t: TestContext, harnesses: readonly string[] = ["alpha", "bravo"]) {
   const root = temporary(), workspace = join(root, "workspace"); mkdirSync(workspace);
   const store = new SqliteSessionStore(join(root, "data"), { recoverRelay }), fakes = new Fakes(harnesses);
+  // The strict design's consent (P9): asked for every vendor, per conversation or globally. The permissive default is relay-permissive.test.ts's.
+  strictRelay(store);
   let next = 0;
   const app = new SessionRuntime(store, fakes, { id: () => "g072c-" + ++next, now: () => new Date(NOW), publish: () => {}, fingerprint: value => createHash("sha256").update(value).digest("hex"), relayIsolated: () => true });
   // The owner is closed before its data root is removed.
@@ -128,8 +131,12 @@ test("G072-C06 CS-02 scopes and the preference: a global record covers a named v
     ({ logSeq, commandId: "c" + logSeq, vendor: vendor as VendorKey, scope: scope === "global" ? { kind: "global" as const } : { kind: "session" as const, sessionId: session as SessionId }, decision, categories: [], policyVersion: "relay/1" as const, authKind: null, decidedAt: 1 });
   assert.equal(consentStanding("openai", null, view([row("openai", "global", "acknowledged", 1)])).kind, "given");
   assert.equal(consentStanding("openai", null, view([row("openai", "session", "acknowledged", 1, "session-two")])).kind, "missing", "another conversation's record");
-  for (const vendor of ["unknown:codex", "gateway:api.example.com", "router:openrouter", "provider:ollama"]) assert.equal(consentStanding(vendor as VendorKey, null, view([], "allow")).kind, "missing", vendor + ": allow never covers it");
-  assert.deepEqual(consentStanding("anthropic", null, view([], "allow")), { kind: "given", decision: "acknowledged", logSeq: null, via: "preference" });
+  // The strict design's preference (goal_only; ask covers nothing) never covers an unknown, gateway, router or Provider key.
+  for (const vendor of ["unknown:codex", "gateway:api.example.com", "router:openrouter", "provider:ollama"]) assert.equal(consentStanding(vendor as VendorKey, null, view([], "goal_only")).kind, "missing", vendor + ": goal_only never covers it");
+  assert.deepEqual(consentStanding("anthropic", null, view([], "goal_only")), { kind: "given", decision: "goal_only", logSeq: null, via: "preference" });
+  // The default (allow; the owner's decision of 2026-11-10) covers every key — unknown, gateway, router, Provider and a workspace
+  // file's endpoint included — as the default's own consent, which the Runtime traces in the log before the Turn is committed.
+  for (const vendor of ["anthropic", "unknown:codex", "gateway:api.example.com", "router:openrouter", "provider:ollama"]) assert.deepEqual(consentStanding(vendor as VendorKey, "workspace_file", view([], "allow")), { kind: "given", decision: "acknowledged", logSeq: null, via: "default" }, vendor + ": allow covers it");
   assert.equal(consentStanding("unknown:codex", null, view([row("unknown:codex", "global", "acknowledged", 1)])).kind, "missing", "an unknown vendor: only this conversation's own record");
   assert.equal(consentStanding("gateway:api.example.com", "workspace_file", view([row("gateway:api.example.com", "global", "acknowledged", 1)])).kind, "missing", "a workspace file's endpoint: every conversation");
   assert.equal(consentStanding("gateway:api.example.com", "user_config", view([row("gateway:api.example.com", "global", "acknowledged", 1)])).kind, "given", "a user setting's endpoint: a global record stands");
@@ -142,8 +149,9 @@ test("G072-C06 CS-02 scopes and the preference: a global record covers a named v
   assert.equal((await turn(s, first, "b1 carries a1", "b1b", { consent: { vendor: "gateway:api.example.com" as VendorKey, decision: "acknowledged", scope: "global" } })).status, "completed");
   const second = await owing(s, gateway("api.example.com", "workspace_file"));
   assert.equal(refusal(s, second, "b1 in another conversation", "b1"), "RELAY_CONSENT_REQUIRED{missing}");
+  // The default preference covers it (the first conversation's global consent is not needed).
   s.store.setPref("relay.crossVendor", "allow");
-  assert.equal(refusal(s, second, "b1 still asked", "b1c"), "RELAY_CONSENT_REQUIRED{missing}", "allow never covers a gateway");
+  assert.equal(refusal(s, second, "b1 not asked any more", "b1c"), "accepted", "allow covers a gateway too");
 });
 
 test("G072-C06 CS-03 a vendor that changes within an epoch needs consent anew (vendor_changed), at admission when the binding knows it, at the open when only the Driver saw it — recorded as relay.vendor_changed; a consent in the request settles it", async t => {

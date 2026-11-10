@@ -16,6 +16,7 @@ import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-stor
 import { RelayKeys } from "../../src/infrastructure/session/relay-keys.js";
 import { ControlError } from "../../src/infrastructure/control/json-rpc-process.js";
 import { driver, peerRoot } from "../fixtures/relay-drivers.js";
+import { strictRelay } from "../fixtures/relay-settings.js";
 import { claudeRelayCapabilities } from "../../src/adapters/control/claude.js";
 import { codexRelayCapabilities } from "../../src/adapters/control/codex.js";
 import { hermesRelayCapabilities } from "../../src/adapters/control/hermes.js";
@@ -113,7 +114,8 @@ class Fakes implements SessionBindingFactory {
   release(): void { for (const release of this.held.splice(0)) release(); }
 }
 interface World { readonly data: string; store: SqliteSessionStore; readonly configuration: SessionConfiguration; runtime(factory: SessionBindingFactory, options?: { readonly isolated?: boolean; readonly keys?: RelayKeyPort }): SessionRuntime }
-function world(t: TestContext): World {
+/** The strict design's world (P9): these cases are about its gates and questions, so every strict preference is on; the permissive defaults are tested in relay-permissive.test.ts. */
+function world(t: TestContext, strict = true): World {
   const root = temporary(t), workspace = join(root, "workspace"), data = join(root, "data");
   mkdirSync(workspace);
   const runtimes: SessionRuntime[] = [];
@@ -125,6 +127,7 @@ function world(t: TestContext): World {
         fingerprint: value => createHash("sha256").update(value).digest("hex"), relayIsolated: () => options.isolated ?? true, ...(options.keys === undefined ? {} : { relayKeys: options.keys }) });
       runtimes.push(app); return app;
     } };
+  if (strict) strictRelay(w.store);
   t.after(async () => {
     for (const app of runtimes) { try { await app.close(); } catch { /* a runtime whose store was closed under it ends failed */ } }
     try { w.store.close(); } catch { /* closed by the test */ }
@@ -161,8 +164,8 @@ function refusedAt(app: SessionRuntime, fakes: Fakes, id: SessionId, text: strin
   return "accepted";
 }
 /** alpha (anthropic) with one Turn, a1; then the conversation switched to `target`. */
-async function fromAlpha(t: TestContext, declarations: Readonly<Record<string, RelayCapabilities | null>>, target: string, options: { readonly isolated?: boolean } = {}) {
-  const w = world(t), fakes = new Fakes({ alpha: declared(), ...declarations });
+async function fromAlpha(t: TestContext, declarations: Readonly<Record<string, RelayCapabilities | null>>, target: string, options: { readonly isolated?: boolean; readonly strict?: boolean } = {}) {
+  const w = world(t, options.strict ?? true), fakes = new Fakes({ alpha: declared(), ...declarations });
   fakes.observed.alpha = seen("anthropic");
   const app = w.runtime(fakes, options), id = (await app.create(w.configuration, { harnessId: "alpha" }, "create")).id;
   const a1 = await turn(app, id, "a1 a fact on alpha", "a1");
@@ -170,13 +173,12 @@ async function fromAlpha(t: TestContext, declarations: Readonly<Record<string, R
   return { w, fakes, app, id, a1 };
 }
 
-test("G072-C01 an idle switch takes effect without building a packet or starting the target; the next message prepares the target's binding and carries what it is owed", async t => {
-  const { w, fakes, app, id, a1 } = await fromAlpha(t, { bravo: declared() }, "bravo");
+test("G072-C01 an idle switch takes effect without building a packet or starting the target; the next message prepares the target's binding and carries what it is owed (the installation's defaults: no probe, consent or data root preset)", async t => {
+  const { w, fakes, app, id, a1 } = await fromAlpha(t, { bravo: declared() }, "bravo", { strict: false });
   fakes.observed.bravo = seen("openai");
   assert.equal(fakes.to("bravo").length, 0, "nothing reached bravo"); assert.equal(fakes.prepared, 1, "only alpha's program ran");
   assert.deepEqual(w.store.relayPackets(id), [], "no packet at the switch");
   assert.equal(app.read(id).nativeBindings!.some(row => row.harnessId === "bravo"), false, "no binding yet");
-  consent(w.store, id, "unknown:bravo"); consent(w.store, null, "openai");
   const b1 = await turn(app, id, "b1 carries a1", "b1");
   assert.equal(b1.status, "completed"); assert.deepEqual(b1.sourceRunIds, [a1.id]);
   assert.equal(typeof fakes.to("bravo")[0]!.turn, "object", "the packet went with b1");
@@ -386,9 +388,9 @@ test("G072-C05 a queued input's admission is done again before it starts (prePla
   assert.equal(app.read(id).runs.find(row => row.id === second.runId)!.error?.code, "RELAY_TARGET_UNVERIFIED");
 });
 
-test("G072-C07 A→B→A (§7.3): the return continues A's native session with a delta of B's Turns by default; relay.native \"new\" archives it and opens a new one with the whole packet; never while a Turn runs", async t => {
-  const { w, fakes, app, id, a1 } = await fromAlpha(t, { bravo: declared() }, "bravo");
-  fakes.observed.bravo = seen("openai"); consent(w.store, id, "unknown:bravo"); consent(w.store, null, "openai"); consent(w.store, null, "anthropic");
+test("G072-C07 A→B→A (§7.3): the return continues A's native session with a delta of B's Turns by default; relay.native \"new\" archives it and opens a new one with the whole packet; never while a Turn runs (the installation's defaults)", async t => {
+  const { w, fakes, app, id, a1 } = await fromAlpha(t, { bravo: declared() }, "bravo", { strict: false });
+  fakes.observed.bravo = seen("openai");
   const b1 = await turn(app, id, "b1 carries a1", "b1");
   await to(app, id, "alpha", "to-a");
   const alphaSession = app.read(id).nativeBindings!.find(row => row.harnessId === "alpha" && row.status !== "archived")!.checkpoint;
@@ -416,9 +418,8 @@ test("G072-C07 A→B→A (§7.3): the return continues A's native session with a
 });
 
 test("G072 the native title (§8.1, VF3-12): a session a handoff opened is named before its first prompt when its Driver declares title \"set\", with the conversation's first words (\"新对话\" when they hold a secret), recorded as relay.title_set; a refusal never fails the Turn", async t => {
-  const { w, fakes, app, id } = await fromAlpha(t, { bravo: declared({ title: "set" }), charlie: declared({ title: "set" }), delta: declared() }, "bravo");
-  for (const harness of ["bravo", "charlie", "delta"]) { fakes.observed[harness] = seen("openai"); consent(w.store, id, "unknown:" + harness); }
-  consent(w.store, null, "openai");
+  const { w, fakes, app, id } = await fromAlpha(t, { bravo: declared({ title: "set" }), charlie: declared({ title: "set" }), delta: declared() }, "bravo", { strict: false });
+  for (const harness of ["bravo", "charlie", "delta"]) fakes.observed[harness] = seen("openai");
   const b1 = await turn(app, id, "b1 carries a1", "b1");
   assert.deepEqual(fakes.titles, [{ harnessId: "bravo", title: "a1 a fact on alpha" }]);
   assert.equal(eventOf(w.store, id, "relay.title_set", b1.id)?.data.result, "set");
@@ -429,11 +430,10 @@ test("G072 the native title (§8.1, VF3-12): a session a handoff opened is named
   fakes.titleFails = false; await to(app, id, "delta", "to-d");
   assert.equal((await turn(app, id, "d1 carries", "d1")).status, "completed"); assert.equal(fakes.titles.length, 1, "a Driver declaring none is not named");
   // First words the egress scan would redact never become a native title (§8.1): "新对话" instead. The key is built in parts.
-  const other = world(t), named = new Fakes({ alpha: declared(), bravo: declared({ title: "set" }) });
+  const other = world(t, false), named = new Fakes({ alpha: declared(), bravo: declared({ title: "set" }) });
   named.observed.alpha = seen("anthropic"); named.observed.bravo = seen("openai");
   const app2 = other.runtime(named), id2 = (await app2.create(other.configuration, { harnessId: "alpha" }, "create")).id;
   await turn(app2, id2, "use " + "sk-" + "ant-" + "api03-" + "Q".repeat(24) + "x9" + "Z".repeat(30) + " for the test", "a1"); await to(app2, id2, "bravo", "to-b");
-  consent(other.store, id2, "unknown:bravo"); consent(other.store, null, "openai");
   assert.equal((await turn(app2, id2, "b1 carries a1", "b1")).status, "completed");
   assert.deepEqual(named.titles, [{ harnessId: "bravo", title: "新对话" }]);
 });

@@ -113,22 +113,6 @@ async function persisted(f: Fixture): Promise<SessionSnapshot> {
   const reader = new SqliteSessionReader(f.data);
   try { const list = reader.list(); assert.equal(list.length, 1); return list[0]!; } finally { reader.close(); }
 }
-/**
- * G072 (ADR-055 D11, §10.4): another Harness's history now meets the probe gate and the vendor's consent at admission, and the
- * chat command takes neither choice. Between two chat processes (the data directory has one owner at a time) the conversation
- * is let through as only an isolated test data root does (`relay.allowUnprobed`) and consents in its own scope to the fixtures'
- * vendors, which they cannot tell (unknown:<harnessId>, and Codex's own unknown:codex for what its Driver observes), as a user's
- * request would.
- */
-function relayOpen(f: Fixture, id: string): void {
-  const store = new SqliteSessionStore(f.data);
-  try {
-    store.setPref("relay.allowUnprobed", "true");
-    for (const vendor of ["unknown:session-a", "unknown:session-b", "unknown:session-bad", "unknown:codex", "openai"])
-      store.appendRelayLog({ commandId: "fixture-grant-" + vendor.replace(":", "-"), vendor: vendor as never, scope: { kind: "session", sessionId: sessionId(id) }, decision: "acknowledged",
-        categories: ["user_text"], policyVersion: "relay/1", authKind: null, decidedAt: 1 });
-  } finally { store.close(); }
-}
 async function trace(f: Fixture): Promise<readonly Record<string, unknown>[]> { return records(await readFile(f.trace, "utf8")); }
 async function assertClean(f: Fixture): Promise<void> {
   const traces = await trace(f);
@@ -187,9 +171,7 @@ test("Session binding owns its lease, isolates configuration and closes idempote
 test("formal chat persists one public Session through ACP A→Codex B→ACP A and an independent process reopen", async t => {
   const f = await fixture(t), opening = start(t, f, ["--harness", "alias-a"]);
   const first = hasEvent("run.ended"); opening.send("first"); await opening.wait(first);
-  // G072: the relays below need the probe gate opened and consents (relayOpen), written while no chat process owns the data.
   opening.send(":quit"); assert.equal((await opening.result).code, 0);
-  relayOpen(f, (await persisted(f)).id);
   const chat = start(t, f, ["--session", (await persisted(f)).id]);
   const switchedB = hasEvent("switch.effective"); chat.send(":harness session-b"); await chat.wait(switchedB);
   const second = hasEvent("run.ended"); chat.send("second"); await chat.wait(second);
@@ -247,9 +229,7 @@ test("formal chat cancellation remains readable during a running external Harnes
 test("formal chat selects without a connection and an invalid target fails only its explicit input", async t => {
   const f = await fixture(t), opening = start(t, f, ["--harness", "session-a"]);
   opening.send("first"); await opening.wait(hasEvent("run.ended"));
-  // G072: the input below carries "first" to session-bad, which needs the probe gate opened and a consent (relayOpen).
   opening.send(":quit"); assert.equal((await opening.result).code, 0);
-  relayOpen(f, (await persisted(f)).id);
   const chat = start(t, f, ["--session", (await persisted(f)).id]);
   chat.send(":harness session-bad"); await chat.wait(hasEvent("switch.effective")); chat.send("explicit input to unavailable connection"); await chat.wait(row=>event(row)?.type==="run.ended" && record(event(row)?.data).status==="failed"); chat.send(":quit");
   const ended = await chat.result; assert.equal(ended.signal, null);

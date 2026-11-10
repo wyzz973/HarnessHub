@@ -4,13 +4,14 @@ import { test } from "node:test";
 import { listedCommand, type VerifyRequest } from "../../src/contracts/control.js";
 import { dshRelayCapabilities } from "../../src/adapters/control/acp.js";
 import {
-  EMPTY_CHAIN, EPHEMERAL_KEY_ID, RelayError, parseBindingRelayState, relayPacketId,
-  type BindingRelayState, type BindingSync, type DeliveredMark, type DeliveryRecord, type Fingerprint, type RelayCapabilities, type RelayPacket, type RelayPacketId, type SourceRange, type VerifyResult,
+  EMPTY_CHAIN, EPHEMERAL_KEY_ID, RELAY_PREF_DEFAULTS, RELAY_PREF_KEYS, RELAY_PREF_VALUES, RELAY_STRICT_PREFS, RelayError, consentSourceOf, defaultAllowCommand, parseBindingRelayState, parseConsentRecord, relayDecisionOf, relayPacketId,
+  type BindingRelayState, type BindingSync, type ConsentRecord, type DeliveredMark, type DeliveryRecord, type Fingerprint, type RelayCapabilities, type RelayPacket, type RelayPacketId, type SourceRange, type VendorKey, type VerifyResult,
 } from "../../src/contracts/relay.js";
 import { SessionError, runId, sessionId, type NativeSessionBinding, type PublicRun, type RunId, type SessionEvent, type SessionSnapshot } from "../../src/contracts/session.js";
 import {
-  UnkeptRelayKeys, RelayLedger, admitRelay, bindingDeliveries, checkedResult, decideTurn, heldSinceIn, holdsNothing, nativeExactAt, relayDeclaration, settleTurn, unavailableResult, verifyRequestOf,
-  type Check, type DecideInput, type RelayChoices, type SettleInput,
+  DEFAULT_SETTINGS, STRICT_SETTINGS, UnkeptRelayKeys, RelayLedger, admitRelay, attentionOf, bindingDeliveries, checkedResult, consentGate, consentStanding, decideTurn, decisionRecord, defaultAllowAppend, explicitChoice,
+  heldSinceIn, holdsNothing, nativeExactAt, policyAloneOf, relayDeclaration, relaySettings, settleTurn, unavailableResult, verifyRequestOf,
+  type Check, type ConsentView, type DecideInput, type RelayChoices, type RelaySettings, type SettleInput,
 } from "../../src/contexts/session/application/relay-coordinator.js";
 import { chainAfter, owed, planReturnVerify, step, type BindingDelivery, type RelayFact, type VerifyPlan } from "../../src/contexts/session/domain/relay/delivery.js";
 import { parseSession } from "../../src/contexts/session/domain/state.js";
@@ -103,7 +104,7 @@ function refused(run: () => unknown): string {
 test("G068 fix R7 decideTurn: b as typed when nothing is owed, n when the user sends it alone, a packet of what is owed; a pending packet resent once by itself, then only on the user's resend or attach full (R9b); a suspect one only on the user's complete packet, as typed when its retreated prior owes nothing (R5)", () => {
   assert.deepEqual(decide(SYNCED, {}, { facts: FOREIGN.slice(0, 2) }), { kind: "plain", foreign: true, nothingToAttach: false });
   assert.deepEqual(decide(SYNCED, { attach: "full" }, { facts: FOREIGN.slice(0, 2) }), { kind: "plain", foreign: true, nothingToAttach: true }, "A9: asked for the history, nothing to attach");
-  assert.deepEqual(decide(SYNCED, { attach: "none" }), { kind: "alone" });
+  assert.deepEqual(decide(SYNCED, { attach: "none" }), { kind: "alone", by: "user" });
   const carry = decide(SYNCED);
   assert.ok(carry.kind === "carry" && carry.resend === null && carry.need.facts.map(fact => fact.seq).join() === "7,9");
   const auto = decide(pending(0));
@@ -364,4 +365,219 @@ test("G068 fix2 I-1b holdsNothing: a binding whose native session the relay coun
   for (const held of [SYNCED, pending(0), relay({ kind: "suspect", mark: null, cause: "clear_unconfirmed", floorCandidate: 12, carried: null, rewound: false })])
     assert.equal(holdsNothing(snapshot([binding(held)]), binding(held)), false, held.sync.kind + ": a binding with a watermark or in doubt");
   assert.equal(holdsNothing(snapshot([binding(fresh2)]), binding(fresh2, { opensNew: true })), false, "one that opens a new native session resumes nothing");
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The permissive defaults (docs/proposals/relay/permissive-defaults.md)
+// ---------------------------------------------------------------------------------------------------------------------
+
+const AUTO = { whenUnsure: "auto" as const };
+/** The decision of `decide` under the policy, or the relay error it threw. */
+function auto(state: BindingRelayState, choices: RelayChoices = {}, extra: Partial<DecideInput> = {}) {
+  try { return decide(state, choices, { ...AUTO, ...extra }); } catch (error) { if (error instanceof RelayError) return error.code + "{" + error.reason + "}"; throw error; }
+}
+const NEWER: readonly RelayFact[] = [...FOREIGN, { runId: runId("run-y11"), seq: 11, executedOn: { harnessId: "yankee", controlId: "yankee-acp", nativeEpoch: 1 } }];
+const doubted = (cause: "rewind" | "unknown_command" | "legacy" | "marker_absent" | "clear_unconfirmed" | "unknown_turn", extra: Partial<Extract<BindingSync, { kind: "suspect" }>> = {}) =>
+  relay({ kind: "suspect", mark: MARK1, cause, floorCandidate: cause === "clear_unconfirmed" ? 12 : null, carried: null, rewound: false, ...extra });
+
+test("permissive §2.1 decideTurn: a pending packet is sent again once by itself by a Driver that can show delivery — lateDelivery included — then the input goes alone, and newer facts send it again with the count started over; never a question", () => {
+  // Row 1: the automatic resend; the late-writing Driver gets it too (its resend carries a dedupe line).
+  for (const lateDelivery of [false, true]) {
+    const declaration = relayDeclaration(caps({ lateDelivery, successProvesRecorded: true }));
+    const first = decide(pending(0), {}, { ...AUTO, declaration });
+    assert.ok(first.kind === "carry" && first.resend?.by === "auto" && first.by === "policy" && first.cause === "delivery_unconfirmed" && first.lateDelivery === false, JSON.stringify({ lateDelivery }));
+    assert.equal(auto(pending(1), {}, { declaration }) && (auto(pending(1), {}, { declaration }) as { kind: string }).kind, "alone");
+  }
+  // Row 2: spent and nothing newer: alone, by the policy, for this cause; the strict design asks (409).
+  assert.deepEqual(auto(pending(1)), { kind: "alone", by: "policy", cause: "delivery_unconfirmed" });
+  assert.equal(refused(() => decide(pending(1))), "RELAY_CHOICE_REQUIRED{delivery_unconfirmed}");
+  assert.equal(refused(() => decide(pending(1), {}, { whenUnsure: "ask" })), "RELAY_CHOICE_REQUIRED{delivery_unconfirmed}");
+  // Row 3: a fact newer than the pending packet's: sent again (grown), the count started over; the user's choice still wins.
+  const grown = auto(pending(1), {}, { facts: NEWER });
+  assert.ok(typeof grown === "object" && grown.kind === "carry" && grown.resend?.by === "grown" && grown.resend.of === R2 && grown.need.facts.map(fact => fact.seq).join() === "7,9,11" && grown.by === "policy");
+  const asked = auto(pending(1), { resend: true }, { facts: NEWER });
+  assert.ok(typeof asked === "object" && asked.kind === "carry" && asked.resend?.by === "user" && asked.by === "user" && asked.cause === undefined);
+  // Row 4: a Driver that can show nothing never gets the automatic resend; only newer facts send it again.
+  const mute = relayDeclaration(null);
+  assert.deepEqual(auto(pending(0), {}, { declaration: mute }), { kind: "alone", by: "policy", cause: "delivery_unconfirmed" });
+  const muteGrown = auto(pending(0), {}, { declaration: mute, facts: NEWER });
+  assert.ok(typeof muteGrown === "object" && muteGrown.kind === "carry" && muteGrown.resend?.by === "grown");
+  // Without the Run that carried it a resend cannot name what it supersedes: alone by the policy, the user's choice fails.
+  assert.deepEqual(auto(pending(0), {}, { pendingRun: null }), { kind: "alone", by: "policy", cause: "delivery_unconfirmed" });
+  assert.equal(auto(pending(0), { resend: true }, { pendingRun: null }), "RELAY_CHOICE_REQUIRED{delivery_unconfirmed}");
+  // The user's own: alone is theirs, by "user".
+  assert.deepEqual(auto(pending(1), { attach: "none" }), { kind: "alone", by: "user" });
+});
+
+test("permissive §2.2 and §2.3 decideTurn: a binding in doubt owed nothing newer is sent to alone, owed newer facts it gets the complete packet again (any cause, legacy and marker_absent included); the strict design asks; the user's complete packet is theirs", () => {
+  for (const cause of ["rewind", "unknown_command", "clear_unconfirmed", "unknown_turn"] as const) {
+    const state = doubted(cause);
+    // Row 5 / 8: no newer fact above the mark: alone, the binding untouched; foreign facts exist, so the strict design would ask.
+    assert.deepEqual(auto(state, {}, { facts: FOREIGN.slice(0, 2) }), { kind: "alone", by: "policy", cause: "verify_required" }, cause);
+    assert.equal(refused(() => decide(state, {}, { facts: FOREIGN.slice(0, 2) })), "RELAY_CHOICE_REQUIRED{verify_required}", cause + ": strict");
+    // Row 6 / 8: newer facts above the mark: the complete packet from the epoch base, by the policy.
+    const retreat = auto(state, {}, { facts: NEWER });
+    assert.ok(typeof retreat === "object" && retreat.kind === "carry" && retreat.retreat?.firstFromSeq === 3 && retreat.by === "policy" && retreat.cause === "verify_required" && retreat.need.facts.map(fact => fact.seq).join() === "3,6,7,9,11", cause);
+    assert.equal(refused(() => decide(state, {}, { facts: NEWER })), "RELAY_CHOICE_REQUIRED{verify_required}", cause + ": strict");
+    // The user's own choice is theirs.
+    const user = auto(state, { attach: "full" }, { facts: NEWER });
+    assert.ok(typeof user === "object" && user.kind === "carry" && user.by === "user" && user.cause === undefined, cause);
+  }
+  // Row 7: a marker found absent, and legacy: owing nothing newer they go as typed (nothing_owed); owed something, the complete packet again.
+  for (const cause of ["marker_absent", "legacy"] as const) {
+    assert.deepEqual(auto(doubted(cause), {}, { facts: FOREIGN.slice(0, 2) }), { kind: "plain", foreign: true, nothingToAttach: false }, cause + " owing nothing");
+    const retreat = auto(doubted(cause), {}, { facts: NEWER });
+    assert.ok(typeof retreat === "object" && retreat.kind === "carry" && retreat.retreat !== undefined && retreat.cause === (cause === "marker_absent" ? "marker_absent" : "verify_required"), cause + " owing newer facts");
+  }
+  // The retreated prior owing nothing is R5 whoever chose it: as typed, the binding standing there; a mark that does not come back (legacy) is refused → alone by the policy.
+  const atFloor: DeliveredMark = { throughSeq: 10, chain: chainAfter(null, SHA1), lastPacketId: P1, evidence: "E3", basis: "evidence" };
+  const stuck = relay({ kind: "suspect", mark: atFloor, cause: "rewind", floorCandidate: null, carried: null, rewound: false }, { nativeEpoch: 2, epochFloor: 10 });
+  const older: readonly RelayFact[] = [{ runId: R1, seq: 4, executedOn: { ...X, nativeEpoch: 1 } }, { runId: runId("run-y12"), seq: 12, executedOn: { harnessId: "yankee", controlId: "yankee-acp", nativeEpoch: 1 } }];
+  const typed = auto(stuck, {}, { facts: older, firstFromSeq: 4 });
+  assert.ok(typeof typed === "object" && typed.kind === "carry" && typed.by === "policy", "a newer fact above the mark: the complete packet");
+  // A fact that is owed nothing: no foreign fact → as typed.
+  assert.deepEqual(auto(doubted("rewind"), {}, { facts: [] }), { kind: "plain", foreign: false, nothingToAttach: false });
+});
+
+test("permissive §2.4/§2.5 decideTurn: a relay record that could not be recovered, in every branch, sends the input alone for the policy and fails for the user's own choice; the strict design fails", () => {
+  const down = { recoveryFailed: true };
+  assert.deepEqual(auto(SYNCED, {}, down), { kind: "alone", by: "policy", cause: "recovery_failed" });
+  assert.deepEqual(auto(pending(0), {}, down), { kind: "alone", by: "policy", cause: "recovery_failed" });
+  assert.deepEqual(auto(doubted("rewind"), {}, { ...down, facts: NEWER }), { kind: "alone", by: "policy", cause: "recovery_failed" });
+  assert.equal(auto(SYNCED, { attach: "full" }, down), "RELAY_UNAVAILABLE{recovery_failed}", "an explicit attach is held to it");
+  assert.equal(auto(SYNCED, { native: "new" }, down), "RELAY_UNAVAILABLE{recovery_failed}");
+  assert.equal(refused(() => decide(SYNCED, {}, down)), "RELAY_UNAVAILABLE{recovery_failed}", "strict");
+  // Nothing to carry: never stopped.
+  assert.deepEqual(auto(SYNCED, {}, { ...down, facts: FOREIGN.slice(0, 2) }), { kind: "plain", foreign: true, nothingToAttach: false });
+});
+
+test("permissive §2.6 decisionRecord and attention: what the Turn records of its decision, and what a binding asks the user to look at — never a block, one episode one key", () => {
+  assert.deepEqual(decisionRecord(auto(pending(1)) as never), { kind: "alone", by: "policy", cause: "delivery_unconfirmed" });
+  assert.deepEqual(decisionRecord(decide(SYNCED)), { kind: "carry", by: "need" });
+  assert.equal(decisionRecord(decide(SYNCED, {}, { facts: FOREIGN.slice(0, 2) })), null, "an ordinary Turn that owes nothing records none");
+  assert.deepEqual(decisionRecord(decide(SYNCED, { attach: "full" }, { facts: FOREIGN.slice(0, 2) })), { kind: "plain", by: "user" });
+  assert.deepEqual(decisionRecord({ kind: "alone", by: "policy", cause: "prepare_failed", reason: "storage_quota" }), { kind: "alone", by: "policy", cause: "prepare_failed", reason: "storage_quota" });
+  assert.deepEqual(relayDecisionOf({ relay: { decision: { kind: "alone", by: "policy", cause: "input_limit", reason: "min_packet" } } }), { kind: "alone", by: "policy", cause: "input_limit", reason: "min_packet" });
+  assert.equal(relayDecisionOf({ relay: { decision: { kind: "nope", by: "policy" } } }), null); assert.equal(relayDecisionOf({}), null);
+  const owedTwo = { owedRuns: 2, recoveryFailed: false, latest: null };
+  assert.deepEqual(attentionOf({ ...owedTwo, relay: pending(1) }), { cause: "delivery_unconfirmed", options: ["attach_full", "new_native"], counts: { runs: 2, packets: 2 }, key: "delivery_unconfirmed:" + P2 });
+  assert.equal(attentionOf({ ...owedTwo, relay: doubted("rewind") })?.cause, "verify_required");
+  assert.equal(attentionOf({ ...owedTwo, relay: doubted("marker_absent") })?.cause, "marker_absent");
+  assert.equal(attentionOf({ ...owedTwo, relay: doubted("legacy") })?.cause, "verify_required");
+  const clear = attentionOf({ ...owedTwo, relay: doubted("clear_unconfirmed") })!;
+  assert.equal(clear.cause, "clear_unconfirmed"); assert.deepEqual(clear.options, ["attach_full", "new_native", "clear_confirmed"]);
+  assert.deepEqual(attentionOf({ ...owedTwo, relay: SYNCED, recoveryFailed: true }), { cause: "recovery_failed", options: ["new_native"], counts: { runs: 2, packets: 0 }, key: "recovery_failed:1" });
+  assert.equal(attentionOf({ ...owedTwo, relay: SYNCED }), null, "a binding that needs nothing");
+  const sentAlone = (cause: NonNullable<ReturnType<typeof decisionRecord>>["cause"]) => attentionOf({ ...owedTwo, relay: SYNCED, latest: { kind: "alone", by: "policy", ...(cause === undefined ? {} : { cause }) } });
+  assert.deepEqual(sentAlone("input_limit"), { cause: "input_limit", options: [], counts: { runs: 2, packets: 0 }, key: "input_limit:1" });
+  assert.deepEqual(sentAlone("consent_revoked")?.options, ["acknowledge"]); assert.equal(sentAlone("consent_goal_only")?.cause, "consent_goal_only");
+  assert.equal(sentAlone("prepare_failed"), null, "a failed preparation is told with the Turn, it is no standing banner");
+  assert.equal(attentionOf({ ...owedTwo, owedRuns: 0, relay: SYNCED, latest: { kind: "alone", by: "policy", cause: "input_limit" } }), null, "nothing owed: nothing to say");
+  // One episode, one key: the same pending packet keeps its key whatever the counts; a new packet is a new episode.
+  assert.equal(attentionOf({ ...owedTwo, relay: pending(0) })!.key, attentionOf({ ...owedTwo, relay: pending(1) })!.key);
+});
+
+test("permissive §2 policyAloneOf: which failures concern the packet only — settled by sending the input alone for the policy; the strict setting, a request that steered the relay, a failure of the message itself and the settings' own gates are not", () => {
+  const e = (code: string, reason: string) => new RelayError({ code, reason } as never, "x");
+  const hits: readonly (readonly [RelayError | SessionError, ReturnType<typeof policyAloneOf>])[] = [
+    [e("RELAY_INPUT_LIMIT", "min_packet"), { cause: "input_limit", reason: "min_packet" }], [e("RELAY_INPUT_LIMIT", "input_limit"), { cause: "input_limit", reason: "input_limit" }],
+    [e("RELAY_UNAVAILABLE", "recovery_failed"), { cause: "recovery_failed" }], [e("RELAY_UNAVAILABLE", "consent_log_full"), { cause: "prepare_failed", reason: "consent_log_full" }],
+    [e("RELAY_CONSENT_REQUIRED", "revoked"), { cause: "consent_revoked" }], [e("RELAY_CONSENT_REQUIRED", "missing"), { cause: "consent_goal_only", reason: "missing" }],
+    [e("RELAY_PREPARE_FAILED", "render"), { cause: "prepare_failed", reason: "render" }], [e("RELAY_PREPARE_FAILED", "storage_quota"), { cause: "prepare_failed", reason: "storage_quota" }],
+    [e("RELAY_PREPARE_FAILED", "redaction_failed"), { cause: "prepare_failed", reason: "redaction_failed" }], [e("RELAY_PREPARE_FAILED", "render_mismatch"), { cause: "prepare_failed", reason: "render_mismatch" }],
+    [e("RELAY_CHOICE_REQUIRED", "verify_required"), { cause: "verify_required" }], [new SessionError("RELAY_PREPARE_FAILED", "secrets"), { cause: "prepare_failed", reason: "redaction_failed" }],
+  ];
+  for (const [error, expected] of hits) assert.deepEqual(policyAloneOf(error, DEFAULT_SETTINGS, {}), expected, error.message + " " + (error as RelayError).reason);
+  for (const error of [e("RELAY_PREPARE_FAILED", "target_start"), e("RELAY_PREPARE_FAILED", "classification_changed"), e("RELAY_TARGET_UNVERIFIED", "unprobed"), e("RELAY_UNAVAILABLE", "data_root_in_workspace"), new SessionError("CANCELLED", "x"), new Error("boom")])
+    assert.equal(policyAloneOf(error, DEFAULT_SETTINGS, {}), null, (error as Error).message);
+  for (const [error] of hits) {
+    assert.equal(policyAloneOf(error, { ...DEFAULT_SETTINGS, whenUnsure: "ask" }, {}), null, "whenUnsure ask: the Run fails as the strict design's");
+    for (const choices of [{ attach: "full" }, { resend: true }, { clearConfirmed: true }, { native: "new" }] as const) assert.equal(policyAloneOf(error, DEFAULT_SETTINGS, choices), null, JSON.stringify(choices) + ": the user steered the relay");
+    assert.notEqual(policyAloneOf(error, DEFAULT_SETTINGS, { tier: "brief", consent: { vendor: "openai", decision: "acknowledged", scope: "session" } }), null, "a tier and a consent steer nothing");
+  }
+  assert.equal(policyAloneOf(e("RELAY_CONSENT_REQUIRED", "revoked"), { ...DEFAULT_SETTINGS, crossVendor: "ask" }, {}), null, "crossVendor ask: the strict consent asks");
+  assert.deepEqual(policyAloneOf(e("RELAY_CONSENT_REQUIRED", "revoked"), { ...DEFAULT_SETTINGS, crossVendor: "goal_only" }, {}), { cause: "consent_revoked" });
+  assert.equal(explicitChoice({ attach: "full" }) && explicitChoice({ resend: true }) && explicitChoice({ clearConfirmed: true }) && explicitChoice({ native: "new" }), true);
+  assert.equal(explicitChoice({}) || explicitChoice({ attach: "none" }) || explicitChoice({ tier: "brief" }) || explicitChoice({ native: "continue" }), false);
+});
+
+const view = (records: readonly ConsentRecord[], crossVendor: ConsentView["crossVendor"], extra: Partial<ConsentView> = {}): ConsentView => ({ session: sessionId("session-unit"), records, crossVendor, localModelsOffline: false, request: null, ...extra });
+const logged = (vendor: string, decision: ConsentRecord["decision"], logSeq: number, scope: ConsentRecord["scope"] = { kind: "global" }, commandId = "user-" + logSeq): ConsentRecord =>
+  ({ logSeq, commandId, vendor: vendor as VendorKey, scope, decision, categories: ["user_text"], policyVersion: "relay/1", authKind: null, decidedAt: 1 });
+
+test("permissive §2.4 consent: allow covers every key — unknown, gateway, router, Provider and a workspace file's endpoint — unless withdrawn, and a vendor change goes with a record; ask and goal_only keep the strict design; a row the default wrote is no consent the user gave", () => {
+  const keys = ["anthropic", "openai", "local", "unknown:codex", "gateway:api.example.com", "router:openrouter", "provider:ollama"] as const;
+  for (const key of keys) {
+    assert.deepEqual(consentStanding(key, "workspace_file", view([], "allow")), { kind: "given", decision: "acknowledged", logSeq: null, via: "default" }, key);
+    assert.deepEqual(consentStanding(key, null, view([logged(key, "revoked", 3)], "allow")), { kind: "missing", revoked: true }, key + ": a withdrawal beats the default");
+    assert.deepEqual(consentStanding(key, null, view([logged(key, "acknowledged", 4)], "allow")), { kind: "given", decision: "acknowledged", logSeq: 4, via: "global" }, key + ": the latest row stands");
+    assert.equal(consentStanding(key, null, view([], "ask")).kind, "missing", key + ": ask asks");
+  }
+  // "本机模型不出网" exempts under the strict design only: the default logs every first use.
+  assert.deepEqual(consentStanding("local", null, view([], "ask", { localModelsOffline: true })), { kind: "exempt" });
+  assert.equal(consentStanding("local", null, view([], "allow", { localModelsOffline: true })).kind, "given");
+  // Default rows count only while the preference is allow.
+  const row = defaultRow("openai");
+  assert.equal(consentStanding("openai", null, view([row], "allow")).kind, "given"); assert.equal((consentStanding("openai", null, view([row], "allow")) as { via: string }).via, "global");
+  assert.equal(consentStanding("openai", null, view([row], "ask")).kind, "missing", "a row the default wrote is no consent under ask");
+  assert.equal(consentStanding("openai", null, view([row], "goal_only")).kind, "given", "goal_only covers a named vendor for the goal only, with or without the row");
+  assert.equal((consentStanding("openai", null, view([row], "goal_only")) as { decision: string }).decision, "goal_only");
+  assert.equal(consentStanding("gateway:api.example.com", null, view([defaultRow("gateway:api.example.com")], "goal_only")).kind, "missing");
+  // consentGate: allow lets a vendor change go, naming where it came from; the strict design refuses; revoked refuses under allow.
+  const kept = relay({ kind: "synced", mark: MARK1 }, { consentKey: "openai" as VendorKey });
+  const gate = (preference: ConsentView["crossVendor"], vendor: string, cross: boolean, records: readonly ConsentRecord[] = []) =>
+    consentGate({ relay: kept, vendor: vendor as VendorKey, layer: null, cross, consent: view(records, preference), target: X, predicted: null });
+  assert.deepEqual(gate("allow", "deepseek", true), { standing: { kind: "given", decision: "acknowledged", logSeq: null, via: "default" }, changedFrom: "openai" });
+  assert.deepEqual(gate("allow", "deepseek", false), { standing: { kind: "given", decision: "acknowledged", logSeq: null, via: "default" }, changedFrom: "openai" }, "a change within one family is traced too");
+  assert.deepEqual(gate("allow", "openai", false), { standing: null, changedFrom: null });
+  assert.throws(() => gate("ask", "deepseek", true), (error: unknown) => error instanceof RelayError && error.reason === "vendor_changed");
+  assert.throws(() => gate("allow", "openai", true, [logged("openai", "revoked", 5)]), (error: unknown) => error instanceof RelayError && error.reason === "revoked");
+  assert.throws(() => gate("goal_only", "deepseek", true), (error: unknown) => error instanceof RelayError && error.reason === "vendor_changed");
+});
+function defaultRow(vendor: string, logSeq = 7): ConsentRecord {
+  const append = defaultAllowAppend(vendor as VendorKey, null, 5);
+  return parseConsentRecord({ ...append, logSeq });
+}
+
+test("permissive §4 settings and the log row: the defaults are permissive and a stored value overrides them; the strict preferences are the four; a default-allow row names its vendor and policy, is idempotent and says its source", () => {
+  assert.deepEqual(relaySettings({}), { crossVendor: "allow", whenUnsure: "auto", allowUnprobed: true, dataRootInWorkspace: "warn", returnPreference: "continue", localModelsOffline: false });
+  assert.deepEqual(relaySettings({}), DEFAULT_SETTINGS);
+  assert.deepEqual(relaySettings(RELAY_STRICT_PREFS), { ...STRICT_SETTINGS });
+  assert.deepEqual(relaySettings({ "relay.crossVendor": "goal_only", "relay.returnPreference": "ask", "relay.localModelsOffline": "true" } as never), { ...DEFAULT_SETTINGS, crossVendor: "goal_only", returnPreference: "ask", localModelsOffline: true });
+  assert.deepEqual(relaySettings({ "relay.crossVendor": "bogus", "relay.whenUnsure": "bogus", "relay.allowUnprobed": "bogus" } as never), { ...DEFAULT_SETTINGS, allowUnprobed: true }, "an unreadable value is the default");
+  assert.deepEqual([...RELAY_PREF_KEYS].sort(), Object.keys(RELAY_PREF_DEFAULTS).sort());
+  for (const key of RELAY_PREF_KEYS) assert.ok(RELAY_PREF_VALUES[key].includes(RELAY_PREF_DEFAULTS[key]), key + "'s default is one of its values");
+  for (const [key, value] of Object.entries(RELAY_STRICT_PREFS)) assert.ok(RELAY_PREF_VALUES[key as keyof typeof RELAY_PREF_VALUES].includes(value!), key);
+  const append = defaultAllowAppend("openai" as VendorKey, "account", 99);
+  assert.deepEqual({ ...append, categories: undefined }, { commandId: "default-allow:openai:relay-1", vendor: "openai", scope: { kind: "global" }, decision: "acknowledged", categories: undefined, policyVersion: "relay/1", authKind: "account", decidedAt: 99 });
+  assert.equal(consentSourceOf({ commandId: append.commandId }), "default"); assert.equal(consentSourceOf({ commandId: "send-1" }), "user");
+  assert.equal(defaultAllowAppend("openai" as VendorKey, null, 1).commandId, append.commandId, "the same vendor and policy, the same command");
+  // A command identity has bounds the vendor key may exceed (a 253-byte gateway host): named by a digest then, still stable, still a valid record.
+  const long = "gateway:" + "a".repeat(60) + "." + "b".repeat(60) + "." + "c".repeat(60) + ".example.com";
+  const longId = defaultAllowCommand(long as VendorKey, "relay/1");
+  assert.ok(Buffer.byteLength(longId) <= 128 && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(longId), longId); assert.equal(longId, defaultAllowCommand(long as VendorKey, "relay/1"));
+  assert.notEqual(longId, defaultAllowCommand((long + "x") as VendorKey, "relay/1"));
+  assert.ok(parseConsentRecord({ ...defaultAllowAppend(long as VendorKey, null, 1), logSeq: 1 }).commandId.startsWith("default-allow:"));
+});
+
+test("permissive §0 admitRelay under the defaults: an input is refused for nothing the policy settles — the recovery, the user's choice, the consent, the window — and only a strict preference or a request that steered the relay is held to them", () => {
+  const settings: RelaySettings = DEFAULT_SETTINGS, withSettings = (value: RelaySettings) => ({ settings: value });
+  const attempt = (state: BindingRelayState, choices: RelayChoices, value: RelaySettings, extra: Parameters<typeof admit>[2] = {}): string => {
+    const bound = binding(state), at = snapshot([bound], extra.extra);
+    try { admitRelay({ state: at, binding: bound, target: X, capabilities: caps(), text: "hello", attachments: [], choices, facts: () => extra.facts ?? FOREIGN, ...withSettings(value) }); return "ok"; }
+    catch (error) { if (error instanceof RelayError) return error.code + "{" + error.reason + "}"; if (error instanceof SessionError) return error.code; throw error; }
+  };
+  const cases: readonly (readonly [string, BindingRelayState, Parameters<typeof admit>[2], string])[] = [
+    ["a spent pending packet", pending(1), {}, "RELAY_CHOICE_REQUIRED{delivery_unconfirmed}"], ["a binding in doubt", doubted("rewind"), {}, "RELAY_CHOICE_REQUIRED{verify_required}"],
+    ["a marker absent", doubted("marker_absent"), {}, "RELAY_CHOICE_REQUIRED{marker_absent}"], ["a record that could not be recovered", pending(0), { extra: { relayRecoveryFailed: 3 } }, "RELAY_UNAVAILABLE{recovery_failed}"],
+  ];
+  for (const [label, state, extra, strict] of cases) {
+    assert.equal(attempt(state, {}, STRICT_SETTINGS, extra), strict, label + ": strict");
+    assert.equal(attempt(state, {}, { ...settings, whenUnsure: "ask" }, extra), strict, label + ": whenUnsure ask");
+    assert.equal(attempt(state, {}, settings, extra), "ok", label + ": the defaults ask nothing");
+    assert.equal(attempt(state, { attach: "full" }, settings, extra), label.includes("recovered") ? strict : "ok", label + ": an explicit attach");
+  }
+  assert.equal(attempt(pending(1), { resend: true }, settings), "ok");
+  // The user's ［确认已清空］ where it is not offered is a mistake of theirs, answered whatever the settings.
+  assert.equal(attempt(SYNCED, { clearConfirmed: true }, settings), "INVALID_INPUT");
 });

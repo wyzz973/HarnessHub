@@ -15,6 +15,7 @@ import { SessionRuntime } from "../../src/contexts/session/application/runtime.j
 import { recoverRelay } from "../../src/contexts/session/domain/relay/recover.js";
 import { RelayKeys, defaultRelayKeyPath, insideByIdentity } from "../../src/infrastructure/session/relay-keys.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { strictRelay } from "../fixtures/relay-settings.js";
 
 // G072-S01 (ADR-055 §10.1, INV-36, D5; relay-architecture §17): the data directory, the relay key and the workspace must not
 // contain one another, compared by device and inode, for a cross-vendor handoff; each way of spelling one directory — its own
@@ -117,6 +118,8 @@ test("G072-S01 through the Runtime with the composition's check: a cross-vendor 
   // The owner is closed before its data root is removed (after hooks run in the order they were registered).
   const root = realpathSync(mkdtempSync(join(tmpdir(), "g072-root-"))), workspace = join(root, "workspace"); mkdirSync(workspace);
   const data = join(workspace, "data"), store = new SqliteSessionStore(data, { recoverRelay }), fakes = new Fakes({ alpha: "anthropic", bravo: "openai", delta: "anthropic" });
+  // The strict design's data root (relay.dataRootInWorkspace "block", P9) and its consents: the default only warns (relay-permissive.test.ts).
+  strictRelay(store);
   let next = 0;
   const app = new SessionRuntime(store, fakes, { id: () => "s01-" + ++next, now: () => new Date(Date.UTC(2026, 10, 10, 12)), publish: () => {}, fingerprint: value => createHash("sha256").update(value).digest("hex"),
     relayIsolated: relayIsolation(data, null) });

@@ -866,8 +866,12 @@ test("G068 point 2 a resend refused before insertion goes back to waiting for th
   assert.equal(pendingResend(back.relay.sync, false), "choice", "the next input checks P2, then asks");
   const refused = settled();
   assert.equal(refused.kind === "refused" && refused.refusal.code, "invalid", "a refused resend must name what it superseded");
-  const first = step(PENDING, { kind: "carry_settled", runId: R2, packetId: P2, bodySha256: SHA2, reanchored: false, row: "in_flight", outcome: { kind: "not_recorded", reason: "rejected_before_insert", decidedSeq: AT.seq, decidedAt: AT.time }, superseded: { packetId: P1, range: RANGE1 } });
-  assert.equal(first.kind === "refused" && first.refusal.code, "invalid", "a first packet supersedes nothing");
+  // A first packet names nothing and goes back to its prior. One that does name a superseded packet with its counts at 0 is a packet
+  // sent again for newer facts (grown, whose counts start again): it goes back to waiting for the packet it named, like any resend.
+  const first = applied(step(PENDING, { kind: "carry_settled", runId: R2, packetId: P2, bodySha256: SHA2, reanchored: false, row: "in_flight", outcome: { kind: "not_recorded", reason: "rejected_before_insert", decidedSeq: AT.seq, decidedAt: AT.time } }));
+  assert.deepEqual(first.relay.sync, (PENDING.sync as Extract<BindingSync, { kind: "pending" }>).prior, "a first packet refused goes back to the prior");
+  const grownBack = applied(step(PENDING, { kind: "carry_settled", runId: R2, packetId: P2, bodySha256: SHA2, reanchored: false, row: "in_flight", outcome: { kind: "not_recorded", reason: "rejected_before_insert", decidedSeq: AT.seq, decidedAt: AT.time }, superseded: { packetId: P1, range: RANGE1 } }));
+  assert.ok(grownBack.relay.sync.kind === "pending" && grownBack.relay.sync.packetId === P1 && grownBack.relay.sync.autoResends === 0, "a grown resend refused goes back to the packet it superseded");
   // Then the next open checks P2 itself.
   const rows = [rowOf(R1, P1, "recorded", RANGE1, SHA1, MARK1), rowOf(R2, P2, "unknown", RANGE2, SHA2, null), { ...rowOf(R3, P3, "not_recorded", RANGE3, SHA3, null), record: record(R3, P3, "not_recorded", { resendOf: R2, compactionAtDelivery: UNMOVED }) }];
   const again = plan(back.relay, rows);
@@ -1021,4 +1025,41 @@ test("G068-C10 Claude's synthesized clear archives the binding, the new one is f
   assert.throws(() => assertSessionTransition(before, after, [{ type: "run.ended", data: { runId: "run-clear" } }]), /archived only by/);
   // The next Turn applies the model the native session had (`/model opus-x` before `/clear`), not the selection's.
   assert.deepEqual(carriedNativeConfiguration(after, selection, 1), { model: "opus-x" });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The permissive defaults (docs/proposals/relay/permissive-defaults.md §2.1)
+// ---------------------------------------------------------------------------------------------------------------------
+
+test("permissive §2.1 a packet sent again for newer facts (grown): it must reach past the pending one's through seq; the automatic count starts again, the user's resends are kept, the one-time attach is inherited, and the row names what it supersedes", () => {
+  const spent = relay({ kind: "pending", prior: { kind: "synced", mark: MARK1 }, packetId: P2, range: RANGE2, autoResends: 1, manualResends: 2, attachOverride: true });
+  const grown = (range: SourceRange, attachOverride = false, lateDelivery = false) => step(spent, { kind: "carry", runId: R3, packet: { id: P3, range }, attachOverride, lateDelivery, resend: { by: "grown", of: R2 } });
+  const next = applied(grown(RANGE3));
+  assert.deepEqual(next.relay.sync, { kind: "pending", prior: { kind: "synced", mark: MARK1 }, packetId: P3, range: RANGE3, autoResends: 0, manualResends: 2, attachOverride: true }, "count 0, manual kept, attach inherited");
+  assert.deepEqual(next.deliveries, [{ kind: "insert", runId: R3, packetId: P3, attachOverride: true, resendOf: R2 }], "the row names the Run it supersedes");
+  assert.equal(pendingResend(next.relay.sync, { lateDelivery: false, evidence: true }, "auto", false), "auto", "one automatic resend is available again");
+  // A packet that reaches no further has nothing new to send: refused, however it was asked for.
+  for (const throughSeq of [RANGE2.throughSeq, RANGE2.throughSeq - 1]) {
+    const refused = grown({ ...RANGE3, fromSeq: 7, throughSeq });
+    assert.equal(refused.kind === "refused" && refused.refusal.code, "invalid", "through " + throughSeq);
+  }
+  // lateDelivery is no reason to refuse it (only the automatic kind asks about that); the user's resend count is not touched by it.
+  assert.equal(grown(RANGE3, false, true).kind, "applied");
+  const auto = step(spent, { kind: "carry", runId: R3, packet: { id: P3, range: RANGE3 }, attachOverride: false, lateDelivery: false, resend: { by: "auto", of: R2 } });
+  assert.equal(auto.kind === "refused" && auto.refusal.code, "RELAY_CHOICE_REQUIRED", "the automatic kind is spent");
+  // Only a pending binding has a packet to send again.
+  const onSynced = step(SYNCED, { kind: "carry", runId: R3, packet: { id: P3, range: RANGE3 }, attachOverride: false, lateDelivery: false, resend: { by: "grown", of: R2 } });
+  assert.equal(onSynced.kind === "refused" && onSynced.refusal.code, "invalid");
+});
+
+test("permissive §0 the policy's send alone (n with by policy) is the user's: the binding exactly as it was, whichever state it is in, and no row; the policy's complete packet again is event a with retreat", () => {
+  for (const state of [FRESH, SYNCED, PENDING, relay({ kind: "suspect", mark: MARK1, cause: "rewind", floorCandidate: null, carried: null, rewound: false })]) {
+    for (const by of ["user", "policy", undefined] as const) {
+      const outcome = applied(step(state, by === undefined ? { kind: "alone" } : { kind: "alone", by }));
+      assert.equal(outcome.changed, false, state.sync.kind + "/" + by); assert.deepEqual(outcome.relay, state); assert.deepEqual(outcome.deliveries, []);
+    }
+  }
+  const doubt = relay({ kind: "suspect", mark: MARK1, cause: "marker_absent", floorCandidate: null, carried: null, rewound: false });
+  const again = applied(step(doubt, { ...carryEvent, retreat: { firstFromSeq: 3 } }));
+  assert.ok(again.relay.sync.kind === "pending" && again.relay.sync.prior.kind === "suspect" && again.relay.sync.autoResends === 0, "pending on the retreated prior: the count starts at 0");
 });

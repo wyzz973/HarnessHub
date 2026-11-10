@@ -479,7 +479,8 @@ export interface SessionRuntimeOptions {
   /**
    * Whether this Gateway's data directory and relay key are out of a workspace's reach (ADR-055 §10.1, INV-36): neither inside
    * the workspace nor holding it, compared by device and inode, and no data directory's marker found in it. A cross-vendor
-   * handoff into a workspace that is not is refused (RELAY_UNAVAILABLE{data_root_in_workspace}). Synchronous and cheap: the
+   * handoff into a workspace that is not is refused (RELAY_UNAVAILABLE{data_root_in_workspace}) while `relay.dataRootInWorkspace`
+   * is "block", and goes on, flagged for the workspace's notice, with its default "warn". Synchronous and cheap: the
    * marker search is the composition's, cached. Absent: nothing can be told, and the check is the composition's to wire.
    */
   readonly relayIsolated?: (workspace: string) => boolean;

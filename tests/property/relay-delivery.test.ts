@@ -13,6 +13,8 @@ import {
   type BindingDelivery, type Cursor, type DecidedOutcome, type PlannedMarker, type RelayEvent, type RelayFact, type RelayStep, type VerifyPlan,
 } from "../../src/contexts/session/domain/relay/delivery.js";
 import { initialBindingRelay } from "../../src/contexts/session/domain/relay/migrate.js";
+import { causeOf, choiceRequired, decideTurn, foreignAtAll, recoveryFailed, type DecideInput, type RelayChoices, type TurnDecision } from "../../src/contexts/session/application/relay-coordinator.js";
+import { RelayError } from "../../src/contracts/relay.js";
 
 // G068-P01 (ADR-055 §7.2): random evidence sequences drive one binding's delivery state machine, with the native history
 // kept by the reference model tests/fixtures/relay-harness-peer.mjs (a forked process) as the ground truth. Each case
@@ -77,7 +79,9 @@ function asked(plan: VerifyPlan): readonly PlannedMarker[] {
 function noChain(plan: VerifyPlan): boolean {
   return plan.kind === "skip" || plan.kind === "clear" && plan.chain.length === 0 || plan.kind === "suspect" && plan.markers.length === 0;
 }
-interface Caps { readonly verify: "on_next_open" | "after_turn" | "none"; readonly lateDelivery: boolean; readonly compaction: boolean; readonly window: number; readonly flaky: number; readonly wholeHistory: boolean; readonly live: boolean }
+interface Caps { readonly verify: "on_next_open" | "after_turn" | "none"; readonly lateDelivery: boolean; readonly compaction: boolean; readonly window: number; readonly flaky: number; readonly wholeHistory: boolean; readonly live: boolean;
+  /** false: the Driver can show nothing of a send (no event, no check, a completed Turn proves nothing): a packet's fate is only ever unknown or refused (permissive-defaults §2.1, row 4). */
+  readonly evidence?: boolean }
 /** A delivery row as the simulated Hub keeps it, with the packet's facts (what it covered) for the checks. */
 interface Row { record: DeliveryRecord; readonly nativeEpoch: number; readonly range: SourceRange; readonly bodySha256: Fingerprint; readonly reanchor: boolean; mark: DeliveredMark | null; readonly facts: readonly string[]; readonly session: string }
 
@@ -104,6 +108,16 @@ class Simulation {
   /** The last packet refused before insertion: an identical need renders the identical text, so the same identity (INV-13). */
   private lastRefused: { readonly packetId: RelayPacketId; readonly facts: string; readonly body: Fingerprint } | null = null;
   readonly log: string[] = [];
+  /**
+   * The policy walks' record of every packet sent (permissive-defaults P5, P6): where it went, how far it reached, who sent it,
+   * how many doubts (a rewind, an unconfirmed clear, an unknown Turn continued, a marker found absent) had been raised by then,
+   * and what became of it. The bound of automatic sends is read off these rows.
+   */
+  readonly policyRows: { readonly session: string; readonly epoch: number; readonly top: number; readonly by: "first" | "auto" | "grown" | "retreat"; readonly doubts: number; outcome: "recorded" | "not_recorded" | "unknown" }[] = [];
+  /** Doubts raised so far (see policyRows). */
+  doubts = 0;
+  /** What the policy did, counted (the cases assert that every kind of decision was reached). */
+  readonly policySeen = { turns: 0, plain: 0, alone: 0, auto: 0, grown: 0, retreat: 0, first: 0, ownedNothing: 0 };
   /** Counters the cases assert on, so a case that never reaches a path is visible. */
   readonly seen = { recorded: 0, retreats: 0, oldPresent: 0, resends: 0, choices: 0, clears: 0, resets: 0, d6: 0, plain: 0, checks: 0,
     epochRises: 0, emptyHistoryClears: 0, restoredWithoutChain: 0, skipChecks: 0, nativeTurns: 0, reusedIds: 0, clearChecks: 0, carriedChecks: 0, supersededBack: 0,
@@ -228,6 +242,7 @@ class Simulation {
     if (plan.kind === "pending" && answer(plan.marker) === "compacted") this.seen.pendingCompacted++;
     const outcome = step(this.relay, { kind: "verified", plan, result, ...(turnEntry === undefined ? {} : { turnEntry }), inRunId: null, at });
     if (outcome.kind === "applied" && before.sync.kind === "suspect" && outcome.relay.sync.kind === "pending") this.seen.revertedPending++;
+    if (outcome.kind === "applied" && outcome.note.verified === "marker_absent") this.doubts++;
     await this.apply(outcome, "k(" + plan.kind + (plan.kind === "skip" ? ":" + plan.reason : ":" + result.markers.map(item => item.result).join("/")) + (turnEntry === undefined ? "" : "+" + turnEntry) + ")",
       result.historyEmpty === true && held.entries === 0);
     if (outcome.kind === "applied" && (outcome.note.verified === "restored" || outcome.note.verified === "kept") && held.clears > this.clearsAtLastCheck) {
@@ -281,6 +296,7 @@ class Simulation {
   /** f: an undo of the last `n` user entries (none for an unknown command without effect), with no check at its open. */
   async injectRewind(n: number, cause: "rewind" | "unknown_command" = "rewind"): Promise<void> {
     const at = this.commit();
+    this.doubts++;
     if (n > 0) await this.peer.call("rewind", { session: this.session, n });
     await this.apply(step(this.relay, { kind: "rewound", cause }), "f(" + cause + " " + n + ")@" + at.seq);
     this.unknownTurn = null;
@@ -288,6 +304,7 @@ class Simulation {
   /** e′ of a clear that ran in the native session while its Driver could not confirm it (R1, directed cases). */
   async injectRanClear(): Promise<void> {
     const at = this.commit();
+    this.doubts++;
     this.seen.clears++;
     await this.peer.call("clear", { session: this.session });
     await this.apply(step(this.relay, { kind: "clear_unconfirmed", seq: at.seq }), "e′(ran)@" + at.seq);
@@ -349,6 +366,7 @@ class Simulation {
   /** e′: a clear that did not run, settled unconfirmed (no check at its open). */
   async injectUnconfirmedClear(): Promise<void> {
     const at = this.commit();
+    this.doubts++;
     this.seen.clears++;
     await this.apply(step(this.relay, { kind: "clear_unconfirmed", seq: at.seq }), "e′(not run)@" + at.seq);
     this.unknownTurn = null;
@@ -377,12 +395,15 @@ class Simulation {
    *   never looks at a row without a mark (A10: only marked rows stand for a mark to fall back to), so it falls back to the
    *   epoch base, and the facts that late write delivered are sent again.
    */
-  private async noUnchosenRepeat(need: ReturnType<typeof owed>): Promise<void> {
+  private async noUnchosenRepeat(need: ReturnType<typeof owed>, grown = false): Promise<void> {
     this.seen.automaticPackets++;
     const holding = await this.peer.call<Held>("held", { session: this.session }), held = new Set(holding.runs), heldFacts = new Set(holding.facts);
     const own = need.facts.filter(fact => fact.executedOn?.harnessId === X.harnessId && held.has(fact.runId));
     if (own.length) this.fail("an automatic packet carries " + own.map(fact => fact.runId + "@" + fact.seq + " (epoch " + fact.executedOn!.nativeEpoch + ")").join(", ") + ", Turns this native session holds (an unchosen repetition)");
     const heldAgain = need.facts.filter(fact => heldFacts.has(fact.runId));
+    // A packet sent for newer facts (`grown`) begins a new period for every fact it carries: the bound of automatic sends is per
+    // through seq (permissive-defaults §2.1), and the count of an older fact starts again with the newer facts that came.
+    if (grown) { for (const fact of need.facts) this.automaticRepeats.delete(this.session + "/" + fact.runId); this.seen.automaticRepeats++; return; }
     if (heldAgain.length) {
       this.seen.heldRepeats++;
       const superseded = (row: Row) => this.rows.some(other => other.record.resendOf === row.record.runId);
@@ -487,11 +508,11 @@ class Simulation {
     this.unknownTurn = null;
   }
   /** a: a packet covering `need`, then its fate in the native history and the evidence a truthful Driver gives of it. */
-  private async carry(need: ReturnType<typeof owed>, attachOverride: boolean, resend: { readonly by: "auto" | "user"; readonly of: RunId } | null, retreatFrom?: number | null): Promise<void> {
+  private async carry(need: ReturnType<typeof owed>, attachOverride: boolean, resend: { readonly by: "auto" | "user" | "grown"; readonly of: RunId } | null, retreatFrom?: number | null): Promise<void> {
     if (need.facts.length === 0) return this.alone();
     // What no user chose may repeat nothing the native session holds, beyond the one automatic resend (R1, R9c). A need reckoned
     // on a mark the user's choice of the complete packet made (evidence "choice") is that choice's still: it may repeat (R9).
-    if (resend?.by !== "user" && retreatFrom === undefined && !attachOverride && markOf(this.relay.sync)?.evidence !== "choice") await this.noUnchosenRepeat(need);
+    if (resend?.by !== "user" && retreatFrom === undefined && !attachOverride && markOf(this.relay.sync)?.evidence !== "choice") await this.noUnchosenRepeat(need, resend?.by === "grown");
     const id = this.nextRun(), facts = need.facts.map(fact => fact.runId as string);
     // The same need rendered again (not a resend, whose template differs) gives the same text and so the same identity as the
     // packet refused before: half the time the case takes that, so identities shared by two Runs are covered (INV-13).
@@ -502,17 +523,22 @@ class Simulation {
     const body = createHash("sha256").update(packetId).digest("hex") as Fingerprint, position = await this.position();
     const cursor = this.caps.compaction ? (await this.peer.call<Held>("held", { session: this.session })).cursor : null;
     const prepared = this.commit();
-    const event: RelayEvent = { kind: "carry", runId: id, packet: { id: packetId, range }, attachOverride, lateDelivery: this.caps.lateDelivery, resend, ...(retreatFrom === undefined ? {} : { retreat: { firstFromSeq: retreatFrom } }) };
+    const event: RelayEvent = { kind: "carry", runId: id, packet: { id: packetId, range }, attachOverride, lateDelivery: this.policyMode ? false : this.caps.lateDelivery, resend, ...(retreatFrom === undefined ? {} : { retreat: { firstFromSeq: retreatFrom } }) };
     const outcome = step(this.relay, event);
     if (outcome.kind === "applied") for (const change of outcome.deliveries) if (change.kind === "insert")
       this.rows.push({ record: { runId: id, packetId, channel: "text_block", position: { kind: "seq", before: position }, outcome: { kind: "in_flight" }, consentLogSeq: null, inputHmac: "c".repeat(64) as DeliveryRecord["inputHmac"],
         redaction: { rulesVersion: "egress/1", keyId: "key-1", setHmac: "0a1b2c3d" as DeliveryRecord["redaction"]["setHmac"] }, compactionAtDelivery: cursor, resendOf: change.resendOf, attachOverride: change.attachOverride, verifyMs: null, realized: null },
         nativeEpoch: this.relay.nativeEpoch, range, bodySha256: body, reanchor: this.relay.reanchor, mark: null, facts, session: this.session });
     if (resend !== null) this.seen.resends++;
+    const policyRow = this.policyMode ? { session: this.session, epoch: this.relay.nativeEpoch, top: range.throughSeq, by: retreatFrom !== undefined ? "retreat" as const : resend === null ? "first" as const : resend.by === "user" ? "first" as const : resend.by, doubts: this.doubts, outcome: "unknown" as "recorded" | "not_recorded" | "unknown" } : null;
+    if (policyRow !== null) this.policyBound(policyRow);
     await this.apply(outcome, "a(" + packetId.slice(-4) + (resend === null ? "" : " resend " + resend.by) + (retreatFrom === undefined ? "" : " retreat") + ") @" + prepared.seq);
+    if (policyRow !== null) this.policyRows.push(policyRow);
     // The packet's fate: inserted with E1 or E3, inserted without evidence, refused before insertion, lost, or written late.
     const fate = this.rand();
-    const kind = this.forcedFate ?? (fate < 0.3 ? "e1" : fate < 0.45 ? "e3" : fate < 0.6 ? "silent" : fate < 0.72 ? "refused" : fate < 0.86 ? "lost" : this.caps.lateDelivery ? "late" : "lost");
+    let kind = this.forcedFate ?? (fate < 0.3 ? "e1" : fate < 0.45 ? "e3" : fate < 0.6 ? "silent" : fate < 0.72 ? "refused" : fate < 0.86 ? "lost" : this.caps.lateDelivery ? "late" : "lost");
+    // A Driver that can show nothing never shows an input recorded: what it would have shown, it leaves unknown.
+    if (this.caps.evidence === false && (kind === "e1" || kind === "e3")) kind = "silent";
     const insert = kind === "e1" || kind === "e3" || kind === "silent" ? "now" : kind === "late" ? "late" : "never";
     await this.peer.call("send", { session: this.session, runId: id, packetId, facts, insert });
     if (kind === "e1" && this.caps.live) {
@@ -542,6 +568,7 @@ class Simulation {
     }
     this.facts.push({ runId: id, seq: at.seq, executedOn: { ...X, nativeEpoch: this.relay.nativeEpoch } });
     this.unknownTurn = decided.kind === "unknown" ? { runId: id, position } : null;
+    if (policyRow !== null) policyRow.outcome = kind === "e1" && this.caps.live ? "recorded" : decided.kind;
     this.lastRefused = kind === "refused" ? { packetId, facts: facts.join(), body } : this.lastRefused;
     if (kind === "late" && this.landBeforeCheck) await this.peer.call("flushLate", { session: this.session });
     if (this.caps.verify === "after_turn") await this.check("settled");
@@ -572,6 +599,7 @@ class Simulation {
       else if (effect < 0.75) await this.peer.call("clear", { session: this.session });
       event = { kind: "rewound", cause: "unknown_command" };
     }
+    if (event.kind === "rewound" || event.kind === "clear_unconfirmed") this.doubts++;
     const outcome = step(this.relay, event);
     await this.apply(outcome, event.kind + "@" + at.seq);
     this.unknownTurn = null;
@@ -602,25 +630,142 @@ class Simulation {
     await this.apply(step(this.relay, { kind: "reset", bindings: this.bindings, ...X }), "l");
     this.unknownTurn = null;
   }
+  /** Set by the policy walks: every packet sent is then held to the bound of automatic sends (P5). */
+  policyMode = false;
+  /**
+   * P5, the bound of automatic sends (permissive-defaults §3): two packets in a row to one native session and epoch need a
+   * reason between them — newer facts (the second reaches past the first), a doubt (a rewind, an unconfirmed clear, an unknown
+   * Turn continued, a marker found absent), the first having been refused (not recorded), or the second being the one automatic
+   * resend of a first send of the same facts. Nothing else may send a packet again by itself.
+   */
+  private policyBound(row: Simulation["policyRows"][number]): void {
+    const previous = this.policyRows.findLast(item => item.session === row.session && item.epoch === row.epoch);
+    if (previous === undefined) return;
+    const reason = row.top > previous.top || row.doubts > previous.doubts || previous.outcome === "not_recorded" || row.by === "auto" && row.top === previous.top && previous.by !== "auto";
+    if (!reason) this.fail("P5: a packet by " + row.by + " (through " + row.top + ") followed one by " + previous.by + " (through " + previous.top + ", " + previous.outcome + ") with no newer fact, no doubt and no refusal between");
+  }
+  /**
+   * A content input decided by the policy — the coordinator's decideTurn with `relay.whenUnsure` "auto" and none of the user's
+   * choices — and then carried out as the Runtime does (P1: it never asks; P3: the decision moves no epoch and no floor; P4: an
+   * input sent alone leaves the binding exactly as it was and writes no row; P5: the bound of automatic sends).
+   */
+  async policyTurn(): Promise<void> {
+    this.policyMode = true;
+    this.policySeen.turns++;
+    await this.check("open");
+    const sync = this.relay.sync, first = this.deliveries().find(row => row.nativeEpoch === this.relay.nativeEpoch)?.range.fromSeq ?? null, evidence = this.caps.evidence ?? true;
+    const declaration = { declared: true, probed: true, verify: this.caps.verify, successProvesRecorded: evidence, lateDelivery: this.caps.lateDelivery, evidence, execution: "process" as const,
+      compactionEvidence: this.caps.compaction ? "event" as const : "none" as const, channel: "text_block" as const, capabilities: null };
+    const input: DecideInput = { relay: this.relay, harnessId: X.harnessId, controlId: X.controlId, facts: this.facts, originHistory: false, choices: {}, declaration, firstFromSeq: first,
+      pendingRun: sync.kind === "pending" ? this.pendingRun() : null, recoveryFailed: false, heldSince: this.since(), whenUnsure: "auto" };
+    let decision: TurnDecision;
+    try { decision = decideTurn(input); }
+    catch (error) { return this.fail("P1: the policy asked the user in " + sync.kind + (sync.kind === "suspect" ? ":" + sync.cause : "") + " (" + (error instanceof RelayError ? error.code + "{" + error.reason + "}" : String(error)) + ")"); }
+    // P9 (at the function): the strict reading of the same state is the pre-change decideTurn's, answer for answer.
+    this.sameAsBefore(input);
+    const before = JSON.stringify(this.relay), rows = this.rows.length;
+    // P3: the decision itself moves no epoch and no floor.
+    const probed = decision.kind === "plain" ? step(this.relay, decision.owedNothing === true ? { kind: "owed_nothing" } : { kind: "plain", foreign: decision.foreign, ...(decision.retreat === undefined ? {} : { retreat: decision.retreat }) })
+      : decision.kind === "alone" ? step(this.relay, { kind: "alone", by: "policy" })
+      : step(this.relay, { kind: "carry", runId: runId("run-probe"), packet: { id: this.nextPacket(), range: { fromSeq: 0, throughSeq: Math.max(0, ...decision.need.facts.map(fact => fact.seq)), fromRun: 0, throughRun: 0 } }, attachOverride: decision.attachOverride, lateDelivery: decision.lateDelivery, resend: decision.resend, ...(decision.retreat === undefined ? {} : { retreat: decision.retreat }) });
+    if (probed.kind === "refused") this.fail("P1: the policy's own decision was refused by the state machine: " + JSON.stringify(probed.refusal));
+    else if (probed.kind === "applied" && (probed.relay.epochFloor !== this.relay.epochFloor || probed.relay.nativeEpoch !== this.relay.nativeEpoch)) this.fail("P3: a decision of the policy moved the epoch or the floor");
+    switch (decision.kind) {
+      case "plain":
+        this.policySeen.plain++;
+        if (decision.owedNothing === true) { this.policySeen.ownedNothing++; return this.plain(step(this.relay, { kind: "owed_nothing" })); }
+        return this.plain(step(this.relay, { kind: "plain", foreign: decision.foreign, ...(decision.retreat === undefined ? {} : { retreat: decision.retreat }) }));
+      case "alone":
+        this.policySeen.alone++;
+        await this.alone();
+        if (JSON.stringify(this.relay) !== before) this.fail("P4: a send alone changed the binding");
+        if (this.rows.length !== rows) this.fail("P4: a send alone wrote a delivery row");
+        return;
+      case "carry":
+        if (decision.retreat !== undefined) this.policySeen.retreat++; else if (decision.resend === null || decision.resend.by === "user") this.policySeen.first++; else this.policySeen[decision.resend.by]++;
+        return this.carry(decision.need, decision.attachOverride, decision.resend, decision.retreat === undefined ? undefined : decision.retreat.firstFromSeq);
+    }
+  }
+  /** The pre-change decideTurn, run on the same state under the strict setting, and the new one under it: the same answer (P9 at the function). */
+  private sameAsBefore(input: DecideInput): void {
+    for (const choices of [{}, { attach: "full" as const }, { resend: true as const }] as readonly RelayChoices[]) {
+      const same = { ...input, choices, whenUnsure: "ask" as const }, outcome = (run: () => unknown): string => {
+        try { const value = run() as { readonly kind: string; readonly resend?: { readonly by: string } | null; readonly retreat?: unknown; readonly need?: { readonly facts: readonly RelayFact[] }; readonly owedNothing?: true; readonly nothingToAttach?: boolean };
+          return JSON.stringify([value.kind, value.resend ?? null, value.retreat ?? null, value.need?.facts.map(fact => fact.runId) ?? null, value.owedNothing ?? null, value.nothingToAttach ?? null]); }
+        catch (error) { return error instanceof RelayError ? error.code + "{" + error.reason + "}" : String(error); }
+      };
+      const now = outcome(() => decideTurn(same)), then = outcome(() => referenceDecide(same));
+      if (now !== then) this.fail("P9: under whenUnsure=ask " + JSON.stringify(choices) + " the strict reading changed in " + input.relay.sync.kind + ": now " + now + ", before " + then);
+    }
+  }
   /** D6: the last Turn ended unknown, the Hub confirmed its process group ended, the user continues the native session. */
   async continueUnknown(): Promise<void> {
     if (this.unknownTurn === null) return;
+    this.doubts++;
     this.seen.d6++;
     await this.apply(step(this.relay, { kind: "unknown_turn_continued" }), "D6");
   }
+}
+
+const PROBE_PACKET = relayPacketId("relay-" + "0".repeat(20)), PROBE_RANGE: SourceRange = { fromSeq: 0, throughSeq: 0, fromRun: 0, throughRun: 0 }, PROBE_RUN = runId("run-relay-probe");
+/**
+ * decideTurn as G072 wrote it (commit 3584410, before the permissive defaults), kept here as the reference the strict setting
+ * (`whenUnsure` "ask") must equal answer for answer (permissive-defaults P9, at the function). Only its shapes are the old ones.
+ */
+function referenceDecide(input: DecideInput): unknown {
+  const { relay, choices, declaration } = input, sync = relay.sync;
+  if (choices.attach === "none") return { kind: "alone" };
+  const needOn = (state: BindingRelayState, attachOverride: boolean) => owed(state, input.harnessId, input.controlId, input.facts, { originHistory: input.originHistory, attachOverride, ...(input.heldSince === undefined ? {} : { heldSince: input.heldSince }) });
+  const nonEmpty = (need: ReturnType<typeof owed>) => need.facts.length > 0 || need.origin;
+  const refusedBy = (outcome: RelayStep): void => {
+    if (outcome.kind !== "refused") return;
+    const refusal = outcome.refusal;
+    if (refusal.code === "RELAY_CHOICE_REQUIRED") throw choiceRequired(refusal.cause);
+    if (refusal.code === "verify_first") throw choiceRequired(causeOf(refusal.cause));
+    throw new RelayError({ code: "RELAY_PREPARE_FAILED", reason: "render" }, "refused (" + refusal.why + ")");
+  };
+  const foreign = () => foreignAtAll(input.facts, input.harnessId, input.controlId, relay, input.originHistory, input.heldSince);
+  const requested = choices.attach === "full" || choices.resend === true;
+  if (sync.kind === "pending") {
+    const attachOverride = sync.attachOverride || choices.attach === "full", need = needOn(relay, attachOverride);
+    if (!nonEmpty(need)) { refusedBy(step(relay, { kind: "owed_nothing" })); return { kind: "plain", foreign: foreign(), nothingToAttach: requested, owedNothing: true }; }
+    if (input.recoveryFailed) throw recoveryFailed();
+    const by = pendingResend(sync, declaration.lateDelivery) === "auto" ? "auto" as const : requested ? "user" as const : null;
+    if (by === null) throw choiceRequired("delivery_unconfirmed");
+    if (input.pendingRun === null) throw choiceRequired("delivery_unconfirmed");
+    const resend = { by, of: input.pendingRun };
+    refusedBy(step(relay, { kind: "carry", runId: PROBE_RUN, packet: { id: PROBE_PACKET, range: PROBE_RANGE }, attachOverride, lateDelivery: declaration.lateDelivery, resend }));
+    return { kind: "carry", need, attachOverride, resend, on: relay };
+  }
+  const attachOverride = choices.attach === "full";
+  if (sync.kind === "suspect" && requested) {
+    const on: BindingRelayState = { ...relay, sync: retreatedPrior(relay, input.firstFromSeq)! }, need = needOn(on, attachOverride);
+    if (!nonEmpty(need)) {
+      const retreat = { firstFromSeq: input.firstFromSeq }, isForeign = foreign();
+      refusedBy(step(relay, { kind: "plain", foreign: isForeign, retreat }));
+      return { kind: "plain", foreign: isForeign, nothingToAttach: true, retreat };
+    }
+    if (input.recoveryFailed) throw recoveryFailed();
+    return { kind: "carry", need, attachOverride, resend: null, retreat: { firstFromSeq: input.firstFromSeq }, on };
+  }
+  const need = needOn(relay, attachOverride);
+  if (!nonEmpty(need)) { const isForeign = foreign(); refusedBy(step(relay, { kind: "plain", foreign: isForeign })); return { kind: "plain", foreign: isForeign, nothingToAttach: requested }; }
+  if (input.recoveryFailed) throw recoveryFailed();
+  refusedBy(step(relay, { kind: "carry", runId: PROBE_RUN, packet: { id: PROBE_PACKET, range: PROBE_RANGE }, attachOverride, lateDelivery: declaration.lateDelivery, resend: null }));
+  return { kind: "carry", need, attachOverride, resend: null, on: relay };
 }
 
 function capsOf(rand: () => number): Caps {
   const verify = (["on_next_open", "after_turn", "none"] as const)[Math.floor(rand() * 3)]!;
   return { verify, lateDelivery: rand() < 0.4, compaction: rand() < 0.6, window: rand() < 0.3 ? 4 : 200, flaky: rand() < 0.3 ? 0.25 : 0, wholeHistory: rand() < 0.6, live: rand() < 0.5 };
 }
-async function run(simulation: Simulation, steps: number): Promise<void> {
+async function run(simulation: Simulation, steps: number, policy = false): Promise<void> {
   for (let index = 0; index < steps; index++) {
     const choice = simulation.rand(), sync = simulation.relay.sync;
     // A packet still to be decided is folded away more often, so its compacted answers are reached (the review's hit counts).
     if ((sync.kind === "pending" || sync.kind === "suspect" && sync.carried !== null) && simulation.rand() < 0.15) { await simulation.foldCarried(); continue; }
     if (choice < 0.24) await simulation.foreignTurn();
-    else if (choice < 0.6) await simulation.contentTurn();
+    else if (choice < 0.6) await (policy ? simulation.policyTurn() : simulation.contentTurn());
     else if (choice < 0.8) await simulation.command();
     else if (choice < 0.85) await simulation.autoCompaction();
     else if (choice < 0.88) await simulation.lateWrites();
@@ -942,6 +1087,69 @@ test("G068-P01 after a packet was received, a /clear and 20 more inputs all go o
       const settled = step(simulation.relay, { kind: "plain_settled", input: fate < 0.7 ? "recorded" : fate < 0.85 ? "unknown" : "not_recorded", agentOutput: fate < 0.85, contextThroughSeq: seq - 1 });
       assert.equal(settled.kind, "applied", label);
       if (settled.kind === "applied") simulation.relay = settled.relay;
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The permissive defaults (docs/proposals/relay/permissive-defaults.md §3): P1–P7, P9 at the function, on the same reference model
+// ---------------------------------------------------------------------------------------------------------------------
+
+function policyCaps(rand: () => number, overrides: Partial<Caps> = {}): Caps { return { ...capsOf(rand), evidence: rand() < 0.75, ...overrides }; }
+
+test("G072-PP01 (P1, P2, P3, P4, P5, P9) policy walks: the policy decides every content input of random evidence sequences and never asks (P1); no mark exceeds what the native session holds (P2); a decision moves no epoch or floor (P3); an input sent alone leaves the binding exactly as it was and writes no row (P4); two packets in a row need a reason (P5); under whenUnsure=ask the answers are the pre-change decideTurn's (P9)", async t => {
+  const peer = await startPeer(t);
+  const totals: Record<string, number> = {}, kinds: Record<string, number> = {};
+  for (const seed of SEEDS.slice(0, 120)) {
+    await peer.call("reset");
+    const rand = generator(seed ^ 0x9e01), caps = policyCaps(rand), simulation = new Simulation(peer, rand, caps, "policy seed 0x" + seed.toString(16) + " " + JSON.stringify(caps));
+    simulation.policyMode = true;
+    await run(simulation, 70, true);
+    for (const [key, count] of Object.entries(simulation.policySeen)) kinds[key] = (kinds[key] ?? 0) + count;
+    for (const [key, count] of Object.entries(simulation.seen)) totals[key] = (totals[key] ?? 0) + count;
+  }
+  t.diagnostic("policy decisions: " + JSON.stringify(kinds) + "; counters: " + JSON.stringify(totals));
+  // Every kind of the policy's decisions was reached somewhere (the owed-nothing one may be rare).
+  for (const key of ["plain", "alone", "auto", "grown", "retreat", "first"] as const) assert.ok(kinds[key]! > 0, "the policy never decided " + key);
+});
+
+test("G072-PP01 P6 twenty content inputs in a row, nothing else happening, every result unknown and every check unavailable: from any reachable state the policy sends at most two packets", async t => {
+  const peer = await startPeer(t);
+  let measured = 0, most = 0;
+  for (const seed of SEEDS.slice(0, 100)) {
+    await peer.call("reset");
+    const rand = generator(seed ^ 0x9e06);
+    // Checks that never answer (flaky 1) and a Driver that can show delivery in principle; the walk reaches a state first.
+    const caps = policyCaps(rand, { flaky: 1, evidence: true, verify: rand() < 0.5 ? "on_next_open" : "none" });
+    const simulation = new Simulation(peer, rand, caps, "P6 seed 0x" + seed.toString(16) + " " + JSON.stringify(caps));
+    simulation.policyMode = true;
+    await run(simulation, 30, true);
+    const before = simulation.policyRows.length;
+    simulation.forcedFate = "silent";
+    try { for (let index = 0; index < 20; index++) await simulation.policyTurn(); } finally { simulation.forcedFate = null; }
+    const sent = simulation.policyRows.length - before;
+    measured++; most = Math.max(most, sent);
+    assert.ok(sent <= 2, "P6 seed 0x" + seed.toString(16) + ": twenty inputs sent " + sent + " packets\n" + simulation.log.slice(-24).join("\n"));
+  }
+  t.diagnostic("states measured " + measured + ", the most packets sent over twenty inputs " + most);
+  assert.ok(most >= 1, "some states did send");
+});
+
+test("G072-PP01 P7 a Driver that can show nothing never gets an automatic resend, and a packet for newer facts needs them: pendingResend, and the state machine's refusal of a grown packet that reaches no further", () => {
+  for (const autoResends of [0, 1] as const) for (const lateDelivery of [false, true]) for (const grown of [false, true]) {
+    const sync = { kind: "pending" as const, prior: { kind: "fresh" as const, basis: "new" as const }, packetId: relayPacketId("relay-" + "1".repeat(20)), range: { fromSeq: 3, throughSeq: 9, fromRun: 0, throughRun: 0 }, autoResends, manualResends: 0, attachOverride: false };
+    const label = JSON.stringify({ autoResends, lateDelivery, grown });
+    assert.notEqual(pendingResend(sync, { lateDelivery, evidence: false }, "auto", grown), "auto", "no evidence, no automatic resend " + label);
+    assert.notEqual(pendingResend(sync, { lateDelivery, evidence: false }, "auto", grown), "choice", "the policy never asks " + label);
+    assert.equal(pendingResend(sync, { lateDelivery, evidence: false }, "auto", grown), grown ? "grown" : "alone", label);
+    assert.equal(pendingResend(sync, { lateDelivery, evidence: true }, "auto", grown), autoResends === 0 ? "auto" : grown ? "grown" : "alone", label);
+    assert.equal(pendingResend(sync, { lateDelivery, evidence: true }, "ask", grown), autoResends === 0 && !lateDelivery ? "auto" : "choice", "ask is the strict design's " + label);
+    // The state machine: a grown packet reaches past the pending one's through seq or it is invalid; auto with lateDelivery asks.
+    const relay = parseBindingRelayState({ ...initialBindingRelay([], X.harnessId, X.controlId, "new"), sync, packetsInEpoch: 0 });
+    for (const throughSeq of [8, 9, 10]) {
+      const outcome = step(relay, { kind: "carry", runId: runId("run-g"), packet: { id: relayPacketId("relay-" + "2".repeat(20)), range: { fromSeq: 3, throughSeq, fromRun: 0, throughRun: 0 } }, attachOverride: false, lateDelivery, resend: { by: "grown", of: runId("run-p") } });
+      if (throughSeq > 9) { assert.equal(outcome.kind, "applied", label); if (outcome.kind === "applied") { const next = outcome.relay.sync; assert.ok(next.kind === "pending" && next.autoResends === 0 && next.manualResends === 0 && next.range.throughSeq === throughSeq); } }
+      else { assert.equal(outcome.kind, "refused", label); assert.deepEqual(outcome.kind === "refused" && outcome.refusal.code, "invalid"); }
     }
   }
 });

@@ -114,8 +114,14 @@ function open(t: TestContext, options: ConstructorParameters<typeof SqliteSessio
 
 test("G066 a new business database is made at v13 with the 11 relay tables and 4 triggers of §14.1, verbatim", t => {
   const doc = readFileSync(join(repository, "docs/proposals/relay/relay-architecture.md"), "utf8");
-  const block = doc.slice(doc.indexOf("### 14.1 v13 DDL")), sql = block.slice(block.indexOf("```sql\n") + 7, block.indexOf("```", block.indexOf("```sql\n") + 7));
-  assert.equal(RELAY_DDL.trim() + "\nPRAGMA user_version=13;", sql.trim(), "the DDL is the design's, character for character");
+  const block = doc.slice(doc.indexOf("### 14.1 v13 DDL")), written = block.slice(block.indexOf("```sql\n") + 7, block.indexOf("```", block.indexOf("```sql\n") + 7));
+  // The permissive-defaults batch (2026-11-10) added two preference keys to relay_prefs' CHECK (relay.whenUnsure, relay.dataRootInWorkspace;
+  // v13 is deployed to no data root, so the DDL itself changed). The design document is the main lead's to rewrite: until it lists them,
+  // this one list is read as the batch changed it, and the rest of the DDL is still compared character for character.
+  const four = "'relay.localModelsOffline')),", six = "'relay.localModelsOffline','relay.whenUnsure','relay.dataRootInWorkspace')),";
+  const sql = written.includes("'relay.whenUnsure'") ? written : written.replace(four, six);
+  assert.ok(sql.includes(six), "relay_prefs lists the six keys");
+  assert.equal(RELAY_DDL.trim() + "\nPRAGMA user_version=13;", sql.trim(), "the DDL is the design's, character for character (relay_prefs' keys aside until the design lists the permissive-defaults batch's two)");
   const { root, store } = open(t); store.close();
   const db = raw(root);
   try {

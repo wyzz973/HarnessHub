@@ -29,6 +29,14 @@ export const RELAY_BUDGET = Object.freeze({
   deltaReplyCap: 1500,
 });
 
+/**
+ * Which limits may lower a packet's tier (permissive-defaults §2.4, the owner's decision of 2026-11-10: "可以不在乎预算"). The
+ * target's window and its channel are physical limits of what can be sent at all, and keep their say (windows.ts hardCap, the 5%
+ * rule); what a handoff costs in money or time, and the price cliff a longer context crosses, are shown (return-policy.ts) and
+ * decide nothing. A change of this table is a change of policy, and changes `RELAY_POLICY_VERSION`.
+ */
+export const BUDGET_DEMOTIONS = Object.freeze({ window: true, channel: true, cost: false, latency: false, cliff: false });
+
 /** A Han, kana, Hangul, CJK punctuation or full-width code point: what the estimate and the language choice count apart. */
 export function cjk(code: number): boolean {
   return (code >= 0x4e00 && code <= 0x9fff) || (code >= 0x3400 && code <= 0x4dbf) || (code >= 0x3000 && code <= 0x30ff) ||

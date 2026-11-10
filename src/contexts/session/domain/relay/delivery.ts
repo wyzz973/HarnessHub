@@ -49,14 +49,17 @@ export type DecidedOutcome = Exclude<DeliveryOutcome, { readonly kind: "in_fligh
 export type RelayEvent =
   /**
    * a: a content Turn that carries packet `packet` (committed with its `run.context_prepared`, before dispatch). On a pending
-   * binding only as a resend of the pending packet: `resend.by` "auto" (allowed once, never with `lateDelivery`) or "user"
-   * (`relay.resend`). On a suspect binding only with `retreat`: a check that decides anything leaves the binding synced or
-   * fresh, so what remains is the user's choice of sending the complete packet again in the same native session, which
-   * first moves the mark back to max(first packet of the epoch's fromSeq − 1, epochFloor) (§9, retreatedPrior); without it
-   * the step is refused verify_first. `attachOverride` is the request's `relay.attach:"full"`.
+   * binding only as a resend of the pending packet: `resend.by` "auto" (allowed once, never with `lateDelivery`), "user"
+   * (`relay.resend`), or "grown" (the permissive defaults, permissive-defaults §2.1: the packet reaches past the pending one's
+   * through seq, so there are newer foreign facts to send; the automatic resend count starts again at 0, the user's resends are
+   * kept, and a packet that does not reach past is `invalid`). On a suspect binding only with `retreat`: a check that decides
+   * anything leaves the binding synced or fresh, so what remains is the complete packet again in the same native session, which
+   * the user chose or the policy did for new facts owed above an untrusted mark; it first moves the mark back to
+   * max(first packet of the epoch's fromSeq − 1, epochFloor) (§9, retreatedPrior); without it the step is refused verify_first.
+   * `attachOverride` is the request's `relay.attach:"full"`.
    */
   | { readonly kind: "carry"; readonly runId: RunId; readonly packet: CarriedPacket; readonly attachOverride: boolean; readonly lateDelivery: boolean;
-      readonly resend: { readonly by: "auto" | "user"; readonly of: RunId } | null; readonly retreat?: { readonly firstFromSeq: number | null } }
+      readonly resend: { readonly by: "auto" | "user" | "grown"; readonly of: RunId } | null; readonly retreat?: { readonly firstFromSeq: number | null } }
   /**
    * b: a content Turn without a packet while nothing is owed (need=∅); `foreign` is F≠∅ (the Session has foreign facts at all).
    * With `retreat`, only on a suspect binding: the user chose the complete packet again (补发完整交接单) and on the prior that
@@ -64,8 +67,13 @@ export type RelayEvent =
    * mark (standing); a mark that is not restorable (legacy) is refused verify_first, as without the choice.
    */
   | { readonly kind: "plain"; readonly foreign: boolean; readonly retreat?: { readonly firstFromSeq: number | null } }
-  /** n: a content Turn without a packet while facts are owed: only after the user chose `relay.attach:"none"`. */
-  | { readonly kind: "alone" }
+  /**
+   * n: a content Turn without a packet while facts are owed: after the user chose `relay.attach:"none"` (`by` "user", the default),
+   * or when the policy decided to send it alone (`by` "policy": a packet still unconfirmed after its resend and nothing newer
+   * to send, a binding in doubt nothing new is owed to, a failure that concerns the packet only; permissive-defaults §0). Either
+   * way the binding is exactly as it was and no row is written; `by` only says who decided.
+   */
+  | { readonly kind: "alone"; readonly by?: "user" | "policy" }
   /** c: a command Turn whose effect is keep or none (or that did not run). */
   | { readonly kind: "command_kept" }
   /**
@@ -336,14 +344,33 @@ export function commandTurnEvent(declared: ContextEffect, outcome: CommandOutcom
   return { kind: "rewound", cause: "unknown_command" };
 }
 
+/** What the next content input of a pending binding does (pendingResend). */
+export type ResendPlan = "auto" | "grown" | "alone" | "choice";
+/** What a Driver's declaration says that decides a resend: that a cancelled input may land late, and that it can show delivery at all. */
+export interface ResendDeclaration {
+  readonly lateDelivery: boolean;
+  /** `live ≠ none ∨ verify ≠ none ∨ successProvesRecorded`: a send can ever be confirmed or refuted (permissive-defaults §2). Absent: it can. */
+  readonly evidence?: boolean;
+}
 /**
- * What the next content input of a pending binding does once its check left the packet unconfirmed (§7.2 pending i, §7.4):
- * an automatic resend while none was made and the Driver does not declare `lateDelivery`, otherwise the user's choice
- * (409 RELAY_CHOICE_REQUIRED{delivery_unconfirmed}). Null when the binding is not pending.
+ * What the next content input of a pending binding does once its check left the packet unconfirmed (§7.2 pending i, §7.4;
+ * permissive-defaults §2.1). Null when the binding is not pending.
+ * - mode "ask" (the strict design): an automatic resend while none was made and the Driver does not declare `lateDelivery`,
+ *   otherwise the user's choice (409 RELAY_CHOICE_REQUIRED{delivery_unconfirmed}) — "choice";
+ * - mode "auto" (the default): the user is never asked. A Driver that can show delivery gets one automatic resend per packet
+ *   (`lateDelivery` included: a late write lands once more at most, and the resend's template carries its own dedupe line);
+ *   after it, and for a Driver that never can show delivery, the next input goes alone — "alone", the binding exactly as it was —
+ *   unless there are facts newer than the pending packet's (`grown`): then the packet is sent again with them — "grown", which
+ *   starts the automatic count again. One packet's facts are thereby sent at most twice automatically, and again only when more
+ *   facts arrive.
+ * `declaration` as a plain boolean is `lateDelivery` alone (a Driver that can show delivery).
  */
-export function pendingResend(sync: BindingSync, lateDelivery: boolean): "auto" | "choice" | null {
+export function pendingResend(sync: BindingSync, declaration: ResendDeclaration | boolean, mode: "auto" | "ask" = "ask", grown = false): ResendPlan | null {
   if (sync.kind !== "pending") return null;
-  return sync.autoResends === 0 && !lateDelivery ? "auto" : "choice";
+  const { lateDelivery, evidence } = typeof declaration === "boolean" ? { lateDelivery: declaration, evidence: true } : { lateDelivery: declaration.lateDelivery, evidence: declaration.evidence ?? true };
+  if (mode === "ask") return sync.autoResends === 0 && !lateDelivery ? "auto" : "choice";
+  if (evidence && sync.autoResends === 0) return "auto";
+  return grown ? "grown" : "alone";
 }
 
 /**
@@ -675,10 +702,13 @@ function carry(relay: BindingRelayState, event: Extract<RelayEvent, { kind: "car
     if (event.retreat !== undefined) return refuse({ code: "invalid", why: "only a suspect binding moves its mark back before a complete packet" });
     if (event.resend.by === "auto" && (sync.autoResends !== 0 || event.lateDelivery)) return refuse({ code: "RELAY_CHOICE_REQUIRED", cause: "delivery_unconfirmed" });
     if (event.resend.by === "user" && sync.manualResends >= RELAY_MAX_RUNS) return refuse({ code: "invalid", why: "a packet is sent again at most " + RELAY_MAX_RUNS + " times" });
+    // The packet of newer facts: it must reach past the pending one's through seq, or there is nothing new to send again (the
+    // bound of the automatic sends: one packet's facts at most twice by themselves, again only when more facts arrive).
+    if (event.resend.by === "grown" && !(event.packet.range.throughSeq > sync.range.throughSeq)) return refuse({ code: "invalid", why: "a packet sent again for newer facts reaches past the pending packet's through seq" });
     // A resend keeps the prior and inherits the one-time attach of the packet it supersedes (VF1-07).
     const attachOverride = sync.attachOverride || event.attachOverride;
     const next: BindingSync = { ...sync, packetId: event.packet.id, range: event.packet.range, attachOverride,
-      autoResends: event.resend.by === "auto" ? 1 : sync.autoResends, manualResends: event.resend.by === "user" ? sync.manualResends + 1 : sync.manualResends };
+      autoResends: event.resend.by === "auto" ? 1 : event.resend.by === "grown" ? 0 : sync.autoResends, manualResends: event.resend.by === "user" ? sync.manualResends + 1 : sync.manualResends };
     return applied(relay, withSync(relay, next), [insert(attachOverride)]);
   }
   if (event.resend !== null) return refuse({ code: "invalid", why: "only a pending binding resends a packet" });
@@ -727,8 +757,11 @@ function carrySettled(relay: BindingRelayState, event: Extract<RelayEvent, { kin
     // RT2-07: a first packet known not to be there goes back to the state before it; its facts are owed again. A resend known
     // not to be there goes back to waiting for the packet it superseded, its counts kept (point 2 of the approval).
     case "not_recorded": {
+      // A resend that counts say was made (an automatic or the user's) must name what it superseded; a packet sent again for newer
+      // facts (`grown`) has its counts at 0 as a first packet has, so the counts cannot say it: the caller, who knows the Turn's
+      // `resendOf`, names the packet, and it is waited for again. Nothing named is a first packet, back to the prior.
       const resent = sync.autoResends + sync.manualResends > 0;
-      if (resent !== (event.superseded !== undefined)) return refuse({ code: "invalid", why: resent ? "a refused resend names the packet it superseded" : "a first packet supersedes nothing" });
+      if (resent && event.superseded === undefined) return refuse({ code: "invalid", why: "a refused resend names the packet it superseded" });
       if (event.superseded !== undefined) return applied(relay, withSync(relay, { ...sync, packetId: event.superseded.packetId, range: event.superseded.range }), [change]);
       return applied(relay, withSync(relay, sync.prior), [change]);
     }

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { nativeConversationId, type BackendResult, type HarnessControl } from "../../src/contracts/control.js";
-import { EMPTY_CHAIN, RelayError, markOf, parseBindingRelayState, parseVendorKey, relayPacketId, type BindingRelayState, type BindingSync, type DeliveredMark, type RelayCapabilities, type SyncPrior, type VendorKey } from "../../src/contracts/relay.js";
+import { EMPTY_CHAIN, RelayError, consentSourceOf, markOf, parseBindingRelayState, parseVendorKey, relayPacketId, type BindingRelayState, type BindingSync, type DeliveredMark, type RelayCapabilities, type SyncPrior, type VendorKey } from "../../src/contracts/relay.js";
 import { SessionError, runId, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId } from "../../src/contracts/session.js";
 import { dshRelayCapabilities } from "../../src/adapters/control/acp.js";
 import { sharedClassify } from "../../src/adapters/control/relay-classify.js";
@@ -16,6 +16,7 @@ import { step, type RelayFact } from "../../src/contexts/session/domain/relay/de
 import { estimateReturn, returnChoice, type ReturnPreference } from "../../src/contexts/session/domain/relay/return-policy.js";
 import { recoverRelay } from "../../src/contexts/session/domain/relay/recover.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { strictRelay } from "../fixtures/relay-settings.js";
 
 // G072-P01 and the state machine's new rules (relay-architecture §17 G072-P01; the approval agent's A7 point 4; §7.3): seeded
 // random sequences, each case's seed printed in its failure.
@@ -79,6 +80,8 @@ test("G072-P01 switches, messages, consents and withdrawals in any interleaving:
     const seed = 0x72_0000 + index, next = random(seed), root = mkdtempSync(join(tmpdir(), "g072-p01-"));
     const workspace = join(root, "workspace"); mkdirSync(workspace);
     const store = new SqliteSessionStore(join(root, "data"), { recoverRelay }), fakes = new Fakes();
+    // The strict design's questions (P9): this property is about refusals and consents; the permissive one is relay-permissive.test.ts's.
+    strictRelay(store);
     let ids = 0, keys = 0;
     const app = new SessionRuntime(store, fakes, { id: () => "p01-" + seed + "-" + ++ids, now: () => new Date(Date.UTC(2026, 10, 10, 12)), publish: () => {},
       fingerprint: value => createHash("sha256").update(value).digest("hex"), relayIsolated: () => true });
@@ -203,4 +206,76 @@ test("G072 the return decision (§7.3, D9): without the request's relay.native i
       assert.ok(longer.wholeDiff! >= estimate.wholeDiff! - 1e-9, "a longer native context never makes continuing cheaper");
     }
   }
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The permissive defaults on the formal Runtime (docs/proposals/relay/permissive-defaults.md P1, P8)
+// ---------------------------------------------------------------------------------------------------------------------
+
+test("G072-PP02 (P1, P8) switches, messages, withdrawals and re-allowing in any interleaving under the defaults: no input is refused, every Run completes, every cross-vendor packet rests on a row of the installation's log written before its Turn was committed, and none goes to a vendor whose latest row is a withdrawal", { timeout: 240_000 }, async () => {
+  const sequences = 24, steps = 24;
+  let packets = 0, revokedAlone = 0, defaults = 0;
+  for (let index = 0; index < sequences; index++) {
+    const seed = 0x72_0200 + index, next = random(seed), root = mkdtempSync(join(tmpdir(), "g072-pp02-"));
+    const workspace = join(root, "workspace"); mkdirSync(workspace);
+    const store = new SqliteSessionStore(join(root, "data"), { recoverRelay }), fakes = new Fakes();
+    // Every commit that prepares a Turn with a packet is checked as it is made: its consent, and the log as it stands.
+    const stands: string[] = [];
+    const append = store.appendRelayLog.bind(store), transact = store.transact.bind(store);
+    let logged = 0, packetCommits = 0;
+    store.appendRelayLog = record => { const row = append(record); logged = Math.max(logged, row.logSeq); return row; };
+    store.transact = (id, version, mutate) => transact(id, version, current => {
+      const mutation = mutate(current);
+      for (const written of mutation.relay?.packets ?? []) {
+        packetCommits++;
+        const run = mutation.next.runs.find(row => row.id === written.runId)!, vendor = VENDORS[run.selection.harnessId]!;
+        const cross = written.packet.source.names.some(name => VENDORS[name.harnessId] !== vendor);
+        const delivery = (mutation.relay?.deliveries ?? []).find(row => row.kind === "insert" && row.record.runId === written.runId);
+        if (delivery === undefined || delivery.kind !== "insert") { stands.push("a packet without a delivery row"); continue; }
+        if (cross) {
+          const seq = delivery.record.consentLogSeq;
+          if (seq === null) stands.push(run.selection.harnessId + ": a cross-vendor packet whose delivery row names no log row");
+          else if (seq > logged) stands.push(run.selection.harnessId + ": the row " + seq + " was written after the Turn was committed (log at " + logged + ")");
+          const view = { session: current.id, records: store.relayConsents(), crossVendor: "allow" as const, localModelsOffline: false, request: null };
+          const standing = consentStanding(vendor, null, view);
+          if (standing.kind === "missing") stands.push(run.selection.harnessId + ": a packet to " + vendor + ", whose latest row is a withdrawal");
+        }
+      }
+      return mutation;
+    });
+    let ids = 0, keys = 0;
+    const app = new SessionRuntime(store, fakes, { id: () => "pp02-" + seed + "-" + ++ids, now: () => new Date(Date.UTC(2026, 10, 10, 12)), publish: () => {},
+      fingerprint: value => createHash("sha256").update(value).digest("hex"), relayIsolated: () => true });
+    const where = (label: string) => "seed " + seed.toString(16) + ", " + label;
+    try {
+      const configuration: SessionConfiguration = { workspace, manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: true };
+      const id = (await app.create(configuration, { harnessId: pick(next, Object.keys(VENDORS)) }, "create")).id as SessionId;
+      for (let at = 0; at < steps; at++) {
+        const action = pick(next, ["send", "send", "send", "send", "switch", "revoke", "allow"] as const), before = app.read(id);
+        if (action === "send") {
+          const text = "m" + at + " " + seed, alone = next() < 0.15;
+          // P1: the defaults refuse nothing a user typed (an input sent alone is the user's own choice and goes too).
+          let receipt;
+          try { receipt = app.send(id, text, "k" + ++keys, [], alone ? { attach: "none" } : undefined); }
+          catch (error) { assert.fail(where("an input was refused under the defaults: " + String(error))); }
+          await app.wait(id).catch((error: unknown) => { if (!(error instanceof SessionError && error.code === "SESSION_BLOCKED")) throw error; });
+          const run = app.read(id).runs.find(row => row.id === receipt.runId)!;
+          assert.equal(run.status, "completed", where("the Run completes: " + (run.error?.code ?? "")));
+          assert.equal(app.read(id).runs.length, before.runs.length + 1);
+        } else if (action === "switch") {
+          app.switch(id, { harnessId: pick(next, Object.keys(VENDORS).filter(harness => harness !== before.selection.harnessId)) }, "k" + ++keys);
+          await app.wait(id);
+        } else {
+          const vendor = pick(next, Object.values(VENDORS));
+          store.appendRelayLog({ commandId: "u" + seed + "-" + ++keys, vendor, scope: next() < 0.5 ? { kind: "session" as const, sessionId: id } : { kind: "global" as const },
+            decision: action === "allow" ? "acknowledged" : "revoked", categories: ["user_text"], policyVersion: "relay/1", authKind: null, decidedAt: 1 });
+          if (action === "revoke") revokedAlone++;
+        }
+        assert.deepEqual(stands, [], where("P8"));
+      }
+      packets += packetCommits;
+      defaults += store.relayConsents().filter(row => consentSourceOf(row) === "default").length;
+    } finally { await app.close(); store.close(); rmSync(root, { recursive: true, force: true }); }
+  }
+  assert.ok(packets >= 20, "packets went: " + packets); assert.ok(defaults >= 10, "first uses were traced: " + defaults); assert.ok(revokedAlone >= 5, "withdrawals were made: " + revokedAlone);
 });

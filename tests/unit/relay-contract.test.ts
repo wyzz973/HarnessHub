@@ -59,7 +59,7 @@ test("G066 the relay contract's closed enums and bounds agree with the Session d
   assert.equal(RELAY_MAX_SEQ, MAX_SESSION_EVENTS); assert.equal(RELAY_MAX_RUNS, MAX_RUNS);
   assert.deepEqual([...CONTEXT_EFFECTS].sort(), ["clear", "compact", "keep", "none", "rewind", "unknown"]);
   assert.deepEqual(Object.keys(LEGACY_CONTINUITY).sort(), ["native_fork", "native_import", "native_resume", "public_context_rehydrate"]);
-  assert.deepEqual([...RELAY_PREF_KEYS].sort(), ["relay.allowUnprobed", "relay.crossVendor", "relay.localModelsOffline", "relay.returnPreference"]);
+  assert.deepEqual([...RELAY_PREF_KEYS].sort(), ["relay.allowUnprobed", "relay.crossVendor", "relay.dataRootInWorkspace", "relay.localModelsOffline", "relay.returnPreference", "relay.whenUnsure"]);
   // The delivery table of relay-architecture §4, all 16 pairs.
   const allowed = new Set(["in_flight>recorded", "in_flight>not_recorded", "in_flight>unknown", "unknown>unknown", "unknown>recorded", "unknown>not_recorded", "not_recorded>recorded", "recorded>recorded"]);
   for (const from of DELIVERY_STATUSES) for (const to of DELIVERY_STATUSES) assert.equal(deliveryTransitionAllowed(from as DeliveryStatus, to as DeliveryStatus), allowed.has(from + ">" + to), from + ">" + to);

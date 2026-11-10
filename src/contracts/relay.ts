@@ -482,15 +482,91 @@ export type WorkspaceObservation =
       readonly counted: { readonly total: number; readonly listed: number }; readonly neutralized: readonly string[]; readonly attributesIncluded: boolean }
   | { readonly kind: "tree"; readonly status: typeof OBSERVATION_STATUSES[number]; readonly fingerprint: Fingerprint; readonly durationMs: number; readonly files: readonly { readonly path: string; readonly size: number; readonly mtimeMs: number }[]; readonly scanned: number; readonly counted: number }
   | { readonly kind: "unavailable"; readonly reason: typeof WORKSPACE_UNAVAILABLE_REASONS[number] };
-export const RELAY_PREF_KEYS = ["relay.crossVendor", "relay.returnPreference", "relay.allowUnprobed", "relay.localModelsOffline"] as const;
+export const RELAY_PREF_KEYS = ["relay.crossVendor", "relay.returnPreference", "relay.allowUnprobed", "relay.localModelsOffline", "relay.whenUnsure", "relay.dataRootInWorkspace"] as const;
 export type RelayPrefKey = typeof RELAY_PREF_KEYS[number];
-/** The values each installation preference takes (public-api.md, relay-architecture §3.1, §7.3, §10.4). */
+/** The values each installation preference takes (public-api.md, relay-architecture §3.1, §7.3, §10.4, permissive-defaults §4). */
 export const RELAY_PREF_VALUES: Readonly<Record<RelayPrefKey, readonly string[]>> = {
   "relay.crossVendor": ["ask", "allow", "goal_only"],
   "relay.returnPreference": ["continue", "new_when_cold", "ask"],
   "relay.allowUnprobed": ["true", "false"],
   "relay.localModelsOffline": ["true", "false"],
+  "relay.whenUnsure": ["auto", "ask"],
+  "relay.dataRootInWorkspace": ["warn", "block"],
 };
+/**
+ * What each preference is while none is stored (the owner's decision of 2026-11-10: relay is permissive by default, the strict
+ * behaviors are settings): a handoff to another vendor is allowed and logged, an unprobed Driver takes history, what the relay
+ * is unsure of it settles itself, and a data directory in the workspace is warned about, not refused.
+ */
+export const RELAY_PREF_DEFAULTS: Readonly<Record<RelayPrefKey, string>> = {
+  "relay.crossVendor": "allow",
+  "relay.returnPreference": "continue",
+  "relay.allowUnprobed": "true",
+  "relay.localModelsOffline": "false",
+  "relay.whenUnsure": "auto",
+  "relay.dataRootInWorkspace": "warn",
+};
+/** The four preferences that turn every strict behavior of the design back on (the relay before the permissive defaults; permissive-defaults P9). */
+export const RELAY_STRICT_PREFS: Readonly<Partial<Record<RelayPrefKey, string>>> = {
+  "relay.crossVendor": "ask",
+  "relay.allowUnprobed": "false",
+  "relay.whenUnsure": "ask",
+  "relay.dataRootInWorkspace": "block",
+};
+
+// ---------------------------------------------------------------------------------------------------------------------
+// What the relay decided for a Turn, and what a binding asks the user to look at (permissive-defaults §2.6)
+// ---------------------------------------------------------------------------------------------------------------------
+
+export const DECISION_KINDS = ["carry", "alone", "plain"] as const;
+/** Who decided: the need alone (an ordinary packet), the policy (an automatic resend, a send alone, a complete packet again), or the user's own choice. */
+export const DECISION_BY = ["need", "policy", "user"] as const;
+/**
+ * The situation a decision of the policy answered (the 409 causes of the strict mode and the failures that no longer stop a Turn):
+ * the delivery of a packet is unconfirmed, a suspect binding could not be checked, the marker is gone, the smallest packet does
+ * not fit, the relay's record could not be recovered, the vendor's consent was withdrawn (or is for the goal only, which the
+ * MVP cannot render), a packet could not be prepared, or the reading of the input changed after the open.
+ */
+export const DECISION_CAUSES = ["delivery_unconfirmed", "verify_required", "marker_absent", "input_limit", "recovery_failed", "consent_revoked", "consent_goal_only", "prepare_failed", "classification_changed"] as const;
+/**
+ * `run.context_prepared.data.relay.decision`: what the relay did with a content Turn's history. `reason` names the failure of a
+ * `prepare_failed` (a RELAY_PREPARE_REASONS or RELAY_UNAVAILABLE_REASONS value). An ordinary Turn that owes nothing records none.
+ */
+export interface RelayDecision {
+  readonly kind: typeof DECISION_KINDS[number];
+  readonly by: typeof DECISION_BY[number];
+  readonly cause?: typeof DECISION_CAUSES[number];
+  readonly reason?: string;
+}
+/** The decision a `run.context_prepared` event records; null when it records none (or something that is not one). */
+export function relayDecisionOf(data: Readonly<Record<string, unknown>> | undefined): RelayDecision | null {
+  const relay = data?.relay;
+  if (relay === null || typeof relay !== "object" || Array.isArray(relay)) return null;
+  const item = (relay as Readonly<Record<string, unknown>>).decision;
+  if (item === null || typeof item !== "object" || Array.isArray(item)) return null;
+  const row = item as Readonly<Record<string, unknown>>;
+  if (!(DECISION_KINDS as readonly unknown[]).includes(row.kind) || !(DECISION_BY as readonly unknown[]).includes(row.by)) return null;
+  const cause = (DECISION_CAUSES as readonly unknown[]).includes(row.cause) ? row.cause as typeof DECISION_CAUSES[number] : undefined;
+  return { kind: row.kind as RelayDecision["kind"], by: row.by as RelayDecision["by"], ...(cause === undefined ? {} : { cause }), ...(typeof row.reason === "string" ? { reason: row.reason.slice(0, 64) } : {}) };
+}
+export const ATTENTION_CAUSES = ["delivery_unconfirmed", "verify_required", "marker_absent", "clear_unconfirmed", "recovery_failed", "input_limit", "consent_revoked", "consent_goal_only"] as const;
+/**
+ * The user's ways out, as the buttons of a banner (the options of the 409's error body, relay-architecture §12.4, stage3-workstreams §3).
+ * `send_alone` is the 409's own option: under the defaults sending alone is what the next input does without being asked, so a banner
+ * never lists it.
+ */
+export const ATTENTION_OPTIONS = ["attach_full", "send_alone", "new_native", "clear_confirmed", "acknowledge"] as const;
+/**
+ * What a binding asks the user to look at (`GET …/relay`, per binding): why, the options that answer it (never a block: the next
+ * input goes anyway), how much is at stake (`runs` of the conversation's Turns it still owes, `packets` sent and not confirmed),
+ * and `key`, which names one episode (the same cause within one wait for a check shows once, and a closed banner does not come back).
+ */
+export interface RelayAttention {
+  readonly cause: typeof ATTENTION_CAUSES[number];
+  readonly options: readonly typeof ATTENTION_OPTIONS[number][];
+  readonly counts: { readonly runs: number; readonly packets: number };
+  readonly key: string;
+}
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Errors
@@ -502,8 +578,8 @@ export const RELAY_UNAVAILABLE_REASONS = ["data_root_in_workspace", "consent_log
 export const RELAY_CHOICE_CAUSES = ["delivery_unconfirmed", "verify_required", "marker_absent"] as const;
 /**
  * Why the target takes no relay content (D11, G072): `unprobed`, its Driver declares relay mechanisms its probes have not
- * proved on the latest release (and `relay.allowUnprobed` is not set); `undeclared`, its Driver declares none (WorkBuddy, Pi,
- * Cursor, a control the Gateway cannot place), which no preference opens.
+ * proved on the latest release (and `relay.allowUnprobed` is off, which is the strict design; the default is on); `undeclared`, its
+ * Driver declares none (WorkBuddy, Pi, Cursor, a control the Gateway cannot place), which the same preference opens in the default.
  */
 export const RELAY_TARGET_REASONS = ["unprobed", "undeclared"] as const;
 /** Why the target's vendor needs the user's consent (§10.4): none recorded (or withdrawn), the vendor changed in this epoch, or withdrawn since the Turn was prepared. */
@@ -585,6 +661,26 @@ export type RelayWriteResult = { readonly written: true } | { readonly written: 
 export interface RelayWindow { readonly harnessId: string; readonly controlId: string; readonly modelKey: string; readonly size: number; readonly firstTurnUsed: number | null; readonly observedAt: number }
 /** A consent decision to append; the log assigns its seq. */
 export type ConsentAppend = Omit<ConsentRecord, "logSeq">;
+/** The command identity every default-allow row of the log starts with: the source of a row is `default` when it does, `user` otherwise. */
+export const DEFAULT_ALLOW_PREFIX = "default-allow:";
+/**
+ * The command identity of the row a vendor's first use writes while `relay.crossVendor` allows it by default (permissive-defaults
+ * §2.4): `default-allow:<vendor key>:<policy>` (`relay/1` spelled `relay-1`), the same for every first use of that vendor under that policy, so a repeat is the
+ * same command. A key too long (a gateway host may take 253 bytes) or not spelled for a command identity is named by a 64-bit
+ * FNV-1a digest of its text instead: an identity for an idempotent row, not a secret and not a proof of anything.
+ */
+export function defaultAllowCommand(vendor: VendorKey, policy: PolicyVersion): string {
+  // A command identity has no "/": the policy `relay/1` is spelled `relay-1` in it.
+  const spelled = policy.replace("/", "-"), readable = DEFAULT_ALLOW_PREFIX + vendor + ":" + spelled;
+  if (utf8(readable) <= 128 && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(readable)) return readable;
+  let digest = 0xcbf29ce484222325n;
+  for (const byte of new TextEncoder().encode(vendor)) digest = BigInt.asUintN(64, (digest ^ BigInt(byte)) * 0x100000001b3n);
+  return DEFAULT_ALLOW_PREFIX + "fnv-" + digest.toString(16).padStart(16, "0") + ":" + spelled;
+}
+/** Where a row of the consent log came from: the user's own decision, or the default that allowed a vendor's first use. */
+export function consentSourceOf(record: Pick<ConsentRecord, "commandId">): "default" | "user" {
+  return record.commandId.startsWith(DEFAULT_ALLOW_PREFIX) ? "default" : "user";
+}
 /** One Run's delivery changed by recovery. */
 export interface RelayRecoveredDelivery { readonly runId: RunId; readonly outcome: Exclude<DeliveryOutcome, { readonly kind: "in_flight" }> }
 /** What recovery changes of a Session's relay state besides recoverSession's own changes. */

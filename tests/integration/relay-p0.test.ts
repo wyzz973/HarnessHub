@@ -19,6 +19,7 @@ import { SessionRuntime } from "../../src/contexts/session/application/runtime.j
 import { MAX_SESSION_BYTES, utf8Bytes } from "../../src/contexts/session/domain/state.js";
 import { initialBindingRelay } from "../../src/contexts/session/domain/relay/migrate.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { askWhenUnsure } from "../fixtures/relay-settings.js";
 import { readRelayPrompt } from "../fixtures/relay-packet.js";
 import type { RelayRecord } from "../../src/contexts/session/domain/relay/packet.js";
 
@@ -32,6 +33,8 @@ interface World { readonly root: string; readonly store: SqliteSessionStore; rea
 async function world(t: test.TestContext): Promise<World> {
   const root = await mkdtemp(join(tmpdir(), "relay-p0-")), workspace = join(root, "workspace"); await mkdir(workspace);
   const store = new SqliteSessionStore(join(root, "data")), runtimes: SessionRuntime[] = [];
+  // These cases are the delivery rules of the strict design (the user is asked where the policy would settle it); the policy's own are relay-permissive.test.ts's.
+  askWhenUnsure(store);
   t.after(async () => {
     for (const app of runtimes) {
       try { await app.close(); }

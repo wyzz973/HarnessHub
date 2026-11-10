@@ -2,17 +2,18 @@ import { createHash, createHmac, randomBytes } from "node:crypto";
 import { MAX_VERIFY_MARKERS, type CommandClass, type ContextEffect, type VerifyRequest } from "../../../contracts/control.js";
 import type { ContentKind } from "../../../contracts/content.js";
 import {
-  EPHEMERAL_KEY_ID, MARKER_RESULTS, RELAY_MAX_RUNS, RELAY_MAX_SEQ, RelayError, TIERS, fingerprint, hmacDigest, markOf, parseDeliveredMark, parseExecutedOn, parseVendorKey, redactionTag, relayPacketId,
-  type BindingRelayState, type ConsentRecord, type ContinuityLevel, type DeliveredMark, type DeliveryPosition, type DeliveryRecord, type EndpointLayer, type ExecutedOn, type Fingerprint, type HmacDigest, type MarkerResult,
-  type RedactionTag, type RelayCapabilities, type RelayDeliveryWrite, type RelayIndexRow, type RelayKeyPort, type RelayPacket, type RelayPacketId, type RelayWindow, type RunRelay, type RunRelayRequest, type SourceRange, type Tier,
-  type VendorKey, type VendorObservation, type VerifyResult,
+  EPHEMERAL_KEY_ID, MARKER_RESULTS, RELAY_MAX_RUNS, RELAY_MAX_SEQ, RELAY_PREF_DEFAULTS, RelayError, TIERS, fingerprint, hmacDigest, markOf, parseDeliveredMark, parseExecutedOn, parseVendorKey, redactionTag, relayPacketId,
+  DEFAULT_ALLOW_PREFIX, defaultAllowCommand,
+  type BindingRelayState, type ConsentAppend, type ConsentRecord, type ContinuityLevel, type DeliveredMark, type DeliveryPosition, type DeliveryRecord, type EndpointLayer, type ExecutedOn, type Fingerprint, type HmacDigest, type MarkerResult,
+  type RedactionTag, type RelayAttention, type RelayCapabilities, type RelayDecision, type RelayDeliveryWrite, type RelayIndexRow, type RelayKeyPort, type RelayPacket, type RelayPacketId, type RelayPrefKey, type RelayWindow, type RunRelay,
+  type RunRelayRequest, type SourceRange, type Tier, type VendorKey, type VendorObservation, type VerifyResult,
 } from "../../../contracts/relay.js";
 import { SessionError, type EventDraft, type HarnessSelection, type NativeSessionBinding, type PublicRun, type RunId, type SessionEvent, type SessionId, type SessionSnapshot } from "../../../contracts/session.js";
 import { commandOutcome, dispatched, type InputOutcome } from "../domain/relay/advance.js";
 import { estimateTokens } from "../domain/relay/budget.js";
 import {
   admitsWithoutChoice, commandTurnEvent, foreignTo, heldSince, owed, pendingResend, retreatedPrior, settledOutcome, settledWithoutCheck, step,
-  type BindingDelivery, type ChoiceCause, type DeliveryChange, type Owed, type RelayAt, type RelayEvent, type RelayFact, type RelayStep, type StepNote, type VerifyPlan,
+  type BindingDelivery, type ChoiceCause, type DeliveryChange, type Owed, type RelayAt, type RelayEvent, type RelayFact, type RelayStep, type ResendPlan, type StepNote, type VerifyPlan,
 } from "../domain/relay/delivery.js";
 import type { RelayRecord } from "../domain/relay/packet.js";
 import { initialBindingRelay } from "../domain/relay/migrate.js";
@@ -35,6 +36,14 @@ import { terminal } from "../domain/state.js";
  * consentGate) and the smallest packet on the target's window (windows.ts); the request's relay options (parseRelayChoices,
  * runRelayRequest) and the decision for a pending binding owed nothing (A7 point 4). Their reads (preferences, consents,
  * windows, the data root) are the Runtime's, given here as values; nothing in this file does I/O (A15).
+ *
+ * The permissive defaults (the owner's decision of 2026-11-10, docs/proposals/relay/permissive-defaults.md): the strict design's
+ * gates and questions are settings now (RelaySettings, `relay_prefs`), off by default. Three rules govern what replaces them:
+ * a matter of the packet alone never stops the message (the input goes alone and the Run says so: `TurnDecision.alone` by
+ * "policy", `RelayDecision` in `run.context_prepared`); the policy does only three things on its own — send alone, send a
+ * pending packet again (once per packet, and again for newer facts), send the complete packet again from the epoch base — and
+ * never raises a mark, a floor or an epoch; what the user chose herself (`explicitChoice`) is not rewritten. Without a setting
+ * given — the functions' own default — every check is the strict design's, so the strict cases are the defaults' control (P9).
  */
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -49,6 +58,12 @@ export interface RelayDeclaration {
   readonly verify: "after_turn" | "on_next_open" | "none";
   readonly successProvesRecorded: boolean;
   readonly lateDelivery: boolean;
+  /**
+   * Whether a send to this Driver can ever be confirmed or refuted: it reports the input as an event (`live`), can be asked
+   * whether it holds the packet (`verify`), or a completed Turn proves the input recorded (`successProvesRecorded`). False for a
+   * Driver that declares nothing: its packets are sent once and never sent again by themselves (permissive-defaults §2.1).
+   */
+  readonly evidence: boolean;
   readonly execution: "process" | "gateway";
   readonly compactionEvidence: RelayCapabilities["compactionEvidence"];
   /** How its packets go: as a text block of their own, or flattened into one text with the user's words (singleText). */
@@ -62,11 +77,44 @@ export interface RelayDeclaration {
  */
 export function relayDeclaration(capabilities: RelayCapabilities | null | undefined): RelayDeclaration {
   if (capabilities === null || capabilities === undefined)
-    return { declared: false, probed: false, verify: "none", successProvesRecorded: false, lateDelivery: true, execution: "gateway", compactionEvidence: "none", channel: "single_text", capabilities: null };
+    return { declared: false, probed: false, verify: "none", successProvesRecorded: false, lateDelivery: true, evidence: false, execution: "gateway", compactionEvidence: "none", channel: "single_text", capabilities: null };
   return { declared: true, probed: capabilities.probed, verify: capabilities.delivery.verify, successProvesRecorded: capabilities.delivery.successProvesRecorded,
-    lateDelivery: capabilities.delivery.lateDelivery, execution: capabilities.execution, compactionEvidence: capabilities.compactionEvidence,
-    channel: capabilities.placement.parts === "multiple" ? "text_block" : "single_text", capabilities };
+    lateDelivery: capabilities.delivery.lateDelivery, evidence: capabilities.delivery.live !== "none" || capabilities.delivery.verify !== "none" || capabilities.delivery.successProvesRecorded,
+    execution: capabilities.execution, compactionEvidence: capabilities.compactionEvidence, channel: capabilities.placement.parts === "multiple" ? "text_block" : "single_text", capabilities };
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Settings: what the installation's preferences make of the policy
+// ---------------------------------------------------------------------------------------------------------------------
+
+/**
+ * The relay's settings with their defaults applied (the owner's decision of 2026-11-10: permissive by default, the strict
+ * behaviors are settings; permissive-defaults §4). `crossVendor` "allow" lets another vendor take the history (logged at its
+ * first use); `whenUnsure` "auto" settles what the relay is unsure of — a packet whose delivery is unconfirmed, a binding in
+ * doubt, a failure concerning the packet only — without asking, and never stops the message; "ask" asks as the strict design
+ * did; `allowUnprobed` lets a Driver whose probes have not proved its mechanisms take history; `dataRootInWorkspace` "block"
+ * refuses a cross-vendor handoff into a workspace the data directory is in reach of, "warn" only says so.
+ */
+export interface RelaySettings {
+  readonly crossVendor: "ask" | "allow" | "goal_only";
+  readonly whenUnsure: "auto" | "ask";
+  readonly allowUnprobed: boolean;
+  readonly dataRootInWorkspace: "warn" | "block";
+  readonly returnPreference: "continue" | "new_when_cold" | "ask";
+  readonly localModelsOffline: boolean;
+}
+/** The settings of a Store's stored preferences (RelayLogPort.relayPrefs): a missing or unreadable value is the default. */
+export function relaySettings(prefs: Readonly<Partial<Record<RelayPrefKey, string>>>): RelaySettings {
+  const value = (key: RelayPrefKey): string => prefs[key] ?? RELAY_PREF_DEFAULTS[key];
+  const crossVendor = value("relay.crossVendor"), returnPreference = value("relay.returnPreference");
+  return { crossVendor: crossVendor === "ask" || crossVendor === "goal_only" ? crossVendor : "allow", whenUnsure: value("relay.whenUnsure") === "ask" ? "ask" : "auto",
+    allowUnprobed: value("relay.allowUnprobed") !== "false", dataRootInWorkspace: value("relay.dataRootInWorkspace") === "block" ? "block" : "warn",
+    returnPreference: returnPreference === "new_when_cold" || returnPreference === "ask" ? returnPreference : "continue", localModelsOffline: value("relay.localModelsOffline") === "true" };
+}
+/** The strict design's settings: the four preferences that turn every strict behavior back on (RELAY_STRICT_PREFS). */
+export const STRICT_SETTINGS: RelaySettings = { crossVendor: "ask", whenUnsure: "ask", allowUnprobed: false, dataRootInWorkspace: "block", returnPreference: "continue", localModelsOffline: false };
+/** What the Runtime's defaults are when nothing is stored. */
+export const DEFAULT_SETTINGS: RelaySettings = relaySettings({});
 
 // ---------------------------------------------------------------------------------------------------------------------
 // The request's choices
@@ -114,6 +162,15 @@ export function parseRelayChoices(value: unknown): RelayChoices | undefined {
     ...(item.clearConfirmed === true ? { clearConfirmed: true as const } : {}), ...(item.tier === undefined ? {} : { tier: item.tier as Tier }),
     ...(item.native === "continue" || item.native === "new" ? { native: item.native } : {}), ...(consent === undefined ? {} : { consent }) };
   return Object.keys(choices).length ? choices : undefined;
+}
+/**
+ * Whether the request steered the relay itself: it asked for the history (`attach:"full"`, `resend`), confirmed a clear or chose a
+ * new native session. What the user chose this way the policy never rewrites (permissive-defaults §0 rule 3): when it cannot be
+ * done the Run fails and the draft stays, instead of going alone. `tier` is recorded with the Run only (the MVP renders the
+ * standard tier), and a consent is the user's answer to the vendor, not a request for history; neither counts.
+ */
+export function explicitChoice(choices: RelayChoices): boolean {
+  return choices.attach === "full" || choices.resend === true || choices.clearConfirmed === true || choices.native === "new";
 }
 /**
  * PublicRun.relayRequest for a request's choices (§4, RT2-19): the tier, attach, native and resend it chose, and the HMAC of
@@ -346,6 +403,11 @@ export interface AdmitInput {
    * tell them, and the unit tests of those checks).
    */
   readonly gates?: AdmitGates;
+  /**
+   * The relay's settings (relaySettings of the stored preferences). Absent: the strict design's (STRICT_SETTINGS), which is what
+   * the pure checks and their unit tests mean; the Runtime always gives the installation's, whose defaults are permissive.
+   */
+  readonly settings?: RelaySettings | (() => RelaySettings);
 }
 /** An input that would carry relay content, as admission found it (relayAdmission): what its binding is and owes. */
 export interface Carrying {
@@ -391,7 +453,7 @@ export interface ConsentView {
 }
 /** What G072's checks read for an input that would carry relay content (relayGatesOf builds the vendor part). */
 export interface AdmitGates {
-  /** `relay.allowUnprobed` (D11): an unprobed Driver may take relay content (development and tests only). */
+  /** `relay.allowUnprobed` (D11): an unprobed Driver may take relay content; on by default, off in the strict design (permissive-defaults §2.4). */
   readonly allowUnprobed: boolean;
   /** The data directory and relay key are out of the workspace's reach (INV-36). */
   readonly isolated: boolean;
@@ -443,12 +505,13 @@ export function carriesWithReading(reading: CommandClass): boolean {
 /**
  * Admission's relay part (§6.1 coordinator.admit, §9): what can be decided before any Run exists, synchronously and without
  * starting anything, for an input relayAdmission found would carry relay content; an input sent alone, a command and a
- * single-Harness conversation never are asked (relayAdmission). In §6.1's order, each the first failing one thrown:
+ * single-Harness conversation are never asked (relayAdmission). In §6.1's order, each the first failing one thrown:
  * - the probe gate (D11): a Driver that declares no relay mechanisms takes none (RELAY_TARGET_UNVERIFIED{undeclared}), an
- *   unprobed one only with `relay.allowUnprobed` (RELAY_TARGET_UNVERIFIED{unprobed});
+ *   unprobed one only with `relay.allowUnprobed` — which is on by default, so this is a setting of the strict design;
  * - a relay recovery that could not be written (RELAY_UNAVAILABLE{recovery_failed});
  * - the data root (INV-36): a cross-vendor handoff (any source's vendor key differs from the target's) into a workspace the
- *   data directory or relay key is not out of reach of (RELAY_UNAVAILABLE{data_root_in_workspace});
+ *   data directory or relay key is not out of reach of (RELAY_UNAVAILABLE{data_root_in_workspace}), when `relay.dataRootInWorkspace`
+ *   is "block"; "warn" (the default) does not refuse;
  * - the user's choice (G068): a pending packet no check before dispatch can settle and none may be resent automatically
  *   (RELAY_CHOICE_REQUIRED{delivery_unconfirmed}), a suspect binding no check can settle (verify_required | marker_absent); a
  *   Driver that checks at the open is let through and settled there (§9: only what admission can decide is a 409);
@@ -458,6 +521,11 @@ export function carriesWithReading(reading: CommandClass): boolean {
  * - the smallest packet (§6.2): the hard cap on the conservative window below MIN_PACKET (RELAY_INPUT_LIMIT{min_packet}).
  * The user's ［确认已清空］ is answered first (admitClearConfirmed: INVALID_INPUT where it is not offered). Without `gates`,
  * only G068's checks run.
+ *
+ * The permissive defaults (permissive-defaults §0, owner's decision of 2026-11-10): with `relay.whenUnsure` "auto" and a request
+ * that made no choice of its own (explicitChoice), nothing but the settings above stops an input: the recovery, the user's
+ * choice, the consent (a withdrawal, or a goal-only consent the MVP cannot render) and the smallest packet are settled at the
+ * open, where the Turn goes on without the packet and says so. A request that steered the relay is held to every check.
  */
 export function admitRelay(input: AdmitInput): void {
   const carrying = relayAdmission(input);
@@ -467,16 +535,20 @@ export function admitCarrying(input: AdmitInput, carrying: Carrying, gates: Admi
   const { state, target, choices } = input, { relay, declaration } = carrying, sync = relay.sync;
   if (choices.clearConfirmed === true) admitClearConfirmed(relay, declaration);
   if (!carrying.owes && !carrying.doubt && sync.kind !== "pending" && choices.attach !== "full") return;
+  // The settings are read (the installation's preferences) only for an input that carries relay content.
+  const settings = typeof input.settings === "function" ? input.settings() : input.settings ?? STRICT_SETTINGS, lenient = settings.whenUnsure === "auto" && !explicitChoice(choices);
   // G072's gates apply to another Harness's history only (Carrying.crossHarness); the epoch's vendor key always.
   const gated = gates !== undefined && carrying.crossHarness ? gates : undefined;
   if (gated !== undefined) probeGate(declaration, gated.allowUnprobed, target);
-  if (state.relayRecoveryFailed !== undefined) throw recoveryFailed();
+  if (state.relayRecoveryFailed !== undefined && !lenient) throw recoveryFailed();
   const cross = gated !== undefined && crossVendor(gated.target.vendor, gated.sources);
-  if (gated !== undefined && cross && !gated.isolated) throw dataRootInWorkspace(target);
-  admitChoice(carrying, choices);
+  if (gated !== undefined && cross && !gated.isolated && settings.dataRootInWorkspace === "block") throw dataRootInWorkspace(target);
+  if (!lenient) admitChoice(carrying, choices);
   if (gates === undefined) return;
-  consentGate({ relay, vendor: gates.target.vendor, layer: gates.target.layer, cross, consent: gates.consent, target, predicted: null });
-  if (gated === undefined) return;
+  // A consent is settled at the open when the preference allows or the policy settles what it cannot (the open reads the vendor
+  // the Driver really resolved): only a strict preference (ask), or a request that steered the relay, is asked here.
+  if (!(lenient && gates.consent.crossVendor !== "ask")) consentGate({ relay, vendor: gates.target.vendor, layer: gates.target.layer, cross, consent: gates.consent, target, predicted: null });
+  if (gated === undefined || lenient) return;
   const window = resolveWindow({ relay, report: declaration.capabilities?.window ?? "none", stored: gates.window, vendor: gates.target.vendor, fixedPrefix: declaration.capabilities?.fixedPrefix ?? null, now: gates.now });
   const channel = declaration.capabilities?.placement.maxInput ?? null, size = declaration.capabilities?.placement.measure(input.text, input.attachments) ?? [...input.text].length;
   const modelKey = relay.vendorObserved?.modelKey ?? "";
@@ -516,9 +588,10 @@ export function targetUnverified(reason: "unprobed" | "undeclared", target: { re
   return new RelayError({ code: "RELAY_TARGET_UNVERIFIED", reason }, message, { harnessId: target.harnessId, controlId: target.controlId });
 }
 /**
- * The probe gate (D11): only a probed Driver takes another Harness's history; with `relay.allowUnprobed` (development and
- * tests, set only in an isolated data root) an unprobed one does too, and so does a Driver that declares nothing, which is then
- * read by the most conservative declaration (relayDeclaration(null): no check, lateDelivery, no success proof).
+ * The probe gate (D11): only a probed Driver takes another Harness's history while `relay.allowUnprobed` is off (the strict design).
+ * With it on — the default (permissive-defaults §2.4: an unprobed Driver is marked "未经真机验证" on its card, not refused) — an
+ * unprobed one does too, and so does a Driver that declares nothing, which is then read by the most conservative declaration
+ * (relayDeclaration(null): no check, lateDelivery, no success proof, so no automatic resend of its packets).
  */
 export function probeGate(declaration: RelayDeclaration, allowUnprobed: boolean, target: { readonly harnessId: string; readonly controlId: string }): void {
   if (declaration.probed || allowUnprobed) return;
@@ -569,28 +642,39 @@ export interface RequestedConsent { readonly vendor: VendorKey; readonly decisio
 /** What stands for a vendor key (§10.4): exempt (local, offline models), a consent (and the record it rests on), or none. */
 export type ConsentStanding =
   | { readonly kind: "exempt" }
-  | { readonly kind: "given"; readonly decision: "acknowledged" | "goal_only"; readonly logSeq: number | null; readonly via: "request" | "session" | "global" | "preference" }
+  /**
+   * `via` "default": nothing was recorded for the vendor and `relay.crossVendor` allows it (the permissive default): no log row yet,
+   * so the Runtime writes one (appendDefaultAllow) before the Turn that rests on it; `logSeq` is then that row's.
+   */
+  | { readonly kind: "given"; readonly decision: "acknowledged" | "goal_only"; readonly logSeq: number | null; readonly via: "request" | "session" | "global" | "preference" | "default" }
   | { readonly kind: "missing"; readonly revoked: boolean };
-/** The vendor keys `relay.crossVendor:allow` never covers, and only a Session's own record does for unknown ones (§10.4, INV-33). */
+/** The vendor keys `relay.crossVendor:goal_only` never covers, and only a Session's own record does for unknown ones (§10.4, INV-33) — the strict design's. */
 function guarded(vendor: VendorKey): boolean { return /^(?:unknown|gateway|router|provider):/u.test(vendor); }
 /**
- * Whether a consent stands for `vendor` in this Session (§10.4, INV-33): `local` with "本机模型不出网" needs none; the request's
- * own consent to it stands; else this Session's latest record decides (withdrawn: none), else — except for an unknown key and an
- * endpoint a workspace file gave, which every Session asks anew — the latest global record, else `relay.crossVendor` (allow or
- * goal_only), which never covers unknown:*, gateway:*, router:* or provider:*. A withdrawal is never overridden by a broader
- * consent or the preference.
+ * Whether a consent stands for `vendor` in this Session (§10.4, INV-33): `local` with "本机模型不出网" needs none (unless the
+ * preference allows, which logs every first use); the request's own consent to it stands; else this Session's latest record
+ * decides (withdrawn: none), else — in the strict design (`ask`, `goal_only`), except for an unknown key and an endpoint a
+ * workspace file gave, which every Session asks anew — the latest global record, else `relay.crossVendor`: `goal_only` covers a
+ * named vendor for the goal only, `ask` nothing. With `allow` (the default; the owner's decision of 2026-11-10) any key stands unless
+ * withdrawn — unknown, gateway, router and Provider keys and an endpoint from a workspace file included: the Harness is already
+ * sending the user's input and code to that endpoint, and the history goes with a notice, not a question. A withdrawal is never
+ * overridden by a broader consent or the preference. A row the default wrote (consentSourceOf) is a consent only while the
+ * preference is `allow`: under a strict preference it is no consent the user gave.
  */
 export function consentStanding(vendor: VendorKey, layer: EndpointLayer | null, view: ConsentView): ConsentStanding {
-  if (vendor === "local" && view.localModelsOffline) return { kind: "exempt" };
+  const permissive = view.crossVendor === "allow";
+  if (vendor === "local" && view.localModelsOffline && !permissive) return { kind: "exempt" };
   if (view.request !== null && view.request.vendor === vendor) return { kind: "given", decision: view.request.decision, logSeq: null, via: "request" };
-  const latest = (scope: "session" | "global") => view.records.filter(record => record.vendor === vendor && (scope === "session" ? record.scope.kind === "session" && record.scope.sessionId === view.session : record.scope.kind === "global"))
+  const latest = (scope: "session" | "global") => view.records.filter(record => record.vendor === vendor && (permissive || !record.commandId.startsWith(DEFAULT_ALLOW_PREFIX))
+    && (scope === "session" ? record.scope.kind === "session" && record.scope.sessionId === view.session : record.scope.kind === "global"))
     .reduce<ConsentRecord | null>((last, record) => last === null || record.logSeq > last.logSeq ? record : last, null);
   const own = latest("session");
   if (own !== null) return own.decision === "revoked" ? { kind: "missing", revoked: true } : { kind: "given", decision: own.decision, logSeq: own.logSeq, via: "session" };
-  if (vendor.startsWith("unknown:") || layer === "workspace_file") return { kind: "missing", revoked: false };
+  if (!permissive && (vendor.startsWith("unknown:") || layer === "workspace_file")) return { kind: "missing", revoked: false };
   const global = latest("global");
   if (global !== null) return global.decision === "revoked" ? { kind: "missing", revoked: true } : { kind: "given", decision: global.decision, logSeq: global.logSeq, via: "global" };
-  if (!guarded(vendor) && view.crossVendor !== "ask") return { kind: "given", decision: view.crossVendor === "allow" ? "acknowledged" : "goal_only", logSeq: null, via: "preference" };
+  if (permissive) return { kind: "given", decision: "acknowledged", logSeq: null, via: "default" };
+  if (!guarded(vendor) && view.crossVendor === "goal_only") return { kind: "given", decision: "goal_only", logSeq: null, via: "preference" };
   return { kind: "missing", revoked: false };
 }
 export function consentRequired(reason: "missing" | "vendor_changed" | "revoked", vendor: VendorKey, target: { readonly harnessId: string; readonly controlId: string }, previous?: VendorKey, goalOnly = false): RelayError {
@@ -600,26 +684,49 @@ export function consentRequired(reason: "missing" | "vendor_changed" | "revoked"
     : "这条消息会附上之前的对话记录交给 " + vendor + "，需要你先同意。可以同意后发送，或只发这条消息（不附交接单）；这条消息没有发出，草稿已保留。";
   return new RelayError({ code: "RELAY_CONSENT_REQUIRED", reason }, message, { vendor, ...(previous === undefined ? {} : { previousVendor: previous }), harnessId: target.harnessId, controlId: target.controlId });
 }
+/** What the consent checks found for a Turn that carries history: the consent that stands (null when none is needed), and the key it moved from. */
+export interface ConsentOutcome {
+  readonly standing: ConsentStanding | null;
+  /** The epoch's earlier vendor key when this Turn goes to another one and the preference allows it (the strict design refuses): `relay.vendor_changed` is recorded, nothing stops. */
+  readonly changedFrom: VendorKey | null;
+}
 /**
  * The consent checks (§10.4) for a Turn that would carry relay content: the vendor key changed since the epoch's first packet
  * (`consentKey`) without this request's consent to the new one → vendor_changed, whether cross-vendor or not (the native
- * history the new vendor reads holds the earlier packets); a cross-vendor handoff without a standing consent → missing (or
- * vendor_changed when `predicted`, what admission read, differs from this key: the open saw another vendor than admission
- * could tell). A goal-only consent stands for no packet yet: the MVP renders the standard tier only (G070), so it is asked
- * again (missing). Returns the consent that stands (null when none is needed).
+ * history the new vendor reads holds the earlier packets) — unless `relay.crossVendor` is `allow`, which lets it go with the
+ * change recorded (`changedFrom`); a cross-vendor handoff without a standing consent → missing (or revoked, or vendor_changed
+ * when `predicted`, what admission read, differs from this key and the preference does not allow). A goal-only consent stands
+ * for no packet yet: the MVP renders the standard tier only (G070), so it is asked again (missing). Returns the consent that
+ * stands (null when none is needed) and the change.
  */
 export function consentGate(input: { readonly relay: BindingRelayState; readonly vendor: VendorKey; readonly layer: EndpointLayer | null; readonly cross: boolean; readonly consent: ConsentView;
-    readonly target: { readonly harnessId: string; readonly controlId: string }; readonly predicted: VendorKey | null }): ConsentStanding | null {
-  const { relay, vendor, consent, target } = input;
-  if (relay.consentKey !== null && relay.consentKey !== vendor && consent.request?.vendor !== vendor) throw consentRequired("vendor_changed", vendor, target, relay.consentKey);
-  if (!input.cross) return null;
+    readonly target: { readonly harnessId: string; readonly controlId: string }; readonly predicted: VendorKey | null }): ConsentOutcome {
+  const { relay, vendor, consent, target } = input, permissive = consent.crossVendor === "allow";
+  let changedFrom: VendorKey | null = null;
+  if (relay.consentKey !== null && relay.consentKey !== vendor && consent.request?.vendor !== vendor) {
+    if (!permissive) throw consentRequired("vendor_changed", vendor, target, relay.consentKey);
+    changedFrom = relay.consentKey;
+  }
+  if (!input.cross && changedFrom === null) return { standing: null, changedFrom: null };
   const standing = consentStanding(vendor, input.layer, consent);
-  if (standing.kind === "missing") throw consentRequired(input.predicted !== null && input.predicted !== vendor ? "vendor_changed" : standing.revoked ? "revoked" : "missing", vendor, target, input.predicted ?? undefined);
+  if (standing.kind === "missing") throw consentRequired(!permissive && input.predicted !== null && input.predicted !== vendor ? "vendor_changed" : standing.revoked ? "revoked" : "missing", vendor, target, input.predicted ?? undefined);
   if (standing.kind === "given" && standing.decision === "goal_only") throw consentRequired("missing", vendor, target, undefined, true);
-  return standing;
+  return { standing, changedFrom };
 }
 /** The data classes a relay packet may carry (§10.1), recorded with a consent the request gives. */
 export const CONSENT_CATEGORIES = ["user_text", "hub_text", "harness_text", "exec_output", "workspace_meta", "credential_path"] as const;
+/** The policy version the consent log's rows are written under (the request's own consent, and the default's). */
+export const CONSENT_POLICY = "relay/1" as const;
+/**
+ * The row the first use of a vendor writes to the installation's log while `relay.crossVendor` allows it by default
+ * (permissive-defaults §2.4): global, acknowledged, the same data classes a consent covers, its command the vendor's and the
+ * policy's (`default-allow:<vendor key>:<policy>`), so a repeat is the same command and the row says by its identity that the
+ * default wrote it (consentSourceOf). It is the trace of what left, not a decision of the user's: a withdrawal after it is the
+ * user's, and wins.
+ */
+export function defaultAllowAppend(vendor: VendorKey, authKind: string | null, now: number): ConsentAppend {
+  return { commandId: defaultAllowCommand(vendor, CONSENT_POLICY), vendor, scope: { kind: "global" }, decision: "acknowledged", categories: [...CONSENT_CATEGORIES], policyVersion: CONSENT_POLICY, authKind, decidedAt: now };
+}
 /** The command identity of the consent a send carries in the installation's log: unique across Sessions, the same for a replay. */
 export function consentCommandOf(session: SessionId, command: string): string {
   return "send-" + createHash("sha256").update(session + "\0" + command, "utf8").digest("hex").slice(0, 40);
@@ -762,12 +869,25 @@ export type TurnDecision =
        * is not asked; the input goes as typed.
        */
       readonly owedNothing?: true }
-  /** n: the user chose to send it alone; what is owed stays owed. */
-  | { readonly kind: "alone" }
-  /** a: a packet of `need`, on `relay` (the binding after the check, a confirmed clear and a retreat). */
-  | { readonly kind: "carry"; readonly need: Owed; readonly attachOverride: boolean; readonly resend: { readonly by: "auto" | "user"; readonly of: RunId } | null; readonly retreat?: { readonly firstFromSeq: number | null };
+  /**
+   * n: the input goes as typed and what is owed stays owed, the binding exactly as it was (no row, no evidence). `by` "user":
+   * the user chose it (`attach:"none"`). `by` "policy" (permissive-defaults §0): the policy did, because a packet is still
+   * unconfirmed after its resend and nothing newer is owed, a binding in doubt owes nothing new, or something concerning the
+   * packet alone could not be done (`cause`; `reason` for a failed preparation).
+   */
+  | { readonly kind: "alone"; readonly by: "user" | "policy"; readonly cause?: DecisionCause; readonly reason?: string }
+  /**
+   * a: a packet of `need`, on `relay` (the binding after the check, a confirmed clear and a retreat). `by`: "need" an ordinary
+   * packet of what is owed; "user" the user's `attach:"full"` or `resend`; "policy" an automatic resend (once per packet, and
+   * again only for newer facts: `resend.by` "grown"), or the complete packet again on a binding in doubt that is owed newer facts.
+   * `lateDelivery` is what the state machine is told (the Driver's declaration, but never in auto mode: a late write lands once
+   * more at most).
+   */
+  | { readonly kind: "carry"; readonly need: Owed; readonly attachOverride: boolean; readonly resend: { readonly by: "auto" | "user" | "grown"; readonly of: RunId } | null; readonly retreat?: { readonly firstFromSeq: number | null };
       /** The binding state `need` was reckoned on: a retreat's prior (retreatedPrior), else the binding as it is. */
-      readonly on: BindingRelayState };
+      readonly on: BindingRelayState; readonly by: "need" | "policy" | "user"; readonly cause?: DecisionCause; readonly lateDelivery: boolean };
+/** The causes a decision of the policy answers (contracts/relay.ts DECISION_CAUSES). */
+export type DecisionCause = NonNullable<RelayDecision["cause"]>;
 export interface DecideInput {
   /** The binding's relay state after the open's check (and the user's ［确认已清空］). */
   readonly relay: BindingRelayState;
@@ -784,33 +904,54 @@ export interface DecideInput {
   readonly recoveryFailed: boolean;
   /** The first native epoch the binding's own native session holds (heldSinceIn); absent, only its current one. */
   readonly heldSince?: number;
+  /** `relay.whenUnsure`: "auto" settles what the relay is unsure of by itself; "ask" (absent too) asks as the strict design did. */
+  readonly whenUnsure?: "auto" | "ask" | (() => "auto" | "ask");
+  /**
+   * The through seq of the packet `need` would make (rangeOf of its Runs): what a pending packet's newer facts are measured by.
+   * Absent: the latest seq of `need`'s facts, which is the same when every fact is carried.
+   */
+  readonly topOf?: (need: Owed) => number;
 }
 /** A packet identity no text has (its digits are all 0), for asking the state machine whether a carry would be refused. */
 const PROBE_PACKET = relayPacketId("relay-" + "0".repeat(20));
 const PROBE_RANGE: SourceRange = { fromSeq: 0, throughSeq: 0, fromRun: 0, throughRun: 0 };
 const PROBE_RUN = "run-relay-probe" as RunId;
 /**
- * The choice between b, n and a for a content Turn after the open's check (§7.2, §9): sent alone when the user chose it;
- * a pending packet resent once by itself when it may be (pendingResend), otherwise only on the user's `resend` or
- * `attach:"full"`; a suspect binding with a packet only on the user's choice of the complete packet (a with retreat) — as typed,
- * standing on the retreated prior, when that prior owes nothing (R5) — as typed when nothing foreign is there or nothing is
- * owed and the cause allows it, else the user's choice (verify_first → RELAY_CHOICE_REQUIRED); otherwise a packet exactly when
- * something is owed. A request for the history with nothing to attach goes as typed and says so (`nothingToAttach`, A9).
+ * The choice between b, n and a for a content Turn after the open's check (§7.2, §9; permissive-defaults §0–§2): sent alone when
+ * the user chose it (by "user"); a pending packet resent once by itself when the Driver can show delivery (pendingResend), and
+ * again only for newer facts (`grown`) — otherwise sent alone by the policy; a suspect binding owed newer facts than its mark by
+ * the complete packet again in the same native session (a with retreat), owed nothing new alone by the policy (or as typed when
+ * nothing foreign is there or the cause allows it); otherwise a packet exactly when something is owed. The user's own choice of
+ * `attach:"full"`, `resend` (and the request's other explicit choices) is acted on as before, and when it cannot be done the Run
+ * fails. A request for the history with nothing to attach goes as typed and says so (`nothingToAttach`, A9). With `whenUnsure`
+ * "ask" (the strict design) each of the policy's decisions is the user's choice instead: RELAY_CHOICE_REQUIRED.
  * Throws the relay error the Run then fails with, undispatched.
  */
 export function decideTurn(input: DecideInput): TurnDecision {
   const { relay, choices, declaration } = input, sync = relay.sync;
-  if (choices.attach === "none") return { kind: "alone" };
+  if (choices.attach === "none") return { kind: "alone", by: "user" };
+  // Read only where it matters (the preferences are an installation read, which an ordinary Turn that owes nothing never makes).
+  let known: "auto" | "ask" | null = null;
+  const mode = (): "auto" | "ask" => known ??= typeof input.whenUnsure === "function" ? input.whenUnsure() : input.whenUnsure ?? "ask";
+  const lenient = (): boolean => mode() === "auto" && !explicitChoice(choices);
   const needOn = (state: BindingRelayState, attachOverride: boolean) => owed(state, input.harnessId, input.controlId, input.facts,
     { originHistory: input.originHistory, attachOverride, ...(input.heldSince === undefined ? {} : { heldSince: input.heldSince }) });
   const nonEmpty = (need: Owed) => need.facts.length > 0 || need.origin;
-  const refusedBy = (outcome: RelayStep): void => {
-    if (outcome.kind !== "refused") return;
+  const topOf = input.topOf ?? ((need: Owed) => Math.max(0, ...need.facts.map(fact => fact.seq)));
+  const alone = (cause: DecisionCause, reason?: string): TurnDecision => ({ kind: "alone", by: "policy", cause, ...(reason === undefined ? {} : { reason }) });
+  /** A refusal of the state machine: the policy's send alone when it may settle it, else the error the Run fails with. */
+  const refusedBy = (outcome: RelayStep): TurnDecision | null => {
+    if (outcome.kind !== "refused") return null;
     const refusal = outcome.refusal;
+    if (lenient()) return refusal.code === "RELAY_CHOICE_REQUIRED" ? alone(refusal.cause) : refusal.code === "verify_first" ? alone(causeOf(refusal.cause)) : alone("prepare_failed", "render");
     if (refusal.code === "RELAY_CHOICE_REQUIRED") throw choiceRequired(refusal.cause);
     if (refusal.code === "verify_first") throw choiceRequired(causeOf(refusal.cause));
     throw new RelayError({ code: "RELAY_PREPARE_FAILED", reason: "render" }, "没能准备交接单：送达状态不允许这样发送（" + refusal.why + "）。这条消息没有发出。");
   };
+  /** The relay's record could not be recovered: nothing it keeps can be carried; the policy sends the input alone. */
+  const unrecovered = (): TurnDecision => { if (lenient()) return alone("recovery_failed"); throw recoveryFailed(); };
+  // A late write lands once more at most when the policy resends by itself: the resend's template carries its own dedupe line.
+  const lateDelivery = (): boolean => mode() === "auto" ? false : declaration.lateDelivery;
   const foreign = () => foreignAtAll(input.facts, input.harnessId, input.controlId, relay, input.originHistory, input.heldSince);
   // The user asked for the history: the complete packet or the pending one again ("附上交接单", "补发完整交接单", "再附一次").
   const requested = choices.attach === "full" || choices.resend === true;
@@ -818,41 +959,128 @@ export function decideTurn(input: DecideInput): TurnDecision {
     const attachOverride = sync.attachOverride || choices.attach === "full", need = needOn(relay, attachOverride);
     // A7 point 4 (G072): nothing is owed any more, so nothing is sent again and nobody is asked; the binding goes back to the prior.
     if (!nonEmpty(need)) {
-      refusedBy(step(relay, { kind: "owed_nothing" }));
+      const back = refusedBy(step(relay, { kind: "owed_nothing" }));
+      if (back !== null) return back;
       return { kind: "plain", foreign: foreign(), nothingToAttach: requested, owedNothing: true };
     }
-    if (input.recoveryFailed) throw recoveryFailed();
-    // On a pending packet `attach:"full"` is the user's resend too (R9b).
-    const by = pendingResend(sync, declaration.lateDelivery) === "auto" ? "auto" as const : requested ? "user" as const : null;
-    if (by === null) throw choiceRequired("delivery_unconfirmed");
-    // Without the Run that carried it, a resend could not name what it supersedes: the user decides instead (G068 phase two).
-    if (input.pendingRun === null) throw choiceRequired("delivery_unconfirmed");
+    if (input.recoveryFailed) return unrecovered();
+    // On a pending packet `attach:"full"` is the user's resend too (R9b). The automatic resend is for a Driver that can show
+    // delivery, once; newer facts than the pending packet's are sent again with it (permissive-defaults §2.1).
+    const plan = pendingResend(sync, { lateDelivery: declaration.lateDelivery, evidence: declaration.evidence }, mode(), topOf(need) > sync.range.throughSeq) as ResendPlan;
+    const by = plan === "auto" ? "auto" as const : requested ? "user" as const : plan === "grown" ? "grown" as const : null;
+    if (by === null) { if (plan === "alone") return alone("delivery_unconfirmed"); throw choiceRequired("delivery_unconfirmed"); }
+    // Without the Run that carried it, a resend could not name what it supersedes (G068 phase two): the policy sends alone, a
+    // request that asked for it fails, and the strict design lets the user decide.
+    if (input.pendingRun === null) { if (lenient()) return alone("delivery_unconfirmed"); throw choiceRequired("delivery_unconfirmed"); }
     const resend = { by, of: input.pendingRun };
-    refusedBy(step(relay, { kind: "carry", runId: PROBE_RUN, packet: { id: PROBE_PACKET, range: PROBE_RANGE }, attachOverride, lateDelivery: declaration.lateDelivery, resend }));
-    return { kind: "carry", need, attachOverride, resend, on: relay };
+    const refused = refusedBy(step(relay, { kind: "carry", runId: PROBE_RUN, packet: { id: PROBE_PACKET, range: by === "grown" ? { ...PROBE_RANGE, throughSeq: topOf(need) } : PROBE_RANGE }, attachOverride, lateDelivery: lateDelivery(), resend }));
+    if (refused !== null) return refused;
+    return { kind: "carry", need, attachOverride, resend, on: relay, by: by === "user" ? "user" : "policy", ...(by === "user" ? {} : { cause: "delivery_unconfirmed" as const }), lateDelivery: lateDelivery() };
   }
   const attachOverride = choices.attach === "full";
-  if (sync.kind === "suspect" && requested) {
-    const on: BindingRelayState = { ...relay, sync: retreatedPrior(relay, input.firstFromSeq)! }, need = needOn(on, attachOverride);
-    if (!nonEmpty(need)) {
-      // Nothing to send again on the prior the choice moves back to (R5): the input goes as typed and the binding stands there,
-      // which no check would otherwise ever let it do; a mark that does not come back (legacy) still needs the user.
-      const retreat = { firstFromSeq: input.firstFromSeq }, isForeign = foreign();
-      refusedBy(step(relay, { kind: "plain", foreign: isForeign, retreat }));
-      return { kind: "plain", foreign: isForeign, nothingToAttach: true, retreat };
+  if (sync.kind === "suspect") {
+    // A suspect mark is not trusted, so a packet is never built on it: what is owed above it would make the binding synced on a
+    // mark nothing has checked. The user's complete packet retreats to the epoch base first; so does the policy's, when newer
+    // facts are owed than the mark claims (permissive-defaults §2.2) — and with nothing newer owed the input goes alone and the
+    // binding stays in doubt until the next open's check or the user settles it.
+    const policyRetreat = !requested && lenient() && nonEmpty(needOn(relay, false));
+    if (requested || policyRetreat) {
+      const on: BindingRelayState = { ...relay, sync: retreatedPrior(relay, input.firstFromSeq)! }, need = needOn(on, attachOverride);
+      const cause: DecisionCause = sync.cause === "marker_absent" ? "marker_absent" : "verify_required";
+      if (!nonEmpty(need)) {
+        // Nothing to send again on the prior the choice moves back to (R5): the input goes as typed and the binding stands there,
+        // which no check would otherwise ever let it do; a mark that does not come back (legacy) still needs the user.
+        const retreat = { firstFromSeq: input.firstFromSeq }, isForeign = foreign();
+        const refused = refusedBy(step(relay, { kind: "plain", foreign: isForeign, retreat }));
+        if (refused !== null) return refused;
+        return { kind: "plain", foreign: isForeign, nothingToAttach: true, retreat };
+      }
+      if (input.recoveryFailed) return unrecovered();
+      return { kind: "carry", need, attachOverride, resend: null, retreat: { firstFromSeq: input.firstFromSeq }, on, by: requested ? "user" : "policy", ...(requested ? {} : { cause }), lateDelivery: lateDelivery() };
     }
-    if (input.recoveryFailed) throw recoveryFailed();
-    return { kind: "carry", need, attachOverride, resend: null, retreat: { firstFromSeq: input.firstFromSeq }, on };
   }
   const need = needOn(relay, attachOverride);
   if (!nonEmpty(need)) {
     const isForeign = foreign();
-    refusedBy(step(relay, { kind: "plain", foreign: isForeign }));
+    const refused = refusedBy(step(relay, { kind: "plain", foreign: isForeign }));
+    if (refused !== null) return refused;
     return { kind: "plain", foreign: isForeign, nothingToAttach: requested };
   }
-  if (input.recoveryFailed) throw recoveryFailed();
-  refusedBy(step(relay, { kind: "carry", runId: PROBE_RUN, packet: { id: PROBE_PACKET, range: PROBE_RANGE }, attachOverride, lateDelivery: declaration.lateDelivery, resend: null }));
-  return { kind: "carry", need, attachOverride, resend: null, on: relay };
+  if (input.recoveryFailed) return unrecovered();
+  const refused = refusedBy(step(relay, { kind: "carry", runId: PROBE_RUN, packet: { id: PROBE_PACKET, range: PROBE_RANGE }, attachOverride, lateDelivery: lateDelivery(), resend: null }));
+  if (refused !== null) return refused;
+  return { kind: "carry", need, attachOverride, resend: null, on: relay, by: attachOverride ? "user" : "need", lateDelivery: lateDelivery() };
+}
+/**
+ * What a Turn records of its decision in `run.context_prepared.data.relay.decision` (contracts RelayDecision): the kind, who decided
+ * and what for. An ordinary Turn that owes nothing records none (it has no `relay` at all); one asked for the history with none to
+ * attach says the user asked; one whose pending packet is no longer owed says the need decided.
+ */
+export function decisionRecord(decision: TurnDecision | null): RelayDecision | null {
+  if (decision === null) return null;
+  switch (decision.kind) {
+    case "carry": return { kind: "carry", by: decision.by, ...(decision.cause === undefined ? {} : { cause: decision.cause }) };
+    case "alone": return { kind: "alone", by: decision.by, ...(decision.cause === undefined ? {} : { cause: decision.cause }), ...(decision.reason === undefined ? {} : { reason: decision.reason }) };
+    case "plain": return decision.nothingToAttach ? { kind: "plain", by: "user" } : decision.owedNothing === true ? { kind: "plain", by: "need" } : null;
+  }
+}
+/**
+ * Whether a relay failure concerns the packet only, so that the policy sends the input alone instead of failing the Run
+ * (permissive-defaults §0 rule 1, rows 13, 15, 16 and 20): the cause it is recorded under, and for a failed preparation the
+ * reason. Null when it does not: the strict setting (`whenUnsure` "ask"), a request that steered the relay (rule 3), a failure of
+ * the message itself (the target did not start, a limit of the message's own), and a failure the settings themselves name (a
+ * data directory in the workspace with `block`, an unprobed Driver with `allowUnprobed` off, a consent the strict preference asks).
+ */
+export function policyAloneOf(error: unknown, settings: RelaySettings, choices: RelayChoices): { readonly cause: DecisionCause; readonly reason?: string } | null {
+  if (settings.whenUnsure !== "auto" || explicitChoice(choices)) return null;
+  if (error instanceof RelayError) {
+    switch (error.code) {
+      case "RELAY_INPUT_LIMIT": return { cause: "input_limit", reason: error.reason };
+      case "RELAY_UNAVAILABLE": return error.reason === "recovery_failed" ? { cause: "recovery_failed" } : error.reason === "consent_log_full" ? { cause: "prepare_failed", reason: error.reason } : null;
+      case "RELAY_CONSENT_REQUIRED": return settings.crossVendor === "ask" ? null : error.reason === "revoked" ? { cause: "consent_revoked" } : { cause: "consent_goal_only", reason: error.reason };
+      case "RELAY_PREPARE_FAILED": return error.reason === "target_start" || error.reason === "classification_changed" ? null : { cause: "prepare_failed", reason: error.reason };
+      case "RELAY_CHOICE_REQUIRED": return { cause: error.reason as ChoiceCause };
+      default: return null;
+    }
+  }
+  // The known secrets could not be read (relaySecretsOf): no packet can be redacted, so none is sent (INV-29, fail closed).
+  if (error instanceof SessionError && error.code === "RELAY_PREPARE_FAILED") return { cause: "prepare_failed", reason: "redaction_failed" };
+  return null;
+}
+/** What `attentionOf` reads of one binding. */
+export interface AttentionInput {
+  readonly relay: BindingRelayState;
+  /** The Session's relay record could not be recovered after a restart (SessionSnapshot.relayRecoveryFailed). */
+  readonly recoveryFailed: boolean;
+  /** The decision of the latest Turn that ran on the binding, when it has one (decisionRecord). */
+  readonly latest: RelayDecision | null;
+  /** How many of the conversation's Turns the binding still owes (owed()). */
+  readonly owedRuns: number;
+}
+/**
+ * What a binding asks the user to look at (permissive-defaults §2.6; `GET …/relay` gives it per binding): from its sync state —
+ * a packet sent and not confirmed, a mark in doubt, a clear not confirmed, a record that could not be recovered — and from what
+ * its latest Turn was sent alone for when that outlasts the Turn (a window too small for the smallest packet, a consent withdrawn
+ * or for the goal only). Never a block: every option is a way the user may settle it, the next input goes anyway. Null when the
+ * binding needs nothing. `key` names the episode: the same cause within one wait for a check is the same key, so a banner shown
+ * once and closed does not come back.
+ */
+export function attentionOf(input: AttentionInput): RelayAttention | null {
+  const { relay } = input, sync = relay.sync, counts = (packets: number) => ({ runs: input.owedRuns, packets });
+  if (input.recoveryFailed) return { cause: "recovery_failed", options: ["new_native"], counts: counts(0), key: "recovery_failed:" + relay.nativeEpoch };
+  if (sync.kind === "pending") return { cause: "delivery_unconfirmed", options: ["attach_full", "new_native"], counts: counts(1 + sync.autoResends + sync.manualResends), key: "delivery_unconfirmed:" + sync.packetId };
+  if (sync.kind === "suspect") {
+    const cause = sync.cause === "marker_absent" ? "marker_absent" as const : sync.cause === "clear_unconfirmed" ? "clear_unconfirmed" as const : "verify_required" as const;
+    const confirmable = sync.cause === "clear_unconfirmed" && sync.floorCandidate !== null && sync.floorCandidate > relay.epochFloor;
+    return { cause, options: ["attach_full", "new_native", ...(confirmable ? ["clear_confirmed" as const] : [])], counts: counts(sync.carried === null ? 0 : 1),
+      key: cause + ":" + relay.nativeEpoch + ":" + (sync.floorCandidate ?? markOf(sync)?.throughSeq ?? "none") + (sync.carried === null ? "" : ":" + sync.carried.packetId) };
+  }
+  const latest = input.latest;
+  if (input.owedRuns > 0 && latest?.kind === "alone" && latest.by === "policy") {
+    if (latest.cause === "input_limit") return { cause: "input_limit", options: [], counts: counts(0), key: "input_limit:" + relay.nativeEpoch };
+    if (latest.cause === "consent_revoked" || latest.cause === "consent_goal_only") return { cause: latest.cause, options: ["acknowledge"], counts: counts(0), key: latest.cause + ":" + relay.nativeEpoch };
+  }
+  return null;
 }
 /** The Runs of what is owed, in conversation order, each a finished fact whose input came before the current one's. */
 export function needRuns(state: SessionSnapshot, current: PublicRun, need: Owed): readonly RunId[] {

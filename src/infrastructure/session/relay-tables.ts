@@ -64,7 +64,7 @@ CREATE TABLE relay_log(seq INTEGER PRIMARY KEY AUTOINCREMENT, command_id TEXT NO
   policy_version TEXT NOT NULL, auth_kind TEXT, decided_at INTEGER NOT NULL) STRICT;                                                          -- 安装级、只追加（RT1-M9）
 CREATE TABLE relay_log_archive(seq INTEGER PRIMARY KEY, command_id TEXT NOT NULL UNIQUE, kind TEXT NOT NULL, vendor TEXT NOT NULL, scope TEXT NOT NULL, session_id TEXT NOT NULL,
   decision TEXT NOT NULL, categories_json TEXT NOT NULL, policy_version TEXT NOT NULL, auth_kind TEXT, decided_at INTEGER NOT NULL, archived_at INTEGER NOT NULL) STRICT;   -- 触顶轮转（F21）
-CREATE TABLE relay_prefs(key TEXT PRIMARY KEY CHECK(key IN('relay.crossVendor','relay.returnPreference','relay.allowUnprobed','relay.localModelsOffline')),
+CREATE TABLE relay_prefs(key TEXT PRIMARY KEY CHECK(key IN('relay.crossVendor','relay.returnPreference','relay.allowUnprobed','relay.localModelsOffline','relay.whenUnsure','relay.dataRootInWorkspace')),
   value TEXT NOT NULL CHECK(length(value)<=64), updated_at INTEGER NOT NULL) STRICT;                                                          -- 安装级偏好（F07）
 CREATE TRIGGER relay_bodies_immutable BEFORE UPDATE ON relay_bodies BEGIN SELECT RAISE(ABORT,'relay body is immutable'); END;
 CREATE TRIGGER relay_packets_immutable BEFORE UPDATE ON relay_packets BEGIN SELECT RAISE(ABORT,'relay packet is immutable'); END;

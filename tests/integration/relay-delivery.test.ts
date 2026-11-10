@@ -27,6 +27,7 @@ import { initialBindingRelay } from "../../src/contexts/session/domain/relay/mig
 import { recoverRelay } from "../../src/contexts/session/domain/relay/recover.js";
 import { RedactedHarnessControl } from "../../src/infrastructure/session/redacted-control.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { askWhenUnsure } from "../fixtures/relay-settings.js";
 
 // G068 (ADR-055 §7, §9 S15): the delivery state machine with real storage and a real native-history reference model.
 // G068-C08 and the crash points K7–K11 run the formal SqliteSessionStore with recoverRelay as its constructor option, on
@@ -702,20 +703,11 @@ async function runtimeWorld(t: TestContext): Promise<RuntimeWorld> {
       let next = 0;
       const app = new SessionRuntime(world.store, factory, { id: () => "g068-" + ++next + "-" + runtimes.length, now: () => new Date(Date.UTC(2026, 10, 10, 12)), publish: () => {},
         fingerprint: value => createHash("sha256").update(value).digest("hex"), ...options });
-      // G072: with the factory's declarations (enableAdmission) the relay's gates apply. These cases are about delivery, not
-      // the gates (tests/integration/relay-coordinator.test.ts, relay-consent.test.ts): the fakes are let through the probe gate
-      // (`relay.allowUnprobed`, as only an isolated test data root sets it) and each conversation consents to its fakes' vendors.
-      const create = app.create.bind(app);
-      (app as { create: SessionRuntime["create"] }).create = async (...args) => {
-        const created = await create(...args);
-        if (factory instanceof ModelHarnesses) for (const harnessId of Object.keys(factory.declarations))
-          world.store.appendRelayLog({ commandId: "grant-" + created.id + "-" + harnessId, vendor: ("unknown:" + harnessId) as VendorKey, scope: { kind: "session", sessionId: created.id }, decision: "acknowledged",
-            categories: ["user_text"], policyVersion: "relay/1", authKind: null, decidedAt: 1 });
-        return created;
-      };
       runtimes.push(app); return app;
     } };
-  world.store.setPref("relay.allowUnprobed", "true");
+  // These cases are about delivery, and the delivery cases of the strict design ask the user where the policy would settle it
+  // (RELAY_CHOICE_REQUIRED, the Run failed before dispatch): the question is on, the gates keep their permissive defaults.
+  askWhenUnsure(world.store);
   t.after(async () => {
     for (const app of runtimes) { try { await app.close(); } catch { /* a runtime whose store was closed under it (a crash) ends failed */ } }
     try { world.store.close(); } catch { /* closed by the test */ }
