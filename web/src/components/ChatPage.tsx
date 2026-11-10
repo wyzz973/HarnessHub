@@ -10,7 +10,7 @@ import { failureMessage, runStatusLabel } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { clock, compact, duration, elapsed, folderName, shortTitle } from "../lib/format.js";
 import { useMedia, useNow, type Preferences } from "../lib/prefs.js";
-import { bannerOf, choiceApplies, choiceView, handoverOf, relayLine, relayRequestFor, runNotes, userSequences } from "../lib/relay-state.js";
+import { bannerOf, choiceApplies, choiceView, handoverOf, relayHasStory, relayLine, relayRequestFor, runNotes, userSequences } from "../lib/relay-state.js";
 import { useClosedNotices, useRelayIntro } from "../lib/use-relay.js";
 import { runRelayInfo, type RelayApi, type RelayChoice, type RelayOption, type RelayPrefs, type RelayRequest, type RelayView } from "../relay.js";
 import { cancelledWords, changeCount, finished, toolTree, TOOL_PENDING, type QueueNotice } from "../lib/turn.js";
@@ -313,7 +313,7 @@ export function ChatPage(props: ChatProps) {
     const first = session === null || session.messages.length === 0;
     if (first) setFirstSend({ id: session?.id ?? null });
     // The line above the box explained where the history goes (the first hand-over to this Harness); the message sent under it is the end of that.
-    const explained = introKey;
+    const explained = showIntro ? introKey : null;
     try { await props.onSend(text, retryAttachments, relayChoice); }
     catch (failure: unknown) { if (first && mounted.current) setFirstSend(null); throw failure; }
     if (explained !== null) introduction.add(explained);
@@ -559,7 +559,7 @@ export function ChatPage(props: ChatProps) {
     : currentState ?? (pending ? "等待选择切换生效" : session ? "可以继续对话" : "选择执行者后开始新对话");
   const panel = session ? <DetailsPanel session={session} harnesses={harnesses} providers={providers} tab={panelTab} onTab={setTab} runId={panelRun} onRun={setPanelRun} describe={describe}
     loadToolDetail={props.onToolDetail} loadDiagnostics={props.onDiagnostics} loadNativeResume={props.onLoadNativeResume} onEndProcess={props.onEndProcess} busy={mutation !== null} onClose={() => setPanel(false)}
-    relay={relay?.view ? { view: relay.view, onViewPacket: viewPacket } : undefined}/> : null;
+    relay={relay?.view && relayHasStory(relay.view) ? { view: relay.view, onViewPacket: viewPacket } : undefined}/> : null;
   // #23: the panel opens by widening (300 ms) and pushes the conversation aside; its content follows 60 ms later from 24 px to
   // the right; it closes in 200 ms. From the keyboard (⌘\) it opens and closes at once.
   const asidePresence = usePresence(inline && panelOpen, 300, 200);

@@ -729,6 +729,23 @@ test("G073 the details panel's 接续 tab lists where each Harness stands and th
 // The setting
 // ---------------------------------------------------------------------------------------------------------------------
 
+test("G073 the details panel has no 接续 tab for a conversation the relay has nothing to tell of, and gets it when there is something", async t => {
+  // One Harness holds a session of it, nothing was sent, nothing is owed or asked: nothing to tell.
+  const { gateway, page, errors } = await open(t, conversation("completed", own(CODEX)), { view: relayView({ bindings: [{ harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "synced", throughRun: 1, evidence: "native", cleared: 0, probed: true }] }) });
+  await page.getByRole("button", { name: "详情栏", exact: true }).click();
+  await expect(page.getByRole("tab", { name: /^执行/u })).toBeVisible();
+  await expect(page.getByRole("tab", { name: /接续/u })).toHaveCount(0);
+  // A second Harness holds a session of it: now there is a story.
+  gateway.view = relayView({ bindings: [CLAUDE_BOUND, { harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "synced", throughRun: 1, evidence: "native", cleared: 0, probed: true }] });
+  gateway.announce();
+  await expect(page.getByRole("tab", { name: /^接续/u })).toBeVisible();
+  // Something owed (or asked) is a story too.
+  gateway.view = relayView({ bindings: [{ harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "fresh", throughRun: null, evidence: null, cleared: 0, probed: true, owed: { runs: 1, estTokens: 300 } }] });
+  gateway.announce();
+  await expect(page.getByRole("tab", { name: /^接续/u })).toBeVisible();
+  assert.deepEqual(errors, []);
+});
+
 test("G073 the settings page offers the two relay choices when the Gateway has them, saves each, and says when it could not", async t => {
   const { gateway, page, errors } = await open(t, conversation("completed", packetRelay(CODEX)), { prefs: "allow" }, [/502/u]);
   const settings = page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "设置", exact: true });
@@ -808,6 +825,8 @@ test("G073 a Gateway without the relay API leaves the page as it was, and a mess
   await composer.fill("普通的一条"); await composer.press("Enter");
   await expect.poll(() => gateway.posted.length).toBe(1);
   assert.equal("relay" in gateway.posted[0]!, false);
+  // The page has taken the answer (the draft is released) before the next message is written: it does one send at a time.
+  await expect(composer).toHaveValue("");
   // A refusal that carries ways forward is still shown as such: it does not depend on the relay state being readable.
   gateway.refusals.push(refusal("RELAY_CHOICE_REQUIRED", { binding: BINDING, cause: "verify_required", options: ["send_alone", "new_native"] }));
   await composer.fill("被拒绝的一条"); await composer.press("Enter");

@@ -50,7 +50,7 @@ Session/配置变更使用 expectedVersion 或条件请求；缺少必须前置�
 
 ## 接力：资源、接口与错误（已接受（ADR-055））
 
-状态：已接受（[ADR-055](../decisions/0055-relay-and-context-scheduling.md)，2026-11-03 验收）。第三阶段的接口（G073 后端，2026-11-10）代码完成、合成测试通过，确切形状见下文“第三阶段已实现的 HTTP 形状”；本节其余仍是设计、未实现；整个接力没有真机验证。本节按接力终稿 [relay-architecture.md](../proposals/relay/relay-architecture.md)（下称“终稿”）的第 4 节（类型草案）、6.1 节（受理时序）、7.4 节（选择与重发）、9 节（失败与边界）、12.4 节（API 与错误码）与 14.2 节（事件）写成；字段名与枚举以终稿第 4 节为唯一来源，本节不另起名字。终稿留给用户拍板的 D1（送达未确认时受理同步 409 三选一）、D2（小窗口目标在启动前 `RELAY_INPUT_LIMIT` 并提供“只发这条消息”）、D4（当前输入永远原样）、D11（生产只对已探针的 Driver 开放）按推荐项写入，用户另作决定时改写本节。
+状态：已接受（[ADR-055](../decisions/0055-relay-and-context-scheduling.md)，2026-11-03 验收）。第三阶段的接口（G073，2026-11-10，已接上运行时与界面）代码完成、合成测试通过（含真实网关加真实页面的端到端走查），确切形状见下文“第三阶段已实现的 HTTP 形状”；本节其余仍是设计、未实现；整个接力没有真机验证。本节按接力终稿 [relay-architecture.md](../proposals/relay/relay-architecture.md)（下称“终稿”）的第 4 节（类型草案）、6.1 节（受理时序）、7.4 节（选择与重发）、9 节（失败与边界）、12.4 节（API 与错误码）与 14.2 节（事件）写成；字段名与枚举以终稿第 4 节为唯一来源，本节不另起名字。终稿留给用户拍板的 D1（送达未确认时受理同步 409 三选一）、D2（小窗口目标在启动前 `RELAY_INPUT_LIMIT` 并提供“只发这条消息”）、D4（当前输入永远原样）、D11（生产只对已探针的 Driver 开放）按推荐项写入，用户另作决定时改写本节。
 
 标注：【事实】是现状代码，`file:line` 以本仓库为准；【实测】是本文作者在本机对现状代码求值的结果；【推断】是终稿没有逐字写出、由其条文推出的解读；【推算】是终稿声明未经实测、待 G070–G074 校准的常量初值。其余条文是终稿的设计决定，数字除另注外都是终稿给定的设计上限或初值。安全侧的规则（出境类别、脱敏、同意、数据根）见 [security.md](security.md) 的接力一节。
 
@@ -113,7 +113,7 @@ Session/配置变更使用 expectedVersion 或条件请求；缺少必须前置�
 | `POST …/relay/pins`、`DELETE …/relay/pins/:pinId` | 钉住与撤回：按 (messageId, offset, length) 记录，不存原文，渲染时从原消息取子串并标出作者；事件 `relay.pin_added`、`relay.pin_withdrawn`（带 `quoteHmac`，不含原文） | 写入时检查上限：≤24 个、每个 ≤2,048 字节、合计 ≤12,288 字节（界面写“≤680 字”） |
 | `POST …/relay/exclusions`、`DELETE …/relay/exclusions/:id`（这里的 `:id` 是排除 ID） | 会话级排除（`kind` 为 `run` 或 `section`）与撤回；事件 `relay.exclusion_added`、`relay.exclusion_withdrawn` | 被排除的轮次从不出现，优先于“不得省略”，之后的包与预览都遵守；撤回只影响之后渲染的包，水位已越过被排除 Run 的绑定不再补交，界面写明 |
 | `GET /api/v1/relay/consents`、`POST /api/v1/relay/consents`、`DELETE /api/v1/relay/consents/:vendor`、`DELETE …/sessions/:id/relay/consents/:vendor` | 安装级同意的读出（每个 (vendor, scope) 的当前视图；`GET …/sessions/:id/relay` 另列对本会话有效的记录）、记录与撤回，按目的厂商键；`DELETE /api/v1/relay/consents/:vendor` 撤回 global 记录，带会话路径的 DELETE 撤回本会话的 session 记录；权威记录在 `relay_log`（自带 seq、`command_id` 唯一、只追加，撤回也是追加一行），会话事件 `relay.consent_recorded`、`relay.consent_revoked` 只作镜像 | `relay_log` 写入失败让该同意命令失败（界面 500），不改任何会话；达到 65,536 行时同一事务轮转到 `relay_log_archive`，仍满即 `409 RELAY_UNAVAILABLE{reason:"consent_log_full"}`；撤回时一并作废待发的重发与预取缓存 |
-| `GET /api/v1/relay/prefs`、`PUT /api/v1/relay/prefs` | 安装级偏好，四个键都可写：`relay.crossVendor`（`ask`、`allow`、`goal_only`；`goal_only` 只允许 tier=goal 的交接单）、`relay.returnPreference`（`continue` 总是续接、`new_when_cold` 冷且长时新开、`ask` 每次询问）、`relay.localModelsOffline`（“本机模型不出网”，INV-33 的唯一免同意例外）、`relay.allowUnprobed`（开发用，不在设置页露出） | 存 `relay_prefs`，最后写入者胜，值 ≤64 字符；`allow` 不覆盖 `unknown:*`、`gateway:*`、`router:*`、`provider:*`，来源是工作区文件的端点每个会话都问（INV-33） |
+| `GET /api/v1/relay/prefs`、`PUT /api/v1/relay/prefs` | 安装级偏好，六个键都可写，`GET` 一律列出六个、没设过的给默认：`relay.crossVendor`（`ask`、`allow`、`goal_only`，**默认 `allow`**；`goal_only` 只交目标，MVP 里等于只发原话）、`relay.whenUnsure`（`auto`、`ask`，**默认 `auto`**：送达拿不准、核对不了时自己处理，`ask` 恢复 `RELAY_CHOICE_REQUIRED`）、`relay.returnPreference`（`continue` 总是续接、`new_when_cold` 冷且长时新开、`ask` 每次询问，默认 `continue`）、`relay.allowUnprobed`（`true`、`false`，**默认 `true`**，`false` 恢复 `RELAY_TARGET_UNVERIFIED`，只经 API）、`relay.dataRootInWorkspace`（`warn`、`block`，**默认 `warn`**，`block` 恢复数据根在工作区内的 409，只经 API）、`relay.localModelsOffline`（`true`、`false`，默认 `false`；“本机模型不出网”，只在 `crossVendor=ask` 时起作用） | 存 `relay_prefs`，最后写入者胜，值 ≤64 字符；默认放行下首次向一个厂商键交接，先向 `relay_log` 追加一行默认允许的记录再发（permissive-defaults §2.4）；`ask` 下 `allow` 不覆盖 `unknown:*`、`gateway:*`、`router:*`、`provider:*`，来源是工作区文件的端点每个会话都问（INV-33） |
 | `POST …/switches` | 增加可选 `mode`（见上文“切换”） | 既有幂等与校验不变 |
 
 **共同前置**：新端点沿用 cookie、CSRF 与 Host/Origin/Sec-Fetch 校验（`src/web/server.ts:505–535`【事实】）；读取其他会话的 packetId 返回 404；SSE 不含正文、原值与原值的哈希（RT4 AP-01–AP-03）。
@@ -124,7 +124,7 @@ Session/配置变更使用 expectedVersion 或条件请求；缺少必须前置�
 
 状态：代码完成，合成测试通过（`tests/integration/relay-api.test.ts`、`tests/security/relay-api.test.ts`：真实 HTTP、真实 SQLite，Harness 是夹具子进程）；没有任何真实 Harness 参与，真机验证未做。类型在 `src/contracts/web.ts`，路由、校验与错误体在 `src/web/relay-routes.ts`。本小节是这一阶段**确切的形状**，与上文设计的描述冲突处以本小节为准；设计里本阶段没有做的部分——`relay/preview`、`relay/observe`、钉住、排除、同意记录的读出与撤回、`excludeRuns`/`excludeSections`/`reveal` 等请求字段——仍是设计，请求里带这些字段得 400。
 
-**默认放行之后，受理时的 409 只在需要用户本人决定时出现**（用户 2026-11-10 的决定，[ADR-055](../decisions/0055-relay-and-context-scheduling.md) 末节）：能自动决定的不问，默认自动补发（有界重复优先于询问）。`RELAY_CHOICE_REQUIRED`（送达没确认且不能自动补发、核对不了、标记丢失）是这类；`RELAY_TARGET_UNVERIFIED` 只在用户打开严格设置（`relay.allowUnprobed` 关闭）时出现，`RELAY_CONSENT_REQUIRED` 只在 `relay.crossVendor=ask` 时出现，数据根在工作区内只作提示、不再是 409。这几个码由运行时抛出（G072）；API 对它们都已能解释（见“错误体”）。界面要能处理它们出现的情形：输入框上方一行说明和 `options` 对应的按钮，草稿保留。
+**默认放行之后，受理时不返回这些 409/429**（用户 2026-11-10 的决定，[ADR-055](../decisions/0055-relay-and-context-scheduling.md) 末节；规则全文见 [permissive-defaults.md](../proposals/relay/permissive-defaults.md)）：只关乎交接单的问题不拦消息。送达没确认、核对不了、标记丢失、窗口放不下、记录没能恢复、同意被撤回、准备失败，都在 open 之后由运行时决定——自动补发一次、退到纪元基准补发完整交接单、或策略单发（这条消息原样发出）——同一个 Run 完成，原因写进 `run.context_prepared` 的 `relay.decision`，这个绑定的 `attention` 常驻（下文 `GET …/relay`），页面据此画提示条。**严格设置**把它们恢复成同步的拒绝：`relay.whenUnsure=ask` 恢复 `RELAY_CHOICE_REQUIRED`、`RELAY_INPUT_LIMIT`（429）与 `RELAY_UNAVAILABLE{recovery_failed}`，`relay.allowUnprobed=false` 恢复 `RELAY_TARGET_UNVERIFIED`，`relay.crossVendor=ask` 恢复 `RELAY_CONSENT_REQUIRED`，`relay.dataRootInWorkspace=block` 恢复 `RELAY_UNAVAILABLE{data_root_in_workspace}`；用户显式选择无法满足时（`attach:"full"`、`resend`、`clearConfirmed`、`native:"new"`）仍然失败、草稿保留。界面要能处理这些码出现的情形：输入框上方一行说明和 `options` 对应的按钮，草稿保留。
 
 #### 发送：`POST /api/v1/sessions/:id/messages`
 
@@ -135,12 +135,12 @@ Session/配置变更使用 expectedVersion 或条件请求；缺少必须前置�
 | `attach` | `"auto"`（默认，等于不带）、`"full"`、`"none"` | 生效，交给运行时（`runtime.send` 的第五个参数）。`full`：附上或补发完整交接单（界面只发它，A4）；`none`：只发这条消息 |
 | `resend` | `true` | 生效 |
 | `clearConfirmed` | `true` | 生效；不在可确认的状态时 400 `INVALID_INPUT`（没有待确认的清空，或清空是否执行已有结论），不建 Run |
-| `tier` | `goal`、`brief`、`standard`、`fidelity`、`full` | 只校验，暂不使用（G072） |
-| `native` | `continue`、`new` | 只校验，暂不使用（G072）。`new` 生效前，［新开原生会话］用 `POST …/native-branch`（`{ epoch, commandId }`）再重发同一条消息 |
-| `note` | 文本，非空白，≤4096 字节，除换行、回车、制表外无控制字符 | 只校验，暂不使用（G072） |
-| `consent` | `{ vendor, decision: "acknowledged"｜"goal_only", scope: "session"｜"global" }`；`vendor` 须是合法的厂商键 | 只校验，暂不使用（G072） |
+| `tier` | `goal`、`brief`、`standard`、`fidelity`、`full` | 生效，交给运行时，随 Run 记录（`relay.decision` 之外的选择记录）；MVP 只渲染标准档，所以它不算“显式选择”，不让策略单发失败 |
+| `native` | `continue`、`new` | 生效，交给运行时。`new` 是［新开原生会话］：这个 Harness 控制入口的原生会话与本条输入同一事务归档（与 `native-reset` 相同的条件：对话空闲、选择是原生 Harness、没有未确认资源），本条输入开一个新的并得到完整交接单；`continue` 记录选择，不要求历史 |
+| `note` | 文本，非空白，≤4096 字节，除换行、回车、制表外无控制字符 | 只校验，不使用（交接单要等 G070 才收附言）；带了不报错、不改变这条发送 |
+| `consent` | `{ vendor, decision: "acknowledged"｜"goal_only", scope: "session"｜"global" }`；`vendor` 须是合法的厂商键 | 生效，交给运行时：同意先写入安装级 `relay_log`，再以 `relay.consent_recorded` 镜像进本会话（`crossVendor=allow` 下重新允许被撤回的厂商就是它，页面的［重新允许］） |
 
-校验是整体的：只认这些字段，未知字段、越界值、类型不符、`attach:"none"` 同时带 `resend`/`clearConfirmed`/`native:"new"`/`consent` 一律 400 `INVALID_INPUT`，文案固定、不引用请求内容，不建 Run。**暂不使用**的字段在响应里不报错、不改变行为——运行时接受它们之前，它们既不进命令指纹，也不影响这次发送。**幂等**：已生效的选择（`attach`、`resend`、`clearConfirmed`）进命令指纹，同一 `commandId` 换选择得 409 `IDEMPOTENCY_CONFLICT`；`attach:"auto"`、`relay:{}` 与不带 `relay` 等价。受理时的 409 不建 Run，也不占用 `commandId`：用户作出选择后，同一 `commandId` 带上选择重发即可。
+校验是整体的：只认这些字段，未知字段、越界值、类型不符、`attach:"none"` 同时带 `resend`/`clearConfirmed`/`native:"new"`/`consent` 一律 400 `INVALID_INPUT`，文案固定、不引用请求内容，不建 Run。`note` 只校验、不使用。**幂等**：交给运行时的选择（`attach`、`resend`、`clearConfirmed`、`tier`、`native`、`consent`）进命令指纹，同一 `commandId` 换选择得 409 `IDEMPOTENCY_CONFLICT`；`attach:"auto"`、`relay:{}` 与不带 `relay` 等价。受理时的 409（严格设置下）不建 Run，也不占用 `commandId`：用户作出选择后，同一 `commandId` 带上选择重发即可。
 
 #### 错误体
 
@@ -171,25 +171,35 @@ Session/配置变更使用 expectedVersion 或条件请求；缺少必须前置�
 ```
 { "bindings": [ { "harnessId", "controlId", "nativeEpoch", "sync": "fresh"｜"synced"｜"pending"｜"suspect",
                   "throughRun": 0 | null, "evidence": "E1"｜"E2"｜"E3"｜"native"｜"legacy"｜"origin"｜"choice" | null,
-                  "cleared": 0, "probed": false } ],
+                  "cleared": 0, "probed": false,
+                  "canConfirm"?: true｜false, "vendor"?: "openai",
+                  "owed"?: { "runs": 2, "estTokens": 1700 },
+                  "attention"?: { "cause", "options": [ "attach_full"｜"new_native"｜"clear_confirmed"｜"acknowledge" ],
+                                  "counts": { "runs": 2, "packets": 1 }, "key", "packet"?: 2, "vendor"?: "openai" } } ],
   "packets":  [ { "packetId", "runId", "runIndex": 1, "number": 1, "kind": "packet"｜"delta"｜"anchor"｜"resend", "tier",
                   "target": { "harnessId", "model": null }, "estTokens", "omissions", "redactions",
-                  "delivery": "in_flight"｜"recorded"｜"unknown"｜"not_recorded", "evidence": "E1"｜"E2"｜"E3" | null } ] }
+                  "delivery": "in_flight"｜"recorded"｜"unknown"｜"not_recorded", "evidence": "E1"｜"E2"｜"E3" | null } ],
+  "dataRootExposed"?: true }
 ```
 
-- `bindings`：会话里每个未归档的原生绑定一行。`throughRun`：绑定的标记所覆盖的最后一个已结束 Run 在会话 Run 里的序号（从 0 起），不覆盖任何 Run（没有标记，或只是会话起点的历史）时为 null；`evidence` 是标记的依据；待核、待定的绑定仍给出它最后所站的标记。`cleared`：当前原生会话里清空过几次（确认的清空就地抬高纪元）。`probed`：Driver 的接力机制是否在真机上证明过；Driver 不声明接力机制时也是 false。
-- `packets`：每个带交接单的 Run 一项，按 Run 顺序；`number` 是第几个 `relay.packetId` 非 null 的 Run（界面“交接单 #n”），`runIndex` 是这个 Run 在会话 Run 里的序号（从 0 起）。同一份交接单被另一个 Run 再发是另一项。`omissions` 是省略项总数，`redactions` 是脱敏计数。没有原生绑定可追踪的 Driver（没有可恢复的原生会话）收到的交接单没有送达行，`delivery` 是 `unknown`、`evidence` 是 null——没有任何证据，不说送达。正文没有存下的交接单不列出，它的序号也空着。
+- `bindings`：会话里每个未归档的原生绑定一行。`throughRun`：绑定的标记所覆盖的最后一个已结束 Run 在会话 Run 里的序号（从 0 起），不覆盖任何 Run（没有标记，或只是会话起点的历史）时为 null；`evidence` 是标记的依据；待核、待定的绑定仍给出它最后所站的标记。`cleared`：当前原生会话里清空过几次——确认的清空就地抬高纪元；Harness 放弃它清空的原生会话（Claude Code 的合成清空）则新会话不在其中抬高纪元，它留下的 `fresh{user_cleared}` 状态算作造出它的那一次清空。`probed`：Driver 的接力机制是否在真机上证明过；Driver 不声明接力机制时也是 false（读自运行时，工厂无从判断时按声明）。
+- `canConfirm`：这个 Harness 做的任何事能不能让网关知道交接单送达了（实时信号、事后核对，或一次正常结束的 prompt 就证明它记下了）；Driver 不声明接力机制时是 false——送达永远没法确认是 Harness 的事实，不是故障；网关答不出时不出现。
+- `vendor`：这个绑定的 Harness 最后一次被看到在哪项模型服务上运行，只给固定词的（`openai`、`anthropic`、`deepseek`…）；用户自己的网关、路由、provider 以主机名或标识命名，不在这里给（只有［重新允许］在 `attention.vendor` 里点名）；Harness 还没运行过时不出现。
+- `owed`：现在向这个绑定交接会带的已结束 Run 数与对它们的 token 估算（它们的原话与回复，加交接单的框架，封顶在窗口未知的标准档上限；估算偏高，不是交接单的大小，界面写“约”）；什么都不欠时不出现。运行时为这个 Harness 保有原生会话时，它就是欠交的唯一说法（清空与下限是运行时才知道的）。
+- `attention`：运行时的 `Runtime.relayAttention`（permissive-defaults §2.6），这个绑定请用户看一眼的事，**从不拦路，下一条消息照样发出**；没有事时不出现。`cause`：`delivery_unconfirmed`｜`verify_required`｜`marker_absent`｜`clear_unconfirmed`｜`recovery_failed`｜`input_limit`｜`consent_revoked`｜`consent_goal_only`。`options` 是用户可以怎么处理，每个对应下一次发送的一个字段（同错误体的 `options`），**永不含 `send_alone`**（单发是下一条输入自己会做的事）。`counts.runs`：这个绑定仍欠的对话轮数；`counts.packets`：已发出还没确认送达的交接单份数（`delivery_unconfirmed` 时为 1＋自动补发＋用户补发）。`key` 命名一次事件：同一个原因在同一次待核内是同一个 key，**页面按 key 只提示一次、关掉后不再弹**（浏览器里记，后端不存）。`packet`：`delivery_unconfirmed` 说的是“交接单 #n”；`vendor`：只在选项含 `acknowledge` 时给，是要重新允许的那个厂商键，关系视图里点名厂商的唯一地方。
+- `dataRootExposed`：数据目录在这个会话的工作区的可及范围内（`Runtime.relayDataRootExposed`）；一个警告，不是拦截，页面在工作区层面给一行可关的横幅（`relay.dataRootInWorkspace=block` 才拒绝）。
+- `packets`：每个带交接单的 Run 一项，按 Run 顺序；`number` 是第几个 `relay.packetId` 非 null 的 Run（界面“交接单 #n”），`runIndex` 是这个 Run 在会话 Run 里的序号（从 0 起）。同一份交接单被另一个 Run 再发是另一项。`kind` 是交接单自己的种类：自动补发的包仍是 `packet`，区分它的是 Run 的 `relay.decision`，不是 `kind`。`omissions` 是省略项总数，`redactions` 是脱敏计数。没有原生绑定可追踪的 Driver（没有可恢复的原生会话）收到的交接单没有送达行，`delivery` 是 `unknown`、`evidence` 是 null——没有任何证据，不说送达。正文没有存下的交接单不列出，它的序号也空着。
 - 读它不改变会话（`lastSeq`、`version` 都不动）。
 
-`GET|HEAD /api/v1/sessions/:id/relay/:packetId` → 交接单存储的正文，即发出时的字节（不在返回时复扫）：`Content-Type: text/plain; charset=utf-8`，`ETag: "<正文字节的 sha256>"`（强校验），`Cache-Control: private, no-cache`，`X-Content-Type-Options: nosniff`，`Content-Security-Policy: default-src 'none'; sandbox`。`If-None-Match`（`*`、弱写法、列表都认）命中得 304 与同一 `ETag`，无正文；`HEAD` 只回头。本会话没有这份交接单——包括别的会话的、不存在的——一律 404 `RELAY_PACKET_NOT_FOUND`，应答逐字相同，不回显标识；会话不存在 404 `SESSION_NOT_FOUND`；会话标识不合法 400。`:packetId` 不是 `relay-` 加 20 位 Crockford base32（小写）的写法、或带查询串，则不是这条路由（404 `NOT_FOUND` 或 400），`relay/preview` 这类未实现的路径同理。
+`GET|HEAD /api/v1/sessions/:id/relay/:packetId` → 交接单存储的正文，即发出时的字节（不在返回时复扫）：`Content-Type: text/plain; charset=utf-8`，`ETag: "<正文字节的 sha256>"`（强校验），`Cache-Control: private, no-cache`，`X-Content-Type-Options: nosniff`，`Content-Security-Policy: default-src 'none'; sandbox`。`If-None-Match`（`*`、弱写法、列表都认）命中得 304 与同一 `ETag`，无正文；`HEAD` 只回头。本会话没有这份交接单——包括别的会话的、不存在的——一律 404 `RELAY_PACKET_NOT_FOUND`，应答逐字相同，不回显标识；会话不存在 404 `SESSION_NOT_FOUND`；会话标识不合法 400。`:packetId` 不是 `relay-` 加 20 位 Crockford base32（小写）的写法、或带查询串，则不是这条路由（404 `NOT_FOUND` 或 400），`relay/preview` 这类未实现的路径同理。页面判“这个网关没有接力 API”的依据只有一条：读 `GET …/relay` 得 404 且 `code` 为 `NOT_FOUND`（统一的路由缺失）或没有 `code`（或 405、501）；`RELAY_PACKET_NOT_FOUND`（包不存在）与 `SESSION_NOT_FOUND`（对话不存在）都不是，包不存在不会让页面忘掉这个网关有接力。
 
-`GET /api/v1/relay/prefs` → `{ "prefs": { "relay.crossVendor"?: …, … } }`：只列出设置过的键，没列出的键用 Gateway 自己的默认（按 2026-11-10 的决定，`relay.crossVendor` 默认允许）。`PUT /api/v1/relay/prefs`，请求体 `{ "key", "value" }`，键与取值取 `RELAY_PREF_KEYS`、`RELAY_PREF_VALUES`（`relay.crossVendor`: `ask`｜`allow`｜`goal_only`；`relay.returnPreference`: `continue`｜`new_when_cold`｜`ask`；`relay.allowUnprobed`、`relay.localModelsOffline`: `true`｜`false`），最后写入者胜；成功回 200 与写后的 `{ prefs }`。未知键、越界值、多余或缺少的字段 400 `INVALID_INPUT`，什么都不写。
+`GET /api/v1/relay/prefs` → `{ "prefs": { 六个键 } }`：六个键都在，没设置过的给默认（`RELAY_PREF_DEFAULTS`：`relay.crossVendor=allow`、`relay.returnPreference=continue`、`relay.allowUnprobed=true`、`relay.localModelsOffline=false`、`relay.whenUnsure=auto`、`relay.dataRootInWorkspace=warn`），页面从不猜默认。`PUT /api/v1/relay/prefs`，请求体 `{ "key", "value" }`，键与取值取 `RELAY_PREF_KEYS`、`RELAY_PREF_VALUES`（`relay.crossVendor`: `ask`｜`allow`｜`goal_only`；`relay.returnPreference`: `continue`｜`new_when_cold`｜`ask`；`relay.whenUnsure`: `auto`｜`ask`；`relay.dataRootInWorkspace`: `warn`｜`block`；`relay.allowUnprobed`、`relay.localModelsOffline`: `true`｜`false`），最后写入者胜；成功回 200 与写后的 `{ prefs }`。未知键、越界值、多余或缺少的字段 400 `INVALID_INPUT`，什么都不写。设置页只露出 `relay.crossVendor`（允许（默认）／每次询问／只交目标）与 `relay.whenUnsure`（自动处理（默认）／每次问我）；其余四个只经 API。
 
 三者都要登录；`PUT` 与发送一样要同源 `Origin` 与 CSRF 令牌（`src/web/server.ts` 的统一检查）；其余方法与路径落到统一的 404。
 
 #### Run 与事实流
 
-**Run 的送达状态**：`GET /api/v1/sessions/:id` 与事实流里的 Run（`SessionView.runs`、`run` 帧）的 `relay`（`RunRelayView`）在快照已有的 `packetId`、`kind`、`continuity`、`executedOn` 之外多一个 `delivery: { state, evidence }`：每个带交接单（`packetId` 非 null）的 Run 都有；没有送达行可追踪的交接单是 `{ state: "unknown", evidence: null }`；没带交接单的 Run 没有它；送达行读不出来时（`INVALID_DATA`）整个会话的 Run 保持快照原样、不带它，会话本身不受影响。**Run 结束后它仍会变**——后来的核对可以把 `unknown` 改成 `recorded`（E2）——变化随提交它的那次事实帧到达。`relayRequest.fingerprint` 现在没有运行时写入；写入后 Web DTO 要屏蔽它（`runViews` 是该处理的位置）。
+**Run 的送达状态与决定**：`GET /api/v1/sessions/:id` 与事实流里的 Run（`SessionView.runs`、`run` 帧）的 `relay`（`RunRelayView`）在快照已有的 `packetId`、`kind`、`continuity`、`executedOn` 之外多两个可选成员。`delivery: { state, evidence }`：每个带交接单（`packetId` 非 null）的 Run 都有；没有送达行可追踪的交接单是 `{ state: "unknown", evidence: null }`；没带交接单的 Run 没有它；送达行读不出来时（`INVALID_DATA`）整个会话的 Run 不带它，会话本身不受影响。**Run 结束后它仍会变**——后来的核对可以把 `unknown` 改成 `recorded`（E2）——变化随提交它的那次事实帧到达。`decision: { kind: "carry"｜"alone"｜"plain", by: "need"｜"policy"｜"user", cause?, reason? }`：relay 对这个 Turn 的历史做了什么、谁决定、为什么（读自事件 `run.context_prepared` 的 `relay.decision`，每个会话读一次、之后只读新事件；只跑在同一个 Harness 控制入口上、没有任何交接的会话不读事件）。普通且不欠任何东西的 Turn 没有它；`carry/need` 是按欠交发出的交接单，`carry/policy` 是策略自动补发或退到纪元基准补发完整交接单，`alone/policy` 是策略单发（`cause` 说为什么：`delivery_unconfirmed`、`verify_required`、`marker_absent`、`input_limit`、`recovery_failed`、`consent_revoked`、`consent_goal_only`、`prepare_failed`、`classification_changed`），`alone/user` 与 `carry/user` 是用户自己的选择。页面据此如实说“这条只发了原话”，从不把单发的 Turn 说成“已接手”。**Web 的 Run 不带 `relayRequest`**：它是用户这次选择的 HMAC（`fingerprint`），留在网关里，用户选了什么看 `decision.by === "user"`；事件页（`GET …/events`）里 `message.accepted` 的 `relayRequest` 也去掉 `fingerprint`。
 
 **`relay` 帧**：会话事实流在 `snapshot`、`message`、`run` 之外多一种帧，只通知、不是事实：
 
@@ -202,17 +212,19 @@ Session/配置变更使用 expectedVersion 或条件请求；缺少必须前置�
 - 每个这四类事件一帧，跟在承载它的事实帧后面，**同一个 `version` 与 `lastSeq`**，SSE 的 `id:` 也相同；按水位应用事实的读者把它当空操作，再去读 `event`。同一次提交里有几个接力事件，各有一帧，都在同一个水位下。
 - `runId`：事件发生在哪个 Run 里（核对的 `inRunId`、厂商变化的 `observedInRun`）；`packetId`：事件点名的那一份交接单（`relay.input_recorded` 的包；`relay.verified` 只在这次核对只看了一份包时给）；`at` 是毫秒时间戳。
 - 不含正文、原值，也不含原值的哈希、标记、位置、厂商键：事件里的这些都不复制。一个背压中的订阅（连接写不出去）之后拿到完整的快照，不补通知。
-- 旧版网页客户端（`web/src/session-stream.ts` 的 `envelope`）遇到未知帧类型会判为流协议错误 `STREAM_INVALID_FRAME` 并中断这条流：接力帧要与认得它的客户端同时上线。
+- 接力帧是 `SessionStreamFrame` 的成员（`RelayStreamFrame`）：页面的解码先读 `event`，再把它当同水位的空操作交给 reducer（它不带事实，所以水位在它之前或之后都不改变会话）。旧版网页客户端（`web/src/session-stream.ts` 的 `envelope`，只认三种帧）遇到它会判为流协议错误 `STREAM_INVALID_FRAME` 并中断这条流：接力帧要与认得它的客户端同时上线。
+
+**状态里的 `relay`**：`GET /api/v1/state` 的应答多一个可选的 `relay: true`：这个网关有接力 API，页面只向说了这话的网关读接力。
 
 #### 本阶段的错误码
 
 | 码 | HTTP | 何时 |
 |---|---|---|
-| `RELAY_CHOICE_REQUIRED` | 409 | 需要用户决定：`delivery_unconfirmed`、`verify_required`、`marker_absent`；带 `relay` 成员 |
-| `RELAY_CONSENT_REQUIRED` | 409 | 只在 `relay.crossVendor=ask`（或同意被撤回、厂商变了）时；带 `relay` 成员；运行时抛出（G072） |
-| `RELAY_TARGET_UNVERIFIED` | 409 | 只在严格设置下目标未经探针时；带 `relay` 成员；运行时抛出（G072） |
-| `RELAY_UNAVAILABLE` | 409 | `recovery_failed`、`consent_log_full`，以及（运行时抛出时）`data_root_in_workspace`；带 `relay` 成员 |
-| `RELAY_INPUT_LIMIT` | 429 | 最小交接单放不下；带 `relay` 成员 |
+| `RELAY_CHOICE_REQUIRED` | 409 | 只在 `relay.whenUnsure=ask` 时：`delivery_unconfirmed`、`verify_required`、`marker_absent`；带 `relay` 成员。默认下运行时自己处理，不返回 |
+| `RELAY_CONSENT_REQUIRED` | 409 | 只在 `relay.crossVendor=ask`（或同意被撤回、厂商变了）时；带 `relay` 成员 |
+| `RELAY_TARGET_UNVERIFIED` | 409 | 只在 `relay.allowUnprobed=false` 时目标未经探针；带 `relay` 成员 |
+| `RELAY_UNAVAILABLE` | 409 | `recovery_failed`（`whenUnsure=ask`）、`consent_log_full`，以及 `data_root_in_workspace`（`dataRootInWorkspace=block`）；带 `relay` 成员 |
+| `RELAY_INPUT_LIMIT` | 429 | 只在 `relay.whenUnsure=ask` 时最小交接单放不下；带 `relay` 成员（`options` 为 `send_alone`） |
 | `RELAY_PACKET_NOT_FOUND` | 404 | 本会话没有这份交接单 |
 | `INVALID_INPUT` | 400 | `relay` 成员、偏好、会话标识不合规，或［确认已清空］不在可确认的状态 |
 | `IDEMPOTENCY_CONFLICT` | 409 | 同一 `commandId` 带了不同的接力选择 |

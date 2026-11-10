@@ -431,6 +431,14 @@ export function choiceApplies(choice: RelayChoice, selection: { readonly harness
 // The details list (12.1 "接续")
 // ---------------------------------------------------------------------------------------------------------------------
 
+/**
+ * Whether the relay has anything to tell about this conversation: a packet was sent, more than one Harness holds a session of it, or
+ * something is owed or asked. A conversation that stayed on one Harness has nothing to say, and the details panel gets no tab for it.
+ */
+export function relayHasStory(view: RelayView): boolean {
+  return view.packets.length > 0 || view.bindings.length > 1 || view.bindings.some(binding => binding.attention !== null || binding.owed !== null);
+}
+
 /** One Harness entry's position, in one sentence: "已同步到第 4 轮（实时确认）· 清空过 1 次". */
 export function syncWords(binding: RelayBinding): string {
   const proof = evidenceWords(binding.evidence), cleared = binding.cleared > 0 ? ` · 清空过 ${binding.cleared} 次` : "";

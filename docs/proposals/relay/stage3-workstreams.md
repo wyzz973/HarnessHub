@@ -23,21 +23,22 @@
 
 ## 3. W2 与 W3 之间的接缝（界面 ↔ API）
 
-以终稿第 12.4 节为准，下面是本阶段要做的最小集合与按“默认放行”调整后的形状。W2 按这里写客户端（类型放 `web/src/relay.ts`），W3 按这里写服务端（类型放 `src/contracts/web.ts`）；字段名以本节为准，合并时主负责人对齐。
+以终稿第 12.4 节为准，下面是本阶段做的最小集合与它**最终合并后的形状**（集成者 2026-11-10 按默认放行对齐；确切字段以 [public-api.md](../../contracts/public-api.md) 的“第三阶段已实现的 HTTP 形状”与 `src/contracts/web.ts`、`web/src/relay.ts` 为准）。分工时的原稿与最终形状的差异在每条末尾以“最终”标出。
 
 **发送**：`POST /api/v1/sessions/:id/messages` 的请求体增加可选
-`relay?: { attach?: "auto" | "full" | "none"; resend?: true; clearConfirmed?: true; native?: "continue" | "new"; tier?: Tier; note?: string; consent?: { vendor: string; decision: "acknowledged" | "goal_only"; scope: "session" | "global" } }`。不带 `relay` 即默认行为。服务端把 `attach`、`resend`、`clearConfirmed` 交给 `runtime.send()` 的第五个参数（现有的 `RelayChoice`）；其余字段在 W1 合入之前先校验后忽略，并在响应里不报错。
+`relay?: { attach?: "auto" | "full" | "none"; resend?: true; clearConfirmed?: true; native?: "continue" | "new"; tier?: Tier; note?: string; consent?: { vendor: string; decision: "acknowledged" | "goal_only"; scope: "session" | "global" } }`。不带 `relay` 即默认行为。最终：`attach`、`resend`、`clearConfirmed`、`tier`、`native`、`consent` 全部交给 `runtime.send` 的第五个参数（G072 接受了它们，`native:"new"` 即［新开原生会话］，不再经 `native-branch`）；`note` 只校验、不使用（交接单还不收附言）。
 
-**错误体**：`{ code, message, relay?: { binding: { harnessId, controlId }, cause?: "delivery_unconfirmed" | "verify_required" | "marker_absent" | "missing" | "vendor_changed" | string, options: readonly ("attach_full" | "send_alone" | "new_native" | "clear_confirmed" | "acknowledge")[], counts?: { runs: number; packets: number } } }`。状态码：`RELAY_CHOICE_REQUIRED`、`RELAY_CONSENT_REQUIRED`、`RELAY_TARGET_UNVERIFIED`、`RELAY_UNAVAILABLE` 为 409，`RELAY_INPUT_LIMIT` 为 429。默认放行之后这些 409 很少出现，界面仍要能处理：出现时在输入框上方给一行说明和 `options` 对应的按钮，草稿保留。
+**错误体**：`{ code, message, relay?: { binding: { harnessId, controlId }, cause?, options, counts?: { runs, packets }, vendor? } }`，`options` 取 `attach_full | send_alone | new_native | clear_confirmed | acknowledge`。状态码不变：`RELAY_CHOICE_REQUIRED`、`RELAY_CONSENT_REQUIRED`、`RELAY_TARGET_UNVERIFIED`、`RELAY_UNAVAILABLE` 为 409，`RELAY_INPUT_LIMIT` 为 429。最终：**默认放行下受理不再返回这些码**，它们只在严格设置（`relay.whenUnsure=ask`、`relay.crossVendor=ask`、`relay.allowUnprobed=false`、`relay.dataRootInWorkspace=block`）或显式选择无法满足时出现；界面两种都处理：默认下读 `attention` 画提示条，严格设置下出现 409 时在输入框上方给说明和按钮、草稿保留。
 
 **只读**：
-- `GET /api/v1/sessions/:id/relay` → `{ bindings: readonly { harnessId, controlId, nativeEpoch, sync: "fresh" | "synced" | "pending" | "suspect", throughRun: number | null, evidence: string | null, cleared: number, probed: boolean }[]; packets: readonly { packetId, runId, runIndex, number, kind, tier, target: { harnessId, model }, estTokens, omissions: number, redactions: number, delivery: "in_flight" | "recorded" | "unknown" | "not_recorded", evidence: "E1" | "E2" | "E3" | null }[] }`。`number` 是会话内序号（界面显示“交接单 #1”）。
-- `GET /api/v1/sessions/:id/relay/:packetId` → 存储的正文，`text/plain; charset=utf-8`，`ETag` 为正文的 sha256；别的会话的 packetId 返回 404。
-- `GET /api/v1/relay/prefs`、`PUT /api/v1/relay/prefs`（`{ key, value }`，键与取值取 `RELAY_PREF_KEYS`、`RELAY_PREF_VALUES`）。
+- `GET /api/v1/sessions/:id/relay` → `{ bindings, packets, dataRootExposed? }`。每个绑定 `{ harnessId, controlId, nativeEpoch, sync, throughRun, evidence, cleared, probed }`，最终另有可选的 `canConfirm`（这个 Harness 能否确认送达）、`vendor`（固定词的模型服务名）、`owed { runs, estTokens }`（现在向它交接会带什么）与 `attention { cause, options, counts, key, packet?, vendor? }`（运行时请用户看一眼的事，从不拦路；同一 `key` 只提示一次）。`packets` 每项 `{ packetId, runId, runIndex, number, kind, tier, target, estTokens, omissions, redactions, delivery, evidence }`，`number` 是会话内序号（“交接单 #n”）。`dataRootExposed` 是数据目录在工作区可及范围内的警告。
+- `GET /api/v1/sessions/:id/relay/:packetId` → 存储的正文，`text/plain; charset=utf-8`，`ETag` 为正文的 sha256；别的会话的 packetId 与不存在的一律 404 `RELAY_PACKET_NOT_FOUND`（页面不会把它当成“网关没有接力 API”：那只认 `GET …/relay` 的 404 加 `NOT_FOUND`）。
+- `GET /api/v1/relay/prefs`、`PUT /api/v1/relay/prefs`（`{ key, value }`，键与取值取 `RELAY_PREF_KEYS`、`RELAY_PREF_VALUES`）。最终：`GET` 一律列出六个键（`relay.crossVendor` 默认 `allow`、`relay.whenUnsure` 默认 `auto`、`relay.returnPreference` 默认 `continue`、`relay.allowUnprobed` 默认 `true`、`relay.dataRootInWorkspace` 默认 `warn`、`relay.localModelsOffline` 默认 `false`），没设过的给默认。
+- 最终：`GET /api/v1/state` 的应答带可选的 `relay: true`，页面据此只向有接力的网关读接力。
 
-**流**：SSE 增加帧 `{ type: "relay", event: { type: "relay.input_recorded" | "relay.verified" | "relay.vendor_changed" | "relay.clear_confirmed", sessionId, runId?, packetId?, at } }`，不含正文、原值与原值的哈希；`run` 帧里的 Run 带 `relay?: { packetId, kind, continuity, delivery: { state, evidence } }`。
+**流**：SSE 增加帧 `{ type: "relay", sessionId, version, lastSeq, event: { type: "relay.input_recorded" | "relay.verified" | "relay.vendor_changed" | "relay.clear_confirmed", sessionId, runId?, packetId?, at } }`，不含正文、原值与原值的哈希；跟在承载事实的帧之后、同一水位。最终：它是 `SessionStreamFrame` 的成员，页面的解码先读 `event`，reducer 把它当同水位的空操作。`run` 帧与快照里的 Run 带 `relay?: { packetId, kind, continuity, executedOn, delivery?: { state, evidence }, decision?: { kind, by, cause?, reason? } }`；最终：Web 的 Run 不带 `relayRequest`（它是用户选择的 HMAC，留在网关里）。
 
-本阶段不做：预览估算（`relay/preview`）、`relay/observe`、钉住与排除、按位置放行、同意记录的列表与撤回页（默认允许之后只在设置页给一个“跨厂商交接：允许 / 每次询问”的开关，即 `relay.crossVendor`）。
+本阶段不做：预览估算（`relay/preview`）、`relay/observe`、钉住与排除、按位置放行、同意记录的列表与撤回页、费用显示。设置页露出两个开关：`relay.crossVendor`（允许（默认）／每次询问／只交目标）与 `relay.whenUnsure`（自动处理（默认）／每次问我）。
 
 ## 4. 界面的最小集合（W2）
 

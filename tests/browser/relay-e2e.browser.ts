@@ -71,7 +71,8 @@ async function shoot(page: Page, name: string): Promise<void> {
   await page.emulateMedia({ colorScheme: "light" });
 }
 
-test("G073-C08 A -> B -> A in the browser under the defaults: handed over with a packet and evidence, brought up to date on the way back, a delivery nothing confirms sent again once and then alone with the way out in a banner, a cleared context given its history for one message; nothing asked, no 409, no failed Run", { timeout: 240_000 }, async t => {
+/** The page opened on a real Gateway with Claude Code and Codex available, and what the walks below do with it. */
+async function start(t: test.TestContext) {
   const fixture = await launch();
   let browser: Browser | null = null;
   // Owned before the browser launches, so a browser that cannot start never leaks a Gateway.
@@ -93,9 +94,6 @@ test("G073-C08 A -> B -> A in the browser under the defaults: handed over with a
   const pick = async (label: string, value: string) => { await page.getByRole("button", { name: label, exact: true }).click(); await page.getByRole("option", { name: value, exact: true }).click(); };
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true });
   const log = page.getByRole("log", { name: "对话历史" });
-  const card = page.locator(".relay-card");
-  const banner = page.locator("[data-relay=attention]");
-  const separator = (name: string | RegExp) => log.getByRole("separator", { name });
   /** Switches the conversation to `name` and waits until the switch took effect. */
   async function switchTo(name: string, harnessId: string): Promise<void> {
     await pick("选择 Harness", name);
@@ -109,12 +107,19 @@ test("G073-C08 A -> B -> A in the browser under the defaults: handed over with a
     await expect(log.locator(".assistant-message").nth(index)).toContainText(reply, { timeout: 30_000 });
     await expect(log.locator(".assistant-message").nth(index)).toHaveAttribute("data-run-status", "completed", { timeout: 30_000 });
   }
-
-  // ---- 1. Claude Code answers, on a conversation of its own --------------------------------------------------------------------
+  // Both Harnesses are on offer before the first message.
   await expect(page.getByRole("button", { name: "新对话", exact: true })).toBeVisible();
   await expect.poll(async () => (await (await context.request.get(origin + "/api/v1/harnesses")).json() as { id: string; controls: { available: boolean }[] }[])
     .filter(harness => ["claude", "codex"].includes(harness.id) && harness.controls.some(control => control.available)).length, { timeout: 30_000 }).toBe(2);
   await page.reload();
+  return { fixture, context, page, errors, refused, origin, current, pick, composer, log, switchTo, say, card: page.locator(".relay-card"), banner: page.locator("[data-relay=attention]"),
+    separator: (name: string | RegExp) => log.getByRole("separator", { name }) };
+}
+
+test("G073-C08 A -> B -> A in the browser under the defaults: handed over with a packet and evidence, brought up to date on the way back, a delivery nothing confirms sent again once and then alone with the way out in a banner, a cleared context given its history for one message; nothing asked, no 409, no failed Run", { timeout: 240_000 }, async t => {
+  const { fixture, page, errors, refused, current, pick, composer, log, switchTo, say, card, banner, separator } = await start(t);
+
+  // ---- 1. Claude Code answers, on a conversation of its own --------------------------------------------------------------------
   await pick("选择 Harness", "Claude Code");
   await say("先帮我想一个项目名，要短一点", 0, CLAUDE_REPLY);
   await expect(card).toHaveCount(0); await expect(page.locator(".relay-divider, .relay-note, [data-relay]")).toHaveCount(0);
@@ -218,4 +223,59 @@ test("G073-C08 A -> B -> A in the browser under the defaults: handed over with a
   // The decisions the relay recorded, as the page showed them.
   assert.deepEqual(finished.runs.map(run => run.relay?.decision ? `${run.relay.decision.kind}/${run.relay.decision.by}${run.relay.decision.cause ? "/" + run.relay.decision.cause : ""}` : "-"),
     ["-", "carry/need", "carry/need", "carry/need", "carry/policy/delivery_unconfirmed", "alone/policy/delivery_unconfirmed", "carry/user", "-", "carry/user"]);
+});
+
+test("G073-C08 the strict setting asks as the stricter design did: once the one automatic resend is spent a delivery nothing confirms is a 409 with the ways out above the box, the draft is kept, and the way chosen sends it", { timeout: 240_000 }, async t => {
+  const { fixture, context, page, errors, refused, origin, current, pick, composer, log, switchTo, say, banner } = await start(t);
+  await pick("选择 Harness", "Claude Code");
+  await say("先说一句话", 0, CLAUDE_REPLY);
+  await switchTo("Codex", "codex");
+  // Codex's native side confirms nothing, so what the relay does about the packet it cannot confirm is the setting's matter.
+  await fixture.mode({ RELAY_HOOK: "1", RELAY_TURNS_FAULT: "refuse" });
+  await say("第二条", 1, CODEX_REPLY);
+  // The setting, as the user changes it: 送达拿不准时 -> 每次问我 (the Gateway's, so a read of the preferences shows it too).
+  await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "设置", exact: true }).click();
+  const unsure = page.getByRole("radiogroup", { name: "送达拿不准时", exact: true });
+  await expect(unsure.getByRole("radio", { name: "自动处理（默认）" })).toHaveAttribute("aria-checked", "true");
+  await unsure.getByRole("radio", { name: "每次问我" }).click();
+  await expect(unsure.getByRole("radio", { name: "每次问我" })).toHaveAttribute("aria-checked", "true");
+  await expect.poll(async () => ((await (await context.request.get(origin + "/api/v1/relay/prefs")).json()) as { prefs: Record<string, string> }).prefs["relay.whenUnsure"]).toBe("ask");
+  await page.getByRole("button", { name: /先说一句话/u }).first().click();
+  await expect(composer).toBeEnabled();
+  // Back in the conversation the first packet is still unconfirmed, and the banner says so (it asks nothing: the next message would go).
+  await expect(banner).toContainText("交接单 #1 还没有确认送达 Codex");
+  // Even asking each time, the relay sends a packet it cannot confirm once more by itself: the third message goes, with the packet again.
+  await say("第三条", 2, CODEX_REPLY);
+  await expect(log.locator(".relay-note").last()).toContainText("上一份交接单没有确认送达，这条消息已再附一次（交接单 #2");
+  assert.equal(refused.length, 0, "nothing was refused yet");
+
+  // That was the one: the next message is refused, whole. Nothing was sent, no Run was made, and the draft is still in the box.
+  await composer.fill("第四条：这条要先问我"); await composer.press("Enter");
+  const choice = page.locator(".relay-choice");
+  await expect(choice).toBeVisible({ timeout: 20_000 });
+  await expect(choice).toContainText("上一份交接单没有确认送达 Codex");
+  await expect(choice.locator("button[data-option]")).toHaveText(["再附一次", "只发这条消息", "新开原生会话"]);
+  await expect(composer).toHaveValue("第四条：这条要先问我");
+  assert.equal((await current()).runs.length, 3, "the refused message made no Run");
+  assert.equal(refused.filter(item => item.startsWith("409")).length, 1, "exactly one refusal, the one the setting asks for");
+  await shoot(page, "e2e-strict-choice");
+  // The way chosen sends the same draft with its field, and the conversation goes on.
+  await choice.getByRole("button", { name: "再附一次", exact: true }).click();
+  await expect(log.locator(".assistant-message")).toHaveCount(4, { timeout: 30_000 });
+  await expect(log.locator(".assistant-message").nth(3)).toHaveAttribute("data-run-status", "completed", { timeout: 30_000 });
+  await expect(choice).toHaveCount(0); await expect(composer).toHaveValue("");
+  // And the other way out: the next one is asked again, and sent alone as typed.
+  await composer.fill("第五条：只发这一条"); await composer.press("Enter");
+  await expect(choice).toBeVisible({ timeout: 20_000 });
+  await choice.getByRole("button", { name: "只发这条消息", exact: true }).click();
+  await expect(log.locator(".assistant-message")).toHaveCount(5, { timeout: 30_000 });
+  await expect(log.locator(".assistant-message").nth(4)).toHaveAttribute("data-run-status", "completed", { timeout: 30_000 });
+  const finished = await current();
+  assert.deepEqual(finished.runs.map(run => run.status), ["completed", "completed", "completed", "completed", "completed"], "every Run that was made completed");
+  assert.deepEqual(finished.runs.map(run => run.relay?.decision ? `${run.relay.decision.kind}/${run.relay.decision.by}${run.relay.decision.cause ? "/" + run.relay.decision.cause : ""}` : "-"),
+    ["-", "carry/need", "carry/policy/delivery_unconfirmed", "carry/user", "alone/user"]);
+  assert.equal(refused.filter(item => item.startsWith("409")).length, 2, "the two asks, and no other refusal");
+  assert.deepEqual(refused.filter(item => !item.startsWith("409")), []);
+  // The two 409s are the browser's own report of an answer the page handled as a choice, not a fault of the page.
+  assert.deepEqual(errors.filter(message => !/409/u.test(message)), [], "no other console error");
 });

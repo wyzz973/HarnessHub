@@ -2884,8 +2884,15 @@ test("G054-DL9 ⌘J opens the Agent list, ⌘. stops the reply, ⌘\\ opens and 
   await expect.poll(async () => { const value = await current(); return value.activeRunId === null && value.pendingSwitchId === null && value.selection.harnessId; }, { timeout: 15000 }).toBe("native-acp");
   const handed = await current(); assert.equal(handed.runs.at(-1).status, "completed"); assert.equal(handed.runs.at(-1).selection.harnessId, "codex");
   await expect(strip).toHaveCount(0); await expect(trigger).toContainText("Shared Agent");
-  // C08: where it took over, a pill with the mark of the Agent before, an arrow and the new Agent's mark (Conversation board).
-  const handover = page.getByRole("log", { name: "对话历史" }).getByRole("separator", { name: "从这里起由 Shared Agent 接手", exact: true });
+  // T1 (ADR-055 §12.1): this Gateway has the relay, so a change draws no line of its own. Where the conversation changed hands is drawn once
+  // something goes to the new Agent, and says "took over" only once what went with it is known to be in its history.
+  const log = page.getByRole("log", { name: "对话历史" });
+  await expect(log.getByRole("separator")).toHaveCount(0);
+  await composer.fill("交给 Shared Agent 的第一条"); await composer.press("Enter");
+  await expect.poll(async () => { const value = await current(); return value.runs.length === handed.runs.length + 1 && value.runs.at(-1).status; }, { timeout: 20000 }).toBe("completed");
+  // C08: where it took over, a pill with the mark of the Agent before, an arrow and the new Agent's mark (Conversation board), with how and
+  // which handoff packet (the Agent's prompt ended well, which proves its history holds the packet).
+  const handover = log.getByRole("separator", { name: "从这里起由 Shared Agent 接手 · 新会话 · 交接单（标准） · #1", exact: true });
   await expect(handover).toBeVisible();
   await expect(handover.locator(".brand-tile")).toHaveCount(2); await expect(handover.locator(".brand-tile").first()).toHaveAttribute("data-brand", "codex");
   // #19: made in view, it comes in: the pill fades in, the arrow draws in 160 ms, the new mark pops from .6, the lines grow.
