@@ -1,18 +1,17 @@
 import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { join, resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import { RelayLedger } from "../contexts/session/application/relay-coordinator.js";
+import { RelayLedger, vendorKeyOf, type RequestedConsent } from "../contexts/session/application/relay-coordinator.js";
 import type { RelayChoice } from "../contexts/session/application/runtime.js";
 import { dispatched } from "../contexts/session/domain/relay/advance.js";
+import { estimateTokens, resolveRelayBudget } from "../contexts/session/domain/relay/budget.js";
 import { heldSince, owed } from "../contexts/session/domain/relay/delivery.js";
 import { terminal } from "../contexts/session/domain/state.js";
 import {
-  ATTACH_CHOICES, NATIVE_CHOICES, RELAY_PREF_KEYS, RELAY_PREF_VALUES, TIERS, markOf, parseVendorKey,
-  type BindingRelayState, type DeliveredMark, type DeliveryOutcome, type DeliveryRecord, type RelayCapabilities, type RelayIndexRow, type RelayLogPort, type RelayStorePort, type Tier, type VendorKey,
+  ATTACH_CHOICES, NATIVE_CHOICES, RELAY_PREF_DEFAULTS, RELAY_PREF_KEYS, RELAY_PREF_VALUES, TIERS, markOf, parseVendorKey, relayDecisionOf,
+  type BindingRelayState, type DeliveredMark, type DeliveryOutcome, type DeliveryRecord, type RelayAttention, type RelayCapabilities, type RelayDecision, type RelayIndexRow, type RelayLogPort, type RelayPrefKey, type RelayStorePort, type Tier, type VendorKey,
 } from "../contracts/relay.js";
 import { SessionError, sessionId, type HarnessSelection, type NativeSessionBinding, type SessionEvent, type SessionId, type SessionSnapshot } from "../contracts/session.js";
-import type { RelayBindingView, RelayDeliveryView, RelayErrorView, RelayOption, RelayPacketView, RelayPrefsView, RelayView, WebRun } from "../contracts/web.js";
+import type { RelayAttentionView, RelayBindingView, RelayDeliveryView, RelayErrorView, RelayOption, RelayPacketView, RelayPrefsView, RelayView, WebRun } from "../contracts/web.js";
 
 /**
  * The relay's HTTP API (ADR-055 §12.4, G073's server side): the choices a send makes, the error bodies the user can answer,
@@ -47,7 +46,7 @@ function noteText(value: unknown): string {
   return value;
 }
 /** What a request asks to record as the user's consent (relay-architecture §10.4); the vendor key is checked, not trusted. */
-export interface RequestedConsent { readonly vendor: VendorKey; readonly decision: "acknowledged" | "goal_only"; readonly scope: "session" | "global" }
+export type { RequestedConsent };
 function consentOf(value: unknown): RequestedConsent {
   const row = plain(value, "relay.consent");
   if (Object.keys(row).some(key => key !== "vendor" && key !== "decision" && key !== "scope") || !("vendor" in row) || !("decision" in row) || !("scope" in row)) invalid("relay.consent names a vendor, a decision and a scope");
@@ -55,52 +54,36 @@ function consentOf(value: unknown): RequestedConsent {
   try { vendor = parseVendorKey(row.vendor); } catch { return invalid("relay.consent.vendor must be a vendor key"); }
   return { vendor, decision: oneOf(row.decision, ["acknowledged", "goal_only"] as const, "relay.consent.decision"), scope: oneOf(row.scope, ["session", "global"] as const, "relay.consent.scope") };
 }
-/**
- * Fields of the request's `relay` member that are checked here and not yet acted on: the Runtime takes them in G072 (the
- * target's tier, a new native session, a note for the packet, a consent to record). Until then a request that carries them is
- * accepted and they change nothing.
- */
-export interface DeferredRelayChoices {
-  readonly tier?: Tier;
-  readonly native?: "continue" | "new";
-  readonly note?: string;
-  readonly consent?: RequestedConsent;
-}
 export interface SendRelay {
-  /** What the Runtime acts on today, `runtime.send`'s fifth argument (which also puts it in the command's fingerprint); undefined when the request made no choice. */
+  /**
+   * What the Runtime is handed: `runtime.send`'s fifth argument, which also puts the choices in the command's fingerprint; the
+   * target's tier, a new native session (`native:"new"`) and a consent to record go with the three history choices. Undefined when the
+   * request made no choice.
+   */
   readonly choices: RelayChoice | undefined;
-  readonly deferred: DeferredRelayChoices;
 }
 /**
  * The `relay` member of `POST …/messages`, checked field by field: an object of only the known fields, each with one of its
  * values (INVALID_INPUT, an HTTP 400, for anything else, with a fixed text that quotes nothing of the request). `attach:
- * "auto"` is no choice. An input sent alone (`attach: "none"`) carries no other choice, as the Runtime holds it.
- *
- * RELAY_REQUEST_SEAM: the merge with G072 (the Runtime taking `tier`, `native`, `consent`) changes only `toRuntime` below,
- * the one place that decides what the Runtime is handed.
+ * "auto"` is no choice. An input sent alone (`attach: "none"`) carries no other choice, as the Runtime holds it. A `note` is
+ * checked and goes no further: the Runtime takes no note until the packet does (G070), and a request that has one is neither
+ * refused nor changed by it.
  */
 export function parseSendRelay(value: unknown): SendRelay {
-  if (value === undefined) return { choices: undefined, deferred: {} };
+  if (value === undefined) return { choices: undefined };
   const item = plain(value, "relay");
   if (Object.keys(item).some(key => !(SEND_FIELDS as readonly string[]).includes(key))) invalid("relay has a field this Gateway does not know");
   const attach = item.attach === undefined ? undefined : oneOf(item.attach, ATTACH_CHOICES, "relay.attach");
   const resend = onlyTrue(item.resend, "relay.resend"), clearConfirmed = onlyTrue(item.clearConfirmed, "relay.clearConfirmed");
   const native = item.native === undefined ? undefined : oneOf(item.native, NATIVE_CHOICES, "relay.native");
   const tier = item.tier === undefined ? undefined : oneOf(item.tier, TIERS, "relay.tier");
-  const note = item.note === undefined ? undefined : noteText(item.note);
+  if (item.note !== undefined) noteText(item.note);
   const consent = item.consent === undefined ? undefined : consentOf(item.consent);
   if (attach === "none" && (resend === true || clearConfirmed === true || native === "new" || consent !== undefined)) invalid("an input sent alone carries no other relay choice");
-  return toRuntime({ attach, resend, clearConfirmed }, { tier, native, note, consent });
-}
-/** The choices the Runtime acts on today (RELAY_REQUEST_SEAM), and the ones it is not yet handed. */
-function toRuntime(acted: { readonly attach: typeof ATTACH_CHOICES[number] | undefined; readonly resend: true | undefined; readonly clearConfirmed: true | undefined },
-    later: { readonly tier: Tier | undefined; readonly native: "continue" | "new" | undefined; readonly note: string | undefined; readonly consent: RequestedConsent | undefined }): SendRelay {
-  const choices: { attach?: "full" | "none"; resend?: true; clearConfirmed?: true } = {
-    ...(acted.attach === "full" || acted.attach === "none" ? { attach: acted.attach } : {}), ...(acted.resend === true ? { resend: true as const } : {}),
-    ...(acted.clearConfirmed === true ? { clearConfirmed: true as const } : {}) };
-  return { choices: Object.keys(choices).length ? choices : undefined,
-    deferred: { ...(later.tier === undefined ? {} : { tier: later.tier }), ...(later.native === undefined ? {} : { native: later.native }),
-      ...(later.note === undefined ? {} : { note: later.note }), ...(later.consent === undefined ? {} : { consent: later.consent }) } };
+  const choices: { attach?: "full" | "none"; resend?: true; clearConfirmed?: true; tier?: Tier; native?: "continue" | "new"; consent?: RequestedConsent } = {
+    ...(attach === "full" || attach === "none" ? { attach } : {}), ...(resend === true ? { resend: true as const } : {}), ...(clearConfirmed === true ? { clearConfirmed: true as const } : {}),
+    ...(tier === undefined ? {} : { tier }), ...(native === undefined ? {} : { native }), ...(consent === undefined ? {} : { consent }) };
+  return { choices: Object.keys(choices).length ? choices : undefined };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -145,28 +128,12 @@ export function relayOptions(code: string, reason: string | undefined, binding: 
 // Reads
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** What the API reads of the Store: the relay rows, the preferences it also writes, and the events the ledger pages. */
-export interface RelayReads extends Pick<RelayStorePort, "relayDeliveries" | "relayPackets" | "relayIndex">, Pick<RelayLogPort, "relayPrefs" | "setPref"> {
-  events(id: SessionId, afterSeq: number, limit?: number): readonly SessionEvent[];
-}
 /**
- * A stored packet text, read through a read-only connection of its own to the business database. The Store keeps no read of
- * `relay_bodies` yet (it is not in RelayStorePort), so this is the interim; it reads committed rows only and holds nothing
- * between reads. A Store method `relayPacketBody(id, bodySha256)` replaces it (and this class goes) when the Store gets one.
+ * What the API reads of the Store: the relay rows (a packet's manifest and its stored text included), the preferences it also
+ * writes, and the events the ledgers page. Committed rows only; nothing is held between reads.
  */
-export class PacketBodies {
-  private readonly path: string;
-  constructor(root: string) { this.path = join(resolve(root), "gateway.sqlite"); }
-  /** The text kept for `bodySha256` in the Session, or null when none is kept. */
-  read(session: SessionId, bodySha256: string): string | null {
-    const database = new DatabaseSync(this.path, { readOnly: true, timeout: 2000, allowExtension: false });
-    try {
-      const row = database.prepare("SELECT body FROM relay_bodies WHERE session_id=? AND sha256=?").get(session, bodySha256);
-      if (row === undefined) return null;
-      if (typeof row.body !== "string") throw new SessionError("INVALID_DATA", "a stored handoff text is not text");
-      return row.body;
-    } finally { database.close(); }
-  }
+export interface RelayReads extends Pick<RelayStorePort, "relayDeliveries" | "relayPackets" | "relayPacket" | "relayPacketBody" | "relayIndex">, Pick<RelayLogPort, "relayPrefs" | "setPref"> {
+  events(id: SessionId, afterSeq: number, limit?: number): readonly SessionEvent[];
 }
 /** The HTTP helpers of the server this API is mounted on (they live in server.ts). */
 export interface RelayHttp {
@@ -175,13 +142,18 @@ export interface RelayHttp {
   queries(url: URL, allowed: readonly string[]): void;
   body(request: IncomingMessage): Promise<unknown>;
 }
+/** What `Runtime.relayAttention` says of one binding: whether its Driver's mechanisms are proved (null: the factory cannot tell) and what it asks the user to look at. */
+export interface BindingAttention { readonly harnessId: string; readonly controlId: string; readonly probed: boolean | null; readonly attention: RelayAttention | null }
 export interface RelayApiOptions {
   readonly reads: RelayReads;
-  readonly bodies: Pick<PacketBodies, "read">;
   /** The Session as the Runtime reads it (SESSION_NOT_FOUND for an identity it does not hold). */
   readonly read: (id: SessionId) => SessionSnapshot;
   /** The static relay declaration of the Driver that serves a Harness control; null or undefined when it declares none. */
   readonly declaration: (selection: HarnessSelection) => RelayCapabilities | null | undefined;
+  /** What each of a Session's bindings asks the user to look at (the Runtime's `relayAttention`); none when the Runtime is not asked. */
+  readonly attention?: (id: SessionId) => readonly BindingAttention[];
+  /** Whether the data directory is within reach of the Session's workspace (the Runtime's `relayDataRootExposed`). */
+  readonly dataRootExposed?: (id: SessionId) => boolean;
   readonly http: RelayHttp;
 }
 
@@ -195,62 +167,162 @@ function matches(header: string | undefined, etag: string): boolean {
   return header.split(",").some(part => { const tag = part.trim(); return (tag.startsWith("W/") ? tag.slice(2) : tag) === etag; });
 }
 const LIST = /^\/api\/v1\/sessions\/([^/]+)\/relay$/u, PACKET = /^\/api\/v1\/sessions\/([^/]+)\/relay\/(relay-[0-9a-hjkmnp-tv-z]{20})$/u;
+/** The Sessions whose decisions are kept at most (the least recently read go first). */
+const DECISION_SESSIONS = 64;
+
+/**
+ * Whether a Turn of the Session can have recorded a relay decision: only a conversation that ran on more than one Harness control,
+ * carried a packet, kept a request's choices or began from quoted history owes anything to anyone. A conversation that stayed on
+ * one control from nothing needs no read of its events at all.
+ */
+function mayHaveDecisions(snapshot: SessionSnapshot): boolean {
+  if ((snapshot.origin?.history.length ?? 0) > 0) return true;
+  const controls = new Set<string>();
+  for (const run of snapshot.runs) {
+    if (run.relay?.packetId != null || run.relayRequest !== undefined) return true;
+    const on = run.relay?.executedOn ?? run.selection;
+    controls.add(on.harnessId + "\0" + on.controlId);
+    if (controls.size > 1) return true;
+  }
+  return false;
+}
+/**
+ * The relay decision each Run's `run.context_prepared` recorded (`relayDecisionOf`), by Run. Events are append-only, so each
+ * Session's are read once, from where the last read stopped; a Session the process has not seen is read from its start. Bounded:
+ * the least recently read Sessions are forgotten.
+ */
+class DecisionLedger {
+  private readonly sessions = new Map<SessionId, { after: number; readonly byRun: Map<string, RelayDecision> }>();
+  constructor(private readonly events: (id: SessionId, afterSeq: number, limit: number) => readonly SessionEvent[]) {}
+  of(state: SessionSnapshot): ReadonlyMap<string, RelayDecision> {
+    let known = this.sessions.get(state.id);
+    if (known === undefined || known.after > state.lastSeq) known = { after: 0, byRun: new Map() };
+    // Used last: moved to the end of the map, which is where the forgetting starts from the other side.
+    this.sessions.delete(state.id); this.sessions.set(state.id, known);
+    if (this.sessions.size > DECISION_SESSIONS) this.sessions.delete(this.sessions.keys().next().value!);
+    while (known.after < state.lastSeq) {
+      const page = this.events(state.id, known.after, 100);
+      if (!page.length) break;
+      for (const item of page) {
+        const run = item.data.runId;
+        if (item.type !== "run.context_prepared" || typeof run !== "string") continue;
+        const decision = relayDecisionOf(item.data);
+        if (decision !== null) known.byRun.set(run, decision);
+      }
+      known.after = page.at(-1)!.seq;
+    }
+    return known.byRun;
+  }
+}
+/** What a binding is owed now: the Runs a handoff to it would carry, and whether the history the Session started from goes too. */
+interface OwedNow { readonly runIds: readonly string[]; readonly origin: boolean }
+/** The packet frame and the most a standard handoff holds, in tokens, for an estimate of what is owed (the budget of a target whose window is unknown). */
+const FRAME_TOKENS = 300;
 
 /** Mounts the relay's routes and builds its views; one per Gateway. */
 export class RelayApi {
   private readonly ledger: RelayLedger;
+  private readonly decisions: DecisionLedger;
   /** The `relay` member of the errors a send was answered with, by the error that is answered (see `explain`). */
   private readonly explained = new WeakMap<object, RelayErrorView>();
-  constructor(private readonly options: RelayApiOptions) { this.ledger = new RelayLedger((id, afterSeq, limit) => options.reads.events(id, afterSeq, limit)); }
+  constructor(private readonly options: RelayApiOptions) {
+    this.ledger = new RelayLedger((id, afterSeq, limit) => options.reads.events(id, afterSeq, limit));
+    this.decisions = new DecisionLedger((id, afterSeq, limit) => options.reads.events(id, afterSeq, limit));
+  }
 
   // ---- the Run DTO ---------------------------------------------------------------------------------------------------
 
   /**
-   * The Session's Runs as the API shows them: each Run that carried a packet gets its delivery state, read from its delivery
+   * The Session's Runs as the API shows them. Each Run that carried a packet gets its delivery state, read from its delivery
    * row, which can change after the Run ended (a later check, a settled resend). A packet sent to a native side the Gateway
    * keeps no binding of (a Driver without a resumable session) has no delivery row to track: nothing is known of it, which
-   * is shown as unknown. A Session whose Runs carried no packet reads no row; rows that cannot be read leave the Runs as the
-   * Session holds them (a derived read never fails the conversation).
+   * is shown as unknown. Each Run the relay decided something for gets that decision (what it did and why: a resend, a send
+   * alone, a complete packet again), read from the event that recorded it. A Run's `relayRequest` never leaves: it holds an HMAC
+   * of the user's choices. A Session whose Runs carried no relay fact is shown as it is; rows that cannot be read leave out
+   * what they would have added (a derived read never fails the conversation).
    */
   runViews(snapshot: SessionSnapshot): readonly WebRun[] {
-    if (!snapshot.runs.some(run => run.relay?.packetId != null)) return snapshot.runs;
-    let rows: ReadonlyMap<string, DeliveryRecord>;
-    try { rows = new Map(this.options.reads.relayDeliveries(snapshot.id).map(row => [row.runId as string, row])); }
-    catch (error) { if (error instanceof SessionError && error.code === "INVALID_DATA") return snapshot.runs; throw error; }
-    return snapshot.runs.map(run => {
-      if (run.relay?.packetId == null) return run;
-      const row = rows.get(run.id);
-      return { ...run, relay: { ...run.relay, delivery: row === undefined ? UNTRACKED : deliveryView(row.outcome) } };
+    if (!snapshot.runs.some(run => run.relay !== undefined || run.relayRequest !== undefined)) return snapshot.runs;
+    let rows: ReadonlyMap<string, DeliveryRecord> | null = new Map();
+    if (snapshot.runs.some(run => run.relay?.packetId != null)) {
+      try { rows = new Map(this.options.reads.relayDeliveries(snapshot.id).map(row => [row.runId as string, row])); }
+      catch (error) { if (error instanceof SessionError && error.code === "INVALID_DATA") rows = null; else throw error; }
+    }
+    let decisions: ReadonlyMap<string, RelayDecision> = new Map();
+    if (mayHaveDecisions(snapshot)) {
+      try { decisions = this.decisions.of(snapshot); }
+      catch (error) { if (!(error instanceof SessionError && error.code === "INVALID_DATA")) throw error; }
+    }
+    const shown = snapshot.runs.map(run => {
+      const { relayRequest: _hidden, relay, ...rest } = run;
+      if (relay === undefined) return run.relayRequest === undefined ? run : rest;
+      const row = rows?.get(run.id), decision = decisions.get(run.id);
+      const delivery = relay.packetId == null || rows === null ? undefined : row === undefined ? UNTRACKED : deliveryView(row.outcome);
+      // A Run that gains nothing is the Run itself.
+      if (run.relayRequest === undefined && delivery === undefined && decision === undefined) return run;
+      return { ...rest, relay: { ...relay, ...(delivery === undefined ? {} : { delivery }), ...(decision === undefined ? {} : { decision }) } };
     });
+    // Nothing added and nothing hidden: the Session's own Runs.
+    return shown.every((run, index) => run === snapshot.runs[index]) ? snapshot.runs : shown;
+  }
+  /** An event as the API shows it: a `message.accepted` keeps no `relayRequest.fingerprint` (an HMAC of the user's choices). */
+  publicEvent(event: SessionEvent): SessionEvent {
+    const request = event.data.relayRequest;
+    if (event.type !== "message.accepted" || request === null || typeof request !== "object" || Array.isArray(request) || !("fingerprint" in request)) return event;
+    const { fingerprint: _hidden, ...kept } = request as Readonly<Record<string, unknown>>;
+    return { ...event, data: { ...event.data, relayRequest: kept } };
   }
 
   // ---- GET …/relay ---------------------------------------------------------------------------------------------------
 
   view(snapshot: SessionSnapshot): RelayView {
     const manifests = new Map(this.options.reads.relayPackets(snapshot.id).map(packet => [packet.id as string, packet]));
-    const bindings = (snapshot.nativeBindings ?? []).flatMap(binding => binding.status === "archived" || binding.relay === undefined ? [] : [this.bindingView(snapshot, binding, binding.relay)]);
     const rows = new Map(this.options.reads.relayDeliveries(snapshot.id).map(row => [row.runId as string, row])), packets: RelayPacketView[] = [];
     // One entry per packet-carrying Run, in Run order: "交接单 #n" is the n-th Run whose `relay.packetId` is not null, whether or not
     // a row tracks its delivery (a packet nothing stored is left out, and its number with it).
     let number = 0;
+    const numbers = new Map<string, number>();
     for (let runIndex = 0; runIndex < snapshot.runs.length; runIndex++) {
       const run = snapshot.runs[runIndex]!;
       if (run.relay?.packetId == null) continue;
       number += 1;
+      if (!numbers.has(run.relay.packetId)) numbers.set(run.relay.packetId, number);
       const packet = manifests.get(run.relay.packetId);
       if (packet === undefined) continue;
       const row = rows.get(run.id), delivery = row === undefined ? UNTRACKED : deliveryView(row.outcome);
       packets.push({ packetId: packet.id, runId: run.id, runIndex, number, kind: packet.kind, tier: packet.tier, target: { harnessId: packet.target.harnessId, model: packet.target.model },
         estTokens: packet.body.estTokens, omissions: packet.omissions.reduce((sum, item) => sum + item.count, 0), redactions: packet.redaction.count, delivery: delivery.state, evidence: delivery.evidence });
     }
-    return { bindings, packets };
+    const attended = this.attended(snapshot.id);
+    const bindings = (snapshot.nativeBindings ?? []).flatMap(binding => binding.status === "archived" || binding.relay === undefined ? [] : [this.bindingView(snapshot, binding, binding.relay, attended, numbers)]);
+    return { bindings, packets, ...(this.exposed(snapshot.id) ? { dataRootExposed: true as const } : {}) };
   }
-  private bindingView(snapshot: SessionSnapshot, binding: NativeSessionBinding, relay: BindingRelayState): RelayBindingView {
+  /** What the Runtime says each binding asks the user to look at, by binding; none when it says nothing (or cannot be asked). */
+  private attended(id: SessionId): ReadonlyMap<string, BindingAttention> {
+    try { return new Map((this.options.attention?.(id) ?? []).map(row => [row.harnessId + "\0" + row.controlId, row])); } catch { return new Map(); }
+  }
+  private exposed(id: SessionId): boolean { try { return this.options.dataRootExposed?.(id) === true; } catch { return false; } }
+  private bindingView(snapshot: SessionSnapshot, binding: NativeSessionBinding, relay: BindingRelayState, attended: ReadonlyMap<string, BindingAttention>, numbers: ReadonlyMap<string, number>): RelayBindingView {
     const mark = markOf(relay.sync);
     let declared: RelayCapabilities | null | undefined;
     try { declared = this.options.declaration({ harnessId: binding.harnessId, controlId: binding.controlId }); } catch { declared = undefined; }
+    const known = attended.get(binding.harnessId + "\0" + binding.controlId);
+    const probed = known?.probed ?? (declared?.probed === true);
+    const canConfirm = declared === undefined ? undefined : declared !== null && (declared.delivery.live !== "none" || declared.delivery.verify !== "none" || declared.delivery.successProvesRecorded);
+    const need = this.owedNow(snapshot, binding);
+    const asked = known?.attention ?? null;
+    let attention: RelayAttentionView | undefined;
+    if (asked !== null) {
+      const packet = relay.sync.kind === "pending" ? numbers.get(relay.sync.packetId) : undefined;
+      // The vendor an `acknowledge` is for is the one place the relay view names one: the page cannot answer the banner without it.
+      const vendor = asked.options.includes("acknowledge") ? vendorKeyOf(declared, binding.harnessId, relay.vendorObserved ?? null) : undefined;
+      attention = { cause: asked.cause, options: asked.options, counts: asked.counts, key: asked.key, ...(packet === undefined ? {} : { packet }), ...(vendor === undefined ? {} : { vendor }) };
+    }
     return { harnessId: binding.harnessId, controlId: binding.controlId, nativeEpoch: relay.nativeEpoch, sync: relay.sync.kind, throughRun: this.throughRun(snapshot, mark),
-      evidence: mark?.evidence ?? null, cleared: Math.max(0, relay.nativeEpoch - heldSince(relay, snapshot.nativeBindings ?? [], binding.harnessId, binding.controlId)), probed: declared?.probed === true };
+      evidence: mark?.evidence ?? null, cleared: Math.max(0, relay.nativeEpoch - heldSince(relay, snapshot.nativeBindings ?? [], binding.harnessId, binding.controlId)), probed,
+      ...(canConfirm === undefined ? {} : { canConfirm }),
+      ...(need === undefined || need.runIds.length === 0 ? {} : { owed: { runs: need.runIds.length, estTokens: this.estimate(snapshot, need) } }),
+      ...(attention === undefined ? {} : { attention }) };
   }
   /**
    * The index (in the Session's Runs) of the latest finished Run whose fact the mark covers: a Run's fact is placed by its
@@ -267,6 +339,31 @@ export class RelayApi {
       if (seq !== undefined && seq <= mark.throughSeq) through = index;
     }
     return through;
+  }
+  /** The Runs (and whether the starting history) a handoff to the binding would carry now; undefined when it cannot be told. */
+  private owedNow(snapshot: SessionSnapshot, binding: NativeSessionBinding): OwedNow | undefined {
+    const relay = binding.relay;
+    if (relay === undefined) return undefined;
+    try {
+      // The migration's index rows place a v12 Run (where it ran); a Session without migrated Runs needs none of them.
+      let index: readonly RelayIndexRow[] = [];
+      if (snapshot.runs.some(run => run.relay === undefined && terminal(run.status) && dispatched(run))) index = this.options.reads.relayIndex(snapshot.id);
+      const facts = this.ledger.facts(snapshot, index, { harnessId: binding.harnessId, controlId: binding.controlId, nativeEpoch: relay.nativeEpoch });
+      const need = owed(relay, binding.harnessId, binding.controlId, facts, { originHistory: (snapshot.origin?.history.length ?? 0) > 0, heldSince: heldSince(relay, snapshot.nativeBindings ?? [], binding.harnessId, binding.controlId) });
+      return { runIds: need.facts.map(fact => fact.runId as string), origin: need.origin };
+    } catch { return undefined; }
+  }
+  /**
+   * What the owed Runs would take if they were sent as they stand, in the estimator's tokens: their words and replies, the
+   * history the Session started from when it goes too, and the packet's frame, held to what a standard packet of an unknown
+   * window may take. It errs high and is not the packet's size; the page says "约".
+   */
+  private estimate(snapshot: SessionSnapshot, need: OwedNow): number {
+    const wanted = new Set(need.runIds);
+    let tokens = FRAME_TOKENS;
+    for (const message of snapshot.messages) if (wanted.has(message.runId)) tokens += estimateTokens(message.text);
+    if (need.origin) for (const turn of snapshot.origin?.history ?? []) tokens += estimateTokens(turn.text);
+    return Math.min(resolveRelayBudget(null).cap, tokens);
   }
 
   // ---- the error body ------------------------------------------------------------------------------------------------
@@ -300,14 +397,8 @@ export class RelayApi {
   private counts(snapshot: SessionSnapshot, binding: NativeSessionBinding | undefined): RelayErrorView["counts"] | undefined {
     const relay = binding?.relay;
     if (binding === undefined || relay === undefined) return undefined;
-    try {
-      // The migration's index rows place a v12 Run (where it ran); a Session without migrated Runs needs none of them.
-      let index: readonly RelayIndexRow[] = [];
-      if (snapshot.runs.some(run => run.relay === undefined && terminal(run.status) && dispatched(run))) index = this.options.reads.relayIndex(snapshot.id);
-      const facts = this.ledger.facts(snapshot, index, { harnessId: binding.harnessId, controlId: binding.controlId, nativeEpoch: relay.nativeEpoch });
-      const need = owed(relay, binding.harnessId, binding.controlId, facts, { originHistory: (snapshot.origin?.history.length ?? 0) > 0, heldSince: heldSince(relay, snapshot.nativeBindings ?? [], binding.harnessId, binding.controlId) });
-      return { runs: need.facts.length, packets: relay.packetsInEpoch };
-    } catch { return undefined; }
+    const need = this.owedNow(snapshot, binding);
+    return need === undefined ? undefined : { runs: need.runIds.length, packets: relay.packetsInEpoch };
   }
 
   // ---- routes --------------------------------------------------------------------------------------------------------
@@ -336,7 +427,11 @@ export class RelayApi {
     if (packet !== null && (method === "GET" || method === "HEAD")) { http.queries(url, []); this.packet(request, response, method, sessionId(packet[1]!), packet[2]!); return true; }
     return false;
   }
-  private prefs(): RelayPrefsView { return { prefs: this.options.reads.relayPrefs() }; }
+  /** Every preference with its value: the one the user set, else its default (RELAY_PREF_DEFAULTS), so the page never guesses one. */
+  private prefs(): RelayPrefsView {
+    const stored = this.options.reads.relayPrefs();
+    return { prefs: Object.fromEntries(RELAY_PREF_KEYS.map(key => [key, stored[key] ?? RELAY_PREF_DEFAULTS[key]])) as Record<RelayPrefKey, string> };
+  }
   /**
    * A packet's stored text, byte for byte as it was sent (relay-architecture §10.2: not scanned again on the way out),
    * with the sha256 of those bytes as its ETag. The Session's own packets only: another Session's identity, or none, is the
@@ -344,9 +439,9 @@ export class RelayApi {
    */
   private packet(request: IncomingMessage, response: ServerResponse, method: string, id: SessionId, packetId: string): void {
     this.options.read(id);
-    const manifest = this.options.reads.relayPackets(id).find(row => row.id === packetId);
-    if (manifest === undefined) throw new SessionError("RELAY_PACKET_NOT_FOUND", "this conversation has no such handoff packet");
-    const text = this.options.bodies.read(id, manifest.body.sha256);
+    const manifest = this.options.reads.relayPacket(id, packetId);
+    if (manifest === null) throw new SessionError("RELAY_PACKET_NOT_FOUND", "this conversation has no such handoff packet");
+    const text = this.options.reads.relayPacketBody(id, manifest.body.sha256);
     if (text === null) throw new SessionError("INVALID_DATA", "a handoff packet is kept without its text");
     const bytes = Buffer.from(text, "utf8"), digest = createHash("sha256").update(bytes).digest("hex");
     if (digest !== manifest.body.sha256 || bytes.length !== manifest.body.bytes) throw new SessionError("INVALID_DATA", "a stored handoff text does not match its manifest");

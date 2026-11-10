@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { commandId, messageId, runId } from "../../src/contracts/session.js";
 import type { PublicMessage, PublicRun } from "../../src/contracts/session.js";
-import type { SessionStreamFrame, SessionView } from "../../src/contracts/web.js";
-import { decodeSession } from "../../web/src/api.js";
+import type { RelayStreamFrame, SessionStreamFrame, SessionView } from "../../src/contracts/web.js";
+import { decodeSession, decodeSessionStreamFrame } from "../../web/src/api.js";
 import { applySessionStreamFrame, consumeSessionEventStream, SessionStreamError } from "../../web/src/session-stream.js";
 
 const encoder = new TextEncoder();
@@ -276,4 +276,59 @@ test("waiting-request lists ride along a session stream without moving its curso
   // Without a consumer for them they are skipped; a broken one fails the stream like any other broken frame.
   assert.deepEqual(await read([encoder.encode(attention + sse(next))]), [next]);
   await assert.rejects(read([encoder.encode("event: attention\ndata: {broken\n\n")]), isCode("STREAM_INVALID_FRAME"));
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The relay's notice is a frame of the stream (ADR-055 §12.4): it follows the facts it names, with their watermark
+// ---------------------------------------------------------------------------------------------------------------------
+
+function relayFrame(base = snapshot(), type: RelayStreamFrame["event"]["type"] = "relay.verified"): RelayStreamFrame {
+  return { type: "relay", sessionId: base.id, version: base.version, lastSeq: base.lastSeq, event: { type, sessionId: base.id, runId: base.runs[0]!.id, packetId: "relay-0123456789abcdefghjk", at: 1_794_305_941_906 } };
+}
+test("a relay notice is read by the page's decoder for its event, and takes nothing but the event", () => {
+  const base = snapshot(), frame = relayFrame(base);
+  assert.deepEqual(decodeSessionStreamFrame(JSON.parse(JSON.stringify(frame))), frame);
+  // Without a Run or a packet it still is a notice that the relay changed.
+  const bare = { type: "relay", sessionId: base.id, version: base.version, lastSeq: base.lastSeq, event: { type: "relay.clear_confirmed", sessionId: base.id, at: 5 } };
+  assert.deepEqual(decodeSessionStreamFrame(bare), bare);
+  // A kind this page does not know is still a notice, and one that is no notice is refused whole.
+  assert.equal(decodeSessionStreamFrame({ ...bare, event: { ...bare.event, type: "relay.something_new" } }).type, "relay");
+  for (const broken of [{ ...bare, event: null }, { ...bare, event: { sessionId: base.id, at: 5 } }, { ...bare, event: { type: "relay.verified", sessionId: base.id } }, { ...bare, version: 0 }, { ...bare, lastSeq: -1 },
+    { ...bare, extra: 1 }, { type: "relay", sessionId: base.id, version: 1, lastSeq: 1 }]) {
+    assert.throws(() => decodeSessionStreamFrame(broken), (error: unknown) => (error as { code?: string }).code === "INVALID_RESPONSE", JSON.stringify(broken).slice(0, 60));
+  }
+});
+test("a relay notice rides in the stream after the facts it follows and leaves the Session as it is", async () => {
+  const first = snapshot(), next = messageFrame(first), notice = relayFrame({ ...first, version: next.version, lastSeq: next.lastSeq } as SessionView);
+  const frames = await (async () => {
+    const seen: SessionStreamFrame[] = [];
+    await consumeSessionEventStream(bytesStream([encoder.encode(sse({ type: "snapshot", session: first }) + sse(next) + sse(notice))]), { signal: new AbortController().signal, decode: decodeSessionStreamFrame, onFrame: frame => { seen.push(frame); } });
+    return seen;
+  })();
+  assert.deepEqual(frames.map(frame => frame.type), ["snapshot", "message", "relay"]);
+  let session: SessionView | null = null;
+  for (const frame of frames) session = applySessionStreamFrame(session, frame, first.id);
+  assert.equal(session!.lastSeq, next.lastSeq); assert.equal(session!.messages.find(message => message.role === "assistant")?.text, next.message.text);
+  const before = session; assert.equal(applySessionStreamFrame(session, notice, first.id), before, "the notice is a no-op under the watermark it names");
+  // The identity on the wire is the facts' watermark, as for any frame.
+  const crooked = encoder.encode("event: session\nid: " + (notice.lastSeq + 1) + "\ndata: " + JSON.stringify(notice) + "\n\n");
+  await assert.rejects(consumeSessionEventStream(bytesStream([crooked]), { signal: new AbortController().signal, decode: decodeSessionStreamFrame, onFrame: () => {} }), isCode("STREAM_INVALID_FRAME"));
+});
+test("a relay notice needs the snapshot it follows, names its own Session, and cannot disagree with the facts it follows", () => {
+  const base = snapshot(), notice = relayFrame(base);
+  assert.throws(() => applySessionStreamFrame(null, notice, base.id), isCode("STREAM_STATE"), "no notice before a snapshot");
+  assert.throws(() => applySessionStreamFrame(base, { ...notice, sessionId: "session-other", event: { ...notice.event, sessionId: "session-other" } }, base.id), isCode("STREAM_STATE"), "another Session's notice");
+  assert.throws(() => applySessionStreamFrame(base, { ...notice, version: base.version - 1 }, base.id), isCode("STREAM_STATE"), "the same watermark under another version");
+  assert.equal(applySessionStreamFrame(base, notice, base.id), base);
+  // A notice that is ahead of the facts the page holds (they come with the snapshot that follows) changes nothing either: it carries none.
+  assert.equal(applySessionStreamFrame(base, { ...notice, version: base.version + 1, lastSeq: base.lastSeq + 3 }, base.id), base);
+  // And one that is behind them is stale, like any older frame.
+  assert.equal(applySessionStreamFrame({ ...base, version: base.version + 1, lastSeq: base.lastSeq + 1 }, notice, base.id).lastSeq, base.lastSeq + 1);
+});
+test("relay events named relay in the stream are handed on as they are, and never move the cursor", async () => {
+  const first = snapshot(), seen: unknown[] = [], frames: SessionStreamFrame[] = [];
+  const event = "event: relay\ndata: " + JSON.stringify({ type: "relay", event: { type: "relay.verified", sessionId: first.id } }) + "\n\n";
+  await consumeSessionEventStream(bytesStream([encoder.encode(sse({ type: "snapshot", session: first }) + event + "event: relay\ndata: {broken\n\n")]), { signal: new AbortController().signal, decode,
+    onFrame: frame => { frames.push(frame); }, onRelay: value => { seen.push(value); } });
+  assert.deepEqual(frames, [{ type: "snapshot", session: first }]); assert.equal(seen.length, 1, "the event that is not JSON is dropped, and does not end the stream");
 });

@@ -27,7 +27,7 @@ function limit(value: number | undefined, fallback: number): number {
   const chosen = value ?? fallback;
   if (!Number.isSafeInteger(chosen) || chosen < 1) throw new Error("invalid session stream limit"); return chosen;
 }
-function water(frame: SessionStreamFrame | RelayStreamFrame): number { return frame.type === "snapshot" ? frame.session.lastSeq : frame.lastSeq; }
+function water(frame: SessionStreamFrame): number { return frame.type === "snapshot" ? frame.session.lastSeq : frame.lastSeq; }
 
 const RELAY_EVENTS: ReadonlySet<string> = new Set(RELAY_STREAM_EVENTS);
 const RUN_IDENTITY = /^run-[A-Za-z0-9-]{1,96}$/u, PACKET_IDENTITY = /^relay-[0-9a-hjkmnp-tv-z]{20}$/u;

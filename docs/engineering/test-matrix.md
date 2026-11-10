@@ -685,6 +685,7 @@
 | G073-S01 | G073 | security | AP-01–AP-03：对 consents、pins、reveal 的跨源请求或缺 CSRF 的请求、读取其他会话的 packetId；排除后做增量、交给另一家、重发，按位置放行后同值出现在新位置；抓取全部 SSE 事件；新端点沿用 cookie、CSRF 与 Host/Origin/Sec-Fetch 校验 | 分别返回 403、404；被排除的轮次从不出现，新位置仍被脱敏；SSE 不含正文、原值，也不含原值的哈希 | planned |
 | G073-C06 | G073 | unit | 用词检查扫描全部界面字符串与无障碍名（`web/src` 与 `src/web` 的文案、`aria-label`），含无效样例与例外清单（`Hermes Agent`、`Claude Agent` 这类注册表名、`子 Agent`） | 无效样例被拒、非零退出；例外清单生效；既有 11 处“我的 Agent”清零 | planned |
 | G073-C07 | G073 | e2e | 费用显示：订阅、API key、越过价格悬崖 | 订阅只显示 token；API key 显示全程与每个后续请求的费用；越悬崖时提示［先压缩］［只发这条消息］［照发］ | planned |
+| G073-C08 | G073 | e2e | 默认设置下，真实网关与真实构建的页面，夹具 Harness 扮演两家：切到 B 发一条（带交接单）、切回 A 再发一条（补增量）、造一次送达未确认（先自动再附一次，再只发原话）、清空后附上交接单 | 全程没有 409 与失败的 Run；分隔线先“送达中”、有证据后才“从这里起由 X 接手”，策略单发的回合如实写“这条只发了原话”而不写“已接手”；提示条读 attention，同一 key 关掉后不再弹，按钮带对应的 relay 字段；附件条能打开交接单原文；浅色与深色各截图自查 | planned |
 | G074-C01 | G074 | integration | 确定性故障注入矩阵：假 Harness 按 Driver 声明（live / verify / lateDelivery / execution）× 证据序列（E1、E3、absent、outside_window、compacted、unknown 一次、unknown 两次、not_recorded、清空确认 / 未确认、回退、attach none）× 崩溃点 K1–K18 | 重复注入 0、丢增量 0；外来事实为空的纪元里 `dispatched === input` | planned |
 | G074-C02 | G074 | e2e | S5、S6、S14、S15 的接力路径与崩溃注入 K1–K18（自 G056 移入） | 按终稿第 9 节收敛：待决切换失败而不悬挂；未知回合不重跑；gateway 型查看器被杀时绑定 unconfirmed、租约不交给他人；重启后 `recoverRelay` 的结论与送达表一致 | planned |
 | G074-R01 | G074 | probe | RelayConformance P1–P14：六家在临时 git 工作区各跑一遍（最新正式版、最便宜的模型、独立凭据与消费上限） | 送达证据与第 8 节声明逐格一致；能回读的几家找得到标记；不出现 `CONTEXT_TOO_LARGE`；P2、P3、P6、P11 通过后翻转 `probed=true`；结果写进 `docs/verification/relay-conformance-<日期>.md` | planned |

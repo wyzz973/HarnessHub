@@ -402,6 +402,8 @@ export function App() {
           await api.streamSession(sessionId, current?.id === sessionId ? current.lastSeq : 0, controller.signal, frame => {
             if (stopped || sessionIdRef.current !== sessionId) return;
             const base = liveSession.current?.id === sessionId ? liveSession.current : null;
+            // A notice that the relay changed says to read the relay again; it carries no facts, so what follows leaves the Session as it is.
+            if (frame.type === "relay") { setRelayPushed(value => value + 1); learnRelay(); }
             const next = applySessionStreamFrame(base, frame, sessionId);
             setConnectionError(null); stage(next); watchTurn.current(next);
           }, frame => { if (!stopped) acceptAttention(frame); }, () => { if (!stopped) { setRelayPushed(value => value + 1); learnRelay(); } });

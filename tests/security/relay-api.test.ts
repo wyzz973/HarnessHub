@@ -214,8 +214,17 @@ test("AP-01–AP-03: nothing of the history, no native value and no digest leave
   assert.deepEqual(Object.keys(row(asked.data)).sort(), ["code", "message", "relay"]); assert.deepEqual(Object.keys(row(row(asked.data).relay)).sort(), ["binding", "cause", "counts", "options"]);
   assert.deepEqual(Object.keys(row(row(row(asked.data).relay).binding)).sort(), ["controlId", "harnessId"]);
   for (const frame of live.frames.filter(item => item.type === "relay")) { assert.deepEqual(Object.keys(frame).sort(), ["event", "lastSeq", "sessionId", "type", "version"]); assert.ok(Object.keys(row(frame.event)).every(key => ["type", "sessionId", "runId", "packetId", "at"].includes(key))); }
-  for (const run of conversation.runs) if (run.relay !== undefined) assert.ok(Object.keys(run.relay).every(key => ["packetId", "kind", "continuity", "executedOn", "delivery"].includes(key)), JSON.stringify(Object.keys(run.relay)));
-  for (const binding of model.bindings) assert.deepEqual(Object.keys(binding).sort(), ["cleared", "controlId", "evidence", "harnessId", "nativeEpoch", "probed", "sync", "throughRun"]);
+  for (const run of conversation.runs) if (run.relay !== undefined) assert.ok(Object.keys(run.relay).every(key => ["packetId", "kind", "continuity", "executedOn", "delivery", "decision"].includes(key)), JSON.stringify(Object.keys(run.relay)));
+  // A Run's `relayRequest` holds an HMAC of the user's choices: it does not leave, not with the Run and not in the events either.
+  for (const run of conversation.runs) assert.equal("relayRequest" in run, false, "the Run holds no relayRequest");
+  const events = await get(f, `/api/v1/sessions/${id}/events?limit=100`), accepted = (row(events.data).events as { type: string; data: Record<string, unknown> }[]).filter(item => item.type === "message.accepted");
+  assert.ok(accepted.length >= 4, "the message events are in the page"); for (const item of accepted) assert.equal(JSON.stringify(item).includes("fingerprint"), false, "an accepted message keeps no fingerprint in the page of events");
+  const allowed = ["attention", "canConfirm", "cleared", "controlId", "evidence", "harnessId", "nativeEpoch", "owed", "probed", "sync", "throughRun"];
+  for (const binding of model.bindings) {
+    assert.ok(Object.keys(binding).every(key => allowed.includes(key)), JSON.stringify(Object.keys(binding)));
+    for (const required of ["cleared", "controlId", "evidence", "harnessId", "nativeEpoch", "probed", "sync", "throughRun"]) assert.ok(required in binding, required);
+    if (binding.attention !== undefined) assert.ok(Object.keys(binding.attention).every(key => ["cause", "options", "counts", "key", "packet", "vendor"].includes(key)), JSON.stringify(Object.keys(binding.attention)));
+  }
   // The text of a packet is a real read of the user's data, so it is not served to a caller that is not logged in.
   for (const packet of model.packets) assert.equal((await send(f, { path: `/api/v1/sessions/${id}/relay/${packet.packetId}`, login: false })).status, 401);
 });

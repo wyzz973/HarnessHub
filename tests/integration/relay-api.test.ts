@@ -11,7 +11,7 @@ import { DatabaseSync } from "node:sqlite";
 import { application } from "../../src/cli/session-application.js";
 import { codexRelayCapabilities } from "../../src/adapters/control/codex.js";
 import {
-  RELAY_PREF_KEYS, RELAY_PREF_VALUES, RelayError, parseDeliveryRecord, parseRelayPacket, relayPacketId,
+  RELAY_PREF_DEFAULTS, RELAY_PREF_KEYS, RELAY_PREF_VALUES, RelayError, parseDeliveryRecord, parseRelayPacket, relayPacketId,
   type BindingRelayState, type DeliveryOutcome, type DeliveryRecord, type Fingerprint, type RelayCapabilities, type RelayPacket, type RelayPacketId,
 } from "../../src/contracts/relay.js";
 import {
@@ -287,6 +287,14 @@ test("A → B → A: the relay model lists the bindings and the packets, and the
   assert.ok(r2?.packetId); assert.deepEqual(r2.delivery, { state: "unknown", evidence: null }, "a packet no row tracks is unknown, never claimed delivered");
   assert.deepEqual(model.bindings.map(item => [item.harnessId, item.controlId, item.nativeEpoch, item.sync, item.throughRun, item.evidence, item.cleared, item.probed]),
     [["rapi-b", "rapi-b-control", 1, "pending", null, null, 0, false]], "only rapi-b keeps a native session; nothing proves its packet, nothing is claimed");
+  // What the binding is owed (the first Run it was handed in a packet nothing confirmed, and the third, which ran on rapi-a), whether its Driver can
+  // confirm a delivery at all, and what the Runtime says it asks of the user: the packet is not confirmed, and "交接单 #1" is the one it is about.
+  const [b] = model.bindings as [RelayBindingView];
+  assert.equal(b.canConfirm, true, "the Codex Driver confirms by what it records and what it can be asked afterwards");
+  assert.deepEqual(b.owed?.runs, 2); assert.ok(b.owed !== undefined && b.owed.estTokens > 0 && b.owed.estTokens <= 6400, "an estimate, held to what a standard packet may take");
+  assert.deepEqual([b.attention?.cause, b.attention?.options, b.attention?.counts, b.attention?.packet], ["delivery_unconfirmed", ["attach_full", "new_native"], { runs: 2, packets: 1 }, 1]);
+  assert.match(b.attention?.key ?? "", /^delivery_unconfirmed:relay-/u); assert.equal(b.attention?.vendor, undefined, "a vendor is named only where an acknowledge needs one");
+  assert.equal("dataRootExposed" in empty, false, "nothing to warn of: the data directory is not in the workspace");
   assert.equal(model.packets.length, 2);
   const [p1, p2] = model.packets as [RelayPacketView, RelayPacketView];
   assert.deepEqual([p1.number, p2.number], [1, 2]); assert.deepEqual([p1.runIndex, p2.runIndex], [1, 2]);
@@ -299,9 +307,33 @@ test("A → B → A: the relay model lists the bindings and the packets, and the
     assert.ok(Number.isSafeInteger(packet.estTokens) && packet.estTokens > 0); assert.equal(packet.omissions, 0); assert.equal(packet.redactions, 0);
     assert.deepEqual([packet.delivery, packet.evidence], ["unknown", null]);
   }
-  for (const binding of model.bindings) assert.deepEqual(Object.keys(binding).sort(), ["cleared", "controlId", "evidence", "harnessId", "nativeEpoch", "probed", "sync", "throughRun"]);
+  for (const binding of model.bindings) assert.deepEqual(Object.keys(binding).sort(), ["attention", "canConfirm", "cleared", "controlId", "evidence", "harnessId", "nativeEpoch", "owed", "probed", "sync", "throughRun"]);
   // Reading changes nothing of the conversation.
   assert.equal((await view(f, id)).lastSeq, conversation.lastSeq); assert.equal((await view(f, id)).version, conversation.version);
+});
+
+test("under the defaults nothing is asked: an unconfirmed handoff is sent again once, then the messages go alone, and each Run says what the relay did", async t => {
+  const f = await fixture(t), id = await create(f);
+  assert.equal((await say(f, id, "first", "m1", 0)).status, 202);
+  await switchTo(f, id, "rapi-b", "to-b");
+  // Four messages on the new Harness, none of them refused: the handoff, the same handoff again (the first one nothing confirmed), then two alone.
+  for (const [index, text] of ["second", "third", "fourth", "fifth"].entries()) { const reply = await say(f, id, text, "m" + (index + 2), index + 1); assert.equal(reply.status, 202, text + ": " + reply.text); }
+  const shown = await view(f, id), model = await relayOf(f, id);
+  assert.deepEqual(shown.runs.map(run => run.status), ["completed", "completed", "completed", "completed", "completed"], "no Run failed");
+  assert.deepEqual(shown.runs.map(run => run.relay?.decision ?? null), [null,
+    { kind: "carry", by: "need" }, { kind: "carry", by: "policy", cause: "delivery_unconfirmed" }, { kind: "alone", by: "policy", cause: "delivery_unconfirmed" }, { kind: "alone", by: "policy", cause: "delivery_unconfirmed" }],
+    "a Run that went alone because of what it could not confirm says so; one sent again says it was the relay that did it");
+  assert.deepEqual(shown.runs.map(run => run.relay?.kind ?? null), [null, "packet", "packet", null, null], "the packet sent again is a packet like the first: what tells it apart is the decision, not its kind");
+  assert.deepEqual(shown.runs.map(run => run.relay?.packetId != null), [false, true, true, false, false]);
+  for (const run of shown.runs) assert.equal("relayRequest" in run, false, "the Run keeps its choices' HMAC to itself");
+  // What the binding asks of the user: two packets went and nothing confirmed either; the page offers the ways out and does not wait for them.
+  const [b] = model.bindings as [RelayBindingView];
+  assert.deepEqual([b.sync, b.attention?.cause, b.attention?.options, b.attention?.counts?.packets, b.attention?.packet], ["pending", "delivery_unconfirmed", ["attach_full", "new_native"], 2, 2]);
+  assert.deepEqual(model.packets.map(item => item.number), [1, 2]);
+  // The way out the banner offers is a field of the next send: [再附一次] is a resend, and it is a Run like the others.
+  const again = await say(f, id, "sixth", "m6", 5, { resend: true }); assert.equal(again.status, 202, again.text);
+  const last = await view(f, id); assert.equal(last.runs[5]!.status, "completed"); assert.ok(last.runs[5]!.relay?.packetId, "the packet went again");
+  assert.deepEqual(last.runs[5]!.relay?.decision?.by, "user", "and the Run says it was the user's choice");
 });
 
 test("a packet's text is served byte for byte as it was sent, with its sha256 as the ETag", async t => {
@@ -420,14 +452,12 @@ test("a send that needs the user's choice is a 409 that names the binding, the c
   assert.deepEqual(model.packets.map(item => item.runIndex), [1, 2, 3]);
 });
 
-test("until the Runtime takes native: new, a new native session is opened through native-branch, and the message held back goes through", async t => {
+test("[新开原生会话] is the field native: new: the held-back message goes through on a new native session, with the complete handoff", async t => {
   const f = await fixture(t), id = await stranded(f);
   const asked = await say(f, id, "fourth", "m4", null); assert.equal(asked.status, 409); assert.ok((asked.data as WebError).relay?.options.includes("new_native"));
-  // The choice is accepted as a field and checked; the Runtime does not act on it yet, so the same answer comes again.
-  const ignored = await say(f, id, "fourth", "m4", null, { native: "new" }); assert.equal(ignored.status, 409, "native: new is not acted on yet");
-  const before = await view(f, id);
-  const branched = await call(f, `/api/v1/sessions/${id}/native-branch`, "POST", { epoch: before.epoch, commandId: "branch-1" }); assert.equal(branched.status, 200, branched.text);
-  const sent = await say(f, id, "fourth", "m4", 3); assert.equal(sent.status, 202, sent.text);
+  // The same command, now with the choice the 409 offered: the Runtime archives the Harness control's native session as a native reset does
+  // and the input opens a new one, which is given the complete handoff.
+  const sent = await say(f, id, "fourth", "m4", 3, { native: "new" }); assert.equal(sent.status, 202, sent.text);
   const after = await view(f, id), model = await relayOf(f, id);
   assert.equal(after.runs[3]!.status, "completed"); assert.ok(after.runs[3]!.relay?.packetId, "the new native session was given the complete handoff");
   assert.deepEqual(model.bindings.map(item => [item.harnessId, item.nativeEpoch]), [["rapi-b", 2]], "one binding of rapi-b is listed: the new native session, in the next epoch");
@@ -501,16 +531,18 @@ test("what the user may choose follows the cause and the binding's state", () =>
 });
 
 test("the relay member is read as a whole before the Runtime sees any of it", () => {
-  assert.deepEqual(parseSendRelay(undefined), { choices: undefined, deferred: {} });
-  assert.deepEqual(parseSendRelay({}), { choices: undefined, deferred: {} });
-  assert.deepEqual(parseSendRelay({ attach: "auto" }), { choices: undefined, deferred: {} }, "auto is no choice");
-  assert.deepEqual(parseSendRelay({ attach: "full", resend: true, clearConfirmed: true }), { choices: { attach: "full", resend: true, clearConfirmed: true }, deferred: {} });
+  assert.deepEqual(parseSendRelay(undefined), { choices: undefined });
+  assert.deepEqual(parseSendRelay({}), { choices: undefined });
+  assert.deepEqual(parseSendRelay({ attach: "auto" }), { choices: undefined }, "auto is no choice");
+  assert.deepEqual(parseSendRelay({ attach: "full", resend: true, clearConfirmed: true }), { choices: { attach: "full", resend: true, clearConfirmed: true } });
   assert.deepEqual(parseSendRelay({ attach: "none" }).choices, { attach: "none" });
-  // What the Runtime does not take yet is checked and kept apart: the one place that hands it on is `toRuntime`.
-  const later = parseSendRelay({ attach: "full", tier: "brief", native: "new", note: "n", consent: { vendor: "openai", decision: "acknowledged", scope: "global" } });
-  assert.deepEqual(later.choices, { attach: "full" });
-  assert.deepEqual(later.deferred, { tier: "brief", native: "new", note: "n", consent: { vendor: "openai", decision: "acknowledged", scope: "global" } });
+  // The target's tier, a new native session and a consent go to the Runtime with the rest; a note is checked and goes no further.
+  const all = parseSendRelay({ attach: "full", tier: "brief", native: "new", note: "n", consent: { vendor: "openai", decision: "acknowledged", scope: "global" } });
+  assert.deepEqual(all.choices, { attach: "full", tier: "brief", native: "new", consent: { vendor: "openai", decision: "acknowledged", scope: "global" } });
+  assert.deepEqual(parseSendRelay({ native: "continue" }).choices, { native: "continue" }, "a choice to continue is recorded with the Run, and is no request for history");
+  assert.deepEqual(parseSendRelay({ note: "只是一句附言" }), { choices: undefined }, "a note alone changes nothing");
   assert.throws(() => parseSendRelay({ attach: "none", native: "new" }), (error: unknown) => error instanceof SessionError && error.code === "INVALID_INPUT");
+  assert.throws(() => parseSendRelay({ note: "  " }), (error: unknown) => error instanceof SessionError && error.code === "INVALID_INPUT");
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -519,7 +551,8 @@ test("the relay member is read as a whole before the Runtime sees any of it", ()
 
 test("the relay preferences are read, written one key at a time, refused when they make no sense, and kept across a restart", async t => {
   const f = await fixture(t);
-  assert.deepEqual((await call(f, "/api/v1/relay/prefs")).data, { prefs: {} }, "nothing set: the Gateway's own defaults apply");
+  assert.deepEqual((await call(f, "/api/v1/relay/prefs")).data, { prefs: RELAY_PREF_DEFAULTS }, "nothing set: all six keys, each at its default (permissive: another vendor takes the history, an unprobed Driver takes it, what is unsure is settled)");
+  assert.deepEqual(Object.keys(row(row((await call(f, "/api/v1/relay/prefs")).data).prefs)).sort(), [...RELAY_PREF_KEYS].sort());
   for (const key of RELAY_PREF_KEYS) for (const value of RELAY_PREF_VALUES[key]) {
     const written = await call(f, "/api/v1/relay/prefs", "PUT", { key, value }); assert.equal(written.status, 200, written.text);
     assert.equal(row(row(written.data).prefs)[key], value); assert.deepEqual((await call(f, "/api/v1/relay/prefs")).data, written.data);
@@ -780,20 +813,26 @@ test("the read model over rows made by hand: every sync state, each delivery out
     ] };
   const ends = [10, 20, 30, 40, 50].map((seq, index) => sessionEvent(id, seq, "run.ended", { runId: runs[index]!.id }));
   const events = [...ends, sessionEvent(id, 51, "run.native_command", { runId: runs[4]!.id })];
-  const reads: RelayReads = { relayDeliveries: () => rowsOf, relayPackets: () => Object.values(packets), relayIndex: () => [], relayPrefs: () => ({}), setPref: () => { throw new Error("not written here"); },
+  const reads: RelayReads = { relayDeliveries: () => rowsOf, relayPackets: () => Object.values(packets), relayPacket: () => { throw new Error("no packet here"); }, relayPacketBody: () => { throw new Error("no body here"); },
+    relayIndex: () => [], relayPrefs: () => ({}), setPref: () => { throw new Error("not written here"); },
     events: (_id, after, limit) => events.filter(item => item.seq > after).slice(0, limit ?? 100) };
-  const api = new RelayApi({ reads, bodies: { read: () => { throw new Error("no body here"); } }, read: () => snapshot,
+  const api = new RelayApi({ reads, read: () => snapshot,
     declaration: selection => selection.harnessId === "alpha" ? { ...codexRelayCapabilities, probed: true } : selection.harnessId === "bravo" ? codexRelayCapabilities : null,
     http: { json: () => { throw new Error("no HTTP here"); }, headers: () => {}, queries: () => {}, body: async () => { throw new Error("no HTTP here"); } } });
   const model = api.view(snapshot);
   const bindings = new Map<string, RelayBindingView[]>(); for (const item of model.bindings) bindings.set(item.harnessId, [...bindings.get(item.harnessId) ?? [], item]);
   assert.deepEqual(model.bindings.map(item => item.harnessId), ["alpha", "bravo", "charlie", "delta", "echo"], "an archived binding is not listed");
-  assert.deepEqual(bindings.get("alpha"), [{ harnessId: "alpha", controlId: "alpha-acp", nativeEpoch: 3, sync: "synced", throughRun: 2, evidence: "E2", cleared: 1, probed: true }],
+  // `canConfirm` follows the Driver's declaration (the Codex Driver records and can be asked; none declared cannot confirm); nothing is owed here
+  // that the marks do not leave out, so only the bindings whose marks fall behind the Runs of other Harnesses are owed anything.
+  const plainView = (item: RelayBindingView) => { const { owed: _owed, attention: _attention, ...rest } = item; return rest; };
+  assert.deepEqual(bindings.get("alpha")!.map(plainView), [{ harnessId: "alpha", controlId: "alpha-acp", nativeEpoch: 3, sync: "synced", throughRun: 2, evidence: "E2", cleared: 1, probed: true, canConfirm: true }],
     "the mark at seq 31 covers the Runs that ended at 10, 20 and 30; the epochs since the archived native session are the clears; a probed Driver says so");
-  assert.deepEqual(bindings.get("bravo"), [{ harnessId: "bravo", controlId: "bravo-acp", nativeEpoch: 1, sync: "pending", throughRun: null, evidence: null, cleared: 0, probed: false }], "a declared Driver nothing proved is not probed");
-  assert.deepEqual(bindings.get("charlie"), [{ harnessId: "charlie", controlId: "charlie-acp", nativeEpoch: 1, sync: "fresh", throughRun: null, evidence: null, cleared: 0, probed: false }], "a Driver that declares none is not probed");
-  assert.deepEqual(bindings.get("delta"), [{ harnessId: "delta", controlId: "delta-acp", nativeEpoch: 2, sync: "suspect", throughRun: 1, evidence: "native", cleared: 1, probed: false }], "a suspect binding still says where it last stood");
-  assert.deepEqual(bindings.get("echo"), [{ harnessId: "echo", controlId: "echo-acp", nativeEpoch: 1, sync: "synced", throughRun: null, evidence: "origin", cleared: 0, probed: false }], "the history a Session started from covers no Run");
+  assert.deepEqual(bindings.get("bravo")!.map(plainView), [{ harnessId: "bravo", controlId: "bravo-acp", nativeEpoch: 1, sync: "pending", throughRun: null, evidence: null, cleared: 0, probed: false, canConfirm: true }], "a declared Driver nothing proved is not probed");
+  assert.deepEqual(bindings.get("charlie")!.map(plainView), [{ harnessId: "charlie", controlId: "charlie-acp", nativeEpoch: 1, sync: "fresh", throughRun: null, evidence: null, cleared: 0, probed: false, canConfirm: false }], "a Driver that declares none is not probed, and nothing it does can confirm a delivery");
+  assert.deepEqual(bindings.get("delta")!.map(plainView), [{ harnessId: "delta", controlId: "delta-acp", nativeEpoch: 2, sync: "suspect", throughRun: 1, evidence: "native", cleared: 1, probed: false, canConfirm: false }], "a suspect binding still says where it last stood");
+  assert.deepEqual(bindings.get("echo")!.map(plainView), [{ harnessId: "echo", controlId: "echo-acp", nativeEpoch: 1, sync: "synced", throughRun: null, evidence: "origin", cleared: 0, probed: false, canConfirm: false }], "the history a Session started from covers no Run");
+  for (const item of model.bindings) assert.equal(item.attention, undefined, "the Runtime was not asked, and says nothing of what a binding asks");
+  assert.equal(bindings.get("alpha")![0]!.owed, undefined, "alpha holds everything of the Runs that ended before its mark");
   // One entry per Run that carried a packet whose text is kept, numbered by the Runs that carried one; an untracked packet is unknown.
   assert.deepEqual(model.packets, [
     { packetId: packets.recorded.id, runId: runs[1]!.id, runIndex: 1, number: 1, kind: "packet", tier: "standard", target: { harnessId: "alpha", model: null }, estTokens: packets.recorded.body.estTokens, omissions: 0, redactions: 3, delivery: "recorded", evidence: "E2" },
@@ -810,12 +849,51 @@ test("the read model over rows made by hand: every sync state, each delivery out
   for (const hidden of ["/Users/someone", "transcript.jsonl", "unknown:", "chain", "0a1b2c3d", hex("c"), "file_offset"]) assert.equal(wire.includes(hidden), false, hidden + " leaked");
   // A Session whose Runs carried no packet reads no delivery row at all.
   const none: SessionSnapshot = { ...snapshot, runs: [runs[0]!, runs[5]!] };
-  const quiet = new RelayApi({ reads: { ...reads, relayDeliveries: () => { throw new Error("read although nothing was carried"); } }, bodies: { read: () => null }, read: () => none, declaration: () => null,
+  const quiet = new RelayApi({ reads: { ...reads, relayDeliveries: () => { throw new Error("read although nothing was carried"); } }, read: () => none, declaration: () => null,
     http: { json: () => {}, headers: () => {}, queries: () => {}, body: async () => null } });
   assert.equal(quiet.runViews(none), none.runs);
   // Delivery rows that cannot be read do not fail the conversation: its Runs are shown as they are.
-  const broken = new RelayApi({ reads: { ...reads, relayDeliveries: () => { throw new SessionError("INVALID_DATA", "a delivery row is unreadable"); } }, bodies: { read: () => null }, read: () => snapshot, declaration: () => null,
+  const broken = new RelayApi({ reads: { ...reads, relayDeliveries: () => { throw new SessionError("INVALID_DATA", "a delivery row is unreadable"); } }, read: () => snapshot, declaration: () => null,
     http: { json: () => {}, headers: () => {}, queries: () => {}, body: async () => null } });
   assert.equal(broken.runViews(snapshot), snapshot.runs);
   assert.throws(() => broken.view(snapshot), (error: unknown) => error instanceof SessionError && error.code === "INVALID_DATA", "asked for the model itself, the failure is said");
+
+  // What the Runtime says each binding asks of the user is passed on as it is said, with the packet a wait is about; the vendor an
+  // acknowledge is for is named only there; and the data directory's reach is the view's, never a binding's.
+  const asking = new RelayApi({ reads, read: () => snapshot, declaration: selection => selection.harnessId === "alpha" ? { ...codexRelayCapabilities, probed: true } : selection.harnessId === "bravo" ? codexRelayCapabilities : null,
+    attention: () => [
+      { harnessId: "alpha", controlId: "alpha-acp", probed: true, attention: null },
+      { harnessId: "bravo", controlId: "bravo-acp", probed: false, attention: { cause: "delivery_unconfirmed", options: ["attach_full", "new_native"], counts: { runs: 1, packets: 1 }, key: "delivery_unconfirmed:" + packets.unknown.id } },
+      { harnessId: "charlie", controlId: "charlie-acp", probed: null, attention: { cause: "consent_revoked", options: ["acknowledge"], counts: { runs: 2, packets: 0 }, key: "consent_revoked:1" } },
+      { harnessId: "delta", controlId: "delta-acp", probed: false, attention: { cause: "clear_unconfirmed", options: ["attach_full", "new_native", "clear_confirmed"], counts: { runs: 0, packets: 0 }, key: "clear_unconfirmed:2:7" } },
+    ],
+    dataRootExposed: () => true, http: { json: () => {}, headers: () => {}, queries: () => {}, body: async () => null } });
+  const asked = new Map(asking.view(snapshot).bindings.map(item => [item.harnessId, item]));
+  assert.equal(asked.get("alpha")!.attention, undefined, "a binding that asks nothing has no attention");
+  assert.deepEqual(asked.get("bravo")!.attention, { cause: "delivery_unconfirmed", options: ["attach_full", "new_native"], counts: { runs: 1, packets: 1 }, key: "delivery_unconfirmed:" + packets.unknown.id, packet: 2 },
+    "the wait is about 交接单 #2: the packet its Run carried, which is the second Run to carry one");
+  assert.deepEqual(asked.get("charlie")!.attention, { cause: "consent_revoked", options: ["acknowledge"], counts: { runs: 2, packets: 0 }, key: "consent_revoked:1", vendor: "unknown:charlie" },
+    "the vendor an acknowledge is for: its Driver declares none, so the key says it could not be told");
+  assert.deepEqual(asked.get("delta")!.attention?.options, ["attach_full", "new_native", "clear_confirmed"]); assert.equal(asked.get("delta")!.attention?.vendor, undefined);
+  assert.equal(asked.get("charlie")!.probed, false, "a factory that cannot tell is not a proof");
+  assert.equal(asking.view(snapshot).dataRootExposed, true, "the data directory is within reach of the workspace: a warning of the whole view");
+  assert.equal("dataRootExposed" in api.view(snapshot), false);
+  // A Runtime that cannot be asked (or fails) leaves the view as it is: attention is a help, never a reason for the conversation to fail to load.
+  const failing = new RelayApi({ reads, read: () => snapshot, declaration: () => null, attention: () => { throw new Error("no attention here"); }, dataRootExposed: () => { throw new Error("no data root here"); },
+    http: { json: () => {}, headers: () => {}, queries: () => {}, body: async () => null } });
+  assert.equal(failing.view(snapshot).bindings.every(item => item.attention === undefined), true); assert.equal("dataRootExposed" in failing.view(snapshot), false);
+});
+
+test("the state says the Gateway has the relay, and the events of the conversation keep no fingerprint of the user's choices", async t => {
+  const f = await fixture(t), state = (await call(f, "/api/v1/state")).data; assert.equal(row(state).relay, true, "the page asks for the relay of a Gateway that says so");
+  const id = await create(f);
+  assert.equal((await say(f, id, "alone, on purpose", "m1", 0, { attach: "none" })).status, 202);
+  // The choice is in the event the Gateway keeps, with an HMAC of it; what the API shows has the choice and not the HMAC.
+  const kept = new DatabaseSync(join(f.data, "gateway.sqlite"), { readOnly: true });
+  let stored: string; try { stored = kept.prepare("SELECT event_json FROM events WHERE session_id=? AND event_json LIKE '%message.accepted%'").all(id).map(item => String(item.event_json)).join("\n"); } finally { kept.close(); }
+  assert.match(stored, /"fingerprint":"/u, "the Gateway's own event holds the fingerprint of the request's choices");
+  const page = row((await call(f, `/api/v1/sessions/${id}/events?limit=100`)).data), accepted = (page.events as { type: string; data: Record<string, unknown> }[]).filter(item => item.type === "message.accepted");
+  assert.equal(accepted.length, 1); assert.deepEqual(row(accepted[0]!.data.relayRequest), { attach: "none" }, "what the user chose, and nothing that identifies it");
+  assert.equal(JSON.stringify(page).includes("fingerprint"), false);
+  assert.equal("relayRequest" in (await view(f, id)).runs[0]!, false);
 });

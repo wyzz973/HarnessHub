@@ -94,7 +94,7 @@
 | G070 | 内容：摘要、渲染、预算与脱敏 | G066, G006, G010, G026 | G1 | in_progress |
 | G071 | 工作区观测器 | G066, G026 | G1 | in_progress |
 | G072 | 接力协调器与返回决策 | G068, G069, G070, G071, G059, G075 | G1 | in_progress |
-| G073 | 界面、API 与用词检查 | G072, G050, G054 | G1 | planned |
+| G073 | 界面、API 与用词检查 | G072, G050, G054 | G1 | in_progress |
 | G074 | 验收设施：RelayConformance、RelayBench 与故障矩阵 | G072, G073, G060 | G1 | in_progress |
 | G075 | 存储优化前置片 | G008, G028 | G1 | in_progress |
 | G076 | v1.1 增强通道 | G074 | G1 | deferred |
@@ -2320,6 +2320,9 @@
 - tests/security/relay-data-root.test.ts
 - tests/unit/relay-return-policy.test.ts
 - tests/performance/relay-dispatch.test.ts
+- tests/fixtures/relay-fakes.ts
+- tests/fixtures/relay-settings.ts
+- tests/integration/relay-permissive.test.ts
 
 验收：
 - 派发路径 −1 提交、ABBA 成对差 p95 ≤15 ms、复用 ≤ 观测 p95 + 15 ms、事件 ≤3 + 同意镜像
@@ -2334,7 +2337,7 @@
 
 ## G073 界面、API 与用词检查
 
-范围：ADR-055（终稿第 12、17 节）：T0–T7 文案与组件、等级词汇、疲劳控制、费用显示（全程、每后续请求、悬崖）、用量环过滤、同意内联与设置页撤回、“核实厂商”、排除与撤回说明、“只发这条消息”与送达未确认的三选一、`/relay` 接口与错误码、`relay_prefs` 接口、SSE、ETag、既有导航“我的 Agent”改“Harness”、用词检查脚本扩到全部界面字符串与无障碍名。现有文件：`src/web/server.ts`、`src/contracts/web.ts`、`src/web/session-stream.ts` 经既有所有者 G050 修改（其中 `src/web/server.ts` 的错误码到 HTTP 状态的规则要扩展，使 `RELAY_TARGET_UNVERIFIED` 返回 409）；`web/src/api.ts`、`web/src/App.tsx` 与 `web/src/components/` 下的 `ChatPage.tsx`、`Turn.tsx`、`Composer.tsx`、`ChatComposer.tsx`、`DetailsPanel.tsx`、`Sidebar.tsx`、`HarnessesPage.tsx` 经既有所有者 G054 修改。
+范围：ADR-055（终稿第 12、17 节）：T0–T7 文案与组件、等级词汇、疲劳控制、费用显示（全程、每后续请求、悬崖）、用量环过滤、同意内联与设置页撤回、“核实厂商”、排除与撤回说明、“只发这条消息”与送达未确认的三选一、`/relay` 接口与错误码、`relay_prefs` 接口、SSE、ETag、既有导航“我的 Agent”改“Harness”、用词检查脚本扩到全部界面字符串与无障碍名。现有文件：`src/web/server.ts`、`src/contracts/web.ts`、`src/web/session-stream.ts` 经既有所有者 G050 修改（其中 `src/web/server.ts` 的错误码到 HTTP 状态的规则要扩展，使 `RELAY_TARGET_UNVERIFIED` 返回 409）；`web/src/api.ts`、`web/src/App.tsx` 与 `web/src/components/` 下的 `ChatPage.tsx`、`Turn.tsx`、`Composer.tsx`、`ChatComposer.tsx`、`DetailsPanel.tsx`、`Sidebar.tsx`、`HarnessesPage.tsx` 经既有所有者 G054 修改。第三阶段（2026-11-10，默认放行之后）实现的最小集合：HTTP 接口（`GET …/relay` 每个绑定带 `probed`、`canConfirm`、`owed` 与 `attention`，Run 带 `decision`，`GET|PUT /relay/prefs` 的六个键，状态里的 `relay: true`，`relay` 流帧并入 `SessionStreamFrame`）、交接卡与提示条（读 `attention`，同一 key 只提示一次）、分隔线与消息下的如实说明、首次说明的一行化、设置页的两个开关、数据根的工作区横幅、用词检查；不做预览估算、`relay/observe`、钉住与排除、同意记录列表与撤回页、费用显示（G073-C07 仍待做）。
 
 依赖：G072, G050, G054。需求：R01, R09, R22, R26。
 
@@ -2351,13 +2354,16 @@
 - tests/security/relay-api.test.ts
 - tests/browser/relay.browser.ts
 - tests/e2e/relay-ui.test.ts
+- web/src/lib/relay-state.ts
+- web/src/lib/use-relay.ts
+- tests/browser/relay-e2e.browser.ts
 
 验收：
 - 浏览器测试覆盖分隔线只在证据后出现、三种证据路径加“已开始回复”、卡片草稿与发送时拼接的说明、清空后一键附上、S5 的［等这一轮结束］［停止并切换］两个按钮、首次同意不增加点击且 Enter 只展开、疑似密钥提示
 - API 契约测试：409 五种、`relay.consent`、ETag、AP-01–AP-03
 - 用词脚本的无效样例被拒且现有 11 处改完
 
-场景：G073-C01, G073-C02, G073-C03, G073-C04, G073-C05, G073-S01, G073-C06, G073-C07。
+场景：G073-C01, G073-C02, G073-C03, G073-C04, G073-C05, G073-S01, G073-C06, G073-C07, G073-C08。
 
 禁止范围：不做运行时逻辑、Driver；现有文件只经其既有所有者修改，不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 

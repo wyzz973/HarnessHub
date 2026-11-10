@@ -1,6 +1,6 @@
 import { consumeSessionEventStream, SessionStreamError } from "./session-stream.js";
 import { readSseBlocks } from "./attention.js";
-import { createRelayApi, decodeRelayErrorBody, decodeRelayFrame, decodeRunRelay, relayBody, type RelayApi, type RelayErrorBody, type RelayEvent, type RelayReply, type RelayRequest, type RelayTransport } from "./relay.js";
+import { createRelayApi, decodeRelayErrorBody, decodeRelayFrame, decodeRelayStreamEvent, decodeRunRelay, relayBody, type RelayApi, type RelayErrorBody, type RelayEvent, type RelayReply, type RelayRequest, type RelayTransport } from "./relay.js";
 import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
 import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, LoginShellView, MaintenanceView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, UninstallCheckView, InstallCheckView, InstallationUpgradeCheckView, WebState } from "../../src/contracts/web.js";
 import { HARNESS_TIERS } from "../../src/contracts/web.js";
@@ -457,9 +457,15 @@ export function decodeSession(value: unknown): SessionView {
 /** Decodes only canonical public facts; stream framing and projection validate their watermarks. */
 export function decodeSessionStreamFrame(value: unknown): SessionStreamFrame {
   const row = record(value);
-  const keys = row.type === "snapshot" ? ["type", "session"] : row.type === "run" ? ["type", "sessionId", "version", "lastSeq", "run"] : ["type", "sessionId", "version", "lastSeq", "message"];
+  const keys = row.type === "snapshot" ? ["type", "session"] : row.type === "run" ? ["type", "sessionId", "version", "lastSeq", "run"] : row.type === "relay" ? ["type", "sessionId", "version", "lastSeq", "event"] : ["type", "sessionId", "version", "lastSeq", "message"];
   if (Object.keys(row).some(key => !keys.includes(key)) || keys.some(key => !(key in row))) return invalid();
   if (row.type === "snapshot") return { type: "snapshot", session: decodeSession(row.session) };
+  if (row.type === "relay") {
+    // A notice of a relay event: the facts it follows are already here (same watermark), so it is read for its event and takes nothing.
+    const version = number(row.version), lastSeq = number(row.lastSeq), event = decodeRelayStreamEvent(row.event);
+    if (version < 1 || lastSeq < 0 || event === null) return invalid();
+    return { type: "relay", sessionId: text(row.sessionId), version, lastSeq, event };
+  }
   if (row.type === "run") { const version = number(row.version), lastSeq = number(row.lastSeq); if (version < 1 || lastSeq < 0) return invalid(); return { type: "run", sessionId: text(row.sessionId), version, lastSeq, run: decodeRun(row.run) }; }
   if (row.type !== "message") return invalid();
   const version = number(row.version), lastSeq = number(row.lastSeq), message = decodeMessage(row.message);

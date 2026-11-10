@@ -708,6 +708,13 @@ export interface RelayStorePort {
   relayDeliveries(id: SessionId): readonly DeliveryRecord[];
   /** The manifests of the packets the Session keeps (G068 phase two: the range, text digest and epoch a check reads). */
   relayPackets(id: SessionId): readonly RelayPacket[];
+  /** One packet's manifest by its identity in the Session; null when the Session keeps no such packet (another Session's packet is none). */
+  relayPacket(id: SessionId, packetId: string): RelayPacket | null;
+  /**
+   * The text the Session keeps for a body digest, exactly as it was stored when the packet was sent (never scanned again, §10.2);
+   * null when none is kept. INVALID_DATA when what is kept is not text. Reads committed rows only and holds nothing between reads.
+   */
+  relayPacketBody(id: SessionId, bodySha256: string): string | null;
   /** The Session's digest index rows (every policy version), as plain objects; the migration's are RelayBehindIndex. */
   relayIndex(id: SessionId): readonly RelayIndexRow[];
 }

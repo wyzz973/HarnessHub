@@ -1,4 +1,5 @@
 import type { ContinuityLevel, DeliveryEvidence, DeliveryStatus, RelayPrefKey, RunRelay, Tier } from "../../src/contracts/relay.js";
+import type { RelayStreamEvent, RelayStreamEventType } from "../../src/contracts/web.js";
 
 /*
  * The relay as the page sees it (ADR-055, relay-architecture §12, docs/proposals/relay/stage3-workstreams.md §3): the
@@ -233,6 +234,17 @@ export function decodeRelayPrefs(value: unknown): RelayPrefs | null {
 }
 /** One event the Gateway pushes about the relay. The page needs to know only that the relay state changed, and of what. */
 export interface RelayEvent { readonly type: string; readonly sessionId: string | null; readonly runId: string | null; readonly packetId: string | null }
+/**
+ * The `event` of a relay notice frame as the contract types it (RelayStreamEvent); null when it is not one. The event's kind is
+ * kept as the Gateway named it: a kind this page does not know is still a notice that the relay changed.
+ */
+export function decodeRelayStreamEvent(value: unknown): RelayStreamEvent | null {
+  if (!isRecord(value)) return null;
+  const type = word(value.type, 64), sessionId = word(value.sessionId, 128), at = whole(value.at);
+  if (type === null || sessionId === null || at === null) return null;
+  const runId = word(value.runId, 128), packetId = word(value.packetId, 128);
+  return { type: type as RelayStreamEventType, sessionId, ...(runId === null ? {} : { runId }), ...(packetId === null ? {} : { packetId }), at };
+}
 export function decodeRelayFrame(value: unknown): RelayEvent | null {
   if (!isRecord(value) || value.type !== "relay" || !isRecord(value.event)) return null;
   const type = word(value.event.type, 64);

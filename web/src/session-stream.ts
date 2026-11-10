@@ -20,9 +20,10 @@ export interface SessionEventStreamOptions {
   /** Waiting approvals and questions the stream carries alongside (`event: attention`, no event id; ADR-035); ignored when absent. */
   readonly onAttention?: (value: unknown) => void;
   /**
-   * Relay events the stream carries alongside (`{ type: "relay", event }`, relay-architecture §12.4), as `event: relay` (with or
-   * without an id) or as a session event: they say the relay's state changed, never move the conversation's cursor, and are
-   * ignored when this is absent.
+   * Relay events a stream carries as `event: relay` (`{ type: "relay", event }`, with or without an id), alongside the session's
+   * facts: they say the relay's state changed, never move the conversation's cursor, and are ignored when this is absent. The
+   * Gateway sends its notices as session frames (`type: "relay"`, the watermark of the facts they follow), which `decode` reads
+   * and `onFrame` takes like any frame.
    */
   readonly onRelay?: (value: unknown) => void;
 }
@@ -34,11 +35,9 @@ function identity(value: string, kind: keyof typeof identities): void {
 function watermark(value: number): void {
   if (!Number.isSafeInteger(value) || value < 0) invalid("Invalid stream watermark");
 }
-/** Whether a stream value is a relay event (`{ type: "relay", event }`) rather than a fact of the conversation. */
-function isRelayEvent(value: unknown): boolean { return value !== null && typeof value === "object" && (value as { type?: unknown }).type === "relay"; }
 function envelope(frame: SessionStreamFrame): { id: string; version: number; lastSeq: number } {
   if (frame === null || typeof frame !== "object") invalid("Invalid stream frame");
-  if (frame.type !== "snapshot" && frame.type !== "message" && frame.type !== "run") invalid("Unknown stream frame type");
+  if (frame.type !== "snapshot" && frame.type !== "message" && frame.type !== "run" && frame.type !== "relay") invalid("Unknown stream frame type");
   const value = frame.type === "snapshot" ? frame.session : frame;
   if (value === null || typeof value !== "object") invalid("Invalid stream frame facts");
   const id = frame.type === "snapshot" ? frame.session.id : frame.sessionId;
@@ -173,11 +172,7 @@ class SessionSseParser {
         const id = Number(this.id); watermark(id);
         let value: unknown;
         try { value = JSON.parse(this.data.join("\n")); } catch { invalid("Session SSE event contains invalid JSON"); }
-        if (isRelayEvent(value)) {
-          // A relay event sent as a session event has no facts of the conversation: it is handed on and leaves the cursor where it is.
-          this.frameBytes = 0; this.event = ""; this.id = null; this.data = []; this.hasFields = false;
-          this.relay?.(value); return;
-        }
+        // A relay notice is a frame like the others: its envelope is the watermark of the facts it follows, which it leaves where they are.
         frame = this.decode(value);
         if (envelope(frame).lastSeq !== id) invalid("Session SSE identity disagrees with its facts watermark");
       }
@@ -247,6 +242,13 @@ export function applySessionStreamFrame(current: SessionView | null, frame: Sess
   identity(expectedSessionId, "session");
   const next = envelope(frame);
   if (next.id !== expectedSessionId || (current !== null && current.id !== expectedSessionId)) stateError("Session stream facts belong to another Session");
+  if (frame.type === "relay") {
+    // A notice that a relay event happened carries no facts of the conversation: whatever its watermark, it changes nothing here
+    // (the caller reads its event first). It needs the snapshot it follows, and it cannot disagree with the facts it names.
+    if (current === null) stateError("A relay notice requires a canonical Session snapshot");
+    if (next.lastSeq === current.lastSeq && next.version !== current.version) stateError("Stream watermark has conflicting versions");
+    return current;
+  }
   if (current !== null) {
     watermark(current.version); watermark(current.lastSeq);
     if (next.lastSeq < current.lastSeq) {

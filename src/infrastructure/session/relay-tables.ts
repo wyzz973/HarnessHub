@@ -372,6 +372,18 @@ export function readDeliveries(database: DatabaseSync, id: SessionId, state: Ses
 export function readPackets(database: DatabaseSync, id: SessionId): readonly RelayPacket[] {
   return database.prepare("SELECT manifest_json FROM relay_packets WHERE session_id=? ORDER BY rowid").all(id).map(row => parseRelayPacket(JSON.parse(String(row.manifest_json))));
 }
+/** One packet's manifest by its identity in the Session; null when the Session keeps none (a packet of another Session is none). */
+export function readPacket(database: DatabaseSync, id: SessionId, packetId: string): RelayPacket | null {
+  const row = database.prepare("SELECT manifest_json FROM relay_packets WHERE session_id=? AND packet_id=?").get(id, packetId);
+  return row === undefined ? null : parseRelayPacket(JSON.parse(String(row.manifest_json)));
+}
+/** The text kept for a digest in the Session, byte for byte as it was stored; null when none is kept (the HTTP API serves it, G073). */
+export function readPacketBody(database: DatabaseSync, id: SessionId, sha256: string): string | null {
+  const row = database.prepare("SELECT body FROM relay_bodies WHERE session_id=? AND sha256=?").get(id, sha256);
+  if (row === undefined) return null;
+  if (typeof row.body !== "string") throw new SessionError("INVALID_DATA", "a stored handoff text is not text");
+  return row.body;
+}
 /** A Session's digest index rows (every policy version) as plain objects, in Run order (G068 phase two reads the facts from them). */
 export function readIndexRows(database: DatabaseSync, id: SessionId): readonly RelayIndexRow[] {
   return database.prepare("SELECT run_id,policy_version,status,index_json FROM relay_digests WHERE session_id=? ORDER BY run_index, policy_version").all(id).map(row => {

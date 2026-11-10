@@ -4714,7 +4714,10 @@
         "tests/property/relay-coordinator.test.ts",
         "tests/security/relay-data-root.test.ts",
         "tests/unit/relay-return-policy.test.ts",
-        "tests/performance/relay-dispatch.test.ts"
+        "tests/performance/relay-dispatch.test.ts",
+        "tests/fixtures/relay-fakes.ts",
+        "tests/fixtures/relay-settings.ts",
+        "tests/integration/relay-permissive.test.ts"
       ],
       "requirements": [
         "R07",
@@ -4766,7 +4769,7 @@
       "title": "界面、API 与用词检查",
       "context": "web",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G072",
@@ -4785,7 +4788,10 @@
         "tests/integration/relay-api.test.ts",
         "tests/security/relay-api.test.ts",
         "tests/browser/relay.browser.ts",
-        "tests/e2e/relay-ui.test.ts"
+        "tests/e2e/relay-ui.test.ts",
+        "web/src/lib/relay-state.ts",
+        "web/src/lib/use-relay.ts",
+        "tests/browser/relay-e2e.browser.ts"
       ],
       "requirements": [
         "R01",
@@ -4798,7 +4804,7 @@
         "INV-25",
         "INV-29"
       ],
-      "scope": "ADR-055（终稿第 12、17 节）：T0–T7 文案与组件、等级词汇、疲劳控制、费用显示（全程、每后续请求、悬崖）、用量环过滤、同意内联与设置页撤回、“核实厂商”、排除与撤回说明、“只发这条消息”与送达未确认的三选一、`/relay` 接口与错误码、`relay_prefs` 接口、SSE、ETag、既有导航“我的 Agent”改“Harness”、用词检查脚本扩到全部界面字符串与无障碍名。现有文件：`src/web/server.ts`、`src/contracts/web.ts`、`src/web/session-stream.ts` 经既有所有者 G050 修改（其中 `src/web/server.ts` 的错误码到 HTTP 状态的规则要扩展，使 `RELAY_TARGET_UNVERIFIED` 返回 409）；`web/src/api.ts`、`web/src/App.tsx` 与 `web/src/components/` 下的 `ChatPage.tsx`、`Turn.tsx`、`Composer.tsx`、`ChatComposer.tsx`、`DetailsPanel.tsx`、`Sidebar.tsx`、`HarnessesPage.tsx` 经既有所有者 G054 修改",
+      "scope": "ADR-055（终稿第 12、17 节）：T0–T7 文案与组件、等级词汇、疲劳控制、费用显示（全程、每后续请求、悬崖）、用量环过滤、同意内联与设置页撤回、“核实厂商”、排除与撤回说明、“只发这条消息”与送达未确认的三选一、`/relay` 接口与错误码、`relay_prefs` 接口、SSE、ETag、既有导航“我的 Agent”改“Harness”、用词检查脚本扩到全部界面字符串与无障碍名。现有文件：`src/web/server.ts`、`src/contracts/web.ts`、`src/web/session-stream.ts` 经既有所有者 G050 修改（其中 `src/web/server.ts` 的错误码到 HTTP 状态的规则要扩展，使 `RELAY_TARGET_UNVERIFIED` 返回 409）；`web/src/api.ts`、`web/src/App.tsx` 与 `web/src/components/` 下的 `ChatPage.tsx`、`Turn.tsx`、`Composer.tsx`、`ChatComposer.tsx`、`DetailsPanel.tsx`、`Sidebar.tsx`、`HarnessesPage.tsx` 经既有所有者 G054 修改。第三阶段（2026-11-10，默认放行之后）实现的最小集合：HTTP 接口（`GET …/relay` 每个绑定带 `probed`、`canConfirm`、`owed` 与 `attention`，Run 带 `decision`，`GET|PUT /relay/prefs` 的六个键，状态里的 `relay: true`，`relay` 流帧并入 `SessionStreamFrame`）、交接卡与提示条（读 `attention`，同一 key 只提示一次）、分隔线与消息下的如实说明、首次说明的一行化、设置页的两个开关、数据根的工作区横幅、用词检查；不做预览估算、`relay/observe`、钉住与排除、同意记录列表与撤回页、费用显示（G073-C07 仍待做）",
       "out_of_scope": [
         "不做运行时逻辑、Driver",
         "现有文件只经其既有所有者修改，不修改其他任务所有权文件",
@@ -4817,8 +4823,10 @@
         "G073-C05",
         "G073-S01",
         "G073-C06",
-        "G073-C07"
-      ]
+        "G073-C07",
+        "G073-C08"
+      ],
+      "active_slice": "relay"
     },
     {
       "id": "G074",

@@ -12326,6 +12326,24 @@
       "planned_file": "tests/e2e/relay-ui.test.ts"
     },
     {
+      "id": "G073-C08",
+      "task": "G073",
+      "requirements": [
+        "R01",
+        "R09"
+      ],
+      "invariants": [
+        "INV-21",
+        "INV-25"
+      ],
+      "layer": "e2e",
+      "scenario": "默认设置下，真实网关与真实构建的页面，夹具 Harness 扮演两家：切到 B 发一条（带交接单）、切回 A 再发一条（补增量）、造一次送达未确认（先自动再附一次，再只发原话）、清空后附上交接单",
+      "expected": "全程没有 409 与失败的 Run；分隔线先“送达中”、有证据后才“从这里起由 X 接手”，策略单发的回合如实写“这条只发了原话”而不写“已接手”；提示条读 attention，同一 key 关掉后不再弹，按钮带对应的 relay 字段；附件条能打开交接单原文；浅色与深色各截图自查",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/relay-e2e.browser.ts"
+    },
+    {
       "id": "G074-C01",
       "task": "G074",
       "requirements": [

@@ -24,7 +24,7 @@ import { supportedProviderProtocols } from "../contexts/provider/domain/provider
 import { carriedNativeConfiguration } from "../contexts/session/domain/state.js";
 import { observedPackageVersion } from "../infrastructure/management/system-version.js";
 import { SessionStreamError, SessionStreamHub } from "./session-stream.js";
-import { PacketBodies, RelayApi, parseSendRelay } from "./relay-routes.js";
+import { RelayApi, parseSendRelay } from "./relay-routes.js";
 import { AttentionStreamHub } from "./attention-stream.js";
 import { HarnessModels } from "./harness-models.js";
 import { buildRevision, NativeCatalogCache, type NativeReadiness } from "./native-catalog-cache.js";
@@ -379,8 +379,10 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     ...(options.installations === undefined ? {} : { installations: options.installations }), ...(options.relayKeyFile === undefined ? {} : { relayKeyFile: options.relayKeyFile }) })))(options.root, event => {
     try { streams.publish(event); } finally { if (app !== undefined) attention.changed(); }
   });
-  relayApi = new RelayApi({ reads: app.store, bodies: new PacketBodies(options.root), read: id => app.runtime.read(id),
-    declaration: selection => { const factory: SessionBindingFactory = app.factory; return factory.relayCapabilities?.(selection); }, http: { json, headers, queries, body } });
+  relayApi = new RelayApi({ reads: app.store, read: id => app.runtime.read(id),
+    declaration: selection => { const factory: SessionBindingFactory = app.factory; return factory.relayCapabilities?.(selection); },
+    // What each binding asks the user to look at, and whether the data directory is in the workspace's reach: the Runtime's reads (never a block).
+    attention: id => app.runtime.relayAttention(id), dataRootExposed: id => app.runtime.relayDataRootExposed(id), http: { json, headers, queries, body } });
   // This build: every compiled Gateway file by name and content (ADR-033), also named in a Turn's diagnostics (ADR-037).
   const revision = buildRevision(fileURLToPath(new URL("..", import.meta.url)));
   // Derived observations only; a file this version cannot adopt is reported and left as it is. Catalogs are reused only by
@@ -548,7 +550,9 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (path === "/api/v1/state" && method === "GET") {
       queries(url, []); const snapshots = app.store.list(100);
       const output: WebState = { providerManagement: options.providerManagement ?? true, workspace: options.configuration.workspace, providers: app.providers.list(), harnesses, harnessesScannedAt: scannedAt,
-        sessions: snapshots.map(summary), jobs: app.management.listJobs().slice(0, 50), readiness: readinessViews(nativeModels.readiness(), snapshots), installationPolicy: app.factory.installations };
+        sessions: snapshots.map(summary), jobs: app.management.listJobs().slice(0, 50), readiness: readinessViews(nativeModels.readiness(), snapshots), installationPolicy: app.factory.installations,
+        // This Gateway has the relay API (ADR-055 §12.4): the page asks for the relay of a Gateway that says so and of none else.
+        relay: true };
       json(response, 200, output); return;
     }
     if (path === "/api/v1/harnesses" && method === "GET") { queries(url, []); json(response, 200, harnesses); return; }
@@ -1056,7 +1060,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       }
       if (action === "events" && method === "GET") {
         queries(url, ["afterSeq", "limit"]); const after = cursor(url.searchParams.get("afterSeq"), 0, 0, Number.MAX_SAFE_INTEGER), limit = cursor(url.searchParams.get("limit"), 50, 1, 100);
-        const events = app.store.events(id, after, limit), nextSeq = events.at(-1)?.seq ?? after;
+        const events = app.store.events(id, after, limit).map(item => relayApi.publicEvent(item)), nextSeq = events.at(-1)?.seq ?? after;
         const output: EventPage = { events, nextSeq, hasMore: app.runtime.read(id).lastSeq > nextSeq }; json(response, 200, output); return;
       }
       if (method === "POST") {
@@ -1064,9 +1068,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         if (action === "messages") {
           const input = record(await body(request), ["text", "commandId", "attachments", "relay"], ["text", "commandId"]); if (typeof input.text !== "string") throw new HttpError(400, "INVALID_INPUT", "Message text required");
           if (input.attachments !== undefined && (!Array.isArray(input.attachments) || input.attachments.length > MAX_RUN_ATTACHMENTS || input.attachments.some(value => typeof value !== "string"))) throw new HttpError(400, "INVALID_INPUT", "Invalid attachments");
-          // The user's relay choices (ADR-055 §12.4): what the Runtime acts on goes with the input, and so into the command's fingerprint.
-          // RELAY_REQUEST_SEAM: `relay.deferred` (tier, native, note, consent) is checked and kept apart until the Runtime takes it (G072);
-          // `toRuntime` in relay-routes.ts is the one place that decides what is handed on.
+          // The user's relay choices (ADR-055 §12.4), checked as a whole before the Runtime sees any of them: they go with the input, and
+          // so into the command's fingerprint. A refusal that waits for the user's choice is answered with the binding, the cause and the options.
           const relay = parseSendRelay(input.relay);
           try { json(response, 202, app.runtime.send(id, input.text, command(input.commandId), (input.attachments ?? []) as string[], relay.choices)); }
           catch (error) { relayApi.explain(error, id); throw error; }
