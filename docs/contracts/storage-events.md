@@ -351,3 +351,11 @@ PRAGMA user_version=13;
 - **Q7**：新字段让快照变大，8 MiB 上限不变，守住“新增字段只放引用”。上限每绑定 1,024 B、每 Run 320 B，用最长合法值断言（终稿第 20 节 Q7 在写入阶段已从第二版的 512 B 改正）。
 - **Q19**：既有命令指纹 `sha256(JSON)` 含审批 `secret` 答复与发送原文，是 INV-29 范围之外的既有违例，是否迁移为 HMAC 另立 ADR。
 - **写入阶段提出、终稿已修订处置的存储细节**（处置见[第四轮处置表](../proposals/relay/round4/v3-dispositions.md)末节）：`relay_prefs` 四个键都可经 API 写、`relay.allowUnprobed` 是偏好行（R2）；`relay_digests.status` 只有 current 与 behind，没有 `failed`；回收：每个 Run 只保留当前 `policyVersion` 的摘要行（懒重建写新行时同一事务删旧行），`relay_windows` 超过 30 天的行在启动时删除，`relay_log_archive` 只增不删、上限 1,048,576 行（终稿第 14.1 节“回收”）；`relay_recovery_failed` 存快照字段 `SessionSnapshot.relayRecoveryFailed`（切换契约 R10）；附件物化目录按会话建、保留稳定只读副本语义，以后的回合按同一路径仍可读、缺失即重新物化（R7）。
+
+## 接力第三阶段的补充（2026-11-11）
+
+- `relay_prefs`：CHECK 限 `RELAY_PREF_KEYS` 的键，现为 6 个（加 `relay.whenUnsure`、`relay.dataRootInWorkspace`）；打开时较旧的库（只列 4 个键）在事务里重建并保留数据；表仍不收的偏好是 `INVALID_INPUT`，不停用 Store。
+- `relay.title_set`：`runId` · 在携带交接单的 `run.context_prepared` 提交之后、`run.dispatched` 之前单独提交；转为单发的 Turn 不设标题。
+- `relay.withheld`：`runId`、`packetId`、`relay.decision`（`{kind: "alone", by: "policy", cause: "consent_revoked"}`）· 在 `run.authorized` 之后、`run.dispatched` 之前同意被撤回：交接单没有发出，原话照发；这个 Run 失去它准备好的交接单，送达行结算为 `not_recorded{never_dispatched}`。
+- `run.context_prepared.data.relay.decision`：`{kind: "carry" | "alone" | "plain", by: "need" | "policy" | "user", cause?, reason?, resend?: "auto" | "grown" | "user"}`；普通且不欠任何东西的 Turn 不记。
+- `relay_log` 里命令号以 `default-allow:` 开头的行是默认允许的留痕（`acknowledged`、全局），先于使用它的 `run.context_prepared` 提交。

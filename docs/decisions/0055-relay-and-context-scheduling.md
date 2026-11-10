@@ -527,3 +527,40 @@ G068 阶段一的独立审查提出 F1–F13 与一个 packetId 重合的疑问�
 - **需要用户选择的 409**（`delivery_unconfirmed`、`verify_required`、`marker_absent`）：能自动决定的不问——默认自动补发（有界重复优先于询问）；只有自动决定会丢事实或无界重复时才问。具体哪些格可以自动，由审批代理对照第 7.2 节的表定。
 - **不变的底线**（正确性，不是防御）：不丢事实；不谎报送达；核对不把“没看到”说成“没有”；不隐式改换 Harness、模型或配置；清空由用户的操作或确凿证据确认。
 - **真机探针与验收**：不再按单 Harness ¥10 的硬上限卡，仍如实记录调用次数与花费。Hermes、OpenClaw 的出站消息约定没有因此放开。
+
+### G072、默认放行与 G073（阶段三）：谁能接力、默认不拦、界面与 API（2026-11-10 至 11-11）
+
+证据等级：代码完成、合成测试通过，另有真实网关加真实构建的页面加夹具 Harness 的浏览器端到端走查（默认与严格设置各一）。真机只有 Driver 层探针（Claude Code、Codex、OpenCode、DeepSeek Harness 四家，见[探针记录](../verification/relay-conformance.md)）；经 Hub 的完整接力没有在真实 Harness 上跑过；六家 `probed` 仍为 false。证据见[验证记录](../verification/relay-stage3-2026-11-11.md)。分工见[第三阶段工作流](../proposals/relay/stage3-workstreams.md)。提交：`3584410`（G072）、`072075f`（默认放行）、`af2537b`、`a5bc877`、`84bda8f`（合并 API、界面、探针）、`bbaf871`（探针发现的 Driver 缺陷）、`c633da8`…`9a09b06`（接线与界面对齐）、`11f1f4f`、`1eddc7e`、`4ab4f91`、`2053c11`（独立审查后的修正）。
+
+**G072**：受理处经工厂读静态声明并同步答复，排队的 Run 启动前重做一次；探针门控、按目的厂商键的同意（安装级 `relay_log`，撤回优先，派发前复读）、数据根检查、安装级密钥 `relay-keys.ts`（送达行与请求指纹用它签，`"ephemeral"` 永不签发）、窗口与 `MIN_PACKET`、声明里的 `placement.measure` 与派发前按通道上限压低预算、读声明的 `classify`（`acceptsRelay` 的命令可捎带）、返回决策（默认续接原会话，`native:"new"` 归档后带整份）、Codex 的原生标题、Claude 的“会话不存在”映射。`VendorObservation` 的形状没有改；持久格式没有变。
+
+**默认放行**（规则全文见[默认放行的规则](../proposals/relay/permissive-defaults.md)，审批代理 2026-11-10 的裁定，是这一批的规格）：
+- 三条总规则：只关乎交接单的问题不拦消息；自动动作只有补发、退到纪元基准后补发完整交接单、策略单发，都不抬水位、不抬清空下限、不加纪元、不换原生会话；用户显式选过的不被策略改写。
+- 偏好六个：`relay.crossVendor`（默认 `allow`）、`relay.whenUnsure`（新，默认 `auto`）、`relay.allowUnprobed`（默认 `true`）、`relay.dataRootInWorkspace`（新，默认 `warn`）、`relay.returnPreference`（`continue`）、`relay.localModelsOffline`（`false`）。严格取值 `ask` / `ask` / `false` / `block` 恢复 G072 的行为：独立审查用同一探索器在两份构建上逐序列比较 131.5 万条，结果全等。
+- 送达未确认：能给出证据的 Driver 每个待核的包自动补发 1 次（声明 `lateDelivery` 的也是 1 次），用尽后这条消息原样发出，绑定不变；只有新包覆盖的事实严格更多才再补发（`resend.by:"grown"`，计数归零）。每一“代”至多 2 份自动发送，新的一代要求有新的外来事实。
+- 待核（rewind、unknown_command、legacy、marker_absent、未确认的清空）核对无定论：没有新欠交就原样发出并保持待核；有新欠交就退到纪元基准补发完整交接单。未确认的清空一律按“没清空”。
+- 默认允许的留痕：某厂商键首次用于交接时先向 `relay_log` 追加一行（命令号 `default-allow:<键>:relay-1`），再提交使用它的 `run.context_prepared`，送达行的 `consentLogSeq` 取该行；`unknown:*`、`gateway:*`、`router:*`、`provider:*` 与来自工作区文件的端点同样允许并提示；撤回必须赢。
+- 只关乎交接单的失败（窗口放不下最小交接单、恢复失败、渲染 / 脱敏 / 配额 / 日志失败、同意被撤回、open 后分类不符）默认不让 Run 失败：原样发出，原因记入 `run.context_prepared.data.relay.decision{kind, by, cause?, reason?, resend?}`。
+- 费用、时延与价格悬崖默认不降档，只显示；窗口与通道上限保留。
+- 不因放行而放开（正确性）：D6 要求 `probed`；未探针不写常量压缩游标；`replaced === null` 的 `native.cleared`（OpenClaw 的 `lifecycleRevision`、Hermes 的回执）只有 `probed` 才算确认，否则按 `clear_unconfirmed`；Hermes 的 `setTitle` 不启用。**后果**：六家都未翻 `probed`，所以 Hermes、OpenClaw 的 `/clear` 现在显示“清空待确认”，由核对、用户确认或按“没清空”收尾；Claude 的合成清空（Driver 自己放弃会话）不受影响。
+
+**G073（本阶段的最小集合）**：
+- API：发送带 `relay`（`attach`、`resend`、`clearConfirmed`、`native`、`tier`、`consent` 交给运行时，`note` 只校验）；错误体带 `relay{binding, cause, options, counts, vendor?}`；`GET …/relay`（绑定的同步状态、`probed`、`canConfirm`、`owed`、`attention`、`vendorChange`，交接单列表，`installation`、`dataRootExposed`）；`GET …/relay/:packetId`（存储的字节、ETag，别的会话的与不存在的同一个 404）；`GET` / `PUT /relay/prefs`（一律六键）；`/state` 带 `relay:true`；SSE 的 `relay` 通知帧（不含正文、原值与哈希，是 `SessionStreamFrame` 的联合成员）；Run 带 `relay.decision`，Web 的 Run 不带 `relayRequest`。
+- 界面：分隔线只在送达证据到达后写“接手”，策略单发的回合如实说明、从不写“接手”；附件条打开发出时的原文；输入框上方一行（欠交、首次向一个服务交接的一句说明、`attention` 的提示与按钮；同一 `key` 只提示一次）；清空后的“附上交接单”；详情栏“接续”；设置页“跨厂商交接”三档与“送达拿不准时”两档；数据根在工作区内的横幅；密钥不可用时的常驻提示；用词检查 `tools/check-ui-wording.mjs` 进 `pnpm check`。
+- `attention` 按此刻的状态现算（同步状态、欠交含分支引用的来源历史、该厂商的同意站位、窗口），不从最近一个 Run 的决定推。
+
+**探针带来的 Driver 修正**：Claude 只在第一个字符就是 `/` 时才读命令（原生不去前导空白；此前 `" /clear"` 会被合成清空）；Claude 目录外的斜杠词是文本（`unlistedSlash: "text"`，`hidden` 的四个仍是命令）；Codex 在回合开始前的停止不再弄坏连接（等回合开始再中断）；Codex 回显客户端身份的字段是 `clientId`（真机证实）；DeepSeek Harness 的模型键取 JSON 数组文本的最后一项。
+
+**独立审查后的修正**（对 `072075f`：阻断 0、重要 7、次要 14）：厂商读取失败是“未看到”，不覆盖缓存观测，该控制已知的任一键被撤回即单发（撤回不被绕过）；清空确认的探针门（上文）；未声明机制的 Driver 上斜杠开头的输入原样发出、不捎带；`carry_settled` 加 `resent`，恢复按 `resendOf` 判定（恢复了被 `grown` 削弱的防御，`BindingSync` 形状不变）；原生标题挪到交接提交之后、派发之前，只在仍携带且是交接新开的会话时设置，脱敏用整会话的秘密；授权之后才撤回同意时扣下交接单、原话照发（新事件 `relay.withheld`，`assertSessionTransition` 为此开一个窄例外：未派发的运行中 Run 可以丢交接单，当且仅当有该事件点名同一 Run 与同一份包）；打开库时重建旧的 4 键 `relay_prefs`；密钥文件的空文件与目录情形。
+
+**已知限制**：
+- 从没读到过厂商且没有缓存的首次交接，无法尊重对某个具体厂商的撤回。
+- 会话级同意不被之后的全局撤回覆盖（按作用域的设计）。
+- 严格模式下首次交接到没打开过的目标要发多次（靠“核实厂商”缓解，未做）；严格模式的“每次问我”仍会先自动再附一次。
+- `relay.native:"new"` 受理即归档旧原生会话，之后若派发前失败，原生会话已换。
+- 本阶段没做：预览估算、`relay/observe`、钉住与排除、按位置放行、同意记录的列表与撤回页、档位选择与附言、首条是命令时的发送前提示、回到原 Harness 时并列的“新开并附交接单”、交接单清单的分节与省略账目（MVP 渲染器不产生）、预取与懒重建、回合外的用量更新。
+- Hermes 的 `setTitle` 启用前的两个前置条件、Claude 计划模式“清空上下文继续”没有信号、OpenClaw 核对的预算，仍如阶段二补记。
+
+**待审批代理确认**（实现者的保守选择，已随修正落地）：`relay.withheld` 的窄例外；`goal_only` 在默认模式下转单发（MVP 只渲染标准档）；`tier`、`consent`、`native:"continue"` 不算显式选择；Claude 目录外的词读作内容的读法超出声明那一格；Codex 回合开始前的停止要等 Codex 确认才有回执。
+
+**留给所有者**：推送与 4317 升级；翻转 `probed`（Claude Code、OpenCode 的探针条件已满足）；Hermes、OpenClaw 的探针放行范围；WorkBuddy 的凭据路线与条款；`~/.codex/config.toml` 里探针留下的两行。
