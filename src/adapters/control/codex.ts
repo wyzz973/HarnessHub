@@ -16,7 +16,7 @@ import type { DataClass, DeliveryPosition, MarkerResult, RelayCapabilities, Rela
 import { CODEX_SKILL_INPUT as SKILL_INPUT, CODEX_THREAD_COMMANDS as THREAD_COMMANDS, codexClassify, codexNativeClassify, codexThreadOperation as threadOperation, relayDeclaration, relayEntries } from "./relay-classify.js";
 import { codexVendor, readEndpoint, slashModelKey, vendorObservation } from "./relay-vendor.js";
 import { singleText, type TurnText, type VerifyRequest } from "../../contracts/control.js";
-import { bodyWithoutFirstLine, boundedRequests, carriesPacket, exceedsInput, INPUT_LIMIT_REFUSED, unavailable, usageRequest, userWords, verifyResult } from "./relay-turn.js";
+import { bodyWithoutFirstLine, boundedRequests, carriesPacket, COMMAND_REFUSED, exceedsInput, INPUT_LIMIT_REFUSED, TITLE_DEADLINE_MS, unavailable, usageRequest, userWords, VERIFY_BUDGET_MS, verifyResult } from "./relay-turn.js";
 
 /**
  * Codex's relay declaration (ADR-055 §8.1, Codex row): one text (packet, a line break, then the user's words), at most
@@ -32,7 +32,9 @@ export const codexRelayCapabilities: RelayCapabilities = relayDeclaration({
   delivery: { live: "recorded_event", verify: "after_turn", successProvesRecorded: false, lateDelivery: false },
   execution: "process",
   commands: { unlistedSlash: "text", hidden: [], classify: codexClassify },
-  placement: { parts: "single", maxInput: { unit: "chars", limit: 1_048_576 }, pointersAfterUser: false },
+  // Files go as pointers at the end of the one text, after the words; images and audio as their own items after it (G069
+  // phase two, approval B8; to be probed).
+  placement: { parts: "single", maxInput: { unit: "chars", limit: 1_048_576 }, pointersAfterUser: true },
   window: "turn_report",
   fixedPrefix: null,
   cacheTtl: "30m",
@@ -77,8 +79,12 @@ interface ActiveTurn {
 }
 interface Tokens { readonly totalTokens: number; readonly inputTokens: number; readonly cachedInputTokens: number; readonly cacheWriteInputTokens: number; readonly outputTokens: number; readonly reasoningOutputTokens: number }
 const STREAM_MS = 300, ITEM_OUTPUT_BYTES = 128 * 1024;
-/** How much of a thread a check reads, newest first: the turn it looks for is usually the last one. */
-const VERIFY_TURN_PAGES = 8, VERIFY_TURNS_PER_PAGE = 50;
+/**
+ * How much of a thread a check reads, newest first: the latest VERIFY_FIRST_PAGE turns (the one it looks for is usually the
+ * last), then pages of VERIFY_TURNS_PER_PAGE, at most VERIFY_TURNS in all; full item views, so small pages keep each answer far
+ * below the frame limit and the wire budget.
+ */
+const VERIFY_FIRST_PAGE = 5, VERIFY_TURNS_PER_PAGE = 50, VERIFY_TURNS = 400;
 function tokens(value: unknown): Tokens | null {
   if (value === null || typeof value !== "object") return null;
   const row = value as Record<string, unknown>, read = (key: string) => typeof row[key] === "number" && Number.isSafeInteger(row[key]) && (row[key] as number) >= 0 ? row[key] as number : 0;
@@ -359,11 +365,14 @@ export class CodexControl implements HarnessControl {
   }
   /**
    * Looks for each packet in the user message Codex recorded with its client identity, reading the thread's turns newest
-   * first (thread/turns/list, at most VERIFY_TURN_PAGES pages): present when that message carries the packet's title line,
-   * compacted when a context compaction came after it, absent when it does not carry it, or when the whole thread was read
-   * and Codex echoes identities but none is this one; outside_window when the pages ran out first; unavailable when the
-   * position is not a client identity, Codex refuses the listing, or it echoes no identity at all (nothing to look for).
-   * historyEmpty and the compaction cursor are given only after the whole thread was read. Reads only.
+   * first (thread/turns/list: the latest VERIFY_FIRST_PAGE turns, then wider pages, at most VERIFY_TURNS turns, within
+   * VERIFY_BUDGET_MS, each request given up alone at the budget's end so that the connection stays usable, C6). That message
+   * is the first client entry after the position, so its title line is enough: present when it carries it, compacted when a
+   * context compaction came after it, absent only when the message with that very identity was found without it.
+   * outside_window when the turns a check reads ran out first; unavailable when the identity was not found in a thread read
+   * to its end (that Codex echoes every client identity is not established, F4), when the position is not a client identity,
+   * Codex refuses or garbles the listing, or the budget ran out. historyEmpty (a thread with no item at all) and the
+   * compaction cursor are given only after the whole thread was read. Reads only.
    */
   async verifyDelivered(id: NativeConversationId, request: VerifyRequest): Promise<VerifyResult> {
     const started = Date.now();
@@ -371,20 +380,24 @@ export class CodexControl implements HarnessControl {
     const wanted = new Map<string, number[]>();
     request.markers.forEach((marker, index) => { if (marker.position.kind === "client_id") wanted.set(marker.position.id, [...(wanted.get(marker.position.id) ?? []), index]); });
     const results: (MarkerResult | null)[] = request.markers.map(marker => marker.position.kind === "client_id" ? null : "unavailable");
-    let users = 0, compactions = 0, echoes = false, complete = false, cursor: string | undefined, foreign: number | null = null;
+    let users = 0, items = 0, compactions = 0, turns = 0, complete = false, cursor: string | undefined, foreign: number | null = null;
     try {
-      for (let page = 0; page < VERIFY_TURN_PAGES && results.includes(null) || page === 0; page++) {
-        const response = object(await this.rpc.request("thread/turns/list", { threadId: id, limit: VERIFY_TURNS_PER_PAGE, sortDirection: "desc", itemsView: "full", ...(cursor === undefined ? {} : { cursor }) }), "Codex turns");
-        if (!Array.isArray(response.data) || response.data.length > VERIFY_TURNS_PER_PAGE) throw new ControlError("INVALID_PROTOCOL", "invalid Codex turn page");
+      for (let page = 0; (results.includes(null) || page === 0) && turns < VERIFY_TURNS; page++) {
+        const left = Math.floor(VERIFY_BUDGET_MS - (Date.now() - started)), limit = page === 0 ? VERIFY_FIRST_PAGE : VERIFY_TURNS_PER_PAGE;
+        if (left <= 0) return unavailable(request, started);
+        const response = object(await this.rpc.request("thread/turns/list", { threadId: id, limit, sortDirection: "desc", itemsView: "full", ...(cursor === undefined ? {} : { cursor }) },
+          Math.min(left, this.options.requestTimeoutMs), "reject"), "Codex turns");
+        if (!Array.isArray(response.data) || response.data.length > limit) throw new ControlError("INVALID_PROTOCOL", "invalid Codex turn page");
+        turns += response.data.length;
         for (const value of response.data) {
-          const items = object(value, "Codex turn").items;
+          const listed = object(value, "Codex turn").items;
           // Newest first throughout: a turn's items in reverse.
-          for (const raw of [...(Array.isArray(items) ? items : [])].reverse()) {
+          for (const raw of [...(Array.isArray(listed) ? listed : [])].reverse()) {
             const item = object(raw, "Codex turn item");
+            items++;
             if (item.type === "contextCompaction") { compactions++; continue; }
             if (item.type !== "userMessage") continue;
             const echoed = typeof item.clientUserMessageId === "string" ? item.clientUserMessageId : typeof item.clientId === "string" ? item.clientId : null;
-            if (echoed !== null) echoes = true;
             for (const index of echoed === null ? [] : wanted.get(echoed) ?? []) {
               if (results[index] !== null) continue;
               const said = Array.isArray(item.content) ? item.content.map(inputText).join("\n") : "";
@@ -398,25 +411,25 @@ export class CodexControl implements HarnessControl {
         cursor = string(response.nextCursor, "Codex turn cursor", 1024);
       }
     } catch (error) {
-      // A refusal (no user message yet, an ephemeral thread) leaves nothing to look at; a broken connection is the caller's.
-      if (error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null) return unavailable(request, started);
-      if (error instanceof ControlError && error.code === "INVALID_PROTOCOL" && this.rpc.failure === null) return unavailable(request, started);
+      // A refusal (no user message yet, an ephemeral thread), a garbled page or a request given up at the budget's end leaves
+      // nothing to look at; a broken connection is the caller's.
+      if (error instanceof ControlError && ["REMOTE_ERROR", "INVALID_PROTOCOL", "REQUEST_TIMEOUT"].includes(error.code) && this.rpc.failure === null) return unavailable(request, started);
       throw error;
     }
-    const settled = results.map(result => result ?? (!complete ? "outside_window" : echoes ? "absent" : "unavailable"));
-    return verifyResult(request, settled, started, complete ? { historyEmpty: request.historyEmpty ? users === 0 : null, compaction: { count: compactions, digest: null }, foreignAfterLast: foreign } : { foreignAfterLast: foreign });
+    const settled = results.map(result => result ?? (complete ? "unavailable" : "outside_window"));
+    return verifyResult(request, settled, started, complete ? { historyEmpty: request.historyEmpty ? items === 0 : null, compaction: { count: compactions, digest: null }, foreignAfterLast: foreign } : { foreignAfterLast: foreign });
   }
   /**
    * Names the thread on Codex's side before its first turn (ADR-055 §8.1, `thread/name/set {threadId, name}`): one line of
-   * at most 200 characters; an empty title is not sent. A refusal rejects with NATIVE_TITLE_UNAVAILABLE and leaves the
-   * connection as it was.
+   * at most 200 characters; an empty title is not sent. A refusal, or no answer within TITLE_DEADLINE_MS, rejects with
+   * NATIVE_TITLE_UNAVAILABLE and leaves the connection as it was (the request is given up alone, C6).
    */
   async setTitle(id: NativeConversationId, title: string): Promise<void> {
     this.assertOwned(id);
     const name = [...title.replace(/[\0-\x1f\x7f\u2028\u2029\u0085]+/gu, " ").trim()].slice(0, 200).join("").trim();
     if (!name) return;
-    try { await this.rpc.request("thread/name/set", { threadId: id, name }); }
-    catch (error) { if (error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null) throw new ControlError("NATIVE_TITLE_UNAVAILABLE", "Codex did not name the thread"); throw error; }
+    try { await this.rpc.request("thread/name/set", { threadId: id, name }, Math.min(this.options.requestTimeoutMs, TITLE_DEADLINE_MS), "reject"); }
+    catch (error) { if (error instanceof ControlError && (error.code === "REMOTE_ERROR" || error.code === "REQUEST_TIMEOUT") && this.rpc.failure === null) throw new ControlError("NATIVE_TITLE_UNAVAILABLE", "Codex did not name the thread"); throw error; }
   }
   /**
    * The endpoint and model this thread runs on (ADR-055 §10.4): the thread's model with its provider as the model's
@@ -641,17 +654,18 @@ export class CodexControl implements HarnessControl {
     const invoked = SKILL_INPUT.exec(prompt), skill = invoked ? this.skills.get(invoked[1]!) : undefined;
     const words = skill ? invoked![2]?.trim() || "$" + skill.name : prompt, mentions = fileMentions(attachments.filter(file => file.kind === "file"));
     // ADR-055 §5.5, §8.1: one text, the packet, a blank line and the words; for a skill input the skill item, then the packet
-    // without the copy of the first line and the rest of the words (RT5-18). A thread operation or any other command goes alone.
+    // without the copy of the first line and the rest of the words (RT5-18). A relay Turn whose words are a thread operation
+    // (or any other command) is refused whole, nothing sent (B4b).
     let text = words, packetId: RelayPacketId | null = null;
+    const nothingSent = (result: BackendResult): ControlRun => ({ result: Promise.resolve(result), requestStop: () => Promise.reject(new ControlError("INVALID_STATE", "nothing was sent, so there is no native turn to stop")) });
     if (typeof turn !== "string") {
       const entries = relayEntries([...THREAD_COMMANDS, ...[...this.skills.keys()].map(name => ({ name: "skill:" + name, description: "", contextEffect: "keep" as const }))]);
       const reading = codexClassify(prompt, entries, attachments.map(file => file.kind));
       // Content, or a listed skill input whose text Codex submits (acceptsRelay); a thread operation never.
-      if (threadOperation(prompt, attachments.length > 0) === null && (reading.kind === "content" || reading.kind === "command" && reading.acceptsRelay === true && skill !== undefined)) {
-        text = reading.kind === "content" ? singleText(turn) : bodyWithoutFirstLine(turn) + "\n\n" + words;
-        packetId = turn.relay.packetId;
-        if (exceedsInput([text + mentions], codexRelayCapabilities.placement)) { onEvent({ type: "diagnostic", message: "交接单没有发出：超过 Codex 的输入上限" }); return { result: Promise.resolve(INPUT_LIMIT_REFUSED), requestStop: () => Promise.reject(new ControlError("INVALID_STATE", "nothing was sent, so there is no native turn to stop")) }; }
-      } else onEvent({ type: "diagnostic", message: "交接单没有随这条输入发出：Codex 把它读作命令，命令回合不附交接内容。" });
+      if (threadOperation(prompt, attachments.length > 0) !== null || !(reading.kind === "content" || reading.kind === "command" && reading.acceptsRelay === true && skill !== undefined)) return nothingSent(COMMAND_REFUSED);
+      text = reading.kind === "content" ? singleText(turn) : bodyWithoutFirstLine(turn) + "\n\n" + words;
+      packetId = turn.relay.packetId;
+      if (exceedsInput([text + mentions], codexRelayCapabilities.placement)) { onEvent({ type: "diagnostic", message: "交接单没有发出：超过 Codex 的输入上限" }); return nothingSent(INPUT_LIMIT_REFUSED); }
     }
     let resolve!: (value: BackendResult) => void, reject!: (error: Error) => void;
     const result = new Promise<BackendResult>((res, rej) => { resolve = res; reject = rej; });

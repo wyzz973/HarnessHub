@@ -13,11 +13,15 @@ import { commandEffect, commandOutcome, dispatched, type InputOutcome } from "..
 import { initialBindingRelay } from "../domain/relay/migrate.js";
 import { BLOCKED_CODES, RelayError, type BindingRelayState, type DeliveryPosition, type RelayCapabilities, type RelayDeliveryWrite, type RelayIndexRow, type RelayPacket, type RelayStorePort, type VerifyResult } from "../../../contracts/relay.js";
 import { mayReuseKept, owed, planReturnVerify, step, type BindingDelivery, type RelayFact } from "../domain/relay/delivery.js";
-/** How long after_turn's check at a settlement may take before it counts as unavailable (ADR-055 §6.1, ≤2 s). */
-const AFTER_TURN_CHECK_MS = 2000;
+/**
+ * How long a relay read on a Turn's connection (a check at the open or at a settlement, the position before dispatch) may take
+ * before it counts as unavailable (ADR-055 §6.1, C6: ≤2 s); a read still outstanding at the open is waited for as long again
+ * before dispatch, and the Turn is not dispatched while it is.
+ */
+const RELAY_READ_MS = 2000;
 import {
-  EphemeralKeys, RelayLedger, acceptedChoices, admitRelay, bindingDeliveries, checkStep, checkWorthAnEvent, checkedResult, continuityOf, decideTurn, deliveryRow, markIn, needRuns,
-  outcomeWrites, packetManifest, parseRelayChoices, rangeOf, recordedStep, relayDeclaration, renderView, runRelayOf, samePlan, settleTurn, unavailableResult, verifiedEvent, verifyRequestOf,
+  EphemeralKeys, RelayLedger, acceptedChoices, admitRelay, bindingDeliveries, checkStep, checkWorthAnEvent, checkedResult, continuityOf, decideTurn, deliveryRow, heldSinceIn, markIn, needRuns,
+  outcomeWrites, packetManifest, parseRelayChoices, rangeOf, recordedStep, relayDeclaration, renderView, retreatEvent, runRelayOf, settleTurn, unavailableResult, verifiedEvent, verifyRequestOf,
   type CarriedTurn, type Check, type RelayChoices, type RelayDeclaration, type SettledTurn, type TurnDecision,
 } from "./relay-coordinator.js";
 import { MAX_COMMANDS, MAX_OUTPUT_BYTES, MAX_PLAN_ENTRIES, MAX_QUEUE, MAX_RUNS, MAX_RUN_ACTIVITIES, MAX_RUN_NOTICES, MAX_RUN_TOOLS, assertInput, carriedNativeConfiguration, parseConfiguration, parseNativeConfiguration, replayCommand, terminal, utf8Bytes } from "../domain/state.js";
@@ -70,6 +74,13 @@ interface TurnRelay {
   settledCheck: Check | null;
   /** The Driver said the input was recorded (E1); for a packet, once committed. */
   recorded: boolean;
+  /**
+   * The relay's own reads on the Turn's connection (a check, the position; ADR-055 C6, G068 fix batch R2): whether one was
+   * asked, and the connection's health (`healthy()`) before the first; the reads given up on at their bound and still
+   * outstanding (the connection is never kept after one, and no input is dispatched while one is); and `broke`: a read left the
+   * connection failed that was not failed before it, or was given up on for good — that failure is the relay's, never the Turn's.
+   */
+  readonly io: { asked: boolean; healthy: boolean | undefined; readonly abandoned: Promise<void>[]; broke: boolean };
 }
 /** A conversation's kept native process (ADR-030): the binding of its last Run, idle between Turns and owned by the runtime. */
 interface KeptProcess {
@@ -154,6 +165,17 @@ function fault(error: unknown): { readonly code: string; readonly message: strin
 const RUN_DIAGNOSTIC_BYTES = 4096, MAX_RUN_DIAGNOSTICS = 64;
 /** Longest wait a driver may announce for one request (a day); anything else is ignored rather than shown. */
 const MAX_PERMISSION_WAIT_MS = 24 * 60 * 60 * 1000;
+/**
+ * Why a Turn is not dispatched when the connection the relay read on (its check, the position) failed, or a read is still
+ * outstanding, before the input went (ADR-055 C6, G068 fix batch R2): nothing reached the Harness (`target_start`).
+ */
+function notReached(): RelayError {
+  return new RelayError({ code: "RELAY_PREPARE_FAILED", reason: "target_start" }, "原程序的连接在核对交接记录时出了问题，这条消息没有发出，草稿已保留。可以再发一次。");
+}
+/** A commit's failure that fails only what asked for it (INV-35: a relay error; a bound), never the Runtime. */
+function expectedFailure(error: unknown): boolean {
+  return error instanceof RelayError || error instanceof SessionError && ["CONTEXT_TOO_LARGE", "OUTPUT_LIMIT", "QUEUE_FULL", "COMMAND_LIMIT", "RUN_LIMIT", "SESSION_LIMIT", "EVENT_LIMIT"].includes(error.code);
+}
 /** Why a switch fails when the Turn it waited for ended without confirmed settlement (ADR-055 §9, RT2-04). */
 const STRANDED_SWITCH = { code: "SWITCH_SOURCE_UNKNOWN", message: "the Turn this switch waited for ended without confirmed settlement; the switch was not applied" } as const;
 /**
@@ -283,6 +305,11 @@ export class SessionRuntime {
   private readonly ledger: RelayLedger;
   /** The keyed digests of delivery rows until G070's session subkeys exist (relay-coordinator EphemeralKeys). */
   private readonly relayKeys = new EphemeralKeys();
+  /**
+   * The relay choices of the inputs this owner accepted, as their `message.accepted` events committed them, until their Turn
+   * reads them (G068 fix batch, R8): an ordinary Turn reads no event for them. A Turn accepted by an earlier owner reads its event.
+   */
+  private readonly acceptedRelay = new Map<string, RelayChoices>();
 
   constructor(private readonly store: SessionStore, private readonly factory: SessionBindingFactory, private readonly options: SessionRuntimeOptions) {
     this.ledger = new RelayLedger((id, after, limit) => this.store.events(id, after, limit));
@@ -417,6 +444,9 @@ export class SessionRuntime {
       messages: [...current.messages, { id: userId, runId: nextId, role: "user", text, seq: current.lastSeq + 1, status: "queued" }],
       commands: [...current.commands, { id: command, kind: "send", fingerprint, resultId: nextId }] },
       events: [event("message.accepted", { runId: nextId, messageId: userId, role: "user", text, ...(attachments.length ? { attachments } : {}), ...(choices === undefined ? {} : { relay: choices }) })] }));
+    this.acceptedRelay.set(nextId, choices ?? {});
+    // Inputs cancelled before they run never read theirs: the oldest go first, so this stays bounded.
+    if (this.acceptedRelay.size > 4096) this.acceptedRelay.delete(this.acceptedRelay.keys().next().value!);
     this.schedule(id); return { sessionId: id, runId: nextId, replayed: false };
   }
   /**
@@ -529,15 +559,17 @@ export class SessionRuntime {
   }
   /**
    * Whether a binding's native session holds exactly the conversation through `through` (ADR-055 §7.5, RT1-B7): synced,
-   * `through` ran in its current native epoch, and nothing foreign up to `through`'s fact is owed to it.
+   * `through` ran in its current native epoch, and nothing foreign up to `through`'s fact is owed to it. A binding without relay
+   * state (none in a v13 Session) is never exact: nothing says what its native session holds (A1, R10a).
    */
   private exactAt(state: SessionSnapshot, binding: NativeSessionBinding, through: PublicRun): boolean {
     const relay = binding.relay;
-    if (relay === undefined) return true;
+    if (relay === undefined) return false;
     if (relay.sync.kind !== "synced" || through.relay?.executedOn?.nativeEpoch !== relay.nativeEpoch) return false;
     const seq = this.ledger.endedSeq(state, through.id);
     if (seq === undefined) return false;
-    const need = owed(relay, binding.harnessId, binding.controlId, this.relayFacts(state, { harnessId: binding.harnessId, controlId: binding.controlId, nativeEpoch: relay.nativeEpoch }).filter(fact => fact.seq <= seq), { originHistory: (state.origin?.history.length ?? 0) > 0 });
+    const need = owed(relay, binding.harnessId, binding.controlId, this.relayFacts(state, { harnessId: binding.harnessId, controlId: binding.controlId, nativeEpoch: relay.nativeEpoch }).filter(fact => fact.seq <= seq),
+      { originHistory: (state.origin?.history.length ?? 0) > 0, heldSince: heldSinceIn(state, binding.harnessId, binding.controlId, relay) });
     return need.facts.length === 0 && !need.origin;
   }
   async wait(id: SessionId): Promise<void> {
@@ -896,7 +928,11 @@ export class SessionRuntime {
       throw error;
     }
   }
-  private commit(id: SessionId, mutate: (state: SessionSnapshot) => SessionMutation): SessionCommit {
+  /**
+   * One Store transaction of `id`, published. A failure fails the Runtime (fatal) unless it is an expected one, or `quiet`
+   * says the caller decides: a commit whose relay part the Store may refuse retries without it (R6, relayRefusal).
+   */
+  private commit(id: SessionId, mutate: (state: SessionSnapshot) => SessionMutation, quiet = false): SessionCommit {
     try {
       this.store.assertOwner();
       const known = this.versions.get(id);
@@ -911,7 +947,16 @@ export class SessionRuntime {
       return this.publish(committed);
     }
     // An expected relay failure (a RelayError from the Store's checks or the relay's own) fails only its Run (INV-35).
-    catch (error) { if (!(error instanceof RelayError) && !(error instanceof SessionError && ["CONTEXT_TOO_LARGE", "OUTPUT_LIMIT", "QUEUE_FULL", "COMMAND_LIMIT", "RUN_LIMIT", "SESSION_LIMIT", "EVENT_LIMIT"].includes(error.code))) this.fail(error, id); throw error; }
+    catch (error) { if (!quiet && !expectedFailure(error)) this.fail(error, id); throw error; }
+  }
+  /**
+   * Whether a failed commit was the Store refusing what it was asked to write — a relay error, a row or transition it found
+   * invalid — while it still works and this owner still owns it, so that its relay part can be dropped (G068 fix batch, R6).
+   * A storage or ownership failure is never one: the Store is disabled then, or the owner gone.
+   */
+  private relayRefusal(error: unknown): boolean {
+    if (!(error instanceof RelayError) && !(error instanceof SessionError && (error.code === "INVALID_DATA" || error.code === "INVALID_TRANSITION"))) return false;
+    try { this.store.assertOwner(); return this.fatal === null; } catch { return false; }
   }
   private publish(commit: SessionCommit): SessionCommit {
     if (this.publicationFailed) return commit;
@@ -1224,8 +1269,12 @@ export class SessionRuntime {
    * commit is thrown to the driver, which ends the Turn with it.
    */
   private output(execution: ActiveExecution, value: ControlEvent): void {
+    // A Driver that declares `live: "agent_output"` (dsh) proves a packet recorded by the Turn's first agent text, thinking or
+    // tool call, never by a plan or usage (ADR-055 §7.1 weak E1, C8): E1 is committed before that output (R3).
+    if (execution.relay.declaration.capabilities?.delivery.live === "agent_output" && execution.relay.turn.kind === "carry" && !execution.relay.recorded
+        && ((value.type === "text" || value.type === "thinking") && value.text !== "" || value.type === "tool")) this.inputRecorded(execution, undefined, "agent_output");
     if (value.type === "text" || value.type === "thinking") { this.streamChunk(execution, value); return; }
-    if (value.type === "input_recorded") { this.inputRecorded(execution, value.packetId); return; }
+    if (value.type === "input_recorded") { this.inputRecorded(execution, value.packetId, "recorded_event"); return; }
     this.flushStream(execution);
     const state = this.owned(execution), run = state.runs.find(run => run.id === execution.runId)!;
     if (run.status !== "running") throw new SessionError("STALE_EVENT", "output arrived outside its active Run");
@@ -1294,9 +1343,12 @@ export class SessionRuntime {
    * before it is committed first, then one transaction records `relay.input_recorded`, the delivery decided recorded(E1) and
    * the binding synced on the packet, with the Run's recordedAt (never its first output). A Turn without a packet only keeps
    * it in memory for its settlement (an ordinary Turn adds no event). An entry the Driver saw with another packet, a second
-   * report, or one after the Turn stopped running decides nothing.
+   * report, or one after the Turn stopped running decides nothing. `live` is the evidence the event names: the Driver's own
+   * report of the entry (`recorded_event`), or the Turn's first agent output (`agent_output`, R3). An E1 the Store refuses
+   * (its relay rows, a binding that changed) is not recorded and the settlement decides as without it (R6); a Store that
+   * failed fails the Runtime as any commit does.
    */
-  private inputRecorded(execution: ActiveExecution, packetId: RelayPacket["id"] | undefined): void {
+  private inputRecorded(execution: ActiveExecution, packetId: RelayPacket["id"] | undefined, live: "recorded_event" | "agent_output"): void {
     const relay = execution.relay, turn = relay.turn;
     if (relay.recorded) return;
     if (turn.kind !== "carry") { if (turn.kind === "plain") relay.recorded = true; return; }
@@ -1310,15 +1362,19 @@ export class SessionRuntime {
     // A binding that is no longer pending on this packet (a bug) takes nothing from it; the settlement decides as without E1.
     if (before?.relay === undefined || recordedStep(before.relay, turn, { seq: state.lastSeq + 1, time: recordedAt }) === null) return;
     let committed = false;
-    this.commit(state.id, current => {
-      const own = ownOf(current), outcome = own?.relay === undefined ? null : recordedStep(own.relay, turn, { seq: current.lastSeq + 1, time: recordedAt });
-      if (outcome === null) throw new SessionError("INVALID_TRANSITION", "the binding changed while E1 was recorded");
+    try {
+      this.commit(state.id, current => {
+        const own = ownOf(current), outcome = own?.relay === undefined ? null : recordedStep(own.relay, turn, { seq: current.lastSeq + 1, time: recordedAt });
+        if (outcome === null) throw new RelayError({ code: "RELAY_PREPARE_FAILED", reason: "render_mismatch" }, "the binding changed while E1 was recorded");
+        const mark = outcome.relay.sync.kind === "synced" ? outcome.relay.sync.mark : null;
+        let next = updatedRun(current, run.id, phase(current, run.id, "recordedAt", recordedAt));
+        next = { ...next, nativeBindings: next.nativeBindings?.map(row => row === own ? { ...row, relay: outcome.relay } : row) ?? [] };
+        return { next, events: [event("relay.input_recorded", { runId: run.id, packetId: turn.packetId, recordedAt, mark, live })], relay: { deliveries: outcomeWrites(outcome.deliveries) } };
+      }, true);
       committed = true;
-      const mark = outcome.relay.sync.kind === "synced" ? outcome.relay.sync.mark : null;
-      let next = updatedRun(current, run.id, phase(current, run.id, "recordedAt", recordedAt));
-      next = { ...next, nativeBindings: next.nativeBindings?.map(row => row === own ? { ...row, relay: outcome.relay } : row) ?? [] };
-      return { next, events: [event("relay.input_recorded", { runId: run.id, packetId: turn.packetId, recordedAt, mark })], relay: { deliveries: outcomeWrites(outcome.deliveries) } };
-    });
+    } catch (error) {
+      if (!this.relayRefusal(error)) { if (!expectedFailure(error)) this.fail(error, state.id); throw error; }
+    }
     if (committed) relay.recorded = true;
   }
   /** Records the Run's first visible output at the clock's reading now, once, as its own committed fact (never held in a window). */
@@ -1469,7 +1525,7 @@ export class SessionRuntime {
       budget: { executionLeftMs: this.options.executionBudgetMs ?? DEFAULT_EXECUTION_BUDGET_MS, waitLeftMs: (this.options.waitBudgetMs ?? DEFAULT_WAIT_BUDGET_MS) - (this.waitUsed.get(target) ?? 0),
         waiting: false, since: performance.now(), timer: null }, stopReason: null, grace: null,
       stream: { kind: null, text: "", committedBytes: 0, bytes: 0, last: "", cancel: null }, streamFailure: null,
-      relay: { declaration: relayDeclaration(null), openCheck: null, turn: { kind: "none" }, settledCheck: null, recorded: false } };
+      relay: { declaration: relayDeclaration(null), openCheck: null, turn: { kind: "none" }, settledCheck: null, recorded: false, io: { asked: false, healthy: undefined, abandoned: [], broke: false } } };
     if (this.actives.has(id)) throw new SessionError("OWNERSHIP_LOST", "another Turn of this conversation is active");
     this.actives.set(id, execution); this.waitUsed.delete(target);
     // The execution budget runs from here: starting the program, its model, tools and result (ADR-036).
@@ -1539,7 +1595,9 @@ export class SessionRuntime {
         const carriedConfiguration = carriedNativeConfiguration(current, run.selection, run.epoch);
         if (carriedConfiguration !== null) this.commit(id, current => ({ next: current, events: [event("native.config_carried", { runId: target, ...carriedConfiguration })] }));
         const nativeOptions = carriedConfiguration?.options === undefined ? run.selection.nativeOptions : { ...run.selection.nativeOptions, ...carriedConfiguration.options };
-        native = await control.open(execution.binding.workspace, carriedConfiguration?.model ?? run.selection.nativeModel, nativeOptions, previousNative?.checkpoint); this.continue(execution);
+        // A binding whose native session the Driver replaced by none yet (opensNew, R4) opens a new one: its checkpoint names the
+        // abandoned session, never resumed.
+        native = await control.open(execution.binding.workspace, carriedConfiguration?.model ?? run.selection.nativeModel, nativeOptions, previousNative?.opensNew === true ? undefined : previousNative?.checkpoint); this.continue(execution);
       }
       opened = native;
       // The Session as the binding's preparation committed it: what the relay reads below (the binding's relay state, the facts).
@@ -1558,7 +1616,7 @@ export class SessionRuntime {
             const bound: NativeSessionBinding = { ...reference, relay: previousNative === undefined ? initialBindingRelay(current.nativeBindings ?? [], reference.harnessId, reference.controlId, "new") : kept?.relay ?? previousNative.relay! };
             const { relayRecoveryFailed, ...rest } = current;
             return { next: { ...(previousNative === undefined ? rest : current), nativeBindings: previousNative === undefined ? [...(current.nativeBindings ?? []), bound] : current.nativeBindings?.map(binding => binding.harnessId === bound.harnessId && binding.controlId === bound.controlId && binding.status !== "archived" ? bound : binding) ?? [bound] },
-              events: [event("native.binding_prepared", { runId: target, harnessId: reference.harnessId, controlId: reference.controlId, resumed: previousNative !== undefined })] };
+              events: [event("native.binding_prepared", { runId: target, harnessId: reference.harnessId, controlId: reference.controlId, resumed: previousNative !== undefined && previousNative.opensNew !== true })] };
           }).session;
           checkpointStored = true;
         }
@@ -1579,9 +1637,12 @@ export class SessionRuntime {
       const now = () => this.options.now().getTime();
       let rows: readonly BindingDelivery[] = [], checked: BindingRelayState | null = null;
       if (bound !== undefined) {
-        rows = this.relayDeliveries(prepared, bound);
+        // Only a binding that waits for a packet, is in doubt or stands on one has delivery rows to read (§11.1, R8): a fresh one
+        // or one synced on its own Turns plans no check, so an ordinary Turn reads no row and no event for its relay.
+        rows = this.rowsMatter(bound.relay!, declaration.verify) ? this.relayDeliveries(prepared, bound) : [];
         const plan = planReturnVerify(bound.relay!, { verify: declaration.verify, moment: "open", deliveries: rows });
-        const result = await this.verifyFor(control, native, plan, null);
+        // Bounded like the settlement's (C6, R2): a check that does not answer in time is unavailable.
+        const result = await this.verifyFor(execution, control, native, plan);
         if (plan.kind !== "skip") this.continue(execution);
         // The Driver contract asks only for packets: an unknown Turn without one cannot be looked for, so its entry is unavailable.
         execution.relay.openCheck = { plan, result, ...(plan.kind === "unknown_turn" && plan.marker === null ? { turnEntry: "unavailable" as const } : {}), moment: "open" };
@@ -1597,10 +1658,12 @@ export class SessionRuntime {
         working ??= initialBindingRelay(prepared.nativeBindings ?? [], h, c, "new");
         const factsOn = (relay: BindingRelayState) => this.relayFacts(prepared, { harnessId: h, controlId: c, nativeEpoch: relay.nativeEpoch });
         let facts = factsOn(working);
+        const since = heldSinceIn(prepared, h, c, working);
         // The user's choices matter unless the binding is synced and owes nothing even below its floor: then b and n, attached or
-        // not, all go as typed and leave it as it is (§7.2), and an ordinary Turn reads nothing more for them (§11.1).
-        const choices = working.sync.kind === "synced" && owed(working, h, c, facts, { originHistory, attachOverride: true }).facts.length === 0 && !owed(working, h, c, facts, { originHistory, attachOverride: true }).origin
-          ? {} : this.choicesOf(prepared, run);
+        // not, all go as typed and leave it as it is (§7.2); only a request for the history is kept, to say there was none (A9).
+        const all = owed(working, h, c, facts, { originHistory, attachOverride: true, heldSince: since }), requested = this.choicesOf(prepared, run);
+        const choices: RelayChoices = working.sync.kind === "synced" && all.facts.length === 0 && !all.origin
+          ? { ...(requested.attach === "full" ? { attach: "full" as const } : {}), ...(requested.resend === true ? { resend: true as const } : {}) } : requested;
         // The user's ［确认已清空］ (§9): e at the clear's floor candidate, only on a binding whose clear is unconfirmed.
         if (bound !== undefined && choices.clearConfirmed === true && working.sync.kind === "suspect" && working.sync.cause === "clear_unconfirmed" && working.sync.floorCandidate !== null) {
           const confirmed = step(working, { kind: "cleared", seq: working.sync.floorCandidate });
@@ -1608,7 +1671,7 @@ export class SessionRuntime {
         }
         const sync = working.sync, epochRows = rows.filter(row => row.nativeEpoch === working!.nativeEpoch);
         decision = decideTurn({ relay: working, harnessId: h, controlId: c, facts, originHistory, choices, declaration, firstFromSeq: epochRows[0]?.range.fromSeq ?? null,
-          pendingRun: sync.kind === "pending" ? this.pendingRunOf(prepared, rows, sync.packetId) : null, recoveryFailed: prepared.relayRecoveryFailed !== undefined });
+          pendingRun: sync.kind === "pending" ? this.pendingRunOf(prepared, rows, sync.packetId) : null, recoveryFailed: prepared.relayRecoveryFailed !== undefined, heldSince: heldSinceIn(prepared, h, c, working) });
         if (decision.kind === "carry") {
           const runs = needRuns(prepared, run, decision.need);
           // The renderer sees the binding on which what is owed was reckoned (a retreat's prior, else the binding as it is).
@@ -1621,10 +1684,13 @@ export class SessionRuntime {
           packet = { manifest, body, record: context.relay, runs, origin: decision.need.origin };
           turnText = { user: run.input, relay: { packetId: manifest.id, body, firstLine: context.relay.firstLine } };
         }
-        // Where the native history stands before the input goes (F20): a packet's delivery row keeps it, and a Turn without one
-        // records it in its preparation, for a later check of an unknown Turn (D6).
-        if (bound !== undefined && decision.kind !== "alone" && control.deliveryPosition !== undefined) { position = await this.positionOf(control, native); this.continue(execution); }
+        // Where the native history stands before a packet goes (F20): its delivery row keeps it for a later check. A Turn without a
+        // packet reads none: D6's check of such a Turn is deferred for good (A16), so nothing would read it (R8).
+        if (bound !== undefined && packet !== null && control.deliveryPosition !== undefined) { position = await this.positionOf(execution, control, native); this.continue(execution); }
       }
+      // The relay's reads are done: none is still outstanding, and none left the connection failed (R2). Otherwise this Turn is
+      // not dispatched — its input goes nowhere, the binding stays as it was — and the user sends it again.
+      if (execution.relay.io.asked) { await this.relayReadsSettled(execution, control); this.continue(execution); }
       // One transaction (ADR-055 §6.1): the open's check, the packet and its delivery row, the binding's relay state, the Run's
       // relay, run.context_prepared and run.authorized. A relay row the Store refuses fails this Turn before dispatch (INV-35).
       const pendingSync = working?.sync.kind === "pending" ? working.sync : null;
@@ -1662,8 +1728,11 @@ export class SessionRuntime {
             }
           }
         } else if (relay !== null && decision?.kind === "plain") {
-          const plain = step(relay, { kind: "plain", foreign: decision.foreign });
+          const plain = step(relay, { kind: "plain", foreign: decision.foreign, ...(decision.retreat === undefined ? {} : { retreat: decision.retreat }) });
           if (plain.kind === "applied") relay = plain.relay;
+          else if (decision.retreat !== undefined) throw new RelayError({ code: "RELAY_PREPARE_FAILED", reason: "render_mismatch" }, "没能补发：送达状态不允许这样发送，这条消息没有发出。");
+          // The user's complete packet had nothing to carry: the binding stands on the prior it moved back to (R5), recorded as a check would be.
+          if (decision.retreat !== undefined) events.push(retreatEvent(relay, run.id));
         }
         const executedOn = bound !== undefined && relay !== null ? { harnessId: h, controlId: c, nativeEpoch: relay.nativeEpoch } : null;
         const sources = packet?.runs ?? [];
@@ -1677,7 +1746,9 @@ export class SessionRuntime {
           // What identifies the packet (policy, ID, sha256 of the text, the facts it carries, how it was folded); never its text.
           ...(packet !== null ? { relay: packet.record, range: packet.manifest.range, ...(decision?.kind === "carry" && decision.resend !== null ? { resendOf: decision.resend.of } : {}),
             ...(decision?.kind === "carry" && decision.retreat !== undefined ? { retreat: true } : {}), ...(decision?.kind === "carry" && decision.attachOverride ? { attachOverride: true } : {}) } : {}),
-          ...(decision?.kind === "alone" ? { alone: true } : {}), ...(packet === null && position !== null && position.kind !== "none" ? { position } : {}) }),
+          // The user asked for the history and there was none to attach: it went as typed, which the conversation shows (A9).
+          ...(decision?.kind === "alone" ? { alone: true } : {}), ...(decision?.kind === "plain" && decision.nothingToAttach ? { nothingToAttach: true } : {}),
+          ...(decision?.kind === "plain" && decision.retreat !== undefined ? { retreat: true } : {}) }),
           event("run.authorized", { runId: target, epoch: run.epoch }));
         return { next, events, ...(packets.length || deliveries.length ? { relay: { ...(packets.length ? { packets } : {}), ...(deliveries.length ? { deliveries } : {}) } } : {}) };
       });
@@ -1707,6 +1778,8 @@ export class SessionRuntime {
         this.continue(execution);
         files = await content.materialize(run.attachments); this.continue(execution);
       }
+      // A connection the relay read on that failed since is not handed the input (R2): the Turn ends as never dispatched.
+      if (execution.relay.io.asked && control.healthy?.() === false) throw notReached();
       this.commit(id, current => ({ next: updatedRun(current, target, phase(current, target, "dispatchedAt", this.options.now().getTime())), events: [event("run.dispatched", { runId: target })] }));
       execution.dispatched = true;
       execution.run = await control.startText(native, turnText, value => this.output(execution, value), ...(files.length ? [files] : []));
@@ -1722,9 +1795,13 @@ export class SessionRuntime {
       this.flushStream(execution);
       this.commit(id, current => ({ next: updatedRun(current, target, { status: "settling", backend }), events: [event("run.backend_settled", { runId: target, backend })] }));
       if (checkpointStored) {
-        const after = await execution.binding.control.checkpoint!(); this.owned(execution);
-        if (after === null || typeof after !== "string" || !after || Buffer.byteLength(after) > 8192 || /[\0\r\n]/u.test(after)) throw new SessionError("INVALID_NATIVE_CHECKPOINT", "original Harness lost its owned session reference");
-        checkpoint = after; nativeConfirmed = true;
+        // A native session the Driver replaced (Claude's synthesized clear, ADR-055 §7.5) is archived as it is: its reference
+        // after the Turn is not needed, so one the Driver no longer gives (it opened no session ahead, R4) fails nothing.
+        const replacing = nativeCleared?.replaced != null;
+        const after = replacing ? await execution.binding.control.checkpoint!().catch(() => null) : await execution.binding.control.checkpoint!(); this.owned(execution);
+        const valid = typeof after === "string" && after !== "" && Buffer.byteLength(after) <= 8192 && !/[\0\r\n]/u.test(after);
+        if (!valid && !replacing) throw new SessionError("INVALID_NATIVE_CHECKPOINT", "original Harness lost its owned session reference");
+        if (valid) checkpoint = after; nativeConfirmed = true;
         reported = true;
         if (execution.binding.control.nativeConfig) {
           // Unreadable or invalid reports leave the configuration unknown; the next Turn then applies the selection as requested.
@@ -1742,8 +1819,17 @@ export class SessionRuntime {
           const provisional = settleTurn({ relay: relayNow, runId: target, openCheck: null, turn: this.settledTurn(execution, latest), dispatched: true, status: backend.status, input: evidence ?? undefined, noop,
             cleared: nativeCleared === undefined ? null : { replaced: nativeCleared.replaced !== null }, declaration, settledCheck: null, unknownTurn: false, endedSeq: latest.lastSeq + 1, time: now() });
           if (!provisional.replaced) {
-            const plan = planReturnVerify(provisional.relay, { verify: "after_turn", moment: "settled", deliveries: this.relayDeliveries(latest, bound) });
-            if (plan.kind !== "skip") { execution.relay.settledCheck = { plan, result: await this.verifyFor(control, native, plan, AFTER_TURN_CHECK_MS), moment: "settled" }; this.owned(execution); }
+            // Only a packet still pending or a binding in doubt is looked for; a synced or fresh one reads no row (F12, R8).
+            const pendingOrSuspect = provisional.relay.sync.kind === "pending" || provisional.relay.sync.kind === "suspect";
+            const plan = planReturnVerify(provisional.relay, { verify: "after_turn", moment: "settled", deliveries: pendingOrSuspect ? this.relayDeliveries(latest, bound) : [] });
+            if (plan.kind !== "skip") {
+              // The Turn has ended: a check that fails or breaks the connection changes nothing of its result (C6, R2). Its failure is
+              // the relay's (io.broke), and a check given up on leaves the connection to be closed, never kept for the next Turn.
+              const io = execution.relay.io, healthy = control.healthy?.(), abandoned = io.abandoned.length;
+              execution.relay.settledCheck = { plan, result: await this.verifyFor(execution, control, native, plan), moment: "settled" };
+              if (healthy !== false && (control.healthy?.() === false || io.abandoned.length > abandoned)) io.broke = true;
+              this.owned(execution);
+            }
           }
         }
       }
@@ -1764,8 +1850,11 @@ export class SessionRuntime {
         try { await this.flushNative(execution); } catch (error) { problem ??= fault(error); }
       }
       // A finished Turn of a conversation that keeps its process hands the process over instead of closing it (ADR-030); not
-      // one whose Driver replaced the native session it cleared (its conversation changed, ADR-055 §7.5).
-      const keep = execution.binding === null || opened === null || nativeCleared?.replaced != null ? { keep: false } : this.keepable(id, execution, backend, problem, checkpointStored && nativeConfirmed);
+      // one whose Driver replaced the native session it cleared (its conversation changed, ADR-055 §7.5), nor one a relay read
+      // broke or left outstanding: an abandoned check would go on in the kept process and break into the next Turn (C6, R2).
+      const io = execution.relay.io;
+      const keep = execution.binding === null || opened === null || nativeCleared?.replaced != null || io.broke || io.abandoned.length > 0 ? { keep: false }
+        : this.keepable(id, execution, backend, problem, checkpointStored && nativeConfirmed);
       if (execution.binding && !keep.keep) {
         try { execution.earlyClose ??= execution.binding.close(); cleanup = await execution.earlyClose; }
         catch (error) { problem = fault(error); }
@@ -1791,26 +1880,37 @@ export class SessionRuntime {
         this.store.assertOwner();
         const current = this.load(id), run = current.runs.find(run => run.id === target)!;
         const unsafe = (execution.dispatched && backend === null) || (execution.binding !== null && cleanup === null && !keep.keep) || this.fatal !== null || this.unknownOwnership(problem);
+        // A connection failure the relay's own read caused — a check at the open before anything was dispatched, or a settlement's
+        // check after the Turn's result was in — is the relay's, never the Turn's (C6, R2): it counts in neither the Turn's failure
+        // nor whether its native state is confirmed, and its end records it apart (`relay.checkFailure`).
+        const checkFailure = io.broke && cleanup?.protocolFailure != null && (!execution.dispatched || backend !== null) ? cleanup.protocolFailure : null;
+        const closed = checkFailure === null ? cleanup : { ...cleanup!, protocolFailure: null };
         // A Turn the Runtime stopped on its own (a budget ran out before it settled) is cancelled when it then settled, whatever
         // it reported, and unknown when it had to be ended.
         const stopped = execution.stopReason !== null;
         const failure = stopped ? { code: execution.stopReason!, message: execution.stopReason === "WAIT_EXPIRED" ? "the wait for the user's decision ran out" : "the Turn's execution budget ran out" }
-          : problem ?? cleanup?.protocolFailure ?? backend?.error ?? null;
+          : problem ?? closed?.protocolFailure ?? backend?.error ?? null;
         const status = unsafe ? "unknown" : run.cancelRequested || problem?.code === "CANCELLED" || stopped ? "cancelled" : failure ? "failed" : backend?.status ?? "failed";
-        // A command's effect counts only when it ran; it goes into the Turn's end event with what the driver knew of the input.
-        // A clear its Driver confirmed ran, although nothing was recorded in the history it emptied (Claude's replaced session).
-        const input: InputOutcome = !execution.dispatched ? "not_recorded" : evidence ?? "unknown";
-        const effect = command === null ? null : commandEffect(command.effect, commandOutcome(execution.dispatched, backend?.status ?? null, nativeCleared !== undefined ? "unknown" : input, noop));
         // The binding is ready again when the Turn's native state is confirmed (ADR-028/030). After an unknown Turn of a process
         // Driver whose program the Hub saw end (its close confirmed), the user may continue the original session (D6, ADR-055
         // §9 S6): the binding is ready and suspect{unknown_turn}, and the next open checks where the Turn's input went.
-        const confirmed = checkpointStored && checkpoint !== null && (keep.keep || cleanup?.closed === true && cleanup.protocolFailure === null) && (!execution.dispatched || nativeConfirmed && backend !== null);
+        const confirmed = checkpointStored && checkpoint !== null && (keep.keep || closed?.closed === true && closed.protocolFailure === null) && (!execution.dispatched || nativeConfirmed && backend !== null);
         const continued = unsafe && checkpointStored && execution.dispatched && backend === null && cleanup?.closed === true && cleanup.protocolFailure === null && this.fatal === null && !this.unknownOwnership(problem)
           && execution.relay.declaration.execution === "process" && execution.relay.declaration.probed;
-        const replacement = confirmed && nativeCleared?.replaced != null && typeof nativeCleared.replaced.checkpoint === "string" && nativeCleared.replaced.checkpoint && Buffer.byteLength(nativeCleared.replaced.checkpoint) <= 8192 && !/[\0\r\n]/u.test(nativeCleared.replaced.checkpoint)
-          ? nativeCleared.replaced.checkpoint : null;
-        this.commit(id, current => {
-          let next: SessionSnapshot = { ...updatedRun(current, target, { status, backend, cleanup,
+        // A clear the Driver confirmed counts (e) unless it replaced a native session whose end is not confirmed.
+        const clearConfirmed = nativeCleared !== undefined && (confirmed || nativeCleared.replaced === null);
+        // A command's effect counts only when it ran; it goes into the Turn's end event with what the driver knew of the input. A
+        // clear its Driver confirmed is a clear, as the binding records it, whatever the Turn's status (R9e).
+        const input: InputOutcome = !execution.dispatched ? "not_recorded" : evidence ?? "unknown";
+        const effect = command === null ? null : clearConfirmed ? "clear" as const : commandEffect(command.effect, commandOutcome(execution.dispatched, backend?.status ?? null, input, noop));
+        // Claude's synthesized clear (§7.5): the session the next Turn continues, or none (null) when it opens a new one (R4).
+        const replaced = confirmed && nativeCleared?.replaced != null ? nativeCleared.replaced : null;
+        const replacement = replaced !== null && typeof replaced.checkpoint === "string" && replaced.checkpoint !== "" && Buffer.byteLength(replaced.checkpoint) <= 8192 && !/[\0\r\n]/u.test(replaced.checkpoint)
+          ? replaced.checkpoint : null;
+        // What the end did with the relay, for a retry without it (R6).
+        const tried = { relayed: false, replaced: false };
+        const ended = (withRelay: boolean) => (current: SessionSnapshot): SessionMutation => {
+          let next: SessionSnapshot = { ...updatedRun(current, target, { status, backend, cleanup: closed,
             error: failure, ...phase(current, target, "endedAt", endedAt), ...(keep.keep ? { retained: true as const } : {}) }), activeRunId: null, status: unsafe ? "blocked" : current.status,
             ...(keep.keep ? { retained: { harnessId: pinned.harnessId, controlId: pinned.controlId, runId: target, since: reusing?.since ?? endedAt, ...(identity === undefined ? {} : { process: identity }) } } : {}) };
           // A Turn that failed on the relay before it ran says so in its relay (§12.2: blocked, with the code).
@@ -1820,9 +1920,10 @@ export class SessionRuntime {
           // The relay part of the end (ADR-055 §6.1, §7.2): the open's check if it was not committed, the Turn's own event, after_turn's
           // check and D6, on the binding's relay state as committed now; the delivery rows decided with it.
           const own = next.nativeBindings?.find(row => row.harnessId === pinned.harnessId && row.controlId === pinned.controlId && row.status !== "archived");
-          const relayed = checkpointStored && own?.relay !== undefined ? settleTurn({ relay: own.relay, runId: target, openCheck: execution.relay.openCheck, turn: this.settledTurn(execution, next),
-            dispatched: execution.dispatched, status: backend?.status ?? null, input: evidence ?? undefined, noop, cleared: nativeCleared === undefined || !confirmed && nativeCleared.replaced !== null ? null : { replaced: replacement !== null },
+          const relayed = withRelay && checkpointStored && own?.relay !== undefined ? settleTurn({ relay: own.relay, runId: target, openCheck: execution.relay.openCheck, turn: this.settledTurn(execution, next),
+            dispatched: execution.dispatched, status: backend?.status ?? null, input: evidence ?? undefined, noop, cleared: clearConfirmed ? { replaced: replaced !== null } : null,
             declaration: execution.relay.declaration, settledCheck: execution.relay.settledCheck, unknownTurn: continued, endedSeq: current.lastSeq + 1, time: endedAt }) : null;
+          if (withRelay) { tried.relayed = relayed !== null; tried.replaced = relayed?.replaced === true; }
           if (checkpointStored && checkpoint !== null && (confirmed || continued)) {
             next = { ...next, nativeBindings: next.nativeBindings?.map(binding => {
               if (binding.harnessId !== pinned.harnessId || binding.controlId !== pinned.controlId || binding.status === "archived") return binding;
@@ -1830,17 +1931,19 @@ export class SessionRuntime {
               if (!confirmed) return { ...binding, status: "ready" as const, ...(relayed === null ? {} : { relay: relayed.relay }) };
               // A replaced native session (§7.5) is archived as it was, its relay state frozen; the Turn ran in it.
               if (relayed?.replaced) return { ...binding, status: "archived" as const, throughRunId: execution.dispatched ? run.id : binding.throughRunId };
-              const { observed: earlier, ...rest } = binding, latest = reported ? observed : earlier;
+              const { observed: earlier, opensNew: _opened, ...rest } = binding, latest = reported ? observed : earlier;
               // The native position follows dispatch (ADR-055 §7.4): a dispatched Turn's input reached this native session, whatever the relay.
               return { ...rest, checkpoint: checkpoint!, status: "ready" as const, throughRunId: execution.dispatched ? run.id : binding.throughRunId, ...(latest === undefined ? {} : { observed: latest }),
                 ...(relayed === null ? {} : { relay: relayed.relay }) };
             }) ?? [] };
             // Claude's synthesized clear (§7.5): the new binding of the same Harness control starts the next epoch at the clear's
             // floor and inherits what the native session was last seen running; a new native session clears a relay recovery failure.
-            if (relayed?.replaced && replacement !== null) {
+            // Without a session to continue (`replaced.checkpoint` null, R4) the next Turn opens a new one (opensNew), and the
+            // binding names the abandoned session it replaces, which is never resumed.
+            if (relayed?.replaced) {
               const latest = reported ? observed : own?.observed, { relayRecoveryFailed, ...rest } = next;
-              next = { ...rest, nativeBindings: [...next.nativeBindings!, { harnessId: pinned.harnessId, controlId: pinned.controlId, checkpoint: replacement, throughRunId: null, status: "ready" as const,
-                ...(latest === undefined ? {} : { observed: latest }), relay: relayed.relay }] };
+              next = { ...rest, nativeBindings: [...next.nativeBindings!, { harnessId: pinned.harnessId, controlId: pinned.controlId, checkpoint: replacement ?? own!.checkpoint, throughRunId: null, status: "ready" as const,
+                ...(latest === undefined ? {} : { observed: latest }), relay: relayed.relay, ...(replacement === null ? { opensNew: true as const } : {}) }] };
             }
           } else if (relayed !== null && !relayed.replaced) {
             next = { ...next, nativeBindings: next.nativeBindings?.map(binding => binding.harnessId === pinned.harnessId && binding.controlId === pinned.controlId && binding.status !== "archived" ? { ...binding, relay: relayed.relay } : binding) ?? [] };
@@ -1852,9 +1955,13 @@ export class SessionRuntime {
           const stranded = unsafe && !cancelSwitch ? next.pendingSwitchId : null;
           const waiting = stranded === null ? [] : next.runs.filter(row => row.status === "queued" && row.awaitingSwitchId === stranded).map(row => row.id);
           if (stranded !== null) next = this.strandSwitch(next, stranded, waiting, endedAt);
-          return { next, events: [event("run.ended", { runId: target, status, backend, cleanup, error: failure, input, ...(effect === null ? {} : { contextEffect: effect }),
+          // Without its relay part (R6) the end marks the conversation: a Turn that would carry relay content is refused
+          // (RELAY_UNAVAILABLE{recovery_failed}) until a new native session, as after a relay recovery that could not be written.
+          if (!withRelay && next.relayRecoveryFailed === undefined) next = { ...next, relayRecoveryFailed: current.lastSeq + 1 };
+          const relayNote = { ...(relayReason === null ? {} : { reason: relayReason }), ...(checkFailure === null ? {} : { checkFailure }), ...(withRelay ? {} : { failed: true }) };
+          return { next, events: [event("run.ended", { runId: target, status, backend, cleanup: closed, error: failure, input, ...(effect === null ? {} : { contextEffect: effect }),
               ...(nativeCleared === undefined ? {} : { native: nativeCleared }), ...(relayed?.delivery == null ? {} : { delivery: relayed.delivery }), ...(relayed === null ? {} : { binding: relayed.binding }),
-              ...(relayed?.shown == null ? {} : { shown: relayed.shown }), ...(relayReason === null ? {} : { relay: { reason: relayReason } }), ...(continued ? { continued: true } : {}) }),
+              ...(relayed?.shown == null ? {} : { shown: relayed.shown }), ...(Object.keys(relayNote).length === 0 ? {} : { relay: relayNote }), ...(continued ? { continued: true } : {}) }),
             ...(relayed?.events ?? []),
             ...(keep.keep ? [event("native.process_retained", { runId: target, idleEndsAt: endedAt + idleMs })] : keep.skipped ? [event("native.retention_skipped", { runId: target, reason: keep.skipped })] : []),
             ...(cancelSwitch ? [event("switch.failed", { switchId: current.pendingSwitchId, reason: "cancelled by close" })] : []),
@@ -1862,7 +1969,15 @@ export class SessionRuntime {
               ...waiting.map(queuedId => event("run.ended", { runId: queuedId, status: "failed", error: { code: "SWITCH_NOT_EFFECTIVE" }, neverDispatched: true }))]),
             ...(unsafe ? [event("session.blocked", { runId: target, reason: "execution or cleanup could not be safely confirmed" })] : [])],
             ...(relayed !== null && relayed.deliveries.length ? { relay: { deliveries: relayed.deliveries } } : {}) };
-        });
+        };
+        try { this.commit(id, ended(true), true); }
+        catch (error) {
+          // The Store refused the relay part of the end (its rows, the binding's relay state): the public facts are committed
+          // without it, once, and the conversation is marked (R6). A replaced native session is not split from its relay state;
+          // a Store that failed, or anything else, fails the Runtime as before.
+          if (!tried.relayed || tried.replaced || !this.relayRefusal(error)) throw error;
+          this.commit(id, ended(false));
+        }
         handed = keep.keep;
       } catch (error) { this.fail(error); }
       if (keep.keep && !handed) {
@@ -1872,6 +1987,7 @@ export class SessionRuntime {
         if (execution.binding !== null) try { await execution.binding.close(); } catch (error) { this.fail(error, id); }
       }
       if (this.actives.get(id) === execution) this.actives.delete(id);
+      this.acceptedRelay.delete(target);
       if (execution.budget.timer !== null) clearTimeout(execution.budget.timer);
       if (execution.grace !== null) clearTimeout(execution.grace);
       this.discardStream(execution);
@@ -2062,31 +2178,78 @@ export class SessionRuntime {
     const rows = reads.relayDeliveries(state.id), packets: readonly RelayPacket[] = rows.length ? reads.relayPackets(state.id) : [];
     return bindingDeliveries(state, binding, rows, packets, (seq, run) => seq > state.lastSeq ? null : markIn(this.store.events(state.id, seq - 1, 1)[0], run));
   }
-  /** The relay choices this input was accepted with, as its acceptance event records them; none without a record. */
+  /**
+   * The relay choices this input was accepted with, as its acceptance event records them; none without a record. Those this
+   * owner accepted it kept (acceptedRelay), so it reads the event only for an input an earlier owner accepted.
+   */
   private choicesOf(state: SessionSnapshot, run: PublicRun): RelayChoices {
+    const kept = this.acceptedRelay.get(run.id);
+    if (kept !== undefined) return kept;
     const message = state.messages.find(row => row.id === run.userMessageId);
     const accepted = message === undefined ? undefined : this.store.events(state.id, message.seq - 1, 1)[0];
     return accepted?.type === "message.accepted" && accepted.data.runId === run.id ? acceptedChoices(accepted.data) : {};
   }
   /**
-   * A check's answer from the Driver (ADR-055 §7.3): nothing to ask for a skipped plan; every marker unavailable when the
-   * Driver cannot check, fails or takes more than `timeoutMs`; otherwise its answer, checked marker by marker.
+   * Whether the open needs a binding's delivery rows (R8): one that waits for a packet or is in doubt (its check, the packet a
+   * resend supersedes, the epoch's first packet a retreat needs), or one synced on a packet that a Driver checking at the open
+   * looks for; a fresh binding, one synced on its own Turns, or a synced one no check at the open looks at, reads none.
    */
-  private async verifyFor(control: HarnessControl, native: NativeConversationId, plan: Check["plan"], timeoutMs: number | null): Promise<VerifyResult> {
-    const request = verifyRequestOf(plan);
-    if (request === null || control.verifyDelivered === undefined) return unavailableResult(request);
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    try {
-      const answer = control.verifyDelivered(native, request);
-      const raw = timeoutMs === null ? await answer : await Promise.race([answer, new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), timeoutMs); timer.unref?.(); })]);
-      return raw === null ? unavailableResult(request) : checkedResult(raw, request);
-    } catch { return unavailableResult(request); }
-    finally { if (timer !== null) clearTimeout(timer); }
+  private rowsMatter(relay: BindingRelayState, verify: RelayDeclaration["verify"]): boolean {
+    const sync = relay.sync;
+    return sync.kind === "pending" || sync.kind === "suspect" || sync.kind === "synced" && sync.mark.lastPacketId !== null && verify === "on_next_open";
   }
-  /** Where the native history stands before dispatch (ADR-055 F20); none when the Driver records none or cannot read it. */
-  private async positionOf(control: HarnessControl, native: NativeConversationId): Promise<DeliveryPosition> {
-    if (control.deliveryPosition === undefined) return { kind: "none" };
-    try { return await control.deliveryPosition(native); } catch { return { kind: "none" }; }
+  /**
+   * A check's answer from the Driver (ADR-055 §7.3): nothing to ask for a skipped plan; every marker unavailable when the
+   * Driver cannot check, fails, answers nothing or takes more than RELAY_READ_MS; otherwise its answer, checked marker by marker.
+   */
+  private async verifyFor(execution: ActiveExecution, control: HarnessControl, native: NativeConversationId, plan: Check["plan"]): Promise<VerifyResult> {
+    const request = verifyRequestOf(plan), verify = control.verifyDelivered?.bind(control);
+    if (request === null || verify === undefined) return unavailableResult(request);
+    const raw = await this.relayRead<unknown>(execution, control, () => verify(native, request), null);
+    return raw === null || raw === undefined ? unavailableResult(request) : checkedResult(raw, request);
+  }
+  /** Where the native history stands before dispatch (ADR-055 F20); none when the Driver records none, cannot read it or is late. */
+  private async positionOf(execution: ActiveExecution, control: HarnessControl, native: NativeConversationId): Promise<DeliveryPosition> {
+    const read = control.deliveryPosition?.bind(control);
+    if (read === undefined) return { kind: "none" };
+    return await this.relayRead<DeliveryPosition>(execution, control, () => read(native), { kind: "none" });
+  }
+  /**
+   * One relay read on the Turn's connection (C6, R2): its answer, or `fallback` when it fails or takes more than RELAY_READ_MS.
+   * A read given up on stays in `io.abandoned` until it ends, so that the connection is not kept and no input is dispatched
+   * on it meanwhile; the connection's health before the Turn's first relay read is kept, to tell what a read broke.
+   */
+  private async relayRead<T>(execution: ActiveExecution, control: HarnessControl, read: () => Promise<T>, fallback: T): Promise<T> {
+    const io = execution.relay.io;
+    if (!io.asked) { io.asked = true; io.healthy = control.healthy?.(); }
+    let answer: Promise<T>, timer: ReturnType<typeof setTimeout> | undefined;
+    try { answer = read(); } catch (error) { answer = Promise.reject(error); }
+    const ended = answer.then(() => {}, () => {});
+    try {
+      const raced = await Promise.race([answer.then(value => ({ value })), new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), RELAY_READ_MS); timer.unref?.(); })]);
+      if (raced !== null) return raced.value;
+      io.abandoned.push(ended);
+      void ended.then(() => { const index = io.abandoned.indexOf(ended); if (index >= 0 && !io.broke) io.abandoned.splice(index, 1); });
+      return fallback;
+    } catch { return fallback; }
+    finally { if (timer !== undefined) clearTimeout(timer); }
+  }
+  /**
+   * Before anything is dispatched after the open's relay reads (R2): a read still outstanding is waited for as long again; one
+   * that does not end by then, or a connection the reads left failed although it was not before them, fails the Turn as never
+   * dispatched (its failure is the relay's, io.broke); a connection that had failed already fails it too, as its own.
+   */
+  private async relayReadsSettled(execution: ActiveExecution, control: HarnessControl): Promise<void> {
+    const io = execution.relay.io;
+    if (!io.asked) return;
+    if (io.abandoned.length > 0) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const done = await Promise.race([Promise.all(io.abandoned).then(() => true), new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), RELAY_READ_MS); timer.unref?.(); })]);
+      if (timer !== undefined) clearTimeout(timer);
+      if (!done) { io.broke = io.healthy !== false; throw notReached(); }
+      io.abandoned.length = 0;
+    }
+    if (control.healthy?.() === false) { io.broke = io.healthy !== false; throw notReached(); }
   }
   /** The pending switch fails as stranded, and each input waiting for it ends as not dispatched (SWITCH_NOT_EFFECTIVE). */
   private strandSwitch(state: SessionSnapshot, switchId: string, waiting: readonly PublicRun["id"][], endedAt: number): SessionSnapshot {

@@ -21,7 +21,8 @@ export const openCodeRelayCapabilities: RelayCapabilities = relayDeclaration({
   delivery: { live: "none", verify: "none", successProvesRecorded: true, lateDelivery: true },
   execution: "process",
   commands: { unlistedSlash: "text", hidden: [], classify: openCodeClassify },
-  placement: { parts: "multiple", maxInput: null, pointersAfterUser: false },
+  // Attachments go as ACP blocks after the two text blocks (G069 phase two, approval B8; to be probed).
+  placement: { parts: "multiple", maxInput: null, pointersAfterUser: true },
   window: "session_report",
   fixedPrefix: null,
   cacheTtl: "unknown",
@@ -133,8 +134,11 @@ export class OpenCodeControl extends AcpControl {
     const id = await super.open(cwd, model, options, checkpoint); this.openedModel = model; return id;
   }
   override async startText(id: NativeConversationId, turn: TurnText, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
+    // A relay Turn whose words read as a command is refused whole (the base driver's refusal, asked first).
+    const refusal = this.relayRefused(turn, attachments.map(file => file.kind));
+    if (refusal !== null) return refusal;
     // The same reading as classify(): only a bare `/compact` without attachments is judged by what it answered. A relay Turn is
-    // placed by the base driver (two text blocks), which sends the words of a command alone.
+    // placed by the base driver (two text blocks).
     const named = commandOf(typeof turn === "string" ? turn : turn.user);
     if (attachments.length || named?.name !== COMPACT.name || named.args !== "") return super.startText(id, turn, onEvent, attachments);
     let answered = false;

@@ -14,7 +14,7 @@ import { string } from "../../infrastructure/control/json-rpc-process.js";
 import { checkInputs } from "../../infrastructure/control/attachments.js";
 import type { ContentRef, ControlAttachment } from "../../contracts/content.js";
 import { type TurnText, type VerifyRequest } from "../../contracts/control.js";
-import { boundedRequests, carriesPacket, strip, unavailable, usageRequest, verifyResult, type UserText } from "./relay-turn.js";
+import { boundedRequests, entryCarries, strip, unavailable, usageRequest, VERIFY_BUDGET_MS, verifyResult, type UserText } from "./relay-turn.js";
 
 type OpenClawMethod = "agents.list" | "models.list" | "sessions.patch" | "sessions.get" | "sessions.list" | "sessions.describe" | "chat.history" | "skills.status" | "tools.catalog";
 /** The bridge's working-directory prefix on every prompt it sends (src/acp translator, `[Working directory: ${displayCwd}]\n\n`, v2026.10.9). */
@@ -117,6 +117,13 @@ function transcriptSeq(value: unknown): number | null {
   const meta = value !== null && typeof value === "object" ? (value as { __openclaw?: { seq?: unknown } }).__openclaw : undefined;
   return typeof meta?.seq === "number" && Number.isSafeInteger(meta.seq) ? meta.seq : null;
 }
+/** A call's answer within `ms`, or REQUEST_TIMEOUT; the call itself is left to finish on its own (its owner awaits it at close). */
+function within<T>(pending: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new ControlError("REQUEST_TIMEOUT", "OpenClaw Gateway call exceeded its deadline")), Math.max(1, ms)); });
+  void pending.catch(() => {});
+  return Promise.race([pending, expired]).finally(() => clearTimeout(timer));
+}
 function blocks(value: unknown): readonly Record<string, unknown>[] {
   const content = value !== null && typeof value === "object" ? (value as { content?: unknown }).content : undefined;
   return Array.isArray(content) ? content.filter((item): item is Record<string, unknown> => item !== null && typeof item === "object") : [];
@@ -212,7 +219,8 @@ export const openClawRelayCapabilities: RelayCapabilities = relayDeclaration({
   delivery: { live: "none", verify: "after_turn", successProvesRecorded: false, lateDelivery: true },
   execution: "gateway",
   commands: { unlistedSlash: "text", hidden: [], classify: openClawClassify },
-  placement: { parts: "single", maxInput: { unit: "bytes", limit: 2_097_152 }, pointersAfterUser: false },
+  // Attachments go as ACP blocks after the one text (G069 phase two, approval B8; what the bridge forwards is to be probed).
+  placement: { parts: "single", maxInput: { unit: "bytes", limit: 2_097_152 }, pointersAfterUser: true },
   window: "session_report",
   fixedPrefix: null,
   cacheTtl: "5m",
@@ -256,8 +264,8 @@ export class OpenClawControl extends AcpControl {
   }
   /**
    * Where this session's transcript stands before a Turn's input (ADR-055 §8.1): its highest sequence number (sessions.get),
-   * read without changing anything; `none` when it cannot be read. Sequence numbers start again after a reset (reset-relative
-   * ordinals, v2026.10.9), which a check recognizes by the reset marker.
+   * read without changing anything; `none` when it cannot be read or a row it read carries no sequence number. Sequence
+   * numbers start again after a reset (reset-relative ordinals, v2026.10.9), which a check recognizes by the reset marker.
    */
   async deliveryPosition(id: NativeConversationId): Promise<DeliveryPosition> {
     this.assertOwned(id);
@@ -265,46 +273,75 @@ export class OpenClawControl extends AcpControl {
     return seq === null ? { kind: "none" } : { kind: "seq", before: seq };
   }
   /**
-   * Looks for each packet's title line in the user rows of this session's transcript after its position (sessions.get, the
-   * latest TRANSCRIPT_WINDOW entries), the bridge's working-directory prefix allowed before it: present when one carries it
-   * (a late write after a cancelled prompt counts: the first rows after the position need not be it), compacted when a
-   * compaction marker follows it; absent when the window covers the position and none does; outside_window when a full window
-   * starts after it. After a reset the transcript shows only what followed it and numbers rows anew, so every user row is
-   * searched and an earlier packet is absent. unavailable when the transcript cannot be read. historyEmpty only from a window
-   * that holds the whole transcript; no compaction cursor (OpenClaw's compaction evidence is not verified).
+   * Looks for each packet in the user rows of this session's transcript after its position (sessions.get, the latest
+   * TRANSCRIPT_WINDOW entries, within VERIFY_BUDGET_MS), the bridge's working-directory prefix allowed before it: the first
+   * row after the position with its title line, a later one only whole (packetEntry: a late write after a cancelled prompt is
+   * whole, a pasted title line is not); present when one carries it, compacted when a compaction marker follows it. Not
+   * found: absent only when the rows read cover the position (a reset row, after which the transcript shows only what
+   * followed it and numbers rows anew, so every user row is searched; or a lowest row at most one past the position);
+   * outside_window when rows were read but start later; unavailable when none were. The whole check is unavailable when the
+   * transcript cannot be read in time, is no list, or a row carries no sequence number.
+   *
+   * sessions.get answers an unknown or filtered session, and one whose row changed while it read, with no message at all,
+   * and reads the transcript archived at the last reset while the active one holds none (2026.10.9 sessions-read
+   * `sessions.get`, `allowResetArchiveFallback: true`; session-transcript-read-kernel readMessagePage), its answer naming
+   * neither. So a check that asks whether the history is empty (an unconfirmed clear) trusts its rows only after a reset row,
+   * which shows they are the active transcript's: without one every marker is unavailable and historyEmpty null. After one,
+   * historyEmpty is false when a user or assistant row was read, and true only when the window holds the whole transcript, it
+   * has none, and sessions.describe names the session. No compaction cursor (OpenClaw's compaction evidence is not verified).
    */
   async verifyDelivered(id: NativeConversationId, request: VerifyRequest): Promise<VerifyResult> {
     const started = Date.now();
     this.assertOwned(id);
     if (this.sessionKey === null) return unavailable(request, started);
     let messages: unknown;
-    try { messages = object(await this.call("sessions.get", { key: this.sessionKey, limit: TRANSCRIPT_WINDOW }), "OpenClaw transcript").messages; } catch { return unavailable(request, started); }
+    try { messages = object(await this.call("sessions.get", { key: this.sessionKey, limit: TRANSCRIPT_WINDOW }, VERIFY_BUDGET_MS), "OpenClaw transcript").messages; } catch { return unavailable(request, started); }
     if (!Array.isArray(messages)) return unavailable(request, started);
-    const rows = messages.flatMap(value => {
+    const rows: { readonly seq: number; readonly role: unknown; readonly kind: unknown; readonly text: string }[] = [];
+    for (const value of messages) {
       const seq = transcriptSeq(value);
-      if (seq === null || value === null || typeof value !== "object") return [];
+      // A row without its number cannot be placed against any position: nothing read can be trusted for one.
+      if (seq === null || value === null || typeof value !== "object") return unavailable(request, started);
       const row = value as Record<string, unknown>, meta = row.__openclaw !== null && typeof row.__openclaw === "object" ? row.__openclaw as Record<string, unknown> : {};
-      return [{ seq, role: row.role, kind: meta.kind, text: typeof row.content === "string" ? row.content : textOf(row) }];
-    }).sort((left, right) => left.seq - right.seq);
+      rows.push({ seq, role: row.role, kind: meta.kind, text: typeof row.content === "string" ? row.content : textOf(row) });
+    }
+    rows.sort((left, right) => left.seq - right.seq);
     const reset = rows.some(row => row.role === "system" && row.kind === "reset"), complete = messages.length < TRANSCRIPT_WINDOW, lowest = rows[0]?.seq ?? null;
+    // An unconfirmed clear's check: rows without a reset row among them may be the archive of the history the clear emptied.
+    if (request.historyEmpty && !reset) return unavailable(request, started);
     let foreign: number | null = null;
     const results = request.markers.map((marker, index): MarkerResult => {
       if (marker.position.kind !== "seq") return "unavailable";
       const before = marker.position.before, users = rows.filter(row => row.role === "user" && (reset || row.seq > before));
-      const found = users.find(row => carriesPacket(row.text, marker.packetId));
-      if (found !== undefined) {
-        if (index === request.markers.length - 1) foreign = users.filter(row => row.seq > found.seq).length;
+      // The first row after the position by its title line, any other only whole (packetEntry's rule). After a reset a row's
+      // number does not tell whether it came after the position (C4: the position names no incarnation), so only the first row
+      // numbered past it is read by its title line alone; without a reset that is the first row searched.
+      const first = users.findIndex(row => row.seq > before);
+      const at = users.findIndex((row, index) => entryCarries(row.text, marker.packetId, index !== first));
+      if (at >= 0) {
+        const found = users[at]!;
+        if (index === request.markers.length - 1) foreign = users.length - at - 1;
         return rows.some(row => row.kind === "compaction" && row.seq > found.seq) ? "compacted" : "present";
       }
-      return !complete && (reset || lowest === null || lowest > before + 1) ? "outside_window" : "absent";
+      return reset || lowest !== null && lowest <= before + 1 ? "absent" : rows.length ? "outside_window" : "unavailable";
     });
-    return verifyResult(request, results, started, { historyEmpty: request.historyEmpty && complete ? !rows.some(row => row.role === "user" || row.role === "assistant") : null, foreignAfterLast: foreign });
+    return verifyResult(request, results, started, { historyEmpty: request.historyEmpty ? await this.historyEmpty(rows, complete, started) : null, foreignAfterLast: foreign });
+  }
+  /**
+   * verifyDelivered's historyEmpty from rows that follow a reset row: false when one of them is a user or assistant row; true
+   * only when the window holds them all and sessions.describe names the session; never only because nothing was read.
+   */
+  private async historyEmpty(rows: readonly { readonly role: unknown }[], complete: boolean, started: number): Promise<boolean | null> {
+    if (rows.some(row => row.role === "user" || row.role === "assistant")) return false;
+    if (!complete) return null;
+    const left = VERIFY_BUDGET_MS - (Date.now() - started);
+    return left > 0 && await this.lifecycleRevision(left) !== null ? true : null;
   }
   /** The session row's incarnation (sessions.describe `lifecycleRevision`, renewed by every reset); null when it cannot be read. */
-  private async lifecycleRevision(): Promise<string | null> {
+  private async lifecycleRevision(deadlineMs?: number): Promise<string | null> {
     if (this.sessionKey === null) return null;
     try {
-      const row = object(await this.call("sessions.describe", { key: this.sessionKey }), "OpenClaw session").session;
+      const row = object(await this.call("sessions.describe", { key: this.sessionKey }, deadlineMs), "OpenClaw session").session;
       const revision = row !== null && typeof row === "object" ? (row as Record<string, unknown>).lifecycleRevision : undefined;
       return typeof revision === "string" && revision && revision.length <= 128 ? revision : null;
     } catch { return null; }
@@ -370,11 +407,16 @@ export class OpenClawControl extends AcpControl {
     const primary = model !== null && typeof model === "object" ? (model as { readonly primary?: unknown }).primary : undefined;
     return { agent, model: typeof primary === "string" && primary.trim() && primary.length <= 1024 && !/[\0\r\n]/u.test(primary) ? primary : undefined };
   }
-  private call(method: OpenClawMethod, params: Readonly<Record<string, unknown>>): Promise<unknown> {
-    if (this.nativeRequest) return this.nativeRequest(method, params);
+  /**
+   * One Gateway call through the original CLI (`openclaw gateway call`), within the connection's request timeout or, for a
+   * check (ADR-055 C6), the shorter `deadlineMs`: past it the call rejects with REQUEST_TIMEOUT and its command is ended.
+   */
+  private call(method: OpenClawMethod, params: Readonly<Record<string, unknown>>, deadlineMs?: number): Promise<unknown> {
+    if (this.nativeRequest) return deadlineMs === undefined ? this.nativeRequest(method, params) : within(this.nativeRequest(method, params), deadlineMs);
     const index = this.nativeLaunch.args.lastIndexOf("acp");
     if (index < 0) return Promise.reject(new ControlError("UNSUPPORTED_CONTROL", "OpenClaw native CLI prefix unavailable"));
-    const pending = nativeCommand(this.nativeLaunch, [...this.nativeLaunch.args.slice(0, index), "gateway", "call", method, "--json", "--params", JSON.stringify(params)], this.nativeOptions, this.abort.signal).then(value => { let parsed: unknown; try { parsed=JSON.parse(value); } catch { throw new ControlError("INVALID_NATIVE_METADATA","native CLI returned invalid JSON"); } return parsed; });
+    const options = deadlineMs === undefined ? this.nativeOptions : { ...this.nativeOptions, requestTimeoutMs: Math.max(1, Math.min(Math.floor(deadlineMs), this.nativeOptions.requestTimeoutMs)) };
+    const pending = nativeCommand(this.nativeLaunch, [...this.nativeLaunch.args.slice(0, index), "gateway", "call", method, "--json", "--params", JSON.stringify(params)], options, this.abort.signal).then(value => { let parsed: unknown; try { parsed=JSON.parse(value); } catch { throw new ControlError("INVALID_NATIVE_METADATA","native CLI returned invalid JSON"); } return parsed; });
     this.commands.add(pending); void pending.finally(() => this.commands.delete(pending)).catch(() => {}); return pending;
   }
   /**
@@ -502,13 +544,18 @@ export class OpenClawControl extends AcpControl {
     const model = this.selectedModel ?? (restored === undefined ? null : rowModel(restored)) ?? this.configuredModel, entry = (await this.readNativeModels()).find(row => row.id === model);
     if (entry?.inputs) checkInputs(attachments, entry.inputs);
   }
-  /** Highest transcript sequence of the Hub-owned session; null when it cannot be read (the turn then stays as the bridge reported it). */
+  /**
+   * Highest transcript sequence of the Hub-owned session, 0 for one without rows yet; null when it cannot be read or a row read
+   * carries no sequence number (the turn then stays as the bridge reported it).
+   */
   private async transcriptSeq(): Promise<number | null> {
     if (this.sessionKey === null) return null;
     try {
       const messages = object(await this.call("sessions.get", { key: this.sessionKey, limit: 1 }), "OpenClaw transcript").messages;
       if (!Array.isArray(messages)) return null;
-      return messages.reduce((max: number, value) => Math.max(max, transcriptSeq(value) ?? 0), 0);
+      let highest = 0;
+      for (const value of messages) { const seq = transcriptSeq(value); if (seq === null) return null; highest = Math.max(highest, seq); }
+      return highest;
     } catch { return null; }
   }
   /**
@@ -523,6 +570,9 @@ export class OpenClawControl extends AcpControl {
    * first entry is reported as a diagnostic, and the entries it holds are still reconciled.
    */
   override async startText(id: NativeConversationId, turn: TurnText, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
+    // A relay Turn whose words read as a command is refused before anything is written (the model patch included).
+    const refusal = this.relayRefused(turn, attachments.map(file => file.kind));
+    if (refusal !== null) return refusal;
     // The words the bridge passes on; a relay Turn's packet is placed by the base driver (one text).
     const prompt = typeof turn === "string" ? turn : turn.user;
     // Nothing was sent, so this is the Turn's own failure rather than a dispatch with an unknown outcome.

@@ -138,18 +138,22 @@ export interface BackendResult {
   readonly command?: "noop";
   /**
    * The Driver confirmed that this Turn emptied the native history (ADR-055 §3.2, F04): the native side's fixed receipt, a
-   * read that shows a new session, or a session the Driver itself opened in place of the old one, whose recovery reference is
-   * then `replaced.checkpoint`. Absent says nothing: a clear the Driver could not confirm stays unconfirmed. Transient: the
+   * read that shows a new session, or the Driver's own replacement of the session (`replaced`): the old native session is
+   * abandoned, and the next Turn continues from `replaced.checkpoint`, or opens a new native session when that is null (a
+   * session never prompted cannot be resumed by another process, so a Driver does not open one ahead). Absent says nothing: a clear the Driver could not confirm stays unconfirmed. Transient: the
    * Session writes its conclusion into the Turn's end event and never into the snapshot.
    */
-  readonly native?: { readonly cleared: true; readonly replaced: { readonly checkpoint: string } | null };
+  readonly native?: { readonly cleared: true; readonly replaced: { readonly checkpoint: string | null } | null };
 }
 /**
  * The default placement of a Turn's text: the input alone, or the relay packet, a blank line and the user's words as one
  * text. A Driver whose declaration places them otherwise (RelayCapabilities.placement) does so itself.
  */
 export function singleText(text: TurnText): string { return typeof text === "string" ? text : `${text.relay.body}\n\n${text.user}`; }
-/** What a check asks a Driver (ADR-055 §7.3): each packet's title line after the position its delivery recorded, oldest first. */
+/**
+ * What a check asks a Driver (ADR-055 §7.3): each packet's title line after the position its delivery recorded, oldest first.
+ * `markers` may be empty: a check of an unconfirmed clear on a binding that stands on no packet asks only `historyEmpty`.
+ */
 export interface VerifyRequest {
   readonly markers: readonly { readonly packetId: RelayPacketId; readonly position: DeliveryPosition }[];
   /** Whether the check needs to know that the native history is empty (an unconfirmed clear). */
@@ -377,7 +381,9 @@ export interface HarnessControl {
   /**
    * Reads the native history for the packets' title lines, each after its own position, and answers per marker; reads only,
    * sends no prompt, and returns no native content (ADR-055 §7.3, R8). A marker it could not look for is "unavailable", never
-   * "absent". `historyEmpty` is null unless the Driver read the whole history. Rejects only when the connection failed.
+   * "absent". `historyEmpty` is null unless the Driver read the whole history. A check never harms what it checks: its
+   * timeout or failure answers "unavailable" (or rejects) within about two seconds, and leaves the connection usable and a
+   * settled Turn's result as it was; it rejects only when the connection had already failed.
    */
   verifyDelivered?(id: NativeConversationId, request: VerifyRequest): Promise<VerifyResult>;
   /**

@@ -188,6 +188,12 @@ export interface VerifyResult {
   readonly verifyMs: number;
 }
 export const DELIVERY_CHANNELS = ["text_block", "single_text"] as const;
+/**
+ * The reserved `redaction.keyId` of a delivery row whose keyed digests were made under a key kept only in the memory of the
+ * owner that wrote it (until G072's relay-keys, A17): no reader can check them. A reader that finds a `keyId` other than its
+ * current key's concludes "not checkable" (不可复核), never "different"; rows are never re-keyed afterwards.
+ */
+export const EPHEMERAL_KEY_ID = "ephemeral";
 export const REALIZED_CLOSED_BY = ["compaction", "clear", "epoch", "idle"] as const;
 export interface RealizedWindow { readonly requests: number; readonly cacheHits: number; readonly closedBy: typeof REALIZED_CLOSED_BY[number] }
 /**
@@ -550,8 +556,10 @@ export interface RelayRecovery { readonly next: SessionSnapshot; readonly delive
  * The relay part of recovery (relay-architecture §9, S15): given a Session as recoverSession left it and its delivery rows,
  * the Session with its bindings' relay state recovered and the deliveries to decide; null when nothing changes. Pure and
  * synchronous; the Store calls it in claimAndRecover's transaction, inside a SAVEPOINT of the Session's own. G068 provides it.
+ * `packets` are the Session's packet manifests (a resend never dispatched goes back to waiting for the packet it superseded,
+ * whose range its manifest holds; G068 fix batch R9g); a caller without them passes none.
  */
-export type RecoverRelay = (state: SessionSnapshot, deliveries: readonly DeliveryRecord[]) => RelayRecovery | null;
+export type RecoverRelay = (state: SessionSnapshot, deliveries: readonly DeliveryRecord[], packets?: readonly RelayPacket[]) => RelayRecovery | null;
 /** The Session Store's relay writes and reads beyond SessionStore (relay-architecture §3.2). */
 export interface RelayStorePort {
   /**

@@ -9,7 +9,7 @@ import {
 } from "../../src/contracts/relay.js";
 import { runId, type NativeSessionBinding, type RunId } from "../../src/contracts/session.js";
 import {
-  foreignTo, owed, pendingResend, planReturnVerify, admitsWithoutChoice, restorable, retreatedPrior, step,
+  foreignTo, heldSince, owed, pendingResend, planReturnVerify, admitsWithoutChoice, restorable, retreatedPrior, step,
   type BindingDelivery, type Cursor, type DecidedOutcome, type PlannedMarker, type RelayEvent, type RelayFact, type RelayStep, type VerifyPlan,
 } from "../../src/contexts/session/domain/relay/delivery.js";
 import { initialBindingRelay } from "../../src/contexts/session/domain/relay/migrate.js";
@@ -60,7 +60,8 @@ class Peer {
 }
 async function startPeer(t: TestContext): Promise<Peer> { const peer = new Peer(); await peer.ready; t.after(() => peer.close()); return peer; }
 
-interface Held { readonly facts: readonly string[]; readonly packets: readonly string[]; readonly cursor: Cursor; readonly late: number; readonly entries: number; readonly clears: number }
+interface Held { readonly facts: readonly string[]; readonly packets: readonly string[]; readonly runs: readonly string[]; readonly entryFacts: readonly string[]; readonly entryRuns: readonly string[];
+  readonly cursor: Cursor; readonly late: number; readonly entries: number; readonly clears: number }
 /** The markers a plan asks the Driver about, the carried packet included. */
 function asked(plan: VerifyPlan): readonly PlannedMarker[] {
   switch (plan.kind) {
@@ -106,7 +107,10 @@ class Simulation {
   /** Counters the cases assert on, so a case that never reaches a path is visible. */
   readonly seen = { recorded: 0, retreats: 0, oldPresent: 0, resends: 0, choices: 0, clears: 0, resets: 0, d6: 0, plain: 0, checks: 0,
     epochRises: 0, emptyHistoryClears: 0, restoredWithoutChain: 0, skipChecks: 0, nativeTurns: 0, reusedIds: 0, clearChecks: 0, carriedChecks: 0, supersededBack: 0,
-    foldedCarried: 0, carriedPresent: 0, carriedCompacted: 0, pendingCompacted: 0, rewoundChecks: 0, revertedPending: 0, unknownTurnsSettled: 0, afterTurnUnknownSettled: 0 };
+    foldedCarried: 0, carriedPresent: 0, carriedCompacted: 0, pendingCompacted: 0, rewoundChecks: 0, revertedPending: 0, unknownTurnsSettled: 0, afterTurnUnknownSettled: 0,
+    userClearConfirmed: 0, clearedAfterTheFact: 0, retreatsAsTyped: 0, automaticPackets: 0, automaticRepeats: 0 };
+  /** Per native session and fact, how many automatic packets repeated it while the session held it (the bound: one). */
+  private readonly automaticRepeats = new Map<string, number>();
   /** The fate the next packet (or plain input: lost, silent) takes, when a directed case sets it (otherwise drawn). */
   forcedFate: "e1" | "e3" | "silent" | "refused" | "lost" | "late" | null = null;
   /** A directed case: a late packet is written before an after_turn Driver's settlement check. */
@@ -122,9 +126,11 @@ class Simulation {
     return relayPacketId("relay-" + Array.from(digest.subarray(0, 20), byte => CROCKFORD[byte % 32]).join(""));
   }
   private fail(message: string): never { assert.fail(this.label + ": " + message + "\n" + this.log.slice(-30).join("\n")); }
-  private foreign(fact: RelayFact): boolean { return foreignTo(fact, X.harnessId, X.controlId, this.relay); }
+  /** The first epoch this binding's native session holds (R1): its epoch rose in place on clears, never on a reset. */
+  private since(): number { return heldSince(this.relay, this.bindings, X.harnessId, X.controlId); }
+  private foreign(fact: RelayFact): boolean { return foreignTo(fact, X.harnessId, X.controlId, this.relay, this.since()); }
   private deliveries(): readonly BindingDelivery[] { return this.rows.filter(row => row.session === this.session); }
-  private need(attachOverride = false) { return owed(this.relay, X.harnessId, X.controlId, this.facts, { originHistory: false, attachOverride }); }
+  private need(attachOverride = false) { return owed(this.relay, X.harnessId, X.controlId, this.facts, { originHistory: false, attachOverride, heldSince: this.since() }); }
 
   /**
    * Applies a step that must not be refused, checks its delivery changes against the rows and the properties. P-F1: a native
@@ -155,6 +161,8 @@ class Simulation {
           this.seen.emptyHistoryClears++;
         }
         this.clearsAtEpochRise = clears;
+        // A clear confirmed after Turns ran on the binding since it (R1): those Turns must not be owed to it now.
+        if (this.facts.some(fact => fact.executedOn?.harnessId === X.harnessId && fact.executedOn.nativeEpoch === before.nativeEpoch && fact.seq > outcome.relay.epochFloor)) this.seen.clearedAfterTheFact++;
       }
       this.relay = outcome.relay; this.bindings = [...this.bindings.slice(0, -1), { ...this.bindings.at(-1)!, relay: this.relay }];
     }
@@ -277,6 +285,52 @@ class Simulation {
     await this.apply(step(this.relay, { kind: "rewound", cause }), "f(" + cause + " " + n + ")@" + at.seq);
     this.unknownTurn = null;
   }
+  /** e′ of a clear that ran in the native session while its Driver could not confirm it (R1, directed cases). */
+  async injectRanClear(): Promise<void> {
+    const at = this.commit();
+    this.seen.clears++;
+    await this.peer.call("clear", { session: this.session });
+    await this.apply(step(this.relay, { kind: "clear_unconfirmed", seq: at.seq }), "e′(ran)@" + at.seq);
+    this.unknownTurn = null;
+  }
+  /** n: an input the user sends alone (directed cases); its Run. */
+  async sendAlone(): Promise<RunId> { await this.alone(); return this.facts.at(-1)!.runId; }
+  /** The user's ［确认已清空］ on an unconfirmed clear (directed cases): e at its floor candidate. */
+  async userConfirmsClear(): Promise<void> {
+    const sync = this.relay.sync;
+    if (sync.kind !== "suspect" || sync.cause !== "clear_unconfirmed" || sync.floorCandidate === null) this.fail("no unconfirmed clear to confirm");
+    this.seen.userClearConfirmed++;
+    await this.apply(step(this.relay, { kind: "cleared", seq: sync.floorCandidate }), "e(user)@" + sync.floorCandidate);
+  }
+  /** What the binding owes now, by Run (directed cases). */
+  owedRuns(): readonly string[] { return this.need().facts.map(fact => fact.runId as string); }
+  /**
+   * The user's "补发完整交接单" on a suspect binding (§9): the complete packet on the retreated prior, or, when that prior owes
+   * nothing, the input as typed with the binding standing there (R5). False when neither applies (a legacy mark).
+   */
+  async completePacket(): Promise<boolean> {
+    const first = this.deliveries().find(row => row.nativeEpoch === this.relay.nativeEpoch)?.range.fromSeq ?? null, prior = retreatedPrior(this.relay, first)!;
+    const need = owed({ ...this.relay, sync: prior }, X.harnessId, X.controlId, this.facts, { originHistory: false, heldSince: this.since() });
+    if (need.facts.length > 0) { this.seen.retreats++; await this.carry(need, false, null, first); return true; }
+    const asTyped = step(this.relay, { kind: "plain", foreign: this.facts.some(fact => this.foreign(fact)), retreat: { firstFromSeq: first } });
+    if (asTyped.kind === "refused") return false;
+    this.seen.retreatsAsTyped++; await this.plain(asTyped); return true;
+  }
+  /** e of a clear that ran and its Driver confirmed (directed cases). */
+  async confirmedClear(): Promise<void> {
+    const at = this.commit();
+    this.seen.clears++;
+    await this.peer.call("clear", { session: this.session });
+    await this.apply(step(this.relay, { kind: "cleared", seq: at.seq }), "e@" + at.seq);
+    this.unknownTurn = null;
+  }
+  /** The user's "附上交接单" right after a clear: a packet of what is owed below the floor too (directed cases). */
+  async attachOnce(fate: NonNullable<Simulation["forcedFate"]>): Promise<void> {
+    this.forcedFate = fate;
+    try { await this.carry(this.need(true), true, null); } finally { this.forcedFate = null; }
+  }
+  /** A content input (directed cases), with the invariants of a packet it may carry. */
+  async content(): Promise<void> { await this.contentTurn(); }
   /** e′: a clear that did not run, settled unconfirmed (no check at its open). */
   async injectUnconfirmedClear(): Promise<void> {
     const at = this.commit();
@@ -289,6 +343,37 @@ class Simulation {
     this.seen.recorded++;
     const row = this.rows.findLast(item => item.record.packetId === packetId)!, need = new Set(this.need().facts.map(fact => fact.runId as string));
     for (const fact of row.facts) if (need.has(fact)) this.fail("need still holds " + fact + ", which packet " + packetId + " delivered");
+  }
+  /**
+   * No unchosen repetition (G068 fix batch R1) and the bound of automatic sends (R9c), for a packet nobody chose to send again
+   * (not the user's resend, complete packet or attach, nor a need reckoned on the mark such a choice made):
+   * - it carries no Turn of this binding's own native session that the session holds (in its entries or its summary): a clear
+   *   confirmed after Turns ran on it since never makes them foreign;
+   * - a fact still in an undecided delivery of this native session (in flight, or unknown for any reason but a check that found
+   *   it absent) is sent again by itself at most once per native session: the first send and one automatic resend.
+   * A retreat a check made, past packets it could not look at (≤4 markers), may repeat facts of recorded packets: that is the
+   * table's conservative reading (§7.2 suspect k), counted by neither.
+   */
+  private async noUnchosenRepeat(need: ReturnType<typeof owed>): Promise<void> {
+    this.seen.automaticPackets++;
+    const held = new Set((await this.peer.call<Held>("held", { session: this.session })).runs);
+    const own = need.facts.filter(fact => fact.executedOn?.harnessId === X.harnessId && held.has(fact.runId));
+    if (own.length) this.fail("an automatic packet carries " + own.map(fact => fact.runId + "@" + fact.seq + " (epoch " + fact.executedOn!.nativeEpoch + ")").join(", ") + ", Turns this native session holds (an unchosen repetition)");
+    // A fact's delivery is undecided while the latest packet of this native session that carried it is.
+    const undecided = (fact: RelayFact) => {
+      const row = this.rows.findLast(item => item.session === this.session && item.facts.includes(fact.runId)), outcome = row?.record.outcome;
+      return outcome !== undefined && (outcome.kind === "in_flight" || outcome.kind === "unknown" && outcome.reason !== "absent");
+    };
+    let repeated = false;
+    for (const fact of need.facts) {
+      const key = this.session + "/" + fact.runId;
+      // Sent while its delivery is decided, it starts afresh: a first send.
+      if (!undecided(fact)) { this.automaticRepeats.delete(key); continue; }
+      const count = (this.automaticRepeats.get(key) ?? 0) + 1;
+      if (count > 1) this.fail(fact.runId + " was sent again by itself " + count + " times while its delivery was undecided: more than the first send and one automatic resend");
+      this.automaticRepeats.set(key, count); repeated = true;
+    }
+    if (repeated) this.seen.automaticRepeats++;
   }
   private markRow(): void {
     const sync = this.relay.sync;
@@ -327,10 +412,15 @@ class Simulation {
       // A check left it suspect (or none was possible): the user chooses (§9 verify_required / marker_absent).
       this.seen.choices++;
       const choice = this.rand(), first = this.deliveries().find(row => row.nativeEpoch === this.relay.nativeEpoch)?.range.fromSeq ?? null;
-      if (choice < 0.5) {
-        const prior = retreatedPrior(this.relay, first)!;
-        need = owed({ ...this.relay, sync: prior }, X.harnessId, X.controlId, this.facts, { originHistory: false });
-        if (need.facts.length > 0) { this.seen.retreats++; return this.carry(need, false, null, first); }
+      if (choice < 0.5 && await this.completePacket()) return;
+      // The user's ［确认已清空］ (R1's first case), given only when a clear really ran in the native session since the epoch last
+      // rose: the user saw it. The Turns run since the clear are in the history it left and are not sent again.
+      if (choice < 0.65 && sync.cause === "clear_unconfirmed" && sync.floorCandidate !== null && (await this.peer.call<Held>("held", { session: this.session })).clears > this.clearsAtEpochRise) {
+        this.seen.userClearConfirmed++;
+        await this.apply(step(this.relay, { kind: "cleared", seq: sync.floorCandidate }), "e(user)@" + sync.floorCandidate);
+        need = this.need();
+        if (need.facts.length === 0) return this.plain(step(this.relay, { kind: "plain", foreign }));
+        return this.carry(need, false, null);
       }
       if (choice < 0.85) return this.alone();
       await this.reset(); return this.contentTurn();
@@ -369,6 +459,9 @@ class Simulation {
   /** a: a packet covering `need`, then its fate in the native history and the evidence a truthful Driver gives of it. */
   private async carry(need: ReturnType<typeof owed>, attachOverride: boolean, resend: { readonly by: "auto" | "user"; readonly of: RunId } | null, retreatFrom?: number | null): Promise<void> {
     if (need.facts.length === 0) return this.alone();
+    // What no user chose may repeat nothing the native session holds, beyond the one automatic resend (R1, R9c). A need reckoned
+    // on a mark the user's choice of the complete packet made (evidence "choice") is that choice's still: it may repeat (R9).
+    if (resend?.by !== "user" && retreatFrom === undefined && !attachOverride && markOf(this.relay.sync)?.evidence !== "choice") await this.noUnchosenRepeat(need);
     const id = this.nextRun(), facts = need.facts.map(fact => fact.runId as string);
     // The same need rendered again (not a resend, whose template differs) gives the same text and so the same identity as the
     // packet refused before: half the time the case takes that, so identities shared by two Runs are covered (INV-13).
@@ -521,7 +614,63 @@ test("G068-P01 under any evidence sequence a trusted mark never exceeds what the
   }
   t.diagnostic("seeds 0x" + SEEDS[0]!.toString(16) + "… (" + SEEDS.length + " cases × 70 steps): " + JSON.stringify(totals));
   // Every path the properties are about was taken somewhere (the two exception counters may stay at zero).
-  for (const [key, count] of Object.entries(totals)) if (key !== "emptyHistoryClears" && key !== "restoredWithoutChain") assert.ok(count > 0, key + " never happened");
+  // clearedAfterTheFact is driven by its own case below (R1); the random walk seldom confirms a clear after Turns ran since it.
+  for (const [key, count] of Object.entries(totals)) if (key !== "emptyHistoryClears" && key !== "restoredWithoutChain" && key !== "clearedAfterTheFact" && key !== "retreatsAsTyped") assert.ok(count > 0, key + " never happened");
+});
+
+test("G068-P01 R1 a clear confirmed after the fact, by the next open's check or by the user, never makes the Turns run on the binding since it foreign: none is sent again", async t => {
+  const peer = await startPeer(t);
+  let byCheck = 0, byUser = 0, after = 0;
+  for (const seed of SEEDS.slice(0, 40)) {
+    await peer.call("reset");
+    const rand = generator(seed ^ 0x0e01), label = "R1 seed 0x" + seed.toString(16), verify = rand() < 0.5 ? "on_next_open" as const : "none" as const;
+    const caps: Caps = { verify, lateDelivery: false, compaction: true, window: 200, flaky: 0, wholeHistory: rand() < 0.5, live: rand() < 0.5 };
+    const simulation = new Simulation(peer, rand, caps, label);
+    for (let index = 0; index < 2; index++) { await simulation.foreignTurn(); await simulation.carryNow("e3"); }
+    await simulation.injectRanClear();
+    const between: string[] = [];
+    for (let index = 0, count = 1 + Math.floor(rand() * 3); index < count; index++) { if (rand() < 0.5) await simulation.foreignTurn(); between.push(await simulation.sendAlone()); }
+    if (verify === "on_next_open") { await simulation.open(); byCheck++; } else { await simulation.userConfirmsClear(); byUser++; }
+    assert.equal(simulation.relay.nativeEpoch, 2, label + ": the clear was confirmed\n" + simulation.log.slice(-8).join("\n"));
+    const owed = simulation.owedRuns();
+    for (const run of between) assert.ok(!owed.includes(run), label + ": " + run + ", run on the binding after the clear, is owed to it again\n" + simulation.log.slice(-8).join("\n"));
+    await simulation.foreignTurn(); await simulation.content();
+    await run(simulation, 10);
+    after += simulation.seen.clearedAfterTheFact;
+  }
+  t.diagnostic("confirmed by a check " + byCheck + ", by the user " + byUser + "; clears confirmed after Turns since them " + after);
+  assert.ok(byCheck >= 5 && byUser >= 5 && after >= byCheck + byUser, "both confirmations were reached, each after Turns since the clear");
+});
+
+test("G068-P01 R5 a suspect binding whose retreated prior owes nothing: the user's complete packet goes as typed and the binding stands on that prior, which claims nothing the native session lacks", async t => {
+  const peer = await startPeer(t);
+  let asTyped = 0;
+  for (const seed of SEEDS.slice(0, 40)) {
+    await peer.call("reset");
+    const rand = generator(seed ^ 0x0e05), label = "R5 seed 0x" + seed.toString(16);
+    const caps: Caps = { verify: rand() < 0.5 ? "none" : "on_next_open", lateDelivery: false, compaction: rand() < 0.5, window: 200, flaky: rand() < 0.5 ? 1 : 0, wholeHistory: rand() < 0.5, live: rand() < 0.5 };
+    const simulation = new Simulation(peer, rand, caps, label);
+    // The reviewer's I1: a fact, a clear the Driver confirmed, the history attached once (its packet's mark at the floor), an undo.
+    await simulation.foreignTurn(); await simulation.carryNow("e3");
+    await simulation.confirmedClear();
+    await simulation.attachOnce("e3");
+    assert.ok(simulation.relay.sync.kind === "synced" && simulation.relay.sync.mark.lastPacketId !== null && simulation.relay.sync.mark.throughSeq === simulation.relay.epochFloor, label + ": synced at the floor on the attached packet");
+    await simulation.injectRewind(1);
+    await simulation.open();
+    // Read anew after each step (the assertion above narrowed the field).
+    const now = (): BindingRelayState => simulation.relay;
+    if (now().sync.kind !== "suspect") continue;
+    const before = simulation.seen.retreatsAsTyped;
+    assert.ok(await simulation.completePacket(), label + ": the complete packet or the input as typed");
+    if (simulation.seen.retreatsAsTyped > before) {
+      asTyped++;
+      const sync = now().sync;
+      assert.ok(sync.kind === "synced" && sync.mark.lastPacketId === null && sync.mark.evidence === "choice", label + ": " + JSON.stringify(sync));
+    }
+    await run(simulation, 10);
+  }
+  t.diagnostic("went as typed on the retreated prior: " + asTyped);
+  assert.ok(asTyped >= 5, "enough cases went as typed (" + asTyped + ")");
 });
 
 test("G068-P01 an unchecked rewind and a clear that never ran, in either order: no epoch rises without a clear, and a mark restored repeats nothing the history holds (rewound)", async t => {

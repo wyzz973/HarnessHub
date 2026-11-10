@@ -9,7 +9,7 @@ import {
 import { commandId, messageId, runId, sessionId, type NativeSessionBinding, type PublicRun, type RunId, type SessionSnapshot } from "../../src/contracts/session.js";
 import { commandOutcome } from "../../src/contexts/session/domain/relay/advance.js";
 import {
-  RELAY_EVENT_LETTERS, chainAfter, commandTurnEvent, eventLetter, mayReuseKept, owed, pendingResend, planReturnVerify, admitsWithoutChoice, retreatedPrior, settledOutcome, step,
+  RELAY_EVENT_LETTERS, chainAfter, commandTurnEvent, eventLetter, foreignTo, heldSince, mayReuseKept, owed, pendingResend, planReturnVerify, admitsWithoutChoice, retreatedPrior, settledOutcome, settledWithoutCheck, step,
   type BindingDelivery, type DeliveryChange, type RelayEvent, type RelayEventLetter, type RelayStep, type VerifyPlan,
 } from "../../src/contexts/session/domain/relay/delivery.js";
 import { migrateSession } from "../../src/contexts/session/domain/relay/migrate.js";
@@ -462,8 +462,10 @@ test("G068 F3 a pending or carried packet absent after the cursor moved since it
   assert.equal(pending.relay.sync.kind, "pending"); assert.equal(pending.relay.reanchor, true);
   assert.deepEqual(pending.deliveries, [{ kind: "outcome", runId: R2, from: "unknown", outcome: { kind: "unknown", reason: "compacted", decidedSeq: AT.seq, decidedAt: AT.time } }]);
   const d6 = applied(step(PENDING, { kind: "unknown_turn_continued" })).relay;
+  // Compacted, the carried packet was delivered and folded: back to pending re-anchored with its automatic resend spent, as a
+  // pending packet found compacted stays pending (G068 fix batch R9c; it went back to the prior before, and was sent again).
   const back = applied(checked(d6, rows, { [P2]: "absent" }, { compaction: CURSOR }));
-  assert.deepEqual(back.relay.sync, { kind: "synced", mark: MARK1 }); assert.equal(back.relay.reanchor, true);
+  assert.deepEqual(back.relay.sync, { ...(PENDING.sync as Extract<BindingSync, { kind: "pending" }>), autoResends: 1 }); assert.equal(back.relay.reanchor, true);
   assert.equal(back.deliveries[0]?.kind === "outcome" && back.deliveries[0].outcome.kind === "unknown" && back.deliveries[0].outcome.reason, "compacted");
   assert.equal(applied(checked(PENDING, rows, { [P2]: "absent" })).relay.reanchor, false, "the cursor did not move: absent stays absent");
 });
@@ -753,6 +755,69 @@ test("G068 a carried packet keeps its one-time attach: attached after a clear, c
   const { attachOverride: _dropped, ...withoutFlag } = CARRIED2;
   assert.throws(() => relay({ kind: "suspect", mark: MARK1, cause: "rewind", floorCandidate: null, carried: withoutFlag as never, rewound: false }), /attach override/u);
   assert.throws(() => relay({ kind: "suspect", mark: MARK1, cause: "rewind", floorCandidate: null, carried: { ...CARRIED2, attachOverride: "yes" } as never, rewound: false }), /attach override/u);
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The fix batch after the review of db39cbd (R1, R5, R9a, R9c)
+// ---------------------------------------------------------------------------------------------------------------------
+
+test("G068 fix R9c a carried packet found compacted goes back to pending re-anchored with its automatic resend spent when the markers leave the binding at its prior's level; below it the markers decide, as for absent", () => {
+  const rows = [rowOf(R1, P1, "recorded", RANGE1, SHA1, MARK1), rowOf(R2, P2, "unknown", RANGE2, SHA2, null)];
+  const back = { ...(PENDING.sync as Extract<BindingSync, { kind: "pending" }>), autoResends: 1 as const };
+  // f on PENDING: suspect{rewind, mark P1, carried P2}; P1 still there, P2 folded into a summary.
+  const rewound = applied(step(PENDING, { kind: "rewound", cause: "rewind" })).relay;
+  const folded = applied(checked(rewound, rows, { [P1]: "present", [P2]: "compacted" }));
+  assert.deepEqual(folded.relay.sync, back); assert.equal(folded.relay.reanchor, true); assert.equal(folded.note.verified, "restored");
+  assert.equal(folded.deliveries[0]?.kind === "outcome" && folded.deliveries[0].outcome.kind === "unknown" && folded.deliveries[0].outcome.reason, "compacted");
+  assert.equal(pendingResend(folded.relay.sync, false), "choice", "no automatic resend beyond the first send and one");
+  // P1 gone as well: the markers retreat below the packet's prior, which no longer holds; the markers' outcome stands.
+  const below = applied(checked(rewound, rows, { [P1]: "absent", [P2]: "compacted" }));
+  assert.equal(below.relay.sync.kind, "synced"); assert.equal(markOf(below.relay.sync)?.lastPacketId, null, "the epoch base");
+  // Absent still goes back to the prior: the packet is not there, its facts are owed again.
+  assert.deepEqual(applied(checked(rewound, rows, { [P1]: "present", [P2]: "absent" })).relay.sync, { kind: "synced", mark: MARK1 });
+  // An unconfirmed clear carrying it: the chain still there (no clear), the packet folded → pending on it, re-anchored.
+  const clearing = applied(step(PENDING, { kind: "clear_unconfirmed", seq: 15 })).relay;
+  const clearFolded = applied(checked(clearing, rows, { [P1]: "present", [P2]: "compacted" }, { historyEmpty: false }));
+  assert.deepEqual(clearFolded.relay.sync, back); assert.equal(clearFolded.relay.reanchor, true); assert.equal(clearFolded.relay.nativeEpoch, PENDING.nativeEpoch, "the clear did not happen");
+  // D6 (no level to meet: a content Turn deletes nothing before its packet).
+  const d6 = applied(step(PENDING, { kind: "unknown_turn_continued" })).relay;
+  assert.deepEqual(applied(checked(d6, rows, { [P2]: "compacted" })).relay.sync, back);
+});
+
+test("G068 fix R5 b with the user's complete packet (retreat) on a suspect binding whose retreated prior owes nothing: it stands on that prior, nothing_owed; refused off suspect, and for a mark that does not come back", () => {
+  const chosen = applied(step(SUSPECT, { kind: "plain", foreign: true, retreat: { firstFromSeq: 3 } }));
+  assert.deepEqual(chosen.relay.sync, { kind: "synced", mark: CHOSEN_BASE }); assert.equal(chosen.note.verified, "nothing_owed"); assert.equal(chosen.changed, true);
+  for (const state of [FRESH, SYNCED]) assert.deepEqual(step(state, { kind: "plain", foreign: true, retreat: { firstFromSeq: 3 } }), { kind: "refused", refusal: { code: "invalid", why: "only a suspect binding moves its mark back on the user's choice of the complete packet" } });
+  assert.equal(step(PENDING, { kind: "plain", foreign: true, retreat: { firstFromSeq: 3 } }).kind, "refused");
+  const legacy = relay({ kind: "suspect", mark: { throughSeq: 1, chain: EMPTY_CHAIN, lastPacketId: null, evidence: "legacy", basis: "legacy" }, cause: "legacy", floorCandidate: null, carried: null, rewound: false });
+  assert.deepEqual(step(legacy, { kind: "plain", foreign: true, retreat: { firstFromSeq: 9 } }), { kind: "refused", refusal: { code: "verify_first", cause: "legacy" } }, "the legacy mark stays below the base and is not restorable");
+});
+
+test("G068 fix R9a settledWithoutCheck: what a suspect binding certainly becomes at the next open when no check can change it; admission reads a pending packet it lands on like any other", () => {
+  const carriedOnFresh = relay({ kind: "suspect", mark: null, cause: "rewind", floorCandidate: null, carried: { prior: { kind: "fresh", basis: "reset" }, packetId: P2, range: RANGE2, attachOverride: false }, rewound: false }, { packetsInEpoch: 0 });
+  const landed = settledWithoutCheck(carriedOnFresh, "none");
+  assert.ok(landed?.sync.kind === "pending" && landed.sync.autoResends === 1 && landed.sync.packetId === P2, JSON.stringify(landed));
+  assert.equal(pendingResend(landed.sync, false), "choice");
+  assert.equal(admitsWithoutChoice(carriedOnFresh, "none"), true, "it leaves suspect, so admission does not ask verify_required");
+  assert.equal(settledWithoutCheck(carriedOnFresh, "on_next_open"), null, "a check at the open decides");
+  assert.deepEqual(settledWithoutCheck(relay({ kind: "suspect", mark: MARK1, cause: "unknown_turn", floorCandidate: null, carried: null, rewound: false }), "on_next_open")?.sync, { kind: "synced", mark: MARK1 }, "an unknown Turn without a packet keeps its mark");
+  assert.equal(settledWithoutCheck(SUSPECT, "none"), null, "a packet mark nothing can check: the user's choice");
+  for (const state of [FRESH, SYNCED, PENDING]) assert.equal(settledWithoutCheck(state, "none"), null);
+});
+
+test("G068 fix R1 heldSince and foreignTo: a clear raises the epoch in place, so a Turn run on the binding after the clear and before its confirmation (the previous epoch, above the floor) is not foreign; one of an archived native session, or below the floor, is", () => {
+  const cleared = relay({ kind: "fresh", basis: "user_cleared" }, { nativeEpoch: 3, epochFloor: 12, packetsInEpoch: 0 });
+  const fact = (seq: number, epoch: number, harnessId = "xray") => ({ runId: runId("run-f" + seq), seq, executedOn: { harnessId, controlId: harnessId + "-acp", nativeEpoch: epoch } });
+  const archived = (epoch: number): NativeSessionBinding => ({ ...bindingOf(relay({ kind: "fresh", basis: "new" }, { nativeEpoch: epoch, packetsInEpoch: 0, epochFloor: -1 }), "archived") });
+  assert.equal(heldSince(cleared, [], "xray", "xray-acp"), 1); assert.equal(heldSince(cleared, [archived(1)], "xray", "xray-acp"), 2); assert.equal(heldSince(cleared, [archived(2)], "xray", "xray-acp"), 3);
+  assert.equal(heldSince(cleared, [{ ...archived(1), harnessId: "other" }], "xray", "xray-acp"), 1, "another Harness control's bindings do not count");
+  assert.equal(foreignTo(fact(14, 2), "xray", "xray-acp", cleared, 1), false, "after the clear, on this native session");
+  assert.equal(foreignTo(fact(14, 2), "xray", "xray-acp", cleared, 3), true, "epoch 2 was another native session's");
+  assert.equal(foreignTo(fact(14, 2), "xray", "xray-acp", cleared), true, "without heldSince: conservative");
+  assert.equal(foreignTo(fact(10, 2), "xray", "xray-acp", cleared, 1), true, "before the clear: what it removed");
+  assert.equal(foreignTo(fact(14, 1), "xray", "xray-acp", cleared, 1), true, "two epochs back lies below the floor of the one in between");
+  assert.equal(foreignTo(fact(14, 2, "yankee"), "xray", "xray-acp", cleared, 1), true, "another Harness");
+  assert.equal(foreignTo(fact(14, 3), "xray", "xray-acp", cleared, 1), false, "its own epoch");
 });
 
 test("G068 Z2 a clear's chain starts at the row whose recording made the mark's own chain, not at the newest row of the same packet", () => {

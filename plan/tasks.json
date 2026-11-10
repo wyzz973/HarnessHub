@@ -4436,7 +4436,8 @@
         "tests/unit/relay-delivery.test.ts",
         "tests/property/relay-delivery.test.ts",
         "tests/integration/relay-delivery.test.ts",
-        "tests/fixtures/relay-harness-peer.mjs"
+        "tests/fixtures/relay-harness-peer.mjs",
+        "tests/unit/relay-coordinator.test.ts"
       ],
       "requirements": [
         "R08",
@@ -4502,7 +4503,8 @@
         "src/adapters/control/relay-turn.ts",
         "tests/fixtures/relay-drivers.ts",
         "tests/protocol/relay-driver-placement.test.ts",
-        "tests/protocol/relay-driver-verify.test.ts"
+        "tests/protocol/relay-driver-verify.test.ts",
+        "tests/protocol/relay-driver-fixes.test.ts"
       ],
       "requirements": [
         "R10",

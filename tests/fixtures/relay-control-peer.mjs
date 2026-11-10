@@ -20,12 +20,22 @@
 //   RELAY_LOAD_FAULT "garbage": session/load replays an update without a kind (a malformed frame).
 //   RELAY_NEW_FAULT "second": a second session/new on one connection is refused (-32603).
 //   RELAY_AUTH_KIND: claude-agent-acp's `_auth/status_update` with this kind, after initialize.
+//   RELAY_NO_COMMANDS "1": no available_commands_update at all (a catalog that is never announced).
+//   RELAY_UNPROMPTED_LOAD "1": session/load of a session that was never prompted is refused with -32002 (claude-agent-acp
+//     0.99.1 in a new process: the CLI writes a conversation at its first prompt, so resuming one never prompted fails with
+//     sessionNotFound, acp-agent.js:2491-2499, 8774-8779, 9255-9262).
+//   RELAY_CLOSE "1" | "refuse" | "hang": session/close is declared (sessionCapabilities.close) and answered {}, refused
+//     (-32603), or never answered.
+//   RELAY_LATE_MS: that long after each prompt's answer, an agent message and a permission request of that session (an
+//     autonomous follow-up, or an abandoned session's late updates).
+//   RELAY_TITLE_FAULT "hang" (with RELAY_HERMES): `/title X` is never answered.
 // RELAY_PROTOCOL "codex": Codex app-server v2. thread/start and thread/resume answer thread "thread-relay" with
 //   RELAY_MODEL and RELAY_PROVIDER; turn/start stores the turn and reports its user message (echoing clientUserMessageId as
 //   RELAY_ECHO_FIELD, default "clientUserMessageId", "none" for no echo) unless RELAY_HOOK "1" (a hook stopped it: the turn
 //   completes without one), RELAY_REQUESTS token usage reports (default 1) and a reply; RELAY_COMPACT "1" records a context
 //   compaction after the user message. thread/turns/list pages the stored turns (RELAY_TURNS_FAULT "refuse" or "garbage");
-//   thread/name/set stores the name (RELAY_NAME_FAULT "refuse"); RELAY_TURNS_FAULT "hang" never answers the listing.
+//   thread/name/set stores the name (RELAY_NAME_FAULT "refuse", or "hang": never answered); RELAY_TURNS_FAULT "hang" never
+//   answers the listing, and RELAY_TURNS_DELAY_MS answers it that late.
 //   RELAY_ECHO_VALUE echoes this identity instead of the one the turn was started with. RELAY_SKILL names one enabled skill
 //   the catalog reads (config/read, model/list, account/read and skills/list answer as an empty, signed-in Codex).
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
@@ -45,15 +55,27 @@ const session = id => (state.sessions[id] ??= { entries: [], seq: 0, revision: r
 
 function acp(message) {
   const params = message.params ?? {};
+  // The client's answers to this peer's own requests (permission requests) need no reply.
+  if (message.method === undefined) return;
   if (message.method === "initialize") {
-    send({ id: message.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true }, authMethods: [{ id: "provider", name: "Provider" }], agentInfo: { name: "relay-control-peer", version: "1.0.0" } } });
+    send({ id: message.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true, ...(env.RELAY_CLOSE ? { sessionCapabilities: { close: {} } } : {}) }, authMethods: [{ id: "provider", name: "Provider" }], agentInfo: { name: "relay-control-peer", version: "1.0.0" } } });
     if (env.RELAY_AUTH_KIND) notify("_auth/status_update", { authStatus: { kind: env.RELAY_AUTH_KIND, label: "a label naming the user" } });
+    return;
+  }
+  if (message.method === "session/close") {
+    if (env.RELAY_CLOSE === "hang") return;
+    send(env.RELAY_CLOSE === "refuse" ? { id: message.id, error: { code: -32603, message: "Internal error" } } : { id: message.id, result: {} });
     return;
   }
   if (message.method === "session/new" || message.method === "session/load") {
     if (message.method === "session/new" && env.RELAY_NEW_FAULT === "second" && sessions >= 1) { send({ id: message.id, error: { code: -32603, message: "Internal error" } }); return; }
-    const sessionId = message.method === "session/load" ? params.sessionId : ++sessions === 1 ? "relay-session" : "relay-session-" + sessions;
     state = load();
+    // A new session takes the first name no session of the shared state has (each process counts from "relay-session").
+    let sessionId = params.sessionId;
+    if (message.method === "session/new") do sessionId = ++sessions === 1 ? "relay-session" : "relay-session-" + sessions; while (state.sessions[sessionId] !== undefined);
+    if (message.method === "session/load" && env.RELAY_UNPROMPTED_LOAD === "1" && state.sessions[sessionId]?.prompted !== true) {
+      send({ id: message.id, error: { code: -32002, message: "Resource not found", data: { sessionId } } }); return;
+    }
     const owned = session(sessionId);
     owned.cwd = params.cwd ?? owned.cwd; save(state);
     if (message.method === "session/load") {
@@ -64,14 +86,16 @@ function acp(message) {
       }
     }
     send({ id: message.id, result: message.method === "session/load" ? {} : { sessionId } });
-    update(sessionId, { sessionUpdate: "available_commands_update", availableCommands: commands });
+    if (env.RELAY_NO_COMMANDS !== "1") update(sessionId, { sessionUpdate: "available_commands_update", availableCommands: commands });
     return;
   }
   if (message.method === "session/prompt") {
     const sessionId = params.sessionId, blocks = (params.prompt ?? []).filter(block => block.type === "text").map(block => block.text);
     const joined = blocks.join(env.RELAY_JOIN ?? "\n"), command = joined.trimStart();
+    if (env.RELAY_HERMES === "1" && env.RELAY_TITLE_FAULT === "hang" && /^\/title\s+\S/u.test(command)) return;
     state = load();
     const owned = session(sessionId);
+    owned.prompted = true;
     let reply = env.RELAY_REPLY ?? "ok";
     if (env.RELAY_HERMES === "1" && /^\/(?:new|clear|reset)\b/u.test(command)) { owned.entries = []; reply = "Conversation history cleared."; }
     else if (env.RELAY_HERMES === "1" && /^\/title\s+\S/u.test(command)) { owned.title = command.slice(6).trim(); reply = "Session title set: " + owned.title; }
@@ -84,6 +108,10 @@ function acp(message) {
     save(state);
     update(sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: reply + (env.RELAY_HERMES === "1" && reply !== (env.RELAY_REPLY ?? "ok") ? "\n" : "") } });
     send({ id: message.id, result: { stopReason: env.RELAY_STOP ?? "end_turn" } });
+    if (env.RELAY_LATE_MS) setTimeout(() => {
+      update(sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "a late follow-up" } });
+      send({ id: "late-" + randomUUID(), method: "session/request_permission", params: { sessionId, toolCall: { toolCallId: "late-tool", title: "late" }, options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }, { optionId: "reject", kind: "reject_once", name: "Reject" }] } });
+    }, Number(env.RELAY_LATE_MS));
     return;
   }
   if (message.method === "session/cancel") return;
@@ -144,10 +172,12 @@ function codex(message) {
     if (env.RELAY_TURNS_FAULT === "garbage") { send({ id: message.id, result: { data: "not a page" } }); return; }
     state = load();
     const all = [...thread().turns].reverse(), offset = Number(params.cursor ?? 0), page = all.slice(offset, offset + (params.limit ?? 50));
-    send({ id: message.id, result: { data: page, nextCursor: offset + page.length < all.length ? String(offset + page.length) : null, backwardsCursor: null } });
+    const answer = () => send({ id: message.id, result: { data: page, nextCursor: offset + page.length < all.length ? String(offset + page.length) : null, backwardsCursor: null } });
+    if (env.RELAY_TURNS_DELAY_MS) setTimeout(answer, Number(env.RELAY_TURNS_DELAY_MS)); else answer();
     return;
   }
   if (message.method === "thread/name/set") {
+    if (env.RELAY_NAME_FAULT === "hang") return;
     if (env.RELAY_NAME_FAULT === "refuse") { send({ id: message.id, error: { code: -32600, message: "thread name must not be empty" } }); return; }
     state = load(); thread().name = params.name; save(state);
     send({ id: message.id, result: {} });

@@ -77,8 +77,10 @@ async function switched(app: SessionRuntime, id: SessionId, selection: Selection
  * whose success proves nothing (the generic ACP Driver's delivery, which G068 phase two reads), with the shared reading of
  * slash words. Not probed.
  */
+// No live evidence either (`live: "none"`): dsh's `agent_output` would make each reply E1 (G068 fix batch R3), and these
+// cases are about Turns that end without evidence.
 const FAKE_RELAY: RelayCapabilities = { ...dshRelayCapabilities, placement: { ...dshRelayCapabilities.placement, parts: "single" },
-  commands: { ...dshRelayCapabilities.commands, unlistedSlash: "executed", classify: text => listedCommand(text, null) } };
+  delivery: { ...dshRelayCapabilities.delivery, live: "none" }, commands: { ...dshRelayCapabilities.commands, unlistedSlash: "executed", classify: text => listedCommand(text, null) } };
 /** How a fake Harness ends one prompt: completed and recorded unless said otherwise; held until its program is ended; or lost. */
 type Ending = BackendResult | "hold" | "lost";
 /**
@@ -309,7 +311,11 @@ createInterface({ input: process.stdin }).on("line", line => {
   if (trace) appendFileSync(trace, line + "\\n");
   if (message.method === "initialize") { send({ id: message.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true }, authMethods: [{ id: "provider", name: "Provider" }], agentInfo: { name: "relay-peer", version: "1.0.0" } } }); return; }
   if (message.method === "session/new") { send({ id: message.id, result: { sessionId: "relay-session" } }); commands("relay-session"); return; }
-  if (message.method === "session/load") { send({ id: message.id, result: {} }); commands(params.sessionId); return; }
+  // RELAY_REPLAY: the user entries session/load replays before its response (as Hermes's gateway viewer does); none by default.
+  if (message.method === "session/load") {
+    for (const text of JSON.parse(process.env.RELAY_REPLAY ?? "[]")) update(params.sessionId, { sessionUpdate: "user_message_chunk", content: { type: "text", text } });
+    send({ id: message.id, result: {} }); commands(params.sessionId); return;
+  }
   if (message.method === "session/prompt") {
     if (behaviour === "error") { send({ id: message.id, error: { code: -32603, message: "Internal error", data: { details: process.env.RELAY_DETAILS } } }); return; }
     if (behaviour === "answer") update(params.sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: process.env.RELAY_REPLY ?? "ok" } });
@@ -427,8 +433,13 @@ test("G067-C02 single-Harness /export, /clear, an unapplied OpenClaw model and a
   for (const id of [claude.id, openclaw.id, codex.id]) assert.equal(app.read(id).status, "open");
 });
 
-test("G067-C04 a full-width space before /clear is read as Hermes reads it: a command sent as typed that carries nothing and is not taken for recorded", { timeout: 60000 }, async t => {
-  const f = await world(t), real = await drivers(f, () => ({ RELAY_PROMPT: "answer" })), app = f.runtime(real);
+/**
+ * G067-C04's conversation: claude's first question, then on Hermes a full-width `　/clear`, which Hermes runs as its /clear,
+ * and the next input. `replay` is what Hermes's next session/load replays: nothing (the clear emptied the history), or an
+ * entry the user typed in Hermes itself after the clear (the history is not empty, although the clear ran).
+ */
+async function fullWidthClear(t: test.TestContext, replay: readonly string[]) {
+  const f = await world(t), real = await drivers(f, (harnessId, n) => ({ RELAY_PROMPT: "answer", ...(harnessId === "hermes" && n >= 2 ? { RELAY_REPLAY: JSON.stringify(replay) } : {}) })), app = f.runtime(real);
   const session = await app.create(f.configuration, { harnessId: "claude" }, "create");
   const first = await sent(app, session.id, "first question", "c1");
   await switched(app, session.id, { harnessId: "hermes" }, "to-hermes");
@@ -445,14 +456,25 @@ test("G067-C04 a full-width space before /clear is read as Hermes reads it: a co
   // binding suspect, never fresh, and the next open's check decides.
   assert.equal(binding(app.read(session.id), "hermes")?.throughRunId, clear.id); assert.equal(syncOf(app.read(session.id), "hermes"), "suspect");
   const next = await sent(app, session.id, "what now?", "h2"), hermes = binding(app.read(session.id), "hermes")!;
-  if (hermes.relay!.epochFloor >= 0) {
-    // The check confirmed the clear (an empty history): what came before it is not sent by default (§7.4).
-    assert.deepEqual(next.sourceRunIds, []); assert.equal((await real.prompts("hermes"))[1], "what now?");
-  } else {
-    // The check could not confirm it: the clear is taken as not having happened and the facts owed go with the input.
-    assert.deepEqual(next.sourceRunIds, [first.id], "a command Turn is no fact"); assert.ok(isPacket((await real.prompts("hermes"))[1]!));
-  }
   assert.equal(hermes.throughRunId, next.id);
+  return { f, real, session, first, clear, next, hermes };
+}
+
+test("G067-C04 a full-width space before /clear is read as Hermes reads it: a command sent as typed that carries nothing and is not taken for recorded; an empty replay at the next open confirms the clear", { timeout: 60000 }, async t => {
+  const { f, real, session, clear, next, hermes } = await fullWidthClear(t, []);
+  // The check confirmed the clear (rule 1, an empty history): what came before it is not sent by default (§7.4).
+  assert.equal(hermes.relay!.epochFloor, events(f.store, session.id).find(row => row.type === "run.ended" && row.data.runId === clear.id)!.seq, "the floor at the clear's end");
+  assert.equal(events(f.store, session.id).findLast(row => row.type === "relay.verified" && row.data.inRunId === next.id)?.data.result, "cleared");
+  assert.deepEqual(next.sourceRunIds, []); assert.equal((await real.prompts("hermes"))[1], "what now?");
+});
+
+test("G067-C04 (fix R9f) the same /clear, and the user then typed in Hermes itself: the replay is not empty and no marker stands for the clear, so it is taken as not having happened and the facts owed go with the input", { timeout: 60000 }, async t => {
+  const { f, real, session, first, next, hermes } = await fullWidthClear(t, ["typed in Hermes itself"]);
+  // No chain to look at (the binding stood on no packet) and a history that is not empty: the mark that claims nothing comes
+  // back (rule 6), the floor stays, and Claude's question is still owed.
+  assert.equal(hermes.relay!.epochFloor, -1);
+  assert.equal(events(f.store, session.id).findLast(row => row.type === "relay.verified" && row.data.inRunId === next.id)?.data.result, "restored");
+  assert.deepEqual(next.sourceRunIds, [first.id], "a command Turn is no fact"); assert.ok(isPacket((await real.prompts("hermes"))[1]!));
 });
 
 test("G067 Hermes refuses a prompt unsent while a lost turn is pending: that Turn is not recorded and moves nothing; after `/discard` the next Turn sends the lost one's facts again", { timeout: 60000 }, async t => {

@@ -320,15 +320,16 @@ test("G067 Hermes: a slash word in neither its registry copy nor its catalog is 
 
 test("G067 R0d each driver's own handling of an input follows its reading: leading whitespace and attachments decide the Hub's /export, Codex's thread operations and OpenCode's /compact alike", async t => {
   const f = await peers(t), file = await attachment(f.root, "notes.txt");
-  // Claude Code reads `  /export` as /export, so the Hub's export runs and nothing is sent; with an attachment it goes to Claude Code.
+  // Claude Code reads `  /export` as /export, so the Hub's export runs and nothing is sent; with an attachment it goes to Claude
+  // Code, which reads it as content (the CLI looks for a command only in the last block, the attachment's).
   const claudeExport = f.launch("acp-v1", { RELAY_PROMPT: "answer", CLAUDE_CONFIG_DIR: join(f.root, "no-claude-config") });
   assert.equal((await turn(new ClaudeControl(claudeExport.launch, options), "  /export", undefined, true)).result.input, "not_recorded"); assert.equal(await claudeExport.received("session/prompt"), 0);
   const claudeAttached = f.launch("acp-v1", { RELAY_PROMPT: "answer" }), claude = new ClaudeControl(claudeAttached.launch, options);
   try {
     await claude.initialize(); const id = await claude.open(process.cwd()), catalog = await claude.models();
-    const reading = claude.classify("/export", catalog, ["file"]);
-    assert.equal(reading.kind, "command"); assert.equal(reading.kind === "command" ? reading.effect : null, "unknown", "with an attachment it is not the Hub's export");
-    assert.equal((await (await claude.startText(id, "/export", () => {}, [file])).result).status, "completed"); assert.equal(await claudeAttached.received("session/prompt"), 1);
+    assert.deepEqual(claude.classify("/export", catalog, ["file"]), { kind: "content" }, "with an attachment it is not the Hub's export, nor any command");
+    const sent = await (await claude.startText(id, "/export", () => {}, [file])).result;
+    assert.deepEqual([sent.status, sent.input], ["completed", "recorded"], "content: its answer proves it recorded"); assert.equal(await claudeAttached.received("session/prompt"), 1);
   } finally { await claude.close(); }
   // Codex: `/compact` with an attachment is an ordinary turn, as classify says.
   const codexCompact = f.launch("codex-app-server", { RELAY_TURN: "user-completed" });

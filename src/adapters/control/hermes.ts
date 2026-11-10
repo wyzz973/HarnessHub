@@ -1,5 +1,5 @@
 import type { BackendResult, CleanupEvidence, CommandClass, ControlEvent, ControlLaunch, ControlOptions, ControlRun, NativeConversationId, NativeModelCatalog, NativeOptions, NativeToolDetail, VerifyRequest } from "../../contracts/control.js";
-import type { DeliveryPosition, MarkerResult, RelayCapabilities, VerifyResult } from "../../contracts/relay.js";
+import type { DeliveryPosition, MarkerResult, RelayCapabilities, RelayPacketId, VerifyResult } from "../../contracts/relay.js";
 import { ControlError, classifyRemoteFailure } from "../../infrastructure/control/json-rpc-process.js";
 import { nativeCommand } from "../../infrastructure/control/native-command.js";
 import type { ContentKind, ControlAttachment } from "../../contracts/content.js";
@@ -9,7 +9,7 @@ import { HERMES_COMMAND_WORD as COMMAND_WORD, HERMES_EFFECTS as EFFECTS, HERMES_
   hermesClassify, hermesCommand as commandOf, hermesNativeClassify, hermesReadsSlash as readsSlash, relayDeclaration, relayEntries } from "./relay-classify.js";
 import { hermesModelKey, hermesVendor } from "./relay-vendor.js";
 import { type TurnText } from "../../contracts/control.js";
-import { carriesPacket, cursorDigest, placeTurn, strip, verifyResult, type RelayTurn, type UserText } from "./relay-turn.js";
+import { carriesWholePacket, cursorDigest, packetEntry, placeTurn, strip, TITLE_DEADLINE_MS, titledPacket, unavailable, verifyResult, type RelayTurn, type UserText } from "./relay-turn.js";
 
 /**
  * Hermes's relay declaration (ADR-055 §8.1, Hermes Agent row): two text blocks with attachment pointers after the user's
@@ -56,7 +56,7 @@ const SUMMARY = /^(?:\[CONTEXT COMPACTION — REFERENCE ONLY\]|\[CONTEXT SUMMARY
 const INJECTED = /^(?:\[OUT-OF-BAND USER MESSAGE\b|\[System:|\[STILL IN PROGRESS\b)/u;
 /** The steer wrapper around a user's words (agent/prompt_builder.py:565-595). */
 const STEER = /^(\[OUT-OF-BAND USER MESSAGE[^\n]*\]\n)([\s\S]*?)(\n\[\/OUT-OF-BAND USER MESSAGE\])$/u;
-/** What a check keeps of a replay: each user entry's head (where a title line is), for the latest entries only. */
+/** What a check keeps of a replay: each user entry's head (a compaction summary's, for the cursor), for the latest entries only. */
 const REPLAY_HEAD = 4096, REPLAY_ENTRIES = 1024;
 /** Without --session-id Hermes exports every session it holds, its messaging gateway's too: the identifier must be a plain one. */
 const PLAIN_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
@@ -146,8 +146,11 @@ const OPTION_NOTES: Readonly<Record<string, (name: string) => string>> = {
  */
 /** What the latest open's replay showed, as far as a check and a position read it. */
 interface ReplayHistory {
-  /** User entries by their place in the replay (one per user row), the latest REPLAY_ENTRIES only, each with its head. */
-  readonly users: { readonly index: number; readonly head: string; readonly summary: boolean; readonly injected: boolean }[];
+  /**
+   * User entries by their place in the replay (one per user row), the latest REPLAY_ENTRIES only: the packet each one's title
+   * line names and whether it holds that packet whole (title and end lines, read from its whole text as it replays, F10).
+   */
+  readonly users: { readonly index: number; readonly titled: RelayPacketId | null; readonly whole: boolean; readonly summary: boolean; readonly injected: boolean }[];
   /** User entries replayed in all, and entries of any other kind (agent messages, thoughts, tool calls). */
   total: number;
   others: number;
@@ -162,7 +165,7 @@ export class HermesControl extends AcpControl {
   private history: ReplayHistory = emptyHistory();
   protected override get vendorHarness(): "hermes" { return "hermes"; }
   override async open(cwd: string, model?: string, options?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> {
-    this.history = emptyHistory();
+    this.history = emptyHistory(); this.prompted = false;
     return super.open(cwd, model, options, checkpoint);
   }
   /**
@@ -179,39 +182,51 @@ export class HermesControl extends AcpControl {
     const summary = kind.endsWith("message_chunk") && (meta?.compactionSummary === true || meta?.containsCompactionSummary === true || SUMMARY.test(text));
     if (summary && this.history.summaries.length < 64) this.history.summaries.push(text.slice(0, REPLAY_HEAD) + "\0" + text.length);
     if (kind !== "user_message_chunk") { this.history.others++; return; }
-    this.history.users.push({ index: this.history.total++, head: text.slice(0, REPLAY_HEAD), summary, injected: INJECTED.test(text) });
+    const titled = titledPacket(text);
+    this.history.users.push({ index: this.history.total++, titled, whole: titled !== null && carriesWholePacket(text, titled), summary, injected: INJECTED.test(text) });
     if (this.history.users.length > REPLAY_ENTRIES) this.history.users.shift();
   }
   /** Whether this open read the whole history: a new session (none yet) or one the viewer replayed (session/load). */
   private get historyRead(): boolean { const opened = this.opened; return opened !== null && opened.method !== "resume"; }
   /**
-   * Where the history stands before a Turn's input (ADR-055 §8.1, F20): the number of user entries this open replayed. Turns
-   * a kept connection runs afterwards are not counted, which only widens a later check (a title line names one packet).
+   * Whether this connection sent a prompt since its open: the replay read at open then no longer holds the history (it lacks
+   * what the prompt wrote, a clear or an undo among them), so neither a position nor a check reads it any more (F7).
+   */
+  private prompted = false;
+  /**
+   * Where the history stands before a Turn's input (ADR-055 §8.1, F20): the number of user entries this open replayed; none
+   * once this connection sent a prompt (its replay no longer holds the history).
    */
   async deliveryPosition(id: NativeConversationId): Promise<DeliveryPosition> {
     this.assertOwned(id);
-    return this.historyRead ? { kind: "seq", before: this.history.total } : { kind: "none" };
+    return this.historyRead && !this.prompted ? { kind: "seq", before: this.history.total } : { kind: "none" };
   }
   /**
-   * Looks for each packet's title line in the user entries this open replayed after the packet's position, compaction
-   * summaries and rows Hermes writes itself left out (VF1-08): present when one carries it, absent otherwise. A replay that
-   * holds a compaction summary has shifted positions (compacted rows are no longer replayed), so the whole replay is
-   * searched then; a packet not found is absent there too, and the cursor (the summaries seen) tells the coordinator that a
-   * compaction may explain it. outside_window when the entries after the position are older than what a check keeps;
-   * unavailable when the history was not replayed. historyEmpty: the replay held nothing at all. Reads only what open read.
+   * Looks for each packet in the user entries this open replayed after the packet's position, rows Hermes writes itself left
+   * out (VF1-08): the first of them with its title line, a later one only whole (packetEntry, F10, worked out as the replay
+   * was read); present when one carries it. A compaction summary that holds it is compacted (a packet folded into a merged
+   * summary is no entry of its own). A replay that holds a compaction summary has shifted positions (compacted rows are no
+   * longer replayed), so the whole replay is searched then, whole packets only, since which entry came first after the position
+   * cannot be told. Not found: outside_window when the entries after the position are older than what a check keeps, absent
+   * otherwise (the viewer replays the whole live history), the cursor (the summaries seen) telling the coordinator that a
+   * compaction may explain it. unavailable when the history was not replayed or this connection prompted since its open
+   * (F7). historyEmpty: the replay held nothing at all. Reads only what open read.
    */
   async verifyDelivered(id: NativeConversationId, request: VerifyRequest): Promise<VerifyResult> {
     const started = Date.now();
     this.assertOwned(id);
-    if (!this.historyRead) return verifyResult(request, request.markers.map(() => "unavailable"), started);
+    if (!this.historyRead || this.prompted) return unavailable(request, started);
     const history = this.history, shifted = history.summaries.length > 0, oldest = history.users[0]?.index ?? history.total;
-    const clientAfter = (index: number) => history.users.filter(entry => entry.index > index && !entry.summary && !entry.injected).length;
+    const clients = history.users.filter(entry => !entry.summary && !entry.injected);
     let foreign: number | null = null;
     const results = request.markers.map((marker, position): MarkerResult => {
       if (marker.position.kind !== "seq") return "unavailable";
-      const before = marker.position.before, carrying = (entry: ReplayHistory["users"][number]) => !entry.summary && carriesPacket(entry.head, marker.packetId);
-      const found = history.users.find(entry => entry.index >= before && carrying(entry)) ?? (shifted ? history.users.find(carrying) : undefined);
-      if (found !== undefined) { if (position === request.markers.length - 1) foreign = clientAfter(found.index); return "present"; }
+      const before = marker.position.before, packetId = marker.packetId;
+      const carries = (entry: ReplayHistory["users"][number], whole: boolean) => entry.titled === packetId && (!whole || entry.whole);
+      const after = clients.filter(entry => entry.index >= before), at = packetEntry(after, carries);
+      const found = at >= 0 ? after[at] : shifted ? clients.find(entry => carries(entry, true)) : undefined;
+      if (found !== undefined) { if (position === request.markers.length - 1) foreign = clients.filter(entry => entry.index > found.index).length; return "present"; }
+      if (history.users.some(entry => entry.summary && entry.titled === packetId)) return "compacted";
       return before < oldest && history.total > history.users.length ? "outside_window" : "absent";
     });
     return verifyResult(request, results, started, { historyEmpty: request.historyEmpty ? history.total === 0 && history.others === 0 : null,
@@ -237,14 +252,18 @@ export class HermesControl extends AcpControl {
    * Names the session in Hermes before its first relayed prompt (ADR-055 §8.1, D3): `/title <title>`, which the viewer answers
    * itself (`_run_slash` → `_rename`, a metadata change) without a gateway turn or a history row; its receipt is swallowed. One
    * line of at most 200 characters; an empty title is not sent (a bare `/title` goes to the gateway). Rejects with
-   * NATIVE_TITLE_UNAVAILABLE when Hermes does not confirm it.
+   * NATIVE_TITLE_UNAVAILABLE when Hermes does not confirm it, also when it does not answer within TITLE_DEADLINE_MS: the prompt
+   * is then given up alone and the connection stays usable (C6). Not enabled: the Runtime does not call it before a probe
+   * (the approval agent's B10).
    */
   async setTitle(id: NativeConversationId, title: string): Promise<void> {
     this.assertOwned(id);
     const name = [...title.replace(/[\0-\x1f\x7f\u2028\u2029\u0085]+/gu, " ").trim()].slice(0, 200).join("").trim();
     if (!name) return;
     let reply = "";
-    const run = await super.startText(id, "/title " + name, event => { if (event.type === "text" && reply.length < 4096) reply += event.text; });
+    // A prompt all the same: the replay read at open no longer counts as the history (F7).
+    this.prompted = true;
+    const run = await super.sendPrompt(id, "/title " + name, event => { if (event.type === "text" && reply.length < 4096) reply += event.text; }, [], TITLE_DEADLINE_MS);
     const result = await run.result;
     if (result.status !== "completed" || !TITLE_SET.test(reply.trim())) throw new ControlError("NATIVE_TITLE_UNAVAILABLE", "Hermes did not confirm the session title");
   }
@@ -313,6 +332,9 @@ export class HermesControl extends AcpControl {
   }
   override classify(text: string, catalog: NativeModelCatalog | null, attachments: readonly ContentKind[] = []): CommandClass { return hermesNativeClassify(text, catalog, attachments); }
   override async startText(id: NativeConversationId, turn: TurnText, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
+    // A relay Turn whose words read as a command is refused before anything below runs (the export included).
+    const refusal = this.relayRefused(turn, attachments.map(file => file.kind));
+    if (refusal !== null) return refusal;
     // The commands the driver reads (export, model, compress, clear) are read in the user's words; the base driver places a packet.
     const prompt = typeof turn === "string" ? turn : turn.user;
     // The same reading as classify(): a registry command by its name and arguments, and none with an image.
@@ -324,6 +346,8 @@ export class HermesControl extends AcpControl {
     // Only Hermes's own command is read for a model switch; a model reply quoting the same words in another turn is never parsed.
     const switching = command === "model" && named?.args !== "", compressing = command === "compress", clearing = command === "new" || command === "clear", mark = this.stderrMark;
     let reply = "", answered = false;
+    // From this prompt on, the replay read at open no longer holds the history (F7).
+    this.prompted = true;
     const run = await super.startText(id, turn, event => { if (event.type === "text") { answered = true; if (reply.length < 4096) reply += event.text; } onEvent(event); }, attachments);
     return { ...run, result: run.result.then((result): BackendResult => {
       const switched = switching ? MODEL_SWITCHED.exec(reply) : null;

@@ -52,6 +52,9 @@ test("G069-C03 Hermes: lstrip() of Python whitespace (half-width, U+3000, U+00A0
       not: ["/compress focus on tests", null, [], ["command", "compress", "compact", "focus on tests"]] },
     { rule: "queue and steer submit their text (acceptsRelay)", read: [["/queue later", null, [], ["command", "queue", "keep", "later", "relay"]], ["/q later", null, [], ["command", "queue", "keep", "later", "relay"]],
       ["/s left", null, [], ["command", "steer", "keep", "left", "relay"]]], not: ["/undo 2", null, [], ["command", "undo", "rewind", "2"]] },
+    // Without text they only answer their usage: nothing is submitted, so no packet can go (G069 fix batch, B4b).
+    { rule: "a bare queue or steer submits nothing", read: [["/queue", null, [], ["command", "queue", "keep", ""]], ["/steer　", null, [], ["command", "steer", "keep", ""]]],
+      not: ["/queue x", null, [], ["command", "queue", "keep", "x", "relay"]] },
     { rule: "a path is text", read: [["/etc/hosts 这一行是什么意思", null, [], ["content"]], ["/tmp/x", null, [], ["content"]], ["/ clear", null, [], ["content"]], ["/", null, [], ["content"]]],
       not: ["/etc", null, [], ["possible_command", "etc"]] },
     { rule: "a word outside the registry is a command only when announced", read: [["/skill-from-gateway now", announced, [], ["command", "skill-from-gateway", "keep", "now"]],
@@ -71,7 +74,9 @@ test("G069-C03 Claude Code: leading whitespace stripped, any command name runs l
     { rule: "a path is content", read: [["/Users/me/notes.md 看看这个", null, [], ["content"]], ["/etc/hosts", catalog, [], ["content"]]], not: ["/Users", null, [], ["possible_command", "Users"]] },
     { rule: "unlisted names run (unknown effect); listed ones have theirs", read: [["/my-command", catalog, [], ["command", "my-command", "unknown", ""]],
       ["/compact keep the plan", catalog, [], ["command", "compact", "compact", "keep the plan"]]], not: ["/review now", catalog, [], ["command", "review", "keep", "now"]] },
-    { rule: "the Hub's /export only without attachments", read: [["/export", catalog, ["file"], ["command", "export", "unknown", ""]]], not: ["/export", catalog, [], ["command", "export", "none", ""]] },
+    // The CLI looks for a command only in the last block, an attachment's when there is one (G069 fix batch, review I6).
+    { rule: "with attachments every input is content", read: [["/export", catalog, ["file"], ["content"]], ["/clear", null, ["image"], ["content"]], ["  /remote-control", catalog, ["file", "image"], ["content"]]],
+      not: ["/export", catalog, [], ["command", "export", "none", ""]] },
   ]);
 });
 
@@ -129,13 +134,15 @@ test("G069-C03 a relay catalog's effect may depend on the arguments, and a liste
 });
 
 test("G069-C03 one source: each Driver's HarnessControl.classify equals its relay declaration's reading over the same commands, acceptsRelay aside", async () => {
-  // The declaration reads Claude Code's catalog as if the Hub offered its own `/export` (models() decides that per
-  // connection); a connection whose Claude lists an export of its own reads `/export` with attachments by its entry.
+  // Whether the Hub offers its own `/export` (models() decides that per connection) no longer changes any reading: with
+  // attachments every input is content for Claude Code, without them its catalog's entry is read either way.
   const offering = new ClaudeControl(acp, options), own = new ClaudeControl(acp, options);
   (offering as unknown as { hubExport: boolean }).hubExport = true;
   const exported: NativeModelCatalog = { models: [], defaultModel: null, authentication: "ready", canSelect: false, commands: [{ name: "export", description: "export", contextEffect: "none" }] };
-  assert.deepEqual(offering.classify("/export", exported, ["file"]), { kind: "command", name: "export", args: "", effect: "unknown" });
-  assert.deepEqual(own.classify("/export", exported, ["file"]), { kind: "command", name: "export", args: "", effect: "none" });
+  for (const control of [offering, own]) {
+    assert.deepEqual(control.classify("/export", exported, ["file"]), { kind: "content" });
+    assert.deepEqual(control.classify("/export", exported, []), { kind: "command", name: "export", args: "", effect: "none" });
+  }
   await own.close();
   const drivers: readonly [string, HarnessControl, RelayClassify][] = [
     ["claude", offering, claudeRelayCapabilities.commands.classify],

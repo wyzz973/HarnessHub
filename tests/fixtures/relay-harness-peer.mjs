@@ -128,13 +128,22 @@ export class NativeHistories {
     if (native.summary?.runs.has(runId)) return { result: "compacted" };
     return { result: "absent" };
   }
-  /** The ground truth: the facts, packets and Turns the native session holds, in its entries or its summary. */
+  /**
+   * The ground truth: the facts, packets and Turns the native session holds, in its entries or its summary; `entryFacts` and
+   * `entryRuns` are those its entries alone hold (what a Driver without compaction evidence can still see, G068 fix batch).
+   */
   held({ session }) {
     const native = this.session(session), facts = new Set(native.summary?.facts ?? []), packets = new Set(native.summary?.packets ?? []), runs = new Set(native.summary?.runs ?? []);
+    const entryFacts = new Set(), entryRuns = new Set();
     let origin = native.summary?.origin ?? false;
-    for (const entry of native.users()) { for (const fact of entry.facts) facts.add(fact); if (entry.packetId !== null) packets.add(entry.packetId); runs.add(entry.runId); origin ||= entry.origin; }
-    runs.delete(null);
-    return { facts: [...facts].sort(), packets: [...packets].sort(), runs: [...runs].sort(), origin, entries: native.entries.length, cursor: native.cursor, late: native.late.length, clears: native.clears };
+    for (const entry of native.users()) {
+      for (const fact of entry.facts) { facts.add(fact); entryFacts.add(fact); }
+      if (entry.packetId !== null) packets.add(entry.packetId);
+      runs.add(entry.runId); entryRuns.add(entry.runId); origin ||= entry.origin;
+    }
+    runs.delete(null); entryRuns.delete(null);
+    return { facts: [...facts].sort(), packets: [...packets].sort(), runs: [...runs].sort(), entryFacts: [...entryFacts].sort(), entryRuns: [...entryRuns].sort(), origin,
+      entries: native.entries.length, cursor: native.cursor, late: native.late.length, clears: native.clears };
   }
   /** Forgets every session (between property cases). */
   reset() { this.sessions.clear(); return { sessions: 0 }; }

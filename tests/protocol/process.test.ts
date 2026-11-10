@@ -30,6 +30,32 @@ test("request deadline closes a peer that never replies", async () => {
   const rpc = peer("timeout", {}, { requestTimeoutMs: 60 });
   try { await assert.rejects(rpc.request("initialize", {}), /deadline/); } finally { await closed(rpc); }
 });
+test("a request whose deadline gives up only itself (ADR-055 C6): it rejects with REQUEST_TIMEOUT, the connection stays usable, and its late answer is dropped without a protocol failure", async t => {
+  const root = await mkdtemp(join(tmpdir(), "rpc-deadline-")); t.after(() => rm(root, { recursive: true, force: true }));
+  // A peer that answers `slow` after 300 ms and every other request at once.
+  const script = join(root, "slow-peer.mjs");
+  await (await import("node:fs/promises")).writeFile(script, `import { createInterface } from "node:readline";
+createInterface({ input: process.stdin }).on("line", line => { const message = JSON.parse(line);
+  const answer = () => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { method: message.method } }) + "\\n");
+  if (message.method === "slow") setTimeout(answer, 300); else answer(); });
+`);
+  let failures = 0;
+  const rpc = new JsonRpcProcess({ protocol: "acp-v1", executable: process.execPath, args: [script], env: {} }, options,
+    { notification: () => {}, request: () => { throw new ControlError("METHOD_NOT_FOUND", "unsupported"); }, failure: () => { failures++; } });
+  try {
+    await assert.rejects(rpc.request("slow", {}, 50, "reject"), (error: unknown) => error instanceof ControlError && error.code === "REQUEST_TIMEOUT");
+    assert.equal(rpc.failure, null, "only the request was given up");
+    assert.deepEqual(await rpc.request("ping", {}), { method: "ping" }, "the connection takes the next request");
+    await new Promise(resolve => setTimeout(resolve, 400));
+    assert.equal(rpc.failure, null, "the late answer was dropped");
+    assert.deepEqual(await rpc.request("slow", {}, 1000, "reject"), { method: "slow" }, "an answer in time is the answer");
+    assert.equal(failures, 0);
+    // The default deadline still fails the connection (every existing caller).
+    await assert.rejects(rpc.request("slow", {}, 50), (error: unknown) => error instanceof ControlError && error.code === "REQUEST_TIMEOUT");
+    const failed = rpc.failure as Error | null;
+    assert.equal(failed instanceof ControlError && failed.code, "REQUEST_TIMEOUT");
+  } finally { assert.equal((await rpc.close()).closed, true); }
+});
 test("remote error is a rejection rather than a successful payload", async () => {
   const rpc = peer("remote-error");
   try { await assert.rejects(rpc.request("initialize", {}), error => error instanceof ControlError && error.code === "REMOTE_ERROR" && error.message.includes("-32001") && !error.message.includes("test remote error")); } finally { await closed(rpc); }

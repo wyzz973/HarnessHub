@@ -423,7 +423,7 @@ G068 阶段一的独立审查提出 F1–F13 与一个 packetId 重合的疑问�
 | hermes | `fixedPrefix` `hostPathRead` `sessionTools` `window` `delivery.successProvesRecorded` `delivery.lateDelivery` `commands.hidden` `placement.maxInput` `cacheTtl` `vendor.noEndpoint` |
 | openclaw | `fixedPrefix` `hostPathRead` `sessionTools` `window` `commands.unlistedSlash` `compactionEvidence` `title` `placement.pointersAfterUser` `vendor.loopback` `vendor.otherProvider` |
 
-各格的含义：`fixedPrefix: null`、`hostPathRead: "none"`（v1.1 未启用）、`sessionTools: null`（v1.2）六家都不是原文；`window` 由“usage.size”“sessions.describe”译为 `session_report`、由 Codex 每回合的 `modelContextWindow` 译为 `turn_report`；`placement.maxInput: null` 是没写输入上限的四家；`placement.pointersAfterUser: false` 是 Hermes 以外的五家（只有 Hermes 写了附件指针在原话之后）；`delivery.lateDelivery: false` 是没写它的四家；`delivery.successProvesRecorded: true` 由 OpenCode、Hermes 的 E3 一格推出；`commands.unlistedSlash: "text"` 是 Codex、OpenCode、OpenClaw 按现码的解析（OpenClaw 属 Q10）；`commands.hidden` 是 Hermes 按现码的 `new`、`clear`；`cacheTtl: "unknown"` 是原文“按模型族”；`compactionEvidence: "none"` 是 OpenClaw 的“未核实”；`title: "none"` 是 OpenClaw 的“待探针”与 OpenCode、dsh 的“未保证”。厂商键一列：`vendor.loopback`（回环端点记 unknown）、`vendor.signin`（Claude 的其他登录种类记 unknown）、`vendor.backendWithEndpoint`（Claude 开关加端点记 unknown）、`vendor.provider`（Codex 的 Provider 写在模型前缀里）、`vendor.endpointProvider`（Codex 的端点只属于 openai）、`vendor.otherProvider`（OpenCode、OpenClaw 未点名的 Provider 记 `provider:<name>`）、`vendor.layers`（dsh 只读三层，插件配置与 pi-ai 路由不读）、`vendor.noEndpoint`（Hermes 没有端点即 unknown）。
+各格的含义：`fixedPrefix: null`、`hostPathRead: "none"`（v1.1 未启用）、`sessionTools: null`（v1.2）六家都不是原文；`window` 由“usage.size”“sessions.describe”译为 `session_report`、由 Codex 每回合的 `modelContextWindow` 译为 `turn_report`；`placement.maxInput: null` 是没写输入上限的四家；`placement.pointersAfterUser: true` 是 Hermes 以外的五家按现码的放置（审批 B8，2026-11-10）：附件以 ACP 块跟在原话块之后；Codex 的文件指针接在原话之后，图片和音频是其后的输入项；OpenClaw 的附件块跟在单段文字之后，网关转发哪些待探针；`delivery.lateDelivery: false` 是没写它的四家；`delivery.successProvesRecorded: true` 由 OpenCode、Hermes 的 E3 一格推出；`commands.unlistedSlash: "text"` 是 Codex、OpenCode、OpenClaw 按现码的解析（OpenClaw 属 Q10）；`commands.hidden` 是 Hermes 按现码的 `new`、`clear`；`cacheTtl: "unknown"` 是原文“按模型族”；`compactionEvidence: "none"` 是 OpenClaw 的“未核实”；`title: "none"` 是 OpenClaw 的“待探针”与 OpenCode、dsh 的“未保证”。厂商键一列：`vendor.loopback`（回环端点记 unknown）、`vendor.signin`（Claude 的其他登录种类记 unknown）、`vendor.backendWithEndpoint`（Claude 开关加端点记 unknown）、`vendor.provider`（Codex 的 Provider 写在模型前缀里）、`vendor.endpointProvider`（Codex 的端点只属于 openai）、`vendor.otherProvider`（OpenCode、OpenClaw 未点名的 Provider 记 `provider:<name>`）、`vendor.layers`（dsh 只读三层，插件配置与 pi-ai 路由不读）、`vendor.noEndpoint`（Hermes 没有端点即 unknown）。
 
 端点层的顺序（Q24）：Claude Code 工作区 `settings.local.json` → `settings.json` → 用户 `settings.json` → 进程环境；Codex 工作区 → 用户 `config.toml` → `OPENAI_BASE_URL`；dsh 继承的环境 → 工作区 `.env` → `$DSH_HOME/.env`（rc.5 源码核对过，见上）；OpenCode 工作区 `opencode.jsonc` → `opencode.json` → 用户的两个。Claude Code 的开关按 1、true、yes、on 判真（设置里写成 JSON 数字或布尔值的按它在环境里的文本）。已知读不到的层：Hermes 的 Provider 端点键第 8.1 节没有点名，Hermes 的厂商键阶段一恒为 `unknown:hermes`；dsh 的插件配置 `baseURL` 与 pi-ai 路由、Claude Code 的组织管理设置、Codex 的 `model_providers.*.base_url` 与 OSS 端点、OpenCode 的 `OPENCODE_CONFIG` 自定义路径都没有读。
 
@@ -442,3 +442,52 @@ G068 阶段一的独立审查提出 F1–F13 与一个 packetId 重合的疑问�
 - 受理时（G072）按 `relayCapabilities(harnessId, protocol)` 读声明，目录取自缓存时经 `relayEntries()` 变成声明的目录。缓存现在保留每个命令的 `contextEffect`，读法与 `models()` 现取的目录相同；上一稿“各 Driver 的 `models()` 本来就补齐了效果”对缓存不成立（缓存当时剥掉了它），已修。缓存不存 `hiddenCommands`，各家的隐藏命令在解析规则里，不依赖目录。
 
 **经既有所有者修改的文件**：`src/contracts/control.ts`（G007）；`src/contracts/relay.ts`（G066，只改 `classify` 的类型）；`src/adapters/control/acp.ts`、`claude.ts`、`opencode.ts`、`hermes.ts`、`openclaw.ts`、`factory.ts`（G032）；`src/adapters/control/codex.ts`（G034）；`src/web/native-catalog-cache.ts`（G050）；`docs/contracts/switching.md`（C006，`classify` 签名与成员名）；ADR-033 的“影响”补一行。`hermes-gateway.ts`、`binding-factory.ts` 没有动。两个新源文件属 G069 的 `owns`，但 `plan/slices.json` 的 relay 切片 `allowed_files` 还没有列它们，`python3 tools/check_design.py` 因此报“application source outside approved slice”两行，由主负责人集成时登记；`plan/` 下 G069 的用例状态仍是 planned，声明一致性与对照用例 G069-D01–D04 没有计划条目。
+
+### 审批代理的决定（2026-11-10，G068 / G069 阶段二，对提交 `db39cbd`）
+
+依据是只读阅读本 ADR、终稿第 6.1、7、8.1、9、10.4、12 节与 `db39cbd` 的代码；审批代理没有运行测试或 Harness。此前三节决定没有被推翻；被改动的只有终稿第 6.1 节“E1 不单独提交”一句（A14）。
+
+**G072 开工前必须先修**：
+- **Driver 丢包后水位仍推进**（B4b）：带包回合的原话被读作命令时 Driver 只发原话、丢掉交接单，结果不带 `input`，`successProvesRecorded=true` 的三家（Claude Code、OpenCode、Hermes）会把没发出的包记成 E3。改为拒绝整个 Turn：`failed`、`input: not_recorded`、原因 `classification_changed`，什么都不发。
+- **dsh 的带包回合永远 unknown**（C8）：声明 `live: agent_output` 的 Driver，由 Runtime 在带包回合的第一条 agent 文本、思考或工具调用（不认 plan 与 usage）时按 E1 处理，事件注明 `live:"agent_output"`。
+- **Claude 合成清空后的空会话跨进程恢复不了**（C5）：仅当绑定为 fresh、本纪元没有已派发的内容回合、且 Driver 的拒绝明确是“会话不存在”时，新开原生会话替换 checkpoint，`relay` 与 `epochFloor` 不变，记一条事件；有水位的绑定一律不这样做。
+
+**运行时侧**：
+- A1 `throughRunId` 只表示原生位置、跟着派发推进：同意。条件：`exactAt` 在绑定没有 `relay` 时不得返回 true（或用测试证明迁移后不可达）；`session.ts` 的注释同步。
+- A2 整份还是增量按水位判：同意；水位非空而 `lastPacketId=null` 仍走增量，补一例。
+- A3 D6 要求 `probed=true`：同意；process 型 Driver 的翻转条件加上 P16。
+- A4 suspect 上 `attach:"full"` 与 `resend` 都算补发：同意；界面只发 `attach:"full"`。
+- A5 `attach:"none"` 一律按 n：同意；界面在 need=∅ 时不提供它。
+- A6 无 `run.relay`、无索引行的 Run 当外来事实：同意，补一例。
+- A7 `rowMissing` 的 `resend.of` 取法、拿不到 superseded 记 unknown：同意。“pending 且 need=∅ → `delivery_unconfirmed`”现状留到 G072；G072 引入排除时改为回到 `pending.prior`、送达行保持 unknown、记 `nothing_owed`、不问用户。
+- A8 受理拿不到声明就放行：只在本地集成分支上接受，不得随它发布；G072 第一步把 `factory.relayCapabilities` 接到受理处，最小界面不得先于它。
+- A9 普通回合零额外读取：同意；`attach:"full"` 而无可附内容时照发，但 `run.context_prepared` 记下“请求附上、实际无可附”，界面要显示。
+- A10 每纪元只为最近 32 条 recorded 行读回 mark：同意，补一例（更早的行得到 `verify_required` 或退回，不是推进）。
+- A11 清空后跑过普通回合就取不回清空前的事实：同意；［附上交接单］只在清空后的下一条内容消息提供（G073）。
+- A12 新 Run 仍写 `sourceRunIds`：暂留到 G073；`session.ts` 的注释现在就改成与代码一致。
+- A13 清单保守值：同意；`run.context_prepared` 保留 MVP 的精确版本号；G072 换渲染器时升 `relay/2`；界面不得从空的 `sections`、`omissions` 推出“完整”“无省略”。
+- A14 E1 单独一个事务：同意，并改终稿第 6.1 节。送达结论、绑定、事件仍在同一事务；水位更早落库，Hub 中途崩溃时已有 E1 的包不会变 unknown 再重发。性能目标写成“带包回合 +1 次提交”，普通回合不变。
+- A15 不导出单一 `finalize`：同意；六个钩子的调用顺序写进 switching.md，G072 不得把 I/O 带进协调器。
+- A16 D6 不带包回合的核对：不扩契约，无限期推迟（三种结果都保持原水位，问了不改变状态）。
+- A17 临时密钥算的 HMAC：接受到 G072，不写占位；`keyId:"ephemeral"` 定为保留字，读者遇到与当前密钥不同的 `keyId` 结论是“不可复核”；不回填；`run.relayRequest` 在 G072 写入。
+- A18 Driver 确认清空即命令已执行：同意。另：Driver 确认的清空不分回合种类，一律按事件 e 处理（现在非命令回合的 `native.cleared` 被忽略，没有 Driver 这样回报，不阻断，但要补）。
+
+**Driver 侧**：
+- B1 标题行匹配：改。位置后第一条客户端用户条目只需标题行；其后的条目必须同时带同一 ID 的标题行与结束行（误判 present 是丢事实，误判 absent 只是有界重复）。
+- B2 Claude 的 `/clear` `/reset` `/new` 由 Driver 合成、回 `input: not_recorded`：同意（终稿第 8.1 节已有的做法）。须告知用户：回合内的说明；发布说明写明旧会话仍可 `--resume`、这条命令没有发给 Claude Code、依赖它的原生钩子不触发。
+- B3 Claude 的 `title` 改为 `none`：同意，回写终稿第 8.1 节。
+- B4a 越限时 Driver 不发送、回 `RELAY_INPUT_LIMIT`：同意，作为兜底；派发前降档见 C3。
+- B5 Hermes 回放有摘要时搜全部回放：同意。
+- B6 Codex、Claude 的压缩游标：同意，记入待探针。
+- B7 OpenClaw 用 `lifecycleRevision` 确认清空：同意，探针前不得在生产据此确认；探针须证明 `/compact`、`/reset soft`、换模型都不改它。Driver 只在本回合被判为 clear 命令且该值变化时回 `cleared`。
+- B8 `pointersAfterUser`：按代码实际行为改为 true，仍留在待探针清单。
+- B9 目录未知时斜杠词不捎带：同意。
+- B10 Hermes 的 `setTitle`：真机验证前不启用；Runtime 现在不调用 `setTitle`，保持不接。
+
+**契约缺口**：C1（位置不带文件身份）、C2（请求不带压缩游标）、C4（OpenClaw 位置不带 incarnation）不改。C3 推迟到 G072，形状现在定：声明里加纯函数 `placement.measure(turn, attachments) → number`。C6 现在写进契约：核对的超时与失败只产生 unavailable，不得中止连接、不得改变已结束回合的结果，≤2 s；每家一例故障注入。C7 推迟到 G072：Runtime 的“是否捎带”读声明的 `commands.classify`。C8 的回合内压缩游标留到 G076。
+
+**排查结论**（[记录](../verification/relay-claude-delta-2026-11-10.md)）：D1 现在不改模板、不加归属句，作为 G074 的对照实验（≥3 个独立基线、中英模板、haiku 与一个更强模型）。D2 `relay-conformance` 第 3 步改为点名对方显示名，通过判据是发出文本与目标原生转录的 sha256 一致加点名问题答对；间接问法只记观察。
+
+**范围与顺序**：G072 的探针门控可以在探针批次完成前合入本地集成分支，但不推送、不部署到 4317；`relay.allowUnprobed=true` 只在隔离的测试数据根里设置。顺序：阶段二的独立复核与修正批次 → G072（先接受理处的声明，再门控、同意与厂商键、relay-keys 与 `run.relayRequest`、`placement.measure` 与降档、声明的 classify、Codex 的标题）→ 最小界面 → 真机探针 → 翻转 `probed` → 请所有者决定推送。同意检查（第 10.4 节）落地之前，这条分支不得跑在任何真实对话上：送达行的 `consentLogSeq` 现在恒为 null。
+
+**留给所有者本人**：推送与 4317 升级（含门控带来的空窗）；真机探针批次的账号、额度与 Hermes、OpenClaw 的出站范围；`relay.allowUnprobed` 是否作为用户可见的设置；B2 的对外措辞。

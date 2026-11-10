@@ -32,10 +32,11 @@ test("G069-C02 Claude Code: the position is the transcript's length before the p
   assert.equal(first.kind, "file_offset");
   if (first.kind !== "file_offset") return;
   assert.equal(basename(first.path), id + ".jsonl"); assert.equal(first.bytes, 0, "the CLI has not written the session yet");
-  assert.equal(basename(dirname(first.path)), (await realpath(peer.workspace)).replace(/[^a-zA-Z0-9]/gu, "-"), "the project directory the CLI names (its realpath)");
+  assert.equal(dirname(first.path), (await realpath(peer.workspace)).replace(/[^a-zA-Z0-9]/gu, "-"), "the project directory the CLI names (its realpath), relative to projects/");
+  const file = join(peer.env.CLAUDE_CONFIG_DIR!, "projects", first.path);
   await run(control, id, relayTurn(ID_A, WORDS));
   const second = await control.deliveryPosition!(id);
-  assert.ok(second.kind === "file_offset" && second.bytes === (await stat(first.path)).size && second.bytes > 0);
+  assert.ok(second.kind === "file_offset" && second.bytes === (await stat(file)).size && second.bytes > 0);
   await run(control, id, relayTurn(ID_B, "再看一下"));
   const both = await control.verifyDelivered!(id, ask([[ID_A, first], [ID_B, second]], true));
   assert.deepEqual(results(both), ["present", "present"]);
@@ -48,7 +49,7 @@ test("G069-C02 Claude Code: the position is the transcript's length before the p
   const after = await control.verifyDelivered!(id, ask([[ID_B, second]]));
   assert.deepEqual([results(after), after.foreignAfterLast], [["present"], 1], "one prompt of the client after the last marker");
   // Lines that are no JSON objects are skipped; nothing native comes back.
-  await appendFile(first.path, "not json\n[1,2]\n");
+  await appendFile(file, "not json\n[1,2]\n");
   const skipped = await control.verifyDelivered!(id, ask([[ID_A, first]]));
   assert.deepEqual(results(skipped), ["present"]);
   assert.ok(!JSON.stringify(skipped).includes("修好"), "no native content in the result");
@@ -64,20 +65,21 @@ test("G069-C02 Claude Code answers unavailable, never absent, when it cannot loo
   assert.deepEqual(results(await control.verifyDelivered!(id, ask([[ID_A, before]]))), ["unavailable"]);
   assert.ok(Date.now() - started >= 250, "looked once more after the CLI's flush interval");
   await run(control, id, relayTurn(ID_A, WORDS));
-  const size = (await stat(before.path)).size;
+  const file = join(peer.env.CLAUDE_CONFIG_DIR!, "projects", before.path), size = (await stat(file)).size;
   const cases: readonly DeliveryPosition[] = [
     { kind: "file_offset", path: join(dirname(before.path), "another-session.jsonl"), bytes: 0 },
     { kind: "file_offset", path: before.path, bytes: size + 10 },
     { kind: "file_offset", path: before.path, bytes: size - 3 },
+    { kind: "file_offset", path: file, bytes: 0 },
     { kind: "seq", before: 0 }, { kind: "client_id", id: "x" }, { kind: "none" }];
   for (const position of cases) assert.deepEqual(results(await control.verifyDelivered!(id, ask([[ID_A, position]]))), ["unavailable"], JSON.stringify(position));
   // A plain prompt after the position: the marker is not there, and the whole rest was read: absent (the invalid sample above).
   const plain = await control.deliveryPosition!(id); await run(control, id, "随便聊聊");
   assert.deepEqual(results(await control.verifyDelivered!(id, ask([[ID_A, plain]]))), ["absent"]);
   // A line of another session makes the file not this conversation's.
-  await appendFile(before.path, JSON.stringify({ type: "user", sessionId: "someone-else", message: { role: "user", content: "x" } }) + "\n");
+  await appendFile(file, JSON.stringify({ type: "user", sessionId: "someone-else", message: { role: "user", content: "x" } }) + "\n");
   assert.deepEqual(results(await control.verifyDelivered!(id, ask([[ID_A, before]]))), ["unavailable"]);
-  await truncate(before.path, 0);
+  await truncate(file, 0);
   assert.deepEqual(results(await control.verifyDelivered!(id, ask([[ID_A, plain]]))), ["unavailable"], "shorter than the position");
   await assert.rejects(control.verifyDelivered!("other" as NativeConversationId, ask([[ID_A, before]])), (error: unknown) => error instanceof ControlError && error.code === "IDENTITY_MISMATCH");
 });
@@ -100,28 +102,25 @@ test("G069-C02 Claude Code: an entry still in the CLI's write queue is found by 
   assert.deepEqual(results(await other.control.verifyDelivered!(other.id, ask([[ID_A, at]]))), ["compacted"]);
 });
 
-test("G069-C05 Claude Code's /clear is the driver's: a new session in place of the old one, reported with its checkpoint; nothing reaches Claude; with an attachment it is sent; a session that cannot be opened is no clear", { timeout: 60000 }, async t => {
+test("G069-C05 Claude Code's /clear is the driver's: the session is given up and the clear reported with no checkpoint (the next Turn opens a session, none is opened ahead); nothing reaches Claude; with an attachment it is sent as content", { timeout: 60000 }, async t => {
   const peer = await peerRoot(t), { control, id } = await opened(t, "claude", peer);
+  let current = id;
   for (const words of ["/clear", "  /reset", "/new"]) {
-    const current = (await control.checkpoint!())!;
-    const { result } = await run(control, current as NativeConversationId, words);
-    const replaced = (await control.checkpoint!())!;
-    assert.notEqual(replaced, current, words);
-    assert.deepEqual(result, { status: "completed", reason: "cleared", input: "not_recorded", native: { cleared: true, replaced: { checkpoint: replaced } } }, words);
-    await assert.rejects(control.startText(current as NativeConversationId, "旧会话", () => {}), (error: unknown) => error instanceof ControlError && error.code === "IDENTITY_MISMATCH", "the old session is no longer this connection's");
+    const { result } = await run(control, current, words);
+    assert.deepEqual(result, { status: "completed", reason: "cleared", input: "not_recorded", native: { cleared: true, replaced: { checkpoint: null } } }, words);
+    assert.equal(await control.checkpoint!(), null, words + ": no session left to resume");
+    await assert.rejects(control.startText(current, "旧会话", () => {}), (error: unknown) => error instanceof ControlError && error.code === "IDENTITY_MISMATCH", "the old session is no longer this connection's");
+    // The next Turn's session (the Runtime opens it on a connection of its own; this one can open it too).
+    current = await control.open(peer.workspace);
   }
   assert.equal(id, "relay-session");
   assert.deepEqual((await prompts(peer)), [], "no prompt was sent for a clear");
-  assert.equal((await peer.sent()).filter(line => line.method === "session/new").length, 4);
-  const now = (await control.checkpoint!()) as NativeConversationId;
-  assert.equal((await run(control, now, "继续")).result.status, "completed", "the new session takes the next prompt");
+  assert.equal((await peer.sent()).filter(line => line.method === "session/new").length, 4, "the first open and the three opens after the clears, none for a clear");
+  assert.equal((await run(control, current, "继续")).result.status, "completed", "the new session takes the next prompt");
   const attachment = join(peer.root, "a.txt"); await writeFile(attachment, "a");
-  await run(control, now, "/clear", [{ id: contentId("content-g069a"), name: "a.txt", mediaType: "text/plain", kind: "file", bytes: 1, sha256: "0".repeat(64), path: attachment }]);
+  const attached = await run(control, current, "/clear", [{ id: contentId("content-g069a"), name: "a.txt", mediaType: "text/plain", kind: "file", bytes: 1, sha256: "0".repeat(64), path: attachment }]);
   assert.deepEqual((await prompts(peer)).at(-1), ["/clear"], "with an attachment the CLI reads no command, so it is sent as it is");
-  // The invalid sample: the agent refuses the new session; the old one, and its history, stay; nothing is confirmed.
-  const failing = await peerRoot(t, { RELAY_NEW_FAULT: "second" }), refused = await opened(t, "claude", failing);
-  const { result } = await run(refused.control, refused.id, "/clear");
-  assert.equal(result.status, "failed"); assert.equal(result.input, "not_recorded"); assert.equal(result.native, undefined);
+  assert.deepEqual([attached.result.input, attached.result.native], ["recorded", undefined], "content, no clear");
 });
 
 test("G069-C02 Codex: the position is a fresh client identity the next turn is sent with; the check finds the user message by it; E1 once, before the result, with the packet, never from the reply", { timeout: 60000 }, async t => {
@@ -140,9 +139,10 @@ test("G069-C02 Codex: the position is a fresh client identity the next turn is s
   const plain = await control.deliveryPosition!(id), second = await run(control, id, "随便聊聊");
   assert.deepEqual(second.events.filter(event => event.type === "input_recorded"), [{ type: "input_recorded" }]);
   assert.deepEqual(results(await control.verifyDelivered!(id, ask([[ID_A, plain], [ID_A, again]]))), ["absent", "present"]);
-  // An identity Codex never recorded, after the whole thread was read with echoes seen: absent; nothing of the kind: unavailable.
+  // An identity Codex never recorded, after the whole thread was read: unavailable (that every user message echoes its
+  // identity is not established, G069-F4); nothing of the kind: unavailable.
   const missing = await control.verifyDelivered!(id, ask([[ID_B, { kind: "client_id", id: "never-sent" }], [ID_B, { kind: "file_offset", path: "/x", bytes: 0 }]]));
-  assert.deepEqual([results(missing), missing.foreignAfterLast], [["absent", "unavailable"], null]);
+  assert.deepEqual([results(missing), missing.foreignAfterLast], [["unavailable", "unavailable"], null]);
   // E1 is never inferred from the reply: a hook stopped the input, the reply came, no E1, nothing recorded.
   const hooked = await peerRoot(t, { RELAY_HOOK: "1" }), stopped = await opened(t, "codex", hooked);
   await stopped.control.deliveryPosition!(stopped.id);
@@ -160,13 +160,13 @@ test("G069-C02 Codex: the position is a fresh client identity the next turn is s
   assert.deepEqual(results(await echo.control.verifyDelivered!(echo.id, ask([[ID_A, mark]]))), ["present"]);
 });
 
-test("G069-C02 Codex: outside_window past the pages a check reads, compacted after a context compaction, unavailable without echoes or when Codex refuses or answers garbage, historyEmpty from a whole thread; a listing that never answers fails the connection", { timeout: 90000 }, async t => {
+test("G069-C02 Codex: outside_window past the turns a check reads, compacted after a context compaction, unavailable without echoes or when Codex refuses or answers garbage, historyEmpty from a whole thread; a listing that never answers is unavailable and the next turn runs (C6)", { timeout: 90000 }, async t => {
   const turn = (index: number, items: readonly Record<string, unknown>[]) => ({ id: "seed-" + index, status: "completed", items });
   const user = (index: number) => ({ type: "userMessage", id: "u-" + index, content: [{ type: "text", text: "旧消息 " + index, text_elements: [] }], clientUserMessageId: "seed-" + index });
   const long = await peerRoot(t); await seed(long, { sessions: {}, threads: { "thread-relay": { name: null, turns: Array.from({ length: 450 }, (_, index) => turn(index, [user(index)])) } } });
   const wide = await opened(t, "codex", long, "thread-relay");
   const window = await wide.control.verifyDelivered!(wide.id, ask([[ID_A, { kind: "client_id", id: "seed-0" }], [ID_B, { kind: "client_id", id: "seed-449" }]], true));
-  assert.deepEqual([results(window), window.historyEmpty, window.compaction], [["outside_window", "absent"], null, null], "8 pages of 50 turns, newest first; nothing whole");
+  assert.deepEqual([results(window), window.historyEmpty, window.compaction], [["outside_window", "absent"], null, null], "the latest 5 turns, then pages of 50, 400 at most, newest first; nothing whole");
   const compacting = await peerRoot(t, { RELAY_COMPACT: "1" }), folded = await opened(t, "codex", compacting), at = await folded.control.deliveryPosition!(folded.id);
   await run(folded.control, folded.id, relayTurn(ID_A, WORDS));
   const compacted = await folded.control.verifyDelivered!(folded.id, ask([[ID_A, at]]));
@@ -174,7 +174,10 @@ test("G069-C02 Codex: outside_window past the pages a check reads, compacted aft
   const empty = await peerRoot(t); await seed(empty, { sessions: {}, threads: { "thread-relay": { name: null, turns: [turn(0, [{ type: "agentMessage", id: "a", text: "hi" }])] } } });
   const blank = await opened(t, "codex", empty, "thread-relay");
   const nothing = await blank.control.verifyDelivered!(blank.id, ask([[ID_A, { kind: "client_id", id: "x" }]], true));
-  assert.deepEqual([results(nothing), nothing.historyEmpty], [["unavailable"], true], "no echo seen: cannot look for an identity; and no user message at all");
+  assert.deepEqual([results(nothing), nothing.historyEmpty], [["unavailable"], false], "not found: cannot say absent; and an agent message is history");
+  const none = await peerRoot(t); await seed(none, { sessions: {}, threads: { "thread-relay": { name: null, turns: [] } } });
+  const bare = await opened(t, "codex", none, "thread-relay");
+  assert.equal((await bare.control.verifyDelivered!(bare.id, ask([[ID_A, { kind: "client_id", id: "x" }]], true))).historyEmpty, true, "a thread with no item at all");
   const silent = await peerRoot(t, { RELAY_ECHO_FIELD: "none" }), quiet = await opened(t, "codex", silent), mark = await quiet.control.deliveryPosition!(quiet.id);
   await run(quiet.control, quiet.id, relayTurn(ID_A, WORDS));
   assert.deepEqual(results(await quiet.control.verifyDelivered!(quiet.id, ask([[ID_A, mark]]))), ["unavailable"], "a Codex that echoes no identity: never absent");
@@ -183,9 +186,13 @@ test("G069-C02 Codex: outside_window past the pages a check reads, compacted aft
     assert.deepEqual(results(await control.verifyDelivered!(id, ask([[ID_A, { kind: "client_id", id: "x" }]]))), ["unavailable"], fault);
     assert.equal(control.healthy!(), true, fault + ": the connection is still usable");
   }
+  // A listing that never answers is given up alone: unavailable within the request's own bound, and the next turn runs.
   const hanging = await peerRoot(t, { RELAY_TURNS_FAULT: "hang" }), stuck = await opened(t, "codex", hanging, undefined, { requestTimeoutMs: 400 });
-  await assert.rejects(stuck.control.verifyDelivered!(stuck.id, ask([[ID_A, { kind: "client_id", id: "x" }]])), (error: unknown) => error instanceof ControlError && error.code === "REQUEST_TIMEOUT");
-  assert.equal(stuck.control.healthy!(), false);
+  const started = Date.now();
+  assert.deepEqual(results(await stuck.control.verifyDelivered!(stuck.id, ask([[ID_A, { kind: "client_id", id: "x" }]]))), ["unavailable"]);
+  assert.ok(Date.now() - started < 1500, "within the connection's shorter request timeout");
+  assert.equal(stuck.control.healthy!(), true);
+  assert.equal((await run(stuck.control, stuck.id, "继续")).result.status, "completed");
 });
 
 test("G069-C07 Codex names the thread before its first turn (thread/name/set), one line; an empty title is not sent; a refusal rejects and leaves the connection usable", { timeout: 30000 }, async t => {
@@ -220,11 +227,12 @@ test("G069-C02 Hermes: the position is the user entries the open replayed; the n
   const shifted = await opened(t, "hermes", compacted, "relay-session");
   const found = await shifted.control.verifyDelivered!(shifted.id, ask([[ID_C, { kind: "seq", before: 1 }], [ID_A, { kind: "seq", before: 9 }]], true));
   assert.deepEqual(results(found), ["absent", "present"], "a stale position after a compaction still finds the packet");
-  // A packet folded into a summary (the merged form keeps the old text first) is not in the history as an entry of its own.
+  // A packet folded into a summary (the merged form keeps the old text first) is not in the history as an entry of its own:
+  // compacted (the review's minor item on db39cbd), never present.
   const merged = await peerRoot(t); await seed(merged, { threads: {}, sessions: { "relay-session": { entries: [row("user", "[PRIOR CONTEXT — for reference only; not a new message]\n" + packet(ID_B, WORDS) + "\n\n[END OF PRIOR CONTEXT — COMPACTION SUMMARY BELOW]\n\n摘要", { summary: true }),
     row("assistant", "ok")], seq: 0, revision: "r", title: null, cwd: null } } });
   const folded = await opened(t, "hermes", merged, "relay-session");
-  assert.deepEqual(results(await folded.control.verifyDelivered!(folded.id, ask([[ID_B, { kind: "seq", before: 0 }]]))), ["absent"], "the summary's copy is no delivery; the cursor says a compaction may explain it");
+  assert.deepEqual(results(await folded.control.verifyDelivered!(folded.id, ask([[ID_B, { kind: "seq", before: 0 }]]))), ["compacted"], "the summary's copy is no delivery of its own");
   assert.equal(found.compaction?.count, 1); assert.match(String(found.compaction?.digest), /^[0-9a-f]{64}$/u);
   assert.equal(found.foreignAfterLast, 1, "Hermes's own rows are not the user's");
   // The invalid sample: the same history without a summary keeps positions, so a packet before the position is absent.
@@ -273,8 +281,11 @@ test("G069-C02 OpenClaw: the position is the transcript's highest sequence; the 
   assert.deepEqual(start, { kind: "seq", before: 0 });
   await run(control, id, "先说一句");
   await run(control, id, relayTurn(ID_A, WORDS));
-  const verified = await control.verifyDelivered!(id, ask([[ID_A, start]], true));
-  assert.deepEqual([results(verified), verified.historyEmpty, verified.compaction, verified.foreignAfterLast], [["present"], false, null, 0], "found although the first row after the position is another one");
+  const verified = await control.verifyDelivered!(id, ask([[ID_A, start]]));
+  assert.deepEqual([results(verified), verified.historyEmpty, verified.compaction, verified.foreignAfterLast], [["present"], null, null, 0], "found although the first row after the position is another one");
+  // Asked whether the history is empty (an unconfirmed clear), rows without a reset row are trusted for nothing (G069-F3).
+  const clearCheck = await control.verifyDelivered!(id, ask([[ID_A, start]], true));
+  assert.deepEqual([results(clearCheck), clearCheck.historyEmpty], [["unavailable"], null]);
   const later = await control.deliveryPosition!(id);
   assert.deepEqual(later, { kind: "seq", before: 4 });
   assert.deepEqual(results(await control.verifyDelivered!(id, ask([[ID_A, later], [ID_A, { kind: "client_id", id: "x" }]]))), ["absent", "unavailable"]);

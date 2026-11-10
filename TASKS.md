@@ -2195,6 +2195,7 @@
 - tests/property/relay-delivery.test.ts
 - tests/integration/relay-delivery.test.ts
 - tests/fixtures/relay-harness-peer.mjs
+- tests/unit/relay-coordinator.test.ts
 
 验收：
 - 夹具覆盖第 7.2 节的 4 × 13 格与 R8 §2.8 / 2.9 每一格
@@ -2224,6 +2225,7 @@
 - tests/fixtures/relay-drivers.ts
 - tests/protocol/relay-driver-placement.test.ts
 - tests/protocol/relay-driver-verify.test.ts
+- tests/protocol/relay-driver-fixes.test.ts
 
 验收：
 - 每家的声明与第 8.1 节逐格一致

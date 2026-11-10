@@ -130,7 +130,8 @@ export interface PublicRun {
   readonly reused?: true;
   /**
    * v13: the packet this Run carries (or none), how it continued its context and where it ran (ADR-055 §4); fixed once the
-   * Run is running. New Runs leave `sourceRunIds` empty; the relay packet's fold names its sources instead.
+   * Run is running. Until G073 new Runs still write `sourceRunIds` (the Runs their packet carries); a reader takes the relay
+   * packet's fold as what the packet carried (A12).
    */
   readonly relay?: RunRelay;
   /** v13: the relay choices its request made, with their HMAC; notes, reveals and exclusions stay in relay rows. Fixed at acceptance. */
@@ -176,8 +177,19 @@ export interface NativeSessionBinding {
   readonly harnessId: string;
   readonly controlId: string;
   readonly checkpoint: string;
+  /**
+   * The native position: the last Run dispatched into this native session (ADR-055 §7.4, A1), whatever the relay knows of
+   * what reached it; null before the first. It says nothing of the relay's delivery watermark (`relay`).
+   */
   readonly throughRunId: RunId | null;
   readonly status: "ready" | "unconfirmed" | "archived" | "fork-pending" | "forking";
+  /**
+   * v13: the Driver replaced this binding's native session by none yet (Claude's synthesized clear with
+   * `native.replaced.checkpoint` null, ADR-055 §7.5, G068 fix batch R4): the next Turn opens a new native session, with this
+   * binding's relay state and observed configuration, and `checkpoint` names the abandoned session it replaces, which is never
+   * resumed. Gone once that Turn's session is prepared. Only on a ready binding without a native position.
+   */
+  readonly opensNew?: true;
   /**
    * v9: the model and option values the native session reported at the end of its last dispatched Turn, including changes
    * made by its own commands. Absent when the interface cannot report them or the last report was unreadable.
@@ -288,8 +300,9 @@ export interface SessionSnapshot {
   /** v11: the native process this conversation holds now; cleared when it is closed. */
   readonly retained?: RetainedProcess;
   /**
-   * v13: the seq of the `session.recovered` event whose relay rows could not be written (ADR-055 §9 S15); a Turn that would
-   * carry relay content is then refused until the user starts a new native session.
+   * v13: the seq of the event whose relay rows could not be written (ADR-055 §9 S15): a `session.recovered`, or a Turn's
+   * `run.ended` committed without its relay part when the Store refused it (`relay.failed`, G068 fix batch R6); a Turn that
+   * would carry relay content is then refused until the user starts a new native session.
    */
   readonly relayRecoveryFailed?: number;
 }

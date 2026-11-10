@@ -2,14 +2,14 @@ import { createHash, createHmac, randomBytes } from "node:crypto";
 import { MAX_VERIFY_MARKERS, type ContextEffect, type VerifyRequest } from "../../../contracts/control.js";
 import type { ContentKind } from "../../../contracts/content.js";
 import {
-  MARKER_RESULTS, RELAY_MAX_RUNS, RELAY_MAX_SEQ, RelayError, fingerprint, hmacDigest, markOf, parseDeliveredMark, parseExecutedOn, redactionTag, relayPacketId,
+  EPHEMERAL_KEY_ID, MARKER_RESULTS, RELAY_MAX_RUNS, RELAY_MAX_SEQ, RelayError, fingerprint, hmacDigest, markOf, parseDeliveredMark, parseExecutedOn, redactionTag, relayPacketId,
   type BindingRelayState, type ContinuityLevel, type DeliveredMark, type DeliveryPosition, type DeliveryRecord, type ExecutedOn, type Fingerprint, type MarkerResult,
   type RelayCapabilities, type RelayDeliveryWrite, type RelayIndexRow, type RelayPacket, type RelayPacketId, type RunRelay, type SourceRange, type VerifyResult,
 } from "../../../contracts/relay.js";
 import { SessionError, type EventDraft, type HarnessSelection, type NativeSessionBinding, type PublicRun, type RunId, type SessionEvent, type SessionId, type SessionSnapshot } from "../../../contracts/session.js";
 import { commandOutcome, dispatched, type InputOutcome } from "../domain/relay/advance.js";
 import {
-  admitsWithoutChoice, commandTurnEvent, foreignTo, owed, pendingResend, planReturnVerify, retreatedPrior, settledOutcome, step,
+  admitsWithoutChoice, commandTurnEvent, foreignTo, heldSince, owed, pendingResend, retreatedPrior, settledOutcome, settledWithoutCheck, step,
   type BindingDelivery, type ChoiceCause, type DeliveryChange, type Owed, type RelayAt, type RelayEvent, type RelayFact, type RelayStep, type StepNote, type VerifyPlan,
 } from "../domain/relay/delivery.js";
 import type { RelayRecord } from "../domain/relay/packet.js";
@@ -160,9 +160,16 @@ function executedOf(value: unknown): ExecutedOn | null {
   if (value === null || value === undefined) return null;
   try { return parseExecutedOn(value); } catch { return null; }
 }
-/** Whether a fact is foreign to the binding at all, whatever the mark (F≠∅ of §7.2), or the Session's own starting history is. */
-export function foreignAtAll(facts: readonly RelayFact[], harnessId: string, controlId: string, relay: BindingRelayState, originHistory: boolean): boolean {
-  return facts.some(fact => foreignTo(fact, harnessId, controlId, relay)) || originHistory && !relay.originIncluded;
+/**
+ * Whether a fact is foreign to the binding at all, whatever the mark (F≠∅ of §7.2), or the Session's own starting history is.
+ * `since` is the binding's `heldSince` (delivery.ts foreignTo).
+ */
+export function foreignAtAll(facts: readonly RelayFact[], harnessId: string, controlId: string, relay: BindingRelayState, originHistory: boolean, since?: number): boolean {
+  return facts.some(fact => foreignTo(fact, harnessId, controlId, relay, since)) || originHistory && !relay.originIncluded;
+}
+/** The first native epoch the binding's own native session holds, from the Session's bindings (delivery.ts heldSince, R1). */
+export function heldSinceIn(state: SessionSnapshot, harnessId: string, controlId: string, relay: BindingRelayState): number {
+  return heldSince(relay, state.nativeBindings ?? [], harnessId, controlId);
 }
 
 /** How many of an epoch's latest recorded rows keep the mark their recording made, for a check's fall back (≥ 8 × SUSPECT_MARKERS). */
@@ -252,24 +259,30 @@ export function admitRelay(input: AdmitInput): void {
   if (capabilities !== null && capabilities.commands.classify(input.text, null, input.attachments).kind !== "content") return;
   const relay = binding?.relay ?? initialBindingRelay(state.nativeBindings ?? [], target.harnessId, target.controlId, "new");
   const facts = input.facts({ harnessId: target.harnessId, controlId: target.controlId, nativeEpoch: relay.nativeEpoch }), originHistory = (state.origin?.history.length ?? 0) > 0;
-  const sync = relay.sync;
-  const need = owed(relay, target.harnessId, target.controlId, facts, { originHistory, attachOverride: choices.attach === "full" || sync.kind === "pending" && sync.attachOverride });
+  const sync = relay.sync, since = heldSinceIn(state, target.harnessId, target.controlId, relay);
+  const need = owed(relay, target.harnessId, target.controlId, facts, { originHistory, attachOverride: choices.attach === "full" || sync.kind === "pending" && sync.attachOverride, heldSince: since });
   const owes = need.facts.length > 0 || need.origin;
-  const doubt = sync.kind === "suspect" && SUSPICIONS.has(sync.cause) && foreignAtAll(facts, target.harnessId, target.controlId, relay, originHistory);
+  const doubt = sync.kind === "suspect" && SUSPICIONS.has(sync.cause) && foreignAtAll(facts, target.harnessId, target.controlId, relay, originHistory, since);
   if (!owes && !doubt && sync.kind !== "pending" && choices.attach !== "full") return;
   // G072 inserts its checks here, in the order of §6.1: the probe gate (RELAY_TARGET_UNVERIFIED), the data root of a
   // cross-vendor handoff (RELAY_UNAVAILABLE{data_root_in_workspace}); then the user's choice below; then consent
   // (RELAY_CONSENT_REQUIRED) and MIN_PACKET (RELAY_INPUT_LIMIT).
   if (state.relayRecoveryFailed !== undefined) throw recoveryFailed();
+  // The user's "再附一次": `resend`, or `attach:"full"` on a pending packet (R9b), which sends it again too.
+  const resend = choices.resend === true || choices.attach === "full";
   if (sync.kind === "pending") {
     // A Driver that checks at the open settles the packet there first; the others already checked (after_turn) or never do.
-    if (declaration.verify !== "on_next_open" && pendingResend(sync, declaration.lateDelivery) === "choice" && choices.resend !== true) throw choiceRequired("delivery_unconfirmed");
+    if (declaration.verify !== "on_next_open" && pendingResend(sync, declaration.lateDelivery) === "choice" && !resend) throw choiceRequired("delivery_unconfirmed");
     return;
   }
   if (sync.kind === "suspect") {
-    if (choices.attach === "full" || choices.resend === true || choices.clearConfirmed === true && sync.cause === "clear_unconfirmed") return;
+    if (resend || choices.clearConfirmed === true && sync.cause === "clear_unconfirmed") return;
     if (sync.cause === "legacy" || sync.cause === "marker_absent") { if (owes) throw choiceRequired(causeOf(sync.cause)); return; }
     if (!admitsWithoutChoice(relay, declaration.verify)) throw choiceRequired("verify_required");
+    // What the open certainly makes of it is read like any binding (R9a): landing on a pending packet whose automatic resend
+    // is spent (the table of unchecked suspicion sends a carried packet back with autoResends 1), the user chooses now.
+    const landed = settledWithoutCheck(relay, declaration.verify);
+    if (landed?.sync.kind === "pending" && pendingResend(landed.sync, declaration.lateDelivery) === "choice") throw choiceRequired("delivery_unconfirmed");
   }
 }
 
@@ -285,7 +298,10 @@ export interface Check {
   readonly turnEntry?: MarkerResult;
   readonly moment: "open" | "settled";
 }
-/** The markers a plan asks the Driver about, oldest first, each once (the newest row of a packet), ≤ MAX_VERIFY_MARKERS. */
+/**
+ * The markers a plan asks the Driver about, oldest first, each once (the newest row of a packet), ≤ MAX_VERIFY_MARKERS, and
+ * for an unconfirmed clear whether the history is empty (even with no marker); null when the plan asks nothing.
+ */
 export function verifyRequestOf(plan: VerifyPlan): VerifyRequest | null {
   const markers = (() => {
     switch (plan.kind) {
@@ -297,7 +313,9 @@ export function verifyRequestOf(plan: VerifyPlan): VerifyRequest | null {
     }
   })();
   const seen = new Set<string>(), unique = [...markers].reverse().filter(marker => { if (seen.has(marker.packetId)) return false; seen.add(marker.packetId); return true; }).reverse().slice(-MAX_VERIFY_MARKERS);
-  if (unique.length === 0) return null;
+  // An unconfirmed clear asks whether the history is empty even with no marker to look for (rule 1, F1): a binding that stood on
+  // no packet has no chain, and an empty replay still confirms its clear (found pinning G067-C04's replay, R9f).
+  if (unique.length === 0) return plan.kind === "clear" ? { markers: [], historyEmpty: true } : null;
   return { markers: unique.map(marker => ({ packetId: marker.packetId, position: marker.position })), historyEmpty: plan.kind === "clear" };
 }
 /** A check no Driver answered: every marker unavailable, nothing else known. */
@@ -368,6 +386,14 @@ export function verifiedEvent(check: Check, outcome: Extract<RelayStep, { kind: 
     ...(check.turnEntry === undefined ? {} : { turnEntry: check.turnEntry }), result: note.verified ?? "skipped", ...(note.choice === undefined ? {} : { choice: note.choice }),
     ...(note.rowMissing ? { rowMissing: true } : {}), inRunId, recorded: recordedMarks(outcome, packetOf), sync: outcome.relay.sync.kind } };
 }
+/**
+ * `relay.verified` (§14.2) for the user's choice of the complete packet when it had nothing to carry (R5): no check ran and
+ * nothing was asked; the binding stands on the prior the choice moved back to (`result` nothing_owed), the input went as typed.
+ */
+export function retreatEvent(relay: BindingRelayState, inRunId: RunId): EventDraft {
+  return { type: "relay.verified", data: { verifiedRunIds: [], moment: "open", plan: "choice", markers: [], historyEmpty: null, compaction: null, foreignAfterLast: null, verifyMs: 0,
+    result: "nothing_owed", retreat: true, nothingToAttach: true, inRunId, recorded: [], sync: relay.sync.kind } };
+}
 /** A step's delivery changes as Store writes (an insert takes the Runtime's fields of the row, given separately). */
 export function outcomeWrites(changes: readonly DeliveryChange[]): readonly RelayDeliveryWrite[] {
   return changes.flatMap(change => change.kind === "outcome" ? [{ kind: "outcome" as const, runId: change.runId, outcome: change.outcome }] : []);
@@ -379,8 +405,12 @@ export function outcomeWrites(changes: readonly DeliveryChange[]): readonly Rela
 
 /** What a content Turn does with what its binding is owed, before anything is rendered. */
 export type TurnDecision =
-  /** b: nothing owed; the input goes as typed. */
-  | { readonly kind: "plain"; readonly foreign: boolean }
+  /**
+   * b: nothing owed; the input goes as typed. `nothingToAttach`: the user asked for the history (`attach:"full"`, or `resend`)
+   * and there was none to attach (A9, R10c), which `run.context_prepared` records. `retreat`: that request was the complete
+   * packet on a suspect binding, whose retreated prior owes nothing; the binding stands on that prior (R5).
+   */
+  | { readonly kind: "plain"; readonly foreign: boolean; readonly nothingToAttach: boolean; readonly retreat?: { readonly firstFromSeq: number | null } }
   /** n: the user chose to send it alone; what is owed stays owed. */
   | { readonly kind: "alone" }
   /** a: a packet of `need`, on `relay` (the binding after the check, a confirmed clear and a retreat). */
@@ -401,6 +431,8 @@ export interface DecideInput {
   /** The Run that carried the pending packet: its delivery row's, else the latest Run whose relay names it; null when none does. */
   readonly pendingRun: RunId | null;
   readonly recoveryFailed: boolean;
+  /** The first native epoch the binding's own native session holds (heldSinceIn); absent, only its current one. */
+  readonly heldSince?: number;
 }
 /** A packet identity no text has (its digits are all 0), for asking the state machine whether a carry would be refused. */
 const PROBE_PACKET = relayPacketId("relay-" + "0".repeat(20));
@@ -408,15 +440,18 @@ const PROBE_RANGE: SourceRange = { fromSeq: 0, throughSeq: 0, fromRun: 0, throug
 const PROBE_RUN = "run-relay-probe" as RunId;
 /**
  * The choice between b, n and a for a content Turn after the open's check (§7.2, §9): sent alone when the user chose it;
- * a pending packet resent once by itself when it may be (pendingResend), otherwise only on the user's `resend`; a suspect
- * binding with a packet only on the user's choice of the complete packet (a with retreat), as typed when nothing foreign is
- * there or nothing is owed and the cause allows it, else the user's choice (verify_first → RELAY_CHOICE_REQUIRED); otherwise
- * a packet exactly when something is owed. Throws the relay error the Run then fails with, undispatched.
+ * a pending packet resent once by itself when it may be (pendingResend), otherwise only on the user's `resend` or
+ * `attach:"full"`; a suspect binding with a packet only on the user's choice of the complete packet (a with retreat) — as typed,
+ * standing on the retreated prior, when that prior owes nothing (R5) — as typed when nothing foreign is there or nothing is
+ * owed and the cause allows it, else the user's choice (verify_first → RELAY_CHOICE_REQUIRED); otherwise a packet exactly when
+ * something is owed. A request for the history with nothing to attach goes as typed and says so (`nothingToAttach`, A9).
+ * Throws the relay error the Run then fails with, undispatched.
  */
 export function decideTurn(input: DecideInput): TurnDecision {
   const { relay, choices, declaration } = input, sync = relay.sync;
   if (choices.attach === "none") return { kind: "alone" };
-  const needOn = (state: BindingRelayState, attachOverride: boolean) => owed(state, input.harnessId, input.controlId, input.facts, { originHistory: input.originHistory, attachOverride });
+  const needOn = (state: BindingRelayState, attachOverride: boolean) => owed(state, input.harnessId, input.controlId, input.facts,
+    { originHistory: input.originHistory, attachOverride, ...(input.heldSince === undefined ? {} : { heldSince: input.heldSince }) });
   const nonEmpty = (need: Owed) => need.facts.length > 0 || need.origin;
   const refusedBy = (outcome: RelayStep): void => {
     if (outcome.kind !== "refused") return;
@@ -425,11 +460,15 @@ export function decideTurn(input: DecideInput): TurnDecision {
     if (refusal.code === "verify_first") throw choiceRequired(causeOf(refusal.cause));
     throw new RelayError({ code: "RELAY_PREPARE_FAILED", reason: "render" }, "没能准备交接单：送达状态不允许这样发送（" + refusal.why + "）。这条消息没有发出。");
   };
+  const foreign = () => foreignAtAll(input.facts, input.harnessId, input.controlId, relay, input.originHistory, input.heldSince);
+  // The user asked for the history: the complete packet or the pending one again ("附上交接单", "补发完整交接单", "再附一次").
+  const requested = choices.attach === "full" || choices.resend === true;
   if (sync.kind === "pending") {
     const attachOverride = sync.attachOverride || choices.attach === "full", need = needOn(relay, attachOverride);
     if (!nonEmpty(need)) throw choiceRequired("delivery_unconfirmed");
     if (input.recoveryFailed) throw recoveryFailed();
-    const by = pendingResend(sync, declaration.lateDelivery) === "auto" ? "auto" as const : choices.resend === true ? "user" as const : null;
+    // On a pending packet `attach:"full"` is the user's resend too (R9b).
+    const by = pendingResend(sync, declaration.lateDelivery) === "auto" ? "auto" as const : requested ? "user" as const : null;
     if (by === null) throw choiceRequired("delivery_unconfirmed");
     // Without the Run that carried it, a resend could not name what it supersedes: the user decides instead (G068 phase two).
     if (input.pendingRun === null) throw choiceRequired("delivery_unconfirmed");
@@ -438,17 +477,23 @@ export function decideTurn(input: DecideInput): TurnDecision {
     return { kind: "carry", need, attachOverride, resend, on: relay };
   }
   const attachOverride = choices.attach === "full";
-  if (sync.kind === "suspect" && (choices.attach === "full" || choices.resend === true)) {
+  if (sync.kind === "suspect" && requested) {
     const on: BindingRelayState = { ...relay, sync: retreatedPrior(relay, input.firstFromSeq)! }, need = needOn(on, attachOverride);
-    if (!nonEmpty(need)) throw choiceRequired(causeOf(sync.cause));
+    if (!nonEmpty(need)) {
+      // Nothing to send again on the prior the choice moves back to (R5): the input goes as typed and the binding stands there,
+      // which no check would otherwise ever let it do; a mark that does not come back (legacy) still needs the user.
+      const retreat = { firstFromSeq: input.firstFromSeq }, isForeign = foreign();
+      refusedBy(step(relay, { kind: "plain", foreign: isForeign, retreat }));
+      return { kind: "plain", foreign: isForeign, nothingToAttach: true, retreat };
+    }
     if (input.recoveryFailed) throw recoveryFailed();
     return { kind: "carry", need, attachOverride, resend: null, retreat: { firstFromSeq: input.firstFromSeq }, on };
   }
   const need = needOn(relay, attachOverride);
   if (!nonEmpty(need)) {
-    const foreign = foreignAtAll(input.facts, input.harnessId, input.controlId, relay, input.originHistory);
-    refusedBy(step(relay, { kind: "plain", foreign }));
-    return { kind: "plain", foreign };
+    const isForeign = foreign();
+    refusedBy(step(relay, { kind: "plain", foreign: isForeign }));
+    return { kind: "plain", foreign: isForeign, nothingToAttach: requested };
   }
   if (input.recoveryFailed) throw recoveryFailed();
   refusedBy(step(relay, { kind: "carry", runId: PROBE_RUN, packet: { id: PROBE_PACKET, range: PROBE_RANGE }, attachOverride, lateDelivery: declaration.lateDelivery, resend: null }));
@@ -519,11 +564,12 @@ export function runRelayOf(packet: RelayPacket | null, continuity: ContinuityLev
 /**
  * The keyed digests a delivery row needs (the current input's, the redaction set's tag) until the session subkeys of
  * G070's relay-keys exist: an HMAC under a key made for this owner and never kept, so the rows hold nothing anyone can
- * check a guessed input against (INV-29); they identify nothing across owners either.
+ * check a guessed input against (INV-29); they identify nothing across owners either. Their rows name the reserved key
+ * identity EPHEMERAL_KEY_ID (A17), which no reader can check them with.
  */
 export class EphemeralKeys {
   private readonly key = randomBytes(32);
-  readonly keyId = "ephemeral";
+  readonly keyId = EPHEMERAL_KEY_ID;
   input(session: SessionId, text: string): DeliveryRecord["inputHmac"] { return hmacDigest(createHmac("sha256", this.key).update("input\0" + session + "\0" + text, "utf8").digest("hex")); }
   setTag(session: SessionId): DeliveryRecord["redaction"]["setHmac"] { return redactionTag(createHmac("sha256", this.key).update("secret-set\0" + session, "utf8").digest("hex").slice(0, 8)); }
 }
@@ -645,16 +691,18 @@ export function settleTurn(input: SettleInput): Settled {
       break;
     }
     case "command": {
-      const outcomeOf = commandOutcome(input.dispatched, input.status, !input.dispatched ? "not_recorded" : input.cleared !== null ? "unknown" : input.input ?? "unknown", input.noop);
+      // A clear the Driver confirmed is e whatever else is known (commandTurnEvent reads `cleared` first).
+      const outcomeOf = commandOutcome(input.dispatched, input.status, !input.dispatched ? "not_recorded" : input.input ?? "unknown", input.noop);
       const event: RelayEvent = commandTurnEvent(turn.declared, outcomeOf, { cleared: input.cleared !== null, seq: input.endedSeq, cursor: null });
       apply(event.kind === "cleared" && input.cleared?.replaced === true ? step(relay, { ...event, replaced: true }) : step(relay, event));
       break;
     }
   }
+  // A clear the Driver confirmed is e whatever the Turn was (A18, R10d): on a pending packet its delivery is no longer pursued.
+  if (turn.kind !== "command" && input.cleared !== null && input.dispatched && !replaced)
+    apply(step(relay, { kind: "cleared", seq: input.endedSeq, ...(input.cleared.replaced ? { replaced: true } : {}) }));
   if (input.settledCheck !== null && !replaced) runCheck(input.settledCheck);
   if (input.unknownTurn && !replaced) apply(step(relay, { kind: "unknown_turn_continued" }));
   return { relay, replaced, deliveries, events, delivery, shown,
     binding: { before, after: relay.sync.kind, nativeEpoch: relay.nativeEpoch, epochFloor: relay.epochFloor, packetsInEpoch: relay.packetsInEpoch, ...(replaced ? { replaced: true } : {}) } };
 }
-/** Whether a check planned on a provisional settlement still holds for the committed one (the same plan, marker for marker). */
-export function samePlan(left: VerifyPlan, right: VerifyPlan): boolean { return JSON.stringify(left) === JSON.stringify(right); }

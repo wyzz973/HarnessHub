@@ -57,8 +57,13 @@ export type RelayEvent =
    */
   | { readonly kind: "carry"; readonly runId: RunId; readonly packet: CarriedPacket; readonly attachOverride: boolean; readonly lateDelivery: boolean;
       readonly resend: { readonly by: "auto" | "user"; readonly of: RunId } | null; readonly retreat?: { readonly firstFromSeq: number | null } }
-  /** b: a content Turn without a packet while nothing is owed (need=∅); `foreign` is F≠∅ (the Session has foreign facts at all). */
-  | { readonly kind: "plain"; readonly foreign: boolean }
+  /**
+   * b: a content Turn without a packet while nothing is owed (need=∅); `foreign` is F≠∅ (the Session has foreign facts at all).
+   * With `retreat`, only on a suspect binding: the user chose the complete packet again (补发完整交接单) and on the prior that
+   * choice moves back to nothing is owed (G068 fix batch, R5), so the input goes as typed and the binding takes that prior's
+   * mark (standing); a mark that is not restorable (legacy) is refused verify_first, as without the choice.
+   */
+  | { readonly kind: "plain"; readonly foreign: boolean; readonly retreat?: { readonly firstFromSeq: number | null } }
   /** n: a content Turn without a packet while facts are owed: only after the user chose `relay.attach:"none"`. */
   | { readonly kind: "alone" }
   /** c: a command Turn whose effect is keep or none (or that did not run). */
@@ -211,10 +216,23 @@ export function admitsWithoutChoice(relay: BindingRelayState, verify: PlanContex
   const sync = relay.sync;
   if (sync.kind !== "suspect") return true;
   if (sync.cause === "legacy" || sync.cause === "marker_absent") return false;
-  if (sync.cause === "unknown_turn" && sync.carried === null) return true;
-  if (verify !== "none" && (sync.carried !== null || sync.mark?.lastPacketId != null)) return true;
+  if (verify !== "none" && (sync.carried !== null || sync.mark?.lastPacketId != null) && !(sync.cause === "unknown_turn" && sync.carried === null)) return true;
+  return settledWithoutCheck(relay, verify) !== null;
+}
+/**
+ * What a suspect binding becomes at its next open when no check there can change it (G068 fix batch, R9a): an unknown Turn
+ * without a packet keeps its mark; with `verify:"none"`, or nothing a check could look for, the table of unchecked suspicion
+ * decides (`uncheckedSuspect`). Null when the open's check decides, when that table leaves the binding suspect (the user's
+ * choice), or for a binding that is not suspect. Admission reads the state it lands on like any other: a pending packet whose
+ * automatic resend is spent asks the user (`delivery_unconfirmed`) before any Run exists.
+ */
+export function settledWithoutCheck(relay: BindingRelayState, verify: PlanContext["verify"]): BindingRelayState | null {
+  const sync = relay.sync;
+  if (sync.kind !== "suspect" || sync.cause === "legacy" || sync.cause === "marker_absent") return null;
+  if (sync.cause === "unknown_turn" && sync.carried === null) return withSync(relay, standing(relay, sync.mark));
+  if (verify !== "none" && (sync.carried !== null || sync.mark?.lastPacketId != null)) return null;
   const outcome = uncheckedSuspect(relay, relay, sync, () => unchanged(relay));
-  return outcome.kind === "applied" && outcome.relay.sync.kind !== "suspect";
+  return outcome.kind === "applied" && outcome.relay.sync.kind !== "suspect" ? outcome.relay : null;
 }
 /**
  * The mark of a binding none of whose packets of this epoch is in its native history any more (§7.2 suspect k, VF1-07):
@@ -339,20 +357,41 @@ export function mayReuseKept(relay: BindingRelayState, verify: "after_turn" | "o
 /** One public fact: a finished, dispatched content Run with its fact seq (its `run.ended` seq, or recovery's) and where it ran. */
 export interface RelayFact { readonly runId: RunId; readonly seq: number; readonly executedOn: ExecutedOn | null }
 export interface Owed { readonly facts: readonly RelayFact[]; readonly origin: boolean }
-/** Whether `fact` is foreign to the binding of `harnessId`/`controlId` in its current epoch (§2: not run there in that epoch). */
-export function foreignTo(fact: RelayFact, harnessId: string, controlId: string, relay: BindingRelayState): boolean {
-  return fact.executedOn === null || fact.executedOn.harnessId !== harnessId || fact.executedOn.controlId !== controlId || fact.executedOn.nativeEpoch !== relay.nativeEpoch;
+/**
+ * The first native epoch a binding's own native session holds (G068 fix batch, R1): a clear raises the epoch in place, on the
+ * same native session (e, or a clear a check or the user confirmed after the fact), while a new native session (l, Claude's
+ * replacement) archives the binding and takes the lineage's next epoch. So the epochs from just after the latest archived
+ * binding of its Harness control up to its own are this native session's. `bindings` are the Session's; an archived binding
+ * without relay state counts as holding every epoch up to the binding's (nothing then carries over).
+ */
+export function heldSince(relay: BindingRelayState, bindings: readonly NativeSessionBinding[], harnessId: string, controlId: string): number {
+  const archived = bindings.filter(binding => binding.status === "archived" && binding.harnessId === harnessId && binding.controlId === controlId);
+  return Math.min(relay.nativeEpoch, Math.max(0, ...archived.map(binding => binding.relay?.nativeEpoch ?? relay.nativeEpoch)) + 1);
+}
+/**
+ * Whether `fact` is foreign to the binding of `harnessId`/`controlId` in its current epoch (§2: not run there in that epoch).
+ * One exception (R1): a Turn that ran on this very native session in the epoch before the current one and after the clear that
+ * ended it (its fact above the floor) is in the history the clear left, so it is not foreign. That happens only when the clear
+ * was confirmed after the fact — a check or the user — since the Turns in between were dispatched while the epoch had not yet
+ * risen; a clear confirmed at its own settlement leaves no such Turn. `since` is `heldSince`: without it (the binding's own
+ * epoch) no earlier epoch counts as this native session's, the conservative reading (a fact may be sent again, never lost).
+ */
+export function foreignTo(fact: RelayFact, harnessId: string, controlId: string, relay: BindingRelayState, since: number = relay.nativeEpoch): boolean {
+  const on = fact.executedOn;
+  if (on === null || on.harnessId !== harnessId || on.controlId !== controlId) return true;
+  if (on.nativeEpoch === relay.nativeEpoch) return false;
+  return !(on.nativeEpoch === relay.nativeEpoch - 1 && on.nativeEpoch >= since && fact.seq > relay.epochFloor);
 }
 /**
  * What the binding still owes (need, §2, §6.3): the foreign facts above max(mark, epochFloor), in seq order, and the history
  * the Session started from (fact seq 0) when its native session does not hold it and nothing at or above 0 is known.
  * `attachOverride` (the user's one-time `relay.attach:"full"`) ignores the floor, which brings back the facts before a
  * clear, the binding's own earlier epochs included (§7.4). A pending binding owes from its prior's mark: the pending
- * packet is not known to be there.
+ * packet is not known to be there. `heldSince` is the binding's `heldSince` (foreignTo).
  */
-export function owed(relay: BindingRelayState, harnessId: string, controlId: string, facts: readonly RelayFact[], options: { readonly originHistory: boolean; readonly attachOverride?: boolean }): Owed {
+export function owed(relay: BindingRelayState, harnessId: string, controlId: string, facts: readonly RelayFact[], options: { readonly originHistory: boolean; readonly attachOverride?: boolean; readonly heldSince?: number }): Owed {
   const mark = markOf(relay.sync)?.throughSeq ?? -1, lower = options.attachOverride === true ? mark : Math.max(mark, relay.epochFloor);
-  return { facts: facts.filter(fact => fact.seq > lower && foreignTo(fact, harnessId, controlId, relay)).sort((left, right) => left.seq - right.seq),
+  return { facts: facts.filter(fact => fact.seq > lower && foreignTo(fact, harnessId, controlId, relay, options.heldSince)).sort((left, right) => left.seq - right.seq),
     origin: options.originHistory && !relay.originIncluded && lower < 0 };
 }
 
@@ -533,6 +572,13 @@ export function step(relay: BindingRelayState, event: RelayEvent): RelayStep {
     case "carry": return carry(relay, event);
     case "plain": {
       if (sync.kind === "pending") return notApplicable("a pending binding owes its packet: a content Turn without a packet is n, after the user chose to send it alone");
+      if (event.retreat !== undefined) {
+        if (sync.kind !== "suspect") return refuse({ code: "invalid", why: "only a suspect binding moves its mark back on the user's choice of the complete packet" });
+        // The complete packet has nothing to carry on the prior it moves back to: the binding stands there, the input goes as typed (R5).
+        const back = markOf(retreatedPrior(relay, event.retreat.firstFromSeq)!);
+        if (!restorable(back)) return refuse({ code: "verify_first", cause: sync.cause });
+        return applied(relay, withSync(relay, standing(relay, back)), [], { verified: "nothing_owed" });
+      }
       if (sync.kind !== "suspect") return unchanged(relay);
       if (sync.cause === "legacy" || sync.cause === "marker_absent") return unchanged(relay, { verified: "nothing_owed" });
       return event.foreign ? refuse({ code: "verify_first", cause: sync.cause }) : unchanged(relay);
@@ -747,9 +793,11 @@ function verified(relay: BindingRelayState, event: Extract<RelayEvent, { kind: "
         if (sync.carried !== null && plan.marker !== null) {
           const result = classified(plan.marker);
           if (result === "present") return advance(sync.carried, plan.marker, false, "recorded");
-          // Absent (or compacted away, which proves no more) goes back to the state before the packet; the next input owes it again.
-          if (result === "absent" || result === "compacted")
-            return applied(relay, { ...withSync(base, sync.carried.prior), reanchor: base.reanchor || result === "compacted" }, refine(plan.marker, result), { verified: "retreated" });
+          // Absent goes back to the state before the packet; the next input owes it again.
+          if (result === "absent") return applied(relay, withSync(base, sync.carried.prior), refine(plan.marker, result), { verified: "retreated" });
+          // Compacted: it was delivered and folded into a summary, so it goes back to pending re-anchored, its automatic resend spent,
+          // like a pending packet found compacted (G068 fix batch, R9c): automatic sends stay within the first and one resend.
+          if (result === "compacted") return applied(relay, { ...withSync(base, backToPending(sync.carried)), reanchor: true }, refine(plan.marker, result), { verified: "restored" });
           // Not seen (unavailable, outside the window): a content Turn deletes nothing before its packet, so the prior still stands
           // and the packet goes back to pending, whatever the prior (2026-11-10).
           return applied(relay, withSync(base, backToPending(sync.carried)), refine(plan.marker, result), { verified: "restored" });
@@ -780,8 +828,8 @@ function verified(relay: BindingRelayState, event: Extract<RelayEvent, { kind: "
         // Not seen (no row to look for, unavailable, outside the window): the markers decide what the binding is without it (S).
         if (result === null || result === "unavailable" || result === "outside_window")
           return carriedUnseen(relay, sync.carried, without === null ? standingIfRestorable(base, sync.mark) : reached(without), rows, undecided);
-        if (without === null) return restorable(sync.mark) ? applied(relay, withSync(base, standing(base, sync.mark)), rows, { verified: "restored" }) : undecided();
-        return without;
+        const settled = without ?? (restorable(sync.mark) ? applied(relay, withSync(base, standing(base, sync.mark)), rows, { verified: "restored" }) : undecided());
+        return result === "compacted" ? carriedFolded(relay, sync.carried, settled) : settled;
       }
       if (plan.markers.length === 0) return restorable(sync.mark) ? applied(relay, withSync(base, standing(base, sync.mark)), [], { verified: "restored" }) : undecided();
       return markers(relay, base, sync.mark, plan.markers, results, plan.firstFromSeq, moved, null);
@@ -814,6 +862,19 @@ function carriedUnseen(relay: BindingRelayState, carried: NonNullable<Carried>, 
     undecided: (rows?: readonly DeliveryChange[]) => RelayStep): RelayStep {
   if (settled === null || !sameLevel(markOf(settled.sync), markOf(carried.prior))) return undecided(rows);
   return applied(relay, withSync(settled, backToPending(carried)), rows, { verified: "restored" });
+}
+/**
+ * A carried packet the check found compacted (G068 fix batch, R9c): it was delivered and folded into a summary. When the markers
+ * leave the binding at the level of the packet's prior, it goes back to pending on the packet re-anchored, its automatic resend
+ * spent — as a pending packet found compacted stays pending — so its facts are not sent again by themselves, beyond the first
+ * send and one automatic resend; the next input's `delivery_unconfirmed` choice settles it. Otherwise (the markers moved the
+ * binding below that level, or left the choice to the user) the markers' outcome stands, as for a packet absent.
+ */
+function carriedFolded(relay: BindingRelayState, carried: NonNullable<Carried>, outcome: RelayStep): RelayStep {
+  if (outcome.kind !== "applied") return outcome;
+  const settled = reached(outcome);
+  if (settled === null || !sameLevel(markOf(settled.sync), markOf(carried.prior))) return outcome;
+  return applied(relay, { ...withSync(settled, backToPending(carried)), reanchor: true }, outcome.deliveries, { verified: "restored" });
 }
 /**
  * A suspect binding with nothing to check (a plan skip{no_marker | unavailable}; the approval agent's decision of 2026-11-10).
@@ -882,7 +943,9 @@ function clearChecked(relay: BindingRelayState, base: BindingRelayState, sync: E
   // A carried packet not seen (no row, unavailable, outside the window): what the chain makes of the binding without it (S)
   // decides whether it goes back to pending (2026-11-10); rules 1, 4 and 5 stand as they are.
   const unseen = sync.carried !== null && (seen === null || seen === "unavailable" || seen === "outside_window");
-  const settle = (outcome: RelayStep): RelayStep => !unseen || outcome.kind === "refused" ? outcome : carriedUnseen(relay, sync.carried!, reached(outcome), rows, tools.undecided);
+  // A carried packet found compacted goes back to pending at its prior's level too, re-anchored (R9c); rules 1, 4 and 5 stand.
+  const settle = (outcome: RelayStep): RelayStep => seen === "compacted" ? carriedFolded(relay, sync.carried!, outcome)
+    : !unseen || outcome.kind === "refused" ? outcome : carriedUnseen(relay, sync.carried!, reached(outcome), rows, tools.undecided);
   if (chain.length > 0 && results.some(result => result === "present" || result === "compacted")) return settle(markers(relay, base, sync.mark, chain, results, plan.firstFromSeq, tools.moved, "restored", rows));
   // Rule 4 needs a compaction ruled out marker by marker: a Driver without compaction evidence cannot tell a marker folded into
   // a summary from one cleared away (the property test's counterexample: a clear that never ran, then /compact). Nor does it
@@ -891,7 +954,7 @@ function clearChecked(relay: BindingRelayState, base: BindingRelayState, sync: E
     return !sync.rewound && chain.every(marker => marker.compactionAtDelivery !== null && !tools.moved(marker)) ? cleared(rows) : tools.undecided(rows);
   if (chain.length === 0) {
     if (unseen) return carriedUnseen(relay, sync.carried!, standingIfRestorable(base, sync.mark), rows, tools.undecided);
-    return restorable(sync.mark) ? applied(relay, withSync(base, standing(base, sync.mark)), rows, { verified: "restored" }) : tools.undecided(rows);
+    return settle(restorable(sync.mark) ? applied(relay, withSync(base, standing(base, sync.mark)), rows, { verified: "restored" }) : tools.undecided(rows));
   }
   return tools.undecided(rows);
 }

@@ -1,6 +1,6 @@
 import { open, readdir, readFile, realpath, stat, type FileHandle } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { MAX_CONTENT_BYTES, type ContentKind, type ControlAttachment } from "../../contracts/content.js";
 import type { BackendResult, CommandClass, ControlEvent, ControlLaunch, ControlOptions, ControlRun, NativeConversationId, NativeModelCatalog, VerifyRequest } from "../../contracts/control.js";
 import { RELAY_POSITION_BYTES, type DeliveryPosition, type MarkerResult, type RelayCapabilities, type VerifyResult } from "../../contracts/relay.js";
@@ -9,7 +9,7 @@ import { AcpControl, refusedRun } from "./acp.js";
 import { CLAUDE_EXPORT as EXPORT, CLAUDE_HIDDEN as HIDDEN, claudeClassify, claudeListedEffect, claudeCommand as commandOf, claudeNativeClassify, relayDeclaration, relayEntries } from "./relay-classify.js";
 import { claudeVendor, slashModelKey } from "./relay-vendor.js";
 import { type TurnText } from "../../contracts/control.js";
-import { authKind, carriesPacket, strip, verifyResult, type UserText } from "./relay-turn.js";
+import { authKind, entryCarries, packetEntry, strip, VERIFY_BUDGET_MS, verifyResult, type UserText } from "./relay-turn.js";
 
 /**
  * Claude Code's relay declaration (ADR-055 §8.1, Claude Code row): two text blocks; no live evidence, a check after the
@@ -27,7 +27,8 @@ export const claudeRelayCapabilities: RelayCapabilities = relayDeclaration({
   delivery: { live: "none", verify: "after_turn", successProvesRecorded: true, lateDelivery: false },
   execution: "process",
   commands: { unlistedSlash: "executed", hidden: relayEntries(HIDDEN), classify: claudeClassify },
-  placement: { parts: "multiple", maxInput: null, pointersAfterUser: false },
+  // Attachments go as ACP blocks after the two text blocks (G069 phase two, approval B8; to be probed).
+  placement: { parts: "multiple", maxInput: null, pointersAfterUser: true },
   window: "session_report",
   fixedPrefix: null,
   cacheTtl: "auth_dependent",
@@ -42,6 +43,11 @@ export const claudeRelayCapabilities: RelayCapabilities = relayDeclaration({
 const MAX_PROJECT_DIRECTORIES = 4096;
 /** A session identity that names a transcript file (`<id>.jsonl`). */
 const SESSION_FILE = /^[A-Za-z0-9-]{1,128}$/u;
+/**
+ * A project directory's name as Claude Code writes one (claude-agent-acp session-index/project-dirs.js encodeProjectPath: every
+ * character but ASCII letters and digits as `-`, a long name cut and followed by `-` and a base-36 hash): never `.` or `..`.
+ */
+const PROJECT_DIRECTORY = /^[A-Za-z0-9-]{1,255}$/u;
 /** How much of a transcript after a delivery position a check reads; the entry it looks for is written first. */
 const TRANSCRIPT_READ_BYTES = 16 * 1024 * 1024;
 /** The CLI flushes its transcript queue every 100 ms (FLUSH_INTERVAL_MS); a check that finds no entry reads once more after this. */
@@ -168,7 +174,8 @@ const SESSION_NOT_FOUND = -32002;
  *
  * Inputs are read as Claude Code reads them (ADR-055 R0d): after leading whitespace, a slash and a command name is a
  * command, listed or not, since Claude Code runs commands its adapter does not list (`/clear`, `/reset` and `/new` clear the
- * native conversation); a slash path is content. The Hub's own `/export` is that command alone, without attachments. A
+ * native conversation); a slash path is content; with attachments every input is content, since the CLI looks for a command
+ * only in the last block, which is then an attachment's (ADR-055, review I6). The Hub's own `/export` is that command alone. A
  * content prompt that ended with end_turn, max_tokens or max_turn_requests, or failed with a model failure's errorKind, was
  * written to the transcript; a prompt refused because the session's stream had ended or the session is unknown (R8 C4),
  * and what this driver refuses or exports itself, never reached Claude (not recorded).
@@ -178,8 +185,8 @@ export class ClaudeControl extends AcpControl {
   private hubExport = false;
   /** The kind of the sign-in the agent last reported (`_auth/status_update`), only the kind. */
   private signedIn: string | null = null;
-  /** The open conversation's transcript, once found or computed: the path and the session it belongs to. */
-  private transcript: { readonly id: NativeConversationId; readonly path: string } | null = null;
+  /** The open conversation's transcript, once found or computed: the path, its project directory and the session it belongs to. */
+  private transcript: { readonly id: NativeConversationId; readonly path: string; readonly project: string } | null = null;
   constructor(private readonly claudeLaunch: ControlLaunch, private readonly claudeOptions: ControlOptions) { super(claudeLaunch, claudeOptions); }
   protected override get vendorHarness(): "claude" { return "claude"; }
   protected override vendorAuthKind(): string | null { return this.signedIn; }
@@ -190,8 +197,8 @@ export class ClaudeControl extends AcpControl {
     if (error.remoteCode === SESSION_NOT_FOUND || error.remoteCode === -32603 && error.remoteMessage === SESSION_ENDED && error.remoteFields === undefined) return "not_recorded";
     return error.remoteCode === -32603 && MODEL_FAILURES.has(error.remoteFields?.errorKind ?? "") ? "recorded" : null;
   }
-  // With attachments `/export` is not the Hub's export (startText sends it to Claude Code), whatever the catalog lists.
-  override classify(text: string, catalog: NativeModelCatalog | null, attachments: readonly ContentKind[] = []): CommandClass { return claudeNativeClassify(text, catalog, attachments, this.hubExport); }
+  // With attachments every input is content (startText sends it to Claude Code as it is), whatever the catalog lists.
+  override classify(text: string, catalog: NativeModelCatalog | null, attachments: readonly ContentKind[] = []): CommandClass { return claudeNativeClassify(text, catalog, attachments); }
   protected override get sessionMeta(): Readonly<Record<string, unknown>> { return SESSION_META; }
   protected override extensionNotification(method: string, params: Readonly<Record<string, unknown>>): boolean {
     if (method !== AUTH_STATUS) return false;
@@ -205,76 +212,94 @@ export class ClaudeControl extends AcpControl {
    * The transcript of this session (§8.1: the position is its length before the prompt): the path found before, the one the
    * workspace's project directory names, else the first project directory that holds `<id>.jsonl`, as claude-agent-acp itself
    * looks it up (resumed-session.js findTranscript). A session the CLI has not written yet has its computed path and size 0;
-   * null when no path can be told.
+   * null when no path can be told. `stored` is the path relative to the configuration directory's `projects/`, which a
+   * position keeps (transcriptFile reads it back only there). Rejects on a file system error other than a missing file.
    */
-  private async locateTranscript(id: NativeConversationId): Promise<{ readonly path: string; readonly size: number } | null> {
+  private async locateTranscript(id: NativeConversationId): Promise<{ readonly path: string; readonly stored: string; readonly size: number } | null> {
     if (!SESSION_FILE.test(id)) return null;
-    const projects = join(this.configDir, "projects"), cwd = this.opened?.cwd;
+    const projects = join(this.configDir, "projects"), cwd = this.opened?.cwd, file = id + ".jsonl";
     const named = cwd === undefined ? null : projectName(await realpath(cwd).catch(() => cwd));
-    const computed = named === null ? null : join(projects, named, id + ".jsonl");
     const sized = async (path: string): Promise<number | null> => {
       try { const info = await stat(path); return info.isFile() ? info.size : null; }
       catch (error) { if (error !== null && typeof error === "object" && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR")) return null; throw error; }
     };
-    for (const path of [this.transcript?.id === id ? this.transcript.path : null, computed]) {
-      if (path === null) continue;
-      const size = await sized(path);
-      if (size !== null) { this.transcript = { id, path }; return { path, size }; }
+    const found = (project: string, size: number) => { const path = join(projects, project, file); this.transcript = { id, path, project }; return { path, stored: project + "/" + file, size }; };
+    for (const project of [this.transcript?.id === id ? this.transcript.project : null, named]) {
+      if (project === null) continue;
+      const size = await sized(join(projects, project, file));
+      if (size !== null) return found(project, size);
     }
     let entries: readonly { readonly name: string; isDirectory(): boolean }[] = [];
     try { entries = (await readdir(projects, { withFileTypes: true })).slice(0, MAX_PROJECT_DIRECTORIES); } catch { entries = []; }
     for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const path = join(projects, entry.name, id + ".jsonl"), size = await sized(path);
-      if (size !== null) { this.transcript = { id, path }; return { path, size }; }
+      if (!entry.isDirectory() || !PROJECT_DIRECTORY.test(entry.name)) continue;
+      const size = await sized(join(projects, entry.name, file));
+      if (size !== null) return found(entry.name, size);
     }
-    return computed === null ? null : { path: computed, size: 0 };
+    return named === null ? null : { path: join(projects, named, file), stored: named + "/" + file, size: 0 };
+  }
+  /**
+   * A position's transcript as a file under this configuration directory's `projects/`: the stored `<project>/<id>.jsonl` of
+   * this session, one directory deep, nothing that leaves `projects/`; null for any other path (an absolute one included).
+   */
+  private transcriptFile(stored: string, id: NativeConversationId): string | null {
+    const parts = stored.split("/");
+    return parts.length === 2 && PROJECT_DIRECTORY.test(parts[0]!) && parts[1] === id + ".jsonl" ? join(this.configDir, "projects", parts[0]!, parts[1]) : null;
   }
   /**
    * Where this session's transcript stands before a Turn's input (ADR-055 §8.1, F20): its byte length, read without
-   * changing it; `none` when no transcript path can be told (a workspace whose project directory name the CLI hashes, before
-   * the CLI wrote the session).
+   * changing it, and its path relative to the configuration directory's `projects/`; `none` when no transcript path can be
+   * told (a workspace whose project directory name the CLI hashes, before the CLI wrote the session) or the file system
+   * cannot tell its size.
    */
   async deliveryPosition(id: NativeConversationId): Promise<DeliveryPosition> {
     this.assertOwned(id);
-    const found = await this.locateTranscript(id);
-    return found === null || Buffer.byteLength(JSON.stringify({ kind: "file_offset", path: found.path, bytes: found.size })) > RELAY_POSITION_BYTES ? { kind: "none" } : { kind: "file_offset", path: found.path, bytes: found.size };
+    const found = await this.locateTranscript(id).catch(() => null);
+    if (found === null) return { kind: "none" };
+    const position = { kind: "file_offset", path: found.stored, bytes: found.size } as const;
+    return Buffer.byteLength(JSON.stringify(position)) > RELAY_POSITION_BYTES ? { kind: "none" } : position;
   }
   /**
-   * Looks for each packet's title line in the first user prompts the client sent after its position in this session's
-   * transcript (ADR-055 §7.1 E2, §8.1): present when one of them carries it, compacted when a compaction followed that entry,
-   * absent when the transcript after the position was read to its end and none does; unavailable when the transcript cannot
-   * be read, is not this session's (`<id>.jsonl`, the sessionId of its lines), was rewritten before the position (shorter, or
-   * the position is no line boundary any more), or is longer after it than a check reads. An entry not found is looked for
-   * once more after the CLI's flush interval. historyEmpty and the compaction cursor are not given: only the part after the
-   * positions is read, and Claude Code's compactions are told by the Turn's events.
+   * Looks for each packet in the user prompts the client sent after its position in this session's transcript (ADR-055 §7.1
+   * E2, §8.1): the first of them with its title line, a later one only with its title and end lines (packetEntry); present
+   * when one does, compacted when a compaction followed that entry, absent when the transcript after the position was read to
+   * its end and none does. unavailable when no client prompt follows the position at all (the Turn was written elsewhere:
+   * the adapter can replace its private session, a plan approved with a fresh context among them), when the transcript cannot
+   * be read, is not this session's (`<id>.jsonl` under this configuration directory, the sessionId of its lines), was
+   * rewritten before the position (shorter, or the position is no line boundary any more), is longer after it than a check
+   * reads, or the check ran out of its time. An entry not found is looked for once more after the CLI's flush interval.
+   * historyEmpty and the compaction cursor are not given: only the part after the positions is read, and Claude Code's
+   * compactions are told by the Turn's events.
    */
   async verifyDelivered(id: NativeConversationId, request: VerifyRequest): Promise<VerifyResult> {
     const started = Date.now();
     this.assertOwned(id);
-    let checked = await this.checkTranscript(id, request);
-    if (checked.again) { await new Promise(resolve => setTimeout(resolve, TRANSCRIPT_FLUSH_MS)); checked = await this.checkTranscript(id, request); }
+    let checked = await this.checkTranscript(id, request, started);
+    if (checked.again && Date.now() - started + TRANSCRIPT_FLUSH_MS < VERIFY_BUDGET_MS) { await new Promise(resolve => setTimeout(resolve, TRANSCRIPT_FLUSH_MS)); checked = await this.checkTranscript(id, request, started); }
     return verifyResult(request, checked.results, started, { foreignAfterLast: checked.foreign });
   }
   /** One reading of the transcript for a check; `again` when an entry may still be in the CLI's write queue (absent, or no file yet). */
-  private async checkTranscript(id: NativeConversationId, request: VerifyRequest): Promise<{ readonly results: readonly MarkerResult[]; readonly foreign: number | null; readonly again: boolean }> {
+  private async checkTranscript(id: NativeConversationId, request: VerifyRequest, started: number): Promise<{ readonly results: readonly MarkerResult[]; readonly foreign: number | null; readonly again: boolean }> {
     const read = new Map<string, Awaited<ReturnType<typeof readTranscript>>>();
     const results: MarkerResult[] = [];
     let foreign: number | null = null, again = false;
     for (const [index, marker] of request.markers.entries()) {
       const position = marker.position;
-      if (position.kind !== "file_offset" || basename(position.path) !== id + ".jsonl") { results.push("unavailable"); continue; }
+      let path = position.kind === "file_offset" ? this.transcriptFile(position.path, id) : null;
+      if (path === null || position.kind !== "file_offset" || Date.now() - started >= VERIFY_BUDGET_MS) { results.push("unavailable"); continue; }
       // A session the CLI had not written at delivery may have been written where the adapter, not the computation, found it.
-      let path = position.path;
       if (position.bytes === 0) { const found = await this.locateTranscript(id).catch(() => null); if (found !== null && found.size > 0) path = found.path; }
       const key = path + "\0" + position.bytes;
       if (!read.has(key)) read.set(key, await readTranscript(path, position.bytes, id));
       const tail = read.get(key)!;
       if (tail === null) { again ||= position.bytes === 0; results.push("unavailable"); continue; }
-      const entry = tail.lines.findIndex(line => clientEntry(line) && texts((line.message as Line | undefined)?.content).some(text => carriesPacket(text, marker.packetId)));
+      const clients = tail.lines.flatMap((line, at) => clientEntry(line) ? [{ at, texts: texts((line.message as Line | undefined)?.content) }] : []);
+      // Nothing the client wrote follows the position: this Turn's prompt is not in this file, which says nothing of the history.
+      if (!clients.length) { again = true; results.push("unavailable"); continue; }
+      const entry = packetEntry(clients, (client, whole) => client.texts.some(text => entryCarries(text, marker.packetId, whole)));
       if (entry < 0) { again = true; results.push(tail.complete ? "absent" : "unavailable"); continue; }
-      results.push(tail.lines.slice(entry + 1).some(compactionLine) ? "compacted" : "present");
-      if (index === request.markers.length - 1 && tail.complete) foreign = tail.lines.slice(entry + 1).filter(clientEntry).length;
+      results.push(tail.lines.slice(clients[entry]!.at + 1).some(compactionLine) ? "compacted" : "present");
+      if (index === request.markers.length - 1 && tail.complete) foreign = clients.length - entry - 1;
     }
     return { results, foreign, again };
   }
@@ -287,20 +312,17 @@ export class ClaudeControl extends AcpControl {
   /**
    * Claude Code's `/clear` (and `/reset`, `/new`) as §8.1 has the Driver do it: the CLI's own clear starts a new conversation
    * that claude-agent-acp does not adopt (the next Turn resumes the old one by its ACP identity, acp-agent.js:6224-6246), so
-   * nothing is sent; the driver opens a new session in place of this one (session/new, same workspace, model and options)
-   * and reports it: the native history is cleared, and the new session's identity is the recovery reference. The command never
-   * reached Claude (not recorded). A session that cannot be opened leaves the old one, and its history, as they were.
+   * nothing is sent. The driver gives up this session instead (abandonConversation: closed when the adapter declares
+   * session/close; its transcript stays on disk, and Claude Code can still resume it) and reports the history cleared with no
+   * checkpoint: the next Turn opens a new native session. None is opened ahead, since a session never prompted cannot be
+   * resumed by another process (claude-agent-acp 0.99.1 answers sessionNotFound, acp-agent.js:2491-2499, 8774-8779,
+   * 9255-9262). The command never reached Claude (not recorded).
    */
   private async syntheticClear(onEvent: (event: ControlEvent) => void): Promise<BackendResult> {
-    try {
-      const replaced = await this.replaceConversation();
-      this.transcript = null;
-      onEvent({ type: "diagnostic", message: "Claude Code 的会话已换成一个新会话（HarnessHub 代为执行 /clear）" });
-      return { status: "completed", reason: "cleared", input: "not_recorded", native: { cleared: true, replaced: { checkpoint: replaced } } };
-    } catch (error) {
-      const code = error instanceof ControlError ? error.code : "NATIVE_CLEAR_FAILED";
-      return { status: "failed", reason: "clear_failed", error: { code, message: "没能为 Claude Code 开始新会话，原来的会话和它的历史保持不变。" }, input: "not_recorded" };
-    }
+    await this.abandonConversation();
+    this.transcript = null;
+    onEvent({ type: "diagnostic", message: "HarnessHub 代为执行了 /clear：这条命令没有发给 Claude Code，原来的会话已放下（仍可在 Claude Code 里用 --resume 打开），下一条消息会在新会话里开始。" });
+    return { status: "completed", reason: "cleared", input: "not_recorded", native: { cleared: true, replaced: { checkpoint: null } } };
   }
   override async models(): Promise<NativeModelCatalog> {
     const catalog = await super.models(), commands = (catalog.commands ?? []).filter(command => command.name !== REMOTE_CONTROL);
@@ -308,15 +330,18 @@ export class ClaudeControl extends AcpControl {
     return { ...catalog, commands: (this.hubExport ? [...commands, EXPORT] : commands).map(command => ({ ...command, contextEffect: command.contextEffect ?? claudeListedEffect(command.name) ?? "keep" })), hiddenCommands: HIDDEN };
   }
   override async startText(id: NativeConversationId, turn: TurnText, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
-    // The same reading as classify(): the command name and arguments of the user's words after leading whitespace. A command
-    // never carries a packet (the base placement leaves it out), so the commands the driver answers itself read the words alone.
-    const named = commandOf(typeof turn === "string" ? turn : turn.user);
+    // A relay Turn whose words read as a command is refused before anything below runs (the clear and the export included).
+    const refusal = this.relayRefused(turn, attachments.map(file => file.kind));
+    if (refusal !== null) return refusal;
+    // The same reading as classify(): the command name and arguments of the user's words after leading whitespace, and none
+    // with attachments: the input is then sent as it is, since the CLI looks for a command only in the last block (CLI 2.1.312
+    // `Aj`), an attachment's.
+    const named = attachments.length ? null : commandOf(typeof turn === "string" ? turn : turn.user);
     if (named?.name === REMOTE_CONTROL) return refusedRun(REMOTE_CONTROL_REFUSED);
-    if (this.hubExport && !attachments.length && named?.name === EXPORT.name && named.args === "") {
+    if (this.hubExport && named?.name === EXPORT.name && named.args === "") {
       return { result: this.exportTranscript(id, onEvent), requestStop: () => Promise.reject(new ControlError("INVALID_STATE", "an export has no native turn to stop")) };
     }
-    // With attachments the input is sent as it is: the CLI looks for a command only in the last block (CLI 2.1.312 `Aj`).
-    if (named !== null && CLEARS.has(named.name) && !attachments.length) {
+    if (named !== null && CLEARS.has(named.name)) {
       this.assertOwned(id);
       if (this.promptActive) throw new ControlError("INVALID_STATE", "a prompt is already active");
       return { result: this.syntheticClear(onEvent), requestStop: () => Promise.reject(new ControlError("INVALID_STATE", "a clear the driver runs itself has no native turn to stop")) };

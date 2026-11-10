@@ -87,35 +87,32 @@ test("G069-C01 Hermes's file pointers follow the user's words (pointersAfterUser
   assert.deepEqual((await prompts(other))[0], [relayTurn(ID_A, "继续").relay.body + "\n\n继续"]);
 });
 
-test("G069-C01 a command's words go alone without the packet (Claude, Hermes with a full-width space, Codex); dsh's slash input is text and carries it; Hermes /queue and /steer carry it in their arguments", { timeout: 60000 }, async t => {
-  const alone = async (harness: Harness, words: string, settings: Record<string, string> = {}) => {
+test("G069-C01 a relay Turn read as a command is refused whole (G069-F1, relay-driver-fixes); what the native side reads as text carries the packet: dsh's slash input, Codex's indented `/compact`; Hermes /queue and /steer carry it in their arguments", { timeout: 60000 }, async t => {
+  const relayed = async (harness: Harness, words: string, settings: Record<string, string> = {}) => {
     const peer = await peerRoot(t, settings), control = driver(t, harness, peer);
     await control.initialize(); const id = await control.open(peer.workspace);
-    const { events } = await run(control, id, relayTurn(ID_A, words, false));
-    return { peer, events };
+    const { result, events } = await run(control, id, relayTurn(ID_A, words, false));
+    return { peer, result, events };
   };
-  for (const [harness, words] of [["claude", "/compact keep the tests"], ["hermes", "　/compress"], ["opencode", "/compact"], ["openclaw", "/new"]] as const) {
-    const { peer, events } = await alone(harness, words, harness === "openclaw" ? { RELAY_COMMANDS: JSON.stringify([{ name: "new", description: "new" }]) } : {});
-    assert.deepEqual((await prompts(peer))[0], [words], harness + ": the command alone");
-    assert.ok(events.some(event => event.type === "diagnostic" && event.message.includes("交接单没有随这条输入发出")), harness + ": and says so");
+  for (const [harness, words] of [["claude", "/compact keep the tests"], ["hermes", "　/compress"], ["opencode", "/compact"]] as const) {
+    const { peer, result, events } = await relayed(harness, words);
+    assert.deepEqual([result.error?.code, result.input, await prompts(peer), events], ["RELAY_PREPARE_FAILED", "not_recorded", [], []], harness + ": refused, nothing sent");
   }
   // The invalid sample: dsh has no commands, so its `/clear` is text and carries the packet.
-  const dsh = await alone("dsh", "/clear");
+  const dsh = await relayed("dsh", "/clear");
   assert.equal((await prompts(dsh.peer))[0]!.length, 2);
   // Hermes /queue and /steer submit their arguments as a prompt (acceptsRelay): the command word, the packet, the arguments.
   for (const word of ["queue", "q", "steer"]) {
-    const { peer } = await alone("hermes", "/" + word + " 修好测试");
+    const { peer } = await relayed("hermes", "/" + word + " 修好测试");
     const [parts] = await prompts(peer), body = relayTurn(ID_A, "x", false).relay.body;
     assert.deepEqual(parts, ["/" + word, body + "\n\n", "修好测试"], word);
     assert.equal(titledPacket(String(Object.values((await peer.native()).sessions)[0]!.entries[0]!.text).replace(/^\/\w+\n/u, "")), ID_A);
   }
-  const bare = await alone("hermes", "/queue");
-  assert.deepEqual((await prompts(bare.peer))[0], ["/queue"], "a bare /queue only answers its usage: no packet");
-  // Codex: a thread operation goes alone; a leading space makes `/compact` text, which carries the packet.
+  // Codex: a thread operation is refused; a leading space makes `/compact` text, which carries the packet.
   const codex = await peerRoot(t), control = driver(t, "codex", codex); await control.initialize(); const thread = await control.open(codex.workspace);
   const compact = await run(control, thread, relayTurn(ID_A, "/compact", false));
-  assert.ok(compact.events.some(event => event.type === "diagnostic" && event.message.includes("交接单没有随这条输入发出")));
-  assert.equal((await codex.sent()).filter(line => line.method === "turn/start").length, 0, "no turn carried the packet");
+  assert.deepEqual([compact.result.error?.code, compact.events], ["RELAY_PREPARE_FAILED", []]);
+  assert.equal((await codex.sent()).filter(line => line.method === "turn/start" || line.method === "thread/compact/start").length, 0, "nothing was sent");
   await run(control, thread, relayTurn(ID_A, " /compact", false));
   const [spaced] = (await codex.sent()).filter(line => line.method === "turn/start");
   assert.equal(titledPacket((spaced!.params as { input: { text: string }[] }).input[0]!.text), ID_A);

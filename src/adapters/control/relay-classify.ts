@@ -94,27 +94,25 @@ export function claudeCommand(text: string): { readonly name: string; readonly a
 }
 /**
  * Claude Code's reading: after leading whitespace, a slash and a command name is a command, listed or not, since Claude
- * Code runs commands its adapter does not list (an unlisted one has an unknown effect); a slash path is content. With
- * attachments `/export` is not the Hub's export (`hubExport`: the Hub offers its own, which goes only without them), so the
- * catalog's entry for it is not read.
+ * Code runs commands its adapter does not list (an unlisted one has an unknown effect); a slash path is content. With any
+ * attachment every input is content: the prompt's blocks go to the CLI in order (claude-agent-acp 0.99.1 promptToClaude,
+ * acp-agent.js:10316, a file as a link text or the file's context after the words, an image as an image block), and the CLI
+ * looks for a command only in the last block (CLI 2.1.312 `Aj`), which is then the attachment's. The adapter's own
+ * `/remote-control` reads a prompt of one text block only (acp-agent.js:191-205).
  */
-export function claudeReading(text: string, commands: CommandLookup | null, attachments: readonly ContentKind[], hubExport: boolean): CommandClass {
-  const named = claudeCommand(text);
+export function claudeReading(text: string, commands: CommandLookup | null, attachments: readonly ContentKind[]): CommandClass {
+  const named = attachments.length ? null : claudeCommand(text);
   if (named === null) return { kind: "content" };
   const { name, args } = named, hidden = CLAUDE_HIDDEN.find(command => command.name === name);
   if (hidden !== undefined) return { kind: "command", name, args, effect: hidden.contextEffect ?? "unknown" };
   if (commands === null) return { kind: "possible_command", name };
-  const listed = attachments.length && hubExport && name === CLAUDE_EXPORT.name ? undefined : commands(name, args);
+  const listed = commands(name, args);
   return { kind: "command", name, args, effect: listed === undefined ? "unknown" : listed.effect ?? claudeListedEffect(name) ?? "keep", ...accepts(listed) };
 }
-/**
- * The declaration reads as if the Hub offered its own `/export`: a catalog entry named export is then not read for an input
- * with attachments, whose effect stays unknown (the more cautious of the two readings).
- */
-export const claudeClassify: RelayClassify = (text, catalog, attachments = []) => claudeReading(text, catalog === null ? null : relayCommands(catalog), attachments, true);
+export const claudeClassify: RelayClassify = (text, catalog, attachments = []) => claudeReading(text, catalog === null ? null : relayCommands(catalog), attachments);
 /** HarnessControl.classify of the Claude driver. */
-export function claudeNativeClassify(text: string, catalog: NativeModelCatalog | null, attachments: readonly ContentKind[], hubExport: boolean): CommandClass {
-  return nativeReading(claudeReading(text, lookupOf(catalog), attachments, hubExport));
+export function claudeNativeClassify(text: string, catalog: NativeModelCatalog | null, attachments: readonly ContentKind[]): CommandClass {
+  return nativeReading(claudeReading(text, lookupOf(catalog), attachments));
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -223,7 +221,10 @@ export const HERMES_REGISTRY: ReadonlyMap<string, string> = new Map(("start new,
  */
 export const HERMES_EFFECTS: Readonly<Record<string, ContextEffect>> = { new: "clear", clear: "clear", compress: "compact", undo: "rewind", retry: "rewind", steer: "keep", queue: "keep",
   help: "none", model: "none", tools: "none", context: "none", usage: "none", status: "none", version: "none", title: "none", discard: "none", branch: "none", export: "none" };
-/** Registry commands that submit their text as a prompt (gateway_commands.py, RT5-16), which can carry relay content. */
+/**
+ * Registry commands that submit their text as a prompt (gateway_commands.py, RT5-16), which can carry relay content; without
+ * text they only answer their usage and submit nothing, so a bare one takes none.
+ */
 const HERMES_PROMPTING: ReadonlySet<string> = new Set(["queue", "steer"]);
 /**
  * `/compress` flags that leave the session as it is, in any case (hermes_cli/partial_compress.py `extract_compress_flags`):
@@ -264,7 +265,7 @@ export function hermesReading(text: string, commands: CommandLookup | null, atta
   const named = hermesReadsSlash(attachments) ? hermesCommand(text) : null;
   if (named === null) return { kind: "content" };
   const name = HERMES_REGISTRY.get(named.word.toLowerCase());
-  if (name !== undefined) return { kind: "command", name, args: named.args, effect: hermesEffect(name, named.args), ...(HERMES_PROMPTING.has(name) ? { acceptsRelay: true } : {}) };
+  if (name !== undefined) return { kind: "command", name, args: named.args, effect: hermesEffect(name, named.args), ...(HERMES_PROMPTING.has(name) && named.args !== "" ? { acceptsRelay: true } : {}) };
   // A word outside the registry is a command only when this Hermes announced it.
   if (commands === null) return { kind: "possible_command", name: named.word };
   const listed = commands(named.word, named.args);

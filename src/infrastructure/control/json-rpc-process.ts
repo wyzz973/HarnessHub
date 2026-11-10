@@ -113,6 +113,15 @@ interface Pending {
   readonly reject: (error: Error) => void;
   readonly timer: ReturnType<typeof setTimeout>;
 }
+/**
+ * What a request's deadline does (JsonRpcProcess.request): "abort" fails the connection (every caller's default: a peer that
+ * misses a deadline is not trusted further); "reject" gives up that one request only, for a read whose answer is optional (a
+ * relay check, a native title, ADR-055 C6): it rejects with REQUEST_TIMEOUT, the connection stays usable, and the peer's late
+ * answer to it is dropped when it comes.
+ */
+export type RequestDeadline = "abort" | "reject";
+/** Requests given up at their deadline whose answers may still come; past this many outstanding, a deadline fails the connection. */
+const MAX_ABANDONED_REQUESTS = 64;
 export function object(value: unknown, label: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value))
     throw new ControlError("INVALID_PROTOCOL", `${label} must be an object`);
@@ -154,6 +163,8 @@ export class JsonRpcProcess {
   private child: ChildProcessWithoutNullStreams | null = null;
   private pid: number | null = null;
   private readonly pending = new Map<string, Pending>();
+  /** Requests given up at a "reject" deadline: their late answers are dropped instead of failing the connection. */
+  private readonly abandoned = new Set<string>();
   private readonly incomingIds = new Set<string>();
   private input = Buffer.alloc(0);
   private sequence = 0;
@@ -203,16 +214,26 @@ export class JsonRpcProcess {
   /** The process group this connection's program leads (spawned detached, so its pid); null before it started. */
   get processGroup(): number | null { return this.pid; }
 
-  request(method: string, params: unknown, timeoutMs = this.options.requestTimeoutMs): Promise<unknown> {
+  /**
+   * One request with its own deadline (the connection's request timeout by default). At the deadline the connection fails
+   * (`deadline` "abort", the default), or only this request is given up ("reject", see RequestDeadline).
+   */
+  request(method: string, params: unknown, timeoutMs = this.options.requestTimeoutMs, deadline: RequestDeadline = "abort"): Promise<unknown> {
     if (this.failed || this.closing) return Promise.reject(this.failed ?? new ControlError("CLOSED", "connection is closed"));
     if (this.pending.size >= 128) return Promise.reject(new ControlError("REQUEST_LIMIT", "too many pending requests"));
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647)
       return Promise.reject(new ControlError("INVALID_INPUT", "request timeout must be a positive bounded integer"));
     this.start();
-    const requestId = ++this.sequence;
+    const requestId = ++this.sequence, requestKey = key(requestId);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => this.abort(new ControlError("REQUEST_TIMEOUT", `${method} exceeded its deadline`)), timeoutMs);
-      this.pending.set(key(requestId), { resolve, reject, timer });
+      const timer = setTimeout(() => {
+        const expired = new ControlError("REQUEST_TIMEOUT", `${method} exceeded its deadline`);
+        if (deadline === "abort" || this.abandoned.size >= MAX_ABANDONED_REQUESTS) { this.abort(expired); return; }
+        // Only this request is given up; its answer, should it still come, is dropped by dispatch().
+        if (!this.pending.delete(requestKey)) return;
+        this.abandoned.add(requestKey); reject(expired);
+      }, timeoutMs);
+      this.pending.set(requestKey, { resolve, reject, timer });
       void this.write({ id: requestId, method, params }).catch(error => this.abort(errorFrom(error)));
     });
   }
@@ -369,6 +390,8 @@ export class JsonRpcProcess {
     }
     const responseId = id(message.id), responseKey = key(responseId);
     const pending = this.pending.get(responseKey);
+    // The late answer to a request given up at its deadline: nobody waits for it any more.
+    if (!pending && this.abandoned.delete(responseKey)) return;
     if (!pending) throw new ControlError("UNKNOWN_RESPONSE", "response has no pending request");
     if (("result" in message) === ("error" in message)) throw new ControlError("INVALID_PROTOCOL", "response must contain exactly one result or error");
     if ("error" in message) {

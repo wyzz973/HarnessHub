@@ -41,13 +41,17 @@ const ENDPOINT = ["api.deepseek.com", "user_config", false] as const;
 /** The cells §8.1 writes for no Harness: inferred for all six. */
 const COMMON = ["fixedPrefix", "hostPathRead", "sessionTools", "window"] as const;
 
-/** ADR-055 §8.1, row by row (relay-architecture.md, the table "七家逐家的组合与回退"; WorkBuddy is not connected). */
+/**
+ * ADR-055 §8.1, row by row (relay-architecture.md, the table "七家逐家的组合与回退"; WorkBuddy is not connected).
+ * `placement.pointersAfterUser` is true for all six: what each Driver's placement does (attachments, as blocks, items or Hub's
+ * pointers, follow the user's words; the approval agent's B8 on db39cbd), §8.1 writing it only for Hermes; still to be probed.
+ */
 const TABLE: Readonly<Record<Harness, Cells>> = {
   claude: {
     plain: { ...unprobed, delivery: { live: "none", verify: "after_turn", successProvesRecorded: true, lateDelivery: false }, execution: "process",
       commands: { unlistedSlash: "executed", hidden: [["clear", "clear"], ["reset", "clear"], ["new", "clear"], ["remote-control", "none"]] },
       // title: §8.1 writes "set" (`_session/rename`); claude-agent-acp 0.99.1 routes it only for a JetBrains AIR client (G069 phase two).
-      placement: { parts: "multiple", maxInput: null, pointersAfterUser: false }, window: "session_report", cacheTtl: "auth_dependent", compactionEvidence: "event", title: "none" },
+      placement: { parts: "multiple", maxInput: null, pointersAfterUser: true }, window: "session_report", cacheTtl: "auth_dependent", compactionEvidence: "event", title: "none" },
     normalizeModel: slashModelKey,
     classify: [["  /clear", null, ["command", "clear", "clear", ""]], ["/reset", null, ["command", "reset", "clear", ""]], ["/remote-control", null, ["command", "remote-control", "none", ""]],
       ["/Users/me/notes.md", null, ["content"]], ["/my-skill", listed(["compact", "compact"]), ["command", "my-skill", "unknown", ""]], ["/compact", listed(["compact", "compact"]), ["command", "compact", "compact", ""]],
@@ -58,7 +62,7 @@ const TABLE: Readonly<Record<Harness, Cells>> = {
   },
   codex: {
     plain: { ...unprobed, delivery: { live: "recorded_event", verify: "after_turn", successProvesRecorded: false, lateDelivery: false }, execution: "process",
-      commands: { unlistedSlash: "text", hidden: [] }, placement: { parts: "single", maxInput: { unit: "chars", limit: 1_048_576 }, pointersAfterUser: false },
+      commands: { unlistedSlash: "text", hidden: [] }, placement: { parts: "single", maxInput: { unit: "chars", limit: 1_048_576 }, pointersAfterUser: true },
       window: "turn_report", cacheTtl: "30m", compactionEvidence: "event", title: "set" },
     normalizeModel: slashModelKey,
     classify: [["/compact", null, ["command", "compact", "compact", ""]], ["/export", null, ["command", "export", "none", ""]], [" /compact", null, ["content"]],
@@ -70,7 +74,7 @@ const TABLE: Readonly<Record<Harness, Cells>> = {
   },
   opencode: {
     plain: { ...unprobed, delivery: { live: "none", verify: "none", successProvesRecorded: true, lateDelivery: true }, execution: "process",
-      commands: { unlistedSlash: "text", hidden: [] }, placement: { parts: "multiple", maxInput: null, pointersAfterUser: false },
+      commands: { unlistedSlash: "text", hidden: [] }, placement: { parts: "multiple", maxInput: null, pointersAfterUser: true },
       window: "session_report", cacheTtl: "unknown", compactionEvidence: "event", title: "none" },
     normalizeModel: slashModelKey,
     classify: [["/compact", null, ["command", "compact", "compact", ""]], ["/review now", listed(["review", "unknown"]), ["command", "review", "keep", "now"]], ["/nope", listed(["review", "keep"]), ["content"]]],
@@ -81,7 +85,7 @@ const TABLE: Readonly<Record<Harness, Cells>> = {
   },
   dsh: {
     plain: { ...unprobed, delivery: { live: "agent_output", verify: "none", successProvesRecorded: false, lateDelivery: false }, execution: "process",
-      commands: { unlistedSlash: "text", hidden: [] }, placement: { parts: "multiple", maxInput: null, pointersAfterUser: false },
+      commands: { unlistedSlash: "text", hidden: [] }, placement: { parts: "multiple", maxInput: null, pointersAfterUser: true },
       window: "session_report", cacheTtl: "hours", compactionEvidence: "none", title: "none" },
     normalizeModel: slashModelKey,
     classify: [["/clear", null, ["content"]], ["/compact", listed(["compact", "compact"]), ["content"]], ["　/clear", null, ["content"]]],
@@ -102,7 +106,7 @@ const TABLE: Readonly<Record<Harness, Cells>> = {
   },
   openclaw: {
     plain: { ...unprobed, delivery: { live: "none", verify: "after_turn", successProvesRecorded: false, lateDelivery: true }, execution: "gateway",
-      commands: { unlistedSlash: "text", hidden: [] }, placement: { parts: "single", maxInput: { unit: "bytes", limit: 2_097_152 }, pointersAfterUser: false },
+      commands: { unlistedSlash: "text", hidden: [] }, placement: { parts: "single", maxInput: { unit: "bytes", limit: 2_097_152 }, pointersAfterUser: true },
       window: "session_report", cacheTtl: "5m", compactionEvidence: "none", title: "none" },
     normalizeModel: slashModelKey,
     classify: (() => { const bridge = listed(["new", "clear"], ["reset", "clear"], ["compact", "compact"], ["stop", "none"], ["restart", "unknown"], ["bash", "unknown"]);

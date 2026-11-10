@@ -266,13 +266,17 @@ function retainedProcess(value: unknown): RetainedProcess {
 }
 function nativeBinding(value: unknown): NativeSessionBinding {
   const item = record(value, "native binding");
-  keys(item, ["harnessId", "controlId", "checkpoint", "throughRunId", "status", "observed", "relay"], "native binding");
+  keys(item, ["harnessId", "controlId", "checkpoint", "throughRunId", "status", "observed", "relay", "opensNew"], "native binding");
   const harnessId = text(item.harnessId, "native Harness", 96), controlId = text(item.controlId, "native control", 96);
   if (![harnessId, controlId].every(id => /^[a-z][a-z0-9-]*$/u.test(id)) || !["ready", "unconfirmed", "archived", "fork-pending", "forking"].includes(String(item.status))) throw new SessionError("INVALID_DATA", "invalid native binding identity or state");
   const checkpoint = text(item.checkpoint, "native checkpoint", 8192);
   if (/[\r\n]/u.test(checkpoint)) throw new SessionError("INVALID_DATA", "invalid native checkpoint");
+  // v13: a binding whose next Turn opens a new native session (ADR-055 §7.5, R4) is ready and has no native position yet.
+  if (item.opensNew !== undefined && (item.opensNew !== true || item.status !== "ready" && item.status !== "archived" || item.throughRunId !== null || item.relay === undefined))
+    throw new SessionError("INVALID_DATA", "a binding that opens a new native session is ready, without a native position, with its relay state");
   return { harnessId, controlId, checkpoint, throughRunId: item.throughRunId === null ? null : runId(item.throughRunId), status: item.status as NativeSessionBinding["status"],
-    ...(item.observed === undefined ? {} : { observed: parseNativeConfiguration(item.observed) }), ...(item.relay === undefined ? {} : { relay: parseBindingRelayState(item.relay) }) };
+    ...(item.observed === undefined ? {} : { observed: parseNativeConfiguration(item.observed) }), ...(item.relay === undefined ? {} : { relay: parseBindingRelayState(item.relay) }),
+    ...(item.opensNew === true ? { opensNew: true as const } : {}) };
 }
 /** A reported native configuration: a bounded model identity (or null) and options shaped like requested native options. */
 export function parseNativeConfiguration(value: unknown): NativeConfiguration {
@@ -494,6 +498,10 @@ export function replayCommand(state: SessionSnapshot, id: CommandRecord["id"], k
   return prior ?? null;
 }
 function same(left: unknown, right: unknown): boolean { return JSON.stringify(left) === JSON.stringify(right); }
+/** Whether a `run.ended` event's `relay` says its relay part was refused and left out (G068 fix batch, R6). */
+function relayFailed(value: unknown): boolean {
+  return value !== null && typeof value === "object" && !Array.isArray(value) && (value as Readonly<Record<string, unknown>>).failed === true;
+}
 /** Whether a `run.ended` event's `native` says its Driver cleared the native history (ADR-055 §7.5, F04). */
 function clearedNative(value: unknown): boolean {
   return value !== null && typeof value === "object" && !Array.isArray(value) && (value as Readonly<Record<string, unknown>>).cleared === true;
@@ -548,7 +556,9 @@ export function assertSessionTransition(before: SessionSnapshot, after: SessionS
     relayStep(old?.relay, next.relay);
   }
   if (before.relayRecoveryFailed !== after.relayRecoveryFailed) {
-    const recorded = after.relayRecoveryFailed !== undefined && events.some((event, index) => event.type === "session.recovered" && before.lastSeq + index + 1 === after.relayRecoveryFailed);
+    // Recorded by recovery, or by a writer Run's end committed without the relay part the Store refused (`relay.failed`, R6).
+    const failedEnd = (event: EventDraft) => event.type === "run.ended" && writer !== undefined && event.data.runId === writer.id && relayFailed(event.data.relay);
+    const recorded = after.relayRecoveryFailed !== undefined && events.some((event, index) => (event.type === "session.recovered" || failedEnd(event)) && before.lastSeq + index + 1 === after.relayRecoveryFailed);
     const renewed = added.some(entry => entry.kind === "native-reset") || newBindings.length > oldBindings.length;
     if (after.relayRecoveryFailed !== undefined ? !recorded : !renewed) throw new SessionError("INVALID_TRANSITION", "a relay recovery failure is recorded by recovery and cleared by a new native session");
   }

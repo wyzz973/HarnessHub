@@ -13,7 +13,7 @@ import type { DataClass, RelayCapabilities, VendorObservation } from "../../cont
 import { nativeReading, relayDeclaration, relayEntries, textClassify } from "./relay-classify.js";
 import { dshVendor, readEndpoint, slashModelKey, vendorObservation } from "./relay-vendor.js";
 import { type TurnText } from "../../contracts/control.js";
-import { exceedsInput, INPUT_LIMIT_REFUSED, placeTurn, userWords, type RelayTurn, type Stripped, type UserText } from "./relay-turn.js";
+import { COMMAND_REFUSED, exceedsInput, INPUT_LIMIT_REFUSED, placeTurn, userWords, type RelayTurn, type Stripped, type UserText } from "./relay-turn.js";
 
 interface ActivePrompt {
   readonly event: (event: ControlEvent) => void;
@@ -57,6 +57,10 @@ const IMPORT_REPLAY_BYTES = 4 * 1024 * 1024, IMPORT_REPLAY_MESSAGES = 2000;
 const IMPORT_LIST_PAGES = 20;
 /** Session setup starts the agent's own runtime (plugins, MCP, model catalog); a cold start can exceed a plain request. */
 const SESSION_SETUP_MS = 60000;
+/** How long an abandoned session's session/close is waited for; the session is abandoned whatever the agent answers. */
+const CLOSE_SESSION_MS = 2000;
+/** Sessions one connection abandons; past this many the connection is used up (Claude's clear, one per Turn, never nears it). */
+const MAX_ABANDONED_SESSIONS = 256;
 /** Display label from native text: control characters (including newlines in multi-line commands) become spaces. */
 function label(value: unknown, fallback: string, maximum = 4096): string {
   if (typeof value !== "string") return fallback;
@@ -148,7 +152,8 @@ export const dshRelayCapabilities: RelayCapabilities = relayDeclaration({
   delivery: { live: "agent_output", verify: "none", successProvesRecorded: false, lateDelivery: false },
   execution: "process",
   commands: { unlistedSlash: "text", hidden: [], classify: textClassify },
-  placement: { parts: "multiple", maxInput: null, pointersAfterUser: false },
+  // Attachments go as ACP blocks after the two text blocks (G069 phase two, approval B8; to be probed).
+  placement: { parts: "multiple", maxInput: null, pointersAfterUser: true },
   window: "session_report",
   fixedPrefix: null,
   cacheTtl: "hours",
@@ -325,7 +330,8 @@ export class AcpControl implements HarnessControl {
    * config_option_update / current_mode_update notifications, which include changes made during a Turn.
    */
   async nativeConfig(): Promise<{ readonly model: string | null; readonly options: NativeOptions }> {
-    this.assertInitialized(); if (this.conversation === null) throw new ControlError("INVALID_STATE", "native configuration requires a session");
+    // A session this connection abandoned (abandonConversation) still reports what it ran: the clear changed no value.
+    this.assertInitialized(); if (this.conversation === null && this.lastAbandoned === null) throw new ControlError("INVALID_STATE", "native configuration requires a session");
     return { model: this.catalog.canSelect ? this.catalog.defaultModel : null, options: Object.fromEntries((this.catalog.options ?? []).map(option => [option.id, option.currentValue])) };
   }
   /** Consecutive replayed chunks of one role form one message; the oldest messages give way to the budget. */
@@ -616,28 +622,30 @@ export class AcpControl implements HarnessControl {
     return this.establish(cwd, model, options, checkpoint);
   }
   /**
-   * Opens a new native session in place of the one this connection owns (Claude's clear, ADR-055 §8.1: the Driver ends the
-   * conversation and starts another): session/new in the same workspace, with the model and option values the old session
-   * runs now, so nothing changes but the history. The connection owns the new session from then on and refuses the old
-   * identity. When the new session cannot be set up, the connection keeps the old one (a failed request that left the
-   * connection healthy) or fails as open() fails. Rejects while a prompt runs.
+   * Gives up the session this connection owns (Claude's clear, ADR-055 §8.1, the approval agent's decision on B1 of the
+   * stage-two review): the connection owns no session from then on, refuses the old identity, and counts and drops whatever
+   * the agent still sends for it (a late reply, a permission request); open() may open a new one. No session is opened in its
+   * place: one never prompted cannot be resumed by another process (claude-agent-acp 0.99.1 answers sessionNotFound), so the
+   * next Turn opens its own. An agent that declares session/close is asked to close the old one, within CLOSE_SESSION_MS and
+   * without failing the connection when it refuses or does not answer; nothing it holds on disk is touched. Rejects while a
+   * prompt runs or a session is being opened.
    */
-  protected async replaceConversation(): Promise<NativeConversationId> {
+  protected async abandonConversation(): Promise<void> {
     this.assertInitialized();
-    if (this.active !== null || this.opening || this.forking || this.conversation === null || this.openedCwd === null) throw new ControlError("INVALID_STATE", "no idle conversation to replace");
-    const previous = this.conversation, cwd = this.openedCwd;
-    const model = this.catalog.canSelect && this.catalog.defaultModel !== null ? this.catalog.defaultModel : undefined;
-    const options = Object.fromEntries((this.catalog.options ?? []).map(option => [option.id, option.currentValue]));
-    // The new session's own updates arrive before its identity; they are kept for it, never scoped to the old one. The old
-    // session's late updates (its commands announced after its own open) are counted and dropped meanwhile.
-    this.conversation = null; this.replacing = previous;
-    try { return await this.establish(cwd, model, options, undefined); }
-    // A new session whose model or options could not be applied is not the replacement: the old one stays this connection's.
-    catch (error) { this.conversation = previous; throw error; }
-    finally { this.replacing = null; }
+    if (this.active !== null || this.opening || this.forking || this.conversation === null) throw new ControlError("INVALID_STATE", "no idle conversation to give up");
+    if (this.abandoned.size >= MAX_ABANDONED_SESSIONS) throw new ControlError("INVALID_STATE", "this connection gave up too many sessions");
+    const previous = this.conversation;
+    this.abandoned.add(previous); this.lastAbandoned = previous; this.conversation = null;
+    const sessions = this.capabilities.sessionCapabilities == null ? {} : object(this.capabilities.sessionCapabilities, "native session capabilities");
+    if (sessions.close === undefined) return;
+    try { await this.rpc.request("session/close", { sessionId: previous }, Math.min(this.options.requestTimeoutMs, CLOSE_SESSION_MS), "reject"); }
+    catch { /* A refusal, a missed deadline or a failed connection leaves the session abandoned all the same. */ }
   }
-  /** The session replaceConversation is replacing, while it does. */
-  private replacing: NativeConversationId | null = null;
+  /** Sessions this connection gave up (abandonConversation), whose late messages are counted and dropped; the latest one. */
+  private readonly abandoned = new Set<string>();
+  private lastAbandoned: NativeConversationId | null = null;
+  /** Whether a message names a session this connection gave up. */
+  private fromAbandoned(params: Readonly<Record<string, unknown>>): boolean { return typeof params.sessionId === "string" && this.abandoned.has(params.sessionId); }
   private async establish(cwd: string, model: string | undefined, options: NativeOptions | undefined, checkpoint: string | undefined): Promise<NativeConversationId> {
     this.opening = true;
     try {
@@ -648,6 +656,8 @@ export class AcpControl implements HarnessControl {
         method = session.resume !== undefined && !(this.restoreByLoad && load) ? "session/resume" : load ? "session/load" : "";
         if (!method) throw new ControlError("NATIVE_RESUME_UNAVAILABLE", "installed Harness did not advertise native recovery");
         this.conversation = nativeConversationId(checkpoint); this.replaying = true; this.lastReplay = Date.now();
+        // A session given up earlier on this connection and restored now is this connection's again.
+        this.abandoned.delete(this.conversation);
       }
       const setup = Math.max(this.options.requestTimeoutMs, Math.min(SESSION_SETUP_MS, this.options.runTimeoutMs));
       const raw = await this.sessionRequest(method, { ...await this.sessionParameters(cwd), ...(checkpoint === undefined ? {} : { sessionId: this.conversation }) }, setup);
@@ -655,6 +665,8 @@ export class AcpControl implements HarnessControl {
       if (checkpoint === undefined) this.conversation = nativeConversationId(response.sessionId);
       else if (response.sessionId !== undefined && response.sessionId !== this.conversation) throw new ControlError("IDENTITY_MISMATCH", "native restore changed the owned session identity");
       if (this.conversation === null) throw new ControlError("IDENTITY_MISMATCH", "native setup did not establish an owned conversation");
+      if (this.abandoned.has(this.conversation)) throw new ControlError("IDENTITY_MISMATCH", "the agent answered a new session with one this connection gave up");
+      this.lastAbandoned = null;
       if (method === "session/load") await this.replaySettled();
       this.replaying = false;
       this.openedCwd = cwd; this.openMethod = method === "session/load" ? "load" : method === "session/resume" ? "resume" : "new";
@@ -687,9 +699,10 @@ export class AcpControl implements HarnessControl {
   }
   /**
    * A relay Turn's text parts as this Driver sends them (ADR-055 §5.5, §7.4): by the declaration's placement, or null when
-   * the packet does not go (the user's words alone are sent): the native side reads the words as a command, or this Driver
-   * has no way to put a packet into a command's arguments. A Driver whose native side submits a command's arguments as a
-   * prompt (acceptsRelay) places the packet there itself. Without a declaration, the default placement (singleText).
+   * the packet cannot go, and so the Turn is refused whole (COMMAND_REFUSED, nothing sent): the native side reads the words
+   * as a command or as a word only its catalog settles, or this Driver has no way to put a packet into a command's arguments.
+   * A Driver whose native side submits a command's arguments as a prompt (acceptsRelay) places the packet there itself.
+   * Without a declaration, the default placement (singleText).
    */
   protected relayParts(turn: RelayTurn, attachments: readonly ContentKind[]): readonly string[] | null {
     const declared = this.relayCapabilities;
@@ -700,7 +713,23 @@ export class AcpControl implements HarnessControl {
   }
   /** What the native side adds to the text before it counts against maxInput (OpenClaw's working-directory prefix), in its unit. */
   protected inputOverhead(_unit: "chars" | "bytes"): number { return 0; }
+  /**
+   * The refusal of a relay Turn this Driver cannot place (COMMAND_REFUSED, ADR-055 B4b): its words read as a command or as a
+   * word only the catalog settles; null when the Turn can be sent. A Driver that handles some inputs itself before the base
+   * startText (an export, a clear, a model check) asks this first, so that nothing of a refused Turn runs.
+   */
+  protected relayRefused(turn: TurnText, attachments: readonly ContentKind[]): ControlRun | null {
+    return typeof turn !== "string" && this.relayParts(turn, attachments) === null ? refusedRun(COMMAND_REFUSED) : null;
+  }
   async startText(id: NativeConversationId, turn: TurnText, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
+    return this.sendPrompt(id, turn, onEvent, attachments, null);
+  }
+  /**
+   * startText, with a deadline of its own for a prompt the native side answers itself (Hermes's `/title`): when it passes, the
+   * prompt is cancelled and given up, its result is failed with REQUEST_TIMEOUT and the connection stays usable (ADR-055 C6);
+   * null keeps the Turn's own deadline, past which the connection fails as every Turn's does.
+   */
+  protected async sendPrompt(id: NativeConversationId, turn: TurnText, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[], deadlineMs: number | null): Promise<ControlRun> {
     // The words the native side reads first: what decides a command, and whether its answer can prove the input recorded.
     const prompt = typeof turn === "string" ? turn : turn.user;
     this.assertInitialized();
@@ -708,24 +737,27 @@ export class AcpControl implements HarnessControl {
     if (this.active !== null) throw new ControlError("INVALID_STATE", "a prompt is already active");
     if (typeof prompt !== "string" || prompt.length === 0) throw new ControlError("INVALID_INPUT", "prompt must contain text");
     const kinds = attachments.map(file => file.kind);
-    const placed = typeof turn === "string" ? [prompt] : this.relayParts(turn, kinds), parts = placed ?? [prompt];
-    // A packet over the input bound is never cut by the native side: nothing is sent (§8.1, the coordinator chooses a lower tier).
-    if (placed !== null && typeof turn !== "string") {
-      const limit = this.relayCapabilities?.placement.maxInput;
-      if (limit != null && exceedsInput(parts, this.relayCapabilities!.placement, this.inputOverhead(limit.unit))) return refusedRun(INPUT_LIMIT_REFUSED);
-    }
+    // A relay Turn the native side would read as a command is refused whole: nothing is sent, and nothing is said in its place.
+    const placed = typeof turn === "string" ? [prompt] : this.relayParts(turn, kinds);
+    if (placed === null) return refusedRun(COMMAND_REFUSED);
     const pointers = this.fileBlocks ? [] : attachments.filter(file => file.kind === "file");
     // Hub's text pointers go after the user's words, the last part (pointersAfterUser).
-    const blocks: Record<string, unknown>[] = parts.map((text, index) => ({ type: "text", text: index === parts.length - 1 ? text + fileMentions(pointers) : text }));
+    const texts = placed.map((text, index) => index === placed.length - 1 ? text + fileMentions(pointers) : text);
+    // A packet over the input bound, pointers included, is never cut by the native side: nothing is sent (§8.1, the coordinator
+    // chooses a lower tier).
+    if (typeof turn !== "string") {
+      const limit = this.relayCapabilities?.placement.maxInput;
+      if (limit != null && exceedsInput(texts, this.relayCapabilities!.placement, this.inputOverhead(limit.unit))) return refusedRun(INPUT_LIMIT_REFUSED);
+    }
+    const blocks: Record<string, unknown>[] = texts.map(text => ({ type: "text", text }));
     for (const file of attachments) if (!pointers.includes(file)) blocks.push(await this.promptBlock(file));
     if (this.active !== null) throw new ControlError("INVALID_STATE", "a prompt is already active");
-    const active: ActivePrompt = { event: onEvent, lastUpdate: 0, answered: false, tools: new Map(), compaction: new Map(), stopping: false, settled: false, stop: null, deadline: Date.now() + this.options.runTimeoutMs };
+    const active: ActivePrompt = { event: onEvent, lastUpdate: 0, answered: false, tools: new Map(), compaction: new Map(), stopping: false, settled: false, stop: null, deadline: Date.now() + (deadlineMs ?? this.options.runTimeoutMs) };
     this.active = active;
-    if (placed === null) onEvent({ type: "diagnostic", message: "交接单没有随这条输入发出：原程序把它读作命令，命令回合不附交接内容。" });
     // Evidence of the prompt reaching the history is about content: a command's answer (a local reply) proves no such thing.
-    const content = (typeof turn === "string" || placed !== null) && this.readsAsContent(prompt, kinds);
+    const content = this.readsAsContent(prompt, kinds);
     const recorded = (reason: string | null): { readonly input?: "recorded" } => content && (active.answered || reason !== null && this.promptRecorded(reason)) ? { input: "recorded" } : {};
-    const result = this.rpc.request("session/prompt", { sessionId: id, prompt: blocks }, this.options.runTimeoutMs)
+    const result = this.rpc.request("session/prompt", { sessionId: id, prompt: blocks }, deadlineMs ?? this.options.runTimeoutMs, deadlineMs === null ? "abort" : "reject")
       .then(value => {
         const response = object(value, "session/prompt result");
         const reason = string(response.stopReason, "ACP stop reason");
@@ -754,6 +786,11 @@ export class AcpControl implements HarnessControl {
           // Where the driver cannot place the refusal before or after insertion, only the agent's answer proves the prompt recorded.
           return { status: "failed", reason: "request_rejected", ...(named !== null ? { error: { code: named.code, message: named.message } } : error.remoteFailure ? { error: error.remoteFailure } : {}),
             ...(stands === "not_recorded" ? { input: stands } : stands === "recorded" && content ? { input: stands } : recorded(null)) };
+        }
+        // A prompt with its own deadline is given up alone: the agent is asked to stop it, its late answer is dropped.
+        if (deadlineMs !== null && error instanceof ControlError && error.code === "REQUEST_TIMEOUT" && this.rpc.failure === null) {
+          void this.rpc.notify("session/cancel", { sessionId: id }).catch(() => { /* A failed write fails the connection; the result stands. */ });
+          return { status: "failed", reason: "timeout", error: { code: "REQUEST_TIMEOUT", message: "the native side did not answer within its deadline" } };
         }
         // The prompt request's own timeout is the Turn's deadline, reported as every driver reports it.
         const failure = error instanceof ControlError && error.code === "REQUEST_TIMEOUT" ? new ControlError("RUN_TIMEOUT", "ACP prompt exceeded its deadline") : errorFrom(error);
@@ -798,15 +835,17 @@ export class AcpControl implements HarnessControl {
     if (this.forking) { this.replayBytes += Buffer.byteLength(JSON.stringify(raw ?? null)); if (this.replayBytes > 64 * 1024 * 1024) throw new ControlError("REPLAY_LIMIT", "native fork replay exceeded its budget"); this.unattributed++; return; }
     if (method !== "session/update") {
       const params = raw === undefined ? {} : object(raw, "ACP notification params");
+      // A session this connection gave up still talks: counted and dropped, never attributed or failed on.
+      if (this.fromAbandoned(params)) { this.unattributed++; return; }
       if (params.sessionId !== undefined) this.scope(params);
       if (method === "$/cancel_request") { this.withdraw(params.requestId); return; }
       if (!this.extensionNotification(method, params)) this.active?.event({ type: "diagnostic", message: `Unsupported ACP notification: ${method}` });
       return;
     }
     const params = object(raw, "ACP notification params");
+    if (this.fromAbandoned(params)) { this.unattributed++; return; }
     const update = object(params.update, "ACP session update");
     const kind = string(update.sessionUpdate, "ACP update kind");
-    if (this.replacing !== null && params.sessionId === this.replacing) { this.unattributed++; return; }
     if (this.opening && this.conversation === null && metadataUpdates.has(kind)) {
       string(params.sessionId, "ACP session identity");
       if (this.openingMetadata.length >= 128) throw new ControlError("WIRE_LIMIT", "ACP opening metadata exceeds its budget");
@@ -910,7 +949,10 @@ export class AcpControl implements HarnessControl {
    * picks. "跳过" declines the whole form and "取消" cancels it. A form with fields the chat cannot ask is declined, not guessed.
    */
   private async elicitation(request: RpcRequest): Promise<unknown> {
-    const params = object(request.params, "ACP elicitation"); this.scope(params);
+    const params = object(request.params, "ACP elicitation");
+    // A session this connection gave up has nobody to ask.
+    if (this.fromAbandoned(params)) { this.unattributed++; return { action: "decline" }; }
+    this.scope(params);
     const active = this.active;
     if (!active || active.settled || active.stopping || !this.interactivePermissions || (params.mode !== undefined && params.mode !== "form")) { if (active && !active.settled) active.event({ type: "permission", id: String(request.id), decision: "denied" }); return { action: "decline" }; }
     const schema = object(params.requestedSchema, "elicitation schema"), properties = object(schema.properties, "elicitation fields"), keys = Object.keys(properties);
@@ -965,7 +1007,10 @@ export class AcpControl implements HarnessControl {
       if (this.active && !this.active.settled) this.active.event({ type: "diagnostic", message: "Harness called unsupported client method " + label(request.method, "unknown", 128) });
       throw new ControlError("METHOD_NOT_FOUND", "client capability is not implemented");
     }
-    const params = object(request.params, "ACP permission params"); this.scope(params);
+    const params = object(request.params, "ACP permission params");
+    // A session this connection gave up belongs to no Run: nobody approves for it.
+    if (this.fromAbandoned(params)) { this.unattributed++; return { outcome: { outcome: "cancelled" } }; }
+    this.scope(params);
     const active = this.active;
     // No public Run owns an autonomous follow-up, so nobody can approve it: cancel instead of tearing down the connection.
     if (!active || active.settled) { this.unattributed++; return { outcome: { outcome: "cancelled" } }; }

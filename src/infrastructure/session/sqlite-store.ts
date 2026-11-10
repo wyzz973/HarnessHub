@@ -765,7 +765,7 @@ export class SqliteSessionStore implements SessionStore, RelayStorePort, RelayLo
     const withRelay = (relay: Readonly<Record<string, unknown>>) => recovered.events.map(event => event.type === "session.recovered" ? { type: event.type, data: { ...event.data, relay } } : event);
     db.exec("SAVEPOINT relay_recovery");
     try {
-      const relay = this.recoverRelay(recovered.next, readDeliveries(db, state.id, state));
+      const relay = this.recoverRelay(recovered.next, readDeliveries(db, state.id, state), readPackets(db, state.id));
       if (relay === null) { db.exec("RELEASE relay_recovery"); return at(recovered.next, recovered.events); }
       const result = at(relay.next, withRelay({ failed: false, deliveries: relay.deliveries.map(row => ({ runId: row.runId, outcome: row.outcome.kind })),
         bindings: (relay.next.nativeBindings ?? []).flatMap(binding => binding.relay === undefined ? [] : [{ harnessId: binding.harnessId, controlId: binding.controlId, sync: binding.relay.sync.kind }]) }));
