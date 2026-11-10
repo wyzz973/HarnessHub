@@ -195,7 +195,8 @@ export class HermesControl extends AcpControl {
   private prompted = false;
   /**
    * Where the history stands before a Turn's input (ADR-055 §8.1, F20): the number of user entries this open replayed; none
-   * once this connection sent a prompt (its replay no longer holds the history).
+   * once this connection sent a prompt (its replay no longer holds the history). A packet sent at no position is still
+   * looked for whole by a later open's check (verifyDelivered).
    */
   async deliveryPosition(id: NativeConversationId): Promise<DeliveryPosition> {
     this.assertOwned(id);
@@ -209,25 +210,40 @@ export class HermesControl extends AcpControl {
    * longer replayed), so the whole replay is searched then, whole packets only, since which entry came first after the position
    * cannot be told. Not found: outside_window when the entries after the position are older than what a check keeps, absent
    * otherwise (the viewer replays the whole live history), the cursor (the summaries seen) telling the coordinator that a
-   * compaction may explain it. unavailable when the history was not replayed or this connection prompted since its open
-   * (F7). historyEmpty: the replay held nothing at all. Reads only what open read.
+   * compaction may explain it.
+   *
+   * A marker without a position (a Turn sent on a connection that had prompted, a kept process's among them) is looked for
+   * whole in every entry of the replay (the second review's I5): packet identities are unique, so an entry with the title
+   * and end lines of the same packet is it, wherever it lies; present then, compacted when only a summary holds it, absent
+   * when the replay was read whole (this open's, every user entry kept) and none does, unavailable when older entries were
+   * not kept. A title line alone never counts for one (a false present loses facts, a false absent only repeats them).
+   *
+   * Every marker is unavailable when the history was not replayed or this connection prompted since its open (F7), a marker
+   * at a position of another kind too. historyEmpty: the replay held nothing at all. Reads only what open read.
    */
   async verifyDelivered(id: NativeConversationId, request: VerifyRequest): Promise<VerifyResult> {
     const started = Date.now();
     this.assertOwned(id);
     if (!this.historyRead || this.prompted) return unavailable(request, started);
     const history = this.history, shifted = history.summaries.length > 0, oldest = history.users[0]?.index ?? history.total;
+    // Every user entry this open replayed is still kept (none gave way to REPLAY_ENTRIES).
+    const kept = history.total === history.users.length;
     const clients = history.users.filter(entry => !entry.summary && !entry.injected);
     let foreign: number | null = null;
     const results = request.markers.map((marker, position): MarkerResult => {
-      if (marker.position.kind !== "seq") return "unavailable";
-      const before = marker.position.before, packetId = marker.packetId;
+      if (marker.position.kind !== "seq" && marker.position.kind !== "none") return "unavailable";
+      const packetId = marker.packetId;
       const carries = (entry: ReplayHistory["users"][number], whole: boolean) => entry.titled === packetId && (!whole || entry.whole);
-      const after = clients.filter(entry => entry.index >= before), at = packetEntry(after, carries);
-      const found = at >= 0 ? after[at] : shifted ? clients.find(entry => carries(entry, true)) : undefined;
-      if (found !== undefined) { if (position === request.markers.length - 1) foreign = clients.filter(entry => entry.index > found.index).length; return "present"; }
+      let found: ReplayHistory["users"][number] | undefined;
+      if (marker.position.kind === "none") found = clients.find(entry => carries(entry, true));
+      else {
+        const before = marker.position.before, after = clients.filter(entry => entry.index >= before), at = packetEntry(after, carries);
+        found = at >= 0 ? after[at] : shifted ? clients.find(entry => carries(entry, true)) : undefined;
+      }
+      if (found !== undefined) { const at = found.index; if (position === request.markers.length - 1) foreign = clients.filter(entry => entry.index > at).length; return "present"; }
       if (history.users.some(entry => entry.summary && entry.titled === packetId)) return "compacted";
-      return before < oldest && history.total > history.users.length ? "outside_window" : "absent";
+      if (marker.position.kind === "none") return kept ? "absent" : "unavailable";
+      return marker.position.before < oldest && !kept ? "outside_window" : "absent";
     });
     return verifyResult(request, results, started, { historyEmpty: request.historyEmpty ? history.total === 0 && history.others === 0 : null,
       compaction: { count: history.summaries.length, digest: cursorDigest(history.summaries) }, foreignAfterLast: foreign });
@@ -254,7 +270,19 @@ export class HermesControl extends AcpControl {
    * line of at most 200 characters; an empty title is not sent (a bare `/title` goes to the gateway). Rejects with
    * NATIVE_TITLE_UNAVAILABLE when Hermes does not confirm it, also when it does not answer within TITLE_DEADLINE_MS: the prompt
    * is then given up alone and the connection stays usable (C6). Not enabled: the Runtime does not call it before a probe
-   * (the approval agent's B10).
+   * (the approval agent's B10), so neither point below is reachable today.
+   *
+   * Before it is enabled (the declaration's `title: "set"` used, or `probed` flipped), two things must be solved first (the
+   * second review's I2 and I3):
+   * - I2: a `/title` given up at its deadline is only cancelled; the viewer's late reply to it arrives on this session while
+   *   the next Turn's prompt is active and is taken for that Turn's own answer, so a content prompt the native side never
+   *   recorded can be reported `input: "recorded"` (the direction that loses facts). The late updates of a given-up prompt
+   *   must be told apart from the next prompt's (or the next prompt held until Hermes settled the cancel) first.
+   * - I3: the title is a prompt, so it sets `prompted`: the first relayed Turn right after it then gets no position (none)
+   *   and the check on this connection is unavailable (F7); a later open still finds the packet whole (I5), but the Turn
+   *   that a handoff titles is exactly the one whose delivery should be checked. Either the title stops counting as a prompt
+   *   that outdates the replay (once the probe confirms it writes no history row and the late-reply point above is solved),
+   *   or the Turn's position is taken from what the replay showed before the title.
    */
   async setTitle(id: NativeConversationId, title: string): Promise<void> {
     this.assertOwned(id);

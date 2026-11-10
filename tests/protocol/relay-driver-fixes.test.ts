@@ -251,7 +251,8 @@ test("G069-F5 every Driver's check survives a fault and the next turn on the sam
   finally { await chmod(file, 0o600); }
   assert.equal((await run(c.control, c.id, "继续")).result.status, "completed", "claude");
   const hermes = await peerRoot(t), h = await opened(t, "hermes", hermes);
-  assert.deepEqual(results(await h.control.verifyDelivered!(h.id, ask([[ID_A, { kind: "client_id", id: "x" }], [ID_A, { kind: "none" }]]))), ["unavailable", "unavailable"]);
+  // A position of another kind is unavailable; one without a position is looked for whole in this (new, empty) history (I5).
+  assert.deepEqual(results(await h.control.verifyDelivered!(h.id, ask([[ID_A, { kind: "client_id", id: "x" }], [ID_A, { kind: "none" }]]))), ["unavailable", "absent"]);
   assert.equal((await run(h.control, h.id, "继续")).result.status, "completed", "hermes");
   let hung = false;
   const hanging = await claw(t, async params => { if (params.limit === 200 && !hung) { hung = true; return new Promise(() => {}); } return { messages: [] }; });
@@ -456,7 +457,7 @@ test("G069 Claude Code's position names its transcript relative to projects/ and
   assert.deepEqual(results(await control.verifyDelivered!(id, ask([[ID_A, { kind: "file_offset", path: position.path, bytes: 0 }]]))), ["present"]);
   // A transcript path the file system cannot resolve (a symbolic link to itself): no position, no rejection.
   const looping = await peerRoot(t), loop = await opened(t, "claude", looping);
-  const project = (await realpath(looping.workspace)).replace(/[^a-zA-Z0-9]/gu, "-"), directory = join(looping.env.CLAUDE_CONFIG_DIR!, "projects", project);
+  const project = (await realpath(looping.workspace)).replace(/[^a-zA-Z0-9]/g, "-"), directory = join(looping.env.CLAUDE_CONFIG_DIR!, "projects", project);
   await mkdir(directory, { recursive: true }); await symlink(join(directory, loop.id + ".jsonl"), join(directory, loop.id + ".jsonl"));
   assert.deepEqual(await loop.control.deliveryPosition!(loop.id), { kind: "none" });
 });

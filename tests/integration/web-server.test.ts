@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { createServer, request } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -369,6 +370,29 @@ test("a conversation's native session is offered for continuing in its own progr
   const exported = await fetch(f.origin + `/api/v1/sessions/${id}/export?format=json`, { headers: { Cookie: f.cookie } });
   assert.equal((await exported.text()).includes(nativeId), false, "the export does not carry it");
   assert.equal((await call(f, `/api/v1/sessions/${id}/native-resume?extra=1`)).status, 400);
+});
+
+test("a binding that opens a new native session (opensNew) offers no continue command: its checkpoint names the session it gave up (G068 fix batch 2, M-4)", async t => {
+  const f = await fixture(t); await auth(f);
+  const created = await call(f, "/api/v1/sessions", "POST", { selection: { harnessId: "web-b" }, commandId: "create-opens-new" }); assert.equal(created.status, 201, created.text);
+  const id = String(row(created.data).id);
+  assert.equal((await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "hello", commandId: "opens-new-send" })).status, 202);
+  await waitFor(f, id, value => value.runs[0]?.status === "completed");
+  assert.notEqual(row((await call(f, `/api/v1/sessions/${id}/native-resume`)).data).resume, null, "a session to continue");
+  // The binding as a Turn leaves it that gave up its native session before any input reached a new one (I-1a, R4), written
+  // while the Gateway is stopped, which then starts again on the same data.
+  await f.gateway.close();
+  const db = new DatabaseSync(join(f.data, "gateway.sqlite"));
+  try {
+    const stored = JSON.parse(String(db.prepare("SELECT snapshot FROM sessions WHERE id=?").get(id)!.snapshot)) as { nativeBindings: Record<string, unknown>[] };
+    stored.nativeBindings = stored.nativeBindings.map(binding => ({ ...binding, throughRunId: null, opensNew: true }));
+    db.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify(stored), id);
+  } finally { db.close(); }
+  const configuration = await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true });
+  f.gateway = await startWebServer({ installations: "any", root: f.data, configuration, port: 0, assetsDirectory: f.assets, workspaceLockRoot: join(f.root, "locks") });
+  const parsed = new URL(f.gateway.url); f.origin = parsed.origin; f.token = new URLSearchParams(parsed.hash.slice(1)).get("token")!;
+  await auth(f);
+  assert.deepEqual((await call(f, `/api/v1/sessions/${id}/native-resume`)).data, { resume: null }, "no session to continue yet");
 });
 
 test("the public conversation exports as Markdown or JSON without private native state", async t => {

@@ -561,7 +561,9 @@ const NO_EVIDENCE: BackendResult = { status: "completed", reason: "fake" };
  * How one prompt goes: whether the native side writes its entry (now, late, never), how the Turn ends, and E1; `outputs`
  * replaces the reply text with these events (G068 fix batch: a Turn that shows only a plan or usage).
  */
-interface Script { readonly insert?: "now" | "late" | "never"; readonly result?: BackendResult | "hold" | "lost"; readonly e1?: RelayPacketId | "own" | null; readonly native?: BackendResult["native"]; readonly outputs?: readonly ControlEvent[] }
+interface Script { readonly insert?: "now" | "late" | "never"; readonly result?: BackendResult | "hold" | "lost"; readonly e1?: RelayPacketId | "own" | null; readonly native?: BackendResult["native"]; readonly outputs?: readonly ControlEvent[];
+  /** false: a command does nothing to the native history (a /clear that did not run, G068 fix batch 2, M-1). */
+  readonly effect?: false }
 /**
  * How a check answers (G068 fix batch R2, R7): the reference model's answer; a rejection; `die`, a request that fails the
  * connection (healthy() false, its close reports the failure, as a Driver that aborts it at a timeout); `hang`, one that never
@@ -589,6 +591,23 @@ class ModelHarnesses implements SessionBindingFactory {
   /** The checkpoints each open was given, in order (undefined: a new native session). */
   readonly opens: (string | undefined)[] = [];
   private opened = 0;
+  /**
+   * G068 fix batch 2. `missing`: native sessions the Harness no longer has; their resume is refused as NATIVE_SESSION_NOT_FOUND
+   * and, as the ACP Driver does, the refused open fails the connection (C5). `strictResume`: a native session never prompted
+   * cannot be resumed by another process (claude-agent-acp), a plain control failure (I-1). `position`: how each position read
+   * answers. `onDispatch`: runs once a Turn is dispatched, before its outputs. `breakAtAttachments`: the connection fails while
+   * the attachments are checked, after the authorization (M-2). `catalogFails`: the catalog cannot be read. `closeFails`: the
+   * program's close rejects (M-8). `prepared`: how many programs were started.
+   */
+  readonly missing = new Set<string>();
+  strictResume = false;
+  private readonly prompted = new Set<string>();
+  position: (harnessId: string) => "model" | "die" = () => "model";
+  onDispatch: ((harnessId: string, input: string) => void) | null = null;
+  breakAtAttachments = false;
+  catalogFails = false;
+  closeFails = false;
+  prepared = 0;
   constructor(private readonly peer: Peer, private readonly declarations: Readonly<Record<string, RelayCapabilities>>, private readonly admission = false) {}
   relayCapabilities?(selection: HarnessSelection): RelayCapabilities | null;
   enableAdmission(): void { this.relayCapabilities = selection => this.declarations[selection.harnessId] ?? null; }
@@ -598,6 +617,7 @@ class ModelHarnesses implements SessionBindingFactory {
   }
   async prepare(selected: HarnessSelection, configuration: SessionConfiguration): Promise<PreparedSessionBinding> {
     const harnessId = selected.harnessId, peer = this.peer;
+    this.prepared += 1;
     let session: string | null = null, dead: SessionError | null = null;
     const held: { readonly resolve: (result: BackendResult) => void; readonly reject: (error: Error) => void }[] = [];
     const die = () => { dead ??= new SessionError("REQUEST_TIMEOUT", "the check exceeded its deadline and the connection was aborted"); return dead; };
@@ -606,15 +626,23 @@ class ModelHarnesses implements SessionBindingFactory {
       initialize: async () => ({ protocol: "acp-v1", protocolVersion: 1, agentName: "model", agentVersion: "1", authenticationMethods: [], capabilities: {} }),
       open: async (_cwd, _model, _options, checkpoint) => {
         this.opens.push(checkpoint);
-        if (checkpoint !== undefined && this.unresumable.has(checkpoint)) throw new SessionError("CONTROL_FAILED", "Resource not found: session " + checkpoint);
+        if (checkpoint !== undefined && this.missing.has(checkpoint)) { dead ??= new SessionError("NATIVE_SESSION_NOT_FOUND", "the Harness has no session with this identity"); throw dead; }
+        if (checkpoint !== undefined && (this.unresumable.has(checkpoint) || this.strictResume && !this.prompted.has(checkpoint))) throw new SessionError("CONTROL_FAILED", "Resource not found: session " + checkpoint);
         session = checkpoint ?? "native-" + harnessId + "-" + ++this.opened; return nativeConversationId(session);
       },
       checkpoint: async () => session,
       healthy: () => dead === null,
-      models: async () => ({ models: [{ id: "model-a", name: "A" }], defaultModel: "model-a", authentication: "ready", canSelect: true, commands: NATIVE_COMMANDS }),
+      models: async () => {
+        if (this.catalogFails) throw new SessionError("CONTROL_FAILED", "the catalog could not be read");
+        return { models: [{ id: "model-a", name: "A" }], defaultModel: "model-a", authentication: "ready", canSelect: true, commands: NATIVE_COMMANDS };
+      },
       classify: (text, catalog) => listedCommand(text, catalog),
-      checkAttachments: async () => { if (this.attachmentsHeld !== null) await this.attachmentsHeld; },
-      deliveryPosition: async () => { this.positions += 1; return peer.call<DeliveryPosition>("position", { session }); },
+      checkAttachments: async () => { if (this.breakAtAttachments) die(); if (this.attachmentsHeld !== null) await this.attachmentsHeld; },
+      deliveryPosition: async () => {
+        this.positions += 1;
+        if (this.position(harnessId) === "die") throw die();
+        return peer.call<DeliveryPosition>("position", { session });
+      },
       verifyDelivered: async (_id, request) => {
         this.verifies += 1;
         const how = this.check(harnessId);
@@ -629,12 +657,14 @@ class ModelHarnesses implements SessionBindingFactory {
       startText: async (_id, turn, output) => {
         if (dead !== null) throw dead;
         const text = singleText(turn), input = typeof turn === "string" ? turn : turn.user, packetId = typeof turn === "string" ? null : turn.relay.packetId;
-        this.prompts.push({ harnessId, text, turn, session: session! });
+        this.prompts.push({ harnessId, text, turn, session: session! }); this.prompted.add(session!);
         const plan = this.script(harnessId, input), name = /^\/(\S+)/u.exec(input)?.[1];
-        if (name === "compact") await peer.call("compact", { session, keep: 1 });
+        if (plan.effect === false) { /* a command that did nothing to the native history */ }
+        else if (name === "compact") await peer.call("compact", { session, keep: 1 });
         else if (name === "clear") await peer.call("clear", { session });
         else if (name === "undo") await peer.call("rewind", { session, n: 1 });
         else await peer.call("send", { session, runId: "entry-" + this.prompts.length, packetId, facts: [], insert: plan.insert ?? "now" });
+        this.onDispatch?.(harnessId, input);
         if (plan.e1 !== undefined && plan.e1 !== null) output({ type: "input_recorded", ...(plan.e1 === "own" ? (packetId === null ? {} : { packetId }) : { packetId: plan.e1 }) });
         if (plan.outputs !== undefined) for (const value of plan.outputs) output(value);
         else if (plan.result !== "lost") output({ type: "text", text: "reply from " + harnessId });
@@ -646,6 +676,7 @@ class ModelHarnesses implements SessionBindingFactory {
       },
       close: async () => {
         for (const hold of held.splice(0)) hold.reject(new SessionError("CLOSED", "the program was ended"));
+        if (this.closeFails) throw new SessionError("CLOSE_REFUSED", "the program could not be ended");
         return dead === null ? clean : { closed: true, exitCode: null, signal: "SIGTERM", protocolFailure: { code: dead.code, message: dead.message } };
       },
     };
@@ -1082,11 +1113,16 @@ async function bounded(app: SessionRuntime, id: SessionId, text: string, key: st
 }
 /**
  * alpha's fact a1, bravo synced on a packet of it (E3), then a /clear on bravo its Driver does not confirm: suspect
- * {clear_unconfirmed}. `unreadable` makes bravo's checks answer unavailable until the caller says otherwise.
+ * {clear_unconfirmed}. `unreadable` makes bravo's checks answer unavailable until the caller says otherwise. `ran` false: the
+ * clear did nothing to bravo's native history. `replaced`: a later `/clear again` is Claude's synthesized clear, replacing the
+ * native session by this one (null: none opened ahead). `admission`: the factory answers the static declarations.
  */
-async function clearUnconfirmed(t: TestContext, verify: RelayCapabilities["delivery"]["verify"], unreadable = false) {
+async function clearUnconfirmed(t: TestContext, verify: RelayCapabilities["delivery"]["verify"], unreadable = false, options: { readonly ran?: boolean; readonly replaced?: string | null; readonly admission?: boolean } = {}) {
   const w = await runtimeWorld(t);
   const fake = new ModelHarnesses(w.peer, { alpha: declared(), bravo: declared({ verify, successProvesRecorded: true }) });
+  if (options.admission === true) fake.enableAdmission();
+  fake.script = (_harnessId, input) => input === "/clear" && options.ran === false ? { effect: false }
+    : input === "/clear again" && options.replaced !== undefined ? { native: { cleared: true, replaced: { checkpoint: options.replaced } } } : {};
   const app = w.runtime(fake), session = await app.create(w.configuration, { harnessId: "alpha" }, "create"), id = session.id;
   const a1 = await turn(app, id, "a1 a fact on alpha", "a1"); await to(app, id, "bravo", "to-b");
   const b1 = await turn(app, id, "b1 carries a1", "b1");
@@ -1130,13 +1166,16 @@ test("G068 fix R1 (Runtime) a clear confirmed after the fact by the next open's 
 
 test("G068 fix R1 (Runtime) a clear confirmed after the fact by after_turn's check at a later Turn's own settlement: that Turn is not sent again", async t => {
   const s = await clearUnconfirmed(t, "after_turn", true);
-  // b2's check at its open (after_turn checks a suspect binding there too) cannot see; the one at its settlement can.
+  // b2 goes alone: its open asks the Driver nothing (G068 fix batch 2, M-3: a read there could only stop it), so its open's check
+  // is answered unavailable without asking; the one at its settlement can see.
   s.fake.readable = true;
   let calls = 0;
-  s.fake.check = () => calls++ > 0 ? "model" : { raw: request => ({ markers: request.markers.map(marker => ({ packetId: marker.packetId, result: "unavailable" })), historyEmpty: null, compaction: null, foreignAfterLast: null, verifyMs: 0 }) };
+  s.fake.check = () => { calls++; return "model"; };
   const b2 = await turn(s.app, s.id, "b2 only this message", "b2", { attach: "none" });
-  assert.equal(calls, 2, "checked at the open and at the settlement");
+  assert.equal(calls, 1, "asked only at the settlement");
+  assert.equal(allEvents(s.w.store, s.id).find(row => row.type === "relay.verified" && row.data.inRunId === b2.id && row.data.moment === "open")?.data.unasked, "alone", "the open's check names why it asked nothing");
   assert.equal(eventOf(s.w.store, s.id, "relay.verified", b2.id)?.data.result, "cleared", "b2's settlement check confirmed the clear");
+  assert.equal(eventOf(s.w.store, s.id, "relay.verified", b2.id)?.data.moment, "settled");
   const b3 = await turn(s.app, s.id, "b3 next message", "b3");
   await noRepeat(s, b2, b3);
 });
@@ -1160,8 +1199,17 @@ test("G068 fix R2 (Runtime) a check at the open that breaks the connection: the 
   assert.equal(app.read(id).status, "open"); assert.equal(app.read(id).nativeBindings!.find(row => row.harnessId === "alpha")!.status, "ready", "the binding stays as it was");
   assert.equal(rowOf(w.store, id, a2.id), undefined, "no packet was authorized");
   fake.check = () => "model";
-  const a3 = await turn(app, id, "a3 after it", "a3");
-  assert.equal(a3.status, "completed"); assert.equal(rowOf(w.store, id, a1.id)?.outcome.kind, "recorded", "the next open's check found a1's packet");
+  // G068 fix batch 2, M-3: in this process the binding is not asked again (its check broke the connection once); the next Turn
+  // goes with its check answered unavailable, and a1's packet is resent by itself.
+  const verifies = fake.verifies, a3 = await turn(app, id, "a3 after it", "a3");
+  assert.equal(a3.status, "completed"); assert.equal(fake.verifies, verifies, "not asked again in this process");
+  assert.equal(eventOf(w.store, id, "relay.verified", a3.id)?.data.unasked, "connection"); assert.equal(rowOf(w.store, id, a3.id)?.resendOf, a1.id);
+  // A new owner asks again.
+  await app.close(); w.store.close();
+  w.store = new SqliteSessionStore(w.data, { recoverRelay });
+  const next = w.runtime(fake), a4 = await turn(next, id, "a4 under a new owner", "a4");
+  assert.equal(a4.status, "completed"); assert.ok(fake.verifies > verifies, "the new owner's open asked the Driver");
+  assert.equal(eventOf(w.store, id, "relay.verified", a4.id)?.data.unasked, undefined);
 });
 
 test("G068 fix R2 (Runtime) a check at the open that never answers is bounded: the Turn is not dispatched while it is outstanding, and ends within the bounds", { timeout: 30000 }, async t => {
@@ -1247,7 +1295,10 @@ test("G068 fix R4 (Runtime) Claude's synthesized clear without a session opened 
   assert.equal(bindings[1]!.opensNew, true); assert.equal(bindings[1]!.status, "ready"); assert.equal(bindings[1]!.throughRunId, null);
   assert.deepEqual(bindings[1]!.relay!.sync, { kind: "fresh", basis: "user_cleared" }); assert.equal(bindings[1]!.relay!.nativeEpoch, before.nativeEpoch + 1);
   assert.equal(bindings[1]!.relay!.epochFloor, eventOf(w.store, id, "run.ended", clear.id)!.seq);
+  // G068 fix batch 2, M-4: the checkpoint the binding names is the abandoned session's, which this conversation no longer holds.
+  assert.equal(bindings[1]!.checkpoint, abandoned); assert.equal(w.store.nativeOwners("alpha", "alpha-acp").get(abandoned), undefined, "the abandoned session is not held");
   const opens = fake.opens.length, after = await turn(app, id, "after the clear", "after");
+  assert.equal(w.store.nativeOwners("alpha", "alpha-acp").get(fake.last("alpha").session), id, "the new one is");
   assert.equal(after.status, "completed", JSON.stringify(after.error)); assert.equal(fake.opens[opens], undefined, "a new native session, not the abandoned one");
   assert.notEqual(fake.last("alpha").session, abandoned); assert.equal(fake.to("alpha").at(-1), after.input, "nothing owed after the clear: as typed");
   const now = app.read(id).nativeBindings!.find(row => row.harnessId === "alpha" && row.status !== "archived")!;
@@ -1447,4 +1498,339 @@ test("G068 fix R9g (Store) a resend never dispatched when its owner ended goes b
     assert.deepEqual(sync, { ...pending, packetId: packet.id, range: packet.range }, "back to waiting for the packet it superseded, with its counts (h)");
     consistent(store, id);
   } finally { store.close(); }
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// G068 fix batch 2 (the second review of stage two): the cases each finding was reproduced with, written before its fix.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** The Harness control's binding in use (the one not archived). */
+function current(app: SessionRuntime, id: SessionId, harnessId: string): NativeSessionBinding { return app.read(id).nativeBindings!.find(row => row.harnessId === harnessId && row.status !== "archived")!; }
+/** Content storage for a Turn with an attachment (the file is never read). */
+const NOTE_CONTENT: ContentPort = { storeOutput: async () => { throw new Error("no outputs"); }, materialize: async refs => refs.map(ref => ({ ...ref, path: "/dev/null" })),
+  resolve: ids => ids.map(item => ({ id: contentId(item), name: "note.txt", mediaType: "text/plain", kind: "file" as const, bytes: 4, sha256: "0".repeat(64) })) };
+/** An input with attachments, to its end. */
+async function withFile(app: SessionRuntime, id: SessionId, text: string, key: string): Promise<PublicRun> {
+  const receipt = app.send(id, text, key, ["content-note"]);
+  await app.wait(id).catch((error: unknown) => { if (!(error instanceof SessionError && error.code === "SESSION_BLOCKED")) throw error; });
+  return app.read(id).runs.find(row => row.id === receipt.runId)!;
+}
+/**
+ * bravo's fact b1; alpha (Claude-like: it checks after its Turns, success proves the input recorded) carries it, then its
+ * Driver's synthesized /clear replaces the native session by `replaced` (null: none opened ahead, opensNew).
+ */
+async function claudeCleared(t: TestContext, replaced: string | null) {
+  const w = await runtimeWorld(t);
+  const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "after_turn", successProvesRecorded: true }), bravo: declared() });
+  fake.script = (_harnessId, input) => input === "/clear" ? { native: { cleared: true, replaced: { checkpoint: replaced } } } : {};
+  const app = w.runtime(fake), session = await app.create(w.configuration, { harnessId: "bravo" }, "create"), id = session.id;
+  const b1 = await turn(app, id, "b1 a fact", "b1"); await to(app, id, "alpha", "to-a"); const a1 = await turn(app, id, "a1 carries b1", "a1");
+  const abandoned = fake.last("alpha").session, clear = await turn(app, id, "/clear", "clear");
+  assert.equal(clear.status, "completed"); assert.equal(app.read(id).nativeBindings!.filter(row => row.harnessId === "alpha").length, 2, "the cleared session's binding is archived");
+  return { w, fake, app, id, b1, a1, abandoned, clear };
+}
+
+test("G068 fix2 I-1a (Runtime) after Claude's synthesized clear opened no session (opensNew), a Turn that fails before dispatch keeps opensNew and the abandoned checkpoint: the next Turn opens a new native session and goes", async t => {
+  const s = await claudeCleared(t, null);
+  // A session never prompted cannot be resumed by another process; neither can the abandoned one.
+  s.fake.strictResume = true; s.fake.unresumable.add(s.abandoned);
+  const before = current(s.app, s.id, "alpha");
+  assert.equal(before.opensNew, true); assert.equal(before.checkpoint, s.abandoned);
+  // The next Turn fails before dispatch: a slash word is settled against the catalog, which cannot be read.
+  s.fake.catalogFails = true;
+  const opens = s.fake.opens.length, failed = await turn(s.app, s.id, "/foo", "foo");
+  assert.equal(failed.status, "failed"); assert.equal(failed.timing?.dispatchedAt, undefined, "never dispatched");
+  assert.equal(s.fake.opens.length, opens + 1); assert.equal(s.fake.opens[opens], undefined, "it opened a new native session");
+  const kept = current(s.app, s.id, "alpha");
+  assert.equal(kept.status, "ready"); assert.equal(kept.opensNew, true, "the next Turn opens a new native session again");
+  assert.equal(kept.checkpoint, s.abandoned, "the binding still names the abandoned session"); assert.equal(kept.throughRunId, null); assert.deepEqual(kept.relay, before.relay);
+  assert.equal(s.w.store.nativeOwners("alpha", "alpha-acp").size, 0, "neither the abandoned session nor the one never prompted is held (M-4)");
+  s.fake.catalogFails = false;
+  const next = await turn(s.app, s.id, "after the failure", "next");
+  assert.equal(next.status, "completed", JSON.stringify(next.error)); assert.equal(s.fake.opens[opens + 1], undefined, "a new native session, not the one never prompted");
+  const now = current(s.app, s.id, "alpha");
+  assert.equal(now.opensNew, undefined); assert.equal(now.checkpoint, s.fake.last("alpha").session); assert.equal(now.throughRunId, next.id);
+  assert.equal((await turn(s.app, s.id, "and on", "on")).status, "completed", "its session is resumed from then on");
+});
+
+test("G068 fix2 I-1a (Runtime) a new binding whose first carrying Turn fails before dispatch (its position read breaks the connection) keeps no session that was never prompted: the next Turn opens a new one and carries what is owed", async t => {
+  const w = await runtimeWorld(t);
+  const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "on_next_open" }), bravo: declared() });
+  fake.strictResume = true;
+  const app = w.runtime(fake), session = await app.create(w.configuration, { harnessId: "bravo" }, "create"), id = session.id;
+  const b1 = await turn(app, id, "b1 a fact", "b1"); await to(app, id, "alpha", "to-a");
+  fake.position = harnessId => harnessId === "alpha" ? "die" : "model";
+  const sent = fake.prompts.length, a1 = await turn(app, id, "a1 carries b1", "a1");
+  assert.equal(a1.status, "failed"); assert.equal(a1.error?.code, "RELAY_PREPARE_FAILED"); assert.equal(fake.prompts.length, sent, "nothing reached the Harness");
+  const binding = current(app, id, "alpha");
+  assert.equal(binding.status, "ready"); assert.equal(binding.opensNew, true, "the session opened for it was never prompted"); assert.equal(binding.throughRunId, null);
+  fake.position = () => "model";
+  const opens = fake.opens.length, a2 = await turn(app, id, "a2 carries b1", "a2");
+  assert.equal(a2.status, "completed", JSON.stringify(a2.error)); assert.equal(fake.opens[opens], undefined, "a new native session");
+  assert.deepEqual(a2.sourceRunIds, [b1.id]); assert.equal(current(app, id, "alpha").opensNew, undefined);
+});
+
+test("G068 fix2 I-1b (Runtime) C5: a fresh binding whose native session holds nothing, whose open its Driver refuses as a session it does not have, opens a new native session in its place on a new connection: relay state and floor unchanged, native.binding_replaced recorded, the Turn goes", async t => {
+  const s = await claudeCleared(t, "native-alpha-ahead");
+  const before = current(s.app, s.id, "alpha");
+  assert.equal(before.checkpoint, "native-alpha-ahead"); assert.equal(before.opensNew, undefined); assert.deepEqual(before.relay!.sync, { kind: "fresh", basis: "user_cleared" });
+  s.fake.missing.add("native-alpha-ahead");
+  const opens = s.fake.opens.length, prepared = s.fake.prepared, a2 = await turn(s.app, s.id, "a2 after the clear", "a2");
+  assert.equal(a2.status, "completed", JSON.stringify(a2.error));
+  assert.deepEqual(s.fake.opens.slice(opens), ["native-alpha-ahead", undefined], "refused, then a new native session");
+  assert.equal(s.fake.prepared, prepared + 2, "the refused connection was closed and a new program started");
+  const replaced = eventOf(s.w.store, s.id, "native.binding_replaced", a2.id)!;
+  assert.equal(replaced.data.reason, "empty_session_unresumable"); assert.equal(replaced.data.nativeEpoch, before.relay!.nativeEpoch);
+  assert.ok(replaced.seq < eventOf(s.w.store, s.id, "run.dispatched", a2.id)!.seq, "recorded before the input went");
+  const now = current(s.app, s.id, "alpha");
+  assert.equal(now.checkpoint, s.fake.last("alpha").session); assert.notEqual(now.checkpoint, "native-alpha-ahead");
+  assert.equal(now.relay!.nativeEpoch, before.relay!.nativeEpoch); assert.equal(now.relay!.epochFloor, before.relay!.epochFloor);
+  assert.equal(s.app.read(s.id).nativeBindings!.filter(row => row.harnessId === "alpha").length, 2, "replaced in place: no binding added");
+  assert.equal(s.fake.to("alpha").at(-1), a2.input, "nothing owed after the clear: as typed");
+});
+
+test("G068 fix2 I-1b (Runtime) a binding with a mark (synced) whose open its Driver refuses as a session it does not have is never replaced: the Turn fails, the checkpoint stays", async t => {
+  const w = await runtimeWorld(t);
+  const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "after_turn", successProvesRecorded: true }), bravo: declared() });
+  const app = w.runtime(fake), session = await app.create(w.configuration, { harnessId: "bravo" }, "create"), id = session.id;
+  await turn(app, id, "b1 a fact", "b1"); await to(app, id, "alpha", "to-a"); await turn(app, id, "a1 carries b1", "a1");
+  assert.equal(bindingRelay(app.read(id), "alpha").sync.kind, "synced");
+  const lost = fake.last("alpha").session; fake.missing.add(lost);
+  const opens = fake.opens.length, a2 = await turn(app, id, "a2 next", "a2");
+  assert.equal(a2.status, "failed"); assert.equal(a2.error?.code, "NATIVE_SESSION_NOT_FOUND");
+  assert.deepEqual(fake.opens.slice(opens), [lost], "asked once, never replaced");
+  assert.equal(eventOf(w.store, id, "native.binding_replaced", a2.id), undefined);
+  assert.equal(current(app, id, "alpha").checkpoint, lost); assert.equal(bindingRelay(app.read(id), "alpha").sync.kind, "synced");
+});
+
+test("G068 fix2 M-1a (Runtime) ［确认已清空］ on an unconfirmed clear the open would send back to pending with its resend spent (verify none, a carried packet): admission answers that landing's 409, no Run is made", async t => {
+  {
+    // No check (verify none): the unconfirmed clear carries a packet whose prior comes back, so the open would send it back to
+    // pending with its automatic resend spent: admission asks for that choice now, and no Run is made.
+    const w = await runtimeWorld(t);
+    const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "none" }), bravo: declared() });
+    fake.enableAdmission();
+    fake.script = (_harnessId, input) => input.startsWith("a1") ? { result: NO_EVIDENCE } : {};
+    const app = w.runtime(fake), session = await app.create(w.configuration, { harnessId: "bravo" }, "create"), id = session.id;
+    await turn(app, id, "b1 a fact", "b1"); await to(app, id, "alpha", "to-a"); await turn(app, id, "a1 carries b1, no evidence", "a1"); await turn(app, id, "/clear", "clear");
+    const sync = bindingRelay(app.read(id), "alpha").sync;
+    assert.ok(sync.kind === "suspect" && sync.cause === "clear_unconfirmed" && sync.carried !== null, JSON.stringify(sync));
+    const runs = app.read(id).runs.length;
+    assert.throws(() => app.send(id, "a2 it was cleared", "a2", [], { clearConfirmed: true }), relayError("RELAY_CHOICE_REQUIRED", "delivery_unconfirmed"));
+    assert.equal(app.read(id).runs.length, runs, "no Run was made");
+  }
+});
+
+test("G068 fix2 M-1b (Runtime) ［确认已清空］ on an unconfirmed clear the open restores by itself (a single Harness, verify none) is not offered: refused at admission, never dropped silently", async t => {
+  {
+    // A single Harness whose mark comes back by itself (verify none): the open restores it, so the confirmation is not offered;
+    // it is refused at admission instead of the Turn going on with no new epoch and no relay.clear_confirmed.
+    const w = await runtimeWorld(t);
+    const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "none", successProvesRecorded: true }) });
+    fake.enableAdmission();
+    const app = w.runtime(fake), session = await app.create(w.configuration, { harnessId: "alpha" }, "create"), id = session.id;
+    await turn(app, id, "a1", "a1"); await turn(app, id, "/clear", "clear");
+    const sync = bindingRelay(app.read(id), "alpha").sync;
+    assert.ok(sync.kind === "suspect" && sync.cause === "clear_unconfirmed", JSON.stringify(sync));
+    const runs = app.read(id).runs.length;
+    assert.throws(() => app.send(id, "a2 it was cleared", "a2", [], { clearConfirmed: true }), (error: unknown) => error instanceof SessionError && error.code === "INVALID_INPUT");
+    assert.equal(app.read(id).runs.length, runs, "no Run was made");
+    assert.equal((await turn(app, id, "a2 without it", "a2b")).status, "completed");
+  }
+});
+
+test("G068 fix2 M-1c (Runtime) ［确认已清空］ whose open's check settles the clear by itself (it did not run: the chain is there): the Run fails before dispatch, saying so; nothing is sent", async t => {
+  {
+    // A check at the open that settles it by itself (the clear did not run: the chain is still there): the Run the confirmation
+    // came with fails before dispatch, saying so, and the binding is what the check found.
+    const s = await clearUnconfirmed(t, "on_next_open", false, { ran: false });
+    const sent = s.fake.prompts.length, b2 = await turn(s.app, s.id, "b2 it was cleared", "b2", { clearConfirmed: true });
+    assert.equal(b2.status, "failed"); assert.equal(b2.error?.code, "RELAY_PREPARE_FAILED"); assert.equal(s.fake.prompts.length, sent, "nothing was sent");
+    assert.equal(eventOf(s.w.store, s.id, "relay.clear_confirmed", b2.id), undefined);
+    assert.equal(bindingRelay(s.app.read(s.id), "bravo").nativeEpoch, 1, "no clear was confirmed"); assert.equal(bindingRelay(s.app.read(s.id), "bravo").sync.kind, "synced", "the check found the history");
+    assert.equal((await turn(s.app, s.id, "b3 without it", "b3")).status, "completed");
+  }
+});
+
+test("G068 fix2 M-2 (Runtime) a connection the relay read on that fails after the authorization, before dispatch: the Turn ends as never dispatched, and its close's protocol failure leaves the binding ready, so the next Turn goes", async t => {
+  const w = await runtimeWorld(t);
+  const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "on_next_open" }), bravo: declared() });
+  const app = w.runtime(fake, { content: NOTE_CONTENT }), session = await app.create(w.configuration, { harnessId: "alpha" }, "create"), id = session.id;
+  await turn(app, id, "a0 on alpha", "a0"); await to(app, id, "bravo", "to-b");
+  const b1 = await turn(app, id, "b1 a fact", "b1"); await to(app, id, "alpha", "to-a");
+  fake.breakAtAttachments = true;
+  const sent = fake.prompts.length, a1 = await withFile(app, id, "a1 carries b1 with a file", "a1");
+  assert.equal(a1.status, "failed"); assert.equal(a1.error?.code, "RELAY_PREPARE_FAILED"); assert.equal(a1.timing?.dispatchedAt, undefined); assert.equal(fake.prompts.length, sent);
+  assert.equal(rowOf(w.store, id, a1.id)?.outcome.kind, "not_recorded", "the packet never left");
+  assert.equal(current(app, id, "alpha").status, "ready", "the close's protocol failure is the relay's, not the binding's");
+  assert.equal(a1.cleanup?.protocolFailure, null); assert.equal((eventOf(w.store, id, "run.ended", a1.id)!.data.relay as { readonly checkFailure?: { readonly code: string } }).checkFailure?.code, "REQUEST_TIMEOUT");
+  fake.breakAtAttachments = false;
+  const a2 = await turn(app, id, "a2 carries b1", "a2");
+  assert.equal(a2.status, "completed", JSON.stringify(a2.error)); assert.deepEqual(a2.sourceRunIds, [b1.id]);
+});
+
+/** alpha checks at the open and waits for a1's packet; then every check breaks the connection. */
+async function pendingAlpha(t: TestContext) {
+  const w = await runtimeWorld(t);
+  const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "on_next_open" }), bravo: declared() });
+  fake.script = (_harnessId, input) => input.startsWith("a1") ? { result: NO_EVIDENCE } : {};
+  const app = w.runtime(fake), session = await app.create(w.configuration, { harnessId: "bravo" }, "create"), id = session.id;
+  await turn(app, id, "b1 a fact", "b1"); await to(app, id, "alpha", "to-a"); await turn(app, id, "a1 carries b1, no evidence", "a1");
+  assert.equal(bindingRelay(app.read(id), "alpha").sync.kind, "pending");
+  fake.check = () => "die";
+  return { w, fake, app, id };
+}
+
+test("G068 fix2 M-3a (Runtime) a binding whose check broke the connection is not asked again in this process: its next Turn goes, its checks answered unavailable without asking", async t => {
+  {
+    const { w, fake, app, id } = await pendingAlpha(t);
+    const a2 = await turn(app, id, "a2 meets a check that breaks the connection", "a2");
+    assert.equal(a2.status, "failed"); assert.equal(a2.error?.code, "RELAY_PREPARE_FAILED");
+    const verifies = fake.verifies, positions = fake.positions, a3 = await turn(app, id, "a3 the check would break it again", "a3");
+    assert.equal(a3.status, "completed", JSON.stringify(a3.error)); assert.equal(fake.verifies, verifies, "not asked again"); assert.equal(fake.positions, positions, "nor for the position");
+    const verified = eventOf(w.store, id, "relay.verified", a3.id)!;
+    assert.equal(verified.data.unasked, "connection"); assert.deepEqual((verified.data.markers as readonly { readonly result: string }[]).map(marker => marker.result), ["unavailable"]);
+    assert.equal(rowOf(w.store, id, a3.id)?.resendOf, app.read(id).runs.find(row => row.input.startsWith("a1"))!.id, "its packet still went (the automatic resend of a1's)");
+  }
+});
+
+test("G068 fix2 M-3b (Runtime) an input sent alone asks the Driver nothing at its open, so a check that would break the connection never stops it", async t => {
+  {
+    const { fake, app, id } = await pendingAlpha(t);
+    const verifies = fake.verifies, alone = await turn(app, id, "a2 only this message", "a2", { attach: "none" });
+    assert.equal(alone.status, "completed", JSON.stringify(alone.error)); assert.equal(fake.verifies, verifies, "an input sent alone asks nothing at its open");
+    assert.equal(fake.to("alpha").at(-1), alone.input); assert.equal(bindingRelay(app.read(id), "alpha").sync.kind, "pending", "what is owed stays owed");
+  }
+});
+
+test("G068 fix2 M-5a (Runtime) a relay recovery failure no Run names is not cleared by another Harness's first native session, nor by a replacement: only the user's native reset clears it", async t => {
+  {
+    const w = await runtimeWorld(t);
+    const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "none", successProvesRecorded: true }), bravo: declared(), gamma: declared() });
+    fake.enableAdmission();
+    fake.script = (_harnessId, input) => input === "/clear" ? { native: { cleared: true, replaced: { checkpoint: null } } } : {};
+    const app = w.runtime(fake), session = await app.create(w.configuration, { harnessId: "bravo" }, "create"), id = session.id;
+    await turn(app, id, "b1", "b1"); await to(app, id, "alpha", "to-a"); await turn(app, id, "a1 carries b1", "a1"); await to(app, id, "bravo", "to-b");
+    await app.close(); w.store.close();
+    // The mark a recovery leaves (§9 S15), set by data repair as in the case above: it names no Run.
+    const db = new DatabaseSync(join(w.data, "gateway.sqlite"));
+    try {
+      const stored = JSON.parse(String(db.prepare("SELECT snapshot FROM sessions WHERE id=?").get(id)!.snapshot)) as SessionSnapshot;
+      db.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify({ ...stored, relayRecoveryFailed: stored.lastSeq }), id);
+    } finally { db.close(); }
+    w.store = new SqliteSessionStore(w.data, { recoverRelay });
+    const next = w.runtime(fake);
+    await to(next, id, "gamma", "to-g");
+    assert.equal((await turn(next, id, "g1 alone on a new Harness", "g1", { attach: "none" })).status, "completed");
+    assert.notEqual(next.read(id).relayRecoveryFailed, undefined, "another Harness's first native session does not clear it");
+    await to(next, id, "alpha", "to-a2");
+    assert.equal((await turn(next, id, "/clear", "clear")).status, "completed");
+    assert.equal(next.read(id).nativeBindings!.filter(row => row.harnessId === "alpha").length, 2, "alpha's session was replaced");
+    assert.notEqual(next.read(id).relayRecoveryFailed, undefined, "a replacement does not clear a failure it is not named by");
+    assert.throws(() => next.send(id, "a2 would carry", "a2", [], { attach: "full" }), relayError("RELAY_UNAVAILABLE", "recovery_failed"));
+    next.resetNative(id, "reset", next.read(id).epoch);
+    assert.equal(next.read(id).relayRecoveryFailed, undefined, "the user's native reset clears it");
+  }
+});
+
+test("G068 fix2 M-5b (Runtime) a relay recovery failure its own Harness's end left (R6) is cleared when that Harness's Driver replaces the native session", async t => {
+  {
+    // R6: alpha's own end was committed without its relay part; alpha's Driver then replaces its native session.
+    const w = await runtimeWorld(t);
+    const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "none", successProvesRecorded: true }), bravo: declared() });
+    fake.enableAdmission();
+    fake.script = (_harnessId, input) => input.startsWith("held") ? { result: "hold" } : input === "/clear" ? { native: { cleared: true, replaced: { checkpoint: null } } } : {};
+    const app = w.runtime(fake), session = await app.create(w.configuration, { harnessId: "bravo" }, "create"), id = session.id;
+    await turn(app, id, "b1 a fact", "b1"); await to(app, id, "alpha", "to-a");
+    const receipt = app.send(id, "held carries b1", "a1");
+    await until(() => fake.holds.length === 1 && rowOf(w.store, id, receipt.runId) !== undefined, "dispatched with its delivery row");
+    const db = new DatabaseSync(join(w.data, "gateway.sqlite"));
+    try { db.prepare("DELETE FROM relay_deliveries WHERE run_id=?").run(receipt.runId); } finally { db.close(); }
+    fake.holds[0]!.resolve(NO_EVIDENCE); await app.wait(id);
+    assert.notEqual(app.read(id).relayRecoveryFailed, undefined);
+    assert.equal((await turn(app, id, "/clear", "clear")).status, "completed");
+    assert.equal(app.read(id).relayRecoveryFailed, undefined, "the binding its Run's end named was replaced");
+  }
+});
+
+test("G068 fix2 M-6 (Runtime) after a clear confirmed after the fact, a native reset's new session holds none of the Turns run since the clear: they are owed to it (heldSince's since)", async t => {
+  const s = await clearUnconfirmed(t, "none");
+  const b2 = await turn(s.app, s.id, "b2 only this message", "b2", { attach: "none" });
+  const b3 = await turn(s.app, s.id, "b3 after confirming", "b3", { clearConfirmed: true });
+  assert.ok(eventOf(s.w.store, s.id, "relay.clear_confirmed", b3.id)); assert.deepEqual(b3.sourceRunIds, []);
+  assert.equal(b2.relay?.executedOn?.nativeEpoch, 1); assert.equal(b3.relay?.executedOn?.nativeEpoch, 2, "b3 ran in the epoch the confirmation opened");
+  const old = s.fake.last("bravo").session;
+  s.app.resetNative(s.id, "reset", s.app.read(s.id).epoch);
+  const b4 = await turn(s.app, s.id, "b4 in a new native session", "b4");
+  assert.notEqual(s.fake.last("bravo").session, old);
+  assert.deepEqual(b4.sourceRunIds, [b2.id, b3.id], "the Turns since the clear, which only the old native session held, are owed to the new one; a1 and b1 lie below the floor");
+});
+
+test("G068 fix2 M-6 (Runtime) after a clear confirmed after the fact, Claude's replacement (a session opened ahead, or none: a new native session) starts above its own floor; attach full brings every earlier Turn back, the ones since the confirmed clear included, as foreign to the new session", async t => {
+  for (const replaced of ["native-bravo-ahead", null]) {
+    const s = await clearUnconfirmed(t, "none", false, { replaced });
+    const b2 = await turn(s.app, s.id, "b2 only this message", "b2", { attach: "none" });
+    const b3 = await turn(s.app, s.id, "b3 after confirming", "b3", { clearConfirmed: true });
+    const old = s.fake.last("bravo").session, again = await turn(s.app, s.id, "/clear again", "clear-again");
+    assert.equal(again.status, "completed"); assert.equal(s.app.read(s.id).nativeBindings!.filter(row => row.harnessId === "bravo").length, 2, String(replaced) + ": replaced");
+    const b4 = await turn(s.app, s.id, "b4 brings it all back", "b4", { attach: "full" });
+    assert.equal(b4.status, "completed", JSON.stringify(b4.error)); assert.notEqual(s.fake.last("bravo").session, old);
+    if (replaced !== null) assert.equal(s.fake.last("bravo").session, replaced);
+    assert.deepEqual(b4.sourceRunIds, [s.a1.id, s.b1.id, b2.id, b3.id], String(replaced) + ": none of them is in the new native session");
+    const b5 = await turn(s.app, s.id, "b5 plain", "b5");
+    assert.deepEqual(b5.sourceRunIds, []); assert.equal(s.fake.to("bravo").at(-1), b5.input);
+  }
+});
+
+test("G068 fix2 M-6/I-1b (Runtime) after a clear confirmed after the fact, a native session that holds the Turns run since the clear is never replaced in place when its open is refused (they would be lost): the Turn fails; after the user's reset they are owed to the new session", async t => {
+  const s = await clearUnconfirmed(t, "after_turn", true);
+  s.fake.readable = true;
+  const b2 = await turn(s.app, s.id, "b2 only this message", "b2", { attach: "none" });
+  const relay = bindingRelay(s.app.read(s.id), "bravo");
+  assert.equal(relay.nativeEpoch, 2, "b2's settlement check confirmed the clear"); assert.deepEqual(relay.sync, { kind: "fresh", basis: "user_cleared" });
+  s.fake.missing.add(s.fake.last("bravo").session);
+  const b3 = await turn(s.app, s.id, "b3 the session is gone", "b3");
+  assert.equal(b3.status, "failed"); assert.equal(b3.error?.code, "NATIVE_SESSION_NOT_FOUND"); assert.equal(eventOf(s.w.store, s.id, "native.binding_replaced", b3.id), undefined);
+  s.app.resetNative(s.id, "reset", s.app.read(s.id).epoch);
+  const b4 = await turn(s.app, s.id, "b4 in a new native session", "b4");
+  assert.equal(b4.status, "completed", JSON.stringify(b4.error)); assert.deepEqual(b4.sourceRunIds, [b2.id], "b2, which only the lost session held, is owed to the new one");
+});
+
+test("G068 fix2 M-8 (Runtime) a close that throws after the Turn already failed keeps the Turn's own failure: the Turn is unknown (its cleanup is unconfirmed) and says what it failed with", async t => {
+  const w = await runtimeWorld(t);
+  const fake = new ModelHarnesses(w.peer, { alpha: declared({ verify: "on_next_open" }), bravo: declared() });
+  const app = w.runtime(fake), session = await app.create(w.configuration, { harnessId: "bravo" }, "create"), id = session.id;
+  await turn(app, id, "b1 a fact", "b1"); await to(app, id, "alpha", "to-a");
+  fake.position = harnessId => harnessId === "alpha" ? "die" : "model"; fake.closeFails = true;
+  const a1 = await turn(app, id, "a1 carries b1", "a1");
+  fake.closeFails = false;
+  assert.equal(a1.status, "unknown", "its program's end is not confirmed"); assert.equal(app.read(id).status, "blocked");
+  assert.equal(a1.error?.code, "RELAY_PREPARE_FAILED", "the failure it ended with, not the close's");
+});
+
+test("G068 fix2 M-9 (Runtime) a dsh-like Driver's E1 the Store refuses (its delivery row is gone) is tried once in the Turn, not once per output; the Turn ends as without it (R6)", async t => {
+  const w = await runtimeWorld(t);
+  const fake = new ModelHarnesses(w.peer, { alpha: declared({ live: "agent_output", verify: "none" }), bravo: declared() });
+  fake.script = (_harnessId, input) => input.startsWith("a1") ? { result: NO_EVIDENCE, outputs: [{ type: "text", text: "one " }, { type: "thinking", text: "so" }, { type: "text", text: "two" },
+    { type: "tool", id: "tool-1", title: "read", status: "completed" }] } : {};
+  const app = w.runtime(fake), session = await app.create(w.configuration, { harnessId: "bravo" }, "create"), id = session.id;
+  await turn(app, id, "b1 a fact", "b1"); await to(app, id, "alpha", "to-a");
+  let tries = 0;
+  const transact = w.store.transact.bind(w.store);
+  w.store.transact = ((target, version, mutate) => transact(target, version, state => {
+    const mutation = mutate(state);
+    if (mutation.events.some(row => row.type === "relay.input_recorded")) tries++;
+    return mutation;
+  })) as typeof w.store.transact;
+  // Injected Store fault: once dispatched, the Turn's delivery row is gone, so the Store refuses E1's write.
+  fake.onDispatch = (harnessId, input) => {
+    if (harnessId !== "alpha" || !input.startsWith("a1")) return;
+    const db = new DatabaseSync(join(w.data, "gateway.sqlite"));
+    try { db.prepare("DELETE FROM relay_deliveries WHERE run_id=?").run(app.read(id).activeRunId); } finally { db.close(); }
+  };
+  const a1 = await turn(app, id, "a1 carries b1, the agent answers", "a1");
+  assert.equal(tries, 1, "E1 was tried once");
+  assert.equal(eventOf(w.store, id, "relay.input_recorded", a1.id), undefined, "and not recorded");
+  assert.equal(a1.status, "completed"); assert.equal(app.read(id).messages.find(row => row.id === a1.assistantMessageId)?.text, "one two", "every output was kept");
+  assert.equal(app.read(id).relayRecoveryFailed, eventOf(w.store, id, "run.ended", a1.id)!.seq, "its end's relay part was refused too (R6)");
 });

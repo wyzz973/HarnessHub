@@ -264,8 +264,9 @@ export class OpenClawControl extends AcpControl {
   }
   /**
    * Where this session's transcript stands before a Turn's input (ADR-055 §8.1): its highest sequence number (sessions.get),
-   * read without changing anything; `none` when it cannot be read or a row it read carries no sequence number. Sequence
-   * numbers start again after a reset (reset-relative ordinals, v2026.10.9), which a check recognizes by the reset marker.
+   * read without changing anything; `none` when it cannot be read or a row it read carries no sequence number (a check then
+   * still looks for the packet whole, verifyDelivered). Sequence numbers start again after a reset (reset-relative ordinals,
+   * v2026.10.9), which a check recognizes by the reset marker.
    */
   async deliveryPosition(id: NativeConversationId): Promise<DeliveryPosition> {
     this.assertOwned(id);
@@ -282,13 +283,23 @@ export class OpenClawControl extends AcpControl {
    * outside_window when rows were read but start later; unavailable when none were. The whole check is unavailable when the
    * transcript cannot be read in time, is no list, or a row carries no sequence number.
    *
+   * A marker without a position (the transcript could not be read before dispatch) is looked for whole in every user row
+   * read (the second review's I5): packet identities are unique, so a row with the title and end lines of the same packet is
+   * it; present (compacted when a compaction marker follows it), absent only when the window holds the whole transcript
+   * (fewer rows than it reads, each numbered, and at least one: an empty answer is no proof, see below), unavailable
+   * otherwise. A title line alone never counts for one.
+   *
    * sessions.get answers an unknown or filtered session, and one whose row changed while it read, with no message at all,
    * and reads the transcript archived at the last reset while the active one holds none (2026.10.9 sessions-read
    * `sessions.get`, `allowResetArchiveFallback: true`; session-transcript-read-kernel readMessagePage), its answer naming
-   * neither. So a check that asks whether the history is empty (an unconfirmed clear) trusts its rows only after a reset row,
-   * which shows they are the active transcript's: without one every marker is unavailable and historyEmpty null. After one,
-   * historyEmpty is false when a user or assistant row was read, and true only when the window holds the whole transcript, it
-   * has none, and sessions.describe names the session. No compaction cursor (OpenClaw's compaction evidence is not verified).
+   * neither. A reset row does not tell the two apart either: the archive reader keeps the archived transcript's own reset
+   * record and numbers what follows it (session-transcript-archive-reader selectArchiveTranscriptEntries, `seq: index + 1`).
+   * The second review read 2026.10.9 and found the fallback out of reach for the Hub's sessions (a reset keeps the
+   * sessionId, writes no archive, and leaves its reset row visible in the active transcript); not probed. The rule stays as
+   * the conservative one it was: a check that asks whether the history is empty (an unconfirmed clear) trusts its rows only
+   * after a reset row, without one every marker is unavailable and historyEmpty null. After one, historyEmpty is false when a
+   * user or assistant row was read, and true only when the window holds the whole transcript, it has none, and
+   * sessions.describe names the session. No compaction cursor (OpenClaw's compaction evidence is not verified).
    */
   async verifyDelivered(id: NativeConversationId, request: VerifyRequest): Promise<VerifyResult> {
     const started = Date.now();
@@ -310,7 +321,15 @@ export class OpenClawControl extends AcpControl {
     // An unconfirmed clear's check: rows without a reset row among them may be the archive of the history the clear emptied.
     if (request.historyEmpty && !reset) return unavailable(request, started);
     let foreign: number | null = null;
+    const compactedAfter = (found: { readonly seq: number }): MarkerResult => rows.some(row => row.kind === "compaction" && row.seq > found.seq) ? "compacted" : "present";
     const results = request.markers.map((marker, index): MarkerResult => {
+      if (marker.position.kind === "none") {
+        // No position: a whole packet anywhere in the window, absent only when the window holds the whole transcript.
+        const users = rows.filter(row => row.role === "user"), at = users.findIndex(row => entryCarries(row.text, marker.packetId, true));
+        if (at < 0) return complete && rows.length > 0 ? "absent" : "unavailable";
+        if (index === request.markers.length - 1) foreign = users.length - at - 1;
+        return compactedAfter(users[at]!);
+      }
       if (marker.position.kind !== "seq") return "unavailable";
       const before = marker.position.before, users = rows.filter(row => row.role === "user" && (reset || row.seq > before));
       // The first row after the position by its title line, any other only whole (packetEntry's rule). After a reset a row's
@@ -319,9 +338,8 @@ export class OpenClawControl extends AcpControl {
       const first = users.findIndex(row => row.seq > before);
       const at = users.findIndex((row, index) => entryCarries(row.text, marker.packetId, index !== first));
       if (at >= 0) {
-        const found = users[at]!;
         if (index === request.markers.length - 1) foreign = users.length - at - 1;
-        return rows.some(row => row.kind === "compaction" && row.seq > found.seq) ? "compacted" : "present";
+        return compactedAfter(users[at]!);
       }
       return reset || lowest !== null && lowest <= before + 1 ? "absent" : rows.length ? "outside_window" : "unavailable";
     });

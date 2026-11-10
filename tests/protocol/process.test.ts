@@ -56,6 +56,39 @@ createInterface({ input: process.stdin }).on("line", line => { const message = J
     assert.equal(failed instanceof ControlError && failed.code, "REQUEST_TIMEOUT");
   } finally { assert.equal((await rpc.close()).closed, true); }
 });
+test("at most 64 requests given up at their deadline wait for an answer that may still come: past them the next deadline fails the connection as \"abort\" does; a late answer frees its place (G069 second review, minor 1)", async t => {
+  const root = await mkdtemp(join(tmpdir(), "rpc-abandoned-")); t.after(() => rm(root, { recursive: true, force: true }));
+  // A peer that never answers `never`, answers `slow` after 200 ms and every other request at once.
+  const script = join(root, "silent-peer.mjs");
+  await (await import("node:fs/promises")).writeFile(script, `import { createInterface } from "node:readline";
+createInterface({ input: process.stdin }).on("line", line => { const message = JSON.parse(line);
+  const answer = () => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { method: message.method } }) + "\\n");
+  if (message.method === "never") return; if (message.method === "slow") setTimeout(answer, 200); else answer(); });
+`);
+  const connect = () => new JsonRpcProcess({ protocol: "acp-v1", executable: process.execPath, args: [script], env: {} }, options,
+    { notification: () => {}, request: () => { throw new ControlError("METHOD_NOT_FOUND", "unsupported"); }, failure: () => {} });
+  const givenUp = (rpc: JsonRpcProcess, method: string) => assert.rejects(rpc.request(method, {}, 20, "reject"), (error: unknown) => error instanceof ControlError && error.code === "REQUEST_TIMEOUT");
+  const silent = connect();
+  try {
+    await Promise.all(Array.from({ length: 64 }, () => givenUp(silent, "never")));
+    assert.equal(silent.failure, null, "64 given up, the connection still usable");
+    assert.deepEqual(await silent.request("ping", {}), { method: "ping" });
+    await givenUp(silent, "never");
+    const failed = silent.failure as Error | null;
+    assert.equal(failed instanceof ControlError && failed.code, "REQUEST_TIMEOUT", "the 65th deadline fails the connection");
+    await assert.rejects(silent.request("ping", {}), (error: unknown) => error instanceof ControlError && error.code === "REQUEST_TIMEOUT");
+  } finally { assert.equal((await silent.close()).closed, true); }
+  // Late answers free their places: 64 given up and answered late, then one more given up, and the connection stays.
+  const slow = connect();
+  try {
+    await Promise.all(Array.from({ length: 64 }, () => givenUp(slow, "slow")));
+    await new Promise(resolve => setTimeout(resolve, 400));
+    assert.equal(slow.failure, null, "the late answers were dropped");
+    await givenUp(slow, "never");
+    assert.equal(slow.failure, null, "their places were freed");
+    assert.deepEqual(await slow.request("ping", {}), { method: "ping" });
+  } finally { assert.equal((await slow.close()).closed, true); }
+});
 test("remote error is a rejection rather than a successful payload", async () => {
   const rpc = peer("remote-error");
   try { await assert.rejects(rpc.request("initialize", {}), error => error instanceof ControlError && error.code === "REMOTE_ERROR" && error.message.includes("-32001") && !error.message.includes("test remote error")); } finally { await closed(rpc); }

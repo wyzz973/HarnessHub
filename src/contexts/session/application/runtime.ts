@@ -20,8 +20,8 @@ import { mayReuseKept, owed, planReturnVerify, step, type BindingDelivery, type 
  */
 const RELAY_READ_MS = 2000;
 import {
-  EphemeralKeys, RelayLedger, acceptedChoices, admitRelay, bindingDeliveries, checkStep, checkWorthAnEvent, checkedResult, continuityOf, decideTurn, deliveryRow, heldSinceIn, markIn, needRuns,
-  outcomeWrites, packetManifest, parseRelayChoices, rangeOf, recordedStep, relayDeclaration, renderView, retreatEvent, runRelayOf, settleTurn, unavailableResult, verifiedEvent, verifyRequestOf,
+  EphemeralKeys, RelayLedger, acceptedChoices, admitRelay, bindingDeliveries, checkStep, checkWorthAnEvent, checkedResult, clearNotConfirmed, continuityOf, decideTurn, deliveryRow, heldSinceIn, holdsNothing, markIn,
+  nativeExactAt, needRuns, outcomeWrites, packetManifest, parseRelayChoices, rangeOf, recordedStep, relayDeclaration, renderView, retreatEvent, runRelayOf, settleTurn, unavailableResult, verifiedEvent, verifyRequestOf,
   type CarriedTurn, type Check, type RelayChoices, type RelayDeclaration, type SettledTurn, type TurnDecision,
 } from "./relay-coordinator.js";
 import { MAX_COMMANDS, MAX_OUTPUT_BYTES, MAX_PLAN_ENTRIES, MAX_QUEUE, MAX_RUNS, MAX_RUN_ACTIVITIES, MAX_RUN_NOTICES, MAX_RUN_TOOLS, assertInput, carriedNativeConfiguration, parseConfiguration, parseNativeConfiguration, replayCommand, terminal, utf8Bytes } from "../domain/state.js";
@@ -81,6 +81,10 @@ interface TurnRelay {
    * connection failed that was not failed before it, or was given up on for good — that failure is the relay's, never the Turn's.
    */
   readonly io: { asked: boolean; healthy: boolean | undefined; readonly abandoned: Promise<void>[]; broke: boolean };
+  /** The Store refused this Turn's E1 (R6): it is not tried again in this Turn (G068 fix batch 2, M-9). */
+  e1Refused: boolean;
+  /** The conversation's Harness control the Turn's reads are made for (`brokenReads`); null before the Turn knows it. */
+  key: string | null;
 }
 /** A conversation's kept native process (ADR-030): the binding of its last Run, idle between Turns and owned by the runtime. */
 interface KeptProcess {
@@ -310,6 +314,13 @@ export class SessionRuntime {
    * reads them (G068 fix batch, R8): an ordinary Turn reads no event for them. A Turn accepted by an earlier owner reads its event.
    */
   private readonly acceptedRelay = new Map<string, RelayChoices>();
+  /**
+   * The conversations' Harness controls (`readsKey`) on which a relay read broke the connection or was given up on at its bound
+   * (G068 fix batch 2, M-3): their later Turns in this process ask the Driver nothing more — a check answers unavailable, a
+   * position none — so that a read that breaks the connection every time cannot keep every input of the binding, one sent alone
+   * included, from being dispatched. Kept in memory only: a new owner asks again.
+   */
+  private readonly brokenReads = new Set<string>();
 
   constructor(private readonly store: SessionStore, private readonly factory: SessionBindingFactory, private readonly options: SessionRuntimeOptions) {
     this.ledger = new RelayLedger((id, after, limit) => this.store.events(id, after, limit));
@@ -557,20 +568,9 @@ export class SessionRuntime {
       return committed.session;
     } catch (error) { this.fail(error, id); throw error; }
   }
-  /**
-   * Whether a binding's native session holds exactly the conversation through `through` (ADR-055 §7.5, RT1-B7): synced,
-   * `through` ran in its current native epoch, and nothing foreign up to `through`'s fact is owed to it. A binding without relay
-   * state (none in a v13 Session) is never exact: nothing says what its native session holds (A1, R10a).
-   */
+  /** Whether a binding's native session holds exactly the conversation through `through` (relay-coordinator nativeExactAt). */
   private exactAt(state: SessionSnapshot, binding: NativeSessionBinding, through: PublicRun): boolean {
-    const relay = binding.relay;
-    if (relay === undefined) return false;
-    if (relay.sync.kind !== "synced" || through.relay?.executedOn?.nativeEpoch !== relay.nativeEpoch) return false;
-    const seq = this.ledger.endedSeq(state, through.id);
-    if (seq === undefined) return false;
-    const need = owed(relay, binding.harnessId, binding.controlId, this.relayFacts(state, { harnessId: binding.harnessId, controlId: binding.controlId, nativeEpoch: relay.nativeEpoch }).filter(fact => fact.seq <= seq),
-      { originHistory: (state.origin?.history.length ?? 0) > 0, heldSince: heldSinceIn(state, binding.harnessId, binding.controlId, relay) });
-    return need.facts.length === 0 && !need.origin;
+    return nativeExactAt(state, binding, through, () => this.ledger.endedSeq(state, through.id), on => this.relayFacts(state, on));
   }
   async wait(id: SessionId): Promise<void> {
     this.load(id);
@@ -1345,12 +1345,13 @@ export class SessionRuntime {
    * it in memory for its settlement (an ordinary Turn adds no event). An entry the Driver saw with another packet, a second
    * report, or one after the Turn stopped running decides nothing. `live` is the evidence the event names: the Driver's own
    * report of the entry (`recorded_event`), or the Turn's first agent output (`agent_output`, R3). An E1 the Store refuses
-   * (its relay rows, a binding that changed) is not recorded and the settlement decides as without it (R6); a Store that
-   * failed fails the Runtime as any commit does.
+   * (its relay rows, a binding that changed) is not recorded, nor tried again in the Turn, and the settlement decides as without
+   * it (R6, M-9); a Store that failed fails the Runtime as any commit does.
    */
   private inputRecorded(execution: ActiveExecution, packetId: RelayPacket["id"] | undefined, live: "recorded_event" | "agent_output"): void {
     const relay = execution.relay, turn = relay.turn;
-    if (relay.recorded) return;
+    // Once per Turn: one the Store refused is not tried again at every later output (G068 fix batch 2, M-9).
+    if (relay.recorded || relay.e1Refused) return;
     if (turn.kind !== "carry") { if (turn.kind === "plain") relay.recorded = true; return; }
     if (packetId !== undefined && packetId !== turn.packetId) return;
     this.flushStream(execution);
@@ -1374,6 +1375,7 @@ export class SessionRuntime {
       committed = true;
     } catch (error) {
       if (!this.relayRefusal(error)) { if (!expectedFailure(error)) this.fail(error, state.id); throw error; }
+      relay.e1Refused = true;
     }
     if (committed) relay.recorded = true;
   }
@@ -1525,7 +1527,8 @@ export class SessionRuntime {
       budget: { executionLeftMs: this.options.executionBudgetMs ?? DEFAULT_EXECUTION_BUDGET_MS, waitLeftMs: (this.options.waitBudgetMs ?? DEFAULT_WAIT_BUDGET_MS) - (this.waitUsed.get(target) ?? 0),
         waiting: false, since: performance.now(), timer: null }, stopReason: null, grace: null,
       stream: { kind: null, text: "", committedBytes: 0, bytes: 0, last: "", cancel: null }, streamFailure: null,
-      relay: { declaration: relayDeclaration(null), openCheck: null, turn: { kind: "none" }, settledCheck: null, recorded: false, io: { asked: false, healthy: undefined, abandoned: [], broke: false } } };
+      relay: { declaration: relayDeclaration(null), openCheck: null, turn: { kind: "none" }, settledCheck: null, recorded: false, io: { asked: false, healthy: undefined, abandoned: [], broke: false },
+        e1Refused: false, key: null } };
     if (this.actives.has(id)) throw new SessionError("OWNERSHIP_LOST", "another Turn of this conversation is active");
     this.actives.set(id, execution); this.waitUsed.delete(target);
     // The execution budget runs from here: starting the program, its model, tools and result (ADR-036).
@@ -1543,6 +1546,10 @@ export class SessionRuntime {
     let evidence: "recorded" | "not_recorded" | null = null, noop = false, nativeCleared: BackendResult["native"] | undefined;
     // The relay reason of a relay failure before dispatch, for the Turn's end (RELAY_CHOICE_REQUIRED's cause and the like).
     let relayReason: string | null = null;
+    // Whether this Turn opened a native session anew (no checkpoint: a new binding, opensNew, or C5's replacement); such a session
+    // was never prompted, so a Turn that ends before dispatching into it keeps the binding opening a new one (G068 fix batch 2,
+    // I-1a). C5 (I-1b): the checkpoint the Driver refused as a session it does not have, and how its connection was closed.
+    let openedNew = false, replacedEmpty: string | null = null, refusedCleanup: CleanupEvidence | null = null;
     try {
       this.commit(id, current => ({ next: { ...updatedRun(current, target, { status: "preparing", selection: pinned, epoch: waitedSwitch ? current.epoch : queued.epoch, ...phase(current, target, "preparingAt", this.options.now().getTime()) }), activeRunId: target },
         events: [event("run.preparing", { runId: target, selection: state.selection, epoch: state.epoch })] }));
@@ -1561,30 +1568,18 @@ export class SessionRuntime {
           return { next: updatedRun(rest, target, { reused: true }), events: [event("native.process_reused", { runId: target, previousRunId: kept.runId, idleMs: Math.max(0, now - kept.lastUsed), backgroundUpdates: this.background(kept) })] };
         });
         this.continue(execution);
-      } else {
-        try { execution.binding = await this.factory.prepare(run.selection, current.configuration, id, target); execution.diagnosticMark = execution.binding.control.diagnosticMark?.() ?? null; }
-        catch (error) {
-          // Another conversation's kept process holds the workspace: the user decides whether to end it (ADR-030, option C).
-          if (error instanceof SessionError && error.code === "WORKSPACE_BUSY" && [...this.kept].some(([holder, kept]) => holder !== id && kept.binding.workspace === current.configuration.workspace))
-            throw new SessionError("WORKSPACE_KEPT", "another conversation keeps a native process in this workspace");
-          throw error;
-        }
-        this.continue(execution);
-        if (execution.binding.installation !== undefined) {
-          const installation = execution.binding.installation;
-          this.commit(id, current => ({ next: current, events: [event("run.installation_resolved", { runId: target, installation })] }));
-        }
-      }
-      const control = execution.binding.control, declaration = execution.relay.declaration = relayDeclaration(control.relayCapabilities);
+      } else await this.startProgram(execution, run, current, id, target);
+      let control = execution.binding!.control;
+      const declaration = execution.relay.declaration = relayDeclaration(control.relayCapabilities);
+      execution.relay.key = this.readsKey(id, run.selection);
       const kinds = run.attachments?.map(file => file.kind) ?? [], reading = this.classify(control, run.input, null, kinds);
       // The relay packet (ADR-055 §5): what this binding's program and this Gateway hold as secrets never leaves in it, and an
       // input read as a possible command never opens it, so the packet cannot become a command's argument.
       // The secrets are the whole Session's (M1): the target binding's own, and those of every Harness whose history it carries.
       // They and the tool details are read only for a Turn that builds a packet (N3): a command reads nothing for one, and a
       // configuration that cannot be read fails only a Turn that would carry history.
-      const binding = execution.binding;
       const relayFor = async (state: SessionSnapshot, sources: readonly PublicRun["id"][], origin: boolean): Promise<PublicContextOptions> => {
-        const details = await this.relayDetails(state, sources), secrets = [...(binding.secrets ?? []), ...await this.relaySecretsOf(state, run, sources, origin)];
+        const details = await this.relayDetails(state, sources), secrets = [...(execution.binding?.secrets ?? []), ...await this.relaySecretsOf(state, run, sources, origin)];
         this.continue(execution);
         return { origin, secrets, firstLine: reading.kind === "content", details, ...(this.options.harnessName === undefined ? {} : { names: this.options.harnessName }) };
       };
@@ -1597,26 +1592,46 @@ export class SessionRuntime {
         const nativeOptions = carriedConfiguration?.options === undefined ? run.selection.nativeOptions : { ...run.selection.nativeOptions, ...carriedConfiguration.options };
         // A binding whose native session the Driver replaced by none yet (opensNew, R4) opens a new one: its checkpoint names the
         // abandoned session, never resumed.
-        native = await control.open(execution.binding.workspace, carriedConfiguration?.model ?? run.selection.nativeModel, nativeOptions, previousNative?.opensNew === true ? undefined : previousNative?.checkpoint); this.continue(execution);
+        const resumeFrom = previousNative?.opensNew === true ? undefined : previousNative?.checkpoint;
+        const open = (on: HarnessControl, from: string | undefined) => on.open(execution.binding!.workspace, carriedConfiguration?.model ?? run.selection.nativeModel, nativeOptions, from);
+        try { native = await open(control, resumeFrom); }
+        catch (error) {
+          // C5 (ADR-055 §7.5; G068 fix batch 2, I-1b): a native session that holds nothing the relay counts on (Claude's empty
+          // session after its synthesized clear, never prompted) that the Driver refuses as one it does not have — that refusal
+          // only, never a timeout or a failed connection — is replaced by a new one, its relay state and floor as they are, on a
+          // new connection: the refused one may be failed by the refusal. A binding with a watermark is never replaced.
+          if (resumeFrom === undefined || previousNative === undefined || fault(error).code !== "NATIVE_SESSION_NOT_FOUND" || !holdsNothing(current, previousNative)) throw error;
+          ({ control, closed: refusedCleanup } = await this.restartProgram(execution, run, current, id, target, error));
+          native = await open(control, undefined);
+          replacedEmpty = resumeFrom;
+        }
+        openedNew = resumeFrom === undefined || replacedEmpty !== null;
+        this.continue(execution);
       }
       opened = native;
       // The Session as the binding's preparation committed it: what the relay reads below (the binding's relay state, the facts).
       let prepared: SessionSnapshot = current;
-      if (run.selection.provider === undefined && execution.binding.control.checkpoint) {
-        checkpoint = await execution.binding.control.checkpoint(); this.continue(execution);
+      if (run.selection.provider === undefined && control.checkpoint) {
+        checkpoint = await control.checkpoint(); this.continue(execution);
         if (checkpoint !== null && (typeof checkpoint !== "string" || !checkpoint || Buffer.byteLength(checkpoint) > 8192 || /[\0\r\n]/u.test(checkpoint))) throw new SessionError("INVALID_NATIVE_CHECKPOINT", "invalid original Harness recovery reference");
         if (previousNative !== undefined && checkpoint === null) throw new SessionError("NATIVE_RESUME_UNAVAILABLE", "original Harness cannot confirm its recovered state; no replacement session was dispatched");
         if (checkpoint !== null) {
-          const reference: NativeSessionBinding = { harnessId: run.selection.harnessId, controlId: run.selection.controlId, checkpoint, throughRunId: previousNative?.throughRunId ?? null, status: "unconfirmed",
+          // C5's new native session holds nothing yet: no native position (I-1b).
+          const reference: NativeSessionBinding = { harnessId: run.selection.harnessId, controlId: run.selection.controlId, checkpoint, throughRunId: replacedEmpty !== null ? null : previousNative?.throughRunId ?? null, status: "unconfirmed",
             ...(previousNative?.observed === undefined ? {} : { observed: previousNative.observed }) };
           prepared = this.commit(id, current => {
             // Every v13 binding carries its relay state, merged on what is committed now (ADR-055 §6.1): a resumed one keeps its
-            // own; a new one starts as its lineage says (ADR-055 §7.5), and a new native session clears a relay recovery failure (§9 S15).
+            // own, C5's replacement included; a new one starts as its lineage says (ADR-055 §7.5). A relay recovery failure stays
+            // (§9 S15): it names no binding a new one replaces (G068 fix batch 2, M-5).
             const kept = current.nativeBindings?.find(binding => binding.harnessId === reference.harnessId && binding.controlId === reference.controlId && binding.status !== "archived");
             const bound: NativeSessionBinding = { ...reference, relay: previousNative === undefined ? initialBindingRelay(current.nativeBindings ?? [], reference.harnessId, reference.controlId, "new") : kept?.relay ?? previousNative.relay! };
-            const { relayRecoveryFailed, ...rest } = current;
-            return { next: { ...(previousNative === undefined ? rest : current), nativeBindings: previousNative === undefined ? [...(current.nativeBindings ?? []), bound] : current.nativeBindings?.map(binding => binding.harnessId === bound.harnessId && binding.controlId === bound.controlId && binding.status !== "archived" ? bound : binding) ?? [bound] },
-              events: [event("native.binding_prepared", { runId: target, harnessId: reference.harnessId, controlId: reference.controlId, resumed: previousNative !== undefined && previousNative.opensNew !== true })] };
+            return { next: { ...current, nativeBindings: previousNative === undefined ? [...(current.nativeBindings ?? []), bound] : current.nativeBindings?.map(binding => binding.harnessId === bound.harnessId && binding.controlId === bound.controlId && binding.status !== "archived" ? bound : binding) ?? [bound] },
+              // `resumed` says whether the binding existed (storage-events.md: each `resumed:false` makes a binding, as the v12
+              // migration reads it); a binding that opened a new native session (opensNew, C5) says so apart (G068 fix batch 2).
+              events: [event("native.binding_prepared", { runId: target, harnessId: reference.harnessId, controlId: reference.controlId, resumed: previousNative !== undefined,
+                ...(previousNative !== undefined && openedNew ? { nativeSession: "new" } : {}) }),
+                ...(replacedEmpty === null ? [] : [event("native.binding_replaced", { runId: target, harnessId: reference.harnessId, controlId: reference.controlId, reason: "empty_session_unresumable",
+                  nativeEpoch: bound.relay!.nativeEpoch, epochFloor: bound.relay!.epochFloor, ...(refusedCleanup === null ? {} : { cleanup: refusedCleanup }) })])] };
           }).session;
           checkpointStored = true;
         }
@@ -1635,17 +1650,22 @@ export class SessionRuntime {
       const h = run.selection.harnessId, c = run.selection.controlId;
       const bound = checkpointStored ? prepared.nativeBindings?.find(row => row.harnessId === h && row.controlId === c && row.status !== "archived" && row.relay !== undefined) : undefined;
       const now = () => this.options.now().getTime();
+      // The relay choices the input was accepted with; an input sent alone asks the Driver nothing at its open (M-3 below).
+      const requested: RelayChoices = command === null ? this.choicesOf(prepared, run) : {};
       let rows: readonly BindingDelivery[] = [], checked: BindingRelayState | null = null;
       if (bound !== undefined) {
         // Only a binding that waits for a packet, is in doubt or stands on one has delivery rows to read (§11.1, R8): a fresh one
         // or one synced on its own Turns plans no check, so an ordinary Turn reads no row and no event for its relay.
         rows = this.rowsMatter(bound.relay!, declaration.verify) ? this.relayDeliveries(prepared, bound) : [];
         const plan = planReturnVerify(bound.relay!, { verify: declaration.verify, moment: "open", deliveries: rows });
-        // Bounded like the settlement's (C6, R2): a check that does not answer in time is unavailable.
-        const result = await this.verifyFor(execution, control, native, plan);
+        // Bounded like the settlement's (C6, R2): a check that does not answer in time is unavailable. The Driver is not asked
+        // (every marker unavailable, and the check says why) for an input sent alone — a read could only keep it from going — nor
+        // on a binding an earlier read of this process broke the connection of (G068 fix batch 2, M-3).
+        const unasked = this.unasked(execution, control, plan, requested.attach === "none");
+        const result = await this.verifyFor(execution, control, native, plan, unasked);
         if (plan.kind !== "skip") this.continue(execution);
         // The Driver contract asks only for packets: an unknown Turn without one cannot be looked for, so its entry is unavailable.
-        execution.relay.openCheck = { plan, result, ...(plan.kind === "unknown_turn" && plan.marker === null ? { turnEntry: "unavailable" as const } : {}), moment: "open" };
+        execution.relay.openCheck = { plan, result, ...(plan.kind === "unknown_turn" && plan.marker === null ? { turnEntry: "unavailable" as const } : {}), ...(unasked === undefined ? {} : { unasked }), moment: "open" };
         checked = checkStep(bound.relay!, execution.relay.openCheck, run.id, { seq: prepared.lastSeq + 1, time: now() }).relay;
       }
       // What the Turn sends (ADR-055 §7.2, §9): a command goes as typed; a content input as typed when nothing is owed, alone
@@ -1661,13 +1681,19 @@ export class SessionRuntime {
         const since = heldSinceIn(prepared, h, c, working);
         // The user's choices matter unless the binding is synced and owes nothing even below its floor: then b and n, attached or
         // not, all go as typed and leave it as it is (§7.2); only a request for the history is kept, to say there was none (A9).
-        const all = owed(working, h, c, facts, { originHistory, attachOverride: true, heldSince: since }), requested = this.choicesOf(prepared, run);
+        const all = owed(working, h, c, facts, { originHistory, attachOverride: true, heldSince: since });
         const choices: RelayChoices = working.sync.kind === "synced" && all.facts.length === 0 && !all.origin
           ? { ...(requested.attach === "full" ? { attach: "full" as const } : {}), ...(requested.resend === true ? { resend: true as const } : {}) } : requested;
-        // The user's ［确认已清空］ (§9): e at the clear's floor candidate, only on a binding whose clear is unconfirmed.
-        if (bound !== undefined && choices.clearConfirmed === true && working.sync.kind === "suspect" && working.sync.cause === "clear_unconfirmed" && working.sync.floorCandidate !== null) {
-          const confirmed = step(working, { kind: "cleared", seq: working.sync.floorCandidate });
-          if (confirmed.kind === "applied") { clearFloor = working.sync.floorCandidate; working = confirmed.relay; facts = factsOn(working); }
+        // The user's ［确认已清空］ (§9): e at the clear's floor candidate while the open's check left the clear undecided. A check that
+        // confirmed the clear itself needs it no more; any other answer of the check fails this Run before dispatch, saying so —
+        // the confirmation is acted on or refused, never dropped (G068 fix batch 2, M-1).
+        if (requested.clearConfirmed === true) {
+          const undecided = working.sync;
+          if (bound !== undefined && undecided.kind === "suspect" && undecided.cause === "clear_unconfirmed" && undecided.floorCandidate !== null) {
+            const confirmed = step(working, { kind: "cleared", seq: undecided.floorCandidate });
+            if (confirmed.kind !== "applied") throw clearNotConfirmed();
+            clearFloor = undecided.floorCandidate; working = confirmed.relay; facts = factsOn(working);
+          } else if (!(bound !== undefined && checked !== null && checked.nativeEpoch > bound.relay!.nativeEpoch)) throw clearNotConfirmed();
         }
         const sync = working.sync, epochRows = rows.filter(row => row.nativeEpoch === working!.nativeEpoch);
         decision = decideTurn({ relay: working, harnessId: h, controlId: c, facts, originHistory, choices, declaration, firstFromSeq: epochRows[0]?.range.fromSeq ?? null,
@@ -1765,7 +1791,7 @@ export class SessionRuntime {
       // Attachments are checked against the opened agent/model and copied before dispatch, so a refusal fails this input cleanly.
       let files: readonly ControlAttachment[] = [];
       if (run.attachments?.length) {
-        const control = execution.binding.control, content = this.options.content;
+        const content = this.options.content;
         if (!control.checkAttachments) throw new SessionError("ATTACHMENT_UNSUPPORTED", "this Harness interface does not accept attachments");
         if (content === undefined) throw new SessionError("ATTACHMENT_UNAVAILABLE", "this Gateway has no content storage for attachments");
         try { await control.checkAttachments(run.attachments); }
@@ -1778,8 +1804,10 @@ export class SessionRuntime {
         this.continue(execution);
         files = await content.materialize(run.attachments); this.continue(execution);
       }
-      // A connection the relay read on that failed since is not handed the input (R2): the Turn ends as never dispatched.
-      if (execution.relay.io.asked && control.healthy?.() === false) throw notReached();
+      // A connection the relay read on that failed since is not handed the input (R2): the Turn ends as never dispatched, and, as
+      // when a read left it failed (relayReadsSettled), its close's protocol failure is the relay's, never the binding's: nothing
+      // was dispatched, so the binding is ready again (G068 fix batch 2, M-2).
+      if (execution.relay.io.asked && control.healthy?.() === false) { execution.relay.io.broke = execution.relay.io.healthy !== false; throw notReached(); }
       this.commit(id, current => ({ next: updatedRun(current, target, phase(current, target, "dispatchedAt", this.options.now().getTime())), events: [event("run.dispatched", { runId: target })] }));
       execution.dispatched = true;
       execution.run = await control.startText(native, turnText, value => this.output(execution, value), ...(files.length ? [files] : []));
@@ -1798,15 +1826,15 @@ export class SessionRuntime {
         // A native session the Driver replaced (Claude's synthesized clear, ADR-055 §7.5) is archived as it is: its reference
         // after the Turn is not needed, so one the Driver no longer gives (it opened no session ahead, R4) fails nothing.
         const replacing = nativeCleared?.replaced != null;
-        const after = replacing ? await execution.binding.control.checkpoint!().catch(() => null) : await execution.binding.control.checkpoint!(); this.owned(execution);
+        const after = replacing ? await control.checkpoint!().catch(() => null) : await control.checkpoint!(); this.owned(execution);
         const valid = typeof after === "string" && after !== "" && Buffer.byteLength(after) <= 8192 && !/[\0\r\n]/u.test(after);
         if (!valid && !replacing) throw new SessionError("INVALID_NATIVE_CHECKPOINT", "original Harness lost its owned session reference");
         if (valid) checkpoint = after; nativeConfirmed = true;
         reported = true;
-        if (execution.binding.control.nativeConfig) {
+        if (control.nativeConfig) {
           // Unreadable or invalid reports leave the configuration unknown; the next Turn then applies the selection as requested.
           // A Turn that told nothing about the native values leaves the earlier report standing.
-          try { const report = await execution.binding.control.nativeConfig(); if (report === null) reported = false; else observed = parseNativeConfiguration(report); }
+          try { const report = await control.nativeConfig(); if (report === null) reported = false; else observed = parseNativeConfiguration(report); }
           catch (error) { observed = undefined; const code = fault(error).code; this.commit(id, current => ({ next: current, events: [event("native.config_unreadable", { runId: target, code })] })); }
           this.owned(execution);
         }
@@ -1825,8 +1853,9 @@ export class SessionRuntime {
             if (plan.kind !== "skip") {
               // The Turn has ended: a check that fails or breaks the connection changes nothing of its result (C6, R2). Its failure is
               // the relay's (io.broke), and a check given up on leaves the connection to be closed, never kept for the next Turn.
-              const io = execution.relay.io, healthy = control.healthy?.(), abandoned = io.abandoned.length;
-              execution.relay.settledCheck = { plan, result: await this.verifyFor(execution, control, native, plan), moment: "settled" };
+              // A binding whose reads an earlier read broke is not asked (M-3); an input sent alone is asked here, where it is harmless.
+              const io = execution.relay.io, healthy = control.healthy?.(), abandoned = io.abandoned.length, unasked = this.unasked(execution, control, plan, false);
+              execution.relay.settledCheck = { plan, result: await this.verifyFor(execution, control, native, plan, unasked), ...(unasked === undefined ? {} : { unasked }), moment: "settled" };
               if (healthy !== false && (control.healthy?.() === false || io.abandoned.length > abandoned)) io.broke = true;
               this.owned(execution);
             }
@@ -1856,8 +1885,9 @@ export class SessionRuntime {
       const keep = execution.binding === null || opened === null || nativeCleared?.replaced != null || io.broke || io.abandoned.length > 0 ? { keep: false }
         : this.keepable(id, execution, backend, problem, checkpointStored && nativeConfirmed);
       if (execution.binding && !keep.keep) {
+        // A close that throws leaves the cleanup unconfirmed (the Turn is unknown); the Turn keeps the failure it ended with (M-8).
         try { execution.earlyClose ??= execution.binding.close(); cleanup = await execution.earlyClose; }
-        catch (error) { problem = fault(error); }
+        catch (error) { problem ??= fault(error); }
       }
       // What the program logged during this Turn, kept privately in memory for the user's diagnostics (redacted on the way out).
       if (execution.binding && execution.diagnosticMark !== null) this.keepDiagnostics(id, target, execution.binding.control.diagnosticsSince?.(execution.diagnosticMark) ?? "");
@@ -1878,7 +1908,8 @@ export class SessionRuntime {
       }
       try {
         this.store.assertOwner();
-        const current = this.load(id), run = current.runs.find(run => run.id === target)!;
+        // Read only for a replaced native session, the one end that may clear a relay recovery failure (M-5).
+        const current = this.load(id), run = current.runs.find(run => run.id === target)!, failedOn = nativeCleared?.replaced != null ? this.recoveryFailureOn(current) : null;
         const unsafe = (execution.dispatched && backend === null) || (execution.binding !== null && cleanup === null && !keep.keep) || this.fatal !== null || this.unknownOwnership(problem);
         // A connection failure the relay's own read caused — a check at the open before anything was dispatched, or a settlement's
         // check after the Turn's result was in — is the relay's, never the Turn's (C6, R2): it counts in neither the Turn's failure
@@ -1932,17 +1963,25 @@ export class SessionRuntime {
               // A replaced native session (§7.5) is archived as it was, its relay state frozen; the Turn ran in it.
               if (relayed?.replaced) return { ...binding, status: "archived" as const, throughRunId: execution.dispatched ? run.id : binding.throughRunId };
               const { observed: earlier, opensNew: _opened, ...rest } = binding, latest = reported ? observed : earlier;
+              // A native session this Turn opened anew and never dispatched into was never prompted, and another process cannot
+              // resume it: the binding goes on opening a new one (opensNew), naming the session it named before — the abandoned one,
+              // C5's refused one, or for a new binding this one (G068 fix batch 2, I-1a). It has no native position yet.
+              if (!execution.dispatched && openedNew) return { ...rest, checkpoint: previousNative?.checkpoint ?? checkpoint!, status: "ready" as const, throughRunId: null, opensNew: true as const,
+                ...(latest === undefined ? {} : { observed: latest }), ...(relayed === null ? {} : { relay: relayed.relay }) };
               // The native position follows dispatch (ADR-055 §7.4): a dispatched Turn's input reached this native session, whatever the relay.
               return { ...rest, checkpoint: checkpoint!, status: "ready" as const, throughRunId: execution.dispatched ? run.id : binding.throughRunId, ...(latest === undefined ? {} : { observed: latest }),
                 ...(relayed === null ? {} : { relay: relayed.relay }) };
             }) ?? [] };
             // Claude's synthesized clear (§7.5): the new binding of the same Harness control starts the next epoch at the clear's
-            // floor and inherits what the native session was last seen running; a new native session clears a relay recovery failure.
+            // floor and inherits what the native session was last seen running. A relay recovery failure is cleared only when it
+            // names this Harness control (a Turn's end committed without its relay part, R6): the binding it named is replaced; one
+            // a recovery left names no binding, and only the user's native reset clears it (§9 S15; G068 fix batch 2, M-5).
             // Without a session to continue (`replaced.checkpoint` null, R4) the next Turn opens a new one (opensNew), and the
             // binding names the abandoned session it replaces, which is never resumed.
             if (relayed?.replaced) {
               const latest = reported ? observed : own?.observed, { relayRecoveryFailed, ...rest } = next;
-              next = { ...rest, nativeBindings: [...next.nativeBindings!, { harnessId: pinned.harnessId, controlId: pinned.controlId, checkpoint: replacement ?? own!.checkpoint, throughRunId: null, status: "ready" as const,
+              const named = failedOn !== null && failedOn.harnessId === pinned.harnessId && failedOn.controlId === pinned.controlId;
+              next = { ...(named ? rest : next), nativeBindings: [...next.nativeBindings!, { harnessId: pinned.harnessId, controlId: pinned.controlId, checkpoint: replacement ?? own!.checkpoint, throughRunId: null, status: "ready" as const,
                 ...(latest === undefined ? {} : { observed: latest }), relay: relayed.relay, ...(replacement === null ? { opensNew: true as const } : {}) }] };
             }
           } else if (relayed !== null && !relayed.replaced) {
@@ -2000,6 +2039,51 @@ export class SessionRuntime {
     if (turn.kind !== "plain") return turn;
     const run = state.runs.find(row => row.id === execution.runId), reply = run === undefined ? undefined : state.messages.find(message => message.id === run.assistantMessageId);
     return { ...turn, recorded: execution.relay.recorded, agentOutput: (reply?.text ?? "") !== "" || (run?.thinking ?? "") !== "" || (run?.tools?.length ?? 0) > 0 };
+  }
+  /**
+   * Starts the Turn's program (its binding), with the installation it resolved; another conversation's kept process holding the
+   * workspace is the user's to end (ADR-030, option C).
+   */
+  private async startProgram(execution: ActiveExecution, run: PublicRun, current: SessionSnapshot, id: SessionId, target: PublicRun["id"]): Promise<void> {
+    try { execution.binding = await this.factory.prepare(run.selection, current.configuration, id, target); execution.diagnosticMark = execution.binding.control.diagnosticMark?.() ?? null; }
+    catch (error) {
+      if (error instanceof SessionError && error.code === "WORKSPACE_BUSY" && [...this.kept].some(([holder, kept]) => holder !== id && kept.binding.workspace === current.configuration.workspace))
+        throw new SessionError("WORKSPACE_KEPT", "another conversation keeps a native process in this workspace");
+      throw error;
+    }
+    this.continue(execution);
+    const installation = execution.binding.installation;
+    if (installation !== undefined) this.commit(id, latest => ({ next: latest, events: [event("run.installation_resolved", { runId: target, installation })] }));
+  }
+  /**
+   * C5 (G068 fix batch 2, I-1b): the program whose open its Driver refused as a session it does not have is closed — a Driver may
+   * fail the connection with that refusal, as the ACP Driver does — and the Turn starts it again, initialized, for a new native
+   * session. A close that does not confirm the program ended keeps that binding for the Turn's end to account for, and the Turn
+   * fails with the refusal, as it would without the replacement. Returns the new control and how the refused one was closed.
+   */
+  private async restartProgram(execution: ActiveExecution, run: PublicRun, current: SessionSnapshot, id: SessionId, target: PublicRun["id"], refusal: unknown): Promise<{ readonly control: HarnessControl; readonly closed: CleanupEvidence }> {
+    const refused = execution.binding!;
+    execution.earlyClose ??= refused.close();
+    const closed = await execution.earlyClose.catch(() => null);
+    if (closed === null || closed.closed !== true) throw refusal;
+    execution.binding = null; execution.earlyClose = null; execution.diagnosticMark = null;
+    this.continue(execution);
+    await this.startProgram(execution, run, current, id, target);
+    const control = execution.binding!.control, observation = await control.initialize(); this.continue(execution);
+    this.commit(id, latest => ({ next: latest, events: [event("run.protocol", { runId: target, observation })] }));
+    return { control, closed };
+  }
+  /**
+   * The Harness control a relay recovery failure names (§9 S15; G068 fix batch 2, M-5): a Turn's end committed without its relay
+   * part (R6) names its Run's; a recovery's names none (its relay part covered every binding). Read from the event it records.
+   */
+  private recoveryFailureOn(state: SessionSnapshot): { readonly harnessId: string; readonly controlId: string } | null {
+    const seq = state.relayRecoveryFailed;
+    if (seq === undefined) return null;
+    const recorded = this.store.events(state.id, seq - 1, 1)[0];
+    if (recorded === undefined || recorded.seq !== seq || recorded.type !== "run.ended" || (recorded.data.relay as { readonly failed?: unknown } | undefined)?.failed !== true) return null;
+    const run = state.runs.find(row => row.id === recorded.data.runId);
+    return run === undefined || run.selection.provider !== undefined ? null : { harnessId: run.selection.harnessId, controlId: run.selection.controlId };
   }
   /**
    * The Run that carried a pending packet (ADR-055's stage-two seam, for its resend's `resend.of`): its delivery row's Run,
@@ -2202,36 +2286,57 @@ export class SessionRuntime {
    * A check's answer from the Driver (ADR-055 §7.3): nothing to ask for a skipped plan; every marker unavailable when the
    * Driver cannot check, fails, answers nothing or takes more than RELAY_READ_MS; otherwise its answer, checked marker by marker.
    */
-  private async verifyFor(execution: ActiveExecution, control: HarnessControl, native: NativeConversationId, plan: Check["plan"]): Promise<VerifyResult> {
+  private async verifyFor(execution: ActiveExecution, control: HarnessControl, native: NativeConversationId, plan: Check["plan"], unasked?: Check["unasked"]): Promise<VerifyResult> {
     const request = verifyRequestOf(plan), verify = control.verifyDelivered?.bind(control);
-    if (request === null || verify === undefined) return unavailableResult(request);
+    if (request === null || verify === undefined || unasked !== undefined) return unavailableResult(request);
     const raw = await this.relayRead<unknown>(execution, control, () => verify(native, request), null);
     return raw === null || raw === undefined ? unavailableResult(request) : checkedResult(raw, request);
+  }
+  /**
+   * Why a check would not ask its Driver (G068 fix batch 2, M-3): `connection` on a binding an earlier read of this process broke
+   * the connection of; `alone` at the open of an input sent alone; undefined when it asks — or when the plan asks nothing anyway.
+   */
+  private unasked(execution: ActiveExecution, control: HarnessControl, plan: Check["plan"], alone: boolean): Check["unasked"] {
+    if (verifyRequestOf(plan) === null || control.verifyDelivered === undefined) return undefined;
+    return this.readsOff(execution) ? "connection" : alone ? "alone" : undefined;
+  }
+  /** Whether the Turn's reads are off: a read of an earlier Turn of this process broke its binding's connection (M-3). */
+  private readsOff(execution: ActiveExecution): boolean { return execution.relay.key !== null && this.brokenReads.has(execution.relay.key); }
+  /** The key `brokenReads` keeps a conversation's Harness control by. */
+  private readsKey(id: SessionId, selection: HarnessSelection): string { return id + "\0" + selection.harnessId + "\0" + selection.controlId; }
+  /** A relay read of this Turn broke its connection, or was given up on: the binding's later Turns ask nothing more (M-3). */
+  private readsBroke(execution: ActiveExecution): void {
+    const key = execution.relay.key;
+    if (key === null) return;
+    this.brokenReads.add(key);
+    if (this.brokenReads.size > 4096) this.brokenReads.delete(this.brokenReads.values().next().value!);
   }
   /** Where the native history stands before dispatch (ADR-055 F20); none when the Driver records none, cannot read it or is late. */
   private async positionOf(execution: ActiveExecution, control: HarnessControl, native: NativeConversationId): Promise<DeliveryPosition> {
     const read = control.deliveryPosition?.bind(control);
-    if (read === undefined) return { kind: "none" };
+    if (read === undefined || this.readsOff(execution)) return { kind: "none" };
     return await this.relayRead<DeliveryPosition>(execution, control, () => read(native), { kind: "none" });
   }
   /**
    * One relay read on the Turn's connection (C6, R2): its answer, or `fallback` when it fails or takes more than RELAY_READ_MS.
    * A read given up on stays in `io.abandoned` until it ends, so that the connection is not kept and no input is dispatched
-   * on it meanwhile; the connection's health before the Turn's first relay read is kept, to tell what a read broke.
+   * on it meanwhile; the connection's health before the Turn's first relay read is kept, to tell what a read broke. A read given
+   * up on, or one that leaves failed a connection that was not failed before it, turns the binding's reads off (M-3).
    */
   private async relayRead<T>(execution: ActiveExecution, control: HarnessControl, read: () => Promise<T>, fallback: T): Promise<T> {
     const io = execution.relay.io;
     if (!io.asked) { io.asked = true; io.healthy = control.healthy?.(); }
+    const before = control.healthy?.(), broke = () => { if (before !== false && control.healthy?.() === false) this.readsBroke(execution); };
     let answer: Promise<T>, timer: ReturnType<typeof setTimeout> | undefined;
     try { answer = read(); } catch (error) { answer = Promise.reject(error); }
     const ended = answer.then(() => {}, () => {});
     try {
       const raced = await Promise.race([answer.then(value => ({ value })), new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), RELAY_READ_MS); timer.unref?.(); })]);
-      if (raced !== null) return raced.value;
-      io.abandoned.push(ended);
+      if (raced !== null) { broke(); return raced.value; }
+      io.abandoned.push(ended); this.readsBroke(execution);
       void ended.then(() => { const index = io.abandoned.indexOf(ended); if (index >= 0 && !io.broke) io.abandoned.splice(index, 1); });
       return fallback;
-    } catch { return fallback; }
+    } catch { broke(); return fallback; }
     finally { if (timer !== undefined) clearTimeout(timer); }
   }
   /**

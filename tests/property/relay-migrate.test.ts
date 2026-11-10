@@ -134,7 +134,10 @@ async function play(w: World, id: SessionId, random: () => number, steps: number
     await settle();
   }
 }
-/** The v12 snapshot a v12 build would hold: the v13 relay state taken away. */
+/**
+ * The v12 snapshot a v12 build would hold: the v13 relay state taken away, a binding's opensNew included (v13 only; since G068 fix
+ * batch 2, I-1a, a new binding whose first Turn ends before dispatch carries it).
+ */
 function v12(state: SessionSnapshot): SessionSnapshot {
   // Since G068 phase two the Runtime also writes each Run's relay and its v13 phases (contextReadyAt, recordedAt); v12 has none.
   const { relayRecoveryFailed: _failed, ...rest } = state;
@@ -142,7 +145,7 @@ function v12(state: SessionSnapshot): SessionSnapshot {
     if (run.timing === undefined) return run;
     const { contextReadyAt: _ready, recordedAt: _recorded, ...timing } = run.timing;
     return { ...run, timing };
-  }), ...(state.nativeBindings === undefined ? {} : { nativeBindings: state.nativeBindings.map(({ relay: _relay, ...binding }) => binding) }) });
+  }), ...(state.nativeBindings === undefined ? {} : { nativeBindings: state.nativeBindings.map(({ relay: _relay, opensNew: _opensNew, ...binding }) => binding) }) });
 }
 /** The event data G067 added (2026-11-03), taken away: what an older v12 build wrote. */
 function older(event: MigrationEvent): MigrationEvent {

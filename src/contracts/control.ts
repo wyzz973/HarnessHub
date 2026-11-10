@@ -381,7 +381,7 @@ export interface HarnessControl {
   /**
    * Reads the native history for the packets' title lines, each after its own position, and answers per marker; reads only,
    * sends no prompt, and returns no native content (ADR-055 §7.3, R8). A marker it could not look for is "unavailable", never
-   * "absent". `historyEmpty` is null unless the Driver read the whole history. A check never harms what it checks: its
+   * "absent". `historyEmpty` is true only after the Driver read the whole history and found nothing, false as soon as it saw an entry, null otherwise. A check never harms what it checks: its
    * timeout or failure answers "unavailable" (or rejects) within about two seconds, and leaves the connection usable and a
    * settled Turn's result as it was; it rejects only when the connection had already failed.
    */

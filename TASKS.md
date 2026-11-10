@@ -2226,6 +2226,7 @@
 - tests/protocol/relay-driver-placement.test.ts
 - tests/protocol/relay-driver-verify.test.ts
 - tests/protocol/relay-driver-fixes.test.ts
+- tests/protocol/relay-driver-second-review.test.ts
 
 验收：
 - 每家的声明与第 8.1 节逐格一致

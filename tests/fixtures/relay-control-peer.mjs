@@ -19,6 +19,8 @@
 //   RELAY_DROP "1": the prompt is answered but never stored (a native side that did not record it).
 //   RELAY_LOAD_FAULT "garbage": session/load replays an update without a kind (a malformed frame).
 //   RELAY_NEW_FAULT "second": a second session/new on one connection is refused (-32603).
+//   RELAY_SAME_SESSION "1": every session/new answers "relay-session", also when it exists (an agent that hands out a session
+//     the client gave up).
 //   RELAY_AUTH_KIND: claude-agent-acp's `_auth/status_update` with this kind, after initialize.
 //   RELAY_NO_COMMANDS "1": no available_commands_update at all (a catalog that is never announced).
 //   RELAY_UNPROMPTED_LOAD "1": session/load of a session that was never prompted is refused with -32002 (claude-agent-acp
@@ -72,7 +74,8 @@ function acp(message) {
     state = load();
     // A new session takes the first name no session of the shared state has (each process counts from "relay-session").
     let sessionId = params.sessionId;
-    if (message.method === "session/new") do sessionId = ++sessions === 1 ? "relay-session" : "relay-session-" + sessions; while (state.sessions[sessionId] !== undefined);
+    if (message.method === "session/new" && env.RELAY_SAME_SESSION === "1") sessionId = "relay-session";
+    else if (message.method === "session/new") do sessionId = ++sessions === 1 ? "relay-session" : "relay-session-" + sessions; while (state.sessions[sessionId] !== undefined);
     if (message.method === "session/load" && env.RELAY_UNPROMPTED_LOAD === "1" && state.sessions[sessionId]?.prompted !== true) {
       send({ id: message.id, error: { code: -32002, message: "Resource not found", data: { sessionId } } }); return;
     }
@@ -117,9 +120,13 @@ function acp(message) {
   if (message.method === "session/cancel") return;
   if (message.id !== undefined) send({ id: message.id, error: { code: -32601, message: "Method not found" } });
 }
-/** Claude Code's transcript lines for one prompt (CLI 2.1.312: the envelope, `type: "user"` with the blocks as content). */
+/**
+ * Claude Code's transcript lines for one prompt (CLI 2.1.312: the envelope, `type: "user"` with the blocks as content), in
+ * the project directory the CLI names: every UTF-16 unit but ASCII letters and digits as `-` (claude-agent-acp 0.99.1
+ * session-index/project-dirs.js `sanitize`, a `/g` pattern, so a character outside the BMP is two).
+ */
 function transcript(sessionId, cwd, blocks, reply) {
-  const project = realpathSync(cwd).normalize("NFC").replace(/[^a-zA-Z0-9]/gu, "-"), directory = join(env.RELAY_TRANSCRIPT, "projects", project);
+  const project = realpathSync(cwd).normalize("NFC").replace(/[^a-zA-Z0-9]/g, "-"), directory = join(env.RELAY_TRANSCRIPT, "projects", project);
   mkdirSync(directory, { recursive: true });
   const file = join(directory, sessionId + ".jsonl"), base = { sessionId, cwd, userType: "external", version: "2.1.312" };
   const lines = [{ ...base, type: "user", uuid: randomUUID(), message: { role: "user", content: blocks.length === 1 ? blocks[0] : blocks.map(text => ({ type: "text", text })) }, permissionMode: "default" },

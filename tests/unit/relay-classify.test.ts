@@ -75,8 +75,13 @@ test("G069-C03 Claude Code: leading whitespace stripped, any command name runs l
     { rule: "unlisted names run (unknown effect); listed ones have theirs", read: [["/my-command", catalog, [], ["command", "my-command", "unknown", ""]],
       ["/compact keep the plan", catalog, [], ["command", "compact", "compact", "keep the plan"]]], not: ["/review now", catalog, [], ["command", "review", "keep", "now"]] },
     // The CLI looks for a command only in the last block, an attachment's when there is one (G069 fix batch, review I6).
-    { rule: "with attachments every input is content", read: [["/export", catalog, ["file"], ["content"]], ["/clear", null, ["image"], ["content"]], ["  /remote-control", catalog, ["file", "image"], ["content"]]],
+    { rule: "with an image or a file every input is content", read: [["/export", catalog, ["file"], ["content"]], ["/clear", null, ["image"], ["content"]], ["  /remote-control", catalog, ["file", "image"], ["content"]],
+      ["/clear", null, ["audio", "file"], ["content"]], ["/clear", null, ["image", "audio"], ["content"]]],
       not: ["/export", catalog, [], ["command", "export", "none", ""]] },
+    // claude-agent-acp drops audio blocks (0.99.1 promptToClaude, acp-agent.js:10384-10386), so the words are the last block
+    // again (G069 second review, minor 2).
+    { rule: "audio alone leaves the input as it reads without attachments", read: [["/clear", null, ["audio"], ["command", "clear", "clear", ""]], ["/export", catalog, ["audio", "audio"], ["command", "export", "none", ""]],
+      ["/review", null, ["audio"], ["possible_command", "review"]]], not: ["/clear", null, ["audio", "image"], ["content"]] },
   ]);
 });
 

@@ -358,13 +358,17 @@ export class SqliteSessionStore implements SessionStore, RelayStorePort, RelayLo
     this.assertOwner();
     return this.read(() => this.database.prepare("SELECT id FROM sessions WHERE json_extract(snapshot,'$.retained') IS NOT NULL ORDER BY rowid").all().map(row => this.session(sessionId(String(row.id)), false)));
   }
-  /** A pending branch only refers to its source's native session; ready and unconfirmed references hold one. */
+  /**
+   * A pending branch only refers to its source's native session; ready and unconfirmed references hold one. A binding that opens
+   * a new native session (opensNew, v13) names the session it gave up, which it no longer holds (G068 fix batch 2, M-4).
+   */
   nativeOwners(harnessId: string, controlId: string): ReadonlyMap<string, SessionId> {
     this.assertOwner();
     return this.read(() => {
       const owners = new Map<string, SessionId>();
       for (const row of this.database.prepare("SELECT s.id AS id, json_extract(b.value,'$.checkpoint') AS checkpoint FROM sessions s, json_each(s.snapshot,'$.nativeBindings') b " +
-          "WHERE json_extract(b.value,'$.harnessId')=? AND json_extract(b.value,'$.controlId')=? AND json_extract(b.value,'$.status') IN ('ready','unconfirmed') ORDER BY s.rowid").iterate(harnessId, controlId)) {
+          "WHERE json_extract(b.value,'$.harnessId')=? AND json_extract(b.value,'$.controlId')=? AND json_extract(b.value,'$.status') IN ('ready','unconfirmed') " +
+          "AND json_extract(b.value,'$.opensNew') IS NULL ORDER BY s.rowid").iterate(harnessId, controlId)) {
         if (typeof row.checkpoint !== "string") throw new SessionError("INVALID_DATA", "persisted native reference is invalid");
         if (owners.has(row.checkpoint)) throw new SessionError("INVALID_DATA", "one native session is held by two Sessions");
         owners.set(row.checkpoint, sessionId(row.id));

@@ -32,7 +32,7 @@ test("G069-C02 Claude Code: the position is the transcript's length before the p
   assert.equal(first.kind, "file_offset");
   if (first.kind !== "file_offset") return;
   assert.equal(basename(first.path), id + ".jsonl"); assert.equal(first.bytes, 0, "the CLI has not written the session yet");
-  assert.equal(dirname(first.path), (await realpath(peer.workspace)).replace(/[^a-zA-Z0-9]/gu, "-"), "the project directory the CLI names (its realpath), relative to projects/");
+  assert.equal(dirname(first.path), (await realpath(peer.workspace)).replace(/[^a-zA-Z0-9]/g, "-"), "the project directory the CLI names (its realpath), relative to projects/");
   const file = join(peer.env.CLAUDE_CONFIG_DIR!, "projects", first.path);
   await run(control, id, relayTurn(ID_A, WORDS));
   const second = await control.deliveryPosition!(id);
@@ -166,7 +166,7 @@ test("G069-C02 Codex: outside_window past the turns a check reads, compacted aft
   const long = await peerRoot(t); await seed(long, { sessions: {}, threads: { "thread-relay": { name: null, turns: Array.from({ length: 450 }, (_, index) => turn(index, [user(index)])) } } });
   const wide = await opened(t, "codex", long, "thread-relay");
   const window = await wide.control.verifyDelivered!(wide.id, ask([[ID_A, { kind: "client_id", id: "seed-0" }], [ID_B, { kind: "client_id", id: "seed-449" }]], true));
-  assert.deepEqual([results(window), window.historyEmpty, window.compaction], [["outside_window", "absent"], null, null], "the latest 5 turns, then pages of 50, 400 at most, newest first; nothing whole");
+  assert.deepEqual([results(window), window.historyEmpty, window.compaction], [["outside_window", "absent"], false, null], "the latest 5 turns, then pages of 50, 400 at most, newest first; not read whole, but its items say it is not empty");
   const compacting = await peerRoot(t, { RELAY_COMPACT: "1" }), folded = await opened(t, "codex", compacting), at = await folded.control.deliveryPosition!(folded.id);
   await run(folded.control, folded.id, relayTurn(ID_A, WORDS));
   const compacted = await folded.control.verifyDelivered!(folded.id, ask([[ID_A, at]]));

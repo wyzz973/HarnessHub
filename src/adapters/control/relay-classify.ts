@@ -93,15 +93,23 @@ export function claudeCommand(text: string): { readonly name: string; readonly a
   return CLAUDE_COMMAND_NAME.test(name) ? { name, args: trimmed.slice(1 + name.length).trim() } : null;
 }
 /**
+ * Whether Claude Code looks for a command in a prompt with these attachments: not when one of them is an image or a file,
+ * whose block then comes last (claudeReading); an audio block is dropped by the adapter (claude-agent-acp 0.99.1
+ * promptToClaude, acp-agent.js:10384-10386, "Ignore audio and other unsupported types"), so the words are the last block
+ * again, as without attachments (the second review's minor 2).
+ */
+export function claudeReadsSlash(attachments: readonly ContentKind[]): boolean { return !attachments.some(kind => kind === "image" || kind === "file"); }
+/**
  * Claude Code's reading: after leading whitespace, a slash and a command name is a command, listed or not, since Claude
- * Code runs commands its adapter does not list (an unlisted one has an unknown effect); a slash path is content. With any
- * attachment every input is content: the prompt's blocks go to the CLI in order (claude-agent-acp 0.99.1 promptToClaude,
- * acp-agent.js:10316, a file as a link text or the file's context after the words, an image as an image block), and the CLI
- * looks for a command only in the last block (CLI 2.1.312 `Aj`), which is then the attachment's. The adapter's own
- * `/remote-control` reads a prompt of one text block only (acp-agent.js:191-205).
+ * Code runs commands its adapter does not list (an unlisted one has an unknown effect); a slash path is content. With an
+ * image or a file attached every input is content: the prompt's blocks go to the CLI in order (claude-agent-acp 0.99.1
+ * promptToClaude, acp-agent.js:10316, a file as a link text or the file's context after the words, an image as an image
+ * block), and the CLI looks for a command only in the last block (CLI 2.1.312 `Aj`), which is then the attachment's; audio
+ * alone changes nothing (claudeReadsSlash). The adapter's own `/remote-control` reads a prompt of one text block only
+ * (acp-agent.js:191-205).
  */
 export function claudeReading(text: string, commands: CommandLookup | null, attachments: readonly ContentKind[]): CommandClass {
-  const named = attachments.length ? null : claudeCommand(text);
+  const named = claudeReadsSlash(attachments) ? claudeCommand(text) : null;
   if (named === null) return { kind: "content" };
   const { name, args } = named, hidden = CLAUDE_HIDDEN.find(command => command.name === name);
   if (hidden !== undefined) return { kind: "command", name, args, effect: hidden.contextEffect ?? "unknown" };

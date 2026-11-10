@@ -371,8 +371,10 @@ export class CodexControl implements HarnessControl {
    * context compaction came after it, absent only when the message with that very identity was found without it.
    * outside_window when the turns a check reads ran out first; unavailable when the identity was not found in a thread read
    * to its end (that Codex echoes every client identity is not established, F4), when the position is not a client identity,
-   * Codex refuses or garbles the listing, or the budget ran out. historyEmpty (a thread with no item at all) and the
-   * compaction cursor are given only after the whole thread was read. Reads only.
+   * Codex refuses or garbles the listing, or the budget ran out. historyEmpty is false once a page read showed an item, also
+   * when the thread was not read to its end; true only for a thread read whole that lists no turn at all (a turn Codex lists
+   * without its items may still hold some, so a thread of such turns is null, the second review's I1); null otherwise. The
+   * compaction cursor is given only after the whole thread was read. Reads only.
    */
   async verifyDelivered(id: NativeConversationId, request: VerifyRequest): Promise<VerifyResult> {
     const started = Date.now();
@@ -417,7 +419,8 @@ export class CodexControl implements HarnessControl {
       throw error;
     }
     const settled = results.map(result => result ?? (complete ? "unavailable" : "outside_window"));
-    return verifyResult(request, settled, started, complete ? { historyEmpty: request.historyEmpty ? items === 0 : null, compaction: { count: compactions, digest: null }, foreignAfterLast: foreign } : { foreignAfterLast: foreign });
+    const historyEmpty = !request.historyEmpty ? null : items > 0 ? false : complete && turns === 0 ? true : null;
+    return verifyResult(request, settled, started, complete ? { historyEmpty, compaction: { count: compactions, digest: null }, foreignAfterLast: foreign } : { historyEmpty, foreignAfterLast: foreign });
   }
   /**
    * Names the thread on Codex's side before its first turn (ADR-055 §8.1, `thread/name/set {threadId, name}`): one line of

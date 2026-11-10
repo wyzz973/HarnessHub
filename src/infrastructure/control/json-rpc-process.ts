@@ -117,10 +117,19 @@ interface Pending {
  * What a request's deadline does (JsonRpcProcess.request): "abort" fails the connection (every caller's default: a peer that
  * misses a deadline is not trusted further); "reject" gives up that one request only, for a read whose answer is optional (a
  * relay check, a native title, ADR-055 C6): it rejects with REQUEST_TIMEOUT, the connection stays usable, and the peer's late
- * answer to it is dropped when it comes.
+ * answer to it is dropped when it comes. That holds for at most MAX_ABANDONED_REQUESTS given-up requests still unanswered at
+ * a time; past them a "reject" deadline does what "abort" does.
  */
 export type RequestDeadline = "abort" | "reject";
-/** Requests given up at their deadline whose answers may still come; past this many outstanding, a deadline fails the connection. */
+/**
+ * Requests given up at a "reject" deadline whose answers may still come, remembered so that a late answer is dropped rather
+ * than failing the connection as an unknown response. A late answer frees its place. With this many still unanswered, the
+ * next "reject" deadline fails the connection with its REQUEST_TIMEOUT, as "abort" does: a peer that leaves 64 requests
+ * unanswered is not trusted further, and what the connection remembers stays bounded. Every later request then rejects
+ * with that failure, so a Driver's check that meets it rejects (its connection failed, the one case in which a check may
+ * reject, VerifyRequest's contract) instead of answering unavailable, and the Driver reports itself unhealthy (the second
+ * review's minor 1).
+ */
 const MAX_ABANDONED_REQUESTS = 64;
 export function object(value: unknown, label: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value))

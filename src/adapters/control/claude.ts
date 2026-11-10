@@ -6,7 +6,7 @@ import type { BackendResult, CommandClass, ControlEvent, ControlLaunch, ControlO
 import { RELAY_POSITION_BYTES, type DeliveryPosition, type MarkerResult, type RelayCapabilities, type VerifyResult } from "../../contracts/relay.js";
 import { ControlError } from "../../infrastructure/control/json-rpc-process.js";
 import { AcpControl, refusedRun } from "./acp.js";
-import { CLAUDE_EXPORT as EXPORT, CLAUDE_HIDDEN as HIDDEN, claudeClassify, claudeListedEffect, claudeCommand as commandOf, claudeNativeClassify, relayDeclaration, relayEntries } from "./relay-classify.js";
+import { CLAUDE_EXPORT as EXPORT, CLAUDE_HIDDEN as HIDDEN, claudeClassify, claudeListedEffect, claudeCommand as commandOf, claudeNativeClassify, claudeReadsSlash as readsSlash, relayDeclaration, relayEntries } from "./relay-classify.js";
 import { claudeVendor, slashModelKey } from "./relay-vendor.js";
 import { type TurnText } from "../../contracts/control.js";
 import { authKind, entryCarries, packetEntry, strip, VERIFY_BUDGET_MS, verifyResult, type UserText } from "./relay-turn.js";
@@ -55,12 +55,14 @@ const TRANSCRIPT_FLUSH_MS = 300;
 /** The commands Claude Code runs to start a new conversation (its `clear`, aliases reset and new). */
 const CLEARS: ReadonlySet<string> = new Set(HIDDEN.filter(command => command.contextEffect === "clear").map(command => command.name));
 /**
- * Claude Code's project directory name for a workspace (claude-agent-acp session-index/project-dirs.js:29-46, the CLI's own
- * rule): the realpath, NFC, every character but ASCII letters and digits as `-`. A longer name than 200 characters ends in a
- * hash the CLI and the SDK compute differently, so it is not computed here (null) and the directories are searched instead.
+ * Claude Code's project directory name for a workspace (claude-agent-acp 0.99.1 session-index/project-dirs.js:29-46, the
+ * CLI's own rule): the realpath, NFC, every UTF-16 unit but ASCII letters and digits as `-` (its `sanitize` has no `u` flag,
+ * so a character outside the BMP is two). A longer name than 200 units ends in a hash the CLI and the SDK compute
+ * differently, so it is not computed here (null) and the directories are searched instead.
  */
 function projectName(path: string): string | null {
-  const name = path.normalize("NFC").replace(/[^a-zA-Z0-9]/gu, "-");
+  // Deliberately without the `u` flag, as the adapter's own pattern (the second review's minor 3).
+  const name = path.normalize("NFC").replace(/[^a-zA-Z0-9]/g, "-");
   return name.length <= 200 ? name : null;
 }
 /** One transcript line as far as a check reads it. */
@@ -174,8 +176,9 @@ const SESSION_NOT_FOUND = -32002;
  *
  * Inputs are read as Claude Code reads them (ADR-055 R0d): after leading whitespace, a slash and a command name is a
  * command, listed or not, since Claude Code runs commands its adapter does not list (`/clear`, `/reset` and `/new` clear the
- * native conversation); a slash path is content; with attachments every input is content, since the CLI looks for a command
- * only in the last block, which is then an attachment's (ADR-055, review I6). The Hub's own `/export` is that command alone. A
+ * native conversation); a slash path is content; with an image or a file attached every input is content, since the CLI
+ * looks for a command only in the last block, which is then the attachment's (ADR-055, review I6), while audio, which the
+ * adapter drops, leaves the input as it reads without attachments. The Hub's own `/export` is that command alone. A
  * content prompt that ended with end_turn, max_tokens or max_turn_requests, or failed with a model failure's errorKind, was
  * written to the transcript; a prompt refused because the session's stream had ended or the session is unknown (R8 C4),
  * and what this driver refuses or exports itself, never reached Claude (not recorded).
@@ -197,7 +200,7 @@ export class ClaudeControl extends AcpControl {
     if (error.remoteCode === SESSION_NOT_FOUND || error.remoteCode === -32603 && error.remoteMessage === SESSION_ENDED && error.remoteFields === undefined) return "not_recorded";
     return error.remoteCode === -32603 && MODEL_FAILURES.has(error.remoteFields?.errorKind ?? "") ? "recorded" : null;
   }
-  // With attachments every input is content (startText sends it to Claude Code as it is), whatever the catalog lists.
+  // With an image or a file every input is content (startText sends it to Claude Code as it is), whatever the catalog lists.
   override classify(text: string, catalog: NativeModelCatalog | null, attachments: readonly ContentKind[] = []): CommandClass { return claudeNativeClassify(text, catalog, attachments); }
   protected override get sessionMeta(): Readonly<Record<string, unknown>> { return SESSION_META; }
   protected override extensionNotification(method: string, params: Readonly<Record<string, unknown>>): boolean {
@@ -334,9 +337,9 @@ export class ClaudeControl extends AcpControl {
     const refusal = this.relayRefused(turn, attachments.map(file => file.kind));
     if (refusal !== null) return refusal;
     // The same reading as classify(): the command name and arguments of the user's words after leading whitespace, and none
-    // with attachments: the input is then sent as it is, since the CLI looks for a command only in the last block (CLI 2.1.312
-    // `Aj`), an attachment's.
-    const named = attachments.length ? null : commandOf(typeof turn === "string" ? turn : turn.user);
+    // with an image or a file: the input is then sent as it is, since the CLI looks for a command only in the last block (CLI
+    // 2.1.312 `Aj`), an attachment's. Audio alone is dropped by the adapter, so `/clear` with it is the clear (readsSlash).
+    const named = readsSlash(attachments.map(file => file.kind)) ? commandOf(typeof turn === "string" ? turn : turn.user) : null;
     if (named?.name === REMOTE_CONTROL) return refusedRun(REMOTE_CONTROL_REFUSED);
     if (this.hubExport && named?.name === EXPORT.name && named.args === "") {
       return { result: this.exportTranscript(id, onEvent), requestStop: () => Promise.reject(new ControlError("INVALID_STATE", "an export has no native turn to stop")) };

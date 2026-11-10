@@ -7,9 +7,9 @@ import {
   EMPTY_CHAIN, EPHEMERAL_KEY_ID, RelayError, parseBindingRelayState, relayPacketId,
   type BindingRelayState, type BindingSync, type DeliveredMark, type DeliveryRecord, type Fingerprint, type RelayCapabilities, type RelayPacket, type RelayPacketId, type SourceRange, type VerifyResult,
 } from "../../src/contracts/relay.js";
-import { runId, sessionId, type NativeSessionBinding, type PublicRun, type RunId, type SessionEvent, type SessionSnapshot } from "../../src/contracts/session.js";
+import { SessionError, runId, sessionId, type NativeSessionBinding, type PublicRun, type RunId, type SessionEvent, type SessionSnapshot } from "../../src/contracts/session.js";
 import {
-  EphemeralKeys, RelayLedger, admitRelay, bindingDeliveries, checkedResult, decideTurn, heldSinceIn, relayDeclaration, settleTurn, unavailableResult, verifyRequestOf,
+  EphemeralKeys, RelayLedger, admitRelay, bindingDeliveries, checkedResult, decideTurn, heldSinceIn, holdsNothing, nativeExactAt, relayDeclaration, settleTurn, unavailableResult, verifyRequestOf,
   type Check, type DecideInput, type RelayChoices, type SettleInput,
 } from "../../src/contexts/session/application/relay-coordinator.js";
 import { chainAfter, owed, planReturnVerify, step, type BindingDelivery, type RelayFact, type VerifyPlan } from "../../src/contexts/session/domain/relay/delivery.js";
@@ -53,7 +53,11 @@ function admit(state: BindingRelayState, choices: RelayChoices = {}, options: { 
   try {
     admitRelay({ state: at, binding: bound, target: X, capabilities: "capabilities" in options ? options.capabilities : caps(), text: options.text ?? "hello", attachments: [], choices, facts: () => options.facts ?? FOREIGN });
     return "ok";
-  } catch (error) { if (error instanceof RelayError) return error.code + "{" + error.reason + "}"; throw error; }
+  } catch (error) {
+    if (error instanceof RelayError) return error.code + "{" + error.reason + "}";
+    if (error instanceof SessionError) return error.code;
+    throw error;
+  }
 }
 
 test("G068 fix R7 admitRelay: only an input that would carry relay content is asked; a pending packet whose resend is spent asks unless the user resends (resend or attach full, R9b); a suspect binding no check can settle asks", () => {
@@ -300,4 +304,58 @@ test("G068 fix R10a (A1) a binding without relay state, the one case exactAt rea
   assert.doesNotThrow(() => parseSession(valid));
   const { relay: _dropped, ...bare } = binding(SYNCED);
   assert.throws(() => parseSession({ ...valid, nativeBindings: [bare] }), /every v13 native binding has its relay state/u);
+});
+
+test("G068 fix2 M-1 admitRelay and ［确认已清空］: offered only on an unconfirmed clear whose check is undecided; one the open would settle without the user gets that landing's 409 or is refused (INVALID_INPUT), never let through to be dropped", () => {
+  const clear = (mark: DeliveredMark | null, carried: boolean) => relay({ kind: "suspect", mark, cause: "clear_unconfirmed", floorCandidate: 12, carried: carried ? { prior: { kind: "fresh", basis: "new" }, packetId: P2, range: RANGE2, attachOverride: false } : null, rewound: false });
+  // The reviewer's case: no check, a carried packet whose prior comes back → the open sends it back to pending with its resend spent.
+  assert.equal(admit(clear(null, true), { clearConfirmed: true }), "RELAY_CHOICE_REQUIRED{delivery_unconfirmed}");
+  // A mark that comes back by itself (none, here): the open restores it whether or not anything is owed.
+  assert.equal(admit(clear(null, false), { clearConfirmed: true }, { facts: [] }), "INVALID_INPUT", "a single Harness: not offered");
+  assert.equal(admit(clear(null, false), { clearConfirmed: true }), "INVALID_INPUT", "with facts owed: not offered either");
+  // A packet mark no check can look at: the table leaves it suspect, which is where the user's confirmation is offered.
+  assert.equal(admit(clear(MARK1, false), { clearConfirmed: true }), "ok");
+  // A Driver that checks at the open: the check decides, and the Run fails before dispatch if it decided otherwise.
+  assert.equal(admit(clear(null, true), { clearConfirmed: true }, { capabilities: caps({ verify: "on_next_open" }) }), "ok");
+  assert.equal(admit(clear(MARK1, false), { clearConfirmed: true }, { capabilities: caps({ verify: "on_next_open" }) }), "ok");
+  // Not an unconfirmed clear at all.
+  assert.equal(admit(SYNCED, { clearConfirmed: true }), "INVALID_INPUT");
+  assert.equal(admit(SYNCED, { clearConfirmed: true }, { facts: [] }), "INVALID_INPUT");
+  assert.equal(admit(pending(0), { clearConfirmed: true }), "INVALID_INPUT");
+  assert.equal(admit(relay({ kind: "suspect", mark: MARK1, cause: "rewind", floorCandidate: null, carried: null, rewound: false }), { clearConfirmed: true }), "INVALID_INPUT");
+  // What admission never asks about stays so: a command carries nothing, a factory that cannot tell leaves it to the open.
+  assert.equal(admit(SYNCED, { clearConfirmed: true }, { text: "/compact" }), "ok");
+  assert.equal(admit(SYNCED, { clearConfirmed: true }, { capabilities: undefined }), "ok");
+});
+
+test("G068 fix2 R10a nativeExactAt: a binding without relay state is never exact (the branch is unreachable in a v13 Session, and pinned here); a synced one is exact at a Turn of its epoch with nothing foreign owed up to it", () => {
+  const through = { id: R2, relay: { packetId: null, kind: null, continuity: { kind: "native_resume" }, executedOn: { ...X, nativeEpoch: 1 } } } as unknown as PublicRun;
+  const state = snapshot([binding(SYNCED)]), none = () => [], at = (seq: number | undefined) => () => seq;
+  const { relay: _dropped, ...bare } = binding(SYNCED);
+  assert.equal(nativeExactAt(state, bare as NativeSessionBinding, through, at(10), none), false, "no relay state: nothing says what the native session holds");
+  assert.equal(nativeExactAt(state, binding(SYNCED), through, at(10), none), true);
+  assert.equal(nativeExactAt(state, binding(SYNCED), through, at(undefined), none), false, "a Turn whose end the events do not place");
+  assert.equal(nativeExactAt(state, binding(pending(0)), through, at(10), none), false, "only a synced binding");
+  assert.equal(nativeExactAt(state, binding(relay({ kind: "synced", mark: MARK1 }, { nativeEpoch: 2 })), through, at(10), none), false, "a Turn of another epoch");
+  assert.equal(nativeExactAt(state, binding(SYNCED), through, at(10), () => FOREIGN), false, "foreign facts above the mark up to the Turn are owed");
+  assert.equal(nativeExactAt(state, binding(SYNCED), through, at(6), () => FOREIGN), true, "none up to the Turn: the mark covers 3 and 6");
+});
+
+test("G068 fix2 I-1b holdsNothing: a binding whose native session the relay counts on for nothing — fresh, without the starting history, nothing ever dispatched into it, no Turn of its Harness control in an epoch it holds — and nothing else", () => {
+  const fresh2 = relay({ kind: "fresh", basis: "user_cleared" }, { nativeEpoch: 2, epochFloor: 12, packetsInEpoch: 0 });
+  const ran = (epoch: number | null, extra: Partial<PublicRun> = {}) => ({ id: runId("run-x" + epoch), selection: X, status: "completed", timing: { acceptedAt: 1, dispatchedAt: 2 },
+    ...(epoch === null ? {} : { relay: { packetId: null, kind: null, continuity: { kind: "native_resume" }, executedOn: { ...X, nativeEpoch: epoch } } }), ...extra }) as unknown as PublicRun;
+  const archived = binding(relay({ kind: "fresh", basis: "new" }), { status: "archived", checkpoint: "native-old" });
+  assert.equal(holdsNothing(snapshot([binding(fresh2)]), binding(fresh2)), true, "nothing ran on it");
+  assert.equal(holdsNothing(snapshot([binding(fresh2)], { runs: [ran(2)] }), binding(fresh2)), false, "a Turn of its own epoch");
+  assert.equal(holdsNothing(snapshot([binding(fresh2)], { runs: [ran(1)] }), binding(fresh2)), false, "a Turn of the epoch before, on this very native session (R1: a clear raised it in place)");
+  assert.equal(holdsNothing(snapshot([archived, binding(fresh2)], { runs: [ran(1)] }), binding(fresh2)), true, "a Turn of an archived native session's epoch");
+  assert.equal(holdsNothing(snapshot([binding(fresh2)], { runs: [ran(null)] }), binding(fresh2)), false, "a Turn the relay cannot place");
+  assert.equal(holdsNothing(snapshot([binding(fresh2)], { runs: [ran(2, { timing: { acceptedAt: 1 } } as Partial<PublicRun>)] }), binding(fresh2)), true, "a Turn never dispatched");
+  assert.equal(holdsNothing(snapshot([binding(fresh2)], { runs: [ran(2, { selection: { harnessId: "yankee", controlId: "yankee-acp" } } as Partial<PublicRun>)] }), binding(fresh2)), true, "another Harness's");
+  assert.equal(holdsNothing(snapshot([binding(fresh2)]), binding(fresh2, { throughRunId: R1 })), false, "something was dispatched into it");
+  assert.equal(holdsNothing(snapshot([binding(fresh2)]), binding(relay({ kind: "fresh", basis: "new" }, { originIncluded: true }))), false, "it holds the starting history");
+  for (const held of [SYNCED, pending(0), relay({ kind: "suspect", mark: null, cause: "clear_unconfirmed", floorCandidate: 12, carried: null, rewound: false })])
+    assert.equal(holdsNothing(snapshot([binding(held)]), binding(held)), false, held.sync.kind + ": a binding with a watermark or in doubt");
+  assert.equal(holdsNothing(snapshot([binding(fresh2)]), binding(fresh2, { opensNew: true })), false, "one that opens a new native session resumes nothing");
 });

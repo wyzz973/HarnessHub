@@ -108,7 +108,7 @@ class Simulation {
   readonly seen = { recorded: 0, retreats: 0, oldPresent: 0, resends: 0, choices: 0, clears: 0, resets: 0, d6: 0, plain: 0, checks: 0,
     epochRises: 0, emptyHistoryClears: 0, restoredWithoutChain: 0, skipChecks: 0, nativeTurns: 0, reusedIds: 0, clearChecks: 0, carriedChecks: 0, supersededBack: 0,
     foldedCarried: 0, carriedPresent: 0, carriedCompacted: 0, pendingCompacted: 0, rewoundChecks: 0, revertedPending: 0, unknownTurnsSettled: 0, afterTurnUnknownSettled: 0,
-    userClearConfirmed: 0, clearedAfterTheFact: 0, retreatsAsTyped: 0, automaticPackets: 0, automaticRepeats: 0 };
+    userClearConfirmed: 0, clearedAfterTheFact: 0, retreatsAsTyped: 0, automaticPackets: 0, automaticRepeats: 0, heldRepeats: 0, supersededLateRepeats: 0, replacedClears: 0 };
   /** Per native session and fact, how many automatic packets repeated it while the session held it (the bound: one). */
   private readonly automaticRepeats = new Map<string, number>();
   /** The fate the next packet (or plain input: lost, silent) takes, when a directed case sets it (otherwise drawn). */
@@ -302,8 +302,16 @@ class Simulation {
     this.seen.userClearConfirmed++;
     await this.apply(step(this.relay, { kind: "cleared", seq: sync.floorCandidate }), "e(user)@" + sync.floorCandidate);
   }
-  /** What the binding owes now, by Run (directed cases). */
-  owedRuns(): readonly string[] { return this.need().facts.map(fact => fact.runId as string); }
+  /** What the binding owes now, by Run (directed cases); `attached`: with the user's one-time attach, below the floor too. */
+  owedRuns(attached = false): readonly string[] { return this.need(attached).facts.map(fact => fact.runId as string); }
+  /** l by Claude's synthesized clear (e with `replaced`, §7.5): the native session is replaced by a new one above the clear's floor. */
+  async replacedClear(): Promise<void> {
+    const at = this.commit();
+    this.seen.clears++; this.seen.replacedClears++;
+    await this.peer.call("clear", { session: this.session });
+    await this.apply(step(this.relay, { kind: "cleared", seq: at.seq, replaced: true }), "e(replaced)@" + at.seq);
+    this.unknownTurn = null;
+  }
   /**
    * The user's "补发完整交接单" on a suspect binding (§9): the complete packet on the retreated prior, or, when that prior owes
    * nothing, the input as typed with the binding standing there (R5). False when neither applies (a legacy mark).
@@ -323,6 +331,13 @@ class Simulation {
     await this.peer.call("clear", { session: this.session });
     await this.apply(step(this.relay, { kind: "cleared", seq: at.seq }), "e@" + at.seq);
     this.unknownTurn = null;
+  }
+  /** The user's "再附一次" of the pending packet, with the fate `fate` (directed cases). */
+  async resendNow(fate: NonNullable<Simulation["forcedFate"]>): Promise<void> {
+    const sync = this.relay.sync;
+    if (sync.kind !== "pending") this.fail("no pending packet to send again");
+    this.forcedFate = fate;
+    try { await this.carry(this.need(sync.attachOverride), sync.attachOverride, { by: "user", of: this.pendingRun() }); } finally { this.forcedFate = null; }
   }
   /** The user's "附上交接单" right after a clear: a packet of what is owed below the floor too (directed cases). */
   async attachOnce(fate: NonNullable<Simulation["forcedFate"]>): Promise<void> {
@@ -349,16 +364,31 @@ class Simulation {
    * (not the user's resend, complete packet or attach, nor a need reckoned on the mark such a choice made):
    * - it carries no Turn of this binding's own native session that the session holds (in its entries or its summary): a clear
    *   confirmed after Turns ran on it since never makes them foreign;
-   * - a fact still in an undecided delivery of this native session (in flight, or unknown for any reason but a check that found
-   *   it absent) is sent again by itself at most once per native session: the first send and one automatic resend.
-   * A retreat a check made, past packets it could not look at (≤4 markers), may repeat facts of recorded packets: that is the
-   * table's conservative reading (§7.2 suspect k), counted by neither.
+   * - within each period a fact's delivery to this native session stays undecided (its latest packet in flight, or unknown for
+   *   any reason but a check that found it absent), the fact is sent by itself at most twice: the send that began the period
+   *   and one automatic resend. A decision (recorded, absent, not recorded) ends the period, and a later send begins a new one;
+   *   the count below is kept per native session and fact, and starts again exactly there (G068 fix batch 2, M-7).
+   * Repetitions of facts the native session does hold that the design accepts — counted, never failed:
+   * - `heldRepeats`: any automatic packet that carries a foreign fact the native session holds. The undecided period above
+   *   bounds the ones a resend makes; the others come from a retreat a check made past packets it could not look at (≤4
+   *   markers, the table's conservative reading, §7.2 suspect k), which may repeat facts of recorded packets.
+   * - `supersededLateRepeats`, one class of those retreats: an old packet superseded by a resend is written late; a later check
+   *   finds it, so its row is changed to recorded, but without a mark (the binding had moved on to the resend); a suspect check
+   *   never looks at a row without a mark (A10: only marked rows stand for a mark to fall back to), so it falls back to the
+   *   epoch base, and the facts that late write delivered are sent again.
    */
   private async noUnchosenRepeat(need: ReturnType<typeof owed>): Promise<void> {
     this.seen.automaticPackets++;
-    const held = new Set((await this.peer.call<Held>("held", { session: this.session })).runs);
+    const holding = await this.peer.call<Held>("held", { session: this.session }), held = new Set(holding.runs), heldFacts = new Set(holding.facts);
     const own = need.facts.filter(fact => fact.executedOn?.harnessId === X.harnessId && held.has(fact.runId));
     if (own.length) this.fail("an automatic packet carries " + own.map(fact => fact.runId + "@" + fact.seq + " (epoch " + fact.executedOn!.nativeEpoch + ")").join(", ") + ", Turns this native session holds (an unchosen repetition)");
+    const heldAgain = need.facts.filter(fact => heldFacts.has(fact.runId));
+    if (heldAgain.length) {
+      this.seen.heldRepeats++;
+      const superseded = (row: Row) => this.rows.some(other => other.record.resendOf === row.record.runId);
+      if (heldAgain.some(fact => this.rows.some(row => row.session === this.session && row.facts.includes(fact.runId) && row.record.outcome.kind === "recorded" && row.mark === null && superseded(row))))
+        this.seen.supersededLateRepeats++;
+    }
     // A fact's delivery is undecided while the latest packet of this native session that carried it is.
     const undecided = (fact: RelayFact) => {
       const row = this.rows.findLast(item => item.session === this.session && item.facts.includes(fact.runId)), outcome = row?.record.outcome;
@@ -367,10 +397,10 @@ class Simulation {
     let repeated = false;
     for (const fact of need.facts) {
       const key = this.session + "/" + fact.runId;
-      // Sent while its delivery is decided, it starts afresh: a first send.
+      // Sent while its delivery is decided, it begins a new undecided period: the count starts again.
       if (!undecided(fact)) { this.automaticRepeats.delete(key); continue; }
       const count = (this.automaticRepeats.get(key) ?? 0) + 1;
-      if (count > 1) this.fail(fact.runId + " was sent again by itself " + count + " times while its delivery was undecided: more than the first send and one automatic resend");
+      if (count > 1) this.fail(fact.runId + " was sent again by itself " + count + " times within one period its delivery stayed undecided: more than the send that began it and one automatic resend");
       this.automaticRepeats.set(key, count); repeated = true;
     }
     if (repeated) this.seen.automaticRepeats++;
@@ -615,7 +645,9 @@ test("G068-P01 under any evidence sequence a trusted mark never exceeds what the
   t.diagnostic("seeds 0x" + SEEDS[0]!.toString(16) + "… (" + SEEDS.length + " cases × 70 steps): " + JSON.stringify(totals));
   // Every path the properties are about was taken somewhere (the two exception counters may stay at zero).
   // clearedAfterTheFact is driven by its own case below (R1); the random walk seldom confirms a clear after Turns ran since it.
-  for (const [key, count] of Object.entries(totals)) if (key !== "emptyHistoryClears" && key !== "restoredWithoutChain" && key !== "clearedAfterTheFact" && key !== "retreatsAsTyped") assert.ok(count > 0, key + " never happened");
+  // replacedClears is driven by its own case (M-6); supersededLateRepeats is the rare class the comment of noUnchosenRepeat names.
+  const directed = new Set(["emptyHistoryClears", "restoredWithoutChain", "clearedAfterTheFact", "retreatsAsTyped", "replacedClears", "supersededLateRepeats"]);
+  for (const [key, count] of Object.entries(totals)) if (!directed.has(key)) assert.ok(count > 0, key + " never happened");
 });
 
 test("G068-P01 R1 a clear confirmed after the fact, by the next open's check or by the user, never makes the Turns run on the binding since it foreign: none is sent again", async t => {
@@ -640,6 +672,66 @@ test("G068-P01 R1 a clear confirmed after the fact, by the next open's check or 
   }
   t.diagnostic("confirmed by a check " + byCheck + ", by the user " + byUser + "; clears confirmed after Turns since them " + after);
   assert.ok(byCheck >= 5 && byUser >= 5 && after >= byCheck + byUser, "both confirmations were reached, each after Turns since the clear");
+});
+
+test("G068-P01 R1 after a clear confirmed after the fact, a new native session — a reset, or Claude's replacement — holds none of the Turns run on the binding since the clear: owed to it above its floor, attachable below (heldSince's since, G068 fix batch 2, M-6)", async t => {
+  const peer = await startPeer(t);
+  let resets = 0, replacements = 0, sinceTheConfirmation = 0;
+  for (const seed of SEEDS.slice(0, 40)) {
+    await peer.call("reset");
+    const rand = generator(seed ^ 0x0e06), label = "R1-new seed 0x" + seed.toString(16), verify = rand() < 0.5 ? "on_next_open" as const : "none" as const;
+    const caps: Caps = { verify, lateDelivery: false, compaction: true, window: 200, flaky: 0, wholeHistory: rand() < 0.5, live: rand() < 0.5 };
+    const simulation = new Simulation(peer, rand, caps, label);
+    for (let index = 0; index < 2; index++) { await simulation.foreignTurn(); await simulation.carryNow("e3"); }
+    await simulation.injectRanClear();
+    const between: string[] = [];
+    for (let index = 0, count = 1 + Math.floor(rand() * 3); index < count; index++) { if (rand() < 0.5) await simulation.foreignTurn(); between.push(await simulation.sendAlone()); }
+    if (verify === "on_next_open") await simulation.open(); else await simulation.userConfirmsClear();
+    assert.equal(simulation.relay.nativeEpoch, 2, label + ": the clear was confirmed\n" + simulation.log.slice(-8).join("\n"));
+    // A Turn in the epoch the confirmation opened, sometimes: the epoch just below the new session's, which `since` alone keeps foreign.
+    if (rand() < 0.6) { between.push(await simulation.sendAlone()); sinceTheConfirmation++; }
+    const replaced = rand() < 0.5;
+    if (replaced) { await simulation.replacedClear(); replacements++; } else { await simulation.reset(); resets++; }
+    const owedNow = simulation.owedRuns(), attachable = simulation.owedRuns(true);
+    for (const run of between) {
+      if (replaced) {
+        assert.ok(!owedNow.includes(run), label + ": " + run + " lies below the replacement's floor\n" + simulation.log.slice(-8).join("\n"));
+        assert.ok(attachable.includes(run), label + ": " + run + ", which the replaced session held, cannot be attached to the new one\n" + simulation.log.slice(-8).join("\n"));
+      } else assert.ok(owedNow.includes(run), label + ": " + run + ", which only the old native session held, is not owed to the new one\n" + simulation.log.slice(-8).join("\n"));
+    }
+    await simulation.foreignTurn(); await simulation.content();
+    await run(simulation, 10);
+  }
+  t.diagnostic("resets " + resets + ", replacements " + replacements + ", with a Turn since the confirmation " + sinceTheConfirmation);
+  assert.ok(resets >= 5 && replacements >= 5 && sinceTheConfirmation >= 5, "both new sessions were reached, with Turns of the confirmed epoch");
+});
+
+test("G068-P01 M-7 the repetition the design accepts, reached on purpose: a packet superseded by a resend and written late is found recorded without a mark; after an undo a suspect check cannot look at it, falls back to the epoch base, and its facts are sent again (counted, never failed)", async t => {
+  const peer = await startPeer(t);
+  let reached = 0, cases = 0;
+  for (const seed of SEEDS.slice(0, 20)) {
+    await peer.call("reset");
+    const rand = generator(seed ^ 0x0e07), label = "superseded-late seed 0x" + seed.toString(16);
+    const simulation = new Simulation(peer, rand, { verify: "on_next_open", lateDelivery: true, compaction: true, window: 200, flaky: 0, wholeHistory: true, live: false }, label);
+    // P late; the user's resend P′ of it, late too; both are written, in that order, and the next open finds both.
+    await simulation.foreignTurn(); await simulation.carryNow("late");
+    await simulation.resendNow("late");
+    await simulation.lateWrites();
+    await simulation.open();
+    const synced = simulation.relay.sync, rows = simulation.rows.filter(row => row.session === simulation.session);
+    if (synced.kind !== "synced" || rows.length !== 2) continue;
+    cases++;
+    assert.ok(rows[0]!.record.outcome.kind === "recorded" && rows[0]!.mark === null && rows[1]!.record.resendOf === rows[0]!.record.runId && rows[1]!.mark !== null,
+      label + ": P recorded without a mark, superseded by P′, which keeps the mark\n" + simulation.log.slice(-8).join("\n"));
+    // The undo takes P′ (the last entry); the history still holds P's facts through P's late write.
+    await simulation.injectRewind(1);
+    const before = simulation.seen.supersededLateRepeats;
+    await simulation.content();
+    reached += simulation.seen.supersededLateRepeats - before;
+    await run(simulation, 10);
+  }
+  t.diagnostic("cases " + cases + ", superseded late writes sent again " + reached);
+  assert.ok(cases >= 10 && reached >= 5, "the class was reached (" + reached + " of " + cases + ")");
 });
 
 test("G068-P01 R5 a suspect binding whose retreated prior owes nothing: the user's complete packet goes as typed and the binding stands on that prior, which claims nothing the native session lacks", async t => {

@@ -1035,7 +1035,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       // How to continue the current native session in the Harness's own program (ADR-039); read on demand, never exported.
       if (action === "native-resume" && method === "GET") {
         queries(url, []); const snapshot = app.runtime.read(id), selection = snapshot.selection;
-        const binding = selection.provider === undefined ? snapshot.nativeBindings?.find(item => item.harnessId === selection.harnessId && item.controlId === selection.controlId && item.status === "ready") : undefined;
+        // A binding that opens a new native session (opensNew) names the one it gave up: there is none to continue yet.
+        const binding = selection.provider === undefined ? snapshot.nativeBindings?.find(item => item.harnessId === selection.harnessId && item.controlId === selection.controlId && item.status === "ready" && item.opensNew !== true) : undefined;
         // The commands do not depend on the installed version, so this read scans nothing (ADR-050 item 30 as ADR-053 changed it).
         // Whether the workspace is a Git repository decides one program's flag; it is only looked at.
         const git = binding === undefined ? false : await stat(join(snapshot.configuration.workspace, ".git")).then(() => true, () => false);

@@ -171,6 +171,41 @@ export function foreignAtAll(facts: readonly RelayFact[], harnessId: string, con
 export function heldSinceIn(state: SessionSnapshot, harnessId: string, controlId: string, relay: BindingRelayState): number {
   return heldSince(relay, state.nativeBindings ?? [], harnessId, controlId);
 }
+/**
+ * Whether a binding's native session holds nothing the relay counts on it holding (ADR-055 C5; G068 fix batch 2, I-1b), so that
+ * a new native session may take its place when its Driver refuses to open it as a session it does not have: fresh (no
+ * watermark, nothing pending or in doubt), without the history the Session started from, nothing ever dispatched into it
+ * (`throughRunId`), and no Turn of its Harness control dispatched in an epoch it holds — its own, or one before it that a clear
+ * raised in place (heldSince, R1: those Turns are in the history the clear left) — nor one the relay cannot place. Stricter than
+ * "no content Turn in this epoch": a native session that holds Turns since a clear confirmed after the fact is never replaced in
+ * place, since nothing would then owe them to the new one. A binding that opens a new native session anyway (opensNew) resumes
+ * nothing, so it is never asked.
+ */
+export function holdsNothing(state: SessionSnapshot, binding: NativeSessionBinding): boolean {
+  const relay = binding.relay;
+  if (relay === undefined || relay.sync.kind !== "fresh" || relay.originIncluded || binding.throughRunId !== null || binding.opensNew === true) return false;
+  const since = heldSinceIn(state, binding.harnessId, binding.controlId, relay);
+  return !state.runs.some(run => run.selection.provider === undefined && run.selection.harnessId === binding.harnessId && run.selection.controlId === binding.controlId && dispatched(run)
+    && (run.relay?.executedOn == null || run.relay.executedOn.nativeEpoch >= since));
+}
+/**
+ * Whether a binding's native session holds exactly the conversation through `through` (ADR-055 §7.5, RT1-B7), for a native
+ * fork: synced, `through` ran in its current native epoch, and nothing foreign up to `through`'s fact (`endedSeq`, the seq of
+ * its end) is owed to it. A binding without relay state is never exact: nothing says what its native session holds (A1, R10a;
+ * none exists in a v13 Session, and this is pinned by a unit test). `endedSeq` and `facts` (those foreign to it) are read only
+ * when the cheaper conditions hold: they page the Session's events.
+ */
+export function nativeExactAt(state: SessionSnapshot, binding: NativeSessionBinding, through: PublicRun, endedSeq: () => number | undefined,
+    facts: (on: { readonly harnessId: string; readonly controlId: string; readonly nativeEpoch: number }) => readonly RelayFact[]): boolean {
+  const relay = binding.relay;
+  if (relay === undefined) return false;
+  if (relay.sync.kind !== "synced" || through.relay?.executedOn?.nativeEpoch !== relay.nativeEpoch) return false;
+  const seq = endedSeq();
+  if (seq === undefined) return false;
+  const need = owed(relay, binding.harnessId, binding.controlId, facts({ harnessId: binding.harnessId, controlId: binding.controlId, nativeEpoch: relay.nativeEpoch }).filter(fact => fact.seq <= seq),
+    { originHistory: (state.origin?.history.length ?? 0) > 0, heldSince: heldSinceIn(state, binding.harnessId, binding.controlId, relay) });
+  return need.facts.length === 0 && !need.origin;
+}
 
 /** How many of an epoch's latest recorded rows keep the mark their recording made, for a check's fall back (≥ 8 × SUSPECT_MARKERS). */
 const MARKED_ROWS = 32;
@@ -226,6 +261,34 @@ export function choiceRequired(cause: ChoiceCause): RelayError {
 export function recoveryFailed(): RelayError {
   return new RelayError({ code: "RELAY_UNAVAILABLE", reason: "recovery_failed" }, "服务重启时没能恢复这个对话的交接记录，暂时不能附带交接内容。可以只发这条消息，或新开原生会话。");
 }
+/**
+ * The user's ［确认已清空］ when it is not offered (§9: only while an unconfirmed clear's check is undecided; G068 fix batch 2,
+ * M-1): at admission, where no Run is made. Never let through to be dropped at the open.
+ */
+export function clearNotOffered(): SessionError {
+  return new SessionError("INVALID_INPUT", "现在不需要［确认已清空］：没有待确认的清空，或清空是否执行已经有了结论。这条消息没有发出，草稿已保留，可以不带这个选择再发一次。");
+}
+/**
+ * The user's ［确认已清空］ the open could not act on: its own check settled the clear otherwise than by confirming it (M-1). The
+ * Run fails before dispatch; nothing was sent.
+ */
+export function clearNotConfirmed(): RelayError {
+  return new RelayError({ code: "RELAY_PREPARE_FAILED", reason: "render_mismatch" }, "没能确认清空：这次打开原生会话时的核对已经有了结论，不再需要［确认已清空］。这条消息没有发出，草稿已保留，可以不带这个选择再发一次。");
+}
+/**
+ * Whether admission can take the user's ［确认已清空］ (§9, M-1): only on an unconfirmed clear whose check is undecided. One the
+ * open settles without the user (`settledWithoutCheck`) is answered as its landing is — a pending packet whose automatic resend
+ * is spent asks for that choice (409 delivery_unconfirmed) — or else refused (clearNotOffered); one a check at the open decides,
+ * or the table leaves to the user, is let through, and the open acts on it or fails the Run (clearNotConfirmed).
+ */
+function admitClearConfirmed(relay: BindingRelayState, declaration: RelayDeclaration): void {
+  const sync = relay.sync;
+  if (sync.kind !== "suspect" || sync.cause !== "clear_unconfirmed" || sync.floorCandidate === null || sync.floorCandidate <= relay.epochFloor) throw clearNotOffered();
+  const landed = settledWithoutCheck(relay, declaration.verify);
+  if (landed === null) return;
+  if (landed.sync.kind === "pending" && pendingResend(landed.sync, declaration.lateDelivery) === "choice") throw choiceRequired("delivery_unconfirmed");
+  throw clearNotOffered();
+}
 /** step's verify_first cause as the 409 cause (F11): marker_absent stays, every other (legacy included) is verify_required. */
 export function causeOf(cause: string): ChoiceCause { return cause === "marker_absent" ? "marker_absent" : "verify_required"; }
 export interface AdmitInput {
@@ -249,7 +312,8 @@ export interface AdmitInput {
  * relay error: RELAY_UNAVAILABLE{recovery_failed}; RELAY_CHOICE_REQUIRED{delivery_unconfirmed} for a pending packet no check
  * before dispatch can settle and none may be resent automatically; RELAY_CHOICE_REQUIRED{verify_required | marker_absent} for a
  * suspect binding no check can settle (admitsWithoutChoice) — a Driver that checks at the open is let through and settled
- * there (§9: only what admission can decide is a 409).
+ * there (§9: only what admission can decide is a 409). The user's ［确认已清空］ is answered before anything else
+ * (admitClearConfirmed: INVALID_INPUT where it is not offered).
  */
 export function admitRelay(input: AdmitInput): void {
   const { state, binding, target, capabilities, choices } = input;
@@ -258,6 +322,9 @@ export function admitRelay(input: AdmitInput): void {
   // A command (or what may be one) carries nothing and is never stopped by the relay (VF1-05).
   if (capabilities !== null && capabilities.commands.classify(input.text, null, input.attachments).kind !== "content") return;
   const relay = binding?.relay ?? initialBindingRelay(state.nativeBindings ?? [], target.harnessId, target.controlId, "new");
+  // The user's ［确认已清空］ is answered first, whatever is owed: a binding that owes nothing would otherwise let it through to an
+  // open that has no use for it (M-1).
+  if (choices.clearConfirmed === true) admitClearConfirmed(relay, declaration);
   const facts = input.facts({ harnessId: target.harnessId, controlId: target.controlId, nativeEpoch: relay.nativeEpoch }), originHistory = (state.origin?.history.length ?? 0) > 0;
   const sync = relay.sync, since = heldSinceIn(state, target.harnessId, target.controlId, relay);
   const need = owed(relay, target.harnessId, target.controlId, facts, { originHistory, attachOverride: choices.attach === "full" || sync.kind === "pending" && sync.attachOverride, heldSince: since });
@@ -296,6 +363,11 @@ export interface Check {
   readonly result: VerifyResult;
   /** An unknown Turn without a packet: whether its own entry follows its position (unavailable: the Driver contract cannot ask, G068 phase two). */
   readonly turnEntry?: MarkerResult;
+  /**
+   * Why the Driver was not asked and every marker is unavailable (G068 fix batch 2, M-3): `alone`, the open of an input the user
+   * sends alone, which a read could only stop; `connection`, a binding an earlier read of this process broke the connection of.
+   */
+  readonly unasked?: "alone" | "connection";
   readonly moment: "open" | "settled";
 }
 /**
@@ -383,7 +455,8 @@ export function verifiedEvent(check: Check, outcome: Extract<RelayStep, { kind: 
   const verifiedRunIds = asked.flatMap(marker => { const run = markers.findLast(item => item.packetId === marker.packetId)?.runId; return run === undefined ? [] : [run]; });
   return { type: "relay.verified", data: { verifiedRunIds, moment: check.moment, plan: check.plan.kind === "skip" ? "skip:" + check.plan.reason : check.plan.kind,
     markers: check.result.markers, historyEmpty: check.result.historyEmpty, compaction: check.result.compaction, foreignAfterLast: check.result.foreignAfterLast, verifyMs: check.result.verifyMs,
-    ...(check.turnEntry === undefined ? {} : { turnEntry: check.turnEntry }), result: note.verified ?? "skipped", ...(note.choice === undefined ? {} : { choice: note.choice }),
+    ...(check.turnEntry === undefined ? {} : { turnEntry: check.turnEntry }), ...(check.unasked === undefined ? {} : { unasked: check.unasked }),
+    result: note.verified ?? "skipped", ...(note.choice === undefined ? {} : { choice: note.choice }),
     ...(note.rowMissing ? { rowMissing: true } : {}), inRunId, recorded: recordedMarks(outcome, packetOf), sync: outcome.relay.sync.kind } };
 }
 /**

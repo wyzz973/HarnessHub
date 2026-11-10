@@ -491,3 +491,28 @@ G068 阶段一的独立审查提出 F1–F13 与一个 packetId 重合的疑问�
 **范围与顺序**：G072 的探针门控可以在探针批次完成前合入本地集成分支，但不推送、不部署到 4317；`relay.allowUnprobed=true` 只在隔离的测试数据根里设置。顺序：阶段二的独立复核与修正批次 → G072（先接受理处的声明，再门控、同意与厂商键、relay-keys 与 `run.relayRequest`、`placement.measure` 与降档、声明的 classify、Codex 的标题）→ 最小界面 → 真机探针 → 翻转 `probed` → 请所有者决定推送。同意检查（第 10.4 节）落地之前，这条分支不得跑在任何真实对话上：送达行的 `consentLogSeq` 现在恒为 null。
 
 **留给所有者本人**：推送与 4317 升级（含门控带来的空窗）；真机探针批次的账号、额度与 Hermes、OpenClaw 的出站范围；`relay.allowUnprobed` 是否作为用户可见的设置；B2 的对外措辞。
+
+### G068、G069（阶段二）：送达状态机接进运行时，六家 Driver 的协议行为（2026-11-10）
+
+证据等级：代码完成、合成测试通过；没有运行任何真实 Harness，六家 `probed` 仍为 false。证据见[验证记录](../verification/relay-stage2-2026-11-10.md)。提交：`89cc2f6`（接缝）、`db39cbd`（实现）、`d20bfc1`（第一轮审查后的修正）与其后的第二批修正。
+
+**做法**：
+- **接缝**（`src/contracts/control.ts`，经 G007）：`startText` 收 `TurnText`，默认拼法 `singleText`；`deliveryPosition`、`verifyDelivered(id, VerifyRequest)`、`relayVendor`、`userTextOf`、`setTitle`；`ControlEvent` 的 `input_recorded`；`BackendResult.native`（`replaced.checkpoint` 可为 null：旧原生会话已放弃，下一回合新开）；`NativeUsage.requests`。核对的契约：超时与失败只回 unavailable，约 2 秒内，不得弄坏连接、不得改变已结束回合的结果；`historyEmpty` 读全且为空才给 true，见到条目即 false；`markers` 可以为空（只问 `historyEmpty`）。
+- **运行时**（`relay-coordinator.ts` 新建，`runtime.ts` 只留挂钩与 I/O）：按“给阶段二的接缝建议”接入开场核对与 k、带包与重发的决定、E1（单独一个事务，见上节 A14）、结算、保留进程的复用、D6（带包回合，且要求 `probed`）、恢复（组合根传入 `recoverRelay`）。v12 的推进规则不再被运行时调用（`advance.ts:advances` 与 `context.ts:publicSources` 保留，只剩测试与迁移在用）。`throughRunId` 只表示原生位置。
+- **Driver**（新模块 `relay-turn.ts`）：按声明放置交接单；Claude、Codex、Hermes、OpenClaw 记录位置并核对标题行（位置后第一条只需标题行，其后的要标题行加同 ID 的结束行）；Codex 发 E1；Claude 的 `/clear` 等由 Driver 放弃旧会话，Hermes 凭固定回执、OpenClaw 凭 `lifecycleRevision` 确认清空；五家报告厂商观测；带包回合的原话被读作命令时整回合拒绝。`json-rpc-process.ts` 增加“到时只放弃这一个请求”的可选方式（默认行为不变）。
+- **两轮独立审查**的发现与处置见验证记录。第一轮的阻断项：清空事后确认时自家回合被再注入；核对弄坏连接时回合与绑定跟着坏；Driver 丢包后水位推进；Claude 预开的空会话恢复不了；OpenClaw、Codex 的核对把没读到答成 absent 或历史为空。都已修并各有先失败后通过的用例。第二轮无阻断。
+
+**偏离上节裁定或终稿之处**：
+- C5 的兜底条件比裁定原文更严：除“fresh、本纪元无已派发内容回合、Driver 明确拒绝为会话不存在”外，还要求该原生会话不持有“事后确认的清空”之后跑过的回合，否则就地替换会让这些回合无人补交。
+- 一个原生会话在第一次派发成功之前不作恢复引用（绑定带 `opensNew`，下一回合新开），覆盖 Claude 清空后与全新绑定两种情形。
+- 核对或取位置弄坏过连接的绑定，本进程内不再问该 Driver（按 unavailable）；“只发这条消息”的回合开场不问 Driver。
+- 〔确认已清空〕在不该提供的状态下受理时拒绝（`INVALID_INPUT`），核对后清空不成立时回合在派发前失败；没有新增专门的 reason。
+- OpenClaw 的归档回退：复核者读 2026.10.9 源码判定普通核对不会把归档旧包读成 present，未经探针。
+
+**阶段二没有做、留给 G072 / G073 / 探针的**：
+- 受理处读不到静态声明（生产的 binding-factory 未实现 `relayCapabilities`），`RELAY_CHOICE_REQUIRED` 现在是让 Run 在派发前失败，不是同步 409；HTTP 请求体不带 `relay` 选择，错误体不带 reason。**不得随现状发布**。
+- 同意与厂商键、探针门控、数据根检查、relay-keys（送达行的 HMAC 现在用 `keyId:"ephemeral"`）、`run.relayRequest`、`placement.measure` 与降档、声明的 `classify`（`acceptsRelay` 的命令现在不捎带）、`setTitle` 的调用、清单里保守填的字段。
+- Claude 的 Driver 没有把适配器的“会话不存在”映射成 `NATIVE_SESSION_NOT_FOUND`，C5 的兜底在真实 Claude 上还不会触发。
+- Hermes 的 `setTitle` 启用前必须先解决：被放弃提示的迟到更新会记到下一回合；`setTitle` 会让随后的带包回合拿不到位置。
+- Claude 计划模式“清空上下文继续”没有任何信号（契约缺口）；OpenClaw 每次核对新起命令行进程，1.8 秒预算可能恒超。
+- 探针待验证的协议事实与最需要真机探针的五条，见验证记录。
