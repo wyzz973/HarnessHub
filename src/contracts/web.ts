@@ -1,6 +1,7 @@
 import type { ProviderView } from "./provider.js";
 import type { HarnessManagementView, InstallationJobView, InstallationLog } from "./management.js";
-import type { HarnessSelection, PublicMessage, PublicRun, PublicSwitch, SelectionRequest, SessionEvent, SessionOrigin, SessionSnapshot } from "./session.js";
+import type { HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunId, SelectionRequest, SessionEvent, SessionOrigin, SessionSnapshot } from "./session.js";
+import type { DeliveryEvidence, DeliveryStatus, EvidenceClass, RelayPacketId, RelayPacketKind, RelayPrefKey, RunRelay, SYNC_KINDS, Tier } from "./relay.js";
 
 /**
  * A conversation's title as summaries and the sidebar give it, the same in the Gateway and the page: its first message,
@@ -210,7 +211,7 @@ export interface SessionView {
     /** The upgrade of this Harness that closed the kept process (ADR-043); until the next Turn, which starts the new version. */
     readonly upgraded?: { readonly harnessId: string; readonly at: number } };
   readonly messages: readonly PublicMessage[];
-  readonly runs: readonly PublicRun[];
+  readonly runs: readonly WebRun[];
   readonly switches: readonly PublicSwitch[];
 }
 /** A conversation's kept native process as the chat shows it; times are milliseconds since the epoch. */
@@ -249,7 +250,7 @@ export type SessionStreamFrame =
   | { readonly type: "snapshot"; readonly session: SessionView }
   | { readonly type: "message"; readonly sessionId: string; readonly version: number; readonly lastSeq: number; readonly message: PublicMessage }
   /** One active Run's canonical facts (tools, plan, usage, notices, activities, outputs) after a single committed event. */
-  | { readonly type: "run"; readonly sessionId: string; readonly version: number; readonly lastSeq: number; readonly run: PublicRun };
+  | { readonly type: "run"; readonly sessionId: string; readonly version: number; readonly lastSeq: number; readonly run: WebRun };
 export interface InstallationLogPage {
   readonly entries: readonly InstallationLog[];
   readonly nextSeq: number;
@@ -261,5 +262,123 @@ export interface CreateWebSession {
   readonly commandId: string;
 }
 export interface SwitchWebSession { readonly selection: SelectionRequest; readonly commandId: string }
-export interface WebError { readonly code: string; readonly message: string }
+export interface WebError {
+  readonly code: string;
+  readonly message: string;
+  /** Only on the relay errors a user can answer (ADR-055 §12.4): which binding, why, and what the user may choose next. */
+  readonly relay?: RelayErrorView;
+}
 export interface AuthSession { readonly csrfToken: string }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The relay's API (ADR-055 §12.4; G073's server side). Everything here is derived from committed relay rows and the
+// Session's own facts; none of it carries a packet's text, a position, a native transcript path or any keyed digest.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** What is known of a Run's packet reaching its binding's native history; it can still change after the Run ended. */
+export interface RelayDeliveryView {
+  readonly state: DeliveryStatus;
+  /** Only when `recorded`: E1 (the native side said so), E2 (checked afterwards) or E3 (inferred when the Turn settled). */
+  readonly evidence: DeliveryEvidence | null;
+}
+/**
+ * PublicRun.relay with the delivery state read in: present for every Run that carried a packet (`packetId` is not null), and
+ * unknown for a packet no row tracks (the Gateway keeps no binding of a Driver without a resumable session); absent for a Run
+ * that carried none, and when the Session's delivery rows could not be read.
+ */
+export interface RunRelayView extends RunRelay { readonly delivery?: RelayDeliveryView }
+/** The Run as the API shows it: a PublicRun whose `relay` also carries the delivery state. Assignable to PublicRun. */
+export type WebRun = Omit<PublicRun, "relay"> & { readonly relay?: RunRelayView };
+
+/** One native binding of a Session as the details panel's "接续" row shows it (GET …/relay). */
+export interface RelayBindingView {
+  readonly harnessId: string;
+  readonly controlId: string;
+  readonly nativeEpoch: number;
+  readonly sync: typeof SYNC_KINDS[number];
+  /** The 0-based index (in the Session's Runs) of the latest finished Run the binding's mark covers; null when it covers none. */
+  readonly throughRun: number | null;
+  /** What the mark stands on (E1, E2, E3, legacy, origin, native, choice); null when there is no mark. */
+  readonly evidence: EvidenceClass | null;
+  /** How many times this native session was cleared (a confirmed clear raises the epoch in place). */
+  readonly cleared: number;
+  /** Whether the Driver's relay mechanisms were proved on a real Harness; false also when the Driver declares none. */
+  readonly probed: boolean;
+}
+/** One packet-carrying Run (GET …/relay), in Run order; the same packet sent again by another Run is another entry. */
+export interface RelayPacketView {
+  readonly packetId: RelayPacketId;
+  readonly runId: RunId;
+  /** The 0-based index of that Run among the Session's Runs. */
+  readonly runIndex: number;
+  /** The 1-based ordinal among the Session's packet-carrying Runs, in Run order ("交接单 #1"): the n-th Run whose `relay.packetId` is not null. */
+  readonly number: number;
+  readonly kind: RelayPacketKind;
+  readonly tier: Tier;
+  readonly target: { readonly harnessId: string; readonly model: string | null };
+  readonly estTokens: number;
+  /** How many items the packet left out (the sum of its omission counts). */
+  readonly omissions: number;
+  readonly redactions: number;
+  readonly delivery: DeliveryStatus;
+  readonly evidence: DeliveryEvidence | null;
+}
+export interface RelayView {
+  readonly bindings: readonly RelayBindingView[];
+  readonly packets: readonly RelayPacketView[];
+}
+/** The installation's relay preferences that were ever set; a key that is absent has its default (GET and PUT /api/v1/relay/prefs). */
+export interface RelayPrefsView { readonly prefs: Readonly<Partial<Record<RelayPrefKey, string>>> }
+export interface RelayPrefWrite { readonly key: RelayPrefKey; readonly value: string }
+
+/**
+ * What the user may choose next, each answered by a field of the next send's `relay` member: `attach_full` is
+ * `{ attach: "full" }` (the complete handoff again), `send_alone` `{ attach: "none" }`, `new_native` `{ native: "new" }`,
+ * `clear_confirmed` `{ clearConfirmed: true }`, `acknowledge` `{ consent: { vendor, decision: "acknowledged", scope } }`.
+ */
+export const RELAY_OPTIONS = ["attach_full", "send_alone", "new_native", "clear_confirmed", "acknowledge"] as const;
+export type RelayOption = typeof RELAY_OPTIONS[number];
+/**
+ * The `relay` member of an error body (ADR-055 §12.4): only on a relay error the user can answer (a 409 or the 429), and only
+ * plain values — a Harness identity, the closed cause and option words, counts. Never text of the history.
+ */
+export interface RelayErrorView {
+  /** The binding the input would have run on. */
+  readonly binding: { readonly harnessId: string; readonly controlId: string };
+  /** The error's closed reason: delivery_unconfirmed, verify_required, marker_absent, missing, vendor_changed, recovery_failed, … */
+  readonly cause?: string;
+  readonly options: readonly RelayOption[];
+  /**
+   * What the binding is owed and holds: `runs`, the finished Runs of other Harnesses (or of its earlier epochs) the next handoff to
+   * it carries; `packets`, the handoff packets it has recorded in its current native epoch.
+   */
+  readonly counts?: { readonly runs: number; readonly packets: number };
+  /** For `acknowledge`: the vendor key the consent would be for (present when the Runtime names it). */
+  readonly vendor?: string;
+}
+
+/** The session events the stream announces as `relay` frames (a notice, not the facts: the facts are in the snapshot before it). */
+export const RELAY_STREAM_EVENTS = ["relay.input_recorded", "relay.verified", "relay.vendor_changed", "relay.clear_confirmed"] as const;
+export type RelayStreamEventType = typeof RELAY_STREAM_EVENTS[number];
+/** Names an event and where it happened; never the packet's text, a native value or a digest of one. `at` is epoch milliseconds. */
+export interface RelayStreamEvent {
+  readonly type: RelayStreamEventType;
+  readonly sessionId: string;
+  readonly runId?: string;
+  readonly packetId?: string;
+  readonly at: number;
+}
+/**
+ * The stream's notice of a relay event. It follows, with the same `version` and `lastSeq`, the frame that carries the facts
+ * (a snapshot, for these events), so a reader that applies facts by watermark takes it as a no-op and reads `event`. A
+ * subscription that is behind (its connection is backed up) gets the snapshot later and no notice. It is deliberately not a
+ * member of SessionStreamFrame, which the page's reducer (web/src/session-stream.ts) matches exhaustively: the page adds it
+ * to its own decoding (`SessionStreamFrame | RelayStreamFrame`) when it takes the notices.
+ */
+export interface RelayStreamFrame {
+  readonly type: "relay";
+  readonly sessionId: string;
+  readonly version: number;
+  readonly lastSeq: number;
+  readonly event: RelayStreamEvent;
+}

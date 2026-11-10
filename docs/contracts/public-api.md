@@ -50,11 +50,11 @@ Session/配置变更使用 expectedVersion 或条件请求；缺少必须前置�
 
 ## 接力：资源、接口与错误（已接受（ADR-055））
 
-状态：已接受（[ADR-055](../decisions/0055-relay-and-context-scheduling.md)，2026-11-03 验收），未实现、未真机验证。本节按接力终稿 [relay-architecture.md](../proposals/relay/relay-architecture.md)（下称“终稿”）的第 4 节（类型草案）、6.1 节（受理时序）、7.4 节（选择与重发）、9 节（失败与边界）、12.4 节（API 与错误码）与 14.2 节（事件）写成；字段名与枚举以终稿第 4 节为唯一来源，本节不另起名字。终稿留给用户拍板的 D1（送达未确认时受理同步 409 三选一）、D2（小窗口目标在启动前 `RELAY_INPUT_LIMIT` 并提供“只发这条消息”）、D4（当前输入永远原样）、D11（生产只对已探针的 Driver 开放）按推荐项写入，用户另作决定时改写本节。
+状态：已接受（[ADR-055](../decisions/0055-relay-and-context-scheduling.md)，2026-11-03 验收）。第三阶段的接口（G073 后端，2026-11-10）代码完成、合成测试通过，确切形状见下文“第三阶段已实现的 HTTP 形状”；本节其余仍是设计、未实现；整个接力没有真机验证。本节按接力终稿 [relay-architecture.md](../proposals/relay/relay-architecture.md)（下称“终稿”）的第 4 节（类型草案）、6.1 节（受理时序）、7.4 节（选择与重发）、9 节（失败与边界）、12.4 节（API 与错误码）与 14.2 节（事件）写成；字段名与枚举以终稿第 4 节为唯一来源，本节不另起名字。终稿留给用户拍板的 D1（送达未确认时受理同步 409 三选一）、D2（小窗口目标在启动前 `RELAY_INPUT_LIMIT` 并提供“只发这条消息”）、D4（当前输入永远原样）、D11（生产只对已探针的 Driver 开放）按推荐项写入，用户另作决定时改写本节。
 
 标注：【事实】是现状代码，`file:line` 以本仓库为准；【实测】是本文作者在本机对现状代码求值的结果；【推断】是终稿没有逐字写出、由其条文推出的解读；【推算】是终稿声明未经实测、待 G070–G074 校准的常量初值。其余条文是终稿的设计决定，数字除另注外都是终稿给定的设计上限或初值。安全侧的规则（出境类别、脱敏、同意、数据根）见 [security.md](security.md) 的接力一节。
 
-**入口位置**：本节路径在本机 Web 入口 `/api/v1` 上（入口约定见 [provider-web-mvp.md](provider-web-mvp.md)），不是上文表格里长期 `/v1` 的建议路径；两者的对应、schema 与 operationId 仍由 C009 冻结。现状 `src/` 与 `web/src/` 没有任何接力路由或 `RELAY_*` 错误码【事实，grep】：会话下的路由只有 permissions、native-branch（`src/web/server.ts:758–759`）、events/stream（`:966`）、runs/:runId/diagnostics（`:994`）与 messages、switches、resume、cancel、close、events、export、fork、retention、end-process、native-resume（`:1017`）【事实】。API、CLI 与界面用同一套命令语义（INV-25）：界面上的每个选择都经下面的请求字段表达，API 使用方收到与界面相同的 409 与选项（终稿第 16 节 S16）。下文 `…` 指 `/api/v1/sessions/:id`。
+**入口位置**：本节路径在本机 Web 入口 `/api/v1` 上（入口约定见 [provider-web-mvp.md](provider-web-mvp.md)），不是上文表格里长期 `/v1` 的建议路径；两者的对应、schema 与 operationId 仍由 C009 冻结。第三阶段之前 `src/` 与 `web/src/` 没有任何接力路由或 `RELAY_*` 错误码；现在 `src/web/relay-routes.ts` 提供 `GET …/relay`、`GET|HEAD …/relay/:packetId`、`GET|PUT /api/v1/relay/prefs` 与 `POST …/messages` 的 `relay` 成员（`src/web/server.ts` 只挂载它们），下文其余路由仍是设计。API、CLI 与界面用同一套命令语义（INV-25）：界面上的每个选择都经下面的请求字段表达，API 使用方收到与界面相同的 409 与选项（终稿第 16 节 S16）。下文 `…` 指 `/api/v1/sessions/:id`。
 
 ### Run、切换与时间上的接力字段
 
@@ -118,7 +118,106 @@ Session/配置变更使用 expectedVersion 或条件请求；缺少必须前置�
 
 **共同前置**：新端点沿用 cookie、CSRF 与 Host/Origin/Sec-Fetch 校验（`src/web/server.ts:505–535`【事实】）；读取其他会话的 packetId 返回 404；SSE 不含正文、原值与原值的哈希（RT4 AP-01–AP-03）。
 
-**事实流**：会话事实流（`GET …/events/stream`）推送 `run.context_prepared`、`relay.input_recorded`、`relay.verified`、`relay.vendor_changed`、`run.ended`，事件数据形状与幂等键见终稿第 14.2 节。每次交接新增事件 ≤3 条（`relay.input_recorded`、`relay.verified`、`relay.title_set`），请求带 `relay.consent` 时另加同意镜像 1 条；普通回合 0 条。
+**事实流**：会话事实流（`GET …/events/stream`）推送 `run.context_prepared`、`relay.input_recorded`、`relay.verified`、`relay.vendor_changed`、`run.ended`，事件数据形状与幂等键见终稿第 14.2 节；事实流上这些事件怎样出现（快照里的 Run 带送达状态、跟在事实后面的 `relay` 帧）见下文“Run 与事实流”。每次交接新增事件 ≤3 条（`relay.input_recorded`、`relay.verified`、`relay.title_set`），请求带 `relay.consent` 时另加同意镜像 1 条；普通回合 0 条。
+
+### 第三阶段已实现的 HTTP 形状（G073 后端，2026-11-10）
+
+状态：代码完成，合成测试通过（`tests/integration/relay-api.test.ts`、`tests/security/relay-api.test.ts`：真实 HTTP、真实 SQLite，Harness 是夹具子进程）；没有任何真实 Harness 参与，真机验证未做。类型在 `src/contracts/web.ts`，路由、校验与错误体在 `src/web/relay-routes.ts`。本小节是这一阶段**确切的形状**，与上文设计的描述冲突处以本小节为准；设计里本阶段没有做的部分——`relay/preview`、`relay/observe`、钉住、排除、同意记录的读出与撤回、`excludeRuns`/`excludeSections`/`reveal` 等请求字段——仍是设计，请求里带这些字段得 400。
+
+**默认放行之后，受理时的 409 只在需要用户本人决定时出现**（用户 2026-11-10 的决定，[ADR-055](../decisions/0055-relay-and-context-scheduling.md) 末节）：能自动决定的不问，默认自动补发（有界重复优先于询问）。`RELAY_CHOICE_REQUIRED`（送达没确认且不能自动补发、核对不了、标记丢失）是这类；`RELAY_TARGET_UNVERIFIED` 只在用户打开严格设置（`relay.allowUnprobed` 关闭）时出现，`RELAY_CONSENT_REQUIRED` 只在 `relay.crossVendor=ask` 时出现，数据根在工作区内只作提示、不再是 409。这几个码由运行时抛出（G072）；API 对它们都已能解释（见“错误体”）。界面要能处理它们出现的情形：输入框上方一行说明和 `options` 对应的按钮，草稿保留。
+
+#### 发送：`POST /api/v1/sessions/:id/messages`
+
+请求体 `{ text, commandId, attachments?, relay? }`；`relay` 可选，不带即默认行为：
+
+| 字段 | 取值 | 本阶段 |
+|---|---|---|
+| `attach` | `"auto"`（默认，等于不带）、`"full"`、`"none"` | 生效，交给运行时（`runtime.send` 的第五个参数）。`full`：附上或补发完整交接单（界面只发它，A4）；`none`：只发这条消息 |
+| `resend` | `true` | 生效 |
+| `clearConfirmed` | `true` | 生效；不在可确认的状态时 400 `INVALID_INPUT`（没有待确认的清空，或清空是否执行已有结论），不建 Run |
+| `tier` | `goal`、`brief`、`standard`、`fidelity`、`full` | 只校验，暂不使用（G072） |
+| `native` | `continue`、`new` | 只校验，暂不使用（G072）。`new` 生效前，［新开原生会话］用 `POST …/native-branch`（`{ epoch, commandId }`）再重发同一条消息 |
+| `note` | 文本，非空白，≤4096 字节，除换行、回车、制表外无控制字符 | 只校验，暂不使用（G072） |
+| `consent` | `{ vendor, decision: "acknowledged"｜"goal_only", scope: "session"｜"global" }`；`vendor` 须是合法的厂商键 | 只校验，暂不使用（G072） |
+
+校验是整体的：只认这些字段，未知字段、越界值、类型不符、`attach:"none"` 同时带 `resend`/`clearConfirmed`/`native:"new"`/`consent` 一律 400 `INVALID_INPUT`，文案固定、不引用请求内容，不建 Run。**暂不使用**的字段在响应里不报错、不改变行为——运行时接受它们之前，它们既不进命令指纹，也不影响这次发送。**幂等**：已生效的选择（`attach`、`resend`、`clearConfirmed`）进命令指纹，同一 `commandId` 换选择得 409 `IDEMPOTENCY_CONFLICT`；`attach:"auto"`、`relay:{}` 与不带 `relay` 等价。受理时的 409 不建 Run，也不占用 `commandId`：用户作出选择后，同一 `commandId` 带上选择重发即可。
+
+#### 错误体
+
+```
+{ "code": "RELAY_CHOICE_REQUIRED", "message": "…",
+  "relay": { "binding": { "harnessId": "codex", "controlId": "codex-app-server" },
+             "cause": "delivery_unconfirmed",
+             "options": ["attach_full", "send_alone", "new_native"],
+             "counts": { "runs": 1, "packets": 0 } } }
+```
+
+`relay` 成员（`RelayErrorView`）只出现在用户能回答的接力错误上（`RELAY_CHOICE_REQUIRED`、`RELAY_CONSENT_REQUIRED`、`RELAY_TARGET_UNVERIFIED`、`RELAY_UNAVAILABLE`、`RELAY_INPUT_LIMIT`），只含标识、封闭的词和计数，没有历史的文字：
+
+| 字段 | 含义 |
+|---|---|
+| `binding` | `{ harnessId, controlId }`：这条输入将要在其上执行的绑定（待决切换的目标，否则当前选择）；运行时在错误里点名了绑定时用它点名的 |
+| `cause` | 错误的封闭原因：`delivery_unconfirmed`、`verify_required`、`marker_absent`（选择类）；`missing`、`vendor_changed`（同意类）；`recovery_failed`、`data_root_in_workspace`、`consent_log_full`（不可用类）；`unprobed`、`undeclared`（目标未经探针、Driver 不声明接力机制）；`min_packet`、`input_limit`（放不下）。不是封闭词的原因不出现 |
+| `options` | 用户接下来可以选什么，每个对应下一次发送的一个字段：`attach_full`＝`{ attach: "full" }`，`send_alone`＝`{ attach: "none" }`，`new_native`＝`{ native: "new" }`，`clear_confirmed`＝`{ clearConfirmed: true }`，`acknowledge`＝`{ consent: { vendor, decision: "acknowledged", scope } }` |
+| `counts` | 只在选择类与同意类：`runs`＝这个绑定被欠的、下一次交接要带的已结束 Run 数（别的 Harness 或它自己更早纪元的），`packets`＝它在当前原生纪元里已记录送达的交接单数。算不出时不出现 |
+| `vendor` | 只在运行时点名了厂商键时：`acknowledge` 要同意的那个键 |
+
+选项按原因与绑定状态定：选择类 `attach_full`、`send_alone`、`new_native`（`marker_absent` 与 `verify_required` 相同），绑定为 `suspect{clear_unconfirmed}`（有可确认的清空下限）而原因是 `verify_required` 时另加 `clear_confirmed`；同意类 `acknowledge`、`send_alone`；`RELAY_UNAVAILABLE{recovery_failed}` 为 `send_alone`、`new_native`，其余原因只有 `send_alone`；`RELAY_TARGET_UNVERIFIED` 与 `RELAY_INPUT_LIMIT` 只有 `send_alone`。HTTP 状态不变：`RELAY_INPUT_LIMIT` 429，其余四个 409。
+
+#### 只读接口
+
+`GET /api/v1/sessions/:id/relay` → `RelayView`：
+
+```
+{ "bindings": [ { "harnessId", "controlId", "nativeEpoch", "sync": "fresh"｜"synced"｜"pending"｜"suspect",
+                  "throughRun": 0 | null, "evidence": "E1"｜"E2"｜"E3"｜"native"｜"legacy"｜"origin"｜"choice" | null,
+                  "cleared": 0, "probed": false } ],
+  "packets":  [ { "packetId", "runId", "runIndex": 1, "number": 1, "kind": "packet"｜"delta"｜"anchor"｜"resend", "tier",
+                  "target": { "harnessId", "model": null }, "estTokens", "omissions", "redactions",
+                  "delivery": "in_flight"｜"recorded"｜"unknown"｜"not_recorded", "evidence": "E1"｜"E2"｜"E3" | null } ] }
+```
+
+- `bindings`：会话里每个未归档的原生绑定一行。`throughRun`：绑定的标记所覆盖的最后一个已结束 Run 在会话 Run 里的序号（从 0 起），不覆盖任何 Run（没有标记，或只是会话起点的历史）时为 null；`evidence` 是标记的依据；待核、待定的绑定仍给出它最后所站的标记。`cleared`：当前原生会话里清空过几次（确认的清空就地抬高纪元）。`probed`：Driver 的接力机制是否在真机上证明过；Driver 不声明接力机制时也是 false。
+- `packets`：每个带交接单的 Run 一项，按 Run 顺序；`number` 是第几个 `relay.packetId` 非 null 的 Run（界面“交接单 #n”），`runIndex` 是这个 Run 在会话 Run 里的序号（从 0 起）。同一份交接单被另一个 Run 再发是另一项。`omissions` 是省略项总数，`redactions` 是脱敏计数。没有原生绑定可追踪的 Driver（没有可恢复的原生会话）收到的交接单没有送达行，`delivery` 是 `unknown`、`evidence` 是 null——没有任何证据，不说送达。正文没有存下的交接单不列出，它的序号也空着。
+- 读它不改变会话（`lastSeq`、`version` 都不动）。
+
+`GET|HEAD /api/v1/sessions/:id/relay/:packetId` → 交接单存储的正文，即发出时的字节（不在返回时复扫）：`Content-Type: text/plain; charset=utf-8`，`ETag: "<正文字节的 sha256>"`（强校验），`Cache-Control: private, no-cache`，`X-Content-Type-Options: nosniff`，`Content-Security-Policy: default-src 'none'; sandbox`。`If-None-Match`（`*`、弱写法、列表都认）命中得 304 与同一 `ETag`，无正文；`HEAD` 只回头。本会话没有这份交接单——包括别的会话的、不存在的——一律 404 `RELAY_PACKET_NOT_FOUND`，应答逐字相同，不回显标识；会话不存在 404 `SESSION_NOT_FOUND`；会话标识不合法 400。`:packetId` 不是 `relay-` 加 20 位 Crockford base32（小写）的写法、或带查询串，则不是这条路由（404 `NOT_FOUND` 或 400），`relay/preview` 这类未实现的路径同理。
+
+`GET /api/v1/relay/prefs` → `{ "prefs": { "relay.crossVendor"?: …, … } }`：只列出设置过的键，没列出的键用 Gateway 自己的默认（按 2026-11-10 的决定，`relay.crossVendor` 默认允许）。`PUT /api/v1/relay/prefs`，请求体 `{ "key", "value" }`，键与取值取 `RELAY_PREF_KEYS`、`RELAY_PREF_VALUES`（`relay.crossVendor`: `ask`｜`allow`｜`goal_only`；`relay.returnPreference`: `continue`｜`new_when_cold`｜`ask`；`relay.allowUnprobed`、`relay.localModelsOffline`: `true`｜`false`），最后写入者胜；成功回 200 与写后的 `{ prefs }`。未知键、越界值、多余或缺少的字段 400 `INVALID_INPUT`，什么都不写。
+
+三者都要登录；`PUT` 与发送一样要同源 `Origin` 与 CSRF 令牌（`src/web/server.ts` 的统一检查）；其余方法与路径落到统一的 404。
+
+#### Run 与事实流
+
+**Run 的送达状态**：`GET /api/v1/sessions/:id` 与事实流里的 Run（`SessionView.runs`、`run` 帧）的 `relay`（`RunRelayView`）在快照已有的 `packetId`、`kind`、`continuity`、`executedOn` 之外多一个 `delivery: { state, evidence }`：每个带交接单（`packetId` 非 null）的 Run 都有；没有送达行可追踪的交接单是 `{ state: "unknown", evidence: null }`；没带交接单的 Run 没有它；送达行读不出来时（`INVALID_DATA`）整个会话的 Run 保持快照原样、不带它，会话本身不受影响。**Run 结束后它仍会变**——后来的核对可以把 `unknown` 改成 `recorded`（E2）——变化随提交它的那次事实帧到达。`relayRequest.fingerprint` 现在没有运行时写入；写入后 Web DTO 要屏蔽它（`runViews` 是该处理的位置）。
+
+**`relay` 帧**：会话事实流在 `snapshot`、`message`、`run` 之外多一种帧，只通知、不是事实：
+
+```
+{ "type": "relay", "sessionId": "session-…", "version": 41, "lastSeq": 41,
+  "event": { "type": "relay.input_recorded"｜"relay.verified"｜"relay.vendor_changed"｜"relay.clear_confirmed",
+             "sessionId": "session-…", "runId"?: "run-…", "packetId"?: "relay-…", "at": 1794305941906 } }
+```
+
+- 每个这四类事件一帧，跟在承载它的事实帧后面，**同一个 `version` 与 `lastSeq`**，SSE 的 `id:` 也相同；按水位应用事实的读者把它当空操作，再去读 `event`。同一次提交里有几个接力事件，各有一帧，都在同一个水位下。
+- `runId`：事件发生在哪个 Run 里（核对的 `inRunId`、厂商变化的 `observedInRun`）；`packetId`：事件点名的那一份交接单（`relay.input_recorded` 的包；`relay.verified` 只在这次核对只看了一份包时给）；`at` 是毫秒时间戳。
+- 不含正文、原值，也不含原值的哈希、标记、位置、厂商键：事件里的这些都不复制。一个背压中的订阅（连接写不出去）之后拿到完整的快照，不补通知。
+- 旧版网页客户端（`web/src/session-stream.ts` 的 `envelope`）遇到未知帧类型会判为流协议错误 `STREAM_INVALID_FRAME` 并中断这条流：接力帧要与认得它的客户端同时上线。
+
+#### 本阶段的错误码
+
+| 码 | HTTP | 何时 |
+|---|---|---|
+| `RELAY_CHOICE_REQUIRED` | 409 | 需要用户决定：`delivery_unconfirmed`、`verify_required`、`marker_absent`；带 `relay` 成员 |
+| `RELAY_CONSENT_REQUIRED` | 409 | 只在 `relay.crossVendor=ask`（或同意被撤回、厂商变了）时；带 `relay` 成员；运行时抛出（G072） |
+| `RELAY_TARGET_UNVERIFIED` | 409 | 只在严格设置下目标未经探针时；带 `relay` 成员；运行时抛出（G072） |
+| `RELAY_UNAVAILABLE` | 409 | `recovery_failed`、`consent_log_full`，以及（运行时抛出时）`data_root_in_workspace`；带 `relay` 成员 |
+| `RELAY_INPUT_LIMIT` | 429 | 最小交接单放不下；带 `relay` 成员 |
+| `RELAY_PACKET_NOT_FOUND` | 404 | 本会话没有这份交接单 |
+| `INVALID_INPUT` | 400 | `relay` 成员、偏好、会话标识不合规，或［确认已清空］不在可确认的状态 |
+| `IDEMPOTENCY_CONFLICT` | 409 | 同一 `commandId` 带了不同的接力选择 |
+
+`RELAY_PREPARE_FAILED` 仍只作 Run 失败，不经 HTTP 返回。
 
 ### 错误码、阶段与选项
 
@@ -152,9 +251,9 @@ Session/配置变更使用 expectedVersion 或条件请求；缺少必须前置�
 
 **长历史不再报 `CONTEXT_TOO_LARGE`**：现状在 `src/contexts/session/domain/context.ts:58` 抛出【事实】。v13（G070）起，历史超出预算时分层降档并记满足恒等式的省略账目；只有“最小交接单 + 当前原话”超过通道硬上限或 capWindow 时才 `RELAY_INPUT_LIMIT`；历史长度永不导致 blocked（属性测试：W 在 4k–2M 上按对数均匀取样），RelayConformance 断言不出现 `CONTEXT_TOO_LARGE`。过渡期（G067，v12、不升库）：每回合只对将要发送的内容预算，同 Harness 续接、切换校验与 blocked 后恢复不再报它；切到新目标时要发的就是全部来源，900 KiB 回复之后 B 的第一条仍可能 `CONTEXT_TOO_LARGE`，此时提供［只发这条消息］（`attach:"none"` 的 P0 版本：原样发送、不改 `throughRunId`），这一点写进发布说明，分层预算到 G070 落地。
 
-**错误体**：接力错误只带错误码与计数，接力代码的异常一律用固定文案、不引用输入片段（见 security.md）。现状错误体只有 `{code, message}`（`src/contracts/web.ts:264`、`src/web/server.ts:1088`【事实】）；`RELAY_CHOICE_REQUIRED` 的 `{binding, cause, options, counts}` 与 `RELAY_CONSENT_REQUIRED` 的预览计数需要扩展错误体，字段与上文 RFC 9457 扩展成员的对应由 C009 冻结。
+**错误体**：接力错误只带错误码与计数，接力代码的异常一律用固定文案、不引用输入片段（见 security.md）。错误体在 `{code, message}` 之外，对用户能回答的接力错误多一个 `relay` 成员（`WebError.relay`，确切形状见下文“错误体”）；字段与上文 RFC 9457 扩展成员的对应仍由 C009 冻结。
 
-**HTTP 状态从哪来**：现状由 `publicFailure` 的子串规则映射（`src/web/server.ts:265–266`【事实】：含 `NOT_FOUND` 为 404，含 `LIMIT` 为 429，含 `UNAVAILABLE`、以 `_REQUIRED` 结尾等为 409，其余为 502）。按现状规则对各码求值【实测：本文作者在本机用 node 对该表达式的逐字副本求值】：`RELAY_INPUT_LIMIT` 429；`RELAY_UNAVAILABLE`、`RELAY_CONSENT_REQUIRED`、`RELAY_CHOICE_REQUIRED` 409；`RELAY_TARGET_UNVERIFIED` 却是 502，实现时须为它显式映射 409（G073，经 `server.ts` 的所有者 G050）。`RELAY_PREPARE_FAILED` 只作 Run 失败，不经 HTTP 返回。
+**HTTP 状态从哪来**：现状由 `publicFailure` 的子串规则映射（`src/web/server.ts:265–266`【事实】：含 `NOT_FOUND` 为 404，含 `LIMIT` 为 429，含 `UNAVAILABLE`、以 `_REQUIRED` 结尾等为 409，其余为 502）。按现状规则对各码求值【实测：本文作者在本机用 node 对该表达式的逐字副本求值】：`RELAY_INPUT_LIMIT` 429；`RELAY_UNAVAILABLE`、`RELAY_CONSENT_REQUIRED`、`RELAY_CHOICE_REQUIRED` 409；`RELAY_TARGET_UNVERIFIED` 按子串规则却是 502，所以 `publicFailure` 为它显式映射 409（现已在 `src/web/server.ts` 里）。`RELAY_PREPARE_FAILED` 只作 Run 失败，不经 HTTP 返回。
 
 ### 写入阶段提出、终稿已修订处置的点
 

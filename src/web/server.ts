@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { application as composeApplication } from "../cli/session-application.js";
 import { ProviderError } from "../contracts/provider.js";
 import { ManagementError } from "../contracts/management.js";
-import { SessionError, parseNativeOptions, sessionId, type SelectionRequest, type SessionConfiguration, type SessionEvent, type SessionSnapshot } from "../contracts/session.js";
+import { SessionError, parseNativeOptions, sessionId, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionSnapshot } from "../contracts/session.js";
 import { MAX_CONTENT_BYTES, MAX_RUN_ATTACHMENTS } from "../contracts/content.js";
 import { conversationTitle, type EventPage, type HarnessReadinessView, type HarnessView, type InstallationLogPage, type InstallationUpgradeCheckView, type KeptProcessView, type MaintenanceView, type NativeSessionListView, type SessionSummary, type SessionView, type UninstallCheckView, type InstallCheckView, type WebState } from "../contracts/web.js";
 import { inventory, officialInstallation } from "../infrastructure/catalog/inventory-composition.js";
@@ -24,6 +24,7 @@ import { supportedProviderProtocols } from "../contexts/provider/domain/provider
 import { carriedNativeConfiguration } from "../contexts/session/domain/state.js";
 import { observedPackageVersion } from "../infrastructure/management/system-version.js";
 import { SessionStreamError, SessionStreamHub } from "./session-stream.js";
+import { PacketBodies, RelayApi, parseSendRelay } from "./relay-routes.js";
 import { AttentionStreamHub } from "./attention-stream.js";
 import { HarnessModels } from "./harness-models.js";
 import { buildRevision, NativeCatalogCache, type NativeReadiness } from "./native-catalog-cache.js";
@@ -353,15 +354,19 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     throw error;
   });
   let app: ReturnType<typeof composeApplication>;
+  // The relay's API (ADR-055 §12.4): its routes, the delivery state of the Runs it shows and the bodies of the errors it explains.
+  let relayApi: RelayApi;
   // A Turn waits for its workspace or, when every slot is taken, for a slot (ADR-036).
   const queueOf = (id: SessionSnapshot["id"]): NonNullable<SessionView["queue"]> | null => {
     const workspace = app.runtime.queueState(id), slot = workspace === null ? app.runtime.slotWait(id) : null;
     return workspace !== null ? { kind: "workspace", ...workspace } : slot !== null ? { kind: "slot", ...slot } : null;
   };
   // A conversation's view with the live state of the native process it keeps (ADR-030).
-  const sessionView = (snapshot: SessionSnapshot, permissions: SessionView["permissions"] = []): SessionView => view(snapshot, permissions, app.runtime.keptProcess(snapshot.id), app.runtime.keptLoss(snapshot.id),
+  const sessionView = (snapshot: SessionSnapshot, permissions: SessionView["permissions"] = []): SessionView => ({ ...view(snapshot, permissions, app.runtime.keptProcess(snapshot.id), app.runtime.keptLoss(snapshot.id),
     queueOf(snapshot.id), Object.fromEntries(snapshot.runs.flatMap(run => { const holder = app.runtime.busyHolderOf(run.id); return holder === null ? [] : [[run.id, holder]]; })),
-    app.runtime.keptOutside(snapshot.id), app.runtime.keptUpgrade(snapshot.id));
+    app.runtime.keptOutside(snapshot.id), app.runtime.keptUpgrade(snapshot.id)),
+    // Each Run that carried a packet with its delivery state, which can still change after the Run ended.
+    runs: relayApi.runViews(snapshot) });
   const streams = new SessionStreamHub(id => sessionView(app.runtime.read(id), app.runtime.permissionRequests(id)), {}, failure => {
     const fault = publicFailure(failure.error, homeForms());
     process.stderr.write("HarnessGateway: SESSION_STREAM_READ_FAILED (" + app.providers.redact(fault.code).slice(0, 128) + ")\n");
@@ -374,6 +379,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     ...(options.installations === undefined ? {} : { installations: options.installations }), ...(options.relayKeyFile === undefined ? {} : { relayKeyFile: options.relayKeyFile }) })))(options.root, event => {
     try { streams.publish(event); } finally { if (app !== undefined) attention.changed(); }
   });
+  relayApi = new RelayApi({ reads: app.store, bodies: new PacketBodies(options.root), read: id => app.runtime.read(id),
+    declaration: selection => { const factory: SessionBindingFactory = app.factory; return factory.relayCapabilities?.(selection); }, http: { json, headers, queries, body } });
   // This build: every compiled Gateway file by name and content (ADR-033), also named in a Turn's diagnostics (ADR-037).
   const revision = buildRevision(fileURLToPath(new URL("..", import.meta.url)));
   // Derived observations only; a file this version cannot adopt is reported and left as it is. Catalogs are reused only by
@@ -1016,6 +1023,9 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         scrub: value => scrubDiagnostics(value, { redact: text => app.providers.redact(text), user }) });
       json(response, 200, { text, includesContent: includeContent }); return;
     }
+    // The relay's reads and preferences (ADR-055 §12.4): a conversation's bindings and packets, a packet's stored text, and the
+    // installation's relay preferences. A write here has passed the same Origin and CSRF checks as every other.
+    if (await relayApi.handle(request, response, url, method)) return;
     const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|switches|resume|cancel|close|events|export|fork|retention|end-process|native-resume))?$/u.exec(path);
     if (sessionRoute) {
       const id = sessionId(sessionRoute[1]!), action = sessionRoute[2];
@@ -1052,9 +1062,15 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       if (method === "POST") {
         queries(url, []);
         if (action === "messages") {
-          const input = record(await body(request), ["text", "commandId", "attachments"], ["text", "commandId"]); if (typeof input.text !== "string") throw new HttpError(400, "INVALID_INPUT", "Message text required");
+          const input = record(await body(request), ["text", "commandId", "attachments", "relay"], ["text", "commandId"]); if (typeof input.text !== "string") throw new HttpError(400, "INVALID_INPUT", "Message text required");
           if (input.attachments !== undefined && (!Array.isArray(input.attachments) || input.attachments.length > MAX_RUN_ATTACHMENTS || input.attachments.some(value => typeof value !== "string"))) throw new HttpError(400, "INVALID_INPUT", "Invalid attachments");
-          json(response, 202, app.runtime.send(id, input.text, command(input.commandId), (input.attachments ?? []) as string[])); return;
+          // The user's relay choices (ADR-055 §12.4): what the Runtime acts on goes with the input, and so into the command's fingerprint.
+          // RELAY_REQUEST_SEAM: `relay.deferred` (tier, native, note, consent) is checked and kept apart until the Runtime takes it (G072);
+          // `toRuntime` in relay-routes.ts is the one place that decides what is handed on.
+          const relay = parseSendRelay(input.relay);
+          try { json(response, 202, app.runtime.send(id, input.text, command(input.commandId), (input.attachments ?? []) as string[], relay.choices)); }
+          catch (error) { relayApi.explain(error, id); throw error; }
+          return;
         }
         if (action === "switches") { const input = record(await body(request), ["selection", "commandId"], ["selection", "commandId"]); json(response, 202, app.runtime.switch(id, select(input.selection), command(input.commandId))); return; }
         if (action === "fork") {
@@ -1088,7 +1104,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     running++;
     void route(request, response).catch(error => {
       const fault = publicFailure(error, homeForms());
-      json(response, fault.status, { code: fault.code, message: app.providers.redact(fault.message) }); request.resume();
+      // A relay error the user can answer also names the binding, the reason and the choices (ADR-055 §12.4).
+      json(response, fault.status, { code: fault.code, message: app.providers.redact(fault.message), ...relayApi.errorBody(error) }); request.resume();
     }).finally(() => { running--; });
   });
   server.headersTimeout = 10000; server.requestTimeout = 15000; server.keepAliveTimeout = 5000; server.maxConnections = 32;

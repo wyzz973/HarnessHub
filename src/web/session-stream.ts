@@ -1,5 +1,5 @@
 import { SessionError, type SessionEvent, type SessionId } from "../contracts/session.js";
-import type { AttentionFrame, SessionStreamFrame, SessionView } from "../contracts/web.js";
+import { RELAY_STREAM_EVENTS, type AttentionFrame, type RelayStreamEvent, type RelayStreamEventType, type RelayStreamFrame, type SessionStreamFrame, type SessionView } from "../contracts/web.js";
 
 export class SessionStreamError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message); this.name = "SessionStreamError"; }
@@ -27,7 +27,35 @@ function limit(value: number | undefined, fallback: number): number {
   const chosen = value ?? fallback;
   if (!Number.isSafeInteger(chosen) || chosen < 1) throw new Error("invalid session stream limit"); return chosen;
 }
-function water(frame: SessionStreamFrame): number { return frame.type === "snapshot" ? frame.session.lastSeq : frame.lastSeq; }
+function water(frame: SessionStreamFrame | RelayStreamFrame): number { return frame.type === "snapshot" ? frame.session.lastSeq : frame.lastSeq; }
+
+const RELAY_EVENTS: ReadonlySet<string> = new Set(RELAY_STREAM_EVENTS);
+const RUN_IDENTITY = /^run-[A-Za-z0-9-]{1,96}$/u, PACKET_IDENTITY = /^relay-[0-9a-hjkmnp-tv-z]{20}$/u;
+/**
+ * What the stream announces of a relay event (ADR-055 §12.4, §14.2): its kind, the Run and packet it names and when, picked
+ * field by field from the event, which also holds a delivery's mark, a check's markers and counts. Nothing else of the event
+ * is copied, so no text, native value or digest can leave through a notice (RT4 AP-01–AP-03). Undefined for any other event.
+ */
+export function relayStreamEvent(event: SessionEvent): RelayStreamEvent | undefined {
+  if (!RELAY_EVENTS.has(event.type)) return undefined;
+  const data = event.data;
+  // The Run an event names is the Turn it happened in: a check's Turn is `inRunId`, a vendor change was seen in `observedInRun`.
+  const named = event.type === "relay.verified" ? data.inRunId : event.type === "relay.vendor_changed" ? data.observedInRun : data.runId;
+  const runId = typeof named === "string" && RUN_IDENTITY.test(named) ? named : undefined;
+  let packetId: string | undefined;
+  if (event.type === "relay.input_recorded") packetId = typeof data.packetId === "string" && PACKET_IDENTITY.test(data.packetId) ? data.packetId : undefined;
+  else if (event.type === "relay.verified" && Array.isArray(data.markers)) {
+    // A check that looked at one packet names it; one that looked at several names none.
+    const asked = new Set<string>();
+    for (const marker of data.markers as readonly unknown[]) {
+      const id = marker !== null && typeof marker === "object" ? (marker as Readonly<Record<string, unknown>>).packetId : undefined;
+      if (typeof id === "string" && PACKET_IDENTITY.test(id)) asked.add(id);
+    }
+    if (asked.size === 1) packetId = [...asked][0];
+  }
+  const at = Date.parse(event.timestamp);
+  return { type: event.type as RelayStreamEventType, sessionId: event.sessionId, ...(runId === undefined ? {} : { runId }), ...(packetId === undefined ? {} : { packetId }), at: Number.isFinite(at) ? at : 0 };
+}
 
 /** Owns subscriptions/timers only. Run admission, persistence and cancellation remain in their application owner. */
 export class SessionStreamHub {
@@ -85,7 +113,10 @@ export class SessionStreamHub {
   }
   /** Authoritative reads may fail closed; every transport write/error is isolated within its subscription. */
   publish(event: SessionEvent): void {
-    const clients = [...this.clients].filter(client => client.id === event.sessionId && client.lastSeq < event.seq);
+    // A relay event is also announced to a subscription that already holds its facts: several events of one commit are
+    // published one by one, and the first one's snapshot already carried the commit's latest facts.
+    const announced = relayStreamEvent(event);
+    const clients = [...this.clients].filter(client => client.id === event.sessionId && (client.lastSeq < event.seq || announced !== undefined));
     if (!clients.length) return;
     const session = this.snapshot(event.sessionId);
     if (session.lastSeq < event.seq) throw new SessionError("INVALID_DATA", "publication is ahead of committed session facts");
@@ -97,7 +128,8 @@ export class SessionStreamHub {
       ? session.runs.find(item => item.id === event.data.runId) : undefined;
     const frame: SessionStreamFrame = message !== undefined ? { type: "message", sessionId: session.id, version: session.version, lastSeq: session.lastSeq, message }
       : activity !== undefined ? { type: "run", sessionId: session.id, version: session.version, lastSeq: session.lastSeq, run: activity } : { type: "snapshot", session };
-    for (const client of clients) client.send(frame);
+    const notice: RelayStreamFrame | undefined = announced === undefined ? undefined : { type: "relay", sessionId: session.id, version: session.version, lastSeq: session.lastSeq, event: announced };
+    for (const client of clients) { client.send(frame); if (notice !== undefined) client.notice(notice); }
   }
   /** A newer list of waiting approvals and questions for every subscription; never throws. */
   attentionChanged(frame: AttentionFrame): void { for (const client of [...this.clients]) client.attention(frame); }
@@ -141,6 +173,14 @@ class StreamClient {
     if (Buffer.byteLength(text, "utf8") > this.hub.maxFrameBytes) { this.close(); return; }
     // write(false) still accepted this frame; subsequent output is replaced by one dirty snapshot marker.
     this.lastSeq = water(frame); this.write(text);
+  }
+  /**
+   * The notice of a relay event: only straight after the facts it follows (same watermark) and never into a backed-up
+   * connection, whose snapshot comes later and carries the facts anyway. It moves nothing the cursor knows.
+   */
+  notice(frame: RelayStreamFrame): void {
+    if (this.closed || this.paused || frame.lastSeq !== this.lastSeq) return;
+    this.write("id: " + frame.lastSeq + "\nevent: session\ndata: " + JSON.stringify(frame) + "\n\n");
   }
   /** The newest list only; a paused subscription keeps the latest until it drains. */
   attention(frame: AttentionFrame): void {
