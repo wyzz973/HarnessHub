@@ -67,6 +67,8 @@ function draftMatches(draft: SelectionDraft, selection: HarnessSelection): boole
 export interface ChatRelay {
   readonly api: RelayApi;
   readonly view: RelayView | null;
+  /** The view was read for the state the conversation is in now (not before the Turn that just ended): what is owed and asked is only said then. */
+  readonly fresh: boolean;
   /** The Gateway's relay settings, when it gave them: the first hand-over to a Harness says where the history goes only while hand-overs are allowed. */
   readonly prefs: RelayPrefs | null;
   readonly choice: RelayChoice | null;
@@ -337,14 +339,14 @@ export function ChatPage(props: ChatProps) {
   // What the relay did with a Turn's history when that is worth saying (a resend, words sent alone and why), under its message.
   const notes = useMemo(() => relay?.view ? runNotes({ runs: session?.runs ?? [], view: relay.view, name: harnessName }) : new Map<string, string>(), [session?.runs, relay?.view, harnesses]);
   const viewPacket = useCallback((packetId: string) => setViewing(packetId), []);
-  const relayNow = useMemo(() => session && relay ? relayLine(session, relay.view) : null, [session, relay?.view]);
+  const relayNow = useMemo(() => session && relay?.fresh ? relayLine(session, relay.view) : null, [session, relay?.view, relay?.fresh]);
   // What a binding asks the user to look at, for the Harness the conversation is on, once the conversation is idle: said once, and a closed one
   // of the same episode (its key, with the conversation and the Harness) does not come back.
   const idle = session !== null && session.status === "open" && session.activeRunId === null && session.pendingSwitchId === null && session.runs.length > 0 && session.runs.every(run => finished(run.status));
   const onBinding = session && relay?.view ? relay.view.bindings.find(item => item.harnessId === session.selection.harnessId && item.controlId === session.selection.controlId) : undefined;
   const closedKey = (key: string) => `${session?.id ?? ""}|${session?.selection.harnessId ?? ""}|${key}`;
-  const banner = useMemo(() => idle && session ? bannerOf(onBinding, harnessName(session.selection.harnessId), key => closed.has(closedKey(key))) : null,
-    [idle, onBinding, session?.id, session?.selection.harnessId, closed.has, harnesses]);
+  const banner = useMemo(() => idle && relay?.fresh && session ? bannerOf(onBinding, harnessName(session.selection.harnessId), key => closed.has(closedKey(key))) : null,
+    [idle, relay?.fresh, onBinding, session?.id, session?.selection.harnessId, closed.has, harnesses]);
   // The first hand-over to a Harness says where the history goes, in the line above the box, while hand-overs are allowed (the default); that
   // it was said is remembered per service (or per Harness while its service is not known), and a message sent under it ends it.
   const introKey = relayNow?.kind === "owed" && banner === null && session ? relayNow.service ?? "harness:" + session.selection.harnessId : null;

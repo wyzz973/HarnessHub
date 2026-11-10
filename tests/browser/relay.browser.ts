@@ -147,6 +147,8 @@ class FakeGateway {
   /** The writes of the preference, and how the fake answers the next one. */
   readonly putPrefs: unknown[] = [];
   prefsFailure: number | null = null;
+  /** How late the fake answers a read of the relay state, for the test that must see the page between a Turn's end and that answer. */
+  viewDelayMs = 0;
   /** How often each relay endpoint was read, for the tests that must see the page not ask. */
   readonly reads = { view: 0, text: 0, prefs: 0 };
   readonly clients = new Set<ServerResponse>();
@@ -242,7 +244,11 @@ class FakeGateway {
       response.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store" });
       this.clients.add(response); response.on("close", () => this.clients.delete(response)); response.write(this.frame()); return;
     }
-    if (action === "relay" && method === "GET") { this.reads.view += 1; return this.view === null ? this.missing(response) : this.json(response, 200, this.view); }
+    if (action === "relay" && method === "GET") {
+      this.reads.view += 1;
+      if (this.viewDelayMs > 0) await new Promise(resolve => setTimeout(resolve, this.viewDelayMs));
+      return this.view === null ? this.missing(response) : this.json(response, 200, this.view);
+    }
     const packet = /^relay\/([^/]+)$/u.exec(action);
     if (packet !== null && method === "GET") {
       this.reads.text += 1;
@@ -731,6 +737,28 @@ test("G073 the details panel's 接续 tab lists where each Harness stands and th
 // ---------------------------------------------------------------------------------------------------------------------
 // The setting
 // ---------------------------------------------------------------------------------------------------------------------
+
+test("G073 what is owed and asked is said from a view read for the state the conversation is in now, not from the one of before the Turn that just ended", async t => {
+  // Codex's Turn runs, and the state read before it says one Turn is still owed to it.
+  const owing = relayView({ bindings: [CLAUDE_BOUND, { harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "fresh", throughRun: null, evidence: null, cleared: 0, probed: true, owed: { runs: 1, estTokens: 500 } }] });
+  const { gateway, page, errors, log } = await open(t, conversation("running", packetRelay(CODEX)), { view: owing });
+  await expect(log.locator(".assistant-message").last()).toBeVisible();
+  await expect.poll(() => gateway.reads.view).toBe(1);
+  await expect(page.locator("[data-relay]")).toHaveCount(0);
+  // The Turn ends and the packet is not confirmed; the Gateway answers the next read of the relay state late.
+  gateway.viewDelayMs = 900;
+  gateway.view = asking({ cause: "delivery_unconfirmed", options: ["attach_full", "new_native"], counts: { runs: 1, packets: 1 }, key: "delivery_unconfirmed:relay-a", packet: 1 });
+  const run = gateway.session.runs[1]!; run.status = "completed"; run.timing = { ...run.timing!, firstOutputAt: NOW - 14_000, endedAt: NOW - 8_000 }; run.backend = { status: "completed", reason: "completed" }; run.cleanup = { closed: true, exitCode: 0, signal: null, protocolFailure: null };
+  gateway.session.activeRunId = null; gateway.session.messages.forEach(message => { if (message.runId === "run-2") message.status = "completed"; });
+  gateway.publish();
+  // The Turn is over, and the page knows it; what the page read before it is not what is owed now, so nothing is said until the read comes back.
+  await expect(log.locator(".assistant-message").last()).toHaveAttribute("data-run-status", "completed");
+  await page.waitForTimeout(500);
+  await expect(page.locator("[data-relay]")).toHaveCount(0);
+  // Then what the Gateway says now: the packet is not confirmed.
+  await expect(page.locator("[data-relay=attention]")).toContainText("交接单 #1 还没有确认送达 Codex");
+  assert.deepEqual(errors, []);
+});
 
 test("G073 the details panel has no 接续 tab for a conversation the relay has nothing to tell of, and gets it when there is something", async t => {
   // One Harness holds a session of it, nothing was sent, nothing is owed or asked: nothing to tell.

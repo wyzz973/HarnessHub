@@ -32,12 +32,14 @@ export function useRelayPresence(): { readonly known: boolean; readonly learn: (
 /**
  * The conversation's relay state: read when the Gateway is known to have the relay and a conversation with Turns is shown,
  * again whenever what it depends on changes (a Turn starts or ends, a packet's delivery is decided) or the Gateway announces
- * a change (`pushed`), and shortly again while a packet is still in flight. null while nothing is known: not read yet, no
+ * a change (`pushed`), and shortly again while a packet is still in flight. `view` is null while nothing is known: not read yet, no
  * Turns, or no relay information to give, which the page treats alike. A read that fails changes nothing and is made again at
- * the next change. A Gateway that answers that it has no such endpoint is `gone`.
+ * the next change. A Gateway that answers that it has no such endpoint is `gone`. `fresh` says the view was read for the state the
+ * conversation is in now: between a Turn ending and its read coming back the view is the one of before the Turn, good for the lines
+ * where earlier Turns were handed over and wrong about what is owed and asked now, so what the line above the box says waits for it.
  */
-export function useRelayView(api: RelayApi, session: SessionView | null, pushed: number, known: boolean, gone: () => void): RelayView | null {
-  const [read, setRead] = useState<{ readonly sessionId: string; readonly view: RelayView | null } | null>(null);
+export function useRelayView(api: RelayApi, session: SessionView | null, pushed: number, known: boolean, gone: () => void): { readonly view: RelayView | null; readonly fresh: boolean } {
+  const [read, setRead] = useState<{ readonly sessionId: string; readonly view: RelayView | null; readonly signature: string } | null>(null);
   const id = session?.id ?? null, turns = session?.runs.length ?? 0;
   // What the view depends on is worked out when the conversation's Turns, selection or state change, not on every frame of a reply.
   const signature = useMemo(() => relaySignature(session), [session?.id, session?.runs, session?.selection, session?.status, session?.pendingSwitchId]);
@@ -51,13 +53,14 @@ export function useRelayView(api: RelayApi, session: SessionView | null, pushed:
       if (absent) { gone(); return; }
       // A read that failed or could not be understood changes nothing: what was read before stays until a read succeeds.
       if (view === null) return;
-      setRead({ sessionId: id, view });
+      setRead({ sessionId: id, view, signature });
       if (view.packets.some(packet => packet.delivery === "in_flight") && document.visibilityState === "visible") timer = setTimeout(() => void load(), WHILE_IN_FLIGHT_MS);
     };
     timer = setTimeout(() => void load(), SETTLE_MS);
     return () => { controller.abort(); if (timer !== null) clearTimeout(timer); };
   }, [api, known, id, turns > 0, signature, pushed]);
-  return known && read !== null && read.sessionId === id && turns > 0 ? read.view : null;
+  const shown = known && read !== null && read.sessionId === id && turns > 0;
+  return { view: shown ? read.view : null, fresh: shown && read.signature === signature };
 }
 
 /**

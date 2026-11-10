@@ -521,7 +521,7 @@ export function App() {
   useEffect(() => { if (!relayPresence.known && state !== null && api.relayAdvertised) learnRelay(); }, [state, relayPresence.known, api, learnRelay]);
   const turns = session?.runs;
   useEffect(() => { if (!relayPresence.known && turns !== undefined && turns.some(run => runRelayInfo(run)?.delivery != null)) learnRelay(); }, [turns, relayPresence.known, learnRelay]);
-  const relayView = useRelayView(api.relay, session, relayPushed, relayPresence.known, relayPresence.forget);
+  const { view: relayView, fresh: relayFresh } = useRelayView(api.relay, session, relayPushed, relayPresence.known, relayPresence.forget);
   // The Gateway's relay settings (they apply to every browser): the settings page changes them, the line above the message box reads them.
   const relayPrefs = useRelayPrefs(api.relay, relayPresence.known);
   const leave = (action: () => void) => {
@@ -1070,7 +1070,7 @@ export function App() {
         onLoadExtensions={signal => api.nativeExtensions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, signal)} onLoadNativeSessions={(cursor, signal, probes) => api.nativeSessions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, cursor, signal, probes)}
         onImportNative={importNative} focusOnOpen={sessionId !== null && openedFromPage === sessionId} onOpenFocused={() => setOpenedFromPage(null)} onApply={() => { lastAutoSelection.current = null; void applySelection(); }} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }}
         onProviders={() => navigate("providers")} onNew={newChat} onMenu={shell.onMenu}
-        {...(relayPresence.known || relayChoice !== null ? { relay: { api: api.relay, view: relayView, prefs: relayPrefs.prefs, choice: relayChoice, next: relayNext, onNext: setRelayNext, onDismissChoice: () => setRelayChoice(null) } } : {})}
+        {...(relayPresence.known || relayChoice !== null ? { relay: { api: api.relay, view: relayView, fresh: relayFresh, prefs: relayPrefs.prefs, choice: relayChoice, next: relayNext, onNext: setRelayNext, onDismissChoice: () => setRelayChoice(null) } } : {})}
         queued={queued} onQueue={queueMessage} onEditQueued={() => { if (queued) returnQueued(queued, null); }} onWithdrawQueued={withdrawQueued} queueNotice={queueNotice} onDismissQueueNotice={() => setQueueNotice(null)}
         preferences={preferences} onPreference={setPreference} conversations={state.sessions.length} sidebarHidden={!narrow && !preferences.sidebar} onExpandSidebar={shell.onExpandSidebar} onHarnesses={() => navigate("harnesses")} onSettings={() => navigate("settings")} onRescan={() => void rescan()} scanning={mutation === "scanning"}/>
         : shown === "providers" ? <ProvidersPage providers={state.providers} editor={editor} saving={mutation === "saving"} probes={probes} error={error} onEdit={provider => { setEditor(provider); setError(null); }} onBack={() => leave(() => { setEditor(null); setEditorDirty(false); setError(null); })} onSave={saveProvider} onProbe={provider => void probeProvider(provider)} onDirty={dirtyChanged} onDismissError={() => setError(null)} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
